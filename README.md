@@ -70,10 +70,15 @@ Mobile: tap to select packages and trucks, use the on-screen quick-action bar.
    packages visibly sulk. ≥50 BTC transactions arrive as whales.
 2. Fill a truck. Capacity is in vB — your truck is a block template, and the same greedy
    fee-rate knapsack a miner solves applies.
-3. Pick a route. The Bull Flank is safe and pays ×1.0. The **Frontline** runs straight down the
-   glowing seam — that is the live price — and pays ×2.6 while under fire from both sides.
-4. Survive the crossing. Liquidation airstrikes crater the terrain, damage trucks and scatter
-   cargo; some packages RBF themselves back to the mempool out of sheer self-preservation.
+3. Pick a route. All three are **visible streets** you can watch your truck drive down: two
+   winding flank highways with kerbs and centre lines that climb over the hills, and the
+   Frontline road, which is redrawn every frame because it follows the live price. They fan out
+   of the plaza and converge again on the Blockchain Gate. The Bull Flank is safe and pays ×1.0;
+   the Frontline pays ×2.6 while under fire from both sides.
+4. Survive the crossing. Every liquidation scrambles a **bomber**: it flies in from off-map
+   trailing contrails, runs over the target, releases a bomb that falls ballistically (with the
+   whistle), then banks away while the blast craters the terrain, damages trucks and scatters
+   cargo. Some packages RBF themselves back to the mempool out of sheer self-preservation.
 5. Deliver through the Blockchain Gate. When a **real block** is found: bass drop, confetti,
    armoured convoy parade, and a ×3 scoring window for 25 seconds. Any packages in the plaza paying
    above that block's median fee get confirmed without you — because that is what actually happens.
@@ -100,10 +105,20 @@ src/
   input.js          picking, box select, hotkeys, touch, manual driving
   ui.js             HUD binding, minimap, order book canvas, tooltips, field manual
   render/scene.js   renderer, sky, market-driven atmosphere, 6 camera modes
-  render/fx.js      pooled GPU particles, tracers, floating text
-  world/battlefield.js   price-chart terrain, frontline, units, order book, airstrikes
+  render/fx.js      pooled GPU particles, ballistic rounds, shockwaves, floating text
+  render/geom.js    model kit — merges multi-part models into one vertex-coloured
+                    geometry so a whole army is a single instanced draw call
+  world/battlefield.js   price-chart terrain, frontline, units, order book, bomber raids
+  world/roads.js         the three visible routes + the mountains they wind through
   world/logistics.js     plaza, packages, fleet, routes, depot, convoys
 ```
+
+Rendering notes: soldiers (helmet, pack, rifle) and tanks (hull, turret, barrel, tracks, road
+wheels) are built from ~15–25 primitives each, then baked down to one geometry with vertex
+colours. Team colour rides on `instanceColor` and multiplies with the baked colours, so a
+near-black rifle stays near-black on both a green and a red soldier — 500 units, two draw calls.
+Mountains are static, so they are baked into the terrain's base height once rather than evaluated
+per vertex per frame.
 
 ## Notes on accuracy
 

@@ -147,9 +147,10 @@ button{font:inherit;color:inherit;cursor:pointer}
 .feed-tag.sim{background:rgba(255,212,71,.14);color:var(--gold);border-color:rgba(255,212,71,.35)}
 .liq-table{display:flex;flex-direction:column;gap:2px;max-height:168px;overflow:hidden;
   font-family:var(--mono);font-size:10px}
-.liq-row{display:grid;grid-template-columns:26px 34px 40px 1fr auto;align-items:center;gap:5px;
-  padding:3px 6px;border-radius:5px;background:rgba(255,255,255,.04);border-left:2px solid var(--dim);
-  animation:slide .3s ease-out;position:relative}
+.liq-row{display:grid;grid-template-columns:22px 28px 34px 1fr 46px;align-items:center;gap:4px;
+  padding:3px 5px;border-radius:5px;background:rgba(255,255,255,.04);border-left:2px solid var(--dim);
+  animation:slide .3s ease-out;position:relative;font-size:9.5px;overflow:hidden}
+.liq-row>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .liq-row.long{border-left-color:var(--bear)}
 .liq-row.short{border-left-color:var(--bull)}
 .liq-age{color:var(--dim)}
@@ -157,7 +158,7 @@ button{font:inherit;color:inherit;cursor:pointer}
 .liq-row.long .liq-side{color:var(--bear)}
 .liq-row.short .liq-side{color:var(--bull)}
 .liq-usd{text-align:right;color:var(--gold);font-weight:700}
-.liq-px{color:var(--dim);font-size:9px}
+.liq-px{color:var(--dim);font-size:8.5px;text-align:right}
 .liq-sim{position:absolute;right:3px;top:-1px;font-size:7.5px;color:var(--dim);opacity:.75}
 
 /* log */

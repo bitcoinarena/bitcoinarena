@@ -15,8 +15,9 @@ export class Game {
     this.events = new Emitter();
     this.stage = new Stage(canvas);
     this.fx = new FX(this.stage.scene);
-    this.bf = new Battlefield(this.stage.scene, this.fx);
     this.audio = new Audio();
+    this.bf = new Battlefield(this.stage.scene, this.fx);
+    this.bf.audio = this.audio;
     this.logistics = new Logistics(this.stage.scene, this.fx, this.bf, this.audio, this.events);
     this.ui = new UI(this);
 
@@ -341,6 +342,12 @@ export class Game {
       volatility: this.volatility,
       manualSteer: this.manualSteer,
       onGunfire: () => this.audio.battle(0.3 + this.volatility),
+      onCannon: (x, z) => {
+        const d = this.stage.camera.position.distanceTo(new THREE.Vector3(x, 0, z));
+        if (d > 220) return;
+        this.audio.cannon(clamp(d / 220, 0, 1));
+        if (d < 70) this.stage.addShake(0.25 * (1 - d / 70));
+      },
     };
     this.bf.update(dt, ctx);
     this.logistics.update(dt, ctx);

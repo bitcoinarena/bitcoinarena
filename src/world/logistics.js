@@ -496,12 +496,8 @@ export class Logistics {
     this.events?.emit('radio', { truck, text });
   }
 
-  laneZ(lane, x) {
-    const base = lane === 'front' ? this.bf.frontlineAt(x) : LANES[lane].z;
-    // Funnel every route into the Blockchain Gate on the final approach.
-    const t = clamp((x - (WORLD.depotX - 58)) / 46, 0, 1);
-    return lerp(base, 0, t * t * (3 - 2 * t));
-  }
+  /** Trucks follow the visible road surface, funnels and all. */
+  laneZ(lane, x) { return this.bf.laneZ(lane, x); }
 
   /* ------------------------------------------------------------- update */
 
@@ -583,7 +579,7 @@ export class Logistics {
   _driveTruck(truck, dt, ctx) {
     const dir = truck.state === 'enroute' ? 1 : -1;
     const goalX = dir > 0 ? WORLD.depotX - 12 : WORLD.plazaX + 20;
-    const laneZ = truck.state === 'enroute' ? this.laneZ(truck.lane, truck.pos.x) : LANES.bull.z;
+    const laneZ = this.laneZ(truck.state === 'enroute' ? truck.lane : 'bull', truck.pos.x);
 
     let targetZ = laneZ;
     let steerBoost = 1;
@@ -596,10 +592,13 @@ export class Logistics {
     const load = 1 - clamp(this.usedCapacity(truck) / truck.spec.capacity, 0, 1) * 0.22;
     truck.speed = approach(truck.speed, base * load, 2.5, dt);
 
-    const dz = clamp(targetZ - truck.pos.z, -26, 26);
+    // The frontline can swing hard when the price ticks, so the truck needs to
+    // be able to chase its lane sideways faster than it drives forward —
+    // otherwise it ends up trundling along beside the road instead of on it.
+    const dz = clamp(targetZ - truck.pos.z, -40, 40);
     const step = truck.speed * dt;
     truck.pos.x += dir * step;
-    truck.pos.z += clamp(dz * dt * 2.4, -step, step);
+    truck.pos.z += clamp(dz * dt * 4.5, -step * 2.2, step * 2.2);
     truck.heading = dir > 0 ? Math.atan2(clamp(dz * 0.06, -0.8, 0.8), 1) : Math.PI - Math.atan2(clamp(dz * 0.06, -0.8, 0.8), 1);
 
     if (truck.boost > 0 || truck.speed > 4) {

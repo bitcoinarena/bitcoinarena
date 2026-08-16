@@ -1,6 +1,8 @@
 import * as THREE from 'three';
 import { WORLD, HISTORY } from '../config.js';
 import { Ring, clamp, lerp, rand, randInt, approach, TAU } from '../util.js';
+import { Roads, mountainHeight } from './roads.js';
+import { makeSoldier, makeTank, makeBomber, makeBomb } from '../render/geom.js';
 
 const COLS = WORLD.columns, ROWS = WORLD.rows;
 const VW = COLS + 1, VH = ROWS + 1;
@@ -36,15 +38,21 @@ export class Battlefield {
 
     this.craters = [];
     this.craterField = new Float32Array(VW * VH);
-    this.incoming = [];        // in-flight liquidation missiles
-    this.markers = [];         // fading light columns at liquidated price levels
+    this.incoming = [];        // bombers currently running a strike
+    this.markers = [];         // fading columns of embers at liquidated price levels
+    this.audio = null;         // set by game.js
 
     this._buildTerrain();
     this._buildTrench();
     this._buildUnits();
     this._buildOrderBook();
     this._buildBackdrop();
+    this._buildAircraft();
+    this.roads = new Roads(scene, this);
   }
+
+  /** Centreline of a route — the trucks drive on the visible road surface. */
+  laneZ(lane, x) { return this.roads.centerZ(lane, x); }
 
   /* ------------------------------------------------------------- terrain */
 
@@ -63,11 +71,14 @@ export class Battlefield {
     this.pos = geo.attributes.position;
     this.col = geo.attributes.color;
 
+    // Mountains are static, so bake them into the base height once instead of
+    // paying for them on every vertex of every mesh update.
     this.baseH = new Float32Array(VW * VH);
     for (let iy = 0; iy < VH; iy++) {
       for (let ix = 0; ix < VW; ix++) {
         const i = iy * VW + ix;
-        this.baseH[i] = groundNoise(this.colX(ix), this.rowZ(iy));
+        const x = this.colX(ix), z = this.rowZ(iy);
+        this.baseH[i] = groundNoise(x, z) * 0.55 + mountainHeight(x, z);
       }
     }
     this.frontZ = new Float32Array(VW);
@@ -128,7 +139,7 @@ export class Battlefield {
   heightAt(x, z) {
     const d = z - this.frontlineAt(x);
     const ad = Math.abs(d);
-    let h = groundNoise(x, z) * 0.55;
+    let h = groundNoise(x, z) * 0.55 + mountainHeight(x, z);
     h += 2.4 / (1 + Math.pow((ad - 7.5) / 5.5, 2));   // shoulders
     h -= 3.0 / (1 + Math.pow(d / 4.0, 2));            // trench cut
     h -= this._craterAt(x, z);
@@ -147,39 +158,44 @@ export class Battlefield {
 
   crater(x, z, r = 10, depth = 4) {
     this.craters.push({ x, z, r, depth, k: 1 });
-    if (this.craters.length > 40) this.craters.shift();
+    if (this.craters.length > 26) this.craters.shift();
   }
 
   /* -------------------------------------------------------------- units */
 
   _buildUnits() {
-    const soldier = new THREE.CapsuleGeometry(0.55, 1.25, 3, 6);
-    soldier.translate(0, 1.2, 0);
-    const tank = new THREE.BoxGeometry(4.4, 1.9, 2.6);
-    tank.translate(0, 1.1, 0);
+    // One merged, vertex-coloured geometry per unit type: the whole army is two
+    // draw calls, but every man still has a helmet, a pack and a rifle.
+    const soldier = makeSoldier();
+    const tank = makeTank();
+    const bigBounds = new THREE.Sphere(new THREE.Vector3(), 600);
 
     this.sides = {};
-    for (const [side, color, emis] of [['bull', 0x3ddc84, 0x0d5a2c], ['bear', 0xff4d5e, 0x6b1220]]) {
-      const infantry = new THREE.InstancedMesh(
-        soldier,
-        new THREE.MeshStandardMaterial({ color, emissive: emis, emissiveIntensity: 0.35, roughness: 0.6 }),
-        360,
-      );
-      infantry.castShadow = true;
-      infantry.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-      infantry.frustumCulled = false;
-      this.scene.add(infantry);
+    for (const [side, color] of [['bull', 0x46e08c], ['bear', 0xff5a6a]]) {
+      const mk = (geo, count, extra) => {
+        const mesh = new THREE.InstancedMesh(
+          geo,
+          new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, ...extra }),
+          count,
+        );
+        mesh.castShadow = true;
+        mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+        mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(count * 3), 3);
+        mesh.frustumCulled = false;
+        mesh.boundingSphere = bigBounds.clone();
+        this.scene.add(mesh);
+        // team colour, with a little per-man variation so ranks don't look cloned
+        const c = new THREE.Color();
+        for (let i = 0; i < count; i++) {
+          c.setHex(color).offsetHSL(0, rand(-0.06, 0.06), rand(-0.09, 0.05));
+          mesh.setColorAt(i, c);
+        }
+        mesh.instanceColor.needsUpdate = true;
+        return mesh;
+      };
 
-      const armour = new THREE.InstancedMesh(
-        tank,
-        new THREE.MeshStandardMaterial({ color, emissive: emis, emissiveIntensity: 0.5, roughness: 0.45, metalness: 0.3 }),
-        26,
-      );
-      armour.castShadow = true;
-      armour.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-      armour.frustumCulled = false;
-      this.scene.add(armour);
-
+      const infantry = mk(soldier, 240, { roughness: 0.72, metalness: 0.05 });
+      const armour = mk(tank, 22, { roughness: 0.5, metalness: 0.35 });
       this.sides[side] = { infantry, armour, units: [], vehicles: [], color, alive: 0 };
     }
 
@@ -314,6 +330,7 @@ export class Battlefield {
     this._updateBook();
     this._updateStrikes(dt);
     this._updateUnits(dt, ctx);
+    this.roads.update(dt);
   }
 
   _updateMesh() {
@@ -328,16 +345,16 @@ export class Battlefield {
         const i3 = i * 3;
         const d = z - this.frontZ[ix];
         const ad = Math.abs(d);
-        let h = this.baseH[i] * 0.55;
+        let h = this.baseH[i];
         h += 2.4 / (1 + ((ad - 7.5) / 5.5) * ((ad - 7.5) / 5.5));
         h -= 3.0 / (1 + (d / 4.0) * (d / 4.0));
         h -= this._craterAt(arr[i3], z);
         arr[i3 + 1] = h;
 
-        // colour: territory + hot seam
+        // colour: territory + hot seam, lightened on high ground
         const own = d < 0 ? bullC : bearC;
         const grip = clamp(ad / 46, 0, 1);
-        const shade = 0.45 + grip * 0.75 + this.baseH[i] * 0.035;
+        const shade = 0.45 + grip * 0.75 + clamp(this.baseH[i] * 0.022, -0.08, 0.42);
         let r = own.r * shade, g = own.g * shade, b = own.b * shade;
         const heat = 1 / (1 + (ad / 5.5) ** 4);
         r = lerp(r, hotC.r, heat * 0.9);
@@ -403,9 +420,13 @@ export class Battlefield {
           u.fire -= dt;
           if (u.fire <= 0) {
             u.fire = rand(0.25, 1.4);
-            const ty = this.heightAt(u.x, front + u.dir * 6) + 1.4;
-            this.fx.tracer(u.x, this.heightAt(u.x, u.z) + 1.5, u.z, u.x + rand(-4, 4), ty, front + u.dir * rand(4, 12), side === 'bull' ? 0x9dffb8 : 0xffa0a8);
-            if (Math.random() < 0.02) ctx.onGunfire?.();
+            const my = this.heightAt(u.x, u.z) + 1.35;
+            const tz = front + u.dir * rand(5, 16);
+            const tx = u.x + rand(-5, 5);
+            const col = side === 'bull' ? 0x9dffb8 : 0xffa0a8;
+            this.fx.bullet(u.x, my, u.z + u.dir * 0.5, tx, this.heightAt(tx, tz) + 0.8, tz, { color: col, speed: rand(64, 88), size: 1 });
+            this.fx.muzzle(u.x, my, u.z + u.dir * 0.8, 0, u.dir, 0.55);
+            if (Math.random() < 0.06) ctx.onGunfire?.();
             // Losing side takes casualties faster.
             const pressure = side === 'bull' ? -flow : flow;
             if (Math.random() < 0.35 + pressure * 0.3) this._kill(u, side);
@@ -431,10 +452,25 @@ export class Battlefield {
         else v.z -= v.dir * dt * 1.2;
         v.x += Math.sin(v.phase * 3 + performance.now() * 0.0002) * dt * 3;
         v.x = clamp(v.x, -WORLD.width / 2 + 8, WORLD.width / 2 - 8);
-        if (Math.random() < dt * 0.25) {
+        // main gun: a heavy shell that arcs across the line and detonates
+        if (Math.random() < dt * 0.07) {
           const front2 = this.frontlineAt(v.x);
-          this.fx.tracer(v.x, this.heightAt(v.x, v.z) + 2.2, v.z, v.x + rand(-8, 8), this.heightAt(v.x, front2) + 2, front2 + v.dir * rand(6, 20), side === 'bull' ? 0xd6ffe2 : 0xffd6da);
-          this.fx.spawn(v.x, this.heightAt(v.x, v.z) + 2.2, v.z + v.dir * 2.4, { color: 0xffcc66, count: 5, size: 1.6, life: 0.25, speed: 8, gravity: 0 });
+          const my = this.heightAt(v.x, v.z) + 2.35;
+          const tx = v.x + rand(-10, 10);
+          const tz = front2 + v.dir * rand(8, 26);
+          this.fx.bullet(v.x, my, v.z + v.dir * 4.6, tx, this.heightAt(tx, tz) + 0.6, tz, {
+            color: side === 'bull' ? 0xd6ffe2 : 0xffd6da,
+            speed: rand(46, 62), size: 2.2, heavy: true,
+            onHit: (hx, hy, hz) => {
+              this.fx.explosion(hx, hy + 0.4, hz, 0.5, 0xffa33a);
+              // craters are the expensive part of the terrain update — only the
+              // occasional shell leaves one behind
+              if (Math.random() < 0.15) this.crater(hx, hz, 4.5, 1.1);
+            },
+          });
+          this.fx.muzzle(v.x, my, v.z + v.dir * 5.2, 0, v.dir, 2.2);
+          this.fx.shockwave(v.x, my, v.z + v.dir * 5, 9, 0.35, 0xfff0c0);
+          ctx.onCannon?.(v.x, v.z);
         }
         const y = this.heightAt(v.x, v.z);
         d.position.set(v.x, y, v.z);
@@ -456,22 +492,70 @@ export class Battlefield {
     });
   }
 
+  _buildAircraft() {
+    this.planes = [];
+    for (let i = 0; i < 6; i++) {
+      const obj = makeBomber(i % 2 ? 0x8d99ab : 0x7f8b78);
+      obj.visible = false;
+      this.scene.add(obj);
+      this.planes.push({ obj, busy: false });
+    }
+    const bombGeo = makeBomb();
+    this.bombs = [];
+    for (let i = 0; i < 6; i++) {
+      const obj = new THREE.Mesh(bombGeo, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.6, metalness: 0.4, flatShading: true }));
+      obj.visible = false;
+      obj.castShadow = true;
+      this.scene.add(obj);
+      this.bombs.push({ obj, busy: false });
+    }
+  }
+
   /**
-   * Liquidation airstrike at a price level. The shell is launched from above and
-   * takes a beat to land, so you actually see it coming — impact is resolved by
-   * the caller through the returned descriptor once `onImpact` fires.
+   * Liquidation airstrike. A bomber flies in from off-map, runs over the target,
+   * releases a bomb that falls ballistically, then banks away trailing smoke —
+   * about eight seconds of theatre rather than an instant puff. Impact damage is
+   * resolved by the caller through `onImpact`.
    */
   airstrike(price, usd, side, onImpact) {
-    const z = clamp(this.priceToZ(price), -WORLD.depth / 2 + 8, WORLD.depth / 2 - 8);
-    const x = rand(-WORLD.width / 2 + 20, WORLD.width / 2 - 20);
+    const z = clamp(this.priceToZ(price), -WORLD.depth / 2 + 10, WORLD.depth / 2 - 10);
+    const x = rand(-WORLD.width / 2 + 26, WORLD.width / 2 - 26);
     const power = clamp(Math.log10(Math.max(1000, usd)) - 3.2, 0.35, 3.2);
+
+    const slot = this.planes.find((p) => !p.busy);
+    if (!slot) {                                   // all bombers busy: strike anyway
+      this._impact({ x, z, power, side, onImpact });
+      return { x, z, power };
+    }
+    slot.busy = true;
+
+    const dir = Math.random() < 0.5 ? 1 : -1;
+    const alt = 62 + power * 12;
+    const speed = 52 + power * 5;
+    const g = 30;
+    const fall = Math.sqrt((2 * (alt - this.heightAt(x, z))) / g);
+
+    slot.obj.visible = true;
     this.incoming.push({
-      x, z, power, side, onImpact,
+      kind: 'raid',
+      plane: slot,
+      x, z, power, side, onImpact, dir, alt, speed, fall, g,
+      dropX: x - dir * speed * fall,             // release early so the bomb arcs in
+      px: x - dir * (speed * fall + 190),        // spawn well off-map
       t: 0,
-      fall: 0.55 + Math.min(0.5, power * 0.15),
-      h: 150 + power * 40,
+      dropped: false,
+      bank: 0,
+      engine: this.audio?.engine?.() ?? null,
     });
+    if (power > 1.6) this.audio?.siren();
     return { x, z, power };
+  }
+
+  _retire(m, i) {
+    m.engine?.stop();
+    if (m.bomb) { m.bomb.obj.visible = false; m.bomb.busy = false; }
+    if (m.plane) { m.plane.obj.visible = false; m.plane.busy = false; }
+    this.incoming.splice(i, 1);
   }
 
   _impact(m) {
@@ -501,14 +585,78 @@ export class Battlefield {
     for (let i = this.incoming.length - 1; i >= 0; i--) {
       const m = this.incoming[i];
       m.t += dt;
-      const k = m.t / m.fall;
-      if (k >= 1) { this._impact(m); this.incoming.splice(i, 1); continue; }
-      // accelerating descent + screaming smoke trail
-      const y = this.heightAt(m.x, m.z) + m.h * (1 - k * k);
-      const col = m.side === 'long' ? 0xff7a4a : 0x6affc0;
-      this.fx.spawn(m.x, y, m.z, { color: col, count: 2, size: 2.2 + m.power, life: 0.45, speed: 1.5, gravity: 0, drag: 1.6 });
-      this.fx.spawn(m.x, y, m.z, { color: 0x9aa4b2, count: 2, size: 3.4, life: 1.1, speed: 1.2, gravity: 1.2, alpha: 0.4 });
-      this.fx.tracer(m.x, y, m.z, m.x, y + 9, m.z, col);
+      m.px += m.dir * m.speed * dt;
+
+      const obj = m.plane.obj;
+      const toTarget = (m.x - m.px) * m.dir;          // >0 while still inbound
+      const past = -toTarget;
+
+      // bank into a turn once the payload is away
+      const wantBank = m.dropped ? clamp(past / 90, 0, 1) * 0.85 : Math.sin(m.t * 0.7) * 0.10;
+      m.bank = approach(m.bank, wantBank, 1.6, dt);
+      const drift = m.dropped ? Math.pow(clamp(past / 70, 0, 1), 2) * 62 : 0;
+
+      obj.position.set(m.px, m.alt + Math.sin(m.t * 1.3) * 1.4, m.z + drift * (m.side === 'long' ? 1 : -1));
+      obj.rotation.set(0, m.dir > 0 ? 0 : Math.PI, m.bank * (m.dir > 0 ? 1 : -1));
+      obj.scale.setScalar(1);
+      for (const p of obj.userData.props) p.rotation.x += dt * 46;
+
+      // engine note swells as it passes overhead
+      m.engine?.set(clamp(1.1 - Math.abs(toTarget) / 220, 0.12, 1), 1 + clamp(toTarget / 400, -0.35, 0.35));
+
+      // contrails from both engines
+      if (Math.random() < dt * 30) {
+        for (const s of [-4.2, 4.2]) {
+          this.fx.spawn(m.px - m.dir * 2, obj.position.y - 0.3, obj.position.z + s, {
+            color: 0xdfe6f0, count: 1, size: 2.6, life: 1.6, speed: 0.5, gravity: 0.4, alpha: 0.30,
+          });
+        }
+      }
+
+      // release
+      if (!m.dropped && toTarget <= m.speed * m.fall) {
+        m.dropped = true;
+        const b = this.bombs.find((k) => !k.busy);
+        if (b) {
+          b.busy = true;
+          b.obj.visible = true;
+          m.bomb = b;
+          m.bombX = m.px; m.bombY = obj.position.y; m.bombZ = m.z;
+          m.bombVy = 0; m.bombT = 0;
+          this.audio?.whistle(m.fall);
+        } else {
+          this._impact(m);
+          this._retire(m, i);
+          continue;
+        }
+      }
+
+      // bomb flight
+      if (m.dropped && m.bomb) {
+        m.bombT += dt;
+        m.bombVy -= m.g * dt;
+        m.bombX += m.dir * m.speed * dt;
+        m.bombY += m.bombVy * dt;
+        const bo = m.bomb.obj;
+        bo.position.set(m.bombX, m.bombY, m.bombZ);
+        bo.rotation.set(clamp(-m.bombVy / 40, -1.4, 0) - Math.PI / 2, 0, m.dir > 0 ? 0 : Math.PI);
+        bo.scale.setScalar(1 + m.power * 0.35);
+        if (Math.random() < dt * 40) {
+          this.fx.spawn(m.bombX, m.bombY, m.bombZ, { color: 0xb9c2cc, count: 1, size: 1.6, life: 0.8, speed: 0.4, gravity: 0.5, alpha: 0.45 });
+        }
+        if (m.bombY <= this.heightAt(m.bombX, m.bombZ) + 0.4) {
+          m.x = m.bombX; m.z = m.bombZ;
+          this._impact(m);
+          m.bomb.obj.visible = false;
+          m.bomb.busy = false;
+          m.bomb = null;
+        }
+      }
+
+      // Retire only once it has actually overflown the target and left — the
+      // spawn point is itself far off-map, so a plain bounds check would kill
+      // the raid on its first frame.
+      if ((m.dropped && past > 240) || m.t > 26) this._retire(m, i);
     }
 
     for (let i = this.markers.length - 1; i >= 0; i--) {

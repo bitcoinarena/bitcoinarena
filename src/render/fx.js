@@ -15,6 +15,104 @@ export class FX {
     this._initParticles();
     this._initTracers();
     this._initText();
+    this._initRings();
+    this.bullets = [];
+  }
+
+  /* --------------------------------------------------- ballistic rounds */
+
+  /**
+   * A round that actually flies: ballistic arc from muzzle to target, drawing a
+   * streak each frame and throwing sparks where it lands. Straight instant
+   * lines read as static noise; arcs read as a firefight.
+   */
+  bullet(x, y, z, tx, ty, tz, { color = 0xffe08a, speed = 90, size = 1.1, heavy = false, onHit = null } = {}) {
+    if (this.bullets.length > 260) return;
+    const dx = tx - x, dz = tz - z;
+    const dist = Math.hypot(dx, dz) || 1;
+    const time = Math.max(0.12, dist / speed);
+    const g = heavy ? 26 : 42;
+    this.bullets.push({
+      x, y, z,
+      px: x, py: y, pz: z,
+      vx: dx / time,
+      vy: (ty - y) / time + 0.5 * g * time,
+      vz: dz / time,
+      g, t: 0, life: time, color, size, heavy, onHit,
+    });
+  }
+
+  _updateBullets(dt) {
+    for (let i = this.bullets.length - 1; i >= 0; i--) {
+      const b = this.bullets[i];
+      b.px = b.x; b.py = b.y; b.pz = b.z;
+      b.t += dt;
+      b.vy -= b.g * dt;
+      b.x += b.vx * dt; b.y += b.vy * dt; b.z += b.vz * dt;
+      this.tracer(b.px, b.py, b.pz, b.x, b.y, b.z, b.color);
+      if (b.heavy && Math.random() < dt * 30) {
+        this.spawn(b.x, b.y, b.z, { color: 0x8b8b8b, count: 1, size: 1.6, life: 0.6, speed: 0.6, gravity: 0.8, alpha: 0.4 });
+      }
+      if (b.t >= b.life || b.y < 0) {
+        this.spawn(b.x, Math.max(0.3, b.y), b.z, {
+          color: b.color, count: b.heavy ? 26 : 7, size: b.size * 1.4,
+          life: b.heavy ? 0.7 : 0.32, speed: b.heavy ? 14 : 7, gravity: -18,
+        });
+        b.onHit?.(b.x, b.y, b.z);
+        this.bullets.splice(i, 1);
+      }
+    }
+  }
+
+  /** Muzzle flash: a bright cone of sparks along the firing direction. */
+  muzzle(x, y, z, dirX, dirZ, scale = 1) {
+    this.spawn(x, y, z, {
+      color: 0xfff0b0, count: Math.round(7 * scale), size: 2.2 * scale, life: 0.14,
+      speed: 16 * scale, gravity: 0, drag: 4, dir: { x: dirX, y: 0.12, z: dirZ },
+    });
+    this.spawn(x, y, z, {
+      color: 0x6b6b6b, count: Math.round(4 * scale), size: 3 * scale, life: 0.8,
+      speed: 4, gravity: 1.4, alpha: 0.4,
+    });
+  }
+
+  /* --------------------------------------------------------- shockwaves */
+
+  _initRings() {
+    this.rings = [];
+    const geo = new THREE.RingGeometry(0.82, 1, 40);
+    geo.rotateX(-Math.PI / 2);
+    for (let i = 0; i < 10; i++) {
+      const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
+        color: 0xffd9a0, transparent: true, opacity: 0, side: THREE.DoubleSide,
+        depthWrite: false, blending: THREE.AdditiveBlending,
+      }));
+      m.visible = false;
+      m.renderOrder = 8;
+      this.scene.add(m);
+      this.rings.push({ mesh: m, t: 0, life: 0, max: 1 });
+    }
+  }
+
+  shockwave(x, y, z, radius = 30, life = 0.9, color = 0xffd9a0) {
+    const r = this.rings.find((k) => !k.mesh.visible);
+    if (!r) return;
+    r.mesh.position.set(x, y + 0.6, z);
+    r.mesh.material.color.setHex(color);
+    r.mesh.visible = true;
+    r.t = 0; r.life = life; r.max = radius;
+  }
+
+  _updateRings(dt) {
+    for (const r of this.rings) {
+      if (!r.mesh.visible) continue;
+      r.t += dt;
+      const k = r.t / r.life;
+      if (k >= 1) { r.mesh.visible = false; continue; }
+      const s = r.max * (1 - Math.pow(1 - k, 2.4));
+      r.mesh.scale.set(s, 1, s);
+      r.mesh.material.opacity = 0.75 * (1 - k) * (1 - k);
+    }
   }
 
   _initParticles() {
@@ -134,10 +232,14 @@ export class FX {
   }
 
   explosion(x, y, z, power = 1, color = 0xffa33a) {
-    const n = clamp(Math.round(60 * power), 24, 420);
-    this.spawn(x, y, z, { color, count: n, size: 2.4 * power, life: 1.1 + power * 0.5, speed: 16 * Math.sqrt(power), spread: 1.4, gravity: -14, drag: 1.6 });
-    this.spawn(x, y, z, { color: 0xffffff, count: Math.round(n * 0.3), size: 3.4 * power, life: 0.35, speed: 26 * Math.sqrt(power), spread: 0.8, gravity: 0, drag: 3.2 });
-    this.spawn(x, y + 2, z, { color: 0x3a3a3a, count: Math.round(n * 0.5), size: 5 * power, life: 2.6, speed: 4, spread: 2.5, gravity: 1.6, drag: 0.7, alpha: 0.55 });
+    const n = clamp(Math.round(70 * power), 28, 460);
+    // fireball, flash, rising smoke column, ground shockwave and thrown debris
+    this.spawn(x, y, z, { color, count: n, size: 2.6 * power, life: 1.2 + power * 0.6, speed: 17 * Math.sqrt(power), spread: 1.4, gravity: -14, drag: 1.6 });
+    this.spawn(x, y, z, { color: 0xffffff, count: Math.round(n * 0.35), size: 3.6 * power, life: 0.32, speed: 30 * Math.sqrt(power), spread: 0.8, gravity: 0, drag: 3.4 });
+    this.spawn(x, y + 1, z, { color: 0xff6a2a, count: Math.round(n * 0.4), size: 4.2 * power, life: 1.7, speed: 7 * power, spread: 1.8, gravity: 5.5, drag: 0.9, alpha: 0.8 });
+    this.spawn(x, y + 2, z, { color: 0x3a3a3a, count: Math.round(n * 0.55), size: 5.5 * power, life: 3.4, speed: 4, spread: 2.5, gravity: 2.2, drag: 0.7, alpha: 0.55 });
+    this.spawn(x, y, z, { color: 0x6a5a44, count: Math.round(n * 0.3), size: 1.8 * power, life: 1.9, speed: 22 * Math.sqrt(power), spread: 1, gravity: -30, drag: 0.5 });
+    this.shockwave(x, y, z, 16 + power * 20, 0.8 + power * 0.25, color);
   }
 
   confetti(x, y, z, count = 220) {
@@ -188,6 +290,9 @@ export class FX {
   /* -------------------------------------------------------------- update */
 
   update(dt) {
+    this._updateBullets(dt);
+    this._updateRings(dt);
+
     // particles
     for (let i = 0; i < MAX_P; i++) {
       const l = this.pLife[i];

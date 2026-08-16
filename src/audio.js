@@ -102,11 +102,106 @@ export class Audio {
 
   /* ---------------------------------------------------------------- sfx */
 
+  /** Small-arms crackle: a snap plus a short tail, pitched randomly. */
   battle(intensity = 0.5) {
     const now = performance.now();
-    if (now - this.lastBattle < 90) return;
+    if (now - this.lastBattle < 70) return;
     this.lastBattle = now;
-    this.noise({ gain: 0.05 + intensity * 0.12, decay: 0.09, freq: rand(700, 2400), filter: 'bandpass', q: 2 });
+    const g = 0.05 + intensity * 0.12;
+    this.noise({ gain: g, decay: 0.05, freq: rand(1800, 4200), filter: 'bandpass', q: 3 });
+    this.noise({ gain: g * 0.7, decay: 0.16, freq: rand(300, 700), filter: 'lowpass', q: 1, sweepTo: 120 });
+    this.tone(rand(160, 260), { type: 'square', gain: g * 0.35, decay: 0.05, slideTo: 70 });
+  }
+
+  /** Tank main gun: hard crack, deep body, long tail. */
+  cannon(dist = 0.5) {
+    const g = clamp(0.5 - dist * 0.3, 0.12, 0.5);
+    this.noise({ gain: g, decay: 0.28, freq: 2600, sweepTo: 180, q: 0.8 });
+    this.tone(rand(70, 95), { type: 'sine', gain: g * 0.9, decay: 0.7, slideTo: 34 });
+    this.noise({ gain: g * 0.35, decay: 1.1, freq: 420, filter: 'lowpass', sweepTo: 90, at: 0.05 });
+  }
+
+  /**
+   * Bomber engines. Two detuned saws through a lowpass make a convincing prop
+   * drone; returns a handle so the plane can fade it as it passes and leaves.
+   */
+  engine() {
+    if (!this.ctx || this.muted) return null;
+    const t = this._now();
+    const bus = this.ctx.createGain();
+    bus.gain.setValueAtTime(0.0001, t);
+    const lp = this.ctx.createBiquadFilter();
+    lp.type = 'lowpass'; lp.frequency.value = 620; lp.Q.value = 1.2;
+    bus.connect(lp); lp.connect(this.master);
+
+    const oscs = [];
+    for (const [f, d] of [[62, -8], [62, 11], [124, 4]]) {
+      const o = this.ctx.createOscillator();
+      o.type = 'sawtooth'; o.frequency.value = f; o.detune.value = d;
+      const g = this.ctx.createGain(); g.gain.value = f > 100 ? 0.25 : 0.5;
+      o.connect(g); g.connect(bus);
+      o.start(t);
+      oscs.push(o);
+    }
+    // propeller chop
+    const lfo = this.ctx.createOscillator();
+    lfo.type = 'sine'; lfo.frequency.value = 19;
+    const lfoGain = this.ctx.createGain(); lfoGain.gain.value = 0.35;
+    lfo.connect(lfoGain); lfoGain.connect(bus.gain);
+    lfo.start(t);
+    oscs.push(lfo);
+
+    return {
+      set: (level, pitch = 1) => {
+        if (!this.ctx) return;
+        const now = this._now();
+        bus.gain.setTargetAtTime(Math.max(0.0001, level * 0.5), now, 0.15);
+        lp.frequency.setTargetAtTime(420 + pitch * 700, now, 0.2);
+        for (const o of oscs) if (o.frequency.value < 200) o.detune.setTargetAtTime((pitch - 1) * 300, now, 0.2);
+      },
+      stop: () => {
+        if (!this.ctx) return;
+        const now = this._now();
+        bus.gain.setTargetAtTime(0.0001, now, 0.35);
+        for (const o of oscs) { try { o.stop(now + 1.6); } catch {} }
+      },
+    };
+  }
+
+  /** Falling-bomb whistle over `dur` seconds. */
+  whistle(dur = 1.6) {
+    if (!this.ctx || this.muted) return;
+    const t = this._now();
+    const o = this.ctx.createOscillator();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(1500, t);
+    o.frequency.exponentialRampToValueAtTime(230, t + dur);
+    const g = this.ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.13, t + 0.18);
+    g.gain.setValueAtTime(0.13, t + dur * 0.75);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    o.connect(g); g.connect(this.master);
+    o.start(t); o.stop(t + dur + 0.05);
+  }
+
+  /** Air-raid siren before a big strike. */
+  siren() {
+    if (!this.ctx || this.muted) return;
+    const t = this._now();
+    const o = this.ctx.createOscillator();
+    o.type = 'sawtooth';
+    o.frequency.setValueAtTime(380, t);
+    o.frequency.linearRampToValueAtTime(620, t + 0.9);
+    o.frequency.linearRampToValueAtTime(360, t + 1.9);
+    const g = this.ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.075, t + 0.3);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 2.1);
+    const lp = this.ctx.createBiquadFilter();
+    lp.type = 'lowpass'; lp.frequency.value = 1400;
+    o.connect(lp); lp.connect(g); g.connect(this.master);
+    o.start(t); o.stop(t + 2.2);
   }
 
   explosion(power = 1) {
