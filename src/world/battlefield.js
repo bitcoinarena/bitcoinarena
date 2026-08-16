@@ -1,11 +1,16 @@
 import * as THREE from 'three';
 import { WORLD, HISTORY } from '../config.js';
 import { Ring, clamp, lerp, rand, randInt, approach, TAU } from '../util.js';
-import { Roads, mountainHeight } from './roads.js';
-import { makeSoldier, makeTank, makeBomber, makeBomb } from '../render/geom.js';
+import { Roads } from './roads.js';
+import { makeSoldierBody, makeSoldierLeg, makeTankHull, makeTankTurret, makeBomber, makeBomb, HIP_Y, TURRET_Y } from '../render/geom.js';
 
 const COLS = WORLD.columns, ROWS = WORLD.rows;
 const VW = COLS + 1, VH = ROWS + 1;
+
+// Rear areas: no fighting, no territory colour. The plaza and the depot sit
+// beyond these lines so the logistics zones read as separate from the war.
+const REAR_X = 74;
+const FRONT_X = 84;      // troops are held between -FRONT_X and +FRONT_X
 
 /** Cheap deterministic rolling ground noise (no external noise lib). */
 function groundNoise(x, z) {
@@ -71,14 +76,11 @@ export class Battlefield {
     this.pos = geo.attributes.position;
     this.col = geo.attributes.color;
 
-    // Mountains are static, so bake them into the base height once instead of
-    // paying for them on every vertex of every mesh update.
     this.baseH = new Float32Array(VW * VH);
     for (let iy = 0; iy < VH; iy++) {
       for (let ix = 0; ix < VW; ix++) {
         const i = iy * VW + ix;
-        const x = this.colX(ix), z = this.rowZ(iy);
-        this.baseH[i] = groundNoise(x, z) * 0.55 + mountainHeight(x, z);
+        this.baseH[i] = groundNoise(this.colX(ix), this.rowZ(iy)) * 0.55;
       }
     }
     this.frontZ = new Float32Array(VW);
@@ -136,14 +138,38 @@ export class Battlefield {
   }
 
   /** Terrain height at a world position — used to sit trucks/units on the ground. */
+  /** Analytic ground height — this is what the terrain mesh is generated from. */
   heightAt(x, z) {
     const d = z - this.frontlineAt(x);
     const ad = Math.abs(d);
-    let h = groundNoise(x, z) * 0.55 + mountainHeight(x, z);
+    let h = groundNoise(x, z) * 0.55;
     h += 2.4 / (1 + Math.pow((ad - 7.5) / 5.5, 2));   // shoulders
     h -= 3.0 / (1 + Math.pow(d / 4.0, 2));            // trench cut
     h -= this._craterAt(x, z);
     return h;
+  }
+
+  /**
+   * Height of the terrain *as actually rendered*, by interpolating the mesh's
+   * own vertices. The analytic height and the triangulated mesh disagree
+   * wherever the ground curves sharply — most of all in the frontline trench,
+   * where flat triangles cut across the dip and sit well above the true curve.
+   * Anything that must appear to rest ON the ground (roads, trucks, troops)
+   * has to use this, or it gets swallowed by the terrain.
+   */
+  surfaceAt(x, z) {
+    if (!this._meshed) return this.heightAt(x, z);
+    const arr = this.pos.array;
+    const fx = clamp((x + WORLD.width / 2) / WORLD.width, 0, 1) * COLS;
+    const fz = clamp((z + WORLD.depth / 2) / WORLD.depth, 0, 1) * ROWS;
+    const ix = Math.min(COLS - 1, fx | 0), iz = Math.min(ROWS - 1, fz | 0);
+    const tx = fx - ix, tz = fz - iz;
+    const h = (cx, cz) => arr[(cz * VW + cx) * 3 + 1];
+    return lerp(
+      lerp(h(ix, iz), h(ix + 1, iz), tx),
+      lerp(h(ix, iz + 1), h(ix + 1, iz + 1), tx),
+      tz,
+    );
   }
 
   _craterAt(x, z) {
@@ -164,10 +190,13 @@ export class Battlefield {
   /* -------------------------------------------------------------- units */
 
   _buildUnits() {
-    // One merged, vertex-coloured geometry per unit type: the whole army is two
-    // draw calls, but every man still has a helmet, a pack and a rifle.
-    const soldier = makeSoldier();
-    const tank = makeTank();
+    // Merged, vertex-coloured geometries: the whole army is a handful of draw
+    // calls, but every man has a helmet and a rifle, legs that swing from the
+    // hip, and every tank has a turret that traverses independently.
+    const body = makeSoldierBody();
+    const leg = makeSoldierLeg();
+    const hull = makeTankHull();
+    const turret = makeTankTurret();
     const bigBounds = new THREE.Sphere(new THREE.Vector3(), 600);
 
     this.sides = {};
@@ -194,9 +223,12 @@ export class Battlefield {
         return mesh;
       };
 
-      const infantry = mk(soldier, 240, { roughness: 0.72, metalness: 0.05 });
-      const armour = mk(tank, 22, { roughness: 0.5, metalness: 0.35 });
-      this.sides[side] = { infantry, armour, units: [], vehicles: [], color, alive: 0 };
+      const infantry = mk(body, 240, { roughness: 0.72, metalness: 0.05 });
+      const legL = mk(leg, 240, { roughness: 0.72, metalness: 0.05 });
+      const legR = mk(leg, 240, { roughness: 0.72, metalness: 0.05 });
+      const armour = mk(hull, 22, { roughness: 0.5, metalness: 0.35 });
+      const turrets = mk(turret, 22, { roughness: 0.5, metalness: 0.35 });
+      this.sides[side] = { infantry, legL, legR, armour, turrets, units: [], vehicles: [], color, alive: 0 };
     }
 
     this.dummy = new THREE.Object3D();
@@ -220,6 +252,11 @@ export class Battlefield {
       z: this.frontlineAt(x) - dir * rand(14, 70),
       speed: vehicle ? rand(3.2, 5.2) : rand(2.0, 4.6),
       phase: rand(TAU),
+      stride: rand(TAU),          // desynchronised, or the whole army goose-steps
+      traverse: rand(-0.2, 0.2),
+      recoil: 0,
+      reload: rand(0, 2.5),
+      retreating: false,
       hp: vehicle ? rand(3, 6) : 1,
       fire: rand(0.4),
       active: true,
@@ -294,7 +331,9 @@ export class Battlefield {
       let p = price, v = 0;
       const seed = [];
       for (let i = 0; i < VW; i++) {
-        v = v * 0.86 + rand(-1, 1) * price * 0.00016;
+        // keep the seeded walk close to real market scale, so the opening
+        // seconds don't look wilder than the live data that replaces them
+        v = v * 0.86 + rand(-1, 1) * price * 0.00006;
         p = p + v;
         seed.push(p);
       }
@@ -303,21 +342,43 @@ export class Battlefield {
       this.priceLo = price * 0.997; this.priceHi = price * 1.003;
       this.seeded = true;
     }
+    // Exponentially smooth the price before sampling it. Real ticks arrive as a
+    // step function — a flat stretch then a jump — and a smoothed series turns
+    // that into a curve the terrain and the road can actually follow.
+    this._ema = this._ema ? lerp(this._ema, price, HISTORY.emaAlpha) : price;
+
     this._sampleAcc += dt * 1000;
     if (this._sampleAcc >= HISTORY.sampleMs) {
       this._sampleAcc = 0;
-      this.history.push(price);
+      this.history.push(this._ema);
       const [lo, hi] = this.history.minmax();
+      // The window auto-zooms to whatever range actually exists, so a market
+      // that only moves cents still redraws the whole battlefield. The floor
+      // only exists to avoid dividing by zero on a perfectly flat tape.
       const pad = Math.max((hi - lo) * HISTORY.windowPad, price * HISTORY.minSpanPct);
-      this.priceLo = approach(this.priceLo, lo - pad, 3, 0.22);
-      this.priceHi = approach(this.priceHi, hi + pad, 3, 0.22);
+      this.priceLo = approach(this.priceLo, lo - pad, 1.5, 0.22);
+      this.priceHi = approach(this.priceHi, hi + pad, 1.5, 0.22);
     }
   }
 
   /* ------------------------------------------------------------- update */
 
   update(dt, ctx) {
-    for (let i = 0; i < VW; i++) this.frontZ[i] = this.priceToZ(this.history.at(i));
+    // Raw price samples are spiky: BTC can sit on two distinct values for a
+    // minute, and the auto-scaled window turns each tick into a big z jump. Left
+    // raw, the frontline is a sawtooth and the road that follows it zigzags
+    // across the map. Smooth it into a line you can actually drive down.
+    const raw = this._rawFront || (this._rawFront = new Float32Array(VW));
+    for (let i = 0; i < VW; i++) raw[i] = this.priceToZ(this.history.at(i));
+    for (let i = 0; i < VW; i++) {
+      let sum = 0, wsum = 0;
+      for (let k = -4; k <= 4; k++) {
+        const j = i + k < 0 ? 0 : i + k >= VW ? VW - 1 : i + k;
+        const w = 1 / (1 + Math.abs(k));
+        sum += raw[j] * w; wsum += w;
+      }
+      this.frontZ[i] = sum / wsum;
+    }
 
     for (let i = this.craters.length - 1; i >= 0; i--) {
       this.craters[i].k -= dt * 0.012;                  // ground slowly heals
@@ -337,6 +398,7 @@ export class Battlefield {
     const arr = this.pos.array, col = this.col.array;
     const bullC = new THREE.Color(0x1f7a44), bearC = new THREE.Color(0x7a1f2a);
     const hotC = new THREE.Color(0xffd98a);
+    const rearC = new THREE.Color(0x3f4756);
     const bias = clamp(this.flow, -1, 1);
     for (let iy = 0; iy < VH; iy++) {
       const z = this.rowZ(iy);
@@ -351,7 +413,8 @@ export class Battlefield {
         h -= this._craterAt(arr[i3], z);
         arr[i3 + 1] = h;
 
-        // colour: territory + hot seam, lightened on high ground
+        // colour: territory + hot seam, fading to neutral rear areas so the
+        // plaza and the depot read as friendly ground, not contested ground
         const own = d < 0 ? bullC : bearC;
         const grip = clamp(ad / 46, 0, 1);
         const shade = 0.45 + grip * 0.75 + clamp(this.baseH[i] * 0.022, -0.08, 0.42);
@@ -361,12 +424,18 @@ export class Battlefield {
         g = lerp(g, hotC.g, heat * 0.9);
         b = lerp(b, hotC.b, heat * 0.9);
         if (d < 0) g += bias * 0.05; else r -= bias * 0.05;
+        const rear = clamp((Math.abs(arr[i3]) - REAR_X) / 26, 0, 1);
+        if (rear > 0) {
+          const k = rear * rear * (3 - 2 * rear);
+          r = lerp(r, rearC.r, k); g = lerp(g, rearC.g, k); b = lerp(b, rearC.b, k);
+        }
         col[i3] = r; col[i3 + 1] = g; col[i3 + 2] = b;
       }
     }
     this.pos.needsUpdate = true;
     this.col.needsUpdate = true;
     this.terrain.geometry.computeVertexNormals();
+    this._meshed = true;
   }
 
   _updateTrench() {
@@ -404,6 +473,8 @@ export class Battlefield {
           } else {
             d.position.set(0, -500, 0); d.scale.setScalar(0.001); d.updateMatrix();
             s.infantry.setMatrixAt(i, d.matrix);
+            s.legL.setMatrixAt(i, d.matrix);
+            s.legR.setMatrixAt(i, d.matrix);
             continue;
           }
         }
@@ -420,11 +491,11 @@ export class Battlefield {
           u.fire -= dt;
           if (u.fire <= 0) {
             u.fire = rand(0.25, 1.4);
-            const my = this.heightAt(u.x, u.z) + 1.35;
+            const my = this.surfaceAt(u.x, u.z) + 1.35;
             const tz = front + u.dir * rand(5, 16);
             const tx = u.x + rand(-5, 5);
             const col = side === 'bull' ? 0x9dffb8 : 0xffa0a8;
-            this.fx.bullet(u.x, my, u.z + u.dir * 0.5, tx, this.heightAt(tx, tz) + 0.8, tz, { color: col, speed: rand(64, 88), size: 1 });
+            this.fx.bullet(u.x, my, u.z + u.dir * 0.5, tx, this.surfaceAt(tx, tz) + 0.8, tz, { color: col, speed: rand(64, 88), size: 1 });
             this.fx.muzzle(u.x, my, u.z + u.dir * 0.8, 0, u.dir, 0.55);
             if (Math.random() < 0.06) ctx.onGunfire?.();
             // Losing side takes casualties faster.
@@ -432,61 +503,208 @@ export class Battlefield {
             if (Math.random() < 0.35 + pressure * 0.3) this._kill(u, side);
           }
         }
-        if (u.x < -WORLD.width / 2 + 4 || u.x > WORLD.width / 2 - 4) u.x = clamp(u.x, -WORLD.width / 2 + 4, WORLD.width / 2 - 4);
+        u.x = clamp(u.x, -FRONT_X, FRONT_X);
 
-        const y = this.heightAt(u.x, u.z);
-        d.position.set(u.x, y, u.z);
-        d.rotation.set(0, u.dir > 0 ? 0 : Math.PI, Math.sin(performance.now() * 0.006 + u.phase) * 0.09);
+        // --- animation: march the legs, bob the body, lean into the advance
+        const moving = gap > 3;
+        u.stride += dt * (moving ? 6.5 + u.speed * 0.5 : 1.6);
+        const swing = Math.sin(u.stride) * (moving ? 0.62 : 0.06);
+        const y = this.surfaceAt(u.x, u.z);
+        const bob = moving ? Math.abs(Math.cos(u.stride)) * 0.09 : 0;
+        const yaw = u.dir > 0 ? 0 : Math.PI;
+
+        d.position.set(u.x, y + bob, u.z);
+        d.rotation.set(moving ? 0.1 : 0, yaw, Math.sin(u.stride) * (moving ? 0.05 : 0.02));
         d.scale.setScalar(1);
         d.updateMatrix();
         s.infantry.setMatrixAt(i, d.matrix);
+
+        // legs pivot at the hip, out of phase with each other
+        const hipX = 0.22;
+        for (const [mesh, sign, off] of [[s.legL, 1, -hipX], [s.legR, -1, hipX]]) {
+          d.position.set(u.x + off * Math.cos(yaw), y + bob + HIP_Y, u.z - off * Math.sin(yaw));
+          d.rotation.set(swing * sign * u.dir, yaw, 0);
+          d.scale.setScalar(1);
+          d.updateMatrix();
+          mesh.setMatrixAt(i, d.matrix);
+        }
       }
       s.alive = alive;
       s.infantry.instanceMatrix.needsUpdate = true;
+      s.legL.instanceMatrix.needsUpdate = true;
+      s.legR.instanceMatrix.needsUpdate = true;
+
+    }
+    this._updateArmour(dt, ctx);
+  }
+
+  /**
+   * Armour is resolved across both sides at once, because tanks have to know
+   * about each other: they push apart instead of interpenetrating, they duel
+   * the nearest enemy instead of driving through it, and when the frontline
+   * moves against them they fall back toward their own flank rather than
+   * standing in ground they no longer hold.
+   */
+  _updateArmour(dt, ctx) {
+    const d = this.dummy;
+    const flow = this.flow;
+
+    const live = [];
+    for (const side of ['bull', 'bear']) {
+      for (const v of this.sides[side].vehicles) if (v.active) live.push(v);
+    }
+
+    // --- keep hulls out of each other ------------------------------------
+    for (let i = 0; i < live.length; i++) {
+      for (let j = i + 1; j < live.length; j++) {
+        const a = live[i], b = live[j];
+        const dx = b.x - a.x, dz = b.z - a.z;
+        const d2 = dx * dx + dz * dz;
+        const min = a.side === b.side ? 8.5 : 7.5;
+        if (d2 > 1e-4 && d2 < min * min) {
+          const dist = Math.sqrt(d2);
+          const push = (min - dist) * 0.5;
+          const nx = dx / dist, nz = dz / dist;
+          a.x -= nx * push; a.z -= nz * push;
+          b.x += nx * push; b.z += nz * push;
+        }
+      }
+    }
+
+    for (const side of ['bull', 'bear']) {
+      const s = this.sides[side];
+      const pressure = side === 'bull' ? flow : -flow;   // >0 = this side is winning
 
       for (let i = 0; i < s.vehicles.length; i++) {
         const v = s.vehicles[i];
+
+        if (!v.active) {
+          v.respawn -= dt;
+          if (v.respawn <= 0) {
+            v.active = true;
+            v.hp = rand(3, 6);
+            v.x = rand(-FRONT_X + 8, FRONT_X - 8);
+            v.z = this.frontlineAt(v.x) - v.dir * rand(46, 76);   // arrives from the rear
+          } else {
+            d.position.set(0, -500, 0); d.scale.setScalar(0.001); d.updateMatrix();
+            s.armour.setMatrixAt(i, d.matrix);
+            s.turrets.setMatrixAt(i, d.matrix);
+            continue;
+          }
+        }
+
+        v.recoil = Math.max(0, v.recoil - dt * 4);
+        v.reload = Math.max(0, (v.reload ?? rand(0, 2)) - dt);
+
+        // nearest enemy hull
+        let foe = null, foeD2 = Infinity;
+        for (const w of live) {
+          if (w.side === v.side || !w.active) continue;
+          const dd = (w.x - v.x) ** 2 + (w.z - v.z) ** 2;
+          if (dd < foeD2) { foeD2 = dd; foe = w; }
+        }
+        const engaged = foe && foeD2 < 46 * 46;
+
+        // --- movement: advance, hold, or fall back to our own flank -------
         const front = this.frontlineAt(v.x);
-        const gap = (front - v.z) * v.dir;
-        if (gap > 12) v.z += v.dir * v.speed * dt;
-        else v.z -= v.dir * dt * 1.2;
+        const gap = (front - v.z) * v.dir;        // >0 = still behind our line
+        const overrun = gap < -14;                // the line has moved past us
+        if (overrun) {
+          // ground lost: pull back toward friendly territory
+          v.z -= v.dir * v.speed * 1.35 * dt;
+          if (!v.retreating) { v.retreating = true; this.fx.smoke(v.x, this.surfaceAt(v.x, v.z) + 2, v.z, 3, 1.4); }
+        } else {
+          v.retreating = false;
+          if (engaged && foeD2 < 26 * 26) {
+            v.z -= v.dir * dt * 1.6;              // hold at contact range
+          } else if (gap > 14) {
+            v.z += v.dir * v.speed * dt;
+          } else {
+            v.z -= v.dir * dt * 1.2;
+          }
+        }
         v.x += Math.sin(v.phase * 3 + performance.now() * 0.0002) * dt * 3;
-        v.x = clamp(v.x, -WORLD.width / 2 + 8, WORLD.width / 2 - 8);
-        // main gun: a heavy shell that arcs across the line and detonates
-        if (Math.random() < dt * 0.07) {
-          const front2 = this.frontlineAt(v.x);
-          const my = this.heightAt(v.x, v.z) + 2.35;
-          const tx = v.x + rand(-10, 10);
-          const tz = front2 + v.dir * rand(8, 26);
-          this.fx.bullet(v.x, my, v.z + v.dir * 4.6, tx, this.heightAt(tx, tz) + 0.6, tz, {
+        v.x = clamp(v.x, -FRONT_X + 4, FRONT_X - 4);
+        v.z = clamp(v.z, -WORLD.depth / 2 + 6, WORLD.depth / 2 - 6);
+
+        // --- turret + gunnery ---------------------------------------------
+        const yaw = v.dir > 0 ? 0 : Math.PI;
+        const aimWorld = engaged
+          ? Math.atan2(foe.x - v.x, foe.z - v.z)
+          : Math.atan2(Math.sin(v.phase) * 14, (front + v.dir * 20) - v.z);
+        let want = aimWorld - yaw;
+        while (want > Math.PI) want -= TAU;
+        while (want < -Math.PI) want += TAU;
+        v.traverse = approach(v.traverse, clamp(want, -1.5, 1.5), 2.4, dt);
+
+        if (engaged && v.reload <= 0 && Math.abs(want - v.traverse) < 0.25) {
+          v.reload = rand(1.4, 3.2) / (1 + Math.max(0, pressure));
+          v.recoil = 1;
+          const worldYaw = yaw + v.traverse;
+          const my = this.surfaceAt(v.x, v.z) + TURRET_Y + 0.5;
+          const mx = v.x + Math.sin(worldYaw) * 5.2;
+          const mz = v.z + Math.cos(worldYaw) * 5.2;
+          const target = foe;
+          this.fx.bullet(mx, my, mz, target.x, this.surfaceAt(target.x, target.z) + 1.6, target.z, {
             color: side === 'bull' ? 0xd6ffe2 : 0xffd6da,
-            speed: rand(46, 62), size: 2.2, heavy: true,
+            speed: rand(70, 95), size: 2.2, heavy: true,
             onHit: (hx, hy, hz) => {
-              this.fx.explosion(hx, hy + 0.4, hz, 0.5, 0xffa33a);
-              // craters are the expensive part of the terrain update — only the
-              // occasional shell leaves one behind
+              this.fx.explosion(hx, hy + 0.4, hz, 0.55, 0xffa33a);
               if (Math.random() < 0.15) this.crater(hx, hz, 4.5, 1.1);
+              if (!target.active) return;
+              // did it actually connect? near misses are part of the show
+              if ((target.x - hx) ** 2 + (target.z - hz) ** 2 < 36) {
+                target.hp -= rand(1.1, 2.4) * (1 + Math.max(0, pressure) * 0.6);
+                if (target.hp <= 0) this._destroyVehicle(target);
+              }
             },
           });
-          this.fx.muzzle(v.x, my, v.z + v.dir * 5.2, 0, v.dir, 2.2);
-          this.fx.shockwave(v.x, my, v.z + v.dir * 5, 9, 0.35, 0xfff0c0);
+          this.fx.muzzle(mx, my, mz, Math.sin(worldYaw), Math.cos(worldYaw), 2.2);
+          this.fx.shockwave(mx, my, mz, 9, 0.35, 0xfff0c0);
           ctx.onCannon?.(v.x, v.z);
         }
-        const y = this.heightAt(v.x, v.z);
+
+        // --- pose ----------------------------------------------------------
+        const y = this.surfaceAt(v.x, v.z);
+        const pitch = Math.atan2(this.surfaceAt(v.x, v.z + 3.2) - this.surfaceAt(v.x, v.z - 3.2), 6.4) * -v.dir;
+        const roll = Math.atan2(this.surfaceAt(v.x + 2, v.z) - this.surfaceAt(v.x - 2, v.z), 4) * v.dir;
+
         d.position.set(v.x, y, v.z);
-        d.rotation.set(0, v.dir > 0 ? 0 : Math.PI, 0);
+        d.rotation.set(pitch + v.recoil * 0.05, yaw, roll);
         d.scale.setScalar(1);
         d.updateMatrix();
         s.armour.setMatrixAt(i, d.matrix);
+
+        const wy = yaw + v.traverse;
+        d.position.set(v.x - Math.sin(wy) * v.recoil * 0.55, y + TURRET_Y, v.z - Math.cos(wy) * v.recoil * 0.55);
+        d.rotation.set(pitch, wy, roll);
+        d.scale.setScalar(1);
+        d.updateMatrix();
+        s.turrets.setMatrixAt(i, d.matrix);
       }
       s.armour.instanceMatrix.needsUpdate = true;
+      s.turrets.instanceMatrix.needsUpdate = true;
     }
+  }
+
+  /** A tank brews up: fireball, wreck smoke, and a long walk back from the rear. */
+  _destroyVehicle(v) {
+    v.active = false;
+    v.retreating = false;
+    v.respawn = rand(6, 14);
+    const y = this.surfaceAt(v.x, v.z);
+    this.fx.explosion(v.x, y + 1.6, v.z, 1.5, 0xffa33a);
+    this.fx.spawn(v.x, y + 2.5, v.z, {
+      color: 0x3a3a3a, count: 40, size: 6, life: 4.5, speed: 5, spread: 2, gravity: 2.6, drag: 0.6, alpha: 0.5,
+    });
+    this.crater(v.x, v.z, 7, 1.6);
+    this.audio?.explosion(0.9);
   }
 
   _kill(u, side) {
     u.active = false;
     u.respawn = rand(0.8, 4.5);
-    const y = this.heightAt(u.x, u.z) + 1;
+    const y = this.surfaceAt(u.x, u.z) + 1;
     this.fx.spawn(u.x, y, u.z, {
       color: side === 'bull' ? 0x8dffb0 : 0xff8a95, count: 9, size: 1.5, life: 0.7, speed: 7, gravity: -12,
     });

@@ -127,6 +127,7 @@ export class UI {
     }
     if (!list.length) {
       this.el.liqBody.innerHTML = '<i class="dim">watching the tape… no liquidations yet</i>';
+      this._liqHtml = null;
       return;
     }
     const html = list.slice(0, 9).map((l) => `

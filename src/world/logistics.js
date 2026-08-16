@@ -143,9 +143,54 @@ export class Logistics {
       g.add(lamp);
     }
 
+    this._addPerimeter(g, 34, 'PLAZA');
+
     this.plaza = g;
     this.plazaPos = new THREE.Vector3(WORLD.plazaX, 0, 0);
     this.scene.add(g);
+  }
+
+  /**
+   * Blast wall separating a logistics zone from the battlefield, with a gap in
+   * the middle where the three routes converge and pass through.
+   */
+  _addPerimeter(parent, localX, label) {
+    const wallMat = new THREE.MeshStandardMaterial({ color: 0x7c8595, roughness: 0.85, metalness: 0.1 });
+    const stripeMat = new THREE.MeshStandardMaterial({ color: 0xf0a83c, roughness: 0.6, emissive: 0x4a2f05, emissiveIntensity: 0.5 });
+    const gate = 15;                       // half-width of the road opening
+
+    for (const dir of [-1, 1]) {
+      const from = dir * gate, to = dir * 64;
+      const len = Math.abs(to - from);
+      const mid = (from + to) / 2;
+      const wall = new THREE.Mesh(new THREE.BoxGeometry(2.2, 8, len), wallMat);
+      wall.position.set(localX, 2.6, mid);
+      wall.castShadow = true; wall.receiveShadow = true;
+      parent.add(wall);
+      const cap = new THREE.Mesh(new THREE.BoxGeometry(2.8, 0.7, len), stripeMat);
+      cap.position.set(localX, 6.9, mid);
+      parent.add(cap);
+
+      // gate pillar + watchtower at the opening
+      const pillar = new THREE.Mesh(new THREE.BoxGeometry(3.4, 12, 3.4), wallMat);
+      pillar.position.set(localX, 4.5, dir * gate);
+      pillar.castShadow = true;
+      parent.add(pillar);
+      const lamp = new THREE.PointLight(0xffd9a0, 70, 60, 2);
+      lamp.position.set(localX, 12, dir * gate);
+      parent.add(lamp);
+      const beacon = new THREE.Mesh(new THREE.BoxGeometry(1.4, 1.4, 1.4), stripeMat);
+      beacon.position.set(localX, 11.2, dir * gate);
+      parent.add(beacon);
+    }
+
+    const tower = new THREE.Mesh(new THREE.BoxGeometry(6, 16, 6), wallMat);
+    tower.position.set(localX, 6, -64);
+    tower.castShadow = true;
+    parent.add(tower);
+    const roof = new THREE.Mesh(new THREE.BoxGeometry(8, 1, 8), stripeMat);
+    roof.position.set(localX, 14.4, -64);
+    parent.add(roof);
   }
 
   /* ----------------------------------------------------------- packages */
@@ -321,6 +366,8 @@ export class Logistics {
     this.blockStack.position.set(12, 19, 0);
     g.add(this.blockStack);
     this.blockStackMat = new THREE.MeshStandardMaterial({ color: 0xf7931a, emissive: 0x8a4a05, emissiveIntensity: 0.6, roughness: 0.4, metalness: 0.3 });
+
+    this._addPerimeter(g, -34, 'DEPOT');
 
     this.depot = g;
     this.depotPos = new THREE.Vector3(WORLD.depotX, 0, 0);
@@ -557,12 +604,27 @@ export class Logistics {
         truck.speed = 0;
       }
 
-      truck.pos.y = this.bf.heightAt(truck.pos.x, truck.pos.z) + (truck.state === 'idle' ? 3.2 : 0);
+      const onRoad = truck.state === 'enroute' || truck.state === 'returning';
+      truck.pos.y = onRoad
+        ? this.bf.surfaceAt(truck.pos.x, truck.pos.z) + 0.45
+        : this.bf.surfaceAt(truck.pos.x, truck.pos.z) + 3.2;
       truck.obj.position.copy(truck.pos);
       truck.obj.rotation.y = -truck.heading;
-      const tilt = Math.sin(this.time * 8 + truck.wobble) * 0.02 * (truck.speed / 20);
-      truck.obj.rotation.z = tilt;
-      truck.obj.rotation.x = truck.state === 'wrecked' ? 0.12 : 0;
+
+      // ride the ground: pitch along the direction of travel, roll across it
+      const fx = Math.cos(truck.heading) * 4, fz = Math.sin(truck.heading) * 4;
+      const pitch = onRoad
+        ? Math.atan2(
+          this.bf.surfaceAt(truck.pos.x + fx, truck.pos.z + fz) - this.bf.surfaceAt(truck.pos.x - fx, truck.pos.z - fz),
+          8,
+        ) * -1
+        : 0;
+      const roll = onRoad
+        ? Math.atan2(this.bf.surfaceAt(truck.pos.x - fz, truck.pos.z + fx) - this.bf.surfaceAt(truck.pos.x + fz, truck.pos.z - fx), 8)
+        : 0;
+      const shudder = Math.sin(this.time * 9 + truck.wobble) * 0.018 * (truck.speed / 20);
+      truck.obj.rotation.z = roll + shudder;
+      truck.obj.rotation.x = truck.state === 'wrecked' ? 0.12 : pitch;
 
       const wheels = truck.obj.userData.wheels || [];
       for (const w of wheels) w.rotation.z -= truck.speed * dt * 0.7;
@@ -598,7 +660,9 @@ export class Logistics {
     const dz = clamp(targetZ - truck.pos.z, -40, 40);
     const step = truck.speed * dt;
     truck.pos.x += dir * step;
-    truck.pos.z += clamp(dz * dt * 4.5, -step * 2.2, step * 2.2);
+    // High gain on purpose: the frontline road is a moving target, so a gentle
+    // correction leaves the truck permanently riding the kerb.
+    truck.pos.z += clamp(dz * dt * 11, -step * 3, step * 3);
     truck.heading = dir > 0 ? Math.atan2(clamp(dz * 0.06, -0.8, 0.8), 1) : Math.PI - Math.atan2(clamp(dz * 0.06, -0.8, 0.8), 1);
 
     if (truck.boost > 0 || truck.speed > 4) {

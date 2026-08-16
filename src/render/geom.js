@@ -62,42 +62,53 @@ const cyl = (r1, r2, h, seg = 8) => new THREE.CylinderGeometry(r1, r2, h, seg);
 /* --------------------------------------------------------------- soldier */
 
 /**
- * Infantryman, ~2 units tall, facing +Z (the direction their side advances).
- * Deliberately chunky — this reads at 200 instances and 60 metres away.
+ * Infantry is split into a body and two legs so the legs can actually swing —
+ * a marching soldier needs a hip joint, and a single merged mesh can't have one.
+ * Three instanced meshes per side, still three draw calls for 240 men.
+ * Everything faces +Z, the direction that side advances.
  */
-export function makeSoldier() {
-  const SKIN = 0xd9a06b, DARK = 0x3a3f47, GEAR = 0x6b6152, STEEL = 0x2b2f36;
+export const HIP_Y = 0.9;
+
+export function makeSoldierBody() {
+  const SKIN = 0xd9a06b, GEAR = 0x6b6152, STEEL = 0x2b2f36;
   return mergeParts([
-    // legs
-    { geo: box(0.3, 0.85, 0.3), m: xf(-0.22, 0.43, 0), color: DARK },
-    { geo: box(0.3, 0.85, 0.3), m: xf(0.22, 0.43, 0.12), color: DARK },
-    // boots
-    { geo: box(0.34, 0.2, 0.5), m: xf(-0.22, 0.1, 0.06), color: STEEL },
-    { geo: box(0.34, 0.2, 0.5), m: xf(0.22, 0.1, 0.18), color: STEEL },
     // torso + webbing
-    { geo: box(0.78, 0.82, 0.46), m: xf(0, 1.24, 0), color: 0xffffff },
-    { geo: box(0.84, 0.22, 0.5), m: xf(0, 1.12, 0), color: GEAR },
+    { geo: box(0.78, 0.82, 0.46), m: xf(0, 1.26, 0), color: 0xffffff },
+    { geo: box(0.84, 0.22, 0.5), m: xf(0, 1.14, 0), color: GEAR },
+    { geo: box(0.72, 0.2, 0.42), m: xf(0, 0.9, 0), color: GEAR },        // hips
     // backpack
-    { geo: box(0.54, 0.56, 0.28), m: xf(0, 1.3, -0.34), color: GEAR },
-    { geo: box(0.2, 0.2, 0.2), m: xf(0.2, 1.05, -0.42), color: STEEL },
+    { geo: box(0.54, 0.56, 0.28), m: xf(0, 1.32, -0.34), color: GEAR },
+    { geo: box(0.2, 0.2, 0.2), m: xf(0.2, 1.07, -0.42), color: STEEL },
     // arms
-    { geo: box(0.2, 0.62, 0.22), m: xf(-0.5, 1.24, 0.06), color: 0xffffff },
-    { geo: box(0.2, 0.5, 0.34), m: xf(0.48, 1.28, 0.2, -0.5, 0, 0), color: 0xffffff },
+    { geo: box(0.2, 0.62, 0.22), m: xf(-0.5, 1.26, 0.06), color: 0xffffff },
+    { geo: box(0.2, 0.5, 0.34), m: xf(0.48, 1.3, 0.2, -0.5, 0, 0), color: 0xffffff },
     // head + helmet
-    { geo: box(0.36, 0.36, 0.34), m: xf(0, 1.83, 0.02), color: SKIN },
-    { geo: cyl(0.3, 0.32, 0.2, 10), m: xf(0, 2.03, 0), color: STEEL },
-    { geo: box(0.6, 0.07, 0.62), m: xf(0, 1.95, 0.02), color: STEEL },
+    { geo: box(0.36, 0.36, 0.34), m: xf(0, 1.85, 0.02), color: SKIN },
+    { geo: cyl(0.3, 0.32, 0.2, 10), m: xf(0, 2.05, 0), color: STEEL },
+    { geo: box(0.6, 0.07, 0.62), m: xf(0, 1.97, 0.02), color: STEEL },
     // rifle
-    { geo: box(0.09, 0.11, 1.0), m: xf(0.44, 1.32, 0.42), color: 0x14171c },
-    { geo: box(0.08, 0.24, 0.26), m: xf(0.44, 1.2, 0.08), color: 0x14171c },
+    { geo: box(0.09, 0.11, 1.0), m: xf(0.44, 1.34, 0.42), color: 0x14171c },
+    { geo: box(0.08, 0.24, 0.26), m: xf(0.44, 1.22, 0.08), color: 0x14171c },
+  ]);
+}
+
+/** One leg, pivoting about the origin (the hip) and hanging down HIP_Y. */
+export function makeSoldierLeg() {
+  const DARK = 0x3a3f47, STEEL = 0x2b2f36;
+  return mergeParts([
+    { geo: box(0.3, 0.86, 0.3), m: xf(0, -0.45, 0), color: DARK },
+    { geo: box(0.34, 0.2, 0.5), m: xf(0, -0.82, 0.08), color: STEEL },
   ]);
 }
 
 /* ------------------------------------------------------------------ tank */
 
-/** Main battle tank, ~7 long, facing +Z. Turret is baked forward. */
-export function makeTank() {
-  const HULL = 0xffffff, TRACK = 0x1b1f26, DETAIL = 0x3d434d, STEEL = 0x2a2e35;
+/** Height of the turret ring above the hull's ground origin. */
+export const TURRET_Y = 1.85;
+
+/** Tank hull, ~7 long, facing +Z. Turret is a separate mesh so it can traverse. */
+export function makeTankHull() {
+  const HULL = 0xffffff, TRACK = 0x1b1f26, DETAIL = 0x3d434d;
   return mergeParts([
     // tracks
     { geo: box(0.95, 1.15, 6.6), m: xf(-1.75, 0.62, 0), color: TRACK },
@@ -114,20 +125,26 @@ export function makeTank() {
     { geo: box(3.2, 0.22, 1.4), m: xf(0, 1.55, -2.9, 0.5, 0, 0), color: HULL },
     // fenders
     { geo: box(4.0, 0.16, 5.6), m: xf(0, 1.22, 0), color: DETAIL },
-    // turret
-    { geo: box(2.3, 0.86, 2.7), m: xf(0, 2.28, -0.25), color: HULL },
-    { geo: box(1.9, 0.3, 2.3), m: xf(0, 2.76, -0.25), color: HULL },
+    // turret ring
+    { geo: cyl(1.0, 1.0, 0.2, 12), m: xf(0, 1.82, -0.25), color: DETAIL },
+  ]);
+}
+
+/** Turret, pivoting about the origin (the turret ring). Gun points +Z. */
+export function makeTankTurret() {
+  const HULL = 0xffffff, DETAIL = 0x3d434d, STEEL = 0x2a2e35;
+  return mergeParts([
+    { geo: box(2.3, 0.86, 2.7), m: xf(0, 0.43, 0), color: HULL },
+    { geo: box(1.9, 0.3, 2.3), m: xf(0, 0.91, 0), color: HULL },
     // mantlet + barrel
-    { geo: box(0.9, 0.6, 0.7), m: xf(0, 2.3, 1.2), color: DETAIL },
-    { geo: cyl(0.17, 0.19, 3.6, 8), m: xf(0, 2.32, 2.9, Math.PI / 2, 0, 0), color: STEEL },
-    { geo: cyl(0.26, 0.26, 0.5, 8), m: xf(0, 2.32, 4.5, Math.PI / 2, 0, 0), color: STEEL },
-    // cupola, hatch, MG
-    { geo: cyl(0.4, 0.42, 0.34, 8), m: xf(-0.55, 2.9, -0.5), color: DETAIL },
-    { geo: box(0.14, 0.14, 0.9), m: xf(0.55, 2.95, 0.2), color: 0x14171c },
-    // stowage
-    { geo: box(1.6, 0.35, 0.5), m: xf(0, 2.5, -1.75), color: 0x5a5140 },
-    // antenna
-    { geo: cyl(0.04, 0.03, 2.2, 4), m: xf(0.9, 3.6, -1.1, 0.12, 0, 0.1), color: STEEL },
+    { geo: box(0.9, 0.6, 0.7), m: xf(0, 0.45, 1.45), color: DETAIL },
+    { geo: cyl(0.17, 0.19, 3.6, 8), m: xf(0, 0.47, 3.15, Math.PI / 2, 0, 0), color: STEEL },
+    { geo: cyl(0.26, 0.26, 0.5, 8), m: xf(0, 0.47, 4.75, Math.PI / 2, 0, 0), color: STEEL },
+    // cupola, MG, stowage, antenna
+    { geo: cyl(0.4, 0.42, 0.34, 8), m: xf(-0.55, 1.05, -0.25), color: DETAIL },
+    { geo: box(0.14, 0.14, 0.9), m: xf(0.55, 1.1, 0.45), color: 0x14171c },
+    { geo: box(1.6, 0.35, 0.5), m: xf(0, 0.65, -1.5), color: 0x5a5140 },
+    { geo: cyl(0.04, 0.03, 2.2, 4), m: xf(0.9, 1.75, -0.85, 0.12, 0, 0.1), color: STEEL },
   ]);
 }
 

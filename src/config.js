@@ -15,10 +15,12 @@ export const WORLD = {
 export const HISTORY = {
   sampleMs: 220,       // one price sample per terrain column
   windowPad: 0.18,     // padding on the auto price window
-  // Floor on the price window, as a fraction of price. Keep this TIGHT: BTC can
-  // trade in a one-cent range for minutes, and a wide floor would pin the
-  // frontline dead centre and make the whole battlefield look frozen.
-  minSpanPct: 0.00004, // ~$2.50 at $63k
+  emaAlpha: 0.25,      // smooths the raw tick series into a drivable curve
+  // Floor on the price window, as a fraction of price. Deliberately tiny: the
+  // window auto-zooms to the real range, so a market that only moves cents in a
+  // 35s window still redraws the battlefield instead of flatlining. The floor
+  // exists only to avoid dividing by zero on a perfectly frozen tape.
+  minSpanPct: 0.000004,
 };
 
 export const LANES = {
@@ -37,6 +39,9 @@ export const TRUCKS = [
 export const SIM = {
   blockMeanSec: 600,   // simulated block interval (exponential)
   startPrice: 63000,
+  // Synthetic liquidations when the real forceOrder tape is dry. Off: a quiet
+  // market simply shows no airstrikes, which is the honest picture.
+  liquidations: false,
 };
 
 export const FEE = {

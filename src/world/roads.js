@@ -7,40 +7,6 @@ const SEG = 120;                    // road segments along X
 const HALF_W = 5.2;                 // half road width
 const KERB = 1.1;
 
-/* ------------------------------------------------------------- mountains */
-
-/**
- * Static terrain features. Deterministic (fixed seed) so the map is the same
- * every session, placed off to the side of the road centrelines so the routes
- * wind between and over their flanks rather than straight through the peaks.
- */
-export const MOUNTAINS = [];
-(function buildMountains() {
-  let seed = 20260816;
-  const rnd = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296);
-  for (let i = 0; i < 11; i++) {
-    const x = -92 + (i + rnd() * 0.6) * (184 / 11);
-    const lane = i % 2 ? 'bear' : 'bull';
-    const side = rnd() < 0.5 ? -1 : 1;
-    const z = clamp(laneBaseZ(lane, x) + side * (26 + rnd() * 20), -WORLD.depth / 2 + 12, WORLD.depth / 2 - 12);
-    MOUNTAINS.push({ x, z, h: 9 + rnd() * 13, r: 19 + rnd() * 13 });
-  }
-  // a couple of big ridges deep in the flanks for silhouette
-  MOUNTAINS.push({ x: -55, z: -76, h: 26, r: 38 });
-  MOUNTAINS.push({ x: 62, z: 78, h: 24, r: 36 });
-})();
-
-export function mountainHeight(x, z) {
-  let h = 0;
-  for (let i = 0; i < MOUNTAINS.length; i++) {
-    const m = MOUNTAINS[i];
-    const dx = x - m.x, dz = z - m.z;
-    const t = (dx * dx + dz * dz) / (m.r * m.r);
-    if (t < 9) h += m.h / (1 + t * t);
-  }
-  return h;
-}
-
 /* ----------------------------------------------------------- centrelines */
 
 /** The raw winding centreline of a flank route, before the end funnels. */
@@ -81,7 +47,7 @@ export class Roads {
 
   /** Road surface height at a point on the centreline. */
   surfaceY(lane, x) {
-    return this.bf.heightAt(x, this.centerZ(lane, x)) + 0.28;
+    return this.bf.surfaceAt(x, this.centerZ(lane, x)) + 0.45;
   }
 
   _build(lane) {
@@ -100,6 +66,9 @@ export class Roads {
       const mat = new THREE.MeshStandardMaterial({
         color, roughness: 0.92, metalness: 0.05, side: THREE.DoubleSide,
         transparent: opacity < 1, opacity,
+        // the road lies almost flat on the terrain; bias it toward the camera
+        // so it never fights with the ground it is resting on
+        polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -8,
       });
       const mesh = new THREE.Mesh(g, mat);
       mesh.frustumCulled = false;
@@ -189,18 +158,21 @@ export class Roads {
       const tx = 4, tz = zB - zA;
       const tl = Math.hypot(tx, tz) || 1;
       const nx = -tz / tl, nz = tx / tl;
-      const y = bf.heightAt(x, z) + 0.3;
       const edge = HALF_W + Math.sin(i * 0.35) * 0.25 * wobble;
 
-      const set = (buf, k, ox, oz, oy) => {
-        buf[k] = x + nx * ox; buf[k + 1] = y + oy; buf[k + 2] = z + nz * oz;
+      // Sample the ground under each edge rather than lifting the whole width
+      // to the centreline height — otherwise the uphill edge of the road
+      // disappears into the slope on any lateral gradient.
+      const set = (buf, k, off, oy) => {
+        const px = x + nx * off, pz = z + nz * off;
+        buf[k] = px; buf[k + 1] = bf.surfaceAt(px, pz) + 0.45 + oy; buf[k + 2] = pz;
       };
-      set(m.surface.pos, i * 6, -edge, -edge, 0);
-      set(m.surface.pos, i * 6 + 3, edge, edge, 0);
-      set(m.kerbL.pos, i * 6, -edge - KERB, -edge - KERB, 0.16);
-      set(m.kerbL.pos, i * 6 + 3, -edge + 0.15, -edge + 0.15, 0.05);
-      set(m.kerbR.pos, i * 6, edge - 0.15, edge - 0.15, 0.05);
-      set(m.kerbR.pos, i * 6 + 3, edge + KERB, edge + KERB, 0.16);
+      set(m.surface.pos, i * 6, -edge, 0);
+      set(m.surface.pos, i * 6 + 3, edge, 0);
+      set(m.kerbL.pos, i * 6, -edge - KERB, 0.16);
+      set(m.kerbL.pos, i * 6 + 3, -edge + 0.15, 0.05);
+      set(m.kerbR.pos, i * 6, edge - 0.15, 0.05);
+      set(m.kerbR.pos, i * 6 + 3, edge + KERB, 0.16);
     }
 
     for (const part of [m.surface, m.kerbL, m.kerbR]) {
@@ -214,7 +186,7 @@ export class Roads {
       const x = -WORLD.width / 2 + ((i * 3 + 1) * WORLD.width) / SEG;
       const z = this.centerZ(lane, x);
       const zA = this.centerZ(lane, x - 2), zB = this.centerZ(lane, x + 2);
-      d.position.set(x, bf.heightAt(x, z) + 0.42, z);
+      d.position.set(x, bf.surfaceAt(x, z) + 0.62, z);
       d.rotation.set(0, -Math.atan2(zB - zA, 4), 0);
       d.scale.setScalar(1);
       d.updateMatrix();
@@ -230,7 +202,7 @@ export class Roads {
         const it = items[i];
         const z = this.centerZ(it.lane, it.x) + it.off;
         const zA = this.centerZ(it.lane, it.x - 2), zB = this.centerZ(it.lane, it.x + 2);
-        d.position.set(it.x, this.bf.heightAt(it.x, z), z);
+        d.position.set(it.x, this.bf.surfaceAt(it.x, z), z);
         d.rotation.set(0, -Math.atan2(zB - zA, 4) + it.yaw, 0);
         d.scale.setScalar(1);
         d.updateMatrix();

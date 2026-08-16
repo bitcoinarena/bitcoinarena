@@ -160,7 +160,7 @@ export class MarketFeed extends Emitter {
    * liquidation feed stays silent for minutes.
    */
   update(dt) {
-    if (!this.liqFresh) this._simLiquidations(dt);
+    if (SIM.liquidations && !this.liqFresh) this._simLiquidations(dt);
     if (this.fresh) return;
     // Mean-reverting random walk with momentum bursts, so the terrain still
     // looks like a chart rather than white noise.
