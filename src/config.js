@@ -15,6 +15,10 @@ export const WORLD = {
 export const HISTORY = {
   sampleMs: 220,       // one price sample per terrain column
   windowPad: 0.18,     // padding on the auto price window
+  // Floor on the price window, as a fraction of price. Keep this TIGHT: BTC can
+  // trade in a one-cent range for minutes, and a wide floor would pin the
+  // frontline dead centre and make the whole battlefield look frozen.
+  minSpanPct: 0.00004, // ~$2.50 at $63k
 };
 
 export const LANES = {

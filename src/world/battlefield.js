@@ -36,6 +36,8 @@ export class Battlefield {
 
     this.craters = [];
     this.craterField = new Float32Array(VW * VH);
+    this.incoming = [];        // in-flight liquidation missiles
+    this.markers = [];         // fading light columns at liquidated price levels
 
     this._buildTerrain();
     this._buildTrench();
@@ -290,7 +292,7 @@ export class Battlefield {
       this._sampleAcc = 0;
       this.history.push(price);
       const [lo, hi] = this.history.minmax();
-      const pad = Math.max((hi - lo) * HISTORY.windowPad, price * 0.0004);
+      const pad = Math.max((hi - lo) * HISTORY.windowPad, price * HISTORY.minSpanPct);
       this.priceLo = approach(this.priceLo, lo - pad, 3, 0.22);
       this.priceHi = approach(this.priceHi, hi + pad, 3, 0.22);
     }
@@ -310,6 +312,7 @@ export class Battlefield {
     if (this._meshAcc > 1 / 24) { this._updateMesh(); this._meshAcc = 0; }
     this._updateTrench();
     this._updateBook();
+    this._updateStrikes(dt);
     this._updateUnits(dt, ctx);
   }
 
@@ -453,15 +456,37 @@ export class Battlefield {
     });
   }
 
-  /** Liquidation airstrike at a price level. Returns the world position hit. */
-  airstrike(price, usd, side) {
-    const z = this.priceToZ(price);
+  /**
+   * Liquidation airstrike at a price level. The shell is launched from above and
+   * takes a beat to land, so you actually see it coming — impact is resolved by
+   * the caller through the returned descriptor once `onImpact` fires.
+   */
+  airstrike(price, usd, side, onImpact) {
+    const z = clamp(this.priceToZ(price), -WORLD.depth / 2 + 8, WORLD.depth / 2 - 8);
     const x = rand(-WORLD.width / 2 + 20, WORLD.width / 2 - 20);
     const power = clamp(Math.log10(Math.max(1000, usd)) - 3.2, 0.35, 3.2);
+    this.incoming.push({
+      x, z, power, side, onImpact,
+      t: 0,
+      fall: 0.55 + Math.min(0.5, power * 0.15),
+      h: 150 + power * 40,
+    });
+    return { x, z, power };
+  }
+
+  _impact(m) {
+    const { x, z, power, side } = m;
     const y = this.heightAt(x, z);
     this.crater(x, z, 6 + power * 5, 1.4 + power * 2.2);
     this.fx.explosion(x, y + 1, z, power, side === 'long' ? 0xff5a3a : 0x6affc0);
-    // knock nearby troops flat
+    this.fx.spawn(x, y + 1, z, {
+      color: 0xffffff, count: Math.round(30 * power), size: 2.6 * power, life: 0.5,
+      speed: 30 * Math.sqrt(power), spread: 1, gravity: 0, drag: 2.4,
+    });
+    // A column of light left standing at the price level that got wrecked.
+    this.markers.push({ x, z, power, side, life: 1 });
+    if (this.markers.length > 14) this.markers.shift();
+
     for (const s of Object.values(this.sides)) {
       for (const u of s.units) {
         if (!u.active) continue;
@@ -469,7 +494,35 @@ export class Battlefield {
         if (dx * dx + dz * dz < (14 + power * 8) ** 2) this._kill(u, u.side);
       }
     }
-    return { x, y, z, power };
+    m.onImpact?.({ x, y, z, power });
+  }
+
+  _updateStrikes(dt) {
+    for (let i = this.incoming.length - 1; i >= 0; i--) {
+      const m = this.incoming[i];
+      m.t += dt;
+      const k = m.t / m.fall;
+      if (k >= 1) { this._impact(m); this.incoming.splice(i, 1); continue; }
+      // accelerating descent + screaming smoke trail
+      const y = this.heightAt(m.x, m.z) + m.h * (1 - k * k);
+      const col = m.side === 'long' ? 0xff7a4a : 0x6affc0;
+      this.fx.spawn(m.x, y, m.z, { color: col, count: 2, size: 2.2 + m.power, life: 0.45, speed: 1.5, gravity: 0, drag: 1.6 });
+      this.fx.spawn(m.x, y, m.z, { color: 0x9aa4b2, count: 2, size: 3.4, life: 1.1, speed: 1.2, gravity: 1.2, alpha: 0.4 });
+      this.fx.tracer(m.x, y, m.z, m.x, y + 9, m.z, col);
+    }
+
+    for (let i = this.markers.length - 1; i >= 0; i--) {
+      const mk = this.markers[i];
+      mk.life -= dt * 0.16;
+      if (mk.life <= 0) { this.markers.splice(i, 1); continue; }
+      if (Math.random() < dt * 26 * mk.life) {
+        const y = this.heightAt(mk.x, mk.z);
+        this.fx.spawn(mk.x + rand(-1.5, 1.5), y + rand(0, 26), mk.z + rand(-1.5, 1.5), {
+          color: mk.side === 'long' ? 0xff4d5e : 0x3ddc84,
+          count: 1, size: 1.6, life: 1.1, speed: 1.4, gravity: 2.2, alpha: 0.7 * mk.life,
+        });
+      }
+    }
   }
 
   bullDominance() {

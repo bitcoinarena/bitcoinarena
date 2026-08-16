@@ -177,6 +177,15 @@ export class Logistics {
     this.haloMesh.frustumCulled = false;
     this.scene.add(this.haloMesh);
 
+    // InstancedMesh caches a bounding sphere the first time anything needs one,
+    // and we rewrite every instance matrix each frame — so a sphere computed on
+    // an early frame (all instances still parked off-screen) would stay cached
+    // and make raycasting silently miss forever. Pin a generous world-sized
+    // sphere instead: three only computes its own when this is null.
+    const bounds = new THREE.Sphere(new THREE.Vector3(0, 0, 0), 600);
+    this.pkgMesh.boundingSphere = bounds.clone();
+    this.haloMesh.boundingSphere = bounds.clone();
+
     this.dummy = new THREE.Object3D();
     this._color = new THREE.Color();
 

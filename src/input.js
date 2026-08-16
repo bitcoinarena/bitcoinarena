@@ -42,6 +42,25 @@ export function bindInput(game) {
     return null;
   };
 
+  /**
+   * Crates are small and they bob, so an exact ray hit is a harsh requirement.
+   * On a miss, fall back to the nearest plaza package within a few pixels.
+   */
+  const pickForgiving = (e, tol = 26) => {
+    const hit = pick(e);
+    if (hit) return hit;
+    let best = null, bestD = tol * tol;
+    for (const p of game.logistics.plazaPackages()) {
+      proj.copy(p.pos).project(game.stage.camera);
+      if (proj.z > 1) continue;
+      const sx = (proj.x * 0.5 + 0.5) * innerWidth;
+      const sy = (-proj.y * 0.5 + 0.5) * innerHeight;
+      const d = (sx - e.clientX) ** 2 + (sy - e.clientY) ** 2;
+      if (d < bestD) { bestD = d; best = p; }
+    }
+    return best ? { type: 'package', p: best } : null;
+  };
+
   /* ------------------------------------------------------------ pointer */
 
   dom.addEventListener('pointerdown', (e) => {
@@ -94,7 +113,7 @@ export function bindInput(game) {
       return;
     }
 
-    const hit = pick(e);
+    const hit = pickForgiving(e);
     if (!hit) { if (!e.shiftKey) game.logistics.selected.clear(); return; }
     if (hit.type === 'package') {
       if (!e.shiftKey && !game.logistics.selected.has(hit.p)) game.logistics.selected.clear();
@@ -189,7 +208,7 @@ export function bindInput(game) {
     const ch = e.changedTouches[0];
     const moved = Math.hypot(ch.clientX - touchStart.x, ch.clientY - touchStart.y);
     if (dt < 400 && moved < 14) {
-      const hit = pick({ clientX: ch.clientX, clientY: ch.clientY });
+      const hit = pickForgiving({ clientX: ch.clientX, clientY: ch.clientY }, 40);
       if (hit?.type === 'package') { game.togglePackage(hit.p); game.ui.packageTooltip(hit.p, ch.clientX, ch.clientY); setTimeout(() => game.ui.hideTooltip(), 2600); }
       else if (hit?.type === 'truck') game.selectTruck(hit.t.id);
     }

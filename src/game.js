@@ -79,13 +79,19 @@ export class Game {
     this.market.on('depth', (book) => { this.bf.setDepth(book); this.book = book; });
 
     this.market.on('liquidation', (liq) => {
-      const hit = this.bf.airstrike(liq.price, liq.usd, liq.side);
-      this.logistics.shockwave(hit.x, hit.z, hit.power);
-      this.stage.addShake(clamp(hit.power * 0.5, 0.15, 1.6));
-      this.audio.explosion(clamp(hit.power * 0.6, 0.3, 1.4));
+      // The shell is in the air for a beat before it lands — impact effects and
+      // damage resolve in the callback so the warning and the hit line up.
+      this.bf.airstrike(liq.price, liq.usd, liq.side, (hit) => {
+        this.logistics.shockwave(hit.x, hit.z, hit.power);
+        this.stage.addShake(clamp(hit.power * 0.5, 0.15, 1.6));
+        this.audio.explosion(clamp(hit.power * 0.6, 0.3, 1.4));
+        this.fx.text(`${fmtUsd(liq.usd)} REKT`, hit.x, hit.y + 16, hit.z, {
+          color: liq.side === 'long' ? '#ff6b78' : '#5ff0a8', life: 2.4, scale: 0.7 + hit.power * 0.3,
+        });
+      });
       this.events.emit('log', {
         kind: 'liq',
-        text: `AIRSTRIKE — ${fmtUsd(liq.usd)} ${liq.side.toUpperCase()} liquidation hits ${liq.side === 'long' ? 'BULL' : 'BEAR'} lines @ ${fmtUsd(liq.price)}`,
+        text: `AIRSTRIKE — ${fmtUsd(liq.usd)} ${liq.side.toUpperCase()} liquidation on ${(liq.symbol || 'BTCUSDT').replace('USDT', '')} hits ${liq.side === 'long' ? 'BULL' : 'BEAR'} lines @ ${fmtUsd(liq.price)}${liq.real ? '' : ' (sim)'}`,
       });
       if (liq.usd > 1_000_000) this.ui.toast(`${fmtUsd(liq.usd)} LIQUIDATED`, liq.side === 'long' ? 'var(--bear)' : 'var(--bull)');
     });
@@ -381,6 +387,7 @@ export class Game {
     this.logistics.setFeeBaseline(rec.halfHourFee ?? this.mempool.feeBands[0] ?? 1);
     const congestion = clamp(this.mempool.mempoolCount / 90000, 0, 1);
     this.ui.setMempool(this.mempool.mempoolCount, this.mempool.mempoolVsize, rec, congestion);
+    this.ui.setLiquidations(this.market.liquidations, this.market.liqFresh);
     this.ui.drawBook(this.book, this.price, this.bf);
     this.ui.drawMinimap(this.bf, this.logistics, this.stage.camera);
 

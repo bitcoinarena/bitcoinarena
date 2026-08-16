@@ -21,6 +21,22 @@ export function fmtUsd(v, digits = 0) {
   return `$${v.toLocaleString('en-US', { minimumFractionDigits: digits, maximumFractionDigits: digits })}`;
 }
 
+/**
+ * The BTC ticker keeps cents. Rounding to the dollar makes a quiet market look
+ * completely frozen even while trades are streaming in.
+ */
+export function fmtPrice(v) {
+  if (!isFinite(v) || !v) return '$—';
+  return `$${v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+export function fmtAgo(ts) {
+  const s = Math.max(0, (Date.now() - ts) / 1000);
+  if (s < 60) return `${s | 0}s`;
+  if (s < 3600) return `${(s / 60) | 0}m`;
+  return `${(s / 3600) | 0}h`;
+}
+
 export function fmtNum(v, digits = 0) {
   if (!isFinite(v)) return '—';
   if (Math.abs(v) >= 1e6) return `${(v / 1e6).toFixed(2)}M`;

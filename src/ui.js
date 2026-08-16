@@ -1,5 +1,5 @@
 import { LANES, TRUCKS, WORLD, FEE } from './config.js';
-import { fmtUsd, fmtNum, fmtBtc, fmtDuration, clamp, lerp, shortId } from './util.js';
+import { fmtUsd, fmtNum, fmtBtc, fmtDuration, fmtPrice, fmtAgo, clamp, lerp, shortId } from './util.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -29,6 +29,7 @@ export class UI {
       log: $('log'), radio: $('radio'), toast: $('toast'), tooltip: $('tooltip'),
       edu: $('edu'), eduBody: $('edu-body'), shop: $('shop'), camModes: $('cam-modes'),
       minimap: $('minimap'), book: $('book-canvas'),
+      liqBody: $('liq-body'), liqHead: $('liq-tag'),
     };
     this.mm = this.el.minimap.getContext('2d');
     this.bookCtx = this.el.book.getContext('2d');
@@ -101,9 +102,43 @@ export class UI {
   bootStatus(t) { this.el.bootStatus.textContent = t; }
 
   setPrice(price, change) {
-    this.el.price.textContent = fmtUsd(price);
-    this.el.change.textContent = `${change >= 0 ? '+' : ''}${change.toFixed(2)}%`;
-    this.el.change.className = change >= 0 ? 'up' : 'down';
+    const txt = fmtPrice(price);
+    if (txt !== this._priceTxt) {
+      // Flash the ticker on every real tick — in a quiet market this is the
+      // only visible proof that the feed is alive.
+      const up = price >= (this._priceVal ?? price);
+      this.el.price.textContent = txt;
+      this.el.price.classList.remove('tick-up', 'tick-down');
+      void this.el.price.offsetWidth;                  // restart the animation
+      this.el.price.classList.add(up ? 'tick-up' : 'tick-down');
+      this._priceTxt = txt;
+      this._priceVal = price;
+    }
+    const flat = Math.abs(change) < 0.005;
+    this.el.change.textContent = `${flat ? '' : change >= 0 ? '+' : ''}${change.toFixed(2)}%`;
+    this.el.change.className = flat ? '' : change >= 0 ? 'up' : 'down';
+  }
+
+  setLiquidations(list, liqLive) {
+    const head = this.el.liqHead;
+    if (head) {
+      head.textContent = liqLive ? 'LIVE' : 'SIM';
+      head.className = `feed-tag ${liqLive ? '' : 'sim'}`;
+    }
+    if (!list.length) {
+      this.el.liqBody.innerHTML = '<i class="dim">watching the tape… no liquidations yet</i>';
+      return;
+    }
+    const html = list.slice(0, 9).map((l) => `
+      <div class="liq-row ${l.side}">
+        <span class="liq-age">${fmtAgo(l.at)}</span>
+        <span class="liq-sym">${(l.symbol || 'BTC').replace('USDT', '')}</span>
+        <span class="liq-side">${l.side === 'long' ? 'LONG' : 'SHORT'}</span>
+        <span class="liq-usd">${fmtUsd(l.usd)}</span>
+        <span class="liq-px">${fmtUsd(l.price)}</span>
+        ${l.real ? '' : '<span class="liq-sim">sim</span>'}
+      </div>`).join('');
+    if (html !== this._liqHtml) { this.el.liqBody.innerHTML = html; this._liqHtml = html; }
   }
 
   setBias(bias) {
@@ -315,6 +350,21 @@ export class UI {
     for (const cr of bf.craters) {
       c.fillStyle = `rgba(255,90,58,${0.25 * cr.k})`;
       c.beginPath(); c.arc(X(cr.x), Z(cr.z), (cr.r / WORLD.width) * w * 1.6, 0, Math.PI * 2); c.fill();
+    }
+
+    // liquidation strikes: incoming warnings + fresh impact markers
+    for (const m of bf.markers) {
+      c.strokeStyle = m.side === 'long' ? `rgba(255,77,94,${m.life})` : `rgba(61,220,132,${m.life})`;
+      c.lineWidth = 1.4;
+      const r = 3 + m.power * 2.4;
+      c.beginPath(); c.arc(X(m.x), Z(m.z), r * (2 - m.life), 0, Math.PI * 2); c.stroke();
+    }
+    for (const m of bf.incoming) {
+      const px = X(m.x), pz = Z(m.z);
+      c.strokeStyle = 'rgba(255,212,71,.95)'; c.lineWidth = 1.2;
+      c.beginPath(); c.arc(px, pz, 4 + Math.sin(m.t * 22) * 2.5, 0, Math.PI * 2); c.stroke();
+      c.beginPath(); c.moveTo(px - 6, pz); c.lineTo(px + 6, pz);
+      c.moveTo(px, pz - 6); c.lineTo(px, pz + 6); c.stroke();
     }
 
     // plaza + depot

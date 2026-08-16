@@ -49,6 +49,10 @@ export class MarketFeed extends Emitter {
     this.liveLiq = false;
     this.book = { bids: [], asks: [] };
     this.lastRealMsg = 0;
+    // -inf, not 0: performance.now() starts at 0, so a 0 here would read as
+    // "a liquidation just arrived" and suppress the fallback for the first 45s.
+    this.lastLiqAt = -Infinity;
+    this.liquidations = [];      // rolling log, newest first
     this._simPrice = SIM.startPrice;
     this._simVel = 0;
     this._simDrift = rand(-1, 1);
@@ -86,8 +90,23 @@ export class MarketFeed extends Emitter {
     });
   }
 
+  /**
+   * A socket that is open but silent is worse than one that is closed: it
+   * freezes the whole world. Treat "no message for 8s" as not live so the
+   * simulator takes over until real ticks resume.
+   */
+  get fresh() { return this.live && performance.now() - this.lastRealMsg < 8000; }
+
+  /** Liquidations are bursty — allow a long gap before assuming the feed is dry. */
+  get liqFresh() { return this.liveLiq && performance.now() - this.lastLiqAt < 45000; }
+
   status() {
-    return { live: this.live, liquidations: this.liveLiq, mode: this.live ? 'LIVE' : 'SIM' };
+    return {
+      live: this.fresh,
+      socket: this.live,
+      liquidations: this.liqFresh,
+      mode: this.fresh ? 'LIVE' : this.live ? 'STALE' : 'SIM',
+    };
   }
 
   _onSpot(msg) {
@@ -97,6 +116,10 @@ export class MarketFeed extends Emitter {
     if (d.e === 'aggTrade') {
       const price = parseFloat(d.p);
       const qty = parseFloat(d.q);
+      // Keep the simulator's momentum coupled to reality so that if the feed
+      // does stall, the handover is seamless rather than a visible jump.
+      if (this._lastTradePrice) this._simVel = this._simVel * 0.9 + (price - this._lastTradePrice) * 4;
+      this._lastTradePrice = price;
       this.price = this._simPrice = price;
       this.emit('trade', { price, qty, usd: price * qty, buy: !d.m });
       this.emit('price', { price, change24h: this.change24h });
@@ -119,13 +142,26 @@ export class MarketFeed extends Emitter {
     const price = parseFloat(o.ap || o.p);
     const qty = parseFloat(o.q);
     const usd = price * qty;
+    this.lastLiqAt = performance.now();
     // side SELL = a long got liquidated (bulls take the hit) and vice versa.
-    this.emit('liquidation', { side: o.S === 'SELL' ? 'long' : 'short', price, qty, usd, real: true });
+    this._pushLiq({ symbol: o.s || 'BTCUSDT', side: o.S === 'SELL' ? 'long' : 'short', price, qty, usd, real: true });
   }
 
-  /** Simulation tick — only produces data while the real socket is down. */
+  _pushLiq(liq) {
+    liq.at = Date.now();
+    this.liquidations.unshift(liq);
+    if (this.liquidations.length > 60) this.liquidations.pop();
+    this.emit('liquidation', liq);
+  }
+
+  /**
+   * Simulation tick. Price action and liquidations are simulated independently,
+   * because in a quiet market the trade feed can be perfectly healthy while the
+   * liquidation feed stays silent for minutes.
+   */
   update(dt) {
-    if (this.live) return;
+    if (!this.liqFresh) this._simLiquidations(dt);
+    if (this.fresh) return;
     // Mean-reverting random walk with momentum bursts, so the terrain still
     // looks like a chart rather than white noise.
     this._simDrift += rand(-1, 1) * dt * 0.35;
@@ -159,12 +195,26 @@ export class MarketFeed extends Emitter {
       this.emit('depth', this.book);
     }
 
-    // Liquidations cluster around violent moves — same as the real thing.
+  }
+
+  /** Liquidations cluster around violent moves — same as the real thing. */
+  _simLiquidations(dt) {
+    if (!this.price) return;
     const violence = Math.abs(this._simVel) / 14;
-    if (Math.random() < dt * (0.06 + violence * 0.9)) {
-      const side = this._simVel < 0 ? 'long' : 'short';
+    this._liqBurst = Math.max(0, (this._liqBurst || 0) - dt);
+    if (Math.random() < dt * 0.03) this._liqBurst = rand(1.5, 5);   // cascades come in clusters
+    const rate = 0.09 + violence * 0.8 + (this._liqBurst > 0 ? 1.0 : 0);
+    if (Math.random() < dt * rate) {
+      const side = this._simVel < 0 || Math.random() < 0.5 ? 'long' : 'short';
       const usd = Math.pow(Math.random(), 3.2) * 4_000_000 + 8000;
-      this.emit('liquidation', { side, price: this.price * (1 + rand(-0.004, 0.004)), qty: usd / this.price, usd, real: false });
+      this._pushLiq({
+        symbol: pick(['BTCUSDT', 'BTCUSDT', 'BTCUSDT', 'ETHUSDT', 'SOLUSDT']),
+        side,
+        price: this.price * (1 + rand(-0.004, 0.004)),
+        qty: usd / this.price,
+        usd,
+        real: false,
+      });
     }
   }
 }
