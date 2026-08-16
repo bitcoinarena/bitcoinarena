@@ -78,6 +78,11 @@ export const COSTS = {
   rbfPerVbyte: 40,
 };
 
+export const EVENTS = {
+  whaleTradeUsd: 400000,   // a single trade this big calls in an airstrike
+  whaleCooldownSec: 6,
+};
+
 export const CAMERAS = ['cinematic', 'god', 'follow', 'plaza', 'driver', 'free'];
 
 export const ENDPOINTS = {

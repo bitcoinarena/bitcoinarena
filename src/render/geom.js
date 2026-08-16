@@ -217,6 +217,30 @@ export function makeBarrier() {
   ]);
 }
 
+/** Barbed wire on X-frames — frontline clutter, not a wall. */
+export function makeWire() {
+  const parts = [];
+  const WOOD = 0x6b5f4a, STEEL = 0x9aa0a8;
+  for (let i = 0; i < 3; i++) {
+    const x = -2.6 + i * 2.6;
+    parts.push({ geo: box(0.16, 2.2, 0.16), m: xf(x, 0.9, 0, 0, 0, 0.5), color: WOOD });
+    parts.push({ geo: box(0.16, 2.2, 0.16), m: xf(x, 0.9, 0, 0, 0, -0.5), color: WOOD });
+  }
+  for (let s = 0; s < 3; s++) {
+    parts.push({ geo: box(6.4, 0.07, 0.07), m: xf(0, 0.5 + s * 0.55, 0, 0, 0, 0.03 * (s % 2 ? 1 : -1)), color: STEEL });
+  }
+  return mergeParts(parts);
+}
+
+/** Route marker staking out the frontline track: post with a painted top. */
+export function makeMarkerPost() {
+  return mergeParts([
+    { geo: box(0.22, 2.4, 0.22), m: xf(0, 1.2, 0), color: 0x2b2f36 },
+    { geo: box(0.46, 0.5, 0.46), m: xf(0, 2.55, 0), color: 0xffd447 },
+    { geo: box(0.36, 0.3, 0.36), m: xf(0, 2.1, 0), color: 0xd8dde5 },
+  ]);
+}
+
 export function makeWreck() {
   return mergeParts([
     { geo: box(3.0, 1.0, 5.2), m: xf(0, 0.7, 0, 0.12, 0.4, 0.16), color: 0x2e3238 },

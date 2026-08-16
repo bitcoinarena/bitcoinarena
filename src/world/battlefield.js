@@ -12,9 +12,30 @@ const VW = COLS + 1, VH = ROWS + 1;
 const REAR_X = 74;
 const FRONT_X = 84;      // troops are held between -FRONT_X and +FRONT_X
 
-/** Cheap deterministic rolling ground noise (no external noise lib). */
+/** Shortest signed angle from a to b. */
+function angleDelta(a, b) {
+  let d = b - a;
+  while (d > Math.PI) d -= TAU;
+  while (d < -Math.PI) d += TAU;
+  return d;
+}
+
+/** Frame-rate independent turn toward a target angle, the short way round. */
+function angleApproach(a, b, rate, dt) {
+  return a + angleDelta(a, b) * (1 - Math.exp(-rate * dt));
+}
+
+/**
+ * Cheap deterministic rolling ground (no external noise lib). Two low-frequency
+ * octaves give gentle hills you can see the road climb over; the high-frequency
+ * terms just break up the surface. Kept small on purpose — the last version had
+ * mountains and they swallowed everything.
+ */
 function groundNoise(x, z) {
   return (
+    Math.sin(x * 0.0125 + 1.7) * 3.4 +
+    Math.cos(z * 0.017 - 0.6) * 2.8 +
+    Math.sin((x * 0.9 - z) * 0.0075) * 3.0 +
     Math.sin(x * 0.055) * 1.7 +
     Math.cos(z * 0.041 + 1.3) * 1.4 +
     Math.sin((x + z) * 0.021) * 2.3 +
@@ -45,6 +66,7 @@ export class Battlefield {
     this.craterField = new Float32Array(VW * VH);
     this.incoming = [];        // bombers currently running a strike
     this.markers = [];         // fading columns of embers at liquidated price levels
+    this.mushrooms = [];       // nuke clouds still rising
     this.audio = null;         // set by game.js
 
     this._buildTerrain();
@@ -58,6 +80,49 @@ export class Battlefield {
 
   /** Centreline of a route — the trucks drive on the visible road surface. */
   laneZ(lane, x) { return this.roads.centerZ(lane, x); }
+
+  /**
+   * Lateral nudge a vehicle at (x,z) heading in `dir` needs in order to go
+   * around whatever is in the road ahead of it, plus how hard it should brake.
+   * Returns { steer, brake }.
+   */
+  avoidance(x, z, dir, radius = 5.5) {
+    let steer = 0, brake = 0;
+    const RANGE = 22;
+    const scan = (ux, uz, size) => {
+      const ahead = (ux - x) * dir;
+      if (ahead < -2 || ahead > RANGE) return;
+      const dz = uz - z;
+      const clearance = radius + size;
+      if (Math.abs(dz) >= clearance) return;
+      // dead ahead: push out to whichever side needs less deviation
+      const urgency = 1 - ahead / RANGE;
+      steer += (dz >= 0 ? -1 : 1) * (clearance - Math.abs(dz)) * urgency * 2.2;
+      if (ahead < 11) brake = Math.max(brake, urgency);
+    };
+    for (const side of ['bull', 'bear']) {
+      for (const v of this.sides[side].vehicles) if (v.active) scan(v.x, v.z, 4.2);
+      for (const u of this.sides[side].units) if (u.active) scan(u.x, u.z, 1.1);
+    }
+    return { steer: clamp(steer, -16, 16), brake: clamp(brake, 0, 0.75) };
+  }
+
+  /** Shove infantry clear of a truck barrelling through them. */
+  scatterFrom(x, z, r = 7) {
+    const r2 = r * r;
+    for (const side of ['bull', 'bear']) {
+      for (const u of this.sides[side].units) {
+        if (!u.active) continue;
+        const dx = u.x - x, dz = u.z - z;
+        const d2 = dx * dx + dz * dz;
+        if (d2 > 1e-4 && d2 < r2) {
+          const d = Math.sqrt(d2), push = (r - d) * 0.5;
+          u.x += (dx / d) * push;
+          u.z += (dz / d) * push;
+        }
+      }
+    }
+  }
 
   /* ------------------------------------------------------------- terrain */
 
@@ -143,8 +208,8 @@ export class Battlefield {
     const d = z - this.frontlineAt(x);
     const ad = Math.abs(d);
     let h = groundNoise(x, z) * 0.55;
-    h += 2.4 / (1 + Math.pow((ad - 7.5) / 5.5, 2));   // shoulders
-    h -= 3.0 / (1 + Math.pow(d / 4.0, 2));            // trench cut
+    h += 0.8 / (1 + Math.pow((ad - 9) / 7, 2));     // faint spoil, not a rampart
+    h -= 1.9 / (1 + Math.pow(d / 8.0, 2));         // broad churned hollow
     h -= this._craterAt(x, z);
     return h;
   }
@@ -182,9 +247,20 @@ export class Battlefield {
     return v;
   }
 
-  crater(x, z, r = 10, depth = 4) {
-    this.craters.push({ x, z, r, depth, k: 1 });
-    if (this.craters.length > 26) this.craters.shift();
+  crater(x, z, r = 10, depth = 4, decay = 0.012) {
+    this.craters.push({ x, z, r, depth, k: 1, decay });
+    if (this.craters.length > 26) {
+      // Evict the least significant crater, not the oldest: a nuke destroys
+      // everything around it, and each of those wrecks leaves its own small
+      // crater — dropping oldest-first would delete the nuke's own hole.
+      let worst = 0, worstScore = Infinity;
+      for (let i = 0; i < this.craters.length; i++) {
+        const c = this.craters[i];
+        const score = c.r * c.depth * c.k;
+        if (score < worstScore) { worstScore = score; worst = i; }
+      }
+      this.craters.splice(worst, 1);
+    }
   }
 
   /* -------------------------------------------------------------- units */
@@ -257,6 +333,8 @@ export class Battlefield {
       recoil: 0,
       reload: rand(0, 2.5),
       retreating: false,
+      yaw: dir > 0 ? 0 : Math.PI,      // hull heading, follows actual travel
+      turretYaw: dir > 0 ? 0 : Math.PI,
       hp: vehicle ? rand(3, 6) : 1,
       fire: rand(0.4),
       active: true,
@@ -381,7 +459,7 @@ export class Battlefield {
     }
 
     for (let i = this.craters.length - 1; i >= 0; i--) {
-      this.craters[i].k -= dt * 0.012;                  // ground slowly heals
+      this.craters[i].k -= dt * (this.craters[i].decay ?? 0.012);   // ground slowly heals
       if (this.craters[i].k <= 0) this.craters.splice(i, 1);
     }
 
@@ -390,6 +468,7 @@ export class Battlefield {
     this._updateTrench();
     this._updateBook();
     this._updateStrikes(dt);
+    this._updateMushrooms(dt);
     this._updateUnits(dt, ctx);
     this.roads.update(dt);
   }
@@ -408,8 +487,8 @@ export class Battlefield {
         const d = z - this.frontZ[ix];
         const ad = Math.abs(d);
         let h = this.baseH[i];
-        h += 2.4 / (1 + ((ad - 7.5) / 5.5) * ((ad - 7.5) / 5.5));
-        h -= 3.0 / (1 + (d / 4.0) * (d / 4.0));
+        h += 0.8 / (1 + ((ad - 9) / 7) * ((ad - 9) / 7));
+        h -= 1.9 / (1 + (d / 8.0) * (d / 8.0));
         h -= this._craterAt(arr[i3], z);
         arr[i3 + 1] = h;
 
@@ -605,42 +684,63 @@ export class Battlefield {
         }
         const engaged = foe && foeD2 < 46 * 46;
 
-        // --- movement: advance, hold, or fall back to our own flank -------
+        // --- movement: drive toward an objective, hold, or fall back -------
+        // Tanks steer toward a point rather than sliding along Z, so the hull
+        // actually turns into its line of advance instead of strafing.
         const front = this.frontlineAt(v.x);
         const gap = (front - v.z) * v.dir;        // >0 = still behind our line
         const overrun = gap < -14;                // the line has moved past us
+        const px = v.x, pz = v.z;
+
+        let goalX, goalZ, drive;
         if (overrun) {
-          // ground lost: pull back toward friendly territory
-          v.z -= v.dir * v.speed * 1.35 * dt;
+          goalX = v.x + Math.sin(v.phase) * 20;
+          goalZ = front - v.dir * 34;             // fall back behind our own line
+          drive = v.speed * 1.35;
           if (!v.retreating) { v.retreating = true; this.fx.smoke(v.x, this.surfaceAt(v.x, v.z) + 2, v.z, 3, 1.4); }
         } else {
           v.retreating = false;
-          if (engaged && foeD2 < 26 * 26) {
-            v.z -= v.dir * dt * 1.6;              // hold at contact range
-          } else if (gap > 14) {
-            v.z += v.dir * v.speed * dt;
+          goalX = engaged ? foe.x : v.x + Math.sin(v.phase * 3 + performance.now() * 0.0002) * 26;
+          if (engaged && foeD2 < 24 * 24) {
+            goalZ = v.z - v.dir * 6;              // back off to keep standoff
+            drive = v.speed * 0.35;
           } else {
-            v.z -= v.dir * dt * 1.2;
+            goalZ = front - v.dir * 9;            // push up to the line
+            drive = v.speed;
           }
         }
-        v.x += Math.sin(v.phase * 3 + performance.now() * 0.0002) * dt * 3;
+        goalX = clamp(goalX, -FRONT_X + 4, FRONT_X - 4);
+
+        const gx = goalX - v.x, gz = goalZ - v.z;
+        const gl = Math.hypot(gx, gz);
+        if (gl > 0.6) {
+          const step = Math.min(drive * dt, gl);
+          v.x += (gx / gl) * step;
+          v.z += (gz / gl) * step;
+        }
         v.x = clamp(v.x, -FRONT_X + 4, FRONT_X - 4);
         v.z = clamp(v.z, -WORLD.depth / 2 + 6, WORLD.depth / 2 - 6);
 
-        // --- turret + gunnery ---------------------------------------------
-        const yaw = v.dir > 0 ? 0 : Math.PI;
+        // hull turns to face the way it is actually travelling
+        const mvx = v.x - px, mvz = v.z - pz;
+        const moved = Math.hypot(mvx, mvz);
+        if (moved > dt * 0.4) v.yaw = angleApproach(v.yaw, Math.atan2(mvx, mvz), 2.2, dt);
+        const yaw = v.yaw;
+
+        // --- turret + gunnery: traverses in world space, independent of hull
         const aimWorld = engaged
           ? Math.atan2(foe.x - v.x, foe.z - v.z)
           : Math.atan2(Math.sin(v.phase) * 14, (front + v.dir * 20) - v.z);
-        let want = aimWorld - yaw;
+        v.turretYaw = angleApproach(v.turretYaw, aimWorld, 2.6, dt);
+        let want = v.turretYaw - yaw;
         while (want > Math.PI) want -= TAU;
         while (want < -Math.PI) want += TAU;
-        v.traverse = approach(v.traverse, clamp(want, -1.5, 1.5), 2.4, dt);
+        v.traverse = want;
 
-        if (engaged && v.reload <= 0 && Math.abs(want - v.traverse) < 0.25) {
+        if (engaged && v.reload <= 0 && Math.abs(angleDelta(v.turretYaw, aimWorld)) < 0.2) {
           v.reload = rand(1.4, 3.2) / (1 + Math.max(0, pressure));
           v.recoil = 1;
-          const worldYaw = yaw + v.traverse;
+          const worldYaw = v.turretYaw;
           const my = this.surfaceAt(v.x, v.z) + TURRET_Y + 0.5;
           const mx = v.x + Math.sin(worldYaw) * 5.2;
           const mz = v.z + Math.cos(worldYaw) * 5.2;
@@ -664,10 +764,12 @@ export class Battlefield {
           ctx.onCannon?.(v.x, v.z);
         }
 
-        // --- pose ----------------------------------------------------------
+        // --- pose: pitch along the hull's own axis, roll across it ---------
         const y = this.surfaceAt(v.x, v.z);
-        const pitch = Math.atan2(this.surfaceAt(v.x, v.z + 3.2) - this.surfaceAt(v.x, v.z - 3.2), 6.4) * -v.dir;
-        const roll = Math.atan2(this.surfaceAt(v.x + 2, v.z) - this.surfaceAt(v.x - 2, v.z), 4) * v.dir;
+        const fx = Math.sin(yaw) * 3.2, fz = Math.cos(yaw) * 3.2;
+        const rx = Math.cos(yaw) * 2.0, rz = -Math.sin(yaw) * 2.0;
+        const pitch = -Math.atan2(this.surfaceAt(v.x + fx, v.z + fz) - this.surfaceAt(v.x - fx, v.z - fz), 6.4);
+        const roll = Math.atan2(this.surfaceAt(v.x + rx, v.z + rz) - this.surfaceAt(v.x - rx, v.z - rz), 4);
 
         d.position.set(v.x, y, v.z);
         d.rotation.set(pitch + v.recoil * 0.05, yaw, roll);
@@ -675,7 +777,7 @@ export class Battlefield {
         d.updateMatrix();
         s.armour.setMatrixAt(i, d.matrix);
 
-        const wy = yaw + v.traverse;
+        const wy = v.turretYaw;
         d.position.set(v.x - Math.sin(wy) * v.recoil * 0.55, y + TURRET_Y, v.z - Math.cos(wy) * v.recoil * 0.55);
         d.rotation.set(pitch, wy, roll);
         d.scale.setScalar(1);
@@ -688,7 +790,7 @@ export class Battlefield {
   }
 
   /** A tank brews up: fireball, wreck smoke, and a long walk back from the rear. */
-  _destroyVehicle(v) {
+  _destroyVehicle(v, quiet = false) {
     v.active = false;
     v.retreating = false;
     v.respawn = rand(6, 14);
@@ -697,8 +799,8 @@ export class Battlefield {
     this.fx.spawn(v.x, y + 2.5, v.z, {
       color: 0x3a3a3a, count: 40, size: 6, life: 4.5, speed: 5, spread: 2, gravity: 2.6, drag: 0.6, alpha: 0.5,
     });
-    this.crater(v.x, v.z, 7, 1.6);
-    this.audio?.explosion(0.9);
+    if (!quiet) this.crater(v.x, v.z, 7, 1.6);
+    this.audio?.explosion(quiet ? 0.4 : 0.9);
   }
 
   _kill(u, side) {
@@ -735,14 +837,14 @@ export class Battlefield {
    * about eight seconds of theatre rather than an instant puff. Impact damage is
    * resolved by the caller through `onImpact`.
    */
-  airstrike(price, usd, side, onImpact) {
+  airstrike(price, usd, side, onImpact, { nuke = false } = {}) {
     const z = clamp(this.priceToZ(price), -WORLD.depth / 2 + 10, WORLD.depth / 2 - 10);
     const x = rand(-WORLD.width / 2 + 26, WORLD.width / 2 - 26);
-    const power = clamp(Math.log10(Math.max(1000, usd)) - 3.2, 0.35, 3.2);
+    const power = clamp(Math.log10(Math.max(1000, usd)) - 3.2, 0.35, 3.2) * (nuke ? 1.6 : 1);
 
     const slot = this.planes.find((p) => !p.busy);
     if (!slot) {                                   // all bombers busy: strike anyway
-      this._impact({ x, z, power, side, onImpact });
+      this._impact({ x, z, power, side, onImpact, nuke });
       return { x, z, power };
     }
     slot.busy = true;
@@ -757,7 +859,7 @@ export class Battlefield {
     this.incoming.push({
       kind: 'raid',
       plane: slot,
-      x, z, power, side, onImpact, dir, alt, speed, fall, g,
+      x, z, power, side, onImpact, nuke, dir, alt, speed, fall, g,
       dropX: x - dir * speed * fall,             // release early so the bomb arcs in
       px: x - dir * (speed * fall + 190),        // spawn well off-map
       t: 0,
@@ -777,26 +879,83 @@ export class Battlefield {
   }
 
   _impact(m) {
-    const { x, z, power, side } = m;
+    const { x, z, power, side, nuke } = m;
     const y = this.heightAt(x, z);
-    this.crater(x, z, 6 + power * 5, 1.4 + power * 2.2);
-    this.fx.explosion(x, y + 1, z, power, side === 'long' ? 0xff5a3a : 0x6affc0);
-    this.fx.spawn(x, y + 1, z, {
-      color: 0xffffff, count: Math.round(30 * power), size: 2.6 * power, life: 0.5,
-      speed: 30 * Math.sqrt(power), spread: 1, gravity: 0, drag: 2.4,
-    });
+
+    if (nuke) {
+      // A liquidation doesn't dent the ground, it reshapes it: a wide, deep
+      // crater that stays for minutes, a mushroom column, stacked shockwaves.
+      const r = 20 + power * 9;
+      this.crater(x, z, r, 4 + power * 2.6, 0.0016);
+      this.crater(x + rand(-r, r) * 0.4, z + rand(-r, r) * 0.4, r * 0.55, 2 + power, 0.0022);
+      this.mushrooms.push({ x, z, y, power, t: 0, capped: false });
+      for (let i = 0; i < 3; i++) {
+        this.fx.shockwave(x, y, z, (26 + power * 22) * (1 + i * 0.5), 1.1 + i * 0.45, i ? 0xffb46a : 0xffffff);
+      }
+      this.fx.spawn(x, y + 2, z, {
+        color: 0xffffff, count: 200, size: 5 * power, life: 0.55,
+        speed: 60 * Math.sqrt(power), spread: 2, gravity: 0, drag: 2.2,
+      });
+      this.fx.explosion(x, y + 2, z, power * 2.2, 0xffd08a);
+      this.audio?.explosion(1.6);
+      this.audio?.siren();
+    } else {
+      this.crater(x, z, 6 + power * 5, 1.4 + power * 2.2);
+      this.fx.explosion(x, y + 1, z, power, side === 'long' ? 0xff5a3a : 0x6affc0);
+      this.fx.spawn(x, y + 1, z, {
+        color: 0xffffff, count: Math.round(30 * power), size: 2.6 * power, life: 0.5,
+        speed: 30 * Math.sqrt(power), spread: 1, gravity: 0, drag: 2.4,
+      });
+    }
+
     // A column of light left standing at the price level that got wrecked.
     this.markers.push({ x, z, power, side, life: 1 });
     if (this.markers.length > 14) this.markers.shift();
 
+    const lethal = (nuke ? 34 + power * 16 : 14 + power * 8) ** 2;
     for (const s of Object.values(this.sides)) {
       for (const u of s.units) {
         if (!u.active) continue;
         const dx = u.x - x, dz = u.z - z;
-        if (dx * dx + dz * dz < (14 + power * 8) ** 2) this._kill(u, u.side);
+        if (dx * dx + dz * dz < lethal) this._kill(u, u.side);
+      }
+      if (nuke) {
+        for (const v of s.vehicles) {
+          if (!v.active) continue;
+          const dx = v.x - x, dz = v.z - z;
+          if (dx * dx + dz * dz < lethal) this._destroyVehicle(v, true);
+        }
       }
     }
-    m.onImpact?.({ x, y, z, power });
+    m.onImpact?.({ x, y, z, power, nuke });
+  }
+
+  /** Rising stem, then the cap — a mushroom cloud over a nuked price level. */
+  _updateMushrooms(dt) {
+    for (let i = this.mushrooms.length - 1; i >= 0; i--) {
+      const c = this.mushrooms[i];
+      c.t += dt;
+      const p = c.power;
+      if (c.t < 2.2) {
+        this.fx.spawn(c.x + rand(-3, 3), c.y + 2 + c.t * 22, c.z + rand(-3, 3), {
+          color: c.t < 0.8 ? 0xffb45a : 0x8a8378, count: 3, size: 7 * p, life: 4,
+          speed: 3, spread: 2.5, gravity: 3.2, drag: 0.5, alpha: 0.6,
+        });
+      }
+      if (!c.capped && c.t > 1.5) {
+        c.capped = true;
+        const capY = c.y + 42 * Math.min(1.6, p);
+        this.fx.spawn(c.x, capY, c.z, {
+          color: 0x9a9186, count: 160, size: 9 * p, life: 6,
+          speed: 15 * p, spread: 3, gravity: 0.8, drag: 1.1, alpha: 0.5,
+        });
+        this.fx.spawn(c.x, capY, c.z, {
+          color: 0xffc27a, count: 60, size: 7 * p, life: 3,
+          speed: 12 * p, spread: 2, gravity: 1.4, drag: 1.3, alpha: 0.45,
+        });
+      }
+      if (c.t > 7) this.mushrooms.splice(i, 1);
+    }
   }
 
   _updateStrikes(dt) {

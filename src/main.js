@@ -24,11 +24,13 @@ let last = performance.now();
 let fpsAcc = 0, fpsFrames = 0;
 
 game.stage.renderer.setAnimationLoop((now) => {
-  let dt = (now - last) / 1000;
+  const real = (now - last) / 1000;
   last = now;
-  dt = Math.min(dt, 0.05);          // never simulate more than 50ms at once
+  const dt = Math.min(real, 0.05);   // never simulate more than 50ms at once
 
-  fpsAcc += dt; fpsFrames++;
+  // Measure fps from the REAL frame time, not the clamped one — otherwise a
+  // machine running at 5fps still cheerfully reports 20.
+  fpsAcc += real; fpsFrames++;
   if (fpsAcc > 0.5) { game.setFps(fpsFrames / fpsAcc); fpsAcc = 0; fpsFrames = 0; }
 
   game.update(dt);

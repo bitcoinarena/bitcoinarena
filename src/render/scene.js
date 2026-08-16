@@ -124,6 +124,9 @@ export class Stage {
 
   addShake(amount) { this.shake = Math.min(2.2, this.shake + amount); }
 
+  /** Blow out the exposure for a moment — a detonation flash. */
+  flash(amount = 1) { this._flash = Math.min(2.5, (this._flash || 0) + amount); }
+
   /**
    * @param dt seconds
    * @param ctx { bias, volatility, frontlineAt(x), truck, plazaPos, depotPos }
@@ -160,7 +163,8 @@ export class Stage {
     this.rim.color.setHex(bear > 0.3 ? 0xff4d5e : 0x5588ff);
     this.embers.material.opacity = 0.12 + bull * 0.45 + this.volatility * 0.2;
     this.embers.material.color.setHex(bear > 0.35 ? 0x8899bb : 0xffd9a0);
-    this.renderer.toneMappingExposure = lerp(0.92, 1.18, bull);
+    this._flash = (this._flash || 0) * Math.exp(-3.4 * dt);
+    this.renderer.toneMappingExposure = lerp(0.92, 1.18, bull) + this._flash;
   }
 
   _camera(dt, ctx) {

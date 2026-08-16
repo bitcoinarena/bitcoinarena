@@ -7,7 +7,7 @@ import { MarketFeed, MempoolFeed } from './feeds.js';
 import { Audio } from './audio.js';
 import { UI } from './ui.js';
 import { bindInput } from './input.js';
-import { LANES, TRUCKS, SCORE, COSTS, WORLD, CAMERAS } from './config.js';
+import { LANES, TRUCKS, SCORE, COSTS, EVENTS, WORLD, CAMERAS } from './config.js';
 import { Emitter, clamp, lerp, approach, rand, fmtUsd, fmtNum, shortId, pick } from './util.js';
 
 export class Game {
@@ -46,6 +46,7 @@ export class Game {
     this._volAcc = 0;
     this._lastPrice = 0;
     this._stingCd = 0;
+    this._whaleCd = 0;
     this._fps = 60;
     this._uiAcc = 0;
     this._spawnBudget = 0;
@@ -75,6 +76,23 @@ export class Game {
           text: `${buy ? 'BULL' : 'BEAR'} block trade ${fmtUsd(usd)} @ ${fmtUsd(price)}`,
         });
       }
+      // A genuinely enormous single trade calls in a conventional airstrike on
+      // the side it just ran over. Rate-limited so a burst can't fill the sky.
+      if (usd >= EVENTS.whaleTradeUsd && this._whaleCd <= 0) {
+        this._whaleCd = EVENTS.whaleCooldownSec;
+        this.bf.airstrike(price, usd, buy ? 'short' : 'long', (hit) => {
+          this.logistics.shockwave(hit.x, hit.z, hit.power);
+          this.stage.addShake(clamp(hit.power * 0.5, 0.15, 1.6));
+          this.audio.explosion(clamp(hit.power * 0.6, 0.3, 1.4));
+          this.fx.text(`🐋 ${fmtUsd(usd)} ${buy ? 'BUY' : 'SELL'}`, hit.x, hit.y + 16, hit.z, {
+            color: buy ? '#5ff0a8' : '#ff6b78', life: 2.4, scale: 0.8,
+          });
+        });
+        this.events.emit('log', {
+          kind: 'whale',
+          text: `WHALE ${buy ? 'BUY' : 'SELL'} ${fmtUsd(usd)} @ ${fmtUsd(price)} — bombers inbound on the ${buy ? 'BEAR' : 'BULL'} line`,
+        });
+      }
     });
 
     this.market.on('depth', (book) => { this.bf.setDepth(book); this.book = book; });
@@ -82,14 +100,16 @@ export class Game {
     this.market.on('liquidation', (liq) => {
       // The shell is in the air for a beat before it lands — impact effects and
       // damage resolve in the callback so the warning and the hit line up.
+      // Liquidations go nuclear: they crater the map for minutes, not seconds.
       this.bf.airstrike(liq.price, liq.usd, liq.side, (hit) => {
-        this.logistics.shockwave(hit.x, hit.z, hit.power);
-        this.stage.addShake(clamp(hit.power * 0.5, 0.15, 1.6));
-        this.audio.explosion(clamp(hit.power * 0.6, 0.3, 1.4));
-        this.fx.text(`${fmtUsd(liq.usd)} REKT`, hit.x, hit.y + 16, hit.z, {
-          color: liq.side === 'long' ? '#ff6b78' : '#5ff0a8', life: 2.4, scale: 0.7 + hit.power * 0.3,
+        this.logistics.shockwave(hit.x, hit.z, hit.power * 2.2);
+        this.stage.addShake(clamp(hit.power * 1.1, 0.6, 2.2));
+        this.stage.flash(0.9);
+        this.audio.explosion(clamp(hit.power * 0.8, 0.5, 1.6));
+        this.fx.text(`${fmtUsd(liq.usd)} REKT`, hit.x, hit.y + 22, hit.z, {
+          color: liq.side === 'long' ? '#ff6b78' : '#5ff0a8', life: 2.8, scale: 0.9 + hit.power * 0.35,
         });
-      });
+      }, { nuke: true });
       this.events.emit('log', {
         kind: 'liq',
         text: `AIRSTRIKE — ${fmtUsd(liq.usd)} ${liq.side.toUpperCase()} liquidation on ${(liq.symbol || 'BTCUSDT').replace('USDT', '')} hits ${liq.side === 'long' ? 'BULL' : 'BEAR'} lines @ ${fmtUsd(liq.price)}${liq.real ? '' : ' (sim)'}`,
@@ -359,6 +379,7 @@ export class Game {
     this.audio.setIntensity(clamp(this.volatility * 0.8 + Math.abs(this.flow) * 0.4, 0, 1));
 
     // price stingers
+    this._whaleCd = Math.max(0, this._whaleCd - dt);
     this._stingCd -= dt;
     if (this._stingCd <= 0 && Math.abs(this.change24h) > 1.5 && this.volatility > 0.55) {
       this._stingCd = 22;

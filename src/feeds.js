@@ -49,6 +49,7 @@ export class MarketFeed extends Emitter {
     this.liveLiq = false;
     this.book = { bids: [], asks: [] };
     this.lastRealMsg = 0;
+    this.lastPriceMove = 0;
     // -inf, not 0: performance.now() starts at 0, so a 0 here would read as
     // "a liquidation just arrived" and suppress the fallback for the first 45s.
     this.lastLiqAt = -Infinity;
@@ -69,6 +70,7 @@ export class MarketFeed extends Emitter {
         const p = parseFloat(d.lastPrice);
         if (p > 0) {
           this.price = this._simPrice = p;
+          this.lastPriceMove = performance.now();
           this.change24h = parseFloat(d.priceChangePercent) || 0;
           this.emit('price', { price: p, change24h: this.change24h });
         }
@@ -92,10 +94,16 @@ export class MarketFeed extends Emitter {
 
   /**
    * A socket that is open but silent is worse than one that is closed: it
-   * freezes the whole world. Treat "no message for 8s" as not live so the
-   * simulator takes over until real ticks resume.
+   * freezes the whole world. Two ways that happens, and both count as stale:
+   *   - no messages at all for 8s
+   *   - messages still flowing (depth, ticker) but the PRICE hasn't budged in
+   *     20s. The battlefield auto-zooms to the recent price range, so a frozen
+   *     tape collapses that range to zero and pins the frontline dead centre.
    */
-  get fresh() { return this.live && performance.now() - this.lastRealMsg < 8000; }
+  get fresh() {
+    const now = performance.now();
+    return this.live && now - this.lastRealMsg < 8000 && now - this.lastPriceMove < 20000;
+  }
 
   /** Liquidations are bursty — allow a long gap before assuming the feed is dry. */
   get liqFresh() { return this.liveLiq && performance.now() - this.lastLiqAt < 45000; }
@@ -119,13 +127,16 @@ export class MarketFeed extends Emitter {
       // Keep the simulator's momentum coupled to reality so that if the feed
       // does stall, the handover is seamless rather than a visible jump.
       if (this._lastTradePrice) this._simVel = this._simVel * 0.9 + (price - this._lastTradePrice) * 4;
+      if (Math.abs(price - (this._lastTradePrice ?? 0)) > 0.005) this.lastPriceMove = performance.now();
       this._lastTradePrice = price;
       this.price = this._simPrice = price;
       this.emit('trade', { price, qty, usd: price * qty, buy: !d.m });
       this.emit('price', { price, change24h: this.change24h });
     } else if (d.e === '24hrTicker') {
       this.change24h = parseFloat(d.P);
-      this.price = this._simPrice = parseFloat(d.c);
+      const c = parseFloat(d.c);
+      if (Math.abs(c - this.price) > 0.005) this.lastPriceMove = performance.now();
+      this.price = this._simPrice = c;
       this.emit('price', { price: this.price, change24h: this.change24h });
     } else if (d.bids && d.asks) {
       this.book = {

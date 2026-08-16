@@ -408,7 +408,7 @@ export class Logistics {
     const truck = {
       spec,
       id: this.trucks.length,
-      pos: new THREE.Vector3(WORLD.plazaX + 20, 0, 16 + this.trucks.length * 10),
+      pos: new THREE.Vector3(WORLD.plazaX + 2 + this.trucks.length * 9, 0, 0),
       heading: 0,
       speed: 0,
       hp: 100 * spec.armor,
@@ -593,12 +593,14 @@ export class Logistics {
         this.fx.smoke(truck.pos.x, truck.pos.y + 5, truck.pos.z, 1, 1.2);
         if (truck.hp >= truck.maxHp * 0.6) {
           truck.state = 'idle';
-          truck.pos.set(WORLD.plazaX + 20, 0, 16 + truck.id * 10);
+          truck.pos.set(WORLD.plazaX + 2 + truck.id * 9, 0, 0);
           this.events?.emit('log', { kind: 'ops', text: `${truck.spec.name} repaired and back on the roster` });
         }
       } else {
         // idle: park at the plaza
-        const target = new THREE.Vector3(WORLD.plazaX + 20, 0, 16 + truck.id * 10);
+        // Park on the road itself, staggered along it — so switching to the
+        // driver camera puts you on the route, not in a field beside it.
+        const target = new THREE.Vector3(WORLD.plazaX + 2 + truck.id * 9, 0, this.laneZ('bull', WORLD.plazaX + 2 + truck.id * 9));
         truck.pos.lerp(target, 1 - Math.exp(-3 * dt));
         truck.heading = approach(truck.heading, 0, 4, dt);
         truck.speed = 0;
@@ -640,10 +642,19 @@ export class Logistics {
 
   _driveTruck(truck, dt, ctx) {
     const dir = truck.state === 'enroute' ? 1 : -1;
-    const goalX = dir > 0 ? WORLD.depotX - 12 : WORLD.plazaX + 20;
+    const goalX = dir > 0 ? WORLD.depotX - 12 : WORLD.plazaX + 2 + truck.id * 9;
     const laneZ = this.laneZ(truck.state === 'enroute' ? truck.lane : 'bull', truck.pos.x);
 
-    let targetZ = laneZ;
+    // Steer around whatever is in the road rather than driving through it.
+    // The dodge is sprung back toward zero, otherwise a frontline that always
+    // has something ahead of you ratchets the truck permanently off the road.
+    const { steer, brake } = this.bf.avoidance(truck.pos.x, truck.pos.z, dir);
+    truck.dodge = clamp(
+      (truck.dodge ?? 0) + (steer - (truck.dodge ?? 0) * 2.2) * dt * 3.5,
+      -7.5, 7.5,
+    );
+
+    let targetZ = laneZ + truck.dodge;
     let steerBoost = 1;
     if (truck.manual && ctx.manualSteer) {
       targetZ = clamp(truck.pos.z + ctx.manualSteer.z * 40 * dt, -WORLD.depth / 2 + 6, WORLD.depth / 2 - 6);
@@ -652,7 +663,9 @@ export class Logistics {
 
     const base = truck.spec.speed * LANES[truck.lane].speed * (truck.boost > 0 ? 1.9 : 1) * steerBoost;
     const load = 1 - clamp(this.usedCapacity(truck) / truck.spec.capacity, 0, 1) * 0.22;
-    truck.speed = approach(truck.speed, base * load, 2.5, dt);
+    truck.speed = approach(truck.speed, base * load * (1 - brake * 0.8), 2.5, dt);
+    // infantry get out of the way of nine tonnes of mail
+    this.bf.scatterFrom(truck.pos.x, truck.pos.z, 7);
 
     // The frontline can swing hard when the price ticks, so the truck needs to
     // be able to chase its lane sideways faster than it drives forward —
