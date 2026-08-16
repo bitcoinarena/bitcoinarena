@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { WORLD, HISTORY } from '../config.js';
-import { Ring, clamp, lerp, rand, randInt, approach, TAU } from '../util.js';
+import { Ring, clamp, lerp, rand, randInt, approach, angleDelta, angleApproach, TAU } from '../util.js';
 import { Roads } from './roads.js';
 import { makeSoldierBody, makeSoldierLeg, makeTankHull, makeTankTurret, makeBomber, makeBomb, HIP_Y, TURRET_Y } from '../render/geom.js';
 
@@ -11,19 +11,6 @@ const VW = COLS + 1, VH = ROWS + 1;
 // beyond these lines so the logistics zones read as separate from the war.
 const REAR_X = 74;
 const FRONT_X = 84;      // troops are held between -FRONT_X and +FRONT_X
-
-/** Shortest signed angle from a to b. */
-function angleDelta(a, b) {
-  let d = b - a;
-  while (d > Math.PI) d -= TAU;
-  while (d < -Math.PI) d += TAU;
-  return d;
-}
-
-/** Frame-rate independent turn toward a target angle, the short way round. */
-function angleApproach(a, b, rate, dt) {
-  return a + angleDelta(a, b) * (1 - Math.exp(-rate * dt));
-}
 
 /**
  * Cheap deterministic rolling ground (no external noise lib). Two low-frequency
@@ -82,45 +69,38 @@ export class Battlefield {
   laneZ(lane, x) { return this.roads.centerZ(lane, x); }
 
   /**
-   * Lateral nudge a vehicle at (x,z) heading in `dir` needs in order to go
-   * around whatever is in the road ahead of it, plus how hard it should brake.
-   * Returns { steer, brake }.
+   * Clear the road for a truck. Anything inside the corridor ahead is walked
+   * sideways out of it — infantry scramble, tanks grind over reluctantly —
+   * and anything already touching the truck is pushed out hard so nothing ever
+   * overlaps. The truck holds the centreline; the war gets out of its way.
    */
-  avoidance(x, z, dir, radius = 5.5) {
-    let steer = 0, brake = 0;
-    const RANGE = 22;
-    const scan = (ux, uz, size) => {
-      const ahead = (ux - x) * dir;
-      if (ahead < -2 || ahead > RANGE) return;
-      const dz = uz - z;
-      const clearance = radius + size;
-      if (Math.abs(dz) >= clearance) return;
-      // dead ahead: push out to whichever side needs less deviation
-      const urgency = 1 - ahead / RANGE;
-      steer += (dz >= 0 ? -1 : 1) * (clearance - Math.abs(dz)) * urgency * 2.2;
-      if (ahead < 11) brake = Math.max(brake, urgency);
-    };
-    for (const side of ['bull', 'bear']) {
-      for (const v of this.sides[side].vehicles) if (v.active) scan(v.x, v.z, 4.2);
-      for (const u of this.sides[side].units) if (u.active) scan(u.x, u.z, 1.1);
-    }
-    return { steer: clamp(steer, -16, 16), brake: clamp(brake, 0, 0.75) };
-  }
+  clearPath(x, z, dir, dt, halfWidth = 7.5, ahead = 26) {
+    const yieldTo = (o, rate, size) => {
+      const along = (o.x - x) * dir;
+      const dz = o.z - z;
+      const lane = halfWidth + size;
 
-  /** Shove infantry clear of a truck barrelling through them. */
-  scatterFrom(x, z, r = 7) {
-    const r2 = r * r;
-    for (const side of ['bull', 'bear']) {
-      for (const u of this.sides[side].units) {
-        if (!u.active) continue;
-        const dx = u.x - x, dz = u.z - z;
-        const d2 = dx * dx + dz * dz;
-        if (d2 > 1e-4 && d2 < r2) {
-          const d = Math.sqrt(d2), push = (r - d) * 0.5;
-          u.x += (dx / d) * push;
-          u.z += (dz / d) * push;
-        }
+      // anticipatory: still up the road, ease out of the corridor
+      if (along > -4 && along < ahead && Math.abs(dz) < lane) {
+        const need = lane - Math.abs(dz) + 0.6;
+        const urgency = 1 - Math.max(0, along) / ahead;
+        o.z += (dz >= 0 ? 1 : -1) * need * rate * (0.35 + urgency) * dt;
       }
+
+      // last resort: hard separation so a wheel never clips a hull
+      const hard = 4.5 + size;
+      const d2 = (o.x - x) ** 2 + dz * dz;
+      if (d2 > 1e-4 && d2 < hard * hard) {
+        const d = Math.sqrt(d2);
+        const push = (hard - d);
+        o.x += ((o.x - x) / d) * push;
+        o.z += (dz / d) * push;
+      }
+    };
+
+    for (const side of ['bull', 'bear']) {
+      for (const v of this.sides[side].vehicles) if (v.active) yieldTo(v, 3.2, 3.2);
+      for (const u of this.sides[side].units) if (u.active) yieldTo(u, 7.0, 0.9);
     }
   }
 
@@ -374,21 +354,25 @@ export class Battlefield {
     // one solid translucent slab. Rank keeps them legible in any regime: rung 0
     // is the touch, rung 11 is deep in the book.
     const front = this.frontlineAt(0);
+    const N = 8;
     const push = (levels, isBid) => {
       let maxQ = 0.0001;
-      for (const [, q] of levels.slice(0, 12)) maxQ = Math.max(maxQ, q);
-      for (let k = 0; k < Math.min(12, levels.length); k++) {
+      for (const [, q] of levels.slice(0, N)) maxQ = Math.max(maxQ, q);
+      for (let k = 0; k < Math.min(N, levels.length); k++) {
         if (i >= 40) return;
-        const q = levels[k][1];
-        const rel = q / maxQ;
-        const z = clamp(front + (isBid ? -1 : 1) * (5 + k * 3.4), -WORLD.halfZ * 1.3, WORLD.halfZ * 1.3);
-        const h = 0.6 + rel * 4.5;                  // low ramparts, not curtains
+        const rel = levels[k][1] / maxQ;
+        if (rel < 0.15) continue;                   // only walls worth drawing
+        const z = clamp(front + (isBid ? -1 : 1) * (7 + k * 4.6), -WORLD.halfZ * 1.3, WORLD.halfZ * 1.3);
+        // Height is the resting size at that rung, so a big wall is visibly a
+        // big wall. Length shrinks with depth so the stack reads as a fan of
+        // barricades behind the line, not a set of mystery stripes.
+        const h = 0.7 + rel * 7;
         d.position.set(0, this.surfaceAt(0, z) + 0.1, z);
         d.rotation.set(0, 0, 0);
-        d.scale.set(WORLD.width * 0.55, h, 0.7 + rel * 1.1);
+        d.scale.set(WORLD.width * (0.46 - k * 0.03), h, 1.1 + rel * 1.6);
         d.updateMatrix();
         this.bookMesh.setMatrixAt(i, d.matrix);
-        c.setHex(isBid ? 0x2ee66f : 0xff3b52).multiplyScalar(0.25 + rel * 0.7);
+        c.setHex(isBid ? 0x2ee66f : 0xff3b52).multiplyScalar(0.3 + rel * 0.9);
         this.bookMesh.setColorAt(i, c);
         i++;
       }

@@ -12,6 +12,17 @@ export const TAU = Math.PI * 2;
 /** Frame-rate independent exponential approach. */
 export const approach = (cur, target, rate, dt) => cur + (target - cur) * (1 - Math.exp(-rate * dt));
 
+/** Shortest signed angle from a to b. */
+export function angleDelta(a, b) {
+  let d = b - a;
+  while (d > Math.PI) d -= TAU;
+  while (d < -Math.PI) d += TAU;
+  return d;
+}
+
+/** Frame-rate independent turn toward a target angle, the short way round. */
+export const angleApproach = (a, b, rate, dt) => a + angleDelta(a, b) * (1 - Math.exp(-rate * dt));
+
 export function fmtUsd(v, digits = 0) {
   if (!isFinite(v)) return '—';
   const abs = Math.abs(v);

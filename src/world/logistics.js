@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { WORLD, LANES, FEE, TRUCKS } from '../config.js';
-import { clamp, lerp, rand, hash01, TAU, approach, pick } from '../util.js';
+import { clamp, lerp, rand, hash01, TAU, approach, angleApproach, pick } from '../util.js';
 
 const MAX_PKG = 170;
 
@@ -643,40 +643,56 @@ export class Logistics {
   _driveTruck(truck, dt, ctx) {
     const dir = truck.state === 'enroute' ? 1 : -1;
     const goalX = dir > 0 ? WORLD.depotX - 12 : WORLD.plazaX + 2 + truck.id * 9;
-    const laneZ = this.laneZ(truck.state === 'enroute' ? truck.lane : 'bull', truck.pos.x);
+    // Drive home on the same road you came in on — switching lanes at the depot
+    // teleports the target up to a hundred units sideways and throws the truck
+    // off the road for the whole return leg.
+    const lane = truck.lane;
 
-    // Steer around whatever is in the road rather than driving through it.
-    // The dodge is sprung back toward zero, otherwise a frontline that always
-    // has something ahead of you ratchets the truck permanently off the road.
-    const { steer, brake } = this.bf.avoidance(truck.pos.x, truck.pos.z, dir);
-    truck.dodge = clamp(
-      (truck.dodge ?? 0) + (steer - (truck.dodge ?? 0) * 2.2) * dt * 3.5,
-      -7.5, 7.5,
-    );
-
-    let targetZ = laneZ + truck.dodge;
     let steerBoost = 1;
-    if (truck.manual && ctx.manualSteer) {
-      targetZ = clamp(truck.pos.z + ctx.manualSteer.z * 40 * dt, -WORLD.depth / 2 + 6, WORLD.depth / 2 - 6);
-      steerBoost = 1 + Math.max(0, ctx.manualSteer.x) * 0.5;
-    }
+    if (truck.manual && ctx.manualSteer) steerBoost = 1 + Math.max(0, ctx.manualSteer.x) * 0.5;
 
     const base = truck.spec.speed * LANES[truck.lane].speed * (truck.boost > 0 ? 1.9 : 1) * steerBoost;
     const load = 1 - clamp(this.usedCapacity(truck) / truck.spec.capacity, 0, 1) * 0.22;
-    truck.speed = approach(truck.speed, base * load * (1 - brake * 0.8), 2.5, dt);
-    // infantry get out of the way of nine tonnes of mail
-    this.bf.scatterFrom(truck.pos.x, truck.pos.z, 7);
-
-    // The frontline can swing hard when the price ticks, so the truck needs to
-    // be able to chase its lane sideways faster than it drives forward —
-    // otherwise it ends up trundling along beside the road instead of on it.
-    const dz = clamp(targetZ - truck.pos.z, -40, 40);
+    truck.speed = approach(truck.speed, base * load, 2.5, dt);
     const step = truck.speed * dt;
-    truck.pos.x += dir * step;
-    // High gain on purpose: the frontline road is a moving target, so a gentle
-    // correction leaves the truck permanently riding the kerb.
-    truck.pos.z += clamp(dz * dt * 11, -step * 3, step * 3);
-    truck.heading = dir > 0 ? Math.atan2(clamp(dz * 0.06, -0.8, 0.8), 1) : Math.PI - Math.atan2(clamp(dz * 0.06, -0.8, 0.8), 1);
+
+    // The mail does not swerve for armour — the armour moves. Anything standing
+    // in the corridor ahead is shoved clear before the truck reaches it, so the
+    // truck can hold the centreline exactly instead of weaving off the road.
+    this.bf.clearPath(truck.pos.x, truck.pos.z, dir, dt);
+
+    // Aim a short way down the road and drive AT that point. Heading then comes
+    // from where the truck is actually going, so it corners properly instead of
+    // sliding sideways down the lane.
+    const aheadX = truck.pos.x + dir * Math.max(7, step * 3 + 7);
+    let targetZ = this.laneZ(lane, aheadX);
+    if (truck.manual && ctx.manualSteer) {
+      targetZ = clamp(truck.pos.z + ctx.manualSteer.z * 40 * dt, -WORLD.depth / 2 + 6, WORLD.depth / 2 - 6);
+    }
+
+    const tx = aheadX - truck.pos.x;
+    // cap the turn so the truck always makes forward progress rather than
+    // pivoting on the spot when the frontline jumps
+    const tz = clamp(targetZ - truck.pos.z, -Math.abs(tx) * 2.5, Math.abs(tx) * 2.5);
+    const tl = Math.hypot(tx, tz) || 1;
+    let vx = (tx / tl) * truck.speed;
+    let vz = (tz / tl) * truck.speed;
+
+    // Pure lookahead-chasing decays lateral error at only speed/lookahead — far
+    // too slow for the frontline road, which can sweep sideways faster than the
+    // truck drives forward. Add a corrective slew toward the centreline at our
+    // own x, and take the heading from the TOTAL velocity so the truck visibly
+    // turns into the correction instead of sliding sideways.
+    if (!truck.manual) {
+      const err = this.laneZ(lane, truck.pos.x) - truck.pos.z;
+      vz += clamp(err * 5, -truck.speed * 1.6, truck.speed * 1.6);
+    }
+
+    truck.pos.x += vx * dt;
+    truck.pos.z += vz * dt;
+
+    // forward vector is (cos heading, 0, sin heading) — see the mesh yaw below
+    truck.heading = angleApproach(truck.heading, Math.atan2(vz, vx), 7, dt);
 
     if (truck.boost > 0 || truck.speed > 4) {
       if (Math.random() < dt * 22) {
