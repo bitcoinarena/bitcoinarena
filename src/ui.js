@@ -215,11 +215,17 @@ export class UI {
       const id = b.dataset.lane;
       b.classList.toggle('sel', id === lane);
       const eta = roads ? roads.repairEta(id) : 0;
+      const wear = roads ? roads.wearLevel(id) : 0;
       b.classList.toggle('cut', eta > 0);
+      b.classList.toggle('worn', eta <= 0 && wear > 0.12);
       let tag = b.querySelector('.lane-cut');
-      if (eta > 0) {
+      const text = eta > 0
+        ? `ROAD CUT — engineers ${Math.ceil(eta)}s`
+        : wear > 0.12 ? `SURFACE DAMAGE ${Math.round(wear * 100)}%` : null;
+      if (text) {
         if (!tag) { tag = document.createElement('i'); tag.className = 'lane-cut'; b.appendChild(tag); }
-        tag.textContent = `ROAD CUT — engineers ${Math.ceil(eta)}s`;
+        tag.textContent = text;
+        tag.style.color = eta > 0 ? 'var(--bear)' : 'var(--gold)';
       } else if (tag) tag.remove();
     }
 

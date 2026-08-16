@@ -11,6 +11,10 @@ const KERB = 1.1;
 export const GATE_X = 34;
 // How long a cut section stays impassable while engineers work it.
 const DAMAGE_SEC = 150;
+// Surface wear: a stretch this long accumulates damage 0..1 before it fails,
+// and heals this fast if nothing else lands on it (~2 min from fully worn).
+const WEAR_SPAN = 16;
+const WEAR_HEAL = 0.008;
 
 /* ----------------------------------------------------------- centrelines */
 
@@ -32,10 +36,11 @@ export function laneBaseZ(lane, x) {
  * and converge again on the Blockchain Gate.
  */
 export class Roads {
-  constructor(scene, bf, fx) {
+  constructor(scene, bf, fx, events) {
     this.scene = scene;
     this.bf = bf;
     this.fx = fx;
+    this.events = events;
     this.lanes = ['bull', 'front', 'bear'];
     this.meshes = {};
     this.highlight = null;
@@ -71,7 +76,9 @@ export class Roads {
     const mk = (verts, color, opacity = 1) => {
       const g = new THREE.BufferGeometry();
       const pos = new Float32Array((SEG + 1) * 2 * 3);
+      const col = new Float32Array((SEG + 1) * 2 * 3).fill(1);
       g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+      g.setAttribute('color', new THREE.BufferAttribute(col, 3));
       const idx = [];
       for (let i = 0; i < SEG; i++) {
         const a = i * 2, b = a + 1, c = a + 2, d = a + 3;
@@ -80,7 +87,7 @@ export class Roads {
       g.setIndex(idx);
       g.computeVertexNormals();
       const mat = new THREE.MeshStandardMaterial({
-        color, roughness: 0.92, metalness: 0.05, side: THREE.DoubleSide,
+        color, vertexColors: true, roughness: 0.92, metalness: 0.05, side: THREE.DoubleSide,
         transparent: opacity < 1, opacity,
         // the road lies almost flat on the terrain; bias it toward the camera
         // so it never fights with the ground it is resting on
@@ -91,7 +98,7 @@ export class Roads {
       mesh.receiveShadow = true;
       mesh.renderOrder = 3;
       this.scene.add(mesh);
-      return { mesh, pos };
+      return { mesh, pos, col };
     };
 
     const front = lane === 'front';
@@ -197,26 +204,96 @@ export class Roads {
    * a couple of minutes while an engineer section from the owning faction works
    * it back into shape.
    */
-  damageAt(x, z, radius) {
+  /** Tear the road open outright — only a nuke does this in one go. */
+  cutAt(x, z, radius) {
     for (const lane of this.lanes) {
       const cz = this.centerZ(lane, x);
       if (Math.abs(cz - z) > radius + HALF_W) continue;
-      const span = Math.max(10, radius * 0.9);
-      const existing = this.damage.find((d) => d.lane === lane && Math.abs(d.x - x) < span);
-      if (existing) { existing.t = Math.max(existing.t, DAMAGE_SEC); continue; }
-      const owner = cz < this.bf.frontlineAt(x) ? 'bull' : 'bear';
-      this.damage.push({ lane, x, span, t: DAMAGE_SEC, total: DAMAGE_SEC, owner });
-      if (this.damage.length > 6) this.damage.shift();
+      this._cut(lane, x, Math.max(10, radius * 0.9));
     }
   }
 
-  /** Is this point on a cut section? Trucks crawl through the rubble. */
+  _cut(lane, x, span) {
+    const existing = this.damage.find((d) => d.lane === lane && Math.abs(d.x - x) < span);
+    if (existing) { existing.t = Math.max(existing.t, DAMAGE_SEC); return; }
+    const owner = this.centerZ(lane, x) < this.bf.frontlineAt(x) ? 'bull' : 'bear';
+    this.damage.push({ lane, x, span, t: DAMAGE_SEC, total: DAMAGE_SEC, owner });
+    // that stretch is rubble now — no point tracking surface wear on it
+    for (let i = this.wear.length - 1; i >= 0; i--) {
+      const w = this.wear[i];
+      if (w.lane === lane && Math.abs(w.x - x) < span) this.wear.splice(i, 1);
+    }
+    if (this.damage.length > 6) this.damage.shift();
+    this.events?.emit('log', {
+      kind: 'loss',
+      text: `${LANES[lane].name} CUT at the ${x < 0 ? 'west' : 'east'} stretch — ${owner === 'bull' ? 'BULL' : 'BEAR'} engineers dispatched`,
+    });
+  }
+
+  /**
+   * Surface damage from a near miss. Roads don't fail in one hit — shellfire and
+   * burning wrecks chew a stretch up until it finally gives way and has to be
+   * rebuilt. Wear runs 0..1 per stretch; at 1 the road is cut.
+   */
+  wearAt(x, z, radius, amount) {
+    for (const lane of this.lanes) {
+      const cz = this.centerZ(lane, x);
+      const dist = Math.abs(cz - z);
+      if (dist > radius + HALF_W) continue;
+      if (this.damage.some((d) => d.lane === lane && Math.abs(d.x - x) < d.span)) continue;
+
+      const bite = clamp(1 - (dist - HALF_W) / Math.max(1, radius), 0.2, 1);
+      const bucket = Math.round(x / WEAR_SPAN) * WEAR_SPAN;
+      let w = this.wear.find((e) => e.lane === lane && e.x === bucket);
+      if (!w) {
+        w = { lane, x: bucket, span: WEAR_SPAN * 0.55, wear: 0 };
+        this.wear.push(w);
+        if (this.wear.length > 24) this.wear.shift();
+      }
+      w.wear += amount * bite;
+      if (w.wear >= 1) this._cut(lane, bucket, Math.max(12, radius));
+    }
+  }
+
+  /** How badly a truck is slowed here: 1 = impassable rubble, 0 = clean road. */
   damageFactor(lane, x) {
     for (const d of this.damage) {
-      if (d.lane !== lane) continue;
-      if (Math.abs(d.x - x) < d.span) return 1 - Math.abs(d.x - x) / d.span;
+      if (d.lane === lane && Math.abs(d.x - x) < d.span) return 1 - Math.abs(d.x - x) / d.span;
+    }
+    for (const w of this.wear) {
+      if (w.lane === lane && Math.abs(w.x - x) < w.span) return w.wear * 0.45;
     }
     return 0;
+  }
+
+  /**
+   * How wrecked the road LOOKS here, 0..1. Separate from damageFactor (which is
+   * about slowing trucks) because a cut needs to read as destroyed across its
+   * whole span, not just at the centre.
+   */
+  severityAt(lane, x) {
+    let s = 0;
+    for (const d of this.damage) {
+      if (d.lane !== lane) continue;
+      const k = Math.abs(d.x - x) / d.span;
+      if (k < 1) {
+        // repaired stretches visibly come good again as the engineers work
+        const repaired = 1 - d.t / d.total;
+        s = Math.max(s, (0.55 + 0.45 * (1 - k)) * (1 - repaired * 0.85));
+      }
+    }
+    for (const w of this.wear) {
+      if (w.lane !== lane) continue;
+      if (Math.abs(w.x - x) < w.span) s = Math.max(s, w.wear * 0.55);
+    }
+    return s;
+  }
+
+  /** Worst surface wear on a lane, 0..1 (cut sections excluded — see repairEta). */
+  wearLevel(lane) {
+    let m = 0;
+    for (const w of this.wear) if (w.lane === lane) m = Math.max(m, w.wear);
+    return m;
   }
 
   isDamaged(lane) { return this.damage.some((d) => d.lane === lane); }
@@ -230,6 +307,18 @@ export class Roads {
 
   _buildRepair() {
     this.damage = [];
+    this.wear = [];
+
+    // potholes and shell scars — how a stretch looks on its way to failing
+    this.potholeMesh = new THREE.InstancedMesh(
+      new THREE.CylinderGeometry(1, 0.75, 0.34, 8),
+      new THREE.MeshStandardMaterial({ color: 0x1a1712, roughness: 1 }),
+      120,
+    );
+    this.potholeMesh.frustumCulled = false;
+    this.potholeMesh.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 600);
+    this.scene.add(this.potholeMesh);
+
     const geo = makeEngineer();
     this.engineerMesh = new THREE.InstancedMesh(
       geo,
@@ -256,8 +345,28 @@ export class Roads {
   _updateRepair(dt, fx) {
     const d = this._propDummy || (this._propDummy = new THREE.Object3D());
     const col = new THREE.Color();
-    let ei = 0, ri = 0;
+    let ei = 0, ri = 0, pi = 0;
     this.time = (this.time || 0) + dt;
+
+    // worn stretches: potholes multiply as the surface degrades, and slowly
+    // heal again if nothing else lands on them
+    for (let k = this.wear.length - 1; k >= 0; k--) {
+      const w = this.wear[k];
+      w.wear -= dt * WEAR_HEAL;
+      if (w.wear <= 0) { this.wear.splice(k, 1); continue; }
+      const holes = Math.min(12, Math.ceil(w.wear * 12));
+      for (let n = 0; n < holes && pi < this.potholeMesh.count; n++) {
+        const f = ((n * 37) % 100) / 100 - 0.5;
+        const x = w.x + f * w.span * 2;
+        const z = this.centerZ(w.lane, x) + Math.sin(n * 3.1 + w.x) * HALF_W * 0.75;
+        const size = 0.5 + ((n * 17) % 10) / 10;
+        d.position.set(x, this.bf.surfaceAt(x, z) + 0.45, z);
+        d.rotation.set(0, n * 1.3, 0);
+        d.scale.set(size, 1, size * 0.8);
+        d.updateMatrix();
+        this.potholeMesh.setMatrixAt(pi++, d.matrix);
+      }
+    }
 
     for (let k = this.damage.length - 1; k >= 0; k--) {
       const dm = this.damage[k];
@@ -307,6 +416,7 @@ export class Roads {
     };
     hide(this.engineerMesh, ei);
     hide(this.rubbleMesh, ri);
+    hide(this.potholeMesh, pi);
     if (this.engineerMesh.instanceColor) this.engineerMesh.instanceColor.needsUpdate = true;
   }
 
@@ -341,8 +451,9 @@ export class Roads {
 
     for (const lane of this.lanes) {
       // the frontline road moves every frame; flank roads only need the
-      // occasional refresh as craters reshape the ground under them
-      if (lane !== 'front' && !full && this._built) continue;
+      // occasional refresh — unless a stretch is being blown up or rebuilt
+      const busy = this.damage.some((d) => d.lane === lane) || this.wear.some((w) => w.lane === lane);
+      if (lane !== 'front' && !busy && !full && this._built) continue;
       this._updateRibbon(lane);
     }
     if (full || !this._built) this._updateProps();
@@ -369,23 +480,41 @@ export class Roads {
       const berm = KERB;
       const bermY = 0.16;
 
+      // How wrecked is this stretch? A cut section is torn open: the surface
+      // drops into the crater, the edges break up, and the tarmac scorches.
+      const sev = this.severityAt(lane, x);
+      const rip = sev > 0 ? Math.sin(i * 5.7) * 1.7 + Math.sin(i * 13.3) * 0.8 : 0;
+      const drop = sev * (1.5 + Math.abs(Math.sin(i * 9.1)) * 1.1);
+      const ragged = edge * (1 - sev * 0.35) + rip * sev;
+
       // Sample the ground under each edge rather than lifting the whole width
       // to the centreline height — otherwise the uphill edge of the road
       // disappears into the slope on any lateral gradient.
       const set = (buf, k, off, oy) => {
         const px = x + nx * off, pz = z + nz * off;
-        buf[k] = px; buf[k + 1] = bf.surfaceAt(px, pz) + 0.45 + oy; buf[k + 2] = pz;
+        buf[k] = px; buf[k + 1] = bf.surfaceAt(px, pz) + 0.45 + oy - drop; buf[k + 2] = pz;
       };
-      set(m.surface.pos, i * 6, -edge, 0);
-      set(m.surface.pos, i * 6 + 3, edge, 0);
-      set(m.kerbL.pos, i * 6, -edge - berm, bermY);
-      set(m.kerbL.pos, i * 6 + 3, -edge + 0.15, 0.05);
-      set(m.kerbR.pos, i * 6, edge - 0.15, 0.05);
-      set(m.kerbR.pos, i * 6 + 3, edge + berm, bermY);
+      set(m.surface.pos, i * 6, -ragged, 0);
+      set(m.surface.pos, i * 6 + 3, ragged, 0);
+      set(m.kerbL.pos, i * 6, -ragged - berm, bermY);
+      set(m.kerbL.pos, i * 6 + 3, -ragged + 0.15, 0.05);
+      set(m.kerbR.pos, i * 6, ragged - 0.15, 0.05);
+      set(m.kerbR.pos, i * 6 + 3, ragged + berm, bermY);
+
+      // scorched and broken: multiply the tarmac down toward burnt earth
+      const shade = 1 - sev * 0.62;
+      const warm = 1 - sev * 0.34;
+      for (const part of [m.surface, m.kerbL, m.kerbR]) {
+        for (let v = 0; v < 2; v++) {
+          const k = i * 6 + v * 3;
+          part.col[k] = warm; part.col[k + 1] = shade; part.col[k + 2] = shade * 0.85;
+        }
+      }
     }
 
     for (const part of [m.surface, m.kerbL, m.kerbR]) {
       part.mesh.geometry.attributes.position.needsUpdate = true;
+      part.mesh.geometry.attributes.color.needsUpdate = true;
       part.mesh.geometry.computeVertexNormals();
     }
 

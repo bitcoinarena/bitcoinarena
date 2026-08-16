@@ -16,7 +16,7 @@ export class Game {
     this.stage = new Stage(canvas);
     this.fx = new FX(this.stage.scene);
     this.audio = new Audio();
-    this.bf = new Battlefield(this.stage.scene, this.fx);
+    this.bf = new Battlefield(this.stage.scene, this.fx, this.events);
     this.bf.audio = this.audio;
     this.logistics = new Logistics(this.stage.scene, this.fx, this.bf, this.audio, this.events);
     this.ui = new UI(this);

@@ -642,9 +642,6 @@ export class Logistics {
     const corner = 1 / (1 + Math.abs(slope) * 0.35 + curvature * 6);
     truck.speed = approach(truck.speed, base * load * corner * (1 - wrecked * 0.7), 2.5, dt);
 
-    // The mail does not swerve for armour — the armour moves.
-    this.bf.clearPath(truck.pos.x, truck.pos.z, dir, dt);
-
     // advance along the arc: a step of `speed` along the curve, not along x
     const step = truck.speed * dt;
     truck.roadX += (dir * step) / Math.sqrt(1 + slope * slope);
@@ -665,6 +662,10 @@ export class Logistics {
     const back = this.laneZ(lane, truck.roadX - dir * 3);
     const fwd = this.laneZ(lane, truck.roadX + dir * 3);
     truck.heading = angleApproach(truck.heading, Math.atan2(fwd - back, dir * 6), 8, dt);
+
+    // The mail does not swerve for armour — the armour moves. Run this AFTER
+    // the truck has been placed, so the separation is against where it now is.
+    this.bf.clearPath(truck.pos.x, truck.pos.z, dir, dt);
 
     if (truck.boost > 0 || truck.speed > 4) {
       if (Math.random() < dt * 22) {
