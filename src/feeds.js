@@ -9,7 +9,7 @@
 // always playable. When a real socket comes back, sim mode switches off again.
 
 import { Emitter, clamp, rand, randInt, pick } from './util.js';
-import { ENDPOINTS, SIM } from './config.js';
+import { ENDPOINTS, SIM, EVENTS } from './config.js';
 
 class ReconnectingSocket {
   constructor(url, { onOpen, onMessage, onDown, name = 'ws' }) {
@@ -54,6 +54,8 @@ export class MarketFeed extends Emitter {
     // "a liquidation just arrived" and suppress the fallback for the first 45s.
     this.lastLiqAt = -Infinity;
     this.liquidations = [];      // rolling log, newest first
+    this.tradeThreshold = 0;     // adaptive 'whale trade' cutoff
+    this.tradeMedian = 0;
     this._simPrice = SIM.startPrice;
     this._simVel = 0;
     this._simDrift = rand(-1, 1);
@@ -130,6 +132,7 @@ export class MarketFeed extends Emitter {
       if (Math.abs(price - (this._lastTradePrice ?? 0)) > 0.005) this.lastPriceMove = performance.now();
       this._lastTradePrice = price;
       this.price = this._simPrice = price;
+      this._noteTradeSize(price * qty);
       this.emit('trade', { price, qty, usd: price * qty, buy: !d.m });
       this.emit('price', { price, change24h: this.change24h });
     } else if (d.e === '24hrTicker') {
@@ -156,6 +159,30 @@ export class MarketFeed extends Emitter {
     this.lastLiqAt = performance.now();
     // side SELL = a long got liquidated (bulls take the hit) and vice versa.
     this._pushLiq({ symbol: o.s || 'BTCUSDT', side: o.S === 'SELL' ? 'long' : 'short', price, qty, usd, real: true });
+  }
+
+  /**
+   * "Whale" has to be relative, not a fixed dollar figure. On a quiet tape the
+   * biggest trade of the minute is ~$20k; in a frenzy it's millions. So track a
+   * rolling window of recent trade sizes and call anything in the top slice a
+   * whale — that fires at a sane rate in both regimes.
+   */
+  _noteTradeSize(usd) {
+    const w = this._tradeSizes || (this._tradeSizes = []);
+    w.push(usd);
+    if (w.length > 400) w.shift();
+    const now = performance.now();
+    if (w.length >= 40 && now - (this._threshAt || 0) > 2000) {
+      this._threshAt = now;
+      const sorted = [...w].sort((a, b) => a - b);
+      this.tradeThreshold = sorted[Math.floor(EVENTS.whalePercentile * (sorted.length - 1))];
+      this.tradeMedian = sorted[Math.floor(0.5 * (sorted.length - 1))];
+    }
+  }
+
+  /** Is this trade an outlier for current conditions? */
+  isWhaleTrade(usd) {
+    return usd >= EVENTS.whaleFloorUsd && this.tradeThreshold > 0 && usd >= this.tradeThreshold;
   }
 
   _pushLiq(liq) {
@@ -191,6 +218,7 @@ export class MarketFeed extends Emitter {
       this._simTradeAcc -= 1;
       const buy = Math.random() < 0.5 + clamp(this._simVel * 0.02, -0.3, 0.3);
       const qty = Math.pow(Math.random(), 4) * 6 + 0.002;
+      this._noteTradeSize(this.price * qty);
       this.emit('trade', { price: this.price, qty, usd: this.price * qty, buy });
     }
 

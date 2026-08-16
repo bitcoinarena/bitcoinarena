@@ -79,8 +79,13 @@ export const COSTS = {
 };
 
 export const EVENTS = {
-  whaleTradeUsd: 400000,   // a single trade this big calls in an airstrike
-  whaleCooldownSec: 6,
+  // A whale is defined relative to current flow, not by a fixed dollar figure:
+  // the biggest trade of a quiet minute is ~$20k, but millions during a frenzy.
+  // Anything in the top slice of the recent trade-size distribution calls in an
+  // airstrike, subject to a floor so a dead tape doesn't bomb $200 trades.
+  whalePercentile: 0.985,
+  whaleFloorUsd: 6000,
+  whaleCooldownSec: 8,
 };
 
 export const CAMERAS = ['cinematic', 'god', 'follow', 'plaza', 'driver', 'free'];

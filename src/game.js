@@ -78,7 +78,7 @@ export class Game {
       }
       // A genuinely enormous single trade calls in a conventional airstrike on
       // the side it just ran over. Rate-limited so a burst can't fill the sky.
-      if (usd >= EVENTS.whaleTradeUsd && this._whaleCd <= 0) {
+      if (this.market.isWhaleTrade(usd) && this._whaleCd <= 0) {
         this._whaleCd = EVENTS.whaleCooldownSec;
         this.bf.airstrike(price, usd, buy ? 'short' : 'long', (hit) => {
           this.logistics.shockwave(hit.x, hit.z, hit.power);
@@ -88,9 +88,10 @@ export class Game {
             color: buy ? '#5ff0a8' : '#ff6b78', life: 2.4, scale: 0.8,
           });
         });
+        const x = this.market.tradeMedian > 0 ? Math.round(usd / this.market.tradeMedian) : 0;
         this.events.emit('log', {
           kind: 'whale',
-          text: `WHALE ${buy ? 'BUY' : 'SELL'} ${fmtUsd(usd)} @ ${fmtUsd(price)} — bombers inbound on the ${buy ? 'BEAR' : 'BULL'} line`,
+          text: `WHALE ${buy ? 'BUY' : 'SELL'} ${fmtUsd(usd)} @ ${fmtUsd(price)}${x > 1 ? ` (${x}× the median trade)` : ''} — bombers inbound on the ${buy ? 'BEAR' : 'BULL'} line`,
         });
       }
     });
@@ -195,7 +196,7 @@ export class Game {
 
     this.events.emit('log', {
       kind: 'block',
-      text: `BLOCK ${b.height.toLocaleString('en-US')} mined by ${b.miner} — ${b.txCount.toLocaleString('en-US')} txs, ${(b.totalFees / 1e8).toFixed(3)} BTC fees, median ${b.medianFee} sat/vB${b.real ? '' : ' (sim)'}`,
+      text: `BLOCK ${b.height.toLocaleString('en-US')} mined by ${b.miner} — ${b.txCount.toLocaleString('en-US')} txs, ${(b.totalFees / 1e8).toFixed(3)} BTC fees, median ${(+b.medianFee || 0).toFixed(1)} sat/vB${b.real ? '' : ' (sim)'}`,
     });
 
     // Any loaded truck at the plaza seals immediately and rolls out — that is
@@ -218,7 +219,7 @@ export class Game {
         mined++;
       }
     }
-    if (mined) this.events.emit('log', { kind: 'ops', text: `${mined} packages confirmed into block ${b.height} without you (fee ≥ ${median} sat/vB)` });
+    if (mined) this.events.emit('log', { kind: 'ops', text: `${mined} packages confirmed into block ${b.height} without you (fee ≥ ${median.toFixed(1)} sat/vB)` });
   }
 
   /* ------------------------------------------------------------- player */

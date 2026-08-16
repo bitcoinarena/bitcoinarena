@@ -368,23 +368,27 @@ export class Battlefield {
     const d = this.dummy;
     const c = new THREE.Color();
     let i = 0;
-    const limit = WORLD.halfZ * 1.1;
+    // Lay the book out by DEPTH RANK, not by mapping price to z. The terrain
+    // auto-zooms to a window a few dollars wide, so real book levels (±0.4% of
+    // price) either fall off the map or collapse onto the same z and stack into
+    // one solid translucent slab. Rank keeps them legible in any regime: rung 0
+    // is the touch, rung 11 is deep in the book.
+    const front = this.frontlineAt(0);
     const push = (levels, isBid) => {
       let maxQ = 0.0001;
-      for (const [, q] of levels) maxQ = Math.max(maxQ, q);
-      for (const [p, q] of levels) {
+      for (const [, q] of levels.slice(0, 12)) maxQ = Math.max(maxQ, q);
+      for (let k = 0; k < Math.min(12, levels.length); k++) {
         if (i >= 40) return;
-        const z = this.priceToZ(p);
-        if (Math.abs(z) > limit) continue;          // off the map, skip it
+        const q = levels[k][1];
         const rel = q / maxQ;
-        if (rel < 0.12) continue;                   // only meaningful walls
-        const h = 0.8 + rel * 5.5;                  // low ramparts, not curtains
-        d.position.set(0, this.heightAt(0, z) + 0.1, z);
+        const z = clamp(front + (isBid ? -1 : 1) * (5 + k * 3.4), -WORLD.halfZ * 1.3, WORLD.halfZ * 1.3);
+        const h = 0.6 + rel * 4.5;                  // low ramparts, not curtains
+        d.position.set(0, this.surfaceAt(0, z) + 0.1, z);
         d.rotation.set(0, 0, 0);
-        d.scale.set(WORLD.width * 0.62, h, 0.9 + rel * 1.4);
+        d.scale.set(WORLD.width * 0.55, h, 0.7 + rel * 1.1);
         d.updateMatrix();
         this.bookMesh.setMatrixAt(i, d.matrix);
-        c.setHex(isBid ? 0x2ee66f : 0xff3b52).multiplyScalar(0.3 + rel * 0.8);
+        c.setHex(isBid ? 0x2ee66f : 0xff3b52).multiplyScalar(0.25 + rel * 0.7);
         this.bookMesh.setColorAt(i, c);
         i++;
       }
