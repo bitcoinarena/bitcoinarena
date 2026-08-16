@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+<title>Bitcoin Logistics War — Bulls &amp; Bears Delivery Front</title>
+<meta name="description" content="Escort real Bitcoin mempool transactions across a live price-chart battlefield and seal them into real blocks." />
+<link rel="stylesheet" href="./styles.css" />
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>🚚</text></svg>" />
+<script type="importmap">
+{ "imports": { "three": "./vendor/three.module.js" } }
+</script>
+</head>
+<body>
+<canvas id="view"></canvas>
+
+<!-- ============================ BOOT OVERLAY ============================ -->
+<div id="boot" class="overlay">
+  <div class="boot-card">
+    <div class="boot-kicker">Bulls &amp; Bears Delivery Front</div>
+    <h1>BITCOIN<br><span>LOGISTICS WAR</span></h1>
+    <p class="boot-sub">
+      The price chart is the battlefield. Real mempool transactions are your cargo.
+      Load them onto armoured mail trucks, run them through the war, and seal them into a real block.
+    </p>
+    <div class="boot-grid">
+      <div><b>1–6</b><span>camera modes</span></div>
+      <div><b>Click</b><span>select package</span></div>
+      <div><b>Space</b><span>auto-load truck</span></div>
+      <div><b>Z / X / C</b><span>pick route</span></div>
+      <div><b>Enter</b><span>dispatch convoy</span></div>
+      <div><b>WASD</b><span>free cam / drive</span></div>
+    </div>
+    <div class="boot-actions">
+      <button id="btn-play" class="btn btn-primary">DEPLOY TO THE FRONT</button>
+      <button id="btn-spectate" class="btn">WAR ROOM (spectate)</button>
+    </div>
+    <div class="boot-note" id="boot-status">connecting to Binance + mempool.space…</div>
+  </div>
+</div>
+
+<!-- ================================ HUD ================================ -->
+<div id="hud" class="hidden">
+
+  <!-- top left: connection status -->
+  <div class="panel pill-row" id="status-row">
+    <span class="pill" id="pill-market">MARKET <b>…</b></span>
+    <span class="pill" id="pill-mempool">MEMPOOL <b>…</b></span>
+    <span class="pill" id="pill-fps">-- fps</span>
+  </div>
+
+  <!-- top center: price + bias -->
+  <div id="ticker">
+    <div class="tick-price"><span id="price">$—</span><em id="change">0.00%</em></div>
+    <div class="bias-wrap">
+      <div class="bias-bar"><i id="bias-fill"></i><u id="bias-mid"></u></div>
+      <div class="bias-label" id="bias-label">CONTESTED</div>
+    </div>
+  </div>
+
+  <!-- top right: score -->
+  <div class="panel" id="score-panel">
+    <div class="score-main"><label>SCORE</label><b id="score">0</b></div>
+    <div class="score-sub">
+      <span><label>FEES BANKED</label><b id="fees">0 sat</b></span>
+      <span><label>BLOCK</label><b id="height">—</b></span>
+      <span><label>NEXT BLOCK ~</label><b id="blocktimer">—</b></span>
+    </div>
+    <div id="block-window" class="block-window hidden">BLOCK WINDOW ×3 <i id="bw-time">0.0s</i></div>
+  </div>
+
+  <!-- left: fleet -->
+  <div class="panel" id="fleet-panel">
+    <h3>FLEET</h3>
+    <div id="fleet-list"></div>
+    <div id="cargo-block">
+      <h4>MANIFEST <span id="cargo-cap">0 / 0 vB</span></h4>
+      <div id="cargo-list" class="cargo-list"><i class="dim">empty — click packages in the plaza, or press SPACE</i></div>
+    </div>
+    <div class="lane-picker">
+      <h4>DISPATCH ROUTE</h4>
+      <button class="lane" data-lane="bull"><b>Bull Flank</b><span>safe · ×1.0</span></button>
+      <button class="lane" data-lane="front"><b>The Frontline</b><span>deadly · ×2.6</span></button>
+      <button class="lane" data-lane="bear"><b>Bear Flank</b><span>risky · ×1.5</span></button>
+    </div>
+  </div>
+
+  <!-- right: market + mempool + log -->
+  <div class="panel" id="market-panel">
+    <h3>MEMPOOL</h3>
+    <div class="stat-row"><span>Unconfirmed</span><b id="mp-count">—</b></div>
+    <div class="stat-row"><span>Congestion</span><b id="mp-congestion">—</b></div>
+    <div class="congestion"><i id="mp-bar"></i></div>
+    <div class="fee-bands" id="fee-bands"></div>
+    <h3 class="mt">ORDER BOOK</h3>
+    <canvas id="book-canvas" width="230" height="70"></canvas>
+  </div>
+
+  <div class="panel" id="log-panel">
+    <h3>KILLFEED / LOGISTICS</h3>
+    <div id="log"></div>
+  </div>
+
+  <!-- bottom: quick actions -->
+  <div id="bottom-bar" class="panel">
+    <button class="btn qa" id="qa-autoload"><b>SPACE</b> Auto-load</button>
+    <button class="btn qa" id="qa-dispatch"><b>ENTER</b> Dispatch</button>
+    <button class="btn qa" id="qa-boost"><b>B</b> Boost <i>5k sat</i></button>
+    <button class="btn qa" id="qa-repair"><b>P</b> Repair <i>25k sat</i></button>
+    <button class="btn qa" id="qa-rbf"><b>R</b> RBF bump</button>
+    <div class="spacer"></div>
+    <div class="shop" id="shop"></div>
+    <div class="spacer"></div>
+    <button class="btn qa" id="qa-edu">📚 Educate</button>
+    <button class="btn qa" id="qa-mute">🔊</button>
+  </div>
+
+  <!-- minimap -->
+  <div id="minimap-wrap" class="panel">
+    <canvas id="minimap" width="260" height="150"></canvas>
+    <div class="mm-legend"><span class="g">bulls</span><span class="r">bears</span><span class="y">truck</span><span class="b">packages</span></div>
+  </div>
+
+  <!-- radio chatter -->
+  <div id="radio"></div>
+
+  <!-- camera mode indicator -->
+  <div id="cam-modes"></div>
+</div>
+
+<!-- tooltips + education -->
+<div id="tooltip" class="hidden"></div>
+<div id="edu" class="panel hidden">
+  <h3>FIELD MANUAL <button id="edu-close">×</button></h3>
+  <div id="edu-body"></div>
+</div>
+<div id="toast"></div>
+
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>
