@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { WORLD, HISTORY } from '../config.js';
 import { Ring, clamp, lerp, rand, randInt, approach, angleDelta, angleApproach, TAU } from '../util.js';
 import { Roads } from './roads.js';
+import { Q } from '../quality.js';
 import { makeSoldierBody, makeSoldierLeg, makeTankHull, makeTankTurret, makeBomber, makeBomb, makeHelicopter, HIP_Y, TURRET_Y } from '../render/geom.js';
 
 const COLS = WORLD.columns, ROWS = WORLD.rows;
@@ -337,11 +338,11 @@ export class Battlefield {
         return mesh;
       };
 
-      const infantry = mk(body, 240, { roughness: 0.72, metalness: 0.05 });
-      const legL = mk(leg, 240, { roughness: 0.72, metalness: 0.05 });
-      const legR = mk(leg, 240, { roughness: 0.72, metalness: 0.05 });
-      const armour = mk(hull, 22, { roughness: 0.5, metalness: 0.35 });
-      const turrets = mk(turret, 22, { roughness: 0.5, metalness: 0.35 });
+      const infantry = mk(body, Q.infantry, { roughness: 0.72, metalness: 0.05 });
+      const legL = mk(leg, Q.infantry, { roughness: 0.72, metalness: 0.05 });
+      const legR = mk(leg, Q.infantry, { roughness: 0.72, metalness: 0.05 });
+      const armour = mk(hull, Q.armour, { roughness: 0.5, metalness: 0.35 });
+      const turrets = mk(turret, Q.armour, { roughness: 0.5, metalness: 0.35 });
       this.sides[side] = { infantry, legL, legR, armour, turrets, units: [], vehicles: [], color, alive: 0 };
     }
 
@@ -412,7 +413,7 @@ export class Battlefield {
     // one solid translucent slab. Rank keeps them legible in any regime: rung 0
     // is the touch, rung 11 is deep in the book.
     const front = this.frontlineAt(0);
-    const N = 8;
+    const N = Q.bookLevels;
     const push = (levels, isBid) => {
       let maxQ = 0.0001;
       for (const [, q] of levels.slice(0, N)) maxQ = Math.max(maxQ, q);
@@ -880,7 +881,7 @@ export class Battlefield {
 
   _buildAircraft() {
     this.planes = [];
-    for (let i = 0; i < 6; i++) {
+    for (let i = 0; i < Q.planes; i++) {
       const obj = makeBomber(i % 2 ? 0x8d99ab : 0x7f8b78);
       obj.visible = false;
       this.scene.add(obj);
@@ -1006,7 +1007,7 @@ export class Battlefield {
 
   _buildHelis() {
     this.heliPool = [];
-    for (let i = 0; i < 4; i++) {
+    for (let i = 0; i < Q.helis; i++) {
       const obj = makeHelicopter(i % 2 ? 0x6f7a68 : 0x74707c);
       obj.visible = false;
       this.scene.add(obj);

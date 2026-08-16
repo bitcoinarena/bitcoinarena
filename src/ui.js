@@ -1,4 +1,5 @@
 import { LANES, TRUCKS, WORLD, FEE } from './config.js';
+import { IS_MOBILE, TIER } from './quality.js';
 import { fmtUsd, fmtNum, fmtBtc, fmtDuration, fmtPrice, fmtAgo, clamp, lerp, shortId } from './util.js';
 
 const $ = (id) => document.getElementById(id);
@@ -39,8 +40,46 @@ export class UI {
     this._buildShop();
     this._buildLanes();
     this._buildEdu();
+    this._buildMobile();
     if (this.el.liqSim) this.el.liqSim.onclick = () => this.game.toggleLiqSim();
     this.fleetDirty = true;
+  }
+
+  /**
+   * On a phone the side panels would cover the battlefield, so they become
+   * bottom sheets and only one is open at a time. The shop moves out of the
+   * action bar into its own sheet, because a horizontally scrolling row of
+   * truck purchases is unusable with a thumb.
+   */
+  _buildMobile() {
+    this.tabs = $('mtabs');
+    if (!IS_MOBILE || !this.tabs) return;
+    document.body.classList.add('mobile');
+
+    // give the shop a home of its own
+    const sheet = document.createElement('div');
+    sheet.id = 'shop-sheet';
+    sheet.className = 'panel';
+    sheet.innerHTML = '<h3>DEPOT — UPGRADES</h3>';
+    sheet.appendChild(this.el.shop);
+    $('hud').appendChild(sheet);
+
+    this.openSheet = null;
+    for (const btn of this.tabs.querySelectorAll('button')) {
+      btn.onclick = () => this.toggleSheet(btn.dataset.sheet);
+    }
+  }
+
+  toggleSheet(id) {
+    const next = this.openSheet === id ? null : id;
+    for (const btn of this.tabs.querySelectorAll('button')) {
+      const target = $(btn.dataset.sheet);
+      const on = btn.dataset.sheet === next;
+      btn.classList.toggle('on', on);
+      target?.classList.toggle('sheet-open', on);
+    }
+    this.openSheet = next;
+    this.game.audio.click();
   }
 
   /* ------------------------------------------------------------- static */

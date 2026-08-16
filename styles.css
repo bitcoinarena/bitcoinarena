@@ -261,3 +261,136 @@ body.spectator #fleet-panel,body.spectator #bottom-bar{display:none}
   #fleet-panel{width:164px}
   #price{font-size:30px}
 }
+
+/* ===================================================================== */
+/* MOBILE                                                                */
+/* Phones get a different HUD, not a squeezed desktop one: the panels     */
+/* collapse into bottom sheets behind a tab bar so only one is on screen  */
+/* at a time, and nothing overlaps the 3D view or the action bar.         */
+/* ===================================================================== */
+
+#mtabs{display:none}
+
+body.mobile{
+  --safe-b:env(safe-area-inset-bottom,0px);
+  --safe-t:env(safe-area-inset-top,0px);
+  --safe-l:env(safe-area-inset-left,0px);
+  --safe-r:env(safe-area-inset-right,0px);
+}
+
+body.mobile #hud{font-size:12px}
+
+/* --- top: one compact strip, price + change + bias --- */
+body.mobile #ticker{top:calc(4px + var(--safe-t));width:100%;left:0;transform:none}
+body.mobile #price{font-size:26px;text-shadow:0 2px 12px rgba(0,0,0,.9)}
+body.mobile #change{font-size:12px}
+body.mobile .bias-wrap{width:min(72vw,300px);margin:3px auto 0}
+body.mobile .bias-bar{height:5px}
+body.mobile .bias-label{font-size:9px;letter-spacing:.2em;margin-top:3px}
+
+body.mobile #status-row{top:calc(4px + var(--safe-t));left:calc(6px + var(--safe-l));padding:0;gap:4px;
+  flex-direction:column;align-items:flex-start;z-index:12}
+body.mobile .pill{font-size:8px;padding:3px 6px}
+
+/* score sits UNDER the ticker, not beside it — at phone widths the centred
+   price text runs straight into a top-right panel */
+body.mobile #score-panel{top:calc(56px + var(--safe-t));right:calc(6px + var(--safe-r));
+  min-width:0;padding:5px 8px;max-width:44vw}
+body.mobile .score-main label{display:none}
+body.mobile .score-main b{font-size:19px}
+body.mobile .score-sub{gap:7px;margin-top:3px}
+body.mobile .score-sub label{font-size:7.5px}
+body.mobile .score-sub b{font-size:9.5px}
+body.mobile #block-window{font-size:10px;padding:3px 5px;letter-spacing:.08em}
+
+/* --- panels become sheets, hidden until their tab is tapped --- */
+body.mobile #fleet-panel,
+body.mobile #market-panel,
+body.mobile #log-panel,
+body.mobile #cam-modes,
+body.mobile #shop-sheet{
+  position:fixed;left:calc(6px + var(--safe-l));right:calc(6px + var(--safe-r));
+  top:auto;bottom:calc(112px + var(--safe-b));width:auto;max-width:none;
+  max-height:44vh;overflow:auto;display:none;padding:11px 12px;
+  -webkit-overflow-scrolling:touch}
+body.mobile #fleet-panel.sheet-open,
+body.mobile #market-panel.sheet-open,
+body.mobile #log-panel.sheet-open,
+body.mobile #cam-modes.sheet-open,
+body.mobile #shop-sheet.sheet-open{display:block}
+
+body.mobile #market-panel{display:none}            /* overrides the <620px hide */
+body.mobile #log{max-height:34vh}
+body.mobile #minimap-wrap{display:none}
+body.mobile #radio{bottom:calc(118px + var(--safe-b));width:92vw;left:50%}
+body.mobile #radio .msg{font-size:10.5px}
+
+/* camera sheet: big tap targets in a grid */
+body.mobile #cam-modes{background:var(--panel);border:1px solid var(--panel-line);
+  border-radius:12px;backdrop-filter:blur(10px);
+  display:none;grid-template-columns:repeat(3,1fr);gap:6px}
+body.mobile #cam-modes.sheet-open{display:grid}
+body.mobile #cam-modes button{font-size:11px;padding:12px 6px;border-radius:9px}
+
+body.mobile #shop-sheet .shop{display:grid;grid-template-columns:1fr;gap:6px}
+body.mobile #shop-sheet .qa{width:100%;justify-content:flex-start;padding:12px}
+
+/* --- action bar: one scrollable row, thumb-sized --- */
+body.mobile #bottom-bar{left:calc(6px + var(--safe-l));right:calc(6px + var(--safe-r));
+  bottom:calc(58px + var(--safe-b));transform:none;max-width:none;
+  display:flex;flex-wrap:nowrap;overflow-x:auto;justify-content:flex-start;
+  gap:6px;padding:7px 8px;scrollbar-width:none}
+body.mobile #bottom-bar::-webkit-scrollbar{display:none}
+body.mobile #bottom-bar .spacer,
+body.mobile #bottom-bar .shop{display:none}        /* shop moves to its own sheet */
+body.mobile #bottom-bar .qa{flex:0 0 auto;min-height:42px;padding:9px 13px;font-size:11.5px}
+
+/* --- tab bar --- */
+body.mobile #mtabs{position:fixed;left:0;right:0;bottom:0;z-index:14;display:flex;
+  padding:4px calc(6px + var(--safe-r)) calc(4px + var(--safe-b)) calc(6px + var(--safe-l));
+  gap:5px;background:linear-gradient(180deg,rgba(11,16,24,.55),rgba(6,9,14,.95));
+  backdrop-filter:blur(12px);border-top:1px solid var(--panel-line);pointer-events:auto}
+body.mobile #mtabs button{flex:1;display:flex;flex-direction:column;align-items:center;gap:1px;
+  min-height:48px;padding:5px 2px;border-radius:10px;border:1px solid transparent;
+  background:rgba(255,255,255,.05);font-size:16px;line-height:1}
+body.mobile #mtabs button span{font-family:var(--cond);font-size:9.5px;letter-spacing:.1em;
+  text-transform:uppercase;color:var(--dim)}
+body.mobile #mtabs button.on{background:rgba(255,212,71,.16);border-color:rgba(255,212,71,.45)}
+body.mobile #mtabs button.on span{color:var(--gold)}
+
+/* boot card fits a phone */
+body.mobile .boot-card{padding:20px 18px;max-height:88vh;overflow:auto}
+body.mobile .boot-card h1{font-size:34px}
+body.mobile .boot-sub{font-size:12.5px}
+body.mobile .boot-grid{grid-template-columns:repeat(2,1fr);gap:6px}
+body.mobile .boot-actions .btn{flex:1;padding:13px 12px}
+body.mobile #tooltip{max-width:min(80vw,290px);font-size:11px}
+
+/* landscape phones are short: keep the sheets shallow */
+@media (max-height:520px){
+  body.mobile #fleet-panel,body.mobile #market-panel,body.mobile #log-panel,
+  body.mobile #cam-modes,body.mobile #shop-sheet{max-height:52vh;bottom:calc(104px + var(--safe-b))}
+  body.mobile #price{font-size:21px}
+  body.mobile .bias-wrap{display:none}
+  body.mobile #score-panel{top:calc(30px + var(--safe-t))}
+  body.mobile #mtabs button{min-height:42px}
+}
+
+/* Keyboard hints are meaningless on a phone — there is no SPACE bar to press.
+   Drop them and let the label carry the button. */
+body.mobile .qa b{display:none}
+body.mobile .qa{letter-spacing:.06em}
+
+/* Score panel: a tight two-column grid instead of a wrapping flex row, which
+   at 44vw was breaking into ragged lines. */
+body.mobile #score-panel .score-main{display:block}
+body.mobile #score-panel .score-main b{display:block;text-align:right;font-size:20px;line-height:1}
+body.mobile .score-sub{display:grid;grid-template-columns:1fr 1fr;gap:2px 8px;margin-top:4px}
+body.mobile .score-sub span{flex-direction:row;justify-content:space-between;gap:5px;align-items:baseline}
+body.mobile .score-sub label{font-size:7px;letter-spacing:.08em;white-space:nowrap}
+body.mobile .score-sub b{white-space:nowrap}
+
+/* the action bar scrolls sideways — hint at it with an edge fade */
+body.mobile #bottom-bar{
+  -webkit-mask-image:linear-gradient(90deg,transparent 0,#000 14px,#000 calc(100% - 22px),transparent 100%);
+  mask-image:linear-gradient(90deg,transparent 0,#000 14px,#000 calc(100% - 22px),transparent 100%)}

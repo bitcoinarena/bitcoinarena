@@ -1,3 +1,5 @@
+import { Q } from './quality.js';
+
 // Central tunables. Everything gameplay-ish that a designer would want to poke
 // lives here so the rest of the modules stay about behaviour, not numbers.
 
@@ -5,15 +7,17 @@ export const WORLD = {
   // X = time (past -> left, now -> right). Z = territory (bull = -Z, bear = +Z).
   width: 260,          // along X
   depth: 170,          // along Z
-  columns: 160,        // terrain segments along X == price history samples
-  rows: 96,            // terrain segments along Z
+  columns: Q.columns,  // terrain segments along X == price history samples
+  rows: Q.rows,        // terrain segments along Z
   halfZ: 62,           // frontline can swing this far either way
   plazaX: -118,        // sorting plaza sits off the "past" end
   depotX: 118,         // block depot / blockchain gate at the "now" end
 };
 
 export const HISTORY = {
-  sampleMs: 220,       // one price sample per terrain column
+  // one sample per terrain column; scaled so the visible window stays ~35s
+  // no matter how coarse the mesh is on a phone
+  sampleMs: Math.round(35000 / Q.columns),
   windowPad: 0.18,     // padding on the auto price window
   emaAlpha: 0.25,      // smooths the raw tick series into a drivable curve
   // Floor on the price window, as a fraction of price. Deliberately tiny: the

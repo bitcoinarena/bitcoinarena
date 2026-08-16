@@ -1,9 +1,10 @@
 import * as THREE from 'three';
 import { WORLD, LANES } from '../config.js';
 import { clamp, lerp, smoothstep, approach } from '../util.js';
+import { Q, props } from '../quality.js';
 import { makeSandbags, makeBarrier, makeWreck, makeMarkerPost, makeWire, makeEngineer } from '../render/geom.js';
 
-const SEG = 120;                    // road segments along X
+const SEG = Q.roadSeg;              // road segments along X
 const HALF_W = 5.2;                 // half road width
 const KERB = 1.1;
 // Distance from a compound's centre to its blast wall / gate opening. Must match
@@ -158,13 +159,13 @@ export class Roads {
   /** Sandbag nests, barriers, wire and burnt-out wrecks lining the routes. */
   _buildProps() {
     const specs = [
-      { geo: makeSandbags(), count: 26, yaw: true },
-      { geo: makeBarrier(), count: 20, yaw: false },
-      { geo: makeWreck(), count: 14, yaw: true },
+      { geo: makeSandbags(), count: props(26), yaw: true },
+      { geo: makeBarrier(), count: props(20), yaw: false },
+      { geo: makeWreck(), count: props(14), yaw: true },
       // frontline clutter: strung along the contested track on both shoulders
-      { geo: makeWire(), count: 30, yaw: false, front: true, spread: [3, 16] },
-      { geo: makeSandbags(), count: 22, yaw: true, front: true, spread: [4, 18] },
-      { geo: makeWreck(), count: 16, yaw: true, front: true, spread: [6, 22] },
+      { geo: makeWire(), count: props(30), yaw: false, front: true, spread: [3, 16] },
+      { geo: makeSandbags(), count: props(22), yaw: true, front: true, spread: [4, 18] },
+      { geo: makeWreck(), count: props(16), yaw: true, front: true, spread: [6, 22] },
     ];
     this.props = [];
     let seed = 991;
@@ -313,7 +314,7 @@ export class Roads {
     this.potholeMesh = new THREE.InstancedMesh(
       new THREE.CylinderGeometry(1, 0.75, 0.34, 8),
       new THREE.MeshStandardMaterial({ color: 0x1a1712, roughness: 1 }),
-      120,
+      props(120),
     );
     this.potholeMesh.frustumCulled = false;
     this.potholeMesh.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 600);
@@ -323,7 +324,7 @@ export class Roads {
     this.engineerMesh = new THREE.InstancedMesh(
       geo,
       new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 0.7 }),
-      36,
+      props(36),
     );
     this.engineerMesh.castShadow = true;
     this.engineerMesh.frustumCulled = false;
@@ -334,7 +335,7 @@ export class Roads {
     this.rubbleMesh = new THREE.InstancedMesh(
       new THREE.BoxGeometry(1, 1, 1),
       new THREE.MeshStandardMaterial({ color: 0x4a4238, roughness: 1, flatShading: true }),
-      90,
+      props(90),
     );
     this.rubbleMesh.frustumCulled = false;
     this.rubbleMesh.castShadow = true;

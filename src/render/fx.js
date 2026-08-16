@@ -1,8 +1,9 @@
 import * as THREE from 'three';
 import { rand, randInt, TAU, clamp } from '../util.js';
+import { Q } from '../quality.js';
 
-const MAX_P = 6000;
-const MAX_TRACER = 900;
+const MAX_P = Q.particles;
+const MAX_TRACER = Q.tracers;
 
 /**
  * Pooled GPU particle system (one draw call), tracer lines for gunfire, and
@@ -27,7 +28,7 @@ export class FX {
    * lines read as static noise; arcs read as a firefight.
    */
   bullet(x, y, z, tx, ty, tz, { color = 0xffe08a, speed = 90, size = 1.1, heavy = false, onHit = null } = {}) {
-    if (this.bullets.length > 260) return;
+    if (this.bullets.length > Q.bullets) return;
     const dx = tx - x, dz = tz - z;
     const dist = Math.hypot(dx, dz) || 1;
     const time = Math.max(0.12, dist / speed);
@@ -82,7 +83,7 @@ export class FX {
     this.rings = [];
     const geo = new THREE.RingGeometry(0.82, 1, 40);
     geo.rotateX(-Math.PI / 2);
-    for (let i = 0; i < 10; i++) {
+    for (let i = 0; i < Q.rings; i++) {
       const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
         color: 0xffd9a0, transparent: true, opacity: 0, side: THREE.DoubleSide,
         depthWrite: false, blending: THREE.AdditiveBlending,
@@ -185,7 +186,7 @@ export class FX {
   _initText() {
     this.texts = [];
     this.textPool = [];
-    for (let i = 0; i < 26; i++) {
+    for (let i = 0; i < Q.texts; i++) {
       const cv = document.createElement('canvas');
       cv.width = 512; cv.height = 128;
       const tex = new THREE.CanvasTexture(cv);

@@ -1,4 +1,5 @@
 import { Game } from './game.js';
+import { Q } from './quality.js';
 
 const canvas = document.getElementById('view');
 const game = new Game(canvas);
@@ -19,6 +20,30 @@ bootStatus();
 document.getElementById('btn-play').onclick = () => game.start(false);
 document.getElementById('btn-spectate').onclick = () => game.start(true);
 
+// ---- adaptive resolution ----------------------------------------------------
+// Geometry counts are fixed at load from the device tier, but a phone can still
+// run hot. Drop render scale first (cheapest big win), then shadows, and give it
+// back once the frame rate recovers.
+const renderer = game.stage.renderer;
+const baseRatio = Math.min(devicePixelRatio, Q.pixelRatio);
+let scale = 1, slow = 0, fast = 0;
+
+function adapt(fps) {
+  if (fps < 24 && scale > 0.6) {
+    if (++slow >= 4) {
+      slow = 0;
+      scale = Math.max(0.6, scale - 0.15);
+      renderer.setPixelRatio(baseRatio * scale);
+      if (scale <= 0.7 && renderer.shadowMap.enabled) {
+        renderer.shadowMap.enabled = false;
+        game.stage.sun.castShadow = false;
+      }
+    }
+  } else if (fps > 52 && scale < 1) {
+    if (++fast >= 10) { fast = 0; scale = Math.min(1, scale + 0.1); renderer.setPixelRatio(baseRatio * scale); }
+  } else { slow = 0; fast = 0; }
+}
+
 // ---- main loop --------------------------------------------------------------
 let last = performance.now();
 let fpsAcc = 0, fpsFrames = 0;
@@ -31,7 +56,12 @@ game.stage.renderer.setAnimationLoop((now) => {
   // Measure fps from the REAL frame time, not the clamped one — otherwise a
   // machine running at 5fps still cheerfully reports 20.
   fpsAcc += real; fpsFrames++;
-  if (fpsAcc > 0.5) { game.setFps(fpsFrames / fpsAcc); fpsAcc = 0; fpsFrames = 0; }
+  if (fpsAcc > 0.5) {
+    const fps = fpsFrames / fpsAcc;
+    game.setFps(fps);
+    adapt(fps);
+    fpsAcc = 0; fpsFrames = 0;
+  }
 
   game.update(dt);
 });

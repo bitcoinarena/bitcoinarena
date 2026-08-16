@@ -113,11 +113,17 @@ export function bindInput(game) {
       return;
     }
 
-    const hit = pickForgiving(e);
+    // fingers are blunter than a mouse pointer
+    const hit = pickForgiving(e, e.pointerType === 'touch' ? 44 : 26);
     if (!hit) { if (!e.shiftKey) game.logistics.selected.clear(); return; }
     if (hit.type === 'package') {
       if (!e.shiftKey && !game.logistics.selected.has(hit.p)) game.logistics.selected.clear();
       game.togglePackage(hit.p);
+      if (e.pointerType === 'touch') {
+        game.ui.packageTooltip(hit.p, e.clientX, e.clientY);
+        clearTimeout(game.ui._tipTimer);
+        game.ui._tipTimer = setTimeout(() => game.ui.hideTooltip(), 2600);
+      }
     } else if (hit.type === 'truck') {
       game.selectTruck(hit.t.id);
     }
@@ -198,22 +204,41 @@ export function bindInput(game) {
 
   /* -------------------------------------------------------------- touch */
 
-  let touchStart = null;
+  // NOTE: there are deliberately no touchstart/touchend tap handlers here.
+  // Touch already produces pointer events, so a separate touch path fires the
+  // selection twice — the package would be selected and immediately
+  // deselected. Taps go through the pointer handlers above, which widen their
+  // pick tolerance for touch.
+
+  // Pinch to dolly the free camera in or out.
+  let pinch = 0;
   dom.addEventListener('touchstart', (e) => {
-    if (e.touches.length === 1) touchStart = { x: e.touches[0].clientX, y: e.touches[0].clientY, t: performance.now() };
-  }, { passive: true });
-  dom.addEventListener('touchend', (e) => {
-    if (!touchStart) return;
-    const dt = performance.now() - touchStart.t;
-    const ch = e.changedTouches[0];
-    const moved = Math.hypot(ch.clientX - touchStart.x, ch.clientY - touchStart.y);
-    if (dt < 400 && moved < 14) {
-      const hit = pickForgiving({ clientX: ch.clientX, clientY: ch.clientY }, 40);
-      if (hit?.type === 'package') { game.togglePackage(hit.p); game.ui.packageTooltip(hit.p, ch.clientX, ch.clientY); setTimeout(() => game.ui.hideTooltip(), 2600); }
-      else if (hit?.type === 'truck') game.selectTruck(hit.t.id);
+    if (e.touches.length === 2) {
+      pinch = Math.hypot(
+        e.touches[0].clientX - e.touches[1].clientX,
+        e.touches[0].clientY - e.touches[1].clientY,
+      );
     }
-    touchStart = null;
   }, { passive: true });
+
+  dom.addEventListener('touchmove', (e) => {
+    if (e.touches.length !== 2 || !pinch) return;
+    const d = Math.hypot(
+      e.touches[0].clientX - e.touches[1].clientX,
+      e.touches[0].clientY - e.touches[1].clientY,
+    );
+    const f = game.stage._free;
+    if (game.stage.mode === 'free' && f) {
+      const fwd = new THREE.Vector3(
+        -Math.sin(f.yaw) * Math.cos(f.pitch), Math.sin(f.pitch), -Math.cos(f.yaw) * Math.cos(f.pitch),
+      );
+      f.pos.addScaledVector(fwd, (d - pinch) * 0.6);
+      f.pos.y = clamp(f.pos.y, 3, 420);
+    }
+    pinch = d;
+  }, { passive: true });
+
+  dom.addEventListener('touchend', () => { pinch = 0; }, { passive: true });
 
   /* ------------------------------------------------------- HUD buttons */
 

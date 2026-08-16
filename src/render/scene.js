@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { WORLD, CAMERAS } from '../config.js';
+import { Q } from '../quality.js';
 import { clamp, lerp, approach, rand, TAU } from '../util.js';
 
 /**
@@ -10,11 +11,11 @@ import { clamp, lerp, approach, rand, TAU } from '../util.js';
 export class Stage {
   constructor(canvas) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
-    this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    this.renderer.setPixelRatio(Math.min(devicePixelRatio, Q.pixelRatio));
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.05;
-    this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.enabled = Q.shadows;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
     this.scene = new THREE.Scene();
@@ -70,7 +71,7 @@ export class Stage {
     this.scene.add(this.sky);
 
     // Star/ember field that doubles as "market particles".
-    const N = 1400;
+    const N = Q.mobile ? 500 : 1400;
     const pos = new Float32Array(N * 3);
     for (let i = 0; i < N; i++) {
       const r = rand(220, 780), a = rand(TAU), y = rand(30, 420);
@@ -90,8 +91,8 @@ export class Stage {
 
     this.sun = new THREE.DirectionalLight(0xffd9a8, 2.0);
     this.sun.position.set(-120, 190, 90);
-    this.sun.castShadow = true;
-    this.sun.shadow.mapSize.set(2048, 2048);
+    this.sun.castShadow = Q.shadows;
+    this.sun.shadow.mapSize.set(Q.shadowSize, Q.shadowSize);
     const c = this.sun.shadow.camera;
     c.left = -180; c.right = 180; c.top = 140; c.bottom = -140; c.near = 20; c.far = 520;
     this.scene.add(this.sun);
@@ -106,6 +107,14 @@ export class Stage {
     const w = innerWidth, h = innerHeight;
     this.renderer.setSize(w, h, false);
     this.camera.aspect = w / h;
+
+    // A phone held upright is a tall, narrow window onto a very wide map.
+    // Dollying back just shrinks everything and adds more empty sky, so instead
+    // the wide shots swing round to look ALONG the map's length (see _camera),
+    // which puts the long axis up the long axis of the screen. The lens only
+    // widens a little to take up the slack.
+    this.portrait = this.camera.aspect < 0.95;
+    this.camera.fov = clamp(58 * (1 + Math.max(0, 1.3 / Math.max(0.35, this.camera.aspect) - 1) * 0.22), 58, 70);
     this.camera.updateProjectionMatrix();
   }
 
@@ -175,8 +184,15 @@ export class Stage {
 
     switch (this.mode) {
       case 'god':
-        pos.set(0, 250, 130);
-        look.set(0, 0, 0);
+        if (this.portrait) {
+          // down the length of the battlefield: plaza in the foreground,
+          // the Blockchain Gate at the far end
+          pos.set(-WORLD.width * 0.66, 138, 6);
+          look.set(WORLD.width * 0.22, 0, 0);
+        } else {
+          pos.set(0, 250, 130);
+          look.set(0, 0, 0);
+        }
         snap = 2.2;
         break;
 
@@ -216,8 +232,13 @@ export class Stage {
         const fz = ctx.frontlineAt ? ctx.frontlineAt(0) : 0;
         switch (this._cineShot) {
           case 0:  // slow crane over the frontline
-            pos.set(Math.sin(t * 0.06) * 150, 78 + Math.sin(t * 0.13) * 12, fz + 120);
-            look.set(0, 6, fz);
+            if (this.portrait) {
+              pos.set(-150, 74 + Math.sin(t * 0.13) * 10, fz + Math.sin(t * 0.06) * 44);
+              look.set(70, 6, fz);
+            } else {
+              pos.set(Math.sin(t * 0.06) * 150, 78 + Math.sin(t * 0.13) * 12, fz + 120);
+              look.set(0, 6, fz);
+            }
             break;
           case 1:  // low pass along the trench
             pos.set(-120 + ((t * 14) % 260), 16, fz - 34);

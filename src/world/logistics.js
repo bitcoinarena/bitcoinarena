@@ -2,8 +2,9 @@ import * as THREE from 'three';
 import { WORLD, LANES, FEE, TRUCKS } from '../config.js';
 import { clamp, lerp, rand, hash01, TAU, approach, angleApproach, pick } from '../util.js';
 import { makeTruckBody, makeTruckWheel } from '../render/geom.js';
+import { Q } from '../quality.js';
 
-const MAX_PKG = 170;
+const MAX_PKG = Q.packages;
 
 /** Tier of a package relative to what the next block is currently paying. */
 export function feeTier(feeRate, baseline = 1) {
