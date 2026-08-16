@@ -155,10 +155,12 @@ export class MarketFeed extends Emitter {
     if (!o) return;
     const price = parseFloat(o.ap || o.p);
     const qty = parseFloat(o.q);
+    const symbol = o.s || 'BTCUSDT';
+    if (!symbol.startsWith('BTC')) return;      // this is a Bitcoin war
     const usd = price * qty;
     this.lastLiqAt = performance.now();
     // side SELL = a long got liquidated (bulls take the hit) and vice versa.
-    this._pushLiq({ symbol: o.s || 'BTCUSDT', side: o.S === 'SELL' ? 'long' : 'short', price, qty, usd, real: true });
+    this._pushLiq({ symbol, side: o.S === 'SELL' ? 'long' : 'short', price, qty, usd, real: true });
   }
 
   /**
@@ -198,7 +200,7 @@ export class MarketFeed extends Emitter {
    * liquidation feed stays silent for minutes.
    */
   update(dt) {
-    if (SIM.liquidations && !this.liqFresh) this._simLiquidations(dt);
+    if (SIM.liquidations && !this.liqFresh) this._simLiquidations(dt);   // toggled from the HUD
     if (this.fresh) return;
     // Mean-reverting random walk with momentum bursts, so the terrain still
     // looks like a chart rather than white noise.
@@ -247,7 +249,7 @@ export class MarketFeed extends Emitter {
       const side = this._simVel < 0 || Math.random() < 0.5 ? 'long' : 'short';
       const usd = Math.pow(Math.random(), 3.2) * 4_000_000 + 8000;
       this._pushLiq({
-        symbol: pick(['BTCUSDT', 'BTCUSDT', 'BTCUSDT', 'ETHUSDT', 'SOLUSDT']),
+        symbol: 'BTCUSDT',
         side,
         price: this.price * (1 + rand(-0.004, 0.004)),
         qty: usd / this.price,

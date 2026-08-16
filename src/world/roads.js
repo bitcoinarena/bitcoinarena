@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { WORLD, LANES } from '../config.js';
-import { clamp, lerp, smoothstep } from '../util.js';
-import { makeSandbags, makeBarrier, makeWreck, makeMarkerPost, makeWire } from '../render/geom.js';
+import { clamp, lerp, smoothstep, approach } from '../util.js';
+import { makeSandbags, makeBarrier, makeWreck, makeMarkerPost, makeWire, makeEngineer } from '../render/geom.js';
 
 const SEG = 120;                    // road segments along X
 const HALF_W = 5.2;                 // half road width
@@ -9,6 +9,8 @@ const KERB = 1.1;
 // Distance from a compound's centre to its blast wall / gate opening. Must match
 // the perimeter walls built in logistics.js.
 export const GATE_X = 34;
+// How long a cut section stays impassable while engineers work it.
+const DAMAGE_SEC = 150;
 
 /* ----------------------------------------------------------- centrelines */
 
@@ -30,14 +32,18 @@ export function laneBaseZ(lane, x) {
  * and converge again on the Blockchain Gate.
  */
 export class Roads {
-  constructor(scene, bf) {
+  constructor(scene, bf, fx) {
     this.scene = scene;
     this.bf = bf;
+    this.fx = fx;
     this.lanes = ['bull', 'front', 'bear'];
     this.meshes = {};
+    this.highlight = null;
+    this.time = 0;
     this._acc = 0;
     for (const lane of this.lanes) this._build(lane);
     this._buildProps();
+    this._buildRepair();
   }
 
   /**
@@ -184,7 +190,151 @@ export class Roads {
     }
   }
 
+  /* -------------------------------------------------------- road damage */
+
+  /**
+   * A strike landing on or near a route cuts it. The span stays impassable for
+   * a couple of minutes while an engineer section from the owning faction works
+   * it back into shape.
+   */
+  damageAt(x, z, radius) {
+    for (const lane of this.lanes) {
+      const cz = this.centerZ(lane, x);
+      if (Math.abs(cz - z) > radius + HALF_W) continue;
+      const span = Math.max(10, radius * 0.9);
+      const existing = this.damage.find((d) => d.lane === lane && Math.abs(d.x - x) < span);
+      if (existing) { existing.t = Math.max(existing.t, DAMAGE_SEC); continue; }
+      const owner = cz < this.bf.frontlineAt(x) ? 'bull' : 'bear';
+      this.damage.push({ lane, x, span, t: DAMAGE_SEC, total: DAMAGE_SEC, owner });
+      if (this.damage.length > 6) this.damage.shift();
+    }
+  }
+
+  /** Is this point on a cut section? Trucks crawl through the rubble. */
+  damageFactor(lane, x) {
+    for (const d of this.damage) {
+      if (d.lane !== lane) continue;
+      if (Math.abs(d.x - x) < d.span) return 1 - Math.abs(d.x - x) / d.span;
+    }
+    return 0;
+  }
+
+  isDamaged(lane) { return this.damage.some((d) => d.lane === lane); }
+
+  /** Seconds until this lane is fully repaired (0 if clear). */
+  repairEta(lane) {
+    let t = 0;
+    for (const d of this.damage) if (d.lane === lane) t = Math.max(t, d.t);
+    return t;
+  }
+
+  _buildRepair() {
+    this.damage = [];
+    const geo = makeEngineer();
+    this.engineerMesh = new THREE.InstancedMesh(
+      geo,
+      new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 0.7 }),
+      36,
+    );
+    this.engineerMesh.castShadow = true;
+    this.engineerMesh.frustumCulled = false;
+    this.engineerMesh.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 600);
+    this.engineerMesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(36 * 3), 3);
+    this.scene.add(this.engineerMesh);
+
+    this.rubbleMesh = new THREE.InstancedMesh(
+      new THREE.BoxGeometry(1, 1, 1),
+      new THREE.MeshStandardMaterial({ color: 0x4a4238, roughness: 1, flatShading: true }),
+      90,
+    );
+    this.rubbleMesh.frustumCulled = false;
+    this.rubbleMesh.castShadow = true;
+    this.rubbleMesh.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 600);
+    this.scene.add(this.rubbleMesh);
+  }
+
+  _updateRepair(dt, fx) {
+    const d = this._propDummy || (this._propDummy = new THREE.Object3D());
+    const col = new THREE.Color();
+    let ei = 0, ri = 0;
+    this.time = (this.time || 0) + dt;
+
+    for (let k = this.damage.length - 1; k >= 0; k--) {
+      const dm = this.damage[k];
+      dm.t -= dt;
+      if (dm.t <= 0) { this.damage.splice(k, 1); continue; }
+
+      const progress = 1 - dm.t / dm.total;
+      // rubble strewn across the cut, cleared from the outside in
+      for (let n = 0; n < 15 && ri < this.rubbleMesh.count; n++) {
+        const f = (n / 15) * 2 - 1;
+        if (Math.abs(f) < progress * 0.9) continue;          // this bit is cleared
+        const x = dm.x + f * dm.span;
+        const z = this.centerZ(dm.lane, x) + Math.sin(n * 2.7) * HALF_W * 0.7;
+        d.position.set(x, this.bf.surfaceAt(x, z) + 0.3, z);
+        d.rotation.set(Math.sin(n) * 0.4, n * 1.1, Math.cos(n) * 0.3);
+        d.scale.set(1.4 + (n % 3) * 0.7, 0.8 + (n % 2) * 0.6, 1.2 + (n % 4) * 0.5);
+        d.updateMatrix();
+        this.rubbleMesh.setMatrixAt(ri++, d.matrix);
+      }
+
+      // engineer section working the cut
+      col.setHex(dm.owner === 'bull' ? 0x9effc4 : 0xffb0b8);
+      for (let n = 0; n < 6 && ei < this.engineerMesh.count; n++) {
+        const along = (n / 5 - 0.5) * dm.span * 1.3 * (1 - progress * 0.5);
+        const x = dm.x + along;
+        const z = this.centerZ(dm.lane, x) + Math.sin(n * 1.9 + this.time * 0.6) * 3;
+        const swing = Math.sin(this.time * 5 + n * 1.3);
+        d.position.set(x, this.bf.surfaceAt(x, z) + Math.abs(swing) * 0.12, z);
+        d.rotation.set(swing * 0.16, Math.sin(n * 2.1) * 2.4, 0);
+        d.scale.setScalar(1);
+        d.updateMatrix();
+        this.engineerMesh.setMatrixAt(ei, d.matrix);
+        this.engineerMesh.setColorAt(ei, col);
+        ei++;
+        if (fx && Math.random() < dt * 2.5) {
+          fx.spawn(x, this.bf.surfaceAt(x, z) + 1.6, z, {
+            color: 0xffd08a, count: 2, size: 1.1, life: 0.5, speed: 4, gravity: -12,
+          });
+        }
+      }
+    }
+
+    const hide = (mesh, from) => {
+      d.position.set(0, -900, 0); d.scale.setScalar(0.001); d.updateMatrix();
+      for (let i = from; i < mesh.count; i++) mesh.setMatrixAt(i, d.matrix);
+      mesh.instanceMatrix.needsUpdate = true;
+    };
+    hide(this.engineerMesh, ei);
+    hide(this.rubbleMesh, ri);
+    if (this.engineerMesh.instanceColor) this.engineerMesh.instanceColor.needsUpdate = true;
+  }
+
+  /* ------------------------------------------------------------ highlight */
+
+  /** Light up the route the player has selected so the choice is visible. */
+  setHighlight(lane) { this.highlight = lane; }
+
+  _updateHighlight(dt) {
+    const pulse = 0.5 + Math.sin((this.time || 0) * 3.2) * 0.5;
+    for (const lane of this.lanes) {
+      const m = this.meshes[lane];
+      const on = lane === this.highlight;
+      const target = on ? 0.35 + pulse * 0.45 : 0;
+      m.glow = approach(m.glow ?? 0, target, 6, dt);
+      for (const part of [m.kerbL, m.kerbR]) {
+        part.mesh.material.emissive.setHex(0xffd447);
+        part.mesh.material.emissiveIntensity = m.glow;
+      }
+      m.surface.mesh.material.emissive.setHex(0xffb03a);
+      m.surface.mesh.material.emissiveIntensity = m.glow * 0.28;
+      if (m.dashes.material.emissive) m.dashes.material.emissiveIntensity = 0.35 + m.glow * 1.2;
+    }
+  }
+
   update(dt) {
+    this._updateRepair(dt, this.fx);
+    this._updateHighlight(dt);
     this._acc += dt;
     const full = this._acc > 1 / 20;
     if (full) this._acc = 0;

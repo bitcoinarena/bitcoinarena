@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { WORLD, HISTORY } from '../config.js';
 import { Ring, clamp, lerp, rand, randInt, approach, angleDelta, angleApproach, TAU } from '../util.js';
 import { Roads } from './roads.js';
-import { makeSoldierBody, makeSoldierLeg, makeTankHull, makeTankTurret, makeBomber, makeBomb, HIP_Y, TURRET_Y } from '../render/geom.js';
+import { makeSoldierBody, makeSoldierLeg, makeTankHull, makeTankTurret, makeBomber, makeBomb, makeHelicopter, HIP_Y, TURRET_Y } from '../render/geom.js';
 
 const COLS = WORLD.columns, ROWS = WORLD.rows;
 const VW = COLS + 1, VH = ROWS + 1;
@@ -54,6 +54,8 @@ export class Battlefield {
     this.incoming = [];        // bombers currently running a strike
     this.markers = [];         // fading columns of embers at liquidated price levels
     this.mushrooms = [];       // nuke clouds still rising
+    this.claims = [];          // ground seized by a strike, held only while troops stay
+    this.helis = [];           // gunships on station
     this.audio = null;         // set by game.js
 
     this._buildTerrain();
@@ -62,7 +64,8 @@ export class Battlefield {
     this._buildOrderBook();
     this._buildBackdrop();
     this._buildAircraft();
-    this.roads = new Roads(scene, this);
+    this._buildHelis();
+    this.roads = new Roads(scene, this, fx);
   }
 
   /** Centreline of a route — the trucks drive on the visible road surface. */
@@ -173,6 +176,60 @@ export class Battlefield {
     const mid = (this.priceHi + this.priceLo) / 2;
     const span = Math.max(1e-6, this.priceHi - this.priceLo);
     return mid + (z / (2 * WORLD.halfZ)) * span;
+  }
+
+  /**
+   * Ground taken by a strike. The blast alone doesn't win anything — the claim
+   * only consolidates while the attacking side has troops standing in it, and
+   * bleeds away as soon as they're driven off or killed.
+   */
+  claimGround(x, z, r, side) {
+    const existing = this.claims.find((c) => c.side === side && (c.x - x) ** 2 + (c.z - z) ** 2 < (c.r * 0.7) ** 2);
+    if (existing) {
+      existing.r = Math.max(existing.r, r);
+      existing.hold = Math.min(1, existing.hold + 0.4);
+      return existing;
+    }
+    const claim = { x, z, r, side, hold: 0.25 };
+    this.claims.push(claim);
+    if (this.claims.length > 10) {
+      let weakest = 0;
+      for (let i = 1; i < this.claims.length; i++) if (this.claims[i].hold < this.claims[weakest].hold) weakest = i;
+      this.claims.splice(weakest, 1);
+    }
+    return claim;
+  }
+
+  _updateClaims(dt) {
+    for (let i = this.claims.length - 1; i >= 0; i--) {
+      const c = this.claims[i];
+      let friend = 0, foe = 0;
+      const r2 = (c.r * 1.15) ** 2;
+      for (const side of ['bull', 'bear']) {
+        const mine = side === c.side;
+        for (const u of this.sides[side].units) {
+          if (!u.active) continue;
+          if ((u.x - c.x) ** 2 + (u.z - c.z) ** 2 < r2) mine ? friend++ : foe++;
+        }
+        for (const v of this.sides[side].vehicles) {
+          if (!v.active) continue;
+          if ((v.x - c.x) ** 2 + (v.z - c.z) ** 2 < r2) mine ? friend += 4 : (foe += 4);
+        }
+      }
+      // held while your side owns the ground, contested away otherwise
+      const pressure = friend > foe ? 0.16 : -0.11 - Math.min(0.3, foe * 0.02);
+      c.hold = clamp(c.hold + pressure * dt, 0, 1);
+      if (c.hold <= 0.001) this.claims.splice(i, 1);
+    }
+  }
+
+  /** Which side effectively owns (x,z) — territory, overridden by any claim. */
+  ownerAt(x, z) {
+    for (const c of this.claims) {
+      if (c.hold < 0.25) continue;
+      if ((x - c.x) ** 2 + (z - c.z) ** 2 < c.r * c.r) return c.side;
+    }
+    return z < this.frontlineAt(x) ? 'bull' : 'bear';
   }
 
   /** Frontline z at a world x (interpolated between columns). */
@@ -457,6 +514,8 @@ export class Battlefield {
     this._updateBook();
     this._updateStrikes(dt);
     this._updateMushrooms(dt);
+    this._updateClaims(dt);
+    this._updateHelis(dt, ctx);
     this._updateUnits(dt, ctx);
     this.roads.update(dt);
   }
@@ -491,6 +550,22 @@ export class Battlefield {
         g = lerp(g, hotC.g, heat * 0.9);
         b = lerp(b, hotC.b, heat * 0.9);
         if (d < 0) g += bias * 0.05; else r -= bias * 0.05;
+        // ground seized by a strike flies the attacker's colours while held
+        if (this.claims.length) {
+          const vx = arr[i3];
+          for (let k = 0; k < this.claims.length; k++) {
+            const cl = this.claims[k];
+            const dcx = vx - cl.x, dcz = z - cl.z;
+            const dd = dcx * dcx + dcz * dcz;
+            if (dd > cl.r * cl.r) continue;
+            const edge = 1 - Math.sqrt(dd) / cl.r;
+            const t = clamp(edge * 2.2, 0, 1) * cl.hold;
+            const own2 = cl.side === 'bull' ? bullC : bearC;
+            r = lerp(r, own2.r * (0.9 + grip * 0.4), t);
+            g = lerp(g, own2.g * (0.9 + grip * 0.4), t);
+            b = lerp(b, own2.b * (0.9 + grip * 0.4), t);
+          }
+        }
         const rear = clamp((Math.abs(arr[i3]) - REAR_X) / 26, 0, 1);
         if (rear > 0) {
           const k = rear * rear * (3 - 2 * rear);
@@ -896,6 +971,11 @@ export class Battlefield {
       });
     }
 
+    // The blast takes ground for whoever called it in — but only if their
+    // troops are close enough to actually hold it (see _updateClaims).
+    this.claimGround(x, z, nuke ? 22 + power * 8 : 10 + power * 5, side === 'long' ? 'bear' : 'bull');
+    this.roads.damageAt(x, z, nuke ? 26 + power * 8 : 12 + power * 4);
+
     // A column of light left standing at the price level that got wrecked.
     this.markers.push({ x, z, power, side, life: 1 });
     if (this.markers.length > 14) this.markers.shift();
@@ -916,6 +996,120 @@ export class Battlefield {
       }
     }
     m.onImpact?.({ x, y, z, power, nuke });
+  }
+
+  /* --------------------------------------------------------- helicopters */
+
+  _buildHelis() {
+    this.heliPool = [];
+    for (let i = 0; i < 4; i++) {
+      const obj = makeHelicopter(i % 2 ? 0x6f7a68 : 0x74707c);
+      obj.visible = false;
+      this.scene.add(obj);
+      this.heliPool.push({ obj, busy: false });
+    }
+  }
+
+  /**
+   * Gunship run: comes in low from its own rear, sweeps the length of the enemy
+   * front rocketing whatever it passes, then wheels away. Sits between armour
+   * and a bomber on the escalation ladder.
+   */
+  heliStrike(side, power = 1) {
+    const slot = this.heliPool.find((h) => !h.busy);
+    if (!slot) return false;
+    slot.busy = true;
+    slot.obj.visible = true;
+
+    const dir = Math.random() < 0.5 ? 1 : -1;
+    const sign = side === 'bull' ? -1 : 1;          // which side it launches from
+    this.helis.push({
+      slot, side, dir, power,
+      x: dir > 0 ? -WORLD.width / 2 - 40 : WORLD.width / 2 + 40,
+      z: this.frontlineAt(0) + sign * rand(34, 52),
+      y: 34,
+      yaw: dir > 0 ? 0 : Math.PI,
+      bank: 0, t: 0, fire: rand(0.4, 1.2),
+      engine: this.audio?.engine?.() ?? null,
+    });
+    return true;
+  }
+
+  _updateHelis(dt, ctx) {
+    const sign = (s) => (s === 'bull' ? -1 : 1);
+    for (let i = this.helis.length - 1; i >= 0; i--) {
+      const h = this.helis[i];
+      h.t += dt;
+
+      // run the length of the front, standing off on our own side of it
+      const speed = 34 + h.power * 6;
+      const px = h.x, pz = h.z;
+      h.x += h.dir * speed * dt;
+      const wantZ = this.frontlineAt(h.x) + sign(h.side) * (26 + Math.sin(h.t * 0.6) * 9);
+      h.z += clamp(wantZ - h.z, -speed * dt * 1.6, speed * dt * 1.6);
+      const wantY = this.surfaceAt(h.x, h.z) + 22 + Math.sin(h.t * 0.9) * 3;
+      h.y = approach(h.y, wantY, 2, dt);
+
+      // nose follows travel, and it banks in proportion to how hard it is turning
+      const vx = h.x - px, vz = h.z - pz;
+      if (Math.hypot(vx, vz) > 1e-4) {
+        const want = Math.atan2(vx, vz);
+        const turn = angleDelta(h.yaw, want);
+        h.yaw = angleApproach(h.yaw, want, 3, dt);
+        h.bank = approach(h.bank, clamp(turn * 4.5, -0.8, 0.8), 3.5, dt);
+      }
+
+      const o = h.slot.obj;
+      o.position.set(h.x, h.y, h.z);
+      // model noses along +X, so yaw is offset by a quarter turn
+      o.rotation.set(0, h.yaw - Math.PI / 2, h.bank);
+      o.userData.mainRotor.rotation.y += dt * 44;
+      o.userData.tailRotor.rotation.x += dt * 60;
+      h.engine?.set(clamp(1.2 - Math.abs(h.x) / 200, 0.15, 1), 1.5);
+
+      // rocket the nearest enemy it passes
+      h.fire -= dt;
+      if (h.fire <= 0 && Math.abs(h.x) < WORLD.width / 2 - 10) {
+        h.fire = rand(0.35, 0.9) / h.power;
+        const foeSide = h.side === 'bull' ? 'bear' : 'bull';
+        let best = null, bestD = 70 * 70;
+        for (const v of this.sides[foeSide].vehicles) {
+          if (!v.active) continue;
+          const d2 = (v.x - h.x) ** 2 + (v.z - h.z) ** 2;
+          if (d2 < bestD) { bestD = d2; best = v; }
+        }
+        if (!best) {
+          for (const u of this.sides[foeSide].units) {
+            if (!u.active) continue;
+            const d2 = (u.x - h.x) ** 2 + (u.z - h.z) ** 2;
+            if (d2 < bestD) { bestD = d2; best = u; }
+          }
+        }
+        if (best) {
+          const col = h.side === 'bull' ? 0xd6ffe2 : 0xffd6da;
+          this.fx.bullet(h.x, h.y - 0.6, h.z, best.x, this.surfaceAt(best.x, best.z) + 1, best.z, {
+            color: col, speed: 95, size: 1.9, heavy: true,
+            onHit: (hx, hy, hz) => {
+              this.fx.explosion(hx, hy + 0.4, hz, 0.45, 0xffa33a);
+              this.claimGround(hx, hz, 11, h.side);
+              if (best.vehicle) {
+                best.hp -= rand(1.2, 2.2);
+                if (best.hp <= 0) this._destroyVehicle(best);
+              } else if (best.active) this._kill(best, best.side);
+            },
+          });
+          this.fx.muzzle(h.x, h.y - 0.6, h.z, Math.sin(h.yaw), Math.cos(h.yaw), 1.1);
+          ctx?.onCannon?.(h.x, h.z);
+        }
+      }
+
+      if (Math.abs(h.x) > WORLD.width / 2 + 60 || h.t > 40) {
+        h.engine?.stop();
+        h.slot.obj.visible = false;
+        h.slot.busy = false;
+        this.helis.splice(i, 1);
+      }
+    }
   }
 
   /** Rising stem, then the cap — a mushroom cloud over a nuked price level. */

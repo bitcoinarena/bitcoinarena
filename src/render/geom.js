@@ -57,7 +57,8 @@ export function mergeParts(parts) {
 }
 
 const box = (w, h, d) => new THREE.BoxGeometry(w, h, d);
-const cyl = (r1, r2, h, seg = 8) => new THREE.CylinderGeometry(r1, r2, h, seg);
+const cyl = (r1, r2, h, seg = 8, hSeg = 1, open = false, start = 0, len = Math.PI * 2) =>
+  new THREE.CylinderGeometry(r1, r2, h, seg, hSeg, open, start, len);
 
 /* --------------------------------------------------------------- soldier */
 
@@ -214,6 +215,155 @@ export function makeBarrier() {
     { geo: box(3.0, 0.28, 0.5), m: xf(0, 0.62, 0), color: 0xd8dde5 },
     { geo: box(0.28, 1.3, 0.28), m: xf(-1.3, 0.65, 0), color: 0x6d7480 },
     { geo: box(0.28, 1.3, 0.28), m: xf(1.3, 0.65, 0), color: 0x6d7480 },
+  ]);
+}
+
+/* ----------------------------------------------------------------- truck */
+
+/**
+ * Armoured mail truck. Built from tapered and rotated forms rather than stacked
+ * cubes — raked windscreen, curved cargo roof, wheel arches, bumper, mirrors,
+ * exhaust — so it reads as a vehicle rather than a pile of boxes. Nose faces +X.
+ */
+export function makeTruckBody(spec) {
+  const s = spec.capacity > 8000 ? 1.3 : spec.capacity > 5000 ? 1.12 : spec.id === 'express' ? 0.94 : 1;
+  const SHELL = 0xffffff, TRIM = 0xf0a83c, GLASS = 0x1b2836, DARK = 0x23272e;
+  const STEEL = 0x8a93a2, LIGHT = 0xfff2c4, RED = 0xd8452f;
+  const P = [];
+  const add = (geo, m, color) => P.push({ geo, m, color });
+
+  // chassis rails + fuel tank
+  add(box(15 * s, 0.5 * s, 0.55 * s), xf(-0.4 * s, 1.5 * s, 1.55 * s), DARK);
+  add(box(15 * s, 0.5 * s, 0.55 * s), xf(-0.4 * s, 1.5 * s, -1.55 * s), DARK);
+  add(cyl(0.62 * s, 0.62 * s, 2.4 * s, 10), xf(-1.2 * s, 1.5 * s, 2.1 * s, 0, 0, Math.PI / 2), STEEL);
+
+  // cargo body: flat sides, curved roof
+  add(box(8.6 * s, 4.4 * s, 5 * s), xf(-2.2 * s, 4.3 * s, 0), SHELL);
+  add(cyl(2.5 * s, 2.5 * s, 8.6 * s, 14, 1, false, 0, Math.PI), xf(-2.2 * s, 6.4 * s, 0, 0, 0, Math.PI / 2), SHELL);
+  add(box(8.7 * s, 0.9 * s, 5.1 * s), xf(-2.2 * s, 3.1 * s, 0), TRIM);          // livery band
+  add(box(0.35 * s, 3.4 * s, 4.7 * s), xf(-6.6 * s, 4.2 * s, 0), DARK);          // rear door
+  add(box(0.5 * s, 0.6 * s, 5.2 * s), xf(-6.8 * s, 2.1 * s, 0), STEEL);          // rear bumper
+  for (const z of [-1.6, 1.6]) add(box(0.2 * s, 0.5 * s, 0.5 * s), xf(-6.9 * s, 2.9 * s, z * s), RED);
+
+  // cab: tapered nose, raked screen, roof fairing
+  add(box(3.9 * s, 3.2 * s, 4.7 * s), xf(4.1 * s, 3.7 * s, 0), SHELL);
+  add(box(1.7 * s, 2.0 * s, 4.6 * s), xf(6.4 * s, 2.9 * s, 0, 0, 0, -0.22), SHELL);   // sloped nose
+  add(box(0.4 * s, 2.1 * s, 4.3 * s), xf(5.9 * s, 4.6 * s, 0, 0, 0, -0.42), GLASS);   // windscreen
+  for (const z of [-2.4, 2.4]) add(box(3.4 * s, 1.5 * s, 0.18 * s), xf(4.1 * s, 4.2 * s, z * s), GLASS);
+  add(cyl(1.5 * s, 1.5 * s, 4.6 * s, 12, 1, false, 0, Math.PI), xf(4.2 * s, 5.3 * s, 0, 0, 0, Math.PI / 2), TRIM);
+
+  // bumper, grille, lights
+  add(box(0.7 * s, 0.8 * s, 5.1 * s), xf(7.2 * s, 2.1 * s, 0), STEEL);
+  add(box(0.3 * s, 1.0 * s, 3.4 * s), xf(7.15 * s, 3.1 * s, 0), DARK);
+  for (const z of [-1.8, 1.8]) {
+    add(cyl(0.42 * s, 0.42 * s, 0.3 * s, 10), xf(7.3 * s, 3.2 * s, z * s, 0, 0, Math.PI / 2), LIGHT);
+  }
+  // mirrors + exhaust + horn
+  for (const z of [-2.7, 2.7]) {
+    add(box(0.12 * s, 0.9 * s, 0.12 * s), xf(5.6 * s, 5.1 * s, z * s), DARK);
+    add(box(0.16 * s, 0.75 * s, 0.5 * s), xf(5.6 * s, 5.6 * s, z * s), DARK);
+  }
+  add(cyl(0.26 * s, 0.24 * s, 4.2 * s, 8), xf(2.0 * s, 5.2 * s, -2.55 * s), STEEL);
+  add(cyl(0.3 * s, 0.3 * s, 0.8 * s, 8), xf(3.2 * s, 6.6 * s, 2.3 * s, 0, 0, Math.PI / 2), TRIM);
+
+  // wheel arches
+  for (const [wx, wz] of [[4.2, 2.6], [4.2, -2.6], [-3.6, 2.6], [-3.6, -2.6]]) {
+    add(cyl(1.95 * s, 1.95 * s, 0.5 * s, 12, 1, false, 0, Math.PI),
+      xf(wx * s, 1.55 * s, wz * s, 0, 0, Math.PI / 2), SHELL);
+  }
+
+  if (spec.armor >= 1.6) {
+    add(box(0.6 * s, 2.6 * s, 5.2 * s), xf(7.5 * s, 3.3 * s, 0, 0, 0, -0.12), STEEL);
+    for (const z of [-2.2, 2.2]) add(box(7.0 * s, 1.8 * s, 0.3 * s), xf(-1.5 * s, 2.6 * s, z * s), STEEL);
+  }
+  if (spec.id === 'express') {
+    add(cyl(0.9 * s, 0.05, 2.6 * s, 4), xf(-2.2 * s, 8.4 * s, 0), 0x7ee0ff);
+  }
+  return mergeParts(P);
+}
+
+/** Wheel: tyre plus hub, axis along Z so it spins about its own axle. */
+export function makeTruckWheel(scale = 1) {
+  const t = cyl(1.5 * scale, 1.5 * scale, 1.15 * scale, 14);
+  const parts = [
+    { geo: t, m: xf(0, 0, 0, Math.PI / 2, 0, 0), color: 0x14171c },
+    { geo: cyl(0.85 * scale, 0.85 * scale, 1.2 * scale, 10), m: xf(0, 0, 0, Math.PI / 2, 0, 0), color: 0x9aa2ad },
+    { geo: box(0.28 * scale, 2.4 * scale, 0.3 * scale), m: xf(0, 0, 0), color: 0xc8ced6 },
+    { geo: box(2.4 * scale, 0.28 * scale, 0.3 * scale), m: xf(0, 0, 0), color: 0xc8ced6 },
+  ];
+  return mergeParts(parts);
+}
+
+/* ------------------------------------------------------------ helicopter */
+
+/**
+ * Gunship. Returned as a Group so the rotors can spin and the airframe can bank.
+ * Nose faces +X. userData holds { mainRotor, tailRotor }.
+ */
+export function makeHelicopter(tint = 0x6f7a68) {
+  const g = new THREE.Group();
+  const body = new THREE.MeshStandardMaterial({ color: tint, roughness: 0.6, metalness: 0.4, flatShading: true });
+  const dark = new THREE.MeshStandardMaterial({ color: 0x22262c, roughness: 0.7, flatShading: true });
+  const glass = new THREE.MeshStandardMaterial({ color: 0x16212e, roughness: 0.12, metalness: 0.9 });
+  const add = (geo, mat, m) => { const k = new THREE.Mesh(geo, mat); k.applyMatrix4(m); k.castShadow = true; g.add(k); return k; };
+
+  add(cyl(1.35, 1.05, 5.6, 12), body, xf(0.4, 0, 0, 0, 0, -Math.PI / 2));       // fuselage
+  add(cyl(1.05, 0.35, 2.2, 12), body, xf(3.6, -0.15, 0, 0, 0, -Math.PI / 2));   // nose taper
+  add(box(1.5, 1.1, 1.7), glass, xf(2.5, 0.45, 0));                              // canopy
+  add(cyl(0.42, 0.3, 6.2, 10), body, xf(-4.4, 0.45, 0, 0, 0, -Math.PI / 2));     // tail boom
+  add(box(0.5, 1.6, 0.16), body, xf(-7.2, 1.1, 0));                              // tail fin
+  add(box(1.4, 0.14, 2.0), body, xf(-6.4, 0.6, 0));                              // stabiliser
+  add(cyl(0.55, 0.55, 0.7, 10), body, xf(0.2, 1.35, 0));                         // rotor mast
+
+  // stub wings + rocket pods
+  add(box(0.9, 0.22, 5.4), body, xf(0.1, 0.1, 0));
+  for (const z of [-2.1, 2.1]) {
+    add(cyl(0.42, 0.42, 1.9, 8), dark, xf(0.2, -0.35, z, 0, 0, -Math.PI / 2));
+    add(box(0.16, 0.5, 0.5), dark, xf(1.3, -0.35, z));
+  }
+  // skids
+  for (const z of [-1.3, 1.3]) {
+    add(box(4.6, 0.16, 0.16), dark, xf(0.2, -1.65, z));
+    add(box(0.16, 1.0, 0.16), dark, xf(1.6, -1.15, z));
+    add(box(0.16, 1.0, 0.16), dark, xf(-1.2, -1.15, z));
+  }
+
+  const mainRotor = new THREE.Group();
+  for (let i = 0; i < 4; i++) {
+    const blade = new THREE.Mesh(box(9.5, 0.1, 0.62), dark);
+    blade.rotation.y = (i * Math.PI) / 2;
+    mainRotor.add(blade);
+  }
+  mainRotor.position.set(0.2, 1.75, 0);
+  g.add(mainRotor);
+
+  const tailRotor = new THREE.Group();
+  for (let i = 0; i < 3; i++) {
+    const blade = new THREE.Mesh(box(0.08, 2.4, 0.3), dark);
+    blade.rotation.x = (i * Math.PI) / 3;
+    tailRotor.add(blade);
+  }
+  tailRotor.position.set(-7.3, 1.1, 0.28);
+  g.add(tailRotor);
+
+  g.userData.mainRotor = mainRotor;
+  g.userData.tailRotor = tailRotor;
+  return g;
+}
+
+/** Combat engineer — like an infantryman but with a hard hat and a toolkit. */
+export function makeEngineer() {
+  const HI = 0xffc84a, GEAR = 0x5f6a4a, SKIN = 0xd9a06b, STEEL = 0x2b2f36;
+  return mergeParts([
+    { geo: box(0.3, 0.85, 0.3), m: xf(-0.22, 0.43, 0), color: GEAR },
+    { geo: box(0.3, 0.85, 0.3), m: xf(0.22, 0.43, 0), color: GEAR },
+    { geo: box(0.76, 0.8, 0.44), m: xf(0, 1.24, 0), color: HI },
+    { geo: box(0.82, 0.2, 0.48), m: xf(0, 1.32, 0), color: 0xffffff },
+    { geo: box(0.2, 0.6, 0.2), m: xf(-0.48, 1.2, 0.1, -0.7, 0, 0), color: HI },
+    { geo: box(0.2, 0.6, 0.2), m: xf(0.48, 1.2, 0.1, -0.7, 0, 0), color: HI },
+    { geo: box(0.34, 0.34, 0.32), m: xf(0, 1.82, 0), color: SKIN },
+    { geo: cyl(0.3, 0.32, 0.22, 10), m: xf(0, 2.02, 0), color: HI },
+    { geo: box(0.5, 0.16, 0.16), m: xf(0, 1.0, 0.42, 0, 0, 0.3), color: STEEL },
   ]);
 }
 

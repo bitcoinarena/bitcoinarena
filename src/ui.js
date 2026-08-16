@@ -29,7 +29,7 @@ export class UI {
       log: $('log'), radio: $('radio'), toast: $('toast'), tooltip: $('tooltip'),
       edu: $('edu'), eduBody: $('edu-body'), shop: $('shop'), camModes: $('cam-modes'),
       minimap: $('minimap'), book: $('book-canvas'),
-      liqBody: $('liq-body'), liqHead: $('liq-tag'),
+      liqBody: $('liq-body'), liqHead: $('liq-tag'), liqSim: $('liq-sim'),
     };
     this.mm = this.el.minimap.getContext('2d');
     this.bookCtx = this.el.book.getContext('2d');
@@ -39,6 +39,7 @@ export class UI {
     this._buildShop();
     this._buildLanes();
     this._buildEdu();
+    if (this.el.liqSim) this.el.liqSim.onclick = () => this.game.toggleLiqSim();
     this.fleetDirty = true;
   }
 
@@ -186,7 +187,13 @@ export class UI {
     if (html !== this._bandHtml) { this.el.feeBands.innerHTML = html; this._bandHtml = html; }
   }
 
-  setFleet(trucks, selected, lane) {
+  setLiqSim(on) {
+    if (!this.el.liqSim) return;
+    this.el.liqSim.textContent = on ? 'SIM ON' : 'SIM OFF';
+    this.el.liqSim.classList.toggle('on', !!on);
+  }
+
+  setFleet(trucks, selected, lane, roads) {
     const html = trucks.map((t) => {
       const used = t.cargo.reduce((a, p) => a + p.vsize, 0);
       const fill = clamp(used / t.spec.capacity, 0, 1) * 100;
@@ -204,7 +211,17 @@ export class UI {
         row.onclick = () => this.game.selectTruck(+row.dataset.truck);
       }
     }
-    for (const b of document.querySelectorAll('.lane')) b.classList.toggle('sel', b.dataset.lane === lane);
+    for (const b of document.querySelectorAll('.lane')) {
+      const id = b.dataset.lane;
+      b.classList.toggle('sel', id === lane);
+      const eta = roads ? roads.repairEta(id) : 0;
+      b.classList.toggle('cut', eta > 0);
+      let tag = b.querySelector('.lane-cut');
+      if (eta > 0) {
+        if (!tag) { tag = document.createElement('i'); tag.className = 'lane-cut'; b.appendChild(tag); }
+        tag.textContent = `ROAD CUT — engineers ${Math.ceil(eta)}s`;
+      } else if (tag) tag.remove();
+    }
 
     if (selected) {
       const used = selected.cargo.reduce((a, p) => a + p.vsize, 0);

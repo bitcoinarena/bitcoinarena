@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { WORLD, LANES, FEE, TRUCKS } from '../config.js';
 import { clamp, lerp, rand, hash01, TAU, approach, angleApproach, pick } from '../util.js';
+import { makeTruckBody, makeTruckWheel } from '../render/geom.js';
 
 const MAX_PKG = 170;
 
@@ -431,69 +432,42 @@ export class Logistics {
 
   _buildTruckMesh(spec) {
     const g = new THREE.Group();
-    const s = spec.capacity > 8000 ? 1.35 : spec.capacity > 5000 ? 1.15 : spec.id === 'express' ? 0.92 : 1;
+    const s = spec.capacity > 8000 ? 1.3 : spec.capacity > 5000 ? 1.12 : spec.id === 'express' ? 0.94 : 1;
 
-    const shell = new THREE.MeshStandardMaterial({ color: 0xeef1f7, roughness: 0.45, metalness: 0.25 });
-    const trim = new THREE.MeshStandardMaterial({ color: 0xf0a83c, roughness: 0.4, metalness: 0.35, emissive: 0x4a2f05, emissiveIntensity: 0.5 });
-    const glass = new THREE.MeshStandardMaterial({ color: 0x1a2634, roughness: 0.15, metalness: 0.7 });
-    const rubber = new THREE.MeshStandardMaterial({ color: 0x14181f, roughness: 0.95 });
+    const body = new THREE.Mesh(
+      makeTruckBody(spec),
+      new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.42, metalness: 0.3, flatShading: true }),
+    );
+    body.castShadow = true;
+    g.add(body);
 
-    const cargo = new THREE.Mesh(new THREE.BoxGeometry(8.5 * s, 5.6 * s, 5 * s), shell);
-    cargo.position.set(-1.6 * s, 4.4 * s, 0);
-    cargo.castShadow = true;
-    g.add(cargo);
-
-    const stripe = new THREE.Mesh(new THREE.BoxGeometry(8.6 * s, 1.1 * s, 5.1 * s), trim);
-    stripe.position.set(-1.6 * s, 3.4 * s, 0);
-    g.add(stripe);
-
-    const cab = new THREE.Mesh(new THREE.BoxGeometry(4 * s, 4 * s, 4.6 * s), shell);
-    cab.position.set(4.2 * s, 3.6 * s, 0);
-    cab.castShadow = true;
-    g.add(cab);
-
-    const windshield = new THREE.Mesh(new THREE.BoxGeometry(0.4 * s, 2.2 * s, 4.0 * s), glass);
-    windshield.position.set(6.25 * s, 4.4 * s, 0);
-    g.add(windshield);
-
-    if (spec.armor >= 1.6) {
-      const plate = new THREE.Mesh(new THREE.BoxGeometry(1.2 * s, 4 * s, 5.4 * s), new THREE.MeshStandardMaterial({ color: 0x5a6376, roughness: 0.7, metalness: 0.6 }));
-      plate.position.set(6.9 * s, 3.2 * s, 0);
-      g.add(plate);
-    }
-    if (spec.id === 'express') {
-      const bolt = new THREE.Mesh(new THREE.ConeGeometry(1.1 * s, 3.4 * s, 4), new THREE.MeshStandardMaterial({ color: 0x7ee0ff, emissive: 0x2a7d9c, emissiveIntensity: 1.4 }));
-      bolt.position.set(-1.6 * s, 8.2 * s, 0);
-      g.add(bolt);
-    }
-
-    this._wheels = this._wheels || [];
+    const wheelGeo = makeTruckWheel(s);
+    const wheelMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85, metalness: 0.2, flatShading: true });
     const wheels = [];
-    const wgeo = new THREE.CylinderGeometry(1.5 * s, 1.5 * s, 1.1 * s, 10);
-    wgeo.rotateX(Math.PI / 2);
-    for (const [wx, wz] of [[4 * s, 2.5 * s], [4 * s, -2.5 * s], [-3.4 * s, 2.5 * s], [-3.4 * s, -2.5 * s]]) {
-      const w = new THREE.Mesh(wgeo, rubber);
-      w.position.set(wx, 1.5 * s, wz);
+    for (const [wx, wz] of [[4.2, 2.85], [4.2, -2.85], [-3.6, 2.85], [-3.6, -2.85]]) {
+      const w = new THREE.Mesh(wheelGeo, wheelMat);
+      w.position.set(wx * s, 1.55 * s, wz * s);
       w.castShadow = true;
       g.add(w);
       wheels.push(w);
     }
     g.userData.wheels = wheels;
 
-    const head = new THREE.PointLight(0xfff0c0, 40, 60, 2);
-    head.position.set(7 * s, 3.4 * s, 0);
+    const head = new THREE.PointLight(0xfff0c0, 55, 70, 2);
+    head.position.set(7.6 * s, 3.2 * s, 0);
     g.add(head);
     g.userData.headlight = head;
 
-    // Cargo fill indicator on the roof
+    // Cargo fill indicator along the roof spine
     const bar = new THREE.Mesh(
-      new THREE.BoxGeometry(7 * s, 0.5, 0.9),
+      new THREE.BoxGeometry(7 * s, 0.4, 0.8),
       new THREE.MeshBasicMaterial({ color: 0x4ade80 }),
     );
-    bar.position.set(-1.6 * s, 7.4 * s, 0);
+    bar.position.set(-2.2 * s, 8.9 * s, 0);
     g.add(bar);
     g.userData.bar = bar;
     g.userData.barWidth = 7 * s;
+    g.userData.scale = s;
 
     return g;
   }
@@ -531,6 +505,8 @@ export class Logistics {
     if (truck.state !== 'idle' || truck.cargo.length === 0) { this.audio?.error(); return false; }
     truck.lane = lane || truck.lane;
     truck.state = 'enroute';
+    truck.roadX = truck.pos.x;
+    truck.offset = 0;
     truck.hazardCd = rand(1.5, 4);
     this.audio?.horn();
     this.radio(truck, truck.lane === 'front' ? pick(RADIO.frontline) : pick(RADIO.depart));
@@ -633,8 +609,9 @@ export class Logistics {
 
       const fill = clamp(this.usedCapacity(truck) / truck.spec.capacity, 0, 1);
       const bar = truck.obj.userData.bar;
+      const bs = truck.obj.userData.scale ?? 1;
       bar.scale.x = Math.max(0.001, fill);
-      bar.position.x = -1.6 + (truck.obj.userData.barWidth * (fill - 1)) / 2;
+      bar.position.x = -2.2 * bs + (truck.obj.userData.barWidth * (fill - 1)) / 2;
       bar.material.color.setHex(fill > 0.85 ? 0xffd447 : 0x4ade80);
       bar.visible = truck.state !== 'wrecked';
     }
@@ -648,51 +625,46 @@ export class Logistics {
     // off the road for the whole return leg.
     const lane = truck.lane;
 
-    let steerBoost = 1;
-    if (truck.manual && ctx.manualSteer) steerBoost = 1 + Math.max(0, ctx.manualSteer.x) * 0.5;
+    // The truck is CONSTRAINED to the road rather than steered toward it: we
+    // advance a parameter along the centreline and place the truck on it. It
+    // therefore cannot leave the road, and its heading is the road's own
+    // tangent, so it turns into every curve instead of sliding across it.
+    if (truck.roadX === undefined) truck.roadX = truck.pos.x;
 
-    const base = truck.spec.speed * LANES[truck.lane].speed * (truck.boost > 0 ? 1.9 : 1) * steerBoost;
+    const slopeAt = (x) => (this.laneZ(lane, x + 2) - this.laneZ(lane, x - 2)) / 4;
+    const slope = slopeAt(truck.roadX);
+    const curvature = Math.abs(slopeAt(truck.roadX + dir * 8) - slope) / 8;
+
+    // slow for corners and for cratered sections being repaired
+    const wrecked = this.bf.roads.damageFactor(lane, truck.roadX);
+    const base = truck.spec.speed * LANES[truck.lane].speed * (truck.boost > 0 ? 1.9 : 1);
     const load = 1 - clamp(this.usedCapacity(truck) / truck.spec.capacity, 0, 1) * 0.22;
-    truck.speed = approach(truck.speed, base * load, 2.5, dt);
-    const step = truck.speed * dt;
+    const corner = 1 / (1 + Math.abs(slope) * 0.35 + curvature * 6);
+    truck.speed = approach(truck.speed, base * load * corner * (1 - wrecked * 0.7), 2.5, dt);
 
-    // The mail does not swerve for armour — the armour moves. Anything standing
-    // in the corridor ahead is shoved clear before the truck reaches it, so the
-    // truck can hold the centreline exactly instead of weaving off the road.
+    // The mail does not swerve for armour — the armour moves.
     this.bf.clearPath(truck.pos.x, truck.pos.z, dir, dt);
 
-    // Aim a short way down the road and drive AT that point. Heading then comes
-    // from where the truck is actually going, so it corners properly instead of
-    // sliding sideways down the lane.
-    const aheadX = truck.pos.x + dir * Math.max(7, step * 3 + 7);
-    let targetZ = this.laneZ(lane, aheadX);
+    // advance along the arc: a step of `speed` along the curve, not along x
+    const step = truck.speed * dt;
+    truck.roadX += (dir * step) / Math.sqrt(1 + slope * slope);
+
+    // the player may weave within the width of the road, never outside it
+    const maxOffset = 3.2;
     if (truck.manual && ctx.manualSteer) {
-      targetZ = clamp(truck.pos.z + ctx.manualSteer.z * 40 * dt, -WORLD.depth / 2 + 6, WORLD.depth / 2 - 6);
+      truck.offset = clamp((truck.offset ?? 0) + ctx.manualSteer.z * 22 * dt, -maxOffset, maxOffset);
+    } else {
+      truck.offset = approach(truck.offset ?? 0, 0, 3, dt);
     }
 
-    const tx = aheadX - truck.pos.x;
-    // cap the turn so the truck always makes forward progress rather than
-    // pivoting on the spot when the frontline jumps
-    const tz = clamp(targetZ - truck.pos.z, -Math.abs(tx) * 2.5, Math.abs(tx) * 2.5);
-    const tl = Math.hypot(tx, tz) || 1;
-    let vx = (tx / tl) * truck.speed;
-    let vz = (tz / tl) * truck.speed;
+    const inv = 1 / Math.sqrt(1 + slope * slope);
+    truck.pos.x = truck.roadX - slope * inv * truck.offset;
+    truck.pos.z = this.laneZ(lane, truck.roadX) + inv * truck.offset;
 
-    // Pure lookahead-chasing decays lateral error at only speed/lookahead — far
-    // too slow for the frontline road, which can sweep sideways faster than the
-    // truck drives forward. Add a corrective slew toward the centreline at our
-    // own x, and take the heading from the TOTAL velocity so the truck visibly
-    // turns into the correction instead of sliding sideways.
-    if (!truck.manual) {
-      const err = this.laneZ(lane, truck.pos.x) - truck.pos.z;
-      vz += clamp(err * 5, -truck.speed * 1.6, truck.speed * 1.6);
-    }
-
-    truck.pos.x += vx * dt;
-    truck.pos.z += vz * dt;
-
-    // forward vector is (cos heading, 0, sin heading) — see the mesh yaw below
-    truck.heading = angleApproach(truck.heading, Math.atan2(vz, vx), 7, dt);
+    // heading is the road tangent, in the direction of travel
+    const back = this.laneZ(lane, truck.roadX - dir * 3);
+    const fwd = this.laneZ(lane, truck.roadX + dir * 3);
+    truck.heading = angleApproach(truck.heading, Math.atan2(fwd - back, dir * 6), 8, dt);
 
     if (truck.boost > 0 || truck.speed > 4) {
       if (Math.random() < dt * 22) {
@@ -714,11 +686,12 @@ export class Logistics {
     }
 
     // arrival
-    if (dir > 0 && truck.pos.x >= goalX) {
+    if (dir > 0 && truck.roadX >= goalX) {
       this._arrive(truck, ctx);
-    } else if (dir < 0 && truck.pos.x <= goalX) {
+    } else if (dir < 0 && truck.roadX <= goalX) {
       truck.state = 'idle';
       truck.speed = 0;
+      truck.roadX = undefined;
     }
   }
 
@@ -761,6 +734,7 @@ export class Logistics {
   _arrive(truck, ctx) {
     truck.state = 'returning';
     truck.speed = 0;
+    truck.roadX = truck.pos.x;
     this.gatePulse = 1;
     this.audio?.stamp();
     this.radio(truck, pick(RADIO.arrive));

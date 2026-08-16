@@ -86,6 +86,10 @@ export const EVENTS = {
   whalePercentile: 0.985,
   whaleFloorUsd: 6000,
   whaleCooldownSec: 8,
+  // Escalation: an outlier trade sends a gunship; this many times the whale
+  // threshold sends bombers instead.
+  bomberMultiple: 2.2,
+  heliCooldownSec: 5,
 };
 
 export const CAMERAS = ['cinematic', 'god', 'follow', 'plaza', 'driver', 'free'];

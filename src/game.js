@@ -7,7 +7,7 @@ import { MarketFeed, MempoolFeed } from './feeds.js';
 import { Audio } from './audio.js';
 import { UI } from './ui.js';
 import { bindInput } from './input.js';
-import { LANES, TRUCKS, SCORE, COSTS, EVENTS, WORLD, CAMERAS } from './config.js';
+import { LANES, TRUCKS, SCORE, COSTS, EVENTS, SIM, WORLD, CAMERAS } from './config.js';
 import { Emitter, clamp, lerp, approach, rand, fmtUsd, fmtNum, shortId, pick } from './util.js';
 
 export class Game {
@@ -57,6 +57,8 @@ export class Game {
 
     this.setCamera('cinematic');
     this.ui.setCamera('cinematic');
+    this.bf.roads.setHighlight(this.lane);
+    this.ui.setLiqSim(SIM.liquidations);
   }
 
   /* --------------------------------------------------------------- feed */
@@ -76,9 +78,22 @@ export class Game {
           text: `${buy ? 'BULL' : 'BEAR'} block trade ${fmtUsd(usd)} @ ${fmtUsd(price)}`,
         });
       }
-      // A genuinely enormous single trade calls in a conventional airstrike on
-      // the side it just ran over. Rate-limited so a burst can't fill the sky.
+      // Escalation ladder: the bigger the order, the heavier the response it
+      // brings. Ordinary flow is already infantry and armour on the line; an
+      // outlier trade scrambles a gunship, a really enormous one a bomber.
       if (this.market.isWhaleTrade(usd) && this._whaleCd <= 0) {
+        const side = buy ? 'bull' : 'bear';
+        const mult = this.market.tradeThreshold > 0 ? usd / this.market.tradeThreshold : 1;
+        if (mult < EVENTS.bomberMultiple) {
+          if (this.bf.heliStrike(side, clamp(mult / 2, 0.6, 2))) {
+            this._whaleCd = EVENTS.heliCooldownSec;
+            this.events.emit('log', {
+              kind: 'whale',
+              text: `${fmtUsd(usd)} ${buy ? 'BUY' : 'SELL'} — ${buy ? 'BULL' : 'BEAR'} gunship on station over the front`,
+            });
+          }
+          return;
+        }
         this._whaleCd = EVENTS.whaleCooldownSec;
         this.bf.airstrike(price, usd, buy ? 'short' : 'long', (hit) => {
           this.logistics.shockwave(hit.x, hit.z, hit.power);
@@ -250,6 +265,7 @@ export class Game {
   setLane(lane) {
     if (!LANES[lane]) return;
     this.lane = lane;
+    this.bf.roads.setHighlight(lane);
     if (this.selectedTruck && this.selectedTruck.state === 'idle') this.selectedTruck.lane = lane;
     this.audio.click();
   }
@@ -334,6 +350,19 @@ export class Game {
     this.audio.click();
   }
 
+  /** Turn synthetic liquidations on/off from the HUD. */
+  toggleLiqSim() {
+    SIM.liquidations = !SIM.liquidations;
+    this.ui.setLiqSim(SIM.liquidations);
+    this.audio.click();
+    this.events.emit('log', {
+      kind: 'ops',
+      text: SIM.liquidations
+        ? 'Simulated liquidations ON — synthetic strikes are tagged SIM'
+        : 'Simulated liquidations OFF — only real Binance BTC liquidations will land',
+    });
+  }
+
   toggleMute() {
     this.audio.setMuted(!this.audio.muted);
     document.getElementById('qa-mute').textContent = this.audio.muted ? '🔇' : '🔊';
@@ -408,7 +437,7 @@ export class Game {
     const nextIn = Math.max(0, this.blockIntervalHint - (performance.now() - this.lastBlockAt) / 1000);
     this.ui.setScore(this.score, this.fees, this.mempool.tipHeight, nextIn);
     this.ui.setBlockWindow(this.blockWindow);
-    this.ui.setFleet(this.logistics.trucks, this.selectedTruck, this.lane);
+    this.ui.setFleet(this.logistics.trucks, this.selectedTruck, this.lane, this.bf.roads);
     this.ui.setShop(this.owned, this.fees);
     this.ui.setStatus(this.market.status(), this.mempool.status(), this._fps);
 
