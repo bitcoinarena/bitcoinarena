@@ -32,11 +32,11 @@ export const HISTORY = {
 // track is the opposite and, being churned earth rather than a built road,
 // is the only one that can never be cut.
 export const LANES = {
-  bullRear: { id: 'bullRear', name: 'Bull Supply Road', z: -68, risk: 0.08, mult: 0.75, speed: 0.9,  desc: 'The long way round, well behind green lines. Barely ever shot at, barely pays.' },
-  bull:     { id: 'bull',     name: 'Bull Flank',       z: -44, risk: 0.18, mult: 1.0,  speed: 1.0,  desc: 'Through green-held ground. Slow, safe, boring.' },
+  bullRear: { id: 'bullRear', name: 'Bull Supply Road', z: -76, risk: 0.08, mult: 0.75, speed: 0.9,  desc: 'The long way round, well behind green lines. Barely ever shot at, barely pays.' },
+  bull:     { id: 'bull',     name: 'Bull Flank',       z: -48, risk: 0.18, mult: 1.0,  speed: 1.0,  desc: 'Through green-held ground. Slow, safe, boring.' },
   front:    { id: 'front',    name: 'The Frontline',    z: null, risk: 1.0, mult: 2.8,  speed: 1.18, desc: 'Straight up the contested track. Pays the most, gets you shot at, and can never be cut.' },
-  bear:     { id: 'bear',     name: 'Bear Flank',       z: 44,  risk: 0.55, mult: 1.5,  speed: 1.08, desc: 'Behind red lines. Faster than the bull road, ambush-prone.' },
-  bearRear: { id: 'bearRear', name: 'Bear Supply Road', z: 68,  risk: 0.28, mult: 1.15, speed: 0.95, desc: 'Deep in red country but far off the front. Quiet, unless they notice you.' },
+  bear:     { id: 'bear',     name: 'Bear Flank',       z: 48,  risk: 0.55, mult: 1.5,  speed: 1.08, desc: 'Behind red lines. Faster than the bull road, ambush-prone.' },
+  bearRear: { id: 'bearRear', name: 'Bear Supply Road', z: 76,  risk: 0.28, mult: 1.15, speed: 0.95, desc: 'Deep in red country but far off the front. Quiet, unless they notice you.' },
 };
 
 /** Routes in map order, top of the screen to bottom. */

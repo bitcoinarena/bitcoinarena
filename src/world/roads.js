@@ -15,21 +15,35 @@ const DAMAGE_SEC = 60;
 // Surface wear: a stretch this long accumulates damage 0..1 before it fails,
 // and heals this fast if nothing else lands on it (~2 min from fully worn).
 const WEAR_SPAN = 16;
-const WEAR_HEAL = 0.008;
+const WEAR_HEAL = 0.02;          // a road that stops being shelled recovers
+
+// Routes must never run into each other. Each flank has its own corridor, and
+// because the frontline route follows a line that moves, the flanks are pushed
+// outward whenever it comes near them — with a hard centre-to-centre minimum,
+// since a road is 10.4 wide.
+const LANE_GAP = 13.5;
+// Where each route crosses the compound wall. Five roads 10.4 wide need 52 of
+// clear width to run side by side, so they enter through one wide gate in their
+// own slots instead of all converging on a single point — which is what made
+// them pile up on top of each other for half the length of the map.
+export const GATE_HALF = 30;
+const GATE_SLOT = { bullRear: -24, bull: -12, front: 0, bear: 12, bearRear: 24 };
+const MERGE_SPAN = 54;                           // distance over which they fan out
 
 /* ----------------------------------------------------------- centrelines */
 
 /** The raw winding centreline of a flank route, before the end funnels. */
 export function laneBaseZ(lane, x) {
   switch (lane) {
+    // amplitudes are bounded so each route keeps to its own corridor
     case 'bullRear':
-      return LANES.bullRear.z + Math.sin(x * 0.0142 + 0.9) * 8 + Math.sin(x * 0.031 + 2.2) * 4;
+      return LANES.bullRear.z + Math.sin(x * 0.0142 + 0.9) * 4 + Math.sin(x * 0.031 + 2.2) * 2;
     case 'bull':
-      return LANES.bull.z + Math.sin(x * 0.0195) * 13 + Math.sin(x * 0.041 + 1.7) * 6 + Math.sin(x * 0.0083 + 0.6) * 8;
+      return LANES.bull.z + Math.sin(x * 0.0195) * 5 + Math.sin(x * 0.041 + 1.7) * 2.5;
     case 'bear':
-      return LANES.bear.z + Math.sin(x * 0.017 + 2.4) * 12 + Math.sin(x * 0.037 + 0.3) * 6.5 + Math.sin(x * 0.0091 + 2.1) * 7;
+      return LANES.bear.z + Math.sin(x * 0.017 + 2.4) * 5 + Math.sin(x * 0.037 + 0.3) * 2.5;
     case 'bearRear':
-      return LANES.bearRear.z + Math.sin(x * 0.0128 + 3.1) * 8.5 + Math.sin(x * 0.027 + 1.2) * 4.5;
+      return LANES.bearRear.z + Math.sin(x * 0.0128 + 3.1) * 4 + Math.sin(x * 0.027 + 1.2) * 2;
     default:
       return 0;
   }
@@ -64,12 +78,28 @@ export class Roads {
    * straight into a blast wall.
    */
   centerZ(lane, x) {
-    const base = lane === 'front' ? this.bf.frontlineAt(x) : laneBaseZ(lane, x);
     const plazaGate = WORLD.plazaX + GATE_X;
     const depotGate = WORLD.depotX - GATE_X;
-    const outOfPlaza = smoothstep(clamp((x - plazaGate) / 58, 0, 1));
-    const intoGate = 1 - smoothstep(clamp((x - (depotGate - 58)) / 58, 0, 1));
-    return base * Math.min(outOfPlaza, intoGate);
+    const outOfPlaza = smoothstep(clamp((x - plazaGate) / MERGE_SPAN, 0, 1));
+    const intoGate = 1 - smoothstep(clamp((x - (depotGate - MERGE_SPAN)) / MERGE_SPAN, 0, 1));
+    const open = Math.min(outOfPlaza, intoGate);
+
+    // Cruising position. The four flank roads are FIXED — built infrastructure
+    // does not move because a battle line drifted over it. Only the frontline
+    // track follows the seam, and it is held between the two inner flanks so it
+    // can never end up running along one of them.
+    let cruise;
+    if (lane === 'front') {
+      const lo = laneBaseZ('bull', x) + LANE_GAP;
+      const hi = laneBaseZ('bear', x) - LANE_GAP;
+      cruise = clamp(this.bf.frontlineAt(x), lo, hi);
+    } else {
+      cruise = laneBaseZ(lane, x);
+    }
+
+    // Near the compounds every route eases into its own slot in the gate rather
+    // than collapsing onto the centreline.
+    return lerp(GATE_SLOT[lane] ?? 0, cruise, open);
   }
 
   /** Road surface height at a point on the centreline. */

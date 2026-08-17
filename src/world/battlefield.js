@@ -960,7 +960,7 @@ export class Battlefield {
             speed: rand(70, 95), size: 2.2, heavy: true,
             onHit: (hx, hy, hz) => {
               this.fx.explosion(hx, hy + 0.4, hz, 0.55, 0xffa33a);
-              this.roads.wearAt(hx, hz, 5, 0.16);
+              this.roads.wearAt(hx, hz, 5, 0.045);
               if (Math.random() < 0.15) this.crater(hx, hz, 4.5, 1.1);
               if (!target.active) return;
               // did it actually connect? near misses are part of the show
@@ -1016,7 +1016,7 @@ export class Battlefield {
       color: 0x3a3a3a, count: 40, size: 6, life: 4.5, speed: 5, spread: 2, gravity: 2.6, drag: 0.6, alpha: 0.5,
     });
     if (!quiet) this.crater(v.x, v.z, 7, 1.6);
-    this.roads.wearAt(v.x, v.z, 7, 0.3);
+    this.roads.wearAt(v.x, v.z, 7, 0.10);
     this.audio?.explosion(quiet ? 0.4 : 0.9);
   }
 
@@ -1128,8 +1128,8 @@ export class Battlefield {
     // The blast takes ground for whoever called it in — but only if their
     // troops are close enough to actually hold it (see _updateClaims).
     this.claimGround(x, z, nuke ? 22 + power * 8 : 10 + power * 5, side === 'long' ? 'bear' : 'bull');
-    if (nuke) this.roads.cutAt(x, z, 26 + power * 8);
-    else this.roads.wearAt(x, z, 12 + power * 4, 0.55 + power * 0.15);
+    if (nuke) this.roads.cutAt(x, z, 14 + power * 4);
+    else this.roads.wearAt(x, z, 12 + power * 4, 0.28 + power * 0.08);
 
     // A column of light left standing at the price level that got wrecked.
     this.markers.push({ x, z, power, side, life: 1 });

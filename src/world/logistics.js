@@ -160,7 +160,7 @@ export class Logistics {
   _addPerimeter(parent, localX, label) {
     const wallMat = new THREE.MeshStandardMaterial({ color: 0x7c8595, roughness: 0.85, metalness: 0.1 });
     const stripeMat = new THREE.MeshStandardMaterial({ color: 0xf0a83c, roughness: 0.6, emissive: 0x4a2f05, emissiveIntensity: 0.5 });
-    const gate = 15;                       // half-width of the road opening
+    const gate = 30;                       // half-width of the road opening: five routes wide
 
     for (const dir of [-1, 1]) {
       const from = dir * gate, to = dir * 64;
@@ -515,6 +515,7 @@ export class Logistics {
       return false;
     }
     truck.lane = want;
+    truck.plannedLane = want;      // restored after any emergency reroute
     truck.fromLane = null;
     truck.laneMix = 1;
     truck.waiting = false;
@@ -798,6 +799,15 @@ export class Logistics {
       truck.state = 'idle';
       truck.speed = 0;
       truck.roadX = undefined;
+      // a truck that had to flee down the frontline goes back to the route the
+      // player actually chose, rather than silently keeping the detour
+      if (truck.plannedLane && truck.lane !== truck.plannedLane) {
+        this.radio(truck, 'Back on the yard. Detour over.');
+        truck.lane = truck.plannedLane;
+      }
+      truck.fromLane = null;
+      truck.laneMix = 1;
+      truck.waiting = false;
     }
   }
 

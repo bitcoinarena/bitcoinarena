@@ -35,6 +35,7 @@ export class UI {
       roundPkgs: $('round-pkgs'), roundVb: $('round-vb'), standings: $('standings'),
       roundHistory: $('round-history'), mpBlocks: $('mp-blocks'),
       scorePanel: $('score-panel'), marketPanel: $('market-panel'),
+      fleetPanel: $('fleet-panel'), minimapWrap: $('minimap-wrap'),
     };
     this.mm = this.el.minimap.getContext('2d');
     this.bookCtx = this.el.book.getContext('2d');
@@ -45,6 +46,8 @@ export class UI {
     this._buildLanes();
     this._buildEdu();
     this._buildMobile();
+    this._layout();
+    addEventListener('resize', () => this._layout());
     if (this.el.liqSim) this.el.liqSim.onclick = () => this.game.toggleLiqSim();
     this.fleetDirty = true;
   }
@@ -72,6 +75,19 @@ export class UI {
     for (const btn of this.tabs.querySelectorAll('button')) {
       btn.onclick = () => this.toggleSheet(btn.dataset.sheet);
     }
+  }
+
+  /**
+   * The fleet panel grows with the number of routes, and at five it ran under
+   * the minimap in the corner. Give it exactly the room between its own top and
+   * whatever is parked at the bottom of that column.
+   */
+  _layout() {
+    if (IS_MOBILE) return;
+    const fleet = this.el.fleetPanel, mm = this.el.minimapWrap;
+    if (!fleet || !mm) return;
+    const bottom = mm.offsetTop || (innerHeight - 200);
+    fleet.style.maxHeight = `${Math.max(200, bottom - fleet.offsetTop - 12)}px`;
   }
 
   toggleSheet(id) {
