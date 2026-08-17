@@ -10,6 +10,36 @@
 <script type="importmap">
 { "imports": { "three": "./vendor/three.module.js" } }
 </script>
+<script>
+/* Classic script, so it runs BEFORE the deferred module graph. A module that
+   fails to link — most often a stale cached file whose exports no longer match
+   its importers — never reaches any handler installed inside main.js, so the
+   boot screen would sit on its placeholder with a dead PLAY button and no clue
+   why. This catches it from outside, and watchdogs the case where nothing
+   throws but the game never comes up either. */
+window.__fatal = function (err) {
+  if (window.__failed) return;
+  window.__failed = true;
+  console.error(err);
+  var note = document.getElementById('boot-status');
+  if (note) {
+    note.innerHTML = '<b style="color:#ff4d5e">FAILED TO START</b> — ' +
+      String((err && err.message) || err) +
+      '<br>Hard reload with Cmd/Ctrl + Shift + R. Details are in the console.';
+  }
+  var play = document.getElementById('btn-play');
+  if (play) { play.textContent = 'RELOAD'; play.onclick = function () { location.reload(); }; }
+};
+addEventListener('error', function (e) {
+  if (e.message || e.error) window.__fatal(e.error || e.message);
+}, true);
+addEventListener('unhandledrejection', function (e) { window.__fatal(e.reason); });
+addEventListener('load', function () {
+  setTimeout(function () {
+    if (!window.game) window.__fatal('the game module never finished loading');
+  }, 6000);
+});
+</script>
 </head>
 <body>
 <canvas id="view"></canvas>
@@ -27,7 +57,7 @@
       <div><b>1–6</b><span>camera modes</span></div>
       <div><b>Click</b><span>select package</span></div>
       <div><b>Space</b><span>auto-load truck</span></div>
-      <div><b>Z / X / C</b><span>pick route</span></div>
+      <div><b>Q Z X C V</b><span>pick route</span></div>
       <div><b>Enter</b><span>dispatch convoy</span></div>
       <div><b>WASD</b><span>free cam / drive</span></div>
     </div>
@@ -91,9 +121,11 @@
     </div>
     <div class="lane-picker">
       <h4>DISPATCH ROUTE</h4>
-      <button class="lane" data-lane="bull"><b>Bull Flank</b><span>safe · ×1.0</span></button>
-      <button class="lane" data-lane="front"><b>The Frontline</b><span>deadly · ×2.6</span></button>
-      <button class="lane" data-lane="bear"><b>Bear Flank</b><span>risky · ×1.5</span></button>
+      <button class="lane" data-lane="bullRear"><b>Bull Supply Road</b><span>Q · safest · ×0.75</span></button>
+      <button class="lane" data-lane="bull"><b>Bull Flank</b><span>Z · safe · ×1.0</span></button>
+      <button class="lane" data-lane="front"><b>The Frontline</b><span>X · deadly · ×2.8 · never cut</span></button>
+      <button class="lane" data-lane="bear"><b>Bear Flank</b><span>C · risky · ×1.5</span></button>
+      <button class="lane" data-lane="bearRear"><b>Bear Supply Road</b><span>V · quiet · ×1.15</span></button>
     </div>
   </div>
 

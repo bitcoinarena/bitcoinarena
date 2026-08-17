@@ -1,8 +1,18 @@
 import { Game } from './game.js';
 import { Q } from './quality.js';
 
+// The failure surface itself lives in a classic script in index.html, so that
+// it is already installed if this module graph fails to link at all.
+const fatal = (err) => window.__fatal?.(err);
+
 const canvas = document.getElementById('view');
-const game = new Game(canvas);
+let game;
+try {
+  game = new Game(canvas);
+} catch (err) {
+  fatal(err);
+  throw err;
+}
 window.game = game;   // handy for poking at it in the console
 
 // ---- boot screen ------------------------------------------------------------

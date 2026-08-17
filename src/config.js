@@ -27,11 +27,20 @@ export const HISTORY = {
   minSpanPct: 0.000004,
 };
 
+// Five routes, ordered from deep in bull country to deep in bear country. The
+// two outer supply roads are the safe, slow, low-paying option; the frontline
+// track is the opposite and, being churned earth rather than a built road,
+// is the only one that can never be cut.
 export const LANES = {
-  bull:  { id: 'bull',  name: 'Bull Flank',   z: -46, risk: 0.18, mult: 1.0, speed: 1.0,  desc: 'Long way round through green-held ground. Slow, safe, boring.' },
-  front: { id: 'front', name: 'The Frontline', z: null, risk: 1.0,  mult: 2.6, speed: 1.18, desc: 'Straight up the contested trench. Double score, gets you shot at.' },
-  bear:  { id: 'bear',  name: 'Bear Flank',   z: 46,  risk: 0.55, mult: 1.5, speed: 1.08, desc: 'Behind red lines. Faster than the bull road, ambush-prone.' },
+  bullRear: { id: 'bullRear', name: 'Bull Supply Road', z: -68, risk: 0.08, mult: 0.75, speed: 0.9,  desc: 'The long way round, well behind green lines. Barely ever shot at, barely pays.' },
+  bull:     { id: 'bull',     name: 'Bull Flank',       z: -44, risk: 0.18, mult: 1.0,  speed: 1.0,  desc: 'Through green-held ground. Slow, safe, boring.' },
+  front:    { id: 'front',    name: 'The Frontline',    z: null, risk: 1.0, mult: 2.8,  speed: 1.18, desc: 'Straight up the contested track. Pays the most, gets you shot at, and can never be cut.' },
+  bear:     { id: 'bear',     name: 'Bear Flank',       z: 44,  risk: 0.55, mult: 1.5,  speed: 1.08, desc: 'Behind red lines. Faster than the bull road, ambush-prone.' },
+  bearRear: { id: 'bearRear', name: 'Bear Supply Road', z: 68,  risk: 0.28, mult: 1.15, speed: 0.95, desc: 'Deep in red country but far off the front. Quiet, unless they notice you.' },
 };
+
+/** Routes in map order, top of the screen to bottom. */
+export const LANE_ORDER = ['bullRear', 'bull', 'front', 'bear', 'bearRear'];
 
 export const TRUCKS = [
   { id: 'vanguard', name: 'Vanguard Van',      capacity: 2600,  speed: 15, armor: 1.0, cost: 0,      desc: 'Standard issue. Smells faintly of diesel and despair.' },

@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { WORLD, LANES } from '../config.js';
+import { WORLD, LANES, LANE_ORDER } from '../config.js';
 import { clamp, lerp, smoothstep, approach } from '../util.js';
 import { Q, props } from '../quality.js';
 import { makeSandbags, makeBarrier, makeWreck, makeMarkerPost, makeWire, makeEngineer } from '../render/geom.js';
@@ -11,7 +11,7 @@ const KERB = 1.1;
 // the perimeter walls built in logistics.js.
 export const GATE_X = 34;
 // How long a cut section stays impassable while engineers work it.
-const DAMAGE_SEC = 150;
+const DAMAGE_SEC = 60;
 // Surface wear: a stretch this long accumulates damage 0..1 before it fails,
 // and heals this fast if nothing else lands on it (~2 min from fully worn).
 const WEAR_SPAN = 16;
@@ -21,13 +21,18 @@ const WEAR_HEAL = 0.008;
 
 /** The raw winding centreline of a flank route, before the end funnels. */
 export function laneBaseZ(lane, x) {
-  if (lane === 'bull') {
-    return LANES.bull.z + Math.sin(x * 0.0195) * 14 + Math.sin(x * 0.041 + 1.7) * 6.5 + Math.sin(x * 0.0083 + 0.6) * 9;
+  switch (lane) {
+    case 'bullRear':
+      return LANES.bullRear.z + Math.sin(x * 0.0142 + 0.9) * 8 + Math.sin(x * 0.031 + 2.2) * 4;
+    case 'bull':
+      return LANES.bull.z + Math.sin(x * 0.0195) * 13 + Math.sin(x * 0.041 + 1.7) * 6 + Math.sin(x * 0.0083 + 0.6) * 8;
+    case 'bear':
+      return LANES.bear.z + Math.sin(x * 0.017 + 2.4) * 12 + Math.sin(x * 0.037 + 0.3) * 6.5 + Math.sin(x * 0.0091 + 2.1) * 7;
+    case 'bearRear':
+      return LANES.bearRear.z + Math.sin(x * 0.0128 + 3.1) * 8.5 + Math.sin(x * 0.027 + 1.2) * 4.5;
+    default:
+      return 0;
   }
-  if (lane === 'bear') {
-    return LANES.bear.z + Math.sin(x * 0.017 + 2.4) * 13 + Math.sin(x * 0.037 + 0.3) * 7 + Math.sin(x * 0.0091 + 2.1) * 8;
-  }
-  return 0;
 }
 
 /**
@@ -42,7 +47,7 @@ export class Roads {
     this.bf = bf;
     this.fx = fx;
     this.events = events;
-    this.lanes = ['bull', 'front', 'bear'];
+    this.lanes = [...LANE_ORDER];
     this.meshes = {};
     this.highlight = null;
     this.time = 0;
@@ -184,7 +189,8 @@ export class Roads {
       this.scene.add(mesh);
       const items = [];
       for (let i = 0; i < spec.count; i++) {
-        const lane = spec.front ? 'front' : (rnd() < 0.5 ? 'bull' : 'bear');
+        const flanks = ['bullRear', 'bull', 'bear', 'bearRear'];
+        const lane = spec.front ? 'front' : flanks[(rnd() * flanks.length) | 0];
         const x = -WORLD.width / 2 + 24 + rnd() * (WORLD.width - 56);
         const side = rnd() < 0.5 ? -1 : 1;
         const [lo, hi] = spec.spread ?? [1.8, 5.0];
@@ -208,6 +214,7 @@ export class Roads {
   /** Tear the road open outright — only a nuke does this in one go. */
   cutAt(x, z, radius) {
     for (const lane of this.lanes) {
+      if (lane === 'front') continue;         // churned earth: nothing left to destroy
       const cz = this.centerZ(lane, x);
       if (Math.abs(cz - z) > radius + HALF_W) continue;
       this._cut(lane, x, Math.max(10, radius * 0.9));
@@ -238,6 +245,7 @@ export class Roads {
    */
   wearAt(x, z, radius, amount) {
     for (const lane of this.lanes) {
+      if (lane === 'front') continue;         // the frontline track is always passable
       const cz = this.centerZ(lane, x);
       const dist = Math.abs(cz - z);
       if (dist > radius + HALF_W) continue;
@@ -289,6 +297,20 @@ export class Roads {
     }
     return s;
   }
+
+  /**
+   * Is a cut section sitting between `fromX` and `toX` on this lane? A truck
+   * cannot drive through rubble, so this decides whether it must turn back,
+   * wait for the engineers, or reroute.
+   */
+  pathBlocked(lane, fromX, toX) {
+    if (lane === 'front') return false;
+    const lo = Math.min(fromX, toX) - 2, hi = Math.max(fromX, toX) + 2;
+    return this.damage.some((d) => d.lane === lane && d.x + d.span > lo && d.x - d.span < hi);
+  }
+
+  /** Lanes with no cut anywhere, in map order. */
+  openLanes() { return this.lanes.filter((l) => !this.isDamaged(l)); }
 
   /** Worst surface wear on a lane, 0..1 (cut sections excluded — see repairEta). */
   wearLevel(lane) {

@@ -166,9 +166,11 @@ export function bindInput(game) {
       case 'KeyF':    game.setCamera(game.stage.mode === 'follow' ? 'cinematic' : 'follow'); break;
       case 'KeyE':    game.toggleEdu(); break;
       case 'KeyM':    game.toggleMute(); break;
+      case 'KeyQ':    game.setLane('bullRear'); break;
       case 'KeyZ':    game.setLane('bull'); break;
       case 'KeyX':    game.setLane('front'); break;
       case 'KeyC':    game.setLane('bear'); break;
+      case 'KeyV':    game.setLane('bearRear'); break;
       case 'Tab':     e.preventDefault(); cycleTruck(); break;
       case 'Escape':  game.logistics.selected.clear(); game.ui.el.edu.classList.add('hidden'); break;
     }

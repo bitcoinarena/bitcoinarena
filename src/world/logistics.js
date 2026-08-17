@@ -1,6 +1,6 @@
 import * as THREE from 'three';
-import { WORLD, LANES, FEE, TRUCKS } from '../config.js';
-import { clamp, lerp, rand, hash01, TAU, approach, angleApproach, pick, fmtFee } from '../util.js';
+import { WORLD, LANES, LANE_ORDER, FEE, TRUCKS } from '../config.js';
+import { clamp, lerp, smoothstep, rand, hash01, TAU, approach, angleApproach, pick, fmtFee } from '../util.js';
 import { makeTruckBody, makeTruckWheel } from '../render/geom.js';
 import { Q } from '../quality.js';
 
@@ -505,7 +505,19 @@ export class Logistics {
 
   dispatch(truck, lane) {
     if (truck.state !== 'idle' || truck.cargo.length === 0) { this.audio?.error(); return false; }
-    truck.lane = lane || truck.lane;
+    const want = lane || truck.lane;
+    if (this.bf.roads.isDamaged(want)) {
+      this.audio?.error();
+      this.events?.emit('log', {
+        kind: 'loss',
+        text: `${LANES[want].name} is cut — engineers need ${Math.ceil(this.bf.roads.repairEta(want))}s. Pick another route.`,
+      });
+      return false;
+    }
+    truck.lane = want;
+    truck.fromLane = null;
+    truck.laneMix = 1;
+    truck.waiting = false;
     truck.state = 'enroute';
     truck.roadX = truck.pos.x;
     truck.offset = 0;
@@ -524,11 +536,90 @@ export class Logistics {
   /** Trucks follow the visible road surface, funnels and all. */
   laneZ(lane, x) { return this.bf.laneZ(lane, x); }
 
+  /**
+   * Centreline for a truck, blended while it is changing lanes. Switching route
+   * mid-run moves the target sideways by tens of units, so it is eased in over
+   * a couple of seconds rather than teleporting the truck across the map.
+   */
+  truckLaneZ(truck, x) {
+    const target = this.laneZ(truck.lane, x);
+    if (!truck.fromLane || truck.laneMix >= 1) return target;
+    return lerp(this.laneZ(truck.fromLane, x), target, smoothstep(truck.laneMix));
+  }
+
+  _switchLane(truck, lane) {
+    if (truck.lane === lane) return;
+    truck.fromLane = truck.lane;
+    truck.lane = lane;
+    truck.laneMix = 0;
+  }
+
+  _goalX(truck) {
+    return truck.state === 'enroute' ? WORLD.depotX - 12 : WORLD.plazaX + 2 + truck.id * 9;
+  }
+
+  /**
+   * Re-plan a truck whose road has been cut. Outbound it turns back — you do
+   * not drive into rubble. Homebound it cannot turn back again, so it either
+   * waits for the engineers if they are nearly done, or takes the frontline
+   * track, which is the one route that can never be cut.
+   */
+  replan(truck) {
+    if (truck.state !== 'enroute' && truck.state !== 'returning') return;
+    const roads = this.bf.roads;
+    if (!roads.pathBlocked(truck.lane, truck.roadX ?? truck.pos.x, this._goalX(truck))) {
+      if (truck.waiting) {
+        truck.waiting = false;
+        this.radio(truck, 'Road open again — rolling.');
+      }
+      return;
+    }
+
+    if (truck.state === 'enroute') {
+      truck.state = 'returning';
+      truck.waiting = false;
+      truck.speed = 0;
+      this.radio(truck, 'Road blown ahead of us! Turning back!');
+      this.events?.emit('log', {
+        kind: 'loss',
+        text: `${truck.spec.name} turned back — ${LANES[truck.lane].name} is cut ahead`,
+      });
+      // it may also be cut behind us; sort that out on the next pass
+      this.replan(truck);
+      return;
+    }
+
+    // homebound and blocked
+    const eta = roads.repairEta(truck.lane);
+    if (eta > 0 && eta <= 18) {
+      if (!truck.waiting) {
+        truck.waiting = true;
+        this.radio(truck, `Holding for the engineers — ${Math.ceil(eta)}s.`);
+      }
+      truck.speed = 0;
+      return;
+    }
+    if (truck.lane !== 'front') {
+      truck.waiting = false;
+      this._switchLane(truck, 'front');
+      this.radio(truck, 'Rerouting home along the frontline. Wish us luck.');
+      this.events?.emit('log', {
+        kind: 'ops',
+        text: `${truck.spec.name} rerouted onto The Frontline — its road home is cut for ${Math.ceil(eta)}s`,
+      });
+    }
+  }
+
   /* ------------------------------------------------------------- update */
 
   update(dt, ctx) {
     this.time += dt;
     this._whaleLogCd = Math.max(0, this._whaleLogCd - dt);
+    this._replanAcc = (this._replanAcc ?? 0) - dt;
+    if (this._replanAcc <= 0) {
+      this._replanAcc = 0.5;
+      for (const t of this.trucks) this.replan(t);
+    }
     this._updateTrucks(dt, ctx);
     this._updatePackages(dt, ctx);
     this._updateProps(dt);
@@ -640,7 +731,8 @@ export class Logistics {
     // tangent, so it turns into every curve instead of sliding across it.
     if (truck.roadX === undefined) truck.roadX = truck.pos.x;
 
-    const slopeAt = (x) => (this.laneZ(lane, x + 2) - this.laneZ(lane, x - 2)) / 4;
+    truck.laneMix = Math.min(1, (truck.laneMix ?? 1) + dt / 2.4);
+    const slopeAt = (x) => (this.truckLaneZ(truck, x + 2) - this.truckLaneZ(truck, x - 2)) / 4;
     const slope = slopeAt(truck.roadX);
     const curvature = Math.abs(slopeAt(truck.roadX + dir * 8) - slope) / 8;
 
@@ -652,7 +744,8 @@ export class Logistics {
     // hauling a loaded van up a fee cliff should cost real speed
     const grade = this.bf.slopeAlong(truck.pos.x, truck.pos.z, Math.cos(truck.heading), Math.sin(truck.heading), 5);
     const climb = grade > 0 ? 1 / (1 + grade * 2.6) : 1 + Math.min(0.3, -grade * 0.45);
-    truck.speed = approach(truck.speed, base * load * corner * climb * (1 - wrecked * 0.7), 2.5, dt);
+    const want = truck.waiting ? 0 : base * load * corner * climb * (1 - wrecked * 0.7);
+    truck.speed = approach(truck.speed, want, truck.waiting ? 5 : 2.5, dt);
 
     // advance along the arc: a step of `speed` along the curve, not along x
     const step = truck.speed * dt;
@@ -668,11 +761,11 @@ export class Logistics {
 
     const inv = 1 / Math.sqrt(1 + slope * slope);
     truck.pos.x = truck.roadX - slope * inv * truck.offset;
-    truck.pos.z = this.laneZ(lane, truck.roadX) + inv * truck.offset;
+    truck.pos.z = this.truckLaneZ(truck, truck.roadX) + inv * truck.offset;
 
     // heading is the road tangent, in the direction of travel
-    const back = this.laneZ(lane, truck.roadX - dir * 3);
-    const fwd = this.laneZ(lane, truck.roadX + dir * 3);
+    const back = this.truckLaneZ(truck, truck.roadX - dir * 3);
+    const fwd = this.truckLaneZ(truck, truck.roadX + dir * 3);
     truck.heading = angleApproach(truck.heading, Math.atan2(fwd - back, dir * 6), 8, dt);
 
     // The mail does not swerve for armour — the armour moves. Run this AFTER
