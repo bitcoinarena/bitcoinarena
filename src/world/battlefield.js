@@ -13,6 +13,22 @@ const VW = COLS + 1, VH = ROWS + 1;
 const REAR_X = 74;
 const FRONT_X = 84;      // troops are held between -FRONT_X and +FRONT_X
 
+// The plaza and depot decks are fixed structures at y = 3.2 (a 1.6-high pad
+// centred at 2.4). The queue relief must not push the ground up through them,
+// so the terrain flattens to an apron under the compounds — set so that the
+// road surface, which rides 0.45 above the ground, comes out exactly flush
+// with the deck and a truck can roll straight on without a step.
+const DECK_Y = 3.2;
+const ROAD_LIFT = 0.45;
+const APRON_Y = DECK_Y - ROAD_LIFT;
+const APRON_FROM = 68;   // |x| where the ground starts levelling off
+const APRON_SPAN = 22;   // fully flat by |x| = 90
+
+const apronMix = (x) => {
+  const t = clamp((Math.abs(x) - APRON_FROM) / APRON_SPAN, 0, 1);
+  return t * t * (3 - 2 * t);
+};
+
 /* ---------------------------------------------------------------- mempool */
 
 // The terrain IS the mempool. Distance from the frontline is queue depth: the
@@ -335,7 +351,8 @@ export class Battlefield {
     let h = groundNoise(x, z) * 0.55 + this.queueHeight(ad);
     h -= 2.4 / (1 + Math.pow(d / 7.0, 2));         // the road cut along the crest
     h -= this._craterAt(x, z);
-    return h;
+    const rear = apronMix(x);
+    return rear > 0 ? lerp(h, APRON_Y, rear) : h;
   }
 
   /**
@@ -658,6 +675,8 @@ export class Battlefield {
         let h = this.baseH[i] + this.queueHeight(ad);
         h -= 2.4 / (1 + (d / 7.0) * (d / 7.0));
         h -= this._craterAt(arr[i3], z);
+        const apron = apronMix(arr[i3]);
+        if (apron > 0) h = lerp(h, APRON_Y, apron);
         arr[i3 + 1] = h;
 
         // colour: territory + hot seam, fading to neutral rear areas so the

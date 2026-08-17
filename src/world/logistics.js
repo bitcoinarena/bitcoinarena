@@ -588,9 +588,11 @@ export class Logistics {
       // Ride on the truck's own wheelbase, not on a single point: a nine-metre
       // van cresting a fee cliff would otherwise drive its nose into the slope.
       const hx = Math.cos(truck.heading), hz = Math.sin(truck.heading);
-      const ground = onRoad
-        ? this.bf.rideHeight(truck.pos.x, truck.pos.z, 4.2, hx, hz) + 0.45
-        : this.bf.surfaceAt(truck.pos.x, truck.pos.z) + 3.2;
+      // Parked or rolling, the truck sits the same 0.45 above the ground. The
+      // terrain flattens to an apron under the compounds that is flush with the
+      // deck, so there is no separate "on the pad" height to special-case — the
+      // old terrain + 3.2 floated as soon as the mempool raised the ground.
+      const ground = this.bf.rideHeight(truck.pos.x, truck.pos.z, 4.2, hx, hz) + 0.45;
       // never below the road, but eased when the ground falls away
       truck.pos.y = Math.max(ground, approach(truck.pos.y || ground, ground, 9, dt));
       truck.obj.position.copy(truck.pos);
