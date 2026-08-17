@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { WORLD, LANES, LANE_ORDER } from '../config.js';
 import { clamp, lerp, smoothstep, approach } from '../util.js';
 import { Q, props } from '../quality.js';
+import { pbr, surfaces } from '../render/surfaces.js';
 import { makeSandbags, makeBarrier, makeWreck, makeMarkerPost, makeWire, makeEngineer } from '../render/geom.js';
 
 const SEG = Q.roadSeg;              // road segments along X
@@ -122,9 +123,12 @@ export class Roads {
       }
       g.setIndex(idx);
       g.computeVertexNormals();
+      const sfc = surfaces();
       const mat = new THREE.MeshStandardMaterial({
-        color, vertexColors: true, roughness: 0.92, metalness: 0.05, side: THREE.DoubleSide,
+        color, vertexColors: true, roughness: 0.88, metalness: 0.06, side: THREE.DoubleSide,
         transparent: opacity < 1, opacity,
+        roughnessMap: sfc.asphalt, normalMap: sfc.grainNormal,
+        normalScale: new THREE.Vector2(0.55, 0.55), envMapIntensity: 0.6,
         // the road lies almost flat on the terrain; bias it toward the camera
         // so it never fights with the ground it is resting on
         polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -8,
@@ -156,7 +160,7 @@ export class Roads {
       dashes = new THREE.InstancedMesh(
         makeMarkerPost(),
         new THREE.MeshStandardMaterial({
-          vertexColors: true, flatShading: true, roughness: 0.7,
+          vertexColors: true, roughness: 0.7,
           emissive: 0xffb03a, emissiveIntensity: 0.45,
         }),
         Math.floor(SEG / 4) * 2,
@@ -209,7 +213,7 @@ export class Roads {
     for (const spec of specs) {
       const mesh = new THREE.InstancedMesh(
         spec.geo,
-        new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9, flatShading: true }),
+        pbr(0xffffff, { vertexColors: true, roughness: 0.88, metalness: 0.15 }),
         spec.count,
       );
       mesh.castShadow = true;
@@ -375,7 +379,7 @@ export class Roads {
     const geo = makeEngineer();
     this.engineerMesh = new THREE.InstancedMesh(
       geo,
-      new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 0.7 }),
+      pbr(0xffffff, { vertexColors: true, roughness: 0.62, metalness: 0.2 }),
       props(36),
     );
     this.engineerMesh.castShadow = true;
@@ -386,7 +390,7 @@ export class Roads {
 
     this.rubbleMesh = new THREE.InstancedMesh(
       new THREE.BoxGeometry(1, 1, 1),
-      new THREE.MeshStandardMaterial({ color: 0x4a4238, roughness: 1, flatShading: true }),
+      new THREE.MeshStandardMaterial({ color: 0x4a4238, roughness: 1 }),
       props(90),
     );
     this.rubbleMesh.frustumCulled = false;

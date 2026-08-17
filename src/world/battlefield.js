@@ -3,6 +3,7 @@ import { WORLD, HISTORY } from '../config.js';
 import { Ring, clamp, lerp, rand, randInt, approach, angleDelta, angleApproach, TAU } from '../util.js';
 import { Roads } from './roads.js';
 import { Q } from '../quality.js';
+import { pbr, surfaces } from '../render/surfaces.js';
 import { makeSoldierBody, makeSoldierLeg, makeTankHull, makeTankTurret, makeBomber, makeBomb, makeHelicopter, HIP_Y, TURRET_Y } from '../render/geom.js';
 
 const COLS = WORLD.columns, ROWS = WORLD.rows;
@@ -145,9 +146,13 @@ export class Battlefield {
     geo.rotateX(-Math.PI / 2);
     const colors = new Float32Array(geo.attributes.position.count * 3);
     geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    const sfc = surfaces();
     const mat = new THREE.MeshStandardMaterial({
-      vertexColors: true, roughness: 0.94, metalness: 0.02, flatShading: true,
+      vertexColors: true, roughness: 0.96, metalness: 0.02,
+      roughnessMap: sfc.scuff, normalMap: sfc.scuffNormal,
+      normalScale: new THREE.Vector2(0.9, 0.9), envMapIntensity: 0.5,
     });
+    sfc.scuff.repeat.set(14, 14); sfc.scuffNormal.repeat.set(14, 14);
     this.terrain = new THREE.Mesh(geo, mat);
     this.terrain.receiveShadow = true;
     this.terrain.name = 'terrain';
@@ -188,7 +193,7 @@ export class Battlefield {
     // Ground plane far below/around so the world doesn't end in a void.
     const g = new THREE.PlaneGeometry(1500, 1500);
     g.rotateX(-Math.PI / 2);
-    const m = new THREE.MeshStandardMaterial({ color: 0x1a2130, roughness: 1 });
+    const m = new THREE.MeshStandardMaterial({ color: 0x1a2130, roughness: 1, metalness: 0 });
     const plane = new THREE.Mesh(g, m);
     plane.position.y = -6;
     this.scene.add(plane);
@@ -451,11 +456,7 @@ export class Battlefield {
     this.sides = {};
     for (const [side, color] of [['bull', 0x46e08c], ['bear', 0xff5a6a]]) {
       const mk = (geo, count, extra) => {
-        const mesh = new THREE.InstancedMesh(
-          geo,
-          new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, ...extra }),
-          count,
-        );
+        const mesh = new THREE.InstancedMesh(geo, pbr(0xffffff, { vertexColors: true, ...extra }), count);
         mesh.castShadow = true;
         mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
         mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(count * 3), 3);
@@ -1040,7 +1041,7 @@ export class Battlefield {
     const bombGeo = makeBomb();
     this.bombs = [];
     for (let i = 0; i < 6; i++) {
-      const obj = new THREE.Mesh(bombGeo, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.6, metalness: 0.4, flatShading: true }));
+      const obj = new THREE.Mesh(bombGeo, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.6, metalness: 0.4 }));
       obj.visible = false;
       obj.castShadow = true;
       this.scene.add(obj);

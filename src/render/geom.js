@@ -1,4 +1,7 @@
 import * as THREE from 'three';
+import { RoundedBoxGeometry } from '../../vendor/addons/geometries/RoundedBoxGeometry.js';
+import { pbr } from './surfaces.js';
+import { Q } from '../quality.js';
 
 /**
  * Model kit. Everything here bakes a multi-part model down to ONE BufferGeometry
@@ -56,9 +59,21 @@ export function mergeParts(parts) {
   return out;
 }
 
-const box = (w, h, d) => new THREE.BoxGeometry(w, h, d);
+/**
+ * Hard 90-degree edges are the single strongest "toy brick" cue: real objects
+ * catch a highlight along every edge because nothing is perfectly sharp. So the
+ * default box is chamfered. Instanced crowds keep the cheap one — a rounded box
+ * is ~16x the triangles and there are hundreds of them.
+ */
+const box = (w, h, d) => {
+  const r = Math.min(0.06, Math.min(w, h, d) * 0.22);
+  if (r < 0.012) return new THREE.BoxGeometry(w, h, d);
+  return new RoundedBoxGeometry(w, h, d, 1, r);
+};
+const plainBox = (w, h, d) => new THREE.BoxGeometry(w, h, d);
+const bevelBox = (w, h, d, r = 0.12, seg = 2) => new RoundedBoxGeometry(w, h, d, seg, r);
 const cyl = (r1, r2, h, seg = 8, hSeg = 1, open = false, start = 0, len = Math.PI * 2) =>
-  new THREE.CylinderGeometry(r1, r2, h, seg, hSeg, open, start, len);
+  new THREE.CylinderGeometry(r1, r2, Math.max(0.001, h), Math.max(seg, Q.mobile ? 8 : 14), hSeg, open, start, len);
 
 /* --------------------------------------------------------------- soldier */
 
@@ -158,9 +173,9 @@ export function makeTankTurret() {
  */
 export function makeBomber(tint = 0x9aa6b8) {
   const g = new THREE.Group();
-  const body = new THREE.MeshStandardMaterial({ color: tint, roughness: 0.55, metalness: 0.45, flatShading: true });
-  const dark = new THREE.MeshStandardMaterial({ color: 0x2a3038, roughness: 0.7, metalness: 0.3, flatShading: true });
-  const glass = new THREE.MeshStandardMaterial({ color: 0x1a2634, roughness: 0.1, metalness: 0.9 });
+  const body = pbr(tint, { roughness: 0.42, metalness: 0.62, normalScale: 0.3 });
+  const dark = pbr(0x2a3038, { roughness: 0.6, metalness: 0.45 });
+  const glass = new THREE.MeshPhysicalMaterial({ color: 0x121c28, roughness: 0.06, metalness: 0.1, transmission: 0.25, thickness: 0.4, clearcoat: 1, clearcoatRoughness: 0.05, envMapIntensity: 2 });
 
   const add = (geo, mat, m) => { const mesh = new THREE.Mesh(geo, mat); mesh.applyMatrix4(m); mesh.castShadow = true; g.add(mesh); return mesh; };
 
@@ -302,9 +317,9 @@ export function makeTruckWheel(scale = 1) {
  */
 export function makeHelicopter(tint = 0x6f7a68) {
   const g = new THREE.Group();
-  const body = new THREE.MeshStandardMaterial({ color: tint, roughness: 0.6, metalness: 0.4, flatShading: true });
-  const dark = new THREE.MeshStandardMaterial({ color: 0x22262c, roughness: 0.7, flatShading: true });
-  const glass = new THREE.MeshStandardMaterial({ color: 0x16212e, roughness: 0.12, metalness: 0.9 });
+  const body = pbr(tint, { roughness: 0.45, metalness: 0.6, normalScale: 0.3 });
+  const dark = pbr(0x22262c, { roughness: 0.6, metalness: 0.4 });
+  const glass = new THREE.MeshPhysicalMaterial({ color: 0x101a26, roughness: 0.06, metalness: 0.1, transmission: 0.2, thickness: 0.4, clearcoat: 1, envMapIntensity: 2 });
   const add = (geo, mat, m) => { const k = new THREE.Mesh(geo, mat); k.applyMatrix4(m); k.castShadow = true; g.add(k); return k; };
 
   add(cyl(1.35, 1.05, 5.6, 12), body, xf(0.4, 0, 0, 0, 0, -Math.PI / 2));       // fuselage

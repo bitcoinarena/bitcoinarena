@@ -3,6 +3,7 @@ import { WORLD, LANES, LANE_ORDER, FEE, TRUCKS } from '../config.js';
 import { clamp, lerp, smoothstep, rand, hash01, TAU, approach, angleApproach, pick, fmtFee } from '../util.js';
 import { makeTruckBody, makeTruckWheel } from '../render/geom.js';
 import { Q } from '../quality.js';
+import { pbr } from '../render/surfaces.js';
 
 const MAX_PKG = Q.packages;
 
@@ -79,7 +80,7 @@ export class Logistics {
 
     const pad = new THREE.Mesh(
       new THREE.BoxGeometry(60, 1.6, 92),
-      new THREE.MeshStandardMaterial({ color: 0x515c72, roughness: 0.92 }),
+      pbr(0x515c72, { roughness: 0.9, metalness: 0.1, normalScale: 0.7 }),
     );
     pad.position.y = 2.4;
     pad.receiveShadow = true;
@@ -94,7 +95,7 @@ export class Logistics {
 
     const shed = new THREE.Mesh(
       new THREE.BoxGeometry(26, 15, 36),
-      new THREE.MeshStandardMaterial({ color: 0x63719a, roughness: 0.75, metalness: 0.15 }),
+      pbr(0x63719a, { roughness: 0.7, metalness: 0.25 }),
     );
     shed.position.set(-15, 10.7, -22);
     shed.castShadow = true; shed.receiveShadow = true;
@@ -102,7 +103,7 @@ export class Logistics {
 
     const roof = new THREE.Mesh(
       new THREE.CylinderGeometry(14, 14, 36, 14, 1, false, 0, Math.PI),
-      new THREE.MeshStandardMaterial({ color: 0xf0a83c, roughness: 0.6 }),
+      pbr(0xf0a83c, { roughness: 0.5, metalness: 0.3 }),
     );
     roof.rotation.set(0, Math.PI / 2, Math.PI / 2);
     roof.position.set(-15, 18.2, -22);
@@ -111,7 +112,7 @@ export class Logistics {
 
     // Conveyor belts feeding the sorting floor — one per fee lane.
     this.belts = [];
-    const beltMat = new THREE.MeshStandardMaterial({ color: 0x181d27, roughness: 0.55, metalness: 0.45 });
+    const beltMat = pbr(0x181d27, { roughness: 0.45, metalness: 0.6 });
     for (let i = 0; i < 3; i++) {
       const belt = new THREE.Mesh(new THREE.BoxGeometry(34, 1.2, 5.4), beltMat);
       belt.position.set(2, 6.2, -26 + i * 15);
@@ -158,8 +159,8 @@ export class Logistics {
    * the middle where the three routes converge and pass through.
    */
   _addPerimeter(parent, localX, label) {
-    const wallMat = new THREE.MeshStandardMaterial({ color: 0x7c8595, roughness: 0.85, metalness: 0.1 });
-    const stripeMat = new THREE.MeshStandardMaterial({ color: 0xf0a83c, roughness: 0.6, emissive: 0x4a2f05, emissiveIntensity: 0.5 });
+    const wallMat = pbr(0x7c8595, { roughness: 0.88, metalness: 0.08, normalScale: 0.9 });
+    const stripeMat = pbr(0xf0a83c, { roughness: 0.45, metalness: 0.35, emissive: 0x4a2f05, emissiveIntensity: 0.5 });
     const gate = 30;                       // half-width of the road opening: five routes wide
 
     for (const dir of [-1, 1]) {
@@ -203,7 +204,7 @@ export class Logistics {
     geo.translate(0, 0.5, 0);
     this.pkgMesh = new THREE.InstancedMesh(
       geo,
-      new THREE.MeshStandardMaterial({ roughness: 0.5, metalness: 0.15 }),
+      pbr(0xffffff, { roughness: 0.42, metalness: 0.2, normalScale: 0.3 }),
       MAX_PKG,
     );
     this.pkgMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
@@ -217,7 +218,7 @@ export class Logistics {
     halo.translate(0, 0.5, 0);
     this.haloMesh = new THREE.InstancedMesh(
       halo,
-      new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.3, blending: THREE.AdditiveBlending, depthWrite: false }),
+      new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.13, blending: THREE.AdditiveBlending, depthWrite: false }),
       MAX_PKG,
     );
     this.haloMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
@@ -325,14 +326,14 @@ export class Logistics {
 
     const pad = new THREE.Mesh(
       new THREE.BoxGeometry(46, 1.6, 86),
-      new THREE.MeshStandardMaterial({ color: 0x232a38, roughness: 0.9 }),
+      pbr(0x232a38, { roughness: 0.9, metalness: 0.12, normalScale: 0.7 }),
     );
     pad.position.y = 2.4;
     pad.receiveShadow = true;
     g.add(pad);
 
     // The Blockchain Gate: two pylons + an energy curtain packages pass through.
-    const pylonMat = new THREE.MeshStandardMaterial({ color: 0x39445c, roughness: 0.6, metalness: 0.4 });
+    const pylonMat = pbr(0x39445c, { roughness: 0.5, metalness: 0.55 });
     for (const s of [-1, 1]) {
       const pylon = new THREE.Mesh(new THREE.BoxGeometry(5, 30, 6), pylonMat);
       pylon.position.set(-6, 17, s * 15);
@@ -358,7 +359,7 @@ export class Logistics {
     // Fortified depot behind the gate
     const depot = new THREE.Mesh(
       new THREE.BoxGeometry(20, 16, 46),
-      new THREE.MeshStandardMaterial({ color: 0x2f394d, roughness: 0.8, metalness: 0.2 }),
+      pbr(0x2f394d, { roughness: 0.75, metalness: 0.3 }),
     );
     depot.position.set(12, 11, 0);
     depot.castShadow = true; depot.receiveShadow = true;
@@ -368,7 +369,7 @@ export class Logistics {
     this.blockStack = new THREE.Group();
     this.blockStack.position.set(12, 19, 0);
     g.add(this.blockStack);
-    this.blockStackMat = new THREE.MeshStandardMaterial({ color: 0xf7931a, emissive: 0x8a4a05, emissiveIntensity: 0.6, roughness: 0.4, metalness: 0.3 });
+    this.blockStackMat = pbr(0xf7931a, { emissive: 0x8a4a05, emissiveIntensity: 0.6, roughness: 0.32, metalness: 0.55 });
 
     this._addPerimeter(g, -34, 'DEPOT');
 
@@ -389,7 +390,7 @@ export class Logistics {
   /** Armoured convoy that parades across the map when a real block is found. */
   spawnConvoy(height) {
     const g = new THREE.Group();
-    const mat = new THREE.MeshStandardMaterial({ color: 0xf7931a, emissive: 0x7a3f04, emissiveIntensity: 0.7, roughness: 0.45, metalness: 0.35 });
+    const mat = pbr(0xf7931a, { emissive: 0x7a3f04, emissiveIntensity: 0.7, roughness: 0.38, metalness: 0.5 });
     for (let i = 0; i < 4; i++) {
       const car = new THREE.Mesh(new THREE.BoxGeometry(9, 6, 5.5), mat);
       car.position.set(-i * 11, 4, 0);
@@ -438,13 +439,13 @@ export class Logistics {
 
     const body = new THREE.Mesh(
       makeTruckBody(spec),
-      new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.42, metalness: 0.3, flatShading: true }),
+      pbr(0xffffff, { vertexColors: true, roughness: 0.38, metalness: 0.35, normalScale: 0.35 }),
     );
     body.castShadow = true;
     g.add(body);
 
     const wheelGeo = makeTruckWheel(s);
-    const wheelMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85, metalness: 0.2, flatShading: true });
+    const wheelMat = pbr(0xffffff, { vertexColors: true, roughness: 0.92, metalness: 0.15, normalScale: 0.8 });
     const wheels = [];
     for (const [wx, wz] of [[4.2, 2.85], [4.2, -2.85], [-3.6, 2.85], [-3.6, -2.85]]) {
       const w = new THREE.Mesh(wheelGeo, wheelMat);

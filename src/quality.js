@@ -27,6 +27,7 @@ const PRESETS = {
     roadSeg: 120, propScale: 1,
     planes: 6, helis: 4, bookLevels: 8,
     packages: 170,
+    bloom: true, aa: true, envSize: 256, envEvery: 2.5,
   },
   medium: {
     pixelRatio: 1.6,
@@ -37,6 +38,7 @@ const PRESETS = {
     roadSeg: 90, propScale: 0.6,
     planes: 4, helis: 3, bookLevels: 6,
     packages: 130,
+    bloom: true, aa: false, envSize: 128, envEvery: 5,
   },
   low: {
     pixelRatio: 1.3,
@@ -47,6 +49,7 @@ const PRESETS = {
     roadSeg: 60, propScale: 0.32,
     planes: 3, helis: 2, bookLevels: 5,
     packages: 80,
+    bloom: false, aa: false, envSize: 64, envEvery: 10,
   },
 };
 

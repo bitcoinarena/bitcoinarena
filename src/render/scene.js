@@ -1,4 +1,9 @@
 import * as THREE from 'three';
+import { EffectComposer } from '../../vendor/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from '../../vendor/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from '../../vendor/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from '../../vendor/addons/postprocessing/OutputPass.js';
+import { SMAAPass } from '../../vendor/addons/postprocessing/SMAAPass.js';
 import { WORLD, CAMERAS } from '../config.js';
 import { Q } from '../quality.js';
 import { clamp, lerp, approach, rand, TAU } from '../util.js';
@@ -37,6 +42,9 @@ export class Stage {
     this._free = { yaw: -0.7, pitch: -0.45, pos: new THREE.Vector3(-150, 90, 140), keys: new Set(), speed: 60 };
     this._cineShot = 0;
     this._cineTime = 0;
+
+    this._buildEnvironment();
+    this._buildComposer();
 
     this.resize();
     addEventListener('resize', () => this.resize());
@@ -85,8 +93,78 @@ export class Stage {
     this.scene.add(this.embers);
   }
 
+  /**
+   * Image-based lighting. Without an environment map a MeshStandardMaterial has
+   * nothing to reflect, so metal reads as flat paint and everything looks like
+   * untextured plastic — the single biggest reason the old look felt like toy
+   * bricks. A small procedural sky is rendered into a PMREM probe and used as
+   * scene.environment, so every surface picks up the sky above it and the
+   * ground bounce below, and metal actually looks like metal.
+   */
+  _buildEnvironment() {
+    this.pmrem = new THREE.PMREMGenerator(this.renderer);
+    this.pmrem.compileEquirectangularShader();
+
+    this.envScene = new THREE.Scene();
+    const dome = new THREE.Mesh(
+      new THREE.SphereGeometry(50, 24, 16),
+      new THREE.ShaderMaterial({
+        side: THREE.BackSide,
+        uniforms: {
+          top: { value: new THREE.Color(0x2a3a52) },
+          horizon: { value: new THREE.Color(0x8a93a3) },
+          ground: { value: new THREE.Color(0x2a2622) },
+        },
+        vertexShader: 'varying vec3 vP; void main(){ vP=position; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.); }',
+        fragmentShader: `uniform vec3 top; uniform vec3 horizon; uniform vec3 ground; varying vec3 vP;
+          void main(){ float h=normalize(vP).y;
+            vec3 c = h > 0.0 ? mix(horizon, top, pow(h, 0.55)) : mix(horizon, ground, pow(-h, 0.4));
+            gl_FragColor = vec4(c, 1.0); }`,
+      }),
+    );
+    this.envScene.add(dome);
+
+    // a bright disc standing in for the sun, so metal gets a specular highlight
+    this.envSun = new THREE.Mesh(
+      new THREE.SphereGeometry(6, 12, 8),
+      new THREE.MeshBasicMaterial({ color: 0xffe9c4 }),
+    );
+    this.envSun.position.set(-24, 34, 18);
+    this.envScene.add(this.envSun);
+
+    this._envAcc = 99;
+    this._updateEnvironment();
+  }
+
+  _updateEnvironment() {
+    const u = this.envScene.children[0].material.uniforms;
+    u.top.value.copy(this.skyUniforms.top.value).multiplyScalar(1.5);
+    u.horizon.value.copy(this.skyUniforms.horizon.value).multiplyScalar(1.35);
+    u.ground.value.copy(this.skyUniforms.bottom.value).multiplyScalar(0.9);
+    this.envSun.material.color.copy(this.sun.color).multiplyScalar(1.5);
+
+    const target = this.pmrem.fromScene(this.envScene, 0, 1, 120);
+    this.scene.environment?.dispose?.();
+    this.scene.environment = target.texture;
+    this.scene.environmentIntensity = 0.8;
+  }
+
+  /** Bloom and anti-aliasing, both gated on the device tier. */
+  _buildComposer() {
+    if (!Q.bloom && !Q.aa) { this.composer = null; return; }
+    const size = new THREE.Vector2(innerWidth, innerHeight);
+    this.composer = new EffectComposer(this.renderer);
+    this.composer.addPass(new RenderPass(this.scene, this.camera));
+    if (Q.bloom) {
+      this.bloom = new UnrealBloomPass(size, 0.22, 0.5, 1.15);
+      this.composer.addPass(this.bloom);
+    }
+    this.composer.addPass(new OutputPass());
+    if (Q.aa) this.composer.addPass(new SMAAPass(size.x, size.y));
+  }
+
   _buildLights() {
-    this.hemi = new THREE.HemisphereLight(0x9fc0ff, 0x2b2418, 0.75);
+    this.hemi = new THREE.HemisphereLight(0x9fc0ff, 0x2b2418, 0.2);
     this.scene.add(this.hemi);
 
     this.sun = new THREE.DirectionalLight(0xffd9a8, 2.0);
@@ -106,6 +184,7 @@ export class Stage {
   resize() {
     const w = innerWidth, h = innerHeight;
     this.renderer.setSize(w, h, false);
+    this.composer?.setSize(w, h);
     this.camera.aspect = w / h;
 
     // A phone held upright is a tall, narrow window onto a very wide map.
@@ -147,7 +226,14 @@ export class Stage {
     this._atmosphere(dt);
     this._camera(dt, ctx);
     this.embers.rotation.y += dt * 0.006;
-    this.renderer.render(this.scene, this.camera);
+
+    // the sky is market-driven, so the light probe has to follow it — but not
+    // every frame, PMREM is far too expensive for that
+    this._envAcc += dt;
+    if (this._envAcc > Q.envEvery) { this._envAcc = 0; this._updateEnvironment(); }
+
+    if (this.composer) this.composer.render(dt);
+    else this.renderer.render(this.scene, this.camera);
   }
 
   _atmosphere(dt) {
@@ -166,14 +252,14 @@ export class Stage {
     this.scene.fog.density = lerp(0.0019, 0.0048, bear) * (1 + this.volatility * 0.25);
 
     this.sun.color.setHSL(lerp(0.60, 0.11, bull), lerp(0.15, 0.7, bull), lerp(0.60, 0.70, bull));
-    this.sun.intensity = lerp(1.9, 3.1, bull) * (1 - bear * 0.28);
-    this.hemi.intensity = lerp(0.85, 1.25, bull);
-    this.rim.intensity = 0.35 + bear * 0.5;
+    this.sun.intensity = lerp(1.9, 2.7, bull) * (1 - bear * 0.28);
+    this.hemi.intensity = lerp(0.26, 0.42, bull);
+    this.rim.intensity = 0.18 + bear * 0.32;
     this.rim.color.setHex(bear > 0.3 ? 0xff4d5e : 0x5588ff);
     this.embers.material.opacity = 0.12 + bull * 0.45 + this.volatility * 0.2;
     this.embers.material.color.setHex(bear > 0.35 ? 0x8899bb : 0xffd9a0);
     this._flash = (this._flash || 0) * Math.exp(-3.4 * dt);
-    this.renderer.toneMappingExposure = lerp(0.92, 1.18, bull) + this._flash;
+    this.renderer.toneMappingExposure = lerp(0.98, 1.2, bull) + this._flash;
   }
 
   _camera(dt, ctx) {
