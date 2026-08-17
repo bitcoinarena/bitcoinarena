@@ -585,9 +585,14 @@ export class Logistics {
       }
 
       const onRoad = truck.state === 'enroute' || truck.state === 'returning';
-      truck.pos.y = onRoad
-        ? this.bf.surfaceAt(truck.pos.x, truck.pos.z) + 0.45
+      // Ride on the truck's own wheelbase, not on a single point: a nine-metre
+      // van cresting a fee cliff would otherwise drive its nose into the slope.
+      const hx = Math.cos(truck.heading), hz = Math.sin(truck.heading);
+      const ground = onRoad
+        ? this.bf.rideHeight(truck.pos.x, truck.pos.z, 4.2, hx, hz) + 0.45
         : this.bf.surfaceAt(truck.pos.x, truck.pos.z) + 3.2;
+      // never below the road, but eased when the ground falls away
+      truck.pos.y = Math.max(ground, approach(truck.pos.y || ground, ground, 9, dt));
       truck.obj.position.copy(truck.pos);
       truck.obj.rotation.y = -truck.heading;
 
@@ -642,7 +647,10 @@ export class Logistics {
     const base = truck.spec.speed * LANES[truck.lane].speed * (truck.boost > 0 ? 1.9 : 1);
     const load = 1 - clamp(this.usedCapacity(truck) / truck.spec.capacity, 0, 1) * 0.22;
     const corner = 1 / (1 + Math.abs(slope) * 0.35 + curvature * 6);
-    truck.speed = approach(truck.speed, base * load * corner * (1 - wrecked * 0.7), 2.5, dt);
+    // hauling a loaded van up a fee cliff should cost real speed
+    const grade = this.bf.slopeAlong(truck.pos.x, truck.pos.z, Math.cos(truck.heading), Math.sin(truck.heading), 5);
+    const climb = grade > 0 ? 1 / (1 + grade * 2.6) : 1 + Math.min(0.3, -grade * 0.45);
+    truck.speed = approach(truck.speed, base * load * corner * climb * (1 - wrecked * 0.7), 2.5, dt);
 
     // advance along the arc: a step of `speed` along the curve, not along x
     const step = truck.speed * dt;

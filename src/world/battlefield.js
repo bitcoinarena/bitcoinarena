@@ -353,12 +353,44 @@ export class Battlefield {
     const fz = clamp((z + WORLD.depth / 2) / WORLD.depth, 0, 1) * ROWS;
     const ix = Math.min(COLS - 1, fx | 0), iz = Math.min(ROWS - 1, fz | 0);
     const tx = fx - ix, tz = fz - iz;
-    const h = (cx, cz) => arr[(cz * VW + cx) * 3 + 1];
-    return lerp(
-      lerp(h(ix, iz), h(ix + 1, iz), tx),
-      lerp(h(ix, iz + 1), h(ix + 1, iz + 1), tx),
-      tz,
-    );
+    const i00 = (iz * VW + ix) * 3 + 1;
+    const h00 = arr[i00];                      // (ix,   iz  )
+    const h10 = arr[i00 + 3];                  // (ix+1, iz  )
+    const h01 = arr[i00 + VW * 3];             // (ix,   iz+1)
+    const h11 = arr[i00 + VW * 3 + 3];         // (ix+1, iz+1)
+
+    // Solve the actual TRIANGLE the point falls in, not a bilinear blend of the
+    // quad. PlaneGeometry splits every cell as (a,b,d) + (b,c,d), so the two
+    // halves are genuinely different planes — and on a steep fee cliff the
+    // bilinear value can sit a full unit off the rendered surface, which is
+    // what let vehicles sink into a slope instead of climbing it.
+    return tx + tz <= 1
+      ? h00 + (h10 - h00) * tx + (h01 - h00) * tz
+      : h11 + (h01 - h11) * (1 - tx) + (h10 - h11) * (1 - tz);
+  }
+
+  /**
+   * Ground height a rigid body of half-length `half` should sit at, sampled
+   * along its own axis. A long hull bridges a crest rather than following the
+   * ground point-by-point, so take the highest point underneath it — otherwise
+   * the nose or the tail buries itself in the hill.
+   */
+  /**
+   * Slope along a heading, as a gradient (rise over run). Positive is uphill.
+   * Used to make climbing cost something instead of vehicles gliding up cliffs
+   * at cruising speed as if the mountain were not there.
+   */
+  slopeAlong(x, z, fx, fz, reach = 4) {
+    const ax = fx * reach, az = fz * reach;
+    return (this.surfaceAt(x + ax, z + az) - this.surfaceAt(x - ax, z - az)) / (2 * reach);
+  }
+
+  rideHeight(x, z, half, fx, fz) {
+    const ax = fx * half, az = fz * half;
+    const a = this.surfaceAt(x - ax, z - az);
+    const b = this.surfaceAt(x, z);
+    const c = this.surfaceAt(x + ax, z + az);
+    return a > b ? (a > c ? a : c) : (b > c ? b : c);
   }
 
   _craterAt(x, z) {
@@ -596,7 +628,9 @@ export class Battlefield {
     }
 
     this._meshAcc += dt;
-    if (this._meshAcc > 1 / 24) { this._updateMesh(); this._meshAcc = 0; }
+    // the mempool terrain moves far more than the old decorative noise did,
+    // so a stale mesh reads as units popping through the ground
+    if (this._meshAcc > 1 / 40) { this._updateMesh(); this._meshAcc = 0; }
     this._updateTrench();
     this._updateBook();
     this._updateProfile(dt);
@@ -713,7 +747,9 @@ export class Battlefield {
         const front = this.frontlineAt(u.x);
         const gap = (front - u.z) * u.dir;               // >0 means still behind the line
         if (gap > 3) {
-          u.z += u.dir * u.speed * dt * (1 + Math.abs(flow) * 0.6);
+          const grade = this.slopeAlong(u.x, u.z, 0, u.dir, 3);
+          const climb = grade > 0 ? 1 / (1 + grade * 1.8) : 1;
+          u.z += u.dir * u.speed * climb * dt * (1 + Math.abs(flow) * 0.6);
           u.x += Math.sin(u.phase + performance.now() * 0.0006) * dt * 2.2;
         } else {
           u.z += u.dir * Math.sin(performance.now() * 0.002 + u.phase) * dt * 3;
@@ -738,7 +774,9 @@ export class Battlefield {
         const moving = gap > 3;
         u.stride += dt * (moving ? 6.5 + u.speed * 0.5 : 1.6);
         const swing = Math.sin(u.stride) * (moving ? 0.62 : 0.06);
-        const y = this.surfaceAt(u.x, u.z);
+        const g0 = this.surfaceAt(u.x, u.z);
+        u.y = u.y === undefined ? g0 : Math.max(g0, approach(u.y, g0, 14, dt));
+        const y = u.y;
         const bob = moving ? Math.abs(Math.cos(u.stride)) * 0.09 : 0;
         const yaw = u.dir > 0 ? 0 : Math.PI;
 
@@ -864,7 +902,10 @@ export class Battlefield {
         const gx = goalX - v.x, gz = goalZ - v.z;
         const gl = Math.hypot(gx, gz);
         if (gl > 0.6) {
-          const step = Math.min(drive * dt, gl);
+          // grinding up a fee cliff is slow; rolling down the back of it is not
+          const grade = this.slopeAlong(v.x, v.z, gx / gl, gz / gl, 4);
+          const climb = grade > 0 ? 1 / (1 + grade * 2.2) : 1 + Math.min(0.35, -grade * 0.5);
+          const step = Math.min(drive * climb * dt, gl);
           v.x += (gx / gl) * step;
           v.z += (gz / gl) * step;
         }
@@ -916,9 +957,14 @@ export class Battlefield {
         }
 
         // --- pose: pitch along the hull's own axis, roll across it ---------
-        const y = this.surfaceAt(v.x, v.z);
-        const fx = Math.sin(yaw) * 3.2, fz = Math.cos(yaw) * 3.2;
-        const rx = Math.cos(yaw) * 2.0, rz = -Math.sin(yaw) * 2.0;
+        const sy = Math.sin(yaw), cy = Math.cos(yaw);
+        // Never allow the hull below the ground, but ease it down when the
+        // ground drops away — a hard snap every frame reads as popping.
+        const ground = this.rideHeight(v.x, v.z, 3.0, sy, cy);
+        v.y = v.y === undefined ? ground : Math.max(ground, approach(v.y, ground, 9, dt));
+        const y = v.y;
+        const fx = sy * 3.2, fz = cy * 3.2;
+        const rx = cy * 2.0, rz = -sy * 2.0;
         const pitch = -Math.atan2(this.surfaceAt(v.x + fx, v.z + fz) - this.surfaceAt(v.x - fx, v.z - fz), 6.4);
         const roll = Math.atan2(this.surfaceAt(v.x + rx, v.z + rz) - this.surfaceAt(v.x - rx, v.z - rz), 4);
 
