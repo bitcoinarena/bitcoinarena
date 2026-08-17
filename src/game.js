@@ -8,7 +8,7 @@ import { Audio } from './audio.js';
 import { UI } from './ui.js';
 import { bindInput } from './input.js';
 import { LANES, TRUCKS, SCORE, COSTS, EVENTS, SIM, WORLD, CAMERAS } from './config.js';
-import { Emitter, clamp, lerp, approach, rand, fmtUsd, fmtNum, shortId, pick } from './util.js';
+import { Emitter, clamp, lerp, approach, rand, fmtUsd, fmtNum, fmtFee, shortId, pick } from './util.js';
 
 export class Game {
   constructor(canvas) {
@@ -36,6 +36,13 @@ export class Game {
     this.delivered = 0;
     this.lastBlockAt = performance.now();
     this.blockIntervalHint = 600;
+
+    // A block IS the round. Everything is scored per block, settled when the
+    // block seals, and kept in a short history — which is also the shape a
+    // multiplayer leaderboard needs, so the standings list already renders as
+    // one even with a single player in it.
+    this.round = this._newRound(0);
+    this.rounds = [];              // finished rounds, newest first
 
     // ---- derived market state
     this.price = 0;
@@ -142,6 +149,7 @@ export class Game {
       this.logistics.addPackage(tx, this.price);
     });
 
+    this.mempool.on('histogram', (h) => this.bf.setMempoolHistogram(h));
     this.mempool.on('block', (b) => this._onBlock(b));
 
     this.mempool.on('stats', () => {});
@@ -156,6 +164,21 @@ export class Game {
     this.events.on('radio', ({ text }) => this.ui.radio(text));
     this.events.on('shake', (v) => this.stage.addShake(v));
     this.events.on('deliver', (d) => this._onDeliver(d));
+  }
+
+  _newRound(height) {
+    return { height, score: 0, delivered: 0, vbytes: 0, fees: 0, startedAt: performance.now() };
+  }
+
+  /** 0..1 progress through the current round, by expected block interval. */
+  roundProgress() {
+    return clamp((performance.now() - this.lastBlockAt) / 1000 / this.blockIntervalHint, 0, 1);
+  }
+
+  /** Standings for the round. One row today; the same shape holds a lobby. */
+  standings() {
+    const rows = [{ name: 'YOU', score: this.round.score, packages: this.round.delivered, you: true }];
+    return rows.sort((a, b) => b.score - a.score).map((r, i) => ({ ...r, rank: i + 1 }));
   }
 
   /* ------------------------------------------------------------ scoring */
@@ -185,6 +208,10 @@ export class Game {
     this.score += pts;
     this.fees += sats;
     this.delivered += cargo.length;
+    this.round.score += pts;
+    this.round.delivered += cargo.length;
+    this.round.vbytes += used;
+    this.round.fees += sats;
 
     this.audio.cash(laneMult * windowMult);
     this.fx.text(`+${fmtNum(pts)}`, WORLD.depotX - 14, 20, 0, { color: '#ffd447', life: 2.2, scale: 1.5 });
@@ -198,6 +225,17 @@ export class Game {
   _onBlock(b) {
     const gap = (performance.now() - this.lastBlockAt) / 1000;
     if (gap > 20) this.blockIntervalHint = lerp(this.blockIntervalHint, clamp(gap, 60, 3600), 0.25);
+    // --- settle the round the block just closed -------------------------
+    const done = this.round;
+    done.sealedBy = b.height;
+    done.miner = b.miner;
+    if (this.started) {
+      this.rounds.unshift(done);
+      if (this.rounds.length > 8) this.rounds.pop();
+    }
+    this.round = this._newRound(b.height + 1);
+    this.ui.setRoundResult(done, b);
+
     this.lastBlockAt = performance.now();
     this.blockWindow = SCORE.blockWindowSec;
 
@@ -211,7 +249,7 @@ export class Game {
 
     this.events.emit('log', {
       kind: 'block',
-      text: `BLOCK ${b.height.toLocaleString('en-US')} mined by ${b.miner} — ${b.txCount.toLocaleString('en-US')} txs, ${(b.totalFees / 1e8).toFixed(3)} BTC fees, median ${(+b.medianFee || 0).toFixed(1)} sat/vB${b.real ? '' : ' (sim)'}`,
+      text: `ROUND CLOSED — BLOCK ${b.height.toLocaleString('en-US')} mined by ${b.miner} — ${b.txCount.toLocaleString('en-US')} txs, ${(b.totalFees / 1e8).toFixed(3)} BTC fees, median ${fmtFee(+b.medianFee || 0)} sat/vB${b.real ? '' : ' (sim)'}`,
     });
 
     // Any loaded truck at the plaza seals immediately and rolls out — that is
@@ -234,7 +272,7 @@ export class Game {
         mined++;
       }
     }
-    if (mined) this.events.emit('log', { kind: 'ops', text: `${mined} packages confirmed into block ${b.height} without you (fee ≥ ${median.toFixed(1)} sat/vB)` });
+    if (mined) this.events.emit('log', { kind: 'ops', text: `${mined} packages confirmed into block ${b.height} without you (fee ≥ ${fmtFee(median)} sat/vB)` });
   }
 
   /* ------------------------------------------------------------- player */
@@ -436,6 +474,16 @@ export class Game {
     this.ui.setBias(this.bias * 0.6 + this.bf.bullDominance() * 0.4);
     const nextIn = Math.max(0, this.blockIntervalHint - (performance.now() - this.lastBlockAt) / 1000);
     this.ui.setScore(this.score, this.fees, this.mempool.tipHeight, nextIn);
+    this.ui.setRound({
+      // the round knows its own block; tip height is only the fallback before
+      // the first block of the session lands
+      height: this.round.height || (this.mempool.tipHeight ? this.mempool.tipHeight + 1 : 0),
+      round: this.round,
+      progress: this.roundProgress(),
+      standings: this.standings(),
+      history: this.rounds,
+      mempoolBlocks: this.bf.mempoolBlocks,
+    });
     this.ui.setBlockWindow(this.blockWindow);
     this.ui.setFleet(this.logistics.trucks, this.selectedTruck, this.lane, this.bf.roads);
     this.ui.setShop(this.owned, this.fees);

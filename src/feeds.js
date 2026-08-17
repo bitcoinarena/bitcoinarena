@@ -272,6 +272,7 @@ export class MempoolFeed extends Emitter {
     this.mempoolCount = 0;
     this.mempoolVsize = 0;
     this.feeBands = [1, 2, 5, 12];   // projected block median fees (sat/vB)
+    this.histogram = null;           // fee-rate vs vsize, the mempool's shape
     this.recommended = { fastestFee: 8, halfHourFee: 5, hourFee: 3, economyFee: 2, minimumFee: 1 };
     this.seen = new Set();
     this._simAcc = 0;
@@ -341,6 +342,11 @@ export class MempoolFeed extends Emitter {
       ]);
       this.mempoolCount = mp.count ?? this.mempoolCount;
       this.mempoolVsize = (mp.vsize ?? 0) / 1e6;
+      // [[feerate, vsize], ...] descending by fee rate — the shape of the queue
+      if (Array.isArray(mp.fee_histogram) && mp.fee_histogram.length) {
+        this.histogram = mp.fee_histogram;
+        this.emit('histogram', this.histogram);
+      }
       this.recommended = fees ?? this.recommended;
       const h = parseInt(tip, 10);
       if (h > 0) this.tipHeight = Math.max(this.tipHeight, h);
@@ -383,6 +389,19 @@ export class MempoolFeed extends Emitter {
     if (this.live) return;
     this.mempoolCount = clamp(this.mempoolCount + rand(-40, 45), 3000, 180000);
     this.mempoolVsize = this.mempoolCount * 0.00035;
+    this._histAcc = (this._histAcc ?? 0) - dt;
+    if (this._histAcc <= 0) {
+      this._histAcc = 5;
+      // a plausible queue: a few high-fee txs on top, a long cheap tail
+      const top = 2 + Math.pow(Math.random(), 2) * 60;
+      const hist = [];
+      for (let i = 0; i < 40; i++) {
+        const f = top * Math.pow(1 - i / 40, 2.4) + 0.3;
+        hist.push([f, (this.mempoolVsize * 1e6) / 40]);
+      }
+      this.histogram = hist;
+      this.emit('histogram', hist);
+    }
     this._simAcc += dt * (3 + this.mempoolCount / 20000);
     while (this._simAcc > 1) {
       this._simAcc -= 1;

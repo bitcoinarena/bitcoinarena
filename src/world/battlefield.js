@@ -13,21 +13,27 @@ const VW = COLS + 1, VH = ROWS + 1;
 const REAR_X = 74;
 const FRONT_X = 84;      // troops are held between -FRONT_X and +FRONT_X
 
-/**
- * Cheap deterministic rolling ground (no external noise lib). Two low-frequency
- * octaves give gentle hills you can see the road climb over; the high-frequency
- * terms just break up the surface. Kept small on purpose — the last version had
- * mountains and they swallowed everything.
- */
+/* ---------------------------------------------------------------- mempool */
+
+// The terrain IS the mempool. Distance from the frontline is queue depth: the
+// ground at |z - frontline| = QUEUE_UNITS is one block's worth of backlog away
+// from being confirmed. Height at that depth is the fee rate you would have to
+// pay to sit there — so a quiet mempool is almost flat, and a fee spike raises
+// a cliff along the front that you can see from the other end of the map.
+const PROFILE_BANDS = 72;
+const FEE_HEIGHT = 9;            // extra relief as the market gets expensive
+const BASE_RELIEF = 5.5;         // relief the queue always gets, however cheap
+const SUB_SAT = 0.01;            // resolve fee rates well below 1 sat/vB
+const MIN_DEPTH = 1.5;           // always show at least this many blocks of queue
+const MAX_DEPTH = 40;
+
+/** Surface texture only — the shape comes from the mempool. */
 function groundNoise(x, z) {
   return (
-    Math.sin(x * 0.0125 + 1.7) * 3.4 +
-    Math.cos(z * 0.017 - 0.6) * 2.8 +
-    Math.sin((x * 0.9 - z) * 0.0075) * 3.0 +
-    Math.sin(x * 0.055) * 1.7 +
-    Math.cos(z * 0.041 + 1.3) * 1.4 +
-    Math.sin((x + z) * 0.021) * 2.3 +
-    Math.sin(x * 0.13 + z * 0.09) * 0.55
+    Math.sin(x * 0.055) * 1.1 +
+    Math.cos(z * 0.041 + 1.3) * 0.9 +
+    Math.sin((x + z) * 0.021) * 1.4 +
+    Math.sin(x * 0.13 + z * 0.09) * 0.45
   );
 }
 
@@ -57,6 +63,13 @@ export class Battlefield {
     this.markers = [];         // fading columns of embers at liquidated price levels
     this.mushrooms = [];       // nuke clouds still rising
     this.claims = [];          // ground seized by a strike, held only while troops stay
+    // fee rate at each queue depth, and the height it maps to
+    this.profile = new Float32Array(PROFILE_BANDS).fill(1);
+    this.profileTarget = new Float32Array(PROFILE_BANDS).fill(1);
+    this.profileHeight = new Float32Array(PROFILE_BANDS);
+    this.mempoolBlocks = 0;    // how many blocks deep the backlog runs
+    this.queueDepth = 6;       // blocks of backlog spanned by the visible flanks
+    this.queueSpan = WORLD.halfZ * 1.35;
     this.helis = [];           // gunships on station
     this.audio = null;         // set by game.js
 
@@ -234,6 +247,79 @@ export class Battlefield {
     return z < this.frontlineAt(x) ? 'bull' : 'bear';
   }
 
+  /**
+   * Rebuild the queue profile from a live fee histogram: [[feerate, vsize], ...]
+   * descending by fee rate. Walking it accumulates vsize, and every 1M vB is one
+   * block of backlog — so we can read off "what fee rate is N blocks deep".
+   */
+  setMempoolHistogram(hist) {
+    if (!hist || !hist.length) return;
+    const BLOCK_VSIZE = 1e6;
+    let total = 0;
+    for (const [, v] of hist) total += v;
+    this.mempoolBlocks = total / BLOCK_VSIZE;
+    // Stretch the depth axis over the WHOLE backlog, so the flanks always show
+    // the entire queue: a 40-block mempool spreads out, a nearly empty one is
+    // zoomed in on its last block or two.
+    this.queueDepth = clamp(this.mempoolBlocks, MIN_DEPTH, MAX_DEPTH);
+
+    let cum = 0, k = 0;
+    for (let i = 0; i < PROFILE_BANDS; i++) {
+      const want = (i / (PROFILE_BANDS - 1)) * this.queueDepth * BLOCK_VSIZE;
+      while (k < hist.length && cum < want) { cum += hist[k][1]; k++; }
+      // past the end of the queue there is nothing left to outbid
+      this.profileTarget[i] = k >= hist.length && cum < want
+        ? 0
+        : hist[Math.max(0, k - 1)][0];
+    }
+  }
+
+  /** Queue depth in blocks at a point — how far from confirmation it sits. */
+  blocksDeepAt(x, z) {
+    return (clamp(Math.abs(z - this.frontlineAt(x)) / this.queueSpan, 0, 1)) * this.queueDepth;
+  }
+
+  /** Ease the ground toward the new mempool shape instead of snapping to it. */
+  _updateProfile(dt) {
+    const k = 1 - Math.exp(-0.7 * dt);
+    let lo = Infinity, hi = 0;
+    for (let i = 0; i < PROFILE_BANDS; i++) {
+      this.profile[i] += (this.profileTarget[i] - this.profile[i]) * k;
+      const r = this.profile[i];
+      if (r > 0 && r < lo) lo = r;
+      if (r > hi) hi = r;
+    }
+    if (!isFinite(lo)) lo = SUB_SAT;
+
+    // A raw log of the absolute fee rate flattens a whole sub-satoshi market
+    // into nothing — 0.2 to 3 sat/vB is a normal quiet queue and would read as
+    // dead ground. So normalise the SHAPE between the cheapest and dearest in
+    // the queue (which resolves fractional rates), then scale the whole relief
+    // by how expensive the market actually is, so a fee spike is still visibly
+    // a mountain and a quiet queue is still visibly a queue.
+    const lgLo = Math.log10(Math.max(SUB_SAT, lo));
+    const lgHi = Math.log10(Math.max(SUB_SAT * 2, hi));
+    const span = Math.max(0.15, lgHi - lgLo);
+    const drama = BASE_RELIEF + FEE_HEIGHT * clamp(Math.log10(1 + hi) / 2.5, 0, 1.6);
+    this.feeLo = lo; this.feeHi = hi;
+
+    for (let i = 0; i < PROFILE_BANDS; i++) {
+      const r = this.profile[i];
+      const rel = r <= 0 ? 0 : clamp((Math.log10(Math.max(SUB_SAT, r)) - lgLo) / span, 0, 1);
+      this.profileHeight[i] = rel * drama;
+    }
+  }
+
+  /** Ground height contributed by the backlog at `ad` units from the front. */
+  queueHeight(ad) {
+    const t = clamp(ad / this.queueSpan, 0, 1) * (PROFILE_BANDS - 1);
+    const i = t | 0;
+    const f = t - i;
+    const a = this.profileHeight[i];
+    const b = this.profileHeight[Math.min(PROFILE_BANDS - 1, i + 1)];
+    return a + (b - a) * f;
+  }
+
   /** Frontline z at a world x (interpolated between columns). */
   frontlineAt(x) {
     const t = clamp((x + WORLD.width / 2) / WORLD.width, 0, 1) * COLS;
@@ -246,9 +332,8 @@ export class Battlefield {
   heightAt(x, z) {
     const d = z - this.frontlineAt(x);
     const ad = Math.abs(d);
-    let h = groundNoise(x, z) * 0.55;
-    h += 0.8 / (1 + Math.pow((ad - 9) / 7, 2));     // faint spoil, not a rampart
-    h -= 1.9 / (1 + Math.pow(d / 8.0, 2));         // broad churned hollow
+    let h = groundNoise(x, z) * 0.55 + this.queueHeight(ad);
+    h -= 2.4 / (1 + Math.pow(d / 7.0, 2));         // the road cut along the crest
     h -= this._craterAt(x, z);
     return h;
   }
@@ -514,6 +599,7 @@ export class Battlefield {
     if (this._meshAcc > 1 / 24) { this._updateMesh(); this._meshAcc = 0; }
     this._updateTrench();
     this._updateBook();
+    this._updateProfile(dt);
     this._updateStrikes(dt);
     this._updateMushrooms(dt);
     this._updateClaims(dt);
@@ -535,9 +621,8 @@ export class Battlefield {
         const i3 = i * 3;
         const d = z - this.frontZ[ix];
         const ad = Math.abs(d);
-        let h = this.baseH[i];
-        h += 0.8 / (1 + ((ad - 9) / 7) * ((ad - 9) / 7));
-        h -= 1.9 / (1 + (d / 8.0) * (d / 8.0));
+        let h = this.baseH[i] + this.queueHeight(ad);
+        h -= 2.4 / (1 + (d / 7.0) * (d / 7.0));
         h -= this._craterAt(arr[i3], z);
         arr[i3 + 1] = h;
 

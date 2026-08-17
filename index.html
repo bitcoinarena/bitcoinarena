@@ -60,13 +60,25 @@
 
   <!-- top right: score -->
   <div class="panel" id="score-panel">
-    <div class="score-main"><label>SCORE</label><b id="score">0</b></div>
+    <div class="round-head">
+      <span class="round-tag">ROUND</span>
+      <b id="round-height">BLOCK —</b>
+      <span class="round-eta">seals ~<i id="blocktimer">—</i></span>
+    </div>
+    <div class="round-bar"><i id="round-fill"></i></div>
+    <div class="score-sub round-stats">
+      <span><label>THIS BLOCK</label><b id="round-score">0</b></span>
+      <span><label>PACKAGES</label><b id="round-pkgs">0</b></span>
+      <span><label>BLOCKSPACE</label><b id="round-vb">0 vB</b></span>
+    </div>
+    <div id="standings"></div>
     <div class="score-sub">
+      <span><label>TOTAL</label><b id="score">0</b></span>
       <span><label>FEES BANKED</label><b id="fees">0 sat</b></span>
-      <span><label>BLOCK</label><b id="height">—</b></span>
-      <span><label>NEXT BLOCK ~</label><b id="blocktimer">—</b></span>
+      <span><label>MEMPOOL</label><b id="mp-blocks">—</b></span>
     </div>
     <div id="block-window" class="block-window hidden">BLOCK WINDOW ×3 <i id="bw-time">0.0s</i></div>
+    <div id="round-history"></div>
   </div>
 
   <!-- left: fleet -->

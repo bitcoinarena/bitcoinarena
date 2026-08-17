@@ -1,6 +1,6 @@
 import { LANES, TRUCKS, WORLD, FEE } from './config.js';
 import { IS_MOBILE, TIER } from './quality.js';
-import { fmtUsd, fmtNum, fmtBtc, fmtDuration, fmtPrice, fmtAgo, clamp, lerp, shortId } from './util.js';
+import { fmtUsd, fmtNum, fmtBtc, fmtFee, fmtDuration, fmtPrice, fmtAgo, clamp, lerp, shortId } from './util.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -31,6 +31,10 @@ export class UI {
       edu: $('edu'), eduBody: $('edu-body'), shop: $('shop'), camModes: $('cam-modes'),
       minimap: $('minimap'), book: $('book-canvas'),
       liqBody: $('liq-body'), liqHead: $('liq-tag'), liqSim: $('liq-sim'),
+      roundHeight: $('round-height'), roundFill: $('round-fill'), roundScore: $('round-score'),
+      roundPkgs: $('round-pkgs'), roundVb: $('round-vb'), standings: $('standings'),
+      roundHistory: $('round-history'), mpBlocks: $('mp-blocks'),
+      scorePanel: $('score-panel'), marketPanel: $('market-panel'),
     };
     this.mm = this.el.minimap.getContext('2d');
     this.bookCtx = this.el.book.getContext('2d');
@@ -202,8 +206,58 @@ export class UI {
   setScore(score, fees, height, nextBlockSec) {
     this.el.score.textContent = Math.round(score).toLocaleString('en-US');
     this.el.fees.textContent = fmtBtc(fees);
-    this.el.height.textContent = height ? height.toLocaleString('en-US') : '—';
     this.el.blocktimer.textContent = nextBlockSec == null ? '—' : fmtDuration(nextBlockSec);
+  }
+
+  /**
+   * The block is the round, so the panel leads with which block is being
+   * contested, how far through it we are, and what has been banked into it.
+   * The standings list is rendered as a leaderboard even with one player,
+   * because that is exactly the shape multiplayer will fill.
+   */
+  setRound({ height, round, progress, standings, history, mempoolBlocks }) {
+    this.el.roundHeight.textContent = height ? `BLOCK ${height.toLocaleString('en-US')}` : 'BLOCK —';
+    this.el.roundFill.style.width = `${progress * 100}%`;
+    this.el.roundFill.classList.toggle('due', progress > 0.92);
+    this.el.roundScore.textContent = Math.round(round.score).toLocaleString('en-US');
+    this.el.roundPkgs.textContent = String(round.delivered);
+    this.el.roundVb.textContent = `${fmtNum(round.vbytes)} vB`;
+    this.el.mpBlocks.textContent = mempoolBlocks ? `${mempoolBlocks.toFixed(1)} blocks` : '—';
+
+    const rows = standings.map((r) => `
+      <div class="stand-row ${r.you ? 'you' : ''}">
+        <span class="stand-rank">${r.rank}</span>
+        <span class="stand-name">${r.name}</span>
+        <span class="stand-pkg">${r.packages}</span>
+        <span class="stand-score">${Math.round(r.score).toLocaleString('en-US')}</span>
+      </div>`).join('');
+    if (rows !== this._standHtml) { this.el.standings.innerHTML = rows; this._standHtml = rows; }
+
+    // The round panel grows and shrinks with the standings and history, so the
+    // market panel below it has to follow rather than sit at a fixed offset.
+    if (!IS_MOBILE) {
+      const h = this.el.scorePanel.offsetHeight;
+      if (h !== this._scoreH) {
+        this._scoreH = h;
+        this.el.marketPanel.style.top = `${this.el.scorePanel.offsetTop + h + 10}px`;
+      }
+    }
+
+    const hist = history.slice(0, 4).map((h) => `
+      <div class="hist-row"><span>#${(h.sealedBy ?? 0).toLocaleString('en-US')}</span>
+        <span>${h.delivered}p</span>
+        <b>${Math.round(h.score).toLocaleString('en-US')}</b></div>`).join('');
+    if (hist !== this._histHtml) { this.el.roundHistory.innerHTML = hist; this._histHtml = hist; }
+  }
+
+  /** Called the moment a block seals the round. */
+  setRoundResult(done, block) {
+    if (done.delivered > 0) {
+      this.toast(`ROUND ${block.height.toLocaleString('en-US')} · ${Math.round(done.score).toLocaleString('en-US')} PTS`, 'var(--orange)');
+      this.log('block', `Round settled into block ${block.height.toLocaleString('en-US')} — ${done.delivered} packages, ${fmtNum(done.vbytes)} vB, ${Math.round(done.score).toLocaleString('en-US')} pts`);
+    } else {
+      this.log('ops', `Round closed on block ${block.height.toLocaleString('en-US')} with nothing delivered — next round is open`);
+    }
   }
 
   setBlockWindow(t) {
@@ -222,7 +276,7 @@ export class UI {
       ['next block', rec.fastestFee], ['~30 min', rec.halfHourFee],
       ['~1 hour', rec.hourFee], ['no rush', rec.minimumFee],
     ];
-    const html = cells.map(([label, v]) => `<div>${(v ?? 1).toFixed(0)}<em>${label}</em></div>`).join('');
+    const html = cells.map(([label, v]) => `<div>${fmtFee(v ?? 1)}<em>${label}</em></div>`).join('');
     if (html !== this._bandHtml) { this.el.feeBands.innerHTML = html; this._bandHtml = html; }
   }
 
@@ -272,7 +326,7 @@ export class UI {
       const used = selected.cargo.reduce((a, p) => a + p.vsize, 0);
       this.el.cargoCap.textContent = `${used.toLocaleString('en-US')} / ${selected.spec.capacity.toLocaleString('en-US')} vB`;
       this.el.cargoList.innerHTML = selected.cargo.length
-        ? selected.cargo.map((p) => `<div class="row"><span>${shortId(p.txid)}</span><span>${p.feeRate.toFixed(0)} s/vB</span></div>`).join('')
+        ? selected.cargo.map((p) => `<div class="row"><span>${shortId(p.txid)}</span><span>${fmtFee(p.feeRate)} s/vB</span></div>`).join('')
         : '<i class="dim">empty — click packages in the plaza, or press SPACE</i>';
     }
   }
@@ -334,7 +388,7 @@ export class UI {
       title: `${p.tier.name} PACKAGE${p.whale ? ' 🐋' : ''}${p.pizza ? ' 🍕' : ''}`,
       rows: [
         ['txid', shortId(p.txid)],
-        ['fee rate', `${p.feeRate.toFixed(1)} sat/vB`],
+        ['fee rate', `${fmtFee(p.feeRate)} sat/vB`],
         ['size', `${p.vsize.toLocaleString('en-US')} vB`],
         ['fee', `${p.fee.toLocaleString('en-US')} sat`],
         ['value', `${p.btc.toFixed(4)} BTC · ${fmtUsd(p.usd)}`],

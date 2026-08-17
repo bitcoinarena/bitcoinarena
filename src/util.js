@@ -48,6 +48,18 @@ export function fmtAgo(ts) {
   return `${(s / 3600) | 0}h`;
 }
 
+/**
+ * Fee rates are routinely fractional — 0.375 sat/vB is a perfectly normal quiet
+ * market. Rounding those to whole sats prints "0" and loses the whole picture.
+ */
+export function fmtFee(r) {
+  if (!isFinite(r)) return '—';
+  if (r >= 100) return String(Math.round(r));
+  if (r >= 10) return r.toFixed(1);
+  if (r >= 1) return r.toFixed(2);
+  return r.toFixed(3).replace(/0+$/, '').replace(/\.$/, '');
+}
+
 export function fmtNum(v, digits = 0) {
   if (!isFinite(v)) return '—';
   if (Math.abs(v) >= 1e6) return `${(v / 1e6).toFixed(2)}M`;

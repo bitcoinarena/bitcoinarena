@@ -394,3 +394,40 @@ body.mobile .score-sub b{white-space:nowrap}
 body.mobile #bottom-bar{
   -webkit-mask-image:linear-gradient(90deg,transparent 0,#000 14px,#000 calc(100% - 22px),transparent 100%);
   mask-image:linear-gradient(90deg,transparent 0,#000 14px,#000 calc(100% - 22px),transparent 100%)}
+
+/* ------------------------------------------------------- round / block */
+/* The block is the round, so the panel leads with which block is being
+   contested and how far through it we are. The standings render as a
+   leaderboard even with one player — that is the shape multiplayer fills. */
+.round-head{display:flex;align-items:baseline;gap:7px;margin-bottom:6px}
+.round-tag{font-family:var(--cond);font-size:9px;letter-spacing:.24em;color:var(--orange);
+  border:1px solid rgba(247,147,26,.45);border-radius:99px;padding:1px 6px}
+.round-head b{font-family:var(--cond);font-size:17px;letter-spacing:.06em;color:var(--ink)}
+.round-eta{margin-left:auto;font-family:var(--mono);font-size:9.5px;color:var(--dim);white-space:nowrap}
+.round-eta i{font-style:normal;color:var(--gold)}
+.round-bar{height:4px;border-radius:99px;background:rgba(255,255,255,.09);overflow:hidden;margin-bottom:8px}
+.round-bar i{display:block;height:100%;width:0%;border-radius:99px;
+  background:linear-gradient(90deg,var(--orange),var(--gold));transition:width .3s linear}
+.round-bar i.due{animation:pulse .7s infinite alternate}
+.round-stats b{color:var(--gold)}
+
+#standings{display:flex;flex-direction:column;gap:2px;margin:8px 0 6px}
+.stand-row{display:grid;grid-template-columns:16px 1fr auto auto;gap:7px;align-items:baseline;
+  padding:3px 6px;border-radius:6px;background:rgba(255,255,255,.04);
+  font-family:var(--mono);font-size:10.5px}
+.stand-row.you{background:rgba(255,212,71,.13);border-left:2px solid var(--gold)}
+.stand-rank{color:var(--dim)}
+.stand-name{font-weight:700;letter-spacing:.06em}
+.stand-pkg{color:var(--dim);font-size:9.5px}
+.stand-score{color:var(--gold);font-weight:700}
+
+#round-history{display:flex;flex-direction:column;gap:2px;margin-top:7px;
+  padding-top:7px;border-top:1px solid var(--panel-line)}
+.hist-row{display:grid;grid-template-columns:1fr auto auto;gap:8px;
+  font-family:var(--mono);font-size:9.5px;color:var(--dim)}
+.hist-row b{color:var(--ink)}
+
+body.mobile #score-panel{max-width:60vw}
+body.mobile #round-history{display:none}
+body.mobile .round-head b{font-size:13px}
+body.mobile #standings{margin:5px 0 3px}

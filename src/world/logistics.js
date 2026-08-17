@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { WORLD, LANES, FEE, TRUCKS } from '../config.js';
-import { clamp, lerp, rand, hash01, TAU, approach, angleApproach, pick } from '../util.js';
+import { clamp, lerp, rand, hash01, TAU, approach, angleApproach, pick, fmtFee } from '../util.js';
 import { makeTruckBody, makeTruckWheel } from '../render/geom.js';
 import { Q } from '../quality.js';
 
@@ -8,7 +8,8 @@ const MAX_PKG = Q.packages;
 
 /** Tier of a package relative to what the next block is currently paying. */
 export function feeTier(feeRate, baseline = 1) {
-  const ratio = feeRate / Math.max(0.5, baseline);
+  // the baseline itself is often sub-satoshi in a quiet market
+  const ratio = feeRate / Math.max(0.05, baseline);
   let t = FEE.tiers[0];
   for (const tier of FEE.tiers) if (ratio >= tier.min) t = tier;
   return t;
@@ -296,7 +297,7 @@ export class Logistics {
       this.audio?.whale();
       this.fx.text(`🐋 ${p.btc.toFixed(1)} BTC`, p.home.x, 20, p.home.z, { color: '#7ee0ff', life: 2.4, scale: 0.8 });
       this.fx.spawn(p.home.x, 14, p.home.z, { color: 0x7ee0ff, count: 46, size: 2.2, life: 1.7, speed: 10 });
-      this.events?.emit('log', { kind: 'whale', text: `WHALE package inbound — ${p.btc.toFixed(2)} BTC @ ${p.feeRate.toFixed(1)} sat/vB` });
+      this.events?.emit('log', { kind: 'whale', text: `WHALE package inbound — ${p.btc.toFixed(2)} BTC @ ${fmtFee(p.feeRate)} sat/vB` });
     }
     if (p.pizza) {
       this.events?.emit('log', { kind: 'egg', text: `🍕 Pizza Day commemorative package spotted (${p.vsize} vB)` });
