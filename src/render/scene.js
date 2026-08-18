@@ -4,6 +4,7 @@ import { RenderPass } from '../../vendor/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from '../../vendor/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from '../../vendor/addons/postprocessing/OutputPass.js';
 import { SMAAPass } from '../../vendor/addons/postprocessing/SMAAPass.js';
+import { loadEnvironment } from './assets.js';
 import { WORLD, CAMERAS } from '../config.js';
 import { Q } from '../quality.js';
 import { clamp, lerp, approach, rand, TAU } from '../util.js';
@@ -134,6 +135,17 @@ export class Stage {
 
     this._envAcc = 99;
     this._updateEnvironment();
+
+    // A photographed sky replaces the procedural probe as soon as it arrives.
+    // Until then the generated one carries the lighting, so nothing waits.
+    loadEnvironment(this.renderer, (texture) => {
+      this.hdri = texture;
+      this.scene.environment = texture;
+      // A real sky carries a strong colour cast of its own. Dialled back so it
+      // grounds the reflections without overriding the market-driven mood,
+      // which is the thing the atmosphere is supposed to communicate.
+      this.scene.environmentIntensity = 0.5;
+    });
   }
 
   _updateEnvironment() {
@@ -143,6 +155,7 @@ export class Stage {
     u.ground.value.copy(this.skyUniforms.bottom.value).multiplyScalar(0.9);
     this.envSun.material.color.copy(this.sun.color).multiplyScalar(1.5);
 
+    if (this.hdri) return;                    // the captured sky outranks it
     const target = this.pmrem.fromScene(this.envScene, 0, 1, 120);
     this.scene.environment?.dispose?.();
     this.scene.environment = target.texture;
@@ -252,7 +265,7 @@ export class Stage {
     this.scene.fog.density = lerp(0.0019, 0.0048, bear) * (1 + this.volatility * 0.25);
 
     this.sun.color.setHSL(lerp(0.60, 0.11, bull), lerp(0.15, 0.7, bull), lerp(0.60, 0.70, bull));
-    this.sun.intensity = lerp(1.9, 2.7, bull) * (1 - bear * 0.28);
+    this.sun.intensity = lerp(2.2, 3.0, bull) * (1 - bear * 0.28);
     this.hemi.intensity = lerp(0.26, 0.42, bull);
     this.rim.intensity = 0.18 + bear * 0.32;
     this.rim.color.setHex(bear > 0.3 ? 0xff4d5e : 0x5588ff);

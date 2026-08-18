@@ -4,6 +4,7 @@ import { Ring, clamp, lerp, rand, randInt, approach, angleDelta, angleApproach, 
 import { Roads } from './roads.js';
 import { Q } from '../quality.js';
 import { pbr, surfaces } from '../render/surfaces.js';
+import { groundMaps } from '../render/assets.js';
 import { makeSoldierBody, makeSoldierLeg, makeTankHull, makeTankTurret, makeBomber, makeBomb, makeHelicopter, HIP_Y, TURRET_Y } from '../render/geom.js';
 
 const COLS = WORLD.columns, ROWS = WORLD.rows;
@@ -146,13 +147,16 @@ export class Battlefield {
     geo.rotateX(-Math.PI / 2);
     const colors = new Float32Array(geo.attributes.position.count * 3);
     geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-    const sfc = surfaces();
+    // Scanned ground, used for RELIEF only. Binding the scan's colour map here
+    // washed the territory out to a uniform brown, and which side holds a patch
+    // of ground is gameplay information — so albedo stays with the vertex
+    // colours and the scan contributes its normals and roughness.
+    const g = groundMaps('brown_mud', 26);
     const mat = new THREE.MeshStandardMaterial({
-      vertexColors: true, roughness: 0.96, metalness: 0.02,
-      roughnessMap: sfc.scuff, normalMap: sfc.scuffNormal,
-      normalScale: new THREE.Vector2(0.9, 0.9), envMapIntensity: 0.5,
+      vertexColors: true, roughness: 1.0, metalness: 0.0,
+      normalMap: g.normalMap, roughnessMap: g.roughnessMap,
+      normalScale: new THREE.Vector2(1.3, 1.3), envMapIntensity: 0.5,
     });
-    sfc.scuff.repeat.set(14, 14); sfc.scuffNormal.repeat.set(14, 14);
     this.terrain = new THREE.Mesh(geo, mat);
     this.terrain.receiveShadow = true;
     this.terrain.name = 'terrain';

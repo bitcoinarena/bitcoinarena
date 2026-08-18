@@ -3,6 +3,7 @@ import { WORLD, LANES, LANE_ORDER } from '../config.js';
 import { clamp, lerp, smoothstep, approach } from '../util.js';
 import { Q, props } from '../quality.js';
 import { pbr, surfaces } from '../render/surfaces.js';
+import { groundMaps, loadProp, PROPS } from '../render/assets.js';
 import { makeSandbags, makeBarrier, makeWreck, makeMarkerPost, makeWire, makeEngineer } from '../render/geom.js';
 
 const SEG = Q.roadSeg;              // road segments along X
@@ -123,12 +124,12 @@ export class Roads {
       }
       g.setIndex(idx);
       g.computeVertexNormals();
-      const sfc = surfaces();
+      const a = groundMaps('asphalt_02', 9);
       const mat = new THREE.MeshStandardMaterial({
-        color, vertexColors: true, roughness: 0.88, metalness: 0.06, side: THREE.DoubleSide,
+        color, vertexColors: true, roughness: 0.95, metalness: 0.04, side: THREE.DoubleSide,
         transparent: opacity < 1, opacity,
-        roughnessMap: sfc.asphalt, normalMap: sfc.grainNormal,
-        normalScale: new THREE.Vector2(0.55, 0.55), envMapIntensity: 0.6,
+        map: a.map, normalMap: a.normalMap, roughnessMap: a.roughnessMap,
+        normalScale: new THREE.Vector2(0.8, 0.8), envMapIntensity: 0.55,
         // the road lies almost flat on the terrain; bias it toward the camera
         // so it never fights with the ground it is resting on
         polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -8,
@@ -198,12 +199,12 @@ export class Roads {
   /** Sandbag nests, barriers, wire and burnt-out wrecks lining the routes. */
   _buildProps() {
     const specs = [
-      { geo: makeSandbags(), count: props(26), yaw: true },
-      { geo: makeBarrier(), count: props(20), yaw: false },
+      { geo: makeSandbags(), count: props(26), yaw: true, prop: 'crate' },
+      { geo: makeBarrier(), count: props(20), yaw: false, prop: 'barrier' },
       { geo: makeWreck(), count: props(14), yaw: true },
       // frontline clutter: strung along the contested track on both shoulders
       { geo: makeWire(), count: props(30), yaw: false, front: true, spread: [3, 16] },
-      { geo: makeSandbags(), count: props(22), yaw: true, front: true, spread: [4, 18] },
+      { geo: makeSandbags(), count: props(22), yaw: true, front: true, spread: [4, 18], prop: 'barrel' },
       { geo: makeWreck(), count: props(16), yaw: true, front: true, spread: [6, 22] },
     ];
     this.props = [];
@@ -216,6 +217,16 @@ export class Roads {
         pbr(0xffffff, { vertexColors: true, roughness: 0.88, metalness: 0.15 }),
         spec.count,
       );
+      // A scanned model swaps in for the coded stand-in once it downloads.
+      if (spec.prop) {
+        const P = PROPS[spec.prop];
+        loadProp(P.name, P.file, P.scale, (geo, mat) => {
+          mesh.geometry.dispose();
+          mesh.geometry = geo;
+          mesh.material = mat;
+          mesh.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 600);
+        });
+      }
       mesh.castShadow = true;
       mesh.receiveShadow = true;
       mesh.frustumCulled = false;
