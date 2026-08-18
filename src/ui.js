@@ -1,5 +1,6 @@
 import { LANES, TRUCKS, WORLD, FEE } from './config.js';
 import { IS_MOBILE, TIER } from './quality.js';
+import { onAssetChange, assetSummary } from './render/assets.js';
 import { fmtUsd, fmtNum, fmtBtc, fmtFee, fmtDuration, fmtPrice, fmtAgo, clamp, lerp, shortId } from './util.js';
 
 const $ = (id) => document.getElementById(id);
@@ -36,6 +37,7 @@ export class UI {
       roundHistory: $('round-history'), mpBlocks: $('mp-blocks'),
       scorePanel: $('score-panel'), marketPanel: $('market-panel'),
       fleetPanel: $('fleet-panel'), minimapWrap: $('minimap-wrap'),
+      bootAssets: $('boot-assets'), pillAssets: $('pill-assets'),
     };
     this.mm = this.el.minimap.getContext('2d');
     this.bookCtx = this.el.book.getContext('2d');
@@ -46,6 +48,7 @@ export class UI {
     this._buildLanes();
     this._buildEdu();
     this._buildMobile();
+    this._wireAssetStatus();
     this._layout();
     addEventListener('resize', () => this._layout());
     if (this.el.liqSim) this.el.liqSim.onclick = () => this.game.toggleLiqSim();
@@ -88,6 +91,30 @@ export class UI {
     if (!fleet || !mm) return;
     const bottom = mm.offsetTop || (innerHeight - 200);
     fleet.style.maxHeight = `${Math.max(200, bottom - fleet.offsetTop - 12)}px`;
+  }
+
+  /**
+   * External assets arrive after the game is already running, so show exactly
+   * what is in and what failed rather than leaving the player to guess whether
+   * the photoreal set actually loaded.
+   */
+  _wireAssetStatus() {
+    onAssetChange((list) => {
+      const s = assetSummary();
+      if (this.el.pillAssets) {
+        const label = s.fail ? `${s.ok}/${s.total} · ${s.fail} failed` : `${s.ok}/${s.total}`;
+        this.el.pillAssets.innerHTML = `ASSETS <b>${label}</b>`;
+        this.el.pillAssets.className = `pill ${s.fail ? 'off' : s.done ? '' : 'sim'}`;
+        this.el.pillAssets.title = list.map((a) => `${a.label}: ${a.state}${a.detail ? ` (${a.detail})` : ''}`).join('\n');
+      }
+      if (this.el.bootAssets) {
+        this.el.bootAssets.innerHTML = list.map((a) => `
+          <span class="asset ${a.state}">
+            <i>${a.state === 'ok' ? '✓' : a.state === 'fail' ? '✕' : '…'}</i>
+            ${a.label}${a.detail ? `<em>${a.detail}</em>` : ''}
+          </span>`).join('');
+      }
+    });
   }
 
   toggleSheet(id) {

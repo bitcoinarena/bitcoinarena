@@ -151,7 +151,7 @@ export class Battlefield {
     // washed the territory out to a uniform brown, and which side holds a patch
     // of ground is gameplay information — so albedo stays with the vertex
     // colours and the scan contributes its normals and roughness.
-    const g = groundMaps('brown_mud', 26);
+    const g = groundMaps('brown_mud', 26, 'Scanned ground');
     const mat = new THREE.MeshStandardMaterial({
       vertexColors: true, roughness: 1.0, metalness: 0.0,
       normalMap: g.normalMap, roughnessMap: g.roughnessMap,

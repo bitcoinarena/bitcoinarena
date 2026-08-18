@@ -124,7 +124,7 @@ export class Roads {
       }
       g.setIndex(idx);
       g.computeVertexNormals();
-      const a = groundMaps('asphalt_02', 9);
+      const a = groundMaps('asphalt_02', 9, 'Scanned asphalt');
       const mat = new THREE.MeshStandardMaterial({
         color, vertexColors: true, roughness: 0.95, metalness: 0.04, side: THREE.DoubleSide,
         transparent: opacity < 1, opacity,
@@ -220,7 +220,7 @@ export class Roads {
       // A scanned model swaps in for the coded stand-in once it downloads.
       if (spec.prop) {
         const P = PROPS[spec.prop];
-        loadProp(P.name, P.file, P.scale, (geo, mat) => {
+        loadProp(P.name, P.file, P.size, (geo, mat) => {
           mesh.geometry.dispose();
           mesh.geometry = geo;
           mesh.material = mat;

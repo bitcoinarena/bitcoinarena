@@ -431,3 +431,18 @@ body.mobile #score-panel{max-width:60vw}
 body.mobile #round-history{display:none}
 body.mobile .round-head b{font-size:13px}
 body.mobile #standings{margin:5px 0 3px}
+
+/* ---------------------------------------------------- asset load status */
+.asset-load{display:flex;flex-wrap:wrap;gap:5px;margin-top:10px}
+.asset-load .asset{display:inline-flex;align-items:center;gap:5px;padding:3px 8px;border-radius:99px;
+  font-family:var(--mono);font-size:9.5px;letter-spacing:.03em;color:var(--dim);
+  background:rgba(255,255,255,.04);border:1px solid var(--panel-line)}
+.asset-load .asset i{font-style:normal;font-size:10px}
+.asset-load .asset em{font-style:normal;opacity:.6;margin-left:3px}
+.asset-load .asset.ok{color:#b9f5d0;border-color:rgba(61,220,132,.35)}
+.asset-load .asset.ok i{color:var(--bull)}
+.asset-load .asset.fail{color:#ffc0c6;border-color:rgba(255,77,94,.4)}
+.asset-load .asset.fail i{color:var(--bear)}
+.asset-load .asset.pending i{color:var(--gold)}
+body.mobile .asset-load{max-height:74px;overflow:auto}
+body.mobile #pill-assets{display:none}
