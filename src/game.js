@@ -426,9 +426,19 @@ export class Game {
     this.bf.setFlow(this.flow);
     this.bf.feedPrice(this.price || 0, dt);
 
+    // the truck the player is driving, offered to the battlefield as a target
+    const t = this.selectedTruck;
+    const courier = t && t.piloted && t.state !== 'idle' && t.state !== 'wrecked'
+      ? { x: t.pos.x, z: t.pos.z, vehicle: true, isCourier: true, active: true, hp: t.hp,
+          vx: Math.cos(t.heading) * t.speed, vz: Math.sin(t.heading) * t.speed }
+      : null;
+
     const ctx = {
       volatility: this.volatility,
       manualSteer: this.manualSteer,
+      firing: this.firing,
+      courier,
+      onCourierHit: (dmg) => { if (t) this.logistics.hitTruck(t, dmg); },
       onGunfire: () => this.audio.battle(0.3 + this.volatility),
       onCannon: (x, z) => {
         const d = this.stage.camera.position.distanceTo(new THREE.Vector3(x, 0, z));

@@ -297,6 +297,19 @@ export function makeTruckBody(spec) {
   return mergeParts(P);
 }
 
+/** Pintle-mounted gun on the cab roof, pivoting about the origin, aiming +X. */
+export function makeTruckTurret(scale = 1) {
+  const s = scale, STEEL = 0x3a4048, DARK = 0x14171c, SHIELD = 0x6d7480;
+  return mergeParts([
+    { geo: cyl(0.5 * s, 0.6 * s, 0.35 * s, 12), m: xf(0, 0.18 * s, 0), color: STEEL },
+    { geo: box(0.7 * s, 0.5 * s, 0.7 * s), m: xf(0, 0.6 * s, 0), color: STEEL },
+    { geo: box(0.25 * s, 1.5 * s, 1.7 * s), m: xf(0.55 * s, 0.85 * s, 0, 0, 0, -0.12), color: SHIELD },
+    { geo: cyl(0.12 * s, 0.14 * s, 3.0 * s, 10), m: xf(1.6 * s, 0.72 * s, 0, 0, 0, Math.PI / 2), color: DARK },
+    { geo: cyl(0.2 * s, 0.2 * s, 0.4 * s, 10), m: xf(3.0 * s, 0.72 * s, 0, 0, 0, Math.PI / 2), color: DARK },
+    { geo: box(0.5 * s, 0.35 * s, 0.55 * s), m: xf(-0.55 * s, 0.7 * s, 0), color: DARK },
+  ]);
+}
+
 /** Wheel: tyre plus hub, axis along Z so it spins about its own axle. */
 export function makeTruckWheel(scale = 1) {
   const t = cyl(1.5 * scale, 1.5 * scale, 1.15 * scale, 14);

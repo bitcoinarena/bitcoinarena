@@ -65,6 +65,8 @@ export function bindInput(game) {
 
   dom.addEventListener('pointerdown', (e) => {
     game.audio.resume();
+    // behind the wheel the left button is the trigger, not a selection tool
+    if (e.button === 0 && (game.stage.mode === 'driver' || game.stage.mode === 'follow')) game.firing = true;
     dragging = { x0: e.clientX, y0: e.clientY, x1: e.clientX, y1: e.clientY, moved: false, button: e.button };
     if (e.button === 2 || game.stage.mode === 'free') lookLast = { x: e.clientX, y: e.clientY };
     dom.setPointerCapture?.(e.pointerId);
@@ -92,6 +94,7 @@ export function bindInput(game) {
   });
 
   dom.addEventListener('pointerup', (e) => {
+    if (e.button === 0) game.firing = false;
     const d = dragging;
     dragging = null; lookLast = null;
     if (!d || e.button === 2) return;
@@ -164,6 +167,7 @@ export function bindInput(game) {
       case 'KeyP':    game.repair(); break;
       case 'KeyR':    game.rbf(); break;
       case 'KeyF':    game.setCamera(game.stage.mode === 'follow' ? 'cinematic' : 'follow'); break;
+      case 'ShiftLeft': case 'ShiftRight': game.firing = true; break;
       case 'KeyE':    game.toggleEdu(); break;
       case 'KeyM':    game.toggleMute(); break;
       case 'KeyQ':    game.setLane('bullRear'); break;
@@ -176,8 +180,11 @@ export function bindInput(game) {
     }
   });
 
-  addEventListener('keyup', (e) => keys.delete(e.code.toLowerCase()));
-  addEventListener('blur', () => keys.clear());
+  addEventListener('keyup', (e) => {
+    keys.delete(e.code.toLowerCase());
+    if (e.code.startsWith('Shift')) game.firing = false;
+  });
+  addEventListener('blur', () => { keys.clear(); game.firing = false; });
 
   function cycleTruck() {
     const list = game.logistics.trucks;
@@ -191,7 +198,12 @@ export function bindInput(game) {
   game.stage.onBeforeUpdate = null;
   const steerTick = () => {
     const t = game.selectedTruck;
-    const driving = t && (game.stage.mode === 'driver' || game.stage.mode === 'follow') && t.state === 'enroute';
+    const rolling = t && (t.state === 'enroute' || t.state === 'returning');
+    const atWheel = game.stage.mode === 'driver' || game.stage.mode === 'follow';
+    // Taking the wheel drops the truck off its rails entirely: from here it is
+    // a vehicle you drive through a war, not a delivery that plays itself.
+    if (t) t.piloted = !!(rolling && atWheel);
+    const driving = rolling && atWheel;
     if (driving) {
       t.manual = true;
       game.manualSteer.z = (keys.has('keyd') || keys.has('arrowright') ? 1 : 0) - (keys.has('keya') || keys.has('arrowleft') ? 1 : 0);

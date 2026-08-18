@@ -110,6 +110,52 @@ export class Battlefield {
    * and anything already touching the truck is pushed out hard so nothing ever
    * overlaps. The truck holds the centreline; the war gets out of its way.
    */
+  /**
+   * Nearest thing that would shoot at a courier. Both sides treat the truck as
+   * a target when it comes close — running the gauntlet is the point, and a
+   * neutral supply van in the middle of a firefight has no friends.
+   */
+  nearestHostile(x, z, range) {
+    let best = null, bestD = range * range;
+    for (const side of ['bull', 'bear']) {
+      for (const v of this.sides[side].vehicles) {
+        if (!v.active) continue;
+        const d = (v.x - x) ** 2 + (v.z - z) ** 2;
+        if (d < bestD) { bestD = d; best = v; }
+      }
+    }
+    if (best) return best;
+    for (const side of ['bull', 'bear']) {
+      for (const u of this.sides[side].units) {
+        if (!u.active) continue;
+        const d = (u.x - x) ** 2 + (u.z - z) ** 2;
+        if (d < bestD) { bestD = d; best = u; }
+      }
+    }
+    return best;
+  }
+
+  /** Damage everything in a small radius. Returns true if something died. */
+  damageAt(x, z, radius, power) {
+    const r2 = radius * radius;
+    let killed = false;
+    for (const side of ['bull', 'bear']) {
+      for (const v of this.sides[side].vehicles) {
+        if (!v.active) continue;
+        if ((v.x - x) ** 2 + (v.z - z) ** 2 > r2 * 4) continue;
+        v.hp -= power * 0.55;
+        if (v.hp <= 0) { this._destroyVehicle(v); killed = true; }
+      }
+      for (const u of this.sides[side].units) {
+        if (!u.active) continue;
+        if ((u.x - x) ** 2 + (u.z - z) ** 2 > r2) continue;
+        this._kill(u, u.side);
+        killed = true;
+      }
+    }
+    return killed;
+  }
+
   clearPath(x, z, dir, dt, halfWidth = 7.5, ahead = 26) {
     const yieldTo = (o, rate, size) => {
       const along = (o.x - x) * dir;
@@ -894,6 +940,14 @@ export class Battlefield {
           const dd = (w.x - v.x) ** 2 + (w.z - v.z) ** 2;
           if (dd < foeD2) { foeD2 = dd; foe = w; }
         }
+        // A courier driving through the battle is a target of opportunity for
+        // both sides, and a closer one outranks the tank duel — this is what
+        // turns the drive from a cutscene into something you have to survive.
+        const courier = ctx.courier;
+        if (courier) {
+          const cd = (courier.x - v.x) ** 2 + (courier.z - v.z) ** 2;
+          if (cd < foeD2 * 0.75 && cd < 52 * 52) { foe = courier; foeD2 = cd; }
+        }
         const engaged = foe && foeD2 < 46 * 46;
 
         // --- movement: drive toward an objective, hold, or fall back -------
@@ -967,6 +1021,10 @@ export class Battlefield {
               this.fx.explosion(hx, hy + 0.4, hz, 0.55, 0xffa33a);
               this.roads.wearAt(hx, hz, 5, 0.045);
               if (Math.random() < 0.15) this.crater(hx, hz, 4.5, 1.1);
+              if (target.isCourier) {
+                if ((target.x - hx) ** 2 + (target.z - hz) ** 2 < 42) ctx.onCourierHit?.(rand(9, 20));
+                return;
+              }
               if (!target.active) return;
               // did it actually connect? near misses are part of the show
               if ((target.x - hx) ** 2 + (target.z - hz) ** 2 < 36) {

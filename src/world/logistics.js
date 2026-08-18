@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { WORLD, LANES, LANE_ORDER, FEE, TRUCKS } from '../config.js';
 import { clamp, lerp, smoothstep, rand, hash01, TAU, approach, angleApproach, pick, fmtFee } from '../util.js';
-import { makeTruckBody, makeTruckWheel } from '../render/geom.js';
+import { makeTruckBody, makeTruckWheel, makeTruckTurret } from '../render/geom.js';
 import { Q } from '../quality.js';
 import { pbr } from '../render/surfaces.js';
 
@@ -424,6 +424,10 @@ export class Logistics {
       boost: 0,
       hazardCd: rand(1, 3),
       radioCd: 0,
+      piloted: false,
+      gunYaw: 0,        // world-space aim of the pintle gun
+      reload: 0,
+      kills: 0,
       wobble: rand(TAU),
       obj: this._buildTruckMesh(spec),
     };
@@ -455,6 +459,16 @@ export class Logistics {
       wheels.push(w);
     }
     g.userData.wheels = wheels;
+
+    // the gun: the player's answer to a battlefield that shoots back
+    const turret = new THREE.Mesh(
+      makeTruckTurret(s),
+      pbr(0xffffff, { vertexColors: true, roughness: 0.5, metalness: 0.55 }),
+    );
+    turret.position.set(3.4 * s, 6.4 * s, 0);
+    turret.castShadow = true;
+    g.add(turret);
+    g.userData.turret = turret;
 
     const head = new THREE.PointLight(0xfff0c0, 55, 70, 2);
     head.position.set(7.6 * s, 3.2 * s, 0);
@@ -533,6 +547,57 @@ export class Logistics {
     if (truck.radioCd > 0) return;
     truck.radioCd = 3.5;
     this.events?.emit('radio', { truck, text });
+  }
+
+  /**
+   * The gun. It acquires the nearest thing shooting at you, tracks it, and
+   * fires when the player holds the trigger — the turret leads the target, so
+   * hitting a moving tank is a matter of pointing the truck well rather than
+   * pixel aiming from a bouncing cab.
+   */
+  _updateGun(truck, dt, ctx) {
+    const mesh = truck.obj.userData.turret;
+    if (!mesh) return;
+    truck.reload = Math.max(0, truck.reload - dt);
+
+    const target = this.bf.nearestHostile(truck.pos.x, truck.pos.z, 78);
+    if (target) {
+      // lead the shot: aim where it will be, not where it is
+      const lead = target.vehicle ? 0.55 : 0.25;
+      const tx = target.x + (target.vx ?? 0) * lead;
+      const tz = target.z + (target.vz ?? 0) * lead;
+      truck.gunYaw = angleApproach(truck.gunYaw, Math.atan2(tx - truck.pos.x, tz - truck.pos.z), 5, dt);
+    } else {
+      truck.gunYaw = angleApproach(truck.gunYaw, Math.PI / 2 - truck.heading + Math.PI / 2, 2, dt);
+    }
+
+    mesh.rotation.y = -(truck.gunYaw - Math.PI / 2) - truck.obj.rotation.y * 0 - (-truck.heading);
+    mesh.rotation.y = (Math.PI / 2 - truck.gunYaw) + truck.heading;
+
+    if (!ctx.firing || !truck.piloted || truck.reload > 0 || !target) return;
+    truck.reload = 0.16;
+
+    const my = truck.pos.y + 7.4;
+    const mx = truck.pos.x + Math.sin(truck.gunYaw) * 3.4;
+    const mz = truck.pos.z + Math.cos(truck.gunYaw) * 3.4;
+    const spread = 0.9 + Math.abs(truck.speed) * 0.06;
+    this.fx.bullet(
+      mx, my, mz,
+      target.x + rand(-spread, spread), this.bf.surfaceAt(target.x, target.z) + 1.2, target.z + rand(-spread, spread),
+      {
+        color: 0xffe08a, speed: 130, size: 1.3,
+        onHit: (hx, hy, hz) => {
+          const killed = this.bf.damageAt(hx, hz, 3.6, 1);
+          if (killed) {
+            truck.kills++;
+            this.fx.text('+1', hx, hy + 4, hz, { color: '#ffd447', life: 0.9, scale: 0.5 });
+          }
+        },
+      },
+    );
+    this.fx.muzzle(mx, my, mz, Math.sin(truck.gunYaw), Math.cos(truck.gunYaw), 1.3);
+    this.audio?.battle(0.9);
+    if (Math.random() < 0.4) ctx.onGunfire?.();
   }
 
   /** Trucks follow the visible road surface, funnels and all. */
@@ -656,6 +721,7 @@ export class Logistics {
     for (const truck of this.trucks) {
       truck.radioCd = Math.max(0, truck.radioCd - dt);
       truck.boost = Math.max(0, truck.boost - dt);
+      this._updateGun(truck, dt, ctx);
 
       if (truck.state === 'enroute' || truck.state === 'returning') {
         this._driveTruck(truck, dt, ctx);
@@ -719,7 +785,64 @@ export class Logistics {
     }
   }
 
+  /**
+   * Free driving. The rails version exists so an unattended truck can make its
+   * own way; the moment the player takes the wheel the truck comes off them
+   * entirely and drives as a vehicle — throttle, steering that tightens with
+   * speed, momentum, and the freedom to leave the road, which is the whole
+   * point of being able to run a battlefield rather than commute across it.
+   */
+  _pilotTruck(truck, dt, ctx) {
+    const st = ctx.manualSteer || { x: 0, z: 0 };
+    const dir = truck.state === 'enroute' ? 1 : -1;
+
+    // road gives grip and speed; open ground is slower and rougher
+    const onRoad = Math.abs(truck.pos.z - this.laneZ(truck.lane, truck.pos.x)) < 7.5
+      || this.bf.roads.lanes.some((l) => Math.abs(truck.pos.z - this.laneZ(l, truck.pos.x)) < 7.5);
+    const surface = onRoad ? 1 : 0.62;
+
+    const top = truck.spec.speed * 1.5 * (truck.boost > 0 ? 1.9 : 1) * surface;
+    const load = 1 - clamp(this.usedCapacity(truck) / truck.spec.capacity, 0, 1) * 0.2;
+    const grade = this.bf.slopeAlong(truck.pos.x, truck.pos.z, Math.cos(truck.heading), Math.sin(truck.heading), 5);
+    const climb = grade > 0 ? 1 / (1 + grade * 2.4) : 1 + Math.min(0.35, -grade * 0.5);
+
+    // throttle: forward, coast, or brake into reverse
+    const throttle = st.x;
+    const wanted = throttle > 0 ? top * load * climb : throttle < 0 ? -top * 0.35 : 0;
+    truck.speed = approach(truck.speed, wanted, throttle !== 0 ? 1.8 : 1.1, dt);
+
+    // steering bites less the faster you go, and not at all standing still
+    const grip = clamp(Math.abs(truck.speed) / 6, 0, 1);
+    const rate = 1.5 / (1 + Math.abs(truck.speed) * 0.045);
+    truck.heading += -st.z * rate * grip * dt * Math.sign(truck.speed || 1);
+
+    const nx = truck.pos.x + Math.cos(truck.heading) * truck.speed * dt;
+    const nz = truck.pos.z + Math.sin(truck.heading) * truck.speed * dt;
+    truck.pos.x = clamp(nx, -WORLD.width / 2 + 6, WORLD.width / 2 - 6);
+    truck.pos.z = clamp(nz, -WORLD.depth / 2 + 6, WORLD.depth / 2 - 6);
+    truck.roadX = truck.pos.x;            // keep the rails in sync if control is dropped
+
+    this.bf.clearPath(truck.pos.x, truck.pos.z, dir, dt);
+
+    if (Math.abs(truck.speed) > 4 && Math.random() < dt * 26) {
+      this.fx.spawn(truck.pos.x - Math.cos(truck.heading) * 5, truck.pos.y + 1.2, truck.pos.z - Math.sin(truck.heading) * 5, {
+        color: onRoad ? 0x8b8b8b : 0x6b5a44, count: 1, size: onRoad ? 1.8 : 2.6,
+        life: 0.9, speed: 2.6, gravity: 1.4, alpha: 0.5,
+      });
+    }
+
+    // arrival is now geographic, because there is no road parameter to compare
+    if (dir > 0 && truck.pos.x >= WORLD.depotX - 12) this._arrive(truck, ctx);
+    else if (dir < 0 && truck.pos.x <= WORLD.plazaX + 14) {
+      truck.state = 'idle';
+      truck.speed = 0;
+      truck.roadX = undefined;
+      truck.piloted = false;
+    }
+  }
+
   _driveTruck(truck, dt, ctx) {
+    if (truck.piloted) return this._pilotTruck(truck, dt, ctx);
     const dir = truck.state === 'enroute' ? 1 : -1;
     const goalX = dir > 0 ? WORLD.depotX - 12 : WORLD.plazaX + 2 + truck.id * 9;
     // Drive home on the same road you came in on — switching lanes at the depot
