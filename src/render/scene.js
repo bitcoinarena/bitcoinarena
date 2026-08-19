@@ -297,10 +297,12 @@ export class Stage {
 
       case 'follow':
         if (truck) {
-          const back = new THREE.Vector3(-Math.cos(truck.heading), 0, -Math.sin(truck.heading)).multiplyScalar(34);
-          pos.copy(truck.pos).add(back).add(new THREE.Vector3(0, 20, 0));
+          const speed = Math.min(1, Math.abs(truck.speed) / 34);
+          const back = new THREE.Vector3(-Math.cos(truck.heading), 0, -Math.sin(truck.heading))
+            .multiplyScalar(30 + speed * 12);
+          pos.copy(truck.pos).add(back).add(new THREE.Vector3(0, 15 + speed * 5, 0));
           look.copy(truck.pos).add(new THREE.Vector3(0, 3, 0));
-          snap = 4.5;
+          snap = 6.5;
         } else { pos.set(0, 120, 150); look.set(0, 0, 0); }
         break;
 

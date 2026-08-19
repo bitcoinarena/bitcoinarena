@@ -12,8 +12,8 @@ const VW = COLS + 1, VH = ROWS + 1;
 
 // Rear areas: no fighting, no territory colour. The plaza and the depot sit
 // beyond these lines so the logistics zones read as separate from the war.
-const REAR_X = 74;
-const FRONT_X = 84;      // troops are held between -FRONT_X and +FRONT_X
+const REAR_X = 80;
+const FRONT_X = 92;      // troops are held between -FRONT_X and +FRONT_X
 
 // The plaza and depot decks are fixed structures at y = 3.2 (a 1.6-high pad
 // centred at 2.4). The queue relief must not push the ground up through them,
@@ -943,10 +943,12 @@ export class Battlefield {
         // A courier driving through the battle is a target of opportunity for
         // both sides, and a closer one outranks the tank duel — this is what
         // turns the drive from a cutscene into something you have to survive.
+        // Only once it is clear of its own apron, though: being shelled from the
+        // moment the gate opens leaves no run to drive, just a death at the wall.
         const courier = ctx.courier;
-        if (courier) {
+        if (courier && Math.abs(courier.x) < REAR_X) {
           const cd = (courier.x - v.x) ** 2 + (courier.z - v.z) ** 2;
-          if (cd < foeD2 * 0.75 && cd < 52 * 52) { foe = courier; foeD2 = cd; }
+          if (cd < foeD2 * 0.75 && cd < 34 * 34) { foe = courier; foeD2 = cd; }
         }
         const engaged = foe && foeD2 < 46 * 46;
 
@@ -1022,7 +1024,7 @@ export class Battlefield {
               this.roads.wearAt(hx, hz, 5, 0.045);
               if (Math.random() < 0.15) this.crater(hx, hz, 4.5, 1.1);
               if (target.isCourier) {
-                if ((target.x - hx) ** 2 + (target.z - hz) ** 2 < 42) ctx.onCourierHit?.(rand(9, 20));
+                if ((target.x - hx) ** 2 + (target.z - hz) ** 2 < 42) ctx.onCourierHit?.(rand(5, 11));
                 return;
               }
               if (!target.active) return;

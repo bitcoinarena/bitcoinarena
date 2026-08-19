@@ -534,6 +534,7 @@ export class Logistics {
     truck.fromLane = null;
     truck.laneMix = 1;
     truck.waiting = false;
+    truck.autoReturn = false;
     truck.state = 'enroute';
     truck.roadX = truck.pos.x;
     truck.offset = 0;
@@ -801,7 +802,10 @@ export class Logistics {
       || this.bf.roads.lanes.some((l) => Math.abs(truck.pos.z - this.laneZ(l, truck.pos.x)) < 7.5);
     const surface = onRoad ? 1 : 0.62;
 
-    const top = truck.spec.speed * 1.5 * (truck.boost > 0 ? 1.9 : 1) * surface;
+    // Piloted trucks run far faster than the AI ones. A 220-unit haul at lorry
+    // speed is twenty-five seconds of commuting; the same distance driven is a
+    // sprint, which is the difference between watching and playing.
+    const top = truck.spec.speed * 2.8 * (truck.boost > 0 ? 1.7 : 1) * surface;
     const load = 1 - clamp(this.usedCapacity(truck) / truck.spec.capacity, 0, 1) * 0.2;
     const grade = this.bf.slopeAlong(truck.pos.x, truck.pos.z, Math.cos(truck.heading), Math.sin(truck.heading), 5);
     const climb = grade > 0 ? 1 / (1 + grade * 2.4) : 1 + Math.min(0.35, -grade * 0.5);
@@ -809,7 +813,7 @@ export class Logistics {
     // throttle: forward, coast, or brake into reverse
     const throttle = st.x;
     const wanted = throttle > 0 ? top * load * climb : throttle < 0 ? -top * 0.35 : 0;
-    truck.speed = approach(truck.speed, wanted, throttle !== 0 ? 1.8 : 1.1, dt);
+    truck.speed = approach(truck.speed, wanted, throttle !== 0 ? 3.4 : 1.4, dt);
 
     // steering bites less the faster you go, and not at all standing still
     const grip = clamp(Math.abs(truck.speed) / 6, 0, 1);
@@ -975,6 +979,12 @@ export class Logistics {
     truck.state = 'returning';
     truck.speed = 0;
     truck.roadX = truck.pos.x;
+    // The run is over at the gate. Driving an empty truck home is not gameplay,
+    // so control is released and it makes its own way back on the rails while
+    // the player goes back to loading the next one.
+    truck.piloted = false;
+    truck.autoReturn = true;
+    truck.releasedAt = this.time;
     this.gatePulse = 1;
     this.audio?.stamp();
     this.radio(truck, pick(RADIO.arrive));

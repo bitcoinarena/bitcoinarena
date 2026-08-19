@@ -198,7 +198,10 @@ export function bindInput(game) {
   game.stage.onBeforeUpdate = null;
   const steerTick = () => {
     const t = game.selectedTruck;
-    const rolling = t && (t.state === 'enroute' || t.state === 'returning');
+    // The empty leg home drives itself (see Logistics._arrive), so an arrived
+    // truck stays on its rails even though the camera is still behind it.
+    const rolling = t && (t.state === 'enroute'
+      || (t.state === 'returning' && !t.autoReturn));
     const atWheel = game.stage.mode === 'driver' || game.stage.mode === 'follow';
     // Taking the wheel drops the truck off its rails entirely: from here it is
     // a vehicle you drive through a war, not a delivery that plays itself.
