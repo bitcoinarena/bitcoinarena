@@ -68,7 +68,38 @@ Zwei Fallen, die den Port betreffen und die im Browser-Build kein Thema waren:
 
 ## Status
 
-Der Code ist **noch nicht ausgeführt worden** — dafür fehlt die Lizenz. Er ist
-gegen die Unity-6-API geschrieben (`Rigidbody.linearVelocity`, nicht das in
-Unity 6 veraltete `velocity`), aber erst der erste Play-Durchlauf zeigt, ob er
-sauber kompiliert.
+Kompiliert und läuft. Projekt liegt unter `/Users/arena/My project`,
+Szene `Assets/Scenes/Prototype.unity` ist als Build-Szene 0 gesetzt.
+
+PlayMode-Tests: `4 von 5 bestanden`.
+
+| Test | Ergebnis |
+|---|---|
+| `SceneBuilds` | ✅ Gelände, Truck, Kamera, 4 WheelCollider |
+| `TruckRestsOnTheGroundInsteadOfSinking` | ✅ sackt nicht durch, kommt zur Ruhe |
+| `StaysUpright` | ✅ kippt nicht |
+| `DrivesUnderPower` | ✅ 12 Einheiten in 3 s, Vorwärtstempo 3,1 → 8,0 m/s |
+| `HandbrakeBreaksTheRearEndLoose` | ❌ offen |
+
+Der Drift-Test scheitert nicht am Handbremscode, sondern am Tempo: nach 6 s
+Gas und 1 s Volleinschlag sind es nur noch **4,1 m/s** (bei 3 s waren es 8,0),
+alle vier Räder am Boden. Der Truck klettert das Fee-Relief hoch und der
+Lenkeinschlag schrubbt den Rest weg — bei 4 m/s driftet nichts.
+
+Mehr Drehmoment ist *nicht* die Lösung: mit 4800 Nm statt 2600 fuhr er
+2,6 statt 12 Einheiten, weil die Reifen nur durchdrehen. Der Rig ist
+traktions-, nicht leistungsbegrenzt. Die Stellschrauben sind die
+Reifen-Friktionskurven, die Fahrzeugmasse und die Höhe des Reliefs
+(`MempoolTerrain.feeHeight` / `baseRelief`) — alles Dinge, die man mit einer
+Kamera davor einstellt, nicht über einen Schwellwert im Test.
+
+Der Test bleibt bewusst rot stehen, statt ihn passend zu machen.
+
+## Tests ausführen
+
+```bash
+/Applications/Unity/Hub/Editor/6000.0.82f1/Unity.app/Contents/MacOS/Unity \
+  -batchmode -runTests -testPlatform PlayMode \
+  -projectPath "/Users/arena/My project" \
+  -testResults /tmp/results.xml -logFile /tmp/tests.log
+```

@@ -1,0 +1,112 @@
+using System.Collections;
+using NUnit.Framework;
+using UnityEngine;
+using UnityEngine.TestTools;
+
+/// <summary>
+/// WheelCollider rigs fail in a small number of well-known ways: the body sinks
+/// through the ground, the suspension never settles, or a tall vehicle rolls
+/// onto its roof on the first corner. These check the rig actually holds the
+/// truck up and drives it, which is the part that cannot be read off the code.
+/// </summary>
+public class VehicleTests
+{
+    GameObject _boot;
+    TruckController _truck;
+    Rigidbody _rb;
+
+    [UnitySetUp]
+    public IEnumerator SetUp()
+    {
+        _boot = new GameObject("Bootstrap");
+        _boot.AddComponent<Bootstrap>();
+        // let Start() build the world and the suspension settle
+        yield return new WaitForSeconds(1.5f);
+        _truck = Object.FindFirstObjectByType<TruckController>();
+        _rb = _truck != null ? _truck.GetComponent<Rigidbody>() : null;
+    }
+
+    [UnityTearDown]
+    public IEnumerator TearDown()
+    {
+        foreach (var go in Object.FindObjectsByType<GameObject>(FindObjectsSortMode.None))
+            if (go.transform.parent == null) Object.Destroy(go);
+        yield return null;
+    }
+
+    [Test]
+    public void SceneBuilds()
+    {
+        Assert.IsNotNull(_truck, "Bootstrap produced no truck");
+        Assert.IsNotNull(Object.FindFirstObjectByType<MempoolTerrain>(), "no terrain");
+        Assert.IsNotNull(Object.FindFirstObjectByType<ChaseCamera>(), "no camera");
+        Assert.AreEqual(4, Object.FindObjectsByType<WheelCollider>(FindObjectsSortMode.None).Length);
+    }
+
+    [UnityTest]
+    public IEnumerator TruckRestsOnTheGroundInsteadOfSinking()
+    {
+        float y0 = _rb.position.y;
+        yield return new WaitForSeconds(1.5f);
+        float drop = y0 - _rb.position.y;
+        Assert.Less(drop, 2.0f, $"the truck sank {drop:0.00} units - suspension or collider is wrong");
+        Assert.Less(_rb.linearVelocity.magnitude, 1.5f, "the truck never came to rest");
+    }
+
+    [UnityTest]
+    public IEnumerator StaysUpright()
+    {
+        yield return new WaitForSeconds(1.5f);
+        float tilt = Vector3.Angle(_truck.transform.up, Vector3.up);
+        Assert.Less(tilt, 25f, $"the truck is tilted {tilt:0}deg - centre of mass or wheel layout is wrong");
+    }
+
+    [UnityTest]
+    public IEnumerator DrivesUnderPower()
+    {
+        Vector3 from = _rb.position;
+        // through the real control path, just with the keyboard swapped out
+        _truck.useExternalInput = true;
+        _truck.externalThrottle = 1f;
+        yield return new WaitForSeconds(3f);
+        float travelled = Vector3.Distance(from, _rb.position);
+        _truck.useExternalInput = false;
+        Assert.Greater(travelled, 5f, $"only travelled {travelled:0.0} units under full power");
+    }
+
+    [UnityTest]
+    public IEnumerator HandbrakeBreaksTheRearEndLoose()
+    {
+        _truck.useExternalInput = true;
+        _truck.externalThrottle = 1f;
+        yield return new WaitForSeconds(6f);          // a drift needs real speed
+
+        _truck.externalSteer = 1f;
+        yield return new WaitForSeconds(1f);
+        float gripped = 0f;
+        for (float t = 0f; t < 0.5f; t += Time.fixedDeltaTime)
+        {
+            gripped = Mathf.Max(gripped, _truck.Slip);
+            yield return new WaitForFixedUpdate();
+        }
+
+        // off the power and on the handbrake, the way it is actually done
+        _truck.externalThrottle = 0f;
+        _truck.externalHandbrake = true;
+        float slid = 0f;
+        int grounded = 0, samples = 0;
+        for (float t = 0f; t < 1.5f; t += Time.fixedDeltaTime)
+        {
+            slid = Mathf.Max(slid, _truck.Slip);
+            foreach (var a in _truck.axles) { if (a.left.isGrounded) grounded++; if (a.right.isGrounded) grounded++; }
+            samples++;
+            yield return new WaitForFixedUpdate();
+        }
+        Debug.Log($"DRIFT speed={_rb.linearVelocity.magnitude:0.0} m/s " +
+                  $"wheelsOnGround={(grounded / (float)samples):0.00}/4 slip={slid:0.00}");
+        _truck.useExternalInput = false;
+
+        Assert.Greater(slid, gripped + 0.5f,
+            $"handbrake did not break traction: gripped {gripped:0.00} vs slid {slid:0.00} m/s sideways");
+    }
+}

@@ -24,9 +24,14 @@ public class TruckController : MonoBehaviour
     }
 
     [Header("Axles (front first)")]
-    public Axle[] axles = new Axle[2];
+    // Empty, not new Axle[2]: AddComponent runs Awake immediately, so a default
+    // array of nulls would be walked before anything could fill it in.
+    public Axle[] axles = new Axle[0];
 
     [Header("Drivetrain")]
+    // Traction-limited, not power-limited: raising this to 4800 spun the tyres
+    // up and the truck travelled LESS (2.6 units in 3 s against 12 at 2600).
+    // More speed has to come from the tyre model or lighter relief, not torque.
     public float motorTorque = 2600f;
     public float brakeTorque = 6000f;
     public float handbrakeTorque = 9000f;
@@ -46,11 +51,22 @@ public class TruckController : MonoBehaviour
 
     [Header("Handbrake grip")]
     [Tooltip("Rear sideways stiffness is cut to this fraction while the handbrake is in.")]
-    public float handbrakeGrip = 0.35f;
+    public float handbrakeGrip = 0.2f;
+
+    /// <summary>
+    /// Drive this truck from code rather than the keyboard. The unattended
+    /// trucks in the full game need exactly this seam, and it lets the physics
+    /// rig be tested through the real control path instead of around it.
+    /// </summary>
+    [System.NonSerialized] public bool useExternalInput;
+    [System.NonSerialized] public float externalThrottle;
+    [System.NonSerialized] public float externalSteer;
+    [System.NonSerialized] public bool externalHandbrake;
 
     Rigidbody _rb;
     float _steer;
-    float[] _rearStiffness;
+    float[] _rearStiffness;      // sideways, per rear wheel
+    float[] _rearForward;        // longitudinal, per rear wheel
 
     public float SpeedKmh => _rb.linearVelocity.magnitude * 3.6f;
     /// <summary>How far the truck is travelling sideways, in m/s. This is the drift readout.</summary>
@@ -60,19 +76,38 @@ public class TruckController : MonoBehaviour
     {
         _rb = GetComponent<Rigidbody>();
         _rb.centerOfMass = centreOfMass;
+    }
 
-        // remember the designed rear grip so the handbrake can restore it
-        var rear = new System.Collections.Generic.List<float>();
+    /// <summary>
+    /// Remember the designed rear grip so the handbrake has something to restore.
+    /// Deferred rather than done in Awake because a truck assembled in code has
+    /// no axles yet at the moment AddComponent returns.
+    /// </summary>
+    void EnsureInit()
+    {
+        if (_rearStiffness != null) return;
+        var side = new System.Collections.Generic.List<float>();
+        var fwd = new System.Collections.Generic.List<float>();
         foreach (var a in axles)
-            if (a.handbraked) { rear.Add(a.left.sidewaysFriction.stiffness); rear.Add(a.right.sidewaysFriction.stiffness); }
-        _rearStiffness = rear.ToArray();
+        {
+            if (a == null || !a.handbraked || a.left == null || a.right == null) continue;
+            side.Add(a.left.sidewaysFriction.stiffness);
+            side.Add(a.right.sidewaysFriction.stiffness);
+            fwd.Add(a.left.forwardFriction.stiffness);
+            fwd.Add(a.right.forwardFriction.stiffness);
+        }
+        _rearStiffness = side.ToArray();
+        _rearForward = fwd.ToArray();
     }
 
     void FixedUpdate()
     {
-        float throttle = Input.GetAxis("Vertical");
-        float steerIn = Input.GetAxis("Horizontal");
-        bool handbrake = Input.GetKey(KeyCode.Space);
+        if (axles == null || axles.Length == 0) return;
+        EnsureInit();
+
+        float throttle = useExternalInput ? externalThrottle : DriveInput.Throttle;
+        float steerIn = useExternalInput ? externalSteer : DriveInput.Steer;
+        bool handbrake = useExternalInput ? externalHandbrake : DriveInput.Handbrake;
 
         float speed = _rb.linearVelocity.magnitude;
         float forward = Vector3.Dot(_rb.linearVelocity, transform.forward);
@@ -89,6 +124,7 @@ public class TruckController : MonoBehaviour
         int stiffIdx = 0;
         foreach (var a in axles)
         {
+            if (a == null || a.left == null || a.right == null) continue;
             if (a.steering) { a.left.steerAngle = _steer; a.right.steerAngle = _steer; }
             if (a.driven) { a.left.motorTorque = motor; a.right.motorTorque = motor; }
 
@@ -102,9 +138,16 @@ public class TruckController : MonoBehaviour
             {
                 foreach (var w in new[] { a.left, a.right })
                 {
-                    var f = w.sidewaysFriction;
-                    f.stiffness = _rearStiffness[stiffIdx] * (handbrake ? handbrakeGrip : 1f);
-                    w.sidewaysFriction = f;
+                    // A locked wheel loses grip in BOTH directions. Cutting only
+                    // the sideways stiffness leaves the rear still pulling the
+                    // truck straight, so it just brakes instead of stepping out.
+                    var side = w.sidewaysFriction;
+                    side.stiffness = _rearStiffness[stiffIdx] * (handbrake ? handbrakeGrip : 1f);
+                    w.sidewaysFriction = side;
+
+                    var fwd = w.forwardFriction;
+                    fwd.stiffness = _rearForward[stiffIdx] * (handbrake ? handbrakeGrip : 1f);
+                    w.forwardFriction = fwd;
                     stiffIdx++;
                 }
             }

@@ -95,7 +95,6 @@ public class MempoolTerrain : MonoBehaviour
         }
         if (pairs.Count == 0) return false;
 
-        const float BLOCK_VSIZE = 1_000_000f;
         float total = 0f;
         foreach (var p in pairs) total += p.y;
         float perColumn = Mathf.Max(total / columns, 1f);

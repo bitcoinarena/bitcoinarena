@@ -1,0 +1,7 @@
+{
+    "name": "BtcLogistics.Runtime",
+    "references": ["Unity.InputSystem"],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "autoReferenced": true
+}

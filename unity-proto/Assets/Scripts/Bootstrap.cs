@@ -118,6 +118,7 @@ public class Bootstrap : MonoBehaviour
         float startX = -terrain.width * 0.44f;
         var root = new GameObject("Truck");
         root.transform.position = new Vector3(startX, terrain.SampleWorld(startX, 0f) + 1.6f, 0f);
+        root.transform.rotation = Quaternion.LookRotation(Vector3.right, Vector3.up);
 
         var rb = root.AddComponent<Rigidbody>();
         rb.mass = 2100f;
@@ -139,15 +140,18 @@ public class Bootstrap : MonoBehaviour
             body.name = "BodyProxy";
             body.transform.SetParent(root.transform, false);
             body.transform.localScale = new Vector3(2.4f, 2.2f, 6.2f);
-            body.transform.localPosition = new Vector3(0f, 0.4f, 0f);
-            Destroy(body.GetComponent<BoxCollider>());
+            body.transform.localPosition = new Vector3(0f, 1.0f, 0f);
+            StripColliders(body);
             if (bodyMaterial != null) body.GetComponent<MeshRenderer>().sharedMaterial = bodyMaterial;
         }
 
-        // collision hull, kept separate from the visual body
+        // Collision hull, kept separate from the visual body. It has to clear the
+        // wheel contact patch by a good margin: the wheels sit at -0.2 with a
+        // 0.55 radius, so anything below about -0.1 leaves the chassis dragging
+        // on the ground, the suspension unloaded and the tyres spinning freely.
         var hull = root.AddComponent<BoxCollider>();
         hull.size = new Vector3(2.4f, 2.0f, 6.2f);
-        hull.center = new Vector3(0f, 0.5f, 0f);
+        hull.center = new Vector3(0f, 0.95f, 0f);
 
         var controller = root.AddComponent<TruckController>();
         controller.axles = new[]
@@ -173,6 +177,7 @@ public class Bootstrap : MonoBehaviour
         go.transform.localPosition = local;
 
         var wheel = go.AddComponent<WheelCollider>();
+        wheel.mass = 70f;
         wheel.radius = 0.55f;
         wheel.suspensionDistance = 0.3f;
         wheel.wheelDampingRate = 1.2f;
@@ -194,10 +199,21 @@ public class Bootstrap : MonoBehaviour
             proxy.transform.localScale = new Vector3(1.1f, 0.16f, 1.1f);
             // a Unity cylinder stands on its end; a wheel lies on its side
             proxy.transform.rotation = Quaternion.Euler(0f, 0f, 90f);
-            Destroy(proxy.GetComponent<CapsuleCollider>());
+            StripColliders(proxy);
             mesh = proxy.transform;
         }
         return wheel;
+    }
+
+    /// <summary>
+    /// Primitives arrive with a collider, and which one depends on the shape, so
+    /// asking for a specific type silently misses. They also have to be disabled
+    /// on the spot: Destroy only takes effect at the end of the frame, and until
+    /// then these are solid bodies being teleported around by the wheel poser.
+    /// </summary>
+    static void StripColliders(GameObject go)
+    {
+        foreach (var c in go.GetComponentsInChildren<Collider>(true)) { c.enabled = false; Destroy(c); }
     }
 
     void BuildCamera(TruckController truck)
