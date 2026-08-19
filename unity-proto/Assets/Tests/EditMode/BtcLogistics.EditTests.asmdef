@@ -1,0 +1,10 @@
+{
+    "name": "BtcLogistics.EditTests",
+    "references": ["UnityEngine.TestRunner", "UnityEditor.TestRunner", "BtcLogistics.Runtime"],
+    "includePlatforms": ["Editor"],
+    "excludePlatforms": [],
+    "overrideReferences": true,
+    "precompiledReferences": ["nunit.framework.dll"],
+    "autoReferenced": false,
+    "defineConstraints": ["UNITY_INCLUDE_TESTS"]
+}

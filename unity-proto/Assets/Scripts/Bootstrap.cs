@@ -37,15 +37,27 @@ public class Bootstrap : MonoBehaviour
     public const float RoadLift = 0.3f;
 
     MempoolTerrain _terrain;
+    public MarketFeed Market { get; private set; }
+    public Battlefield Field { get; private set; }
 
     void Start()
     {
         BuildLighting();
         _terrain = BuildTerrain();
+
+        // live tape first: the frontline is the price chart, so everything
+        // downstream wants it already ticking
+        Market = gameObject.AddComponent<MarketFeed>();
+        Field = gameObject.AddComponent<Battlefield>();
+        Field.terrain = _terrain;
+        Field.market = Market;
         BuildRoad(_terrain);
         var truck = BuildTruck(_terrain);
         BuildCamera(truck);
-        gameObject.AddComponent<DriveHud>().truck = truck;
+        var hud = gameObject.AddComponent<DriveHud>();
+        hud.truck = truck;
+        hud.market = Market;
+        hud.field = Field;
     }
 
     void BuildLighting()
