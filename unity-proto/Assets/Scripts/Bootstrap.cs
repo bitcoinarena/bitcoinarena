@@ -28,6 +28,14 @@ public class Bootstrap : MonoBehaviour
     public Color sunColour = new Color(1f, 0.95f, 0.86f);
     public float sunIntensity = 2.2f;
 
+    /// <summary>
+    /// How far the road ribbon floats above the terrain. Just enough to beat
+    /// z-fighting: the road carries NO collider, so it is a painted stripe
+    /// rather than a raised deck. A lifted deck with a vertical edge and no
+    /// shoulder is something the truck falls off, which is exactly what it did.
+    /// </summary>
+    public const float RoadLift = 0.3f;
+
     MempoolTerrain _terrain;
 
     void Start()
@@ -37,6 +45,7 @@ public class Bootstrap : MonoBehaviour
         BuildRoad(_terrain);
         var truck = BuildTruck(_terrain);
         BuildCamera(truck);
+        gameObject.AddComponent<DriveHud>().truck = truck;
     }
 
     void BuildLighting()
@@ -71,9 +80,11 @@ public class Bootstrap : MonoBehaviour
     /// <summary>A single road for the prototype: the frontline route, plaza to depot.</summary>
     void BuildRoad(MempoolTerrain terrain)
     {
-        const int SEGMENTS = 120;
+        const int SEGMENTS = 240;
         const float HALF_WIDTH = 6.5f;
-        const float LIFT = 0.45f;
+        // 0.45 left the ribbon buried: the terrain mesh is finer than the road's
+        // own sampling, so it bulged through between road vertices.
+        const float LIFT = RoadLift;
 
         var verts = new Vector3[(SEGMENTS + 1) * 2];
         var uvs = new Vector2[(SEGMENTS + 1) * 2];
@@ -110,15 +121,16 @@ public class Bootstrap : MonoBehaviour
         var go = new GameObject("Road");
         go.AddComponent<MeshFilter>().sharedMesh = mesh;
         var mr = go.AddComponent<MeshRenderer>();
+        mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
         if (roadMaterial != null) mr.sharedMaterial = roadMaterial;
-        go.AddComponent<MeshCollider>().sharedMesh = mesh;
+        // deliberately no collider - the truck drives on the terrain beneath
     }
 
     TruckController BuildTruck(MempoolTerrain terrain)
     {
         float startX = -terrain.width * 0.44f;
         var root = new GameObject("Truck");
-        root.transform.position = new Vector3(startX, terrain.SampleWorld(startX, 0f) + 1.6f, 0f);
+        root.transform.position = new Vector3(startX, terrain.SampleWorld(startX, 0f) + 1.4f, 0f);
         root.transform.rotation = Quaternion.LookRotation(Vector3.right, Vector3.up);
 
         var rb = root.AddComponent<Rigidbody>();
@@ -155,6 +167,8 @@ public class Bootstrap : MonoBehaviour
         hull.center = new Vector3(0f, 0.95f, 0f);
 
         var controller = root.AddComponent<TruckController>();
+        controller.spawnPosition = root.transform.position;
+        controller.spawnRotation = root.transform.rotation;
         controller.axles = new[]
         {
             BuildAxle(root.transform, 2.0f, true, false, false),   // front: steers

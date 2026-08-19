@@ -48,6 +48,19 @@ public static class DriveInput
         }
     }
 
+    /// <summary>Put the truck back on its start mark.</summary>
+    public static bool Reset
+    {
+        get
+        {
+#if ENABLE_INPUT_SYSTEM
+            return Keyboard.current != null && Keyboard.current.rKey.wasPressedThisFrame;
+#else
+            return Input.GetKeyDown(KeyCode.R);
+#endif
+        }
+    }
+
     public static bool Handbrake
     {
         get

@@ -71,15 +71,30 @@ Zwei Fallen, die den Port betreffen und die im Browser-Build kein Thema waren:
 Kompiliert und läuft. Projekt liegt unter `/Users/arena/My project`,
 Szene `Assets/Scenes/Prototype.unity` ist als Build-Szene 0 gesetzt.
 
-PlayMode-Tests: `4 von 5 bestanden`.
+PlayMode-Tests: `5 von 6 bestanden`.
 
 | Test | Ergebnis |
 |---|---|
 | `SceneBuilds` | ✅ Gelände, Truck, Kamera, 4 WheelCollider |
 | `TruckRestsOnTheGroundInsteadOfSinking` | ✅ sackt nicht durch, kommt zur Ruhe |
 | `StaysUpright` | ✅ kippt nicht |
-| `DrivesUnderPower` | ✅ 12 Einheiten in 3 s, Vorwärtstempo 3,1 → 8,0 m/s |
+| `DrivesUnderPower` | ✅ 12 Einheiten in 3 s |
+| `StaysOnTheMapUnderSustainedThrottle` | ✅ 20 s Dauergas, bleibt in der Karte |
 | `HandbrakeBreaksTheRearEndLoose` | ❌ offen |
+
+Im Browser gemessen: 56 km/h, 4/4 Räder am Boden, 56 Einheiten zurückgelegt.
+
+## Steuerung
+
+| Taste | Wirkung |
+|---|---|
+| `W` / `↑` | Gas |
+| `S` / `↓` | Bremse, dann Rückwärtsgang |
+| `A` `D` / `←` `→` | Lenken |
+| `Leertaste` | Handbremse |
+| `R` | Truck zurücksetzen |
+
+Erst **ins Canvas klicken**, sonst gehen die Tasten an die Seite.
 
 Der Drift-Test scheitert nicht am Handbremscode, sondern am Tempo: nach 6 s
 Gas und 1 s Volleinschlag sind es nur noch **4,1 m/s** (bei 3 s waren es 8,0),

@@ -68,6 +68,10 @@ public class TruckController : MonoBehaviour
     float[] _rearStiffness;      // sideways, per rear wheel
     float[] _rearForward;        // longitudinal, per rear wheel
 
+    /// <summary>Where the truck goes back to when it leaves the world or lands on its roof.</summary>
+    [System.NonSerialized] public Vector3 spawnPosition;
+    [System.NonSerialized] public Quaternion spawnRotation = Quaternion.identity;
+
     public float SpeedKmh => _rb.linearVelocity.magnitude * 3.6f;
     /// <summary>How far the truck is travelling sideways, in m/s. This is the drift readout.</summary>
     public float Slip => Mathf.Abs(transform.InverseTransformDirection(_rb.linearVelocity).x);
@@ -76,6 +80,19 @@ public class TruckController : MonoBehaviour
     {
         _rb = GetComponent<Rigidbody>();
         _rb.centerOfMass = centreOfMass;
+        spawnPosition = transform.position;
+        spawnRotation = transform.rotation;
+    }
+
+    /// <summary>Drop the truck back on its start mark, stationary and upright.</summary>
+    public void Respawn()
+    {
+        _rb.linearVelocity = Vector3.zero;
+        _rb.angularVelocity = Vector3.zero;
+        _rb.position = spawnPosition;
+        _rb.rotation = spawnRotation;
+        transform.SetPositionAndRotation(spawnPosition, spawnRotation);
+        _steer = 0f;
     }
 
     /// <summary>
@@ -108,6 +125,7 @@ public class TruckController : MonoBehaviour
         float throttle = useExternalInput ? externalThrottle : DriveInput.Throttle;
         float steerIn = useExternalInput ? externalSteer : DriveInput.Steer;
         bool handbrake = useExternalInput ? externalHandbrake : DriveInput.Handbrake;
+        if (!useExternalInput && DriveInput.Reset) Respawn();
 
         float speed = _rb.linearVelocity.magnitude;
         float forward = Vector3.Dot(_rb.linearVelocity, transform.forward);
@@ -121,10 +139,12 @@ public class TruckController : MonoBehaviour
         float motor = braking ? 0f : throttle * motorTorque * (1f - Mathf.Clamp01(speed / topSpeed));
         float brake = braking ? brakeTorque : 0f;
 
-        int stiffIdx = 0;
+        int stiffIdx = 0, grounded = 0;
         foreach (var a in axles)
         {
             if (a == null || a.left == null || a.right == null) continue;
+            if (a.left.isGrounded) grounded++;
+            if (a.right.isGrounded) grounded++;
             if (a.steering) { a.left.steerAngle = _steer; a.right.steerAngle = _steer; }
             if (a.driven) { a.left.motorTorque = motor; a.right.motorTorque = motor; }
 
@@ -156,8 +176,17 @@ public class TruckController : MonoBehaviour
             PoseWheel(a.right, a.rightMesh);
         }
 
-        // keeps the tall body planted over crests instead of taking off
-        _rb.AddForce(-transform.up * downforce * speed);
+        // Keeps the tall body planted over crests. ONLY while a wheel is down:
+        // -transform.up flips to world-up once the truck rolls past 90 degrees,
+        // turning downforce into thrust that scales with speed - a runaway that
+        // launched the truck off the map at 136 m/s.
+        if (grounded > 0)
+            _rb.AddForce(-transform.up * Mathf.Min(downforce * speed, downforce * topSpeed));
+
+        // Airborne, upside down, or off the edge of the world: put it back.
+        if (_rb.position.y < -40f
+            || Mathf.Abs(_rb.position.x) > 200f || Mathf.Abs(_rb.position.z) > 130f)
+            Respawn();
     }
 
     /// <summary>

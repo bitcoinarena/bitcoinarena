@@ -109,4 +109,30 @@ public class VehicleTests
         Assert.Greater(slid, gripped + 0.5f,
             $"handbrake did not break traction: gripped {gripped:0.00} vs slid {slid:0.00} m/s sideways");
     }
+
+    /// <summary>
+    /// The short tests all passed while the truck was quietly building up to
+    /// 136 m/s and flying off the map: downforce is applied along -transform.up,
+    /// which becomes thrust once the hull rolls past 90 degrees. Three seconds
+    /// of throttle never got there. Twenty does.
+    /// </summary>
+    [UnityTest]
+    public IEnumerator StaysOnTheMapUnderSustainedThrottle()
+    {
+        _truck.useExternalInput = true;
+        _truck.externalThrottle = 1f;
+
+        float topSpeed = 0f;
+        for (float t = 0f; t < 20f; t += 0.25f)
+        {
+            topSpeed = Mathf.Max(topSpeed, _rb.linearVelocity.magnitude);
+            yield return new WaitForSeconds(0.25f);
+        }
+        Vector3 p = _rb.position;
+        _truck.useExternalInput = false;
+
+        Assert.Less(topSpeed, 45f, $"reached {topSpeed * 3.6f:0} km/h - something is adding energy");
+        Assert.Less(Mathf.Abs(p.z), 130f, $"left the map sideways at z={p.z:0}");
+        Assert.Greater(p.y, -40f, $"fell out of the world at y={p.y:0}");
+    }
 }
