@@ -310,15 +310,56 @@ export function makeTruckTurret(scale = 1) {
   ]);
 }
 
-/** Wheel: tyre plus hub, axis along Z so it spins about its own axle. */
+/**
+ * Wheel: tyre, rim and hub, axle along Z so it spins about its own axle.
+ *
+ * The old wheel was a black cylinder with the spokes buried INSIDE the tyre,
+ * so from outside it was radially symmetric — it span every frame and looked
+ * dead still. Everything that reads as rotation is now on the outside: tread
+ * blocks around the circumference and a spoked face with lug bolts on both
+ * sides, because the same geometry serves the left and right of the truck.
+ */
 export function makeTruckWheel(scale = 1) {
-  const t = cyl(1.5 * scale, 1.5 * scale, 1.15 * scale, 14);
+  const S = scale;
+  const R = 1.5 * S;            // tyre radius
+  const HW = 0.575 * S;         // half width
   const parts = [
-    { geo: t, m: xf(0, 0, 0, Math.PI / 2, 0, 0), color: 0x14171c },
-    { geo: cyl(0.85 * scale, 0.85 * scale, 1.2 * scale, 10), m: xf(0, 0, 0, Math.PI / 2, 0, 0), color: 0x9aa2ad },
-    { geo: box(0.28 * scale, 2.4 * scale, 0.3 * scale), m: xf(0, 0, 0), color: 0xc8ced6 },
-    { geo: box(2.4 * scale, 0.28 * scale, 0.3 * scale), m: xf(0, 0, 0), color: 0xc8ced6 },
+    // carcass, slightly narrower than the tread so the blocks stand proud
+    { geo: cyl(R * 0.97, R * 0.97, HW * 2, 20), m: xf(0, 0, 0, Math.PI / 2, 0, 0), color: 0x14171c },
+    // rim barrel
+    { geo: cyl(0.95 * S, 0.95 * S, HW * 2.06, 16), m: xf(0, 0, 0, Math.PI / 2, 0, 0), color: 0x79828e },
   ];
+
+  // tread blocks: the strongest rotation cue there is
+  const BLOCKS = 14;
+  for (let i = 0; i < BLOCKS; i++) {
+    const a = (i / BLOCKS) * Math.PI * 2;
+    parts.push({
+      geo: box(0.2 * S, 0.46 * S, HW * 1.94),
+      m: xf(Math.cos(a) * R * 0.95, Math.sin(a) * R * 0.95, 0, 0, 0, a),
+      color: i % 2 ? 0x0d0f13 : 0x1b1f26,
+    });
+  }
+
+  // both faces get a rim, so one geometry serves both sides of the truck
+  for (const side of [1, -1]) {
+    const z = side * (HW + 0.02 * S);
+    parts.push({ geo: cyl(0.36 * S, 0.36 * S, 0.12 * S, 12), m: xf(0, 0, z, Math.PI / 2, 0, 0), color: 0xc8ced6 });
+    const SPOKES = 5;
+    for (let i = 0; i < SPOKES; i++) {
+      const a = (i / SPOKES) * Math.PI * 2 + side * 0.3;
+      parts.push({
+        geo: box(0.62 * S, 0.24 * S, 0.09 * S),
+        m: xf(Math.cos(a) * 0.62 * S, Math.sin(a) * 0.62 * S, z, 0, 0, a),
+        color: 0xb4bcc6,
+      });
+      parts.push({
+        geo: cyl(0.085 * S, 0.085 * S, 0.09 * S, 6),
+        m: xf(Math.cos(a) * 0.5 * S, Math.sin(a) * 0.5 * S, z + side * 0.05 * S, Math.PI / 2, 0, 0),
+        color: 0xe6ebf1,
+      });
+    }
+  }
   return mergeParts(parts);
 }
 

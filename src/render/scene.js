@@ -7,7 +7,7 @@ import { SMAAPass } from '../../vendor/addons/postprocessing/SMAAPass.js';
 import { loadEnvironment } from './assets.js';
 import { WORLD, CAMERAS } from '../config.js';
 import { Q } from '../quality.js';
-import { clamp, lerp, approach, rand, TAU } from '../util.js';
+import { clamp, lerp, approach, rand, TAU, angleApproach } from '../util.js';
 
 /**
  * Renderer + scene + sky + lighting + the camera rig with all six view modes.
@@ -33,7 +33,7 @@ export class Stage {
     this._buildSky();
     this._buildLights();
 
-    this.mode = 'cinematic';
+    this.mode = 'god';
     this.bias = 0;                 // -1 bear .. +1 bull
     this.volatility = 0;
     this.shake = 0;
@@ -282,7 +282,31 @@ export class Stage {
     let snap = 2.6;
 
     switch (this.mode) {
+      case 'follow': {
+        if (!truck) { pos.set(0, 120, 150); look.set(0, 0, 0); break; }
+        const sp = Math.min(1, Math.abs(truck.speed) / 34);
+        // Chase the direction of travel rather than the nose. In a slide the
+        // two diverge, so the camera stays square to the road and you watch
+        // your own flank come round — which is how a drift reads as a drift.
+        const v = truck.vel;
+        const moving = v && Math.hypot(v.x, v.z) > 6;
+        const yaw = moving ? Math.atan2(v.z, v.x) : truck.heading;
+        this._chaseYaw = this._chaseYaw === undefined
+          ? yaw
+          : angleApproach(this._chaseYaw, yaw, 2.8, dt);
+        const back = new THREE.Vector3(-Math.cos(this._chaseYaw), 0, -Math.sin(this._chaseYaw))
+          .multiplyScalar(28 + sp * 14);
+        pos.copy(truck.pos).add(back).add(new THREE.Vector3(0, 13 + sp * 6, 0));
+        // look down the road ahead, not at the tailgate
+        look.copy(truck.pos)
+          .add(new THREE.Vector3(Math.cos(truck.heading), 0, Math.sin(truck.heading)).multiplyScalar(6 + sp * 12))
+          .add(new THREE.Vector3(0, 3.4, 0));
+        snap = 6.5;
+        break;
+      }
+
       case 'god':
+      default:
         if (this.portrait) {
           // down the length of the battlefield: plaza in the foreground,
           // the Blockchain Gate at the far end
@@ -294,73 +318,6 @@ export class Stage {
         }
         snap = 2.2;
         break;
-
-      case 'follow':
-        if (truck) {
-          const speed = Math.min(1, Math.abs(truck.speed) / 34);
-          const back = new THREE.Vector3(-Math.cos(truck.heading), 0, -Math.sin(truck.heading))
-            .multiplyScalar(30 + speed * 12);
-          pos.copy(truck.pos).add(back).add(new THREE.Vector3(0, 15 + speed * 5, 0));
-          look.copy(truck.pos).add(new THREE.Vector3(0, 3, 0));
-          snap = 6.5;
-        } else { pos.set(0, 120, 150); look.set(0, 0, 0); }
-        break;
-
-      case 'driver':
-        if (truck) {
-          // Bumper cam: sit in front of the cab so we aren't inside our own mesh.
-          const fwd = new THREE.Vector3(Math.cos(truck.heading), 0, Math.sin(truck.heading));
-          pos.copy(truck.pos).add(new THREE.Vector3(0, 6.0, 0)).add(fwd.clone().multiplyScalar(9.5));
-          look.copy(pos).add(fwd.clone().multiplyScalar(34)).add(new THREE.Vector3(0, -3.5, 0));
-          snap = 12;
-        } else { pos.set(WORLD.plazaX, 20, 30); look.set(0, 5, 0); }
-        break;
-
-      case 'plaza':
-        pos.set(WORLD.plazaX - 26 + Math.sin(this._t * 0.09) * 14, 52, 88);
-        look.set(WORLD.plazaX + 14, 6, -2);
-        snap = 2.0;
-        break;
-
-      case 'free':
-        return this._freeFly(dt);
-
-      case 'cinematic':
-      default: {
-        this._cineTime -= dt;
-        if (this._cineTime <= 0) { this._cineTime = rand(9, 15); this._cineShot = (this._cineShot + 1 + ((Math.random() * 3) | 0)) % 5; }
-        const t = this._t;
-        const fz = ctx.frontlineAt ? ctx.frontlineAt(0) : 0;
-        switch (this._cineShot) {
-          case 0:  // slow crane over the frontline
-            if (this.portrait) {
-              pos.set(-150, 74 + Math.sin(t * 0.13) * 10, fz + Math.sin(t * 0.06) * 44);
-              look.set(70, 6, fz);
-            } else {
-              pos.set(Math.sin(t * 0.06) * 150, 78 + Math.sin(t * 0.13) * 12, fz + 120);
-              look.set(0, 6, fz);
-            }
-            break;
-          case 1:  // low pass along the trench
-            pos.set(-120 + ((t * 14) % 260), 16, fz - 34);
-            look.set(-90 + ((t * 14) % 260) + 60, 4, fz + 6);
-            break;
-          case 2:  // over the shoulder of the truck
-            if (truck) {
-              pos.copy(truck.pos).add(new THREE.Vector3(Math.sin(t * 0.4) * 26, 14, Math.cos(t * 0.4) * 26));
-              look.copy(truck.pos);
-            } else { pos.set(0, 100, 160); look.set(0, 0, 0); }
-            break;
-          case 3:  // depot gate
-            pos.set(WORLD.depotX + 60, 40, Math.sin(t * 0.2) * 60);
-            look.set(WORLD.depotX - 10, 8, 0);
-            break;
-          default: // plaza chaos
-            pos.set(WORLD.plazaX - 34, 44 + Math.sin(t * 0.3) * 6, 72);
-            look.set(WORLD.plazaX + 12, 6, -2);
-        }
-        snap = 1.4;
-      }
     }
 
     this._camPos.lerp(pos, 1 - Math.exp(-snap * dt));

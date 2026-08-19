@@ -113,6 +113,16 @@ export class Audio {
     this.tone(rand(160, 260), { type: 'square', gain: g * 0.35, decay: 0.05, slideTo: 70 });
   }
 
+  /** Tyres letting go: a bandpassed squeal that rises with how hard you slide. */
+  skid(intensity = 0.5) {
+    const now = performance.now();
+    if (now - (this.lastSkid || 0) < 90) return;
+    this.lastSkid = now;
+    const g = 0.03 + intensity * 0.09;
+    this.noise({ gain: g, decay: 0.22, freq: 900 + intensity * 1400, filter: 'bandpass', q: 6 });
+    this.noise({ gain: g * 0.5, decay: 0.3, freq: 260, filter: 'lowpass', q: 1, sweepTo: 140 });
+  }
+
   /** Tank main gun: hard crack, deep body, long tail. */
   cannon(dist = 0.5) {
     const g = clamp(0.5 - dist * 0.3, 0.12, 0.5);

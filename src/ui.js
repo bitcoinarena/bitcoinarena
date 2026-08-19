@@ -132,7 +132,7 @@ export class UI {
   /* ------------------------------------------------------------- static */
 
   _buildCamButtons() {
-    const modes = [['cinematic', '1 CINE'], ['god', '2 GOD'], ['follow', '3 FOLLOW'], ['plaza', '4 PLAZA'], ['driver', '5 DRIVER'], ['free', '6 FREE']];
+    const modes = [['god', '1 GOD'], ['follow', '2 FOLLOW']];
     this.el.camModes.innerHTML = '';
     for (const [id, label] of modes) {
       const b = document.createElement('button');

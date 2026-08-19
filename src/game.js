@@ -62,8 +62,8 @@ export class Game {
     this._wireEvents();
     bindInput(this);
 
-    this.setCamera('cinematic');
-    this.ui.setCamera('cinematic');
+    this.setCamera('god');
+    this.ui.setCamera('god');
     this.bf.roads.setHighlight(this.lane);
     this.ui.setLiqSim(SIM.liquidations);
   }
@@ -286,7 +286,7 @@ export class Game {
     this.ui.log('ops', spectator
       ? 'WAR ROOM online. Sit back and watch the war over Bitcoin unfold.'
       : 'Logistics Commander on deck. Load packages, pick a route, survive.');
-    this.setCamera(spectator ? 'cinematic' : 'plaza');
+    this.setCamera(spectator ? 'god' : 'follow');
   }
 
   setCamera(mode) {
@@ -437,6 +437,7 @@ export class Game {
       volatility: this.volatility,
       manualSteer: this.manualSteer,
       firing: this.firing,
+      handbrake: this.handbrake,
       courier,
       onCourierHit: (dmg) => { if (t) this.logistics.hitTruck(t, dmg); },
       onGunfire: () => this.audio.battle(0.3 + this.volatility),

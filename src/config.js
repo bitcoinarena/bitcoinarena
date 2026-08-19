@@ -105,7 +105,9 @@ export const EVENTS = {
   heliCooldownSec: 5,
 };
 
-export const CAMERAS = ['cinematic', 'god', 'follow', 'plaza', 'driver', 'free'];
+// Two views, and only two: the overview you plan from and the chase cam you
+// drive from. The rest were places to watch the game rather than play it.
+export const CAMERAS = ['god', 'follow'];
 
 export const ENDPOINTS = {
   binanceSpot: 'wss://stream.binance.com:9443/stream?streams=btcusdt@aggTrade/btcusdt@ticker/btcusdt@depth20@100ms',

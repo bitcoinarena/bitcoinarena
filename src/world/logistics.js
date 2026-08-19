@@ -455,6 +455,12 @@ export class Logistics {
       const w = new THREE.Mesh(wheelGeo, wheelMat);
       w.position.set(wx * s, 1.55 * s, wz * s);
       w.castShadow = true;
+      // Spin about the axle (local Z) happens BEFORE the steering yaw (local
+      // Y) under the default XYZ order, which is exactly the order a real
+      // steered wheel composes in.
+      w.userData.baseY = 1.55 * s;
+      w.userData.front = wx > 0;
+      w.userData.right = wz > 0;
       g.add(w);
       wheels.push(w);
     }
@@ -758,23 +764,63 @@ export class Logistics {
       truck.obj.position.copy(truck.pos);
       truck.obj.rotation.y = -truck.heading;
 
-      // ride the ground: pitch along the direction of travel, roll across it
+      // Ride the ground. Under the default XYZ order the Z rotation is applied
+      // in the body frame but X is applied AFTER the yaw, in world space — so
+      // the old code fed terrain roll into what is actually pitch, and the
+      // truck nosed up when it should have banked. YXZ puts both back on the
+      // hull's own axes: X rolls along the nose, Z pitches about the axles.
+      truck.obj.rotation.order = 'YXZ';
       const fx = Math.cos(truck.heading) * 4, fz = Math.sin(truck.heading) * 4;
-      const pitch = onRoad
+      const pitchGround = onRoad
         ? Math.atan2(
           this.bf.surfaceAt(truck.pos.x + fx, truck.pos.z + fz) - this.bf.surfaceAt(truck.pos.x - fx, truck.pos.z - fz),
           8,
-        ) * -1
+        )
         : 0;
-      const roll = onRoad
+      // right flank is (-sin, cos); positive = the right side is riding higher
+      const rollGround = onRoad
         ? Math.atan2(this.bf.surfaceAt(truck.pos.x - fz, truck.pos.z + fx) - this.bf.surfaceAt(truck.pos.x + fz, truck.pos.z - fx), 8)
         : 0;
-      const shudder = Math.sin(this.time * 9 + truck.wobble) * 0.018 * (truck.speed / 20);
-      truck.obj.rotation.z = roll + shudder;
-      truck.obj.rotation.x = truck.state === 'wrecked' ? 0.12 : pitch;
 
+      // Weight transfer. A loaded van squats on the throttle, dives on the
+      // brakes and leans out of a corner, and that lean is most of what makes
+      // speed legible without a speedometer.
+      const dr = truck.drive;
+      const wantPitch = clamp((dr?.accel ?? 0) * 0.0022, -0.09, 0.09);
+      const wantRoll = clamp(-(dr?.centrip ?? 0) * 0.010, -0.16, 0.16);
+      truck.bodyPitch = approach(truck.bodyPitch ?? 0, truck.piloted ? wantPitch : 0, 7, dt);
+      truck.bodyRoll = approach(truck.bodyRoll ?? 0, truck.piloted ? wantRoll : 0, 6, dt);
+
+      const shudder = Math.sin(this.time * 9 + truck.wobble) * 0.018 * (truck.speed / 20);
+      truck.obj.rotation.x = -rollGround + truck.bodyRoll + shudder;
+      truck.obj.rotation.z = truck.state === 'wrecked' ? -0.12 : pitchGround + truck.bodyPitch;
+
+      // --- wheels ---------------------------------------------------------
       const wheels = truck.obj.userData.wheels || [];
-      for (const w of wheels) w.rotation.z -= truck.speed * dt * 0.7;
+      if (wheels.length) {
+        const ws = truck.obj.userData.scale ?? 1;
+        const radius = 1.5 * ws;
+        // Roll rate comes from the rolling radius, so the tread moves at road
+        // speed instead of an invented 0.7 rad per unit.
+        const rolled = (truck.speed / radius) * dt;
+        // buried throttle from low speed spins the driven axle faster than the road
+        const spinUp = dr?.accel > 20 && Math.abs(truck.speed) < 12 ? 7 * dt : 0;
+        truck.spinFront = (truck.spinFront ?? 0) - rolled;
+        truck.spinRear = (truck.spinRear ?? 0) - (dr?.hb ? 0 : rolled + spinUp);
+
+        const steer = truck.piloted ? (dr?.steer ?? 0) : 0;
+        const dip = clamp((dr?.accel ?? 0) / 70, -0.5, 0.5);
+        const lean = clamp((dr?.centrip ?? 0) / 26, -0.5, 0.5);
+        for (const w of wheels) {
+          const { front, right, baseY } = w.userData;
+          w.rotation.z = front ? truck.spinFront : truck.spinRear;
+          // rotation about +Y turns +X toward -Z, and right is +Z, so steering
+          // right is a negative yaw on the hub
+          w.rotation.y = front ? -steer : 0;
+          // the loaded corner compresses: the wheel rises into the arch
+          w.position.y = baseY + (front ? -dip : dip) * 0.24 + (right ? -lean : lean) * 0.2;
+        }
+      }
 
       const fill = clamp(this.usedCapacity(truck) / truck.spec.capacity, 0, 1);
       const bar = truck.obj.userData.bar;
@@ -797,10 +843,24 @@ export class Logistics {
     const st = ctx.manualSteer || { x: 0, z: 0 };
     const dir = truck.state === 'enroute' ? 1 : -1;
 
-    // road gives grip and speed; open ground is slower and rougher
+    // Velocity is a world vector, not a scalar along the nose. That single
+    // change is what makes this drive like a car instead of a cursor: the
+    // truck can point one way and travel another, which is a slide, and the
+    // tyres have to claw it back.
+    const d = truck.drive || (truck.drive = {
+      vx: 0, vz: 0, steer: 0, yawRate: 0, slip: 0, accel: 0, lat: 0, seeded: false,
+    });
+    if (!d.seeded) {
+      d.vx = Math.cos(truck.heading) * truck.speed;
+      d.vz = Math.sin(truck.heading) * truck.speed;
+      d.seeded = true;
+    }
+
+    // road gives grip and speed; open ground is slower and far looser
     const onRoad = Math.abs(truck.pos.z - this.laneZ(truck.lane, truck.pos.x)) < 7.5
       || this.bf.roads.lanes.some((l) => Math.abs(truck.pos.z - this.laneZ(l, truck.pos.x)) < 7.5);
     const surface = onRoad ? 1 : 0.62;
+    const traction = onRoad ? 1 : 0.68;
 
     // Piloted trucks run far faster than the AI ones. A 220-unit haul at lorry
     // speed is twenty-five seconds of commuting; the same distance driven is a
@@ -810,26 +870,86 @@ export class Logistics {
     const grade = this.bf.slopeAlong(truck.pos.x, truck.pos.z, Math.cos(truck.heading), Math.sin(truck.heading), 5);
     const climb = grade > 0 ? 1 / (1 + grade * 2.4) : 1 + Math.min(0.35, -grade * 0.5);
 
-    // throttle: forward, coast, or brake into reverse
+    // --- body frame: split velocity into forward and sideways -------------
+    const ch = Math.cos(truck.heading), sh = Math.sin(truck.heading);
+    let vf = d.vx * ch + d.vz * sh;      // along the nose
+    let vl = -d.vx * sh + d.vz * ch;     // out of the truck's right flank
+
+    const handbrake = !!ctx.handbrake;
     const throttle = st.x;
-    const wanted = throttle > 0 ? top * load * climb : throttle < 0 ? -top * 0.35 : 0;
-    truck.speed = approach(truck.speed, wanted, throttle !== 0 ? 3.4 : 1.4, dt);
+    const steerIn = st.z;                // +1 = right, and right is +Z here
 
-    // steering bites less the faster you go, and not at all standing still
-    const grip = clamp(Math.abs(truck.speed) / 6, 0, 1);
-    const rate = 1.5 / (1 + Math.abs(truck.speed) * 0.045);
-    truck.heading += -st.z * rate * grip * dt * Math.sign(truck.speed || 1);
+    // --- engine, brakes, drag ---------------------------------------------
+    const power = 30 * load * climb;
+    let af = 0;
+    if (throttle > 0) af += power * (1 - clamp(vf / top, 0, 1));
+    else if (throttle < 0) af += vf > 1.5 ? -38 : -power * 0.5;   // brake first, then reverse
+    af -= vf * 0.45 + Math.sign(vf) * vf * vf * 0.010;            // rolling + aero drag
+    if (handbrake) af -= Math.sign(vf) * 15;
 
-    const nx = truck.pos.x + Math.cos(truck.heading) * truck.speed * dt;
-    const nz = truck.pos.z + Math.sin(truck.heading) * truck.speed * dt;
+    // --- steering ----------------------------------------------------------
+    // A loaded van does not dart, and it darts less the faster it is going.
+    const steerMax = 0.62 / (1 + Math.abs(vf) * 0.055);
+    d.steer = approach(d.steer, steerIn * steerMax, 6.5, dt);
+
+    // Bicycle model: the hull yaws because the front wheels are turned, so
+    // steering does nothing standing still and everything under power.
+    const WHEELBASE = 7.8;
+    let yawWanted = (vf / WHEELBASE) * Math.tan(d.steer);
+    if (handbrake) yawWanted *= 1.8;     // rear grip drops, the tail comes round
+    d.yawRate = approach(d.yawRate, yawWanted, 9, dt);
+    truck.heading += d.yawRate * dt;
+
+    // --- tyre forces -------------------------------------------------------
+    // Rotating the hull does not rotate the momentum with it. The leftover is
+    // lateral velocity, and grip is how hard the tyres scrub it off.
+    const gripLat = (handbrake ? 2.6 : 12) * traction;
+    vf += (af + d.yawRate * vl) * dt;
+    vl += (-d.yawRate * vf) * dt;
+    const before = vl;
+    vl = approach(vl, 0, gripLat, dt);
+
+    vf = clamp(vf, -top * 0.42, top);
+    d.accel = af;
+    d.hb = handbrake;
+    d.centrip = d.yawRate * vf;
+    d.lat = (vl - before) / Math.max(dt, 1e-4);
+    d.slip = Math.abs(vl);
+
+    // back to a world vector
+    d.vx = ch * vf - sh * vl;
+    d.vz = sh * vf + ch * vl;
+    truck.speed = vf;                    // the rest of the game reads a scalar
+    const vel = truck.vel || (truck.vel = { x: 0, z: 0 });
+    vel.x = d.vx; vel.z = d.vz;          // the chase cam reads the course
+
+    const nx = truck.pos.x + d.vx * dt;
+    const nz = truck.pos.z + d.vz * dt;
     truck.pos.x = clamp(nx, -WORLD.width / 2 + 6, WORLD.width / 2 - 6);
     truck.pos.z = clamp(nz, -WORLD.depth / 2 + 6, WORLD.depth / 2 - 6);
     truck.roadX = truck.pos.x;            // keep the rails in sync if control is dropped
 
     this.bf.clearPath(truck.pos.x, truck.pos.z, dir, dt);
 
-    if (Math.abs(truck.speed) > 4 && Math.random() < dt * 26) {
-      this.fx.spawn(truck.pos.x - Math.cos(truck.heading) * 5, truck.pos.y + 1.2, truck.pos.z - Math.sin(truck.heading) * 5, {
+    // --- what the tyres leave behind ---------------------------------------
+    const sliding = d.slip > 4.5;
+    if (sliding && Math.random() < dt * 60) {
+      // smoke off the rear axle, on the outside of the slide
+      // rear axle, on the outside of the slide: right is (-sin, cos)
+      const side = Math.sign(vl) || 1;
+      this.fx.spawn(
+        truck.pos.x - ch * 4 - sh * side * 2.6,
+        truck.pos.y + 0.6,
+        truck.pos.z - sh * 4 + ch * side * 2.6,
+        {
+          color: onRoad ? 0xb9b9b9 : 0x7a6449, count: 1,
+          size: 2.2 + Math.min(3, d.slip * 0.22), life: 1.1,
+          speed: 3.2, gravity: 0.6, alpha: 0.55,
+        },
+      );
+      this.audio?.skid?.(clamp(d.slip / 14, 0, 1));
+    } else if (Math.abs(vf) > 4 && Math.random() < dt * 26) {
+      this.fx.spawn(truck.pos.x - ch * 5, truck.pos.y + 1.2, truck.pos.z - sh * 5, {
         color: onRoad ? 0x8b8b8b : 0x6b5a44, count: 1, size: onRoad ? 1.8 : 2.6,
         life: 0.9, speed: 2.6, gravity: 1.4, alpha: 0.5,
       });
@@ -842,11 +962,13 @@ export class Logistics {
       truck.speed = 0;
       truck.roadX = undefined;
       truck.piloted = false;
+      d.seeded = false;
     }
   }
 
   _driveTruck(truck, dt, ctx) {
     if (truck.piloted) return this._pilotTruck(truck, dt, ctx);
+    if (truck.drive) truck.drive.seeded = false;
     const dir = truck.state === 'enroute' ? 1 : -1;
     const goalX = dir > 0 ? WORLD.depotX - 12 : WORLD.plazaX + 2 + truck.id * 9;
     // Drive home on the same road you came in on — switching lanes at the depot
