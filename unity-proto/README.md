@@ -95,6 +95,39 @@ Kamera davor einstellt, nicht über einen Schwellwert im Test.
 
 Der Test bleibt bewusst rot stehen, statt ihn passend zu machen.
 
+## Im Browser aufrufen
+
+```bash
+cd unity-proto && python3 serve-unity.py 8900
+```
+
+Der Build liegt unter `build/webgl/` (nicht in git, 55 MB).
+
+Neu bauen:
+
+```bash
+/Applications/Unity/Hub/Editor/6000.0.82f1/Unity.app/Contents/MacOS/Unity \
+  -batchmode -quit -nographics -buildTarget WebGL \
+  -projectPath "/Users/arena/My project" \
+  -executeMethod BuildWebGL.Run -logFile /tmp/webgl.log
+```
+
+Zwei Dinge, die dabei zwingend sind:
+
+- **Kompression aus.** Unity liefert per Default Brotli, was den Server zwingt,
+  `Content-Encoding` zu setzen. Ein einfacher Static-Server tut das nicht, und
+  der Player lädt dann gar nicht. `serve-unity.py` setzt außerdem die
+  MIME-Typen für `.wasm` und `.data`, die Python nicht kennt.
+- **Materialien müssen Assets sein.** Unbelegte Material-Slots fallen auf
+  Unitys Standardmaterial zurück — Built-in-Shader, im URP-Build nicht
+  vorhanden, alles magenta. `BuildPrototypeScene` legt deshalb vier
+  URP/Lit-Materialien unter `Assets/Materials/` an und hängt sie an die Szene,
+  was sie zugleich vor dem Shader-Stripper schützt.
+
+Preis der Entscheidung: 55 MB Download, davon 42 MB wasm. Mit Brotli und
+passenden Server-Headern wären es grob ein Viertel davon. Das three.js-Spiel
+liegt bei 14,6 MB inklusive aller Assets.
+
 ## Tests ausführen
 
 ```bash

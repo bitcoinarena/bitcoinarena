@@ -20,6 +20,7 @@ public class Bootstrap : MonoBehaviour
     public Material groundMaterial;
     public Material roadMaterial;
     public Material bodyMaterial;
+    public Material wheelMaterial;
 
     [Header("Sun")]
     public float sunPitch = 42f;
@@ -200,6 +201,7 @@ public class Bootstrap : MonoBehaviour
             // a Unity cylinder stands on its end; a wheel lies on its side
             proxy.transform.rotation = Quaternion.Euler(0f, 0f, 90f);
             StripColliders(proxy);
+            if (wheelMaterial != null) proxy.GetComponent<MeshRenderer>().sharedMaterial = wheelMaterial;
             mesh = proxy.transform;
         }
         return wheel;
