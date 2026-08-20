@@ -2,12 +2,18 @@ using System.Collections.Generic;
 using UnityEngine;
 
 /// <summary>
-/// Draws both armies.
+/// Draws both armies as pooled GameObjects.
 ///
-/// Instanced rather than a GameObject per unit: a few hundred soldiers as
-/// GameObjects costs a Transform hierarchy, a Renderer and a culling entry
-/// each, for models that are boxes. This walks the plain unit list and issues
-/// one draw per mesh per side.
+/// This used Graphics.RenderMeshInstanced, which rendered correctly in the
+/// editor and nothing at all in the WebGL build: the INSTANCING_ON variant of
+/// URP/Lit is stripped at build time unless a material ASSET asks for it, and
+/// setting enableInstancing at runtime is too late. Instancing also culls
+/// against RenderParams.worldBounds, which defaults to a zero-size box.
+///
+/// Two invisible-only-in-the-build failure modes for a couple of hundred
+/// objects is a bad trade. Plain renderers cannot fail either way, and 200
+/// GameObjects is nothing. If the army ever grows enough to matter, that is a
+/// measurable optimisation to revisit - with a build to measure.
 /// </summary>
 public class ArmyRenderer : MonoBehaviour
 {
@@ -16,28 +22,23 @@ public class ArmyRenderer : MonoBehaviour
     public Material bullMaterial;
     public Material bearMaterial;
 
-    /// <summary>RenderMeshInstanced takes at most 1023 matrices per call.</summary>
-    const int Batch = 1023;
-
     Mesh _hull, _turret, _soldier;
-    readonly Dictionary<(Army.Side, int), List<Matrix4x4>> _batches = new Dictionary<(Army.Side, int), List<Matrix4x4>>();
+    readonly List<Transform> _hulls = new List<Transform>();
+    readonly List<Transform> _turrets = new List<Transform>();
+    readonly List<Transform> _soldiers = new List<Transform>();
 
     void Awake()
     {
         _hull = Box(new Vector3(3.4f, 1.5f, 6.2f), "TankHull");
         _turret = Turret();
         _soldier = Box(new Vector3(0.7f, 1.8f, 0.5f), "Soldier");
-
-        foreach (Army.Side side in new[] { Army.Side.Bull, Army.Side.Bear })
-            for (int kind = 0; kind < 3; kind++)
-                _batches[(side, kind)] = new List<Matrix4x4>();
     }
 
     static Mesh Box(Vector3 size, string name)
     {
-        var m = new Mesh { name = name };
         var t = GameObject.CreatePrimitive(PrimitiveType.Cube);
         var src = t.GetComponent<MeshFilter>().sharedMesh;
+        var m = new Mesh { name = name };
         var verts = src.vertices;
         for (int i = 0; i < verts.Length; i++) verts[i] = Vector3.Scale(verts[i], size);
         m.vertices = verts;
@@ -49,12 +50,11 @@ public class ArmyRenderer : MonoBehaviour
         return m;
     }
 
-    /// <summary>Turret box with a barrel poking out of the front, as one mesh.</summary>
+    /// <summary>Turret box with a barrel out of the front, as one mesh.</summary>
     static Mesh Turret()
     {
         var body = Box(new Vector3(2.2f, 1.0f, 2.6f), "t");
         var barrel = Box(new Vector3(0.34f, 0.34f, 4.2f), "b");
-
         var combine = new[]
         {
             new CombineInstance { mesh = body, transform = Matrix4x4.Translate(new Vector3(0f, 1.2f, -0.2f)) },
@@ -67,64 +67,68 @@ public class ArmyRenderer : MonoBehaviour
         return m;
     }
 
+    Transform MakePiece(Mesh mesh, string name)
+    {
+        var go = new GameObject(name);
+        go.transform.SetParent(transform, false);
+        go.AddComponent<MeshFilter>().sharedMesh = mesh;
+        var mr = go.AddComponent<MeshRenderer>();
+        mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.On;
+        return go.transform;
+    }
+
+    /// <summary>Grow the pool to fit, and park anything spare out of sight.</summary>
+    static void Fit(List<Transform> pool, int need, System.Func<Transform> make)
+    {
+        while (pool.Count < need) pool.Add(make());
+        for (int i = need; i < pool.Count; i++)
+            if (pool[i].gameObject.activeSelf) pool[i].gameObject.SetActive(false);
+    }
+
     void LateUpdate() => Submit();
 
     /// <summary>
-    /// Hand this frame's instances to the renderer. Separate from LateUpdate so
-    /// a test can submit and render in the same frame - batch mode never fires
-    /// WaitForEndOfFrame, so there is no other way to catch a submission.
+    /// Place every piece for this frame. Called from LateUpdate; public so a
+    /// visibility test can place and render inside a single frame, because
+    /// batch mode never fires WaitForEndOfFrame.
     /// </summary>
     public void Submit()
     {
-        if (army == null || bullMaterial == null || bearMaterial == null) return;
+        if (army == null) return;
 
-        foreach (var list in _batches.Values) list.Clear();
+        int armour = army.Armour.Count;
+        Fit(_hulls, armour, () => MakePiece(_hull, "Hull"));
+        Fit(_turrets, armour, () => MakePiece(_turret, "Turret"));
+        Fit(_soldiers, army.Infantry.Count, () => MakePiece(_soldier, "Soldier"));
 
-        foreach (var v in army.Armour)
+        for (int i = 0; i < armour; i++)
         {
-            float y = Ground(v.x, v.z);
-            // hull yaw is its line of advance; the turret traverses in world
-            // space, so it is NOT parented to the hull's rotation
-            _batches[(v.side, 0)].Add(Matrix4x4.TRS(
-                new Vector3(v.x, y + 0.9f, v.z), Quaternion.Euler(0f, v.heading * Mathf.Rad2Deg, 0f), Vector3.one));
-            _batches[(v.side, 1)].Add(Matrix4x4.TRS(
-                new Vector3(v.x, y + 0.9f, v.z), Quaternion.Euler(0f, v.turretYaw * Mathf.Rad2Deg, 0f), Vector3.one));
+            var v = army.Armour[i];
+            float y = Ground(v.x, v.z) + 0.9f;
+            var mat = v.side == Army.Side.Bull ? bullMaterial : bearMaterial;
+
+            Place(_hulls[i], new Vector3(v.x, y, v.z), v.heading, mat);
+            // the turret traverses in world space, so it is NOT parented to the hull
+            Place(_turrets[i], new Vector3(v.x, y, v.z), v.turretYaw, mat);
         }
 
-        foreach (var s in army.Infantry)
+        for (int i = 0; i < army.Infantry.Count; i++)
         {
-            float y = Ground(s.x, s.z);
+            var s = army.Infantry[i];
             // a small bob, so a line of infantry does not read as fenceposts
             float bob = Mathf.Abs(Mathf.Sin(s.phase)) * 0.16f;
-            _batches[(s.side, 2)].Add(Matrix4x4.TRS(
-                new Vector3(s.x, y + 0.9f + bob, s.z),
-                Quaternion.Euler(0f, s.heading * Mathf.Rad2Deg, 0f), Vector3.one));
+            Place(_soldiers[i], new Vector3(s.x, Ground(s.x, s.z) + 0.9f + bob, s.z), s.heading,
+                  s.side == Army.Side.Bull ? bullMaterial : bearMaterial);
         }
+    }
 
-        Draw(Army.Side.Bull, 0, _hull); Draw(Army.Side.Bear, 0, _hull);
-        Draw(Army.Side.Bull, 1, _turret); Draw(Army.Side.Bear, 1, _turret);
-        Draw(Army.Side.Bull, 2, _soldier); Draw(Army.Side.Bear, 2, _soldier);
+    static void Place(Transform t, Vector3 pos, float yawRadians, Material mat)
+    {
+        if (!t.gameObject.activeSelf) t.gameObject.SetActive(true);
+        t.SetPositionAndRotation(pos, Quaternion.Euler(0f, yawRadians * Mathf.Rad2Deg, 0f));
+        var mr = t.GetComponent<MeshRenderer>();
+        if (mat != null && mr.sharedMaterial != mat) mr.sharedMaterial = mat;
     }
 
     float Ground(float x, float z) => terrain != null ? terrain.SampleSurface(x, z) : 0f;
-
-    void Draw(Army.Side side, int kind, Mesh mesh)
-    {
-        var list = _batches[(side, kind)];
-        if (list.Count == 0) return;
-        var rp = new RenderParams(side == Army.Side.Bull ? bullMaterial : bearMaterial)
-        {
-            receiveShadows = true,
-            shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.On,
-            // REQUIRED. worldBounds defaults to a zero-size box at the origin,
-            // and instanced draws are culled against it - leave it alone and
-            // every unit is submitted every frame and never appears.
-            worldBounds = new Bounds(Vector3.zero, new Vector3(600f, 400f, 600f)),
-        };
-        for (int i = 0; i < list.Count; i += Batch)
-        {
-            int n = Mathf.Min(Batch, list.Count - i);
-            Graphics.RenderMeshInstanced(rp, mesh, 0, list.GetRange(i, n).ToArray(), n);
-        }
-    }
 }
