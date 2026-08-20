@@ -39,6 +39,7 @@ public class Bootstrap : MonoBehaviour
     MempoolTerrain _terrain;
     public MarketFeed Market { get; private set; }
     public Battlefield Field { get; private set; }
+    public RoadNetwork Roads { get; private set; }
 
     void Start()
     {
@@ -51,7 +52,7 @@ public class Bootstrap : MonoBehaviour
         Field = gameObject.AddComponent<Battlefield>();
         Field.terrain = _terrain;
         Field.market = Market;
-        BuildRoad(_terrain);
+        BuildRoads();
         var truck = BuildTruck(_terrain);
         BuildCamera(truck);
         gameObject.AddComponent<TouchControls>();
@@ -90,53 +91,19 @@ public class Bootstrap : MonoBehaviour
         return go.AddComponent<MempoolTerrain>();
     }
 
-    /// <summary>A single road for the prototype: the frontline route, plaza to depot.</summary>
-    void BuildRoad(MempoolTerrain terrain)
+    /// <summary>
+    /// All five routes, with their own damage model. Replaces the prototype's
+    /// single hand-built ribbon.
+    /// </summary>
+    void BuildRoads()
     {
-        const int SEGMENTS = 240;
-        const float HALF_WIDTH = 6.5f;
-        // 0.45 left the ribbon buried: the terrain mesh is finer than the road's
-        // own sampling, so it bulged through between road vertices.
-        const float LIFT = RoadLift;
-
-        var verts = new Vector3[(SEGMENTS + 1) * 2];
-        var uvs = new Vector2[(SEGMENTS + 1) * 2];
-        var tris = new int[SEGMENTS * 6];
-
-        for (int i = 0; i <= SEGMENTS; i++)
-        {
-            float t = i / (float)SEGMENTS;
-            float x = Mathf.Lerp(-terrain.width * 0.46f, terrain.width * 0.46f, t);
-            // the road curves, so there is something to steer into
-            float z = Mathf.Sin(t * Mathf.PI * 1.6f) * 22f;
-            float y = terrain.SampleWorld(x, z) + LIFT;
-
-            float dx = Mathf.Cos(t * Mathf.PI * 1.6f) * 1.6f * Mathf.PI * 22f / terrain.width;
-            var normal = new Vector3(-dx, 0f, 1f).normalized;
-
-            verts[i * 2] = new Vector3(x, y, z) - normal * HALF_WIDTH;
-            verts[i * 2 + 1] = new Vector3(x, y, z) + normal * HALF_WIDTH;
-            uvs[i * 2] = new Vector2(0f, t * SEGMENTS * 0.5f);
-            uvs[i * 2 + 1] = new Vector2(1f, t * SEGMENTS * 0.5f);
-
-            if (i < SEGMENTS)
-            {
-                int b = i * 6, v = i * 2;
-                tris[b] = v; tris[b + 1] = v + 2; tris[b + 2] = v + 1;
-                tris[b + 3] = v + 1; tris[b + 4] = v + 2; tris[b + 5] = v + 3;
-            }
-        }
-
-        var mesh = new Mesh { name = "Road" };
-        mesh.vertices = verts; mesh.uv = uvs; mesh.triangles = tris;
-        mesh.RecalculateNormals(); mesh.RecalculateTangents(); mesh.RecalculateBounds();
-
-        var go = new GameObject("Road");
-        go.AddComponent<MeshFilter>().sharedMesh = mesh;
-        var mr = go.AddComponent<MeshRenderer>();
-        mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-        if (roadMaterial != null) mr.sharedMaterial = roadMaterial;
-        // deliberately no collider - the truck drives on the terrain beneath
+        var go = new GameObject("Roads");
+        go.transform.SetParent(transform, false);
+        Roads = go.AddComponent<RoadNetwork>();
+        Roads.terrain = _terrain;
+        Roads.field = Field;
+        Roads.roadMaterial = roadMaterial;
+        Roads.lift = RoadLift;
     }
 
     TruckController BuildTruck(MempoolTerrain terrain)

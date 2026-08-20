@@ -71,7 +71,7 @@ Zwei Fallen, die den Port betreffen und die im Browser-Build kein Thema waren:
 Kompiliert und läuft. Projekt liegt unter `/Users/arena/My project`,
 Szene `Assets/Scenes/Prototype.unity` ist als Build-Szene 0 gesetzt.
 
-PlayMode-Tests: `5 von 6 bestanden`.
+Tests: EditMode `34/34`, PlayMode `9/10`.
 
 | Test | Ergebnis |
 |---|---|
