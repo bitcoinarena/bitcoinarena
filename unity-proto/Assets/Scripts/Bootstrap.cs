@@ -24,6 +24,9 @@ public class Bootstrap : MonoBehaviour
     public Material barrierMaterial;
     public Material bullMaterial;
     public Material bearMaterial;
+    public Material tracerMaterial;
+    public Material flashMaterial;
+    public Material blastMaterial;
 
     [Header("Armies")]
     public int armourPerSide = 11;
@@ -47,6 +50,7 @@ public class Bootstrap : MonoBehaviour
     public MarketFeed Market { get; private set; }
     public Battlefield Field { get; private set; }
     public RoadNetwork Roads { get; private set; }
+    public CombatFx Fx { get; private set; }
 
     void Start()
     {
@@ -98,6 +102,10 @@ public class Bootstrap : MonoBehaviour
         groundMaterial = Fallback(groundMaterial, new Color(0.34f, 0.31f, 0.27f), 0.92f);
         bullMaterial = Fallback(bullMaterial, new Color(0.24f, 0.52f, 0.28f), 0.55f);
         bearMaterial = Fallback(bearMaterial, new Color(0.62f, 0.22f, 0.20f), 0.55f);
+        // effects are meant to read against sunlit ground, so they are near-white
+        tracerMaterial = Fallback(tracerMaterial, new Color(1f, 0.92f, 0.55f), 0.2f);
+        flashMaterial = Fallback(flashMaterial, new Color(1f, 0.96f, 0.78f), 0.15f);
+        blastMaterial = Fallback(blastMaterial, new Color(1f, 0.55f, 0.14f), 0.35f);
         roadMaterial = Fallback(roadMaterial, new Color(0.12f, 0.12f, 0.13f), 0.72f);
         bodyMaterial = Fallback(bodyMaterial, new Color(0.16f, 0.34f, 0.22f), 0.45f);
         wheelMaterial = Fallback(wheelMaterial, new Color(0.05f, 0.05f, 0.06f), 0.95f);
@@ -234,6 +242,19 @@ public class Bootstrap : MonoBehaviour
         renderer.bullMaterial = bullMaterial;
         renderer.bearMaterial = bearMaterial;
         go.SetActive(true);
+
+        var fxGo = new GameObject("CombatFx");
+        fxGo.transform.SetParent(transform, false);
+        fxGo.SetActive(false);
+        Fx = fxGo.AddComponent<CombatFx>();
+        Fx.terrain = _terrain;
+        Fx.tracerMaterial = tracerMaterial;
+        Fx.flashMaterial = flashMaterial;
+        Fx.blastMaterial = blastMaterial;
+        Fx.bullMaterial = bullMaterial;
+        Fx.bearMaterial = bearMaterial;
+        fxGo.SetActive(true);
+        Fx.Bind(Field.Army);
     }
 
     TruckController BuildTruck(MempoolTerrain terrain)

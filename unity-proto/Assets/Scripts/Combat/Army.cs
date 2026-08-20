@@ -270,8 +270,13 @@ public class Army
             // fire and damage compounds into annihilation the moment the tape
             // leans one way for any length of time.
             v.reload = Rand(1.4f, 3.2f) / (1f + Mathf.Max(0f, pressure) * 0.45f);
-            LastShot = (v, foe);
-            if (Random01() < 0.55f)                    // near misses are part of the show
+            bool connects = Random01() < 0.55f;        // near misses are part of the show
+            // a miss still has to go somewhere, or the tracer would lie
+            var impact = connects
+                ? new Vector2(foe.x, foe.z)
+                : new Vector2(foe.x + Rand(-5f, 5f), foe.z + Rand(-5f, 5f));
+            Fired?.Invoke(v, impact);
+            if (connects)
             {
                 foe.hp -= Rand(1.1f, 2.4f) * (1f + Mathf.Max(0f, pressure) * 0.25f);
                 if (foe.hp <= 0f) Destroyed?.Invoke(foe);
@@ -311,7 +316,11 @@ public class Army
         s.reload = Rand(2.5f, 4.5f) / (1f + Mathf.Max(0f, pressure) * 0.45f);
         s.heading = Mathf.Atan2(foe.x - s.x, foe.z - s.z);
 
-        if (Random01() < RifleHitChance * (1f + Mathf.Max(0f, pressure) * 0.25f))
+        bool hit = Random01() < RifleHitChance * (1f + Mathf.Max(0f, pressure) * 0.25f);
+        Shot?.Invoke(s, hit
+            ? new Vector2(foe.x, foe.z)
+            : new Vector2(foe.x + Rand(-3f, 3f), foe.z + Rand(-3f, 3f)));
+        if (hit)
         {
             foe.hp -= 1f;
             if (foe.hp <= 0f) Killed?.Invoke(foe);
@@ -397,8 +406,11 @@ public class Army
         foreach (var v in Armour) YieldTo(v, 0f, 3.2f, false, 3.0f);
     }
 
-    /// <summary>Last shell fired, for the renderer to draw a tracer.</summary>
-    public (Unit from, Unit at)? LastShot;
+    /// <summary>A tank fired its main gun at another. Carries the impact point.</summary>
+    public System.Action<Unit, Vector2> Fired;
+    /// <summary>A rifleman fired. Carries the point aimed at.</summary>
+    public System.Action<Unit, Vector2> Shot;
+    /// <summary>A tank was destroyed.</summary>
     public System.Action<Unit> Destroyed;
     /// <summary>A rifleman went down.</summary>
     public System.Action<Unit> Killed;
