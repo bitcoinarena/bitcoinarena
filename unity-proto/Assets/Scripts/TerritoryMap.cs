@@ -52,18 +52,31 @@ public class TerritoryMap : MonoBehaviour
         };
         _px = new Color32[Width * Height];
 
-        if (target != null)
-        {
-            // instance, so the .mat asset on disk is not modified
-            _mat = target.material;
-            _mat.SetTexture("_BaseMap", _tex);
-            _mat.SetColor("_BaseColor", Color.white);
-        }
+        Bind();
         Repaint();
     }
 
+    /// <summary>
+    /// Bind lazily. Awake runs the instant AddComponent returns, which is
+    /// before a caller assembling the scene in code can hand over the renderer
+    /// - binding only there left the texture created but never attached, and
+    /// the ground stayed a flat brown.
+    /// </summary>
+    void Bind()
+    {
+        if (_mat != null || target == null) return;
+        _mat = target.material;      // instance, so the .mat asset is not modified
+        _mat.SetTexture("_BaseMap", _tex);
+        _mat.SetColor("_BaseColor", Color.white);
+    }
+
+    /// <summary>The texture the ground is painted with. Exposed so a test can check it is bound.</summary>
+    public Texture2D Texture => _tex;
+    public bool IsBound => _mat != null && _mat.GetTexture("_BaseMap") == _tex;
+
     void Update()
     {
+        Bind();
         _acc += Time.deltaTime;
         if (_acc < refreshSeconds) return;
         _acc = 0f;

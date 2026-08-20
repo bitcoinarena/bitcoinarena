@@ -25,6 +25,9 @@ public class RoadNetwork : MonoBehaviour
     readonly Dictionary<Lane, float> _lastSignature = new Dictionary<Lane, float>();
     float _rebuildAcc;
 
+    /// <summary>Lane meshes, exposed so a test can check they were built on the ground.</summary>
+    public IReadOnlyDictionary<Lane, Mesh> Meshes => _meshes;
+
     void Awake()
     {
         Model = new RoadModel();
@@ -101,13 +104,21 @@ public class RoadNetwork : MonoBehaviour
             float dz = Model.CenterZ(lane, x + 1f) - Model.CenterZ(lane, x - 1f);
             var side = new Vector3(-dz, 0f, 2f).normalized;
 
-            float ground = terrain != null ? terrain.SampleWorld(x, z) : 0f;
             // a worn surface is broken up, so damage is visible on the road itself
             float broken = severity[i] * Random01(x, lane) * 0.9f;
-            float y = ground + lift - broken * 0.55f;
 
-            verts.Add(new Vector3(x, y, z) - side * RoadModel.HalfWidth);
-            verts.Add(new Vector3(x, y + broken * 0.25f, z) + side * RoadModel.HalfWidth);
+            // Sample the ground under each EDGE, not just the centreline. A
+            // ribbon held flat across its width floats on one side and buries
+            // itself on the other wherever the terrain slopes sideways.
+            var left = new Vector3(x, 0f, z) - side * RoadModel.HalfWidth;
+            var right = new Vector3(x, 0f, z) + side * RoadModel.HalfWidth;
+            float gl = terrain != null ? terrain.SampleWorld(left.x, left.z) : 0f;
+            float gr = terrain != null ? terrain.SampleWorld(right.x, right.z) : 0f;
+
+            left.y = gl + lift - broken * 0.55f;
+            right.y = gr + lift - broken * 0.55f + broken * 0.25f;
+            verts.Add(left);
+            verts.Add(right);
             uvs.Add(new Vector2(0f, t * n * 0.5f));
             uvs.Add(new Vector2(1f, t * n * 0.5f));
         }

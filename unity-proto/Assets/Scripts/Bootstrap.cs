@@ -44,6 +44,7 @@ public class Bootstrap : MonoBehaviour
 
     void Start()
     {
+        EnsureMaterials();
         BuildLighting();
         _terrain = BuildTerrain();
 
@@ -55,10 +56,16 @@ public class Bootstrap : MonoBehaviour
         Field.market = Market;
         BuildRoads();
 
-        var territory = gameObject.AddComponent<TerritoryMap>();
+        // same trap: TerritoryMap binds its texture to the ground material in
+        // Awake, so it has to know the renderer before the component exists
+        var territoryGo = new GameObject("Territory");
+        territoryGo.transform.SetParent(transform, false);
+        territoryGo.SetActive(false);
+        var territory = territoryGo.AddComponent<TerritoryMap>();
         territory.terrain = _terrain;
         territory.field = Field;
         territory.target = _terrain.GetComponent<MeshRenderer>();
+        territoryGo.SetActive(true);
         BuildBoundary(_terrain);
         var truck = BuildTruck(_terrain);
         BuildCamera(truck);
@@ -67,6 +74,35 @@ public class Bootstrap : MonoBehaviour
         hud.truck = truck;
         hud.market = Market;
         hud.field = Field;
+    }
+
+    /// <summary>
+    /// Fill in any material the scene did not supply.
+    ///
+    /// Dropping this component on an empty object is the documented way to run
+    /// the prototype, and an unassigned slot falls back to Unity's default
+    /// material - a Built-in shader that does not exist in a URP build, so
+    /// everything renders magenta. The URP/Lit shader is already referenced by
+    /// the scene's material assets, so asking for it here cannot be stripped.
+    /// </summary>
+    void EnsureMaterials()
+    {
+        groundMaterial = Fallback(groundMaterial, new Color(0.34f, 0.31f, 0.27f), 0.92f);
+        roadMaterial = Fallback(roadMaterial, new Color(0.12f, 0.12f, 0.13f), 0.72f);
+        bodyMaterial = Fallback(bodyMaterial, new Color(0.16f, 0.34f, 0.22f), 0.45f);
+        wheelMaterial = Fallback(wheelMaterial, new Color(0.05f, 0.05f, 0.06f), 0.95f);
+        barrierMaterial = Fallback(barrierMaterial, new Color(0.58f, 0.55f, 0.50f), 0.85f);
+    }
+
+    static Material Fallback(Material assigned, Color colour, float roughness)
+    {
+        if (assigned != null) return assigned;
+        var shader = Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Standard");
+        if (shader == null) { Debug.LogError("[Bootstrap] no usable shader found"); return null; }
+        var m = new Material(shader);
+        m.SetColor("_BaseColor", colour);
+        m.SetFloat("_Smoothness", 1f - roughness);
+        return m;
     }
 
     void BuildLighting()
@@ -106,11 +142,17 @@ public class Bootstrap : MonoBehaviour
     {
         var go = new GameObject("Roads");
         go.transform.SetParent(transform, false);
+        // INACTIVE first: AddComponent runs Awake immediately, and RoadNetwork
+        // builds all five ribbons there. Assigning the terrain and material
+        // afterwards is too late - the roads come out flat at y=0 with no
+        // material, buried in the ground.
+        go.SetActive(false);
         Roads = go.AddComponent<RoadNetwork>();
         Roads.terrain = _terrain;
         Roads.field = Field;
         Roads.roadMaterial = roadMaterial;
         Roads.lift = RoadLift;
+        go.SetActive(true);
     }
 
     /// <summary>
@@ -125,33 +167,43 @@ public class Bootstrap : MonoBehaviour
     /// </summary>
     void BuildBoundary(MempoolTerrain terrain)
     {
-        const float Height = 14f;
+        const float VisibleHeight = 3.2f;   // a kerb you can see, not a fence around the sky
+        const float BlockHeight = 26f;      // the part that actually stops a truck
         const float Thickness = 3f;
-        const float Sink = 12f;          // buried well below the deepest terrain
 
         var root = new GameObject("Boundary");
         root.transform.SetParent(transform, false);
 
         float hw = terrain.width * 0.5f, hd = terrain.depth * 0.5f;
-        var sides = new (string name, Vector3 centre, Vector3 size)[]
+        // footprint only: the visual and the blocker each supply their own height
+        var sides = new (string name, Vector3 centre, Vector2 footprint)[]
         {
-            ("West",  new Vector3(-hw, 0f, 0f), new Vector3(Thickness, Height + Sink, terrain.depth + Thickness * 2f)),
-            ("East",  new Vector3( hw, 0f, 0f), new Vector3(Thickness, Height + Sink, terrain.depth + Thickness * 2f)),
-            ("North", new Vector3(0f, 0f, -hd), new Vector3(terrain.width + Thickness * 2f, Height + Sink, Thickness)),
-            ("South", new Vector3(0f, 0f,  hd), new Vector3(terrain.width + Thickness * 2f, Height + Sink, Thickness)),
+            ("West",  new Vector3(-hw, 0f, 0f), new Vector2(Thickness, terrain.depth + Thickness * 2f)),
+            ("East",  new Vector3( hw, 0f, 0f), new Vector2(Thickness, terrain.depth + Thickness * 2f)),
+            ("North", new Vector3(0f, 0f, -hd), new Vector2(terrain.width + Thickness * 2f, Thickness)),
+            ("South", new Vector3(0f, 0f,  hd), new Vector2(terrain.width + Thickness * 2f, Thickness)),
         };
 
-        foreach (var (name, centre, size) in sides)
+        foreach (var (name, centre, footprint) in sides)
         {
-            var go = GameObject.CreatePrimitive(PrimitiveType.Cube);
-            go.name = $"Wall_{name}";
-            go.transform.SetParent(root.transform, false);
-            // sample the ground under the wall so it sits on the terrain, not through it
             float ground = terrain.SampleWorld(centre.x, centre.z);
-            go.transform.position = new Vector3(centre.x, ground + Height * 0.5f - Sink * 0.5f, centre.z);
-            go.transform.localScale = size;
-            if (barrierMaterial != null) go.GetComponent<MeshRenderer>().sharedMaterial = barrierMaterial;
-            go.GetComponent<MeshRenderer>().shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.On;
+
+            // what you see: a low barrier sitting on the ground
+            var visual = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            visual.name = $"Barrier_{name}";
+            visual.transform.SetParent(root.transform, false);
+            visual.transform.position = new Vector3(centre.x, ground + VisibleHeight * 0.5f, centre.z);
+            visual.transform.localScale = new Vector3(footprint.x, VisibleHeight, footprint.y);
+            Destroy(visual.GetComponent<BoxCollider>());
+            if (barrierMaterial != null) visual.GetComponent<MeshRenderer>().sharedMaterial = barrierMaterial;
+
+            // what stops you: tall and invisible, so a truck arriving airborne
+            // off a fee cliff still cannot clear the edge of the world
+            var blocker = new GameObject($"Wall_{name}");
+            blocker.transform.SetParent(root.transform, false);
+            blocker.transform.position = new Vector3(centre.x, ground + BlockHeight * 0.5f - 6f, centre.z);
+            var bc = blocker.AddComponent<BoxCollider>();
+            bc.size = new Vector3(footprint.x, BlockHeight, footprint.y);
         }
     }
 

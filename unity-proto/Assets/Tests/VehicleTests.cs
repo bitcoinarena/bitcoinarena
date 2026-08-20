@@ -210,4 +210,57 @@ public class VehicleTests
             $"der Truck kam bis z={worst:0.0} - die Wand haelt nicht");
         Assert.Greater(_rb.position.y, -20f, "durch den Boden gefallen");
     }
+
+    /// <summary>
+    /// Both of these went unnoticed because nothing checked the scene had
+    /// actually been wired up: AddComponent runs Awake before the caller can
+    /// hand over the terrain and the renderer, so the ground kept its plain
+    /// material and the roads were built flat at y=0, buried.
+    /// </summary>
+    [UnityTest]
+    public IEnumerator GroundIsPaintedWithTheTerritoryTexture()
+    {
+        yield return new WaitForSeconds(1f);
+        var territory = Object.FindFirstObjectByType<TerritoryMap>();
+        Assert.IsNotNull(territory, "keine Territoriumskarte in der Szene");
+        Assert.IsNotNull(territory.Texture, "Textur wurde nie erzeugt");
+        Assert.IsTrue(territory.IsBound, "Textur haengt nicht am Bodenmaterial");
+
+        // and it has to actually contain both sides
+        var px = territory.Texture.GetPixels32();
+        int green = 0, red = 0;
+        foreach (var c in px) { if (c.g > c.r + 8) green++; else if (c.r > c.g + 8) red++; }
+        Assert.Greater(green, px.Length / 20, "kein Bullen-Gebiet auf der Karte");
+        Assert.Greater(red, px.Length / 20, "kein Baeren-Gebiet auf der Karte");
+    }
+
+    [UnityTest]
+    public IEnumerator RoadsAreBuiltOnTheGroundWithMaterials()
+    {
+        yield return new WaitForSeconds(1f);
+        var roads = Object.FindFirstObjectByType<RoadNetwork>();
+        Assert.IsNotNull(roads, "kein Strassennetz in der Szene");
+        var terrain = Object.FindFirstObjectByType<MempoolTerrain>();
+
+        int checkedLanes = 0;
+        foreach (var lane in RoadModel.Order)
+        {
+            var mesh = roads.Meshes[lane];
+            Assert.Greater(mesh.vertexCount, 0, $"{lane} hat kein Mesh");
+
+            var renderer = GameObject.Find($"Road_{lane}")?.GetComponent<MeshRenderer>();
+            Assert.IsNotNull(renderer?.sharedMaterial, $"{lane} hat kein Material");
+
+            // every vertex must sit near the terrain, not at y=0
+            var verts = mesh.vertices;
+            for (int i = 0; i < verts.Length; i += 37)
+            {
+                float ground = terrain.SampleWorld(verts[i].x, verts[i].z);
+                Assert.Less(Mathf.Abs(verts[i].y - ground), 3f,
+                    $"{lane} liegt bei x={verts[i].x:0} auf y={verts[i].y:0.0}, Boden ist {ground:0.0}");
+            }
+            checkedLanes++;
+        }
+        Assert.AreEqual(5, checkedLanes);
+    }
 }
