@@ -12,6 +12,17 @@ using UnityEngine.InputSystem;
 /// </summary>
 public static class DriveInput
 {
+    /// <summary>
+    /// Written every frame by TouchControls. Merged with the keyboard rather
+    /// than replacing it, so a phone and a laptop behave the same and a tester
+    /// can use either.
+    /// </summary>
+    public static float TouchThrottle;
+    public static float TouchSteer;
+    public static bool TouchHandbrake;
+
+    static float Merge(float key, float touch) => Mathf.Abs(touch) > Mathf.Abs(key) ? touch : key;
+
     /// <summary>-1 reverse / brake, +1 throttle.</summary>
     public static float Throttle
     {
@@ -19,11 +30,11 @@ public static class DriveInput
         {
 #if ENABLE_INPUT_SYSTEM
             var k = Keyboard.current;
-            if (k == null) return 0f;
+            if (k == null) return TouchThrottle;
             float v = 0f;
             if (k.wKey.isPressed || k.upArrowKey.isPressed) v += 1f;
             if (k.sKey.isPressed || k.downArrowKey.isPressed) v -= 1f;
-            return v;
+            return Merge(v, TouchThrottle);
 #else
             return Input.GetAxisRaw("Vertical");
 #endif
@@ -37,11 +48,11 @@ public static class DriveInput
         {
 #if ENABLE_INPUT_SYSTEM
             var k = Keyboard.current;
-            if (k == null) return 0f;
+            if (k == null) return TouchSteer;
             float v = 0f;
             if (k.dKey.isPressed || k.rightArrowKey.isPressed) v += 1f;
             if (k.aKey.isPressed || k.leftArrowKey.isPressed) v -= 1f;
-            return v;
+            return Merge(v, TouchSteer);
 #else
             return Input.GetAxisRaw("Horizontal");
 #endif
@@ -66,7 +77,7 @@ public static class DriveInput
         get
         {
 #if ENABLE_INPUT_SYSTEM
-            return Keyboard.current != null && Keyboard.current.spaceKey.isPressed;
+            return TouchHandbrake || (Keyboard.current != null && Keyboard.current.spaceKey.isPressed);
 #else
             return Input.GetKey(KeyCode.Space);
 #endif

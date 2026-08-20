@@ -54,6 +54,7 @@ public class Bootstrap : MonoBehaviour
         BuildRoad(_terrain);
         var truck = BuildTruck(_terrain);
         BuildCamera(truck);
+        gameObject.AddComponent<TouchControls>();
         var hud = gameObject.AddComponent<DriveHud>();
         hud.truck = truck;
         hud.market = Market;

@@ -96,6 +96,16 @@ Im Browser gemessen: 56 km/h, 4/4 Räder am Boden, 56 Einheiten zurückgelegt.
 
 Erst **ins Canvas klicken**, sonst gehen die Tasten an die Seite.
 
+Auf Geräten mit Touchscreen erscheinen zusätzlich Bildschirmtasten: Lenkung
+links, Gas und Bremse rechts, Handbremse dazwischen. Sie sind bewusst *nicht*
+mit `GUI.Button` gebaut — das löst immer nur einen Druck gleichzeitig auf, und
+Fahren braucht Gas und Lenken zusammen. Stattdessen werden die Fingerpositionen
+direkt gegen die Flächen geprüft, also zählt jeder Finger.
+
+Die Pfeile sind als Dreiecke in Texturen gerastert statt als Schriftzeichen:
+die geometrischen Unicode-Formen sind in der Standardschrift nicht garantiert
+und würden als leere Kästchen erscheinen.
+
 Der Drift-Test scheitert nicht am Handbremscode, sondern am Tempo: nach 6 s
 Gas und 1 s Volleinschlag sind es nur noch **4,1 m/s** (bei 3 s waren es 8,0),
 alle vier Räder am Boden. Der Truck klettert das Fee-Relief hoch und der

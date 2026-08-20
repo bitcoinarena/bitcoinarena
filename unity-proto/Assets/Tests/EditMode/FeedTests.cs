@@ -103,3 +103,112 @@ public class PriceHistoryTests
         Assert.Greater(Mathf.Abs(risen - flat), 0.5f, "the frontline ignored a 6000 dollar rally");
     }
 }
+
+/// <summary>
+/// The controls have to survive real phone aspect ratios. Overlapping pads
+/// would make "gas and steer at once" ambiguous, and a pad half off the screen
+/// is simply unreachable.
+/// </summary>
+public class TouchPadTests
+{
+    static readonly (int w, int h, string name)[] Screens =
+    {
+        (844, 390, "iPhone 14 quer"),
+        (932, 430, "iPhone 15 Pro Max quer"),
+        (390, 844, "iPhone 14 hoch"),
+        (1180, 820, "iPad quer"),
+        (2340, 1080, "Android sehr breit"),
+        (360, 640, "kleines Android hoch"),
+    };
+
+    [Test] public void PadsNeverOverlap()
+    {
+        foreach (var s in Screens)
+            Assert.IsTrue(TouchPad.LayoutIsDisjoint(s.w, s.h), $"Pads ueberlappen auf {s.name} ({s.w}x{s.h})");
+    }
+
+    [Test] public void PadsStayOnScreen()
+    {
+        foreach (var s in Screens)
+            Assert.IsTrue(TouchPad.LayoutFitsOnScreen(s.w, s.h), $"Pad liegt ausserhalb auf {s.name} ({s.w}x{s.h})");
+    }
+
+    [Test] public void ButtonsAreBigEnoughForAThumb()
+    {
+        foreach (var s in Screens)
+            Assert.GreaterOrEqual(TouchPad.ButtonSize(s.w, s.h), 76f, $"zu klein auf {s.name}");
+    }
+
+    [Test] public void HitTestFindsThePressedPad()
+    {
+        const int W = 844, H = 390;
+        var up = TouchPad.RectFor(TouchPad.Pad.Up, W, H);
+        var points = new System.Collections.Generic.List<Vector2> { up.center };
+        Assert.IsTrue(TouchPad.Hit(TouchPad.Pad.Up, W, H, points));
+        Assert.IsFalse(TouchPad.Hit(TouchPad.Pad.Down, W, H, points));
+    }
+
+    [Test] public void TwoThumbsRegisterTogether()
+    {
+        const int W = 844, H = 390;
+        var points = new System.Collections.Generic.List<Vector2>
+        {
+            TouchPad.RectFor(TouchPad.Pad.Up, W, H).center,
+            TouchPad.RectFor(TouchPad.Pad.Left, W, H).center,
+        };
+        Assert.IsTrue(TouchPad.Hit(TouchPad.Pad.Up, W, H, points), "Gas nicht erkannt");
+        Assert.IsTrue(TouchPad.Hit(TouchPad.Pad.Left, W, H, points), "Lenken nicht erkannt");
+    }
+}
+
+public class TouchResolveTests
+{
+    const int W = 844, H = 390;
+    static Vector2 C(TouchPad.Pad p) => TouchPad.RectFor(p, W, H).center;
+
+    [Test] public void GasAndSteerAtTheSameTime()
+    {
+        var pts = new System.Collections.Generic.List<Vector2> { C(TouchPad.Pad.Up), C(TouchPad.Pad.Left) };
+        TouchPad.Resolve(pts, W, H, out var thr, out var steer, out var hb);
+        Assert.AreEqual(1f, thr, 0.001f, "Gas nicht erkannt");
+        Assert.AreEqual(-1f, steer, 0.001f, "Lenken links nicht erkannt");
+        Assert.IsFalse(hb);
+    }
+
+    [Test] public void BrakeIsNegativeThrottle()
+    {
+        var pts = new System.Collections.Generic.List<Vector2> { C(TouchPad.Pad.Down) };
+        TouchPad.Resolve(pts, W, H, out var thr, out _, out _);
+        Assert.AreEqual(-1f, thr, 0.001f);
+    }
+
+    [Test] public void HandbrakeIsItsOwnPad()
+    {
+        var pts = new System.Collections.Generic.List<Vector2> { C(TouchPad.Pad.Handbrake) };
+        TouchPad.Resolve(pts, W, H, out var thr, out var steer, out var hb);
+        Assert.IsTrue(hb);
+        Assert.AreEqual(0f, thr, 0.001f, "Handbremse hat versehentlich Gas gegeben");
+        Assert.AreEqual(0f, steer, 0.001f);
+    }
+
+    [Test] public void OppositePadsCancel()
+    {
+        var pts = new System.Collections.Generic.List<Vector2> { C(TouchPad.Pad.Left), C(TouchPad.Pad.Right) };
+        TouchPad.Resolve(pts, W, H, out _, out var steer, out _);
+        Assert.AreEqual(0f, steer, 0.001f);
+    }
+
+    [Test] public void EmptyScreenIsNeutral()
+    {
+        TouchPad.Resolve(new System.Collections.Generic.List<Vector2>(), W, H,
+                         out var thr, out var steer, out var hb);
+        Assert.AreEqual(0f, thr, 0.001f); Assert.AreEqual(0f, steer, 0.001f); Assert.IsFalse(hb);
+    }
+
+    [Test] public void WorksInPortraitToo()
+    {
+        var pts = new System.Collections.Generic.List<Vector2> { TouchPad.RectFor(TouchPad.Pad.Up, 390, 844).center };
+        TouchPad.Resolve(pts, 390, 844, out var thr, out _, out _);
+        Assert.AreEqual(1f, thr, 0.001f);
+    }
+}

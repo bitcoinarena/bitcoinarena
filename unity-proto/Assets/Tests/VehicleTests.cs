@@ -135,4 +135,48 @@ public class VehicleTests
         Assert.Less(Mathf.Abs(p.z), 130f, $"left the map sideways at z={p.z:0}");
         Assert.Greater(p.y, -40f, $"fell out of the world at y={p.y:0}");
     }
+
+    /// <summary>
+    /// The whole point of the on-screen pads: a finger on the gas pad has to
+    /// drive the truck through exactly the same path the keyboard uses.
+    /// </summary>
+    [UnityTest]
+    public IEnumerator TouchGasDrivesTheTruck()
+    {
+        var pads = Object.FindFirstObjectByType<TouchControls>();
+        Assert.IsNotNull(pads, "the scene has no on-screen controls");
+        Vector3 from = _rb.position;
+
+        // a finger in the middle of the gas pad, at the real screen size
+        pads.debugPoints = new System.Collections.Generic.List<Vector2>
+        {
+            TouchPad.RectFor(TouchPad.Pad.Up, Screen.width, Screen.height).center,
+        };
+        yield return new WaitForSeconds(3f);
+        float travelled = Vector3.Distance(from, _rb.position);
+        pads.debugPoints = null;
+
+        Assert.Greater(travelled, 5f, $"touch gas moved the truck only {travelled:0.0} units");
+    }
+
+    [UnityTest]
+    public IEnumerator TouchSteerTurnsTheTruck()
+    {
+        var pads = Object.FindFirstObjectByType<TouchControls>();
+        Assert.IsNotNull(pads, "the scene has no on-screen controls");
+        var gas = TouchPad.RectFor(TouchPad.Pad.Up, Screen.width, Screen.height).center;
+        var right = TouchPad.RectFor(TouchPad.Pad.Right, Screen.width, Screen.height).center;
+
+        pads.debugPoints = new System.Collections.Generic.List<Vector2> { gas };
+        yield return new WaitForSeconds(3f);
+        float headingBefore = _truck.transform.eulerAngles.y;
+
+        // two fingers at once, which GUI.Button could never have done
+        pads.debugPoints = new System.Collections.Generic.List<Vector2> { gas, right };
+        yield return new WaitForSeconds(2.5f);
+        float delta = Mathf.DeltaAngle(headingBefore, _truck.transform.eulerAngles.y);
+        pads.debugPoints = null;
+
+        Assert.Greater(delta, 5f, $"touch steer turned the truck {delta:0.0} degrees, expected a right turn");
+    }
 }
