@@ -22,6 +22,12 @@ public class Bootstrap : MonoBehaviour
     public Material bodyMaterial;
     public Material wheelMaterial;
     public Material barrierMaterial;
+    public Material bullMaterial;
+    public Material bearMaterial;
+
+    [Header("Armies")]
+    public int armourPerSide = 11;
+    public int infantryPerSide = 90;
 
     [Header("Sun")]
     public float sunPitch = 42f;
@@ -66,6 +72,7 @@ public class Bootstrap : MonoBehaviour
         territory.field = Field;
         territory.target = _terrain.GetComponent<MeshRenderer>();
         territoryGo.SetActive(true);
+        BuildArmies();
         BuildBoundary(_terrain);
         var truck = BuildTruck(_terrain);
         BuildCamera(truck);
@@ -88,6 +95,8 @@ public class Bootstrap : MonoBehaviour
     void EnsureMaterials()
     {
         groundMaterial = Fallback(groundMaterial, new Color(0.34f, 0.31f, 0.27f), 0.92f);
+        bullMaterial = Fallback(bullMaterial, new Color(0.24f, 0.52f, 0.28f), 0.55f);
+        bearMaterial = Fallback(bearMaterial, new Color(0.62f, 0.22f, 0.20f), 0.55f);
         roadMaterial = Fallback(roadMaterial, new Color(0.12f, 0.12f, 0.13f), 0.72f);
         bodyMaterial = Fallback(bodyMaterial, new Color(0.16f, 0.34f, 0.22f), 0.45f);
         wheelMaterial = Fallback(wheelMaterial, new Color(0.05f, 0.05f, 0.06f), 0.95f);
@@ -96,12 +105,14 @@ public class Bootstrap : MonoBehaviour
 
     static Material Fallback(Material assigned, Color colour, float roughness)
     {
-        if (assigned != null) return assigned;
+        // instancing has to be on or RenderMeshInstanced silently draws nothing
+        if (assigned != null) { assigned.enableInstancing = true; return assigned; }
         var shader = Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Standard");
         if (shader == null) { Debug.LogError("[Bootstrap] no usable shader found"); return null; }
         var m = new Material(shader);
         m.SetColor("_BaseColor", colour);
         m.SetFloat("_Smoothness", 1f - roughness);
+        m.enableInstancing = true;
         return m;
     }
 
@@ -205,6 +216,23 @@ public class Bootstrap : MonoBehaviour
             var bc = blocker.AddComponent<BoxCollider>();
             bc.size = new Vector3(footprint.x, BlockHeight, footprint.y);
         }
+    }
+
+    /// <summary>Both armies, fed by the same tape that moves the frontline.</summary>
+    void BuildArmies()
+    {
+        Field.Army = new Army(System.Environment.TickCount) { FrontlineAt = Field.FrontlineZ };
+        Field.Army.Populate(armourPerSide, infantryPerSide);
+
+        var go = new GameObject("Armies");
+        go.transform.SetParent(transform, false);
+        go.SetActive(false);                    // wire before Awake, as ever
+        var renderer = go.AddComponent<ArmyRenderer>();
+        renderer.army = Field.Army;
+        renderer.terrain = _terrain;
+        renderer.bullMaterial = bullMaterial;
+        renderer.bearMaterial = bearMaterial;
+        go.SetActive(true);
     }
 
     TruckController BuildTruck(MempoolTerrain terrain)

@@ -2,7 +2,12 @@ using System;
 using System.Collections.Generic;
 using UnityEngine;
 
-public enum Lane { BullRear, Bull, Front, Bear, BearRear }
+/// <summary>
+/// The four flank routes. There is deliberately no frontline road: a ribbon
+/// laid along the seam sat on top of the territory boundary and fought with
+/// it visually, and the seam already reads perfectly well as a colour edge.
+/// </summary>
+public enum Lane { BullRear, Bull, Bear, BearRear }
 
 /// <summary>
 /// The five routes and what shelling does to them. Pure logic - no meshes, no
@@ -27,7 +32,7 @@ public class RoadModel
     public const float WearHeal = 0.02f;
 
     public static readonly Lane[] Order =
-        { Lane.BullRear, Lane.Bull, Lane.Front, Lane.Bear, Lane.BearRear };
+        { Lane.BullRear, Lane.Bull, Lane.Bear, Lane.BearRear };
 
     public float PlazaX = -118f;
     public float DepotX = 118f;
@@ -44,9 +49,8 @@ public class RoadModel
     static float GateSlot(Lane lane) => lane switch
     {
         Lane.BullRear => -24f,
-        Lane.Bull => -12f,
-        Lane.Front => 0f,
-        Lane.Bear => 12f,
+        Lane.Bull => -9f,
+        Lane.Bear => 9f,
         _ => 24f,
     };
 
@@ -60,8 +64,7 @@ public class RoadModel
         Lane.BullRear => -76f + Mathf.Sin(x * 0.0142f + 0.9f) * 4f + Mathf.Sin(x * 0.031f + 2.2f) * 2f,
         Lane.Bull => -48f + Mathf.Sin(x * 0.0195f) * 5f + Mathf.Sin(x * 0.041f + 1.7f) * 2.5f,
         Lane.Bear => 48f + Mathf.Sin(x * 0.017f + 2.4f) * 5f + Mathf.Sin(x * 0.037f + 0.3f) * 2.5f,
-        Lane.BearRear => 76f + Mathf.Sin(x * 0.0128f + 3.1f) * 4f + Mathf.Sin(x * 0.027f + 1.2f) * 2f,
-        _ => 0f,
+        _ => 76f + Mathf.Sin(x * 0.0128f + 3.1f) * 4f + Mathf.Sin(x * 0.027f + 1.2f) * 2f,
     };
 
     static float Smoothstep(float t) => t * t * (3f - 2f * t);
@@ -79,18 +82,9 @@ public class RoadModel
         float intoGate = 1f - Smoothstep(Mathf.Clamp01((x - (depotGate - MergeSpan)) / MergeSpan));
         float open = Mathf.Min(outOfPlaza, intoGate);
 
-        float cruise;
-        if (lane == Lane.Front)
-        {
-            // held between the two inner flanks so it can never end up running
-            // along one of them
-            float lo = BaseZ(Lane.Bull, x) + LaneGap;
-            float hi = BaseZ(Lane.Bear, x) - LaneGap;
-            cruise = Mathf.Clamp(FrontlineAt(x), lo, hi);
-        }
-        else cruise = BaseZ(lane, x);
-
-        return Mathf.Lerp(GateSlot(lane), cruise, open);
+        // Every route is fixed infrastructure now: none of them follow the
+        // seam, so none of them move when the market does.
+        return Mathf.Lerp(GateSlot(lane), BaseZ(lane, x), open);
     }
 
     /// <summary>Which lane a world point sits on, or null if it is off-road.</summary>
@@ -113,7 +107,6 @@ public class RoadModel
     {
         foreach (var lane in Order)
         {
-            if (lane == Lane.Front) continue;              // the frontline track can never be cut
             if (Mathf.Abs(z - CenterZ(lane, x)) > radius + HalfWidth) continue;
 
             float bucket = Mathf.Round(x / WearSpan) * WearSpan;
@@ -129,7 +122,6 @@ public class RoadModel
     {
         foreach (var lane in Order)
         {
-            if (lane == Lane.Front) continue;
             if (Mathf.Abs(z - CenterZ(lane, x)) > radius + HalfWidth) continue;
             AddCut(lane, x, Mathf.Max(radius, WearSpan * 0.5f));
         }
@@ -139,6 +131,12 @@ public class RoadModel
     {
         var existing = Cuts.Find(d => d.lane == lane && Mathf.Abs(d.x - x) < span);
         if (existing != null) { existing.t = Mathf.Max(existing.t, DamageSeconds); return; }
+
+        // The frontline road used to be the guaranteed way through. With it
+        // gone, the guarantee has to be a rule: the last open route holds. A
+        // player with nowhere to drive is not a difficulty spike, it is a stop.
+        if (!IsCut(lane) && OpenLanes().Count <= 1) return;
+
         Cuts.Add(new Cut { lane = lane, x = x, span = span, t = DamageSeconds, total = DamageSeconds });
     }
 
@@ -175,10 +173,9 @@ public class RoadModel
         return s;
     }
 
-    /// <summary>Is a cut sitting between these two points? The frontline never is.</summary>
+    /// <summary>Is a cut sitting between these two points?</summary>
     public bool PathBlocked(Lane lane, float fromX, float toX)
     {
-        if (lane == Lane.Front) return false;
         float lo = Mathf.Min(fromX, toX) - 2f, hi = Mathf.Max(fromX, toX) + 2f;
         return Cuts.Exists(d => d.lane == lane && d.x + d.span > lo && d.x - d.span < hi);
     }

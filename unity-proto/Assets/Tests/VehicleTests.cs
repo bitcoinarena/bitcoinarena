@@ -275,6 +275,46 @@ public class VehicleTests
             }
             checkedLanes++;
         }
-        Assert.AreEqual(5, checkedLanes);
+        Assert.AreEqual(RoadModel.Order.Length, checkedLanes);
+    }
+
+    [UnityTest]
+    public IEnumerator BothArmiesAreOnTheFieldAndOnTheGround()
+    {
+        yield return new WaitForSeconds(2f);
+        var field = Object.FindFirstObjectByType<Battlefield>();
+        Assert.IsNotNull(field?.Army, "keine Armeen in der Szene");
+        Assert.Greater(field.Army.Armour.Count, 4, "zu wenig Panzer");
+        Assert.Greater(field.Army.Infantry.Count, 20, "zu wenig Infanterie");
+
+        Assert.IsNotNull(Object.FindFirstObjectByType<ArmyRenderer>(), "die Armeen werden nicht gezeichnet");
+
+        // both sides present, and nobody parked inside anybody else
+        int bull = 0, bear = 0;
+        foreach (var v in field.Army.Armour) { if (v.side == Army.Side.Bull) bull++; else bear++; }
+        Assert.Greater(bull, 0, "keine Bullen-Panzer");
+        Assert.Greater(bear, 0, "keine Baeren-Panzer");
+
+        for (int i = 0; i < field.Army.Armour.Count; i++)
+            for (int j = i + 1; j < field.Army.Armour.Count; j++)
+            {
+                var a = field.Army.Armour[i]; var b = field.Army.Armour[j];
+                float d = Mathf.Sqrt((a.x - b.x) * (a.x - b.x) + (a.z - b.z) * (a.z - b.z));
+                Assert.Greater(d, 4f, $"zwei Panzer stecken ineinander (Abstand {d:0.0})");
+            }
+    }
+
+    [UnityTest]
+    public IEnumerator ArmiesFightNearTheSeamRatherThanWanderingOff()
+    {
+        yield return new WaitForSeconds(6f);
+        var field = Object.FindFirstObjectByType<Battlefield>();
+
+        int nearFront = 0;
+        foreach (var v in field.Army.Armour)
+            if (Mathf.Abs(v.z - field.FrontlineZ(v.x)) < 60f) nearFront++;
+
+        Assert.Greater(nearFront, field.Army.Armour.Count / 2,
+            "die Haelfte der Panzer haelt sich nicht in der Naehe der Front auf");
     }
 }

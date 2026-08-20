@@ -82,7 +82,6 @@ public class RoadNetwork : MonoBehaviour
         // the ground itself counts: live mempool data reshapes it, and a road
         // built against the old heights ends up floating over the new ones
         float s = terrain != null ? terrain.Version * 1e5f : 0f;
-        if (lane == Lane.Front) s += Mathf.Round(Model.CenterZ(lane, 0f) * 4f);
         foreach (var d in Model.Cuts) if (d.lane == lane) s += 1000f + Mathf.Round(d.x) + Mathf.Round(d.t);
         foreach (var w in Model.Wears) if (w.lane == lane) s += 7f + Mathf.Round(w.x) + Mathf.Round(w.wear * 20f);
         return s;
@@ -156,11 +155,10 @@ public class RoadNetwork : MonoBehaviour
     /// </summary>
     public static Color TintFor(Lane lane) => lane switch
     {
-        Lane.BullRear => new Color(0.16f, 0.30f, 0.18f),   // deep green, quiet
-        Lane.Bull     => new Color(0.22f, 0.48f, 0.26f),   // green
-        Lane.Front    => new Color(0.82f, 0.62f, 0.14f),   // amber: contested
-        Lane.Bear     => new Color(0.52f, 0.21f, 0.19f),   // red
-        _             => new Color(0.31f, 0.14f, 0.14f),   // deep red, quiet
+        Lane.BullRear => new Color(0.30f, 0.30f, 0.32f),   // deep flank, quiet
+        Lane.Bull     => new Color(0.42f, 0.43f, 0.45f),   // inner flank
+        Lane.Bear     => new Color(0.40f, 0.36f, 0.34f),   // inner flank
+        _             => new Color(0.28f, 0.26f, 0.25f),   // deep flank, quiet
     };
 
     /// <summary>Stable per-position jitter, so a worn stretch does not shimmer.</summary>

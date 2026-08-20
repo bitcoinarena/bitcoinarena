@@ -32,8 +32,13 @@ public class Army
         public float heading, turretYaw;
         public float hp, reload, phase;
         public bool retreating;
-        /// <summary>+1 for bear (holds the +z side), -1 for bull.</summary>
-        public float Dir => side == Side.Bull ? -1f : 1f;
+        /// <summary>
+        /// +1 for bull, -1 for bear. Sign convention matters: every formula
+        /// ported from battlefield.js is written as "front - dir * distance",
+        /// so getting this backwards silently inverts advance, retreat and the
+        /// overrun test all at once.
+        /// </summary>
+        public float Dir => side == Side.Bull ? 1f : -1f;
     }
 
     public readonly List<Unit> Armour = new List<Unit>();
@@ -45,6 +50,8 @@ public class Army
     public float Flow;
 
     readonly System.Random _rng;
+    /// <summary>Own clock, so the logic runs identically in a test and in a scene.</summary>
+    public float Time { get; private set; }
 
     public Army(int seed = 0) { _rng = new System.Random(seed); }
 
@@ -63,9 +70,9 @@ public class Army
     Unit Spawn(Side side, bool vehicle)
     {
         float x = Rand(-FrontX + 8f, FrontX - 8f);
-        float dir = side == Side.Bull ? -1f : 1f;
+        float dir = side == Side.Bull ? 1f : -1f;
         // arrives from the rear, well behind its own line
-        float z = FrontlineAt(x) + dir * Rand(vehicle ? 46f : 30f, vehicle ? 76f : 78f);
+        float z = FrontlineAt(x) - dir * Rand(vehicle ? 46f : 30f, vehicle ? 76f : 78f);
         return new Unit
         {
             side = side, x = x, z = Mathf.Clamp(z, -HalfDepth, HalfDepth),
@@ -112,6 +119,7 @@ public class Army
 
     public void Update(float dt)
     {
+        Time += dt;
         for (int i = 0; i < Armour.Count; i++)
             for (int j = i + 1; j < Armour.Count; j++)
                 Separate(Armour[i], Armour[j]);
@@ -191,10 +199,10 @@ public class Army
         float dz = goalZ - s.z;
         float step = Mathf.Min(3.4f * dt, Mathf.Abs(dz));
         s.z += Mathf.Sign(dz) * step;
-        s.x += Mathf.Sin(s.phase + Time.time * 0.2f) * 1.6f * dt;
+        s.x += Mathf.Sin(s.phase) * 1.6f * dt;
         s.x = Mathf.Clamp(s.x, -FrontX + 4f, FrontX - 4f);
         s.z = Mathf.Clamp(s.z, -HalfDepth, HalfDepth);
-        s.heading = Mathf.Atan2(0f, -s.Dir);
+        s.heading = s.Dir > 0f ? 0f : Mathf.PI;
         s.phase += dt * 6f;
     }
 

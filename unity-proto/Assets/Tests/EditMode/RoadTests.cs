@@ -39,25 +39,23 @@ public class RoadModelTests
         var b = Model(70f);
         for (float x = -110f; x <= 110f; x += 7f)
             foreach (var lane in RoadModel.Order)
-            {
-                if (lane == Lane.Front) continue;
                 Assert.AreEqual(a.CenterZ(lane, x), b.CenterZ(lane, x), 0.001f,
                     $"{lane} wurde bei x={x:0} von der Frontlinie verschoben");
-            }
     }
 
     [Test]
-    public void FrontRouteStaysBetweenTheInnerFlanks()
+    public void NoRouteFollowsTheSeam()
     {
-        foreach (float front in new[] { -200f, -60f, 0f, 60f, 200f })
+        // With the frontline road gone, no centreline may depend on the market
+        // at all - the four flanks are fixed infrastructure.
+        for (float front = -80f; front <= 80f; front += 20f)
         {
             var m = Model(front);
-            for (float x = -110f; x <= 110f; x += 7f)
-            {
-                float z = m.CenterZ(Lane.Front, x);
-                Assert.Greater(z, RoadModel.BaseZ(Lane.Bull, x) + 1f, $"Front unter die Bullen-Flanke gerutscht (x={x:0})");
-                Assert.Less(z, RoadModel.BaseZ(Lane.Bear, x) - 1f, $"Front ueber die Baeren-Flanke gerutscht (x={x:0})");
-            }
+            var flat = Model(0f);
+            for (float x = -110f; x <= 110f; x += 11f)
+                foreach (var lane in RoadModel.Order)
+                    Assert.AreEqual(flat.CenterZ(lane, x), m.CenterZ(lane, x), 0.001f,
+                        $"{lane} folgt der Frontlinie bei x={x:0}");
         }
     }
 
@@ -96,13 +94,17 @@ public class RoadModelTests
     }
 
     [Test]
-    public void TheFrontlineTrackCanNeverBeCut()
+    public void TheLastOpenRouteAlwaysHolds()
     {
+        // The frontline road used to be the guaranteed way through. Now the
+        // guarantee is a rule, and it has to survive the whole map being shelled.
         var m = Model();
-        for (int i = 0; i < 200; i++) m.WearAt(0f, m.CenterZ(Lane.Front, 0f), 8f, 0.5f);
-        m.CutAt(0f, m.CenterZ(Lane.Front, 0f), 20f);
-        Assert.IsFalse(m.IsCut(Lane.Front), "die Frontstrasse wurde zerschnitten - sie muss immer befahrbar sein");
-        Assert.IsFalse(m.PathBlocked(Lane.Front, -110f, 110f));
+        for (float x = -110f; x <= 110f; x += 4f)
+            foreach (var lane in RoadModel.Order)
+                m.CutAt(x, m.CenterZ(lane, x), 14f);
+
+        Assert.GreaterOrEqual(m.OpenLanes().Count, 1,
+            "alle vier Strassen gesperrt - der Truck kaeme nirgendwo mehr durch");
     }
 
     [Test]
@@ -207,12 +209,15 @@ public class TerritoryTests
         }
     }
 
-    [Test] public void TheContestedRouteIsTheBrightest()
+    [Test] public void RouteColoursDoNotImpersonateTerritory()
     {
-        float front = RoadNetwork.TintFor(Lane.Front).grayscale;
+        // The ground says who holds it. A road tinted green or red would read
+        // as territory rather than as a road.
         foreach (var lane in RoadModel.Order)
-            if (lane != Lane.Front)
-                Assert.Greater(front, RoadNetwork.TintFor(lane).grayscale,
-                    $"{lane} sticht mehr hervor als die Frontstrasse");
+        {
+            var c = RoadNetwork.TintFor(lane);
+            Assert.Less(Mathf.Abs(c.r - c.g), 0.12f, $"{lane} sieht nach Parteifarbe aus");
+            Assert.Less(Mathf.Abs(c.g - c.b), 0.12f, $"{lane} sieht nach Parteifarbe aus");
+        }
     }
 }
