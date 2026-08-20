@@ -486,4 +486,5 @@ public class VehicleTests
         Assert.Less(Vector3.Distance(chase.transform.position, _truck.transform.position), 60f,
             "die Verfolgeransicht steht nicht beim Truck");
     }
+
 }

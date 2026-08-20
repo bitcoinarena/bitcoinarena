@@ -41,6 +41,11 @@ public class ArmyRenderer : MonoBehaviour
     /// <summary>Turret nodes of the prefab tanks, in step with _hulls.</summary>
     readonly List<Transform> _prefabTurrets = new List<Transform>();
 
+    /// <summary>Road wheels per tank wrapper, and how far each tank has driven.</summary>
+    readonly Dictionary<Transform, List<Transform>> _tankWheels =
+        new Dictionary<Transform, List<Transform>>();
+    readonly Dictionary<Transform, Vector3> _lastTankPos = new Dictionary<Transform, Vector3>();
+
     /// <summary>
     /// Units live on their own layer with self-collision switched off. The Army
     /// logic already pushes hulls apart; letting the physics engine do it too
@@ -111,25 +116,23 @@ public class ArmyRenderer : MonoBehaviour
     /// </summary>
     Transform MakeTankFromPrefab(Army.Side side)
     {
-        var go = Instantiate(tankPrefab, transform);
-        go.name = "Hull";
+        // Scaled on the NARROWER horizontal axis: the longer one includes the
+        // gun barrel, which sticks far past the hull and would shrink every tank.
+        var go = WrapOnItsSole(tankPrefab, transform, "Hull", tankWidth, true);
         go.layer = UnitLayer;
 
-        var renderers = go.GetComponentsInChildren<Renderer>(true);
         Transform turret = null;
-        foreach (var r in renderers)
+        foreach (var r in go.GetComponentsInChildren<Renderer>(true))
             if (r.name.ToLowerInvariant().Contains("turret")) { turret = r.transform; break; }
 
-        if (renderers.Length > 0)
+        // road wheels, so the running gear turns as the tank moves
+        var wheels = new List<Transform>();
+        foreach (var t in go.GetComponentsInChildren<Transform>(true))
         {
-            var bounds = renderers[0].bounds;
-            foreach (var r in renderers) bounds.Encapsulate(r.bounds);
-            // Scale on the NARROWER horizontal axis. The longer one includes the
-            // gun barrel, which sticks a long way past the hull and would make
-            // every tank come out too small.
-            float across = Mathf.Min(bounds.size.x, bounds.size.z);
-            if (across > 0.0001f) go.transform.localScale = Vector3.one * (tankWidth / across);
+            string n = t.name.ToLowerInvariant();
+            if (n.Contains("wheel") && !n.Contains("bone")) wheels.Add(t);
         }
+        _tankWheels[go.transform] = wheels;
 
         var tint = side == Army.Side.Bull ? bullMaterial : bearMaterial;
         foreach (var r in go.GetComponentsInChildren<Renderer>(true))
@@ -164,22 +167,8 @@ public class ArmyRenderer : MonoBehaviour
     /// </summary>
     Transform MakeSoldierFromPrefab(Army.Side side)
     {
-        var go = Instantiate(soldierPrefab, transform);
-        go.name = "Soldier";
+        var go = WrapOnItsSole(soldierPrefab, transform, "Soldier", soldierHeight, false);
         go.layer = UnitLayer;
-
-        // scale from the actual rendered bounds, not a guess about units
-        var renderers = go.GetComponentsInChildren<Renderer>(true);
-        if (renderers.Length > 0)
-        {
-            var bounds = renderers[0].bounds;
-            foreach (var r in renderers) bounds.Encapsulate(r.bounds);
-            if (bounds.size.y > 0.0001f)
-            {
-                float k = soldierHeight / bounds.size.y;
-                go.transform.localScale = Vector3.one * k;
-            }
-        }
 
         var tint = side == Army.Side.Bull ? bullMaterial : bearMaterial;
         foreach (var r in go.GetComponentsInChildren<Renderer>(true))
@@ -265,6 +254,52 @@ public class ArmyRenderer : MonoBehaviour
             rb.interpolation = RigidbodyInterpolation.Interpolate;
         }
         return go.transform;
+    }
+
+    /// <summary>
+    /// Wrap an imported model so the wrapper's origin sits on the model's
+    /// SOLE, scaled to a wanted size.
+    ///
+    /// A pack's pivot is wherever the artist left it - often the hull centre,
+    /// sometimes the turret ring. Placing such a model at ground level buries
+    /// half of it. Measuring the bounds and shifting the model inside a wrapper
+    /// means every caller can simply put the wrapper on the ground.
+    ///
+    /// The measurement has to be done in the WRAPPER's space: Renderer.bounds
+    /// is world-space, and feeding a world Y into a localPosition is what put
+    /// the truck somewhere off the map entirely.
+    /// </summary>
+    static GameObject WrapOnItsSole(GameObject prefab, Transform parent, string name,
+                                    float wantedSize, bool sizeByNarrowest)
+    {
+        var wrapper = new GameObject(name);
+        wrapper.transform.SetParent(parent, false);
+
+        var model = Instantiate(prefab, wrapper.transform);
+        model.transform.localPosition = Vector3.zero;
+        model.transform.localRotation = Quaternion.identity;
+
+        var renderers = model.GetComponentsInChildren<Renderer>(true);
+        if (renderers.Length == 0) return wrapper;
+
+        Bounds World()
+        {
+            var b = renderers[0].bounds;
+            foreach (var r in renderers) b.Encapsulate(r.bounds);
+            return b;
+        }
+
+        var bounds = World();
+        float measure = sizeByNarrowest ? Mathf.Min(bounds.size.x, bounds.size.z) : bounds.size.y;
+        if (measure > 0.0001f) model.transform.localScale = Vector3.one * (wantedSize / measure);
+
+        // re-measure after scaling, then lift by the sole IN LOCAL SPACE
+        bounds = World();
+        float soleLocalY = wrapper.transform.InverseTransformPoint(
+            new Vector3(bounds.center.x, bounds.min.y, bounds.center.z)).y;
+        model.transform.localPosition = new Vector3(0f, -soleLocalY, 0f);
+
+        return wrapper;
     }
 
     static Transform FindDeep(Transform root, string name)
@@ -362,10 +397,11 @@ public class ArmyRenderer : MonoBehaviour
             if (prefab)
             {
                 // world traverse expressed relative to the hull it sits on
-                var turret = hull.Find("turret") ?? FindDeep(hull, "turret");
+                var turret = FindDeep(hull, "turret");
                 if (turret != null)
                     turret.localRotation = Quaternion.Euler(
                         0f, (v.turretYaw - v.heading) * Mathf.Rad2Deg, 0f);
+                SpinRunningGear(hull);
             }
             else
             {
@@ -410,6 +446,27 @@ public class ArmyRenderer : MonoBehaviour
         if (mat == null) return;
         var mr = t.GetComponent<MeshRenderer>();
         if (mr != null && mr.sharedMaterial != mat) mr.sharedMaterial = mat;
+    }
+
+    /// <summary>
+    /// Turn the road wheels by how far the tank actually moved.
+    ///
+    /// Driven from distance rather than a clock, so a tank standing still has
+    /// still wheels - which is most of what makes tracked movement read as
+    /// movement rather than sliding.
+    /// </summary>
+    void SpinRunningGear(Transform hull)
+    {
+        if (!_tankWheels.TryGetValue(hull, out var wheels) || wheels.Count == 0) return;
+
+        Vector3 now = hull.position;
+        if (!_lastTankPos.TryGetValue(hull, out var was)) { _lastTankPos[hull] = now; return; }
+        _lastTankPos[hull] = now;
+
+        float travelled = Vector3.Dot(now - was, hull.forward);
+        const float WheelRadius = 0.42f;
+        float degrees = travelled / WheelRadius * Mathf.Rad2Deg;
+        foreach (var w in wheels) w.Rotate(degrees, 0f, 0f, Space.Self);
     }
 
     float Ground(float x, float z) => terrain != null ? terrain.SampleSurface(x, z) : 0f;

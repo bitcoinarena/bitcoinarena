@@ -347,45 +347,58 @@ public class Bootstrap : MonoBehaviour
     /// <summary>
     /// Make an imported truck usable.
     ///
-    /// Scaled from its own rendered bounds to the wheelbase the physics rig
-    /// expects, because a model authored at any size would otherwise sit
-    /// wrapped around, or lost inside, a collider tuned in metres.
+    /// Scaled from its own rendered bounds to the length the physics rig
+    /// expects, then shifted so its SOLE meets the wheels' contact patch rather
+    /// than the chassis origin. The origin sits 0.75 above that patch - wheels
+    /// at -0.2 with a 0.55 radius - so a model dropped straight on the origin
+    /// floats, and one positioned from world-space bounds (which is what this
+    /// did) lands wherever the truck happened to spawn.
     ///
-    /// Its wheels are pulled OUT of the body and handed to the pool the
-    /// WheelColliders drive: left where they are, they would turn with the
-    /// chassis and never spin, which is the fault this project already fixed
-    /// once in the three.js build.
+    /// Its wheels are then pulled OUT of the body and handed to the pool the
+    /// WheelColliders drive: left in place they turn with the chassis and never
+    /// spin, which is the fault this project already fixed once in three.js.
     /// </summary>
     void NormaliseTruckModel(GameObject body, Transform root)
     {
         var renderers = body.GetComponentsInChildren<Renderer>(true);
-        if (renderers.Length == 0) return;
-
-        var bounds = renderers[0].bounds;
-        foreach (var r in renderers) bounds.Encapsulate(r.bounds);
-        if (bounds.size.z > 0.001f)
+        if (renderers.Length == 0)
         {
-            const float WantedLength = 6.4f;      // matches the hull collider
-            float k = WantedLength / bounds.size.z;
-            body.transform.localScale = Vector3.one * k;
+            Debug.LogWarning("[Bootstrap] truck model has no renderers");
+            return;
         }
 
-        // sit the model on the chassis origin rather than through it
-        var after = renderers[0].bounds;
-        foreach (var r in renderers) after.Encapsulate(r.bounds);
-        body.transform.localPosition = new Vector3(0f, -(after.center.y - after.extents.y) + 0.05f, 0f);
+        Bounds World()
+        {
+            var b = renderers[0].bounds;
+            foreach (var r in renderers) b.Encapsulate(r.bounds);
+            return b;
+        }
+
+        var bounds = World();
+        // longest horizontal axis is the length, whichever way it was modelled
+        float longest = Mathf.Max(bounds.size.x, bounds.size.z);
+        const float WantedLength = 6.4f;
+        if (longest > 0.0001f) body.transform.localScale = Vector3.one * (WantedLength / longest);
+
+        // measure again after scaling, in the TRUCK's space, not the world's
+        bounds = World();
+        float soleLocalY = root.InverseTransformPoint(
+            new Vector3(bounds.center.x, bounds.min.y, bounds.center.z)).y;
+        const float ContactPatch = -0.75f;      // where the tyres meet the ground
+        body.transform.localPosition = new Vector3(0f, ContactPatch - soleLocalY, 0f);
 
         _modelWheels.Clear();
         foreach (var t in body.GetComponentsInChildren<Transform>(true))
         {
             string n = t.name.ToLowerInvariant();
-            if (n.Contains("wheel") || n.Contains("tire") || n.Contains("tyre") || n.Contains("rad"))
+            if (n.Contains("wheel") || n.Contains("tire") || n.Contains("tyre"))
                 _modelWheels.Add(t);
         }
-        // detach so the wheel poser owns them outright
-        foreach (var w in _modelWheels) w.SetParent(root.parent, true);
+        foreach (var w in _modelWheels) w.SetParent(null, true);
 
         foreach (var c in body.GetComponentsInChildren<Collider>(true)) Destroy(c);
+        Debug.Log($"[Bootstrap] truck model scaled to {WantedLength}m, " +
+                  $"{_modelWheels.Count} wheels lifted out");
     }
 
     readonly System.Collections.Generic.List<Transform> _modelWheels =
