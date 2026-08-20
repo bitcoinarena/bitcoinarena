@@ -67,7 +67,14 @@ public class ArmyRenderer : MonoBehaviour
         return m;
     }
 
-    void LateUpdate()
+    void LateUpdate() => Submit();
+
+    /// <summary>
+    /// Hand this frame's instances to the renderer. Separate from LateUpdate so
+    /// a test can submit and render in the same frame - batch mode never fires
+    /// WaitForEndOfFrame, so there is no other way to catch a submission.
+    /// </summary>
+    public void Submit()
     {
         if (army == null || bullMaterial == null || bearMaterial == null) return;
 
@@ -109,6 +116,10 @@ public class ArmyRenderer : MonoBehaviour
         {
             receiveShadows = true,
             shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.On,
+            // REQUIRED. worldBounds defaults to a zero-size box at the origin,
+            // and instanced draws are culled against it - leave it alone and
+            // every unit is submitted every frame and never appears.
+            worldBounds = new Bounds(Vector3.zero, new Vector3(600f, 400f, 600f)),
         };
         for (int i = 0; i < list.Count; i += Batch)
         {
