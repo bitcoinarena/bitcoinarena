@@ -9,6 +9,8 @@ public class Battlefield : MonoBehaviour
 {
     public MempoolTerrain terrain;
     public MarketFeed market;
+    /// <summary>The truck. The armies move aside for it.</summary>
+    public Transform courier;
 
     public PriceHistory History { get; private set; }
     /// <summary>Both armies. Owned here because they live and die by the same tape.</summary>
@@ -39,6 +41,15 @@ public class Battlefield : MonoBehaviour
             // trade flow is the pressure: whichever side the tape favours pushes
             Army.Flow = market != null ? market.Flow : 0f;
             Army.Update(Time.deltaTime);
+
+            // AFTER the step, so nobody is left standing inside the truck at
+            // the end of a frame - that is what wedges it in place
+            if (courier != null)
+            {
+                var p = courier.position;
+                float heading = courier.eulerAngles.y * Mathf.Deg2Rad;
+                Army.ClearPath(p.x, p.z, heading, Time.deltaTime);
+            }
         }
     }
 

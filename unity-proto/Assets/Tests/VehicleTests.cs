@@ -373,4 +373,47 @@ public class VehicleTests
         var turret = GameObject.Find("Turret");
         Assert.IsNull(turret?.GetComponent<BoxCollider>(), "Turm hat einen Collider und kaempft mit dem Rumpf");
     }
+
+    /// <summary>
+    /// Reported as: after hitting anything, the truck can no longer drive. The
+    /// armies do not know the truck exists, so they walked into it - and a
+    /// kinematic body teleported into a dynamic one every frame wedges it.
+    /// </summary>
+    [UnityTest]
+    public IEnumerator TheTruckCanDriveOnAfterHittingTheArmy()
+    {
+        yield return new WaitForSeconds(1.5f);
+        var field = Object.FindFirstObjectByType<Battlefield>();
+        Assert.IsNotNull(field?.Army);
+
+        // bury the truck in a crowd
+        Vector3 p = _rb.position;
+        _truck.transform.rotation = Quaternion.LookRotation(Vector3.right, Vector3.up);
+        for (int i = 0; i < field.Army.Armour.Count; i++)
+        {
+            field.Army.Armour[i].x = p.x + 3f + i * 2f;
+            field.Army.Armour[i].z = p.z;
+        }
+        for (int i = 0; i < Mathf.Min(20, field.Army.Infantry.Count); i++)
+        {
+            field.Army.Infantry[i].x = p.x + 2f + i;
+            field.Army.Infantry[i].z = p.z + (i % 3) - 1f;
+        }
+
+        _truck.useExternalInput = true;
+        _truck.externalThrottle = 1f;
+        yield return new WaitForSeconds(4f);      // shove into them
+
+        // Armour is meant to stop the truck, so the test is NOT that it drives
+        // on through. It is that the truck still answers the controls: wedged
+        // means it cannot move at all, in any direction.
+        Vector3 stuck = _rb.position;
+        _truck.externalThrottle = -1f;
+        yield return new WaitForSeconds(5f);
+        float backedOff = Vector3.Distance(stuck, _rb.position);
+        _truck.useExternalInput = false;
+
+        Assert.Greater(backedOff, 6f,
+            $"nach der Kollision nur {backedOff:0.0} Einheiten zurueckgesetzt - der Truck steckt fest");
+    }
 }

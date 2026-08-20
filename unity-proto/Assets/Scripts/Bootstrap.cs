@@ -75,6 +75,7 @@ public class Bootstrap : MonoBehaviour
         BuildArmies();
         BuildBoundary(_terrain);
         var truck = BuildTruck(_terrain);
+        Field.courier = truck.transform;
         BuildCamera(truck);
         gameObject.AddComponent<TouchControls>();
         var hud = gameObject.AddComponent<DriveHud>();

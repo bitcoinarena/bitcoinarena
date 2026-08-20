@@ -208,6 +208,63 @@ public class Army
 
     float Random01() => (float)_rng.NextDouble();
 
+    /// <summary>
+    /// Get out of the courier's way.
+    ///
+    /// Without this the armies walk straight into the truck: the Army logic
+    /// does not know it exists, and a kinematic body teleported into a dynamic
+    /// one every frame jams the truck solid.
+    ///
+    /// Infantry steps aside. Armour does not - a tank is meant to be an
+    /// obstacle - and is only pushed out of a DEEP overlap, which resolves the
+    /// wedge without letting the truck shoulder tanks out of the way.
+    ///
+    /// Ported from clearPath in src/world/battlefield.js.
+    /// </summary>
+    public void ClearPath(float x, float z, float headingRadians, float dt,
+                          float halfWidth = 7.5f, float ahead = 26f)
+    {
+        float dirX = Mathf.Cos(headingRadians), dirZ = Mathf.Sin(headingRadians);
+
+        void YieldTo(Unit o, float rate, float size, bool stepsAside, float hard)
+        {
+            float ox = o.x - x, oz = o.z - z;
+            float along = ox * dirX + oz * dirZ;      // down the truck's nose
+            float across = -ox * dirZ + oz * dirX;    // out of its flank
+            float lane = halfWidth + size;
+
+            // anticipatory: still up the road, ease out of the corridor
+            if (stepsAside && along > -4f && along < ahead && Mathf.Abs(across) < lane)
+            {
+                float need = lane - Mathf.Abs(across) + 0.6f;
+                float urgency = 1f - Mathf.Max(0f, along) / ahead;
+                float step = (across >= 0f ? 1f : -1f) * need * rate * (0.35f + urgency) * dt;
+                o.x += -dirZ * step;
+                o.z += dirX * step;
+            }
+
+            // last resort: undo genuine interpenetration, so nothing is left
+            // standing INSIDE the truck at the end of a frame
+            float d2 = ox * ox + oz * oz;
+            if (d2 > 1e-4f && d2 < hard * hard)
+            {
+                float d = Mathf.Sqrt(d2);
+                float push = hard - d;
+                o.x += ox / d * push;
+                o.z += oz / d * push;
+            }
+        }
+
+        // Infantry scatters: a line of soldiers is a fence otherwise, and men
+        // diving out of the way of a lorry is what men do.
+        foreach (var u in Infantry) YieldTo(u, 7.0f, 0.9f, true, 5.4f);
+
+        // Armour does NOT step aside - a tank in your way is the obstacle, and
+        // driving round it is the game. It only gets pushed out of a deep
+        // overlap, which is the wedge, not the contact.
+        foreach (var v in Armour) YieldTo(v, 0f, 3.2f, false, 3.0f);
+    }
+
     /// <summary>Last shell fired, for the renderer to draw a tracer.</summary>
     public (Unit from, Unit at)? LastShot;
     public System.Action<Unit> Destroyed;
