@@ -251,6 +251,15 @@ public class VehicleTests
             var renderer = GameObject.Find($"Road_{lane}")?.GetComponent<MeshRenderer>();
             Assert.IsNotNull(renderer?.sharedMaterial, $"{lane} hat kein Material");
 
+            // A road wound the wrong way is drawn every frame and culled as a
+            // back face: present in the scene, invisible from above.
+            var normals = mesh.normals;
+            Assert.Greater(normals.Length, 0, $"{lane} hat keine Normalen");
+            float up = 0f;
+            foreach (var nrm in normals) up += nrm.y;
+            Assert.Greater(up / normals.Length, 0.5f,
+                $"{lane} zeigt nach unten (mittleres n.y={up / normals.Length:0.00}) - von oben unsichtbar");
+
             // every vertex must sit near the terrain, not at y=0
             // against the DRAWN surface, not the analytic one: a road that
             // follows the curve but not the triangles disappears into the ground

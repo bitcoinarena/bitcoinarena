@@ -134,9 +134,12 @@ public class RoadNetwork : MonoBehaviour
         {
             // a cut section is missing, not merely dark: the road ends in rubble
             if (severity[i] > 0.82f || severity[i + 1] > 0.82f) continue;
+            // Winding matters: with left at v and right at v+1, the order
+            // (v, v+2, v+1) puts the normal in -Y and Unity culls the road as a
+            // back face - drawn every frame and invisible from above.
             int v = i * 2;
-            tris.Add(v); tris.Add(v + 2); tris.Add(v + 1);
-            tris.Add(v + 1); tris.Add(v + 2); tris.Add(v + 3);
+            tris.Add(v); tris.Add(v + 1); tris.Add(v + 2);
+            tris.Add(v + 1); tris.Add(v + 3); tris.Add(v + 2);
         }
 
         mesh.Clear();
