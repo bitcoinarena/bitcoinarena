@@ -29,6 +29,17 @@ public class ArmyRenderer : MonoBehaviour
     public float soldierHeight = 1.8f;
     [Tooltip("Degrees to add so the model faces +Z, which is what the army logic assumes.")]
     public float soldierYawOffset;
+    [Tooltip("Controller built from the pack's clips. Without it the model stands in its bind pose.")]
+    public RuntimeAnimatorController soldierAnimator;
+
+    [Tooltip("Tank prefab. Falls back to a box hull and turret if empty.")]
+    public GameObject tankPrefab;
+    [Tooltip("Metres wide across the tracks. The model is scaled to this.")]
+    public float tankWidth = 3.7f;
+    public float tankYawOffset;
+
+    /// <summary>Turret nodes of the prefab tanks, in step with _hulls.</summary>
+    readonly List<Transform> _prefabTurrets = new List<Transform>();
 
     /// <summary>
     /// Units live on their own layer with self-collision switched off. The Army
@@ -40,6 +51,8 @@ public class ArmyRenderer : MonoBehaviour
     Mesh _hull, _turret, _soldier;
     readonly List<Transform> _hulls = new List<Transform>();
     readonly List<Transform> _turrets = new List<Transform>();
+    readonly List<Transform> _hullsBull = new List<Transform>();
+    readonly List<Transform> _hullsBear = new List<Transform>();
     readonly List<Transform> _soldiersBull = new List<Transform>();
     readonly List<Transform> _soldiersBear = new List<Transform>();
 
@@ -89,6 +102,57 @@ public class ArmyRenderer : MonoBehaviour
     /// sits inside its own hull's collider and would only fight with it.
     /// </param>
     /// <summary>
+    /// Build one tank from the imported prefab.
+    ///
+    /// The model carries its own turret node, so the turret is driven as a
+    /// LOCAL rotation of the hull rather than as a separate object at a world
+    /// angle - which is how the box version had to do it, and why that one
+    /// looked like a turret hovering next to a tank rather than on it.
+    /// </summary>
+    Transform MakeTankFromPrefab(Army.Side side)
+    {
+        var go = Instantiate(tankPrefab, transform);
+        go.name = "Hull";
+        go.layer = UnitLayer;
+
+        var renderers = go.GetComponentsInChildren<Renderer>(true);
+        Transform turret = null;
+        foreach (var r in renderers)
+            if (r.name.ToLowerInvariant().Contains("turret")) { turret = r.transform; break; }
+
+        if (renderers.Length > 0)
+        {
+            var bounds = renderers[0].bounds;
+            foreach (var r in renderers) bounds.Encapsulate(r.bounds);
+            // Scale on the NARROWER horizontal axis. The longer one includes the
+            // gun barrel, which sticks a long way past the hull and would make
+            // every tank come out too small.
+            float across = Mathf.Min(bounds.size.x, bounds.size.z);
+            if (across > 0.0001f) go.transform.localScale = Vector3.one * (tankWidth / across);
+        }
+
+        var tint = side == Army.Side.Bull ? bullMaterial : bearMaterial;
+        foreach (var r in go.GetComponentsInChildren<Renderer>(true))
+        {
+            var mats = new Material[r.sharedMaterials.Length];
+            for (int i = 0; i < mats.Length; i++) mats[i] = TeamMaterial(r.sharedMaterials[i], tint);
+            r.sharedMaterials = mats;
+            r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.On;
+        }
+
+        foreach (var c in go.GetComponentsInChildren<Collider>(true)) DestroyImmediate(c);
+        var box = go.AddComponent<BoxCollider>();
+        box.size = new Vector3(3.4f, 1.5f, 6.2f);
+        box.center = new Vector3(0f, 0.9f, 0f);
+        var rb = go.AddComponent<Rigidbody>();
+        rb.isKinematic = true;
+        rb.useGravity = false;
+
+        _prefabTurrets.Add(turret);
+        return go.transform;
+    }
+
+    /// <summary>
     /// Build one soldier from the imported prefab.
     ///
     /// Two things have to be normalised whatever the asset does: its scale,
@@ -135,6 +199,17 @@ public class ArmyRenderer : MonoBehaviour
         var rb = go.AddComponent<Rigidbody>();
         rb.isKinematic = true;
         rb.useGravity = false;
+
+        if (soldierAnimator != null)
+        {
+            var anim = go.GetComponentInChildren<Animator>() ?? go.AddComponent<Animator>();
+            anim.runtimeAnimatorController = soldierAnimator;
+            // Only animate what is on screen. A hundred and eighty skinned
+            // characters is a real cost in WebGL, and a man behind you does not
+            // need his legs solved.
+            anim.cullingMode = AnimatorCullingMode.CullCompletely;
+            anim.applyRootMotion = false;      // the army logic owns the position
+        }
 
         return go.transform;
     }
@@ -192,6 +267,22 @@ public class ArmyRenderer : MonoBehaviour
         return go.transform;
     }
 
+    static Transform FindDeep(Transform root, string name)
+    {
+        foreach (var t in root.GetComponentsInChildren<Transform>(true))
+            if (t.name.ToLowerInvariant() == name) return t;
+        return null;
+    }
+
+    /// <summary>Size each side's tank pool. Per side, because the tint is baked in.</summary>
+    void FitArmourSided(int total)
+    {
+        int bull = 0, bear = 0;
+        foreach (var v in army.Armour) { if (v.side == Army.Side.Bull) bull++; else bear++; }
+        Fit(_hullsBull, bull, () => MakeTankFromPrefab(Army.Side.Bull));
+        Fit(_hullsBear, bear, () => MakeTankFromPrefab(Army.Side.Bear));
+    }
+
     /// <summary>Size one side's soldier pool to its current strength.</summary>
     void FitSided(List<Transform> pool, Army.Side side)
     {
@@ -232,22 +323,55 @@ public class ArmyRenderer : MonoBehaviour
         if (army == null) return;
 
         int armour = army.Armour.Count;
-        Fit(_hulls, armour, () => MakePiece(_hull, "Hull", true, new Vector3(3.4f, 1.5f, 6.2f)));
-        Fit(_turrets, armour, () => MakePiece(_turret, "Turret", false, Vector3.zero));
+        if (tankPrefab != null)
+        {
+            // the model brings its own turret, so no separate pool is needed
+            FitArmourSided(armour);
+        }
+        else
+        {
+            Fit(_hulls, armour, () => MakePiece(_hull, "Hull", true, new Vector3(3.4f, 1.5f, 6.2f)));
+            Fit(_turrets, armour, () => MakePiece(_turret, "Turret", false, Vector3.zero));
+        }
         // The pool is per side, because a soldier's team colour is baked into
         // the instance - a shared pool would hand a green body to a red man.
         FitSided(_soldiersBull, Army.Side.Bull);
         FitSided(_soldiersBear, Army.Side.Bear);
 
+        int bullTanks = 0, bearTanks = 0;
         for (int i = 0; i < armour; i++)
         {
             var v = army.Armour[i];
-            float y = Ground(v.x, v.z) + 0.9f;
-            var mat = v.side == Army.Side.Bull ? bullMaterial : bearMaterial;
+            bool prefab = tankPrefab != null;
+            // a prefab stands ON the ground; the proxy box is centred on its middle
+            float y = Ground(v.x, v.z) + (prefab ? 0f : 0.9f);
 
-            Place(_hulls[i], new Vector3(v.x, y, v.z), v.heading, mat);
-            // the turret traverses in world space, so it is NOT parented to the hull
-            Place(_turrets[i], new Vector3(v.x, y, v.z), v.turretYaw, mat);
+            Transform hull;
+            if (prefab)
+            {
+                var pool = v.side == Army.Side.Bull ? _hullsBull : _hullsBear;
+                int idx = v.side == Army.Side.Bull ? bullTanks++ : bearTanks++;
+                if (idx >= pool.Count) continue;
+                hull = pool[idx];
+            }
+            else hull = _hulls[i];
+
+            var mat = prefab ? null : (v.side == Army.Side.Bull ? bullMaterial : bearMaterial);
+            Place(hull, new Vector3(v.x, y, v.z), v.heading + (prefab ? tankYawOffset * Mathf.Deg2Rad : 0f), mat);
+
+            if (prefab)
+            {
+                // world traverse expressed relative to the hull it sits on
+                var turret = hull.Find("turret") ?? FindDeep(hull, "turret");
+                if (turret != null)
+                    turret.localRotation = Quaternion.Euler(
+                        0f, (v.turretYaw - v.heading) * Mathf.Rad2Deg, 0f);
+            }
+            else
+            {
+                // the turret traverses in world space, so it is NOT parented to the hull
+                Place(_turrets[i], new Vector3(v.x, y, v.z), v.turretYaw, mat);
+            }
         }
 
         int bull = 0, bear = 0;
@@ -261,8 +385,21 @@ public class ArmyRenderer : MonoBehaviour
             float bob = Mathf.Abs(Mathf.Sin(s.phase)) * 0.16f;
             // a prefab stands ON the ground; the proxy box is centred on its middle
             float lift = soldierPrefab != null ? 0f : 0.9f;
-            Place(pool[idx], new Vector3(s.x, Ground(s.x, s.z) + lift + bob, s.z),
+            var t = pool[idx];
+            Place(t, new Vector3(s.x, Ground(s.x, s.z) + lift + bob, s.z),
                   s.heading + soldierYawOffset * Mathf.Deg2Rad, null);
+
+            if (soldierAnimator != null)
+            {
+                var anim = t.GetComponentInChildren<Animator>();
+                if (anim != null && anim.runtimeAnimatorController != null)
+                {
+                    // moving toward the line, or dug in and shooting
+                    float toGo = Mathf.Abs(s.z - army.FrontlineAt(s.x));
+                    anim.SetFloat("Speed", toGo > 14f ? 1f : 0f);
+                    anim.SetBool("Shoot", toGo <= 14f);
+                }
+            }
         }
     }
 

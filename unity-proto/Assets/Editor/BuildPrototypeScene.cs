@@ -1,7 +1,11 @@
 using System.IO;
 using UnityEditor;
+using UnityEditor.Animations;
+using UnityEngine.Rendering;
+using UnityEngine.Rendering.Universal;
 using UnityEditor.SceneManagement;
 using UnityEngine;
+using System.Linq;
 
 /// <summary>
 /// Creates the prototype scene from scratch. Generating it rather than
@@ -32,8 +36,9 @@ public static class BuildPrototypeScene
         boot.bodyMaterial = Lit("Body", new Color(0.16f, 0.34f, 0.22f), 0.45f, 0.25f);
         boot.wheelMaterial = Lit("Wheel", new Color(0.05f, 0.05f, 0.06f), 0.95f);
         boot.barrierMaterial = Lit("Barrier", new Color(0.58f, 0.55f, 0.50f), 0.85f);
-        boot.bullMaterial = Lit("Bull", new Color(0.20f, 0.62f, 0.28f), 0.5f);
-        boot.bearMaterial = Lit("Bear", new Color(0.74f, 0.20f, 0.18f), 0.5f);
+        // strong, because these have to be picked out against the ground
+        boot.bullMaterial = Lit("Bull", new Color(0.24f, 0.78f, 0.32f), 0.45f);
+        boot.bearMaterial = Lit("Bear", new Color(0.92f, 0.22f, 0.18f), 0.45f);
         boot.tracerMaterial = Lit("Tracer", new Color(1f, 0.92f, 0.55f), 0.2f);
         boot.flashMaterial = Lit("Flash", new Color(1f, 0.96f, 0.78f), 0.15f);
         boot.blastMaterial = Lit("Blast", new Color(1f, 0.55f, 0.14f), 0.35f);
@@ -42,6 +47,13 @@ public static class BuildPrototypeScene
         // search rather than by hand in the inspector, because regenerating the
         // scene would otherwise silently drop the assignment every time.
         boot.soldierPrefab = FindPrefab("soldier", "infantry", "trooper");
+        boot.soldierAnimator = BuildSoldierAnimator();
+        boot.tankPrefab = FindPrefab("leopard", "tank", "panzer");
+        boot.truckModel = FindPrefab("smalltruck", "industrialsmalltruck", "truck", "lorry", "van");
+        Debug.Log($"[BuildPrototypeScene] truck model: " +
+                  (boot.truckModel != null ? AssetDatabase.GetAssetPath(boot.truckModel) : "none, using a box"));
+        Debug.Log($"[BuildPrototypeScene] tank model: " +
+                  (boot.tankPrefab != null ? AssetDatabase.GetAssetPath(boot.tankPrefab) : "none, using boxes"));
         if (boot.soldierPrefab != null)
             Debug.Log($"[BuildPrototypeScene] soldier model: {AssetDatabase.GetAssetPath(boot.soldierPrefab)}");
         else
@@ -59,6 +71,9 @@ public static class BuildPrototypeScene
                 "Assets/Textures/road/asphalt_02_diff.jpg",
                 "Assets/Textures/road/asphalt_02_nor.jpg");
 
+        boot.postProfile = BuildPostProfile();
+        WidenShadows();
+
         System.IO.Directory.CreateDirectory("Assets/Scenes");
         EditorSceneManager.SaveScene(scene, ScenePath);
 
@@ -69,24 +84,178 @@ public static class BuildPrototypeScene
     }
 
     /// <summary>
-    /// First prefab in the project whose name contains one of these words, and
-    /// which actually has geometry - packs ship empty rigs and effect prefabs
-    /// alongside the models.
+    /// A post-processing profile.
+    ///
+    /// Without one the scene renders raw linear light straight to the screen:
+    /// no tonemapping, no contrast curve, no bloom. Everything lands in the
+    /// same narrow middle band and the whole picture reads as washed out, which
+    /// no amount of texture work fixes.
+    /// </summary>
+    static VolumeProfile BuildPostProfile()
+    {
+        Directory.CreateDirectory("Assets/Settings");
+        const string path = "Assets/Settings/BattlefieldPost.asset";
+        AssetDatabase.DeleteAsset(path);
+
+        var profile = ScriptableObject.CreateInstance<VolumeProfile>();
+        AssetDatabase.CreateAsset(profile, path);
+
+        var tone = profile.Add<Tonemapping>(true);
+        tone.mode.overrideState = true;
+        tone.mode.value = TonemappingMode.ACES;      // filmic shoulder, deep blacks
+
+        var colour = profile.Add<ColorAdjustments>(true);
+        colour.postExposure.overrideState = true; colour.postExposure.value = 0.35f;
+        colour.contrast.overrideState = true; colour.contrast.value = 22f;
+        colour.saturation.overrideState = true; colour.saturation.value = 14f;
+
+        var bloom = profile.Add<Bloom>(true);
+        bloom.threshold.overrideState = true; bloom.threshold.value = 1.05f;
+        bloom.intensity.overrideState = true; bloom.intensity.value = 0.45f;
+        bloom.scatter.overrideState = true; bloom.scatter.value = 0.62f;
+
+        var vignette = profile.Add<Vignette>(true);
+        vignette.intensity.overrideState = true; vignette.intensity.value = 0.28f;
+        vignette.smoothness.overrideState = true; vignette.smoothness.value = 0.45f;
+
+        foreach (var c in profile.components) AssetDatabase.AddObjectToAsset(c, profile);
+        EditorUtility.SetDirty(profile);
+        AssetDatabase.SaveAssets();
+        Debug.Log("[BuildPrototypeScene] post profile: ACES, contrast +22, bloom, vignette");
+        return profile;
+    }
+
+    /// <summary>
+    /// Shadows reach 50 metres out of the box. On a map 260 metres across that
+    /// means the overview has no shadows at all - and shadow is most of what
+    /// makes a shape read as a shape.
+    /// </summary>
+    static void WidenShadows()
+    {
+        foreach (var guid in AssetDatabase.FindAssets("t:UniversalRenderPipelineAsset"))
+        {
+            var path = AssetDatabase.GUIDToAssetPath(guid);
+            var rp = AssetDatabase.LoadAssetAtPath<UniversalRenderPipelineAsset>(path);
+            if (rp == null) continue;
+            var so = new SerializedObject(rp);
+            so.FindProperty("m_ShadowDistance").floatValue = 260f;
+            so.FindProperty("m_ShadowCascadeCount").intValue = 4;
+            so.FindProperty("m_MainLightShadowmapResolution").intValue = 2048;
+            so.ApplyModifiedProperties();
+            EditorUtility.SetDirty(rp);
+            Debug.Log($"[BuildPrototypeScene] shadows widened in {Path.GetFileName(path)}");
+        }
+        AssetDatabase.SaveAssets();
+    }
+
+    /// <summary>
+    /// Build an animator controller from whatever clips the soldier pack ships.
+    ///
+    /// The model is a skinned mesh with no controller, so it arrives in its
+    /// bind pose and stands there. The clips live as sub-assets inside separate
+    /// FBX files, which is why loading the model alone finds nothing.
+    ///
+    /// Generated as an ASSET rather than assembled at runtime: a controller
+    /// only reachable through code is not referenced by the scene, and what the
+    /// scene does not reference does not go into the build.
+    /// </summary>
+    static RuntimeAnimatorController BuildSoldierAnimator()
+    {
+        var clips = new System.Collections.Generic.Dictionary<string, AnimationClip>();
+        foreach (var guid in AssetDatabase.FindAssets("t:AnimationClip"))
+        {
+            string path = AssetDatabase.GUIDToAssetPath(guid);
+            foreach (var sub in AssetDatabase.LoadAllAssetRepresentationsAtPath(path))
+            {
+                if (sub is not AnimationClip clip) continue;
+                string n = (clip.name + " " + Path.GetFileNameWithoutExtension(path)).ToLowerInvariant();
+                if (n.Contains("run") || n.Contains("walk")) clips["run"] = clip;
+                else if (n.Contains("shoot") || n.Contains("fire") || n.Contains("attack")) clips["shoot"] = clip;
+                else if (n.Contains("idle")) clips["idle"] = clip;
+            }
+        }
+        if (clips.Count == 0)
+        {
+            Debug.Log("[BuildPrototypeScene] no animation clips found - soldiers will stand still");
+            return null;
+        }
+        Debug.Log($"[BuildPrototypeScene] animation clips: {string.Join(", ", clips.Keys)}");
+
+        Directory.CreateDirectory("Assets/Animation");
+        const string path2 = "Assets/Animation/Soldier.controller";
+        AssetDatabase.DeleteAsset(path2);
+        var controller = AnimatorController.CreateAnimatorControllerAtPath(path2);
+        controller.AddParameter("Speed", AnimatorControllerParameterType.Float);
+        controller.AddParameter("Shoot", AnimatorControllerParameterType.Bool);
+
+        var sm = controller.layers[0].stateMachine;
+        var idle = sm.AddState("Idle");
+        idle.motion = clips.TryGetValue("idle", out var idleClip) ? idleClip : clips.Values.First();
+        sm.defaultState = idle;
+
+        if (clips.TryGetValue("run", out var runClip))
+        {
+            var run = sm.AddState("Run");
+            run.motion = runClip;
+            var toRun = idle.AddTransition(run);
+            toRun.AddCondition(AnimatorConditionMode.Greater, 0.3f, "Speed");
+            toRun.hasExitTime = false; toRun.duration = 0.15f;
+            var toIdle = run.AddTransition(idle);
+            toIdle.AddCondition(AnimatorConditionMode.Less, 0.3f, "Speed");
+            toIdle.hasExitTime = false; toIdle.duration = 0.15f;
+        }
+
+        if (clips.TryGetValue("shoot", out var shootClip))
+        {
+            var shoot = sm.AddState("Shoot");
+            shoot.motion = shootClip;
+            var toShoot = idle.AddTransition(shoot);
+            toShoot.AddCondition(AnimatorConditionMode.If, 0f, "Shoot");
+            toShoot.hasExitTime = false; toShoot.duration = 0.08f;
+            var back = shoot.AddTransition(idle);
+            back.AddCondition(AnimatorConditionMode.IfNot, 0f, "Shoot");
+            back.hasExitTime = false; back.duration = 0.12f;
+        }
+
+        AssetDatabase.SaveAssets();
+        return controller;
+    }
+
+    /// <summary>
+    /// First model in the project whose name contains one of these words and
+    /// which actually has geometry.
+    ///
+    /// Searches t:GameObject rather than t:Prefab: packs frequently ship a bare
+    /// FBX with no prefab at all, which is what the soldier pack does - a
+    /// t:Prefab search finds nothing and silently falls back to boxes.
+    ///
+    /// Animation clips are usually FBX files too, and are skipped: they carry a
+    /// rig but no mesh, so picking one up would place invisible soldiers.
     /// </summary>
     static GameObject FindPrefab(params string[] words)
     {
-        foreach (var guid in AssetDatabase.FindAssets("t:Prefab"))
+        GameObject best = null;
+        foreach (var guid in AssetDatabase.FindAssets("t:GameObject"))
         {
             string path = AssetDatabase.GUIDToAssetPath(guid);
+            if (path.ToLowerInvariant().Contains("/animation")) continue;
+
             string name = System.IO.Path.GetFileNameWithoutExtension(path).ToLowerInvariant();
             bool matches = false;
             foreach (var w in words) if (name.Contains(w)) { matches = true; break; }
             if (!matches) continue;
 
             var go = AssetDatabase.LoadAssetAtPath<GameObject>(path);
-            if (go != null && go.GetComponentInChildren<Renderer>(true) != null) return go;
+            if (go == null) continue;
+            bool hasMesh = go.GetComponentInChildren<MeshRenderer>(true) != null
+                        || go.GetComponentInChildren<SkinnedMeshRenderer>(true) != null;
+            if (!hasMesh) continue;
+
+            // prefer an actual prefab if the pack ships one
+            if (path.EndsWith(".prefab", System.StringComparison.OrdinalIgnoreCase)) return go;
+            best ??= go;
         }
-        return null;
+        return best;
     }
 
     /// <summary>

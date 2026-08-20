@@ -19,8 +19,11 @@ public class TerritoryMap : MonoBehaviour
     public const int Width = 192;
     public const int Height = 128;
 
-    static readonly Color Bull = new Color(0.24f, 0.44f, 0.22f);
-    static readonly Color Bear = new Color(0.46f, 0.20f, 0.19f);
+    // Muted on purpose. The ground says WHOSE it is; the units are what you
+    // have to pick out of it, and a saturated red tank on saturated red ground
+    // is invisible. Held apart enough to read, not enough to compete.
+    static readonly Color Bull = new Color(0.30f, 0.40f, 0.27f);
+    static readonly Color Bear = new Color(0.44f, 0.30f, 0.27f);
     /// <summary>Churned, colourless ground right where the fighting is.</summary>
     static readonly Color NoMansLand = new Color(0.34f, 0.30f, 0.25f);
 

@@ -1,4 +1,5 @@
 using UnityEngine;
+using UnityEngine.Rendering.Universal;
 
 /// <summary>
 /// Builds the whole prototype scene in code. Unity scene files are YAML full of
@@ -18,6 +19,10 @@ public class Bootstrap : MonoBehaviour
     [Tooltip("Soldier prefab from an imported pack. Empty falls back to boxes.")]
     public GameObject soldierPrefab;
     public float soldierYawOffset;
+    public RuntimeAnimatorController soldierAnimator;
+    [Tooltip("Tank prefab from an imported pack. Empty falls back to boxes.")]
+    public GameObject tankPrefab;
+    public float tankYawOffset;
 
     [Header("Materials (assign URP/Lit with Poly Haven maps)")]
     public Material groundMaterial;
@@ -35,11 +40,14 @@ public class Bootstrap : MonoBehaviour
     public int armourPerSide = 11;
     public int infantryPerSide = 90;
 
+    [Header("Look")]
+    public UnityEngine.Rendering.VolumeProfile postProfile;
+
     [Header("Sun")]
-    public float sunPitch = 42f;
-    public float sunYaw = -35f;
-    public Color sunColour = new Color(1f, 0.95f, 0.86f);
-    public float sunIntensity = 2.2f;
+    public float sunPitch = 28f;          // low, for long shadows
+    public float sunYaw = -42f;
+    public Color sunColour = new Color(1f, 0.93f, 0.80f);
+    public float sunIntensity = 2.9f;
 
     /// <summary>
     /// How far the road ribbon floats above the terrain. Just enough to beat
@@ -137,13 +145,31 @@ public class Bootstrap : MonoBehaviour
         light.intensity = sunIntensity;
         light.shadows = LightShadows.Soft;
         light.shadowBias = 0.02f;
+        // A low sun throws long shadows, and shadow is most of what tells you a
+        // box is a tank. Overhead light flattens everything to its own colour.
         go.transform.rotation = Quaternion.Euler(sunPitch, sunYaw, 0f);
 
-        RenderSettings.ambientMode = UnityEngine.Rendering.AmbientMode.Skybox;
+        // Flat sky ambient fills every crevice and cancels the sun's modelling.
+        // A gradient keeps the ground dark and the sky bright, which is both
+        // more like daylight and far more legible.
+        RenderSettings.ambientMode = UnityEngine.Rendering.AmbientMode.Trilight;
+        RenderSettings.ambientSkyColor = new Color(0.42f, 0.50f, 0.62f);
+        RenderSettings.ambientEquatorColor = new Color(0.26f, 0.27f, 0.28f);
+        RenderSettings.ambientGroundColor = new Color(0.11f, 0.10f, 0.09f);
+
         RenderSettings.fog = true;
         RenderSettings.fogMode = FogMode.ExponentialSquared;
-        RenderSettings.fogDensity = 0.0035f;
-        RenderSettings.fogColor = new Color(0.62f, 0.67f, 0.74f);
+        RenderSettings.fogDensity = 0.0022f;
+        RenderSettings.fogColor = new Color(0.58f, 0.64f, 0.72f);
+
+        if (postProfile != null)
+        {
+            var vol = new GameObject("PostProcessing");
+            vol.transform.SetParent(transform, false);
+            var v = vol.AddComponent<UnityEngine.Rendering.Volume>();
+            v.isGlobal = true;
+            v.sharedProfile = postProfile;
+        }
     }
 
     MempoolTerrain BuildTerrain()
@@ -246,6 +272,9 @@ public class Bootstrap : MonoBehaviour
         renderer.bearMaterial = bearMaterial;
         renderer.soldierPrefab = soldierPrefab;
         renderer.soldierYawOffset = soldierYawOffset;
+        renderer.soldierAnimator = soldierAnimator;
+        renderer.tankPrefab = tankPrefab;
+        renderer.tankYawOffset = tankYawOffset;
         go.SetActive(true);
 
         var fxGo = new GameObject("CombatFx");
@@ -281,7 +310,9 @@ public class Bootstrap : MonoBehaviour
         if (truckModel != null)
         {
             body = Instantiate(truckModel, root.transform);
+            body.name = "Body";
             body.transform.localPosition = Vector3.zero;
+            NormaliseTruckModel(body, root.transform);
         }
         else
         {
@@ -313,6 +344,54 @@ public class Bootstrap : MonoBehaviour
         return controller;
     }
 
+    /// <summary>
+    /// Make an imported truck usable.
+    ///
+    /// Scaled from its own rendered bounds to the wheelbase the physics rig
+    /// expects, because a model authored at any size would otherwise sit
+    /// wrapped around, or lost inside, a collider tuned in metres.
+    ///
+    /// Its wheels are pulled OUT of the body and handed to the pool the
+    /// WheelColliders drive: left where they are, they would turn with the
+    /// chassis and never spin, which is the fault this project already fixed
+    /// once in the three.js build.
+    /// </summary>
+    void NormaliseTruckModel(GameObject body, Transform root)
+    {
+        var renderers = body.GetComponentsInChildren<Renderer>(true);
+        if (renderers.Length == 0) return;
+
+        var bounds = renderers[0].bounds;
+        foreach (var r in renderers) bounds.Encapsulate(r.bounds);
+        if (bounds.size.z > 0.001f)
+        {
+            const float WantedLength = 6.4f;      // matches the hull collider
+            float k = WantedLength / bounds.size.z;
+            body.transform.localScale = Vector3.one * k;
+        }
+
+        // sit the model on the chassis origin rather than through it
+        var after = renderers[0].bounds;
+        foreach (var r in renderers) after.Encapsulate(r.bounds);
+        body.transform.localPosition = new Vector3(0f, -(after.center.y - after.extents.y) + 0.05f, 0f);
+
+        _modelWheels.Clear();
+        foreach (var t in body.GetComponentsInChildren<Transform>(true))
+        {
+            string n = t.name.ToLowerInvariant();
+            if (n.Contains("wheel") || n.Contains("tire") || n.Contains("tyre") || n.Contains("rad"))
+                _modelWheels.Add(t);
+        }
+        // detach so the wheel poser owns them outright
+        foreach (var w in _modelWheels) w.SetParent(root.parent, true);
+
+        foreach (var c in body.GetComponentsInChildren<Collider>(true)) Destroy(c);
+    }
+
+    readonly System.Collections.Generic.List<Transform> _modelWheels =
+        new System.Collections.Generic.List<Transform>();
+    int _wheelTaken;
+
     TruckController.Axle BuildAxle(Transform root, float z, bool steering, bool driven, bool handbraked)
     {
         var axle = new TruckController.Axle { steering = steering, driven = driven, handbraked = handbraked };
@@ -339,7 +418,12 @@ public class Bootstrap : MonoBehaviour
         var side = wheel.sidewaysFriction; side.stiffness = 2.4f; wheel.sidewaysFriction = side;
 
         // visual, posed each frame from the collider
-        if (wheelModel != null)
+        if (_wheelTaken < _modelWheels.Count)
+        {
+            // a wheel lifted out of the imported truck, in the order it was found
+            mesh = _modelWheels[_wheelTaken++];
+        }
+        else if (wheelModel != null)
         {
             mesh = Instantiate(wheelModel).transform;
         }
@@ -374,6 +458,10 @@ public class Bootstrap : MonoBehaviour
         var cam = go.AddComponent<Camera>();
         cam.fieldOfView = 62f;
         cam.farClipPlane = 900f;
+        // a Volume in the scene does nothing unless the camera opts in
+        var urp = go.AddComponent<UniversalAdditionalCameraData>();
+        urp.renderPostProcessing = true;
+        urp.antialiasing = AntialiasingMode.FastApproximateAntialiasing;
         go.AddComponent<AudioListener>();
         var chase = go.AddComponent<ChaseCamera>();
         chase.target = truck.transform;
