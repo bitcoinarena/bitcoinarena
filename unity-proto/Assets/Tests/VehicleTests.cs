@@ -252,12 +252,17 @@ public class VehicleTests
             Assert.IsNotNull(renderer?.sharedMaterial, $"{lane} hat kein Material");
 
             // every vertex must sit near the terrain, not at y=0
+            // against the DRAWN surface, not the analytic one: a road that
+            // follows the curve but not the triangles disappears into the ground
             var verts = mesh.vertices;
-            for (int i = 0; i < verts.Length; i += 37)
+            for (int i = 0; i < verts.Length; i += 13)
             {
-                float ground = terrain.SampleWorld(verts[i].x, verts[i].z);
-                Assert.Less(Mathf.Abs(verts[i].y - ground), 3f,
-                    $"{lane} liegt bei x={verts[i].x:0} auf y={verts[i].y:0.0}, Boden ist {ground:0.0}");
+                float drawn = terrain.SampleSurface(verts[i].x, verts[i].z);
+                float above = verts[i].y - drawn;
+                Assert.Greater(above, -0.05f,
+                    $"{lane} steckt bei x={verts[i].x:0} im Boden: y={verts[i].y:0.00}, Oberflaeche {drawn:0.00}");
+                Assert.Less(above, 1.6f,
+                    $"{lane} schwebt bei x={verts[i].x:0} ueber dem Boden: y={verts[i].y:0.00}, Oberflaeche {drawn:0.00}");
             }
             checkedLanes++;
         }

@@ -15,8 +15,12 @@ public class RoadNetwork : MonoBehaviour
     public Battlefield field;
     public Material roadMaterial;
 
-    /// <summary>Above the terrain, purely to beat z-fighting - the road carries no collider.</summary>
-    public float lift = 0.3f;
+    /// <summary>
+    /// Above the drawn surface. The road has no collider, so this costs nothing
+    /// in handling - it only has to clear z-fighting and the last of the
+    /// triangulation error.
+    /// </summary>
+    public float lift = 0.45f;
     public int segmentsPerLane = 200;
 
     public RoadModel Model { get; private set; }
@@ -75,7 +79,10 @@ public class RoadNetwork : MonoBehaviour
     /// <summary>Cheap fingerprint of everything that would change a lane's mesh.</summary>
     float Signature(Lane lane)
     {
-        float s = lane == Lane.Front ? Mathf.Round(Model.CenterZ(lane, 0f) * 4f) : 0f;
+        // the ground itself counts: live mempool data reshapes it, and a road
+        // built against the old heights ends up floating over the new ones
+        float s = terrain != null ? terrain.Version * 1e5f : 0f;
+        if (lane == Lane.Front) s += Mathf.Round(Model.CenterZ(lane, 0f) * 4f);
         foreach (var d in Model.Cuts) if (d.lane == lane) s += 1000f + Mathf.Round(d.x) + Mathf.Round(d.t);
         foreach (var w in Model.Wears) if (w.lane == lane) s += 7f + Mathf.Round(w.x) + Mathf.Round(w.wear * 20f);
         return s;
@@ -112,8 +119,8 @@ public class RoadNetwork : MonoBehaviour
             // itself on the other wherever the terrain slopes sideways.
             var left = new Vector3(x, 0f, z) - side * RoadModel.HalfWidth;
             var right = new Vector3(x, 0f, z) + side * RoadModel.HalfWidth;
-            float gl = terrain != null ? terrain.SampleWorld(left.x, left.z) : 0f;
-            float gr = terrain != null ? terrain.SampleWorld(right.x, right.z) : 0f;
+            float gl = terrain != null ? terrain.SampleSurface(left.x, left.z) : 0f;
+            float gr = terrain != null ? terrain.SampleSurface(right.x, right.z) : 0f;
 
             left.y = gl + lift - broken * 0.55f;
             right.y = gr + lift - broken * 0.55f + broken * 0.25f;

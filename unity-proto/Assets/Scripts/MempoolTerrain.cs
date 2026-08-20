@@ -131,8 +131,16 @@ public class MempoolTerrain : MonoBehaviour
         return h;
     }
 
+    /// <summary>
+    /// Bumped on every rebuild. Anything laid on the ground has to watch this:
+    /// when live mempool data reshapes the terrain, a road built against the
+    /// old heights is left floating or buried.
+    /// </summary>
+    public int Version { get; private set; }
+
     public void Build()
     {
+        Version++;
         int vx = columns, vz = rows;
         if (_verts == null || _verts.Length != vx * vz) _verts = new Vector3[vx * vz];
         var uvs = new Vector2[vx * vz];
@@ -173,11 +181,46 @@ public class MempoolTerrain : MonoBehaviour
         GetComponent<MeshCollider>().sharedMesh = _mesh;
     }
 
-    /// <summary>Ground height under a world position, for placing props and the road.</summary>
+    /// <summary>
+    /// Analytic ground height. This is what the mesh is GENERATED from, not
+    /// what it looks like - see SampleSurface for the difference.
+    /// </summary>
     public float SampleWorld(float worldX, float worldZ)
     {
         float u = Mathf.Clamp01(worldX / width + 0.5f);
         float v = Mathf.Clamp01(worldZ / depth + 0.5f);
         return HeightAt(u, v);
+    }
+
+    /// <summary>
+    /// Height of the DRAWN surface: the exact plane of the triangle under this
+    /// point, matching how the mesh is wound in Build().
+    ///
+    /// The mesh is a triangulation of HeightAt, and between grid points the two
+    /// disagree by a few tenths. Anything laid on the ground - roads, props -
+    /// has to follow the triangle, or it sinks into the terrain wherever the
+    /// chord happens to sit above the curve.
+    /// </summary>
+    public float SampleSurface(float worldX, float worldZ)
+    {
+        int vx = columns, vz = rows;
+        float fu = Mathf.Clamp01(worldX / width + 0.5f) * (vx - 1);
+        float fv = Mathf.Clamp01(worldZ / depth + 0.5f) * (vz - 1);
+
+        int x0 = Mathf.Clamp(Mathf.FloorToInt(fu), 0, vx - 2);
+        int z0 = Mathf.Clamp(Mathf.FloorToInt(fv), 0, vz - 2);
+        float tx = fu - x0, tz = fv - z0;
+
+        float U(int gx, int gz) => HeightAt(gx / (float)(vx - 1), gz / (float)(vz - 1));
+        float a = U(x0, z0);          // A
+        float b = U(x0, z0 + 1);      // B
+        float c = U(x0 + 1, z0);      // C
+        float d = U(x0 + 1, z0 + 1);  // D
+
+        // Build() winds each cell as (A,B,C) then (C,B,D); the split runs from
+        // B to C, so tx + tz < 1 lands in the first triangle.
+        return tx + tz < 1f
+            ? a + (c - a) * tx + (b - a) * tz
+            : d + (b - d) * (1f - tx) + (c - d) * (1f - tz);
     }
 }
