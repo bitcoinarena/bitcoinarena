@@ -104,3 +104,89 @@ public class CombatFxTests
         Object.DestroyImmediate(fx.gameObject);
     }
 }
+
+/// <summary>
+/// A destroyed tank has to look like a destroyed tank. One sphere is a
+/// placeholder; this checks the explosion actually has its parts and that none
+/// of them leak.
+/// </summary>
+public class TankExplosionTests
+{
+    static CombatFx Rig()
+    {
+        var go = new GameObject("Fx");
+        var fx = go.AddComponent<CombatFx>();
+        var mat = new Material(Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Standard"));
+        fx.tracerMaterial = fx.flashMaterial = fx.blastMaterial = mat;
+        fx.bullMaterial = fx.bearMaterial = mat;
+        fx.fireCoreMaterial = fx.fireMaterial = fx.smokeMaterial = fx.debrisMaterial = mat;
+        return fx;
+    }
+
+    [Test]
+    public void AnExplosionIsMoreThanOneSphere()
+    {
+        var fx = Rig();
+        fx.TankExplosion(Vector3.zero, 0f);
+        Assert.Greater(fx.LivePieces, 20,
+            $"nur {fx.LivePieces} Teile - das ist wieder eine einzelne Kugel");
+        Object.DestroyImmediate(fx.gameObject);
+    }
+
+    [Test]
+    public void ItArrivesInStagesRatherThanAllAtOnce()
+    {
+        var fx = Rig();
+        fx.TankExplosion(Vector3.zero, 0f);
+        int visible = 0;
+        foreach (Transform t in fx.transform) if (t.localScale.sqrMagnitude > 0.0001f) visible++;
+        Assert.Less(visible, fx.LivePieces,
+            "alles ist im ersten Frame voll aufgeblendet - der Feuerball billowt nicht");
+        Object.DestroyImmediate(fx.gameObject);
+    }
+
+    [Test]
+    public void TheFireGoesOutButTheSmokeOutlivesIt()
+    {
+        var fx = Rig();
+        fx.TankExplosion(Vector3.zero, 0f);
+        for (int i = 0; i < 60 * 2; i++) fx.Step(1f / 60f);
+        int afterFire = fx.LivePieces;
+        Assert.Greater(afterFire, 0, "nach zwei Sekunden ist nichts mehr da - kein Rauch, kein Wrack");
+        Object.DestroyImmediate(fx.gameObject);
+    }
+
+    [Test]
+    public void EverythingClearsEventually()
+    {
+        var fx = Rig();
+        fx.TankExplosion(Vector3.zero, 0f);
+        for (int i = 0; i < 60 * 30; i++) fx.Step(1f / 60f);
+        Assert.AreEqual(0, fx.LivePieces, $"{fx.LivePieces} Teile haengen fest");
+        Object.DestroyImmediate(fx.gameObject);
+    }
+
+    [Test]
+    public void DebrisFallsAndLandsRatherThanFlyingAway()
+    {
+        var fx = Rig();
+        fx.TankExplosion(new Vector3(0f, 0f, 0f), 0f);
+        for (int i = 0; i < 60 * 3; i++) fx.Step(1f / 60f);
+        foreach (Transform t in fx.transform)
+        {
+            if (!t.gameObject.activeSelf) continue;
+            Assert.Less(t.position.y, 30f, $"ein Teil ist auf {t.position.y:0} Metern - es faellt nicht zurueck");
+        }
+        Object.DestroyImmediate(fx.gameObject);
+    }
+
+    [Test]
+    public void SeveralTanksAtOnceStayWithinTheCap()
+    {
+        var fx = Rig();
+        fx.maxPieces = 120;
+        for (int i = 0; i < 20; i++) fx.TankExplosion(new Vector3(i * 8f, 0f, 0f), 0f);
+        Assert.LessOrEqual(fx.LivePieces, 120, "die Obergrenze greift bei mehreren Explosionen nicht");
+        Object.DestroyImmediate(fx.gameObject);
+    }
+}

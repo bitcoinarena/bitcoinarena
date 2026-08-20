@@ -20,6 +20,15 @@ public class CombatFx : MonoBehaviour
     public Material bullMaterial;
     public Material bearMaterial;
 
+    [Header("Explosions")]
+    public Material fireCoreMaterial;
+    public Material fireMaterial;
+    public Material smokeMaterial;
+    public Material debrisMaterial;
+    [Tooltip("Tank model for the burnt-out hull. Falls back to a charred box.")]
+    public GameObject wreckPrefab;
+    public float wreckWidth = 3.7f;
+
     [Header("Bodies")]
     [Tooltip("Soldier model for the fallen. Without it a plain box is used.")]
     public GameObject bodyPrefab;
@@ -33,10 +42,13 @@ public class CombatFx : MonoBehaviour
         public Kind kind;
         public Quaternion fallFrom, fallTo;
         public Vector3 slide, from;
-        public bool isModelBody, bull;
+        public bool isModelBody, bull, isWreckModel;
+        /// <summary>Held at zero scale until this much of its life has passed.</summary>
+        public float delay;
+        public Vector3 velocity, spin;
     }
 
-    enum Kind { Tracer, Flash, Blast, Body, Wreck }
+    enum Kind { Tracer, Flash, Blast, Body, Wreck, Fireball, Smoke, Debris, Shockwave }
 
     /// <summary>Pooled soldier models for the dead, kept per side so the tint holds.</summary>
     readonly Dictionary<bool, Stack<Transform>> _bodyPool = new Dictionary<bool, Stack<Transform>>
@@ -91,6 +103,7 @@ public class CombatFx : MonoBehaviour
     {
         p.t.gameObject.SetActive(false);
         if (p.isModelBody) { _bodyPool[p.bull].Push(p.t); return; }
+        if (p.isWreckModel) { _wreckPool.Push(p.t); return; }
         var mf = p.t.GetComponent<MeshFilter>();
         if (mf == null) return;                       // a model wrapper, not a primitive
         (mf.sharedMesh == _sphere ? _spheres : _cubes).Push(p.t);
@@ -234,6 +247,153 @@ public class CombatFx : MonoBehaviour
         return wrapper.transform;
     }
 
+    /// <summary>
+    /// A tank going up.
+    ///
+    /// Not one sphere. A shell cooking off a hull is a white core, a fireball
+    /// that arrives in stages rather than all at once, a smoke column that
+    /// outlives the flame, debris on ballistic arcs, and a ring of dust across
+    /// the ground - and the burnt-out hull left behind. Any one of those on its
+    /// own reads as a placeholder, which is exactly what the single orange
+    /// sphere was.
+    /// </summary>
+    public void TankExplosion(Vector3 at, float heading)
+    {
+        // white-hot core, brief
+        Fireball(at + Vector3.up * 1.2f, 5.5f, fireCoreMaterial, 0f, 0.22f);
+
+        // the body of the flame, arriving in stages so it billows
+        for (int i = 0; i < 5; i++)
+        {
+            var off = new Vector3(Random.Range(-2.2f, 2.2f), Random.Range(0.4f, 3.4f), Random.Range(-2.2f, 2.2f));
+            Fireball(at + off, Random.Range(4f, 7.5f), fireMaterial, i * 0.055f, Random.Range(0.4f, 0.7f));
+        }
+
+        // smoke outlives the fire and keeps rising
+        for (int i = 0; i < 7; i++)
+        {
+            var off = new Vector3(Random.Range(-1.8f, 1.8f), Random.Range(1f, 3f), Random.Range(-1.8f, 1.8f));
+            Smoke(at + off, Random.Range(3.5f, 6.5f), i * 0.12f);
+        }
+
+        // torn plate and road wheels thrown clear
+        for (int i = 0; i < 12; i++)
+        {
+            float a = Random.Range(0f, Mathf.PI * 2f);
+            var v = new Vector3(Mathf.Sin(a), 0f, Mathf.Cos(a)) * Random.Range(6f, 16f);
+            v.y = Random.Range(7f, 15f);
+            Debris(at + Vector3.up * 1.4f, v, Random.Range(0.3f, 0.8f));
+        }
+
+        Shockwave(at);
+        WreckModel(at, heading);
+    }
+
+    void Fireball(Vector3 at, float size, Material mat, float delay, float life)
+    {
+        if (_live.Count >= maxPieces) return;
+        var t = Take(_spheres, _sphere, mat ?? blastMaterial);
+        t.SetPositionAndRotation(at, Random.rotation);
+        t.localScale = Vector3.zero;
+        _live.Add(new Piece
+        {
+            t = t, life = delay + life, delay = delay,
+            baseScale = Vector3.one * size, kind = Kind.Fireball,
+        });
+    }
+
+    void Smoke(Vector3 at, float size, float delay)
+    {
+        if (_live.Count >= maxPieces) return;
+        var t = Take(_spheres, _sphere, smokeMaterial ?? blastMaterial);
+        t.SetPositionAndRotation(at, Random.rotation);
+        t.localScale = Vector3.zero;
+        _live.Add(new Piece
+        {
+            t = t, life = delay + Random.Range(2.4f, 3.8f), delay = delay,
+            baseScale = Vector3.one * size, kind = Kind.Smoke, from = at,
+            velocity = new Vector3(Random.Range(-0.6f, 0.6f), Random.Range(2.2f, 3.6f), Random.Range(-0.6f, 0.6f)),
+        });
+    }
+
+    void Debris(Vector3 at, Vector3 velocity, float size)
+    {
+        if (_live.Count >= maxPieces) return;
+        var t = Take(_cubes, _cube, debrisMaterial ?? blastMaterial);
+        t.SetPositionAndRotation(at, Random.rotation);
+        var scale = Vector3.one * size;
+        t.localScale = scale;
+        _live.Add(new Piece
+        {
+            t = t, life = Random.Range(1.4f, 2.4f), baseScale = scale, kind = Kind.Debris,
+            from = at, velocity = velocity,
+            spin = new Vector3(Random.Range(-720f, 720f), Random.Range(-720f, 720f), Random.Range(-720f, 720f)),
+        });
+    }
+
+    /// <summary>Dust driven out across the ground: a flat disc, not a ball.</summary>
+    void Shockwave(Vector3 at)
+    {
+        if (_live.Count >= maxPieces) return;
+        var t = Take(_spheres, _sphere, smokeMaterial ?? blastMaterial);
+        t.SetPositionAndRotation(at + Vector3.up * 0.3f, Quaternion.identity);
+        t.localScale = Vector3.zero;
+        _live.Add(new Piece
+        {
+            t = t, life = 0.85f, baseScale = new Vector3(18f, 0.9f, 18f), kind = Kind.Shockwave,
+        });
+    }
+
+    /// <summary>The burnt-out hull, using the real model where there is one.</summary>
+    void WreckModel(Vector3 at, float heading)
+    {
+        if (_live.Count >= maxPieces) return;
+        if (wreckPrefab == null) { Wreck(at, heading); return; }
+
+        Transform t;
+        if (_wreckPool.Count > 0) { t = _wreckPool.Pop(); t.gameObject.SetActive(true); }
+        else
+        {
+            var wrapper = new GameObject("Wreck");
+            wrapper.transform.SetParent(transform, false);
+            var model = Instantiate(wreckPrefab, wrapper.transform);
+
+            var rs = model.GetComponentsInChildren<Renderer>(true);
+            if (rs.Length > 0)
+            {
+                Bounds B() { var b = rs[0].bounds; foreach (var r in rs) b.Encapsulate(r.bounds); return b; }
+                var bounds = B();
+                float across = Mathf.Min(bounds.size.x, bounds.size.z);
+                if (across > 0.0001f) model.transform.localScale = Vector3.one * (wreckWidth / across);
+                bounds = B();
+                float sole = wrapper.transform.InverseTransformPoint(
+                    new Vector3(bounds.center.x, bounds.min.y, bounds.center.z)).y;
+                model.transform.localPosition = new Vector3(0f, -sole, 0f);
+            }
+            // charred: the same hull, burnt, rather than a differently coloured tank
+            foreach (var r in model.GetComponentsInChildren<Renderer>(true))
+            {
+                var mats = new Material[r.sharedMaterials.Length];
+                for (int i = 0; i < mats.Length; i++) mats[i] = debrisMaterial;
+                r.sharedMaterials = mats;
+            }
+            foreach (var a in model.GetComponentsInChildren<Animator>(true)) Destroy(a);
+            foreach (var c in model.GetComponentsInChildren<Collider>(true)) Destroy(c);
+            t = wrapper.transform;
+        }
+
+        // knocked askew, because a wreck does not sit square
+        t.SetPositionAndRotation(at, Quaternion.Euler(
+            Random.Range(-7f, 7f), heading * Mathf.Rad2Deg + Random.Range(-18f, 18f), Random.Range(-7f, 7f)));
+        t.localScale = Vector3.one;
+        _live.Add(new Piece
+        {
+            t = t, life = 22f, baseScale = Vector3.one, kind = Kind.Wreck, isWreckModel = true,
+        });
+    }
+
+    readonly Stack<Transform> _wreckPool = new Stack<Transform>();
+
     /// <summary>A burning hull, left where it died.</summary>
     public void Wreck(Vector3 at, float heading)
     {
@@ -256,7 +416,9 @@ public class CombatFx : MonoBehaviour
         {
             var p = _live[i];
             p.age += dt;
-            float k = Mathf.Clamp01(p.age / p.life);
+            if (p.age < p.delay) continue;                 // not lit yet
+            float span = Mathf.Max(0.0001f, p.life - p.delay);
+            float k = Mathf.Clamp01((p.age - p.delay) / span);
 
             switch (p.kind)
             {
@@ -287,7 +449,41 @@ public class CombatFx : MonoBehaviour
                     break;
                 }
                 case Kind.Wreck:
+                    if (k > 0.85f) p.t.localScale = p.baseScale * Mathf.Lerp(1f, 0f, (k - 0.85f) / 0.15f);
+                    break;
+
+                case Kind.Fireball:
+                    // snaps open, then collapses in on itself
+                    p.t.localScale = p.baseScale *
+                        (k < 0.22f ? Mathf.Lerp(0.15f, 1f, k / 0.22f)
+                                   : Mathf.Lerp(1f, 0f, (k - 0.22f) / 0.78f));
+                    break;
+
+                case Kind.Smoke:
+                    // rises and swells while it thins away
+                    p.t.position = p.from + p.velocity * (p.age - p.delay);
+                    p.t.localScale = p.baseScale *
+                        (k < 0.3f ? Mathf.Lerp(0.2f, 1f, k / 0.3f)
+                                  : Mathf.Lerp(1f, 0.05f, (k - 0.3f) / 0.7f));
+                    break;
+
+                case Kind.Debris:
+                {
+                    // a real arc, so pieces land instead of drifting off
+                    float t2 = p.age;
+                    var pos = p.from + p.velocity * t2 + Vector3.up * (-9.81f * 0.5f * t2 * t2);
+                    float floor = Ground(pos.x, pos.z) + p.baseScale.y * 0.5f;
+                    if (pos.y < floor) { pos.y = floor; p.velocity = Vector3.zero; }
+                    p.t.position = pos;
+                    p.t.Rotate(p.spin * dt, Space.Self);
                     if (k > 0.7f) p.t.localScale = p.baseScale * Mathf.Lerp(1f, 0f, (k - 0.7f) / 0.3f);
+                    break;
+                }
+
+                case Kind.Shockwave:
+                    // flat and spreading: dust driven out, not a ball of fire
+                    p.t.localScale = new Vector3(
+                        p.baseScale.x * k, p.baseScale.y * (1f - k * 0.7f), p.baseScale.z * k);
                     break;
             }
 
@@ -330,11 +526,6 @@ public class CombatFx : MonoBehaviour
                  u.side == Army.Side.Bull, knock);
         };
 
-        army.Destroyed += v =>
-        {
-            var at = new Vector3(v.x, Ground(v.x, v.z) + 1.2f, v.z);
-            Blast(at, 9f);
-            Wreck(at, v.heading);
-        };
+        army.Destroyed += v => TankExplosion(new Vector3(v.x, Ground(v.x, v.z), v.z), v.heading);
     }
 }

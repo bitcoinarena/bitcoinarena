@@ -42,6 +42,12 @@ public static class BuildPrototypeScene
         boot.tracerMaterial = Lit("Tracer", new Color(1f, 0.92f, 0.55f), 0.2f);
         boot.flashMaterial = Lit("Flash", new Color(1f, 0.96f, 0.78f), 0.15f);
         boot.blastMaterial = Lit("Blast", new Color(1f, 0.55f, 0.14f), 0.35f);
+        // Fire GLOWS. A bright base colour is still just a lit surface; emission
+        // is what makes it a light source, and what bloom can catch.
+        boot.fireCoreMaterial = Glow("FireCore", new Color(1f, 0.97f, 0.86f), 9f);
+        boot.fireMaterial = Glow("Fire", new Color(1f, 0.48f, 0.10f), 5f);
+        boot.smokeMaterial = Lit("Smoke", new Color(0.17f, 0.16f, 0.15f), 0.95f);
+        boot.debrisMaterial = Lit("Debris", new Color(0.10f, 0.09f, 0.09f), 0.8f);
 
         // Pick up an imported soldier model if one is in the project. Done by
         // search rather than by hand in the inspector, because regenerating the
@@ -111,23 +117,23 @@ public static class BuildPrototypeScene
         tone.mode.value = TonemappingMode.ACES;      // filmic shoulder, deep blacks
 
         var colour = profile.Add<ColorAdjustments>(true);
-        colour.postExposure.overrideState = true; colour.postExposure.value = 0.35f;
-        colour.contrast.overrideState = true; colour.contrast.value = 22f;
-        colour.saturation.overrideState = true; colour.saturation.value = 14f;
+        colour.postExposure.overrideState = true; colour.postExposure.value = 1.05f;
+        colour.contrast.overrideState = true; colour.contrast.value = 20f;
+        colour.saturation.overrideState = true; colour.saturation.value = 12f;
 
         var bloom = profile.Add<Bloom>(true);
-        bloom.threshold.overrideState = true; bloom.threshold.value = 1.05f;
-        bloom.intensity.overrideState = true; bloom.intensity.value = 0.45f;
+        bloom.threshold.overrideState = true; bloom.threshold.value = 0.95f;
+        bloom.intensity.overrideState = true; bloom.intensity.value = 0.7f;
         bloom.scatter.overrideState = true; bloom.scatter.value = 0.62f;
 
         var vignette = profile.Add<Vignette>(true);
-        vignette.intensity.overrideState = true; vignette.intensity.value = 0.28f;
+        vignette.intensity.overrideState = true; vignette.intensity.value = 0.18f;
         vignette.smoothness.overrideState = true; vignette.smoothness.value = 0.45f;
 
         foreach (var c in profile.components) AssetDatabase.AddObjectToAsset(c, profile);
         EditorUtility.SetDirty(profile);
         AssetDatabase.SaveAssets();
-        Debug.Log("[BuildPrototypeScene] post profile: ACES, contrast +22, bloom, vignette");
+        Debug.Log("[BuildPrototypeScene] post profile: ACES, exposure +1.05, contrast +20, bloom 0.7");
         return profile;
     }
 
@@ -335,6 +341,22 @@ public static class BuildPrototypeScene
         mat.SetFloat("_BumpScale", normalStrength);
         mat.EnableKeyword("_NORMALMAP");
         EditorUtility.SetDirty(mat);
+    }
+
+    /// <summary>
+    /// An emissive material. Set on the ASSET, so the _EMISSION keyword is
+    /// there at build time - a keyword enabled only at runtime is one the
+    /// stripper has already thrown away.
+    /// </summary>
+    static Material Glow(string name, Color colour, float strength)
+    {
+        var mat = Lit(name, colour, 0.2f);
+        if (mat == null) return null;
+        mat.SetColor("_EmissionColor", colour * strength);
+        mat.EnableKeyword("_EMISSION");
+        mat.globalIlluminationFlags = MaterialGlobalIlluminationFlags.RealtimeEmissive;
+        EditorUtility.SetDirty(mat);
+        return mat;
     }
 
     /// <summary>Create (or refresh) a URP/Lit material asset.</summary>

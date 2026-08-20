@@ -35,6 +35,10 @@ public class Bootstrap : MonoBehaviour
     public Material tracerMaterial;
     public Material flashMaterial;
     public Material blastMaterial;
+    public Material fireCoreMaterial;
+    public Material fireMaterial;
+    public Material smokeMaterial;
+    public Material debrisMaterial;
 
     [Header("Armies")]
     public int armourPerSide = 11;
@@ -44,10 +48,10 @@ public class Bootstrap : MonoBehaviour
     public UnityEngine.Rendering.VolumeProfile postProfile;
 
     [Header("Sun")]
-    public float sunPitch = 28f;          // low, for long shadows
+    public float sunPitch = 34f;          // low enough for long shadows, high enough to light
     public float sunYaw = -42f;
-    public Color sunColour = new Color(1f, 0.93f, 0.80f);
-    public float sunIntensity = 2.9f;
+    public Color sunColour = new Color(1f, 0.95f, 0.86f);
+    public float sunIntensity = 3.6f;
 
     /// <summary>
     /// How far the road ribbon floats above the terrain. Just enough to beat
@@ -117,6 +121,10 @@ public class Bootstrap : MonoBehaviour
         tracerMaterial = Fallback(tracerMaterial, new Color(1f, 0.92f, 0.55f), 0.2f);
         flashMaterial = Fallback(flashMaterial, new Color(1f, 0.96f, 0.78f), 0.15f);
         blastMaterial = Fallback(blastMaterial, new Color(1f, 0.55f, 0.14f), 0.35f);
+        fireCoreMaterial = Fallback(fireCoreMaterial, new Color(1f, 0.97f, 0.86f), 0.1f);
+        fireMaterial = Fallback(fireMaterial, new Color(1f, 0.48f, 0.10f), 0.3f);
+        smokeMaterial = Fallback(smokeMaterial, new Color(0.17f, 0.16f, 0.15f), 0.95f);
+        debrisMaterial = Fallback(debrisMaterial, new Color(0.10f, 0.09f, 0.09f), 0.8f);
         roadMaterial = Fallback(roadMaterial, new Color(0.12f, 0.12f, 0.13f), 0.72f);
         bodyMaterial = Fallback(bodyMaterial, new Color(0.16f, 0.34f, 0.22f), 0.45f);
         wheelMaterial = Fallback(wheelMaterial, new Color(0.05f, 0.05f, 0.06f), 0.95f);
@@ -153,9 +161,12 @@ public class Bootstrap : MonoBehaviour
         // A gradient keeps the ground dark and the sky bright, which is both
         // more like daylight and far more legible.
         RenderSettings.ambientMode = UnityEngine.Rendering.AmbientMode.Trilight;
-        RenderSettings.ambientSkyColor = new Color(0.42f, 0.50f, 0.62f);
-        RenderSettings.ambientEquatorColor = new Color(0.26f, 0.27f, 0.28f);
-        RenderSettings.ambientGroundColor = new Color(0.11f, 0.10f, 0.09f);
+        // Lifted well up. A gradient keeps the modelling that flat sky fill
+        // destroys, but set too dark it just makes everything dim - which is
+        // the other half of "no contrast".
+        RenderSettings.ambientSkyColor = new Color(0.62f, 0.72f, 0.86f);
+        RenderSettings.ambientEquatorColor = new Color(0.44f, 0.45f, 0.46f);
+        RenderSettings.ambientGroundColor = new Color(0.20f, 0.19f, 0.17f);
 
         RenderSettings.fog = true;
         RenderSettings.fogMode = FogMode.ExponentialSquared;
@@ -288,6 +299,11 @@ public class Bootstrap : MonoBehaviour
         Fx.bullMaterial = bullMaterial;
         Fx.bearMaterial = bearMaterial;
         Fx.bodyPrefab = soldierPrefab;
+        Fx.fireCoreMaterial = fireCoreMaterial;
+        Fx.fireMaterial = fireMaterial;
+        Fx.smokeMaterial = smokeMaterial;
+        Fx.debrisMaterial = debrisMaterial;
+        Fx.wreckPrefab = tankPrefab;
         fxGo.SetActive(true);
         Fx.Bind(Field.Army);
     }
