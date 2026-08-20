@@ -15,6 +15,9 @@ public class Bootstrap : MonoBehaviour
     [Header("Optional imported models")]
     public GameObject truckModel;
     public GameObject wheelModel;
+    [Tooltip("Soldier prefab from an imported pack. Empty falls back to boxes.")]
+    public GameObject soldierPrefab;
+    public float soldierYawOffset;
 
     [Header("Materials (assign URP/Lit with Poly Haven maps)")]
     public Material groundMaterial;
@@ -241,6 +244,8 @@ public class Bootstrap : MonoBehaviour
         renderer.terrain = _terrain;
         renderer.bullMaterial = bullMaterial;
         renderer.bearMaterial = bearMaterial;
+        renderer.soldierPrefab = soldierPrefab;
+        renderer.soldierYawOffset = soldierYawOffset;
         go.SetActive(true);
 
         var fxGo = new GameObject("CombatFx");

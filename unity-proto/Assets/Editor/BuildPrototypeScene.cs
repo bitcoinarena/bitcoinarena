@@ -38,6 +38,15 @@ public static class BuildPrototypeScene
         boot.flashMaterial = Lit("Flash", new Color(1f, 0.96f, 0.78f), 0.15f);
         boot.blastMaterial = Lit("Blast", new Color(1f, 0.55f, 0.14f), 0.35f);
 
+        // Pick up an imported soldier model if one is in the project. Done by
+        // search rather than by hand in the inspector, because regenerating the
+        // scene would otherwise silently drop the assignment every time.
+        boot.soldierPrefab = FindPrefab("soldier", "infantry", "trooper");
+        if (boot.soldierPrefab != null)
+            Debug.Log($"[BuildPrototypeScene] soldier model: {AssetDatabase.GetAssetPath(boot.soldierPrefab)}");
+        else
+            Debug.Log("[BuildPrototypeScene] no soldier model found - falling back to boxes");
+
         // scanned CC0 surfaces from Poly Haven, over the flat colours
         AddDetail(boot.groundMaterial,
                   "Assets/Textures/ground/aerial_ground_rock_diff.jpg",
@@ -57,6 +66,27 @@ public static class BuildPrototypeScene
         EditorBuildSettings.scenes = new[] { new EditorBuildSettingsScene(ScenePath, true) };
         AssetDatabase.SaveAssets();
         Debug.Log($"[BuildPrototypeScene] wrote {ScenePath} and set it as build scene 0");
+    }
+
+    /// <summary>
+    /// First prefab in the project whose name contains one of these words, and
+    /// which actually has geometry - packs ship empty rigs and effect prefabs
+    /// alongside the models.
+    /// </summary>
+    static GameObject FindPrefab(params string[] words)
+    {
+        foreach (var guid in AssetDatabase.FindAssets("t:Prefab"))
+        {
+            string path = AssetDatabase.GUIDToAssetPath(guid);
+            string name = System.IO.Path.GetFileNameWithoutExtension(path).ToLowerInvariant();
+            bool matches = false;
+            foreach (var w in words) if (name.Contains(w)) { matches = true; break; }
+            if (!matches) continue;
+
+            var go = AssetDatabase.LoadAssetAtPath<GameObject>(path);
+            if (go != null && go.GetComponentInChildren<Renderer>(true) != null) return go;
+        }
+        return null;
     }
 
     /// <summary>
