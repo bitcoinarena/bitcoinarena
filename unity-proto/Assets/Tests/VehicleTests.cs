@@ -317,4 +317,60 @@ public class VehicleTests
         Assert.Greater(nearFront, field.Army.Armour.Count / 2,
             "die Haelfte der Panzer haelt sich nicht in der Naehe der Front auf");
     }
+
+    /// <summary>A tank is a thing in the way, not scenery you drive through.</summary>
+    [UnityTest]
+    public IEnumerator ArmourBlocksTheTruck()
+    {
+        yield return new WaitForSeconds(1.5f);
+        var field = Object.FindFirstObjectByType<Battlefield>();
+        Assert.IsNotNull(field?.Army);
+
+        // park a tank squarely in the truck's path and hold it there
+        var target = field.Army.Armour[0];
+        Vector3 start = _rb.position;
+        _truck.transform.rotation = Quaternion.LookRotation(Vector3.right, Vector3.up);
+        float blockX = start.x + 22f;
+        target.x = blockX; target.z = start.z;
+
+        _truck.useExternalInput = true;
+        _truck.externalThrottle = 1f;
+
+        float furthest = start.x;
+        for (float t = 0f; t < 12f; t += 0.1f)
+        {
+            // the army keeps stepping, so pin the blocker every frame
+            target.x = blockX; target.z = start.z; target.hp = 99f;
+            furthest = Mathf.Max(furthest, _rb.position.x);
+            yield return new WaitForSeconds(0.1f);
+        }
+        _truck.useExternalInput = false;
+
+        Assert.Less(furthest, blockX + 4f,
+            $"der Truck ist durch den Panzer hindurchgefahren (bis x={furthest:0.0}, Panzer bei {blockX:0.0})");
+        Assert.Greater(furthest, start.x + 6f, "der Truck ist gar nicht erst losgefahren");
+    }
+
+    [UnityTest]
+    public IEnumerator UnitsDoNotShoveEachOtherWithPhysics()
+    {
+        yield return new WaitForSeconds(2f);
+        // hulls and soldiers share a layer whose self-collision is off, so the
+        // Army logic is the only thing deciding where they stand
+        Assert.IsTrue(Physics.GetIgnoreLayerCollision(ArmyRenderer.UnitLayer, ArmyRenderer.UnitLayer),
+            "Einheiten kollidieren miteinander - Physik und Army-Logik streiten um dieselben Positionen");
+
+        var hull = GameObject.Find("Hull");
+        Assert.IsNotNull(hull, "kein Panzerrumpf in der Szene");
+        Assert.IsNotNull(hull.GetComponent<BoxCollider>(), "Panzer ohne Collider");
+        Assert.IsTrue(hull.GetComponent<Rigidbody>().isKinematic, "Panzer ist nicht kinematisch");
+        Assert.AreEqual(ArmyRenderer.UnitLayer, hull.layer);
+
+        var soldier = GameObject.Find("Soldier");
+        Assert.IsNotNull(soldier?.GetComponent<BoxCollider>(), "Soldat ohne Collider");
+
+        // a turret sits inside its own hull, so it must NOT carry one
+        var turret = GameObject.Find("Turret");
+        Assert.IsNull(turret?.GetComponent<BoxCollider>(), "Turm hat einen Collider und kaempft mit dem Rumpf");
+    }
 }

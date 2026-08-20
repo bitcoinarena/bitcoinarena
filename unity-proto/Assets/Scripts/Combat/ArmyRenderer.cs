@@ -22,6 +22,13 @@ public class ArmyRenderer : MonoBehaviour
     public Material bullMaterial;
     public Material bearMaterial;
 
+    /// <summary>
+    /// Units live on their own layer with self-collision switched off. The Army
+    /// logic already pushes hulls apart; letting the physics engine do it too
+    /// means two systems fighting over the same positions every frame.
+    /// </summary>
+    public const int UnitLayer = 8;
+
     Mesh _hull, _turret, _soldier;
     readonly List<Transform> _hulls = new List<Transform>();
     readonly List<Transform> _turrets = new List<Transform>();
@@ -29,6 +36,7 @@ public class ArmyRenderer : MonoBehaviour
 
     void Awake()
     {
+        Physics.IgnoreLayerCollision(UnitLayer, UnitLayer, true);
         _hull = Box(new Vector3(3.4f, 1.5f, 6.2f), "TankHull");
         _turret = Turret();
         _soldier = Box(new Vector3(0.7f, 1.8f, 0.5f), "Soldier");
@@ -67,13 +75,30 @@ public class ArmyRenderer : MonoBehaviour
         return m;
     }
 
-    Transform MakePiece(Mesh mesh, string name)
+    /// <param name="solid">
+    /// Hulls and soldiers block the truck; turrets do not, because a turret
+    /// sits inside its own hull's collider and would only fight with it.
+    /// </param>
+    Transform MakePiece(Mesh mesh, string name, bool solid, Vector3 hitbox)
     {
         var go = new GameObject(name);
         go.transform.SetParent(transform, false);
+        go.layer = UnitLayer;
         go.AddComponent<MeshFilter>().sharedMesh = mesh;
         var mr = go.AddComponent<MeshRenderer>();
         mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.On;
+
+        if (solid)
+        {
+            go.AddComponent<BoxCollider>().size = hitbox;
+            // A collider that moves every frame without a body makes Unity
+            // rebuild the static collision structure each time. Kinematic keeps
+            // it in the moving set and still refuses to be pushed around.
+            var rb = go.AddComponent<Rigidbody>();
+            rb.isKinematic = true;
+            rb.useGravity = false;
+            rb.interpolation = RigidbodyInterpolation.Interpolate;
+        }
         return go.transform;
     }
 
@@ -97,9 +122,10 @@ public class ArmyRenderer : MonoBehaviour
         if (army == null) return;
 
         int armour = army.Armour.Count;
-        Fit(_hulls, armour, () => MakePiece(_hull, "Hull"));
-        Fit(_turrets, armour, () => MakePiece(_turret, "Turret"));
-        Fit(_soldiers, army.Infantry.Count, () => MakePiece(_soldier, "Soldier"));
+        Fit(_hulls, armour, () => MakePiece(_hull, "Hull", true, new Vector3(3.4f, 1.5f, 6.2f)));
+        Fit(_turrets, armour, () => MakePiece(_turret, "Turret", false, Vector3.zero));
+        Fit(_soldiers, army.Infantry.Count,
+            () => MakePiece(_soldier, "Soldier", true, new Vector3(0.7f, 1.8f, 0.5f)));
 
         for (int i = 0; i < armour; i++)
         {
