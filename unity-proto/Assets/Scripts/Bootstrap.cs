@@ -352,5 +352,6 @@ public class Bootstrap : MonoBehaviour
         var chase = go.AddComponent<ChaseCamera>();
         chase.target = truck.transform;
         chase.targetBody = truck.GetComponent<Rigidbody>();
+        chase.terrain = _terrain;
     }
 }

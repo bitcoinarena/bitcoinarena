@@ -8,7 +8,7 @@ using UnityEngine;
 /// </summary>
 public static class TouchPad
 {
-    public enum Pad { Left, Right, Up, Down, Handbrake }
+    public enum Pad { Left, Right, Up, Down, Handbrake, View }
 
     /// <summary>
     /// Button size. Thumbs are blunt and a phone held in landscape has very
@@ -39,6 +39,9 @@ public static class TouchPad
             case Pad.Up:        return new Rect(screenW - m - s, bottom - s - m * 0.5f, s, s);
             case Pad.Down:      return new Rect(screenW - m - s, bottom, s, s);
             case Pad.Handbrake: return new Rect(screenW - m - s * 2f - m * 0.5f, bottom, s, s);
+            // top-left is the diagnostics box and top-centre is the price, so
+            // the view toggle goes top-right where nothing else lives
+            case Pad.View:      return new Rect(screenW - m - s * 0.7f, m, s * 0.7f, s * 0.7f);
             default:            return new Rect();
         }
     }

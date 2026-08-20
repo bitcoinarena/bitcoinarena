@@ -27,6 +27,7 @@ public class TouchControls : MonoBehaviour
     public List<Vector2> debugPoints;
 
     readonly List<Vector2> _points = new List<Vector2>();
+    bool _viewHeld;
     Texture2D _flat;
     readonly Dictionary<TouchPad.Pad, Texture2D> _arrows = new Dictionary<TouchPad.Pad, Texture2D>();
 
@@ -41,7 +42,7 @@ public class TouchControls : MonoBehaviour
     {
         _flat = new Texture2D(1, 1); _flat.SetPixel(0, 0, Color.white); _flat.Apply();
         foreach (TouchPad.Pad p in System.Enum.GetValues(typeof(TouchPad.Pad)))
-            if (p != TouchPad.Pad.Handbrake) _arrows[p] = MakeArrow(p);
+            if (p != TouchPad.Pad.Handbrake && p != TouchPad.Pad.View) _arrows[p] = MakeArrow(p);
     }
 
     /// <summary>Solid triangle pointing the pad's way, on a transparent field.</summary>
@@ -105,6 +106,12 @@ public class TouchControls : MonoBehaviour
         DriveInput.TouchThrottle = throttle;
         DriveInput.TouchSteer = steer;
         DriveInput.TouchHandbrake = handbrake;
+
+        // the view pad is a tap, not a hold: fire on the press edge only, or
+        // resting a thumb on it flips the camera every frame
+        bool view = TouchPad.Hit(TouchPad.Pad.View, Screen.width, Screen.height, _points);
+        DriveInput.TouchCameraTapped = view && !_viewHeld;
+        _viewHeld = view;
     }
 
     void OnGUI()
@@ -123,7 +130,18 @@ public class TouchControls : MonoBehaviour
             GUI.color = held ? new Color(1f, 1f, 1f, 0.95f) : new Color(1f, 1f, 1f, 0.55f);
             DrawRing(r, Mathf.Max(2f, r.width * 0.035f));
 
-            if (pad == TouchPad.Pad.Handbrake)
+            if (pad == TouchPad.Pad.View)
+            {
+                var vs = new GUIStyle(GUI.skin.label)
+                {
+                    alignment = TextAnchor.MiddleCenter,
+                    fontSize = Mathf.RoundToInt(r.width * 0.30f),
+                    fontStyle = FontStyle.Bold,
+                };
+                vs.normal.textColor = held ? Color.black : Color.white;
+                GUI.Label(r, "VIEW", vs);
+            }
+            else if (pad == TouchPad.Pad.Handbrake)
             {
                 var st = new GUIStyle(GUI.skin.label)
                 {

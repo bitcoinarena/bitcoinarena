@@ -212,3 +212,31 @@ public class TouchResolveTests
         Assert.AreEqual(1f, thr, 0.001f);
     }
 }
+
+/// <summary>The view toggle must not collide with the driving pads.</summary>
+public class ViewPadTests
+{
+    static readonly (int w, int h)[] Screens =
+        { (844, 390), (932, 430), (390, 844), (1180, 820), (2340, 1080), (360, 640) };
+
+    [Test] public void ViewPadNeverOverlapsTheControls()
+    {
+        foreach (var (w, h) in Screens)
+            Assert.IsTrue(TouchPad.LayoutIsDisjoint(w, h), $"Pads ueberlappen auf {w}x{h}");
+    }
+
+    [Test] public void ViewPadStaysOnScreen()
+    {
+        foreach (var (w, h) in Screens)
+            Assert.IsTrue(TouchPad.LayoutFitsOnScreen(w, h), $"Pad ausserhalb auf {w}x{h}");
+    }
+
+    [Test] public void TappingViewDoesNotSteerOrAccelerate()
+    {
+        const int W = 844, H = 390;
+        var pts = new System.Collections.Generic.List<Vector2>
+            { TouchPad.RectFor(TouchPad.Pad.View, W, H).center };
+        TouchPad.Resolve(pts, W, H, out var thr, out var steer, out var hb);
+        Assert.AreEqual(0f, thr, 0.001f); Assert.AreEqual(0f, steer, 0.001f); Assert.IsFalse(hb);
+    }
+}

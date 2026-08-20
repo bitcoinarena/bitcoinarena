@@ -93,11 +93,13 @@ Im Browser gemessen: 56 km/h, 4/4 Räder am Boden, 56 Einheiten zurückgelegt.
 | `A` `D` / `←` `→` | Lenken |
 | `Leertaste` | Handbremse |
 | `R` | Truck zurücksetzen |
+| `G` oder `Tab` | Übersicht ↔ Verfolgeransicht |
 
 Erst **ins Canvas klicken**, sonst gehen die Tasten an die Seite.
 
 Auf Geräten mit Touchscreen erscheinen zusätzlich Bildschirmtasten: Lenkung
-links, Gas und Bremse rechts, Handbremse dazwischen. Sie sind bewusst *nicht*
+links, Gas und Bremse rechts, Handbremse dazwischen, Ansichtswechsel oben
+rechts. Sie sind bewusst *nicht*
 mit `GUI.Button` gebaut — das löst immer nur einen Druck gleichzeitig auf, und
 Fahren braucht Gas und Lenken zusammen. Stattdessen werden die Fingerpositionen
 direkt gegen die Flächen geprüft, also zählt jeder Finger.

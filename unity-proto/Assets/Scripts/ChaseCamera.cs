@@ -7,8 +7,18 @@ using UnityEngine;
 /// </summary>
 public class ChaseCamera : MonoBehaviour
 {
+    public enum Mode { Follow, God }
+
     public Transform target;
     public Rigidbody targetBody;
+
+    [Header("God view")]
+    public MempoolTerrain terrain;
+    /// <summary>Tilt of the overview. Straight down reads as a map; this reads as a battlefield.</summary>
+    public float godPitch = 62f;
+
+    public Mode View { get; private set; } = Mode.Follow;
+    public void Toggle() => View = View == Mode.Follow ? Mode.God : Mode.Follow;
 
     [Header("Framing")]
     public float distance = 9f;
@@ -25,6 +35,32 @@ public class ChaseCamera : MonoBehaviour
     float _yaw;
     Vector3 _pos;
 
+    /// <summary>
+    /// High enough that the whole battlefield fits, worked out from the field
+    /// size and the lens rather than a hand-tuned height - the terrain is
+    /// 260 by 170, and a number that happens to fit today stops fitting the
+    /// moment either changes.
+    /// </summary>
+    void GodView()
+    {
+        var cam = GetComponent<Camera>();
+        float w = terrain != null ? terrain.width : 260f;
+        float d = terrain != null ? terrain.depth : 170f;
+
+        float vFov = cam.fieldOfView * Mathf.Deg2Rad;
+        float hFov = 2f * Mathf.Atan(Mathf.Tan(vFov * 0.5f) * cam.aspect);
+        // distance needed for each axis, with a margin so nothing touches the edge
+        float need = Mathf.Max(d * 0.5f / Mathf.Tan(vFov * 0.5f), w * 0.5f / Mathf.Tan(hFov * 0.5f)) * 1.25f;
+
+        float pitch = godPitch * Mathf.Deg2Rad;
+        var centre = new Vector3(0f, 0f, 0f);
+        var pos = centre + new Vector3(0f, Mathf.Sin(pitch), -Mathf.Cos(pitch)) * need;
+
+        _pos = Vector3.Lerp(_pos, pos, 1f - Mathf.Exp(-4f * Time.deltaTime));
+        transform.position = _pos;
+        transform.rotation = Quaternion.LookRotation(centre - _pos, Vector3.up);
+    }
+
     void Start()
     {
         if (target == null) return;
@@ -34,6 +70,8 @@ public class ChaseCamera : MonoBehaviour
 
     void LateUpdate()
     {
+        if (DriveInput.CameraToggle) Toggle();
+        if (View == Mode.God) { GodView(); return; }
         if (target == null) return;
 
         Vector3 v = targetBody != null ? targetBody.linearVelocity : Vector3.zero;

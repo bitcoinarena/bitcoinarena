@@ -20,6 +20,8 @@ public static class DriveInput
     public static float TouchThrottle;
     public static float TouchSteer;
     public static bool TouchHandbrake;
+    /// <summary>Set for a single frame by TouchControls when the view pad is tapped.</summary>
+    public static bool TouchCameraTapped;
 
     static float Merge(float key, float touch) => Mathf.Abs(touch) > Mathf.Abs(key) ? touch : key;
 
@@ -55,6 +57,21 @@ public static class DriveInput
             return Merge(v, TouchSteer);
 #else
             return Input.GetAxisRaw("Horizontal");
+#endif
+        }
+    }
+
+    /// <summary>Switch between the chase cam and the overview. Edge-triggered.</summary>
+    public static bool CameraToggle
+    {
+        get
+        {
+            if (TouchCameraTapped) return true;
+#if ENABLE_INPUT_SYSTEM
+            var k = Keyboard.current;
+            return k != null && (k.gKey.wasPressedThisFrame || k.tabKey.wasPressedThisFrame);
+#else
+            return Input.GetKeyDown(KeyCode.G) || Input.GetKeyDown(KeyCode.Tab);
 #endif
         }
     }

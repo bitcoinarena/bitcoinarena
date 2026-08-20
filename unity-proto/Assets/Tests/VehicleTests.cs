@@ -416,4 +416,57 @@ public class VehicleTests
         Assert.Greater(backedOff, 6f,
             $"nach der Kollision nur {backedOff:0.0} Einheiten zurueckgesetzt - der Truck steckt fest");
     }
+
+    /// <summary>
+    /// The overview has to actually show everything. Checking the height would
+    /// only prove the camera went up; this projects the four corners of the map
+    /// and requires all of them to land on screen, so the framing stays right
+    /// if the field size or the lens ever changes.
+    /// </summary>
+    [UnityTest]
+    public IEnumerator GodViewFramesTheWholeBattlefield()
+    {
+        yield return new WaitForSeconds(1f);
+        var chase = Object.FindFirstObjectByType<ChaseCamera>();
+        var cam = chase.GetComponent<Camera>();
+        var terrain = Object.FindFirstObjectByType<MempoolTerrain>();
+        Assert.AreEqual(ChaseCamera.Mode.Follow, chase.View, "startet nicht in der Verfolgeransicht");
+
+        chase.Toggle();
+        Assert.AreEqual(ChaseCamera.Mode.God, chase.View);
+        yield return new WaitForSeconds(2f);      // let it ease into place
+
+        float hw = terrain.width * 0.5f, hd = terrain.depth * 0.5f;
+        foreach (var corner in new[]
+        {
+            new Vector3(-hw, 0f, -hd), new Vector3(hw, 0f, -hd),
+            new Vector3(-hw, 0f, hd), new Vector3(hw, 0f, hd),
+        })
+        {
+            var v = cam.WorldToViewportPoint(corner);
+            Assert.Greater(v.z, 0f, $"Ecke {corner} liegt hinter der Kamera");
+            Assert.IsTrue(v.x is >= 0f and <= 1f && v.y is >= 0f and <= 1f,
+                $"Ecke {corner} liegt ausserhalb des Bildes bei {v.x:0.00}/{v.y:0.00}");
+        }
+
+        Assert.Greater(cam.transform.position.y, 60f, "die Uebersicht ist nicht ueber dem Feld");
+    }
+
+    [UnityTest]
+    public IEnumerator GodViewTogglesBackToTheChaseCam()
+    {
+        yield return new WaitForSeconds(1f);
+        var chase = Object.FindFirstObjectByType<ChaseCamera>();
+        chase.Toggle();
+        yield return new WaitForSeconds(1.5f);
+        Vector3 up = chase.transform.position;
+
+        chase.Toggle();
+        Assert.AreEqual(ChaseCamera.Mode.Follow, chase.View);
+        yield return new WaitForSeconds(2.5f);
+
+        Assert.Less(chase.transform.position.y, up.y - 20f, "die Kamera kommt nicht wieder herunter");
+        Assert.Less(Vector3.Distance(chase.transform.position, _truck.transform.position), 60f,
+            "die Verfolgeransicht steht nicht beim Truck");
+    }
 }
