@@ -20,6 +20,11 @@ public class CombatFx : MonoBehaviour
     public Material bullMaterial;
     public Material bearMaterial;
 
+    [Header("Bodies")]
+    [Tooltip("Soldier model for the fallen. Without it a plain box is used.")]
+    public GameObject bodyPrefab;
+    public float bodyHeight = 1.8f;
+
     class Piece
     {
         public Transform t;
@@ -27,9 +32,17 @@ public class CombatFx : MonoBehaviour
         public Vector3 baseScale;
         public Kind kind;
         public Quaternion fallFrom, fallTo;
+        public Vector3 slide, from;
+        public bool isModelBody, bull;
     }
 
     enum Kind { Tracer, Flash, Blast, Body, Wreck }
+
+    /// <summary>Pooled soldier models for the dead, kept per side so the tint holds.</summary>
+    readonly Dictionary<bool, Stack<Transform>> _bodyPool = new Dictionary<bool, Stack<Transform>>
+    {
+        { true, new Stack<Transform>() }, { false, new Stack<Transform>() },
+    };
 
     readonly List<Piece> _live = new List<Piece>();
     readonly Stack<Transform> _cubes = new Stack<Transform>();
@@ -77,7 +90,10 @@ public class CombatFx : MonoBehaviour
     void Retire(Piece p)
     {
         p.t.gameObject.SetActive(false);
-        (p.t.GetComponent<MeshFilter>().sharedMesh == _sphere ? _spheres : _cubes).Push(p.t);
+        if (p.isModelBody) { _bodyPool[p.bull].Push(p.t); return; }
+        var mf = p.t.GetComponent<MeshFilter>();
+        if (mf == null) return;                       // a model wrapper, not a primitive
+        (mf.sharedMesh == _sphere ? _spheres : _cubes).Push(p.t);
     }
 
     float Ground(float x, float z) => terrain != null ? terrain.SampleSurface(x, z) : 0f;
@@ -118,22 +134,104 @@ public class CombatFx : MonoBehaviour
         _live.Add(new Piece { t = t, life = 0.55f, baseScale = scale, kind = Kind.Blast });
     }
 
-    /// <summary>A rifleman going down: he topples, lies there, then sinks away.</summary>
-    public void Body(Vector3 at, float heading, bool bull)
+    /// <summary>
+    /// A rifleman going down.
+    ///
+    /// Uses the actual soldier model where one is available - a falling box is
+    /// a placeholder, not a casualty. He keeps whatever pose the animator left
+    /// him in, which reads far better than a rig snapping to a T-pose, then
+    /// topples and sinks away.
+    ///
+    /// <paramref name="knock"/> is how he was hit: a bullet folds him where he
+    /// stands, a truck throws him along the line it was travelling.
+    /// </summary>
+    public void Body(Vector3 at, float heading, bool bull, Vector2 knock = default)
     {
         if (_live.Count >= maxPieces) return;
-        var t = Take(_cubes, _cube, bull ? bullMaterial : bearMaterial);
-        var scale = new Vector3(0.7f, 1.8f, 0.5f);
-        t.localScale = scale;
-        var upright = Quaternion.Euler(0f, heading * Mathf.Rad2Deg, 0f);
-        // falls away from where he was facing, so a line goes down together
-        var flat = upright * Quaternion.Euler(78f, 0f, 0f);
+
+        Transform t;
+        Vector3 scale;
+        bool model = bodyPrefab != null;
+        if (model)
+        {
+            t = TakeBody(bull);
+            scale = Vector3.one;
+            t.localScale = scale;
+        }
+        else
+        {
+            t = Take(_cubes, _cube, bull ? bullMaterial : bearMaterial);
+            scale = new Vector3(0.7f, 1.8f, 0.5f);
+            t.localScale = scale;
+        }
+
+        // Face the way he FELL, not the way he stood: a man ridden down goes
+        // over along the truck's line, not his own.
+        bool thrown = knock.sqrMagnitude > 0.01f;
+        float faceYaw = thrown ? Mathf.Atan2(knock.x, knock.y) : heading;
+        var upright = Quaternion.Euler(0f, faceYaw * Mathf.Rad2Deg, 0f);
+        // onto his face, with a little roll so a row of dead is not a row of
+        // identical dead
+        var flat = upright * Quaternion.Euler(thrown ? 92f : 76f, 0f, Random.Range(-25f, 25f));
+
         t.SetPositionAndRotation(at, upright);
         _live.Add(new Piece
         {
-            t = t, life = 5f, baseScale = scale, kind = Kind.Body,
+            t = t, life = thrown ? 7f : 5f, baseScale = scale, kind = Kind.Body,
+            isModelBody = model, bull = bull,
             fallFrom = upright, fallTo = flat,
+            slide = thrown ? new Vector3(knock.x, 0f, knock.y) * 4.5f : Vector3.zero,
+            from = at,
         });
+    }
+
+    /// <summary>
+    /// A tinted soldier model for the dead, pooled - instantiating a skinned
+    /// mesh per casualty is not free, and there is about one a second.
+    /// </summary>
+    Transform TakeBody(bool bull)
+    {
+        var pool = _bodyPool[bull];
+        if (pool.Count > 0)
+        {
+            var reused = pool.Pop();
+            reused.gameObject.SetActive(true);
+            return reused;
+        }
+
+        var wrapper = new GameObject("Body");
+        wrapper.transform.SetParent(transform, false);
+        var body = Instantiate(bodyPrefab, wrapper.transform);
+
+        var renderers = body.GetComponentsInChildren<Renderer>(true);
+        if (renderers.Length > 0)
+        {
+            Bounds B()
+            {
+                var b = renderers[0].bounds;
+                foreach (var r in renderers) b.Encapsulate(r.bounds);
+                return b;
+            }
+            var bounds = B();
+            if (bounds.size.y > 0.0001f)
+                body.transform.localScale = Vector3.one * (bodyHeight / bounds.size.y);
+            bounds = B();
+            float sole = wrapper.transform.InverseTransformPoint(
+                new Vector3(bounds.center.x, bounds.min.y, bounds.center.z)).y;
+            body.transform.localPosition = new Vector3(0f, -sole, 0f);
+        }
+
+        var tint = bull ? bullMaterial : bearMaterial;
+        foreach (var r in body.GetComponentsInChildren<Renderer>(true))
+        {
+            var mats = new Material[r.sharedMaterials.Length];
+            for (int i = 0; i < mats.Length; i++) mats[i] = tint;
+            r.sharedMaterials = mats;
+        }
+        // the dead hold their last pose rather than jogging on the ground
+        foreach (var a in body.GetComponentsInChildren<Animator>(true)) Destroy(a);
+        foreach (var c in body.GetComponentsInChildren<Collider>(true)) Destroy(c);
+        return wrapper.transform;
     }
 
     /// <summary>A burning hull, left where it died.</summary>
@@ -174,11 +272,20 @@ public class CombatFx : MonoBehaviour
                     p.t.localScale = p.baseScale * grow;
                     break;
                 case Kind.Body:
+                {
                     // topple over the first half second, then sink into the ground
-                    p.t.rotation = Quaternion.Slerp(p.fallFrom, p.fallTo, Mathf.Clamp01(p.age / 0.5f));
-                    if (k > 0.75f)
-                        p.t.localScale = p.baseScale * Mathf.Lerp(1f, 0f, (k - 0.75f) / 0.25f);
+                    p.t.rotation = Quaternion.Slerp(p.fallFrom, p.fallTo, Mathf.Clamp01(p.age / 0.55f));
+                    // thrown bodies carry on along the line they were hit,
+                    // slowing as they tumble
+                    if (p.slide.sqrMagnitude > 0.001f)
+                    {
+                        float carried = 1f - Mathf.Exp(-3.2f * p.age);
+                        p.t.position = p.from + p.slide * carried;
+                    }
+                    if (k > 0.8f)
+                        p.t.localScale = p.baseScale * Mathf.Lerp(1f, 0f, (k - 0.8f) / 0.2f);
                     break;
+                }
                 case Kind.Wreck:
                     if (k > 0.7f) p.t.localScale = p.baseScale * Mathf.Lerp(1f, 0f, (k - 0.7f) / 0.3f);
                     break;
@@ -215,8 +322,13 @@ public class CombatFx : MonoBehaviour
             Blast(impact, 4.5f);
         };
 
-        army.Killed += u => Body(new Vector3(u.x, Ground(u.x, u.z) + 0.9f, u.z), u.heading,
-                               u.side == Army.Side.Bull);
+        army.Killed += (u, knock) =>
+        {
+            // a model body stands on the ground; the proxy box is centred
+            float lift = bodyPrefab != null ? 0f : 0.9f;
+            Body(new Vector3(u.x, Ground(u.x, u.z) + lift, u.z), u.heading,
+                 u.side == Army.Side.Bull, knock);
+        };
 
         army.Destroyed += v =>
         {

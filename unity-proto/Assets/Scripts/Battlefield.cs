@@ -55,7 +55,9 @@ public class Battlefield : MonoBehaviour
                 // out of a deep overlap so the truck can never be pinned
                 var body = courier.GetComponent<Rigidbody>();
                 float speed = body != null ? body.linearVelocity.magnitude : 0f;
-                RunDown += Army.RunOver(p.x, p.z, 3.6f, speed);
+                var v = body != null ? body.linearVelocity : Vector3.zero;
+                var knock = new Vector2(v.x, v.z).normalized;
+                RunDown += Army.RunOver(p.x, p.z, 3.6f, speed, knock);
 
                 Army.ClearPath(p.x, p.z, heading, Time.deltaTime);
             }

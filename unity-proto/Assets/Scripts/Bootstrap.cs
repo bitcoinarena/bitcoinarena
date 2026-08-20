@@ -287,6 +287,7 @@ public class Bootstrap : MonoBehaviour
         Fx.blastMaterial = blastMaterial;
         Fx.bullMaterial = bullMaterial;
         Fx.bearMaterial = bearMaterial;
+        Fx.bodyPrefab = soldierPrefab;
         fxGo.SetActive(true);
         Fx.Bind(Field.Army);
     }

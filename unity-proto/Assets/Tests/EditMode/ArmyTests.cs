@@ -292,7 +292,7 @@ public class InfantryCombatTests
     static int KillsOver(Army army, float seconds)
     {
         int kills = 0;
-        army.Killed += _ => kills++;
+        army.Killed += (_, __) => kills++;
         for (int i = 0; i < 60 * seconds; i++) army.Update(1f / 60f);
         return kills;
     }
@@ -336,7 +336,7 @@ public class InfantryCombatTests
             u.z = u.side == Army.Side.Bull ? -60f : 60f;
         }
         int kills = 0;
-        army.Killed += _ => kills++;
+        army.Killed += (_, __) => kills++;
         // one step only: any more and they close on the front and engage
         army.Update(1f / 60f);
         Assert.AreEqual(0, kills, "Soldaten sterben ausser Schussweite");
@@ -371,7 +371,7 @@ public class RunOverTests
         var army = Field();
         foreach (var u in army.Infantry) { u.x = 0f; u.z = 0f; }
         int before = army.Infantry.Count;
-        int down = army.RunOver(0f, 0f, 3.6f, 12f);
+        int down = army.RunOver(0f, 0f, 3.6f, 12f, Vector2.right);
         Assert.Greater(down, 0, "niemand wurde ueberfahren");
         Assert.AreEqual(before - down, army.Infantry.Count);
     }
@@ -381,7 +381,7 @@ public class RunOverTests
     {
         var army = Field();
         foreach (var u in army.Infantry) { u.x = 0f; u.z = 0f; }
-        Assert.AreEqual(0, army.RunOver(0f, 0f, 3.6f, 0.4f),
+        Assert.AreEqual(0, army.RunOver(0f, 0f, 3.6f, 0.4f, Vector2.right),
             "ein stehender Truck raeumt sich einen Platz frei");
     }
 
@@ -390,7 +390,7 @@ public class RunOverTests
     {
         var army = Field();
         foreach (var u in army.Infantry) { u.x = 60f; u.z = 60f; }
-        Assert.AreEqual(0, army.RunOver(0f, 0f, 3.6f, 12f), "Soldaten am anderen Ende sterben mit");
+        Assert.AreEqual(0, army.RunOver(0f, 0f, 3.6f, 12f, Vector2.right), "Soldaten am anderen Ende sterben mit");
     }
 
     [Test]
@@ -399,7 +399,7 @@ public class RunOverTests
         var army = Field();
         foreach (var v in army.Armour) { v.x = 0f; v.z = 0f; }
         int before = army.Armour.Count;
-        army.RunOver(0f, 0f, 3.6f, 20f);
+        army.RunOver(0f, 0f, 3.6f, 20f, Vector2.right);
         Assert.AreEqual(before, army.Armour.Count, "ein Panzer wurde ueberfahren");
     }
 

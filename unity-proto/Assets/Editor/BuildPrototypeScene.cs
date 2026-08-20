@@ -48,9 +48,12 @@ public static class BuildPrototypeScene
         // scene would otherwise silently drop the assignment every time.
         boot.soldierPrefab = FindPrefab("soldier", "infantry", "trooper");
         boot.soldierAnimator = BuildSoldierAnimator();
-        // The pack's soldier faces away from its direction of travel, so he ran
-        // backwards while playing the forward animation.
-        boot.soldierYawOffset = 180f;
+        // Zero, and it must stay zero. The report of men running backwards was
+        // about RETREATING soldiers only - advancing ones were already right,
+        // so the model does face its own +Z. Fixing the heading logic AND
+        // adding 180 degrees was two corrections for one fault, and the second
+        // one turned everybody round.
+        boot.soldierYawOffset = 0f;
         boot.tankPrefab = FindPrefab("leopard", "tank", "panzer");
         boot.truckModel = FindPrefab("smalltruck", "industrialsmalltruck", "truck", "lorry", "van");
         Debug.Log($"[BuildPrototypeScene] truck model: " +

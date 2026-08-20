@@ -340,7 +340,7 @@ public class Army
         if (hit)
         {
             foe.hp -= 1f;
-            if (foe.hp <= 0f) Killed?.Invoke(foe);
+            if (foe.hp <= 0f) Killed?.Invoke(foe, Vector2.zero);
         }
     }
 
@@ -437,7 +437,8 @@ public class Army
     /// line it is merely touching, and a stationary one should not clear a
     /// space around itself. Returns how many went down.
     /// </summary>
-    public int RunOver(float x, float z, float radius, float speed, float minSpeed = 2.5f)
+    public int RunOver(float x, float z, float radius, float speed, Vector2 knock,
+                       float minSpeed = 2.5f)
     {
         if (speed < minSpeed) return 0;
         int down = 0;
@@ -448,7 +449,7 @@ public class Army
             float dx = u.x - x, dz = u.z - z;
             if (dx * dx + dz * dz > r2) continue;
             u.hp = 0f;
-            Killed?.Invoke(u);
+            Killed?.Invoke(u, knock);
             Infantry.RemoveAt(i);
             down++;
         }
@@ -461,6 +462,10 @@ public class Army
     public System.Action<Unit, Vector2> Shot;
     /// <summary>A tank was destroyed.</summary>
     public System.Action<Unit> Destroyed;
-    /// <summary>A rifleman went down.</summary>
-    public System.Action<Unit> Killed;
+    /// <summary>
+    /// A rifleman went down. The vector is the knock he took: zero for a bullet,
+    /// the vehicle's heading for someone ridden down, so the body can be thrown
+    /// the way it was hit rather than folding on the spot.
+    /// </summary>
+    public System.Action<Unit, Vector2> Killed;
 }
