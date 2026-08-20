@@ -15,6 +15,8 @@ public class Battlefield : MonoBehaviour
     public PriceHistory History { get; private set; }
     /// <summary>Both armies. Owned here because they live and die by the same tape.</summary>
     public Army Army { get; set; }
+    /// <summary>How many riflemen the courier has ridden down.</summary>
+    public int RunDown { get; private set; }
 
     /// <summary>Simulated price when the live feed has nothing, so the map is never dead.</summary>
     double _simPrice = 63000;
@@ -48,6 +50,13 @@ public class Battlefield : MonoBehaviour
             {
                 var p = courier.position;
                 float heading = courier.eulerAngles.y * Mathf.Deg2Rad;
+
+                // anything under the wheels goes down; the rest is only pushed
+                // out of a deep overlap so the truck can never be pinned
+                var body = courier.GetComponent<Rigidbody>();
+                float speed = body != null ? body.linearVelocity.magnitude : 0f;
+                RunDown += Army.RunOver(p.x, p.z, 3.6f, speed);
+
                 Army.ClearPath(p.x, p.z, heading, Time.deltaTime);
             }
         }

@@ -48,6 +48,9 @@ public static class BuildPrototypeScene
         // scene would otherwise silently drop the assignment every time.
         boot.soldierPrefab = FindPrefab("soldier", "infantry", "trooper");
         boot.soldierAnimator = BuildSoldierAnimator();
+        // The pack's soldier faces away from its direction of travel, so he ran
+        // backwards while playing the forward animation.
+        boot.soldierYawOffset = 180f;
         boot.tankPrefab = FindPrefab("leopard", "tank", "panzer");
         boot.truckModel = FindPrefab("smalltruck", "industrialsmalltruck", "truck", "lorry", "van");
         Debug.Log($"[BuildPrototypeScene] truck model: " +

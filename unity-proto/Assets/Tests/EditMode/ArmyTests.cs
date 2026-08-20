@@ -351,3 +351,151 @@ public class InfantryCombatTests
             "anhaltender Baeren-Druck hilft der Baeren-Infanterie nicht");
     }
 }
+
+/// <summary>
+/// Infantry is meant to be driven through, not driven around. Armour is the
+/// opposite, and getting the two the wrong way round is easy to do silently.
+/// </summary>
+public class RunOverTests
+{
+    static Army Field()
+    {
+        var a = new Army(31) { FrontlineAt = _ => 0f };
+        a.Populate(4, 30);
+        return a;
+    }
+
+    [Test]
+    public void DrivingThroughRiflemenKillsThem()
+    {
+        var army = Field();
+        foreach (var u in army.Infantry) { u.x = 0f; u.z = 0f; }
+        int before = army.Infantry.Count;
+        int down = army.RunOver(0f, 0f, 3.6f, 12f);
+        Assert.Greater(down, 0, "niemand wurde ueberfahren");
+        Assert.AreEqual(before - down, army.Infantry.Count);
+    }
+
+    [Test]
+    public void CrawlingDoesNotMowDownALine()
+    {
+        var army = Field();
+        foreach (var u in army.Infantry) { u.x = 0f; u.z = 0f; }
+        Assert.AreEqual(0, army.RunOver(0f, 0f, 3.6f, 0.4f),
+            "ein stehender Truck raeumt sich einen Platz frei");
+    }
+
+    [Test]
+    public void OnlyThoseUnderTheWheelsGoDown()
+    {
+        var army = Field();
+        foreach (var u in army.Infantry) { u.x = 60f; u.z = 60f; }
+        Assert.AreEqual(0, army.RunOver(0f, 0f, 3.6f, 12f), "Soldaten am anderen Ende sterben mit");
+    }
+
+    [Test]
+    public void ArmourIsNotRunOver()
+    {
+        var army = Field();
+        foreach (var v in army.Armour) { v.x = 0f; v.z = 0f; }
+        int before = army.Armour.Count;
+        army.RunOver(0f, 0f, 3.6f, 20f);
+        Assert.AreEqual(before, army.Armour.Count, "ein Panzer wurde ueberfahren");
+    }
+
+    [Test]
+    public void NobodyStepsAsideAnyMore()
+    {
+        var army = Field();
+        var man = army.Infantry[0];
+        // well clear of the truck, but up the road it is pointed down
+        man.x = 14f; man.z = 0.5f;
+        float wasX = man.x, wasZ = man.z;
+        army.ClearPath(0f, 0f, 0f, 1f / 60f);
+        Assert.AreEqual(wasX, man.x, 0.001f, "der Soldat weicht immer noch aus");
+        Assert.AreEqual(wasZ, man.z, 0.001f, "der Soldat weicht immer noch aus");
+    }
+
+    [Test]
+    public void DeepOverlapIsStillUndoneSoNothingWedges()
+    {
+        var army = Field();
+        var man = army.Infantry[0];
+        man.x = 0.1f; man.z = 0f;          // standing inside the truck
+        army.ClearPath(0f, 0f, 0f, 1f / 60f);
+        Assert.Greater(Mathf.Abs(man.x) + Mathf.Abs(man.z), 1f,
+            "jemand steht im Truck - genau das klemmt ihn fest");
+    }
+}
+
+/// <summary>
+/// A man walking backwards while playing a forward run is the giveaway that
+/// heading and movement have come apart.
+/// </summary>
+public class InfantryFacingTests
+{
+    static Army At(float front)
+    {
+        var a = new Army(77) { FrontlineAt = _ => front };
+        a.Populate(0, 6);
+        return a;
+    }
+
+    static Army.Unit Bull(Army a) => a.Infantry.Find(u => u.side == Army.Side.Bull);
+
+    [Test]
+    public void AdvancingMenFaceForward()
+    {
+        var army = At(0f);
+        var man = Bull(army);
+        man.z = -60f;                      // well behind his own line
+        army.Update(1f / 60f);
+        Assert.IsTrue(man.walking, "er steht, obwohl er weit hinter der Linie ist");
+        Assert.AreEqual(0f, man.heading, 0.01f, "er rueckt vor, schaut aber zurueck");
+    }
+
+    [Test]
+    public void FallingBackMenTurnRoundRatherThanReversing()
+    {
+        var army = At(-60f);               // the line has moved away behind him
+        var man = Bull(army);
+        man.z = 40f;                       // stranded far up the field
+        army.Update(1f / 60f);
+        Assert.IsTrue(man.walking);
+        Assert.AreEqual(Mathf.PI, man.heading, 0.01f,
+            "er geht zurueck, dreht sich aber nicht um - genau das laesst ihn rueckwaerts laufen");
+    }
+
+    [Test]
+    public void HeadingAlwaysAgreesWithTheDirectionOfTravel()
+    {
+        foreach (float front in new[] { -70f, -20f, 0f, 20f, 70f })
+        {
+            var army = At(front);
+            foreach (var u in army.Infantry)
+            {
+                float before = u.z;
+                army.Update(1f / 60f);
+                float moved = u.z - before;
+                if (Mathf.Abs(moved) < 0.001f || !u.walking) continue;
+                float faces = Mathf.Cos(u.heading);      // +1 looks at +z, -1 at -z
+                Assert.Greater(moved * faces, 0f,
+                    $"laeuft nach {(moved > 0 ? "+z" : "-z")}, schaut aber nach {(faces > 0 ? "+z" : "-z")}");
+            }
+        }
+    }
+
+    [Test]
+    public void DugInMenFaceTheEnemyRatherThanTheirOwnRear()
+    {
+        var army = At(0f);
+        var man = Bull(army);
+        // exactly at HIS position: every man digs in at his own distance behind
+        // the line, so "at the line" is not one shared number
+        man.z = -man.standoff;
+        army.Update(1f / 60f);
+        Assert.IsFalse(man.walking, "er sollte an der Linie stehen");
+        Assert.Less(Mathf.Abs(Mathf.DeltaAngle(man.heading * Mathf.Rad2Deg, 0f)), 91f,
+            "er steht an der Front und schaut nach hinten");
+    }
+}

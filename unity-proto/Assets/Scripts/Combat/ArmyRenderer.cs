@@ -145,8 +145,10 @@ public class ArmyRenderer : MonoBehaviour
 
         foreach (var c in go.GetComponentsInChildren<Collider>(true)) DestroyImmediate(c);
         var box = go.AddComponent<BoxCollider>();
-        box.size = new Vector3(3.4f, 1.5f, 6.2f);
-        box.center = new Vector3(0f, 0.9f, 0f);
+        // As tall as the real thing. At 1.5 the truck climbed straight over a
+        // tank instead of being stopped by it - a low box is a ramp, not a wall.
+        box.size = new Vector3(3.6f, 2.6f, 7.2f);
+        box.center = new Vector3(0f, 1.3f, 0f);
         var rb = go.AddComponent<Rigidbody>();
         rb.isKinematic = true;
         rb.useGravity = false;
@@ -181,13 +183,10 @@ public class ArmyRenderer : MonoBehaviour
 
         // colliders come from the asset in whatever shape it likes; replace
         // them with the same box the rest of the army uses
+        // No collider. Infantry is meant to be driven through, and a truck that
+        // bounces off a man it is running over reads as a bug rather than as a
+        // casualty. Armour keeps its collider; that is the thing you go round.
         foreach (var c in go.GetComponentsInChildren<Collider>(true)) DestroyImmediate(c);
-        var box = go.AddComponent<BoxCollider>();
-        box.size = new Vector3(0.7f, soldierHeight, 0.5f);
-        box.center = new Vector3(0f, soldierHeight * 0.5f, 0f);
-        var rb = go.AddComponent<Rigidbody>();
-        rb.isKinematic = true;
-        rb.useGravity = false;
 
         if (soldierAnimator != null)
         {
@@ -325,7 +324,7 @@ public class ArmyRenderer : MonoBehaviour
         foreach (var u in army.Infantry) if (u.side == side) need++;
         Fit(pool, need, () => soldierPrefab != null
             ? MakeSoldierFromPrefab(side)
-            : MakePiece(_soldier, "Soldier", true, new Vector3(0.7f, 1.8f, 0.5f)));
+            : MakePiece(_soldier, "Soldier", false, Vector3.zero));
         // the proxy carries no team colour of its own, so give it one
         if (soldierPrefab == null)
         {
@@ -430,10 +429,11 @@ public class ArmyRenderer : MonoBehaviour
                 var anim = t.GetComponentInChildren<Animator>();
                 if (anim != null && anim.runtimeAnimatorController != null)
                 {
-                    // moving toward the line, or dug in and shooting
-                    float toGo = Mathf.Abs(s.z - army.FrontlineAt(s.x));
-                    anim.SetFloat("Speed", toGo > 14f ? 1f : 0f);
-                    anim.SetBool("Shoot", toGo <= 14f);
+                    // The army decides whether he is walking; the renderer must
+                    // not guess it again from position, or the two disagree and
+                    // he runs on the spot or slides while standing.
+                    anim.SetFloat("Speed", s.walking ? 1f : 0f);
+                    anim.SetBool("Shoot", !s.walking);
                 }
             }
         }

@@ -394,12 +394,66 @@ public class Bootstrap : MonoBehaviour
             if (n.Contains("wheel") || n.Contains("tire") || n.Contains("tyre"))
                 _modelWheels.Add(t);
         }
-        foreach (var w in _modelWheels) w.SetParent(null, true);
+        foreach (var w in _modelWheels)
+        {
+            foreach (var r in w.GetComponentsInChildren<Renderer>(true))
+            {
+                var mats = new Material[r.sharedMaterials.Length];
+                for (int i = 0; i < mats.Length; i++) mats[i] = ToUrp(r.sharedMaterials[i]);
+                r.sharedMaterials = mats;
+            }
+            // Strip their colliders BEFORE detaching. The body is cleaned up
+            // below, but by then the wheels have already left it - so any
+            // collider they carried survives as a loose solid being teleported
+            // to a wheel position every frame, shoving the truck it belongs to.
+            foreach (var c in w.GetComponentsInChildren<Collider>(true)) { c.enabled = false; Destroy(c); }
+            w.SetParent(null, true);
+        }
 
         foreach (var c in body.GetComponentsInChildren<Collider>(true)) Destroy(c);
+
+        // The pack ships Built-in materials. In a URP build that shader is not
+        // there at all, so the body renders NOTHING while still casting a
+        // shadow - which looks exactly like a truck-shaped hole in the world.
+        int converted = 0;
+        foreach (var r in body.GetComponentsInChildren<Renderer>(true))
+        {
+            var mats = new Material[r.sharedMaterials.Length];
+            for (int i = 0; i < mats.Length; i++) { mats[i] = ToUrp(r.sharedMaterials[i]); converted++; }
+            r.sharedMaterials = mats;
+        }
         Debug.Log($"[Bootstrap] truck model scaled to {WantedLength}m, " +
-                  $"{_modelWheels.Count} wheels lifted out");
+                  $"{_modelWheels.Count} wheels lifted out, {converted} materials converted");
     }
+
+    /// <summary>
+    /// A URP material carrying whatever the source had. Cached, so a model with
+    /// repeated materials does not end up with a copy per renderer.
+    /// </summary>
+    Material ToUrp(Material source)
+    {
+        if (source == null) return bodyMaterial;
+        if (_urpCache.TryGetValue(source, out var hit)) return hit;
+
+        var shader = Shader.Find("Universal Render Pipeline/Lit");
+        if (shader == null) return bodyMaterial;
+
+        var m = new Material(shader);
+        Texture tex = source.HasProperty("_BaseMap") ? source.GetTexture("_BaseMap")
+                    : source.HasProperty("_MainTex") ? source.GetTexture("_MainTex")
+                    : null;
+        if (tex != null) m.SetTexture("_BaseMap", tex);
+        Color c = source.HasProperty("_BaseColor") ? source.GetColor("_BaseColor")
+                : source.HasProperty("_Color") ? source.GetColor("_Color")
+                : Color.white;
+        m.SetColor("_BaseColor", tex != null ? Color.white : c);
+        m.SetFloat("_Smoothness", 0.3f);
+        _urpCache[source] = m;
+        return m;
+    }
+
+    readonly System.Collections.Generic.Dictionary<Material, Material> _urpCache =
+        new System.Collections.Generic.Dictionary<Material, Material>();
 
     readonly System.Collections.Generic.List<Transform> _modelWheels =
         new System.Collections.Generic.List<Transform>();

@@ -139,6 +139,18 @@ public class TruckController : MonoBehaviour
         float motor = braking ? 0f : throttle * motorTorque * (1f - Mathf.Clamp01(speed / topSpeed));
         float brake = braking ? brakeTorque : 0f;
 
+        // Hold on a hill. The ground here is generated from live mempool data,
+        // so the slope under a parked truck is different every session - and
+        // without this it simply rolls away whenever you let go, which is both
+        // annoying to play and why "does it come to rest" was measuring
+        // something different on every run.
+        if (throttle == 0f && !handbrake)
+            // Below a walking pace it holds outright; above it this is engine
+            // braking, which a lorry has and which is what stops a slope from
+            // accelerating it away. A brake that only engages under 1.5 m/s
+            // never engages at all: it rolls straight past that on the way down.
+            brake = Mathf.Max(brake, brakeTorque * (speed < 2f ? 0.6f : 0.14f));
+
         int stiffIdx = 0, grounded = 0;
         foreach (var a in axles)
         {

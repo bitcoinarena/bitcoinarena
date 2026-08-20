@@ -383,8 +383,13 @@ public class VehicleTests
         Assert.IsTrue(hull.GetComponent<Rigidbody>().isKinematic, "Panzer ist nicht kinematisch");
         Assert.AreEqual(ArmyRenderer.UnitLayer, hull.layer);
 
+        // Infantry deliberately has NO collider: it is meant to be driven
+        // through, and a two-tonne truck bouncing off a man it is running over
+        // reads as a bug rather than as a casualty.
         var soldier = GameObject.Find("Soldier");
-        Assert.IsNotNull(soldier?.GetComponent<BoxCollider>(), "Soldat ohne Collider");
+        Assert.IsNotNull(soldier, "kein Soldat in der Szene");
+        Assert.IsNull(soldier.GetComponent<Collider>(),
+            "der Soldat hat einen Collider - der Truck wuerde an ihm abprallen statt ihn zu ueberfahren");
 
         // a turret sits inside its own hull, so it must NOT carry one
         var turret = GameObject.Find("Turret");

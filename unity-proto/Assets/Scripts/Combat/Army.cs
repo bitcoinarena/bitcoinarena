@@ -44,6 +44,14 @@ public class Army
         public float heading, turretYaw;
         public float hp, reload, phase;
         public bool retreating;
+        /// <summary>Moving under his own legs, as opposed to holding a position.</summary>
+        public bool walking;
+        /// <summary>
+        /// How far behind the line this man digs in. Fixed at spawn: rolling it
+        /// every frame moved his goal under his feet, so "walking" flickered
+        /// and a standing man kept twitching into a run.
+        /// </summary>
+        public float standoff;
         /// <summary>
         /// +1 for bull, -1 for bear. Sign convention matters: every formula
         /// ported from battlefield.js is written as "front - dir * distance",
@@ -121,6 +129,7 @@ public class Army
             hp = vehicle ? Rand(6f, 10f) : 1f,
             reload = Rand(0f, 3f),
             phase = Rand(0f, 6.283f),
+            standoff = Rand(4f, 12f),
             heading = dir > 0 ? 0f : Mathf.PI,
         };
     }
@@ -287,15 +296,22 @@ public class Army
     void StepInfantry(Unit s, float dt)
     {
         float front = FrontlineAt(s.x);
-        float goalZ = front - s.Dir * Rand(4f, 12f);
+        float goalZ = front - s.Dir * s.standoff;
         float dz = goalZ - s.z;
         float step = Mathf.Min(3.4f * dt, Mathf.Abs(dz));
         s.z += Mathf.Sign(dz) * step;
         s.x += Mathf.Sin(s.phase) * 1.6f * dt;
         s.x = Mathf.Clamp(s.x, -FrontX + 4f, FrontX - 4f);
         s.z = Mathf.Clamp(s.z, -HalfDepth, HalfDepth);
-        s.heading = s.Dir > 0f ? 0f : Mathf.PI;
         s.phase += dt * 6f;
+
+        // Face the way he is actually WALKING, not the way his side faces.
+        // When the line moves over a man he has to fall back, and a fixed
+        // heading left him reversing up the field playing a forward run.
+        s.walking = Mathf.Abs(dz) > 0.6f;
+        s.heading = s.walking
+            ? (dz > 0f ? 0f : Mathf.PI)
+            : (s.Dir > 0f ? 0f : Mathf.PI);      // dug in: face the enemy
 
         // --- rifle fire -----------------------------------------------------
         // Targets are acquired only when the shot goes off, not every frame:
@@ -314,7 +330,8 @@ public class Army
 
         float pressure = s.side == Side.Bull ? Flow : -Flow;
         s.reload = Rand(2.5f, 4.5f) / (1f + Mathf.Max(0f, pressure) * 0.45f);
-        s.heading = Mathf.Atan2(foe.x - s.x, foe.z - s.z);
+        // only turn to the target while standing; a running man keeps his line
+        if (!s.walking) s.heading = Mathf.Atan2(foe.x - s.x, foe.z - s.z);
 
         bool hit = Random01() < RifleHitChance * (1f + Mathf.Max(0f, pressure) * 0.25f);
         Shot?.Invoke(s, hit
@@ -396,14 +413,46 @@ public class Army
             }
         }
 
-        // Infantry scatters: a line of soldiers is a fence otherwise, and men
-        // diving out of the way of a lorry is what men do.
-        foreach (var u in Infantry) YieldTo(u, 7.0f, 0.9f, true, 5.4f);
+        // ARMOUR IS DELIBERATELY ABSENT.
+        //
+        // Tanks carry colliders, so the physics engine already resolves them
+        // against the truck. Resolving it here too is two systems arguing over
+        // the same overlap every frame, and there is no radius that satisfies
+        // both: large enough to clear the collider and the tank is shoved out
+        // of the way, so the truck drives through it; small enough to block and
+        // the box reaches into the truck while this thinks they are clear, so
+        // the truck is pushed around by something it is not touching. Both
+        // failures were measured. The engine owns this one.
+        //
+        // Infantry has no collider - it is meant to be driven through - so it
+        // only gets nudged out of a deep overlap, purely so nobody is left
+        // standing inside the cab.
+        foreach (var u in Infantry) YieldTo(u, 0f, 0.9f, false, 1.6f);
+    }
 
-        // Armour does NOT step aside - a tank in your way is the obstacle, and
-        // driving round it is the game. It only gets pushed out of a deep
-        // overlap, which is the wedge, not the contact.
-        foreach (var v in Armour) YieldTo(v, 0f, 3.2f, false, 3.0f);
+    /// <summary>
+    /// Ride down anyone under the wheels.
+    ///
+    /// Only above a walking pace: a truck edging forward should not mow down a
+    /// line it is merely touching, and a stationary one should not clear a
+    /// space around itself. Returns how many went down.
+    /// </summary>
+    public int RunOver(float x, float z, float radius, float speed, float minSpeed = 2.5f)
+    {
+        if (speed < minSpeed) return 0;
+        int down = 0;
+        float r2 = radius * radius;
+        for (int i = Infantry.Count - 1; i >= 0; i--)
+        {
+            var u = Infantry[i];
+            float dx = u.x - x, dz = u.z - z;
+            if (dx * dx + dz * dz > r2) continue;
+            u.hp = 0f;
+            Killed?.Invoke(u);
+            Infantry.RemoveAt(i);
+            down++;
+        }
+        return down;
     }
 
     /// <summary>A tank fired its main gun at another. Carries the impact point.</summary>
