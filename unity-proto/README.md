@@ -163,3 +163,20 @@ liegt bei 14,6 MB inklusive aller Assets.
   -projectPath "/Users/arena/My project" \
   -testResults /tmp/results.xml -logFile /tmp/tests.log
 ```
+
+## Assets
+
+Gescannte CC0-Oberflächen von [Poly Haven](https://polyhaven.com), 2k JPG,
+unter `Assets/Textures/`. Keine Installation nötig, keine Namensnennung
+verlangt (CC0), Nutzung auch kommerziell frei.
+
+| Datei | Quelle | Verwendung |
+|---|---|---|
+| `ground/aerial_ground_rock_*` | polyhaven.com/a/aerial_ground_rock | Gelände-Detail |
+| `road/asphalt_02_*` | polyhaven.com/a/asphalt_02 | Straßenbelag |
+
+Sie hängen in den **Detail**-Slots von URP/Lit, nicht in der Base Map. Die ist
+beim Gelände schon belegt: dort liegt die Territoriumstextur, die die ganze
+Welt mit 0..1 abdeckt, damit die Frontlinie genau einmal erscheint. Eine
+gekachelte Fotografie kann dort nicht hin. Die Detail-Maps haben eine eigene
+Kachelung — weltweite Farbe unten, gescanntes Korn und Relief darüber.

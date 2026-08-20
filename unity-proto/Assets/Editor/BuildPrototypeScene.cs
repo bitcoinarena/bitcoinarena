@@ -38,6 +38,16 @@ public static class BuildPrototypeScene
         boot.flashMaterial = Lit("Flash", new Color(1f, 0.96f, 0.78f), 0.15f);
         boot.blastMaterial = Lit("Blast", new Color(1f, 0.55f, 0.14f), 0.35f);
 
+        // scanned CC0 surfaces from Poly Haven, over the flat colours
+        AddDetail(boot.groundMaterial,
+                  "Assets/Textures/ground/aerial_ground_rock_diff.jpg",
+                  "Assets/Textures/ground/aerial_ground_rock_nor.jpg",
+                  new Vector2(34f, 22f), 1.1f);
+        AddDetail(boot.roadMaterial,
+                  "Assets/Textures/road/asphalt_02_diff.jpg",
+                  "Assets/Textures/road/asphalt_02_nor.jpg",
+                  new Vector2(3f, 46f), 0.8f);
+
         System.IO.Directory.CreateDirectory("Assets/Scenes");
         EditorSceneManager.SaveScene(scene, ScenePath);
 
@@ -45,6 +55,58 @@ public static class BuildPrototypeScene
         EditorBuildSettings.scenes = new[] { new EditorBuildSettingsScene(ScenePath, true) };
         AssetDatabase.SaveAssets();
         Debug.Log($"[BuildPrototypeScene] wrote {ScenePath} and set it as build scene 0");
+    }
+
+    /// <summary>
+    /// Import a Poly Haven map with the right settings. A normal map imported
+    /// as a colour texture is not merely wrong, it is unreadable - Unity packs
+    /// normals differently - and the mistake looks like bad lighting rather
+    /// than a bad import.
+    /// </summary>
+    static Texture2D Map(string path, bool isNormal, bool srgb)
+    {
+        var importer = AssetImporter.GetAtPath(path) as TextureImporter;
+        if (importer != null)
+        {
+            var wanted = isNormal ? TextureImporterType.NormalMap : TextureImporterType.Default;
+            if (importer.textureType != wanted || importer.sRGBTexture != srgb)
+            {
+                importer.textureType = wanted;
+                importer.sRGBTexture = srgb;
+                importer.wrapMode = TextureWrapMode.Repeat;
+                importer.SaveAndReimport();
+            }
+        }
+        var tex = AssetDatabase.LoadAssetAtPath<Texture2D>(path);
+        if (tex == null) Debug.LogWarning($"[BuildPrototypeScene] missing texture {path}");
+        return tex;
+    }
+
+    /// <summary>
+    /// Hang a scanned surface on a material through the DETAIL slots.
+    ///
+    /// The base map is already spoken for: the ground carries the territory
+    /// texture, which spans the whole world at 0..1 so the frontline appears
+    /// exactly once. A tiled photo cannot go there. URP's detail maps have
+    /// their own tiling, which is precisely this case - world-scale colour
+    /// underneath, scanned grain and relief on top.
+    /// </summary>
+    static void AddDetail(Material mat, string albedo, string normal, Vector2 tiling, float normalStrength = 1f)
+    {
+        var a = Map(albedo, false, true);
+        var n = Map(normal, true, false);
+        if (a == null || n == null) return;
+
+        mat.SetTexture("_DetailAlbedoMap", a);
+        mat.SetTextureScale("_DetailAlbedoMap", tiling);
+        mat.SetTexture("_DetailNormalMap", n);
+        mat.SetTextureScale("_DetailNormalMap", tiling);
+        mat.SetFloat("_DetailNormalMapScale", normalStrength);
+        // without the keyword the maps are assigned and ignored, and because
+        // variants are stripped by what material ASSETS ask for, doing it here
+        // is also what keeps it working in a build
+        mat.EnableKeyword("_DETAIL_MULX2");
+        EditorUtility.SetDirty(mat);
     }
 
     /// <summary>Create (or refresh) a URP/Lit material asset.</summary>
