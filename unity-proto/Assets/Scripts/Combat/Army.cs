@@ -61,7 +61,10 @@ public class Army
     public int ArmourPerSide { get; private set; }
     public int InfantryPerSide { get; private set; }
 
-    /// <summary>Seconds between replacements arriving, per side.</summary>
+    /// <summary>
+    /// Seconds between replacements when a side is one tank short. A bigger
+    /// deficit brings them faster - see Reinforce.
+    /// </summary>
     public float ReinforceSeconds = 6f;
     readonly Dictionary<Side, float> _reinforceAt = new Dictionary<Side, float>
     {
@@ -163,8 +166,15 @@ public class Army
     {
         foreach (Side side in new[] { Side.Bull, Side.Bear })
         {
-            if (ArmourOf(side) >= ArmourPerSide) continue;
-            _reinforceAt[side] -= dt;
+            int deficit = ArmourPerSide - ArmourOf(side);
+            if (deficit <= 0) continue;
+
+            // A fixed cadence cannot recover from a collapse. Once a side is
+            // losing it gets focused down, so a flat one-tank-per-six-seconds
+            // is always behind: measured, green sat at 0-1 for five minutes
+            // while red held eleven. Replacements come faster the worse it is,
+            // which is also what a command actually does with a failing front.
+            _reinforceAt[side] -= dt * deficit;
             if (_reinforceAt[side] > 0f) continue;
             _reinforceAt[side] = ReinforceSeconds;
             Armour.Add(Spawn(side, true));
@@ -231,11 +241,14 @@ public class Army
         v.reload -= dt;
         if (engaged && v.reload <= 0f)
         {
-            v.reload = Rand(1.4f, 3.2f) / (1f + Mathf.Max(0f, pressure));
+            // Pressure is an edge, not an execution. Doubling both rate of
+            // fire and damage compounds into annihilation the moment the tape
+            // leans one way for any length of time.
+            v.reload = Rand(1.4f, 3.2f) / (1f + Mathf.Max(0f, pressure) * 0.45f);
             LastShot = (v, foe);
             if (Random01() < 0.55f)                    // near misses are part of the show
             {
-                foe.hp -= Rand(1.1f, 2.4f) * (1f + Mathf.Max(0f, pressure) * 0.6f);
+                foe.hp -= Rand(1.1f, 2.4f) * (1f + Mathf.Max(0f, pressure) * 0.25f);
                 if (foe.hp <= 0f) Destroyed?.Invoke(foe);
             }
         }

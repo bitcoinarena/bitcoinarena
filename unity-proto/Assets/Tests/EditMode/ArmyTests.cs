@@ -215,3 +215,61 @@ public class ReinforcementTests
                 $"Verstaerkung bei z={v.z:0} ausserhalb des Feldes");
     }
 }
+
+/// <summary>
+/// A battle has to stay a battle. Reported from play as green sitting at two
+/// tanks and never recovering; measured, it sat at 0-1 for five minutes while
+/// red held eleven, because a side that starts losing gets focused down and a
+/// fixed reinforcement cadence is always behind.
+/// </summary>
+public class AttritionTests
+{
+    static Army UnderPressure(float flow)
+    {
+        var army = new Army(7) { FrontlineAt = _ => 0f };
+        army.Populate(11, 20);
+        army.Flow = flow;
+        return army;
+    }
+
+    static void Run(Army army, float seconds)
+    {
+        float flow = army.Flow;
+        for (int i = 0; i < 60 * seconds; i++) { army.Flow = flow; army.Update(1f / 60f); }
+    }
+
+    [Test]
+    public void NeitherSideIsAnnihilatedByASustainedOneSidedTape()
+    {
+        foreach (float flow in new[] { -1f, -0.5f, 0.5f, 1f })
+        {
+            var army = UnderPressure(flow);
+            Run(army, 300f);
+            int bull = army.ArmourOf(Army.Side.Bull), bear = army.ArmourOf(Army.Side.Bear);
+            Assert.Greater(bull, 3, $"Bullen bei Fluss {flow} auf {bull} zusammengebrochen");
+            Assert.Greater(bear, 3, $"Baeren bei Fluss {flow} auf {bear} zusammengebrochen");
+        }
+    }
+
+    [Test]
+    public void PressureStillFavoursTheSideItShould()
+    {
+        // damped, but not neutered: the tape has to mean something
+        var bearish = UnderPressure(-1f);
+        Run(bearish, 300f);
+        Assert.GreaterOrEqual(bearish.ArmourOf(Army.Side.Bear), bearish.ArmourOf(Army.Side.Bull),
+            "anhaltender Baeren-Druck verschafft den Baeren keinen Vorteil mehr");
+    }
+
+    [Test]
+    public void ACollapsedSideRecoversQuickly()
+    {
+        var army = UnderPressure(0f);
+        for (int i = army.Armour.Count - 1; i >= 0; i--)
+            if (army.Armour[i].side == Army.Side.Bull) army.Armour.RemoveAt(i);
+
+        Run(army, 30f);
+        Assert.GreaterOrEqual(army.ArmourOf(Army.Side.Bull), 6,
+            "ein zusammengebrochener Verband braucht laenger als 30 s zurueck auf die Beine");
+    }
+}
