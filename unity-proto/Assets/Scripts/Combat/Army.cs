@@ -57,8 +57,28 @@ public class Army
 
     float Rand(float a, float b) => a + (float)_rng.NextDouble() * (b - a);
 
+    /// <summary>Establishment per side. Losses are made good against this.</summary>
+    public int ArmourPerSide { get; private set; }
+    public int InfantryPerSide { get; private set; }
+
+    /// <summary>Seconds between replacements arriving, per side.</summary>
+    public float ReinforceSeconds = 6f;
+    readonly Dictionary<Side, float> _reinforceAt = new Dictionary<Side, float>
+    {
+        { Side.Bull, 0f }, { Side.Bear, 0f },
+    };
+
+    public int ArmourOf(Side side)
+    {
+        int n = 0;
+        foreach (var v in Armour) if (v.side == side) n++;
+        return n;
+    }
+
     public void Populate(int armourPerSide, int infantryPerSide)
     {
+        ArmourPerSide = armourPerSide;
+        InfantryPerSide = infantryPerSide;
         Armour.Clear(); Infantry.Clear();
         foreach (Side side in new[] { Side.Bull, Side.Bear })
         {
@@ -128,6 +148,35 @@ public class Army
         foreach (var s in Infantry) StepInfantry(s, dt);
 
         Armour.RemoveAll(u => u.hp <= 0f);
+        Reinforce(dt);
+    }
+
+    /// <summary>
+    /// Make good the losses.
+    ///
+    /// Without this a side simply runs out: armour dies in the duel and nothing
+    /// replaces it, so drive past a battle, turn round, and one colour has no
+    /// tanks left. They arrive from the rear on a cadence rather than popping
+    /// in, so the line is fed rather than restored.
+    /// </summary>
+    void Reinforce(float dt)
+    {
+        foreach (Side side in new[] { Side.Bull, Side.Bear })
+        {
+            if (ArmourOf(side) >= ArmourPerSide) continue;
+            _reinforceAt[side] -= dt;
+            if (_reinforceAt[side] > 0f) continue;
+            _reinforceAt[side] = ReinforceSeconds;
+            Armour.Add(Spawn(side, true));
+        }
+
+        // infantry does not die yet, but a stray clamp could still lose one
+        foreach (Side side in new[] { Side.Bull, Side.Bear })
+        {
+            int have = 0;
+            foreach (var u in Infantry) if (u.side == side) have++;
+            if (have < InfantryPerSide) Infantry.Add(Spawn(side, false));
+        }
     }
 
     void StepArmour(Unit v, float dt)

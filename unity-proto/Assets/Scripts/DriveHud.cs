@@ -76,7 +76,7 @@ public class DriveHud : MonoBehaviour
         /* ------------------------------------------------------- diagnostics */
         float pad = Mathf.Max(8f, Screen.height * 0.02f);
         float lh = _small.fontSize * 1.45f;
-        int lines = 6 + (market != null ? 2 : 0);
+        int lines = 7 + (market != null ? 2 : 0);
         var box = new Rect(pad, pad, Mathf.Min(320f, w * 0.34f), lh * lines + pad);
 
         GUI.color = new Color(0f, 0f, 0f, 0.42f);
@@ -104,6 +104,10 @@ public class DriveHud : MonoBehaviour
         {
             Line($"Fluss   {market.Flow:+0.00;-0.00; 0.00}");
             Line($"Liquid. {market.Liquidations.Count} / 90 s");
+        }
+        if (field?.Army != null)
+        {
+            Line($"Panzer   gruen {field.Army.ArmourOf(Army.Side.Bull)}  rot {field.Army.ArmourOf(Army.Side.Bear)}");
         }
         if (field != null && truck != null)
         {

@@ -121,10 +121,12 @@ public class ArmyTests
     {
         var army = Field();
         army.Populate(3, 0);
-        int before = army.Armour.Count;
-        army.Armour[0].hp = 0f;
+        // by identity, not by count: losses are made good in the same step, so
+        // counting would only measure the reinforcement
+        var doomed = army.Armour[0];
+        doomed.hp = 0f;
         army.Update(1f / 60f);
-        Assert.AreEqual(before - 1, army.Armour.Count, "ein zerstoerter Panzer bleibt stehen");
+        Assert.IsFalse(army.Armour.Contains(doomed), "ein zerstoerter Panzer bleibt stehen");
     }
 
     [Test]
@@ -140,5 +142,76 @@ public class ArmyTests
         foreach (var v in army.Armour)
             Assert.AreEqual(v.side == Army.Side.Bull ? -1f : 1f, Mathf.Sign(v.z), 0.001f,
                 $"{v.side} startet auf der falschen Seite der Front");
+    }
+}
+
+/// <summary>
+/// Reported from play: drive past a battle, turn round, and one side has no
+/// tanks left. Armour dies in the duel and nothing was replacing it.
+/// </summary>
+public class ReinforcementTests
+{
+    static Army Field() => new Army(99) { FrontlineAt = _ => 0f, ReinforceSeconds = 2f };
+
+    [Test]
+    public void NeitherSideEverRunsOutOfArmour()
+    {
+        var army = Field();
+        army.Populate(8, 10);
+
+        // five simulated minutes of shooting at each other
+        for (int i = 0; i < 60 * 300; i++) army.Update(1f / 60f);
+
+        Assert.Greater(army.ArmourOf(Army.Side.Bull), 0, "die Bullen haben keine Panzer mehr");
+        Assert.Greater(army.ArmourOf(Army.Side.Bear), 0, "die Baeren haben keine Panzer mehr");
+    }
+
+    [Test]
+    public void LossesAreMadeGoodTowardEstablishment()
+    {
+        var army = Field();
+        army.Populate(8, 4);
+        // wipe out one side
+        for (int i = army.Armour.Count - 1; i >= 0; i--)
+            if (army.Armour[i].side == Army.Side.Bull) army.Armour.RemoveAt(i);
+        Assert.AreEqual(0, army.ArmourOf(Army.Side.Bull));
+
+        for (int i = 0; i < 60 * 60; i++) army.Update(1f / 60f);
+        Assert.GreaterOrEqual(army.ArmourOf(Army.Side.Bull), 6,
+            "der Verband wurde nach einem Totalverlust nicht wieder aufgefuellt");
+    }
+
+    [Test]
+    public void ReinforcementsArriveOnACadenceRatherThanAllAtOnce()
+    {
+        var army = Field();
+        army.Populate(8, 0);
+        army.Armour.Clear();
+
+        army.Update(1f / 60f);
+        Assert.LessOrEqual(army.Armour.Count, 2, "der ganze Verband ist in einem Frame erschienen");
+    }
+
+    [Test]
+    public void EstablishmentIsNotExceeded()
+    {
+        var army = Field();
+        army.Populate(6, 8);
+        for (int i = 0; i < 60 * 120; i++) army.Update(1f / 60f);
+        Assert.LessOrEqual(army.ArmourOf(Army.Side.Bull), 6, "mehr Bullen-Panzer als vorgesehen");
+        Assert.LessOrEqual(army.ArmourOf(Army.Side.Bear), 6, "mehr Baeren-Panzer als vorgesehen");
+    }
+
+    [Test]
+    public void ReinforcementsArriveFromTheirOwnRear()
+    {
+        var army = Field();
+        army.Populate(4, 0);
+        army.Armour.Clear();
+        for (int i = 0; i < 60 * 30; i++) army.Update(1f / 60f);
+
+        foreach (var v in army.Armour)
+            Assert.LessOrEqual(Mathf.Abs(v.z), Army.HalfDepth + 0.1f,
+                $"Verstaerkung bei z={v.z:0} ausserhalb des Feldes");
     }
 }
