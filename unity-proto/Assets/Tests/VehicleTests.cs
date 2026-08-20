@@ -251,6 +251,23 @@ public class VehicleTests
             var renderer = GameObject.Find($"Road_{lane}")?.GetComponent<MeshRenderer>();
             Assert.IsNotNull(renderer?.sharedMaterial, $"{lane} hat kein Material");
 
+            // UVs must be in TILE units, measured along the road. Scaling them
+            // here AND in the material gave 4600 repeats of a 2k asphalt photo
+            // over one road - which renders as noise, not as a surface.
+            var uv = mesh.uv;
+            var vertsForUv = mesh.vertices;
+            Assert.AreEqual(vertsForUv.Length, uv.Length, $"{lane}: UVs passen nicht zu den Eckpunkten");
+            float span = 0f, length = 0f;
+            for (int i = 2; i < vertsForUv.Length; i += 2)
+            {
+                length += Vector3.Distance(vertsForUv[i - 2], vertsForUv[i]);
+                span = Mathf.Max(span, uv[i].y);
+            }
+            // one tile every four metres, give or take the road's own curvature
+            float metresPerTile = length / Mathf.Max(span, 0.001f);
+            Assert.That(metresPerTile, Is.InRange(2f, 7f),
+                $"{lane}: eine Kachel alle {metresPerTile:0.0} m - Kachelung wurde doppelt angewandt");
+
             // A road wound the wrong way is drawn every frame and culled as a
             // back face: present in the scene, invisible from above.
             var normals = mesh.normals;

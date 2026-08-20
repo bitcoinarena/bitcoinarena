@@ -43,10 +43,12 @@ public static class BuildPrototypeScene
                   "Assets/Textures/ground/aerial_ground_rock_diff.jpg",
                   "Assets/Textures/ground/aerial_ground_rock_nor.jpg",
                   new Vector2(34f, 22f), 1.1f);
-        AddDetail(boot.roadMaterial,
-                  "Assets/Textures/road/asphalt_02_diff.jpg",
-                  "Assets/Textures/road/asphalt_02_nor.jpg",
-                  new Vector2(3f, 46f), 0.8f);
+        // The road's base map is free - it carries no world-scale mask - so the
+        // asphalt goes on properly, as albedo and normal, rather than as a
+        // detail layer multiplied over a flat colour.
+        Surface(boot.roadMaterial,
+                "Assets/Textures/road/asphalt_02_diff.jpg",
+                "Assets/Textures/road/asphalt_02_nor.jpg");
 
         System.IO.Directory.CreateDirectory("Assets/Scenes");
         EditorSceneManager.SaveScene(scene, ScenePath);
@@ -106,6 +108,27 @@ public static class BuildPrototypeScene
         // variants are stripped by what material ASSETS ask for, doing it here
         // is also what keeps it working in a build
         mat.EnableKeyword("_DETAIL_MULX2");
+        EditorUtility.SetDirty(mat);
+    }
+
+    /// <summary>
+    /// Put a scanned surface in the MAIN slots. Tiling is left at 1: the mesh
+    /// emits UVs already measured in tile units, so there is exactly one place
+    /// where the scale is decided.
+    /// </summary>
+    static void Surface(Material mat, string albedo, string normal, float normalStrength = 1f)
+    {
+        var a = Map(albedo, false, true);
+        var n = Map(normal, true, false);
+        if (a == null || n == null) return;
+
+        mat.SetTexture("_BaseMap", a);
+        mat.SetTextureScale("_BaseMap", Vector2.one);
+        mat.SetColor("_BaseColor", Color.white);      // let the photo speak
+        mat.SetTexture("_BumpMap", n);
+        mat.SetTextureScale("_BumpMap", Vector2.one);
+        mat.SetFloat("_BumpScale", normalStrength);
+        mat.EnableKeyword("_NORMALMAP");
         EditorUtility.SetDirty(mat);
     }
 

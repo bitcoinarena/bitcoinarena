@@ -47,7 +47,9 @@ public class RoadNetwork : MonoBehaviour
             mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
             if (roadMaterial != null)
             {
-                // instance per lane, so the five routes are told apart at a glance
+                // A tint per lane, but multiplied INTO the asphalt rather than
+                // replacing it: a flat colour in _BaseColor would hide the photo
+                // the material now carries.
                 var m = new Material(roadMaterial);
                 m.SetColor("_BaseColor", TintFor(lane));
                 mr.sharedMaterial = m;
@@ -98,6 +100,14 @@ public class RoadNetwork : MonoBehaviour
         var uvs = new List<Vector2>(n * 2 + 2);
         var tris = new List<int>(n * 6);
 
+        // One texture tile every TileMetres, measured along the road as it is
+        // actually driven. Emitting UVs in tile units means the material needs
+        // no tiling factor, so the asphalt cannot end up repeated four thousand
+        // times because two scalings were applied on top of each other.
+        const float TileMetres = 4f;
+        float run = 0f;
+        var prev = Vector3.zero;
+
         var severity = new float[n + 1];
         for (int i = 0; i <= n; i++)
         {
@@ -125,8 +135,14 @@ public class RoadNetwork : MonoBehaviour
             right.y = gr + lift - broken * 0.55f + broken * 0.25f;
             verts.Add(left);
             verts.Add(right);
-            uvs.Add(new Vector2(0f, t * n * 0.5f));
-            uvs.Add(new Vector2(1f, t * n * 0.5f));
+
+            var centre = new Vector3(x, (left.y + right.y) * 0.5f, z);
+            if (i > 0) run += Vector3.Distance(prev, centre);
+            prev = centre;
+            float v = run / TileMetres;
+            float uWidth = RoadModel.HalfWidth * 2f / TileMetres;   // square tiles
+            uvs.Add(new Vector2(0f, v));
+            uvs.Add(new Vector2(uWidth, v));
         }
 
         for (int i = 0; i < n; i++)
@@ -155,10 +171,12 @@ public class RoadNetwork : MonoBehaviour
     /// </summary>
     public static Color TintFor(Lane lane) => lane switch
     {
-        Lane.BullRear => new Color(0.30f, 0.30f, 0.32f),   // deep flank, quiet
-        Lane.Bull     => new Color(0.42f, 0.43f, 0.45f),   // inner flank
-        Lane.Bear     => new Color(0.40f, 0.36f, 0.34f),   // inner flank
-        _             => new Color(0.28f, 0.26f, 0.25f),   // deep flank, quiet
+        // near white, so the asphalt reads as asphalt: these only shade one
+        // route slightly against the next
+        Lane.BullRear => new Color(0.78f, 0.80f, 0.82f),
+        Lane.Bull     => new Color(1.00f, 1.00f, 1.00f),
+        Lane.Bear     => new Color(0.94f, 0.90f, 0.86f),
+        _             => new Color(0.72f, 0.70f, 0.68f),
     };
 
     /// <summary>Stable per-position jitter, so a worn stretch does not shimmer.</summary>
