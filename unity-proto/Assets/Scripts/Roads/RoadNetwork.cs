@@ -38,7 +38,13 @@ public class RoadNetwork : MonoBehaviour
             go.AddComponent<MeshFilter>().sharedMesh = mesh;
             var mr = go.AddComponent<MeshRenderer>();
             mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-            if (roadMaterial != null) mr.sharedMaterial = roadMaterial;
+            if (roadMaterial != null)
+            {
+                // instance per lane, so the five routes are told apart at a glance
+                var m = new Material(roadMaterial);
+                m.SetColor("_BaseColor", TintFor(lane));
+                mr.sharedMaterial = m;
+            }
             _meshes[lane] = mesh;
             _lastSignature[lane] = float.NaN;
             Rebuild(lane);
@@ -122,6 +128,19 @@ public class RoadNetwork : MonoBehaviour
         mesh.RecalculateNormals();
         mesh.RecalculateBounds();
     }
+
+    /// <summary>
+    /// Route colours follow the risk they carry: deep flanks are muted, the
+    /// contested frontline track is the one that shouts.
+    /// </summary>
+    public static Color TintFor(Lane lane) => lane switch
+    {
+        Lane.BullRear => new Color(0.16f, 0.30f, 0.18f),   // deep green, quiet
+        Lane.Bull     => new Color(0.22f, 0.48f, 0.26f),   // green
+        Lane.Front    => new Color(0.82f, 0.62f, 0.14f),   // amber: contested
+        Lane.Bear     => new Color(0.52f, 0.21f, 0.19f),   // red
+        _             => new Color(0.31f, 0.14f, 0.14f),   // deep red, quiet
+    };
 
     /// <summary>Stable per-position jitter, so a worn stretch does not shimmer.</summary>
     static float Random01(float x, Lane lane)

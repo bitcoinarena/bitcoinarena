@@ -145,8 +145,9 @@ public class MempoolTerrain : MonoBehaviour
                 float u = x / (float)(vx - 1);
                 int i = z * vx + x;
                 _verts[i] = new Vector3((u - 0.5f) * width, HeightAt(u, v), (v - 0.5f) * depth);
-                // tile the PBR ground material rather than stretching one copy
-                uvs[i] = new Vector2(u * width / 8f, v * depth / 8f);
+                // 0..1 across the whole map: the territory texture is world-sized,
+                // so it must not tile or the frontline would appear five times
+                uvs[i] = new Vector2(u, v);
             }
         }
 

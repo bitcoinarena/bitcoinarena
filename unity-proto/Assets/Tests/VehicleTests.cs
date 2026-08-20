@@ -179,4 +179,35 @@ public class VehicleTests
 
         Assert.Greater(delta, 5f, $"touch steer turned the truck {delta:0.0} degrees, expected a right turn");
     }
+
+    /// <summary>
+    /// Driving at the edge has to stop at the edge. The respawn is a safety
+    /// net; the wall is the actual boundary, and this checks the truck is held
+    /// by the wall rather than teleported by the net.
+    /// </summary>
+    [UnityTest]
+    public IEnumerator TheEdgeOfTheWorldIsAWall()
+    {
+        var terrain = Object.FindFirstObjectByType<MempoolTerrain>();
+        Assert.IsNotNull(Object.FindFirstObjectByType<Bootstrap>());
+        Assert.Greater(Object.FindObjectsByType<BoxCollider>(FindObjectsSortMode.None).Length, 4,
+            "keine Begrenzungswaende in der Szene");
+
+        // point it at the south edge and bury the throttle
+        _truck.transform.rotation = Quaternion.LookRotation(Vector3.forward, Vector3.up);
+        _truck.useExternalInput = true;
+        _truck.externalThrottle = 1f;
+
+        float worst = 0f;
+        for (float t = 0f; t < 18f; t += 0.25f)
+        {
+            worst = Mathf.Max(worst, Mathf.Abs(_rb.position.z));
+            yield return new WaitForSeconds(0.25f);
+        }
+        _truck.useExternalInput = false;
+
+        Assert.LessOrEqual(worst, terrain.depth * 0.5f + 2f,
+            $"der Truck kam bis z={worst:0.0} - die Wand haelt nicht");
+        Assert.Greater(_rb.position.y, -20f, "durch den Boden gefallen");
+    }
 }

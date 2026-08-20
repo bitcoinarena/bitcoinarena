@@ -149,3 +149,70 @@ public class RoadModelTests
         Assert.IsTrue(m.PathBlocked(Lane.Bull, 40f, 110f));
     }
 }
+
+/// <summary>
+/// The ground has to say who holds it at a glance, and the five routes have to
+/// be told apart without reading a label.
+/// </summary>
+public class TerritoryTests
+{
+    [Test] public void BullGroundIsGreenerThanItIsRed()
+    {
+        var c = TerritoryMap.Shade(-40f, 0.5f);
+        Assert.Greater(c.g, c.r, "Bullen-Gebiet ist nicht gruen");
+    }
+
+    [Test] public void BearGroundIsRedderThanItIsGreen()
+    {
+        var c = TerritoryMap.Shade(40f, 0.5f);
+        Assert.Greater(c.r, c.g, "Baeren-Gebiet ist nicht rot");
+    }
+
+    [Test] public void TheSeamItselfIsNeitherSide()
+    {
+        var c = TerritoryMap.Shade(0f, 0.5f);
+        Assert.Less(Mathf.Abs(c.r - c.g), 0.12f, "die Frontlinie selbst ist einer Seite zugeschlagen");
+    }
+
+    [Test] public void ColourStrengthensWithDistanceFromTheFront()
+    {
+        float near = TerritoryMap.Shade(-6f, 0.5f).g - TerritoryMap.Shade(-6f, 0.5f).r;
+        float far = TerritoryMap.Shade(-60f, 0.5f).g - TerritoryMap.Shade(-60f, 0.5f).r;
+        Assert.Greater(far, near, "tiefes Hinterland ist nicht deutlicher gefaerbt als die Front");
+    }
+
+    [Test] public void NoiseNeverDrivesAChannelOutOfRange()
+    {
+        foreach (float d in new[] { -80f, -20f, 0f, 20f, 80f })
+            foreach (float n in new[] { 0f, 0.5f, 1f })
+            {
+                var c = TerritoryMap.Shade(d, n);
+                Assert.IsTrue(c.r is >= 0f and <= 1f && c.g is >= 0f and <= 1f && c.b is >= 0f and <= 1f,
+                    $"Farbkanal ausserhalb 0..1 bei d={d} n={n}: {c}");
+            }
+    }
+
+    [Test] public void EveryRouteHasItsOwnColour()
+    {
+        var seen = new System.Collections.Generic.List<Color>();
+        foreach (var lane in RoadModel.Order)
+        {
+            var c = RoadNetwork.TintFor(lane);
+            foreach (var other in seen)
+            {
+                float diff = Mathf.Abs(c.r - other.r) + Mathf.Abs(c.g - other.g) + Mathf.Abs(c.b - other.b);
+                Assert.Greater(diff, 0.12f, $"{lane} ist von einer anderen Strecke kaum zu unterscheiden");
+            }
+            seen.Add(c);
+        }
+    }
+
+    [Test] public void TheContestedRouteIsTheBrightest()
+    {
+        float front = RoadNetwork.TintFor(Lane.Front).grayscale;
+        foreach (var lane in RoadModel.Order)
+            if (lane != Lane.Front)
+                Assert.Greater(front, RoadNetwork.TintFor(lane).grayscale,
+                    $"{lane} sticht mehr hervor als die Frontstrasse");
+    }
+}

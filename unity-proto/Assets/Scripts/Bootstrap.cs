@@ -21,6 +21,7 @@ public class Bootstrap : MonoBehaviour
     public Material roadMaterial;
     public Material bodyMaterial;
     public Material wheelMaterial;
+    public Material barrierMaterial;
 
     [Header("Sun")]
     public float sunPitch = 42f;
@@ -53,6 +54,12 @@ public class Bootstrap : MonoBehaviour
         Field.terrain = _terrain;
         Field.market = Market;
         BuildRoads();
+
+        var territory = gameObject.AddComponent<TerritoryMap>();
+        territory.terrain = _terrain;
+        territory.field = Field;
+        territory.target = _terrain.GetComponent<MeshRenderer>();
+        BuildBoundary(_terrain);
         var truck = BuildTruck(_terrain);
         BuildCamera(truck);
         gameObject.AddComponent<TouchControls>();
@@ -104,6 +111,48 @@ public class Bootstrap : MonoBehaviour
         Roads.field = Field;
         Roads.roadMaterial = roadMaterial;
         Roads.lift = RoadLift;
+    }
+
+    /// <summary>
+    /// Walls round the edge of the world.
+    ///
+    /// The respawn in TruckController is a safety net, not a boundary - being
+    /// teleported back to the start because you drove too far is a punishment
+    /// for exploring. A wall you can see and bounce off is a map edge.
+    ///
+    /// They are tall and sunk deep: a truck cresting a fee cliff at speed
+    /// arrives at the edge airborne, and a wall it can fly over is not a wall.
+    /// </summary>
+    void BuildBoundary(MempoolTerrain terrain)
+    {
+        const float Height = 14f;
+        const float Thickness = 3f;
+        const float Sink = 12f;          // buried well below the deepest terrain
+
+        var root = new GameObject("Boundary");
+        root.transform.SetParent(transform, false);
+
+        float hw = terrain.width * 0.5f, hd = terrain.depth * 0.5f;
+        var sides = new (string name, Vector3 centre, Vector3 size)[]
+        {
+            ("West",  new Vector3(-hw, 0f, 0f), new Vector3(Thickness, Height + Sink, terrain.depth + Thickness * 2f)),
+            ("East",  new Vector3( hw, 0f, 0f), new Vector3(Thickness, Height + Sink, terrain.depth + Thickness * 2f)),
+            ("North", new Vector3(0f, 0f, -hd), new Vector3(terrain.width + Thickness * 2f, Height + Sink, Thickness)),
+            ("South", new Vector3(0f, 0f,  hd), new Vector3(terrain.width + Thickness * 2f, Height + Sink, Thickness)),
+        };
+
+        foreach (var (name, centre, size) in sides)
+        {
+            var go = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            go.name = $"Wall_{name}";
+            go.transform.SetParent(root.transform, false);
+            // sample the ground under the wall so it sits on the terrain, not through it
+            float ground = terrain.SampleWorld(centre.x, centre.z);
+            go.transform.position = new Vector3(centre.x, ground + Height * 0.5f - Sink * 0.5f, centre.z);
+            go.transform.localScale = size;
+            if (barrierMaterial != null) go.GetComponent<MeshRenderer>().sharedMaterial = barrierMaterial;
+            go.GetComponent<MeshRenderer>().shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.On;
+        }
     }
 
     TruckController BuildTruck(MempoolTerrain terrain)

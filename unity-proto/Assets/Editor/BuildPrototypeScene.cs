@@ -31,6 +31,7 @@ public static class BuildPrototypeScene
         boot.roadMaterial = Lit("Road", new Color(0.12f, 0.12f, 0.13f), 0.72f);
         boot.bodyMaterial = Lit("Body", new Color(0.16f, 0.34f, 0.22f), 0.45f, 0.25f);
         boot.wheelMaterial = Lit("Wheel", new Color(0.05f, 0.05f, 0.06f), 0.95f);
+        boot.barrierMaterial = Lit("Barrier", new Color(0.58f, 0.55f, 0.50f), 0.85f);
 
         System.IO.Directory.CreateDirectory("Assets/Scenes");
         EditorSceneManager.SaveScene(scene, ScenePath);
