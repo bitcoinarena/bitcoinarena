@@ -273,3 +273,81 @@ public class AttritionTests
             "ein zusammengebrochener Verband braucht laenger als 30 s zurueck auf die Beine");
     }
 }
+
+/// <summary>
+/// Riflemen shoot each other. The counts alone do not show it - reinforcement
+/// matches the losses, which is what a front holding looks like - so these
+/// count the casualties themselves.
+/// </summary>
+public class InfantryCombatTests
+{
+    static Army Field(float flow = 0f)
+    {
+        var a = new Army(21) { FrontlineAt = _ => 0f };
+        a.Populate(0, 60);
+        a.Flow = flow;
+        return a;
+    }
+
+    static int KillsOver(Army army, float seconds)
+    {
+        int kills = 0;
+        army.Killed += _ => kills++;
+        for (int i = 0; i < 60 * seconds; i++) army.Update(1f / 60f);
+        return kills;
+    }
+
+    [Test]
+    public void RiflemenActuallyKillEachOther()
+    {
+        var army = Field();
+        int kills = KillsOver(army, 60f);
+        Assert.Greater(kills, 10, $"in einer Minute nur {kills} Gefallene - es wird nicht geschossen");
+    }
+
+    [Test]
+    public void TheFrontHoldsRatherThanEmptying()
+    {
+        var army = Field();
+        KillsOver(army, 240f);
+        Assert.Greater(army.InfantryOf(Army.Side.Bull), 40, "die Bullen-Infanterie ist ausgeblutet");
+        Assert.Greater(army.InfantryOf(Army.Side.Bear), 40, "die Baeren-Infanterie ist ausgeblutet");
+    }
+
+    [Test]
+    public void CasualtiesAreNotSoFastThatTheLineEvaporates()
+    {
+        // ninety riflemen a side at a realistic hit rate wipe both armies out
+        // in seconds; this pins the rate to something you can watch
+        var army = Field();
+        int kills = KillsOver(army, 60f);
+        Assert.Less(kills, 400, $"{kills} Gefallene pro Minute - die Linie loest sich auf");
+    }
+
+    [Test]
+    public void NobodyDiesWithNoEnemyInRange()
+    {
+        var army = new Army(5) { FrontlineAt = _ => 0f };
+        army.Populate(0, 4);
+        // park the two sides at opposite ends, far beyond rifle range
+        foreach (var u in army.Infantry)
+        {
+            u.x = u.side == Army.Side.Bull ? -80f : 80f;
+            u.z = u.side == Army.Side.Bull ? -60f : 60f;
+        }
+        int kills = 0;
+        army.Killed += _ => kills++;
+        // one step only: any more and they close on the front and engage
+        army.Update(1f / 60f);
+        Assert.AreEqual(0, kills, "Soldaten sterben ausser Schussweite");
+    }
+
+    [Test]
+    public void PressureFavoursTheSideItShould()
+    {
+        var bearish = Field(-1f);
+        for (int i = 0; i < 60 * 180; i++) { bearish.Flow = -1f; bearish.Update(1f / 60f); }
+        Assert.GreaterOrEqual(bearish.InfantryOf(Army.Side.Bear), bearish.InfantryOf(Army.Side.Bull) - 8,
+            "anhaltender Baeren-Druck hilft der Baeren-Infanterie nicht");
+    }
+}

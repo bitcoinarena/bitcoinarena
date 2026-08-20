@@ -23,6 +23,18 @@ public class Army
     /// <summary>Beyond this the line has moved past a unit and it is falling back.</summary>
     public const float OverrunDepth = 14f;
 
+    /// <summary>How far a rifle reaches.</summary>
+    public const float RifleRange = 26f;
+
+    /// <summary>
+    /// Chance a shot connects. Deliberately tiny: ninety riflemen a side firing
+    /// every three seconds is thirty shots a second, so anything like a
+    /// realistic hit rate wipes both armies out inside ten seconds. At this
+    /// value a soldier lives about a minute under fire, which is long enough to
+    /// watch a line hold and break.
+    /// </summary>
+    public const float RifleHitChance = 0.045f;
+
     public enum Side { Bull = -1, Bear = 1 }
 
     public class Unit
@@ -67,6 +79,13 @@ public class Army
     /// </summary>
     public float ReinforceSeconds = 6f;
     readonly Dictionary<Side, float> _reinforceAt = new Dictionary<Side, float>
+    {
+        { Side.Bull, 0f }, { Side.Bear, 0f },
+    };
+
+    /// <summary>Riflemen are cheaper than tanks, and there are far more of them.</summary>
+    public float InfantryReinforceSeconds = 2.5f;
+    readonly Dictionary<Side, float> _infantryAt = new Dictionary<Side, float>
     {
         { Side.Bull, 0f }, { Side.Bear, 0f },
     };
@@ -151,6 +170,7 @@ public class Army
         foreach (var s in Infantry) StepInfantry(s, dt);
 
         Armour.RemoveAll(u => u.hp <= 0f);
+        Infantry.RemoveAll(u => u.hp <= 0f);
         Reinforce(dt);
     }
 
@@ -180,12 +200,17 @@ public class Army
             Armour.Add(Spawn(side, true));
         }
 
-        // infantry does not die yet, but a stray clamp could still lose one
+        // Infantry the same way, but on its own clock. Adding one per frame
+        // whenever a side is short refills ninety men in under two seconds,
+        // which reads as a line that cannot be hurt.
         foreach (Side side in new[] { Side.Bull, Side.Bear })
         {
-            int have = 0;
-            foreach (var u in Infantry) if (u.side == side) have++;
-            if (have < InfantryPerSide) Infantry.Add(Spawn(side, false));
+            int deficit = InfantryPerSide - InfantryOf(side);
+            if (deficit <= 0) continue;
+            _infantryAt[side] -= dt * deficit;
+            if (_infantryAt[side] > 0f) continue;
+            _infantryAt[side] = InfantryReinforceSeconds;
+            Infantry.Add(Spawn(side, false));
         }
     }
 
@@ -266,6 +291,51 @@ public class Army
         s.z = Mathf.Clamp(s.z, -HalfDepth, HalfDepth);
         s.heading = s.Dir > 0f ? 0f : Mathf.PI;
         s.phase += dt * 6f;
+
+        // --- rifle fire -----------------------------------------------------
+        // Targets are acquired only when the shot goes off, not every frame:
+        // a hundred and eighty men each scanning every other man every frame is
+        // thirty thousand comparisons a frame for a decision that changes once
+        // every couple of seconds.
+        s.reload -= dt;
+        if (s.reload > 0f) return;
+
+        var foe = NearestEnemyInfantry(s, out float d2);
+        if (foe == null || d2 > RifleRange * RifleRange)
+        {
+            s.reload = Rand(0.4f, 1.1f);        // nothing in range; look again shortly
+            return;
+        }
+
+        float pressure = s.side == Side.Bull ? Flow : -Flow;
+        s.reload = Rand(2.5f, 4.5f) / (1f + Mathf.Max(0f, pressure) * 0.45f);
+        s.heading = Mathf.Atan2(foe.x - s.x, foe.z - s.z);
+
+        if (Random01() < RifleHitChance * (1f + Mathf.Max(0f, pressure) * 0.25f))
+        {
+            foe.hp -= 1f;
+            if (foe.hp <= 0f) Killed?.Invoke(foe);
+        }
+    }
+
+    /// <summary>Nearest live enemy rifleman, or null.</summary>
+    public Unit NearestEnemyInfantry(Unit self, out float distSq)
+    {
+        Unit best = null; distSq = float.MaxValue;
+        foreach (var o in Infantry)
+        {
+            if (o.side == self.side || o.hp <= 0f) continue;
+            float d = (o.x - self.x) * (o.x - self.x) + (o.z - self.z) * (o.z - self.z);
+            if (d < distSq) { distSq = d; best = o; }
+        }
+        return best;
+    }
+
+    public int InfantryOf(Side side)
+    {
+        int n = 0;
+        foreach (var u in Infantry) if (u.side == side) n++;
+        return n;
     }
 
     float Random01() => (float)_rng.NextDouble();
@@ -330,4 +400,6 @@ public class Army
     /// <summary>Last shell fired, for the renderer to draw a tracer.</summary>
     public (Unit from, Unit at)? LastShot;
     public System.Action<Unit> Destroyed;
+    /// <summary>A rifleman went down.</summary>
+    public System.Action<Unit> Killed;
 }
