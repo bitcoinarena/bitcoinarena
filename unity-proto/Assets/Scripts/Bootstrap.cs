@@ -105,11 +105,13 @@ public class Bootstrap : MonoBehaviour
         streamer.bootstrap = this;
         streamer.army = Object.FindFirstObjectByType<ArmyRenderer>();
         streamer.fx = Fx;
+        _streamer = streamer;
         gameObject.AddComponent<TouchControls>();
         var hud = gameObject.AddComponent<DriveHud>();
         hud.truck = truck;
         hud.market = Market;
         hud.field = Field;
+        hud.streamer = _streamer;
     }
 
     /// <summary>
@@ -315,6 +317,7 @@ public class Bootstrap : MonoBehaviour
         Debug.Log("[Bootstrap] truck model swapped in");
     }
 
+    ModelStreamer _streamer;
     Transform _truckRoot;
     TruckController _truck;
 

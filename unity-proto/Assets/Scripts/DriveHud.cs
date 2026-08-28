@@ -13,6 +13,7 @@ public class DriveHud : MonoBehaviour
     public MarketFeed market;
     public Battlefield field;
     public bool showDiagnostics = true;
+    public ModelStreamer streamer;
 
     GUIStyle _price, _sub, _small;
     Texture2D _flat;
@@ -51,6 +52,59 @@ public class DriveHud : MonoBehaviour
         style.normal.textColor = prev;
     }
 
+    /// <summary>
+    /// What is still coming, and what has arrived.
+    ///
+    /// The models stream in behind the game, which is invisible by design - and
+    /// invisible is indistinguishable from broken. This was reported as the
+    /// models not loading while all four were in fact arriving. It retires
+    /// itself a few seconds after the last one lands, so it does not become
+    /// permanent furniture.
+    /// </summary>
+    void DrawStreamingPanel(int w, int h)
+    {
+        if (streamer == null || streamer.Items.Count == 0) return;
+        // gone once everything has settled, unless something failed - a failure
+        // is worth leaving on screen
+        if (streamer.AllDone && streamer.Failed == 0 && streamer.SinceDone > 4f) return;
+
+        float pad = Mathf.Max(8f, h * 0.02f);
+        float lh = _small.fontSize * 1.5f;
+        float width = Mathf.Min(240f, w * 0.30f);
+        var box = new Rect(w - width - pad, h * 0.30f, width, lh * (streamer.Items.Count + 1) + pad);
+
+        GUI.color = new Color(0f, 0f, 0f, 0.45f);
+        GUI.DrawTexture(box, _flat);
+        GUI.color = Color.white;
+
+        float y = box.y + pad * 0.4f;
+        var head = new GUIStyle(_small) { fontStyle = FontStyle.Bold };
+        head.normal.textColor = Color.white;
+        GUI.Label(new Rect(box.x + pad * 0.6f, y, box.width, lh),
+                  streamer.AllDone ? "Modelle geladen" : "Modelle werden geladen", head);
+        y += lh;
+
+        foreach (var item in streamer.Items)
+        {
+            var style = new GUIStyle(_small);
+            string mark;
+            switch (item.state)
+            {
+                case ModelStreamer.State.Loaded:
+                    style.normal.textColor = Up; mark = "fertig"; break;
+                case ModelStreamer.State.Failed:
+                    style.normal.textColor = Down; mark = "fehlgeschlagen"; break;
+                case ModelStreamer.State.Loading:
+                    style.normal.textColor = new Color(1f, 0.82f, 0.35f);
+                    mark = $"{Mathf.RoundToInt(item.sizeMb * 100f)} %"; break;
+                default:
+                    style.normal.textColor = new Color(0.65f, 0.68f, 0.72f); mark = "wartet"; break;
+            }
+            GUI.Label(new Rect(box.x + pad * 0.6f, y, box.width, lh), $"{item.label}  {mark}", style);
+            y += lh;
+        }
+    }
+
     void OnGUI()
     {
         Styles();
@@ -70,6 +124,8 @@ public class DriveHud : MonoBehaviour
             Shadowed(new Rect(0, h * 0.015f + _price.fontSize * 1.12f, w, _sub.fontSize * 1.6f),
                      sub, _sub, chg >= 0 ? Up : Down);
         }
+
+        DrawStreamingPanel(w, h);
 
         if (!showDiagnostics) return;
 

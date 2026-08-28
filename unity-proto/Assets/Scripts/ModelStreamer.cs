@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.AddressableAssets;
 using UnityEngine.ResourceManagement.AsyncOperations;
@@ -24,10 +25,31 @@ public class ModelStreamer : MonoBehaviour
     public const string TruckKey = "model/truck";
     public const string HelicopterKey = "model/helicopter";
 
+    public enum State { Waiting, Loading, Loaded, Failed }
+
+    /// <summary>
+    /// One line per model, for the HUD.
+    ///
+    /// Streaming is invisible by design - the game starts on boxes and quietly
+    /// improves - and invisible is indistinguishable from broken. It was
+    /// reported as "the models are not loading" while all four were in fact
+    /// arriving, because nothing on screen said so.
+    /// </summary>
+    public class Item
+    {
+        public string label;
+        public string key;
+        public State state = State.Waiting;
+        public float sizeMb;
+    }
+
+    public readonly List<Item> Items = new List<Item>();
+
     public int Loaded { get; private set; }
     public int Failed { get; private set; }
-    /// <summary>What the HUD can show while the field is still made of boxes.</summary>
-    public string Status { get; private set; } = "Modelle werden geladen …";
+    /// <summary>Seconds since the last one finished, so the panel can retire itself.</summary>
+    public float SinceDone { get; private set; } = -1f;
+    public bool AllDone => Items.Count > 0 && Loaded + Failed >= Items.Count;
 
     void Awake() => RouteBundlesToThisHost();
 
@@ -60,7 +82,20 @@ public class ModelStreamer : MonoBehaviour
         Debug.Log($"[ModelStreamer] bundles will be fetched from {baseUrl}ServerData/");
     }
 
-    void Start() => StartCoroutine(Stream());
+    void Start()
+    {
+        Items.Add(new Item { label = "Soldaten", key = SoldierKey });
+        Items.Add(new Item { label = "Panzer", key = TankKey });
+        Items.Add(new Item { label = "Truck", key = TruckKey });
+        Items.Add(new Item { label = "Helikopter", key = HelicopterKey });
+        StartCoroutine(Stream());
+    }
+
+    void Update()
+    {
+        if (AllDone && SinceDone < 0f) SinceDone = 0f;
+        else if (SinceDone >= 0f) SinceDone += Time.deltaTime;
+    }
 
     IEnumerator Stream()
     {
@@ -86,18 +121,28 @@ public class ModelStreamer : MonoBehaviour
             if (army != null) army.SetHelicopterPrefab(go);
         });
 
-        Status = Failed == 0 ? null : $"{Failed} Modell(e) nicht geladen - Platzhalter bleiben";
+        Debug.Log($"[ModelStreamer] done: {Loaded} loaded, {Failed} failed");
     }
 
     IEnumerator Fetch(string key, System.Action<GameObject> apply)
     {
+        var item = Items.Find(i => i.key == key);
+        if (item != null) item.state = State.Loading;
+
         var handle = Addressables.LoadAssetAsync<GameObject>(key);
-        yield return handle;
+        while (!handle.IsDone)
+        {
+            // PercentComplete covers the whole chain including the download, so
+            // it is the only honest progress figure available per model
+            if (item != null) item.sizeMb = handle.PercentComplete;
+            yield return null;
+        }
 
         if (handle.Status == AsyncOperationStatus.Succeeded && handle.Result != null)
         {
             apply(handle.Result);
             Loaded++;
+            if (item != null) item.state = State.Loaded;
             Debug.Log($"[ModelStreamer] {key} in place");
         }
         else
@@ -105,8 +150,8 @@ public class ModelStreamer : MonoBehaviour
             // Not fatal, by design: a missing bundle leaves the proxy standing
             // rather than leaving a hole where a soldier should be.
             Failed++;
+            if (item != null) item.state = State.Failed;
             Debug.LogWarning($"[ModelStreamer] {key} failed: {handle.OperationException?.Message}");
         }
-        Status = $"Modelle: {Loaded} geladen";
     }
 }
