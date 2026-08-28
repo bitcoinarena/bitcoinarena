@@ -177,7 +177,7 @@ public class ArmyRenderer : MonoBehaviour
     {
         // Scaled on the NARROWER horizontal axis: the longer one includes the
         // gun barrel, which sticks far past the hull and would shrink every tank.
-        var go = WrapOnItsSole(tankPrefab, transform, "Hull", tankWidth, true);
+        var go = WrapOnItsSole(tankPrefab, transform, "Hull", tankWidth, Measure.NarrowestHorizontal);
         go.layer = UnitLayer;
 
         Transform turret = null;
@@ -228,7 +228,7 @@ public class ArmyRenderer : MonoBehaviour
     /// </summary>
     Transform MakeSoldierFromPrefab(Army.Side side)
     {
-        var go = WrapOnItsSole(soldierPrefab, transform, "Soldier", soldierHeight, false);
+        var go = WrapOnItsSole(soldierPrefab, transform, "Soldier", soldierHeight, Measure.Height);
         go.layer = UnitLayer;
 
         var tint = side == Army.Side.Bull ? bullMaterial : bearMaterial;
@@ -327,8 +327,11 @@ public class ArmyRenderer : MonoBehaviour
     /// is world-space, and feeding a world Y into a localPosition is what put
     /// the truck somewhere off the map entirely.
     /// </summary>
+    /// <summary>Which dimension <paramref name="wantedSize"/> refers to.</summary>
+    public enum Measure { Height, NarrowestHorizontal, LongestHorizontal }
+
     static GameObject WrapOnItsSole(GameObject prefab, Transform parent, string name,
-                                    float wantedSize, bool sizeByNarrowest)
+                                    float wantedSize, Measure measure)
     {
         var wrapper = new GameObject(name);
         wrapper.transform.SetParent(parent, false);
@@ -348,8 +351,16 @@ public class ArmyRenderer : MonoBehaviour
         }
 
         var bounds = World();
-        float measure = sizeByNarrowest ? Mathf.Min(bounds.size.x, bounds.size.z) : bounds.size.y;
-        if (measure > 0.0001f) model.transform.localScale = Vector3.one * (wantedSize / measure);
+        // Measured on the axis the caller actually meant. A helicopter given
+        // its LENGTH but measured on its height comes out several times too
+        // big, because an airframe is long and flat.
+        float span = measure switch
+        {
+            Measure.NarrowestHorizontal => Mathf.Min(bounds.size.x, bounds.size.z),
+            Measure.LongestHorizontal => Mathf.Max(bounds.size.x, bounds.size.z),
+            _ => bounds.size.y,
+        };
+        if (span > 0.0001f) model.transform.localScale = Vector3.one * (wantedSize / span);
 
         // re-measure after scaling, then lift by the sole IN LOCAL SPACE
         bounds = World();
@@ -419,7 +430,7 @@ public class ArmyRenderer : MonoBehaviour
     {
         if (helicopterPrefab != null)
         {
-            var wrapped = WrapOnItsSole(helicopterPrefab, transform, "Helicopter", helicopterLength, false);
+            var wrapped = WrapOnItsSole(helicopterPrefab, transform, "Helicopter", helicopterLength, Measure.LongestHorizontal);
             // a flying model must not be seated on the ground like a tank
             var inner = wrapped.transform.childCount > 0 ? wrapped.transform.GetChild(0) : null;
             if (inner != null) inner.localPosition = Vector3.zero;
@@ -438,6 +449,17 @@ public class ArmyRenderer : MonoBehaviour
                 else { main ??= t; }
             }
             _heliRotors[wrapped.transform] = (main, tail);
+
+            var rs = wrapped.GetComponentsInChildren<Renderer>(true);
+            if (rs.Length > 0)
+            {
+                var b = rs[0].bounds;
+                foreach (var r in rs) b.Encapsulate(r.bounds);
+                Debug.Log($"[Heli] built from model: {rs.Length} renderers, size {b.size}, " +
+                          $"scale {wrapped.transform.GetChild(0).localScale.x:0.000}, " +
+                          $"rotors main={(main != null ? main.name : "none")} tail={(tail != null ? tail.name : "none")}");
+            }
+            else Debug.LogWarning("[Heli] model has no renderers");
             return wrapped.transform;
         }
 

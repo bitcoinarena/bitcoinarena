@@ -24,7 +24,7 @@ public class Battlefield : MonoBehaviour
 
     [Header("Air support")]
     [Tooltip("Seconds between sorties, per side. Rare enough that one is an event.")]
-    public float sortieSeconds = 26f;
+    public float sortieSeconds = 17f;
 
     float _sortieBull, _sortieBear;
 
@@ -86,6 +86,8 @@ public class Battlefield : MonoBehaviour
         {
             _sortieBull = sortieSeconds * Random.Range(0.7f, 1.4f);
             Army.SendHelicopter(Army.Side.Bull);
+            var h = Army.Helicopters[Army.Helicopters.Count - 1];
+            Debug.Log($"[Sortie] bull at x={h.x:0} y={h.y:0} z={h.z:0}, airborne={Army.Helicopters.Count}");
         }
         if (_sortieBear <= 0f)
         {

@@ -327,7 +327,7 @@ public class Army
             dropIn = Rand(1.5f, 4f),
         };
         h.z = FrontlineAt(h.x) - h.Dir * 26f;
-        h.y = GroundAt(h.x, h.z) + 24f;
+        h.y = GroundAt(h.x, h.z) + 19f;
         h.yaw = dir > 0 ? Mathf.PI * 0.5f : -Mathf.PI * 0.5f;
         Helicopters.Add(h);
     }
@@ -356,14 +356,21 @@ public class Army
             var h = Helicopters[i];
             h.t += dt;
 
-            // run the length of the front, standing off on our own side of it
-            const float Speed = 30f;
+            // Run the length of the front, standing off on our own side.
+            //
+            // 20, not 30: at thirty a gunship crossed a 244 unit map in eight
+            // seconds, and with a sortie every twenty-six there was something
+            // in the air barely a third of the time - measured, and easy to
+            // miss entirely. Slower means longer on station and more drops per
+            // pass, without making air cover constant.
+            const float Speed = 20f;
             float px = h.x, pz = h.z;
             h.x += h.dir * Speed * dt;
 
             float wantZ = FrontlineAt(h.x) - h.Dir * (26f + Mathf.Sin(h.t * 0.6f) * 9f);
             h.z += Mathf.Clamp(wantZ - h.z, -Speed * dt * 1.6f, Speed * dt * 1.6f);
-            float wantY = GroundAt(h.x, h.z) + 24f + Mathf.Sin(h.t * 0.9f) * 3f;
+            // low enough to read against the ground rather than vanish into sky
+            float wantY = GroundAt(h.x, h.z) + 19f + Mathf.Sin(h.t * 0.9f) * 3f;
             h.y += (wantY - h.y) * (1f - Mathf.Exp(-2f * dt));
 
             // nose follows travel, and it banks in proportion to how hard it turns
@@ -381,7 +388,7 @@ public class Army
             h.dropIn -= dt;
             if (h.dropIn <= 0f && Mathf.Abs(h.x) < FrontX)
             {
-                h.dropIn = Rand(2.2f, 4.5f);
+                h.dropIn = Rand(1.6f, 3.2f);
                 Release(h);
             }
 

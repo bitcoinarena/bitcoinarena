@@ -132,7 +132,7 @@ public class DriveHud : MonoBehaviour
         /* ------------------------------------------------------- diagnostics */
         float pad = Mathf.Max(8f, Screen.height * 0.02f);
         float lh = _small.fontSize * 1.45f;
-        int lines = 8 + (market != null ? 2 : 0);
+        int lines = 9 + (market != null ? 2 : 0);
         var box = new Rect(pad, pad, Mathf.Min(320f, w * 0.34f), lh * lines + pad);
 
         GUI.color = new Color(0f, 0f, 0f, 0.42f);
@@ -165,6 +165,7 @@ public class DriveHud : MonoBehaviour
         {
             Line($"Panzer   gruen {field.Army.ArmourOf(Army.Side.Bull)}  rot {field.Army.ArmourOf(Army.Side.Bear)}");
             Line($"Soldaten gruen {field.Army.InfantryOf(Army.Side.Bull)}  rot {field.Army.InfantryOf(Army.Side.Bear)}");
+            Line($"Luft     {field.Army.Helicopters.Count} Heli  {field.Army.Bombs.Count} Bombe(n)");
         }
         if (field != null && truck != null)
         {
