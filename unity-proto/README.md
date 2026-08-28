@@ -241,3 +241,17 @@ Zwei Fallen dabei, beide nur im Build sichtbar:
 
 Neu bauen: erst `SetupAddressables.BuildContent`, dann `BuildWebGL.Run`, dann
 `ServerData/` neben den Build kopieren.
+
+### Das Streaming braucht einen sicheren Kontext
+
+Über `http://<LAN-IP>:8900/` lädt Addressables **seinen eigenen Katalog nicht**
+— die Anfrage an `StreamingAssets/aa/settings.json` wird nicht einmal gestellt,
+die Initialisierung meldet „Unable to load runtime data", und jeder Schlüssel
+scheitert danach mit „No Location found".
+
+Derselbe Build über `http://127.0.0.1:8900/` oder über HTTPS lädt alles. Der
+Unterschied ist der sichere Kontext: `localhost` gilt dem Browser als
+vertrauenswürdig, eine LAN-IP über einfaches HTTP nicht.
+
+Zum Spielen im Netz also **HTTPS verwenden** (der Cloudflare-Tunnel genügt),
+oder lokal über `127.0.0.1`.

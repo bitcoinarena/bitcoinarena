@@ -62,9 +62,15 @@ public static class SetupAddressables
         marked += Mark(settings, group, TruckKey, "smalltruck", "industrialsmalltruck", "truck", "lorry", "van");
         marked += Mark(settings, group, HelicopterKey, "gunship", "helicopter", "hellicopter", "chopper");
 
-        settings.BuildRemoteCatalog = true;
-        settings.RemoteCatalogBuildPath.SetVariableByName(settings, AddressableAssetSettings.kRemoteBuildPath);
-        settings.RemoteCatalogLoadPath.SetVariableByName(settings, AddressableAssetSettings.kRemoteLoadPath);
+        // The catalog ships INSIDE the player, and only the bundles are remote.
+        //
+        // A remote catalog has to be found before anything else can be, and
+        // finding it is exactly the step that failed: over localhost it fetched,
+        // over a LAN address it silently did not, and every key then reported
+        // "No Location found". A catalog that travels with the build cannot go
+        // missing, and it still points at remote bundles - which is the part
+        // worth streaming.
+        settings.BuildRemoteCatalog = false;
         EditorUtility.SetDirty(settings);
         AssetDatabase.SaveAssets();
 

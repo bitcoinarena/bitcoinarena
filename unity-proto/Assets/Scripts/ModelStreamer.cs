@@ -51,8 +51,6 @@ public class ModelStreamer : MonoBehaviour
     public float SinceDone { get; private set; } = -1f;
     public bool AllDone => Items.Count > 0 && Loaded + Failed >= Items.Count;
 
-    void Awake() => RouteBundlesToThisHost();
-
     /// <summary>
     /// Turn the relative bundle paths into absolute URLs against whatever host
     /// is serving the page.
@@ -63,10 +61,14 @@ public class ModelStreamer : MonoBehaviour
     /// pin the build to one host, and this one moves between localhost, a LAN
     /// address and a tunnel. Rewriting the id at load time satisfies both.
     /// </summary>
-    void RouteBundlesToThisHost()
+    static bool _routed;
+
+    static void RouteBundlesToThisHost()
     {
+        if (_routed) return;
         string page = Application.absoluteURL;
         if (string.IsNullOrEmpty(page)) return;          // editor: paths are local anyway
+        _routed = true;
 
         int cut = page.LastIndexOf('/');
         string baseUrl = cut > 0 ? page.Substring(0, cut + 1) : page;
@@ -99,6 +101,24 @@ public class ModelStreamer : MonoBehaviour
 
     IEnumerator Stream()
     {
+        // Initialise FIRST, and wait for it.
+        //
+        // Touching Addressables.ResourceManager before initialisation throws a
+        // NullReferenceException inside Addressables' own startup, which then
+        // reports "Unable to load runtime data" and leaves the catalog unloaded
+        // - so every key afterwards fails with "No Location found". Four failed
+        // models, one line run too early.
+        Debug.Log($"[ModelStreamer] absoluteURL={Application.absoluteURL} " +
+                  $"streamingAssets={Application.streamingAssetsPath} " +
+                  $"runtimePath={Addressables.RuntimePath}");
+        var init = Addressables.InitializeAsync(false);
+        yield return init;
+        if (init.Status != AsyncOperationStatus.Succeeded)
+            Debug.LogWarning($"[ModelStreamer] Addressables init failed: {init.OperationException?.Message}");
+        Addressables.Release(init);
+
+        RouteBundlesToThisHost();
+
         // Deliberately sequential. Three bundles at once on a phone connection
         // means all three arrive late; one at a time means the field starts
         // improving almost immediately.

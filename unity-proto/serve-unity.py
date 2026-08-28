@@ -65,9 +65,16 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def end_headers(self):
         self.send_header("Cache-Control", "no-store, max-age=0")
         # Unity is happier with cross-origin isolation available; harmless if unused
-        self.send_header("Cross-Origin-Opener-Policy", "same-origin")
-        self.send_header("Cross-Origin-Embedder-Policy", "require-corp")
-        self.send_header("Cross-Origin-Resource-Policy", "cross-origin")
+        # NO cross-origin isolation headers.
+        #
+        # These were set on a guess - "Unity is happier with them" - and this
+        # build has no use for them: it does not touch SharedArrayBuffer,
+        # because the decompression fallback rules out threads. They are not
+        # free, either. Over http on a LAN address the origin is not
+        # "trustworthy", so the browser ignores COOP while still applying COEP,
+        # and Addressables could not fetch its own catalog - which looked like
+        # the models simply not loading. On 127.0.0.1, a trustworthy origin, the
+        # same build worked, which is why this hid for so long.
         if getattr(self, "_encoding", None):
             self.send_header("Content-Encoding", self._encoding)
         super().end_headers()
