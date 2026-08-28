@@ -14,6 +14,8 @@ using UnityEngine;
 public class CombatFx : MonoBehaviour
 {
     public MempoolTerrain terrain;
+    [Tooltip("Told where wrecks stand, so units walk round them rather than through.")]
+    public Army army;
     public Material tracerMaterial;
     public Material flashMaterial;
     public Material blastMaterial;
@@ -57,6 +59,8 @@ public class CombatFx : MonoBehaviour
         public Rigidbody body;
         /// <summary>Countdown to the next puff of flame from a burning wreck.</summary>
         public float burnAt;
+        /// <summary>Index into Army.Wrecks, or -1. Released when the hull fades.</summary>
+        public int wreckIndex = -1;
         /// <summary>Held at zero scale until this much of its life has passed.</summary>
         public float delay;
         public Vector3 velocity, spin;
@@ -169,6 +173,10 @@ public class CombatFx : MonoBehaviour
 
     void Retire(Piece p)
     {
+        // the ground is free again once the hull has gone
+        if (p.wreckIndex >= 0 && army != null && p.wreckIndex < army.Wrecks.Count)
+            army.Wrecks[p.wreckIndex] = new Vector3(0f, 0f, 0f);
+
         // park the body before pooling, or it carries its last tumble into the
         // next man who dies
         if (p.body != null)
@@ -532,20 +540,37 @@ public class CombatFx : MonoBehaviour
         return _smoke;
     }
 
-    bool SmokeBurst(Vector3 at, int count)
+    bool SmokeBurst(Vector3 at, int count, float lifetime = 0f)
     {
         var ps = SmokeSystem();
         if (ps == null) return false;
-        ps.Emit(new ParticleSystem.EmitParams { position = at, applyShapeToPosition = true }, count);
+        var p = new ParticleSystem.EmitParams { position = at, applyShapeToPosition = true };
+        if (lifetime > 0f)
+        {
+            p.startLifetime = lifetime;
+            p.velocity = new Vector3(Random.Range(-0.5f, 0.5f), Random.Range(1.4f, 2.4f), Random.Range(-0.5f, 0.5f));
+        }
+        ps.Emit(p, count);
         return true;
     }
 
     /// <summary>Fire the flipbook burst at a point. Returns false if there is no material for it.</summary>
-    bool FlipbookBurst(Vector3 at, int count)
+    /// <param name="lifetime">
+    /// Seconds per particle, which is also how long the flipbook takes to play.
+    /// A detonation wants half a second; a hull burning for twenty wants three,
+    /// or the same sheet races through and reads as a strobe rather than a fire.
+    /// </param>
+    bool FlipbookBurst(Vector3 at, int count, float lifetime = 0f)
     {
         var ps = FireSystem();
         if (ps == null) return false;
         var p = new ParticleSystem.EmitParams { position = at, applyShapeToPosition = true };
+        if (lifetime > 0f)
+        {
+            p.startLifetime = lifetime;
+            p.startSize = Random.Range(2f, 4f);
+            p.velocity = new Vector3(Random.Range(-0.4f, 0.4f), Random.Range(0.7f, 1.6f), Random.Range(-0.4f, 0.4f));
+        }
         ps.Emit(p, count);
         return true;
     }
@@ -730,15 +755,45 @@ public class CombatFx : MonoBehaviour
         // made them look like they were standing in the air.
         t.SetPositionAndRotation(at, Quaternion.Euler(
             Random.Range(-3f, 3f), heading * Mathf.Rad2Deg + Random.Range(-18f, 18f), Random.Range(-3f, 3f)));
+        GiveWreckASolidBody(t.gameObject);
         t.localScale = Vector3.one;
-        Add(new Piece
+        var piece = new Piece
         {
             t = t, life = 25f, baseScale = Vector3.one, kind = Kind.Wreck, isWreckModel = true,
-            burnAt = 0.2f,
-        });
+            burnAt = 0.2f, wreckIndex = ClaimWreckSlot(at),
+        };
+        Add(piece);
     }
 
     readonly Stack<Transform> _wreckPool = new Stack<Transform>();
+
+    /// <summary>
+    /// Tell the army a hull is standing here. Physics stops the truck, but the
+    /// units are moved by logic and would walk straight through otherwise.
+    /// </summary>
+    int ClaimWreckSlot(Vector3 at)
+    {
+        if (army == null) return -1;
+        army.Wrecks.Add(new Vector3(at.x, at.z, 4.2f));
+        return army.Wrecks.Count - 1;
+    }
+
+    /// <summary>
+    /// Wrecks block. A burnt-out hull that everything drives through is a
+    /// picture lying on the ground, and it removes the one interesting thing a
+    /// destroyed tank leaves behind: an obstacle in the middle of the field.
+    /// </summary>
+    static void GiveWreckASolidBody(GameObject go)
+    {
+        if (go.GetComponent<BoxCollider>() != null) return;
+        var box = go.AddComponent<BoxCollider>();
+        box.size = new Vector3(3.6f, 2.2f, 7f);
+        box.center = new Vector3(0f, 1.1f, 0f);
+        var rb = go.AddComponent<Rigidbody>();
+        rb.isKinematic = true;
+        rb.useGravity = false;
+        SetLayer(go, ArmyRenderer.UnitLayer);
+    }
 
     /// <summary>A burning hull, left where it died.</summary>
     public void Wreck(Vector3 at, float heading)
@@ -748,12 +803,14 @@ public class CombatFx : MonoBehaviour
         var scale = new Vector3(3.4f, 1.2f, 6.2f);
         t.localScale = scale;
         t.SetPositionAndRotation(at, Quaternion.Euler(0f, heading * Mathf.Rad2Deg, 0f));
+        GiveWreckASolidBody(t.gameObject);
         // Same life and same burn as the model wreck. They used to differ - 8
         // seconds and no fire against 40 and burning - so the fallback path
         // quietly behaved like a different feature.
         Add(new Piece
         {
             t = t, life = 25f, baseScale = scale, kind = Kind.Wreck, burnAt = 0.2f,
+            wreckIndex = ClaimWreckSlot(at),
         });
     }
 
@@ -835,11 +892,13 @@ public class CombatFx : MonoBehaviour
                         var seat = p.t.position + Vector3.up * 1.4f;
                         var jitter = new Vector3(Random.Range(-0.9f, 0.9f), 0f, Random.Range(-1.3f, 1.3f));
 
-                        if (vigour > 0.02f && !FlipbookBurst(seat + jitter, 1))
-                            Fireball(seat + jitter, Mathf.Lerp(0.6f, 2.8f, vigour), fireMaterial, 0f, 0.35f);
+                        // Slow. A hull burns for a long time; the same flipbook
+                        // at explosion speed reads as a strobe on a wreck.
+                        if (vigour > 0.02f && !FlipbookBurst(seat + jitter, 1, Random.Range(2.4f, 4f)))
+                            Fireball(seat + jitter, Mathf.Lerp(0.6f, 2.8f, vigour), fireMaterial, 0f, 1.4f);
 
                         // smoke outlasts the flame, as it does on a real hull
-                        if (!SmokeBurst(seat + Vector3.up * 1.4f, 1))
+                        if (!SmokeBurst(seat + Vector3.up * 1.4f, 1, Random.Range(4f, 7f)))
                             Smoke(seat + Vector3.up * 1.4f, Mathf.Lerp(1.5f, 3.5f, vigour), 0f);
                     }
 

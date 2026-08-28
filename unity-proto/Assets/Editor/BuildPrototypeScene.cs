@@ -55,7 +55,12 @@ public static class BuildPrototypeScene
         // Pick up an imported soldier model if one is in the project. Done by
         // search rather than by hand in the inspector, because regenerating the
         // scene would otherwise silently drop the assignment every time.
-        boot.soldierPrefab = FindPrefab("soldier", "infantry", "trooper");
+        // Deliberately NOT assigned: a model referenced by the scene is pulled
+        // into the player build, which is the very weight streaming exists to
+        // remove. ModelStreamer fetches them at runtime instead.
+        boot.soldierPrefab = null;
+        boot.tankPrefab = null;
+        boot.truckModel = null;
         boot.soldierAnimator = BuildSoldierAnimator();
         // Zero, and it must stay zero. The report of men running backwards was
         // about RETREATING soldiers only - advancing ones were already right,
@@ -69,10 +74,6 @@ public static class BuildPrototypeScene
                   (boot.truckModel != null ? AssetDatabase.GetAssetPath(boot.truckModel) : "none, using a box"));
         Debug.Log($"[BuildPrototypeScene] tank model: " +
                   (boot.tankPrefab != null ? AssetDatabase.GetAssetPath(boot.tankPrefab) : "none, using boxes"));
-        if (boot.soldierPrefab != null)
-            Debug.Log($"[BuildPrototypeScene] soldier model: {AssetDatabase.GetAssetPath(boot.soldierPrefab)}");
-        else
-            Debug.Log("[BuildPrototypeScene] no soldier model found - falling back to boxes");
 
         // scanned CC0 surfaces from Poly Haven, over the flat colours
         AddDetail(boot.groundMaterial,

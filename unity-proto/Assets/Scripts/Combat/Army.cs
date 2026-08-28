@@ -61,6 +61,13 @@ public class Army
         public float Dir => side == Side.Bull ? 1f : -1f;
     }
 
+    /// <summary>
+    /// Burnt-out hulls standing on the field. Units are moved by this logic
+    /// rather than by physics, so a collider on a wreck stops the truck but not
+    /// a tank - the army has to be told the ground is occupied.
+    /// </summary>
+    public readonly List<Vector3> Wrecks = new List<Vector3>();   // x, z, radius
+
     public readonly List<Unit> Armour = new List<Unit>();
     public readonly List<Unit> Infantry = new List<Unit>();
 
@@ -177,6 +184,7 @@ public class Army
 
         foreach (var v in Armour) StepArmour(v, dt);
         foreach (var s in Infantry) StepInfantry(s, dt);
+        AvoidWrecks();
 
         Armour.RemoveAll(u => u.hp <= 0f);
         Infantry.RemoveAll(u => u.hp <= 0f);
@@ -220,6 +228,29 @@ public class Army
             if (_infantryAt[side] > 0f) continue;
             _infantryAt[side] = InfantryReinforceSeconds;
             Infantry.Add(Spawn(side, false));
+        }
+    }
+
+    /// <summary>Push anyone standing inside a wreck back out of it.</summary>
+    void AvoidWrecks()
+    {
+        if (Wrecks.Count == 0) return;
+        foreach (var w in Wrecks)
+        {
+            float r = w.z;                     // x, y = position; z carries the radius
+            void Clear(Unit u, float size)
+            {
+                float dx = u.x - w.x, dz = u.z - w.y;
+                float d2 = dx * dx + dz * dz;
+                float reach = r + size;
+                if (d2 > reach * reach || d2 < 1e-4f) return;
+                float d = Mathf.Sqrt(d2);
+                float push = reach - d;
+                u.x += dx / d * push;
+                u.z += dz / d * push;
+            }
+            foreach (var v in Armour) Clear(v, 3.2f);
+            foreach (var u in Infantry) Clear(u, 0.6f);
         }
     }
 

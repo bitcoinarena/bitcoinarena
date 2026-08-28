@@ -99,6 +99,12 @@ public class Bootstrap : MonoBehaviour
         var truck = BuildTruck(_terrain);
         Field.courier = truck.transform;
         BuildCamera(truck);
+
+        // the detailed models come in behind the game, not in front of it
+        var streamer = gameObject.AddComponent<ModelStreamer>();
+        streamer.bootstrap = this;
+        streamer.army = Object.FindFirstObjectByType<ArmyRenderer>();
+        streamer.fx = Fx;
         gameObject.AddComponent<TouchControls>();
         var hud = gameObject.AddComponent<DriveHud>();
         hud.truck = truck;
@@ -275,6 +281,43 @@ public class Bootstrap : MonoBehaviour
         }
     }
 
+    /// <summary>
+    /// Replace the truck's body with a model that arrived after the start.
+    ///
+    /// Only the visual is swapped: the rigidbody, the wheel colliders and the
+    /// hull collider stay exactly as they were, so the truck keeps driving
+    /// through the change instead of being rebuilt under the player.
+    /// </summary>
+    public void SwapTruckModel(GameObject prefab)
+    {
+        if (prefab == null || _truckRoot == null) return;
+        truckModel = prefab;
+
+        var old = _truckRoot.Find("Body");
+        if (old != null) Destroy(old.gameObject);
+        foreach (var w in _modelWheels) if (w != null) Destroy(w.gameObject);
+        _modelWheels.Clear();
+        _wheelTaken = 0;
+
+        var body = Instantiate(prefab, _truckRoot);
+        body.name = "Body";
+        body.transform.localPosition = Vector3.zero;
+        NormaliseTruckModel(body, _truckRoot);
+
+        // hand the model's own wheels to the colliders that were already there
+        if (_truck != null)
+            foreach (var axle in _truck.axles)
+            {
+                if (axle == null) continue;
+                if (_wheelTaken < _modelWheels.Count) axle.leftMesh = _modelWheels[_wheelTaken++];
+                if (_wheelTaken < _modelWheels.Count) axle.rightMesh = _modelWheels[_wheelTaken++];
+            }
+        Debug.Log("[Bootstrap] truck model swapped in");
+    }
+
+    Transform _truckRoot;
+    TruckController _truck;
+
     /// <summary>Both armies, fed by the same tape that moves the frontline.</summary>
     void BuildArmies()
     {
@@ -301,6 +344,7 @@ public class Bootstrap : MonoBehaviour
         fxGo.SetActive(false);
         Fx = fxGo.AddComponent<CombatFx>();
         Fx.terrain = _terrain;
+        Fx.army = Field.Army;
         Fx.tracerMaterial = tracerMaterial;
         Fx.flashMaterial = flashMaterial;
         Fx.blastMaterial = blastMaterial;
@@ -362,6 +406,8 @@ public class Bootstrap : MonoBehaviour
         hull.center = new Vector3(0f, 0.95f, 0f);
 
         var controller = root.AddComponent<TruckController>();
+        _truckRoot = root.transform;
+        _truck = controller;
         controller.spawnPosition = root.transform.position;
         controller.spawnRotation = root.transform.rotation;
         controller.axles = new[]

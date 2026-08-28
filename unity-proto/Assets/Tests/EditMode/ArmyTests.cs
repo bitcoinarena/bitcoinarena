@@ -499,3 +499,68 @@ public class InfantryFacingTests
             "er steht an der Front und schaut nach hinten");
     }
 }
+
+/// <summary>
+/// A wreck is an obstacle. Physics stops the truck, but the units are moved by
+/// this logic rather than by the engine, so they would walk straight through
+/// unless the army is told the ground is taken.
+/// </summary>
+public class WreckObstacleTests
+{
+    static Army Field()
+    {
+        var a = new Army(51) { FrontlineAt = _ => 0f };
+        a.Populate(4, 10);
+        return a;
+    }
+
+    [Test]
+    public void ArmourIsPushedOutOfAWreck()
+    {
+        var army = Field();
+        army.Wrecks.Add(new Vector3(0f, 0f, 4.2f));
+        var tank = army.Armour[0];
+        tank.x = 0.5f; tank.z = 0.5f;              // sitting inside it
+        army.Update(1f / 60f);
+        float d = Mathf.Sqrt(tank.x * tank.x + tank.z * tank.z);
+        Assert.Greater(d, 4f, $"der Panzer steht im Wrack (Abstand {d:0.0})");
+    }
+
+    [Test]
+    public void InfantryIsPushedOutToo()
+    {
+        var army = Field();
+        army.Wrecks.Add(new Vector3(20f, -10f, 4.2f));
+        var man = army.Infantry[0];
+        man.x = 20f; man.z = -10f;
+        army.Update(1f / 60f);
+        float d = Mathf.Sqrt((man.x - 20f) * (man.x - 20f) + (man.z + 10f) * (man.z + 10f));
+        Assert.Greater(d, 3f, $"der Soldat steht im Wrack (Abstand {d:0.0})");
+    }
+
+    [Test]
+    public void UnitsWellClearOfAWreckAreLeftAlone()
+    {
+        var army = Field();
+        army.Wrecks.Add(new Vector3(60f, 60f, 4.2f));
+        var tank = army.Armour[0];
+        tank.x = -60f; tank.z = -60f;
+        float wasX = tank.x, wasZ = tank.z;
+        army.Update(1f / 60f);
+        // it still runs its normal step, but the wreck must not have moved it
+        Assert.Less(Mathf.Abs(tank.x - wasX), 2f, "ein Wrack am anderen Ende hat ihn verschoben");
+        Assert.Less(Mathf.Abs(tank.z - wasZ), 2f, "ein Wrack am anderen Ende hat ihn verschoben");
+    }
+
+    [Test]
+    public void AClearedWreckSlotStopsPushing()
+    {
+        var army = Field();
+        army.Wrecks.Add(new Vector3(0f, 0f, 0f));   // burnt out: zero radius
+        var tank = army.Armour[0];
+        tank.x = 0.5f; tank.z = 0.5f;
+        army.Update(1f / 60f);
+        Assert.Less(Mathf.Sqrt(tank.x * tank.x + tank.z * tank.z), 4f,
+            "ein abgeraeumtes Wrack schiebt immer noch");
+    }
+}

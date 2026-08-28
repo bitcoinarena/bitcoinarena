@@ -9,3 +9,7 @@
 *.csproj
 *.sln
 *.userprefs
+
+# Addressables output - rebuilt from the project, not source
+[Ss]erverData/
+Assets/AddressableAssetsData/*/*.bin

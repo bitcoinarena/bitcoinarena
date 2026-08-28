@@ -61,6 +61,42 @@ public class ArmyRenderer : MonoBehaviour
     readonly List<Transform> _soldiersBull = new List<Transform>();
     readonly List<Transform> _soldiersBear = new List<Transform>();
 
+    /// <summary>
+    /// Take a soldier model that arrived after the game had already started.
+    ///
+    /// The pools go with it: they hold instances built from whatever prefab was
+    /// current when each was made, so leaving them would keep half the army as
+    /// boxes for as long as those instances happen to survive.
+    /// </summary>
+    public void SetSoldierPrefab(GameObject prefab)
+    {
+        if (prefab == null || prefab == soldierPrefab) return;
+        soldierPrefab = prefab;
+        Discard(_soldiersBull);
+        Discard(_soldiersBear);
+    }
+
+    /// <summary>The same for armour, which also drops its turret and wheel maps.</summary>
+    public void SetTankPrefab(GameObject prefab)
+    {
+        if (prefab == null || prefab == tankPrefab) return;
+        tankPrefab = prefab;
+        Discard(_hulls);
+        Discard(_turrets);
+        Discard(_hullsBull);
+        Discard(_hullsBear);
+        _prefabTurrets.Clear();
+        _tankWheels.Clear();
+        _lastTankPos.Clear();
+    }
+
+    static void Discard(List<Transform> pool)
+    {
+        foreach (var t in pool) if (t != null) Destroy(t.gameObject);
+        pool.Clear();
+    }
+
+
     void Awake()
     {
         Physics.IgnoreLayerCollision(UnitLayer, UnitLayer, true);
