@@ -220,3 +220,24 @@ WebGL nicht: VFX Graph braucht Compute-Shader, die WebGL 2 nicht hat — die
 Verwendet werden deshalb die **Flipbook-Texturen** des Packs
 (`FireBall01_8x8.exr`) in einem klassischen Partikelsystem, das dort läuft. Die
 Kunst überlebt, der Effektgraph nicht.
+
+## Streaming der Modelle
+
+Die vier Modelle (Soldat, Panzer, Truck, Helikopter) liegen nicht im Player,
+sondern in Addressables-Paketen unter `build/webgl/ServerData/`. Das Spiel
+startet auf Quader-Platzhaltern und tauscht jedes Modell ein, sobald sein Paket
+da ist.
+
+Zwei Fallen dabei, beide nur im Build sichtbar:
+
+- **Die Szene darf die Modelle nicht referenzieren.** Was eine Szene
+  referenziert, landet im Player — genau das Gewicht, das Streaming entfernen
+  soll.
+- **WebGL braucht absolute URLs.** Ein relativer Pfad wird vom
+  `AssetBundleProvider` abgelehnt (`Invalid path`), die Anfrage wird gar nicht
+  gestellt. Eine absolute URL zur Build-Zeit würde den Build aber an einen Host
+  binden. `ModelStreamer` schreibt die Pfade deshalb beim Laden um, gegen die
+  URL der Seite.
+
+Neu bauen: erst `SetupAddressables.BuildContent`, dann `BuildWebGL.Run`, dann
+`ServerData/` neben den Build kopieren.

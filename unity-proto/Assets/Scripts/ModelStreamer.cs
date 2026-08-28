@@ -29,6 +29,37 @@ public class ModelStreamer : MonoBehaviour
     /// <summary>What the HUD can show while the field is still made of boxes.</summary>
     public string Status { get; private set; } = "Modelle werden geladen …";
 
+    void Awake() => RouteBundlesToThisHost();
+
+    /// <summary>
+    /// Turn the relative bundle paths into absolute URLs against whatever host
+    /// is serving the page.
+    ///
+    /// WebGL's bundle provider refuses a bare relative path outright - it does
+    /// not even issue the request, it reports "Invalid path in
+    /// AssetBundleProvider". But baking an absolute URL in at build time would
+    /// pin the build to one host, and this one moves between localhost, a LAN
+    /// address and a tunnel. Rewriting the id at load time satisfies both.
+    /// </summary>
+    void RouteBundlesToThisHost()
+    {
+        string page = Application.absoluteURL;
+        if (string.IsNullOrEmpty(page)) return;          // editor: paths are local anyway
+
+        int cut = page.LastIndexOf('/');
+        string baseUrl = cut > 0 ? page.Substring(0, cut + 1) : page;
+        int query = baseUrl.IndexOf('?');
+        if (query >= 0) baseUrl = baseUrl.Substring(0, query);
+
+        Addressables.ResourceManager.InternalIdTransformFunc = location =>
+        {
+            string id = location.InternalId;
+            if (id.StartsWith("ServerData/", System.StringComparison.Ordinal)) return baseUrl + id;
+            return id;
+        };
+        Debug.Log($"[ModelStreamer] bundles will be fetched from {baseUrl}ServerData/");
+    }
+
     void Start() => StartCoroutine(Stream());
 
     IEnumerator Stream()
