@@ -65,6 +65,15 @@ public class Army
         /// <summary>Per-man variation, so a rank is not one model repeated.</summary>
         public float height = 1f;
         public float pace = 1f;
+
+        /// <summary>
+        /// Men do not advance at a constant rate in a straight line. They
+        /// stop, look, and set off again, and they arrive at their position by
+        /// a slightly different route each time. These carry that.
+        /// </summary>
+        public float restFor;        // seconds still to spend halted
+        public float nextRest;       // seconds until he next stops
+        public float drift;          // his own lateral bias, not a shared wave
         /// <summary>
         /// +1 for bull, -1 for bear. Sign convention matters: every formula
         /// ported from battlefield.js is written as "front - dir * distance",
@@ -214,6 +223,8 @@ public class Army
             unit.squadOffsetZ = Rand(-5f, 5f);
             unit.height = Rand(0.92f, 1.08f);
             unit.pace = Rand(0.82f, 1.18f);
+            unit.nextRest = Rand(2f, 9f);
+            unit.drift = Rand(-1f, 1f);
             unit.x = Mathf.Clamp(squads[unit.squad] + unit.squadOffsetX, -FrontX + 4f, FrontX - 4f);
         }
         return unit;
@@ -562,17 +573,37 @@ public class Army
         float front = FrontlineAt(s.x);
         float goalZ = front - s.Dir * (s.standoff + s.squadOffsetZ);
         float dz = goalZ - s.z;
-        float step = Mathf.Min(3.4f * s.pace * dt, Mathf.Abs(dz));
+
+        // He stops now and then - to look, to take cover, for no reason at all.
+        // A column that advances at an unbroken rate is the clearest tell that
+        // nobody in it is deciding anything.
+        if (s.restFor > 0f) s.restFor -= dt;
+        else
+        {
+            s.nextRest -= dt;
+            if (s.nextRest <= 0f && Mathf.Abs(dz) > 2f)
+            {
+                s.restFor = Rand(0.4f, 1.8f);
+                s.nextRest = Rand(3f, 11f);
+            }
+        }
+        bool halted = s.restFor > 0f;
+
+        // and he does not hold one speed while moving: a small wave on his own
+        // phase, so no two men are ever in step
+        float gait = halted ? 0f : s.pace * (0.82f + 0.18f * Mathf.Sin(s.phase * 0.7f));
+        float step = Mathf.Min(3.4f * gait * dt, Mathf.Abs(dz));
         s.z += Mathf.Sign(dz) * step;
 
         // hold station on his squad rather than wandering the whole front
         var squads = _squads[s.side];
-        if (s.squad >= 0 && s.squad < squads.Count)
+        if (s.squad >= 0 && s.squad < squads.Count && !halted)
         {
             float goalX = squads[s.squad] + s.squadOffsetX;
-            s.x += Mathf.Clamp(goalX - s.x, -2.4f * dt * s.pace, 2.4f * dt * s.pace);
+            float toward = Mathf.Clamp(goalX - s.x, -2.4f * dt * s.pace, 2.4f * dt * s.pace);
+            // curves in rather than marching straight at his mark
+            s.x += toward + s.drift * 0.7f * dt;
         }
-        s.x += Mathf.Sin(s.phase) * 0.9f * dt;
         s.x = Mathf.Clamp(s.x, -FrontX + 4f, FrontX - 4f);
         s.z = Mathf.Clamp(s.z, -HalfDepth, HalfDepth);
         s.phase += dt * 6f;
@@ -580,7 +611,7 @@ public class Army
         // Face the way he is actually WALKING, not the way his side faces.
         // When the line moves over a man he has to fall back, and a fixed
         // heading left him reversing up the field playing a forward run.
-        s.walking = Mathf.Abs(dz) > 0.6f;
+        s.walking = !halted && Mathf.Abs(dz) > 0.6f;
         s.heading = s.walking
             ? (dz > 0f ? 0f : Mathf.PI)
             : (s.Dir > 0f ? 0f : Mathf.PI);      // dug in: face the enemy

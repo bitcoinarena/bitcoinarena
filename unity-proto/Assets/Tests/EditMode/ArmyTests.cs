@@ -744,3 +744,62 @@ public class HelicopterTests
         Assert.AreEqual(0, army.Helicopters.Count, "der Helikopter kreist ewig weiter");
     }
 }
+
+/// <summary>
+/// An advance at an unbroken rate is the clearest tell that nobody in the
+/// column is deciding anything.
+/// </summary>
+public class InfantryGaitTests
+{
+    static Army Field()
+    {
+        var a = new Army(404) { FrontlineAt = _ => 0f };
+        a.Populate(0, 40);
+        // put them well back, so they are all walking to begin with
+        foreach (var u in a.Infantry) u.z = -u.Dir * 60f;
+        return a;
+    }
+
+    [Test]
+    public void MenStopNowAndThenRatherThanMarchingContinuously()
+    {
+        var army = Field();
+        bool sawAHalt = false;
+        for (int i = 0; i < 60 * 40 && !sawAHalt; i++)
+        {
+            army.Update(1f / 60f);
+            foreach (var u in army.Infantry)
+                if (!u.walking && Mathf.Abs(u.z) > 20f) { sawAHalt = true; break; }
+        }
+        Assert.IsTrue(sawAHalt, "in vierzig Sekunden bleibt niemand stehen - das ist eine Prozession");
+    }
+
+    [Test]
+    public void NotEveryoneIsInStep()
+    {
+        var army = Field();
+        for (int i = 0; i < 60 * 6; i++) army.Update(1f / 60f);
+
+        // the distance covered in one second must differ from man to man
+        var before = army.Infantry.ConvertAll(u => u.z);
+        for (int i = 0; i < 60; i++) army.Update(1f / 60f);
+
+        var moved = new System.Collections.Generic.HashSet<float>();
+        for (int i = 0; i < before.Count && i < army.Infantry.Count; i++)
+            moved.Add(Mathf.Round(Mathf.Abs(army.Infantry[i].z - before[i]) * 20f));
+        Assert.Greater(moved.Count, 5, "alle legen exakt dieselbe Strecke zurueck");
+    }
+
+    [Test]
+    public void AHaltedManDoesNotPlayTheWalkingAnimation()
+    {
+        var army = Field();
+        for (int i = 0; i < 60 * 40; i++)
+        {
+            army.Update(1f / 60f);
+            foreach (var u in army.Infantry)
+                if (u.restFor > 0f)
+                    Assert.IsFalse(u.walking, "er steht, laeuft aber weiter in der Animation");
+        }
+    }
+}

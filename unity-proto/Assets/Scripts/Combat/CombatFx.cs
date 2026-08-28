@@ -74,6 +74,16 @@ public class CombatFx : MonoBehaviour
     /// </summary>
     public const int CorpseLayer = 9;
 
+    /// <summary>
+    /// The player's vehicle, on its own layer.
+    ///
+    /// Corpses already ignore the units, but the truck sat on the default layer
+    /// with the terrain - so a 75 kg body appearing inside it was resolved by
+    /// throwing the truck into the air. It has to be excluded by name, not by
+    /// being lumped in with the ground it drives on.
+    /// </summary>
+    public const int CourierLayer = 10;
+
     /// <summary>Pooled soldier models for the dead, kept per side so the tint holds.</summary>
     readonly Dictionary<bool, Stack<Transform>> _bodyPool = new Dictionary<bool, Stack<Transform>>
     {
@@ -103,6 +113,7 @@ public class CombatFx : MonoBehaviour
         _layersSet = true;
         Physics.IgnoreLayerCollision(CorpseLayer, CorpseLayer, true);
         Physics.IgnoreLayerCollision(CorpseLayer, ArmyRenderer.UnitLayer, true);
+        Physics.IgnoreLayerCollision(CorpseLayer, CourierLayer, true);
     }
 
     void Awake()
@@ -348,6 +359,27 @@ public class CombatFx : MonoBehaviour
         }
     }
 
+    readonly Dictionary<Material, Material> _corpseMaterials = new Dictionary<Material, Material>();
+
+    /// <summary>A URP material carrying the model's own texture, dimmed.</summary>
+    Material CorpseMaterial(Material source, Color shade)
+    {
+        if (source != null && _corpseMaterials.TryGetValue(source, out var hit)) return hit;
+
+        var shader = Shader.Find("Universal Render Pipeline/Lit");
+        if (shader == null) return source;
+        var m = new Material(shader);
+        Texture tex = source == null ? null
+            : source.HasProperty("_BaseMap") ? source.GetTexture("_BaseMap")
+            : source.HasProperty("_MainTex") ? source.GetTexture("_MainTex")
+            : null;
+        if (tex != null) m.SetTexture("_BaseMap", tex);
+        m.SetColor("_BaseColor", shade);
+        m.SetFloat("_Smoothness", 0.1f);          // dirt does not shine
+        if (source != null) _corpseMaterials[source] = m;
+        return m;
+    }
+
     /// <summary>
     /// A tinted soldier model for the dead, pooled - instantiating a skinned
     /// mesh per casualty is not free, and there is about one a second.
@@ -384,11 +416,19 @@ public class CombatFx : MonoBehaviour
             body.transform.localPosition = new Vector3(0f, -sole, 0f);
         }
 
+        // Keep the model's own texture, darkened.
+        //
+        // Replacing it with the flat team material made a body BRIGHTER the
+        // moment it died - the one thing a corpse should not do. The tint is
+        // multiplied in and pulled well down, so he reads as the man he was,
+        // face down in the dirt.
         var tint = bull ? bullMaterial : bearMaterial;
+        Color shade = tint != null ? tint.GetColor("_BaseColor") : Color.white;
+        shade = new Color(shade.r * 0.5f, shade.g * 0.5f, shade.b * 0.5f, 1f);
         foreach (var r in body.GetComponentsInChildren<Renderer>(true))
         {
             var mats = new Material[r.sharedMaterials.Length];
-            for (int i = 0; i < mats.Length; i++) mats[i] = tint;
+            for (int i = 0; i < mats.Length; i++) mats[i] = CorpseMaterial(r.sharedMaterials[i], shade);
             r.sharedMaterials = mats;
         }
         // the dead hold their last pose rather than jogging on the ground

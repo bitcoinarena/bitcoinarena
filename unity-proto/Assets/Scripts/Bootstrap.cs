@@ -379,6 +379,8 @@ public class Bootstrap : MonoBehaviour
         root.transform.position = new Vector3(startX, terrain.SampleWorld(startX, 0f) + 1.4f, 0f);
         root.transform.rotation = Quaternion.LookRotation(Vector3.right, Vector3.up);
 
+        // its own layer, so a body it runs over cannot throw it into the air
+        root.layer = CombatFx.CourierLayer;
         var rb = root.AddComponent<Rigidbody>();
         rb.mass = 2100f;
         rb.linearDamping = 0.05f;
