@@ -53,12 +53,22 @@ public class CombatFx : MonoBehaviour
         public Quaternion fallFrom, fallTo;
         public Vector3 slide, from;
         public bool isModelBody, bull, isWreckModel;
+        /// <summary>Set when the body is being thrown by the physics engine.</summary>
+        public Rigidbody body;
+        /// <summary>Countdown to the next puff of flame from a burning wreck.</summary>
+        public float burnAt;
         /// <summary>Held at zero scale until this much of its life has passed.</summary>
         public float delay;
         public Vector3 velocity, spin;
     }
 
     enum Kind { Tracer, Flash, Blast, Body, Wreck, Fireball, Smoke, Debris, Shockwave }
+
+    /// <summary>
+    /// Corpses collide with the ground and nothing else. They must not shove
+    /// the truck that hit them, nor knock the living about.
+    /// </summary>
+    public const int CorpseLayer = 9;
 
     /// <summary>Pooled soldier models for the dead, kept per side so the tint holds.</summary>
     readonly Dictionary<bool, Stack<Transform>> _bodyPool = new Dictionary<bool, Stack<Transform>>
@@ -77,8 +87,23 @@ public class CombatFx : MonoBehaviour
     /// </summary>
     public int maxPieces = 400;
 
+    bool _layersSet;
+
+    /// <summary>
+    /// Kept out of Awake: edit-mode tests never run it, so a rule set only
+    /// there is a rule the tests cannot see and the build silently depends on.
+    /// </summary>
+    void EnsureLayers()
+    {
+        if (_layersSet) return;
+        _layersSet = true;
+        Physics.IgnoreLayerCollision(CorpseLayer, CorpseLayer, true);
+        Physics.IgnoreLayerCollision(CorpseLayer, ArmyRenderer.UnitLayer, true);
+    }
+
     void Awake()
     {
+        EnsureLayers();
         _cube = Prim(PrimitiveType.Cube);
         _sphere = Prim(PrimitiveType.Sphere);
     }
@@ -109,8 +134,22 @@ public class CombatFx : MonoBehaviour
         return t;
     }
 
+    static void SetLayer(GameObject go, int layer)
+    {
+        go.layer = layer;
+        foreach (Transform c in go.transform) SetLayer(c.gameObject, layer);
+    }
+
     void Retire(Piece p)
     {
+        // park the body before pooling, or it carries its last tumble into the
+        // next man who dies
+        if (p.body != null)
+        {
+            p.body.linearVelocity = Vector3.zero;
+            p.body.angularVelocity = Vector3.zero;
+            p.body.isKinematic = true;
+        }
         p.t.gameObject.SetActive(false);
         if (p.isModelBody) { _bodyPool[p.bull].Push(p.t); return; }
         if (p.isWreckModel) { _wreckPool.Push(p.t); return; }
@@ -186,6 +225,7 @@ public class CombatFx : MonoBehaviour
     public void Body(Vector3 at, float heading, bool bull, Vector2 knock = default)
     {
         if (_live.Count >= maxPieces) return;
+        EnsureLayers();
 
         Transform t;
         Vector3 scale;
@@ -213,14 +253,56 @@ public class CombatFx : MonoBehaviour
         var flat = upright * Quaternion.Euler(thrown ? 92f : 76f, 0f, Random.Range(-25f, 25f));
 
         t.SetPositionAndRotation(at, upright);
+
+        // Someone ridden down is THROWN, not slid along a curve. A scripted
+        // slide is what made it look like an object being dragged rather than a
+        // man being hit: the arc is identical every time, it ignores the ground
+        // it crosses, and it cannot bounce or roll to a stop.
+        Rigidbody rb = null;
+        if (thrown)
+        {
+            rb = t.GetComponent<Rigidbody>();
+            if (rb == null)
+            {
+                var col = t.gameObject.AddComponent<CapsuleCollider>();
+                col.height = 1.7f; col.radius = 0.3f;
+                col.center = new Vector3(0f, 0.85f, 0f);
+                col.direction = 1;
+                rb = t.gameObject.AddComponent<Rigidbody>();
+                rb.mass = 75f;
+                rb.collisionDetectionMode = CollisionDetectionMode.ContinuousDynamic;
+                SetLayer(t.gameObject, CorpseLayer);
+            }
+            rb.isKinematic = false;
+            rb.linearVelocity = new Vector3(knock.x, 0f, knock.y) * Random.Range(7f, 12f)
+                              + Vector3.up * Random.Range(3.5f, 6f);
+            // end over end, the way a body actually goes
+            rb.angularVelocity = new Vector3(
+                Random.Range(-9f, 9f), Random.Range(-4f, 4f), Random.Range(-9f, 9f));
+        }
+
         _live.Add(new Piece
         {
-            t = t, life = thrown ? 7f : 5f, baseScale = scale, kind = Kind.Body,
-            isModelBody = model, bull = bull,
+            t = t, life = thrown ? 9f : 5f, baseScale = scale, kind = Kind.Body,
+            isModelBody = model, bull = bull, body = rb,
             fallFrom = upright, fallTo = flat,
-            slide = thrown ? new Vector3(knock.x, 0f, knock.y) * 4.5f : Vector3.zero,
             from = at,
         });
+    }
+
+    /// <summary>
+    /// The moment of the hit: a short spray thrown along the line of travel.
+    /// Without it a man simply changes from standing to lying, and the blow
+    /// itself - the thing that killed him - is invisible.
+    /// </summary>
+    void Impact(Vector3 at, Vector2 knock)
+    {
+        for (int i = 0; i < 6; i++)
+        {
+            var v = new Vector3(knock.x, 0f, knock.y) * Random.Range(3f, 8f)
+                  + new Vector3(Random.Range(-2f, 2f), Random.Range(2f, 5f), Random.Range(-2f, 2f));
+            Debris(at, v, Random.Range(0.06f, 0.12f));
+        }
     }
 
     /// <summary>
@@ -465,13 +547,25 @@ public class CombatFx : MonoBehaviour
                 Smoke(at + off, Random.Range(3.5f, 6.5f), i * 0.12f);
             }
 
-        // torn plate and road wheels thrown clear
-        for (int i = 0; i < 12; i++)
+        // Splinters, not crates. At up to 0.8 across in near-black these read
+        // across the field as black rectangles flying about - which is what
+        // they were reported as. Small enough to be debris, and light enough to
+        // catch the sun rather than silhouette against it.
+        for (int i = 0; i < 10; i++)
         {
             float a = Random.Range(0f, Mathf.PI * 2f);
             var v = new Vector3(Mathf.Sin(a), 0f, Mathf.Cos(a)) * Random.Range(6f, 16f);
             v.y = Random.Range(7f, 15f);
-            Debris(at + Vector3.up * 1.4f, v, Random.Range(0.3f, 0.8f));
+            Debris(at + Vector3.up * 1.4f, v, Random.Range(0.12f, 0.3f));
+        }
+
+        // and sparks, which is what actually reads at a distance
+        for (int i = 0; i < 14; i++)
+        {
+            float a = Random.Range(0f, Mathf.PI * 2f);
+            var v = new Vector3(Mathf.Sin(a), 0f, Mathf.Cos(a)) * Random.Range(9f, 22f);
+            v.y = Random.Range(6f, 18f);
+            Spark(at + Vector3.up * 1.6f, v);
         }
 
         Shockwave(at);
@@ -517,6 +611,25 @@ public class CombatFx : MonoBehaviour
             t = t, life = Random.Range(1.4f, 2.4f), baseScale = scale, kind = Kind.Debris,
             from = at, velocity = velocity,
             spin = new Vector3(Random.Range(-720f, 720f), Random.Range(-720f, 720f), Random.Range(-720f, 720f)),
+        });
+    }
+
+    /// <summary>
+    /// A spark: small, bright and short-lived. Debris tells you something broke;
+    /// sparks are what actually carry an explosion across a distance.
+    /// </summary>
+    void Spark(Vector3 at, Vector3 velocity)
+    {
+        if (_live.Count >= maxPieces) return;
+        var t = Take(_cubes, _cube, fireCoreMaterial ?? tracerMaterial);
+        t.SetPositionAndRotation(at, Random.rotation);
+        var scale = new Vector3(0.08f, 0.08f, Random.Range(0.4f, 0.9f));
+        t.localScale = scale;
+        _live.Add(new Piece
+        {
+            t = t, life = Random.Range(0.5f, 1.0f), baseScale = scale, kind = Kind.Debris,
+            from = at, velocity = velocity,
+            spin = new Vector3(Random.Range(-200f, 200f), Random.Range(-200f, 200f), 0f),
         });
     }
 
@@ -585,7 +698,8 @@ public class CombatFx : MonoBehaviour
         t.localScale = Vector3.one;
         _live.Add(new Piece
         {
-            t = t, life = 22f, baseScale = Vector3.one, kind = Kind.Wreck, isWreckModel = true,
+            t = t, life = 40f, baseScale = Vector3.one, kind = Kind.Wreck, isWreckModel = true,
+            burnAt = 0.2f,
         });
     }
 
@@ -632,15 +746,16 @@ public class CombatFx : MonoBehaviour
                     break;
                 case Kind.Body:
                 {
-                    // topple over the first half second, then sink into the ground
-                    p.t.rotation = Quaternion.Slerp(p.fallFrom, p.fallTo, Mathf.Clamp01(p.age / 0.55f));
-                    // thrown bodies carry on along the line they were hit,
-                    // slowing as they tumble
-                    if (p.slide.sqrMagnitude > 0.001f)
+                    if (p.body != null)
                     {
-                        float carried = 1f - Mathf.Exp(-3.2f * p.age);
-                        p.t.position = p.from + p.slide * carried;
+                        // the engine owns him: he tumbles, lands and rolls out
+                        // on his own, and nothing here should fight that
+                        if (k > 0.88f)
+                            p.t.localScale = p.baseScale * Mathf.Lerp(1f, 0f, (k - 0.88f) / 0.12f);
+                        break;
                     }
+                    // shot where he stood: fold over, then sink away
+                    p.t.rotation = Quaternion.Slerp(p.fallFrom, p.fallTo, Mathf.Clamp01(p.age / 0.55f));
                     if (k > 0.8f)
                         p.t.localScale = p.baseScale * Mathf.Lerp(1f, 0f, (k - 0.8f) / 0.2f);
                     break;
@@ -652,6 +767,28 @@ public class CombatFx : MonoBehaviour
                     // height it died at is soon standing in mid-air.
                     var wp = p.t.position;
                     p.t.position = new Vector3(wp.x, Ground(wp.x, wp.z), wp.z);
+
+                    // It burns. A hull that stops smoking the instant the
+                    // fireball clears reads as scenery dropped on the field
+                    // rather than as something that was just destroyed - and
+                    // the fire is what tells you which wrecks are fresh.
+                    p.burnAt -= dt;
+                    if (p.burnAt <= 0f)
+                    {
+                        p.burnAt = Random.Range(0.25f, 0.5f);
+                        // dies down as it burns out, so the field settles
+                        float vigour = 1f - k;
+                        var seat = p.t.position + Vector3.up * 1.4f;
+                        if (Random.value < vigour)
+                        {
+                            var jitter = new Vector3(Random.Range(-1f, 1f), 0f, Random.Range(-1.4f, 1.4f));
+                            if (!FlipbookBurst(seat + jitter, 1))
+                                Fireball(seat + jitter, Random.Range(1.6f, 3f), fireMaterial, 0f, 0.4f);
+                        }
+                        if (!SmokeBurst(seat + Vector3.up * 1.2f, 1))
+                            Smoke(seat + Vector3.up * 1.2f, Random.Range(2f, 3.5f), 0f);
+                    }
+
                     if (k > 0.85f) p.t.localScale = p.baseScale * Mathf.Lerp(1f, 0f, (k - 0.85f) / 0.15f);
                     break;
                 }
@@ -724,6 +861,9 @@ public class CombatFx : MonoBehaviour
 
         army.Killed += (u, knock) =>
         {
+            // a hit you can see, so a casualty is not just a model changing state
+            if (knock.sqrMagnitude > 0.01f)
+                Impact(new Vector3(u.x, Ground(u.x, u.z) + 1f, u.z), knock);
             // a model body stands on the ground; the proxy box is centred
             float lift = bodyPrefab != null ? 0f : 0.9f;
             Body(new Vector3(u.x, Ground(u.x, u.z) + lift, u.z), u.heading,

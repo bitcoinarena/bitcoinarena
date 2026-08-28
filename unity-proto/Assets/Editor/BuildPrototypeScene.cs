@@ -47,7 +47,7 @@ public static class BuildPrototypeScene
         boot.fireCoreMaterial = Glow("FireCore", new Color(1f, 0.97f, 0.86f), 9f);
         boot.fireMaterial = Glow("Fire", new Color(1f, 0.48f, 0.10f), 5f);
         boot.smokeMaterial = Lit("Smoke", new Color(0.46f, 0.44f, 0.42f), 0.95f);
-        boot.debrisMaterial = Lit("Debris", new Color(0.10f, 0.09f, 0.09f), 0.8f);
+        boot.debrisMaterial = Lit("Debris", new Color(0.28f, 0.26f, 0.24f), 0.55f);
         boot.dustMaterial = Lit("Dust", new Color(0.72f, 0.66f, 0.56f), 0.95f);
         boot.fireParticleMaterial = FireFlipbookMaterial();
         boot.smokeParticleMaterial = SmokeFlipbookMaterial();

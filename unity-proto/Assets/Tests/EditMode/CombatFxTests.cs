@@ -201,3 +201,150 @@ public class TankExplosionTests
         Object.DestroyImmediate(fx.gameObject);
     }
 }
+
+/// <summary>
+/// A man ridden down has to behave like a man, not like a prop on a rail. The
+/// scripted slide it replaced had an identical arc every time and could not
+/// bounce, roll, or notice the ground.
+/// </summary>
+public class RunOverBodyTests
+{
+    static CombatFx Rig()
+    {
+        var go = new GameObject("Fx");
+        var fx = go.AddComponent<CombatFx>();
+        var mat = new Material(Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Standard"));
+        fx.tracerMaterial = fx.flashMaterial = fx.blastMaterial = mat;
+        fx.bullMaterial = fx.bearMaterial = fx.debrisMaterial = mat;
+        fx.fireCoreMaterial = fx.fireMaterial = fx.smokeMaterial = fx.dustMaterial = mat;
+        return fx;
+    }
+
+    [Test]
+    public void AThrownBodyIsHandedToThePhysicsEngine()
+    {
+        var fx = Rig();
+        fx.Body(Vector3.zero, 0f, true, Vector2.right);
+        var t = fx.transform.GetChild(0);
+        var rb = t.GetComponent<Rigidbody>();
+        Assert.IsNotNull(rb, "der Koerper hat keinen Rigidbody - er wird wieder auf einer Bahn geschoben");
+        Assert.IsFalse(rb.isKinematic, "der Koerper ist kinematisch, die Physik kann ihn nicht werfen");
+        Assert.Greater(rb.linearVelocity.magnitude, 5f, "er bekommt keinen Impuls");
+        Assert.Greater(rb.angularVelocity.magnitude, 1f, "er taumelt nicht");
+        Object.DestroyImmediate(fx.gameObject);
+    }
+
+    [Test]
+    public void HeIsThrownTheWayTheTruckWasGoing()
+    {
+        var fx = Rig();
+        fx.Body(Vector3.zero, 0f, true, Vector2.right);
+        var rb = fx.transform.GetChild(0).GetComponent<Rigidbody>();
+        Assert.Greater(rb.linearVelocity.x, 0f, "er fliegt nicht in Fahrtrichtung");
+        Assert.Greater(rb.linearVelocity.y, 0f, "er wird nicht angehoben - er wuerde nur schleifen");
+        Object.DestroyImmediate(fx.gameObject);
+    }
+
+    [Test]
+    public void AManShotWhereHeStoodIsNotThrown()
+    {
+        var fx = Rig();
+        fx.Body(Vector3.zero, 0f, true);          // no knock
+        var rb = fx.transform.GetChild(0).GetComponent<Rigidbody>();
+        Assert.IsNull(rb, "ein erschossener Soldat wird durch die Gegend geworfen");
+        Object.DestroyImmediate(fx.gameObject);
+    }
+
+    [Test]
+    public void CorpsesDoNotCollideWithTheLivingOrEachOther()
+    {
+        var fx = Rig();
+        fx.Body(Vector3.zero, 0f, true, Vector2.right);
+        Assert.IsTrue(Physics.GetIgnoreLayerCollision(CombatFx.CorpseLayer, CombatFx.CorpseLayer),
+            "Leichen stossen sich gegenseitig herum");
+        Assert.IsTrue(Physics.GetIgnoreLayerCollision(CombatFx.CorpseLayer, ArmyRenderer.UnitLayer),
+            "eine Leiche kann den Truck oder einen Panzer schieben");
+        Object.DestroyImmediate(fx.gameObject);
+    }
+
+    [Test]
+    public void ABodyIsParkedBeforeItGoesBackInThePool()
+    {
+        var fx = Rig();
+        fx.Body(Vector3.zero, 0f, true, Vector2.right);
+        var rb = fx.transform.GetChild(0).GetComponent<Rigidbody>();
+        for (int i = 0; i < 60 * 12; i++) fx.Step(1f / 60f);
+        Assert.AreEqual(0, fx.LivePieces);
+        Assert.IsTrue(rb.isKinematic,
+            "der Koerper haelt seinen letzten Sturz fest und traegt ihn in den naechsten Toten");
+        Object.DestroyImmediate(fx.gameObject);
+    }
+}
+
+/// <summary>
+/// A wreck that stops smoking the moment the fireball clears reads as scenery
+/// dropped on the field. The fire is what says which hulls are fresh.
+/// </summary>
+public class BurningWreckTests
+{
+    static CombatFx Rig()
+    {
+        var go = new GameObject("Fx");
+        var fx = go.AddComponent<CombatFx>();
+        var mat = new Material(Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Standard"));
+        fx.tracerMaterial = fx.flashMaterial = fx.blastMaterial = mat;
+        fx.bullMaterial = fx.bearMaterial = fx.debrisMaterial = mat;
+        fx.fireCoreMaterial = fx.fireMaterial = fx.smokeMaterial = fx.dustMaterial = mat;
+        return fx;
+    }
+
+    [Test]
+    public void TheHullKeepsBurningAfterTheBlastHasGone()
+    {
+        var fx = Rig();
+        fx.TankExplosion(Vector3.zero, 0f);
+
+        // well past the fireball, well before the wreck fades
+        for (int i = 0; i < 60 * 6; i++) fx.Step(1f / 60f);
+        int atSix = fx.LivePieces;
+
+        // it must still be producing something, not sitting inert
+        int spawned = 0;
+        for (int i = 0; i < 60 * 4; i++)
+        {
+            int before = fx.LivePieces;
+            fx.Step(1f / 60f);
+            if (fx.LivePieces > before) spawned += fx.LivePieces - before;
+        }
+        Assert.Greater(spawned, 0, "das Wrack raucht nicht mehr - es steht nur noch herum");
+        Assert.Greater(atSix, 0, "nach sechs Sekunden ist gar nichts mehr da");
+        Object.DestroyImmediate(fx.gameObject);
+    }
+
+    [Test]
+    public void TheFireDiesDownRatherThanBurningForever()
+    {
+        var fx = Rig();
+        fx.TankExplosion(Vector3.zero, 0f);
+        for (int i = 0; i < 60 * 60; i++) fx.Step(1f / 60f);
+        Assert.AreEqual(0, fx.LivePieces, $"{fx.LivePieces} Teile brennen nach einer Minute noch");
+        Object.DestroyImmediate(fx.gameObject);
+    }
+
+    [Test]
+    public void DebrisIsSplintersRatherThanCrates()
+    {
+        var fx = Rig();
+        fx.TankExplosion(Vector3.zero, 0f);
+        foreach (Transform t in fx.transform)
+        {
+            if (!t.gameObject.activeSelf) continue;
+            float biggest = Mathf.Max(t.localScale.x, Mathf.Max(t.localScale.y, t.localScale.z));
+            // the fireballs and the wreck are meant to be large; the flying
+            // pieces are not, and at 0.8 in near-black they read as black boxes
+            if (biggest < 1.5f)
+                Assert.Less(biggest, 1.0f, "ein fliegendes Teil ist so gross wie eine Kiste");
+        }
+        Object.DestroyImmediate(fx.gameObject);
+    }
+}

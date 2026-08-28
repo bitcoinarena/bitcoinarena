@@ -129,7 +129,9 @@ public class Bootstrap : MonoBehaviour
         // 0.17 was near-black: as an opaque sphere that reads as a hole in the
         // ground rather than as smoke
         smokeMaterial = Fallback(smokeMaterial, new Color(0.46f, 0.44f, 0.42f), 0.95f);
-        debrisMaterial = Fallback(debrisMaterial, new Color(0.10f, 0.09f, 0.09f), 0.8f);
+        // 0.10 was a black rectangle in the air. Scorched metal that still
+        // takes a highlight reads as a fragment; a silhouette reads as a bug.
+        debrisMaterial = Fallback(debrisMaterial, new Color(0.28f, 0.26f, 0.24f), 0.55f);
         dustMaterial = Fallback(dustMaterial, new Color(0.72f, 0.66f, 0.56f), 0.95f);
         roadMaterial = Fallback(roadMaterial, new Color(0.12f, 0.12f, 0.13f), 0.72f);
         bodyMaterial = Fallback(bodyMaterial, new Color(0.16f, 0.34f, 0.22f), 0.45f);
