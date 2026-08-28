@@ -39,6 +39,7 @@ public class Bootstrap : MonoBehaviour
     public Material fireMaterial;
     public Material smokeMaterial;
     public Material debrisMaterial;
+    public Material dustMaterial;
 
     [Header("Armies")]
     public int armourPerSide = 11;
@@ -125,6 +126,7 @@ public class Bootstrap : MonoBehaviour
         fireMaterial = Fallback(fireMaterial, new Color(1f, 0.48f, 0.10f), 0.3f);
         smokeMaterial = Fallback(smokeMaterial, new Color(0.17f, 0.16f, 0.15f), 0.95f);
         debrisMaterial = Fallback(debrisMaterial, new Color(0.10f, 0.09f, 0.09f), 0.8f);
+        dustMaterial = Fallback(dustMaterial, new Color(0.72f, 0.66f, 0.56f), 0.95f);
         roadMaterial = Fallback(roadMaterial, new Color(0.12f, 0.12f, 0.13f), 0.72f);
         bodyMaterial = Fallback(bodyMaterial, new Color(0.16f, 0.34f, 0.22f), 0.45f);
         wheelMaterial = Fallback(wheelMaterial, new Color(0.05f, 0.05f, 0.06f), 0.95f);
@@ -303,6 +305,7 @@ public class Bootstrap : MonoBehaviour
         Fx.fireMaterial = fireMaterial;
         Fx.smokeMaterial = smokeMaterial;
         Fx.debrisMaterial = debrisMaterial;
+        Fx.dustMaterial = dustMaterial;
         Fx.wreckPrefab = tankPrefab;
         fxGo.SetActive(true);
         Fx.Bind(Field.Army);

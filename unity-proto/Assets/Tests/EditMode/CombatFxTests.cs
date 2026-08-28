@@ -87,20 +87,31 @@ public class CombatFxTests
         Object.DestroyImmediate(fx.gameObject);
     }
 
+    /// <summary>
+    /// A shell burst is no longer a single sphere - it is a small version of
+    /// the tank explosion - so this measures the whole thing rather than the
+    /// first child, which now starts at zero and may not even be lit yet.
+    /// </summary>
     [Test]
     public void ABlastGrowsThenCollapses()
     {
         var fx = Rig();
         fx.Blast(Vector3.zero, 6f);
-        var t = fx.transform.GetChild(0);
-        float start = t.localScale.x;
 
-        fx.Step(0.2f);
-        float peak = t.localScale.x;
-        Assert.Greater(peak, start, "die Explosion waechst nicht");
+        float Widest()
+        {
+            float w = 0f;
+            foreach (Transform t in fx.transform)
+                if (t.gameObject.activeSelf) w = Mathf.Max(w, t.localScale.x);
+            return w;
+        }
 
-        fx.Step(0.3f);
-        Assert.Less(t.localScale.x, peak, "die Explosion faellt nicht wieder zusammen");
+        fx.Step(0.1f);
+        float peak = Widest();
+        Assert.Greater(peak, 0.5f, "die Explosion waechst nicht");
+
+        for (int i = 0; i < 60; i++) fx.Step(1f / 60f);
+        Assert.Less(Widest(), peak, "die Explosion faellt nicht wieder zusammen");
         Object.DestroyImmediate(fx.gameObject);
     }
 }

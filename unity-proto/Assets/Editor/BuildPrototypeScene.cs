@@ -48,6 +48,7 @@ public static class BuildPrototypeScene
         boot.fireMaterial = Glow("Fire", new Color(1f, 0.48f, 0.10f), 5f);
         boot.smokeMaterial = Lit("Smoke", new Color(0.17f, 0.16f, 0.15f), 0.95f);
         boot.debrisMaterial = Lit("Debris", new Color(0.10f, 0.09f, 0.09f), 0.8f);
+        boot.dustMaterial = Lit("Dust", new Color(0.72f, 0.66f, 0.56f), 0.95f);
 
         // Pick up an imported soldier model if one is in the project. Done by
         // search rather than by hand in the inspector, because regenerating the

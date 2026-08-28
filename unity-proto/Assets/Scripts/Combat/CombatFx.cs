@@ -25,6 +25,8 @@ public class CombatFx : MonoBehaviour
     public Material fireMaterial;
     public Material smokeMaterial;
     public Material debrisMaterial;
+    [Tooltip("Pale, for the dust ring. Built from the smoke material it reads as a black disc.")]
+    public Material dustMaterial;
     [Tooltip("Tank model for the burnt-out hull. Falls back to a charred box.")]
     public GameObject wreckPrefab;
     public float wreckWidth = 3.7f;
@@ -136,15 +138,26 @@ public class CombatFx : MonoBehaviour
         _live.Add(new Piece { t = t, life = 0.09f, baseScale = scale, kind = Kind.Flash });
     }
 
-    /// <summary>A shell going off: grows fast, then collapses.</summary>
+    /// <summary>
+    /// A shell going off.
+    ///
+    /// The same recipe as a tank brewing up, just small: a flash of flame, a
+    /// puff of smoke and a little dirt. It used to be one orange ball, which is
+    /// what read across the field as scattered yellow blobs.
+    /// </summary>
     public void Blast(Vector3 at, float size)
     {
-        if (_live.Count >= maxPieces) return;
-        var t = Take(_spheres, _sphere, blastMaterial);
-        t.SetPositionAndRotation(at, Quaternion.identity);
-        var scale = Vector3.one * size;
-        t.localScale = scale * 0.2f;
-        _live.Add(new Piece { t = t, life = 0.55f, baseScale = scale, kind = Kind.Blast });
+        Fireball(at, size * 1.1f, fireCoreMaterial, 0f, 0.14f);
+        Fireball(at + Vector3.up * 0.6f, size * 1.5f, fireMaterial, 0.04f, 0.3f);
+        for (int i = 0; i < 2; i++)
+            Smoke(at + Vector3.up * Random.Range(0.5f, 1.5f), size * Random.Range(0.8f, 1.3f), 0.06f * i);
+        for (int i = 0; i < 3; i++)
+        {
+            float a = Random.Range(0f, Mathf.PI * 2f);
+            var v = new Vector3(Mathf.Sin(a), 0f, Mathf.Cos(a)) * Random.Range(3f, 7f);
+            v.y = Random.Range(4f, 8f);
+            Debris(at, v, Random.Range(0.15f, 0.35f));
+        }
     }
 
     /// <summary>
@@ -331,16 +344,22 @@ public class CombatFx : MonoBehaviour
         });
     }
 
-    /// <summary>Dust driven out across the ground: a flat disc, not a ball.</summary>
+    /// <summary>
+    /// Dust driven out across the ground.
+    ///
+    /// PALE. Built from the smoke material this was a near-black disc sitting
+    /// on the field - which is not a shockwave, it is a hole. Kept low and
+    /// thin, so it reads as dust rather than as an object.
+    /// </summary>
     void Shockwave(Vector3 at)
     {
         if (_live.Count >= maxPieces) return;
-        var t = Take(_spheres, _sphere, smokeMaterial ?? blastMaterial);
-        t.SetPositionAndRotation(at + Vector3.up * 0.3f, Quaternion.identity);
+        var t = Take(_spheres, _sphere, dustMaterial ?? smokeMaterial ?? blastMaterial);
+        t.SetPositionAndRotation(at + Vector3.up * 0.15f, Quaternion.identity);
         t.localScale = Vector3.zero;
         _live.Add(new Piece
         {
-            t = t, life = 0.85f, baseScale = new Vector3(18f, 0.9f, 18f), kind = Kind.Shockwave,
+            t = t, life = 0.7f, baseScale = new Vector3(15f, 0.35f, 15f), kind = Kind.Shockwave,
         });
     }
 
@@ -382,9 +401,11 @@ public class CombatFx : MonoBehaviour
             t = wrapper.transform;
         }
 
-        // knocked askew, because a wreck does not sit square
+        // Knocked askew, because a wreck does not sit square - but only
+        // slightly: a big tilt lifts one end clear of the ground, which is what
+        // made them look like they were standing in the air.
         t.SetPositionAndRotation(at, Quaternion.Euler(
-            Random.Range(-7f, 7f), heading * Mathf.Rad2Deg + Random.Range(-18f, 18f), Random.Range(-7f, 7f)));
+            Random.Range(-3f, 3f), heading * Mathf.Rad2Deg + Random.Range(-18f, 18f), Random.Range(-3f, 3f)));
         t.localScale = Vector3.one;
         _live.Add(new Piece
         {
@@ -449,8 +470,15 @@ public class CombatFx : MonoBehaviour
                     break;
                 }
                 case Kind.Wreck:
+                {
+                    // Re-seat it on the ground every frame. The terrain is
+                    // rebuilt from live mempool data, so a hull left at the
+                    // height it died at is soon standing in mid-air.
+                    var wp = p.t.position;
+                    p.t.position = new Vector3(wp.x, Ground(wp.x, wp.z), wp.z);
                     if (k > 0.85f) p.t.localScale = p.baseScale * Mathf.Lerp(1f, 0f, (k - 0.85f) / 0.15f);
                     break;
+                }
 
                 case Kind.Fireball:
                     // snaps open, then collapses in on itself
