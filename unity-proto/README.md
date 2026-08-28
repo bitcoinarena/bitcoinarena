@@ -253,5 +253,20 @@ Derselbe Build über `http://127.0.0.1:8900/` oder über HTTPS lädt alles. Der
 Unterschied ist der sichere Kontext: `localhost` gilt dem Browser als
 vertrauenswürdig, eine LAN-IP über einfaches HTTP nicht.
 
-Zum Spielen im Netz also **HTTPS verwenden** (der Cloudflare-Tunnel genügt),
-oder lokal über `127.0.0.1`.
+`serve-unity.py` liefert deshalb über **HTTPS** aus, mit einem selbst
+ausgestellten Zertifikat aus `certs/`. Es ist auf die LAN-IP ausgestellt, und
+zwar im `subjectAltName` — moderne Browser ignorieren den `CN` vollständig, ein
+Zertifikat ohne SAN wird rundheraus abgelehnt.
+
+Neu ausstellen, wenn sich die IP ändert:
+
+```bash
+cd unity-proto && IP=$(ipconfig getifaddr en0)
+sed -i '' "s/CN = .*/CN = $IP/; s/IP:[0-9.]*,/IP:$IP,/" certs/openssl.cnf
+openssl req -x509 -newkey rsa:2048 -nodes -days 825 \
+  -keyout certs/server.key -out certs/server.crt -config certs/openssl.cnf
+```
+
+Der Browser warnt einmal pro Gerät, weil das Zertifikat selbst ausgestellt ist.
+Das ist der ganze Preis dafür, den Verkehr im eigenen Netz zu halten statt ihn
+durch einen Tunnel zu schicken.

@@ -1,6 +1,16 @@
 #!/usr/bin/env python3
 """
-Static server for the Unity WebGL build.
+Static server for the Unity WebGL build, over HTTPS.
+
+TLS is not decoration here. Addressables refuses to load its own catalog on an
+origin the browser does not consider trustworthy, and a LAN address over plain
+http is not one - the request is never even issued, and every streamed model
+then fails with "No Location found". localhost is trustworthy, which is exactly
+why this hid during local testing.
+
+The certificate is self-signed, so a browser will warn once per device. That is
+the whole cost of keeping the traffic on your own network rather than routing it
+through a tunnel.
 
 Python's http.server does not know .wasm or .data, and a WebGL player served
 with the wrong Content-Type fails to instantiate - so the mappings are set
@@ -13,6 +23,7 @@ import http.server
 import mimetypes
 import os
 import socket
+import ssl
 import sys
 
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "build", "webgl")
@@ -94,12 +105,29 @@ def lan_ip():
         s.close()
 
 
+CERT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "certs", "server.crt")
+KEY = os.path.join(os.path.dirname(os.path.abspath(__file__)), "certs", "server.key")
+
+
 if __name__ == "__main__":
-    port = int(sys.argv[1]) if len(sys.argv) > 1 else 8900
+    port = int(sys.argv[1]) if len(sys.argv) > 1 else 8443
     if not os.path.isdir(ROOT):
         sys.exit(f"no build at {ROOT} - run the WebGL build first")
+
     srv = http.server.ThreadingHTTPServer(("0.0.0.0", port), Handler)
-    print(f"Unity-Prototyp:  http://{lan_ip()}:{port}/")
-    print(f"                 http://127.0.0.1:{port}/")
+
+    if os.path.exists(CERT) and os.path.exists(KEY):
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ctx.load_cert_chain(CERT, KEY)
+        srv.socket = ctx.wrap_socket(srv.socket, server_side=True)
+        scheme = "https"
+    else:
+        # Still runs without a certificate, but say so plainly: the streamed
+        # models will not load from anything but localhost.
+        print("WARNUNG: kein Zertifikat unter certs/ - Modelle laden nur ueber 127.0.0.1")
+        scheme = "http"
+
+    print(f"Unity-Prototyp:  {scheme}://{lan_ip()}:{port}/")
+    print(f"                 {scheme}://127.0.0.1:{port}/")
     print(f"Wurzel:          {ROOT}")
     srv.serve_forever()
