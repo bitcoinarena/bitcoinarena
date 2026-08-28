@@ -33,6 +33,8 @@ public class CombatFx : MonoBehaviour
     public Material fireParticleMaterial;
     [Tooltip("Flipbook grid, e.g. 8x8 for a 64 frame sheet.")]
     public Vector2Int flipbookTiles = new Vector2Int(8, 8);
+    [Tooltip("Same flipbook, alpha blended and grey. Null falls back to smoke spheres.")]
+    public Material smokeParticleMaterial;
     [Tooltip("Tank model for the burnt-out hull. Falls back to a charred box.")]
     public GameObject wreckPrefab;
     public float wreckWidth = 3.7f;
@@ -158,8 +160,9 @@ public class CombatFx : MonoBehaviour
             Fireball(at, size * 1.1f, fireCoreMaterial, 0f, 0.14f);
             Fireball(at + Vector3.up * 0.6f, size * 1.5f, fireMaterial, 0.04f, 0.3f);
         }
-        for (int i = 0; i < 2; i++)
-            Smoke(at + Vector3.up * Random.Range(0.5f, 1.5f), size * Random.Range(0.8f, 1.3f), 0.06f * i);
+        if (!SmokeBurst(at + Vector3.up * 0.8f, 2))
+            for (int i = 0; i < 2; i++)
+                Smoke(at + Vector3.up * Random.Range(0.5f, 1.5f), size * Random.Range(0.8f, 1.3f), 0.06f * i);
         for (int i = 0; i < 3; i++)
         {
             float a = Random.Range(0f, Mathf.PI * 2f);
@@ -269,7 +272,7 @@ public class CombatFx : MonoBehaviour
         return wrapper.transform;
     }
 
-    ParticleSystem _fire;
+    ParticleSystem _fire, _smoke;
 
     /// <summary>
     /// A pooled particle system playing the pack's fire flipbook.
@@ -336,6 +339,90 @@ public class CombatFx : MonoBehaviour
         return _fire;
     }
 
+    /// <summary>
+    /// Smoke as flipbook particles.
+    ///
+    /// It used to be opaque spheres at 17% grey, which from above are not
+    /// clouds but holes in the field - the black circles that kept getting
+    /// reported. A texture with an alpha edge reads as smoke; a solid ball
+    /// never will, whatever colour it is.
+    /// </summary>
+    ParticleSystem SmokeSystem()
+    {
+        if (_smoke != null) return _smoke;
+        if (smokeParticleMaterial == null) return null;
+
+        var go = new GameObject("SmokeParticles");
+        go.transform.SetParent(transform, false);
+        _smoke = go.AddComponent<ParticleSystem>();
+        _smoke.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
+
+        var main = _smoke.main;
+        main.duration = 1f;
+        main.loop = false;
+        main.playOnAwake = false;
+        main.startLifetime = new ParticleSystem.MinMaxCurve(2.2f, 4.5f);
+        main.startSpeed = new ParticleSystem.MinMaxCurve(1.2f, 3f);
+        main.startSize = new ParticleSystem.MinMaxCurve(5f, 11f);
+        main.startRotation = new ParticleSystem.MinMaxCurve(0f, Mathf.PI * 2f);
+        main.startColor = new ParticleSystem.MinMaxGradient(
+            new Color(0.42f, 0.40f, 0.38f, 0.85f), new Color(0.62f, 0.60f, 0.57f, 0.7f));
+        main.gravityModifier = -0.25f;                 // smoke rises
+        main.maxParticles = 300;
+        main.simulationSpace = ParticleSystemSimulationSpace.World;
+
+        var emission = _smoke.emission;
+        emission.enabled = true;
+        emission.rateOverTime = 0f;
+
+        var shape = _smoke.shape;
+        shape.enabled = true;
+        shape.shapeType = ParticleSystemShapeType.Sphere;
+        shape.radius = 1.8f;
+
+        var sheet = _smoke.textureSheetAnimation;
+        sheet.enabled = true;
+        sheet.numTilesX = flipbookTiles.x;
+        sheet.numTilesY = flipbookTiles.y;
+        sheet.animation = ParticleSystemAnimationType.WholeSheet;
+        sheet.timeMode = ParticleSystemAnimationTimeMode.Lifetime;
+        sheet.frameOverTime = new ParticleSystem.MinMaxCurve(1f, AnimationCurve.Linear(0f, 0f, 1f, 1f));
+        sheet.cycleCount = 1;
+
+        // swells as it drifts, and thins away instead of vanishing
+        var size = _smoke.sizeOverLifetime;
+        size.enabled = true;
+        size.size = new ParticleSystem.MinMaxCurve(1f, AnimationCurve.Linear(0f, 0.5f, 1f, 1.8f));
+
+        var colour = _smoke.colorOverLifetime;
+        colour.enabled = true;
+        colour.color = new ParticleSystem.MinMaxGradient(new Gradient
+        {
+            colorKeys = new[] { new GradientColorKey(Color.white, 0f), new GradientColorKey(Color.white, 1f) },
+            alphaKeys = new[]
+            {
+                new GradientAlphaKey(0f, 0f), new GradientAlphaKey(1f, 0.15f),
+                new GradientAlphaKey(0f, 1f),
+            },
+        });
+
+        var renderer = go.GetComponent<ParticleSystemRenderer>();
+        renderer.material = smokeParticleMaterial;
+        renderer.renderMode = ParticleSystemRenderMode.Billboard;
+        renderer.alignment = ParticleSystemRenderSpace.View;
+        renderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+        renderer.receiveShadows = false;
+        return _smoke;
+    }
+
+    bool SmokeBurst(Vector3 at, int count)
+    {
+        var ps = SmokeSystem();
+        if (ps == null) return false;
+        ps.Emit(new ParticleSystem.EmitParams { position = at, applyShapeToPosition = true }, count);
+        return true;
+    }
+
     /// <summary>Fire the flipbook burst at a point. Returns false if there is no material for it.</summary>
     bool FlipbookBurst(Vector3 at, int count)
     {
@@ -371,11 +458,12 @@ public class CombatFx : MonoBehaviour
         }
 
         // smoke outlives the fire and keeps rising
-        for (int i = 0; i < 7; i++)
-        {
-            var off = new Vector3(Random.Range(-1.8f, 1.8f), Random.Range(1f, 3f), Random.Range(-1.8f, 1.8f));
-            Smoke(at + off, Random.Range(3.5f, 6.5f), i * 0.12f);
-        }
+        if (!SmokeBurst(at + Vector3.up * 2f, 10))
+            for (int i = 0; i < 7; i++)
+            {
+                var off = new Vector3(Random.Range(-1.8f, 1.8f), Random.Range(1f, 3f), Random.Range(-1.8f, 1.8f));
+                Smoke(at + off, Random.Range(3.5f, 6.5f), i * 0.12f);
+            }
 
         // torn plate and road wheels thrown clear
         for (int i = 0; i < 12; i++)

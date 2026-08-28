@@ -46,10 +46,11 @@ public static class BuildPrototypeScene
         // is what makes it a light source, and what bloom can catch.
         boot.fireCoreMaterial = Glow("FireCore", new Color(1f, 0.97f, 0.86f), 9f);
         boot.fireMaterial = Glow("Fire", new Color(1f, 0.48f, 0.10f), 5f);
-        boot.smokeMaterial = Lit("Smoke", new Color(0.17f, 0.16f, 0.15f), 0.95f);
+        boot.smokeMaterial = Lit("Smoke", new Color(0.46f, 0.44f, 0.42f), 0.95f);
         boot.debrisMaterial = Lit("Debris", new Color(0.10f, 0.09f, 0.09f), 0.8f);
         boot.dustMaterial = Lit("Dust", new Color(0.72f, 0.66f, 0.56f), 0.95f);
         boot.fireParticleMaterial = FireFlipbookMaterial();
+        boot.smokeParticleMaterial = SmokeFlipbookMaterial();
 
         // Pick up an imported soldier model if one is in the project. Done by
         // search rather than by hand in the inspector, because regenerating the
@@ -395,6 +396,43 @@ public static class BuildPrototypeScene
         EditorUtility.SetDirty(mat);
         AssetDatabase.SaveAssets();
         Debug.Log($"[BuildPrototypeScene] fire flipbook: {AssetDatabase.GetAssetPath(sheet)}");
+        return mat;
+    }
+
+    /// <summary>
+    /// The same flipbook, alpha blended and grey, for smoke.
+    ///
+    /// Additive is right for fire, which adds light, and wrong for smoke, which
+    /// blocks it. And a solid sphere is wrong for both: at 17% grey it reads as
+    /// a hole in the field rather than as a cloud, which is what kept being
+    /// reported as black circles.
+    /// </summary>
+    static Material SmokeFlipbookMaterial()
+    {
+        var fire = AssetDatabase.LoadAssetAtPath<Material>("Assets/Materials/FireFlipbook.mat");
+        var tex = fire != null ? fire.GetTexture("_BaseMap") : null;
+        if (tex == null) return null;
+
+        var shader = Shader.Find("Universal Render Pipeline/Particles/Unlit")
+                  ?? Shader.Find("Universal Render Pipeline/Unlit");
+        if (shader == null) return null;
+
+        const string path = "Assets/Materials/SmokeFlipbook.mat";
+        AssetDatabase.DeleteAsset(path);
+        var mat = new Material(shader);
+        AssetDatabase.CreateAsset(mat, path);
+        mat.SetTexture("_BaseMap", tex);
+        mat.SetColor("_BaseColor", new Color(0.55f, 0.53f, 0.50f, 1f));
+        mat.SetFloat("_Surface", 1f);                 // transparent
+        mat.SetFloat("_Blend", 0f);                   // alpha, not additive
+        mat.SetFloat("_SrcBlend", (float)UnityEngine.Rendering.BlendMode.SrcAlpha);
+        mat.SetFloat("_DstBlend", (float)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
+        mat.SetFloat("_ZWrite", 0f);
+        mat.renderQueue = (int)UnityEngine.Rendering.RenderQueue.Transparent;
+        mat.EnableKeyword("_SURFACE_TYPE_TRANSPARENT");
+        EditorUtility.SetDirty(mat);
+        AssetDatabase.SaveAssets();
+        Debug.Log("[BuildPrototypeScene] smoke flipbook material built");
         return mat;
     }
 

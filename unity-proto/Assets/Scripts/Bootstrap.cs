@@ -41,6 +41,7 @@ public class Bootstrap : MonoBehaviour
     public Material debrisMaterial;
     public Material dustMaterial;
     public Material fireParticleMaterial;
+    public Material smokeParticleMaterial;
 
     [Header("Armies")]
     public int armourPerSide = 11;
@@ -125,7 +126,9 @@ public class Bootstrap : MonoBehaviour
         blastMaterial = Fallback(blastMaterial, new Color(1f, 0.55f, 0.14f), 0.35f);
         fireCoreMaterial = Fallback(fireCoreMaterial, new Color(1f, 0.97f, 0.86f), 0.1f);
         fireMaterial = Fallback(fireMaterial, new Color(1f, 0.48f, 0.10f), 0.3f);
-        smokeMaterial = Fallback(smokeMaterial, new Color(0.17f, 0.16f, 0.15f), 0.95f);
+        // 0.17 was near-black: as an opaque sphere that reads as a hole in the
+        // ground rather than as smoke
+        smokeMaterial = Fallback(smokeMaterial, new Color(0.46f, 0.44f, 0.42f), 0.95f);
         debrisMaterial = Fallback(debrisMaterial, new Color(0.10f, 0.09f, 0.09f), 0.8f);
         dustMaterial = Fallback(dustMaterial, new Color(0.72f, 0.66f, 0.56f), 0.95f);
         roadMaterial = Fallback(roadMaterial, new Color(0.12f, 0.12f, 0.13f), 0.72f);
@@ -308,6 +311,7 @@ public class Bootstrap : MonoBehaviour
         Fx.debrisMaterial = debrisMaterial;
         Fx.dustMaterial = dustMaterial;
         Fx.fireParticleMaterial = fireParticleMaterial;
+        Fx.smokeParticleMaterial = smokeParticleMaterial;
         Fx.wreckPrefab = tankPrefab;
         fxGo.SetActive(true);
         Fx.Bind(Field.Army);
