@@ -23,10 +23,44 @@ mimetypes.add_type("text/javascript", ".js")
 mimetypes.add_type("application/json", ".json")
 mimetypes.add_type("image/x-icon", ".ico")
 
+# Unity names compressed files <name>.<ext>.br / .gz. The browser must be told
+# they are encoded, or it hands compressed bytes to the wasm loader as if they
+# were the real thing.
+ENCODINGS = {".br": "br", ".gz": "gzip"}
+BASE_TYPES = {
+    ".wasm": "application/wasm",
+    ".js": "text/javascript",
+    ".data": "application/octet-stream",
+    ".symbols.json": "application/json",
+}
+
 
 class Handler(http.server.SimpleHTTPRequestHandler):
     def __init__(self, *a, **kw):
         super().__init__(*a, directory=ROOT, **kw)
+
+    def guess_type(self, path):
+        """
+        A compressed Unity file keeps its real type and gains an encoding.
+        webgl.wasm.br is a wasm that happens to be brotli - served as
+        application/octet-stream it never reaches the wasm compiler.
+        """
+        base, ext = os.path.splitext(path)
+        if ext in ENCODINGS:
+            for suffix, mime in BASE_TYPES.items():
+                if base.endswith(suffix):
+                    return mime
+            return super().guess_type(base)
+        return super().guess_type(path)
+
+    def send_head(self):
+        # announce the encoding before the body goes out
+        _, ext = os.path.splitext(self.translate_path(self.path))
+        if ext in ENCODINGS:
+            self._encoding = ENCODINGS[ext]
+        else:
+            self._encoding = None
+        return super().send_head()
 
     def end_headers(self):
         self.send_header("Cache-Control", "no-store, max-age=0")
@@ -34,6 +68,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.send_header("Cross-Origin-Opener-Policy", "same-origin")
         self.send_header("Cross-Origin-Embedder-Policy", "require-corp")
         self.send_header("Cross-Origin-Resource-Policy", "cross-origin")
+        if getattr(self, "_encoding", None):
+            self.send_header("Content-Encoding", self._encoding)
         super().end_headers()
 
     def log_message(self, fmt, *args):

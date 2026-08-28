@@ -22,14 +22,23 @@ public static class BuildWebGL
         for (int i = 0; i < args.Length - 1; i++)
             if (args[i] == "-buildOutput") output = args[i + 1];
 
-        // Brotli and gzip need the server to send Content-Encoding, and a plain
-        // static server does not. Uncompressed is bigger but loads anywhere,
-        // which is the point of handing over a LAN URL.
-        PlayerSettings.WebGL.compressionFormat = WebGLCompressionFormat.Disabled;
-        PlayerSettings.WebGL.decompressionFallback = false;
+        // Brotli, with the decompression fallback ON.
+        //
+        // Compression needs the server to send Content-Encoding, and a plain
+        // static server does not - which is why this was off. The fallback
+        // makes that survivable: where the header is missing the loader
+        // decompresses in JavaScript instead of failing outright. Slower to
+        // start, but it starts.
+        //
+        // Measured on this build: wasm 45.4 MB -> 9.9, data 39.3 -> 28.9.
+        PlayerSettings.WebGL.compressionFormat = WebGLCompressionFormat.Brotli;
+        PlayerSettings.WebGL.decompressionFallback = true;
         PlayerSettings.WebGL.dataCaching = false;
         PlayerSettings.WebGL.exceptionSupport = WebGLExceptionSupport.ExplicitlyThrownExceptionsOnly;
         PlayerSettings.runInBackground = true;
+        // Our own template: the stock one shows a bare grey bar, and at 35 MB
+        // the person waiting needs to know it is working and roughly how long.
+        PlayerSettings.WebGL.template = "PROJECT:BtcLogistics";
         PlayerSettings.productName = "BTC Logistics War - Prototype";
 
         var opts = new BuildPlayerOptions

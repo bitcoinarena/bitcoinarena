@@ -151,9 +151,25 @@ Zwei Dinge, die dabei zwingend sind:
   URP/Lit-Materialien unter `Assets/Materials/` an und hängt sie an die Szene,
   was sie zugleich vor dem Shader-Stripper schützt.
 
-Preis der Entscheidung: 55 MB Download, davon 42 MB wasm. Mit Brotli und
-passenden Server-Headern wären es grob ein Viertel davon. Das three.js-Spiel
-liegt bei 14,6 MB inklusive aller Assets.
+### Startlast
+
+Gemessen am aktuellen Build:
+
+| | roh | Brotli |
+|---|---|---|
+| `webgl.wasm` (Code) | 45,4 MB | **8,0 MB** |
+| `webgl.data` (Inhalte) | 39,3 MB | **27,3 MB** |
+| **gesamt** | 85 MB | **35,5 MB** |
+
+Brotli ist aktiv, mit `decompressionFallback`. Ohne den bräuchte der Server
+zwingend `Content-Encoding`-Header und der Player lädt sonst gar nicht; mit ihm
+packt der Loader notfalls in JavaScript aus — langsamer, aber es startet.
+
+Zum Vergleich lädt das three.js-Spiel **1,6 MB** bis zum ersten Bild
+(three.js + Spielcode); seine 15 MB Assets kommen asynchron nach.
+
+Der Code-Anteil ist der Sockel: er schrumpft nicht, wenn man Inhalte
+auslagert.
 
 ## Tests ausführen
 

@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no, viewport-fit=cover">
+  <title>{{{ PRODUCT_NAME }}}</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; overflow: hidden; background: #0d1014; }
+    body { font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: #e8eaed; }
+
+    #canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+
+    /* The loading screen sits ON TOP of the canvas rather than beside it, so
+       there is never a moment of blank page between the two. */
+    #boot {
+      position: absolute; inset: 0; display: flex; flex-direction: column;
+      align-items: center; justify-content: center; gap: 22px; padding: 24px;
+      background: radial-gradient(circle at 50% 35%, #1b2430 0%, #0d1014 70%);
+      transition: opacity .5s ease; z-index: 10;
+    }
+    #boot.done { opacity: 0; pointer-events: none; }
+
+    #title { font-size: clamp(22px, 5vw, 40px); font-weight: 700; letter-spacing: -0.02em; }
+    #title span { color: #f7931a; }               /* the one bitcoin orange */
+    #sub { color: #8b949e; font-size: 14px; margin-top: -14px; }
+
+    #track { width: min(440px, 82vw); height: 8px; border-radius: 99px; background: #222932; overflow: hidden; }
+    #bar { height: 100%; width: 0; border-radius: 99px; background: linear-gradient(90deg, #f7931a, #ffc46b);
+           transition: width .25s ease; }
+
+    #pct { font-variant-numeric: tabular-nums; font-size: 28px; font-weight: 600; }
+    #stage { color: #8b949e; font-size: 13px; min-height: 1.5em; text-align: center; }
+    #note { color: #5c6570; font-size: 12px; max-width: 460px; text-align: center; }
+
+    #err { display: none; color: #ff6b6b; max-width: 560px; text-align: center; font-size: 14px; }
+    #err.show { display: block; }
+  </style>
+</head>
+<body>
+  <canvas id="canvas" tabindex="-1"></canvas>
+
+  <div id="boot">
+    <div id="title">Bitcoin <span>Logistics</span> War</div>
+    <div id="sub">{{{ PRODUCT_VERSION }}}</div>
+    <div id="pct">0%</div>
+    <div id="track"><div id="bar"></div></div>
+    <div id="stage">Verbindung wird aufgebaut …</div>
+    <div id="note">Rund 35 MB werden geladen. Das dauert beim ersten Mal am längsten —
+      danach liegt vieles im Browser-Cache.</div>
+    <div id="err"></div>
+  </div>
+
+  <script>
+    const boot = document.getElementById('boot');
+    const bar = document.getElementById('bar');
+    const pct = document.getElementById('pct');
+    const stage = document.getElementById('stage');
+    const err = document.getElementById('err');
+
+    // Unity reports one number for the whole load. Naming what is happening at
+    // each part of it is the difference between "it is stuck" and "it is
+    // working" - at 35 MB that judgement gets made by the person waiting.
+    const STAGES = [
+      [0.00, 'Programm wird geladen …'],
+      [0.35, 'Spieldaten werden geladen …'],
+      [0.80, 'Schlachtfeld wird aufgebaut …'],
+      [0.97, 'Fast fertig …'],
+    ];
+
+    function show(p) {
+      const clamped = Math.max(0, Math.min(1, p));
+      bar.style.width = (clamped * 100).toFixed(1) + '%';
+      pct.textContent = Math.round(clamped * 100) + '%';
+      for (let i = STAGES.length - 1; i >= 0; i--) {
+        if (clamped >= STAGES[i][0]) { stage.textContent = STAGES[i][1]; break; }
+      }
+    }
+
+    function fail(message) {
+      err.textContent = message;
+      err.classList.add('show');
+      stage.textContent = 'Start fehlgeschlagen';
+    }
+
+    const canvas = document.getElementById('canvas');
+    const config = {
+      dataUrl: 'Build/{{{ DATA_FILENAME }}}',
+      frameworkUrl: 'Build/{{{ FRAMEWORK_FILENAME }}}',
+      codeUrl: 'Build/{{{ CODE_FILENAME }}}',
+      streamingAssetsUrl: 'StreamingAssets',
+      companyName: '{{{ COMPANY_NAME }}}',
+      productName: '{{{ PRODUCT_NAME }}}',
+      productVersion: '{{{ PRODUCT_VERSION }}}',
+    };
+
+    // Match the drawing buffer to the device, or a phone renders a blurry
+    // upscale of a desktop-sized canvas.
+    function resize() {
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      canvas.width = Math.floor(window.innerWidth * dpr);
+      canvas.height = Math.floor(window.innerHeight * dpr);
+    }
+    resize();
+    window.addEventListener('resize', resize);
+
+    const script = document.createElement('script');
+    script.src = 'Build/{{{ LOADER_FILENAME }}}';
+    script.onerror = () => fail('Der Loader konnte nicht geladen werden.');
+    script.onload = () => {
+      createUnityInstance(canvas, config, show)
+        .then(() => {
+          show(1);
+          boot.classList.add('done');
+          setTimeout(() => boot.remove(), 600);
+          canvas.focus();
+        })
+        .catch(fail);
+    };
+    document.body.appendChild(script);
+  </script>
+</body>
+</html>
