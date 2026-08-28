@@ -27,6 +27,7 @@ public static class SetupAddressables
     public const string TankKey = "model/tank";
     public const string TruckKey = "model/truck";
     public const string HelicopterKey = "model/helicopter";
+    public const string BombKey = "model/bomb";
 
     [MenuItem("Tools/BTC Logistics/Set Up Streaming")]
     public static void Run()
@@ -61,6 +62,12 @@ public static class SetupAddressables
         marked += Mark(settings, group, TankKey, "leopard", "tank", "panzer");
         marked += Mark(settings, group, TruckKey, "smalltruck", "industrialsmalltruck", "truck", "lorry", "van");
         marked += Mark(settings, group, HelicopterKey, "gunship", "helicopter", "hellicopter", "chopper");
+        // RMB_23 by name, because the pack numbers its forty models and the
+        // numbers say nothing. Measured, they fall into two families: length
+        // over thickness around 2 at ten units long - a stubby body with a wide
+        // tail, i.e. a free-fall bomb - and around 5 at thirty units, i.e.
+        // rockets. This is the most detailed of the bombs at 1154 triangles.
+        marked += Mark(settings, group, BombKey, "rmb_23", "bomb");
 
         // The catalog ships INSIDE the player, and only the bundles are remote.
         //

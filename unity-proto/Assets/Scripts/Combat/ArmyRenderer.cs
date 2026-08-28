@@ -38,6 +38,10 @@ public class ArmyRenderer : MonoBehaviour
     public GameObject helicopterPrefab;
     public float helicopterLength = 14f;
     public float helicopterYawOffset;
+    [Tooltip("Bomb prefab. Falls back to a box if empty.")]
+    public GameObject bombPrefab;
+    [Tooltip("Metres long. A free-fall bomb is about two.")]
+    public float bombLength = 2.2f;
     [Tooltip("Metres wide across the tracks. The model is scaled to this.")]
     public float tankWidth = 3.7f;
     public float tankYawOffset;
@@ -99,6 +103,14 @@ public class ArmyRenderer : MonoBehaviour
         _prefabTurrets.Clear();
         _tankWheels.Clear();
         _lastTankPos.Clear();
+    }
+
+    /// <summary>Take a bomb model that arrived after the start.</summary>
+    public void SetBombPrefab(GameObject prefab)
+    {
+        if (prefab == null || prefab == bombPrefab) return;
+        bombPrefab = prefab;
+        Discard(_bombs);
     }
 
     /// <summary>Take a gunship model that arrived after the start.</summary>
@@ -414,7 +426,7 @@ public class ArmyRenderer : MonoBehaviour
             }
         }
 
-        Fit(_bombs, army.Bombs.Count, () => MakePiece(_bomb, "Bomb", false, Vector3.zero));
+        Fit(_bombs, army.Bombs.Count, MakeBomb);
         for (int i = 0; i < army.Bombs.Count; i++)
         {
             var b = army.Bombs[i];
@@ -426,13 +438,63 @@ public class ArmyRenderer : MonoBehaviour
             var t = _bombs[i];
             if (!t.gameObject.activeSelf) t.gameObject.SetActive(true);
             t.SetPositionAndRotation(new Vector3(b.x, b.y, b.z), rot);
-            var mr = t.GetComponent<MeshRenderer>();
-            if (mr != null && debrisMaterialForBombs != null) mr.sharedMaterial = debrisMaterialForBombs;
+            if (bombPrefab == null)
+            {
+                var mr = t.GetComponent<MeshRenderer>();
+                if (mr != null && debrisMaterialForBombs != null) mr.sharedMaterial = debrisMaterialForBombs;
+            }
         }
     }
 
     [Tooltip("Bombs are dark metal, not team-coloured - they belong to nobody once released.")]
     public Material debrisMaterialForBombs;
+
+    /// <summary>
+    /// A bomb, from the model where there is one.
+    ///
+    /// The model is turned so its LONGEST axis points along +Z before anything
+    /// else happens, because the wrapper is then rotated to face the flight
+    /// path - and a body modelled nose-up would otherwise fall sideways. Which
+    /// axis that is gets measured rather than assumed; the pack does not say.
+    /// </summary>
+    Transform MakeBomb()
+    {
+        if (bombPrefab == null) return MakePiece(_bomb, "Bomb", false, Vector3.zero);
+
+        var wrapper = new GameObject("Bomb");
+        wrapper.transform.SetParent(transform, false);
+        var model = Instantiate(bombPrefab, wrapper.transform);
+        model.transform.localPosition = Vector3.zero;
+
+        var rs = model.GetComponentsInChildren<Renderer>(true);
+        if (rs.Length > 0)
+        {
+            Bounds B()
+            {
+                var bb = rs[0].bounds;
+                foreach (var r in rs) bb.Encapsulate(r.bounds);
+                return bb;
+            }
+            var b = B();
+            // point the long axis down +Z
+            if (b.size.y >= b.size.x && b.size.y >= b.size.z)
+                model.transform.localRotation = Quaternion.Euler(90f, 0f, 0f);
+            else if (b.size.x > b.size.z)
+                model.transform.localRotation = Quaternion.Euler(0f, 90f, 0f);
+
+            b = B();
+            float longest = Mathf.Max(b.size.x, Mathf.Max(b.size.y, b.size.z));
+            if (longest > 0.0001f) model.transform.localScale = Vector3.one * (bombLength / longest);
+
+            b = B();
+            // centre it on the wrapper, so it spins about itself in flight
+            model.transform.localPosition -= wrapper.transform.InverseTransformPoint(b.center);
+        }
+
+        Rematerialise(wrapper, null);
+        foreach (var c in wrapper.GetComponentsInChildren<Collider>(true)) DestroyImmediate(c);
+        return wrapper.transform;
+    }
 
     Transform MakeHelicopter()
     {

@@ -23,6 +23,7 @@ public class Bootstrap : MonoBehaviour
     [Tooltip("Tank prefab from an imported pack. Empty falls back to boxes.")]
     public GameObject tankPrefab;
     public float tankYawOffset;
+    public GameObject bombPrefab;
 
     [Header("Materials (assign URP/Lit with Poly Haven maps)")]
     public Material groundMaterial;
@@ -346,6 +347,7 @@ public class Bootstrap : MonoBehaviour
         renderer.tankPrefab = tankPrefab;
         renderer.tankYawOffset = tankYawOffset;
         renderer.debrisMaterialForBombs = debrisMaterial;
+        renderer.bombPrefab = bombPrefab;
         go.SetActive(true);
 
         var fxGo = new GameObject("CombatFx");

@@ -24,6 +24,7 @@ public class ModelStreamer : MonoBehaviour
     public const string TankKey = "model/tank";
     public const string TruckKey = "model/truck";
     public const string HelicopterKey = "model/helicopter";
+    public const string BombKey = "model/bomb";
 
     public enum State { Waiting, Loading, Loaded, Failed }
 
@@ -90,6 +91,7 @@ public class ModelStreamer : MonoBehaviour
         Items.Add(new Item { label = "Panzer", key = TankKey });
         Items.Add(new Item { label = "Truck", key = TruckKey });
         Items.Add(new Item { label = "Helikopter", key = HelicopterKey });
+        Items.Add(new Item { label = "Bomben", key = BombKey });
         StartCoroutine(Stream());
     }
 
@@ -139,6 +141,10 @@ public class ModelStreamer : MonoBehaviour
         yield return Fetch(HelicopterKey, go =>
         {
             if (army != null) army.SetHelicopterPrefab(go);
+        });
+        yield return Fetch(BombKey, go =>
+        {
+            if (army != null) army.SetBombPrefab(go);
         });
 
         Debug.Log($"[ModelStreamer] done: {Loaded} loaded, {Failed} failed");
