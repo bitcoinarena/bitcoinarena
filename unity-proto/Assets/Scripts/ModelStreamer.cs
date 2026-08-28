@@ -41,6 +41,9 @@ public class ModelStreamer : MonoBehaviour
         public string label;
         public string key;
         public State state = State.Waiting;
+        /// <summary>Fraction of this model's bundle transferred, 0..1.</summary>
+        public float progress;
+        /// <summary>Bundle size in MB, or 0 once it is cached and costs nothing.</summary>
         public float sizeMb;
     }
 
@@ -155,12 +158,22 @@ public class ModelStreamer : MonoBehaviour
         var item = Items.Find(i => i.key == key);
         if (item != null) item.state = State.Loading;
 
+        // How much this one actually costs. Reported as zero once it is in the
+        // browser's cache, which is worth showing: a second visit is nearly
+        // free and the panel should say so rather than repeating the first
+        // visit's figures.
+        var size = Addressables.GetDownloadSizeAsync(key);
+        yield return size;
+        if (item != null && size.Status == AsyncOperationStatus.Succeeded)
+            item.sizeMb = size.Result / (1024f * 1024f);
+        Addressables.Release(size);
+
         var handle = Addressables.LoadAssetAsync<GameObject>(key);
         while (!handle.IsDone)
         {
             // PercentComplete covers the whole chain including the download, so
             // it is the only honest progress figure available per model
-            if (item != null) item.sizeMb = handle.PercentComplete;
+            if (item != null) item.progress = handle.PercentComplete;
             yield return null;
         }
 

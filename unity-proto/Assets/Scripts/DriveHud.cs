@@ -70,7 +70,7 @@ public class DriveHud : MonoBehaviour
 
         float pad = Mathf.Max(8f, h * 0.02f);
         float lh = _small.fontSize * 1.5f;
-        float width = Mathf.Min(240f, w * 0.30f);
+        float width = Mathf.Min(290f, w * 0.34f);
         var box = new Rect(w - width - pad, h * 0.30f, width, lh * (streamer.Items.Count + 1) + pad);
 
         GUI.color = new Color(0f, 0f, 0f, 0.45f);
@@ -80,8 +80,12 @@ public class DriveHud : MonoBehaviour
         float y = box.y + pad * 0.4f;
         var head = new GUIStyle(_small) { fontStyle = FontStyle.Bold };
         head.normal.textColor = Color.white;
+        float totalMb = 0f;
+        foreach (var it in streamer.Items) totalMb += it.sizeMb;
         GUI.Label(new Rect(box.x + pad * 0.6f, y, box.width, lh),
-                  streamer.AllDone ? "Modelle geladen" : "Modelle werden geladen", head);
+                  streamer.AllDone
+                      ? (totalMb > 0.01f ? $"Modelle geladen  ({totalMb:0.0} MB)" : "Modelle geladen")
+                      : "Modelle werden geladen", head);
         y += lh;
 
         foreach (var item in streamer.Items)
@@ -91,12 +95,18 @@ public class DriveHud : MonoBehaviour
             switch (item.state)
             {
                 case ModelStreamer.State.Loaded:
-                    style.normal.textColor = Up; mark = "fertig"; break;
+                    style.normal.textColor = Up;
+                    // zero means it came from cache, which is worth saying
+                    mark = item.sizeMb > 0.01f ? $"{item.sizeMb:0.0} MB" : "aus Cache";
+                    break;
                 case ModelStreamer.State.Failed:
                     style.normal.textColor = Down; mark = "fehlgeschlagen"; break;
                 case ModelStreamer.State.Loading:
                     style.normal.textColor = new Color(1f, 0.82f, 0.35f);
-                    mark = $"{Mathf.RoundToInt(item.sizeMb * 100f)} %"; break;
+                    mark = item.sizeMb > 0.01f
+                        ? $"{Mathf.RoundToInt(item.progress * 100f)} %  {item.sizeMb:0.0} MB"
+                        : $"{Mathf.RoundToInt(item.progress * 100f)} %";
+                    break;
                 default:
                     style.normal.textColor = new Color(0.65f, 0.68f, 0.72f); mark = "wartet"; break;
             }

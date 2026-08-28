@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using UnityEditor;
 using System.Linq;
 using UnityEditor.Build.Reporting;
@@ -14,6 +15,35 @@ public static class BuildWebGL
 {
     const string DefaultOutput = "/Users/arena/code/btc-logistics-war/unity-proto/build/webgl";
     const string ScenePath = "Assets/Scenes/Prototype.unity";
+
+    /// <summary>
+    /// Write the real download size into the page.
+    ///
+    /// The template cannot know it: it is shipped alongside files that do not
+    /// exist when it is written. A percentage on its own does not tell someone
+    /// whether they are waiting ten seconds or two minutes, and at this size
+    /// that is the difference between waiting and giving up.
+    /// </summary>
+    static void StampDownloadSize(string output)
+    {
+        string page = Path.Combine(output, "index.html");
+        string buildDir = Path.Combine(output, "Build");
+        if (!File.Exists(page) || !Directory.Exists(buildDir)) return;
+
+        long bytes = 0;
+        foreach (var f in Directory.GetFiles(buildDir)) bytes += new FileInfo(f).Length;
+        string mb = (bytes / (1024f * 1024f)).ToString("0.#",
+            System.Globalization.CultureInfo.InvariantCulture);
+
+        string html = File.ReadAllText(page);
+        if (!html.Contains("__TOTAL_MB__"))
+        {
+            Debug.LogWarning("[BuildWebGL] template has no __TOTAL_MB__ placeholder");
+            return;
+        }
+        File.WriteAllText(page, html.Replace("__TOTAL_MB__", mb));
+        Debug.Log($"[BuildWebGL] download size stamped into the page: {mb} MB");
+    }
 
     /// <summary>
     /// What is actually IN the build, biggest first.
@@ -95,6 +125,7 @@ public static class BuildWebGL
         Debug.Log($"[BuildWebGL] result={s.result} size={s.totalSize / (1024 * 1024)}MB " +
                   $"errors={s.totalErrors} time={s.totalTime}");
         ReportContents(report);
+        StampDownloadSize(output);
 
         if (s.result != BuildResult.Succeeded)
         {
