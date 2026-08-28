@@ -22,6 +22,12 @@ public class Battlefield : MonoBehaviour
     double _simPrice = 63000;
     float _simVel;
 
+    [Header("Air support")]
+    [Tooltip("Seconds between sorties, per side. Rare enough that one is an event.")]
+    public float sortieSeconds = 26f;
+
+    float _sortieBull, _sortieBear;
+
     void Awake() => History = new PriceHistory(96);
 
     void Update()
@@ -43,6 +49,7 @@ public class Battlefield : MonoBehaviour
             // trade flow is the pressure: whichever side the tape favours pushes
             Army.Flow = market != null ? market.Flow : 0f;
             Army.Update(Time.deltaTime);
+            LaunchSorties(Time.deltaTime);
 
             // AFTER the step, so nobody is left standing inside the truck at
             // the end of a frame - that is what wedges it in place
@@ -61,6 +68,29 @@ public class Battlefield : MonoBehaviour
 
                 Army.ClearPath(p.x, p.z, heading, Time.deltaTime);
             }
+        }
+    }
+
+    /// <summary>
+    /// Send gunships out.
+    ///
+    /// Sparse on purpose: a helicopter carries the heaviest thing in the game,
+    /// and one every twenty-odd seconds per side is an event you look up for.
+    /// Constant air cover would just be weather.
+    /// </summary>
+    void LaunchSorties(float dt)
+    {
+        _sortieBull -= dt;
+        _sortieBear -= dt;
+        if (_sortieBull <= 0f)
+        {
+            _sortieBull = sortieSeconds * Random.Range(0.7f, 1.4f);
+            Army.SendHelicopter(Army.Side.Bull);
+        }
+        if (_sortieBear <= 0f)
+        {
+            _sortieBear = sortieSeconds * Random.Range(0.7f, 1.4f);
+            Army.SendHelicopter(Army.Side.Bear);
         }
     }
 

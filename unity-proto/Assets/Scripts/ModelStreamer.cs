@@ -22,6 +22,7 @@ public class ModelStreamer : MonoBehaviour
     public const string SoldierKey = "model/soldier";
     public const string TankKey = "model/tank";
     public const string TruckKey = "model/truck";
+    public const string HelicopterKey = "model/helicopter";
 
     public int Loaded { get; private set; }
     public int Failed { get; private set; }
@@ -48,6 +49,10 @@ public class ModelStreamer : MonoBehaviour
         yield return Fetch(TruckKey, go =>
         {
             if (bootstrap != null) bootstrap.SwapTruckModel(go);
+        });
+        yield return Fetch(HelicopterKey, go =>
+        {
+            if (army != null) army.SetHelicopterPrefab(go);
         });
 
         Status = Failed == 0 ? null : $"{Failed} Modell(e) nicht geladen - Platzhalter bleiben";

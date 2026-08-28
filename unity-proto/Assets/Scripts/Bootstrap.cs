@@ -321,7 +321,12 @@ public class Bootstrap : MonoBehaviour
     /// <summary>Both armies, fed by the same tape that moves the frontline.</summary>
     void BuildArmies()
     {
-        Field.Army = new Army(System.Environment.TickCount) { FrontlineAt = Field.FrontlineZ };
+        Field.Army = new Army(System.Environment.TickCount)
+        {
+            FrontlineAt = Field.FrontlineZ,
+            // gunships hold a height over the ground, not over sea level
+            GroundAt = (x, z) => _terrain.SampleSurface(x, z),
+        };
         Field.Army.Populate(armourPerSide, infantryPerSide);
 
         var go = new GameObject("Armies");
@@ -337,6 +342,7 @@ public class Bootstrap : MonoBehaviour
         renderer.soldierAnimator = soldierAnimator;
         renderer.tankPrefab = tankPrefab;
         renderer.tankYawOffset = tankYawOffset;
+        renderer.debrisMaterialForBombs = debrisMaterial;
         go.SetActive(true);
 
         var fxGo = new GameObject("CombatFx");

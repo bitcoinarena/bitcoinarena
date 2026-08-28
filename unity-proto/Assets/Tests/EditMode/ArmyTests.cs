@@ -490,9 +490,10 @@ public class InfantryFacingTests
     {
         var army = At(0f);
         var man = Bull(army);
-        // exactly at HIS position: every man digs in at his own distance behind
-        // the line, so "at the line" is not one shared number
-        man.z = -man.standoff;
+        // Exactly at HIS position. Every man digs in at his own distance behind
+        // the line AND at his own place in his squad, so "at the line" is not
+        // one shared number - it is his number.
+        man.z = -(man.standoff + man.squadOffsetZ);
         army.Update(1f / 60f);
         Assert.IsFalse(man.walking, "er sollte an der Linie stehen");
         Assert.Less(Mathf.Abs(Mathf.DeltaAngle(man.heading * Mathf.Rad2Deg, 0f)), 91f,
@@ -562,5 +563,184 @@ public class WreckObstacleTests
         army.Update(1f / 60f);
         Assert.Less(Mathf.Sqrt(tank.x * tank.x + tank.z * tank.z), 4f,
             "ein abgeraeumtes Wrack schiebt immer noch");
+    }
+}
+
+/// <summary>
+/// Reported from play: the infantry reads as one homogeneous block. An army
+/// evenly spaced along a line at one height and one speed looks like a
+/// spreadsheet, whatever the models are.
+/// </summary>
+public class InfantryVarietyTests
+{
+    static Army Field()
+    {
+        var a = new Army(88) { FrontlineAt = _ => 0f };
+        a.Populate(0, 60);
+        return a;
+    }
+
+    [Test]
+    public void MenAreNotAllTheSameSizeOrSpeed()
+    {
+        var army = Field();
+        var heights = new System.Collections.Generic.HashSet<float>();
+        var paces = new System.Collections.Generic.HashSet<float>();
+        foreach (var u in army.Infantry) { heights.Add(u.height); paces.Add(u.pace); }
+        Assert.Greater(heights.Count, 20, "alle Soldaten sind gleich gross");
+        Assert.Greater(paces.Count, 20, "alle Soldaten laufen gleich schnell");
+    }
+
+    [Test]
+    public void HeightsStayWithinAHumanRange()
+    {
+        var army = Field();
+        foreach (var u in army.Infantry)
+            Assert.That(u.height, Is.InRange(0.85f, 1.15f), "die Streuung ist grotesk statt menschlich");
+    }
+
+    [Test]
+    public void MenClumpIntoSquadsRatherThanFormingAnEvenLine()
+    {
+        var army = Field();
+        for (int i = 0; i < 60 * 30; i++) army.Update(1f / 60f);
+
+        var xs = new System.Collections.Generic.List<float>();
+        foreach (var u in army.Infantry)
+            if (u.side == Army.Side.Bull) xs.Add(u.x);
+        xs.Sort();
+        Assert.Greater(xs.Count, 10);
+
+        // An even line has near-identical gaps between neighbours. Clumps do
+        // not: most gaps are small, a few are large. Compare the biggest gap
+        // with the median one - on an even line they are the same.
+        var gaps = new System.Collections.Generic.List<float>();
+        for (int i = 1; i < xs.Count; i++) gaps.Add(xs[i] - xs[i - 1]);
+        gaps.Sort();
+        float median = gaps[gaps.Count / 2];
+        float widest = gaps[gaps.Count - 1];
+        Assert.Greater(widest, median * 3f,
+            $"die Abstaende sind fast gleich (Median {median:0.0}, groesster {widest:0.0}) - das ist eine Reihe, kein Haufen");
+    }
+
+    [Test]
+    public void SquadsDriftSoTheLineIsNotFrozen()
+    {
+        var army = Field();
+        for (int i = 0; i < 60 * 5; i++) army.Update(1f / 60f);
+        var before = army.Infantry.ConvertAll(u => u.x);
+        for (int i = 0; i < 60 * 60; i++) army.Update(1f / 60f);
+
+        float moved = 0f;
+        for (int i = 0; i < before.Count && i < army.Infantry.Count; i++)
+            moved += Mathf.Abs(army.Infantry[i].x - before[i]);
+        Assert.Greater(moved / Mathf.Max(1, before.Count), 1f,
+            "die Front steht nach einer Minute noch exakt gleich da");
+    }
+}
+
+/// <summary>
+/// Gunships and the bombs they drop - the heaviest thing either side puts in
+/// the air, and the only weapon that clears a circle rather than hitting a
+/// point.
+/// </summary>
+public class HelicopterTests
+{
+    static Army Field()
+    {
+        var a = new Army(64) { FrontlineAt = _ => 0f, GroundAt = (_, __) => 0f };
+        a.Populate(6, 40);
+        return a;
+    }
+
+    [Test]
+    public void AGunshipEntersFromOffTheMapAndCrossesIt()
+    {
+        var army = Field();
+        army.SendHelicopter(Army.Side.Bull);
+        var h = army.Helicopters[0];
+        Assert.Greater(Mathf.Abs(h.x), Army.FrontX, "er erscheint mitten auf dem Feld statt anzufliegen");
+
+        float startX = h.x;
+        for (int i = 0; i < 60 * 3; i++) army.Update(1f / 60f);
+        if (army.Helicopters.Count > 0)
+            Assert.Greater(Mathf.Abs(army.Helicopters[0].x - startX), 1f, "er fliegt nicht");
+    }
+
+    [Test]
+    public void HeStandsOffOnHisOwnSideOfTheLine()
+    {
+        var army = Field();
+        army.SendHelicopter(Army.Side.Bull);
+        for (int i = 0; i < 60 * 4; i++) army.Update(1f / 60f);
+        if (army.Helicopters.Count == 0) Assert.Pass("bereits durchgeflogen");
+        var h = army.Helicopters[0];
+        Assert.Less(h.z, 0f, "der Bullen-Helikopter steht auf der Baeren-Seite der Front");
+    }
+
+    [Test]
+    public void HeFliesAboveTheGroundRatherThanThroughIt()
+    {
+        var army = new Army(64) { FrontlineAt = _ => 0f, GroundAt = (_, __) => 12f };
+        army.Populate(2, 4);
+        army.SendHelicopter(Army.Side.Bear);
+        for (int i = 0; i < 60 * 3; i++) army.Update(1f / 60f);
+        if (army.Helicopters.Count == 0) Assert.Pass("bereits durchgeflogen");
+        Assert.Greater(army.Helicopters[0].y, 12f + 10f, "er fliegt im Boden");
+    }
+
+    [Test]
+    public void HeDropsAndTheBombFalls()
+    {
+        var army = Field();
+        army.SendHelicopter(Army.Side.Bull);
+        int released = 0;
+        army.BombReleased += _ => released++;
+
+        for (int i = 0; i < 60 * 12; i++) army.Update(1f / 60f);
+        Assert.Greater(released, 0, "er wirft nichts ab");
+    }
+
+    [Test]
+    public void ABombClearsACircleRatherThanHittingAPoint()
+    {
+        var army = Field();
+        // a tight knot of men directly under the bomb
+        foreach (var u in army.Infantry) { u.x = 0f; u.z = 0f; }
+        int killed = 0;
+        army.Killed += (_, __) => killed++;
+
+        army.Bombs.Add(new Army.Bomb { x = 0f, y = 0.5f, z = 0f, vy = -20f, side = Army.Side.Bull });
+        // a bomb needs a frame or two to reach the ground, whatever its speed
+        for (int i = 0; i < 30 && army.Bombs.Count > 0; i++) army.Update(1f / 60f);
+        Assert.AreEqual(0, army.Bombs.Count, "die Bombe ist nicht eingeschlagen");
+
+        Assert.Greater(killed, 5, $"nur {killed} gefallen - eine Bombe raeumt einen Kreis, nicht einen Mann");
+    }
+
+    [Test]
+    public void ABombDamagesArmourByDistance()
+    {
+        var army = Field();
+        var near = army.Armour[0];
+        var far = army.Armour[1];
+        near.x = 0f; near.z = 0f; near.hp = 20f;
+        far.x = 0f; far.z = Army.BombRadius * 0.9f; far.hp = 20f;
+
+        army.Bombs.Add(new Army.Bomb { x = 0f, y = 0.5f, z = 0f, vy = -20f, side = Army.Side.Bull });
+        for (int i = 0; i < 30 && army.Bombs.Count > 0; i++) army.Update(1f / 60f);
+
+        Assert.Less(near.hp, 20f, "der Panzer im Zentrum nimmt keinen Schaden");
+        Assert.Greater(near.hp < far.hp ? 1 : 0, 0,
+            $"der ferne Panzer nimmt gleich viel oder mehr ({far.hp:0.0}) als der nahe ({near.hp:0.0})");
+    }
+
+    [Test]
+    public void GunshipsLeaveOnceTheyHaveCrossed()
+    {
+        var army = Field();
+        army.SendHelicopter(Army.Side.Bull);
+        for (int i = 0; i < 60 * 40; i++) army.Update(1f / 60f);
+        Assert.AreEqual(0, army.Helicopters.Count, "der Helikopter kreist ewig weiter");
     }
 }

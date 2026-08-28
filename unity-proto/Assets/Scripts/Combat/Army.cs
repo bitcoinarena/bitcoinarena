@@ -52,6 +52,19 @@ public class Army
         /// and a standing man kept twitching into a run.
         /// </summary>
         public float standoff;
+
+        /// <summary>
+        /// Which squad he belongs to, and where he stands in it. Men are not
+        /// evenly spaced along a front - they clump, with gaps between groups -
+        /// and an even line is the single thing that most makes an army read as
+        /// a spreadsheet rather than as people.
+        /// </summary>
+        public int squad = -1;
+        public float squadOffsetX, squadOffsetZ;
+
+        /// <summary>Per-man variation, so a rank is not one model repeated.</summary>
+        public float height = 1f;
+        public float pace = 1f;
         /// <summary>
         /// +1 for bull, -1 for bear. Sign convention matters: every formula
         /// ported from battlefield.js is written as "front - dir * distance",
@@ -67,6 +80,38 @@ public class Army
     /// a tank - the army has to be told the ground is occupied.
     /// </summary>
     public readonly List<Vector3> Wrecks = new List<Vector3>();   // x, z, radius
+
+    /// <summary>
+    /// Gunships. They run the length of the front on their own side of it and
+    /// drop on what they pass - the heaviest thing either army puts in the air.
+    /// </summary>
+    public class Helicopter
+    {
+        public Side side;
+        public float x, y, z;
+        public float yaw, bank, dir;
+        public float t, dropIn;
+        public float Dir => side == Side.Bull ? 1f : -1f;
+    }
+
+    /// <summary>A bomb in the air. Ballistic, so it lands ahead of where it was released.</summary>
+    public class Bomb
+    {
+        public float x, y, z;
+        public float vx, vy, vz;
+        public Side side;
+    }
+
+    public readonly List<Helicopter> Helicopters = new List<Helicopter>();
+    public readonly List<Bomb> Bombs = new List<Bomb>();
+
+    /// <summary>How far a bomb kills. Deliberately far larger than a tank shell.</summary>
+    public const float BombRadius = 16f;
+
+    /// <summary>A bomb went off at x, z.</summary>
+    public System.Action<Vector2> Bombed;
+    /// <summary>A bomb was released, so the renderer can follow it down.</summary>
+    public System.Action<Bomb> BombReleased;
 
     public readonly List<Unit> Armour = new List<Unit>();
     public readonly List<Unit> Infantry = new List<Unit>();
@@ -124,13 +169,31 @@ public class Army
         }
     }
 
+    /// <summary>Squad anchors along the front, per side. Index is the squad id.</summary>
+    readonly Dictionary<Side, List<float>> _squads = new Dictionary<Side, List<float>>
+    {
+        { Side.Bull, new List<float>() }, { Side.Bear, new List<float>() },
+    };
+
+    /// <summary>
+    /// Roughly one squad per twelve men, spread along the front with uneven
+    /// spacing - evenly spaced squads look as mechanical as evenly spaced men.
+    /// </summary>
+    void EnsureSquads(Side side, int strength)
+    {
+        var list = _squads[side];
+        int want = Mathf.Max(3, strength / 12);
+        while (list.Count < want)
+            list.Add(Rand(-FrontX + 12f, FrontX - 12f));
+    }
+
     Unit Spawn(Side side, bool vehicle)
     {
         float x = Rand(-FrontX + 8f, FrontX - 8f);
         float dir = side == Side.Bull ? 1f : -1f;
         // arrives from the rear, well behind its own line
         float z = FrontlineAt(x) - dir * Rand(vehicle ? 46f : 30f, vehicle ? 76f : 78f);
-        return new Unit
+        var unit = new Unit
         {
             side = side, x = x, z = Mathf.Clamp(z, -HalfDepth, HalfDepth),
             hp = vehicle ? Rand(6f, 10f) : 1f,
@@ -139,6 +202,21 @@ public class Army
             standoff = Rand(4f, 12f),
             heading = dir > 0 ? 0f : Mathf.PI,
         };
+
+        if (!vehicle)
+        {
+            EnsureSquads(side, InfantryPerSide);
+            var squads = _squads[side];
+            unit.squad = _rng.Next(squads.Count);
+            // a loose knot rather than a rank: wider across than deep, and
+            // never the same shape twice
+            unit.squadOffsetX = Rand(-9f, 9f);
+            unit.squadOffsetZ = Rand(-5f, 5f);
+            unit.height = Rand(0.92f, 1.08f);
+            unit.pace = Rand(0.82f, 1.18f);
+            unit.x = Mathf.Clamp(squads[unit.squad] + unit.squadOffsetX, -FrontX + 4f, FrontX - 4f);
+        }
+        return unit;
     }
 
     /// <summary>
@@ -184,6 +262,9 @@ public class Army
 
         foreach (var v in Armour) StepArmour(v, dt);
         foreach (var s in Infantry) StepInfantry(s, dt);
+        DriftSquads(dt);
+        StepHelicopters(dt);
+        StepBombs(dt);
         AvoidWrecks();
 
         Armour.RemoveAll(u => u.hp <= 0f);
@@ -228,6 +309,151 @@ public class Army
             if (_infantryAt[side] > 0f) continue;
             _infantryAt[side] = InfantryReinforceSeconds;
             Infantry.Add(Spawn(side, false));
+        }
+    }
+
+    /// <summary>Ground height under a point, so gunships hold a height over terrain.</summary>
+    public System.Func<float, float, float> GroundAt = (_, __) => 0f;
+
+    public void SendHelicopter(Side side)
+    {
+        float dir = Random.value < 0.5f ? 1f : -1f;
+        var h = new Helicopter
+        {
+            side = side,
+            dir = dir,
+            // enters from off the map, so it arrives rather than appearing
+            x = dir > 0 ? -FrontX - 30f : FrontX + 30f,
+            dropIn = Rand(1.5f, 4f),
+        };
+        h.z = FrontlineAt(h.x) - h.Dir * 26f;
+        h.y = GroundAt(h.x, h.z) + 24f;
+        h.yaw = dir > 0 ? Mathf.PI * 0.5f : -Mathf.PI * 0.5f;
+        Helicopters.Add(h);
+    }
+
+    /// <summary>
+    /// Squads drift along the front, so the shape of the line changes over a
+    /// few minutes instead of being fixed at spawn.
+    /// </summary>
+    void DriftSquads(float dt)
+    {
+        foreach (var side in new[] { Side.Bull, Side.Bear })
+        {
+            var list = _squads[side];
+            for (int i = 0; i < list.Count; i++)
+            {
+                float drift = Mathf.Sin(Time * 0.12f + i * 2.4f) * 3.6f * dt;
+                list[i] = Mathf.Clamp(list[i] + drift, -FrontX + 12f, FrontX - 12f);
+            }
+        }
+    }
+
+    void StepHelicopters(float dt)
+    {
+        for (int i = Helicopters.Count - 1; i >= 0; i--)
+        {
+            var h = Helicopters[i];
+            h.t += dt;
+
+            // run the length of the front, standing off on our own side of it
+            const float Speed = 30f;
+            float px = h.x, pz = h.z;
+            h.x += h.dir * Speed * dt;
+
+            float wantZ = FrontlineAt(h.x) - h.Dir * (26f + Mathf.Sin(h.t * 0.6f) * 9f);
+            h.z += Mathf.Clamp(wantZ - h.z, -Speed * dt * 1.6f, Speed * dt * 1.6f);
+            float wantY = GroundAt(h.x, h.z) + 24f + Mathf.Sin(h.t * 0.9f) * 3f;
+            h.y += (wantY - h.y) * (1f - Mathf.Exp(-2f * dt));
+
+            // nose follows travel, and it banks in proportion to how hard it turns
+            float vx = h.x - px, vz = h.z - pz;
+            if (vx * vx + vz * vz > 1e-8f)
+            {
+                float want = Mathf.Atan2(vx, vz);
+                float turn = Mathf.DeltaAngle(h.yaw * Mathf.Rad2Deg, want * Mathf.Rad2Deg) * Mathf.Deg2Rad;
+                h.yaw = Mathf.LerpAngle(h.yaw * Mathf.Rad2Deg, want * Mathf.Rad2Deg,
+                                        1f - Mathf.Exp(-3f * dt)) * Mathf.Deg2Rad;
+                h.bank += (Mathf.Clamp(turn * 4.5f, -0.8f, 0.8f) - h.bank) * (1f - Mathf.Exp(-3.5f * dt));
+            }
+
+            // drop on what it passes, but only over enemy ground
+            h.dropIn -= dt;
+            if (h.dropIn <= 0f && Mathf.Abs(h.x) < FrontX)
+            {
+                h.dropIn = Rand(2.2f, 4.5f);
+                Release(h);
+            }
+
+            // gone off the far side
+            if (Mathf.Abs(h.x) > FrontX + 40f) Helicopters.RemoveAt(i);
+        }
+    }
+
+    void Release(Helicopter h)
+    {
+        float front = FrontlineAt(h.x);
+        var bomb = new Bomb
+        {
+            side = h.side,
+            x = h.x, y = h.y, z = h.z,
+            // inherits the aircraft's speed, and is aimed across the seam
+            vx = h.dir * 30f,
+            vy = 0f,
+            vz = Mathf.Sign(front - h.z) * Rand(10f, 22f),
+        };
+        Bombs.Add(bomb);
+        BombReleased?.Invoke(bomb);
+    }
+
+    void StepBombs(float dt)
+    {
+        for (int i = Bombs.Count - 1; i >= 0; i--)
+        {
+            var b = Bombs[i];
+            b.vy -= 9.81f * dt;
+            b.x += b.vx * dt;
+            b.y += b.vy * dt;
+            b.z += b.vz * dt;
+
+            float ground = GroundAt(b.x, b.z);
+            if (b.y > ground) continue;
+
+            b.y = ground;
+            Detonate(b);
+            Bombs.RemoveAt(i);
+        }
+    }
+
+    /// <summary>
+    /// A bomb is not a shell. It clears a circle: everyone inside dies, armour
+    /// takes damage falling off with distance rather than a flat hit.
+    /// </summary>
+    void Detonate(Bomb b)
+    {
+        Bombed?.Invoke(new Vector2(b.x, b.z));
+
+        float r2 = BombRadius * BombRadius;
+        for (int i = Infantry.Count - 1; i >= 0; i--)
+        {
+            var u = Infantry[i];
+            float dx = u.x - b.x, dz = u.z - b.z;
+            if (dx * dx + dz * dz > r2) continue;
+            u.hp = 0f;
+            // thrown outward from the blast, not along a vehicle's line
+            var away = new Vector2(dx, dz).normalized;
+            Killed?.Invoke(u, away);
+            Infantry.RemoveAt(i);
+        }
+
+        foreach (var v in Armour)
+        {
+            float dx = v.x - b.x, dz = v.z - b.z;
+            float d2 = dx * dx + dz * dz;
+            if (d2 > r2) continue;
+            float falloff = 1f - Mathf.Sqrt(d2) / BombRadius;
+            v.hp -= 12f * falloff;
+            if (v.hp <= 0f) Destroyed?.Invoke(v);
         }
     }
 
@@ -327,11 +553,19 @@ public class Army
     void StepInfantry(Unit s, float dt)
     {
         float front = FrontlineAt(s.x);
-        float goalZ = front - s.Dir * s.standoff;
+        float goalZ = front - s.Dir * (s.standoff + s.squadOffsetZ);
         float dz = goalZ - s.z;
-        float step = Mathf.Min(3.4f * dt, Mathf.Abs(dz));
+        float step = Mathf.Min(3.4f * s.pace * dt, Mathf.Abs(dz));
         s.z += Mathf.Sign(dz) * step;
-        s.x += Mathf.Sin(s.phase) * 1.6f * dt;
+
+        // hold station on his squad rather than wandering the whole front
+        var squads = _squads[s.side];
+        if (s.squad >= 0 && s.squad < squads.Count)
+        {
+            float goalX = squads[s.squad] + s.squadOffsetX;
+            s.x += Mathf.Clamp(goalX - s.x, -2.4f * dt * s.pace, 2.4f * dt * s.pace);
+        }
+        s.x += Mathf.Sin(s.phase) * 0.9f * dt;
         s.x = Mathf.Clamp(s.x, -FrontX + 4f, FrontX - 4f);
         s.z = Mathf.Clamp(s.z, -HalfDepth, HalfDepth);
         s.phase += dt * 6f;

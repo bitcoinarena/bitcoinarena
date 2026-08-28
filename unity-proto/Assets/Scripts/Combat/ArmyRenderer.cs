@@ -34,6 +34,10 @@ public class ArmyRenderer : MonoBehaviour
 
     [Tooltip("Tank prefab. Falls back to a box hull and turret if empty.")]
     public GameObject tankPrefab;
+    [Tooltip("Helicopter prefab. Falls back to a crude airframe if empty.")]
+    public GameObject helicopterPrefab;
+    public float helicopterLength = 14f;
+    public float helicopterYawOffset;
     [Tooltip("Metres wide across the tracks. The model is scaled to this.")]
     public float tankWidth = 3.7f;
     public float tankYawOffset;
@@ -56,6 +60,13 @@ public class ArmyRenderer : MonoBehaviour
     Mesh _hull, _turret, _soldier;
     readonly List<Transform> _hulls = new List<Transform>();
     readonly List<Transform> _turrets = new List<Transform>();
+    readonly List<Transform> _helis = new List<Transform>();
+    readonly List<Transform> _bombs = new List<Transform>();
+    /// <summary>Main and tail rotor per airframe, so they can be spun.</summary>
+    readonly Dictionary<Transform, (Transform main, Transform tail)> _heliRotors =
+        new Dictionary<Transform, (Transform, Transform)>();
+    Mesh _heliBody, _heliRotor, _bomb;
+
     readonly List<Transform> _hullsBull = new List<Transform>();
     readonly List<Transform> _hullsBear = new List<Transform>();
     readonly List<Transform> _soldiersBull = new List<Transform>();
@@ -90,6 +101,15 @@ public class ArmyRenderer : MonoBehaviour
         _lastTankPos.Clear();
     }
 
+    /// <summary>Take a gunship model that arrived after the start.</summary>
+    public void SetHelicopterPrefab(GameObject prefab)
+    {
+        if (prefab == null || prefab == helicopterPrefab) return;
+        helicopterPrefab = prefab;
+        Discard(_helis);
+        _heliRotors.Clear();
+    }
+
     static void Discard(List<Transform> pool)
     {
         foreach (var t in pool) if (t != null) Destroy(t.gameObject);
@@ -103,6 +123,9 @@ public class ArmyRenderer : MonoBehaviour
         _hull = Box(new Vector3(3.4f, 1.5f, 6.2f), "TankHull");
         _turret = Turret();
         _soldier = Box(new Vector3(0.7f, 1.8f, 0.5f), "Soldier");
+        _heliBody = Box(new Vector3(2.2f, 2.2f, 11f), "HeliBody");
+        _heliRotor = Box(new Vector3(13f, 0.22f, 1.1f), "Rotor");
+        _bomb = Box(new Vector3(0.7f, 0.7f, 2.2f), "Bomb");
     }
 
     static Mesh Box(Vector3 size, string name)
@@ -337,6 +360,110 @@ public class ArmyRenderer : MonoBehaviour
         return wrapper;
     }
 
+    /// <summary>
+    /// Gunships and the bombs they drop.
+    ///
+    /// The airframe is one pool for both sides - it is tinted per frame rather
+    /// than per instance, because there are only ever a handful in the air and
+    /// a pool per side would spend more on bookkeeping than it saves.
+    /// </summary>
+    void PlaceAircraft()
+    {
+        Fit(_helis, army.Helicopters.Count, MakeHelicopter);
+        for (int i = 0; i < army.Helicopters.Count; i++)
+        {
+            var h = army.Helicopters[i];
+            if (i >= _helis.Count) break;
+            var t = _helis[i];
+            if (!t.gameObject.activeSelf) t.gameObject.SetActive(true);
+
+            t.SetPositionAndRotation(
+                new Vector3(h.x, h.y, h.z),
+                Quaternion.Euler(0f, (h.yaw + helicopterYawOffset * Mathf.Deg2Rad) * Mathf.Rad2Deg,
+                                 h.bank * Mathf.Rad2Deg));
+
+            var mat = h.side == Army.Side.Bull ? bullMaterial : bearMaterial;
+            foreach (var r in t.GetComponentsInChildren<MeshRenderer>(true))
+                if (mat != null && r.sharedMaterial != mat && helicopterPrefab == null)
+                    r.sharedMaterial = mat;
+
+            // rotors spin regardless of what the model provides
+            if (_heliRotors.TryGetValue(t, out var rotors))
+            {
+                if (rotors.main != null) rotors.main.Rotate(0f, 1500f * Time.deltaTime, 0f, Space.Self);
+                if (rotors.tail != null) rotors.tail.Rotate(2200f * Time.deltaTime, 0f, 0f, Space.Self);
+            }
+        }
+
+        Fit(_bombs, army.Bombs.Count, () => MakePiece(_bomb, "Bomb", false, Vector3.zero));
+        for (int i = 0; i < army.Bombs.Count; i++)
+        {
+            var b = army.Bombs[i];
+            if (i >= _bombs.Count) break;
+            // noses along its own flight path, so it does not fall sideways
+            var vel = new Vector3(b.vx, b.vy, b.vz);
+            var rot = vel.sqrMagnitude > 0.01f
+                ? Quaternion.LookRotation(vel.normalized, Vector3.up) : Quaternion.identity;
+            var t = _bombs[i];
+            if (!t.gameObject.activeSelf) t.gameObject.SetActive(true);
+            t.SetPositionAndRotation(new Vector3(b.x, b.y, b.z), rot);
+            var mr = t.GetComponent<MeshRenderer>();
+            if (mr != null && debrisMaterialForBombs != null) mr.sharedMaterial = debrisMaterialForBombs;
+        }
+    }
+
+    [Tooltip("Bombs are dark metal, not team-coloured - they belong to nobody once released.")]
+    public Material debrisMaterialForBombs;
+
+    Transform MakeHelicopter()
+    {
+        if (helicopterPrefab != null)
+        {
+            var wrapped = WrapOnItsSole(helicopterPrefab, transform, "Helicopter", helicopterLength, false);
+            // a flying model must not be seated on the ground like a tank
+            var inner = wrapped.transform.childCount > 0 ? wrapped.transform.GetChild(0) : null;
+            if (inner != null) inner.localPosition = Vector3.zero;
+            foreach (var c in wrapped.GetComponentsInChildren<Collider>(true)) DestroyImmediate(c);
+
+            // Tail rotors are named for the end they sit on, and packs disagree
+            // about which word that is - this one calls it Back_Rotor. Check the
+            // tail FIRST, or a name containing "rotor" is claimed by the main.
+            Transform main = null, tail = null;
+            foreach (var t in wrapped.GetComponentsInChildren<Transform>(true))
+            {
+                string n = t.name.ToLowerInvariant();
+                if (!n.Contains("rotor")) continue;
+                bool isTail = n.Contains("tail") || n.Contains("back") || n.Contains("rear");
+                if (isTail) { tail ??= t; }
+                else { main ??= t; }
+            }
+            _heliRotors[wrapped.transform] = (main, tail);
+            return wrapped.transform;
+        }
+
+        // crude airframe: a body with a rotor disc, enough to read as a gunship
+        var go = new GameObject("Helicopter");
+        go.transform.SetParent(transform, false);
+        var body = MakeChild(go.transform, _heliBody, "Body", Vector3.zero);
+        var rotor = MakeChild(go.transform, _heliRotor, "MainRotor", new Vector3(0f, 1.6f, 1f));
+        var tailRotor = MakeChild(go.transform, _heliRotor, "TailRotor", new Vector3(0f, 1.2f, -5.6f));
+        tailRotor.localScale = new Vector3(0.34f, 1f, 0.34f);
+        _heliRotors[go.transform] = (rotor, tailRotor);
+        _ = body;
+        return go.transform;
+    }
+
+    Transform MakeChild(Transform parent, Mesh mesh, string name, Vector3 local)
+    {
+        var go = new GameObject(name);
+        go.transform.SetParent(parent, false);
+        go.transform.localPosition = local;
+        go.AddComponent<MeshFilter>().sharedMesh = mesh;
+        var mr = go.AddComponent<MeshRenderer>();
+        mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.On;
+        return go.transform;
+    }
+
     static Transform FindDeep(Transform root, string name)
     {
         foreach (var t in root.GetComponentsInChildren<Transform>(true))
@@ -408,6 +535,8 @@ public class ArmyRenderer : MonoBehaviour
         FitSided(_soldiersBull, Army.Side.Bull);
         FitSided(_soldiersBear, Army.Side.Bear);
 
+        PlaceAircraft();
+
         int bullTanks = 0, bearTanks = 0;
         for (int i = 0; i < armour; i++)
         {
@@ -459,6 +588,10 @@ public class ArmyRenderer : MonoBehaviour
             var t = pool[idx];
             Place(t, new Vector3(s.x, Ground(s.x, s.z) + lift + bob, s.z),
                   s.heading + soldierYawOffset * Mathf.Deg2Rad, null);
+            // one model repeated at one size is what makes a rank look stamped
+            // out; a few percent either way is enough to break that
+            if (!Mathf.Approximately(t.localScale.x, s.height))
+                t.localScale = Vector3.one * s.height;
 
             if (soldierAnimator != null)
             {

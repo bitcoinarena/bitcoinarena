@@ -26,6 +26,7 @@ public static class SetupAddressables
     public const string SoldierKey = "model/soldier";
     public const string TankKey = "model/tank";
     public const string TruckKey = "model/truck";
+    public const string HelicopterKey = "model/helicopter";
 
     [MenuItem("Tools/BTC Logistics/Set Up Streaming")]
     public static void Run()
@@ -59,6 +60,7 @@ public static class SetupAddressables
         marked += Mark(settings, group, SoldierKey, "soldier", "infantry", "trooper");
         marked += Mark(settings, group, TankKey, "leopard", "tank", "panzer");
         marked += Mark(settings, group, TruckKey, "smalltruck", "industrialsmalltruck", "truck", "lorry", "van");
+        marked += Mark(settings, group, HelicopterKey, "gunship", "helicopter", "hellicopter", "chopper");
 
         settings.BuildRemoteCatalog = true;
         settings.RemoteCatalogBuildPath.SetVariableByName(settings, AddressableAssetSettings.kRemoteBuildPath);

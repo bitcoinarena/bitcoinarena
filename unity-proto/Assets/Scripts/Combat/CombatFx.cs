@@ -991,5 +991,34 @@ public class CombatFx : MonoBehaviour
         };
 
         army.Destroyed += v => TankExplosion(new Vector3(v.x, Ground(v.x, v.z), v.z), v.heading);
+
+        // A bomb is not a tank going up. Everything is bigger and there is more
+        // of it, because the whole point of a gunship is that it outweighs
+        // anything on the ground.
+        army.Bombed += at =>
+        {
+            var p = new Vector3(at.x, Ground(at.x, at.y), at.y);
+            if (!FlipbookBurst(p + Vector3.up * 3f, 26, 1.1f))
+            {
+                Fireball(p + Vector3.up * 2f, 11f, fireCoreMaterial, 0f, 0.3f);
+                for (int i = 0; i < 8; i++)
+                    Fireball(p + new Vector3(Random.Range(-5f, 5f), Random.Range(1f, 7f), Random.Range(-5f, 5f)),
+                             Random.Range(7f, 13f), fireMaterial, i * 0.05f, Random.Range(0.6f, 1f));
+            }
+            if (!SmokeBurst(p + Vector3.up * 5f, 16, Random.Range(5f, 9f)))
+                for (int i = 0; i < 10; i++)
+                    Smoke(p + new Vector3(Random.Range(-3f, 3f), Random.Range(2f, 6f), Random.Range(-3f, 3f)),
+                          Random.Range(6f, 10f), i * 0.1f);
+
+            for (int i = 0; i < 22; i++)
+            {
+                float a = Random.Range(0f, Mathf.PI * 2f);
+                var v = new Vector3(Mathf.Sin(a), 0f, Mathf.Cos(a)) * Random.Range(10f, 26f);
+                v.y = Random.Range(10f, 24f);
+                if (i % 2 == 0) Spark(p + Vector3.up * 2f, v);
+                else Debris(p + Vector3.up * 2f, v, Random.Range(0.15f, 0.4f));
+            }
+            Shockwave(p);
+        };
     }
 }
