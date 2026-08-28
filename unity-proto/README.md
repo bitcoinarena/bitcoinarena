@@ -155,11 +155,24 @@ Zwei Dinge, die dabei zwingend sind:
 
 Gemessen am aktuellen Build:
 
-| | roh | Brotli |
+| | anfangs | jetzt |
 |---|---|---|
-| `webgl.wasm` (Code) | 45,4 MB | **8,0 MB** |
-| `webgl.data` (Inhalte) | 39,3 MB | **27,3 MB** |
-| **gesamt** | 85 MB | **35,5 MB** |
+| `webgl.wasm` (Code) | 45,4 MB | **8,2 MB** |
+| `webgl.data` (Inhalte) | 39,3 MB | **11,3 MB** |
+| **Start gesamt** | 85 MB | **19,6 MB** |
+
+Dazu kommen ~14 MB Modell-Pakete, die **nach** dem Start geladen werden.
+
+Zwei Schritte dahin, und der zweite war der wichtige:
+
+1. **Brotli** (85 → 35,5 MB). Der Code komprimiert fünffach, die Daten kaum.
+2. **Texturgrößen begrenzt** (35,5 → 19,6 MB). Der Build-Report zeigte 68 MB
+   Texturen, allein acht Panzer-Maps in 2048² für 42 MB davon. Auf einer
+   260-Meter-Karte ist ein Panzer wenige Pixel hoch. Gedeckelt auf 512 für
+   Fahrzeuge und Figuren, 1024 für Boden und Straße.
+
+Die Begrenzung sitzt im **Import**, nicht in den Dateien — die Originale bleiben
+unangetastet, ein höheres Limit kostet einen Reimport.
 
 Brotli ist aktiv, mit `decompressionFallback`. Ohne den bräuchte der Server
 zwingend `Content-Encoding`-Header und der Player lädt sonst gar nicht; mit ihm
