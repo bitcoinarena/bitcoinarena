@@ -54,8 +54,9 @@ public class CombatFxTests
         for (int i = 0; i < 60 * 60; i++) { army.Update(1f / 60f); fx.Step(1f / 60f); }
         int during = fx.LivePieces;
 
-        // guns fall silent; everything must clear
-        for (int i = 0; i < 60 * 12; i++) fx.Step(1f / 60f);
+        // guns fall silent; everything must clear - long enough for the
+        // wrecks to burn out, which is the longest-lived thing on the field
+        for (int i = 0; i < 60 * 35; i++) fx.Step(1f / 60f);
         Assert.AreEqual(0, fx.LivePieces, $"{fx.LivePieces} Effekte haengen fest (waehrend des Gefechts {during})");
         Object.DestroyImmediate(fx.gameObject);
     }
@@ -172,7 +173,8 @@ public class TankExplosionTests
     {
         var fx = Rig();
         fx.TankExplosion(Vector3.zero, 0f);
-        for (int i = 0; i < 60 * 30; i++) fx.Step(1f / 60f);
+        // past the wreck's 25 second burn, which outlasts everything else
+        for (int i = 0; i < 60 * 35; i++) fx.Step(1f / 60f);
         Assert.AreEqual(0, fx.LivePieces, $"{fx.LivePieces} Teile haengen fest");
         Object.DestroyImmediate(fx.gameObject);
     }
@@ -345,6 +347,82 @@ public class BurningWreckTests
             if (biggest < 1.5f)
                 Assert.Less(biggest, 1.0f, "ein fliegendes Teil ist so gross wie eine Kiste");
         }
+        Object.DestroyImmediate(fx.gameObject);
+    }
+}
+
+/// <summary>
+/// Reported from play: bodies rolling metres down a hill, and wreck fire that
+/// stops and restarts. Both are failures of settling - one physical, one in
+/// how the flame is emitted.
+/// </summary>
+public class SettlingTests
+{
+    static CombatFx Rig()
+    {
+        var go = new GameObject("Fx");
+        var fx = go.AddComponent<CombatFx>();
+        var mat = new Material(Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Standard"));
+        fx.tracerMaterial = fx.flashMaterial = fx.blastMaterial = mat;
+        fx.bullMaterial = fx.bearMaterial = fx.debrisMaterial = mat;
+        fx.fireCoreMaterial = fx.fireMaterial = fx.smokeMaterial = fx.dustMaterial = mat;
+        return fx;
+    }
+
+    [Test]
+    public void ABodyIsABoxNotABarrel()
+    {
+        var fx = Rig();
+        fx.Body(Vector3.zero, 0f, true, Vector2.right);
+        var t = fx.transform.GetChild(0);
+        Assert.IsNull(t.GetComponent<CapsuleCollider>(),
+            "der Koerper hat eine Kapsel - die rollt den Hang hinunter wie ein Fass");
+        Assert.IsNotNull(t.GetComponent<BoxCollider>(), "kein Box-Collider am Koerper");
+        Object.DestroyImmediate(fx.gameObject);
+    }
+
+    [Test]
+    public void ABodyGripsTheGroundAndDoesNotBounce()
+    {
+        var fx = Rig();
+        fx.Body(Vector3.zero, 0f, true, Vector2.right);
+        var col = fx.transform.GetChild(0).GetComponent<BoxCollider>();
+        Assert.IsNotNull(col.material, "kein Reibungsmaterial - er rutscht jeden Hang hinunter");
+        Assert.Greater(col.material.dynamicFriction, 0.7f, "zu glatt");
+        Assert.AreEqual(0f, col.material.bounciness, 0.01f, "eine Leiche darf nicht huepfen");
+        Object.DestroyImmediate(fx.gameObject);
+    }
+
+    [Test]
+    public void ABodyIsHeavilyDampedSoItStopsTumbling()
+    {
+        var fx = Rig();
+        fx.Body(Vector3.zero, 0f, true, Vector2.right);
+        var rb = fx.transform.GetChild(0).GetComponent<Rigidbody>();
+        Assert.Greater(rb.angularDamping, 3f, "er dreht sich endlos weiter");
+        Assert.Less(rb.angularVelocity.magnitude, 12f, "er wird wie ein Rad angeworfen");
+        Object.DestroyImmediate(fx.gameObject);
+    }
+
+    [Test]
+    public void TheWreckFireBeatsSteadilyRatherThanFlickering()
+    {
+        var fx = Rig();
+        fx.TankExplosion(Vector3.zero, 0f);
+        for (int i = 0; i < 60 * 4; i++) fx.Step(1f / 60f);   // past the blast
+
+        // Counted on TotalSpawned, not on the live count: while pieces retire
+        // as fast as they appear the live count does not move, so it cannot
+        // tell a steady fire from one that has gone out.
+        int silentWindows = 0;
+        for (int w = 0; w < 12; w++)
+        {
+            int before = fx.TotalSpawned;
+            for (int i = 0; i < 30; i++) fx.Step(1f / 60f);
+            if (fx.TotalSpawned == before) silentWindows++;
+        }
+        Assert.LessOrEqual(silentWindows, 2,
+            $"{silentWindows} von 12 halben Sekunden ohne Feuer - es flackert an und aus");
         Object.DestroyImmediate(fx.gameObject);
     }
 }

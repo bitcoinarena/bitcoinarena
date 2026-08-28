@@ -134,10 +134,37 @@ public class CombatFx : MonoBehaviour
         return t;
     }
 
+    static PhysicsMaterial _corpseFriction;
+
+    /// <summary>
+    /// Grippy and dead. Without it a body slides and rolls down every slope it
+    /// lands on - the default material is far too slippery for something that
+    /// is meant to stay where it fell.
+    /// </summary>
+    static PhysicsMaterial CorpseFriction()
+    {
+        if (_corpseFriction != null) return _corpseFriction;
+        _corpseFriction = new PhysicsMaterial("Corpse")
+        {
+            dynamicFriction = 0.95f,
+            staticFriction = 0.95f,
+            bounciness = 0f,
+            frictionCombine = PhysicsMaterialCombine.Maximum,
+            bounceCombine = PhysicsMaterialCombine.Minimum,
+        };
+        return _corpseFriction;
+    }
+
     static void SetLayer(GameObject go, int layer)
     {
         go.layer = layer;
         foreach (Transform c in go.transform) SetLayer(c.gameObject, layer);
+    }
+
+    void Add(Piece p)
+    {
+        TotalSpawned++;
+        _live.Add(p);
     }
 
     void Retire(Piece p)
@@ -172,7 +199,7 @@ public class CombatFx : MonoBehaviour
         t.SetPositionAndRotation(mid, Quaternion.LookRotation((to - from).normalized, Vector3.up));
         var scale = new Vector3(thickness, thickness, len);
         t.localScale = scale;
-        _live.Add(new Piece { t = t, life = life, baseScale = scale, kind = Kind.Tracer });
+        Add(new Piece { t = t, life = life, baseScale = scale, kind = Kind.Tracer });
     }
 
     public void Flash(Vector3 at, float size)
@@ -182,7 +209,7 @@ public class CombatFx : MonoBehaviour
         t.SetPositionAndRotation(at, Quaternion.identity);
         var scale = Vector3.one * size;
         t.localScale = scale;
-        _live.Add(new Piece { t = t, life = 0.09f, baseScale = scale, kind = Kind.Flash });
+        Add(new Piece { t = t, life = 0.09f, baseScale = scale, kind = Kind.Flash });
     }
 
     /// <summary>
@@ -264,24 +291,32 @@ public class CombatFx : MonoBehaviour
             rb = t.GetComponent<Rigidbody>();
             if (rb == null)
             {
-                var col = t.gameObject.AddComponent<CapsuleCollider>();
-                col.height = 1.7f; col.radius = 0.3f;
+                // A BOX, not a capsule. A capsule is a barrel on its side: it
+                // rolls, and on a slope it rolls for tens of metres, which is
+                // what made a run-over look like a dropped log.
+                var col = t.gameObject.AddComponent<BoxCollider>();
+                col.size = new Vector3(0.55f, 1.7f, 0.4f);
                 col.center = new Vector3(0f, 0.85f, 0f);
-                col.direction = 1;
+                col.material = CorpseFriction();
+
                 rb = t.gameObject.AddComponent<Rigidbody>();
                 rb.mass = 75f;
                 rb.collisionDetectionMode = CollisionDetectionMode.ContinuousDynamic;
+                // A body is not a ball. Heavy angular damping is what stops it
+                // spinning on and on once it is down.
+                rb.angularDamping = 6f;
+                rb.linearDamping = 0.4f;
                 SetLayer(t.gameObject, CorpseLayer);
             }
             rb.isKinematic = false;
-            rb.linearVelocity = new Vector3(knock.x, 0f, knock.y) * Random.Range(7f, 12f)
-                              + Vector3.up * Random.Range(3.5f, 6f);
-            // end over end, the way a body actually goes
+            rb.linearVelocity = new Vector3(knock.x, 0f, knock.y) * Random.Range(5f, 8f)
+                              + Vector3.up * Random.Range(3f, 4.5f);
+            // over once or twice, not a cartwheel down the field
             rb.angularVelocity = new Vector3(
-                Random.Range(-9f, 9f), Random.Range(-4f, 4f), Random.Range(-9f, 9f));
+                Random.Range(-5f, 5f), Random.Range(-2f, 2f), Random.Range(-5f, 5f));
         }
 
-        _live.Add(new Piece
+        Add(new Piece
         {
             t = t, life = thrown ? 9f : 5f, baseScale = scale, kind = Kind.Body,
             isModelBody = model, bull = bull, body = rb,
@@ -578,7 +613,7 @@ public class CombatFx : MonoBehaviour
         var t = Take(_spheres, _sphere, mat ?? blastMaterial);
         t.SetPositionAndRotation(at, Random.rotation);
         t.localScale = Vector3.zero;
-        _live.Add(new Piece
+        Add(new Piece
         {
             t = t, life = delay + life, delay = delay,
             baseScale = Vector3.one * size, kind = Kind.Fireball,
@@ -591,7 +626,7 @@ public class CombatFx : MonoBehaviour
         var t = Take(_spheres, _sphere, smokeMaterial ?? blastMaterial);
         t.SetPositionAndRotation(at, Random.rotation);
         t.localScale = Vector3.zero;
-        _live.Add(new Piece
+        Add(new Piece
         {
             t = t, life = delay + Random.Range(2.4f, 3.8f), delay = delay,
             baseScale = Vector3.one * size, kind = Kind.Smoke, from = at,
@@ -606,7 +641,7 @@ public class CombatFx : MonoBehaviour
         t.SetPositionAndRotation(at, Random.rotation);
         var scale = Vector3.one * size;
         t.localScale = scale;
-        _live.Add(new Piece
+        Add(new Piece
         {
             t = t, life = Random.Range(1.4f, 2.4f), baseScale = scale, kind = Kind.Debris,
             from = at, velocity = velocity,
@@ -625,7 +660,7 @@ public class CombatFx : MonoBehaviour
         t.SetPositionAndRotation(at, Random.rotation);
         var scale = new Vector3(0.08f, 0.08f, Random.Range(0.4f, 0.9f));
         t.localScale = scale;
-        _live.Add(new Piece
+        Add(new Piece
         {
             t = t, life = Random.Range(0.5f, 1.0f), baseScale = scale, kind = Kind.Debris,
             from = at, velocity = velocity,
@@ -646,7 +681,7 @@ public class CombatFx : MonoBehaviour
         var t = Take(_spheres, _sphere, dustMaterial ?? smokeMaterial ?? blastMaterial);
         t.SetPositionAndRotation(at + Vector3.up * 0.15f, Quaternion.identity);
         t.localScale = Vector3.zero;
-        _live.Add(new Piece
+        Add(new Piece
         {
             t = t, life = 0.7f, baseScale = new Vector3(15f, 0.35f, 15f), kind = Kind.Shockwave,
         });
@@ -696,9 +731,9 @@ public class CombatFx : MonoBehaviour
         t.SetPositionAndRotation(at, Quaternion.Euler(
             Random.Range(-3f, 3f), heading * Mathf.Rad2Deg + Random.Range(-18f, 18f), Random.Range(-3f, 3f)));
         t.localScale = Vector3.one;
-        _live.Add(new Piece
+        Add(new Piece
         {
-            t = t, life = 40f, baseScale = Vector3.one, kind = Kind.Wreck, isWreckModel = true,
+            t = t, life = 25f, baseScale = Vector3.one, kind = Kind.Wreck, isWreckModel = true,
             burnAt = 0.2f,
         });
     }
@@ -709,11 +744,17 @@ public class CombatFx : MonoBehaviour
     public void Wreck(Vector3 at, float heading)
     {
         if (_live.Count >= maxPieces) return;
-        var t = Take(_cubes, _cube, blastMaterial);
+        var t = Take(_cubes, _cube, debrisMaterial ?? blastMaterial);
         var scale = new Vector3(3.4f, 1.2f, 6.2f);
         t.localScale = scale;
         t.SetPositionAndRotation(at, Quaternion.Euler(0f, heading * Mathf.Rad2Deg, 0f));
-        _live.Add(new Piece { t = t, life = 8f, baseScale = scale, kind = Kind.Wreck });
+        // Same life and same burn as the model wreck. They used to differ - 8
+        // seconds and no fire against 40 and burning - so the fallback path
+        // quietly behaved like a different feature.
+        Add(new Piece
+        {
+            t = t, life = 25f, baseScale = scale, kind = Kind.Wreck, burnAt = 0.2f,
+        });
     }
 
     /* --------------------------------------------------------------- clock */
@@ -748,8 +789,17 @@ public class CombatFx : MonoBehaviour
                 {
                     if (p.body != null)
                     {
-                        // the engine owns him: he tumbles, lands and rolls out
-                        // on his own, and nothing here should fight that
+                        // The engine owns the throw - but once he has come to
+                        // rest, take him back. Left dynamic he keeps creeping
+                        // down whatever slope he landed on, and a body that
+                        // slides away on its own is worse than one that never
+                        // moved.
+                        if (!p.body.isKinematic && p.age > 0.6f
+                            && p.body.linearVelocity.sqrMagnitude < 0.35f
+                            && p.body.angularVelocity.sqrMagnitude < 0.6f)
+                        {
+                            p.body.isKinematic = true;
+                        }
                         if (k > 0.88f)
                             p.t.localScale = p.baseScale * Mathf.Lerp(1f, 0f, (k - 0.88f) / 0.12f);
                         break;
@@ -772,21 +822,25 @@ public class CombatFx : MonoBehaviour
                     // fireball clears reads as scenery dropped on the field
                     // rather than as something that was just destroyed - and
                     // the fire is what tells you which wrecks are fresh.
+                    // Burns STEADILY. Rolling a die every half second for
+                    // whether there is fire at all is what made it flicker on
+                    // and off; a fire that stops and restarts is not a fire.
+                    // It emits on a short, fixed beat and fades by making each
+                    // puff smaller, not by skipping them.
                     p.burnAt -= dt;
                     if (p.burnAt <= 0f)
                     {
-                        p.burnAt = Random.Range(0.25f, 0.5f);
-                        // dies down as it burns out, so the field settles
-                        float vigour = 1f - k;
+                        p.burnAt = 0.12f;
+                        float vigour = Mathf.Clamp01(1f - k * 1.15f);
                         var seat = p.t.position + Vector3.up * 1.4f;
-                        if (Random.value < vigour)
-                        {
-                            var jitter = new Vector3(Random.Range(-1f, 1f), 0f, Random.Range(-1.4f, 1.4f));
-                            if (!FlipbookBurst(seat + jitter, 1))
-                                Fireball(seat + jitter, Random.Range(1.6f, 3f), fireMaterial, 0f, 0.4f);
-                        }
-                        if (!SmokeBurst(seat + Vector3.up * 1.2f, 1))
-                            Smoke(seat + Vector3.up * 1.2f, Random.Range(2f, 3.5f), 0f);
+                        var jitter = new Vector3(Random.Range(-0.9f, 0.9f), 0f, Random.Range(-1.3f, 1.3f));
+
+                        if (vigour > 0.02f && !FlipbookBurst(seat + jitter, 1))
+                            Fireball(seat + jitter, Mathf.Lerp(0.6f, 2.8f, vigour), fireMaterial, 0f, 0.35f);
+
+                        // smoke outlasts the flame, as it does on a real hull
+                        if (!SmokeBurst(seat + Vector3.up * 1.4f, 1))
+                            Smoke(seat + Vector3.up * 1.4f, Mathf.Lerp(1.5f, 3.5f, vigour), 0f);
                     }
 
                     if (k > 0.85f) p.t.localScale = p.baseScale * Mathf.Lerp(1f, 0f, (k - 0.85f) / 0.15f);
@@ -833,6 +887,13 @@ public class CombatFx : MonoBehaviour
     }
 
     public int LivePieces => _live.Count;
+
+    /// <summary>
+    /// Every piece ever created. Exposed because the live count cannot show
+    /// cadence: while things are retiring at the rate they are spawned it does
+    /// not move, so it cannot tell a steady fire from a stopped one.
+    /// </summary>
+    public int TotalSpawned { get; private set; }
 
     /* ---------------------------------------------------------- army hooks */
 
