@@ -40,6 +40,7 @@ public class Bootstrap : MonoBehaviour
     public Material smokeMaterial;
     public Material debrisMaterial;
     public Material dustMaterial;
+    public Material fireParticleMaterial;
 
     [Header("Armies")]
     public int armourPerSide = 11;
@@ -306,6 +307,7 @@ public class Bootstrap : MonoBehaviour
         Fx.smokeMaterial = smokeMaterial;
         Fx.debrisMaterial = debrisMaterial;
         Fx.dustMaterial = dustMaterial;
+        Fx.fireParticleMaterial = fireParticleMaterial;
         Fx.wreckPrefab = tankPrefab;
         fxGo.SetActive(true);
         Fx.Bind(Field.Army);

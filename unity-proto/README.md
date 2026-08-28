@@ -180,3 +180,14 @@ beim Gelände schon belegt: dort liegt die Territoriumstextur, die die ganze
 Welt mit 0..1 abdeckt, damit die Frontlinie genau einmal erscheint. Eine
 gekachelte Fotografie kann dort nicht hin. Die Detail-Maps haben eine eigene
 Kachelung — weltweite Farbe unten, gescanntes Korn und Relief darüber.
+
+## Effekt-Assets
+
+Der [VFX Particles: Fireball Pack](https://assetstore.unity.com/packages/vfx/particles/fire-explosions/free-asset-vfx-particles-fireball-pack-263814)
+(kostenlos, URP) liefert seine Effekte als **Visual Effect Graph**. Das läuft in
+WebGL nicht: VFX Graph braucht Compute-Shader, die WebGL 2 nicht hat — die
+`.vfx`-Prefabs sähen im Editor richtig aus und würden im Build nichts zeichnen.
+
+Verwendet werden deshalb die **Flipbook-Texturen** des Packs
+(`FireBall01_8x8.exr`) in einem klassischen Partikelsystem, das dort läuft. Die
+Kunst überlebt, der Effektgraph nicht.

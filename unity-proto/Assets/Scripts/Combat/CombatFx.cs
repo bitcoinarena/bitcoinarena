@@ -27,6 +27,12 @@ public class CombatFx : MonoBehaviour
     public Material debrisMaterial;
     [Tooltip("Pale, for the dust ring. Built from the smoke material it reads as a black disc.")]
     public Material dustMaterial;
+
+    [Header("Flipbook fire")]
+    [Tooltip("Particle material carrying a fire flipbook. Null falls back to the sphere fireballs.")]
+    public Material fireParticleMaterial;
+    [Tooltip("Flipbook grid, e.g. 8x8 for a 64 frame sheet.")]
+    public Vector2Int flipbookTiles = new Vector2Int(8, 8);
     [Tooltip("Tank model for the burnt-out hull. Falls back to a charred box.")]
     public GameObject wreckPrefab;
     public float wreckWidth = 3.7f;
@@ -147,8 +153,11 @@ public class CombatFx : MonoBehaviour
     /// </summary>
     public void Blast(Vector3 at, float size)
     {
-        Fireball(at, size * 1.1f, fireCoreMaterial, 0f, 0.14f);
-        Fireball(at + Vector3.up * 0.6f, size * 1.5f, fireMaterial, 0.04f, 0.3f);
+        if (!FlipbookBurst(at + Vector3.up * 0.5f, 3))
+        {
+            Fireball(at, size * 1.1f, fireCoreMaterial, 0f, 0.14f);
+            Fireball(at + Vector3.up * 0.6f, size * 1.5f, fireMaterial, 0.04f, 0.3f);
+        }
         for (int i = 0; i < 2; i++)
             Smoke(at + Vector3.up * Random.Range(0.5f, 1.5f), size * Random.Range(0.8f, 1.3f), 0.06f * i);
         for (int i = 0; i < 3; i++)
@@ -260,6 +269,83 @@ public class CombatFx : MonoBehaviour
         return wrapper.transform;
     }
 
+    ParticleSystem _fire;
+
+    /// <summary>
+    /// A pooled particle system playing the pack's fire flipbook.
+    ///
+    /// Built in code rather than taken from the pack's own prefabs: those are
+    /// Visual Effect Graph, which needs compute shaders and therefore does not
+    /// run in WebGL at all - it would draw nothing in the build while looking
+    /// right in the editor. A classic particle system does run there, and the
+    /// artwork that matters is the flipbook, which is just a texture.
+    /// </summary>
+    ParticleSystem FireSystem()
+    {
+        if (_fire != null) return _fire;
+        if (fireParticleMaterial == null) return null;
+
+        var go = new GameObject("FireParticles");
+        go.transform.SetParent(transform, false);
+        _fire = go.AddComponent<ParticleSystem>();
+        // AddComponent starts it immediately, and a playing system refuses to
+        // have its duration set - Unity asserts rather than ignoring it.
+        _fire.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
+
+        var main = _fire.main;
+        main.duration = 1f;
+        main.loop = false;
+        main.playOnAwake = false;
+        main.startLifetime = new ParticleSystem.MinMaxCurve(0.5f, 0.95f);
+        main.startSpeed = new ParticleSystem.MinMaxCurve(2.5f, 7f);
+        main.startSize = new ParticleSystem.MinMaxCurve(4f, 9f);
+        main.startRotation = new ParticleSystem.MinMaxCurve(0f, Mathf.PI * 2f);
+        main.gravityModifier = -0.12f;                  // fire lifts
+        main.maxParticles = 300;
+        main.simulationSpace = ParticleSystemSimulationSpace.World;
+
+        var emission = _fire.emission;
+        emission.enabled = true;
+        emission.rateOverTime = 0f;                     // bursts only
+
+        var shape = _fire.shape;
+        shape.enabled = true;
+        shape.shapeType = ParticleSystemShapeType.Sphere;
+        shape.radius = 1.6f;
+
+        // the flipbook: play the whole sheet once over each particle's life
+        var sheet = _fire.textureSheetAnimation;
+        sheet.enabled = true;
+        sheet.numTilesX = flipbookTiles.x;
+        sheet.numTilesY = flipbookTiles.y;
+        sheet.animation = ParticleSystemAnimationType.WholeSheet;
+        sheet.timeMode = ParticleSystemAnimationTimeMode.Lifetime;
+        sheet.frameOverTime = new ParticleSystem.MinMaxCurve(1f, AnimationCurve.Linear(0f, 0f, 1f, 1f));
+        sheet.cycleCount = 1;
+
+        var size = _fire.sizeOverLifetime;
+        size.enabled = true;
+        size.size = new ParticleSystem.MinMaxCurve(1f, AnimationCurve.EaseInOut(0f, 0.55f, 1f, 1.35f));
+
+        var renderer = go.GetComponent<ParticleSystemRenderer>();
+        renderer.material = fireParticleMaterial;
+        renderer.renderMode = ParticleSystemRenderMode.Billboard;
+        renderer.alignment = ParticleSystemRenderSpace.View;
+        renderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+        renderer.receiveShadows = false;
+        return _fire;
+    }
+
+    /// <summary>Fire the flipbook burst at a point. Returns false if there is no material for it.</summary>
+    bool FlipbookBurst(Vector3 at, int count)
+    {
+        var ps = FireSystem();
+        if (ps == null) return false;
+        var p = new ParticleSystem.EmitParams { position = at, applyShapeToPosition = true };
+        ps.Emit(p, count);
+        return true;
+    }
+
     /// <summary>
     /// A tank going up.
     ///
@@ -272,14 +358,16 @@ public class CombatFx : MonoBehaviour
     /// </summary>
     public void TankExplosion(Vector3 at, float heading)
     {
-        // white-hot core, brief
-        Fireball(at + Vector3.up * 1.2f, 5.5f, fireCoreMaterial, 0f, 0.22f);
-
-        // the body of the flame, arriving in stages so it billows
-        for (int i = 0; i < 5; i++)
+        // Real fire where the flipbook is available; the sphere version stays
+        // as the fallback so the scene never depends on an imported pack.
+        if (!FlipbookBurst(at + Vector3.up * 1.6f, 14))
         {
-            var off = new Vector3(Random.Range(-2.2f, 2.2f), Random.Range(0.4f, 3.4f), Random.Range(-2.2f, 2.2f));
-            Fireball(at + off, Random.Range(4f, 7.5f), fireMaterial, i * 0.055f, Random.Range(0.4f, 0.7f));
+            Fireball(at + Vector3.up * 1.2f, 5.5f, fireCoreMaterial, 0f, 0.22f);
+            for (int i = 0; i < 5; i++)
+            {
+                var off = new Vector3(Random.Range(-2.2f, 2.2f), Random.Range(0.4f, 3.4f), Random.Range(-2.2f, 2.2f));
+                Fireball(at + off, Random.Range(4f, 7.5f), fireMaterial, i * 0.055f, Random.Range(0.4f, 0.7f));
+            }
         }
 
         // smoke outlives the fire and keeps rising

@@ -49,6 +49,7 @@ public static class BuildPrototypeScene
         boot.smokeMaterial = Lit("Smoke", new Color(0.17f, 0.16f, 0.15f), 0.95f);
         boot.debrisMaterial = Lit("Debris", new Color(0.10f, 0.09f, 0.09f), 0.8f);
         boot.dustMaterial = Lit("Dust", new Color(0.72f, 0.66f, 0.56f), 0.95f);
+        boot.fireParticleMaterial = FireFlipbookMaterial();
 
         // Pick up an imported soldier model if one is in the project. Done by
         // search rather than by hand in the inspector, because regenerating the
@@ -342,6 +343,59 @@ public static class BuildPrototypeScene
         mat.SetFloat("_BumpScale", normalStrength);
         mat.EnableKeyword("_NORMALMAP");
         EditorUtility.SetDirty(mat);
+    }
+
+    /// <summary>
+    /// A particle material carrying a fire flipbook from whatever VFX pack is
+    /// in the project.
+    ///
+    /// The packs ship their effects as Visual Effect Graph assets, which need
+    /// compute shaders and so do not run in WebGL at all - they would look
+    /// right in the editor and draw nothing in the build. The flipbook itself
+    /// is only a texture, and a classic particle system does run there, so the
+    /// artwork survives even though the effect graph cannot.
+    /// </summary>
+    static Material FireFlipbookMaterial()
+    {
+        Texture2D sheet = null;
+        foreach (var guid in AssetDatabase.FindAssets("t:Texture2D"))
+        {
+            string path = AssetDatabase.GUIDToAssetPath(guid);
+            string name = Path.GetFileNameWithoutExtension(path).ToLowerInvariant();
+            // a fire sheet, not the temperature variant, which is a data map
+            if (!name.Contains("fireball") || name.Contains("temperature")) continue;
+            var tex = AssetDatabase.LoadAssetAtPath<Texture2D>(path);
+            if (tex != null) { sheet = tex; break; }
+        }
+        if (sheet == null)
+        {
+            Debug.Log("[BuildPrototypeScene] no fire flipbook found - explosions use the built-in spheres");
+            return null;
+        }
+
+        var shader = Shader.Find("Universal Render Pipeline/Particles/Unlit")
+                  ?? Shader.Find("Universal Render Pipeline/Unlit");
+        if (shader == null) return null;
+
+        const string path2 = "Assets/Materials/FireFlipbook.mat";
+        AssetDatabase.DeleteAsset(path2);
+        var mat = new Material(shader);
+        AssetDatabase.CreateAsset(mat, path2);
+        mat.SetTexture("_BaseMap", sheet);
+        mat.SetColor("_BaseColor", Color.white);
+        // additive: fire adds light, it does not occlude what is behind it
+        mat.SetFloat("_Surface", 1f);                 // transparent
+        mat.SetFloat("_Blend", 1f);                   // additive
+        mat.SetFloat("_SrcBlend", (float)UnityEngine.Rendering.BlendMode.SrcAlpha);
+        mat.SetFloat("_DstBlend", (float)UnityEngine.Rendering.BlendMode.One);
+        mat.SetFloat("_ZWrite", 0f);
+        mat.renderQueue = (int)UnityEngine.Rendering.RenderQueue.Transparent;
+        mat.EnableKeyword("_SURFACE_TYPE_TRANSPARENT");
+        mat.EnableKeyword("_ALPHAPREMULTIPLY_ON");
+        EditorUtility.SetDirty(mat);
+        AssetDatabase.SaveAssets();
+        Debug.Log($"[BuildPrototypeScene] fire flipbook: {AssetDatabase.GetAssetPath(sheet)}");
+        return mat;
     }
 
     /// <summary>
