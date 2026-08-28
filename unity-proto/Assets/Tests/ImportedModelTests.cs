@@ -101,4 +101,45 @@ public class ImportedModelTests
         }
         Assert.Greater(seen, 0, "keine Soldaten gefunden");
     }
+
+    /// <summary>
+    /// Every imported model must end up on a URP shader.
+    ///
+    /// These packs ship Built-in materials, and a Built-in shader in a URP
+    /// build is not merely wrong - it is ABSENT, so the mesh renders nothing
+    /// while still casting a shadow. That failure has now hidden twice: once as
+    /// an invisible truck, once as a helicopter that the placeholder version of
+    /// showed perfectly well. It is the same mistake in a different place, and
+    /// nothing was checking for it.
+    /// </summary>
+    [UnityTest]
+    public IEnumerator NoImportedModelKeepsABuiltInShader()
+    {
+        // wait for the streamed models to land and be swapped in
+        float waited = 0f;
+        var streamer = Object.FindFirstObjectByType<ModelStreamer>();
+        while (waited < 25f && (streamer == null || !streamer.AllDone))
+        {
+            yield return new WaitForSeconds(0.5f);
+            waited += 0.5f;
+            streamer ??= Object.FindFirstObjectByType<ModelStreamer>();
+        }
+        if (streamer == null || streamer.Loaded == 0) Assert.Ignore("keine Modelle geladen");
+        yield return new WaitForSeconds(1.5f);      // let the pools rebuild
+
+        int checkedRenderers = 0;
+        foreach (var r in Object.FindObjectsByType<Renderer>(FindObjectsSortMode.None))
+        {
+            var mat = r.sharedMaterial;
+            if (mat == null || mat.shader == null) continue;
+            string shader = mat.shader.name;
+            // anything the packs brought with them
+            if (!shader.StartsWith("Standard") && !shader.StartsWith("Legacy")
+                && !shader.StartsWith("Mobile/") && !shader.StartsWith("Diffuse")) continue;
+
+            Assert.Fail($"{r.name} traegt noch '{shader}' - im URP-Build zeichnet das nichts");
+            checkedRenderers++;
+        }
+        _ = checkedRenderers;
+    }
 }

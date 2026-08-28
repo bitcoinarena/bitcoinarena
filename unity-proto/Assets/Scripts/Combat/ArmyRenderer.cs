@@ -193,14 +193,7 @@ public class ArmyRenderer : MonoBehaviour
         }
         _tankWheels[go.transform] = wheels;
 
-        var tint = side == Army.Side.Bull ? bullMaterial : bearMaterial;
-        foreach (var r in go.GetComponentsInChildren<Renderer>(true))
-        {
-            var mats = new Material[r.sharedMaterials.Length];
-            for (int i = 0; i < mats.Length; i++) mats[i] = TeamMaterial(r.sharedMaterials[i], tint);
-            r.sharedMaterials = mats;
-            r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.On;
-        }
+        Rematerialise(go, side == Army.Side.Bull ? bullMaterial : bearMaterial);
 
         foreach (var c in go.GetComponentsInChildren<Collider>(true)) DestroyImmediate(c);
         var box = go.AddComponent<BoxCollider>();
@@ -231,17 +224,8 @@ public class ArmyRenderer : MonoBehaviour
         var go = WrapOnItsSole(soldierPrefab, transform, "Soldier", soldierHeight, Measure.Height);
         go.layer = UnitLayer;
 
-        var tint = side == Army.Side.Bull ? bullMaterial : bearMaterial;
-        foreach (var r in go.GetComponentsInChildren<Renderer>(true))
-        {
-            var mats = new Material[r.sharedMaterials.Length];
-            for (int i = 0; i < mats.Length; i++) mats[i] = TeamMaterial(r.sharedMaterials[i], tint);
-            r.sharedMaterials = mats;
-            r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.On;
-        }
+        Rematerialise(go, side == Army.Side.Bull ? bullMaterial : bearMaterial);
 
-        // colliders come from the asset in whatever shape it likes; replace
-        // them with the same box the rest of the army uses
         // No collider. Infantry is meant to be driven through, and a truck that
         // bounces off a man it is running over reads as a bug rather than as a
         // casualty. Armour keeps its collider; that is the thing you go round.
@@ -268,14 +252,38 @@ public class ArmyRenderer : MonoBehaviour
     /// A URP material carrying the model's own texture under a team colour.
     /// Cached, or every soldier would carry his own copy.
     /// </summary>
+    /// <summary>
+    /// Re-materialise an imported model for URP.
+    ///
+    /// EVERY imported model needs this, and forgetting it on one of them is
+    /// what has made first the truck and then the helicopter invisible: these
+    /// packs ship Built-in materials, and a Built-in shader does not merely
+    /// look wrong in a URP build - it is absent, so the mesh renders nothing
+    /// while still casting a shadow. Having one function for it means the next
+    /// model cannot quietly miss out.
+    /// </summary>
+    void Rematerialise(GameObject go, Material tint)
+    {
+        foreach (var r in go.GetComponentsInChildren<Renderer>(true))
+        {
+            var mats = new Material[r.sharedMaterials.Length];
+            for (int i = 0; i < mats.Length; i++) mats[i] = TeamMaterial(r.sharedMaterials[i], tint);
+            r.sharedMaterials = mats;
+            r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.On;
+        }
+    }
+
     Material TeamMaterial(Material source, Material tint)
     {
         var key = (source, tint);
         if (_teamCache.TryGetValue(key, out var cached)) return cached;
 
         var shader = Shader.Find("Universal Render Pipeline/Lit");
-        var m = shader != null ? new Material(shader) : new Material(tint);
-        m.SetColor("_BaseColor", tint.GetColor("_BaseColor"));
+        if (shader == null) return tint != null ? tint : source;
+        var m = new Material(shader);
+        // A null tint means "keep the model's own colours" - aircraft belong to
+        // a side but are not painted in its colour.
+        m.SetColor("_BaseColor", tint != null ? tint.GetColor("_BaseColor") : Color.white);
 
         // carry the original albedo across if the asset had one, under either
         // the URP or the Built-in property name
@@ -435,6 +443,9 @@ public class ArmyRenderer : MonoBehaviour
             var inner = wrapped.transform.childCount > 0 ? wrapped.transform.GetChild(0) : null;
             if (inner != null) inner.localPosition = Vector3.zero;
             foreach (var c in wrapped.GetComponentsInChildren<Collider>(true)) DestroyImmediate(c);
+            // THIS was missing, and it is why the model helicopter was invisible
+            // while the placeholder was not: no URP materials, nothing drawn.
+            Rematerialise(wrapped, null);
 
             // Tail rotors are named for the end they sit on, and packs disagree
             // about which word that is - this one calls it Back_Rotor. Check the
