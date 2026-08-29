@@ -68,9 +68,38 @@ public class ChaseCamera : MonoBehaviour
         _pos = target.position;
     }
 
+    /// <summary>
+    /// Where the wreck is while the death sequence runs, or null.
+    /// The camera pulls back off the burning truck and circles it, which is the
+    /// half of a GTA death that is doing the work - the text on its own over a
+    /// frozen chase cam just reads as a paused game.
+    /// </summary>
+    public Vector3? deathOrbit;
+
+    public float deathDistance = 15f;
+    public float deathHeight = 7.5f;
+    public float deathSpin = 22f;          // degrees a second
+
+    float _deathYaw;
+
     void LateUpdate()
     {
         if (DriveInput.CameraToggle) Toggle();
+
+        if (deathOrbit.HasValue)
+        {
+            var at = deathOrbit.Value;
+            // unscaled: the world is in slow motion, the camera move is not
+            _deathYaw += deathSpin * Time.unscaledDeltaTime;
+            float y = _deathYaw * Mathf.Deg2Rad;
+            var orbit = at + new Vector3(-Mathf.Sin(y), 0f, -Mathf.Cos(y)) * deathDistance
+                           + Vector3.up * deathHeight;
+            _pos = Vector3.Lerp(_pos, orbit, 1f - Mathf.Exp(-2.2f * Time.unscaledDeltaTime));
+            transform.position = _pos;
+            transform.rotation = Quaternion.LookRotation(at + Vector3.up * 1.2f - _pos, Vector3.up);
+            return;
+        }
+
         if (View == Mode.God) { GodView(); return; }
         if (target == null) return;
 

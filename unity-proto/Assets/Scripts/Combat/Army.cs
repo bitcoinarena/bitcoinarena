@@ -118,6 +118,20 @@ public class Army
     public const float BombRadius = 16f;
 
     /// <summary>A bomb went off at x, z.</summary>
+    /// <summary>
+    /// Where the player's truck is, or null when it is off the field. Both
+    /// sides treat it as a target once it comes close: running the gauntlet is
+    /// the point, and a neutral supply van in the middle of a firefight has no
+    /// friends. Ported from nearestHostile in src/world/battlefield.js.
+    /// </summary>
+    public Vector2? Courier;
+
+    /// <summary>How close the truck has to come before it is shot at.</summary>
+    public const float CourierRange = 34f;
+
+    /// <summary>The truck was hit. Carries damage before its armour.</summary>
+    public System.Action<float> CourierHit;
+
     public System.Action<Vector2> Bombed;
     /// <summary>A bomb was released, so the renderer can follow it down.</summary>
     public System.Action<Bomb> BombReleased;
@@ -555,11 +569,30 @@ public class Army
             // leans one way for any length of time.
             v.reload = Rand(1.4f, 3.2f) / (1f + Mathf.Max(0f, pressure) * 0.45f);
             bool connects = Random01() < 0.55f;        // near misses are part of the show
+
+            // The truck outranks the other side's tanks as a target when it is
+            // nearer than they are - it is in everybody's way and nobody's army.
+            var at = new Vector2(foe.x, foe.z);
+            bool onCourier = false;
+            if (Courier.HasValue)
+            {
+                var c = Courier.Value;
+                float cd = (c.x - v.x) * (c.x - v.x) + (c.y - v.z) * (c.y - v.z);
+                float fd = (foe.x - v.x) * (foe.x - v.x) + (foe.z - v.z) * (foe.z - v.z);
+                if (cd < CourierRange * CourierRange && cd < fd) { at = c; onCourier = true; }
+            }
+
             // a miss still has to go somewhere, or the tracer would lie
             var impact = connects
-                ? new Vector2(foe.x, foe.z)
-                : new Vector2(foe.x + Rand(-5f, 5f), foe.z + Rand(-5f, 5f));
+                ? at
+                : new Vector2(at.x + Rand(-5f, 5f), at.y + Rand(-5f, 5f));
             Fired?.Invoke(v, impact);
+
+            if (onCourier)
+            {
+                if (connects) CourierHit?.Invoke(Rand(5f, 11f));
+                return;
+            }
             if (connects)
             {
                 foe.hp -= Rand(1.1f, 2.4f) * (1f + Mathf.Max(0f, pressure) * 0.25f);
@@ -637,9 +670,26 @@ public class Army
         if (!s.walking) s.heading = Mathf.Atan2(foe.x - s.x, foe.z - s.z);
 
         bool hit = Random01() < RifleHitChance * (1f + Mathf.Max(0f, pressure) * 0.25f);
+
+        // riflemen switch to the truck on the same rule as the tanks
+        var mark = new Vector2(foe.x, foe.z);
+        bool atCourier = false;
+        if (Courier.HasValue)
+        {
+            var c = Courier.Value;
+            float cd = (c.x - s.x) * (c.x - s.x) + (c.y - s.z) * (c.y - s.z);
+            if (cd < RifleRange * RifleRange && cd < d2) { mark = c; atCourier = true; }
+        }
+
         Shot?.Invoke(s, hit
-            ? new Vector2(foe.x, foe.z)
-            : new Vector2(foe.x + Rand(-3f, 3f), foe.z + Rand(-3f, 3f)));
+            ? mark
+            : new Vector2(mark.x + Rand(-3f, 3f), mark.y + Rand(-3f, 3f)));
+
+        if (atCourier)
+        {
+            if (hit) CourierHit?.Invoke(Rand(1.5f, 3.5f));
+            return;
+        }
         if (hit)
         {
             foe.hp -= 1f;

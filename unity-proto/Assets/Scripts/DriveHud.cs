@@ -14,6 +14,8 @@ public class DriveHud : MonoBehaviour
     public Battlefield field;
     public bool showDiagnostics = true;
     public ModelStreamer streamer;
+    public TruckHealth health;
+    public WastedSequence wasted;
 
     GUIStyle _price, _sub, _small;
     Texture2D _flat;
@@ -50,6 +52,84 @@ public class DriveHud : MonoBehaviour
         style.normal.textColor = colour;
         GUI.Label(r, text, style);
         style.normal.textColor = prev;
+    }
+
+    /// <summary>
+    /// WASTED, over a drained and slowed world.
+    ///
+    /// Fades up with the sequence rather than snapping on, and sits slightly
+    /// above centre the way GTA does - dead centre reads as a menu.
+    /// </summary>
+    void DrawWasted(int w, int h)
+    {
+        if (wasted == null || wasted.Intensity <= 0.01f) return;
+
+        float k = wasted.Intensity;
+        var style = new GUIStyle(GUI.skin.label)
+        {
+            alignment = TextAnchor.MiddleCenter,
+            fontStyle = FontStyle.Bold,
+            fontSize = Mathf.RoundToInt(Mathf.Min(w, h) * 0.17f),
+        };
+
+        // a band behind it, so the word holds against a bright sky
+        float bandH = style.fontSize * 1.5f;
+        var band = new Rect(0f, h * 0.34f, w, bandH);
+        GUI.color = new Color(0f, 0f, 0f, 0.42f * k);
+        GUI.DrawTexture(band, _flat);
+
+        // grows very slightly as it comes up, which is what sells the weight
+        float scale = Mathf.Lerp(0.94f, 1f, k);
+        style.fontSize = Mathf.RoundToInt(style.fontSize * scale);
+
+        GUI.color = Color.white;
+        style.normal.textColor = new Color(0f, 0f, 0f, 0.6f * k);
+        GUI.Label(new Rect(band.x + 3f, band.y + 4f, band.width, band.height), "WASTED", style);
+        style.normal.textColor = new Color(0.86f, 0.13f, 0.13f, k);
+        GUI.Label(band, "WASTED", style);
+        GUI.color = Color.white;
+    }
+
+    /// <summary>
+    /// Condition of the truck, bottom left, plus the countdown while it burns.
+    ///
+    /// Drawn as a bar rather than a number because the thing the player needs
+    /// off a glance at 60 km/h is how much is left, not how much exactly.
+    /// </summary>
+    void DrawHealth(int w, int h)
+    {
+        if (health == null) return;
+
+        float pad = Mathf.Max(8f, h * 0.02f);
+        float width = Mathf.Min(260f, w * 0.30f);
+        float barH = Mathf.Max(12f, h * 0.022f);
+        float lh = _small.fontSize * 1.5f;
+        var box = new Rect(pad, h - pad - barH - lh, width, barH + lh);
+
+        var label = new GUIStyle(_small) { fontStyle = FontStyle.Bold };
+        label.normal.textColor = Color.white;
+        Shadowed(new Rect(box.x, box.y, box.width, lh),
+                 health.IsDestroyed
+                     ? $"ZERSTÖRT — neu in {Mathf.CeilToInt(health.RespawnIn)}s"
+                     : $"Zustand {Mathf.CeilToInt(health.Fraction * 100f)}%",
+                 label, health.IsDestroyed ? Down : Color.white);
+
+        var track = new Rect(box.x, box.y + lh, box.width, barH);
+        GUI.color = new Color(0f, 0f, 0f, 0.5f);
+        GUI.DrawTexture(track, _flat);
+
+        // the bar drains while it burns, so the wait reads as a bar too
+        float fill = health.IsDestroyed
+            ? (health.respawnSeconds > 0f ? health.RespawnIn / health.respawnSeconds : 0f)
+            : health.Fraction;
+
+        GUI.color = health.IsDestroyed
+            ? new Color(1f, 0.45f, 0.15f, 0.9f)
+            : Color.Lerp(Down, Up, health.Fraction);
+        GUI.DrawTexture(new Rect(track.x + 2f, track.y + 2f,
+                                 Mathf.Max(0f, (track.width - 4f) * fill),
+                                 track.height - 4f), _flat);
+        GUI.color = Color.white;
     }
 
     /// <summary>
@@ -135,6 +215,8 @@ public class DriveHud : MonoBehaviour
                      sub, _sub, chg >= 0 ? Up : Down);
         }
 
+        DrawHealth(w, h);
+        DrawWasted(w, h);
         DrawStreamingPanel(w, h);
 
         if (!showDiagnostics) return;

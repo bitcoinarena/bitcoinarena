@@ -99,6 +99,17 @@ public class Bootstrap : MonoBehaviour
         BuildBoundary(_terrain);
         var truck = BuildTruck(_terrain);
         Field.courier = truck.transform;
+
+        // Only here: BuildArmies runs before BuildTruck, so wiring this any
+        // earlier hooked up a truck that did not exist yet - silently, because
+        // every one of these is a null assignment that throws nothing.
+        _truckHealth.fx = Fx;
+        Field.health = _truckHealth;
+        Field.Army.CourierHit += _truckHealth.Damage;
+
+        var wasted = gameObject.AddComponent<WastedSequence>();
+        wasted.health = _truckHealth;
+        _wasted = wasted;
         BuildCamera(truck);
 
         // the detailed models come in behind the game, not in front of it
@@ -113,6 +124,8 @@ public class Bootstrap : MonoBehaviour
         hud.market = Market;
         hud.field = Field;
         hud.streamer = _streamer;
+        hud.health = _truckHealth;
+        hud.wasted = _wasted;
     }
 
     /// <summary>
@@ -321,6 +334,8 @@ public class Bootstrap : MonoBehaviour
     ModelStreamer _streamer;
     Transform _truckRoot;
     TruckController _truck;
+    TruckHealth _truckHealth;
+    WastedSequence _wasted;
 
     /// <summary>Both armies, fed by the same tape that moves the frontline.</summary>
     void BuildArmies()
@@ -423,6 +438,11 @@ public class Bootstrap : MonoBehaviour
         var controller = root.AddComponent<TruckController>();
         _truckRoot = root.transform;
         _truck = controller;
+
+        // Condition, destruction and the respawn wait. Fx and the army are
+        // hooked up later, once both exist.
+        _truckHealth = root.AddComponent<TruckHealth>();
+        _truckHealth.truck = controller;
         controller.spawnPosition = root.transform.position;
         controller.spawnRotation = root.transform.rotation;
         controller.axles = new[]

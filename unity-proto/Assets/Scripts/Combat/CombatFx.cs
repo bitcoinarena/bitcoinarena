@@ -104,6 +104,10 @@ public class CombatFx : MonoBehaviour
     };
 
     readonly List<Piece> _live = new List<Piece>();
+
+    /// <summary>Effects currently alive. Public so a test can see that
+    /// something was actually spawned rather than trusting the call.</summary>
+    public int LiveCount => _live.Count;
     readonly Stack<Transform> _cubes = new Stack<Transform>();
     readonly Stack<Transform> _spheres = new Stack<Transform>();
     Mesh _cube, _sphere;

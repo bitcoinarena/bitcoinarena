@@ -12,6 +12,10 @@ public class Battlefield : MonoBehaviour
     /// <summary>The truck. The armies move aside for it.</summary>
     public Transform courier;
 
+    [Tooltip("Optional. When set, the armies stop shooting at the truck while " +
+             "it is burning, and hits are routed into its condition.")]
+    public TruckHealth health;
+
     public PriceHistory History { get; private set; }
     /// <summary>Both armies. Owned here because they live and die by the same tape.</summary>
     public Army Army { get; set; }
@@ -48,12 +52,21 @@ public class Battlefield : MonoBehaviour
         {
             // trade flow is the pressure: whichever side the tape favours pushes
             Army.Flow = market != null ? market.Flow : 0f;
+
+            // Where the gauntlet is. A wrecked truck is not a target - it is
+            // already burning, and shooting it would keep it "dying" through
+            // the whole respawn wait.
+            bool alive = courier != null && (health == null || !health.IsDestroyed);
+            Army.Courier = alive
+                ? new Vector2(courier.position.x, courier.position.z)
+                : (Vector2?)null;
+
             Army.Update(Time.deltaTime);
             LaunchSorties(Time.deltaTime);
 
             // AFTER the step, so nobody is left standing inside the truck at
             // the end of a frame - that is what wedges it in place
-            if (courier != null)
+            if (courier != null && (health == null || !health.IsDestroyed))
             {
                 var p = courier.position;
                 float heading = courier.eulerAngles.y * Mathf.Deg2Rad;
