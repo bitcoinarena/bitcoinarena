@@ -20,8 +20,22 @@ public class VehicleTests
     {
         _boot = new GameObject("Bootstrap");
         _boot.AddComponent<Bootstrap>();
-        // let Start() build the world and the suspension settle
-        yield return new WaitForSeconds(1.5f);
+        yield return null;                            // let Start() build the world
+
+        // Flatten the ground before the truck settles on it. The terrain is the
+        // live fee histogram, so every run spawned the truck on a different
+        // slope and the drift test passed or failed on whether it happened to
+        // start downhill. These test the suspension and the tyre model, not the
+        // mempool, so they get a deterministic floor.
+        var ground = Object.FindFirstObjectByType<MempoolTerrain>();
+        if (ground != null)
+        {
+            ground.feeHeight = 0f;
+            ground.baseRelief = 0f;
+            ground.Build();
+        }
+
+        yield return new WaitForSeconds(1.5f);        // let the suspension settle
         _truck = Object.FindFirstObjectByType<TruckController>();
         _rb = _truck != null ? _truck.GetComponent<Rigidbody>() : null;
     }
@@ -74,40 +88,85 @@ public class VehicleTests
         Assert.Greater(travelled, 5f, $"only travelled {travelled:0.0} units under full power");
     }
 
+    /// <summary>
+    /// The handbrake is supposed to break the rear loose, and the honest
+    /// measure of that is the rear tyres' own sideways slip - not the hull's
+    /// lateral speed, which mostly reports how fast the truck happens to be
+    /// going. The first version of this test compared a full-lock phase against
+    /// a handbrake phase that ran afterwards at a third of the speed, so it was
+    /// really comparing two different velocities and flipped between pass and
+    /// fail on noise.
+    ///
+    /// Both windows are short and back to back, so the two are sampled at
+    /// comparable speed.
+    /// </summary>
+    /// <summary>
+    /// Clear the battlefield for the tests that need a clean straight. A speed
+    /// probe showed the truck accelerating cleanly to 15.5 m/s and then
+    /// dropping to 1.3 m/s at x=-53, because it rams the armies - correct
+    /// gameplay, and useless in a tyre test: the entry speed into every
+    /// measurement was really "how far did it get before hitting a tank".
+    ///
+    /// Only the tests that measure the truck alone call this. The tests that
+    /// check the truck against the armies obviously must not.
+    /// </summary>
+    void ClearBattlefield()
+    {
+        foreach (var army in Object.FindObjectsByType<ArmyRenderer>(FindObjectsSortMode.None))
+            army.gameObject.SetActive(false);
+    }
+
     [UnityTest]
     public IEnumerator HandbrakeBreaksTheRearEndLoose()
     {
+        ClearBattlefield();
         _truck.useExternalInput = true;
         _truck.externalThrottle = 1f;
-        yield return new WaitForSeconds(6f);          // a drift needs real speed
+        yield return new WaitForSeconds(10f);         // a drift needs real speed
 
         _truck.externalSteer = 1f;
-        yield return new WaitForSeconds(1f);
+        yield return new WaitForSeconds(0.3f);        // let the front bite
+
+        float grippedEntry = _rb.linearVelocity.magnitude;
         float gripped = 0f;
         for (float t = 0f; t < 0.5f; t += Time.fixedDeltaTime)
         {
-            gripped = Mathf.Max(gripped, _truck.Slip);
+            gripped = Mathf.Max(gripped, RearSlip());
             yield return new WaitForFixedUpdate();
         }
 
-        // off the power and on the handbrake, the way it is actually done
-        _truck.externalThrottle = 0f;
         _truck.externalHandbrake = true;
+        float slidEntry = _rb.linearVelocity.magnitude;
         float slid = 0f;
-        int grounded = 0, samples = 0;
-        for (float t = 0f; t < 1.5f; t += Time.fixedDeltaTime)
+        for (float t = 0f; t < 0.5f; t += Time.fixedDeltaTime)
         {
-            slid = Mathf.Max(slid, _truck.Slip);
-            foreach (var a in _truck.axles) { if (a.left.isGrounded) grounded++; if (a.right.isGrounded) grounded++; }
-            samples++;
+            slid = Mathf.Max(slid, RearSlip());
             yield return new WaitForFixedUpdate();
         }
-        Debug.Log($"DRIFT speed={_rb.linearVelocity.magnitude:0.0} m/s " +
-                  $"wheelsOnGround={(grounded / (float)samples):0.00}/4 slip={slid:0.00}");
         _truck.useExternalInput = false;
+        _truck.externalHandbrake = false;
 
-        Assert.Greater(slid, gripped + 0.5f,
-            $"handbrake did not break traction: gripped {gripped:0.00} vs slid {slid:0.00} m/s sideways");
+        Debug.Log($"DRIFT gripped {gripped:0.00} @ {grippedEntry:0.0} m/s -> " +
+                  $"slid {slid:0.00} @ {slidEntry:0.0} m/s");
+
+        Assert.Greater(slid, gripped * 1.4f,
+            $"handbrake did not break the rear loose: rear sideways slip " +
+            $"{gripped:0.00} gripped ({grippedEntry:0.0} m/s) vs {slid:0.00} " +
+            $"on the handbrake ({slidEntry:0.0} m/s)");
+    }
+
+    /// <summary>Worst sideways slip reported by either handbraked wheel.</summary>
+    float RearSlip()
+    {
+        float worst = 0f;
+        foreach (var a in _truck.axles)
+        {
+            if (a == null || !a.handbraked) continue;
+            foreach (var w in new[] { a.left, a.right })
+                if (w != null && w.GetGroundHit(out WheelHit hit))
+                    worst = Mathf.Max(worst, Mathf.Abs(hit.sidewaysSlip));
+        }
+        return worst;
     }
 
     /// <summary>

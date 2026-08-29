@@ -637,8 +637,6 @@ public class ArmyRenderer : MonoBehaviour
         {
             var v = army.Armour[i];
             bool prefab = tankPrefab != null;
-            // a prefab stands ON the ground; the proxy box is centred on its middle
-            float y = Ground(v.x, v.z) + (prefab ? 0f : 0.9f);
 
             Transform hull;
             if (prefab)
@@ -651,7 +649,14 @@ public class ArmyRenderer : MonoBehaviour
             else hull = _hulls[i];
 
             var mat = prefab ? null : (v.side == Army.Side.Bull ? bullMaterial : bearMaterial);
-            Place(hull, new Vector3(v.x, y, v.z), v.heading + (prefab ? tankYawOffset * Mathf.Deg2Rad : 0f), mat);
+            if (!hull.gameObject.activeSelf) hull.gameObject.SetActive(true);
+            SeatOnTerrain(hull, v.x, v.z, v.heading + (prefab ? tankYawOffset * Mathf.Deg2Rad : 0f),
+                          3.4f, 1.8f, prefab ? 0f : 0.9f);
+            if (mat != null)
+            {
+                var mr = hull.GetComponent<MeshRenderer>();
+                if (mr != null && mr.sharedMaterial != mat) mr.sharedMaterial = mat;
+            }
 
             if (prefab)
             {
@@ -664,8 +669,10 @@ public class ArmyRenderer : MonoBehaviour
             }
             else
             {
-                // the turret traverses in world space, so it is NOT parented to the hull
-                Place(_turrets[i], new Vector3(v.x, y, v.z), v.turretYaw, mat);
+                // the turret traverses in world space, so it is NOT parented to
+                // the hull - but it still has to ride at the height the hull was
+                // just seated at, or it floats off on every slope
+                Place(_turrets[i], new Vector3(v.x, hull.position.y, v.z), v.turretYaw, mat);
             }
         }
 
@@ -681,7 +688,14 @@ public class ArmyRenderer : MonoBehaviour
             // a prefab stands ON the ground; the proxy box is centred on its middle
             float lift = soldierPrefab != null ? 0f : 0.9f;
             var t = pool[idx];
-            Place(t, new Vector3(s.x, Ground(s.x, s.z) + lift + bob, s.z),
+            // A man stands UPRIGHT on a slope - he does not lean with the
+            // ground the way a tank does - but he still has to stand on the
+            // highest ground his feet cover, or the downhill foot sinks in.
+            // Sampling only his centre is what buried them on every incline.
+            float foot = Mathf.Max(
+                Mathf.Max(Ground(s.x + 0.3f, s.z), Ground(s.x - 0.3f, s.z)),
+                Mathf.Max(Ground(s.x, s.z + 0.3f), Ground(s.x, s.z - 0.3f)));
+            Place(t, new Vector3(s.x, Mathf.Max(foot, Ground(s.x, s.z)) + lift + bob, s.z),
                   s.heading + soldierYawOffset * Mathf.Deg2Rad, null);
             // one model repeated at one size is what makes a rank look stamped
             // out; a few percent either way is enough to break that
@@ -734,4 +748,43 @@ public class ArmyRenderer : MonoBehaviour
     }
 
     float Ground(float x, float z) => terrain != null ? terrain.SampleSurface(x, z) : 0f;
+
+    /// <summary>
+    /// Sit a hull ON the ground it is standing on, not at one point above it.
+    ///
+    /// A seven metre vehicle placed from a single sample and left level buries
+    /// its nose or its tail the moment the ground is not flat - which is most
+    /// of this map, because the terrain is the fee histogram. Four samples
+    /// around the footprint give both the height it rests at and the attitude
+    /// it rests in.
+    ///
+    /// Height is the HIGHEST of them: a tracked vehicle bridges a dip, it does
+    /// not sink into it.
+    /// </summary>
+    void SeatOnTerrain(Transform t, float x, float z, float yaw,
+                       float halfLength, float halfWidth, float lift = 0f)
+    {
+        float c = Mathf.Cos(yaw), s2 = Mathf.Sin(yaw);
+        // forward is (sin, cos) in this project's convention; right is (cos, -sin)
+        float fx = s2 * halfLength, fz = c * halfLength;
+        float rx = c * halfWidth, rz = -s2 * halfWidth;
+
+        float front = Ground(x + fx, z + fz);
+        float back = Ground(x - fx, z - fz);
+        float right = Ground(x + rx, z + rz);
+        float left = Ground(x - rx, z - rz);
+
+        float rest = Mathf.Max(Mathf.Max(front, back), Mathf.Max(right, left));
+        float pitch = Mathf.Atan2(front - back, halfLength * 2f) * Mathf.Rad2Deg;
+        float roll = Mathf.Atan2(left - right, halfWidth * 2f) * Mathf.Rad2Deg;
+
+        // clamped: a spike in the fee histogram should tilt a tank, not stand it
+        // on its nose
+        pitch = Mathf.Clamp(pitch, -28f, 28f);
+        roll = Mathf.Clamp(roll, -22f, 22f);
+
+        t.SetPositionAndRotation(
+            new Vector3(x, rest + lift, z),
+            Quaternion.Euler(0f, yaw * Mathf.Rad2Deg, 0f) * Quaternion.Euler(pitch, 0f, roll));
+    }
 }

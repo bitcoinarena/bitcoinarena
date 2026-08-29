@@ -47,15 +47,29 @@ public class ImportedModelTests
         {
             if (t.name != "Hull" || t.GetComponentsInChildren<Renderer>(true).Length == 0) continue;
             var b = Of(t.gameObject);
-            float ground = _terrain.SampleSurface(b.center.x, b.center.z);
 
-            Assert.Greater(b.min.y, ground - 1.2f,
-                $"Panzer steckt im Boden: Unterkante {b.min.y:0.00}, Boden {ground:0.00}");
-            Assert.Less(b.min.y, ground + 2.5f,
-                $"Panzer schwebt: Unterkante {b.min.y:0.00}, Boden {ground:0.00}");
+            // Sample the CORNERS of the footprint, not the centre. A seven
+            // metre hull placed level from one central sample has its middle in
+            // exactly the right place while its nose is a metre underground -
+            // which is what this test used to pass straight through.
+            foreach (var corner in new[]
+            {
+                new Vector2(b.min.x, b.min.z), new Vector2(b.max.x, b.min.z),
+                new Vector2(b.min.x, b.max.z), new Vector2(b.max.x, b.max.z),
+                new Vector2(b.center.x, b.center.z),
+            })
+            {
+                float ground = _terrain.SampleSurface(corner.x, corner.y);
+                Assert.Greater(b.min.y, ground - 1.6f,
+                    $"Panzer steckt bei ({corner.x:0},{corner.y:0}) im Boden: " +
+                    $"Unterkante {b.min.y:0.00}, Boden {ground:0.00}");
+            }
+            float under = _terrain.SampleSurface(b.center.x, b.center.z);
+            Assert.Less(b.min.y, under + 2.5f,
+                $"Panzer schwebt: Unterkante {b.min.y:0.00}, Boden {under:0.00}");
             Assert.That(Mathf.Max(b.size.x, b.size.z), Is.InRange(4f, 16f),
                 $"Panzer ist {Mathf.Max(b.size.x, b.size.z):0.0} m lang");
-            if (++seen >= 6) break;
+            if (++seen >= 25) break;
         }
         Assert.Greater(seen, 0, "keine Panzerruempfe gefunden");
     }
@@ -91,13 +105,19 @@ public class ImportedModelTests
             if (t.name != "Soldier" || t.GetComponentsInChildren<Renderer>(true).Length == 0) continue;
             var b = Of(t.gameObject);
             float ground = _terrain.SampleSurface(b.center.x, b.center.z);
-            Assert.Greater(b.min.y, ground - 0.8f,
+            // Measured across 25 live soldiers the soles sit +0.03 to +0.20 m
+            // above the ground. The old -0.8 m tolerance let a 1.8 m man stand
+            // in it up to his knees and still pass, which is why this never
+            // caught them sinking on slopes.
+            Assert.Greater(b.min.y, ground - 0.35f,
                 $"Soldat steckt im Boden: Unterkante {b.min.y:0.00}, Boden {ground:0.00}");
+            Assert.Less(b.min.y, ground + 0.75f,
+                $"Soldat schwebt: Unterkante {b.min.y:0.00}, Boden {ground:0.00}");
             Assert.That(b.size.y, Is.InRange(1.2f, 2.6f), $"Soldat ist {b.size.y:0.0} m gross");
 
             var anim = t.GetComponentInChildren<Animator>();
             Assert.IsNotNull(anim?.runtimeAnimatorController, "Soldat ohne laufenden Animator");
-            if (++seen >= 6) break;
+            if (++seen >= 25) break;
         }
         Assert.Greater(seen, 0, "keine Soldaten gefunden");
     }

@@ -59,6 +59,15 @@ public class CombatFx : MonoBehaviour
         public Rigidbody body;
         /// <summary>Countdown to the next puff of flame from a burning wreck.</summary>
         public float burnAt;
+        /// <summary>
+        /// How high above the ground this body came to rest. The terrain is
+        /// rebuilt from live mempool data, so a body pinned at the absolute
+        /// height it died at is buried by the next fee update - the same thing
+        /// wrecks are re-seated for. Held as an OFFSET rather than re-seated
+        /// flat, so a body that settled half on its side is not teleported.
+        /// NaN until he has come to rest.
+        /// </summary>
+        public float restOffset = float.NaN;
         /// <summary>Index into Army.Wrecks, or -1. Released when the hull fades.</summary>
         public int wreckIndex = -1;
         /// <summary>Held at zero scale until this much of its life has passed.</summary>
@@ -896,12 +905,30 @@ public class CombatFx : MonoBehaviour
                             && p.body.angularVelocity.sqrMagnitude < 0.6f)
                         {
                             p.body.isKinematic = true;
+                            var rp = p.t.position;
+                            p.restOffset = rp.y - Ground(rp.x, rp.z);
+                        }
+                        // once he is kinematic nothing holds him on the ground
+                        // any more, so carry him with it
+                        if (p.body.isKinematic && !float.IsNaN(p.restOffset))
+                        {
+                            var bp = p.t.position;
+                            p.t.position = new Vector3(
+                                bp.x, Ground(bp.x, bp.z) + p.restOffset, bp.z);
                         }
                         if (k > 0.88f)
                             p.t.localScale = p.baseScale * Mathf.Lerp(1f, 0f, (k - 0.88f) / 0.12f);
                         break;
                     }
-                    // shot where he stood: fold over, then sink away
+                    // shot where he stood: fold over, then sink away - and ride
+                    // the ground while he does it
+                    if (float.IsNaN(p.restOffset))
+                    {
+                        var sp0 = p.t.position;
+                        p.restOffset = sp0.y - Ground(sp0.x, sp0.z);
+                    }
+                    var sp = p.t.position;
+                    p.t.position = new Vector3(sp.x, Ground(sp.x, sp.z) + p.restOffset, sp.z);
                     p.t.rotation = Quaternion.Slerp(p.fallFrom, p.fallTo, Mathf.Clamp01(p.age / 0.55f));
                     if (k > 0.8f)
                         p.t.localScale = p.baseScale * Mathf.Lerp(1f, 0f, (k - 0.8f) / 0.2f);
