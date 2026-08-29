@@ -14,6 +14,10 @@ using UnityEngine;
 public class CombatFx : MonoBehaviour
 {
     public MempoolTerrain terrain;
+
+    [Tooltip("Optional. Wrecks and bodies rest on the road deck where there " +
+             "is one, not on the ground it is laid over.")]
+    public RoadNetwork roads;
     [Tooltip("Told where wrecks stand, so units walk round them rather than through.")]
     public Army army;
     public Material tracerMaterial;
@@ -213,7 +217,9 @@ public class CombatFx : MonoBehaviour
         (mf.sharedMesh == _sphere ? _spheres : _cubes).Push(p.t);
     }
 
-    float Ground(float x, float z) => terrain != null ? terrain.SampleSurface(x, z) : 0f;
+    float Ground(float x, float z) =>
+        roads != null ? roads.SurfaceHeight(x, z)
+                      : (terrain != null ? terrain.SampleSurface(x, z) : 0f);
 
     /* ------------------------------------------------------------- effects */
 

@@ -339,6 +339,7 @@ public class Bootstrap : MonoBehaviour
         var renderer = go.AddComponent<ArmyRenderer>();
         renderer.army = Field.Army;
         renderer.terrain = _terrain;
+        renderer.roads = Roads;
         renderer.bullMaterial = bullMaterial;
         renderer.bearMaterial = bearMaterial;
         renderer.soldierPrefab = soldierPrefab;
@@ -355,6 +356,7 @@ public class Bootstrap : MonoBehaviour
         fxGo.SetActive(false);
         Fx = fxGo.AddComponent<CombatFx>();
         Fx.terrain = _terrain;
+        Fx.roads = Roads;
         Fx.army = Field.Army;
         Fx.tracerMaterial = tracerMaterial;
         Fx.flashMaterial = flashMaterial;

@@ -19,6 +19,10 @@ public class ArmyRenderer : MonoBehaviour
 {
     public Army army;
     public MempoolTerrain terrain;
+
+    [Tooltip("Optional. When set, units stand on the road deck rather than on " +
+             "the bare ground the deck is laid over.")]
+    public RoadNetwork roads;
     public Material bullMaterial;
     public Material bearMaterial;
 
@@ -747,7 +751,14 @@ public class ArmyRenderer : MonoBehaviour
         foreach (var w in wheels) w.Rotate(degrees, 0f, 0f, Space.Self);
     }
 
-    float Ground(float x, float z) => terrain != null ? terrain.SampleSurface(x, z) : 0f;
+    /// <summary>
+    /// The surface to stand on: the road deck where there is one, otherwise the
+    /// ground. The deck sits 45 cm over the terrain, so sampling the terrain
+    /// alone left everything driving through the road it was standing on.
+    /// </summary>
+    float Ground(float x, float z) =>
+        roads != null ? roads.SurfaceHeight(x, z)
+                      : (terrain != null ? terrain.SampleSurface(x, z) : 0f);
 
     /// <summary>Eased attitude per pooled hull, so tanks do not jitter.</summary>
     readonly Dictionary<Transform, Vector2> _attitude = new Dictionary<Transform, Vector2>();
@@ -784,6 +795,15 @@ public class ArmyRenderer : MonoBehaviour
         float left = Ground(x - rx, z - rz);
 
         float rest = (front + back + right + left) * 0.25f;
+
+        // The plane fit is exact only while the ground under the hull IS a
+        // plane. At a road edge it is a step - the deck stands 30 cm over the
+        // ground it is laid on - and the fit splits the difference, which put
+        // one track 0.52 m under the surface. Raise the whole hull just enough
+        // that no corner is left below what it is standing on. On genuinely
+        // flat or evenly sloped ground this term is zero.
+        float saddle = Mathf.Max((front + back) * 0.5f, (right + left) * 0.5f) - rest;
+        rest += Mathf.Max(0f, saddle);
         // Both signs are inverted against the ground on purpose: a positive
         // rotation about local X pitches the NOSE DOWN, and a positive rotation
         // about local Z lifts the RIGHT side. Taken the intuitive way round the

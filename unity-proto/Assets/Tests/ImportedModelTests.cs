@@ -15,6 +15,7 @@ public class ImportedModelTests
 {
     Bootstrap _boot;
     MempoolTerrain _terrain;
+    RoadNetwork _roads;
 
     [UnitySetUp]
     public IEnumerator SetUp()
@@ -24,6 +25,7 @@ public class ImportedModelTests
         yield return new WaitForSeconds(2.5f);
         _boot = Object.FindFirstObjectByType<Bootstrap>();
         _terrain = Object.FindFirstObjectByType<MempoolTerrain>();
+        _roads = Object.FindFirstObjectByType<RoadNetwork>();
         Assert.IsNotNull(_boot, "die Prototyp-Szene enthaelt kein Bootstrap");
     }
 
@@ -63,7 +65,10 @@ public class ImportedModelTests
             })
             {
                 var w = t.TransformPoint(corner);
-                float d = w.y - _terrain.SampleSurface(w.x, w.z);
+                // the SURFACE, not the terrain: the road deck is laid 45 cm
+                // over the ground, and a tank on the road stands on the deck
+                float d = w.y - (_roads != null ? _roads.SurfaceHeight(w.x, w.z)
+                                                : _terrain.SampleSurface(w.x, w.z));
                 low = Mathf.Min(low, d); high = Mathf.Max(high, d);
             }
             Assert.Greater(low, -0.45f,

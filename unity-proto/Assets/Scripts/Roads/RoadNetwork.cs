@@ -25,6 +25,35 @@ public class RoadNetwork : MonoBehaviour
 
     public RoadModel Model { get; private set; }
 
+    /// <summary>
+    /// Height of the surface anything STANDS on at this point - the road deck
+    /// where there is one, the bare ground everywhere else.
+    ///
+    /// The deck is laid <see cref="lift"/> above the terrain, so units seated
+    /// straight onto terrain.SampleSurface sank into the road by exactly that
+    /// much wherever they drove on it.
+    ///
+    /// The lift fades out across the last stretch of the shoulder. Switched on
+    /// and off at the edge a tank half on the road would step 45 cm as it
+    /// crossed the line.
+    /// </summary>
+    public float SurfaceHeight(float x, float z)
+    {
+        float ground = terrain != null ? terrain.SampleSurface(x, z) : 0f;
+        if (Model == null) return ground;
+
+        var lane = Model.LaneAt(x, z, RoadModel.HalfWidth + Shoulder);
+        if (lane == null) return ground;
+
+        float d = Mathf.Abs(z - Model.CenterZ(lane.Value, x));
+        float t = Mathf.InverseLerp(RoadModel.HalfWidth + Shoulder,
+                                    RoadModel.HalfWidth, d);
+        return ground + lift * Mathf.Clamp01(t);
+    }
+
+    /// <summary>How far past the edge the deck height is blended out.</summary>
+    public const float Shoulder = 2.6f;
+
     readonly Dictionary<Lane, Mesh> _meshes = new Dictionary<Lane, Mesh>();
     readonly Dictionary<Lane, float> _lastSignature = new Dictionary<Lane, float>();
     float _rebuildAcc;
