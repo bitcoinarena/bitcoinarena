@@ -30,9 +30,13 @@ public class PackageYard : MonoBehaviour
     public int perRow = 5;
     public float fieldOfView = 42f;
 
-    [Tooltip("How far down the panel sits, as a fraction of its height. " +
-             "Positive lifts it, leaving the truck bed in view below.")]
-    public float lift = 0.28f;
+    [Tooltip("Top of the panel band, as a fraction of the view height above " +
+             "centre. The band never reaches below bandBottom, so the truck " +
+             "and the war stay visible underneath it.")]
+    public float bandTop = 0.44f;
+
+    [Tooltip("Bottom of the panel band. Everything below this is the game.")]
+    public float bandBottom = 0.06f;
 
     [Tooltip("Distance from the yard camera to the crates.")]
     public float depth = 7f;
@@ -173,7 +177,13 @@ public class PackageYard : MonoBehaviour
         }
     }
 
-    /// <summary>Spread the crates over the panel, in the rig's own space.</summary>
+    /// <summary>
+    /// Spread the crates across a band in the UPPER part of the view.
+    ///
+    /// The first panel was centred and opaque and covered the truck, so the
+    /// player could not see the thing they were loading. The band never
+    /// reaches below bandBottom, and everything under that line is the game.
+    /// </summary>
     void Layout()
     {
         if (_yard.Count == 0) return;
@@ -184,24 +194,70 @@ public class PackageYard : MonoBehaviour
         int cols = Mathf.Min(perRow, _yard.Count);
         int rows = Mathf.CeilToInt(_yard.Count / (float)cols);
 
-        float cw = w * 0.82f / cols;
-        float ch = h * 0.42f / Mathf.Max(1, rows);
-        float top = h * lift;
+        float hi = h * bandTop, lo = h * bandBottom;
+        float ch = (hi - lo) / Mathf.Max(1, rows);
+        float cw = w * 0.86f / cols;
 
         for (int i = 0; i < _yard.Count; i++)
         {
             int row = i / cols, col = i % cols;
             int inRow = Mathf.Min(cols, _yard.Count - row * cols);
             float x = (col - (inRow - 1) * 0.5f) * cw;
-            float y = top - row * ch;
+            // sits in the upper part of its row, leaving room for the caption
+            float y = hi - ch * (row + 0.38f);
             _yard[i].seat = new Vector3(x, y, depth);
             _yard[i].crate.transform.localPosition = _yard[i].seat;
-            _yard[i].crate.transform.localScale = Vector3.one * Mathf.Min(_yard[i].size, cw * 0.62f);
+            _yard[i].crate.transform.localScale =
+                Vector3.one * Mathf.Min(_yard[i].size * 1.1f, Mathf.Min(cw * 0.44f, ch * 0.42f));
         }
 
-        // the panel behind them, covering the grid with a margin
-        _backdrop.transform.localPosition = new Vector3(0f, top - (rows - 1) * ch * 0.5f, depth + 3.2f);
-        _backdrop.transform.localScale = new Vector3(w * 0.95f, ch * rows + h * 0.30f, 1f);
+        // the panel behind them, reaching no lower than the band
+        float centre = (hi + lo) * 0.5f;
+        _backdrop.transform.localPosition = new Vector3(0f, centre, depth + 3.2f);
+        _backdrop.transform.localScale =
+            new Vector3(w * 0.97f, (hi - lo) + ch * 0.55f, 1f);
+    }
+
+    /// <summary>A crate as the HUD needs it: what it is and where it is drawn.</summary>
+    public struct Caption
+    {
+        public MempoolFeed.Tx tx;
+        public Vector2 screen;      // centre of the crate, in screen pixels
+        public float radius;        // roughly half its drawn size, in pixels
+        public bool loaded;
+    }
+
+    /// <summary>
+    /// Where to write the numbers. The crates say size by their size and value
+    /// by their colour, but "300 vB at 12 sat/vB" is not a thing a cube can
+    /// say, and picking freight blind is not a choice.
+    /// </summary>
+    public List<Caption> Captions()
+    {
+        var list = new List<Caption>();
+        if (_cam == null) return list;
+
+        foreach (var y in _yard)
+        {
+            if (y.crate == null) continue;
+            bool loaded = bay != null && bay.Contains(y.tx.txid);
+            var p = _cam.WorldToScreenPoint(y.crate.transform.position);
+            if (p.z <= 0f) continue;
+
+            float scale = y.crate.transform.localScale.y;
+            var edge = _cam.WorldToScreenPoint(
+                y.crate.transform.position + _cam.transform.up * scale * 0.5f);
+
+            list.Add(new Caption
+            {
+                tx = y.tx,
+                // GUI counts down from the top, the camera counts up
+                screen = new Vector2(p.x, Screen.height - p.y),
+                radius = Mathf.Abs(edge.y - p.y),
+                loaded = loaded,
+            });
+        }
+        return list;
     }
 
     /// <summary>Pick up or put back. False when there was no room.</summary>

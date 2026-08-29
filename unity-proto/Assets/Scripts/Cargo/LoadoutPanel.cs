@@ -22,7 +22,7 @@ public class LoadoutPanel : MonoBehaviour
     /// <summary>True while the bay is open and the truck is held.</summary>
     public bool IsOpen { get; private set; }
 
-    GUIStyle _head, _small, _btn;
+    GUIStyle _head, _small, _btn, _cap, _capSub;
     Texture2D _flat;
     bool _wasDestroyed;
 
@@ -109,6 +109,54 @@ public class LoadoutPanel : MonoBehaviour
         _btn.fontSize = Mathf.RoundToInt(Mathf.Clamp(min * 0.030f, 14f, 22f));
         _head.normal.textColor = Color.white;
         _small.normal.textColor = new Color(1f, 1f, 1f, 0.85f);
+
+        if (_cap == null)
+        {
+            _cap = new GUIStyle(GUI.skin.label)
+                { alignment = TextAnchor.UpperCenter, fontStyle = FontStyle.Bold, wordWrap = false };
+            _capSub = new GUIStyle(GUI.skin.label)
+                { alignment = TextAnchor.UpperCenter, wordWrap = false };
+        }
+        _cap.fontSize = Mathf.RoundToInt(Mathf.Clamp(min * 0.023f, 11f, 17f));
+        _capSub.fontSize = Mathf.RoundToInt(Mathf.Clamp(min * 0.020f, 10f, 15f));
+    }
+
+    /// <summary>
+    /// The numbers under each crate.
+    ///
+    /// A cube can say how big a transaction is and roughly what it pays, and
+    /// nothing else. Everything a haulier would actually decide on - the size
+    /// in vB, the rate, what is being moved - has to be written down.
+    /// </summary>
+    void DrawCaptions()
+    {
+        if (yard == null) return;
+
+        foreach (var c in yard.Captions())
+        {
+            float wCap = Mathf.Max(120f, Screen.width * 0.13f);
+            float y = c.screen.y + c.radius + 4f;
+            var box = new Rect(c.screen.x - wCap * 0.5f, y, wCap, _cap.fontSize * 3.4f);
+
+            // a plate behind the text: crate colours run light and so does the sky
+            GUI.color = new Color(0f, 0f, 0f, c.loaded ? 0.62f : 0.45f);
+            GUI.DrawTexture(new Rect(box.x + wCap * 0.06f, box.y - 2f,
+                                     wCap * 0.88f, box.height), _flat);
+            GUI.color = Color.white;
+
+            _cap.normal.textColor = c.loaded ? new Color(0.45f, 0.95f, 0.6f) : Color.white;
+            GUI.Label(new Rect(box.x, box.y, box.width, _cap.fontSize * 1.5f),
+                      $"{c.tx.FeeRate:0.0} sat/vB", _cap);
+
+            _capSub.normal.textColor = new Color(1f, 1f, 1f, 0.82f);
+            GUI.Label(new Rect(box.x, box.y + _cap.fontSize * 1.35f, box.width, _capSub.fontSize * 1.5f),
+                      $"{c.tx.vsize} vB · {c.tx.Btc:0.###} BTC", _capSub);
+
+            GUI.Label(new Rect(box.x, box.y + _cap.fontSize * 1.35f + _capSub.fontSize * 1.25f,
+                               box.width, _capSub.fontSize * 1.5f),
+                      c.loaded ? "GELADEN — antippen zum Abladen"
+                               : (c.tx.Whale ? $"{c.tx.Short}  🐋" : c.tx.Short), _capSub);
+        }
     }
 
     void OnGUI()
@@ -122,6 +170,8 @@ public class LoadoutPanel : MonoBehaviour
         float lh = _head.fontSize * 1.7f;
         float panelH = lh * 3.5f;
         var panel = new Rect((w - barW) * 0.5f, h - panelH - pad, barW, panelH);
+
+        DrawCaptions();
 
         GUI.color = new Color(0f, 0f, 0f, 0.62f);
         GUI.DrawTexture(panel, _flat);

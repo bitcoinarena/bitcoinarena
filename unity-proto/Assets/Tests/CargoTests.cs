@@ -379,20 +379,24 @@ public class CargoTests
     }
 
     /// <summary>
-    /// Count the pixels. Every other check here can pass while the panel draws
-    /// nothing at all - the crates hang 2000 m under the world, and whether
-    /// light reaches them there is an assumption, not a fact. This renders the
-    /// panel camera and looks at what came out.
+    /// Count the pixels, and count them in halves.
+    ///
+    /// Every other check here can pass while the panel draws nothing - the
+    /// crates hang 2000 m under the world, and whether light reaches them
+    /// there is an assumption. And the first panel drew perfectly well and
+    /// covered the truck, which is worse than useless: the load going onto the
+    /// bed is the whole point of picking it.
     /// </summary>
     [UnityTest]
-    public IEnumerator ThePanelActuallyDrawsSomething()
+    public IEnumerator ThePanelDrawsOnTopAndLeavesTheGameVisible()
     {
         yield return null;
         var yard = Object.FindFirstObjectByType<PackageYard>();
         var cam = yard.View;
 
-        var rt = new RenderTexture(320, 200, 24);
-        var shot = new Texture2D(320, 200, TextureFormat.RGB24, false);
+        const int W = 320, H = 200;
+        var rt = new RenderTexture(W, H, 24);
+        var shot = new Texture2D(W, H, TextureFormat.RGB24, false);
         var wasClear = cam.clearFlags;
         var wasBg = cam.backgroundColor;
         cam.clearFlags = CameraClearFlags.SolidColor;
@@ -401,7 +405,7 @@ public class CargoTests
         cam.Render();
 
         RenderTexture.active = rt;
-        shot.ReadPixels(new Rect(0, 0, 320, 200), 0, 0);
+        shot.ReadPixels(new Rect(0, 0, W, H), 0, 0);
         shot.Apply();
         RenderTexture.active = null;
 
@@ -409,23 +413,54 @@ public class CargoTests
         cam.clearFlags = wasClear;
         cam.backgroundColor = wasBg;
 
-        int drawn = 0, lit = 0;
-        foreach (var px in shot.GetPixels())
+        var px = shot.GetPixels();
+        int topDrawn = 0, topLit = 0, bottomDrawn = 0;
+        for (int y = 0; y < H; y++)
         {
-            bool background = px.r > 0.85f && px.g < 0.2f && px.b > 0.85f;
-            if (background) continue;
-            drawn++;
-            if (px.r + px.g + px.b > 0.25f) lit++;    // not a black silhouette
+            for (int x = 0; x < W; x++)
+            {
+                var c = px[y * W + x];
+                bool background = c.r > 0.85f && c.g < 0.2f && c.b > 0.85f;
+                if (background) continue;
+                // ReadPixels counts up from the bottom
+                if (y >= H / 2) { topDrawn++; if (c.r + c.g + c.b > 0.25f) topLit++; }
+                else bottomDrawn++;
+            }
         }
         Object.Destroy(shot);
         rt.Release();
         Object.Destroy(rt);
 
-        float share = drawn / (320f * 200f);
-        Assert.Greater(share, 0.10f,
-            $"das Auswahlfenster fuellt nur {share * 100:0.0}% des Bildes - es zeichnet praktisch nichts");
-        Assert.Greater(lit / (float)Mathf.Max(1, drawn), 0.5f,
+        float half = W * H * 0.5f;
+        float top = topDrawn / half, bottom = bottomDrawn / half;
+
+        Assert.Greater(top, 0.20f,
+            $"das Auswahlfenster fuellt nur {top * 100:0.0}% der oberen Bildhaelfte");
+        Assert.Greater(topLit / (float)Mathf.Max(1, topDrawn), 0.5f,
             "das Panel wird gezeichnet, ist aber schwarz - dort unten kommt kein Licht an");
+        Assert.Less(bottom, 0.25f,
+            $"das Panel deckt {bottom * 100:0.0}% der unteren Bildhaelfte ab - " +
+            "dort steht der Truck, den man beim Beladen sehen muss");
+    }
+
+    [UnityTest]
+    public IEnumerator EveryPackageCarriesItsNumbers()
+    {
+        yield return null;
+        var yard = Object.FindFirstObjectByType<PackageYard>();
+        var caps = yard.Captions();
+
+        Assert.AreEqual(_feed.Offers.Count, caps.Count,
+            "nicht jedes Paket hat eine Beschriftung");
+
+        foreach (var c in caps)
+        {
+            Assert.Greater(c.tx.vsize, 0, "ein Paket kennt seine Groesse nicht");
+            Assert.Greater(c.tx.FeeRate, 0f, "ein Paket kennt seine Gebuehrenrate nicht");
+            Assert.Greater(c.radius, 1f, "die Beschriftung wuesste nicht, wie gross die Kiste ist");
+            Assert.That(c.screen.x, Is.InRange(-Screen.width * 0.5f, Screen.width * 1.5f),
+                "eine Beschriftung liegt weit ausserhalb des Bildes");
+        }
     }
 
     [Test]
