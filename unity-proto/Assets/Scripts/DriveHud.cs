@@ -28,6 +28,17 @@ public class DriveHud : MonoBehaviour
         _flat = new Texture2D(1, 1); _flat.SetPixel(0, 0, Color.white); _flat.Apply();
     }
 
+    /// <summary>
+    /// The small font size, as arithmetic rather than as a GUIStyle.
+    ///
+    /// The panel geometry is derived from it, and GUI.skin only exists inside
+    /// OnGUI - so anything that computes a layout by reading _small.fontSize
+    /// throws the moment it is called from outside a GUI pass, a test
+    /// included.
+    /// </summary>
+    static int SmallFont(int w, int h) =>
+        Mathf.RoundToInt(Mathf.Clamp(Mathf.Min(w, h) * 0.032f, 13f, 20f));
+
     void Styles()
     {
         int min = Mathf.Min(Screen.width, Screen.height);
@@ -39,8 +50,21 @@ public class DriveHud : MonoBehaviour
         }
         _price.fontSize = Mathf.RoundToInt(min * 0.13f);
         _sub.fontSize = Mathf.RoundToInt(min * 0.045f);
-        _small.fontSize = Mathf.RoundToInt(Mathf.Clamp(min * 0.032f, 13f, 20f));
+        _small.fontSize = SmallFont(Screen.width, Screen.height);
         _small.normal.textColor = Color.white;
+    }
+
+    /// <summary>
+    /// Where the diagnostics panel sits. Shared with the health bar, which is
+    /// parked directly under it - computing the same box twice would drift
+    /// apart the first time a line is added to the panel.
+    /// </summary>
+    public Rect DiagnosticsBox(int w, int h)
+    {
+        float pad = Mathf.Max(8f, h * 0.02f);
+        float lh = SmallFont(w, h) * 1.45f;
+        int lines = 9 + (market != null ? 2 : 0);
+        return new Rect(pad, pad, Mathf.Min(320f, w * 0.34f), lh * lines + pad);
     }
 
     /// <summary>Drawn twice with an offset: the sky and the dirt are both bright.</summary>
@@ -96,23 +120,43 @@ public class DriveHud : MonoBehaviour
     /// Drawn as a bar rather than a number because the thing the player needs
     /// off a glance at 60 km/h is how much is left, not how much exactly.
     /// </summary>
+    /// <summary>
+    /// Where the condition bar sits: directly under the diagnostics panel, and
+    /// the same width, so the two read as one block rather than two things
+    /// that happen to share a corner. Public so a test can check it stays put
+    /// when the panel above it grows a line.
+    /// </summary>
+    public Rect HealthBox(int w, int h)
+    {
+        float pad = Mathf.Max(8f, h * 0.02f);
+        float barH = Mathf.Max(12f, h * 0.022f);
+        float lh = SmallFont(w, h) * 1.5f;
+        var diag = DiagnosticsBox(w, h);
+        float top = showDiagnostics ? diag.yMax + pad * 0.4f : pad;
+        return new Rect(diag.x, top, diag.width, barH + lh);
+    }
+
     void DrawHealth(int w, int h)
     {
         if (health == null) return;
 
         float pad = Mathf.Max(8f, h * 0.02f);
-        float width = Mathf.Min(260f, w * 0.30f);
         float barH = Mathf.Max(12f, h * 0.022f);
         float lh = _small.fontSize * 1.5f;
-        var box = new Rect(pad, h - pad - barH - lh, width, barH + lh);
+        var box = HealthBox(w, h);
 
         var label = new GUIStyle(_small) { fontStyle = FontStyle.Bold };
         label.normal.textColor = Color.white;
         Shadowed(new Rect(box.x, box.y, box.width, lh),
                  health.IsDestroyed
                      ? $"ZERSTÖRT — neu in {Mathf.CeilToInt(health.RespawnIn)}s"
-                     : $"Zustand {Mathf.CeilToInt(health.Fraction * 100f)}%",
-                 label, health.IsDestroyed ? Down : Color.white);
+                     : health.IsInvulnerable
+                         ? "Zustand 100%  ·  geschützt"
+                         : $"Zustand {Mathf.CeilToInt(health.Fraction * 100f)}%",
+                 label,
+                 health.IsDestroyed ? Down
+                                    : health.IsInvulnerable ? new Color(0.55f, 0.8f, 1f)
+                                                            : Color.white);
 
         var track = new Rect(box.x, box.y + lh, box.width, barH);
         GUI.color = new Color(0f, 0f, 0f, 0.5f);
@@ -223,9 +267,8 @@ public class DriveHud : MonoBehaviour
 
         /* ------------------------------------------------------- diagnostics */
         float pad = Mathf.Max(8f, Screen.height * 0.02f);
-        float lh = _small.fontSize * 1.45f;
-        int lines = 9 + (market != null ? 2 : 0);
-        var box = new Rect(pad, pad, Mathf.Min(320f, w * 0.34f), lh * lines + pad);
+        float lh = _small.fontSize * 1.45f;   // still the line height for Line()
+        var box = DiagnosticsBox(w, h);
 
         GUI.color = new Color(0f, 0f, 0f, 0.42f);
         GUI.DrawTexture(box, _flat);

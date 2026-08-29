@@ -29,6 +29,12 @@ public class TruckHealth : MonoBehaviour
              "nudging a hull while parked is not instantly fatal.")]
     public float crashSpeed = 4f;
 
+    [Header("Spawn protection")]
+    [Tooltip("How far the truck has to get from the spawn before it can be " +
+             "hurt. Without this a truck destroyed on the apron respawns into " +
+             "whatever killed it and dies again on a loop.")]
+    public float safeRadius = 8f;
+
     [Header("Wiring")]
     public TruckController truck;
     public CombatFx fx;
@@ -44,6 +50,13 @@ public class TruckHealth : MonoBehaviour
     /// <summary>Seconds until it is back, or 0 when it is not destroyed.</summary>
     public float RespawnIn => IsDestroyed ? Mathf.Max(0f, respawnSeconds - _burningFor) : 0f;
 
+    /// <summary>
+    /// True until the truck has driven clear of its spawn. Nothing can hurt it
+    /// while it sits on the apron: dying there put it straight back into the
+    /// thing that killed it, again and again.
+    /// </summary>
+    public bool IsInvulnerable => !_leftSpawn;
+
     /// <summary>Raised when the truck is written off.</summary>
     public System.Action Wrecked;
 
@@ -51,7 +64,8 @@ public class TruckHealth : MonoBehaviour
     public System.Action Respawned;
 
     float _burningFor = -1f;
-    Renderer[] _skin;
+    float _burnBeat;
+    bool _leftSpawn;
     Rigidbody _rb;
 
     /// <summary>
@@ -72,7 +86,7 @@ public class TruckHealth : MonoBehaviour
     public void Damage(float amount)
     {
         EnsureInit();
-        if (IsDestroyed || amount <= 0f) return;
+        if (IsDestroyed || IsInvulnerable || amount <= 0f) return;
 
         Health -= amount / Mathf.Max(0.01f, armour);
         if (fx != null)
@@ -85,23 +99,16 @@ public class TruckHealth : MonoBehaviour
     public void WriteOff()
     {
         EnsureInit();
-        if (IsDestroyed) return;
+        if (IsDestroyed || IsInvulnerable) return;
 
         Health = 0f;
         _burningFor = 0f;
 
-        float heading = transform.eulerAngles.y * Mathf.Deg2Rad;
-        if (fx != null)
-        {
-            fx.TankExplosion(transform.position, heading);
-            fx.Wreck(transform.position, heading);
-        }
-
-        // The burning hull IS the wreck effect, so the truck itself goes away
-        // while it burns. Left visible there would be two trucks in the same
-        // place, one of them driveable.
-        _skin = GetComponentsInChildren<Renderer>(true);
-        foreach (var r in _skin) r.enabled = false;
+        // The blast only. TankExplosion finishes by dropping a wreck model,
+        // and that model is the tank - which turned the player's truck into a
+        // tank the moment it died. The truck IS its own wreck: it stays where
+        // it is, keeps its own body and burns there.
+        if (fx != null) fx.VehicleExplosion(transform.position);
 
         if (truck != null) truck.enabled = false;
         if (_rb != null)
@@ -117,16 +124,36 @@ public class TruckHealth : MonoBehaviour
     void Update()
     {
         EnsureInit();
+
+        // Cleared once, on the way out. Checked as a distance rather than as a
+        // "has moved at all" so that being nudged on the apron does not arm the
+        // damage model while the truck is still standing in the traffic.
+        if (!_leftSpawn && truck != null &&
+            Vector3.Distance(transform.position, truck.spawnPosition) > safeRadius)
+            _leftSpawn = true;
+
         if (!IsDestroyed) return;
 
         // UNSCALED: the death sequence puts the world in slow motion, and a
         // wait measured in scaled time would stretch with it - five seconds
         // would take fourteen.
         _burningFor += Time.unscaledDeltaTime;
+
+        // burns where it stands, on the same beat and with the same fire as a
+        // wrecked tank
+        _burnBeat -= Time.unscaledDeltaTime;
+        if (_burnBeat <= 0f && fx != null)
+        {
+            _burnBeat = 0.12f;
+            float left = respawnSeconds > 0f ? _burningFor / respawnSeconds : 1f;
+            fx.BurnBeat(transform.position, Mathf.Clamp01(1f - left * 0.55f));
+        }
+
         if (_burningFor < respawnSeconds) return;
 
         _burningFor = -1f;
         Health = maxHealth;
+        _leftSpawn = false;              // protected again until it drives off
 
         if (_rb != null) _rb.isKinematic = false;
         if (truck != null)
@@ -134,7 +161,6 @@ public class TruckHealth : MonoBehaviour
             truck.enabled = true;
             truck.Respawn();
         }
-        if (_skin != null) foreach (var r in _skin) if (r != null) r.enabled = true;
 
         Respawned?.Invoke();
     }
@@ -147,8 +173,16 @@ public class TruckHealth : MonoBehaviour
     void OnCollisionEnter(Collision collision)
     {
         EnsureInit();
-        if (IsDestroyed) return;
+        if (IsDestroyed || IsInvulnerable) return;
         if (collision.gameObject.layer != ArmyRenderer.UnitLayer) return;
+
+        // A burnt-out hull is scenery. Hitting one costs paint however hard it
+        // is hit; only a live tank writes the truck off.
+        if (collision.collider.GetComponentInParent<BurntOutHull>() != null)
+        {
+            Damage(collision.relativeVelocity.magnitude * 3f);
+            return;
+        }
 
         float impact = collision.relativeVelocity.magnitude;
         if (impact >= crashSpeed) WriteOff();

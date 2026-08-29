@@ -34,6 +34,67 @@ public class TruckHealthTests
         yield return null;
     }
 
+    /// <summary>
+    /// Get the truck off the apron. It is protected until it has driven clear
+    /// of the spawn, so anything testing damage has to leave first.
+    /// </summary>
+    IEnumerator LeaveSpawn()
+    {
+        _truck.transform.position = _truck.spawnPosition + new Vector3(25f, 0f, 0f);
+        yield return null;
+        yield return null;
+        Assert.IsFalse(_health.IsInvulnerable, "der Truck ist abseits des Spawns noch geschuetzt");
+    }
+
+    [UnityTest]
+    public IEnumerator TheTruckIsProtectedOnTheApron()
+    {
+        Assert.IsTrue(_health.IsInvulnerable, "der Truck ist am Spawn nicht geschuetzt");
+
+        _health.WriteOff();
+        _field.Army.CourierHit.Invoke(500f);
+        yield return null;
+
+        Assert.IsFalse(_health.IsDestroyed,
+            "der Truck kann am Spawn zerstoert werden - genau das ist die Todesschleife");
+        Assert.AreEqual(1f, _health.Fraction, 0.001f, "er nimmt am Spawn Schaden");
+    }
+
+    [UnityTest]
+    public IEnumerator ProtectionComesBackWithTheRespawn()
+    {
+        yield return LeaveSpawn();
+        _health.respawnSeconds = 1f;
+        _health.WriteOff();
+
+        float t0 = Time.realtimeSinceStartup;
+        while (_health.IsDestroyed && Time.realtimeSinceStartup - t0 < 8f) yield return null;
+        yield return null;
+
+        Assert.IsTrue(_health.IsInvulnerable,
+            "nach dem Respawn ist der Truck sofort wieder verwundbar");
+    }
+
+    [Test]
+    public void AWreckIsMarkedAndATankIsNot()
+    {
+        var fx = Object.FindFirstObjectByType<CombatFx>();
+        fx.Wreck(new Vector3(0f, 0f, 40f), 0f);
+
+        bool marked = false;
+        foreach (var h in Object.FindObjectsByType<BurntOutHull>(FindObjectsSortMode.None))
+            if (h.GetComponent<Collider>() != null) marked = true;
+        Assert.IsTrue(marked, "ein Wrack traegt keine Markierung - es ist von einem Panzer nicht zu unterscheiden");
+
+        foreach (var t in Object.FindObjectsByType<Transform>(FindObjectsSortMode.None))
+            if (t.name == "Hull" && t.GetComponent<BoxCollider>() != null)
+            {
+                Assert.IsNull(t.GetComponentInParent<BurntOutHull>(),
+                    "ein lebender Panzer ist als Wrack markiert - dann waere kein Crash mehr toedlich");
+                break;
+            }
+    }
+
     [Test]
     public void TheTruckStartsWhole()
     {
@@ -50,10 +111,29 @@ public class TruckHealthTests
         Assert.AreSame(_health, hud.health, "das HUD kennt den Zustand des Trucks nicht");
     }
 
+    [Test]
+    public void TheBarSitsDirectlyUnderTheDebugPanel()
+    {
+        var hud = Object.FindFirstObjectByType<DriveHud>();
+        hud.showDiagnostics = true;
+
+        var diag = hud.DiagnosticsBox(1600, 900);
+        var bar = hud.HealthBox(1600, 900);
+
+        Assert.GreaterOrEqual(bar.y, diag.yMax,
+            "der Zustandsbalken ueberlappt das Debug-Feld");
+        Assert.Less(bar.y - diag.yMax, 40f,
+            $"der Balken haengt {bar.y - diag.yMax:0} px unter dem Debug-Feld statt direkt darunter");
+        Assert.AreEqual(diag.x, bar.x, 0.5f, "der Balken ist nicht am Debug-Feld ausgerichtet");
+        Assert.AreEqual(diag.width, bar.width, 0.5f, "der Balken ist nicht so breit wie das Debug-Feld");
+    }
+
     [UnityTest]
     public IEnumerator IncomingFireCostsCondition()
     {
         Assert.IsNotNull(_field?.Army, "keine Armee");
+        yield return LeaveSpawn();
+
         // through the event the armies actually raise, not through Damage()
         _field.Army.CourierHit.Invoke(30f);
         yield return null;
@@ -65,6 +145,7 @@ public class TruckHealthTests
     [UnityTest]
     public IEnumerator EnoughFireWrecksIt()
     {
+        yield return LeaveSpawn();
         for (int i = 0; i < 12 && !_health.IsDestroyed; i++)
         {
             _field.Army.CourierHit.Invoke(20f);
@@ -80,6 +161,7 @@ public class TruckHealthTests
         Assert.IsNotNull(fx, "keine Effekte");
         int before = fx.LiveCount;
 
+        yield return LeaveSpawn();
         _health.WriteOff();
         yield return null;
 
@@ -93,6 +175,7 @@ public class TruckHealthTests
         _health.respawnSeconds = 1.5f;               // the real wait is 5s
         var spawn = _truck.spawnPosition;
 
+        yield return LeaveSpawn();
         _health.WriteOff();
         yield return new WaitForSeconds(0.4f);
         Assert.IsTrue(_health.IsDestroyed, "der Truck ist sofort wieder da");
@@ -108,6 +191,7 @@ public class TruckHealthTests
     public IEnumerator TheArmiesLeaveAWreckAlone()
     {
         _health.respawnSeconds = 30f;
+        yield return LeaveSpawn();
         _health.WriteOff();
         yield return new WaitForSeconds(0.3f);
 

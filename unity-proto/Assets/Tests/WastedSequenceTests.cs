@@ -34,6 +34,15 @@ public class WastedSequenceTests
         yield return null;
     }
 
+    /// <summary>The truck is protected until it has left the spawn.</summary>
+    IEnumerator LeaveSpawn()
+    {
+        var truck = Object.FindFirstObjectByType<TruckController>();
+        truck.transform.position = truck.spawnPosition + new Vector3(25f, 0f, 0f);
+        yield return null;
+        yield return null;
+    }
+
     [Test]
     public void TheSequenceIsWiredUp()
     {
@@ -48,6 +57,7 @@ public class WastedSequenceTests
     [UnityTest]
     public IEnumerator TheWorldSlowsDownAndDrains()
     {
+        yield return LeaveSpawn();
         _health.WriteOff();
         yield return new WaitForSecondsRealtime(0.9f);
 
@@ -58,6 +68,7 @@ public class WastedSequenceTests
     [UnityTest]
     public IEnumerator TheCameraPullsOffTheWreck()
     {
+        yield return LeaveSpawn();
         _health.WriteOff();
         yield return new WaitForSecondsRealtime(0.5f);
 
@@ -73,6 +84,7 @@ public class WastedSequenceTests
     public IEnumerator FiveSecondsMeansFiveRealSeconds()
     {
         _health.respawnSeconds = 2f;
+        yield return LeaveSpawn();
         float t0 = Time.realtimeSinceStartup;
 
         _health.WriteOff();
@@ -89,6 +101,7 @@ public class WastedSequenceTests
     public IEnumerator EverythingComesBackAfterwards()
     {
         _health.respawnSeconds = 1.5f;
+        yield return LeaveSpawn();
         _health.WriteOff();
 
         float t0 = Time.realtimeSinceStartup;

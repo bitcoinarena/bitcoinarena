@@ -56,7 +56,8 @@ public class Battlefield : MonoBehaviour
             // Where the gauntlet is. A wrecked truck is not a target - it is
             // already burning, and shooting it would keep it "dying" through
             // the whole respawn wait.
-            bool alive = courier != null && (health == null || !health.IsDestroyed);
+            bool alive = courier != null &&
+                         (health == null || (!health.IsDestroyed && !health.IsInvulnerable));
             Army.Courier = alive
                 ? new Vector2(courier.position.x, courier.position.z)
                 : (Vector2?)null;

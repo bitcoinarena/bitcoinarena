@@ -691,6 +691,52 @@ public class CombatFx : MonoBehaviour
         WreckModel(at, heading);
     }
 
+    /// <summary>
+    /// The blast only, with no hull left behind.
+    ///
+    /// TankExplosion finishes by dropping a wreck model, and that model is the
+    /// tank. Used for the player's truck it turned the truck into a tank the
+    /// moment it died. The truck keeps its own body and burns where it stands,
+    /// so it needs the bang without the tank.
+    /// </summary>
+    public void VehicleExplosion(Vector3 at)
+    {
+        if (!FlipbookBurst(at + Vector3.up * 1.4f, 10))
+        {
+            Fireball(at + Vector3.up * 1.1f, 4.5f, fireCoreMaterial, 0f, 0.22f);
+            for (int i = 0; i < 4; i++)
+                Fireball(at + Vector3.up * Random.Range(0.6f, 2.6f), Random.Range(2f, 3.4f),
+                         fireMaterial, Random.Range(0.02f, 0.16f), 0.4f);
+        }
+        for (int i = 0; i < 10; i++)
+        {
+            float a = Random.Range(0f, Mathf.PI * 2f);
+            var v = new Vector3(Mathf.Sin(a), 0f, Mathf.Cos(a)) * Random.Range(7f, 17f);
+            v.y = Random.Range(5f, 14f);
+            Spark(at + Vector3.up * 1.4f, v);
+        }
+        Shockwave(at);
+    }
+
+    /// <summary>
+    /// One beat of a burning hull. Public so something that is NOT a wreck
+    /// piece - the player's truck, which stays put and keeps its own model -
+    /// burns with exactly the same fire rather than a second imitation of it.
+    /// </summary>
+    public void BurnBeat(Vector3 at, float vigour)
+    {
+        var seat = at + Vector3.up * 1.4f;
+        var jitter = new Vector3(Random.Range(-0.9f, 0.9f), 0f, Random.Range(-1.3f, 1.3f));
+
+        // Slow. A hull burns for a long time; the same flipbook at explosion
+        // speed reads as a strobe on a wreck.
+        if (vigour > 0.02f && !FlipbookBurst(seat + jitter, 1, Random.Range(2.4f, 4f)))
+            Fireball(seat + jitter, Mathf.Lerp(0.6f, 2.8f, vigour), fireMaterial, 0f, 1.4f);
+
+        if (!SmokeBurst(seat + Vector3.up * 1.4f, 1, Random.Range(4f, 7f)))
+            Smoke(seat + Vector3.up * 1.4f, Mathf.Lerp(1.5f, 3.5f, vigour), 0f);
+    }
+
     void Fireball(Vector3 at, float size, Material mat, float delay, float life)
     {
         if (_live.Count >= maxPieces) return;
@@ -844,6 +890,10 @@ public class CombatFx : MonoBehaviour
     /// </summary>
     static void GiveWreckASolidBody(GameObject go)
     {
+        // Marked, because it is the only way to tell a burnt-out hull from a
+        // live tank at a collision: both are solid and both sit on the unit
+        // layer. Driving into a wreck must not be fatal.
+        if (go.GetComponent<BurntOutHull>() == null) go.AddComponent<BurntOutHull>();
         if (go.GetComponent<BoxCollider>() != null) return;
         var box = go.AddComponent<BoxCollider>();
         box.size = new Vector3(3.6f, 2.2f, 7f);
@@ -965,18 +1015,7 @@ public class CombatFx : MonoBehaviour
                     if (p.burnAt <= 0f)
                     {
                         p.burnAt = 0.12f;
-                        float vigour = Mathf.Clamp01(1f - k * 1.15f);
-                        var seat = p.t.position + Vector3.up * 1.4f;
-                        var jitter = new Vector3(Random.Range(-0.9f, 0.9f), 0f, Random.Range(-1.3f, 1.3f));
-
-                        // Slow. A hull burns for a long time; the same flipbook
-                        // at explosion speed reads as a strobe on a wreck.
-                        if (vigour > 0.02f && !FlipbookBurst(seat + jitter, 1, Random.Range(2.4f, 4f)))
-                            Fireball(seat + jitter, Mathf.Lerp(0.6f, 2.8f, vigour), fireMaterial, 0f, 1.4f);
-
-                        // smoke outlasts the flame, as it does on a real hull
-                        if (!SmokeBurst(seat + Vector3.up * 1.4f, 1, Random.Range(4f, 7f)))
-                            Smoke(seat + Vector3.up * 1.4f, Mathf.Lerp(1.5f, 3.5f, vigour), 0f);
+                        BurnBeat(p.t.position, Mathf.Clamp01(1f - k * 1.15f));
                     }
 
                     if (k > 0.85f) p.t.localScale = p.baseScale * Mathf.Lerp(1f, 0f, (k - 0.85f) / 0.15f);
