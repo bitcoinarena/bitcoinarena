@@ -48,25 +48,28 @@ public class ImportedModelTests
             if (t.name != "Hull" || t.GetComponentsInChildren<Renderer>(true).Length == 0) continue;
             var b = Of(t.gameObject);
 
-            // Sample the CORNERS of the footprint, not the centre. A seven
-            // metre hull placed level from one central sample has its middle in
-            // exactly the right place while its nose is a metre underground -
-            // which is what this test used to pass straight through.
+            // Measure the four TRACK CORNERS in the hull's own frame against
+            // the ground beneath each one. A world-space bounding box cannot
+            // see this: a hull tilted the wrong way has its centre at exactly
+            // the right height, which is all the old check looked at, while one
+            // track corner hangs 0.85 m under the ground and the opposite one
+            // floats 0.79 m over it. Seated correctly the corners come in
+            // within +/-0.16 m, so 0.45 m is a real failure and not noise.
+            float low = 99f, high = -99f;
             foreach (var corner in new[]
             {
-                new Vector2(b.min.x, b.min.z), new Vector2(b.max.x, b.min.z),
-                new Vector2(b.min.x, b.max.z), new Vector2(b.max.x, b.max.z),
-                new Vector2(b.center.x, b.center.z),
+                new Vector3(1.8f, 0f, 3.4f), new Vector3(-1.8f, 0f, 3.4f),
+                new Vector3(1.8f, 0f, -3.4f), new Vector3(-1.8f, 0f, -3.4f),
             })
             {
-                float ground = _terrain.SampleSurface(corner.x, corner.y);
-                Assert.Greater(b.min.y, ground - 1.6f,
-                    $"Panzer steckt bei ({corner.x:0},{corner.y:0}) im Boden: " +
-                    $"Unterkante {b.min.y:0.00}, Boden {ground:0.00}");
+                var w = t.TransformPoint(corner);
+                float d = w.y - _terrain.SampleSurface(w.x, w.z);
+                low = Mathf.Min(low, d); high = Mathf.Max(high, d);
             }
-            float under = _terrain.SampleSurface(b.center.x, b.center.z);
-            Assert.Less(b.min.y, under + 2.5f,
-                $"Panzer schwebt: Unterkante {b.min.y:0.00}, Boden {under:0.00}");
+            Assert.Greater(low, -0.45f,
+                $"Panzerkette steckt im Boden: tiefste Ecke {low:0.00} m darunter");
+            Assert.Less(high, 0.45f,
+                $"Panzer schwebt: hoechste Ecke {high:0.00} m ueber dem Boden");
             Assert.That(Mathf.Max(b.size.x, b.size.z), Is.InRange(4f, 16f),
                 $"Panzer ist {Mathf.Max(b.size.x, b.size.z):0.0} m lang");
             if (++seen >= 25) break;

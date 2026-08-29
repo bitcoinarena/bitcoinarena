@@ -749,6 +749,9 @@ public class ArmyRenderer : MonoBehaviour
 
     float Ground(float x, float z) => terrain != null ? terrain.SampleSurface(x, z) : 0f;
 
+    /// <summary>Eased attitude per pooled hull, so tanks do not jitter.</summary>
+    readonly Dictionary<Transform, Vector2> _attitude = new Dictionary<Transform, Vector2>();
+
     /// <summary>
     /// Sit a hull ON the ground it is standing on, not at one point above it.
     ///
@@ -758,14 +761,20 @@ public class ArmyRenderer : MonoBehaviour
     /// around the footprint give both the height it rests at and the attitude
     /// it rests in.
     ///
-    /// Height is the HIGHEST of them: a tracked vehicle bridges a dip, it does
-    /// not sink into it.
+    /// The height is the AVERAGE of the samples, not the highest: once the hull
+    /// is tilted into the slope its underside already lies in that plane, and
+    /// the plane passes through the average. Taking the maximum as well counted
+    /// the slope twice and left the tanks visibly hovering.
+    ///
+    /// The attitude is eased rather than taken raw. Sampled fresh every frame
+    /// off a histogram that updates live, it snapped about while they drove.
     /// </summary>
     void SeatOnTerrain(Transform t, float x, float z, float yaw,
                        float halfLength, float halfWidth, float lift = 0f)
     {
+        // heading is Unity yaw here - Army sets it with Atan2(dx, dz) - so the
+        // nose is (sin, cos) and the right flank is (cos, -sin)
         float c = Mathf.Cos(yaw), s2 = Mathf.Sin(yaw);
-        // forward is (sin, cos) in this project's convention; right is (cos, -sin)
         float fx = s2 * halfLength, fz = c * halfLength;
         float rx = c * halfWidth, rz = -s2 * halfWidth;
 
@@ -774,14 +783,28 @@ public class ArmyRenderer : MonoBehaviour
         float right = Ground(x + rx, z + rz);
         float left = Ground(x - rx, z - rz);
 
-        float rest = Mathf.Max(Mathf.Max(front, back), Mathf.Max(right, left));
-        float pitch = Mathf.Atan2(front - back, halfLength * 2f) * Mathf.Rad2Deg;
-        float roll = Mathf.Atan2(left - right, halfWidth * 2f) * Mathf.Rad2Deg;
+        float rest = (front + back + right + left) * 0.25f;
+        // Both signs are inverted against the ground on purpose: a positive
+        // rotation about local X pitches the NOSE DOWN, and a positive rotation
+        // about local Z lifts the RIGHT side. Taken the intuitive way round the
+        // hull tilts against the slope and doubles the error instead of
+        // cancelling it - measured at one track corner 0.85 m under the ground
+        // with the opposite corner 0.79 m above it.
+        float pitch = Mathf.Atan2(back - front, halfLength * 2f) * Mathf.Rad2Deg;
+        float roll = Mathf.Atan2(right - left, halfWidth * 2f) * Mathf.Rad2Deg;
 
         // clamped: a spike in the fee histogram should tilt a tank, not stand it
         // on its nose
-        pitch = Mathf.Clamp(pitch, -28f, 28f);
-        roll = Mathf.Clamp(roll, -22f, 22f);
+        pitch = Mathf.Clamp(pitch, -18f, 18f);
+        roll = Mathf.Clamp(roll, -14f, 14f);
+
+        if (_attitude.TryGetValue(t, out var was))
+        {
+            float k = 1f - Mathf.Exp(-6f * Time.deltaTime);
+            pitch = Mathf.Lerp(was.x, pitch, k);
+            roll = Mathf.Lerp(was.y, roll, k);
+        }
+        _attitude[t] = new Vector2(pitch, roll);
 
         t.SetPositionAndRotation(
             new Vector3(x, rest + lift, z),
