@@ -131,8 +131,6 @@ public class Bootstrap : MonoBehaviour
         yard.feed = feed;
         yard.bay = bay;
         yard.truck = truck.transform;
-        yard.terrain = _terrain;
-        yard.roads = Roads;
         yard.crateMaterial = crateMaterial;
         yardGo.SetActive(true);
 
@@ -690,6 +688,9 @@ public class Bootstrap : MonoBehaviour
     {
         var go = new GameObject("ChaseCamera");
         var cam = go.AddComponent<Camera>();
+        // The loading panel draws its crates on its own layer with its own
+        // camera. The game camera must never see them.
+        cam.cullingMask &= ~(1 << PackageYard.YardLayer);
         cam.fieldOfView = 62f;
         cam.farClipPlane = 900f;
         // a Volume in the scene does nothing unless the camera opts in

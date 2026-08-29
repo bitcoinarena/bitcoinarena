@@ -283,16 +283,17 @@ public class CargoTests
     /// <summary>
     /// Built, lit and active is not the same as visible. The first yard was
     /// laid out behind the truck in world axes, so every crate sat behind the
-    /// chase camera and the yard looked empty - reported as "no packages are
-    /// shown". This checks they are actually in shot.
+    /// camera and looked like nothing at all - reported as "no packages are
+    /// shown". This checks they are in shot of the camera that draws them.
     /// </summary>
     [UnityTest]
     public IEnumerator TheYardIsInTheCameraView()
     {
         yield return null;
-        var chase = Object.FindFirstObjectByType<ChaseCamera>();
-        var cam = chase != null ? chase.GetComponent<Camera>() : Camera.main;
-        Assert.IsNotNull(cam, "keine Kamera");
+        var yard = Object.FindFirstObjectByType<PackageYard>();
+        var cam = yard.View;
+        Assert.IsNotNull(cam, "die Auswahl hat keine eigene Kamera");
+        Assert.IsTrue(cam.enabled, "die Kamera der Auswahl ist aus");
 
         int total = 0, onScreen = 0;
         foreach (var t in Object.FindObjectsByType<Transform>(FindObjectsSortMode.None))
@@ -306,6 +307,125 @@ public class CargoTests
         Assert.Greater(total, 0, "es stehen gar keine Pakete im Lager");
         Assert.GreaterOrEqual(onScreen, total - 1,
             $"nur {onScreen} von {total} Paketen sind im Bild - der Rest steht ausserhalb der Kamera");
+    }
+
+    /// <summary>
+    /// The panel must be a panel: its own camera, its own layer, and nothing
+    /// of it standing in the world where the game is played.
+    /// </summary>
+    [UnityTest]
+    public IEnumerator TheSelectionIsAPanelNotSceneryOnTheField()
+    {
+        yield return null;
+        var yard = Object.FindFirstObjectByType<PackageYard>();
+        var chase = Object.FindFirstObjectByType<ChaseCamera>();
+        var gameCam = chase.GetComponent<Camera>();
+
+        Assert.AreEqual(0, gameCam.cullingMask & (1 << PackageYard.YardLayer),
+            "die Spielkamera sieht die Auswahl-Ebene - dann stehen die Pakete im Feld");
+        Assert.Greater(yard.View.depth, gameCam.depth,
+            "die Auswahl wird hinter dem Spiel gezeichnet");
+
+        int crates = 0;
+        foreach (var t in Object.FindObjectsByType<Transform>(FindObjectsSortMode.None))
+        {
+            if (t.name != "YardPackage") continue;
+            crates++;
+            Assert.AreEqual(PackageYard.YardLayer, t.gameObject.layer,
+                "ein Paket liegt nicht auf der Auswahl-Ebene");
+            Assert.Less(t.position.y, -100f,
+                $"ein Paket steht bei y={t.position.y:0} im Spielfeld statt im Panel");
+        }
+        Assert.Greater(crates, 0, "keine Pakete im Panel");
+    }
+
+    [UnityTest]
+    public IEnumerator ThePackagesTurnAndEachHasItsOwnColour()
+    {
+        var yard = Object.FindFirstObjectByType<PackageYard>();
+
+        Transform sample = null;
+        var seen = new List<Color>();
+        foreach (var t in Object.FindObjectsByType<Transform>(FindObjectsSortMode.None))
+        {
+            if (t.name != "YardPackage") continue;
+            if (sample == null) sample = t;
+            var r = t.GetComponent<Renderer>();
+            if (r != null && r.sharedMaterial != null) seen.Add(r.sharedMaterial.color);
+        }
+        Assert.IsNotNull(sample, "keine Pakete");
+
+        var was = sample.localRotation;
+        yield return new WaitForSecondsRealtime(0.5f);
+        Assert.Greater(Quaternion.Angle(was, sample.localRotation), 2f,
+            "die Pakete drehen sich nicht");
+
+        // every crate its own colour
+        for (int i = 0; i < seen.Count; i++)
+            for (int j = i + 1; j < seen.Count; j++)
+                Assert.Greater(
+                    Mathf.Abs(seen[i].r - seen[j].r) + Mathf.Abs(seen[i].g - seen[j].g) +
+                    Mathf.Abs(seen[i].b - seen[j].b), 0.05f,
+                    $"Paket {i} und {j} haben dieselbe Farbe");
+    }
+
+    [Test]
+    public void SmallPackagesTurnFasterThanBigOnes()
+    {
+        var small = new MempoolFeed.Tx { txid = "small", feeSats = 100, vsize = 180, valueSats = 1 };
+        var big = new MempoolFeed.Tx { txid = "big", feeSats = 100, vsize = 2400, valueSats = 1 };
+        Assert.Less(CargoBay.CrateSize(small), CargoBay.CrateSize(big),
+            "die Groesse haengt nicht an der Transaktionsgroesse");
+    }
+
+    /// <summary>
+    /// Count the pixels. Every other check here can pass while the panel draws
+    /// nothing at all - the crates hang 2000 m under the world, and whether
+    /// light reaches them there is an assumption, not a fact. This renders the
+    /// panel camera and looks at what came out.
+    /// </summary>
+    [UnityTest]
+    public IEnumerator ThePanelActuallyDrawsSomething()
+    {
+        yield return null;
+        var yard = Object.FindFirstObjectByType<PackageYard>();
+        var cam = yard.View;
+
+        var rt = new RenderTexture(320, 200, 24);
+        var shot = new Texture2D(320, 200, TextureFormat.RGB24, false);
+        var wasClear = cam.clearFlags;
+        var wasBg = cam.backgroundColor;
+        cam.clearFlags = CameraClearFlags.SolidColor;
+        cam.backgroundColor = Color.magenta;          // nothing in the panel is magenta
+        cam.targetTexture = rt;
+        cam.Render();
+
+        RenderTexture.active = rt;
+        shot.ReadPixels(new Rect(0, 0, 320, 200), 0, 0);
+        shot.Apply();
+        RenderTexture.active = null;
+
+        cam.targetTexture = null;
+        cam.clearFlags = wasClear;
+        cam.backgroundColor = wasBg;
+
+        int drawn = 0, lit = 0;
+        foreach (var px in shot.GetPixels())
+        {
+            bool background = px.r > 0.85f && px.g < 0.2f && px.b > 0.85f;
+            if (background) continue;
+            drawn++;
+            if (px.r + px.g + px.b > 0.25f) lit++;    // not a black silhouette
+        }
+        Object.Destroy(shot);
+        rt.Release();
+        Object.Destroy(rt);
+
+        float share = drawn / (320f * 200f);
+        Assert.Greater(share, 0.10f,
+            $"das Auswahlfenster fuellt nur {share * 100:0.0}% des Bildes - es zeichnet praktisch nichts");
+        Assert.Greater(lit / (float)Mathf.Max(1, drawn), 0.5f,
+            "das Panel wird gezeichnet, ist aber schwarz - dort unten kommt kein Licht an");
     }
 
     [Test]
