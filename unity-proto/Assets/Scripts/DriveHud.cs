@@ -100,7 +100,7 @@ public class DriveHud : MonoBehaviour
         st.normal.textColor = Color.white;
         GUI.Label(new Rect(box.x, box.y, box.width - pad * 0.6f, lh),
                   bay.IsLoaded
-                      ? $"Ladung: {bay.Manifest.Count} Pakete  ·  {bay.FeeCarried:N0} sat"
+                      ? $"Ladung: {bay.Count} Pakete  ·  {bay.FeeCarried:N0} sat"
                       : "Ladung: leer", st);
 
         var st2 = new GUIStyle(st) { fontStyle = FontStyle.Bold };

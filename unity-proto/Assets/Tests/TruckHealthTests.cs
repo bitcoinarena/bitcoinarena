@@ -30,6 +30,12 @@ public class TruckHealthTests
     [UnityTearDown]
     public IEnumerator TearDown()
     {
+        // Never hand the next test a slowed world. The death sequence drops
+        // timeScale, and a test that ends while the truck is burning leaves it
+        // there - the next test then runs at a third speed and quietly does a
+        // third of the driving it thinks it does.
+        Time.timeScale = 1f;
+
         foreach (var go in Object.FindObjectsByType<GameObject>(FindObjectsSortMode.None))
             if (go.transform.parent == null) Object.Destroy(go);
         yield return null;
@@ -42,10 +48,27 @@ public class TruckHealthTests
     /// </summary>
     static void LoadAndRelease()
     {
-        var bay = Object.FindFirstObjectByType<LoadoutPanel>();
-        if (bay == null) return;
-        bay.Auto();
-        bay.Confirm();
+        var panel = Object.FindFirstObjectByType<LoadoutPanel>();
+        if (panel == null) return;
+
+        // Put freight in the yard first. The helper used to lean on whatever
+        // the live mempool happened to return, and with an empty feed AUTO
+        // loads nothing, LOSFAHREN rightly refuses, and every driving test
+        // silently sat at the ramp.
+        var feed = Object.FindFirstObjectByType<MempoolFeed>();
+        if (feed != null && feed.Offers.Count == 0)
+            feed.Offers = new System.Collections.Generic.List<MempoolFeed.Tx>
+            {
+                new MempoolFeed.Tx
+                {
+                    txid = "testfreight0000000000000000000000",
+                    feeSats = 2400, vsize = 300, valueSats = 25_000_000,
+                },
+            };
+
+        panel.Auto();
+        panel.Confirm();
+        Assert.IsFalse(panel.IsOpen, "die Laderampe liess den Truck nicht los");
     }
 
     /// <summary>

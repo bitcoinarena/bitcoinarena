@@ -123,9 +123,23 @@ public class Bootstrap : MonoBehaviour
         var bay = truck.gameObject.AddComponent<CargoBay>();
         bay.crateMaterial = crateMaterial;
 
+        // The yard: the waiting transactions as crates you can actually tap.
+        var yardGo = new GameObject("PackageYard");
+        yardGo.transform.SetParent(transform, false);
+        yardGo.SetActive(false);                 // wire before Awake, as ever
+        var yard = yardGo.AddComponent<PackageYard>();
+        yard.feed = feed;
+        yard.bay = bay;
+        yard.truck = truck.transform;
+        yard.terrain = _terrain;
+        yard.roads = Roads;
+        yard.crateMaterial = crateMaterial;
+        yardGo.SetActive(true);
+
         var loadout = gameObject.AddComponent<LoadoutPanel>();
         loadout.feed = feed;
         loadout.bay = bay;
+        loadout.yard = yard;
         loadout.truck = _truck;
         loadout.health = _truckHealth;
         loadout.market = Market;

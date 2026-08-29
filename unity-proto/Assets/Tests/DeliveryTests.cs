@@ -42,6 +42,12 @@ public class DeliveryTests
     [UnityTearDown]
     public IEnumerator TearDown()
     {
+        // Never hand the next test a slowed world. The death sequence drops
+        // timeScale, and a test that ends while the truck is burning leaves it
+        // there - the next test then runs at a third speed and quietly does a
+        // third of the driving it thinks it does.
+        Time.timeScale = 1f;
+
         foreach (var go in Object.FindObjectsByType<GameObject>(FindObjectsSortMode.None))
             if (go.transform.parent == null) Object.Destroy(go);
         yield return null;

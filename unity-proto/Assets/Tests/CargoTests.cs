@@ -51,6 +51,12 @@ public class CargoTests
     [UnityTearDown]
     public IEnumerator TearDown()
     {
+        // Never hand the next test a slowed world. The death sequence drops
+        // timeScale, and a test that ends while the truck is burning leaves it
+        // there - the next test then runs at a third speed and quietly does a
+        // third of the driving it thinks it does.
+        Time.timeScale = 1f;
+
         foreach (var go in Object.FindObjectsByType<GameObject>(FindObjectsSortMode.None))
             if (go.transform.parent == null) Object.Destroy(go);
         yield return null;
@@ -83,15 +89,71 @@ public class CargoTests
     public void AutoTakesTheBestPayingLoadThatFits()
     {
         _bayUi.Auto();
+
+        Assert.Greater(_bay.Count, 0, "Auto laedt nichts");
+        Assert.Greater(_bay.Fill, 0.6f, $"Auto laesst die Ladeflaeche zu {(1 - _bay.Fill) * 100:0}% leer");
+
+        // Highest fee rate first, so whatever is left behind must pay no more
+        // than the worst thing that got on.
+        float worstAboard = float.MaxValue;
+        foreach (var s in _bay.Slots) worstAboard = Mathf.Min(worstAboard, s.tx.FeeRate);
+        foreach (var tx in _feed.Offers)
+            if (!_bay.Contains(tx.txid))
+                Assert.LessOrEqual(tx.FeeRate, worstAboard + 0.01f,
+                    $"{tx.Short} zahlt {tx.FeeRate:0.0} sat/vB und blieb stehen, " +
+                    $"waehrend {worstAboard:0.0} geladen wurde");
         _bayUi.Confirm();
+    }
 
-        Assert.AreEqual(_bay.capacity, _bay.Manifest.Count,
-            "Auto fuellt die Ladeflaeche nicht aus");
+    [Test]
+    public void PackagesComeInDifferentSizes()
+    {
+        var small = new MempoolFeed.Tx { txid = "s", feeSats = 100, vsize = 180, valueSats = 1 };
+        var big = new MempoolFeed.Tx { txid = "b", feeSats = 100, vsize = 2000, valueSats = 1 };
+        var whale = new MempoolFeed.Tx { txid = "w", feeSats = 100, vsize = 180, valueSats = 3_000_000_000 };
 
-        // sorted by fee rate, so the 0.5 sat/vB straggler is the one left behind
-        foreach (var tx in _bay.Manifest)
-            Assert.Greater(tx.FeeRate, 0.6f,
-                $"Auto hat {tx.Short} mit {tx.FeeRate:0.0} sat/vB geladen, obwohl besseres da war");
+        Assert.Less(CargoBay.CrateSize(small), CargoBay.CrateSize(big),
+            "eine grosse Transaktion ergibt kein groesseres Paket");
+        Assert.Greater(CargoBay.CrateSize(whale), CargoBay.CrateSize(small),
+            "ein Whale faellt nicht auf");
+        Assert.AreNotEqual(CargoBay.CrateColour(whale), CargoBay.CrateColour(small),
+            "ein Whale hat keine eigene Farbe");
+    }
+
+    [Test]
+    public void TheBedFillsUpAndThenRefuses()
+    {
+        // big packages, so the bed runs out before the list does
+        int taken = 0;
+        for (int i = 0; i < 40; i++)
+        {
+            var tx = new MempoolFeed.Tx
+            {
+                txid = "big" + i, feeSats = 1000, vsize = 2000, valueSats = 1_000_000,
+            };
+            if (_bay.TryAdd(tx)) taken++;
+            else
+            {
+                Assert.Greater(taken, 0, "die Ladeflaeche nimmt gar nichts an");
+                Assert.Greater(_bay.Fill, 0.7f,
+                    $"abgelehnt, obwohl erst {_bay.Fill * 100:0}% belegt sind");
+                return;
+            }
+        }
+        Assert.Fail("die Ladeflaeche nimmt unbegrenzt Pakete an");
+    }
+
+    [Test]
+    public void TakingOneOffMakesRoomAgain()
+    {
+        var fat = new MempoolFeed.Tx { txid = "fat", feeSats = 1, vsize = 3000, valueSats = 1 };
+        while (_bay.TryAdd(new MempoolFeed.Tx
+               { txid = System.Guid.NewGuid().ToString("N"), feeSats = 1, vsize = 3000, valueSats = 1 })) { }
+
+        Assert.IsFalse(_bay.Fits(fat), "die Ladeflaeche ist nicht voll");
+        var first = _bay.Slots[0].tx.txid;
+        _bay.Remove(first);
+        Assert.IsTrue(_bay.Fits(fat), "nach dem Abladen ist wieder kein Platz");
     }
 
     [UnityTest]
@@ -126,8 +188,19 @@ public class CargoTests
         foreach (var t in _truck.GetComponentsInChildren<Transform>(true))
             if (t.name == "Package") crates++;
 
-        Assert.AreEqual(_bay.Manifest.Count, crates,
-            "die Ladung ist auf dem Truck nicht zu sehen");
+        Assert.AreEqual(_bay.Count, crates, "die Ladung ist auf dem Truck nicht zu sehen");
+
+        // and it sits ON the bed, not on the roof of the cab: the measured
+        // load floor is y 0.36 in the truck's frame, the cab roof is y 1.56
+        foreach (var t in _truck.GetComponentsInChildren<Transform>(true))
+        {
+            if (t.name != "Package") continue;
+            var local = _truck.transform.InverseTransformPoint(t.position);
+            Assert.Less(local.y, 1.3f,
+                $"das Paket sitzt bei y={local.y:0.00} - das ist auf dem Fuehrerhaus");
+            Assert.Less(local.z, 0.6f,
+                $"das Paket sitzt bei z={local.z:0.00} - das ist vor der Ladeflaeche");
+        }
     }
 
     [UnityTest]
@@ -165,6 +238,46 @@ public class CargoTests
         Assert.IsTrue(_bayUi.IsOpen, "nach dem Respawn geht die Rampe nicht wieder auf");
         Assert.IsFalse(_bay.IsLoaded, "die Ladung ueberlebt die Zerstoerung des Trucks");
         Assert.IsTrue(_truck.controlsLocked, "der Truck ist nach dem Respawn nicht gesperrt");
+    }
+
+    [UnityTest]
+    public IEnumerator TappingACrateLoadsItOntoTheTruck()
+    {
+        var yard = Object.FindFirstObjectByType<PackageYard>();
+        Assert.IsNotNull(yard, "kein Lagerplatz in der Szene");
+        Assert.IsTrue(yard.IsOpen, "der Lagerplatz ist beim Spawn nicht offen");
+
+        int standing = 0;
+        foreach (var t in Object.FindObjectsByType<Transform>(FindObjectsSortMode.None))
+            if (t.name == "YardPackage") standing++;
+        Assert.AreEqual(_feed.Offers.Count, standing,
+            "die wartenden Transaktionen stehen nicht als Pakete im Lager");
+
+        var tx = _feed.Offers[0];
+        Assert.IsTrue(yard.Toggle(tx), "das Paket liess sich nicht aufladen");
+        yield return null;
+
+        Assert.IsTrue(_bay.Contains(tx.txid), "das angetippte Paket ist nicht auf dem Truck");
+        Assert.AreEqual(1, _bay.Count);
+
+        // and tapping it again puts it back
+        Assert.IsTrue(yard.Toggle(tx), "das Paket liess sich nicht abladen");
+        yield return null;
+        Assert.IsFalse(_bay.Contains(tx.txid), "das Paket blieb nach dem Abladen an Bord");
+    }
+
+    [UnityTest]
+    public IEnumerator ACrateOnTheBedIsNotAlsoInTheYard()
+    {
+        var yard = Object.FindFirstObjectByType<PackageYard>();
+        var tx = _feed.Offers[1];
+        yard.Toggle(tx);
+        yield return null;
+
+        foreach (var t in Object.FindObjectsByType<Transform>(FindObjectsSortMode.None))
+            if (t.name == "YardPackage" && t.gameObject.activeSelf)
+                Assert.That(Mathf.Abs(t.localScale.y - CargoBay.CrateSize(tx)), Is.GreaterThan(0.001f),
+                    "das geladene Paket steht immer noch im Lager");
     }
 
     [Test]
