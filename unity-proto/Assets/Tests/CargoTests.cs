@@ -280,6 +280,34 @@ public class CargoTests
                     "das geladene Paket steht immer noch im Lager");
     }
 
+    /// <summary>
+    /// Built, lit and active is not the same as visible. The first yard was
+    /// laid out behind the truck in world axes, so every crate sat behind the
+    /// chase camera and the yard looked empty - reported as "no packages are
+    /// shown". This checks they are actually in shot.
+    /// </summary>
+    [UnityTest]
+    public IEnumerator TheYardIsInTheCameraView()
+    {
+        yield return null;
+        var chase = Object.FindFirstObjectByType<ChaseCamera>();
+        var cam = chase != null ? chase.GetComponent<Camera>() : Camera.main;
+        Assert.IsNotNull(cam, "keine Kamera");
+
+        int total = 0, onScreen = 0;
+        foreach (var t in Object.FindObjectsByType<Transform>(FindObjectsSortMode.None))
+        {
+            if (t.name != "YardPackage" || !t.gameObject.activeSelf) continue;
+            total++;
+            var vp = cam.WorldToViewportPoint(t.position);
+            if (vp.z > 0f && vp.x > 0f && vp.x < 1f && vp.y > 0f && vp.y < 1f) onScreen++;
+        }
+
+        Assert.Greater(total, 0, "es stehen gar keine Pakete im Lager");
+        Assert.GreaterOrEqual(onScreen, total - 1,
+            $"nur {onScreen} von {total} Paketen sind im Bild - der Rest steht ausserhalb der Kamera");
+    }
+
     [Test]
     public void TheApiShapeIsParsed()
     {

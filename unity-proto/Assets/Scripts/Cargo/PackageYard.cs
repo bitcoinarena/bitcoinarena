@@ -21,12 +21,16 @@ public class PackageYard : MonoBehaviour
     public Material crateMaterial;
     public Camera view;
 
-    [Tooltip("Rows of crates laid out beside the truck.")]
+    [Tooltip("Crates per row across the truck's nose.")]
     public int perRow = 5;
-    public float spacing = 2.2f;
+    public float spacing = 2.9f;
 
-    [Tooltip("Offset from the truck, in world space: to its left and behind.")]
-    public Vector3 yardOffset = new Vector3(-6f, 0f, -11f);
+    [Tooltip("How far in front of the truck the first row stands.")]
+    public float standoff = 9f;
+
+    [Tooltip("Yard crates are drawn larger than they ride, so they can be " +
+             "seen and tapped from the chase camera.")]
+    public float yardScale = 1.9f;
 
     /// <summary>The crate the pointer is over, for the highlight.</summary>
     public MempoolFeed.Tx Hovered { get; private set; }
@@ -64,7 +68,7 @@ public class PackageYard : MonoBehaviour
             var box = go.AddComponent<BoxCollider>();
             box.size = Vector3.one;
 
-            float size = CargoBay.CrateSize(tx);
+            float size = CargoBay.CrateSize(tx) * yardScale;
             go.transform.localScale = Vector3.one * size;
 
             var at = Spot(i, size);
@@ -82,15 +86,25 @@ public class PackageYard : MonoBehaviour
         Hovered = null;
     }
 
+    /// <summary>
+    /// Laid out IN FRONT of the truck, across its nose.
+    ///
+    /// The first version put the yard behind and to one side in world axes.
+    /// The crates were built, lit and active - and every one of them was
+    /// behind the chase camera, so the yard looked empty.
+    /// </summary>
     Vector3 Spot(int i, float size)
     {
-        var origin = truck != null ? truck.position : Vector3.zero;
+        if (truck == null) return Vector3.zero;
+
         int row = i / perRow, col = i % perRow;
-        float x = origin.x + yardOffset.x + row * spacing;
-        float z = origin.z + yardOffset.z + col * spacing;
-        float ground = roads != null ? roads.SurfaceHeight(x, z)
-                     : terrain != null ? terrain.SampleSurface(x, z) : 0f;
-        return new Vector3(x, ground + size * 0.5f, z);
+        float ahead = standoff + row * spacing;
+        float across = (col - (perRow - 1) * 0.5f) * spacing;
+
+        var p = truck.position + truck.forward * ahead + truck.right * across;
+        float ground = roads != null ? roads.SurfaceHeight(p.x, p.z)
+                     : terrain != null ? terrain.SampleSurface(p.x, p.z) : 0f;
+        return new Vector3(p.x, ground + size * 0.5f, p.z);
     }
 
     /// <summary>Pick up or put back. Returns false when there was no room.</summary>
