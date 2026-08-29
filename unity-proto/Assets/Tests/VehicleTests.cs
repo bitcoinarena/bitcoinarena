@@ -36,6 +36,10 @@ public class VehicleTests
         }
 
         yield return new WaitForSeconds(1.5f);        // let the suspension settle
+
+        // AFTER the wait, not before: LoadoutPanel.Start opens the bay, and a
+        // release issued before it has run is undone the moment it does.
+        LoadAndRelease();
         _truck = Object.FindFirstObjectByType<TruckController>();
         _rb = _truck != null ? _truck.GetComponent<Rigidbody>() : null;
     }
@@ -46,6 +50,19 @@ public class VehicleTests
         foreach (var go in Object.FindObjectsByType<GameObject>(FindObjectsSortMode.None))
             if (go.transform.parent == null) Object.Destroy(go);
         yield return null;
+    }
+
+
+    /// <summary>
+    /// Get through the loading bay. The truck is held at the ramp until
+    /// freight is aboard, so anything that drives has to load first.
+    /// </summary>
+    static void LoadAndRelease()
+    {
+        var bay = Object.FindFirstObjectByType<LoadoutPanel>();
+        if (bay == null) return;
+        bay.Auto();
+        bay.Confirm();
     }
 
     [Test]

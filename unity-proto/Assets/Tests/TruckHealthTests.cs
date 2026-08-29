@@ -24,6 +24,7 @@ public class TruckHealthTests
         _truck = Object.FindFirstObjectByType<TruckController>();
         _health = Object.FindFirstObjectByType<TruckHealth>();
         _field = Object.FindFirstObjectByType<Battlefield>();
+        LoadAndRelease();
     }
 
     [UnityTearDown]
@@ -34,15 +35,37 @@ public class TruckHealthTests
         yield return null;
     }
 
+
+    /// <summary>
+    /// Get through the loading bay. The truck is held at the ramp until
+    /// freight is aboard, so anything that drives has to load first.
+    /// </summary>
+    static void LoadAndRelease()
+    {
+        var bay = Object.FindFirstObjectByType<LoadoutPanel>();
+        if (bay == null) return;
+        bay.Auto();
+        bay.Confirm();
+    }
+
     /// <summary>
     /// Get the truck off the apron. It is protected until it has driven clear
     /// of the spawn, so anything testing damage has to leave first.
     /// </summary>
     IEnumerator LeaveSpawn()
     {
-        _truck.transform.position = _truck.spawnPosition + new Vector3(25f, 0f, 0f);
-        yield return null;
-        yield return null;
+        // Move the BODY, not the transform. The truck has a non-kinematic
+        // rigidbody, so a transform write is overwritten at the next physics
+        // step and the truck is dragged back to the spawn - which is why the
+        // protection sometimes never lifted and this failed one run in two.
+        var body = _truck.GetComponent<Rigidbody>();
+        var away = _truck.spawnPosition + new Vector3(25f, 0f, 0f);
+        body.linearVelocity = Vector3.zero;
+        body.angularVelocity = Vector3.zero;
+        body.position = away;
+        _truck.transform.position = away;
+        // the condition, not a frame count: protection is cleared in Update
+        for (int i = 0; i < 30 && _health.IsInvulnerable; i++) yield return null;
         Assert.IsFalse(_health.IsInvulnerable, "der Truck ist abseits des Spawns noch geschuetzt");
     }
 

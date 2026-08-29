@@ -40,6 +40,9 @@ public class Bootstrap : MonoBehaviour
     public Material fireMaterial;
     public Material smokeMaterial;
     public Material debrisMaterial;
+
+    [Tooltip("Crates on the truck bed. Falls back to a cardboard brown.")]
+    public Material crateMaterial;
     public Material dustMaterial;
     public Material fireParticleMaterial;
     public Material smokeParticleMaterial;
@@ -110,6 +113,20 @@ public class Bootstrap : MonoBehaviour
         var wasted = gameObject.AddComponent<WastedSequence>();
         wasted.health = _truckHealth;
         _wasted = wasted;
+
+        // The loading bay. The truck is held here until freight is aboard, and
+        // the bay reopens on every respawn.
+        var feed = gameObject.AddComponent<MempoolFeed>();
+        var bay = truck.gameObject.AddComponent<CargoBay>();
+        bay.crateMaterial = crateMaterial;
+
+        var loadout = gameObject.AddComponent<LoadoutPanel>();
+        loadout.feed = feed;
+        loadout.bay = bay;
+        loadout.truck = _truck;
+        loadout.health = _truckHealth;
+        loadout.market = Market;
+        _cargo = bay;
         BuildCamera(truck);
 
         // the detailed models come in behind the game, not in front of it
@@ -140,6 +157,7 @@ public class Bootstrap : MonoBehaviour
     void EnsureMaterials()
     {
         groundMaterial = Fallback(groundMaterial, new Color(0.34f, 0.31f, 0.27f), 0.92f);
+        crateMaterial = Fallback(crateMaterial, new Color(0.62f, 0.45f, 0.26f), 0.85f);
         bullMaterial = Fallback(bullMaterial, new Color(0.24f, 0.52f, 0.28f), 0.55f);
         bearMaterial = Fallback(bearMaterial, new Color(0.62f, 0.22f, 0.20f), 0.55f);
         // effects are meant to read against sunlit ground, so they are near-white
@@ -336,6 +354,7 @@ public class Bootstrap : MonoBehaviour
     TruckController _truck;
     TruckHealth _truckHealth;
     WastedSequence _wasted;
+    CargoBay _cargo;
 
     /// <summary>Both armies, fed by the same tape that moves the frontline.</summary>
     void BuildArmies()

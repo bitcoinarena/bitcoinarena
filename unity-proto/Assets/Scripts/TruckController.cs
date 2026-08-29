@@ -59,6 +59,12 @@ public class TruckController : MonoBehaviour
     /// rig be tested through the real control path instead of around it.
     /// </summary>
     [System.NonSerialized] public bool useExternalInput;
+
+    /// <summary>
+    /// Set while the player is loading the truck. Driving off before the
+    /// freight is aboard is the one thing the loading bay exists to prevent.
+    /// </summary>
+    [System.NonSerialized] public bool controlsLocked;
     [System.NonSerialized] public float externalThrottle;
     [System.NonSerialized] public float externalSteer;
     [System.NonSerialized] public bool externalHandbrake;
@@ -126,6 +132,16 @@ public class TruckController : MonoBehaviour
         float steerIn = useExternalInput ? externalSteer : DriveInput.Steer;
         bool handbrake = useExternalInput ? externalHandbrake : DriveInput.Handbrake;
         if (!useExternalInput && DriveInput.Reset) Respawn();
+
+        // Held at the loading bay until the freight is aboard. The handbrake
+        // rather than merely no throttle, so it stands still on the slope the
+        // apron happens to be on instead of rolling into the war unmanned.
+        if (controlsLocked)
+        {
+            throttle = 0f;
+            steerIn = 0f;
+            handbrake = true;
+        }
 
         float speed = _rb.linearVelocity.magnitude;
         float forward = Vector3.Dot(_rb.linearVelocity, transform.forward);
