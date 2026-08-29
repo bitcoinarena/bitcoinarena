@@ -43,6 +43,9 @@ public class Bootstrap : MonoBehaviour
 
     [Tooltip("Crates on the truck bed. Falls back to a cardboard brown.")]
     public Material crateMaterial;
+
+    [Tooltip("The delivery gate. Falls back to a high-visibility yellow.")]
+    public Material gateMaterial;
     public Material dustMaterial;
     public Material fireParticleMaterial;
     public Material smokeParticleMaterial;
@@ -127,6 +130,24 @@ public class Bootstrap : MonoBehaviour
         loadout.health = _truckHealth;
         loadout.market = Market;
         _cargo = bay;
+
+        // The far end of the run. Without it the freight has nowhere to go and
+        // the whole loading bay is decoration.
+        var gateGo = new GameObject("DeliveryGate");
+        gateGo.transform.SetParent(transform, false);
+        gateGo.SetActive(false);                 // wire before Awake, as ever
+        var gate = gateGo.AddComponent<DeliveryGate>();
+        gate.courier = truck.transform;
+        gate.bay = bay;
+        gate.truck = _truck;
+        gate.health = _truckHealth;
+        gate.loadout = loadout;
+        gate.terrain = _terrain;
+        gate.fx = Fx;
+        gate.gateX = _terrain.width * 0.44f;
+        gate.postMaterial = gateMaterial;
+        gateGo.SetActive(true);
+        _gate = gate;
         BuildCamera(truck);
 
         // the detailed models come in behind the game, not in front of it
@@ -143,6 +164,8 @@ public class Bootstrap : MonoBehaviour
         hud.streamer = _streamer;
         hud.health = _truckHealth;
         hud.wasted = _wasted;
+        hud.gate = _gate;
+        hud.bay = _cargo;
     }
 
     /// <summary>
@@ -158,6 +181,7 @@ public class Bootstrap : MonoBehaviour
     {
         groundMaterial = Fallback(groundMaterial, new Color(0.34f, 0.31f, 0.27f), 0.92f);
         crateMaterial = Fallback(crateMaterial, new Color(0.62f, 0.45f, 0.26f), 0.85f);
+        gateMaterial = Fallback(gateMaterial, new Color(0.96f, 0.78f, 0.12f), 0.6f);
         bullMaterial = Fallback(bullMaterial, new Color(0.24f, 0.52f, 0.28f), 0.55f);
         bearMaterial = Fallback(bearMaterial, new Color(0.62f, 0.22f, 0.20f), 0.55f);
         // effects are meant to read against sunlit ground, so they are near-white
@@ -355,6 +379,7 @@ public class Bootstrap : MonoBehaviour
     TruckHealth _truckHealth;
     WastedSequence _wasted;
     CargoBay _cargo;
+    DeliveryGate _gate;
 
     /// <summary>Both armies, fed by the same tape that moves the frontline.</summary>
     void BuildArmies()

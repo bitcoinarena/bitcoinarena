@@ -16,6 +16,8 @@ public class DriveHud : MonoBehaviour
     public ModelStreamer streamer;
     public TruckHealth health;
     public WastedSequence wasted;
+    public DeliveryGate gate;
+    public CargoBay bay;
 
     GUIStyle _price, _sub, _small;
     Texture2D _flat;
@@ -76,6 +78,50 @@ public class DriveHud : MonoBehaviour
         style.normal.textColor = colour;
         GUI.Label(r, text, style);
         style.normal.textColor = prev;
+    }
+
+    /// <summary>
+    /// What is aboard and what has been banked, plus the flash on arrival.
+    /// </summary>
+    void DrawManifest(int w, int h)
+    {
+        if (gate == null || bay == null) return;
+
+        float pad = Mathf.Max(8f, h * 0.02f);
+        float lh = SmallFont(w, h) * 1.6f;
+        float width = Mathf.Min(300f, w * 0.30f);
+        var box = new Rect(w - width - pad, pad, width, lh * 2.2f);
+
+        GUI.color = new Color(0f, 0f, 0f, 0.42f);
+        GUI.DrawTexture(box, _flat);
+        GUI.color = Color.white;
+
+        var st = new GUIStyle(_small) { alignment = TextAnchor.MiddleRight };
+        st.normal.textColor = Color.white;
+        GUI.Label(new Rect(box.x, box.y, box.width - pad * 0.6f, lh),
+                  bay.IsLoaded
+                      ? $"Ladung: {bay.Manifest.Count} Pakete  ·  {bay.FeeCarried:N0} sat"
+                      : "Ladung: leer", st);
+
+        var st2 = new GUIStyle(st) { fontStyle = FontStyle.Bold };
+        st2.normal.textColor = Up;
+        GUI.Label(new Rect(box.x, box.y + lh, box.width - pad * 0.6f, lh),
+                  $"Geliefert: {gate.SatsDelivered:N0} sat  ·  {gate.Runs} Fahrten", st2);
+
+        // the flash on arrival
+        if (gate.SinceDelivery < 2.6f)
+        {
+            float k = 1f - gate.SinceDelivery / 2.6f;
+            var big = new GUIStyle(GUI.skin.label)
+            {
+                alignment = TextAnchor.MiddleCenter,
+                fontStyle = FontStyle.Bold,
+                fontSize = Mathf.RoundToInt(Mathf.Min(w, h) * 0.075f),
+            };
+            big.normal.textColor = new Color(Up.r, Up.g, Up.b, k);
+            GUI.Label(new Rect(0f, h * 0.24f, w, big.fontSize * 1.6f),
+                      $"GELIEFERT  +{gate.LastRun:N0} sat", big);
+        }
     }
 
     /// <summary>
@@ -261,6 +307,7 @@ public class DriveHud : MonoBehaviour
 
         DrawHealth(w, h);
         DrawWasted(w, h);
+        DrawManifest(w, h);
         DrawStreamingPanel(w, h);
 
         if (!showDiagnostics) return;
