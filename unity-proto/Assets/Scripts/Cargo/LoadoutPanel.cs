@@ -215,46 +215,57 @@ public class LoadoutPanel : MonoBehaviour
 
         var panel = yard.PanelRect(w, h);
         var bar = yard.TitleRect(w, h);
-        var gold = new Color(1f, 0.86f, 0.35f);
 
-        // title bar, filled so it reads as chrome rather than as more panel
-        GUI.color = new Color(0.10f, 0.09f, 0.06f, 0.95f);
-        GUI.DrawTexture(bar, _flat);
-        GUI.color = new Color(gold.r, gold.g, gold.b, 0.9f);
-        GUI.DrawTexture(new Rect(bar.x, bar.yMax - 2f, bar.width, 2f), _flat);
-        GUI.color = Color.white;
+        // Outside in: glow, then the frame, then the bar, then the marks.
+        PanelSkin.Glow(panel, PanelSkin.Gold);
+        PanelSkin.Border(panel, new Color(PanelSkin.Gold.r, PanelSkin.Gold.g, PanelSkin.Gold.b, 0.85f));
+        PanelSkin.Scan(panel, PanelSkin.Cyan);
+
+        // hazard tape down both flanks: this is a loading ramp
+        float tape = Mathf.Clamp(panel.width * 0.010f, 8f, 16f);
+        PanelSkin.Hazard(new Rect(panel.x + 2f, bar.yMax, tape, panel.yMax - bar.yMax - 2f),
+                         PanelSkin.Gold);
+        PanelSkin.Hazard(new Rect(panel.xMax - tape - 2f, bar.yMax, tape, panel.yMax - bar.yMax - 2f),
+                         PanelSkin.Gold);
+
+        // the title bar, lifting towards its own top edge
+        PanelSkin.Gradient(bar, new Color(0.16f, 0.14f, 0.08f, 0.98f),
+                                new Color(0.07f, 0.065f, 0.05f, 0.98f));
+        PanelSkin.Rule(new Rect(bar.x, bar.yMax - 3f, bar.width, 3f), PanelSkin.Gold);
 
         var title = new GUIStyle(GUI.skin.label)
         {
             alignment = TextAnchor.MiddleCenter,
             fontStyle = FontStyle.Bold,
-            fontSize = Mathf.RoundToInt(Mathf.Clamp(bar.height * 0.52f, 16f, 40f)),
+            fontSize = Mathf.RoundToInt(Mathf.Clamp(bar.height * 0.50f, 16f, 40f)),
         };
-        title.normal.textColor = gold;
+        // a shadow, then the face: IMGUI has no text shadow of its own
+        title.normal.textColor = new Color(0f, 0f, 0f, 0.6f);
+        GUI.Label(new Rect(bar.x + 2f, bar.y + 3f, bar.width, bar.height), "CHOOSE YOUR MEMPOOL CARGO", title);
+        title.normal.textColor = PanelSkin.Gold;
         GUI.Label(bar, "CHOOSE YOUR MEMPOOL CARGO", title);
+
+        var tag = new GUIStyle(_small) { alignment = TextAnchor.MiddleLeft, fontStyle = FontStyle.Bold };
+        float tagW = Mathf.Min(150f, panel.width * 0.16f);
+        PanelSkin.Tag(new Rect(bar.x + 14f, bar.y + bar.height * 0.28f, tagW, bar.height * 0.44f),
+                      feed != null && feed.Fresh ? "● LIVE MEMPOOL" : "○ CONNECTING",
+                      feed != null && feed.Fresh ? PanelSkin.Cyan : new Color(1f, 1f, 1f, 0.5f), tag);
+
+        var count = new GUIStyle(_small) { alignment = TextAnchor.MiddleRight };
+        count.normal.textColor = new Color(1f, 1f, 1f, 0.55f);
+        GUI.Label(new Rect(bar.x, bar.y, bar.width - 16f, bar.height),
+                  yard.Captions().Count + " on the ramp", count);
 
         var hint = new GUIStyle(GUI.skin.label)
         {
             alignment = TextAnchor.LowerCenter,
-            fontSize = Mathf.RoundToInt(Mathf.Clamp(bar.height * 0.30f, 11f, 20f)),
+            fontSize = Mathf.RoundToInt(Mathf.Clamp(bar.height * 0.28f, 11f, 19f)),
         };
-        hint.normal.textColor = new Color(1f, 1f, 1f, 0.65f);
-        GUI.Label(new Rect(panel.x, bar.yMax + 2f, panel.width, hint.fontSize * 1.6f),
-                  "Tap to load  ·  tap again to unload", hint);
+        hint.normal.textColor = new Color(1f, 1f, 1f, 0.6f);
+        GUI.Label(new Rect(panel.x, bar.yMax + 3f, panel.width, hint.fontSize * 1.7f),
+                  "Tap to load  ·  tap again to unload  ·  hover for details", hint);
 
-        // corner ticks, so the border reads as a frame and not as a box
-        Frame(panel, new Color(gold.r, gold.g, gold.b, 0.75f), 2f);
-        float tick = Mathf.Min(panel.width, panel.height) * 0.06f;
-        GUI.color = gold;
-        foreach (var c in new[]
-        {
-            new Rect(panel.x, panel.y, tick, 4f), new Rect(panel.x, panel.y, 4f, tick),
-            new Rect(panel.xMax - tick, panel.y, tick, 4f), new Rect(panel.xMax - 4f, panel.y, 4f, tick),
-            new Rect(panel.x, panel.yMax - 4f, tick, 4f), new Rect(panel.x, panel.yMax - tick, 4f, tick),
-            new Rect(panel.xMax - tick, panel.yMax - 4f, tick, 4f),
-            new Rect(panel.xMax - 4f, panel.yMax - tick, 4f, tick),
-        }) GUI.DrawTexture(c, _flat);
-        GUI.color = Color.white;
+        PanelSkin.Corners(panel, PanelSkin.Gold);
     }
 
     /// <summary>

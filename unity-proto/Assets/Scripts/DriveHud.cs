@@ -12,7 +12,10 @@ public class DriveHud : MonoBehaviour
     public TruckController truck;
     public MarketFeed market;
     public Battlefield field;
-    public bool showDiagnostics = true;
+    [Tooltip("Developer readout, top left. OFF by default: it sits exactly " +
+             "where the block clock goes and is drawn after it, so it was " +
+             "hiding it. F1 toggles it.")]
+    public bool showDiagnostics = false;
     public ModelStreamer streamer;
     public TruckHealth health;
     public WastedSequence wasted;
@@ -162,13 +165,23 @@ public class DriveHud : MonoBehaviour
         var head = new GUIStyle(_small) { fontStyle = FontStyle.Bold, alignment = TextAnchor.UpperLeft };
         var line = new GUIStyle(_small) { alignment = TextAnchor.UpperLeft };
 
-        float y = pad;
-        Shadowed(new Rect(pad, y, bw, lh), $"BLOCK #{block.Height}", head,
+        // Height depends on whether there is a board yet, so it is measured
+        // before anything is drawn.
+        int rows = Mathf.Min(5, block.Board.Count);
+        float boxH = lh * (3.2f + (rows > 0 ? 1.2f + rows * 0.95f : 0f));
+        var box = new Rect(pad, pad, bw + pad, boxH);
+
+        PanelSkin.Body(box, 0.72f);
+        PanelSkin.Border(box, new Color(1f, 0.86f, 0.35f, 0.55f));
+        PanelSkin.Corners(box, new Color(1f, 0.86f, 0.35f, 0.8f), 2f);
+
+        float y = pad + lh * 0.15f;
+        Shadowed(new Rect(pad * 1.5f, y, bw, lh), $"BLOCK #{block.Height}", head,
                  new Color(1f, 0.86f, 0.35f));
         y += lh;
 
         // the clock, running out
-        var track = new Rect(pad, y, bw, lh * 0.42f);
+        var track = new Rect(pad * 1.5f, y, bw, lh * 0.42f);
         GUI.color = new Color(1f, 1f, 1f, 0.16f);
         GUI.DrawTexture(track, _flat);
         GUI.color = block.Fraction < 0.2f
@@ -180,22 +193,22 @@ public class DriveHud : MonoBehaviour
         y += lh * 0.62f;
 
         int secs = Mathf.CeilToInt(block.Remaining);
-        Shadowed(new Rect(pad, y, bw, lh), $"{secs / 60}:{secs % 60:00} left", line,
+        Shadowed(new Rect(pad * 1.5f, y, bw, lh), $"{secs / 60}:{secs % 60:00} left", line,
                  new Color(1f, 1f, 1f, 0.85f));
         y += lh;
-        Shadowed(new Rect(pad, y, bw, lh),
+        Shadowed(new Rect(pad * 1.5f, y, bw, lh),
                  $"in this block: {block.PendingSats:N0} sat  ·  {block.PendingBtc:0.###} BTC",
                  line, Up);
         y += lh * 1.4f;
 
         if (block.Board.Count == 0) return;
 
-        Shadowed(new Rect(pad, y, bw, lh), "BEST BLOCKS", head, new Color(1f, 1f, 1f, 0.8f));
+        Shadowed(new Rect(pad * 1.5f, y, bw, lh), "BEST BLOCKS", head, new Color(1f, 1f, 1f, 0.8f));
         y += lh;
         for (int i = 0; i < block.Board.Count && i < 5; i++)
         {
             var b = block.Board[i];
-            Shadowed(new Rect(pad, y, bw, lh),
+            Shadowed(new Rect(pad * 1.5f, y, bw, lh),
                      $"{i + 1}.  #{b.height}   {b.sats:N0} sat   {b.btc:0.##} BTC",
                      line, i == 0 ? Up : new Color(1f, 1f, 1f, 0.7f));
             y += lh * 0.95f;
@@ -481,6 +494,12 @@ public class DriveHud : MonoBehaviour
             GUI.Label(new Rect(box.x + pad * 0.6f, y, box.width, lh), $"{item.label}  {mark}", style);
             y += lh;
         }
+    }
+
+    void Update()
+    {
+        var kb = UnityEngine.InputSystem.Keyboard.current;
+        if (kb != null && kb.f1Key.wasPressedThisFrame) showDiagnostics = !showDiagnostics;
     }
 
     void OnGUI()

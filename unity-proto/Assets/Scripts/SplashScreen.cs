@@ -71,7 +71,10 @@ public class SplashScreen : MonoBehaviour
             _title = new GUIStyle(GUI.skin.label) { alignment = TextAnchor.MiddleCenter, fontStyle = FontStyle.Bold };
             _sub = new GUIStyle(GUI.skin.label) { alignment = TextAnchor.MiddleCenter };
             _body = new GUIStyle(GUI.skin.label) { alignment = TextAnchor.UpperLeft, wordWrap = true };
-            _btn = new GUIStyle(GUI.skin.button) { fontStyle = FontStyle.Bold };
+            // No skin box: the gradient and border underneath are the button,
+            // and Unity's default grey would sit on top of them.
+            _btn = new GUIStyle(GUI.skin.label)
+                { alignment = TextAnchor.MiddleCenter, fontStyle = FontStyle.Bold };
         }
         _title.fontSize = Mathf.RoundToInt(Mathf.Clamp(min * 0.070f, 30f, 68f));
         _sub.fontSize = Mathf.RoundToInt(Mathf.Clamp(min * 0.028f, 14f, 24f));
@@ -86,60 +89,96 @@ public class SplashScreen : MonoBehaviour
         GUI.depth = -200;                          // in front of everything
 
         int w = Screen.width, h = Screen.height;
-        var gold = new Color(1f, 0.86f, 0.35f);
 
-        // a dark wash, not a solid fill: the battle is worth watching
-        GUI.color = new Color(0.02f, 0.03f, 0.05f, 0.72f);
+        // A wash rather than a curtain: the battle behind this is the best
+        // argument the game has, and it is running whether anyone watches or
+        // not.
+        GUI.color = new Color(0.02f, 0.03f, 0.05f, 0.62f);
         GUI.DrawTexture(new Rect(0, 0, w, h), _flat);
         GUI.color = Color.white;
 
         float pw = Mathf.Min(w * 0.86f, 900f);
-        float ph = Mathf.Min(h * 0.82f, 640f);
+        float ph = Mathf.Min(h * 0.84f, 660f);
         var panel = new Rect((w - pw) * 0.5f, (h - ph) * 0.5f, pw, ph);
+        float bar = Mathf.Clamp(ph * 0.13f, 44f, 96f);
+        var head = new Rect(panel.x, panel.y, panel.width, bar);
 
-        GUI.color = new Color(0.05f, 0.05f, 0.07f, 0.92f);
-        GUI.DrawTexture(panel, _flat);
-        GUI.color = new Color(gold.r, gold.g, gold.b, 0.8f);
-        foreach (var edge in new[]
-        {
-            new Rect(panel.x, panel.y, panel.width, 3f),
-            new Rect(panel.x, panel.yMax - 3f, panel.width, 3f),
-            new Rect(panel.x, panel.y, 3f, panel.height),
-            new Rect(panel.xMax - 3f, panel.y, 3f, panel.height),
-        }) GUI.DrawTexture(edge, _flat);
-        GUI.color = Color.white;
+        PanelSkin.Glow(panel, PanelSkin.Gold, 6, 0.34f);
+        PanelSkin.Body(panel);
+        PanelSkin.Border(panel, new Color(PanelSkin.Gold.r, PanelSkin.Gold.g, PanelSkin.Gold.b, 0.85f));
+        PanelSkin.Scan(panel, PanelSkin.Cyan, 5.5f);
 
-        float pad = pw * 0.06f;
-        float y = panel.y + pad * 0.7f;
+        float tape = Mathf.Clamp(pw * 0.011f, 9f, 17f);
+        PanelSkin.Hazard(new Rect(panel.x + 2f, head.yMax, tape, panel.yMax - head.yMax - 2f),
+                         PanelSkin.Gold);
+        PanelSkin.Hazard(new Rect(panel.xMax - tape - 2f, head.yMax, tape, panel.yMax - head.yMax - 2f),
+                         PanelSkin.Gold);
 
-        _title.normal.textColor = gold;
-        GUI.Label(new Rect(panel.x, y, panel.width, _title.fontSize * 1.3f),
-                  "BTC LOGISTICS WAR", _title);
-        y += _title.fontSize * 1.35f;
+        PanelSkin.Gradient(head, new Color(0.17f, 0.14f, 0.07f, 0.98f),
+                                 new Color(0.07f, 0.065f, 0.05f, 0.98f));
+        PanelSkin.Rule(new Rect(head.x, head.yMax - 3f, head.width, 3f), PanelSkin.Gold);
 
-        _sub.normal.textColor = new Color(1f, 1f, 1f, 0.75f);
+        _title.normal.textColor = new Color(0f, 0f, 0f, 0.6f);
+        GUI.Label(new Rect(head.x + 3f, head.y + 4f, head.width, head.height), "BTC LOGISTICS WAR", _title);
+        _title.normal.textColor = PanelSkin.Gold;
+        GUI.Label(head, "BTC LOGISTICS WAR", _title);
+
+        float pad = pw * 0.07f;
+        float y = head.yMax + ph * 0.035f;
+
+        _sub.normal.textColor = PanelSkin.Cyan;
         GUI.Label(new Rect(panel.x, y, panel.width, _sub.fontSize * 1.6f),
-                  "Run mempool freight across a live battlefield", _sub);
-        y += _sub.fontSize * 2.4f;
+                  "RUN MEMPOOL FREIGHT ACROSS A LIVE BATTLEFIELD", _sub);
+        y += _sub.fontSize * 2.1f;
 
-        _body.normal.textColor = new Color(1f, 1f, 1f, 0.92f);
-        GUI.Label(new Rect(panel.x + pad, y, panel.width - pad * 2f, ph * 0.42f),
-            "The ground you drive on is the Bitcoin mempool: the hills are the fee " +
-            "histogram, the freight is real unconfirmed transactions.\n\n" +
-            "1.  LOAD  —  pick parcels at the ramp. The fee is your payout. The " +
-            "more you carry, the harder both armies hunt you.\n\n" +
-            "2.  DRIVE  —  W A S D or the on-screen pads. Soldiers go under the " +
-            "wheels; a tank does not. Watch your condition.\n\n" +
-            "3.  DELIVER  —  reach the gate at the far end before the block closes. " +
-            "Whatever arrives in time is confirmed and scored.\n\n" +
-            "A block is a round. Playing it safe costs you the block.", _body);
+        // three numbered steps, each with its own accent rule
+        string[] heads = { "1 · LOAD", "2 · DRIVE", "3 · DELIVER" };
+        string[] bodies =
+        {
+            "Pick parcels at the ramp. The fee is your payout — and the more you " +
+            "carry, the harder both armies hunt you.",
+            "W A S D or the on-screen pads. Soldiers go under the wheels; a tank " +
+            "does not. Watch your condition.",
+            "Reach the gate at the far end before the block closes. Whatever " +
+            "arrives in time is confirmed and scored.",
+        };
 
-        float bw = pw * 0.42f, bh = _btn.fontSize * 2.1f;
-        var play = new Rect(panel.x + (pw - bw) * 0.5f, panel.yMax - pad - bh, bw, bh);
-        if (GUI.Button(play, "▶  PLAY", _btn)) Play();
+        var stepHead = new GUIStyle(_body) { fontStyle = FontStyle.Bold };
+        for (int i = 0; i < 3; i++)
+        {
+            stepHead.normal.textColor = PanelSkin.Gold;
+            GUI.Label(new Rect(panel.x + pad, y, panel.width - pad * 2f, _body.fontSize * 1.5f),
+                      heads[i], stepHead);
+            PanelSkin.Rule(new Rect(panel.x + pad, y + _body.fontSize * 1.45f, pw * 0.09f, 2f),
+                           PanelSkin.Gold);
+            y += _body.fontSize * 1.9f;
 
-        _sub.normal.textColor = new Color(1f, 1f, 1f, 0.45f);
-        GUI.Label(new Rect(panel.x, play.y - _sub.fontSize * 1.8f, panel.width, _sub.fontSize * 1.6f),
+            _body.normal.textColor = new Color(1f, 1f, 1f, 0.88f);
+            GUI.Label(new Rect(panel.x + pad, y, panel.width - pad * 2f, _body.fontSize * 3.2f),
+                      bodies[i], _body);
+            y += _body.fontSize * 2.9f;
+        }
+
+        _sub.normal.textColor = new Color(1f, 1f, 1f, 0.6f);
+        GUI.Label(new Rect(panel.x, y, panel.width, _sub.fontSize * 1.6f),
+                  "A block is a round. Playing it safe costs you the block.", _sub);
+
+        float bw = pw * 0.44f, bh = _btn.fontSize * 2.2f;
+        var play = new Rect(panel.x + (pw - bw) * 0.5f, panel.yMax - pad * 0.75f - bh, bw, bh);
+
+        // the button breathes, so the eye finds it
+        float pulse = 0.5f + 0.5f * Mathf.Sin(Time.unscaledTime * 2.4f);
+        PanelSkin.Glow(play, PanelSkin.Gold, 4, 0.18f + 0.22f * pulse);
+        PanelSkin.Gradient(play, new Color(0.30f, 0.24f, 0.06f, 0.95f),
+                                 new Color(0.16f, 0.13f, 0.04f, 0.95f));
+        PanelSkin.Border(play, PanelSkin.Gold);
+        _btn.normal.textColor = PanelSkin.Gold;
+        if (GUI.Button(play, "▶   PLAY", _btn)) Play();
+
+        _sub.normal.textColor = new Color(1f, 1f, 1f, 0.42f);
+        GUI.Label(new Rect(panel.x, play.y - _sub.fontSize * 1.7f, panel.width, _sub.fontSize * 1.5f),
                   "sound starts when you press play", _sub);
+
+        PanelSkin.Corners(panel, PanelSkin.Gold, 4f);
     }
 }

@@ -640,6 +640,25 @@ public class CargoTests
         Assert.Greater(_bay.HeatOf(fat), 0.8f, "das Paket kennt seinen Risikobeitrag nicht");
     }
 
+    /// <summary>
+    /// The chrome is drawn from one white pixel, every frame, for both
+    /// windows. It has no assets to lose and no shader to strip, but it CAN
+    /// throw - GUI.BeginGroup and a rotated matrix have to be unwound exactly
+    /// - and an exception inside OnGUI takes the whole window with it.
+    /// </summary>
+    [UnityTest]
+    public IEnumerator TheWindowChromeDrawsWithoutThrowing()
+    {
+        var panel = Object.FindFirstObjectByType<LoadoutPanel>();
+        Assert.IsTrue(panel.IsOpen, "die Rampe ist zu");
+
+        // several frames, because the hazard tape and the scan line move
+        for (int i = 0; i < 20; i++) yield return null;
+
+        LogAssert.NoUnexpectedReceived();
+        Assert.IsTrue(panel.IsOpen, "das Fenster hat sich beim Zeichnen geschlossen");
+    }
+
     [UnityTest]
     public IEnumerator NoCrateReachesIntoTheTitleBar()
     {

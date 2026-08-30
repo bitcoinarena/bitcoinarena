@@ -192,6 +192,24 @@ public class FeatureTests
             "die Bestenliste sortiert die Bloecke nicht nach Ertrag");
     }
 
+    /// <summary>
+    /// Reported: the block, its clock and the board were nowhere to be seen.
+    /// They were drawn top left and the developer readout is drawn top left
+    /// too - later in OnGUI, so it landed on top of them.
+    /// </summary>
+    [Test]
+    public void TheBlockReadoutIsWiredAndNotBuriedUnderTheDiagnostics()
+    {
+        var hud = Object.FindFirstObjectByType<DriveHud>();
+        var clock = Object.FindFirstObjectByType<BlockClock>();
+
+        Assert.IsNotNull(clock, "keine Blockuhr");
+        Assert.AreSame(clock, hud.block, "das HUD kennt die Blockuhr nicht");
+        Assert.IsFalse(hud.showDiagnostics,
+            "das Diagnosefeld ist an und verdeckt Block, Uhr und Bestenliste");
+        Assert.IsNotNull(clock.gate, "die Blockuhr haengt nicht am Lieferziel");
+    }
+
     [Test]
     public void TheTitleScreenHoldsEverythingUntilPlay()
     {

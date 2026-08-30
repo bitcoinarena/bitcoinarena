@@ -47,7 +47,7 @@ public class PackageYard : MonoBehaviour
     public float panelTop = 0.10f;
     // Just above the middle. Three rows with captions need the height, but the
     // truck bed underneath has to stay in view - that is what the panel is for.
-    public float panelBottom = 0.53f;
+    public float panelBottom = 0.51f;
     public float panelInset = 0.03f;
 
     [Tooltip("Height of the title bar, as a fraction of the panel.")]
