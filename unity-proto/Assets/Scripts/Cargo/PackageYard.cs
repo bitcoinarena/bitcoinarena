@@ -218,7 +218,10 @@ public class PackageYard : MonoBehaviour
             spin = Mathf.Lerp(78f, 20f, t) * (Hash01(tx.txid + "s") < 0.5f ? -1f : 1f),
             axis = new Vector3(Hash01(tx.txid + "x") - 0.5f, 1f,
                                Hash01(tx.txid + "z") - 0.5f).normalized,
-            bob = Mathf.Lerp(0.13f, 0.05f, t),
+            // Small. A crate that rides up far enough to cross the title bar
+            // reads as the panel being broken, and a turning box already
+            // reaches past its own height at the corners.
+            bob = Mathf.Lerp(0.05f, 0.02f, t),
             phase = Hash01(tx.txid + "p") * 6.283f,
         };
     }

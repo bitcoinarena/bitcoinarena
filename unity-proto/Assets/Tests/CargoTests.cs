@@ -609,6 +609,77 @@ public class CargoTests
         Assert.Greater(parts, 0, "die Pakete haben keine sichtbaren Teile");
     }
 
+    /// <summary>
+    /// No crate may reach up into the title bar.
+    ///
+    /// Sampled over a second of real time, because the crates turn and bob:
+    /// a box is widest across its corners, so the moment it is worst is not
+    /// the moment the panel is laid out.
+    /// </summary>
+    [UnityTest]
+    public IEnumerator NoCrateReachesIntoTheTitleBar()
+    {
+        yield return null;
+        var yard = Object.FindFirstObjectByType<PackageYard>();
+        var cam = yard.View;
+        var title = yard.TitleRect(Screen.width, Screen.height);
+
+        float highest = float.MaxValue;      // smallest GUI y seen
+        string worst = "";
+
+        for (int frame = 0; frame < 40; frame++)
+        {
+            foreach (var t in Object.FindObjectsByType<Transform>(FindObjectsSortMode.None))
+            {
+                if (t.name != "YardPackage" || !t.gameObject.activeSelf) continue;
+                var rs = t.GetComponentsInChildren<Renderer>(true);
+                if (rs.Length == 0) continue;
+
+                var b = rs[0].bounds;
+                foreach (var r in rs) b.Encapsulate(r.bounds);
+
+                // every corner, since the box is turning
+                for (int c = 0; c < 8; c++)
+                {
+                    var corner = new Vector3(
+                        (c & 1) == 0 ? b.min.x : b.max.x,
+                        (c & 2) == 0 ? b.min.y : b.max.y,
+                        (c & 4) == 0 ? b.min.z : b.max.z);
+                    var vp = cam.WorldToScreenPoint(corner);
+                    if (vp.z <= 0f) continue;
+                    float guiY = Screen.height - vp.y;
+                    if (guiY < highest) { highest = guiY; worst = t.name; }
+                }
+            }
+            yield return null;
+        }
+
+        Assert.Greater(highest, title.yMax,
+            $"eine Kiste ragt bis y={highest:0} hinauf, die Titelleiste endet bei " +
+            $"{title.yMax:0} - die Animation laeuft ueber den Kopf des Fensters");
+    }
+
+    [UnityTest]
+    public IEnumerator TheBedIsPackedWithoutGaps()
+    {
+        _bayUi.Auto();
+        yield return null;
+
+        Assert.Greater(_bay.Count, 2, "zu wenig geladen, um Luecken zu beurteilen");
+
+        // Every crate has to fill the width of its column. Sized to a fraction
+        // of it, a full bed looked like a few boxes rattling around in it.
+        float colW = _bay.bedWidth / _bay.columns;
+        foreach (var slot in _bay.Slots)
+        {
+            var scale = slot.crate.transform.localScale;
+            Assert.Greater(scale.x, colW * 0.9f,
+                $"eine Kiste ist nur {scale.x:0.00} breit, die Spur ist {colW:0.00}");
+            Assert.Greater(scale.z, slot.length * 0.9f,
+                $"eine Kiste ist nur {scale.z:0.00} lang, ihr Platz ist {slot.length:0.00}");
+        }
+    }
+
     [UnityTest]
     public IEnumerator TheValuableOnesAreShownFirst()
     {

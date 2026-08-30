@@ -179,18 +179,31 @@ public class CargoBay : MonoBehaviour
         foreach (var tx in kept) TryAdd(tx);
     }
 
-    /// <summary>Sit every crate in its slot.</summary>
+    /// <summary>
+    /// Sit every crate in its slot, FILLING it.
+    ///
+    /// The crates used to be sized to 82% of the room they claimed, which left
+    /// a gap on every side of every package and made a full bed look like a
+    /// few boxes rattling around in it. A crate now takes the whole width of
+    /// its column and the whole length of its slot; the transaction's size is
+    /// still visible, in how much of the bed it takes and in how tall it
+    /// stands.
+    /// </summary>
     void Reflow()
     {
+        float colW = bedWidth / columns;
         foreach (var s in Slots)
         {
-            float colW = bedWidth / columns;
             float x = bedFloor.x - bedWidth * 0.5f + colW * (s.column + 0.5f);
             float z = bedFloor.z + bedLength * 0.5f - (s.along + s.length * 0.5f);
-            float size = CrateSize(s.tx);
-            s.crate.transform.localPosition = new Vector3(x, bedFloor.y + size * 0.5f, z);
-            s.crate.transform.localScale = new Vector3(
-                Mathf.Min(size, colW * 0.92f), size, Mathf.Min(size, s.length * 0.92f));
+
+            // height follows the package, width and depth follow the slot
+            float tall = Mathf.Clamp(CrateSize(s.tx) * 0.95f, 0.42f, colW * 1.15f);
+
+            s.crate.transform.localPosition = new Vector3(x, bedFloor.y + tall * 0.5f, z);
+            s.crate.transform.localRotation = Quaternion.identity;   // stacked, not strewn
+            s.crate.transform.localScale =
+                new Vector3(colW * 0.97f, tall, s.length * 0.97f);
         }
     }
 
@@ -228,7 +241,10 @@ public class CargoBay : MonoBehaviour
         var wrapper = new GameObject("Package");
         var model = Instantiate(boxPrefab, wrapper.transform);
         model.transform.localPosition = Vector3.zero;
-        model.transform.localRotation = Quaternion.Euler(0f, Random.Range(0f, 360f), 0f);
+        // Square to the wrapper. A random yaw looked lively in the panel and
+        // like a badly loaded truck on the bed, where the boxes are supposed
+        // to be stacked. The panel spins them anyway.
+        model.transform.localRotation = Quaternion.identity;
 
         foreach (var c in model.GetComponentsInChildren<Collider>(true)) DestroyImmediate(c);
 
