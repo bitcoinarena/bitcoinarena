@@ -51,6 +51,22 @@ public class MempoolFeed : MonoBehaviour
 
     public string Status { get; private set; } = "verbinde …";
 
+    /// <summary>
+    /// Freight on the ramp from the first frame.
+    ///
+    /// The loading bay opens the moment the truck spawns, and the mempool
+    /// takes seconds to answer - so the player sat in front of an empty ramp
+    /// for ten seconds with nothing to pick and no way to leave. A stand-in
+    /// yard is built immediately and replaced by the real transactions when
+    /// they land, which the panel only does while nothing has been loaded, so
+    /// the swap can never take a package out from under the player.
+    /// </summary>
+    void Awake()
+    {
+        Offers = Synthetic(keep);
+        Status = "lade Mempool …";
+    }
+
     void Start() => StartCoroutine(Poll());
 
     IEnumerator Poll()
@@ -75,8 +91,8 @@ public class MempoolFeed : MonoBehaviour
                 }
                 else
                 {
-                    Status = req.error;
-                    if (!Fresh) { Offers = Synthetic(keep); Status = "offline"; }
+                    // the stand-in yard is already up; just say so
+                    Status = Fresh ? req.error : "offline";
                 }
             }
             yield return new WaitForSeconds(refreshSeconds);

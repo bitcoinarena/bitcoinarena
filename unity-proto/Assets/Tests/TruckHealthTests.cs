@@ -255,7 +255,12 @@ public class TruckHealthTests
         _truck.useExternalInput = true;
         _truck.externalThrottle = 1f;
 
-        for (float t = 0f; t < 12f && !_health.IsDestroyed; t += 0.25f)
+        // 25 seconds, not 12. The terrain is the live fee histogram, so how
+        // long the run to the armies takes depends on the slope the truck
+        // happens to spawn on - the same live-data variance that made the
+        // handbrake test flap. It reaches the war in about 7 seconds on flat
+        // ground; the budget is generous so a steep start is not a failure.
+        for (float t = 0f; t < 25f && !_health.IsDestroyed; t += 0.25f)
             yield return new WaitForSeconds(0.25f);
 
         _truck.useExternalInput = false;
