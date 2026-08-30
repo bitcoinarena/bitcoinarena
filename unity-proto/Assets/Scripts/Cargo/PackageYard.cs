@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.Rendering.Universal;
 
 /// <summary>
 /// The freight on offer, shown as a panel of floating crates rather than as
@@ -58,6 +59,7 @@ public class PackageYard : MonoBehaviour
     Transform _rig;
     GameObject _backdrop;
     bool _open;
+    bool _stacked;
     string _showing = "";
 
     public bool IsOpen => _open;
@@ -75,13 +77,20 @@ public class PackageYard : MonoBehaviour
         var camGo = new GameObject("YardCamera");
         camGo.transform.SetParent(_rig, false);
         _cam = camGo.AddComponent<Camera>();
-        _cam.clearFlags = CameraClearFlags.Depth;      // the game stays behind it
         _cam.cullingMask = 1 << YardLayer;
         _cam.fieldOfView = fieldOfView;
         _cam.nearClipPlane = 0.1f;
         _cam.farClipPlane = 60f;
-        _cam.depth = 50f;                              // on top of the chase camera
+        _cam.depth = 50f;
         _cam.enabled = false;
+
+        // URP does NOT composite two base cameras the way the built-in
+        // pipeline does. clearFlags = Depth on a second base camera leaves the
+        // colour buffer undefined and the game simply disappears behind the
+        // panel - which is exactly what happened: the panel drew perfectly and
+        // took the whole screen with it.
+        var data = _cam.GetUniversalAdditionalCameraData();
+        data.renderType = CameraRenderType.Overlay;    // clears depth, keeps colour
 
         _backdrop = GameObject.CreatePrimitive(PrimitiveType.Quad);
         _backdrop.name = "YardBackdrop";
@@ -98,9 +107,32 @@ public class PackageYard : MonoBehaviour
             mr.sharedMaterial = new Material(crateMaterial) { color = new Color(0.04f, 0.05f, 0.07f) };
     }
 
+    /// <summary>
+    /// Hang the panel camera off the game camera's stack.
+    ///
+    /// Deferred to Start: Bootstrap builds the chase camera and the yard in
+    /// whatever order it happens to, and an overlay attached to a camera that
+    /// does not exist yet is attached to nothing - silently.
+    /// </summary>
+    void Start() => Attach();
+
+    void Attach()
+    {
+        if (_stacked || _cam == null) return;
+        var chase = FindFirstObjectByType<ChaseCamera>();
+        var baseCam = chase != null ? chase.GetComponent<Camera>() : Camera.main;
+        if (baseCam == null) return;
+
+        var data = baseCam.GetUniversalAdditionalCameraData();
+        if (data == null) return;
+        if (!data.cameraStack.Contains(_cam)) data.cameraStack.Add(_cam);
+        _stacked = true;
+    }
+
     public void Open(IEnumerable<MempoolFeed.Tx> offers)
     {
         Close();
+        Attach();
         _open = true;
         _showing = Signature(offers);
 

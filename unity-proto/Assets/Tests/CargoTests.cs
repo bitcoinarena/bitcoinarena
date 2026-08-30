@@ -379,68 +379,106 @@ public class CargoTests
     }
 
     /// <summary>
-    /// Count the pixels, and count them in halves.
+    /// Render the frame with the panel open and again with it shut, and diff
+    /// the two.
     ///
-    /// Every other check here can pass while the panel draws nothing - the
-    /// crates hang 2000 m under the world, and whether light reaches them
-    /// there is an assumption. And the first panel drew perfectly well and
-    /// covered the truck, which is worse than useless: the load going onto the
-    /// bed is the whole point of picking it.
+    /// This has now been got wrong twice. The first version rendered the panel
+    /// camera alone into its own texture, which says nothing about how the two
+    /// images are combined - and that was exactly where the bug was: URP does
+    /// not composite two base cameras the way the built-in pipeline does, so
+    /// the panel took the whole screen and the truck vanished, while the test
+    /// passed. The second version looked for a near-black backdrop in the
+    /// finished frame, which the tone mapping and exposure lift well clear of
+    /// black.
+    ///
+    /// A difference between two frames needs no threshold on any colour: the
+    /// panel must change the top of the picture and must leave the bottom -
+    /// where the truck is - alone.
     /// </summary>
     [UnityTest]
-    public IEnumerator ThePanelDrawsOnTopAndLeavesTheGameVisible()
+    public IEnumerator ThePanelCoversTheTopAndLeavesTheTruckVisible()
     {
         yield return null;
         var yard = Object.FindFirstObjectByType<PackageYard>();
-        var cam = yard.View;
+        var chase = Object.FindFirstObjectByType<ChaseCamera>();
+        var cam = chase.GetComponent<Camera>();
+        Assert.IsTrue(yard.IsOpen, "die Auswahl ist zu");
 
-        const int W = 320, H = 200;
+        // Let URP render over a normal frame rather than calling
+        // Camera.Render(): the manual call does not run a camera stack, so the
+        // overlay would be left out of the measurement entirely.
+        const int W = 240, H = 150;
         var rt = new RenderTexture(W, H, 24);
-        var shot = new Texture2D(W, H, TextureFormat.RGB24, false);
-        var wasClear = cam.clearFlags;
-        var wasBg = cam.backgroundColor;
-        cam.clearFlags = CameraClearFlags.SolidColor;
-        cam.backgroundColor = Color.magenta;          // nothing in the panel is magenta
         cam.targetTexture = rt;
-        cam.Render();
 
-        RenderTexture.active = rt;
-        shot.ReadPixels(new Rect(0, 0, W, H), 0, 0);
-        shot.Apply();
-        RenderTexture.active = null;
+        yield return null; yield return null;
+        var open = Grab(rt, W, H);
+
+        yard.Close();
+        yield return null; yield return null;
+        var shut = Grab(rt, W, H);
 
         cam.targetTexture = null;
-        cam.clearFlags = wasClear;
-        cam.backgroundColor = wasBg;
-
-        var px = shot.GetPixels();
-        int topDrawn = 0, topLit = 0, bottomDrawn = 0;
-        for (int y = 0; y < H; y++)
-        {
-            for (int x = 0; x < W; x++)
-            {
-                var c = px[y * W + x];
-                bool background = c.r > 0.85f && c.g < 0.2f && c.b > 0.85f;
-                if (background) continue;
-                // ReadPixels counts up from the bottom
-                if (y >= H / 2) { topDrawn++; if (c.r + c.g + c.b > 0.25f) topLit++; }
-                else bottomDrawn++;
-            }
-        }
-        Object.Destroy(shot);
         rt.Release();
         Object.Destroy(rt);
 
-        float half = W * H * 0.5f;
-        float top = topDrawn / half, bottom = bottomDrawn / half;
+        int topChanged = 0, bottomChanged = 0, bottomLit = 0;
+        for (int y = 0; y < H; y++)
+            for (int x = 0; x < W; x++)
+            {
+                int i = y * W + x;
+                float d = Mathf.Abs(open[i].r - shut[i].r) + Mathf.Abs(open[i].g - shut[i].g)
+                        + Mathf.Abs(open[i].b - shut[i].b);
+                bool changed = d > 0.08f;
+                if (y >= H / 2) { if (changed) topChanged++; }
+                else
+                {
+                    if (changed) bottomChanged++;
+                    if (open[i].r + open[i].g + open[i].b > 0.30f) bottomLit++;
+                }
+            }
 
-        Assert.Greater(top, 0.20f,
-            $"das Auswahlfenster fuellt nur {top * 100:0.0}% der oberen Bildhaelfte");
-        Assert.Greater(topLit / (float)Mathf.Max(1, topDrawn), 0.5f,
-            "das Panel wird gezeichnet, ist aber schwarz - dort unten kommt kein Licht an");
-        Assert.Less(bottom, 0.25f,
-            $"das Panel deckt {bottom * 100:0.0}% der unteren Bildhaelfte ab - " +
+        float half = W * H * 0.5f;
+        Assert.Greater(topChanged / half, 0.25f,
+            $"das Panel veraendert nur {topChanged / half * 100:0.0}% der oberen Bildhaelfte - " +
+            "es wird nicht ueber das Spiel gezeichnet");
+        Assert.Less(bottomChanged / half, 0.12f,
+            $"das Panel veraendert {bottomChanged / half * 100:0.0}% der unteren Bildhaelfte - " +
             "dort steht der Truck, den man beim Beladen sehen muss");
+        Assert.Greater(bottomLit / half, 0.60f,
+            $"die untere Bildhaelfte ist nur zu {bottomLit / half * 100:0.0}% hell - " +
+            "dort muesste das Spiel zu sehen sein");
+    }
+
+    static Color[] Grab(RenderTexture rt, int w, int h)
+    {
+        var tex = new Texture2D(w, h, TextureFormat.RGB24, false);
+        RenderTexture.active = rt;
+        tex.ReadPixels(new Rect(0, 0, w, h), 0, 0);
+        tex.Apply();
+        RenderTexture.active = null;
+        var px = tex.GetPixels();
+        Object.Destroy(tex);
+        return px;
+    }
+
+    [Test]
+    public void ThePanelIsAnOverlayOnTheGameCamera()
+    {
+        var yard = Object.FindFirstObjectByType<PackageYard>();
+        var chase = Object.FindFirstObjectByType<ChaseCamera>();
+        var data = chase.GetComponent<Camera>()
+            .GetComponent<UnityEngine.Rendering.Universal.UniversalAdditionalCameraData>();
+
+        Assert.IsNotNull(data, "die Spielkamera hat keine URP-Daten");
+        Assert.Contains(yard.View, data.cameraStack,
+            "die Panel-Kamera haengt nicht im Stack der Spielkamera - dann " +
+            "ueberschreibt sie das Spielbild, statt darueber zu liegen");
+
+        var yardData = yard.View
+            .GetComponent<UnityEngine.Rendering.Universal.UniversalAdditionalCameraData>();
+        Assert.AreEqual(UnityEngine.Rendering.Universal.CameraRenderType.Overlay,
+            yardData.renderType, "die Panel-Kamera ist keine Overlay-Kamera");
     }
 
     [UnityTest]
