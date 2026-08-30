@@ -31,9 +31,11 @@ public class PackageYard : MonoBehaviour
     [Tooltip("Fewer per row means bigger crates and readable captions.")]
     public int perRow = 5;
 
-    [Tooltip("At most this many are offered, biggest mover first. A single " +
-             "row of five is what fits between the headline price and the " +
-             "truck while still being large enough to read the numbers under.")]
+    [Tooltip("How many stand on the ramp at once, biggest mover first. A " +
+             "single row of five is what fits between the headline price and " +
+             "the truck while still being large enough to read the numbers " +
+             "under. The rest wait their turn and come forward as freight is " +
+             "taken, so the ramp never runs dry with the bed half empty.")]
     public int show = 5;
 
     public float fieldOfView = 42f;
@@ -62,6 +64,9 @@ public class PackageYard : MonoBehaviour
     }
 
     readonly List<Yarded> _yard = new List<Yarded>();
+
+    /// <summary>Waiting their turn. Highest value first.</summary>
+    readonly List<MempoolFeed.Tx> _reserve = new List<MempoolFeed.Tx>();
     Camera _cam;
     Transform _rig;
     GameObject _backdrop;
@@ -143,62 +148,68 @@ public class PackageYard : MonoBehaviour
         _open = true;
         _showing = Signature(offers);
 
-        // Biggest mover first, and only the top few. The mempool is mostly
-        // dust - a screen of 0.000 BTC crates is a screen of nothing to choose
-        // between, and the one worth carrying was lost among them.
+        // Biggest mover first. The mempool is mostly dust - a screen of 0.000
+        // BTC crates is a screen of nothing to choose between, and the one
+        // worth carrying was lost among them - so only the best few stand on
+        // the ramp and the rest wait behind them.
         var sorted = new List<MempoolFeed.Tx>(offers);
         sorted.Sort((a, b) => b.valueSats.CompareTo(a.valueSats));
-        if (sorted.Count > show) sorted.RemoveRange(show, sorted.Count - show);
 
-        int i = 0;
-        foreach (var tx in sorted)
+        _reserve.Clear();
+        if (sorted.Count > show)
         {
-            var go = bay.MakeCrate(tx);
-            go.name = "YardPackage";
-            go.transform.SetParent(_rig, false);
-            go.layer = YardLayer;
-
-            // A collider here, unlike on the bed: these are what the pointer
-            // hits - and it is deliberately larger than the crate it wraps.
-            // The crates turn, so their silhouette shrinks and grows as they
-            // spin, and a hit box exactly the size of the mesh means a tap
-            // that looked dead centre can miss.
-            go.AddComponent<BoxCollider>().size = Vector3.one * 1.5f;
-
-            var mr = go.GetComponent<MeshRenderer>();
-            mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-            mr.receiveShadows = false;
-            if (mr.sharedMaterial != null)
-                mr.sharedMaterial.color = PanelColour(tx);
-
-            float size = CargoBay.CrateSize(tx);
-            float t = Mathf.InverseLerp(0.45f, 1.4f, size);
-
-            _yard.Add(new Yarded
-            {
-                tx = tx,
-                crate = go,
-                size = size,
-                // A small package is light and spins quickly; a big one turns
-                // slowly. The motion is the size, told a second way.
-                spin = Mathf.Lerp(78f, 20f, t) * (Hash01(tx.txid + "s") < 0.5f ? -1f : 1f),
-                axis = new Vector3(Hash01(tx.txid + "x") - 0.5f,
-                                   1f,
-                                   Hash01(tx.txid + "z") - 0.5f).normalized,
-                bob = Mathf.Lerp(0.13f, 0.05f, t),
-                phase = Hash01(tx.txid + "p") * 6.283f,
-            });
-            i++;
+            _reserve.AddRange(sorted.GetRange(show, sorted.Count - show));
+            sorted.RemoveRange(show, sorted.Count - show);
         }
+
+        foreach (var tx in sorted) _yard.Add(Build(tx));
         Layout();
         _cam.enabled = true;
         _backdrop.SetActive(true);
+    }
+
+    Yarded Build(MempoolFeed.Tx tx)
+    {
+        var go = bay.MakeCrate(tx);
+        go.name = "YardPackage";
+        go.transform.SetParent(_rig, false);
+        go.layer = YardLayer;
+
+        // A collider here, unlike on the bed: these are what the pointer hits
+        // - and it is deliberately larger than the crate it wraps. The crates
+        // turn, so their silhouette shrinks and grows as they spin, and a hit
+        // box exactly the size of the mesh means a tap that looked dead centre
+        // can miss.
+        go.AddComponent<BoxCollider>().size = Vector3.one * 1.5f;
+
+        var mr = go.GetComponent<MeshRenderer>();
+        mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+        mr.receiveShadows = false;
+        if (mr.sharedMaterial != null) mr.sharedMaterial.color = PanelColour(tx);
+
+        float size = CargoBay.CrateSize(tx);
+        float t = Mathf.InverseLerp(0.45f, 1.4f, size);
+
+        return new Yarded
+        {
+            tx = tx,
+            crate = go,
+            size = size,
+            // A small package is light and spins quickly; a big one turns
+            // slowly. The motion is the size, told a second way.
+            spin = Mathf.Lerp(78f, 20f, t) * (Hash01(tx.txid + "s") < 0.5f ? -1f : 1f),
+            axis = new Vector3(Hash01(tx.txid + "x") - 0.5f, 1f,
+                               Hash01(tx.txid + "z") - 0.5f).normalized,
+            bob = Mathf.Lerp(0.13f, 0.05f, t),
+            phase = Hash01(tx.txid + "p") * 6.283f,
+        };
     }
 
     public void Close()
     {
         foreach (var y in _yard) if (y.crate != null) Destroy(y.crate);
         _yard.Clear();
+        _reserve.Clear();
         _open = false;
         if (_cam != null) _cam.enabled = false;
         if (_backdrop != null) _backdrop.SetActive(false);
@@ -323,7 +334,7 @@ public class PackageYard : MonoBehaviour
         if (bay.Contains(tx.txid))
         {
             bay.Remove(tx.txid);
-            Show(tx, true);
+            Return(tx);
             return true;
         }
         if (!bay.TryAdd(tx))
@@ -331,18 +342,103 @@ public class PackageYard : MonoBehaviour
             RefusedAt = Time.unscaledTime;
             return false;
         }
-        Show(tx, false);          // it is on the bed now, so it leaves the panel
+        Take(tx);
         return true;
     }
 
-    /// <summary>Take a crate out of the panel because it is on the bed now.</summary>
-    public void Hide(MempoolFeed.Tx tx) => Show(tx, false);
+    /// <summary>Take a crate off the ramp because it is on the bed now.</summary>
+    public void Hide(MempoolFeed.Tx tx) => Take(tx);
 
-    void Show(MempoolFeed.Tx tx, bool visible)
+    /// <summary>
+    /// Off the ramp, and the next one forward.
+    ///
+    /// The ramp used to hold exactly what was first offered, so loading all of
+    /// it left an empty panel and a bed two thirds full, with no way to finish
+    /// the job. It is a conveyor now: what is taken is replaced by the best
+    /// thing still waiting.
+    /// </summary>
+    void Take(MempoolFeed.Tx tx)
     {
-        foreach (var y in _yard)
-            if (y.tx.txid == tx.txid && y.crate != null) y.crate.SetActive(visible);
+        for (int i = 0; i < _yard.Count; i++)
+        {
+            if (_yard[i].tx.txid != tx.txid) continue;
+            if (_yard[i].crate != null) Destroy(_yard[i].crate);
+            _yard.RemoveAt(i);
+            break;
+        }
+        Refill();
     }
+
+    /// <summary>Put one back on the ramp, making room if it is full.</summary>
+    void Return(MempoolFeed.Tx tx)
+    {
+        if (_yard.Count >= show)
+        {
+            // the least valuable one on the ramp steps back into the queue
+            int worst = 0;
+            for (int i = 1; i < _yard.Count; i++)
+                if (_yard[i].tx.valueSats < _yard[worst].tx.valueSats) worst = i;
+            _reserve.Insert(0, _yard[worst].tx);
+            if (_yard[worst].crate != null) Destroy(_yard[worst].crate);
+            _yard.RemoveAt(worst);
+        }
+        _yard.Add(Build(tx));
+        Sort();
+        Layout();
+    }
+
+    void Refill()
+    {
+        while (_yard.Count < show && _reserve.Count > 0)
+        {
+            var next = _reserve[0];
+            _reserve.RemoveAt(0);
+            if (bay != null && bay.Contains(next.txid)) continue;
+            _yard.Add(Build(next));
+        }
+        Sort();
+        Layout();
+    }
+
+    /// <summary>
+    /// Keep at least one thing on the ramp that will still go on the bed.
+    ///
+    /// The conveyor only moved when something was taken, so once the bed was
+    /// down to its last stretch and the five on the ramp were all too big,
+    /// nothing came forward and the load stopped two thirds full with a queue
+    /// of small packages behind it that would have fitted.
+    /// </summary>
+    void KeepSomethingThatFits()
+    {
+        if (bay == null || _yard.Count == 0 || _reserve.Count == 0) return;
+
+        foreach (var y in _yard)
+            if (!bay.Contains(y.tx.txid) && bay.Fits(y.tx)) return;   // fine as it is
+
+        // best thing in the queue that does fit
+        int pick = -1;
+        for (int i = 0; i < _reserve.Count; i++)
+            if (bay.Fits(_reserve[i])) { pick = i; break; }
+        if (pick < 0) return;                       // nothing anywhere fits; that is the end
+
+        // the biggest thing on the ramp goes to the back of the queue for it
+        int biggest = 0;
+        for (int i = 1; i < _yard.Count; i++)
+            if (_yard[i].size > _yard[biggest].size) biggest = i;
+
+        var wanted = _reserve[pick];
+        _reserve.RemoveAt(pick);
+        _reserve.Add(_yard[biggest].tx);
+        if (_yard[biggest].crate != null) Destroy(_yard[biggest].crate);
+        _yard.RemoveAt(biggest);
+
+        _yard.Add(Build(wanted));
+        Sort();
+        Layout();
+    }
+
+    /// <summary>Highest value first, so the ramp always reads the same way.</summary>
+    void Sort() => _yard.Sort((a, b) => b.tx.valueSats.CompareTo(a.tx.valueSats));
 
     public List<MempoolFeed.Tx> Remaining()
     {
@@ -373,6 +469,7 @@ public class PackageYard : MonoBehaviour
             if (now != _showing) { Open(feed.Offers); return; }
         }
 
+        KeepSomethingThatFits();
         Spin();
 
         if (Pressed(out var at))

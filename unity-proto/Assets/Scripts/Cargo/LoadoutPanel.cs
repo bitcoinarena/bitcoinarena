@@ -61,9 +61,16 @@ public class LoadoutPanel : MonoBehaviour
         if (truck != null) truck.controlsLocked = false;
     }
 
+    [Tooltip("How full AUTO will load the bed. Deliberately short of full: " +
+             "it is the quick option, not the best one, and topping the load " +
+             "up by hand has to be worth doing.")]
+    public float autoFill = 0.8f;
+
     /// <summary>
-    /// Fill the bed with the best paying freight that fits: highest fee rate
-    /// first, which is what the next block would take.
+    /// A quick, decent load: the best paying freight first, which is what the
+    /// next block would take - but only up to autoFill. Filling the last of
+    /// the bed is left to the player, and choosing what goes in it is the
+    /// interesting part.
     /// </summary>
     public void Auto()
     {
@@ -72,7 +79,11 @@ public class LoadoutPanel : MonoBehaviour
 
         var sorted = new List<MempoolFeed.Tx>(feed.Offers);
         sorted.Sort((a, b) => b.FeeRate.CompareTo(a.FeeRate));
-        foreach (var tx in sorted) bay.TryAdd(tx);
+        foreach (var tx in sorted)
+        {
+            if (bay.Fill >= autoFill) break;
+            bay.TryAdd(tx);
+        }
 
         // the yard has to agree with the bed
         if (yard != null)

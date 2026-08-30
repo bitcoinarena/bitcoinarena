@@ -34,13 +34,23 @@ public class CargoTests
         // a fixed yard, so the test does not depend on what the mempool holds
         _feed.Offers = new List<MempoolFeed.Tx>
         {
+            // Deep enough to FILL the bed, which takes about 6.0 of room and
+            // more than seven packages. Two carry no value at all: the mempool
+            // is full of them and they must not crowd out the movers.
             Tx("aaaa1111aaaa1111aaaa1111aaaa1111",  200,  400,   50_000_000),  // 0.5/vB
-            Tx("bbbb2222bbbb2222bbbb2222bbbb2222", 9000,  300, 3_000_000_000),  // 30/vB, whale
+            Tx("bbbb2222bbbb2222bbbb2222bbbb2222", 9000,  300, 3_000_000_000),  // whale
             Tx("cccc3333cccc3333cccc3333cccc3333", 2000,  200,   10_000_000),  // 10/vB
             Tx("dddd4444dddd4444dddd4444dddd4444", 4500,  150,   20_000_000),  // 30/vB
             Tx("eeee5555eeee5555eeee5555eeee5555",  600,  600,    5_000_000),  // 1/vB
-            Tx("ffff6666ffff6666ffff6666ffff6666", 1800,  120,    7_000_000),  // 15/vB
-            Tx("99997777999977779999777799997777",  900,  450,    9_000_000),  // 2/vB
+            Tx("ffff6666ffff6666ffff6666ffff6666", 1800, 2400,    7_000_000),  // a big one
+            Tx("99997777999977779999777799997777",  900,  450,            0),  // dust
+            Tx("8888aaaa8888aaaa8888aaaa8888aaaa",  120,  200,            0),  // dust
+            Tx("7777bbbb7777bbbb7777bbbb7777bbbb", 3300,  220,   80_000_000),
+            Tx("6666cccc6666cccc6666cccc6666cccc", 1500,  500,   40_000_000),
+            Tx("5555dddd5555dddd5555dddd5555dddd", 2600,  260,   30_000_000),
+            Tx("4444eeee4444eeee4444eeee4444eeee",  700,  700,   15_000_000),
+            Tx("3333ffff3333ffff3333ffff3333ffff", 1100,  180,   12_000_000),
+            Tx("2222aaaa2222aaaa2222aaaa2222aaaa",  800,  240,    9_000_000)
         };
         yield return null;
     }
@@ -419,37 +429,55 @@ public class CargoTests
         yield return null; yield return null;
         var shut = Grab(rt, W, H);
 
+        // A second shut frame, as a baseline. The world does not hold still
+        // between two captures - soldiers walk, turrets traverse, smoke drifts
+        // - so part of any difference is simply the battle carrying on. Without
+        // this the test was reading world motion as panel coverage and failing
+        // at 12.5% when the panel touches the lower half not at all.
+        yield return null; yield return null;
+        var also = Grab(rt, W, H);
+
         cam.targetTexture = null;
         rt.Release();
         Object.Destroy(rt);
 
         int topChanged = 0, bottomChanged = 0, bottomLit = 0;
+        int topNoise = 0, bottomNoise = 0;
         for (int y = 0; y < H; y++)
             for (int x = 0; x < W; x++)
             {
                 int i = y * W + x;
-                float d = Mathf.Abs(open[i].r - shut[i].r) + Mathf.Abs(open[i].g - shut[i].g)
-                        + Mathf.Abs(open[i].b - shut[i].b);
-                bool changed = d > 0.08f;
-                if (y >= H / 2) { if (changed) topChanged++; }
+                bool changed = Differs(open[i], shut[i]);
+                bool noise = Differs(shut[i], also[i]);
+                if (y >= H / 2)
+                {
+                    if (changed) topChanged++;
+                    if (noise) topNoise++;
+                }
                 else
                 {
                     if (changed) bottomChanged++;
+                    if (noise) bottomNoise++;
                     if (open[i].r + open[i].g + open[i].b > 0.30f) bottomLit++;
                 }
             }
 
         float half = W * H * 0.5f;
-        Assert.Greater(topChanged / half, 0.25f,
-            $"das Panel veraendert nur {topChanged / half * 100:0.0}% der oberen Bildhaelfte - " +
-            "es wird nicht ueber das Spiel gezeichnet");
-        Assert.Less(bottomChanged / half, 0.12f,
-            $"das Panel veraendert {bottomChanged / half * 100:0.0}% der unteren Bildhaelfte - " +
-            "dort steht der Truck, den man beim Beladen sehen muss");
+        Assert.Greater((topChanged - topNoise) / half, 0.25f,
+            $"das Panel veraendert nur {(topChanged - topNoise) / half * 100:0.0}% der " +
+            "oberen Bildhaelfte ueber die Eigenbewegung hinaus - es wird nicht " +
+            "ueber das Spiel gezeichnet");
+        Assert.Less((bottomChanged - bottomNoise) / half, 0.08f,
+            $"das Panel veraendert {(bottomChanged - bottomNoise) / half * 100:0.0}% der " +
+            "unteren Bildhaelfte ueber die Eigenbewegung hinaus - dort steht der " +
+            "Truck, den man beim Beladen sehen muss");
         Assert.Greater(bottomLit / half, 0.60f,
             $"die untere Bildhaelfte ist nur zu {bottomLit / half * 100:0.0}% hell - " +
             "dort muesste das Spiel zu sehen sein");
     }
+
+    static bool Differs(Color a, Color b) =>
+        Mathf.Abs(a.r - b.r) + Mathf.Abs(a.g - b.g) + Mathf.Abs(a.b - b.b) > 0.08f;
 
     static Color[] Grab(RenderTexture rt, int w, int h)
     {
@@ -570,6 +598,78 @@ public class CargoTests
         // the dust must not crowd out the movers
         Assert.LessOrEqual(caps.Count, 6, "es werden zu viele Posten angeboten");
         Assert.Greater(caps[0].tx.Btc, 0.0, "ganz vorne steht eine 0-BTC-Transaktion");
+    }
+
+    /// <summary>
+    /// Reported: everything on the ramp was loaded and the bed was still only
+    /// two thirds full, with nothing left to pick. The ramp is a conveyor -
+    /// what is taken is replaced by the best thing still waiting - so it must
+    /// be possible to fill the bed by hand.
+    /// </summary>
+    [UnityTest]
+    public IEnumerator TheRampOffersEnoughToFillTheBed()
+    {
+        yield return null;
+        var yard = Object.FindFirstObjectByType<PackageYard>();
+
+        for (int guard = 0; guard < 40; guard++)
+        {
+            var caps = yard.Captions();
+            if (caps.Count == 0) break;
+
+            bool took = false;
+            foreach (var c in caps)
+                if (_bay.Fits(c.tx) && yard.Toggle(c.tx)) { took = true; break; }
+
+            // Nothing on the ramp fits: give it a frame to bring something
+            // forward that does, and only give up if it cannot.
+            if (!took)
+            {
+                yield return null;
+                bool anyFits = false;
+                foreach (var c in yard.Captions()) if (_bay.Fits(c.tx)) anyFits = true;
+                if (!anyFits) break;
+            }
+            yield return null;
+        }
+
+        // 0.9 rather than 1.0: two columns packed greedily leave a stub too
+        // short for anything on offer, which is honest packing, not a fault.
+        Assert.Greater(_bay.Fill, 0.9f,
+            $"die Ladeflaeche ist nur zu {_bay.Fill * 100:0}% voll, obwohl alles " +
+            "Angebotene geladen wurde - die Rampe bietet zu wenig nach");
+    }
+
+    [UnityTest]
+    public IEnumerator TakingOneOffTheRampBringsTheNextForward()
+    {
+        yield return null;
+        var yard = Object.FindFirstObjectByType<PackageYard>();
+
+        int before = yard.Captions().Count;
+        Assert.AreEqual(yard.show, before, "die Rampe ist nicht voll besetzt");
+
+        var first = yard.Captions()[0].tx;
+        yard.Toggle(first);
+        yield return null;
+
+        var after = yard.Captions();
+        Assert.AreEqual(before, after.Count,
+            "nach dem Aufladen rueckt nichts nach - die Rampe wird leer");
+        foreach (var c in after)
+            Assert.AreNotEqual(first.txid, c.tx.txid,
+                "das geladene Paket steht noch auf der Rampe");
+    }
+
+    [Test]
+    public void AutoLeavesRoomToFillUpByHand()
+    {
+        _bayUi.Auto();
+
+        Assert.Greater(_bay.Fill, 0.4f, "AUTO laedt viel zu wenig");
+        Assert.LessOrEqual(_bay.Fill, _bayUi.autoFill + 0.2f,
+            $"AUTO fuellt die Ladeflaeche zu {_bay.Fill * 100:0}% - dann lohnt " +
+            "das Auffuellen von Hand nicht mehr");
     }
 
     [Test]
