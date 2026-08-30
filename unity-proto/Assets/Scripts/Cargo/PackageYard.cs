@@ -31,22 +31,21 @@ public class PackageYard : MonoBehaviour
     [Tooltip("Fewer per row means bigger crates and readable captions.")]
     public int perRow = 5;
 
-    [Tooltip("How many stand on the ramp at once, biggest mover first. A " +
-             "single row of five is what fits between the headline price and " +
-             "the truck while still being large enough to read the numbers " +
-             "under. The rest wait their turn and come forward as freight is " +
-             "taken, so the ramp never runs dry with the bed half empty.")]
-    public int show = 5;
+    [Tooltip("How many stand on the ramp at once, biggest mover first. Two " +
+             "rows of five: enough choice to fill the bed without waiting for " +
+             "the conveyor, and still large enough to read the numbers under. " +
+             "The rest wait their turn and come forward as freight is taken.")]
+    public int show = 10;
 
     public float fieldOfView = 42f;
 
     [Tooltip("Top of the panel band, as a fraction of the view height above " +
              "centre. Kept clear of the headline price at the top of the " +
              "screen, which it used to run into.")]
-    public float bandTop = 0.33f;
+    public float bandTop = 0.40f;
 
     [Tooltip("Bottom of the panel band. Everything below this is the game.")]
-    public float bandBottom = 0.02f;
+    public float bandBottom = 0.00f;
 
     [Tooltip("Distance from the yard camera to the crates.")]
     public float depth = 7f;
@@ -259,20 +258,28 @@ public class PackageYard : MonoBehaviour
         float ch = (hi - lo) / Mathf.Max(1, rows);
         float cw = w * 0.86f / cols;
 
+        // Sized against the BIGGEST on the ramp, so the differences are the
+        // real ones. Squeezing them into 62-100% of the cell - which is what
+        // this did - makes a 200 vB package and a 2400 vB package look alike
+        // whenever the offers happen to be of similar size, and the whole
+        // point of a crate is that its size is the transaction's size.
+        float biggest = 0f;
+        foreach (var y in _yard) biggest = Mathf.Max(biggest, y.size);
+        float room = Mathf.Min(cw * 0.62f, ch * 0.60f);
+
         for (int i = 0; i < _yard.Count; i++)
         {
             int row = i / cols, col = i % cols;
             int inRow = Mathf.Min(cols, _yard.Count - row * cols);
             float x = (col - (inRow - 1) * 0.5f) * cw;
             // sits in the upper part of its row, leaving room for the caption
-            float y = hi - ch * (row + 0.38f);
+            float y = hi - ch * (row + 0.34f);
             _yard[i].seat = new Vector3(x, y, depth);
             _yard[i].crate.transform.localPosition = _yard[i].seat;
-            // Big enough to read the numbers under. The relative sizes still
-            // hold, the whole set is simply drawn larger.
-            float room = Mathf.Min(cw * 0.62f, ch * 0.52f);
-            float rel = Mathf.InverseLerp(0.45f, 1.65f, _yard[i].size);
-            _yard[i].crate.transform.localScale = Vector3.one * Mathf.Lerp(room * 0.62f, room, rel);
+
+            // a floor, so the smallest is still worth aiming at
+            float rel = biggest > 0f ? _yard[i].size / biggest : 1f;
+            _yard[i].crate.transform.localScale = Vector3.one * room * Mathf.Clamp(rel, 0.42f, 1f);
         }
 
         // The panel behind them. Its BOTTOM edge is pinned to the band, and

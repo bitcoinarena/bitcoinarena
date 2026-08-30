@@ -147,7 +147,7 @@ public class LoadoutPanel : MonoBehaviour
         {
             float wCap = Mathf.Max(180f, Screen.width * 0.19f);
             float y = c.screen.y + c.radius + 4f;
-            var box = new Rect(c.screen.x - wCap * 0.5f, y, wCap, _cap.fontSize * 3.4f);
+            var box = new Rect(c.screen.x - wCap * 0.5f, y, wCap, _cap.fontSize * 3.6f);
 
             // a plate behind the text: crate colours run light and so does the sky
             GUI.color = new Color(0f, 0f, 0f, c.loaded ? 0.62f : 0.45f);
@@ -155,18 +155,21 @@ public class LoadoutPanel : MonoBehaviour
                                      wCap * 0.88f, box.height), _flat);
             GUI.color = Color.white;
 
-            _cap.normal.textColor = c.loaded ? new Color(0.45f, 0.95f, 0.6f) : Color.white;
+            // The fee is what the run pays out, so it leads. Everything else
+            // is how you judge whether it is worth the room it takes.
+            _cap.normal.textColor = c.loaded ? new Color(0.45f, 0.95f, 0.6f)
+                                             : new Color(1f, 0.85f, 0.35f);
             GUI.Label(new Rect(box.x, box.y, box.width, _cap.fontSize * 1.5f),
-                      $"{c.tx.FeeRate:0.0} sat/vB", _cap);
+                      $"+{c.tx.feeSats:N0} sat", _cap);
 
-            _capSub.normal.textColor = new Color(1f, 1f, 1f, 0.82f);
+            _capSub.normal.textColor = new Color(1f, 1f, 1f, 0.85f);
             GUI.Label(new Rect(box.x, box.y + _cap.fontSize * 1.35f, box.width, _capSub.fontSize * 1.5f),
-                      $"{c.tx.vsize} vB   ·   {c.tx.Btc:0.####} BTC", _capSub);
+                      $"{c.tx.FeeRate:0.0} sat/vB   ·   {c.tx.vsize} vB", _capSub);
 
             GUI.Label(new Rect(box.x, box.y + _cap.fontSize * 1.35f + _capSub.fontSize * 1.25f,
                                box.width, _capSub.fontSize * 1.5f),
                       c.loaded ? "GELADEN — antippen zum Abladen"
-                               : (c.tx.Whale ? $"{c.tx.Short}  🐋" : c.tx.Short), _capSub);
+                               : $"{c.tx.Btc:0.####} BTC{(c.tx.Whale ? "  🐋" : "")}", _capSub);
         }
     }
 

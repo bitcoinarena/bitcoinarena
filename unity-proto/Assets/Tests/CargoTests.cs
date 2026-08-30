@@ -590,13 +590,20 @@ public class CargoTests
             best = c.tx.Btc;
         }
 
-        // and that order runs left to right on screen
+        // and that order runs left to right along each row, then down
         for (int i = 1; i < caps.Count; i++)
-            Assert.Greater(caps[i].screen.x, caps[i - 1].screen.x,
-                "die Reihenfolge im Panel entspricht nicht der auf dem Bildschirm");
+        {
+            bool sameRow = i % yard.perRow != 0;
+            if (sameRow)
+                Assert.Greater(caps[i].screen.x, caps[i - 1].screen.x,
+                    "die Reihenfolge in der Reihe entspricht nicht der auf dem Bildschirm");
+            else
+                Assert.Greater(caps[i].screen.y, caps[i - 1].screen.y,
+                    "die zweite Reihe steht nicht unter der ersten");
+        }
 
         // the dust must not crowd out the movers
-        Assert.LessOrEqual(caps.Count, 6, "es werden zu viele Posten angeboten");
+        Assert.LessOrEqual(caps.Count, yard.show, "es werden zu viele Posten angeboten");
         Assert.Greater(caps[0].tx.Btc, 0.0, "ganz vorne steht eine 0-BTC-Transaktion");
     }
 
@@ -670,6 +677,63 @@ public class CargoTests
         Assert.LessOrEqual(_bay.Fill, _bayUi.autoFill + 0.2f,
             $"AUTO fuellt die Ladeflaeche zu {_bay.Fill * 100:0}% - dann lohnt " +
             "das Auffuellen von Hand nicht mehr");
+    }
+
+    /// <summary>
+    /// Reported: the crates in the panel all looked the same size while the
+    /// ones on the bed did not. They were squeezed into 62-100% of their cell,
+    /// which hides the difference whenever the offers are of similar size -
+    /// and the size of a crate is the whole way a transaction's size is shown.
+    /// </summary>
+    [UnityTest]
+    public IEnumerator ThePanelShowsRealSizeDifferences()
+    {
+        yield return null;
+        var yard = Object.FindFirstObjectByType<PackageYard>();
+
+        float small = float.MaxValue, large = 0f;
+        MempoolFeed.Tx smallest = null, largest = null;
+        foreach (var t in Object.FindObjectsByType<Transform>(FindObjectsSortMode.None))
+        {
+            if (t.name != "YardPackage" || !t.gameObject.activeSelf) continue;
+            if (t.localScale.y < small) small = t.localScale.y;
+            if (t.localScale.y > large) large = t.localScale.y;
+        }
+        foreach (var c in yard.Captions())
+        {
+            if (smallest == null || c.tx.vsize < smallest.vsize) smallest = c.tx;
+            if (largest == null || c.tx.vsize > largest.vsize) largest = c.tx;
+        }
+
+        Assert.Greater(largest.vsize, smallest.vsize * 2,
+            "die Testdaten enthalten keine wirklich verschieden grossen Posten");
+        Assert.Greater(large / small, 1.6f,
+            $"die groesste Kiste ist nur {large / small:0.00}-mal so gross wie die " +
+            $"kleinste, obwohl {largest.vsize} vB gegen {smallest.vsize} vB stehen");
+    }
+
+    [UnityTest]
+    public IEnumerator TenPackagesAreOnOffer()
+    {
+        yield return null;
+        var yard = Object.FindFirstObjectByType<PackageYard>();
+        Assert.GreaterOrEqual(yard.show, 10, "es werden weniger als zehn Posten angeboten");
+        Assert.AreEqual(Mathf.Min(_feed.Offers.Count, yard.show), yard.Captions().Count,
+            "die Rampe ist nicht voll besetzt");
+    }
+
+    [Test]
+    public void EveryPackageKnowsWhatItPays()
+    {
+        // the fee is the payout: the gate banks exactly the sum of what is aboard
+        foreach (var tx in _feed.Offers)
+            Assert.Greater(tx.feeSats, 0, $"{tx.Short} hat keine Gebuehr, also keinen Verdienst");
+
+        _bayUi.Auto();
+        long expected = 0;
+        foreach (var slot in _bay.Slots) expected += slot.tx.feeSats;
+        Assert.AreEqual(expected, _bay.FeeCarried,
+            "der angezeigte Verdienst stimmt nicht mit der Ladung ueberein");
     }
 
     [Test]
