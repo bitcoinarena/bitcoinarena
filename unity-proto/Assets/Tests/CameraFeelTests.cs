@@ -89,13 +89,26 @@ public class CameraFeelTests
         _truck.externalThrottle = 1f;
         yield return new WaitForSeconds(5f);
 
+        var body = _truck.GetComponent<Rigidbody>();
+        Assert.Greater(body.linearVelocity.magnitude, 6f,
+            "der Truck faehrt nicht - ohne Fahrt gibt es keine Kurvenlast zu messen");
+
         float straight = _chase.transform.eulerAngles.z;
         _truck.externalSteer = 1f;
-        yield return new WaitForSeconds(1.5f);
-        float cornering = _chase.transform.eulerAngles.z;
+
+        // The WORST lean over the corner, not a single reading at the end. The
+        // lean is eased in and the truck scrubs speed at full lock, so by the
+        // time the window closes it is already coming back - which is how this
+        // read 0.03 degrees while the camera was visibly leaning 6.
+        float lean = 0f;
+        for (float t = 0f; t < 1.5f; t += 0.1f)
+        {
+            yield return new WaitForSeconds(0.1f);
+            lean = Mathf.Max(lean,
+                Mathf.Abs(Mathf.DeltaAngle(straight, _chase.transform.eulerAngles.z)));
+        }
         _truck.useExternalInput = false;
 
-        float lean = Mathf.Abs(Mathf.DeltaAngle(straight, cornering));
         Assert.Greater(lean, 1.2f,
             $"die Kamera legt sich mit {lean:0.0}° kaum in die Kurve");
         Assert.Less(lean, 20f, "die Kamera kippt weg");

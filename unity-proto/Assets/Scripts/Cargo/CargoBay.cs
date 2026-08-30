@@ -26,6 +26,10 @@ public class CargoBay : MonoBehaviour
 
     public Material crateMaterial;
 
+    [Tooltip("Optional cardboard box model. Falls back to a plain cube, which " +
+             "is what every crate was until this was imported.")]
+    public GameObject boxPrefab;
+
     /// <summary>A package on the bed or in the yard.</summary>
     public class Slot
     {
@@ -192,6 +196,11 @@ public class CargoBay : MonoBehaviour
 
     public GameObject MakeCrate(MempoolFeed.Tx tx)
     {
+        return boxPrefab != null ? ModelCrate(tx) : CubeCrate(tx);
+    }
+
+    GameObject CubeCrate(MempoolFeed.Tx tx)
+    {
         var go = GameObject.CreatePrimitive(PrimitiveType.Cube);
         go.name = "Package";
         // no collider on the bed: a crate bolted to the truck must not fight
@@ -201,11 +210,63 @@ public class CargoBay : MonoBehaviour
 
         var mr = go.GetComponent<MeshRenderer>();
         if (crateMaterial != null)
-        {
-            var m = new Material(crateMaterial) { color = CrateColour(tx) };
-            mr.sharedMaterial = m;
-        }
+            mr.sharedMaterial = new Material(crateMaterial) { color = CrateColour(tx) };
         mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.On;
         return go;
+    }
+
+    /// <summary>
+    /// A real cardboard box, wrapped so it behaves exactly like the cube it
+    /// replaces: one unit across and sitting on its own underside, so every
+    /// caller can keep setting localScale and be done.
+    ///
+    /// The colour is kept. It is not decoration - it says what the transaction
+    /// pays - so the model is tinted rather than left in its own brown.
+    /// </summary>
+    GameObject ModelCrate(MempoolFeed.Tx tx)
+    {
+        var wrapper = new GameObject("Package");
+        var model = Instantiate(boxPrefab, wrapper.transform);
+        model.transform.localPosition = Vector3.zero;
+        model.transform.localRotation = Quaternion.Euler(0f, Random.Range(0f, 360f), 0f);
+
+        foreach (var c in model.GetComponentsInChildren<Collider>(true)) DestroyImmediate(c);
+
+        var rs = model.GetComponentsInChildren<Renderer>(true);
+        if (rs.Length == 0) { Destroy(wrapper); return CubeCrate(tx); }
+
+        var bounds = rs[0].bounds;
+        foreach (var r in rs) bounds.Encapsulate(r.bounds);
+
+        // scale so the box is one unit on its widest horizontal axis, then sit
+        // it on the wrapper's origin
+        float widest = Mathf.Max(0.0001f, Mathf.Max(bounds.size.x, bounds.size.z));
+        float k = 1f / widest;
+        model.transform.localScale = Vector3.one * k;
+        model.transform.localPosition = -(bounds.center - model.transform.position) * k
+                                        + Vector3.up * (bounds.size.y * k * 0.5f);
+
+        var tint = CrateColour(tx);
+        foreach (var r in rs)
+        {
+            var mats = new Material[r.sharedMaterials.Length];
+            for (int i = 0; i < mats.Length; i++)
+            {
+                var src = r.sharedMaterials[i];
+                // Built-in shaders draw nothing in a URP build, so anything
+                // imported is rebuilt on URP/Lit - the same trap the soldiers,
+                // the tanks and the helicopter all fell into.
+                var m = new Material(Shader.Find("Universal Render Pipeline/Lit"));
+                if (src != null && src.HasProperty("_MainTex"))
+                    m.SetTexture("_BaseMap", src.GetTexture("_MainTex"));
+                else if (src != null && src.HasProperty("_BaseMap"))
+                    m.SetTexture("_BaseMap", src.GetTexture("_BaseMap"));
+                m.color = tint;
+                mats[i] = m;
+            }
+            r.sharedMaterials = mats;
+            r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.On;
+        }
+        return wrapper;
     }
 }

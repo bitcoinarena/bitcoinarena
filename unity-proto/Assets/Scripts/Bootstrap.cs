@@ -46,6 +46,9 @@ public class Bootstrap : MonoBehaviour
 
     [Tooltip("The delivery gate. Falls back to a high-visibility yellow.")]
     public Material gateMaterial;
+
+    [Tooltip("Cardboard box model for the freight. Falls back to a cube.")]
+    public GameObject boxPrefab;
     public Material dustMaterial;
     public Material fireParticleMaterial;
     public Material smokeParticleMaterial;
@@ -116,7 +119,19 @@ public class Bootstrap : MonoBehaviour
 
         var audio = gameObject.AddComponent<GameAudio>();
         audio.truck = _truck;
+        audio.ear = truck.transform;
         Audio = audio;
+
+        // The war gets a voice. Hung off the same events the effects use, so a
+        // shot that is drawn is a shot that is heard.
+        var army = Field.Army;
+        army.Fired += (from, at) => audio.Cannon(new Vector2(from.x, from.z));
+        army.Shot += (from, at) => audio.Rifle(new Vector2(from.x, from.z));
+        army.Destroyed += u => audio.Destroyed(new Vector2(u.x, u.z));
+        army.Killed += (u, at) => audio.Hit(new Vector2(u.x, u.z));
+        army.Bombed += at => audio.Destroyed(at);
+        army.CourierHit += _ => audio.Hit(new Vector2(truck.transform.position.x,
+                                                      truck.transform.position.z));
         // the chase camera is built further down, so both of these find it
         // themselves in Start rather than being handed a null here
         Field.Army.CourierHit += _truckHealth.Damage;
@@ -130,6 +145,7 @@ public class Bootstrap : MonoBehaviour
         var feed = gameObject.AddComponent<MempoolFeed>();
         var bay = truck.gameObject.AddComponent<CargoBay>();
         bay.crateMaterial = crateMaterial;
+        bay.boxPrefab = boxPrefab;
 
         // The yard: the waiting transactions as crates you can actually tap.
         var yardGo = new GameObject("PackageYard");

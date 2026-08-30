@@ -28,21 +28,21 @@ public class PackageYard : MonoBehaviour
     public Material crateMaterial;
 
     [Header("Panel")]
-    [Tooltip("Fewer per row means bigger crates and readable captions.")]
-    public int perRow = 5;
+    [Tooltip("Crates per row across the panel.")]
+    public int perRow = 7;
 
     [Tooltip("How many stand on the ramp at once, biggest mover first. Two " +
              "rows of five: enough choice to fill the bed without waiting for " +
              "the conveyor, and still large enough to read the numbers under. " +
              "The rest wait their turn and come forward as freight is taken.")]
-    public int show = 10;
+    public int show = 21;
 
     public float fieldOfView = 42f;
 
     [Tooltip("Top of the panel band, as a fraction of the view height above " +
              "centre. Kept clear of the headline price at the top of the " +
              "screen, which it used to run into.")]
-    public float bandTop = 0.40f;
+    public float bandTop = 0.44f;
 
     [Tooltip("Bottom of the panel band. Everything below this is the game.")]
     public float bandBottom = 0.00f;
@@ -162,6 +162,7 @@ public class PackageYard : MonoBehaviour
         }
 
         foreach (var tx in sorted) _yard.Add(Build(tx));
+        Recolour();
         Layout();
         _cam.enabled = true;
         _backdrop.SetActive(true);
@@ -219,12 +220,33 @@ public class PackageYard : MonoBehaviour
     /// the panel look alike. How bright it is still says what it pays, and a
     /// whale keeps its blue whatever that is.
     /// </summary>
-    public static Color PanelColour(MempoolFeed.Tx tx)
+    public static Color PanelColour(MempoolFeed.Tx tx, int index = 0, int total = 1)
     {
         if (tx.Whale) return new Color(0.42f, 0.80f, 1f);
-        float hue = Hash01(tx.txid);
+
+        // Hue spread EVENLY over the panel rather than hashed from the txid.
+        // With twenty-one crates on the ramp a hash collides - two packages
+        // came out the same colour - and the colour is what tells them apart.
+        float hue = total > 1 ? index / (float)total : Hash01(tx.txid);
         float pay = Mathf.Clamp01(tx.FeeRate / 45f);
-        return Color.HSVToRGB(hue, Mathf.Lerp(0.35f, 0.85f, pay), Mathf.Lerp(0.45f, 1f, pay));
+        return Color.HSVToRGB(Mathf.Repeat(hue, 1f),
+                              Mathf.Lerp(0.40f, 0.90f, pay), Mathf.Lerp(0.50f, 1f, pay));
+    }
+
+    /// <summary>Re-tint every crate for its place on the ramp.</summary>
+    void Recolour()
+    {
+        for (int i = 0; i < _yard.Count; i++)
+        {
+            var mr = _yard[i].crate != null ? _yard[i].crate.GetComponent<MeshRenderer>() : null;
+            var colour = PanelColour(_yard[i].tx, i, _yard.Count);
+            if (mr != null && mr.sharedMaterial != null) { mr.sharedMaterial.color = colour; continue; }
+
+            // a model crate carries its colour on every part
+            if (_yard[i].crate == null) continue;
+            foreach (var r in _yard[i].crate.GetComponentsInChildren<Renderer>(true))
+                if (r.sharedMaterial != null) r.sharedMaterial.color = colour;
+        }
     }
 
     static float Hash01(string s)
@@ -401,6 +423,7 @@ public class PackageYard : MonoBehaviour
         }
         _yard.Add(Build(tx));
         Sort();
+        Recolour();
         Layout();
     }
 
@@ -414,6 +437,7 @@ public class PackageYard : MonoBehaviour
             _yard.Add(Build(next));
         }
         Sort();
+        Recolour();
         Layout();
     }
 
@@ -451,6 +475,7 @@ public class PackageYard : MonoBehaviour
 
         _yard.Add(Build(wanted));
         Sort();
+        Recolour();
         Layout();
     }
 

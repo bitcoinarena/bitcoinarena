@@ -70,6 +70,14 @@ public static class BuildPrototypeScene
         boot.soldierYawOffset = 0f;
         boot.tankPrefab = FindPrefab("leopard", "tank", "panzer");
         boot.truckModel = FindPrefab("smalltruck", "industrialsmalltruck", "truck", "lorry", "van");
+
+        // The freight boxes are small and are NOT streamed - they are needed
+        // the moment the loading bay opens, which is the first thing the player
+        // sees, so they ride in the build.
+        boot.boxPrefab = FindPrefab("box_1_browntape", "box_1", "cardboard", "box");
+        Debug.Log(boot.boxPrefab != null
+            ? "[BuildPrototypeScene] cardboard boxes: " + AssetDatabase.GetAssetPath(boot.boxPrefab)
+            : "[BuildPrototypeScene] no cardboard box model - freight stays cubes");
         Debug.Log($"[BuildPrototypeScene] truck model: " +
                   (boot.truckModel != null ? AssetDatabase.GetAssetPath(boot.truckModel) : "none, using a box"));
         Debug.Log($"[BuildPrototypeScene] tank model: " +

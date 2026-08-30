@@ -16,8 +16,10 @@ public class MempoolFeed : MonoBehaviour
     public string mempoolApi = "https://mempool.space/api";
     public float refreshSeconds = 12f;
 
-    [Tooltip("How many are kept on offer. More than this is a wall of hex.")]
-    public int keep = 14;
+    [Tooltip("How many are kept on offer. The ramp shows most of them and " +
+             "holds the rest back as a queue, so freight never runs out with " +
+             "the bed half empty.")]
+    public int keep = 40;
 
     public class Tx
     {

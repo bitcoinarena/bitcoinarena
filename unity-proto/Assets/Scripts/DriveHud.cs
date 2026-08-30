@@ -141,6 +141,77 @@ public class DriveHud : MonoBehaviour
     }
 
     /// <summary>
+    /// The wanted level, top right, as stars.
+    ///
+    /// The risk was set at the loading ramp and then never mentioned again, so
+    /// the consequence of a greedy load was invisible the moment it mattered.
+    /// Filled stars for the heat, and they pulse while it is high.
+    /// </summary>
+    void DrawWanted(int w, int h)
+    {
+        if (bay == null || !bay.IsLoaded) return;
+
+        int stars = Mathf.Clamp(Mathf.CeilToInt(bay.Heat * 5f), 0, 5);
+        if (stars <= 0) return;
+
+        float pad = Mathf.Max(10f, h * 0.025f);
+        var style = new GUIStyle(GUI.skin.label)
+        {
+            alignment = TextAnchor.UpperRight,
+            fontStyle = FontStyle.Bold,
+            fontSize = Mathf.RoundToInt(Mathf.Clamp(Mathf.Min(w, h) * 0.055f, 24f, 46f)),
+        };
+
+        // a slow pulse at high heat, so a five star run never settles down
+        float pulse = bay.Heat > 0.55f
+            ? 0.75f + 0.25f * Mathf.Sin(Time.unscaledTime * 5.5f) : 1f;
+        var colour = Color.Lerp(new Color(1f, 0.86f, 0.35f), new Color(1f, 0.32f, 0.25f), bay.Heat);
+        colour.a = pulse;
+
+        var box = new Rect(0f, pad, w - pad, style.fontSize * 1.4f);
+        Shadowed(box, new string('★', stars) + new string('☆', 5 - stars), style, colour);
+
+        var sub = new GUIStyle(_small) { alignment = TextAnchor.UpperRight };
+        Shadowed(new Rect(0f, pad + style.fontSize * 1.25f, w - pad, _small.fontSize * 1.6f),
+                 stars >= 4 ? "GEJAGT" : "GESUCHT", sub, colour);
+    }
+
+    /// <summary>
+    /// Being shot at, in a way that cannot be missed: a red rim on the screen
+    /// that flares with every hit.
+    ///
+    /// Tracers were already drawn at the truck, but with a battle going on all
+    /// around them they read as part of the scenery rather than as fire coming
+    /// this way.
+    /// </summary>
+    void DrawUnderFire(int w, int h)
+    {
+        if (health == null) return;
+        float since = Time.unscaledTime - health.LastHitAt;
+        if (since > 1.1f) return;
+
+        float k = 1f - since / 1.1f;
+        float band = Mathf.Min(w, h) * 0.13f;
+        var red = new Color(0.9f, 0.12f, 0.10f, 0.42f * k);
+
+        GUI.color = red;
+        GUI.DrawTexture(new Rect(0f, 0f, w, band), _flat);
+        GUI.DrawTexture(new Rect(0f, h - band, w, band), _flat);
+        GUI.DrawTexture(new Rect(0f, 0f, band, h), _flat);
+        GUI.DrawTexture(new Rect(w - band, 0f, band, h), _flat);
+        GUI.color = Color.white;
+
+        var style = new GUIStyle(GUI.skin.label)
+        {
+            alignment = TextAnchor.MiddleCenter,
+            fontStyle = FontStyle.Bold,
+            fontSize = Mathf.RoundToInt(Mathf.Min(w, h) * 0.045f),
+        };
+        Shadowed(new Rect(0f, h * 0.14f, w, style.fontSize * 1.5f), "UNTER BESCHUSS",
+                 style, new Color(1f, 0.35f, 0.3f, k));
+    }
+
+    /// <summary>
     /// Where the gate is and how far.
     ///
     /// From the spawn the delivery gate is 230 m away and behind a battle -
@@ -269,18 +340,6 @@ public class DriveHud : MonoBehaviour
                                     : health.IsInvulnerable ? new Color(0.55f, 0.8f, 1f)
                                                             : Color.white);
 
-        // Heat: how badly the war wants what is on the back. This is the
-        // consequence of the freight choice, so it belongs next to the damage
-        // it is going to cause.
-        if (bay != null && bay.Heat > 0.01f)
-        {
-            var hs = new GUIStyle(_small) { fontStyle = FontStyle.Bold };
-            int pips = Mathf.Clamp(Mathf.CeilToInt(bay.Heat * 5f), 1, 5);
-            Shadowed(new Rect(box.x + box.width * 0.55f, box.y, box.width * 0.45f, lh),
-                     new string('★', pips) + new string('☆', 5 - pips), hs,
-                     Color.Lerp(new Color(1f, 0.85f, 0.3f), Down, bay.Heat));
-        }
-
         var track = new Rect(box.x, box.y + lh, box.width, barH);
         GUI.color = new Color(0f, 0f, 0f, 0.5f);
         GUI.DrawTexture(track, _flat);
@@ -382,6 +441,8 @@ public class DriveHud : MonoBehaviour
                      sub, _sub, chg >= 0 ? Up : Down);
         }
 
+        DrawWanted(w, h);
+        DrawUnderFire(w, h);
         DrawWaypoint(w, h);
         DrawHealth(w, h);
         DrawWasted(w, h);

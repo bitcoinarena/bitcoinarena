@@ -179,52 +179,136 @@ public class LoadoutPanel : MonoBehaviour
         Styles();
 
         int w = Screen.width, h = Screen.height;
+        int min = Mathf.Min(w, h);
         float pad = Mathf.Max(10f, h * 0.022f);
-        float barW = Mathf.Min(w * 0.92f, 760f);
-        float lh = _head.fontSize * 1.7f;
-        float panelH = lh * 3.5f;
+
+        Title(w, h);
+        DrawCaptions();
+        Bar(w, h, min, pad);
+    }
+
+    /// <summary>The name of the thing, over the crates.</summary>
+    void Title(int w, int h)
+    {
+        var title = new GUIStyle(GUI.skin.label)
+        {
+            alignment = TextAnchor.UpperCenter,
+            fontStyle = FontStyle.Bold,
+            fontSize = Mathf.RoundToInt(Mathf.Clamp(Mathf.Min(w, h) * 0.042f, 20f, 38f)),
+        };
+        var sub = new GUIStyle(GUI.skin.label)
+        {
+            alignment = TextAnchor.UpperCenter,
+            fontSize = Mathf.RoundToInt(Mathf.Clamp(Mathf.Min(w, h) * 0.023f, 12f, 19f)),
+        };
+
+        float y = h * 0.055f;
+        title.normal.textColor = new Color(1f, 0.86f, 0.35f);
+        GUI.Label(new Rect(0f, y, w, title.fontSize * 1.4f), "CHOOSE YOUR MEMPOOL CARGO", title);
+        sub.normal.textColor = new Color(1f, 1f, 1f, 0.7f);
+        GUI.Label(new Rect(0f, y + title.fontSize * 1.35f, w, sub.fontSize * 1.6f),
+                  "Antippen zum Aufladen · nochmal antippen zum Abladen", sub);
+    }
+
+    /// <summary>A one pixel frame, drawn as four fills.</summary>
+    void Frame(Rect r, Color colour, float thickness)
+    {
+        GUI.color = colour;
+        GUI.DrawTexture(new Rect(r.x, r.y, r.width, thickness), _flat);
+        GUI.DrawTexture(new Rect(r.x, r.yMax - thickness, r.width, thickness), _flat);
+        GUI.DrawTexture(new Rect(r.x, r.y, thickness, r.height), _flat);
+        GUI.DrawTexture(new Rect(r.xMax - thickness, r.y, thickness, r.height), _flat);
+        GUI.color = Color.white;
+    }
+
+    void Gauge(Rect track, float fill, Color colour, string label, GUIStyle style)
+    {
+        GUI.color = new Color(1f, 1f, 1f, 0.12f);
+        GUI.DrawTexture(track, _flat);
+        GUI.color = colour;
+        GUI.DrawTexture(new Rect(track.x + 2f, track.y + 2f,
+                                 Mathf.Max(0f, (track.width - 4f) * Mathf.Clamp01(fill)),
+                                 track.height - 4f), _flat);
+        GUI.color = Color.white;
+        Frame(track, new Color(1f, 1f, 1f, 0.25f), 1f);
+
+        style.normal.textColor = Color.white;
+        GUI.Label(new Rect(track.x + 8f, track.y - style.fontSize * 1.35f,
+                           track.width, style.fontSize * 1.4f), label, style);
+    }
+
+    /// <summary>
+    /// Capacity, risk and reward, with the reward given the most room.
+    ///
+    /// The bed filling up was the only thing shown, which says what fits and
+    /// nothing about whether it is worth taking. Risk is what the load makes of
+    /// the run, and the reward is what the whole thing is for.
+    /// </summary>
+    void Bar(int w, int h, int min, float pad)
+    {
+        float barW = Mathf.Min(w * 0.94f, 1040f);
+        float lh = _head.fontSize * 1.6f;
+        float panelH = lh * 4.4f;
         var panel = new Rect((w - barW) * 0.5f, h - panelH - pad, barW, panelH);
 
-        DrawCaptions();
-
-        GUI.color = new Color(0f, 0f, 0f, 0.62f);
+        GUI.color = new Color(0.03f, 0.04f, 0.06f, 0.86f);
         GUI.DrawTexture(panel, _flat);
         GUI.color = Color.white;
+        Frame(panel, new Color(1f, 0.86f, 0.35f, 0.55f), 2f);
 
-        float y = panel.y + lh * 0.15f;
-        GUI.Label(new Rect(panel.x, y, panel.width, lh),
-                  "LADERAMPE — Pakete antippen zum Aufladen, nochmal antippen zum Abladen", _head);
-        y += lh * 0.95f;
-
-        // ------------------------------------------------------- fill gauge
-        float gaugeW = panel.width - pad * 2f;
-        var track = new Rect(panel.x + pad, y, gaugeW, lh * 0.55f);
-        GUI.color = new Color(1f, 1f, 1f, 0.16f);
-        GUI.DrawTexture(track, _flat);
+        float inner = pad * 1.2f;
+        float gaugeW = (panel.width - inner * 3f) * 0.34f;
+        float top = panel.y + lh * 1.05f;
+        float gaugeH = lh * 0.5f;
 
         bool refused = yard != null && Time.unscaledTime - yard.RefusedAt < 0.7f;
-        GUI.color = refused ? new Color(1f, 0.35f, 0.3f, 0.95f)
-                            : Color.Lerp(new Color(0.3f, 0.75f, 0.45f), new Color(1f, 0.78f, 0.2f), bay.Fill);
-        GUI.DrawTexture(new Rect(track.x + 2f, track.y + 2f,
-                                 Mathf.Max(0f, (track.width - 4f) * bay.Fill), track.height - 4f), _flat);
-        GUI.color = Color.white;
-        y += lh * 0.75f;
+
+        // --- capacity -------------------------------------------------------
+        Gauge(new Rect(panel.x + inner, top, gaugeW, gaugeH), bay.Fill,
+              refused ? new Color(1f, 0.35f, 0.3f)
+                      : Color.Lerp(new Color(0.3f, 0.75f, 0.45f), new Color(1f, 0.78f, 0.2f), bay.Fill),
+              refused ? "LADEFLÄCHE  —  VOLL"
+                      : $"LADEFLÄCHE  {Mathf.RoundToInt(bay.Fill * 100f)}%  ·  {bay.Count} Pakete",
+              _small);
+
+        // --- risk -----------------------------------------------------------
+        float heat = bay.Heat;
+        Gauge(new Rect(panel.x + inner * 2f + gaugeW, top, gaugeW, gaugeH), heat,
+              Color.Lerp(new Color(0.45f, 0.8f, 0.5f), new Color(1f, 0.25f, 0.2f), heat),
+              $"RISIKO  {Mathf.RoundToInt(heat * 100f)}%  ·  {new string('★', Mathf.Clamp(Mathf.CeilToInt(heat * 5f), 0, 5))}",
+              _small);
+
+        // --- reward, given the room it deserves ------------------------------
+        var reward = new GUIStyle(GUI.skin.label)
+        {
+            alignment = TextAnchor.MiddleRight,
+            fontStyle = FontStyle.Bold,
+            fontSize = Mathf.RoundToInt(Mathf.Clamp(min * 0.055f, 24f, 52f)),
+        };
+        reward.normal.textColor = new Color(1f, 0.86f, 0.35f);
+        float rx = panel.x + inner * 2f + gaugeW * 2f;
+        float rw = panel.width - (rx - panel.x) - inner;
+
+        var lbl = new GUIStyle(_small) { alignment = TextAnchor.UpperRight };
+        lbl.normal.textColor = new Color(1f, 1f, 1f, 0.7f);
+        GUI.Label(new Rect(rx, top - _small.fontSize * 1.35f, rw, _small.fontSize * 1.4f),
+                  "BELOHNUNG BEI ANKUNFT", lbl);
+        GUI.Label(new Rect(rx, top - reward.fontSize * 0.1f, rw, reward.fontSize * 1.3f),
+                  $"{bay.FeeCarried:N0} sat", reward);
 
         string usd = market != null && market.Price > 0
-            ? $"   ·   ${bay.BtcCarried * market.Price:N0}" : "";
-        GUI.Label(new Rect(panel.x, y, panel.width, lh * 0.9f),
-                  refused
-                      ? "KEIN PLATZ MEHR — erst etwas abladen"
-                      : $"{bay.Count} Pakete   ·   {Mathf.RoundToInt(bay.Fill * 100f)}% belegt   ·   " +
-                        $"{bay.FeeCarried:N0} sat{usd}", _small);
-        y += lh * 0.95f;
+            ? $"{bay.BtcCarried * market.Price:N0} $ Warenwert" : $"{bay.BtcCarried:0.###} BTC an Bord";
+        var sub = new GUIStyle(_small) { alignment = TextAnchor.LowerRight };
+        sub.normal.textColor = new Color(1f, 1f, 1f, 0.7f);
+        GUI.Label(new Rect(rx, top + reward.fontSize * 1.15f, rw, _small.fontSize * 1.5f), usd, sub);
 
-        // ---------------------------------------------------------- buttons
-        float bw = (panel.width - pad * 3f) * 0.5f;
-        if (GUI.Button(new Rect(panel.x + pad, y, bw, lh * 1.05f), "AUTO", _btn)) Auto();
+        // --- buttons ---------------------------------------------------------
+        float by = panel.yMax - lh * 1.25f;
+        float bw = gaugeW;
+        if (GUI.Button(new Rect(panel.x + inner, by, bw, lh), "AUTO  (80%)", _btn)) Auto();
 
         GUI.enabled = bay.IsLoaded;
-        if (GUI.Button(new Rect(panel.x + pad * 2f + bw, y, bw, lh * 1.05f),
+        if (GUI.Button(new Rect(panel.x + inner * 2f + gaugeW, by, bw, lh),
                        bay.IsLoaded ? "LOSFAHREN" : "NICHTS GELADEN", _btn)) Confirm();
         GUI.enabled = true;
     }

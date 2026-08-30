@@ -90,6 +90,20 @@ public class Battlefield : MonoBehaviour
                 ? cargo.Heat : 0f;
 
             Army.Update(Time.deltaTime);
+
+            // rotors: the nearest helicopter, or silence
+            if (audio != null)
+            {
+                Vector2? nearest = null;
+                float best = float.MaxValue;
+                var here = courier != null ? courier.position : Vector3.zero;
+                foreach (var h in Army.Helicopters)
+                {
+                    float d = (h.x - here.x) * (h.x - here.x) + (h.z - here.z) * (h.z - here.z);
+                    if (d < best) { best = d; nearest = new Vector2(h.x, h.z); }
+                }
+                audio.Rotors(nearest);
+            }
             LaunchSorties(Time.deltaTime);
 
             // AFTER the step, so nobody is left standing inside the truck at

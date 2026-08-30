@@ -54,6 +54,12 @@ public class TruckHealth : MonoBehaviour
 
     public bool IsDestroyed => _burningFor >= 0f;
 
+    /// <summary>
+    /// When the last hit landed, on unscaled time. Drives the screen rim, so
+    /// that being shot at cannot be mistaken for the battle going on nearby.
+    /// </summary>
+    public float LastHitAt { get; private set; } = -99f;
+
     /// <summary>Seconds until it is back, or 0 when it is not destroyed.</summary>
     public float RespawnIn => IsDestroyed ? Mathf.Max(0f, respawnSeconds - _burningFor) : 0f;
 
@@ -98,6 +104,8 @@ public class TruckHealth : MonoBehaviour
         if (IsDestroyed || IsInvulnerable || amount <= 0f) return;
 
         Health -= amount / Mathf.Max(0.01f, armour);
+        LastHitAt = Time.unscaledTime;
+        if (chase != null) chase.Shake(Mathf.Min(0.6f, amount * 0.02f));
         if (fx != null)
             fx.Flash(transform.position + Vector3.up * 1.4f, 1.6f);
 

@@ -27,8 +27,9 @@ public class GameAudio : MonoBehaviour
     /// <summary>One-shots fired since start. Public so a test can see them.</summary>
     public int Fired { get; private set; }
 
-    AudioSource _engine, _tyres, _shots;
+    AudioSource _engine, _tyres, _shots, _war, _rotor;
     AudioClip _impact, _explosion, _chime, _blip, _thud;
+    AudioClip _cannon, _rifle, _ricochet, _boom;
     Rigidbody _body;
     float _rpm;
 
@@ -46,11 +47,26 @@ public class GameAudio : MonoBehaviour
 
         _shots = Make("Effects", loop: false);
 
+        // The battle gets its own voice so a burst of rifle fire cannot cut off
+        // the truck's own impact - one source stealing from the other is what
+        // makes a firefight sound thin.
+        _war = Make("War", loop: false);
+
+        _rotor = Make("Rotor", loop: true);
+        _rotor.clip = RotorClip();
+        _rotor.volume = 0f;
+        _rotor.Play();
+
         _impact = Burst("impact", 0.35f, 9f, 900f);
         _explosion = Burst("explosion", 1.6f, 2.4f, 220f);
         _thud = Burst("thud", 0.25f, 14f, 320f);
         _chime = Chime();
         _blip = Blip();
+
+        _cannon = Burst("cannon", 1.1f, 4.5f, 420f);
+        _rifle = Burst("rifle", 0.16f, 26f, 3800f);
+        _ricochet = Burst("ricochet", 0.20f, 20f, 2600f);
+        _boom = Burst("boom", 2.0f, 1.9f, 160f);
     }
 
     AudioSource Make(string name, bool loop)
@@ -117,6 +133,79 @@ public class GameAudio : MonoBehaviour
 
     /// <summary>A package picked up or put back.</summary>
     public void Pickup(bool taken) => Shot(_blip, 0.5f, taken ? 1.25f : 0.85f);
+
+    /* ------------------------------------------------------------- the battle */
+
+    /// <summary>
+    /// Where the player is, for working out how loud the war is. Set by the
+    /// battlefield; without it everything is heard as if it happened here.
+    /// </summary>
+    public Transform ear;
+
+    /// <summary>
+    /// How loud something at this point should be.
+    ///
+    /// Nothing is spatialised - the listener is the camera, which moves - so
+    /// distance is applied by hand. A rifle two hundred metres up the field
+    /// must not be as loud as one beside the cab, or the battle turns into a
+    /// wall of noise with no sense of where anything is.
+    /// </summary>
+    float Carry(Vector2 at, float range)
+    {
+        if (ear == null) return 0.6f;
+        var p = ear.position;
+        float d = Vector2.Distance(at, new Vector2(p.x, p.z));
+        return Mathf.Clamp01(1f - d / range);
+    }
+
+    void War(AudioClip clip, float volume, float pitch)
+    {
+        if (clip == null || _war == null || volume <= 0.01f) return;
+        _war.pitch = pitch;
+        _war.PlayOneShot(clip, Mathf.Clamp01(volume * effectVolume));
+        Fired++;
+    }
+
+    /// <summary>A tank's main gun.</summary>
+    public void Cannon(Vector2 at)
+    {
+        float carry = Carry(at, 190f);
+        War(_cannon, carry * carry * 0.95f, Random.Range(0.82f, 1.05f));
+    }
+
+    /// <summary>A rifle. Deliberately quiet: there are a hundred of them.</summary>
+    public void Rifle(Vector2 at)
+    {
+        float carry = Carry(at, 90f);
+        War(_rifle, carry * carry * 0.30f, Random.Range(0.85f, 1.3f));
+    }
+
+    /// <summary>Something was hit - a round finding metal or a man.</summary>
+    public void Hit(Vector2 at)
+    {
+        float carry = Carry(at, 110f);
+        War(_ricochet, carry * carry * 0.45f, Random.Range(0.8f, 1.4f));
+    }
+
+    /// <summary>Something was destroyed: a tank, a bomb, the truck.</summary>
+    public void Destroyed(Vector2 at)
+    {
+        float carry = Carry(at, 260f);
+        War(_boom, Mathf.Max(0.15f, carry * carry), Random.Range(0.8f, 1.05f));
+    }
+
+    /// <summary>
+    /// Rotors overhead. Called every frame with the nearest helicopter, or
+    /// nothing when the sky is clear.
+    /// </summary>
+    public void Rotors(Vector2? at)
+    {
+        if (_rotor == null) return;
+        float wanted = at.HasValue ? Carry(at.Value, 150f) : 0f;
+        _rotor.volume = Mathf.Lerp(_rotor.volume, effectVolume * 0.55f * wanted * wanted,
+                                   1f - Mathf.Exp(-2.5f * Time.deltaTime));
+        _rotor.pitch = Mathf.Lerp(0.85f, 1.1f, wanted);
+    }
 
     /* --------------------------------------------------------- the synthesis */
 
@@ -210,6 +299,29 @@ public class GameAudio : MonoBehaviour
             data[i] = (a + b) * 0.4f;
         }
         var clip = AudioClip.Create("chime", samples, 1, Rate, false);
+        clip.SetData(data, 0);
+        return clip;
+    }
+
+    /// <summary>
+    /// A rotor: a low thump repeating at blade rate, over a wash of air.
+    /// </summary>
+    static AudioClip RotorClip()
+    {
+        const float beats = 11f;                       // blade passes a second
+        int samples = Rate;                            // one second, so it loops
+        var data = new float[samples];
+        var rng = new System.Random(23);
+        float air = 0f;
+        for (int i = 0; i < samples; i++)
+        {
+            float t = i / (float)Rate;
+            float phase = Mathf.Repeat(t * beats, 1f);
+            float thump = Mathf.Exp(-14f * phase) * Mathf.Sin(2f * Mathf.PI * 46f * t);
+            air = Mathf.Lerp(air, (float)(rng.NextDouble() * 2.0 - 1.0), 0.25f);
+            data[i] = Mathf.Clamp(thump * 0.7f + air * 0.18f, -1f, 1f);
+        }
+        var clip = AudioClip.Create("rotor", samples, 1, Rate, false);
         clip.SetData(data, 0);
         return clip;
     }
