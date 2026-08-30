@@ -87,26 +87,42 @@ public class DriveHud : MonoBehaviour
     {
         if (gate == null || bay == null) return;
 
-        float pad = Mathf.Max(8f, h * 0.02f);
-        float lh = SmallFont(w, h) * 1.6f;
-        float width = Mathf.Min(300f, w * 0.30f);
-        var box = new Rect(w - width - pad, pad, width, lh * 2.2f);
+        // Bottom right and large. This is the score: it is the one number the
+        // player is playing for, and it was a small grey line in a corner.
+        float pad = Mathf.Max(10f, h * 0.025f);
+        int min = Mathf.Min(w, h);
 
-        GUI.color = new Color(0f, 0f, 0f, 0.42f);
-        GUI.DrawTexture(box, _flat);
-        GUI.color = Color.white;
+        var score = new GUIStyle(GUI.skin.label)
+        {
+            alignment = TextAnchor.LowerRight,
+            fontStyle = FontStyle.Bold,
+            fontSize = Mathf.RoundToInt(Mathf.Clamp(min * 0.075f, 30f, 74f)),
+        };
+        var under = new GUIStyle(GUI.skin.label)
+        {
+            alignment = TextAnchor.LowerRight,
+            fontSize = Mathf.RoundToInt(Mathf.Clamp(min * 0.030f, 15f, 26f)),
+        };
 
-        var st = new GUIStyle(_small) { alignment = TextAnchor.MiddleRight };
-        st.normal.textColor = Color.white;
-        GUI.Label(new Rect(box.x, box.y, box.width - pad * 0.6f, lh),
-                  bay.IsLoaded
-                      ? $"Ladung: {bay.Count} Pakete  ·  {bay.FeeCarried:N0} sat"
-                      : "Ladung: leer", st);
+        float width = w * 0.6f;
+        float x = w - width - pad;
+        float bottom = h - pad;
 
-        var st2 = new GUIStyle(st) { fontStyle = FontStyle.Bold };
-        st2.normal.textColor = Up;
-        GUI.Label(new Rect(box.x, box.y + lh, box.width - pad * 0.6f, lh),
-                  $"Geliefert: {gate.SatsDelivered:N0} sat  ·  {gate.Runs} Fahrten", st2);
+        // the load, smallest and highest
+        var loadLine = new Rect(x, bottom - score.fontSize * 1.05f - under.fontSize * 2.6f,
+                                width, under.fontSize * 1.5f);
+        Shadowed(loadLine, bay.IsLoaded
+                     ? $"Ladung  {bay.Count} Pakete  ·  {bay.FeeCarried:N0} sat"
+                     : "Ladung  leer",
+                 under, bay.IsLoaded ? Color.white : new Color(1f, 1f, 1f, 0.6f));
+
+        // the score itself
+        var scoreLine = new Rect(x, bottom - score.fontSize * 1.05f - under.fontSize * 1.2f,
+                                 width, score.fontSize * 1.25f);
+        Shadowed(scoreLine, $"{gate.SatsDelivered:N0} sat", score, Up);
+
+        var runsLine = new Rect(x, bottom - under.fontSize * 1.4f, width, under.fontSize * 1.5f);
+        Shadowed(runsLine, $"{gate.Runs} Fahrten geliefert", under, new Color(1f, 1f, 1f, 0.75f));
 
         // the flash on arrival
         if (gate.SinceDelivery < 2.6f)
@@ -116,7 +132,7 @@ public class DriveHud : MonoBehaviour
             {
                 alignment = TextAnchor.MiddleCenter,
                 fontStyle = FontStyle.Bold,
-                fontSize = Mathf.RoundToInt(Mathf.Min(w, h) * 0.075f),
+                fontSize = Mathf.RoundToInt(Mathf.Min(w, h) * 0.10f),
             };
             big.normal.textColor = new Color(Up.r, Up.g, Up.b, k);
             GUI.Label(new Rect(0f, h * 0.24f, w, big.fontSize * 1.6f),

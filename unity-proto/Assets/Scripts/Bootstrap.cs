@@ -111,6 +111,8 @@ public class Bootstrap : MonoBehaviour
         // every one of these is a null assignment that throws nothing.
         _truckHealth.fx = Fx;
         Field.health = _truckHealth;
+        // the chase camera is built further down, so both of these find it
+        // themselves in Start rather than being handed a null here
         Field.Army.CourierHit += _truckHealth.Damage;
 
         var wasted = gameObject.AddComponent<WastedSequence>();

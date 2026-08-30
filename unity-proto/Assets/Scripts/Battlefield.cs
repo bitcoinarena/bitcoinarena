@@ -16,6 +16,11 @@ public class Battlefield : MonoBehaviour
              "it is burning, and hits are routed into its condition.")]
     public TruckHealth health;
 
+    [Tooltip("Optional. Shaken when the truck rides somebody down. Found in " +
+             "Start: Bootstrap builds the camera after this is wired up, so " +
+             "anything assigned at wiring time would be null.")]
+    public ChaseCamera chase;
+
     public PriceHistory History { get; private set; }
     /// <summary>Both armies. Owned here because they live and die by the same tape.</summary>
     public Army Army { get; set; }
@@ -33,6 +38,11 @@ public class Battlefield : MonoBehaviour
     float _sortieBull, _sortieBear;
 
     void Awake() => History = new PriceHistory(96);
+
+    void Start()
+    {
+        if (chase == null) chase = FindFirstObjectByType<ChaseCamera>();
+    }
 
     void Update()
     {
@@ -78,7 +88,10 @@ public class Battlefield : MonoBehaviour
                 float speed = body != null ? body.linearVelocity.magnitude : 0f;
                 var v = body != null ? body.linearVelocity : Vector3.zero;
                 var knock = new Vector2(v.x, v.z).normalized;
-                RunDown += Army.RunOver(p.x, p.z, 3.6f, speed, knock);
+                int went = Army.RunOver(p.x, p.z, 3.6f, speed, knock);
+                RunDown += went;
+                // a body under the wheels should be felt, not just counted
+                if (went > 0 && chase != null) chase.Shake(Mathf.Min(0.5f, went * 0.22f));
 
                 Army.ClearPath(p.x, p.z, heading, Time.deltaTime);
             }

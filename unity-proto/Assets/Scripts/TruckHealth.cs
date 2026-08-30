@@ -39,6 +39,10 @@ public class TruckHealth : MonoBehaviour
     public TruckController truck;
     public CombatFx fx;
 
+    [Tooltip("Optional. Gets thrown about on impacts, so a collision reads " +
+             "as one instead of as the game not having noticed.")]
+    public ChaseCamera chase;
+
     /// <summary>Condition remaining, 0..maxHealth.</summary>
     public float Health { get; private set; } = -1f;
 
@@ -78,6 +82,7 @@ public class TruckHealth : MonoBehaviour
         Health = maxHealth;
         _rb = GetComponent<Rigidbody>();
         if (truck == null) truck = GetComponent<TruckController>();
+        if (chase == null) chase = FindFirstObjectByType<ChaseCamera>();
     }
 
     void Start() => EnsureInit();
@@ -109,6 +114,7 @@ public class TruckHealth : MonoBehaviour
         // tank the moment it died. The truck IS its own wreck: it stays where
         // it is, keeps its own body and burns there.
         if (fx != null) fx.VehicleExplosion(transform.position);
+        if (chase != null) chase.Shake(2.2f);
 
         if (truck != null) truck.enabled = false;
         if (_rb != null)
@@ -180,11 +186,14 @@ public class TruckHealth : MonoBehaviour
         // is hit; only a live tank writes the truck off.
         if (collision.collider.GetComponentInParent<BurntOutHull>() != null)
         {
+            if (chase != null)
+                chase.Shake(Mathf.Min(0.9f, collision.relativeVelocity.magnitude * 0.06f));
             Damage(collision.relativeVelocity.magnitude * 3f);
             return;
         }
 
         float impact = collision.relativeVelocity.magnitude;
+        if (chase != null) chase.Shake(Mathf.Min(1.2f, impact * 0.09f));
         if (impact >= crashSpeed) WriteOff();
         else Damage(impact * 6f);       // a slow shunt still costs paint
     }

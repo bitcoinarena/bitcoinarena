@@ -29,6 +29,27 @@ public class ChaseCamera : MonoBehaviour
 
     [Header("Damping")]
     public float positionDamp = 6.5f;
+
+    [Header("Feel")]
+    [Tooltip("Field of view standing still.")]
+    public float fovIdle = 58f;
+
+    [Tooltip("Field of view flat out. The widening IS the sense of speed - " +
+             "a fixed lens makes 30 m/s look like 8.")]
+    public float fovFlatOut = 78f;
+
+    [Tooltip("Speed at which the lens is fully open. Set to what the truck " +
+             "actually reaches on this map - about 20 m/s - not to its " +
+             "theoretical top speed: measured against topSpeed and squared, " +
+             "a hard-driven run moved the lens by two degrees and felt the " +
+             "same as standing still.")]
+    public float fovAtSpeed = 20f;
+
+    [Tooltip("How far the camera leans into a corner, in degrees.")]
+    public float leanDegrees = 6f;
+
+    [Tooltip("How hard the camera is thrown by an impact.")]
+    public float shakeScale = 1f;
     public float yawDamp = 2.8f;
     public float topSpeed = 34f;
 
@@ -82,6 +103,22 @@ public class ChaseCamera : MonoBehaviour
 
     float _deathYaw;
 
+    float _shake;
+    float _lean;
+    Camera _cam;
+
+    /// <summary>
+    /// Throw the camera about. Called on an impact, on a kill under the
+    /// wheels, and when the truck is written off.
+    ///
+    /// A collision that the camera does not react to reads as the game not
+    /// having noticed it.
+    /// </summary>
+    public void Shake(float amount) => _shake = Mathf.Min(2.5f, _shake + amount * shakeScale);
+
+    /// <summary>Current shake, for a test to watch it decay.</summary>
+    public float ShakeAmount => _shake;
+
     void LateUpdate()
     {
         if (DriveInput.CameraToggle) Toggle();
@@ -120,10 +157,46 @@ public class ChaseCamera : MonoBehaviour
                      + Vector3.up * (height + heightAtSpeed * speed01);
 
         _pos = Vector3.Lerp(_pos, goal, 1f - Mathf.Exp(-positionDamp * Time.deltaTime));
+
+        // Shake decays fast. Held longer it stops reading as an impact and
+        // starts reading as a fault in the camera.
+        _shake = Mathf.Max(0f, _shake - Time.deltaTime * 3.2f);
+        if (_shake > 0.001f)
+        {
+            float t = Time.time * 47f;
+            _pos += new Vector3(Mathf.PerlinNoise(t, 0f) - 0.5f,
+                                Mathf.PerlinNoise(0f, t) - 0.5f,
+                                Mathf.PerlinNoise(t, t) - 0.5f) * (_shake * 1.6f);
+        }
         transform.position = _pos;
+
+        // Lean into the corner, off the CORNERING LOAD - yaw rate times speed,
+        // which is the sideways acceleration the driver is actually feeling.
+        //
+        // Taking the sideways velocity instead, as this first did, measures
+        // how much the truck is sliding: a vehicle with grip barely slides at
+        // all, so a hard corner produced 0.7 degrees of lean and the camera sat
+        // there flat while the truck heeled over on its springs.
+        float yawRate = targetBody != null ? targetBody.angularVelocity.y : 0f;
+        float forwardSpeed = Vector3.Dot(v, target.forward);
+        float corneringG = yawRate * forwardSpeed;              // m/s^2, signed
+        float wantedLean = Mathf.Clamp(corneringG / 7f, -1f, 1f) * leanDegrees;
+        _lean = Mathf.Lerp(_lean, wantedLean, 1f - Mathf.Exp(-3.5f * Time.deltaTime));
 
         // look down the road ahead, not at the tailgate
         Vector3 look = target.position + target.forward * (lookAhead * (0.4f + speed01)) + Vector3.up * 1.2f;
-        transform.rotation = Quaternion.LookRotation(look - _pos, Vector3.up);
+        transform.rotation = Quaternion.LookRotation(look - _pos, Vector3.up)
+                           * Quaternion.Euler(0f, 0f, _lean + (_shake > 0.001f ? _shake * 2f : 0f));
+
+        // The lens opens up as it goes. This is most of the difference between
+        // a truck that is moving and a truck that feels fast.
+        if (_cam == null) _cam = GetComponent<Camera>();
+        if (_cam != null)
+        {
+            float lens = Mathf.Pow(Mathf.Clamp01(v.magnitude / Mathf.Max(1f, fovAtSpeed)), 1.3f);
+            _cam.fieldOfView = Mathf.Lerp(_cam.fieldOfView,
+                                          Mathf.Lerp(fovIdle, fovFlatOut, lens),
+                                          1f - Mathf.Exp(-2.4f * Time.deltaTime));
+        }
     }
 }
