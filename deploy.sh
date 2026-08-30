@@ -12,4 +12,7 @@ PROJECT="${1:-btc-logistics-war}"
 [ -f "$BUILD/index.html" ] || { echo "no build at $BUILD - run BuildWebGL.Run first"; exit 1; }
 
 echo "deploying $(du -sh "$BUILD" | cut -f1) to Cloudflare Pages project '$PROJECT'"
-wrangler pages deploy "$BUILD" --project-name "$PROJECT" --commit-dirty=true
+# --branch is pinned: wrangler otherwise takes it from git, and a deployment
+# on any branch but the production one is published under a preview URL while
+# the main address answers "Deployment Not Found".
+wrangler pages deploy "$BUILD" --project-name "$PROJECT" --branch main --commit-dirty=true
