@@ -33,9 +33,14 @@ public class LoadoutPanel : MonoBehaviour
         _flat.Apply();
     }
 
+    public SplashScreen splash;
+
     void Start()
     {
-        Open();                                   // the first run starts here too
+        // Not before the title screen has been dismissed: the ramp used to
+        // open on a player who had not yet been told what any of it was for.
+        if (splash == null) splash = FindFirstObjectByType<SplashScreen>();
+        if (splash == null || !splash.Showing) Open();
         if (health != null) health.Respawned += Open;
     }
 
@@ -167,8 +172,8 @@ public class LoadoutPanel : MonoBehaviour
             // it is made rather than only in the total afterwards
             int risk = bay != null ? Mathf.RoundToInt(bay.HeatOf(c.tx) * 100f) : 0;
             GUI.Label(new Rect(box.x, box.y + _cap.fontSize * 1.25f, box.width, _capSub.fontSize * 1.5f),
-                      c.loaded ? "GELADEN"
-                               : $"{c.tx.vsize} vB · +{risk}% Risiko"
+                      c.loaded ? "LOADED"
+                               : $"{c.tx.Btc:0.####} BTC · +{risk}% heat"
                                  + (c.tx.Whale ? "  🐋" : ""), _capSub);
 
             // Two lines only. Twenty-one crates in three rows leaves no room
@@ -179,6 +184,7 @@ public class LoadoutPanel : MonoBehaviour
     void OnGUI()
     {
         if (!IsOpen || bay == null) return;
+        if (splash != null && splash.Showing) return;
         Styles();
 
         // In front of everything the game HUD draws. IMGUI depth is inverted:
@@ -192,6 +198,7 @@ public class LoadoutPanel : MonoBehaviour
         Chrome(w, h);
         DrawCaptions();
         Bar(w, h, min, pad);
+        Inspector(w, h);
     }
 
     /// <summary>
@@ -233,7 +240,7 @@ public class LoadoutPanel : MonoBehaviour
         };
         hint.normal.textColor = new Color(1f, 1f, 1f, 0.65f);
         GUI.Label(new Rect(panel.x, bar.yMax + 2f, panel.width, hint.fontSize * 1.6f),
-                  "Antippen zum Aufladen  ·  nochmal antippen zum Abladen", hint);
+                  "Tap to load  ·  tap again to unload", hint);
 
         // corner ticks, so the border reads as a frame and not as a box
         Frame(panel, new Color(gold.r, gold.g, gold.b, 0.75f), 2f);
@@ -248,6 +255,64 @@ public class LoadoutPanel : MonoBehaviour
             new Rect(panel.xMax - 4f, panel.yMax - tick, 4f, tick),
         }) GUI.DrawTexture(c, _flat);
         GUI.color = Color.white;
+    }
+
+    /// <summary>
+    /// The transaction under the pointer, the way a block explorer would put
+    /// it - full txid, value, fee, rate, size - but small and out of the way.
+    ///
+    /// The captions can only carry what fits under a crate. This is where the
+    /// rest goes, and it only exists while somebody is actually looking at a
+    /// package.
+    /// </summary>
+    void Inspector(int w, int h)
+    {
+        var tx = yard != null ? yard.Hovered : null;
+        if (tx == null) return;
+
+        var pos = UnityEngine.InputSystem.Mouse.current != null
+            ? UnityEngine.InputSystem.Mouse.current.position.ReadValue()
+            : Vector2.zero;
+        float px = pos.x, py = h - pos.y;
+
+        float bw = Mathf.Min(w * 0.30f, 380f);
+        float lh = _small.fontSize * 1.55f;
+        float bh = lh * 5.6f;
+
+        // flipped to the other side when it would run off the screen
+        var box = new Rect(Mathf.Clamp(px + 18f, 4f, w - bw - 4f),
+                           Mathf.Clamp(py + 18f, 4f, h - bh - 4f), bw, bh);
+
+        GUI.color = new Color(0.03f, 0.04f, 0.06f, 0.95f);
+        GUI.DrawTexture(box, _flat);
+        GUI.color = Color.white;
+        Frame(box, new Color(0.42f, 0.86f, 1f, 0.8f), 2f);
+
+        float y = box.y + lh * 0.2f;
+        var id = new GUIStyle(_small) { fontStyle = FontStyle.Bold, alignment = TextAnchor.UpperLeft };
+        id.normal.textColor = new Color(0.42f, 0.86f, 1f);
+        GUI.Label(new Rect(box.x + 10f, y, bw - 20f, lh), tx.txid, id);
+        y += lh * 1.05f;
+
+        var row = new GUIStyle(_small) { alignment = TextAnchor.UpperLeft };
+        row.normal.textColor = new Color(1f, 1f, 1f, 0.9f);
+
+        void Line(string k, string v, Color c)
+        {
+            var kk = new GUIStyle(row); kk.normal.textColor = new Color(1f, 1f, 1f, 0.55f);
+            GUI.Label(new Rect(box.x + 10f, y, bw * 0.42f, lh), k, kk);
+            var vv = new GUIStyle(row) { alignment = TextAnchor.UpperRight };
+            vv.normal.textColor = c;
+            GUI.Label(new Rect(box.x + bw * 0.42f, y, bw * 0.58f - 10f, lh), v, vv);
+            y += lh * 0.92f;
+        }
+
+        Line("value", $"{tx.Btc:0.########} BTC", Color.white);
+        if (market != null && market.Price > 0)
+            Line("", $"${tx.Btc * market.Price:N2}", new Color(1f, 1f, 1f, 0.6f));
+        Line("fee", $"{tx.feeSats:N0} sat", new Color(1f, 0.86f, 0.35f));
+        Line("fee rate", $"{tx.FeeRate:0.0} sat/vB", Color.white);
+        Line("size", $"{tx.vsize} vB", Color.white);
     }
 
     /// <summary>A one pixel frame, drawn as four fills.</summary>
@@ -307,17 +372,18 @@ public class LoadoutPanel : MonoBehaviour
         Gauge(new Rect(panel.x + inner, top, gaugeW, gaugeH), bay.Fill,
               refused ? new Color(1f, 0.35f, 0.3f)
                       : Color.Lerp(new Color(0.3f, 0.75f, 0.45f), new Color(1f, 0.78f, 0.2f), bay.Fill),
-              refused ? "LADEFLÄCHE  —  VOLL"
-                      : $"LADEFLÄCHE  {Mathf.RoundToInt(bay.Fill * 100f)}%  ·  {bay.Count} Pakete",
+              refused ? "BED  —  FULL"
+                      : $"BED  {Mathf.RoundToInt(bay.Fill * 100f)}%  ·  {bay.Count} parcels",
               _small);
 
         // --- risk -----------------------------------------------------------
         float heat = bay.Heat;
         Gauge(new Rect(panel.x + inner * 2f + gaugeW, top, gaugeW, gaugeH), heat,
               Color.Lerp(new Color(0.45f, 0.8f, 0.5f), new Color(1f, 0.25f, 0.2f), heat),
-              $"RISIKO  {Mathf.RoundToInt(heat * 100f)}%  " +
-              $"{new string('★', Mathf.Clamp(Mathf.CeilToInt(heat * 5f), 0, 5))}" +
-              $"   ·   je mehr sat, desto härter gejagt",
+              // Short. The explanation used to run onto a second line and
+              // straight over the button underneath it.
+              $"HEAT  {Mathf.RoundToInt(heat * 100f)}%  " +
+              $"{new string('★', Mathf.Clamp(Mathf.CeilToInt(heat * 5f), 0, 5))}",
               _small);
 
         // --- reward, given the room it deserves ------------------------------
@@ -334,12 +400,12 @@ public class LoadoutPanel : MonoBehaviour
         var lbl = new GUIStyle(_small) { alignment = TextAnchor.UpperRight };
         lbl.normal.textColor = new Color(1f, 1f, 1f, 0.7f);
         GUI.Label(new Rect(rx, top - _small.fontSize * 1.35f, rw, _small.fontSize * 1.4f),
-                  "BELOHNUNG BEI ANKUNFT", lbl);
+                  "PAYOUT ON ARRIVAL", lbl);
         GUI.Label(new Rect(rx, top - reward.fontSize * 0.1f, rw, reward.fontSize * 1.3f),
                   $"{bay.FeeCarried:N0} sat", reward);
 
         string usd = market != null && market.Price > 0
-            ? $"{bay.BtcCarried * market.Price:N0} $ Warenwert" : $"{bay.BtcCarried:0.###} BTC an Bord";
+            ? $"${bay.BtcCarried * market.Price:N0} in transit" : $"{bay.BtcCarried:0.###} BTC aboard";
         var sub = new GUIStyle(_small) { alignment = TextAnchor.LowerRight };
         sub.normal.textColor = new Color(1f, 1f, 1f, 0.7f);
         GUI.Label(new Rect(rx, top + reward.fontSize * 1.15f, rw, _small.fontSize * 1.5f), usd, sub);
@@ -351,7 +417,7 @@ public class LoadoutPanel : MonoBehaviour
 
         GUI.enabled = bay.IsLoaded;
         if (GUI.Button(new Rect(panel.x + inner * 2f + gaugeW, by, bw, lh),
-                       bay.IsLoaded ? "LOSFAHREN" : "NICHTS GELADEN", _btn)) Confirm();
+                       bay.IsLoaded ? "ROLL OUT" : "NOTHING LOADED", _btn)) Confirm();
         GUI.enabled = true;
     }
 }

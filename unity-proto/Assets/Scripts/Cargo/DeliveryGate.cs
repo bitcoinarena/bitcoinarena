@@ -40,6 +40,9 @@ public class DeliveryGate : MonoBehaviour
     /// <summary>Sats banked by the last run, for the HUD flash.</summary>
     public long LastRun { get; private set; }
 
+    /// <summary>BTC moved by the last run, for the block tally.</summary>
+    public double LastBtc { get; private set; }
+
     /// <summary>Seconds since the last delivery, or a large number.</summary>
     public float SinceDelivery { get; private set; } = 999f;
 
@@ -63,6 +66,7 @@ public class DeliveryGate : MonoBehaviour
     void Deliver()
     {
         LastRun = bay.FeeCarried;
+        LastBtc = bay.BtcCarried;
         SatsDelivered += LastRun;
         Runs++;
         SinceDelivery = 0f;

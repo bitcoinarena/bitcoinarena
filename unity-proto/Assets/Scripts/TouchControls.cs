@@ -121,6 +121,12 @@ public class TouchControls : MonoBehaviour
 
         foreach (TouchPad.Pad pad in System.Enum.GetValues(typeof(TouchPad.Pad)))
         {
+            // The handbrake and the view toggle are off the screen. Neither is
+            // something a player reaches for mid-run, and both were taking room
+            // the score needs. The INPUTS stay - the keys still work, and the
+            // god view is shown behind the splash screen instead.
+            if (pad == TouchPad.Pad.Handbrake || pad == TouchPad.Pad.View) continue;
+
             var r = TouchPad.RectFor(pad, w, h);
             bool held = TouchPad.Hit(pad, w, h, _points);
 

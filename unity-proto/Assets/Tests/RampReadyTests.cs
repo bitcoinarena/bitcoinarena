@@ -35,6 +35,11 @@ public class RampReadyTests
         // a handful of frames, not a handful of seconds
         for (int i = 0; i < 6; i++) yield return null;
 
+        // past the title screen: it holds the truck and the ramp until PLAY
+        var splash0 = Object.FindFirstObjectByType<SplashScreen>();
+        if (splash0 != null && splash0.Showing) splash0.Play();
+        yield return null;
+
         var yard = Object.FindFirstObjectByType<PackageYard>();
         Assert.IsNotNull(yard, "keine Laderampe");
         Assert.IsTrue(yard.IsOpen, "die Rampe ist zu");
@@ -57,6 +62,11 @@ public class RampReadyTests
         _boot = new GameObject("Bootstrap");
         _boot.AddComponent<Bootstrap>();
         for (int i = 0; i < 6; i++) yield return null;
+
+        // past the title screen: it holds the truck and the ramp until PLAY
+        var splash0 = Object.FindFirstObjectByType<SplashScreen>();
+        if (splash0 != null && splash0.Showing) splash0.Play();
+        yield return null;
 
         var feed = Object.FindFirstObjectByType<MempoolFeed>();
         var yard = Object.FindFirstObjectByType<PackageYard>();
@@ -83,6 +93,11 @@ public class RampReadyTests
         _boot = new GameObject("Bootstrap");
         _boot.AddComponent<Bootstrap>();
         for (int i = 0; i < 6; i++) yield return null;
+
+        // past the title screen: it holds the truck and the ramp until PLAY
+        var splash0 = Object.FindFirstObjectByType<SplashScreen>();
+        if (splash0 != null && splash0.Showing) splash0.Play();
+        yield return null;
 
         var feed = Object.FindFirstObjectByType<MempoolFeed>();
         var yard = Object.FindFirstObjectByType<PackageYard>();

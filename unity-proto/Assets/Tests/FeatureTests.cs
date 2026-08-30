@@ -26,6 +26,11 @@ public class FeatureTests
         _boot.AddComponent<Bootstrap>();
         yield return new WaitForSeconds(1.5f);
 
+        // past the title screen: it holds the truck and the ramp until PLAY
+        var splash0 = Object.FindFirstObjectByType<SplashScreen>();
+        if (splash0 != null && splash0.Showing) splash0.Play();
+        yield return null;
+
         _truck = Object.FindFirstObjectByType<TruckController>();
         _health = Object.FindFirstObjectByType<TruckHealth>();
         _field = Object.FindFirstObjectByType<Battlefield>();
@@ -152,6 +157,54 @@ public class FeatureTests
         Assert.Less(_health.Fraction, 0.7f, "der Treffer hat nichts bewirkt");
         Assert.AreEqual(_health.Fraction, _truck.condition, 0.01f,
             "der Zustand kommt nicht am Fahrverhalten an");
+    }
+
+    /* ------------------------------------------------------------ the block */
+
+    /// <summary>
+    /// Reported as an exploit: load only tiny parcels, never be threatened,
+    /// and earn for ever. The block is the answer - time is the scarce thing,
+    /// not safety - so a timid run and a bold one cost the same block.
+    /// </summary>
+    [UnityTest]
+    public IEnumerator TheBlockPutsAPriceOnTime()
+    {
+        var clock = Object.FindFirstObjectByType<BlockClock>();
+        Assert.IsNotNull(clock, "keine Blockuhr in der Szene");
+        Assert.Greater(clock.Remaining, 0f, "die Runde laeuft nicht");
+        Assert.Greater(clock.blockSeconds, 30f, "eine Runde ist unspielbar kurz");
+        yield return null;
+
+        // a timid run and a bold one both spend the whole block
+        clock.gate.Delivered.Invoke(52);
+        yield return null;
+        Assert.AreEqual(52, clock.PendingSats, "die Lieferung landet nicht im Block");
+
+        clock.Close();
+        Assert.AreEqual(0, clock.PendingSats, "der Block wird nicht abgeschlossen");
+        Assert.AreEqual(1, clock.Board.Count, "der Block kommt nicht auf die Bestenliste");
+        Assert.AreEqual(52, clock.Board[0].sats);
+
+        // and the board ranks blocks against each other
+        clock.gate.Delivered.Invoke(4000);
+        clock.Close();
+        Assert.AreEqual(4000, clock.Board[0].sats,
+            "die Bestenliste sortiert die Bloecke nicht nach Ertrag");
+    }
+
+    [Test]
+    public void TheTitleScreenHoldsEverythingUntilPlay()
+    {
+        // it was dismissed in SetUp, so build a fresh one to look at
+        var go = new GameObject("Splash");
+        var splash = go.AddComponent<SplashScreen>();
+        Assert.IsTrue(splash.Showing, "der Splash-Screen zeigt sich nicht");
+        Assert.AreEqual(0f, AudioListener.volume, 0.001f,
+            "der Ton laeuft schon vor dem Klick - im Browser wuerde er blockiert");
+
+        splash.Play();
+        Assert.IsFalse(splash.Showing);
+        Assert.AreEqual(1f, AudioListener.volume, 0.001f, "nach PLAY bleibt es stumm");
     }
 
     /* --------------------------------------------------------------- waypoint */

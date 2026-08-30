@@ -80,6 +80,10 @@ public class Bootstrap : MonoBehaviour
     public RoadNetwork Roads { get; private set; }
 
     public GameAudio Audio { get; private set; }
+
+    public BlockClock Clock { get; private set; }
+
+    public SplashScreen Splash { get; private set; }
     public CombatFx Fx { get; private set; }
 
     void Start()
@@ -203,6 +207,19 @@ public class Bootstrap : MonoBehaviour
         hud.wasted = _wasted;
         hud.gate = _gate;
         hud.loadout = Object.FindFirstObjectByType<LoadoutPanel>();
+
+        // The block is the round: it puts a price on time, without which the
+        // safest possible load was also the best one.
+        var clock = gameObject.AddComponent<BlockClock>();
+        clock.gate = _gate;
+        clock.audioSource = Audio;
+        hud.block = clock;
+        Clock = clock;
+
+        var splash = gameObject.AddComponent<SplashScreen>();
+        splash.truck = _truck;
+        Splash = splash;
+        if (hud.loadout != null) hud.loadout.splash = splash;
         hud.bay = _cargo;
     }
 

@@ -45,11 +45,17 @@ public class PackageYard : MonoBehaviour
     [Header("Where the panel sits, as a fraction of the screen")]
     [Tooltip("Clear of the headline price, which takes the top fifth.")]
     public float panelTop = 0.10f;
-    public float panelBottom = 0.56f;
+    // Just above the middle. Three rows with captions need the height, but the
+    // truck bed underneath has to stay in view - that is what the panel is for.
+    public float panelBottom = 0.53f;
     public float panelInset = 0.03f;
 
     [Tooltip("Height of the title bar, as a fraction of the panel.")]
     public float titleBar = 0.13f;
+
+    [Tooltip("How much of each cell is kept for the caption under the crate. " +
+             "Reserving nothing put one row's numbers on the next row's box.")]
+    public float captionFraction = 0.42f;
 
     /// <summary>Set when a pick was refused for want of room, for the HUD.</summary>
     public float RefusedAt { get; private set; } = -99f;
@@ -59,6 +65,7 @@ public class PackageYard : MonoBehaviour
         public MempoolFeed.Tx tx;
         public GameObject crate;
         public Vector3 seat;         // where it floats, in the rig's space
+        public float reach;          // half its diagonal, plus the bob
         public Vector3 axis;         // what it turns about
         public float spin, bob, phase, size;
     }
@@ -330,17 +337,27 @@ public class PackageYard : MonoBehaviour
         float cellW = area.width / cols;
         float cellH = area.height / rows;
 
-        // Sized against the BIGGEST on the ramp, so the differences are the
-        // real ones.
+        // Sized against the BIGGEST on the ramp, so the differences are real.
         float biggest = 0f;
         foreach (var y in _yard) biggest = Mathf.Max(biggest, y.size);
 
-        // The cell in world units
+        // The cell in world units.
         var o = FromScreen(0f, 0f, depth);
         var e = FromScreen(cellW, cellH, depth);
         float cellWorldW = Mathf.Abs(e.x - o.x), cellWorldH = Mathf.Abs(e.y - o.y);
 
-        // Where the working area starts, in world units
+        // A cell holds a crate AND its caption. Reserving nothing for the
+        // caption is what let one row's numbers land on the next row's box,
+        // and what pushed the last row out through the bottom of the panel.
+        float captionShare = Mathf.Clamp01(captionFraction);
+        float crateBand = cellWorldH * (1f - captionShare);
+
+        // A TURNING box reaches out to half its DIAGONAL, not half its height.
+        // For the parcel shape below that is 0.90 of the base size, so the base
+        // has to be small enough that twice the reach still fits the band.
+        const float shapeX = 1.25f, shapeY = 0.80f, shapeZ = 1.0f;
+        float reachPerUnit = 0.5f * Mathf.Sqrt(shapeX * shapeX + shapeY * shapeY + shapeZ * shapeZ);
+
         float areaTopWorld = FromScreen(0f, area.y, depth).y;
 
         for (int i = 0; i < _yard.Count; i++)
@@ -349,24 +366,19 @@ public class PackageYard : MonoBehaviour
             int inRow = Mathf.Min(cols, _yard.Count - row * cols);
 
             float rel = Mathf.Clamp(biggest > 0f ? _yard[i].size / biggest : 1f, 0.45f, 1f);
-            float room = Mathf.Min(cellWorldW * 0.82f, cellWorldH * 0.66f) * rel;
+            float room = Mathf.Min(cellWorldW * 0.78f / (shapeX * 1.15f),
+                                   crateBand * 0.92f / (reachPerUnit * 2f)) * rel;
 
-            // Shaped like a parcel rather than a die - wider than it is tall,
-            // which is also what a box on a loading ramp looks like.
-            var scale = new Vector3(room * 1.25f, room * 0.80f, room * 1.0f);
+            var scale = new Vector3(room * shapeX, room * shapeY, room * shapeZ);
             _yard[i].crate.transform.localScale = scale;
 
-            // A TURNING box reaches out to half its own diagonal, not to half
-            // its height, so that - plus the bob - is the clearance the row
-            // needs from the title bar above it. Placing rows by their centre
-            // and hoping the height fitted is what kept crates crossing the
-            // header.
-            float reach = scale.magnitude * 0.5f + _yard[i].bob;
+            float reach = room * reachPerUnit + _yard[i].bob;
+            _yard[i].reach = reach;
 
             float px = area.x + area.width * 0.5f
                      + (col - (inRow - 1) * 0.5f) * cellW;
             float rowTop = areaTopWorld - row * cellWorldH;
-            float wy = rowTop - reach - cellWorldH * 0.06f;
+            float wy = rowTop - reach - cellWorldH * 0.04f;
 
             var seat = FromScreen(px, 0f, depth);
             _yard[i].seat = new Vector3(seat.x, wy, depth);
@@ -410,9 +422,11 @@ public class PackageYard : MonoBehaviour
             var p = _cam.WorldToScreenPoint(y.crate.transform.position);
             if (p.z <= 0f) continue;
 
-            float scale = y.crate.transform.localScale.y;
+            // The reach, not half the height: a turning box sticks out further
+            // than it is tall, and a caption placed off its height slid under
+            // the crate it belonged to.
             var edge = _cam.WorldToScreenPoint(
-                y.crate.transform.position + _cam.transform.up * scale * 0.5f);
+                y.crate.transform.position + _cam.transform.up * y.reach);
 
             list.Add(new Caption
             {
@@ -574,6 +588,9 @@ public class PackageYard : MonoBehaviour
         return sb.ToString();
     }
 
+    /// <summary>The crate the pointer is resting on, or null.</summary>
+    public MempoolFeed.Tx Hovered { get; private set; }
+
     void Update()
     {
         if (!_open) return;
@@ -600,6 +617,8 @@ public class PackageYard : MonoBehaviour
         }
 
         Spin();
+
+        Hovered = PickAt(PointerPosition());
 
         if (Pressed(out var at))
         {
@@ -654,6 +673,15 @@ public class PackageYard : MonoBehaviour
             if (d < c.radius * 1.35f && d < bestD) { bestD = d; best = c.tx; }
         }
         return best;
+    }
+
+    static Vector2 PointerPosition()
+    {
+        var touch = UnityEngine.InputSystem.Touchscreen.current;
+        if (touch != null && touch.primaryTouch.press.isPressed)
+            return touch.primaryTouch.position.ReadValue();
+        var mouse = UnityEngine.InputSystem.Mouse.current;
+        return mouse != null ? mouse.position.ReadValue() : new Vector2(-999f, -999f);
     }
 
     /// <summary>A click or a tap that went DOWN this frame.</summary>

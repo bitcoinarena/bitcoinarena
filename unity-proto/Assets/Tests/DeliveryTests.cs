@@ -25,6 +25,11 @@ public class DeliveryTests
         _boot.AddComponent<Bootstrap>();
         yield return new WaitForSeconds(1.5f);
 
+        // past the title screen: it holds the truck and the ramp until PLAY
+        var splash0 = Object.FindFirstObjectByType<SplashScreen>();
+        if (splash0 != null && splash0.Showing) splash0.Play();
+        yield return null;
+
         _truck = Object.FindFirstObjectByType<TruckController>();
         _bay = Object.FindFirstObjectByType<CargoBay>();
         _ui = Object.FindFirstObjectByType<LoadoutPanel>();

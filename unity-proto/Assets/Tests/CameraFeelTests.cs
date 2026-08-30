@@ -37,6 +37,15 @@ public class CameraFeelTests
 
         yield return new WaitForSeconds(1.5f);
 
+
+        // past the title screen: it holds the truck and the ramp until PLAY
+
+        var splash0 = Object.FindFirstObjectByType<SplashScreen>();
+
+        if (splash0 != null && splash0.Showing) splash0.Play();
+
+        yield return null;
+
         var panel = Object.FindFirstObjectByType<LoadoutPanel>();
         panel.Auto();
         panel.Confirm();

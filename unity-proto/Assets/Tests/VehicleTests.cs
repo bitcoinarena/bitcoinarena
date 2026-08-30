@@ -65,6 +65,11 @@ public class VehicleTests
     /// </summary>
     static void LoadAndRelease()
     {
+        // Past the title screen first: it holds the truck and keeps the ramp
+        // shut until PLAY is pressed, which is the point of it.
+        var splash = Object.FindFirstObjectByType<SplashScreen>();
+        if (splash != null && splash.Showing) splash.Play();
+
         var panel = Object.FindFirstObjectByType<LoadoutPanel>();
         if (panel == null) return;
 

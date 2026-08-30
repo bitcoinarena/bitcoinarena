@@ -19,6 +19,7 @@ public class DriveHud : MonoBehaviour
     public DeliveryGate gate;
     public CargoBay bay;
     public LoadoutPanel loadout;
+    public BlockClock block;
 
     GUIStyle _price, _sub, _small;
     Texture2D _flat;
@@ -107,14 +108,16 @@ public class DriveHud : MonoBehaviour
 
         float width = w * 0.6f;
         float x = w - width - pad;
-        float bottom = h - pad;
+        // ABOVE the driving pads, not behind them. The pads occupy the bottom
+        // fifth of the screen and the score was sitting underneath them.
+        float bottom = h - Mathf.Max(pad, h * 0.24f);
 
         // the load, smallest and highest
         var loadLine = new Rect(x, bottom - score.fontSize * 1.05f - under.fontSize * 2.6f,
                                 width, under.fontSize * 1.5f);
         Shadowed(loadLine, bay.IsLoaded
-                     ? $"Ladung  {bay.Count} Pakete  ·  {bay.FeeCarried:N0} sat"
-                     : "Ladung  leer",
+                     ? $"CARGO  {bay.Count} parcels  ·  {bay.FeeCarried:N0} sat"
+                     : "CARGO  empty",
                  under, bay.IsLoaded ? Color.white : new Color(1f, 1f, 1f, 0.6f));
 
         // the score itself
@@ -123,7 +126,7 @@ public class DriveHud : MonoBehaviour
         Shadowed(scoreLine, $"{gate.SatsDelivered:N0} sat", score, Up);
 
         var runsLine = new Rect(x, bottom - under.fontSize * 1.4f, width, under.fontSize * 1.5f);
-        Shadowed(runsLine, $"{gate.Runs} Fahrten geliefert", under, new Color(1f, 1f, 1f, 0.75f));
+        Shadowed(runsLine, $"{gate.Runs} runs delivered", under, new Color(1f, 1f, 1f, 0.75f));
 
         // the flash on arrival
         if (gate.SinceDelivery < 2.6f)
@@ -137,7 +140,65 @@ public class DriveHud : MonoBehaviour
             };
             big.normal.textColor = new Color(Up.r, Up.g, Up.b, k);
             GUI.Label(new Rect(0f, h * 0.24f, w, big.fontSize * 1.6f),
-                      $"GELIEFERT  +{gate.LastRun:N0} sat", big);
+                      $"DELIVERED  +{gate.LastRun:N0} sat", big);
+        }
+    }
+
+    /// <summary>
+    /// The block being mined, its clock, and the best blocks so far.
+    ///
+    /// The clock is what stops a risk-free trickle from being the best play:
+    /// a block spent hauling 52 sat is a block that cannot be spent hauling
+    /// four thousand, and the board compares blocks rather than lifetimes.
+    /// </summary>
+    void DrawBlock(int w, int h)
+    {
+        if (block == null) return;
+
+        float pad = Mathf.Max(10f, h * 0.022f);
+        float bw = Mathf.Min(300f, w * 0.24f);
+        float lh = SmallFont(w, h) * 1.55f;
+
+        var head = new GUIStyle(_small) { fontStyle = FontStyle.Bold, alignment = TextAnchor.UpperLeft };
+        var line = new GUIStyle(_small) { alignment = TextAnchor.UpperLeft };
+
+        float y = pad;
+        Shadowed(new Rect(pad, y, bw, lh), $"BLOCK #{block.Height}", head,
+                 new Color(1f, 0.86f, 0.35f));
+        y += lh;
+
+        // the clock, running out
+        var track = new Rect(pad, y, bw, lh * 0.42f);
+        GUI.color = new Color(1f, 1f, 1f, 0.16f);
+        GUI.DrawTexture(track, _flat);
+        GUI.color = block.Fraction < 0.2f
+            ? new Color(1f, 0.35f, 0.28f) : new Color(0.42f, 0.86f, 1f);
+        GUI.DrawTexture(new Rect(track.x + 1f, track.y + 1f,
+                                 Mathf.Max(0f, (track.width - 2f) * block.Fraction),
+                                 track.height - 2f), _flat);
+        GUI.color = Color.white;
+        y += lh * 0.62f;
+
+        int secs = Mathf.CeilToInt(block.Remaining);
+        Shadowed(new Rect(pad, y, bw, lh), $"{secs / 60}:{secs % 60:00} left", line,
+                 new Color(1f, 1f, 1f, 0.85f));
+        y += lh;
+        Shadowed(new Rect(pad, y, bw, lh),
+                 $"in this block: {block.PendingSats:N0} sat  ·  {block.PendingBtc:0.###} BTC",
+                 line, Up);
+        y += lh * 1.4f;
+
+        if (block.Board.Count == 0) return;
+
+        Shadowed(new Rect(pad, y, bw, lh), "BEST BLOCKS", head, new Color(1f, 1f, 1f, 0.8f));
+        y += lh;
+        for (int i = 0; i < block.Board.Count && i < 5; i++)
+        {
+            var b = block.Board[i];
+            Shadowed(new Rect(pad, y, bw, lh),
+                     $"{i + 1}.  #{b.height}   {b.sats:N0} sat   {b.btc:0.##} BTC",
+                     line, i == 0 ? Up : new Color(1f, 1f, 1f, 0.7f));
+            y += lh * 0.95f;
         }
     }
 
@@ -174,7 +235,7 @@ public class DriveHud : MonoBehaviour
 
         var sub = new GUIStyle(_small) { alignment = TextAnchor.UpperRight };
         Shadowed(new Rect(0f, pad + style.fontSize * 1.25f, w - pad, _small.fontSize * 1.6f),
-                 stars >= 4 ? "GEJAGT" : "GESUCHT", sub, colour);
+                 stars >= 4 ? "HUNTED" : "WANTED", sub, colour);
     }
 
     /// <summary>
@@ -208,7 +269,7 @@ public class DriveHud : MonoBehaviour
             fontStyle = FontStyle.Bold,
             fontSize = Mathf.RoundToInt(Mathf.Min(w, h) * 0.045f),
         };
-        Shadowed(new Rect(0f, h * 0.14f, w, style.fontSize * 1.5f), "UNTER BESCHUSS",
+        Shadowed(new Rect(0f, h * 0.14f, w, style.fontSize * 1.5f), "UNDER FIRE",
                  style, new Color(1f, 0.35f, 0.3f, k));
     }
 
@@ -256,7 +317,7 @@ public class DriveHud : MonoBehaviour
 
         var colour = new Color(0.42f, 0.86f, 1f);
         Shadowed(new Rect(x - 90f, y - style.fontSize * 1.6f, 180f, style.fontSize * 1.6f),
-                 offScreen ? "▲ ZIEL" : "ZIEL", style, colour);
+                 offScreen ? "▲ DROP-OFF" : "DROP-OFF", style, colour);
         Shadowed(new Rect(x - 90f, y, 180f, style.fontSize * 1.6f),
                  $"{distance:0} m", style, new Color(1f, 1f, 1f, 0.9f));
     }
@@ -332,10 +393,10 @@ public class DriveHud : MonoBehaviour
         label.normal.textColor = Color.white;
         Shadowed(new Rect(box.x, box.y, box.width, lh),
                  health.IsDestroyed
-                     ? $"ZERSTÖRT — neu in {Mathf.CeilToInt(health.RespawnIn)}s"
+                     ? $"WRECKED — back in {Mathf.CeilToInt(health.RespawnIn)}s"
                      : health.IsInvulnerable
-                         ? "Zustand 100%  ·  geschützt"
-                         : $"Zustand {Mathf.CeilToInt(health.Fraction * 100f)}%",
+                         ? "CONDITION 100%  ·  protected"
+                         : $"CONDITION {Mathf.CeilToInt(health.Fraction * 100f)}%",
                  label,
                  health.IsDestroyed ? Down
                                     : health.IsInvulnerable ? new Color(0.55f, 0.8f, 1f)
@@ -391,8 +452,8 @@ public class DriveHud : MonoBehaviour
         foreach (var it in streamer.Items) totalMb += it.sizeMb;
         GUI.Label(new Rect(box.x + pad * 0.6f, y, box.width, lh),
                   streamer.AllDone
-                      ? (totalMb > 0.01f ? $"Modelle geladen  ({totalMb:0.0} MB)" : "Modelle geladen")
-                      : "Modelle werden geladen", head);
+                      ? (totalMb > 0.01f ? $"Models loaded  ({totalMb:0.0} MB)" : "Models loaded")
+                      : "Loading models", head);
         y += lh;
 
         foreach (var item in streamer.Items)
@@ -471,6 +532,7 @@ public class DriveHud : MonoBehaviour
             return;
         }
 
+        DrawBlock(w, h);
         DrawWanted(w, h);
         DrawUnderFire(w, h);
         DrawWaypoint(w, h);
