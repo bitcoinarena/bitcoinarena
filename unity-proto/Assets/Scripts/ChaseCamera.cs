@@ -105,6 +105,7 @@ public class ChaseCamera : MonoBehaviour
 
     float _shake;
     float _lean;
+    float _lastHeading;
     Camera _cam;
 
     /// <summary>
@@ -177,7 +178,13 @@ public class ChaseCamera : MonoBehaviour
         // how much the truck is sliding: a vehicle with grip barely slides at
         // all, so a hard corner produced 0.7 degrees of lean and the camera sat
         // there flat while the truck heeled over on its springs.
-        float yawRate = targetBody != null ? targetBody.angularVelocity.y : 0f;
+        // Measured off the target's own heading rather than off a rigidbody:
+        // one less thing that can be unset, and it reads 0.3 degrees instead
+        // of 6 when it is.
+        float heading = target.eulerAngles.y;
+        float yawRate = Time.deltaTime > 0f
+            ? Mathf.DeltaAngle(_lastHeading, heading) * Mathf.Deg2Rad / Time.deltaTime : 0f;
+        _lastHeading = heading;
         float forwardSpeed = Vector3.Dot(v, target.forward);
         float corneringG = yawRate * forwardSpeed;              // m/s^2, signed
         float wantedLean = Mathf.Clamp(corneringG / 7f, -1f, 1f) * leanDegrees;

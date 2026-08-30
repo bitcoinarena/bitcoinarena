@@ -128,8 +128,8 @@ public class LoadoutPanel : MonoBehaviour
             _capSub = new GUIStyle(GUI.skin.label)
                 { alignment = TextAnchor.UpperCenter, wordWrap = false };
         }
-        _cap.fontSize = Mathf.RoundToInt(Mathf.Clamp(min * 0.034f, 15f, 26f));
-        _capSub.fontSize = Mathf.RoundToInt(Mathf.Clamp(min * 0.029f, 13f, 22f));
+        _cap.fontSize = Mathf.RoundToInt(Mathf.Clamp(min * 0.026f, 13f, 21f));
+        _capSub.fontSize = Mathf.RoundToInt(Mathf.Clamp(min * 0.021f, 11f, 17f));
     }
 
     /// <summary>
@@ -145,9 +145,9 @@ public class LoadoutPanel : MonoBehaviour
 
         foreach (var c in yard.Captions())
         {
-            float wCap = Mathf.Max(180f, Screen.width * 0.19f);
-            float y = c.screen.y + c.radius + 4f;
-            var box = new Rect(c.screen.x - wCap * 0.5f, y, wCap, _cap.fontSize * 3.6f);
+            float wCap = Mathf.Max(140f, Screen.width * 0.13f);
+            float y = c.screen.y + c.radius + 3f;
+            var box = new Rect(c.screen.x - wCap * 0.5f, y, wCap, _cap.fontSize * 2.5f);
 
             // a plate behind the text: crate colours run light and so does the sky
             GUI.color = new Color(0f, 0f, 0f, c.loaded ? 0.62f : 0.45f);
@@ -163,13 +163,13 @@ public class LoadoutPanel : MonoBehaviour
                       $"+{c.tx.feeSats:N0} sat", _cap);
 
             _capSub.normal.textColor = new Color(1f, 1f, 1f, 0.85f);
-            GUI.Label(new Rect(box.x, box.y + _cap.fontSize * 1.35f, box.width, _capSub.fontSize * 1.5f),
-                      $"{c.tx.FeeRate:0.0} sat/vB   ·   {c.tx.vsize} vB", _capSub);
+            GUI.Label(new Rect(box.x, box.y + _cap.fontSize * 1.25f, box.width, _capSub.fontSize * 1.5f),
+                      c.loaded ? "GELADEN"
+                               : $"{c.tx.FeeRate:0.0} sat/vB · {c.tx.vsize} vB"
+                                 + (c.tx.Whale ? "  🐋" : ""), _capSub);
 
-            GUI.Label(new Rect(box.x, box.y + _cap.fontSize * 1.35f + _capSub.fontSize * 1.25f,
-                               box.width, _capSub.fontSize * 1.5f),
-                      c.loaded ? "GELADEN — antippen zum Abladen"
-                               : $"{c.tx.Btc:0.####} BTC{(c.tx.Whale ? "  🐋" : "")}", _capSub);
+            // Two lines only. Twenty-one crates in three rows leaves no room
+            // for a third, and the value is already told by the colour.
         }
     }
 
@@ -182,32 +182,65 @@ public class LoadoutPanel : MonoBehaviour
         int min = Mathf.Min(w, h);
         float pad = Mathf.Max(10f, h * 0.022f);
 
-        Title(w, h);
+        Chrome(w, h);
         DrawCaptions();
         Bar(w, h, min, pad);
     }
 
-    /// <summary>The name of the thing, over the crates.</summary>
-    void Title(int w, int h)
+    /// <summary>
+    /// The window round the crates: a title bar and a border.
+    ///
+    /// The crates are drawn by their own camera and the chrome by the GUI on
+    /// top of it, so both have to come from the same rectangle - which the
+    /// yard owns. Drawn from its numbers, the slate ended up in one place and
+    /// the crates in another, with the title sitting over the headline price.
+    /// </summary>
+    void Chrome(int w, int h)
     {
+        if (yard == null) return;
+
+        var panel = yard.PanelRect(w, h);
+        var bar = yard.TitleRect(w, h);
+        var gold = new Color(1f, 0.86f, 0.35f);
+
+        // title bar, filled so it reads as chrome rather than as more panel
+        GUI.color = new Color(0.10f, 0.09f, 0.06f, 0.95f);
+        GUI.DrawTexture(bar, _flat);
+        GUI.color = new Color(gold.r, gold.g, gold.b, 0.9f);
+        GUI.DrawTexture(new Rect(bar.x, bar.yMax - 2f, bar.width, 2f), _flat);
+        GUI.color = Color.white;
+
         var title = new GUIStyle(GUI.skin.label)
         {
-            alignment = TextAnchor.UpperCenter,
+            alignment = TextAnchor.MiddleCenter,
             fontStyle = FontStyle.Bold,
-            fontSize = Mathf.RoundToInt(Mathf.Clamp(Mathf.Min(w, h) * 0.042f, 20f, 38f)),
+            fontSize = Mathf.RoundToInt(Mathf.Clamp(bar.height * 0.52f, 16f, 40f)),
         };
-        var sub = new GUIStyle(GUI.skin.label)
-        {
-            alignment = TextAnchor.UpperCenter,
-            fontSize = Mathf.RoundToInt(Mathf.Clamp(Mathf.Min(w, h) * 0.023f, 12f, 19f)),
-        };
+        title.normal.textColor = gold;
+        GUI.Label(bar, "CHOOSE YOUR MEMPOOL CARGO", title);
 
-        float y = h * 0.055f;
-        title.normal.textColor = new Color(1f, 0.86f, 0.35f);
-        GUI.Label(new Rect(0f, y, w, title.fontSize * 1.4f), "CHOOSE YOUR MEMPOOL CARGO", title);
-        sub.normal.textColor = new Color(1f, 1f, 1f, 0.7f);
-        GUI.Label(new Rect(0f, y + title.fontSize * 1.35f, w, sub.fontSize * 1.6f),
-                  "Antippen zum Aufladen · nochmal antippen zum Abladen", sub);
+        var hint = new GUIStyle(GUI.skin.label)
+        {
+            alignment = TextAnchor.LowerCenter,
+            fontSize = Mathf.RoundToInt(Mathf.Clamp(bar.height * 0.30f, 11f, 20f)),
+        };
+        hint.normal.textColor = new Color(1f, 1f, 1f, 0.65f);
+        GUI.Label(new Rect(panel.x, bar.yMax + 2f, panel.width, hint.fontSize * 1.6f),
+                  "Antippen zum Aufladen  ·  nochmal antippen zum Abladen", hint);
+
+        // corner ticks, so the border reads as a frame and not as a box
+        Frame(panel, new Color(gold.r, gold.g, gold.b, 0.75f), 2f);
+        float tick = Mathf.Min(panel.width, panel.height) * 0.06f;
+        GUI.color = gold;
+        foreach (var c in new[]
+        {
+            new Rect(panel.x, panel.y, tick, 4f), new Rect(panel.x, panel.y, 4f, tick),
+            new Rect(panel.xMax - tick, panel.y, tick, 4f), new Rect(panel.xMax - 4f, panel.y, 4f, tick),
+            new Rect(panel.x, panel.yMax - 4f, tick, 4f), new Rect(panel.x, panel.yMax - tick, 4f, tick),
+            new Rect(panel.xMax - tick, panel.yMax - 4f, tick, 4f),
+            new Rect(panel.xMax - 4f, panel.yMax - tick, 4f, tick),
+        }) GUI.DrawTexture(c, _flat);
+        GUI.color = Color.white;
     }
 
     /// <summary>A one pixel frame, drawn as four fills.</summary>

@@ -18,6 +18,7 @@ public class DriveHud : MonoBehaviour
     public WastedSequence wasted;
     public DeliveryGate gate;
     public CargoBay bay;
+    public LoadoutPanel loadout;
 
     GUIStyle _price, _sub, _small;
     Texture2D _flat;
@@ -427,7 +428,12 @@ public class DriveHud : MonoBehaviour
         int w = Screen.width, h = Screen.height;
 
         /* ---------------------------------------------------- headline price */
-        if (market != null)
+        // The loading panel needs the top of the screen, and the price is not
+        // what the player is reading while choosing freight. It steps aside
+        // into the corner rather than fighting the panel for the same pixels.
+        bool loading = loadout != null && loadout.IsOpen;
+
+        if (market != null && !loading)
         {
             string text = market.Price > 0 ? $"${market.Price:N0}" : "— — —";
             var colour = market.Fresh ? Color.white : new Color(1f, 1f, 1f, 0.55f);
@@ -439,6 +445,14 @@ public class DriveHud : MonoBehaviour
                 : $"verbinde … ({market.Status})";
             Shadowed(new Rect(0, h * 0.015f + _price.fontSize * 1.12f, w, _sub.fontSize * 1.6f),
                      sub, _sub, chg >= 0 ? Up : Down);
+        }
+
+        if (loading && market != null && market.Price > 0)
+        {
+            var small = new GUIStyle(_small) { alignment = TextAnchor.UpperLeft, fontStyle = FontStyle.Bold };
+            Shadowed(new Rect(w * 0.02f, h * 0.012f, w * 0.4f, _small.fontSize * 1.6f),
+                     $"${market.Price:N0}   {market.DayChangePct:+0.00;-0.00;0.00}% 24h",
+                     small, market.DayChangePct >= 0 ? Up : Down);
         }
 
         DrawWanted(w, h);

@@ -109,6 +109,46 @@ public class ImportedModelTests
             $"das Modell ist {Mathf.Max(b.size.x, b.size.z):0.0} m lang");
     }
 
+    /// <summary>
+    /// The freight is the imported cardboard box, not a primitive cube.
+    ///
+    /// This lives here rather than with the other cargo tests because those
+    /// build a bare Bootstrap in code, which has no prefabs assigned at all -
+    /// the models only exist in the real scene. Written there, the test could
+    /// never have seen the box even once it was wired up.
+    ///
+    /// And it checks the MESH, not the renderer: a cube has a renderer too,
+    /// which is how the freight stayed cubes while a weaker version of this
+    /// passed.
+    /// </summary>
+    [UnityTest]
+    public IEnumerator TheFreightIsTheCardboardModel()
+    {
+        yield return null;
+        var panel = Object.FindFirstObjectByType<LoadoutPanel>();
+        var bay = Object.FindFirstObjectByType<CargoBay>();
+        Assert.IsNotNull(bay.boxPrefab,
+            "der Szene ist kein Kartonmodell zugewiesen - die Pakete bleiben Wuerfel");
+
+        panel.Auto();
+        yield return null;
+
+        int crates = 0, modelled = 0;
+        foreach (var t in Object.FindObjectsByType<Transform>(FindObjectsSortMode.None))
+        {
+            if (t.name != "Package") continue;
+            crates++;
+            foreach (var mf in t.GetComponentsInChildren<MeshFilter>(true))
+                if (mf.sharedMesh != null && mf.sharedMesh.name != "Cube") modelled++;
+            foreach (var r in t.GetComponentsInChildren<Renderer>(true))
+                Assert.IsFalse(r.sharedMaterial.shader.name.StartsWith("Standard"),
+                    "ein Paket traegt einen Built-in-Shader - im URP-Build unsichtbar");
+        }
+
+        Assert.Greater(crates, 0, "nichts geladen");
+        Assert.Greater(modelled, 0, "die Pakete sind immer noch Unity-Wuerfel");
+    }
+
     [UnityTest]
     public IEnumerator SoldiersStandOnTheGroundAndAreAnimated()
     {

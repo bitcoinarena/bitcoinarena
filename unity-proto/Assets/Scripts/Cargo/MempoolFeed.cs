@@ -86,9 +86,9 @@ public class MempoolFeed : MonoBehaviour
                     // at it.
                     if (parsed.Count > 0)
                     {
-                        Offers = parsed;
+                        Offers = Merge(parsed);
                         Fresh = true;
-                        Status = $"{parsed.Count} tx";
+                        Status = $"{Offers.Count} tx";
                     }
                 }
                 else
@@ -97,8 +97,37 @@ public class MempoolFeed : MonoBehaviour
                     Status = Fresh ? req.error : "offline";
                 }
             }
-            yield return new WaitForSeconds(refreshSeconds);
+            // Quick to begin with, so the ramp fills from ten to twenty-one
+            // within the first half minute, then settle to the normal beat.
+            yield return new WaitForSeconds(Offers.Count < 24 ? 2.5f : refreshSeconds);
         }
+    }
+
+    /// <summary>
+    /// Fold a fresh reply into what is already on offer.
+    ///
+    /// /api/mempool/recent returns only the last ten arrivals, and the loading
+    /// ramp shows twenty-one - so a single reply can never fill it. New
+    /// transactions are accumulated across polls, oldest dropped once the pool
+    /// is full, which is also closer to what a mempool is: a queue that things
+    /// join and leave rather than a snapshot of ten.
+    ///
+    /// The first replacement is wholesale: the stand-in yard has to go the
+    /// moment real freight arrives, not be mixed with it.
+    /// </summary>
+    List<Tx> Merge(List<Tx> arrived)
+    {
+        if (!Fresh) return arrived;                 // the stand-ins go entirely
+
+        var pool = new List<Tx>(Offers);
+        var have = new HashSet<string>();
+        foreach (var t in pool) have.Add(t.txid);
+
+        foreach (var t in arrived)
+            if (have.Add(t.txid)) pool.Insert(0, t);   // newest at the front
+
+        if (pool.Count > keep) pool.RemoveRange(keep, pool.Count - keep);
+        return pool;
     }
 
     public static List<Tx> Parse(string json, int keep)

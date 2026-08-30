@@ -202,6 +202,7 @@ public class Bootstrap : MonoBehaviour
         hud.health = _truckHealth;
         hud.wasted = _wasted;
         hud.gate = _gate;
+        hud.loadout = Object.FindFirstObjectByType<LoadoutPanel>();
         hud.bay = _cargo;
     }
 

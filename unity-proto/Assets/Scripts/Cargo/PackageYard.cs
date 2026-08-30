@@ -39,16 +39,17 @@ public class PackageYard : MonoBehaviour
 
     public float fieldOfView = 42f;
 
-    [Tooltip("Top of the panel band, as a fraction of the view height above " +
-             "centre. Kept clear of the headline price at the top of the " +
-             "screen, which it used to run into.")]
-    public float bandTop = 0.44f;
-
-    [Tooltip("Bottom of the panel band. Everything below this is the game.")]
-    public float bandBottom = 0.00f;
-
     [Tooltip("Distance from the yard camera to the crates.")]
     public float depth = 7f;
+
+    [Header("Where the panel sits, as a fraction of the screen")]
+    [Tooltip("Clear of the headline price, which takes the top fifth.")]
+    public float panelTop = 0.10f;
+    public float panelBottom = 0.56f;
+    public float panelInset = 0.03f;
+
+    [Tooltip("Height of the title bar, as a fraction of the panel.")]
+    public float titleBar = 0.13f;
 
     /// <summary>Set when a pick was refused for want of room, for the HUD.</summary>
     public float RefusedAt { get; private set; } = -99f;
@@ -71,6 +72,7 @@ public class PackageYard : MonoBehaviour
     GameObject _backdrop;
     bool _open;
     bool _stacked;
+    Vector2Int _laidOutFor;
     string _showing = "";
 
     public bool IsOpen => _open;
@@ -182,10 +184,15 @@ public class PackageYard : MonoBehaviour
         // can miss.
         go.AddComponent<BoxCollider>().size = Vector3.one * 1.5f;
 
-        var mr = go.GetComponent<MeshRenderer>();
-        mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-        mr.receiveShadows = false;
-        if (mr.sharedMaterial != null) mr.sharedMaterial.color = PanelColour(tx);
+        // Children, not the object itself: a model crate is a wrapper with the
+        // mesh underneath it, and asking the wrapper for its MeshRenderer threw
+        // the moment the cardboard model was wired up.
+        foreach (var r in go.GetComponentsInChildren<Renderer>(true))
+        {
+            r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            r.receiveShadows = false;
+            if (r.sharedMaterial != null) r.sharedMaterial.color = PanelColour(tx);
+        }
 
         float size = CargoBay.CrateSize(tx);
         float t = Mathf.InverseLerp(0.45f, 1.4f, size);
@@ -238,12 +245,8 @@ public class PackageYard : MonoBehaviour
     {
         for (int i = 0; i < _yard.Count; i++)
         {
-            var mr = _yard[i].crate != null ? _yard[i].crate.GetComponent<MeshRenderer>() : null;
-            var colour = PanelColour(_yard[i].tx, i, _yard.Count);
-            if (mr != null && mr.sharedMaterial != null) { mr.sharedMaterial.color = colour; continue; }
-
-            // a model crate carries its colour on every part
             if (_yard[i].crate == null) continue;
+            var colour = PanelColour(_yard[i].tx, i, _yard.Count);
             foreach (var r in _yard[i].crate.GetComponentsInChildren<Renderer>(true))
                 if (r.sharedMaterial != null) r.sharedMaterial.color = colour;
         }
@@ -260,59 +263,100 @@ public class PackageYard : MonoBehaviour
     }
 
     /// <summary>
-    /// Spread the crates across a band in the UPPER part of the view.
+    /// Where the panel is on screen, in GUI pixels.
     ///
-    /// The first panel was centred and opaque and covered the truck, so the
-    /// player could not see the thing they were loading. The band never
-    /// reaches below bandBottom, and everything under that line is the game.
+    /// ONE rectangle decides everything: the backdrop is sized to it, the
+    /// crates are laid out inside it, and the frame and title are drawn round
+    /// it. Deriving the two independently is what put the crates outside the
+    /// slate they were supposed to be sitting on.
+    /// </summary>
+    public Rect PanelRect(int w, int h)
+    {
+        float x = w * panelInset;
+        return new Rect(x, h * panelTop, w - x * 2f, h * (panelBottom - panelTop));
+    }
+
+    /// <summary>The bar across the top of the panel, where the title goes.</summary>
+    public Rect TitleRect(int w, int h)
+    {
+        var r = PanelRect(w, h);
+        return new Rect(r.x, r.y, r.width, r.height * titleBar);
+    }
+
+    /// <summary>A point on screen, on the plane the crates sit on.</summary>
+    Vector3 FromScreen(float px, float py, float atDepth)
+    {
+        float vh = 2f * atDepth * Mathf.Tan(_cam.fieldOfView * 0.5f * Mathf.Deg2Rad);
+        float vw = vh * Mathf.Max(0.5f, _cam.aspect);
+        return new Vector3((px / Screen.width - 0.5f) * vw,
+                           (0.5f - py / Screen.height) * vh,
+                           atDepth);
+    }
+
+    /// <summary>
+    /// Lay the crates out INSIDE the panel rectangle, under its title bar.
     /// </summary>
     void Layout()
     {
-        if (_yard.Count == 0) return;
+        if (_yard.Count == 0 || _cam == null) return;
 
-        float h = 2f * depth * Mathf.Tan(_cam.fieldOfView * 0.5f * Mathf.Deg2Rad);
-        float w = h * Mathf.Max(0.5f, _cam.aspect);
+        int sw = Screen.width, sh = Screen.height;
+        var panel = PanelRect(sw, sh);
+        float titleH = panel.height * titleBar;
+
+        // the working area: inside the frame, below the title
+        var area = new Rect(panel.x + panel.width * 0.02f,
+                            panel.y + titleH,
+                            panel.width * 0.96f,
+                            panel.height - titleH - panel.height * 0.04f);
 
         int cols = Mathf.Min(perRow, _yard.Count);
         int rows = Mathf.CeilToInt(_yard.Count / (float)cols);
 
-        float hi = h * bandTop, lo = h * bandBottom;
-        float ch = (hi - lo) / Mathf.Max(1, rows);
-        float cw = w * 0.86f / cols;
+        float cellW = area.width / cols;
+        float cellH = area.height / rows;
 
         // Sized against the BIGGEST on the ramp, so the differences are the
-        // real ones. Squeezing them into 62-100% of the cell - which is what
-        // this did - makes a 200 vB package and a 2400 vB package look alike
-        // whenever the offers happen to be of similar size, and the whole
-        // point of a crate is that its size is the transaction's size.
+        // real ones. Squeezing them into a narrow band of the cell makes a
+        // 200 vB package and a 2400 vB one look alike whenever the offers
+        // happen to be similar, and a crate's size is the whole way a
+        // transaction's size is shown.
         float biggest = 0f;
         foreach (var y in _yard) biggest = Mathf.Max(biggest, y.size);
-        float room = Mathf.Min(cw * 0.62f, ch * 0.60f);
 
         for (int i = 0; i < _yard.Count; i++)
         {
             int row = i / cols, col = i % cols;
             int inRow = Mathf.Min(cols, _yard.Count - row * cols);
-            float x = (col - (inRow - 1) * 0.5f) * cw;
-            // sits in the upper part of its row, leaving room for the caption
-            float y = hi - ch * (row + 0.34f);
-            _yard[i].seat = new Vector3(x, y, depth);
+
+            // centred in its row, and in the upper part of its cell so the
+            // caption underneath has somewhere to go
+            float px = area.x + area.width * 0.5f
+                     + (col - (inRow - 1) * 0.5f) * cellW;
+            float py = area.y + cellH * (row + 0.34f);
+
+            _yard[i].seat = FromScreen(px, py, depth);
             _yard[i].crate.transform.localPosition = _yard[i].seat;
 
-            // a floor, so the smallest is still worth aiming at
+            // the cell in world units, so the crate can be sized against it
+            var a = FromScreen(0f, 0f, depth);
+            var b = FromScreen(cellW, cellH, depth);
+            float room = Mathf.Min(Mathf.Abs(b.x - a.x) * 0.60f,
+                                   Mathf.Abs(b.y - a.y) * 0.52f);
+
             float rel = biggest > 0f ? _yard[i].size / biggest : 1f;
             _yard[i].crate.transform.localScale = Vector3.one * room * Mathf.Clamp(rel, 0.42f, 1f);
         }
 
-        // The panel behind them. Its BOTTOM edge is pinned to the band, and
-        // the margin is added at the top only: sharing it evenly let the slate
-        // dip below the middle of the screen and take a strip of the truck
-        // with it - measured at 18% of the lower half.
-        float bottom = lo;
-        float top = hi + ch * 0.35f;
+        // The slate, sized to the panel rectangle exactly. It used to be
+        // positioned from its own numbers, which is why the crates ended up
+        // floating outside it.
+        var tl = FromScreen(panel.x, panel.y, depth + 3.2f);
+        var br = FromScreen(panel.xMax, panel.yMax, depth + 3.2f);
         _backdrop.transform.localPosition =
-            new Vector3(0f, (top + bottom) * 0.5f, depth + 3.2f);
-        _backdrop.transform.localScale = new Vector3(w * 0.97f, top - bottom, 1f);
+            new Vector3((tl.x + br.x) * 0.5f, (tl.y + br.y) * 0.5f, depth + 3.2f);
+        _backdrop.transform.localScale =
+            new Vector3(Mathf.Abs(br.x - tl.x), Mathf.Abs(br.y - tl.y), 1f);
     }
 
     /// <summary>A crate as the HUD needs it: what it is and where it is drawn.</summary>
@@ -512,6 +556,15 @@ public class PackageYard : MonoBehaviour
         }
 
         KeepSomethingThatFits();
+
+        // the panel is laid out in screen space, so a resized window has to
+        // rebuild it - in a browser that happens whenever the tab is resized
+        if (_laidOutFor.x != Screen.width || _laidOutFor.y != Screen.height)
+        {
+            _laidOutFor = new Vector2Int(Screen.width, Screen.height);
+            Layout();
+        }
+
         Spin();
 
         if (Pressed(out var at))
