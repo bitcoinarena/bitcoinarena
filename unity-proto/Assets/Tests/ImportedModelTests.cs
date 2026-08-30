@@ -149,6 +149,24 @@ public class ImportedModelTests
         Assert.Greater(modelled, 0, "die Pakete sind immer noch Unity-Wuerfel");
     }
 
+    /// <summary>
+    /// The truck model is referenced by the scene, so it is in the build
+    /// before anything is streamed. Asking for it over the network as well
+    /// could only ever end as "Truck failed", which is what was reported.
+    /// </summary>
+    [UnityTest]
+    public IEnumerator TheTruckIsNotStreamedBecauseItIsInTheBuild()
+    {
+        yield return null;
+        var boot = Object.FindFirstObjectByType<Bootstrap>();
+        var streamer = Object.FindFirstObjectByType<ModelStreamer>();
+
+        Assert.IsNotNull(boot.truckModel, "der Szene ist kein Truckmodell zugewiesen");
+        foreach (var item in streamer.Items)
+            Assert.AreNotEqual("Truck", item.label,
+                "der Truck steht auf der Streaming-Liste, obwohl er fest in der Szene sitzt");
+    }
+
     [UnityTest]
     public IEnumerator SoldiersStandOnTheGroundAndAreAnimated()
     {

@@ -210,6 +210,50 @@ public class FeatureTests
         Assert.IsNotNull(clock.gate, "die Blockuhr haengt nicht am Lieferziel");
     }
 
+    /// <summary>
+    /// The corners of the screen are shared, and every one of these landed on
+    /// top of something: the condition bar on the block, the score on the
+    /// driving pads. Checked as rectangles, because that is what the fault is.
+    /// </summary>
+    [Test]
+    public void NothingInTheHudOverlapsAnythingElse()
+    {
+        var hud = Object.FindFirstObjectByType<DriveHud>();
+        const int W = 1600, H = 900;
+
+        float pad = Mathf.Max(8f, H * 0.02f);
+        var blockBox = new Rect(pad, pad, W * 0.24f + pad, hud.BlockBoxHeight(W, H));
+        var health = hud.HealthBox(W, H);
+
+        Assert.Greater(health.y, blockBox.yMax,
+            $"der Zustandsbalken beginnt bei {health.y:0} und der Block endet erst " +
+            $"bei {blockBox.yMax:0} - sie liegen uebereinander");
+
+        // and the score has to sit clear of the throttle and brake pads
+        var pads = TouchPad.RectFor(TouchPad.Pad.Up, W, H);
+        var brake = TouchPad.RectFor(TouchPad.Pad.Down, W, H);
+        Assert.Greater(pads.y, blockBox.yMax, "die Pads liegen im oberen HUD");
+        Assert.Greater(brake.yMax, pads.y, "die Pads sind nicht gestapelt wie erwartet");
+    }
+
+    [Test]
+    public void OnlyStreamedModelsAreListedAsStreaming()
+    {
+        var streamer = Object.FindFirstObjectByType<ModelStreamer>();
+        Assert.IsNotNull(streamer, "kein Streamer");
+
+        // Only the wording here. Whether the truck belongs in the list depends
+        // on the SCENE having the model assigned, and this suite builds a bare
+        // Bootstrap with no prefabs at all - so that check lives with the tests
+        // that load the real scene. Checked here it would also be wrong for a
+        // second reason: a successful stream sets truckModel itself, so after
+        // it has run the field says nothing about where the model came from.
+        foreach (var item in streamer.Items)
+            Assert.IsFalse(item.label.Contains("ü") || item.label.Contains("ä") ||
+                           item.label.Contains("Panzer") || item.label.Contains("Bomben"),
+                $"'{item.label}' ist noch deutsch");
+    }
+
     [Test]
     public void TheTitleScreenHoldsEverythingUntilPlay()
     {

@@ -90,11 +90,17 @@ public class ModelStreamer : MonoBehaviour
 
     void Start()
     {
-        Items.Add(new Item { label = "Soldaten", key = SoldierKey });
-        Items.Add(new Item { label = "Panzer", key = TankKey });
-        Items.Add(new Item { label = "Truck", key = TruckKey });
-        Items.Add(new Item { label = "Helikopter", key = HelicopterKey });
-        Items.Add(new Item { label = "Bomben", key = BombKey });
+        Items.Add(new Item { label = "Soldiers", key = SoldierKey });
+        Items.Add(new Item { label = "Tanks", key = TankKey });
+
+        // The truck rides in the build - the scene references it directly, so
+        // it is there before anything is streamed. Asking for it as well was
+        // reported as "Truck failed", which it was: there is nothing to fetch.
+        if (bootstrap == null || bootstrap.truckModel == null)
+            Items.Add(new Item { label = "Truck", key = TruckKey });
+
+        Items.Add(new Item { label = "Helicopter", key = HelicopterKey });
+        Items.Add(new Item { label = "Bombs", key = BombKey });
         StartCoroutine(Stream());
     }
 
@@ -137,10 +143,11 @@ public class ModelStreamer : MonoBehaviour
             if (army != null) army.SetTankPrefab(go);
             if (fx != null) fx.wreckPrefab = go;
         });
-        yield return Fetch(TruckKey, go =>
-        {
-            if (bootstrap != null) bootstrap.SwapTruckModel(go);
-        });
+        if (bootstrap == null || bootstrap.truckModel == null)
+            yield return Fetch(TruckKey, go =>
+            {
+                if (bootstrap != null) bootstrap.SwapTruckModel(go);
+            });
         yield return Fetch(HelicopterKey, go =>
         {
             if (army != null) army.SetHelicopterPrefab(go);

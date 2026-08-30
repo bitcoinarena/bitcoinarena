@@ -245,8 +245,11 @@ public class LoadoutPanel : MonoBehaviour
         title.normal.textColor = PanelSkin.Gold;
         GUI.Label(bar, "CHOOSE YOUR MEMPOOL CARGO", title);
 
-        var tag = new GUIStyle(_small) { alignment = TextAnchor.MiddleLeft, fontStyle = FontStyle.Bold };
-        float tagW = Mathf.Min(150f, panel.width * 0.16f);
+        // Wide enough for the words, and no wrapping: at 150 px "LIVE MEMPOOL"
+        // broke onto a second line and spilled out of its own pill.
+        var tag = new GUIStyle(_small)
+            { alignment = TextAnchor.MiddleLeft, fontStyle = FontStyle.Bold, wordWrap = false };
+        float tagW = Mathf.Clamp(panel.width * 0.20f, 190f, 300f);
         PanelSkin.Tag(new Rect(bar.x + 14f, bar.y + bar.height * 0.28f, tagW, bar.height * 0.44f),
                       feed != null && feed.Fresh ? "● LIVE MEMPOOL" : "○ CONNECTING",
                       feed != null && feed.Fresh ? PanelSkin.Cyan : new Color(1f, 1f, 1f, 0.5f), tag);

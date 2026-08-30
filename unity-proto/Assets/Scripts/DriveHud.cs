@@ -111,9 +111,12 @@ public class DriveHud : MonoBehaviour
 
         float width = w * 0.6f;
         float x = w - width - pad;
-        // ABOVE the driving pads, not behind them. The pads occupy the bottom
-        // fifth of the screen and the score was sitting underneath them.
-        float bottom = h - Mathf.Max(pad, h * 0.24f);
+
+        // ABOVE the driving pads, measured off the pads themselves rather than
+        // guessed at: throttle and brake are stacked in the bottom right corner
+        // and the score was sitting across them.
+        float padsTop = TouchPad.RectFor(TouchPad.Pad.Up, w, h).y;
+        float bottom = padsTop - pad * 0.6f;
 
         // the load, smallest and highest
         var loadLine = new Rect(x, bottom - score.fontSize * 1.05f - under.fontSize * 2.6f,
@@ -168,7 +171,7 @@ public class DriveHud : MonoBehaviour
         // Height depends on whether there is a board yet, so it is measured
         // before anything is drawn.
         int rows = Mathf.Min(5, block.Board.Count);
-        float boxH = lh * (3.2f + (rows > 0 ? 1.2f + rows * 0.95f : 0f));
+        float boxH = BlockBoxHeight(w, h);
         var box = new Rect(pad, pad, bw + pad, boxH);
 
         PanelSkin.Body(box, 0.72f);
@@ -389,8 +392,22 @@ public class DriveHud : MonoBehaviour
         float barH = Mathf.Max(12f, h * 0.022f);
         float lh = SmallFont(w, h) * 1.5f;
         var diag = DiagnosticsBox(w, h);
-        float top = showDiagnostics ? diag.yMax + pad * 0.4f : pad;
+
+        // UNDER whatever occupies the top left. That is the diagnostics box
+        // when it is up, and the block readout otherwise - the condition bar
+        // was landing straight on top of the block, its clock and the board.
+        float top = showDiagnostics ? diag.yMax + pad * 0.4f
+                                    : pad + BlockBoxHeight(w, h) + pad * 0.5f;
         return new Rect(diag.x, top, diag.width, barH + lh);
+    }
+
+    /// <summary>How tall the block readout is. Shared, so nothing lands on it.</summary>
+    public float BlockBoxHeight(int w, int h)
+    {
+        if (block == null) return 0f;
+        float lh = SmallFont(w, h) * 1.55f;
+        int rows = Mathf.Min(5, block.Board.Count);
+        return lh * (3.2f + (rows > 0 ? 1.2f + rows * 0.95f : 0f));
     }
 
     void DrawHealth(int w, int h)
