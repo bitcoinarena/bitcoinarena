@@ -11,6 +11,11 @@ PROJECT="${1:-btc-logistics-war}"
 
 [ -f "$BUILD/index.html" ] || { echo "no build at $BUILD - run BuildWebGL.Run first"; exit 1; }
 
+# The build directory is gitignored, so anything Cloudflare needs that is not
+# produced by Unity has to be copied in from a version-controlled copy - or a
+# fresh clone deploys without content types and cache rules and nobody notices.
+cp "$ROOT/deploy/_headers" "$BUILD/_headers"
+
 echo "deploying $(du -sh "$BUILD" | cut -f1) to Cloudflare Pages project '$PROJECT'"
 # --branch is pinned: wrangler otherwise takes it from git, and a deployment
 # on any branch but the production one is published under a preview URL while

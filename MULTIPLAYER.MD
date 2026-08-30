@@ -1,370 +1,370 @@
-# BTC Logistics War — Multiplayer- & Echtgeld-Konzept
+# BTC Logistics War — Multiplayer & Real-Money Concept
 
-Stand: 2026-08-30. Dieses Dokument beschreibt, wie aus dem Einzelspieler-Prototyp
-ein anonymes Multiplayer-Spiel mit echten Sats wird: Lightning rein, Fracht als
-Einsatz, Auszahlung nur bei Ankunft, 10 % Host-Fee — und eine Architektur, in
-der der Client **nichts** entscheidet.
-
----
-
-## 0. Leitprinzip
-
-> **Der Client ist ein Eingabegerät und ein Fernseher.**
-
-Sobald Geld auf dem Spiel steht, darf keine einzige spielentscheidende Größe im
-Browser berechnet werden. Der Client sendet ausschließlich Eingaben (Lenken,
-Gas, Bremse) und rendert, was der Server ihm sagt. Ob der Truck getroffen
-wurde, ob er lebt, ob er das Tor erreicht hat — das simuliert der Server.
-
-Die Konsequenz ist die wichtigste Sicherheitseigenschaft des ganzen Konzepts:
-**Es gibt keinen API-Aufruf „ich bin angekommen“.** Ankunft ist ein Ereignis,
-das der Server in seiner eigenen Simulation feststellt. Die Angriffsklasse
-„gefälschtes Spielergebnis“ existiert damit strukturell nicht — sie muss nicht
-abgewehrt werden, weil es den Endpunkt nicht gibt.
-
-Ein manipulierter Client kann deshalb genau eines erreichen: perfekt fahren.
-Das ist kein Sicherheits-, sondern ein Ökonomieproblem, und wird in §4.4
-(Kalibrierung) behandelt.
+Written 2026-08-30. This document describes how the single-player prototype
+becomes an anonymous multiplayer game played for real sats: Lightning in,
+cargo as the stake, payout only on arrival, a 10% house fee — and an
+architecture in which the client decides **nothing**.
 
 ---
 
-## 1. Konten & Anonymität
+## 0. Guiding principle
 
-**Kein E-Mail, kein Passwort, keine PII.** Ein Konto ist ein Schlüsselpaar.
+> **The client is an input device and a television.**
 
-- Beim ersten Besuch erzeugt der Browser (WebCrypto) ein ed25519-Schlüsselpaar.
-  Der Public Key **ist** die Konto-ID.
-- Login = Challenge-Response: Server schickt Nonce, Client signiert, fertig.
-  Es gibt keine Passwortdatenbank, die geleakt werden könnte.
-- Der Anzeigename wird deterministisch aus dem Pubkey abgeleitet
-  (`brave-otter-4711`) — zufällig wirkend, kollisionfrei, nicht wählbar.
-  Nicht wählbar heißt: keine Impersonation, keine Beleidigungsnamen, keine
-  Moderation nötig.
-- Schlüsselverlust = Guthabenverlust. Der Client bietet einmalig eine
-  Seed-Phrase zum Sichern an. Das ist die ehrliche Konsequenz aus
-  Anonymität ohne Identitätsanker, und sie wird dem Nutzer genau so gesagt.
-- Kontoerstellung ist gratis, aber gedrosselt (Rate-Limit pro IP + kleines
-  Client-Proof-of-Work), damit Konten-Fluten teuer sind.
+Once money is on the table, not one outcome-deciding quantity may be computed
+in the browser. The client sends inputs only (steering, throttle, brake) and
+renders what the server tells it. Whether the truck was hit, whether it is
+alive, whether it reached the gate — the server simulates all of it.
+
+The consequence is the single most important security property of this design:
+**there is no "I have arrived" API call.** Arrival is an event the server
+observes in its own simulation. The attack class "forged game result" therefore
+does not exist structurally — it does not need defending against, because the
+endpoint is not there.
+
+A tampered client can achieve exactly one thing: driving perfectly. That is not
+a security problem but an economic one, and it is handled in §4.4
+(calibration).
 
 ---
 
-## 2. Geldfluss
+## 1. Accounts & anonymity
+
+**No email, no password, no PII.** An account is a keypair.
+
+- On first visit the browser generates an ed25519 keypair (WebCrypto). The
+  public key **is** the account ID.
+- Login is challenge-response: the server sends a nonce, the client signs it,
+  done. There is no password database that could leak.
+- The display name is derived deterministically from the pubkey
+  (`brave-otter-4711`) — random-looking, collision-free, and not choosable.
+  Not choosable means: no impersonation, no abusive names, no moderation
+  needed.
+- Losing the key means losing the balance. The client offers a seed phrase to
+  write down, once. That is the honest consequence of anonymity without an
+  identity anchor, and the user is told exactly that.
+- Account creation is free but throttled (per-IP rate limit plus a small
+  client-side proof-of-work), so flooding the system with accounts costs
+  something.
+
+---
+
+## 2. Money flow
 
 ```
-                    ┌──────────────────────── Spieler ───────────────────────┐
-                    │  ed25519-Konto          Browser-Client (Unity WebGL)   │
+                    ┌──────────────────────── Player ────────────────────────┐
+                    │  ed25519 account        Browser client (Unity WebGL)   │
                     └───────┬──────────────────────────┬─────────────────────┘
-                            │ REST (Wallet)            │ WebSocket (Spiel: nur Inputs)
+                            │ REST (wallet)            │ WebSocket (game: inputs only)
                     ┌───────▼──────────┐       ┌───────▼─────────┐
-                    │  API-Gateway     │       │  Shard-Server   │  autoritative
-                    │  (stateless)     │       │  (Spielsim)     │  Simulation
+                    │  API gateway     │       │  Shard server   │  authoritative
+                    │  (stateless)     │       │  (game sim)     │  simulation
                     └───────┬──────────┘       └───────┬─────────┘
-                            │                          │ signierte Ergebnisse
+                            │                          │ signed outcomes
                     ┌───────▼──────────────────────────▼─────────┐
                     │        Ledger (Postgres, double-entry,     │
-                    │        append-only Hash-Kette)             │
+                    │        append-only hash chain)             │
                     └───────┬────────────────────────────────────┘
-                            │ signierte Auszahlungs-Freigaben
+                            │ signed payout authorisations
                     ┌───────▼──────────┐
-                    │  Wallet-Daemon   │── Lightning-Node (Hot-Wallet, kleiner Float)
-                    │  (eigener Host,  │── Cold-Sweep ab Schwellwert
-                    │  kein Internet-  │
-                    │  Inbound)        │
+                    │  Wallet daemon   │── Lightning node (hot wallet, small float)
+                    │  (own host, no   │── cold sweep above threshold
+                    │  inbound from    │
+                    │  the internet)   │
                     └──────────────────┘
 ```
 
-### 2.1 Einzahlung
-- `POST /deposit {amount}` → Server erzeugt Lightning-Invoice (Label = Konto).
-- Settlement-Callback schreibt **idempotent** (Invoice-ID als Schlüssel) auf
-  das Konto gut. Lightning settelt atomar — das 0-Conf-Problem von On-Chain
-  existiert hier nicht.
-- Min. 1 000 sat, konfigurierbares Maximum pro Konto (Exposure-Cap, §8.4).
+### 2.1 Deposit
+- `POST /deposit {amount}` → the server issues a Lightning invoice (label =
+  account).
+- The settlement callback credits the account **idempotently** (invoice ID as
+  the key). Lightning settles atomically — the 0-conf problem of on-chain does
+  not arise here.
+- Minimum 1,000 sat; configurable per-account maximum (exposure cap, §8).
 
 ### 2.2 Ledger
-- **Double-Entry**: jede Bewegung ist eine Buchung zwischen zwei Konten
-  (Spieler ↔ Escrow ↔ Haus). Es gibt keinen Code-Pfad, der „einen Saldo setzt“.
-- Invariante, laufend geprüft:
-  `Σ Spielerguthaben + Escrow + Hauskonto = Σ Einzahlungen − Σ Auszahlungen`
-- Jede Buchung enthält den Hash ihres Vorgängers → **append-only Hash-Kette**.
-  Nachträgliches Ändern einer Buchung bricht die Kette sichtbar. Der aktuelle
-  Kettenkopf ist öffentlich abrufbar (`GET /audit/head`); Spieler bekommen zu
-  jeder eigenen Buchung eine signierte Quittung.
-- Saldo-Operationen laufen unter `SELECT … FOR UPDATE` / serialisierbaren
-  Transaktionen — Race-Conditions (doppeltes Ausgeben desselben Guthabens
-  durch parallele Requests) sind damit auf DB-Ebene ausgeschlossen, nicht nur
-  im Anwendungscode.
+- **Double-entry**: every movement is a posting between two accounts
+  (player ↔ escrow ↔ house). There is no code path that "sets a balance".
+- Continuously checked invariant:
+  `Σ player balances + escrow + house = Σ deposits − Σ withdrawals`
+- Every posting carries the hash of its predecessor → an **append-only hash
+  chain**. Altering a posting after the fact breaks the chain visibly. The
+  current chain head is public (`GET /audit/head`), and players receive a
+  signed receipt for each of their own postings.
+- Balance operations run under `SELECT … FOR UPDATE` / serialisable
+  transactions — races (spending the same balance twice through parallel
+  requests) are ruled out at the database level, not merely in application
+  code.
 
-### 2.3 Auszahlung
-- `POST /withdraw {bolt11}` → Prüfungen: Betrag ≤ Saldo, ≥ Minimum,
-  Rate-Limits, Tages-Cap.
-- Ablauf: erst **debit als pending**, dann zahlen, bei Fehlschlag re-credit.
-  Idempotency-Key pro Anfrage — ein doppelt gesendeter Request zahlt nie
-  doppelt.
-- Beträge über Schwellwert (z. B. 250 000 sat) werden verzögert ausgezahlt
-  (Review-Fenster). Das begrenzt den Schaden **jedes** noch unbekannten Fehlers
-  auf den Schwellwert × Rate — Sicherheitsnetz unter allem anderen.
-- Routing-Gebühren trägt der Empfänger (transparent angezeigt); die Host-Fee
-  steckt im Spiel (§4), nicht in der Auszahlung.
+### 2.3 Withdrawal
+- `POST /withdraw {bolt11}` → checks: amount ≤ balance, ≥ minimum, rate limits,
+  daily cap.
+- Order of operations: **debit as pending first**, then pay, and re-credit on
+  failure. An idempotency key per request means a duplicate request never pays
+  twice.
+- Amounts above a threshold (say 250,000 sat) are paid out on a delay (review
+  window). That caps the damage of **any** still-unknown bug at threshold ×
+  rate — the safety net underneath everything else.
+- Routing fees are borne by the recipient and shown transparently; the house
+  fee lives in the game (§4), not in the withdrawal.
 
-### 2.4 Schlüsseltrennung (warum ein gehackter Spielserver die Node nicht leert)
-Der Wallet-Daemon läuft auf eigenem Host, nimmt **keine** Verbindungen aus dem
-Internet an und zahlt nur gegen eine gültige ed25519-Signatur des
-Settlement-Keys **plus** passende Ledger-Buchung **plus** Rate-Caps. Der
-Settlement-Key liegt nicht auf dem Web/Spiel-Tier. Wer das Gateway oder einen
-Shard kompromittiert, kann damit keine Auszahlung erzeugen — er kann höchstens
-Runden manipulieren, was die Kalibrierung (§4.4) und die Caps (§8.4) begrenzen.
-Die Hot-Wallet hält nur einen kleinen Float (z. B. 2–5 M sat), Rest wird
-automatisch cold geswept.
-
----
-
-## 3. Eine Fahrt (Ablauf)
-
-1. **Runde**: Der Server betreibt die Blockuhr (heute `BlockClock`, dann
-   serverseitig). Pro Runde ein Seed → identisches Terrain, identische Armeen
-   für alle (§7).
-2. **Beladen**: Spieler wählt Pakete. Jedes Paket hat einen **Preis in sats**
-   (§4.1). Bei „LOSFAHREN“ wird die Summe vom Guthaben in ein Escrow-Konto
-   gebucht. Kein Guthaben, keine Fracht.
-3. **Fahren**: Client schickt Eingaben, Server simuliert, Client rendert mit
-   Prediction und wird korrigiert (§6).
-4. **Ausgang**:
-   - **Tor erreicht** → Server stellt das Ankunftsereignis fest, bucht
-     `Einsatz × Multiplikator` (§4.2) vom Haus/Pool an den Spieler.
-   - **Zerstört / Rundenende ohne Ankunft** → Einsatz geht vollständig ans
-     Haus. Keine Teilauszahlung (Anforderung 4: nur Ankunft zahlt).
-5. **Reparatur/Neukauf** nach der Fahrt aus dem Guthaben (§5).
+### 2.4 Key separation (why a compromised game server cannot drain the node)
+The wallet daemon runs on its own host, accepts **no** inbound connections from
+the internet, and pays only against a valid ed25519 signature from the
+settlement key **plus** a matching ledger posting **plus** rate caps. The
+settlement key does not live on the web or game tier. Whoever compromises the
+gateway or a shard cannot produce a payout with it — at most they can
+manipulate rounds, which calibration (§4.4) and the caps (§8) bound. The hot
+wallet holds only a small float (e.g. 2–5M sat); the rest is swept cold
+automatically.
 
 ---
 
-## 4. Einsatz, Auszahlung, 10 % Host-Fee
+## 3. A run, end to end
 
-### 4.1 Pakete als Einsatz
-Die Pakete kommen weiter aus dem echten Mempool (Optik, Größe, Heat), aber ihr
-**Einsatzpreis** ist eine Serverseite Größe in Stufen, abgeleitet aus dem
-Fee-Band der Transaktion: z. B. 100 / 500 / 1 000 / 5 000 sat. Der
-Gesamteinsatz ist die Summe der geladenen Pakete, begrenzt durch Ladefläche
-**und** Einsatz-Cap des Trucks (§5). „Ein 5 000-sat-Truck“ heißt: 5 000 sat
-Einsatz sind an Bord, und bei Ankunft auf der Normalroute kommen ~5 000 sat
-Gewinn heraus (M ≈ 2,0 nach Fee, siehe Beispiel).
+1. **Round**: the server runs the block clock (today `BlockClock`, later
+   server-side). One seed per round → identical terrain and identical armies
+   for everyone (§7).
+2. **Load**: the player picks parcels. Each parcel has a **price in sats**
+   (§4.1). On "ROLL OUT" the total is moved from the balance into an escrow
+   account. No balance, no freight.
+3. **Drive**: the client sends inputs, the server simulates, the client renders
+   with prediction and gets corrected (§6).
+4. **Outcome**:
+   - **Gate reached** → the server observes the arrival event and posts
+     `stake × multiplier` (§4.2) from the house/pool to the player.
+   - **Wrecked, or the round ends without arrival** → the stake goes to the
+     house in full. No partial payout (requirement 4: only arrival pays).
+5. **Repair or replacement** afterwards, from the balance (§5).
 
-### 4.2 Auszahlungsformel
+---
+
+## 4. Stake, payout, and the 10% house fee
+
+### 4.1 Parcels as the stake
+Parcels still come from the real mempool (look, size, heat), but their **stake
+price** is a server-side figure in tiers derived from the transaction's fee
+band: e.g. 100 / 500 / 1,000 / 5,000 sat. The total stake is the sum of the
+loaded parcels, bounded by both the bed and the truck's stake cap (§5). "A
+5,000 sat truck" means: 5,000 sat of stake aboard, and arriving by the normal
+route returns roughly 5,000 sat of profit (M ≈ 2.0 after the fee — see the
+example).
+
+### 4.2 The payout formula
 ```
-Auszahlung bei Ankunft = Einsatz × M_angezeigt
-M_angezeigt            = 0,90 × M_fair(Route, Heat, Truckklasse)
+payout on arrival = stake × M_shown
+M_shown           = 0.90 × M_fair(route, heat, truck class)
 ```
-Die **10 % Host-Fee ist im angezeigten Multiplikator eingebacken** — der
-Spieler sieht immer die Zahl, die er tatsächlich bekommt. `M_fair` ist der
-Multiplikator, bei dem die erwartete Auszahlung dem Einsatz entspricht
-(faire Quote): schafft es statistisch jeder zweite Truck durch den
-Frontkorridor, ist dort `M_fair = 2,0` und angezeigt wird ×1,8.
+The **10% house fee is baked into the multiplier that is shown** — the player
+always sees the number they will actually receive. `M_fair` is the multiplier
+at which expected payout equals the stake (the fair odds): if statistically
+one truck in two makes it through the front corridor, `M_fair = 2.0` there and
+×1.8 is displayed.
 
-**Beispiel:** Einsatz 5 000 sat, Frontkorridor, `M_fair = 2,22` →
-angezeigt ×2,0 → Ankunft zahlt 10 000 sat (Netto +5 000). Von den fairen
-11 111 hat das Haus 1 111 einbehalten ≙ 10 % — über alle Spieler gerechnet.
+**Example:** stake 5,000 sat, front corridor, `M_fair = 2.22` → shown ×2.0 →
+arrival pays 10,000 sat (net +5,000). Of the fair 11,111 the house kept 1,111,
+which is 10% — measured across all players.
 
-### 4.3 Routen-Multiplikator & Gefechtsnähe (Anforderung 5)
-Der Server kennt den gefahrenen Pfad (er simuliert ihn) und berechnet ein
-**Expositions-Integral**: wie lange und wie tief der Truck im
-Gefechtskorridor war, gewichtet mit der aktuellen Heat.
+### 4.3 Route multiplier and proximity to the fighting (requirement 5)
+The server knows the path driven, because it simulated it, and computes an
+**exposure integral**: how long and how deeply the truck was inside the combat
+corridor, weighted by the heat at the time.
 
-- Frontkorridor (Mitte, hohe Heat): bis ×2,4 fair.
-- Normalroute: ~×1,6 fair.
-- Randweg / Kartenkante: fällt gegen ×1,0 fair — **nach Fee also ×0,9**.
+- Front corridor (middle, high heat): up to ×2.4 fair.
+- Normal route: about ×1.6 fair.
+- Edge route / map boundary: falls towards ×1.0 fair — **so ×0.9 after the
+  fee**.
 
-Das ist die elegante Form der „Strafpunkte“: Wer sich vom Schlachtfeld
-fernhält, verliert nicht durch eine Regel, sondern durch Arithmetik.
-Risikofrei fahren hat EV −10 %. Der Exploit aus dem Einzelspieler („nur
-billige, sichere Fracht, ewig Gewinn“) ist damit doppelt zu: die Blockuhr
-begrenzt Fahrten pro Zeit, und sichere Fahrten sind strukturell verlustig.
+That is the elegant form of "penalty points": a player who keeps away from the
+battlefield does not lose to a rule, they lose to arithmetic. Driving risk-free
+is −10% EV. It also closes the single-player exploit twice over ("carry only
+cheap, safe freight and earn forever"): the block clock limits runs per unit of
+time, and safe runs are structurally loss-making.
 
-### 4.4 Kalibrierung — die ökonomische Verteidigung
-`M_fair` ist keine Konstante, sondern wird laufend aus den **globalen,
-tatsächlichen Ankunftsquoten** je (Routenband × Heatband × Truckklasse)
-nachgeführt, Ziel: Auszahlungsquote 90 % über alles.
+### 4.4 Calibration — the economic defence
+`M_fair` is not a constant. It is tracked continuously from the **global,
+observed arrival rates** per (route band × heat band × truck class), targeting
+a 90% payout ratio overall.
 
-Das ist die Antwort auf perfekte Fahr-Bots und auf Multi-Accounts: Ein Bot,
-der überdurchschnittlich oft ankommt, hebt die gemessene Ankunftsquote seines
-Bandes → der Multiplikator sinkt für alle → sein eigener Vorteil schrumpft
-mit. Bots schlagen nicht das Haus, sie verschlechtern die Quote — ihre eigene
-eingeschlossen. Multi-Accounts helfen nicht, weil es keine Boni gibt und die
-Kalibrierung global ist.
+This is the answer to perfect driving bots and to multi-accounting. A bot that
+arrives more often than average raises the measured arrival rate of its band →
+the multiplier drops for everyone in that band → its own edge shrinks with it.
+Bots do not beat the house; they worsen the odds, including their own.
+Multi-accounting does not help either, because there are no bonuses and
+calibration is global.
 
-Ehrlicher Trade-off: Auch gute menschliche Fahrer teilen sich diese Anpassung.
-Die Granularität (pro Band, nicht global) hält den Effekt lokal; einzelne
-geübte Spieler **können** zeitweise +EV sein — das ist wie Poker-Rake
-akzeptiert, solange das Aggregat stimmt. Schutzgeländer: Einsatz-Cap pro Fahrt
-und pro Konto/Runde, Rekalibrierung täglich, Alarm bei Band-Quoten > 95 %.
-
----
-
-## 5. Trucks: Kauf & Reparatur (Anforderung 6)
-
-- **Starter-Truck**: gratis, kleine Ladefläche (niedriger Einsatz-Cap), wenig
-  Panzerung.
-- Bessere Trucks kosten Sats vom Guthaben: mehr Ladefläche (höherer
-  Einsatz-Cap), mehr Panzerung (höhere Überlebensquote), mehr Tempo.
-- Schaden bleibt nach der Fahrt bestehen; Reparatur kostet anteilig.
-  Totalschaden = Truck weg, neu kaufen.
-- **Grundsatz: Geld kauft Kapazität und Varianzreduktion, nie Erwartungswert.**
-  Jede Truckklasse hat ihre eigene Kalibrierungsspalte (§4.4). Ein gepanzerter
-  Truck kommt öfter an — und hat dafür entsprechend niedrigere Multiplikatoren.
-  Sonst wäre „Panzerung kaufen“ eine Gelddruckmaschine, und genau solche
-  stillen +EV-Pfade sind die Sicherheitslücken von Spielökonomien.
+The honest trade-off: good human drivers share that adjustment too. The
+granularity (per band, not global) keeps the effect local, and individual
+skilled players **can** be +EV for a while — that is accepted the way poker
+rake is, as long as the aggregate holds. Guard rails: stake caps per run and
+per account per round, daily recalibration, and an alert when a band's arrival
+rate exceeds 95%.
 
 ---
 
-## 6. Autoritative Simulation & Netzprotokoll (Anforderungen 8, 9)
+## 5. Trucks: buying and repairing (requirement 6)
 
-### 6.1 Geteilter deterministischer Kern
-Die Spiellogik (Armeen, Beschuss, Truck-Bewegung als vereinfachtes
-Fahrmodell, Treffer, Tor) wird aus `Army.cs` & Co. in einen **gemeinsamen
-deterministischen Kern** extrahiert (Rust → nativ für den Server, WASM für den
-Client; Festkomma-Arithmetik, damit beide bitidentisch rechnen).
+- **Starter truck**: free, small bed (low stake cap), little armour.
+- Better trucks cost sats from the balance: more bed (higher stake cap), more
+  armour (higher survival rate), more speed.
+- Damage persists after a run; repair costs in proportion. A write-off means
+  the truck is gone and has to be replaced.
+- **Principle: money buys capacity and variance reduction, never expected
+  value.** Each truck class has its own calibration column (§4.4). An armoured
+  truck arrives more often — and carries correspondingly lower multipliers.
+  Otherwise "buy armour" would be a money printer, and quiet +EV paths like
+  that are precisely the security holes of game economies.
 
-- Der **Server** führt den Kern autoritativ aus: ~20–30 Hz, pro Fahrt eine
-  private Weltinstanz (§6.3). Der Kern ist klein (≈200 Einheiten, 2D-Logik) —
-  konservativ geschätzt laufen **mehrere hundert parallele Fahrten pro
-  CPU-Kern**.
-- Der **Client** führt denselben Kern lokal als Prediction aus. Die Armeen
-  sind aus dem Runden-Seed vollständig deterministisch → der Server muss sie
-  **nicht** streamen, nur einen Checksum-Heartbeat; bei Drift schickt er einen
-  Korrektur-Snapshot (selten).
-- Unity behält WheelCollider & Federung **rein kosmetisch** — das Fahrgefühl
-  bleibt, aber Position/Tod/Ankunft kommen vom Server. (Das ist die eine
-  spürbare Migrationsänderung: das Ergebnis-Fahrmodell wird einfacher als
-  PhysX.)
+---
 
-### 6.2 Traffic-Budget
-| Nachricht | Richtung | Rate | Größe |
+## 6. Authoritative simulation and the wire protocol (requirements 8, 9)
+
+### 6.1 A shared deterministic core
+The game logic (armies, fire, the truck as a simplified driving model, hits,
+the gate) is extracted from `Army.cs` and friends into a **shared
+deterministic core** (Rust → native for the server, WASM for the client; fixed
+point arithmetic so both compute bit-identically).
+
+- The **server** runs the core authoritatively at 20–30 Hz, with a private
+  world instance per run (§6.3). The core is small (~200 units, 2D logic) — a
+  conservative estimate is **several hundred concurrent runs per CPU core**.
+- The **client** runs the same core locally as prediction. The armies follow
+  entirely from the round seed, so the server does **not** stream them, only a
+  checksum heartbeat; on drift it sends a correction snapshot, which should be
+  rare.
+- Unity keeps WheelColliders and suspension as **cosmetics only** — the feel
+  survives, but position, death and arrival come from the server. (This is the
+  one migration change a player might notice: the model that decides the
+  outcome is simpler than PhysX.)
+
+### 6.2 Traffic budget
+| Message | Direction | Rate | Size |
 |---|---|---|---|
-| InputBatch (Tick-Nr + 10× quantisiert Lenk/Gas/Bremse) | C→S | 10/s | ~30 B |
-| TruckCorrection (Pos, V, Heading, HP, quantisiert) | S→C | 10/s | ~40 B |
-| GhostUpdate (≤ 8 nächste Spieler, delta-codiert) | S→C | 5/s | ~10 B/Ghost |
+| InputBatch (tick number + 10× quantised steer/throttle/brake) | C→S | 10/s | ~30 B |
+| TruckCorrection (position, velocity, heading, HP, quantised) | S→C | 10/s | ~40 B |
+| GhostUpdate (≤ 8 nearest players, delta-coded) | S→C | 5/s | ~10 B/ghost |
 | ArmyChecksum | S→C | 1/s | 8 B |
-| Events (Treffer, Tod, Lieferung, Blockschluss) | S→C | selten | ~20 B |
+| Events (hit, death, delivery, block close) | S→C | rare | ~20 B |
 
-**Summe < 2 KB/s pro Spieler.** Zusätzlicher Plattform-Gewinn: heute pollt
-jeder Client selbst mempool.space; künftig holt **ein** Server-Fetcher die
-Daten und verteilt sie im Runden-Seed — ein externer Abruf für alle statt
-einem pro Spieler.
+**Under 2 KB/s per player.** A further platform win: today every client polls
+mempool.space itself; in future **one** server-side fetcher pulls the data and
+distributes it in the round seed — one external call for everybody instead of
+one per player.
 
-### 6.3 Andere Spieler: Geister, bewusst
-Andere Trucks sind sichtbare **Geister ohne Kollision**, und die Armeen jeder
-Fahrt reagieren **nur auf den eigenen Truck** (private Weltinstanz).
+### 6.3 Other players: ghosts, deliberately
+Other trucks are visible **ghosts with no collision**, and the armies in each
+run react **only to that run's own truck** (a private world instance).
 
-Begründung, keine Bequemlichkeit: In einem Geldspiel darf kein fremder Spieler
-meine Gewinnchance verändern können. Geteilte Armeen wären reicher, aber
-sofort ausbeutbar (im Windschatten eines Whale-Fahrers fahren, der alle Panzer
-auf sich zieht; gezieltes Rammen; Absprachen). Geister geben das
-Multiplayer-Gefühl — man sieht die Konkurrenz fahren, sterben, ankommen — ohne
-einen einzigen Kopplungs-Exploit. Ein „Konvoi-Modus“ mit echter Interaktion
-bleibt als spätere Nicht-Geld-Variante denkbar.
+This is a reasoned choice, not a convenience. In a game played for money, no
+other player may be able to change my odds. Shared armies would be richer but
+immediately exploitable: drafting behind a whale who pulls every tank onto
+himself, deliberate ramming, collusion. Ghosts give the multiplayer feeling —
+you watch the competition drive, die and arrive — without a single coupling
+exploit. A "convoy mode" with real interaction remains possible later as a
+play-money variant.
 
-Das globale **Leaderboard pro Block** (heute lokal in `BlockClock.Board`) wird
-serverseitig und für alle sichtbar: wer hat in diesem Block wie viel sat
-verdient, wie viel BTC bewegt.
-
----
-
-## 7. Provably Fair (Runden-Seeds)
-
-Damit niemand argwöhnen muss, das Terrain oder die Armeen seien gegen ihn
-gewürfelt:
-
-1. Der Server committet im Voraus eine Kette von Tagesgeheimnissen
-   (`H(secret_d)` wird am Vortag veröffentlicht).
-2. Runden-Seed: `seed = HMAC(secret_d, btc_blockhash ‖ runden_nr)` — der
-   Bitcoin-Blockhash ist öffentliche, vom Haus nicht wählbare Entropie.
-3. Bei Rundenstart wird `H(seed)` veröffentlicht, bei Rundenende `seed`.
-4. Jeder kann mit dem offenen WASM-Kern nachrechnen, dass Terrain und
-   Armee-Spawns exakt aus dem Seed folgen — und dass der Server sie nicht
-   nachträglich auf einen bestimmten Spieler zugeschnitten hat.
+The **per-block leaderboard** (today local, in `BlockClock.Board`) becomes
+server-side and visible to everyone: who earned how many sats in this block,
+and how much BTC they moved.
 
 ---
 
-## 8. Bedrohungsmodell
+## 7. Provably fair (round seeds)
 
-| Angriff | Verteidigung |
+So that nobody has to wonder whether the terrain or the armies were rolled
+against them:
+
+1. The server commits in advance to a chain of daily secrets: `H(secret_d)` is
+   published the day before.
+2. Round seed: `seed = HMAC(secret_d, btc_blockhash ‖ round_number)` — the
+   Bitcoin block hash is public entropy the house cannot choose.
+3. At round start `H(seed)` is published; at round end, `seed` itself.
+4. Anyone can recompute with the open WASM core that terrain and army spawns
+   follow exactly from the seed — and that the server did not tailor them to a
+   particular player after the fact.
+
+---
+
+## 8. Threat model
+
+| Attack | Defence |
 |---|---|
-| Gefälschte Ankunft per API | **Endpunkt existiert nicht.** Ankunft ist ein Server-Simulationsereignis (§0). |
-| Manipulierter Client / Speedhack / Teleport | Client sendet nur Inputs; Server-Takt und Server-Physik gelten. Inputs jenseits des Tick-Fensters werden verworfen. |
-| Replay alter Eingaben/Ergebnisse | Tick-Nummern + Session-HMAC pro Nachricht; Fahrten sind an Runden-ID + Seed gebunden. |
-| Doppelauszahlung / Race auf Saldo | Double-Entry-Ledger, serialisierbare Transaktionen, Idempotency-Keys (§2.2, 2.3). |
-| Kompromittierter Spielserver leert die Node | Schlüsseltrennung: Wallet-Daemon zahlt nur signierte, ledger-gedeckte, rate-begrenzte Freigaben (§2.4). Hot-Float klein. |
-| Perfekter Fahr-Bot | Ökonomisch: globale Kalibrierung senkt sein Band (§4.4); Einsatz-Caps begrenzen Durchsatz. |
-| Multi-Accounting | Keine Boni; Kalibrierung global; Kontoerstellung gedrosselt (PoW + IP-Limits). |
-| Spieler-gegen-Spieler-Griefing | Strukturell unmöglich: private Weltinstanzen, Geister ohne Kollision (§6.3). |
-| Rigged Terrain/Spawns („das Haus würfelt gegen mich“) | Commit-Reveal-Seeds mit Bitcoin-Blockhash-Entropie, nachrechenbar (§7). |
-| Ledger-Manipulation durch Insider | Append-only Hash-Kette, öffentlicher Kettenkopf, signierte Spielerquittungen (§2.2). |
-| DoS / Flooding | CDN/WS-Gateway mit Rate-Limits, Nachrichtenquoten pro Session, stateless Gateways horizontal skaliert. |
-| Invoice-/Withdraw-Probing | Min/Max, Rate-Caps, Pending-Zustände, Review-Schwelle (§2.3). |
+| Forged arrival via the API | **The endpoint does not exist.** Arrival is a server simulation event (§0). |
+| Tampered client / speed hack / teleport | The client sends inputs only; the server's clock and physics decide. Inputs outside the tick window are dropped. |
+| Replaying old inputs or results | Tick numbers plus a per-message session HMAC; runs are bound to round ID and seed. |
+| Double payout / race on a balance | Double-entry ledger, serialisable transactions, idempotency keys (§2.2, §2.3). |
+| Compromised game server drains the node | Key separation: the wallet daemon pays only signed, ledger-backed, rate-capped authorisations (§2.4). Small hot float. |
+| A perfect driving bot | Economic: global calibration lowers its band (§4.4); stake caps limit throughput. |
+| Multi-accounting | No bonuses; calibration is global; account creation is throttled (PoW + IP limits). |
+| Player-versus-player griefing | Structurally impossible: private world instances, ghosts without collision (§6.3). |
+| Rigged terrain or spawns ("the house rolls against me") | Commit-reveal seeds with Bitcoin block hash entropy, recomputable (§7). |
+| Insider tampering with the ledger | Append-only hash chain, public chain head, signed player receipts (§2.2). |
+| DoS / flooding | CDN and WS gateway with rate limits, per-session message quotas, stateless gateways scaled horizontally. |
+| Invoice / withdrawal probing | Minimums and maximums, rate caps, pending states, review threshold (§2.3). |
 
-**Ehrliche Grenze:** „Es gibt keine Sicherheitslücken“ kann kein seriöses
-Konzept versprechen. Was dieses Design leistet: die gefährlichsten
-Angriffsklassen sind **strukturell unmöglich** (gefälschtes Ergebnis,
-Client-Autorität, PvP-Kopplung), die übrigen sind **im Schaden begrenzt**
-(Exposure-Caps, kleiner Hot-Float, Review-Schwellen, Schlüsseltrennung) und
-**sichtbar** (Hash-Kette, Invarianten-Monitoring, Quoten-Alarme). Das ist der
-Zustand, den auch eine Börse oder ein Casino realistisch erreicht.
+**An honest limit:** no serious design can promise "there are no security
+holes". What this one does deliver: the most dangerous attack classes are
+**structurally impossible** (forged results, client authority, PvP coupling),
+the rest are **bounded in damage** (exposure caps, a small hot float, review
+thresholds, key separation) and **visible** (hash chain, invariant monitoring,
+odds alerts). That is the state an exchange or a casino realistically reaches.
 
 ---
 
-## 9. Skalierung & Betrieb
+## 9. Scaling and operations
 
-- **Gateway**: stateless, hinter CDN (WebSocket-Terminierung, Rate-Limits).
-- **Shards**: ein Prozess simuliert n Fahrten; Zuweisung per Konsistent-Hash;
-  horizontale Skalierung trivial, weil Fahrten unabhängig sind (§6.3).
-- **Ledger**: ein Postgres-Primary (Geld ist klein und transaktional, das
-  skaliert weit); Read-Replicas für Leaderboards/Audit.
+- **Gateway**: stateless, behind a CDN (WebSocket termination, rate limits).
+- **Shards**: one process simulates n runs; assignment by consistent hashing.
+  Horizontal scaling is trivial because runs are independent (§6.3).
+- **Ledger**: a single Postgres primary (money is small and transactional,
+  which scales a long way); read replicas for leaderboards and audit.
 - **Sessions**: Redis.
-- **Ein** Mempool-Fetcher für die ganze Plattform (§6.2).
-- Monitoring: Ledger-Invariante, Auszahlungsquote je Band, Hot-Wallet-Float,
-  Checksum-Driftrate.
+- **One** mempool fetcher for the whole platform (§6.2).
+- Monitoring: the ledger invariant, payout ratio per band, hot wallet float,
+  checksum drift rate.
 
 ---
 
-## 10. Rechtlicher Hinweis (außerhalb des Scopes, nicht ignorierbar)
+## 10. Legal note (out of scope, but not ignorable)
 
-Echtgeld-Einsatz mit Zufallsanteil ist in den meisten Jurisdiktionen
-lizenzpflichtiges Glücks- oder Geschicklichkeitsspiel; volle Anonymität ohne
-KYC kollidiert je nach Standort mit Geldwäsche-Regeln. Das Konzept ist so
-geschnitten, dass Limits (Einsatz-Caps, Verlust-Limits pro Zeitraum,
-Selbstsperre) technisch vorhanden sind — die Rechtsfrage selbst braucht vor
-einem Echtgeld-Launch eine eigene Klärung. Bis dahin läuft alles identisch mit
-Spielgeld (Phase 1–2).
+Playing for real money with an element of chance is licensable gambling — or
+skill gaming — in most jurisdictions, and full anonymity without KYC collides
+with anti-money-laundering rules in several. The concept is cut so that the
+limits exist technically (stake caps, loss limits per period, self-exclusion),
+but the legal question itself needs its own answer before a real-money launch.
+Until then everything runs identically on play money (phases 1–2).
 
 ---
 
-## 11. Umsetzungsplan
+## 11. Delivery plan
 
-| Phase | Inhalt | Baut auf |
+| Phase | Content | Builds on |
 |---|---|---|
-| **0** | Deterministischen Kern extrahieren (Rust: Armeen, Truck-Fahrmodell, Treffer, Tor; Festkomma; WASM-Build). Golden-Tests: Kern-Replays gegen aufgezeichnete Unity-Läufe. | `Army.cs` ist bereits reine Logik — genau dafür portierbar. |
-| **1** | Konten (ed25519), Ledger, Spielgeld-Einzahlung/-Auszahlung, Audit-Kette. Noch Einzelspieler. | `BlockClock`, `DeliveryGate` |
-| **2** | Server-autoritative Fahrten: Input-Protokoll, Prediction/Correction im Client, Geister, globales Block-Leaderboard, ein zentraler Mempool-Fetcher. | §6 |
-| **3** | Lightning echt (LND/CLN + Wallet-Daemon, Schlüsseltrennung), kleine Caps, Commit-Reveal-Seeds, Kalibrierungs-Pipeline. | §2, §4.4, §7 |
-| **4** | Skalierung (Shards, CDN), Truck-Shop & Reparatur, Review-Prozesse, Limits/Selbstsperre, Lasttests, externes Security-Audit vor Cap-Erhöhung. | §5, §9 |
+| **0** | Extract the deterministic core (Rust: armies, truck driving model, hits, gate; fixed point; WASM build). Golden tests: core replays against recorded Unity runs. | `Army.cs` is already pure logic — portable for exactly this. |
+| **1** | Accounts (ed25519), ledger, play-money deposit and withdrawal, audit chain. Still single-player. | `BlockClock`, `DeliveryGate` |
+| **2** | Server-authoritative runs: input protocol, prediction and correction in the client, ghosts, global per-block leaderboard, one central mempool fetcher. | §6 |
+| **3** | Lightning for real (LND/CLN plus wallet daemon, key separation), small caps, commit-reveal seeds, the calibration pipeline. | §2, §4.4, §7 |
+| **4** | Scaling (shards, CDN), truck shop and repair, review processes, limits and self-exclusion, load tests, an external security audit before raising caps. | §5, §9 |
 
 ---
 
-## 12. API-Oberfläche (vollständig — Kürze ist hier das Sicherheitsargument)
+## 12. API surface (complete — its brevity is the security argument)
 
 ```
-REST  POST /account            {pubkey}                → Name
-      POST /login              {pubkey}→Challenge→Sig  → Session-Token
-      POST /deposit            {amount}                → bolt11-Invoice
+REST  POST /account            {pubkey}                → name
+      POST /login              {pubkey}→challenge→sig  → session token
+      POST /deposit            {amount}                → bolt11 invoice
       POST /withdraw           {bolt11, idempotency}   → pending/paid
       GET  /balance
-      GET  /rounds/current                             → Seed-Commit, Uhr, Board
-      GET  /audit/head                                 → Ledger-Kettenkopf
-      GET  /receipts/{entry}                           → signierte Quittung
+      GET  /rounds/current                             → seed commit, clock, board
+      GET  /audit/head                                 → ledger chain head
+      GET  /receipts/{entry}                           → signed receipt
 
-WS    join_run   {truck, cargo[]}   → Server prüft & escrowt Einsatz
+WS    join_run   {truck, cargo[]}   → server validates and escrows the stake
       inputs     {tick, [steer,throttle,brake]×10, hmac}
       ← state    {correction | ghost | checksum | event}
 ```
 
-Mehr gibt es nicht. Insbesondere gibt es keinen Endpunkt, über den ein Client
-eine Position, einen Treffer, eine Ankunft oder einen Kontostand *behaupten*
-kann — und was es nicht gibt, kann niemand missbrauchen.
+That is all of it. In particular there is no endpoint through which a client
+can *assert* a position, a hit, an arrival or a balance — and what does not
+exist cannot be abused.

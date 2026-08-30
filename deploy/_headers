@@ -1,0 +1,13 @@
+# Unity's loader decompresses the .unityweb files itself (decompressionFallback
+# is on), so no Content-Encoding is needed - but the right types still help the
+# browser cache and stream them properly.
+/Build/*.wasm.unityweb
+  Content-Type: application/wasm
+/Build/*.js.unityweb
+  Content-Type: application/javascript
+/Build/*.data.unityweb
+  Content-Type: application/octet-stream
+
+# The streamed models are content-hashed, so they can be cached hard.
+/ServerData/*
+  Cache-Control: public, max-age=31536000, immutable
