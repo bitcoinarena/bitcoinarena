@@ -21,6 +21,20 @@ public class CameraFeelTests
     {
         _boot = new GameObject("Bootstrap");
         _boot.AddComponent<Bootstrap>();
+        yield return null;
+
+        // Flat ground. The terrain is the live fee histogram, so how fast the
+        // truck gets going and how hard it turns depends on the slope it
+        // happens to spawn on - which is what made this read 6 degrees of lean
+        // one run and 0.5 the next. These test the camera, not the mempool.
+        var ground = Object.FindFirstObjectByType<MempoolTerrain>();
+        if (ground != null)
+        {
+            ground.feeHeight = 0f;
+            ground.baseRelief = 0f;
+            ground.Build();
+        }
+
         yield return new WaitForSeconds(1.5f);
 
         var panel = Object.FindFirstObjectByType<LoadoutPanel>();

@@ -447,12 +447,28 @@ public class DriveHud : MonoBehaviour
                      sub, _sub, chg >= 0 ? Up : Down);
         }
 
+        // Everything the game HUD draws sits UNDER the loading window. IMGUI
+        // has no z-order between components - it draws in whatever order the
+        // components happen to run - so the health bar, the diagnostics and the
+        // model list were landing on top of the panel. Depth is inverted:
+        // higher is further back.
+        GUI.depth = loading ? 10 : 0;
+
         if (loading && market != null && market.Price > 0)
         {
             var small = new GUIStyle(_small) { alignment = TextAnchor.UpperLeft, fontStyle = FontStyle.Bold };
             Shadowed(new Rect(w * 0.02f, h * 0.012f, w * 0.4f, _small.fontSize * 1.6f),
                      $"${market.Price:N0}   {market.DayChangePct:+0.00;-0.00;0.00}% 24h",
                      small, market.DayChangePct >= 0 ? Up : Down);
+        }
+
+        // At the ramp none of this is what the player is reading, and all of it
+        // was covering the window: the condition bar, the streaming list, the
+        // waypoint and the diagnostics.
+        if (loading)
+        {
+            DrawWasted(w, h);
+            return;
         }
 
         DrawWanted(w, h);

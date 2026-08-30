@@ -110,7 +110,7 @@ public class PackageYard : MonoBehaviour
         var col = _backdrop.GetComponent<Collider>();
         if (col != null) Destroy(col);
         _backdrop.transform.SetParent(_rig, false);
-        _backdrop.layer = YardLayer;
+        SetLayer(_backdrop, YardLayer);
         _backdrop.SetActive(false);
 
         var mr = _backdrop.GetComponent<MeshRenderer>();
@@ -149,12 +149,11 @@ public class PackageYard : MonoBehaviour
         _open = true;
         _showing = Signature(offers);
 
-        // Biggest mover first. The mempool is mostly dust - a screen of 0.000
-        // BTC crates is a screen of nothing to choose between, and the one
-        // worth carrying was lost among them - so only the best few stand on
-        // the ramp and the rest wait behind them.
+        // Best PAYING first. The fee is what the run banks, so that is the
+        // number the ramp is ordered by - sorting by the value being moved
+        // ranked packages by something the player is never paid for.
         var sorted = new List<MempoolFeed.Tx>(offers);
-        sorted.Sort((a, b) => b.valueSats.CompareTo(a.valueSats));
+        sorted.Sort((a, b) => b.feeSats.CompareTo(a.feeSats));
 
         _reserve.Clear();
         if (sorted.Count > show)
@@ -170,12 +169,24 @@ public class PackageYard : MonoBehaviour
         _backdrop.SetActive(true);
     }
 
+    static void SetLayer(GameObject go, int layer)
+    {
+        go.layer = layer;
+        foreach (Transform child in go.transform) SetLayer(child.gameObject, layer);
+    }
+
     Yarded Build(MempoolFeed.Tx tx)
     {
         var go = bay.MakeCrate(tx);
         go.name = "YardPackage";
         go.transform.SetParent(_rig, false);
-        go.layer = YardLayer;
+
+        // The WHOLE tree, not just the wrapper. With a cube those were the same
+        // object; with the cardboard model the mesh hangs underneath, so
+        // setting the layer on the wrapper alone left every box on the default
+        // layer - which the panel camera does not draw and the game camera
+        // excludes. The result was captions floating over an empty slate.
+        SetLayer(go, YardLayer);
 
         // A collider here, unlike on the bed: these are what the pointer hits
         // - and it is deliberately larger than the crate it wraps. The crates
@@ -460,7 +471,7 @@ public class PackageYard : MonoBehaviour
             // the least valuable one on the ramp steps back into the queue
             int worst = 0;
             for (int i = 1; i < _yard.Count; i++)
-                if (_yard[i].tx.valueSats < _yard[worst].tx.valueSats) worst = i;
+                if (_yard[i].tx.feeSats < _yard[worst].tx.feeSats) worst = i;
             _reserve.Insert(0, _yard[worst].tx);
             if (_yard[worst].crate != null) Destroy(_yard[worst].crate);
             _yard.RemoveAt(worst);
@@ -524,7 +535,7 @@ public class PackageYard : MonoBehaviour
     }
 
     /// <summary>Highest value first, so the ramp always reads the same way.</summary>
-    void Sort() => _yard.Sort((a, b) => b.tx.valueSats.CompareTo(a.tx.valueSats));
+    void Sort() => _yard.Sort((a, b) => b.tx.feeSats.CompareTo(a.tx.feeSats));
 
     public List<MempoolFeed.Tx> Remaining()
     {

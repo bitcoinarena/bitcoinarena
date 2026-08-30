@@ -582,6 +582,33 @@ public class CargoTests
         Assert.IsTrue(_bay.Contains(biggest.txid), "es ist nicht an Bord");
     }
 
+    /// <summary>
+    /// Every crate has to be on the panel's own layer, INCLUDING the meshes
+    /// under it.
+    ///
+    /// Setting the layer on the wrapper alone left the cardboard model on the
+    /// default layer, which the panel camera does not draw and the game camera
+    /// excludes - so the panel showed captions floating over an empty slate.
+    /// </summary>
+    [UnityTest]
+    public IEnumerator EveryPartOfACrateIsOnThePanelLayer()
+    {
+        yield return null;
+        int parts = 0;
+        foreach (var t in Object.FindObjectsByType<Transform>(FindObjectsSortMode.None))
+        {
+            if (t.name != "YardPackage") continue;
+            foreach (var r in t.GetComponentsInChildren<Renderer>(true))
+            {
+                parts++;
+                Assert.AreEqual(PackageYard.YardLayer, r.gameObject.layer,
+                    $"'{r.name}' liegt auf Ebene {r.gameObject.layer} statt auf der " +
+                    "Auswahl-Ebene - die Panel-Kamera zeichnet es nicht");
+            }
+        }
+        Assert.Greater(parts, 0, "die Pakete haben keine sichtbaren Teile");
+    }
+
     [UnityTest]
     public IEnumerator TheValuableOnesAreShownFirst()
     {
@@ -592,12 +619,15 @@ public class CargoTests
         // The panel is laid out in the order Captions() returns, so that order
         // IS the reading order. Sorting by screen position would be wrong: the
         // crates bob, so their y drifts by a few pixels every frame.
-        double best = double.MaxValue;
+        // Ordered by what it PAYS. The fee is what the run banks; the value
+        // being moved is not something the player is ever paid for.
+        long best = long.MaxValue;
         foreach (var c in caps)
         {
-            Assert.LessOrEqual(c.tx.Btc, best + 0.0001,
-                $"{c.tx.Short} mit {c.tx.Btc:0.####} BTC steht hinter einem kleineren Posten");
-            best = c.tx.Btc;
+            Assert.LessOrEqual(c.tx.feeSats, best,
+                $"{c.tx.Short} mit {c.tx.feeSats} sat steht hinter einem schlechter " +
+                "bezahlten Posten");
+            best = c.tx.feeSats;
         }
 
         // and that order runs left to right along each row, then down
@@ -615,7 +645,7 @@ public class CargoTests
         // the dust must not crowd out the movers
         Assert.LessOrEqual(caps.Count, yard.show, "es werden zu viele Posten angeboten");
         Assert.GreaterOrEqual(yard.show, 20, "es werden weniger als zwanzig Posten angeboten");
-        Assert.Greater(caps[0].tx.Btc, 0.0, "ganz vorne steht eine 0-BTC-Transaktion");
+        Assert.Greater(caps[0].tx.feeSats, 0, "der erste Posten zahlt nichts");
     }
 
     /// <summary>

@@ -178,6 +178,10 @@ public class LoadoutPanel : MonoBehaviour
         if (!IsOpen || bay == null) return;
         Styles();
 
+        // In front of everything the game HUD draws. IMGUI depth is inverted:
+        // the lower the number, the closer to the front.
+        GUI.depth = -100;
+
         int w = Screen.width, h = Screen.height;
         int min = Mathf.Min(w, h);
         float pad = Mathf.Max(10f, h * 0.022f);
