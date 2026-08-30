@@ -117,8 +117,8 @@ public class LoadoutPanel : MonoBehaviour
             _capSub = new GUIStyle(GUI.skin.label)
                 { alignment = TextAnchor.UpperCenter, wordWrap = false };
         }
-        _cap.fontSize = Mathf.RoundToInt(Mathf.Clamp(min * 0.023f, 11f, 17f));
-        _capSub.fontSize = Mathf.RoundToInt(Mathf.Clamp(min * 0.020f, 10f, 15f));
+        _cap.fontSize = Mathf.RoundToInt(Mathf.Clamp(min * 0.034f, 15f, 26f));
+        _capSub.fontSize = Mathf.RoundToInt(Mathf.Clamp(min * 0.029f, 13f, 22f));
     }
 
     /// <summary>
@@ -134,7 +134,7 @@ public class LoadoutPanel : MonoBehaviour
 
         foreach (var c in yard.Captions())
         {
-            float wCap = Mathf.Max(120f, Screen.width * 0.13f);
+            float wCap = Mathf.Max(180f, Screen.width * 0.19f);
             float y = c.screen.y + c.radius + 4f;
             var box = new Rect(c.screen.x - wCap * 0.5f, y, wCap, _cap.fontSize * 3.4f);
 
@@ -150,7 +150,7 @@ public class LoadoutPanel : MonoBehaviour
 
             _capSub.normal.textColor = new Color(1f, 1f, 1f, 0.82f);
             GUI.Label(new Rect(box.x, box.y + _cap.fontSize * 1.35f, box.width, _capSub.fontSize * 1.5f),
-                      $"{c.tx.vsize} vB · {c.tx.Btc:0.###} BTC", _capSub);
+                      $"{c.tx.vsize} vB   ·   {c.tx.Btc:0.####} BTC", _capSub);
 
             GUI.Label(new Rect(box.x, box.y + _cap.fontSize * 1.35f + _capSub.fontSize * 1.25f,
                                box.width, _capSub.fontSize * 1.5f),

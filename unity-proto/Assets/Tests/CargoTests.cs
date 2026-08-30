@@ -250,10 +250,11 @@ public class CargoTests
         int standing = 0;
         foreach (var t in Object.FindObjectsByType<Transform>(FindObjectsSortMode.None))
             if (t.name == "YardPackage") standing++;
-        Assert.AreEqual(_feed.Offers.Count, standing,
-            "die wartenden Transaktionen stehen nicht als Pakete im Lager");
+        // the best few, not everything the mempool holds
+        Assert.AreEqual(Mathf.Min(_feed.Offers.Count, yard.show), standing,
+            "die angebotenen Transaktionen stehen nicht als Pakete im Panel");
 
-        var tx = _feed.Offers[0];
+        var tx = yard.Captions()[0].tx;
         Assert.IsTrue(yard.Toggle(tx), "das Paket liess sich nicht aufladen");
         yield return null;
 
@@ -270,7 +271,7 @@ public class CargoTests
     public IEnumerator ACrateOnTheBedIsNotAlsoInTheYard()
     {
         var yard = Object.FindFirstObjectByType<PackageYard>();
-        var tx = _feed.Offers[1];
+        var tx = yard.Captions()[1].tx;
         yard.Toggle(tx);
         yield return null;
 
@@ -488,8 +489,8 @@ public class CargoTests
         var yard = Object.FindFirstObjectByType<PackageYard>();
         var caps = yard.Captions();
 
-        Assert.AreEqual(_feed.Offers.Count, caps.Count,
-            "nicht jedes Paket hat eine Beschriftung");
+        Assert.AreEqual(Mathf.Min(_feed.Offers.Count, yard.show), caps.Count,
+            "nicht jedes angebotene Paket hat eine Beschriftung");
 
         foreach (var c in caps)
         {
@@ -499,6 +500,76 @@ public class CargoTests
             Assert.That(c.screen.x, Is.InRange(-Screen.width * 0.5f, Screen.width * 1.5f),
                 "eine Beschriftung liegt weit ausserhalb des Bildes");
         }
+    }
+
+    /// <summary>
+    /// Reported: AUTO gets a big package aboard and picking one by hand does
+    /// not. This presses where each crate is actually drawn and checks the
+    /// right one is taken - the big one included.
+    /// </summary>
+    [UnityTest]
+    public IEnumerator TappingWhereACrateIsDrawnPicksThatCrate()
+    {
+        yield return null;
+        var yard = Object.FindFirstObjectByType<PackageYard>();
+
+        var caps = yard.Captions();
+        Assert.Greater(caps.Count, 0, "keine Pakete im Panel");
+
+        foreach (var c in caps)
+        {
+            // Captions() counts down from the top like the GUI; the pointer
+            // counts up from the bottom
+            var press = new Vector2(c.screen.x, Screen.height - c.screen.y);
+            var hit = yard.PickAt(press);
+            Assert.IsNotNull(hit, $"ein Tipp genau auf {c.tx.Short} trifft nichts");
+            Assert.AreEqual(c.tx.txid, hit.txid,
+                $"ein Tipp auf {c.tx.Short} waehlt {hit.Short} aus");
+        }
+    }
+
+    [UnityTest]
+    public IEnumerator TheBiggestPackageCanBeLoadedByHand()
+    {
+        yield return null;
+        var yard = Object.FindFirstObjectByType<PackageYard>();
+
+        MempoolFeed.Tx biggest = null;
+        foreach (var c in yard.Captions())
+            if (biggest == null || c.tx.vsize > biggest.vsize) biggest = c.tx;
+        Assert.IsNotNull(biggest, "keine Pakete im Panel");
+
+        Assert.IsTrue(yard.Toggle(biggest),
+            $"das groesste Paket ({biggest.vsize} vB) laesst sich von Hand nicht laden");
+        Assert.IsTrue(_bay.Contains(biggest.txid), "es ist nicht an Bord");
+    }
+
+    [UnityTest]
+    public IEnumerator TheValuableOnesAreShownFirst()
+    {
+        yield return null;
+        var yard = Object.FindFirstObjectByType<PackageYard>();
+        var caps = yard.Captions();
+
+        // The panel is laid out in the order Captions() returns, so that order
+        // IS the reading order. Sorting by screen position would be wrong: the
+        // crates bob, so their y drifts by a few pixels every frame.
+        double best = double.MaxValue;
+        foreach (var c in caps)
+        {
+            Assert.LessOrEqual(c.tx.Btc, best + 0.0001,
+                $"{c.tx.Short} mit {c.tx.Btc:0.####} BTC steht hinter einem kleineren Posten");
+            best = c.tx.Btc;
+        }
+
+        // and that order runs left to right on screen
+        for (int i = 1; i < caps.Count; i++)
+            Assert.Greater(caps[i].screen.x, caps[i - 1].screen.x,
+                "die Reihenfolge im Panel entspricht nicht der auf dem Bildschirm");
+
+        // the dust must not crowd out the movers
+        Assert.LessOrEqual(caps.Count, 6, "es werden zu viele Posten angeboten");
+        Assert.Greater(caps[0].tx.Btc, 0.0, "ganz vorne steht eine 0-BTC-Transaktion");
     }
 
     [Test]

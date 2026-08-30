@@ -28,16 +28,23 @@ public class PackageYard : MonoBehaviour
     public Material crateMaterial;
 
     [Header("Panel")]
+    [Tooltip("Fewer per row means bigger crates and readable captions.")]
     public int perRow = 5;
+
+    [Tooltip("At most this many are offered, biggest mover first. A single " +
+             "row of five is what fits between the headline price and the " +
+             "truck while still being large enough to read the numbers under.")]
+    public int show = 5;
+
     public float fieldOfView = 42f;
 
     [Tooltip("Top of the panel band, as a fraction of the view height above " +
-             "centre. The band never reaches below bandBottom, so the truck " +
-             "and the war stay visible underneath it.")]
-    public float bandTop = 0.44f;
+             "centre. Kept clear of the headline price at the top of the " +
+             "screen, which it used to run into.")]
+    public float bandTop = 0.33f;
 
     [Tooltip("Bottom of the panel band. Everything below this is the game.")]
-    public float bandBottom = 0.06f;
+    public float bandBottom = 0.02f;
 
     [Tooltip("Distance from the yard camera to the crates.")]
     public float depth = 7f;
@@ -136,16 +143,27 @@ public class PackageYard : MonoBehaviour
         _open = true;
         _showing = Signature(offers);
 
+        // Biggest mover first, and only the top few. The mempool is mostly
+        // dust - a screen of 0.000 BTC crates is a screen of nothing to choose
+        // between, and the one worth carrying was lost among them.
+        var sorted = new List<MempoolFeed.Tx>(offers);
+        sorted.Sort((a, b) => b.valueSats.CompareTo(a.valueSats));
+        if (sorted.Count > show) sorted.RemoveRange(show, sorted.Count - show);
+
         int i = 0;
-        foreach (var tx in offers)
+        foreach (var tx in sorted)
         {
             var go = bay.MakeCrate(tx);
             go.name = "YardPackage";
             go.transform.SetParent(_rig, false);
             go.layer = YardLayer;
 
-            // a collider here, unlike on the bed: these are what the pointer hits
-            go.AddComponent<BoxCollider>().size = Vector3.one;
+            // A collider here, unlike on the bed: these are what the pointer
+            // hits - and it is deliberately larger than the crate it wraps.
+            // The crates turn, so their silhouette shrinks and grows as they
+            // spin, and a hit box exactly the size of the mesh means a tap
+            // that looked dead centre can miss.
+            go.AddComponent<BoxCollider>().size = Vector3.one * 1.5f;
 
             var mr = go.GetComponent<MeshRenderer>();
             mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
@@ -239,15 +257,22 @@ public class PackageYard : MonoBehaviour
             float y = hi - ch * (row + 0.38f);
             _yard[i].seat = new Vector3(x, y, depth);
             _yard[i].crate.transform.localPosition = _yard[i].seat;
-            _yard[i].crate.transform.localScale =
-                Vector3.one * Mathf.Min(_yard[i].size * 1.1f, Mathf.Min(cw * 0.44f, ch * 0.42f));
+            // Big enough to read the numbers under. The relative sizes still
+            // hold, the whole set is simply drawn larger.
+            float room = Mathf.Min(cw * 0.62f, ch * 0.52f);
+            float rel = Mathf.InverseLerp(0.45f, 1.65f, _yard[i].size);
+            _yard[i].crate.transform.localScale = Vector3.one * Mathf.Lerp(room * 0.62f, room, rel);
         }
 
-        // the panel behind them, reaching no lower than the band
-        float centre = (hi + lo) * 0.5f;
-        _backdrop.transform.localPosition = new Vector3(0f, centre, depth + 3.2f);
-        _backdrop.transform.localScale =
-            new Vector3(w * 0.97f, (hi - lo) + ch * 0.55f, 1f);
+        // The panel behind them. Its BOTTOM edge is pinned to the band, and
+        // the margin is added at the top only: sharing it evenly let the slate
+        // dip below the middle of the screen and take a strip of the truck
+        // with it - measured at 18% of the lower half.
+        float bottom = lo;
+        float top = hi + ch * 0.35f;
+        _backdrop.transform.localPosition =
+            new Vector3(0f, (top + bottom) * 0.5f, depth + 3.2f);
+        _backdrop.transform.localScale = new Vector3(w * 0.97f, top - bottom, 1f);
     }
 
     /// <summary>A crate as the HUD needs it: what it is and where it is drawn.</summary>
@@ -271,7 +296,7 @@ public class PackageYard : MonoBehaviour
 
         foreach (var y in _yard)
         {
-            if (y.crate == null) continue;
+            if (y.crate == null || !y.crate.activeSelf) continue;
             bool loaded = bay != null && bay.Contains(y.tx.txid);
             var p = _cam.WorldToScreenPoint(y.crate.transform.position);
             if (p.z <= 0f) continue;
@@ -352,7 +377,7 @@ public class PackageYard : MonoBehaviour
 
         if (Pressed(out var at))
         {
-            var tx = Pick(at);
+            var tx = PickAt(at);
             if (tx != null) Toggle(tx);
         }
     }
@@ -373,15 +398,36 @@ public class PackageYard : MonoBehaviour
         }
     }
 
-    MempoolFeed.Tx Pick(Vector2 screen)
+    /// <summary>
+    /// Which crate a tap at this screen point means, or null.
+    ///
+    /// A ray first, then the nearest crate on screen as a fallback. A turning
+    /// cube presents a different silhouette every frame, so a ray that goes
+    /// exactly where the player pointed can still slip past a corner - and a
+    /// tap that does nothing reads as broken. Public so a test can press
+    /// where a crate is drawn and check the right one is picked up, which is
+    /// the thing that was reported as not working.
+    /// </summary>
+    public MempoolFeed.Tx PickAt(Vector2 screen)
     {
         if (_cam == null) return null;
+
         var ray = _cam.ScreenPointToRay(screen);
-        if (!Physics.Raycast(ray, out var hit, 60f, 1 << YardLayer)) return null;
-        foreach (var y in _yard)
-            if (y.crate != null && hit.collider != null && hit.collider.gameObject == y.crate)
-                return y.tx;
-        return null;
+        if (Physics.Raycast(ray, out var hit, 60f, 1 << YardLayer))
+            foreach (var y in _yard)
+                if (y.crate != null && y.crate.activeSelf &&
+                    hit.collider != null && hit.collider.gameObject == y.crate)
+                    return y.tx;
+
+        // nearest crate whose drawn footprint the tap is within
+        MempoolFeed.Tx best = null;
+        float bestD = float.MaxValue;
+        foreach (var c in Captions())
+        {
+            float d = Vector2.Distance(c.screen, new Vector2(screen.x, Screen.height - screen.y));
+            if (d < c.radius * 1.35f && d < bestD) { bestD = d; best = c.tx; }
+        }
+        return best;
     }
 
     /// <summary>A click or a tap that went DOWN this frame.</summary>
