@@ -163,9 +163,12 @@ public class LoadoutPanel : MonoBehaviour
                       $"+{c.tx.feeSats:N0} sat", _cap);
 
             _capSub.normal.textColor = new Color(1f, 1f, 1f, 0.85f);
+            // what this one costs in attention, so the trade is visible before
+            // it is made rather than only in the total afterwards
+            int risk = bay != null ? Mathf.RoundToInt(bay.HeatOf(c.tx) * 100f) : 0;
             GUI.Label(new Rect(box.x, box.y + _cap.fontSize * 1.25f, box.width, _capSub.fontSize * 1.5f),
                       c.loaded ? "GELADEN"
-                               : $"{c.tx.FeeRate:0.0} sat/vB · {c.tx.vsize} vB"
+                               : $"{c.tx.vsize} vB · +{risk}% Risiko"
                                  + (c.tx.Whale ? "  🐋" : ""), _capSub);
 
             // Two lines only. Twenty-one crates in three rows leaves no room
@@ -312,7 +315,9 @@ public class LoadoutPanel : MonoBehaviour
         float heat = bay.Heat;
         Gauge(new Rect(panel.x + inner * 2f + gaugeW, top, gaugeW, gaugeH), heat,
               Color.Lerp(new Color(0.45f, 0.8f, 0.5f), new Color(1f, 0.25f, 0.2f), heat),
-              $"RISIKO  {Mathf.RoundToInt(heat * 100f)}%  ·  {new string('★', Mathf.Clamp(Mathf.CeilToInt(heat * 5f), 0, 5))}",
+              $"RISIKO  {Mathf.RoundToInt(heat * 100f)}%  " +
+              $"{new string('★', Mathf.Clamp(Mathf.CeilToInt(heat * 5f), 0, 5))}" +
+              $"   ·   je mehr sat, desto härter gejagt",
               _small);
 
         // --- reward, given the room it deserves ------------------------------

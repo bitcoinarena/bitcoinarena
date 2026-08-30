@@ -616,6 +616,25 @@ public class CargoTests
     /// a box is widest across its corners, so the moment it is worst is not
     /// the moment the panel is laid out.
     /// </summary>
+    [Test]
+    public void TheRiskFollowsWhatTheRunPays()
+    {
+        // Reported: a 25,000 sat load showed 1% risk, because heat was driven
+        // by the BTC being moved rather than by the fee being earned.
+        var fat = new MempoolFeed.Tx
+            { txid = "fat", feeSats = 25_000, vsize = 400, valueSats = 1000 };
+
+        _bay.Clear();
+        Assert.AreEqual(0f, _bay.Heat, 0.001f);
+
+        Assert.IsTrue(_bay.TryAdd(fat), "das Paket passt nicht");
+        Assert.Greater(_bay.Heat, 0.8f,
+            $"eine Ladung mit 25.000 sat Lohn ergibt nur {_bay.Heat * 100:0}% Risiko");
+
+        // and a package on the ramp can say what it would add
+        Assert.Greater(_bay.HeatOf(fat), 0.8f, "das Paket kennt seinen Risikobeitrag nicht");
+    }
+
     [UnityTest]
     public IEnumerator NoCrateReachesIntoTheTitleBar()
     {
@@ -624,10 +643,18 @@ public class CargoTests
         var cam = yard.View;
         var title = yard.TitleRect(Screen.width, Screen.height);
 
+        // A browser is wide and the test runner is not. The crates are limited
+        // by cell WIDTH in a narrow window and by cell HEIGHT in a wide one, so
+        // they come out at their largest on a widescreen - which is where the
+        // overlap was reported and where this check has to look.
+        cam.aspect = 2.2f;
+        yard.Relayout();
+        yield return null;
+
         float highest = float.MaxValue;      // smallest GUI y seen
         string worst = "";
 
-        for (int frame = 0; frame < 40; frame++)
+        for (int frame = 0; frame < 90; frame++)
         {
             foreach (var t in Object.FindObjectsByType<Transform>(FindObjectsSortMode.None))
             {
@@ -669,14 +696,16 @@ public class CargoTests
 
         // Every crate has to fill the width of its column. Sized to a fraction
         // of it, a full bed looked like a few boxes rattling around in it.
+        // Filling their slot bar a hand's width: tight enough that a full bed
+        // looks full, loose enough that the parcels read as separate.
         float colW = _bay.bedWidth / _bay.columns;
         foreach (var slot in _bay.Slots)
         {
             var scale = slot.crate.transform.localScale;
-            Assert.Greater(scale.x, colW * 0.9f,
-                $"eine Kiste ist nur {scale.x:0.00} breit, die Spur ist {colW:0.00}");
-            Assert.Greater(scale.z, slot.length * 0.9f,
-                $"eine Kiste ist nur {scale.z:0.00} lang, ihr Platz ist {slot.length:0.00}");
+            Assert.That(colW - scale.x, Is.InRange(0.08f, 0.30f),
+                $"quer bleiben {colW - scale.x:0.00} m Luft, gewollt sind rund {_bay.gap:0.00}");
+            Assert.That(slot.length - scale.z, Is.InRange(0.08f, 0.30f),
+                $"laengs bleiben {slot.length - scale.z:0.00} m Luft, gewollt sind rund {_bay.gap:0.00}");
         }
     }
 

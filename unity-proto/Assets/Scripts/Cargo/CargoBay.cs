@@ -24,6 +24,10 @@ public class CargoBay : MonoBehaviour
     [Tooltip("Crates are packed in this many columns down the bed.")]
     public int columns = 2;
 
+    [Tooltip("Space left between packages, in metres. Flush together they read " +
+             "as one block of cardboard rather than as separate parcels.")]
+    public float gap = 0.15f;
+
     public Material crateMaterial;
 
     [Tooltip("Optional cardboard box model. Falls back to a plain cube, which " +
@@ -55,14 +59,33 @@ public class CargoBay : MonoBehaviour
         get { double b = 0; foreach (var s in Slots) b += s.tx.Btc; return b; }
     }
 
+    [Tooltip("Fees carried at which the wanted level is at its maximum.")]
+    public float heatAtSats = 20000f;
+
     /// <summary>
     /// How badly the war wants this load, 0..1.
     ///
-    /// Value carried, not fees: a whale on the back is a prize worth diverting
-    /// armour for, while a bed full of dust that happens to pay well is not.
-    /// Twenty BTC aboard is as hot as it gets.
+    /// Driven by the FEES aboard - what the run pays out - not by the value
+    /// being moved. Against value, a 25,000 sat load came out at 1% risk,
+    /// which is both wrong and unreadable: the player is hunted for the prize
+    /// they are carrying, and the prize is the fee.
+    ///
+    /// A whale still adds on top, because a bed carrying twenty-five BTC is
+    /// worth diverting armour for whatever it pays.
     /// </summary>
-    public float Heat => Mathf.Clamp01((float)(BtcCarried / 20.0));
+    public float Heat
+    {
+        get
+        {
+            float fromFees = Mathf.Clamp01(FeeCarried / Mathf.Max(1f, heatAtSats));
+            float fromValue = Mathf.Clamp01((float)(BtcCarried / 25.0)) * 0.45f;
+            return Mathf.Clamp01(fromFees + fromValue);
+        }
+    }
+
+    /// <summary>What each package would add to the wanted level, for the UI.</summary>
+    public float HeatOf(MempoolFeed.Tx tx) =>
+        tx == null ? 0f : Mathf.Clamp01(tx.feeSats / Mathf.Max(1f, heatAtSats));
 
     /// <summary>0..1, how full the bed is. Drives the gauge.</summary>
     public float Fill
@@ -202,8 +225,11 @@ public class CargoBay : MonoBehaviour
 
             s.crate.transform.localPosition = new Vector3(x, bedFloor.y + tall * 0.5f, z);
             s.crate.transform.localRotation = Quaternion.identity;   // stacked, not strewn
-            s.crate.transform.localScale =
-                new Vector3(colW * 0.97f, tall, s.length * 0.97f);
+            // A hand's width between packages. Flush against each other they
+            // read as one block of cardboard rather than as a load of separate
+            // parcels.
+            s.crate.transform.localScale = new Vector3(
+                Mathf.Max(0.2f, colW - gap), tall, Mathf.Max(0.2f, s.length - gap));
         }
     }
 

@@ -331,35 +331,46 @@ public class PackageYard : MonoBehaviour
         float cellH = area.height / rows;
 
         // Sized against the BIGGEST on the ramp, so the differences are the
-        // real ones. Squeezing them into a narrow band of the cell makes a
-        // 200 vB package and a 2400 vB one look alike whenever the offers
-        // happen to be similar, and a crate's size is the whole way a
-        // transaction's size is shown.
+        // real ones.
         float biggest = 0f;
         foreach (var y in _yard) biggest = Mathf.Max(biggest, y.size);
+
+        // The cell in world units
+        var o = FromScreen(0f, 0f, depth);
+        var e = FromScreen(cellW, cellH, depth);
+        float cellWorldW = Mathf.Abs(e.x - o.x), cellWorldH = Mathf.Abs(e.y - o.y);
+
+        // Where the working area starts, in world units
+        float areaTopWorld = FromScreen(0f, area.y, depth).y;
 
         for (int i = 0; i < _yard.Count; i++)
         {
             int row = i / cols, col = i % cols;
             int inRow = Mathf.Min(cols, _yard.Count - row * cols);
 
-            // centred in its row, and in the upper part of its cell so the
-            // caption underneath has somewhere to go
+            float rel = Mathf.Clamp(biggest > 0f ? _yard[i].size / biggest : 1f, 0.45f, 1f);
+            float room = Mathf.Min(cellWorldW * 0.82f, cellWorldH * 0.66f) * rel;
+
+            // Shaped like a parcel rather than a die - wider than it is tall,
+            // which is also what a box on a loading ramp looks like.
+            var scale = new Vector3(room * 1.25f, room * 0.80f, room * 1.0f);
+            _yard[i].crate.transform.localScale = scale;
+
+            // A TURNING box reaches out to half its own diagonal, not to half
+            // its height, so that - plus the bob - is the clearance the row
+            // needs from the title bar above it. Placing rows by their centre
+            // and hoping the height fitted is what kept crates crossing the
+            // header.
+            float reach = scale.magnitude * 0.5f + _yard[i].bob;
+
             float px = area.x + area.width * 0.5f
                      + (col - (inRow - 1) * 0.5f) * cellW;
-            float py = area.y + cellH * (row + 0.34f);
+            float rowTop = areaTopWorld - row * cellWorldH;
+            float wy = rowTop - reach - cellWorldH * 0.06f;
 
-            _yard[i].seat = FromScreen(px, py, depth);
+            var seat = FromScreen(px, 0f, depth);
+            _yard[i].seat = new Vector3(seat.x, wy, depth);
             _yard[i].crate.transform.localPosition = _yard[i].seat;
-
-            // the cell in world units, so the crate can be sized against it
-            var a = FromScreen(0f, 0f, depth);
-            var b = FromScreen(cellW, cellH, depth);
-            float room = Mathf.Min(Mathf.Abs(b.x - a.x) * 0.60f,
-                                   Mathf.Abs(b.y - a.y) * 0.52f);
-
-            float rel = biggest > 0f ? _yard[i].size / biggest : 1f;
-            _yard[i].crate.transform.localScale = Vector3.one * room * Mathf.Clamp(rel, 0.42f, 1f);
         }
 
         // The slate, sized to the panel rectangle exactly. It used to be
@@ -414,6 +425,15 @@ public class PackageYard : MonoBehaviour
         }
         return list;
     }
+
+    /// <summary>
+    /// Lay the panel out again. Public so a test can check the layout at a
+    /// browser's aspect ratio rather than only at the one the test runner
+    /// happens to use - the crates are limited by cell WIDTH in a narrow
+    /// window and by cell HEIGHT in a wide one, so a check that only ever saw
+    /// 4:3 could pass while a widescreen browser overlapped.
+    /// </summary>
+    public void Relayout() => Layout();
 
     /// <summary>Pick up or put back. False when there was no room.</summary>
     public bool Toggle(MempoolFeed.Tx tx)
