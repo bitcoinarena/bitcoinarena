@@ -51,6 +51,15 @@ public class CargoBay : MonoBehaviour
         get { double b = 0; foreach (var s in Slots) b += s.tx.Btc; return b; }
     }
 
+    /// <summary>
+    /// How badly the war wants this load, 0..1.
+    ///
+    /// Value carried, not fees: a whale on the back is a prize worth diverting
+    /// armour for, while a bed full of dust that happens to pay well is not.
+    /// Twenty BTC aboard is as hot as it gets.
+    /// </summary>
+    public float Heat => Mathf.Clamp01((float)(BtcCarried / 20.0));
+
     /// <summary>0..1, how full the bed is. Drives the gauge.</summary>
     public float Fill
     {

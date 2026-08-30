@@ -141,6 +141,55 @@ public class DriveHud : MonoBehaviour
     }
 
     /// <summary>
+    /// Where the gate is and how far.
+    ///
+    /// From the spawn the delivery gate is 230 m away and behind a battle -
+    /// invisible, and there is nothing on screen saying which way to go. An
+    /// arrow at the edge of the screen when it is off camera, a distance when
+    /// it is not.
+    /// </summary>
+    void DrawWaypoint(int w, int h)
+    {
+        if (gate == null || truck == null) return;
+
+        var cam = Camera.main;
+        if (cam == null)
+        {
+            var chase = Object.FindFirstObjectByType<ChaseCamera>();
+            cam = chase != null ? chase.GetComponent<Camera>() : null;
+        }
+        if (cam == null) return;
+
+        var at = new Vector3(gate.gateX, truck.transform.position.y + 4f, 0f);
+        float distance = Vector3.Distance(truck.transform.position, at);
+
+        var vp = cam.WorldToScreenPoint(at);
+        bool ahead = vp.z > 0f;
+        float x = ahead ? vp.x : w - vp.x;
+        float y = h - vp.y;
+
+        var style = new GUIStyle(GUI.skin.label)
+        {
+            alignment = TextAnchor.MiddleCenter,
+            fontStyle = FontStyle.Bold,
+            fontSize = Mathf.RoundToInt(Mathf.Clamp(Mathf.Min(w, h) * 0.032f, 15f, 26f)),
+        };
+
+        // clamped to a margin, so it becomes an edge arrow once the gate is
+        // off to the side or behind
+        float margin = Mathf.Min(w, h) * 0.09f;
+        bool offScreen = !ahead || x < margin || x > w - margin || y < margin || y > h - margin;
+        x = Mathf.Clamp(x, margin, w - margin);
+        y = Mathf.Clamp(y, margin, h - margin);
+
+        var colour = new Color(0.42f, 0.86f, 1f);
+        Shadowed(new Rect(x - 90f, y - style.fontSize * 1.6f, 180f, style.fontSize * 1.6f),
+                 offScreen ? "▲ ZIEL" : "ZIEL", style, colour);
+        Shadowed(new Rect(x - 90f, y, 180f, style.fontSize * 1.6f),
+                 $"{distance:0} m", style, new Color(1f, 1f, 1f, 0.9f));
+    }
+
+    /// <summary>
     /// WASTED, over a drained and slowed world.
     ///
     /// Fades up with the sequence rather than snapping on, and sits slightly
@@ -219,6 +268,18 @@ public class DriveHud : MonoBehaviour
                  health.IsDestroyed ? Down
                                     : health.IsInvulnerable ? new Color(0.55f, 0.8f, 1f)
                                                             : Color.white);
+
+        // Heat: how badly the war wants what is on the back. This is the
+        // consequence of the freight choice, so it belongs next to the damage
+        // it is going to cause.
+        if (bay != null && bay.Heat > 0.01f)
+        {
+            var hs = new GUIStyle(_small) { fontStyle = FontStyle.Bold };
+            int pips = Mathf.Clamp(Mathf.CeilToInt(bay.Heat * 5f), 1, 5);
+            Shadowed(new Rect(box.x + box.width * 0.55f, box.y, box.width * 0.45f, lh),
+                     new string('★', pips) + new string('☆', 5 - pips), hs,
+                     Color.Lerp(new Color(1f, 0.85f, 0.3f), Down, bay.Heat));
+        }
 
         var track = new Rect(box.x, box.y + lh, box.width, barH);
         GUI.color = new Color(0f, 0f, 0f, 0.5f);
@@ -321,6 +382,7 @@ public class DriveHud : MonoBehaviour
                      sub, _sub, chg >= 0 ? Up : Down);
         }
 
+        DrawWaypoint(w, h);
         DrawHealth(w, h);
         DrawWasted(w, h);
         DrawManifest(w, h);

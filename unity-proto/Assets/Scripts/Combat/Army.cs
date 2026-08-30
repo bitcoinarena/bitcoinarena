@@ -129,6 +129,16 @@ public class Army
     /// <summary>How close the truck has to come before it is shot at.</summary>
     public const float CourierRange = 34f;
 
+    /// <summary>
+    /// How badly both sides want the truck, 0..1.
+    ///
+    /// Set from what it is carrying. An empty van is in the way; a van with a
+    /// whale on the back is worth diverting a tank for. Without this the
+    /// freight choice had no consequence at all - the player simply took the
+    /// most valuable thing on the ramp every time.
+    /// </summary>
+    public float Heat;
+
     /// <summary>The truck was hit. Carries damage before its armour.</summary>
     public System.Action<float> CourierHit;
 
@@ -579,7 +589,12 @@ public class Army
                 var c = Courier.Value;
                 float cd = (c.x - v.x) * (c.x - v.x) + (c.y - v.z) * (c.y - v.z);
                 float fd = (foe.x - v.x) * (foe.x - v.x) + (foe.z - v.z) * (foe.z - v.z);
-                if (cd < CourierRange * CourierRange && cd < fd) { at = c; onCourier = true; }
+                // Heat both widens the range the truck is noticed at and lets
+                // it outrank a closer enemy: at full heat a tank will leave the
+                // tank in front of it to shoot at the van.
+                float reach = CourierRange * (1f + Heat * 1.4f);
+                if (cd < reach * reach && cd < fd * (1f + Heat * 2.5f))
+                { at = c; onCourier = true; }
             }
 
             // a miss still has to go somewhere, or the tracer would lie
@@ -590,7 +605,7 @@ public class Army
 
             if (onCourier)
             {
-                if (connects) CourierHit?.Invoke(Rand(5f, 11f));
+                if (connects) CourierHit?.Invoke(Rand(5f, 11f) * (1f + Heat * 0.6f));
                 return;
             }
             if (connects)
@@ -678,7 +693,9 @@ public class Army
         {
             var c = Courier.Value;
             float cd = (c.x - s.x) * (c.x - s.x) + (c.y - s.z) * (c.y - s.z);
-            if (cd < RifleRange * RifleRange && cd < d2) { mark = c; atCourier = true; }
+            float reach = RifleRange * (1f + Heat * 0.8f);
+            if (cd < reach * reach && cd < d2 * (1f + Heat * 2.5f))
+            { mark = c; atCourier = true; }
         }
 
         Shot?.Invoke(s, hit

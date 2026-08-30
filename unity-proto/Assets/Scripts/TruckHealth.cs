@@ -43,6 +43,9 @@ public class TruckHealth : MonoBehaviour
              "as one instead of as the game not having noticed.")]
     public ChaseCamera chase;
 
+    [Tooltip("Optional. Impacts and the explosion.")]
+    public GameAudio audio;
+
     /// <summary>Condition remaining, 0..maxHealth.</summary>
     public float Health { get; private set; } = -1f;
 
@@ -83,6 +86,7 @@ public class TruckHealth : MonoBehaviour
         _rb = GetComponent<Rigidbody>();
         if (truck == null) truck = GetComponent<TruckController>();
         if (chase == null) chase = FindFirstObjectByType<ChaseCamera>();
+        if (audio == null) audio = FindFirstObjectByType<GameAudio>();
     }
 
     void Start() => EnsureInit();
@@ -115,6 +119,7 @@ public class TruckHealth : MonoBehaviour
         // it is, keeps its own body and burns there.
         if (fx != null) fx.VehicleExplosion(transform.position);
         if (chase != null) chase.Shake(2.2f);
+        if (audio != null) audio.Explosion();
 
         if (truck != null) truck.enabled = false;
         if (_rb != null)
@@ -127,9 +132,25 @@ public class TruckHealth : MonoBehaviour
         Wrecked?.Invoke();
     }
 
+    float _smokeAt;
+
     void Update()
     {
         EnsureInit();
+
+        // hand the condition to the controller, and smoke when it is bad
+        if (truck != null) truck.condition = IsDestroyed ? 1f : Fraction;
+
+        if (!IsDestroyed && fx != null && Fraction < 0.35f)
+        {
+            _smokeAt -= Time.deltaTime;
+            if (_smokeAt <= 0f)
+            {
+                // faster the worse it is, so a dying truck is visible from behind
+                _smokeAt = Mathf.Lerp(0.10f, 0.45f, Fraction / 0.35f);
+                fx.BurnBeat(transform.position, Mathf.Clamp01(0.55f - Fraction));
+            }
+        }
 
         // Cleared once, on the way out. Checked as a distance rather than as a
         // "has moved at all" so that being nudged on the apron does not arm the
@@ -194,6 +215,7 @@ public class TruckHealth : MonoBehaviour
 
         float impact = collision.relativeVelocity.magnitude;
         if (chase != null) chase.Shake(Mathf.Min(1.2f, impact * 0.09f));
+        if (audio != null) audio.Impact(impact);
         if (impact >= crashSpeed) WriteOff();
         else Damage(impact * 6f);       // a slow shunt still costs paint
     }

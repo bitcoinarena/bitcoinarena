@@ -75,6 +75,8 @@ public class Bootstrap : MonoBehaviour
     public MarketFeed Market { get; private set; }
     public Battlefield Field { get; private set; }
     public RoadNetwork Roads { get; private set; }
+
+    public GameAudio Audio { get; private set; }
     public CombatFx Fx { get; private set; }
 
     void Start()
@@ -111,6 +113,10 @@ public class Bootstrap : MonoBehaviour
         // every one of these is a null assignment that throws nothing.
         _truckHealth.fx = Fx;
         Field.health = _truckHealth;
+
+        var audio = gameObject.AddComponent<GameAudio>();
+        audio.truck = _truck;
+        Audio = audio;
         // the chase camera is built further down, so both of these find it
         // themselves in Start rather than being handed a null here
         Field.Army.CourierHit += _truckHealth.Damage;
@@ -144,6 +150,7 @@ public class Bootstrap : MonoBehaviour
         loadout.health = _truckHealth;
         loadout.market = Market;
         _cargo = bay;
+        Field.cargo = bay;          // what is aboard sets how hard it is hunted
 
         // The far end of the run. Without it the freight has nowhere to go and
         // the whole loading bay is decoration.

@@ -65,6 +65,14 @@ public class TruckController : MonoBehaviour
     /// freight is aboard is the one thing the loading bay exists to prevent.
     /// </summary>
     [System.NonSerialized] public bool controlsLocked;
+
+    /// <summary>
+    /// Condition, 0..1. A battered truck pulls, loses power and steers badly.
+    ///
+    /// Without this the health bar was binary - whole or dead - and a hit
+    /// changed nothing you could feel until the last one. Set by TruckHealth.
+    /// </summary>
+    [System.NonSerialized] public float condition = 1f;
     [System.NonSerialized] public float externalThrottle;
     [System.NonSerialized] public float externalSteer;
     [System.NonSerialized] public bool externalHandbrake;
@@ -88,9 +96,13 @@ public class TruckController : MonoBehaviour
         _rb.centerOfMass = centreOfMass;
         spawnPosition = transform.position;
         spawnRotation = transform.rotation;
+        _pull = Random.value < 0.5f ? -1f : 1f;
     }
 
     /// <summary>Drop the truck back on its start mark, stationary and upright.</summary>
+    /// <summary>Which way a damaged truck pulls. Fixed per truck.</summary>
+    float _pull;
+
     public void Respawn()
     {
         _rb.linearVelocity = Vector3.zero;
@@ -141,6 +153,18 @@ public class TruckController : MonoBehaviour
             throttle = 0f;
             steerIn = 0f;
             handbrake = true;
+        }
+
+        // Damage is felt, not just displayed. A beaten truck is down on power
+        // and pulls to one side, so the last stretch of a bad run is a fight.
+        // The pull is deterministic per truck rather than random, or it would
+        // read as the controls being unreliable instead of the truck being
+        // hurt.
+        float hurt = 1f - Mathf.Clamp01(condition);
+        if (hurt > 0.02f)
+        {
+            throttle *= Mathf.Lerp(1f, 0.55f, hurt);
+            steerIn = Mathf.Clamp(steerIn + _pull * hurt * 0.35f, -1f, 1f);
         }
 
         float speed = _rb.linearVelocity.magnitude;

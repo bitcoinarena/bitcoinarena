@@ -342,6 +342,7 @@ public class PackageYard : MonoBehaviour
         {
             bay.Remove(tx.txid);
             Return(tx);
+            Sound(false);
             return true;
         }
         if (!bay.TryAdd(tx))
@@ -350,7 +351,16 @@ public class PackageYard : MonoBehaviour
             return false;
         }
         Take(tx);
+        Sound(true);
         return true;
+    }
+
+    GameAudio _audio;
+
+    void Sound(bool taken)
+    {
+        if (_audio == null) _audio = FindFirstObjectByType<GameAudio>();
+        if (_audio != null) _audio.Pickup(taken);
     }
 
     /// <summary>Take a crate off the ramp because it is on the bed now.</summary>

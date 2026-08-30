@@ -21,6 +21,12 @@ public class Battlefield : MonoBehaviour
              "anything assigned at wiring time would be null.")]
     public ChaseCamera chase;
 
+    [Tooltip("Optional. The sound of somebody going under the wheels.")]
+    public GameAudio audio;
+
+    [Tooltip("Optional. What is on the truck sets how hard it is hunted.")]
+    public CargoBay cargo;
+
     public PriceHistory History { get; private set; }
     /// <summary>Both armies. Owned here because they live and die by the same tape.</summary>
     public Army Army { get; set; }
@@ -42,6 +48,7 @@ public class Battlefield : MonoBehaviour
     void Start()
     {
         if (chase == null) chase = FindFirstObjectByType<ChaseCamera>();
+        if (audio == null) audio = FindFirstObjectByType<GameAudio>();
     }
 
     void Update()
@@ -72,6 +79,16 @@ public class Battlefield : MonoBehaviour
                 ? new Vector2(courier.position.x, courier.position.z)
                 : (Vector2?)null;
 
+            // What the truck is carrying is what the war wants. An empty van is
+            // in the way; a whale on the back is worth diverting a tank for.
+            //
+            // NOT gated on spawn protection: heat is a property of the load,
+            // not of whether the truck can currently be hurt. Whether anyone
+            // may shoot at it is decided by Courier below, and mixing the two
+            // meant a truck loaded up on the apron read as carrying nothing.
+            Army.Heat = cargo != null && (health == null || !health.IsDestroyed)
+                ? cargo.Heat : 0f;
+
             Army.Update(Time.deltaTime);
             LaunchSorties(Time.deltaTime);
 
@@ -91,7 +108,11 @@ public class Battlefield : MonoBehaviour
                 int went = Army.RunOver(p.x, p.z, 3.6f, speed, knock);
                 RunDown += went;
                 // a body under the wheels should be felt, not just counted
-                if (went > 0 && chase != null) chase.Shake(Mathf.Min(0.5f, went * 0.22f));
+                if (went > 0)
+                {
+                    if (chase != null) chase.Shake(Mathf.Min(0.5f, went * 0.22f));
+                    if (audio != null) audio.Thud();
+                }
 
                 Army.ClearPath(p.x, p.z, heading, Time.deltaTime);
             }

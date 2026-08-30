@@ -21,6 +21,7 @@ public class DeliveryGate : MonoBehaviour
     public LoadoutPanel loadout;
     public MempoolTerrain terrain;
     public CombatFx fx;
+    public GameAudio audio;
 
     [Tooltip("Where the gate stands. Mirrors the spawn at the other end.")]
     public float gateX = 114f;
@@ -74,6 +75,9 @@ public class DeliveryGate : MonoBehaviour
                 fx.Flash(at + new Vector3(Random.Range(-4f, 4f), Random.Range(0f, 4f),
                                           Random.Range(-4f, 4f)), Random.Range(1f, 2.4f));
         }
+
+        if (audio == null) audio = FindFirstObjectByType<GameAudio>();
+        if (audio != null) audio.Delivered();
 
         Delivered?.Invoke(LastRun);
 
