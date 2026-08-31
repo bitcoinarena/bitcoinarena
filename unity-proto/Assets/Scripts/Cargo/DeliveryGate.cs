@@ -42,7 +42,7 @@ public class DeliveryGate : MonoBehaviour
 
     [Tooltip("Height only. The model is 134 m tall as authored, which fills " +
              "the upper half of a phone screen; 0.78 gives the sky back.")]
-    public float minerHeightScale = 0.78f;
+    public float minerHeightScale = 0.45f;
 
     /// <summary>
     /// Height, and ONLY height.

@@ -71,10 +71,13 @@ public class MinerGateTests
 
         var b = rs[0].bounds;
         foreach (var r in rs) b.Encapsulate(r.bounds);
-        // 80, not 100: the coin sits at the very top and is reparented out of
-        // the batched body before this runs, so the static bounds stop just
-        // below it. What is being asserted is that the thing is a building.
-        Assert.Greater(b.size.y, 80f, $"nur {b.size.y:0} m hoch - das ist kein Wahrzeichen");
+        // 45 m, and the number has a history worth keeping. The coin sits at
+        // the very top and is reparented out of the batched body before this
+        // runs, so the static bounds stop below it - and the height factor
+        // itself came down to 0.45 because the chase camera pitches 15 degrees
+        // down, which caps what fits in frame far more tightly than the model
+        // does. See SkylineTests for that arithmetic.
+        Assert.Greater(b.size.y, 45f, $"nur {b.size.y:0} m hoch - das ist kein Wahrzeichen");
         Assert.Greater(b.size.z, 110f, $"nur {b.size.z:0} m breit - man kaeme daran vorbei");
     }
 
@@ -119,8 +122,19 @@ public class MinerGateTests
             Assert.IsFalse(Clear(z, TruckHeight),
                 $"bei z={z:0} kann man an der Einfahrt vorbeifahren");
 
-        // over the lintel: wall
-        Assert.IsFalse(Clear(0f, 60f), "ueber dem Sturzträger ist offen");
+        // Over the lintel but under the roof.
+        //
+        // 60 m was hard-coded when the building was 105 m tall; at 55 m that
+        // ray clears the roof entirely and correctly reports open sky. The
+        // height comes off the building now: twice the mouth, which is well
+        // above the opening and well below the top whatever the scale is.
+        var mesh = GameObject.Find("MinerMegastructure");
+        var mrs = mesh.GetComponentsInChildren<Renderer>(true);
+        var mb = mrs[0].bounds; foreach (var r in mrs) mb.Encapsulate(r.bounds);
+        float overLintel = mb.min.y + (mb.size.y * 0.45f);
+
+        Assert.IsFalse(Clear(0f, overLintel),
+            $"ueber dem Sturztraeger (bei {overLintel:0} m) ist offen");
     }
 
     /// <summary>Flat out at the facade beside the mouth stops the truck.</summary>

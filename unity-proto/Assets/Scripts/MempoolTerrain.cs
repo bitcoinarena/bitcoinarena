@@ -120,6 +120,11 @@ public class MempoolTerrain : MonoBehaviour
     }
 
     /// <summary>Fee rate at a column, normalised so sub-sat markets still have relief.</summary>
+    [Tooltip("How much of the far end of the map is levelled off into an " +
+             "apron, as a fraction of the width. The miner stands there and " +
+             "its approach has to be flat.")]
+    public float apronFraction = 0.22f;
+
     float HeightAt(float u, float v)
     {
         int c = Mathf.Clamp(Mathf.RoundToInt(u * (columns - 1)), 0, columns - 1);
@@ -128,6 +133,21 @@ public class MempoolTerrain : MonoBehaviour
         float h = Mathf.Log10(1f + fee) * feeHeight;
         // rolling ground so the map is not a staircase of flat bands
         h += Mathf.PerlinNoise(u * 7f, v * 5f) * baseRelief;
+
+        // The far end is levelled into an apron.
+        //
+        // Mempool relief is generated across the whole map, including the run
+        // in to the miner - so a busy block raised the ground into the finish
+        // straight and the building sat in a hillside with the road climbing
+        // through its foundations. A delivery yard is flat; the last fifth of
+        // the map is flattened to the height of its own far edge, eased in so
+        // there is no step where the terrain meets the apron.
+        float into = Mathf.InverseLerp(1f - Mathf.Clamp01(apronFraction), 1f, u);
+        if (into > 0f)
+        {
+            float flat = Mathf.Log10(1f + Mathf.Max(_profile[columns - 1], subSat)) * feeHeight;
+            h = Mathf.Lerp(h, flat, Mathf.SmoothStep(0f, 1f, into));
+        }
         return h;
     }
 
