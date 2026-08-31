@@ -173,8 +173,10 @@ BLWP does **not** keep the house multiplier, because the economics are now a
 P2P success pool. Route choice instead affects survival, delivery, time,
 score and ranking. The scoring function may reward risk, speed, cargo
 objective or exposure, but it is fixed in the Round Contract and
-deterministic. A safe route needs no operator-adjusted payout — it can
-simply produce a weaker rank if that is the declared rule.
+deterministic. A safe route needs no operator-adjusted payout — but "a
+weaker rank" is not enough on its own, and **§18A dimensions what it has to
+be**: a route that is nearly certain to arrive must earn nearly nothing, or
+the cautious player free-rides on the losses of the bold.
 
 ## 0.7 Driving and controls
 
@@ -292,7 +294,10 @@ players enter. No operator changes odds after observing performance.
 A Round Contract defines a deterministic score from factors already in the
 game: delivery success, delivery time, cargo objective, truck/cargo
 condition, route exposure, combat exposure, mission objectives. The protocol
-does not dictate the creative balance formula. It requires only:
+does not dictate the creative balance formula, but it does constrain it:
+**exposure must enter the score multiplicatively** and the rank curve must be
+steep (§18A). Without that constraint the safe route is strictly positive
+expected value and the risk premise collapses. Beyond that it requires only:
 
 ```text
 same inputs + same seed + same sim version = same score
@@ -1423,6 +1428,144 @@ plus a rank-weighted share of `loser_pool`. Node fees and the player-selected
 donation are charged **on top** of the stake at entry and therefore do not
 reduce the pool. `VOID` and `ENTRY_VOID` entries neither contribute to nor
 draw from the pool.
+
+---
+
+# 18A. Score, exposure and the rank curve
+
+This section exists because §18 dropped the operator's route multiplier and,
+for a while, put nothing dimensioned in its place.
+
+## 18A.1 The hole
+
+In the house-banked design, staying away from the fighting was punished
+arithmetically: a near-certain route was priced down to ×0.9 and carried −10%
+EV. In a pool, nothing prices it. A cautious player simply arrives,
+qualifies under §18, and takes a rank-weighted share of a pool funded
+entirely by other people's failures.
+
+Worked example — 100 players, 100 sat stake, 2% in fees on top, 50 taking
+the map edge and all arriving, 50 taking the corridor with half of them dying:
+
+```text
+loser_pool = 25 x 100 = 2,500 sat
+flat-ish rank curve: bottom 50 collectively take 20% -> 10 sat each
+```
+
+| Route | Expected value | Variance |
+|---|---|---|
+| Edge | 100 back + 10 share − 2 fee = **+8%** | ~zero |
+| Corridor | 0.5 × (100 + 80) − 102 = **−12%** | high |
+
+Exactly backwards. It is the same exploit class as "carry only the cheapest
+parcels" in the operator model, wearing a different costume, and the block
+clock does not contain it: if safe is +EV, it is +EV every round.
+
+## 18A.2 The target
+
+Not to forbid the edge route. §14 rules out arbitrary minimum-danger
+requirements, and rightly — a rule that says "you must be shot at" is a rule
+players will satisfy in the cheapest possible way. The target is that a
+zero-exposure delivery **earns approximately zero**:
+
+| Route | Target EV |
+|---|---|
+| Edge | −2% (the fee), near-zero variance |
+| Corridor | −2% on average, with real upside for skill |
+
+Both pay only the fee. The choice becomes variance and skill rather than
+arithmetic, and a driver whose personal survival beats the population's is
++EV — which is exactly where skill should be paid.
+
+## 18A.3 The reference score
+
+All factors multiplicative, so that any one of them at zero collapses the
+score:
+
+```text
+score = 1000 · E · T · C
+
+E  exposure  in [0,1]      time and depth in the corridor, heat-weighted
+T  time      in [0.5,1.5]  reference_time / elapsed, clamped
+C  cargo     in [0,1]      value delivered / capacity
+```
+
+with the exposure integral accumulated per simulation tick:
+
+```text
+proximity(t) = 1 − clamp01( |z − frontline_z(x)| / corridor_half_width )
+rate(t)      = proximity(t) · (1 + heat(t))
+E_raw        = Σ rate(t) · dt
+E            = clamp01( E_raw / E_reference )
+```
+
+`E_reference` is the exposure of a full run spent on the seam at zero heat,
+and is a Round Contract constant.
+
+Multiplicative is the whole point. Under an additive score a fast, full, safe
+run out-scores a slow, damaged, brave one — which is precisely the inversion
+this section exists to prevent. Under a multiplicative one, arriving with a
+full bed in record time and `E ≈ 0.05` yields `score ≈ 50` against the
+corridor's `≈ 900`.
+
+## 18A.4 The reference rank curve
+
+Geometric over the top quarter of qualifiers:
+
+```text
+K       = ceil(0.25 · qualifier_count)
+w_i     = r^(i−1),  r = 0.75,  i = 1..K
+share_i = loser_pool · w_i / Σ w_j
+```
+
+Everyone below rank K gets their stake back and nothing else. That is the
+mechanism that moves the edge route from +8% to −2%: it qualifies, it keeps
+its stake, it simply does not place.
+
+## 18A.5 Qualification stays generous
+
+`score ≥ min_score` with `min_score` set low — reference value 1. The
+cautious player is **not** disqualified and does **not** forfeit.
+
+Disqualifying them is the obvious-looking fix and it is wrong. Their stakes
+would fall into the pool, raising it to 7,500 sat, handing corridor survivors
++98% and the cautious −100%. That is not balancing, it is a levy on a legal
+strategy, and it re-creates the minimum-danger rule through the back door.
+The mechanism throughout is "earn nothing", never "lose everything".
+
+## 18A.6 The same round, re-run
+
+```text
+50 edge players       E ≈ 0.05 -> score ≈ 50   -> ranks 26..75, share 0
+25 corridor survivors E ≈ 0.9  -> score ≈ 900  -> ranks 1..25
+25 corridor deaths                             -> loser_pool 2,500
+K = ceil(0.25 · 75) = 19, all of them corridor survivors
+```
+
+| Route | Expected value |
+|---|---|
+| Edge | 100 − 102 = **−2%** |
+| Corridor | 0.5 × (100 + 100) − 102 = **−2%** |
+| Corridor at 70% personal survival | 0.7 × 200 − 102 = **+38%** |
+
+Zero-sum holds: 100 players × −2 sat = −200 sat, exactly the fees collected
+under §18.
+
+**And if everyone plays it safe?** The pool is empty, nobody earns anything,
+and everybody still pays the fee. There is no equilibrium in which caution
+wins — the property the operator model bought with a multiplier, this one
+gets from the shape of the curve.
+
+## 18A.7 What the Round Contract must pin
+
+`E_reference`, `corridor_half_width`, the clamps on `T`, `min_score`, `K` and
+`r`. These are game balance, not protocol, and §0.15's determinism
+requirement is the only hard constraint on them.
+
+But a contract that leaves the rank curve flat, or exposure additive, is a
+contract whose safe route is +EV. Clients SHOULD warn before entry when
+`r ≥ 0.95`, when `K > 0.5 · qualifier_count`, or when the declared score
+function is not exposure-multiplicative.
 
 ---
 
