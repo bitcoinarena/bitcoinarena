@@ -24,7 +24,7 @@ invoice, VSS shares) and only says *how*.
 
 ---
 
-## 1. Scope: everything is JavaScript
+## 1. Scope: JavaScript first, WebAssembly where it earns it
 
 | Component | Runtime | Notes |
 |---|---|---|
@@ -34,12 +34,61 @@ invoice, VSS shares) and only says *how*.
 | Browser client, Unity bridge, wallet | JS | Same protocol package |
 | Threshold signing (FROST) | Pure JS on `@noble/curves` | RFC 9591, §9.3 |
 
-**Dependency policy.** "Native Node.js" is taken to mean: no other language
-in the build, no compiled addons, no WASM. Where the Node standard library
-suffices it is used (`node:sqlite`, `node:crypto`, `node:worker_threads`,
-`node:test`). Where a shared browser/node implementation is needed, only
-audited pure-JS packages are used — `@noble/curves`, `@noble/hashes`,
-`@noble/ciphers`. No `node-gyp`, ever.
+**Dependency policy.** No other language in the *build*, no compiled addons,
+no `node-gyp`, ever. Where the Node standard library suffices it is used
+(`node:sqlite`, `node:crypto`, `node:worker_threads`, `node:test`). Where a
+shared browser/node implementation is needed, only audited pure-JS packages
+are used — `@noble/curves`, `@noble/hashes`, `@noble/ciphers`.
+
+**On WebAssembly.** An earlier draft banned it outright. That was one
+assumption too many, and §1.1 replaces it: WASM is permitted inside the
+deterministic core under conditions, because WASM arithmetic is
+*specified* where JavaScript's is not. It remains banned everywhere it would
+merely be convenient.
+
+### 1.1 When WebAssembly is allowed, and when it is not
+
+The reason the core is fixed-point is narrow and worth restating: in
+JavaScript, `Math.sin` and its family are *permitted by the specification* to
+be implementation-defined approximations, and V8, SpiderMonkey and
+JavaScriptCore genuinely differ in the last bits. Integer arithmetic is
+exact; transcendentals are not.
+
+**WebAssembly does not have that problem.** Its floating-point arithmetic is
+IEEE-754 with specified rounding, no reassociation, no fused multiply-add in
+the core instruction set, and no x87 excess precision. `sin` is not a WASM
+instruction at all — it comes from the libm compiled *into* the module, so
+every browser executes the same code. A physics engine compiled to WASM can
+therefore be bit-identical across engines in a way that the same engine
+written in plain JavaScript cannot.
+
+That is a real alternative to hand-building fixed point, and refusing to look
+at it would be dogma. It is admitted under five conditions, all of which
+exist because WASM's determinism has exactly four holes:
+
+1. **The binary is committed, not built.** The `.wasm` artifact is a checked-in
+   file whose hash is part of `sim_wasm_hash`. Nothing in the trust path may
+   depend on a toolchain version, a build flag or a package manager
+   resolving a range. This is the same rule as the trig tables (§3.4) and for
+   the same reason.
+2. **No threads, no shared memory, no atomics.** Thread scheduling is
+   nondeterministic by construction. A single instance, single-threaded.
+3. **No relaxed SIMD.** Ordinary SIMD follows the same IEEE rules and is
+   fine; `relaxed-simd` is *explicitly specified as nondeterministic* and is
+   the one extension that would silently break everything.
+4. **NaN must be impossible, and proven so.** The specification allows
+   implementation-defined NaN payloads — the single genuine nondeterminism in
+   WASM float. A physics step should never produce NaN, so the core asserts
+   on every state hash that no lane is NaN, and the corpus includes inputs
+   designed to provoke one.
+5. **Host imports are pure.** No `Date.now`, no `Math.random`, no `performance`
+   crossing the boundary. The module gets ticks and inputs and nothing else.
+
+Under those five, WASM is allowed in the simulation core. It is **not**
+allowed in `@blwp/protocol` — encoding, hashing, contracts, census, sortition
+and payout stay pure JS, because those are what a second implementation would
+have to reproduce from the test vectors, and a WASM blob is not a
+specification anybody can read.
 
 **On `BigInt`.** Native `BigInt` is used, not a library. `bigint.js`,
 `big-integer` and `bignumber.js` all predate native BigInt and exist to
@@ -908,14 +957,32 @@ is theatre, as §31 of the specification says plainly.
 ### 15.5 Recommendation
 
 Before committing to thirty-five sessions: **one or two sessions as a pure
-risk spike.** A toy core in fixed point — a vehicle, a few enemies, ten
-thousand ticks — run through Node, Chrome, Firefox and Safari, and the state
-hashes compared. No protocol, no Unity, no money.
+risk spike**, answering two questions rather than one. No protocol, no Unity,
+no money.
 
-If the hashes match, the foundation stands and the table above holds. If they
-do not, you know after two sessions instead of fifteen — and that is the
-moment to reopen the Rust/WASM question rather than after the core has grown
-around the assumption.
+**A — does hand-built fixed point hold?** A toy core — a vehicle, a few
+enemies, ten thousand ticks — run through Node, Chrome, Firefox and Safari,
+and the state hashes compared. This is the plan of record and stages 0 and 1
+are costed against it.
+
+**B — does WASM hold, and would it be cheaper?** The same ten thousand ticks
+through a WASM physics engine (Rapier is the candidate: Apache-2.0, and it
+ships a `DynamicRayCastVehicleController` in the `btRaycastVehicle` family
+that Unity's WheelCollider also belongs to). Same four engines, same hash
+comparison, plus the NaN probe from §1.1.
+
+Half a session more, and the outcomes are worth it:
+
+| A | B | What it means |
+|---|---|---|
+| holds | — | Stages 0 and 1 as costed. The plan of record. |
+| holds | also holds | A choice, made on measurement: build fixed point, or pin a WASM binary and skip most of stage 0. Weigh it against the trust-path cost in §1.1. |
+| **fails** | holds | The saving is enormous — most of stage 0 disappears and stage 1 becomes wiring plus feel. |
+| fails | fails | Neither is viable in the browser and the whole architecture needs rethinking. Better to learn this in session two than in session fifteen. |
+
+The bottom-left row is the reason B is worth running even if A succeeds: it is
+the only outcome where the estimate is badly wrong in the *cheap* direction,
+and the only way to find out is to measure.
 
 ---
 
@@ -944,7 +1011,13 @@ Stated plainly, so nobody discovers it in month four:
    respectable rather than reckless, but it still needs external review
    before real money (§9.3).
 
-What the choice buys, and it is not small: **one language, one protocol
+If the spike's option B is taken, item 1 above is what changes: determinism
+would be enforced by the WASM specification rather than by an AST guard, and
+stage 0 shrinks to the harness and the state layout. What is bought instead
+is a binary in the trust path — pinned by hash and committed, per §1.1, but
+still a thing nobody can read.
+
+What the all-JS choice buys, and it is not small: **one language, one protocol
 implementation, one core, shared between the browser and every node.** No
 Rust toolchain, no WASM build step, no napi-rs, no `node-gyp`. Canonical
 encoding, contract validation, sortition, the payout function and the
