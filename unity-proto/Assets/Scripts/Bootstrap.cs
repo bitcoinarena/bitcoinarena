@@ -189,6 +189,21 @@ public class Bootstrap : MonoBehaviour
         gate.postMaterial = gateMaterial;
         gateGo.SetActive(true);
         _gate = gate;
+
+        // Section 18A of the P2P spec, made drivable. Subscribes to the gate,
+        // so it has to exist before anything reads a score off it.
+        var scoreGo = new GameObject("RunScore");
+        scoreGo.transform.SetParent(transform, false);
+        scoreGo.SetActive(false);
+        var score = scoreGo.AddComponent<RunScore>();
+        score.courier = truck.transform;
+        score.field = Field;
+        score.bay = bay;
+        score.health = _truckHealth;
+        score.gate = gate;
+        scoreGo.SetActive(true);
+        _score = score;
+
         BuildCamera(truck);
 
         // the detailed models come in behind the game, not in front of it
@@ -206,6 +221,7 @@ public class Bootstrap : MonoBehaviour
         hud.health = _truckHealth;
         hud.wasted = _wasted;
         hud.gate = _gate;
+        hud.runScore = _score;
         hud.loadout = Object.FindFirstObjectByType<LoadoutPanel>();
 
         // The block is the round: it puts a price on time, without which the
@@ -435,6 +451,10 @@ public class Bootstrap : MonoBehaviour
     WastedSequence _wasted;
     CargoBay _cargo;
     DeliveryGate _gate;
+    RunScore _score;
+
+    /// <summary>The run score, for tests and for the HUD.</summary>
+    public RunScore Score => _score;
 
     /// <summary>Both armies, fed by the same tape that moves the frontline.</summary>
     void BuildArmies()

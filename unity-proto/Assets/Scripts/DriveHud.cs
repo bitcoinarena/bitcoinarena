@@ -23,6 +23,7 @@ public class DriveHud : MonoBehaviour
     public CargoBay bay;
     public LoadoutPanel loadout;
     public BlockClock block;
+    public RunScore runScore;
 
     GUIStyle _price, _sub, _small;
     Texture2D _flat;
@@ -126,13 +127,29 @@ public class DriveHud : MonoBehaviour
                      : "CARGO  empty",
                  under, bay.IsLoaded ? Color.white : new Color(1f, 1f, 1f, 0.6f));
 
-        // the score itself
+        // The score itself, and it is the RUN score, not the lifetime sats.
+        //
+        // Sats are the stake in the P2P model, not the reward: what a player
+        // actually earns is a rank-weighted share of other players' failures,
+        // and rank comes from this number. A HUD headlining lifetime sats
+        // teaches the wrong game.
+        bool live = runScore != null && runScore.Running;
+        int shown = runScore == null ? 0 : (live ? runScore.Projected : runScore.LastScore);
+
+        // Amber while it is still only a projection, green once banked. The
+        // difference matters: a projected score is lost entirely on a wreck.
+        var tint = live ? new Color(1f, 0.82f, 0.30f) : Up;
+        if (live && runScore.Projected <= 0) tint = new Color(1f, 0.45f, 0.40f);
+
         var scoreLine = new Rect(x, bottom - score.fontSize * 1.05f - under.fontSize * 1.2f,
                                  width, score.fontSize * 1.25f);
-        Shadowed(scoreLine, $"{gate.SatsDelivered:N0} sat", score, Up);
+        Shadowed(scoreLine, $"{shown:N0}", score, tint);
 
+        string tail = runScore == null
+            ? $"{gate.Runs} runs delivered"
+            : $"SCORE  ·  best {runScore.Best:N0}  ·  {gate.Runs} runs  ·  {gate.SatsDelivered:N0} sat";
         var runsLine = new Rect(x, bottom - under.fontSize * 1.4f, width, under.fontSize * 1.5f);
-        Shadowed(runsLine, $"{gate.Runs} runs delivered", under, new Color(1f, 1f, 1f, 0.75f));
+        Shadowed(runsLine, tail, under, new Color(1f, 1f, 1f, 0.75f));
 
         // the flash on arrival
         if (gate.SinceDelivery < 2.6f)
@@ -146,7 +163,25 @@ public class DriveHud : MonoBehaviour
             };
             big.normal.textColor = new Color(Up.r, Up.g, Up.b, k);
             GUI.Label(new Rect(0f, h * 0.24f, w, big.fontSize * 1.6f),
-                      $"DELIVERED  +{gate.LastRun:N0} sat", big);
+                      runScore != null ? $"DELIVERED  {runScore.LastScore:N0}"
+                                       : $"DELIVERED  +{gate.LastRun:N0} sat", big);
+
+            // The breakdown is the whole point of showing a score at all: it
+            // is where the player reads WHY a careful full-bed run scored 40
+            // and a reckless half-empty one scored 700.
+            if (runScore != null)
+            {
+                var line = new GUIStyle(GUI.skin.label)
+                {
+                    alignment = TextAnchor.UpperCenter,
+                    fontSize = Mathf.RoundToInt(Mathf.Min(w, h) * 0.030f),
+                };
+                line.normal.textColor = new Color(1f, 1f, 1f, k * 0.9f);
+                GUI.Label(new Rect(0f, h * 0.24f + big.fontSize * 1.5f, w, line.fontSize * 1.8f),
+                          $"exposure {runScore.LastExposure:0.00}   ×   " +
+                          $"time {runScore.LastTime:0.00}   ×   " +
+                          $"cargo {runScore.LastCargo:0.00}   ×  1000", line);
+            }
         }
     }
 
@@ -252,6 +287,88 @@ public class DriveHud : MonoBehaviour
         var sub = new GUIStyle(_small) { alignment = TextAnchor.UpperRight };
         Shadowed(new Rect(0f, pad + style.fontSize * 1.25f, w - pad, _small.fontSize * 1.6f),
                  stars >= 4 ? "HUNTED" : "WANTED", sub, colour);
+    }
+
+    /// <summary>
+    /// Where the exposure meter sits: under the wanted stars, on the right,
+    /// at a FIXED offset whether or not the stars are showing.
+    ///
+    /// The stars come and go with the load. If the meter were stacked on the
+    /// stars it would jump half a centimetre every time the heat crossed a
+    /// star boundary, which is exactly when the player is looking at it.
+    /// Public so a test can assert it never lands on the block board.
+    /// </summary>
+    public Rect ExposureBox(int w, int h)
+    {
+        float pad = Mathf.Max(10f, h * 0.025f);
+        float starFont = Mathf.Clamp(Mathf.Min(w, h) * 0.055f, 24f, 46f);
+        float small = SmallFont(w, h);
+        float top = pad + starFont * 1.25f + small * 1.9f;
+        float width = Mathf.Min(w * 0.26f, 300f);
+        return new Rect(w - width - pad, top, width, small * 1.5f + Mathf.Max(10f, h * 0.020f));
+    }
+
+    /// <summary>
+    /// The exposure meter — section 18A of the P2P spec, made visible.
+    ///
+    /// This is the one HUD element that exists to teach a rule rather than
+    /// report a state. Exposure multiplies the score, so a run that never goes
+    /// near the fighting scores near zero no matter how full the bed is or how
+    /// fast it arrives. That is an easy rule to state and an impossible one to
+    /// discover by driving, unless the multiplier is on the screen while the
+    /// choice is being made.
+    ///
+    /// So the bar shows two different things at once: how much exposure the
+    /// run has BANKED (the fill, which only ever grows) and whether it is
+    /// earning any RIGHT NOW (the bright cap and the warning). Without the
+    /// second, a player creeping along the map edge sees a bar that simply
+    /// stopped, and reads it as a bug.
+    /// </summary>
+    void DrawExposure(int w, int h)
+    {
+        if (runScore == null || !runScore.Running) return;
+
+        var box = ExposureBox(w, h);
+        float lh = _small.fontSize * 1.5f;
+        float barH = box.height - lh;
+        float e = runScore.Exposure;
+        float rate = runScore.Rate;
+        bool cold = rate < 0.03f;
+
+        var label = new GUIStyle(_small) { alignment = TextAnchor.UpperRight, fontStyle = FontStyle.Bold };
+        Shadowed(new Rect(box.x, box.y, box.width, lh),
+                 $"EXPOSURE  ×{e:0.00}", label,
+                 cold ? new Color(1f, 0.45f, 0.40f)
+                      : Color.Lerp(new Color(1f, 0.86f, 0.35f), new Color(0.45f, 1f, 0.62f), e));
+
+        var track = new Rect(box.x, box.y + lh, box.width, barH);
+        GUI.color = new Color(0f, 0f, 0f, 0.45f);
+        GUI.DrawTexture(track, _flat);
+
+        GUI.color = Color.Lerp(new Color(1f, 0.55f, 0.25f), new Color(0.45f, 1f, 0.62f), e);
+        GUI.DrawTexture(new Rect(track.x, track.y, track.width * e, track.height), _flat);
+
+        // The live cap: how fast exposure is accruing at this instant, drawn
+        // as a bright block riding the fill edge. It is the only part of the
+        // meter that reacts within a second of turning the wheel.
+        if (!cold)
+        {
+            float cap = Mathf.Min(track.width * 0.06f * Mathf.Clamp01(rate / 2f) + 2f,
+                                  Mathf.Max(2f, track.width - track.width * e));
+            float pulse = 0.6f + 0.4f * Mathf.Sin(Time.unscaledTime * 7f);
+            GUI.color = new Color(1f, 1f, 1f, pulse);
+            GUI.DrawTexture(new Rect(track.x + track.width * e, track.y, cap, track.height), _flat);
+        }
+        GUI.color = Color.white;
+
+        if (cold)
+        {
+            var warn = new GUIStyle(_small) { alignment = TextAnchor.UpperRight, fontStyle = FontStyle.Bold };
+            float k = 0.55f + 0.45f * Mathf.Sin(Time.unscaledTime * 4.5f);
+            Shadowed(new Rect(box.x, box.yMax + 2f, box.width, lh),
+                     "OUT OF THE FIGHT  ·  SCORING NOTHING", warn,
+                     new Color(1f, 0.42f, 0.36f, k));
+        }
     }
 
     /// <summary>
@@ -570,6 +687,7 @@ public class DriveHud : MonoBehaviour
 
         DrawBlock(w, h);
         DrawWanted(w, h);
+        DrawExposure(w, h);
         DrawUnderFire(w, h);
         DrawWaypoint(w, h);
         DrawHealth(w, h);

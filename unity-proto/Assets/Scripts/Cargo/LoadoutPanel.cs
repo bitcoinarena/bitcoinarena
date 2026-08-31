@@ -413,13 +413,19 @@ public class LoadoutPanel : MonoBehaviour
 
         var lbl = new GUIStyle(_small) { alignment = TextAnchor.UpperRight };
         lbl.normal.textColor = new Color(1f, 1f, 1f, 0.7f);
+        // NOT "payout": the sats aboard are the stake, and under the P2P
+        // economics of section 18A they come back on arrival whatever happens.
+        // What the load actually buys is the cargo factor in the score - and
+        // only the cargo factor, which is why a full bed alone is worth at
+        // most a third of a good run.
         GUI.Label(new Rect(rx, top - _small.fontSize * 1.35f, rw, _small.fontSize * 1.4f),
-                  "PAYOUT ON ARRIVAL", lbl);
+                  "CARGO FACTOR  ×" + $"{Mathf.Clamp01(bay.Fill):0.00}", lbl);
         GUI.Label(new Rect(rx, top - reward.fontSize * 0.1f, rw, reward.fontSize * 1.3f),
                   $"{bay.FeeCarried:N0} sat", reward);
 
         string usd = market != null && market.Price > 0
-            ? $"${bay.BtcCarried * market.Price:N0} in transit" : $"{bay.BtcCarried:0.###} BTC aboard";
+            ? $"${bay.BtcCarried * market.Price:N0} in transit  ·  score needs exposure"
+            : $"{bay.BtcCarried:0.###} BTC aboard  ·  score needs exposure";
         var sub = new GUIStyle(_small) { alignment = TextAnchor.LowerRight };
         sub.normal.textColor = new Color(1f, 1f, 1f, 0.7f);
         GUI.Label(new Rect(rx, top + reward.fontSize * 1.15f, rw, _small.fontSize * 1.5f), usd, sub);
