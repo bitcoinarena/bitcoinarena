@@ -1,935 +1,1682 @@
-# BTC Logistics War — Providerless P2P Multiplayer Protocol (BLWP)
+# BTC Logistics War — BLWP v4.6
+## Providerless P2P Multiplayer Protocol
 
-Written 2026-08-30, revised 2026-08-31 (**v1.2**). Concept specification only
-— no implementation.
+**Status:** architecture concept, security-hardened
+**Version:** 4.6 (supersedes v4.4/v4.5 and the earlier v1.x P2P drafts; both remain in git history)
+**Date:** 2026-08-31
 
-This document redesigns the existing centrally-operated real-money
-architecture (`MULTIPLAYER.MD` v2) into a **providerless multiplayer
-protocol** with the existing Unity WebGL game as its reference client.
-Gameplay, vehicles, cargo, mempool-derived maps, enemies, ghost multiplayer,
-the lobby concept and late joining are preserved. What is removed is the
-operator: there is no house bankroll, no custodial balances, no
-authoritative game server, no central payout authority — and as of v1.2,
-**no single-party custody of anything at any moment**.
+BLWP v4.6 keeps the simplified v4.4 architecture — one open-source node
+package, deterministic local simulation, quorum verification, P2P pool
+economics — and closes the security holes that made v4.4 unsafe for real
+money.
 
-> **Design principle: centralized infrastructure is acceptable.
-> Centralized trust is not.**
+---
 
-### Revision notes v1.2 (what changed and why)
+# 0A. What changed in v4.6, and why
 
-| # | Change | Why | Where |
+Six changes are load-bearing. Four of them close holes through which an
+attacker could take the whole pool.
+
+| # | Change | Closes | Cost |
 |---|---|---|---|
-| 1 | **The BLWP Federation Node.** Sequencer, witnesses, attestors, custodians and the settlement coordinator collapse into **one node software** run by n independent operators. Every infrastructure duty is a duty of the federation, executed under thresholds. | Four separately-staffed roles were operationally unrealistic and left one singleton (the coordinator). One binary, many operators, no singleton. | §2, §7.5, §13, §19 |
-| 2 | **Unilateral custody eliminated.** The v1.1 coordinator's "temporary custody during payout" is gone: the settlement wallet is controlled by **t-of-n threshold keys**. No single node can settle, cancel, sweep or pay anything alone — the in-transit pool is collectively controlled at every instant. Honest limit: custody does not vanish, it becomes **threshold custody**; ≥t colluding nodes can steal in-transit pools (the same trust class as Fedimint or Liquid), stated as *the* residual. | "Temporarily custodial single party" was the worst remaining trust item. | §13.5, §4 |
-| 3 | **Sequencer decentralized.** A rotating leader from the federation proposes 1 Hz event batches; a root is valid only with **≥t_root co-signatures**. Leader stall ⇒ deterministic rotation; equivocation now requires a colluding quorum and remains self-proving. The separate witness role is absorbed. | The v1.1 sequencer was one machine with witnesses bolted on. | §7.5, §10.3 |
-| 4 | **Per-round committee split inside the federation.** For each round, a seeded shuffle partitions the roster into an **attestor committee** and a **custody committee** — no node is in both for the same round. The v1.1 principle "whoever signs the truth holds no key to the money" survives the merger into one software. | Merging roles must not silently merge powers. | §7.5, §13.4 |
-| 5 | **Fee model fixed in the default contract template:** 2% of each round's pool split automatically across all federation nodes that met the round's liveness bar, and 2% as a donation to the developer key. Both are contract line items with **zero attached control power**; players accept them at entry; alternative contracts may set other values. | Sustainable node operation and development funding without recreating a mandatory house. | §15.3 |
+| 1 | **Committee seed comes from randomness published *after* the round_id** (drand round at `start_time`). | **Grinding attack.** In v4.4 the creator chose `round_id`, and `committee_seed = H(public_randomness ‖ census_epoch ‖ round_id)` with randomness already known. An attacker could brute-force round_ids offline until the deterministic selection returned his own nodes for *both* committees, publish that round, and sign himself the win and the payout. §5A.11 did not help — he overwrote nothing, he computed legally. | Committee is unknown until `start_time`; the lobby shows "committee pending" for a short window. |
+| 2 | **Bonds are mandatory and slashable; thresholds raised to 5-of-7 for both roles; selection is bond-weighted stateless sortition.** | **Free Sybil + thin quorums.** v4.4 made bonds optional ("if the protocol adopts bonding"), defined no slashing, and used 2-of-3 settlement. Two colluding operators drained a round. With a free identity and 12 eligible settlement nodes of which an attacker ran 4, P(≥2 of 3 selected are his) = **23.6%**; for game/verify (20 eligible, 8 his, 5 chosen, 3 needed) = **29.6%**. Roughly every third to fourth round was fully controllable at zero cost. | Node operation now requires capital. Small networks must run at capped stakes (§5A.10). |
+| 3 | **A node may not sign for a round in which its operator plays.** | **Self-signing.** v4.4 separated game/verify from settlement but never separated *player* from *node*. | Nodes declare an operator identity; overlapping entries forfeit the fee and the signature right. |
+| 4 | **The custody chapter exists** (§23): hold invoice, preimage VSS-shared to the settlement committee, threshold-signed movement, expiry-as-default refund. | **The missing mechanism.** v4.4 said "stake commitment" and "2-of-3 Lightning settlement" but never stated where a stake lives during a round or which key moves it. Without it, "non-custodial" was unsupported and outages had no refund path. | The most complex part of the protocol; the interim construction is named honestly (§23.6). |
+| 5 | **Objection window with a replay veto** (§13A) before finality. | **Unappealable lies.** In v4.4, a colluding quorum's signature was the end of the story. The veto existed in the earlier v1.1/v1.2 drafts and was dropped in the simplification; it is the cheapest defence in the whole design. | Finality is delayed by the window `W` (reference: 10 minutes). |
+| 6 | **Explicit equivocation and no-quorum rules** (§13B, §13C). | **Undefined states.** v4.4 never said what happens if a player publishes two conflicting checkpoint chains, or if the committee cannot agree on a result — the latter left funds stuck with no defined path. | Two short rules; one of them (equivocation ⇒ forfeit) must be in the Entry Contract. |
 
-### Revision notes v1.1 (retained)
+Smaller corrections, all listed here so nothing is silently changed:
 
-| # | Change | Where |
-|---|---|---|
-| 1 | Player-level finality (`EVIDENCE_FINAL`) replaces round-level VOID; refunds only for never-final runs; refund/DDoS prize removed | §10.5, §12.4, §16 |
-| 2 | Truth/money power split with a public objection window and the victim's mirror-uploaded veto | §13.4 |
-| 3 | Relay formalized as event sequencer with signed MMR roots; equivocation self-proving | §7.5, §10.3 |
-| 4 | Honest time claims: no backdating/rewind/slow-motion — forward simulation explicitly not prevented | §10.3–10.4 |
-| 5 | Corrected bandwidth arithmetic, replay-speed as benchmark target, NWC budgets as wallet policy | §18, §13.1 |
+- **Stateful rotation removed.** v4.5's shuffled round-robin needed a global
+  cursor, and §5A.8 admitted the canonical assignment log was unsolved —
+  i.e. it needed consensus, which the simplification was trying to avoid.
+  Bond-weighted **stateless sortition** gives fair long-run selection with
+  no shared cursor and no path dependence (§5A.6).
+- **"No Sybil reward" corrected** (§22A). It was false as written: extra
+  nodes do not collect extra fees directly, but they *do* buy extra
+  selection chances. Bonds are what make identity expensive; the document
+  now says that instead.
+- **Replay cost stated instead of assumed** (§34). Every committee member
+  replays every run — that is what the 2% pays for — so round size is
+  *derived* from measured replay throughput rather than hoping for 20×.
+- **Donation capped** at 100% of stake with a mandatory client confirmation
+  above 5% (§22A).
+- **`sim_wasm_hash` must be on the client's known-good list** for
+  real-money entry (§5, §6).
+- **Score inflation** added to the threat model (§35A): colluding nodes
+  need not fabricate a win, it is enough to inflate a rank.
 
-Unchanged by design: Unity WebGL client, dynamic rounds, lobby + late join,
-ghost multiplayer, deterministic Rust/WASM simulation, Round/Entry
-contracts, non-custodial player wallets, hold-invoice stake commitment,
-replaceable infrastructure, pool economics.
-
----
-
-## 1. Executive architecture summary
-
-Three ideas carry the whole design:
-
-1. **The ghost architecture is the scalability and trust model.** Each
-   player's financially relevant simulation depends only on round statics,
-   their own seed, and their own inputs. Other players are non-authoritative
-   ghosts. Therefore each browser runs **its own authoritative deterministic
-   simulation** (Rust/WASM, fixed-point) and publishes an authenticated
-   transcript (input log + rolling state commitments). A player's result *is*
-   whatever deterministic replay of their transcript yields — verifiable by
-   anyone, forgeable by no one. There is no server simulation at all.
-
-2. **The federation sequences and settles; no member acts alone.**
-   *(revised v1.2)* A roster of n independent **BLWP nodes** runs one shared
-   binary. A rotating leader orders events into 1 Hz **sequence roots**,
-   valid only with ≥t_root co-signatures — order and time, never truth.
-   Per-round seeded committees keep judging (attestors) and key-holding
-   (custodians) disjoint. The settlement wallet exists only behind
-   **t_s-of-n threshold signatures**: every HTLC settle, cancel and payout
-   is a quorum ceremony, sequenced and auditable.
-
-3. **Stakes are Lightning hold invoices, and results carry player-level
-   finality.** A stake is an in-flight HTLC, not a balance in anyone's
-   database. A player's result becomes **evidence-final** the moment their
-   complete transcript is sequenced — from then on, no outage and no quorum
-   loss can erase it; infrastructure failure only delays settlement.
-   Refunds exist solely for runs that never reached evidence-finality.
-   Claiming a lost stake requires a committee attestation, an elapsed public
-   objection window the victim can veto with their own transcript, and a
-   threshold signing quorum.
-
-Honesty up front: **fully trustless N-player pool settlement with
-browser-only clients does not exist on Bitcoin/Lightning today.** Browsers
-cannot run Lightning nodes, stay online for justice transactions, or
-participate reliably in N-party on-chain ceremonies. v1.2's answer is
-**federated threshold custody**: at no point does any single party control
-player funds — and the residual is stated without cosmetics: **≥t_s of n
-federation nodes colluding can steal in-transit pools.** That is the same
-trust class as Fedimint or Liquid, it is the minimum achievable under the
-browser constraint today, and everything else in this document is built to
-keep that quorum honest, visible and bonded.
-
-Because there is no house, the economics are **zero-sum pools between
-players**. Bots cannot "beat the house" because there is none; pool-in
-equals pool-out minus declared fees, structurally. Bots are a *fairness*
-problem (brackets, skill pools — §15), not a solvency problem.
+Everything else from v4.4 — the game, ghosts, private worlds, permissionless
+rounds, one node binary, player-level finality, the disconnect rule, the
+fee-on-top model, the P2P pool — is unchanged.
 
 ---
 
-## 2. High-level architecture *(revised v1.2)*
+# 0. Original game concept — the foundation BLWP preserves
 
-```
-                REPLACEABLE CONVENIENCE INFRASTRUCTURE
-   Lobby & round discovery ── Matchmaking ── Leaderboard ── Indexers/Mirrors
-              WebRTC signaling ── STUN / TURN
-                              │
-        ┌─────────────────────┴──────────────────────────┐
-        │           BLWP FEDERATION  (n nodes,           │
-        │            one binary, bonded operators)       │
-        │                                                │
-        │  duty                        acting as         │
-        │  ── event sequencing ──────  rotating leader   │
-        │                              + ≥t_root co-sign │
-        │  ── result attestation ────  per-round attestor│
-        │                              committee (t_a)   │
-        │  ── preimage share custody ─ per-round custody │
-        │                              committee (t_c),  │
-        │                              disjoint from     │
-        │                              attestors         │
-        │  ── settlement wallet ─────  t_s-of-n threshold│
-        │     (LN node, hold invoices) signing — no node │
-        │                              can move funds    │
-        │                              alone             │
-        │  ── transcript mirroring ──  every node        │
-        └─────────────────────┬──────────────────────────┘
-      ┌───────────────────────┼──────────────────┐
-      │                       │                  │
-   PLAYER A                PLAYER B           PLAYER C   … PLAYER N
-   Wallet A (NWC/QR)       Wallet B           Wallet C
-      │                       │                  │
- Unity WebGL (render/UI) Unity WebGL       Unity WebGL
-      │                       │                  │
- WASM deterministic sim  WASM sim           WASM sim      ← authoritative
-      │                       │                  │           per player
-      └── signed entries, inputs, checkpoints, results ──┘
-                              │
-                   PARTICIPANT REGISTRY (append-only, MMR,
-                   sequenced under quorum-signed roots, mirrorable)
-                              │
-                    Deterministic payout function
-                              │
-                     Bitcoin / Lightning settlement
+BLWP is the P2P/network/settlement redesign of the existing **BTC Logistics
+War** real-money concept. This section defines the game the protocol exists
+to run. The later sections replace the original central authority and money
+architecture; they do not replace the game's trucks, freight, terrain,
+combat, delivery loop or ghost-player philosophy.
+
+## 0.1 Product premise
+
+BTC Logistics War is a logistics/driving game built in Unity and delivered
+as **Unity WebGL in a normal browser**.
+
+The player drives a truck carrying Bitcoin-themed freight through a
+dangerous logistics route. Terrain, armies, heat, obstacles and the selected
+route create the risk. The objective is simple:
+
+> **Load freight, drive through the map, survive, and reach the delivery
+> gate.**
+
+A run combines driving skill, route selection, vehicle characteristics,
+cargo/stake selection, battlefield exposure, survival, and delivery
+performance.
+
+## 0.2 The basic run
+
+```text
+ROUND / MAP
+    -> SELECT TRUCK
+    -> LOAD PARCELS / CARGO
+    -> COMMIT STAKE
+    -> ROLL OUT
+    -> DRIVE THROUGH TERRAIN + COMBAT
+    -> DAMAGE / SURVIVE / CHOOSE ROUTE
+    -> REACH DELIVERY GATE
+    -> RESULT + SCORE + PAYOUT
 ```
 
-No single machine anywhere in this picture can determine a result, move a
-sat, or rewrite an order. Quorums can move money; quorums cannot quietly
-invent results (§13.4); and everything a quorum does is sequenced.
+1. A round defines the map/world and its randomness.
+2. The player selects a truck.
+3. The player loads parcels subject to truck capacity and round rules.
+4. The stake is committed before the run begins.
+5. The player drives using steering, throttle and brake.
+6. The truck travels through terrain and the combat environment.
+7. Enemies, fire, obstacles and route exposure may damage truck and cargo.
+8. The player may choose a safer outer route or a riskier one near the
+   fighting.
+9. Reaching the gate produces `DELIVERED`.
+10. Wrecking or failing to complete produces a losing result.
+11. Result and score feed the multiplayer ranking and P2P payout.
 
----
+The real-money result is never based on a client-side button such as
+`I arrived`. It follows from the deterministic simulation and authenticated
+inputs.
 
-## 3. Providerless: definition and control questions
+## 0.3 Parcels and cargo
 
-| Question | Answer *(v1.2)* |
-|---|---|
-| Who controls funds? | The player's own wallet until stake-in; then an in-flight HTLC. Every movement afterwards requires a t_s-of-n threshold signature of the federation. **No single party has custody at any moment.** ≥t_s collusion is the stated residual. |
-| Who determines outcomes? | The deterministic WASM simulation, replayable by anyone. Committees attest; the victim can veto a false attestation with their own transcript; nobody *decides*. |
-| Who changes rules? | Nobody, per round: the Round Contract is immutable once published. |
-| Who can admit/exclude participants? | Entry is permissionless given a valid signed Entry Contract + funded hold invoice, sequenced under a quorum root. |
-| Who can stop joining? | Loss of the sequencing quorum stops *new* joins (fail-closed, no money at risk). |
-| Who can stop settlement? | Quorum loss **delays** settlement of evidence-final results; it cannot reverse them. Ultimate backstop: HTLC expiry (§13.4). |
-| Indispensable infrastructure? | The federation as a *role* — but its members are replaceable, its roster is versioned per round, and rival federations can run rival rounds under the same protocol. |
-| Mandatory fee recipient? | None with control power. The default template pays 2% to participating nodes and 2% to the developer donation key — line items players accept at entry; other contracts may differ (§15.3). |
-| Who can shut the system down? | No single party. Below t_root the federation halts new sequencing: provisional runs refund by expiry, final results settle when a quorum returns. |
+Parcels are central, not cosmetic. Their appearance and properties derive
+from the real Bitcoin mempool: transaction appearance, size, fee/heat band.
 
----
+BLWP simplifies the financial model to **fixed-stake round brackets** but
+preserves the cargo fantasy and the relationship between truck, loadout,
+cargo and run. A Round Contract may define stake bracket, allowed cargo
+tiers, truck capacity and cargo configuration rules — without reintroducing
+a house multiplier.
 
-## 4. Trust model — stated first, so the rest can be read against it
+## 0.4 Trucks
 
-A player must trust:
-1. **Bitcoin consensus** and, where used, **standard Lightning assumptions**.
-2. **Cryptographic primitives** (ed25519, SHA-256, Shamir/VSS, FROST-style
-   threshold Schnorr, BLS for drand).
-3. **Their own wallet** (keys never enter the browser page).
-4. **The deterministic simulation build** they verified or accepted (§14).
-5. **The Round Contract and their own Entry Contract** they signed.
+The starter truck is free, small, low capacity, lightly armoured. Better
+trucks may provide larger capacity, greater armour, higher survivability,
+more speed, different handling. Damage may persist; repairs cost; a
+written-off truck needs replacement.
 
-Residual trust, stated precisely (v1.2):
-6. **The federation quorum, ≥t_s of n, is THE residual.** t_s colluding
-   nodes can steal in-transit pools (held-stake settles, unpaid payouts) —
-   the same trust class as a Fedimint federation or the Liquid functionary
-   set. Everything below exists to keep that collusion unlikely, loud and
-   expensive: independent bonded operators, per-round disjoint committees,
-   the victim's objection veto, full sequencing of every quorum action,
-   and slashable, publicly attributable misbehaviour.
-7. **Committee honesty within the federation**: attestors (t_a) judge but
-   hold no key material for the round; custodians (t_c) hold shares but
-   judge nothing and release only on the mechanical rule (sequenced
-   attestation + elapsed objection window + no counter-evidence). A false
-   loss additionally requires the victim's mirrored transcript to be
-   unavailable — and every federation node is a mirror, plus any third
-   party may mirror.
-8. **Sequencing quorum honesty (t_root)** for history uniqueness.
-   Equivocation requires t_root signers on two branches and is self-proving
-   from the double-signed roots.
-9. **Time integrity is partial by design**: roots prevent rewind,
-   backdating and slow-motion — not forward simulation (§10.4).
-10. **The loaded web page** is trusted at load time; the wallet's own
-    approval UI and budget ceiling are the real boundary — wallet policy,
-    not cryptographic round-binding (§13.1).
-11. **drand** (or the Bitcoin-blockhash fallback) as unpredictable public
-    randomness.
-12. **Maturity note, honestly:** federated *custody* (Fedimint-class) is
-    production technology today; a Lightning node whose channel operations
-    are signed by an external **t-of-n threshold signer quorum**
-    (VLS-style remote signing generalized to FROST) is emerging technology.
-    V1 may interim-operate the settlement wallet as a Fedimint-style
-    federation with an LN gateway (mature) while threshold-LN hardens; the
-    trust statement — no single signer, ≥t_s to move funds — is identical
-    in both constructions.
+The economic principle from the original concept remains:
 
-A player does **not** trust: the lobby, matchmaking, signaling, STUN/TURN,
-any single federation node, the leaderboard, the web host (beyond item 10),
-other players, any house, any central ledger, any single payout authority.
+> **A better truck may change capacity, survival probability and variance,
+> but must not secretly create guaranteed positive expected value.**
 
----
+Because BLWP replaces house odds with player-versus-player pooled
+competition, truck balance belongs to the Round Contract and the game rules
+rather than to a recalibrated house multiplier.
 
-## 5. Unity WebGL reference client
+## 0.5 Terrain, armies and combat
 
-Hard constraint honoured: the game is 100% Unity WebGL in a normal browser.
-No extension, daemon, node, or native software.
+The financially relevant world includes deterministic logic for terrain,
+armies, fire, truck movement, hits, damage, cargo effects, the delivery
+gate and mission timeout. Existing logic (e.g. `Army.cs`) is extracted into
+the deterministic Rust core. Unity may keep richer visual physics and
+suspension, but settled state comes from the core.
 
-Division of labour inside the page:
+## 0.6 Route choice and battlefield exposure
 
-- **Unity WebGL**: rendering, UI, input capture, audio, animation, ghosts,
-  lobby screens. Unchanged product experience.
-- **Deterministic core (Rust → WASM)**: all financially relevant state —
-  vehicle movement, collisions with world objects, damage, AI/enemies,
-  cargo, gates, delivery, timeout. Fixed-point arithmetic; no floats in
-  financial state; no reliance on Unity PhysX/FixedUpdate for anything
-  settled. Unity renders *from* core state, never writes to it except via
-  the input API.
-- **JS bridge**: Unity ⇄ core ⇄ network ⇄ wallet links.
-
-Browser constraints addressed explicitly:
-- **Threads**: the core runs single-threaded; no SharedArrayBuffer/COOP/COEP
-  requirement (keeps mirror hosting trivial).
-- **Float determinism**: avoided entirely by fixed-point in the core.
-- **Background tabs / suspension / mobile lock / CPU throttling**: the sim
-  may stall — missing checkpoint cadence is handled deterministically
-  (§12); a suspended tab drifts toward forfeit like any disconnect.
-- **GC pauses / memory pressure**: core state ≤ ~32 MB, allocation-free tick
-  loop; a GC pause shorter than the cadence tolerance is invisible.
-- **Networking**: WSS to the current leader (with automatic failover to the
-  rotation successor) for protocol traffic; optional WebRTC DataChannels
-  (unreliable) for ghost snapshots. Loss/ordering handled by tick-numbered,
-  idempotent messages.
-- **Reconnect**: the client rebuilds its own run by fetching its streamed
-  input log back and replaying locally (§12.5).
-- Compatibility target: current Chrome, Firefox, Edge, Safari (WASM MVP +
-  WebSocket + WebCrypto only; WebRTC optional).
-
----
-
-## 6. Protocol vs reference client
-
-The **protocol** is: message formats, contracts, registry/sequencing
-structure, committee derivation, randomness derivation, transcript and
-checkpoint rules, verification and objection rules, payout function,
-settlement flows — everything in §§7–19. Any compatible client (headless
-Rust client included) may participate; any compatible node implementation
-may join a roster. The **Unity build** is one client. Protocol identity
-derives from `(protocol_version, sim_wasm_hash)`, never from a domain.
-
----
-
-## 7. Rounds, lobby, and dynamic membership
-
-### 7.1 Lobby
-The lobby is a discovery view over Round Contracts: upcoming and running
-rounds, status (`WAITING / ACTIVE / CLOSING / SETTLING / FINAL`), committed
-player count, stake bracket, payout curve, start condition, late-join
-policy, elapsed time, leaderboard, **federation roster and fee schedule**.
-The V1 lobby service is centralized and non-authoritative: every fact it
-displays is a signed artifact any replacement lobby can serve identically.
-
-Player states: `OBSERVING → READY → ENTRY_SIGNED → STAKE_COMMITTED →
-ACTIVE`. Only `STAKE_COMMITTED` has money at risk.
-
-### 7.2 Round Contract *(fields revised v1.2)*
-Immutable, published at creation, content-addressed (`round_id` = hash of
-the contract):
-
-```
-RoundContract {
-  round_id, protocol_version, sim_wasm_hash
-  map_params            // mempool snapshot reference + derivation rules
-  randomness_rules      // drand chain hash, epoch schedule, sub-seed formula
-  schedule              // open_time, start_condition, epoch length,
-                        // entry_close_tick, end_tick, max_duration
-  late_join_policy      // enabled, per-epoch terms, T_run per entry
-  tick_rate: 30 Hz      // checkpoint cadence 1 Hz, tolerance ±2 s
-  stake_bracket         // fixed stake per entry, e.g. 100 sat
-  payout_model          // qualification rule + rank curve + tie rules
-                        //   + zero-qualifier rule (full refund)
-  fee_schedule          // v1.2 default: 2% → federation nodes (liveness-
-                        //   weighted, equal split), 2% → developer donation
-                        //   key; line items, no control power attached
-  federation {          // v1.2
-    roster[]            //   n node pubkeys + bonds + endpoints
-    t_root, t_a, t_c, t_s
-    committee_seed_rule //   deterministic per-round attestor/custody split;
-                        //   disjointness REQUIRED
-    leader_rotation     //   order, stall grace, handover rule
-    liveness_bar        //   share of roots a node must co-sign to earn fees
-  }
-  finality_rules        // evidence-finality criteria, objection window W,
-                        //   annulment conditions (§10.5)
-  disconnect_rules      // neutral-input + cadence-forfeit definitions
-  suspension_rules      // same as disconnect (explicitly)
-  settlement_rules      // federated wallet id, hold-invoice params, CLTV
-                        //   (sized in days), claim windows, threshold t_s
-  dispute_rules         // replay procedure, checkpoint bisection, deadlines
-  registry_rules        // event schema, MMR parameters, mirrors
-}
+```text
+front / combat corridor   = greater exposure and danger
+normal route              = intermediate exposure
+edge / boundary route     = lower exposure and danger
 ```
 
-### 7.3 Player Entry Contract
-Signed by the player's entry key; one per join, late joins included:
+The original house-banked design turned exposure into payout multipliers.
+BLWP does **not** keep the house multiplier, because the economics are now a
+P2P success pool. Route choice instead affects survival, delivery, time,
+score and ranking. The scoring function may reward risk, speed, cargo
+objective or exposure, but it is fixed in the Round Contract and
+deterministic. A safe route needs no operator-adjusted payout — it can
+simply produce a weaker rank if that is the declared rule.
 
+## 0.7 Driving and controls
+
+```text
+steering
+throttle
+brake
 ```
-PlayerEntryContract {
-  round_id, player_pubkey
-  entry_epoch, join_tick        // derived from sequence position (§7.5)
-  stake, payment_hash           // hash of the player-generated preimage P
-  vss_shares_ref                // P Shamir-shared to the round's CUSTODY
-                                //   committee (VSS, encrypted per-member)
-  seed_commitment = H(s_p)      // player randomness secret (§11)
-  vehicle, loadout, cargo_tier
-  accepted: payout_model_hash, fee_hash, disconnect_rules_hash,
-            finality_rules_hash, federation_hash, sim_wasm_hash,
-            protocol_version, max_payout
-  session_pubkey                // per-run signing key, certified here
+
+Unity captures these. The deterministic Rust/WASM simulation consumes the
+canonical quantised input stream. Unity may render WheelColliders,
+suspension, particles, impacts, animation and camera effects — but Unity
+presentation must never change settled position, damage, failure, cargo
+state, delivery or score.
+
+## 0.8 Multiplayer lobby
+
+A round supports a dynamically growing number of competitors.
+
+```text
+12:00  37 players committed, round active
+12:01  +8 players
+12:03  +11 players
+12:06  +5 players
+12:07  entry closes
+       61 total competitors
+```
+
+Late join is a normal feature, not merely reconnect. Each accepted entrant
+receives the same contract-defined mission duration `T_run`, even when
+wall-clock start times differ.
+
+## 0.9 Ghost players — a fundamental game rule
+
+Other trucks are visible **ghosts with no collision**.
+
+Another player must not be able to change my financial odds by ramming me,
+blocking a road, pushing me, damaging me, drawing my enemies away, pulling
+enemies toward me, sacrificing themselves for me, or colluding physically.
+
+Each player's enemies react only to that player's own truck in their
+financially relevant world.
+
+> You can watch other competitors drive, struggle, fail and arrive —
+> without allowing them to manipulate your outcome.
+
+A future play-money convoy mode may use real interaction; it is outside the
+settled BLWP competition.
+
+## 0.10 Private financial world per player
+
+```text
+financial_world(p)
+=
+deterministic_sim(RoundContract, map, player_seed, player_inputs)
+```
+
+Ghost snapshots are never inputs to this calculation.
+
+```text
+Alice's physics cannot change Bob's result.
+Bob's physics cannot change Alice's result.
+```
+
+The shared competition is produced by comparing independent results. This is
+what lets the architecture support many competitors without one giant
+synchronized physics state.
+
+## 0.11 Leaderboard
+
+Derived from signed final protocol results. It may show pseudonym, live run
+status, delivered/failed state, score, rank, cargo statistics and payout.
+The leaderboard is presentation, not authority.
+
+## 0.12 Player identity
+
+A keypair. The public key identifies the player; the private key signs Entry
+Contracts, session data and protocol messages. Clients may derive a friendly
+pseudonym (`brave-otter-4711`). No email or password. Wallet identity and
+game identity need not be the same key.
+
+## 0.13 Original money model vs BLWP money model
+
+**Original centralized concept:**
+
+```text
+player balance -> stake escrow -> house-backed route multiplier
+-> 10% house fee -> payout on arrival
+payout = stake x shown_multiplier
+```
+
+**BLWP:**
+
+```text
+fixed stake + player-vs-player success pool + deterministic rank distribution
+```
+
+There is no house bankroll, no RTP target, no centrally adjusted odds, no
+house-funded multiplier, no standing custodial player balance.
+
+## 0.14 BLWP P2P success pool
+
+```text
+61 players x 100 sat
+24 DELIVERED, 31 FAILED, 6 FORFEIT
+loser pool = 37 x 100 = 3,700 sat
+```
+
+Qualifying delivered players receive their own stake back plus a
+rank-weighted share of the loser pool. The rank curve is fixed before
+players enter. No operator changes odds after observing performance.
+
+## 0.15 Score
+
+A Round Contract defines a deterministic score from factors already in the
+game: delivery success, delivery time, cargo objective, truck/cargo
+condition, route exposure, combat exposure, mission objectives. The protocol
+does not dictate the creative balance formula. It requires only:
+
+```text
+same inputs + same seed + same sim version = same score
+```
+
+## 0.16 End-to-end player experience
+
+Alice opens the Unity WebGL game and sees an active round: 100 sat stake,
+49 players, late join open, entry closes 12:07, mission time 3 minutes. She
+picks a truck and cargo, commits 100 sat from her external Lightning wallet,
+and rolls out. She steers, brakes, chooses her route, meets deterministic
+armies and fire, takes damage, sees competitors as ghosts, reaches the gate.
+Independent BLWP nodes replay her authenticated input history and confirm
+`DELIVERED, score 18,321`. After membership and results are finalized, her
+rank determines her share of the loser pool, settled to her external wallet.
+
+## 0.17 What changes technically
+
+```text
+BEFORE:  Unity WebGL -> authoritative shard -> central ledger
+         -> wallet daemon -> Lightning
+
+AFTER:   Unity WebGL -> deterministic Rust/WASM
+         -> independent BLWP node quorum
+         -> independent settlement quorum -> Lightning
+         -> external player wallets
+```
+
+The gameplay fantasy stays the same. The trust architecture changes.
+
+## 0.18 Deliberately removed from the original central concept
+
+Central authoritative game server; central player ledger; persistent
+custodial balances; operator hot-wallet float as bankroll; house-backed
+multipliers; 90% RTP target; global operator calibration; mandatory 10%
+house fee; central withdrawal endpoint; one operator deciding results.
+
+## 0.19 Deliberately preserved
+
+BTC Logistics War theme; Unity WebGL; trucks; cargo/parcels; mempool-derived
+world; terrain; armies; combat; damage; route choice; delivery gate; driving
+skill; deterministic core; many simultaneous competitors; private player
+worlds; non-colliding ghosts; public leaderboard; cryptographic identity;
+real sats via Lightning; replayable game state.
+
+---
+
+# 1. Multiplayer model
+
+Any practical number of players; no 1v1 assumption. All accepted players
+belong to the same logical round and payout pool. Every player receives the
+same mission duration `T_run`. Late join is normal.
+
+---
+
+# 2. Ghost architecture
+
+Ghosts may affect visuals, animation, labels, approximate position/speed and
+the leaderboard. Ghosts may **not** affect collision, damage, enemies,
+cargo, RNG, score, qualification or payout.
+
+```text
+financial_world(player)
+=
+deterministic_sim(RoundContract, map, player_seed, player_inputs)
+```
+
+Other players are not inputs. This is the main scalability simplification:
+no globally authoritative multiplayer physics server is required.
+
+---
+
+# 3. The whole architecture
+
+One downloadable server package, `blwp-node`, plus the browser client.
+
+```text
+OPEN SOURCE CLIENT
+      |
+      v
+blwp-node software
+      |
+      +-- 7 selected GAME/VERIFY role slots      5-of-7 agreement
+      |
+      +-- 7 selected SETTLEMENT role slots       5-of-7 agreement
+                    |
+                    v
+                LIGHTNING
+```
+
+There is no separate settlement product and no second private package.
+Every operator downloads the same open-source software and enables
+capabilities in configuration:
+
+```text
+roles = ["game_verify"]
+roles = ["settlement"]
+roles = ["game_verify", "settlement"]
+```
+
+Roles are logically and cryptographically separated even though the binary
+is identical. A settlement-capable instance cannot invent a game result:
+settlement requires the protocol-defined 5-of-7 result and payout
+signatures.
+
+**Thresholds changed in v4.6.** v4.4 used 3-of-5 and 2-of-3. Two colluding
+settlement operators drained a round, and with free identities that
+combination arrived by itself in roughly a quarter of rounds (§0A, fix 2).
+5-of-7 with mandatory bonds means an attacker must corrupt five bonded
+operators simultaneously and forfeit five bonds to do it.
+
+---
+
+# 4. Open source
+
+```text
+/client-unity
+/sim-core
+/protocol
+/blwp-node
+/replayer
+/test-vectors
+```
+
+`/blwp-node` contains all server-side capabilities: entry and checkpoint
+handling, transcript storage, replay and signing, and optional Lightning
+settlement support. No proprietary daemon is required.
+
+GitHub may be primary, but no domain or account is authoritative. Anyone may
+build and host the client, run the node, enable either role, create rounds,
+build a competing frontend or a compatible client. No API key and no
+developer approval is required.
+
+---
+
+# 5. Unity vs deterministic core
+
+Unity is not trusted for money. Unity handles rendering, audio, UI, input
+capture, animation, ghosts and lobby. A deterministic Rust core compiled to
+WASM handles vehicle state, movement, world collision, damage, cargo,
+enemies, delivery, failure, timeout and score.
+
+Requirements: fixed-point arithmetic; deterministic simulation; fixed
+protocol tick; no Unity PhysX for settled state; canonical serialization;
+versioned `sim_wasm_hash`.
+
+**Build trust (v4.6).** The `sim_wasm_hash` is chosen by the round creator,
+so the client must not accept it blindly. For real-money rounds the client
+MUST verify the hash against its **known-good list** of reproducibly built
+core versions, and MUST refuse — or require an explicit, clearly worded
+override — for unknown hashes. Otherwise a creator could publish a round
+running a backdoored core.
+
+A modified Unity client cannot invent a valid win. A claimed result is
+accepted only if replay reproduces it.
+
+---
+
+# 5A. Census Protocol — discovering eligible nodes
+
+The protocol must not assume that exactly the required number of nodes
+exists. There may be 40 game/verify-capable and 25 settlement-capable nodes
+while a round needs 7 and 7.
+
+The Census Protocol produces a deterministic eligible-node set before each
+round: permissionless participation, deterministic selection, fair
+long-run distribution, real Sybil cost, no operator choosing favourites,
+and independent reproducibility by everyone.
+
+## 5A.1 Node advertisement
+
+```text
+NodeAdvertisement {
+  node_pubkey
+  operator_id                  // v4.6: identity for conflict rules (§5A.13)
+  supported_protocol_versions
+  roles_supported
+  endpoint, region, capacity_class
+  first_seen_epoch
+  software_hash
+  settlement_capabilities
+  lightning_capabilities
+  bond_outpoint                // v4.6: MANDATORY, see 5A.3
+  bond_amount
+  timestamp
   signature
 }
 ```
 
-### 7.4 Start, epochs, late join
-- **Start condition** is deterministic and pre-published. No party
-  discretionarily starts a round after seeing stakes.
-- Entry epochs (e.g. 60 s); entries close at
-  `entry_close_tick = end_tick − T_run` so every entrant gets the full
-  mission duration.
-- **Pool consent**: the contract states *"all valid entries up to
-  entry_close_tick contribute to and share one pool, computed over
-  evidence-final results."* Every entrant signed that sentence.
-- **Epoch closure is objective**: epoch *e* closes at the first
-  quorum-signed root with timestamp ≥ the boundary; membership and
-  `join_tick` follow from sequence position, not from anyone's claim.
+## 5A.2 Census epoch
 
-### 7.5 Sequencing and committees *(revised v1.2)*
+Time is divided into fixed census epochs (reference: 10 minutes). A round
+references a `census_epoch_id`. The eligible set is frozen at the end of the
+census epoch preceding committee selection, so a round creator cannot pick a
+favourable live subset after seeing participants.
 
-**Sequencing.** Per round, the contract fixes a leader rotation over the
-roster (deterministic order from `round_id`). The current leader collects
-events (entries, checkpoint receipts, epoch closures, attestations,
-objections, share releases, settlement records), assigns positions, and
-proposes a 1 Hz root:
+## 5A.3 Eligibility — bonds are mandatory *(changed in v4.6)*
 
-```
-SequencedRoot { round_id, seq, unix_ms, mmr_root, leader_sig,
-                cosigs[] }        // valid iff |cosigs| ≥ t_root
+A node is eligible only if it satisfies deterministic, publicly verifiable
+rules:
+
+```text
+valid signed advertisement
+supported protocol version
+advertisement seen before census cutoff
+minimum uptime / heartbeat record
+software version/hash policy satisfied
+role capability advertised
+no unslashed proven misbehaviour
+bond present and confirmed (see below)
 ```
 
-- Every co-signing node checks the MMR consistency proof (append-only
-  extension) before signing — an O(log n) check with no gameplay knowledge.
-- **Leader stall** > grace (e.g. 3 s) ⇒ the next node in rotation resumes
-  from the last quorum root; clients fail over automatically. Liveness
-  requires any t_root honest reachable nodes, not one machine.
-- **Equivocation** now requires ≥t_root signers on two branches — and two
-  quorum roots with equal `seq` and different `mmr_root` are portable proof
-  against every signer of both.
+**Bond (mandatory).** Every eligible node must lock a bond in a
+publicly verifiable output before the census cutoff:
 
-**Committees.** Per round, a public seeded shuffle
-(`H(round_seed ‖ "committees")`) partitions the roster into the **attestor
-committee** (size a, threshold t_a) and the **custody committee** (size c,
-threshold t_c), disjoint by rule. Example genesis parameters: n = 9,
-t_root = 5, a = 4/t_a = 3, c = 5/t_c = 3, t_s = 5. A node attests some
-rounds and custodies others — never both for the same round. *"Whoever
-signs the truth holds no key to the money"* survives inside one binary.
+```text
+bond_amount >= bond_min(role)
+bond_min(settlement)  >= max_round_pool of the rounds it may serve
+bond_min(game_verify) >= max_round_pool of the rounds it may serve
+```
 
-**Registry.** As before: append-only, self-authenticating events, MMR
-inclusion proofs, mirrored by every node and by anyone else. There is no
-trusted database administrator.
+The bond is what makes identity expensive. Without it, a Sybil attacker
+creates arbitrarily many nodes for free and buys arbitrarily many selection
+chances — the flaw that made v4.4 unsafe.
+
+**Slashing.** A bond is forfeit on *objectively provable* misbehaviour, each
+of which is a portable artifact anyone can check:
+
+| Offence | Proof |
+|---|---|
+| Signing two different results for the same (round, player) | The two signed results |
+| Signing a result contradicted by replay of the canonical transcript | Transcript + receipts + replay |
+| Signing a payout table that does not equal `F(contract, membership, results)` | The table and its inputs |
+| Settlement action without the required 5-of-7 result and payout signatures | The settlement record |
+| Signing for a round in which the operator played (§5A.13) | Entry Contract + node signature |
+| Claiming a fee share without meeting the availability rule (§22A) | Receipt record |
+
+Slashed bonds are distributed: half to the affected players of that round,
+half burned or to the remaining honest committee members of the round, as
+fixed by the Round Contract. The proof-carrying transaction may be published
+by anyone.
+
+## 5A.4 Canonical census set
+
+Eligible advertisements are canonicalized and sorted by
+`canonical_node_id = H(node_pubkey)`, producing `game_verify_census[]` and
+`settlement_census[]` and their roots. The Round Contract references the
+roots. Everyone derives the same arrays.
+
+## 5A.5 Committee seed — from randomness published *after* the round
+*(changed in v4.6 — closes the grinding attack)*
+
+```text
+committee_seed =
+H(
+  census_epoch_id
+  || round_id
+  || round_randomness
+)
+```
+
+with the hard rule:
+
+```text
+round_randomness = drand.round(start_time)
+```
+
+that is, a public randomness beacon value that **does not exist yet** when
+`round_id` is published. The Round Contract commits to *which* beacon round
+will be used (`randomness_rule`), not to its value.
+
+> **Why:** in v4.4 the creator chose `round_id` while `public_randomness` was
+> already known, so committee selection was a pure function of a value the
+> attacker controlled. Grinding round_ids offline until both committees
+> consisted of his own nodes was trivial and undetectable — §5A.11's
+> "committee cannot be overwritten" check passed, because nothing was
+> overwritten. Sourcing the seed from a *future* beacon makes the committee
+> unknowable at creation time. Grinding now requires predicting drand, which
+> is the beacon's security assumption.
+
+Consequences for the product:
+
+- Between round publication and `start_time` the lobby shows
+  **"committee: pending"**; the selected nodes appear at start.
+- Stake commitment MAY occur before the committee is known (the committee
+  cannot alter the game rules), but a client MAY be configured to wait for
+  committee publication before releasing funds. The reference client waits
+  for high stake brackets and does not wait for the lowest bracket.
+- Fallback if the beacon is unavailable at `start_time`: the contract's
+  declared fallback (next Bitcoin block hash after `start_time`). If neither
+  is available within the grace period, the round does not start and all
+  entries are `ENTRY_VOID` (refund).
+
+## 5A.6 Selection — bond-weighted stateless sortition
+*(replaces the stateful rotation of v4.5)*
+
+For each role independently:
+
+```text
+for each eligible node:
+    ticket(node) = H(committee_seed || node_pubkey || role)   // 256-bit
+    weight(node) = floor( sqrt( bond_amount / bond_min ) )    // >= 1
+    score(node)  = ticket(node) / weight(node)                // fixed-point
+
+select the `slots` nodes with the lowest score
+```
+
+- **Stateless.** No cursor, no shared counter, no assignment history. v4.5's
+  round-robin needed a global rotation cursor, and §5A.8 conceded that the
+  canonical assignment log was unsolved — i.e. it required exactly the
+  consensus the simplification was trying to avoid. Sortition removes the
+  problem instead of deferring it.
+- **Fair in the long run.** Expected selection frequency is proportional to
+  `weight`, verifiable by anyone over any window of rounds.
+- **Sybil-priced.** Splitting one bond across many identities *reduces*
+  total weight, because weight grows with the square root of the bond:
+  one node at 4× the minimum has weight 2, four nodes at 1× have weight 1
+  each — equal expectation, four times the operational cost, and four bonds
+  exposed to slashing. Concentration is neither punished nor rewarded; free
+  identity creation is simply worthless.
+
+## 5A.7 Committee size and thresholds *(changed in v4.6)*
+
+```text
+GAME/VERIFY:  7 slots, threshold 5
+SETTLEMENT:   7 slots, threshold 5
+```
+
+## 5A.8 (removed)
+
+The stateful rotation cursor of v4.5 is gone; see §5A.6. Nothing in v4.6
+requires a canonical assignment log.
+
+## 5A.9 Role separation between committees
+
+Selection runs separately per role, and by default overlap is minimized:
+
+```text
+select 7 GAME/VERIFY
+remove those nodes (and their operator_id siblings) from the settlement pool
+select 7 SETTLEMENT from the remainder
+```
+
+Fallback if too few remain: overlap is permitted but `overlap_count` is
+published, and the client MUST display material overlap before the player
+commits funds.
+
+## 5A.10 Minimum census size and stake ceiling *(tightened in v4.6)*
+
+A real-money round must not start unless the eligible population is
+meaningfully larger than the committee. The maximum stake bracket is
+**derived** from census health, so a young network runs safely at small
+stakes rather than unsafely at large ones:
+
+| Eligible (per role) | Committee | Max bracket |
+|---|---|---|
+| < 10 | — | play money only |
+| 10–14 | 7 of 7 pool, 5-of-7 | 10 sat |
+| 15–24 | 7, 5-of-7 | 100 sat |
+| 25–49 | 7, 5-of-7 | 1,000 sat |
+| ≥ 50 | 7, 5-of-7 | contract-defined |
+
+Rationale: with 15 eligible settlement nodes of equal bond, an attacker
+holding 5 of them has P(≥5 of 7 selected are his) < 0.2%; at 10 eligible
+with 5 attacker nodes it is ~8%. The ceiling keeps the expected loss of the
+bad case below the bonds that would be slashed for it.
+
+## 5A.11 Selection cannot be overwritten
+
+The Round Contract contains:
+
+```text
+census_epoch_id
+game_verify_census_root
+settlement_census_root
+randomness_rule                 // WHICH future beacon round (v4.6)
+selection_algorithm_version
+```
+
+and, published at `start_time` once the beacon value exists:
+
+```text
+round_randomness
+selected_game_verify_nodes[7]
+selected_settlement_nodes[7]
+```
+
+Every participant verifies
+
+```text
+selected nodes == deterministic_select(census_root, committee_seed, algo_version)
+```
+
+A round whose published committee does not match is invalid, and any node
+that acts under it is slashable.
+
+## 5A.12 Fee fairness under sortition
+
+The 2% node fee goes only to the committee that actually serves the round
+(§22A). Because selection is bond-weighted and stateless, long-run fee
+income is proportional to bonded capital and uptime, not to the number of
+identities. No node holds a permanent slot, and no developer, lobby or round
+creator decides who earns.
+
+## 5A.13 Player–node separation *(new in v4.6)*
+
+> **A selected node may not sign anything for a round in which its operator
+> has an Entry Contract.**
+
+Concretely:
+
+- Every advertisement declares an `operator_id` (a pubkey). Nodes sharing an
+  operator are siblings for all conflict rules.
+- If a selected node's `operator_id` also signed an Entry Contract in that
+  round, the node is **conflicted**: its result signatures, payout-table
+  signatures and settlement participation are invalid, and it earns no fee
+  share. Signing anyway is a slashable offence with a one-artifact proof.
+- If conflicts reduce a committee below its threshold, the round's affected
+  entries are `ENTRY_VOID` (refund) rather than settled by a compromised
+  committee.
+- The client MUST show, before commitment, whether any selected node's
+  operator is playing.
+
+> **Why:** v4.4 separated game/verify from settlement but never separated
+> player from node. Combined with the grinding attack this was the complete
+> exploit; even without grinding, an operator with a moderate share of the
+> census could sign himself wins in the rounds he happened to be selected
+> for. Nothing in v4.4 forbade it.
 
 ---
 
-## 8. Round-global vs player-private state; ghosts
+# 6. Permissionless round creation
 
-**Round-global (shared, small):** round_id, clock/roots, map parameters,
-seed commitments, registry, leaderboard, status.
+There is no central `CreateRound` server. Anyone may create a Round
+Contract; it is valid because its fields satisfy the protocol. No developer
+signature is required.
 
-**Player-private (financial, per player):** vehicle state, damage, cargo,
-their world's enemies, mission progress, inputs, result. Derived *only*
-from (round statics, player sub-seed, own inputs) — never from other
-players.
+```text
+RoundContract {
+  round_id
+  protocol_version
+  sim_wasm_hash                    // client checks against known-good list (§5)
 
-**Ghost multiplayer** is preserved exactly as in the current game: no
-collisions, no pushing, no cross-player AI influence, no shared physics.
-Ghost snapshots `{pubkey, pos, rot, speed, tick, envelope}` (~30 B) flow at
-5 Hz over the low-trust path, interest-managed (K ≈ 20), lossy and
-approximate — and **cannot touch financial state by construction**: the
-deterministic core has no input channel for them. The live leaderboard is
-informational; payouts derive only from verified transcripts.
+  map
+  start_time, entry_close_time, end_time
+  player_run_duration              // T_run
 
----
+  stake                            // bracket, bounded by census health (§5A.10)
+  payout_model
+  fee_schedule
 
-## 9. Deterministic simulation and protocol tick
+  census_epoch_id
+  game_verify_census_root
+  settlement_census_root
+  selection_algorithm_version
+  randomness_rule                  // WHICH future beacon (v4.6)
+  randomness_fallback              // e.g. next block hash after start_time
 
-- Fixed protocol tick **30 Hz**; rendering FPS free.
-- `result = Replay(sim_wasm_hash, round_statics, sub_seed, input_log)` —
-  bit-identical everywhere.
-- Inputs are quantized and bound to tick numbers; missing ticks auto-fill
-  with the contract's neutral policy (throttle 0, steering decay, brake
-  ramp).
-- Historical sim versions are archived content-addressed; any old round
-  replays forever.
+  game_verify_slots = 7,  game_verify_threshold = 5
+  settlement_slots  = 7,  settlement_threshold  = 5
 
----
+  node_fee_bps = 200
+  donation_bps_max = 10000         // protocol cap (v4.6)
 
-## 10. Authenticated transcripts, time, and finality
+  bond_min_game_verify
+  bond_min_settlement
+  slashing_rules_hash
 
-### 10.1 Input stream
-Input batches (10 Hz, ~30 B) are **hash-chained**; each 1 Hz **checkpoint**
-signs the chain head:
+  objection_window_W               // v4.6, reference 10 minutes
+  equivocation_rule_hash           // v4.6
+  no_quorum_rule_hash              // v4.6
 
-```
-Checkpoint {
-  round_id, player_pubkey, tick
-  state_hash, input_chain_head
-  root_ref                      // latest quorum-signed root
-  prev_checkpoint_hash
-  session_signature             // ed25519, ~1 sig/s
+  custody_rules                    // v4.6, see §23
+  htlc_cltv_days
+  claim_window_days
+
+  disconnect_rule
+  finality_rule
+
+  creator_pubkey
+  creator_signature
 }
 ```
 
-≈150 B/s upstream, acknowledged by leader **receipts** that are themselves
-sequenced. Inputs must be published to mirrors within ≤5 s; a transcript
-with withheld inputs is unverifiable and forfeits by rule.
+The creator gains no administrative power after publication — and, since
+v4.6, no influence over the committee either.
 
-### 10.2 Why rewriting is impossible
-Once a checkpoint's receipt is sequenced under a quorum root, every input
-before its tick is frozen under the player's own signature.
+---
 
-### 10.3 What the time mechanism guarantees
-Roots double as time beacons; a checkpoint for tick `T` must embed a recent
-root and arrive within `|root.time − T/30| ≤ tolerance`. Receipts sandwich
-each 1 s segment in wall-clock time. Exactly three guarantees:
-1. **No backdating.**
-2. **No rewind past publication** (forking limited to the un-receipted last
-   ≤1 s, visible as a cadence gap priced as neutral-input time).
-3. **No gross slow-motion** (cadence at 1× ± tolerance or forfeit forward).
+# 7. Player Entry Contract
 
-### 10.4 What it does **not** guarantee — stated honestly
-With no server there is **no per-player hidden randomness**: the client
-must know every roll to simulate. **Forward simulation is not prevented and
-cannot be** — a fast agent may explore thousands of candidate futures per
-real second. The design does not rely on pacing for economic safety; it
-relies on the pool being **zero-sum between players** (§15.2).
+```text
+PlayerEntryContract {
+  round_id
+  player_pubkey
+  operator_id_declaration          // v4.6: "none" or the operator this player is
 
-### 10.5 Player-level finality
-Each entry's result moves along a one-way ladder:
+  stake
+  join_time
+  vehicle, loadout, cargo
 
-```
-PROVISIONAL      transcript in progress
-EVIDENCE_FINAL   complete evidence exists and is ordered:
-                   - DELIVERED/FAILED: terminal checkpoint sequenced under a
-                     quorum root, full input log mirrored (availability
-                     receipt sequenced)
-                   - FORFEIT: cadence expiry relative to the last sequenced
-                     receipt, established by a later quorum root
-ATTESTED         ≥t_a attestor-committee signatures, sequenced
-SETTLED          HTLC settled/cancelled; payout executed (threshold-signed)
-ANNULLED         terminal refund state — reachable ONLY from PROVISIONAL
+  seed_commitment                  // H(player_secret)
+  payment_hash                     // H(P), P = player-generated preimage (§23)
+  vss_shares_ref                   // P shared to the settlement committee (§23)
+
+  sim_wasm_hash
+  payout_hash, fee_hash
+  equivocation_rule_hash           // v4.6: player accepts forfeit-on-equivocation
+  finality_rule_hash
+
+  donation_bps                     // player-chosen, <= donation_bps_max
+  donation_recipient
+
+  session_pubkey
+  signature
+}
 ```
 
-**The finality rule:** once `EVIDENCE_FINAL`, a result can never change
-class and can never be refunded. Quorum loss, leader death, committee
-outage — all of it *delays* the remaining steps; none of it reverses a
-known result.
-
-**Annulment (bounded refunds):** only runs still `PROVISIONAL` when the
-*federation side* fails (sequencing quorum lost beyond the liveness
-threshold, proven equivocation past the common prefix) are `ANNULLED`:
-their HTLCs expire → refund. Client-side silence is never annulment — it is
-the forfeit rule.
-
-**Pool arithmetic under mixed outcomes:** pool and rank curve are computed
-over `EVIDENCE_FINAL` results only; `ANNULLED` entries neither contribute
-nor draw. Deterministic, and consented to in the Entry Contract.
-
-**Why this kills the refund/DDoS incentive:** results reach
-evidence-finality within seconds; attestation and share release run eagerly
-per player; an attacker who somehow downs a *quorum* of independent nodes
-annuls only in-progress runs — recovering at most their own stake, never
-profiting. The stated residual: a losing-but-not-yet-forfeit player who
-manages to break sequencing before their cadence expiry converts a probable
-loss into an annulment-refund; rotation across n nodes makes that an attack
-on t_root machines at once, for bracket-sized money.
+Late joins simply add more Entry Contracts. The Round Contract is never
+rewritten.
 
 ---
 
-## 11. Randomness
+# 8. One downloadable BLWP node software
 
-```
-round_seed    = H(RoundContract ‖ btc_blockhash_at_creation)
-epoch_rand(e) = drand.round(scheduled_at_epoch_open(e))     // unpredictable
-epoch_seed(e) = H(round_seed ‖ e ‖ epoch_rand(e))
-sub_seed(p)   = H(epoch_seed(e_p) ‖ player_pubkey ‖ s_p ‖ join_tick)
+One open-source package, `blwp-node`. Depending on enabled roles, an
+installation can accept and timestamp entries, receive checkpoints and
+transcripts, store enough data for replay, replay and sign results, and
+participate in threshold Lightning settlement.
+
+```text
+7 GAME/VERIFY role slots  -> 5 matching signatures required
+7 SETTLEMENT role slots   -> 5 matching authorizations required
 ```
 
-- **drand** is public, BLS-verifiable, browser-fetchable; fallback:
-  Bitcoin block hashes with coarser epochs. Nobody in this protocol chooses
-  randomness — including the federation.
-- `s_p` committed (`H(s_p)`) **before** the entry's `epoch_rand` exists →
-  no grinding; stake committed before the seed is knowable → no abort
-  advantage; `s_p` revealed by the terminal checkpoint or the transcript is
-  unverifiable → forfeit.
-- **Late-join asymmetry**: ghosts reveal *other players' worlds*;
-  per-player sub-seeds keep a late joiner's own world unknown until
-  committed; identical stakes, identical `T_run`, rank scoring, objective
-  entry cutoff. Residual meta-information accepted and stated.
+These are roles of the same software, not different products. Selected slots
+SHOULD be operated by genuinely independent parties; the same operator may
+technically enable both roles, but §5A.9 minimizes overlap and the client
+displays it.
+
+No single instance is authoritative.
 
 ---
 
-## 12. Liveness rules: disconnects, suspension, recovery
+# 9. Entry acceptance
 
-### 12.1 Before commitment
-Unfunded states: disconnect = nothing; entries expire.
+A player is financially admitted if:
 
-### 12.2 The one rule after commitment
-**A transcript that stops is a result.** Missing inputs become neutral
-inputs; missing checkpoints beyond the cadence tolerance — measured against
-sequenced receipts, objectively — end the valid transcript at the last
-receipted checkpoint, scored as-is (typically FORFEIT). Covers every
-client-side failure and strategy identically. The stake was committed
-before the first financial tick; settlement needs nothing from the player.
+```text
+valid Entry Contract
++ stake committed as a held HTLC (§23)
++ 5-of-7 game/verify nodes issued an EntryReceipt
++ before entry_close_time
+```
 
-### 12.3 Finishing players
-Delivery emits a terminal checkpoint (delivery event, score, `s_p` reveal),
-sent before the client celebrates; the client pushes its full transcript to
-≥2 mirrors (federation nodes and/or third parties) before declaring success
-— this upload arms the objection veto of §13.4.
+```text
+EntryReceipt {
+  round_id, player_pubkey, entry_hash
+  received_at, node_pubkey, signature
+}
+```
 
-### 12.4 Grace and annulment
-Short gaps are neutral-input time. Federation-side liveness failure beyond
-the threshold annuls only still-provisional runs (HTLC expiry → refund).
-Evidence-final results are untouched and settle when a quorum returns.
-
-### 12.5 Player-side recovery
-The client streams its inputs out; after a reload it fetches its own log
-back from any mirror, replays locally, resumes. Reconnect changes the
-future, never the past.
+Order inside the entry window is economically irrelevant; no global ordering
+is required.
 
 ---
 
-## 13. Money: wallets, stake commitment, federated settlement
+# 10. Time and checkpoints
 
-### 13.1 Wallets — what actually works in a browser today
-- **Nostr Wallet Connect (NWC)**: extension-free; `make_invoice` /
-  `pay_invoice` with per-connection **budgets — enforced by the wallet as
-  local policy**, not cryptographically bound to a round. The hard boundary
-  is the budget ceiling and the wallet's own confirmation UI; the protocol
-  claims exactly that and nothing more.
-- **bolt11 QR / deep links**: universal fallback for stake-in; payouts to a
-  player-supplied invoice during the claim window.
-- **WebLN** where present — never required.
-- The wallet seed never enters Unity, JS, WASM, or any node.
+The protocol does not claim to prove human-speed play. It prevents obvious
+rewrite and rewind behaviour.
 
-### 13.2 The payout function is code, not a decision
-`payouts = F(RoundContract, registry, EntryContracts, evidence-final
-results)` — deterministic, replayable by anyone. Result classes:
-`DELIVERED(score) / FAILED / FORFEIT / ANNULLED`.
+```text
+Checkpoint {
+  round_id, player_pubkey, tick
+  state_hash
+  input_chain_hash
+  previous_checkpoint_hash
+  session_signature
+}
+```
 
-### 13.3 Stake-in: hold invoices against the federated wallet
-1. Player generates preimage `P`; `payment_hash = H(P)` goes into the Entry
-   Contract; `P` is VSS-shared (threshold t_c) to the round's **custody
-   committee**.
-2. The **federated settlement wallet** — an LN node whose every channel
-   operation requires t_s-of-n threshold signatures (§13.5) — issues a hold
-   invoice; the player's wallet pays; the HTLC sits in-flight, CLTV sized
-   in days.
-3. `STAKE_COMMITTED` is sequenced. Play begins only after this.
+A checkpoint is accepted when enough nodes receive it within the required
+window; nodes timestamp receipt and return a signed `CheckpointReceipt`.
+This proves the player committed to that state at approximately that real
+time.
 
-### 13.4 Settlement: judged by one committee, keyed by another, vetoed by
-victims, signed by a quorum *(revised v1.2)*
+It does **not** prove that a human played, that no bot was used, or that no
+local forward simulation was performed. BLWP makes no such claim.
 
-Eager, per-player flow:
-
-- **DELIVERED**: on `EVIDENCE_FINAL`, the attestor committee replays and
-  attests; a t_s quorum **cancels** the winner's HTLC (cancelling only ever
-  returns money to its owner). The pool share is paid after round `FINAL`.
-- **FAILED / FORFEIT**: attestation is sequenced; the **objection window
-  W** (e.g. 10 min) runs. Absent valid counter-evidence, the custody
-  committee releases shares per its mechanical rule; a t_s quorum settles
-  the hold invoice — only now does the stake move, into the
-  threshold-controlled pool. A loser cannot escape: the money left their
-  wallet at entry, and every later step runs without them.
-- **Objection (the victim's veto)**: counter-evidence = a player-signed
-  transcript with sequenced receipts that replays to `DELIVERED` under the
-  contract's `sim_wasm_hash` — mechanically checkable by anyone. A
-  sequenced valid objection freezes release; replay decides (determinism
-  leaves no middle ground). Mirror-upload at delivery (§12.3) makes the
-  veto work even for a player who closed the browser; any third party can
-  raise it for them.
-- **ANNULLED**: nobody attests, nobody releases, HTLCs expire → refund.
-
-**What collusion can and cannot do:**
-- Attestor committee alone (≥t_a): can sign a false loss — disprovable by
-  any mirror within W; holds no key material for the round; nothing moves.
-- Custody committee alone (≥t_c): holds shares, but its rule's inputs are
-  public sequenced facts it cannot fabricate, and moving the stake still
-  needs a t_s signing quorum.
-- Sequencing quorum alone: order and delay games, all self-proving.
-- **The full worst case is trust item 6 (§4)**: ≥t_s nodes spanning the
-  committees colluding — able to fabricate, release and sign together —
-  *plus* suppression of the victim's mirrored evidence. Possible, loud,
-  bonded, permanently provable. This is the federated-custody trust class,
-  named without cosmetics.
-- **V2/experimental**: zk proof-of-replay would make release
-  cryptographically contingent on a verified loss, shrinking committee
-  trust further. Not assumed.
-
-### 13.5 The federated settlement wallet *(replaces the v1.1 coordinator)*
-
-There is **no settlement coordinator**. The settlement wallet is operated
-by the federation itself:
-
-- Its keys exist only as **t_s-of-n threshold shares** (FROST-style
-  Schnorr). Every hold-invoice issue, settle, cancel, payout and any
-  on-chain action is a threshold ceremony whose participants and inputs are
-  sequenced in the registry.
-- **No single node — and no minority — can move a satoshi.** The v1.1
-  "temporary custody during payout" by one party is gone: pools in transit
-  are collectively controlled at every instant.
-- What remains, said plainly: **threshold custody**. ≥t_s colluding nodes
-  control in-transit funds (claimed-but-unpaid pools, and they could refuse
-  to co-sign honest payouts). Delay by an honest-minority outage ends at
-  the backstops: winners' cancels and unclaimed loser HTLCs expire →
-  refund; the claim window governs payouts.
-- **Construction maturity (§4.12)**: threshold-signed LN channel operation
-  is emerging; a Fedimint-style federation with an LN gateway delivers the
-  identical trust statement with production technology and may serve as the
-  interim construction. The contract names which construction a round uses.
-- Bonds: every roster member posts a published bond; provable misbehaviour
-  (double-signed roots, false attestation against a replaying transcript,
-  signing a settlement that violates the mechanical rule) is attributable
-  per-signature and slashable/blacklistable at roster level.
-
-### 13.6 Settlement scalability
-N stake HTLCs in, ≤N payouts out, zero on-chain transactions in the normal
-path. Threshold ceremonies batch naturally (one signing session covers many
-settles/payouts). 1,000 × 100 sat = 100k sat inbound liquidity — trivial;
-brackets keep liquidity predictable; payouts retry across routes within a
-30-day claim window; dust floors per bracket. On-chain appears only in
-disaster recovery of the federated node itself (standard force-close
-mechanics, threshold-signed).
+**Receipt gossip (v4.6).** Committee members exchange digests of the
+checkpoint receipts they issued once per window. This is what makes player
+equivocation surface quickly (§13B) rather than at settlement time.
 
 ---
 
-## 14. Distribution, builds, versioning, compromised hosts
+# 11. Input transcript
 
-- The client is **static assets** servable from the official site, mirrors,
-  IPFS gateways, or localhost. Protocol identity =
-  `(protocol_version, sim_wasm_hash)`, not a domain.
-- The **sim core is reproducibly buildable**; historical versions archived.
-  The Unity build is content-addressed and manifest-signed as a whole (the
-  financial layer is the WASM, and that one is bit-reproducible).
-- **No privileged admin key exists** — for the game *or the federation*:
-  roster changes are per-round facts in new contracts players opt into,
-  never retroactive edits.
-- **Compromised web host**: phishing-grade power, bounded by the wallet's
-  budget ceiling and approval UI. It cannot forge entries, results, or
-  settlements.
+Player inputs are hash-chained:
 
----
+```text
+InputBatch { first_tick, last_tick, inputs, previous_hash }
+```
 
-## 15. Economics without a house
+The client periodically sends batches and checkpoints; nodes store the
+transcript until the challenge and finality windows have passed; the player
+keeps a local copy. The seven committee nodes provide redundancy, so no
+separate data-availability network is required.
 
-### 15.1 Model (unchanged)
-A **success pool within fixed-stake brackets** with a rank curve: pool =
-stakes of evidence-final `FAILED` + `FORFEIT`; qualification = `DELIVERED`
-with score ≥ minimum; distribution by rank curve (ties split); qualifiers
-also get their stake back; zero qualifiers ⇒ refund round. Identical
-`T_run` time-normalizes scores. Solvency is structural.
-
-### 15.2 Skill and bots (unchanged in substance)
-Bots take money from players, not from a house: fairness controls —
-brackets, rating-gated pools (Glicko-2 over verified results, computable by
-anyone), declared-bot rounds; no bonuses ⇒ Sybil splitting buys nothing;
-ghost isolation ⇒ in-round collusion yields nothing mechanical. Forward
-simulation (§10.4) is assumed to exist; bot detection is not assumed to
-work.
-
-### 15.3 Fees *(revised v1.2)*
-The default contract template sets, as pool line items at settlement:
-
-- **2% → the federation**, split equally among roster nodes that met the
-  round's **liveness bar** (co-signed ≥ the contract's share of roots and
-  performed their committee duties). Paid automatically inside the
-  threshold payout batch. This is what funds sequencing, attestation,
-  custody, mirroring and the settlement wallet — infrastructure pays for
-  itself without a house.
-- **2% → the developer donation key**, funding client and protocol
-  development. A donation line item with **no control power attached**: the
-  key can neither sign roots, attest, custody shares, nor block anything.
-- Both percentages are template defaults, visible in the lobby, accepted by
-  signature at entry. Alternative contracts may set other values or other
-  recipients — the protocol has **no hard-coded fee recipient**; rounds
-  that want players must offer fee schedules players accept.
-
-### 15.4 Finality of the round
-`end_tick` → ladders complete (eager attestation) → last objection window
-closes → `FINAL`: pool and allocation immutable; claim window (30 days);
-unclaimed remainders per contract.
+A transcript whose inputs were never published cannot be replayed and
+therefore cannot be finalized as a win — withholding is never an advantage.
 
 ---
 
-## 16. Failure matrix *(revised v1.2)*
+# 12. Randomness
 
-| Failure | Effect | Classification |
+```text
+round_randomness = drand.round(start_time)          // also the committee seed source
+player_seed      = H(round_randomness || player_pubkey || player_secret)
+```
+
+The player's secret is committed (`seed_commitment`) before the beacon value
+exists, which prevents seed grinding. Because the client must know the
+resulting randomness to simulate, advanced bots may forward-simulate future
+states. That is accepted and stated; BLWP does not claim bot resistance
+(§33).
+
+---
+
+# 13. Results
+
+Each committee node independently replays the player's canonical transcript
+(§13C) using the pinned simulation version and signs:
+
+```text
+PlayerResult {
+  round_id, player_pubkey
+  result, score
+  transcript_hash, sim_wasm_hash
+  node_pubkey, signature
+}
+```
+
+Once **5-of-7** nodes sign the identical result, the result becomes
+`PROVISIONALLY_FINAL` and the objection window opens (§13A). It becomes
+`FINAL` when the window closes without a valid objection.
+
+> v4.4 made 3 matching signatures immediately final. v4.6 inserts the
+> window, because a signature quorum that lies had no counterparty in v4.4.
+
+---
+
+# 13A. Objection window and replay veto *(new in v4.6)*
+
+After a result is `PROVISIONALLY_FINAL`, the window `W` (reference: 10
+minutes, contract-defined) runs.
+
+**Who may object:** anyone — the affected player, another player in the
+round, a non-selected node, a spectator, a watchtower.
+
+**What a valid objection is:** a portable artifact consisting of
+
+```text
+Objection {
+  round_id, player_pubkey
+  transcript                      // inputs + checkpoints
+  receipts[]                      // CheckpointReceipts from committee nodes
+  claimed_result                  // what replay of this transcript produces
+  objector_signature
+}
+```
+
+It is valid iff every checkpoint carries genuine receipts, the chain is
+consistent, and deterministic replay under the round's `sim_wasm_hash`
+produces `claimed_result ≠ signed_result`. Anyone can check this; there is
+no judgement involved, only replay.
+
+**Effect:** a valid objection suspends finality. The full committee re-runs
+the canonical transcript; the replay outcome is authoritative. Every node
+that signed the contradicted result is slashed (§5A.3). If the committee
+cannot reach 5-of-7 on the re-run, §13C applies.
+
+**Client duty:** on delivery, the reference client uploads its complete
+transcript to at least two committee nodes and, if configured, to an
+independent mirror **before** showing the victory screen. This is what makes
+the veto work for a player who closes the browser immediately afterwards.
+
+**Effect on the collusion bar:** five colluding bonded operators must now
+also ensure that no honest node, no third-party mirror and no watchtower
+holds the victim's receipted transcript. Their fabrication is permanently
+provable afterwards, and their bonds are slashable by whoever proves it.
+
+---
+
+# 13B. Player equivocation *(new in v4.6)*
+
+> **A player who publishes two different checkpoints for the same
+> `(round_id, player_pubkey, tick)`, or two chains that diverge at any tick,
+> forfeits the entry.**
+
+- Result: `FORFEIT`; the stake joins the loser pool.
+- The two conflicting signed checkpoints are a complete, portable proof; no
+  replay is needed.
+- Nodes MUST publish such a proof when they hold one, and receipt gossip
+  (§10) exists so that a divergence sent to disjoint node subsets surfaces
+  within a window rather than at settlement.
+- The rule is bound into the Entry Contract via `equivocation_rule_hash`,
+  so the player accepted it before staking.
+
+> **Why:** v4.4 had 5 nodes and threshold 3, so two 3-subsets always overlap
+> in at least one node — divergence was in principle detectable. But the
+> document never said what that node must *do*, which left "run several
+> forks and submit the winning one" as an open question. With 7 slots and
+> threshold 5, any two 5-subsets overlap in at least three nodes; combined
+> with gossip and an explicit forfeit rule, the strategy is not merely
+> detectable but priced.
+
+---
+
+# 13C. Canonical transcript and the no-quorum rule *(new in v4.6)*
+
+**Canonical transcript.** For each player, the canonical transcript is the
+**longest checkpoint chain that carries receipts from at least 5 committee
+nodes**, together with the input batches whose hashes it commits to. All
+nodes replay that object, so "node A saw more than node B" cannot by itself
+produce disagreement.
+
+**No-quorum rule.** If, after the result window, no result has 5-of-7
+signatures:
+
+1. If the disagreement is explained by proven player equivocation (§13B) →
+   `FORFEIT`.
+2. Otherwise the fault is on the operator side → the entry becomes `VOID`,
+   the stake is refunded by letting the HTLC expire, and the entry is
+   excluded from the pool and from the payout table.
+3. Nodes whose signature contradicts a replay of the canonical transcript
+   are slashed.
+
+This is deliberately asymmetric: a player cannot manufacture a refund by
+causing disagreement, because the only way a player can cause it is
+equivocation, and equivocation forfeits. Everything else that goes wrong is
+the infrastructure's fault and refunds.
+
+> **Why:** v4.4 had no rule at all. A committee that could not agree left
+> funds in an undefined state with no path forward.
+
+---
+
+# 14. Finality
+
+> Once a player's result is `FINAL`, later infrastructure failure does not
+> erase it.
+
+```text
+final loser + later DDoS  !=  refund
+```
+
+A later outage may delay settlement. It cannot convert `FAILED -> REFUND` or
+`FORFEIT -> REFUND` after finality. This is unchanged from v4.4 and remains
+one of the most important properties in the design.
+
+The one-way ladder:
+
+```text
+PROVISIONAL -> PROVISIONALLY_FINAL -> FINAL -> SETTLED
+                        |
+                        +-> (valid objection) -> re-replay -> FINAL
+PROVISIONAL -> VOID / ENTRY_VOID          (refund; reachable only from PROVISIONAL)
+```
+
+---
+
+# 15. Disconnect rule
+
+After stake commitment:
+
+> A transcript that stops becomes a deterministic result.
+
+Missing inputs follow the neutral-input policy; if checkpoints stop beyond
+tolerance, the valid run ends at the last receipted checkpoint; replay
+determines the final state; the player normally becomes `FAILED` or
+`FORFEIT`. Closing the browser does not escape a losing stake.
+
+---
+
+# 16. Infrastructure outage before finality
+
+**Before stake commitment:** no financial entry exists; no loss.
+
+**After commitment, before the first financial tick:** if fewer than 5
+game/verify nodes are available, the entry becomes `ENTRY_VOID` and the
+stake is refunded by HTLC expiry.
+
+**During active play:** with 5-of-7 available, continue. Below threshold,
+protocol progress pauses; a short grace period is allowed. No finalized
+result is erased, and known losses never become refunds because of a later
+attack.
+
+---
+
+# 17. Round membership
+
+After `entry_close_time`, membership is the set of players holding ≥5 valid
+EntryReceipts issued before the cutoff, minus entries voided under §13C or
+§5A.13. The list is deterministic; no central database decides it.
+
+---
+
+# 18. P2P economics
+
+The house does not fund winnings. Fixed brackets (10 / 100 / 1,000 sat,
+capped by census health per §5A.10).
+
+```text
+loser_pool = Σ FAILED stakes + Σ FORFEIT stakes
+```
+
+Qualifiers (`DELIVERED` and score ≥ minimum) receive their own stake back
+plus a rank-weighted share of `loser_pool`. Node fees and the player-selected
+donation are charged **on top** of the stake at entry and therefore do not
+reduce the pool. `VOID` and `ENTRY_VOID` entries neither contribute to nor
+draw from the pool.
+
+---
+
+# 19. No house
+
+```text
+no house bankroll, no RTP promise, no server-funded multiplier,
+no central player balance, no required protocol treasury
+
+payouts <= validly collected game stakes
+```
+
+Bots may outperform humans. They cannot create unlimited liability for a
+house, because there is no house.
+
+---
+
+# 20. Final payout table
+
+Once entry is closed, membership is known and every accepted player has a
+`FINAL` result:
+
+```text
+PayoutTable = F(RoundContract, Membership, FinalResults)
+```
+
+Deterministic. Nodes sign the payout-table hash; **5-of-7 matching
+signatures** make it final. A node signing a table that does not equal `F(...)`
+of its published inputs is slashable.
+
+---
+
+# 21. Settlement role of the same node software
+
+```text
+blwp-node --roles game_verify
+blwp-node --roles settlement
+blwp-node --roles game_verify,settlement
+```
+
+**GAME/VERIFY role:** receives entries and checkpoints; stores transcripts;
+replays the deterministic simulation; signs final results; signs the final
+payout table; **does not move funds**.
+
+**SETTLEMENT role:** verifies the Round Contract; verifies 5-of-7 final
+result and payout signatures; holds one share of each entry preimage;
+participates in threshold Lightning settlement; **cannot change a result or
+the payout formula**.
+
+The same software implements both, but the protocol requires the
+result/payout quorum before any settlement authorization.
+
+---
+
+# 22. Node trust model
+
+BLWP does not pretend browser-only Lightning settlement is perfectly
+trustless. The honest statement:
+
+> Anyone can download the same node software and, with a bond, become
+> eligible. No single node decides a result or moves funds. A 5-of-7
+> game/verify quorum determines final results; a separate 5-of-7 settlement
+> quorum authorizes Lightning settlement; and a public objection window lets
+> anyone overturn a fabricated result by replay.
+
+Residual assumptions:
+
+```text
+5-of-7 malicious GAME/VERIFY slots
+  AND the victim's receipted transcript unavailable to every honest party
+    -> can corrupt result finality
+
+5-of-7 malicious SETTLEMENT slots
+    -> can corrupt or censor settlement of in-transit funds
+```
+
+Both require five bonded operators to collude and forfeit five bonds, in a
+round whose committee they could not choose (§5A.5) and in which they may
+not be playing (§5A.13). This is the same trust class as a Fedimint
+federation, stated without cosmetics.
+
+---
+
+# 22A. Node fee and developer donation
+
+## Fee base
+
+```text
+gross_round_volume = Σ stake of every financially activated entry
+```
+
+`ENTRY_VOID` and `VOID` entries are excluded.
+
+```text
+61 active players x 100 sat = 6,100 sat
+```
+
+## Node fee: 2% mandatory, to the selected slots
+
+```text
+node_fee = 2.00% of gross_round_volume
+1.00% -> GAME/VERIFY pool     (7 slots)
+1.00% -> SETTLEMENT pool      (7 slots)
+```
+
+Each eligible slot receives `1.00% / 7 ≈ 0.1429%` of gross volume for its
+role. An operator selected for both roles earns both shares, because it
+performs both services.
+
+**Availability qualification.** A selected node earns its share only if it
+performed the contract-defined minimum service: for game/verify, the
+required receipts plus replay and signing; for settlement, participation in
+the settlement protocol during the settlement window. A conflicted node
+(§5A.13) never qualifies. Unearned shares are redistributed pro rata among
+the other eligible nodes in the same role pool, keeping the total at 2%.
+
+**Remainders.** Calculate in millisatoshis, floor each base share, and
+distribute the remaining msat in ascending `H(round_id ‖ node_pubkey)` order.
+
+## Sybil economics — corrected statement *(v4.6)*
+
+v4.4 claimed "no Sybil reward". That was false as written: fees do go only
+to selected slots, but **more identities buy more selection chances**, and
+§5A.12 said so in the same document. The accurate statement is:
+
+> Extra identities are not rewarded, because selection weight grows with the
+> square root of the bond (§5A.6). Four nodes at the minimum bond have the
+> same total expected selection as one node at four times the minimum, cost
+> four times as much to operate, and expose four bonds to slashing. What buys
+> long-run fee income is **bonded capital and uptime**, not identity count.
+
+## Developer donation — the player's choice, capped
+
+The donation is not a protocol fee and not a node-controlled parameter. The
+player selects it in the client:
+
+```text
+developer_donation = 0.00% | 1.00% | 2.00% | 5.00% | custom
+```
+
+The reference client MAY default to 2%. The player may change it, including
+to zero; a round with `donation_bps = 0` is fully valid.
+
+> Nodes, round creators, lobbies and settlement participants may not
+> overwrite, increase or substitute the player's choice. A node may accept
+> the signed Entry Contract or reject it as invalid — never rewrite the
+> donation field.
+
+**Cap (new in v4.6).** `donation_bps ≤ donation_bps_max` (protocol maximum
+10000 = 100% of stake), and the client MUST require an explicit second
+confirmation above 500 bps. A compromised web host can otherwise set an
+absurd donation to a recipient key it controls, and the player's only
+defence is reading the wallet dialog carefully.
+
+## Collection: on top of the stake
+
+```text
+game stake                        100 sat
+node infrastructure fee             2 sat   (2%)
+player-selected donation            2 sat   (0% or chosen)
+------------------------------------------
+wallet commitment                 104 sat
+```
+
+The pool stays mathematically clean: 100 sat is game risk; the rest is
+service and voluntary donation, outside the winner/loser pool and outside
+the ranking.
+
+## Example: 61-player round
+
+```text
+gross_round_volume = 6,100 sat
+node fee (2%)      =   122 sat
+  GAME/VERIFY pool =    61 sat -> 8.714 sat per eligible slot (7)
+  SETTLEMENT pool  =    61 sat -> 8.714 sat per eligible slot (7)
+donation (2%)      =   122 sat -> donation recipient(s)
+game pool          = 6,100 sat -> loser-pool distribution only
+```
+
+## Transparency
+
+Before wallet approval the client MUST display: game stake, node fee,
+developer donation, total wallet commitment, the selected node identities
+(or "pending" per §5A.5), any committee overlap, whether any selected
+operator is playing, and the donation recipient. The Entry Contract commits
+to the fee schedule hash; nothing can change afterwards.
+
+---
+
+# 23. Stake custody and settlement *(new chapter in v4.6)*
+
+v4.4 described entry, results and payout but never said where a stake lives
+during a round or which key moves it. This chapter supplies that mechanism.
+Its guiding property:
+
+> **Doing nothing refunds the player. Taking a player's stake requires a
+> final result, an elapsed objection window, and a threshold quorum.**
+
+## 23.1 Stake commitment
+
+1. The player generates a random preimage `P` and puts
+   `payment_hash = H(P)` in the Entry Contract.
+2. The player splits `P` with verifiable secret sharing (Shamir, threshold
+   **5-of-7**) and encrypts one share to each settlement-committee member;
+   `vss_shares_ref` points at the published shares. Verifiability means each
+   node can confirm its share is consistent without reconstructing `P`.
+3. The settlement committee's Lightning endpoint (§23.6) issues a **hold
+   invoice** for `payment_hash`.
+4. The player's wallet pays it. The HTLC is now **in flight** — accepted but
+   not settled. It is in nobody's balance.
+5. `STAKE_COMMITTED` is recorded once ≥5 settlement nodes have seen the held
+   HTLC. Play begins only after this.
+
+CLTV is sized in **days**, comfortably beyond round + objection window +
+result window + claim window, so that delay is never loss.
+
+## 23.2 What each outcome does
+
+| Outcome | Action | Requires |
 |---|---|---|
-| Lobby down | Discovery only; direct round_id entry works | JOIN IMPOSSIBLE / NO IMPACT |
-| Matchmaking/signaling/STUN/TURN down | Ghosts degrade; finances untouched | DEGRADED |
-| **Leader node stalls** | Rotation successor resumes from last quorum root within grace | NO IMPACT (brief hiccup) |
-| **Minority of nodes down (< n − t_root)** | Quorums still form; fees dock the absentees | NO IMPACT |
-| **Sequencing quorum lost (≥ threshold time)** | Provisional runs ANNULLED (refund by expiry); **evidence-final results stand, settle late** | PARTIAL ANNUL + SETTLEMENT DELAY |
-| **Quorum equivocation (proven)** | Double-signed roots incriminate every signer; common-prefix results stand; rest annulled; bonds slashed | PARTIAL ANNUL |
-| Attestor committee unavailable | Losses cannot be erased; settlement waits; backstop: unsettled HTLCs expire | SETTLEMENT DELAY → (backstop) REFUND of unsettled |
-| Custody committee unreachable ≥ CLTV | Loser HTLCs expire unclaimed | REFUND of those losses (stated backstop; why CLTV is days) |
-| **Settlement quorum (t_s) unavailable** | No settles/cancels/payouts until quorum returns; expiry backstops | SETTLEMENT DELAY → REFUND of unsettled |
-| One browser crashes / player partition | Transcript ends | PLAYER FORFEIT |
-| Wallet unavailable at entry / payout | Entry expires / 30 d claim window | JOIN IMPOSSIBLE / SETTLEMENT DELAY |
-| LN route fails (stake / payout) | Not committed / retried in window | JOIN IMPOSSIBLE / SETTLEMENT DELAY |
-| Bitcoin fee spike | Off-chain protocol unaffected | NO IMPACT |
-| Late join during outage | Entry can't be sequenced | JOIN IMPOSSIBLE |
+| `DELIVERED` (qualifying) | Cancel the HTLC → stake returns to the player | 5-of-7 settlement signatures; cancelling can only return money to its owner |
+| `FAILED` / `FORFEIT` | Settle the HTLC → stake enters the pool wallet | `FINAL` result + elapsed `W` + no valid objection + ≥5 preimage shares released + 5-of-7 settlement signature |
+| `VOID` / `ENTRY_VOID` | Do nothing | The HTLC expires and the wallet is refunded automatically |
+| Payout to a qualifier | Lightning payment from the pool wallet | Final payout table (5-of-7) + 5-of-7 settlement signature |
 
-Every cell ends in REFUND, FORFEIT, DELAY, PARTIAL ANNUL — and no cell
-erases an evidence-final result or hands funds to a single party.
+The default path — nobody acting — is always the refund. That is what makes
+infrastructure failure safe.
 
----
+## 23.3 Why a loser cannot escape
 
-## 17. Verification and disputes
+The money left the player's wallet at entry and sits in a held HTLC. Every
+step afterwards — attestation, objection window, share release, settlement
+— runs without the player's cooperation. Closing the browser, refusing to
+answer, or deleting the client changes nothing.
 
-- Attestor committee members run the open replayer; **anyone outside the
-  committee can also replay and raise objections** — the committee is who
-  settlement listens to, not who truth belongs to.
-- Disputes are player-specific and mechanical: bisect the 1 Hz checkpoints
-  to the first divergent second; replay 30 ticks; signatures and
-  determinism leave no middle ground. Committee-vs-objection conflicts
-  resolve by replay; unresolved conflicts leave runs unsettled until the
-  expiry backstop (never silently decided).
+## 23.4 Why a committee cannot quietly take it
 
-### Threat model (condensed; v1.2 rows marked)
+Settling a loser's HTLC requires reconstructing `P`, which requires 5 of the
+7 shares, which the mechanical rule releases only against a `FINAL` result —
+and finality requires 5-of-7 game/verify signatures plus an objection window
+that anyone in the world may use to disprove the result by replay (§13A).
+The two committees are separately selected and overlap-minimized (§5A.9),
+every participant is bonded, and every one of these steps leaves a signed
+artifact.
 
-| Threat | Capability | Impact | Prevention / Detection | Recovery / Residual |
-|---|---|---|---|---|
-| Malicious player, modified client/WASM, bots | Anything client-side | Plays well | Nothing client-side trusted; transcripts + replay | Fairness residual (§15.2) |
-| Input rewriting | Fork own past | Forge wins | Chained checkpoints + sequenced receipts | None |
-| Fake checkpoints / divergence | Wrong hashes | Forge wins | Deterministic replay; bisection | Forfeit; none |
-| Rewind / slow-motion / suspension | Local clock control | Escape cadence | Root embedding + receipts | ≤1 s residue |
-| Forward simulation (fast bot) | Candidate futures each second | Superhuman play | **Not preventable**; declared | Zero-sum economics; fairness pools |
-| Seed grinding / abort advantage | Choose entries | Favorable worlds | Commit before epoch_rand; stake precedes seed | None |
-| Withheld inputs / no reveal | Withhold data | Block verification | Availability windows; reveal-or-forfeit | None |
-| Late-entry arbitrage | Join informed | Edge | Fresh sub-seeds, equal T_run, objective closure | Meta-info residue |
-| Sybil / in-round collusion | Many entries | Shift pool | Zero-sum + ghost isolation; no bonuses | Rating-manipulation residue |
-| Disconnect / refund gaming | Kill own feed; attack nodes | Escape a loss | Finality ladder; annulment ⇒ own stake at most; **attack now needs a quorum of machines** *(v1.2)* | Narrow window, bracket-bounded |
-| Ghost spoofing | Fake visuals | Mislead humans | Enveloped snapshots; zero financial coupling | Cosmetic |
-| Message replay | Re-send traffic | Duplicates | Seq numbers; idempotent sequencing; single-use payment_hash | None |
-| Settlement refusal by loser | Do nothing | Keep stake | Eager attestation + committee release + t_s signing | None |
-| **Leader censorship** *(v1.2)* | Drop events selectively | Grief specific players | Client resubmits via next leader; rotation; receipts prove submission where obtained | Delay only |
-| **Quorum equivocation** *(v1.2)* | Two histories | Conflicting rounds | ≥t_root must double-sign — self-proving against each signer | Partial annul; bonds slashed |
-| **Attestor committee collusion (≥t_a)** | Sign false loss | Attempt theft | No round keys; objection window; every node + third parties mirror | Delay only, unless full collusion |
-| **Custody committee collusion (≥t_c)** | Release early | Attempt theft | Rule inputs public; t_s still required; provable vs bonds | Bounded, loud |
-| **Federation collusion ≥t_s** *(v1.2)* | Fabricate + release + sign | **Steal in-transit pools** | Disjoint committees raise the bar; bonds; permanent public proof; roster diversity | **The stated residual (§4.6)** |
-| Compromised website/CDN/DNS | Lying build | Phish stakes | Hashes/manifests/mirrors; wallet budget policy | Bounded to approved amounts |
-| DDoS during rounds | Attack nodes | Stall | Rotation + quorums; finality first; provisional refunds | Availability cost only |
-| Protocol fragmentation | Forks | Split liquidity | Versioned contracts; players sign what they accept | Social |
+## 23.5 The pool wallet
+
+Settled loser stakes accumulate in a wallet whose every operation requires a
+**5-of-7 threshold signature** of the settlement committee. No node and no
+minority can move a satoshi, at any moment, including during payout. Fees
+and donations are paid from separate entry-time commitments, not from the
+pool wallet, so a fee dispute can never touch player stakes.
+
+## 23.6 Construction and maturity — stated honestly
+
+Two constructions satisfy the property "no single party can move funds":
+
+- **Threshold-signed Lightning node** (FROST-style Schnorr over channel
+  operations, VLS-style remote signing generalized): the cleanest fit, and
+  **emerging technology** rather than a solved product.
+- **Fedimint-class federation with a Lightning gateway**: production-ready
+  today, with an identical trust statement — a quorum of guardians, no
+  single custodian.
+
+The Round Contract names which construction it uses. V1 deployments should
+use the mature one and migrate when threshold-LN hardens. Either way, the
+residual is the same and is stated in §22: five colluding bonded operators
+control in-transit funds. This is the minimum achievable under a
+browser-only client constraint today, not a comfortable claim.
 
 ---
 
-## 18. Scalability
+# 24. Wallet integration
 
-Per player, upstream: inputs 300 B/s + checkpoints 150 B/s + ghost
-snapshots 150 B/s ≈ **600 B/s**. Downstream: 20 ghosts × 30 B × 5 Hz =
-3.0 KB/s + roots/receipts ~0.4 KB/s + registry deltas ~0.3 KB/s ≈
-**3.5–4 KB/s**. Independent of N.
+Nostr Wallet Connect, BOLT11 QR, deep link, or WebLN where available.
 
-Leader node, 1,000-player round: ingest ≈ 0.6 MB/s, egress ≈ 4 MB/s, plus
-registry streaming ≈ 0.5 MB/s — one modest server's load, now failover-able
-across the roster. Co-signing overhead: t_root signatures over a 32 B root
-per second — negligible. Threshold-ceremony overhead: batched, dozens of
-signing sessions per round, not per event.
-
-Registry per 1,000-player round: entries ~0.4 MB; checkpoints ~19 MB;
-input logs ~180 MB streamed, archived for the objection/claim windows, then
-prunable to roots + terminal proofs — replicated across nodes (every node
-is a mirror).
-
-Attestor workload: replay speed is a **benchmark target, not an
-assumption** (implementation plan gates: native ≥20×, in-browser ≥3×
-realtime); eager per-player attestation spreads replays across the round;
-sampling covers the honest mass; full replay concentrates on objections.
-
-Settlement: ≤2 LN operations per player per round, threshold-signed in
-batches.
+Rules: the wallet seed never enters the game; the wallet stays external; the
+stake amount must be visible; permissions minimal; and **no assumption that
+generic NWC permissions cryptographically encode the Round Contract** — NWC
+budgets are wallet-side policy, and the reliable boundary is the budget
+ceiling plus the wallet's own confirmation screen. The protocol binds the
+stake to the Entry Contract via `payment_hash`, not via wallet permissions.
 
 ---
 
-## 19. Infrastructure matrix *(collapsed for v1.2)*
+# 25. Lobby and discovery
 
-| Component | Required? | Centralizable? | Custody? | Can steal? | Decides result? | Blocks join? | Blocks play? | Blocks settlement? | Replaceable? | Fallback |
-|---|---|---|---|---|---|---|---|---|---|---|
-| Unity WebGL host / CDN | yes* | yes | no | no² | no | yes | no | no | yes | mirrors/IPFS/local |
-| Lobby / matchmaking | no | yes | no | no | no | yes | no | no | yes | direct round_id |
-| Signaling / STUN / TURN | no | yes | no | no | no | no | ghosts only | no | yes | leader-fanout ghosts |
-| **BLWP node (single)** | — | — | **no — key share only** | **no** | attests some rounds | no | no | no | yes | rotation & quorums |
-| **Federation quorum (≥t)** | yes (per round) | partly (independent operators) | **threshold custody of in-transit pools** | **≥t_s collusion: yes — the stated residual** | attest + veto-checked | roster-wide outage only | stall ⇒ partial annul | delays; expiry backstop | per-round roster in new contracts | HTLC expiry ⇒ refund |
-| Developer donation key | no | — | no | no | no | no | no | no | removable per contract | — |
-| Bitcoin / Lightning | yes | no / partly | n/a / in-flight only | no | no | funding path | no | ultimate settlement / delays | n/a / yes | retry routes |
-
-\* some host, any host. ² phishing-grade, bounded by wallet budget policy.
-
-**Decentralization-theater check:** the only row that can move funds is a
-*quorum*; no single machine row can both fabricate a result and move a sat;
-every role rotates or is replaceable per round; total disappearance of the
-roster refunds provisional runs by expiry and leaves final results
-settleable by any future quorum holding resharing state — or, failing that,
-refunded by the same expiry backstop.
+Discovery is not authoritative: project website, community sites, Nostr, a
+direct round link, a QR code, or a copied `round_id`. A lobby may hide a
+round from its UI; it cannot make a valid round invalid, and a player with
+the Round Contract can always connect directly.
 
 ---
 
-## 20. V1 and V2
+# 26. Reference client experience
 
-**Pragmatic V1 (buildable now):** one genesis federation of 5–9 named,
-bonded, independent operators (the developer may operate a minority of
-nodes at genesis — stated openly; a minority can neither sequence nor
-settle alone). Rotating leader + t_root co-signing; per-round disjoint
-committees; settlement wallet as **Fedimint-style federation with LN
-gateway** (mature) or threshold-signed LN node (as it hardens) — identical
-trust statement either way; NWC + QR wallets; drand randomness; the full
-transcript/replay, finality and objection machinery; default fees 2% nodes
-+ 2% developer donation.
+```text
+Open game -> Choose round -> Choose vehicle/loadout -> Connect wallet
+-> Stake sats -> Drive -> See ghost players -> Deliver / fail
+-> See result -> See final rank -> Receive payout
+```
 
-**Decentralized V2:** open bonded roster membership with epoch-based
-resharing (DKG) on membership change; multiple lobbies and round discovery
-over Nostr; larger rosters with per-round sortition of committees;
-registry-derived reputation; content-addressed client releases as default.
-**Experimental, flagged:** zk proof-of-replay for cryptographically
-contingent release; PTLC/adaptor-signature stake conditioning; N-party
-pooled DLCs per epoch.
-
-**Current technical limitations, plainly:**
-1. Browser-only trustless N-party settlement does not exist → federated
-   **threshold custody** with ≥t_s collusion as the stated residual (§4.6).
-2. Threshold-signed LN channel operation is emerging tech → interim
-   Fedimint-class construction with the same trust statement (§4.12).
-3. No hidden per-player randomness → forward simulation and ~p_max bots
-   assumed; harmless to solvency (zero-sum), handled as fairness.
-4. Time integrity is partial: rewind/backdating/slow-motion prevented;
-   forward simulation not.
-5. A losing-but-not-yet-forfeit player who breaks the sequencing quorum can
-   still reach annulment-refund of their own stake (never profit) — now an
-   attack on t_root machines, bracket-bounded.
-6. The loaded web page is trusted at load; wallet budgets are policy, not
-   cryptographic round-binding.
-7. drand/blockhash beacons are external dependencies (replaceable,
-   verifiable).
+The distributed protocol should mostly be invisible. The two places it is
+deliberately visible: the pre-commitment disclosure panel (§22A) and the
+"committee pending" state before `start_time` (§5A.5).
 
 ---
 
-## 21. Complete round lifecycle
+# 27. Example round
 
-| # | Step | Message / artifact | Guarded by | On failure |
-|---|---|---|---|---|
-| 1 | Open game | static assets | hashes/manifest | try mirror |
-| 2 | Verify build/protocol | manifest sig, `sim_wasm_hash` | reproducible build | refuse to stake |
-| 3 | Connect wallet | NWC pairing (budget policy) or QR | wallet UI | QR fallback |
-| 4–5 | Lobby, discover rounds | RoundContracts incl. roster + fees | signatures | direct round_id |
-| 6 | Pick round + stake | — | — | — |
-| 7 | Entry Contract draft | `H(s_p)`, payment_hash, VSS→custody committee | client-side generation | abort free |
-| 8 | Sign entry | ed25519; session key certified | player key | abort free |
-| 9 | Commit stake | wallet pays hold invoice to federated wallet; HTLC held | LN; CLTV in days; threshold-issued | entry expires |
-| 10 | Sequencing | entry under quorum root; join_tick = sequence position | leader + t_root cosigs | resubmit via next leader |
-| 11–12 | Wait; start fires | roots as clock; deterministic schedule | contract | annul provisional ⇒ refund |
-| 13 | Epoch seed | H(round_seed ‖ e ‖ drand) after objective closure | drand verifiability | blockhash fallback |
-| 14–15 | Play | 10 Hz input chain; 30 Hz core; 1 Hz checkpoints + receipts | §10 | neutral-input rule |
-| 16 | Ghosts | 5 Hz snapshots via leader fan-out | non-authoritative | cosmetic loss |
-| 17–20 | Late joins (until close) | new Entry Contracts, own epochs/sub-seeds | §7.4, §11 | JOIN IMPOSSIBLE |
-| 21 | Finish/fail/timeout | terminal checkpoint (+`s_p`); transcript → ≥2 mirrors | §12.3 | forfeit rule |
-| 22 | Evidence-finality | terminal/forfeit evidence sequenced | §10.5 | remains provisional ⇒ annul-able |
-| 23 | Eager attestation + objection window | committee attestations sequenced; W per player | §13.4 | delay; expiry backstop |
-| 24 | Round FINAL | pool = F(evidence-final results); fees 2%+2% applied | §15.3–15.4 | fraud proof reopens entry |
-| 25 | Cooperative settlement | t_s quorum: cancel winners, settle losers via committee shares, pay shares + fees | §13.4–13.5 | retries |
-| 26 | Non-cooperative paths | loser absent: shares + quorum claim anyway; winner absent: 30 d claim; quorum absent: expiry refund of unsettled | §13.4–13.5 | expiry backstop |
-| 27 | Permanent replayability | archived transcripts + WASM versions on every node | content addressing | any mirror |
+```text
+Round #92831
+game stake:            100 sat
+node fee:                2 sat (2%)
+developer donation:      0 or 2 sat (player's choice)
+GAME/VERIFY:           7 slots, 5-of-7   (published at start_time)
+SETTLEMENT:            7 slots, 5-of-7   (published at start_time)
+entry closes:          12:07
+T_run:                 3 minutes
+objection window W:    10 minutes
+```
 
-## 22. Walkthrough: Round #92831 and Alice *(updated v1.2)*
+At 12:00 the round starts; `round_randomness` is fetched from the beacon and
+both committees become known and verifiable. 37 players are accepted.
 
-12:00:00 — the contract for #92831 is public: 100-sat bracket, epochs 60 s,
-`T_run` = 3 min, end 12:10, objection window 10 min, **federation roster of
-9 bonded nodes (t_root 5, committees 4/5 disjoint, t_s 5), fees 2% nodes +
-2% developer**. 37 players commit; entries sequenced under quorum roots.
-12:00:30 — start fires.
+Alice joins at 12:01. She signs her Entry Contract, generates `P`, shares it
+to the settlement committee, and her wallet pays the 104 sat hold invoice.
+Five settlement nodes confirm the held HTLC; five game/verify nodes issue
+EntryReceipts. She rolls out, publishes inputs and checkpoints, and delivers.
 
-12:01:15 — **Alice** joins the active round: preimage `P_A` VSS-shared to
-the round's five custody nodes, `s_A` committed, entry signed, her wallet
-pays the hold invoice **issued by the federated wallet — a wallet no single
-operator can touch**. Committed before her world is knowable.
+Her client uploads the full transcript to two committee nodes and a mirror
+before showing the victory screen. Five game/verify nodes replay and sign
+`DELIVERED, score 18,321`. The result is provisionally final at 12:05; the
+objection window closes at 12:15; nobody objects; it is `FINAL`.
 
-12:03 — a losing player disconnects forever; cadence expiry against quorum
-roots makes his FORFEIT evidence-final within seconds; the attestor
-committee attests eagerly; his objection window ends ~12:13; custody shares
-release; a t_s signing quorum settles his HTLC into the pool. From 12:03
-on, no outage can un-lose him — and no single node could have taken his
-stake either.
+At 12:07 entry closes: 61 players. Final results: 24 delivered, 31 failed,
+6 forfeit → loser pool 3,700 sat. The deterministic payout table is signed
+5-of-7. The settlement committee cancels the qualifiers' HTLCs, releases
+preimage shares for the losers, settles those HTLCs into the pool wallet,
+and pays the rank-weighted shares — every action a 5-of-7 threshold
+ceremony.
 
-12:04:40 — Alice delivers: terminal checkpoint sequenced, transcript pushed
-to two mirrors before the victory screen — her veto insurance. Her HTLC is
-cancelled by a threshold ceremony (stake back); her pool share waits for
-FINAL. She closes her laptop; nothing more is needed from her.
-
-12:20-ish — FINAL. 61 entries: 24 DELIVERED, 31 FAILED, 6 FORFEIT → pool
-3,700 sat; **fees 4% = 148 sat (74 split across the nine nodes that met
-the liveness bar, 74 to the developer key)**; 3,552 distributable over the
-rank curve; Alice ranks 7th → ~181 sat, paid by a threshold-signed batch to
-the invoice her wallet issues, within the 30-day claim window.
-
-**If Lightning routing fails** for her payout: retried for 30 days; her
-stake-cancel is unaffected. **If the leader node dies at 12:05**: the next
-node in rotation resumes from the last quorum root within seconds — nobody
-notices. **If five of nine nodes die at 12:05**: sequencing halts; runs
-still provisional are annulled (HTLCs expire → refund) while Alice's
-delivery and the 12:03 forfeit stand and settle when a quorum returns.
-The failure mode of the whole federation is: *pending runs get their money
-back; known results are kept; and at no point — running, stalled, or dead —
-did any single party hold the money.*
+Alice receives her 100 sat stake back plus her rank share. No central game
+server decided she won, and at no instant did any single party hold her
+money.
 
 ---
 
-*Deliverable cross-reference: as v1.1, with sequencing/witnesses and
-settlement now under the federation (§7.5, §13.4–13.5), fees under §15.3.*
+# 28. Failure matrix
+
+| Failure | Effect |
+|---|---|
+| Official website down | Use a mirror |
+| Lobby down | Direct round access |
+| 1–2 game/verify nodes down | No problem (5-of-7 holds) |
+| 3+ game/verify nodes down before finality | Protocol pauses; unstarted entries may `ENTRY_VOID` (refund) |
+| A node lies | Ignored unless 5 collude; the lie is slashable evidence |
+| Committee cannot reach 5-of-7 | §13C: player equivocation ⇒ forfeit, otherwise `VOID` + refund |
+| Valid objection filed | Finality suspended, committee re-replays, wrong signers slashed |
+| Player publishes conflicting checkpoints | §13B: automatic `FORFEIT` |
+| Player closes browser / loses internet | Deterministic disconnect path (§15) |
+| Result already `FINAL`, then nodes fail | Result stays `FINAL`; settlement delayed |
+| 1–2 settlement nodes down | Settlement continues (5-of-7) |
+| 3+ settlement nodes down | Settlement delayed; unsettled HTLCs expire → refund |
+| Beacon unavailable at `start_time` | Fallback beacon; if that fails, round does not start, all entries `ENTRY_VOID` |
+| Lightning payout route fails | Retry within the claim window |
+| Website compromised | Wallet approval still required; hashes/mirrors; donation cap limits the damage |
+| 5 game/verify nodes collude **and** the victim's transcript is unavailable | Residual result-integrity failure; five bonds slashable afterwards |
+| 5 settlement nodes collude | Residual settlement failure on in-transit funds; five bonds slashable |
+
+No cell leaves funds in an undefined state, and no cell erases a `FINAL`
+result.
+
+---
+
+# 29. What was intentionally removed from earlier versions
+
+From v4.3: separate sequencer network, time-witness network, DA network,
+verifier network, backup sequencer committees, multiple settlement profiles,
+complex finality certificates, mandatory rolling entropy, multi-layer quorum
+failover.
+
+From v4.5 (removed in v4.6): the **stateful rotation cursor**, because it
+required a canonical assignment log — i.e. consensus — which the
+simplification was trying to avoid. Bond-weighted stateless sortition
+(§5A.6) achieves the same fairness goal without shared state.
+
+---
+
+# 30. What must NOT be simplified away
+
+1. Deterministic Rust/WASM simulation.
+2. Ghosts cannot affect money-relevant state.
+3. Open protocol and client.
+4. Permissionless round creation.
+5. No single node is authoritative.
+6. Results require 5-of-7 matching signatures.
+7. Settlement is a separate committee with a separate quorum.
+8. No single settlement node controls funds.
+9. No central internal player balance.
+10. `FINAL` losses cannot later become refunds due to an infrastructure attack.
+11. One public `blwp-node` package for all roles.
+12. 2% node fee distributed deterministically to eligible selected slots.
+13. Developer donation optional at protocol level and possibly 0%.
+14. No privileged developer admin key.
+15. **Committee seed from randomness published after the round_id** (§5A.5).
+16. **Mandatory bonds with objective slashing** (§5A.3).
+17. **No node may sign for a round its operator plays in** (§5A.13).
+18. **Refund-by-default custody: doing nothing returns the stake** (§23).
+19. **An objection window in which anyone can overturn a result by replay** (§13A).
+20. **Explicit equivocation and no-quorum rules** (§13B, §13C).
+
+Items 15–20 are the v4.6 additions. Removing any of them reopens a hole
+through which a colluding or Sybil operator takes the pool.
+
+---
+
+# 31. Organizational independence
+
+Running seven servers is not enough if one company owns them. Selected
+instances should be run by genuinely separate operators; independence
+concerns operators and bonded threshold ownership, not binaries. The
+reference developer should not control either quorum, and `operator_id`
+declarations (§5A.1) make ownership overlap visible before entry.
+
+---
+
+# 32. Developer disappearance test
+
+```text
+Developer disappears tomorrow.
+
+Can someone download/build the client?   YES
+Can someone host the client?             YES
+Can users create rounds?                 YES
+Can anyone download/run blwp-node?       YES
+Can nodes enable either/both roles?      YES
+Can existing rounds finish?              YES
+Can stakes be refunded if nothing runs?  YES (HTLC expiry, §23)
+Is developer approval needed?            NO
+Is a developer admin key needed?         NO
+Is the developer donation mandatory?     NO
+```
+
+---
+
+# 33. Bot model
+
+Assume hostile clients: bots, automation, modified Unity, local replay,
+strategy search, computer vision, forward simulation. The protocol's job is
+not to prove human play; it is to ensure the submitted transcript
+deterministically produces the claimed result. Bot mitigation belongs to
+skill pools, rating, bot-designated rounds, matchmaking and product rules.
+Because there is no house, superhuman play redistributes value between
+players; it cannot create unbounded liability.
+
+---
+
+# 34. Scalability and the replay budget *(quantified in v4.6)*
+
+Player financial worlds are independent, so nodes replay players
+individually and networking scales per player, not full-mesh.
+
+Every committee member replays **every** run of its round — that is the
+service the 2% pays for, and sampling would weaken exactly the property that
+makes a quorum meaningful. The consequence is a hard capacity relation
+rather than an assumption:
+
+```text
+max_players_per_round
+=
+(measured_replay_speed x result_window) / T_run
+```
+
+Example with `T_run` = 3 min and a 10-minute result window: at a measured
+30× realtime the ceiling is 100 players per committee node; at 60× it is
+200. Rounds larger than that require either a longer result window, a faster
+core, or per-node partitioning of the replay set — a design decision to be
+made **after** measurement.
+
+Do not hard-code unsupported assumptions such as `20x realtime` until the
+simulation core is benchmarked. Storage: transcripts must be retained
+through the objection and claim windows by all seven nodes.
+
+---
+
+# 35. Security model
+
+A player trusts:
+
+- Bitcoin and Lightning assumptions;
+- cryptography (ed25519, SHA-256, Shamir/VSS, threshold Schnorr, BLS for the
+  beacon);
+- their own wallet;
+- the exact Round Contract they signed;
+- the exact `sim_wasm_hash`, checked against the client's known-good list;
+- the drand beacon (or its declared fallback) for committee selection and
+  round randomness;
+- fewer than 5-of-7 selected game/verify slots being malicious **or** at
+  least one honest party holding their receipted transcript;
+- fewer than 5-of-7 selected settlement slots being malicious.
+
+A player does **not** need to trust: one official website; one lobby; one
+authoritative game server; one result server; one payout operator; another
+player; a house bankroll; the round creator (who influences neither
+committee nor outcome).
+
+---
+
+# 35A. Threat model — the cases that changed
+
+| Threat | Capability | v4.4 | v4.6 |
+|---|---|---|---|
+| Committee grinding via chosen `round_id` | Offline hashing | **Total theft**, undetectable | Impossible without predicting the beacon (§5A.5) |
+| Free Sybil into the census | Register many nodes | 24–30% of rounds controllable at zero cost | Bond per identity; √-weighted selection makes splitting pointless (§5A.3, §5A.6) |
+| Player runs the nodes of their own round | Operate nodes | Self-signed wins | Conflicted nodes cannot sign and are slashable (§5A.13) |
+| Colluding quorum signs a false loss | 5 bonded operators | Unappealable | Anyone can overturn it by replay within `W`; signers slashed (§13A) |
+| Colluding quorum **inflates a score** rather than faking a win | 5 bonded operators | Not considered | Same objection path: the canonical transcript replays to one score only; a table that does not equal `F(...)` is slashable (§13A, §20) |
+| Player runs multiple forks and submits the winner | Modified client | Undefined handling | Automatic forfeit on proven equivocation; receipt gossip surfaces it (§13B, §10) |
+| Committee disagreement | Node faults | Funds stuck, undefined | `VOID` + refund, or forfeit if caused by equivocation (§13C) |
+| Who holds the stake during the round | — | **Unspecified** | Held HTLC; refund is the default; movement needs quorum + preimage shares (§23) |
+| Compromised web host sets a huge donation | Serve a lying client | Uncapped | Capped at 100%, second confirmation above 5% (§22A) |
+| Round with a backdoored simulation core | Publish a round | Player trusts the hash blindly | Client refuses unknown `sim_wasm_hash` for real money (§5) |
+| DDoS after a loss is final | Network attack | Already handled | Unchanged: `FINAL` results survive (§14) |
+
+---
+
+# 36. Architecture summary
+
+```text
+                  GITHUB / MIRRORS
+                        |
+          ONE OPEN-SOURCE blwp-node PACKAGE
+                  (bonded operators)
+                        |
+          +-------------+-------------+
+          |                           |
+ GAME/VERIFY ROLE              SETTLEMENT ROLE
+ 7 selected slots              7 selected slots
+      5-of-7                       5-of-7
+   result + payout            preimage shares +
+     signatures               threshold wallet
+          |                           |
+          +--- objection window W ----+
+                        |
+                 FINAL PAYOUT TABLE
+                        |
+                     LIGHTNING
+                        |
+                 PLAYER WALLETS
+
+UNITY WEBGL CLIENT -> deterministic WASM -> committee
+```
+
+```text
+100% game stake  -> P2P game pool
+2% node fee      -> eligible selected slots (1% per role pool)
+0% or chosen     -> optional developer donation
+```
+
+---
+
+# 37. Final principle
+
+> There is one open-source `blwp-node` package that anyone can download and,
+> with a bond, register. Committees are selected deterministically from
+> randomness that does not exist when the round is created, so nobody can
+> choose their own judges. Seven selected instances verify results and five
+> matching signatures make a result provisionally final; anyone in the world
+> may overturn it within the objection window by replaying the transcript.
+> Seven separately selected instances hold shares of each stake's preimage
+> and a threshold wallet, so no single party ever holds player funds, and
+> doing nothing refunds everyone. A fixed 2% infrastructure fee goes to the
+> slots that served; the developer donation is the player's choice and may be
+> zero. Anyone can create a round, and no company is required to decide who
+> won or to move funds.
+
+That is BLWP v4.6.
+
+---
+
+**End of BLWP v4.6**
