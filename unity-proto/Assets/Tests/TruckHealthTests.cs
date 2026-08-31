@@ -27,6 +27,41 @@ public class TruckHealthTests
         LoadAndRelease();
     }
 
+    /// <summary>
+    /// Choosing freight must not be a way to die.
+    ///
+    /// The bay locks the controls but not the physics, so a tank blundering
+    /// onto the apron could shove the truck past the safe radius while the
+    /// player was still reading the yard. Protection latched off, the next
+    /// shell wrote the truck off, and the run ended before it began with no
+    /// input from the player at all.
+    /// </summary>
+    [UnityTest]
+    public IEnumerator NothingCanHurtTheTruckWhileTheBayIsOpen()
+    {
+        var ui = Object.FindFirstObjectByType<LoadoutPanel>();
+        ui.Open();
+        yield return null;
+        Assert.IsTrue(ui.IsOpen, "die Rampe ist zu, der Test prueft nichts");
+
+        // shoved well past the safe radius, as a tank would
+        var rb = _truck.GetComponent<Rigidbody>();
+        rb.position += new Vector3(0f, 0f, _health.safeRadius * 4f);
+        yield return new WaitForSeconds(0.4f);
+
+        Assert.IsTrue(_health.IsInvulnerable,
+            "der Schutz faellt weg, obwohl der Spieler noch auswaehlt");
+
+        _health.Damage(500f);
+        _health.WriteOff();
+        yield return null;
+
+        Assert.IsFalse(_health.IsDestroyed,
+            "der Truck wurde zerstoert, waehrend die Rampe offen war");
+        Assert.AreEqual(1f, _health.Fraction, 0.001f,
+            "der Truck hat waehrend der Auswahl Schaden genommen");
+    }
+
     [UnityTearDown]
     public IEnumerator TearDown()
     {

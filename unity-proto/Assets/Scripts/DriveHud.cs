@@ -152,21 +152,23 @@ public class DriveHud : MonoBehaviour
             : $"best {runScore.Best:N0}  ·  {gate.Runs} runs  ·  {gate.SatsDelivered:N0} sat";
         Shadowed(Row(under.fontSize * 1.5f), tail, under, new Color(1f, 1f, 1f, 0.7f));
 
+        // The condition, in small type, directly under the two figures it
+        // explains. Above them it read as a heading for the whole block; the
+        // sentence is about the top number only.
+        string caption = runScore == null ? ""
+            : live ? "yours only if you reach the drop-off" : "last run";
+        Shadowed(Row(under.fontSize * 1.5f), caption, under,
+                 live ? new Color(1f, 0.82f, 0.30f, 0.8f) : new Color(1f, 1f, 1f, 0.5f));
+
         // BANKED: what is actually yours. Green, and it never goes down.
         if (runScore != null)
             Shadowed(Row(banked.fontSize * 1.3f), $"BANKED  {runScore.Total:N0}", banked, Up);
 
-        // PENDING: what the current run would add. Amber, because a wreck
-        // takes all of it - the colour is the warning, the word says why.
+        // SCORE: what the current run would add. Amber, because a wreck takes
+        // all of it - the colour is the warning, the line beneath says why.
         var tint = live ? new Color(1f, 0.82f, 0.30f) : new Color(1f, 1f, 1f, 0.45f);
         if (live && runScore.Projected <= 0) tint = new Color(1f, 0.45f, 0.40f);
-        Shadowed(Row(score.fontSize * 1.25f), $"{pending:N0}", score, tint);
-
-        string caption = runScore == null ? "SCORE"
-            : live ? "PENDING SCORE  ·  yours only if you reach the gate"
-                   : "LAST RUN";
-        Shadowed(Row(under.fontSize * 1.5f), caption, under,
-                 live ? new Color(1f, 0.82f, 0.30f, 0.85f) : new Color(1f, 1f, 1f, 0.55f));
+        Shadowed(Row(score.fontSize * 1.25f), $"SCORE  {pending:N0}", score, tint);
 
         Shadowed(Row(under.fontSize * 1.5f), bay.IsLoaded
                      ? $"CARGO  {bay.Count} parcels  ·  {bay.FeeCarried:N0} sat"
@@ -200,9 +202,9 @@ public class DriveHud : MonoBehaviour
                 };
                 line.normal.textColor = new Color(1f, 1f, 1f, k * 0.9f);
                 GUI.Label(new Rect(0f, h * 0.24f + big.fontSize * 1.5f, w, line.fontSize * 1.8f),
-                          $"exposure {runScore.LastExposure:0.00}   ×   " +
-                          $"time {runScore.LastTime:0.00}   ×   " +
-                          $"cargo {runScore.LastCargo:0.00}   ×  1000", line);
+                          $"load {runScore.LastCargo:0.00}   ×   " +
+                          $"danger {runScore.LastExposure:0.00}   ×   " +
+                          $"speed {runScore.LastTime:0.00}   ×  1000", line);
             }
         }
     }
@@ -359,7 +361,7 @@ public class DriveHud : MonoBehaviour
 
         var label = new GUIStyle(_small) { alignment = TextAnchor.UpperRight, fontStyle = FontStyle.Bold };
         Shadowed(new Rect(box.x, box.y, box.width, lh),
-                 $"EXPOSURE  ×{e:0.00}", label,
+                 $"DANGER  ×{e:0.00}", label,
                  cold ? new Color(1f, 0.45f, 0.40f)
                       : Color.Lerp(new Color(1f, 0.86f, 0.35f), new Color(0.45f, 1f, 0.62f), e));
 
@@ -393,7 +395,7 @@ public class DriveHud : MonoBehaviour
             float k = 0.55f + 0.45f * Mathf.Sin(Time.unscaledTime * 4.5f);
             float ww = Mathf.Min(w * 0.75f, 560f);
             Shadowed(new Rect(box.xMax - ww, box.yMax + 2f, ww, lh),
-                     "OUT OF THE FIGHT  ·  SCORING NOTHING", warn,
+                     "TOO FAR FROM THE FIGHTING  ·  EARNING NOTHING", warn,
                      new Color(1f, 0.42f, 0.36f, k));
         }
     }

@@ -68,7 +68,21 @@ public class TruckHealth : MonoBehaviour
     /// while it sits on the apron: dying there put it straight back into the
     /// thing that killed it, again and again.
     /// </summary>
-    public bool IsInvulnerable => !_leftSpawn;
+    [Tooltip("The loading bay. While it is open the truck cannot be hurt, " +
+             "whatever the battle does to it.")]
+    public LoadoutPanel loadout;
+
+    /// <summary>
+    /// Nothing can hurt the truck while it is still on the apron.
+    ///
+    /// Distance from spawn is not enough on its own. The loading bay locks the
+    /// controls but not the physics, so a tank blundering into the apron could
+    /// shove the truck past the safe radius while the player was still reading
+    /// the yard - protection then latched off and the run was over before it
+    /// began, with no input from the player at all. An open bay therefore holds
+    /// protection outright.
+    /// </summary>
+    public bool IsInvulnerable => !_leftSpawn || (loadout != null && loadout.IsOpen);
 
     /// <summary>Raised when the truck is written off.</summary>
     public System.Action Wrecked;
@@ -163,8 +177,11 @@ public class TruckHealth : MonoBehaviour
         // Cleared once, on the way out. Checked as a distance rather than as a
         // "has moved at all" so that being nudged on the apron does not arm the
         // damage model while the truck is still standing in the traffic.
-        if (!_leftSpawn && truck != null &&
-            Vector3.Distance(transform.position, truck.spawnPosition) > safeRadius)
+        // Being shoved off the apron with the bay open must not count as
+        // leaving it: the player has not driven anywhere yet.
+        if (loadout != null && loadout.IsOpen) _leftSpawn = false;
+        else if (!_leftSpawn && truck != null &&
+                 Vector3.Distance(transform.position, truck.spawnPosition) > safeRadius)
             _leftSpawn = true;
 
         if (!IsDestroyed) return;

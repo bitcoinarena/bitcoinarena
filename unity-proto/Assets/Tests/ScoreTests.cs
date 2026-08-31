@@ -96,24 +96,60 @@ public class ScoreTests
         foreach (var tx in _feed.Offers) _bay.TryAdd(tx);
         Assert.IsTrue(_bay.IsLoaded, "test fixture failed to load the bed");
 
-        // leave the ramp: spawn protection lifts on movement, and the rigidbody
-        // owns the transform, so the body is what has to be moved
+        // Shut the bay. An open bay now holds spawn protection outright, so a
+        // fixture that loads the bed directly and never confirms leaves the
+        // truck immortal and every exposure assertion below vacuous.
+        _ui.Confirm();
+        yield return null;
+
+        // Leave the ramp, and leave it PROPERLY - out to the middle of the map.
+        //
+        // Spawn protection lifts on movement, and the rigidbody owns the
+        // transform, so the body is what has to be moved. Nudging it a few
+        // metres is not enough any more: the apron pays no exposure at all, and
+        // when the tape put the frontline near the spawn a fixture that stayed
+        // close measured that rule instead of the one under test.
         var rb = _truck.GetComponent<Rigidbody>();
-        rb.position += new Vector3(0f, 0f, 40f);
+        rb.position = new Vector3(0f, rb.position.y + 0.5f, rb.position.z + 40f);
         yield return new WaitForSeconds(0.4f);
         Assert.IsFalse(_health.IsInvulnerable, "truck never left spawn protection");
+        Assert.Greater(Vector3.Distance(rb.position, _truck.spawnPosition),
+                       _score.spawnFreeRadius,
+                       "das Fixture steht noch auf dem Vorfeld, wo nichts verdient wird");
+
+        // These tests measure SCORING, not survival, and driving the seam for
+        // six seconds means driving into a tank - which writes the truck off,
+        // ends the run and zeroes the exposure under test. Damage is disarmed
+        // here; AWreckBanksNothing calls WriteOff() directly and is unaffected.
+        _health.crashSpeed = 9999f;
+        _health.armour = 9999f;
+
+        // Kinematic from here on. These fixtures place the truck frame by
+        // frame, and a dynamic body fights every placement: the suspension
+        // pushes back, the wheels grip, and the resulting jitter measured about
+        // 1.8 m/s of "movement" for a truck that was standing still. That is
+        // enough to defeat the idle rule, so a parked truck scored and a driven
+        // one did not - both fixtures were measuring physics, not scoring.
+        rb.isKinematic = true;
     }
 
     /// <summary>Parks the truck at a z offset from the frontline and holds it there.</summary>
     IEnumerator Hold(float offsetFromFront, float seconds)
     {
         var rb = _truck.GetComponent<Rigidbody>();
+        var terrain = Object.FindFirstObjectByType<MempoolTerrain>();
+        float limit = terrain.width * 0.42f;
+        float dir = 1f;
         float t = 0f;
         while (t < seconds)
         {
-            float x = rb.position.x;
+            // Driven ALONG the corridor, not parked in it. Idling earns nothing
+            // by design now, and the wheel colliders brake whenever the
+            // throttle is idle - so a fixture that only sets a velocity reads
+            // as stationary and measures the idle rule instead of this one.
+            float x = rb.position.x + dir * 15f * Time.deltaTime;
+            if (Mathf.Abs(x) > limit) { dir = -dir; x = rb.position.x; }
             rb.position = new Vector3(x, rb.position.y, _field.FrontlineZ(x) + offsetFromFront);
-            rb.linearVelocity = Vector3.zero;
             t += Time.deltaTime;
             yield return null;
         }
@@ -131,16 +167,82 @@ public class ScoreTests
     {
         var terrain = Object.FindFirstObjectByType<MempoolTerrain>();
         float edge = terrain.depth * 0.5f - 6f;
+        float limit = terrain.width * 0.42f;
+        float dir = 1f;
         var rb = _truck.GetComponent<Rigidbody>();
 
         for (float t = 0f; t < seconds; t += Time.deltaTime)
         {
-            float x = rb.position.x;
+            float x = rb.position.x + dir * 15f * Time.deltaTime;
+            if (Mathf.Abs(x) > limit) { dir = -dir; x = rb.position.x; }
             float front = _field.FrontlineZ(x);
             float z = Mathf.Abs(-edge - front) > Mathf.Abs(edge - front) ? -edge : edge;
-            rb.position = new Vector3(x, rb.position.y, z);
-            rb.linearVelocity = Vector3.zero;
+            rb.position = new Vector3(x, rb.position.y, z);   // driven, not parked
             yield return null;
+        }
+    }
+
+    /// <summary>
+    /// Standing still earns nothing, wherever you are standing.
+    ///
+    /// The frontline moves with the price and sometimes drifts to within a few
+    /// dozen metres of the spawn point. A truck parked there, loaded and doing
+    /// absolutely nothing, was being paid exposure - and parking ON the seam
+    /// paid best of all, which would have made "stop and wait" the strongest
+    /// opening in the game.
+    /// </summary>
+    [UnityTest]
+    public IEnumerator IdlingEarnsNothingEvenOnTheSeam()
+    {
+        yield return Launch();
+
+        var rb = _truck.GetComponent<Rigidbody>();
+
+        // Parked at ONE fixed spot on the seam, captured once. Re-reading the
+        // frontline every frame would move the truck with it - the tape shifts
+        // the front between frames and the fixture would then be driving, which
+        // is the opposite of what this test is about.
+        var spot = new Vector3(rb.position.x, rb.position.y,
+                               _field.FrontlineZ(rb.position.x));
+
+        // Settle first, THEN measure. Moving onto the spot is itself a
+        // movement, and taking the peak from the first frame recorded that
+        // one jump rather than the standing still that follows it.
+        for (float t = 0f; t < 0.4f; t += Time.deltaTime)
+        {
+            rb.position = spot;
+            yield return null;
+        }
+
+        float peak = 0f;
+        for (float t = 0f; t < 1.5f; t += Time.deltaTime)
+        {
+            rb.position = spot;
+            yield return null;
+            peak = Mathf.Max(peak, _score.Rate);
+        }
+
+        Assert.AreEqual(0f, peak, 0.001f,
+            $"a parked truck on the frontline earned at {peak:0.00}/s");
+    }
+
+    /// <summary>The apron is safe ground and pays nothing, wherever the tape puts the front.</summary>
+    [UnityTest]
+    public IEnumerator TheSpawnApronNeverEarns()
+    {
+        yield return Launch();
+
+        var rb = _truck.GetComponent<Rigidbody>();
+        // parked ON the spawn point, and moving, so only the apron rule applies
+        for (float t = 0f; t < 0.6f; t += Time.deltaTime)
+        {
+            // criss-crossing the apron at speed, so only the apron rule can
+            // be what holds the rate at zero
+            rb.position = _truck.spawnPosition
+                        + new Vector3(Mathf.Sin(t * 30f) * 4f, 0f, Mathf.Cos(t * 30f) * 4f);
+            yield return null;
+            Assert.AreEqual(0f, _score.Rate, 0.001f,
+                "der Spawnpunkt zahlt Exposition");
         }
     }
 
@@ -253,10 +355,9 @@ public class ScoreTests
         var rb = _truck.GetComponent<Rigidbody>();
         for (float t = 0f; t < 1.5f; t += Time.deltaTime)
         {
-            float x = rb.position.x;
+            float x = rb.position.x + 15f * Time.deltaTime;
             rb.position = new Vector3(x, rb.position.y, _field.FrontlineZ(x));
-            rb.linearVelocity = Vector3.zero;
-            yield return null;
+            yield return null;                               // driven, not parked
             hot = Mathf.Max(hot, _score.Rate);
         }
 

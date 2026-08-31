@@ -183,6 +183,9 @@ public class Bootstrap : MonoBehaviour
         gate.truck = _truck;
         gate.health = _truckHealth;
         gate.loadout = loadout;
+        // Without this the bay locks the controls but not the physics, and a
+        // tank can write the truck off while the player is still choosing.
+        if (_truckHealth != null) _truckHealth.loadout = loadout;
         gate.terrain = _terrain;
         gate.fx = Fx;
         gate.gateX = _terrain.width * 0.44f;
@@ -200,6 +203,7 @@ public class Bootstrap : MonoBehaviour
         score.field = Field;
         score.bay = bay;
         score.health = _truckHealth;
+        score.truck = _truck;
         score.gate = gate;
         scoreGo.SetActive(true);
         _score = score;

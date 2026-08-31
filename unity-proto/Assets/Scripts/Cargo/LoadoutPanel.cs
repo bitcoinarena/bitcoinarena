@@ -170,15 +170,15 @@ public class LoadoutPanel : MonoBehaviour
             _cap.normal.textColor = c.loaded ? new Color(0.45f, 0.95f, 0.6f)
                                              : new Color(1f, 0.85f, 0.35f);
             GUI.Label(new Rect(box.x, box.y, box.width, _cap.fontSize * 1.5f),
-                      c.loaded ? "LOADED" : $"+{share}% BED", _cap);
+                      c.loaded ? "ON BOARD" : $"FILLS {share}%", _cap);
 
             _capSub.normal.textColor = new Color(1f, 1f, 1f, 0.85f);
             // The stake and the danger it attracts, on one line and plainly
             // labelled, so the trade is visible before it is made.
             int risk = bay != null ? Mathf.RoundToInt(bay.HeatOf(c.tx) * 100f) : 0;
             GUI.Label(new Rect(box.x, box.y + _cap.fontSize * 1.25f, box.width, _capSub.fontSize * 1.5f),
-                      c.loaded ? $"+{share}% BED · +{risk}% heat"
-                               : $"{c.tx.feeSats:N0} sat stake · +{risk}% heat"
+                      c.loaded ? $"fills {share}% · danger +{risk}%"
+                               : $"{c.tx.feeSats:N0} sat · danger +{risk}%"
                                  + (c.tx.Whale ? "  🐋" : ""), _capSub);
 
             // Two lines only. Twenty-one crates in three rows leaves no room
@@ -393,8 +393,8 @@ public class LoadoutPanel : MonoBehaviour
         Gauge(new Rect(panel.x + inner, top, gaugeW, gaugeH), bay.Fill,
               refused ? new Color(1f, 0.35f, 0.3f)
                       : Color.Lerp(new Color(0.3f, 0.75f, 0.45f), new Color(1f, 0.78f, 0.2f), bay.Fill),
-              refused ? "BED  —  FULL"
-                      : $"BED  {Mathf.RoundToInt(bay.Fill * 100f)}%  ·  {bay.Count} parcels",
+              refused ? "TRUCK  —  FULL"
+                      : $"TRUCK FULL  {Mathf.RoundToInt(bay.Fill * 100f)}%  ·  {bay.Count} parcels",
               _small);
 
         // --- risk -----------------------------------------------------------
@@ -403,7 +403,7 @@ public class LoadoutPanel : MonoBehaviour
               Color.Lerp(new Color(0.45f, 0.8f, 0.5f), new Color(1f, 0.25f, 0.2f), heat),
               // Short. The explanation used to run onto a second line and
               // straight over the button underneath it.
-              $"HEAT  {Mathf.RoundToInt(heat * 100f)}%  " +
+              $"HUNTED  {Mathf.RoundToInt(heat * 100f)}%  " +
               $"{new string('★', Mathf.Clamp(Mathf.CeilToInt(heat * 5f), 0, 5))}",
               _small);
 
@@ -429,18 +429,23 @@ public class LoadoutPanel : MonoBehaviour
         // the three terms in the score, so that term is what gets the big
         // type, and the formula is spelled out underneath so the other two are
         // visibly still to be earned by driving.
+        // Plain words, not the spec's. "Cargo factor", "exposure" and "time"
+        // are the terms in section 18A and they are precise; they are also
+        // three pieces of vocabulary to learn before the first run makes any
+        // sense. LOAD, DANGER and SPEED say the same thing and need no glossary.
         GUI.Label(new Rect(rx, top - _small.fontSize * 1.35f, rw, _small.fontSize * 1.4f),
-                  "CARGO FACTOR  ·  1 of 3", lbl);
+                  "LOAD  ·  1 of 3 things you are scored on", lbl);
         GUI.Label(new Rect(rx, top - reward.fontSize * 0.1f, rw, reward.fontSize * 1.3f),
                   $"×{Mathf.Clamp01(bay.Fill):0.00}", reward);
 
         var sub = new GUIStyle(_small) { alignment = TextAnchor.LowerRight };
         sub.normal.textColor = new Color(1f, 1f, 1f, 0.7f);
         GUI.Label(new Rect(rx, top + reward.fontSize * 1.15f, rw, _small.fontSize * 1.5f),
-                  "score = exposure × time × cargo", sub);
+                  "SCORE  =  LOAD × DANGER × SPEED", sub);
         GUI.Label(new Rect(rx, top + reward.fontSize * 1.15f + _small.fontSize * 1.5f,
                            rw, _small.fontSize * 1.5f),
-                  $"{bay.FeeCarried:N0} sat aboard is your stake — it returns on arrival", sub);
+                  $"the {bay.FeeCarried:N0} sat you carry come back either way — drive for the score",
+                  sub);
 
         // --- buttons ---------------------------------------------------------
         float by = panel.yMax - lh * 1.25f;

@@ -40,6 +40,16 @@ public class RunScore : MonoBehaviour
     [Tooltip("Par time for the run, in seconds. Faster than this scores above 1.")]
     public float referenceSeconds = 65f;
 
+    [Tooltip("No exposure is earned within this distance of the spawn point, " +
+             "however close the frontline drifts. The apron is safe ground.")]
+    public float spawnFreeRadius = 22f;
+
+    [Tooltip("Below this speed in m/s the run earns no exposure. Sitting in " +
+             "the corridor is not the same as hauling freight through it.")]
+    public float minSpeed = 2.5f;
+
+    public TruckController truck;
+
     /// <summary>E in the spec: 0..1, how much of the corridor this run has eaten.</summary>
     public float Exposure => Mathf.Clamp01(_exposure / Mathf.Max(0.01f, exposureReference));
 
@@ -105,10 +115,22 @@ public class RunScore : MonoBehaviour
         bool live = bay != null && bay.IsLoaded
                     && (health == null || (!health.IsDestroyed && !health.IsInvulnerable));
 
-        if (!live) { Rate = 0f; Running = false; return; }
+        if (!live) { Rate = 0f; Speed = 0f; _havePos = false; Running = false; return; }
 
         Running = true;
         _elapsed += Time.deltaTime;
+
+        // Measured before the rate, which reads it. The first frame of a run
+        // has no previous position, and a respawn teleports - both would show
+        // as an enormous speed, so the first sample is discarded.
+        var here = courier != null ? courier.position : Vector3.zero;
+        Speed = _havePos && Time.deltaTime > 0f
+            ? Vector3.Distance(new Vector3(here.x, 0f, here.z),
+                               new Vector3(_lastPos.x, 0f, _lastPos.z)) / Time.deltaTime
+            : 0f;
+        _lastPos = here;
+        _havePos = true;
+
         Rate = RateNow();
         _exposure += Rate * Time.deltaTime;
     }
@@ -124,11 +146,42 @@ public class RunScore : MonoBehaviour
     {
         if (courier == null || field == null) return 0f;
         var p = courier.position;
+
+        // The apron earns nothing, whatever the tape does.
+        //
+        // The frontline moves with the price and sometimes drifts within a few
+        // dozen metres of the spawn point. Standing there, freshly loaded and
+        // still protected, then paid exposure for doing precisely nothing -
+        // and once protection lifted it kept paying, because proximity does
+        // not care whether you drove anywhere.
+        if (truck != null &&
+            Vector3.Distance(p, truck.spawnPosition) < spawnFreeRadius) return 0f;
+
+        // Nor does parking in the corridor count. The score is for hauling
+        // freight through a battle, not for idling in one: without this, the
+        // best play is to stop on the seam and wait, which is neither driving
+        // nor interesting.
+        if (Speed < minSpeed) return 0f;
+
         float dz = Mathf.Abs(p.z - field.FrontlineZ(p.x));
         float proximity = 1f - Mathf.Clamp01(dz / Mathf.Max(1f, corridorHalfWidth));
         float heat = bay != null ? bay.Heat : 0f;
         return proximity * (1f + heat);
     }
+
+    /// <summary>
+    /// Ground speed in m/s, measured as ground actually covered.
+    ///
+    /// Not Rigidbody.linearVelocity: the wheel colliders apply brake torque
+    /// whenever the throttle is idle, so the body's velocity is zeroed every
+    /// physics step and reading it reports a rolling truck as stationary.
+    /// Distance between frames is what "hauling freight through a battle"
+    /// actually means, and it does not care how the motion was produced.
+    /// </summary>
+    public float Speed { get; private set; }
+
+    Vector3 _lastPos;
+    bool _havePos;
 
     void OnDelivered(long _)
     {
@@ -148,6 +201,8 @@ public class RunScore : MonoBehaviour
         _exposure = 0f;
         _elapsed = 0f;
         Rate = 0f;
+        Speed = 0f;
+        _havePos = false;
         Running = false;
     }
 }
