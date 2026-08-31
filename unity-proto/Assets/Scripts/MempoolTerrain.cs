@@ -119,6 +119,37 @@ public class MempoolTerrain : MonoBehaviour
         return true;
     }
 
+    /// <summary>
+    /// The fee histogram, normalised to 0..1, resampled to however many
+    /// buckets the caller wants.
+    ///
+    /// The terrain already fetches and holds this - it is what the relief is
+    /// made of - so the miner's display bars read the same data rather than
+    /// polling for it a second time. Returns null before the first fetch
+    /// lands, which callers must treat as "leave what is on screen" rather
+    /// than "the mempool is empty".
+    /// </summary>
+    public float[] FeeProfile(int buckets)
+    {
+        if (_profile == null || buckets <= 0) return null;
+
+        var outp = new float[buckets];
+        float peak = 0.01f;
+        for (int i = 0; i < buckets; i++)
+        {
+            // average the columns falling into this bucket, so a coarse bar
+            // chart is not a random sample of a fine histogram
+            int from = Mathf.FloorToInt(i / (float)buckets * _profile.Length);
+            int to = Mathf.Max(from + 1, Mathf.FloorToInt((i + 1) / (float)buckets * _profile.Length));
+            float sum = 0f; int n = 0;
+            for (int c = from; c < to && c < _profile.Length; c++) { sum += _profile[c]; n++; }
+            outp[i] = n > 0 ? Mathf.Log10(1f + sum / n) : 0f;
+            peak = Mathf.Max(peak, outp[i]);
+        }
+        for (int i = 0; i < buckets; i++) outp[i] = Mathf.Clamp01(outp[i] / peak);
+        return outp;
+    }
+
     /// <summary>Fee rate at a column, normalised so sub-sat markets still have relief.</summary>
     [Tooltip("How much of the far end of the map is levelled off into an " +
              "apron, as a fraction of the width. The miner stands there and " +

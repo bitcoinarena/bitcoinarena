@@ -278,16 +278,32 @@ public class DeliveryGate : MonoBehaviour
         StaticBatchingUtility.Combine(miner);
     }
 
+    /// <summary>
+    /// What must NOT be swallowed by static batching.
+    ///
+    /// Batching bakes the transform of everything it combines, so anything
+    /// that turns, scales or carries child text has to be lifted out first -
+    /// the fans and the coin because they spin, the histogram bars because
+    /// they are scaled from the live fee profile, and the screen because the
+    /// terminal parents its text meshes to it.
+    /// </summary>
     static bool IsMoving(string n) =>
-        n.StartsWith("Fan_") && !n.EndsWith("_mount") || n == "Coin" || n == "Beacon_Tip";
+        n.StartsWith("Fan_") && !n.EndsWith("_mount")
+        || n.StartsWith("bar_")
+        || n == "terminal_screen" || n == "Coin" || n == "Beacon_Tip";
 
     void Spin(GameObject miner)
     {
         var spin = miner.AddComponent<MinerSpin>();
         var fans = new System.Collections.Generic.List<Transform>();
+        var bars = new System.Collections.Generic.List<Transform>();
+        Transform screen = null;
+
         foreach (var t in miner.GetComponentsInChildren<Transform>(true))
         {
             if (t.name.StartsWith("Fan_") && !t.name.EndsWith("_mount")) fans.Add(t);
+            else if (t.name.StartsWith("bar_")) bars.Add(t);
+            else if (t.name == "terminal_screen") screen = t;
             else if (t.name == "Coin") spin.coin = t;
             else if (t.name == "Beacon_Tip")
             {
@@ -296,6 +312,15 @@ public class DeliveryGate : MonoBehaviour
             }
         }
         spin.fans = fans.ToArray();
+
+        // bar_00 .. bar_23 in order, so the histogram is not shuffled
+        bars.Sort((a, b) => string.CompareOrdinal(a.name, b.name));
+
+        var term = miner.AddComponent<MinerTerminal>();
+        term.screen = screen;
+        term.bars = bars.ToArray();
+        term.feed = FindFirstObjectByType<MempoolFeed>();
+        term.terrain = terrain;
     }
 
     /// <summary>
