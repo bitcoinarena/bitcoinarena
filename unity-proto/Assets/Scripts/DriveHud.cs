@@ -357,8 +357,15 @@ public class DriveHud : MonoBehaviour
 
         line.normal.textColor = new Color(1f, 1f, 1f, k * 0.62f);
         GUI.Label(new Rect(card.x, y, card.width, line.fontSize * 1.7f),
-                  missed ? "your sats came back — beat the clock next block"
-                         : "the sats were your stake and came back — the score is what you earned",
+                  // NOT "your stake came back". There is no stake in this
+                  // game: nobody deposits anything, so nothing returns. That
+                  // was multiplayer vocabulary imported into a build that has
+                  // no multiplayer, and it described a mechanic the player had
+                  // never taken part in. The sats are the FEES of the
+                  // transactions being hauled - they belong to the miner, which
+                  // is why the headline says delivered to the miners.
+                  missed ? "the fees never reached the block — beat the clock next time"
+                         : "those fees go to the miners — the score is what the run pays you",
                   line);
     }
 

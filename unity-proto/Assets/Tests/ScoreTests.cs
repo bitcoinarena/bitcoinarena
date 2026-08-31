@@ -312,6 +312,19 @@ public class ScoreTests
     public IEnumerator SafeRouteScoresNearNothing()
     {
         yield return Launch();
+
+        // BOTH legs start at the same x and cover the same span.
+        //
+        // Threat varies enormously along the map - measured, the seam runs 3.4
+        // at one end and 13.5 in the middle - so comparing a quiet leg driven
+        // over one stretch against a seam leg driven over another compares
+        // stretches, not routes. It made this test swing between 0.33 and 0.05
+        // between runs on live price data. Same span, and the only difference
+        // left is the z the fixture chose.
+        var start = _truck.GetComponent<Rigidbody>();
+        start.position = new Vector3(-60f, start.position.y, start.position.z);
+        yield return null;
+
         yield return HoldAtTheFarEdge(6f);
 
         float safe = _score.Exposure;

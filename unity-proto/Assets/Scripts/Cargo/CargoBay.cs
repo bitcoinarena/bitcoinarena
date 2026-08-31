@@ -103,7 +103,7 @@ public class CargoBay : MonoBehaviour
     ///
     /// This is the honest answer to "what does loading this buy me": a share
     /// of C in score = 1000 * E * T * C, and nothing else. Its sats are the
-    /// stake and come back on arrival either way.
+    /// transaction's fee and go to the miner, not to the player.
     /// </summary>
     public float ShareOf(MempoolFeed.Tx tx)
     {

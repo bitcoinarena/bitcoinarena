@@ -173,9 +173,11 @@ public class LoadoutPanel : MonoBehaviour
             // What this package BUYS leads, and it is bed share - not sats.
             //
             // The headline used to be "+2.400 sat" in green, which reads as
-            // earnings and is not: the sats are the stake and come back on
-            // arrival whatever the run does. All a package actually buys is a
-            // slice of the cargo factor, one of the three terms in the score.
+            // earnings and is not: those sats are the transaction's FEE and
+            // they go to the miner, not to the player. All a package buys the
+            // player is a slice of the load factor, one of the three terms in
+            // the score. "Stake" was multiplayer vocabulary for a mechanic
+            // this build does not have - nobody deposits anything here.
             int share = bay != null ? Mathf.RoundToInt(bay.ShareOf(c.tx) * 100f) : 0;
             _cap.normal.textColor = c.loaded ? new Color(0.45f, 0.95f, 0.6f)
                                              : new Color(1f, 0.85f, 0.35f);
@@ -188,7 +190,7 @@ public class LoadoutPanel : MonoBehaviour
             int risk = bay != null ? Mathf.RoundToInt(bay.HeatOf(c.tx) * 100f) : 0;
             GUI.Label(new Rect(box.x, box.y + _cap.fontSize * 1.25f, box.width, _capSub.fontSize * 1.5f),
                       c.loaded ? $"fills {share}% · danger +{risk}%"
-                               : $"{c.tx.feeSats:N0} sat · danger +{risk}%"
+                               : $"{c.tx.feeSats:N0} sat fee · danger +{risk}%"
                                  + (c.tx.Whale ? "  🐋" : ""), _capSub);
 
             // Two lines only. Twenty-one crates in three rows leaves no room
@@ -434,8 +436,8 @@ public class LoadoutPanel : MonoBehaviour
         // The big number is the CARGO FACTOR, not the sats.
         //
         // A large sat figure here was read as the prize - understandably, it
-        // was the biggest thing on the bar. It is the stake: it returns on
-        // arrival and it is not what the run pays. Loading buys exactly one of
+        // was the biggest thing on the bar. It is the miners' fee, not the
+        // player's pay. Loading buys exactly one of
         // the three terms in the score, so that term is what gets the big
         // type, and the formula is spelled out underneath so the other two are
         // visibly still to be earned by driving.
@@ -476,7 +478,7 @@ public class LoadoutPanel : MonoBehaviour
         var sub = new GUIStyle(_small) { alignment = TextAnchor.LowerRight };
         sub.normal.textColor = new Color(1f, 1f, 1f, 0.7f);
         GUI.Label(new Rect(rx, fy + _small.fontSize * 1.5f, rw, _small.fontSize * 1.5f),
-                  "you pick LOAD here — DANGER and SPEED you earn on the road", sub);
+                  "you pick LOAD · DANGER and SPEED you earn driving", sub);
 
         // --- buttons ---------------------------------------------------------
         float by = panel.yMax - lh * 1.25f;
