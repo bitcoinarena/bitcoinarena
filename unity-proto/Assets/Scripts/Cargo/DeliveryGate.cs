@@ -338,6 +338,7 @@ public class DeliveryGate : MonoBehaviour
         term.bars = bars.ToArray();
         term.feed = FindFirstObjectByType<MempoolFeed>();
         term.terrain = terrain;
+        term.stats = FindFirstObjectByType<ChainStats>();
         term.verticalStretch = 1f / Mathf.Max(0.05f, minerHeightScale);
     }
 

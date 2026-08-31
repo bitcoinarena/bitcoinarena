@@ -179,6 +179,16 @@ public class MempoolTerrain : MonoBehaviour
             float flat = Mathf.Log10(1f + Mathf.Max(_profile[columns - 1], subSat)) * feeHeight;
             h = Mathf.Lerp(h, flat, Mathf.SmoothStep(0f, 1f, into));
         }
+
+        // And the same at the START, where the post office stands. Its 24 bay
+        // doors are 4.6 m wide and the relief was climbing straight through
+        // them - a loading yard on a hillside.
+        float outOf = Mathf.InverseLerp(Mathf.Clamp01(apronFraction), 0f, u);
+        if (outOf > 0f)
+        {
+            float flat = Mathf.Log10(1f + Mathf.Max(_profile[0], subSat)) * feeHeight;
+            h = Mathf.Lerp(h, flat, Mathf.SmoothStep(0f, 1f, outOf));
+        }
         return h;
     }
 

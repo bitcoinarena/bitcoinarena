@@ -95,6 +95,11 @@ public class PostOfficeTests
         // the goggles wall is built from the same offers the yard is
         var goggles = GameObject.Find("goggles_screen");
         Assert.IsNotNull(goggles, "keine Goggles-Wand");
+        // The wall rebuilds on its own clock, so give it one turn of that.
+        var wall = Object.FindFirstObjectByType<GogglesWall>();
+        Assert.IsNotNull(wall, "keine Goggles-Komponente");
+        yield return new WaitForSeconds(wall.rebuildSeconds + 1.5f);
+
         int tiles = 0;
         foreach (Transform c in goggles.transform) if (c.name.StartsWith("tile")) tiles++;
         Assert.Greater(tiles, 8, $"nur {tiles} Kacheln auf der Goggles-Wand");

@@ -119,6 +119,10 @@ public class Bootstrap : MonoBehaviour
         // The post office goes up FIRST, because the truck has to be parked in
         // one of its bays and the bay position is arithmetic, not geometry -
         // so it is known before the building has finished streaming.
+        var statsGo = new GameObject("ChainStats");
+        statsGo.transform.SetParent(transform, false);
+        _stats = statsGo.AddComponent<ChainStats>();
+
         var postGo = new GameObject("PostOffice");
         postGo.transform.SetParent(transform, false);
         postGo.SetActive(false);
@@ -126,6 +130,7 @@ public class Bootstrap : MonoBehaviour
         post.terrain = _terrain;
         post.postX = -_terrain.width * 0.44f;
         post.feed = Object.FindFirstObjectByType<MempoolFeed>();
+        post.stats = _stats;
         postGo.SetActive(true);
         _post = post;
 
@@ -496,6 +501,10 @@ public class Bootstrap : MonoBehaviour
     CargoBay _cargo;
     DeliveryGate _gate;
     PostOffice _post;
+    ChainStats _stats;
+
+    /// <summary>Live chain state, shared by both buildings.</summary>
+    public ChainStats Stats => _stats;
     RunScore _score;
 
     /// <summary>The building the run starts from.</summary>

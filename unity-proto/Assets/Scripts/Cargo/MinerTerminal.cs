@@ -17,6 +17,7 @@ public class MinerTerminal : MonoBehaviour
 {
     public MempoolFeed feed;
     public MempoolTerrain terrain;
+    public ChainStats stats;
 
     [Tooltip("How often the three transactions are re-drawn, in seconds. " +
              "Fast: this is a mempool ticker, and a wall that changes twice a " +
@@ -62,10 +63,14 @@ public class MinerTerminal : MonoBehaviour
         if (font == null) font = Resources.GetBuiltinResource<Font>("Arial.ttf");
 
         _text = new TextMesh[Lines];
-        // Local units on a 96 x 36 screen whose origin is its centre. The
-        // bars own everything below y = -6, so the four rows live above it.
-        float[] rows = { 13f, 5f, -0.5f, -6f };
-        float[] high = { 6.5f, 4.2f, 4.2f, 4.2f };
+        // Local units on a 96 x 36 screen whose origin is its centre.
+        //
+        // The bars own everything below y = -6. The bottom row used to sit AT
+        // -6 and stand 4.2 high, so it reached down to -8 and its descenders
+        // crossed the histogram. Rows now stop at -3.5 with the last one 3.8
+        // high, which leaves a metre of daylight.
+        float[] rows = { 14f, 7.5f, 2f, -3.5f };
+        float[] high = { 6.5f, 3.8f, 3.8f, 3.8f };
 
         for (int i = 0; i < Lines; i++)
         {
@@ -93,6 +98,7 @@ public class MinerTerminal : MonoBehaviour
             tm.alignment = TextAlignment.Left;
             tm.color = i == 0 ? new Color(0.42f, 1f, 0.55f) : new Color(0.60f, 1f, 0.72f);
             tm.text = i == 0 ? "MINING" : "";
+            if (i == 0) _header = tm;
 
             var mr = go.GetComponent<MeshRenderer>();
             mr.sharedMaterial = font.material;
@@ -106,6 +112,7 @@ public class MinerTerminal : MonoBehaviour
     }
 
     float[] _rowHeight;
+    TextMesh _header;
 
     /// <summary>
     /// Scales a row to its target height, measured in the SCREEN's own units.
@@ -160,6 +167,19 @@ public class MinerTerminal : MonoBehaviour
         // of the word MINING.
         if (_refit > 0 && --_refit == 0)
             for (int i = 0; i < Lines; i++) FitRow(i);
+
+        // What this farm is worth, beside the word MINING.
+        //
+        // A tenth of the network, and it wanders: a pool dashboard never shows
+        // the same number twice because the figure is a Poisson estimate from
+        // found shares, not a measurement. Steady to three digits, restless in
+        // the last one, which is what a real rig looks like.
+        if (_header != null && stats != null)
+        {
+            float eh = stats.OurExahash;
+            string want = eh > 0.5f ? $"MINING          {eh:0} EH/s" : "MINING";
+            if (_header.text != want) { _header.text = want; _refit = 2; }
+        }
 
         if (Time.unscaledTime < _nextRoll) return;
         _nextRoll = Time.unscaledTime + rollSeconds;

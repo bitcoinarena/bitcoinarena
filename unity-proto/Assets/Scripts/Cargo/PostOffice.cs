@@ -21,6 +21,7 @@ public class PostOffice : MonoBehaviour
     public MempoolFeed feed;
     public MarketFeed market;
     public BlockClock clock;
+    public ChainStats stats;
 
     [Tooltip("Where the building stands. Mirrors the delivery gate.")]
     public float postX = -114.4f;
@@ -194,7 +195,13 @@ public class PostOffice : MonoBehaviour
         foreach (var t in root.GetComponentsInChildren<Transform>(true))
         {
             string n = t.name;
-            if (n == "goggles_screen") _goggles = t;
+            if (n == "goggles_screen")
+            {
+                _goggles = t;
+                var wall = gameObject.AddComponent<GogglesWall>();
+                wall.feed = feed;
+                wall.screen = t;
+            }
             else if (n == "unconf_count") _unconf = Plate(t, 5.2f, white, TextAnchor.MiddleCenter);
             else if (n.StartsWith("fee_rate_") && !n.Contains("unit"))
                 _feeRate.Add(Plate(t, 1.5f, white, TextAnchor.MiddleCenter));
@@ -207,54 +214,6 @@ public class PostOffice : MonoBehaviour
             else if (n.StartsWith("block_label_") && !n.Contains("case"))
                 _blockLabel.Add(Plate(t, 1.0f, blue, TextAnchor.MiddleCenter));
         }
-        Treemap();
-    }
-
-    /// <summary>
-    /// Mempool Goggles: one quad per transaction, sized by weight.
-    ///
-    /// Squares rather than a texture, so it costs no download and no render
-    /// target - and each square really is one of the transactions sitting in
-    /// the loading yard.
-    /// </summary>
-    void Treemap()
-    {
-        if (_goggles == null || feed == null) return;
-        var offers = feed.Offers;
-        if (offers == null || offers.Count == 0) return;
-
-        for (int i = _goggles.childCount - 1; i >= 0; i--)
-            if (_goggles.GetChild(i).name.StartsWith("tile")) Destroy(_goggles.GetChild(i).gameObject);
-
-        const int Cols = 8;
-        int show = Mathf.Min(offers.Count, Cols * Cols);
-        for (int i = 0; i < show; i++)
-        {
-            var tx = offers[i];
-            float cell = 16f / Cols;
-            int cx = i % Cols, cy = i / Cols;
-
-            var q = GameObject.CreatePrimitive(PrimitiveType.Quad);
-            q.name = "tile" + i;
-            Destroy(q.GetComponent<Collider>());
-            q.transform.SetParent(_goggles, false);
-            q.layer = _goggles.gameObject.layer;
-
-            float fill = Mathf.Clamp(CargoBay.RoomFor(tx) / 1.35f, 0.30f, 0.95f);
-            q.transform.localPosition = new Vector3(
-                (cx - (Cols - 1) * 0.5f) * cell, (cy - (Cols - 1) * 0.5f) * cell, -0.12f);
-            q.transform.localScale = new Vector3(cell * fill, cell * fill, 1f);
-            q.transform.localRotation = Quaternion.identity;
-
-            var mr = q.GetComponent<MeshRenderer>();
-            mr.sharedMaterial = new Material(Shader.Find("Universal Render Pipeline/Unlit"))
-            {
-                color = Color.Lerp(new Color(0.16f, 0.42f, 0.20f),
-                                   new Color(0.72f, 0.78f, 0.20f),
-                                   Mathf.Clamp01(tx.FeeRate / 30f)),
-            };
-            mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-        }
     }
 
     void Update()
@@ -265,7 +224,6 @@ public class PostOffice : MonoBehaviour
         Fees();
         Unconfirmed();
         Blocks();
-        Treemap();
     }
 
     /// <summary>
@@ -276,17 +234,16 @@ public class PostOffice : MonoBehaviour
     /// </summary>
     void Fees()
     {
-        if (_feeRate.Count < 4 || terrain == null) return;
-        var profile = terrain.FeeProfile(32);
-        if (profile == null) return;
+        if (_feeRate.Count < 4 || stats == null || !stats.HasFees) return;
 
-        // profile is normalised, so scale it back onto a plausible sat/vB range
-        float[] q = { 0.06f, 0.22f, 0.55f, 0.92f };
+        // Straight from the node. These were derived from the terrain's
+        // normalised fee profile times a constant - numbers not so much wrong
+        // as unrelated to anything, and it showed.
+        int[] tier = { stats.FeeNone, stats.FeeLow, stats.FeeMedium, stats.FeeHigh };
         for (int i = 0; i < 4 && i < _feeRate.Count; i++)
         {
-            int at = Mathf.Clamp(Mathf.RoundToInt(q[i] * (profile.Length - 1)), 0, profile.Length - 1);
-            float rate = Mathf.Max(0.1f, profile[at] * 24f);
-            _feeRate[i].text = $"{rate:0.#}";
+            float rate = tier[i];
+            _feeRate[i].text = $"{tier[i]}";
             Fit(_feeRate[i]);
 
             if (i < _feeUsd.Count)
@@ -302,33 +259,60 @@ public class PostOffice : MonoBehaviour
 
     void Unconfirmed()
     {
-        if (_unconf == null || feed == null) return;
-        // the feed keeps a rolling window, not the whole mempool, so the count
-        // is scaled to read as a mempool depth rather than a list length
-        int n = feed.Offers != null ? feed.Offers.Count : 0;
-        _unconf.text = n > 0 ? $"{n * 1900:N0}" : "—";
+        if (_unconf == null) return;
+        // The REAL count. It used to be the length of the freight list times
+        // 1900 - a made-up number wearing a real one's clothes.
+        int n = stats != null ? stats.Unconfirmed : 0;
+        _unconf.text = n > 0 ? $"{n:N0}" : "—";
         Fit(_unconf);
     }
 
+    /// <summary>
+    /// The block row, as mempool.space arranges it.
+    ///
+    /// Left of the divider are PROJECTED blocks - what the mempool would pay
+    /// if it were mined now: fees in BTC, how many transactions, roughly when.
+    /// Right are blocks that exist: height, transaction count, how long ago.
+    /// Two different things drawn as the same cube, which is exactly why each
+    /// needs its own words.
+    /// </summary>
     void Blocks()
     {
-        if (clock == null) return;
-        int tip = clock.Height;
-        for (int i = 0; i < _blockLabel.Count; i++)
-        {
-            // five upcoming then five mined, newest in the middle
-            int height = i < 5 ? tip + (5 - i) : tip - (i - 5);
-            _blockLabel[i].text = height > 0 ? height.ToString("N0") : "—";
-            Fit(_blockLabel[i]);
-        }
-        // From the fee profile, not from Random: a made-up number on a wall
-        // that claims to show chain state is worse than an empty wall.
-        var profile = terrain != null ? terrain.FeeProfile(_blockFace.Count) : null;
+        if (stats == null) return;
+
         for (int i = 0; i < _blockFace.Count; i++)
         {
-            _blockFace[i].text = profile != null
-                ? $"~{Mathf.Max(0.1f, profile[i] * 24f):0.#} sat/vB" : "—";
+            if (i < 5)
+            {
+                var up = i < stats.Upcoming.Count ? stats.Upcoming[i] : null;
+                _blockFace[i].text = up == null ? "\u2014"
+                    : $"{up.totalFeeSats / 1e8:0.000} BTC\n{up.nTx:N0} tx\nin ~{up.inMinutes} min";
+            }
+            else
+            {
+                int at = i - 5;
+                var m = at < stats.Recent.Count ? stats.Recent[at] : null;
+                _blockFace[i].text = m == null ? "\u2014"
+                    : $"{m.nTx:N0} tx\nvor {m.AgeMinutes} min";
+            }
             Fit(_blockFace[i]);
+        }
+
+        for (int i = 0; i < _blockLabel.Count; i++)
+        {
+            if (i < 5)
+            {
+                int tip = stats.Recent.Count > 0 ? stats.Recent[0].height
+                        : (clock != null ? clock.Height : 0);
+                _blockLabel[i].text = tip > 0 ? $"{tip + (5 - i):N0}" : "\u2014";
+            }
+            else
+            {
+                int at = i - 5;
+                _blockLabel[i].text = at < stats.Recent.Count
+                    ? $"{stats.Recent[at].height:N0}" : "\u2014";
+            }
+            Fit(_blockLabel[i]);
         }
     }
 }

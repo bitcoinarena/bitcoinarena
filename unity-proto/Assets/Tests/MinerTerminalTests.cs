@@ -75,10 +75,23 @@ public class MinerTerminalTests
         // and a non-uniform scale under rotation cannot survive a change of
         // parent. Unity approximates, and the blades came out sheared inside
         // their rings.
-        var body = GameObject.Find("MinerMegastructure").transform;
-        Assert.Less(Vector3.Distance(fan.lossyScale, body.lossyScale), 0.02f,
-            $"der Luefter hat Skalierung {fan.lossyScale} statt {body.lossyScale} - " +
-            "er wurde beim Umhaengen verzerrt");
+        // Round, and inside its housing.
+        //
+        // The blade disc is authored 11.00 x 14.46 x 7.23 - 31% out of round
+        // against a 4 m recess, which is what made it look like it was
+        // wobbling however true the axle ran. Both are corrected at setup.
+        var rs2 = fan.GetComponentsInChildren<Renderer>(true);
+        var fb = rs2[0].bounds; foreach (var r in rs2) fb.Encapsulate(r.bounds);
+        var s = fb.size;
+        float thin = Mathf.Min(s.x, Mathf.Min(s.y, s.z));
+        float p1 = s.x + s.y + s.z - thin - Mathf.Max(s.x, Mathf.Max(s.y, s.z));
+        float p2 = Mathf.Max(s.x, Mathf.Max(s.y, s.z));
+
+        Assert.Less(Mathf.Abs(p1 - p2) / p2, 0.08f,
+            $"die Luefterscheibe ist {p1:0.0} x {p2:0.0} m - sie ist nicht rund und eiert");
+        Assert.Less(thin, 4f,
+            $"die Scheibe ist {thin:0.0} m tief und steht aus ihrer 4 m tiefen " +
+            "Aussparung heraus");
 
         // 1.4, measured at 1.24 with the axle correct.
         //
@@ -117,7 +130,9 @@ public class MinerTerminalTests
             lines[i] = go.GetComponent<TextMesh>();
         }
 
-        Assert.AreEqual("MINING", lines[0].text, "die Kopfzeile sagt nicht MINING");
+        // Starts with, not equals: the header carries the farm's hashrate now.
+        StringAssert.StartsWith("MINING", lines[0].text,
+            $"die Kopfzeile sagt nicht MINING: \"{lines[0].text}\"");
 
         for (int i = 1; i < 4; i++)
         {
