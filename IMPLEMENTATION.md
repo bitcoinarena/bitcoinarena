@@ -179,8 +179,28 @@ The reputation of JS as non-deterministic is only half earned. Precisely:
 
 - `Math.sin`, `cos`, `tan`, `atan`, `atan2`, `exp`, `log`, `pow`, `sqrt`,
   `cbrt`, `hypot`. The spec explicitly permits implementation-defined
-  approximations. V8, SpiderMonkey and JavaScriptCore use different libm
-  paths and *do* differ in the last bits.
+  approximations.
+
+  **Measured, 31 August 2026** — 120,000 inputs per function, hashed over the
+  exact bit patterns, on arm64:
+
+  | | Node 24 | V8 15.4 | SpiderMonkey | JavaScriptCore |
+  |---|---|---|---|---|
+  | `sqrt` | agree | agree | agree | agree |
+  | `sin` `cos` `tan` | ✗ | ✗ | ✗ | ✗ |
+  | `atan2` `exp` `log` `pow` `cbrt` `hypot` | ✗ | ✗ | ✗ | ✗ |
+
+  `sqrt` is the single exception, and for a good reason: IEEE-754 requires it
+  to be correctly rounded, so every engine gets it from the hardware.
+  Everything else differs.
+
+  The result worth pausing on is the first two columns. **Node 24 and the V8
+  15.4 shell disagree** — two builds of the *same engine*. Cross-browser
+  divergence was the expected hazard; cross-*version* divergence is worse,
+  because it means a player who updates Chrome could fail to replay their own
+  earlier transcript. No amount of "test on the three engines" would catch
+  that. This is the measurement that turns the fixed-point core from cautious
+  into necessary.
 - General floating-point arithmetic where results are not exact integers —
   correctly rounded per operation, but the moment you build a physics step on
   it, operand ordering, compiler reassociation and denormal handling make
@@ -960,16 +980,26 @@ Before committing to thirty-five sessions: **one or two sessions as a pure
 risk spike**, answering two questions rather than one. No protocol, no Unity,
 no money.
 
-**A — does hand-built fixed point hold?** A toy core — a vehicle, a few
-enemies, ten thousand ticks — run through Node, Chrome, Firefox and Safari,
-and the state hashes compared. This is the plan of record and stages 0 and 1
-are costed against it.
+**A — does hand-built fixed point hold?** *Answered 31 August 2026: yes.*
+Ten thousand ticks of a vehicle and forty-eight units, ten checkpoints,
+identical SHA-256 state hashes from V8, SpiderMonkey, JavaScriptCore and a
+second V8 build. Throughput measured at **4050× realtime**, against the
+15–30× this document expected — two orders of magnitude of headroom that
+spec §34's player cap can now be derived from rather than guessed at. The one
+half of the criterion still open is the second architecture: the machine was
+arm64 only.
 
-**B — does WASM hold, and would it be cheaper?** The same ten thousand ticks
-through a WASM physics engine (Rapier is the candidate: Apache-2.0, and it
-ships a `DynamicRayCastVehicleController` in the `btRaycastVehicle` family
-that Unity's WheelCollider also belongs to). Same four engines, same hash
-comparison, plus the NaN probe from §1.1.
+**B — does WASM hold, and would it be cheaper?** *Partly answered, and the
+answer changed what B is for.* Plain float arithmetic — two million
+iterations of a chaotic integration using only `+ - * /` — is bit-identical
+across all four runtimes, as IEEE-754 requires. The library functions are
+not, and §3.1 now carries the table. So WASM's advantage is real and narrow:
+it compiles its own libm in, which is exactly the gap that divides the
+engines.
+
+But since A passed and the core is built, B is no longer a fork in the road.
+It becomes the fallback to reach for if stage 1's driving model turns out to
+need trigonometry the table cannot serve cheaply — not a competing plan.
 
 Half a session more, and the outcomes are worth it:
 
