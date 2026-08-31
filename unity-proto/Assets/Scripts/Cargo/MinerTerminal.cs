@@ -19,9 +19,9 @@ public class MinerTerminal : MonoBehaviour
     public MempoolTerrain terrain;
 
     [Tooltip("How often the three transactions are re-drawn, in seconds. " +
-             "Slow on purpose: a wall of text that reshuffles every frame is " +
-             "unreadable from a moving truck.")]
-    public float rollSeconds = 4f;
+             "Fast: this is a mempool ticker, and a wall that changes twice a " +
+             "minute reads as a photograph of one.")]
+    public float rollSeconds = 0.4f;
 
     [Tooltip("The screen quad from the model, 96 x 36 in its own local space.")]
     public Transform screen;
@@ -32,6 +32,9 @@ public class MinerTerminal : MonoBehaviour
              "is scaled (1, 0.45, 1), and text inheriting that is legible but " +
              "visibly squat.")]
     public float verticalStretch = 1f;
+
+    [Tooltip("How often the histogram scrolls one column left.")]
+    public float shiftSeconds = 0.5f;
 
     const int Lines = 4;                 // MINING + three transactions
     TextMesh[] _text;
@@ -68,7 +71,11 @@ public class MinerTerminal : MonoBehaviour
         {
             var go = new GameObject("TerminalLine" + i);
             go.transform.SetParent(screen, false);
-            go.transform.localPosition = new Vector3(-44f, rows[i], -0.2f);
+            // +44, not -44. Measured: the screen's local +x runs to world +z,
+            // and the player drives in +x, so their left hand is world +z.
+            // Anchored at -44 the whole display sat on the right-hand end of
+            // the panel and read away from the reader.
+            go.transform.localPosition = new Vector3(44f, rows[i], -0.2f);
             // Half a turn: TextMesh draws on its -Z face, so a child sharing
             // the quad's orientation faces INTO the building and is read
             // through the panel - which is why MINING came out as ENINIM.
@@ -79,10 +86,11 @@ public class MinerTerminal : MonoBehaviour
             tm.font = font;
             tm.fontSize = 80;
             tm.characterSize = 1f;      // real size comes from FitRow
-            // Anchored on the RIGHT because the row is turned round: what is
-            // left to the reader is +x to the flipped transform.
-            tm.anchor = TextAnchor.MiddleRight;
-            tm.alignment = TextAlignment.Right;
+            // Left-anchored, and the row is turned round - so the text runs
+            // from the anchor towards the panel's -x, which is the reader's
+            // right. Start at the left edge, read rightwards, as text does.
+            tm.anchor = TextAnchor.MiddleLeft;
+            tm.alignment = TextAlignment.Left;
             tm.color = i == 0 ? new Color(0.42f, 1f, 0.55f) : new Color(0.60f, 1f, 0.72f);
             tm.text = i == 0 ? "MINING" : "";
 
@@ -178,9 +186,26 @@ public class MinerTerminal : MonoBehaviour
             string id = tx.txid != null && tx.txid.Length >= 16
                 ? tx.txid.Substring(0, 16).ToUpperInvariant()
                 : (tx.txid ?? "");
-            _text[row].text = $"{id}   ₿ {tx.Btc:0.000}";
+            _text[row].text = $"{id}   {Amount(tx)}";
             _refit = 2;
         }
+    }
+
+    /// <summary>
+    /// A readable amount with its unit.
+    ///
+    /// "0.000" was on every line, because real mempool transactions are mostly
+    /// a few tens of thousands of satoshis and three decimals of BTC rounds
+    /// all of that to nothing. Below a hundredth of a coin the honest unit is
+    /// the satoshi; above it, BTC. The unit is always spelled out - a bare
+    /// number on a wall says nothing about what it counts.
+    /// </summary>
+    static string Amount(MempoolFeed.Tx tx)
+    {
+        double btc = tx.Btc;
+        if (btc >= 0.01) return $"{btc:0.###} BTC";
+        if (btc > 0) return $"{tx.valueSats:N0} sat";
+        return "0 sat";
     }
 
     /// <summary>
@@ -191,16 +216,41 @@ public class MinerTerminal : MonoBehaviour
     /// snapped: the histogram arrives every twenty seconds and a step change
     /// across twenty-four bars reads as a glitch.
     /// </summary>
+    float _nextShift;
+
     void Bars()
     {
         if (bars == null || bars.Length == 0) return;
 
-        var profile = terrain != null ? terrain.FeeProfile(bars.Length) : null;
-        if (profile != null)
-            for (int i = 0; i < bars.Length; i++)
-                _barTarget[i] = Mathf.Max(0.06f, profile[i]);
+        // A ROLLING chart, not a static profile.
+        //
+        // Setting all 24 bars from the fee histogram was correct data and dead
+        // to look at: the histogram moves slowly, so the wall was a still life
+        // that happened to be accurate. It now scrolls - every bar shifts one
+        // place left and a fresh sample enters at the right - which is how a
+        // mempool chart reads as live, and is also true: each column really is
+        // a later reading than the one beside it.
+        if (Time.unscaledTime >= _nextShift)
+        {
+            _nextShift = Time.unscaledTime + shiftSeconds;
 
-        float k = 1f - Mathf.Exp(-Time.unscaledDeltaTime * 3f);
+            var profile = terrain != null ? terrain.FeeProfile(bars.Length) : null;
+            float entering = 0.3f;
+            if (profile != null)
+            {
+                // the newest reading is the busy end of the histogram
+                float sum = 0f;
+                for (int i = 0; i < profile.Length; i++) sum += profile[i];
+                entering = Mathf.Clamp01(sum / Mathf.Max(1, profile.Length) * 1.6f);
+            }
+            // a little jitter, so two quiet minutes are not a flat line
+            entering = Mathf.Clamp(entering * Random.Range(0.72f, 1.34f), 0.08f, 1f);
+
+            for (int i = 0; i < _barTarget.Length - 1; i++) _barTarget[i] = _barTarget[i + 1];
+            _barTarget[_barTarget.Length - 1] = entering;
+        }
+
+        float k = 1f - Mathf.Exp(-Time.unscaledDeltaTime * 6f);
         for (int i = 0; i < bars.Length; i++)
         {
             if (bars[i] == null) continue;

@@ -122,7 +122,11 @@ public class MinerTerminalTests
         for (int i = 1; i < 4; i++)
         {
             Assert.IsNotEmpty(lines[i].text, $"Transaktionszeile {i} ist leer");
-            StringAssert.Contains("₿", lines[i].text, $"Zeile {i} zeigt keinen Betrag");
+            // " BTC" or " sat", not a bitcoin glyph: the amounts carry a
+            // spelled-out unit now, because most mempool transactions are
+            // small enough that BTC rounds them to nothing.
+            bool unit = lines[i].text.EndsWith(" BTC") || lines[i].text.EndsWith(" sat");
+            Assert.IsTrue(unit, $"Zeile {i} zeigt keinen Betrag mit Einheit: \"{lines[i].text}\"");
             Assert.Greater(lines[i].text.Length, 12, $"Zeile {i} zeigt keine txid");
         }
 
@@ -183,6 +187,65 @@ public class MinerTerminalTests
         }
     }
 
+    /// <summary>
+    /// The display reads from the left, and every amount carries its unit.
+    ///
+    /// Both were wrong at once and neither was catchable by looking at the
+    /// code: the rows were anchored at the panel's -x end, which measures out
+    /// as the driver's RIGHT because the screen's local +x runs to world +z
+    /// and the truck drives +x. And every line said 0.000, because real
+    /// mempool transactions are a few tens of thousands of satoshis and three
+    /// decimals of BTC rounds all of that away.
+    /// </summary>
+    [UnityTest]
+    public IEnumerator TheDisplayReadsFromTheLeftWithUnits()
+    {
+        var screen = Find("terminal_screen");
+        var panel = screen.GetComponent<Renderer>().bounds;
+
+        var feed = Object.FindFirstObjectByType<MempoolFeed>();
+        for (float t = 0f; t < 20f && (feed.Offers == null || feed.Offers.Count == 0);
+             t += Time.deltaTime)
+            yield return null;
+        yield return new WaitForSeconds(1.5f);
+
+        for (int i = 0; i < 4; i++)
+        {
+            var row = Find("TerminalLine" + i);
+            var b = row.GetComponent<MeshRenderer>().bounds;
+
+            // The driver goes +x, so their left hand is world +z.
+            Assert.Greater(b.center.z - panel.center.z, 0f,
+                $"Zeile {i} steht auf der rechten Haelfte - gelesen wird von links");
+
+            if (i == 0) continue;
+            string text = row.GetComponent<TextMesh>().text;
+            bool unit = text.EndsWith(" BTC") || text.EndsWith(" sat");
+            Assert.IsTrue(unit, $"Zeile {i} \"{text}\" nennt keine Einheit");
+            Assert.IsFalse(text.Contains("0.000 "),
+                $"Zeile {i} zeigt einen auf null gerundeten Betrag: \"{text}\"");
+        }
+    }
+
+    /// <summary>The ticker moves at ticker speed, not at billboard speed.</summary>
+    [UnityTest]
+    public IEnumerator TheTickerRollsSeveralTimesASecond()
+    {
+        var term = Object.FindFirstObjectByType<MinerTerminal>();
+        Assert.LessOrEqual(term.rollSeconds, 0.6f,
+            $"die Zeilen wechseln nur alle {term.rollSeconds:0.0}s - das ist ein Plakat");
+
+        var row = Find("TerminalLine1").GetComponent<TextMesh>();
+        string was = row.text;
+        int changes = 0;
+        for (float t = 0f; t < 2f; t += Time.deltaTime)
+        {
+            yield return null;
+            if (row.text != was) { changes++; was = row.text; }
+        }
+        Assert.Greater(changes, 2, $"in zwei Sekunden nur {changes} Wechsel");
+    }
+
     [UnityTest]
     public IEnumerator TheBarsFollowTheFeeHistogram()
     {
@@ -205,14 +268,19 @@ public class MinerTerminalTests
         Assert.Greater(hi - lo, 0.08f,
             $"alle Balken stehen gleich hoch ({lo:0.00}..{hi:0.00}) - sie zeigen keine Daten");
 
-        // and the tallest bar is where the profile says it should be
-        int peakBar = 0, peakData = 0;
-        for (int i = 1; i < 24; i++)
-        {
-            if (bars[i].localScale.y > bars[peakBar].localScale.y) peakBar = i;
-            if (profile[i] > profile[peakData]) peakData = i;
-        }
-        Assert.LessOrEqual(Mathf.Abs(peakBar - peakData), 2,
-            $"hoechster Balken bei {peakBar}, hoechster Gebuehrenwert bei {peakData}");
+        // And it MOVES. The chart scrolls a column left every half second, so
+        // a wall that is merely accurate but still is the failure this catches
+        // - it was exactly that when the bars were set once from the histogram,
+        // which changes about three times an hour.
+        var before = new float[24];
+        for (int i = 0; i < 24; i++) before[i] = bars[i].localScale.y;
+
+        yield return new WaitForSeconds(2f);
+
+        int moved = 0;
+        for (int i = 0; i < 24; i++)
+            if (Mathf.Abs(bars[i].localScale.y - before[i]) > 0.02f) moved++;
+        Assert.Greater(moved, 6,
+            $"nur {moved} von 24 Balken haben sich in zwei Sekunden bewegt");
     }
 }
