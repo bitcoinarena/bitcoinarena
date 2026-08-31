@@ -223,7 +223,8 @@ public class ScoreTests
         }
 
         Assert.AreEqual(0f, peak, 0.001f,
-            $"a parked truck on the frontline earned at {peak:0.00}/s");
+            $"a parked truck on the frontline earned at {peak:0.00}");
+        Assert.IsFalse(_score.MakingProgress, "Stillstand gilt als Fortschritt");
     }
 
     /// <summary>The apron is safe ground and pays nothing, wherever the tape puts the front.</summary>
@@ -244,6 +245,52 @@ public class ScoreTests
             Assert.AreEqual(0f, _score.Rate, 0.001f,
                 "der Spawnpunkt zahlt Exposition");
         }
+    }
+
+    /// <summary>
+    /// Laps earn nothing.
+    ///
+    /// Once through the fighting a player could turn round and circle in the
+    /// corridor, and as a time integral that kept paying: circling tripled the
+    /// exposure term while the time term only halved, so stalling was worth
+    /// doing. Exposure is now integrated over ground made good against a
+    /// high-water mark, so a lap covers no new ground and earns accordingly -
+    /// while the round clock runs on regardless.
+    /// </summary>
+    [UnityTest]
+    public IEnumerator DrivingInCirclesEarnsNothing()
+    {
+        yield return Launch();
+
+        // one honest run down the corridor, to build a mark to beat
+        yield return Hold(0f, 3f);
+        float earned = _score.Exposure;
+        Assert.Greater(earned, 0.02f, "das Fixture ist gar nicht erst vorangekommen");
+
+        // Now circle on the seam. The FIRST lap legitimately reaches further
+        // than anything before it - that arc is real ground and is supposed to
+        // pay. What must earn nothing is every lap after it, so the first is
+        // ridden out and only the repeats are measured.
+        var rb = _truck.GetComponent<Rigidbody>();
+        float cx = rb.position.x;
+        IEnumerator Circle(float seconds)
+        {
+            for (float t = 0f; t < seconds; t += Time.deltaTime)
+            {
+                float x = cx + Mathf.Sin(t * 3f) * 18f;
+                rb.position = new Vector3(x, rb.position.y, _field.FrontlineZ(x));
+                yield return null;
+            }
+        }
+
+        yield return Circle(2.5f);                 // first lap: allowed to pay
+        float afterFirstLap = _score.Exposure;
+
+        yield return Circle(6f);                   // and now round and round
+
+        Assert.Less(_score.Exposure - afterFirstLap, 0.005f,
+            $"sechs Sekunden im Kreis brachten noch {_score.Exposure - afterFirstLap:0.000} Exposition");
+        Assert.IsFalse(_score.MakingProgress, "eine Runde im Kreis gilt als Fortschritt");
     }
 
     /// <summary>

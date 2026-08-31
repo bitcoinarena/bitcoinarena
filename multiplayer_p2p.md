@@ -1502,20 +1502,32 @@ E            = clamp01( E_raw / E_reference )
 `E_reference` is the exposure of a full run spent on the seam at zero heat,
 and is a Round Contract constant.
 
-Two guards belong in `rate(t)`, and playtesting found both the hard way:
+**Integrate over ground made good, not over time.** Playtesting broke the
+time integral twice, and the second break was not fixable by tuning:
 
 ```text
-rate(t) = 0   within spawn_free_radius of the start
-rate(t) = 0   below min_speed
+progress(t) = max(0, x(t) − high_water_mark)     high_water_mark := max x so far
+E_raw       = Σ proximity · (1 + heat) · progress
+E_raw      += 0   within spawn_free_radius of the start
 ```
 
-The frontline moves with the chain state, so it can drift within a few dozen
-metres of the spawn point — at which point a freshly loaded truck, parked and
-still under spawn protection, accrues exposure for doing nothing whatsoever.
-And without the speed floor the strongest opening is to stop on the seam and
-wait, which is neither driving nor a decision. Exposure is meant to price
-*hauling freight through* a battle, not standing near one; both constants
-belong in the Round Contract alongside the rest.
+As a time integral, exposure paid for *presence*. Parked on the seam, a
+loaded truck scored for standing still — and the frontline moves with chain
+state, so it can drift within a few dozen metres of the spawn point and pay a
+player who has not yet moved. Worse, once through the fighting a player could
+simply circle: dawdling roughly tripled `E` while `T` at a 0.5 floor only
+halved, so stalling was **net positive**. Tightening `T` alone cannot fix
+that; it is a race between two clamps.
+
+Against a high-water mark a lap covers no new ground and earns exactly
+nothing, while the round clock runs on regardless. The time floor drops to
+0.25 as well, so stalling is unambiguously negative rather than merely less
+good. `E_reference` becomes a distance — the length of the run — and
+`spawn_free_radius` joins the Round Contract constants.
+
+The general lesson for anyone writing a scoring function here: **any term
+integrated over time can be farmed by taking longer.** Integrate over
+progress the player cannot repeat.
 
 Multiplicative is the whole point. Under an additive score a fast, full, safe
 run out-scores a slow, damaged, brave one — which is precisely the inversion

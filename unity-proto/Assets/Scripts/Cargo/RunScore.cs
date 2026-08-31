@@ -33,9 +33,9 @@ public class RunScore : MonoBehaviour
              "Beyond this the run earns nothing at all.")]
     public float corridorHalfWidth = 46f;
 
-    [Tooltip("Seam-seconds for a full exposure score. A run spent entirely on " +
-             "the frontline at zero heat reaches E = 1 after this long.")]
-    public float exposureReference = 34f;
+    [Tooltip("Seam-metres for a full exposure score. A run that covers the " +
+             "whole distance to the gate along the frontline reaches E = 1.")]
+    public float exposureReference = 190f;
 
     [Tooltip("Par time for the run, in seconds. Faster than this scores above 1.")]
     public float referenceSeconds = 65f;
@@ -44,13 +44,15 @@ public class RunScore : MonoBehaviour
              "however close the frontline drifts. The apron is safe ground.")]
     public float spawnFreeRadius = 22f;
 
-    [Tooltip("Below this speed in m/s the run earns no exposure. Sitting in " +
-             "the corridor is not the same as hauling freight through it.")]
-    public float minSpeed = 2.5f;
-
     public TruckController truck;
 
-    /// <summary>E in the spec: 0..1, how much of the corridor this run has eaten.</summary>
+    /// <summary>
+    /// True when the truck is further down the map than it has ever been this
+    /// run. Only then does exposure accrue.
+    /// </summary>
+    public bool MakingProgress { get; private set; }
+
+    /// <summary>E in the spec: 0..1, danger integrated over ground made good.</summary>
     public float Exposure => Mathf.Clamp01(_exposure / Mathf.Max(0.01f, exposureReference));
 
     /// <summary>
@@ -61,10 +63,17 @@ public class RunScore : MonoBehaviour
     /// </summary>
     public float Rate { get; private set; }
 
-    /// <summary>T in the spec, clamped to [0.5, 1.5].</summary>
+    /// <summary>
+    /// T in the spec, clamped to [0.25, 1.5].
+    ///
+    /// The floor used to be 0.5, which was not enough of a stick. Dawdling
+    /// could triple the exposure term while only halving this one, so taking
+    /// longer was worth doing. The round is timed anyway; this is where that
+    /// clock is allowed to bite.
+    /// </summary>
     public float TimeFactor =>
         _elapsed <= 0.01f ? 1.5f
-                          : Mathf.Clamp(referenceSeconds / _elapsed, 0.5f, 1.5f);
+                          : Mathf.Clamp(referenceSeconds / _elapsed, 0.25f, 1.5f);
 
     /// <summary>C in the spec: how full the bed is.</summary>
     public float CargoFactor => bay != null ? Mathf.Clamp01(bay.Fill) : 0f;
@@ -92,6 +101,7 @@ public class RunScore : MonoBehaviour
     public bool Running { get; private set; }
 
     float _exposure, _elapsed;
+    float _bestX = float.NegativeInfinity;
 
     void OnEnable()
     {
@@ -115,7 +125,12 @@ public class RunScore : MonoBehaviour
         bool live = bay != null && bay.IsLoaded
                     && (health == null || (!health.IsDestroyed && !health.IsInvulnerable));
 
-        if (!live) { Rate = 0f; Speed = 0f; _havePos = false; Running = false; return; }
+        if (!live)
+        {
+            Rate = 0f; Speed = 0f; _havePos = false;
+            MakingProgress = false; Running = false;
+            return;
+        }
 
         Running = true;
         _elapsed += Time.deltaTime;
@@ -124,15 +139,37 @@ public class RunScore : MonoBehaviour
         // has no previous position, and a respawn teleports - both would show
         // as an enormous speed, so the first sample is discarded.
         var here = courier != null ? courier.position : Vector3.zero;
-        Speed = _havePos && Time.deltaTime > 0f
+        bool first = !_havePos;
+        Speed = !first && Time.deltaTime > 0f
             ? Vector3.Distance(new Vector3(here.x, 0f, here.z),
                                new Vector3(_lastPos.x, 0f, _lastPos.z)) / Time.deltaTime
             : 0f;
         _lastPos = here;
         _havePos = true;
 
-        Rate = RateNow();
-        _exposure += Rate * Time.deltaTime;
+        // The high-water mark starts wherever the run starts. Left at negative
+        // infinity it would score the first frame as infinite progress.
+        if (first) { _bestX = here.x; MakingProgress = false; Rate = 0f; return; }
+
+        // Exposure is integrated over GROUND MADE GOOD, not over time, and
+        // only past the furthest point this run has reached.
+        //
+        // As a time integral it paid for presence, so once through the fighting
+        // a player could circle in the corridor and keep earning. The round is
+        // timed, but the time term alone could not price that out: circling
+        // tripled the exposure term while only halving the time one. Against a
+        // high-water mark, a lap earns exactly nothing - it covers no new
+        // ground - and the clock keeps running while it happens.
+        float x = here.x;
+        float gained = x - _bestX;
+        MakingProgress = gained > 0.0001f;
+        Rate = MakingProgress ? RateNow() : 0f;
+
+        if (MakingProgress)
+        {
+            _exposure += RateNow() * gained;
+            _bestX = x;
+        }
     }
 
     /// <summary>
@@ -156,12 +193,6 @@ public class RunScore : MonoBehaviour
         // not care whether you drove anywhere.
         if (truck != null &&
             Vector3.Distance(p, truck.spawnPosition) < spawnFreeRadius) return 0f;
-
-        // Nor does parking in the corridor count. The score is for hauling
-        // freight through a battle, not for idling in one: without this, the
-        // best play is to stop on the seam and wait, which is neither driving
-        // nor interesting.
-        if (Speed < minSpeed) return 0f;
 
         float dz = Mathf.Abs(p.z - field.FrontlineZ(p.x));
         float proximity = 1f - Mathf.Clamp01(dz / Mathf.Max(1f, corridorHalfWidth));
@@ -203,6 +234,8 @@ public class RunScore : MonoBehaviour
         Rate = 0f;
         Speed = 0f;
         _havePos = false;
+        MakingProgress = false;
+        _bestX = float.NegativeInfinity;   // set on the first live frame
         Running = false;
     }
 }

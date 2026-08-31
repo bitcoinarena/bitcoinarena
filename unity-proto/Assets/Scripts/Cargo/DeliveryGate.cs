@@ -32,7 +32,7 @@ public class DeliveryGate : MonoBehaviour
     [Tooltip("How long the arrival card is left alone before the loading bay " +
              "reopens over it. The card carries the score and its breakdown, " +
              "which is the only moment the player sees how the run was priced.")]
-    public float scoreHoldSeconds = 3.2f;
+    public float scoreHoldSeconds = 5.6f;
 
     public Material postMaterial;
 

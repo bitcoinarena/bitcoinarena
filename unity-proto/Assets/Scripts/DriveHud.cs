@@ -175,38 +175,77 @@ public class DriveHud : MonoBehaviour
                      : "CARGO  empty",
                  under, bay.IsLoaded ? Color.white : new Color(1f, 1f, 1f, 0.6f));
 
-        // the flash on arrival
-        if (gate.SinceDelivery < 2.6f)
-        {
-            float k = 1f - gate.SinceDelivery / 2.6f;
-            var big = new GUIStyle(GUI.skin.label)
-            {
-                alignment = TextAnchor.MiddleCenter,
-                fontStyle = FontStyle.Bold,
-                fontSize = Mathf.RoundToInt(Mathf.Min(w, h) * 0.10f),
-            };
-            big.normal.textColor = new Color(Up.r, Up.g, Up.b, k);
-            GUI.Label(new Rect(0f, h * 0.24f, w, big.fontSize * 1.6f),
-                      runScore != null ? $"DELIVERED  {runScore.LastScore:N0}"
-                                       : $"DELIVERED  +{gate.LastRun:N0} sat", big);
+        DrawArrivalCard(w, h);
+    }
 
-            // The breakdown is the whole point of showing a score at all: it
-            // is where the player reads WHY a careful full-bed run scored 40
-            // and a reckless half-empty one scored 700.
-            if (runScore != null)
-            {
-                var line = new GUIStyle(GUI.skin.label)
-                {
-                    alignment = TextAnchor.UpperCenter,
-                    fontSize = Mathf.RoundToInt(Mathf.Min(w, h) * 0.030f),
-                };
-                line.normal.textColor = new Color(1f, 1f, 1f, k * 0.9f);
-                GUI.Label(new Rect(0f, h * 0.24f + big.fontSize * 1.5f, w, line.fontSize * 1.8f),
-                          $"load {runScore.LastCargo:0.00}   ×   " +
-                          $"danger {runScore.LastExposure:0.00}   ×   " +
-                          $"speed {runScore.LastTime:0.00}   ×  1000", line);
-            }
-        }
+    /// <summary>
+    /// What just happened, on arrival: the freight delivered, the score earned,
+    /// and the arithmetic that produced it.
+    ///
+    /// The two are DIFFERENT things and the card used to conflate them - it
+    /// said "DELIVERED 412", which claims a score was hauled to the gate. What
+    /// was hauled is satoshis, to the miner; the score is what the run was
+    /// worth for doing it. So the headline names the freight and the score sits
+    /// underneath with its working.
+    ///
+    /// It is also on screen for five seconds rather than under three. The
+    /// breakdown is three factors and a product, which nobody reads in a
+    /// second and a half, and the loading bay used to arrive on top of it.
+    /// </summary>
+    void DrawArrivalCard(int w, int h)
+    {
+        const float Hold = 5f;
+        if (gate.SinceDelivery >= Hold) return;
+
+        // Full strength for most of it, then fade. A linear fade from the first
+        // frame spends the whole time getting harder to read.
+        float k = Mathf.Clamp01((Hold - gate.SinceDelivery) / (Hold * 0.28f));
+        int min = Mathf.Min(w, h);
+
+        var big = new GUIStyle(GUI.skin.label)
+        {
+            alignment = TextAnchor.UpperCenter,
+            fontStyle = FontStyle.Bold,
+            fontSize = Mathf.RoundToInt(min * 0.072f),
+        };
+        var mid = new GUIStyle(GUI.skin.label)
+        {
+            alignment = TextAnchor.UpperCenter,
+            fontStyle = FontStyle.Bold,
+            fontSize = Mathf.RoundToInt(min * 0.056f),
+        };
+        var line = new GUIStyle(GUI.skin.label)
+        {
+            alignment = TextAnchor.UpperCenter,
+            fontSize = Mathf.RoundToInt(min * 0.034f),
+        };
+
+        float y = h * 0.20f;
+
+        big.normal.textColor = new Color(Up.r, Up.g, Up.b, k);
+        GUI.Label(new Rect(0f, y, w, big.fontSize * 1.5f),
+                  $"DELIVERED  {gate.LastRun:N0} sat to the miner", big);
+        y += big.fontSize * 1.45f;
+
+        if (runScore == null) return;
+
+        mid.normal.textColor = new Color(1f, 0.86f, 0.35f, k);
+        GUI.Label(new Rect(0f, y, w, mid.fontSize * 1.4f),
+                  $"SCORE  +{runScore.LastScore:N0}", mid);
+        y += mid.fontSize * 1.35f;
+
+        // The working, which is the whole point of showing a score at all: it
+        // is where the player reads WHY a careful full run scored 40 and a
+        // reckless half-empty one scored 700.
+        line.normal.textColor = new Color(1f, 1f, 1f, k * 0.92f);
+        GUI.Label(new Rect(0f, y, w, line.fontSize * 1.7f),
+                  $"load {runScore.LastCargo:0.00}   ×   danger {runScore.LastExposure:0.00}" +
+                  $"   ×   speed {runScore.LastTime:0.00}   ×  1000", line);
+        y += line.fontSize * 1.7f;
+
+        line.normal.textColor = new Color(1f, 1f, 1f, k * 0.6f);
+        GUI.Label(new Rect(0f, y, w, line.fontSize * 1.7f),
+                  "the sats were your stake and came back — the score is what you earned", line);
     }
 
     /// <summary>
@@ -359,6 +398,11 @@ public class DriveHud : MonoBehaviour
         float rate = runScore.Rate;
         bool cold = rate < 0.03f;
 
+        // Two different reasons to earn nothing, and they need different
+        // advice. Out of the corridor: get closer to the fighting. In the
+        // corridor but not gaining ground: circling pays nothing, drive on.
+        bool stalled = !runScore.MakingProgress && runScore.RateNow() >= 0.03f;
+
         var label = new GUIStyle(_small) { alignment = TextAnchor.UpperRight, fontStyle = FontStyle.Bold };
         Shadowed(new Rect(box.x, box.y, box.width, lh),
                  $"DANGER  ×{e:0.00}", label,
@@ -395,7 +439,8 @@ public class DriveHud : MonoBehaviour
             float k = 0.55f + 0.45f * Mathf.Sin(Time.unscaledTime * 4.5f);
             float ww = Mathf.Min(w * 0.75f, 560f);
             Shadowed(new Rect(box.xMax - ww, box.yMax + 2f, ww, lh),
-                     "TOO FAR FROM THE FIGHTING  ·  EARNING NOTHING", warn,
+                     stalled ? "NO GROUND GAINED  ·  CIRCLING EARNS NOTHING"
+                             : "TOO FAR FROM THE FIGHTING  ·  EARNING NOTHING", warn,
                      new Color(1f, 0.42f, 0.36f, k));
         }
     }

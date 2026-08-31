@@ -434,18 +434,39 @@ public class LoadoutPanel : MonoBehaviour
         // three pieces of vocabulary to learn before the first run makes any
         // sense. LOAD, DANGER and SPEED say the same thing and need no glossary.
         GUI.Label(new Rect(rx, top - _small.fontSize * 1.35f, rw, _small.fontSize * 1.4f),
-                  "LOAD  ·  1 of 3 things you are scored on", lbl);
+                  "LOAD", lbl);
         GUI.Label(new Rect(rx, top - reward.fontSize * 0.1f, rw, reward.fontSize * 1.3f),
                   $"×{Mathf.Clamp01(bay.Fill):0.00}", reward);
 
+        // The formula, drawn in pieces so LOAD can be lit and the other two
+        // left grey.
+        //
+        // "1 of 3 things you are scored on" was a sentence to decode, and it
+        // did not survive contact with a player. Three words with one of them
+        // burning needs no decoding at all: you can see that you are setting
+        // one part, that there are two more, and that they are not yours yet.
+        var f = new GUIStyle(_small) { fontStyle = FontStyle.Bold };
+        var litC = new Color(1f, 0.86f, 0.35f);
+        var dimC = new Color(1f, 1f, 1f, 0.38f);
+        string[] parts = { "LOAD", "  ×  ", "DANGER", "  ×  ", "SPEED" };
+        var cols = new[] { litC, dimC, dimC, dimC, dimC };
+
+        float total = 0f;
+        foreach (var part in parts) total += f.CalcSize(new GUIContent(part)).x;
+        float fx = rx + rw - total;
+        float fy = top + reward.fontSize * 1.15f;
+        for (int i = 0; i < parts.Length; i++)
+        {
+            float pw = f.CalcSize(new GUIContent(parts[i])).x;
+            f.normal.textColor = cols[i];
+            GUI.Label(new Rect(fx, fy, pw + 1f, _small.fontSize * 1.5f), parts[i], f);
+            fx += pw;
+        }
+
         var sub = new GUIStyle(_small) { alignment = TextAnchor.LowerRight };
         sub.normal.textColor = new Color(1f, 1f, 1f, 0.7f);
-        GUI.Label(new Rect(rx, top + reward.fontSize * 1.15f, rw, _small.fontSize * 1.5f),
-                  "SCORE  =  LOAD × DANGER × SPEED", sub);
-        GUI.Label(new Rect(rx, top + reward.fontSize * 1.15f + _small.fontSize * 1.5f,
-                           rw, _small.fontSize * 1.5f),
-                  $"the {bay.FeeCarried:N0} sat you carry come back either way — drive for the score",
-                  sub);
+        GUI.Label(new Rect(rx, fy + _small.fontSize * 1.5f, rw, _small.fontSize * 1.5f),
+                  "you pick LOAD here — DANGER and SPEED you earn on the road", sub);
 
         // --- buttons ---------------------------------------------------------
         float by = panel.yMax - lh * 1.25f;
