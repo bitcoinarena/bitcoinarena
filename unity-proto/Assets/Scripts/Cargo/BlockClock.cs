@@ -60,6 +60,9 @@ public class BlockClock : MonoBehaviour
     /// <summary>Best block so far, or null.</summary>
     public Mined Best => Board.Count > 0 ? Board[0] : null;
 
+    /// <summary>Raised when the block is sealed. A run still out there has lost.</summary>
+    public System.Action BlockClosed;
+
     void Start()
     {
         Remaining = blockSeconds;
@@ -100,6 +103,14 @@ public class BlockClock : MonoBehaviour
         });
         Board.Sort((a, b) => b.sats.CompareTo(a.sats));
         if (Board.Count > 8) Board.RemoveRange(8, Board.Count - 8);
+
+        // The block closing is the round ending, and a run still on the road
+        // when it does has missed it. Announced here so the gate can throw the
+        // freight away and start the next one: without this the clock counted
+        // down for two minutes and then did nothing at all, which taught the
+        // player that time does not matter - and time is the only thing
+        // stopping a risk-free trickle from being the best play.
+        BlockClosed?.Invoke();
 
         PendingSats = 0;
         PendingBtc = 0;

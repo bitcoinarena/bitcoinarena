@@ -233,6 +233,10 @@ public class Bootstrap : MonoBehaviour
         var clock = gameObject.AddComponent<BlockClock>();
         clock.gate = _gate;
         clock.audioSource = Audio;
+        // The clock running out has to DO something, or it teaches the player
+        // that time is free - and time is the only cost left on dawdling.
+        clock.BlockClosed += _gate.MissTheBlock;
+        clock.BlockClosed += () => { if (_score != null) _score.Reset(); };
         hud.block = clock;
         Clock = clock;
 

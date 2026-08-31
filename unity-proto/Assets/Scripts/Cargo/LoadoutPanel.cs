@@ -58,10 +58,20 @@ public class LoadoutPanel : MonoBehaviour
     }
 
     /// <summary>Shut the yard and let the player go.</summary>
+    /// <summary>Unscaled time of the last roll-out, or a long time ago.</summary>
+    public float ConfirmedAt { get; private set; } = -99f;
+
+    /// <summary>Sats aboard at the moment of roll-out, for the send-off.</summary>
+    public long ConfirmedSats { get; private set; }
+
     public void Confirm()
     {
         if (bay == null || !bay.IsLoaded) return;      // nothing aboard, nothing to run
         IsOpen = false;
+        // Recorded here rather than read off the bay later: the bed is cleared
+        // on arrival, and the send-off should name what was actually taken on.
+        ConfirmedAt = Time.unscaledTime;
+        ConfirmedSats = bay.FeeCarried;
         if (yard != null) yard.Close();
         if (truck != null) truck.controlsLocked = false;
     }

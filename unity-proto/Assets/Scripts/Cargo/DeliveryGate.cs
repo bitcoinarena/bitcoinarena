@@ -53,6 +53,33 @@ public class DeliveryGate : MonoBehaviour
 
     public System.Action<long> Delivered;
 
+    /// <summary>Unscaled time the last run timed out, for the HUD notice.</summary>
+    public float MissedAt { get; private set; } = -99f;
+
+    /// <summary>Runs that ran out of block. Not deliveries, and not wrecks.</summary>
+    public int Missed { get; private set; }
+
+    /// <summary>
+    /// The block closed with freight still aboard: the run is over and it
+    /// scored nothing.
+    ///
+    /// This is what makes the clock mean something. Arriving late is now a
+    /// loss rather than a slightly worse arrival, which is the only thing that
+    /// prices out dawdling once exposure stops paying for it.
+    /// </summary>
+    public void MissTheBlock()
+    {
+        if (bay == null || !bay.IsLoaded) return;
+        if (health != null && health.IsDestroyed) return;
+
+        Missed++;
+        MissedAt = Time.unscaledTime;
+
+        bay.Clear();
+        if (truck != null) truck.Respawn();
+        _reopenAt = Time.unscaledTime + Mathf.Max(0f, scoreHoldSeconds * 0.55f);
+    }
+
     void Start() => Build();
 
     void Update()

@@ -176,6 +176,96 @@ public class DriveHud : MonoBehaviour
                  under, bay.IsLoaded ? Color.white : new Color(1f, 1f, 1f, 0.6f));
 
         DrawArrivalCard(w, h);
+        DrawSendOff(w, h);
+    }
+
+    /// <summary>
+    /// Time left in the block, directly under the price.
+    ///
+    /// The clock was a line in the top-left panel among five others, and it
+    /// counted down for two minutes and then did nothing - so it read as
+    /// decoration, which it now is not: the block closing ends the run. A
+    /// deadline that costs you the load has to be somewhere you cannot avoid
+    /// seeing, and it goes red and pulses in the last thirty seconds.
+    /// </summary>
+    void DrawBlockTimer(int w, int h, float y)
+    {
+        if (block == null || block.Remaining <= 0f) return;
+
+        int left = Mathf.CeilToInt(block.Remaining);
+        bool late = left <= 30;
+
+        var style = new GUIStyle(GUI.skin.label)
+        {
+            alignment = TextAnchor.UpperCenter,
+            fontStyle = FontStyle.Bold,
+            fontSize = Mathf.RoundToInt(Mathf.Clamp(Mathf.Min(w, h) * 0.055f, 22f, 46f)),
+        };
+
+        var colour = late
+            ? Color.Lerp(new Color(1f, 0.45f, 0.35f), new Color(1f, 0.2f, 0.15f),
+                         0.5f + 0.5f * Mathf.Sin(Time.unscaledTime * 6f))
+            : new Color(1f, 0.86f, 0.35f);
+
+        Shadowed(new Rect(0f, y, w, style.fontSize * 1.35f),
+                 $"BLOCK {block.Height:N0}   ·   {left / 60}:{left % 60:00}", style, colour);
+
+        var sub = new GUIStyle(_small) { alignment = TextAnchor.UpperCenter };
+        Shadowed(new Rect(0f, y + style.fontSize * 1.2f, w, _small.fontSize * 1.6f),
+                 late ? "DELIVER BEFORE THE BLOCK IS MINED — OR LOSE THE LOAD"
+                      : "the block is the round · arrive before it closes",
+                 sub, new Color(1f, 1f, 1f, late ? 0.95f : 0.6f));
+    }
+
+    /// <summary>
+    /// The send-off, on rolling out of the bay.
+    ///
+    /// The arrival card tells the player what a run was worth; without a
+    /// counterpart at the start, the run simply begins with the panel
+    /// vanishing. This names the freight in the same words the arrival uses -
+    /// sats, to the miners - so the two ends of a run are visibly the same
+    /// errand rather than two unrelated screens.
+    /// </summary>
+    void DrawSendOff(int w, int h)
+    {
+        if (loadout == null) return;
+        const float Hold = 3.4f;
+        float since = Time.unscaledTime - loadout.ConfirmedAt;
+        if (since < 0f || since >= Hold) return;
+
+        float k = Mathf.Clamp01((Hold - since) / (Hold * 0.3f));
+        int min = Mathf.Min(w, h);
+
+        int head = Mathf.RoundToInt(Mathf.Min(w * 0.034f, min * 0.060f));
+        var big = new GUIStyle(GUI.skin.label)
+        {
+            alignment = TextAnchor.UpperCenter, fontStyle = FontStyle.Bold, fontSize = head,
+        };
+        var sub = new GUIStyle(GUI.skin.label)
+        {
+            alignment = TextAnchor.UpperCenter, fontStyle = FontStyle.Bold,
+            fontSize = Mathf.RoundToInt(head * 0.78f),
+        };
+
+        float padY = head * 0.5f;
+        float cardW = Mathf.Min(w * 0.92f, head * 26f);
+        var card = new Rect((w - cardW) * 0.5f, h * 0.20f, cardW,
+                            padY * 2f + head * 1.3f + sub.fontSize * 1.3f);
+
+        GUI.color = new Color(0.02f, 0.03f, 0.05f, 0.8f * k);
+        GUI.DrawTexture(card, _flat);
+        GUI.color = new Color(1f, 0.86f, 0.35f, 0.5f * k);
+        GUI.DrawTexture(new Rect(card.x, card.y, card.width, 2f), _flat);
+        GUI.DrawTexture(new Rect(card.x, card.yMax - 2f, card.width, 2f), _flat);
+        GUI.color = Color.white;
+
+        big.normal.textColor = new Color(1f, 0.86f, 0.35f, k);
+        GUI.Label(new Rect(card.x, card.y + padY, card.width, head * 1.4f),
+                  $"DELIVERING  {loadout.ConfirmedSats:N0} sat  TO THE MINERS", big);
+
+        sub.normal.textColor = new Color(Up.r, Up.g, Up.b, k);
+        GUI.Label(new Rect(card.x, card.y + padY + head * 1.3f, card.width, sub.fontSize * 1.4f),
+                  "GOOD LUCK!", sub);
     }
 
     /// <summary>
@@ -195,57 +285,81 @@ public class DriveHud : MonoBehaviour
     void DrawArrivalCard(int w, int h)
     {
         const float Hold = 5f;
-        if (gate.SinceDelivery >= Hold) return;
+        bool missed = Time.unscaledTime - gate.MissedAt < Hold;
+        float since = missed ? Time.unscaledTime - gate.MissedAt : gate.SinceDelivery;
+        if (!missed && gate.SinceDelivery >= Hold) return;
 
         // Full strength for most of it, then fade. A linear fade from the first
         // frame spends the whole time getting harder to read.
-        float k = Mathf.Clamp01((Hold - gate.SinceDelivery) / (Hold * 0.28f));
+        float k = Mathf.Clamp01((Hold - since) / (Hold * 0.28f));
         int min = Mathf.Min(w, h);
 
+        // Sized off the WIDTH, not the smaller dimension.
+        //
+        // On a wide window min is the height, so the headline was scaled for a
+        // square and ran off both sides - "…to the miner" with the s missing.
+        // It is also drawn on a dark plate: the card lands over sky and
+        // explosions, and pale text on a fireball is unreadable however large.
+        int head = Mathf.RoundToInt(Mathf.Min(w * 0.040f, min * 0.070f));
         var big = new GUIStyle(GUI.skin.label)
         {
-            alignment = TextAnchor.UpperCenter,
-            fontStyle = FontStyle.Bold,
-            fontSize = Mathf.RoundToInt(min * 0.072f),
+            alignment = TextAnchor.UpperCenter, fontStyle = FontStyle.Bold, fontSize = head,
         };
         var mid = new GUIStyle(GUI.skin.label)
         {
-            alignment = TextAnchor.UpperCenter,
-            fontStyle = FontStyle.Bold,
-            fontSize = Mathf.RoundToInt(min * 0.056f),
+            alignment = TextAnchor.UpperCenter, fontStyle = FontStyle.Bold,
+            fontSize = Mathf.RoundToInt(head * 0.82f),
         };
         var line = new GUIStyle(GUI.skin.label)
         {
             alignment = TextAnchor.UpperCenter,
-            fontSize = Mathf.RoundToInt(min * 0.034f),
+            fontSize = Mathf.RoundToInt(head * 0.48f),
         };
 
-        float y = h * 0.20f;
+        float padY = head * 0.55f;
+        float cardH = padY * 2f + head * 1.35f + mid.fontSize * 1.3f
+                    + line.fontSize * 3.4f;
+        float cardW = Mathf.Min(w * 0.92f, head * 26f);
+        var card = new Rect((w - cardW) * 0.5f, h * 0.18f, cardW, cardH);
 
-        big.normal.textColor = new Color(Up.r, Up.g, Up.b, k);
-        GUI.Label(new Rect(0f, y, w, big.fontSize * 1.5f),
-                  $"DELIVERED  {gate.LastRun:N0} sat to the miner", big);
-        y += big.fontSize * 1.45f;
+        GUI.color = new Color(0.02f, 0.03f, 0.05f, 0.82f * k);
+        GUI.DrawTexture(card, _flat);
+        GUI.color = new Color(1f, 0.86f, 0.35f, 0.5f * k);
+        GUI.DrawTexture(new Rect(card.x, card.y, card.width, 2f), _flat);
+        GUI.DrawTexture(new Rect(card.x, card.yMax - 2f, card.width, 2f), _flat);
+        GUI.color = Color.white;
+
+        float y = card.y + padY;
+
+        big.normal.textColor = missed ? new Color(1f, 0.42f, 0.36f, k)
+                                      : new Color(Up.r, Up.g, Up.b, k);
+        GUI.Label(new Rect(card.x, y, card.width, head * 1.5f),
+                  missed ? "BLOCK MINED WITHOUT YOU"
+                         : $"DELIVERED  {gate.LastRun:N0} sat to the miners", big);
+        y += head * 1.35f;
 
         if (runScore == null) return;
 
         mid.normal.textColor = new Color(1f, 0.86f, 0.35f, k);
-        GUI.Label(new Rect(0f, y, w, mid.fontSize * 1.4f),
-                  $"SCORE  +{runScore.LastScore:N0}", mid);
-        y += mid.fontSize * 1.35f;
+        GUI.Label(new Rect(card.x, y, card.width, mid.fontSize * 1.4f),
+                  missed ? "SCORE  0" : $"SCORE  +{runScore.LastScore:N0}", mid);
+        y += mid.fontSize * 1.3f;
 
         // The working, which is the whole point of showing a score at all: it
         // is where the player reads WHY a careful full run scored 40 and a
         // reckless half-empty one scored 700.
         line.normal.textColor = new Color(1f, 1f, 1f, k * 0.92f);
-        GUI.Label(new Rect(0f, y, w, line.fontSize * 1.7f),
-                  $"load {runScore.LastCargo:0.00}   ×   danger {runScore.LastExposure:0.00}" +
-                  $"   ×   speed {runScore.LastTime:0.00}   ×  1000", line);
+        GUI.Label(new Rect(card.x, y, card.width, line.fontSize * 1.7f),
+                  missed ? "the freight never reached the block"
+                         : $"load {runScore.LastCargo:0.00}   ×   danger {runScore.LastExposure:0.00}" +
+                           $"   ×   speed {runScore.LastTime:0.00}   ×  1000", line);
         y += line.fontSize * 1.7f;
 
-        line.normal.textColor = new Color(1f, 1f, 1f, k * 0.6f);
-        GUI.Label(new Rect(0f, y, w, line.fontSize * 1.7f),
-                  "the sats were your stake and came back — the score is what you earned", line);
+        line.normal.textColor = new Color(1f, 1f, 1f, k * 0.62f);
+        GUI.Label(new Rect(card.x, y, card.width, line.fontSize * 1.7f),
+                  missed ? "your sats came back — beat the clock next block"
+                         : "the sats were your stake and came back — the score is what you earned",
+                  line);
     }
 
     /// <summary>
@@ -439,8 +553,13 @@ public class DriveHud : MonoBehaviour
             float k = 0.55f + 0.45f * Mathf.Sin(Time.unscaledTime * 4.5f);
             float ww = Mathf.Min(w * 0.75f, 560f);
             Shadowed(new Rect(box.xMax - ww, box.yMax + 2f, ww, lh),
-                     stalled ? "NO GROUND GAINED  ·  CIRCLING EARNS NOTHING"
-                             : "TOO FAR FROM THE FIGHTING  ·  EARNING NOTHING", warn,
+                     // Both open with NO SCORE and close with the action.
+                     // The previous pair buried the verdict in the middle -
+                     // "NO GROUND GAINED · CIRCLING EARNS NOTHING" - and the
+                     // eye lands on EARNING, which says the opposite of what
+                     // the line means.
+                     stalled ? "NO SCORE FOR LAPS  ·  HEAD FOR THE DROP-OFF"
+                             : "NO SCORE OUT HERE  ·  GET CLOSER TO THE FIGHTING", warn,
                      new Color(1f, 0.42f, 0.36f, k));
         }
     }
@@ -733,6 +852,8 @@ public class DriveHud : MonoBehaviour
                 : $"verbinde … ({market.Status})";
             Shadowed(new Rect(0, h * 0.015f + _price.fontSize * 1.12f, w, _sub.fontSize * 1.6f),
                      sub, _sub, chg >= 0 ? Up : Down);
+
+            DrawBlockTimer(w, h, h * 0.015f + _price.fontSize * 1.12f + _sub.fontSize * 1.55f);
         }
 
         // Everything the game HUD draws sits UNDER the loading window. IMGUI

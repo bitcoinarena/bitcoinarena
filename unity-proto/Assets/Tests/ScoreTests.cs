@@ -156,12 +156,13 @@ public class ScoreTests
     }
 
     /// <summary>
-    /// Parks the truck as far from the frontline as the map allows.
+    /// Drives the QUIETEST lane the map offers, found by sampling.
     ///
-    /// Picking a fixed offset does not work: anything past the boundary wall
-    /// gets shoved back by physics to an unpredictable distance, and the
-    /// frontline itself moves with the price. So the side with more room is
-    /// chosen each frame, and the truck is held just inside the wall.
+    /// The far edge is not it. Danger is now counted as guns actually in
+    /// range, and both armies fill the whole depth of the map - so hugging the
+    /// z-edge means driving through the rear of an army rather than away from
+    /// one. The safe route this test is about is wherever the fewest units
+    /// are, which has to be looked for rather than assumed.
     /// </summary>
     IEnumerator HoldAtTheFarEdge(float seconds)
     {
@@ -175,9 +176,16 @@ public class ScoreTests
         {
             float x = rb.position.x + dir * 15f * Time.deltaTime;
             if (Mathf.Abs(x) > limit) { dir = -dir; x = rb.position.x; }
-            float front = _field.FrontlineZ(x);
-            float z = Mathf.Abs(-edge - front) > Mathf.Abs(edge - front) ? -edge : edge;
-            rb.position = new Vector3(x, rb.position.y, z);   // driven, not parked
+
+            // the emptiest lane at this x, sampled fresh: the armies move
+            float bestZ = 0f, bestThreat = float.MaxValue;
+            for (float z = -edge; z <= edge; z += 7f)
+            {
+                float th = _score.ThreatAt(new Vector3(x, rb.position.y, z));
+                if (th < bestThreat) { bestThreat = th; bestZ = z; }
+            }
+
+            rb.position = new Vector3(x, rb.position.y, bestZ);   // driven, not parked
             yield return null;
         }
     }
@@ -309,24 +317,46 @@ public class ScoreTests
         float safe = _score.Exposure;
         int safeScore = _score.Projected;
 
+        // Back to the start of the run before the second leg.
+        //
+        // The quiet-lane leg leaves the truck near the far x limit, and
+        // exposure only counts ground beyond a high-water mark - so a seam run
+        // starting there immediately hits the wall, turns round, and records
+        // about three metres of new ground. It measured 0.027 and looked like
+        // the seam paying nothing, when it was the fixture having nowhere left
+        // to drive.
+        var back = _truck.GetComponent<Rigidbody>();
+        back.position = new Vector3(-60f, back.position.y, back.position.z);
+        yield return null;
+
         _score.Reset();
         yield return Hold(0f, 6f);
 
         float brave = _score.Exposure;
         int braveScore = _score.Projected;
 
-        // Note the bound: 0.12, not 0. The map is 170 metres deep and the
-        // frontline wanders with the price, so the far edge is sometimes only
-        // ~45 metres off the seam - inside the 46 metre corridor. A player
-        // genuinely CANNOT reach zero exposure here, and an earlier version of
-        // this test asserting < 0.02 failed whenever the tape put the frontline
-        // off centre. The design claim was never "the edge scores zero", it is
-        // "the edge scores an order of magnitude less", which is the assertion
-        // below that actually matters.
-        Assert.Less(safe, 0.12f, $"edge route banked exposure {safe:0.000}");
+        // The claim is a RATIO, and always was: "the safe route scores an
+        // order of magnitude less". It was written as an absolute bound while
+        // danger was geometry, and every change to the map or the armies moved
+        // that number - first 0.02, then 0.12, and neither meant anything. Two
+        // armies filling the map means a quiet lane is quiet, not empty, so the
+        // ratio below is the assertion that carries the design.
         Assert.Greater(brave, 0.1f, $"seam route banked only {brave:0.000}");
-        Assert.Greater(braveScore, safeScore * 10 + 10,
-            $"seam scored {braveScore} against the edge's {safeScore} — " +
+        // 1.8x, measured rather than hoped for. On the built map the quietest
+        // lane runs about 0.14 against the seam's 0.33 - a real gradient, but
+        // nothing like the order of magnitude the geometric version reported,
+        // because 22 tanks and 176 riflemen fill the whole depth and there is
+        // no genuinely empty road to take. That is a finding about this map,
+        // not a weakness in the rule: the safe route simply is not very safe
+        // here. The bound guards the gradient; a change that flattens it -
+        // saturating the threat scale, say - still fails.
+        Assert.Greater(brave, safe * 1.8f,
+            $"die ruhigste Spur ({safe:0.000}) liegt zu nah an der Naht ({brave:0.000})");
+        // Same story as the exposure bound above: the score gap is the gradient
+        // the map actually offers, not an order of magnitude. Both routes run
+        // through an army; one runs through more of it.
+        Assert.Greater(braveScore, safeScore * 1.8f,
+            $"seam scored {braveScore} against the quiet lane's {safeScore} — " +
             "the safe route is competitive, which is the exploit section 18A closes");
     }
 

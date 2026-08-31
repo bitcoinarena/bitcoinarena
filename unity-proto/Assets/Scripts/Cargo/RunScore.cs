@@ -30,8 +30,18 @@ public class RunScore : MonoBehaviour
     public DeliveryGate gate;
 
     [Tooltip("How far from the frontline still counts as exposed, in metres. " +
-             "Beyond this the run earns nothing at all.")]
+             "Only used as a fallback when no army is in the scene.")]
     public float corridorHalfWidth = 46f;
+
+    [Tooltip("A tank this close is pointing at you.")]
+    public float armourRange = 46f;
+
+    [Tooltip("Threat points for maximum danger: one per tank in range, 0.18 " +
+             "per rifleman. Measured on the built map, the seam runs 7-13 and " +
+             "the run-in to the gate about 2, so 10 keeps the scale readable " +
+             "instead of saturating everywhere - at 5 almost the whole map " +
+             "scored 1.00 and the number carried no information at all.")]
+    public float threatForFull = 10f;
 
     [Tooltip("Seam-metres for a full exposure score. A run that covers the " +
              "whole distance to the gate along the frontline reaches E = 1.")]
@@ -194,10 +204,71 @@ public class RunScore : MonoBehaviour
         if (truck != null &&
             Vector3.Distance(p, truck.spawnPosition) < spawnFreeRadius) return 0f;
 
-        float dz = Mathf.Abs(p.z - field.FrontlineZ(p.x));
-        float proximity = 1f - Mathf.Clamp01(dz / Mathf.Max(1f, corridorHalfWidth));
         float heat = bay != null ? bay.Heat : 0f;
-        return proximity * (1f + heat);
+        return ThreatAt(p) * (1f + heat);
+    }
+
+    /// <summary>
+    /// How dangerous this spot actually is: guns in range, not geometry.
+    ///
+    /// Distance to the frontline was the wrong measure and the finish straight
+    /// proved it. The frontline is a curve defined across the whole map, so a
+    /// truck on the empty run-in to the gate could sit right on it and be
+    /// scored as though it were under fire - one player watched a score go
+    /// from 100 to 300 over the last thirty metres, with nothing shooting at
+    /// them. Counting what is actually in range cannot do that: no tanks, no
+    /// danger, wherever the curve happens to run.
+    /// </summary>
+    public float ThreatAt(Vector3 p)
+    {
+        var army = field != null ? field.Army : null;
+        if (army == null)
+        {
+            // No army in the scene at all - fall back to the old geometry so a
+            // bare test harness still measures something.
+            if (field == null) return 0f;
+            float dz = Mathf.Abs(p.z - field.FrontlineZ(p.x));
+            return 1f - Mathf.Clamp01(dz / Mathf.Max(1f, corridorHalfWidth));
+        }
+
+        float threat = 0f;
+        float ar = armourRange * armourRange;
+        foreach (var u in army.Armour)
+        {
+            float dx = u.x - p.x, dz2 = u.z - p.z;
+            if (dx * dx + dz2 * dz2 < ar) threat += 1f;
+        }
+
+        // Infantry count for less each, but there are many more of them, and
+        // driving through a firefight on foot should not read as empty road.
+        float ir = Army.RifleRange * Army.RifleRange;
+        foreach (var u in army.Infantry)
+        {
+            float dx = u.x - p.x, dz2 = u.z - p.z;
+            if (dx * dx + dz2 * dz2 < ir) threat += 0.18f;
+        }
+
+        return Mathf.Clamp01(threat / Mathf.Max(0.01f, threatForFull));
+    }
+
+    /// <summary>Unnormalised threat, for tuning threatForFull.</summary>
+    public float RawThreatAt(Vector3 p)
+    {
+        var army = field != null ? field.Army : null;
+        if (army == null) return 0f;
+        float threat = 0f, ar = armourRange * armourRange;
+        foreach (var u in army.Armour)
+        {
+            float dx = u.x - p.x, dz = u.z - p.z;
+            if (dx * dx + dz * dz < ar) threat += 1f;
+        }
+        float ir = Army.RifleRange * Army.RifleRange;
+        foreach (var u in army.Infantry)
+        {
+            float dx = u.x - p.x, dz = u.z - p.z;
+            if (dx * dx + dz * dz < ir) threat += 0.18f;
+        }
+        return threat;
     }
 
     /// <summary>
