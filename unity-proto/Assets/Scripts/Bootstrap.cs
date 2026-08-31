@@ -116,6 +116,19 @@ public class Bootstrap : MonoBehaviour
         territoryGo.SetActive(true);
         BuildArmies();
         BuildBoundary(_terrain);
+        // The post office goes up FIRST, because the truck has to be parked in
+        // one of its bays and the bay position is arithmetic, not geometry -
+        // so it is known before the building has finished streaming.
+        var postGo = new GameObject("PostOffice");
+        postGo.transform.SetParent(transform, false);
+        postGo.SetActive(false);
+        var post = postGo.AddComponent<PostOffice>();
+        post.terrain = _terrain;
+        post.postX = -_terrain.width * 0.44f;
+        post.feed = Object.FindFirstObjectByType<MempoolFeed>();
+        postGo.SetActive(true);
+        _post = post;
+
         var truck = BuildTruck(_terrain);
         Field.courier = truck.transform;
 
@@ -244,6 +257,24 @@ public class Bootstrap : MonoBehaviour
         clock.BlockClosed += () => { if (_score != null) _score.Reset(); };
         hud.block = clock;
         Clock = clock;
+        if (_post != null)
+        {
+            _post.clock = clock;
+            _post.market = Market;
+            if (_post.feed == null) _post.feed = Object.FindFirstObjectByType<MempoolFeed>();
+        }
+
+        // The free camera lives on the chase camera's own object, so it can
+        // switch the chase behaviour off and take over the same view.
+        var chaseCam = Object.FindFirstObjectByType<ChaseCamera>();
+        if (chaseCam != null)
+        {
+            var spec = chaseCam.gameObject.AddComponent<SpectatorCamera>();
+            spec.chase = chaseCam;
+            spec.truck = truck.transform;
+            spec.gate = _gate;
+            spec.post = _post;
+        }
 
         var splash = gameObject.AddComponent<SplashScreen>();
         splash.truck = _truck;
@@ -464,7 +495,11 @@ public class Bootstrap : MonoBehaviour
     WastedSequence _wasted;
     CargoBay _cargo;
     DeliveryGate _gate;
+    PostOffice _post;
     RunScore _score;
+
+    /// <summary>The building the run starts from.</summary>
+    public PostOffice Post => _post;
 
     /// <summary>The run score, for tests and for the HUD.</summary>
     public RunScore Score => _score;
@@ -527,7 +562,17 @@ public class Bootstrap : MonoBehaviour
     {
         float startX = -terrain.width * 0.44f;
         var root = new GameObject("Truck");
-        root.transform.position = new Vector3(startX, terrain.SampleWorld(startX, 0f) + 1.4f, 0f);
+
+        // Parked in a loading bay, not on an empty apron. Bay 1 while nobody
+        // else is on the map - which is always, until there is multiplayer.
+        // BayFor is arithmetic, not geometry, so it can be asked before the
+        // building's Start has run - which it has not, because SetActive only
+        // runs Awake immediately and Start waits for the frame. Gating on a
+        // flag set in Start left every truck parked at z = 0, 79 m from Bay 1.
+        var at = _post != null
+            ? _post.BayFor(PostOffice.SoloBay)
+            : new Vector3(startX, terrain.SampleWorld(startX, 0f) + 1.4f, 0f);
+        root.transform.position = at;
         root.transform.rotation = Quaternion.LookRotation(Vector3.right, Vector3.up);
 
         // its own layer, so a body it runs over cannot throw it into the air

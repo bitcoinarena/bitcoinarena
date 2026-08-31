@@ -29,6 +29,7 @@ public static class SetupAddressables
     public const string HelicopterKey = "model/helicopter";
     public const string BombKey = "model/bomb";
     public const string MinerKey = "model/miner";
+    public const string PostKey = "model/postoffice";
 
     [MenuItem("Tools/BTC Logistics/Set Up Streaming")]
     public static void Run()
@@ -70,6 +71,7 @@ public static class SetupAddressables
         // rockets. This is the most detailed of the bombs at 1154 triangles.
         marked += Mark(settings, group, BombKey, "rmb_23", "bomb");
         marked += Mark(settings, group, MinerKey, "megastructure", "bitcoin_miner");
+        marked += Mark(settings, group, PostKey, "post_office", "mempool_post");
 
         // The catalog ships INSIDE the player, and only the bundles are remote.
         //

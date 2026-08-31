@@ -55,6 +55,14 @@ public class SplashScreen : MonoBehaviour
         if (truck != null) truck.controlsLocked = true;
     }
 
+    /// <summary>Free camera, without starting the round.</summary>
+    public void Spectate()
+    {
+        var cam = Object.FindFirstObjectByType<SpectatorCamera>();
+        if (cam != null) cam.Enter();
+        Showing = false;
+    }
+
     public void Play()
     {
         Showing = false;
@@ -174,6 +182,20 @@ public class SplashScreen : MonoBehaviour
         PanelSkin.Border(play, PanelSkin.Gold);
         _btn.normal.textColor = PanelSkin.Gold;
         if (GUI.Button(play, "▶   PLAY", _btn)) Play();
+
+        // A free camera, offered before the run rather than hidden behind a
+        // key. The two buildings are the most expensive things in the project
+        // and normally only ever seen from behind a truck at windscreen
+        // height; flying round them is how you find out whether they are
+        // actually right.
+        var spec = new Rect(play.x, play.y - bh * 1.15f, bw, bh * 0.78f);
+        PanelSkin.Gradient(spec, new Color(0.10f, 0.14f, 0.20f, 0.95f),
+                                 new Color(0.06f, 0.09f, 0.13f, 0.95f));
+        PanelSkin.Border(spec, new Color(0.55f, 0.75f, 1f, 0.75f));
+        var was = _btn.normal.textColor;
+        _btn.normal.textColor = new Color(0.70f, 0.85f, 1f);
+        if (GUI.Button(spec, "◈   INSPECT", _btn)) Spectate();
+        _btn.normal.textColor = was;
 
         _sub.normal.textColor = new Color(1f, 1f, 1f, 0.42f);
         GUI.Label(new Rect(panel.x, play.y - _sub.fontSize * 1.7f, panel.width, _sub.fontSize * 1.5f),

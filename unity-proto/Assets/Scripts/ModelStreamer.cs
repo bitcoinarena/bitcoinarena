@@ -26,6 +26,7 @@ public class ModelStreamer : MonoBehaviour
     public const string HelicopterKey = "model/helicopter";
     public const string BombKey = "model/bomb";
     public const string MinerKey = "model/miner";
+    public const string PostKey = "model/postoffice";
 
     public enum State { Waiting, Loading, Loaded, Failed }
 
@@ -103,6 +104,7 @@ public class ModelStreamer : MonoBehaviour
         Items.Add(new Item { label = "Helicopter", key = HelicopterKey });
         Items.Add(new Item { label = "Bombs", key = BombKey });
         Items.Add(new Item { label = "Miner", key = MinerKey });
+        Items.Add(new Item { label = "Post Office", key = PostKey });
         StartCoroutine(Stream());
     }
 
@@ -166,6 +168,15 @@ public class ModelStreamer : MonoBehaviour
         {
             var gate = FindFirstObjectByType<DeliveryGate>();
             if (gate != null) gate.ShowMiner(go);
+        });
+
+        // The post office is behind the player at the start, so it can arrive
+        // last of all - the bay they are parked in is arithmetic and does not
+        // wait for it.
+        yield return Fetch(PostKey, go =>
+        {
+            var post = FindFirstObjectByType<PostOffice>();
+            if (post != null) post.Show(go);
         });
 
         Debug.Log($"[ModelStreamer] done: {Loaded} loaded, {Failed} failed");
