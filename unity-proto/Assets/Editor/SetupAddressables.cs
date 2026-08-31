@@ -28,6 +28,7 @@ public static class SetupAddressables
     public const string TruckKey = "model/truck";
     public const string HelicopterKey = "model/helicopter";
     public const string BombKey = "model/bomb";
+    public const string MinerKey = "model/miner";
 
     [MenuItem("Tools/BTC Logistics/Set Up Streaming")]
     public static void Run()
@@ -68,6 +69,7 @@ public static class SetupAddressables
         // tail, i.e. a free-fall bomb - and around 5 at thirty units, i.e.
         // rockets. This is the most detailed of the bombs at 1154 triangles.
         marked += Mark(settings, group, BombKey, "rmb_23", "bomb");
+        marked += Mark(settings, group, MinerKey, "megastructure", "bitcoin_miner");
 
         // The catalog ships INSIDE the player, and only the bundles are remote.
         //

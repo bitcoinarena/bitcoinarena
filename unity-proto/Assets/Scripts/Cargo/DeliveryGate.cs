@@ -40,8 +40,32 @@ public class DeliveryGate : MonoBehaviour
              "posts and a beam, so the scene still builds on a fresh clone.")]
     public GameObject minerModel;
 
-    // Measured off the imported model rather than guessed. The facade sits at
-    // local x 0..4.5 and the tunnel mouth is the hole in it.
+    [Tooltip("Height only. The model is 134 m tall as authored, which fills " +
+             "the upper half of a phone screen; 0.78 gives the sky back.")]
+    public float minerHeightScale = 0.78f;
+
+    /// <summary>
+    /// Height, and ONLY height.
+    ///
+    /// Scaling the building uniformly was the obvious thing and it opened a
+    /// hole in the map: at 0.75 the shell spans 126 m against the map's 170,
+    /// leaving 22 m of clear ground down each side to drive around the whole
+    /// building through. Width and depth therefore stay at 1, and the fans go
+    /// very slightly oval - which at 90 m tall and 200 m away nobody will ever
+    /// see, whereas a way round the goal everybody would find.
+    /// </summary>
+    Vector3 MinerScale => new Vector3(1f, minerHeightScale, 1f);
+
+    /// <summary>
+    /// The model faces +X as imported, and the truck drives +X - so it arrives
+    /// at the back. glTFast negates X on import: ground_entry_marking is at
+    /// glTF -23 and lands at Unity +23, which puts the approach apron behind
+    /// the building. Half a turn fixes it, and the collision shell turns with
+    /// it so every local offset below stays valid.
+    /// </summary>
+    static readonly Quaternion FaceThePlayer = Quaternion.Euler(0f, 180f, 0f);
+
+    // Measured off the imported model rather than guessed, at scale 1.
     const float MouthHalfWidth = 40f;    // local z -40 .. +40
     const float MouthHeight = 26f;       // local y  -1.2 .. 26
     const float ShellHalfWidth = 84.4f;  // local z -84.4 .. +84.4
@@ -63,6 +87,37 @@ public class DeliveryGate : MonoBehaviour
     public float SinceDelivery { get; private set; } = 999f;
 
     public System.Action<long> Delivered;
+
+    [Tooltip("True when the miner is expected to arrive over Addressables, " +
+             "so the fallback posts are not drawn in the meantime.")]
+    public bool streamed = true;
+
+    /// <summary>
+    /// The megastructure has arrived from the streamer: put it up.
+    ///
+    /// Streamed for the same reason the tank is - it is 800 KB of building
+    /// that nobody needs in the first frame, and the initial download is what
+    /// decides whether a phone on 5G ever sees the game at all. The collision
+    /// shell does NOT wait for it: the wall is up from Start, so the run can
+    /// never be driven through a hole that the model was going to fill.
+    /// </summary>
+    public void ShowMiner(GameObject model)
+    {
+        if (model == null || _minerUp) return;
+        minerModel = model;
+        _minerUp = true;
+
+        foreach (var n in new[] { "GatePostLeft", "GatePostRight", "GateBeam" })
+        {
+            var old = transform.Find(n);
+            if (old != null) Destroy(old.gameObject);
+        }
+
+        float ground = terrain != null ? terrain.SampleSurface(gateX, 0f) : 0f;
+        BuildMiner(ground);
+    }
+
+    bool _minerUp;
 
     /// <summary>Unscaled time the last run timed out, for the HUD notice.</summary>
     public float MissedAt { get; private set; } = -99f;
@@ -156,6 +211,12 @@ public class DeliveryGate : MonoBehaviour
     {
         float ground = terrain != null ? terrain.SampleSurface(gateX, 0f) : 0f;
 
+        // The mouth is the goal, so the trigger cannot be wider than the mouth.
+        // Scaling the building without this left 34 m of trigger either side of
+        // centre against a 30 m half-opening, and the corners of the delivery
+        // line sat inside solid wall.
+        halfMouth = Mathf.Min(halfMouth, MouthHalfWidth - 3f);
+
         // The wall goes up whether or not the model does.
         //
         // Collision is what makes the end of the map a building rather than a
@@ -166,7 +227,15 @@ public class DeliveryGate : MonoBehaviour
         // check for one.
         Wall(ground);
 
-        if (minerModel != null) { BuildMiner(ground); return; }
+        if (minerModel != null) { _minerUp = true; BuildMiner(ground); return; }
+
+        // Nothing else is drawn while the building streams in.
+        //
+        // The posts were a stand-in for a missing model, but the collision
+        // shell is already up and the miner arrives within seconds - two
+        // yellow posts appearing and then vanishing inside a megastructure
+        // reads as a bug, not as a placeholder.
+        if (streamed) return;
 
         const float height = 9f;
         Post(new Vector3(gateX, ground + height * 0.5f, -halfMouth),
@@ -188,8 +257,9 @@ public class DeliveryGate : MonoBehaviour
     void BuildMiner(float ground)
     {
         var miner = Instantiate(minerModel, new Vector3(gateX, ground, 0f),
-                                Quaternion.identity, transform);
+                                FaceThePlayer, transform);
         miner.name = "MinerMegastructure";
+        miner.transform.localScale = MinerScale;
 
         Spin(miner);
 
@@ -243,6 +313,8 @@ public class DeliveryGate : MonoBehaviour
         var shell = new GameObject("MinerShell");
         shell.transform.SetParent(transform, false);
         shell.transform.position = new Vector3(gateX, ground, 0f);
+        shell.transform.rotation = FaceThePlayer;
+        shell.transform.localScale = MinerScale;
         var wall = shell.transform;
 
         float side = (ShellHalfWidth - MouthHalfWidth) * 0.5f;

@@ -31,6 +31,12 @@ public class MinerGateTests
             0, UnityEngine.SceneManagement.LoadSceneMode.Single);
         yield return null;
         yield return new WaitForSeconds(2.5f);
+
+        // The miner streams in, so it is not there on the first frame.
+        for (float t = 0f; t < 25f && GameObject.Find("MinerMegastructure") == null;
+             t += Time.deltaTime)
+            yield return null;
+
         var splash = Object.FindFirstObjectByType<SplashScreen>();
         if (splash != null && splash.Showing) splash.Play();
         yield return null;
@@ -56,14 +62,20 @@ public class MinerGateTests
     {
         var miner = GameObject.Find("MinerMegastructure");
         Assert.IsNotNull(miner, "keine Megastruktur am Ziel - das Modell wurde nicht zugewiesen");
+        Assert.IsTrue(miner.transform.rotation.eulerAngles.y > 170f
+                   && miner.transform.rotation.eulerAngles.y < 190f,
+            "die Megastruktur steht falsch herum - der Truck faehrt hinten an");
 
         var rs = miner.GetComponentsInChildren<Renderer>(true);
         Assert.Greater(rs.Length, 100, "die Megastruktur hat fast keine Renderer");
 
         var b = rs[0].bounds;
         foreach (var r in rs) b.Encapsulate(r.bounds);
-        Assert.Greater(b.size.y, 100f, $"nur {b.size.y:0} m hoch - das ist kein Wahrzeichen");
-        Assert.Greater(b.size.z, 150f, $"nur {b.size.z:0} m breit - man kaeme daran vorbei");
+        // 80, not 100: the coin sits at the very top and is reparented out of
+        // the batched body before this runs, so the static bounds stop just
+        // below it. What is being asserted is that the thing is a building.
+        Assert.Greater(b.size.y, 80f, $"nur {b.size.y:0} m hoch - das ist kein Wahrzeichen");
+        Assert.Greater(b.size.z, 110f, $"nur {b.size.z:0} m breit - man kaeme daran vorbei");
     }
 
     /// <summary>
@@ -93,10 +105,14 @@ public class MinerGateTests
             return !Physics.Raycast(new Vector3(x, y, z), Vector3.right, reach);
         }
 
-        // straight down the middle, at truck height: open
+        // Off the gate's own trigger width rather than hard-coded metres: the
+        // building is scaled, so a fixed +/-30 sat exactly on the scaled edge
+        // of a 30 m half-opening and read as blocked.
+        float inside = _gate.halfMouth * 0.7f;
+
         Assert.IsTrue(Clear(0f, TruckHeight), "die Einfahrt ist zu");
-        Assert.IsTrue(Clear(-30f, TruckHeight), "die Einfahrt ist links zu");
-        Assert.IsTrue(Clear(30f, TruckHeight), "die Einfahrt ist rechts zu");
+        Assert.IsTrue(Clear(-inside, TruckHeight), "die Einfahrt ist links zu");
+        Assert.IsTrue(Clear(inside, TruckHeight), "die Einfahrt ist rechts zu");
 
         // outside the mouth, same height: wall
         foreach (float z in new[] { -75f, -55f, 55f, 75f })

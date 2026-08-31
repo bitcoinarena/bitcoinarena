@@ -78,10 +78,14 @@ public class DeliveryTests
         Assert.Greater(_gate.gateX, 100f, "das Ziel steht nicht am anderen Ende");
         Assert.Less(_truck.spawnPosition.x, 0f, "der Spawn liegt nicht gegenueber");
 
-        int posts = 0;
-        foreach (var t in _gate.GetComponentsInChildren<Transform>(true))
-            if (t.name.StartsWith("Gate")) posts++;
-        Assert.AreEqual(3, posts, "das Tor ist nicht zu sehen");
+        // The two posts and a beam are gone: the end of the map is a building
+        // now, and its collision shell is what is always there - the model
+        // itself streams in a few seconds later. So this asks for the wall
+        // rather than the posts.
+        var shell = _gate.transform.Find("MinerShell");
+        Assert.IsNotNull(shell, "keine Fassade am Ziel");
+        Assert.Greater(shell.GetComponentsInChildren<BoxCollider>(true).Length, 3,
+            "die Fassade hat zu wenige Kollisionsflaechen, um eine Wand zu sein");
     }
 
     [UnityTest]

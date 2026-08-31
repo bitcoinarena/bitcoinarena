@@ -25,6 +25,7 @@ public class ModelStreamer : MonoBehaviour
     public const string TruckKey = "model/truck";
     public const string HelicopterKey = "model/helicopter";
     public const string BombKey = "model/bomb";
+    public const string MinerKey = "model/miner";
 
     public enum State { Waiting, Loading, Loaded, Failed }
 
@@ -101,6 +102,7 @@ public class ModelStreamer : MonoBehaviour
 
         Items.Add(new Item { label = "Helicopter", key = HelicopterKey });
         Items.Add(new Item { label = "Bombs", key = BombKey });
+        Items.Add(new Item { label = "Miner", key = MinerKey });
         StartCoroutine(Stream());
     }
 
@@ -155,6 +157,15 @@ public class ModelStreamer : MonoBehaviour
         yield return Fetch(BombKey, go =>
         {
             if (army != null) army.SetBombPrefab(go);
+        });
+
+        // Last, deliberately. It is the biggest single asset and the furthest
+        // away - the player spends the first part of a run driving towards it,
+        // and the collision that makes it a wall is already in place.
+        yield return Fetch(MinerKey, go =>
+        {
+            var gate = FindFirstObjectByType<DeliveryGate>();
+            if (gate != null) gate.ShowMiner(go);
         });
 
         Debug.Log($"[ModelStreamer] done: {Loaded} loaded, {Failed} failed");

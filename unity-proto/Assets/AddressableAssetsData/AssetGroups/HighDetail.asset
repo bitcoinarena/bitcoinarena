@@ -15,6 +15,11 @@ MonoBehaviour:
   m_GroupName: HighDetail
   m_GUID: 02e5b451d3e334996bab058f229b52c4
   m_SerializeEntries:
+  - m_GUID: 4aa9f1e70838c4187b21623853434ea5
+    m_Address: model/miner
+    m_ReadOnly: 0
+    m_SerializedLabels: []
+    FlaggedDuringContentUpdateRestriction: 0
   - m_GUID: 7140d6bd1a3d53b4cb6f0f05526d7489
     m_Address: model/tank
     m_ReadOnly: 0
