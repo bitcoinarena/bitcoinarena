@@ -67,6 +67,19 @@ public class MinerTerminalTests
         Assert.Greater(Quaternion.Angle(Quaternion.identity, fan.localRotation), 1f,
             "der Luefter dreht sich gar nicht");
 
+        // Undistorted: the fan must carry exactly the building's own scale.
+        //
+        // It did not, and that was the actual misalignment. Static batching
+        // bakes transforms, so the moving parts were reparented out of the way
+        // first - but the miner is scaled (1, 0.45, 1) and turned half round,
+        // and a non-uniform scale under rotation cannot survive a change of
+        // parent. Unity approximates, and the blades came out sheared inside
+        // their rings.
+        var body = GameObject.Find("MinerMegastructure").transform;
+        Assert.Less(Vector3.Distance(fan.lossyScale, body.lossyScale), 0.02f,
+            $"der Luefter hat Skalierung {fan.lossyScale} statt {body.lossyScale} - " +
+            "er wurde beim Umhaengen verzerrt");
+
         // 1.4, measured at 1.24 with the axle correct.
         //
         // A fan with pitched blades legitimately sweeps a bigger box than any
@@ -116,6 +129,58 @@ public class MinerTerminalTests
         // and they are three DIFFERENT transactions, not the same one thrice
         Assert.AreNotEqual(lines[1].text, lines[2].text, "zwei Zeilen zeigen dasselbe");
         Assert.AreNotEqual(lines[2].text, lines[3].text, "zwei Zeilen zeigen dasselbe");
+    }
+
+    /// <summary>
+    /// The lettering fits on the panel, and faces out of it.
+    ///
+    /// Neither was true and both were visible from across the map: the header
+    /// stood three times the height of the screen and hung off the left edge,
+    /// and every line read back to front - MINING as ENINIM - because TextMesh
+    /// draws on its minus-Z face and the rows had been given the panel's own
+    /// orientation. Two things a screenshot catches instantly and no test did,
+    /// so here they are.
+    /// </summary>
+    [UnityTest]
+    public IEnumerator TheLetteringFitsThePanelAndFacesOut()
+    {
+        var screen = Find("terminal_screen");
+        Assert.IsNotNull(screen, "keine Anzeigeflaeche am Miner");
+
+        var feed = Object.FindFirstObjectByType<MempoolFeed>();
+        for (float t = 0f; t < 20f && (feed.Offers == null || feed.Offers.Count == 0);
+             t += Time.deltaTime)
+            yield return null;
+        yield return new WaitForSeconds(1f);
+
+        var panel = screen.GetComponent<Renderer>().bounds;
+
+        for (int i = 0; i < 4; i++)
+        {
+            var row = Find("TerminalLine" + i);
+            Assert.IsNotNull(row, $"Zeile {i} fehlt");
+            var mr = row.GetComponent<MeshRenderer>();
+            // z, not x: the panel faces along X, so the lettering lies in the
+            // YZ plane and its X extent is the thickness of nothing.
+            Assert.Greater(mr.bounds.size.z, 0.5f, $"Zeile {i} ist leer");
+
+            // inside the panel, with a little slack for the glyph overhang
+            var b = mr.bounds;
+            Assert.LessOrEqual(b.size.y, panel.size.y * 0.34f,
+                $"Zeile {i} ist {b.size.y:0.0} m hoch auf einer {panel.size.y:0.0} m " +
+                "hohen Flaeche");
+            Assert.LessOrEqual(b.size.z, panel.size.z * 1.02f,
+                $"Zeile {i} ist {b.size.z:0.0} m breit und laeuft ueber die " +
+                $"{panel.size.z:0.0} m breite Flaeche hinaus");
+            Assert.Less(Mathf.Abs(b.center.y - panel.center.y), panel.size.y,
+                $"Zeile {i} steht ausserhalb der Flaeche");
+
+            // and reads the right way round: the text's own forward has to
+            // point the same way as the panel's outward face, not into it
+            float facing = Vector3.Dot(row.forward, -screen.forward);
+            Assert.Greater(facing, 0.5f,
+                $"Zeile {i} zeigt in die Wand - der Text wird spiegelverkehrt gelesen");
+        }
     }
 
     [UnityTest]

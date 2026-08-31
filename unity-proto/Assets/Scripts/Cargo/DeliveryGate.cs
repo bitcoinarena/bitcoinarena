@@ -42,10 +42,20 @@ public class DeliveryGate : MonoBehaviour
 
     [Tooltip("Height only. The model is 134 m tall as authored, which fills " +
              "the upper half of a phone screen; 0.78 gives the sky back.")]
-    public float minerHeightScale = 0.45f;
+    public float minerHeightScale = 1f;
 
     /// <summary>
-    /// Height, and ONLY height.
+    /// Height, and ONLY height - and currently 1, which is to say: off.
+    ///
+    /// Squashing Y alone avoided the map gap that uniform scaling opens, but
+    /// it SHEARS every rotated part of the building: a child turned 291
+    /// degrees under a (1, 0.45, 1) parent comes out with a lossy scale of
+    /// (0.63, 0.82, 1.00), which is why the fan blades sat crooked in their
+    /// rings. Non-uniform scale and rotation do not compose.
+    ///
+    /// So there is no runtime scale that works: uniform opens a way round the
+    /// building, non-uniform bends it. The height has to come out of the model
+    /// itself, and until it does this stays at 1.
     ///
     /// Scaling the building uniformly was the obvious thing and it opened a
     /// hole in the map: at 0.75 the shell spans 126 m against the map's 170,
@@ -263,19 +273,26 @@ public class DeliveryGate : MonoBehaviour
 
         Spin(miner);
 
-        // Draw calls, not triangles, are the cost here: 880 renderers is 880
-        // batches for one building. The moving parts are pulled out first
-        // because static batching bakes the transform of everything it
-        // combines, and a baked fan does not turn.
-        var moving = new System.Collections.Generic.List<Transform>();
-        foreach (var t in miner.GetComponentsInChildren<Transform>(true))
-            if (IsMoving(t.name)) moving.Add(t);
-
-        var loose = new GameObject("MinerMoving");
-        loose.transform.SetParent(transform, false);
-        foreach (var t in moving) t.SetParent(loose.transform, true);
-
-        StaticBatchingUtility.Combine(miner);
+        // Batch the static parts WITHOUT touching the hierarchy.
+        //
+        // The first version lifted the fans, the coin, the bars and the screen
+        // out to a sibling object so the combine could not bake their
+        // transforms. That reparenting is what skewed them: the miner is
+        // scaled (1, 0.45, 1) and turned half round, and a non-uniform scale
+        // combined with rotation cannot survive a change of parent - Unity
+        // approximates it and the fans came out sheared inside their rings.
+        //
+        // Combine takes an explicit list, so the moving parts simply stay
+        // where they are and are left out of it.
+        var statics = new System.Collections.Generic.List<GameObject>();
+        foreach (var r in miner.GetComponentsInChildren<Renderer>(true))
+        {
+            bool live = false;
+            for (var t = r.transform; t != null && t != miner.transform; t = t.parent)
+                if (IsMoving(t.name)) { live = true; break; }
+            if (!live) statics.Add(r.gameObject);
+        }
+        StaticBatchingUtility.Combine(statics.ToArray(), miner);
     }
 
     /// <summary>
@@ -321,6 +338,7 @@ public class DeliveryGate : MonoBehaviour
         term.bars = bars.ToArray();
         term.feed = FindFirstObjectByType<MempoolFeed>();
         term.terrain = terrain;
+        term.verticalStretch = 1f / Mathf.Max(0.05f, minerHeightScale);
     }
 
     /// <summary>

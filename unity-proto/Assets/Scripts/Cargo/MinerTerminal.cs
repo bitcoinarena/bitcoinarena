@@ -28,6 +28,11 @@ public class MinerTerminal : MonoBehaviour
 
     public Transform[] bars;
 
+    [Tooltip("Undoes the building's height squash on the lettering. The miner " +
+             "is scaled (1, 0.45, 1), and text inheriting that is legible but " +
+             "visibly squat.")]
+    public float verticalStretch = 1f;
+
     const int Lines = 4;                 // MINING + three transactions
     TextMesh[] _text;
     float _nextRoll;
@@ -54,23 +59,30 @@ public class MinerTerminal : MonoBehaviour
         if (font == null) font = Resources.GetBuiltinResource<Font>("Arial.ttf");
 
         _text = new TextMesh[Lines];
-        float[] rows = { 14f, 7f, 1f, -5f };
-        float[] size = { 1.35f, 1f, 1f, 1f };
+        // Local units on a 96 x 36 screen whose origin is its centre. The
+        // bars own everything below y = -6, so the four rows live above it.
+        float[] rows = { 13f, 5f, -0.5f, -6f };
+        float[] high = { 6.5f, 4.2f, 4.2f, 4.2f };
 
         for (int i = 0; i < Lines; i++)
         {
             var go = new GameObject("TerminalLine" + i);
             go.transform.SetParent(screen, false);
             go.transform.localPosition = new Vector3(-44f, rows[i], -0.2f);
-            go.transform.localRotation = Quaternion.identity;
+            // Half a turn: TextMesh draws on its -Z face, so a child sharing
+            // the quad's orientation faces INTO the building and is read
+            // through the panel - which is why MINING came out as ENINIM.
+            go.transform.localRotation = Quaternion.Euler(0f, 180f, 0f);
             go.layer = screen.gameObject.layer;
 
             var tm = go.AddComponent<TextMesh>();
             tm.font = font;
             tm.fontSize = 80;
-            tm.characterSize = 0.9f * size[i];
-            tm.anchor = TextAnchor.MiddleLeft;
-            tm.alignment = TextAlignment.Left;
+            tm.characterSize = 1f;      // real size comes from FitRow
+            // Anchored on the RIGHT because the row is turned round: what is
+            // left to the reader is +x to the flipped transform.
+            tm.anchor = TextAnchor.MiddleRight;
+            tm.alignment = TextAlignment.Right;
             tm.color = i == 0 ? new Color(0.42f, 1f, 0.55f) : new Color(0.60f, 1f, 0.72f);
             tm.text = i == 0 ? "MINING" : "";
 
@@ -81,26 +93,65 @@ public class MinerTerminal : MonoBehaviour
             _text[i] = tm;
         }
 
-        // Fitted by measurement, not by arithmetic: TextMesh sizing depends on
-        // the font atlas and does not follow characterSize in world units in
-        // any way worth predicting. Draw once, measure, scale to fit.
-        FitRow(0, 26f);
+        _rowHeight = high;
+        FitRow(0);
     }
 
-    void FitRow(int i, float targetHeight)
+    float[] _rowHeight;
+
+    /// <summary>
+    /// Scales a row to its target height, measured in the SCREEN's own units.
+    ///
+    /// The first version divided by Renderer.bounds, which is world space -
+    /// and the screen sits under a building scaled (1, 0.45, 1) and turned
+    /// ninety degrees, so the correction was applied through two transforms it
+    /// knew nothing about and the lettering came out three times the height of
+    /// the panel. The mesh's own bounds are in the text's local space and need
+    /// no such unpicking.
+    /// </summary>
+    void FitRow(int i)
     {
+        // Renderer.localBounds, NOT MeshFilter.sharedMesh.
+        //
+        // TextMesh manages its mesh internally and leaves sharedMesh null, so
+        // the whole fit routine was returning on its first line and had never
+        // run at all - which is why the header stood three times the height of
+        // the panel and a transaction line ran 107 m across a 96 m screen.
+        // localBounds is in the text object's own space, which is exactly the
+        // frame the scale below is expressed in.
         var mr = _text[i].GetComponent<MeshRenderer>();
-        float h = mr.bounds.size.y;
-        if (h > 0.001f)
-        {
-            float k = targetHeight / h * _text[i].transform.localScale.y;
-            _text[i].transform.localScale = Vector3.one * Mathf.Clamp(k, 0.05f, 40f);
-        }
+        if (mr == null) return;
+
+        var size = mr.localBounds.size;
+        if (size.y < 0.001f || size.x < 0.001f) return;
+
+        // Whichever runs out first, height or width.
+        //
+        // Fitting on height alone put a 24-character transaction line at 108 m
+        // across a 96 m panel - the header is six characters and fits at any
+        // height the row allows, a txid plus an amount does not.
+        const float Usable = 88f;                    // 96 wide, with a margin
+        float k = Mathf.Min(_rowHeight[i] / size.y, Usable / size.x);
+        k = Mathf.Clamp(k, 0.001f, 5f);
+        _text[i].transform.localScale = new Vector3(k, k * verticalStretch, k);
+
     }
+
+    int _refit;
 
     void Update()
     {
         Bars();
+
+        // Fitting is deferred a frame or two after the text changes.
+        //
+        // TextMesh rebuilds its mesh at the end of the frame, so measuring
+        // sharedMesh.bounds in the same frame as the assignment measures the
+        // PREVIOUS string - which is how a 24-character transaction line came
+        // out 107 m wide on a 96 m panel after being fitted against the width
+        // of the word MINING.
+        if (_refit > 0 && --_refit == 0)
+            for (int i = 0; i < Lines; i++) FitRow(i);
 
         if (Time.unscaledTime < _nextRoll) return;
         _nextRoll = Time.unscaledTime + rollSeconds;
@@ -128,8 +179,7 @@ public class MinerTerminal : MonoBehaviour
                 ? tx.txid.Substring(0, 16).ToUpperInvariant()
                 : (tx.txid ?? "");
             _text[row].text = $"{id}   ₿ {tx.Btc:0.000}";
-            if (row == 1) FitRow(1, 5.5f);
-            else _text[row].transform.localScale = _text[1].transform.localScale;
+            _refit = 2;
         }
     }
 
