@@ -44,6 +44,10 @@ public class Bootstrap : MonoBehaviour
     [Tooltip("Crates on the truck bed. Falls back to a cardboard brown.")]
     public Material crateMaterial;
 
+    [Tooltip("The miner megastructure at the far end. Assigned by " +
+             "BuildPrototypeScene; null falls back to posts and a beam.")]
+    public GameObject minerModel;
+
     [Tooltip("The delivery gate. Falls back to a high-visibility yellow.")]
     public Material gateMaterial;
 
@@ -190,6 +194,7 @@ public class Bootstrap : MonoBehaviour
         gate.fx = Fx;
         gate.gateX = _terrain.width * 0.44f;
         gate.postMaterial = gateMaterial;
+        gate.minerModel = minerModel;
         gateGo.SetActive(true);
         _gate = gate;
 

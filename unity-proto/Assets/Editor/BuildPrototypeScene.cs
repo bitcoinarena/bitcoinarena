@@ -74,6 +74,11 @@ public static class BuildPrototypeScene
         // The freight boxes are small and are NOT streamed - they are needed
         // the moment the loading bay opens, which is the first thing the player
         // sees, so they ride in the build.
+        boot.minerModel = FindPrefab("bitcoin_miner_megastructure", "megastructure", "miner");
+        Debug.Log(boot.minerModel != null
+            ? "[BuildPrototypeScene] miner: " + AssetDatabase.GetAssetPath(boot.minerModel)
+            : "[BuildPrototypeScene] no miner model - the gate stays two posts and a beam");
+
         boot.boxPrefab = FindPrefab("box_1_browntape", "box_1", "cardboard", "box");
         Debug.Log(boot.boxPrefab != null
             ? "[BuildPrototypeScene] cardboard boxes: " + AssetDatabase.GetAssetPath(boot.boxPrefab)

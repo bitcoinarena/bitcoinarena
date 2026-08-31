@@ -1,0 +1,126 @@
+using System.Collections;
+using NUnit.Framework;
+using UnityEngine;
+using UnityEngine.TestTools;
+
+/// <summary>
+/// The building at the end of the run, and the one way through it.
+///
+/// The point of replacing the gate with a megastructure is that it is a wall:
+/// the freight goes in through the tunnel mouth or it does not go in at all.
+/// A gate you can drive around is scenery, and the delivery trigger would then
+/// be reachable without ever entering the thing.
+/// </summary>
+public class MinerGateTests
+{
+    DeliveryGate _gate;
+    TruckController _truck;
+
+    [UnitySetUp]
+    public IEnumerator SetUp()
+    {
+        // The SAVED scene, not a fresh Bootstrap.
+        //
+        // minerModel is a serialized reference assigned by BuildPrototypeScene,
+        // so a Bootstrap created with AddComponent has it null and the building
+        // never appears. The collision is checked either way - it no longer
+        // depends on the model - but "the miner is there" can only be asked of
+        // the scene that actually carries it.
+        LogAssert.ignoreFailingMessages = true;
+        UnityEngine.SceneManagement.SceneManager.LoadScene(
+            0, UnityEngine.SceneManagement.LoadSceneMode.Single);
+        yield return null;
+        yield return new WaitForSeconds(2.5f);
+        var splash = Object.FindFirstObjectByType<SplashScreen>();
+        if (splash != null && splash.Showing) splash.Play();
+        yield return null;
+        _gate = Object.FindFirstObjectByType<DeliveryGate>();
+        _truck = Object.FindFirstObjectByType<TruckController>();
+        yield return null;
+        LogAssert.ignoreFailingMessages = false;
+    }
+
+    [UnityTearDown]
+    public IEnumerator TearDown()
+    {
+        Time.timeScale = 1f;
+        LogAssert.ignoreFailingMessages = true;
+        foreach (var go in Object.FindObjectsByType<GameObject>(FindObjectsSortMode.None))
+            if (go.transform.parent == null) Object.Destroy(go);
+        yield return null;
+        LogAssert.ignoreFailingMessages = false;
+    }
+
+    [Test]
+    public void TheMinerIsBuiltAndIsHuge()
+    {
+        var miner = GameObject.Find("MinerMegastructure");
+        Assert.IsNotNull(miner, "keine Megastruktur am Ziel - das Modell wurde nicht zugewiesen");
+
+        var rs = miner.GetComponentsInChildren<Renderer>(true);
+        Assert.Greater(rs.Length, 100, "die Megastruktur hat fast keine Renderer");
+
+        var b = rs[0].bounds;
+        foreach (var r in rs) b.Encapsulate(r.bounds);
+        Assert.Greater(b.size.y, 100f, $"nur {b.size.y:0} m hoch - das ist kein Wahrzeichen");
+        Assert.Greater(b.size.z, 150f, $"nur {b.size.z:0} m breit - man kaeme daran vorbei");
+    }
+
+    /// <summary>
+    /// A ray fired along the road at the height of a truck: clear through the
+    /// mouth, blocked everywhere else across the width of the map.
+    /// </summary>
+    [Test]
+    public void OnlyTheTunnelMouthIsOpen()
+    {
+        float x = _gate.gateX - 60f;
+        const float TruckHeight = 3f;
+
+        // Just past the facade, and no further. A 130 m ray runs on to the
+        // map's own eastern boundary wall, which sits behind the building -
+        // so every lane came back blocked, including the open one, and the
+        // test was measuring the edge of the world rather than the miner.
+        float reach = _gate.gateX + 8f - x;
+
+        // Fired at truck height ABOVE THE GROUND AT THAT z, not at an absolute
+        // altitude: the terrain is mempool relief and rolls, so one fixed y is
+        // above the road in one lane and under it in the next.
+        var terrain = Object.FindFirstObjectByType<MempoolTerrain>();
+
+        bool Clear(float z, float above)
+        {
+            float y = terrain.SampleSurface(x, z) + above;
+            return !Physics.Raycast(new Vector3(x, y, z), Vector3.right, reach);
+        }
+
+        // straight down the middle, at truck height: open
+        Assert.IsTrue(Clear(0f, TruckHeight), "die Einfahrt ist zu");
+        Assert.IsTrue(Clear(-30f, TruckHeight), "die Einfahrt ist links zu");
+        Assert.IsTrue(Clear(30f, TruckHeight), "die Einfahrt ist rechts zu");
+
+        // outside the mouth, same height: wall
+        foreach (float z in new[] { -75f, -55f, 55f, 75f })
+            Assert.IsFalse(Clear(z, TruckHeight),
+                $"bei z={z:0} kann man an der Einfahrt vorbeifahren");
+
+        // over the lintel: wall
+        Assert.IsFalse(Clear(0f, 60f), "ueber dem Sturzträger ist offen");
+    }
+
+    /// <summary>Flat out at the facade beside the mouth stops the truck.</summary>
+    [UnityTest]
+    public IEnumerator DrivingAtTheFacadeDoesNotGetYouIn()
+    {
+        var rb = _truck.GetComponent<Rigidbody>();
+        rb.position = new Vector3(_gate.gateX - 40f, rb.position.y + 1f, 62f);
+        yield return new WaitForSeconds(0.3f);
+
+        _truck.useExternalInput = true;
+        _truck.externalThrottle = 1f;
+        yield return new WaitForSeconds(4f);
+        _truck.useExternalInput = false;
+
+        Assert.Less(rb.position.x, _gate.gateX,
+            $"der Truck steht bei x={rb.position.x:0} - er ist durch die Fassade gefahren");
+    }
+}

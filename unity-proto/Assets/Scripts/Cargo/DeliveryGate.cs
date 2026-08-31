@@ -36,6 +36,17 @@ public class DeliveryGate : MonoBehaviour
 
     public Material postMaterial;
 
+    [Tooltip("The miner megastructure. Without it the gate falls back to two " +
+             "posts and a beam, so the scene still builds on a fresh clone.")]
+    public GameObject minerModel;
+
+    // Measured off the imported model rather than guessed. The facade sits at
+    // local x 0..4.5 and the tunnel mouth is the hole in it.
+    const float MouthHalfWidth = 40f;    // local z -40 .. +40
+    const float MouthHeight = 26f;       // local y  -1.2 .. 26
+    const float ShellHalfWidth = 84.4f;  // local z -84.4 .. +84.4
+    const float ShellHeight = 133.2f;
+
     /// <summary>Total fees delivered, in sats. This is the score.</summary>
     public long SatsDelivered { get; private set; }
 
@@ -140,18 +151,144 @@ public class DeliveryGate : MonoBehaviour
 
     float _reopenAt;
 
-    /// <summary>Two posts and a beam. Enough to read as a goal from a distance.</summary>
+    /// <summary>The far end of the run: the miner, or two posts if it is absent.</summary>
     void Build()
     {
         float ground = terrain != null ? terrain.SampleSurface(gateX, 0f) : 0f;
-        const float height = 9f;
 
+        // The wall goes up whether or not the model does.
+        //
+        // Collision is what makes the end of the map a building rather than a
+        // backdrop, and it must not depend on an asset reference that is null
+        // in any scene built at runtime - which is every test that does not
+        // load the saved scene. Tying the two together meant the playfield had
+        // no far boundary at all in exactly the situation where a test would
+        // check for one.
+        Wall(ground);
+
+        if (minerModel != null) { BuildMiner(ground); return; }
+
+        const float height = 9f;
         Post(new Vector3(gateX, ground + height * 0.5f, -halfMouth),
              new Vector3(2f, height, 2f), "GatePostLeft");
         Post(new Vector3(gateX, ground + height * 0.5f, halfMouth),
              new Vector3(2f, height, 2f), "GatePostRight");
         Post(new Vector3(gateX, ground + height, 0f),
              new Vector3(2.2f, 2.2f, halfMouth * 2f), "GateBeam");
+    }
+
+    /// <summary>
+    /// The miner, its collision, and its moving parts.
+    ///
+    /// The model's own origin is placed at gateX, which puts the facade on the
+    /// delivery line and leaves the tunnel mouth reaching back towards the
+    /// player - so crossing gateX means being inside the tunnel, not merely
+    /// near the building.
+    /// </summary>
+    void BuildMiner(float ground)
+    {
+        var miner = Instantiate(minerModel, new Vector3(gateX, ground, 0f),
+                                Quaternion.identity, transform);
+        miner.name = "MinerMegastructure";
+
+        Spin(miner);
+
+        // Draw calls, not triangles, are the cost here: 880 renderers is 880
+        // batches for one building. The moving parts are pulled out first
+        // because static batching bakes the transform of everything it
+        // combines, and a baked fan does not turn.
+        var moving = new System.Collections.Generic.List<Transform>();
+        foreach (var t in miner.GetComponentsInChildren<Transform>(true))
+            if (IsMoving(t.name)) moving.Add(t);
+
+        var loose = new GameObject("MinerMoving");
+        loose.transform.SetParent(transform, false);
+        foreach (var t in moving) t.SetParent(loose.transform, true);
+
+        StaticBatchingUtility.Combine(miner);
+    }
+
+    static bool IsMoving(string n) =>
+        n.StartsWith("Fan_") && !n.EndsWith("_mount") || n == "Coin" || n == "Beacon_Tip";
+
+    void Spin(GameObject miner)
+    {
+        var spin = miner.AddComponent<MinerSpin>();
+        var fans = new System.Collections.Generic.List<Transform>();
+        foreach (var t in miner.GetComponentsInChildren<Transform>(true))
+        {
+            if (t.name.StartsWith("Fan_") && !t.name.EndsWith("_mount")) fans.Add(t);
+            else if (t.name == "Coin") spin.coin = t;
+            else if (t.name == "Beacon_Tip")
+            {
+                spin.beacon = t;
+                spin.beaconLamp = t.GetComponentInChildren<Renderer>();
+            }
+        }
+        spin.fans = fans.ToArray();
+    }
+
+    /// <summary>
+    /// The facade, as collision: solid everywhere except the tunnel mouth.
+    ///
+    /// This is the whole point of putting a building at the end rather than a
+    /// gate - you have to drive INTO it, through the one opening, and the
+    /// rest of it is a wall. Three boxes rather than mesh colliders on 880
+    /// renderers: the shape that matters is a rectangle with a hole in it, and
+    /// hitting the actual greebles would be both expensive and worse, because
+    /// a truck should slide along a facade rather than catch on a rivet.
+    /// </summary>
+    void Wall(float ground)
+    {
+        var shell = new GameObject("MinerShell");
+        shell.transform.SetParent(transform, false);
+        shell.transform.position = new Vector3(gateX, ground, 0f);
+        var wall = shell.transform;
+
+        float side = (ShellHalfWidth - MouthHalfWidth) * 0.5f;
+        float sideZ = MouthHalfWidth + side;
+
+        // Buried 20 m deep, on purpose.
+        //
+        // The shell is placed at the ground height sampled at z = 0, but the
+        // terrain is mempool relief and falls away to either side - so a wall
+        // that starts exactly at that one sample leaves a gap underneath it
+        // 75 m out, and a truck drives straight through the gap. A building
+        // has foundations; these are 20 m of them.
+        const float Footing = 20f;
+        float wallH = ShellHeight + Footing;
+        float wallY = wallH * 0.5f - Footing;
+
+        Slab(wall, "FacadeLeft",
+             new Vector3(2f, wallY, -sideZ),
+             new Vector3(8f, wallH, side * 2f));
+        Slab(wall, "FacadeRight",
+             new Vector3(2f, wallY, sideZ),
+             new Vector3(8f, wallH, side * 2f));
+
+        // over the mouth, so nothing drives in across the lintel
+        Slab(wall, "FacadeLintel",
+             new Vector3(2f, MouthHeight + (ShellHeight - MouthHeight) * 0.5f, 0f),
+             new Vector3(8f, ShellHeight - MouthHeight, MouthHalfWidth * 2f));
+
+        // and the tunnel's own two sides, so the run-in is a corridor rather
+        // than a doorway you can clip past at an angle
+        Slab(wall, "TunnelLeft",
+             new Vector3(-11f, MouthHeight * 0.5f - Footing * 0.5f,
+                         -(MouthHalfWidth + 2f)),
+             new Vector3(28f, MouthHeight + Footing, 4f));
+        Slab(wall, "TunnelRight",
+             new Vector3(-11f, MouthHeight * 0.5f - Footing * 0.5f,
+                         MouthHalfWidth + 2f),
+             new Vector3(28f, MouthHeight + Footing, 4f));
+    }
+
+    void Slab(Transform parent, string name, Vector3 localCentre, Vector3 size)
+    {
+        var go = new GameObject(name);
+        go.transform.SetParent(parent, false);
+        go.transform.localPosition = localCentre;
+        go.AddComponent<BoxCollider>().size = size;
     }
 
     void Post(Vector3 at, Vector3 size, string name)
