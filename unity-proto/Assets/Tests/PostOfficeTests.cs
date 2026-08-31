@@ -75,6 +75,69 @@ public class PostOfficeTests
             "die Fassade hat zu wenige Flaechen fuer 24 Tore");
     }
 
+    /// <summary>
+    /// The building stands ON the ground, and the truck stands on top of it.
+    ///
+    /// It did neither. The apron is one 26 x 168 m slab laid at a single
+    /// sampled height, the terrain under it was still rolling, and the truck
+    /// was parked at the height of a sample taken 78 m away - so the loading
+    /// dock hung several metres over the ground and the player spawned
+    /// underneath his own building, looking up at it.
+    /// </summary>
+    [UnityTest]
+    public IEnumerator TheBuildingSitsOnTheGroundAndTheTruckOnIt()
+    {
+        var apron = GameObject.Find("ground_apron");
+        Assert.IsNotNull(apron, "keine Vorfahrt am Post Office");
+        var slab = apron.GetComponent<Renderer>().bounds;
+        var terrain = _post.terrain;
+
+        // the slab, along its whole 168 m
+        for (int i = 0; i <= 8; i++)
+        {
+            float z = Mathf.Lerp(slab.min.z, slab.max.z, i / 8f);
+            foreach (float x in new[] { slab.min.x + 1f, slab.center.x, slab.max.x - 1f })
+            {
+                float ground = terrain.SampleSurface(x, z);
+                Assert.Less(Mathf.Abs(slab.max.y - ground), 0.6f,
+                    $"die Vorfahrt liegt bei ({x:0}, {z:0}) {slab.max.y - ground:0.00} m " +
+                    "ueber dem Boden - das Gebaeude schwebt");
+            }
+        }
+
+        // and the truck is on top of the slab, not under it
+        yield return new WaitForSeconds(1.5f);
+        var truck = _truck.transform.position;
+        Assert.Greater(truck.y, slab.max.y - 1f,
+            $"der Truck steht {slab.max.y - truck.y:0.0} m unter der Vorfahrt");
+        Assert.Less(truck.y - terrain.SampleSurface(truck.x, truck.z), 2.5f,
+            "der Truck schwebt ueber dem Boden");
+    }
+
+    /// <summary>
+    /// The wall is a barrier in front of the building, not around the truck.
+    ///
+    /// The slabs used to run six metres FORWARD of the facade, onto the apron
+    /// the truck is parked on - an invisible wall in front of the doors.
+    /// </summary>
+    [Test]
+    public void TheBarrierStandsAtTheFacadeAndNotOnTheApron()
+    {
+        var shell = GameObject.Find("PostOfficeShell");
+        Assert.IsNotNull(shell, "keine Fassade am Post Office");
+
+        var spawn = _truck.spawnPosition;
+        foreach (var box in shell.GetComponentsInChildren<BoxCollider>(true))
+        {
+            var b = box.bounds;
+            Assert.LessOrEqual(b.max.x, _post.postX + 0.5f,
+                $"{box.name} steht {b.max.x - _post.postX:0.0} m vor der Fassade " +
+                "auf der Vorfahrt");
+            Assert.IsFalse(b.Contains(spawn),
+                $"der Spawn steckt in {box.name}");
+        }
+    }
+
     /// <summary>Every plate carries live data, and none of it is a placeholder.</summary>
     [UnityTest]
     public IEnumerator TheDisplaysCarryLiveData()
@@ -103,6 +166,104 @@ public class PostOfficeTests
         int tiles = 0;
         foreach (Transform c in goggles.transform) if (c.name.StartsWith("tile")) tiles++;
         Assert.Greater(tiles, 8, $"nur {tiles} Kacheln auf der Goggles-Wand");
+    }
+
+    /// <summary>
+    /// The lettering fills its plate without running off it.
+    ///
+    /// The model ships every display as a blank quad of a known size, and the
+    /// text hung on it was scaled to a height picked by hand - 1.4 m for three
+    /// lines on an 8.2 m block face, which from the road is a blank building.
+    /// Both bounds matter: too small is unreadable, too large runs over the
+    /// frame, and only measuring both catches the swap of one fault for the
+    /// other.
+    /// </summary>
+    [UnityTest]
+    public IEnumerator TheLetteringFillsItsPlates()
+    {
+        yield return new WaitForSeconds(4f);
+
+        int checkedPlates = 0;
+        foreach (var tm in Object.FindObjectsByType<TextMesh>(FindObjectsSortMode.None))
+        {
+            if (!tm.name.EndsWith("_text")) continue;
+            var plate = tm.transform.parent;
+            var mf = plate != null ? plate.GetComponent<MeshFilter>() : null;
+            if (mf == null || mf.sharedMesh == null) continue;
+            if (string.IsNullOrEmpty(tm.text) || tm.text == "—") continue;
+
+            var room = mf.sharedMesh.bounds.size;
+            var mr = tm.GetComponent<MeshRenderer>();
+            float k = tm.transform.localScale.x;
+            float w = mr.localBounds.size.x * k, h = mr.localBounds.size.y * k;
+
+            Assert.LessOrEqual(w, room.x + 0.01f,
+                $"{plate.name}: \"{tm.text}\" ist {w:0.0} m breit auf {room.x:0.0} m Platte");
+            Assert.LessOrEqual(h, room.y + 0.01f,
+                $"{plate.name}: \"{tm.text}\" ist {h:0.0} m hoch auf {room.y:0.0} m Platte");
+
+            float fills = Mathf.Max(w / room.x, h / room.y);
+            Assert.Greater(fills, 0.55f,
+                $"{plate.name}: \"{tm.text}\" fuellt nur {fills:0%} der Platte - " +
+                "das ist aus Fahrerperspektive nicht lesbar");
+            checkedPlates++;
+        }
+        Assert.Greater(checkedPlates, 12,
+            $"nur {checkedPlates} beschriftete Platten gefunden");
+    }
+
+    /// <summary>
+    /// The block band reads as a block explorer: English, and every mined
+    /// block carries its own height.
+    /// </summary>
+    [UnityTest]
+    public IEnumerator TheBlockBandIsInEnglishAndNumbered()
+    {
+        var stats = Object.FindFirstObjectByType<ChainStats>();
+        for (float t = 0f; t < 25f && stats.Recent.Count == 0; t += Time.deltaTime)
+            yield return null;
+        Assume.That(stats.Recent.Count, Is.GreaterThan(0),
+            "kein Blockstand von mempool.space - ohne Netz ist hier nichts zu pruefen");
+        yield return new WaitForSeconds(2.5f);
+
+        int mined = 0, numbered = 0;
+        foreach (var tm in Object.FindObjectsByType<TextMesh>(FindObjectsSortMode.None))
+        {
+            var plate = tm.transform.parent;
+            if (plate == null || !plate.name.StartsWith("mined_face_")) continue;
+            if (tm.text == "—") continue;
+            mined++;
+
+            StringAssert.DoesNotContain("vor ", tm.text,
+                $"der Block spricht Deutsch: \"{tm.text}\"");
+            StringAssert.Contains("ago", tm.text,
+                $"dem Block fehlt das Alter in Worten: \"{tm.text}\"");
+
+            // the height, as the explorer writes it, on its first line
+            var head = tm.text.Split('\n')[0].Replace(",", "").Replace(".", "");
+            if (int.TryParse(head, out int height) && height > 800000) numbered++;
+        }
+        Assert.Greater(mined, 3, $"nur {mined} geminte Bloecke tragen Text");
+        Assert.AreEqual(mined, numbered,
+            "nicht jeder alte Block traegt seine Blocknummer");
+
+        // and the projected side counts UP from the tip, so the block nearest
+        // the divider is the one being mined next
+        var labels = new System.Collections.Generic.List<int>();
+        foreach (var tm in Object.FindObjectsByType<TextMesh>(FindObjectsSortMode.None))
+        {
+            var plate = tm.transform.parent;
+            if (plate == null || !plate.name.StartsWith("block_label_")) continue;
+            if (!plate.name.EndsWith("_00") && !plate.name.EndsWith("_04")) continue;
+            if (int.TryParse(tm.text.Replace(",", "").Replace(".", ""), out int h))
+                labels.Add(plate.name.EndsWith("_00") ? h : -h);
+        }
+        Assert.AreEqual(2, labels.Count, "die Blockbeschriftung fehlt");
+        int first = Mathf.Max(labels[0], labels[1]), fifth = -Mathf.Min(labels[0], labels[1]);
+        Assert.AreEqual(stats.Recent[0].height + 1, first,
+            "der naechste Block ist nicht als Tip + 1 beschriftet");
+        Assert.AreEqual(first + 4, fifth,
+            "die projizierten Bloecke sind nicht aufsteigend beschriftet");
     }
 
     [UnityTest]

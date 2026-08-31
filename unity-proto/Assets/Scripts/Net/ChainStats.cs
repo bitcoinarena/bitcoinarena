@@ -77,27 +77,156 @@ public class ChainStats : MonoBehaviour
     public List<Projected> Upcoming { get; private set; } = new();
     public List<Mined> Recent { get; private set; } = new();
 
+    /// <summary>When the unconfirmed count last changed, for the displays.</summary>
+    public float CountAge => Time.unscaledTime - _countAt;
+
+    /// <summary>True while the live socket is the one feeding the count.</summary>
+    public bool Streaming { get; private set; }
+
     static long Now() => System.DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+
+    // mempool.space's own socket - the same one their site's counter runs on.
+    //
+    // The count on the post office has to move every half second, and REST
+    // cannot give that: /mempool at 2 requests a second is 172,000 requests a
+    // day from one player, which is how a public instance comes to rate-limit
+    // the game to a stop. The socket pushes the mempool as it changes and
+    // costs one connection, so the display is not merely refreshed often, it
+    // is actually current. REST stays underneath it as the fallback for a
+    // blocked socket, a mirror that has none, and the first seconds before
+    // this one is open.
+    const string StreamUrl = "wss://mempool.space/api/v1/ws";
+    const string Want = "{\"action\":\"want\",\"data\":[\"stats\",\"blocks\",\"mempool-blocks\"]}";
+
+    WebSocketClient _ws;
+    bool _asked;
+    float _retry, _lastMessage, _countAt;
 
     void Start()
     {
+        _lastMessage = Time.unscaledTime;
+        Connect();
         StartCoroutine(PollMempool());
         StartCoroutine(PollBlocks());
         StartCoroutine(PollFees());
         StartCoroutine(PollHashrate());
     }
 
+    void Connect()
+    {
+        _ws?.Dispose();
+        _ws = new WebSocketClient(StreamUrl);
+        _asked = false;
+        _retry = Time.unscaledTime + 20f;
+    }
+
+    void OnDestroy() => _ws?.Dispose();
+
+    void Update()
+    {
+        if (_ws == null) return;
+        float now = Time.unscaledTime;
+
+        // The socket only sends what it has been asked for, and it can only be
+        // asked once it is open.
+        if (!_asked && _ws.Status == WebSocketClient.State.Open)
+        {
+            _ws.Send(Want);
+            _asked = true;
+            _lastMessage = now;
+        }
+
+        foreach (var msg in _ws.Drain()) { _lastMessage = now; Live(msg); }
+
+        // Open but silent counts as dead: that is the failure that actually
+        // happens to a websocket, far more often than a clean close.
+        bool stale = now - _lastMessage > 45f;
+        Streaming = _asked && !stale && _ws.Status == WebSocketClient.State.Open;
+        if ((stale || _ws.Status == WebSocketClient.State.Closed
+                   || _ws.Status == WebSocketClient.State.Error) && now > _retry)
+            Connect();
+    }
+
+    /// <summary>
+    /// One frame of live chain state.
+    ///
+    /// Same field names as the REST endpoints - it is the same server - so the
+    /// three payloads are read with the same code as their polled twins rather
+    /// than a second parser that can drift away from it.
+    /// </summary>
+    void Live(string msg)
+    {
+        if (string.IsNullOrEmpty(msg)) return;
+
+        var info = Json.GetRaw(msg, "mempoolInfo");
+        if (info != null)
+        {
+            int n = (int)Json.GetDouble(info, "size");
+            if (n > 0) { Unconfirmed = n; _countAt = Time.unscaledTime; }
+        }
+
+        var projected = Json.GetRaw(msg, "mempool-blocks");
+        if (projected != null)
+        {
+            var list = Read(projected);
+            if (list.Count > 0) Upcoming = list;
+        }
+
+        // A block was just found. Straight onto the front of the row, rather
+        // than waiting up to twenty seconds for the poll to notice the thing
+        // the whole game is timed against.
+        var block = Json.GetRaw(msg, "block");
+        if (block != null)
+        {
+            int height = (int)Json.GetDouble(block, "height");
+            if (height > 0 && (Recent.Count == 0 || height > Recent[0].height))
+            {
+                var row = new List<Mined>(Recent);
+                row.Insert(0, new Mined
+                {
+                    height = height,
+                    nTx = (int)Json.GetDouble(block, "tx_count"),
+                    timestamp = (long)Json.GetDouble(block, "timestamp"),
+                });
+                if (row.Count > 8) row.RemoveRange(8, row.Count - 8);
+                Recent = row;
+            }
+        }
+    }
+
+    /// <summary>The projected-block array, from either transport.</summary>
+    static List<Projected> Read(string array)
+    {
+        var list = new List<Projected>();
+        foreach (var obj in Json.Elements(array))
+        {
+            list.Add(new Projected
+            {
+                nTx = (int)Json.GetDouble(obj, "nTx"),
+                totalFeeSats = (long)Json.GetDouble(obj, "totalFees"),
+                medianFee = Json.GetDouble(obj, "medianFee"),
+                blockVSize = Json.GetDouble(obj, "blockVSize"),
+                inMinutes = list.Count * 10 + 9,
+            });
+            if (list.Count >= 8) break;
+        }
+        return list;
+    }
+
     IEnumerator PollMempool()
     {
         while (true)
         {
-            yield return MempoolHosts.Get("/mempool", 10f, text =>
-            {
-                if (text == null) return;
-                int n = (int)Json.GetDouble(text, "count");
-                if (n > 0) Unconfirmed = n;
-            });
-            yield return new WaitForSeconds(5f);
+            // Skipped entirely while the socket is feeding the count - the
+            // fallback exists to cover the socket, not to race it.
+            if (!Streaming)
+                yield return MempoolHosts.Get("/mempool", 10f, text =>
+                {
+                    if (text == null) return;
+                    int n = (int)Json.GetDouble(text, "count");
+                    if (n > 0) { Unconfirmed = n; _countAt = Time.unscaledTime; }
+                });
+            yield return new WaitForSeconds(Streaming ? 30f : 5f);
         }
     }
 
@@ -108,19 +237,7 @@ public class ChainStats : MonoBehaviour
             yield return MempoolHosts.Get("/v1/fees/mempool-blocks", 12f, text =>
             {
                 if (text == null) return;
-                var list = new List<Projected>();
-                foreach (var obj in Json.Elements(text))
-                {
-                    list.Add(new Projected
-                    {
-                        nTx = (int)Json.GetDouble(obj, "nTx"),
-                        totalFeeSats = (long)Json.GetDouble(obj, "totalFees"),
-                        medianFee = Json.GetDouble(obj, "medianFee"),
-                        blockVSize = Json.GetDouble(obj, "blockVSize"),
-                        inMinutes = list.Count * 10 + 9,
-                    });
-                    if (list.Count >= 8) break;
-                }
+                var list = Read(text);
                 if (list.Count > 0) Upcoming = list;
             });
 

@@ -41,6 +41,17 @@ public class MinerTerminalTests
     /// A fan turning about its real axle sweeps its own disc. One turning
     /// about the wrong axis sweeps a sphere - so the giveaway for a wobble is
     /// the world bounding box growing as it spins.
+    ///
+    /// The other giveaway, and the one that survived three attempts at the
+    /// first, is that the fan is DEFORMED. This used to assert that a single
+    /// pose of the blade assembly had a square bounding box, on the theory
+    /// that a disc measures the same across both of its in-plane axes. Seven
+    /// blades 51.4 degrees apart have no four-fold symmetry, so their box is
+    /// 11.0 x 14.5 however true the disc runs - and the only way to pass that
+    /// assertion was to squash the fan into a 31 percent ellipse, which is
+    /// precisely what made it look like it was wobbling. What is checked now
+    /// is the thing that is actually wrong when a fan eiert: an in-plane
+    /// scale that is not uniform, and a hub that moves while it turns.
     /// </summary>
     [UnityTest]
     public IEnumerator TheFansSpinRatherThanWobble()
@@ -56,39 +67,57 @@ public class MinerTerminalTests
             return b;
         }
 
+        var hub = Find("fan_hub_01");
+        Assert.IsNotNull(hub, "keine Nabe an Fan_01");
+        var hubWas = hub.GetComponent<Renderer>().bounds.center;
+
         var start = Sweep();
         var swept = start;
+        float wander = 0f;
         for (float t = 0f; t < 1.2f; t += Time.deltaTime)
         {
             yield return null;
             swept.Encapsulate(Sweep());
+            wander = Mathf.Max(wander,
+                Vector3.Distance(hubWas, hub.GetComponent<Renderer>().bounds.center));
         }
 
         Assert.Greater(Quaternion.Angle(Quaternion.identity, fan.localRotation), 1f,
             "der Luefter dreht sich gar nicht");
 
-        // Undistorted: the fan must carry exactly the building's own scale.
+        // Undeformed in the plane it turns in.
         //
-        // It did not, and that was the actual misalignment. Static batching
-        // bakes transforms, so the moving parts were reparented out of the way
-        // first - but the miner is scaled (1, 0.45, 1) and turned half round,
-        // and a non-uniform scale under rotation cannot survive a change of
-        // parent. Unity approximates, and the blades came out sheared inside
-        // their rings.
-        // Round, and inside its housing.
-        //
-        // The blade disc is authored 11.00 x 14.46 x 7.23 - 31% out of round
-        // against a 4 m recess, which is what made it look like it was
-        // wobbling however true the axle ran. Both are corrected at setup.
+        // Scale and rotation only commute when the scale is uniform across the
+        // rotation's plane. Anything else and the blades are squashed by a
+        // different amount at every angle, which is a wobble that no amount of
+        // getting the axle right can fix.
+        // Axle-agnostic: the flattening runs along the axle, so the two
+        // LARGEST components of the scale are the ones in the plane of
+        // rotation, whichever way the exporter laid the node out.
+        var spin = Object.FindFirstObjectByType<MinerSpin>();
+        void PlaneIsUniform(Vector3 v, float tolerance, string what)
+        {
+            float a = Mathf.Abs(v.x), b = Mathf.Abs(v.y), c = Mathf.Abs(v.z);
+            float small = Mathf.Min(a, Mathf.Min(b, c));
+            float one = Mathf.Max(a, Mathf.Max(b, c));
+            float two = a + b + c - small - one;
+            Assert.Less(Mathf.Abs(one - two) / Mathf.Max(0.001f, one), tolerance,
+                $"{what} steht auf {v} - in der Drehebene ist das keine " +
+                "gleichmaessige Skalierung, und das eiert");
+        }
+        PlaneIsUniform(fan.localScale, 0.01f, "der Luefter");
+        PlaneIsUniform(fan.lossyScale, 0.02f, "die Scheibe in der Welt");
+
+        // And it turns about its hub rather than around it.
+        Assert.Less(wander, 0.15f,
+            $"die Nabe wandert beim Drehen {wander:0.00} m - der Luefter laeuft " +
+            "exzentrisch");
+
+        // Deep enough to sit in its housing: the disc is authored 7.2 m deep
+        // against a 2.3 m ring, and is flattened along its axle at setup.
         var rs2 = fan.GetComponentsInChildren<Renderer>(true);
         var fb = rs2[0].bounds; foreach (var r in rs2) fb.Encapsulate(r.bounds);
-        var s = fb.size;
-        float thin = Mathf.Min(s.x, Mathf.Min(s.y, s.z));
-        float p1 = s.x + s.y + s.z - thin - Mathf.Max(s.x, Mathf.Max(s.y, s.z));
-        float p2 = Mathf.Max(s.x, Mathf.Max(s.y, s.z));
-
-        Assert.Less(Mathf.Abs(p1 - p2) / p2, 0.08f,
-            $"die Luefterscheibe ist {p1:0.0} x {p2:0.0} m - sie ist nicht rund und eiert");
+        float thin = Mathf.Min(fb.size.x, Mathf.Min(fb.size.y, fb.size.z));
         Assert.Less(thin, 4f,
             $"die Scheibe ist {thin:0.0} m tief und steht aus ihrer 4 m tiefen " +
             "Aussparung heraus");
@@ -107,7 +136,6 @@ public class MinerTerminalTests
 
         // And slowly enough not to alias: a blade must not pass more often
         // than a quarter of the frame rate, or it appears to run backwards.
-        var spin = Object.FindFirstObjectByType<MinerSpin>();
         float passes = spin.fanRpm / 60f * spin.bladeCount;
         Assert.Less(passes, 8f,
             $"{passes:0.0} Fluegeldurchgaenge pro Sekunde - das aliast auf 30 fps");

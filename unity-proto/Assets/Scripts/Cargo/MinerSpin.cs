@@ -27,8 +27,15 @@ public class MinerSpin : MonoBehaviour
     public float coinRpm = 9f;
     public float coinBobMetres = 1.6f;
 
+    [Tooltip("How deep a fan may be along its axle, in metres. The housings " +
+             "are 2.3 m deep and the blade discs are authored at 7.2, so the " +
+             "blades otherwise stand proud of their rings on both sides.")]
+    public float maxDepth = 3.2f;
+
     Vector3 _coinHome;
     Vector3[] _axles;
+    Quaternion[] _rest;
+    float _angle;
     MaterialPropertyBlock _block;
 
     void Start()
@@ -36,138 +43,111 @@ public class MinerSpin : MonoBehaviour
         if (coin != null) _coinHome = coin.localPosition;
         _block = new MaterialPropertyBlock();
 
-        _axles = new Vector3[fans != null ? fans.Length : 0];
-        for (int i = 0; i < _axles.Length; i++)
-        {
-            _axles[i] = AxleOf(fans[i]);
-            TrueUp(fans[i], _axles[i]);
-        }
+        int n = fans != null ? fans.Length : 0;
+        _axles = new Vector3[n];
+        _rest = new Quaternion[n];
+        for (int i = 0; i < n; i++) TrueUp(i);
+
         // Slow enough that the blades never alias.
         //
-        // The axle and the pivot both measured correct and the fans still
-        // looked wrong, which is the giveaway for the wagon-wheel effect
-        // rather than a transform bug: at 140 rpm with seven blades a blade
-        // passes 16.3 times a second, and on a phone rendering at 30 fps that
-        // is above Nyquist - so the fan appears to crawl, stop, or run
-        // backwards. Held to a quarter of the frame rate it always reads as
-        // turning forwards.
+        // At 140 rpm with seven blades a blade passes 16.3 times a second, and
+        // on a phone rendering at 30 fps that is above Nyquist - so the fan
+        // appears to crawl, stop, or run backwards. Held to a quarter of the
+        // frame rate it always reads as turning forwards.
         float fps = Mathf.Max(24f, 1f / Mathf.Max(0.001f, Time.smoothDeltaTime));
         float maxRpm = fps * 0.25f / Mathf.Max(1, bladeCount) * 60f;
         fanRpm = Mathf.Min(fanRpm, maxRpm);
     }
 
-    [Tooltip("How deep a fan may be along its axle, in metres. The housings " +
-             "are 4 m deep and the blade discs are authored at 7.2.")]
-    public float maxDepth = 3.2f;
-
     /// <summary>
-    /// Makes a fan round, and shallow enough to sit in its housing.
+    /// Everything a fan needs to run true: its axle, its rest pose, and where
+    /// the centre of its blade disc actually is.
     ///
-    /// Measured on the model, Fan_01's blade assembly is 11.00 x 14.46 x 7.23.
-    /// A fan disc has to be EQUAL in its two in-plane axes - it is a circle -
-    /// and this one is 31% out of round, which is precisely what a wobble
-    /// looks like: the blade tips do not describe a circle, so the outline
-    /// pulses as it turns however true the axle runs. It is also 7.2 m deep
-    /// against a 4 m recess and a 2.3 m ring, so the blades stand proud of the
-    /// housing.
+    /// The previous version squashed each fan in its own plane to make its
+    /// BOUNDING BOX square, on the theory that a fan disc must measure the
+    /// same across both in-plane axes. That premise is wrong and it is what
+    /// the wobble was. Measured on the import, Fan_01's seven blades sit on a
+    /// circle of radius 5.2 centred on the node - the disc is already true.
+    /// Its box is 11.0 x 14.5 only because seven blades at 51.4 degrees apart
+    /// have no four-fold symmetry, so the corners of the box catch different
+    /// parts of different blades. Scaling that box square turned a round fan
+    /// into a 31 percent ellipse, and a rotating ellipse is exactly what
+    /// "eiernd" looks like.
     ///
-    /// Both are corrected here rather than in the model because the fix is
-    /// exact and cheap. The scale is applied ONCE in the fan's local frame and
-    /// the rotation runs rigidly on top of it - Unity composes local-to-world
-    /// as T*R*S, so the shape is fixed before it is turned and cannot change
-    /// with the angle. That is the opposite of scaling the BUILDING
-    /// non-uniformly, which sheared every rotated part of it.
+    /// What is left is the part that was right: the disc is 7.2 m deep against
+    /// a 2.3 m ring, so it is flattened ALONG THE AXLE. That scale commutes
+    /// with the spin - it is uniform in the plane the rotation happens in - so
+    /// it cannot deform anything as the fan turns.
+    ///
+    /// Nothing is done about the centre, deliberately. The blades sit on a
+    /// circle of radius 5.2 about the node's own origin, so the origin IS the
+    /// hub and rotating about it is exact. The bounding box's centre is 10 cm
+    /// off it, but that is the asymmetry of seven plates rather than an
+    /// eccentric - correcting to it would make a true fan orbit by 10 cm.
     /// </summary>
-    void TrueUp(Transform fan, Vector3 axle)
+    void TrueUp(int i)
     {
-        if (fan == null) return;
+        var fan = fans[i];
+        if (fan == null) { _rest[i] = Quaternion.identity; _axles[i] = Vector3.forward; return; }
 
-        bool any = false; var box = new Bounds();
-        foreach (var r in fan.GetComponentsInChildren<Renderer>(true))
-        {
-            var mf = r.GetComponent<MeshFilter>();
-            if (mf == null || mf.sharedMesh == null) continue;
-            var mb = mf.sharedMesh.bounds;
-            for (int c = 0; c < 8; c++)
-            {
-                var corner = new Vector3((c & 1) == 0 ? mb.min.x : mb.max.x,
-                                         (c & 2) == 0 ? mb.min.y : mb.max.y,
-                                         (c & 4) == 0 ? mb.min.z : mb.max.z);
-                var local = fan.InverseTransformPoint(r.transform.TransformPoint(corner));
-                if (!any) { box = new Bounds(local, Vector3.zero); any = true; }
-                else box.Encapsulate(local);
-            }
-        }
-        if (!any) return;
-
-        var size = box.size;
-        float a, p1, p2;
-        if (axle == Vector3.right) { a = size.x; p1 = size.y; p2 = size.z; }
-        else if (axle == Vector3.up) { a = size.y; p1 = size.x; p2 = size.z; }
-        else { a = size.z; p1 = size.x; p2 = size.y; }
-        if (p1 < 0.01f || p2 < 0.01f || a < 0.01f) return;
-
-        float round = (p1 + p2) * 0.5f;
-        float k1 = round / p1, k2 = round / p2;
-        float ka = Mathf.Min(1f, maxDepth / a);
-
-        fan.localScale = axle == Vector3.right ? new Vector3(ka, k1, k2)
-                       : axle == Vector3.up ? new Vector3(k1, ka, k2)
-                       : new Vector3(k1, k2, ka);
-    }
-
-    /// <summary>
-    /// Which way a fan's axle points, taken from the fan's own geometry.
-    ///
-    /// Rotating every fan about its local Z was a guess and it was wrong - the
-    /// blades wobbled instead of spinning, because the hub is threaded onto a
-    /// different axis than the node's local forward. A fan is a disc: it is
-    /// much thinner along its axle than across it, so measuring the blades in
-    /// the fan's own frame and taking the shortest side finds the axle without
-    /// anyone having to reason about how the exporter laid the node out.
-    /// </summary>
-    static Vector3 AxleOf(Transform fan)
-    {
-        if (fan == null) return Vector3.forward;
-
-        bool any = false;
-        var box = new Bounds();
-        foreach (var r in fan.GetComponentsInChildren<Renderer>(true))
-        {
-            var mf = r.GetComponent<MeshFilter>();
-            if (mf == null || mf.sharedMesh == null) continue;
-            var mb = mf.sharedMesh.bounds;
-            for (int c = 0; c < 8; c++)
-            {
-                var corner = new Vector3((c & 1) == 0 ? mb.min.x : mb.max.x,
-                                         (c & 2) == 0 ? mb.min.y : mb.max.y,
-                                         (c & 4) == 0 ? mb.min.z : mb.max.z);
-                var local = fan.InverseTransformPoint(r.transform.TransformPoint(corner));
-                if (!any) { box = new Bounds(local, Vector3.zero); any = true; }
-                else box.Encapsulate(local);
-            }
-        }
-        if (!any) return Vector3.forward;
+        if (!Blades(fan, out var box)) { _axles[i] = Vector3.forward; _rest[i] = fan.localRotation; return; }
 
         var s = box.size;
-        if (s.x <= s.y && s.x <= s.z) return Vector3.right;
-        if (s.y <= s.x && s.y <= s.z) return Vector3.up;
-        return Vector3.forward;
+        var axle = s.x <= s.y && s.x <= s.z ? Vector3.right
+                 : s.y <= s.x && s.y <= s.z ? Vector3.up : Vector3.forward;
+        _axles[i] = axle;
+
+        float depth = Vector3.Dot(s, axle);
+        if (depth > maxDepth && depth > 0.01f)
+        {
+            float k = maxDepth / depth;
+            fan.localScale = axle == Vector3.right ? new Vector3(k, 1f, 1f)
+                           : axle == Vector3.up ? new Vector3(1f, k, 1f)
+                           : new Vector3(1f, 1f, k);
+        }
+
+        _rest[i] = fan.localRotation;
+    }
+
+    /// <summary>The blade assembly's extent, measured in the fan's own frame.</summary>
+    static bool Blades(Transform fan, out Bounds box)
+    {
+        bool any = false;
+        box = new Bounds();
+        foreach (var r in fan.GetComponentsInChildren<Renderer>(true))
+        {
+            var mf = r.GetComponent<MeshFilter>();
+            if (mf == null || mf.sharedMesh == null) continue;
+            var mb = mf.sharedMesh.bounds;
+            for (int c = 0; c < 8; c++)
+            {
+                var corner = new Vector3((c & 1) == 0 ? mb.min.x : mb.max.x,
+                                         (c & 2) == 0 ? mb.min.y : mb.max.y,
+                                         (c & 4) == 0 ? mb.min.z : mb.max.z);
+                var local = fan.InverseTransformPoint(r.transform.TransformPoint(corner));
+                if (!any) { box = new Bounds(local, Vector3.zero); any = true; }
+                else box.Encapsulate(local);
+            }
+        }
+        return any;
     }
 
     void Update()
     {
         float t = Time.unscaledTime;
-        float dt = Time.unscaledDeltaTime;
 
+        // Set from absolute time rather than integrated frame by frame: an
+        // accumulated angle drifts with the frame rate, so two fans that
+        // started together end the session out of step for no reason.
+        _angle = Mathf.Repeat(t * fanRpm * 6f, 360f);
         if (fans != null)
             for (int i = 0; i < fans.Length; i++)
                 if (fans[i] != null)
-                    fans[i].Rotate(_axles[i], fanRpm * 6f * dt, Space.Self);
+                    fans[i].localRotation = _rest[i] * Quaternion.AngleAxis(_angle, _axles[i]);
 
         if (coin != null)
         {
-            coin.Rotate(Vector3.up, coinRpm * 6f * dt, Space.Self);
+            coin.Rotate(Vector3.up, coinRpm * 6f * Time.unscaledDeltaTime, Space.Self);
             coin.localPosition = _coinHome + Vector3.up * (Mathf.Sin(t * 0.9f) * coinBobMetres);
         }
 

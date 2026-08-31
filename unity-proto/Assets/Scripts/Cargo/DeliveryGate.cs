@@ -128,6 +128,26 @@ public class DeliveryGate : MonoBehaviour
     }
 
     bool _minerUp;
+    Transform _miner, _shell;
+    int _seenGround = -1;
+
+    /// <summary>
+    /// Put the building back on the ground after the ground has moved.
+    ///
+    /// The same watch the post office keeps at the other end: the terrain is
+    /// the live fee histogram, so its height under the miner changes with the
+    /// mempool, and a megastructure set down once at boot spends the rest of
+    /// the session either on stilts or up to its mouth in the ground.
+    /// </summary>
+    void FollowTheGround()
+    {
+        if (terrain == null || terrain.Version == _seenGround) return;
+        _seenGround = terrain.Version;
+
+        float ground = terrain.SampleSurface(gateX, 0f);
+        if (_miner != null) _miner.position = new Vector3(gateX, ground, 0f);
+        if (_shell != null) _shell.position = new Vector3(gateX, ground, 0f);
+    }
 
     /// <summary>Unscaled time the last run timed out, for the HUD notice.</summary>
     public float MissedAt { get; private set; } = -99f;
@@ -161,6 +181,7 @@ public class DeliveryGate : MonoBehaviour
     void Update()
     {
         SinceDelivery += Time.deltaTime;
+        FollowTheGround();
 
         // The bay reopens a beat AFTER the arrival, not with it.
         //
@@ -269,6 +290,7 @@ public class DeliveryGate : MonoBehaviour
         var miner = Instantiate(minerModel, new Vector3(gateX, ground, 0f),
                                 FaceThePlayer, transform);
         miner.name = "MinerMegastructure";
+        _miner = miner.transform;
         miner.transform.localScale = MinerScale;
 
         Spin(miner);
@@ -357,6 +379,7 @@ public class DeliveryGate : MonoBehaviour
         var shell = new GameObject("MinerShell");
         shell.transform.SetParent(transform, false);
         shell.transform.position = new Vector3(gateX, ground, 0f);
+        _shell = shell.transform;
         shell.transform.rotation = FaceThePlayer;
         shell.transform.localScale = MinerScale;
         var wall = shell.transform;

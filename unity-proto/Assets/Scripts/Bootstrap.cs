@@ -208,6 +208,19 @@ public class Bootstrap : MonoBehaviour
         // Without this the bay locks the controls but not the physics, and a
         // tank can write the truck off while the player is still choosing.
         if (_truckHealth != null) _truckHealth.loadout = loadout;
+
+        // The start mark follows the ground.
+        //
+        // Everything above was assembled against the terrain as it stood at
+        // boot, which is the flat stand-in it uses until the first fee
+        // histogram lands. That histogram moves the ground by several metres,
+        // and the truck was the one thing left standing at the old height -
+        // inside the new one.
+        var mark = _truck.gameObject.AddComponent<SpawnMark>();
+        mark.terrain = _terrain;
+        mark.post = _post;
+        mark.truck = _truck;
+        mark.loadout = loadout;
         gate.terrain = _terrain;
         gate.fx = Fx;
         gate.gateX = _terrain.width * 0.44f;

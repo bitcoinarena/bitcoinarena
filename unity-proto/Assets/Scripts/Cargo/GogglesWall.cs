@@ -34,6 +34,12 @@ public class GogglesWall : MonoBehaviour
     [Tooltip("How often the wall is rebuilt.")]
     public float rebuildSeconds = 2.5f;
 
+    [Tooltip("How much of the grid the tiles should cover. The placer needs " +
+             "slack to find a home for every square, so this is not 1: at " +
+             "0.92 it starts dropping transactions it cannot fit, at 0.85 it " +
+             "places all forty across every mempool shape I tried.")]
+    public float fill = 0.85f;
+
     float _next;
     Material _shared;
     readonly List<GameObject> _tiles = new();
@@ -58,11 +64,39 @@ public class GogglesWall : MonoBehaviour
     ///
     /// Area tracks vsize, so the side tracks its square root - which is the
     /// whole reason the graph reads as a size comparison rather than a list.
+    ///
+    /// <paramref name="scale"/> is what turns a proportion into a size. The
+    /// first version fixed it at one slot per 180 vB, which is mempool.space's
+    /// own figure for a full block of several thousand transactions. The feed
+    /// here holds forty. Forty transactions at a block's scale came out as
+    /// forty tiles of half a metre huddled in the corner of a 16 m wall, which
+    /// from the road is a wall with nothing on it - which is exactly what was
+    /// reported. The scale is now derived from what is actually in the feed,
+    /// so the same forty fill the same wall, and the RELATIVE areas - the only
+    /// thing the graph is saying - are untouched.
     /// </summary>
-    public static int SideFor(int vsize, int maxSide)
+    public static int SideFor(int vsize, int maxSide, float scale)
     {
-        float side = Mathf.Sqrt(Mathf.Max(1, vsize) / 180f);
+        float side = Mathf.Sqrt(Mathf.Max(1, vsize)) * scale;
         return Mathf.Clamp(Mathf.RoundToInt(side), 1, maxSide);
+    }
+
+    /// <summary>
+    /// The slots-per-sqrt-vB that fills the grid with what the feed holds.
+    ///
+    /// Solving sum(k*sqrt(v))^2 = fill * slots^2 for k, which is just
+    /// k = sqrt(fill / sum(v)) * slots. Capped so that a feed of three
+    /// transactions gives three big tiles rather than three tiles bigger than
+    /// the wall, and floored at the block-accurate scale so a full mempool
+    /// dump is never inflated.
+    /// </summary>
+    public static float ScaleFor(IReadOnlyList<MempoolFeed.Tx> offers, int slots, float fill)
+    {
+        double total = 0;
+        for (int i = 0; i < offers.Count; i++) total += Mathf.Max(1, offers[i].vsize);
+        if (total <= 0) return 1f;
+        float k = slots * Mathf.Sqrt(Mathf.Clamp01(fill) / (float)total);
+        return Mathf.Clamp(k, 1f / Mathf.Sqrt(180f), slots * 0.25f);
     }
 
     void Update()
@@ -93,10 +127,11 @@ public class GogglesWall : MonoBehaviour
 
         var taken = new bool[slots, slots];
         float cell = size / slots;
+        float scale = ScaleFor(sorted, slots, fill);
 
         foreach (var tx in sorted)
         {
-            int side = SideFor(tx.vsize, Mathf.Max(1, slots / 4));
+            int side = SideFor(tx.vsize, Mathf.Max(1, slots / 3), scale);
             if (!Place(taken, side, out int px, out int py)) continue;
 
             var q = GameObject.CreatePrimitive(PrimitiveType.Quad);
@@ -107,12 +142,22 @@ public class GogglesWall : MonoBehaviour
 
             // a hairline between tiles, as the original has
             float w = side * cell * 0.88f;
+
+            // In FRONT of the panel, and facing out of it.
+            //
+            // The screen's local +z points at the apron - measured, not
+            // assumed - so the tiles were being hung 12 cm INSIDE the
+            // building, behind an opaque panel, with their one visible face
+            // pointing further in. Two reasons to see nothing, which is
+            // exactly what the wall showed. A Unity quad's normal is its -z,
+            // hence the half turn: without it the tiles are in the right place
+            // and still culled.
             q.transform.localPosition = new Vector3(
                 (px + side * 0.5f) * cell - size * 0.5f,
                 (py + side * 0.5f) * cell - size * 0.5f,
-                -0.12f);
+                0.12f);
             q.transform.localScale = new Vector3(w, w, 1f);
-            q.transform.localRotation = Quaternion.identity;
+            q.transform.localRotation = Quaternion.Euler(0f, 180f, 0f);
 
             var mr = q.GetComponent<MeshRenderer>();
             mr.sharedMaterial = new Material(_shared) { color = Colour(tx.FeeRate) };
