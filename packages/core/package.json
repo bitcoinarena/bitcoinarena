@@ -1,0 +1,17 @@
+{
+  "name": "@blwp/core",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Deterministic simulation core. Integer arithmetic only.",
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "scripts": {
+    "guard": "node tools/check-determinism.js",
+    "hash": "node tools/hash-core.js",
+    "tables": "node tools/gen-tables.js",
+    "test": "node --test test/*.test.js",
+    "engines": "bash tools/run-engines.sh"
+  }
+}
