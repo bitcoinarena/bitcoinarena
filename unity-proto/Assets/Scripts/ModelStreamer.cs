@@ -165,6 +165,31 @@ public class ModelStreamer : MonoBehaviour
         var item = Items.Find(i => i.key == key);
         if (item != null) item.state = State.Loading;
 
+        // Ask whether the key resolves BEFORE asking for the asset.
+        //
+        // Addressables logs an InvalidKeyException at Error level from inside
+        // LoadAssetAsync and GetDownloadSizeAsync when a key has no location,
+        // and it does so before the handle reports failure - so the graceful
+        // handling further down never gets the chance to keep it quiet. One
+        // absent model therefore fails every PlayMode test in the project,
+        // because the test framework fails a test on any unhandled error log.
+        //
+        // A missing model is a degraded scene, not a broken one: the code-built
+        // proxy stays where the detailed mesh would have gone.
+        var locations = Addressables.LoadResourceLocationsAsync(key);
+        yield return locations;
+        bool missing = locations.Status != AsyncOperationStatus.Succeeded
+                       || locations.Result == null || locations.Result.Count == 0;
+        Addressables.Release(locations);
+
+        if (missing)
+        {
+            Failed++;
+            if (item != null) item.state = State.Failed;
+            Debug.LogWarning($"[ModelStreamer] {key} is not in the catalog - keeping the proxy");
+            yield break;
+        }
+
         // How much this one actually costs. Reported as zero once it is in the
         // browser's cache, which is worth showing: a second visit is nearly
         // free and the panel should say so rather than repeating the first
