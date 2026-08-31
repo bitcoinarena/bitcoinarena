@@ -37,6 +37,14 @@ public class RoadModel
     public float PlazaX = -118f;
     public float DepotX = 118f;
 
+    [Tooltip("Where the post office's own paving ends and the road may start. " +
+             "The plaza end of every lane is INSIDE the building: its facade " +
+             "stands at -114 and its apron reaches out to -83, so a ribbon " +
+             "laid from PlazaX ran through the loading bays and out across " +
+             "the concrete the truck is parked on. The road now begins where " +
+             "the building's own ground ends.")]
+    public float PlazaPavedTo = -83.4f;
+
     /// <summary>Where the frontline runs. Only the Front lane follows it.</summary>
     public Func<float, float> FrontlineAt = _ => 0f;
 
@@ -46,11 +54,21 @@ public class RoadModel
     public readonly List<Cut> Cuts = new List<Cut>();
     public readonly List<Wear> Wears = new List<Wear>();
 
+    /// <summary>
+    /// Where each route meets the compound gates.
+    ///
+    /// The Bear slot is not a round number because it is not a free choice:
+    /// it is the centreline of the loading bay the solo player starts in.
+    /// The bays are on a 6.8 m pitch across the post office, the roads used
+    /// to leave from a tidy z = 9, and the two did not meet - so the truck
+    /// spawned in its bay five metres off the edge of the only road it could
+    /// take, which reads as being parked crooked. A road leaves from a door.
+    /// </summary>
     static float GateSlot(Lane lane) => lane switch
     {
         Lane.BullRear => -24f,
         Lane.Bull => -9f,
-        Lane.Bear => 9f,
+        Lane.Bear => PostOffice.BayZ(PostOffice.SoloBay),
         _ => 24f,
     };
 

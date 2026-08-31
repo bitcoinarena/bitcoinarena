@@ -34,8 +34,13 @@ public class MinerTerminal : MonoBehaviour
              "visibly squat.")]
     public float verticalStretch = 1f;
 
-    [Tooltip("How often the histogram scrolls one column left.")]
+    [Tooltip("How often the histogram is re-read.")]
     public float shiftSeconds = 0.5f;
+
+    [Tooltip("Tallest a bar may stand, as a fraction of its authored height. " +
+             "The bars are 11 m at full scale on a 36 m screen and would " +
+             "otherwise run up through the transaction lines above them.")]
+    public float maxBar = 0.82f;
 
     const int Lines = 4;                 // MINING + three transactions
     TextMesh[] _text;
@@ -107,12 +112,72 @@ public class MinerTerminal : MonoBehaviour
             _text[i] = tm;
         }
 
+        // The amounts get their own column, right-aligned.
+        //
+        // They were part of the same string as the txid, separated by three
+        // spaces, in a proportional font - so where an amount started depended
+        // on how wide the sixteen hex digits before it happened to be, and
+        // three lines of numbers stepped raggedly across the screen. A column
+        // is a column: same right edge, whatever is to the left of it.
+        _amounts = new TextMesh[Lines];
+        for (int i = 1; i < Lines; i++)
+        {
+            var col = new GameObject("TerminalAmount" + i);
+            col.transform.SetParent(screen, false);
+            col.transform.localPosition = new Vector3(-40f, rows[i], -0.2f);
+            col.transform.localRotation = Quaternion.Euler(0f, 180f, 0f);
+            col.layer = screen.gameObject.layer;
+
+            var am = col.AddComponent<TextMesh>();
+            am.font = font;
+            am.fontSize = 80;
+            am.characterSize = 1f;
+            am.anchor = TextAnchor.MiddleRight;
+            am.alignment = TextAlignment.Right;
+            am.color = new Color(0.60f, 1f, 0.72f);
+            am.text = "";
+
+            var amr = col.GetComponent<MeshRenderer>();
+            amr.sharedMaterial = font.material;
+            amr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            amr.receiveShadows = false;
+            _amounts[i] = am;
+        }
+
+        // The hashrate gets its own text, in its own colour.
+        //
+        // It was appended to the word MINING with a run of spaces, in the same
+        // green, which made the biggest number on the building look like part
+        // of a label. It is the whole network's rate - about 900 EH/s - and it
+        // belongs to nothing else on the screen, so it is set apart: amber,
+        // right-hand end of the same row, reading back towards the word it
+        // belongs to.
+        var hash = new GameObject("TerminalHashrate");
+        hash.transform.SetParent(screen, false);
+        hash.transform.localPosition = new Vector3(-44f, rows[0], -0.2f);
+        hash.transform.localRotation = Quaternion.Euler(0f, 180f, 0f);
+        hash.layer = screen.gameObject.layer;
+        _hash = hash.AddComponent<TextMesh>();
+        _hash.font = font;
+        _hash.fontSize = 80;
+        _hash.characterSize = 1f;
+        _hash.anchor = TextAnchor.MiddleRight;
+        _hash.alignment = TextAlignment.Right;
+        _hash.color = new Color(1f, 0.76f, 0.26f);
+        _hash.text = "";
+        var hr = hash.GetComponent<MeshRenderer>();
+        hr.sharedMaterial = font.material;
+        hr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+        hr.receiveShadows = false;
+
         _rowHeight = high;
         FitRow(0);
     }
 
     float[] _rowHeight;
-    TextMesh _header;
+    TextMesh[] _amounts;
+    TextMesh _header, _hash;
+    float _hashHeight = 6.5f;
 
     /// <summary>
     /// Scales a row to its target height, measured in the SCREEN's own units.
@@ -166,19 +231,24 @@ public class MinerTerminal : MonoBehaviour
         // out 107 m wide on a 96 m panel after being fitted against the width
         // of the word MINING.
         if (_refit > 0 && --_refit == 0)
-            for (int i = 0; i < Lines; i++) FitRow(i);
+            for (int i = 0; i < Lines; i++)
+            {
+                FitRow(i);
+                if (_amounts != null && i > 0 && _amounts[i] != null)
+                    FitTo(_amounts[i], _rowHeight[i], 34f);
+            }
 
-        // What this farm is worth, beside the word MINING.
+        // What the whole network is worth, at the other end of the row.
         //
-        // A tenth of the network, and it wanders: a pool dashboard never shows
-        // the same number twice because the figure is a Poisson estimate from
-        // found shares, not a measurement. Steady to three digits, restless in
-        // the last one, which is what a real rig looks like.
-        if (_header != null && stats != null)
+        // It wanders: the figure is a Poisson estimate from blocks found in a
+        // window, not a measurement, and no dashboard shows the same number
+        // twice. Steady in its leading digits, restless in the last, which is
+        // what a real readout looks like.
+        if (_hash != null && stats != null)
         {
-            float eh = stats.OurExahash;
-            string want = eh > 0.5f ? $"MINING          {eh:0} EH/s" : "MINING";
-            if (_header.text != want) { _header.text = want; _refit = 2; }
+            float eh = stats.Exahash;
+            string want = eh > 0.5f ? $"{eh:0} EH/s" : "";
+            if (_hash.text != want) { _hash.text = want; FitHash(); }
         }
 
         if (Time.unscaledTime < _nextRoll) return;
@@ -206,7 +276,12 @@ public class MinerTerminal : MonoBehaviour
             string id = tx.txid != null && tx.txid.Length >= 16
                 ? tx.txid.Substring(0, 16).ToUpperInvariant()
                 : (tx.txid ?? "");
-            _text[row].text = $"{id}   {Amount(tx)}";
+            _text[row].text = id;
+            if (_amounts != null && _amounts[row] != null)
+            {
+                _amounts[row].text = Amount(tx);
+                FitTo(_amounts[row], _rowHeight[row], 34f);
+            }
             _refit = 2;
         }
     }
@@ -228,55 +303,131 @@ public class MinerTerminal : MonoBehaviour
         return "0 sat";
     }
 
-    /// <summary>
-    /// The bars are the live fee histogram, not a loop.
-    ///
-    /// Same data the terrain relief is built from, so the wall and the ground
-    /// tell the same story about how congested the chain is. Eased rather than
-    /// snapped: the histogram arrives every twenty seconds and a step change
-    /// across twenty-four bars reads as a glitch.
-    /// </summary>
-    float _nextShift;
+    /// <summary>Scales the hashrate to the header row, in the screen's units.</summary>
+    void FitHash() => FitTo(_hash, _hashHeight, 40f);
 
+    /// <summary>Scales one text to a height, and no wider than it is allowed.</summary>
+    void FitTo(TextMesh tm, float height, float width)
+    {
+        var mr = tm != null ? tm.GetComponent<MeshRenderer>() : null;
+        if (mr == null) return;
+        var size = mr.localBounds.size;
+        if (size.y < 0.001f || size.x < 0.001f) return;
+        float k = Mathf.Max(0.001f, Mathf.Min(height / size.y, width / size.x));
+        tm.transform.localScale = new Vector3(k, k * verticalStretch, k);
+    }
+
+    /// <summary>
+    /// The bars ARE the mempool: the fee curve of everything waiting, richest
+    /// on the left, height and colour both the rate being paid.
+    ///
+    /// They used to scroll - each bar shifted left every half second and a new
+    /// sample entered at the right - with a random multiplier of 0.72 to 1.34
+    /// applied to that sample "so two quiet minutes are not a flat line". That
+    /// is a screensaver: twenty-four bars, none of which stood for anything in
+    /// particular, jittering. It looked random because it WAS random.
+    ///
+    /// Now bar i is the fee rate of the i-th 24th of the queue, taken from the
+    /// projected blocks' own fee ranges off mempool.space's socket - so it
+    /// moves every couple of seconds because the mempool moved, and it is
+    /// coloured on the same ramp as the goggles wall at the other end of the
+    /// map. Read left to right it is the shape of the market: a wall that
+    /// steps down gently is a chain keeping up, a red block on the left is a
+    /// fee war, and a flat green run is a quiet night.
+    /// </summary>
     void Bars()
     {
         if (bars == null || bars.Length == 0) return;
 
-        // A ROLLING chart, not a static profile.
-        //
-        // Setting all 24 bars from the fee histogram was correct data and dead
-        // to look at: the histogram moves slowly, so the wall was a still life
-        // that happened to be accurate. It now scrolls - every bar shifts one
-        // place left and a fresh sample enters at the right - which is how a
-        // mempool chart reads as live, and is also true: each column really is
-        // a later reading than the one beside it.
         if (Time.unscaledTime >= _nextShift)
         {
             _nextShift = Time.unscaledTime + shiftSeconds;
 
-            var profile = terrain != null ? terrain.FeeProfile(bars.Length) : null;
-            float entering = 0.3f;
-            if (profile != null)
-            {
-                // the newest reading is the busy end of the histogram
-                float sum = 0f;
-                for (int i = 0; i < profile.Length; i++) sum += profile[i];
-                entering = Mathf.Clamp01(sum / Mathf.Max(1, profile.Length) * 1.6f);
-            }
-            // a little jitter, so two quiet minutes are not a flat line
-            entering = Mathf.Clamp(entering * Random.Range(0.72f, 1.34f), 0.08f, 1f);
+            // live first, the terrain's slow histogram as the fallback
+            var rates = stats != null ? stats.FeeCurve(bars.Length) : null;
+            if (rates == null && terrain != null) rates = terrain.FeeRates(bars.Length);
 
-            for (int i = 0; i < _barTarget.Length - 1; i++) _barTarget[i] = _barTarget[i + 1];
-            _barTarget[_barTarget.Length - 1] = entering;
+            if (rates != null)
+            {
+                // Scaled to the range the queue is actually paying, not to
+                // zero. On a quiet night the whole mempool sits between 0.36
+                // and 0.5 sat/vB with one transaction paying 200, and a scale
+                // that runs from nothing to the highest bar drew that as one
+                // tower and twenty-three stubs - true, and unreadable. The
+                // ends are trimmed so a single outlier cannot set the scale
+                // for the other twenty-three.
+                var sorted = new float[rates.Length];
+                System.Array.Copy(rates, sorted, rates.Length);
+                System.Array.Sort(sorted);
+                float lo = Mathf.Log10(1f + sorted[Mathf.Clamp(sorted.Length / 10, 0, sorted.Length - 1)]);
+                float hi = Mathf.Log10(1f + sorted[Mathf.Clamp(sorted.Length * 9 / 10, 0, sorted.Length - 1)]);
+                if (hi - lo < 0.02f) { hi = lo + 0.02f; }
+
+                for (int i = 0; i < _barTarget.Length && i < rates.Length; i++)
+                {
+                    // log, like every fee chart: a 400 sat/vB spike must not
+                    // flatten the rest of the market into the floor
+                    float h = Mathf.InverseLerp(lo, hi, Mathf.Log10(1f + Mathf.Max(0f, rates[i])));
+                    // Floor and ceiling. The floor is so an empty bucket is a
+                    // low bar rather than no bar at all - a missing bar reads
+                    // as a broken display. The ceiling is geometry: the bars
+                    // stand at the bottom of a 36 m screen and are 11 m tall
+                    // at full scale, which reaches the transaction lines above
+                    // them and strikes the third one through.
+                    _barTarget[i] = Mathf.Clamp(Mathf.Lerp(0.12f, maxBar, h), 0.12f, maxBar);
+                }
+                Paint(rates);
+            }
         }
 
-        float k = 1f - Mathf.Exp(-Time.unscaledDeltaTime * 6f);
+        // Eased rather than snapped: a step change across twenty-four bars
+        // reads as a glitch, and the socket delivers a new curve every couple
+        // of seconds.
+        float k = 1f - Mathf.Exp(-Time.unscaledDeltaTime * 3f);
         for (int i = 0; i < bars.Length; i++)
         {
             if (bars[i] == null) continue;
             var s = bars[i].localScale;
             s.y = Mathf.Lerp(s.y, _barTarget[i], k);
             bars[i].localScale = s;
+        }
+    }
+
+    float _nextShift;
+    MaterialPropertyBlock _paint;
+    static readonly int BaseColorFactor = Shader.PropertyToID("baseColorFactor");
+    static readonly int EmissiveFactor = Shader.PropertyToID("emissiveFactor");
+    static readonly int BaseColor = Shader.PropertyToID("_BaseColor");
+    static readonly int Emission = Shader.PropertyToID("_EmissionColor");
+
+    /// <summary>
+    /// Colours each bar by what it is paying, without touching the shared
+    /// material - a property block per renderer, so twenty-four bars still
+    /// cost one material.
+    /// </summary>
+    void Paint(float[] rates)
+    {
+        _paint ??= new MaterialPropertyBlock();
+        for (int i = 0; i < bars.Length && i < rates.Length; i++)
+        {
+            if (bars[i] == null) continue;
+            var r = bars[i].GetComponent<Renderer>();
+            if (r == null) continue;
+
+            var c = GogglesWall.Colour(rates[i]);
+            r.GetPropertyBlock(_paint);
+
+            // The building comes in through glTFast, so its materials are the
+            // glTF shader graph and its colour is "baseColorFactor" - not
+            // "_BaseColor", which is what URP's own Lit calls it. Setting the
+            // wrong name is not an error, it just quietly does nothing, which
+            // is exactly how twenty-four bars stayed one colour.
+            var mat = r.sharedMaterial;
+            if (mat != null && mat.HasProperty(BaseColorFactor)) _paint.SetColor(BaseColorFactor, c);
+            if (mat != null && mat.HasProperty(EmissiveFactor)) _paint.SetColor(EmissiveFactor, c * 0.8f);
+            if (mat != null && mat.HasProperty(BaseColor)) _paint.SetColor(BaseColor, c);
+            if (mat != null && mat.HasProperty(Emission)) _paint.SetColor(Emission, c * 0.8f);
+            r.SetPropertyBlock(_paint);
         }
     }
 }

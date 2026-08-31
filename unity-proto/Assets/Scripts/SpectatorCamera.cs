@@ -10,8 +10,9 @@ using UnityEngine;
 /// whether the fans turn true, whether the lettering fits, and whether the
 /// bay a player spawns in lines up with the doors.
 ///
-/// Drag to look, WASD to move, Q/E for height, shift to hurry. On a phone,
-/// drag to look and the two pads to move.
+/// Drag to look, WASD to move, Q/E for height, shift to hurry. On a phone:
+/// one finger to look, the pads to move, two fingers dragged up or down for
+/// height, and the EXIT button to go back to the truck.
 /// </summary>
 public class SpectatorCamera : MonoBehaviour
 {
@@ -26,10 +27,24 @@ public class SpectatorCamera : MonoBehaviour
 
     public bool Active { get; private set; }
 
+    [Tooltip("Metres of altitude per screen height of two-finger drag.")]
+    public float liftSpeed = 90f;
+
     Camera _cam;
     float _yaw, _pitch;
     Vector2 _lastPointer;
     bool _dragging;
+    float _lastPinch;
+    bool _lifting;
+    Texture2D _flat;
+
+    /// <summary>Where the EXIT button sits, in GUI space.</summary>
+    public static Rect ExitRect(int w, int h)
+    {
+        float s = TouchPad.ButtonSize(w, h) * 0.62f;
+        float m = TouchPad.Margin(w, h);
+        return new Rect(m, m, s * 1.7f, s * 0.62f);
+    }
 
     /// <summary>Places to jump to, so the two big models are one tap away.</summary>
     public enum Spot { Truck, PostOffice, Miner, Overview }
@@ -83,25 +98,78 @@ public class SpectatorCamera : MonoBehaviour
     void Update()
     {
         if (!Active) return;
+        Fingers();
         Look();
         Move();
     }
 
+    /// <summary>
+    /// Every finger on the glass, in GUI space - origin top left, y down.
+    ///
+    /// GUI space, not input space, because that is what TouchPad hit-tests in.
+    /// Reading the raw touch position and passing it straight to TouchPad.Hit
+    /// is what made the pads dead in this mode: the y axis was upside down, so
+    /// pressing the forward pad at the bottom of the screen tested a rectangle
+    /// at the top and nothing ever moved.
+    /// </summary>
+    readonly System.Collections.Generic.List<Vector2> _fingers = new();
+
+    void Fingers()
+    {
+        _fingers.Clear();
+        var touch = UnityEngine.InputSystem.Touchscreen.current;
+        if (touch == null) return;
+        foreach (var t in touch.touches)
+            if (t.press.isPressed)
+            {
+                var p = t.position.ReadValue();
+                _fingers.Add(new Vector2(p.x, Screen.height - p.y));
+            }
+    }
+
+    /// <summary>Is this finger on one of the on-screen controls?</summary>
+    static bool OnAControl(Vector2 gui, int w, int h)
+    {
+        var one = new System.Collections.Generic.List<Vector2> { gui };
+        return ExitRect(w, h).Contains(gui)
+            || TouchPad.Hit(TouchPad.Pad.Up, w, h, one)
+            || TouchPad.Hit(TouchPad.Pad.Down, w, h, one)
+            || TouchPad.Hit(TouchPad.Pad.Left, w, h, one)
+            || TouchPad.Hit(TouchPad.Pad.Right, w, h, one);
+    }
+
     void Look()
     {
+        int w = Screen.width, h = Screen.height;
+
+        // Two fingers: height. A phone has no Q and E, and a free camera that
+        // can only be flown at one altitude is no use for looking at a
+        // building 52 m tall.
+        if (_fingers.Count >= 2)
+        {
+            float mid = (_fingers[0].y + _fingers[1].y) * 0.5f;
+            if (_lifting)
+                transform.position += Vector3.up * ((_lastPinch - mid) / h * liftSpeed);
+            _lastPinch = mid;
+            _lifting = true;
+            _dragging = false;
+            return;
+        }
+        _lifting = false;
+
         Vector2 p = Vector2.zero;
         bool down = false;
 
         var mouse = UnityEngine.InputSystem.Mouse.current;
         if (mouse != null && mouse.leftButton.isPressed)
         {
-            p = mouse.position.ReadValue();
-            down = true;
+            var m = mouse.position.ReadValue();
+            p = new Vector2(m.x, Screen.height - m.y);
+            down = !OnAControl(p, w, h);
         }
-        var touch = UnityEngine.InputSystem.Touchscreen.current;
-        if (!down && touch != null && touch.primaryTouch.press.isPressed)
+        if (!down && _fingers.Count == 1 && !OnAControl(_fingers[0], w, h))
         {
-            p = touch.primaryTouch.position.ReadValue();
+            p = _fingers[0];
             down = true;
         }
 
@@ -109,7 +177,8 @@ public class SpectatorCamera : MonoBehaviour
         {
             var d = p - _lastPointer;
             _yaw += d.x * lookSpeed;
-            _pitch = Mathf.Clamp(_pitch - d.y * lookSpeed, -85f, 85f);
+            // GUI space has y running down, so a drag DOWN raises the pitch
+            _pitch = Mathf.Clamp(_pitch + d.y * lookSpeed, -85f, 85f);
             transform.rotation = Quaternion.Euler(_pitch, _yaw, 0f);
         }
         _dragging = down;
@@ -134,27 +203,69 @@ public class SpectatorCamera : MonoBehaviour
 
         // The driving pads double as movement while spectating, so the mode is
         // usable on a phone. TouchPad has no held-state of its own - it
-        // resolves a list of live points - so the touches are collected here
-        // and handed to the same hit test the driving controls use.
-        var touch = UnityEngine.InputSystem.Touchscreen.current;
-        if (touch != null)
+        // resolves a list of live points - so the fingers collected above are
+        // handed to the same hit test the driving controls use.
+        if (_fingers.Count > 0)
         {
-            var points = new System.Collections.Generic.List<Vector2>();
-            foreach (var t in touch.touches)
-                if (t.press.isPressed) points.Add(t.position.ReadValue());
-
-            if (points.Count > 0)
-            {
-                int w = Screen.width, h = Screen.height;
-                if (TouchPad.Hit(TouchPad.Pad.Up, w, h, points)) move += transform.forward;
-                if (TouchPad.Hit(TouchPad.Pad.Down, w, h, points)) move -= transform.forward;
-                if (TouchPad.Hit(TouchPad.Pad.Left, w, h, points)) move -= transform.right;
-                if (TouchPad.Hit(TouchPad.Pad.Right, w, h, points)) move += transform.right;
-            }
+            int w = Screen.width, h = Screen.height;
+            if (TouchPad.Hit(TouchPad.Pad.Up, w, h, _fingers)) move += transform.forward;
+            if (TouchPad.Hit(TouchPad.Pad.Down, w, h, _fingers)) move -= transform.forward;
+            if (TouchPad.Hit(TouchPad.Pad.Left, w, h, _fingers)) move -= transform.right;
+            if (TouchPad.Hit(TouchPad.Pad.Right, w, h, _fingers)) move += transform.right;
         }
 
         if (move.sqrMagnitude > 0.0001f)
             transform.position += move.normalized *
                                   (fast ? fastSpeed : speed) * Time.unscaledDeltaTime;
+    }
+
+    /// <summary>
+    /// The way back, and how to fly.
+    ///
+    /// Spectating was reachable from the title screen and had no exit at all
+    /// on a phone: no key to press, and the pads that move the camera look
+    /// exactly like the pads that drive the truck. A labelled button and one
+    /// line of instructions cost nothing and are the difference between a mode
+    /// and a trap.
+    /// </summary>
+    void OnGUI()
+    {
+        if (!Active) return;
+        if (_flat == null)
+        {
+            _flat = new Texture2D(1, 1);
+            _flat.SetPixel(0, 0, Color.white);
+            _flat.Apply();
+        }
+
+        int w = Screen.width, h = Screen.height;
+        var exit = ExitRect(w, h);
+
+        GUI.color = new Color(0f, 0f, 0f, 0.55f);
+        GUI.DrawTexture(exit, _flat);
+        GUI.color = new Color(1f, 1f, 1f, 0.85f);
+        GUI.DrawTexture(new Rect(exit.x, exit.y, exit.width, 2f), _flat);
+        GUI.DrawTexture(new Rect(exit.x, exit.yMax - 2f, exit.width, 2f), _flat);
+        GUI.DrawTexture(new Rect(exit.x, exit.y, 2f, exit.height), _flat);
+        GUI.DrawTexture(new Rect(exit.xMax - 2f, exit.y, 2f, exit.height), _flat);
+        GUI.color = Color.white;
+
+        var label = new GUIStyle(GUI.skin.label)
+        {
+            alignment = TextAnchor.MiddleCenter,
+            fontStyle = FontStyle.Bold,
+            fontSize = Mathf.RoundToInt(Mathf.Clamp(exit.height * 0.42f, 11f, 22f)),
+        };
+        label.normal.textColor = Color.white;
+        if (GUI.Button(exit, "EXIT", label)) Leave();
+
+        var hint = new GUIStyle(GUI.skin.label)
+        {
+            alignment = TextAnchor.UpperLeft,
+            fontSize = Mathf.RoundToInt(Mathf.Clamp(Mathf.Min(w, h) * 0.021f, 10f, 17f)),
+        };
+        hint.normal.textColor = new Color(1f, 1f, 1f, 0.65f);
+        GUI.Label(new Rect(exit.x, exit.yMax + 6f, w * 0.6f, hint.fontSize * 3f),
+                  "drag to look  ·  pads to fly  ·  two fingers up/down for height", hint);
     }
 }

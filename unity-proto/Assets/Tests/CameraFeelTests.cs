@@ -50,6 +50,17 @@ public class CameraFeelTests
         panel.Auto();
         panel.Confirm();
 
+        // Clear the battlefield, for the same reason the tyre tests do.
+        //
+        // The solo bay is in the MIDDLE of the post office now, so the run out
+        // of it goes straight through the war instead of along the empty edge
+        // of the map - which is the point, and which means a truck driven at
+        // full throttle for six seconds in a camera test gets shot. A wrecked
+        // truck stops yawing, the camera stops leaning, and the test reports a
+        // camera fault. These check the camera, not the armies.
+        foreach (var army in Object.FindObjectsByType<ArmyRenderer>(FindObjectsSortMode.None))
+            army.gameObject.SetActive(false);
+
         _truck = Object.FindFirstObjectByType<TruckController>();
         _chase = Object.FindFirstObjectByType<ChaseCamera>();
         _cam = _chase.GetComponent<Camera>();

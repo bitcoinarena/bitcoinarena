@@ -64,8 +64,13 @@ public static class MempoolHosts
             using (var req = UnityWebRequest.Get(All[at] + path))
             {
                 req.timeout = Mathf.Max(1, Mathf.RoundToInt(timeout));
-                // Some instances refuse the default UnityWebRequest agent.
+                // Some instances refuse the default UnityWebRequest agent - but
+                // NOT in a browser, where User-Agent is a forbidden header: the
+                // browser owns it, setting it does nothing, and it earns a
+                // console warning on every single request.
+#if !UNITY_WEBGL || UNITY_EDITOR
                 req.SetRequestHeader("User-Agent", "btc-logistics-war");
+#endif
                 yield return req.SendWebRequest();
 
                 if (req.result == UnityWebRequest.Result.Success)

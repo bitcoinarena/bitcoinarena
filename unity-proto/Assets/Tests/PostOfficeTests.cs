@@ -162,17 +162,61 @@ public class PostOfficeTests
         Assert.Greater(filled, 12,
             $"nur {filled} Anzeigen tragen Daten - Gebuehren, Zaehler und Bloecke fehlen");
 
-        // the goggles wall is built from the same offers the yard is
+        // the goggles wall carries the projected block
         var goggles = GameObject.Find("goggles_screen");
         Assert.IsNotNull(goggles, "keine Goggles-Wand");
         // The wall rebuilds on its own clock, so give it one turn of that.
         var wall = Object.FindFirstObjectByType<GogglesWall>();
         Assert.IsNotNull(wall, "keine Goggles-Komponente");
-        yield return new WaitForSeconds(wall.rebuildSeconds + 1.5f);
+        yield return new WaitForSeconds(wall.rebuildSeconds + 2f);
 
-        int tiles = 0;
-        foreach (Transform c in goggles.transform) if (c.name.StartsWith("tile")) tiles++;
-        Assert.Greater(tiles, 8, $"nur {tiles} Kacheln auf der Goggles-Wand");
+        var mesh = WallMesh();
+        Assert.IsNotNull(mesh, "die Goggles-Wand hat kein Netz");
+        Assert.Greater(mesh.vertexCount, 8 * 4,
+            $"nur {mesh.vertexCount / 4} Kacheln auf der Goggles-Wand");
+    }
+
+    /// <summary>The one mesh the whole wall is drawn as.</summary>
+    static Mesh WallMesh()
+    {
+        var go = GameObject.Find("GogglesMesh");
+        var mf = go != null ? go.GetComponent<MeshFilter>() : null;
+        return mf != null ? mf.sharedMesh : null;
+    }
+
+    /// <summary>
+    /// The wall moves.
+    ///
+    /// mempool.space's own graph tweens every transaction to its new place
+    /// over a second and flies new arrivals in from off the edge - see
+    /// block-scene.ts, animationDuration = 1000. This drew forty quads off a
+    /// twelve-second poll and then never moved again, which is a photograph of
+    /// a mempool rather than a mempool.
+    /// </summary>
+    [UnityTest]
+    public IEnumerator TheGogglesAnimate()
+    {
+        var wall = Object.FindFirstObjectByType<GogglesWall>();
+        Assert.IsNotNull(wall, "keine Goggles-Komponente");
+        yield return new WaitForSeconds(wall.rebuildSeconds + 2f);
+
+        var mesh = WallMesh();
+        Assume.That(mesh, Is.Not.Null);
+        Assume.That(mesh.vertexCount, Is.GreaterThan(0),
+            "ohne Netzverbindung ist auf der Wand nichts zu animieren");
+
+        var before = mesh.vertices;
+        float moved = 0f;
+        for (float t = 0f; t < 2f && moved <= 0.02f; t += Time.deltaTime)
+        {
+            yield return null;
+            var now = mesh.vertices;
+            int n = Mathf.Min(before.Length, now.Length);
+            for (int i = 0; i < n; i++)
+                moved = Mathf.Max(moved, Vector3.Distance(before[i], now[i]));
+        }
+        Assert.Greater(moved, 0.02f,
+            "auf der Goggles-Wand bewegt sich in zwei Sekunden nichts");
     }
 
     /// <summary>
@@ -192,28 +236,21 @@ public class PostOfficeTests
     {
         var wall = Object.FindFirstObjectByType<GogglesWall>();
         Assert.IsNotNull(wall, "keine Goggles-Komponente");
-        yield return new WaitForSeconds(wall.rebuildSeconds + 2f);
+        yield return new WaitForSeconds(wall.rebuildSeconds + 1.5f);
 
         var inScene = new System.Collections.Generic.HashSet<string>();
         foreach (var r in Object.FindObjectsByType<Renderer>(FindObjectsSortMode.None))
             foreach (var m in r.sharedMaterials)
-                if (m != null && m.shader != null && !m.name.StartsWith("tile"))
+                if (m != null && m.shader != null && r.gameObject.name != "GogglesMesh")
                     inScene.Add(m.shader.name);
 
-        var screen = GameObject.Find("goggles_screen");
-        int tiles = 0;
-        foreach (Transform c in screen.transform)
-        {
-            if (!c.name.StartsWith("tile")) continue;
-            tiles++;
-            var m = c.GetComponent<MeshRenderer>().sharedMaterial;
-            Assert.IsNotNull(m, "eine Kachel hat gar kein Material");
-            Assert.IsNotNull(m.shader, "eine Kachel hat keinen Shader");
-            Assert.IsTrue(inScene.Contains(m.shader.name),
-                $"die Kacheln zeichnen mit \"{m.shader.name}\", den sonst nichts in der " +
-                "Szene benutzt - der Build wirft ihn raus und die Wand ist wieder leer");
-        }
-        Assert.Greater(tiles, 8, $"nur {tiles} Kacheln");
+        var drawn = GameObject.Find("GogglesMesh");
+        Assert.IsNotNull(drawn, "die Goggles-Wand wurde nie gebaut");
+        var mat = drawn.GetComponent<MeshRenderer>().sharedMaterial;
+        Assert.IsNotNull(mat, "die Wand hat kein Material");
+        Assert.IsTrue(inScene.Contains(mat.shader.name),
+            $"die Wand zeichnet mit \"{mat.shader.name}\", den sonst nichts in der " +
+            "Szene benutzt - der Build wirft ihn raus und die Wand ist wieder leer");
     }
 
     /// <summary>
@@ -231,10 +268,15 @@ public class PostOfficeTests
     {
         yield return new WaitForSeconds(4f);
 
+        // Per PLATE, not per text. A mined block's face carries two: the
+        // height, set large, and the transaction count and age under it at a
+        // third of the size. What has to be legible is the plate, so the test
+        // asks whether the BIGGEST thing on each one fills it.
+        var biggest = new System.Collections.Generic.Dictionary<Transform, float>();
         int checkedPlates = 0;
         foreach (var tm in Object.FindObjectsByType<TextMesh>(FindObjectsSortMode.None))
         {
-            if (!tm.name.EndsWith("_text")) continue;
+            if (!tm.name.EndsWith("_text") && !tm.name.EndsWith("_height")) continue;
             var plate = tm.transform.parent;
             var mf = plate != null ? plate.GetComponent<MeshFilter>() : null;
             if (mf == null || mf.sharedMesh == null) continue;
@@ -251,11 +293,14 @@ public class PostOfficeTests
                 $"{plate.name}: \"{tm.text}\" ist {h:0.0} m hoch auf {room.y:0.0} m Platte");
 
             float fills = Mathf.Max(w / room.x, h / room.y);
-            Assert.Greater(fills, 0.55f,
-                $"{plate.name}: \"{tm.text}\" fuellt nur {fills:0%} der Platte - " +
-                "das ist aus Fahrerperspektive nicht lesbar");
+            biggest[plate] = Mathf.Max(biggest.TryGetValue(plate, out var was) ? was : 0f, fills);
             checkedPlates++;
         }
+
+        foreach (var pair in biggest)
+            Assert.Greater(pair.Value, 0.55f,
+                $"{pair.Key.name}: die groesste Beschriftung fuellt nur {pair.Value:0%} " +
+                "der Platte - das ist aus Fahrerperspektive nicht lesbar");
         Assert.Greater(checkedPlates, 12,
             $"nur {checkedPlates} beschriftete Platten gefunden");
     }
@@ -280,16 +325,22 @@ public class PostOfficeTests
             var plate = tm.transform.parent;
             if (plate == null || !plate.name.StartsWith("mined_face_")) continue;
             if (tm.text == "—") continue;
-            mined++;
 
+            if (tm.name.EndsWith("_height"))
+            {
+                // the number, on its own, large and in its own colour
+                var digits = tm.text.Replace(",", "").Replace(".", "");
+                if (int.TryParse(digits, out int height) && height > 800000) numbered++;
+                Assert.Greater(tm.color.r + tm.color.g, tm.color.b * 1.5f,
+                    "die Blocknummer ist nicht farbig abgesetzt");
+                continue;
+            }
+
+            mined++;
             StringAssert.DoesNotContain("vor ", tm.text,
                 $"der Block spricht Deutsch: \"{tm.text}\"");
             StringAssert.Contains("ago", tm.text,
                 $"dem Block fehlt das Alter in Worten: \"{tm.text}\"");
-
-            // the height, as the explorer writes it, on its first line
-            var head = tm.text.Split('\n')[0].Replace(",", "").Replace(".", "");
-            if (int.TryParse(head, out int height) && height > 800000) numbered++;
         }
         Assert.Greater(mined, 3, $"nur {mined} geminte Bloecke tragen Text");
         Assert.AreEqual(mined, numbered,

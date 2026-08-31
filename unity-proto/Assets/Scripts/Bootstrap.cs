@@ -122,6 +122,10 @@ public class Bootstrap : MonoBehaviour
         var statsGo = new GameObject("ChainStats");
         statsGo.transform.SetParent(transform, false);
         _stats = statsGo.AddComponent<ChainStats>();
+        // The projected block, transaction by transaction, off mempool.space's
+        // socket. The goggles wall is drawn from this rather than from the
+        // freight list: forty parcels is a truckload, not a block.
+        statsGo.AddComponent<MempoolBlockStream>();
 
         var postGo = new GameObject("PostOffice");
         postGo.transform.SetParent(transform, false);
@@ -268,6 +272,7 @@ public class Bootstrap : MonoBehaviour
         // safest possible load was also the best one.
         var clock = gameObject.AddComponent<BlockClock>();
         clock.gate = _gate;
+        clock.stats = _stats;          // one chain, one height
         clock.audioSource = Audio;
         // The clock running out has to DO something, or it teaches the player
         // that time is free - and time is the only cost left on dawdling.
@@ -413,6 +418,12 @@ public class Bootstrap : MonoBehaviour
         // material, buried in the ground.
         go.SetActive(false);
         Roads = go.AddComponent<RoadNetwork>();
+        // The road starts where the post office's apron stops. Both are placed
+        // from the same number, so the two can never drift apart - and the
+        // model behind the network does not exist until the object is active,
+        // which is why this is a field on the component and not a property of
+        // the model.
+        Roads.pavedTo = -_terrain.width * 0.44f + PostOffice.ApronReach;
         Roads.terrain = _terrain;
         Roads.field = Field;
         Roads.roadMaterial = roadMaterial;

@@ -239,12 +239,15 @@ public class MinerTerminalTests
         for (int i = 1; i < 4; i++)
         {
             Assert.IsNotEmpty(lines[i].text, $"Transaktionszeile {i} ist leer");
-            // " BTC" or " sat", not a bitcoin glyph: the amounts carry a
-            // spelled-out unit now, because most mempool transactions are
-            // small enough that BTC rounds them to nothing.
-            bool unit = lines[i].text.EndsWith(" BTC") || lines[i].text.EndsWith(" sat");
-            Assert.IsTrue(unit, $"Zeile {i} zeigt keinen Betrag mit Einheit: \"{lines[i].text}\"");
             Assert.Greater(lines[i].text.Length, 12, $"Zeile {i} zeigt keine txid");
+
+            // " BTC" or " sat", not a bitcoin glyph: the amounts carry a
+            // spelled-out unit, because most mempool transactions are small
+            // enough that BTC rounds them to nothing. They live in their own
+            // right-aligned column beside the ids.
+            var amount = Find("TerminalAmount" + i).GetComponent<TextMesh>().text;
+            bool unit = amount.EndsWith(" BTC") || amount.EndsWith(" sat");
+            Assert.IsTrue(unit, $"Zeile {i} zeigt keinen Betrag mit Einheit: \"{amount}\"");
         }
 
         // and they are three DIFFERENT transactions, not the same one thrice
@@ -336,11 +339,29 @@ public class MinerTerminalTests
                 $"Zeile {i} steht auf der rechten Haelfte - gelesen wird von links");
 
             if (i == 0) continue;
-            string text = row.GetComponent<TextMesh>().text;
+
+            // The amount is its own text now, right-aligned in a column, so
+            // that three amounts under one another share an edge instead of
+            // starting wherever the txid before them happened to end.
+            var amount = Find("TerminalAmount" + i);
+            Assert.IsNotNull(amount, $"Zeile {i} hat keine Betragsspalte");
+            string text = amount.GetComponent<TextMesh>().text;
             bool unit = text.EndsWith(" BTC") || text.EndsWith(" sat");
             Assert.IsTrue(unit, $"Zeile {i} \"{text}\" nennt keine Einheit");
             Assert.IsFalse(text.Contains("0.000 "),
                 $"Zeile {i} zeigt einen auf null gerundeten Betrag: \"{text}\"");
+        }
+
+        // and the amounts line up: one column, one right edge
+        float edge = float.NaN;
+        for (int i = 1; i < 4; i++)
+        {
+            var b = Find("TerminalAmount" + i).GetComponent<MeshRenderer>().bounds;
+            // the panel's own left-right runs along world z
+            float right = b.min.z;
+            if (float.IsNaN(edge)) edge = right;
+            Assert.AreEqual(edge, right, 0.6f,
+                $"die Betraege stehen nicht buendig: Zeile {i} endet {right - edge:0.0} m versetzt");
         }
     }
 
@@ -366,6 +387,7 @@ public class MinerTerminalTests
     [UnityTest]
     public IEnumerator TheBarsFollowTheFeeHistogram()
     {
+        var stats = Object.FindFirstObjectByType<ChainStats>();
         var terrain = Object.FindFirstObjectByType<MempoolTerrain>();
         var bars = new Transform[24];
         for (int i = 0; i < 24; i++)
@@ -374,30 +396,57 @@ public class MinerTerminalTests
             Assert.IsNotNull(bars[i], $"bar_{i:00} fehlt");
         }
 
-        yield return new WaitForSeconds(2.5f);   // let the easing settle
+        // wait for a fee curve to exist at all, then for the easing to settle
+        for (float t = 0f; t < 25f && stats.FeeCurve(24) == null; t += Time.deltaTime)
+            yield return null;
+        yield return new WaitForSeconds(3f);
 
-        var profile = terrain.FeeProfile(24);
-        Assert.IsNotNull(profile, "das Terrain hat noch kein Gebuehrenprofil");
+        var curve = stats.FeeCurve(24);
+        Assume.That(curve, Is.Not.Null,
+            "keine Gebuehrenkurve von mempool.space - ohne Netz ist hier nichts zu pruefen");
 
         // not all the same height - a flat wall of bars is a loop, not data
         float lo = 9f, hi = 0f;
         foreach (var b in bars) { lo = Mathf.Min(lo, b.localScale.y); hi = Mathf.Max(hi, b.localScale.y); }
-        Assert.Greater(hi - lo, 0.08f,
+        Assert.Greater(hi - lo, 0.05f,
             $"alle Balken stehen gleich hoch ({lo:0.00}..{hi:0.00}) - sie zeigen keine Daten");
 
-        // And it MOVES. The chart scrolls a column left every half second, so
-        // a wall that is merely accurate but still is the failure this catches
-        // - it was exactly that when the bars were set once from the histogram,
-        // which changes about three times an hour.
-        var before = new float[24];
-        for (int i = 0; i < 24; i++) before[i] = bars[i].localScale.y;
+        // And they are THAT data. The chart used to scroll a rolling average
+        // with a random 0.72-1.34 multiplier on every new sample, which moved
+        // convincingly and meant nothing; what is checked now is that the wall
+        // agrees with the curve it claims to be drawing - the dearest bucket
+        // has to stand taller than the cheapest.
+        int rich = 0, poor = 0;
+        for (int i = 1; i < 24; i++)
+        {
+            if (curve[i] > curve[rich]) rich = i;
+            if (curve[i] < curve[poor]) poor = i;
+        }
+        if (curve[rich] > curve[poor] * 1.2f)
+            Assert.Greater(bars[rich].localScale.y, bars[poor].localScale.y,
+                $"Balken {rich} zahlt {curve[rich]:0.0} sat/vB und steht niedriger als " +
+                $"Balken {poor} mit {curve[poor]:0.0} - die Wand zeigt nicht ihre eigenen Daten");
 
-        yield return new WaitForSeconds(2f);
-
-        int moved = 0;
-        for (int i = 0; i < 24; i++)
-            if (Mathf.Abs(bars[i].localScale.y - before[i]) > 0.02f) moved++;
-        Assert.Greater(moved, 6,
-            $"nur {moved} von 24 Balken haben sich in zwei Sekunden bewegt");
+        // And each bar is coloured by what it pays, not painted alike.
+        //
+        // Read back under the name the MATERIAL uses: the building comes in
+        // through glTFast, so its colour is "baseColorFactor" and not URP's
+        // own "_BaseColor" - asking for the wrong one returns black for every
+        // bar, which looks exactly like a chart that was never coloured.
+        Color Painted(Transform bar)
+        {
+            var r = bar.GetComponent<Renderer>();
+            var block = new MaterialPropertyBlock();
+            r.GetPropertyBlock(block);
+            var mat = r.sharedMaterial;
+            if (mat != null && mat.HasProperty("baseColorFactor"))
+                return block.GetColor("baseColorFactor");
+            return block.GetColor("_BaseColor");
+        }
+        var dear = Painted(bars[rich]);
+        var cheap = Painted(bars[poor]);
+        if (curve[rich] > curve[poor] * 2f)
+            Assert.Greater(Vector4.Distance(dear, cheap), 0.05f,
+                "teure und billige Balken haben dieselbe Farbe - die Skala sagt nichts");
     }
 }

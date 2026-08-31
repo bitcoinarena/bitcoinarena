@@ -1,4 +1,7 @@
 using UnityEngine;
+#if UNITY_WEBGL && !UNITY_EDITOR
+using System.Runtime.InteropServices;
+#endif
 
 /// <summary>
 /// The title screen: what the game is, how it is played, and a PLAY button.
@@ -58,14 +61,36 @@ public class SplashScreen : MonoBehaviour
     /// <summary>Free camera, without starting the round.</summary>
     public void Spectate()
     {
+        WakeAudio();
         var cam = Object.FindFirstObjectByType<SpectatorCamera>();
         if (cam != null) cam.Enter();
         Showing = false;
     }
 
+#if UNITY_WEBGL && !UNITY_EDITOR
+    [DllImport("__Internal")] static extern void UnlockAudio();
+#endif
+
+    /// <summary>
+    /// Wakes the browser's audio, from inside the gesture that asked for it.
+    ///
+    /// A phone browser will not start an AudioContext outside a user gesture,
+    /// and iOS additionally wants something PLAYED inside that same gesture
+    /// before it will believe the context is in use - which is why the game
+    /// was silent on a phone while being perfectly audible on a desktop, where
+    /// Unity's own one-shot resume is enough.
+    /// </summary>
+    public static void WakeAudio()
+    {
+#if UNITY_WEBGL && !UNITY_EDITOR
+        try { UnlockAudio(); } catch (System.Exception e) { Debug.LogWarning(e.Message); }
+#endif
+    }
+
     public void Play()
     {
         Showing = false;
+        WakeAudio();
         AudioListener.volume = 1f;
         if (chase != null && chase.View == ChaseCamera.Mode.God) chase.Toggle();
         if (loadout != null) loadout.Open();      // straight to the ramp
@@ -204,7 +229,7 @@ public class SplashScreen : MonoBehaviour
 
     public const string Title = "BTC LOGISTICS WAR";
     public const string PlayLabel = "▶  PLAY";
-    public const string SpectateLabel = "DEBUG SPECTATE";
+    public const string SpectateLabel = "SPECTATE";
 
     const string Standfirst = "HAUL REAL MEMPOOL FREIGHT THROUGH A LIVE BATTLEFIELD";
     const string Footnote = "One Bitcoin block is one round - and every fee, block and " +
@@ -214,12 +239,14 @@ public class SplashScreen : MonoBehaviour
     static readonly string[] Steps = { "1 · LOAD", "2 · DRIVE", "3 · DELIVER" };
     static readonly string[] Says =
     {
-        "Take transactions off the ramp at the post office. Their fees are your " +
-        "payout - and the richer the load, the harder both armies come after it.",
-        "W A S D, or the pads on a touchscreen. Infantry goes under the wheels; " +
-        "a tank does not.",
-        "Reach the miner before the block closes. What gets through in time is " +
-        "confirmed and paid; what does not is worth nothing.",
+        "Take transactions off the ramp at the post office. A full bed is worth " +
+        "more at the far end - and pulls both armies onto you on the way there.",
+        "W A S D, or the pads on a touchscreen. The points are in the fighting: " +
+        "a run down the quiet edge of the map scores almost nothing, however " +
+        "much freight it is carrying.",
+        "Reach the miner before the block closes. The run scores cargo times " +
+        "exposure times speed - and a load that misses the block scores zero, " +
+        "however well it was driven.",
     };
 
     /// <summary>

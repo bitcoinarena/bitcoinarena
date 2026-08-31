@@ -19,27 +19,42 @@ public class ChainStats : MonoBehaviour
     /// <summary>Whole-network hashrate in hashes per second.</summary>
     public double NetworkHashrate { get; private set; }
 
-    [Tooltip("How much of the network this farm is. 0.1 = a tenth.")]
-    public float ourShare = 0.10f;
+    [Tooltip("Unused. The building showed a tenth of the network as though it " +
+             "were one farm's rate; it shows the whole network now, which is " +
+             "the figure that is actually worth putting on a wall.")]
+    public float ourShare = 1f;
 
     /// <summary>
-    /// What our own miner is worth, in EH/s.
+    /// The whole network, in EH/s - about 900 at the time of writing.
     ///
-    /// A share of the network, wandering the way a real farm's reported rate
-    /// does - a pool dashboard never shows the same number twice, because it
-    /// is a Poisson estimate from found shares and not a measurement.
+    /// It was a tenth of that, presented as this farm's own rate, which is an
+    /// invented number standing in front of a real one. The network hashrate
+    /// is a fact, it is enormous, and it is the thing a mining building should
+    /// be shouting.
+    ///
+    /// It still wanders, because the reported figure genuinely does: it is a
+    /// Poisson estimate from blocks found in a window, not a measurement, and
+    /// no dashboard shows the same number twice.
     /// </summary>
-    public float OurExahash
+    public float Exahash
     {
         get
         {
             if (NetworkHashrate <= 0) return 0f;
-            float eh = (float)(NetworkHashrate / 1e18 * ourShare);
-            float wander = Mathf.Sin(Time.unscaledTime * 0.07f) * 0.035f;
-            float flicker = (Mathf.PerlinNoise(Time.unscaledTime * 0.55f, 0.3f) - 0.5f) * 0.05f;
+            float eh = (float)(NetworkHashrate / 1e18);
+            // Restless on purpose, and by a visible amount: at 900 EH/s a
+            // wander of two percent moves the last two digits, which is what a
+            // real pool dashboard does. A hashrate readout that holds the same
+            // number for five minutes reads as a picture of a display rather
+            // than a display.
+            float wander = Mathf.Sin(Time.unscaledTime * 0.09f) * 0.022f;
+            float flicker = (Mathf.PerlinNoise(Time.unscaledTime * 0.7f, 0.3f) - 0.5f) * 0.018f;
             return eh * (1f + wander + flicker);
         }
     }
+
+    /// <summary>Kept so an older reference still compiles.</summary>
+    public float OurExahash => Exahash;
 
     /// <summary>
     /// The four priority tiers, straight from the node.
@@ -63,6 +78,14 @@ public class ChainStats : MonoBehaviour
         public double blockVSize;
         /// <summary>Rough minutes until this one is mined, ten to a block.</summary>
         public int inMinutes;
+
+        /// <summary>
+        /// The fee rates paid across this block, cheapest first - mempool's
+        /// own feeRange. Eight or nine samples per block, which strung end to
+        /// end across the projected blocks is the whole fee curve of the
+        /// mempool, live.
+        /// </summary>
+        public float[] feeRange;
     }
 
     public class Mined
@@ -165,6 +188,49 @@ public class ChainStats : MonoBehaviour
             if (n > 0) { Unconfirmed = n; _countAt = Time.unscaledTime; }
         }
 
+        // The recommended fees ride along on every stats message, so the
+        // building's fee panel never has to ask for them.
+        var fees = Json.GetRaw(msg, "fees");
+        if (fees != null)
+        {
+            int fast = (int)System.Math.Ceiling(Json.GetDouble(fees, "fastestFee"));
+            if (fast > 0)
+            {
+                FeeNone = Mathf.Max(1, (int)System.Math.Ceiling(Json.GetDouble(fees, "minimumFee")));
+                FeeLow = Mathf.Max(FeeNone, (int)System.Math.Ceiling(
+                    Mathf.Max((float)Json.GetDouble(fees, "economyFee"),
+                              (float)Json.GetDouble(fees, "hourFee"))));
+                FeeMedium = Mathf.Max(FeeLow, (int)System.Math.Ceiling(Json.GetDouble(fees, "halfHourFee")));
+                FeeHigh = Mathf.Max(FeeMedium, fast);
+                HasFees = true;
+            }
+        }
+
+        // The whole recent-block row arrives on the first message.
+        var found = Json.GetRaw(msg, "blocks");
+        if (found != null)
+        {
+            var list = new List<Mined>();
+            foreach (var obj in Json.Elements(found))
+            {
+                int height = (int)Json.GetDouble(obj, "height");
+                if (height <= 0) continue;
+                list.Add(new Mined
+                {
+                    height = height,
+                    nTx = (int)Json.GetDouble(obj, "tx_count"),
+                    timestamp = (long)Json.GetDouble(obj, "timestamp"),
+                });
+            }
+            if (list.Count > 0)
+            {
+                // newest first, which is how the row is drawn
+                list.Sort((a, b) => b.height.CompareTo(a.height));
+                if (list.Count > 8) list.RemoveRange(8, list.Count - 8);
+                Recent = list;
+            }
+        }
+
         var projected = Json.GetRaw(msg, "mempool-blocks");
         if (projected != null)
         {
@@ -194,6 +260,51 @@ public class ChainStats : MonoBehaviour
         }
     }
 
+    /// <summary>A JSON array of numbers, as floats.</summary>
+    static float[] Rates(string array)
+    {
+        if (array == null) return null;
+        var parts = Json.Elements(array);
+        if (parts.Count == 0) return null;
+        var outp = new float[parts.Count];
+        for (int i = 0; i < parts.Count; i++)
+            float.TryParse(parts[i].Trim(), System.Globalization.NumberStyles.Float,
+                           System.Globalization.CultureInfo.InvariantCulture, out outp[i]);
+        return outp;
+    }
+
+    /// <summary>
+    /// The fee curve of the whole mempool, resampled to as many buckets as the
+    /// caller wants: the projected blocks' own fee ranges, laid end to end,
+    /// richest first. Null before the first message.
+    /// </summary>
+    public float[] FeeCurve(int buckets)
+    {
+        if (buckets <= 0 || Upcoming.Count == 0) return null;
+
+        var flat = new List<float>();
+        foreach (var block in Upcoming)
+        {
+            if (block.feeRange == null || block.feeRange.Length == 0) continue;
+            // mempool lists each block's range cheapest first, and the blocks
+            // richest first - so reversed within the block, the whole run is
+            // one curve falling from the top of the market to the bottom
+            for (int i = block.feeRange.Length - 1; i >= 0; i--) flat.Add(block.feeRange[i]);
+        }
+        if (flat.Count == 0) return null;
+
+        var outp = new float[buckets];
+        for (int i = 0; i < buckets; i++)
+        {
+            int from = Mathf.FloorToInt(i / (float)buckets * flat.Count);
+            int to = Mathf.Max(from + 1, Mathf.FloorToInt((i + 1) / (float)buckets * flat.Count));
+            float sum = 0f; int n = 0;
+            for (int c = from; c < to && c < flat.Count; c++) { sum += flat[c]; n++; }
+            outp[i] = n > 0 ? sum / n : 0f;
+        }
+        return outp;
+    }
+
     /// <summary>The projected-block array, from either transport.</summary>
     static List<Projected> Read(string array)
     {
@@ -207,6 +318,7 @@ public class ChainStats : MonoBehaviour
                 medianFee = Json.GetDouble(obj, "medianFee"),
                 blockVSize = Json.GetDouble(obj, "blockVSize"),
                 inMinutes = list.Count * 10 + 9,
+                feeRange = Rates(Json.GetRaw(obj, "feeRange")),
             });
             if (list.Count >= 8) break;
         }
@@ -241,6 +353,7 @@ public class ChainStats : MonoBehaviour
                 if (list.Count > 0) Upcoming = list;
             });
 
+            if (Streaming && Recent.Count > 0) { yield return new WaitForSeconds(20f); continue; }
             yield return MempoolHosts.Get("/v1/blocks", 12f, text =>
             {
                 if (text == null) return;
@@ -266,6 +379,7 @@ public class ChainStats : MonoBehaviour
     {
         while (true)
         {
+            if (Streaming && HasFees) { yield return new WaitForSeconds(30f); continue; }
             yield return MempoolHosts.Get("/v1/fees/recommended", 10f, text =>
             {
                 if (text == null) return;

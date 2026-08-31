@@ -150,6 +150,29 @@ public class MempoolTerrain : MonoBehaviour
         return outp;
     }
 
+    /// <summary>
+    /// The fee histogram in sat/vB, resampled to however many buckets the
+    /// caller wants - the raw rates rather than the normalised profile.
+    ///
+    /// FeeProfile answers "how tall", which is all the terrain needs. A chart
+    /// that also wants to COLOUR its bars needs to know what rate each one
+    /// stands for, and dividing a normalised number back out is guesswork.
+    /// </summary>
+    public float[] FeeRates(int buckets)
+    {
+        if (_profile == null || buckets <= 0) return null;
+        var outp = new float[buckets];
+        for (int i = 0; i < buckets; i++)
+        {
+            int from = Mathf.FloorToInt(i / (float)buckets * _profile.Length);
+            int to = Mathf.Max(from + 1, Mathf.FloorToInt((i + 1) / (float)buckets * _profile.Length));
+            float sum = 0f; int n = 0;
+            for (int c = from; c < to && c < _profile.Length; c++) { sum += _profile[c]; n++; }
+            outp[i] = n > 0 ? sum / n : 0f;
+        }
+        return outp;
+    }
+
     /// <summary>Fee rate at a column, normalised so sub-sat markets still have relief.</summary>
     [Tooltip("How much of each end of the map is levelled off into an apron, " +
              "as a fraction of the width. The two buildings stand there and " +

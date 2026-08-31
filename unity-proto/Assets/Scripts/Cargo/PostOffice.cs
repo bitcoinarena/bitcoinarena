@@ -35,9 +35,19 @@ public class PostOffice : MonoBehaviour
     /// solo player who starts at the end of the rank drives seventeen seconds
     /// down an empty verge before anything happens. Twenty-four bays exist for
     /// twenty-four players; the one player there is gets the one in the
-    /// middle, which is also the one the road leaves from.
+    /// middle - and specifically the one the road leaves from, so the truck
+    /// starts centred on its own lane rather than straddling the kerb.
     /// </summary>
-    public const int SoloBay = 12;
+    public const int SoloBay = 13;
+
+    /// <summary>
+    /// Where a bay's centreline runs. Public because the road has to leave
+    /// from a door: the solo bay was at z = 3.4 and the nearest lane ran down
+    /// z = 9, so the truck spawned five metres off the edge of the only road
+    /// it could take, which from the cab looks exactly like being parked
+    /// crooked.
+    /// </summary>
+    public static float BayZ(int bay) => FirstPortZ + PortPitch * Mathf.Clamp(bay, 0, 23);
 
     /// <summary>Where the truck should stand, once the building is up.</summary>
     public Vector3 BayPosition { get; private set; }
@@ -60,6 +70,9 @@ public class PostOffice : MonoBehaviour
     const float ShellHalf = 84.15f;
     const float ShellHigh = 52f;
     const float FacadeX = 0f;
+
+    /// <summary>How far the apron paving reaches in front of the facade.</summary>
+    public const float ApronReach = 31f;
     const float WallDepth = 8f;        // the barrier runs back INTO the hall
 
     [Tooltip("How far out on the apron the truck is parked, in metres from " +
@@ -84,6 +97,7 @@ public class PostOffice : MonoBehaviour
     readonly List<TextMesh> _feeUsd = new();
     TextMesh _unconf;
     readonly List<TextMesh> _blockFace = new();
+    readonly List<TextMesh> _blockHeight = new();
     readonly List<TextMesh> _blockLabel = new();
     Transform _goggles;
     float _nextData, _nextCount;
@@ -108,14 +122,14 @@ public class PostOffice : MonoBehaviour
             float z = Mathf.Lerp(-ShellHalf, ShellHalf, i / 8f);
             low = Mathf.Min(low, terrain.SampleSurface(postX, z));
             low = Mathf.Min(low, terrain.SampleSurface(postX + bayStandoff, z));
-            low = Mathf.Min(low, terrain.SampleSurface(postX + 31f, z));
+            low = Mathf.Min(low, terrain.SampleSurface(postX + ApronReach, z));
         }
         return low;
     }
 
     public Vector3 BayFor(int bay)
     {
-        float z = FirstPortZ + PortPitch * Mathf.Clamp(bay, 0, 23);
+        float z = BayZ(bay);
         float x = postX + bayStandoff;
         // the ground the truck will actually rest on, not the ground at the
         // building's centre 78 m away
@@ -225,12 +239,15 @@ public class PostOffice : MonoBehaviour
     }
 
     /// <summary>Hangs a text mesh on one of the model's blank plates.</summary>
-    TextMesh Plate(Transform plate, Color colour, float fill = 0.88f)
+    TextMesh Plate(Transform plate, Color colour, float fill = 0.88f,
+                   TextAnchor anchor = TextAnchor.MiddleCenter, Vector2 offset = default,
+                   string suffix = "_text", float wideFill = 0f)
     {
         var font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
-        var go = new GameObject(plate.name + "_text");
+        var go = new GameObject(plate.name + suffix);
         go.transform.SetParent(plate, false);
-        go.transform.localPosition = new Vector3(0f, 0f, -0.15f);
+        var room0 = Room(plate);
+        go.transform.localPosition = new Vector3(offset.x * room0.x, offset.y * room0.y, -0.15f);
         go.transform.localRotation = Quaternion.Euler(0f, 180f, 0f);
         go.layer = plate.gameObject.layer;
 
@@ -238,7 +255,7 @@ public class PostOffice : MonoBehaviour
         tm.font = font;
         tm.fontSize = 80;
         tm.characterSize = 1f;
-        tm.anchor = TextAnchor.MiddleCenter;
+        tm.anchor = anchor;
         tm.alignment = TextAlignment.Center;
         tm.color = colour;
         tm.text = "";
@@ -247,7 +264,12 @@ public class PostOffice : MonoBehaviour
         mr.sharedMaterial = font.material;
         mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
         mr.receiveShadows = false;
-        _room[tm] = Room(plate) * fill;
+        // Width and height are allowed different shares of the plate: the
+        // block height takes the top half of a face but is entitled to the
+        // whole width of it, and scaling both by one number made a seven-digit
+        // number that fitted in half the plate's WIDTH - which is a small
+        // number on a big sign.
+        _room[tm] = new Vector2(room0.x * (wideFill > 0f ? wideFill : fill), room0.y * fill);
         return tm;
     }
 
@@ -292,6 +314,7 @@ public class PostOffice : MonoBehaviour
         var white = Color.white;
         var green = new Color(0.35f, 0.95f, 0.45f);
         var blue = new Color(0.45f, 0.65f, 1f);
+        var amber = new Color(1f, 0.78f, 0.28f);
 
         foreach (var t in root.GetComponentsInChildren<Transform>(true))
         {
@@ -301,6 +324,7 @@ public class PostOffice : MonoBehaviour
                 _goggles = t;
                 var wall = gameObject.AddComponent<GogglesWall>();
                 wall.feed = feed;
+                wall.stream = FindFirstObjectByType<MempoolBlockStream>();
                 wall.screen = t;
             }
             else if (n == "unconf_count") _unconf = Plate(t, white);
@@ -311,7 +335,20 @@ public class PostOffice : MonoBehaviour
             else if (n.StartsWith("next_face_") && !n.Contains("plate"))
                 _blockFace.Add(Plate(t, white, 0.82f));
             else if (n.StartsWith("mined_face_") && !n.Contains("plate"))
-                _blockFace.Add(Plate(t, white, 0.82f));
+            {
+                // Two texts on one face, not three lines in one.
+                //
+                // The height is what identifies a block and it was set at the
+                // same size as its transaction count, so from the road the
+                // whole row read as three interchangeable grey paragraphs. It
+                // now takes the top half of the face on its own, in the amber
+                // an explorer uses for a confirmed block, with the detail
+                // underneath at a third of the size.
+                _blockHeight.Add(Plate(t, amber, 0.46f, TextAnchor.LowerCenter,
+                                       new Vector2(0f, 0.10f), "_height", 0.92f));
+                _blockFace.Add(Plate(t, white, 0.30f, TextAnchor.UpperCenter,
+                                     new Vector2(0f, -0.16f), "_text", 0.86f));
+            }
             else if (n.StartsWith("block_label_") && !n.Contains("case"))
                 _blockLabel.Add(Plate(t, blue, 0.92f));
         }
@@ -444,12 +481,17 @@ public class PostOffice : MonoBehaviour
             {
                 int at = i - 5;
                 var m = at < stats.Recent.Count ? stats.Recent[at] : null;
-                // The height goes ON the block. It was on the strip above it
-                // and nowhere else, which is a caption rather than a label -
-                // and a mined block without its number is not identifiable as
-                // anything.
+                // The height goes ON the block, large, in its own colour. It
+                // was on the strip above it and nowhere else, which is a
+                // caption rather than a label - and a mined block without its
+                // number is not identifiable as anything.
                 _blockFace[i].text = m == null ? "—"
-                    : $"{m.height:N0}\n{m.nTx:N0} tx\n{Ago(m.AgeMinutes)}";
+                    : $"{m.nTx:N0} tx\n{Ago(m.AgeMinutes)}";
+                if (at < _blockHeight.Count)
+                {
+                    _blockHeight[at].text = m == null ? "—" : $"{m.height:N0}";
+                    Fit(_blockHeight[at]);
+                }
             }
             Fit(_blockFace[i]);
         }

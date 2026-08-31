@@ -32,6 +32,11 @@ public class BlockClock : MonoBehaviour
     /// <summary>Height of the block being mined, or 0 before the first fetch.</summary>
     public int Height { get; private set; }
 
+    [Tooltip("Live chain state. When it is present the height comes from " +
+             "there - it is fed by mempool.space's socket and knows about a " +
+             "new block within a second of it being found.")]
+    public ChainStats stats;
+
     /// <summary>Seconds left in this round.</summary>
     public float Remaining { get; private set; }
 
@@ -84,6 +89,15 @@ public class BlockClock : MonoBehaviour
 
     void Update()
     {
+        // The block being mined is the one after the tip, and the tip is
+        // whatever the chain says it is - over the socket, so a new block
+        // shows up here within a second of being found.
+        if (stats != null && stats.Recent.Count > 0)
+        {
+            int mining = stats.Recent[0].height + 1;
+            if (mining > Height) Height = mining;
+        }
+
         Remaining -= Time.deltaTime;
         if (Remaining > 0f) return;
 
@@ -115,26 +129,37 @@ public class BlockClock : MonoBehaviour
         PendingSats = 0;
         PendingBtc = 0;
         PendingRuns = 0;
-        Height++;
+
+        // The height is NOT incremented here any more.
+        //
+        // A round is compressed - it runs in a fraction of the ten minutes a
+        // real block takes - so counting a block per round walked the number
+        // away from the chain at several blocks an hour, and the poll below
+        // could never correct it because it only ever moved the number
+        // forward. The HUD ended up naming a block that did not exist while
+        // the post office, reading the same chain from a different endpoint,
+        // named the real one two rows away. One source, and it is the chain.
     }
 
     IEnumerator PollHeight()
     {
         while (true)
         {
-            yield return MempoolHosts.Get("/blocks/tip/height", 10f, text =>
-            {
-                if (text != null &&
-                    int.TryParse(text.Trim(), out int tip) && tip > 0)
+            // Only while the socket is not carrying it: this is the fallback
+            // for a blocked WebSocket, not a second opinion.
+            if (stats == null || stats.Recent.Count == 0)
+                yield return MempoolHosts.Get("/blocks/tip/height", 10f, text =>
                 {
-                    // Only ever move forward. The round is compressed, so the
-                    // local count runs ahead of the chain between fetches, and
-                    // snapping back would make the height jump about.
-                    if (tip > Height) Height = tip;
-                }
-                else if (Height == 0) Height = 900000;   // something plausible offline
-            });
-            yield return new WaitForSeconds(60f);
+                    if (text != null &&
+                        int.TryParse(text.Trim(), out int tip) && tip > 0)
+                    {
+                        // the tip is the last block FOUND; the round is the
+                        // one being mined on top of it
+                        if (tip + 1 > Height) Height = tip + 1;
+                    }
+                    else if (Height == 0) Height = 900000;   // plausible offline
+                });
+            yield return new WaitForSeconds(30f);
         }
     }
 }

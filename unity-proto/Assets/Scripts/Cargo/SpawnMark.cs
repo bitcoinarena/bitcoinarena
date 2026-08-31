@@ -23,9 +23,8 @@ public class SpawnMark : MonoBehaviour
     public TruckController truck;
     public LoadoutPanel loadout;
 
-    [Tooltip("How far from the old mark the truck may be and still be " +
-             "considered parked. Beyond this it is out on the run, and moving " +
-             "it would be worse than leaving it on the wrong height.")]
+    [Tooltip("How far from the old mark the truck may be and still count as " +
+             "standing in its bay.")]
     public float parkedWithin = 12f;
 
     int _seen = -1;
@@ -40,13 +39,17 @@ public class SpawnMark : MonoBehaviour
         var mark = post.BayFor(PostOffice.SoloBay);
         truck.spawnPosition = mark;
 
-        // Only re-seat a truck that has not left yet. A rebuild during a run
-        // is common - the ground moves under a driving truck and it drives on
-        // - and teleporting the player back to the bay for it would be a far
-        // worse bug than the one this fixes.
-        bool parked = truck.controlsLocked
-                   || (loadout != null && loadout.IsOpen)
-                   || Vector3.Distance(truck.transform.position, was) < parkedWithin;
+        // Only re-seat a truck that has not been let go yet.
+        //
+        // Being NEAR the bay is not enough, and assuming it was cost three
+        // driving tests: the terrain is rebuilt on every mempool poll, so a
+        // truck that had just pulled off the apron was picked up and put back
+        // in its bay every twenty seconds. Whether the player has been
+        // released is a fact the loading bay already knows - so ask it, and
+        // leave a truck that is under way alone with a stale mark until it
+        // comes back.
+        bool held = truck.controlsLocked || (loadout != null && loadout.IsOpen);
+        bool parked = held && Vector3.Distance(truck.transform.position, was) < parkedWithin;
         if (parked) truck.Respawn();
     }
 }

@@ -23,6 +23,12 @@ public class RoadNetwork : MonoBehaviour
     public float lift = 0.45f;
     public int segmentsPerLane = 200;
 
+    [Tooltip("Where the paving at the plaza end stops and the road may begin. " +
+             "Set before the object is activated, because Awake is what " +
+             "builds the ribbons - the model does not exist before then, so " +
+             "it cannot be reached through it.")]
+    public float pavedTo = float.NaN;
+
     public RoadModel Model { get; private set; }
 
     /// <summary>
@@ -64,6 +70,7 @@ public class RoadNetwork : MonoBehaviour
     void Awake()
     {
         Model = new RoadModel();
+        if (!float.IsNaN(pavedTo)) Model.PlazaPavedTo = pavedTo;
         if (field != null) Model.FrontlineAt = field.FrontlineZ;
 
         foreach (var lane in RoadModel.Order)
@@ -124,7 +131,12 @@ public class RoadNetwork : MonoBehaviour
         var mesh = _meshes[lane];
         int n = segmentsPerLane;
 
-        float x0 = Model.PlazaX + 4f, x1 = Model.DepotX - 4f;
+        // Never over the post office's own concrete: the building spans the
+        // start of the map and its apron is 26 m of paving in front of the
+        // doors, so a lane that begins at the plaza mark begins inside the
+        // loading bays.
+        float x0 = Mathf.Max(Model.PlazaX + 4f, Model.PlazaPavedTo);
+        float x1 = Model.DepotX - 4f;
         var verts = new List<Vector3>(n * 2 + 2);
         var uvs = new List<Vector2>(n * 2 + 2);
         var tris = new List<int>(n * 6);
