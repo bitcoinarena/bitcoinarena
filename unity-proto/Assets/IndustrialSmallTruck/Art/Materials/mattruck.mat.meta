@@ -1,0 +1,16 @@
+fileFormatVersion: 2
+guid: 834da6e8e197748c8bf8509833700968
+timeCreated: 1505193512
+licenseType: Store
+NativeFormatImporter:
+  mainObjectFileID: 2100000
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 101483
+  packageName: Industrial Small Truck Free
+  packageVersion: 1.0
+  assetPath: Assets/IndustrialSmallTruck/Art/Materials/mattruck.mat
+  uploadId: 789230

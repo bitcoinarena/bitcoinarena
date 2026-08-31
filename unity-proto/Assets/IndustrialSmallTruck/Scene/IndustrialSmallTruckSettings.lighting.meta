@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: bb9cce777063443ea99f446efbc7cbb3
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 4890085278179872738
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 101483
+  packageName: Industrial Small Truck Free
+  packageVersion: 1.0
+  assetPath: Assets/IndustrialSmallTruck/Scene/IndustrialSmallTruckSettings.lighting
+  uploadId: 789230

@@ -14,7 +14,32 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   m_GroupName: HighDetail
   m_GUID: 02e5b451d3e334996bab058f229b52c4
-  m_SerializeEntries: []
+  m_SerializeEntries:
+  - m_GUID: 7140d6bd1a3d53b4cb6f0f05526d7489
+    m_Address: model/tank
+    m_ReadOnly: 0
+    m_SerializedLabels: []
+    FlaggedDuringContentUpdateRestriction: 0
+  - m_GUID: 7edea385b3f574ef08113b2349548d3d
+    m_Address: model/truck
+    m_ReadOnly: 0
+    m_SerializedLabels: []
+    FlaggedDuringContentUpdateRestriction: 0
+  - m_GUID: 8394012a40e20d14e9158d2b74e12ee7
+    m_Address: model/helicopter
+    m_ReadOnly: 0
+    m_SerializedLabels: []
+    FlaggedDuringContentUpdateRestriction: 0
+  - m_GUID: a17d57b879b1bd64b82f81a883735718
+    m_Address: model/bomb
+    m_ReadOnly: 0
+    m_SerializedLabels: []
+    FlaggedDuringContentUpdateRestriction: 0
+  - m_GUID: fcb334eb247ae3e488abb081c847cf09
+    m_Address: model/soldier
+    m_ReadOnly: 0
+    m_SerializedLabels: []
+    FlaggedDuringContentUpdateRestriction: 0
   m_ReadOnly: 0
   m_Settings: {fileID: 11400000, guid: 8e1fd35387dc6443a9ab7f4ba29383a7, type: 2}
   m_SchemaSet:
