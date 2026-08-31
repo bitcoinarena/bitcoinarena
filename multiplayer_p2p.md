@@ -2,8 +2,25 @@
 ## Providerless P2P Multiplayer Protocol
 
 **Status:** architecture concept, security-hardened
-**Version:** 4.6 (supersedes v4.4/v4.5 and the earlier v1.x P2P drafts; both remain in git history)
+**Version:** 4.6.1 (supersedes v4.4/v4.5 and the earlier v1.x P2P drafts; all remain in git history)
 **Date:** 2026-08-31
+
+> **Revision 4.6.1 — four release blockers closed.** The v4.6 architecture is
+> unchanged; four under-specified places that would have blocked a real-money
+> release are now concrete.
+>
+> | # | Blocker | Resolution |
+> |---|---|---|
+> | 1 | The canonical census was asserted, not derived — every observer could have had a different eligible set, with no way to agree | The census is a **function of Bitcoin chain state**: a node is eligible iff its bond output is confirmed and unspent at `census_height` and commits to its advertisement. Subjective criteria (uptime, heartbeats, reputation) are removed from eligibility (§5A.2–5A.4) |
+> | 2 | "Slashable" was a word, not a construction | Concrete bond output with three spend paths, a fraud-proof-committing slashing transaction, and the **named residual**: Bitcoin cannot verify a WASM replay, so slashing needs an arbitration set that could in principle slash without cause. Bounds and why player funds never depend on it: §5A.3B |
+> | 3 | `sqrt(bond)` weighting was **wrong in the attacker's favour** — four nodes at 1× give total weight 4, one node at 4× gives 2, so splitting *increased* selection chances | Linear `weight = bond / bond_min`. Splitting the same capital is now exactly neutral; control probability is a function of **capital share**, not identity count (§5A.6, with numbers) |
+> | 4 | Stake commitment was allowed before the settlement committee was known — impossible, since the preimage shares are encrypted *to* that committee | Hard ordering: publish → future randomness → committees selected and verified → VSS shares → hold invoice → stake committed → play. A new `committee_time` sits between publication and `start_time` so pre-start entry still works (§5A.5, §9, §23.1) |
+>
+> Also corrected: `operator_id` is described as a **self-declaration**, not
+> identity proof — it prevents declared conflicts and creates a slashing hook,
+> but an anonymous attacker can simply not declare. Economic Sybil resistance
+> comes from bonds and sortition, and self-dealing is caught by the threshold
+> and the objection window, not by the declaration (§5A.13).
 
 BLWP v4.6 keeps the simplified v4.4 architecture — one open-source node
 package, deterministic local simulation, quorum verification, P2P pool
@@ -19,8 +36,8 @@ attacker could take the whole pool.
 
 | # | Change | Closes | Cost |
 |---|---|---|---|
-| 1 | **Committee seed comes from randomness published *after* the round_id** (drand round at `start_time`). | **Grinding attack.** In v4.4 the creator chose `round_id`, and `committee_seed = H(public_randomness ‖ census_epoch ‖ round_id)` with randomness already known. An attacker could brute-force round_ids offline until the deterministic selection returned his own nodes for *both* committees, publish that round, and sign himself the win and the payout. §5A.11 did not help — he overwrote nothing, he computed legally. | Committee is unknown until `start_time`; the lobby shows "committee pending" for a short window. |
-| 2 | **Bonds are mandatory and slashable; thresholds raised to 5-of-7 for both roles; selection is bond-weighted stateless sortition.** | **Free Sybil + thin quorums.** v4.4 made bonds optional ("if the protocol adopts bonding"), defined no slashing, and used 2-of-3 settlement. Two colluding operators drained a round. With a free identity and 12 eligible settlement nodes of which an attacker ran 4, P(≥2 of 3 selected are his) = **23.6%**; for game/verify (20 eligible, 8 his, 5 chosen, 3 needed) = **29.6%**. Roughly every third to fourth round was fully controllable at zero cost. | Node operation now requires capital. Small networks must run at capped stakes (§5A.10). |
+| 1 | **Committee seed comes from randomness published *after* the round_id** (drand round at `committee_time`, §5A.5). | **Grinding attack.** In v4.4 the creator chose `round_id`, and `committee_seed = H(public_randomness ‖ census_epoch ‖ round_id)` with randomness already known. An attacker could brute-force round_ids offline until the deterministic selection returned his own nodes for *both* committees, publish that round, and sign himself the win and the payout. §5A.11 did not help — he overwrote nothing, he computed legally. | Committee is unknown until `committee_time`; the lobby shows "committee pending" until then, and entry opens only afterwards. |
+| 2 | **Bonds are mandatory and slashable; thresholds raised to 5-of-7 for both roles; selection is linear bond-weighted stateless sortition.** | **Free Sybil + thin quorums.** v4.4 made bonds optional ("if the protocol adopts bonding"), defined no slashing, and used 2-of-3 settlement. Two colluding operators drained a round. With a free identity and 12 eligible settlement nodes of which an attacker ran 4, P(≥2 of 3 selected are his) = **23.6%**; for game/verify (20 eligible, 8 his, 5 chosen, 3 needed) = **29.6%**. Roughly every third to fourth round was fully controllable at zero cost. | Node operation now requires capital. Small networks must run at capped stakes (§5A.10). |
 | 3 | **A node may not sign for a round in which its operator plays.** | **Self-signing.** v4.4 separated game/verify from settlement but never separated *player* from *node*. | Nodes declare an operator identity; overlapping entries forfeit the fee and the signature right. |
 | 4 | **The custody chapter exists** (§23): hold invoice, preimage VSS-shared to the settlement committee, threshold-signed movement, expiry-as-default refund. | **The missing mechanism.** v4.4 said "stake commitment" and "2-of-3 Lightning settlement" but never stated where a stake lives during a round or which key moves it. Without it, "non-custodial" was unsupported and outages had no refund path. | The most complex part of the protocol; the interim construction is named honestly (§23.6). |
 | 5 | **Objection window with a replay veto** (§13A) before finality. | **Unappealable lies.** In v4.4, a colluding quorum's signature was the end of the story. The veto existed in the earlier v1.1/v1.2 drafts and was dropped in the simplification; it is the cheapest defence in the whole design. | Finality is delayed by the window `W` (reference: 10 minutes). |
@@ -450,49 +467,97 @@ and independent reproducibility by everyone.
 ```text
 NodeAdvertisement {
   node_pubkey
-  operator_id                  // v4.6: identity for conflict rules (§5A.13)
+  operator_id                  // SELF-DECLARED, not proof of identity (§5A.13)
   supported_protocol_versions
-  roles_supported
+  roles_supported              // game_verify | settlement | both
   endpoint, region, capacity_class
-  first_seen_epoch
   software_hash
   settlement_capabilities
   lightning_capabilities
-  bond_outpoint                // v4.6: MANDATORY, see 5A.3
-  bond_amount
+  bond_outpoint                // MANDATORY; the census entry itself (§5A.2)
+  bond_script_template_version
+  payout_pubkey                // where fee shares are paid
   timestamp
-  signature
+  signature                    // by node_pubkey over all of the above
 }
 ```
 
-## 5A.2 Census epoch
+The advertisement is **not** what makes a node eligible. The bond output is
+(§5A.2). The advertisement is the body that the bond output commits to, so
+that chain data alone identifies both the node and its terms.
 
-Time is divided into fixed census epochs (reference: 10 minutes). A round
-references a `census_epoch_id`. The eligible set is frozen at the end of the
-census epoch preceding committee selection, so a round creator cannot pick a
-favourable live subset after seeing participants.
+## 5A.2 Census anchoring — the census is Bitcoin chain state
+*(rewritten in 4.6.1 — blocker 1)*
 
-## 5A.3 Eligibility — bonds are mandatory *(changed in v4.6)*
+v4.6 said advertisements are "canonicalized" without saying how independent
+observers converge on the same set. They would not have: advertisements
+arrive over gossip, and any criterion that depends on what a given observer
+happened to receive produces a different census for every observer, with no
+mechanism to agree — the very consensus problem the architecture avoids
+elsewhere.
 
-A node is eligible only if it satisfies deterministic, publicly verifiable
-rules:
+The fix is to stop treating the census as a gossip artifact and derive it
+from a ledger that already has consensus:
+
+> **A node is in the census if and only if it has a bond output on Bitcoin,
+> confirmed and unspent at `census_height`, that commits to its
+> NodeAdvertisement.**
 
 ```text
-valid signed advertisement
-supported protocol version
-advertisement seen before census cutoff
-minimum uptime / heartbeat record
-software version/hash policy satisfied
-role capability advertised
-no unslashed proven misbehaviour
-bond present and confirmed (see below)
+census_height            a Bitcoin block height, named in the Round Contract
+census_confirmations     minimum depth for the bond output (reference: 6)
 ```
 
-**Bond (mandatory).** Every eligible node must lock a bond in a
-publicly verifiable output before the census cutoff:
+The eligible set is therefore a pure function of the chain up to
+`census_height`. Two parties with the same chain compute the same census;
+disagreement about the census reduces to disagreement about Bitcoin, which
+is out of scope by assumption.
+
+**Commitment.** The bond output commits to `H(NodeAdvertisement)` either in
+an `OP_RETURN` output of the funding transaction or in the taproot script
+tree, plus an optional retrieval hint (URI). The body is served by the node,
+by mirrors, or by anyone — the hash makes retrieval trust-free. A body that
+cannot be retrieved by `census_height` excludes that node, and it excludes
+it for everyone identically, because the hash is public and the content is
+missing for all.
+
+**What this costs.** A node cannot join the census instantly: it must fund a
+bond and wait for confirmations. That is intended — the delay is what makes
+census membership expensive, and it is the same property that makes the
+census objective.
+
+## 5A.3 Eligibility — objective criteria only *(tightened in 4.6.1)*
+
+Every eligibility criterion must be decidable from chain state plus the
+committed advertisement body. Nothing else may enter, or the census stops
+being canonical.
+
+**Eligible iff all of:**
 
 ```text
+bond output exists at census_height, unspent, >= census_confirmations deep
+bond output uses the protocol's bond script template (5A.3B)
 bond_amount >= bond_min(role)
+committed advertisement body retrievable and hash-matching
+advertisement signature valid under node_pubkey
+advertisement declares the role and a supported protocol version
+```
+
+**Deliberately NOT eligibility criteria** *(removed in 4.6.1)*: uptime,
+heartbeat history, reputation, latency, geographic spread, or "no unslashed
+misbehaviour" as a live judgement. None of these is objectively observable
+by every participant at a common instant; each would hand different
+observers a different census. v4.6 listed uptime and heartbeats here, which
+alone would have broken canonicalization.
+
+Liveness is handled *after* selection instead, where it costs nothing to
+disagree about: an absent node earns no fee share (§22A), and a committee
+that cannot reach its threshold triggers the void-and-refund path (§13C).
+Proven misbehaviour removes a node the only objective way — by its bond
+being spent by a slashing transaction, which makes the output no longer
+unspent at the next `census_height`.
+
+```text
 bond_min(settlement)  >= max_round_pool of the rounds it may serve
 bond_min(game_verify) >= max_round_pool of the rounds it may serve
 ```
@@ -501,8 +566,9 @@ The bond is what makes identity expensive. Without it, a Sybil attacker
 creates arbitrarily many nodes for free and buys arbitrarily many selection
 chances — the flaw that made v4.4 unsafe.
 
-**Slashing.** A bond is forfeit on *objectively provable* misbehaviour, each
-of which is a portable artifact anyone can check:
+**Slashing offences.** A bond is forfeit on *objectively provable*
+misbehaviour, each a portable artifact anyone can check. How a proof becomes
+a transaction is §5A.3B.
 
 | Offence | Proof |
 |---|---|
@@ -515,15 +581,131 @@ of which is a portable artifact anyone can check:
 
 Slashed bonds are distributed: half to the affected players of that round,
 half burned or to the remaining honest committee members of the round, as
-fixed by the Round Contract. The proof-carrying transaction may be published
-by anyone.
+fixed by the Round Contract.
 
-## 5A.4 Canonical census set
+## 5A.3B Bond construction and how a fraud proof becomes a slash
+*(new in 4.6.1 — blocker 2)*
 
-Eligible advertisements are canonicalized and sorted by
-`canonical_node_id = H(node_pubkey)`, producing `game_verify_census[]` and
-`settlement_census[]` and their roots. The Round Contract references the
-roots. Everyone derives the same arrays.
+v4.6 said "slashable" without saying where the bond sits or who can move it.
+This section makes it implementable and then states plainly what cannot be
+made trustless.
+
+### The bond output
+
+A P2TR output with three spend paths:
+
+```text
+key path      MuSig2(node_key, arbitration_aggregate_key)
+              -> cooperative release or cooperative slash, one signature,
+                 indistinguishable on chain, cheapest and most private
+
+script path A (recovery, unilateral)
+              <node_key> CHECKSIGVERIFY
+              <bond_maturity> CHECKLOCKTIMEVERIFY DROP
+              -> the node alone, after maturity
+
+script path B (slash)
+              <k-of-m arbitration keys> CHECKMULTISIG
+              -> the arbitration quorum, any time before maturity
+```
+
+`bond_maturity` is an absolute locktime set beyond the last round the node
+may serve plus the objection and challenge windows (reference: 30 days after
+the node stops advertising). Its purpose is that **arbitration can never
+freeze a bond forever**: if arbitration disappears, path A returns the money
+to its owner.
+
+### From proof to transaction
+
+```text
+1. Anyone publishes a fraud proof: the two contradicting signatures, or the
+   transcript + receipts + replay, or the payout table + its inputs.
+2. The proof is mechanically checkable — every offence in the table above is
+   either a signature comparison or a deterministic replay. No judgement.
+3. k-of-m arbitration keys sign a slashing transaction spending path B.
+4. That transaction MUST carry OP_RETURN = H(fraud_proof) ‖ retrieval hint.
+5. Outputs pay the distribution fixed by the Round Contract.
+```
+
+Because the slashing transaction commits to the proof, **every slash is
+permanently auditable**: anyone can fetch the proof later and re-verify it.
+A slash whose committed proof does not retrieve, or does not check, is
+itself public evidence against the arbitration set.
+
+### The residual, named
+
+> **Bitcoin cannot verify a WASM replay.** No script, no covenant proposal
+> and no soft fork changes this. A fraud proof about "this transcript
+> replays to DELIVERED, not FAILED" is not expressible on chain. Therefore
+> any slashing mechanism needs an off-chain party to attest that the proof
+> checks — and that party can, in principle, slash without cause.
+
+BLWP therefore does not claim trustless slashing. It bounds the trust:
+
+- **Arbitration is disjoint from the round committees** and from settlement.
+  It touches bonds only; it can never move a player stake, delay a round, or
+  influence a result.
+- **Slashing without a valid committed proof is provable misconduct**, which
+  destroys the arbitration set's standing and, where the arbitration members
+  are themselves bonded, their bonds.
+- **Path A caps the damage in time**: an inactive or hostile arbitration set
+  cannot hold a bond past `bond_maturity`.
+- **A DLC with an attesting oracle is the same trust in different plumbing**
+  — the oracle decides, the chain only enforces. It is a valid alternative
+  construction, not a stronger one.
+
+### Why player funds do not depend on any of this
+
+Slashing is **deterrence, not safety**. Player money is protected by three
+things that keep working if arbitration fails entirely: the 5-of-7
+thresholds, the refund-by-default custody of §23 (doing nothing returns the
+stake), and the objection window of §13A (anyone can overturn a false result
+by replay). If the arbitration set vanished tomorrow, rounds would still
+settle correctly and refunds would still happen; what would be lost is the
+economic penalty for getting caught.
+
+## 5A.4 Canonical census set — the exact derivation
+*(specified in 4.6.1 — blocker 1)*
+
+Given `census_height`, every participant runs the same five steps:
+
+```text
+1. SCAN     all outputs created at or before census_height whose script
+            matches the bond template (5A.3B) and that are unspent at
+            census_height with >= census_confirmations depth.
+
+2. RESOLVE  for each, read the committed H(advertisement) and retrieve the
+            body from the node, a mirror, or any peer. Hash must match.
+            Unretrievable body -> excluded (identically for everyone: the
+            hash is public, the content is missing for all).
+
+3. FILTER   apply 5A.3. Objective criteria only.
+
+4. SORT     ascending by (funding_txid, vout) as raw bytes.
+            Outpoints are unique, so the order is total and tie-free.
+            NOTE: sorting by H(node_pubkey), as v4.6 said, is grindable —
+            a node can mine a pubkey to sit anywhere it likes. Outpoints
+            cannot be chosen after the fact.
+
+5. COMMIT   census_list[role]  = the filtered, sorted entries
+            census_root[role]  = Merkle root over their canonical
+                                 serialization (outpoint || advertisement
+                                 hash || bond_amount || role bits)
+```
+
+The Round Contract names `census_height` and both roots. Any participant
+recomputes them; a contract whose roots do not match the chain is invalid
+and no honest node will issue receipts against it.
+
+**In a browser.** The client cannot run a full node. It verifies the census
+root by (a) following the block-header chain and checking Merkle inclusion
+of the bond transactions (SPV), and/or (b) querying several independent
+chain providers and requiring agreement. This is a **named residual**: a
+browser client's view of Bitcoin is only as good as its header source. It is
+the same assumption every browser Bitcoin application makes, it is bounded
+(a wrong census means a wrong committee, not stolen funds — funds still need
+5-of-7 and still refund by expiry), and it is why the reference client ships
+with multiple providers and a hard-coded checkpoint.
 
 ## 5A.5 Committee seed — from randomness published *after* the round
 *(changed in v4.6 — closes the grinding attack)*
@@ -531,7 +713,8 @@ roots. Everyone derives the same arrays.
 ```text
 committee_seed =
 H(
-  census_epoch_id
+  census_root_game_verify
+  || census_root_settlement
   || round_id
   || round_randomness
 )
@@ -540,7 +723,7 @@ H(
 with the hard rule:
 
 ```text
-round_randomness = drand.round(start_time)
+round_randomness = drand.round(committee_time)
 ```
 
 that is, a public randomness beacon value that **does not exist yet** when
@@ -556,18 +739,51 @@ will be used (`randomness_rule`), not to its value.
 > unknowable at creation time. Grinding now requires predicting drand, which
 > is the beacon's security assumption.
 
-Consequences for the product:
+### The `committee_time` window *(4.6.1 — blocker 4)*
 
-- Between round publication and `start_time` the lobby shows
-  **"committee: pending"**; the selected nodes appear at start.
-- Stake commitment MAY occur before the committee is known (the committee
-  cannot alter the game rules), but a client MAY be configured to wait for
-  committee publication before releasing funds. The reference client waits
-  for high stake brackets and does not wait for the lowest bracket.
-- Fallback if the beacon is unavailable at `start_time`: the contract's
-  declared fallback (next Bitcoin block hash after `start_time`). If neither
-  is available within the grace period, the round does not start and all
-  entries are `ENTRY_VOID` (refund).
+v4.6 placed committee selection at `start_time` and then permitted stake
+commitment before the committee was known. That is not merely a policy
+choice, it is impossible: the preimage shares are **encrypted to the
+settlement committee** (§23.1), so the committee must exist before an entry
+can be constructed at all.
+
+A dedicated `committee_time` is therefore inserted between publication and
+`start_time`, which also restores pre-start lobby entry:
+
+```text
+published_at        contract exists; committee unknowable
+                    |
+committee_time      beacon value appears -> committees selected & verified
+                    |  ENTRY WINDOW OPENS HERE
+start_time          round begins for everyone committed so far
+                    |
+entry_close_time    last late join
+                    |
+end_time
+```
+
+Constraints:
+
+```text
+committee_time  >= published_at + min_publication_lead   (reference: 5 min)
+entry_open_time == committee_time
+start_time      >= committee_time + min_entry_window     (reference: 60 s)
+```
+
+**Anti-grinding still holds, and is now checkable.** The creator must obtain
+timestamp receipts for the contract from at least 5 census nodes, and those
+receipts must predate `round_randomness`. A node refuses to timestamp a
+contract whose `committee_time` has already passed. A contract without valid
+pre-randomness receipts is invalid, and entries against it get no entry
+receipts — so a creator cannot publish after seeing the beacon and backdate.
+
+- Between `published_at` and `committee_time` the lobby shows
+  **"committee: pending"**. No stake may be committed in this state, and the
+  client offers no entry button.
+- Fallback if the beacon is unavailable at `committee_time`: the contract's
+  declared fallback (hash of the first Bitcoin block after `committee_time`).
+  If neither is available within the grace period, the round never opens for
+  entry; since no stake was committed, nothing needs refunding.
 
 ## 5A.6 Selection — bond-weighted stateless sortition
 *(replaces the stateful rotation of v4.5)*
@@ -576,11 +792,23 @@ For each role independently:
 
 ```text
 for each eligible node:
-    ticket(node) = H(committee_seed || node_pubkey || role)   // 256-bit
-    weight(node) = floor( sqrt( bond_amount / bond_min ) )    // >= 1
-    score(node)  = ticket(node) / weight(node)                // fixed-point
+    ticket(node) = H(committee_seed || outpoint || role)      // 256-bit int
+    weight(node) = floor( bond_amount / bond_min )            // >= 1, LINEAR
+    score(node)  = ticket(node) / weight(node)                // 512-bit fixed point
 
 select the `slots` nodes with the lowest score
+```
+
+**Linear, not square-root** *(corrected in 4.6.1 — blocker 3)*. v4.6 used
+`sqrt(bond / bond_min)` and claimed it made splitting neutral. It did the
+opposite: four nodes at 1× have weight 1 each, total 4, while one node at 4×
+has weight 2 — under square-root weighting **splitting a bond doubles the
+attacker's total selection weight**. Linear weighting makes the same capital
+produce the same total weight however it is divided:
+
+```text
+capital C, one identity   : weight C/bond_min
+capital C, j identities   : weight C/(j*bond_min) each, total C/bond_min
 ```
 
 - **Stateless.** No cursor, no shared counter, no assignment history. v4.5's
@@ -589,13 +817,40 @@ select the `slots` nodes with the lowest score
   consensus the simplification was trying to avoid. Sortition removes the
   problem instead of deferring it.
 - **Fair in the long run.** Expected selection frequency is proportional to
-  `weight`, verifiable by anyone over any window of rounds.
-- **Sybil-priced.** Splitting one bond across many identities *reduces*
-  total weight, because weight grows with the square root of the bond:
-  one node at 4× the minimum has weight 2, four nodes at 1× have weight 1
-  each — equal expectation, four times the operational cost, and four bonds
-  exposed to slashing. Concentration is neither punished nor rewarded; free
-  identity creation is simply worthless.
+  bonded capital, verifiable by anyone over any window of rounds.
+- **Deterministic tie-breaking.** Tickets are drawn over the *outpoint*, not
+  the pubkey, so a node cannot mine a favourable identity: it would have to
+  choose a txid.
+
+### What the weighting does and does not buy
+
+Because a node can occupy at most one slot, an attacker who wants a
+threshold needs at least that many identities — so identity count is not
+irrelevant, and the honest claim is narrower than "Sybil-proof":
+
+> **Control probability is a function of the attacker's share of total
+> bonded capital. Splitting the same capital across more identities does not
+> reduce the capital needed.**
+
+With 7 slots and each node's inclusion probability ≈ `7 · w_i / W_total`:
+
+| Attacker's share of all bonded capital | Identities | P(controls ≥5 of 7) |
+|---|---|---|
+| 28% (5 nodes × 5.7% each) | 5 | ≈ 1% |
+| 50% (5 nodes × 10% each) | 5 | ≈ 17% |
+| 50% (10 nodes × 5% each) | 10 | ≈ 23% |
+
+Splitting the same 50% across ten identities instead of five moves the
+attacker from 17% to 23% — a marginal gain from having more draws, not the
+multiplicative gain that square-root weighting handed him. The binding
+constraint is capital: **to threaten a meaningful fraction of rounds, an
+attacker must bond about as much as the entire honest network**, keep it
+locked, and lose five bonds when the objection window (§13A) exposes the
+fabricated result anyway.
+
+This is what §5A.10 turns into a rule: the stake ceiling is set so that the
+capital required to reach these probabilities exceeds the pools it could
+take.
 
 ## 5A.7 Committee size and thresholds *(changed in v4.6)*
 
@@ -630,32 +885,41 @@ meaningfully larger than the committee. The maximum stake bracket is
 **derived** from census health, so a young network runs safely at small
 stakes rather than unsafely at large ones:
 
-| Eligible (per role) | Committee | Max bracket |
-|---|---|---|
-| < 10 | — | play money only |
-| 10–14 | 7 of 7 pool, 5-of-7 | 10 sat |
-| 15–24 | 7, 5-of-7 | 100 sat |
-| 25–49 | 7, 5-of-7 | 1,000 sat |
-| ≥ 50 | 7, 5-of-7 | contract-defined |
+Both figures matter, and the binding one is capital (§5A.6): identity count
+sets whether a threshold is *reachable*, bonded capital sets how *likely* it
+is.
 
-Rationale: with 15 eligible settlement nodes of equal bond, an attacker
-holding 5 of them has P(≥5 of 7 selected are his) < 0.2%; at 10 eligible
-with 5 attacker nodes it is ~8%. The ceiling keeps the expected loss of the
-bad case below the bonds that would be slashed for it.
+| Eligible nodes (per role) | Total bonded capital (per role) | Max bracket |
+|---|---|---|
+| < 10 | any | play money only |
+| ≥ 10 | ≥ 20 × max_round_pool | 10 sat |
+| ≥ 15 | ≥ 50 × max_round_pool | 100 sat |
+| ≥ 25 | ≥ 100 × max_round_pool | 1,000 sat |
+| ≥ 50 | ≥ 200 × max_round_pool | contract-defined |
+
+Rationale: at 100 × max_round_pool, an attacker reaching the ~17% control
+probability of §5A.6 must bond ≈ 50 × the pool he could steal, and forfeits
+five bonds when caught. The ceiling exists so that the arithmetic stays that
+way as the network grows rather than being asserted once.
+
+Both quantities are computable by anyone from `census_root` and the chain,
+so a client can enforce this rule itself and refuse a round whose bracket
+exceeds what its census supports.
 
 ## 5A.11 Selection cannot be overwritten
 
 The Round Contract contains:
 
 ```text
-census_epoch_id
+census_height, census_confirmations
 game_verify_census_root
 settlement_census_root
-randomness_rule                 // WHICH future beacon round (v4.6)
-selection_algorithm_version
+randomness_rule                 // WHICH future beacon round, at committee_time
+selection_algorithm_version     // linear-weight sortition
+timestamp_receipts[]            // >=5, predating the beacon (§5A.5)
 ```
 
-and, published at `start_time` once the beacon value exists:
+and, published at `committee_time` once the beacon value exists:
 
 ```text
 round_randomness
@@ -687,8 +951,8 @@ creator decides who earns.
 
 Concretely:
 
-- Every advertisement declares an `operator_id` (a pubkey). Nodes sharing an
-  operator are siblings for all conflict rules.
+- Every advertisement declares an `operator_id` (a pubkey). Nodes sharing a
+  declared operator are siblings for all conflict rules.
 - If a selected node's `operator_id` also signed an Entry Contract in that
   round, the node is **conflicted**: its result signatures, payout-table
   signatures and settlement participation are invalid, and it earns no fee
@@ -704,6 +968,30 @@ Concretely:
 > exploit; even without grinding, an operator with a moderate share of the
 > census could sign himself wins in the rounds he happened to be selected
 > for. Nothing in v4.4 forbade it.
+
+### What `operator_id` is, and what it is not *(clarified in 4.6.1)*
+
+`operator_id` is a **self-declaration**. It is not a proof of identity, and
+nothing in a pseudonymous protocol can make it one: an attacker who runs
+nodes and plays simply declares nothing, or declares unrelated ids, and the
+rule does not fire.
+
+So this rule is **defence in depth, not a Sybil control**. What it actually
+achieves:
+
+- honest operators cannot accidentally serve their own rounds;
+- a declared conflict is machine-checkable before entry and shown to the
+  player;
+- if a hidden link is ever established — reused payout keys, reused
+  endpoints, self-admission, a leaked correlation — the false declaration is
+  itself a slashable offence with a one-artifact proof.
+
+**Where anonymous self-dealing is actually stopped:** by the two mechanisms
+that do not depend on identity at all. An attacker must control 5 of 7
+selected slots, which §5A.6 prices in bonded capital, and a fabricated
+result is overturnable by anyone through deterministic replay inside the
+objection window (§13A). Economic Sybil resistance comes from **bonds and
+sortition**; `operator_id` only removes the easy, declared case.
 
 ---
 
@@ -722,17 +1010,25 @@ RoundContract {
   map
   start_time, entry_close_time, end_time
   player_run_duration              // T_run
+                                   // ordering: published_at < committee_time
+                                   //   = entry_open_time < start_time
+                                   //   < entry_close_time < end_time
 
   stake                            // bracket, bounded by census health (§5A.10)
   payout_model
   fee_schedule
 
-  census_epoch_id
+  census_height                    // Bitcoin height; census is chain state (§5A.2)
+  census_confirmations
   game_verify_census_root
   settlement_census_root
-  selection_algorithm_version
-  randomness_rule                  // WHICH future beacon (v4.6)
-  randomness_fallback              // e.g. next block hash after start_time
+  selection_algorithm_version      // linear-weight sortition (§5A.6)
+  randomness_rule                  // WHICH future beacon, at committee_time
+  randomness_fallback              // first block hash after committee_time
+  published_at
+  committee_time                   // >= published_at + min_publication_lead
+  entry_open_time                  // == committee_time (§5A.5)
+  timestamp_receipts[]             // >=5 census-node receipts predating the beacon
 
   game_verify_slots = 7,  game_verify_threshold = 5
   settlement_slots  = 7,  settlement_threshold  = 5
@@ -742,7 +1038,11 @@ RoundContract {
 
   bond_min_game_verify
   bond_min_settlement
+  bond_script_template_version     // §5A.3B
   slashing_rules_hash
+  arbitration_set                  // k-of-m keys; bonds only, never stakes
+  arbitration_k, arbitration_m
+  bond_maturity                    // absolute locktime for unilateral recovery
 
   objection_window_W               // v4.6, reference 10 minutes
   equivocation_rule_hash           // v4.6
@@ -822,13 +1122,30 @@ No single instance is authoritative.
 
 # 9. Entry acceptance
 
+**Nothing may be committed before the committees are known.** The order is
+mandatory, because an Entry Contract cannot even be *constructed* earlier:
+its `vss_shares_ref` encrypts the preimage shares to the settlement
+committee (§23.1).
+
+```text
+1. round published                 committee unknowable; no entry possible
+2. committee_time reached          beacon value appears
+3. committees selected + verified  client recomputes them itself (§5A.11)
+4. player builds Entry Contract    P generated, VSS shares to THIS committee
+5. hold invoice issued             by the settlement committee's endpoint
+6. player's wallet pays            HTLC held, not settled
+7. >=5 EntryReceipts               STAKE_COMMITTED
+8. play
+```
+
 A player is financially admitted if:
 
 ```text
 valid Entry Contract
++ built against the round's published, verified committees
 + stake committed as a held HTLC (§23)
 + 5-of-7 game/verify nodes issued an EntryReceipt
-+ before entry_close_time
++ between entry_open_time and entry_close_time
 ```
 
 ```text
@@ -893,12 +1210,20 @@ therefore cannot be finalized as a win — withholding is never an advantage.
 # 12. Randomness
 
 ```text
-round_randomness = drand.round(start_time)          // also the committee seed source
+round_randomness = drand.round(committee_time)      // also the committee seed source
 player_seed      = H(round_randomness || player_pubkey || player_secret)
 ```
 
-The player's secret is committed (`seed_commitment`) before the beacon value
-exists, which prevents seed grinding. Because the client must know the
+The player's secret is committed (`seed_commitment`) in the Entry Contract.
+For entries made before `start_time` the beacon is already known at
+commitment time, so grinding is prevented instead by the sub-seed binding to
+`player_pubkey` and `join_tick`, both fixed by the entry itself: a player can
+grind `player_secret`, but every candidate world is equally unknown to them
+until they play it, since terrain and army behaviour derive from the same
+round statics for everyone. Where a deployment wants strict
+commit-before-reveal, the contract may declare a second beacon at
+`start_time` mixed into `player_seed`; that is a contract option, not a
+protocol requirement. Because the client must know the
 resulting randomness to simulate, advanced bots may forward-simulate future
 states. That is accepted and stated; BLWP does not claim bot resistance
 (§33).
@@ -1223,11 +1548,18 @@ v4.4 claimed "no Sybil reward". That was false as written: fees do go only
 to selected slots, but **more identities buy more selection chances**, and
 §5A.12 said so in the same document. The accurate statement is:
 
-> Extra identities are not rewarded, because selection weight grows with the
-> square root of the bond (§5A.6). Four nodes at the minimum bond have the
-> same total expected selection as one node at four times the minimum, cost
-> four times as much to operate, and expose four bonds to slashing. What buys
-> long-run fee income is **bonded capital and uptime**, not identity count.
+> Extra identities are not rewarded, because selection weight is **linear**
+> in the bond (§5A.6): capital `C` split across `j` identities yields total
+> weight `C / bond_min` for every `j`. Four nodes at the minimum bond have
+> exactly the same total expected selection as one node at four times the
+> minimum — while costing four times as much to operate and exposing four
+> bonds to slashing. What buys long-run fee income is **bonded capital and
+> availability**, not identity count.
+>
+> v4.6 used square-root weighting here and claimed the same property. It had
+> it backwards: under `sqrt`, four nodes at 1× total weight 4 against a
+> single node at 4× with weight 2, so splitting a bond *doubled* selection
+> chances. That was corrected in 4.6.1.
 
 ## Developer donation — the player's choice, capped
 
@@ -1297,6 +1629,12 @@ Its guiding property:
 > final result, an elapsed objection window, and a threshold quorum.**
 
 ## 23.1 Stake commitment
+
+**Precondition (4.6.1):** the round's committees must already be published
+and verified by the client (§5A.5, §9). Step 2 encrypts shares *to the
+settlement committee*, so no part of this sequence can run earlier. Any
+statement that a stake may be committed before the committee is known has
+been removed from this document.
 
 1. The player generates a random preimage `P` and puts
    `payment_hash = H(P)` in the Entry Contract.
@@ -1413,20 +1751,29 @@ Round #92831
 game stake:            100 sat
 node fee:                2 sat (2%)
 developer donation:      0 or 2 sat (player's choice)
-GAME/VERIFY:           7 slots, 5-of-7   (published at start_time)
-SETTLEMENT:            7 slots, 5-of-7   (published at start_time)
+census_height:         H (Bitcoin), roots in the contract
+published_at:          11:50   committee unknowable, no entry possible
+committee_time:        11:55   beacon -> both committees fixed, entry opens
+start_time:            12:00
 entry closes:          12:07
 T_run:                 3 minutes
 objection window W:    10 minutes
+GAME/VERIFY:           7 slots, 5-of-7   (known from 11:55)
+SETTLEMENT:            7 slots, 5-of-7   (known from 11:55)
 ```
 
-At 12:00 the round starts; `round_randomness` is fetched from the beacon and
-both committees become known and verifiable. 37 players are accepted.
+At 11:50 the contract is published and timestamped by five census nodes; the
+lobby shows it with **committee: pending** and no entry button. At 11:55 the
+beacon value appears, both committees are selected, and every client
+recomputes and verifies them against the census roots. The entry window
+opens. Between 11:55 and 12:00, 37 players enter. At 12:00 the round starts.
 
-Alice joins at 12:01. She signs her Entry Contract, generates `P`, shares it
-to the settlement committee, and her wallet pays the 104 sat hold invoice.
-Five settlement nodes confirm the held HTLC; five game/verify nodes issue
-EntryReceipts. She rolls out, publishes inputs and checkpoints, and delivers.
+Alice joins at 12:01. Because the committees have been known since 11:55,
+she can build a valid entry: she generates `P`, VSS-shares it to the seven
+settlement nodes, signs her Entry Contract, and her wallet pays the 104 sat
+hold invoice. Five settlement nodes confirm the held HTLC; five game/verify
+nodes issue EntryReceipts. She rolls out, publishes inputs and checkpoints,
+and delivers.
 
 Her client uploads the full transcript to two committee nodes and a mirror
 before showing the victory screen. Five game/verify nodes replay and sign
@@ -1462,7 +1809,11 @@ money.
 | Result already `FINAL`, then nodes fail | Result stays `FINAL`; settlement delayed |
 | 1–2 settlement nodes down | Settlement continues (5-of-7) |
 | 3+ settlement nodes down | Settlement delayed; unsettled HTLCs expire → refund |
-| Beacon unavailable at `start_time` | Fallback beacon; if that fails, round does not start, all entries `ENTRY_VOID` |
+| Beacon unavailable at `committee_time` | Fallback beacon; if that fails, the entry window never opens — no stake was committed, so nothing needs refunding |
+| Census roots in a contract do not match the chain | Contract invalid; no node issues receipts; no entry possible |
+| Client's chain view is wrong (bad header source) | Wrong committee expectation; entry fails for lack of matching receipts. Funds are never at risk — settlement still needs 5-of-7 and still refunds by expiry |
+| Arbitration set inactive | No slashing; deterrence lost. Rounds settle and refund normally; bonds recoverable by the node after `bond_maturity` |
+| Arbitration set slashes without a valid proof | Bond stolen from that node. Publicly provable from the committed proof hash; player funds untouched (arbitration cannot reach stakes) |
 | Lightning payout route fails | Retry within the claim window |
 | Website compromised | Wallet approval still required; hashes/mirrors; donation cap limits the damage |
 | 5 game/verify nodes collude **and** the victim's transcript is unavailable | Residual result-integrity failure; five bonds slashable afterwards |
@@ -1509,9 +1860,14 @@ simplification was trying to avoid. Bond-weighted stateless sortition
 18. **Refund-by-default custody: doing nothing returns the stake** (§23).
 19. **An objection window in which anyone can overturn a result by replay** (§13A).
 20. **Explicit equivocation and no-quorum rules** (§13B, §13C).
+21. **The census is chain state, and eligibility uses objective criteria only** (§5A.2–5A.4).
+22. **Selection weight is linear in the bond** (§5A.6) — square-root or any
+    concave weighting rewards splitting a bond and must never be used.
+23. **Committees are fixed before any stake is committed** (§5A.5, §9, §23.1).
 
-Items 15–20 are the v4.6 additions. Removing any of them reopens a hole
-through which a colluding or Sybil operator takes the pool.
+Items 15–20 are the v4.6 additions; 21–23 are the 4.6.1 release blockers.
+Removing any of them reopens a hole through which a colluding or Sybil
+operator takes the pool.
 
 ---
 
@@ -1596,6 +1952,11 @@ A player trusts:
 - the exact `sim_wasm_hash`, checked against the client's known-good list;
 - the drand beacon (or its declared fallback) for committee selection and
   round randomness;
+- their client's view of the Bitcoin chain for the census (§5A.4) — bounded:
+  a wrong view costs a failed entry, never funds;
+- for slashing *deterrence only*, the arbitration set (§5A.3B) — it can
+  never touch a player stake, and the protocol settles and refunds correctly
+  without it;
 - fewer than 5-of-7 selected game/verify slots being malicious **or** at
   least one honest party holding their receipted transcript;
 - fewer than 5-of-7 selected settlement slots being malicious.
@@ -1621,6 +1982,12 @@ committee nor outcome).
 | Who holds the stake during the round | — | **Unspecified** | Held HTLC; refund is the default; movement needs quorum + preimage shares (§23) |
 | Compromised web host sets a huge donation | Serve a lying client | Uncapped | Capped at 100%, second confirmation above 5% (§22A) |
 | Round with a backdoored simulation core | Publish a round | Player trusts the hash blindly | Client refuses unknown `sim_wasm_hash` for real money (§5) |
+| **Census divergence** — participants disagree on who is eligible | Selective gossip, withheld advertisements | Committee disputes, ungrounded rounds | Census is chain state at `census_height`; subjective criteria removed; outpoint ordering is unmineable (§5A.2–5A.4) |
+| **Bond splitting to buy selection** | Split capital across identities | v4.6's √ weighting **doubled** an attacker's weight when splitting | Linear weighting: same capital, same total weight; control cost is capital share (§5A.6) |
+| **Identity mining for a low ticket** | Grind `node_pubkey` | Favourable sort/ticket position | Tickets and ordering derive from the bond **outpoint**, which cannot be chosen after funding (§5A.4, §5A.6) |
+| **Entry before the committee exists** | — | Shares encrypted to an unknown set; stake at risk under a committee the player never saw | Structurally impossible: entry opens at `committee_time`, and the Entry Contract cannot be built earlier (§9, §23.1) |
+| **Arbitration slashes without cause** | k-of-m arbitration keys | Bond theft from an honest node | Slash must commit to a retrievable proof; unilateral recovery at `bond_maturity`; arbitration is disjoint from committees and cannot reach stakes (§5A.3B) |
+| **Undeclared operator playing his own round** | Anonymous operator | Self-signed win | `operator_id` does **not** stop this; the 5-of-7 capital requirement (§5A.6) and the replay objection (§13A) do (§5A.13) |
 | DDoS after a loss is final | Network attack | Already handled | Unchanged: `FINAL` results survive (§14) |
 
 ---
@@ -1663,9 +2030,12 @@ UNITY WEBGL CLIENT -> deterministic WASM -> committee
 # 37. Final principle
 
 > There is one open-source `blwp-node` package that anyone can download and,
-> with a bond, register. Committees are selected deterministically from
-> randomness that does not exist when the round is created, so nobody can
-> choose their own judges. Seven selected instances verify results and five
+> with a bond on Bitcoin, register — and that bond output *is* the census
+> entry, so everyone derives the same eligible set from chain state.
+> Committees are selected deterministically, with weight linear in the bond,
+> from randomness that does not exist when the round is created — so nobody
+> can choose their own judges, and splitting capital across identities buys
+> nothing. The committees are fixed before any stake is committed. Seven selected instances verify results and five
 > matching signatures make a result provisionally final; anyone in the world
 > may overturn it within the objection window by replaying the transcript.
 > Seven separately selected instances hold shares of each stake's preimage
