@@ -33,10 +33,11 @@ public class PostOfficeTests
     public IEnumerator TearDown() { Time.timeScale = 1f; yield return null; }
 
     /// <summary>
-    /// Solo, the player always gets Bay 1 - and has to actually be in it.
+    /// Solo, the player gets the middle bay - and has to actually be in it,
+    /// not merely near the building.
     /// </summary>
     [Test]
-    public void TheTruckStartsInBayOne()
+    public void TheTruckStartsInTheMiddleBay()
     {
         Assert.IsNotNull(_post, "kein Post Office in der Szene");
         var bay = _post.BayFor(PostOffice.SoloBay);
@@ -45,8 +46,14 @@ public class PostOfficeTests
             new Vector2(bay.x, bay.z),
             new Vector2(_truck.spawnPosition.x, _truck.spawnPosition.z));
         Assert.Less(off, 2f,
-            $"der Spawn steht {off:0.0} m neben Bay 1 (Spawn z={_truck.spawnPosition.z:0.0}, " +
-            $"Bay z={bay.z:0.0})");
+            $"der Spawn steht {off:0.0} m neben der Solo-Bay (Spawn z=" +
+            $"{_truck.spawnPosition.z:0.0}, Bay z={bay.z:0.0})");
+
+        // and in the middle of the rank, not in the corner of the map: the
+        // run from the last bay is made along the boundary, where there is no
+        // war to drive through
+        Assert.Less(Mathf.Abs(bay.z), 12f,
+            $"die Solo-Bay steht bei z={bay.z:0.0} am Kartenrand statt in der Mitte");
 
         // and pointing out of it
         Assert.Greater(Vector3.Dot(_truck.spawnRotation * Vector3.forward, Vector3.right), 0.9f,
@@ -166,6 +173,47 @@ public class PostOfficeTests
         int tiles = 0;
         foreach (Transform c in goggles.transform) if (c.name.StartsWith("tile")) tiles++;
         Assert.Greater(tiles, 8, $"nur {tiles} Kacheln auf der Goggles-Wand");
+    }
+
+    /// <summary>
+    /// The goggles are drawn with a shader that survives a player build.
+    ///
+    /// The wall was blank in the browser and correct in the editor, which is
+    /// the signature of shader stripping: a build only contains shaders
+    /// something in it references, every material in this scene is URP/Lit,
+    /// and the wall was asking for URP/Unlit - so Shader.Find returned null in
+    /// the build alone and the tiles had no material at all. An editor test
+    /// cannot see that directly, because in the editor every shader is
+    /// findable. What it CAN check is the rule underneath: draw with a shader
+    /// the scene already uses, and the build cannot strip it.
+    /// </summary>
+    [UnityTest]
+    public IEnumerator TheGogglesUseAShaderTheBuildWillKeep()
+    {
+        var wall = Object.FindFirstObjectByType<GogglesWall>();
+        Assert.IsNotNull(wall, "keine Goggles-Komponente");
+        yield return new WaitForSeconds(wall.rebuildSeconds + 2f);
+
+        var inScene = new System.Collections.Generic.HashSet<string>();
+        foreach (var r in Object.FindObjectsByType<Renderer>(FindObjectsSortMode.None))
+            foreach (var m in r.sharedMaterials)
+                if (m != null && m.shader != null && !m.name.StartsWith("tile"))
+                    inScene.Add(m.shader.name);
+
+        var screen = GameObject.Find("goggles_screen");
+        int tiles = 0;
+        foreach (Transform c in screen.transform)
+        {
+            if (!c.name.StartsWith("tile")) continue;
+            tiles++;
+            var m = c.GetComponent<MeshRenderer>().sharedMaterial;
+            Assert.IsNotNull(m, "eine Kachel hat gar kein Material");
+            Assert.IsNotNull(m.shader, "eine Kachel hat keinen Shader");
+            Assert.IsTrue(inScene.Contains(m.shader.name),
+                $"die Kacheln zeichnen mit \"{m.shader.name}\", den sonst nichts in der " +
+                "Szene benutzt - der Build wirft ihn raus und die Wand ist wieder leer");
+        }
+        Assert.Greater(tiles, 8, $"nur {tiles} Kacheln");
     }
 
     /// <summary>

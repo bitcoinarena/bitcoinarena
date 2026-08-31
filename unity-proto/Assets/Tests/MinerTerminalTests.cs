@@ -141,6 +141,80 @@ public class MinerTerminalTests
             $"{passes:0.0} Fluegeldurchgaenge pro Sekunde - das aliast auf 30 fps");
     }
 
+    /// <summary>
+    /// Seven blades, one shape, evenly spaced.
+    ///
+    /// The model puts them in the right PLACES - a ring of seven at radius
+    /// 5.2, exact - and then pitches each about a fixed axis instead of about
+    /// its own radius, so only the first one is right and the fourth is 61
+    /// degrees out. Cut from the identical mesh, blade 0 reaches from radius
+    /// 5.00 to 6.24 and blade 2 from 3.59 to 7.25. That is not a fan at rest
+    /// and it cannot become one by turning.
+    /// </summary>
+    [UnityTest]
+    public IEnumerator TheBladesAreOneBladeSevenTimes()
+    {
+        var fan = Find("Fan_01");
+        Assert.IsNotNull(fan, "kein Fan_01 in der Szene");
+        yield return null;
+
+        var blades = new System.Collections.Generic.List<Transform>();
+        foreach (Transform c in fan) if (c.name.Contains("blade")) blades.Add(c);
+        Assert.AreEqual(7, blades.Count, "der Luefter hat nicht sieben Fluegel");
+
+        // Each blade's reach from the axle, measured on its own geometry.
+        var axle = Vector3.forward;
+        var near = new System.Collections.Generic.List<float>();
+        var far = new System.Collections.Generic.List<float>();
+        var angles = new System.Collections.Generic.List<float>();
+        foreach (var b in blades)
+        {
+            var mb = b.GetComponent<MeshFilter>().sharedMesh.bounds;
+            float lo = 99f, hi = 0f;
+            for (int c = 0; c < 8; c++)
+            {
+                var corner = new Vector3((c & 1) == 0 ? mb.min.x : mb.max.x,
+                                         (c & 2) == 0 ? mb.min.y : mb.max.y,
+                                         (c & 4) == 0 ? mb.min.z : mb.max.z);
+                var local = fan.InverseTransformPoint(b.TransformPoint(corner));
+                float r = new Vector2(local.x, local.y).magnitude;
+                lo = Mathf.Min(lo, r); hi = Mathf.Max(hi, r);
+            }
+            near.Add(lo); far.Add(hi);
+            var at = fan.InverseTransformPoint(b.position);
+            angles.Add(Mathf.Atan2(at.y, at.x) * Mathf.Rad2Deg);
+            Assert.AreEqual(blades[0].localScale.x, b.localScale.x, 0.01f,
+                $"{b.name} ist anders skaliert als der erste Fluegel");
+        }
+
+        // Congruent: every blade covers the same band of the disc as the
+        // first. The model gives them the same mesh and seven different
+        // attitudes, so blade 0 sweeps 5.00 to 6.24 m and blade 2 sweeps 3.59
+        // to 7.25 - which is what made the fan look bent while standing still.
+        for (int i = 1; i < blades.Count; i++)
+        {
+            Assert.AreEqual(near[0], near[i], 0.2f,
+                $"{blades[i].name} beginnt bei {near[i]:0.00} m statt bei {near[0]:0.00} m");
+            Assert.AreEqual(far[0], far[i], 0.2f,
+                $"{blades[i].name} reicht bis {far[i]:0.00} m statt bis {far[0]:0.00} m");
+        }
+
+        // And pitched, rather than feathered: a blade that presents its edge
+        // to the air spans a hand's width of the disc and reads as a strut.
+        // The housing opens to 7.85 m and the hub is 2.4.
+        Assert.Greater(far[0] - near[0], 3f,
+            $"die Fluegel ueberdecken nur {far[0] - near[0]:0.00} m der Scheibe - " +
+            "sie stehen auf Fahnenstellung und sehen aus wie Streben");
+        Assert.LessOrEqual(far[0], 7.9f,
+            $"die Fluegelspitzen stehen bei {far[0]:0.00} m im Ring");
+
+        angles.Sort();
+        for (int i = 1; i < angles.Count; i++)
+            Assert.AreEqual(360f / blades.Count, angles[i] - angles[i - 1], 1.5f,
+                $"die Fluegel stehen nicht gleichmaessig: {angles[i] - angles[i - 1]:0.0} " +
+                "Grad zwischen zweien");
+    }
+
     [UnityTest]
     public IEnumerator TheScreenShowsMiningAndThreeTransactions()
     {

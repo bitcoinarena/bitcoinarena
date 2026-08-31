@@ -269,6 +269,62 @@ public class FeatureTests
         Assert.AreEqual(1f, AudioListener.volume, 0.001f, "nach PLAY bleibt es stumm");
     }
 
+    /// <summary>
+    /// Nothing on the title screen is drawn on top of anything else.
+    ///
+    /// The hint line used to be positioned relative to the PLAY button and was
+    /// drawn straight through the second one, and on a short window the third
+    /// instruction ran under both buttons: a layout that was right on one
+    /// window size and wrong on every other. Overlap is a number, so it is
+    /// measured - across the shapes a phone, a tablet and a desktop actually
+    /// have.
+    /// </summary>
+    [Test]
+    public void TheTitleScreenNeverDrawsOverItself()
+    {
+        var sizes = new[]
+        {
+            new Vector2(1920, 1080), new Vector2(1366, 768), new Vector2(1024, 1366),
+            new Vector2(844, 390),   new Vector2(390, 844),  new Vector2(640, 480),
+            new Vector2(2560, 1440), new Vector2(768, 1024),
+        };
+
+        foreach (var size in sizes)
+        {
+            float min = Mathf.Min(size.x, size.y);
+            float sub = Mathf.Clamp(min * 0.028f, 14f, 24f);
+            float btn = Mathf.Clamp(min * 0.040f, 18f, 34f);
+            var f = SplashScreen.Measure(size.x, size.y, sub, btn);
+            string at = $"bei {size.x}x{size.y}";
+
+            void Apart(Rect a, Rect b, string what)
+                => Assert.IsFalse(a.Overlaps(b), $"{what} ueberlappen sich {at}: {a} / {b}");
+
+            Apart(f.copy, f.play, "Text und PLAY");
+            Apart(f.copy, f.spectate, "Text und DEBUG SPECTATE");
+            Apart(f.copy, f.hint, "Text und der Hinweis");
+            Apart(f.hint, f.play, "der Hinweis und PLAY");
+            Apart(f.hint, f.spectate, "der Hinweis und DEBUG SPECTATE");
+            Apart(f.play, f.spectate, "die beiden Knoepfe");
+            Apart(f.head, f.copy, "die Kopfzeile und der Text");
+
+            // side by side, same height, same baseline - that is the alignment
+            Assert.AreEqual(f.play.y, f.spectate.y, 0.01f, $"die Knoepfe stehen versetzt {at}");
+            Assert.AreEqual(f.play.height, f.spectate.height, 0.01f,
+                $"die Knoepfe sind verschieden hoch {at}");
+            Assert.Greater(f.spectate.x, f.play.xMax, $"die Knoepfe stehen nicht nebeneinander {at}");
+
+            // and everything inside the panel it belongs to
+            foreach (var r in new[] { f.copy, f.hint, f.play, f.spectate })
+            {
+                Assert.GreaterOrEqual(r.x, f.panel.x - 0.01f, $"etwas haengt links raus {at}");
+                Assert.LessOrEqual(r.xMax, f.panel.xMax + 0.01f, $"etwas haengt rechts raus {at}");
+                Assert.LessOrEqual(r.yMax, f.panel.yMax + 0.01f, $"etwas haengt unten raus {at}");
+            }
+            Assert.Greater(f.copy.height, 40f, $"fuer den Text bleibt kein Platz {at}");
+        }
+    }
+
     /* --------------------------------------------------------------- waypoint */
 
     [Test]

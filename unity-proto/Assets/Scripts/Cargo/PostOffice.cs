@@ -26,8 +26,18 @@ public class PostOffice : MonoBehaviour
     [Tooltip("Where the building stands. Mirrors the delivery gate.")]
     public float postX = -114.4f;
 
-    /// <summary>Bay the player is given when nobody else is on the map.</summary>
-    public const int SoloBay = 0;
+    /// <summary>
+    /// Bay the player is given when nobody else is on the map: the middle one.
+    ///
+    /// It was Bay 0, which is the far corner of the building - 6.8 m from the
+    /// edge of the map, with the whole run then made along the boundary where
+    /// the two armies barely reach. The war is fought across the middle, so a
+    /// solo player who starts at the end of the rank drives seventeen seconds
+    /// down an empty verge before anything happens. Twenty-four bays exist for
+    /// twenty-four players; the one player there is gets the one in the
+    /// middle, which is also the one the road leaves from.
+    /// </summary>
+    public const int SoloBay = 12;
 
     /// <summary>Where the truck should stand, once the building is up.</summary>
     public Vector3 BayPosition { get; private set; }

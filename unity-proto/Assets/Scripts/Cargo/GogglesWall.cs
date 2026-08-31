@@ -116,8 +116,23 @@ public class GogglesWall : MonoBehaviour
 
         if (_shared == null)
         {
-            var sh = Shader.Find("Universal Render Pipeline/Unlit") ?? Shader.Find("Unlit/Color");
+            // URP/Lit, and not URP/Unlit, which is what this asked for and why
+            // the wall was blank in the browser while it drew correctly in the
+            // editor. A player build only contains shaders something in it
+            // references: every material in this scene is Lit, nothing is
+            // Unlit, so the Unlit variant is stripped and Shader.Find returns
+            // null in the build alone. The same trap the scene's own material
+            // fallback documents - so the same shader everything else here
+            // asks for, and a complaint rather than a silent blank wall if
+            // even that is missing.
+            var sh = Shader.Find("Universal Render Pipeline/Lit");
+            if (sh == null)
+            {
+                Debug.LogWarning("[GogglesWall] no URP/Lit in this build - the wall stays blank");
+                return;
+            }
             _shared = new Material(sh);
+            _shared.SetFloat("_Smoothness", 0f);
         }
 
         // largest first, which is both mempool's order and what makes the
@@ -160,7 +175,18 @@ public class GogglesWall : MonoBehaviour
             q.transform.localRotation = Quaternion.Euler(0f, 180f, 0f);
 
             var mr = q.GetComponent<MeshRenderer>();
-            mr.sharedMaterial = new Material(_shared) { color = Colour(tx.FeeRate) };
+            var colour = Colour(tx.FeeRate);
+            var tile = new Material(_shared);
+
+            // Black body, coloured light: the tile is a pixel on a screen, and
+            // a screen does not take the weather. Lit on top of emissive came
+            // out at nearly twice the intended value in the afternoon sun -
+            // the whole wall bleached to pastel and the fee ramp, which is the
+            // only thing it is saying, went with it.
+            tile.SetColor("_BaseColor", Color.black);
+            tile.EnableKeyword("_EMISSION");
+            tile.SetColor("_EmissionColor", colour);
+            mr.sharedMaterial = tile;
             mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
             mr.receiveShadows = false;
             _tiles.Add(q);
