@@ -99,6 +99,19 @@ public class CargoBay : MonoBehaviour
     }
 
     /// <summary>
+    /// What one package adds to the cargo factor, as a fraction of the bed.
+    ///
+    /// This is the honest answer to "what does loading this buy me": a share
+    /// of C in score = 1000 * E * T * C, and nothing else. Its sats are the
+    /// stake and come back on arrival either way.
+    /// </summary>
+    public float ShareOf(MempoolFeed.Tx tx)
+    {
+        float total = bedLength * columns;
+        return total > 0f ? Mathf.Clamp01(RoomFor(tx) / total) : 0f;
+    }
+
+    /// <summary>
     /// How much room a transaction takes. Four sizes, so the yard is not a row
     /// of identical boxes and the player can see what they are picking up.
     /// </summary>

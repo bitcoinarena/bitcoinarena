@@ -160,20 +160,25 @@ public class LoadoutPanel : MonoBehaviour
                                      wCap * 0.88f, box.height), _flat);
             GUI.color = Color.white;
 
-            // The fee is what the run pays out, so it leads. Everything else
-            // is how you judge whether it is worth the room it takes.
+            // What this package BUYS leads, and it is bed share - not sats.
+            //
+            // The headline used to be "+2.400 sat" in green, which reads as
+            // earnings and is not: the sats are the stake and come back on
+            // arrival whatever the run does. All a package actually buys is a
+            // slice of the cargo factor, one of the three terms in the score.
+            int share = bay != null ? Mathf.RoundToInt(bay.ShareOf(c.tx) * 100f) : 0;
             _cap.normal.textColor = c.loaded ? new Color(0.45f, 0.95f, 0.6f)
                                              : new Color(1f, 0.85f, 0.35f);
             GUI.Label(new Rect(box.x, box.y, box.width, _cap.fontSize * 1.5f),
-                      $"+{c.tx.feeSats:N0} sat", _cap);
+                      c.loaded ? "LOADED" : $"+{share}% BED", _cap);
 
             _capSub.normal.textColor = new Color(1f, 1f, 1f, 0.85f);
-            // what this one costs in attention, so the trade is visible before
-            // it is made rather than only in the total afterwards
+            // The stake and the danger it attracts, on one line and plainly
+            // labelled, so the trade is visible before it is made.
             int risk = bay != null ? Mathf.RoundToInt(bay.HeatOf(c.tx) * 100f) : 0;
             GUI.Label(new Rect(box.x, box.y + _cap.fontSize * 1.25f, box.width, _capSub.fontSize * 1.5f),
-                      c.loaded ? "LOADED"
-                               : $"{c.tx.Btc:0.####} BTC · +{risk}% heat"
+                      c.loaded ? $"+{share}% BED · +{risk}% heat"
+                               : $"{c.tx.feeSats:N0} sat stake · +{risk}% heat"
                                  + (c.tx.Whale ? "  🐋" : ""), _capSub);
 
             // Two lines only. Twenty-one crates in three rows leaves no room
@@ -367,7 +372,9 @@ public class LoadoutPanel : MonoBehaviour
     {
         float barW = Mathf.Min(w * 0.94f, 1040f);
         float lh = _head.fontSize * 1.6f;
-        float panelH = lh * 4.4f;
+        // 5.1, not 4.4: the reward column gained a line spelling out that the
+        // sats are a stake, and at 4.4 that line landed on the ROLL OUT button.
+        float panelH = lh * 5.1f;
         var panel = new Rect((w - barW) * 0.5f, h - panelH - pad, barW, panelH);
 
         GUI.color = new Color(0.03f, 0.04f, 0.06f, 0.86f);
@@ -413,22 +420,27 @@ public class LoadoutPanel : MonoBehaviour
 
         var lbl = new GUIStyle(_small) { alignment = TextAnchor.UpperRight };
         lbl.normal.textColor = new Color(1f, 1f, 1f, 0.7f);
-        // NOT "payout": the sats aboard are the stake, and under the P2P
-        // economics of section 18A they come back on arrival whatever happens.
-        // What the load actually buys is the cargo factor in the score - and
-        // only the cargo factor, which is why a full bed alone is worth at
-        // most a third of a good run.
-        GUI.Label(new Rect(rx, top - _small.fontSize * 1.35f, rw, _small.fontSize * 1.4f),
-                  "CARGO FACTOR  ×" + $"{Mathf.Clamp01(bay.Fill):0.00}", lbl);
-        GUI.Label(new Rect(rx, top - reward.fontSize * 0.1f, rw, reward.fontSize * 1.3f),
-                  $"{bay.FeeCarried:N0} sat", reward);
 
-        string usd = market != null && market.Price > 0
-            ? $"${bay.BtcCarried * market.Price:N0} in transit  ·  score needs exposure"
-            : $"{bay.BtcCarried:0.###} BTC aboard  ·  score needs exposure";
+        // The big number is the CARGO FACTOR, not the sats.
+        //
+        // A large sat figure here was read as the prize - understandably, it
+        // was the biggest thing on the bar. It is the stake: it returns on
+        // arrival and it is not what the run pays. Loading buys exactly one of
+        // the three terms in the score, so that term is what gets the big
+        // type, and the formula is spelled out underneath so the other two are
+        // visibly still to be earned by driving.
+        GUI.Label(new Rect(rx, top - _small.fontSize * 1.35f, rw, _small.fontSize * 1.4f),
+                  "CARGO FACTOR  ·  1 of 3", lbl);
+        GUI.Label(new Rect(rx, top - reward.fontSize * 0.1f, rw, reward.fontSize * 1.3f),
+                  $"×{Mathf.Clamp01(bay.Fill):0.00}", reward);
+
         var sub = new GUIStyle(_small) { alignment = TextAnchor.LowerRight };
         sub.normal.textColor = new Color(1f, 1f, 1f, 0.7f);
-        GUI.Label(new Rect(rx, top + reward.fontSize * 1.15f, rw, _small.fontSize * 1.5f), usd, sub);
+        GUI.Label(new Rect(rx, top + reward.fontSize * 1.15f, rw, _small.fontSize * 1.5f),
+                  "score = exposure × time × cargo", sub);
+        GUI.Label(new Rect(rx, top + reward.fontSize * 1.15f + _small.fontSize * 1.5f,
+                           rw, _small.fontSize * 1.5f),
+                  $"{bay.FeeCarried:N0} sat aboard is your stake — it returns on arrival", sub);
 
         // --- buttons ---------------------------------------------------------
         float by = panel.yMax - lh * 1.25f;
