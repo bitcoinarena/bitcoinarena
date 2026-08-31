@@ -28,6 +28,9 @@ public class MempoolTerrain : MonoBehaviour
     public float subSat = 0.01f;
 
     [Header("Live data")]
+    [Tooltip("Unused - the host list lives in MempoolHosts so that one outage " +
+             "does not have to be fixed in three places. Kept so an existing " +
+             "scene reference does not break.")]
     public string mempoolApi = "https://mempool.space/api";
     public float refreshSeconds = 20f;
 
@@ -52,15 +55,12 @@ public class MempoolTerrain : MonoBehaviour
     {
         while (true)
         {
-            using (var req = UnityWebRequest.Get(mempoolApi + "/mempool"))
+            yield return MempoolHosts.Get("/mempool", 10f, text =>
             {
-                yield return req.SendWebRequest();
-                if (req.result == UnityWebRequest.Result.Success)
-                {
-                    if (TryParseHistogram(req.downloadHandler.text, out var p)) { _profile = p; Build(); }
-                }
-                else Debug.LogWarning($"[MempoolTerrain] {req.error} - keeping the previous relief");
-            }
+                if (text != null && TryParseHistogram(text, out var p)) { _profile = p; Build(); }
+                else if (text == null)
+                    Debug.LogWarning("[MempoolTerrain] no host answered - keeping the previous relief");
+            });
             yield return new WaitForSeconds(refreshSeconds);
         }
     }

@@ -362,25 +362,41 @@ public class CargoTests
     }
 
     [UnityTest]
-    public IEnumerator ThePackagesTurnAndEachHasItsOwnColour()
+    public IEnumerator ThePackagesStandStillAndEachHasItsOwnColour()
     {
         var yard = Object.FindFirstObjectByType<PackageYard>();
 
         Transform sample = null;
+        var poses = new List<Quaternion>();
         var seen = new List<Color>();
         foreach (var t in Object.FindObjectsByType<Transform>(FindObjectsSortMode.None))
         {
             if (t.name != "YardPackage") continue;
             if (sample == null) sample = t;
+            poses.Add(t.localRotation);
             var r = t.GetComponent<Renderer>();
             if (r != null && r.sharedMaterial != null) seen.Add(r.sharedMaterial.color);
         }
         Assert.IsNotNull(sample, "keine Pakete");
 
+        // Sie stehen still. Einundzwanzig Kisten, die sich jede um ihre eigene
+        // Achse drehen, sind zu viel Bewegung, um eine Preisliste hindurch zu
+        // lesen - das Panel ist eine Auswahl, keine Vitrine.
         var was = sample.localRotation;
+        var wasPos = sample.localPosition;
         yield return new WaitForSecondsRealtime(0.5f);
-        Assert.Greater(Quaternion.Angle(was, sample.localRotation), 2f,
-            "die Pakete drehen sich nicht");
+        Assert.Less(Quaternion.Angle(was, sample.localRotation), 0.5f,
+            "die Pakete drehen sich noch");
+        Assert.Less(Vector3.Distance(wasPos, sample.localPosition), 0.01f,
+            "die Pakete wippen noch");
+
+        // Stillstehen heisst nicht ausgerichtet: jede Kiste hat ihren eigenen
+        // Ruhewinkel, sonst liest sich das Panel wie eine Tabelle.
+        int distinct = 0;
+        for (int i = 1; i < poses.Count; i++)
+            if (Quaternion.Angle(poses[0], poses[i]) > 5f) distinct++;
+        Assert.Greater(distinct, poses.Count / 2,
+            "die Kisten stehen alle im selben Winkel");
 
         // every crate its own colour
         for (int i = 0; i < seen.Count; i++)

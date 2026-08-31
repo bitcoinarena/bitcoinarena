@@ -13,6 +13,8 @@ using UnityEngine.Networking;
 /// </summary>
 public class MempoolFeed : MonoBehaviour
 {
+    [Tooltip("Unused - see MempoolHosts. Kept so an existing scene reference " +
+             "does not break.")]
     public string mempoolApi = "https://mempool.space/api";
     public float refreshSeconds = 12f;
 
@@ -75,12 +77,11 @@ public class MempoolFeed : MonoBehaviour
     {
         while (true)
         {
-            using (var req = UnityWebRequest.Get(mempoolApi + "/mempool/recent"))
+            yield return MempoolHosts.Get("/mempool/recent", 10f, text =>
             {
-                yield return req.SendWebRequest();
-                if (req.result == UnityWebRequest.Result.Success)
+                if (text != null)
                 {
-                    var parsed = Parse(req.downloadHandler.text, keep);
+                    var parsed = Parse(text, keep);
                     // Only replace a good list with another good one. A blank
                     // reply must not empty the yard while the player is looking
                     // at it.
@@ -94,9 +95,9 @@ public class MempoolFeed : MonoBehaviour
                 else
                 {
                     // the stand-in yard is already up; just say so
-                    Status = Fresh ? req.error : "offline";
+                    Status = Fresh ? "stale" : "offline";
                 }
-            }
+            });
             // Quick to begin with, so the ramp fills from ten to twenty-one
             // within the first half minute, then settle to the normal beat.
             yield return new WaitForSeconds(Offers.Count < 24 ? 2.5f : refreshSeconds);

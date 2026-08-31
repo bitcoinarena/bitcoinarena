@@ -119,7 +119,7 @@ NavMeshSettings:
     debug:
       m_Flags: 0
   m_NavMeshData: {fileID: 0}
---- !u!1 &1528427004
+--- !u!1 &858841153
 GameObject:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
@@ -127,8 +127,8 @@ GameObject:
   m_PrefabAsset: {fileID: 0}
   serializedVersion: 6
   m_Component:
-  - component: {fileID: 1528427006}
-  - component: {fileID: 1528427005}
+  - component: {fileID: 858841155}
+  - component: {fileID: 858841154}
   m_Layer: 0
   m_Name: Bootstrap
   m_TagString: Untagged
@@ -136,13 +136,13 @@ GameObject:
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
   m_IsActive: 1
---- !u!114 &1528427005
+--- !u!114 &858841154
 MonoBehaviour:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1528427004}
+  m_GameObject: {fileID: 858841153}
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: fc43578844fa14040b330442185e6548, type: 3}
@@ -174,8 +174,8 @@ MonoBehaviour:
   gateMaterial: {fileID: 0}
   boxPrefab: {fileID: 8616823808319995515, guid: 2bbf3381616564c4c99d243d8eda9503, type: 3}
   dustMaterial: {fileID: 2100000, guid: dd7b55ac757354b36b726114aeb9f0a0, type: 2}
-  fireParticleMaterial: {fileID: 0}
-  smokeParticleMaterial: {fileID: 0}
+  fireParticleMaterial: {fileID: 2100000, guid: c54df979ed8734540a0982e169347742, type: 2}
+  smokeParticleMaterial: {fileID: 2100000, guid: ef82735dae1d8418d89027096c12ebd9, type: 2}
   armourPerSide: 11
   infantryPerSide: 90
   postProfile: {fileID: 11400000, guid: aa0a201f4c7944d599ef91fb4702cd25, type: 2}
@@ -183,13 +183,13 @@ MonoBehaviour:
   sunYaw: -42
   sunColour: {r: 1, g: 0.95, b: 0.86, a: 1}
   sunIntensity: 3.6
---- !u!4 &1528427006
+--- !u!4 &858841155
 Transform:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1528427004}
+  m_GameObject: {fileID: 858841153}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
   m_LocalPosition: {x: 0, y: 0, z: 0}
@@ -202,4 +202,4 @@ Transform:
 SceneRoots:
   m_ObjectHideFlags: 0
   m_Roots:
-  - {fileID: 1528427006}
+  - {fileID: 858841155}

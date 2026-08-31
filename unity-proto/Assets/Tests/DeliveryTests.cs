@@ -109,6 +109,16 @@ public class DeliveryTests
         yield return DriveToTheGate();
 
         Assert.IsFalse(_bay.IsLoaded, "die Ladung bleibt nach der Lieferung an Bord");
+
+        // Die Rampe oeffnet mit Verzoegerung, nicht sofort.
+        //
+        // Sie oeffnete frueher im selben Frame wie die Ankunft und deckte damit
+        // die Score-Karte zu - die Fahrt wurde bewertet und der Spieler sah die
+        // Rechnung nie. Erst pruefen, dass sie noch ZU ist, dann warten.
+        Assert.IsFalse(_ui.IsOpen,
+            "die Rampe deckt die Score-Karte sofort wieder zu");
+        yield return new WaitForSecondsRealtime(_gate.scoreHoldSeconds + 0.5f);
+
         Assert.IsTrue(_ui.IsOpen, "die Rampe geht nach der Lieferung nicht wieder auf");
         Assert.IsTrue(_truck.controlsLocked, "der Truck ist nach der Lieferung nicht gesperrt");
         Assert.Less(Vector3.Distance(_truck.transform.position, _truck.spawnPosition), 6f,

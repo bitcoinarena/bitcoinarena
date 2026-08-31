@@ -22,6 +22,14 @@ public class PackageYard : MonoBehaviour
     /// <summary>Only the yard camera draws this layer.</summary>
     public const int YardLayer = 11;
 
+    [Tooltip("Turn and bob the crates. OFF: twenty-one boxes each turning on " +
+             "their own axis is a lot of motion to read a price list through, " +
+             "and the panel is a chooser, not a display case. The spin and bob " +
+             "values are still computed - they set each crate's resting angle " +
+             "and the layout still reserves room for a turning silhouette, so " +
+             "this can be switched back on without anything overlapping.")]
+    public bool animateCrates = false;
+
     public MempoolFeed feed;
     public CargoBay bay;
     public Transform truck;
@@ -383,6 +391,17 @@ public class PackageYard : MonoBehaviour
             var seat = FromScreen(px, 0f, depth);
             _yard[i].seat = new Vector3(seat.x, wy, depth);
             _yard[i].crate.transform.localPosition = _yard[i].seat;
+
+            // A resting angle, set once, when the crates do not turn.
+            //
+            // Static must not mean twenty-one identical boxes squared up to
+            // the camera - that reads as a spreadsheet, not a cargo yard. The
+            // angle comes off the txid, so it is stable across a reopen: a
+            // crate that jumped to a new pose every time the panel opened
+            // would be its own kind of flicker.
+            if (!animateCrates)
+                _yard[i].crate.transform.localRotation =
+                    Quaternion.AngleAxis(Hash01(_yard[i].tx.txid + "r") * 360f, _yard[i].axis);
         }
 
         // The slate, sized to the panel rectangle exactly. It used to be
@@ -633,6 +652,8 @@ public class PackageYard : MonoBehaviour
     /// </summary>
     void Spin()
     {
+        if (!animateCrates) return;
+
         float t = Time.unscaledTime;
         foreach (var y in _yard)
         {

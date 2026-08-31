@@ -18,6 +18,8 @@ using UnityEngine.Networking;
 /// </summary>
 public class BlockClock : MonoBehaviour
 {
+    [Tooltip("Unused - see MempoolHosts. Kept so an existing scene reference " +
+             "does not break.")]
     public string mempoolApi = "https://mempool.space/api";
 
     [Tooltip("Seconds in a round. Bitcoin averages ten minutes; that is far " +
@@ -109,11 +111,10 @@ public class BlockClock : MonoBehaviour
     {
         while (true)
         {
-            using (var req = UnityWebRequest.Get(mempoolApi + "/blocks/tip/height"))
+            yield return MempoolHosts.Get("/blocks/tip/height", 10f, text =>
             {
-                yield return req.SendWebRequest();
-                if (req.result == UnityWebRequest.Result.Success &&
-                    int.TryParse(req.downloadHandler.text.Trim(), out int tip) && tip > 0)
+                if (text != null &&
+                    int.TryParse(text.Trim(), out int tip) && tip > 0)
                 {
                     // Only ever move forward. The round is compressed, so the
                     // local count runs ahead of the chain between fetches, and
@@ -121,7 +122,7 @@ public class BlockClock : MonoBehaviour
                     if (tip > Height) Height = tip;
                 }
                 else if (Height == 0) Height = 900000;   // something plausible offline
-            }
+            });
             yield return new WaitForSeconds(60f);
         }
     }

@@ -29,6 +29,11 @@ public class DeliveryGate : MonoBehaviour
     [Tooltip("Half the width of the mouth, along z.")]
     public float halfMouth = 34f;
 
+    [Tooltip("How long the arrival card is left alone before the loading bay " +
+             "reopens over it. The card carries the score and its breakdown, " +
+             "which is the only moment the player sees how the run was priced.")]
+    public float scoreHoldSeconds = 3.2f;
+
     public Material postMaterial;
 
     /// <summary>Total fees delivered, in sats. This is the score.</summary>
@@ -53,6 +58,19 @@ public class DeliveryGate : MonoBehaviour
     void Update()
     {
         SinceDelivery += Time.deltaTime;
+
+        // The bay reopens a beat AFTER the arrival, not with it.
+        //
+        // Deliver() used to call loadout.Open() directly, so the modal covered
+        // the score card in the same frame it appeared - the run was priced and
+        // the player never saw the arithmetic. The pause is unscaled because a
+        // delivery can land while the world is still in slow motion.
+        if (_reopenAt > 0f && Time.unscaledTime >= _reopenAt)
+        {
+            _reopenAt = 0f;
+            if (loadout != null) loadout.Open();
+        }
+
         if (courier == null || bay == null) return;
         if (health != null && health.IsDestroyed) return;
         if (!bay.IsLoaded) return;
@@ -85,11 +103,15 @@ public class DeliveryGate : MonoBehaviour
 
         Delivered?.Invoke(LastRun);
 
-        // back to the ramp for the next run
+        // Back to the ramp for the next run - but the bay stays shut until the
+        // score card has had its moment. Clearing the bed and respawning are
+        // safe to do now: the truck is at the gate, not being driven.
         bay.Clear();
         if (truck != null) truck.Respawn();
-        if (loadout != null) loadout.Open();
+        _reopenAt = Time.unscaledTime + Mathf.Max(0f, scoreHoldSeconds);
     }
+
+    float _reopenAt;
 
     /// <summary>Two posts and a beam. Enough to read as a goal from a distance.</summary>
     void Build()

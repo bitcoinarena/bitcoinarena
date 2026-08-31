@@ -110,8 +110,14 @@ public class DriveHud : MonoBehaviour
             fontSize = Mathf.RoundToInt(Mathf.Clamp(min * 0.030f, 15f, 26f)),
         };
 
-        float width = w * 0.6f;
-        float x = w - width - pad;
+        // The full width, not 60% of it.
+        //
+        // These are right-aligned labels, so a box narrower than the text
+        // clips it on the LEFT - which is why a narrow window showed "CORE ·
+        // best 370" with the S cut off. Anchoring to the screen edge lets a
+        // long line run leftwards as far as it needs.
+        float width = w - pad * 2f;
+        float x = pad;
 
         // ABOVE the driving pads, measured off the pads themselves rather than
         // guessed at: throttle and brake are stacked in the bottom right corner
@@ -119,37 +125,53 @@ public class DriveHud : MonoBehaviour
         float padsTop = TouchPad.RectFor(TouchPad.Pad.Up, w, h).y;
         float bottom = padsTop - pad * 0.6f;
 
-        // the load, smallest and highest
-        var loadLine = new Rect(x, bottom - score.fontSize * 1.05f - under.fontSize * 2.6f,
-                                width, under.fontSize * 1.5f);
-        Shadowed(loadLine, bay.IsLoaded
-                     ? $"CARGO  {bay.Count} parcels  ·  {bay.FeeCarried:N0} sat"
-                     : "CARGO  empty",
-                 under, bay.IsLoaded ? Color.white : new Color(1f, 1f, 1f, 0.6f));
+        // Banked is deliberately its own size: bigger than the small print,
+        // smaller than the pending figure. It is the number that survives.
+        var banked = new GUIStyle(GUI.skin.label)
+        {
+            alignment = TextAnchor.LowerRight,
+            fontStyle = FontStyle.Bold,
+            fontSize = Mathf.RoundToInt(Mathf.Clamp(min * 0.042f, 20f, 40f)),
+        };
 
-        // The score itself, and it is the RUN score, not the lifetime sats.
-        //
-        // Sats are the stake in the P2P model, not the reward: what a player
-        // actually earns is a rank-weighted share of other players' failures,
-        // and rank comes from this number. A HUD headlining lifetime sats
-        // teaches the wrong game.
         bool live = runScore != null && runScore.Running;
-        int shown = runScore == null ? 0 : (live ? runScore.Projected : runScore.LastScore);
+        int pending = runScore == null ? 0 : (live ? runScore.Projected : runScore.LastScore);
 
-        // Amber while it is still only a projection, green once banked. The
-        // difference matters: a projected score is lost entirely on a wreck.
-        var tint = live ? new Color(1f, 0.82f, 0.30f) : Up;
-        if (live && runScore.Projected <= 0) tint = new Color(1f, 0.45f, 0.40f);
-
-        var scoreLine = new Rect(x, bottom - score.fontSize * 1.05f - under.fontSize * 1.2f,
-                                 width, score.fontSize * 1.25f);
-        Shadowed(scoreLine, $"{shown:N0}", score, tint);
+        // Stacked bottom-up so adding a row never silently overlaps the one
+        // below it - the earlier version positioned every row off `bottom`
+        // with hand-tuned multiples and drifted apart the moment one changed.
+        float y = bottom;
+        Rect Row(float lineHeight)
+        {
+            y -= lineHeight;
+            return new Rect(x, y, width, lineHeight);
+        }
 
         string tail = runScore == null
             ? $"{gate.Runs} runs delivered"
-            : $"SCORE  ·  best {runScore.Best:N0}  ·  {gate.Runs} runs  ·  {gate.SatsDelivered:N0} sat";
-        var runsLine = new Rect(x, bottom - under.fontSize * 1.4f, width, under.fontSize * 1.5f);
-        Shadowed(runsLine, tail, under, new Color(1f, 1f, 1f, 0.75f));
+            : $"best {runScore.Best:N0}  ·  {gate.Runs} runs  ·  {gate.SatsDelivered:N0} sat";
+        Shadowed(Row(under.fontSize * 1.5f), tail, under, new Color(1f, 1f, 1f, 0.7f));
+
+        // BANKED: what is actually yours. Green, and it never goes down.
+        if (runScore != null)
+            Shadowed(Row(banked.fontSize * 1.3f), $"BANKED  {runScore.Total:N0}", banked, Up);
+
+        // PENDING: what the current run would add. Amber, because a wreck
+        // takes all of it - the colour is the warning, the word says why.
+        var tint = live ? new Color(1f, 0.82f, 0.30f) : new Color(1f, 1f, 1f, 0.45f);
+        if (live && runScore.Projected <= 0) tint = new Color(1f, 0.45f, 0.40f);
+        Shadowed(Row(score.fontSize * 1.25f), $"{pending:N0}", score, tint);
+
+        string caption = runScore == null ? "SCORE"
+            : live ? "PENDING SCORE  ·  yours only if you reach the gate"
+                   : "LAST RUN";
+        Shadowed(Row(under.fontSize * 1.5f), caption, under,
+                 live ? new Color(1f, 0.82f, 0.30f, 0.85f) : new Color(1f, 1f, 1f, 0.55f));
+
+        Shadowed(Row(under.fontSize * 1.5f), bay.IsLoaded
+                     ? $"CARGO  {bay.Count} parcels  ·  {bay.FeeCarried:N0} sat"
+                     : "CARGO  empty",
+                 under, bay.IsLoaded ? Color.white : new Color(1f, 1f, 1f, 0.6f));
 
         // the flash on arrival
         if (gate.SinceDelivery < 2.6f)
@@ -363,9 +385,14 @@ public class DriveHud : MonoBehaviour
 
         if (cold)
         {
+            // Drawn in its own, wider box. The meter is a quarter of the
+            // screen; this sentence is not, and in the meter's box it lost its
+            // second half off the left edge - "OUT OF THE FIGHT ·" and nothing
+            // after it, which reads as a truncation bug rather than a warning.
             var warn = new GUIStyle(_small) { alignment = TextAnchor.UpperRight, fontStyle = FontStyle.Bold };
             float k = 0.55f + 0.45f * Mathf.Sin(Time.unscaledTime * 4.5f);
-            Shadowed(new Rect(box.x, box.yMax + 2f, box.width, lh),
+            float ww = Mathf.Min(w * 0.75f, 560f);
+            Shadowed(new Rect(box.xMax - ww, box.yMax + 2f, ww, lh),
                      "OUT OF THE FIGHT  ·  SCORING NOTHING", warn,
                      new Color(1f, 0.42f, 0.36f, k));
         }
