@@ -817,7 +817,109 @@ buffer growth, SQLite write throughput.
 
 ---
 
-## 15. What this choice costs
+## 15. Effort and milestones
+
+*Estimated 31 August 2026, against the game rules as they stood that day.
+Written down here because the first version of this estimate lived only in a
+chat and was lost to compaction.*
+
+Two honesties first. **"Session" is a poor unit** — ours have run from a few
+minutes to several hours. What is counted here is a session of that longer
+kind: a few hours, 30–80 tool calls, one coherent piece of work. And
+**software estimates are systematically optimistic, mine included.** The
+ranges are wide because they have to be.
+
+The calibration is the session this was written in: same codebase, same
+working style, including the rounds spent because something had been built
+and was invisible.
+
+### 15.1 Effort by stage
+
+| Stage | Content | Sessions |
+|---|---|---|
+| 0 | Core foundation: fixed point, RNG, tables, state layout, AST guard, cross-engine harness | 3–5 |
+| 1 | Port the game rules from C# into the core (armies, terrain, driving, damage, gate, score) | 7–12 |
+| 2 | `@blwp/protocol`: encoding, contracts, census, sortition, payout + vectors | 3–4 |
+| 3 | `blwp-node`: HTTP/WS, `node:sqlite`, entries, checkpoints, transcripts | 4–6 |
+| 4 | Replay pool, 5-of-7 finality, objection, equivocation, no-quorum | 3–5 |
+| 5 | Chain: bond verification, census build, committee publication (regtest) | 3–4 |
+| 6 | Unity bridge, `@blwp/client`, NWC wallet | 4–6 |
+| 7 | Settlement: VSS, FROST, hold invoices, backends | 5–8 |
+| 8 | Bonds and arbitration on-chain, load tests | 3–5 |
+| | **Total** | **35–55** |
+
+Stage 1 is the one number that has moved since the first estimate, from 6–10
+to 7–12. The rules grew that same day: the score gained a multiplicative
+exposure term integrated over ground made good rather than time, threat
+became a count of units actually in range rather than distance to a line, the
+block clock started ending runs, and two buildings arrived with collision
+that the simulation has to agree on.
+
+Their *displays* do not move the number. The terminal, the histogram, the
+goggles wall and the fee tiers are presentation fed from live chain state —
+they are outside the deterministic core by construction, because nothing that
+depends on when an HTTP response arrived can be part of a replayable
+simulation.
+
+### 15.2 When it is playable
+
+The better news: playability comes long before real money.
+
+| Milestone | What you can do | Cumulative |
+|---|---|---|
+| **M1 — core-driven single player** | Today's game, but position, damage, enemies and delivery come from the deterministic JS core instead of PhysX. No network, no money. Plays in a browser as it does now. | 11–18 |
+| **M2 — play-money multiplayer** | Lobby, shared round start, late join, ghosts, leaderboard, verified results across seven local nodes. The whole experience, without sats. | 23–33 |
+| **M3 — testnet sats** | Real Lightning mechanics on testnet: hold invoices, VSS, threshold settlement. | 31–45 |
+| **M4 — mainnet, lowest bracket** | Real sats, plus external review. | 36–52 |
+
+**M1 is the milestone to steer for.** It is not merely early — it retires the
+two largest risks in the whole undertaking: does determinism hold across four
+engines, and does the fixed-point model still *drive well*? The WheelCollider
+behaviour behind the handbrake, the grip and the camera pitch has to be
+derived again from scratch. That is an iteration with the player at the
+wheel, not a mechanical port.
+
+### 15.3 What drives the spread
+
+**Driving feel (stage 1)** is the largest uncertainty and the only one that
+cannot be resolved alone — it needs judgement, repeatedly. The camera and the
+handbrake each took three or four rounds on the *existing* model.
+
+**Cross-engine determinism (stage 0)** is the headline risk. If it holds
+first time, three sessions. If Safari diverges on some corner nobody
+considered, stage 0 doubles and everything downstream sits behind it.
+
+**FROST (stage 7)** is implementation against an RFC with test vectors, so it
+is tractable craft. The external cryptographic review before it is calendar
+time, not session time — weeks, not hours, and it is not in the table.
+
+**Lightning integration always surprises.** There is padding in the table,
+but hold invoices, routing failures and recovery after a crash are reliably
+where five sessions become eight.
+
+### 15.4 What is not in the estimate
+
+Two things sit on the critical path between M3 and M4 and depend on no
+programming at all: the legal review, and finding seven independent, willing
+node operators with bonds posted. The second is an organisational problem,
+not a technical one — and without a solution the whole federated architecture
+is theatre, as §31 of the specification says plainly.
+
+### 15.5 Recommendation
+
+Before committing to thirty-five sessions: **one or two sessions as a pure
+risk spike.** A toy core in fixed point — a vehicle, a few enemies, ten
+thousand ticks — run through Node, Chrome, Firefox and Safari, and the state
+hashes compared. No protocol, no Unity, no money.
+
+If the hashes match, the foundation stands and the table above holds. If they
+do not, you know after two sessions instead of fifteen — and that is the
+moment to reopen the Rust/WASM question rather than after the core has grown
+around the assumption.
+
+---
+
+## 16. What this choice costs
 
 Stated plainly, so nobody discovers it in month four:
 
