@@ -30,6 +30,7 @@ namespace Blwp
         [DllImport("__Internal")] private static extern int BlwpSetGround(IntPtr h, int cols, int rows);
         [DllImport("__Internal")] private static extern int BlwpSetSolids(IntPtr b, int count);
         [DllImport("__Internal")] private static extern int BlwpSetArmour(IntPtr b, int count);
+        [DllImport("__Internal")] private static extern int BlwpTeleport(int x, int z, int heading);
         public const bool Compiled = true;
 #else
         private static int BlwpInit(int seed) => 0;
@@ -42,6 +43,7 @@ namespace Blwp
         private static int BlwpSetGround(IntPtr h, int c, int r) => 0;
         private static int BlwpSetSolids(IntPtr b, int n) => 0;
         private static int BlwpSetArmour(IntPtr b, int n) => 0;
+        private static int BlwpTeleport(int x, int z, int h) => 0;
         public const bool Compiled = false;
 #endif
 
@@ -126,6 +128,23 @@ namespace Blwp
             var pin = GCHandle.Alloc(xz, GCHandleType.Pinned);
             try { return BlwpSetArmour(pin.AddrOfPinnedObject(), count) != 0; }
             finally { pin.Free(); }
+        }
+
+        /// <summary>
+        /// Puts the truck back where it started, stationary.
+        ///
+        /// It has to go through the core because the core OWNS the position:
+        /// TruckController.Respawn set the Transform and the Rigidbody and the
+        /// core overwrote both on the very next frame, so a missed block left
+        /// the player standing at the miner, unable to load anything, with the
+        /// bay eighty metres away.
+        /// </summary>
+        public static bool Teleport(Vector3 at, float headingDegrees)
+        {
+            if (!Available) return false;
+            int h = Mathf.RoundToInt(Mathf.Repeat(headingDegrees, 360f) * 65536f / 360f) & 0xFFFF;
+            return BlwpTeleport(Mathf.RoundToInt(at.x * ONE),
+                                Mathf.RoundToInt(at.z * ONE), h) != 0;
         }
 
         /// <summary>The truck's velocity, in metres a second.</summary>

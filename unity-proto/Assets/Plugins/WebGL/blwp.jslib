@@ -100,6 +100,14 @@ mergeInto(LibraryManager.library, {
     return b.core.setArmour(b.st, count | 0, src.slice()) ? 1 : 0;
   },
 
+  // Put the truck back. A host command: the round ended, or it was written
+  // off, and it belongs in the bay.
+  BlwpTeleport: function (x, z, heading) {
+    var b = Module.blwp;
+    if (!b) return 0;
+    return b.core.teleport(b.st, x | 0, z | 0, heading | 0) ? 1 : 0;
+  },
+
   // A query parameter from the page's own URL, written into a caller-owned
   // buffer. Handing a build to somebody in the mode you meant them to see is
   // what a shared link is for, and it beats asking them to find a switch.

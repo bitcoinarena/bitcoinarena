@@ -126,6 +126,16 @@ public class TruckController : MonoBehaviour
         _rb.rotation = spawnRotation;
         transform.SetPositionAndRotation(spawnPosition, spawnRotation);
         _steer = 0f;
+
+        // And tell the core, which owns the position when it is driving.
+        //
+        // Without this the two lines above were undone on the very next frame:
+        // the truck was moved back to the bay and the core put it straight
+        // back at the miner. A round that timed out therefore did nothing
+        // visible at all - the player stayed where they were, could not load,
+        // and the bay was eighty metres away.
+        if (externallyDriven)
+            Blwp.BlwpCore.Teleport(spawnPosition, spawnRotation.eulerAngles.y);
     }
 
     /// <summary>
