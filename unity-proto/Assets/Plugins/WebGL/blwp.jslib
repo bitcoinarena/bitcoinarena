@@ -82,6 +82,15 @@ mergeInto(LibraryManager.library, {
     return b.core.setGround(b.st, cols | 0, rows | 0, src.slice()) ? 1 : 0;
   },
 
+  // The solid world, handed over as round setup with the relief.
+  BlwpSetSolids: function (ptr, count) {
+    var b = Module.blwp;
+    if (!b) return 0;
+    var n = (count | 0) * 6;
+    var src = new Int32Array(Module.HEAP32.buffer, ptr, n);
+    return b.core.setSolids(b.st, count | 0, src.slice()) ? 1 : 0;
+  },
+
   // A query parameter from the page's own URL, written into a caller-owned
   // buffer. Handing a build to somebody in the mode you meant them to see is
   // what a shared link is for, and it beats asking them to find a switch.

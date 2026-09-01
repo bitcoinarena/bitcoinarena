@@ -265,4 +265,61 @@ public class PhysxReferenceTests
 
         yield return null;
     }
+
+    /// <summary>
+    /// Where a wall stops the PhysX truck.
+    ///
+    /// The core has to put it in the same place. This drives full throttle at
+    /// the post office frontage and records the gap left between the truck's
+    /// nose and the face of the wall it hit - which is the number the core's
+    /// own collision has to reproduce.
+    /// </summary>
+    [UnityTest]
+    [Explicit("Measurement, not an assertion. See MeasureThePhysxTruck.")]
+    public IEnumerator MeasureThePhysxWall()
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine("PHYSXWALL BEGIN");
+
+        // The frontage: every static box the world is made of, as the core
+        // will see it.
+        var boxes = Blwp.WorldSolids.Gather(_truck.transform, out int n);
+        sb.AppendLine($"PHYSXWALL solids {n}");
+
+        // Find the nearest wall face straight down +X from the spawn, which is
+        // the post office frontage the truck is parked against.
+        var post = Object.FindFirstObjectByType<PostOffice>();
+        Assert.IsNotNull(post, "kein Post Office");
+
+        float lane = post.BayPosition.z;
+        float bestFace = float.NegativeInfinity;
+        for (int i = 0; i < n; i++)
+        {
+            float cx = boxes[i * 6] / 65536f, cz = boxes[i * 6 + 1] / 65536f;
+            float hx = boxes[i * 6 + 2] / 65536f, hz = boxes[i * 6 + 3] / 65536f;
+            float yLow = boxes[i * 6 + 4] / 65536f;
+            if (Mathf.Abs(cz - lane) > hz) continue;        // not in this lane
+            if (yLow > post.BayPosition.y + 2f) continue;   // a lintel, not a wall
+            if (cx + hx > post.BayPosition.x) continue;     // behind the truck
+            bestFace = Mathf.Max(bestFace, cx + hx);
+        }
+        sb.AppendLine($"PHYSXWALL face {bestFace:0.000} lane {lane:0.00}");
+
+        // Reverse into it: the wall is BEHIND the truck on the apron.
+        Drive(0f, 0f);
+        _rb.linearVelocity = Vector3.zero;
+        _rb.position = post.BayPosition;
+        _rb.rotation = Quaternion.Euler(0f, 90f, 0f);
+        yield return Settle();
+
+        float el = 0f;
+        while (el < 8f) { Drive(-1f, 0f); yield return null; el += Time.deltaTime; }
+
+        float rear = _rb.position.x - 3.2f;               // the tail of a 6.4 m chassis
+        sb.AppendLine($"PHYSXWALL rest x={_rb.position.x:0.000} rear={rear:0.000} " +
+                      $"gap={(rear - bestFace):0.000} v={_rb.linearVelocity.magnitude:0.00}");
+        sb.AppendLine("PHYSXWALL END");
+        Debug.Log(sb.ToString());
+        yield return null;
+    }
 }

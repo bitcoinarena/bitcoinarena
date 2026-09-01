@@ -294,3 +294,117 @@ public class CameraDragGuardTests
             "in der Bildmitte muss man die Ansicht drehen koennen");
     }
 }
+
+/// <summary>
+/// The core starts the truck where Unity draws the bay.
+///
+/// These are two numbers in two languages describing one place, and when they
+/// disagree nothing throws. The core spawned the truck at postX itself - the
+/// facade line - so it started fourteen metres too far back, buried in the
+/// loading dock and clipping through it, with the chase camera pressed against
+/// a white slab a couple of metres from the lens. That reads as "the bay is
+/// completely white at launch", which is why it went looking for a lighting
+/// fault and not for this.
+/// </summary>
+public class TruckSpawnTests
+{
+    [UnityTest]
+    public IEnumerator TheCoreSpawnsOnTheApronWhereTheBayIs()
+    {
+        var boot = new GameObject("Bootstrap");
+        boot.AddComponent<Bootstrap>();
+        yield return new WaitForSeconds(1.5f);
+
+        var post = Object.FindFirstObjectByType<PostOffice>();
+        Assert.IsNotNull(post, "kein Post Office");
+        Assert.IsTrue(post.HasBay, "die Bucht steht noch nicht fest");
+
+        var bay = post.BayPosition;
+        float coreX = Blwp.Layout.START_X / 65536f;
+        float coreZ = Blwp.Layout.START_Z / 65536f;
+
+        Assert.AreEqual(bay.x, coreX, 0.6f,
+            $"der Core startet bei x={coreX:0.0}, die Bucht liegt bei x={bay.x:0.0} " +
+            "- der Truck steht in der Rampe");
+        Assert.AreEqual(bay.z, coreZ, 0.6f,
+            $"der Core startet bei z={coreZ:0.0}, die Bucht liegt bei z={bay.z:0.0}");
+
+        Object.Destroy(boot);
+    }
+}
+
+/// <summary>
+/// The core is given the world Unity is actually colliding with.
+///
+/// Harvested from the scene rather than described a second time: the buildings
+/// are already colliders, and writing their geometry out again by hand is how
+/// the collision world and the visible world come to disagree.
+/// </summary>
+public class WorldSolidsTests
+{
+    GameObject _boot;
+    TruckController _truck;
+
+    [UnitySetUp]
+    public IEnumerator SetUp()
+    {
+        _boot = new GameObject("Bootstrap");
+        _boot.AddComponent<Bootstrap>();
+        yield return new WaitForSeconds(1.5f);
+        _truck = Object.FindFirstObjectByType<TruckController>();
+    }
+
+    [TearDown] public void TearDown() { if (_boot != null) Object.Destroy(_boot); }
+
+    [Test]
+    public void TheBuildingsAreInIt()
+    {
+        var boxes = Blwp.WorldSolids.Gather(_truck.transform, out int n);
+        Assert.Greater(n, 10, "die Gebaeude fehlen - der Truck faehrt durch alles hindurch");
+        Assert.AreEqual(n * Blwp.WorldSolids.Words, boxes.Length);
+    }
+
+    [Test]
+    public void ThereIsAWallBehindTheTruckAndADoorwayInFrontOfIt()
+    {
+        var post = Object.FindFirstObjectByType<PostOffice>();
+        Assert.IsNotNull(post);
+        var boxes = Blwp.WorldSolids.Gather(_truck.transform, out int n);
+
+        float lane = post.BayPosition.z, spawnX = post.BayPosition.x;
+        bool wall = false, lintel = false;
+        for (int i = 0; i < n; i++)
+        {
+            float cx = boxes[i * 6] / 65536f, cz = boxes[i * 6 + 1] / 65536f;
+            float hx = boxes[i * 6 + 2] / 65536f, hz = boxes[i * 6 + 3] / 65536f;
+            float yLow = boxes[i * 6 + 4] / 65536f;
+            if (Mathf.Abs(cz - lane) > hz) continue;
+            if (cx + hx > spawnX) continue;
+            if (yLow > post.BayPosition.y + 2f) lintel = true; else wall = true;
+        }
+
+        Assert.IsTrue(wall, "hinter dem Truck steht keine Wand");
+        Assert.IsTrue(lintel,
+            "ueber der Einfahrt liegt kein Sturz - dann traegt die Bucht auch keine Hoehe, " +
+            "und der Core koennte nicht wissen, dass man darunter durchfaehrt");
+    }
+
+    [Test]
+    public void TheTruckIsNotAnObstacleToItself()
+    {
+        foreach (var c in _truck.GetComponentsInChildren<BoxCollider>())
+            Assert.IsFalse(Blwp.WorldSolids.IsWorld(c, _truck.transform),
+                "der Truck wuerde sich selbst im Weg stehen");
+    }
+
+    [Test]
+    public void MovingThingsAreNotScenery()
+    {
+        // A tank has a Rigidbody; it is fought, not driven around.
+        var go = new GameObject("Movable");
+        go.AddComponent<Rigidbody>();
+        var box = go.AddComponent<BoxCollider>();
+        Assert.IsFalse(Blwp.WorldSolids.IsWorld(box, _truck.transform));
+        Object.Destroy(go);
+    }
+}

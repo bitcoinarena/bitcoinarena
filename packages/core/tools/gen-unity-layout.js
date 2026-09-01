@@ -44,6 +44,16 @@ out += '    /// <summary>Word offsets into the core state buffer. Generated from
 out += '    public static class Layout\n    {\n';
 for (const k of wanted.sort()) out += `        public const int ${k} = ${mod[k]};\n`;
 out += '\n';
+
+// The spawn lives in sim.js, not state.js, but it has to reach C# for the same
+// reason the offsets do: Unity draws a loading bay at one place and the core
+// starts the truck at another, and nothing throws - the truck simply spawns
+// inside the building and clips through it.
+const sim = await import(new URL('../src/sim.js', import.meta.url));
+out += '        /// <summary>Where the core starts the truck, Q16.16 metres.</summary>\n';
+out += `        public const int START_X = ${sim.START_X};\n`;
+out += `        public const int START_Z = ${sim.START_Z};\n`;
+out += '\n';
 out += '        /// <summary>Base word offset of unit <paramref name="i"/>.</summary>\n';
 out += '        public static int UnitBase(int i) => O_UNITS + i * U_WORDS;\n';
 out += '    }\n}\n';

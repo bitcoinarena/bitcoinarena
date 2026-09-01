@@ -46,6 +46,10 @@ namespace Blwp
         public const int U_Z = 1;
         public const int WORDS = 2072;
 
+        /// <summary>Where the core starts the truck, Q16.16 metres.</summary>
+        public const int START_X = -6579814;
+        public const int START_Z = 668467;
+
         /// <summary>Base word offset of unit <paramref name="i"/>.</summary>
         public static int UnitBase(int i) => O_UNITS + i * U_WORDS;
     }

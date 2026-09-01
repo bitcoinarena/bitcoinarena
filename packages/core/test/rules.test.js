@@ -7,7 +7,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { init, step, runScore, setGround, HALF_X } from '../src/sim.js';
+import { init, step, runScore, setGround, setSolids, HALF_X } from '../src/sim.js';
 import { hash } from '../src/state.js';
 import * as scoring from '../src/rules/score.js';
 import * as gate from '../src/rules/gate.js';
@@ -289,4 +289,123 @@ test('a hill costs the core what it costs Unity', async () => {
     `the core ${worstAt.core.toFixed(2)} m/s`);
   assert.ok(sum / n < ref.tolerance.hillEffect * 0.7,
     `the hill response is ${(sum / n).toFixed(2)} m/s out on average`);
+});
+
+/**
+ * The truck cannot drive through the world.
+ *
+ * When the core took the driving off PhysX it took the collisions with it: the
+ * body is kinematic and its transform is written straight from the core, so
+ * nothing in Unity resolves a penetration any more and the truck drove through
+ * the post office, through the miner, through everything.
+ *
+ * A doorway is checked as carefully as a wall. The obstacles carry a vertical
+ * span because the lintel over each bay is a nine-metre-high slab, and a core
+ * that only knew about XZ would have walled up every door in the building.
+ */
+test('a wall stops the truck and a lintel does not', () => {
+  const Q = 65536, O = 5, T_X = 0, T_Z = 1, T_SPEED = 9;
+  const q = (m) => Math.round(m * Q);
+
+  const run = (boxes) => {
+    const st = init(1);
+    if (boxes) assert.ok(setSolids(st, boxes.length / 6, boxes), 'die Hindernisse wurden abgelehnt');
+    const sx = st.i32[O + T_X] / Q;
+    for (let i = 0; i < 600; i++) step(st, Q, 0, 0, 0, 0);
+    return { x: st.i32[O + T_X] / Q, v: st.i32[O + T_SPEED] / Q, from: sx };
+  };
+
+  const open = run(null);
+  assert.ok(open.x - open.from > 100, 'ohne Hindernis muss der Truck weit kommen');
+
+  // A slab across the road, from the ground up, thirty metres ahead.
+  const wallAt = open.from + 30;
+  const st0 = init(1);
+  const z = st0.i32[O + T_Z] / Q;
+  const wall = run(new Int32Array([q(wallAt), q(z), q(1), q(20), 0, q(50)]));
+
+  // The nose stops one radius plus the nose offset short of the face.
+  const face = wallAt - 1;
+  const expected = face - 1.275 - 2.0;
+  assert.ok(Math.abs(wall.x - expected) < 0.2,
+    `der Truck steht bei ${wall.x.toFixed(2)}, die Wand haelt ihn bei ${expected.toFixed(2)}`);
+  assert.ok(wall.v < 1, `er drueckt mit ${wall.v.toFixed(2)} m/s weiter in die Wand`);
+
+  // The same slab, but starting nine metres up: that is a doorway.
+  const door = run(new Int32Array([q(wallAt), q(z), q(1), q(20), q(9), q(50)]));
+  assert.ok(Math.abs(door.x - open.x) < 0.01,
+    `der Sturz hat den Truck aufgehalten - er kam nur bis ${door.x.toFixed(1)} statt ${open.x.toFixed(1)}`);
+});
+
+/**
+ * The core stops the truck where PhysX stopped it.
+ *
+ * Not just that it stops - where. A wall the old game let the player park
+ * flush against, and the core holds them a metre off, is a doorway they can
+ * see they fit through and cannot drive into.
+ *
+ * The reference is a recording of the PhysX truck reversed into the post
+ * office frontage at full throttle and left to settle.
+ */
+test('a wall holds the truck where the old game held it', async () => {
+  const ref = JSON.parse(
+    await readFile(new URL('./vectors/physx-wall.json', import.meta.url), 'utf8'));
+
+  const Q = 65536, O = 5, T_X = 0, T_Z = 1;
+  const q = (m) => Math.round(m * Q);
+
+  const st = init(1);
+  const z = st.i32[O + T_Z] / Q;
+
+  // The same wall, in the same place, relative to where the truck starts.
+  // Reversing into it, as the reference run did.
+  const face = ref.wallFace;
+  const thick = 4;
+  st.i32[O + T_X] = q(face + 12);
+  setSolids(st, 1, new Int32Array(
+    [q(face - thick / 2), q(z), q(thick / 2), q(20), 0, q(50)]));
+
+  for (let i = 0; i < 60 * 8; i++) step(st, -Q, 0, 0, 0, 0);
+
+  const rear = st.i32[O + T_X] / Q - ref.halfChassis;
+  const gap = rear - face;
+
+  assert.ok(Math.abs(gap - ref.gap) < ref.tolerance.gap,
+    `PhysX liess den Truck ${ref.gap.toFixed(2)} m vor der Wand stehen, ` +
+    `der Core ${gap.toFixed(2)} m - ${Math.abs(gap - ref.gap).toFixed(2)} m Unterschied`);
+});
+
+/**
+ * A box on the far side of the map is not a box the truck is standing in.
+ *
+ * length2 squares its arguments in Q16.16, and the rails around this map are
+ * 266 m long. A box a hundred metres away overflowed the sum of the squares
+ * past 2^31, wrapped it negative, and came back as a distance of ZERO - which
+ * reads as the circle sitting dead in the middle of that box. The truck was
+ * ejected from scenery it was nowhere near and arrived at the western edge of
+ * the map half a second after the round began, stationary, with no way to tell
+ * from the outside that a collision had done it.
+ */
+test('a distant wall does not eject the truck', () => {
+  const Q = 65536, O = 5, T_X = 0, T_Z = 1;
+  const q = (m) => Math.round(m * Q);
+
+  const st = init(1);
+  const x0 = st.i32[O + T_X] / Q, z0 = st.i32[O + T_Z] / Q;
+
+  // The real rails: 266 m long, along both edges of the map, and the post
+  // office frontage. None of them is anywhere near the spawn.
+  assert.ok(setSolids(st, 3, new Int32Array([
+    q(0), q(-85), q(133), q(1.5), q(-1.7), q(24.3),
+    q(0), q(85), q(133), q(1.5), q(-1.7), q(24.3),
+    q(-118.4), q(0), q(4), q(84.1), q(15.6), q(58.4),
+  ])), 'die Hindernisse wurden abgelehnt');
+
+  // Standing still, hands off.
+  for (let i = 0; i < 120; i++) step(st, 0, 0, 0, 0, 0);
+
+  const x = st.i32[O + T_X] / Q, z = st.i32[O + T_Z] / Q;
+  assert.ok(Math.abs(x - x0) < 0.5 && Math.abs(z - z0) < 0.5,
+    `der Truck stand bei ${x0.toFixed(1)}, ${z0.toFixed(1)} und wurde nach ` +
+    `${x.toFixed(1)}, ${z.toFixed(1)} geschoben`);
 });

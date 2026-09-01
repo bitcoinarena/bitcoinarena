@@ -1035,6 +1035,143 @@ function vehicleStep(v, throttle, steer, brake, handbrake, dt, grade) {
   return v;
 }
 
+// ---- rules/solids.js
+// What the truck cannot drive through.
+//
+// The core replaced PhysX for the driving and took the collisions with it:
+// the body is kinematic and its transform is written straight from here, so
+// nothing in Unity resolves a penetration any more. The truck drove through
+// the post office, through the miner, through everything.
+//
+// The obstacles are uploaded by the host as round setup, the same status as
+// the relief - they are the boxes Unity is ACTUALLY colliding with, harvested
+// from the scene, rather than a second description of the building that could
+// disagree with the first.
+//
+// Boxes are axis-aligned in XZ, which every static collider in this game is,
+// and carry their vertical span so the truck can drive UNDER a doorway lintel
+// instead of into it.
+
+
+const BOX_WORDS = 6;   // cx, cz, hx, hz, yLow, yHigh
+
+/** The truck's own shape: two circles, front axle and rear. */
+const BODY_FRONT = 131072;    // +2.0 m along the nose
+const BODY_REAR = -117965;    // -1.8 m
+const BODY_RADIUS = 83558;    // 1.275 m, half the track width
+
+/** How tall the truck stands. Anything starting above this is driven under. */
+const BODY_HEIGHT = 213811;   // 3.26 m
+
+function noSolids() {
+  return { n: 0, box: new Int32Array(0) };
+}
+
+/**
+ * Pushes one circle out of every box it is inside.
+ *
+ * Returns the correction as a pair, and the surface it was pushed off, so the
+ * caller can kill the velocity going INTO the wall without touching the part
+ * running along it - which is what makes a wall something you slide down
+ * rather than something you stick to.
+ */
+function pushOut(s, cx, cz, r, floor, out) {
+  out[0] = 0; out[1] = 0;
+  let hit = 0;
+
+  for (let i = 0; i < s.n; i++) {
+    const b = Math.imul(i, BOX_WORDS);
+    const yLow = s.box[b + 4], yHigh = s.box[b + 5];
+
+    // A lintel nine metres up is a doorway, not a wall.
+    if (yLow > add(floor, BODY_HEIGHT)) continue;
+    if (yHigh < floor) continue;
+
+    const bx = s.box[b], bz = s.box[b + 1];
+    const hx = s.box[b + 2], hz = s.box[b + 3];
+
+    // Reject on the axes FIRST, before any distance is computed.
+    //
+    // Not only for speed. length2 squares its arguments in Q16.16, and the
+    // rails around this map are 266 m long, so a box a hundred metres away
+    // overflowed the sum past 2^31, wrapped it negative, and came back as a
+    // distance of ZERO - which read as the circle sitting dead in the middle
+    // of that box. The truck was then ejected from scenery it was nowhere
+    // near, and arrived at the western edge of the map half a second after
+    // the round began.
+    if (abs(sub(cx, bx)) > add(hx, r)) continue;
+    if (abs(sub(cz, bz)) > add(hz, r)) continue;
+
+    // Nearest point on the box, then the vector out to the circle.
+    const nx = clamp(cx, sub(bx, hx), add(bx, hx));
+    const nz = clamp(cz, sub(bz, hz), add(bz, hz));
+    let dx = sub(cx, nx), dz = sub(cz, nz);
+    const dist = length2(dx, dz);
+
+    if (dist >= r) continue;
+
+    if (dist === 0) {
+      // Dead centre: leave along the shortest way out, or the box would
+      // decide the direction by rounding noise.
+      const left = sub(cx, sub(bx, hx)), right = sub(add(bx, hx), cx);
+      const back = sub(cz, sub(bz, hz)), front = sub(add(bz, hz), cz);
+      const mx = min(left, right), mz = min(back, front);
+      if (mx < mz) { dx = left < right ? -ONE : ONE; dz = 0; }
+      else { dx = 0; dz = back < front ? -ONE : ONE; }
+      out[0] = add(out[0], mulFast(dx, add(r, mx < mz ? mx : mz)));
+      out[1] = add(out[1], mulFast(dz, add(r, mx < mz ? mx : mz)));
+      hit = 1;
+      continue;
+    }
+
+    const push = sub(r, dist);
+    out[0] = add(out[0], div(mulFast(dx, push), dist));
+    out[1] = add(out[1], div(mulFast(dz, push), dist));
+    hit = 1;
+  }
+  return hit;
+}
+
+const _a = new Int32Array(2);
+const _b = new Int32Array(2);
+
+/**
+ * Keeps the truck out of the solid world.
+ *
+ * Two circles rather than one: a 6.4 m truck represented by a single circle
+ * either clips its own nose through a corner or is too fat to fit a doorway
+ * it visibly fits. Front and rear are pushed out separately and the body
+ * takes the sum, which also makes it slide along a wall it meets at an angle
+ * instead of stopping dead against it.
+ */
+function resolveSolids(v, s, fx, fz, floor) {
+  if (!s || s.n === 0) return 0;
+
+  const fcx = add(v.x, mulFast(fx, BODY_FRONT)), fcz = add(v.z, mulFast(fz, BODY_FRONT));
+  const rcx = add(v.x, mulFast(fx, BODY_REAR)), rcz = add(v.z, mulFast(fz, BODY_REAR));
+
+  const a = pushOut(s, fcx, fcz, BODY_RADIUS, floor, _a);
+  const b = pushOut(s, rcx, rcz, BODY_RADIUS, floor, _b);
+  if (a === 0 && b === 0) return 0;
+
+  const px = add(_a[0], _b[0]), pz = add(_a[1], _b[1]);
+  v.x = add(v.x, px);
+  v.z = add(v.z, pz);
+
+  // Kill only the part of the velocity going into the wall. Killing all of it
+  // makes a glancing scrape a full stop, which is what a wall must not be.
+  const len = length2(px, pz);
+  if (len > 0) {
+    const nx = div(px, len), nz = div(pz, len);
+    const into = add(mulFast(v.vx, nx), mulFast(v.vz, nz));
+    if (into < 0) {
+      v.vx = sub(v.vx, mulFast(into, nx));
+      v.vz = sub(v.vz, mulFast(into, nz));
+    }
+  }
+  return 1;
+}
+
 // ---- rules/army.js
 // The two armies, ported from Army.cs.
 //
@@ -1277,12 +1414,28 @@ function frontlineZ(hist, x, halfX, halfZ) {
 
 
 
+
 const UNITS = 96;
 const HALF_X = Math.imul(130, ONE);
 const HALF_Z = Math.imul(85, ONE);
 const TICK_DT = 1092;                       // 1/60 in Q16.16
-const START_X = Math.imul(-114, ONE);
-const START_Z = Math.imul(-78, ONE);        // bay 1
+// The loading bay, and it has to be the SAME bay Unity draws.
+//
+// This was -114, which is postX - the facade line itself. The truck spawned
+// fourteen metres too far back, buried in the loading dock, clipping through
+// it with the chase camera jammed against a white slab a couple of metres from
+// the lens. That is what "the bay is completely white at launch" was: not a
+// lighting fault at all, but a camera with its nose against a wall.
+//
+// The z was wrong too, and by more: -78.2 is bay 1, the far END of a 168 m
+// frontage, while the game parks a solo player in bay 14 - the middle one, the
+// one the road actually leaves from. So the truck started eighty-eight metres
+// along the building from its own lane AND fourteen metres inside the wall.
+//
+// PostOffice.BayFor(SoloBay) is the authority; TruckSpawnTests holds the two
+// numbers together so they cannot drift apart again in silence.
+const START_X = -6579814;                   // -100.4 m, 14 m out on the apron
+const START_Z = 668467;                     // 10.2 m, the solo bay (14 of 24)
 // Every fourth unit is armour. A mask rather than a modulo: '%' is banned
 // outside the arithmetic files, and a power of two makes the ban free.
 const ARMOUR_MASK = 3;
@@ -1318,6 +1471,23 @@ function setGround(st, cols, rows, heights) {
 }
 
 /** Surface height under a world position, for whatever is drawing the truck. */
+/**
+ * Hands the core the solid world, as axis-aligned boxes in XZ.
+ *
+ * `boxes` is cx, cz, hx, hz, yLow, yHigh per obstacle, Q16.16 metres. Round
+ * setup, like the relief: uploaded once and never touched while the round
+ * runs, so it can stay outside the hashed state and still be something every
+ * player has agreed on.
+ */
+function setSolids(st, count, boxes) {
+  const n = Math.imul(count, BOX_WORDS);
+  if (count < 0 || boxes.length < n) return false;
+  const box = new Int32Array(n);
+  box.set(boxes.subarray(0, n));
+  st.solids = { n: count, box };
+  return true;
+}
+
 function groundAt(st, x, z) {
   return heightAtWorld(st.ground, x, z, HALF_X, HALF_Z);
 }
@@ -1343,6 +1513,10 @@ function init(seedWord) {
   // default: a core that invents hills the player cannot see is worse than one
   // that drives over a table.
   st.ground = flatGround(DEFAULT_COLS, DEFAULT_ROWS);
+
+  // An empty world until the host says otherwise. Empty is honest: a core
+  // inventing walls the player cannot see is worse than one with none.
+  st.solids = noSolids();
 
   for (let i = 0; i < UNITS; i++) {
     const b = unitBase(i);
@@ -1390,6 +1564,13 @@ function step(st, throttle, steer, brake, handbrake, practice) {
                            sin(s[T + T_HEADING]), cos(s[T + T_HEADING]),
                            HALF_X, HALF_Z);
   vehicleStep(v, throttle, steer, brake, handbrake, TICK_DT, grade);
+  // Out of the walls before the position is committed. After the vehicle
+  // step, so it corrects where the truck WOULD have got to rather than
+  // steering it away in advance - a wall has to be something you drive into.
+  resolveSolids(v, st.solids,
+                sin(v.heading), cos(v.heading),
+                heightAtWorld(st.ground, v.x, v.z, HALF_X, HALF_Z));
+
   s[T + T_X] = clamp(v.x, -HALF_X, HALF_X);
   s[T + T_Z] = clamp(v.z, -HALF_Z, HALF_Z);
   s[T + T_HEADING] = v.heading;
@@ -1453,7 +1634,7 @@ const runScore = (st) =>
                 st.i32[O_SCORE + S_CARGO]);
 
 return { init: init, step: step, hash: hash, runScore: runScore,
-         setGround: setGround, groundAt: groundAt,
+         setGround: setGround, groundAt: groundAt, setSolids: setSolids,
          create: create, WORDS: WORDS };
 })();
 if (typeof module !== "undefined") module.exports = BLWP;

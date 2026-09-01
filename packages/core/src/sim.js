@@ -26,6 +26,7 @@ import {
 // exactly what section 3.6 argues against for anything that pins money.
 import { vehicleStep } from './rules/vehicle.js';
 import { flatGround, gradeAlong, heightAtWorld, DEFAULT_COLS, DEFAULT_ROWS } from './rules/ground.js';
+import { noSolids, resolveSolids, BOX_WORDS } from './rules/solids.js';
 import { stepUnit, threatAt } from './rules/army.js';
 import { accrue, earning, scoreOf } from './rules/score.js';
 import { outcome, RUN_LIVE, RUN_DELIVERED, RUN_WRECKED, RUN_MISSED } from './rules/gate.js';
@@ -35,8 +36,23 @@ export const UNITS = 96;
 export const HALF_X = Math.imul(130, ONE);
 export const HALF_Z = Math.imul(85, ONE);
 const TICK_DT = 1092;                       // 1/60 in Q16.16
-const START_X = Math.imul(-114, ONE);
-const START_Z = Math.imul(-78, ONE);        // bay 1
+// The loading bay, and it has to be the SAME bay Unity draws.
+//
+// This was -114, which is postX - the facade line itself. The truck spawned
+// fourteen metres too far back, buried in the loading dock, clipping through
+// it with the chase camera jammed against a white slab a couple of metres from
+// the lens. That is what "the bay is completely white at launch" was: not a
+// lighting fault at all, but a camera with its nose against a wall.
+//
+// The z was wrong too, and by more: -78.2 is bay 1, the far END of a 168 m
+// frontage, while the game parks a solo player in bay 14 - the middle one, the
+// one the road actually leaves from. So the truck started eighty-eight metres
+// along the building from its own lane AND fourteen metres inside the wall.
+//
+// PostOffice.BayFor(SoloBay) is the authority; TruckSpawnTests holds the two
+// numbers together so they cannot drift apart again in silence.
+export const START_X = -6579814;                   // -100.4 m, 14 m out on the apron
+export const START_Z = 668467;                     // 10.2 m, the solo bay (14 of 24)
 // Every fourth unit is armour. A mask rather than a modulo: '%' is banned
 // outside the arithmetic files, and a power of two makes the ban free.
 const ARMOUR_MASK = 3;
@@ -72,6 +88,23 @@ export function setGround(st, cols, rows, heights) {
 }
 
 /** Surface height under a world position, for whatever is drawing the truck. */
+/**
+ * Hands the core the solid world, as axis-aligned boxes in XZ.
+ *
+ * `boxes` is cx, cz, hx, hz, yLow, yHigh per obstacle, Q16.16 metres. Round
+ * setup, like the relief: uploaded once and never touched while the round
+ * runs, so it can stay outside the hashed state and still be something every
+ * player has agreed on.
+ */
+export function setSolids(st, count, boxes) {
+  const n = Math.imul(count, BOX_WORDS);
+  if (count < 0 || boxes.length < n) return false;
+  const box = new Int32Array(n);
+  box.set(boxes.subarray(0, n));
+  st.solids = { n: count, box };
+  return true;
+}
+
 export function groundAt(st, x, z) {
   return heightAtWorld(st.ground, x, z, HALF_X, HALF_Z);
 }
@@ -97,6 +130,10 @@ export function init(seedWord) {
   // default: a core that invents hills the player cannot see is worse than one
   // that drives over a table.
   st.ground = flatGround(DEFAULT_COLS, DEFAULT_ROWS);
+
+  // An empty world until the host says otherwise. Empty is honest: a core
+  // inventing walls the player cannot see is worse than one with none.
+  st.solids = noSolids();
 
   for (let i = 0; i < UNITS; i++) {
     const b = unitBase(i);
@@ -144,6 +181,13 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
                            sin(s[T + T_HEADING]), cos(s[T + T_HEADING]),
                            HALF_X, HALF_Z);
   vehicleStep(v, throttle, steer, brake, handbrake, TICK_DT, grade);
+  // Out of the walls before the position is committed. After the vehicle
+  // step, so it corrects where the truck WOULD have got to rather than
+  // steering it away in advance - a wall has to be something you drive into.
+  resolveSolids(v, st.solids,
+                sin(v.heading), cos(v.heading),
+                heightAtWorld(st.ground, v.x, v.z, HALF_X, HALF_Z));
+
   s[T + T_X] = clamp(v.x, -HALF_X, HALF_X);
   s[T + T_Z] = clamp(v.z, -HALF_Z, HALF_Z);
   s[T + T_HEADING] = v.heading;

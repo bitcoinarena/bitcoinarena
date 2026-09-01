@@ -28,6 +28,7 @@ namespace Blwp
         [DllImport("__Internal")] private static extern int BlwpStateWords();
         [DllImport("__Internal")] private static extern int BlwpQueryParam(IntPtr name, IntPtr outp, int cap);
         [DllImport("__Internal")] private static extern int BlwpSetGround(IntPtr h, int cols, int rows);
+        [DllImport("__Internal")] private static extern int BlwpSetSolids(IntPtr b, int count);
         public const bool Compiled = true;
 #else
         private static int BlwpInit(int seed) => 0;
@@ -38,6 +39,7 @@ namespace Blwp
         private static int BlwpStateWords() => 0;
         private static int BlwpQueryParam(IntPtr n, IntPtr o, int cap) => 0;
         private static int BlwpSetGround(IntPtr h, int c, int r) => 0;
+        private static int BlwpSetSolids(IntPtr b, int n) => 0;
         public const bool Compiled = false;
 #endif
 
@@ -104,6 +106,21 @@ namespace Blwp
             if (!Available || heights == null || heights.Length < cols * rows) return false;
             var pin = GCHandle.Alloc(heights, GCHandleType.Pinned);
             try { return BlwpSetGround(pin.AddrOfPinnedObject(), cols, rows) != 0; }
+            finally { pin.Free(); }
+        }
+
+        /// <summary>
+        /// Hands the core the boxes the truck must not drive through.
+        ///
+        /// Six words each: centre x and z, half extents x and z, and the
+        /// vertical span - the last so a doorway lintel is something to drive
+        /// under rather than a wall across the door.
+        /// </summary>
+        public static bool SetSolids(int[] boxes, int count)
+        {
+            if (!Available || boxes == null || boxes.Length < count * 6) return false;
+            var pin = GCHandle.Alloc(boxes, GCHandleType.Pinned);
+            try { return BlwpSetSolids(pin.AddrOfPinnedObject(), count) != 0; }
             finally { pin.Free(); }
         }
 

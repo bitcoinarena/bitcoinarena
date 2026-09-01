@@ -67,6 +67,8 @@ namespace Blwp
         // The colliders ARE children of the chassis, so they still give the
         // mounting points for free.
         int _groundRevision = -1;
+        int _solidCount = -1;
+        float _solidsChecked;
 
         // The tick just gone, so a frame landing between two ticks can be
         // drawn between them instead of snapping to the later one.
@@ -118,6 +120,7 @@ namespace Blwp
             if (_truck != null) _truck.externallyDriven = true;
             CollectWheels();
             UploadGround();
+            UploadSolids();
             Debug.Log("[blwp] core is driving");
         }
 
@@ -266,10 +269,34 @@ namespace Blwp
                 Debug.LogWarning("[blwp] the core refused the relief - it stays flat");
         }
 
+        /// <summary>
+        /// Gives the core the solid world.
+        ///
+        /// Re-checked now and then rather than once: the post office and the
+        /// miner arrive from the streamer seconds after the round starts, and
+        /// a core that harvested before they landed knows about an empty map.
+        /// Cheap, because it only re-uploads when the count actually moves.
+        /// </summary>
+        void UploadSolids()
+        {
+            if (Time.unscaledTime - _solidsChecked < 1f && _solidCount >= 0) return;
+            _solidsChecked = Time.unscaledTime;
+
+            var boxes = WorldSolids.Gather(transform, out int n);
+            if (n == _solidCount) return;
+            _solidCount = n;
+
+            if (BlwpCore.SetSolids(boxes, n))
+                Debug.Log($"[blwp] {n} solid boxes uploaded");
+            else
+                Debug.LogWarning("[blwp] the core refused the collision world");
+        }
+
         void Update()
         {
             if (!Driving) return;
             UploadGround();
+            UploadSolids();
 
             // A fixed step, caught up in whole ticks. Rendering interpolates
             // between them; the simulation never sees a partial one.
