@@ -135,6 +135,7 @@ public static class BuildWebGL
         Debug.Log($"[BuildWebGL] result={s.result} size={s.totalSize / (1024 * 1024)}MB " +
                   $"errors={s.totalErrors} time={s.totalTime}");
         ReportContents(report);
+        CopyStreamedContent(output);
         StampDownloadSize(output);
 
         if (s.result != BuildResult.Succeeded)
@@ -146,5 +147,43 @@ public static class BuildWebGL
             EditorApplication.Exit(1);
         }
         EditorApplication.Exit(0);
+    
+    /// <summary>
+    /// Copies the streamed bundles into the build output.
+    ///
+    /// They are loaded from ServerData/ at runtime, and NOTHING was putting
+    /// them there: the folder in the build output had been copied by hand
+    /// once, and every build since shipped whatever was in it. Swapping a
+    /// model therefore produced a catalogue asking for a bundle hash that was
+    /// not on the server, a 404, and a building that simply did not appear in
+    /// the world - with no error anywhere a player could see.
+    ///
+    /// Mirrored rather than merged, so a bundle that has been replaced does
+    /// not linger and get served in place of the one that replaced it.
+    /// </summary>
+    static void CopyStreamedContent(string output)
+    {
+        string target = EditorUserBuildSettings.activeBuildTarget.ToString();
+        string from = Path.GetFullPath(Path.Combine(Application.dataPath, "..", "ServerData", target));
+        if (!Directory.Exists(from))
+        {
+            Debug.LogWarning("[BuildWebGL] no streamed content at " + from);
+            return;
+        }
+
+        string to = Path.Combine(output, "ServerData", target);
+        if (Directory.Exists(to)) Directory.Delete(to, true);
+        Directory.CreateDirectory(to);
+
+        long bytes = 0;
+        var files = Directory.GetFiles(from);
+        foreach (var f in files)
+        {
+            File.Copy(f, Path.Combine(to, Path.GetFileName(f)), true);
+            bytes += new FileInfo(f).Length;
+        }
+        Debug.Log($"[BuildWebGL] copied {files.Length} streamed bundles " +
+                  $"({bytes / (1024f * 1024f):0.0} MB) into the build");
     }
+}
 }

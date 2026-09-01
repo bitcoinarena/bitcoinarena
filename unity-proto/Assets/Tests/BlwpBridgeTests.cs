@@ -516,3 +516,31 @@ public class ReinforcementTests
             $"statt vorgerueckt zu sein (Start {before:0.0})");
     }
 }
+
+/// <summary>
+/// No two controls share a pixel.
+///
+/// SOUND was placed at the same origin as the (invisible) view toggle, so a
+/// click on it also registered as a tap on the view pad and flipped the camera
+/// to the god view. From the outside that reads as "the on-screen buttons do
+/// not work" rather than as two overlapping rectangles.
+/// </summary>
+public class PadLayoutTests
+{
+    [TestCase(1280, 800)]
+    [TestCase(900, 1400)]
+    [TestCase(2400, 1080)]
+    public void NoPadOverlapsAnother(int w, int h)
+    {
+        Assert.IsTrue(TouchPad.LayoutIsDisjoint(w, h),
+            $"zwei Bedienflaechen ueberlappen bei {w}x{h}");
+    }
+
+    [TestCase(1280, 800)]
+    [TestCase(900, 1400)]
+    public void EveryPadIsOnScreen(int w, int h)
+    {
+        Assert.IsTrue(TouchPad.LayoutFitsOnScreen(w, h),
+            $"eine Bedienflaeche liegt ausserhalb des Bildes bei {w}x{h}");
+    }
+}

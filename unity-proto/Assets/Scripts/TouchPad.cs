@@ -46,9 +46,14 @@ public static class TouchPad
             // Settings, top-right under the view toggle. Registered as pads so
             // a drag that starts on one looks around nothing - the camera
             // guard walks this enum.
-            case Pad.Sound:     return new Rect(screenW - m - s * 0.7f, m, s * 0.7f, s * 0.34f);
+            // BELOW the view toggle, not on top of it. They were placed at the
+            // same origin, so a click on SOUND also registered as a tap on the
+            // view pad and flipped the camera to the god view - which reads as
+            // the on-screen buttons not working at all.
+            case Pad.Sound:     return new Rect(screenW - m - s * 0.7f,
+                                                m + s * 0.80f, s * 0.7f, s * 0.34f);
             case Pad.Debug:     return new Rect(screenW - m - s * 0.7f,
-                                                m + s * 0.40f, s * 0.7f, s * 0.34f);
+                                                m + s * 1.20f, s * 0.7f, s * 0.34f);
             default:            return new Rect();
         }
     }

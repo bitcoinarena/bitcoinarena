@@ -1546,6 +1546,29 @@ function setArmour(st, count, xz) {
   return true;
 }
 
+/**
+ * Puts the truck back, stationary and pointing down the map.
+ *
+ * A host command, not a rule: the round ended, or the truck was written off,
+ * and it belongs back in the bay. It has to go through the core because the
+ * core owns the position - TruckController.Respawn set the Transform and the
+ * Rigidbody, and the core overwrote both on the very next frame, so a missed
+ * block left the player standing at the miner loading fresh freight where they
+ * were.
+ *
+ * Everything that carries momentum is cleared with it. Leaving the velocity
+ * behind teleports a truck doing 20 m/s into the bay still doing 20 m/s.
+ */
+function teleport(st, x, z, heading) {
+  const s = st.i32, T = O_TRUCK;
+  s[T + T_X] = x | 0;
+  s[T + T_Z] = z | 0;
+  s[T + T_HEADING] = (heading | 0) & 65535;
+  s[T + T_VX] = 0; s[T + T_VZ] = 0;
+  s[T + T_ANGVEL] = 0; s[T + T_STEER] = 0; s[T + T_WHEEL] = 0;
+  return true;
+}
+
 /** Surface height under a world position, for whatever is drawing the truck. */
 /**
  * Hands the core the solid world, as axis-aligned boxes in XZ.
@@ -1731,7 +1754,7 @@ const runScore = (st) =>
                 st.i32[O_SCORE + S_CARGO]);
 
 return { init: init, step: step, hash: hash, runScore: runScore,
-         setGround: setGround, groundAt: groundAt, setSolids: setSolids, setArmour: setArmour,
+         setGround: setGround, groundAt: groundAt, setSolids: setSolids, setArmour: setArmour, teleport: teleport,
          create: create, WORDS: WORDS };
 })();
 if (typeof module !== "undefined") module.exports = BLWP;
