@@ -307,11 +307,17 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
   const tx = s[T + T_X], tz = s[T + T_Z];
   const seamZ = frontlineZ(st.tape, tx, HALF_X, HALF_Z);
   let hits = 0;
-  const u = { x: 0, z: 0, hp: 0, heading: 0, cooldown: 0, armour: false };
+  const u = { x: 0, z: 0, hp: 0, heading: 0, cooldown: 0, armour: false, side: 1 };
   for (let i = 0; i < UNITS; i++) {
     const b = unitBase(i);
     u.x = s[b + U_X]; u.z = s[b + U_Z]; u.hp = s[b + U_HP];
     u.heading = s[b + U_HEADING]; u.cooldown = s[b + U_COOLDOWN];
+    // Every fourth unit is a tank, and it walks at a tank's pace. This was
+    // left false on the stepping view, so armour closed at infantry speed -
+    // 2.6 m/s where the C# army does 6.8 - and the two arms arrived together
+    // instead of the armour reaching the line first.
+    u.armour = isArmour(i);
+    u.side = s[b + U_SIDE];
     const r = stepUnit(u, rng, seamZ, tx, tz, HALF_X, HALF_Z, TICK_DT);
     s[b + U_X] = u.x; s[b + U_Z] = u.z;
     s[b + U_HEADING] = u.heading; s[b + U_COOLDOWN] = u.cooldown;

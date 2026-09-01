@@ -14,7 +14,18 @@ import { below } from '../rng.js';
 export const RIFLE_RANGE = Math.imul(26, ONE);
 export const ARMOUR_RANGE = Math.imul(46, ONE);
 export const RIFLE_HIT_PER_MIL = 45;        // 0.045 per shot
-const WALK = 3200;
+// Closing speeds, measured off the C# army rather than chosen: it covers
+// -77.5 to -43.5 in five seconds with armour and -77.5 to -64.6 with
+// infantry. See test/vectors/csharp-army.json.
+const ARMOUR_WALK = 445645;      // 6.8 m/s
+const RIFLE_WALK = 170394;       // 2.6 m/s
+
+// Where each kind stops. Armour pushes to the line and holds a little short
+// of it; infantry closes further before it settles. Both sides doing this is
+// what makes a front rather than a breakthrough - the means oscillate about
+// the seam and never cross it.
+const ARMOUR_STANDOFF = Math.imul(9, ONE);
+const RIFLE_STANDOFF = Math.imul(4, ONE);
 const OVERRUN = Math.imul(14, ONE);
 
 export const SIDE_BULL = -1;
@@ -33,11 +44,28 @@ export function stepUnit(u, rng, seamZ, truckX, truckZ, halfX, halfZ, dt) {
   const wobble = (below(rng, 64) - 32) | 0;
   u.heading = (add(u.heading, wobble)) & 65535;
 
-  // walk toward the seam, overrunning it a little, then hold
-  const gap = sub(seamZ, u.z);
-  const want = abs(gap) > OVERRUN ? (gap > 0 ? ONE : -ONE) : 0;
-  const dz = mulFast(mulFast(WALK, want), dt);
-  const dx = mulFast(mulFast(WALK, sin(u.heading)), mulFast(dt, 26214));
+  // Advance on the seam from our own side and hold short of it.
+  //
+  // The stand-off is what keeps this a front. Walking onto the seam and
+  // stopping there puts both armies on one line and the first side with a
+  // rounding advantage walks through; holding short leaves a contested strip
+  // between them, which is what the C# army does and why its means oscillate
+  // about zero for ninety seconds without ever crossing.
+  const walk = u.armour ? ARMOUR_WALK : RIFLE_WALK;
+  const standoff = u.armour ? ARMOUR_STANDOFF : RIFLE_STANDOFF;
+  // The side a unit BELONGS to, not the side it happens to be standing on.
+  //
+  // Taken from the current position, a unit that stepped over the seam had its
+  // stand-off flip and was sent back - so armour oscillated across the line
+  // instead of holding short of it, and by t=10 the whole force had walked
+  // through a front that no longer existed.
+  const side = u.side < 0 ? -1 : 1;
+  const hold = add(seamZ, Math.imul(side, standoff));
+
+  const gap = sub(hold, u.z);
+  const want = abs(gap) > mulFast(walk, dt) ? (gap > 0 ? ONE : -ONE) : 0;
+  const dz = mulFast(mulFast(walk, want), dt);
+  const dx = mulFast(mulFast(walk, sin(u.heading)), mulFast(dt, 26214));
 
   u.x = clamp(add(u.x, dx), -halfX, halfX);
   u.z = clamp(add(u.z, dz), -halfZ, halfZ);

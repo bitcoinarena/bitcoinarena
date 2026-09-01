@@ -467,3 +467,65 @@ test('armour blocks the truck and infantry does not', () => {
   assert.ok(Math.abs(man.x - clear.x) < 0.01,
     `die Infanterie hat den Truck aufgehalten - ${man.x.toFixed(1)} statt ${clear.x.toFixed(1)}`);
 });
+
+/**
+ * The army closes on the seam at the C# army's pace, and holds a front.
+ *
+ * Step (a) of moving the army into the core. What is checked is the approach
+ * - the part that is pure movement - and the property that makes a front a
+ * front: both sides stop short of the seam on their own side and neither
+ * crosses. Casualties and retreat come later and change where they settle,
+ * so the settled position is deliberately not asserted here.
+ *
+ * Measured against test/vectors/csharp-army.json, in SEAM-RELATIVE terms.
+ * The recording pinned the seam at z = 0; the core's runs with the map, and
+ * comparing raw z made a correct army look like it had overrun the line by
+ * twenty-seven metres.
+ */
+test('the army closes at the pace the C# army closes', async () => {
+  const ref = JSON.parse(
+    await readFile(new URL('./vectors/csharp-army.json', import.meta.url), 'utf8'));
+
+  const Q = 65536, O_UNITS = 24, U_WORDS = 8, UNITS = 96;
+  const U_X = 0, U_Z = 1, U_SIDE = 2, U_STATE = 5;
+
+  const st = init(1);
+  const mean = (armour, side) => {
+    let sum = 0, n = 0;
+    for (let i = 0; i < UNITS; i++) {
+      if (((i & 3) === 0) !== armour) continue;
+      const b = O_UNITS + i * U_WORDS;
+      if (st.i32[b + U_STATE] === 0 || st.i32[b + U_SIDE] !== side) continue;
+      sum += st.i32[b + U_Z] / Q; n++;
+    }
+    return n > 0 ? sum / n : null;
+  };
+
+  const at0 = { armour: mean(true, -1), rifle: mean(false, -1) };
+  for (let i = 0; i < 60 * 5; i++) step(st, 0, 0, 0, 0, 0);
+  const at5 = { armour: mean(true, -1), rifle: mean(false, -1) };
+
+  // Five seconds of closing, against the recording's own first two rows.
+  const wantArmour = (ref.rows[1].bullArmour.z - ref.rows[0].bullArmour.z) / 5;
+  const wantRifle = (ref.rows[1].bullInf.z - ref.rows[0].bullInf.z) / 5;
+  const gotArmour = (at5.armour - at0.armour) / 5;
+  const gotRifle = (at5.rifle - at0.rifle) / 5;
+
+  assert.ok(Math.abs(gotArmour - wantArmour) < 0.8,
+    `armour closes at ${gotArmour.toFixed(2)} m/s, the C# army at ${wantArmour.toFixed(2)}`);
+  assert.ok(Math.abs(gotRifle - wantRifle) < 0.5,
+    `infantry closes at ${gotRifle.toFixed(2)} m/s, the C# army at ${wantRifle.toFixed(2)}`);
+
+  // Armour arrives first. Both arms moving together is the signature of the
+  // fault this test was written after: the kind flag never reached the step,
+  // so tanks walked at rifle pace.
+  assert.ok(Math.abs(gotArmour) > Math.abs(gotRifle) * 2,
+    'armour and infantry close at the same speed - the kind flag is not reaching the step');
+
+  // And it settles into a front rather than through one.
+  for (let i = 0; i < 60 * 60; i++) step(st, 0, 0, 0, 0, 0);
+  const bull = mean(true, -1), bear = mean(true, 1);
+  assert.ok(bull !== null && bear !== null, 'one side has vanished');
+  assert.ok(bull < bear,
+    `the armies have crossed: bull armour at ${bull.toFixed(1)}, bear at ${bear.toFixed(1)}`);
+});
