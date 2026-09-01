@@ -363,6 +363,7 @@ public class PostOffice : MonoBehaviour
         // number that fitted in half the plate's WIDTH - which is a small
         // number on a big sign.
         _room[tm] = new Vector2(room0.x * (wideFill > 0f ? wideFill : fill), room0.y * fill);
+        _roomAtWire[tm] = room0;
         return tm;
     }
 
@@ -393,6 +394,29 @@ public class PostOffice : MonoBehaviour
     /// internally and leaves sharedMesh null, which is the trap the miner's
     /// terminal fell into first.
     /// </summary>
+    /// <summary>
+    /// Fit, but against the plate that is there NOW.
+    ///
+    /// The building streams in and swaps the mesh under nodes that keep their
+    /// names, so a size read when the display was wired can describe a plate
+    /// that no longer exists. That is how the whitepaper came to fill exactly
+    /// 22% of its own plate through four attempts to widen it: it was sized
+    /// perfectly, to something else.
+    /// </summary>
+    void Refit(TextMesh tm)
+    {
+        if (tm == null) return;
+        var live = Room(tm.transform.parent);
+        if (_room.TryGetValue(tm, out var had) && had.y > 0.001f)
+        {
+            float share = had.y / Mathf.Max(0.001f, _roomAtWire.TryGetValue(tm, out var w0) ? w0.y : had.y);
+            _room[tm] = new Vector2(live.x * (had.x / Mathf.Max(0.001f, w0.x)), live.y * share);
+        }
+        Fit(tm);
+    }
+
+    readonly Dictionary<TextMesh, Vector2> _roomAtWire = new();
+
     void Fit(TextMesh tm)
     {
         var mr = tm.GetComponent<MeshRenderer>();
@@ -630,7 +654,7 @@ public class PostOffice : MonoBehaviour
                 if (i < _nextHeight.Count)
                 {
                     _nextHeight[i].text = tip > 0 ? $"{tip + 1 + i:N0}" : "—";
-                    Fit(_nextHeight[i]);
+                    Refit(_nextHeight[i]);
                 }
             }
             else
@@ -650,10 +674,10 @@ public class PostOffice : MonoBehaviour
                 if (at < _blockHeight.Count)
                 {
                     _blockHeight[at].text = m == null ? "—" : $"{m.height:N0}";
-                    Fit(_blockHeight[at]);
+                    Refit(_blockHeight[at]);
                 }
             }
-            Fit(_blockFace[i]);
+            Refit(_blockFace[i]);
         }
 
     }
