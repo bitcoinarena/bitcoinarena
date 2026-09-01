@@ -27,7 +27,7 @@ import {
 import { vehicleStep } from './rules/vehicle.js';
 import { flatGround, gradeAlong, heightAtWorld, DEFAULT_COLS, DEFAULT_ROWS } from './rules/ground.js';
 import { noSolids, resolveSolids, resolveArmour, BOX_WORDS } from './rules/solids.js';
-import { stepUnit, threatAt } from './rules/army.js';
+import { stepUnit, threatAt, pickTarget, RELOAD_MIN, RELOAD_SPAN, DAMAGE_MIN, DAMAGE_SPAN } from './rules/army.js';
 import { accrue, earning, scoreOf } from './rules/score.js';
 import { outcome, RUN_LIVE, RUN_DELIVERED, RUN_WRECKED, RUN_MISSED } from './rules/gate.js';
 import { frontlineZ, SAMPLES } from './rules/frontline.js';
@@ -223,13 +223,30 @@ export function init(seedWord) {
     //
     // And each side comes in at its OWN edge and walks up, rather than
     // appearing at a random depth in the middle of the fighting.
-    const side = nextBelow(rng, 2) === 0 ? -1 : 1;
+    // Even forces, not a coin toss per unit.
+    //
+    // Populate() in the C# army gives each side exactly the same armour and
+    // the same infantry. Flipping for it produced sixteen tanks against eight,
+    // and in a lethal exchange an advantage compounds - the larger side lost
+    // nobody while the smaller was wiped out. Both armies must start equal or
+    // there is no front to hold, only a countdown.
+    //
+    // Bit two, so that armour - every fourth index - alternates as well.
+    const side = ((i >> 2) & 1) === 0 ? -1 : 1;
     s[b + U_X] = Math.imul(nextBelow(rng, 176) - 88, ONE);
     s[b + U_Z] = Math.imul(Math.imul(side, 79) - Math.imul(side, nextBelow(rng, 4)), ONE);
     s[b + U_SIDE] = side;
     s[b + U_HP] = Math.imul(60 + nextBelow(rng, 40), ONE);
     s[b + U_HEADING] = nextBelow(rng, 65536);
     s[b + U_STATE] = 1;
+
+    // Staggered reload, as the C# army staggers it at spawn.
+    //
+    // Left at zero, every tank fires on the first tick, in index order, and
+    // the side holding the lower indices wins every exchange before the other
+    // has fired at all: one army went from eleven to two while the other lost
+    // nobody. A front is made of two sides shooting on their own clocks.
+    s[b + U_TARGET] = nextBelow(rng, 180);
     s[b + U_COOLDOWN] = nextBelow(rng, 120);
     s[b + U_TARGET] = -1;
   }
@@ -308,6 +325,16 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
   const seamZ = frontlineZ(st.tape, tx, HALF_X, HALF_Z);
   let hits = 0;
   const u = { x: 0, z: 0, hp: 0, heading: 0, cooldown: 0, armour: false, side: 1 };
+
+  // A read-only view of any unit, for target selection. Declared before the
+  // loop that uses it, unlike the scoring one further down.
+  const peek = { x: 0, z: 0, hp: 0, armour: false, side: 1 };
+  const peekAt = (i) => {
+    const pb = unitBase(i);
+    peek.x = s[pb + U_X]; peek.z = s[pb + U_Z]; peek.hp = s[pb + U_HP];
+    peek.side = s[pb + U_SIDE]; peek.armour = isArmour(i);
+    return peek;
+  };
   for (let i = 0; i < UNITS; i++) {
     const b = unitBase(i);
     u.x = s[b + U_X]; u.z = s[b + U_Z]; u.hp = s[b + U_HP];
@@ -318,7 +345,23 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
     // instead of the armour reaching the line first.
     u.armour = isArmour(i);
     u.side = s[b + U_SIDE];
-    const r = stepUnit(u, rng, seamZ, tx, tz, HALF_X, HALF_Z, TICK_DT);
+    const r = stepUnit(u, rng, seamZ, tx, tz, HALF_X, HALF_Z, TICK_DT, i);
+
+    // Armour fires on armour. Drawn in index order, always, so the transcript
+    // replays: a tank that fires earlier changes what the ones after it see.
+    if (u.armour && u.hp > 0) {
+      if (s[b + U_TARGET] > 0) s[b + U_TARGET] = (s[b + U_TARGET] - 1) | 0;
+      else {
+        const foe = pickTarget(peekAt, UNITS, i, u.x, u.z, u.side);
+        if (foe >= 0) {
+          const fb = unitBase(foe);
+          const hurt = add(DAMAGE_MIN, Math.imul(nextBelow(rng, 100), DAMAGE_SPAN) / 100 | 0);
+          s[fb + U_HP] = max(0, sub(s[fb + U_HP], hurt));
+          if (s[fb + U_HP] === 0) s[fb + U_STATE] = 0;
+          s[b + U_TARGET] = (RELOAD_MIN + nextBelow(rng, RELOAD_SPAN)) | 0;
+        }
+      }
+    }
     s[b + U_X] = u.x; s[b + U_Z] = u.z;
     s[b + U_HEADING] = u.heading; s[b + U_COOLDOWN] = u.cooldown;
     if (r === 2) hits = (hits + 1) | 0;

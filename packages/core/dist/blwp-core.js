@@ -1295,8 +1295,22 @@ const RIFLE_WALK = 170394;       // 2.6 m/s
 // of it; infantry closes further before it settles. Both sides doing this is
 // what makes a front rather than a breakthrough - the means oscillate about
 // the seam and never cross it.
-const ARMOUR_STANDOFF = Math.imul(9, ONE);
-const RIFLE_STANDOFF = Math.imul(4, ONE);
+// The distance the C# army SETTLES at, not the distance it aims for.
+//
+// StepArmour walks towards front - Dir*9 and is pushed back off it by being
+// overrun, and the recording shows it holding around 25. Standing at 9 puts
+// the two armour lines eighteen metres apart - permanently inside the 46 m
+// gun range - and both sides were ground down to a third in a minute where
+// the C# army keeps three quarters. At 25 the lines are fifty apart and
+// mostly out of range, which is what makes the fight a grind.
+//
+// This is an interim: the number is the OUTCOME of the retreat behaviour,
+// which is step (c). When that lands this becomes 9 again and the distance
+// is earned rather than declared.
+const ARMOUR_STANDOFF = Math.imul(25, ONE);
+const ARMOUR_SPREAD = Math.imul(40, ONE);   // +/- 20, as the recording shows
+const RIFLE_SPREAD = Math.imul(36, ONE);
+const RIFLE_STANDOFF = Math.imul(17, ONE);
 const OVERRUN = Math.imul(14, ONE);
 
 const SIDE_BULL = -1;
@@ -1309,7 +1323,7 @@ const SIDE_BEAR = 1;
  * cooldown has expired - reload, then the hit roll. Nothing may be inserted
  * before the wobble or every recorded transcript stops replaying.
  */
-function stepUnit(u, rng, seamZ, truckX, truckZ, halfX, halfZ, dt) {
+function stepUnit(u, rng, seamZ, truckX, truckZ, halfX, halfZ, dt, index) {
   if (u.hp <= 0) return 0;
 
   const wobble = (below(rng, 64) - 32) | 0;
@@ -1323,7 +1337,21 @@ function stepUnit(u, rng, seamZ, truckX, truckZ, halfX, halfZ, dt) {
   // between them, which is what the C# army does and why its means oscillate
   // about zero for ninety seconds without ever crossing.
   const walk = u.armour ? ARMOUR_WALK : RIFLE_WALK;
-  const standoff = u.armour ? ARMOUR_STANDOFF : RIFLE_STANDOFF;
+  // Each unit holds at its OWN distance, scattered about the mean.
+  //
+  // A single stand-off for everyone puts the whole army on one line, and then
+  // it is all or nothing: at nine metres apart every tank is permanently
+  // inside the 46 m gun range and both sides are ground to a third in a
+  // minute; at fifty, nobody is ever in range and nobody dies at all. The C#
+  // army sits at a mean of 25 with a spread near 20, and that spread is what
+  // produces the trickle of engagements that makes it a grind.
+  //
+  // Derived from the index rather than stored: it must not change from tick to
+  // tick, and there is no spare word in the unit for it.
+  const scatter = (Math.imul(index | 0, 2654435761) >>> 20) & 1023;
+  const span = u.armour ? ARMOUR_SPREAD : RIFLE_SPREAD;
+  const standoff = add(u.armour ? ARMOUR_STANDOFF : RIFLE_STANDOFF,
+                       sub(Math.imul(scatter, span) >> 10, span >> 1));
   // The side a unit BELONGS to, not the side it happens to be standing on.
   //
   // Taken from the current position, a unit that stepped over the seam had its
@@ -1357,6 +1385,47 @@ function stepUnit(u, rng, seamZ, truckX, truckZ, halfX, halfZ, dt) {
  * the scale measured on the built map, where the seam runs 7 to 13 and the
  * run-in to the gate about 2.
  */
+// Fire between the two armies, ported from Army.StepArmour with Flow at zero.
+//
+// A tank engages the nearest enemy tank inside 46 m, reloads for 1.4 to 3.2
+// seconds and takes 1.1 to 2.4 hit points off it - and a tank has 6 to 10, so
+// it dies to about five hits over roughly ten seconds. That is the shape the
+// recording shows: twenty-four a side down to nineteen by t=15, then a grind
+// that neither side wins.
+//
+// Hit points here are the C# ones times ten, which is what the state buffer
+// already holds.
+const FIRE_RELOAD_MIN = 84;      // ticks, 1.4 s
+const FIRE_RELOAD_SPAN = 108;    // up to 3.2 s
+const FIRE_DAMAGE_MIN = Math.imul(11, ONE);
+const FIRE_DAMAGE_SPAN = Math.imul(13, ONE);
+
+/**
+ * One round of armour against armour.
+ *
+ * `units` is the same accessor threatAt takes; `self` is the index firing.
+ * Returns the index it hit, or -1. The caller applies the damage, because the
+ * state buffer is the caller's to write.
+ */
+function pickTarget(units, count, self, x, z, side) {
+  let best = -1, bestD = ARMOUR_RANGE;
+  for (let i = 0; i < count; i++) {
+    if (i === self) continue;
+    const u = units(i);
+    if (u.hp <= 0 || u.side === side || !u.armour) continue;
+    const dx = sub(u.x, x), dz = sub(u.z, z);
+    if (abs(dx) > bestD || abs(dz) > bestD) continue;
+    const d = length2(dx, dz);
+    if (d < bestD) { bestD = d; best = i; }
+  }
+  return best;
+}
+
+const RELOAD_MIN = FIRE_RELOAD_MIN;
+const RELOAD_SPAN = FIRE_RELOAD_SPAN;
+const DAMAGE_MIN = FIRE_DAMAGE_MIN;
+const DAMAGE_SPAN = FIRE_DAMAGE_SPAN;
+
 const THREAT_FOR_FULL = Math.imul(10, ONE);
 
 function threatAt(units, count, x, z) {
@@ -1740,13 +1809,30 @@ function init(seedWord) {
     //
     // And each side comes in at its OWN edge and walks up, rather than
     // appearing at a random depth in the middle of the fighting.
-    const side = nextBelow(rng, 2) === 0 ? -1 : 1;
+    // Even forces, not a coin toss per unit.
+    //
+    // Populate() in the C# army gives each side exactly the same armour and
+    // the same infantry. Flipping for it produced sixteen tanks against eight,
+    // and in a lethal exchange an advantage compounds - the larger side lost
+    // nobody while the smaller was wiped out. Both armies must start equal or
+    // there is no front to hold, only a countdown.
+    //
+    // Bit two, so that armour - every fourth index - alternates as well.
+    const side = ((i >> 2) & 1) === 0 ? -1 : 1;
     s[b + U_X] = Math.imul(nextBelow(rng, 176) - 88, ONE);
     s[b + U_Z] = Math.imul(Math.imul(side, 79) - Math.imul(side, nextBelow(rng, 4)), ONE);
     s[b + U_SIDE] = side;
     s[b + U_HP] = Math.imul(60 + nextBelow(rng, 40), ONE);
     s[b + U_HEADING] = nextBelow(rng, 65536);
     s[b + U_STATE] = 1;
+
+    // Staggered reload, as the C# army staggers it at spawn.
+    //
+    // Left at zero, every tank fires on the first tick, in index order, and
+    // the side holding the lower indices wins every exchange before the other
+    // has fired at all: one army went from eleven to two while the other lost
+    // nobody. A front is made of two sides shooting on their own clocks.
+    s[b + U_TARGET] = nextBelow(rng, 180);
     s[b + U_COOLDOWN] = nextBelow(rng, 120);
     s[b + U_TARGET] = -1;
   }
@@ -1825,6 +1911,16 @@ function step(st, throttle, steer, brake, handbrake, practice) {
   const seamZ = frontlineZ(st.tape, tx, HALF_X, HALF_Z);
   let hits = 0;
   const u = { x: 0, z: 0, hp: 0, heading: 0, cooldown: 0, armour: false, side: 1 };
+
+  // A read-only view of any unit, for target selection. Declared before the
+  // loop that uses it, unlike the scoring one further down.
+  const peek = { x: 0, z: 0, hp: 0, armour: false, side: 1 };
+  const peekAt = (i) => {
+    const pb = unitBase(i);
+    peek.x = s[pb + U_X]; peek.z = s[pb + U_Z]; peek.hp = s[pb + U_HP];
+    peek.side = s[pb + U_SIDE]; peek.armour = isArmour(i);
+    return peek;
+  };
   for (let i = 0; i < UNITS; i++) {
     const b = unitBase(i);
     u.x = s[b + U_X]; u.z = s[b + U_Z]; u.hp = s[b + U_HP];
@@ -1835,7 +1931,23 @@ function step(st, throttle, steer, brake, handbrake, practice) {
     // instead of the armour reaching the line first.
     u.armour = isArmour(i);
     u.side = s[b + U_SIDE];
-    const r = stepUnit(u, rng, seamZ, tx, tz, HALF_X, HALF_Z, TICK_DT);
+    const r = stepUnit(u, rng, seamZ, tx, tz, HALF_X, HALF_Z, TICK_DT, i);
+
+    // Armour fires on armour. Drawn in index order, always, so the transcript
+    // replays: a tank that fires earlier changes what the ones after it see.
+    if (u.armour && u.hp > 0) {
+      if (s[b + U_TARGET] > 0) s[b + U_TARGET] = (s[b + U_TARGET] - 1) | 0;
+      else {
+        const foe = pickTarget(peekAt, UNITS, i, u.x, u.z, u.side);
+        if (foe >= 0) {
+          const fb = unitBase(foe);
+          const hurt = add(DAMAGE_MIN, Math.imul(nextBelow(rng, 100), DAMAGE_SPAN) / 100 | 0);
+          s[fb + U_HP] = max(0, sub(s[fb + U_HP], hurt));
+          if (s[fb + U_HP] === 0) s[fb + U_STATE] = 0;
+          s[b + U_TARGET] = (RELOAD_MIN + nextBelow(rng, RELOAD_SPAN)) | 0;
+        }
+      }
+    }
     s[b + U_X] = u.x; s[b + U_Z] = u.z;
     s[b + U_HEADING] = u.heading; s[b + U_COOLDOWN] = u.cooldown;
     if (r === 2) hits = (hits + 1) | 0;

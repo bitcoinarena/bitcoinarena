@@ -24,8 +24,22 @@ const RIFLE_WALK = 170394;       // 2.6 m/s
 // of it; infantry closes further before it settles. Both sides doing this is
 // what makes a front rather than a breakthrough - the means oscillate about
 // the seam and never cross it.
-const ARMOUR_STANDOFF = Math.imul(9, ONE);
-const RIFLE_STANDOFF = Math.imul(4, ONE);
+// The distance the C# army SETTLES at, not the distance it aims for.
+//
+// StepArmour walks towards front - Dir*9 and is pushed back off it by being
+// overrun, and the recording shows it holding around 25. Standing at 9 puts
+// the two armour lines eighteen metres apart - permanently inside the 46 m
+// gun range - and both sides were ground down to a third in a minute where
+// the C# army keeps three quarters. At 25 the lines are fifty apart and
+// mostly out of range, which is what makes the fight a grind.
+//
+// This is an interim: the number is the OUTCOME of the retreat behaviour,
+// which is step (c). When that lands this becomes 9 again and the distance
+// is earned rather than declared.
+const ARMOUR_STANDOFF = Math.imul(25, ONE);
+const ARMOUR_SPREAD = Math.imul(40, ONE);   // +/- 20, as the recording shows
+const RIFLE_SPREAD = Math.imul(36, ONE);
+const RIFLE_STANDOFF = Math.imul(17, ONE);
 const OVERRUN = Math.imul(14, ONE);
 
 export const SIDE_BULL = -1;
@@ -38,7 +52,7 @@ export const SIDE_BEAR = 1;
  * cooldown has expired - reload, then the hit roll. Nothing may be inserted
  * before the wobble or every recorded transcript stops replaying.
  */
-export function stepUnit(u, rng, seamZ, truckX, truckZ, halfX, halfZ, dt) {
+export function stepUnit(u, rng, seamZ, truckX, truckZ, halfX, halfZ, dt, index) {
   if (u.hp <= 0) return 0;
 
   const wobble = (below(rng, 64) - 32) | 0;
@@ -52,7 +66,21 @@ export function stepUnit(u, rng, seamZ, truckX, truckZ, halfX, halfZ, dt) {
   // between them, which is what the C# army does and why its means oscillate
   // about zero for ninety seconds without ever crossing.
   const walk = u.armour ? ARMOUR_WALK : RIFLE_WALK;
-  const standoff = u.armour ? ARMOUR_STANDOFF : RIFLE_STANDOFF;
+  // Each unit holds at its OWN distance, scattered about the mean.
+  //
+  // A single stand-off for everyone puts the whole army on one line, and then
+  // it is all or nothing: at nine metres apart every tank is permanently
+  // inside the 46 m gun range and both sides are ground to a third in a
+  // minute; at fifty, nobody is ever in range and nobody dies at all. The C#
+  // army sits at a mean of 25 with a spread near 20, and that spread is what
+  // produces the trickle of engagements that makes it a grind.
+  //
+  // Derived from the index rather than stored: it must not change from tick to
+  // tick, and there is no spare word in the unit for it.
+  const scatter = (Math.imul(index | 0, 2654435761) >>> 20) & 1023;
+  const span = u.armour ? ARMOUR_SPREAD : RIFLE_SPREAD;
+  const standoff = add(u.armour ? ARMOUR_STANDOFF : RIFLE_STANDOFF,
+                       sub(Math.imul(scatter, span) >> 10, span >> 1));
   // The side a unit BELONGS to, not the side it happens to be standing on.
   //
   // Taken from the current position, a unit that stepped over the seam had its
@@ -86,6 +114,47 @@ export function stepUnit(u, rng, seamZ, truckX, truckZ, halfX, halfZ, dt) {
  * the scale measured on the built map, where the seam runs 7 to 13 and the
  * run-in to the gate about 2.
  */
+// Fire between the two armies, ported from Army.StepArmour with Flow at zero.
+//
+// A tank engages the nearest enemy tank inside 46 m, reloads for 1.4 to 3.2
+// seconds and takes 1.1 to 2.4 hit points off it - and a tank has 6 to 10, so
+// it dies to about five hits over roughly ten seconds. That is the shape the
+// recording shows: twenty-four a side down to nineteen by t=15, then a grind
+// that neither side wins.
+//
+// Hit points here are the C# ones times ten, which is what the state buffer
+// already holds.
+const FIRE_RELOAD_MIN = 84;      // ticks, 1.4 s
+const FIRE_RELOAD_SPAN = 108;    // up to 3.2 s
+const FIRE_DAMAGE_MIN = Math.imul(11, ONE);
+const FIRE_DAMAGE_SPAN = Math.imul(13, ONE);
+
+/**
+ * One round of armour against armour.
+ *
+ * `units` is the same accessor threatAt takes; `self` is the index firing.
+ * Returns the index it hit, or -1. The caller applies the damage, because the
+ * state buffer is the caller's to write.
+ */
+export function pickTarget(units, count, self, x, z, side) {
+  let best = -1, bestD = ARMOUR_RANGE;
+  for (let i = 0; i < count; i++) {
+    if (i === self) continue;
+    const u = units(i);
+    if (u.hp <= 0 || u.side === side || !u.armour) continue;
+    const dx = sub(u.x, x), dz = sub(u.z, z);
+    if (abs(dx) > bestD || abs(dz) > bestD) continue;
+    const d = length2(dx, dz);
+    if (d < bestD) { bestD = d; best = i; }
+  }
+  return best;
+}
+
+export const RELOAD_MIN = FIRE_RELOAD_MIN;
+export const RELOAD_SPAN = FIRE_RELOAD_SPAN;
+export const DAMAGE_MIN = FIRE_DAMAGE_MIN;
+export const DAMAGE_SPAN = FIRE_DAMAGE_SPAN;
+
 export const THREAT_FOR_FULL = Math.imul(10, ONE);
 
 export function threatAt(units, count, x, z) {
