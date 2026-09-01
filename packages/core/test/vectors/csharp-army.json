@@ -1,0 +1,466 @@
+{
+ "_comment": [
+  "How the C# army behaves, recorded by ArmyReferenceTests.MeasureTheArmy.",
+  "Flat world, seam at z=0, no trade flow, no truck: everything that moves",
+  "here is the army's own doing. Seeded 20260901, 24 armour and 72 infantry",
+  "a side, sampled every five seconds for ninety.",
+  "",
+  "The shape to reproduce, read off these rows:",
+  "  - both sides enter at |z| ~ 77.5, tightly grouped (spread ~0.9)",
+  "  - armour closes at about 6.8 m/s, infantry at about 2.6",
+  "  - they are in contact by t=15 and the first armour losses are at t=10-15",
+  "  - from t=30 it is a steady grind: armour |z| ~ 25 with a spread near 20,",
+  "    infantry |z| ~ 15-20, both sides holding roughly 70 of 72 infantry",
+  "  - neither side breaks through: the means oscillate, they do not cross"
+ ],
+ "seed": 20260901,
+ "armourPerSide": 24,
+ "infantryPerSide": 72,
+ "dt": 0.016666,
+ "sampleSeconds": 5,
+ "tolerance": {
+  "_comment": "metres on the mean, and units on the count",
+  "meanZ": 6.0,
+  "spread": 8.0,
+  "alive": 6
+ },
+ "rows": [
+  {
+   "t": 0.0,
+   "bullArmour": {
+    "n": 24,
+    "z": -77.32,
+    "spread": 0.96
+   },
+   "bearArmour": {
+    "n": 24,
+    "z": 77.59,
+    "spread": 0.85
+   },
+   "bullInf": {
+    "n": 72,
+    "z": -77.58,
+    "spread": 0.92
+   },
+   "bearInf": {
+    "n": 72,
+    "z": 77.48,
+    "spread": 0.87
+   }
+  },
+  {
+   "t": 5.0,
+   "bullArmour": {
+    "n": 24,
+    "z": -43.51,
+    "spread": 4.34
+   },
+   "bearArmour": {
+    "n": 24,
+    "z": 43.65,
+    "spread": 4.53
+   },
+   "bullInf": {
+    "n": 72,
+    "z": -64.58,
+    "spread": 2.16
+   },
+   "bearInf": {
+    "n": 72,
+    "z": 64.83,
+    "spread": 2.31
+   }
+  },
+  {
+   "t": 10.0,
+   "bullArmour": {
+    "n": 24,
+    "z": -18.7,
+    "spread": 12.72
+   },
+   "bearArmour": {
+    "n": 24,
+    "z": 16.08,
+    "spread": 4.38
+   },
+   "bullInf": {
+    "n": 72,
+    "z": -53.4,
+    "spread": 2.89
+   },
+   "bearInf": {
+    "n": 72,
+    "z": 53.46,
+    "spread": 2.87
+   }
+  },
+  {
+   "t": 15.0,
+   "bullArmour": {
+    "n": 19,
+    "z": -19.2,
+    "spread": 18.22
+   },
+   "bearArmour": {
+    "n": 21,
+    "z": 19.71,
+    "spread": 18.41
+   },
+   "bullInf": {
+    "n": 72,
+    "z": -40.85,
+    "spread": 4.44
+   },
+   "bearInf": {
+    "n": 72,
+    "z": 41.32,
+    "spread": 4.17
+   }
+  },
+  {
+   "t": 20.0,
+   "bullArmour": {
+    "n": 19,
+    "z": -21.61,
+    "spread": 17.48
+   },
+   "bearArmour": {
+    "n": 21,
+    "z": 21.85,
+    "spread": 18.91
+   },
+   "bullInf": {
+    "n": 72,
+    "z": -29.31,
+    "spread": 5.71
+   },
+   "bearInf": {
+    "n": 72,
+    "z": 29.5,
+    "spread": 5.59
+   }
+  },
+  {
+   "t": 25.0,
+   "bullArmour": {
+    "n": 19,
+    "z": -24.41,
+    "spread": 18.6
+   },
+   "bearArmour": {
+    "n": 19,
+    "z": 21.98,
+    "spread": 20.39
+   },
+   "bullInf": {
+    "n": 72,
+    "z": -17.7,
+    "spread": 6.48
+   },
+   "bearInf": {
+    "n": 72,
+    "z": 17.96,
+    "spread": 5.93
+   }
+  },
+  {
+   "t": 30.0,
+   "bullArmour": {
+    "n": 17,
+    "z": -26.59,
+    "spread": 20.86
+   },
+   "bearArmour": {
+    "n": 18,
+    "z": 25.73,
+    "spread": 22.07
+   },
+   "bullInf": {
+    "n": 71,
+    "z": -12.93,
+    "spread": 10.79
+   },
+   "bearInf": {
+    "n": 70,
+    "z": 14.59,
+    "spread": 14.97
+   }
+  },
+  {
+   "t": 35.0,
+   "bullArmour": {
+    "n": 18,
+    "z": -30.51,
+    "spread": 20.48
+   },
+   "bearArmour": {
+    "n": 19,
+    "z": 24.96,
+    "spread": 20.58
+   },
+   "bullInf": {
+    "n": 70,
+    "z": -13.23,
+    "spread": 15.08
+   },
+   "bearInf": {
+    "n": 70,
+    "z": 15.57,
+    "spread": 18.27
+   }
+  },
+  {
+   "t": 40.0,
+   "bullArmour": {
+    "n": 19,
+    "z": -29.43,
+    "spread": 21.18
+   },
+   "bearArmour": {
+    "n": 21,
+    "z": 23.84,
+    "spread": 18.84
+   },
+   "bullInf": {
+    "n": 69,
+    "z": -15.95,
+    "spread": 18.3
+   },
+   "bearInf": {
+    "n": 70,
+    "z": 17.61,
+    "spread": 19.53
+   }
+  },
+  {
+   "t": 45.0,
+   "bullArmour": {
+    "n": 18,
+    "z": -30.84,
+    "spread": 21.59
+   },
+   "bearArmour": {
+    "n": 20,
+    "z": 22.41,
+    "spread": 18.09
+   },
+   "bullInf": {
+    "n": 70,
+    "z": -19.79,
+    "spread": 21.05
+   },
+   "bearInf": {
+    "n": 70,
+    "z": 18.45,
+    "spread": 18.85
+   }
+  },
+  {
+   "t": 50.0,
+   "bullArmour": {
+    "n": 20,
+    "z": -26.89,
+    "spread": 18.34
+   },
+   "bearArmour": {
+    "n": 21,
+    "z": 23.37,
+    "spread": 20.91
+   },
+   "bullInf": {
+    "n": 71,
+    "z": -20.87,
+    "spread": 20.65
+   },
+   "bearInf": {
+    "n": 72,
+    "z": 18.18,
+    "spread": 17.48
+   }
+  },
+  {
+   "t": 55.0,
+   "bullArmour": {
+    "n": 21,
+    "z": -22.41,
+    "spread": 16.99
+   },
+   "bearArmour": {
+    "n": 19,
+    "z": 23.73,
+    "spread": 18.91
+   },
+   "bullInf": {
+    "n": 70,
+    "z": -20.69,
+    "spread": 19.34
+   },
+   "bearInf": {
+    "n": 70,
+    "z": 16.44,
+    "spread": 15.19
+   }
+  },
+  {
+   "t": 60.0,
+   "bullArmour": {
+    "n": 19,
+    "z": -20.86,
+    "spread": 14.56
+   },
+   "bearArmour": {
+    "n": 21,
+    "z": 23.55,
+    "spread": 19.58
+   },
+   "bullInf": {
+    "n": 71,
+    "z": -19.96,
+    "spread": 18.35
+   },
+   "bearInf": {
+    "n": 71,
+    "z": 17.43,
+    "spread": 17.43
+   }
+  },
+  {
+   "t": 65.0,
+   "bullArmour": {
+    "n": 21,
+    "z": -23.39,
+    "spread": 18.6
+   },
+   "bearArmour": {
+    "n": 20,
+    "z": 22.34,
+    "spread": 19.16
+   },
+   "bullInf": {
+    "n": 71,
+    "z": -21.07,
+    "spread": 19.54
+   },
+   "bearInf": {
+    "n": 72,
+    "z": 16.41,
+    "spread": 16.65
+   }
+  },
+  {
+   "t": 70.0,
+   "bullArmour": {
+    "n": 21,
+    "z": -23.29,
+    "spread": 16.97
+   },
+   "bearArmour": {
+    "n": 21,
+    "z": 20.67,
+    "spread": 18.37
+   },
+   "bullInf": {
+    "n": 70,
+    "z": -18.43,
+    "spread": 16.42
+   },
+   "bearInf": {
+    "n": 70,
+    "z": 18.38,
+    "spread": 18.67
+   }
+  },
+  {
+   "t": 75.0,
+   "bullArmour": {
+    "n": 21,
+    "z": -22.2,
+    "spread": 17.32
+   },
+   "bearArmour": {
+    "n": 19,
+    "z": 22.0,
+    "spread": 18.8
+   },
+   "bullInf": {
+    "n": 71,
+    "z": -17.86,
+    "spread": 16.78
+   },
+   "bearInf": {
+    "n": 70,
+    "z": 20.26,
+    "spread": 19.66
+   }
+  },
+  {
+   "t": 80.0,
+   "bullArmour": {
+    "n": 20,
+    "z": -22.26,
+    "spread": 18.8
+   },
+   "bearArmour": {
+    "n": 20,
+    "z": 24.67,
+    "spread": 20.11
+   },
+   "bullInf": {
+    "n": 72,
+    "z": -16.97,
+    "spread": 15.99
+   },
+   "bearInf": {
+    "n": 70,
+    "z": 21.18,
+    "spread": 19.6
+   }
+  },
+  {
+   "t": 85.0,
+   "bullArmour": {
+    "n": 17,
+    "z": -27.78,
+    "spread": 20.32
+   },
+   "bearArmour": {
+    "n": 21,
+    "z": 23.29,
+    "spread": 18.76
+   },
+   "bullInf": {
+    "n": 70,
+    "z": -18.54,
+    "spread": 18.06
+   },
+   "bearInf": {
+    "n": 70,
+    "z": 20.25,
+    "spread": 18.61
+   }
+  },
+  {
+   "t": 90.0,
+   "bullArmour": {
+    "n": 18,
+    "z": -33.48,
+    "spread": 20.47
+   },
+   "bearArmour": {
+    "n": 20,
+    "z": 21.96,
+    "spread": 19.94
+   },
+   "bullInf": {
+    "n": 71,
+    "z": -18.46,
+    "spread": 18.18
+   },
+   "bearInf": {
+    "n": 71,
+    "z": 20.45,
+    "spread": 18.8
+   }
+  }
+ ]
+}
