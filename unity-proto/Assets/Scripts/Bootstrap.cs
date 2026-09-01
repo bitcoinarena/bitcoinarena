@@ -96,6 +96,8 @@ public class Bootstrap : MonoBehaviour
 
     void Start()
     {
+        SharpenTextures();
+
         EnsureMaterials();
         BuildLighting();
         _terrain = BuildTerrain();
@@ -377,6 +379,29 @@ public class Bootstrap : MonoBehaviour
         m.SetFloat("_Smoothness", 1f - roughness);
         m.enableInstancing = true;
         return m;
+    }
+
+    /// <summary>
+    /// Undoes two quality settings that were quietly halving the whole game.
+    ///
+    /// globalTextureMipmapLimit was 1 on the level this build runs at, which
+    /// DISCARDS the top mip of every texture - so a 970 x 1262 whitepaper was
+    /// uploaded at 485 x 631 no matter what the file contained, and every
+    /// texture in the world was at half resolution. anisotropicTextures was 0,
+    /// which makes a per-texture anisoLevel do nothing at all.
+    ///
+    /// Both were fought for an afternoon from the other end: the whitepaper
+    /// was recompressed, restored to full resolution and given filtering
+    /// hints, and none of it could reach the screen.
+    ///
+    /// Set here rather than in the asset because the quality level is chosen
+    /// at runtime by platform, and this has to hold whichever one is picked.
+    /// </summary>
+    void SharpenTextures()
+    {
+        QualitySettings.globalTextureMipmapLimit = 0;
+        QualitySettings.anisotropicFiltering = AnisotropicFiltering.ForceEnable;
+        Debug.Log("[Bootstrap] full-resolution textures, anisotropic filtering forced");
     }
 
     void BuildLighting()

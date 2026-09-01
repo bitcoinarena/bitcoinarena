@@ -120,6 +120,33 @@ public class ChaseCamera : MonoBehaviour
     bool _dragging;
     Vector3 _lastPointer;
 
+    Vector3 _flyFrom, _flyLook;
+    float _flySeconds, _flyLeft;
+
+    /// <summary>
+    /// Fly the camera in to the truck.
+    ///
+    /// Used twice: entering a round, and coming back from the miner after a
+    /// delivery. Both run the length of the map over the fighting, because the
+    /// fighting and the mempool building are the two things worth showing and
+    /// a cut straight to the tailgate shows neither.
+    ///
+    /// It looks at `lookAt` to begin with and swings onto the truck as it
+    /// arrives, so the building is held in frame while the camera is still far
+    /// enough away for it to read.
+    /// </summary>
+    public void FlyIn(Vector3 from, Vector3 lookAt, float seconds)
+    {
+        _flyFrom = from;
+        _flyLook = lookAt;
+        _flySeconds = Mathf.Max(0.2f, seconds);
+        _flyLeft = _flySeconds;
+        _pos = from;
+    }
+
+    /// <summary>True while a scripted approach is running.</summary>
+    public bool Flying => _flyLeft > 0f;
+
     float _shake;
     float _lean;
     float _lastHeading;
@@ -212,6 +239,42 @@ public class ChaseCamera : MonoBehaviour
 
         if (View == Mode.God) { GodView(); return; }
         if (target == null) return;
+
+        if (_flyLeft > 0f)
+        {
+            _flyLeft -= Time.unscaledDeltaTime;
+            float t = Mathf.Clamp01(1f - _flyLeft / _flySeconds);
+            float e = t * t * (3f - 2f * t);     // eased at both ends
+
+            float head = target.eulerAngles.y * Mathf.Deg2Rad;
+            var settled = target.position
+                        + new Vector3(-Mathf.Sin(head), 0f, -Mathf.Cos(head)) * distance
+                        + Vector3.up * height;
+
+            _pos = Vector3.Lerp(_flyFrom, settled, e);
+
+            // An impact is still felt during a scripted move. Swallowing it
+            // reads as the game not having noticed the hit, which is exactly
+            // what the shake exists to prevent - and the flight home from a
+            // delivery is 4.6 seconds long.
+            _shake = Mathf.Max(0f, _shake - Time.unscaledDeltaTime * 3.2f);
+            if (_shake > 0.001f)
+            {
+                float ts = Time.time * 47f;
+                _pos += new Vector3(Mathf.PerlinNoise(ts, 0f) - 0.5f,
+                                    Mathf.PerlinNoise(0f, ts) - 0.5f,
+                                    Mathf.PerlinNoise(ts, ts) - 0.5f) * (_shake * 1.6f);
+            }
+
+            transform.position = _pos;
+            transform.rotation = Quaternion.LookRotation(
+                Vector3.Lerp(_flyLook, target.position + Vector3.up * 1.2f, e) - _pos,
+                Vector3.up);
+
+            _yaw = head;
+            _lastHeading = target.eulerAngles.y;
+            return;
+        }
 
         Vector3 v = targetBody != null ? targetBody.linearVelocity : Vector3.zero;
         v.y = 0f;

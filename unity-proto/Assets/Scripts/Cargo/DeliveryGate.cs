@@ -225,6 +225,20 @@ public class DeliveryGate : MonoBehaviour
         if (audio == null) audio = FindFirstObjectByType<GameAudio>();
         if (audio != null) audio.Delivered();
 
+        // And fly back. From just OUTSIDE the miner, not inside it: the truck
+        // is in the doorway when this fires, and starting the camera at its
+        // position puts it in the middle of a hundred-metre building looking
+        // at the inside of a wall. Ninety-five is clear of the leading face at
+        // 108, and the whole run home is over the fighting with the post
+        // office ahead.
+        var chase = FindFirstObjectByType<ChaseCamera>();
+        var post = FindFirstObjectByType<PostOffice>();
+        if (chase != null)
+            chase.FlyIn(new Vector3(95f, 34f, transform.position.z),
+                        post != null ? post.BayPosition + Vector3.up * 18f
+                                     : new Vector3(-114f, 20f, 0f),
+                        4.6f);
+
         Delivered?.Invoke(LastRun);
 
         // Back to the ramp for the next run - but the bay stays shut until the

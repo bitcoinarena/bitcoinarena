@@ -89,6 +89,20 @@ public class SplashScreen : MonoBehaviour
 
     public void Play()
     {
+        // Fly in from over the middle of the field.
+        //
+        // A cut straight to the tailgate shows neither the fighting nor the
+        // building the freight comes out of, which are the two things worth
+        // seeing before a run. It starts high over the battlefield looking at
+        // the post office and swings onto the truck as it arrives.
+        var chase = FindFirstObjectByType<ChaseCamera>();
+        var post = FindFirstObjectByType<PostOffice>();
+        if (chase != null)
+            chase.FlyIn(new Vector3(0f, 52f, 0f),
+                        post != null ? post.BayPosition + Vector3.up * 18f
+                                     : new Vector3(-114f, 20f, 0f),
+                        4.2f);
+
         Showing = false;
         WakeAudio();
         AudioListener.volume = 1f;
