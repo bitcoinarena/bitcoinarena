@@ -6,6 +6,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import { init, step, runScore, HALF_X } from '../src/sim.js';
 import { hash } from '../src/state.js';
 import * as scoring from '../src/rules/score.js';
@@ -131,38 +132,76 @@ test('a delivered run banks a score and a wrecked one does not', () => {
  * truck simply drove almost straight while the wheel was hard over, and that
  * reads as unresponsive controls rather than as a bug.
  */
-test('full lock turns the truck inside the width of the field', () => {
-  const O = 5, T_X = 0, T_Z = 1, T_HEADING = 2, T_SPEED = 9;
-  const st = init(1);
+/**
+ * The core drives like the PhysX truck it replaces.
+ *
+ * This is the test that matters for feel, and it is the one that was missing.
+ * An earlier steering model was derived from the bicycle equation, was correct
+ * in its own terms, and destroyed the driving - because feel was never a
+ * bicycle model. It came out of WheelCollider, tyre slip and a hand-tuned lock
+ * curve. So the reference is a recording of the real thing, and the core is
+ * held to it within a stated tolerance rather than to anything derived.
+ *
+ * The protocol mirrors PhysxReferenceTests exactly: eight seconds of throttle,
+ * five to settle into the turn, five of measurement.
+ */
+test('the core drives like the PhysX truck it replaces', async () => {
+  const ref = JSON.parse(
+    await readFile(new URL('./vectors/physx-reference.json', import.meta.url), 'utf8'));
+  const tol = ref.tolerance;
+  const O = 5, HEAD = 2, VX = 3, VZ = 4, SPEED = 9, STEER = 11, HZ = 60, Q = 65536;
 
-  for (let i = 0; i < 400; i++) step(st, 65536, 0, 0, 0, 0);       // up to speed
-  for (let i = 0; i < 900; i++) step(st, 65536, 65536, 0, 0, 0);   // settle the turn
+  const drive = (s, n, th, st) => {
+    for (let i = 0; i < n; i++) step(s, Math.round(th * Q), Math.round(st * Q), 0, 0, 0);
+  };
+  const headDeg = (s) => (s.i32[O + HEAD] & 65535) * 360 / Q;
 
-  // Measured on the settled circle, not on the spiral getting into it - the
-  // entry transient makes the bounding box far wider than the circle is.
-  let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
-  let prev = st.i32[O + T_HEADING], turned = 0;
-  for (let i = 0; i < 1200; i++) {
-    step(st, 65536, 65536, 0, 0, 0);
-    const x = st.i32[O + T_X] / 65536, z = st.i32[O + T_Z] / 65536;
-    minX = Math.min(minX, x); maxX = Math.max(maxX, x);
-    minZ = Math.min(minZ, z); maxZ = Math.max(maxZ, z);
-    let d = (st.i32[O + T_HEADING] - prev) & 65535;
-    if (d > 32768) d -= 65536;
-    turned += d; prev = st.i32[O + T_HEADING];
+  {
+    const s = init(1);
+    for (let t = 1; t <= 13; t++) {
+      drive(s, HZ, 1, 0);
+      const want = ref.accel[String(t)];
+      if (want === undefined) continue;
+      const got = s.i32[O + SPEED] / Q;
+      assert.ok(Math.abs(got - want) / want < tol.accel,
+        `at ${t}s the PhysX truck was doing ${want} m/s, the core does ${got.toFixed(2)}`);
+    }
   }
 
-  const degrees = Math.abs(turned) * 360 / 65536;
-  assert.ok(degrees > 360,
-    `held at full lock for 20 s the truck turned only ${degrees.toFixed(0)} deg`);
+  for (const t of ref.turns) {
+    const s = init(1);
+    drive(s, HZ * 8, 1, 0);
+    drive(s, HZ * 5, 1, t.steer);
 
-  const diameter = (maxX - minX + maxZ - minZ) / 2;
-  assert.ok(diameter < 40,
-    `the turning circle is ${diameter.toFixed(0)} m across, wider than the road`);
+    let prev = headDeg(s), turned = 0, vsum = 0, slip = 0, wheel = 0, n = 0;
+    for (let i = 0; i < HZ * 5; i++) {
+      drive(s, 1, 1, t.steer);
+      const h = headDeg(s);
+      let d = h - prev; if (d > 180) d -= 360; if (d < -180) d += 360;
+      turned += d; prev = h;
 
-  // The path follows the nose: no crabbing sideways through the corner.
-  const speed = st.i32[O + T_SPEED] / 65536;
-  const radius = speed / (Math.abs(turned) * 2 * Math.PI / 65536 / 20);
-  assert.ok(Math.abs(radius - diameter / 2) < 4,
-    `the nose says radius ${radius.toFixed(1)} m, the path says ${(diameter / 2).toFixed(1)} m`);
+      const vx = s.i32[O + VX] / Q, vz = s.i32[O + VZ] / Q;
+      const sp = Math.sqrt(vx * vx + vz * vz);
+      vsum += sp;
+      if (sp > 1) {
+        let sl = Math.atan2(vx, vz) * 180 / Math.PI - h;
+        if (sl > 180) sl -= 360; if (sl < -180) sl += 360;
+        slip += sl;
+      }
+      wheel += s.i32[O + STEER] * 360 / Q;
+      n++;
+    }
+
+    const v = vsum / n, yaw = Math.abs(turned / 5);
+    const radius = v / (yaw * Math.PI / 180);
+    const near = (got, want, f, what) => assert.ok(
+      Math.abs(got - want) / want < f,
+      `steer ${t.steer}: ${what} is ${got.toFixed(2)}, the PhysX truck was ${want}`);
+
+    near(yaw, t.yaw, tol.yaw, 'yaw rate deg/s');
+    near(v, t.v, tol.v, 'speed m/s');
+    near(radius, t.radius, tol.radius, 'turn radius m');
+    near(Math.abs(slip / n), t.slip, tol.slip, 'slip angle deg');
+    near(Math.abs(wheel / n), t.wheel, tol.wheel, 'wheel angle deg');
+  }
 });

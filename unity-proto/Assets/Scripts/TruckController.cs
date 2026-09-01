@@ -99,6 +99,9 @@ public class TruckController : MonoBehaviour
     [System.NonSerialized] public Quaternion spawnRotation = Quaternion.identity;
 
     public float SpeedKmh => _rb.linearVelocity.magnitude * 3.6f;
+
+    /// <summary>Front wheel angle in degrees. Read by the reference harness.</summary>
+    public float SteerAngle => _steer;
     /// <summary>How far the truck is travelling sideways, in m/s. This is the drift readout.</summary>
     public float Slip => Mathf.Abs(transform.InverseTransformDirection(_rb.linearVelocity).x);
 

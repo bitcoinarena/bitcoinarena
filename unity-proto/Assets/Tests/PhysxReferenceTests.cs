@@ -1,0 +1,180 @@
+using System.Collections;
+using System.Text;
+using NUnit.Framework;
+using UnityEngine;
+using UnityEngine.TestTools;
+
+/// <summary>
+/// Measures how the ORIGINAL PhysX truck drives, so the deterministic core can
+/// be matched to it rather than to a textbook.
+///
+/// The core's first steering model was derived from the bicycle equation and
+/// was, in the strict sense, correct - and it destroyed the feel, because feel
+/// was never a bicycle model. It came out of WheelCollider, tyre slip and a
+/// tuned lock curve. So the reference is the thing itself: drive the PhysX
+/// truck with scripted inputs, record what it does, and hold the core to that.
+///
+/// This does not assert. It prints a table, which is then read into
+/// packages/core as a fixture.
+/// </summary>
+public class PhysxReferenceTests
+{
+    GameObject _boot;
+    TruckController _truck;
+    Rigidbody _rb;
+
+    [UnitySetUp]
+    public IEnumerator SetUp()
+    {
+        Blwp.PracticeMode.On = true;               // nothing may shoot the subject
+        _boot = new GameObject("Bootstrap");
+        _boot.AddComponent<Bootstrap>();
+        yield return new WaitForSeconds(1.5f);
+
+        _truck = Object.FindFirstObjectByType<TruckController>();
+        Assert.IsNotNull(_truck, "kein Truck");
+
+        // PhysX drives, not the core - this is the reference, not the copy.
+        var core = _truck.GetComponent<Blwp.CoreDrivenTruck>();
+        if (core != null) { core.enabled = false; _truck.externallyDriven = false; }
+
+        _rb = _truck.GetComponent<Rigidbody>();
+        _rb.isKinematic = false;
+        _truck.useExternalInput = true;
+        _truck.controlsLocked = false;
+
+        // Everything that can interrupt a measurement gets switched off. The
+        // first run drove into the battle, was written off, respawned, and the
+        // bay reopened and locked the controls - so the table read 27 m/s and
+        // then thirty seconds of zero.
+        var loadout = Object.FindFirstObjectByType<LoadoutPanel>();
+        if (loadout != null) { loadout.Auto(); loadout.Confirm(); loadout.enabled = false; }
+
+        var health = Object.FindFirstObjectByType<TruckHealth>();
+        if (health != null) health.enabled = false;
+
+        foreach (var f in Object.FindObjectsByType<Battlefield>(FindObjectsSortMode.None))
+            f.enabled = false;
+        yield return new WaitForSeconds(0.5f);
+    }
+
+    [TearDown] public void TearDown() { if (_boot != null) Object.Destroy(_boot); }
+
+    void Drive(float throttle, float steer)
+    {
+        // Re-cleared every call: the bay re-locks the controls whenever it
+        // thinks the truck is empty, and a locked truck measures as a truck
+        // that cannot accelerate.
+        _truck.controlsLocked = false;
+        _truck.condition = 1f;
+        _truck.externalThrottle = throttle;
+        _truck.externalSteer = steer;
+        _truck.externalHandbrake = false;
+    }
+
+    /// <summary>Puts the truck back on flat open ground, pointing down the map.</summary>
+    IEnumerator Reset()
+    {
+        Drive(0f, 0f);
+        _rb.linearVelocity = Vector3.zero;
+        _rb.angularVelocity = Vector3.zero;
+
+        // The empty western end of the map, pointing up the long axis: nothing
+        // to hit for 200 m, which a turning circle needs.
+        var terrain = Object.FindFirstObjectByType<MempoolTerrain>();
+        float y = terrain != null ? terrain.SampleSurface(-150f, -110f) : 0f;
+        _rb.position = new Vector3(-150f, y + 1.5f, -110f);
+        _rb.rotation = Quaternion.Euler(0f, 0f, 0f);
+        yield return new WaitForSeconds(1.5f);
+    }
+
+    /// <summary>Lets the truck fall onto the ground and stop bouncing.</summary>
+    IEnumerator Settle()
+    {
+        for (float w = 0f; w < 3f; w += Time.deltaTime)
+        {
+            Drive(0f, 0f);
+            yield return null;
+            if (w > 1f && _rb.linearVelocity.magnitude < 0.3f) break;
+        }
+    }
+
+    [UnityTest]
+    [Explicit("Measurement, not an assertion: it drives for two minutes and " +
+              "prints a table. Run it deliberately when the PhysX truck's " +
+              "tuning changes, then paste the PHYSXREF lines into " +
+              "packages/core/test/vectors/physx-reference.json.")]
+    public IEnumerator MeasureThePhysxTruck()
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine("PHYSXREF BEGIN");
+
+        // --- straight line ---
+        yield return Reset();
+        yield return Settle();
+        float t = 0f;
+        for (int i = 0; i < 16; i++)
+        {
+            float target = t + 1f;
+            while (t < target) { t += Time.deltaTime; Drive(1f, 0f); yield return null; }
+            sb.AppendLine($"PHYSXREF accel {t:0.0} {_rb.linearVelocity.magnitude:0.000}");
+        }
+
+        // --- steady turns ---
+        foreach (float steer in new[] { 0.25f, 0.5f, 1.0f })
+        {
+            yield return Reset();
+            yield return Settle();
+            for (float w = 0f; w < 8f; w += Time.deltaTime) { Drive(1f, 0f); yield return null; }
+            for (float w = 0f; w < 5f; w += Time.deltaTime) { Drive(1f, steer); yield return null; }
+
+            float prev = _truck.transform.eulerAngles.y, turned = 0f, dur = 0f;
+            float vsum = 0f, slipsum = 0f, steersum = 0f; int n = 0;
+            while (dur < 5f)
+            {
+                Drive(1f, steer);
+                yield return null;
+                dur += Time.deltaTime;
+                float y = _truck.transform.eulerAngles.y;
+                turned += Mathf.DeltaAngle(prev, y); prev = y;
+
+                var vel = _rb.linearVelocity; vel.y = 0f;
+                vsum += vel.magnitude;
+                if (vel.magnitude > 1f)
+                    slipsum += Vector3.SignedAngle(_truck.transform.forward, vel, Vector3.up);
+                steersum += _truck.SteerAngle;
+                n++;
+            }
+            float v = vsum / n, yaw = turned / dur;
+            float radius = Mathf.Abs(yaw) > 0.01f ? v / (Mathf.Abs(yaw) * Mathf.Deg2Rad) : 9999f;
+            sb.AppendLine($"PHYSXREF turn {steer:0.00} v={v:0.00} yaw={yaw:0.00} radius={radius:0.0} " +
+                          $"slip={slipsum / n:0.00} steer={steersum / n:0.00}");
+        }
+
+        // --- how quickly the yaw builds when the wheel goes over ---
+        yield return Reset();
+        yield return Settle();
+        for (float w = 0f; w < 8f; w += Time.deltaTime) { Drive(1f, 0f); yield return null; }
+        float p2 = _truck.transform.eulerAngles.y, acc = 0f, el = 0f, mark = 0.25f;
+        float vEntry = _rb.linearVelocity.magnitude;
+        sb.AppendLine($"PHYSXREF transient entry v={vEntry:0.00}");
+        while (el < 3f)
+        {
+            Drive(1f, 1f);
+            yield return null;
+            el += Time.deltaTime;
+            float y = _truck.transform.eulerAngles.y;
+            acc += Mathf.DeltaAngle(p2, y); p2 = y;
+            if (el >= mark)
+            {
+                sb.AppendLine($"PHYSXREF transient {el:0.00} turned={acc:0.0} " +
+                              $"steer={_truck.SteerAngle:0.0} v={_rb.linearVelocity.magnitude:0.00}");
+                mark += 0.25f;
+            }
+        }
+
+        sb.AppendLine("PHYSXREF END");
+        Debug.Log(sb.ToString());
+        yield return null;
+    }
+}

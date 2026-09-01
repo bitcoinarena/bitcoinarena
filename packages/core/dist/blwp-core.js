@@ -781,18 +781,47 @@ const HALF_WID = 83558;         // 1.275 m
 // accelerations: DRIVE at 7200 is 0.11 m/s^2, so the truck reached walking
 // pace after fifteen seconds and could not leave its own apron. Units now
 // stated, because that is the mistake worth not repeating.
-const DRIVE_ACCEL = Math.imul(6, ONE);        // 6 m/s^2, a laden truck
-const REVERSE_ACCEL = Math.imul(3, ONE);      // reverse is half as eager
-const BRAKE_ACCEL = Math.imul(11, ONE);       // 11 m/s^2, near a locked wheel
-const ROLL_DRAG = 13107;                      // 0.20 per second
-const AIR_DRAG = 22938;                       // 0.35 per second at top speed
-const MAX_SPEED = Math.imul(26, ONE);
-const STEER_LOCK = 5800;        // Q16.16 turns at full lock, about 32 degrees
-const STEER_RATE = 3400;        // how fast the wheels reach the lock
-const STEER_FALLOFF = 39322;    // 0.6 - how much lock is taken away by speed
-const WHEELBASE = 262144;       // 4.0 m between the axles, off the 6.4 m chassis
-const GRIP_SIDE = 40000;        // lateral friction coefficient, 0..ONE
-const GRIP_HAND = 6000;         // with the handbrake on, the rear lets go
+// These are PORTED FROM TruckController, not derived. The bicycle model that
+// was here before was correct and felt nothing like the game: the truck it
+// describes has perfect grip, and WheelCollider's does not. Matching the feel
+// means matching the thing, so the lock curve, the steering rate and the way
+// drive force tapers off with speed are the same laws with the same numbers.
+const TOP_SPEED = 2228224;      // 34 m/s, TruckController.topSpeed
+// Fitted to the measured PhysX run, not guessed: 0.53 m/s RMS across thirteen
+// seconds of full throttle from rest. See tools/measure.js and the fixture in
+// test/vectors/physx-reference.json.
+const DRIVE_ACCEL = 285082;     // 4.35 m/s^2 at rest, tapering to nothing at TOP
+const REVERSE_ACCEL = 142541;   // half as eager
+const BRAKE_ACCEL = 720896;     // 11 m/s^2, near a locked wheel
+const ROLL_DRAG = 1966;         // 0.03 per second, so it coasts down
+const AIR_DRAG = 1966;          // 0.03 per second at top speed
+const MAX_SPEED = TOP_SPEED;
+
+// Lerp(34, 9, speed/topSpeed) in TURNS, because that is what heading is in.
+const LOCK_SLOW = 6190;         // 34 degrees
+const LOCK_FAST = 1638;         // 9 degrees
+const STEER_RATE_MUL = 360448;  // 5.5 - the lock is reached in about 0.18 s
+
+// The EFFECTIVE wheelbase, 5.4 m - not the geometric 3.8 m between the axles.
+//
+// A tyre does not point the truck exactly where it points itself; it slips,
+// and the truck turns on a longer arc than the geometry says. Solving the
+// bicycle equation backwards from both measured PhysX turns gives 5.39 m and
+// 5.39 m - the same number from a 30 m circle and an 11 m one, which is why
+// this is a constant and not a curve. Using the real 3.8 m made the core turn
+// 41% harder than the game it is replacing.
+const WHEELBASE = 353894;
+
+// Lateral grip, as a fraction of sideways speed killed per second.
+//
+// The old 0.61 was the whole problem. It let the truck crab at FIFTY-FOUR
+// degrees of slip - the nose swung round while the body carried on sliding
+// almost sideways, which reads as steering that overreacts wildly even though
+// the path barely bends. The PhysX truck slips 4 degrees at half lock and 8 at
+// full, and this is tuned to land there.
+const GRIP_SIDE = 589824;       // 9.0 per second
+const CORNER_DRAG = 39322;      // 0.6 - forward speed lost per unit of sideways scrub
+const GRIP_HAND = 32768;        // 0.5 - with the handbrake on, the rear lets goo
 
 /**
  * One vehicle step.
@@ -804,15 +833,14 @@ function vehicleStep(v, throttle, steer, brake, handbrake, dt) {
   // steering follows the input rather than snapping to it, which is most of
   // what makes a vehicle feel heavy
   //
-  // Lock falls away with speed, which is what stops the corrected yaw below
-  // from turning the truck into a spinning top at 26 m/s. Uses last tick's
-  // speed so the phase order in here does not have to change.
-  const fast = clamp(div(abs(v.speed), MAX_SPEED), 0, ONE);
-  const lock = mulFast(STEER_LOCK, sub(ONE, mulFast(fast, STEER_FALLOFF)));
+  // TruckController's law exactly: the lock tightens with speed, and the
+  // wheels reach it at a rate proportional to that lock.
+  const frac = clamp(div(abs(v.speed), TOP_SPEED), 0, ONE);
+  const lock = add(LOCK_SLOW, mulFast(sub(LOCK_FAST, LOCK_SLOW), frac));
   const want = mulFast(clamp(steer, -ONE, ONE), lock);
+  const rate = mulFast(mulFast(STEER_RATE_MUL, lock), dt);
   const gap = sub(want, v.steerAngle);
-  const move = clamp(gap, neg(mulFast(STEER_RATE, dt)), mulFast(STEER_RATE, dt));
-  v.steerAngle = add(v.steerAngle, move);
+  v.steerAngle = add(v.steerAngle, clamp(gap, neg(rate), rate));
 
   const fx = sin(v.heading), fz = cos(v.heading);
   const rx = fz, rz = neg(fx);                       // right-hand normal
@@ -822,8 +850,14 @@ function vehicleStep(v, throttle, steer, brake, handbrake, dt) {
   let across = add(mulFast(v.vx, rx), mulFast(v.vz, rz));
 
   // drive and brake act along the nose
+  //
+  // Torque falls away as the truck approaches its top speed, which is what
+  // motorTorque * (1 - speed/topSpeed) does in TruckController. Without the
+  // taper the core simply ran into a hard speed cap instead of easing up to
+  // one, and the last third of the throttle did nothing at all.
   const th = clamp(throttle, -ONE, ONE);
-  const drive = mulFast(th, th < 0 ? REVERSE_ACCEL : DRIVE_ACCEL);
+  const taper = sub(ONE, clamp(div(abs(along), TOP_SPEED), 0, ONE));
+  const drive = mulFast(mulFast(th, th < 0 ? REVERSE_ACCEL : DRIVE_ACCEL), taper);
   along = add(along, mulFast(drive, dt));
   if (brake > 0) {
     const b = mulFast(mulFast(clamp(brake, 0, ONE), BRAKE_ACCEL), dt);
@@ -842,7 +876,19 @@ function vehicleStep(v, throttle, steer, brake, handbrake, dt) {
   const grip = handbrake > 0 ? GRIP_HAND : GRIP_SIDE;
   const spent = min(ONE, div(abs(drive), DRIVE_ACCEL));
   const available = mulFast(grip, sub(ONE, mulFast(spent, 19661)));   // 0.3 of it
-  across = sub(across, mulFast(across, mulFast(available, dt)));
+  const kill = min(ONE, mulFast(available, dt));   // never more than all of it
+  const scrubbed = mulFast(across, kill);
+  across = sub(across, scrubbed);
+
+  // Cornering costs forward speed.
+  //
+  // A tyre dragged sideways burns the energy somewhere, and in the PhysX truck
+  // it comes out of the run down the straight: it holds 18 m/s through a half
+  // lock turn but only 10.8 through a full one. Without this the core carried
+  // 15 m/s through the same corner and simply outran the thing it is copying.
+  const scrub = mulFast(CORNER_DRAG, abs(across));
+  const cost = mulFast(scrub, dt);
+  along = abs(along) < cost ? 0 : sub(along, Math.imul(cost, sign(along)));
 
   // Yaw from the bicycle model: omega = v * tan(steer) / wheelbase, and with
   // heading measured in turns the 2*pi cancels, leaving v * steer / wheelbase.
