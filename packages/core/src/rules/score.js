@@ -52,7 +52,7 @@ export const timeFactor = (ticks) =>
  * counted, not measured, and because a fractional score would be one more
  * thing two implementations could round differently.
  */
-export function score(exposure, ticks, cargo) {
+export function scoreOf(exposure, ticks, cargo) {
   const e = exposureFactor(exposure);
   const t = timeFactor(ticks);
   const c = clamp(cargo, 0, ONE);

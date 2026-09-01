@@ -44,7 +44,7 @@ const GRIP_HAND = 6000;         // with the handbrake on, the rear lets go
  * `v` is a plain object of Q16.16 fields so the caller can keep it wherever it
  * likes; sim.js keeps it in the state buffer. Inputs are Q16.16 in [-1, 1].
  */
-export function step(v, throttle, steer, brake, handbrake, dt) {
+export function vehicleStep(v, throttle, steer, brake, handbrake, dt) {
   // steering follows the input rather than snapping to it, which is most of
   // what makes a vehicle feel heavy
   const want = mulFast(clamp(steer, -ONE, ONE), STEER_LOCK);

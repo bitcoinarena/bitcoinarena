@@ -20,10 +20,14 @@ import {
   S_EXPOSURE, S_ELAPSED, S_BESTX, S_CARGO, S_DELIVERED, S_STATE,
   U_X, U_Z, U_SIDE, U_HP, U_HEADING, U_STATE, U_COOLDOWN, U_TARGET,
 } from './state.js';
-import * as vehicle from './rules/vehicle.js';
-import * as army from './rules/army.js';
-import * as scoring from './rules/score.js';
-import * as gate from './rules/gate.js';
+// Named imports, not namespaces. `import * as x` cannot survive concatenation
+// into a single browser file - after the import line is stripped, every
+// `x.thing` points at nothing - and a real bundler in the trust path is
+// exactly what section 3.6 argues against for anything that pins money.
+import { vehicleStep } from './rules/vehicle.js';
+import { stepUnit, threatAt } from './rules/army.js';
+import { accrue, earning, scoreOf } from './rules/score.js';
+import { outcome, RUN_LIVE, RUN_DELIVERED, RUN_WRECKED, RUN_MISSED } from './rules/gate.js';
 import { frontlineZ, SAMPLES } from './rules/frontline.js';
 
 export const UNITS = 96;
@@ -61,7 +65,7 @@ export function init(seedWord) {
   s[O_TRUCK + T_CARGO] = 45875;             // 0.7 of a bed
   s[O_SCORE + S_BESTX] = START_X;
   s[O_SCORE + S_CARGO] = 45875;
-  s[O_SCORE + S_STATE] = gate.RUN_LIVE;
+  s[O_SCORE + S_STATE] = RUN_LIVE;
 
   st.tape = tape(rng);
 
@@ -96,7 +100,7 @@ export function step(st, throttle, steer, brake, handbrake) {
     vx: s[T + T_VX], vz: s[T + T_VZ], angVel: s[T + T_ANGVEL],
     steerAngle: s[T + T_STEER], speed: 0,
   };
-  vehicle.step(v, throttle, steer, brake, handbrake, TICK_DT);
+  vehicleStep(v, throttle, steer, brake, handbrake, TICK_DT);
   s[T + T_X] = clamp(v.x, -HALF_X, HALF_X);
   s[T + T_Z] = clamp(v.z, -HALF_Z, HALF_Z);
   s[T + T_HEADING] = v.heading;
@@ -114,12 +118,12 @@ export function step(st, throttle, steer, brake, handbrake) {
     const b = unitBase(i);
     u.x = s[b + U_X]; u.z = s[b + U_Z]; u.hp = s[b + U_HP];
     u.heading = s[b + U_HEADING]; u.cooldown = s[b + U_COOLDOWN];
-    const r = army.stepUnit(u, rng, seamZ, tx, tz, HALF_X, HALF_Z, TICK_DT);
+    const r = stepUnit(u, rng, seamZ, tx, tz, HALF_X, HALF_Z, TICK_DT);
     s[b + U_X] = u.x; s[b + U_Z] = u.z;
     s[b + U_HEADING] = u.heading; s[b + U_COOLDOWN] = u.cooldown;
     if (r === 2) hits = (hits + 1) | 0;
   }
-  if (hits > 0 && s[O_SCORE + S_STATE] === gate.RUN_LIVE)
+  if (hits > 0 && s[O_SCORE + S_STATE] === RUN_LIVE)
     s[T + T_HP] = max(0, sub(s[T + T_HP], Math.imul(hits, ONE)));
 
   // ---- 3. score ----------------------------------------------------------
@@ -131,25 +135,25 @@ export function step(st, throttle, steer, brake, handbrake) {
   };
   const fromStart = length2(sub(tx, START_X), sub(tz, START_Z));
   const gaining = tx > s[O_SCORE + S_BESTX];
-  if (scoring.earning(fromStart, gaining) && s[O_SCORE + S_STATE] === gate.RUN_LIVE) {
-    const threat = army.threatAt(view, UNITS, tx, tz);
-    s[O_SCORE + S_EXPOSURE] = scoring.accrue(
+  if (earning(fromStart, gaining) && s[O_SCORE + S_STATE] === RUN_LIVE) {
+    const threat = threatAt(view, UNITS, tx, tz);
+    s[O_SCORE + S_EXPOSURE] = accrue(
       s[O_SCORE + S_EXPOSURE], s[O_SCORE + S_BESTX], tx, threat, s[O_SCORE + S_CARGO]);
   }
   if (gaining) s[O_SCORE + S_BESTX] = tx;
-  if (s[O_SCORE + S_STATE] === gate.RUN_LIVE)
+  if (s[O_SCORE + S_STATE] === RUN_LIVE)
     s[O_SCORE + S_ELAPSED] = (s[O_SCORE + S_ELAPSED] + 1) | 0;
 
   // ---- 4. outcome --------------------------------------------------------
-  s[O_SCORE + S_STATE] = gate.outcome(
+  s[O_SCORE + S_STATE] = outcome(
     s[O_SCORE + S_STATE], tx, tz, s[T + T_HP], s[O_SCORE + S_ELAPSED]);
-  if (s[O_SCORE + S_STATE] === gate.RUN_DELIVERED && s[O_SCORE + S_DELIVERED] === 0)
-    s[O_SCORE + S_DELIVERED] = scoring.score(
+  if (s[O_SCORE + S_STATE] === RUN_DELIVERED && s[O_SCORE + S_DELIVERED] === 0)
+    s[O_SCORE + S_DELIVERED] = scoreOf(
       s[O_SCORE + S_EXPOSURE], s[O_SCORE + S_ELAPSED], s[O_SCORE + S_CARGO]);
   return st;
 }
 
 export const runScore = (st) =>
-  scoring.score(st.i32[O_SCORE + S_EXPOSURE],
+  scoreOf(st.i32[O_SCORE + S_EXPOSURE],
                 st.i32[O_SCORE + S_ELAPSED],
                 st.i32[O_SCORE + S_CARGO]);
