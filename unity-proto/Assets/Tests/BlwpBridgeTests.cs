@@ -195,3 +195,68 @@ public class PracticeModeTests
         Blwp.PracticeMode.On = true;
     }
 }
+
+/// <summary>
+/// The truck lies on the ground rather than floating dead level over it.
+///
+/// This is worth a test because the fault is invisible: a truck pinned level
+/// looks entirely normal, and the only symptom is that driving down a hill
+/// does not feel like driving down a hill. The physics was right and the
+/// drawing was not.
+/// </summary>
+public class TruckLieTests
+{
+    const float Half = 2.0f, Track = 1.15f;
+
+    static float PitchOf(Quaternion q)
+    {
+        // Positive = nose up.
+        float p = q.eulerAngles.x;
+        return -(p > 180f ? p - 360f : p);
+    }
+
+    [Test]
+    public void FlatGroundLeavesItLevel()
+    {
+        var q = Blwp.CoreDrivenTruck.Lie(37f, 2f, 2f, 2f, 2f, Half, Track);
+        Assert.AreEqual(0f, PitchOf(q), 0.01f, "auf ebenem Boden neigt sich nichts");
+        Assert.AreEqual(37f, q.eulerAngles.y, 0.5f, "die Fahrtrichtung darf sich nicht aendern");
+    }
+
+    [Test]
+    public void GoingDownhillPutsTheNoseDown()
+    {
+        // Front wheels a metre lower than the rear over a 4 m wheelbase.
+        var q = Blwp.CoreDrivenTruck.Lie(0f, 1f, 1f, 2f, 2f, Half, Track);
+        float pitch = PitchOf(q);
+        Assert.Less(pitch, -10f, $"bergab zeigt die Nase nach unten, gemessen {pitch:0.0} Grad");
+        Assert.AreEqual(-Mathf.Atan2(1f, 4f) * Mathf.Rad2Deg, pitch, 1f,
+            "der Winkel muss dem Gefaelle entsprechen");
+    }
+
+    [Test]
+    public void GoingUphillPutsTheNoseUp()
+    {
+        var q = Blwp.CoreDrivenTruck.Lie(0f, 2f, 2f, 1f, 1f, Half, Track);
+        Assert.Greater(PitchOf(q), 10f, "bergauf zeigt die Nase nach oben");
+    }
+
+    [Test]
+    public void ACrossSlopeRollsIt()
+    {
+        // Left wheels low, right wheels high.
+        var q = Blwp.CoreDrivenTruck.Lie(0f, 1f, 2f, 1f, 2f, Half, Track);
+        float roll = q.eulerAngles.z; if (roll > 180f) roll -= 360f;
+        Assert.Greater(Mathf.Abs(roll), 10f, "quer zum Hang legt sich der Truck");
+        Assert.AreEqual(0f, PitchOf(q), 1f, "quer zum Hang aendert sich die Neigung nicht");
+    }
+
+    [Test]
+    public void TheLieFollowsTheHeading()
+    {
+        // Same slope, truck turned 90 degrees: what was pitch is now roll.
+        var q = Blwp.CoreDrivenTruck.Lie(90f, 1f, 1f, 2f, 2f, Half, Track);
+        Assert.Less(PitchOf(q), -10f,
+            "bergab bleibt bergab, in welche Himmelsrichtung auch immer");
+    }
+}

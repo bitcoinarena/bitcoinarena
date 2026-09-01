@@ -56,6 +56,12 @@ namespace Blwp
         // The colliders ARE children of the chassis, so they still give the
         // mounting points for free.
         int _groundRevision = -1;
+
+        // The tick just gone, so a frame landing between two ticks can be
+        // drawn between them instead of snapping to the later one.
+        float _prevX, _prevZ, _prevHeading;
+        bool _havePrev;
+        Quaternion _lie = Quaternion.identity;
         Transform[] _wheels;
         Vector3[] _wheelMount;      // in the truck's own frame
         Quaternion[] _wheelBase;    // resting orientation, relative to the truck
@@ -145,14 +151,24 @@ namespace Blwp
         bool WheelsWentStale()
         {
             if (_truck == null || _truck.axles == null) return false;
+
+            // Written out rather than looping over a temporary array: this runs
+            // every frame, and `new[] { a.leftMesh, a.rightMesh }` allocated
+            // one on each axle on each frame. Two hundred small arrays a second
+            // is a collection every few seconds, and a collection is a dropped
+            // frame - which is exactly the stutter this was meant to prevent.
             int i = 0;
             foreach (var a in _truck.axles)
             {
                 if (a == null) continue;
-                foreach (var mesh in new[] { a.leftMesh, a.rightMesh })
+                if (a.leftMesh != null)
                 {
-                    if (mesh == null) continue;
-                    if (_wheels == null || i >= _wheels.Length || _wheels[i] != mesh) return true;
+                    if (_wheels == null || i >= _wheels.Length || _wheels[i] != a.leftMesh) return true;
+                    i++;
+                }
+                if (a.rightMesh != null)
+                {
+                    if (_wheels == null || i >= _wheels.Length || _wheels[i] != a.rightMesh) return true;
                     i++;
                 }
             }
@@ -186,8 +202,14 @@ namespace Blwp
             {
                 if (_wheels[i] == null) continue;
                 var turn = Quaternion.Euler(0f, _wheelSteers[i] ? steer : 0f, 0f);
-                _wheels[i].SetPositionAndRotation(
-                    transform.TransformPoint(_wheelMount[i]),
+
+                // Each wheel meets the ground under ITSELF. Hanging them off
+                // the body's plane leaves one corner buried and the opposite
+                // one in the air the moment the truck is across a slope.
+                var at = transform.TransformPoint(_wheelMount[i]);
+                if (terrain != null) at.y = Ground(at.x, at.z) + _wheelRadius;
+
+                _wheels[i].SetPositionAndRotation(at,
                     transform.rotation * turn * _wheelBase[i] * Quaternion.Euler(_spin, 0f, 0f));
             }
         }
@@ -224,10 +246,21 @@ namespace Blwp
             int guard = 0;
             while (_accumulator >= step && guard++ < 8)
             {
+                // Remember where the truck was BEFORE this tick. Without it
+                // there is nothing to draw between, and the truck moves in
+                // whole ticks - which at any refresh rate that is not an exact
+                // multiple of the tick rate means some frames advance it twice
+                // and some not at all. That is the stutter: the simulation was
+                // smooth all along and the drawing was not.
+                _prevX = BlwpCore.Metres(BlwpCore.State[Layout.O_TRUCK + Layout.T_X]);
+                _prevZ = BlwpCore.Metres(BlwpCore.State[Layout.O_TRUCK + Layout.T_Z]);
+                _prevHeading = BlwpCore.TruckHeading;
+                _havePrev = true;
+
                 _accumulator -= step;
                 BlwpCore.Step(Throttle(), Steer(), Brake(), Handbrake(), PracticeMode.Input);
             }
-            Apply();
+            Apply(Mathf.Clamp01(_accumulator / step));
         }
 
         /// <summary>
@@ -250,16 +283,70 @@ namespace Blwp
 
         static int Q(float v) => Mathf.RoundToInt(Mathf.Clamp(v, -1f, 1f) * BlwpCore.ONE);
 
-        void Apply()
+        /// <summary>
+        /// How the truck lies on four contact points.
+        ///
+        /// Separate and static so it can be tested without a core: the whole
+        /// fault it fixes is invisible from inside the game, because a truck
+        /// pinned dead level looks perfectly normal until you notice that a
+        /// hill does not tilt it.
+        ///
+        /// `fl`/`fr`/`rl`/`rr` are ground heights under the four wheels,
+        /// `half` is half the wheelbase and `track` half the track width.
+        /// </summary>
+        public static Quaternion Lie(float heading, float fl, float fr, float rl, float rr,
+                                     float half, float track)
         {
-            float ground = terrain != null
-                ? terrain.SampleSurface(BlwpCore.Metres(BlwpCore.State[Layout.O_TRUCK + Layout.T_X]),
-                                        BlwpCore.Metres(BlwpCore.State[Layout.O_TRUCK + Layout.T_Z]))
-                : 0f;
+            var rot = Quaternion.Euler(0f, heading, 0f);
+            Vector3 fwd = rot * Vector3.forward, right = rot * Vector3.right;
 
-            transform.SetPositionAndRotation(
-                BlwpCore.TruckPosition(ground + rideHeight),
-                Quaternion.Euler(0f, BlwpCore.TruckHeading, 0f));
+            var slopedF = new Vector3(fwd.x, ((fl + fr) - (rl + rr)) / (4f * half), fwd.z).normalized;
+            var slopedR = new Vector3(right.x, ((fr + rr) - (fl + rl)) / (4f * track), right.z).normalized;
+            return Quaternion.LookRotation(slopedF, Vector3.Cross(slopedF, slopedR));
+        }
+
+        /// <summary>Ground under a point, or zero without a terrain.</summary>
+        float Ground(float x, float z) => terrain != null ? terrain.SampleSurface(x, z) : 0f;
+
+        /// <summary>
+        /// Draws the truck between the last two ticks, lying on the ground.
+        ///
+        /// `alpha` is how far through the current tick this frame falls.
+        /// </summary>
+        void Apply(float alpha)
+        {
+            float x = BlwpCore.Metres(BlwpCore.State[Layout.O_TRUCK + Layout.T_X]);
+            float z = BlwpCore.Metres(BlwpCore.State[Layout.O_TRUCK + Layout.T_Z]);
+            float heading = BlwpCore.TruckHeading;
+
+            if (_havePrev)
+            {
+                x = Mathf.Lerp(_prevX, x, alpha);
+                z = Mathf.Lerp(_prevZ, z, alpha);
+                heading = Mathf.LerpAngle(_prevHeading, heading, alpha);
+            }
+
+            // The truck lies on its own four contact points, which is what the
+            // WheelColliders did for free and what was lost when the core took
+            // over: the body was pinned dead level, so a descent looked exactly
+            // like flat ground however steep it was.
+            var rot = Quaternion.Euler(0f, heading, 0f);
+            Vector3 fwd = rot * Vector3.forward, right = rot * Vector3.right;
+
+            float half = 2.0f, track = 1.15f;      // the axles, from Bootstrap
+            float fl = Ground(x + fwd.x * half - right.x * track, z + fwd.z * half - right.z * track);
+            float fr = Ground(x + fwd.x * half + right.x * track, z + fwd.z * half + right.z * track);
+            float rl = Ground(x - fwd.x * half - right.x * track, z - fwd.z * half - right.z * track);
+            float rr = Ground(x - fwd.x * half + right.x * track, z - fwd.z * half + right.z * track);
+
+            var lie = Lie(heading, fl, fr, rl, rr, half, track);
+
+            // Eased, because the relief is sampled per frame and a truck on
+            // springs does not snap to every pebble.
+            _lie = Quaternion.Slerp(_lie, lie, 1f - Mathf.Exp(-8f * Time.deltaTime));
+
+            float ride = (fl + fr + rl + rr) * 0.25f + rideHeight;
+            transform.SetPositionAndRotation(new Vector3(x, ride, z), _lie);
 
             if (_rb != null) _rb.position = transform.position;
             PoseWheels();
