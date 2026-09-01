@@ -7,7 +7,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { init, step, runScore, HALF_X } from '../src/sim.js';
+import { init, step, runScore, setGround, HALF_X } from '../src/sim.js';
 import { hash } from '../src/state.js';
 import * as scoring from '../src/rules/score.js';
 import * as gate from '../src/rules/gate.js';
@@ -204,4 +204,89 @@ test('the core drives like the PhysX truck it replaces', async () => {
     near(Math.abs(slip / n), t.slip, tol.slip, 'slip angle deg');
     near(Math.abs(wheel / n), t.wheel, tol.wheel, 'wheel angle deg');
   }
+});
+
+/**
+ * A hill costs the core what it costs Unity.
+ *
+ * The core had the mempool relief ported and never read it, so a climb was
+ * free and a descent gave nothing back - the truck drove over the map as
+ * though it were a table.
+ *
+ * The reference is a PAIR of PhysX runs down the same line: one over the map's
+ * own relief, one with the relief zeroed. The difference between them is what
+ * a hill does, and that is what this compares against - not the raw speed.
+ * Comparing raw traces measured the hill response and every other difference
+ * at once, and the core is a shade quick off the mark, so that bias swamped
+ * the number being looked for. Subtracting each side's own flat control
+ * removes it and leaves the hills.
+ */
+test('a hill costs the core what it costs Unity', async () => {
+  const ref = JSON.parse(
+    await readFile(new URL('./vectors/physx-hills.json', import.meta.url), 'utf8'));
+
+  const Q = 65536, O = 5, T_X = 0, T_Z = 1, T_SPEED = 9;
+  const COLS = 160, ROWS = 96, HALFX = 130;
+
+  // The recorded line laid across the whole field: the truck drives straight
+  // up +X, so relief varying only with x is the ground it actually met.
+  const drive = (profile) => {
+    const heights = new Int32Array(COLS * ROWS);
+    for (let c = 0; c < COLS; c++) {
+      const worldX = (c / (COLS - 1) - 0.5) * (HALFX * 2);
+      const f = (worldX - ref.profileFromX) / ref.profileStep;
+      const i = Math.max(0, Math.min(profile.length - 2, Math.floor(f)));
+      const t = Math.max(0, Math.min(1, f - i));
+      const h = profile[i] + (profile[i + 1] - profile[i]) * t;
+      for (let r = 0; r < ROWS; r++) heights[r * COLS + c] = Math.round(h * Q);
+    }
+
+    const st = init(1);
+    assert.ok(setGround(st, COLS, ROWS, heights), 'the relief was refused');
+    st.i32[O + T_X] = Math.round(ref.startX * Q);
+    st.i32[O + T_Z] = Math.round(ref.lane * Q);
+
+    const out = [];
+    for (let k = 0; k < 60 * 22; k++) {
+      step(st, Q, 0, 0, 0, 0);
+      out.push([st.i32[O + T_X] / Q, st.i32[O + T_SPEED] / Q]);
+    }
+    return out;
+  };
+
+  // Speed where the truck passed a given x, on either side.
+  const speedAt = (rows, x, xi, vi) => {
+    for (let i = 1; i < rows.length; i++) {
+      if (rows[i][xi] >= x) {
+        const a = rows[i - 1], b = rows[i];
+        const t = (x - a[xi]) / Math.max(1e-6, b[xi] - a[xi]);
+        return a[vi] + (b[vi] - a[vi]) * t;
+      }
+    }
+    return null;
+  };
+
+  const coreRelief = drive(ref.relief.profile);
+  const coreFlat = drive(ref.flat.profile);
+
+  let sum = 0, n = 0, worst = 0, worstAt = null, sawAHill = 0;
+  for (let x = -110; x <= 110; x += 10) {
+    const unity = speedAt(ref.relief.trace, x, 1, 2) - speedAt(ref.flat.trace, x, 1, 2);
+    const core = speedAt(coreRelief, x, 0, 1) - speedAt(coreFlat, x, 0, 1);
+    const d = Math.abs(core - unity);
+    if (d > worst) { worst = d; worstAt = { x, unity, core }; }
+    sum += d; n++;
+    sawAHill = Math.max(sawAHill, Math.abs(core));
+  }
+
+  // Guards against passing by doing nothing: a core that ignored the ground
+  // would score zero difference against its own flat control.
+  assert.ok(sawAHill > 0.4,
+    `the relief changed the core's speed by at most ${sawAHill.toFixed(2)} m/s - it is not reading the ground`);
+
+  assert.ok(worst < ref.tolerance.hillEffect,
+    `at x=${worstAt.x} the relief cost Unity ${worstAt.unity.toFixed(2)} m/s and ` +
+    `the core ${worstAt.core.toFixed(2)} m/s`);
+  assert.ok(sum / n < ref.tolerance.hillEffect * 0.7,
+    `the hill response is ${(sum / n).toFixed(2)} m/s out on average`);
 });

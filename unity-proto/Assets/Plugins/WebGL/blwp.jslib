@@ -69,6 +69,19 @@ mergeInto(LibraryManager.library, {
     return (typeof BLWP === 'undefined') ? 0 : (BLWP.WORDS | 0);
   },
 
+  // The relief the host is drawing, handed over once as round setup.
+  //
+  // Not recomputed inside the core: Unity's ground uses Mathf.PerlinNoise,
+  // which has no seed and no specification, so a core generating its own would
+  // feel hills the player cannot see.
+  BlwpSetGround: function (ptr, cols, rows) {
+    var b = Module.blwp;
+    if (!b) return 0;
+    var n = (cols | 0) * (rows | 0);
+    var src = new Int32Array(Module.HEAP32.buffer, ptr, n);
+    return b.core.setGround(b.st, cols | 0, rows | 0, src.slice()) ? 1 : 0;
+  },
+
   // A query parameter from the page's own URL, written into a caller-owned
   // buffer. Handing a build to somebody in the mode you meant them to see is
   // what a shared link is for, and it beats asking them to find a switch.

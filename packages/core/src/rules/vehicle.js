@@ -15,6 +15,7 @@ import {
   ONE, add, sub, neg, mulFast, div, clamp, min, max, abs, sign, length2,
 } from '../fixed.js';
 import { sin, cos } from '../trig.js';
+import { slopeSin } from './ground.js';
 
 export const WHEELS = 4;
 
@@ -66,6 +67,20 @@ const WHEELBASE = 353894;
 // the path barely bends. The PhysX truck slips 4 degrees at half lock and 8 at
 // full, and this is tuned to land there.
 const GRIP_SIDE = 589824;       // 9.0 per second
+// Unity's own gravity, resolved along the slope. There is no tuning freedom
+// here and none was taken: PhysX puts a rigidbody under Physics.gravity and
+// the component along the ground is g*sin(theta). Measured against the PhysX
+// truck on the map's own hills it comes back as 9.85 m/s^2.
+const GRAVITY = 642908;         // 9.81 m/s^2
+
+// Engine braking, ported from TruckController. Letting go of the throttle on
+// a slope HOLDS the truck rather than letting it roll away - a deliberate
+// decision in the original, and without it the core simply coasted downhill
+// whenever the player stopped driving.
+const ENGINE_BRAKE = 9175;      // 0.14 of the brake, above walking pace
+const ENGINE_HOLD = 39322;      // 0.60 of it below
+const WALKING = 131072;         // 2 m/s
+
 const CORNER_DRAG = 39322;      // 0.6 - forward speed lost per unit of sideways scrub
 const GRIP_HAND = 32768;        // 0.5 - with the handbrake on, the rear lets goo
 
@@ -75,7 +90,7 @@ const GRIP_HAND = 32768;        // 0.5 - with the handbrake on, the rear lets go
  * `v` is a plain object of Q16.16 fields so the caller can keep it wherever it
  * likes; sim.js keeps it in the state buffer. Inputs are Q16.16 in [-1, 1].
  */
-export function vehicleStep(v, throttle, steer, brake, handbrake, dt) {
+export function vehicleStep(v, throttle, steer, brake, handbrake, dt, grade) {
   // steering follows the input rather than snapping to it, which is most of
   // what makes a vehicle feel heavy
   //
@@ -105,8 +120,21 @@ export function vehicleStep(v, throttle, steer, brake, handbrake, dt) {
   const taper = sub(ONE, clamp(div(abs(along), TOP_SPEED), 0, ONE));
   const drive = mulFast(mulFast(th, th < 0 ? REVERSE_ACCEL : DRIVE_ACCEL), taper);
   along = add(along, mulFast(drive, dt));
-  if (brake > 0) {
-    const b = mulFast(mulFast(clamp(brake, 0, ONE), BRAKE_ACCEL), dt);
+
+  // Gravity down the slope. Applied to the along-axis only: the core is two
+  // dimensional and the truck is always on the ground, so there is nothing for
+  // the normal component to do.
+  along = sub(along, mulFast(mulFast(GRAVITY, slopeSin(grade | 0)), dt));
+
+  let brakeFrac = clamp(brake, 0, ONE);
+  if (th === 0 && handbrake === 0) {
+    // Off the throttle is not neutral - a lorry has engine braking, and this
+    // is what stops a hill from running away with it.
+    const hold = abs(along) < WALKING ? ENGINE_HOLD : ENGINE_BRAKE;
+    brakeFrac = max(brakeFrac, hold);
+  }
+  if (brakeFrac > 0) {
+    const b = mulFast(mulFast(brakeFrac, BRAKE_ACCEL), dt);
     const s = sign(along);
     along = abs(along) < b ? 0 : sub(along, Math.imul(b, s));
   }

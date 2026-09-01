@@ -236,6 +236,8 @@ public class MempoolTerrain : MonoBehaviour
 
     public void Build()
     {
+        Revision++;
+
         Version++;
         int vx = columns, vz = rows;
         if (_verts == null || _verts.Length != vx * vz) _verts = new Vector3[vx * vz];
@@ -297,6 +299,36 @@ public class MempoolTerrain : MonoBehaviour
     /// has to follow the triangle, or it sinks into the terrain wherever the
     /// chord happens to sit above the curve.
     /// </summary>
+    /// <summary>
+    /// Goes up by one every time the relief is rebuilt.
+    ///
+    /// The ground here comes from a live fetch, so it changes under whatever
+    /// is using it. Anything holding a copy - the deterministic core does -
+    /// needs to know when its copy went stale.
+    /// </summary>
+    public int Revision { get; private set; }
+
+    /// <summary>
+    /// The relief as a grid of Q16.16 metres, row-major, for the core.
+    ///
+    /// Sampled through SampleSurface rather than HeightAt so it is the surface
+    /// the truck actually drives on, triangle split and all.
+    /// </summary>
+    public int[] HeightGrid(int cols, int rows)
+    {
+        var g = new int[cols * rows];
+        for (int r = 0; r < rows; r++)
+        {
+            float z = ((float)r / (rows - 1) - 0.5f) * depth;
+            for (int c = 0; c < cols; c++)
+            {
+                float x = ((float)c / (cols - 1) - 0.5f) * width;
+                g[r * cols + c] = Mathf.RoundToInt(SampleSurface(x, z) * 65536f);
+            }
+        }
+        return g;
+    }
+
     public float SampleSurface(float worldX, float worldZ)
     {
         int vx = columns, vz = rows;

@@ -754,6 +754,94 @@ function hash(st) {
 /** The byte order the protocol is defined in. Exposed so a test can assert it. */
 const CANONICAL_LITTLE_ENDIAN = true;
 
+// ---- rules/ground.js
+// The ground under the truck.
+//
+// The core had the mempool relief ported and never read it, so a climb cost
+// nothing and a descent gave nothing back - the truck drove over the map as
+// though it were a table.
+//
+// The heights are NOT recomputed here from the fee profile. Unity's relief
+// uses Mathf.PerlinNoise, which has no seed and no specification, and the
+// core's own noise field is a different shape - up to five and a half metres
+// different. A core that felt a hill where the player sees flat ground is
+// worse than one that feels no hills at all. So the host uploads the height
+// field it is actually drawing, once, as round setup data: the same status as
+// the fee profile it came from, agreed before the round and hashed with it,
+// never touched again while the round runs.
+
+
+const DEFAULT_COLS = 160;
+const DEFAULT_ROWS = 96;
+
+/** A field of one height, which is what a flat world is. */
+function flatGround(cols, rows) {
+  return { cols, rows, h: new Int32Array(Math.imul(cols, rows)) };
+}
+
+/**
+ * Surface height at a world position, Q16.16 throughout.
+ *
+ * A port of MempoolTerrain.SampleSurface, including its triangle split: the
+ * mesh is wound (A,B,C) then (C,B,D), so the seam runs from B to C and
+ * tx + tz < 1 lands in the first triangle. Interpolating bilinearly instead
+ * would put the physics a few centimetres off the visible surface on every
+ * cell diagonal, which is a shimmer the player would feel and not see.
+ */
+function heightAtWorld(g, x, z, halfX, halfZ) {
+  if (!g || g.cols < 2 || g.rows < 2) return 0;
+
+  const u = clamp(add(div(x, Math.imul(halfX, 2)), 32768), 0, ONE);
+  const v = clamp(add(div(z, Math.imul(halfZ, 2)), 32768), 0, ONE);
+
+  const fu = mulFast(u, Math.imul(g.cols - 1, ONE));
+  const fv = mulFast(v, Math.imul(g.rows - 1, ONE));
+
+  const x0 = clamp(fu >> 16, 0, g.cols - 2);
+  const z0 = clamp(fv >> 16, 0, g.rows - 2);
+  const tx = sub(fu, Math.imul(x0, ONE));
+  const tz = sub(fv, Math.imul(z0, ONE));
+
+  const at = (gx, gz) => g.h[add(Math.imul(gz, g.cols), gx)];
+  const a = at(x0, z0), b = at(x0, z0 + 1);
+  const c = at(x0 + 1, z0), d = at(x0 + 1, z0 + 1);
+
+  if (add(tx, tz) < ONE) {
+    return add(a, add(mulFast(sub(c, a), tx), mulFast(sub(b, a), tz)));
+  }
+  return add(d, add(mulFast(sub(b, d), sub(ONE, tx)),
+                    mulFast(sub(c, d), sub(ONE, tz))));
+}
+
+/** How far ahead and behind the slope is read, in metres. */
+const REACH = Math.imul(3, ONE);
+
+/**
+ * Rise over run along a heading: positive is uphill.
+ *
+ * Measured over six metres rather than at a point because the truck is 6.4 m
+ * long and rides the average, not the pebble under the front axle. It is also
+ * the span the reference measurement used, so the number the core fits is the
+ * number PhysX was asked for.
+ */
+function gradeAlong(g, x, z, fx, fz, halfX, halfZ) {
+  const ax = add(x, mulFast(fx, REACH)), az = add(z, mulFast(fz, REACH));
+  const bx = sub(x, mulFast(fx, REACH)), bz = sub(z, mulFast(fz, REACH));
+  const rise = sub(heightAtWorld(g, ax, az, halfX, halfZ),
+                   heightAtWorld(g, bx, bz, halfX, halfZ));
+  return div(rise, Math.imul(REACH, 2));
+}
+
+/**
+ * sin(atan(grade)) - the fraction of gravity that acts along the slope.
+ *
+ * Done as grade / sqrt(1 + grade^2) rather than through the trig table: it is
+ * exact for the purpose, it is monotone, and it needs no angle.
+ */
+function slopeSin(grade) {
+  return div(grade, length2(ONE, grade));
+}
+
 // ---- rules/vehicle.js
 // The truck, derived from the raycast-vehicle family rather than ported from
 // PhysX.
@@ -767,6 +855,7 @@ const CANONICAL_LITTLE_ENDIAN = true;
 //
 // The numbers below are a STARTING POINT, not a match for today's feel. That
 // is stage 1 work with a human at the wheel, and the estimate says so.
+
 
 
 
@@ -820,6 +909,20 @@ const WHEELBASE = 353894;
 // the path barely bends. The PhysX truck slips 4 degrees at half lock and 8 at
 // full, and this is tuned to land there.
 const GRIP_SIDE = 589824;       // 9.0 per second
+// Unity's own gravity, resolved along the slope. There is no tuning freedom
+// here and none was taken: PhysX puts a rigidbody under Physics.gravity and
+// the component along the ground is g*sin(theta). Measured against the PhysX
+// truck on the map's own hills it comes back as 9.85 m/s^2.
+const GRAVITY = 642908;         // 9.81 m/s^2
+
+// Engine braking, ported from TruckController. Letting go of the throttle on
+// a slope HOLDS the truck rather than letting it roll away - a deliberate
+// decision in the original, and without it the core simply coasted downhill
+// whenever the player stopped driving.
+const ENGINE_BRAKE = 9175;      // 0.14 of the brake, above walking pace
+const ENGINE_HOLD = 39322;      // 0.60 of it below
+const WALKING = 131072;         // 2 m/s
+
 const CORNER_DRAG = 39322;      // 0.6 - forward speed lost per unit of sideways scrub
 const GRIP_HAND = 32768;        // 0.5 - with the handbrake on, the rear lets goo
 
@@ -829,7 +932,7 @@ const GRIP_HAND = 32768;        // 0.5 - with the handbrake on, the rear lets go
  * `v` is a plain object of Q16.16 fields so the caller can keep it wherever it
  * likes; sim.js keeps it in the state buffer. Inputs are Q16.16 in [-1, 1].
  */
-function vehicleStep(v, throttle, steer, brake, handbrake, dt) {
+function vehicleStep(v, throttle, steer, brake, handbrake, dt, grade) {
   // steering follows the input rather than snapping to it, which is most of
   // what makes a vehicle feel heavy
   //
@@ -859,8 +962,21 @@ function vehicleStep(v, throttle, steer, brake, handbrake, dt) {
   const taper = sub(ONE, clamp(div(abs(along), TOP_SPEED), 0, ONE));
   const drive = mulFast(mulFast(th, th < 0 ? REVERSE_ACCEL : DRIVE_ACCEL), taper);
   along = add(along, mulFast(drive, dt));
-  if (brake > 0) {
-    const b = mulFast(mulFast(clamp(brake, 0, ONE), BRAKE_ACCEL), dt);
+
+  // Gravity down the slope. Applied to the along-axis only: the core is two
+  // dimensional and the truck is always on the ground, so there is nothing for
+  // the normal component to do.
+  along = sub(along, mulFast(mulFast(GRAVITY, slopeSin(grade | 0)), dt));
+
+  let brakeFrac = clamp(brake, 0, ONE);
+  if (th === 0 && handbrake === 0) {
+    // Off the throttle is not neutral - a lorry has engine braking, and this
+    // is what stops a hill from running away with it.
+    const hold = abs(along) < WALKING ? ENGINE_HOLD : ENGINE_BRAKE;
+    brakeFrac = max(brakeFrac, hold);
+  }
+  if (brakeFrac > 0) {
+    const b = mulFast(mulFast(brakeFrac, BRAKE_ACCEL), dt);
     const s = sign(along);
     along = abs(along) < b ? 0 : sub(along, Math.imul(b, s));
   }
@@ -1160,6 +1276,7 @@ function frontlineZ(hist, x, halfX, halfZ) {
 
 
 
+
 const UNITS = 96;
 const HALF_X = Math.imul(130, ONE);
 const HALF_Z = Math.imul(85, ONE);
@@ -1182,6 +1299,29 @@ function tape(rngWords) {
   return h;
 }
 
+/**
+ * Hands the core the relief the host is drawing.
+ *
+ * Round setup, not per-tick input: it is uploaded once, before anyone moves,
+ * and never touched again. That is what lets it stay outside the hashed state
+ * without weakening anything - in the protocol it belongs with the fee profile
+ * it came from, agreed and committed at the start of the round.
+ *
+ * `heights` is row-major, Q16.16 metres, cols*rows long.
+ */
+function setGround(st, cols, rows, heights) {
+  if (cols < 2 || rows < 2 || heights.length < Math.imul(cols, rows)) return false;
+  const g = flatGround(cols, rows);
+  g.h.set(heights.subarray(0, Math.imul(cols, rows)));
+  st.ground = g;
+  return true;
+}
+
+/** Surface height under a world position, for whatever is drawing the truck. */
+function groundAt(st, x, z) {
+  return heightAtWorld(st.ground, x, z, HALF_X, HALF_Z);
+}
+
 function init(seedWord) {
   const st = create();
   const s = st.i32;
@@ -1198,6 +1338,11 @@ function init(seedWord) {
   s[O_SCORE + S_STATE] = RUN_LIVE;
 
   st.tape = tape(rng);
+
+  // Flat until the host uploads the relief it is drawing. Flat is the honest
+  // default: a core that invents hills the player cannot see is worse than one
+  // that drives over a table.
+  st.ground = flatGround(DEFAULT_COLS, DEFAULT_ROWS);
 
   for (let i = 0; i < UNITS; i++) {
     const b = unitBase(i);
@@ -1240,7 +1385,11 @@ function step(st, throttle, steer, brake, handbrake, practice) {
     // at 26 m/s - the correction below would have had nothing to correct.
     steerAngle: s[T + T_STEER], speed: s[T + T_WHEEL],
   };
-  vehicleStep(v, throttle, steer, brake, handbrake, TICK_DT);
+  // The slope the truck is standing on, along its own nose.
+  const grade = gradeAlong(st.ground, s[T + T_X], s[T + T_Z],
+                           sin(s[T + T_HEADING]), cos(s[T + T_HEADING]),
+                           HALF_X, HALF_Z);
+  vehicleStep(v, throttle, steer, brake, handbrake, TICK_DT, grade);
   s[T + T_X] = clamp(v.x, -HALF_X, HALF_X);
   s[T + T_Z] = clamp(v.z, -HALF_Z, HALF_Z);
   s[T + T_HEADING] = v.heading;
@@ -1304,6 +1453,7 @@ const runScore = (st) =>
                 st.i32[O_SCORE + S_CARGO]);
 
 return { init: init, step: step, hash: hash, runScore: runScore,
+         setGround: setGround, groundAt: groundAt,
          create: create, WORDS: WORDS };
 })();
 if (typeof module !== "undefined") module.exports = BLWP;

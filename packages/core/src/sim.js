@@ -25,6 +25,7 @@ import {
 // `x.thing` points at nothing - and a real bundler in the trust path is
 // exactly what section 3.6 argues against for anything that pins money.
 import { vehicleStep } from './rules/vehicle.js';
+import { flatGround, gradeAlong, heightAtWorld, DEFAULT_COLS, DEFAULT_ROWS } from './rules/ground.js';
 import { stepUnit, threatAt } from './rules/army.js';
 import { accrue, earning, scoreOf } from './rules/score.js';
 import { outcome, RUN_LIVE, RUN_DELIVERED, RUN_WRECKED, RUN_MISSED } from './rules/gate.js';
@@ -52,6 +53,29 @@ function tape(rngWords) {
   return h;
 }
 
+/**
+ * Hands the core the relief the host is drawing.
+ *
+ * Round setup, not per-tick input: it is uploaded once, before anyone moves,
+ * and never touched again. That is what lets it stay outside the hashed state
+ * without weakening anything - in the protocol it belongs with the fee profile
+ * it came from, agreed and committed at the start of the round.
+ *
+ * `heights` is row-major, Q16.16 metres, cols*rows long.
+ */
+export function setGround(st, cols, rows, heights) {
+  if (cols < 2 || rows < 2 || heights.length < Math.imul(cols, rows)) return false;
+  const g = flatGround(cols, rows);
+  g.h.set(heights.subarray(0, Math.imul(cols, rows)));
+  st.ground = g;
+  return true;
+}
+
+/** Surface height under a world position, for whatever is drawing the truck. */
+export function groundAt(st, x, z) {
+  return heightAtWorld(st.ground, x, z, HALF_X, HALF_Z);
+}
+
 export function init(seedWord) {
   const st = create();
   const s = st.i32;
@@ -68,6 +92,11 @@ export function init(seedWord) {
   s[O_SCORE + S_STATE] = RUN_LIVE;
 
   st.tape = tape(rng);
+
+  // Flat until the host uploads the relief it is drawing. Flat is the honest
+  // default: a core that invents hills the player cannot see is worse than one
+  // that drives over a table.
+  st.ground = flatGround(DEFAULT_COLS, DEFAULT_ROWS);
 
   for (let i = 0; i < UNITS; i++) {
     const b = unitBase(i);
@@ -110,7 +139,11 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
     // at 26 m/s - the correction below would have had nothing to correct.
     steerAngle: s[T + T_STEER], speed: s[T + T_WHEEL],
   };
-  vehicleStep(v, throttle, steer, brake, handbrake, TICK_DT);
+  // The slope the truck is standing on, along its own nose.
+  const grade = gradeAlong(st.ground, s[T + T_X], s[T + T_Z],
+                           sin(s[T + T_HEADING]), cos(s[T + T_HEADING]),
+                           HALF_X, HALF_Z);
+  vehicleStep(v, throttle, steer, brake, handbrake, TICK_DT, grade);
   s[T + T_X] = clamp(v.x, -HALF_X, HALF_X);
   s[T + T_Z] = clamp(v.z, -HALF_Z, HALF_Z);
   s[T + T_HEADING] = v.heading;

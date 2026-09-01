@@ -177,4 +177,92 @@ public class PhysxReferenceTests
         Debug.Log(sb.ToString());
         yield return null;
     }
+
+    /// <summary>
+    /// What a hill does to the truck.
+    ///
+    /// The core is flat: it has the mempool relief ported but never reads it,
+    /// so a climb costs nothing and a descent gives nothing back. This records
+    /// what PhysX actually does, sampling the gradient under the truck against
+    /// the acceleration it produced, so the core can be given the same law.
+    /// </summary>
+    [UnityTest]
+    [Explicit("Measurement, not an assertion. See MeasureThePhysxTruck.")]
+    public IEnumerator MeasureThePhysxHills()
+    {
+        var terrain = Object.FindFirstObjectByType<MempoolTerrain>();
+        Assert.IsNotNull(terrain, "kein Terrain");
+
+        var sb = new StringBuilder();
+        sb.AppendLine("PHYSXHILL BEGIN");
+
+        // One straight crossing of the map, recorded as the height under the
+        // truck against the speed it was doing. That pairing is the whole
+        // reference: replay the same relief and the same throttle in the core
+        // and the two speed traces have to lie on top of each other.
+        const float lane = -20f;
+
+        // The same crossing is driven TWICE: once over the map's own relief,
+        // and once with the relief switched off.
+        //
+        // The pair is the point. Comparing a hilly PhysX run against a hilly
+        // core run measures the hill response and every other difference at
+        // once, and the core is a little quick off the mark - so the bias from
+        // that leaked into the hill number and made it unreadable. With a flat
+        // control on both sides the hill response can be isolated: what the
+        // relief did to Unity, against what it did to the core.
+        for (int pass = 0; pass < 2; pass++)
+        {
+            bool flat = pass == 1;
+            if (flat) { terrain.feeHeight = 0f; terrain.baseRelief = 0f; terrain.Build(); }
+            yield return new WaitForSeconds(0.5f);
+            sb.AppendLine(flat ? "PHYSXHILL PASS flat" : "PHYSXHILL PASS relief");
+            yield return Crossing(terrain, lane, sb);
+        }
+
+        sb.AppendLine("PHYSXHILL END");
+        Debug.Log(sb.ToString());
+        yield return null;
+    }
+
+    /// <summary>One full-throttle crossing of the map, recorded.</summary>
+    IEnumerator Crossing(MempoolTerrain terrain, float lane, StringBuilder sb)
+    {
+        Drive(0f, 0f);
+        _rb.linearVelocity = Vector3.zero;
+        _rb.angularVelocity = Vector3.zero;
+        _rb.position = new Vector3(-120f, terrain.SampleSurface(-120f, lane) + 1.5f, lane);
+        _rb.rotation = Quaternion.Euler(0f, 90f, 0f);          // straight up +X
+        yield return Settle();
+
+        // The relief along the line, sampled every metre, so the core can be
+        // given exactly the ground PhysX drove over.
+        var prof = new StringBuilder();
+        for (int x = -125; x <= 125; x++)
+            prof.Append(terrain.SampleSurface(x, lane).ToString("0.000")).Append(' ');
+        sb.AppendLine("PHYSXHILL profile " + prof.ToString().Trim());
+        sb.AppendLine($"PHYSXHILL lane {lane} startx -120");
+
+        float el = 0f, mark = 0.25f;
+        while (el < 20f && _rb.position.x < 120f)
+        {
+            Drive(1f, 0f);
+            yield return null;
+            el += Time.deltaTime;
+            if (el < mark) continue;
+            mark += 0.25f;
+
+            int down = 0;
+            foreach (var a in _truck.axles)
+            {
+                if (a == null) continue;
+                if (a.left != null && a.left.isGrounded) down++;
+                if (a.right != null && a.right.isGrounded) down++;
+            }
+            sb.AppendLine($"PHYSXHILL t={el:0.00} x={_rb.position.x:0.000} " +
+                          $"v={_rb.linearVelocity.magnitude:0.000} grounded={down}");
+        }
+
+        yield return null;
+    }
 }

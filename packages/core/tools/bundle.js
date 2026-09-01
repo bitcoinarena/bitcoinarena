@@ -68,6 +68,7 @@ for (const file of order) {
   out += '\n// ---- ' + relative(SRC, file) + '\n' + body;
 }
 out += '\nreturn { init: init, step: step, hash: hash, runScore: runScore,\n';
+out += '         setGround: setGround, groundAt: groundAt,\n';
 out += '         create: create, WORDS: WORDS };\n})();\n';
 out += 'if (typeof module !== "undefined") module.exports = BLWP;\n';
 

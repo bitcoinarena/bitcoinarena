@@ -55,6 +55,7 @@ namespace Blwp
         // the core rather than from a collider that is no longer simulated.
         // The colliders ARE children of the chassis, so they still give the
         // mounting points for free.
+        int _groundRevision = -1;
         Transform[] _wheels;
         Vector3[] _wheelMount;      // in the truck's own frame
         Quaternion[] _wheelBase;    // resting orientation, relative to the truck
@@ -86,6 +87,7 @@ namespace Blwp
             if (_rb != null) { _wasKinematic = _rb.isKinematic; _rb.isKinematic = true; }
             if (_truck != null) _truck.externallyDriven = true;
             CollectWheels();
+            UploadGround();
             Debug.Log("[blwp] core is driving");
         }
 
@@ -190,9 +192,30 @@ namespace Blwp
             }
         }
 
+        /// <summary>
+        /// Gives the core the relief the game is drawing.
+        ///
+        /// Re-sent when the terrain rebuilds, because the ground comes from a
+        /// live fetch and changes under us: a core still holding the flat
+        /// placeholder from before the first fetch would drive a hillside as
+        /// though it were a table, which is exactly the bug this exists to fix.
+        /// </summary>
+        void UploadGround()
+        {
+            if (terrain == null || _groundRevision == terrain.Revision) return;
+            _groundRevision = terrain.Revision;
+
+            const int cols = 160, rows = 96;      // the terrain's own grid
+            if (BlwpCore.SetGround(terrain.HeightGrid(cols, rows), cols, rows))
+                Debug.Log($"[blwp] relief uploaded, revision {_groundRevision}");
+            else
+                Debug.LogWarning("[blwp] the core refused the relief - it stays flat");
+        }
+
         void Update()
         {
             if (!Driving) return;
+            UploadGround();
 
             // A fixed step, caught up in whole ticks. Rendering interpolates
             // between them; the simulation never sees a partial one.

@@ -27,6 +27,7 @@ namespace Blwp
         [DllImport("__Internal")] private static extern int BlwpRunScore();
         [DllImport("__Internal")] private static extern int BlwpStateWords();
         [DllImport("__Internal")] private static extern int BlwpQueryParam(IntPtr name, IntPtr outp, int cap);
+        [DllImport("__Internal")] private static extern int BlwpSetGround(IntPtr h, int cols, int rows);
         public const bool Compiled = true;
 #else
         private static int BlwpInit(int seed) => 0;
@@ -36,6 +37,7 @@ namespace Blwp
         private static int BlwpRunScore() => 0;
         private static int BlwpStateWords() => 0;
         private static int BlwpQueryParam(IntPtr n, IntPtr o, int cap) => 0;
+        private static int BlwpSetGround(IntPtr h, int c, int r) => 0;
         public const bool Compiled = false;
 #endif
 
@@ -88,6 +90,22 @@ namespace Blwp
         }
 
         public static int RunScore() => Available ? BlwpRunScore() : 0;
+
+        /// <summary>
+        /// Hands the core the ground the game is drawing, in Q16.16 metres.
+        ///
+        /// Round setup, uploaded once: the core needs the slope under the
+        /// truck to make a climb cost anything, and it must be THIS ground
+        /// rather than ground of its own, or it would feel hills that are not
+        /// on the screen.
+        /// </summary>
+        public static bool SetGround(int[] heights, int cols, int rows)
+        {
+            if (!Available || heights == null || heights.Length < cols * rows) return false;
+            var pin = GCHandle.Alloc(heights, GCHandleType.Pinned);
+            try { return BlwpSetGround(pin.AddrOfPinnedObject(), cols, rows) != 0; }
+            finally { pin.Free(); }
+        }
 
         /// <summary>
         /// A query parameter from the page URL, or null outside a browser.
