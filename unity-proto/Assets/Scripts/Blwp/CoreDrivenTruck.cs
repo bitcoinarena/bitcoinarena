@@ -43,6 +43,12 @@ namespace Blwp
         /// <summary>True while the core is actually driving.</summary>
         public bool Driving { get; private set; }
 
+        /// <summary>Last slope under the truck, rise over run. For the debug panel.</summary>
+        public float LastGrade { get; private set; }
+
+        /// <summary>Last surface height the truck was set on to.</summary>
+        public float LastSurface { get; private set; }
+
         TruckController _truck;
         Rigidbody _rb;
         float _accumulator;
@@ -388,6 +394,8 @@ namespace Blwp
             _lie = Quaternion.Slerp(_lie, lie, 1f - Mathf.Exp(-8f * Time.deltaTime));
 
             float ride = (fl + fr + rl + rr) * 0.25f + _bodyAboveGround;
+            LastSurface = (fl + fr + rl + rr) * 0.25f;
+            LastGrade = ((fl + fr) - (rl + rr)) / (4f * half);
             transform.SetPositionAndRotation(new Vector3(x, ride, z), _lie);
 
             if (_rb != null) _rb.position = transform.position;

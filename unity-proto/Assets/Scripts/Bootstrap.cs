@@ -72,7 +72,7 @@ public class Bootstrap : MonoBehaviour
     public float sunPitch = 34f;          // low enough for long shadows, high enough to light
     public float sunYaw = -42f;
     public Color sunColour = new Color(1f, 0.95f, 0.86f);
-    public float sunIntensity = 3.6f;
+    public float sunIntensity = 1.6f;
 
     /// <summary>
     /// How far the road ribbon floats above the terrain. Just enough to beat
@@ -392,6 +392,13 @@ public class Bootstrap : MonoBehaviour
         // box is a tank. Overhead light flattens everything to its own colour.
         go.transform.rotation = Quaternion.Euler(sunPitch, sunYaw, 0f);
 
+        // Exposure, measured rather than judged by eye: at a sun of 3.6 with
+        // +1.05 EV on top, 57% of the pixels at the loading bay were pure
+        // white. Concrete has an albedo near 0.7, so in full sun that lands
+        // around 2.5 in linear light, doubled by the exposure to 5 - and ACES
+        // maps anything past about 1.5 to paper. The bay was not overlit in
+        // the model; it was overexposed by the camera.
+        //
         // Flat sky ambient fills every crevice and cancels the sun's modelling.
         // A gradient keeps the ground dark and the sky bright, which is both
         // more like daylight and far more legible.
@@ -399,9 +406,9 @@ public class Bootstrap : MonoBehaviour
         // Lifted well up. A gradient keeps the modelling that flat sky fill
         // destroys, but set too dark it just makes everything dim - which is
         // the other half of "no contrast".
-        RenderSettings.ambientSkyColor = new Color(0.62f, 0.72f, 0.86f);
-        RenderSettings.ambientEquatorColor = new Color(0.44f, 0.45f, 0.46f);
-        RenderSettings.ambientGroundColor = new Color(0.20f, 0.19f, 0.17f);
+        RenderSettings.ambientSkyColor = new Color(0.42f, 0.49f, 0.60f);
+        RenderSettings.ambientEquatorColor = new Color(0.30f, 0.31f, 0.32f);
+        RenderSettings.ambientGroundColor = new Color(0.16f, 0.15f, 0.14f);
 
         RenderSettings.fog = true;
         RenderSettings.fogMode = FogMode.ExponentialSquared;

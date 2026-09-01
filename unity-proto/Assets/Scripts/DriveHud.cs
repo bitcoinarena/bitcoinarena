@@ -178,6 +178,8 @@ public class DriveHud : MonoBehaviour
         DrawArrivalCard(w, h);
         DrawSendOff(w, h);
         DrawPractice(w, h);
+        DrawSettings(w, h);
+        DrawDebug(w, h);
     }
 
     /// <summary>
@@ -232,6 +234,93 @@ public class DriveHud : MonoBehaviour
 
         if (GUI.Button(box, GUIContent.none, GUIStyle.none)) Blwp.PracticeMode.Toggle();
     }
+
+    /// <summary>
+    /// Sound and debug, top right.
+    ///
+    /// Small and out of the way: neither is reached for mid-run, and the
+    /// corner they sit in is the only one not already carrying the block
+    /// clock, the score or a driving pad.
+    /// </summary>
+    void DrawSettings(int w, int h)
+    {
+        Button(TouchPad.RectFor(TouchPad.Pad.Sound, w, h),
+               GameSettings.Sound ? "SOUND" : "MUTED", GameSettings.Sound,
+               GameSettings.ToggleSound);
+        Button(TouchPad.RectFor(TouchPad.Pad.Debug, w, h),
+               "DEBUG", GameSettings.Debug, GameSettings.ToggleDebug);
+    }
+
+    void Button(Rect r, string label, bool on, System.Action onClick)
+    {
+        GUI.color = new Color(0.02f, 0.03f, 0.05f, on ? 0.78f : 0.55f);
+        GUI.DrawTexture(r, _flat);
+        GUI.color = on ? new Color(0.45f, 0.75f, 1f, 0.85f) : new Color(1f, 1f, 1f, 0.35f);
+        GUI.DrawTexture(new Rect(r.x, r.y, r.width, 2f), _flat);
+        GUI.color = Color.white;
+
+        var st = new GUIStyle(GUI.skin.label)
+        {
+            alignment = TextAnchor.MiddleCenter,
+            fontStyle = FontStyle.Bold,
+            fontSize = Mathf.RoundToInt(Mathf.Clamp(r.height * 0.42f, 10f, 18f)),
+        };
+        Shadowed(r, label, st, on ? new Color(0.75f, 0.9f, 1f) : new Color(1f, 1f, 1f, 0.6f));
+        if (GUI.Button(r, GUIContent.none, GUIStyle.none)) onClick();
+    }
+
+    /// <summary>
+    /// What the core actually thinks is happening.
+    ///
+    /// Every fault in this build so far was invisible until it had a number
+    /// on it: a truck riding half a metre high, wheels sunk into the road by
+    /// the depth of the tarmac, a steering model out by a factor of four. The
+    /// person best placed to catch the next one is whoever is driving, so the
+    /// numbers go where they can see them.
+    /// </summary>
+    void DrawDebug(int w, int h)
+    {
+        if (!GameSettings.Debug) return;
+
+        var core = Object.FindFirstObjectByType<Blwp.CoreDrivenTruck>();
+        _fps = Mathf.Lerp(_fps, 1f / Mathf.Max(0.0001f, Time.unscaledDeltaTime), 0.06f);
+
+        var lines = new System.Collections.Generic.List<string>
+        {
+            $"fps {_fps:0}",
+            core != null && core.Driving ? "core DRIVING" : "PhysX driving",
+        };
+
+        if (core != null && core.Driving)
+        {
+            float ONE = Blwp.BlwpCore.ONE;
+            var st = Blwp.BlwpCore.State;
+            lines.Add($"tick {Blwp.BlwpCore.Tick}");
+            lines.Add($"speed {Blwp.BlwpCore.TruckSpeed:0.0} m/s   {Blwp.BlwpCore.TruckSpeed * 3.6f:0} km/h");
+            lines.Add($"pos {st[Blwp.Layout.O_TRUCK + Blwp.Layout.T_X] / ONE:0.0}, " +
+                      $"{st[Blwp.Layout.O_TRUCK + Blwp.Layout.T_Z] / ONE:0.0}");
+            lines.Add($"heading {Blwp.BlwpCore.TruckHeading:0}   wheel {Blwp.BlwpCore.TruckSteerDegrees:0.0}");
+            lines.Add($"surface {core.LastSurface:0.00} m   grade {core.LastGrade:0.000} " +
+                      $"({Mathf.Atan(core.LastGrade) * Mathf.Rad2Deg:0.0} deg)");
+            lines.Add($"practice {(Blwp.PracticeMode.On ? "on" : "off")} ({Blwp.PracticeMode.Source})");
+        }
+
+        var style = new GUIStyle(_small) { alignment = TextAnchor.MiddleLeft };
+        float lh = Mathf.Max(14f, h * 0.020f);
+        float bw = Mathf.Min(w * 0.42f, 260f);
+        var box = new Rect(w - bw - Mathf.Max(10f, h * 0.025f),
+                           TouchPad.RectFor(TouchPad.Pad.Debug, w, h).yMax + lh * 0.6f,
+                           bw, lh * lines.Count + lh * 0.6f);
+
+        GUI.color = new Color(0.02f, 0.03f, 0.05f, 0.72f);
+        GUI.DrawTexture(box, _flat);
+        GUI.color = Color.white;
+        for (int i = 0; i < lines.Count; i++)
+            Shadowed(new Rect(box.x + 10f, box.y + lh * 0.3f + i * lh, box.width - 14f, lh),
+                     lines[i], style, new Color(0.7f, 0.95f, 0.8f));
+    }
+
+    float _fps = 60f;
 
     /// <summary>How tall the condition bar is. Shared, so nothing lands on it.</summary>
     float HealthBoxHeight(int w, int h) => HealthBox(w, h).height;

@@ -125,7 +125,10 @@ public class TouchControls : MonoBehaviour
             // something a player reaches for mid-run, and both were taking room
             // the score needs. The INPUTS stay - the keys still work, and the
             // god view is shown behind the splash screen instead.
-            if (pad == TouchPad.Pad.Handbrake || pad == TouchPad.Pad.View) continue;
+            // The settings buttons are drawn by the HUD, which owns their
+            // labels and their state; here they would be two blank pads.
+            if (pad == TouchPad.Pad.Handbrake || pad == TouchPad.Pad.View
+                || pad == TouchPad.Pad.Sound || pad == TouchPad.Pad.Debug) continue;
 
             var r = TouchPad.RectFor(pad, w, h);
             bool held = TouchPad.Hit(pad, w, h, _points);

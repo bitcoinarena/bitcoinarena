@@ -135,12 +135,12 @@ public static class BuildPrototypeScene
         tone.mode.value = TonemappingMode.ACES;      // filmic shoulder, deep blacks
 
         var colour = profile.Add<ColorAdjustments>(true);
-        colour.postExposure.overrideState = true; colour.postExposure.value = 1.05f;
+        colour.postExposure.overrideState = true; colour.postExposure.value = 0f;
         colour.contrast.overrideState = true; colour.contrast.value = 20f;
         colour.saturation.overrideState = true; colour.saturation.value = 12f;
 
         var bloom = profile.Add<Bloom>(true);
-        bloom.threshold.overrideState = true; bloom.threshold.value = 0.95f;
+        bloom.threshold.overrideState = true; bloom.threshold.value = 1.15f;
         bloom.intensity.overrideState = true; bloom.intensity.value = 0.7f;
         bloom.scatter.overrideState = true; bloom.scatter.value = 0.62f;
 

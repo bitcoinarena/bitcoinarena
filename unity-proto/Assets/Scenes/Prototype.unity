@@ -183,7 +183,7 @@ MonoBehaviour:
   sunPitch: 34
   sunYaw: -42
   sunColour: {r: 1, g: 0.95, b: 0.86, a: 1}
-  sunIntensity: 3.6
+  sunIntensity: 1.6
 --- !u!4 &237872914
 Transform:
   m_ObjectHideFlags: 0
