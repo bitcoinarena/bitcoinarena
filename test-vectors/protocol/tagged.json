@@ -1,0 +1,21 @@
+{
+ "what": "Tagged hash. H_tag(x) = sha256(sha256(tag) || sha256(tag) || x).",
+ "cases": [
+  {
+   "tag": "BLWP/v1/RoundContract",
+   "message": "",
+   "digest": "90d2fa7b91b30e864473753024e96c8ee9008f82296a28cf575a5e7bee262c24"
+  },
+  {
+   "tag": "BLWP/v1/RoundContract",
+   "message": "010203",
+   "digest": "bb8e48fb08cf2aebe64fb5756aa2c8507ae044651c1f2da2d3dc524a24323375"
+  },
+  {
+   "tag": "BLWP/v1/EntryContract",
+   "message": "010203",
+   "digest": "f5a3b900263101f802fabec93a90431fa865eba37b61d35febd9ca847ceda049"
+  }
+ ],
+ "note": "The last two share a body and differ only by tag. Any implementation that produces one digest for both has dropped the tag."
+}

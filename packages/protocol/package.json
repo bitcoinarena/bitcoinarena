@@ -1,0 +1,11 @@
+{
+  "name": "@blwp/protocol",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Canonical encoding, contracts, census, sortition and payout. Isomorphic.",
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "vectors": "node tools/make-vectors.js"
+  }
+}

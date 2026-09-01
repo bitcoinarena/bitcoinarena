@@ -1,0 +1,58 @@
+{
+ "what": "Census canonicalisation: filter by height, maturity and spentness; sort by (txid, vout); Merkle-root the tagged leaves.",
+ "entries": [
+  {
+   "txid": "0303030303030303030303030303030303030303030303030303030303030303",
+   "vout": 0,
+   "bondSats": "500000",
+   "height": 800003,
+   "roles": [
+    "game",
+    "verify"
+   ],
+   "encoded": "030303030303030303030303030303030303030303030303030303030303030300000000c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5000000000007a120000c350300020001",
+   "leaf": "56fcce9ae9fc794154c01341916b0e95dfb55735261be520298395b7a0d461ec"
+  },
+  {
+   "txid": "0505050505050505050505050505050505050505050505050505050505050505",
+   "vout": 2,
+   "bondSats": "2000000",
+   "height": 800005,
+   "roles": [
+    "game",
+    "verify"
+   ],
+   "encoded": "050505050505050505050505050505050505050505050505050505050505050500000002c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c300000000001e8480000c350500020001",
+   "leaf": "5af471324c1df7fb01165b585278ee7c6bbc129c3614564431c42721a6cf4e56"
+  },
+  {
+   "txid": "0707070707070707070707070707070707070707070707070707070707070707",
+   "vout": 1,
+   "bondSats": "100000",
+   "height": 800007,
+   "roles": [
+    "game",
+    "verify"
+   ],
+   "encoded": "070707070707070707070707070707070707070707070707070707070707070700000001c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c100000000000186a0000c350700020001",
+   "leaf": "c95fa969b08c6a0172feaa3ff461505b365d245f57dfbaebe3a6dd7b63618a8a"
+  },
+  {
+   "txid": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b",
+   "vout": 2,
+   "bondSats": "100000",
+   "height": 800011,
+   "roles": [
+    "game",
+    "verify"
+   ],
+   "encoded": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b00000002bdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbd00000000000186a0000c350b00020001",
+   "leaf": "99606ee24bdd6c281b55963cd9f9cbf7bec4a275c0a0a330bc792a0d449104b5"
+  }
+ ],
+ "root": "e7b790cdf2822d8f61a856d6d5b9b4dbcb164a2532a45477e47b4233e00f894c",
+ "rules": [
+  "Sort by (txid, vout). NOT by H(pubkey): a pubkey can be ground until its hash lands where the operator wants, a txid cannot be chosen after funding.",
+  "An odd level PROMOTES the last node. Duplicating it makes two leaf sets share a root, which is CVE-2012-2459."
+ ]
+}

@@ -1,0 +1,14 @@
+{
+ "package": "@blwp/protocol",
+ "protocolVersion": 1,
+ "produced": "packages/protocol/tools/make-vectors.js",
+ "claim": "A second implementation is correct if and only if it reproduces every value here.",
+ "vectors": [
+  "tagged",
+  "encoding",
+  "census",
+  "sortition",
+  "payout",
+  "contracts"
+ ]
+}

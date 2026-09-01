@@ -20,8 +20,21 @@ const K = new Int32Array([
 
 const rotr = (x, n) => ((x >>> n) | (x << (32 - n))) | 0;
 
+/** Returns the 32 raw digest bytes. */
+export function sha256bytes(bytes) {
+  return words(bytes);
+}
+
 /** Returns a 64-character lower-case hex digest of the bytes given. */
 export function sha256hex(bytes) {
+  const w = words(bytes);
+  const digits = '0123456789abcdef';
+  let out = '';
+  for (let i = 0; i < 32; i++) out += digits[(w[i] >>> 4) & 15] + digits[w[i] & 15];
+  return out;
+}
+
+function words(bytes) {
   const len = bytes.length;
   const bitLenHi = Math.floor(len / 536870912);
   const bitLenLo = (len << 3) >>> 0;
@@ -71,12 +84,14 @@ export function sha256hex(bytes) {
     h4 = (h4 + e) | 0; h5 = (h5 + f) | 0; h6 = (h6 + g) | 0; h7 = (h7 + h) | 0;
   }
 
-  const digits = '0123456789abcdef';
-  let out = '';
-  const words = [h0, h1, h2, h3, h4, h5, h6, h7];
+  const out = new Uint8Array(32);
+  const hs = [h0, h1, h2, h3, h4, h5, h6, h7];
   for (let i = 0; i < 8; i++) {
-    const v = words[i];
-    for (let n = 28; n >= 0; n -= 4) out += digits[(v >>> n) & 15];
+    const v = hs[i], o = i << 2;
+    out[o] = (v >>> 24) & 255;
+    out[o + 1] = (v >>> 16) & 255;
+    out[o + 2] = (v >>> 8) & 255;
+    out[o + 3] = v & 255;
   }
   return out;
 }
