@@ -7,7 +7,7 @@
 // defined across the whole map, so a truck on the empty run-in to the gate
 // could sit on it and be scored as though under fire.
 
-import { ONE, add, sub, mulFast, div, clamp, min, max, abs, length2 } from '../fixed.js';
+import { ONE, add, sub, neg, mulFast, div, clamp, min, max, abs, length2 } from '../fixed.js';
 import { sin, cos } from '../trig.js';
 import { below } from '../rng.js';
 
@@ -40,7 +40,24 @@ const RIFLE_STANDOFF = Math.imul(4, ONE);
 const ARMOUR_SPREAD = Math.imul(10, ONE);
 const RIFLE_SPREAD = Math.imul(8, ONE);
 
+/**
+ * Pushed this far past its own line, a unit is overrun and falls right back.
+ *
+ * This is the missing half of the front's shape. Advance-and-back-off alone
+ * settles every unit onto one line - the measured z spread collapsed from 23
+ * to 9 while the C# army holds 20 - and a single line means both armies meet
+ * at once and half the armour dies in the ten seconds after contact. Units
+ * thrown right back and coming forward again are what keeps the strip
+ * populated at different depths, so contact is a rolling local thing instead
+ * of one collision.
+ */
+const OVERRUN_DEPTH = Math.imul(14, ONE);   // Army.OverrunDepth
+const FALL_BACK = Math.imul(34, ONE);
+
 /** Inside this, a tank gives ground rather than closing further. */
+/** The battlefield's half width, as Army.FrontX has it. */
+const FRONT_X = Math.imul(92, ONE);
+
 const BACK_OFF_RANGE = Math.imul(24, ONE);
 const BACK_OFF = Math.imul(6, ONE);        // metres a second, away from the seam
 const OVERRUN = Math.imul(14, ONE);
@@ -99,8 +116,20 @@ export function stepUnit(u, rng, seamZ, truckX, truckZ, halfX, halfZ, dt, index)
   // on one line with every other unit; one that backs off when crowded ends up
   // scattered through a contested strip, which is where the trickle of
   // engagements comes from.
+  // Overrun: past our own line by more than a few metres, fall right back.
+  // NOT side: the Bull army spawns at negative z, so its side is -1 while its
+  // Dir - the way it faces and pushes - is +1. Using side made every unit read
+  // as overrun the moment it reached its own holding line, so the whole army
+  // sat on the fall-back line and never fired a shot.
+  const past = mulFast(sub(u.z, seamZ), Math.imul(-side, ONE));
+  const overrun = past > OVERRUN_DEPTH;
+
   let dz;
-  if (u.crowded) {
+  if (overrun) {
+    const back = add(seamZ, Math.imul(side, FALL_BACK));
+    const g = sub(back, u.z);
+    dz = mulFast(mulFast(walk, g > 0 ? ONE : -ONE), dt);
+  } else if (u.crowded) {
     dz = mulFast(mulFast(BACK_OFF, Math.imul(side, ONE)), dt);
   } else {
     const gap = sub(hold, u.z);
@@ -109,7 +138,18 @@ export function stepUnit(u, rng, seamZ, truckX, truckZ, halfX, halfZ, dt, index)
   }
   const dx = mulFast(mulFast(walk, sin(u.heading)), mulFast(dt, 26214));
 
-  u.x = clamp(add(u.x, dx), -halfX, halfX);
+  // Held on the BATTLEFIELD, not merely on the map.
+  //
+  // The heading wobbles, so the lateral step is a random walk, and clamped at
+  // the map edge it is a random walk with 130 m of room: after thirty seconds
+  // the surviving tanks were spread from -130 to +130 with not one enemy
+  // inside gun range of another. The fight was a massacre in the first twenty
+  // seconds and then nothing at all, which is why attrition looked like twice
+  // the C# army's - it was not a faster grind, it was no grind.
+  //
+  // Unity holds every unit inside |x| < FrontX - 4 for exactly this reason.
+  const edge = sub(FRONT_X, Math.imul(4, ONE));
+  u.x = clamp(add(u.x, dx), neg(min(edge, halfX)), min(edge, halfX));
   u.z = clamp(add(u.z, dz), -halfZ, halfZ);
 
   // in range of the courier?
