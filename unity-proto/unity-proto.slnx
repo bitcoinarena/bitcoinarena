@@ -1,0 +1,7 @@
+﻿<Solution>
+  <Project Path="BtcLogistics.EditTests.csproj" />
+  <Project Path="BtcLogistics.Runtime.csproj" />
+  <Project Path="BtcLogistics.Tests.csproj" />
+  <Project Path="Assembly-CSharp-Editor.csproj" />
+  <Project Path="Assembly-CSharp.csproj" />
+</Solution>

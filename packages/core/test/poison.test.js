@@ -24,7 +24,7 @@ test('the core runs with every nondeterministic Math function poisoned', async (
     const { init, step } = await import('../src/sim.js');
     const { hash } = await import('../src/state.js');
     const st = init(0x5eed1234);
-    for (let t = 0; t < 2000; t++) step(st, 40000, ((t * 977) % 65536) - 32768, 0);
+    for (let t = 0; t < 2000; t++) step(st, 40000, ((t * 977) % 65536) - 32768, 0, 0);
     assert.equal(hash(st).length, 64);
   } finally {
     for (const name of POISON) Math[name] = saved[name];
@@ -44,7 +44,7 @@ test('the same seed gives the same world, a different seed does not', async () =
   const { hash } = await import('../src/state.js');
   const run = (seed) => {
     const st = init(seed);
-    for (let t = 0; t < 500; t++) step(st, 50000, 12345, 0);
+    for (let t = 0; t < 500; t++) step(st, 50000, 12345, 0, 0);
     return hash(st);
   };
   assert.equal(run(7), run(7));

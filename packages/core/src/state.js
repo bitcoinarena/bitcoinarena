@@ -33,6 +33,16 @@ export const T_WHEEL = 9, T_THROTTLE = 10, T_STEER = 11;
 export const S_EXPOSURE = 0, S_ELAPSED = 1, S_BESTX = 2;
 export const S_CARGO = 3, S_DELIVERED = 4, S_STATE = 5;
 
+/**
+ * Set for any tick the run spent in practice mode.
+ *
+ * It lives in the HASHED state on purpose. Practice is not a cheat if it is
+ * declared, and a verifier replaying a transcript sees this word set and can
+ * refuse to settle the round - which is what makes it safe to offer at all.
+ * A flag Unity kept to itself would be invisible to every node.
+ */
+export const S_PRACTICE = 6;
+
 // unit fields, relative to a unit's base
 export const U_X = 0, U_Z = 1, U_SIDE = 2, U_HP = 3;
 export const U_HEADING = 4, U_STATE = 5, U_COOLDOWN = 6, U_TARGET = 7;

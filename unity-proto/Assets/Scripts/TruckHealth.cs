@@ -82,7 +82,8 @@ public class TruckHealth : MonoBehaviour
     /// began, with no input from the player at all. An open bay therefore holds
     /// protection outright.
     /// </summary>
-    public bool IsInvulnerable => !_leftSpawn || (loadout != null && loadout.IsOpen);
+    public bool IsInvulnerable =>
+        Blwp.PracticeMode.On || !_leftSpawn || (loadout != null && loadout.IsOpen);
 
     /// <summary>Raised when the truck is written off.</summary>
     public System.Action Wrecked;

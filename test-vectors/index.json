@@ -26,6 +26,11 @@
    "name": "idle",
    "ticks": 3600,
    "final": "076fcb26f98fc1dc6037b3208d8ff6c4d1c1ef8a3007084f9d1ce7b9bd898a31"
+  },
+  {
+   "name": "practice",
+   "ticks": 3600,
+   "final": "ab2e4026c4d2ae1ba3fd39b6d70dbc6f1650c7e4d9ed09800de53e508e46b301"
   }
  ]
 }

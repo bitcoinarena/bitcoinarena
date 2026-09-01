@@ -581,8 +581,21 @@ const K = new Int32Array([
 
 const rotr = (x, n) => ((x >>> n) | (x << (32 - n))) | 0;
 
+/** Returns the 32 raw digest bytes. */
+function sha256bytes(bytes) {
+  return words(bytes);
+}
+
 /** Returns a 64-character lower-case hex digest of the bytes given. */
 function sha256hex(bytes) {
+  const w = words(bytes);
+  const digits = '0123456789abcdef';
+  let out = '';
+  for (let i = 0; i < 32; i++) out += digits[(w[i] >>> 4) & 15] + digits[w[i] & 15];
+  return out;
+}
+
+function words(bytes) {
   const len = bytes.length;
   const bitLenHi = Math.floor(len / 536870912);
   const bitLenLo = (len << 3) >>> 0;
@@ -632,12 +645,14 @@ function sha256hex(bytes) {
     h4 = (h4 + e) | 0; h5 = (h5 + f) | 0; h6 = (h6 + g) | 0; h7 = (h7 + h) | 0;
   }
 
-  const digits = '0123456789abcdef';
-  let out = '';
-  const words = [h0, h1, h2, h3, h4, h5, h6, h7];
+  const out = new Uint8Array(32);
+  const hs = [h0, h1, h2, h3, h4, h5, h6, h7];
   for (let i = 0; i < 8; i++) {
-    const v = words[i];
-    for (let n = 28; n >= 0; n -= 4) out += digits[(v >>> n) & 15];
+    const v = hs[i], o = i << 2;
+    out[o] = (v >>> 24) & 255;
+    out[o + 1] = (v >>> 16) & 255;
+    out[o + 2] = (v >>> 8) & 255;
+    out[o + 3] = v & 255;
   }
   return out;
 }
@@ -676,6 +691,16 @@ const T_WHEEL = 9, T_THROTTLE = 10, T_STEER = 11;
 // score fields, relative to O_SCORE
 const S_EXPOSURE = 0, S_ELAPSED = 1, S_BESTX = 2;
 const S_CARGO = 3, S_DELIVERED = 4, S_STATE = 5;
+
+/**
+ * Set for any tick the run spent in practice mode.
+ *
+ * It lives in the HASHED state on purpose. Practice is not a cheat if it is
+ * declared, and a verifier replaying a transcript sees this word set and can
+ * refuse to settle the round - which is what makes it safe to offer at all.
+ * A flag Unity kept to itself would be invisible to every node.
+ */
+const S_PRACTICE = 6;
 
 // unit fields, relative to a unit's base
 const U_X = 0, U_Z = 1, U_SIDE = 2, U_HP = 3;
@@ -1133,7 +1158,14 @@ function init(seedWord) {
 
 const nextBelow = below;
 
-function step(st, throttle, steer, brake, handbrake) {
+/**
+ * One tick.
+ *
+ * `practice` is an INPUT, not a setting. It rides in the transcript with
+ * everything else, so a node replaying the run sees exactly which ticks were
+ * shielded - which is the difference between a practice mode and a cheat.
+ */
+function step(st, throttle, steer, brake, handbrake, practice) {
   const s = st.i32;
   const rng = s.subarray(O_RNG, O_RNG + 4);
   const T = O_TRUCK;
@@ -1168,7 +1200,12 @@ function step(st, throttle, steer, brake, handbrake) {
     s[b + U_HEADING] = u.heading; s[b + U_COOLDOWN] = u.cooldown;
     if (r === 2) hits = (hits + 1) | 0;
   }
-  if (hits > 0 && s[O_SCORE + S_STATE] === RUN_LIVE)
+  // The army still fires, still walks, still counts towards danger - only the
+  // damage is withheld. Skipping the shooting entirely would change the draw
+  // order and make a practice run replay differently from a live one, which
+  // would defeat the point of practising.
+  if (practice) s[O_SCORE + S_PRACTICE] = 1;
+  else if (hits > 0 && s[O_SCORE + S_STATE] === RUN_LIVE)
     s[T + T_HP] = max(0, sub(s[T + T_HP], Math.imul(hits, ONE)));
 
   // ---- 3. score ----------------------------------------------------------

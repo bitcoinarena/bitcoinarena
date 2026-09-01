@@ -97,7 +97,7 @@ test('nothing locale-dependent, time-dependent or random is reachable', async ()
     const { init, step } = await import('../src/sim.js?specified');
     const { hash } = await import('../src/state.js?specified');
     const st = init(0x51ec);
-    for (let t = 0; t < 3000; t++) step(st, 60000, ((t * 811) % 65536) - 32768, 0, 0);
+    for (let t = 0; t < 3000; t++) step(st, 60000, ((t * 811) % 65536) - 32768, 0, 0, 0);
     assert.equal(hash(st).length, 64);
   } finally {
     for (const [obj, key, fn] of saved) obj[key] = fn;

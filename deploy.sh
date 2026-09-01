@@ -9,6 +9,16 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 BUILD="$ROOT/unity-proto/build/webgl"
 PROJECT="${1:-btc-logistics-war}"
 
+# FROZEN. This project holds the last single-player version - Unity running
+# PhysX, no deterministic core. The core-driven build goes to its own host via
+# deploy-core.sh, so that this one stays where players can find it.
+if [ "$PROJECT" = "btc-logistics-war" ] && [ "${ALLOW_OVERWRITE_SINGLEPLAYER:-0}" != "1" ]; then
+  echo "btc-logistics-war is frozen as the last single-player version." >&2
+  echo "Use ./deploy-core.sh for the core build, or set" >&2
+  echo "ALLOW_OVERWRITE_SINGLEPLAYER=1 if you really mean to replace it." >&2
+  exit 2
+fi
+
 [ -f "$BUILD/index.html" ] || { echo "no build at $BUILD - run BuildWebGL.Run first"; exit 1; }
 
 # The build directory is gitignored, so anything Cloudflare needs that is not

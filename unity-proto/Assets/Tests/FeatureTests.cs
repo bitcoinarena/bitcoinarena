@@ -11,6 +11,15 @@ using UnityEngine.TestTools;
 /// </summary>
 public class FeatureTests
 {
+    /// <summary>
+    /// Practice mode is on when the game starts and withholds every hit -
+    /// which is what it is for, and which makes every test below vacuous if
+    /// it is left that way. It is a process-wide static, so it has to be put
+    /// back deliberately rather than assumed.
+    /// </summary>
+    [SetUp]
+    public void PracticeOffSoDamageIsReal() => Blwp.PracticeMode.On = false;
+
     GameObject _boot;
     TruckController _truck;
     TruckHealth _health;

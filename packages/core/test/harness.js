@@ -42,7 +42,7 @@ say('# ticks=' + TICKS + ' seed=' + SEED);
 
 for (let t = 0; t < TICKS; t++) {
   const i = inputs(t);
-  step(st, i.throttle, i.steer, i.brake);
+  step(st, i.throttle, i.steer, i.brake, 0, 0);
   if ((t + 1) % 3600 === 0) say((t + 1) + ' ' + hash(st));
 }
 say('final ' + hash(st));

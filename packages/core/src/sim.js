@@ -17,7 +17,7 @@ import {
   O_TICK, O_RNG, O_TRUCK, O_SCORE,
   T_X, T_Z, T_HEADING, T_VX, T_VZ, T_ANGVEL, T_HP, T_CARGO, T_FLAGS,
   T_WHEEL, T_THROTTLE, T_STEER,
-  S_EXPOSURE, S_ELAPSED, S_BESTX, S_CARGO, S_DELIVERED, S_STATE,
+  S_EXPOSURE, S_ELAPSED, S_BESTX, S_CARGO, S_DELIVERED, S_STATE, S_PRACTICE,
   U_X, U_Z, U_SIDE, U_HP, U_HEADING, U_STATE, U_COOLDOWN, U_TARGET,
 } from './state.js';
 // Named imports, not namespaces. `import * as x` cannot survive concatenation
@@ -88,7 +88,14 @@ export function init(seedWord) {
 import { below } from './rng.js';
 const nextBelow = below;
 
-export function step(st, throttle, steer, brake, handbrake) {
+/**
+ * One tick.
+ *
+ * `practice` is an INPUT, not a setting. It rides in the transcript with
+ * everything else, so a node replaying the run sees exactly which ticks were
+ * shielded - which is the difference between a practice mode and a cheat.
+ */
+export function step(st, throttle, steer, brake, handbrake, practice) {
   const s = st.i32;
   const rng = s.subarray(O_RNG, O_RNG + 4);
   const T = O_TRUCK;
@@ -123,7 +130,12 @@ export function step(st, throttle, steer, brake, handbrake) {
     s[b + U_HEADING] = u.heading; s[b + U_COOLDOWN] = u.cooldown;
     if (r === 2) hits = (hits + 1) | 0;
   }
-  if (hits > 0 && s[O_SCORE + S_STATE] === RUN_LIVE)
+  // The army still fires, still walks, still counts towards danger - only the
+  // damage is withheld. Skipping the shooting entirely would change the draw
+  // order and make a practice run replay differently from a live one, which
+  // would defeat the point of practising.
+  if (practice) s[O_SCORE + S_PRACTICE] = 1;
+  else if (hits > 0 && s[O_SCORE + S_STATE] === RUN_LIVE)
     s[T + T_HP] = max(0, sub(s[T + T_HP], Math.imul(hits, ONE)));
 
   // ---- 3. score ----------------------------------------------------------

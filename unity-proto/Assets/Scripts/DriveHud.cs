@@ -177,7 +177,60 @@ public class DriveHud : MonoBehaviour
 
         DrawArrivalCard(w, h);
         DrawSendOff(w, h);
+        DrawPractice(w, h);
     }
+
+    /// <summary>
+    /// The practice switch, and the state it is in.
+    ///
+    /// It is drawn rather than hidden behind a key because a run that took no
+    /// damage has to LOOK different from one that survived - otherwise the two
+    /// are indistinguishable on a screenshot, and the first thing anyone does
+    /// with a build is send a screenshot.
+    ///
+    /// On by default in this build: it exists to be driven and judged, not
+    /// survived.
+    /// </summary>
+    void DrawPractice(int w, int h)
+    {
+        float pad = Mathf.Max(10f, h * 0.025f);
+        int min = Mathf.Min(w, h);
+        float bw = Mathf.Min(w * 0.30f, 260f);
+        float bh = Mathf.Max(34f, min * 0.055f);
+
+        // Under the block clock, on the left, clear of the driving pads and of
+        // the score column on the right.
+        var box = new Rect(pad, pad + BlockBoxHeight(w, h) + HealthBoxHeight(w, h) + pad * 1.4f,
+                           bw, bh);
+
+        bool on = Blwp.PracticeMode.On;
+        var tint = on ? new Color(0.45f, 0.75f, 1f) : new Color(1f, 0.55f, 0.30f);
+
+        GUI.color = new Color(0.02f, 0.03f, 0.05f, 0.72f);
+        GUI.DrawTexture(box, _flat);
+        GUI.color = new Color(tint.r, tint.g, tint.b, 0.75f);
+        GUI.DrawTexture(new Rect(box.x, box.y, 3f, box.height), _flat);
+        GUI.color = Color.white;
+
+        var label = new GUIStyle(GUI.skin.label)
+        {
+            alignment = TextAnchor.MiddleLeft,
+            fontStyle = FontStyle.Bold,
+            fontSize = Mathf.RoundToInt(Mathf.Clamp(min * 0.030f, 13f, 22f)),
+        };
+        var sub = new GUIStyle(_small) { alignment = TextAnchor.MiddleLeft };
+
+        var text = new Rect(box.x + 12f, box.y, box.width - 16f, box.height * 0.58f);
+        Shadowed(text, on ? "PRACTICE  ·  ON" : "PRACTICE  ·  OFF", label, tint);
+        Shadowed(new Rect(box.x + 12f, box.y + box.height * 0.5f, box.width - 16f, box.height * 0.5f),
+                 on ? "nothing can hit you  ·  tap to arm" : "live fire  ·  tap for practice",
+                 sub, new Color(1f, 1f, 1f, 0.7f));
+
+        if (GUI.Button(box, GUIContent.none, GUIStyle.none)) Blwp.PracticeMode.Toggle();
+    }
+
+    /// <summary>How tall the condition bar is. Shared, so nothing lands on it.</summary>
+    float HealthBoxHeight(int w, int h) => HealthBox(w, h).height;
 
     /// <summary>
     /// Time left in the block, directly under the price.

@@ -23,8 +23,8 @@ for (const entry of index.vectors) {
     const st = init(v.seed);
     let checked = 0;
     for (let t = 0; t < v.ticks; t++) {
-      const [th, sr, br, hb] = v.inputs[t];
-      step(st, th, sr, br, hb);
+      const [th, sr, br, hb, pr] = v.inputs[t];
+      step(st, th, sr, br, hb, pr);
       const cp = v.checkpoints[checked];
       if (cp && cp.tick === t + 1) {
         assert.equal(hash(st), cp.hash,

@@ -32,7 +32,7 @@ var st = core.init(SEED);
 say('# blwp bundle harness');
 for (var t = 0; t < TICKS; t++) {
   var i = inputs(t);
-  core.step(st, i.throttle, i.steer, i.brake, 0);
+  core.step(st, i.throttle, i.steer, i.brake, 0, 0);
   if ((t + 1) % 3600 === 0) say((t + 1) + ' ' + core.hash(st));
 }
 say('final ' + core.hash(st));

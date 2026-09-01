@@ -31,9 +31,9 @@ for (const entry of index.vectors) {
     const a = init(v.seed);
     const b = bundled.init(v.seed);
     for (let t = 0; t < v.ticks; t++) {
-      const [th, sr, br, hb] = v.inputs[t];
-      step(a, th, sr, br, hb);
-      bundled.step(b, th, sr, br, hb);
+      const [th, sr, br, hb, pr] = v.inputs[t];
+      step(a, th, sr, br, hb, pr);
+      bundled.step(b, th, sr, br, hb, pr);
       if ((t + 1) % 900 === 0)
         assert.equal(bundled.hash(b), hash(a),
           entry.name + ': bundle and modules parted at tick ' + (t + 1));

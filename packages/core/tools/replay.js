@@ -21,8 +21,8 @@ const t0 = Date.now();
 let bad = -1, at = 0;
 
 for (let t = 0; t < v.ticks; t++) {
-  const [th, sr, br, hb] = v.inputs[t];
-  step(st, th, sr, br, hb);
+  const [th, sr, br, hb, pr] = v.inputs[t];
+  step(st, th, sr, br, hb, pr);
   const cp = v.checkpoints[at];
   if (cp && cp.tick === t + 1) {
     if (hash(st) !== cp.hash && bad < 0) bad = cp.tick;

@@ -51,6 +51,10 @@ public class Bootstrap : MonoBehaviour
     [Tooltip("The delivery gate. Falls back to a high-visibility yellow.")]
     public Material gateMaterial;
 
+    [Tooltip("Whether incoming fire is withheld when the round starts. The " +
+             "URL parameter ?practice=0 or 1 overrides this.")]
+    public bool practiceByDefault = true;
+
     [Tooltip("Cardboard box model for the freight. Falls back to a cube.")]
     public GameObject boxPrefab;
     public Material dustMaterial;
@@ -139,6 +143,25 @@ public class Bootstrap : MonoBehaviour
         _post = post;
 
         var truck = BuildTruck(_terrain);
+
+        // The deterministic core, if this build has one.
+        //
+        // It attaches always and decides for itself: in a WebGL build with the
+        // bundle loaded it takes the wheel and switches the Rigidbody to
+        // kinematic; anywhere else it finds no core, says so once, and leaves
+        // PhysX alone. That asymmetry is the whole reason it is a component
+        // rather than a compile-time switch - the editor has no JavaScript, and
+        // a scene that only works in one of the two is a scene nobody can
+        // iterate on.
+        var driver = truck.gameObject.AddComponent<Blwp.CoreDrivenTruck>();
+        driver.terrain = _terrain;
+
+        // Practice starts on in this build. The scene's value is the fallback;
+        // ?practice=0 in the URL overrides it, so a link can hand somebody the
+        // build in the mode it was meant to be seen in.
+        Blwp.PracticeMode.Configure(practiceByDefault);
+        Debug.Log($"[blwp] practice {(Blwp.PracticeMode.On ? "on" : "off")} " +
+                  $"(from {Blwp.PracticeMode.Source})");
         Field.courier = truck.transform;
 
         // Only here: BuildArmies runs before BuildTruck, so wiring this any
