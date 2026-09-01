@@ -45,9 +45,42 @@ export function create() {
 export const unitBase = (i) => O_UNITS + Math.imul(i, U_WORDS);
 
 /**
- * Canonical hash of the whole state.
+ * True on every machine this will realistically run on, and checked anyway.
+ *
+ * WebAssembly is defined as little-endian and every current CPU that runs a
+ * browser agrees, so the fast path below is the only one that has ever been
+ * taken. It is still worth writing the other one: the digest has to be a
+ * property of the state's VALUES, not of the host's byte order, or a
+ * big-endian verifier would reject every player without either side being
+ * wrong.
+ */
+const LITTLE_ENDIAN = new Uint8Array(new Int32Array([1]).buffer)[0] === 1;
+
+/**
+ * Canonical hash of the whole state, little-endian by definition.
  *
  * Deliberately the entire buffer including padding: anything excluded is
  * something two implementations could differ on unnoticed.
+ *
+ * The endianness is the part that no test on this hardware could have caught.
+ * Hashing the raw bytes of an Int32Array makes the digest depend on the
+ * machine's byte order, and x86-64 and arm64 are both little-endian - so the
+ * cross-architecture run proved the core agreed with itself while leaving the
+ * assumption entirely unexamined.
  */
-export const hash = (st) => sha256hex(st.u8);
+export function hash(st) {
+  if (LITTLE_ENDIAN) return sha256hex(st.u8);
+
+  const swapped = new Uint8Array(st.u8.length);
+  for (let i = 0; i < st.i32.length; i++) {
+    const v = st.i32[i], o = i << 2;
+    swapped[o] = v & 255;
+    swapped[o + 1] = (v >>> 8) & 255;
+    swapped[o + 2] = (v >>> 16) & 255;
+    swapped[o + 3] = (v >>> 24) & 255;
+  }
+  return sha256hex(swapped);
+}
+
+/** The byte order the protocol is defined in. Exposed so a test can assert it. */
+export const CANONICAL_LITTLE_ENDIAN = true;

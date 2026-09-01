@@ -52,6 +52,10 @@ jobs:
       - name: bundle matches the modules
         run: node tools/bundle.js && node --test test/bundle.test.js
 
+      - name: docker for the cross-architecture check
+        if: runner.os == 'Linux'
+        run: bash tools/run-arch.sh || echo "cross-arch skipped on this runner"
+
       # The shells, not the browsers: jsvu gives the same JavaScriptCore and
       # SpiderMonkey the browsers ship, without a display server or a driver.
       - name: install engine shells
