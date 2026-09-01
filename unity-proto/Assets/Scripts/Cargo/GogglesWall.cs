@@ -217,6 +217,21 @@ public class GogglesWall : MonoBehaviour
     static readonly List<string> _ids = new();
     static readonly List<float> _vsizes = new();
     static readonly List<float> _rates = new();
+    static readonly List<int> _placeOrder = new();
+
+    /// <summary>
+    /// A stable scattering key for a transaction.
+    ///
+    /// FNV-1a over the txid: cheap, well spread, and the same every time - a
+    /// tile must not move because the wall was repacked.
+    /// </summary>
+    static uint Scatter(string txid)
+    {
+        uint h = 2166136261u;
+        if (txid != null)
+            for (int i = 0; i < txid.Length; i++) { h ^= txid[i]; h *= 16777619u; }
+        return h;
+    }
 
     /// <summary>
     /// Repack the wall and give every tile a new destination.
@@ -242,7 +257,23 @@ public class GogglesWall : MonoBehaviour
         var skyline = new int[slots];
         foreach (var t in _tiles.Values) t.seen = false;
 
-        for (int i = 0; i < _ids.Count; i++)
+        // Placed in a SCATTERED order, not the order the socket sent them.
+        //
+        // The feed arrives sorted by fee rate, and fee rate correlates with
+        // size, so a skyline packer laid it down in bands: a solid field of
+        // identical small tiles above, the big ones stacked along the bottom.
+        // The real thing mixes them - a large transaction sits wherever it
+        // happens to fit, with small ones packed around it - and that mixing
+        // is most of what makes it read as a mempool rather than a chart.
+        //
+        // Ordered by a hash of the txid rather than shuffled: it has to be the
+        // same order on the next repack, or every tile would swap places with
+        // a stranger each time the wall refreshes.
+        _placeOrder.Clear();
+        for (int i = 0; i < _ids.Count; i++) _placeOrder.Add(i);
+        _placeOrder.Sort((a, b) => Scatter(_ids[a]).CompareTo(Scatter(_ids[b])));
+
+        foreach (int i in _placeOrder)
         {
             int side = SideFor(_vsizes[i], Mathf.Max(1, slots / 3), scale);
             if (!Place(skyline, side, out int px, out int py)) continue;

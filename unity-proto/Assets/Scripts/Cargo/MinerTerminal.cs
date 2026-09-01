@@ -29,6 +29,11 @@ public class MinerTerminal : MonoBehaviour
 
     public Transform[] bars;
 
+    [Tooltip("The live transaction socket. The histogram is built from what " +
+             "is queued right now, which moves; the projected blocks it used " +
+             "to read only change every few seconds.")]
+    public MempoolBlockStream stream;
+
     [Tooltip("Undoes the building's height squash on the lettering. The miner " +
              "is scaled (1, 0.45, 1), and text inheriting that is legible but " +
              "visibly squat.")]
@@ -49,6 +54,8 @@ public class MinerTerminal : MonoBehaviour
 
     void Start()
     {
+        if (stream == null) stream = FindFirstObjectByType<MempoolBlockStream>();
+
         if (screen == null) { enabled = false; return; }
         BuildText();
         _barTarget = new float[bars != null ? bars.Length : 0];
@@ -335,6 +342,38 @@ public class MinerTerminal : MonoBehaviour
     /// steps down gently is a chain keeping up, a red block on the left is a
     /// fee war, and a flat green run is a quiet night.
     /// </summary>
+    /// <summary>
+    /// The fee curve of what is queued RIGHT NOW, richest first.
+    ///
+    /// Built from the socket's own transaction list rather than from the
+    /// projected blocks: the projections are recomputed occasionally, the
+    /// transactions arrive constantly, and the histogram is supposed to be
+    /// the shape of the market as it moves.
+    /// </summary>
+    float[] LiveCurve(int buckets)
+    {
+        var s = stream != null ? stream.Transactions : null;
+        if (s == null || s.Count < buckets) return null;
+
+        if (_live == null || _live.Length != buckets) _live = new float[buckets];
+        if (_sortRates == null || _sortRates.Length != s.Count) _sortRates = new float[s.Count];
+        for (int i = 0; i < s.Count; i++) _sortRates[i] = s[i].rate;
+        System.Array.Sort(_sortRates);
+
+        // Richest on the left, as the wall reads.
+        for (int b = 0; b < buckets; b++)
+        {
+            int from = (int)((long)(buckets - 1 - b) * s.Count / buckets);
+            int to = Mathf.Max(from + 1, (int)((long)(buckets - b) * s.Count / buckets));
+            float sum = 0f; int n = 0;
+            for (int i = from; i < to && i < _sortRates.Length; i++) { sum += _sortRates[i]; n++; }
+            _live[b] = n > 0 ? sum / n : 0f;
+        }
+        return _live;
+    }
+
+    float[] _live, _sortRates;
+
     void Bars()
     {
         if (bars == null || bars.Length == 0) return;
@@ -343,8 +382,17 @@ public class MinerTerminal : MonoBehaviour
         {
             _nextShift = Time.unscaledTime + shiftSeconds;
 
-            // live first, the terrain's slow histogram as the fallback
-            var rates = stats != null ? stats.FeeCurve(bars.Length) : null;
+            // The LIVE queue first.
+            //
+            // FeeCurve is derived from the projected blocks, and those only
+            // change when the socket sends a new projection - seconds apart at
+            // best, often much longer - so the histogram was correct and
+            // completely static. The transactions themselves arrive
+            // continuously, so a curve built from what is actually queued right
+            // now moves every time the sample is taken, and every movement is
+            // a real one.
+            var rates = LiveCurve(bars.Length);
+            if (rates == null && stats != null) rates = stats.FeeCurve(bars.Length);
             if (rates == null && terrain != null) rates = terrain.FeeRates(bars.Length);
 
             if (rates != null)
