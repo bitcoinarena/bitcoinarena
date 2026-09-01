@@ -1295,22 +1295,25 @@ const RIFLE_WALK = 170394;       // 2.6 m/s
 // of it; infantry closes further before it settles. Both sides doing this is
 // what makes a front rather than a breakthrough - the means oscillate about
 // the seam and never cross it.
-// The distance the C# army SETTLES at, not the distance it aims for.
+// What the C# army AIMS for. It settles much further back than this, and it
+// earns that distance rather than declaring it: StepArmour walks towards
+// front - Dir*9, and backs off whenever an enemy is inside 24 m. The mean of
+// 25 in the recording is the outcome of that give and take.
 //
-// StepArmour walks towards front - Dir*9 and is pushed back off it by being
-// overrun, and the recording shows it holding around 25. Standing at 9 puts
-// the two armour lines eighteen metres apart - permanently inside the 46 m
-// gun range - and both sides were ground down to a third in a minute where
-// the C# army keeps three quarters. At 25 the lines are fifty apart and
-// mostly out of range, which is what makes the fight a grind.
-//
-// This is an interim: the number is the OUTCOME of the retreat behaviour,
-// which is step (c). When that lands this becomes 9 again and the distance
-// is earned rather than declared.
-const ARMOUR_STANDOFF = Math.imul(25, ONE);
-const ARMOUR_SPREAD = Math.imul(40, ONE);   // +/- 20, as the recording shows
-const RIFLE_SPREAD = Math.imul(36, ONE);
-const RIFLE_STANDOFF = Math.imul(17, ONE);
+// It was declared at 25 for a while, as a stand-in for the behaviour, and the
+// difference matters: a declared distance holds every unit on one line, so
+// the fight is all or nothing - at 18 m apart both sides are ground to a
+// third in a minute, at 50 nobody is ever in range at all. Backing off
+// individually is what produces the scatter, and the scatter is what makes it
+// a grind.
+const ARMOUR_STANDOFF = Math.imul(9, ONE);
+const RIFLE_STANDOFF = Math.imul(4, ONE);
+const ARMOUR_SPREAD = Math.imul(10, ONE);
+const RIFLE_SPREAD = Math.imul(8, ONE);
+
+/** Inside this, a tank gives ground rather than closing further. */
+const BACK_OFF_RANGE = Math.imul(24, ONE);
+const BACK_OFF = Math.imul(6, ONE);        // metres a second, away from the seam
 const OVERRUN = Math.imul(14, ONE);
 
 const SIDE_BULL = -1;
@@ -1361,9 +1364,20 @@ function stepUnit(u, rng, seamZ, truckX, truckZ, halfX, halfZ, dt, index) {
   const side = u.side < 0 ? -1 : 1;
   const hold = add(seamZ, Math.imul(side, standoff));
 
-  const gap = sub(hold, u.z);
-  const want = abs(gap) > mulFast(walk, dt) ? (gap > 0 ? ONE : -ONE) : 0;
-  const dz = mulFast(mulFast(walk, want), dt);
+  // Give ground when something is too close.
+  //
+  // This is the whole of the front's shape. A unit that only advances stands
+  // on one line with every other unit; one that backs off when crowded ends up
+  // scattered through a contested strip, which is where the trickle of
+  // engagements comes from.
+  let dz;
+  if (u.crowded) {
+    dz = mulFast(mulFast(BACK_OFF, Math.imul(side, ONE)), dt);
+  } else {
+    const gap = sub(hold, u.z);
+    const want = abs(gap) > mulFast(walk, dt) ? (gap > 0 ? ONE : -ONE) : 0;
+    dz = mulFast(mulFast(walk, want), dt);
+  }
   const dx = mulFast(mulFast(walk, sin(u.heading)), mulFast(dt, 26214));
 
   u.x = clamp(add(u.x, dx), -halfX, halfX);
@@ -1421,6 +1435,7 @@ function pickTarget(units, count, self, x, z, side) {
   return best;
 }
 
+const BACKOFF_RANGE = BACK_OFF_RANGE;
 const RELOAD_MIN = FIRE_RELOAD_MIN;
 const RELOAD_SPAN = FIRE_RELOAD_SPAN;
 const DAMAGE_MIN = FIRE_DAMAGE_MIN;
@@ -1910,11 +1925,11 @@ function step(st, throttle, steer, brake, handbrake, practice) {
   const tx = s[T + T_X], tz = s[T + T_Z];
   const seamZ = frontlineZ(st.tape, tx, HALF_X, HALF_Z);
   let hits = 0;
-  const u = { x: 0, z: 0, hp: 0, heading: 0, cooldown: 0, armour: false, side: 1 };
+  const u = { x: 0, z: 0, hp: 0, heading: 0, cooldown: 0, armour: false, side: 1, crowded: false };
 
   // A read-only view of any unit, for target selection. Declared before the
   // loop that uses it, unlike the scoring one further down.
-  const peek = { x: 0, z: 0, hp: 0, armour: false, side: 1 };
+  const peek = { x: 0, z: 0, hp: 0, armour: false, side: 1, crowded: false };
   const peekAt = (i) => {
     const pb = unitBase(i);
     peek.x = s[pb + U_X]; peek.z = s[pb + U_Z]; peek.hp = s[pb + U_HP];
@@ -1931,6 +1946,19 @@ function step(st, throttle, steer, brake, handbrake, practice) {
     // instead of the armour reaching the line first.
     u.armour = isArmour(i);
     u.side = s[b + U_SIDE];
+
+    // Is anything of the other side too close? Decided before the step, from
+    // the positions everyone had at the start of the tick, so the order units
+    // are visited in cannot change who gives ground.
+    u.crowded = false;
+    for (let j = 0; j < UNITS; j++) {
+      if (j === i) continue;
+      const jb = unitBase(j);
+      if (s[jb + U_STATE] === 0 || s[jb + U_SIDE] === u.side) continue;
+      const ddx = sub(s[jb + U_X], u.x), ddz = sub(s[jb + U_Z], u.z);
+      if (abs(ddx) > BACKOFF_RANGE || abs(ddz) > BACKOFF_RANGE) continue;
+      if (length2(ddx, ddz) < BACKOFF_RANGE) { u.crowded = true; break; }
+    }
     const r = stepUnit(u, rng, seamZ, tx, tz, HALF_X, HALF_Z, TICK_DT, i);
 
     // Armour fires on armour. Drawn in index order, always, so the transcript
