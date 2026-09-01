@@ -195,12 +195,28 @@ The reputation of JS as non-deterministic is only half earned. Precisely:
   Everything else differs.
 
   The result worth pausing on is the first two columns. **Node 24 and the V8
-  15.4 shell disagree** — two builds of the *same engine*. Cross-browser
-  divergence was the expected hazard; cross-*version* divergence is worse,
-  because it means a player who updates Chrome could fail to replay their own
-  earlier transcript. No amount of "test on the three engines" would catch
-  that. This is the measurement that turns the fixed-point core from cautious
-  into necessary.
+  15.4 shell disagree** — two builds of the *same engine*.
+
+  Followed up across four Node releases spanning four years of V8:
+
+  | | V8 10.2 | V8 11.3 | V8 12.4 | V8 13.6 |
+  |---|---|---|---|---|
+  | core, 36,000 ticks | `5d65d265…` | `5d65d265…` | `5d65d265…` | `5d65d265…` |
+  | `Math.pow` digest | `0150334f` | `0150334f` | `0150334f` | **`a01870cd`** |
+
+  **V8 changed `Math.pow` between 12.4 and 13.6.** Not a browser difference —
+  a version difference, in the wild, in the engine most players run. A
+  simulation that called it would have desynced everyone who updated Chrome,
+  silently, and only for some inputs.
+
+  The core is unaffected across all four, because it calls none of them. That
+  is the whole argument, and `tools/run-versions.sh` is what keeps it true:
+  the ten-minute corpus under every installed Node version, requiring one
+  hash.
+
+  Cross-*browser* divergence was the expected hazard. Cross-*version*
+  divergence is worse, because no amount of "test on the three engines"
+  catches it — and it is the one that has now actually been observed.
 - General floating-point arithmetic where results are not exact integers —
   correctly rounded per operation, but the moment you build a physics step on
   it, operand ordering, compiler reassociation and denormal handling make

@@ -12,6 +12,7 @@
     "hash": "node tools/hash-core.js",
     "tables": "node tools/gen-tables.js",
     "test": "node --test test/*.test.js",
-    "engines": "bash tools/run-engines.sh"
+    "engines": "bash tools/run-engines.sh",
+    "versions": "bash tools/run-versions.sh"
   }
 }
