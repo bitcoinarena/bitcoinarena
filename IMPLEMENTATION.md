@@ -214,9 +214,31 @@ The reputation of JS as non-deterministic is only half earned. Precisely:
   the ten-minute corpus under every installed Node version, requiring one
   hash.
 
-  Cross-*browser* divergence was the expected hazard. Cross-*version*
-  divergence is worse, because no amount of "test on the three engines"
-  catches it — and it is the one that has now actually been observed.
+  And the same question again across CPUs, on one V8 version — 13.6:
+
+  | | x86-64 | arm64 |
+  |---|---|---|
+  | core, 36,000 ticks | `5d65d265…` | `5d65d265…` |
+  | `sin` `cos` `tan` `atan2` | ✗ | ✗ |
+  | `exp` `log` `pow` | ✗ | ✗ |
+  | `sqrt` `cbrt` `hypot` | agree | agree |
+
+  **The same browser build gives different answers on Intel and on Apple
+  silicon.** Not a version difference this time — one binary version, two
+  instruction sets, seven functions that disagree.
+
+  So there are three questions, not one, and the core has now been measured
+  against all three:
+
+  | | script | asks |
+  |---|---|---|
+  | cross-engine | `tools/run-engines.sh` | do V8, SpiderMonkey and JSC agree? |
+  | cross-version | `tools/run-versions.sh` | does one engine agree with itself over time? |
+  | cross-arch | `tools/run-arch.sh` | does one engine agree with itself across CPUs? |
+
+  Cross-*browser* divergence was the expected hazard. The other two are worse,
+  because no amount of "test on the three engines" catches either — and both
+  have now actually been observed.
 - General floating-point arithmetic where results are not exact integers —
   correctly rounded per operation, but the moment you build a physics step on
   it, operand ordering, compiler reassociation and denormal handling make

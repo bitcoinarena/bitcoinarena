@@ -1,0 +1,121 @@
+name: deterministic core
+
+# Two questions, and they are different.
+#
+#   Cross-ENGINE: do V8, SpiderMonkey and JavaScriptCore agree with each other?
+#   Cross-VERSION: does one engine agree with itself across releases?
+#
+# The second is the one that has actually bitten: V8 changed Math.pow between
+# 12.4 and 13.6. And both are asked on two ARCHITECTURES, because the local
+# machine is arm64 only and x86-64 has a different JIT backend in every engine.
+
+on:
+  push:
+    branches: [master, 'phase*']
+    paths: ['packages/core/**', 'test-vectors/**', '.github/workflows/core.yml']
+  pull_request:
+    paths: ['packages/core/**', 'test-vectors/**']
+  workflow_dispatch:
+
+jobs:
+  acceptance:
+    name: ${{ matrix.arch }} (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest    # x86-64
+            arch: x86-64
+          - os: macos-latest     # Apple silicon
+            arch: arm64
+    defaults:
+      run:
+        working-directory: packages/core
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: install acorn for the guard
+        run: npm install --no-save acorn
+
+      - name: determinism guard
+        run: node tools/check-determinism.js
+
+      - name: tests
+        run: node --test test/*.test.js
+
+      - name: bundle matches the modules
+        run: node tools/bundle.js && node --test test/bundle.test.js
+
+      # The shells, not the browsers: jsvu gives the same JavaScriptCore and
+      # SpiderMonkey the browsers ship, without a display server or a driver.
+      - name: install engine shells
+        run: |
+          npx --yes jsvu@latest --os=default --engines=spidermonkey,v8
+          echo "$HOME/.jsvu/bin" >> $GITHUB_PATH
+
+      - name: cross-engine acceptance
+        run: bash tools/run-engines.sh
+
+      # Four V8 versions spanning four years. This is the check that would have
+      # caught Math.pow moving.
+      - name: fetch older Node releases
+        shell: bash
+        run: |
+          mkdir -p /tmp/nodevers
+          case "${{ runner.os }}-${{ runner.arch }}" in
+            Linux-X64)  plat=linux-x64 ;;
+            macOS-ARM64) plat=darwin-arm64 ;;
+            macOS-X64)  plat=darwin-x64 ;;
+            *) echo "unknown runner"; exit 1 ;;
+          esac
+          for v in 18.20.8 20.19.0 22.14.0; do
+            curl -sL "https://nodejs.org/dist/v$v/node-v$v-$plat.tar.gz" \
+              | tar xz -C /tmp/nodevers
+          done
+          ls /tmp/nodevers
+
+      - name: cross-version acceptance
+        run: bash tools/run-versions.sh
+
+      - name: core hash
+        run: node tools/hash-core.js
+
+      - name: publish this architecture's corpus hash
+        run: |
+          node test/harness.js | tail -1 | awk '{print $2}' > /tmp/corpus.txt
+          echo "${{ matrix.arch }} $(cat /tmp/corpus.txt)"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: corpus-${{ matrix.arch }}
+          path: /tmp/corpus.txt
+
+  compare:
+    name: x86-64 vs arm64
+    needs: acceptance
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { path: hashes }
+
+      # Each architecture being self-consistent is not the claim. The claim is
+      # that they agree with each other - otherwise there are two games, and
+      # a node on one would reject every player on the other.
+      - name: the architectures must agree
+        run: |
+          x=$(cat hashes/corpus-x86-64/corpus.txt)
+          a=$(cat hashes/corpus-arm64/corpus.txt)
+          echo "x86-64  $x"
+          echo "arm64   $a"
+          if [ "$x" = "$a" ]; then
+            echo "cross-architecture acceptance: PASS"
+          else
+            echo "cross-architecture acceptance: FAIL - the same inputs give two worlds"
+            exit 1
+          fi

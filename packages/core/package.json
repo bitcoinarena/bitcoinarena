@@ -13,6 +13,8 @@
     "tables": "node tools/gen-tables.js",
     "test": "node --test test/*.test.js",
     "engines": "bash tools/run-engines.sh",
-    "versions": "bash tools/run-versions.sh"
+    "versions": "bash tools/run-versions.sh",
+    "arch": "bash tools/run-arch.sh",
+    "acceptance": "npm run guard && npm test && npm run engines && npm run versions && npm run arch"
   }
 }
