@@ -291,6 +291,7 @@ public class PostOffice : MonoBehaviour
     }
 
     readonly Dictionary<TextMesh, Vector2> _room = new();
+    readonly List<TextMesh> _nextHeight = new();
 
     /// <summary>
     /// Scales a plate's text to fill it - both ways, and no further.
@@ -333,7 +334,19 @@ public class PostOffice : MonoBehaviour
             else if (n.StartsWith("fee_usd_") && !n.Contains("unit"))
                 _feeUsd.Add(Plate(t, green));
             else if (n.StartsWith("next_face_") && !n.Contains("plate"))
-                _blockFace.Add(Plate(t, white, 0.82f));
+            {
+                // Laid out exactly like a mined face: the number on top in its
+                // own size, the detail underneath. It was only on the thin
+                // caption strip above the block - 1.1 m of it against an 8.2 m
+                // face - so the projected half of the band was numbered in
+                // something you could not read from the road while the mined
+                // half carried it large. Two halves of one display should not
+                // describe the same thing in two different sizes.
+                _nextHeight.Add(Plate(t, green, 0.46f, TextAnchor.LowerCenter,
+                                      new Vector2(0f, 0.10f), "_height", 0.92f));
+                _blockFace.Add(Plate(t, white, 0.30f, TextAnchor.UpperCenter,
+                                     new Vector2(0f, -0.16f), "_text", 0.86f));
+            }
             else if (n.StartsWith("mined_face_") && !n.Contains("plate"))
             {
                 // Two texts on one face, not three lines in one.
@@ -476,6 +489,11 @@ public class PostOffice : MonoBehaviour
                 var up = i < stats.Upcoming.Count ? stats.Upcoming[i] : null;
                 _blockFace[i].text = up == null ? "—"
                     : $"{up.totalFeeSats / 1e8:0.000} BTC\n{up.nTx:N0} tx\nin ~{up.inMinutes} min";
+                if (i < _nextHeight.Count)
+                {
+                    _nextHeight[i].text = tip > 0 ? $"{tip + 1 + i:N0}" : "—";
+                    Fit(_nextHeight[i]);
+                }
             }
             else
             {
@@ -485,8 +503,12 @@ public class PostOffice : MonoBehaviour
                 // was on the strip above it and nowhere else, which is a
                 // caption rather than a label - and a mined block without its
                 // number is not identifiable as anything.
+                // The fee, as the projected half has always shown it. A block
+                // was worth 0.009 BTC before it was mined and nothing at all
+                // afterwards, which made the two halves of one band read as
+                // two unrelated displays.
                 _blockFace[i].text = m == null ? "—"
-                    : $"{m.nTx:N0} tx\n{Ago(m.AgeMinutes)}";
+                    : $"{m.totalFeeSats / 1e8:0.000} BTC\n{m.nTx:N0} tx\n{Ago(m.AgeMinutes)}";
                 if (at < _blockHeight.Count)
                 {
                     _blockHeight[at].text = m == null ? "—" : $"{m.height:N0}";

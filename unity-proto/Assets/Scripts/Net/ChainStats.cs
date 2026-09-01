@@ -93,6 +93,16 @@ public class ChainStats : MonoBehaviour
         public int height;
         public int nTx;
         public long timestamp;
+
+        /// <summary>
+        /// What the miner was paid for it.
+        ///
+        /// The projected blocks carry this and the mined ones did not, so the
+        /// two halves of the band described the same thing in different terms
+        /// - a block was worth 0.009 BTC before it was mined and nothing at
+        /// all afterwards. mempool.space keeps it under extras.totalFees.
+        /// </summary>
+        public long totalFeeSats;
         public int AgeMinutes =>
             Mathf.Max(0, Mathf.RoundToInt((float)(Now() - timestamp) / 60f));
     }
@@ -215,11 +225,15 @@ public class ChainStats : MonoBehaviour
             {
                 int height = (int)Json.GetDouble(obj, "height");
                 if (height <= 0) continue;
+                // extras.totalFees, or the flat key if a mirror omits extras.
+                var extras = Json.GetRaw(obj, "extras");
                 list.Add(new Mined
                 {
                     height = height,
                     nTx = (int)Json.GetDouble(obj, "tx_count"),
                     timestamp = (long)Json.GetDouble(obj, "timestamp"),
+                    totalFeeSats = (long)Json.GetDouble(
+                        string.IsNullOrEmpty(extras) ? obj : extras, "totalFees"),
                 });
             }
             if (list.Count > 0)

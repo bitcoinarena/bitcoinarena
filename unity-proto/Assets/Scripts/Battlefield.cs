@@ -7,6 +7,15 @@ using UnityEngine;
 /// </summary>
 public class Battlefield : MonoBehaviour
 {
+    /// <summary>
+    /// The one in the scene. The deterministic core needs the tank positions
+    /// every tick, and hunting for it with FindFirstObjectByType at sixty
+    /// hertz is a search per frame for something that never moves.
+    /// </summary>
+    public static Battlefield Current { get; private set; }
+
+    void OnDestroy() { if (Current == this) Current = null; }
+
     public MempoolTerrain terrain;
     public MarketFeed market;
     /// <summary>The truck. The armies move aside for it.</summary>
@@ -43,7 +52,11 @@ public class Battlefield : MonoBehaviour
 
     float _sortieBull, _sortieBear;
 
-    void Awake() => History = new PriceHistory(96);
+    void Awake()
+    {
+        Current = this;
+        History = new PriceHistory(96);
+    }
 
     void Start()
     {
@@ -115,9 +128,18 @@ public class Battlefield : MonoBehaviour
 
                 // anything under the wheels goes down; the rest is only pushed
                 // out of a deep overlap so the truck can never be pinned
+                // The velocity comes from the CORE when the core is driving.
+                //
+                // The truck's Rigidbody is kinematic now and its
+                // linearVelocity is permanently zero, so this read a stationary
+                // truck and nobody was ever run over: infantry stood in the
+                // road and the wheels went through them.
                 var body = courier.GetComponent<Rigidbody>();
-                float speed = body != null ? body.linearVelocity.magnitude : 0f;
-                var v = body != null ? body.linearVelocity : Vector3.zero;
+                var driver = courier.GetComponent<Blwp.CoreDrivenTruck>();
+                var v = driver != null && driver.Driving
+                    ? Blwp.BlwpCore.Velocity
+                    : (body != null ? body.linearVelocity : Vector3.zero);
+                float speed = v.magnitude;
                 var knock = new Vector2(v.x, v.z).normalized;
                 int went = Army.RunOver(p.x, p.z, 3.6f, speed, knock);
                 RunDown += went;

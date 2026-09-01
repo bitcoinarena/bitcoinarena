@@ -91,6 +91,15 @@ mergeInto(LibraryManager.library, {
     return b.core.setSolids(b.st, count | 0, src.slice()) ? 1 : 0;
   },
 
+  // The tanks, this tick. Per-tick input, not setup: they move.
+  BlwpSetArmour: function (ptr, count) {
+    var b = Module.blwp;
+    if (!b) return 0;
+    var n = (count | 0) * 2;
+    var src = new Int32Array(Module.HEAP32.buffer, ptr, n);
+    return b.core.setArmour(b.st, count | 0, src.slice()) ? 1 : 0;
+  },
+
   // A query parameter from the page's own URL, written into a caller-owned
   // buffer. Handing a build to somebody in the mode you meant them to see is
   // what a shared link is for, and it beats asking them to find a switch.

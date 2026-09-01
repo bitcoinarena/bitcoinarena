@@ -29,6 +29,7 @@ namespace Blwp
         [DllImport("__Internal")] private static extern int BlwpQueryParam(IntPtr name, IntPtr outp, int cap);
         [DllImport("__Internal")] private static extern int BlwpSetGround(IntPtr h, int cols, int rows);
         [DllImport("__Internal")] private static extern int BlwpSetSolids(IntPtr b, int count);
+        [DllImport("__Internal")] private static extern int BlwpSetArmour(IntPtr b, int count);
         public const bool Compiled = true;
 #else
         private static int BlwpInit(int seed) => 0;
@@ -40,6 +41,7 @@ namespace Blwp
         private static int BlwpQueryParam(IntPtr n, IntPtr o, int cap) => 0;
         private static int BlwpSetGround(IntPtr h, int c, int r) => 0;
         private static int BlwpSetSolids(IntPtr b, int n) => 0;
+        private static int BlwpSetArmour(IntPtr b, int n) => 0;
         public const bool Compiled = false;
 #endif
 
@@ -108,6 +110,28 @@ namespace Blwp
             try { return BlwpSetGround(pin.AddrOfPinnedObject(), cols, rows) != 0; }
             finally { pin.Free(); }
         }
+
+        /// <summary>
+        /// The tanks the player can see, for this tick.
+        ///
+        /// The core simulates an army of its own, and for a while the truck
+        /// was being kept out of THOSE - which are invisible. The tanks on
+        /// screen belong to Unity's Battlefield, so the truck drove straight
+        /// through everything visible while colliding perfectly with ghosts.
+        /// Until the army itself moves into the core, its positions are input.
+        /// </summary>
+        public static bool SetArmour(int[] xz, int count)
+        {
+            if (!Available || xz == null || xz.Length < count * 2) return false;
+            var pin = GCHandle.Alloc(xz, GCHandleType.Pinned);
+            try { return BlwpSetArmour(pin.AddrOfPinnedObject(), count) != 0; }
+            finally { pin.Free(); }
+        }
+
+        /// <summary>The truck's velocity, in metres a second.</summary>
+        public static Vector3 Velocity => new Vector3(
+            Metres(_state[Layout.O_TRUCK + Layout.T_VX]), 0f,
+            Metres(_state[Layout.O_TRUCK + Layout.T_VZ]));
 
         /// <summary>
         /// Hands the core the boxes the truck must not drive through.

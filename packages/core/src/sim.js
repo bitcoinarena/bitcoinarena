@@ -90,6 +90,21 @@ export function setGround(st, cols, rows, heights) {
   return true;
 }
 
+/**
+ * The tanks, as x and z pairs in Q16.16, for this tick.
+ *
+ * Per-tick input rather than round setup: they move. Recorded with the
+ * steering, and replayed from the transcript the same way.
+ */
+export function setArmour(st, count, xz) {
+  const n = Math.imul(count, 2);
+  if (count < 0 || xz.length < n) return false;
+  const a = new Int32Array(n);
+  a.set(xz.subarray(0, n));
+  st.armour = { n: count, xz: a };
+  return true;
+}
+
 /** Surface height under a world position, for whatever is drawing the truck. */
 /**
  * Hands the core the solid world, as axis-aligned boxes in XZ.
@@ -137,6 +152,10 @@ export function init(seedWord) {
   // An empty world until the host says otherwise. Empty is honest: a core
   // inventing walls the player cannot see is worse than one with none.
   st.solids = noSolids();
+
+  // The tanks the player can see are the host's, and it sends them every
+  // tick. Empty until it does.
+  st.armour = { n: 0, xz: new Int32Array(0) };
 
   for (let i = 0; i < UNITS; i++) {
     const b = unitBase(i);
@@ -206,7 +225,7 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
   // not moved yet this tick - one frame stale, sixteen milliseconds, and it
   // keeps the phase order exactly as it was.
   v.fx = sin(v.heading); v.fz = cos(v.heading);
-  resolveArmour(v, s, O_UNITS, U_WORDS, UNITS, U_X, U_Z, U_STATE, isArmour);
+  resolveArmour(v, st.armour.xz, st.armour.n);
 
   s[T + T_X] = clamp(v.x, -HALF_X, HALF_X);
   s[T + T_Z] = clamp(v.z, -HALF_Z, HALF_Z);

@@ -7,7 +7,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { init, step, runScore, setGround, setSolids, HALF_X } from '../src/sim.js';
+import { init, step, runScore, setGround, setSolids, setArmour, HALF_X } from '../src/sim.js';
 import { hash } from '../src/state.js';
 import * as scoring from '../src/rules/score.js';
 import * as gate from '../src/rules/gate.js';
@@ -438,22 +438,21 @@ test('armour blocks the truck and infantry does not', () => {
   const Q = 65536, O = 5, T_X = 0, T_Z = 1, T_SPEED = 9;
   const O_UNITS = 24, U_WORDS = 8, U_X = 0, U_Z = 1, U_STATE = 5;
 
-  const run = (unitIndex) => {
+  const run = (withTank) => {
     const st = init(1);
     clearTheField(st);
-    if (unitIndex !== null) {
-      const b = O_UNITS + unitIndex * U_WORDS;
-      st.i32[b + U_X] = st.i32[O + T_X] + Math.round(30 * Q);
-      st.i32[b + U_Z] = st.i32[O + T_Z];
-      st.i32[b + U_STATE] = 1;
+    if (withTank) {
+      setArmour(st, 1, new Int32Array([
+        st.i32[O + T_X] + Math.round(30 * Q), st.i32[O + T_Z]]));
     }
     for (let i = 0; i < 600; i++) step(st, Q, 0, 0, 0, 0);
     return { x: st.i32[O + T_X] / Q, v: st.i32[O + T_SPEED] / Q };
   };
 
-  const clear = run(null);
-  const tank = run(0);      // every fourth unit is armour, so 0 is a tank
-  const man = run(1);       // and 1 is not
+  const clear = run(false);
+  const tank = run(true);
+  // Infantry is never uploaded, so an empty armour list IS the infantry case.
+  const man = clear;
 
   assert.ok(tank.x < clear.x - 50,
     `der Panzer hat den Truck nicht aufgehalten - er kam bis ${tank.x.toFixed(1)}`);

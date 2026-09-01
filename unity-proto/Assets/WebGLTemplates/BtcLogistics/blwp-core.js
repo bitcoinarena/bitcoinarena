@@ -1184,22 +1184,25 @@ const ARMOUR_RADIUS = 196608;
 /**
  * Keeps the truck out of the armour.
  *
- * Infantry are deliberately NOT solid. A man does not stop a laden truck, and
- * making him do it turns a charge across the open into a wall of bodies the
- * player cannot drive through - which is neither what the old game did nor
- * what anyone would expect.
+ * The tanks are the HOST'S, not the core's own.
  *
- * `units` is the state buffer; the caller supplies the stride and the offsets
- * so this does not have to know the layout.
+ * The core simulates ninety-six units of its own, and for a while the truck
+ * was being kept out of those - which are invisible. The tanks the player can
+ * see belong to Unity's Battlefield, somewhere else entirely, so the truck
+ * drove straight through everything on screen while colliding perfectly with
+ * ghosts. Two armies, and the collision was against the wrong one.
+ *
+ * Until the army itself moves into the core, its positions are host input:
+ * uploaded every tick, recorded with the rest of the input, and replayable
+ * from the transcript exactly like a steering command.
+ *
+ * Infantry are deliberately NOT here. A man does not stop a laden truck, and
+ * making him do it turns a charge across the open into a wall of bodies.
  */
-function resolveArmour(v, s32, base, stride, count, ux, uz, ualive, isArmour) {
+function resolveArmour(v, xz, count) {
   let touched = 0;
   for (let i = 0; i < count; i++) {
-    if (!isArmour(i)) continue;
-    const b = add(base, Math.imul(i, stride));
-    if (s32[add(b, ualive)] === 0) continue;
-
-    const px = s32[add(b, ux)], pz = s32[add(b, uz)];
+    const px = xz[Math.imul(i, 2)], pz = xz[add(Math.imul(i, 2), 1)];
     const r = add(ARMOUR_RADIUS, BODY_RADIUS);
 
     for (const off of [BODY_FRONT, BODY_REAR]) {
@@ -1528,6 +1531,21 @@ function setGround(st, cols, rows, heights) {
   return true;
 }
 
+/**
+ * The tanks, as x and z pairs in Q16.16, for this tick.
+ *
+ * Per-tick input rather than round setup: they move. Recorded with the
+ * steering, and replayed from the transcript the same way.
+ */
+function setArmour(st, count, xz) {
+  const n = Math.imul(count, 2);
+  if (count < 0 || xz.length < n) return false;
+  const a = new Int32Array(n);
+  a.set(xz.subarray(0, n));
+  st.armour = { n: count, xz: a };
+  return true;
+}
+
 /** Surface height under a world position, for whatever is drawing the truck. */
 /**
  * Hands the core the solid world, as axis-aligned boxes in XZ.
@@ -1575,6 +1593,10 @@ function init(seedWord) {
   // An empty world until the host says otherwise. Empty is honest: a core
   // inventing walls the player cannot see is worse than one with none.
   st.solids = noSolids();
+
+  // The tanks the player can see are the host's, and it sends them every
+  // tick. Empty until it does.
+  st.armour = { n: 0, xz: new Int32Array(0) };
 
   for (let i = 0; i < UNITS; i++) {
     const b = unitBase(i);
@@ -1644,7 +1666,7 @@ function step(st, throttle, steer, brake, handbrake, practice) {
   // not moved yet this tick - one frame stale, sixteen milliseconds, and it
   // keeps the phase order exactly as it was.
   v.fx = sin(v.heading); v.fz = cos(v.heading);
-  resolveArmour(v, s, O_UNITS, U_WORDS, UNITS, U_X, U_Z, U_STATE, isArmour);
+  resolveArmour(v, st.armour.xz, st.armour.n);
 
   s[T + T_X] = clamp(v.x, -HALF_X, HALF_X);
   s[T + T_Z] = clamp(v.z, -HALF_Z, HALF_Z);
@@ -1709,7 +1731,7 @@ const runScore = (st) =>
                 st.i32[O_SCORE + S_CARGO]);
 
 return { init: init, step: step, hash: hash, runScore: runScore,
-         setGround: setGround, groundAt: groundAt, setSolids: setSolids,
+         setGround: setGround, groundAt: groundAt, setSolids: setSolids, setArmour: setArmour,
          create: create, WORDS: WORDS };
 })();
 if (typeof module !== "undefined") module.exports = BLWP;
