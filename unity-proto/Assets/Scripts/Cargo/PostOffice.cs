@@ -239,6 +239,37 @@ public class PostOffice : MonoBehaviour
     }
 
     /// <summary>
+    /// Puts words on the whitepaper that can actually be read.
+    ///
+    /// The printed page cannot be made legible and it is not a resolution
+    /// problem: the paper carries about 2500 characters across 970 pixels,
+    /// which is four pixels a character IN THE FILE, and on screen the plaque
+    /// is a few hundred pixels wide - under two pixels a letter. No texture
+    /// and no filter fixes that; the page was recompressed, restored to full
+    /// resolution, given anisotropic filtering and a mip bias, and stayed a
+    /// grey smear, because the arithmetic was never going to work.
+    ///
+    /// So the content changes instead. The title, the author and the opening
+    /// of the abstract are drawn as text, sized to fill the plaque, which is
+    /// legible from across the yard - and is what anyone looking at it wants
+    /// to read anyway.
+    /// </summary>
+    void Paper(Transform plate)
+    {
+        var tm = Plate(plate, new Color(0.06f, 0.06f, 0.07f), 0.80f);
+        tm.text = "Bitcoin: A Peer-to-Peer\n" +
+                  "Electronic Cash System\n\n" +
+                  "Satoshi Nakamoto\n" +
+                  "satoshin@gmx.com\n\n" +
+                  "A purely peer-to-peer version of\n" +
+                  "electronic cash would allow online\n" +
+                  "payments to be sent directly from one\n" +
+                  "party to another without going through\n" +
+                  "a financial institution.";
+        Fit(tm);
+    }
+
+    /// <summary>
     /// Keeps a printed page readable from further than arm's length.
     ///
     /// The whitepaper and the genesis print are pages of body text on a plaque
@@ -360,7 +391,8 @@ public class PostOffice : MonoBehaviour
                 wall.stream = FindFirstObjectByType<MempoolBlockStream>();
                 wall.screen = t;
             }
-            else if (n == "whitepaper_print" || n == "genesis_block_print") Sharpen(t);
+            else if (n == "whitepaper_print") { Sharpen(t); Paper(t); }
+            else if (n == "genesis_block_print") Sharpen(t);
             else if (n == "unconf_count") _unconf = Plate(t, white);
             else if (n.StartsWith("fee_rate_") && !n.Contains("unit"))
                 _feeRate.Add(Plate(t, white));
