@@ -15,7 +15,10 @@ const say = (m) => {
   else console.log(m);
 };
 
-const TICKS = 10000;
+// Ten minutes at 60 Hz, which is what the acceptance criterion asks for. The
+// first version ran 10,000 ticks - under three minutes - and a divergence that
+// takes four minutes of accumulated rounding to surface would have passed it.
+const TICKS = 36000;
 const SEED = 0x5eed1234;
 
 /**
@@ -40,6 +43,6 @@ say('# ticks=' + TICKS + ' seed=' + SEED);
 for (let t = 0; t < TICKS; t++) {
   const i = inputs(t);
   step(st, i.throttle, i.steer, i.brake);
-  if ((t + 1) % 1000 === 0) say((t + 1) + ' ' + hash(st));
+  if ((t + 1) % 3600 === 0) say((t + 1) + ' ' + hash(st));
 }
 say('final ' + hash(st));

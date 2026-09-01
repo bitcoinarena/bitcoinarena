@@ -1,0 +1,31 @@
+{
+ "core": "blwp-core",
+ "produced": "tools/make-vectors.js",
+ "vectors": [
+  {
+   "name": "straight",
+   "ticks": 3600,
+   "final": "37e6960a32dda5e765c9173691922b0f5f4a47f1a4b93f89c867fe79ef4cd270"
+  },
+  {
+   "name": "slalom",
+   "ticks": 3600,
+   "final": "dfcbdfe35ca8e9705bb38df2c1fba8371f374a6f57d9c1fae910df2cc89b46c1"
+  },
+  {
+   "name": "handbrake",
+   "ticks": 3600,
+   "final": "9cea0bebe46218ce3d0bd46045de184513c66dc09249ab26e7d3bce58b8ec5ab"
+  },
+  {
+   "name": "reverse",
+   "ticks": 3600,
+   "final": "f44f2213c34d2613c91118d183b9e730b95f3323e5cb145ce9ffc4af1d20b775"
+  },
+  {
+   "name": "idle",
+   "ticks": 3600,
+   "final": "076fcb26f98fc1dc6037b3208d8ff6c4d1c1ef8a3007084f9d1ce7b9bd898a31"
+  }
+ ]
+}
