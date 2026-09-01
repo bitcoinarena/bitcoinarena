@@ -238,6 +238,38 @@ public class PostOffice : MonoBehaviour
         go.AddComponent<BoxCollider>().size = size;
     }
 
+    /// <summary>
+    /// Keeps a printed page readable from further than arm's length.
+    ///
+    /// The whitepaper and the genesis print are pages of body text on a plaque
+    /// two metres across. At any distance the mip chain takes over and every
+    /// glyph collapses into the same flat grey - the texture is not too small,
+    /// it is being averaged away before it reaches the screen. Anisotropic
+    /// filtering and a negative mip bias hold the sharper level in view for
+    /// the angles these are actually read at.
+    ///
+    /// Applied to these two only. It is a cost, and it buys nothing on a
+    /// concrete wall.
+    /// </summary>
+    static void Sharpen(Transform plate)
+    {
+        var mr = plate.GetComponent<MeshRenderer>();
+        if (mr == null) return;
+        foreach (var m in mr.materials)
+        {
+            if (m == null) continue;
+            foreach (var id in new[] { "_BaseMap", "_MainTex", "_EmissionMap" })
+            {
+                if (!m.HasProperty(id)) continue;
+                var tex = m.GetTexture(id) as Texture2D;
+                if (tex == null) continue;
+                tex.anisoLevel = 16;
+                tex.mipMapBias = -1.25f;
+                tex.filterMode = FilterMode.Trilinear;
+            }
+        }
+    }
+
     /// <summary>Hangs a text mesh on one of the model's blank plates.</summary>
     TextMesh Plate(Transform plate, Color colour, float fill = 0.88f,
                    TextAnchor anchor = TextAnchor.MiddleCenter, Vector2 offset = default,
@@ -328,6 +360,7 @@ public class PostOffice : MonoBehaviour
                 wall.stream = FindFirstObjectByType<MempoolBlockStream>();
                 wall.screen = t;
             }
+            else if (n == "whitepaper_print" || n == "genesis_block_print") Sharpen(t);
             else if (n == "unconf_count") _unconf = Plate(t, white);
             else if (n.StartsWith("fee_rate_") && !n.Contains("unit"))
                 _feeRate.Add(Plate(t, white));
