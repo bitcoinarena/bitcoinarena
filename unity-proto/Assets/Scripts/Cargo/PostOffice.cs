@@ -256,66 +256,13 @@ public class PostOffice : MonoBehaviour
     /// </summary>
     void Paper(Transform plate)
     {
-        // A blank sheet over the printed one first.
-        //
-        // Without it the drawn text sits ON the photographed page and both are
-        // visible at once - two overlapping copies of the same words, which is
-        // worse than the unreadable version was. It goes between the paper and
-        // the text: the page is at zero, this at -0.10, the words at -0.15.
+        // No cover sheet any more: the model ships this page BLANK now, so
+        // there is nothing underneath to hide. It used to carry a photograph
+        // of the whitepaper that could not be made legible at any resolution -
+        // four pixels a character in the file, under two on screen - and the
+        // drawn text had to be laid over a white quad to cover it.
         var room = Room(plate);
-        // The mesh is built here rather than taken from CreatePrimitive.
-        //
-        // Unity's built-in Quad is a resource, and resources nothing else
-        // references are STRIPPED from a player build - so in the editor this
-        // covered the page and in the browser it was a renderer with no mesh:
-        // invisible, silent, and the printed text showed straight through the
-        // drawn one. Four vertices cannot be stripped.
-        var sheet = new GameObject(plate.name + "_sheet");
-        var mf = sheet.AddComponent<MeshFilter>();
-        var quad = new Mesh { name = "sheet" };
-        quad.vertices = new[]
-        {
-            new Vector3(-0.5f, -0.5f, 0f), new Vector3(-0.5f, 0.5f, 0f),
-            new Vector3(0.5f, 0.5f, 0f),   new Vector3(0.5f, -0.5f, 0f),
-        };
-        quad.triangles = new[] { 0, 1, 2, 0, 2, 3 };
-        quad.normals = new[] { -Vector3.forward, -Vector3.forward,
-                               -Vector3.forward, -Vector3.forward };
-        quad.uv = new[] { Vector2.zero, Vector2.up, Vector2.one, Vector2.right };
-        quad.RecalculateBounds();
-        mf.sharedMesh = quad;
-        sheet.AddComponent<MeshRenderer>();
-        sheet.transform.SetParent(plate, false);
-        sheet.transform.localPosition = new Vector3(0f, 0f, -0.10f);
-        sheet.transform.localRotation = Quaternion.identity;
-        sheet.transform.localScale = new Vector3(room.x * 0.97f, room.y * 0.97f, 1f);
-        sheet.layer = plate.gameObject.layer;
 
-        var mr = sheet.GetComponent<MeshRenderer>();
-        mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-        mr.receiveShadows = false;
-        // The plate's OWN material as the base, so the shader is one the build
-        // certainly kept - Shader.Find can come back null in a player build for
-        // anything the scene does not already use, and that is how the goggles
-        // wall ended up blank in the browser and correct in the editor.
-        var source = plate.GetComponent<MeshRenderer>();
-        var shader = source != null && source.sharedMaterial != null
-            ? source.sharedMaterial.shader
-            : Shader.Find("Universal Render Pipeline/Lit");
-        if (shader != null)
-        {
-            var m = new Material(shader);
-            if (m.HasProperty("_BaseColor")) m.SetColor("_BaseColor", new Color(0.97f, 0.96f, 0.93f));
-            if (m.HasProperty("_Color")) m.SetColor("_Color", new Color(0.97f, 0.96f, 0.93f));
-            if (m.HasProperty("_BaseMap")) m.SetTexture("_BaseMap", null);
-            if (m.HasProperty("_MainTex")) m.SetTexture("_MainTex", null);
-            if (m.HasProperty("_EmissionMap")) m.SetTexture("_EmissionMap", null);
-            if (m.HasProperty("_Smoothness")) m.SetFloat("_Smoothness", 0.05f);
-            mr.sharedMaterial = m;
-        }
-
-        // Filled almost to the edge: this plate carries nothing else, and a
-        // page of text set at four fifths of it reads as small from the yard.
         var tm = Plate(plate, new Color(0.06f, 0.06f, 0.07f), 0.94f,
                        TextAnchor.MiddleCenter, default, "_text", 0.94f);
         _paper = tm;
@@ -323,7 +270,17 @@ public class PostOffice : MonoBehaviour
         // tighter of the two axes, so one long line forces the whole block
         // small and leaves the page mostly empty - it filled a ninth of the
         // plate that way.
-        tm.text = "Bitcoin\n" +
+        // Shaped to the plate, which is 9.4 x 12.2 - portrait, about 0.77.
+        // Fit scales to the tighter axis, so a block much narrower or much
+        // squatter than the page leaves most of it empty however high the fill
+        // is set: raising it from 0.80 to 0.94 moved the coverage three points
+        // and no further, because the fill was never the limit.
+        // Shaped to the plate, which is 9.4 x 12.2 - portrait, about 0.77.
+        // Fit scales to the tighter axis, so a block much narrower or much
+        // squatter than the page leaves most of it empty however high the fill
+        // is set.
+        tm.text = "BITCOIN\n" +
+                  "\n" +
                   "A Peer-to-Peer\n" +
                   "Electronic\n" +
                   "Cash System\n" +
@@ -331,7 +288,7 @@ public class PostOffice : MonoBehaviour
                   "Satoshi\n" +
                   "Nakamoto\n" +
                   "\n" +
-                  "31 October 2008";
+                  "31 Oct 2008";
         // Fitted here AND again once it has a mesh. TextMesh builds its own
         // geometry internally and Renderer.localBounds is empty on the frame
         // the text is set, so a single Fit at wire time scaled it against
@@ -340,6 +297,7 @@ public class PostOffice : MonoBehaviour
     }
 
     TextMesh _paper;
+    int _paperFits;
 
     /// <summary>
     /// Keeps a printed page readable from further than arm's length.
@@ -546,6 +504,15 @@ public class PostOffice : MonoBehaviour
 
         if (_up == null) return;
 
+        // Re-fitted every frame until it has settled.
+        //
+        // TextMesh builds its geometry internally and Renderer.localBounds is
+        // EMPTY on the frame the text is set, so the fit at wire time scaled
+        // the page against nothing and left it at a fifth of the plate. One
+        // retry is not enough either: the bounds appear a frame or two later
+        // depending on when the font atlas is built.
+        if (_paper != null && _paperFits < 8) { Fit(_paper); _paperFits++; }
+
         // The counter runs on its own clock. It is the one number on the
         // building that moves between one look and the next, and a mempool
         // counter that updates every other second reads as a photograph.
@@ -627,7 +594,6 @@ public class PostOffice : MonoBehaviour
     /// </summary>
     void Blocks()
     {
-        if (_paper != null) Fit(_paper);
         if (stats == null) return;
 
         int tip = stats.Recent.Count > 0 ? stats.Recent[0].height

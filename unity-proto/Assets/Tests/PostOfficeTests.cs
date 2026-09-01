@@ -319,6 +319,19 @@ public class PostOfficeTests
             "kein Blockstand von mempool.space - ohne Netz ist hier nichts zu pruefen");
         yield return new WaitForSeconds(2.5f);
 
+        // The building is STREAMED. Alone this test has time for it to land;
+        // in a full suite the download is slower and the block band does not
+        // exist yet, so the test measured an empty wall and blamed the wiring.
+        for (float t = 0f; t < 20f; t += Time.deltaTime)
+        {
+            bool up = false;
+            foreach (var tr in Object.FindObjectsByType<Transform>(FindObjectsSortMode.None))
+                if (tr.name.StartsWith("mined_face_") && !tr.name.Contains("plate")) { up = true; break; }
+            if (up) break;
+            yield return null;
+        }
+        yield return new WaitForSeconds(1.5f);
+
         int mined = 0, numbered = 0;
         foreach (var tm in Object.FindObjectsByType<TextMesh>(FindObjectsSortMode.None))
         {
