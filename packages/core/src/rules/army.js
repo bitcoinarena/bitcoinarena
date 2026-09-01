@@ -189,6 +189,22 @@ export function stepUnit(u, rng, seamZ, truckX, truckZ, halfX, halfZ, dt, index)
 // already holds.
 const FIRE_RELOAD_MIN = 84;      // ticks, 1.4 s
 const FIRE_RELOAD_SPAN = 108;    // up to 3.2 s
+/**
+ * How often a shot connects. Near misses are part of the show.
+ *
+ * StepArmour rolls Random01() < 0.55 before taking anything off the target,
+ * and the core took a hit off every shot. That single line is most of why
+ * the core kept a third of its armour over a minute where the C# army keeps
+ * three quarters - and it was invisible in the constants, because reload,
+ * damage and hit points had all been matched exactly.
+ *
+ * Found by measuring rather than reading: the C# army fights with four to
+ * eight enemies in range per tank against the core's 0.3-0.75 and still loses
+ * far fewer, which said the fault could not be contact and had to be
+ * lethality per shot.
+ */
+export const HIT_PER_MIL = 550;
+
 const FIRE_DAMAGE_MIN = Math.imul(11, ONE);
 const FIRE_DAMAGE_SPAN = Math.imul(13, ONE);
 

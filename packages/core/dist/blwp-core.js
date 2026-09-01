@@ -1407,6 +1407,15 @@ function stepUnit(u, rng, seamZ, truckX, truckZ, halfX, halfZ, dt, index) {
     const want = abs(gap) > mulFast(walk, dt) ? (gap > 0 ? ONE : -ONE) : 0;
     dz = mulFast(mulFast(walk, want), dt);
   }
+  // Sideways: a slow drift. NOT a chase towards the engaged foe.
+  //
+  // StepArmour steers towards (foe.x, front - Dir*9) as one vector, and
+  // porting that coupling was the obvious way to get the depth the front is
+  // missing. Measured, it made things worse: the z spread fell from 9-12 to
+  // 1.9-11.7 and one side was wiped out on two seeds, because chasing pulls
+  // both armies onto the same x and concentrates the fighting rather than
+  // spreading it. Reverted rather than kept, since the whole point of the
+  // change was to raise that number.
   const dx = mulFast(mulFast(walk, sin(u.heading)), mulFast(dt, 26214));
 
   // Held on the BATTLEFIELD, not merely on the map.
@@ -1451,6 +1460,22 @@ function stepUnit(u, rng, seamZ, truckX, truckZ, halfX, halfZ, dt, index) {
 // already holds.
 const FIRE_RELOAD_MIN = 84;      // ticks, 1.4 s
 const FIRE_RELOAD_SPAN = 108;    // up to 3.2 s
+/**
+ * How often a shot connects. Near misses are part of the show.
+ *
+ * StepArmour rolls Random01() < 0.55 before taking anything off the target,
+ * and the core took a hit off every shot. That single line is most of why
+ * the core kept a third of its armour over a minute where the C# army keeps
+ * three quarters - and it was invisible in the constants, because reload,
+ * damage and hit points had all been matched exactly.
+ *
+ * Found by measuring rather than reading: the C# army fights with four to
+ * eight enemies in range per tank against the core's 0.3-0.75 and still loses
+ * far fewer, which said the fault could not be contact and had to be
+ * lethality per shot.
+ */
+const HIT_PER_MIL = 550;
+
 const FIRE_DAMAGE_MIN = Math.imul(11, ONE);
 const FIRE_DAMAGE_SPAN = Math.imul(13, ONE);
 
@@ -1965,11 +1990,11 @@ function step(st, throttle, steer, brake, handbrake, practice) {
   const tx = s[T + T_X], tz = s[T + T_Z];
   const seamZ = frontlineZ(st.tape, tx, HALF_X, HALF_Z);
   let hits = 0;
-  const u = { x: 0, z: 0, hp: 0, heading: 0, cooldown: 0, armour: false, side: 1, crowded: false };
+  const u = { x: 0, z: 0, hp: 0, heading: 0, cooldown: 0, armour: false, side: 1, crowded: false, engaged: false, foeX: 0 };
 
   // A read-only view of any unit, for target selection. Declared before the
   // loop that uses it, unlike the scoring one further down.
-  const peek = { x: 0, z: 0, hp: 0, armour: false, side: 1, crowded: false };
+  const peek = { x: 0, z: 0, hp: 0, armour: false, side: 1, crowded: false, engaged: false, foeX: 0 };
   const peekAt = (i) => {
     const pb = unitBase(i);
     peek.x = s[pb + U_X]; peek.z = s[pb + U_Z]; peek.hp = s[pb + U_HP];
@@ -1990,14 +2015,23 @@ function step(st, throttle, steer, brake, handbrake, practice) {
     // Is anything of the other side too close? Decided before the step, from
     // the positions everyone had at the start of the tick, so the order units
     // are visited in cannot change who gives ground.
+    // The nearest enemy, and whether it is close enough to crowd us. Both
+    // read from the positions everyone held at the START of the tick, so the
+    // order units are visited in cannot decide who gives ground or who is
+    // chasing whom.
     u.crowded = false;
+    u.engaged = false;
+    u.foeX = 0;
+    let nearest = ARMOUR_RANGE;   // plain name: the bundler cannot alias
     for (let j = 0; j < UNITS; j++) {
       if (j === i) continue;
       const jb = unitBase(j);
       if (s[jb + U_STATE] === 0 || s[jb + U_SIDE] === u.side) continue;
       const ddx = sub(s[jb + U_X], u.x), ddz = sub(s[jb + U_Z], u.z);
-      if (abs(ddx) > BACKOFF_RANGE || abs(ddz) > BACKOFF_RANGE) continue;
-      if (length2(ddx, ddz) < BACKOFF_RANGE) { u.crowded = true; break; }
+      if (abs(ddx) > nearest || abs(ddz) > nearest) continue;
+      const dd = length2(ddx, ddz);
+      if (dd < BACKOFF_RANGE) u.crowded = true;
+      if (dd < nearest) { nearest = dd; u.engaged = true; u.foeX = s[jb + U_X]; }
     }
     const r = stepUnit(u, rng, seamZ, tx, tz, HALF_X, HALF_Z, TICK_DT, i);
 
@@ -2008,10 +2042,15 @@ function step(st, throttle, steer, brake, handbrake, practice) {
       else {
         const foe = pickTarget(peekAt, UNITS, i, u.x, u.z, u.side);
         if (foe >= 0) {
-          const fb = unitBase(foe);
-          const hurt = add(DAMAGE_MIN, Math.imul(nextBelow(rng, 100), DAMAGE_SPAN) / 100 | 0);
-          s[fb + U_HP] = max(0, sub(s[fb + U_HP], hurt));
-          if (s[fb + U_HP] === 0) s[fb + U_STATE] = 0;
+          // Rolled whether it hits BEFORE the reload is set, and the reload is
+          // set either way: a miss costs a shell and the time to load another.
+          const connects = nextBelow(rng, 1000) < HIT_PER_MIL;
+          if (connects) {
+            const fb = unitBase(foe);
+            const hurt = add(DAMAGE_MIN, Math.imul(nextBelow(rng, 100), DAMAGE_SPAN) / 100 | 0);
+            s[fb + U_HP] = max(0, sub(s[fb + U_HP], hurt));
+            if (s[fb + U_HP] === 0) s[fb + U_STATE] = 0;
+          }
           s[b + U_TARGET] = (RELOAD_MIN + nextBelow(rng, RELOAD_SPAN)) | 0;
         }
       }

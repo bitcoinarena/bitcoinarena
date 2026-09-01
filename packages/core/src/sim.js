@@ -27,7 +27,7 @@ import {
 import { vehicleStep } from './rules/vehicle.js';
 import { flatGround, gradeAlong, heightAtWorld, DEFAULT_COLS, DEFAULT_ROWS } from './rules/ground.js';
 import { noSolids, resolveSolids, resolveArmour, BOX_WORDS } from './rules/solids.js';
-import { stepUnit, threatAt, pickTarget, RELOAD_MIN, RELOAD_SPAN, DAMAGE_MIN, DAMAGE_SPAN, BACKOFF_RANGE, ARMOUR_RANGE as ARMOUR_RANGE_Q } from './rules/army.js';
+import { stepUnit, threatAt, pickTarget, RELOAD_MIN, RELOAD_SPAN, DAMAGE_MIN, DAMAGE_SPAN, BACKOFF_RANGE, HIT_PER_MIL, ARMOUR_RANGE } from './rules/army.js';
 import { accrue, earning, scoreOf } from './rules/score.js';
 import { outcome, RUN_LIVE, RUN_DELIVERED, RUN_WRECKED, RUN_MISSED } from './rules/gate.js';
 import { frontlineZ, SAMPLES } from './rules/frontline.js';
@@ -356,7 +356,7 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
     u.crowded = false;
     u.engaged = false;
     u.foeX = 0;
-    let nearest = ARMOUR_RANGE_Q;
+    let nearest = ARMOUR_RANGE;   // plain name: the bundler cannot alias
     for (let j = 0; j < UNITS; j++) {
       if (j === i) continue;
       const jb = unitBase(j);
@@ -376,10 +376,15 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
       else {
         const foe = pickTarget(peekAt, UNITS, i, u.x, u.z, u.side);
         if (foe >= 0) {
-          const fb = unitBase(foe);
-          const hurt = add(DAMAGE_MIN, Math.imul(nextBelow(rng, 100), DAMAGE_SPAN) / 100 | 0);
-          s[fb + U_HP] = max(0, sub(s[fb + U_HP], hurt));
-          if (s[fb + U_HP] === 0) s[fb + U_STATE] = 0;
+          // Rolled whether it hits BEFORE the reload is set, and the reload is
+          // set either way: a miss costs a shell and the time to load another.
+          const connects = nextBelow(rng, 1000) < HIT_PER_MIL;
+          if (connects) {
+            const fb = unitBase(foe);
+            const hurt = add(DAMAGE_MIN, Math.imul(nextBelow(rng, 100), DAMAGE_SPAN) / 100 | 0);
+            s[fb + U_HP] = max(0, sub(s[fb + U_HP], hurt));
+            if (s[fb + U_HP] === 0) s[fb + U_STATE] = 0;
+          }
           s[b + U_TARGET] = (RELOAD_MIN + nextBelow(rng, RELOAD_SPAN)) | 0;
         }
       }
