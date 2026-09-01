@@ -11,6 +11,8 @@ using UnityEngine.TestTools;
 /// </summary>
 public class VehicleTests
 {
+    [TearDown] public void ClearTheWorld() => TestWorld.TearDown();
+
     GameObject _boot;
     TruckController _truck;
     Rigidbody _rb;

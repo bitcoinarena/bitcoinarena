@@ -13,6 +13,8 @@ using UnityEngine.TestTools;
 /// </summary>
 public class VisibilityTests
 {
+    [TearDown] public void ClearTheWorld() => TestWorld.TearDown();
+
     const int W = 320, H = 200;
 
     /// <summary>

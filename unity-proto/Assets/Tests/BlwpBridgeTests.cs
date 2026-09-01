@@ -17,6 +17,8 @@ using Blwp;
 /// </summary>
 public class BlwpBridgeTests
 {
+    [TearDown] public void ClearTheWorld() => TestWorld.TearDown();
+
     static string CoreDir =>
         Path.GetFullPath(Path.Combine(Application.dataPath, "..", "..", "packages", "core"));
 
@@ -125,6 +127,8 @@ public class BlwpBridgeTests
 // where it lives - it is an input to the core, not a Unity setting.
 public class PracticeModeTests
 {
+    [TearDown] public void ClearTheWorld() => TestWorld.TearDown();
+
     [SetUp] public void Reset() => Blwp.PracticeMode.On = true;
 
     [Test]
@@ -206,6 +210,8 @@ public class PracticeModeTests
 /// </summary>
 public class TruckLieTests
 {
+    [TearDown] public void ClearTheWorld() => TestWorld.TearDown();
+
     const float Half = 2.0f, Track = 1.15f;
 
     static float PitchOf(Quaternion q)
@@ -270,6 +276,8 @@ public class TruckLieTests
 /// </summary>
 public class CameraDragGuardTests
 {
+    [TearDown] public void ClearTheWorld() => TestWorld.TearDown();
+
     static Vector3 Centre(TouchPad.Pad pad)
     {
         var r = TouchPad.RectFor(pad, Screen.width, Screen.height);
@@ -308,6 +316,8 @@ public class CameraDragGuardTests
 /// </summary>
 public class TruckSpawnTests
 {
+    [TearDown] public void ClearTheWorld() => TestWorld.TearDown();
+
     [UnityTest]
     public IEnumerator TheCoreSpawnsOnTheApronWhereTheBayIs()
     {
@@ -342,6 +352,8 @@ public class TruckSpawnTests
 /// </summary>
 public class WorldSolidsTests
 {
+    [TearDown] public void ClearTheWorld() => TestWorld.TearDown();
+
     GameObject _boot;
     TruckController _truck;
 
@@ -420,6 +432,8 @@ public class WorldSolidsTests
 /// </summary>
 public class GunshipCorridorTests
 {
+    [TearDown] public void ClearTheWorld() => TestWorld.TearDown();
+
     [Test]
     public void TheCorridorStopsShortOfBothDepots()
     {
@@ -464,6 +478,8 @@ public class GunshipCorridorTests
 /// </summary>
 public class ReinforcementTests
 {
+    [TearDown] public void ClearTheWorld() => TestWorld.TearDown();
+
     [Test]
     public void EveryUnitArrivesAtTheEdgeOfTheField()
     {
@@ -527,6 +543,8 @@ public class ReinforcementTests
 /// </summary>
 public class PadLayoutTests
 {
+    [TearDown] public void ClearTheWorld() => TestWorld.TearDown();
+
     [TestCase(1280, 800)]
     [TestCase(900, 1400)]
     [TestCase(2400, 1080)]

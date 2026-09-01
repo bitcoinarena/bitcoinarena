@@ -15,6 +15,8 @@ using UnityEngine.TestTools;
 /// </summary>
 public class RampReadyTests
 {
+    [TearDown] public void ClearTheWorld() => TestWorld.TearDown();
+
     GameObject _boot;
 
     [UnityTearDown]

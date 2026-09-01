@@ -11,6 +11,8 @@ using UnityEngine.TestTools;
 /// </summary>
 public class DeliveryTests
 {
+    [TearDown] public void ClearTheWorld() => TestWorld.TearDown();
+
     GameObject _boot;
     TruckController _truck;
     CargoBay _bay;

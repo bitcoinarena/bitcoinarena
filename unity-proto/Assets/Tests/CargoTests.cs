@@ -11,6 +11,8 @@ using UnityEngine.TestTools;
 /// </summary>
 public class CargoTests
 {
+    [TearDown] public void ClearTheWorld() => TestWorld.TearDown();
+
     /// <summary>
     /// Practice mode is on when the game starts and withholds every hit -
     /// which is what it is for, and which makes every test below vacuous if

@@ -164,6 +164,7 @@ export const ARMOUR_RADIUS = 196608;
  */
 export function resolveArmour(v, xz, count) {
   let touched = 0;
+  let sumX = 0, sumZ = 0;   // px and pz are already the tank's position
   for (let i = 0; i < count; i++) {
     const px = xz[Math.imul(i, 2)], pz = xz[add(Math.imul(i, 2), 1)];
     const r = add(ARMOUR_RADIUS, BODY_RADIUS);
@@ -179,8 +180,8 @@ export function resolveArmour(v, xz, count) {
 
       const push = sub(r, d === 0 ? 0 : d);
       const nx = d === 0 ? ONE : div(dx, d), nz = d === 0 ? 0 : div(dz, d);
-      v.x = add(v.x, mulFast(nx, push));
-      v.z = add(v.z, mulFast(nz, push));
+      sumX = add(sumX, mulFast(nx, push));
+      sumZ = add(sumZ, mulFast(nz, push));
 
       const into = add(mulFast(v.vx, nx), mulFast(v.vz, nz));
       if (into < 0) {
@@ -194,5 +195,30 @@ export function resolveArmour(v, xz, count) {
       touched = 1;
     }
   }
+
+  // The total correction is capped.
+  //
+  // Two circles against a crowd of tanks produce several ways out at once, and
+  // summing them all is how a truck gets wedged: pushed north by one and east
+  // by the next until the corrections cancel the controls entirely. Backing
+  // out of a jam moved it four and a half metres in five seconds where it
+  // should have covered twenty. A cap per tick lets the deepest contact win
+  // and leaves the driver in charge of the rest.
+  const total = length2(sumX, sumZ);
+  if (total > CORRECTION_CAP) {
+    sumX = div(mulFast(sumX, CORRECTION_CAP), total);
+    sumZ = div(mulFast(sumZ, CORRECTION_CAP), total);
+  }
+  v.x = add(v.x, sumX);
+  v.z = add(v.z, sumZ);
   return touched;
 }
+
+/**
+ * Most the collision may move the truck in one tick: 0.6 m.
+ *
+ * It has to exceed the distance the truck covers in a tick, or a fast
+ * approach simply pushes through: at 24 m/s that is 0.4 m, and a cap of 0.25
+ * let the truck drive into a tank and out the other side.
+ */
+const CORRECTION_CAP = 39322;
