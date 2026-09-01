@@ -263,25 +263,54 @@ public class PostOffice : MonoBehaviour
         // worse than the unreadable version was. It goes between the paper and
         // the text: the page is at zero, this at -0.10, the words at -0.15.
         var room = Room(plate);
-        var sheet = GameObject.CreatePrimitive(PrimitiveType.Quad);
-        sheet.name = plate.name + "_sheet";
-        var col = sheet.GetComponent<Collider>();
-        if (col != null) Destroy(col);
+        // The mesh is built here rather than taken from CreatePrimitive.
+        //
+        // Unity's built-in Quad is a resource, and resources nothing else
+        // references are STRIPPED from a player build - so in the editor this
+        // covered the page and in the browser it was a renderer with no mesh:
+        // invisible, silent, and the printed text showed straight through the
+        // drawn one. Four vertices cannot be stripped.
+        var sheet = new GameObject(plate.name + "_sheet");
+        var mf = sheet.AddComponent<MeshFilter>();
+        var quad = new Mesh { name = "sheet" };
+        quad.vertices = new[]
+        {
+            new Vector3(-0.5f, -0.5f, 0f), new Vector3(-0.5f, 0.5f, 0f),
+            new Vector3(0.5f, 0.5f, 0f),   new Vector3(0.5f, -0.5f, 0f),
+        };
+        quad.triangles = new[] { 0, 1, 2, 0, 2, 3 };
+        quad.normals = new[] { -Vector3.forward, -Vector3.forward,
+                               -Vector3.forward, -Vector3.forward };
+        quad.uv = new[] { Vector2.zero, Vector2.up, Vector2.one, Vector2.right };
+        quad.RecalculateBounds();
+        mf.sharedMesh = quad;
+        sheet.AddComponent<MeshRenderer>();
         sheet.transform.SetParent(plate, false);
         sheet.transform.localPosition = new Vector3(0f, 0f, -0.10f);
-        sheet.transform.localRotation = Quaternion.Euler(0f, 180f, 0f);
+        sheet.transform.localRotation = Quaternion.identity;
         sheet.transform.localScale = new Vector3(room.x * 0.97f, room.y * 0.97f, 1f);
         sheet.layer = plate.gameObject.layer;
 
         var mr = sheet.GetComponent<MeshRenderer>();
         mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
         mr.receiveShadows = false;
-        var shader = Shader.Find("Universal Render Pipeline/Lit");
+        // The plate's OWN material as the base, so the shader is one the build
+        // certainly kept - Shader.Find can come back null in a player build for
+        // anything the scene does not already use, and that is how the goggles
+        // wall ended up blank in the browser and correct in the editor.
+        var source = plate.GetComponent<MeshRenderer>();
+        var shader = source != null && source.sharedMaterial != null
+            ? source.sharedMaterial.shader
+            : Shader.Find("Universal Render Pipeline/Lit");
         if (shader != null)
         {
             var m = new Material(shader);
-            m.SetColor("_BaseColor", new Color(0.96f, 0.95f, 0.92f));
-            m.SetFloat("_Smoothness", 0.05f);
+            if (m.HasProperty("_BaseColor")) m.SetColor("_BaseColor", new Color(0.97f, 0.96f, 0.93f));
+            if (m.HasProperty("_Color")) m.SetColor("_Color", new Color(0.97f, 0.96f, 0.93f));
+            if (m.HasProperty("_BaseMap")) m.SetTexture("_BaseMap", null);
+            if (m.HasProperty("_MainTex")) m.SetTexture("_MainTex", null);
+            if (m.HasProperty("_EmissionMap")) m.SetTexture("_EmissionMap", null);
+            if (m.HasProperty("_Smoothness")) m.SetFloat("_Smoothness", 0.05f);
             mr.sharedMaterial = m;
         }
 
@@ -456,8 +485,12 @@ public class PostOffice : MonoBehaviour
                 _blockFace.Add(Plate(t, white, 0.30f, TextAnchor.UpperCenter,
                                      new Vector2(0f, -0.16f), "_text", 0.86f));
             }
-            else if (n.StartsWith("block_label_") && !n.Contains("case"))
-                _blockLabel.Add(Plate(t, blue, 0.92f));
+            // The caption strip is left blank on purpose.
+            //
+            // The number is drawn large on the face of the block now, and the
+            // strip sits over that same face in this model - so every block
+            // carried its height twice, once readable and once as a small blue
+            // smudge across the top of it.
         }
     }
 
@@ -612,23 +645,5 @@ public class PostOffice : MonoBehaviour
             Fit(_blockFace[i]);
         }
 
-        for (int i = 0; i < _blockLabel.Count; i++)
-        {
-            if (i < 5)
-            {
-                // The nearest projected block to the divider is the NEXT one,
-                // tip + 1 - it is the one its own face says arrives in nine
-                // minutes. The row used to be numbered backwards, so the block
-                // captioned tip + 5 was the one being mined next.
-                _blockLabel[i].text = tip > 0 ? $"{tip + 1 + i:N0}" : "—";
-            }
-            else
-            {
-                int at = i - 5;
-                _blockLabel[i].text = at < stats.Recent.Count
-                    ? $"{stats.Recent[at].height:N0}" : "—";
-            }
-            Fit(_blockLabel[i]);
-        }
     }
 }

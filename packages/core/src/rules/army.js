@@ -65,7 +65,16 @@ export function threatAt(units, count, x, z) {
   for (let i = 0; i < count; i++) {
     const u = units(i);
     if (u.hp <= 0) continue;
-    const d = length2(sub(u.x, x), sub(u.z, z));
+
+    // Rejected on each axis before any distance is taken. length2 squares its
+    // arguments in Q16.16 and this map is 260 m across, so a unit at the far
+    // end overflows the sum of squares past 2^31 and comes back as a distance
+    // of zero - which reads as a tank standing on the truck. The same trap the
+    // collision walked into.
+    const dx = sub(u.x, x), dz = sub(u.z, z);
+    if (abs(dx) > ARMOUR_RANGE || abs(dz) > ARMOUR_RANGE) continue;
+
+    const d = length2(dx, dz);
     if (u.armour) { if (d < ARMOUR_RANGE) threat = add(threat, ONE); }
     else if (d < RIFLE_RANGE) threat = add(threat, 11796);   // 0.18
   }
