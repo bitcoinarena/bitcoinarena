@@ -369,7 +369,17 @@ public class PostOfficeTests
         foreach (var tm in Object.FindObjectsByType<TextMesh>(FindObjectsSortMode.None))
         {
             var plate = tm.transform.parent;
-            if (plate == null || !plate.name.StartsWith("block_label_")) continue;
+            // Read off the FACE, not the caption strip.
+            //
+            // The projected block's height used to be on the thin strip above
+            // it - 1.1 m against an 8.2 m face - and it is now drawn large on
+            // the face itself, laid out like the mined side. The strip is
+            // deliberately blank: in this model it sits over the same face, so
+            // wiring both put the number on every block twice. What is being
+            // claimed here has not changed - the projected side counts up from
+            // the tip - only where it is written.
+            if (plate == null || !plate.name.StartsWith("next_face_")) continue;
+            if (!tm.name.EndsWith("_height")) continue;
             if (!plate.name.EndsWith("_00") && !plate.name.EndsWith("_04")) continue;
             if (int.TryParse(tm.text.Replace(",", "").Replace(".", ""), out int h))
                 labels.Add(plate.name.EndsWith("_00") ? h : -h);
