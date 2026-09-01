@@ -28,6 +28,7 @@ namespace Blwp
         public const int T_FLAGS = 8;
         public const int T_HEADING = 2;
         public const int T_HP = 6;
+        public const int T_IMPACT = 12;
         public const int T_STEER = 11;
         public const int T_THROTTLE = 10;
         public const int T_VX = 3;

@@ -14,7 +14,7 @@
 // and carry their vertical span so the truck can drive UNDER a doorway lintel
 // instead of into it.
 
-import { ONE, add, sub, mulFast, div, clamp, min, max, abs, length2 } from '../fixed.js';
+import { ONE, add, sub, neg, mulFast, div, clamp, min, max, abs, length2 } from '../fixed.js';
 
 export const BOX_WORDS = 6;   // cx, cz, hx, hz, yLow, yHigh
 
@@ -184,6 +184,10 @@ export function resolveArmour(v, xz, count) {
 
       const into = add(mulFast(v.vx, nx), mulFast(v.vz, nz));
       if (into < 0) {
+        // How hard it went in, before the velocity is taken off it. The host
+        // applies its own rule to this - the core's job is to notice.
+        const hit = neg(into);
+        if (hit > v.impact) v.impact = hit;
         v.vx = sub(v.vx, mulFast(into, nx));
         v.vz = sub(v.vz, mulFast(into, nz));
       }

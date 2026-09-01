@@ -31,6 +31,7 @@ namespace Blwp
         [DllImport("__Internal")] private static extern int BlwpSetSolids(IntPtr b, int count);
         [DllImport("__Internal")] private static extern int BlwpSetArmour(IntPtr b, int count);
         [DllImport("__Internal")] private static extern int BlwpTeleport(int x, int z, int heading);
+        [DllImport("__Internal")] private static extern int BlwpTakeImpact();
         public const bool Compiled = true;
 #else
         private static int BlwpInit(int seed) => 0;
@@ -44,6 +45,7 @@ namespace Blwp
         private static int BlwpSetSolids(IntPtr b, int n) => 0;
         private static int BlwpSetArmour(IntPtr b, int n) => 0;
         private static int BlwpTeleport(int x, int z, int h) => 0;
+        private static int BlwpTakeImpact() => 0;
         public const bool Compiled = false;
 #endif
 
@@ -146,6 +148,16 @@ namespace Blwp
             return BlwpTeleport(Mathf.RoundToInt(at.x * ONE),
                                 Mathf.RoundToInt(at.z * ONE), h) != 0;
         }
+
+        /// <summary>
+        /// The hardest armour impact since this was last called, m/s.
+        ///
+        /// Reading clears it, so one crash is applied once. PhysX raised
+        /// OnCollisionEnter for this and the body is kinematic now, so nothing
+        /// fires - which is why a truck could be driven into a tank at speed
+        /// and come away unmarked.
+        /// </summary>
+        public static float TakeImpact() => Available ? BlwpTakeImpact() / (float)ONE : 0f;
 
         /// <summary>The truck's velocity, in metres a second.</summary>
         public static Vector3 Velocity => new Vector3(

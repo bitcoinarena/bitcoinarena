@@ -159,6 +159,22 @@ public class TruckHealth : MonoBehaviour
 
     void Update()
     {
+        // Armour impacts come from the core now.
+        //
+        // OnCollisionEnter below still exists and still holds the rule, but it
+        // cannot fire: the truck's Rigidbody is kinematic and the core writes
+        // its transform, so PhysX resolves nothing and reports nothing. The
+        // core notices the crash; the rule that decides what it costs stays
+        // exactly where it was.
+        float rammed = Blwp.BlwpCore.TakeImpact();
+        if (rammed > 0.5f && !IsDestroyed && !IsInvulnerable)
+        {
+            if (chase != null) chase.Shake(Mathf.Min(1.2f, rammed * 0.09f));
+            if (audio != null) audio.Impact(rammed);
+            if (rammed >= crashSpeed) WriteOff();
+            else Damage(rammed * 6f);
+        }
+
         EnsureInit();
 
         // hand the condition to the controller, and smoke when it is bad

@@ -62,8 +62,20 @@ public class RunScore : MonoBehaviour
     /// </summary>
     public bool MakingProgress { get; private set; }
 
+    /// <summary>True while the deterministic core is the authority.</summary>
+    static bool FromCore => Blwp.BlwpCore.Available;
+
     /// <summary>E in the spec: 0..1, danger integrated over ground made good.</summary>
-    public float Exposure => Mathf.Clamp01(_exposure / Mathf.Max(0.01f, exposureReference));
+    ///
+    /// Taken from the core when the core is driving. Two implementations of
+    /// section 18A were running side by side - this one in C# and the core's
+    /// own - and they were never going to agree: they integrate different
+    /// danger, over different positions, at different rates. Whichever one the
+    /// HUD happened to read was the score the player saw, and it was not the
+    /// one the round would eventually be settled on.
+    public float Exposure => FromCore
+        ? Mathf.Clamp01(Blwp.BlwpCore.Exposure)
+        : Mathf.Clamp01(_exposure / Mathf.Max(0.01f, exposureReference));
 
     /// <summary>
     /// The instantaneous rate, unnormalised. Zero at the map edge, 1 on the
@@ -89,8 +101,9 @@ public class RunScore : MonoBehaviour
     public float CargoFactor => bay != null ? Mathf.Clamp01(bay.Fill) : 0f;
 
     /// <summary>What this run would score if it were delivered right now.</summary>
-    public int Projected =>
-        Mathf.RoundToInt(1000f * Exposure * TimeFactor * CargoFactor);
+    public int Projected => FromCore
+        ? Blwp.BlwpCore.RunScore()
+        : Mathf.RoundToInt(1000f * Exposure * TimeFactor * CargoFactor);
 
     /// <summary>Score of the last delivered run, for the breakdown card.</summary>
     public int LastScore { get; private set; }

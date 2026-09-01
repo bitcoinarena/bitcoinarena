@@ -314,18 +314,32 @@ public class PostOffice : MonoBehaviour
             mr.sharedMaterial = m;
         }
 
-        var tm = Plate(plate, new Color(0.06f, 0.06f, 0.07f), 0.80f);
-        tm.text = "Bitcoin: A Peer-to-Peer\n" +
-                  "Electronic Cash System\n\n" +
-                  "Satoshi Nakamoto\n" +
-                  "satoshin@gmx.com\n\n" +
-                  "A purely peer-to-peer version of\n" +
-                  "electronic cash would allow online\n" +
-                  "payments to be sent directly from one\n" +
-                  "party to another without going through\n" +
-                  "a financial institution.";
+        // Filled almost to the edge: this plate carries nothing else, and a
+        // page of text set at four fifths of it reads as small from the yard.
+        var tm = Plate(plate, new Color(0.06f, 0.06f, 0.07f), 0.94f,
+                       TextAnchor.MiddleCenter, default, "_text", 0.94f);
+        _paper = tm;
+        // Short lines on purpose. The plate is portrait and Fit scales to the
+        // tighter of the two axes, so one long line forces the whole block
+        // small and leaves the page mostly empty - it filled a ninth of the
+        // plate that way.
+        tm.text = "Bitcoin\n" +
+                  "A Peer-to-Peer\n" +
+                  "Electronic\n" +
+                  "Cash System\n" +
+                  "\n" +
+                  "Satoshi\n" +
+                  "Nakamoto\n" +
+                  "\n" +
+                  "31 October 2008";
+        // Fitted here AND again once it has a mesh. TextMesh builds its own
+        // geometry internally and Renderer.localBounds is empty on the frame
+        // the text is set, so a single Fit at wire time scaled it against
+        // nothing and left it at a ninth of the plate.
         Fit(tm);
     }
+
+    TextMesh _paper;
 
     /// <summary>
     /// Keeps a printed page readable from further than arm's length.
@@ -449,7 +463,16 @@ public class PostOffice : MonoBehaviour
                 wall.stream = FindFirstObjectByType<MempoolBlockStream>();
                 wall.screen = t;
             }
-            else if (n == "whitepaper_print") { Sharpen(t); Paper(t); }
+            else if (n == "whitepaper_print")
+            {
+                // Guarded, because Wire() is one loop over every transform in
+                // the building: anything thrown in here stops the rest of it,
+                // and the block band is wired AFTER this. One decorative
+                // plaque took the whole display wall down with it.
+                try { Sharpen(t); Paper(t); }
+                catch (System.Exception e)
+                { Debug.LogWarning("[PostOffice] whitepaper: " + e.Message); }
+            }
             else if (n == "genesis_block_print") Sharpen(t);
             else if (n == "unconf_count") _unconf = Plate(t, white);
             else if (n.StartsWith("fee_rate_") && !n.Contains("unit"))
@@ -604,6 +627,7 @@ public class PostOffice : MonoBehaviour
     /// </summary>
     void Blocks()
     {
+        if (_paper != null) Fit(_paper);
         if (stats == null) return;
 
         int tip = stats.Recent.Count > 0 ? stats.Recent[0].height

@@ -688,6 +688,15 @@ const T_X = 0, T_Z = 1, T_HEADING = 2, T_VX = 3, T_VZ = 4;
 const T_ANGVEL = 5, T_HP = 6, T_CARGO = 7, T_FLAGS = 8;
 const T_WHEEL = 9, T_THROTTLE = 10, T_STEER = 11;
 
+/**
+ * Closing speed of the last armour impact, in m/s, or zero.
+ *
+ * Written by the collision and cleared once read. PhysX used to raise
+ * OnCollisionEnter for this and the body is kinematic now, so nothing fires -
+ * which is why a truck could be driven into a tank and come away unmarked.
+ */
+const T_IMPACT = 12;
+
 // score fields, relative to O_SCORE
 const S_EXPOSURE = 0, S_ELAPSED = 1, S_BESTX = 2;
 const S_CARGO = 3, S_DELIVERED = 4, S_STATE = 5;
@@ -1221,6 +1230,10 @@ function resolveArmour(v, xz, count) {
 
       const into = add(mulFast(v.vx, nx), mulFast(v.vz, nz));
       if (into < 0) {
+        // How hard it went in, before the velocity is taken off it. The host
+        // applies its own rule to this - the core's job is to notice.
+        const hit = neg(into);
+        if (hit > v.impact) v.impact = hit;
         v.vx = sub(v.vx, mulFast(into, nx));
         v.vz = sub(v.vz, mulFast(into, nz));
       }
@@ -1739,7 +1752,11 @@ function step(st, throttle, steer, brake, handbrake, practice) {
   // not moved yet this tick - one frame stale, sixteen milliseconds, and it
   // keeps the phase order exactly as it was.
   v.fx = sin(v.heading); v.fz = cos(v.heading);
+  v.impact = 0;
   resolveArmour(v, st.armour.xz, st.armour.n);
+
+  // The hardest armour impact this tick, for whatever applies damage.
+  if (v.impact > s[T + T_IMPACT]) s[T + T_IMPACT] = v.impact;
 
   s[T + T_X] = clamp(v.x, -HALF_X, HALF_X);
   s[T + T_Z] = clamp(v.z, -HALF_Z, HALF_Z);

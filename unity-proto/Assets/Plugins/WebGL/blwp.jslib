@@ -108,6 +108,17 @@ mergeInto(LibraryManager.library, {
     return b.core.teleport(b.st, x | 0, z | 0, heading | 0) ? 1 : 0;
   },
 
+  // The hardest armour impact since this was last asked, in Q16.16 m/s.
+  // Reading it clears it, so one crash is applied once.
+  BlwpTakeImpact: function () {
+    var b = Module.blwp;
+    if (!b) return 0;
+    var T = 5, T_IMPACT = 12;
+    var v = b.st.i32[T + T_IMPACT] | 0;
+    b.st.i32[T + T_IMPACT] = 0;
+    return v;
+  },
+
   // A query parameter from the page's own URL, written into a caller-owned
   // buffer. Handing a build to somebody in the mode you meant them to see is
   // what a shared link is for, and it beats asking them to find a switch.

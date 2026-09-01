@@ -29,6 +29,15 @@ export const T_X = 0, T_Z = 1, T_HEADING = 2, T_VX = 3, T_VZ = 4;
 export const T_ANGVEL = 5, T_HP = 6, T_CARGO = 7, T_FLAGS = 8;
 export const T_WHEEL = 9, T_THROTTLE = 10, T_STEER = 11;
 
+/**
+ * Closing speed of the last armour impact, in m/s, or zero.
+ *
+ * Written by the collision and cleared once read. PhysX used to raise
+ * OnCollisionEnter for this and the body is kinematic now, so nothing fires -
+ * which is why a truck could be driven into a tank and come away unmarked.
+ */
+export const T_IMPACT = 12;
+
 // score fields, relative to O_SCORE
 export const S_EXPOSURE = 0, S_ELAPSED = 1, S_BESTX = 2;
 export const S_CARGO = 3, S_DELIVERED = 4, S_STATE = 5;

@@ -16,7 +16,7 @@ import {
   create, unitBase, MAX_UNITS, O_UNITS, U_WORDS,
   O_TICK, O_RNG, O_TRUCK, O_SCORE,
   T_X, T_Z, T_HEADING, T_VX, T_VZ, T_ANGVEL, T_HP, T_CARGO, T_FLAGS,
-  T_WHEEL, T_THROTTLE, T_STEER,
+  T_WHEEL, T_THROTTLE, T_STEER, T_IMPACT,
   S_EXPOSURE, S_ELAPSED, S_BESTX, S_CARGO, S_DELIVERED, S_STATE, S_PRACTICE,
   U_X, U_Z, U_SIDE, U_HP, U_HEADING, U_STATE, U_COOLDOWN, U_TARGET,
 } from './state.js';
@@ -289,7 +289,11 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
   // not moved yet this tick - one frame stale, sixteen milliseconds, and it
   // keeps the phase order exactly as it was.
   v.fx = sin(v.heading); v.fz = cos(v.heading);
+  v.impact = 0;
   resolveArmour(v, st.armour.xz, st.armour.n);
+
+  // The hardest armour impact this tick, for whatever applies damage.
+  if (v.impact > s[T + T_IMPACT]) s[T + T_IMPACT] = v.impact;
 
   s[T + T_X] = clamp(v.x, -HALF_X, HALF_X);
   s[T + T_Z] = clamp(v.z, -HALF_Z, HALF_Z);

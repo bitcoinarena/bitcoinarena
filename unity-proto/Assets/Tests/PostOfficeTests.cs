@@ -339,7 +339,11 @@ public class PostOfficeTests
             mined++;
             StringAssert.DoesNotContain("vor ", tm.text,
                 $"der Block spricht Deutsch: \"{tm.text}\"");
-            StringAssert.Contains("ago", tm.text,
+            // "just now" is what a block found seconds ago says, and it is as
+            // English as "9 minutes ago". The claim being made here is that
+            // the band is not in German, not that every phrasing ends in one
+            // particular word.
+            Assert.IsTrue(tm.text.Contains("ago") || tm.text.Contains("just now"),
                 $"dem Block fehlt das Alter in Worten: \"{tm.text}\"");
         }
         Assert.Greater(mined, 3, $"nur {mined} geminte Bloecke tragen Text");
