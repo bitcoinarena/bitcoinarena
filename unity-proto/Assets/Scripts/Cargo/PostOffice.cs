@@ -256,6 +256,35 @@ public class PostOffice : MonoBehaviour
     /// </summary>
     void Paper(Transform plate)
     {
+        // A blank sheet over the printed one first.
+        //
+        // Without it the drawn text sits ON the photographed page and both are
+        // visible at once - two overlapping copies of the same words, which is
+        // worse than the unreadable version was. It goes between the paper and
+        // the text: the page is at zero, this at -0.10, the words at -0.15.
+        var room = Room(plate);
+        var sheet = GameObject.CreatePrimitive(PrimitiveType.Quad);
+        sheet.name = plate.name + "_sheet";
+        var col = sheet.GetComponent<Collider>();
+        if (col != null) Destroy(col);
+        sheet.transform.SetParent(plate, false);
+        sheet.transform.localPosition = new Vector3(0f, 0f, -0.10f);
+        sheet.transform.localRotation = Quaternion.Euler(0f, 180f, 0f);
+        sheet.transform.localScale = new Vector3(room.x * 0.97f, room.y * 0.97f, 1f);
+        sheet.layer = plate.gameObject.layer;
+
+        var mr = sheet.GetComponent<MeshRenderer>();
+        mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+        mr.receiveShadows = false;
+        var shader = Shader.Find("Universal Render Pipeline/Lit");
+        if (shader != null)
+        {
+            var m = new Material(shader);
+            m.SetColor("_BaseColor", new Color(0.96f, 0.95f, 0.92f));
+            m.SetFloat("_Smoothness", 0.05f);
+            mr.sharedMaterial = m;
+        }
+
         var tm = Plate(plate, new Color(0.06f, 0.06f, 0.07f), 0.80f);
         tm.text = "Bitcoin: A Peer-to-Peer\n" +
                   "Electronic Cash System\n\n" +
