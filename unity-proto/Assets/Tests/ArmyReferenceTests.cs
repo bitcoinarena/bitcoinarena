@@ -64,7 +64,9 @@ public class ArmyReferenceTests
         // tank has inside gun range, because those two numbers together are
         // what decides whether a fight is a grind or one collision.
         Density(army, out float dens, out float xspread);
-        sb.AppendLine($"ARMYREF density inRange={dens:0.00} xspread={xspread:0.0}");
+        Concentration(army, out float per, out int worst, out int shooters);
+        sb.AppendLine($"ARMYREF density inRange={dens:0.00} xspread={xspread:0.0} " +
+                      $"shooters={shooters} perTarget={per:0.00} worst={worst}");
 
         sb.AppendLine($"ARMYREF t={t:0.0} " +
                       $"bullArmour n={an} z={ad:0.00} spread={av:0.00} " +
@@ -99,6 +101,37 @@ public class ArmyReferenceTests
         float v = 0f;
         foreach (var x in xs) v += (x - m) * (x - m);
         xSpread = xs.Count > 1 ? Mathf.Sqrt(v / xs.Count) : 0f;
+    }
+
+    /// <summary>
+    /// How concentrated the fire is: shooters per target, and the worst case.
+    ///
+    /// Every tank shoots at its nearest enemy, so several can pick the same
+    /// one. That is the difference between an army that grinds and one that
+    /// evaporates, and it is the quantity the core is being compared on.
+    /// </summary>
+    static void Concentration(Army army, out float perTarget, out int worst, out int shooters)
+    {
+        var hits = new System.Collections.Generic.Dictionary<Army.Unit, int>();
+        shooters = 0;
+        foreach (var a in army.Armour)
+        {
+            if (a.hp <= 0f) continue;
+            Army.Unit best = null; float bd = 46f * 46f;
+            foreach (var b in army.Armour)
+            {
+                if (b == a || b.hp <= 0f || b.side == a.side) continue;
+                float d = (b.x - a.x) * (b.x - a.x) + (b.z - a.z) * (b.z - a.z);
+                if (d < bd) { bd = d; best = b; }
+            }
+            if (best == null) continue;
+            shooters++;
+            hits.TryGetValue(best, out int c);
+            hits[best] = c + 1;
+        }
+        worst = 0;
+        foreach (var c in hits.Values) worst = Mathf.Max(worst, c);
+        perTarget = hits.Count > 0 ? (float)shooters / hits.Count : 0f;
     }
 
     static void Stats(System.Collections.Generic.List<Army.Unit> units, Army.Side side,

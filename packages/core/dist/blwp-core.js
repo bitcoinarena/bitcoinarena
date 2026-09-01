@@ -1329,6 +1329,12 @@ const FALL_BACK = Math.imul(34, ONE);
 /** The battlefield's half width, as Army.FrontX has it. */
 const FRONT_X = Math.imul(92, ONE);
 
+/** Squad anchors along the front, and how wide a squad stands. */
+const SQUADS = 8;
+const SQUAD_SPAN = Math.imul(76, ONE);     // anchors run from -76 to +76
+const SQUAD_WIDTH = Math.imul(16, ONE);    // each unit sits within 8 m of its anchor
+const TWO = Math.imul(2, ONE);
+
 const BACK_OFF_RANGE = Math.imul(24, ONE);
 const BACK_OFF = Math.imul(6, ONE);        // metres a second, away from the seam
 const OVERRUN = Math.imul(14, ONE);
@@ -1407,6 +1413,36 @@ function stepUnit(u, rng, seamZ, truckX, truckZ, halfX, halfZ, dt, index) {
     const want = abs(gap) > mulFast(walk, dt) ? (gap > 0 ? ONE : -ONE) : 0;
     dz = mulFast(mulFast(walk, want), dt);
   }
+  // Sideways: hold a squad position, not a random walk.
+  //
+  // A unit that wanders freely fills whatever room it is given. Clamped to the
+  // battlefield the core's armour still spread from 57 m to 87 m of standard
+  // deviation over a minute - past uniform, so they were piling at the edges -
+  // while the C# army holds 36 to 45 throughout. It holds it because units do
+  // not wander at all: EnsureSquads anchors them along the front and each unit
+  // keeps its own offset from its anchor.
+  //
+  // Without that the two armies drift apart sideways and stop meeting: by t=60
+  // seven tanks were alive and NOT ONE was shooting. The fight was over, and
+  // that is what looked like heavy attrition - all of it happened in the first
+  // thirty seconds and then nothing.
+  // Bit three and up, so that a squad holds one unit from EACH side.
+  //
+  // index % SQUADS collides with the side assignment: armour is every fourth
+  // index and the side is bit two, so armour fell into just two squads, one
+  // per army, and the two lines stood at opposite ends of the field. Twenty
+  // three of twenty four tanks survived a minute because not one of them ever
+  // saw an enemy.
+  const squad = ((index | 0) >> 3) % SQUADS;
+  const anchor = sub(Math.imul(squad, div(Math.imul(2, SQUAD_SPAN), Math.imul(SQUADS - 1, ONE))),
+                     SQUAD_SPAN);
+  const offset = sub(Math.imul((Math.imul(index | 0, 2654435761) >>> 22) & 255,
+                               div(SQUAD_WIDTH, Math.imul(255, ONE))), div(SQUAD_WIDTH, TWO));
+  const post = add(anchor, offset);
+  const dxWant = sub(post, u.x);
+  const dxCap = mulFast(walk, dt);
+  const dx = clamp(dxWant, neg(dxCap), dxCap);
+
   // Sideways: a slow drift. NOT a chase towards the engaged foe.
   //
   // StepArmour steers towards (foe.x, front - Dir*9) as one vector, and
@@ -1416,8 +1452,6 @@ function stepUnit(u, rng, seamZ, truckX, truckZ, halfX, halfZ, dt, index) {
   // both armies onto the same x and concentrates the fighting rather than
   // spreading it. Reverted rather than kept, since the whole point of the
   // change was to raise that number.
-  const dx = mulFast(mulFast(walk, sin(u.heading)), mulFast(dt, 26214));
-
   // Held on the BATTLEFIELD, not merely on the map.
   //
   // The heading wobbles, so the lateral step is a random walk, and clamped at
