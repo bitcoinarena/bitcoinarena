@@ -17,6 +17,17 @@ public class ChaseCamera : MonoBehaviour
     /// <summary>Tilt of the overview. Straight down reads as a map; this reads as a battlefield.</summary>
     public float godPitch = 62f;
 
+    [Header("Look around")]
+    [Tooltip("Degrees of camera yaw per screen width dragged.")]
+    public float dragYaw = 220f;
+    [Tooltip("Degrees of camera pitch per screen height dragged.")]
+    public float dragPitch = 120f;
+    [Tooltip("How far the view may be tilted up and down, in degrees.")]
+    public float pitchLimit = 55f;
+    [Tooltip("Seconds the view is held after a drag before it eases back " +
+             "behind the truck. Zero keeps it until the next drag.")]
+    public float recentreAfter = 2.5f;
+
     public Mode View { get; private set; } = Mode.Follow;
     public void Toggle() => View = View == Mode.Follow ? Mode.God : Mode.Follow;
 
@@ -103,6 +114,12 @@ public class ChaseCamera : MonoBehaviour
 
     float _deathYaw;
 
+    // Where the player has dragged the view to, relative to the automatic one.
+    float _orbitYaw, _orbitPitch;
+    float _dragIdle;
+    bool _dragging;
+    Vector3 _lastPointer;
+
     float _shake;
     float _lean;
     float _lastHeading;
@@ -120,9 +137,64 @@ public class ChaseCamera : MonoBehaviour
     /// <summary>Current shake, for a test to watch it decay.</summary>
     public float ShakeAmount => _shake;
 
+    /// <summary>
+    /// Drag to look around.
+    ///
+    /// A chase camera locked behind the truck gives the player no way to read
+    /// how the truck is SITTING - whether it is nose-down on a descent, or
+    /// leaning across a slope - because the one view that shows it is the one
+    /// view they cannot get to. Dragging swings the camera round the truck and
+    /// it eases back on its own afterwards, so looking does not cost the run.
+    ///
+    /// Drags that begin on a driving pad are ignored: on a phone the pads are
+    /// the controls, and a thumb sliding on one must steer, not pan.
+    /// </summary>
+    void ReadDrag()
+    {
+        bool held = Input.GetMouseButton(0);
+        Vector3 at = Input.mousePosition;
+
+        if (held && !_dragging)
+        {
+            _dragging = !OverAPad(at);
+            _lastPointer = at;
+        }
+        else if (held && _dragging)
+        {
+            Vector3 d = at - _lastPointer;
+            _lastPointer = at;
+            _orbitYaw += d.x / Mathf.Max(1, Screen.width) * dragYaw;
+            _orbitPitch = Mathf.Clamp(_orbitPitch - d.y / Mathf.Max(1, Screen.height) * dragPitch,
+                                      -pitchLimit, pitchLimit);
+            _dragIdle = 0f;
+        }
+        else
+        {
+            _dragging = false;
+            _dragIdle += Time.unscaledDeltaTime;
+            if (recentreAfter > 0f && _dragIdle > recentreAfter)
+            {
+                float k = 1f - Mathf.Exp(-2f * Time.unscaledDeltaTime);
+                _orbitYaw = Mathf.Lerp(_orbitYaw, 0f, k);
+                _orbitPitch = Mathf.Lerp(_orbitPitch, 0f, k);
+            }
+        }
+    }
+
+    /// <summary>True if a screen point is on one of the touch controls.</summary>
+    public static bool OverAPad(Vector3 screenPoint)
+    {
+        // GUI space: y runs down from the top, Input.mousePosition runs up.
+        var p = new Vector2(screenPoint.x, Screen.height - screenPoint.y);
+        foreach (TouchPad.Pad pad in System.Enum.GetValues(typeof(TouchPad.Pad)))
+            if (TouchPad.RectFor(pad, Screen.width, Screen.height).Contains(p)) return true;
+        return false;
+    }
+
     void LateUpdate()
     {
         if (DriveInput.CameraToggle) Toggle();
+        ReadDrag();
 
         if (deathOrbit.HasValue)
         {
@@ -152,10 +224,17 @@ public class ChaseCamera : MonoBehaviour
         _yaw = Mathf.LerpAngle(_yaw * Mathf.Rad2Deg, wanted * Mathf.Rad2Deg,
                    1f - Mathf.Exp(-yawDamp * Time.deltaTime)) * Mathf.Deg2Rad;
 
-        Vector3 back = new Vector3(-Mathf.Sin(_yaw), 0f, -Mathf.Cos(_yaw));
+        float yaw = _yaw + _orbitYaw * Mathf.Deg2Rad;
+        Vector3 back = new Vector3(-Mathf.Sin(yaw), 0f, -Mathf.Cos(yaw));
+        float reach = distance + distanceAtSpeed * speed01;
+        float rise = height + heightAtSpeed * speed01;
+
+        // Dragged pitch swings the camera up and over, or down towards the
+        // ground, keeping its distance from the truck.
+        float p = _orbitPitch * Mathf.Deg2Rad;
         Vector3 goal = target.position
-                     + back * (distance + distanceAtSpeed * speed01)
-                     + Vector3.up * (height + heightAtSpeed * speed01);
+                     + back * (reach * Mathf.Cos(p))
+                     + Vector3.up * (rise + reach * Mathf.Sin(p));
 
         _pos = Vector3.Lerp(_pos, goal, 1f - Mathf.Exp(-positionDamp * Time.deltaTime));
 

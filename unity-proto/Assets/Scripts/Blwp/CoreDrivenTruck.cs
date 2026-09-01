@@ -28,11 +28,16 @@ namespace Blwp
                  "is the one thing the core cannot give up.")]
         public int tickHz = 60;
 
-        [Tooltip("Height above the sampled ground. The core is two-dimensional; " +
-                 "the terrain is Unity's.")]
+        [Tooltip("Fallback height above the ground, used only when the truck " +
+                 "has no wheels to measure. Normally the body's height is " +
+                 "derived from where its own wheels have to sit.")]
         public float rideHeight = 1.4f;
 
         public MempoolTerrain terrain;
+
+        [Tooltip("The road deck. Anything standing on the map stands on THIS, " +
+                 "not on the bare terrain - the deck is lifted above it.")]
+        public RoadNetwork roads;
         public int seed = 0x5eed1234;
 
         /// <summary>True while the core is actually driving.</summary>
@@ -67,6 +72,17 @@ namespace Blwp
         Quaternion[] _wheelBase;    // resting orientation, relative to the truck
         bool[] _wheelSteers;
         float _wheelRadius = 0.55f;
+
+        // How far the body's origin sits above the ground, measured off the
+        // wheels rather than assumed.
+        //
+        // It was a hard-coded 1.4 m, and the axles put the wheel centres at
+        // -0.335 m in body space with a 0.55 m radius - so the correct height
+        // is 0.885 and the truck rode half a metre high. That was invisible
+        // while the wheels hung off the body and floated with it; the moment
+        // they were put on the ground where they belong, the body stayed up
+        // and the truck looked jacked up on stilts.
+        float _bodyAboveGround = 1.4f;
         float _spin;
 
         void Awake()
@@ -77,6 +93,8 @@ namespace Blwp
 
         void Start()
         {
+            if (roads == null) roads = FindFirstObjectByType<RoadNetwork>();
+
             if (!useCore) return;
             if (!BlwpCore.Init(seed))
             {
@@ -145,6 +163,14 @@ namespace Blwp
             _wheelSteers = steers.ToArray();
             _wheelMount = mount.ToArray();
             _wheelBase = basis.ToArray();
+
+            if (_wheelMount.Length > 0)
+            {
+                float meanY = 0f;
+                foreach (var m in _wheelMount) meanY += m.y;
+                meanY /= _wheelMount.Length;
+                _bodyAboveGround = _wheelRadius - meanY;
+            }
         }
 
         /// <summary>True when the axles no longer point at the wheels we hold.</summary>
@@ -305,8 +331,24 @@ namespace Blwp
             return Quaternion.LookRotation(slopedF, Vector3.Cross(slopedF, slopedR));
         }
 
-        /// <summary>Ground under a point, or zero without a terrain.</summary>
-        float Ground(float x, float z) => terrain != null ? terrain.SampleSurface(x, z) : 0f;
+        /// <summary>
+        /// The surface anything STANDS on here - the road deck where there is
+        /// one, the bare relief where there is not.
+        ///
+        /// Not terrain.SampleSurface: the deck is laid ABOVE the relief, so
+        /// wheels placed on the terrain sank into the road by exactly the lift
+        /// and looked right everywhere else. RoadNetwork carries this exact
+        /// warning in its own comment, having been caught by it before.
+        ///
+        /// The core's physics still reads the bare relief, which is correct -
+        /// the deck is a constant lift, so it has the same slope as the ground
+        /// beneath it and changes nothing a truck would feel.
+        /// </summary>
+        float Ground(float x, float z)
+        {
+            if (roads != null) return roads.SurfaceHeight(x, z);
+            return terrain != null ? terrain.SampleSurface(x, z) : 0f;
+        }
 
         /// <summary>
         /// Draws the truck between the last two ticks, lying on the ground.
@@ -345,7 +387,7 @@ namespace Blwp
             // springs does not snap to every pebble.
             _lie = Quaternion.Slerp(_lie, lie, 1f - Mathf.Exp(-8f * Time.deltaTime));
 
-            float ride = (fl + fr + rl + rr) * 0.25f + rideHeight;
+            float ride = (fl + fr + rl + rr) * 0.25f + _bodyAboveGround;
             transform.SetPositionAndRotation(new Vector3(x, ride, z), _lie);
 
             if (_rb != null) _rb.position = transform.position;

@@ -155,6 +155,8 @@ public class Bootstrap : MonoBehaviour
         // iterate on.
         var driver = truck.gameObject.AddComponent<Blwp.CoreDrivenTruck>();
         driver.terrain = _terrain;
+        // The deck, not the bare relief: the truck stands on the road.
+        driver.roads = FindFirstObjectByType<RoadNetwork>();
 
         // Practice starts on in this build. The scene's value is the fallback;
         // ?practice=0 in the URL overrides it, so a link can hand somebody the

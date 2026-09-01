@@ -260,3 +260,37 @@ public class TruckLieTests
             "bergab bleibt bergab, in welche Himmelsrichtung auch immer");
     }
 }
+
+/// <summary>
+/// Dragging looks around, but never at the cost of steering.
+///
+/// On a phone the pads ARE the controls, and a thumb sliding on one has to
+/// steer the truck rather than pan the camera. Getting this wrong does not
+/// look like a camera bug - it looks like the steering has died.
+/// </summary>
+public class CameraDragGuardTests
+{
+    static Vector3 Centre(TouchPad.Pad pad)
+    {
+        var r = TouchPad.RectFor(pad, Screen.width, Screen.height);
+        // TouchPad works in GUI space, y down; Input.mousePosition is y up.
+        return new Vector3(r.center.x, Screen.height - r.center.y, 0f);
+    }
+
+    [Test]
+    public void ADragStartingOnADrivingPadIsNotALook()
+    {
+        foreach (TouchPad.Pad pad in System.Enum.GetValues(typeof(TouchPad.Pad)))
+            Assert.IsTrue(ChaseCamera.OverAPad(Centre(pad)),
+                $"ein Zug auf {pad} wuerde die Kamera schwenken statt zu lenken");
+    }
+
+    [Test]
+    public void ADragOnTheOpenScreenIsALook()
+    {
+        // The middle of the screen is where the world is; nothing sits there.
+        var middle = new Vector3(Screen.width * 0.5f, Screen.height * 0.55f, 0f);
+        Assert.IsFalse(ChaseCamera.OverAPad(middle),
+            "in der Bildmitte muss man die Ansicht drehen koennen");
+    }
+}
