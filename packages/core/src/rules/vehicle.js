@@ -35,6 +35,8 @@ const AIR_DRAG = 22938;                       // 0.35 per second at top speed
 const MAX_SPEED = Math.imul(26, ONE);
 const STEER_LOCK = 5800;        // Q16.16 turns at full lock, about 32 degrees
 const STEER_RATE = 3400;        // how fast the wheels reach the lock
+const STEER_FALLOFF = 39322;    // 0.6 - how much lock is taken away by speed
+const WHEELBASE = 262144;       // 4.0 m between the axles, off the 6.4 m chassis
 const GRIP_SIDE = 40000;        // lateral friction coefficient, 0..ONE
 const GRIP_HAND = 6000;         // with the handbrake on, the rear lets go
 
@@ -47,7 +49,13 @@ const GRIP_HAND = 6000;         // with the handbrake on, the rear lets go
 export function vehicleStep(v, throttle, steer, brake, handbrake, dt) {
   // steering follows the input rather than snapping to it, which is most of
   // what makes a vehicle feel heavy
-  const want = mulFast(clamp(steer, -ONE, ONE), STEER_LOCK);
+  //
+  // Lock falls away with speed, which is what stops the corrected yaw below
+  // from turning the truck into a spinning top at 26 m/s. Uses last tick's
+  // speed so the phase order in here does not have to change.
+  const fast = clamp(div(abs(v.speed), MAX_SPEED), 0, ONE);
+  const lock = mulFast(STEER_LOCK, sub(ONE, mulFast(fast, STEER_FALLOFF)));
+  const want = mulFast(clamp(steer, -ONE, ONE), lock);
   const gap = sub(want, v.steerAngle);
   const move = clamp(gap, neg(mulFast(STEER_RATE, dt)), mulFast(STEER_RATE, dt));
   v.steerAngle = add(v.steerAngle, move);
@@ -82,10 +90,16 @@ export function vehicleStep(v, throttle, steer, brake, handbrake, dt) {
   const available = mulFast(grip, sub(ONE, mulFast(spent, 19661)));   // 0.3 of it
   across = sub(across, mulFast(across, mulFast(available, dt)));
 
-  // yaw follows the steered wheels, scaled by how fast the truck is actually
-  // going - a stationary truck cannot turn, which is what the wheels do
-  const bite = clamp(div(abs(along), MAX_SPEED), 0, ONE);
-  const yawRate = mulFast(mulFast(v.steerAngle, bite), 26214);        // 0.4
+  // Yaw from the bicycle model: omega = v * tan(steer) / wheelbase, and with
+  // heading measured in turns the 2*pi cancels, leaving v * steer / wheelbase.
+  //
+  // What was here before multiplied the steer angle by a DIMENSIONLESS speed
+  // fraction and an arbitrary 0.4, so it was not a yaw rate at all - the units
+  // did not work out, and the scale that fell out of it gave a turning circle
+  // of 117 m on a field 200 m wide. The truck could not go round a corner. The
+  // small-angle approximation for tan is worth 11% at full lock and nothing at
+  // all at the angles actually reachable at speed.
+  const yawRate = div(mulFast(along, v.steerAngle), WHEELBASE);
   v.angVel = add(v.angVel, mulFast(sub(yawRate, v.angVel), mulFast(196608, dt)));
   v.heading = (add(v.heading, mulFast(v.angVel, dt))) & 65535;
 

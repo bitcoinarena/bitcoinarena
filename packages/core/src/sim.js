@@ -105,7 +105,10 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
   const v = {
     x: s[T + T_X], z: s[T + T_Z], heading: s[T + T_HEADING],
     vx: s[T + T_VX], vz: s[T + T_VZ], angVel: s[T + T_ANGVEL],
-    steerAngle: s[T + T_STEER], speed: 0,
+    // Last tick's speed, not zero: the steering lock falls away with speed,
+    // and rebuilding this with a zero every tick left the truck on full lock
+    // at 26 m/s - the correction below would have had nothing to correct.
+    steerAngle: s[T + T_STEER], speed: s[T + T_WHEEL],
   };
   vehicleStep(v, throttle, steer, brake, handbrake, TICK_DT);
   s[T + T_X] = clamp(v.x, -HALF_X, HALF_X);

@@ -120,3 +120,49 @@ test('a delivered run banks a score and a wrecked one does not', () => {
   step(wreck, 0, 0, 0, 0, 0);
   assert.equal(wreck.i32[O_SCORE + S_STATE], gate.RUN_WRECKED);
 });
+
+/**
+ * The truck can go round a corner.
+ *
+ * Worth pinning with a number rather than a feel. The first yaw model
+ * multiplied the steer angle by a dimensionless speed fraction and a constant,
+ * which is not a yaw rate - the units did not work out, and the turning circle
+ * that fell out of it was 117 m on a field 200 m wide. Nothing failed; the
+ * truck simply drove almost straight while the wheel was hard over, and that
+ * reads as unresponsive controls rather than as a bug.
+ */
+test('full lock turns the truck inside the width of the field', () => {
+  const O = 5, T_X = 0, T_Z = 1, T_HEADING = 2, T_SPEED = 9;
+  const st = init(1);
+
+  for (let i = 0; i < 400; i++) step(st, 65536, 0, 0, 0, 0);       // up to speed
+  for (let i = 0; i < 900; i++) step(st, 65536, 65536, 0, 0, 0);   // settle the turn
+
+  // Measured on the settled circle, not on the spiral getting into it - the
+  // entry transient makes the bounding box far wider than the circle is.
+  let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+  let prev = st.i32[O + T_HEADING], turned = 0;
+  for (let i = 0; i < 1200; i++) {
+    step(st, 65536, 65536, 0, 0, 0);
+    const x = st.i32[O + T_X] / 65536, z = st.i32[O + T_Z] / 65536;
+    minX = Math.min(minX, x); maxX = Math.max(maxX, x);
+    minZ = Math.min(minZ, z); maxZ = Math.max(maxZ, z);
+    let d = (st.i32[O + T_HEADING] - prev) & 65535;
+    if (d > 32768) d -= 65536;
+    turned += d; prev = st.i32[O + T_HEADING];
+  }
+
+  const degrees = Math.abs(turned) * 360 / 65536;
+  assert.ok(degrees > 360,
+    `held at full lock for 20 s the truck turned only ${degrees.toFixed(0)} deg`);
+
+  const diameter = (maxX - minX + maxZ - minZ) / 2;
+  assert.ok(diameter < 40,
+    `the turning circle is ${diameter.toFixed(0)} m across, wider than the road`);
+
+  // The path follows the nose: no crabbing sideways through the corner.
+  const speed = st.i32[O + T_SPEED] / 65536;
+  const radius = speed / (Math.abs(turned) * 2 * Math.PI / 65536 / 20);
+  assert.ok(Math.abs(radius - diameter / 2) < 4,
+    `the nose says radius ${radius.toFixed(1)} m, the path says ${(diameter / 2).toFixed(1)} m`);
+});

@@ -67,6 +67,18 @@ public class TruckController : MonoBehaviour
     [System.NonSerialized] public bool controlsLocked;
 
     /// <summary>
+    /// Set by CoreDrivenTruck while the deterministic core is driving.
+    ///
+    /// Everything below this point assumes PhysX is simulating: motor torque,
+    /// downforce, and above all posing the wheel meshes in WORLD space from
+    /// WheelCollider.GetWorldPose. Once the body is kinematic and the chassis
+    /// is written from the core, none of that resolves any more - the wheels
+    /// were left behind in world space while the body turned away from them,
+    /// which is exactly what it looked like on the phone.
+    /// </summary>
+    [System.NonSerialized] public bool externallyDriven;
+
+    /// <summary>
     /// Condition, 0..1. A battered truck pulls, loses power and steers badly.
     ///
     /// Without this the health bar was binary - whole or dead - and a hit
@@ -137,6 +149,7 @@ public class TruckController : MonoBehaviour
 
     void FixedUpdate()
     {
+        if (externallyDriven) return;
         if (axles == null || axles.Length == 0) return;
         EnsureInit();
 

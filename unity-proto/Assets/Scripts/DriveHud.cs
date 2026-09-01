@@ -195,8 +195,12 @@ public class DriveHud : MonoBehaviour
     {
         float pad = Mathf.Max(10f, h * 0.025f);
         int min = Mathf.Min(w, h);
-        float bw = Mathf.Min(w * 0.30f, 260f);
-        float bh = Mathf.Max(34f, min * 0.055f);
+        // Wide enough for the subtitle to sit on ONE line. At 30% of a phone's
+        // width the longer of the two captions wrapped and the second line was
+        // clipped off by the box, so the switch read "nothing can hit you · tap"
+        // with no idea what to tap.
+        float bw = Mathf.Min(w * 0.52f, 300f);
+        float bh = Mathf.Max(42f, min * 0.070f);
 
         // Under the block clock, on the left, clear of the driving pads and of
         // the score column on the right.
@@ -220,10 +224,10 @@ public class DriveHud : MonoBehaviour
         };
         var sub = new GUIStyle(_small) { alignment = TextAnchor.MiddleLeft };
 
-        var text = new Rect(box.x + 12f, box.y, box.width - 16f, box.height * 0.58f);
+        var text = new Rect(box.x + 12f, box.y + 2f, box.width - 16f, box.height * 0.52f);
         Shadowed(text, on ? "PRACTICE  ·  ON" : "PRACTICE  ·  OFF", label, tint);
-        Shadowed(new Rect(box.x + 12f, box.y + box.height * 0.5f, box.width - 16f, box.height * 0.5f),
-                 on ? "nothing can hit you  ·  tap to arm" : "live fire  ·  tap for practice",
+        Shadowed(new Rect(box.x + 12f, box.y + box.height * 0.48f, box.width - 16f, box.height * 0.46f),
+                 on ? "no damage  ·  tap to arm" : "live fire  ·  tap for practice",
                  sub, new Color(1f, 1f, 1f, 0.7f));
 
         if (GUI.Button(box, GUIContent.none, GUIStyle.none)) Blwp.PracticeMode.Toggle();

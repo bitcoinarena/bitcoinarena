@@ -84,6 +84,16 @@ public static class BuildWebGL
     [MenuItem("Tools/BTC Logistics/Build WebGL")]
     public static void Run()
     {
+        // The core is rebuilt and copied into the template HERE, not by hand.
+        //
+        // It used to be a menu item nobody remembered to run, so the build
+        // shipped whatever bundle was last synced. That is not a visible
+        // failure - the game loads and drives, it just drives by the OLD
+        // rules. A steering fix was measured as correct in Node, built,
+        // deployed, and changed nothing at all on the phone, because the page
+        // was still loading a bundle from three hours earlier.
+        SyncCore.Run();
+
         string output = DefaultOutput;
         var args = Environment.GetCommandLineArgs();
         for (int i = 0; i < args.Length - 1; i++)

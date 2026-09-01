@@ -136,6 +136,16 @@ namespace Blwp
             Metres(_state[Layout.O_TRUCK + Layout.T_Z]));
 
         public static float TruckHeading => Degrees(_state[Layout.O_TRUCK + Layout.T_HEADING]);
+
+        /// <summary>
+        /// Front wheel angle in degrees, signed.
+        ///
+        /// Not Degrees(): that masks to 16 bits because a heading wraps, and a
+        /// steer angle does not - it goes negative, and masking turns a small
+        /// left lock into 328 degrees of right.
+        /// </summary>
+        public static float TruckSteerDegrees =>
+            _state[Layout.O_TRUCK + Layout.T_STEER] * 360f / 65536f;
         public static float TruckHealth => Metres(_state[Layout.O_TRUCK + Layout.T_HP]);
         public static float TruckSpeed => Metres(_state[Layout.O_TRUCK + Layout.T_WHEEL]);
         public static int Tick => _state[Layout.O_TICK];
