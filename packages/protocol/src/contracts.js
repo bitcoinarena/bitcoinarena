@@ -132,8 +132,12 @@ function compare32(a, b) {
  */
 export function contractWarnings(c) {
   const out = [];
-  const r = c.rankNumerator / c.rankDenominator;
-  if (!(r < 0.95)) out.push('flat_rank_curve');
+  // Integer comparison, not a quotient. This is only a client warning and a
+  // float here would change nothing - which is exactly why it is worth not
+  // writing: a division on a money-shaped number is a habit, and the next one
+  // will be somewhere it matters.
+  if (Math.imul(c.rankNumerator, 100) >= Math.imul(c.rankDenominator, 95))
+    out.push('flat_rank_curve');
   if (c.exposureReference === 0) out.push('exposure_ignored');
   if (c.timeFloor >= c.timeCeil) out.push('time_factor_degenerate');
   if (c.minScore > 0 && c.minScore > 100) out.push('minimum_score_is_a_danger_rule');

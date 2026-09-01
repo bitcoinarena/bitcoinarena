@@ -90,6 +90,24 @@ jobs:
       - name: core hash
         run: node tools/hash-core.js
 
+      - name: protocol - money guard and tests
+        working-directory: packages/protocol
+        run: |
+          npm install --no-save acorn
+          node tools/check-money.js
+          node --test test/*.test.js
+
+      # The protocol computes round_ids that pin money, and a browser client
+      # derives them independently of the node - so it has to agree across
+      # engines exactly as the simulation does.
+      - name: protocol across engines
+        working-directory: packages/protocol
+        run: |
+          for e in "$HOME/.jsvu/bin/v8 --module" "$HOME/.jsvu/bin/sm --module"; do
+            echo -n "$e -> "; $e test/engine-check.js | tr '\n' ' '; echo
+          done
+          node test/engine-check.js
+
       - name: publish this architecture's corpus hash
         run: |
           node test/harness.js | tail -1 | awk '{print $2}' > /tmp/corpus.txt

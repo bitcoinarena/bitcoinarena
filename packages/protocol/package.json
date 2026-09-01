@@ -6,6 +6,8 @@
   "description": "Canonical encoding, contracts, census, sortition and payout. Isomorphic.",
   "scripts": {
     "test": "node --test test/*.test.js",
-    "vectors": "node tools/make-vectors.js"
+    "vectors": "node tools/make-vectors.js",
+    "guard": "node tools/check-money.js",
+    "acceptance": "npm run guard && npm test"
   }
 }
