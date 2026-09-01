@@ -287,17 +287,17 @@ public class PostOffice : MonoBehaviour
                   "\n" +
                   "Satoshi\n" +
                   "Nakamoto\n" +
+                  "satoshin@gmx.com\n" +
                   "\n" +
                   "31 Oct 2008";
         // Fitted here AND again once it has a mesh. TextMesh builds its own
         // geometry internally and Renderer.localBounds is empty on the frame
         // the text is set, so a single Fit at wire time scaled it against
         // nothing and left it at a ninth of the plate.
-        Fit(tm);
     }
 
     TextMesh _paper;
-    int _paperFits;
+    bool _paperFitted;
 
     /// <summary>
     /// Keeps a printed page readable from further than arm's length.
@@ -504,14 +504,35 @@ public class PostOffice : MonoBehaviour
 
         if (_up == null) return;
 
-        // Re-fitted every frame until it has settled.
+        // Fitted ONCE, and only when there is something to measure.
         //
-        // TextMesh builds its geometry internally and Renderer.localBounds is
-        // EMPTY on the frame the text is set, so the fit at wire time scaled
-        // the page against nothing and left it at a fifth of the plate. One
-        // retry is not enough either: the bounds appear a frame or two later
-        // depending on when the font atlas is built.
-        if (_paper != null && _paperFits < 8) { Fit(_paper); _paperFits++; }
+        // Renderer.localBounds is empty on the frame TextMesh is written, so a
+        // fit at wire time scales against nothing. The obvious repair - retry
+        // every frame until it settles - is worse: localBounds comes back
+        // already scaled, so each retry divides the room by an ever smaller
+        // text and shrinks it again. Eight retries took the page to a fifth of
+        // its plate and held it there, which is why the number would not move
+        // however the fill or the line breaks were changed.
+        if (_paper != null && !_paperFitted)
+        {
+            var pmr = _paper.GetComponent<MeshRenderer>();
+            if (pmr != null && pmr.localBounds.size.y > 0.001f)
+            {
+                // The room is re-read HERE, not trusted from wire time.
+                //
+                // Room() saw a 9.4 x 12.2 sheet when the plate was wired and
+                // the same transform reports 73.8 x 52.3 x 168.3 by the time
+                // the text is fitted: the building streams in and swaps the
+                // mesh under a node that keeps its name. The text was sized
+                // perfectly - to a plate that no longer existed - which is why
+                // it measured 22% of the real one through every change to the
+                // fill, the line breaks and the timing. 11.47 / 52.25 = 0.2195.
+                var live = Room(_paper.transform.parent);
+                _room[_paper] = new Vector2(live.x * 0.94f, live.y * 0.94f);
+                Fit(_paper);
+                _paperFitted = true;
+            }
+        }
 
         // The counter runs on its own clock. It is the one number on the
         // building that moves between one look and the next, and a mempool
