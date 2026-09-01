@@ -134,3 +134,58 @@ export function resolveSolids(v, s, fx, fz, floor) {
   }
   return 1;
 }
+
+/**
+ * How wide a tank is to drive into.
+ *
+ * Three metres, which is a hull, not the whole vehicle: a tank stops the truck
+ * where its armour is, and a slightly generous circle around a 7 m hull would
+ * have the truck bouncing off thin air beside it.
+ */
+export const ARMOUR_RADIUS = 196608;
+
+/**
+ * Keeps the truck out of the armour.
+ *
+ * Infantry are deliberately NOT solid. A man does not stop a laden truck, and
+ * making him do it turns a charge across the open into a wall of bodies the
+ * player cannot drive through - which is neither what the old game did nor
+ * what anyone would expect.
+ *
+ * `units` is the state buffer; the caller supplies the stride and the offsets
+ * so this does not have to know the layout.
+ */
+export function resolveArmour(v, s32, base, stride, count, ux, uz, ualive, isArmour) {
+  let touched = 0;
+  for (let i = 0; i < count; i++) {
+    if (!isArmour(i)) continue;
+    const b = add(base, Math.imul(i, stride));
+    if (s32[add(b, ualive)] === 0) continue;
+
+    const px = s32[add(b, ux)], pz = s32[add(b, uz)];
+    const r = add(ARMOUR_RADIUS, BODY_RADIUS);
+
+    for (const off of [BODY_FRONT, BODY_REAR]) {
+      const cx = add(v.x, mulFast(v.fx, off)), cz = add(v.z, mulFast(v.fz, off));
+      let dx = sub(cx, px), dz = sub(cz, pz);
+      if (abs(dx) > r || abs(dz) > r) continue;      // cheap reject, and no overflow
+
+      const d = length2(dx, dz);
+      if (d >= r) continue;
+      if (d === 0) { dx = ONE; dz = 0; }
+
+      const push = sub(r, d === 0 ? 0 : d);
+      const nx = d === 0 ? ONE : div(dx, d), nz = d === 0 ? 0 : div(dz, d);
+      v.x = add(v.x, mulFast(nx, push));
+      v.z = add(v.z, mulFast(nz, push));
+
+      const into = add(mulFast(v.vx, nx), mulFast(v.vz, nz));
+      if (into < 0) {
+        v.vx = sub(v.vx, mulFast(into, nx));
+        v.vz = sub(v.vz, mulFast(into, nz));
+      }
+      touched = 1;
+    }
+  }
+  return touched;
+}

@@ -428,7 +428,12 @@ public class VehicleTests
     [UnityTest]
     public IEnumerator ArmiesFightNearTheSeamRatherThanWanderingOff()
     {
-        yield return new WaitForSeconds(6f);
+        // Twelve seconds, not six. Reinforcements used to appear at a random
+        // depth - as little as thirty metres behind the line - and now every
+        // unit walks in from the edge of the field at 79 m, which is the point
+        // of the change. The claim being tested is unchanged: more than half
+        // the armour SETTLES near the seam. It just has further to walk first.
+        yield return new WaitForSeconds(12f);
         var field = Object.FindFirstObjectByType<Battlefield>();
 
         int nearFront = 0;

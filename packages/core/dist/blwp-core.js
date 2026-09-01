@@ -1172,6 +1172,61 @@ function resolveSolids(v, s, fx, fz, floor) {
   return 1;
 }
 
+/**
+ * How wide a tank is to drive into.
+ *
+ * Three metres, which is a hull, not the whole vehicle: a tank stops the truck
+ * where its armour is, and a slightly generous circle around a 7 m hull would
+ * have the truck bouncing off thin air beside it.
+ */
+const ARMOUR_RADIUS = 196608;
+
+/**
+ * Keeps the truck out of the armour.
+ *
+ * Infantry are deliberately NOT solid. A man does not stop a laden truck, and
+ * making him do it turns a charge across the open into a wall of bodies the
+ * player cannot drive through - which is neither what the old game did nor
+ * what anyone would expect.
+ *
+ * `units` is the state buffer; the caller supplies the stride and the offsets
+ * so this does not have to know the layout.
+ */
+function resolveArmour(v, s32, base, stride, count, ux, uz, ualive, isArmour) {
+  let touched = 0;
+  for (let i = 0; i < count; i++) {
+    if (!isArmour(i)) continue;
+    const b = add(base, Math.imul(i, stride));
+    if (s32[add(b, ualive)] === 0) continue;
+
+    const px = s32[add(b, ux)], pz = s32[add(b, uz)];
+    const r = add(ARMOUR_RADIUS, BODY_RADIUS);
+
+    for (const off of [BODY_FRONT, BODY_REAR]) {
+      const cx = add(v.x, mulFast(v.fx, off)), cz = add(v.z, mulFast(v.fz, off));
+      let dx = sub(cx, px), dz = sub(cz, pz);
+      if (abs(dx) > r || abs(dz) > r) continue;      // cheap reject, and no overflow
+
+      const d = length2(dx, dz);
+      if (d >= r) continue;
+      if (d === 0) { dx = ONE; dz = 0; }
+
+      const push = sub(r, d === 0 ? 0 : d);
+      const nx = d === 0 ? ONE : div(dx, d), nz = d === 0 ? 0 : div(dz, d);
+      v.x = add(v.x, mulFast(nx, push));
+      v.z = add(v.z, mulFast(nz, push));
+
+      const into = add(mulFast(v.vx, nx), mulFast(v.vz, nz));
+      if (into < 0) {
+        v.vx = sub(v.vx, mulFast(into, nx));
+        v.vz = sub(v.vz, mulFast(into, nz));
+      }
+      touched = 1;
+    }
+  }
+  return touched;
+}
+
 // ---- rules/army.js
 // The two armies, ported from Army.cs.
 //
@@ -1440,6 +1495,9 @@ const START_Z = 668467;                     // 10.2 m, the solo bay (14 of 24)
 // outside the arithmetic files, and a power of two makes the ban free.
 const ARMOUR_MASK = 3;
 
+/** Every fourth unit is a tank. Shared, so the collision and the fighting agree. */
+const isArmour = (i) => (i & ARMOUR_MASK) === 0;
+
 /** A price tape, so the frontline has something to follow. */
 function tape(rngWords) {
   const h = new Int32Array(SAMPLES);
@@ -1521,9 +1579,20 @@ function init(seedWord) {
   for (let i = 0; i < UNITS; i++) {
     const b = unitBase(i);
     // draw order: x, z, side, hp, heading, cooldown
-    s[b + U_X] = Math.imul(nextBelow(rng, 200) - 100, ONE);
-    s[b + U_Z] = Math.imul(nextBelow(rng, 160) - 80, ONE);
-    s[b + U_SIDE] = nextBelow(rng, 2) === 0 ? -1 : 1;
+    // The battlefield, and only the battlefield.
+    //
+    // This was the full width of the map, so a tank could be placed at x=-100
+    // - which is where the truck is parked. With the armour made solid the
+    // truck was then shoved off its own apron before the player touched
+    // anything. Unity holds its units to |x| < 88 for the same reason; these
+    // are the same bounds.
+    //
+    // And each side comes in at its OWN edge and walks up, rather than
+    // appearing at a random depth in the middle of the fighting.
+    const side = nextBelow(rng, 2) === 0 ? -1 : 1;
+    s[b + U_X] = Math.imul(nextBelow(rng, 176) - 88, ONE);
+    s[b + U_Z] = Math.imul(Math.imul(side, 79) - Math.imul(side, nextBelow(rng, 4)), ONE);
+    s[b + U_SIDE] = side;
     s[b + U_HP] = Math.imul(60 + nextBelow(rng, 40), ONE);
     s[b + U_HEADING] = nextBelow(rng, 65536);
     s[b + U_STATE] = 1;
@@ -1570,6 +1639,12 @@ function step(st, throttle, steer, brake, handbrake, practice) {
   resolveSolids(v, st.solids,
                 sin(v.heading), cos(v.heading),
                 heightAtWorld(st.ground, v.x, v.z, HALF_X, HALF_Z));
+
+  // And out of the armour. Last tick's tank positions, because the army has
+  // not moved yet this tick - one frame stale, sixteen milliseconds, and it
+  // keeps the phase order exactly as it was.
+  v.fx = sin(v.heading); v.fz = cos(v.heading);
+  resolveArmour(v, s, O_UNITS, U_WORDS, UNITS, U_X, U_Z, U_STATE, isArmour);
 
   s[T + T_X] = clamp(v.x, -HALF_X, HALF_X);
   s[T + T_Z] = clamp(v.z, -HALF_Z, HALF_Z);

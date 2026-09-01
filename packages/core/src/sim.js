@@ -13,7 +13,7 @@ import { ONE, add, sub, mulFast, div, clamp, min, max, abs, length2 } from './fi
 import { seed } from './rng.js';
 import { sin, cos } from './trig.js';
 import {
-  create, unitBase, MAX_UNITS,
+  create, unitBase, MAX_UNITS, O_UNITS, U_WORDS,
   O_TICK, O_RNG, O_TRUCK, O_SCORE,
   T_X, T_Z, T_HEADING, T_VX, T_VZ, T_ANGVEL, T_HP, T_CARGO, T_FLAGS,
   T_WHEEL, T_THROTTLE, T_STEER,
@@ -26,7 +26,7 @@ import {
 // exactly what section 3.6 argues against for anything that pins money.
 import { vehicleStep } from './rules/vehicle.js';
 import { flatGround, gradeAlong, heightAtWorld, DEFAULT_COLS, DEFAULT_ROWS } from './rules/ground.js';
-import { noSolids, resolveSolids, BOX_WORDS } from './rules/solids.js';
+import { noSolids, resolveSolids, resolveArmour, BOX_WORDS } from './rules/solids.js';
 import { stepUnit, threatAt } from './rules/army.js';
 import { accrue, earning, scoreOf } from './rules/score.js';
 import { outcome, RUN_LIVE, RUN_DELIVERED, RUN_WRECKED, RUN_MISSED } from './rules/gate.js';
@@ -56,6 +56,9 @@ export const START_Z = 668467;                     // 10.2 m, the solo bay (14 o
 // Every fourth unit is armour. A mask rather than a modulo: '%' is banned
 // outside the arithmetic files, and a power of two makes the ban free.
 const ARMOUR_MASK = 3;
+
+/** Every fourth unit is a tank. Shared, so the collision and the fighting agree. */
+const isArmour = (i) => (i & ARMOUR_MASK) === 0;
 
 /** A price tape, so the frontline has something to follow. */
 function tape(rngWords) {
@@ -138,9 +141,20 @@ export function init(seedWord) {
   for (let i = 0; i < UNITS; i++) {
     const b = unitBase(i);
     // draw order: x, z, side, hp, heading, cooldown
-    s[b + U_X] = Math.imul(nextBelow(rng, 200) - 100, ONE);
-    s[b + U_Z] = Math.imul(nextBelow(rng, 160) - 80, ONE);
-    s[b + U_SIDE] = nextBelow(rng, 2) === 0 ? -1 : 1;
+    // The battlefield, and only the battlefield.
+    //
+    // This was the full width of the map, so a tank could be placed at x=-100
+    // - which is where the truck is parked. With the armour made solid the
+    // truck was then shoved off its own apron before the player touched
+    // anything. Unity holds its units to |x| < 88 for the same reason; these
+    // are the same bounds.
+    //
+    // And each side comes in at its OWN edge and walks up, rather than
+    // appearing at a random depth in the middle of the fighting.
+    const side = nextBelow(rng, 2) === 0 ? -1 : 1;
+    s[b + U_X] = Math.imul(nextBelow(rng, 176) - 88, ONE);
+    s[b + U_Z] = Math.imul(Math.imul(side, 79) - Math.imul(side, nextBelow(rng, 4)), ONE);
+    s[b + U_SIDE] = side;
     s[b + U_HP] = Math.imul(60 + nextBelow(rng, 40), ONE);
     s[b + U_HEADING] = nextBelow(rng, 65536);
     s[b + U_STATE] = 1;
@@ -187,6 +201,12 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
   resolveSolids(v, st.solids,
                 sin(v.heading), cos(v.heading),
                 heightAtWorld(st.ground, v.x, v.z, HALF_X, HALF_Z));
+
+  // And out of the armour. Last tick's tank positions, because the army has
+  // not moved yet this tick - one frame stale, sixteen milliseconds, and it
+  // keeps the phase order exactly as it was.
+  v.fx = sin(v.heading); v.fz = cos(v.heading);
+  resolveArmour(v, s, O_UNITS, U_WORDS, UNITS, U_X, U_Z, U_STATE, isArmour);
 
   s[T + T_X] = clamp(v.x, -HALF_X, HALF_X);
   s[T + T_Z] = clamp(v.z, -HALF_Z, HALF_Z);

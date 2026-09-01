@@ -16,6 +16,24 @@ public class Army
     public const float FrontX = 92f;
     public const float HalfDepth = 79f;
 
+    /// <summary>
+    /// How far out along the map a gunship may fly.
+    ///
+    /// The two depots are not scenery a helicopter can pass through. The post
+    /// office wall stands from x -122.4 to -114.4 and reaches 58 m up; the
+    /// miner from 108.4 to 116.4 and reaches 133. A gunship holds 19 m over
+    /// the ground, so it flew straight into both - and worse, it SPAWNED at
+    /// -FrontX - 30 = -122, which is inside the post office wall. It appeared
+    /// in the building, flew out of it, crossed the field, and vanished into
+    /// the miner.
+    ///
+    /// Climbing over is not the answer: the miner is 133 m tall and a gunship
+    /// at that height is a speck. They patrol the front, so the front is where
+    /// they belong - 104 is past the fighting at 92 and short of the miner's
+    /// leading face at 108.
+    /// </summary>
+    public const float AirCorridorX = 104f;
+
     /// <summary>Hulls push apart below this centre distance. Enemies close a little tighter.</summary>
     public const float FriendlySpacing = 8.5f;
     public const float HostileSpacing = 7.5f;
@@ -224,8 +242,19 @@ public class Army
     {
         float x = Rand(-FrontX + 8f, FrontX - 8f);
         float dir = side == Side.Bull ? 1f : -1f;
-        // arrives from the rear, well behind its own line
-        float z = FrontlineAt(x) - dir * Rand(vehicle ? 46f : 30f, vehicle ? 76f : 78f);
+
+        // From the edge of the field, always.
+        //
+        // This used to be a random depth behind the line - 30 to 78 m for a
+        // man, 46 to 76 for a tank - and reinforcements arrive DURING the
+        // round, so at the near end of that range a squad simply appeared
+        // thirty metres from the fighting, in plain view. Coming in off the
+        // edge and walking up costs nothing: StepArmour and StepInfantry
+        // already drive every unit towards the line on their own, so the
+        // approach is the movement they would have made anyway.
+        //
+        // A metre or two of jitter so they do not arrive on one ruled line.
+        float z = -dir * (HalfDepth - Rand(0f, 3f));
         var unit = new Unit
         {
             side = side, x = x, z = Mathf.Clamp(z, -HalfDepth, HalfDepth),
@@ -357,8 +386,9 @@ public class Army
         {
             side = side,
             dir = dir,
-            // enters from off the map, so it arrives rather than appearing
-            x = dir > 0 ? -FrontX - 30f : FrontX + 30f,
+            // Enters from beyond the fighting, so it arrives rather than
+            // appearing - but short of the depots, which it cannot fly through.
+            x = dir > 0 ? -AirCorridorX : AirCorridorX,
             dropIn = Rand(1.5f, 4f),
         };
         h.z = FrontlineAt(h.x) - h.Dir * 26f;
@@ -428,7 +458,7 @@ public class Army
             }
 
             // gone off the far side
-            if (Mathf.Abs(h.x) > FrontX + 40f) Helicopters.RemoveAt(i);
+            if (Mathf.Abs(h.x) > AirCorridorX) Helicopters.RemoveAt(i);
         }
     }
 

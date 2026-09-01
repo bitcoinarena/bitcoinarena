@@ -13,6 +13,19 @@ import * as scoring from '../src/rules/score.js';
 import * as gate from '../src/rules/gate.js';
 
 const ONE = 65536;
+
+/**
+ * Empties the battlefield.
+ *
+ * The driving references were recorded with Unity's Battlefield switched off,
+ * so the core has to be measured on the same empty map - otherwise the test is
+ * comparing a clear run against one that drove into a tank.
+ */
+function clearTheField(st) {
+  const O_UNITS = 24, U_WORDS = 8, U_STATE = 5, UNITS = 96;
+  for (let i = 0; i < UNITS; i++) st.i32[O_UNITS + i * U_WORDS + U_STATE] = 0;
+}
+
 const O_TRUCK = 5, T_X = 0, T_Z = 1, T_HP = 6;
 const O_SCORE = 17, S_EXPOSURE = 0, S_ELAPSED = 1, S_BESTX = 2, S_STATE = 5;
 
@@ -158,6 +171,7 @@ test('the core drives like the PhysX truck it replaces', async () => {
 
   {
     const s = init(1);
+    clearTheField(s);
     for (let t = 1; t <= 13; t++) {
       drive(s, HZ, 1, 0);
       const want = ref.accel[String(t)];
@@ -170,6 +184,7 @@ test('the core drives like the PhysX truck it replaces', async () => {
 
   for (const t of ref.turns) {
     const s = init(1);
+    clearTheField(s);
     drive(s, HZ * 8, 1, 0);
     drive(s, HZ * 5, 1, t.steer);
 
@@ -242,6 +257,7 @@ test('a hill costs the core what it costs Unity', async () => {
     }
 
     const st = init(1);
+    clearTheField(st);
     assert.ok(setGround(st, COLS, ROWS, heights), 'the relief was refused');
     st.i32[O + T_X] = Math.round(ref.startX * Q);
     st.i32[O + T_Z] = Math.round(ref.lane * Q);
@@ -408,4 +424,47 @@ test('a distant wall does not eject the truck', () => {
   assert.ok(Math.abs(x - x0) < 0.5 && Math.abs(z - z0) < 0.5,
     `der Truck stand bei ${x0.toFixed(1)}, ${z0.toFixed(1)} und wurde nach ` +
     `${x.toFixed(1)}, ${z.toFixed(1)} geschoben`);
+});
+
+/**
+ * A tank is something to drive around, a soldier is not.
+ *
+ * Armour blocks; infantry deliberately does not. A man does not stop a laden
+ * truck, and making him do it turns a charge across the open into a wall of
+ * bodies the player cannot get through - which is neither what the old game
+ * did nor what anyone would expect of it.
+ */
+test('armour blocks the truck and infantry does not', () => {
+  const Q = 65536, O = 5, T_X = 0, T_Z = 1, T_SPEED = 9;
+  const O_UNITS = 24, U_WORDS = 8, U_X = 0, U_Z = 1, U_STATE = 5;
+
+  const run = (unitIndex) => {
+    const st = init(1);
+    clearTheField(st);
+    if (unitIndex !== null) {
+      const b = O_UNITS + unitIndex * U_WORDS;
+      st.i32[b + U_X] = st.i32[O + T_X] + Math.round(30 * Q);
+      st.i32[b + U_Z] = st.i32[O + T_Z];
+      st.i32[b + U_STATE] = 1;
+    }
+    for (let i = 0; i < 600; i++) step(st, Q, 0, 0, 0, 0);
+    return { x: st.i32[O + T_X] / Q, v: st.i32[O + T_SPEED] / Q };
+  };
+
+  const clear = run(null);
+  const tank = run(0);      // every fourth unit is armour, so 0 is a tank
+  const man = run(1);       // and 1 is not
+
+  assert.ok(tank.x < clear.x - 50,
+    `der Panzer hat den Truck nicht aufgehalten - er kam bis ${tank.x.toFixed(1)}`);
+  assert.ok(tank.v < 1,
+    `der Truck drueckt mit ${tank.v.toFixed(2)} m/s weiter in den Panzer`);
+
+  // The stopping distance is the two radii plus the nose: about 6.3 m.
+  const gap = (clear.from ?? 0, 30 + (init(1).i32[O + T_X] / Q) - tank.x);
+  assert.ok(gap > 4 && gap < 9,
+    `der Truck steht ${gap.toFixed(1)} m vor dem Panzer - erwartet etwa 6.3`);
+
+  assert.ok(Math.abs(man.x - clear.x) < 0.01,
+    `die Infanterie hat den Truck aufgehalten - ${man.x.toFixed(1)} statt ${clear.x.toFixed(1)}`);
 });

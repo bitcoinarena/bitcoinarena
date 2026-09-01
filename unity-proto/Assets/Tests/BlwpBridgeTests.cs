@@ -408,3 +408,111 @@ public class WorldSolidsTests
         Object.Destroy(go);
     }
 }
+
+/// <summary>
+/// Gunships patrol the front. They do not fly through the depots.
+///
+/// They held nineteen metres over the ground and ran from -FrontX-30 to
+/// +FrontX+40, which put the spawn INSIDE the post office wall - it stands
+/// from x -122.4 to -114.4 and reaches 58 m up - and the exit through the
+/// miner. A helicopter appeared in a building, flew out of it, crossed the
+/// field and vanished into the other one.
+/// </summary>
+public class GunshipCorridorTests
+{
+    [Test]
+    public void TheCorridorStopsShortOfBothDepots()
+    {
+        // Measured off the harvested collision world: the miner's leading face
+        // is the nearer of the two, and everything has to fit inside it.
+        Assert.Less(Army.AirCorridorX, 108.4f,
+            "der Korridor reicht in den Miner hinein");
+        Assert.Greater(Army.AirCorridorX, Army.FrontX,
+            "der Korridor endet vor der Front - die Hubschrauber kaemen nie an");
+    }
+
+    [Test]
+    public void AGunshipNeverLeavesTheCorridor()
+    {
+        var army = new Army(1234);
+        army.GroundAt = (x, z) => 0f;
+        army.FrontlineAt = _ => 0f;
+
+        for (int i = 0; i < 6; i++) army.SendHelicopter(i % 2 == 0 ? Army.Side.Bull : Army.Side.Bear);
+
+        float worst = 0f;
+        for (int step = 0; step < 3000; step++)
+        {
+            army.Update(1f / 60f);
+            foreach (var h in army.Helicopters) worst = Mathf.Max(worst, Mathf.Abs(h.x));
+            if (step % 400 == 0) army.SendHelicopter(step % 800 == 0 ? Army.Side.Bull : Army.Side.Bear);
+        }
+
+        Assert.LessOrEqual(worst, Army.AirCorridorX + 0.5f,
+            $"ein Hubschrauber kam bis x={worst:0.0} - das ist im Gebaeude");
+    }
+}
+
+/// <summary>
+/// Reinforcements walk in from the edge; they do not appear in the fighting.
+///
+/// The spawn depth was random - as little as thirty metres behind the line for
+/// infantry - and reinforcements arrive DURING a round, so a squad could
+/// simply materialise in plain view of the player. Both step functions already
+/// drive a unit towards the line, so arriving at the edge costs nothing but
+/// the walk.
+/// </summary>
+public class ReinforcementTests
+{
+    [Test]
+    public void EveryUnitArrivesAtTheEdgeOfTheField()
+    {
+        var army = new Army(99);
+        army.FrontlineAt = _ => 0f;
+        army.GroundAt = (x, z) => 0f;
+        army.Populate(12, 40);
+
+        foreach (var u in army.Armour)
+            Assert.GreaterOrEqual(Mathf.Abs(u.z), Army.HalfDepth - 3.5f,
+                $"ein Panzer erschien bei z={u.z:0.0} statt am Rand ({Army.HalfDepth})");
+        foreach (var u in army.Infantry)
+            Assert.GreaterOrEqual(Mathf.Abs(u.z), Army.HalfDepth - 3.5f,
+                $"ein Soldat erschien bei z={u.z:0.0} statt am Rand ({Army.HalfDepth})");
+    }
+
+    [Test]
+    public void EachSideArrivesOnItsOwnSide()
+    {
+        var army = new Army(7);
+        army.FrontlineAt = _ => 0f;
+        army.GroundAt = (x, z) => 0f;
+        army.Populate(8, 24);
+
+        foreach (var u in army.Armour)
+            Assert.AreEqual(u.side == Army.Side.Bull ? -1f : 1f, Mathf.Sign(u.z),
+                "eine Einheit kam von der gegnerischen Seite herein");
+    }
+
+    [Test]
+    public void AndThenTheyWalkToTheFront()
+    {
+        var army = new Army(3);
+        army.FrontlineAt = _ => 0f;
+        army.GroundAt = (x, z) => 0f;
+        army.Populate(6, 18);
+
+        float before = 0f;
+        foreach (var u in army.Armour) before += Mathf.Abs(u.z);
+        before /= army.Armour.Count;
+
+        for (int i = 0; i < 60 * 20; i++) army.Update(1f / 60f);
+
+        float after = 0f;
+        foreach (var u in army.Armour) after += Mathf.Abs(u.z);
+        after /= Mathf.Max(1, army.Armour.Count);
+
+        Assert.Less(after, before - 10f,
+            $"die Panzer standen nach zwanzig Sekunden noch bei {after:0.0} " +
+            $"statt vorgerueckt zu sein (Start {before:0.0})");
+    }
+}
