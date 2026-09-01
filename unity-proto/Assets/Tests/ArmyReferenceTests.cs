@@ -59,11 +59,46 @@ public class ArmyReferenceTests
         Stats(army.Infantry, Army.Side.Bull, out float iv, out float idd, out int inn);
         Stats(army.Infantry, Army.Side.Bear, out float jv, out float jd, out int jn);
 
+        // What the core cannot reproduce yet: the DEPTH of the front. Reported
+        // as the spread of |z - seam| per side, plus how many enemies each
+        // tank has inside gun range, because those two numbers together are
+        // what decides whether a fight is a grind or one collision.
+        Density(army, out float dens, out float xspread);
+        sb.AppendLine($"ARMYREF density inRange={dens:0.00} xspread={xspread:0.0}");
+
         sb.AppendLine($"ARMYREF t={t:0.0} " +
                       $"bullArmour n={an} z={ad:0.00} spread={av:0.00} " +
                       $"bearArmour n={bn} z={bd:0.00} spread={bv:0.00} " +
                       $"bullInf n={inn} z={idd:0.00} spread={iv:0.00} " +
                       $"bearInf n={jn} z={jd:0.00} spread={jv:0.00}");
+    }
+
+    /// <summary>Mean enemies inside 46 m, and how far the armour is spread along x.</summary>
+    static void Density(Army army, out float inRange, out float xSpread)
+    {
+        float total = 0f; int n = 0;
+        var xs = new System.Collections.Generic.List<float>();
+        foreach (var a in army.Armour)
+        {
+            if (a.hp <= 0f) continue;
+            xs.Add(a.x);
+            int c = 0;
+            foreach (var b in army.Armour)
+            {
+                if (b == a || b.hp <= 0f || b.side == a.side) continue;
+                float dx = b.x - a.x, dz = b.z - a.z;
+                if (dx * dx + dz * dz < 46f * 46f) c++;
+            }
+            total += c; n++;
+        }
+        inRange = n > 0 ? total / n : 0f;
+
+        float m = 0f;
+        foreach (var x in xs) m += x;
+        m = xs.Count > 0 ? m / xs.Count : 0f;
+        float v = 0f;
+        foreach (var x in xs) v += (x - m) * (x - m);
+        xSpread = xs.Count > 1 ? Mathf.Sqrt(v / xs.Count) : 0f;
     }
 
     static void Stats(System.Collections.Generic.List<Army.Unit> units, Army.Side side,

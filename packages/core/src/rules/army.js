@@ -136,6 +136,15 @@ export function stepUnit(u, rng, seamZ, truckX, truckZ, halfX, halfZ, dt, index)
     const want = abs(gap) > mulFast(walk, dt) ? (gap > 0 ? ONE : -ONE) : 0;
     dz = mulFast(mulFast(walk, want), dt);
   }
+  // Sideways: a slow drift. NOT a chase towards the engaged foe.
+  //
+  // StepArmour steers towards (foe.x, front - Dir*9) as one vector, and
+  // porting that coupling was the obvious way to get the depth the front is
+  // missing. Measured, it made things worse: the z spread fell from 9-12 to
+  // 1.9-11.7 and one side was wiped out on two seeds, because chasing pulls
+  // both armies onto the same x and concentrates the fighting rather than
+  // spreading it. Reverted rather than kept, since the whole point of the
+  // change was to raise that number.
   const dx = mulFast(mulFast(walk, sin(u.heading)), mulFast(dt, 26214));
 
   // Held on the BATTLEFIELD, not merely on the map.

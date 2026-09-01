@@ -462,5 +462,40 @@
     "spread": 18.8
    }
   }
- ]
+ ],
+ "density": {
+  "_comment": [
+   "Enemies inside the 46 m gun range per living tank, and how far the armour",
+   "is spread along x. Measured on the same run.",
+   "",
+   "This overturns the obvious reading of the loss curve. The C# army fights in",
+   "MUCH heavier contact than a two-line model suggests - four to eight enemies",
+   "in range each, and an x spread of 45 m across a 176 m front, so the two",
+   "sides interleave rather than face each other - and it still keeps 71-83% of",
+   "its armour over a minute. The core, with 0.3-0.75 enemies in range, loses",
+   "far more. Whatever is wrong is not too little contact; it is too much",
+   "lethality per shot, and that is where to look next."
+  ],
+  "inRangePerTank": [
+   0.0,
+   0.0,
+   7.92,
+   6.35,
+   5.3,
+   4.89,
+   4.46,
+   3.95
+  ],
+  "xSpread": [
+   45.3,
+   45.3,
+   45.1,
+   43.3,
+   42.1,
+   38.8,
+   36.2,
+   38.1
+  ],
+  "sampleSeconds": 5
+ }
 }

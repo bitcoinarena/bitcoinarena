@@ -27,7 +27,7 @@ import {
 import { vehicleStep } from './rules/vehicle.js';
 import { flatGround, gradeAlong, heightAtWorld, DEFAULT_COLS, DEFAULT_ROWS } from './rules/ground.js';
 import { noSolids, resolveSolids, resolveArmour, BOX_WORDS } from './rules/solids.js';
-import { stepUnit, threatAt, pickTarget, RELOAD_MIN, RELOAD_SPAN, DAMAGE_MIN, DAMAGE_SPAN, BACKOFF_RANGE } from './rules/army.js';
+import { stepUnit, threatAt, pickTarget, RELOAD_MIN, RELOAD_SPAN, DAMAGE_MIN, DAMAGE_SPAN, BACKOFF_RANGE, ARMOUR_RANGE as ARMOUR_RANGE_Q } from './rules/army.js';
 import { accrue, earning, scoreOf } from './rules/score.js';
 import { outcome, RUN_LIVE, RUN_DELIVERED, RUN_WRECKED, RUN_MISSED } from './rules/gate.js';
 import { frontlineZ, SAMPLES } from './rules/frontline.js';
@@ -324,11 +324,11 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
   const tx = s[T + T_X], tz = s[T + T_Z];
   const seamZ = frontlineZ(st.tape, tx, HALF_X, HALF_Z);
   let hits = 0;
-  const u = { x: 0, z: 0, hp: 0, heading: 0, cooldown: 0, armour: false, side: 1, crowded: false };
+  const u = { x: 0, z: 0, hp: 0, heading: 0, cooldown: 0, armour: false, side: 1, crowded: false, engaged: false, foeX: 0 };
 
   // A read-only view of any unit, for target selection. Declared before the
   // loop that uses it, unlike the scoring one further down.
-  const peek = { x: 0, z: 0, hp: 0, armour: false, side: 1, crowded: false };
+  const peek = { x: 0, z: 0, hp: 0, armour: false, side: 1, crowded: false, engaged: false, foeX: 0 };
   const peekAt = (i) => {
     const pb = unitBase(i);
     peek.x = s[pb + U_X]; peek.z = s[pb + U_Z]; peek.hp = s[pb + U_HP];
@@ -349,14 +349,23 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
     // Is anything of the other side too close? Decided before the step, from
     // the positions everyone had at the start of the tick, so the order units
     // are visited in cannot change who gives ground.
+    // The nearest enemy, and whether it is close enough to crowd us. Both
+    // read from the positions everyone held at the START of the tick, so the
+    // order units are visited in cannot decide who gives ground or who is
+    // chasing whom.
     u.crowded = false;
+    u.engaged = false;
+    u.foeX = 0;
+    let nearest = ARMOUR_RANGE_Q;
     for (let j = 0; j < UNITS; j++) {
       if (j === i) continue;
       const jb = unitBase(j);
       if (s[jb + U_STATE] === 0 || s[jb + U_SIDE] === u.side) continue;
       const ddx = sub(s[jb + U_X], u.x), ddz = sub(s[jb + U_Z], u.z);
-      if (abs(ddx) > BACKOFF_RANGE || abs(ddz) > BACKOFF_RANGE) continue;
-      if (length2(ddx, ddz) < BACKOFF_RANGE) { u.crowded = true; break; }
+      if (abs(ddx) > nearest || abs(ddz) > nearest) continue;
+      const dd = length2(ddx, ddz);
+      if (dd < BACKOFF_RANGE) u.crowded = true;
+      if (dd < nearest) { nearest = dd; u.engaged = true; u.foeX = s[jb + U_X]; }
     }
     const r = stepUnit(u, rng, seamZ, tx, tz, HALF_X, HALF_Z, TICK_DT, i);
 
