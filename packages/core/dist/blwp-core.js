@@ -1393,9 +1393,26 @@ const RIFLE_WALK = 170394;       // 2.6 m/s
 // individually is what produces the scatter, and the scatter is what makes it
 // a grind.
 const ARMOUR_STANDOFF = Math.imul(9, ONE);
-const RIFLE_STANDOFF = Math.imul(4, ONE);
 const ARMOUR_SPREAD = Math.imul(10, ONE);
-const RIFLE_SPREAD = Math.imul(8, ONE);
+
+// A rifleman's distance from the seam, and it is TWO numbers in the C#, added:
+//
+//     standoff     = Rand(4f, 12f)          Army.Spawn
+//     squadOffsetZ = Rand(-5f, 5f)          Army.Spawn, infantry only
+//     goalZ        = front - Dir * (standoff + squadOffsetZ)   StepInfantry
+//
+// So a man holds anywhere from 1 m PAST the seam to 17 m short of it, and the
+// sum of two uniforms is triangular - it piles up at 8. The core had a flat
+// 0 to 8, mean 4, so both lines stood four metres too far forward and half as
+// deep, which puts them eight metres closer together than the recording's.
+//
+// That is not a cosmetic difference. It is how densely the men pack where the
+// bombs fall: with the lines too close and too shallow the core killed 81-116
+// riflemen a round by bomb against the recording's 60-76, and only 42-49% of
+// its bombs hit nobody against 50-58%. Measured, both before and after.
+const RIFLE_STANDOFF = Math.imul(4, ONE);
+const RIFLE_SPREAD = Math.imul(8, ONE);      // + 0 to 8, so 4 to 12
+const RIFLE_SQUAD_Z = Math.imul(10, ONE);    // then -5 to +5
 
 /**
  * Pushed this far past its own line, a unit is overrun and falls right back.
@@ -1469,9 +1486,16 @@ function stepUnit(u, rng, seamZ, truckX, truckZ, halfX, halfZ, dt, index) {
   // Derived from the index rather than stored: it must not change from tick to
   // tick, and there is no spare word in the unit for it.
   const scatter = (Math.imul(index | 0, 2654435761) >>> 20) & 1023;
-  const span = u.armour ? ARMOUR_SPREAD : RIFLE_SPREAD;
-  const standoff = add(u.armour ? ARMOUR_STANDOFF : RIFLE_STANDOFF,
-                       sub(Math.imul(scatter, span) >> 10, span >> 1));
+  // A second slice of the same hash, so the rifleman's two offsets are
+  // independent of each other the way the C#'s two draws are. Same hash and a
+  // different window rather than a second constant: one magic number is enough
+  // to have to justify.
+  const scatter2 = (Math.imul(index | 0, 2654435761) >>> 8) & 1023;
+  const standoff = u.armour
+    ? add(ARMOUR_STANDOFF,
+          sub(Math.imul(scatter, ARMOUR_SPREAD) >> 10, ARMOUR_SPREAD >> 1))
+    : add(add(RIFLE_STANDOFF, Math.imul(scatter, RIFLE_SPREAD) >> 10),
+          sub(Math.imul(scatter2, RIFLE_SQUAD_Z) >> 10, RIFLE_SQUAD_Z >> 1));
   // The side a unit BELONGS to, not the side it happens to be standing on.
   //
   // Taken from the current position, a unit that stepped over the seam had its
@@ -1501,6 +1525,18 @@ function stepUnit(u, rng, seamZ, truckX, truckZ, halfX, halfZ, dt, index) {
     const g = sub(back, u.z);
     dz = mulFast(mulFast(walk, g > 0 ? ONE : -ONE), dt);
   } else if (u.crowded) {
+    // Armour only, and `crowded` is now only ever set for armour - the scan
+    // in sim.js does not run for a rifleman at all.
+    //
+    // This is StepArmour's `if (engaged && foeD2 < 24*24)`: a tank that has
+    // another tank inside 24 m gives six metres of ground. C# INFANTRY has no
+    // such rule anywhere - Separate is called on Armour pairs only
+    // (Army.cs:325) and StepInfantry walks a man to his standoff and leaves
+    // him there. Applying it to riflemen held the two lines 24.0 m apart at
+    // every sample of every seed, which is wider than the 16 m blast, so no
+    // bomb in this core could ever catch men from both sides; the recording's
+    // lines come within 4.7 m of each other. That floor was the whole of the
+    // friendly-fire and dud-share gap the air arm was blamed for.
     dz = mulFast(mulFast(BACK_OFF, Math.imul(side, ONE)), dt);
   } else {
     const gap = sub(hold, u.z);
@@ -1561,12 +1597,50 @@ function stepUnit(u, rng, seamZ, truckX, truckZ, halfX, halfZ, dt, index) {
   u.z = clamp(add(u.z, dz), -halfZ, halfZ);
 
   // in range of the courier?
+  //
+  // Armour only now. A rifleman has ONE clock and fires ONE shot on it, at
+  // the courier or at another rifleman, and that lives in sim.js beside the
+  // armour's gun because it needs to see the other units. Two clocks would
+  // have let a man shoot twice as often as the C# one does.
+  //
+  // What is left here is untouched and still wrong, and it is item (j): a
+  // tank shoots the courier at 34 m (CourierRange) for Rand(5, 11), not at 26
+  // for a flat point, and it only leaves the tank in front of it when the
+  // truck is nearer. Measured, a truck parked in the C# fight for ninety
+  // seconds takes 163 tank hits for 1271.7 points and 6 rifle hits for 13.9.
+  if (!u.armour) return 0;
   const d = length2(sub(u.x, truckX), sub(u.z, truckZ));
   if (d >= RIFLE_RANGE) return 0;
 
   if (u.cooldown > 0) { u.cooldown = (u.cooldown - 1) | 0; return 1; }
   u.cooldown = (40 + below(rng, 60)) | 0;
   return below(rng, 1000) < RIFLE_HIT_PER_MIL ? 2 : 1;   // 2 = a hit landed
+}
+
+/**
+ * The nearest enemy RIFLEMAN inside rifle range, or -1.
+ *
+ * `Army.NearestEnemyInfantry`, and the counterpart of pickTarget: that one
+ * scans armour for a tank's gun, this one scans infantry for a rifle. A
+ * rifleman never shoots at a tank in the C# and does not here.
+ *
+ * Called when the shot goes off and not every tick, which is C#'s own choice
+ * and its own comment: a hundred and eighty men each scanning every other man
+ * every frame is thirty thousand comparisons for a decision that changes once
+ * every few seconds.
+ */
+function pickRifleTarget(units, count, self, x, z, side) {
+  let best = -1, bestD = RIFLE_RANGE;
+  for (let i = 0; i < count; i++) {
+    if (i === self) continue;
+    const u = units(i);
+    if (u.hp <= 0 || u.side === side || u.armour) continue;
+    const dx = sub(u.x, x), dz = sub(u.z, z);
+    if (abs(dx) > bestD || abs(dz) > bestD) continue;
+    const d = length2(dx, dz);
+    if (d < bestD) { bestD = d; best = i; }
+  }
+  return best;
 }
 
 /**
@@ -1627,6 +1701,23 @@ function pickTarget(units, count, self, x, z, side) {
   }
   return best;
 }
+
+// The rifle, from Army.StepInfantry. A man reloads for 2.5 to 4.5 seconds
+// after a shot and looks again after 0.4 to 1.1 when he has nobody to shoot
+// at, and a hit takes one point off a man who has one - so a rifleman dies to
+// a single bullet. In this core he carries ten, because the buffer holds hit
+// points at ten times C#'s scale.
+const RIFLE_RELOAD_MIN = 150;    // ticks, 2.5 s
+const RIFLE_RELOAD_SPAN = 120;   // up to 4.5 s
+const RIFLE_LOOK_MIN = 24;       // 0.4 s, nothing in range
+const RIFLE_LOOK_SPAN = 42;      // up to 1.1 s
+
+const RIFLE_RELOAD_TICKS = RIFLE_RELOAD_MIN;
+const RIFLE_RELOAD_TICKS_SPAN = RIFLE_RELOAD_SPAN;
+const RIFLE_LOOK_TICKS = RIFLE_LOOK_MIN;
+const RIFLE_LOOK_TICKS_SPAN = RIFLE_LOOK_SPAN;
+const RIFLE_HP = Math.imul(10, ONE);
+const RIFLE_DAMAGE = Math.imul(10, ONE);
 
 const BACKOFF_RANGE = BACK_OFF_RANGE;
 const RELOAD_MIN = FIRE_RELOAD_MIN;
@@ -2332,7 +2423,15 @@ function spawnUnit(s, rng, i) {
   s[b + U_X] = Math.imul(nextBelow(rng, 176) - 88, ONE);
   s[b + U_Z] = Math.imul(Math.imul(side, 79) - Math.imul(side, nextBelow(rng, 4)), ONE);
   s[b + U_SIDE] = side;
-  s[b + U_HP] = Math.imul(60 + nextBelow(rng, 40), ONE);
+  // A tank has 6 to 10 hit points in the C# and a rifleman has exactly 1, and
+  // the ternary that says so draws NOTHING for a rifleman:
+  //
+  //     hp = vehicle ? Rand(6f, 10f) : 1f
+  //
+  // Ported with the draw as well as the value. Before this every unit in the
+  // core spawned with a tank's hit points, so a rifle round taking one man's
+  // worth of damage would have needed six to ten hits to kill him.
+  s[b + U_HP] = isArmour(i) ? Math.imul(60 + nextBelow(rng, 40), ONE) : RIFLE_HP;
   s[b + U_HEADING] = nextBelow(rng, 65536);
   s[b + U_STATE] = 1;
 
@@ -2661,16 +2760,22 @@ function step(st, throttle, steer, brake, handbrake, practice) {
     u.crowded = false;
     u.engaged = false;
     u.foeX = 0;
-    let nearest = ARMOUR_RANGE;   // plain name: the bundler cannot alias
-    for (let j = 0; j < UNITS; j++) {
-      if (j === i) continue;
-      const jb = unitBase(j);
-      if (s[jb + U_STATE] === 0 || s[jb + U_SIDE] === u.side) continue;
-      const ddx = sub(s[jb + U_X], u.x), ddz = sub(s[jb + U_Z], u.z);
-      if (abs(ddx) > nearest || abs(ddz) > nearest) continue;
-      const dd = length2(ddx, ddz);
-      if (dd < BACKOFF_RANGE) u.crowded = true;
-      if (dd < nearest) { nearest = dd; u.engaged = true; u.foeX = s[jb + U_X]; }
+    // ARMOUR ONLY, on both sides of the test, because Army.NearestEnemy walks
+    // the Armour list and nothing else. A rifleman has no scan at all here -
+    // he has no crowding rule to feed and picks his target when he fires - and
+    // a tank is not crowded by riflemen, only by another tank.
+    if (u.armour) {
+      let nearest = ARMOUR_RANGE;   // plain name: the bundler cannot alias
+      for (let j = 0; j < UNITS; j++) {
+        if (j === i || !isArmour(j)) continue;
+        const jb = unitBase(j);
+        if (s[jb + U_STATE] === 0 || s[jb + U_SIDE] === u.side) continue;
+        const ddx = sub(s[jb + U_X], u.x), ddz = sub(s[jb + U_Z], u.z);
+        if (abs(ddx) > nearest || abs(ddz) > nearest) continue;
+        const dd = length2(ddx, ddz);
+        if (dd < BACKOFF_RANGE) u.crowded = true;
+        if (dd < nearest) { nearest = dd; u.engaged = true; u.foeX = s[jb + U_X]; }
+      }
     }
     const r = stepUnit(u, rng, seamZ, tx, tz, HALF_X, HALF_Z, TICK_DT, i);
 
@@ -2694,6 +2799,45 @@ function step(st, throttle, steer, brake, handbrake, practice) {
         }
       }
     }
+    // The rifle, in the same place and for the same reason: it reads the other
+    // units, so it cannot live inside stepUnit.
+    //
+    // One clock and one shot on it, which is Army.StepInfantry's shape. The
+    // target is picked when the shot goes off, and the reload is set BEFORE
+    // the hit is rolled, because the C# sets it either way and a stream that
+    // draws in a different order is a different program.
+    //
+    // The courier branch is TODAY'S rule and not C#'s, and it is item (j)'s to
+    // replace: a C# rifleman fires at the truck only when he already has a man
+    // inside 26 m and the truck is nearer than that man, which is why six
+    // rifle rounds hit a truck parked in the fight for ninety seconds. What is
+    // here shoots the truck whenever it is in range. It does now do it on the
+    // rifle's own 2.5-4.5 s reload rather than the 0.7-1.7 s this counter used
+    // to run at, because the man only has the one clock.
+    if (!u.armour && u.hp > 0) {
+      if (s[b + U_COOLDOWN] > 0) s[b + U_COOLDOWN] = (s[b + U_COOLDOWN] - 1) | 0;
+      else {
+        const toTruck = length2(sub(u.x, tx), sub(u.z, tz));
+        if (toTruck < RIFLE_RANGE) {
+          s[b + U_COOLDOWN] = (RIFLE_RELOAD_TICKS + nextBelow(rng, RIFLE_RELOAD_TICKS_SPAN)) | 0;
+          if (nextBelow(rng, 1000) < RIFLE_HIT_PER_MIL) hits = (hits + 1) | 0;
+        } else {
+          const foe = pickRifleTarget(peekAt, UNITS, i, u.x, u.z, u.side);
+          if (foe < 0) {
+            s[b + U_COOLDOWN] = (RIFLE_LOOK_TICKS + nextBelow(rng, RIFLE_LOOK_TICKS_SPAN)) | 0;
+          } else {
+            s[b + U_COOLDOWN] = (RIFLE_RELOAD_TICKS + nextBelow(rng, RIFLE_RELOAD_TICKS_SPAN)) | 0;
+            if (nextBelow(rng, 1000) < RIFLE_HIT_PER_MIL) {
+              const fb = unitBase(foe);
+              s[fb + U_HP] = max(0, sub(s[fb + U_HP], RIFLE_DAMAGE));
+              if (s[fb + U_HP] === 0) s[fb + U_STATE] = 0;
+            }
+          }
+        }
+      }
+      u.cooldown = s[b + U_COOLDOWN];
+    }
+
     s[b + U_X] = u.x; s[b + U_Z] = u.z;
     s[b + U_HEADING] = u.heading; s[b + U_COOLDOWN] = u.cooldown;
     if (r === 2) hits = (hits + 1) | 0;

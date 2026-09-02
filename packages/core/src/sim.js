@@ -31,7 +31,7 @@ import {
 import { vehicleStep } from './rules/vehicle.js';
 import { flatGround, gradeAlong, heightAtWorld, DEFAULT_COLS, DEFAULT_ROWS } from './rules/ground.js';
 import { noSolids, resolveSolids, resolveArmour, BOX_WORDS } from './rules/solids.js';
-import { stepUnit, threatAt, pickTarget, RELOAD_MIN, RELOAD_SPAN, DAMAGE_MIN, DAMAGE_SPAN, BACKOFF_RANGE, HIT_PER_MIL, ARMOUR_RANGE } from './rules/army.js';
+import { stepUnit, threatAt, pickTarget, pickRifleTarget, RELOAD_MIN, RELOAD_SPAN, DAMAGE_MIN, DAMAGE_SPAN, BACKOFF_RANGE, HIT_PER_MIL, ARMOUR_RANGE, RIFLE_RANGE, RIFLE_HIT_PER_MIL, RIFLE_RELOAD_TICKS, RIFLE_RELOAD_TICKS_SPAN, RIFLE_LOOK_TICKS, RIFLE_LOOK_TICKS_SPAN, RIFLE_HP, RIFLE_DAMAGE } from './rules/army.js';
 import { accrue, earning, scoreOf } from './rules/score.js';
 import { outcome, RUN_LIVE, RUN_DELIVERED, RUN_WRECKED, RUN_MISSED } from './rules/gate.js';
 import { frontlineZ, SAMPLES } from './rules/frontline.js';
@@ -266,7 +266,15 @@ function spawnUnit(s, rng, i) {
   s[b + U_X] = Math.imul(nextBelow(rng, 176) - 88, ONE);
   s[b + U_Z] = Math.imul(Math.imul(side, 79) - Math.imul(side, nextBelow(rng, 4)), ONE);
   s[b + U_SIDE] = side;
-  s[b + U_HP] = Math.imul(60 + nextBelow(rng, 40), ONE);
+  // A tank has 6 to 10 hit points in the C# and a rifleman has exactly 1, and
+  // the ternary that says so draws NOTHING for a rifleman:
+  //
+  //     hp = vehicle ? Rand(6f, 10f) : 1f
+  //
+  // Ported with the draw as well as the value. Before this every unit in the
+  // core spawned with a tank's hit points, so a rifle round taking one man's
+  // worth of damage would have needed six to ten hits to kill him.
+  s[b + U_HP] = isArmour(i) ? Math.imul(60 + nextBelow(rng, 40), ONE) : RIFLE_HP;
   s[b + U_HEADING] = nextBelow(rng, 65536);
   s[b + U_STATE] = 1;
 
@@ -595,16 +603,22 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
     u.crowded = false;
     u.engaged = false;
     u.foeX = 0;
-    let nearest = ARMOUR_RANGE;   // plain name: the bundler cannot alias
-    for (let j = 0; j < UNITS; j++) {
-      if (j === i) continue;
-      const jb = unitBase(j);
-      if (s[jb + U_STATE] === 0 || s[jb + U_SIDE] === u.side) continue;
-      const ddx = sub(s[jb + U_X], u.x), ddz = sub(s[jb + U_Z], u.z);
-      if (abs(ddx) > nearest || abs(ddz) > nearest) continue;
-      const dd = length2(ddx, ddz);
-      if (dd < BACKOFF_RANGE) u.crowded = true;
-      if (dd < nearest) { nearest = dd; u.engaged = true; u.foeX = s[jb + U_X]; }
+    // ARMOUR ONLY, on both sides of the test, because Army.NearestEnemy walks
+    // the Armour list and nothing else. A rifleman has no scan at all here -
+    // he has no crowding rule to feed and picks his target when he fires - and
+    // a tank is not crowded by riflemen, only by another tank.
+    if (u.armour) {
+      let nearest = ARMOUR_RANGE;   // plain name: the bundler cannot alias
+      for (let j = 0; j < UNITS; j++) {
+        if (j === i || !isArmour(j)) continue;
+        const jb = unitBase(j);
+        if (s[jb + U_STATE] === 0 || s[jb + U_SIDE] === u.side) continue;
+        const ddx = sub(s[jb + U_X], u.x), ddz = sub(s[jb + U_Z], u.z);
+        if (abs(ddx) > nearest || abs(ddz) > nearest) continue;
+        const dd = length2(ddx, ddz);
+        if (dd < BACKOFF_RANGE) u.crowded = true;
+        if (dd < nearest) { nearest = dd; u.engaged = true; u.foeX = s[jb + U_X]; }
+      }
     }
     const r = stepUnit(u, rng, seamZ, tx, tz, HALF_X, HALF_Z, TICK_DT, i);
 
@@ -628,6 +642,45 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
         }
       }
     }
+    // The rifle, in the same place and for the same reason: it reads the other
+    // units, so it cannot live inside stepUnit.
+    //
+    // One clock and one shot on it, which is Army.StepInfantry's shape. The
+    // target is picked when the shot goes off, and the reload is set BEFORE
+    // the hit is rolled, because the C# sets it either way and a stream that
+    // draws in a different order is a different program.
+    //
+    // The courier branch is TODAY'S rule and not C#'s, and it is item (j)'s to
+    // replace: a C# rifleman fires at the truck only when he already has a man
+    // inside 26 m and the truck is nearer than that man, which is why six
+    // rifle rounds hit a truck parked in the fight for ninety seconds. What is
+    // here shoots the truck whenever it is in range. It does now do it on the
+    // rifle's own 2.5-4.5 s reload rather than the 0.7-1.7 s this counter used
+    // to run at, because the man only has the one clock.
+    if (!u.armour && u.hp > 0) {
+      if (s[b + U_COOLDOWN] > 0) s[b + U_COOLDOWN] = (s[b + U_COOLDOWN] - 1) | 0;
+      else {
+        const toTruck = length2(sub(u.x, tx), sub(u.z, tz));
+        if (toTruck < RIFLE_RANGE) {
+          s[b + U_COOLDOWN] = (RIFLE_RELOAD_TICKS + nextBelow(rng, RIFLE_RELOAD_TICKS_SPAN)) | 0;
+          if (nextBelow(rng, 1000) < RIFLE_HIT_PER_MIL) hits = (hits + 1) | 0;
+        } else {
+          const foe = pickRifleTarget(peekAt, UNITS, i, u.x, u.z, u.side);
+          if (foe < 0) {
+            s[b + U_COOLDOWN] = (RIFLE_LOOK_TICKS + nextBelow(rng, RIFLE_LOOK_TICKS_SPAN)) | 0;
+          } else {
+            s[b + U_COOLDOWN] = (RIFLE_RELOAD_TICKS + nextBelow(rng, RIFLE_RELOAD_TICKS_SPAN)) | 0;
+            if (nextBelow(rng, 1000) < RIFLE_HIT_PER_MIL) {
+              const fb = unitBase(foe);
+              s[fb + U_HP] = max(0, sub(s[fb + U_HP], RIFLE_DAMAGE));
+              if (s[fb + U_HP] === 0) s[fb + U_STATE] = 0;
+            }
+          }
+        }
+      }
+      u.cooldown = s[b + U_COOLDOWN];
+    }
+
     s[b + U_X] = u.x; s[b + U_Z] = u.z;
     s[b + U_HEADING] = u.heading; s[b + U_COOLDOWN] = u.cooldown;
     if (r === 2) hits = (hits + 1) | 0;

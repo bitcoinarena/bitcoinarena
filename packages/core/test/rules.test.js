@@ -907,39 +907,34 @@ test('the gunship height constant matches the tick it was written for', async ()
 });
 
 /**
- * No bomb in this core can ever kill men from both sides at once, and that is
- * the one place the port does NOT reach the recording.
+ * The two lines interpenetrate, which is what lets a bomb kill men from both
+ * sides - and it is the condition the recording was measured under.
  *
- * The recording has 18-42% of a bomb's infantry victims on the dropper's own
- * side; the core runs at 39-59%. The blast rule is not the reason - it is
- * copied to the metre and does not ask whose men are inside - and neither is
- * where the bombs land, which matches the recording on every published figure.
- * It is where the men STAND. army.js backs a unit off whenever an enemy comes
- * within BACK_OFF_RANGE, and that rule applies to riflemen as well as armour,
- * so twenty-four metres is a hard floor on the distance between any two
- * enemies. The blast radius is sixteen. The two lines therefore cannot be
- * straddled, and which side a bomb kills is decided entirely by which side of
- * the seam it fell on - so it comes out near the even split.
+ * This test used to assert the OPPOSITE, and said so: army.js backed a unit
+ * off whenever an enemy came within BACK_OFF_RANGE and applied it to riflemen
+ * as well as armour, so twenty-four metres was a hard floor between any two
+ * enemies against a sixteen-metre blast. No bomb could straddle the lines,
+ * which side a bomb killed was decided purely by which side of the seam it
+ * fell on, and the friendly-fire share came out near an even split against the
+ * recording's 18-42%.
  *
- * The C# has no such floor: StepInfantry walks a man to his standoff and leaves
- * him there, with no crowding rule at all and a rifle that reaches 26 m, so the
- * two lines interpenetrate and a bomb on enemy ground still kills mostly
- * enemies.
+ * The C# has no crowding rule for infantry at all - Separate is called on
+ * Armour pairs only (Army.cs:325) and StepInfantry walks a man to his standoff
+ * and leaves him there - so item (h) took the floor off the riflemen and gave
+ * them the C#'s own reach: standoff Rand(4,12) plus squadOffsetZ Rand(-5,5).
  *
- * That is item 2c's line, not the air arm's, and it is left alone here. It is
- * pinned instead, because it is the kind of fact that explains a live
- * divergence and would otherwise be rediscovered from scratch the next time
- * somebody asks why friendly fire is high.
+ * Measured after it, four seeds, seam pinned, against
+ * test/vectors/csharp-infantry.json:
+ *
+ *     closest opposing pair   core 2.5 - 23.8 m      recording 4.7 - 19.2 m
+ *
+ * Pinned here so that reapplying a floor to the infantry - the obvious way to
+ * make the two lines look tidier - fails loudly rather than quietly putting
+ * the friendly-fire and dud-share numbers back where they were.
  */
-test('no blast can straddle the two lines, which is why friendly fire is high', async () => {
+test('the two lines interpenetrate, so a blast can catch both sides', async () => {
   const L = await import('../src/state.js');
-  const army = await import('../src/rules/army.js');
   const air = await import('../src/rules/air.js');
-
-  assert.ok(army.BACKOFF_RANGE > air.BOMB_RADIUS,
-    'the back-off is now inside the blast radius, so bombs can catch both sides - ' +
-    'the friendly fire share should have moved towards the recording and this ' +
-    'test should be re-measured, not deleted');
 
   const st = init(20260901);
   st.tape.fill(st.tape[0]);                   // the seam the recording was made at
@@ -960,7 +955,14 @@ test('no blast can straddle the two lines, which is why friendly fire is high', 
       closest = Math.min(closest, Math.sqrt(dx * dx + dz * dz));
     }
   }
-  assert.ok(closest >= air.BOMB_RADIUS / ONE,
-    `two riflemen of opposite sides came within ${closest.toFixed(1)} m, inside the ` +
-    `${air.BOMB_RADIUS / ONE} m blast - the friendly fire measurement above is stale`);
+
+  assert.ok(closest < air.BOMB_RADIUS / ONE,
+    `the closest opposing riflemen were ${closest.toFixed(1)} m apart, outside the ` +
+    `${air.BOMB_RADIUS / ONE} m blast - no bomb can catch both sides, which is the ` +
+    'state item (h) removed. Something has put a floor back under the infantry.');
+
+  assert.ok(closest < 24,
+    `the closest opposing riflemen were ${closest.toFixed(1)} m apart, which is the ` +
+    'old BACK_OFF_RANGE floor to the metre - the crowding rule is being applied to ' +
+    'riflemen again');
 });
