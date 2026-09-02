@@ -2280,11 +2280,30 @@ time-boxed rather than open-ended.
 This is the recommended path, and for a wallet that supports budgets it is
 the whole answer.
 
-## 24A.2 Session balance, for wallets that cannot do that
+## 24A.2 Session balance — OPTIONAL, and NOT built for M3 or M4
 
 One payment of 1000 sats, ten rounds of 100. It requires somebody to hold
-the remainder between rounds, and this protocol has spent §23 arranging for
-nobody to hold anything - so it is stated plainly:
+the remainder between rounds, and §23 spent a chapter arranging for nobody
+to hold anything.
+
+### What actually changes, and it is not a matter of degree
+
+§23 already concedes that five colluding operators control **in-transit**
+funds (§23.6). A session balance is a different claim, and the difference is
+not how long or how much:
+
+| | during a round (§23) | session balance |
+|---|---|---|
+| Where the stake is | an unresolved HTLC | **settled — the money arrived** |
+| Player holds | a payment in flight | a signed promise |
+| Player is | a payer | a **creditor** |
+| If everyone stops cooperating | expiry refunds them | they must prove and slash |
+| Exposure | ~2 minutes | ~30 minutes |
+
+The line that matters is the fourth row. Under §23 the default outcome of
+total failure is **the player gets their money back** — doing nothing
+refunds. Under a session balance the default outcome of total failure is **a
+claim**, and a claim is only worth the enforcement behind it.
 
 > **A session balance is custody.** It is acceptable only because it is
 > bounded, and because the party holding it has posted a bond worth
@@ -2350,11 +2369,25 @@ player**, and every failure mode has to route through that.
 - **No credit.** A round is never entered against a balance that is not
   already there.
 
-### Where it sits in the plan
+### Why it is specified and not built
 
-M3.2, with the client and the wallet - after settlement works per-round.
-Building a balance before single-round custody is proven would mean debugging
-the hard part through an extra layer.
+Written down because the pressure to add it will arrive, and it should
+arrive to a design with a bound and a receipt rather than to an improvisation
+under deadline. But the trade is bad on today's facts:
+
+- §24A.1 removes the approval fatigue, which is the actual complaint, at
+  **zero** cost to the trust model.
+- What remains is *only* wallets that cannot do budgets — a wallet feature
+  gap, which is likely to close on its own.
+- Paying for a temporary wallet limitation with a permanent protocol
+  property is the wrong direction. **Non-custodial is the product.**
+
+So it is **optional, off by default, and per-node opt-in**, not part of M3 or
+M4. A node that offers it MUST declare it in its advertisement, and a client
+MUST show the player that this round's stake sits in a balance somebody else
+holds — the one thing that must never be the quiet default.
+
+Revisit only if budget-capable wallets stay rare after mainnet.
 
 ---
 
