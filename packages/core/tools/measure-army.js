@@ -104,17 +104,34 @@ function density(us) {
 }
 
 const ref = JSON.parse(readFileSync(new URL('../test/vectors/csharp-army.json', import.meta.url), 'utf8'));
-const refAt = (t) => ref.rows.find((r) => Math.abs(r.t - t) < 0.01);
-const refDensity = (t) => ({
-  inRange: ref.density.inRangePerTank[Math.round(t / ref.density.sampleSeconds)],
-  xSpread: ref.density.xSpread[Math.round(t / ref.density.sampleSeconds)],
-});
-// The recording's density series stops here. Anything the core reports past
-// this mark - and the shooter collapse is at t=60 - has NOTHING to be held
-// against until ArmyReferenceTests records that far.
-const REF_DENSITY_END = (ref.density.inRangePerTank.length - 1) * ref.density.sampleSeconds;
+
+/**
+ * Which recorded pass the core is being laid beside.
+ *
+ * The default is the only one that is a fair target: the C# army at the
+ * establishment the core fields, WITH its replacement running. The top-level
+ * 'reinforce' pass is twice the size, and reading its 38-42 of 48 as something
+ * a 24-tank army should hit is the mistake that cost this item four rounds.
+ */
+const REF_TAG = (args.find((a) => a.startsWith('--ref=')) || '--ref=core-size-reinforce').slice(6);
+const refPass = REF_TAG === 'reinforce'
+  ? {
+      armourPerSide: ref.armourPerSide, infantryPerSide: ref.infantryPerSide, rows: ref.rows,
+      density: ref.density.inRangePerTank.map((v, i) => ({
+        t: Math.imul(i, ref.density.sampleSeconds), inRange: v, xSpread: ref.density.xSpread[i],
+        shooters: ref.density.shooters[i], tanksAlive: ref.density.tanksAlive[i],
+        lost: ref.density.lost[i], arrived: ref.density.arrived[i],
+      })),
+    }
+  : ref.passes[REF_TAG];
+if (!refPass) throw new Error('no recorded pass called ' + REF_TAG);
+
+const refAt = (t) => refPass.rows.find((r) => Math.abs(r.t - t) < 0.01);
+const refDensity = (t) => refPass.density.find((d) => Math.abs(d.t - t) < 0.01) || {};
 
 const MARKS = [0, 5, 10, 15, 20, 25, 30, 40, 50, 60, 75, 90];
+/** A tick and a bit, so a transition landing on a sample boundary counts. */
+const EPS = 1 / 30;
 
 function measure(seed) {
   const summary = { seed, marks: {}, deaths: 0, contactLostAt: null, lastDeath: null };
@@ -128,8 +145,9 @@ function measure(seed) {
               `infantry=${spawn.filter((u) => !u.armour).length} ` +
               `(bull ${spawn.filter((u) => !u.armour && u.side < 0).length}, ` +
               `bear ${spawn.filter((u) => !u.armour && u.side > 0).length})`);
-  console.log('ARMYCORE recording establishment armour=' + ref.armourPerSide + '/side infantry=' +
-              ref.infantryPerSide + '/side   <- HALF AGAIN as many per side as the core has');
+  console.log(`ARMYCORE reference '${REF_TAG}': armour ${refPass.armourPerSide}/side ` +
+              `infantry ${refPass.infantryPerSide}/side` +
+              (refPass.armourPerSide === 12 ? ' - the core\'s own establishment' : ' - NOT the core\'s size'));
 
   let t = 0;
   for (const mark of MARKS) {
@@ -138,8 +156,8 @@ function measure(seed) {
     const d = density(us);
     const seam = frontlineZ(st.tape, st.i32[5], HALF_X, HALF_Z) / Q;
 
-    const r = refAt(Math.round(mark / 5) * 5 <= 90 ? mark : 90);
-    const rd = mark <= REF_DENSITY_END ? refDensity(mark) : {};
+    const r = refAt(mark);
+    const rd = refDensity(mark);
 
     summary.marks[mark] = {
       shooters: d.shooters, tanks: d.tanks, inRange: d.inRange,
@@ -160,9 +178,9 @@ function measure(seed) {
         ` z=${mean(aAlive.map((u) => u.z - seam)).toFixed(1)} sd=${stdev(aAlive.map((u) => u.z)).toFixed(1)}` +
         `  inf ${iAlive.length}/${inf.length} (${(100 * iAlive.length / inf.length).toFixed(0)}%)` +
         ` z=${mean(iAlive.map((u) => u.z - seam)).toFixed(1)}` +
-        (refArm ? `   | REC armour ${refArm.n}/${ref.armourPerSide} (${(100 * refArm.n / ref.armourPerSide).toFixed(0)}%)` +
+        (refArm ? `   | REC armour ${refArm.n}/${refPass.armourPerSide} (${(100 * refArm.n / refPass.armourPerSide).toFixed(0)}%)` +
           ` z=${refArm.z.toFixed(1)} sd=${refArm.spread.toFixed(1)}` +
-          `  inf ${refInf.n}/${ref.infantryPerSide} (${(100 * refInf.n / ref.infantryPerSide).toFixed(0)}%)` : ''));
+          `  inf ${refInf.n}/${refPass.infantryPerSide} (${(100 * refInf.n / refPass.infantryPerSide).toFixed(0)}%)` : ''));
     }
 
     // The question this file exists for: WHERE the dead are.
@@ -183,8 +201,9 @@ function measure(seed) {
                 `xspread=${d.xSpread.toFixed(1)} shooters=${d.shooters} tanksAlive=${d.tanks} ` +
                 `perTarget=${d.perTarget.toFixed(2)} worst=${d.worst} seam=${seam.toFixed(1)}` +
                 (rd.inRange !== undefined
-                  ? `   | REC inRange=${rd.inRange} xspread=${rd.xSpread}`
-                  : `   | REC none recorded past t=${REF_DENSITY_END}`));
+                  ? `   | REC inRange=${rd.inRange} xspread=${rd.xSpread} shooters=${rd.shooters} ` +
+                    `tanksAlive=${rd.tanksAlive} lost=${rd.lost} arrived=${rd.arrived}`
+                  : ''));
   }
   console.log('ARMYCORE END');
 
@@ -199,14 +218,23 @@ function measure(seed) {
   // and leaves the flanks, drift kills evenly and merely separates the living.
   const st2 = start(seed);
   const wasAlive = new Array(UNITS).fill(true);
+  /** Last tick's hit points per slot: a living tank never gains any. */
+  const hp = new Array(UNITS).fill(0);
   const at = (i) => {
     const o = b(i);
-    return { x: st2.i32[o + U_X] / Q, z: st2.i32[o + U_Z] / Q,
+    return { x: st2.i32[o + U_X] / Q, z: st2.i32[o + U_Z] / Q, hp: st2.i32[o + U_HP] / Q,
              alive: st2.i32[o + U_STATE] !== 0 && st2.i32[o + U_HP] > 0 };
   };
+  for (let i = 0; i < UNITS; i++) if (isArmour(i)) hp[i] = at(i).hp;
   const deaths = [];
+  const arrivals = [];
   const spawnX = {};
   for (let i = 0; i < UNITS; i++) if (isArmour(i)) spawnX[i] = at(i).x;
+
+  // Cumulative losses and arrivals at each mark, which is the pair the
+  // recording is read on: a headcount alone cannot tell an army that is not
+  // dying from one that is dying and being replaced.
+  const ledger = {};
 
   /** Living armour, and the distance from each to its nearest enemy. */
   const contact = () => {
@@ -228,13 +256,30 @@ function measure(seed) {
     step(st2, 0, 0, 0, 0, 0);
     const tNow = (f + 1) / 60;
     for (let i = 0; i < UNITS; i++) {
-      if (!isArmour(i) || !wasAlive[i]) continue;
-      if (!at(i).alive) {
-        wasAlive[i] = false;
-        deaths.push({ t: tNow, i, side: st2.i32[b(i) + U_SIDE], squad: squadOf(i),
-                      x: before[i].x, z: before[i].z, spawnX: spawnX[i] });
+      if (!isArmour(i)) continue;
+      const u = at(i);
+      const side = st2.i32[b(i) + U_SIDE];
+      const died = () => deaths.push({ t: tNow, i, side, squad: squadOf(i),
+                                       x: before[i] ? before[i].x : u.x,
+                                       z: before[i] ? before[i].z : u.z, spawnX: spawnX[i] });
+      // A slot refilled. The index fixes the side and the arm, so a
+      // replacement always joins the army that lost the tank.
+      const arrived = () => arrivals.push({ t: tNow, i, side });
+
+      if (wasAlive[i] && !u.alive) { wasAlive[i] = false; died(); }
+      else if (!wasAlive[i] && u.alive) { wasAlive[i] = true; arrived(); }
+      else if (u.alive && u.hp > hp[i]) {
+        // Alive at both ends of the tick and HEALED, which nothing in the
+        // army does: this slot lost its tank and was refilled in the same
+        // tick - reinforce() runs after the shooting and takes the first free
+        // slot, which can be the one that just emptied. Counting only the
+        // state flag missed both events and made the vehicle look like it had
+        // moved a hundred and sixteen metres in a second.
+        died(); arrived();
       }
+      hp[i] = u.hp;
     }
+    if ((f + 1) % 60 === 0) ledger[Math.round(tNow)] = { lost: deaths.length, arrived: arrivals.length };
     // Once per second: is anyone still within gun range of an enemy, and does
     // anything still move? The first is why the shooting stops; the second
     // says whether the survivors are walking anywhere or standing on a post.
@@ -243,11 +288,26 @@ function measure(seed) {
       if (summary.contactLostAt === null && gap > RANGE && deaths.length > 0) summary.contactLostAt = tNow;
       if (gap <= RANGE) summary.contactLostAt = null;
 
-      const now = [];
-      for (let i = 0; i < UNITS; i++) if (isArmour(i) && wasAlive[i]) now.push(at(i));
-      if (prev && prev.length === now.length) {
+      // Per SLOT, not per position in a list of the living. With replacement
+      // running, the list's membership changes between samples, so comparing
+      // by position measured the distance from one tank to a different one and
+      // reported a hundred and thirty-five metres in a second - a respawn at
+      // the map edge, read as movement. Slots that arrived inside the window
+      // are skipped for the same reason.
+      const now = {};
+      for (let i = 0; i < UNITS; i++) if (isArmour(i) && wasAlive[i]) now[i] = at(i);
+      // Comparable only if the slot held the same tank for the whole second.
+      // Anything that died or was refilled inside the window is a different
+      // vehicle at the two ends of it.
+      const born = new Set();
+      for (const a of arrivals) if (a.t > tNow - 1 - EPS) born.add(a.i);
+      for (const d of deaths) if (d.t > tNow - 1 - EPS) born.add(d.i);
+      if (prev) {
         let moved = 0;
-        for (let k = 0; k < now.length; k++) moved = Math.max(moved, Math.abs(now[k].x - prev[k].x) + Math.abs(now[k].z - prev[k].z));
+        for (const i of Object.keys(now)) {
+          if (!prev[i] || born.has(Number(i))) continue;
+          moved = Math.max(moved, Math.abs(now[i].x - prev[i].x) + Math.abs(now[i].z - prev[i].z));
+        }
         moveAt[tNow] = moved;
       }
       prev = now;
@@ -261,8 +321,12 @@ function measure(seed) {
     }
   }
   console.log('ARMYCORE DEATHS END  total=' + deaths.length + ' of ' +
-              Object.keys(spawnX).length + ' armour');
+              Object.keys(spawnX).length + ' armour, arrivals=' + arrivals.length);
+  console.log('ARMYCORE ledger (cumulative armour lost/arrived) ' +
+              MARKS.filter((m) => ledger[m]).map((m) => `t=${m}:${ledger[m].lost}/${ledger[m].arrived}`).join(' '));
   summary.deaths = deaths.length;
+  summary.arrivals = arrivals.length;
+  summary.ledger = ledger;
   summary.lastDeath = deaths.length ? deaths[deaths.length - 1].t : null;
 
   // Losses banded by the x each tank was standing on when it died, and by the
@@ -355,10 +419,12 @@ for (const s of all) {
   console.log(`ARMYCORE summary seed=${String(s.seed).padStart(9)} ` +
     `armour bull/bear t=15 ${at(15).bull}/${at(15).bear}  t=30 ${at(30).bull}/${at(30).bear}  ` +
     `t=60 ${at(60).bull}/${at(60).bear}  t=90 ${at(90).bull}/${at(90).bear}  ` +
-    `shooters t=20/40/60 ${at(20).shooters}/${at(40).shooters}/${at(60).shooters}  ` +
-    `deaths=${s.deaths} last=${s.lastDeath === null ? '-' : s.lastDeath.toFixed(0)}s  ` +
+    `shooters t=20/40/60/90 ${at(20).shooters}/${at(40).shooters}/${at(60).shooters}/${at(90).shooters}  ` +
+    `lost/arrived=${s.deaths}/${s.arrivals}  ` +
     `contact lost from t=${s.contactLostAt === null ? '-' : s.contactLostAt.toFixed(0)}`);
 }
-console.log('ARMYCORE recording, for the same rows: armour 24/side, survivors 79-88% at t=15-60. ' +
-            'The core fields 12/side, so neither the percentages nor the shooter counts are ' +
-            'comparable until the two armies are the same size.');
+const rEnd = refPass.density[refPass.density.length - 1];
+console.log(`ARMYCORE reference '${REF_TAG}' for the same rows: ` +
+  `alive ${refPass.density.filter((d) => d.t >= 15).map((d) => d.tanksAlive).join(',')} ` +
+  `| shooters ${refPass.density.filter((d) => d.t >= 15).map((d) => d.shooters).join(',')} ` +
+  `| lost/arrived at t=90 ${rEnd.lost}/${rEnd.arrived}`);

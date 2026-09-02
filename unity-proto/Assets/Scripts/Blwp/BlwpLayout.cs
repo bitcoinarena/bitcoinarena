@@ -10,7 +10,13 @@ namespace Blwp
     /// <summary>Word offsets into the core state buffer. Generated from state.js.</summary>
     public static class Layout
     {
+        public const int A_ARMOUR_BEAR = 1;
+        public const int A_ARMOUR_BULL = 0;
+        public const int A_RIFLE_BEAR = 3;
+        public const int A_RIFLE_BULL = 2;
+        public const int A_WORDS = 4;
         public const int MAX_UNITS = 256;
+        public const int O_ARMY = 2072;
         public const int O_RNG = 1;
         public const int O_SCORE = 17;
         public const int O_TICK = 0;
@@ -45,7 +51,7 @@ namespace Blwp
         public const int U_WORDS = 8;
         public const int U_X = 0;
         public const int U_Z = 1;
-        public const int WORDS = 2072;
+        public const int WORDS = 2076;
 
         /// <summary>Where the core starts the truck, Q16.16 metres.</summary>
         public const int START_X = -6579814;

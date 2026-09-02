@@ -22,7 +22,28 @@ export const O_TRUCK = 5;        // 12 words
 export const O_SCORE = 17;       // 6 words
 export const O_UNITS = 24;       // MAX_UNITS * U_WORDS
 export const U_WORDS = 8;
-export const WORDS = O_UNITS + Math.imul(MAX_UNITS, U_WORDS);
+
+/**
+ * The army's replacement clocks: how long until the next unit walks on, per
+ * side and per arm, in Q16.16 seconds.
+ *
+ * Appended AFTER the units so that every offset above this line stayed where
+ * it was. Growing the state moves every golden vector hash, but so does
+ * reinforcement itself - the checkpoints cover the whole buffer, including all
+ * ninety-six unit positions - so there is no layout that would have avoided
+ * regenerating them. The honest one is the one that reads.
+ *
+ * They are STATE rather than locals for the reason everything else here is:
+ * a verifier replaying a transcript has to arrive at the same bytes, and a
+ * timer living outside the buffer is a timer two implementations can disagree
+ * about without either one noticing.
+ */
+export const O_ARMY = O_UNITS + Math.imul(MAX_UNITS, U_WORDS);
+export const A_ARMOUR_BULL = 0, A_ARMOUR_BEAR = 1;
+export const A_RIFLE_BULL = 2, A_RIFLE_BEAR = 3;
+export const A_WORDS = 4;
+
+export const WORDS = O_ARMY + A_WORDS;
 
 // truck fields, relative to O_TRUCK
 export const T_X = 0, T_Z = 1, T_HEADING = 2, T_VX = 3, T_VZ = 4;

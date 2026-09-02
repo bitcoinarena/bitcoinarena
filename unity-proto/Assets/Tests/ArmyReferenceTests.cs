@@ -47,9 +47,16 @@ public class ArmyReferenceTests
         //              fields - 12 armour and 36 infantry a side, because
         //              UNITS is 96 - so the comparison is not also a
         //              comparison of two differently sized armies.
+        //   core-size-reinforce
+        //              the one the core's own reinforcement is accepted
+        //              against: its establishment AND its replacement. The
+        //              24/72 figures cannot be a target for a 24-tank army,
+        //              and reading them as one is the mistake that cost 2b
+        //              four rounds.
         Pass(sb, "reinforce", 24, 72, reinforce: true);
         Pass(sb, "attrition", 24, 72, reinforce: false);
         Pass(sb, "core-size", 12, 36, reinforce: false);
+        Pass(sb, "core-size-reinforce", 12, 36, reinforce: true);
 
         sb.AppendLine("ARMYREF END");
         Debug.Log(sb.ToString());

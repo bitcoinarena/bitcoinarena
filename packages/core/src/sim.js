@@ -9,12 +9,13 @@
 // and only if in range, its reload and hit roll. That sequence is the reason a
 // transcript recorded today can still be replayed next year.
 
-import { ONE, add, sub, mulFast, div, idiv, clamp, min, max, abs, length2 } from './fixed.js';
+import { ONE, HALF, add, sub, mulFast, div, idiv, clamp, min, max, abs, length2 } from './fixed.js';
 import { seed } from './rng.js';
 import { sin, cos } from './trig.js';
 import {
   create, unitBase, MAX_UNITS, O_UNITS, U_WORDS,
-  O_TICK, O_RNG, O_TRUCK, O_SCORE,
+  O_TICK, O_RNG, O_TRUCK, O_SCORE, O_ARMY,
+  A_ARMOUR_BULL, A_ARMOUR_BEAR, A_RIFLE_BULL, A_RIFLE_BEAR,
   T_X, T_Z, T_HEADING, T_VX, T_VZ, T_ANGVEL, T_HP, T_CARGO, T_FLAGS,
   T_WHEEL, T_THROTTLE, T_STEER, T_IMPACT,
   S_EXPOSURE, S_ELAPSED, S_BESTX, S_CARGO, S_DELIVERED, S_STATE, S_PRACTICE,
@@ -210,47 +211,131 @@ export function init(seedWord) {
   st.armour = { n: 0, xz: new Int32Array(0) };
   st.units = { n: 0, u: new Int32Array(0) };
 
-  for (let i = 0; i < UNITS; i++) {
-    const b = unitBase(i);
-    // draw order: x, z, side, hp, heading, cooldown
-    // The battlefield, and only the battlefield.
-    //
-    // This was the full width of the map, so a tank could be placed at x=-100
-    // - which is where the truck is parked. With the armour made solid the
-    // truck was then shoved off its own apron before the player touched
-    // anything. Unity holds its units to |x| < 88 for the same reason; these
-    // are the same bounds.
-    //
-    // And each side comes in at its OWN edge and walks up, rather than
-    // appearing at a random depth in the middle of the fighting.
-    // Even forces, not a coin toss per unit.
-    //
-    // Populate() in the C# army gives each side exactly the same armour and
-    // the same infantry. Flipping for it produced sixteen tanks against eight,
-    // and in a lethal exchange an advantage compounds - the larger side lost
-    // nobody while the smaller was wiped out. Both armies must start equal or
-    // there is no front to hold, only a countdown.
-    //
-    // Bit two, so that armour - every fourth index - alternates as well.
-    const side = ((i >> 2) & 1) === 0 ? -1 : 1;
-    s[b + U_X] = Math.imul(nextBelow(rng, 176) - 88, ONE);
-    s[b + U_Z] = Math.imul(Math.imul(side, 79) - Math.imul(side, nextBelow(rng, 4)), ONE);
-    s[b + U_SIDE] = side;
-    s[b + U_HP] = Math.imul(60 + nextBelow(rng, 40), ONE);
-    s[b + U_HEADING] = nextBelow(rng, 65536);
-    s[b + U_STATE] = 1;
-
-    // Staggered reload, as the C# army staggers it at spawn.
-    //
-    // Left at zero, every tank fires on the first tick, in index order, and
-    // the side holding the lower indices wins every exchange before the other
-    // has fired at all: one army went from eleven to two while the other lost
-    // nobody. A front is made of two sides shooting on their own clocks.
-    s[b + U_TARGET] = nextBelow(rng, 180);
-    s[b + U_COOLDOWN] = nextBelow(rng, 120);
-    s[b + U_TARGET] = -1;
-  }
+  for (let i = 0; i < UNITS; i++) spawnUnit(s, rng, i);
   return st;
+}
+
+/**
+ * The side a slot belongs to. Bit two, so that armour - every fourth index -
+ * alternates as well.
+ *
+ * Populate() in the C# army gives each side exactly the same armour and the
+ * same infantry. Flipping a coin per unit produced sixteen tanks against
+ * eight, and in a lethal exchange an advantage compounds - the larger side
+ * lost nobody while the smaller was wiped out. Both armies must start equal or
+ * there is no front to hold, only a countdown. Deriving the side from the
+ * index rather than drawing it also means a replacement always refills the
+ * side and the arm that lost the unit.
+ */
+const sideOf = (i) => (((i >> 2) & 1) === 0 ? -1 : 1);
+
+/**
+ * Put a unit on the field in slot `i`, at its own army's edge.
+ *
+ * One function for the two callers that need it - Populate at the start of a
+ * round and Reinforce during it - because C# has one Spawn() and two armies
+ * that spawn differently is a difference nobody would see until a replacement
+ * walked on somewhere a starter never could.
+ *
+ * Draw order: x, z, hp, heading, reload, cooldown. It is part of the protocol:
+ * a verifier drawing them in another order gets another army.
+ */
+function spawnUnit(s, rng, i) {
+  const b = unitBase(i);
+  // The battlefield, and only the battlefield.
+  //
+  // This was the full width of the map, so a tank could be placed at x=-100
+  // - which is where the truck is parked. With the armour made solid the
+  // truck was then shoved off its own apron before the player touched
+  // anything. Unity holds its units to |x| < 88 for the same reason; these
+  // are the same bounds.
+  //
+  // And each side comes in at its OWN edge and walks up, rather than
+  // appearing at a random depth in the middle of the fighting. C# Spawn does
+  // the same, and its comment says why: replacements arrive DURING the round,
+  // so a unit that appeared thirty metres from the fighting appeared in plain
+  // view.
+  const side = sideOf(i);
+  s[b + U_X] = Math.imul(nextBelow(rng, 176) - 88, ONE);
+  s[b + U_Z] = Math.imul(Math.imul(side, 79) - Math.imul(side, nextBelow(rng, 4)), ONE);
+  s[b + U_SIDE] = side;
+  s[b + U_HP] = Math.imul(60 + nextBelow(rng, 40), ONE);
+  s[b + U_HEADING] = nextBelow(rng, 65536);
+  s[b + U_STATE] = 1;
+
+  // Staggered reload, as the C# army staggers it at spawn.
+  //
+  // Left at zero, every tank fires on the first tick, in index order, and
+  // the side holding the lower indices wins every exchange before the other
+  // has fired at all: one army went from eleven to two while the other lost
+  // nobody. A front is made of two sides shooting on their own clocks.
+  s[b + U_TARGET] = nextBelow(rng, 180);
+  s[b + U_COOLDOWN] = nextBelow(rng, 120);
+  s[b + U_TARGET] = -1;
+}
+
+/**
+ * How many of each arm a side keeps in the field, and how long it waits for a
+ * replacement. Both follow from the slot scheme: armour is every fourth index,
+ * the side is bit two, so of ninety-six slots each side holds twelve tanks and
+ * thirty-six riflemen.
+ */
+const ARMOUR_PER_SIDE = UNITS >> 3;
+const RIFLE_PER_SIDE = Math.imul(3, UNITS >> 3);
+const REINFORCE_ARMOUR = Math.imul(6, ONE);        // Army.ReinforceSeconds
+const REINFORCE_RIFLE = Math.imul(5, HALF);        // Army.InfantryReinforceSeconds, 2.5 s
+
+/**
+ * The four replacement clocks, in the order they are served. Armour for both
+ * sides, then infantry for both, which is the order C# Reinforce runs them in
+ * - and the order is protocol, because each spawn draws from the same stream.
+ */
+const CLOCKS = [
+  { word: A_ARMOUR_BULL, side: -1, armour: true, want: ARMOUR_PER_SIDE, wait: REINFORCE_ARMOUR },
+  { word: A_ARMOUR_BEAR, side: 1, armour: true, want: ARMOUR_PER_SIDE, wait: REINFORCE_ARMOUR },
+  { word: A_RIFLE_BULL, side: -1, armour: false, want: RIFLE_PER_SIDE, wait: REINFORCE_RIFLE },
+  { word: A_RIFLE_BEAR, side: 1, armour: false, want: RIFLE_PER_SIDE, wait: REINFORCE_RIFLE },
+];
+
+/**
+ * Replace the dead, the way Army.Reinforce does.
+ *
+ * The cadence is not flat, and that is the whole design: `timer -= dt *
+ * deficit` brings the next replacement faster the further behind a side is.
+ * C#'s comment on that line says it was added because a fixed one-per-six-
+ * seconds cannot recover from a collapse - measured, one side sat at 0-1 tanks
+ * for five minutes while the other held eleven. The core reproduced that
+ * failure exactly before this existed: one army wiped inside thirty seconds,
+ * the survivors then standing still with nothing inside the 46 m gun for the
+ * remaining minute. Replacement is not a garnish on the army; it is what holds
+ * the front up.
+ *
+ * Not conditional on anything the player does, practice included. practice.json
+ * states that practice "changes nothing else - the army still fires and still
+ * counts towards danger, so the draw order is identical", and a replacement
+ * that only arrived in a scored run would break that promise silently.
+ */
+function reinforce(s, rng) {
+  for (const c of CLOCKS) {
+    // Alive, and the first free slot of that side and arm. One pass for both:
+    // the slot's index already fixes which army and which arm it refills.
+    let alive = 0, slot = -1;
+    for (let i = 0; i < UNITS; i++) {
+      if (isArmour(i) !== c.armour || sideOf(i) !== c.side) continue;
+      if (s[unitBase(i) + U_STATE] !== 0) alive = (alive + 1) | 0;
+      else if (slot < 0) slot = i;
+    }
+
+    const deficit = (c.want - alive) | 0;
+    if (deficit <= 0) continue;
+
+    // The clock only runs while a side is short, as C#'s does - it is not a
+    // spawn rate, it is a queue that starts when someone dies.
+    s[O_ARMY + c.word] = sub(s[O_ARMY + c.word], Math.imul(deficit, TICK_DT));
+    if (s[O_ARMY + c.word] > 0) continue;
+    s[O_ARMY + c.word] = c.wait;
+    if (slot >= 0) spawnUnit(s, rng, slot);
+  }
 }
 
 // re-exported so the draw order lives in one place
@@ -400,6 +485,12 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
   if (practice) s[O_SCORE + S_PRACTICE] = 1;
   else if (hits > 0 && s[O_SCORE + S_STATE] === RUN_LIVE)
     s[T + T_HP] = max(0, sub(s[T + T_HP], Math.imul(hits, ONE)));
+
+  // Replacements walk on last, after everyone has moved and fired, which is
+  // where C# Update puts it - RemoveAll, then Reinforce. Anything drawn here
+  // is drawn after the tick's shooting, so moving this call moves the whole
+  // army.
+  reinforce(s, rng);
 
   // ---- 3. score ----------------------------------------------------------
   // danger is guns in range, not distance to a line

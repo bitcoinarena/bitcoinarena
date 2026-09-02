@@ -529,3 +529,105 @@ test('the army closes at the pace the C# army closes', async () => {
   assert.ok(bull < bear,
     `the armies have crossed: bull armour at ${bull.toFixed(1)}, bear at ${bear.toFixed(1)}`);
 });
+
+/**
+ * The army replaces its dead, and the front therefore holds.
+ *
+ * Step (d) of moving the army into the core, and the reason it is not a
+ * garnish: without replacement the first exchange decides the round. Measured,
+ * before this existed - one side wiped inside thirty seconds, and from t=34 the
+ * nearest enemy to any survivor was 49 to 154 m away against a 46 m gun. Not a
+ * slow fight; a finished one, with fifty seconds still to play.
+ *
+ * Held to the recording rather than to what the core happens to do:
+ * `passes.core-size-reinforce` in csharp-army.json is the C# army at the
+ * establishment the core fields - twelve tanks and thirty-six riflemen a side -
+ * with Army.Reinforce running. Its own `tolerance.alive` is the band.
+ *
+ * The shooter count is the assertion that matters. A headcount can be held up
+ * by an army standing in two heaps that never meet, which is exactly the state
+ * the core was in.
+ */
+test('replacements keep both armies in contact for the whole round', async () => {
+  const ref = JSON.parse(
+    await readFile(new URL('./vectors/csharp-army.json', import.meta.url), 'utf8'));
+  const rec = ref.passes['core-size-reinforce'];
+  const recAt = (t) => rec.density.find((d) => d.t === t);
+
+  const O_UNITS = 24, U_WORDS = 8, UNITS = 96, RANGE = 46;
+  const U_X = 0, U_Z = 1, U_SIDE = 2, U_STATE = 5;
+
+  const st = init(20260901);
+  // The recording pins the seam at z=0 (ArmyReferenceTests sets FrontlineAt to
+  // zero). The core's runs with the price tape, and comparing a fight offset by
+  // twenty-seven metres against a symmetric one is not a comparison.
+  st.tape.fill(st.tape[0]);
+
+  const armour = () => {
+    const out = [];
+    for (let i = 0; i < UNITS; i++) {
+      if ((i & 3) !== 0) continue;
+      const b = O_UNITS + i * U_WORDS;
+      if (st.i32[b + U_STATE] === 0) continue;
+      out.push({ x: st.i32[b + U_X] / ONE, z: st.i32[b + U_Z] / ONE, side: st.i32[b + U_SIDE] });
+    }
+    return out;
+  };
+  /** Tanks with an enemy inside the gun - the ones that can actually fight. */
+  const shooters = (us) => us.filter((a) =>
+    us.some((b) => b.side !== a.side &&
+      (b.x - a.x) * (b.x - a.x) + (b.z - a.z) * (b.z - a.z) < RANGE * RANGE)).length;
+
+  let t = 0;
+  for (const mark of [30, 60, 90]) {
+    while (t < mark * 60) { step(st, 0, 0, 0, 0, 0); t++; }
+    const us = armour();
+    const want = recAt(mark);
+
+    assert.ok(Math.abs(us.length - want.tanksAlive) <= ref.tolerance.alive,
+      `at t=${mark} the core fields ${us.length} tanks, the recording ${want.tanksAlive}`);
+    assert.ok(shooters(us) > 0,
+      `at t=${mark} not one tank has an enemy in range - the fight is over and ` +
+      `the recording has ${want.shooters} still shooting`);
+  }
+
+  // And a side that is emptied comes back, which is what the deficit term in
+  // the cadence is for: C# added it after one side sat at 0-1 tanks for five
+  // minutes while the other held eleven.
+  const us = armour();
+  for (const side of [-1, 1]) {
+    assert.ok(us.filter((u) => u.side === side).length >= 4,
+      `one army has been wiped out and not replaced: ${us.filter((u) => u.side === -1).length} ` +
+      `against ${us.filter((u) => u.side === 1).length} at t=90`);
+  }
+});
+
+/**
+ * Practice changes the damage the truck takes and NOTHING else.
+ *
+ * practice.json says so in its own note - "the army still fires and still
+ * counts towards danger, so the draw order is identical" - and reinforcement is
+ * the first thing since that could have broken it: a replacement drawn only in
+ * a scored run would take a different number of words out of the stream and
+ * every unit after it would stand somewhere else.
+ *
+ * Compared over the whole army region, all ninety-six units and the four
+ * replacement clocks, rather than over a summary that could agree by accident.
+ */
+test('a practice run and a live run field the same army, word for word', async () => {
+  const { O_UNITS, O_ARMY, A_WORDS } = await import('../src/state.js');
+  const drive = (practice) => {
+    const st = init(1);
+    for (let i = 0; i < 3600; i++) step(st, ONE, 0, 0, 0, practice);
+    return st;
+  };
+  const live = drive(0), shielded = drive(1);
+
+  let differing = 0;
+  for (let w = O_UNITS; w < O_ARMY + A_WORDS; w++)
+    if (live.i32[w] !== shielded.i32[w]) differing++;
+
+  assert.equal(differing, 0,
+    `${differing} words of the army differ between a live and a practice run - ` +
+    'something in the army is reading the practice flag');
+});
