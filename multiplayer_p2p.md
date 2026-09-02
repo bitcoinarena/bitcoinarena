@@ -2549,10 +2549,13 @@ The donation set cannot be a median: it is not a scalar, and the capital
 holders are not the people whose work is being funded. It also cannot be
 fixed forever, because addresses change.
 
-It is signed by one key, and that key is part of what defines the network:
+It is signed by one key, and that key - with its recovery key - is part of
+what defines the network:
 
 ```text
-network_id = H( genesis_parameters || donation_authority_pubkey )
+network_id = H( genesis_parameters
+             || donation_authority_pubkey
+             || donation_recovery_pubkey )
 ```
 
 **A fork that replaces the key produces a different `network_id`.** Round
@@ -2579,11 +2582,49 @@ Published like an advertisement - a marked output committing to
 `H(DonationSet)` - so it is discoverable, timestamped, and cannot be rolled
 back to an older serial.
 
-### What the key can do, exhaustively
+### Two keys, and why there are two
+
+**`donation_authority`** is the working key. It signs donation sets and
+nothing else. It is used whenever recipients change, so it lives somewhere
+usable.
+
+**`donation_recovery`** is cold, and can do exactly one thing: name a new
+`donation_authority`. It never signs a donation set. It is used once in
+years, if ever, and belongs in a safe.
+
+Both are committed in `network_id`, so replacing either is a fork - but
+*rotating the authority under an unchanged recovery key is not*, and that
+is the whole point.
+
+The first draft of this section had only the authority key and said that a
+theft would be answered by forking to a new one. That was wrong, and
+badly: `network_id` commits to the key, so changing it invalidates the
+entire census. Every node would have to post a new bond while its old
+capital stayed timelocked, and every live contract would die - as the price
+of a leaked donation address. A key with no revocation path is not a
+bounded risk just because what it controls is small.
+
+### Recovery, concretely
 
 ```text
-CAN     replace the donation recipients and their shares
-CAN     rotate itself to a successor key, signed by the current one
+AuthorityRotation {
+  network_id
+  serial              monotonic, separate from the donation set's
+  new_authority       pubkey
+  valid_from          block height
+  signature           by donation_recovery_pubkey
+}
+```
+
+Published like the donation set. From `valid_from`, sets signed by the old
+authority are rejected and only the new one is accepted, whatever serial
+the old key publishes.
+
+### What each key can do, exhaustively
+
+```text
+authority   CAN     replace the donation recipients and their shares
+recovery    CAN     name a new authority key
 ```
 
 ```text
@@ -2596,17 +2637,19 @@ CANNOT  make a player donate: the percentage is the player's, and zero
         is valid (§22A)
 ```
 
-**Blast radius if it is stolen.** Donations from players who have donations
-switched on go to the thief until the theft is noticed and the community
-moves to a fork with a new key. Nothing else is affected: no round, no
-stake, no payout, no census. Every recipient is displayed before wallet
-approval (§22A), and `donation_bps_max` caps the amount. The damage is
-bounded, voluntary and visible.
+### What happens in each case
 
-**If the key is lost**, the set freezes at its last published serial and
-everything continues to work. There is no recovery path and there should
-not be one: a recovery path is a second way to control the key, which is
-exactly the thing this section exists to prevent.
+| | Effect |
+|---|---|
+| **authority stolen** | The thief signs a set with a higher serial pointing at their own LNURLs, and players with donations on pay them until it is noticed. Answered by a rotation from the recovery key: **no fork, the census survives.** Nothing else is touched - no round, no stake, no payout, no committee. |
+| **authority lost** | Same remedy. Rotate and carry on. |
+| **both lost** | The set freezes at its last published serial and every donation keeps going where it was already going. Everything else works. There is no further recovery and there should not be. |
+| **recovery stolen** | The thief can seize the authority. It is therefore **exactly as sensitive as the authority key** and must be stored accordingly - the fact that it is used once in years makes cold storage realistic, not optional. |
+| **both stolen** | The network's donations are lost to the thief, and this is the case a fork is for. It costs a census. |
+
+The damage is bounded in every row: donations are voluntary, capped by
+`donation_bps_max`, and every recipient is displayed before wallet approval
+(§22A). A player who has donations switched off is unaffected by all of it.
 
 ## 27A.5 Discrete changes: rough consensus
 
