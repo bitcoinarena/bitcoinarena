@@ -3309,7 +3309,23 @@ function step(st, throttle, steer, brake, handbrake, practice) {
   // section already pushes the TRUCK out of the tanks, and C#'s own comment
   // says why nothing should push the tanks as well: two systems arguing over
   // one overlap have no radius that satisfies both.
-  {
+  //
+  // A WRECK CLEARS NOBODY. `Battlefield` wraps this whole block in
+  // `if (courier != null && (health == null || !health.IsDestroyed))`, so once
+  // the truck is written off C# stops both running men down and pushing them
+  // out. The first version of this port had no such guard and went on shoving
+  // riflemen out of a hulk the game considers gone.
+  //
+  // The core's quantity for "written off" is `T_HP`, and NOT `S_STATE`: the
+  // state word is recomputed down in the score section, after this, so here it
+  // still holds last tick's value and would let a wreck clear for one more
+  // tick. `T_HP` is current at this point because the courier damage above
+  // has already come off it. It is also not `TruckHealth` and not its `armour`
+  // divisor - that is the two-owner question and it is not being decided here.
+  //
+  // Run-over goes INSIDE this brace when it is ported, because it shares the
+  // same `if` in the game and not merely a neighbouring one.
+  if (s[T + T_HP] > 0) {
     const tx2 = s[T + T_X], tz2 = s[T + T_Z];
     for (let i = 0; i < UNITS; i++) {
       if (isArmour(i)) continue;
