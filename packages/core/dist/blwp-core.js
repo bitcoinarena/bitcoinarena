@@ -1391,6 +1391,18 @@ const CORRECTION_CAP = 39322;
 
 const RIFLE_RANGE = Math.imul(26, ONE);
 const ARMOUR_RANGE = Math.imul(46, ONE);
+
+/**
+ * The courier's own reach and what a tank shell does to it.
+ *
+ * `Army.CourierRange` is 34 m, wider than the rifle's 26, and a hit takes
+ * `Rand(5f, 11f)` - `Army.cs:638`, with Heat at zero as every recording has
+ * it. Drawn in hundredths the way the shell's own damage is, so it is one
+ * draw either way and the stream does not change shape with the target.
+ */
+const COURIER_RANGE = Math.imul(34, ONE);
+const COURIER_DAMAGE_MIN = Math.imul(5, ONE);
+const COURIER_DAMAGE_SPAN = Math.imul(6, ONE);   // 5 to 11
 const RIFLE_HIT_PER_MIL = 45;        // 0.045 per shot
 // Closing speeds, measured off the C# army rather than chosen: it covers
 // -77.5 to -43.5 in five seconds with armour and -77.5 to -64.6 with
@@ -1635,34 +1647,20 @@ function stepUnit(u, rng, seamZ, truckX, truckZ, halfX, halfZ, dt, index) {
   u.x = clamp(add(u.x, dx), neg(min(edge, halfX)), min(edge, halfX));
   u.z = clamp(add(u.z, dz), -halfZ, halfZ);
 
-  // in range of the courier?
+  // The courier is NOT a weapon, and this function no longer has one.
   //
-  // Armour only now. A rifleman has ONE clock and fires ONE shot on it, at
-  // the courier or at another rifleman, and that lives in sim.js beside the
-  // armour's gun because it needs to see the other units. Two clocks would
-  // have let a man shoot twice as often as the C# one does.
+  // What stood here was a second gun bolted onto the tank: its own 40-99 tick
+  // clock, the rifle's 0.045 roll, a 26 m reach and one flat point of damage.
+  // The C# has nothing of the sort. `Army.StepArmour` fires the tank's ONE gun
+  // when it is engaged, and the courier is only a TARGET CHOICE inside that
+  // shot - taken when the truck is inside CourierRange and nearer than the
+  // enemy the tank had picked. So the parallel weapon is deleted rather than
+  // widened to 34 m, and the choice now lives in sim.js beside the gun, which
+  // is the only place that can see both the foe and the truck.
   //
-  // What is left here is untouched and still wrong, and it is item (j): a
-  // tank shoots the courier at 34 m (CourierRange) for Rand(5, 11), not at 26
-  // for a flat point, and it only leaves the tank in front of it when the
-  // truck is nearer. Measured, a truck parked in the C# fight for ninety
-  // seconds takes 163 tank hits for 1271.7 points and 6 rifle hits for 13.9.
-  if (!u.armour) return 0;
-  // Axes first, then length2 - the same guard as pickTarget and threatAt
-  // below, and for the reason spelled out at their call sites: past about
-  // 181.5 m the sum of squares overflows and length2 returns ZERO, so the
-  // truck read as standing on the tank. Measured before it was fixed, 1.2% of
-  // all live tank-ticks were in that state, firing at a truck they could not
-  // see. Item (j) rewrites this function for CourierRange 34 m; it must keep
-  // the rejection, or the overflow comes back with a wider threshold.
-  const dxTruck = sub(u.x, truckX), dzTruck = sub(u.z, truckZ);
-  if (abs(dxTruck) > RIFLE_RANGE || abs(dzTruck) > RIFLE_RANGE) return 0;
-  const d = length2(dxTruck, dzTruck);
-  if (d >= RIFLE_RANGE) return 0;
-
-  if (u.cooldown > 0) { u.cooldown = (u.cooldown - 1) | 0; return 1; }
-  u.cooldown = (40 + below(rng, 60)) | 0;
-  return below(rng, 1000) < RIFLE_HIT_PER_MIL ? 2 : 1;   // 2 = a hit landed
+  // Measured before it went: 263 shots a round for 11 points, against the
+  // recording's 163 hits for 1271.7.
+  return 0;
 }
 
 /**
@@ -2851,7 +2849,12 @@ function step(st, throttle, steer, brake, handbrake, practice) {
   // ---- 2. army -----------------------------------------------------------
   const tx = s[T + T_X], tz = s[T + T_Z];
   const seamZ = frontlineZ(st.tape, tx, HALF_X, HALF_Z);
-  let hits = 0;
+  // Damage dealt to the truck this tick, in Q16.16 rather than a count of
+  // hits. It used to be a tally of flat points because every courier hit was
+  // worth exactly one; a tank shell is Rand(5, 11), so the truck's damage has
+  // to be carried at its real size. The rifle still adds exactly ONE until
+  // its own half of (j) is done.
+  let courierDmg = 0;
   const u = { x: 0, z: 0, hp: 0, heading: 0, cooldown: 0, armour: false, side: 1, crowded: false, engaged: false, foeX: 0 };
 
   // A read-only view of any unit, for target selection. Declared before the
@@ -2903,7 +2906,10 @@ function step(st, throttle, steer, brake, handbrake, practice) {
         if (dd < nearest) { nearest = dd; u.engaged = true; u.foeX = s[jb + U_X]; }
       }
     }
-    const r = stepUnit(u, rng, seamZ, tx, tz, HALF_X, HALF_Z, TICK_DT, i);
+    // Moves the unit. Its return value used to say "a courier hit landed"; the
+    // tank's courier weapon is gone and the choice lives in the gun below, so
+    // there is nothing left to report and the call is made for its effect.
+    stepUnit(u, rng, seamZ, tx, tz, HALF_X, HALF_Z, TICK_DT, i);
 
     // Armour fires on armour. Drawn in index order, always, so the transcript
     // replays: a tank that fires earlier changes what the ones after it see.
@@ -2915,11 +2921,40 @@ function step(st, throttle, steer, brake, handbrake, practice) {
           // Rolled whether it hits BEFORE the reload is set, and the reload is
           // set either way: a miss costs a shell and the time to load another.
           const connects = nextBelow(rng, 1000) < HIT_PER_MIL;
+          const fb = unitBase(foe);
+
+          // THE COURIER IS A TARGET CHOICE, not a second gun. Army.cs:696-706:
+          // the truck outranks the enemy the tank had picked when it is inside
+          // CourierRange and NEARER than that enemy - "it is in everybody's way
+          // and nobody's army". Heat is zero in every recording, which drops
+          // the two widening terms and leaves a plain 34 m and a plain nearer.
+          //
+          // Axes before length2, the guard item (m) put on the old weapon,
+          // with its threshold moved to 34 with the range. Dropping it here
+          // would bring the overflow back through a wider gate: past ~181.5 m
+          // the sum of squares wraps and length2 returns ZERO, which read as
+          // the truck standing on the tank. The foe needs no such guard - it
+          // is inside ARMOUR_RANGE by construction.
+          const dxTruck = sub(u.x, tx), dzTruck = sub(u.z, tz);
+          let onCourier = false;
+          if (abs(dxTruck) <= COURIER_RANGE && abs(dzTruck) <= COURIER_RANGE) {
+            const toTruck = length2(dxTruck, dzTruck);
+            if (toTruck < COURIER_RANGE)
+              onCourier = toTruck < length2(sub(u.x, s[fb + U_X]), sub(u.z, s[fb + U_Z]));
+          }
+
           if (connects) {
-            const fb = unitBase(foe);
-            const hurt = add(DAMAGE_MIN, idiv(Math.imul(nextBelow(rng, 100), DAMAGE_SPAN), 100));
-            s[fb + U_HP] = max(0, sub(s[fb + U_HP], hurt));
-            if (s[fb + U_HP] === 0) s[fb + U_STATE] = 0;
+            // One draw either way, and in hundredths like the shell's own
+            // damage, so the stream does not change shape with the target.
+            if (onCourier) {
+              courierDmg = add(courierDmg,
+                add(COURIER_DAMAGE_MIN,
+                    idiv(Math.imul(nextBelow(rng, 100), COURIER_DAMAGE_SPAN), 100)));
+            } else {
+              const hurt = add(DAMAGE_MIN, idiv(Math.imul(nextBelow(rng, 100), DAMAGE_SPAN), 100));
+              s[fb + U_HP] = max(0, sub(s[fb + U_HP], hurt));
+              if (s[fb + U_HP] === 0) s[fb + U_STATE] = 0;
+            }
           }
           s[b + U_TARGET] = (RELOAD_MIN + nextBelow(rng, RELOAD_SPAN)) | 0;
         }
@@ -2959,7 +2994,7 @@ function step(st, throttle, steer, brake, handbrake, practice) {
         if (abs(dxTruck) <= RIFLE_RANGE && abs(dzTruck) <= RIFLE_RANGE &&
             length2(dxTruck, dzTruck) < RIFLE_RANGE) {
           s[b + U_COOLDOWN] = (RIFLE_RELOAD_TICKS + nextBelow(rng, RIFLE_RELOAD_TICKS_SPAN)) | 0;
-          if (nextBelow(rng, 1000) < RIFLE_HIT_PER_MIL) hits = (hits + 1) | 0;
+          if (nextBelow(rng, 1000) < RIFLE_HIT_PER_MIL) courierDmg = add(courierDmg, ONE);
         } else {
           const foe = pickRifleTarget(peekAt, UNITS, i, u.x, u.z, u.side);
           if (foe < 0) {
@@ -2979,15 +3014,14 @@ function step(st, throttle, steer, brake, handbrake, practice) {
 
     s[b + U_X] = u.x; s[b + U_Z] = u.z;
     s[b + U_HEADING] = u.heading; s[b + U_COOLDOWN] = u.cooldown;
-    if (r === 2) hits = (hits + 1) | 0;
   }
   // The army still fires, still walks, still counts towards danger - only the
   // damage is withheld. Skipping the shooting entirely would change the draw
   // order and make a practice run replay differently from a live one, which
   // would defeat the point of practising.
   if (practice) s[O_SCORE + S_PRACTICE] = 1;
-  else if (hits > 0 && s[O_SCORE + S_STATE] === RUN_LIVE)
-    s[T + T_HP] = max(0, sub(s[T + T_HP], Math.imul(hits, ONE)));
+  else if (courierDmg > 0 && s[O_SCORE + S_STATE] === RUN_LIVE)
+    s[T + T_HP] = max(0, sub(s[T + T_HP], courierDmg));
 
   // The squads walk. Between the unit loop and the air because that is where
   // Army.Update runs DriftSquads, and it decides where the men are standing

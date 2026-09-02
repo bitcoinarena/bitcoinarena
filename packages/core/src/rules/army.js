@@ -13,6 +13,18 @@ import { below } from '../rng.js';
 
 export const RIFLE_RANGE = Math.imul(26, ONE);
 export const ARMOUR_RANGE = Math.imul(46, ONE);
+
+/**
+ * The courier's own reach and what a tank shell does to it.
+ *
+ * `Army.CourierRange` is 34 m, wider than the rifle's 26, and a hit takes
+ * `Rand(5f, 11f)` - `Army.cs:638`, with Heat at zero as every recording has
+ * it. Drawn in hundredths the way the shell's own damage is, so it is one
+ * draw either way and the stream does not change shape with the target.
+ */
+export const COURIER_RANGE = Math.imul(34, ONE);
+export const COURIER_DAMAGE_MIN = Math.imul(5, ONE);
+export const COURIER_DAMAGE_SPAN = Math.imul(6, ONE);   // 5 to 11
 export const RIFLE_HIT_PER_MIL = 45;        // 0.045 per shot
 // Closing speeds, measured off the C# army rather than chosen: it covers
 // -77.5 to -43.5 in five seconds with armour and -77.5 to -64.6 with
@@ -257,34 +269,20 @@ export function stepUnit(u, rng, seamZ, truckX, truckZ, halfX, halfZ, dt, index)
   u.x = clamp(add(u.x, dx), neg(min(edge, halfX)), min(edge, halfX));
   u.z = clamp(add(u.z, dz), -halfZ, halfZ);
 
-  // in range of the courier?
+  // The courier is NOT a weapon, and this function no longer has one.
   //
-  // Armour only now. A rifleman has ONE clock and fires ONE shot on it, at
-  // the courier or at another rifleman, and that lives in sim.js beside the
-  // armour's gun because it needs to see the other units. Two clocks would
-  // have let a man shoot twice as often as the C# one does.
+  // What stood here was a second gun bolted onto the tank: its own 40-99 tick
+  // clock, the rifle's 0.045 roll, a 26 m reach and one flat point of damage.
+  // The C# has nothing of the sort. `Army.StepArmour` fires the tank's ONE gun
+  // when it is engaged, and the courier is only a TARGET CHOICE inside that
+  // shot - taken when the truck is inside CourierRange and nearer than the
+  // enemy the tank had picked. So the parallel weapon is deleted rather than
+  // widened to 34 m, and the choice now lives in sim.js beside the gun, which
+  // is the only place that can see both the foe and the truck.
   //
-  // What is left here is untouched and still wrong, and it is item (j): a
-  // tank shoots the courier at 34 m (CourierRange) for Rand(5, 11), not at 26
-  // for a flat point, and it only leaves the tank in front of it when the
-  // truck is nearer. Measured, a truck parked in the C# fight for ninety
-  // seconds takes 163 tank hits for 1271.7 points and 6 rifle hits for 13.9.
-  if (!u.armour) return 0;
-  // Axes first, then length2 - the same guard as pickTarget and threatAt
-  // below, and for the reason spelled out at their call sites: past about
-  // 181.5 m the sum of squares overflows and length2 returns ZERO, so the
-  // truck read as standing on the tank. Measured before it was fixed, 1.2% of
-  // all live tank-ticks were in that state, firing at a truck they could not
-  // see. Item (j) rewrites this function for CourierRange 34 m; it must keep
-  // the rejection, or the overflow comes back with a wider threshold.
-  const dxTruck = sub(u.x, truckX), dzTruck = sub(u.z, truckZ);
-  if (abs(dxTruck) > RIFLE_RANGE || abs(dzTruck) > RIFLE_RANGE) return 0;
-  const d = length2(dxTruck, dzTruck);
-  if (d >= RIFLE_RANGE) return 0;
-
-  if (u.cooldown > 0) { u.cooldown = (u.cooldown - 1) | 0; return 1; }
-  u.cooldown = (40 + below(rng, 60)) | 0;
-  return below(rng, 1000) < RIFLE_HIT_PER_MIL ? 2 : 1;   // 2 = a hit landed
+  // Measured before it went: 263 shots a round for 11 points, against the
+  // recording's 163 hits for 1271.7.
+  return 0;
 }
 
 /**

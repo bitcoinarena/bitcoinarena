@@ -32,7 +32,8 @@
 import { readFileSync } from 'node:fs';
 import { init, step, teleport, UNITS } from '../src/sim.js';
 import * as L from '../src/state.js';
-import { pickTarget, RELOAD_MIN, RELOAD_SPAN, ARMOUR_RANGE } from '../src/rules/army.js';
+import { pickTarget, RELOAD_MIN, RELOAD_SPAN, ARMOUR_RANGE, COURIER_RANGE as CR_FX } from '../src/rules/army.js';
+import { length2, sub, abs } from '../src/fixed.js';
 
 // The recording's courier pass is `air: "none"`, so this run must be too, or
 // it is not a pair - the same fault the depth pair was made of. The air is
@@ -112,7 +113,7 @@ function measure(seed) {
   let prev = cool();
   let hpWas = hp0;
   const tally = { tank: 0, rifle: 0, ambiguous: 0, tankShots: 0, rifleShots: 0,
-                  gunShots: 0, engagedShots: 0, wouldCourier: 0, marginal: 0 };
+                  gunShots: 0, engagedShots: 0, wouldCourier: 0, marginal: 0, diedAt: 0, guardWouldPass: 0 };
   const prevGun = [];
   for (let i = 0; i < UNITS; i++) prevGun[i] = st.i32[L.unitBase(i) + L.U_TARGET];
   for (let f = 0; f < ref.setup.durationSeconds * 60; f++) {
@@ -121,11 +122,16 @@ function measure(seed) {
     // Which weapons fired at the truck this tick, and how many points landed.
     const now = cool();
     const tx0 = q(st.i32[T + L.T_X]), tz0 = q(st.i32[T + L.T_Z]);
-    let tShots = 0, rShots = 0;
+    let tShots = 0, rShots = 0, courierThisTick = 0;
     for (let i = 0; i < UNITS; i++) {
       const a = prev[i], b = now[i];
       if (!a.alive || !b.alive || b.cool <= a.cool) continue;
       if (Math.hypot(b.x - tx0, b.z - tz0) >= RIFLE_R) continue;
+      // A tank has no private courier clock any more - its courier shots are
+      // gun shots whose target choice fell on the truck, and those are counted
+      // by the predicate replay below. What is left in the 40-99 band is a
+      // core that still carries the deleted weapon, which is how this tool
+      // stays readable against an older build.
       if (isArmour(i)) { if (b.cool >= TANK_CLOCK[0] && b.cool <= TANK_CLOCK[1]) tShots++; }
       else if (b.cool >= RIFLE_CLOCK[0]) rShots++;
     }
@@ -161,17 +167,35 @@ function measure(seed) {
       const fb = L.unitBase(foe);
       const cd = Math.hypot(q(ux) - tx0, q(uz) - tz0);
       const fd = Math.hypot(q(ux - st.i32[fb + L.U_X]), q(uz - st.i32[fb + L.U_Z]));
-      if (cd < COURIER_RANGE && cd < fd) tally.wouldCourier++;
+      if (cd < COURIER_RANGE && cd < fd) {
+        tally.wouldCourier++;
+        courierThisTick++;
+      }
       if (Math.abs(cd - COURIER_RANGE) < 0.5 || Math.abs(cd - fd) < 0.5) tally.marginal++;
+      // (m)'s guard, checked rather than trusted. The axis test is only a
+      // cheap pre-filter - it passes everything inside a 68 x 68 m square and
+      // length2 then rejects the corners, which is the arithmetic working, not
+      // a fault. The FAULT would be length2 answering "inside 34 m" for a tank
+      // that is not, which is what the overflow did past ~181.5 m. So the rule
+      // is run as the rule runs it, in fixed point, and disagreements with the
+      // true distance are counted.
+      const dxfx = sub(ux, fx(tx0)), dzfx = sub(uz, fx(tz0));
+      const ruleSays = abs(dxfx) <= CR_FX && abs(dzfx) <= CR_FX && length2(dxfx, dzfx) < CR_FX;
+      if (ruleSays !== (cd < COURIER_RANGE)) tally.guardWouldPass++;
     }
     for (let i = 0; i < UNITS; i++) prevGun[i] = st.i32[L.unitBase(i) + L.U_TARGET];
     const landed = q(hpWas - st.i32[T + L.T_HP]);
     hpWas = st.i32[T + L.T_HP];
     if (landed > 0) {
-      if (tShots > 0 && rShots === 0) tally.tank += landed;
-      else if (rShots > 0 && tShots === 0) tally.rifle += landed;
+      // Split by the SIZE of the hit, which is exactly how the recorder does
+      // it and is possible for the first time now that a tank writes 5-11 and
+      // a rifleman one. A tick carrying both is counted as ambiguous and
+      // printed rather than apportioned.
+      if (courierThisTick > 0 && rShots === 0) tally.tank += landed;
+      else if (rShots > 0 && courierThisTick === 0 && tShots === 0) tally.rifle += landed;
       else tally.ambiguous += landed;
     }
+    if (tally.diedAt === 0 && st.i32[T + L.T_HP] <= 0) tally.diedAt = (f + 1) / 60;
     prev = now;
     if ((f + 1) % SAMPLE) continue;
     const tx = q(st.i32[T + L.T_X]), tz = q(st.i32[T + L.T_Z]);
@@ -230,10 +254,16 @@ for (const seed of SEEDS) {
     console.log(`COURIER      of THOSE, truck inside ${COURIER_RANGE} m and nearer  ${last.wouldCourier}` +
                 `   <- predicted courier shots`);
     console.log(`COURIER      marginal, within 0.5 m of either gate   ${last.marginal}`);
+    console.log(`COURIER      (m)'s guard: shots where the rule's fixed-point reach disagrees`);
+    console.log(`COURIER      with the true distance                  ${last.guardWouldPass}   <- must be 0`);
     const hits = last.wouldCourier * 0.55, pts = hits * 8;
     console.log(`COURIER    at the gun's 0.55 roll that is ${hits.toFixed(1)} hits, and at Rand(5,11)`);
     console.log(`COURIER    averaging 8 points, about ${pts.toFixed(0)} points - against the recording's`);
     console.log('COURIER    163 hits and 1271.7. THAT is the number the rewrite is held to;');
     console.log('COURIER    the rest of the gap is presence, and is not the rewrite\'s to close.');
+    if (last.diedAt)
+      console.log(`COURIER    NOTE: the core's truck has 100 points and died at t=${last.diedAt.toFixed(1)} s,` +
+                  ' so the damage column saturates.\nCOURIER    Shots and hits are the unsaturated' +
+                  ' acceptance; the recording accumulates past 100.');
   }
 }
