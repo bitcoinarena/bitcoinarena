@@ -223,3 +223,243 @@ public class ArmyReferenceTests
         spread = alive > 1 ? Mathf.Sqrt(var2 / alive) : 0f;
     }
 }
+
+/// <summary>
+/// Records what the C# INFANTRY does, which nothing has ever asked it.
+///
+/// `csharp-army.json` carries `n`, `z` and `spread` for the riflemen and
+/// nothing else - no death causes, no nearest-enemy distance, no rifle fire,
+/// no courier fire. Every quantity argued over in PRIORITIES so far is an
+/// armour quantity, and the core's infantry has therefore never been held to
+/// anything: it has no rifleman-on-rifleman fire at all, and it keeps a hard
+/// 24 m floor between the two lines that this army does not have.
+///
+/// Recorded now because item (e) deletes Army.cs, and with it every chance to
+/// ask. Same conditions as MeasureTheArmy - flat, still, seam at zero, seed
+/// 20260901, ninety seconds, sampled every five - so the two recordings can be
+/// read together.
+///
+/// Prints a table; asserts nothing.
+/// </summary>
+public class InfantryReferenceTests
+{
+    [Test]
+    [Explicit("Measurement, not an assertion. Read the INFREF lines out of " +
+              "the log and paste them into packages/core/test/vectors/.")]
+    public void MeasureTheInfantry()
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine("INFREF BEGIN");
+
+        // line       the establishment the core actually fields, with the
+        //            replacement it actually runs. The pass its infantry is
+        //            to be accepted against.
+        // line-24-72 the same at the size the game ships, so this recording
+        //            can be read beside the existing 24/72 rows.
+        // courier    a truck parked on the seam and left there. The core
+        //            fires at the truck from every unit that has it inside 26
+        //            m for a flat one hit point; this army fires at it from
+        //            riflemen (1.5-3.5) and from TANKS (5-11, at 34 m), and
+        //            only when the shooter already has a foe in range and the
+        //            truck is closer than that foe. Truck damage is M1's, so
+        //            the rule needs a number and not a reading of the source.
+        Line(sb, "line", 12, 36);
+        Line(sb, "line-24-72", 24, 72);
+        Courier(sb, "courier", 12, 36);
+
+        sb.AppendLine("INFREF END");
+        Debug.Log(sb.ToString());
+    }
+
+    /// <summary>The same world every pass: flat, still, seam down the middle.</summary>
+    static Army World(int armourPerSide, int infantryPerSide)
+    {
+        var army = new Army(20260901);
+        army.FrontlineAt = _ => 0f;
+        army.GroundAt = (x, z) => 0f;
+        army.Flow = 0f;
+        army.Heat = 0f;
+        army.Populate(armourPerSide, infantryPerSide);
+        return army;
+    }
+
+    /// <summary>
+    /// The infantry line with nobody to shoot at but each other.
+    ///
+    /// No truck and no aircraft, so every Killed in this pass is a bullet:
+    /// Detonate and RunOver are the only other callers and neither can fire
+    /// here. That is what makes `kills` a rifle death count rather than a
+    /// headcount difference, which replacement hides completely.
+    /// </summary>
+    static void Line(StringBuilder sb, string tag, int armourPerSide, int infantryPerSide)
+    {
+        var army = World(armourPerSide, infantryPerSide);
+
+        // NOT subscribed to `Shot`, and that is not an omission.
+        //
+        //     Shot?.Invoke(s, hit ? mark
+        //                        : new Vector2(mark.x + Rand(-3f, 3f), ...));
+        //
+        // The scatter on a miss is drawn INSIDE the argument, so `?.` skips it
+        // when nobody is listening and draws it when somebody is. Subscribing
+        // moves the whole RNG stream: the first version of this pass carried a
+        // shot counter and its rows walked away from the stored recording from
+        // about t=25, which is exactly when the first shot is fired. With the
+        // counter gone the rows reproduce `passes.core-size-reinforce` to the
+        // digit, which is the check that this pass measures the same run the
+        // army recording did.
+        //
+        // `Killed` and `Destroyed` are safe - their arguments draw nothing.
+        int killsBull = 0, killsBear = 0;
+        army.Killed += (u, knock) =>
+        {
+            if (u.side == Army.Side.Bull) killsBull++; else killsBear++;
+        };
+
+        sb.AppendLine($"INFREF RUN tag={tag} armourPerSide={armourPerSide} " +
+                      $"infantryPerSide={infantryPerSide} reinforce=on courier=none seed=20260901");
+        Row(sb, army, tag, 0f, killsBull, killsBear);
+
+        const float dt = 1f / 60f;
+        for (int step = 1; step <= 60 * 90; step++)
+        {
+            army.Update(dt);
+            if (step % (60 * 5) == 0) Row(sb, army, tag, step * dt, killsBull, killsBear);
+        }
+    }
+
+    /// <summary>
+    /// One line of the infantry table.
+    ///
+    /// `nearestPair` is the quantity the core is furthest from and the one no
+    /// recording had: the closest any two opposing riflemen come. The core
+    /// backs a man off whenever an enemy is inside 24 m and applies it to
+    /// riflemen, so its answer is 24.0 at every sample of every seed - which
+    /// is wider than the 16 m blast, and is why no bomb in the core can ever
+    /// catch men from both sides.
+    /// </summary>
+    static void Row(StringBuilder sb, Army army, string tag, float t,
+                    int killsBull, int killsBear)
+    {
+        Stats(army.Infantry, Army.Side.Bull, out float bullSpread, out float bullZ, out int bullN);
+        Stats(army.Infantry, Army.Side.Bear, out float bearSpread, out float bearZ, out int bearN);
+        Contact(army, out float nearestPair, out float meanNearest, out int inRifleRange);
+
+        sb.AppendLine($"INFREF t={t:0.0} tag={tag} " +
+                      $"bullInf n={bullN} z={bullZ:0.00} spread={bullSpread:0.00} " +
+                      $"bearInf n={bearN} z={bearZ:0.00} spread={bearSpread:0.00} " +
+                      $"nearestPair={nearestPair:0.00} meanNearest={meanNearest:0.00} " +
+                      $"inRifleRange={inRifleRange} " +
+                      $"killsBull={killsBull} killsBear={killsBear}");
+    }
+
+    /// <summary>
+    /// A truck parked on the seam, and what the army does to it.
+    ///
+    /// Split by size of hit rather than by source, because CourierHit carries
+    /// only the amount - and the two ranges are disjoint: a rifle takes 1.5 to
+    /// 3.5 and a tank 5 to 11, with Heat at zero.
+    /// </summary>
+    static void Courier(StringBuilder sb, string tag, int armourPerSide, int infantryPerSide)
+    {
+        var army = World(armourPerSide, infantryPerSide);
+        var at = new Vector2(0f, 0f);
+        army.Courier = at;
+
+        // CourierHit draws its amount INSIDE the argument the same way Shot
+        // draws its scatter - `Rand(5f, 11f)` for a tank, `Rand(1.5f, 3.5f)`
+        // for a rifle - so listening to it moves the stream. Listened to
+        // anyway, because that is the game's own condition: Bootstrap wires
+        // this event to TruckHealth.Damage. It does mean this pass is its own
+        // run and its positions are not the `line` pass's.
+        int rifleHits = 0, tankHits = 0;
+        float rifleDmg = 0f, tankDmg = 0f;
+        army.CourierHit += amount =>
+        {
+            if (amount < 4.5f) { rifleHits++; rifleDmg += amount; }
+            else { tankHits++; tankDmg += amount; }
+        };
+
+        sb.AppendLine($"INFREF RUN tag={tag} armourPerSide={armourPerSide} " +
+                      $"infantryPerSide={infantryPerSide} reinforce=on courier=0,0 seed=20260901");
+
+        const float dt = 1f / 60f;
+        for (int step = 1; step <= 60 * 90; step++)
+        {
+            army.Update(dt);
+            if (step % (60 * 5) != 0) continue;
+
+            // How many could have fired at it, so the core can be compared on
+            // the RATE and not only on the total: a truck standing in a
+            // thinner crowd takes less fire for the same rule.
+            int inRifle = 0, inTank = 0;
+            foreach (var u in army.Infantry)
+            {
+                if (u.hp <= 0f) continue;
+                float dx = u.x - at.x, dz = u.z - at.y;
+                if (dx * dx + dz * dz < Army.RifleRange * Army.RifleRange) inRifle++;
+            }
+            foreach (var u in army.Armour)
+            {
+                if (u.hp <= 0f) continue;
+                float dx = u.x - at.x, dz = u.z - at.y;
+                if (dx * dx + dz * dz < Army.CourierRange * Army.CourierRange) inTank++;
+            }
+
+            sb.AppendLine($"INFREF courier t={step * dt:0.0} tag={tag} " +
+                          $"rifleHits={rifleHits} rifleDmg={rifleDmg:0.00} " +
+                          $"tankHits={tankHits} tankDmg={tankDmg:0.00} " +
+                          $"totalDmg={rifleDmg + tankDmg:0.00} " +
+                          $"inRifle={inRifle} inTank={inTank}");
+        }
+    }
+
+    /// <summary>Closest opposing pair, mean nearest enemy, and how many have one in range.</summary>
+    static void Contact(Army army, out float nearestPair, out float meanNearest, out int inRange)
+    {
+        nearestPair = float.MaxValue;
+        float sum = 0f; int n = 0;
+        inRange = 0;
+
+        foreach (var a in army.Infantry)
+        {
+            if (a.hp <= 0f) continue;
+            float best = float.MaxValue;
+            foreach (var b in army.Infantry)
+            {
+                if (b.hp <= 0f || b.side == a.side) continue;
+                float dx = b.x - a.x, dz = b.z - a.z;
+                float d2 = dx * dx + dz * dz;
+                if (d2 < best) best = d2;
+            }
+            if (best == float.MaxValue) continue;
+            best = Mathf.Sqrt(best);
+            if (best < nearestPair) nearestPair = best;
+            if (best < Army.RifleRange) inRange++;
+            sum += best; n++;
+        }
+
+        if (n == 0) { nearestPair = 0f; meanNearest = 0f; return; }
+        meanNearest = sum / n;
+    }
+
+    static void Stats(System.Collections.Generic.List<Army.Unit> units, Army.Side side,
+                      out float spread, out float meanZ, out int alive)
+    {
+        float sum = 0f; alive = 0;
+        foreach (var u in units)
+        {
+            if (u.side != side || u.hp <= 0f) continue;
+            sum += u.z; alive++;
+        }
+        meanZ = alive > 0 ? sum / alive : 0f;
+
+        float var2 = 0f;
+        foreach (var u in units)
+        {
+            if (u.side != side || u.hp <= 0f) continue;
+            float d = u.z - meanZ; var2 += d * d;
+        }
+        spread = alive > 1 ? Mathf.Sqrt(var2 / alive) : 0f;
+    }
+}

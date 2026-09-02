@@ -1,0 +1,1109 @@
+{
+  "_comment": [
+    "What the C# INFANTRY does, recorded by InfantryReferenceTests.MeasureTheInfantry.",
+    "",
+    "csharp-army.json carries n, z and spread for the riflemen and nothing else.",
+    "Every quantity item 2 has argued over is an ARMOUR quantity, so the core's",
+    "infantry - 72 of its 96 units a side - had never been held to anything. It",
+    "has no rifleman-on-rifleman fire at all, and it keeps a hard 24 m floor",
+    "between the two lines that this army does not have.",
+    "",
+    "Recorded before item (e), because (e) deletes Army.cs and with it every",
+    "chance to ask. Same conditions as the army recording - flat, still, seam at",
+    "z=0, no aircraft, seed 20260901, ninety seconds, sampled every five - and",
+    "the bullInf/bearInf columns of the `line` pass reproduce",
+    "csharp-army.json passes.core-size-reinforce to the digit, and `line-24-72`",
+    "reproduces its top-level rows. That equality is the check that this is the",
+    "same run and not a second one that merely looks like it.",
+    "",
+    "SUBSCRIBING TO AN EVENT IN THIS ARMY CHANGES THE RUN. Shot?.Invoke draws",
+    "its miss scatter INSIDE the argument, so `?.` skips two Rand() calls when",
+    "nobody listens and makes them when somebody does. The first version of this",
+    "recording carried a shot counter and walked away from the stored rows from",
+    "t=25, which is when the first shot is fired. CourierHit has the same shape",
+    "and the courier pass listens to it anyway, because that is the game's own",
+    "condition - Bootstrap wires it to TruckHealth.Damage - which is why that",
+    "pass is a separate run and its positions are not the line pass's."
+  ],
+  "setup": {
+    "seed": 20260901,
+    "dt": 0.0166666,
+    "durationSeconds": 90,
+    "sampleSeconds": 5,
+    "seam": "z = 0, flat ground, no trade flow",
+    "air": "none",
+    "rifleRange": 26.0,
+    "rifleHitChance": 0.045,
+    "rifleReloadSeconds": [
+      2.5,
+      4.5
+    ],
+    "rifleDamage": 1.0,
+    "infantryHp": 1.0,
+    "courierRange": 34.0,
+    "courierRifleDamage": [
+      1.5,
+      3.5
+    ],
+    "courierTankDamage": [
+      5.0,
+      11.0
+    ],
+    "infantryReinforceSeconds": 2.5,
+    "armourReinforceSeconds": 6.0,
+    "heat": 0.0,
+    "flow": 0.0,
+    "crowding": "NONE for infantry. Army.Separate is called on Armour pairs only (Army.cs:325)."
+  },
+  "_findings": [
+    "1. THE TWO LINES INTERPENETRATE. The closest opposing pair of riflemen is",
+    "   4.7 to 19.2 m once the lines meet (5.5 to 16.5 at 24/72), and the mean",
+    "   nearest enemy settles at 24.4 to 35.5 m. The core holds 24.0 m exactly, at",
+    "   every sample of every seed, because army.js applies BACK_OFF_RANGE to",
+    "   riflemen. The blast radius is 16, so that floor alone decides that no",
+    "   bomb in the core can ever catch men from both sides.",
+    "",
+    "2. RIFLE FIRE KILLS 28 A ROUND at the core's own establishment - 15 bull",
+    "   and 13 bear over ninety seconds at 12/36, and 90 at 24/72. The core",
+    "   scores zero: its rifle fire targets the courier and nothing else.",
+    "   Replacement hides all of it in the headcount, which never leaves 34-36",
+    "   of 36, which is why the army recording could carry n and spread for",
+    "   ninety seconds and still say nothing about it.",
+    "",
+    "3. 18 TO 50 RIFLEMEN of the ~70 alive have an enemy inside 26 m at any",
+    "   sample, from t=25 on. Contact is never lost, the same way the armour's",
+    "   never is.",
+    "",
+    "4. THE TRUCK IS SHOT BY TANKS, NOT BY RIFLEMEN, AND THAT IS NOT CLOSE.",
+    "   A courier parked on the seam for ninety seconds takes 163 tank hits for",
+    "   1271.7 points and 6 rifle hits for 13.9 - 99% of the damage from the",
+    "   arm the core does not model at all. The core fires at the truck from",
+    "   EVERY unit that has it inside 26 m, armour and infantry alike, for a",
+    "   flat one point. Wrong source, wrong range (34 m for a tank), wrong",
+    "   size. Truck damage is M1's, so this is not a decoration.",
+    "",
+    "5. A RIFLEMAN ALMOST NEVER SHOOTS THE TRUCK, and the reason is the",
+    "   selection rule, not the range: he fires only when he already has an",
+    "   enemy rifleman inside 26 m, and switches to the courier only if it is",
+    "   CLOSER than that man (cd < d2, with Heat at zero). In a line that",
+    "   interpenetrates there is nearly always someone nearer. Six hits in",
+    "   ninety seconds, from a truck parked in the middle of the fight.",
+    "",
+    "6. THE TANK RATE IS STEADY: 163 hits over the ninety, about 1.8 a second",
+    "   once the lines are in contact, 7.8 points a hit, with 7 to 18 tanks",
+    "   inside CourierRange at any sample. A hundred-point truck standing here",
+    "   is written off in the first ten seconds of contact."
+  ],
+  "passes": {
+    "line": {
+      "_comment": [
+        "12 armour and 36 infantry a side - the establishment the core fields -",
+        "with the replacement it runs. The pass its infantry is accepted against.",
+        "bullInf and bearInf equal csharp-army.json passes.core-size-reinforce."
+      ],
+      "armourPerSide": 12,
+      "infantryPerSide": 36,
+      "reinforce": true,
+      "courier": null,
+      "rows": [
+        {
+          "t": 0.0,
+          "bullInf": {
+            "n": 36,
+            "z": -77.43,
+            "spread": 0.87
+          },
+          "bearInf": {
+            "n": 36,
+            "z": 77.47,
+            "spread": 0.94
+          },
+          "nearestPair": 152.09,
+          "meanNearest": 154.14,
+          "inRifleRange": 0,
+          "rifleKills": {
+            "bull": 0,
+            "bear": 0
+          }
+        },
+        {
+          "t": 5.0,
+          "bullInf": {
+            "n": 36,
+            "z": -64.31,
+            "spread": 2.17
+          },
+          "bearInf": {
+            "n": 36,
+            "z": 64.62,
+            "spread": 2.31
+          },
+          "nearestPair": 121.78,
+          "meanNearest": 126.94,
+          "inRifleRange": 0,
+          "rifleKills": {
+            "bull": 0,
+            "bear": 0
+          }
+        },
+        {
+          "t": 10.0,
+          "bullInf": {
+            "n": 36,
+            "z": -53.0,
+            "spread": 3.17
+          },
+          "bearInf": {
+            "n": 36,
+            "z": 53.61,
+            "spread": 3.06
+          },
+          "nearestPair": 96.09,
+          "meanNearest": 104.79,
+          "inRifleRange": 0,
+          "rifleKills": {
+            "bull": 0,
+            "bear": 0
+          }
+        },
+        {
+          "t": 15.0,
+          "bullInf": {
+            "n": 36,
+            "z": -40.16,
+            "spread": 4.33
+          },
+          "bearInf": {
+            "n": 36,
+            "z": 41.44,
+            "spread": 4.44
+          },
+          "nearestPair": 67.51,
+          "meanNearest": 78.67,
+          "inRifleRange": 0,
+          "rifleKills": {
+            "bull": 0,
+            "bear": 0
+          }
+        },
+        {
+          "t": 20.0,
+          "bullInf": {
+            "n": 36,
+            "z": -28.59,
+            "spread": 5.6
+          },
+          "bearInf": {
+            "n": 36,
+            "z": 29.72,
+            "spread": 5.13
+          },
+          "nearestPair": 40.43,
+          "meanNearest": 53.04,
+          "inRifleRange": 0,
+          "rifleKills": {
+            "bull": 0,
+            "bear": 0
+          }
+        },
+        {
+          "t": 25.0,
+          "bullInf": {
+            "n": 36,
+            "z": -16.75,
+            "spread": 6.51
+          },
+          "bearInf": {
+            "n": 36,
+            "z": 20.0,
+            "spread": 11.36
+          },
+          "nearestPair": 19.22,
+          "meanNearest": 32.66,
+          "inRifleRange": 18,
+          "rifleKills": {
+            "bull": 0,
+            "bear": 1
+          }
+        },
+        {
+          "t": 30.0,
+          "bullInf": {
+            "n": 36,
+            "z": -11.58,
+            "spread": 11.66
+          },
+          "bearInf": {
+            "n": 35,
+            "z": 14.74,
+            "spread": 13.7
+          },
+          "nearestPair": 12.49,
+          "meanNearest": 25.65,
+          "inRifleRange": 42,
+          "rifleKills": {
+            "bull": 1,
+            "bear": 3
+          }
+        },
+        {
+          "t": 35.0,
+          "bullInf": {
+            "n": 36,
+            "z": -9.22,
+            "spread": 10.29
+          },
+          "bearInf": {
+            "n": 36,
+            "z": 17.22,
+            "spread": 19.84
+          },
+          "nearestPair": 4.74,
+          "meanNearest": 25.44,
+          "inRifleRange": 49,
+          "rifleKills": {
+            "bull": 1,
+            "bear": 5
+          }
+        },
+        {
+          "t": 40.0,
+          "bullInf": {
+            "n": 36,
+            "z": -10.76,
+            "spread": 13.96
+          },
+          "bearInf": {
+            "n": 36,
+            "z": 19.19,
+            "spread": 20.87
+          },
+          "nearestPair": 8.12,
+          "meanNearest": 29.38,
+          "inRifleRange": 50,
+          "rifleKills": {
+            "bull": 2,
+            "bear": 7
+          }
+        },
+        {
+          "t": 45.0,
+          "bullInf": {
+            "n": 35,
+            "z": -10.31,
+            "spread": 11.33
+          },
+          "bearInf": {
+            "n": 36,
+            "z": 17.04,
+            "spread": 16.78
+          },
+          "nearestPair": 10.0,
+          "meanNearest": 24.43,
+          "inRifleRange": 49,
+          "rifleKills": {
+            "bull": 3,
+            "bear": 7
+          }
+        },
+        {
+          "t": 50.0,
+          "bullInf": {
+            "n": 35,
+            "z": -15.55,
+            "spread": 19.73
+          },
+          "bearInf": {
+            "n": 35,
+            "z": 15.1,
+            "spread": 13.0
+          },
+          "nearestPair": 12.0,
+          "meanNearest": 25.87,
+          "inRifleRange": 49,
+          "rifleKills": {
+            "bull": 6,
+            "bear": 8
+          }
+        },
+        {
+          "t": 55.0,
+          "bullInf": {
+            "n": 36,
+            "z": -15.26,
+            "spread": 17.65
+          },
+          "bearInf": {
+            "n": 35,
+            "z": 14.49,
+            "spread": 13.04
+          },
+          "nearestPair": 8.06,
+          "meanNearest": 27.83,
+          "inRifleRange": 42,
+          "rifleKills": {
+            "bull": 6,
+            "bear": 9
+          }
+        },
+        {
+          "t": 60.0,
+          "bullInf": {
+            "n": 36,
+            "z": -13.55,
+            "spread": 14.22
+          },
+          "bearInf": {
+            "n": 35,
+            "z": 14.34,
+            "spread": 13.61
+          },
+          "nearestPair": 10.22,
+          "meanNearest": 30.02,
+          "inRifleRange": 29,
+          "rifleKills": {
+            "bull": 6,
+            "bear": 10
+          }
+        },
+        {
+          "t": 65.0,
+          "bullInf": {
+            "n": 35,
+            "z": -13.64,
+            "spread": 15.2
+          },
+          "bearInf": {
+            "n": 36,
+            "z": 13.83,
+            "spread": 13.16
+          },
+          "nearestPair": 10.98,
+          "meanNearest": 27.71,
+          "inRifleRange": 39,
+          "rifleKills": {
+            "bull": 8,
+            "bear": 10
+          }
+        },
+        {
+          "t": 70.0,
+          "bullInf": {
+            "n": 36,
+            "z": -13.59,
+            "spread": 15.24
+          },
+          "bearInf": {
+            "n": 35,
+            "z": 14.31,
+            "spread": 14.32
+          },
+          "nearestPair": 10.84,
+          "meanNearest": 35.5,
+          "inRifleRange": 36,
+          "rifleKills": {
+            "bull": 8,
+            "bear": 12
+          }
+        },
+        {
+          "t": 75.0,
+          "bullInf": {
+            "n": 36,
+            "z": -11.59,
+            "spread": 11.84
+          },
+          "bearInf": {
+            "n": 36,
+            "z": 14.1,
+            "spread": 14.04
+          },
+          "nearestPair": 11.93,
+          "meanNearest": 31.45,
+          "inRifleRange": 30,
+          "rifleKills": {
+            "bull": 8,
+            "bear": 12
+          }
+        },
+        {
+          "t": 80.0,
+          "bullInf": {
+            "n": 35,
+            "z": -10.76,
+            "spread": 9.41
+          },
+          "bearInf": {
+            "n": 36,
+            "z": 12.66,
+            "spread": 11.3
+          },
+          "nearestPair": 12.71,
+          "meanNearest": 30.57,
+          "inRifleRange": 30,
+          "rifleKills": {
+            "bull": 9,
+            "bear": 12
+          }
+        },
+        {
+          "t": 85.0,
+          "bullInf": {
+            "n": 35,
+            "z": -13.34,
+            "spread": 15.55
+          },
+          "bearInf": {
+            "n": 36,
+            "z": 11.4,
+            "spread": 8.74
+          },
+          "nearestPair": 13.96,
+          "meanNearest": 31.86,
+          "inRifleRange": 41,
+          "rifleKills": {
+            "bull": 11,
+            "bear": 12
+          }
+        },
+        {
+          "t": 90.0,
+          "bullInf": {
+            "n": 34,
+            "z": -17.85,
+            "spread": 20.55
+          },
+          "bearInf": {
+            "n": 35,
+            "z": 11.0,
+            "spread": 6.65
+          },
+          "nearestPair": 13.2,
+          "meanNearest": 34.43,
+          "inRifleRange": 41,
+          "rifleKills": {
+            "bull": 15,
+            "bear": 13
+          }
+        }
+      ]
+    },
+    "line-24-72": {
+      "_comment": [
+        "The size the game ships, so this can be read beside the army",
+        "recording's top-level rows, which it equals."
+      ],
+      "armourPerSide": 24,
+      "infantryPerSide": 72,
+      "reinforce": true,
+      "courier": null,
+      "rows": [
+        {
+          "t": 0.0,
+          "bullInf": {
+            "n": 72,
+            "z": -77.58,
+            "spread": 0.92
+          },
+          "bearInf": {
+            "n": 72,
+            "z": 77.48,
+            "spread": 0.87
+          },
+          "nearestPair": 152.43,
+          "meanNearest": 154.11,
+          "inRifleRange": 0,
+          "rifleKills": {
+            "bull": 0,
+            "bear": 0
+          }
+        },
+        {
+          "t": 5.0,
+          "bullInf": {
+            "n": 72,
+            "z": -64.58,
+            "spread": 2.16
+          },
+          "bearInf": {
+            "n": 72,
+            "z": 64.83,
+            "spread": 2.31
+          },
+          "nearestPair": 121.1,
+          "meanNearest": 126.0,
+          "inRifleRange": 0,
+          "rifleKills": {
+            "bull": 0,
+            "bear": 0
+          }
+        },
+        {
+          "t": 10.0,
+          "bullInf": {
+            "n": 72,
+            "z": -53.4,
+            "spread": 2.89
+          },
+          "bearInf": {
+            "n": 72,
+            "z": 53.46,
+            "spread": 2.87
+          },
+          "nearestPair": 94.89,
+          "meanNearest": 102.59,
+          "inRifleRange": 0,
+          "rifleKills": {
+            "bull": 0,
+            "bear": 0
+          }
+        },
+        {
+          "t": 15.0,
+          "bullInf": {
+            "n": 72,
+            "z": -40.85,
+            "spread": 4.44
+          },
+          "bearInf": {
+            "n": 72,
+            "z": 41.32,
+            "spread": 4.17
+          },
+          "nearestPair": 64.87,
+          "meanNearest": 75.49,
+          "inRifleRange": 0,
+          "rifleKills": {
+            "bull": 0,
+            "bear": 0
+          }
+        },
+        {
+          "t": 20.0,
+          "bullInf": {
+            "n": 72,
+            "z": -29.31,
+            "spread": 5.71
+          },
+          "bearInf": {
+            "n": 72,
+            "z": 29.5,
+            "spread": 5.59
+          },
+          "nearestPair": 39.39,
+          "meanNearest": 51.53,
+          "inRifleRange": 0,
+          "rifleKills": {
+            "bull": 0,
+            "bear": 0
+          }
+        },
+        {
+          "t": 25.0,
+          "bullInf": {
+            "n": 72,
+            "z": -17.7,
+            "spread": 6.48
+          },
+          "bearInf": {
+            "n": 72,
+            "z": 17.96,
+            "spread": 5.93
+          },
+          "nearestPair": 16.52,
+          "meanNearest": 28.64,
+          "inRifleRange": 51,
+          "rifleKills": {
+            "bull": 0,
+            "bear": 0
+          }
+        },
+        {
+          "t": 30.0,
+          "bullInf": {
+            "n": 71,
+            "z": -12.93,
+            "spread": 10.79
+          },
+          "bearInf": {
+            "n": 70,
+            "z": 14.59,
+            "spread": 14.97
+          },
+          "nearestPair": 7.08,
+          "meanNearest": 20.52,
+          "inRifleRange": 126,
+          "rifleKills": {
+            "bull": 3,
+            "bear": 6
+          }
+        },
+        {
+          "t": 35.0,
+          "bullInf": {
+            "n": 70,
+            "z": -13.23,
+            "spread": 15.08
+          },
+          "bearInf": {
+            "n": 70,
+            "z": 15.57,
+            "spread": 18.27
+          },
+          "nearestPair": 8.94,
+          "meanNearest": 21.08,
+          "inRifleRange": 123,
+          "rifleKills": {
+            "bull": 7,
+            "bear": 10
+          }
+        },
+        {
+          "t": 40.0,
+          "bullInf": {
+            "n": 69,
+            "z": -15.95,
+            "spread": 18.3
+          },
+          "bearInf": {
+            "n": 70,
+            "z": 17.61,
+            "spread": 19.53
+          },
+          "nearestPair": 10.23,
+          "meanNearest": 25.58,
+          "inRifleRange": 113,
+          "rifleKills": {
+            "bull": 12,
+            "bear": 14
+          }
+        },
+        {
+          "t": 45.0,
+          "bullInf": {
+            "n": 70,
+            "z": -19.79,
+            "spread": 21.05
+          },
+          "bearInf": {
+            "n": 70,
+            "z": 18.45,
+            "spread": 18.85
+          },
+          "nearestPair": 5.49,
+          "meanNearest": 27.65,
+          "inRifleRange": 103,
+          "rifleKills": {
+            "bull": 17,
+            "bear": 17
+          }
+        },
+        {
+          "t": 50.0,
+          "bullInf": {
+            "n": 71,
+            "z": -20.87,
+            "spread": 20.65
+          },
+          "bearInf": {
+            "n": 72,
+            "z": 18.18,
+            "spread": 17.48
+          },
+          "nearestPair": 10.22,
+          "meanNearest": 27.55,
+          "inRifleRange": 103,
+          "rifleKills": {
+            "bull": 20,
+            "bear": 18
+          }
+        },
+        {
+          "t": 55.0,
+          "bullInf": {
+            "n": 70,
+            "z": -20.69,
+            "spread": 19.34
+          },
+          "bearInf": {
+            "n": 70,
+            "z": 16.44,
+            "spread": 15.19
+          },
+          "nearestPair": 10.34,
+          "meanNearest": 27.18,
+          "inRifleRange": 100,
+          "rifleKills": {
+            "bull": 24,
+            "bear": 21
+          }
+        },
+        {
+          "t": 60.0,
+          "bullInf": {
+            "n": 71,
+            "z": -19.96,
+            "spread": 18.35
+          },
+          "bearInf": {
+            "n": 71,
+            "z": 17.43,
+            "spread": 17.43
+          },
+          "nearestPair": 7.18,
+          "meanNearest": 26.0,
+          "inRifleRange": 106,
+          "rifleKills": {
+            "bull": 26,
+            "bear": 24
+          }
+        },
+        {
+          "t": 65.0,
+          "bullInf": {
+            "n": 71,
+            "z": -21.07,
+            "spread": 19.54
+          },
+          "bearInf": {
+            "n": 72,
+            "z": 16.41,
+            "spread": 16.65
+          },
+          "nearestPair": 11.13,
+          "meanNearest": 25.58,
+          "inRifleRange": 109,
+          "rifleKills": {
+            "bull": 31,
+            "bear": 25
+          }
+        },
+        {
+          "t": 70.0,
+          "bullInf": {
+            "n": 70,
+            "z": -18.43,
+            "spread": 16.42
+          },
+          "bearInf": {
+            "n": 70,
+            "z": 18.38,
+            "spread": 18.67
+          },
+          "nearestPair": 13.57,
+          "meanNearest": 27.15,
+          "inRifleRange": 106,
+          "rifleKills": {
+            "bull": 33,
+            "bear": 31
+          }
+        },
+        {
+          "t": 75.0,
+          "bullInf": {
+            "n": 71,
+            "z": -17.86,
+            "spread": 16.78
+          },
+          "bearInf": {
+            "n": 70,
+            "z": 20.26,
+            "spread": 19.66
+          },
+          "nearestPair": 13.01,
+          "meanNearest": 28.6,
+          "inRifleRange": 102,
+          "rifleKills": {
+            "bull": 35,
+            "bear": 36
+          }
+        },
+        {
+          "t": 80.0,
+          "bullInf": {
+            "n": 72,
+            "z": -16.97,
+            "spread": 15.99
+          },
+          "bearInf": {
+            "n": 70,
+            "z": 21.18,
+            "spread": 19.6
+          },
+          "nearestPair": 10.59,
+          "meanNearest": 28.3,
+          "inRifleRange": 96,
+          "rifleKills": {
+            "bull": 36,
+            "bear": 40
+          }
+        },
+        {
+          "t": 85.0,
+          "bullInf": {
+            "n": 70,
+            "z": -18.54,
+            "spread": 18.06
+          },
+          "bearInf": {
+            "n": 70,
+            "z": 20.25,
+            "spread": 18.61
+          },
+          "nearestPair": 14.5,
+          "meanNearest": 29.52,
+          "inRifleRange": 98,
+          "rifleKills": {
+            "bull": 42,
+            "bear": 43
+          }
+        },
+        {
+          "t": 90.0,
+          "bullInf": {
+            "n": 71,
+            "z": -18.46,
+            "spread": 18.18
+          },
+          "bearInf": {
+            "n": 71,
+            "z": 20.45,
+            "spread": 18.8
+          },
+          "nearestPair": 15.29,
+          "meanNearest": 30.51,
+          "inRifleRange": 91,
+          "rifleKills": {
+            "bull": 44,
+            "bear": 46
+          }
+        }
+      ]
+    },
+    "courier": {
+      "_comment": [
+        "A truck parked at x=0, z=0 and left there for ninety seconds, taking",
+        "whatever the army gives it. Cumulative. Split by the size of the hit,",
+        "because CourierHit carries only an amount and the two ranges are",
+        "disjoint with Heat at zero: a rifle takes 1.5-3.5, a tank 5-11.",
+        "inRifle and inTank are how many could have fired, so the core can be",
+        "held to the RATE and not only to the total."
+      ],
+      "armourPerSide": 12,
+      "infantryPerSide": 36,
+      "reinforce": true,
+      "courier": [
+        0.0,
+        0.0
+      ],
+      "rows": [
+        {
+          "t": 5.0,
+          "rifleHits": 0,
+          "rifleDmg": 0.0,
+          "tankHits": 0,
+          "tankDmg": 0.0,
+          "totalDmg": 0.0,
+          "inRifle": 0,
+          "inTank": 0
+        },
+        {
+          "t": 10.0,
+          "rifleHits": 0,
+          "rifleDmg": 0.0,
+          "tankHits": 1,
+          "tankDmg": 8.33,
+          "totalDmg": 8.33,
+          "inRifle": 0,
+          "inTank": 8
+        },
+        {
+          "t": 15.0,
+          "rifleHits": 0,
+          "rifleDmg": 0.0,
+          "tankHits": 5,
+          "tankDmg": 35.88,
+          "totalDmg": 35.88,
+          "inRifle": 0,
+          "inTank": 8
+        },
+        {
+          "t": 20.0,
+          "rifleHits": 0,
+          "rifleDmg": 0.0,
+          "tankHits": 10,
+          "tankDmg": 70.31,
+          "totalDmg": 70.31,
+          "inRifle": 0,
+          "inTank": 7
+        },
+        {
+          "t": 25.0,
+          "rifleHits": 0,
+          "rifleDmg": 0.0,
+          "tankHits": 16,
+          "tankDmg": 118.23,
+          "totalDmg": 118.23,
+          "inRifle": 2,
+          "inTank": 8
+        },
+        {
+          "t": 30.0,
+          "rifleHits": 0,
+          "rifleDmg": 0.0,
+          "tankHits": 26,
+          "tankDmg": 199.18,
+          "totalDmg": 199.18,
+          "inRifle": 21,
+          "inTank": 8
+        },
+        {
+          "t": 35.0,
+          "rifleHits": 0,
+          "rifleDmg": 0.0,
+          "tankHits": 35,
+          "tankDmg": 272.39,
+          "totalDmg": 272.39,
+          "inRifle": 26,
+          "inTank": 12
+        },
+        {
+          "t": 40.0,
+          "rifleHits": 0,
+          "rifleDmg": 0.0,
+          "tankHits": 41,
+          "tankDmg": 316.78,
+          "totalDmg": 316.78,
+          "inRifle": 24,
+          "inTank": 13
+        },
+        {
+          "t": 45.0,
+          "rifleHits": 0,
+          "rifleDmg": 0.0,
+          "tankHits": 51,
+          "tankDmg": 404.1,
+          "totalDmg": 404.1,
+          "inRifle": 18,
+          "inTank": 11
+        },
+        {
+          "t": 50.0,
+          "rifleHits": 2,
+          "rifleDmg": 5.11,
+          "tankHits": 60,
+          "tankDmg": 478.7,
+          "totalDmg": 483.81,
+          "inRifle": 28,
+          "inTank": 14
+        },
+        {
+          "t": 55.0,
+          "rifleHits": 4,
+          "rifleDmg": 8.78,
+          "tankHits": 69,
+          "tankDmg": 546.17,
+          "totalDmg": 554.95,
+          "inRifle": 36,
+          "inTank": 14
+        },
+        {
+          "t": 60.0,
+          "rifleHits": 4,
+          "rifleDmg": 8.78,
+          "tankHits": 80,
+          "tankDmg": 630.03,
+          "totalDmg": 638.81,
+          "inRifle": 18,
+          "inTank": 14
+        },
+        {
+          "t": 65.0,
+          "rifleHits": 4,
+          "rifleDmg": 8.78,
+          "tankHits": 95,
+          "tankDmg": 752.55,
+          "totalDmg": 761.32,
+          "inRifle": 14,
+          "inTank": 14
+        },
+        {
+          "t": 70.0,
+          "rifleHits": 4,
+          "rifleDmg": 8.78,
+          "tankHits": 106,
+          "tankDmg": 839.75,
+          "totalDmg": 848.52,
+          "inRifle": 12,
+          "inTank": 17
+        },
+        {
+          "t": 75.0,
+          "rifleHits": 4,
+          "rifleDmg": 8.78,
+          "tankHits": 120,
+          "tankDmg": 941.5,
+          "totalDmg": 950.28,
+          "inRifle": 6,
+          "inTank": 15
+        },
+        {
+          "t": 80.0,
+          "rifleHits": 4,
+          "rifleDmg": 8.78,
+          "tankHits": 133,
+          "tankDmg": 1045.26,
+          "totalDmg": 1054.03,
+          "inRifle": 21,
+          "inTank": 17
+        },
+        {
+          "t": 85.0,
+          "rifleHits": 4,
+          "rifleDmg": 8.78,
+          "tankHits": 147,
+          "tankDmg": 1152.3,
+          "totalDmg": 1161.07,
+          "inRifle": 23,
+          "inTank": 18
+        },
+        {
+          "t": 90.0,
+          "rifleHits": 6,
+          "rifleDmg": 13.88,
+          "tankHits": 163,
+          "tankDmg": 1271.72,
+          "totalDmg": 1285.6,
+          "inRifle": 27,
+          "inTank": 17
+        }
+      ]
+    }
+  },
+  "envelope": {
+    "_comment": "The whole-round numbers, for a core measurement to land inside.",
+    "nearestOpposingPair": [
+      4.74,
+      19.22
+    ],
+    "meanNearestEnemy": [
+      24.43,
+      35.5
+    ],
+    "riflemenInRange": [
+      18,
+      50
+    ],
+    "rifleKillsPerRound": 28,
+    "rifleKillsPerRound2472": 90,
+    "infantryAlive": [
+      34,
+      36
+    ],
+    "courierTankHits": 163,
+    "courierTankDamage": 1271.72,
+    "courierRifleHits": 6,
+    "courierRifleDamage": 13.88,
+    "courierTankShare": 0.989
+  }
+}
