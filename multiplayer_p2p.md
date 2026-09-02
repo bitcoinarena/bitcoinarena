@@ -2457,6 +2457,172 @@ money.
 
 ---
 
+# 27A. Governance — changing the parameters *(new)*
+
+A providerless network still has numbers that must change over time: the
+node fee, the minimum bond, how hard the game is to win. Changing them
+needs consensus without a company and without a governance coin, and it
+needs to not become a lever somebody can pull.
+
+The primitive is already here. **The bond is the stake.** Weight is bonded
+capital, which is exactly the weight sortition uses, so influence costs the
+same as an attack costs and is Sybil-proof for the same reason (§5A.10).
+No token, no treasury, no voting contract.
+
+## 27A.1 What can change, and by whom
+
+| Parameter | Mechanism | Who |
+|---|---|---|
+| `node_fee_bps`, role split | bond-weighted median | the census |
+| `bond_min` per bracket, bracket table | bond-weighted median **with notice** | the census |
+| game difficulty: `E_reference`, corridor width, `T` clamps, `min_score`, `K`, `r` | bond-weighted median as defaults; a round MAY override in its contract | the census, then the round |
+| the donation set | signed by the donation authority | one key, nothing else (§27A.4) |
+| protocol rules, message formats, the core | software version; adoption is running it | nobody in particular |
+
+## 27A.2 Scalars: a median, not a ballot
+
+Every node declares its preferred value for each scalar in its
+NodeAdvertisement. The value in force for a round is the **bond-weighted
+median** over the census at `census_height`.
+
+```text
+value = median over the census, each node weighted by its bond amount
+```
+
+There is no proposal, no voting period, no quorum, no tally and no round of
+messages. The value is a pure function of chain state, so every participant
+computes the same one and disagreement about it reduces to disagreement
+about Bitcoin.
+
+**Median rather than mean.** A mean is moved by an outlier in proportion to
+how absurd it is; a median is moved only as far as the weight behind it
+reaches. A node declaring a node fee of 90% moves nothing.
+
+**Changing a declaration is deliberately not free.** It means publishing a
+new advertisement, which means a new bond output and its confirmations
+(§5A.10B). Governance therefore moves at the speed of capital, and a
+campaign to swing a parameter is visible on chain while it is being
+assembled.
+
+**Why this is better than a DAO vote here.** A vote needs a proposal, a
+window, a quorum rule and a tie-break, and every one of those is an attack
+surface - proposal spam, deadline sniping, quorum failure, whale timing. A
+median has none of them: there is nothing to schedule and nothing to win by
+being last. What a vote buys is the ability to make a *discrete* choice,
+and discrete choices are handled in 27A.5 instead.
+
+## 27A.3 `bond_min` changes with notice, and with escalation
+
+Raising `bond_min` makes some nodes ineligible for the brackets they were
+serving. That is legitimate - the network grew and the floor should follow
+- but it must never be a surprise, because **a bond cannot be topped up**:
+it is one timelocked output, so responding means funding a second bond and
+waiting for confirmations (§5A.10B).
+
+> A rise in `bond_min` takes effect **`notice_period` after the median
+> first crosses it** - reference 30 days, and never less than
+> `bond_maturity` minus the confirmation depth.
+
+A fall takes effect immediately: nobody is harmed by a floor dropping.
+
+During the notice period, an affected node SHOULD escalate to its operator
+rather than warn once:
+
+```text
+T-30d   informational   "the floor for the 1,000 sat bracket will rise to
+                         X on <date>; this node is at Y and will keep the
+                         100 sat bracket"
+T-14d   actionable      restated with the shortfall and what a second bond
+                         would cost at current fees
+T-3d    urgent          last point at which a new bond can confirm in time
+T+0     status change   brackets lost, income effect, and that the node
+                         continues to serve everything below
+```
+
+Delivery is operator configuration (§5A.10B) and nothing in the protocol
+depends on a message arriving. A node that dropped a bracket keeps serving
+the ones below it: **the floor moving is not an eviction.**
+
+## 27A.4 Network identity and the donation authority
+
+The donation set cannot be a median: it is not a scalar, and the capital
+holders are not the people whose work is being funded. It also cannot be
+fixed forever, because addresses change.
+
+It is signed by one key, and that key is part of what defines the network:
+
+```text
+network_id = H( genesis_parameters || donation_authority_pubkey )
+```
+
+**A fork that replaces the key produces a different `network_id`.** Round
+Contracts carry it, nodes and clients reject contracts that do not match
+the one they were built for, and censuses are per-network. Someone who
+forks the code and writes their own donation address in has not captured
+the donations - they have left, and are running a different network with
+their own census to bootstrap.
+
+The identity commits to the **key**, not to the set. Rotating recipients is
+therefore an ordinary operation that does not fork anything:
+
+```text
+DonationSet {
+  network_id
+  serial          monotonic; the highest validly signed one wins
+  entries[]       lnurl + share_bps, summing to 10000
+  valid_from      block height
+  signature       by donation_authority_pubkey
+}
+```
+
+Published like an advertisement - a marked output committing to
+`H(DonationSet)` - so it is discoverable, timestamped, and cannot be rolled
+back to an older serial.
+
+### What the key can do, exhaustively
+
+```text
+CAN     replace the donation recipients and their shares
+CAN     rotate itself to a successor key, signed by the current one
+```
+
+```text
+CANNOT  pause anything
+CANNOT  change any fee, floor, threshold or difficulty parameter
+CANNOT  admit, exclude, slash or favour a node
+CANNOT  see, alter, delay or void a round or a result
+CANNOT  move, hold or touch any player's money
+CANNOT  make a player donate: the percentage is the player's, and zero
+        is valid (§22A)
+```
+
+**Blast radius if it is stolen.** Donations from players who have donations
+switched on go to the thief until the theft is noticed and the community
+moves to a fork with a new key. Nothing else is affected: no round, no
+stake, no payout, no census. Every recipient is displayed before wallet
+approval (§22A), and `donation_bps_max` caps the amount. The damage is
+bounded, voluntary and visible.
+
+**If the key is lost**, the set freezes at its last published serial and
+everything continues to work. There is no recovery path and there should
+not be one: a recovery path is a second way to control the key, which is
+exactly the thing this section exists to prevent.
+
+## 27A.5 Discrete changes: rough consensus
+
+New message types, changed rules, a different core - none of these is a
+number and none can be a median. There is no mechanism and deliberately so.
+A change ships as a software version; it takes effect when enough nodes run
+it that rounds using it can find a committee. Nodes advertise
+`supported_protocol_versions` (§5A.1) and a Round Contract names the one it
+needs, so a round that nobody supports simply finds no committee and never
+starts.
+
+This is slower and less tidy than a vote. It is also the only version that
+does not require someone to be in charge.
+
+---
+
 # 28. Failure matrix
 
 | Failure | Effect |
@@ -2558,7 +2724,11 @@ Can nodes enable either/both roles?      YES
 Can existing rounds finish?              YES
 Can stakes be refunded if nothing runs?  YES (HTLC expiry, §23)
 Is developer approval needed?            NO
-Is a developer admin key needed?         NO
+Is a developer admin key needed?         NO (the donation authority of
+                                         §27A.4 signs the donation set and
+                                         nothing else; if it is gone the
+                                         set freezes and every line above
+                                         still answers YES)
 Is the developer donation mandatory?     NO
 ```
 
