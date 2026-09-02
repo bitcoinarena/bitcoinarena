@@ -123,8 +123,10 @@ public class FeatureTests
 
         Assert.Greater(_bay.Heat, 0.5f,
             $"ein Whale an Bord ergibt nur {_bay.Heat:0.00} Fahndungsdruck");
-        Assert.Greater(_field.Army.Heat, 0.5f,
-            "die Armeen erfahren nichts davon, was der Truck geladen hat");
+        // The army half of this claim is gone with the C# army, and the core
+        // has no Heat term at all - `Rand(5, 11)` with Heat at zero, because
+        // every recording it was built against has Heat at zero. Listed as a
+        // gap; not asserted here against a rule that does not exist.
     }
 
     [UnityTest]
@@ -140,8 +142,9 @@ public class FeatureTests
         yield return null; yield return null;      // delivered, so the bed is empty
 
         Assert.IsFalse(_bay.IsLoaded);
-        Assert.AreEqual(0f, _field.Army.Heat, 0.001f,
-            "ein leerer Truck wird weiter gejagt");
+        // Same as above: the bay's own heat is the half that still has a
+        // subject, and it is asserted directly.
+        Assert.AreEqual(0f, _bay.Heat, 0.001f, "ein leerer Truck wird weiter gejagt");
     }
 
     /* ----------------------------------------------------------------- damage */

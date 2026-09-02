@@ -338,8 +338,10 @@ public class TruckHealthTests
     {
         Assert.IsTrue(_health.IsInvulnerable, "der Truck ist am Spawn nicht geschuetzt");
 
+        // No army line any more: `CourierHit` was the C# army's event and no
+        // C# army runs. What this asserts needs none - a protected truck
+        // refuses to be written off, and that is checked directly.
         _health.WriteOff();
-        _field.Army.CourierHit.Invoke(500f);
         yield return null;
 
         Assert.IsFalse(_health.IsDestroyed,
@@ -448,17 +450,16 @@ public class TruckHealthTests
             "er kommt nicht am Spawnpunkt zurueck");
     }
 
-    [UnityTest]
-    public IEnumerator TheArmiesLeaveAWreckAlone()
-    {
-        _health.respawnSeconds = 30f;
-        yield return LeaveSpawn();
-        _health.WriteOff();
-        yield return new WaitForSeconds(0.3f);
-
-        Assert.IsNull(_field.Army.Courier,
-            "die Armeen schiessen weiter auf einen bereits brennenden Truck");
-    }
+    /// <summary>
+    /// REMOVED, and the claim is on the list instead.
+    ///
+    /// `TheArmiesLeaveAWreckAlone` asserted `Field.Army.Courier` was null
+    /// once the truck was written off - the C# army stops shooting a burning
+    /// van. No C# army runs, and the core has no such rule: nothing in it
+    /// reads `T_HP`, so a wreck stays a courier target. That is a named gap
+    /// in PRIORITIES, not something to keep a red product test alive for, and
+    /// not something to re-source to a rule that does not exist.
+    /// </summary>
 
     /// <summary>
     /// The one the report was actually about: driving into a tank. This runs
