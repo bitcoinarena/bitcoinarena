@@ -17,7 +17,23 @@ using UnityEngine;
 /// </summary>
 public class ArmyRenderer : MonoBehaviour
 {
-    public Army army;
+    /// <summary>
+    /// WHERE THE PICTURE COMES FROM. The core, and nothing else.
+    ///
+    /// This was `public Army army`, and every loop below walked
+    /// `army.Armour`, `army.Infantry`, `army.Helicopters` and `army.Bombs` -
+    /// a C# simulation that, since `UploadArmour` was deleted, fed the core
+    /// nothing and was fed nothing by it. The player watched an army that
+    /// decided no outcome while the truck was shot at and blocked by an army
+    /// nobody drew.
+    ///
+    /// `Army.Side` survives as an enum for the pools and tints. No `Army`
+    /// instance is touched.
+    /// </summary>
+    static bool CoreReady => Blwp.BlwpCore.Available;
+
+    static Army.Side SideOf(int i) =>
+        Blwp.BlwpCore.UnitSide(i) < 0 ? Army.Side.Bull : Army.Side.Bear;
     public MempoolTerrain terrain;
 
     [Tooltip("Optional. When set, units stand on the road deck rather than on " +
@@ -404,25 +420,31 @@ public class ArmyRenderer : MonoBehaviour
     /// </summary>
     void PlaceAircraft()
     {
-        Fit(_helis, army.Helicopters.Count, MakeHelicopter);
-        for (int i = 0; i < army.Helicopters.Count; i++)
+        int helis = 0;
+        for (int k = 0; k < Blwp.Layout.MAX_HELIS; k++) if (Blwp.BlwpCore.HeliAlive(k)) helis++;
+        Fit(_helis, helis, MakeHelicopter);
+        int hn = 0;
+        for (int k = 0; k < Blwp.Layout.MAX_HELIS; k++)
         {
-            var h = army.Helicopters[i];
-            if (i >= _helis.Count) break;
-            var t = _helis[i];
+            if (!Blwp.BlwpCore.HeliAlive(k)) continue;
+            if (hn >= _helis.Count) break;
+            var t = _helis[hn++];
             if (!t.gameObject.activeSelf) t.gameObject.SetActive(true);
 
-            t.SetPositionAndRotation(
-                new Vector3(h.x, h.y, h.z),
-                Quaternion.Euler(0f, (h.yaw + helicopterYawOffset * Mathf.Deg2Rad) * Mathf.Rad2Deg,
-                                 h.bank * Mathf.Rad2Deg));
+            // YAW AND BANK ARE THE RENDERER'S OWN. The core carries `H_DIR`,
+            // the way the gunship is crossing, and nothing else - it has no
+            // yaw and no bank because neither decides anything. A gunship
+            // faces along its run and banks for the look of it, so both are
+            // derived here and no simulation is invented to supply them.
+            float yaw = Blwp.BlwpCore.HeliDir(k) >= 0 ? 90f : -90f;
+            t.SetPositionAndRotation(Blwp.BlwpCore.HeliPosition(k),
+                                     Quaternion.Euler(0f, yaw + helicopterYawOffset, 0f));
 
-            var mat = h.side == Army.Side.Bull ? bullMaterial : bearMaterial;
+            var mat = Blwp.BlwpCore.HeliSide(k) < 0 ? bullMaterial : bearMaterial;
             foreach (var r in t.GetComponentsInChildren<MeshRenderer>(true))
                 if (mat != null && r.sharedMaterial != mat && helicopterPrefab == null)
                     r.sharedMaterial = mat;
 
-            // rotors spin regardless of what the model provides
             if (_heliRotors.TryGetValue(t, out var rotors))
             {
                 if (rotors.main != null) rotors.main.Rotate(0f, 1500f * Time.deltaTime, 0f, Space.Self);
@@ -430,18 +452,21 @@ public class ArmyRenderer : MonoBehaviour
             }
         }
 
-        Fit(_bombs, army.Bombs.Count, MakeBomb);
-        for (int i = 0; i < army.Bombs.Count; i++)
+        int bombs = 0;
+        for (int k = 0; k < Blwp.Layout.MAX_BOMBS; k++) if (Blwp.BlwpCore.BombAlive(k)) bombs++;
+        Fit(_bombs, bombs, MakeBomb);
+        int bn = 0;
+        for (int k = 0; k < Blwp.Layout.MAX_BOMBS; k++)
         {
-            var b = army.Bombs[i];
-            if (i >= _bombs.Count) break;
+            if (!Blwp.BlwpCore.BombAlive(k)) continue;
+            if (bn >= _bombs.Count) break;
             // noses along its own flight path, so it does not fall sideways
-            var vel = new Vector3(b.vx, b.vy, b.vz);
+            var vel = Blwp.BlwpCore.BombVelocity(k);
             var rot = vel.sqrMagnitude > 0.01f
                 ? Quaternion.LookRotation(vel.normalized, Vector3.up) : Quaternion.identity;
-            var t = _bombs[i];
+            var t = _bombs[bn++];
             if (!t.gameObject.activeSelf) t.gameObject.SetActive(true);
-            t.SetPositionAndRotation(new Vector3(b.x, b.y, b.z), rot);
+            t.SetPositionAndRotation(Blwp.BlwpCore.BombPosition(k), rot);
             if (bombPrefab == null)
             {
                 var mr = t.GetComponent<MeshRenderer>();
@@ -574,7 +599,11 @@ public class ArmyRenderer : MonoBehaviour
     void FitArmourSided(int total)
     {
         int bull = 0, bear = 0;
-        foreach (var v in army.Armour) { if (v.side == Army.Side.Bull) bull++; else bear++; }
+        for (int i = 0; i < Blwp.Layout.UNITS; i++)
+        {
+            if (!Blwp.BlwpCore.UnitIsArmour(i) || !Blwp.BlwpCore.UnitAlive(i)) continue;
+            if (SideOf(i) == Army.Side.Bull) bull++; else bear++;
+        }
         Fit(_hullsBull, bull, () => MakeTankFromPrefab(Army.Side.Bull));
         Fit(_hullsBear, bear, () => MakeTankFromPrefab(Army.Side.Bear));
     }
@@ -583,7 +612,11 @@ public class ArmyRenderer : MonoBehaviour
     void FitSided(List<Transform> pool, Army.Side side)
     {
         int need = 0;
-        foreach (var u in army.Infantry) if (u.side == side) need++;
+        for (int i = 0; i < Blwp.Layout.UNITS; i++)
+        {
+            if (Blwp.BlwpCore.UnitIsArmour(i) || !Blwp.BlwpCore.UnitAlive(i)) continue;
+            if (SideOf(i) == side) need++;
+        }
         Fit(pool, need, () => soldierPrefab != null
             ? MakeSoldierFromPrefab(side)
             : MakePiece(_soldier, "Soldier", false, Vector3.zero));
@@ -616,9 +649,12 @@ public class ArmyRenderer : MonoBehaviour
     /// </summary>
     public void Submit()
     {
-        if (army == null) return;
+        if (!CoreReady) return;
 
-        int armour = army.Armour.Count;
+        int armour = 0;
+        for (int i = 0; i < Blwp.Layout.UNITS; i++)
+            if (Blwp.BlwpCore.UnitIsArmour(i) && Blwp.BlwpCore.UnitAlive(i)) armour++;
+
         if (tankPrefab != null)
         {
             // the model brings its own turret, so no separate pool is needed
@@ -636,25 +672,32 @@ public class ArmyRenderer : MonoBehaviour
 
         PlaceAircraft();
 
-        int bullTanks = 0, bearTanks = 0;
-        for (int i = 0; i < armour; i++)
+        int bullTanks = 0, bearTanks = 0, dense = 0;
+        for (int i = 0; i < Blwp.Layout.UNITS; i++)
         {
-            var v = army.Armour[i];
+            if (!Blwp.BlwpCore.UnitIsArmour(i) || !Blwp.BlwpCore.UnitAlive(i)) continue;
+            var side = SideOf(i);
+            var at = Blwp.BlwpCore.UnitPosition(i, 0f);
+            float heading = Blwp.BlwpCore.UnitHeading(i) * Mathf.Deg2Rad;
             bool prefab = tankPrefab != null;
 
             Transform hull;
             if (prefab)
             {
-                var pool = v.side == Army.Side.Bull ? _hullsBull : _hullsBear;
-                int idx = v.side == Army.Side.Bull ? bullTanks++ : bearTanks++;
+                var pool = side == Army.Side.Bull ? _hullsBull : _hullsBear;
+                int idx = side == Army.Side.Bull ? bullTanks++ : bearTanks++;
                 if (idx >= pool.Count) continue;
                 hull = pool[idx];
             }
-            else hull = _hulls[i];
+            else
+            {
+                if (dense >= _hulls.Count) { dense++; continue; }
+                hull = _hulls[dense];
+            }
 
-            var mat = prefab ? null : (v.side == Army.Side.Bull ? bullMaterial : bearMaterial);
+            var mat = prefab ? null : (side == Army.Side.Bull ? bullMaterial : bearMaterial);
             if (!hull.gameObject.activeSelf) hull.gameObject.SetActive(true);
-            SeatOnTerrain(hull, v.x, v.z, v.heading + (prefab ? tankYawOffset * Mathf.Deg2Rad : 0f),
+            SeatOnTerrain(hull, at.x, at.z, heading + (prefab ? tankYawOffset * Mathf.Deg2Rad : 0f),
                           3.4f, 1.8f, prefab ? 0f : 0.9f);
             if (mat != null)
             {
@@ -662,60 +705,67 @@ public class ArmyRenderer : MonoBehaviour
                 if (mr != null && mr.sharedMaterial != mat) mr.sharedMaterial = mat;
             }
 
+            // THE TURRET FOLLOWS THE HULL. C# traversed it in world space on
+            // its own `turretYaw`; the core has no turret, and none is being
+            // invented here or anywhere else in C#. When the core reports an
+            // aim this reads it - until then a tank looks where it is going,
+            // which is at least true.
             if (prefab)
             {
-                // world traverse expressed relative to the hull it sits on
                 var turret = FindDeep(hull, "turret");
-                if (turret != null)
-                    turret.localRotation = Quaternion.Euler(
-                        0f, (v.turretYaw - v.heading) * Mathf.Rad2Deg, 0f);
+                if (turret != null) turret.localRotation = Quaternion.identity;
                 SpinRunningGear(hull);
             }
-            else
+            else if (dense < _turrets.Count)
             {
-                // the turret traverses in world space, so it is NOT parented to
-                // the hull - but it still has to ride at the height the hull was
-                // just seated at, or it floats off on every slope
-                Place(_turrets[i], new Vector3(v.x, hull.position.y, v.z), v.turretYaw, mat);
+                Place(_turrets[dense], new Vector3(at.x, hull.position.y, at.z), heading, mat);
             }
+            dense++;
         }
 
         int bull = 0, bear = 0;
-        foreach (var s in army.Infantry)
+        for (int i = 0; i < Blwp.Layout.UNITS; i++)
         {
-            var pool = s.side == Army.Side.Bull ? _soldiersBull : _soldiersBear;
-            int idx = s.side == Army.Side.Bull ? bull++ : bear++;
+            if (Blwp.BlwpCore.UnitIsArmour(i) || !Blwp.BlwpCore.UnitAlive(i)) continue;
+            var side = SideOf(i);
+            var pool = side == Army.Side.Bull ? _soldiersBull : _soldiersBear;
+            int idx = side == Army.Side.Bull ? bull++ : bear++;
             if (idx >= pool.Count) continue;
 
-            // a small bob, so a line of infantry does not read as fenceposts
-            float bob = Mathf.Abs(Mathf.Sin(s.phase)) * 0.16f;
-            // a prefab stands ON the ground; the proxy box is centred on its middle
+            var at = Blwp.BlwpCore.UnitPosition(i, 0f);
+            float heading = Blwp.BlwpCore.UnitHeading(i) * Mathf.Deg2Rad;
+
+            // A small bob, so a line of infantry does not read as fenceposts.
+            // Derived from the tick and the slot, NOT from a gait the core
+            // keeps - it keeps none, which is its own listed gap (q). This is
+            // decoration, computed where decoration belongs.
+            float bob = Mathf.Abs(Mathf.Sin(Blwp.BlwpCore.Tick * 0.08f + i)) * 0.16f;
             float lift = soldierPrefab != null ? 0f : 0.9f;
             var t = pool[idx];
             // A man stands UPRIGHT on a slope - he does not lean with the
             // ground the way a tank does - but he still has to stand on the
             // highest ground his feet cover, or the downhill foot sinks in.
-            // Sampling only his centre is what buried them on every incline.
             float foot = Mathf.Max(
-                Mathf.Max(Ground(s.x + 0.3f, s.z), Ground(s.x - 0.3f, s.z)),
-                Mathf.Max(Ground(s.x, s.z + 0.3f), Ground(s.x, s.z - 0.3f)));
-            Place(t, new Vector3(s.x, Mathf.Max(foot, Ground(s.x, s.z)) + lift + bob, s.z),
-                  s.heading + soldierYawOffset * Mathf.Deg2Rad, null);
-            // one model repeated at one size is what makes a rank look stamped
-            // out; a few percent either way is enough to break that
-            if (!Mathf.Approximately(t.localScale.x, s.height))
-                t.localScale = Vector3.one * s.height;
+                Mathf.Max(Ground(at.x + 0.3f, at.z), Ground(at.x - 0.3f, at.z)),
+                Mathf.Max(Ground(at.x, at.z + 0.3f), Ground(at.x, at.z - 0.3f)));
+            Place(t, new Vector3(at.x, Mathf.Max(foot, Ground(at.x, at.z)) + lift + bob, at.z),
+                  heading + soldierYawOffset * Mathf.Deg2Rad, null);
+
+            // Height per man is a core gap, listed as (q). One size until it
+            // exists - guessing one here would be a second simulation of a
+            // thing the core is supposed to own.
+            if (!Mathf.Approximately(t.localScale.x, 1f)) t.localScale = Vector3.one;
 
             if (soldierAnimator != null)
             {
                 var anim = t.GetComponentInChildren<Animator>();
                 if (anim != null && anim.runtimeAnimatorController != null)
                 {
-                    // The army decides whether he is walking; the renderer must
-                    // not guess it again from position, or the two disagree and
-                    // he runs on the spot or slides while standing.
-                    anim.SetFloat("Speed", s.walking ? 1f : 0f);
-                    anim.SetBool("Shoot", !s.walking);
+                    // The core's infantry has no halt - (q) again - so it is
+                    // always walking, and saying so is the truth rather than a
+                    // guess made from position.
+                    anim.SetFloat("Speed", 1f);
+                    anim.SetBool("Shoot", false);
                 }
             }
         }

@@ -50,7 +50,6 @@ public class Battlefield : MonoBehaviour
     [Tooltip("Seconds between sorties, per side. Rare enough that one is an event.")]
     public float sortieSeconds = 17f;
 
-    float _sortieBull, _sortieBear;
 
     void Awake()
     {
@@ -78,107 +77,25 @@ public class Battlefield : MonoBehaviour
         }
         History.Feed(price, Time.deltaTime);
 
-        if (Army != null)
-        {
-            // trade flow is the pressure: whichever side the tape favours pushes
-            Army.Flow = market != null ? market.Flow : 0f;
-
-            // Where the gauntlet is. A wrecked truck is not a target - it is
-            // already burning, and shooting it would keep it "dying" through
-            // the whole respawn wait.
-            bool alive = courier != null &&
-                         (health == null || (!health.IsDestroyed && !health.IsInvulnerable));
-            Army.Courier = alive
-                ? new Vector2(courier.position.x, courier.position.z)
-                : (Vector2?)null;
-
-            // What the truck is carrying is what the war wants. An empty van is
-            // in the way; a whale on the back is worth diverting a tank for.
-            //
-            // NOT gated on spawn protection: heat is a property of the load,
-            // not of whether the truck can currently be hurt. Whether anyone
-            // may shoot at it is decided by Courier below, and mixing the two
-            // meant a truck loaded up on the apron read as carrying nothing.
-            Army.Heat = cargo != null && (health == null || !health.IsDestroyed)
-                ? cargo.Heat : 0f;
-
-            Army.Update(Time.deltaTime);
-
-            // rotors: the nearest helicopter, or silence
-            if (audio != null)
-            {
-                Vector2? nearest = null;
-                float best = float.MaxValue;
-                var here = courier != null ? courier.position : Vector3.zero;
-                foreach (var h in Army.Helicopters)
-                {
-                    float d = (h.x - here.x) * (h.x - here.x) + (h.z - here.z) * (h.z - here.z);
-                    if (d < best) { best = d; nearest = new Vector2(h.x, h.z); }
-                }
-                audio.Rotors(nearest);
-            }
-            LaunchSorties(Time.deltaTime);
-
-            // AFTER the step, so nobody is left standing inside the truck at
-            // the end of a frame - that is what wedges it in place
-            if (courier != null && (health == null || !health.IsDestroyed))
-            {
-                var p = courier.position;
-                float heading = courier.eulerAngles.y * Mathf.Deg2Rad;
-
-                // anything under the wheels goes down; the rest is only pushed
-                // out of a deep overlap so the truck can never be pinned
-                // The velocity comes from the CORE when the core is driving.
-                //
-                // The truck's Rigidbody is kinematic now and its
-                // linearVelocity is permanently zero, so this read a stationary
-                // truck and nobody was ever run over: infantry stood in the
-                // road and the wheels went through them.
-                var body = courier.GetComponent<Rigidbody>();
-                var driver = courier.GetComponent<Blwp.CoreDrivenTruck>();
-                var v = driver != null && driver.Driving
-                    ? Blwp.BlwpCore.Velocity
-                    : (body != null ? body.linearVelocity : Vector3.zero);
-                float speed = v.magnitude;
-                var knock = new Vector2(v.x, v.z).normalized;
-                int went = Army.RunOver(p.x, p.z, 3.6f, speed, knock);
-                RunDown += went;
-                // a body under the wheels should be felt, not just counted
-                if (went > 0)
-                {
-                    if (chase != null) chase.Shake(Mathf.Min(0.5f, went * 0.22f));
-                    if (audio != null) audio.Thud();
-                }
-
-                Army.ClearPath(p.x, p.z, heading, Time.deltaTime);
-            }
-        }
+        // THE C# ARMY IS NOT STEPPED, and nothing here feeds it any more.
+        // This block set Flow from the tape, Courier from the truck and Heat
+        // from the load and then ran `Army.Update(dt)` every frame - a full
+        // second simulation beside the core's, which since `UploadArmour` was
+        // deleted fed it nothing and was fed nothing by it. The core owns the
+        // army and `ArmyRenderer` draws the core.
+        //
+        // The rotor audio went with it: it picked the nearest of `Army`'s own
+        // helicopters. The core has helicopters and no sound yet, which is the
+        // same gap as the muzzle flashes and is item 7's.
     }
 
     /// <summary>
-    /// Send gunships out.
-    ///
-    /// Sparse on purpose: a helicopter carries the heaviest thing in the game,
-    /// and one every twenty-odd seconds per side is an event you look up for.
-    /// Constant air cover would just be weather.
+    /// GONE with the C# army it launched. This sent `Army.SendHelicopter` on
+    /// its own clock; the core runs `launchSorties` on the same schedule from
+    /// the same seed, and two launchers over one sky is the shape this whole
+    /// step removes. `sortieSeconds` stays as a serialized field so an existing
+    /// scene does not lose it, and is read by nothing.
     /// </summary>
-    void LaunchSorties(float dt)
-    {
-        _sortieBull -= dt;
-        _sortieBear -= dt;
-        if (_sortieBull <= 0f)
-        {
-            _sortieBull = sortieSeconds * Random.Range(0.7f, 1.4f);
-            Army.SendHelicopter(Army.Side.Bull);
-            var h = Army.Helicopters[Army.Helicopters.Count - 1];
-            Debug.Log($"[Sortie] bull at x={h.x:0} y={h.y:0} z={h.z:0}, airborne={Army.Helicopters.Count}");
-        }
-        if (_sortieBear <= 0f)
-        {
-            _sortieBear = sortieSeconds * Random.Range(0.7f, 1.4f);
-            Army.SendHelicopter(Army.Side.Bear);
-        }
-    }
 
     /// <summary>Frontline z at a world x.</summary>
     public float FrontlineZ(float x)

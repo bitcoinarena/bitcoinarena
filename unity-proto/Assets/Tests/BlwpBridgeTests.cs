@@ -17,6 +17,50 @@ using Blwp;
 /// </summary>
 public class BlwpBridgeTests
 {
+
+    /// <summary>
+    /// The player path does not run a second army.
+    ///
+    /// `Battlefield.Update` used to call `Army.Update(dt)` every frame beside
+    /// the core's own army, and `Bootstrap` built and populated one. Since
+    /// `UploadArmour` was deleted the two could not even see each other: the
+    /// player watched an army that decided nothing while the truck was shot at
+    /// and blocked by an army nobody drew. Nothing constructs one now.
+    /// </summary>
+    [UnityTest]
+    public IEnumerator ThePlayerPathRunsNoCSharpArmy()
+    {
+        var boot = new GameObject("Bootstrap");
+        boot.AddComponent<Bootstrap>();
+        yield return new WaitForSeconds(1.5f);
+
+        var field = Object.FindFirstObjectByType<Battlefield>();
+        Assert.IsNotNull(field, "kein Battlefield in der Szene");
+        Assert.IsNull(field.Army,
+            "die C# Armee wird noch gebaut - der Spielerpfad simuliert zweimal");
+    }
+
+    /// <summary>
+    /// The drawer takes its units from the core, not from an `Army`.
+    ///
+    /// WIRING ONLY, and that limit is the point rather than a shortcut:
+    /// `BlwpCore` is stubbed unless `UNITY_WEBGL &amp;&amp; !UNITY_EDITOR`, so
+    /// in PlayMode there is no core to draw and no picture to check. What can
+    /// be checked here is that `ArmyRenderer` no longer carries an `Army` to
+    /// read - the picture itself is a browser run against a WebGL build.
+    /// </summary>
+    [UnityTest]
+    public IEnumerator TheDrawerHasNoArmyToReadFrom()
+    {
+        var boot = new GameObject("Bootstrap");
+        boot.AddComponent<Bootstrap>();
+        yield return new WaitForSeconds(1.5f);
+
+        var renderer = Object.FindFirstObjectByType<ArmyRenderer>();
+        Assert.IsNotNull(renderer, "kein ArmyRenderer in der Szene");
+        Assert.IsNull(typeof(ArmyRenderer).GetField("army"),
+            "ArmyRenderer haelt noch ein Army-Feld - das Bild kaeme wieder aus C#");
+    }
     [TearDown] public void ClearTheWorld() => TestWorld.TearDown();
 
     static string CoreDir =>

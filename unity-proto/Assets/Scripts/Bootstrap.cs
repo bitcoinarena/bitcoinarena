@@ -179,16 +179,12 @@ public class Bootstrap : MonoBehaviour
         audio.ear = truck.transform;
         Audio = audio;
 
-        // The war gets a voice. Hung off the same events the effects use, so a
-        // shot that is drawn is a shot that is heard.
-        var army = Field.Army;
-        army.Fired += (from, at) => audio.Cannon(new Vector2(from.x, from.z));
-        army.Shot += (from, at) => audio.Rifle(new Vector2(from.x, from.z));
-        army.Destroyed += u => audio.Destroyed(new Vector2(u.x, u.z));
-        army.Killed += (u, at) => audio.Hit(new Vector2(u.x, u.z));
-        army.Bombed += at => audio.Destroyed(at);
-        army.CourierHit += _ => audio.Hit(new Vector2(truck.transform.position.x,
-                                                      truck.transform.position.z));
+        // THE WAR HAS NO VOICE FOR NOW, and that is a stated price rather
+        // than an oversight. The audio hung off `Fired`, `Shot`, `Destroyed`,
+        // `Killed` and `Bombed` - events of the C# army, which no longer runs.
+        // The core raises none of them yet; when it does, this and CombatFx
+        // come back together. Guessing a bang from a position in C# would be a
+        // second simulation of the thing that was just removed.
         // the chase camera is built further down, so both of these find it
         // themselves in Start rather than being handed a null here
         // The C# army no longer hurts the truck. `CourierHit` used to be wired
@@ -601,19 +597,16 @@ public class Bootstrap : MonoBehaviour
     /// <summary>Both armies, fed by the same tape that moves the frontline.</summary>
     void BuildArmies()
     {
-        Field.Army = new Army(System.Environment.TickCount)
-        {
-            FrontlineAt = Field.FrontlineZ,
-            // gunships hold a height over the ground, not over sea level
-            GroundAt = (x, z) => _terrain.SampleSurface(x, z),
-        };
-        Field.Army.Populate(armourPerSide, infantryPerSide);
+        // NO C# ARMY IS BUILT. The core fields one - ninety-six slots, twelve
+        // tanks and thirty-six men a side - and since `UploadArmour` was
+        // deleted the two could not see each other: the player watched an army
+        // that decided nothing while the truck was shot at and blocked by an
+        // army nobody drew. `ArmyRenderer` reads the core now.
 
         var go = new GameObject("Armies");
         go.transform.SetParent(transform, false);
         go.SetActive(false);                    // wire before Awake, as ever
         var renderer = go.AddComponent<ArmyRenderer>();
-        renderer.army = Field.Army;
         renderer.terrain = _terrain;
         renderer.roads = Roads;
         renderer.bullMaterial = bullMaterial;
@@ -633,7 +626,6 @@ public class Bootstrap : MonoBehaviour
         Fx = fxGo.AddComponent<CombatFx>();
         Fx.terrain = _terrain;
         Fx.roads = Roads;
-        Fx.army = Field.Army;
         Fx.tracerMaterial = tracerMaterial;
         Fx.flashMaterial = flashMaterial;
         Fx.blastMaterial = blastMaterial;
@@ -649,7 +641,10 @@ public class Bootstrap : MonoBehaviour
         Fx.smokeParticleMaterial = smokeParticleMaterial;
         Fx.wreckPrefab = tankPrefab;
         fxGo.SetActive(true);
-        Fx.Bind(Field.Army);
+        // Not bound: `CombatFx` lives on the C# army's events and the core
+        // raises none. Item 7 owns this, and until then there are no muzzle
+        // flashes, tracers or corpses. Said out loud rather than left to be
+        // discovered on screen.
     }
 
     TruckController BuildTruck(MempoolTerrain terrain)

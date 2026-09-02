@@ -1076,11 +1076,23 @@ public class DriveHud : MonoBehaviour
             Line($"Fluss   {market.Flow:+0.00;-0.00; 0.00}");
             Line($"Liquid. {market.Liquidations.Count} / 90 s");
         }
-        if (field?.Army != null)
+        if (Blwp.BlwpCore.Available)
         {
-            Line($"Panzer   gruen {field.Army.ArmourOf(Army.Side.Bull)}  rot {field.Army.ArmourOf(Army.Side.Bear)}");
-            Line($"Soldaten gruen {field.Army.InfantryOf(Army.Side.Bull)}  rot {field.Army.InfantryOf(Army.Side.Bear)}");
-            Line($"Luft     {field.Army.Helicopters.Count} Heli  {field.Army.Bombs.Count} Bombe(n)");
+            // Counted off the CORE, which is what is on the screen now. This
+            // read `field.Army`, a simulation that no longer runs.
+            int ab = 0, ar = 0, ib = 0, ir = 0, heli = 0, bomb = 0;
+            for (int i = 0; i < Blwp.Layout.UNITS; i++)
+            {
+                if (!Blwp.BlwpCore.UnitAlive(i)) continue;
+                bool bull = Blwp.BlwpCore.UnitSide(i) < 0;
+                if (Blwp.BlwpCore.UnitIsArmour(i)) { if (bull) ab++; else ar++; }
+                else { if (bull) ib++; else ir++; }
+            }
+            for (int i = 0; i < Blwp.Layout.MAX_HELIS; i++) if (Blwp.BlwpCore.HeliAlive(i)) heli++;
+            for (int i = 0; i < Blwp.Layout.MAX_BOMBS; i++) if (Blwp.BlwpCore.BombAlive(i)) bomb++;
+            Line($"Panzer   gruen {ab}  rot {ar}");
+            Line($"Soldaten gruen {ib}  rot {ir}");
+            Line($"Luft     {heli} Heli  {bomb} Bombe(n)");
         }
         if (field != null && truck != null)
         {
