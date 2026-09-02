@@ -520,11 +520,19 @@ is out of scope by assumption.
 
 **Commitment.** The bond output commits to `H(NodeAdvertisement)` either in
 an `OP_RETURN` output of the funding transaction or in the taproot script
-tree, plus an optional retrieval hint (URI). The body is served by the node,
-by mirrors, or by anyone — the hash makes retrieval trust-free. A body that
-cannot be retrieved by `census_height` excludes that node, and it excludes
-it for everyone identically, because the hash is public and the content is
-missing for all.
+tree. The body itself travels in the witness of the same transaction
+(§25.1), so it is retrievable by anyone with the chain and there is nothing
+to serve and nothing to keep running. A body that is absent excludes that
+node, and excludes it for everyone identically.
+
+**Findability.** Every bond funding transaction MUST also pay a dust output
+to `BOND_MARKER`, one address fixed by this protocol and shared by all
+bonds. Without it the census is unfindable in practice: a P2TR output is a
+32-byte key indistinguishable from any other, and BIP158 compact filters
+exclude `OP_RETURN`, so nothing in the transaction would be searchable. One
+marked output makes every bond discoverable by any light client, at the
+cost of one dust output and the privacy of being recognisable as a bond -
+which the published advertisement gives up regardless.
 
 **What this costs.** A node cannot join the census instantly: it must fund a
 bond and wait for confirmations. That is intended — the delay is what makes
@@ -1893,121 +1901,109 @@ stake to the Entry Contract via `payment_hash`, not via wallet permissions.
 
 # 25. Lobby and discovery
 
-Discovery is not authoritative: project website, community sites, Nostr, a
-direct round link, a QR code, or a copied `round_id`. A lobby may hide a
-round from its UI; it cannot make a valid round invalid, and a player with
-the Round Contract can always connect directly.
+Finding a ROUND is not authoritative: project website, community sites, a
+direct link, a QR code, or a copied `round_id`. A lobby may hide a round
+from its UI; it cannot make a valid round invalid, and a player with the
+Round Contract can always connect directly.
 
-## 25.1 Nostr as a discovery transport *(new)*
+Finding the NODES is a different matter and is not left open: it is chain
+state, and §25.1 says exactly how.
 
-Nostr is named above as one option among several. This section makes it a
-specified one, because it is a good fit for a narrow and stateable reason:
-**a relay can withhold, it cannot lie.**
+## 25.1 Discovery is chain state *(new)*
 
-The census is chain state (§5A.2) and the advertisement body is committed
-to by hash, so nothing a relay serves is believed on its own account. A
-client verifies everything it receives against the bond output before it
-means anything. That is exactly the threat model Nostr's weak guarantees
-suit — and exactly why the same transport must not carry anything the
-protocol's security rests on.
+A client finds nodes by reading Bitcoin. There is no directory, no relay
+network and no seed list belonging to this protocol.
 
-### What is published
+| # | Step | Answered by |
+|---|---|---|
+| 1 | Find a round | link, QR, copied `round_id`, a lobby - carries nothing |
+| 2 | Which nodes count? | Bitcoin: bond outputs confirmed and unspent at `census_height` |
+| 3 | Which are on the committee? | arithmetic: census roots + `round_id` + the beacon value at `committee_time` |
+| 4 | Where do I reach them? | the NodeAdvertisement, carried by the bond funding transaction |
 
-Two event kinds. Both are signed by `node_pubkey`, or by a Nostr key the
-advertisement attests to; implementations SHOULD use the former, because a
-second key is a second thing to lose.
+Then connect `wss://` to the `endpoint` from the verified advertisement.
+
+Steps 2 and 3 are computed, not fetched: there is nothing for anyone to
+withhold or forge. Step 4 is read from the same transaction that answered
+step 2.
+
+### Finding the bonds at all
+
+A P2TR output is a 32-byte key and looks like every other one, so a bond
+cannot be recognised from its output - the privacy property of §5A.3B is a
+discovery problem. `OP_RETURN` does not help either: BIP158 compact filters
+exclude it.
+
+> **Every bond funding transaction MUST pay a dust output to
+> `BOND_MARKER`, a single address fixed by this protocol.**
+
+One address for every bond, so it appears in the compact filters and any
+light client can find every bond that has ever existed without asking
+anyone. It costs one dust output, once. It gives up the privacy of *being*
+a bond, which the advertisement gives up anyway.
+
+### The advertisement travels with the bond
+
+The body of §5A.1 is carried in the witness of the funding transaction, and
+the bond output commits to `H(NodeAdvertisement)` as before. Step 4
+therefore needs nothing external: the transaction that proves the bond also
+carries the address.
+
+**What this costs.** The endpoint is fixed for the life of the bond. A
+server move, a new host or a changed IP means a new funding transaction and
+new confirmations, during which the node is unreachable although its bond
+still stands. That is the price of having no external dependency, and the
+two cannot both be had: anything that makes an address cheap to change is
+something outside the chain that must be running.
+
+Nodes are therefore expected to have stable addresses. An operator who
+cannot promise one should not run a node.
+
+### What a browser actually does
+
+Downloading compact filters for years of blocks is hundreds of megabytes,
+which a browser will not do. A browser is given a list - by whoever it
+likes - and **verifies** it:
 
 ```text
-NODE_ADVERTISEMENT      parameterized replaceable, d = node_pubkey
-  content   the NodeAdvertisement body of §5A.1, verbatim
-  tags      bond_outpoint     MANDATORY - without it the event cannot be
-                              checked against the chain and is inert
-            roles             game_verify | settlement | both
-            region, capacity_class, protocol_version
-                              so a client can filter without fetching all
-
-ROUND_ANNOUNCEMENT      regular event
-  content   round_id and the Round Contract hash
-  tags      census_height, committee_time, start_time
+block headers          from several independent sources, most work wins
+                       80 bytes a block; under 4 MB for all of history,
+                       far less from a checkpoint
+bond transaction       plus a merkle proof, from any chain API
+verify                 proof against header, H(advertisement) against the
+                       bond output's commitment
 ```
 
-Replaceable, so a new advertisement supersedes the old one and relays keep
-one per node rather than a history nobody reads.
-
-### What this is for, and what it is not
-
-It serves §5A.2's "the body is served by the node, by mirrors, or by
-anyone". Distributing the body over relays makes the failure it describes -
-*a body that cannot be retrieved by `census_height` excludes that node* -
-substantially less likely. That is an availability gain, not a security
-one, at a place where unavailability costs an operator money.
-
-It MUST NOT carry anything time-critical or anything the protocol depends
-on: input batches, checkpoints, result signatures, payout tables and
-committee selection all travel over the direct WebSocket to the node.
-Relays have no delivery guarantee, no ordering, and drop events at their
-own discretion.
-
-### What it does not solve
-
-Relay discovery is itself a bootstrap: *which relays?* The normal answer -
-a small hardcoded set plus NIP-65 relay lists - moves the problem without
-removing it. It is a real improvement and should be described as one
-rather than more: "one website must exist" becomes "one of a set must
-exist, and the set can be extended without anyone's permission". A client
-that finds no relay and has no direct `round_id` cannot start.
-
-> **Why specify it at all, if it carries nothing?** Because the
-> alternative is every client inventing its own, and a discovery layer that
-> differs per client is one more thing that makes two players see different
-> rounds. Nothing is lost by fixing the shape of an advisory channel.
-
-## 25.1.1 Discovery in four steps *(new)*
-
-| # | Step | Answered by | Nostr? |
-|---|---|---|---|
-| 1 | Find a round | link, QR, copied `round_id`, a lobby | **optional** - one of several, carries nothing |
-| 2 | Which nodes count? | Bitcoin: bond outputs confirmed and unspent at `census_height` | **no** - the census is chain state (§5A.2) |
-| 3 | Which are on the committee? | arithmetic: census roots + `round_id` + the beacon value at `committee_time` | **no** - a pure function, nothing to ask anyone |
-| 4 | Where do I reach them? | the NodeAdvertisement body, verified against `H(body)` in the bond output | **yes** - this is the retrieval layer |
-
-Then connect `wss://` to the `endpoint` from the **verified** body.
-
-> **Bitcoin says which nodes count. Nostr only says where they are.**
-
-That is the whole reason a weak channel is acceptable at step 4 and would
-not be at steps 2 or 3. A relay can withhold an advertisement - the client
-asks another - but it cannot forge one, because the hash comparison fails.
-At steps 2 and 3 there is nothing to withhold or forge: both are computed,
-not fetched.
-
-**The open dependency.** Step 2 requires a view of the chain. A node of
-one's own, or headers plus an inclusion proof, or an API - and the last
-moves the trust rather than removing it: whoever controls that API controls
-which census the client sees, and therefore which committee it believes.
-Neutrino/BIP157 is the direction; in a browser it is a project of its own.
+A list provider can then **omit** but not **forge**, and omission is
+answered by asking a second one. This is the difference between using a
+provider and trusting one, and it is a few hundred lines: built in from the
+start it stays; retrofitted it never happens, because by then it works and
+nobody touches it.
 
 ## 25.2 Which channel carries what *(new)*
 
 ```text
-node advertisements, round announcements     Nostr
+node advertisements                          Bitcoin (§25.1)
+round announcements                          any channel; carries nothing
 player -> node: inputs, checkpoints          direct WebSocket
 node <-> node: FROST, VSS, result assembly   direct, between endpoints
-equivocation proofs, objections, receipt     BOTH
-  gossip
+equivocation proofs, objections, receipt     direct, AND any public
+  gossip                                       broadcast channel
 ```
 
 The split is by **delivery guarantee**, not by convenience. Relays have
 none, no ordering, and drop events at their own discretion. A missed FROST
 round is a failed settlement, not a delay.
 
-**Why accusations go both ways.** An equivocation proof is two conflicting
+**Why accusations go two ways.** An equivocation proof is two conflicting
 signed checkpoints - self-verifying, portable, no replay needed (§13B) - so
 it needs no trusted channel, only *some* channel. But it has a deadline
 (the objection window) and it accuses somebody. Sent only peer to peer, it
 may travel through the party it accuses, or through that party's siblings
-under a shared `operator_id` (§5A.13). Publishing to independent relays as
-well removes that, and the direct path keeps it inside the window.
+under a shared `operator_id` (§5A.13). It MUST therefore also go somewhere
+public that the accused does not control. This protocol does not specify
+which channel: the proof carries its own verification, so any will do, and
+naming one would make it infrastructure.
 
 > Direct is fast and bounded; public is censorship-resistant. A proof that
 > is both accusing and time-limited needs both.
@@ -2039,12 +2035,12 @@ to `H(NodeAdvertisement)` (§5A.2) and the advertisement contains
 entry until a new commitment confirms. A server move, a hosting change or
 a new IP therefore costs confirmation time and possibly a round.
 
-The fix is to commit to something stable that *carries* the address rather
-than to the address: the advertisement's replaceable Nostr event (§25.1)
-already holds the current `endpoint`, so the bond can commit to the key
-and the move becomes a republish rather than a new funding transaction.
-Implementations SHOULD prefer this. Committing directly to a literal
-endpoint is permitted and is a choice to run a node that cannot move.
+There is no way around this that does not reintroduce a dependency.
+Committing to something that merely *carries* the address - a name, a
+record, a relay - means that thing must be running for the node to be
+reachable, and it is exactly the external service §25.1 exists to avoid.
+The address is therefore committed directly, and running a node is a
+commitment to a stable address.
 
 ---
 
