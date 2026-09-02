@@ -3175,13 +3175,25 @@ and a replay that cannot be reproduced cannot settle money.
 |---|---|---|---|---|---|---|
 | DESIGN | 30% | >50% | 1008 | 1440 | 2016 | ~31 d |
 | MONEY | 40% | ≥66% | 1008 | 1440 | 2016 | ~31 d |
-| **UPGRADE** | **60%** | **≥80%** | **4032** | **4032** | **8064** | **~112 d** |
+| **UPGRADE** | **60%** | **≥80%** | **2016** | **2016** | **4320** | **~58 d** |
 
 A hard fork can change anything, including the thresholds that would govern
-the next one, so it carries the highest bar the network has and takes a
-season to happen. Four weeks of review before a single vote counts is the
-point: the review window is where an upgrade is found to be broken, and an
-upgrade is the change most able to be broken.
+the next one, so it carries the highest bar the network has - but the bar is
+the **threshold**, not the calendar. Waiting longer does not make an upgrade
+safer; it makes upgrading rare enough that the network stops being able to
+fix itself, which is its own failure mode.
+
+**Scrutiny is 28 days, not 14.** Votes may be changed until the window
+closes (last vote by height wins, §27A.7.3), so a defect found on day 25 can
+still flip an approval that was already cast. The review phase only decides
+when counting *starts*; it never stops being possible to react.
+
+**The 30-day cooldown is the one number that is not a preference.** It is at
+least `bond_maturity`, so an operator who rejects the fork can let their bond
+mature and be entirely out **before activation** - not stuck holding locked
+capital in a network they refused. Shortening the cooldown below
+`bond_maturity` would make dissent cost money, which is precisely what
+§27A.8.3 exists to prevent.
 
 ### 27A.8.3 Bonds cross, but only if their operator says so
 
