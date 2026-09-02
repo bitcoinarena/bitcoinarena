@@ -67,6 +67,12 @@ public class TruckHealthTests
               "of the log.")]
     public IEnumerator MeasureTheTwoTruckHealths()
     {
+        // Through the real control path with the keyboard swapped out.
+        // `externalThrottle` on its own does nothing, and the first run of
+        // this measurement proved it: the truck sat at x = -100.4 for sixty
+        // seconds and reported a tidy zero for everything, which is a null
+        // result from a test that could not have fired.
+        _truck.useExternalInput = true;
         _truck.externalThrottle = 1f;
 
         float coreZero = -1f, gameZero = -1f, stateAt = -1f;
@@ -96,6 +102,110 @@ public class TruckHealthTests
             "kein Core in diesem Lauf - BlwpCore ist ausserhalb von WebGL gestubbt, " +
             "die core-Spalte ist dann durchgehend 0 und vergleicht nichts");
         Assert.Greater(Blwp.BlwpCore.Tick, 600, "der Lauf ist gar nicht angelaufen");
+    }
+
+    /// <summary>
+    /// What `RunOver` and `ClearPath` are actually worth, before (e) deletes
+    /// the file they live in.
+    ///
+    /// Both are outcomes the PLAYER produces and neither has a rule in the
+    /// core: driving over riflemen above 2.5 m/s kills them
+    /// (`Battlefield.cs:144`, radius 3.6), and infantry are eased out of the
+    /// truck's corridor so nobody is left standing in the cab
+    /// (`Battlefield.cs:153`, halfWidth 7.5, ahead 26). After (e) they either
+    /// vanish from the game or stay in C#, and both of those break the law -
+    /// so the port has to be sized first, and it cannot be sized afterwards
+    /// because `Army.cs` is gone by then.
+    ///
+    /// `Battlefield.RunDown` already counts the kills, so nothing in the game
+    /// is touched to read it. The corridor census is computed here from
+    /// `Army.Infantry` and the truck's transform, which is what `ClearPath`
+    /// itself looks at.
+    ///
+    /// Measurement, not an assertion. Watch the speed column: `Battlefield`
+    /// takes it from the CORE when the core is driving and from a kinematic
+    /// Rigidbody otherwise, and a kinematic body reports zero - so a run with
+    /// no core can report no run-overs for a reason that has nothing to do
+    /// with the rule.
+    /// </summary>
+    [UnityTest]
+    [Explicit("Measurement, not an assertion. Read the RUNOVER lines out of " +
+              "the log.")]
+    public IEnumerator MeasureRunOverAndClearPath()
+    {
+        // Through the real control path with the keyboard swapped out.
+        // `externalThrottle` on its own does nothing, and the first run of
+        // this measurement proved it: the truck sat at x = -100.4 for sixty
+        // seconds and reported a tidy zero for everything, which is a null
+        // result from a test that could not have fired.
+        _truck.useExternalInput = true;
+        _truck.externalThrottle = 1f;
+        var army = _field.Army;
+        var body = _truck.GetComponent<Rigidbody>();
+        var driver = _truck.GetComponent<Blwp.CoreDrivenTruck>();
+
+        Debug.Log($"RUNOVER RUN coreAvailable={Blwp.BlwpCore.Available} " +
+                  $"driving={(driver != null && driver.Driving)} " +
+                  $"kinematic={(body != null && body.isKinematic)}");
+
+        int corridorPeak = 0, insidePeak = 0, samples = 0;
+        long corridorSum = 0;
+        for (int i = 1; i <= 120; i++)
+        {
+            // Steered at the nearest living rifleman rather than driven
+            // straight. Straight ahead the truck crossed the whole map at
+            // 20 m/s with `corridor` at zero the entire way - it simply never
+            // met anybody, and a rule cannot be sized on a route that misses
+            // it. This is the upper bound the port has to cover: what the
+            // rule is worth to a player who drives AT the infantry.
+            {
+                var here = _truck.transform.position;
+                float best = float.MaxValue; float bx = 0f, bz = 0f;
+                foreach (var u in army.Infantry)
+                {
+                    if (u.hp <= 0f) continue;
+                    float d = (u.x - here.x) * (u.x - here.x) + (u.z - here.z) * (u.z - here.z);
+                    if (d < best) { best = d; bx = u.x; bz = u.z; }
+                }
+                if (best < float.MaxValue)
+                {
+                    float want = Mathf.Atan2(bx - here.x, bz - here.z) * Mathf.Rad2Deg;
+                    float err = Mathf.DeltaAngle(_truck.transform.eulerAngles.y, want);
+                    _truck.externalSteer = Mathf.Clamp(err / 30f, -1f, 1f);
+                }
+            }
+
+            yield return new WaitForSeconds(0.5f);
+            var p = _truck.transform.position;
+            float heading = _truck.transform.eulerAngles.y * Mathf.Deg2Rad;
+            float dirX = Mathf.Sin(heading), dirZ = Mathf.Cos(heading);
+
+            int corridor = 0, inside = 0;
+            foreach (var u in army.Infantry)
+            {
+                if (u.hp <= 0f) continue;
+                float ox = u.x - p.x, oz = u.z - p.z;
+                float along = ox * dirX + oz * dirZ;
+                float across = -ox * dirZ + oz * dirX;
+                if (along > -4f && along < 26f && Mathf.Abs(across) < 8.3f) corridor++;
+                if (ox * ox + oz * oz < 3.6f * 3.6f) inside++;
+            }
+            corridorSum += corridor; samples++;
+            if (corridor > corridorPeak) corridorPeak = corridor;
+            if (inside > insidePeak) insidePeak = inside;
+
+            var v = driver != null && driver.Driving
+                ? Blwp.BlwpCore.Velocity
+                : (body != null ? body.linearVelocity : Vector3.zero);
+            Debug.Log($"RUNOVER t={i * 0.5f:0.0} runDown={_field.RunDown} " +
+                      $"speed={v.magnitude:0.00} corridor={corridor} within3.6m={inside} " +
+                      $"men={army.Infantry.Count} x={p.x:0.0} z={p.z:0.0}");
+        }
+
+        Debug.Log($"RUNOVER END runDown={_field.RunDown} corridorPeak={corridorPeak} " +
+                  $"corridorMean={(samples > 0 ? corridorSum / (double)samples : 0):0.00} " +
+                  $"within3.6mPeak={insidePeak}");
+        Assert.Greater(samples, 0);
     }
 
     /// <summary>
