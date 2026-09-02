@@ -32,6 +32,7 @@
 import { readFileSync } from 'node:fs';
 import { init, step, teleport, UNITS } from '../src/sim.js';
 import * as L from '../src/state.js';
+import { pickTarget, RELOAD_MIN, RELOAD_SPAN, ARMOUR_RANGE } from '../src/rules/army.js';
 
 // The recording's courier pass is `air: "none"`, so this run must be too, or
 // it is not a pair - the same fault the depth pair was made of. The air is
@@ -72,6 +73,10 @@ const Q = 65536, q = (v) => v / Q, fx = (m) => Math.round(m * Q);
 // reload-band write by a man that close is a shot at the truck and not at a
 // foe. The bands do not meet.
 const TANK_CLOCK = [40, 99], RIFLE_CLOCK = [150, 269];
+// The tank's GUN reload, which is the clock the courier will have to share
+// once (j) puts the target choice inside it. It lives in U_TARGET, not
+// U_COOLDOWN - the armour's private courier weapon is the one in U_COOLDOWN.
+const GUN_CLOCK = [RELOAD_MIN, RELOAD_MIN + RELOAD_SPAN - 1];
 const isArmour = (i) => (i & 3) === 0;
 const T = L.O_TRUCK;
 
@@ -106,7 +111,10 @@ function measure(seed) {
   };
   let prev = cool();
   let hpWas = hp0;
-  const tally = { tank: 0, rifle: 0, ambiguous: 0, tankShots: 0, rifleShots: 0 };
+  const tally = { tank: 0, rifle: 0, ambiguous: 0, tankShots: 0, rifleShots: 0,
+                  gunShots: 0, engagedShots: 0, wouldCourier: 0, marginal: 0 };
+  const prevGun = [];
+  for (let i = 0; i < UNITS; i++) prevGun[i] = st.i32[L.unitBase(i) + L.U_TARGET];
   for (let f = 0; f < ref.setup.durationSeconds * 60; f++) {
     step(st, 0, 0, 0, 0, 0);
     holdAir(st);
@@ -122,6 +130,41 @@ function measure(seed) {
       else if (b.cool >= RIFLE_CLOCK[0]) rShots++;
     }
     tally.tankShots += tShots; tally.rifleShots += rShots;
+
+    // WHAT (j) WILL DO, measured on today's core before a rule line moves.
+    //
+    // After the rewrite a tank has ONE clock: it fires when pickTarget found a
+    // foe, and it aims at the truck instead only when the truck is inside
+    // CourierRange AND nearer than that foe (Army.cs:696-706, Heat at zero).
+    // Both halves are readable now - pickTarget is exported and pure, it draws
+    // nothing, and the truck is in the core's own words. So the courier shot
+    // count after (j) can be PREDICTED rather than estimated.
+    //
+    // Read at the end of the tick, where the rule reads it mid-loop: a tank
+    // moves at most 7 m/s, so a shot within a tenth of a metre of the 34 m
+    // gate could fall either way. Those are counted and printed as marginal.
+    const peek = (k) => {
+      const bb = L.unitBase(k);
+      return { x: st.i32[bb + L.U_X], z: st.i32[bb + L.U_Z], hp: st.i32[bb + L.U_HP],
+               side: st.i32[bb + L.U_SIDE], armour: isArmour(k) };
+    };
+    for (let i = 0; i < UNITS; i++) {
+      if (!isArmour(i)) continue;
+      const bb = L.unitBase(i);
+      const t = st.i32[bb + L.U_TARGET];
+      if (!(prevGun[i] <= 0 && t >= GUN_CLOCK[0] && t <= GUN_CLOCK[1])) continue;
+      tally.gunShots++;
+      const ux = st.i32[bb + L.U_X], uz = st.i32[bb + L.U_Z];
+      const foe = pickTarget(peek, UNITS, i, ux, uz, st.i32[bb + L.U_SIDE]);
+      if (foe < 0) continue;                       // not engaged: the C# would not fire
+      tally.engagedShots++;
+      const fb = L.unitBase(foe);
+      const cd = Math.hypot(q(ux) - tx0, q(uz) - tz0);
+      const fd = Math.hypot(q(ux - st.i32[fb + L.U_X]), q(uz - st.i32[fb + L.U_Z]));
+      if (cd < COURIER_RANGE && cd < fd) tally.wouldCourier++;
+      if (Math.abs(cd - COURIER_RANGE) < 0.5 || Math.abs(cd - fd) < 0.5) tally.marginal++;
+    }
+    for (let i = 0; i < UNITS; i++) prevGun[i] = st.i32[L.unitBase(i) + L.U_TARGET];
     const landed = q(hpWas - st.i32[T + L.T_HP]);
     hpWas = st.i32[T + L.T_HP];
     if (landed > 0) {
@@ -179,5 +222,18 @@ for (const seed of SEEDS) {
                 `   ambiguous ${last.ambiguous.toFixed(2)}`);
     console.log('COURIER    ambiguous means both weapons fired in the same tick and the point');
     console.log('COURIER    cannot be attributed from outside. It is printed, not apportioned.');
+    console.log('');
+    console.log('COURIER  WHAT (j) WILL DO, predicted from today\'s core, no rule moved');
+    console.log(`COURIER    tank GUN shots this round                 ${last.gunShots}`);
+    console.log(`COURIER      of them with a foe inside ${q(ARMOUR_RANGE)} m       ${last.engagedShots}` +
+                '   (the C# fires only when engaged)');
+    console.log(`COURIER      of THOSE, truck inside ${COURIER_RANGE} m and nearer  ${last.wouldCourier}` +
+                `   <- predicted courier shots`);
+    console.log(`COURIER      marginal, within 0.5 m of either gate   ${last.marginal}`);
+    const hits = last.wouldCourier * 0.55, pts = hits * 8;
+    console.log(`COURIER    at the gun's 0.55 roll that is ${hits.toFixed(1)} hits, and at Rand(5,11)`);
+    console.log(`COURIER    averaging 8 points, about ${pts.toFixed(0)} points - against the recording's`);
+    console.log('COURIER    163 hits and 1271.7. THAT is the number the rewrite is held to;');
+    console.log('COURIER    the rest of the gap is presence, and is not the rewrite\'s to close.');
   }
 }
