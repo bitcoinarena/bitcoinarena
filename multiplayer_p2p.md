@@ -2319,12 +2319,54 @@ session_cap_sats  <=  min(bond of each session-committee node) / K
 with `K` the §5A.10 safety factor. A session that cannot be capped this way
 is not opened.
 
-### The session committee
+### Who holds it — and why the player does not choose
 
 Drawn at session open by the ordinary bond-weighted sortition (§5A.6) from
-the settlement pool, and it holds for the session's life rather than the
-round's. Rounds keep their own per-round committees for everything else -
-this committee does one job, which is to hold a number.
+the settlement pool, holding for the session's life rather than the round's.
+Rounds keep their own per-round committees for everything else; this
+committee does one job, which is to hold a number.
+
+**The player does not pick, and this is not a UX omission.** Three reasons,
+and the second is the one that decides it:
+
+1. **A pick-list is a security decision the player cannot make.** Asked
+   which of three hundred nodes should hold their money, a player picks the
+   top of the list — so list order becomes the custody decision, and whoever
+   controls the ordering controls the float. That failure is well known and
+   there is no reason to rebuild it.
+
+2. **Choice defeats the bound.** `session_cap ≤ min bond / K` bounds *one*
+   session. Sortition spreads sessions across the census, so a node's total
+   float stays near its share of the network. Choice concentrates instead —
+   and popularity is cheap to manufacture with a good UI and a low fee. The
+   most-chosen node ends up holding many multiples of its own bond, and
+   every individual session is still inside its cap while the aggregate is
+   far outside it.
+
+3. **Sortition is already the network's answer to "who?"** Committees are
+   drawn, never selected, everywhere else in this protocol. A second
+   mechanism for the one case that touches custody would be the wrong place
+   to make an exception.
+
+**The aggregate cap, which is the one that actually binds:**
+
+```text
+sum(open session balances at a node)  <=  bond / K
+```
+
+Per-session capping alone is insufficient and stating only that would have
+been a real hole. A node at its float ceiling MUST decline new sessions and
+say so, which self-limits exposure without anyone having to notice it
+happening.
+
+**What the player does choose** is binary: whether to use a balance at all,
+or pay per round (§24A.1) and have no custody. That is the choice worth
+giving them, and it is the only one they can evaluate.
+
+A client MAY carry a **deny-list** — refusing specific nodes is safe where
+picking them is not, because refusal cannot concentrate float. But if
+exclusions narrow the pool below `census_min_nodes`, no session opens: a
+deny-list must not become a pick-list by elimination.
 
 ### The signed balance receipt
 
