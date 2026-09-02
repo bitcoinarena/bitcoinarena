@@ -236,7 +236,7 @@ public class TruckHealthTests
     /// input from the player at all.
     /// </summary>
     [UnityTest]
-    public IEnumerator NothingCanHurtTheTruckWhileTheBayIsOpen()
+    public IEnumerator ACoreWriteOffIsShownWhileTheBayIsOpen()
     {
         var ui = Object.FindFirstObjectByType<LoadoutPanel>();
         ui.Open();
@@ -251,16 +251,30 @@ public class TruckHealthTests
         Assert.IsTrue(_health.IsInvulnerable,
             "der Schutz faellt weg, obwohl der Spieler noch auswaehlt");
 
-        // `Damage` is gone: the core owns condition and this class only shows it.
-        // What these two assert is that a protected truck refuses to be WRITTEN
-        // OFF, which needs no damage API at all.
-        _health.WriteOff();
-        yield return null;
-
-        Assert.IsFalse(_health.IsDestroyed,
-            "der Truck wurde zerstoert, waehrend die Rampe offen war");
+        // Nothing in C# hurts the truck: `Damage` is gone and this class only
+        // shows what the core says.
         Assert.AreEqual(1f, _health.Fraction, 0.001f,
             "der Truck hat waehrend der Auswahl Schaden genommen");
+
+        // AND C# DOES NOT REFUSE THE CORE'S VERDICT. This used to call
+        // `WriteOff` and assert that a protected truck refused it - which was
+        // the veto itself, written down as a test. Measured in a browser with
+        // the same injection, run 0 -> 2 and `T_HP` 100 -> 0 forced in the
+        // core: the road showed WASTED, the apron with the bay open showed an
+        // intact truck. Two engines disagreeing about whether the run is over.
+        //
+        // The promise this test was named for - choosing freight is not a way
+        // to die - is not deleted, it is moved to the engine that owns damage:
+        // `practice shields the truck in the core, not in the client` in
+        // packages/core. The apron itself is a listed core gap and is now
+        // reachable; see PRIORITIES.
+        _health.ApplySnapshot(0f, true);
+        yield return null;
+
+        Assert.IsTrue(_health.IsDestroyed,
+            "C# hat ein Wrack abgelehnt, das der Core schon gesetzt hatte");
+        Assert.AreEqual(0f, _health.Fraction, 0.001f,
+            "der Zustand folgt dem Core nicht");
     }
 
     [UnityTearDown]
@@ -334,19 +348,21 @@ public class TruckHealthTests
     }
 
     [UnityTest]
-    public IEnumerator TheTruckIsProtectedOnTheApron()
+    public IEnumerator TheApronDoesNotOverruleTheCore()
     {
         Assert.IsTrue(_health.IsInvulnerable, "der Truck ist am Spawn nicht geschuetzt");
+        Assert.AreEqual(1f, _health.Fraction, 0.001f, "er nimmt am Spawn Schaden");
 
-        // No army line any more: `CourierHit` was the C# army's event and no
-        // C# army runs. What this asserts needs none - a protected truck
-        // refuses to be written off, and that is checked directly.
-        _health.WriteOff();
+        // The write-off is the CORE's to make, and C# shows it. This asserted
+        // the opposite - that a protected truck refuses one - and that refusal
+        // was a second gate over an M1 outcome. Where the truck may be hurt is
+        // a rule about damage and belongs in `sim.js`, which is where the
+        // practice shield already is.
+        _health.ApplySnapshot(0f, true);
         yield return null;
 
-        Assert.IsFalse(_health.IsDestroyed,
-            "der Truck kann am Spawn zerstoert werden - genau das ist die Todesschleife");
-        Assert.AreEqual(1f, _health.Fraction, 0.001f, "er nimmt am Spawn Schaden");
+        Assert.IsTrue(_health.IsDestroyed,
+            "C# hat am Spawn ein Wrack abgelehnt, das der Core gesetzt hatte");
     }
 
     [UnityTest]

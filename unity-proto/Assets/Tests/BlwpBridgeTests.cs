@@ -241,12 +241,16 @@ public class PracticeModeTests
         Blwp.PracticeMode.On = true;
         Assert.IsTrue(health.IsInvulnerable, "practice did not reach TruckHealth");
 
-        // `Damage` is gone: the core owns condition and this class only shows it.
-        // What these two assert is that a protected truck refuses to be WRITTEN
-        // OFF, which needs no damage API at all.
-        health.WriteOff();
+        // What practice actually shields is the fire, and it does that in the
+        // core: `practice shields the truck in the core, not in the client`
+        // drives the whole field on three seeds and ends at full condition.
+        // This used to assert that a practising truck refuses a write-off,
+        // which was C# vetoing an outcome the core had already decided - the
+        // road showed WASTED and the apron did not, on identical core state.
+        health.ApplySnapshot(0f, true);
         yield return null;
-        Assert.IsFalse(health.IsDestroyed, "the truck was destroyed while practising");
+        Assert.IsTrue(health.IsDestroyed,
+                      "C# refused a write-off the core had already made");
 
         foreach (var go in Object.FindObjectsByType<GameObject>(FindObjectsSortMode.None))
             if (go.transform.parent == null) Object.Destroy(go);

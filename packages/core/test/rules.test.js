@@ -13,7 +13,7 @@ import { init, step, restart, runScore, setGround, setSolids, groundAt, HALF_X }
 // had to be found - which is the same drift that let `T_IMPACT` and
 // `S_EXPOSURE` share word 17 in the first place.
 import {
-  hash, WORDS, O_AIR, AIR_BULL, AIR_BEAR,
+  hash, WORDS, O_AIR, AIR_BULL, AIR_BEAR, S_PRACTICE as L_S_PRACTICE,
   O_TRUCK, T_X, T_Z, T_HP, O_SCORE, S_EXPOSURE, S_ELAPSED, S_BESTX, S_STATE,
   O_UNITS, U_WORDS, U_X, U_Z, U_HP, U_STATE,
 } from '../src/state.js';
@@ -1292,4 +1292,27 @@ test('a second round starts where the first one did', () => {
   }
   assert.equal(hash(second), hash(first),
     'the second round diverges from the first on identical inputs');
+});
+
+test('practice shields the truck in the core, not in the client', () => {
+  // What `TruckHealth.IsInvulnerable` used to guarantee, asserted where the
+  // guarantee actually lives. C# read that flag a second time, AFTER the core
+  // had already decided, and refused a write-off the core had made: the same
+  // injection in a browser showed WASTED on the road and an intact truck on
+  // the apron. The veto is gone, so what stands behind it is stated here.
+  //
+  // Practice holds on every seed. The apron does NOT, and this test does not
+  // pretend otherwise - see the note in PRIORITIES: parked in the bay with
+  // live fire, seed 13572468 starts losing condition at tick 812 and ends
+  // thirty seconds at 96.2. That is a core gap and it is now reachable,
+  // which is a reason to close it in the core, not to keep a second gate in
+  // C# that hid it.
+  for (const seed of [0x5eed1234, 0xabcdef01, 0x13572468]) {
+    const shielded = init(seed);
+    for (let f = 0; f < 1800; f++) step(shielded, ONE, 0, 0, 0, 1);
+    assert.equal(shielded.i32[O_TRUCK + T_HP], Math.imul(100, ONE),
+      `seed ${seed.toString(16)}: practice did not shield the truck in the core`);
+    assert.equal(shielded.i32[O_SCORE + L_S_PRACTICE], 1,
+      `seed ${seed.toString(16)}: the practice flag was not recorded in the hashed state`);
+  }
 });

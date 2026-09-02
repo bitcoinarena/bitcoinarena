@@ -136,13 +136,51 @@ public class TruckHealth : MonoBehaviour
         EnsureInit();
         Health = Mathf.Clamp(health, 0f, maxHealth);
         if (Health < maxHealth) LastHitAt = Time.unscaledTime;
-        if (wrecked && !IsDestroyed) WriteOff();
+
+        // The core's word, applied ONCE per write-off.
+        //
+        // `outcome` latches: RUN_WRECKED holds for every tick after the truck
+        // died, not just the one it died on. `IsDestroyed` is the burn timer,
+        // not the condition, so it lets go when the wreck has finished burning
+        // - and a level read here then exploded the truck again, and again,
+        // every time the respawn cleared the timer. The `IsInvulnerable` guard
+        // below used to hide that by refusing the write-off outright while the
+        // truck was back on the apron. That guard is gone, so the edge is
+        // stated instead of relied upon.
+        //
+        // The flag clears when the core says live again, which happens in one
+        // place: `restart`, at roll-out. Nothing in C# clears it, and nothing
+        // in C# refuses the wreck.
+        if (!wrecked) { _wroteOff = false; return; }
+        if (_wroteOff) return;
+        _wroteOff = true;
+        WriteOff();
     }
 
+    /// <summary>Whether the core's current RUN_WRECKED has already been shown.</summary>
+    bool _wroteOff;
+
+    /// <summary>
+    /// Show the truck as written off.
+    ///
+    /// NO `IsInvulnerable` HERE. It used to return early on it, which made
+    /// this a C# veto over one of M1's four outcomes: measured in a browser
+    /// with the same injection - run 0 -> 2 and `T_HP` 100 -> 0 forced in the
+    /// core, nothing else touched - the road showed WASTED and the apron with
+    /// the bay open showed an intact truck driving on. Two engines, one
+    /// disagreeing with the other about whether the run was over.
+    ///
+    /// Invulnerability is a rule about where damage HAPPENS, and that belongs
+    /// in the core, which already holds it: a truck parked in the bay takes
+    /// zero damage over thirty seconds on three seeds because the army never
+    /// reaches it, and practice withholds courier fire in `sim.js`. Applying
+    /// it a second time here, after the core has already decided, is not
+    /// protection - it is a second gate.
+    /// </summary>
     public void WriteOff()
     {
         EnsureInit();
-        if (IsDestroyed || IsInvulnerable) return;
+        if (IsDestroyed) return;
 
         Health = 0f;
         _burningFor = 0f;
@@ -250,7 +288,15 @@ public class TruckHealth : MonoBehaviour
         Health = maxHealth;
         _leftSpawn = false;              // protected again until it drives off
 
-        if (_rb != null) _rb.isKinematic = false;
+        // Kinematic stays kinematic while the core drives. `CoreDrivenTruck`
+        // makes the body kinematic once, in Start, and writes the transform
+        // from core state every frame; handing it back to PhysX here was a
+        // PhysX-era line, and it meant that after the first write-off the
+        // truck was a dynamic body being teleported sixty times a second for
+        // the rest of the session. Without a core, PhysX drives and gets it
+        // back, which is the editor's correct behaviour rather than a
+        // degraded one.
+        if (_rb != null) _rb.isKinematic = Blwp.BlwpCore.Available;
         if (truck != null)
         {
             truck.enabled = true;
