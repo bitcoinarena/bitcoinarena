@@ -2246,243 +2246,63 @@ A round is two minutes and a stake is 100 sats, so a player who sits down
 for half an hour signs fifteen payments. That is not a payments problem, it
 is the reason they stop playing.
 
-It splits into two costs that have different answers, and conflating them is
-how this ends up custodial for no reason:
+The fix is to remove the **approvals**, never the payments. Every round keeps
+its own hold invoice, its own `payment_hash` bound to its own Entry Contract,
+its own VSS-shared preimage and its own expiry refund (§23). What changes is
+only how often the player is interrupted.
 
-| Cost | Fix | Custody |
-|---|---|---|
-| **Fifteen wallet approvals** | one NWC budget (§24A.1) | **none** |
-| **Fifteen Lightning payments** | a session balance (§24A.2) | bounded, bonded |
+## 24A.1 Budgeted play
 
-Most of the annoyance is the first one, so it is solved first and without
-touching the trust model at all.
-
-## 24A.1 Budgeted play: one approval, still one payment per round
-
-Nostr Wallet Connect already carries a budget - "1000 sats per hour to this
-connection" - and that is exactly the shape needed. The player grants it
+Nostr Wallet Connect carries a budget — "1000 sats per hour to this
+connection" — and that is exactly the shape needed. The player grants it
 once; the client pays each round's hold invoice inside it; no approval
-screen appears again until the budget is spent.
+screen appears again until the budget is spent or its window closes.
 
-**Nothing about settlement changes.** Every round still gets its own hold
-invoice, its own `payment_hash` bound to its own Entry Contract, its own
-VSS-shared preimage and its own expiry refund (§23). No node ever holds a
-balance, because there is no balance - there are fifteen ordinary entries
-that happened not to interrupt anybody.
+**Nothing about settlement changes.** No node holds a balance, because there
+is no balance — there are fifteen ordinary entries that happened not to
+interrupt anybody.
 
 The caveat from §24 stands and matters more here, not less: **an NWC budget
 is wallet-side policy and encodes nothing about the round.** It bounds the
 loss if the client is compromised; it does not bind a payment to a contract.
-The binding is still `payment_hash` in the Entry Contract. So the client
-MUST show the running total and what it was spent on, and a budget MUST be
+The binding is still `payment_hash` in the Entry Contract. So a client MUST
+show the running total and what it was spent on, and a budget MUST be
 time-boxed rather than open-ended.
 
-This is the recommended path, and for a wallet that supports budgets it is
-the whole answer.
+## 24A.2 The payment surface, and all of it
 
-## 24A.2 Session balance — OPTIONAL, and NOT built for M3 or M4
+| Direction | Mechanism |
+|---|---|
+| Player pays a stake | BOLT11 hold invoice per round; NWC budget, QR, deep link or WebLN |
+| Player is paid a win | LNURL-withdraw, or a BOLT11 invoice the player supplies |
+| Donations are paid | LNURL per recipient, by share (§27A.4) |
 
-One payment of 1000 sats, ten rounds of 100. It requires somebody to hold
-the remainder between rounds, and §23 spent a chapter arranging for nobody
-to hold anything.
+Ordinary Lightning in both directions, one round at a time.
 
-### What actually changes, and it is not a matter of degree
+## 24A.3 What was considered and rejected: session balances
 
-§23 already concedes that five colluding operators control **in-transit**
-funds (§23.6). A session balance is a different claim, and the difference is
-not how long or how much:
+A single 1000 sat deposit spent across ten rounds was specified and then
+**removed**. It is recorded here so it is not re-invented as a new idea.
 
-| | during a round (§23) | session balance |
-|---|---|---|
-| Where the stake is | an unresolved HTLC | **settled — the money arrived** |
-| Player holds | a payment in flight | a signed promise |
-| Player is | a payer | a **creditor** |
-| If everyone stops cooperating | expiry refunds them | they must prove and slash |
-| Exposure | ~2 minutes | ~30 minutes |
+It required a committee to hold the remainder between rounds, and that is
+custody. Three properties killed it, in order of severity:
 
-The line that matters is the fourth row. Under §23 the default outcome of
-total failure is **the player gets their money back** — doing nothing
-refunds. Under a session balance the default outcome of total failure is **a
-claim**, and a claim is only worth the enforcement behind it.
+1. **No unilateral exit.** Once a deposit settles, the sats are inside the
+   committee's Lightning node — not in a script a timelock can open. An
+   on-chain escrow would give the player a real way out on their own, and
+   its closing fee exceeds a 100 sat stake. **The construction that fixes
+   it is unaffordable at exactly the size that needs it.**
+2. **Slashing is punishment, not restitution.** A committee that goes dark
+   leaves the player waiting. Slashing hurts the operator, returns no sats,
+   and shortens the wait by not one day.
+3. **It inverts the default.** Under §23, total failure refunds the player
+   by expiry — *doing nothing returns the money*. A settled balance requires
+   somebody to act. No cap, schedule or penalty converts one into the other,
+   because that is simply what "the payment settled" means.
 
-> **A session balance is custody.** It is acceptable only because it is
-> bounded, and because the party holding it has posted a bond worth
-> materially more than it can steal.
-
-That is the same argument as §5A.10's stake ceiling, applied to a balance
-instead of a pot, and it gives the cap directly:
-
-```text
-session_cap_sats  <=  min(bond of each session-committee node) / K
-```
-
-with `K` the §5A.10 safety factor. A session that cannot be capped this way
-is not opened.
-
-### Who holds it — and why the player does not choose
-
-Drawn at session open by the ordinary bond-weighted sortition (§5A.6) from
-the settlement pool, holding for the session's life rather than the round's.
-Rounds keep their own per-round committees for everything else; this
-committee does one job, which is to hold a number.
-
-**The player does not pick, and this is not a UX omission.** Three reasons,
-and the second is the one that decides it:
-
-1. **A pick-list is a security decision the player cannot make.** Asked
-   which of three hundred nodes should hold their money, a player picks the
-   top of the list — so list order becomes the custody decision, and whoever
-   controls the ordering controls the float. That failure is well known and
-   there is no reason to rebuild it.
-
-2. **Choice defeats the bound.** `session_cap ≤ min bond / K` bounds *one*
-   session. Sortition spreads sessions across the census, so a node's total
-   float stays near its share of the network. Choice concentrates instead —
-   and popularity is cheap to manufacture with a good UI and a low fee. The
-   most-chosen node ends up holding many multiples of its own bond, and
-   every individual session is still inside its cap while the aggregate is
-   far outside it.
-
-3. **Sortition is already the network's answer to "who?"** Committees are
-   drawn, never selected, everywhere else in this protocol. A second
-   mechanism for the one case that touches custody would be the wrong place
-   to make an exception.
-
-**The aggregate cap, which is the one that actually binds:**
-
-```text
-sum(open session balances at a node)  <=  bond / K
-```
-
-Per-session capping alone is insufficient and stating only that would have
-been a real hole. A node at its float ceiling MUST decline new sessions and
-say so, which self-limits exposure without anyone having to notice it
-happening.
-
-**What the player does choose** is binary: whether to use a balance at all,
-or pay per round (§24A.1) and have no custody. That is the choice worth
-giving them, and it is the only one they can evaluate.
-
-A client MAY carry a **deny-list** — refusing specific nodes is safe where
-picking them is not, because refusal cannot concentrate float. But if
-exclusions narrow the pool below `census_min_nodes`, no session opens: a
-deny-list must not become a pick-list by elimination.
-
-### The signed balance receipt
-
-After every round, the session committee threshold-signs the new balance and
-gives it to the player:
-
-```text
-balance_receipt {
-  session_id, network_id
-  round_id            the round just settled
-  sequence            strictly increasing
-  balance_sats
-  threshold signature
-}
-```
-
-This is the whole enforcement mechanism, and it is the reason the scheme is
-safe rather than merely small. A node that later denies the balance is
-contradicting its own signature, so the proof of theft is **one artifact the
-player already holds** - the same shape as every other slashing proof here
-(§13A). Refusing to sign a receipt is itself the offence, because a player
-with no receipt stops playing immediately and withdraws.
-
-### Outage, and the thing this design cannot fix
-
-**One node going offline must be a non-event**, and that is a matter of
-saying so: the session committee is `k`-of-`m` like every other committee
-here, withdrawal needs the threshold and not unanimity, and a single
-operator rebooting for six days is invisible to the player. A design where
-any one node can freeze a balance would be indefensible and is not what is
-specified.
-
-**Below threshold there is no good answer, and it should not be dressed up
-as one.** If enough of the committee is down at once, the player cannot
-reach their money and:
-
-> **Slashing is punishment, not restitution.** A slashed bond hurts the
-> operator. It does not hand the player their sats back, and it does not
-> shorten the wait by a day. A player locked out for six days has been
-> harmed whether or not somebody is punished for it afterwards.
-
-The reflex is a unilateral exit — a timelocked path the player can take
-alone, exactly like a node recovering its own bond after `bond_maturity`
-(§5A.3B), or like a channel force-close. **It does not exist here**, and the
-reason is structural rather than an omission:
-
-- Once the deposit has settled, the sats are **inside the committee's
-  Lightning node**. They are not in a script the player can spend, so there
-  is nothing for a timelock to unlock.
-- An on-chain escrow would give a real unilateral path — a P2TR output with
-  a cooperative key path and a player-only script after `session_timeout`,
-  the same shape as a bond. At a 1000 sat balance the closing fee is a
-  large fraction of the deposit, and at 100 sat stakes it exceeds it. The
-  construction that would fix this is unaffordable at exactly the size that
-  wants it.
-- Even `session_expiry` does not save it: expiry can only *oblige* the
-  committee to pay, it cannot pay by itself.
-
-This is the §23 comparison at its sharpest. **A hold invoice refunds by
-doing nothing; a settled balance requires somebody to act.** That is not a
-parameter to tune — it is what "the payment settled" means, and no schedule,
-cap or penalty converts one into the other.
-
-What can be done bounds the damage without removing it: a **short
-`session_expiry`** (an hour, not a day), so the most that can be stranded is
-one sitting's float; **liveness as an eligibility criterion** for the
-session pool, so committees are drawn from operators currently answering;
-and **immediate withdrawal of the whole balance** offered at the end of every
-round, making the resting balance as short-lived as the player wants.
-
-None of that is a substitute for being able to take your own money. It is
-the reason §24A.2 is optional and unbuilt.
-
-### Withdrawal, and expiry
-
-The player may withdraw the remaining balance at any time, to a Lightning
-invoice of their choosing. The committee MUST pay within `withdraw_window`;
-failing to, against a held receipt, is slashable.
-
-At `session_expiry` the balance is returned unprompted. Expiry is the
-default, exactly as with a hold invoice: **doing nothing refunds the
-player**, and every failure mode has to route through that.
-
-### What a session must never become
-
-- **No balance across sessions.** It expires, it is returned, it does not
-  accrue. A permanent balance is an account, and an account is a bank.
-- **No transfers between players.** That is an exchange, and it would make
-  every node a money transmitter for a convenience feature.
-- **No interest, no yield, no lending of the float.** The float exists for
-  minutes and belongs to the player.
-- **No credit.** A round is never entered against a balance that is not
-  already there.
-
-### Why it is specified and not built
-
-Written down because the pressure to add it will arrive, and it should
-arrive to a design with a bound and a receipt rather than to an improvisation
-under deadline. But the trade is bad on today's facts:
-
-- §24A.1 removes the approval fatigue, which is the actual complaint, at
-  **zero** cost to the trust model.
-- What remains is *only* wallets that cannot do budgets — a wallet feature
-  gap, which is likely to close on its own.
-- Paying for a temporary wallet limitation with a permanent protocol
-  property is the wrong direction. **Non-custodial is the product.**
-- And there is no unilateral exit at this size. A player whose committee
-  goes dark waits for it to come back, and slashing punishes the operator
-  without returning a single sat.
-
-So it is **optional, off by default, and per-node opt-in**, not part of M3 or
-M4. A node that offers it MUST declare it in its advertisement, and a client
-MUST show the player that this round's stake sits in a balance somebody else
-holds — the one thing that must never be the quiet default.
-
-Revisit only if budget-capable wallets stay rare after mainnet.
+The problem it was meant to solve — approval fatigue — is solved by §24A.1
+at zero cost to the trust model. **Paying for a wallet limitation with a
+permanent protocol property is the wrong trade.**
 
 ---
 
@@ -3610,6 +3430,10 @@ simplification was trying to avoid. Bond-weighted stateless sortition
 6. Results require 5-of-7 matching signatures.
 7. Settlement is a separate committee with a separate quorum.
 8. No single settlement node controls funds.
+9. **No node holds player funds between rounds.** Money is in flight during
+   a round and nowhere else. Session balances, deposits, wallets, credit and
+   any other resting float are out of scope permanently (§24A.3) — not
+   deferred, not optional, not behind a flag.
 9. No central internal player balance.
 10. `FINAL` losses cannot later become refunds due to an infrastructure attack.
 11. One public `blwp-node` package for all roles.
