@@ -2390,6 +2390,56 @@ player already holds** - the same shape as every other slashing proof here
 (§13A). Refusing to sign a receipt is itself the offence, because a player
 with no receipt stops playing immediately and withdraws.
 
+### Outage, and the thing this design cannot fix
+
+**One node going offline must be a non-event**, and that is a matter of
+saying so: the session committee is `k`-of-`m` like every other committee
+here, withdrawal needs the threshold and not unanimity, and a single
+operator rebooting for six days is invisible to the player. A design where
+any one node can freeze a balance would be indefensible and is not what is
+specified.
+
+**Below threshold there is no good answer, and it should not be dressed up
+as one.** If enough of the committee is down at once, the player cannot
+reach their money and:
+
+> **Slashing is punishment, not restitution.** A slashed bond hurts the
+> operator. It does not hand the player their sats back, and it does not
+> shorten the wait by a day. A player locked out for six days has been
+> harmed whether or not somebody is punished for it afterwards.
+
+The reflex is a unilateral exit — a timelocked path the player can take
+alone, exactly like a node recovering its own bond after `bond_maturity`
+(§5A.3B), or like a channel force-close. **It does not exist here**, and the
+reason is structural rather than an omission:
+
+- Once the deposit has settled, the sats are **inside the committee's
+  Lightning node**. They are not in a script the player can spend, so there
+  is nothing for a timelock to unlock.
+- An on-chain escrow would give a real unilateral path — a P2TR output with
+  a cooperative key path and a player-only script after `session_timeout`,
+  the same shape as a bond. At a 1000 sat balance the closing fee is a
+  large fraction of the deposit, and at 100 sat stakes it exceeds it. The
+  construction that would fix this is unaffordable at exactly the size that
+  wants it.
+- Even `session_expiry` does not save it: expiry can only *oblige* the
+  committee to pay, it cannot pay by itself.
+
+This is the §23 comparison at its sharpest. **A hold invoice refunds by
+doing nothing; a settled balance requires somebody to act.** That is not a
+parameter to tune — it is what "the payment settled" means, and no schedule,
+cap or penalty converts one into the other.
+
+What can be done bounds the damage without removing it: a **short
+`session_expiry`** (an hour, not a day), so the most that can be stranded is
+one sitting's float; **liveness as an eligibility criterion** for the
+session pool, so committees are drawn from operators currently answering;
+and **immediate withdrawal of the whole balance** offered at the end of every
+round, making the resting balance as short-lived as the player wants.
+
+None of that is a substitute for being able to take your own money. It is
+the reason §24A.2 is optional and unbuilt.
+
 ### Withdrawal, and expiry
 
 The player may withdraw the remaining balance at any time, to a Lightning
@@ -2423,6 +2473,9 @@ under deadline. But the trade is bad on today's facts:
   gap, which is likely to close on its own.
 - Paying for a temporary wallet limitation with a permanent protocol
   property is the wrong direction. **Non-custodial is the product.**
+- And there is no unilateral exit at this size. A player whose committee
+  goes dark waits for it to come back, and slashing punishes the operator
+  without returning a single sat.
 
 So it is **optional, off by default, and per-node opt-in**, not part of M3 or
 M4. A node that offers it MUST declare it in its advertisement, and a client
