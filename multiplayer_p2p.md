@@ -1962,6 +1962,31 @@ that finds no relay and has no direct `round_id` cannot start.
 > differs per client is one more thing that makes two players see different
 > rounds. Nothing is lost by fixing the shape of an advisory channel.
 
+## 25.1.1 Discovery in four steps *(new)*
+
+| # | Step | Answered by | Nostr? |
+|---|---|---|---|
+| 1 | Find a round | link, QR, copied `round_id`, a lobby | **optional** - one of several, carries nothing |
+| 2 | Which nodes count? | Bitcoin: bond outputs confirmed and unspent at `census_height` | **no** - the census is chain state (§5A.2) |
+| 3 | Which are on the committee? | arithmetic: census roots + `round_id` + the beacon value at `committee_time` | **no** - a pure function, nothing to ask anyone |
+| 4 | Where do I reach them? | the NodeAdvertisement body, verified against `H(body)` in the bond output | **yes** - this is the retrieval layer |
+
+Then connect `wss://` to the `endpoint` from the **verified** body.
+
+> **Bitcoin says which nodes count. Nostr only says where they are.**
+
+That is the whole reason a weak channel is acceptable at step 4 and would
+not be at steps 2 or 3. A relay can withhold an advertisement - the client
+asks another - but it cannot forge one, because the hash comparison fails.
+At steps 2 and 3 there is nothing to withhold or forge: both are computed,
+not fetched.
+
+**The open dependency.** Step 2 requires a view of the chain. A node of
+one's own, or headers plus an inclusion proof, or an API - and the last
+moves the trust rather than removing it: whoever controls that API controls
+which census the client sees, and therefore which committee it believes.
+Neutrino/BIP157 is the direction; in a browser it is a project of its own.
+
 ## 25.2 Which channel carries what *(new)*
 
 ```text
