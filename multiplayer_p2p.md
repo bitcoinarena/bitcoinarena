@@ -1251,8 +1251,12 @@ RoundContract {
 
   game_verify_slots = 7,  game_verify_threshold = 5
   settlement_slots  = 7,  settlement_threshold  = 5
+       // echoed for readability; MUST equal genesis_parameters (§27A.6),
+       // which network_id commits to. A contract disagreeing with the
+       // network it names is invalid, not a smaller committee.
 
-  node_fee_bps = 200
+  node_fee_bps = 200               // basis points of the round amount, so 2%
+  config_hash                      // the game_config this round runs (§27A.7.5)
   donation_bps_max = 10000         // protocol cap (v4.6)
 
   bond_min_game_verify
