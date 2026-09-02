@@ -114,7 +114,30 @@ const SQUAD_OFFSET = Math.imul(18, ONE);   // a rifleman: Army.Spawn's Rand(-9, 
 const TWO = Math.imul(2, ONE);
 
 const BACK_OFF_RANGE = Math.imul(24, ONE);
-const BACK_OFF = Math.imul(6, ONE);        // metres a second, away from the seam
+/**
+ * How much ground a crowded tank gives, and it is a DISTANCE.
+ *
+ * `StepArmour` says `goalZ = v.z - v.Dir * 6f` and then `speed *= 0.35f`. The
+ * six is a GOAL - a point six metres back - and the rate is the walk cut to a
+ * third. This line used to read `6 * ONE` and was spent as
+ * `dz = BACK_OFF * side * dt`, which is the six read as a SPEED: six metres a
+ * second, for as long as the crowding lasts, and squarely in z. Wrong unit and
+ * wrong component in one line.
+ *
+ * The fix is NOT to copy the number C# is left holding. Its backward rate is
+ * `0.35 * speed * 6/gl`, a leftover of steering at `foe.x` and at the seam in
+ * one vector - and that coupling was ported here once, measured, and reverted;
+ * the note on the lateral drift further down has the numbers. Reproducing a
+ * magnitude without its cause is the same mistake facing the other way.
+ *
+ * So this is stated in the core's own terms, which it can be because there is
+ * already a hold and a controller that walks to one: a crowded tank's hold
+ * moves six metres further back, it walks there at a third of its speed, and
+ * it STOPS. Bounded, in metres, no coupling - and unlike a velocity it cannot
+ * accumulate over a round.
+ */
+const BACK_OFF = Math.imul(6, ONE);             // metres of ground given
+const CROWD_WALK = mulFast(ARMOUR_WALK, 22938); // 0.35 * 6.8 m/s, StepArmour's cut
 const OVERRUN = Math.imul(14, ONE);
 
 export const SIDE_BULL = -1;
@@ -204,7 +227,12 @@ export function stepUnit(u, rng, seamZ, truckX, truckZ, halfX, halfZ, dt, index)
     // bomb in this core could ever catch men from both sides; the recording's
     // lines come within 4.7 m of each other. That floor was the whole of the
     // friendly-fire and dud-share gap the air arm was blamed for.
-    dz = mulFast(mulFast(BACK_OFF, Math.imul(side, ONE)), dt);
+    // Six metres further back than it would otherwise hold, walked to and then
+    // held - not a retreat that runs for as long as the crowding does.
+    const back = add(hold, Math.imul(side, BACK_OFF));
+    const g = sub(back, u.z);
+    const want = abs(g) > mulFast(CROWD_WALK, dt) ? (g > 0 ? ONE : -ONE) : 0;
+    dz = mulFast(mulFast(CROWD_WALK, want), dt);
   } else {
     const gap = sub(hold, u.z);
     const want = abs(gap) > mulFast(walk, dt) ? (gap > 0 ? ONE : -ONE) : 0;
