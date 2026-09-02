@@ -8,7 +8,15 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { init, step, runScore, setGround, setSolids, HALF_X } from '../src/sim.js';
-import { hash, O_AIR, AIR_BULL, AIR_BEAR } from '../src/state.js';
+// Offsets are IMPORTED, never typed. They were typed in nine places in this
+// file, and when the truck block grew its thirteenth word every one of them
+// had to be found - which is the same drift that let `T_IMPACT` and
+// `S_EXPOSURE` share word 17 in the first place.
+import {
+  hash, O_AIR, AIR_BULL, AIR_BEAR,
+  O_TRUCK, T_X, T_Z, T_HP, O_SCORE, S_EXPOSURE, S_ELAPSED, S_BESTX, S_STATE,
+  O_UNITS, U_WORDS, U_X, U_Z, U_HP, U_STATE,
+} from '../src/state.js';
 import * as scoring from '../src/rules/score.js';
 import * as gate from '../src/rules/gate.js';
 
@@ -32,7 +40,7 @@ const ONE = 65536;
  * clearing it once and hoping.
  */
 function clearTheField(st) {
-  const O_UNITS = 24, U_WORDS = 8, U_HP = 3, U_STATE = 5, UNITS = 96;
+  const UNITS = 96;
   for (let i = 0; i < UNITS; i++) {
     // HP AS WELL AS STATE, and that is not tidiness. The core is of two minds
     // about what "alive" means: `reinforce`, `fillArmour` and the crowding
@@ -46,8 +54,6 @@ function clearTheField(st) {
   }
 }
 
-const O_TRUCK = 5, T_X = 0, T_Z = 1, T_HP = 6;
-const O_SCORE = 17, S_EXPOSURE = 0, S_ELAPSED = 1, S_BESTX = 2, S_STATE = 5;
 
 /** One tick on an empty battlefield. See `clearTheField` for why every tick. */
 const stepAlone = (st, throttle, steer, brake) => {
@@ -520,7 +526,6 @@ test('a distant wall does not eject the truck', () => {
  */
 const parkedUnderFire = (seed, ticks) => {
   const Q = 65536, O = 5, T_X = 0, T_Z = 1, T_HP = 6;
-  const O_SCORE = 17, S_STATE = 5;
   const st = init(seed);
   const hold = () => {
     st.i32[O_AIR + AIR_BULL] = 1 << 30;
@@ -567,8 +572,6 @@ test('enough fire writes the truck off', () => {
  */
 test('crashing into armour costs condition, and hard enough writes it off', () => {
   const Q = 65536, O = 5, T_X = 0, T_Z = 1, T_HP = 6;
-  const O_UNITS = 24, U_WORDS = 8, U_X = 0, U_Z = 1, U_HP = 3, U_STATE = 5;
-  const O_SCORE = 17, S_STATE = 5;
 
   const driveInto = (ticks, throttle) => {
     const st = init(1);
@@ -601,7 +604,6 @@ test('crashing into armour costs condition, and hard enough writes it off', () =
 
 test('a truck at speed rides a rifleman down, and a crawling one does not', () => {
   const Q = 65536, O = 5, T_X = 0, T_Z = 1, T_VX = 3, T_VZ = 4;
-  const O_UNITS = 24, U_WORDS = 8, U_X = 0, U_Z = 1, U_HP = 3, U_STATE = 5;
 
   // Slot 1 is a rifleman: `isArmour(i)` is `(i & 3) === 0`.
   const run = (vx) => {
@@ -634,7 +636,6 @@ test('a truck at speed rides a rifleman down, and a crawling one does not', () =
 
 test('armour blocks the truck and infantry does not', () => {
   const Q = 65536, O = 5, T_X = 0, T_Z = 1, T_SPEED = 9;
-  const O_UNITS = 24, U_WORDS = 8, U_X = 0, U_Z = 1, U_HP = 3, U_STATE = 5;
 
   // A real unit of the core's own, not a list handed in from outside.
   //
@@ -707,7 +708,7 @@ test('the army closes at the pace the C# army closes', async () => {
   const ref = JSON.parse(
     await readFile(new URL('./vectors/csharp-army.json', import.meta.url), 'utf8'));
 
-  const Q = 65536, O_UNITS = 24, U_WORDS = 8, UNITS = 96;
+  const Q = 65536, UNITS = 96;
   const U_X = 0, U_Z = 1, U_SIDE = 2, U_STATE = 5;
 
   const st = init(1);
@@ -775,7 +776,7 @@ test('replacements keep both armies in contact for the whole round', async () =>
   const rec = ref.passes['core-size-reinforce'];
   const recAt = (t) => rec.density.find((d) => d.t === t);
 
-  const O_UNITS = 24, U_WORDS = 8, UNITS = 96, RANGE = 46;
+  const UNITS = 96, RANGE = 46;
   const U_X = 0, U_Z = 1, U_SIDE = 2, U_STATE = 5;
 
   const st = init(20260901);
@@ -853,6 +854,42 @@ test('replacements keep both armies in contact for the whole round', async () =>
  * itself. A rule that branched on the flag anywhere - in the army, the air,
  * the score - would show up here.
  */
+/**
+ * No two blocks share a word.
+ *
+ * They did. `O_TRUCK` was declared as twelve words while its fields ran 0..12,
+ * so `O_TRUCK + T_IMPACT` and `O_SCORE + S_EXPOSURE` were both word 17 and a
+ * contact hard enough to beat the exposure so far overwrote the run's score
+ * with a collision speed. Nothing caught it because the offsets were typed
+ * rather than derived, and the fields and the size could disagree in silence.
+ *
+ * This walks the blocks the offsets actually declare and asserts each field
+ * lands inside its own.
+ */
+test('no two blocks share a word', async () => {
+  const L = await import('../src/state.js');
+  const blocks = [
+    ['tick', L.O_TICK, 1],
+    ['rng', L.O_RNG, L.RNG_WORDS],
+    ['truck', L.O_TRUCK, L.TRUCK_WORDS],
+    ['score', L.O_SCORE, L.SCORE_WORDS],
+  ];
+  for (let i = 1; i < blocks.length; i++) {
+    const [pn, po, pw] = blocks[i - 1], [n, o] = blocks[i];
+    assert.ok(po + pw <= o, `${pn} runs to word ${po + pw - 1} and ${n} starts at ${o}`);
+  }
+
+  const widest = (prefix, block, size) => {
+    let top = -1, name = '';
+    for (const [k, v] of Object.entries(L))
+      if (k.startsWith(prefix) && typeof v === 'number' && v > top) { top = v; name = k; }
+    assert.ok(top < size,
+      `${name} is field ${top} of a ${size}-word ${block} block`);
+  };
+  widest('T_', 'truck', L.TRUCK_WORDS);
+  widest('S_', 'score', L.SCORE_WORDS);
+});
+
 test('nothing but the truck reads the practice flag', async () => {
   const { WORDS, O_SCORE, S_PRACTICE, O_TRUCK, T_X, T_Z, T_VX, T_VZ, T_HP } =
     await import('../src/state.js');

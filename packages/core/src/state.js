@@ -15,12 +15,24 @@ import { sha256hex } from './sha256.js';
 
 export const MAX_UNITS = 256;
 
-// word offsets into the Int32Array view
+// Word offsets into the Int32Array view.
+//
+// DERIVED FROM THE BLOCK SIZES, not typed, because typing them let two blocks
+// share a word for a long time without anybody noticing. The truck was
+// declared as twelve words while its fields ran 0..12 - thirteen - so
+// `O_TRUCK + T_IMPACT` and `O_SCORE + S_EXPOSURE` were both word 17, and every
+// contact hard enough to beat the exposure so far overwrote the run's score
+// with a collision speed. Written this way the sizes and the fields can only
+// disagree in one place, and `no two blocks share a word` in the tests checks
+// that they do not.
 export const O_TICK = 0;
-export const O_RNG = 1;          // 4 words
-export const O_TRUCK = 5;        // 12 words
-export const O_SCORE = 17;       // 6 words
-export const O_UNITS = 24;       // MAX_UNITS * U_WORDS
+export const O_RNG = 1;
+export const RNG_WORDS = 4;
+export const O_TRUCK = O_RNG + RNG_WORDS;
+export const TRUCK_WORDS = 13;   // fields 0..12, T_IMPACT included
+export const O_SCORE = O_TRUCK + TRUCK_WORDS;
+export const SCORE_WORDS = 7;   // fields 0..6, S_PRACTICE included
+export const O_UNITS = O_SCORE + SCORE_WORDS;   // MAX_UNITS * U_WORDS follow
 export const U_WORDS = 8;
 
 /**
