@@ -13,6 +13,7 @@ namespace Blwp
         public const int AIR_BEAR = 1;
         public const int AIR_BULL = 0;
         public const int AIR_WORDS = 2;
+        public const int ARMOUR_MASK = 3;
         public const int A_ARMOUR_BEAR = 1;
         public const int A_ARMOUR_BULL = 0;
         public const int A_RIFLE_BEAR = 3;
@@ -74,6 +75,7 @@ namespace Blwp
         public const int T_WHEEL = 9;
         public const int T_X = 0;
         public const int T_Z = 1;
+        public const int UNITS = 96;
         public const int U_COOLDOWN = 6;
         public const int U_HEADING = 4;
         public const int U_HP = 3;
@@ -91,5 +93,11 @@ namespace Blwp
 
         /// <summary>Base word offset of unit <paramref name="i"/>.</summary>
         public static int UnitBase(int i) => O_UNITS + i * U_WORDS;
+
+        /// <summary>Base word offset of helicopter <paramref name="i"/>.</summary>
+        public static int HeliBase(int i) => O_HELIS + i * H_WORDS;
+
+        /// <summary>Base word offset of bomb <paramref name="i"/>.</summary>
+        public static int BombBase(int i) => O_BOMBS + i * B_WORDS;
     }
 }

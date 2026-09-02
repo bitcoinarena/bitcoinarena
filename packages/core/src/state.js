@@ -15,6 +15,22 @@ import { sha256hex } from './sha256.js';
 
 export const MAX_UNITS = 256;
 
+/**
+ * How many slots the simulation actually fields, and which of them are armour.
+ *
+ * Both lived in `sim.js` - `UNITS` exported, `ARMOUR_MASK` private - and so
+ * neither reached `BlwpLayout.cs`, which is generated from THIS file. A
+ * renderer reading core units would have had to walk all 256 slots and
+ * hand-copy `(i & 3) === 0` into C#, which is exactly the drift the generator
+ * exists to prevent: two descriptions of one buffer, and nothing throws when
+ * they disagree.
+ *
+ * Every fourth slot is armour. A mask rather than a remainder, so `UNITS` and
+ * this stay a power of two apart and the rule is one expression on both sides.
+ */
+export const UNITS = 96;
+export const ARMOUR_MASK = 3;
+
 // Word offsets into the Int32Array view.
 //
 // DERIVED FROM THE BLOCK SIZES, not typed, because typing them let two blocks

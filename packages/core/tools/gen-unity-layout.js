@@ -56,6 +56,15 @@ out += `        public const int START_Z = ${sim.START_Z};\n`;
 out += '\n';
 out += '        /// <summary>Base word offset of unit <paramref name="i"/>.</summary>\n';
 out += '        public static int UnitBase(int i) => O_UNITS + i * U_WORDS;\n';
+// The air needs the same, and for the same reason: a renderer that draws
+// gunships and bombs from the core has to find them without restating the
+// stride on the C# side.
+out += '\n';
+out += '        /// <summary>Base word offset of helicopter <paramref name="i"/>.</summary>\n';
+out += '        public static int HeliBase(int i) => O_HELIS + i * H_WORDS;\n';
+out += '\n';
+out += '        /// <summary>Base word offset of bomb <paramref name="i"/>.</summary>\n';
+out += '        public static int BombBase(int i) => O_BOMBS + i * B_WORDS;\n';
 out += '    }\n}\n';
 
 process.stdout.write(out);

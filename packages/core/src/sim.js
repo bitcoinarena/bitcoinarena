@@ -13,7 +13,7 @@ import { ONE, HALF, add, sub, mulFast, div, idiv, clamp, min, max, abs, length2 
 import { seed } from './rng.js';
 import { sin, cos } from './trig.js';
 import {
-  create, unitBase, heliBase, bombBase, MAX_UNITS, O_UNITS, U_WORDS,
+  create, unitBase, heliBase, bombBase, MAX_UNITS, O_UNITS, U_WORDS, UNITS, ARMOUR_MASK,
   O_TICK, O_RNG, O_TRUCK, O_SCORE, O_ARMY,
   A_ARMOUR_BULL, A_ARMOUR_BEAR, A_RIFLE_BULL, A_RIFLE_BEAR,
   O_AIR, AIR_BULL, AIR_BEAR, MAX_HELIS, MAX_BOMBS,
@@ -41,7 +41,10 @@ import {
   AIR_RELEASE, AIR_GONE,
 } from './rules/air.js';
 
-export const UNITS = 96;
+// UNITS and ARMOUR_MASK live in state.js so the generated C# mirror carries
+// them; re-exported here because every tool and rule already reads them from
+// this module.
+export { UNITS, ARMOUR_MASK };
 /**
  * The van is soft but not paper.
  *
@@ -114,7 +117,7 @@ export const START_X = -6579814;                   // -100.4 m, 14 m out on the 
 export const START_Z = 668467;                     // 10.2 m, the solo bay (14 of 24)
 // Every fourth unit is armour. A mask rather than a modulo: '%' is banned
 // outside the arithmetic files, and a power of two makes the ban free.
-const ARMOUR_MASK = 3;
+
 
 /** Every fourth unit is a tank. Shared, so the collision and the fighting agree. */
 const isArmour = (i) => (i & ARMOUR_MASK) === 0;

@@ -239,5 +239,69 @@ namespace Blwp
         }
 
         public static float UnitHealth(int i) => Metres(_state[Layout.UnitBase(i) + Layout.U_HP]);
+
+        /// <summary>
+        /// The rest of what a drawer needs to put a unit on the screen.
+        ///
+        /// Every one of these reads the SAME buffer the simulation writes, and
+        /// every constant behind them - `UNITS`, `ARMOUR_MASK`, the field
+        /// offsets - comes out of the generated `Layout`. Nothing here restates
+        /// a rule: `(i &amp; ARMOUR_MASK) == 0` is the core's own expression,
+        /// mirrored rather than retyped, because two descriptions of one buffer
+        /// do not throw when they disagree - the tank simply renders as a man.
+        ///
+        /// `UnitAlive` is `U_STATE`, not `U_HP`. The core is of two minds about
+        /// which one means alive - the firing code guards on hit points while
+        /// `reinforce` and the crowding scan skip on the state word - and a
+        /// drawer wants the one that says "this slot is occupied".
+        /// </summary>
+        public static int UnitSide(int i) => _state[Layout.UnitBase(i) + Layout.U_SIDE];
+
+        public static bool UnitAlive(int i) => _state[Layout.UnitBase(i) + Layout.U_STATE] != 0;
+
+        public static bool UnitIsArmour(int i) => (i & Layout.ARMOUR_MASK) == 0;
+
+        public static float UnitHeading(int i) =>
+            Degrees(_state[Layout.UnitBase(i) + Layout.U_HEADING]);
+
+        /// <summary>
+        /// The air, on the same terms. Bombs map word for word; a helicopter
+        /// does not, and the difference is named rather than papered over: the
+        /// core carries `H_DIR`, the way it is flying, and has no yaw and no
+        /// bank. Those are the renderer's own - a gunship faces along the
+        /// corridor it is crossing and banks for the look of it - so they are
+        /// derived on this side and no simulation is invented to supply them.
+        /// </summary>
+        public static bool HeliAlive(int i) => _state[Layout.HeliBase(i) + Layout.H_STATE] != 0;
+
+        public static int HeliSide(int i) => _state[Layout.HeliBase(i) + Layout.H_SIDE];
+
+        public static int HeliDir(int i) => _state[Layout.HeliBase(i) + Layout.H_DIR];
+
+        public static Vector3 HeliPosition(int i)
+        {
+            int b = Layout.HeliBase(i);
+            return new Vector3(Metres(_state[b + Layout.H_X]),
+                               Metres(_state[b + Layout.H_Y]),
+                               Metres(_state[b + Layout.H_Z]));
+        }
+
+        public static bool BombAlive(int i) => _state[Layout.BombBase(i) + Layout.B_STATE] != 0;
+
+        public static Vector3 BombPosition(int i)
+        {
+            int b = Layout.BombBase(i);
+            return new Vector3(Metres(_state[b + Layout.B_X]),
+                               Metres(_state[b + Layout.B_Y]),
+                               Metres(_state[b + Layout.B_Z]));
+        }
+
+        public static Vector3 BombVelocity(int i)
+        {
+            int b = Layout.BombBase(i);
+            return new Vector3(Metres(_state[b + Layout.B_VX]),
+                               Metres(_state[b + Layout.B_VY]),
+                               Metres(_state[b + Layout.B_VZ]));
+        }
     }
 }
