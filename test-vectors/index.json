@@ -5,12 +5,12 @@
   {
    "name": "straight",
    "ticks": 3600,
-   "final": "7978d11ec54c50f0fbe47a34c61456ca2664a14d900a6345bb152409a7a2fd55"
+   "final": "1fefdbdc9f6df9746f7fbb11c94e10b6a11c14bf737c447e3715a90e5680432f"
   },
   {
    "name": "slalom",
    "ticks": 3600,
-   "final": "ff89eb7fa8418632776fb6d68f17a64c2104d79cf890a6f6a8295aef17a8feff"
+   "final": "f3c5122b861122874be4981477a9d81213731fd56fc08484226138f571d8d49b"
   },
   {
    "name": "handbrake",
@@ -20,7 +20,7 @@
   {
    "name": "reverse",
    "ticks": 3600,
-   "final": "4ed1fd7c3e15ca1dea3539d0cc944cadfd388dc7bcf32e8ca0e744b51cb2417c"
+   "final": "4ae585e5bcc13144852099fe6f7558496033754693417aeded830c8e692ec7a6"
   },
   {
    "name": "idle",
@@ -30,7 +30,7 @@
   {
    "name": "practice",
    "ticks": 3600,
-   "final": "04033891735048b810e24f46a86310daed572a0aef6d90651bff9de1ffc5db4f"
+   "final": "2ee4f93529c5895e2b7c52fbafa45a563dfde179cf7f79831a99e448bb9b8df5"
   }
  ]
 }

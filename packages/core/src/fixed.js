@@ -33,6 +33,19 @@ export const abs = (a) => (a < 0 ? (-a) | 0 : a);
 export const mulFast = (a, b) => ((a * b) / ONE) | 0;
 
 /**
+ * Rounding multiply, and rounding conversion back to a whole number. `mulFast`
+ * and `toInt` both throw the fraction away, which is right for the simulation -
+ * a truncation there is a rule, applied identically on every engine - but wrong
+ * where the value being produced is a *reported* number that some other
+ * implementation rounds. The score is the one such number: the old game ends on
+ * `Mathf.RoundToInt`, so the core has to round too or it sits a point low on
+ * roughly half of all runs. Same magnitude rules as `mulFast`: the caller must
+ * know |a*b| stays under 2^53.
+ */
+export const mulRound = (a, b) => (((a * b) + (ONE >> 1)) / ONE) | 0;
+export const toIntRound = (x) => (x + (ONE >> 1)) >> SHIFT;
+
+/**
  * Exact multiply for anything that could overflow the double's integer range.
  * BigInt is exact at any width; it allocates, so it stays off per-unit inner
  * loops by convention rather than by enforcement.
@@ -42,6 +55,27 @@ export const mulWide = (a, b) =>
 
 /** Truncating divide. Returns 0 for a zero divisor rather than NaN or Infinity. */
 export const div = (a, b) => (b === 0 ? 0 : ((a * ONE) / b) | 0);
+
+/**
+ * Rounding divide, the counterpart of `mulRound` and for the same reason: a
+ * quotient that feeds a *reported* number must not lose its fraction, or the
+ * loss compounds through the multiplies that follow it. Every truncation leans
+ * the same way, so they add rather than cancel. Only for those; `div` stays
+ * the simulation's divide.
+ */
+export const divRound = (a, b) =>
+  b === 0 ? 0 : (((a * ONE) + ((b / 2) | 0)) / b) | 0;
+
+/**
+ * Rounded `a * b / c` without ever landing on the intermediate. A ratio taken
+ * on its own has to be stored as a Q16.16 fraction of at most 1.0, which
+ * quantises it to 1.5e-5 - and once that ratio is scaled up by a thousand the
+ * error is scaled with it. Kept as one expression the quotient is only ever
+ * rounded at the end, at the precision of the answer rather than the ratio.
+ * The caller must know |a*b| stays under 2^53.
+ */
+export const mulDivRound = (a, b, c) =>
+  c === 0 ? 0 : (((a * b) + ((c / 2) | 0)) / c) | 0;
 
 /**
  * Truncating divide of two PLAIN INTEGERS - not Q16.16 values.

@@ -39,6 +39,19 @@ const abs = (a) => (a < 0 ? (-a) | 0 : a);
 const mulFast = (a, b) => ((a * b) / ONE) | 0;
 
 /**
+ * Rounding multiply, and rounding conversion back to a whole number. `mulFast`
+ * and `toInt` both throw the fraction away, which is right for the simulation -
+ * a truncation there is a rule, applied identically on every engine - but wrong
+ * where the value being produced is a *reported* number that some other
+ * implementation rounds. The score is the one such number: the old game ends on
+ * `Mathf.RoundToInt`, so the core has to round too or it sits a point low on
+ * roughly half of all runs. Same magnitude rules as `mulFast`: the caller must
+ * know |a*b| stays under 2^53.
+ */
+const mulRound = (a, b) => (((a * b) + (ONE >> 1)) / ONE) | 0;
+const toIntRound = (x) => (x + (ONE >> 1)) >> SHIFT;
+
+/**
  * Exact multiply for anything that could overflow the double's integer range.
  * BigInt is exact at any width; it allocates, so it stays off per-unit inner
  * loops by convention rather than by enforcement.
@@ -48,6 +61,27 @@ const mulWide = (a, b) =>
 
 /** Truncating divide. Returns 0 for a zero divisor rather than NaN or Infinity. */
 const div = (a, b) => (b === 0 ? 0 : ((a * ONE) / b) | 0);
+
+/**
+ * Rounding divide, the counterpart of `mulRound` and for the same reason: a
+ * quotient that feeds a *reported* number must not lose its fraction, or the
+ * loss compounds through the multiplies that follow it. Every truncation leans
+ * the same way, so they add rather than cancel. Only for those; `div` stays
+ * the simulation's divide.
+ */
+const divRound = (a, b) =>
+  b === 0 ? 0 : (((a * ONE) + ((b / 2) | 0)) / b) | 0;
+
+/**
+ * Rounded `a * b / c` without ever landing on the intermediate. A ratio taken
+ * on its own has to be stored as a Q16.16 fraction of at most 1.0, which
+ * quantises it to 1.5e-5 - and once that ratio is scaled up by a thousand the
+ * error is scaled with it. Kept as one expression the quotient is only ever
+ * rounded at the end, at the precision of the answer rather than the ratio.
+ * The caller must know |a*b| stays under 2^53.
+ */
+const mulDivRound = (a, b, c) =>
+  c === 0 ? 0 : (((a * b) + ((c / 2) | 0)) / c) | 0;
 
 /**
  * Truncating divide of two PLAIN INTEGERS - not Q16.16 values.
@@ -1846,6 +1880,12 @@ const APRON_RADIUS = Math.imul(22, ONE);
 const T_FLOOR = 16384;      // 0.25
 const T_CEIL = 98304;       // 1.5
 
+// The time clamp, said in ticks: T = REFERENCE_TICKS / ticks held to
+// [0.25, 1.5] is exactly ticks held to [2600, 15600]. Written out so the two
+// forms cannot drift apart silently.
+const T_TICKS_MIN = 2600;   // REFERENCE_TICKS / 1.5
+const T_TICKS_MAX = 15600;  // REFERENCE_TICKS / 0.25
+
 /**
  * Accumulates exposure over GROUND MADE GOOD against a high-water mark.
  *
@@ -1865,11 +1905,11 @@ function accrue(exposure, bestX, x, threat, heat) {
 }
 
 const exposureFactor = (exposure) =>
-  clamp(div(exposure, EXPOSURE_REFERENCE), 0, ONE);
+  clamp(divRound(exposure, EXPOSURE_REFERENCE), 0, ONE);
 
 const timeFactor = (ticks) =>
   ticks <= 0 ? T_CEIL
-             : clamp(div(Math.imul(REFERENCE_TICKS, ONE), Math.imul(ticks, ONE)),
+             : clamp(divRound(Math.imul(REFERENCE_TICKS, ONE), Math.imul(ticks, ONE)),
                      T_FLOOR, T_CEIL);
 
 /**
@@ -1880,11 +1920,26 @@ const timeFactor = (ticks) =>
  * thing two implementations could round differently.
  */
 function scoreOf(exposure, ticks, cargo) {
-  const e = exposureFactor(exposure);
-  const t = timeFactor(ticks);
+  // NO FACTOR IS EVER FORMED ON ITS OWN. `exposureFactor` and `timeFactor`
+  // below are the readable statement of the rule and stay the tested ones, but
+  // each returns a fraction of at most 1.0 in Q16.16, quantised to 1.5e-5 -
+  // and this score multiplies by a thousand, which scales that error to 0.015
+  // points. Carrying the thousand from the first step instead, and rounding
+  // only at the end of each divide, leaves a grid of 1/65536 of a point.
+  //
+  // Both clamps survive the move. Exposure is clamped to the reference before
+  // dividing, which is the same as clamping the ratio at 1. Time is clamped on
+  // the TICKS, not the factor: T is 3900/ticks held to [0.25, 1.5], so ticks
+  // held to [2600, 15600] says the identical thing exactly, and it also gives
+  // an instant run its 1.5 without a separate branch.
+  //
+  // Magnitudes, since `mulDivRound` is only exact under 2^53: the largest
+  // intermediate is 1000 ONE * 190 ONE = 8.2e14, and no result passes 1500 ONE.
+  const ex = clamp(exposure, 0, EXPOSURE_REFERENCE);
+  const tk = clamp(ticks | 0, T_TICKS_MIN, T_TICKS_MAX);
   const c = clamp(cargo, 0, ONE);
-  const product = mulFast(mulFast(e, t), c);
-  return mulFast(Math.imul(1000, ONE), product) >> 16;
+  const scaled = mulDivRound(Math.imul(1000, ONE), ex, EXPOSURE_REFERENCE);
+  return toIntRound(mulRound(mulDivRound(scaled, REFERENCE_TICKS, tk), c));
 }
 
 /**

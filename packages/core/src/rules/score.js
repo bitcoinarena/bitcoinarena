@@ -7,7 +7,7 @@
 // slow, damaged, brave one, which is the inversion the section exists to
 // prevent.
 
-import { ONE, add, sub, mulFast, div, clamp, min, max, abs, length2 } from '../fixed.js';
+import { ONE, add, sub, mulFast, mulRound, mulDivRound, toIntRound, div, divRound, clamp, min, max, abs, length2 } from '../fixed.js';
 
 /** Metres of ground made good at full danger for E = 1. */
 export const EXPOSURE_REFERENCE = Math.imul(190, ONE);
@@ -18,6 +18,12 @@ export const APRON_RADIUS = Math.imul(22, ONE);
 
 export const T_FLOOR = 16384;      // 0.25
 export const T_CEIL = 98304;       // 1.5
+
+// The time clamp, said in ticks: T = REFERENCE_TICKS / ticks held to
+// [0.25, 1.5] is exactly ticks held to [2600, 15600]. Written out so the two
+// forms cannot drift apart silently.
+export const T_TICKS_MIN = 2600;   // REFERENCE_TICKS / 1.5
+export const T_TICKS_MAX = 15600;  // REFERENCE_TICKS / 0.25
 
 /**
  * Accumulates exposure over GROUND MADE GOOD against a high-water mark.
@@ -38,11 +44,11 @@ export function accrue(exposure, bestX, x, threat, heat) {
 }
 
 export const exposureFactor = (exposure) =>
-  clamp(div(exposure, EXPOSURE_REFERENCE), 0, ONE);
+  clamp(divRound(exposure, EXPOSURE_REFERENCE), 0, ONE);
 
 export const timeFactor = (ticks) =>
   ticks <= 0 ? T_CEIL
-             : clamp(div(Math.imul(REFERENCE_TICKS, ONE), Math.imul(ticks, ONE)),
+             : clamp(divRound(Math.imul(REFERENCE_TICKS, ONE), Math.imul(ticks, ONE)),
                      T_FLOOR, T_CEIL);
 
 /**
@@ -53,11 +59,26 @@ export const timeFactor = (ticks) =>
  * thing two implementations could round differently.
  */
 export function scoreOf(exposure, ticks, cargo) {
-  const e = exposureFactor(exposure);
-  const t = timeFactor(ticks);
+  // NO FACTOR IS EVER FORMED ON ITS OWN. `exposureFactor` and `timeFactor`
+  // below are the readable statement of the rule and stay the tested ones, but
+  // each returns a fraction of at most 1.0 in Q16.16, quantised to 1.5e-5 -
+  // and this score multiplies by a thousand, which scales that error to 0.015
+  // points. Carrying the thousand from the first step instead, and rounding
+  // only at the end of each divide, leaves a grid of 1/65536 of a point.
+  //
+  // Both clamps survive the move. Exposure is clamped to the reference before
+  // dividing, which is the same as clamping the ratio at 1. Time is clamped on
+  // the TICKS, not the factor: T is 3900/ticks held to [0.25, 1.5], so ticks
+  // held to [2600, 15600] says the identical thing exactly, and it also gives
+  // an instant run its 1.5 without a separate branch.
+  //
+  // Magnitudes, since `mulDivRound` is only exact under 2^53: the largest
+  // intermediate is 1000 ONE * 190 ONE = 8.2e14, and no result passes 1500 ONE.
+  const ex = clamp(exposure, 0, EXPOSURE_REFERENCE);
+  const tk = clamp(ticks | 0, T_TICKS_MIN, T_TICKS_MAX);
   const c = clamp(cargo, 0, ONE);
-  const product = mulFast(mulFast(e, t), c);
-  return mulFast(Math.imul(1000, ONE), product) >> 16;
+  const scaled = mulDivRound(Math.imul(1000, ONE), ex, EXPOSURE_REFERENCE);
+  return toIntRound(mulRound(mulDivRound(scaled, REFERENCE_TICKS, tk), c));
 }
 
 /**
