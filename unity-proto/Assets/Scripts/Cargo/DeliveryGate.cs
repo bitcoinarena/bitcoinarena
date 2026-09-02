@@ -199,8 +199,24 @@ public class DeliveryGate : MonoBehaviour
         if (health != null && health.IsDestroyed) return;
         if (!bay.IsLoaded) return;
 
-        var p = courier.position;
-        if (p.x < gateX || Mathf.Abs(p.z) > halfMouth) return;
+        // WHO DECIDES A DELIVERY. The core, when there is one.
+        //
+        // This tested `p.x >= gateX && |p.z| <= halfMouth` against the truck's
+        // transform - the same shape as the core's own `arrived(x, z)`, run a
+        // second time in C#. Two deciders for one of M1's four outcomes, and
+        // the core's `RUN_DELIVERED` had no reader at all: only `RunState == 2`
+        // was ever looked at, for the wreck. Now the core's verdict is the
+        // verdict, and the geometry below is what the editor falls back on,
+        // where `BlwpCore` is stubbed and there is nothing to ask.
+        if (Blwp.BlwpCore.Available)
+        {
+            if (Blwp.BlwpCore.RunState != 1) return;   // RUN_DELIVERED
+        }
+        else
+        {
+            var p = courier.position;
+            if (p.x < gateX || Mathf.Abs(p.z) > halfMouth) return;
+        }
 
         Deliver();
     }

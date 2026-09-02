@@ -186,6 +186,28 @@ public class RunScore : MonoBehaviour
         float x = here.x;
         float gained = x - _bestX;
         MakingProgress = gained > 0.0001f;
+
+        if (FromCore)
+        {
+            // THE RATE COMES OUT OF THE CORE, not out of a second formula.
+            //
+            // `Exposure` above already reads the core, but `Rate` did not: it
+            // called `RateNow`, which walks `army.Armour` and `army.Infantry`
+            // - and with no C# army left that fell through to a geometry
+            // fallback. So the meter on screen was drawn by a client formula
+            // measuring a different danger from the one the round is settled
+            // on. The core integrates `exposure += rate * gained`, so the rate
+            // IS the exposure it gained per metre of new ground, and that is
+            // read back rather than recomputed.
+            float now = Blwp.BlwpCore.Exposure * Mathf.Max(0.01f, exposureReference);
+            Rate = MakingProgress && gained > 0.0001f
+                ? Mathf.Clamp((now - _coreExposure) / gained, 0f, 2f)
+                : 0f;
+            _coreExposure = now;
+            if (MakingProgress) _bestX = x;
+            return;
+        }
+
         Rate = MakingProgress ? RateNow() : 0f;
 
         if (MakingProgress)
@@ -194,6 +216,9 @@ public class RunScore : MonoBehaviour
             _bestX = x;
         }
     }
+
+    /// <summary>Last exposure read out of the core, for the rate above.</summary>
+    float _coreExposure;
 
     /// <summary>
     /// proximity * (1 + heat), straight out of section 18A.3.
