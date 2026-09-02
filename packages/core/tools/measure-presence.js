@@ -19,7 +19,7 @@
 //      across the same interval, so a single seed's count is where its anchors
 //      happened to fall. The envelope is the comparison.
 import { init, step, HALF_X, HALF_Z } from '../src/sim.js';
-import { MAX_UNITS, unitBase, U_HP, U_SIDE, U_X, U_Z, O_TRUCK, T_X } from '../src/state.js';
+import { MAX_UNITS, unitBase, U_HP, U_SIDE, U_X, U_Z, O_TRUCK, T_X, O_AIR, AIR_BULL, AIR_BEAR } from '../src/state.js';
 import { frontlineZ } from '../src/rules/frontline.js';
 
 const ONE = 65536;
@@ -34,8 +34,16 @@ const isArmour = (i) => (i & 3) === 0;   // `sim.js:70`, every fourth slot
 const REC = { 10: [8, 0], 30: [8, 21], 60: [14, 18], 90: [17, 27] };
 
 /** The sortie clocks, pinned from outside the rules. The pass is air "none". */
+const CLOCK_HIGH = 1 << 30;
+/**
+ * The sortie clocks live in the STATE WORDS at `O_AIR`, not as properties on
+ * `st`. An earlier version of this helper wrote `st.heliClock`, which is not a
+ * key on the state at all, so it held nothing off and every row it produced
+ * was measured with the air ON while the caption said "air off".
+ */
 const airOff = (st) => {
-  for (const k of ['heliClock', 'sortieClock']) if (k in st) st[k] = 1 << 30;
+  st.i32[O_AIR + AIR_BULL] = CLOCK_HIGH;
+  st.i32[O_AIR + AIR_BEAR] = CLOCK_HIGH;
 };
 
 const run = (seed, marks, at) => {
