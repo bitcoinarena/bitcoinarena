@@ -60,6 +60,14 @@ const FRONT_X = Math.imul(92, ONE);
 
 /** Squad anchors along the front, and how wide a squad stands. */
 const SQUADS = 8;
+/**
+ * Picking a squad is a mask, not a remainder: '%' is division, and division
+ * lives in fixed.js. Which means SQUADS has to stay a power of two - so the
+ * mask is written from it rather than as a bare 7, and a change to five or
+ * twelve breaks loudly here instead of quietly assigning every unit to squad
+ * zero.
+ */
+const SQUAD_MASK = SQUADS - 1;
 const SQUAD_SPAN = Math.imul(76, ONE);     // anchors run from -76 to +76
 const SQUAD_WIDTH = Math.imul(16, ONE);    // each unit sits within 8 m of its anchor
 const TWO = Math.imul(2, ONE);
@@ -162,7 +170,7 @@ export function stepUnit(u, rng, seamZ, truckX, truckZ, halfX, halfZ, dt, index)
   // per army, and the two lines stood at opposite ends of the field. Twenty
   // three of twenty four tanks survived a minute because not one of them ever
   // saw an enemy.
-  const squad = ((index | 0) >> 3) % SQUADS;
+  const squad = ((index | 0) >> 3) & SQUAD_MASK;
   const anchor = sub(Math.imul(squad, div(Math.imul(2, SQUAD_SPAN), Math.imul(SQUADS - 1, ONE))),
                      SQUAD_SPAN);
   const offset = sub(Math.imul((Math.imul(index | 0, 2654435761) >>> 22) & 255,

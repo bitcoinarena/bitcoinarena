@@ -9,7 +9,7 @@
 // and only if in range, its reload and hit roll. That sequence is the reason a
 // transcript recorded today can still be replayed next year.
 
-import { ONE, add, sub, mulFast, div, clamp, min, max, abs, length2 } from './fixed.js';
+import { ONE, add, sub, mulFast, div, idiv, clamp, min, max, abs, length2 } from './fixed.js';
 import { seed } from './rng.js';
 import { sin, cos } from './trig.js';
 import {
@@ -381,7 +381,7 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
           const connects = nextBelow(rng, 1000) < HIT_PER_MIL;
           if (connects) {
             const fb = unitBase(foe);
-            const hurt = add(DAMAGE_MIN, Math.imul(nextBelow(rng, 100), DAMAGE_SPAN) / 100 | 0);
+            const hurt = add(DAMAGE_MIN, idiv(Math.imul(nextBelow(rng, 100), DAMAGE_SPAN), 100));
             s[fb + U_HP] = max(0, sub(s[fb + U_HP], hurt));
             if (s[fb + U_HP] === 0) s[fb + U_STATE] = 0;
           }

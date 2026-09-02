@@ -43,6 +43,19 @@ export const mulWide = (a, b) =>
 /** Truncating divide. Returns 0 for a zero divisor rather than NaN or Infinity. */
 export const div = (a, b) => (b === 0 ? 0 : ((a * ONE) / b) | 0);
 
+/**
+ * Truncating divide of two PLAIN INTEGERS - not Q16.16 values.
+ *
+ * `div` scales its numerator by ONE first, which is right for fixed-point and
+ * wrong for a count. Splitting a hundred parts of something, or a byte into
+ * buckets, was being written as `x / n | 0` at the call site, which is exactly
+ * the arithmetic the guard exists to keep in one auditable file.
+ *
+ * Truncates towards zero, as `| 0` does, so it is the same value the inline
+ * form produced. Both arguments must already be int32.
+ */
+export const idiv = (a, b) => (b === 0 ? 0 : (a / b) | 0);
+
 export const min = (a, b) => (a < b ? a : b);
 export const max = (a, b) => (a > b ? a : b);
 export const clamp = (x, lo, hi) => (x < lo ? lo : x > hi ? hi : x);
