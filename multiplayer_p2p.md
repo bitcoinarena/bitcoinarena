@@ -628,6 +628,52 @@ the node stops advertising). Its purpose is that **arbitration can never
 freeze a bond forever**: if arbitration disappears, path A returns the money
 to its owner.
 
+### Why Taproot and not a plain multisig
+
+Three reasons, in the order they matter.
+
+**A cooperative release and a cooperative slash are the same transaction.**
+The key path is MuSig2 over both keys, so either one is a single Schnorr
+signature that looks like any other taproot spend. An observer cannot tell
+that a bond was here, that there was a dispute, or how it ended. With a
+classic P2SH multisig the whole script is published on the spend, and the
+arrangement is legible to anyone forever.
+
+**The paths nobody uses are never revealed.** The k-of-m arbitration keys
+and the timelock exist only as hashes in the script tree. Using one reveals
+that branch and nothing else - the other two remain private. A plain
+multisig has no such thing: its structure is its address.
+
+**The common case is the cheap case.** One signature, no script, no k
+signatures. The path that should almost always be taken is the one that
+costs least, which is the right way round.
+
+The privacy has a cost, and it is paid in §25.1: an output nobody can
+recognise is also an output nobody can *find*. That is what `BOND_MARKER`
+is for.
+
+### Rejected alternatives, so they are not proposed again
+
+**Pre-signed transactions, or Lightning-style channel constructions, for
+the census.** They do not apply. Those solve *two parties agreeing on a
+transfer without publishing it*, enforced by the threat of publishing.
+The census asks something else: which outputs exist, confirmed and
+**unspent**, at a height, computed identically by every observer. That is
+an observation problem about global state, and Lightning is built so that
+state is precisely not public. Opposite requirements. A pre-signed
+transaction also proves only that someone *could* spend an output, never
+that it is still unspent - and unspentness is the whole question.
+
+**Proving unspentness positively.** Bitcoin has no UTXO set commitment, so
+a light client cannot be handed a proof that an output is still unspent.
+It can, however, be handed the opposite: a spend of that output is itself a
+complete, portable proof, exactly like the equivocation proof of §13B. The
+census can therefore be built from inclusion proofs and **corrected by
+objection** - anyone may knock an entry out by presenting the spending
+transaction. No client needs the UTXO set; it needs headers and an
+objection window. A node that spends its own bond and still expects to
+serve hands its accusers the evidence itself.
+
 ### From proof to transaction
 
 ```text
