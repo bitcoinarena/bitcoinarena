@@ -32,8 +32,18 @@ const ONE = 65536;
  * clearing it once and hoping.
  */
 function clearTheField(st) {
-  const O_UNITS = 24, U_WORDS = 8, U_STATE = 5, UNITS = 96;
-  for (let i = 0; i < UNITS; i++) st.i32[O_UNITS + i * U_WORDS + U_STATE] = 0;
+  const O_UNITS = 24, U_WORDS = 8, U_HP = 3, U_STATE = 5, UNITS = 96;
+  for (let i = 0; i < UNITS; i++) {
+    // HP AS WELL AS STATE, and that is not tidiness. The core is of two minds
+    // about what "alive" means: `reinforce`, `fillArmour` and the crowding
+    // scan skip on `U_STATE`, but `stepUnit` returns early on `u.hp <= 0` and
+    // the firing code guards on `hp > 0`. Zeroing only the state left every
+    // unit walking and shooting - so a fixture that said "empty battlefield"
+    // was measuring a truck under fire, and the vehicle fixtures below were
+    // quietly comparing a damaged truck against the PhysX recording.
+    st.i32[O_UNITS + i * U_WORDS + U_HP] = 0;
+    st.i32[O_UNITS + i * U_WORDS + U_STATE] = 0;
+  }
 }
 
 const O_TRUCK = 5, T_X = 0, T_Z = 1, T_HP = 6;
