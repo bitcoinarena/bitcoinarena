@@ -93,6 +93,17 @@ const air = HAS_AIR ? await import(new URL('rules/air.js', base).pathname) : nul
 if (SORTIES !== 'on' && !HAS_AIR)
   throw new Error(`--sorties=${SORTIES} wants a core with an air arm; ${CORE} has none (it is air-off already)`);
 
+/**
+ * The rifle's own clock words, from the core that is loaded - not copied here.
+ * A shot sets the reload (2.5-4.5 s); a man who looked and found nobody sets
+ * the look (0.4-1.1 s). The two bands do not overlap, which is what makes a
+ * shot visible from outside: nothing else writes U_COOLDOWN except a spawn,
+ * and a spawn is a slot that was refilled and is excluded.
+ */
+const army = await import(new URL('rules/army.js', base).pathname);
+const RELOAD_TICKS = army.RIFLE_RELOAD_TICKS;
+const LOOK_TICKS = army.RIFLE_LOOK_TICKS;
+
 const Q = 65536;
 const q = (v) => v / Q;
 const isArmour = (i) => (i & 3) === 0;
@@ -100,7 +111,25 @@ const RADIUS = HAS_AIR ? q(air.BOMB_RADIUS) : 16;
 const RIFLE_RANGE = 26;
 
 const ref = JSON.parse(readFileSync(new URL('../test/vectors/csharp-infantry.json', import.meta.url), 'utf8'));
-const REF = ref.passes.line.rows;
+
+/**
+ * The recording's rows FOR THIS SEED, or null.
+ *
+ * csharp-infantry.json carries four line passes - the unlabelled `line` is the
+ * file's own `setup.seed`, and `line-<seed>` the other three - and every core
+ * seed used to be annotated with the first of them. That is the same mistake
+ * the depth pair was: a REC column that is not the pair of the core column
+ * printed beside it. The seed is read off the file (a pass's own `seed`, else
+ * `setup.seed`) rather than remembered here, so a re-record cannot leave a
+ * stale pairing standing, and a seed the recording does not hold gets no REC
+ * cells at all and says so.
+ *
+ * `line-24-72` is a different establishment - 24 armour and 72 infantry - and
+ * is never a pair for a 12/36 core run whatever seed it was made on.
+ */
+const refPass = (seed) => Object.entries(ref.passes).find(([name, pass]) =>
+  (name === 'line' || name.startsWith('line-')) && name !== 'line-24-72' &&
+  (pass.seed ?? ref.setup.seed) === seed)?.[1] ?? null;
 
 const dt = 1 / 60;
 const TICKS = 90 * 60;
@@ -166,6 +195,7 @@ function census(st) {
       i, armour: isArmour(i), side: st.i32[o + L.U_SIDE],
       alive: st.i32[o + L.U_STATE] !== 0 && st.i32[o + L.U_HP] > 0,
       x: q(st.i32[o + L.U_X]), z: q(st.i32[o + L.U_Z]), hp: q(st.i32[o + L.U_HP]),
+      cool: st.i32[o + L.U_COOLDOWN],
     });
   }
   return out;
@@ -215,19 +245,63 @@ function line(now) {
   };
 }
 
+/**
+ * How many riflemen have an enemy inside 26 m, counted EVERY tick.
+ *
+ * `line()` answers the same question at the samples, and the samples are all
+ * the recording has. They are not enough for a rate over a window in which the
+ * line ARRIVES: the core's line is a plank and goes from nobody in range to
+ * forty inside one five-second window, so averaging the window's two ends
+ * charges it with men-seconds it never had, and its early rate comes out
+ * halved. The C# line is 6.5 m deep by the time it arrives and ramps over two
+ * or three windows, so the same average costs it much less. That is a property
+ * of the instrument, not of the gun, and this is the integral that removes it
+ * from the core's column. Nothing can remove it from the recording's - five
+ * seconds is what it published - so both columns are printed both ways.
+ *
+ * Same test as `line()`'s, an enemy strictly inside the range, with the axis
+ * rejections that make it cheap enough to run 5400 times a round.
+ */
+function inRangeCount(now) {
+  const men = [];
+  for (let i = 0; i < UNITS; i++) if (now[i].alive && !now[i].armour) men.push(now[i]);
+  const R2 = RIFLE_RANGE * RIFLE_RANGE;
+  let n = 0;
+  for (const a of men)
+    for (const b of men) {
+      if (b.side === a.side) continue;
+      const dx = b.x - a.x; if (dx > RIFLE_RANGE || dx < -RIFLE_RANGE) continue;
+      const dz = b.z - a.z; if (dz > RIFLE_RANGE || dz < -RIFLE_RANGE) continue;
+      if (dx * dx + dz * dz < R2) { n++; break; }
+    }
+  return n;
+}
+
 function measure(seed) {
   const tally = { helis: 0, bombs: 0 };
+  const pass = refPass(seed);
+  const REF = pass ? pass.rows : null;
   const st = start(seed, tally);
   let prev = census(st);
   let prevBombs = bombSlots(st);
   let rifleKills = 0, bombKills = 0, arrived = 0;
+  // Men-with-an-enemy-in-reach, summed over the ticks of the window just
+  // ended, so a window's exposure is an integral and not two end points.
+  let manTicks = 0;
+  // THE SHOT LEDGER. Kills alone cannot say whether a thin exchange is a
+  // clock or a roll: the hit chance is a fixed 45 in 1000 and a hit is fatal,
+  // so kills are shots times a constant. What is countable from outside is the
+  // clock word - a rifleman who fires sets 150-269 ticks and a rifleman who
+  // looked and found nobody sets 24-65, and the bands do not meet.
+  let shots = 0, looks = 0;
   const rows = [];
 
-  console.log(`INFCORE BEGIN  seed=${seed}${SEAM0 ? ' seam0' : ''} ${cond()}`);
+  console.log(`INFCORE BEGIN  seed=${seed}${SEAM0 ? ' seam0' : ''} ${cond()}` +
+              (REF ? '' : '   (the recording holds no line pass for this seed - no REC cells)'));
 
   const sample = (t) => {
     const l = line(prev);
-    const r = REF.find((x) => Math.abs(x.t - t) < 0.01);
+    const r = REF && REF.find((x) => Math.abs(x.t - t) < 0.01);
     const refPart = r
       ? `  | REC bull ${r.bullInf.n}@${r.bullInf.z.toFixed(1)} bear ${r.bearInf.n}@${r.bearInf.z.toFixed(1)} ` +
         `nearest=${r.nearestPair.toFixed(1)} mean=${r.meanNearest.toFixed(1)} inRange=${r.inRifleRange} ` +
@@ -237,7 +311,8 @@ function measure(seed) {
                 `bear ${l.bear.n}@${l.bear.z.toFixed(1)}sd${l.bear.spread.toFixed(1)} ` +
                 `nearest=${l.nearestPair.toFixed(1)} mean=${l.meanNearest.toFixed(1)} ` +
                 `inRange=${l.inRifleRange} rifleKills=${rifleKills} bombKills=${bombKills}` + refPart);
-    rows.push({ t, ...l, rifleKills, bombKills });
+    rows.push({ t, ...l, rifleKills, bombKills, manMean: manTicks / SAMPLE, shots, looks });
+    manTicks = 0; shots = 0; looks = 0;
   };
   sample(0);
 
@@ -275,7 +350,19 @@ function measure(seed) {
       if (d.claimed) bombKills++; else rifleKills++;
     }
 
+    // Read before prev is replaced: a clock that went up this tick was set by
+    // this tick's unit loop. Slots that were refilled underneath are skipped -
+    // a fresh man is given a spawn cooldown, and that is not a shot.
+    for (let i = 0; i < UNITS; i++) {
+      const a = prev[i], b = now[i];
+      if (a.armour || !a.alive || !b.alive || b.hp > a.hp) continue;
+      if (b.cool <= a.cool) continue;
+      if (b.cool >= RELOAD_TICKS) shots++;
+      else if (b.cool >= LOOK_TICKS) looks++;
+    }
+
     prev = now; prevBombs = nowBombs;
+    manTicks += inRangeCount(now);
     if ((f + 1) % SAMPLE === 0) sample((f + 1) * dt);
   }
 
@@ -289,7 +376,7 @@ function measure(seed) {
               `rifleKills=${rifleKills} bombKills=${bombKills}` +
               (MODE === 'on' ? '' : ` held gunships=${tally.helis} bombs=${tally.bombs}`));
   return { seed, np0, np1, mn0, mn1, ir0, ir1, rifleKills, bombKills,
-           heldHelis: tally.helis, heldBombs: tally.bombs };
+           heldHelis: tally.helis, heldBombs: tally.bombs, rows, ref: REF };
 }
 
 /** One condition, run over every seed, and its envelope. */
@@ -318,7 +405,179 @@ function runCondition(mode) {
                       : '   *** NOT ZERO: the clock pin did NOT hold - this run is not air-off ***')
                   : '   (cleared the tick they were filled; a bomb here would be a fault)'));
   }
+  if (mode !== 'on') contactWindows(all);
   return all;
+}
+
+// ---------------------------------------------------------------------------
+// CONTACT WINDOWS: the rifle line's rate, per five seconds, per man in range.
+//
+// The air-off rifle envelopes overlap (core 24-42 against the recording's
+// 28-51) and this file's reading of that is four-seed scatter - how well the
+// two lines happened to meet. `inRifleRange` is the quantity that says how well
+// they met, and BOTH engines publish it at every sample, so it can be divided
+// out: kills per man with an enemy in reach, rather than kills.
+//
+// Two things this fixes about the whole-round number:
+//
+//   it is anchored on CONTACT, not on the clock. Contact is at a different t in
+//   each engine and on each seed - the seed decides where three squads a side
+//   land - so a fixed cut compares a core still walking against a C# already
+//   fighting. w0 is the first window in which that engine had a man in range.
+//   Through the approach both engines' inRifleRange and rifleKills are zero, so
+//   nothing is being sliced off a line that was shooting.
+//
+//   it separates AT CONTACT from LATE. If the core's rate is the recording's in
+//   the first windows and falls away after, that is attrition or churn; if it is
+//   below from the first exchange, it is the gun.
+//
+// Air off on both sides, and conditioned on the recording's own setup block -
+// `air: "none"` and the pinned seam - so the pair cannot go stale under a
+// re-record. Core rows are this run's; the REC rows are that seed's own pass.
+const REC_AIR_OFF = ref.setup.air === 'none';
+
+/**
+ * Per-window deltas, and where contact starts, for one engine's rows.
+ *
+ * `trap` is the exposure both engines can publish - the men in range at the
+ * window's two ends, averaged. `mean` is the integral over the window's ticks
+ * and exists for the core only, because the recording holds five-second
+ * samples and nothing between them.
+ */
+function windows(rows, kills, inRange, exact) {
+  const out = [];
+  for (let i = 1; i < rows.length; i++)
+    out.push({ t: rows[i].t, dKills: kills(rows[i]) - kills(rows[i - 1]),
+               trap: (inRange(rows[i]) + inRange(rows[i - 1])) / 2,
+               mean: exact ? exact(rows[i]) : null,
+               shots: rows[i].shots ?? null, looks: rows[i].looks ?? null });
+  // The window that ENDS at the first sample holding a man in range: the men
+  // came into reach during it, and its kills are the first exchange.
+  const at = rows.findIndex((r) => inRange(r) > 0);
+  return { out, anchor: at < 1 ? 0 : at - 1, contactAt: at < 0 ? null : rows[at].t };
+}
+
+const rate = (k, m) => (m > 0 ? k / m : NaN);
+const num = (v, d = 3) => (Number.isFinite(v) ? v.toFixed(d) : '-');
+
+function contactWindows(all) {
+  console.log('');
+  console.log('INFCORE ' + '='.repeat(62));
+  console.log(`INFCORE CONTACT WINDOWS  ${cond()}, five-second windows, anchored on each`);
+  console.log("INFCORE   engine's own first man-in-range. rate = rifle kills / men in range.");
+  console.log('INFCORE   The core carries two exposures: `mean` is every tick of the window,');
+  console.log('INFCORE   `trap` is the two end points averaged, which is all the recording can');
+  console.log('INFCORE   be read as. A line that arrives inside one window is overcharged by');
+  console.log('INFCORE   trap, and the core\'s arrives as a plank - so the two core columns are');
+  console.log('INFCORE   the size of that artefact, and only trap-against-trap is like for like.');
+  if (!SEAM0 || !REC_AIR_OFF) {
+    console.log(`INFCORE   REC column WITHHELD: the recording's setup is air=${JSON.stringify(ref.setup.air)}` +
+                ` and this run is ${SEAM0 ? 'seam pinned' : 'NOT seam pinned'} - not a pair.`);
+    return;
+  }
+
+  const sums = [];
+  for (const r of all) {
+    const c = windows(r.rows, (x) => x.rifleKills, (x) => x.inRifleRange, (x) => x.manMean);
+    const k = r.ref ? windows(r.ref, (x) => x.rifleKills.bull + x.rifleKills.bear,
+                              (x) => x.inRifleRange) : null;
+    console.log('INFCORE');
+    console.log(`INFCORE seed=${r.seed} contact core t=${c.contactAt ?? 'never'}` +
+                (k ? `  REC t=${k.contactAt ?? 'never'}` : '  REC (no pass for this seed)'));
+    console.log('INFCORE   w    t   kills  mean  trap  rate(mean) rate(trap) |  t   kills  trap  rate');
+    const n = Math.max(c.out.length - c.anchor, k ? k.out.length - k.anchor : 0);
+    for (let w = 0; w < n; w++) {
+      const a = c.out[c.anchor + w], b = k ? k.out[k.anchor + w] : null;
+      const core = a
+        ? `${String(a.t.toFixed(0)).padStart(3)}   ${String(a.dKills).padStart(3)}  ` +
+          `${a.mean.toFixed(1).padStart(5)} ${a.trap.toFixed(1).padStart(5)}  ` +
+          `${num(rate(a.dKills, a.mean)).padStart(8)}   ${num(rate(a.dKills, a.trap)).padStart(8)}`
+        : ' '.repeat(45);
+      const rec = b
+        ? `${String(b.t.toFixed(0)).padStart(3)}   ${String(b.dKills).padStart(3)}  ` +
+          `${b.trap.toFixed(1).padStart(5)}  ${num(rate(b.dKills, b.trap))}`
+        : '  -     -      -   -';
+      console.log(`INFCORE   ${String(w).padEnd(4)} ${core} | ${rec}`);
+    }
+    // Post-contact totals, and the same split three windows in: at contact
+    // against later, which is what says whether a deficit is the first
+    // exchange or an accumulation.
+    const tot = (x, field) => {
+      if (!x) return null;
+      const win = x.out.slice(x.anchor);
+      const sum = (f, from = 0, to = win.length) => win.slice(from, to).reduce((s, v) => s + f(v), 0);
+      return { kills: sum((v) => v.dKills), men: sum((v) => v[field]),
+               earlyK: sum((v) => v.dKills, 0, 3), earlyM: sum((v) => v[field], 0, 3),
+               lateK: sum((v) => v.dKills, 3), lateM: sum((v) => v[field], 3) };
+    };
+    const cm = tot(c, 'mean'), ct = tot(c, 'trap'), kt = tot(k, 'trap');
+    // The ledger, core only: the recording holds deaths, not trigger pulls.
+    const led = (from, to) => {
+      const win = c.out.slice(c.anchor).slice(from, to);
+      const sum = (f) => win.reduce((a, v) => a + f(v), 0);
+      return { shots: sum((v) => v.shots), looks: sum((v) => v.looks),
+               men: sum((v) => v.mean), kills: sum((v) => v.dKills) };
+    };
+    const ledLine = (name, x) => console.log(
+      `INFCORE   ${name.padEnd(12)} shots=${String(x.shots).padStart(4)} looks=${String(x.looks).padStart(4)} ` +
+      `shotsPerManWindow=${num(rate(x.shots, x.men))} killsPerShot=${num(rate(x.kills, x.shots))} ` +
+      `(the roll is a fixed 0.045)`);
+    ledLine('core ledger', led(0, Infinity));
+    ledLine('  w0-w2', led(0, 3));
+    ledLine('  w3+', led(3, Infinity));
+    const say = (name, x) => x && console.log(
+      `INFCORE   ${name.padEnd(12)} post-contact kills=${String(x.kills).padStart(3)} ` +
+      `manWindows=${x.men.toFixed(1).padStart(6)} rate=${num(rate(x.kills, x.men))}   ` +
+      `w0-w2 ${num(rate(x.earlyK, x.earlyM))}  w3+ ${num(rate(x.lateK, x.lateM))}`);
+    say('core mean', cm); say('core trap', ct); say('REC trap', kt);
+    if (cm && kt) sums.push({ seed: r.seed, mean: cm, trap: ct, rec: kt });
+  }
+
+  if (sums.length === 0) return;
+  const span = (f) => `${num(Math.min(...sums.map(f)))}-${num(Math.max(...sums.map(f)))}`;
+  const pooled = (pick, kn, mn) => rate(sums.reduce((a, s) => a + pick(s)[kn], 0),
+                                        sums.reduce((a, s) => a + pick(s)[mn], 0));
+  console.log('INFCORE');
+  console.log(`INFCORE RIFLE KILLS PER MAN IN RANGE, ${cond()}, ${sums.length} seeds`);
+  console.log('INFCORE ' + ' '.repeat(28) + 'per seed'.padEnd(16) + 'pooled'.padEnd(10) +
+              'w0-w2'.padEnd(10) + 'w3+');
+  const row = (name, pick) => console.log(
+    'INFCORE ' + name.padEnd(28) +
+    span((s) => rate(pick(s).kills, pick(s).men)).padEnd(16) +
+    num(pooled(pick, 'kills', 'men')).padEnd(10) +
+    num(pooled(pick, 'earlyK', 'earlyM')).padEnd(10) +
+    num(pooled(pick, 'lateK', 'lateM')));
+  row('core, mean over the ticks', (s) => s.mean);
+  row('core, end points (trap)', (s) => s.trap);
+  row('C# recording (trap only)', (s) => s.rec);
+  // The ledger pooled over the seeds. If the early deficit is in shotsPerMan,
+  // it is the clock; if it is in killsPerShot, it is not the clock and the men
+  // are firing at something that is not an enemy rifleman.
+  const ledger = (from, to) => {
+    let shots = 0, looks = 0, men = 0, kills = 0;
+    for (const r of all) {
+      const c = windows(r.rows, (x) => x.rifleKills, (x) => x.inRifleRange, (x) => x.manMean);
+      for (const w of c.out.slice(c.anchor).slice(from, to)) {
+        shots += w.shots; looks += w.looks; men += w.mean; kills += w.dKills;
+      }
+    }
+    return { shots, looks, men, kills };
+  };
+  console.log('INFCORE');
+  console.log('INFCORE THE SHOT LEDGER, core only - the recording holds deaths, not trigger pulls');
+  console.log('INFCORE ' + ' '.repeat(28) + 'shots'.padEnd(9) + 'looks'.padEnd(9) +
+              'shots/man'.padEnd(12) + 'kills/shot');
+  for (const [name, from, to] of [['post-contact', 0, Infinity], ['w0-w2', 0, 3], ['w3+', 3, Infinity]]) {
+    const x = ledger(from, to);
+    console.log('INFCORE ' + name.padEnd(28) + String(x.shots).padEnd(9) + String(x.looks).padEnd(9) +
+                num(rate(x.shots, x.men), 3).padEnd(12) + num(rate(x.kills, x.shots), 4));
+  }
+  console.log('INFCORE   and the kills themselves, which the rate divides the meeting out of:');
+  console.log(`INFCORE     core [${sums.map((s) => s.mean.kills)}]  REC [${sums.map((s) => s.rec.kills)}]`);
+  console.log('INFCORE     men in range, summed over the windows: core mean ' +
+              `[${sums.map((s) => s.mean.men.toFixed(0))}] trap [${sums.map((s) => s.trap.men.toFixed(0))}]` +
+              `  REC trap [${sums.map((s) => s.rec.men.toFixed(0))}]`);
+  console.log('INFCORE ' + '='.repeat(62));
 }
 
 // ---------------------------------------------------------------------------
