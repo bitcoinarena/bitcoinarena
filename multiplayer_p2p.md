@@ -1898,6 +1898,70 @@ direct round link, a QR code, or a copied `round_id`. A lobby may hide a
 round from its UI; it cannot make a valid round invalid, and a player with
 the Round Contract can always connect directly.
 
+## 25.1 Nostr as a discovery transport *(new)*
+
+Nostr is named above as one option among several. This section makes it a
+specified one, because it is a good fit for a narrow and stateable reason:
+**a relay can withhold, it cannot lie.**
+
+The census is chain state (§5A.2) and the advertisement body is committed
+to by hash, so nothing a relay serves is believed on its own account. A
+client verifies everything it receives against the bond output before it
+means anything. That is exactly the threat model Nostr's weak guarantees
+suit — and exactly why the same transport must not carry anything the
+protocol's security rests on.
+
+### What is published
+
+Two event kinds. Both are signed by `node_pubkey`, or by a Nostr key the
+advertisement attests to; implementations SHOULD use the former, because a
+second key is a second thing to lose.
+
+```text
+NODE_ADVERTISEMENT      parameterized replaceable, d = node_pubkey
+  content   the NodeAdvertisement body of §5A.1, verbatim
+  tags      bond_outpoint     MANDATORY - without it the event cannot be
+                              checked against the chain and is inert
+            roles             game_verify | settlement | both
+            region, capacity_class, protocol_version
+                              so a client can filter without fetching all
+
+ROUND_ANNOUNCEMENT      regular event
+  content   round_id and the Round Contract hash
+  tags      census_height, committee_time, start_time
+```
+
+Replaceable, so a new advertisement supersedes the old one and relays keep
+one per node rather than a history nobody reads.
+
+### What this is for, and what it is not
+
+It serves §5A.2's "the body is served by the node, by mirrors, or by
+anyone". Distributing the body over relays makes the failure it describes -
+*a body that cannot be retrieved by `census_height` excludes that node* -
+substantially less likely. That is an availability gain, not a security
+one, at a place where unavailability costs an operator money.
+
+It MUST NOT carry anything time-critical or anything the protocol depends
+on: input batches, checkpoints, result signatures, payout tables and
+committee selection all travel over the direct WebSocket to the node.
+Relays have no delivery guarantee, no ordering, and drop events at their
+own discretion.
+
+### What it does not solve
+
+Relay discovery is itself a bootstrap: *which relays?* The normal answer -
+a small hardcoded set plus NIP-65 relay lists - moves the problem without
+removing it. It is a real improvement and should be described as one
+rather than more: "one website must exist" becomes "one of a set must
+exist, and the set can be extended without anyone's permission". A client
+that finds no relay and has no direct `round_id` cannot start.
+
+> **Why specify it at all, if it carries nothing?** Because the
+> alternative is every client inventing its own, and a discovery layer that
+> differs per client is one more thing that makes two players see different
+> rounds. Nothing is lost by fixing the shape of an advisory channel.
+
 ---
 
 # 26. Reference client experience
