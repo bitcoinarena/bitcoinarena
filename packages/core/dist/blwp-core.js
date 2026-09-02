@@ -1688,11 +1688,30 @@ function stepUnit(u, rng, seamZ, truckX, truckZ, halfX, halfZ, dt, index) {
     ? sub(Math.imul(squad, div(Math.imul(2, SQUAD_SPAN), Math.imul(SQUADS - 1, ONE))),
           SQUAD_SPAN)
     : u.anchor;
-  const post = u.armour
-    ? add(anchor, sub(Math.imul((Math.imul(index | 0, 2654435761) >>> 22) & 255,
-                                div(SQUAD_WIDTH, Math.imul(255, ONE))),
-                      div(SQUAD_WIDTH, TWO)))
-    : riflePost(anchor, index);
+  const ladder = add(anchor, sub(Math.imul((Math.imul(index | 0, 2654435761) >>> 22) & 255,
+                                           div(SQUAD_WIDTH, Math.imul(255, ONE))),
+                                 div(SQUAD_WIDTH, TWO)));
+  // An engaged tank closes on its enemy's x. IN X ONLY, and that is the whole
+  // difference from the version this core ported once and reverted.
+  //
+  // What was reverted steered at `(foe.x, seam - Dir*9)` as ONE normalised
+  // vector, the way StepArmour does. Normalising is what did the damage: the
+  // z component is then dragged along by the size of the x chase, the front
+  // lost its depth (z spread 9-12 down to 1.9-11.7) and one side was wiped out
+  // on two seeds. Here x and z stay on their own controllers - z is still the
+  // hold, clamped at its own walk, and knows nothing about the foe - so the
+  // depth cannot be spent on the chase. Both are measured below and in
+  // PRIORITIES, because a change that fixes presence by flattening the front
+  // has not fixed anything.
+  //
+  // The ladder stays for a tank with nobody to close on. It was invented here
+  // because armour left to a heading wobble random-walks to the map edges and
+  // stops meeting anything at all; it is a place to wait, not a place to fight
+  // from. Eight fixed posts from -76 to +76 put only two of them inside the
+  // truck's 34 m, which is why 35% of the armour was ever near it against the
+  // recording's 71% - the spread was right (sd 46 against C#'s 36-45) and the
+  // SHAPE was flat where the recording's is peaked.
+  const post = u.armour ? (u.engaged ? u.foeX : ladder) : riflePost(anchor, index);
   const dxWant = sub(post, u.x);
   const dxCap = mulFast(walk, dt);
   const dx = clamp(dxWant, neg(dxCap), dxCap);
