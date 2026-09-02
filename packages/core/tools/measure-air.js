@@ -943,6 +943,35 @@ const DERIVED = [
   ['infantryPerEffectiveBomb', span((r) => r.infKills / r.effective),
                                refSpan((s) => s.infantry.perEffectiveBomb), 2],
 ];
+// ---------------------------------------------------------------------------
+// THE SAME QUESTION ASKED OF THE TANKS.
+//
+// `summary.armour.insideRadius` and `summary.armour.bombsThatKilledArmour` have
+// been in the recording from the first pass and no check has ever used them.
+// They are the 19 men asked of a different population standing on the same
+// ground at the same moment: if the core's bombs cover the recording's number
+// of TANKS but more MEN, then the ground the bombs find is not busier and the
+// difference is in how the INFANTRY are arranged. Computed from the per-pass
+// rows, like DECOMPOSE, not from the envelope block.
+const ALSO = [
+  ['infantryInsideRadius', span((r) => r.infIn), refSpan((s) => s.infantry.insideRadius), 0],
+  ['armourInsideRadius', span((r) => r.armourIn), refSpan((s) => s.armour.insideRadius), 0],
+  ['bombsThatKilledArmour', span((r) => r.tankKillers),
+                            refSpan((s) => s.armour.bombsThatKilledArmour), 0],
+];
+console.log('');
+console.log('AIRCORE TANKS  the same ground, a different population');
+for (const [name, [lo, hi], [rlo, rhi], d] of ALSO)
+  console.log(`AIRCORE also ${name.padEnd(25)} core [${fmt(lo, d)}, ${fmt(hi, d)}]`.padEnd(70) +
+              `rec [${fmt(rlo, d)}, ${fmt(rhi, d)}]  ${!(hi < rlo || lo > rhi) ? 'OVERLAPS' : 'OUTSIDE'}`);
+{
+  const ci = rows.reduce((a, r) => a + r.infIn, 0), ca = rows.reduce((a, r) => a + r.armourIn, 0);
+  const ri = airPasses.reduce((a, s) => a + s.infantry.insideRadius, 0);
+  const ra = airPasses.reduce((a, s) => a + s.armour.insideRadius, 0);
+  console.log(`AIRCORE also pooled: infantry covered ${ci} against ${ri} = ${(ci / ri).toFixed(2)}x,` +
+              ` armour covered ${ca} against ${ra} = ${(ca / ra).toFixed(2)}x`);
+}
+
 console.log('');
 console.log('AIRCORE DECOMPOSE  perEffectiveBomb = menPerEffectiveBomb x lethalityInRadius');
 for (const [name, [lo, hi], [rlo, rhi], d] of DERIVED) {
