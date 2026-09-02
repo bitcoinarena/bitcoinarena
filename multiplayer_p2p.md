@@ -1918,6 +1918,106 @@ the other eligible nodes in the same role pool, keeping the total at 2%.
 **Remainders.** Calculate in millisatoshis, floor each base share, and
 distribute the remaining msat in ascending `H(round_id ‖ node_pubkey)` order.
 
+## The donation set
+
+A donation goes to a **set** of recipients with declared shares, not to one
+address:
+
+```json
+[
+  { "lnurl": "LNURL1...", "share_bps": 5000 },
+  { "lnurl": "LNURL2...", "share_bps": 5000 }
+]
+```
+
+`share_bps` are basis points and MUST sum to exactly 10000. A client with
+donations enabled pays each recipient its share of the player's chosen
+donation - fifty-fifty above - as separate Lightning payments.
+
+**Why a set and not an address.** One address is one party's decision about
+who deserves the money, made once and never revisited. A set with shares is
+a parameter the network can hold an opinion about, splits between a
+developer fund and whatever else a round's participants agree is worth
+funding, and does not have to be renegotiated as a whole to change one
+entry.
+
+**Rules.**
+
+- The set is named in the **Round Contract** and its hash is part of the
+  contract hash, so it cannot change after entry.
+- The client MUST show every recipient before wallet approval (§22A). A
+  donation to an undisclosed address is not a donation.
+- A player who has donations switched off pays none of them, and the set is
+  irrelevant to that entry.
+- Payment failure to one recipient does not void the entry or the round.
+  A donation is voluntary and outside the pool; an unreachable LNURL is a
+  failed payment and nothing more. Clients SHOULD report it and MUST NOT
+  redirect the share to the remaining recipients, which would let one
+  unreachable endpoint quietly redistribute other people's money.
+- Rounding: compute in millisatoshis, floor each share, and give the
+  remainder to the first recipient in the set as published. Deterministic,
+  and the amounts are too small for anything cleverer to be worth its
+  complexity.
+
+## System parameters — three kinds, three mechanisms
+
+"Set a parameter across the network" is three different problems wearing
+one name, and each needs a different answer. Collapsing them is how a
+providerless system acquires an owner.
+
+### 1. Consensus-critical: the Round Contract
+
+Anything two participants must agree on exactly or the round cannot settle:
+committee size and threshold, `census_height`, `randomness_rule`, the
+score parameters of §18A.7, the fee schedule, the donation set.
+
+These are **not network parameters at all**. They are per-round, fixed in
+the contract, hashed into it, and accepted by the player at entry. A round
+whose parameters someone dislikes is a round they do not enter - and
+clients SHOULD warn about the ones §18A.7 lists rather than leaving the
+player to read a hash.
+
+There is nothing to vote on and no state to keep. This is where the great
+majority of parameters belong.
+
+### 2. Slowly varying network values: bond-weighted median
+
+A few values are properties of the network rather than of a round -
+`bond_min` per bracket, the bracket table of §5A.10, the split of the node
+fee between roles. Nobody should own them, and they should not be frozen
+at whatever seemed right when the document was written.
+
+Each node declares its preferred value in its NodeAdvertisement. The
+effective value for a round is the **bond-weighted median** over the census
+at `census_height`:
+
+```text
+value = median over census, each node weighted by its bond
+```
+
+Median rather than mean: an outlier declaring an absurd figure moves a mean
+and cannot move a median past the weight it actually holds. Bond-weighted
+for the same reason sortition is - influence costs capital, so buying it is
+Sybil-proof by construction, and the cost is the same cost an attacker
+faces in §5A.10.
+
+It is computable by anyone from the chain, so it needs no vote, no tally,
+no quorum and no round of messages. A node changes its declaration the same
+way it changes anything else in its advertisement: by publishing a new one
+with a new bond (§5A.10B), which is deliberately not free.
+
+### 3. Client preferences: not network parameters
+
+The donation percentage, whether donations are on at all, notification
+channels, UI. These belong to the player or the operator and the protocol
+has no opinion. §22A already forbids anyone else from overwriting the
+player's donation choice; the same principle covers the rest.
+
+> The test for which kind a parameter is: **what breaks if two participants
+> disagree about it?** If the round cannot settle, it is kind 1. If the
+> network merely drifts, kind 2. If nothing breaks, kind 3 and it does not
+> belong in this document.
+
 ## Sybil economics — corrected statement *(v4.6)*
 
 v4.4 claimed "no Sybil reward". That was false as written: fees do go only
@@ -1960,35 +2060,66 @@ confirmation above 500 bps. A compromised web host can otherwise set an
 absurd donation to a recipient key it controls, and the player's only
 defence is reading the wallet dialog carefully.
 
-## Collection: on top of the stake
+## Collection: inclusive in the stake *(changed)*
 
 ```text
-game stake                        100 sat
-node infrastructure fee             2 sat   (2%)
-player-selected donation            2 sat   (0% or chosen)
+wallet commitment                 100 sat   <- what the player chose
+  node infrastructure fee           2 sat   (2%, identical for everyone)
+  player-selected donation          2 sat   (0% or chosen)
 ------------------------------------------
-wallet commitment                 104 sat
+net game stake                     96 sat   -> the pool
 ```
 
-The pool stays mathematically clean: 100 sat is game risk; the rest is
-service and voluntary donation, outside the winner/loser pool and outside
-the ranking.
+Earlier versions collected the fee and the donation **on top**: a 100 sat
+round took 104 sat from the wallet. That kept the pool arithmetically tidy
+at the cost of the one number the player actually chose. "Play for 100"
+now means 100 leaves the wallet, and the wallet dialog agrees with the
+button that was pressed.
 
-## Example: 61-player round
+### What this costs, and it is not nothing
+
+With an inclusive donation, **players no longer contribute equally**. A
+player donating nothing puts 98 sat into the pool; one donating 5% puts 93.
+They compete for the same ranks.
+
+Left there, donating would be rewarded twice - once as the donation, and
+again as a smaller contribution for the same entitlement - which is
+backwards and is an exploit, not a generosity.
+
+> **A player's entitlement is therefore weighted by their net stake.**
+> §18A's rank weights distribute the pool as before; each rank's share is
+> then scaled by that player's net stake against the mean net stake of the
+> qualifiers.
+
+It stays a deterministic function of published inputs, so §20 is unchanged
+in kind: `PayoutTable = F(RoundContract, Membership, FinalResults)`, with
+net stake among the inputs it already has. Millisatoshi arithmetic and the
+ascending-`H(round_id ‖ pubkey)` remainder rule of §18A.6 apply unchanged.
+
+The node fee raises no such question: it is the same percentage for
+everyone, so it scales every contribution identically and cancels out of
+the ranking entirely.
+
+## Example: 61-player round, all donating 2%
 
 ```text
-gross_round_volume = 6,100 sat
+gross_round_volume = 6,100 sat   (61 x 100, the wallet commitments)
 node fee (2%)      =   122 sat
   GAME/VERIFY pool =    61 sat -> 8.714 sat per eligible slot (7)
   SETTLEMENT pool  =    61 sat -> 8.714 sat per eligible slot (7)
-donation (2%)      =   122 sat -> donation recipient(s)
-game pool          = 6,100 sat -> loser-pool distribution only
+donation (2%)      =   122 sat -> split per the donation set
+game pool          = 5,856 sat -> loser-pool distribution only
 ```
+
+Where donations differ per player the game pool is
+`Σ (stake - node_fee_share - own_donation)`, and each player's entitlement
+is weighted by their own net stake as above.
 
 ## Transparency
 
-Before wallet approval the client MUST display: game stake, node fee,
-developer donation, total wallet commitment, the selected node identities
+Before wallet approval the client MUST display: total wallet commitment,
+the node fee and donation coming OUT of it, the resulting net game stake,
+the selected node identities
 (or "pending" per §5A.5), any committee overlap, whether any selected
 operator is playing, and the donation recipient. The Entry Contract commits
 to the fee schedule hash; nothing can change afterwards.
