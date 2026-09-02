@@ -765,7 +765,28 @@ const B_WORDS = 8;
 const B_STATE = 0, B_SIDE = 1, B_X = 2, B_Y = 3, B_Z = 4;
 const B_VX = 5, B_VY = 6, B_VZ = 7;
 
-const WORDS = O_BOMBS + Math.imul(MAX_BOMBS, B_WORDS);
+/**
+ * Where each side's infantry squads are standing, along x.
+ *
+ * Three a side, which is `Army.EnsureSquads`'s own arithmetic at this
+ * establishment: `want = max(3, strength / 12)` and a side fields 36 riflemen.
+ *
+ * State rather than a function of the index, because the anchors are DRAWN -
+ * `Rand(-FrontX + 12, FrontX - 12)`, independently per side, so the two sides
+ * do not line up - and because DriftSquads walks each one by
+ * `sin(Time * 0.12 + i * 2.4) * 3.6 * dt` every tick and clamps it. A clamped
+ * integral is path-dependent: once an anchor has been held at the edge it has
+ * lost the excursion, and no closed form in the tick can say that.
+ *
+ * Appended after the bombs so every existing offset stays where it was.
+ * Armour is NOT here. C# tanks have no squad at all, and the core's own even
+ * ladder is what stops its two armies drifting apart sideways - see (a).
+ */
+const O_SQUADS = O_BOMBS + Math.imul(MAX_BOMBS, B_WORDS);
+const SQUADS_PER_SIDE = 3;
+const SQUAD_WORDS = Math.imul(SQUADS_PER_SIDE, 2);   // bull, then bear
+
+const WORDS = O_SQUADS + SQUAD_WORDS;
 
 // truck fields, relative to O_TRUCK
 const T_X = 0, T_Z = 1, T_HEADING = 2, T_VX = 3, T_VZ = 4;
@@ -1444,6 +1465,7 @@ const SQUADS = 8;
 const SQUAD_MASK = SQUADS - 1;
 const SQUAD_SPAN = Math.imul(76, ONE);     // anchors run from -76 to +76
 const SQUAD_WIDTH = Math.imul(16, ONE);    // each unit sits within 8 m of its anchor
+const SQUAD_OFFSET = Math.imul(18, ONE);   // a rifleman: Army.Spawn's Rand(-9, 9)
 const TWO = Math.imul(2, ONE);
 
 const BACK_OFF_RANGE = Math.imul(24, ONE);
@@ -1563,12 +1585,29 @@ function stepUnit(u, rng, seamZ, truckX, truckZ, halfX, halfZ, dt, index) {
   // per army, and the two lines stood at opposite ends of the field. Twenty
   // three of twenty four tanks survived a minute because not one of them ever
   // saw an enemy.
+  // ARMOUR keeps the ladder. INFANTRY is given C#'s own geometry instead: three
+  // drawn anchors a side that walk, handed in as u.anchor, and a man sits at
+  // anchor + Rand(-9, 9) on it.
+  //
+  // The ladder is an invention of this core and it stays for the tanks, because
+  // C# armour has no squad at all - StepArmour steers at its foe's x - and
+  // without the ladder the two armies drifted apart sideways and stopped
+  // meeting. For the riflemen it was doing active harm: eight evenly spaced
+  // columns SHARED BY BOTH SIDES meant a bomb that caught anybody caught men
+  // of both armies, so half of what the air killed was its own (34-49 a round
+  // against the recording's 11-29), and eight knots spread over the front left
+  // too little empty ground for a bomb to fall on (dud share 0.38-0.46 against
+  // 0.50-0.58).
   const squad = ((index | 0) >> 3) & SQUAD_MASK;
-  const anchor = sub(Math.imul(squad, div(Math.imul(2, SQUAD_SPAN), Math.imul(SQUADS - 1, ONE))),
-                     SQUAD_SPAN);
-  const offset = sub(Math.imul((Math.imul(index | 0, 2654435761) >>> 22) & 255,
-                               div(SQUAD_WIDTH, Math.imul(255, ONE))), div(SQUAD_WIDTH, TWO));
-  const post = add(anchor, offset);
+  const anchor = u.armour
+    ? sub(Math.imul(squad, div(Math.imul(2, SQUAD_SPAN), Math.imul(SQUADS - 1, ONE))),
+          SQUAD_SPAN)
+    : u.anchor;
+  const post = u.armour
+    ? add(anchor, sub(Math.imul((Math.imul(index | 0, 2654435761) >>> 22) & 255,
+                                div(SQUAD_WIDTH, Math.imul(255, ONE))),
+                      div(SQUAD_WIDTH, TWO)))
+    : riflePost(anchor, index);
   const dxWant = sub(post, u.x);
   const dxCap = mulFast(walk, dt);
   const dx = clamp(dxWant, neg(dxCap), dxCap);
@@ -1629,6 +1668,26 @@ function stepUnit(u, rng, seamZ, truckX, truckZ, halfX, halfZ, dt, index) {
  * every frame is thirty thousand comparisons for a decision that changes once
  * every few seconds.
  */
+/**
+ * Where a rifleman stands on his squad's anchor.
+ *
+ * `Army.Spawn` draws `squadOffsetX = Rand(-9f, 9f)` once and `StepInfantry`
+ * walks him to `squads[squad] + squadOffsetX` for the rest of his life. Here
+ * it comes off the slot index instead of a word, because there is no spare
+ * word in the unit - which does mean a replacement inherits the offset of the
+ * man whose slot it took, where C# draws a fresh one. Same distribution, one
+ * fewer degree of freedom.
+ *
+ * Shared, so that the post a man spawns on and the post he walks to cannot
+ * drift apart.
+ */
+function riflePost(anchor, index) {
+  const offset = sub(Math.imul((Math.imul(index | 0, 2654435761) >>> 22) & 255,
+                               div(SQUAD_OFFSET, Math.imul(255, ONE))),
+                     div(SQUAD_OFFSET, TWO));
+  return add(anchor, offset);
+}
+
 function pickRifleTarget(units, count, self, x, z, side) {
   let best = -1, bestD = RIFLE_RANGE;
   for (let i = 0; i < count; i++) {
@@ -2375,8 +2434,47 @@ function init(seedWord) {
   st.armour = { n: 0, xz: new Int32Array(0) };
   st.units = { n: 0, u: new Int32Array(0) };
 
+  // The squad anchors first, because a rifleman is put ON his post when he
+  // spawns and cannot be if the post does not exist yet. C# reaches the same
+  // order the other way round - EnsureSquads runs inside the first infantry
+  // Spawn of a side - and the count is its own arithmetic: three a side, from
+  // `want = max(3, strength / 12)` at 36 riflemen.
+  //
+  // Drawn per side and independent of the other side's, which is the whole
+  // point: shared columns are what let one bomb kill men of both armies.
+  for (let k = 0; k < SQUAD_WORDS; k++)
+    s[O_SQUADS + k] = Math.imul(nextBelow(rng, 161) - 80, ONE);
+
   for (let i = 0; i < UNITS; i++) spawnUnit(s, rng, i);
   return st;
+}
+
+/** Word holding squad `k` of `side`. Bull's three, then Bear's. */
+const squadWord = (side, k) => O_SQUADS + (side < 0 ? k : SQUADS_PER_SIDE + k);
+
+/**
+ * The squads walk, and the two sides' walk apart.
+ *
+ * `Army.DriftSquads`: every anchor moves by sin(Time * 0.12 + i * 2.4) * 3.6
+ * a second and is held inside the field. Angles here are Q16.16 TURNS, so a
+ * radian is 65536 / 2pi = 10430.22 units: 0.12 rad/s is 1252 units a second,
+ * and the 2.4 rad between squads is 25032.
+ *
+ * Draws nothing. It runs between the unit loop and the air because that is
+ * where Army.Update runs it, and the order is protocol even for a step that
+ * touches no random number - it decides where the men are standing when the
+ * bombs go off.
+ */
+function driftSquads(s) {
+  const angle = idiv(Math.imul(s[O_TICK], 1252), 60);
+  for (let k = 0; k < SQUADS_PER_SIDE; k++) {
+    const phase = (angle + Math.imul(k, 25032)) & 65535;
+    const step = mulFast(sin(phase), 3932);        // 3.6 m/s * (1/60) s
+    for (const side of [-1, 1]) {
+      const w = squadWord(side, k);
+      s[w] = clamp(add(s[w], step), Math.imul(-80, ONE), Math.imul(80, ONE));
+    }
+  }
 }
 
 /**
@@ -2401,8 +2499,14 @@ const sideOf = (i) => (((i >> 2) & 1) === 0 ? -1 : 1);
  * that spawn differently is a difference nobody would see until a replacement
  * walked on somewhere a starter never could.
  *
- * Draw order: x, z, hp, heading, reload, cooldown. It is part of the protocol:
- * a verifier drawing them in another order gets another army.
+ * Draw order: x, z, hp, heading, reload, cooldown, and for a rifleman a squad
+ * after them. It is part of the protocol: a verifier drawing them in another
+ * order gets another army.
+ *
+ * The x draw happens for a rifleman too and is then thrown away, because C#
+ * does exactly that - `float x = Rand(...)` at the top of Spawn and
+ * `unit.x = clamp(squads[squad] + squadOffsetX)` at the bottom of the
+ * infantry branch.
  */
 function spawnUnit(s, rng, i) {
   const b = unitBase(i);
@@ -2444,6 +2548,17 @@ function spawnUnit(s, rng, i) {
   s[b + U_TARGET] = nextBelow(rng, 180);
   s[b + U_COOLDOWN] = nextBelow(rng, 120);
   s[b + U_TARGET] = -1;
+
+  // A rifleman picks a squad - `unit.squad = _rng.Next(squads.Count)` - and is
+  // put straight on its post rather than walking in from wherever the x draw
+  // put him. U_TARGET is the armour's reload counter and a rifleman has no use
+  // for it, so his squad lives there.
+  if (!isArmour(i)) {
+    const k = nextBelow(rng, SQUADS_PER_SIDE);
+    s[b + U_TARGET] = k;
+    s[b + U_X] = clamp(riflePost(s[squadWord(side, k)], i),
+                       Math.imul(-88, ONE), Math.imul(88, ONE));
+  }
 }
 
 /**
@@ -2749,6 +2864,8 @@ function step(st, throttle, steer, brake, handbrake, practice) {
     // instead of the armour reaching the line first.
     u.armour = isArmour(i);
     u.side = s[b + U_SIDE];
+    // The post he is holding, read fresh every tick: the anchors walk.
+    u.anchor = u.armour ? 0 : s[squadWord(u.side, s[b + U_TARGET])];
 
     // Is anything of the other side too close? Decided before the step, from
     // the positions everyone had at the start of the tick, so the order units
@@ -2849,6 +2966,11 @@ function step(st, throttle, steer, brake, handbrake, practice) {
   if (practice) s[O_SCORE + S_PRACTICE] = 1;
   else if (hits > 0 && s[O_SCORE + S_STATE] === RUN_LIVE)
     s[T + T_HP] = max(0, sub(s[T + T_HP], Math.imul(hits, ONE)));
+
+  // The squads walk. Between the unit loop and the air because that is where
+  // Army.Update runs DriftSquads, and it decides where the men are standing
+  // when the bombs go off.
+  driftSquads(s);
 
   // ---- 2b. air -----------------------------------------------------------
   // Gunships, then bombs, then replacements, then the sortie clocks. That is

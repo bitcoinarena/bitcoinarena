@@ -93,7 +93,28 @@ export const B_WORDS = 8;
 export const B_STATE = 0, B_SIDE = 1, B_X = 2, B_Y = 3, B_Z = 4;
 export const B_VX = 5, B_VY = 6, B_VZ = 7;
 
-export const WORDS = O_BOMBS + Math.imul(MAX_BOMBS, B_WORDS);
+/**
+ * Where each side's infantry squads are standing, along x.
+ *
+ * Three a side, which is `Army.EnsureSquads`'s own arithmetic at this
+ * establishment: `want = max(3, strength / 12)` and a side fields 36 riflemen.
+ *
+ * State rather than a function of the index, because the anchors are DRAWN -
+ * `Rand(-FrontX + 12, FrontX - 12)`, independently per side, so the two sides
+ * do not line up - and because DriftSquads walks each one by
+ * `sin(Time * 0.12 + i * 2.4) * 3.6 * dt` every tick and clamps it. A clamped
+ * integral is path-dependent: once an anchor has been held at the edge it has
+ * lost the excursion, and no closed form in the tick can say that.
+ *
+ * Appended after the bombs so every existing offset stays where it was.
+ * Armour is NOT here. C# tanks have no squad at all, and the core's own even
+ * ladder is what stops its two armies drifting apart sideways - see (a).
+ */
+export const O_SQUADS = O_BOMBS + Math.imul(MAX_BOMBS, B_WORDS);
+export const SQUADS_PER_SIDE = 3;
+export const SQUAD_WORDS = Math.imul(SQUADS_PER_SIDE, 2);   // bull, then bear
+
+export const WORDS = O_SQUADS + SQUAD_WORDS;
 
 // truck fields, relative to O_TRUCK
 export const T_X = 0, T_Z = 1, T_HEADING = 2, T_VX = 3, T_VZ = 4;

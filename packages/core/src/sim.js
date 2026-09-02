@@ -23,6 +23,7 @@ import {
   T_WHEEL, T_THROTTLE, T_STEER, T_IMPACT,
   S_EXPOSURE, S_ELAPSED, S_BESTX, S_CARGO, S_DELIVERED, S_STATE, S_PRACTICE,
   U_X, U_Z, U_SIDE, U_HP, U_HEADING, U_STATE, U_COOLDOWN, U_TARGET,
+  O_SQUADS, SQUADS_PER_SIDE, SQUAD_WORDS,
 } from './state.js';
 // Named imports, not namespaces. `import * as x` cannot survive concatenation
 // into a single browser file - after the import line is stripped, every
@@ -31,7 +32,7 @@ import {
 import { vehicleStep } from './rules/vehicle.js';
 import { flatGround, gradeAlong, heightAtWorld, DEFAULT_COLS, DEFAULT_ROWS } from './rules/ground.js';
 import { noSolids, resolveSolids, resolveArmour, BOX_WORDS } from './rules/solids.js';
-import { stepUnit, threatAt, pickTarget, pickRifleTarget, RELOAD_MIN, RELOAD_SPAN, DAMAGE_MIN, DAMAGE_SPAN, BACKOFF_RANGE, HIT_PER_MIL, ARMOUR_RANGE, RIFLE_RANGE, RIFLE_HIT_PER_MIL, RIFLE_RELOAD_TICKS, RIFLE_RELOAD_TICKS_SPAN, RIFLE_LOOK_TICKS, RIFLE_LOOK_TICKS_SPAN, RIFLE_HP, RIFLE_DAMAGE } from './rules/army.js';
+import { stepUnit, threatAt, pickTarget, pickRifleTarget, riflePost, RELOAD_MIN, RELOAD_SPAN, DAMAGE_MIN, DAMAGE_SPAN, BACKOFF_RANGE, HIT_PER_MIL, ARMOUR_RANGE, RIFLE_RANGE, RIFLE_HIT_PER_MIL, RIFLE_RELOAD_TICKS, RIFLE_RELOAD_TICKS_SPAN, RIFLE_LOOK_TICKS, RIFLE_LOOK_TICKS_SPAN, RIFLE_HP, RIFLE_DAMAGE } from './rules/army.js';
 import { accrue, earning, scoreOf } from './rules/score.js';
 import { outcome, RUN_LIVE, RUN_DELIVERED, RUN_WRECKED, RUN_MISSED } from './rules/gate.js';
 import { frontlineZ, SAMPLES } from './rules/frontline.js';
@@ -218,8 +219,47 @@ export function init(seedWord) {
   st.armour = { n: 0, xz: new Int32Array(0) };
   st.units = { n: 0, u: new Int32Array(0) };
 
+  // The squad anchors first, because a rifleman is put ON his post when he
+  // spawns and cannot be if the post does not exist yet. C# reaches the same
+  // order the other way round - EnsureSquads runs inside the first infantry
+  // Spawn of a side - and the count is its own arithmetic: three a side, from
+  // `want = max(3, strength / 12)` at 36 riflemen.
+  //
+  // Drawn per side and independent of the other side's, which is the whole
+  // point: shared columns are what let one bomb kill men of both armies.
+  for (let k = 0; k < SQUAD_WORDS; k++)
+    s[O_SQUADS + k] = Math.imul(nextBelow(rng, 161) - 80, ONE);
+
   for (let i = 0; i < UNITS; i++) spawnUnit(s, rng, i);
   return st;
+}
+
+/** Word holding squad `k` of `side`. Bull's three, then Bear's. */
+const squadWord = (side, k) => O_SQUADS + (side < 0 ? k : SQUADS_PER_SIDE + k);
+
+/**
+ * The squads walk, and the two sides' walk apart.
+ *
+ * `Army.DriftSquads`: every anchor moves by sin(Time * 0.12 + i * 2.4) * 3.6
+ * a second and is held inside the field. Angles here are Q16.16 TURNS, so a
+ * radian is 65536 / 2pi = 10430.22 units: 0.12 rad/s is 1252 units a second,
+ * and the 2.4 rad between squads is 25032.
+ *
+ * Draws nothing. It runs between the unit loop and the air because that is
+ * where Army.Update runs it, and the order is protocol even for a step that
+ * touches no random number - it decides where the men are standing when the
+ * bombs go off.
+ */
+function driftSquads(s) {
+  const angle = idiv(Math.imul(s[O_TICK], 1252), 60);
+  for (let k = 0; k < SQUADS_PER_SIDE; k++) {
+    const phase = (angle + Math.imul(k, 25032)) & 65535;
+    const step = mulFast(sin(phase), 3932);        // 3.6 m/s * (1/60) s
+    for (const side of [-1, 1]) {
+      const w = squadWord(side, k);
+      s[w] = clamp(add(s[w], step), Math.imul(-80, ONE), Math.imul(80, ONE));
+    }
+  }
 }
 
 /**
@@ -244,8 +284,14 @@ const sideOf = (i) => (((i >> 2) & 1) === 0 ? -1 : 1);
  * that spawn differently is a difference nobody would see until a replacement
  * walked on somewhere a starter never could.
  *
- * Draw order: x, z, hp, heading, reload, cooldown. It is part of the protocol:
- * a verifier drawing them in another order gets another army.
+ * Draw order: x, z, hp, heading, reload, cooldown, and for a rifleman a squad
+ * after them. It is part of the protocol: a verifier drawing them in another
+ * order gets another army.
+ *
+ * The x draw happens for a rifleman too and is then thrown away, because C#
+ * does exactly that - `float x = Rand(...)` at the top of Spawn and
+ * `unit.x = clamp(squads[squad] + squadOffsetX)` at the bottom of the
+ * infantry branch.
  */
 function spawnUnit(s, rng, i) {
   const b = unitBase(i);
@@ -287,6 +333,17 @@ function spawnUnit(s, rng, i) {
   s[b + U_TARGET] = nextBelow(rng, 180);
   s[b + U_COOLDOWN] = nextBelow(rng, 120);
   s[b + U_TARGET] = -1;
+
+  // A rifleman picks a squad - `unit.squad = _rng.Next(squads.Count)` - and is
+  // put straight on its post rather than walking in from wherever the x draw
+  // put him. U_TARGET is the armour's reload counter and a rifleman has no use
+  // for it, so his squad lives there.
+  if (!isArmour(i)) {
+    const k = nextBelow(rng, SQUADS_PER_SIDE);
+    s[b + U_TARGET] = k;
+    s[b + U_X] = clamp(riflePost(s[squadWord(side, k)], i),
+                       Math.imul(-88, ONE), Math.imul(88, ONE));
+  }
 }
 
 /**
@@ -592,6 +649,8 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
     // instead of the armour reaching the line first.
     u.armour = isArmour(i);
     u.side = s[b + U_SIDE];
+    // The post he is holding, read fresh every tick: the anchors walk.
+    u.anchor = u.armour ? 0 : s[squadWord(u.side, s[b + U_TARGET])];
 
     // Is anything of the other side too close? Decided before the step, from
     // the positions everyone had at the start of the tick, so the order units
@@ -692,6 +751,11 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
   if (practice) s[O_SCORE + S_PRACTICE] = 1;
   else if (hits > 0 && s[O_SCORE + S_STATE] === RUN_LIVE)
     s[T + T_HP] = max(0, sub(s[T + T_HP], Math.imul(hits, ONE)));
+
+  // The squads walk. Between the unit loop and the air because that is where
+  // Army.Update runs DriftSquads, and it decides where the men are standing
+  // when the bombs go off.
+  driftSquads(s);
 
   // ---- 2b. air -----------------------------------------------------------
   // Gunships, then bombs, then replacements, then the sortie clocks. That is

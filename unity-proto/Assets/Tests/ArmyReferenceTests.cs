@@ -263,18 +263,28 @@ public class InfantryReferenceTests
         //            only when the shooter already has a foe in range and the
         //            truck is closer than that foe. Truck damage is M1's, so
         //            the rule needs a number and not a reading of the source.
-        Line(sb, "line", 12, 36);
-        Line(sb, "line-24-72", 24, 72);
+        Line(sb, "line", 12, 36, 20260901);
+        Line(sb, "line-24-72", 24, 72, 20260901);
         Courier(sb, "courier", 12, 36);
+
+        // THE SAME FOUR SEEDS THE CORE MEASURES ON, because the line turns out
+        // to be seed-sensitive and a one-seed reference cannot say whether that
+        // is a fault. Three squad anchors a side, drawn at random x
+        // independently per side, sometimes land far apart - and then the two
+        // lines never meet at all. Whether that is a fault or the army's own
+        // behaviour is a question about the C#, and only the C# can answer it.
+        Line(sb, "line-20260902", 12, 36, 20260902);
+        Line(sb, "line-20260903", 12, 36, 20260903);
+        Line(sb, "line-20260904", 12, 36, 20260904);
 
         sb.AppendLine("INFREF END");
         Debug.Log(sb.ToString());
     }
 
     /// <summary>The same world every pass: flat, still, seam down the middle.</summary>
-    static Army World(int armourPerSide, int infantryPerSide)
+    static Army World(int armourPerSide, int infantryPerSide, int seed = 20260901)
     {
-        var army = new Army(20260901);
+        var army = new Army(seed);
         army.FrontlineAt = _ => 0f;
         army.GroundAt = (x, z) => 0f;
         army.Flow = 0f;
@@ -291,9 +301,9 @@ public class InfantryReferenceTests
     /// here. That is what makes `kills` a rifle death count rather than a
     /// headcount difference, which replacement hides completely.
     /// </summary>
-    static void Line(StringBuilder sb, string tag, int armourPerSide, int infantryPerSide)
+    static void Line(StringBuilder sb, string tag, int armourPerSide, int infantryPerSide, int seed)
     {
-        var army = World(armourPerSide, infantryPerSide);
+        var army = World(armourPerSide, infantryPerSide, seed);
 
         // NOT subscribed to `Shot`, and that is not an omission.
         //
@@ -317,7 +327,7 @@ public class InfantryReferenceTests
         };
 
         sb.AppendLine($"INFREF RUN tag={tag} armourPerSide={armourPerSide} " +
-                      $"infantryPerSide={infantryPerSide} reinforce=on courier=none seed=20260901");
+                      $"infantryPerSide={infantryPerSide} reinforce=on courier=none seed={seed}");
         Row(sb, army, tag, 0f, killsBull, killsBear);
 
         const float dt = 1f / 60f;

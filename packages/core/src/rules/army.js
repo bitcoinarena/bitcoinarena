@@ -87,6 +87,7 @@ const SQUADS = 8;
 const SQUAD_MASK = SQUADS - 1;
 const SQUAD_SPAN = Math.imul(76, ONE);     // anchors run from -76 to +76
 const SQUAD_WIDTH = Math.imul(16, ONE);    // each unit sits within 8 m of its anchor
+const SQUAD_OFFSET = Math.imul(18, ONE);   // a rifleman: Army.Spawn's Rand(-9, 9)
 const TWO = Math.imul(2, ONE);
 
 const BACK_OFF_RANGE = Math.imul(24, ONE);
@@ -206,12 +207,29 @@ export function stepUnit(u, rng, seamZ, truckX, truckZ, halfX, halfZ, dt, index)
   // per army, and the two lines stood at opposite ends of the field. Twenty
   // three of twenty four tanks survived a minute because not one of them ever
   // saw an enemy.
+  // ARMOUR keeps the ladder. INFANTRY is given C#'s own geometry instead: three
+  // drawn anchors a side that walk, handed in as u.anchor, and a man sits at
+  // anchor + Rand(-9, 9) on it.
+  //
+  // The ladder is an invention of this core and it stays for the tanks, because
+  // C# armour has no squad at all - StepArmour steers at its foe's x - and
+  // without the ladder the two armies drifted apart sideways and stopped
+  // meeting. For the riflemen it was doing active harm: eight evenly spaced
+  // columns SHARED BY BOTH SIDES meant a bomb that caught anybody caught men
+  // of both armies, so half of what the air killed was its own (34-49 a round
+  // against the recording's 11-29), and eight knots spread over the front left
+  // too little empty ground for a bomb to fall on (dud share 0.38-0.46 against
+  // 0.50-0.58).
   const squad = ((index | 0) >> 3) & SQUAD_MASK;
-  const anchor = sub(Math.imul(squad, div(Math.imul(2, SQUAD_SPAN), Math.imul(SQUADS - 1, ONE))),
-                     SQUAD_SPAN);
-  const offset = sub(Math.imul((Math.imul(index | 0, 2654435761) >>> 22) & 255,
-                               div(SQUAD_WIDTH, Math.imul(255, ONE))), div(SQUAD_WIDTH, TWO));
-  const post = add(anchor, offset);
+  const anchor = u.armour
+    ? sub(Math.imul(squad, div(Math.imul(2, SQUAD_SPAN), Math.imul(SQUADS - 1, ONE))),
+          SQUAD_SPAN)
+    : u.anchor;
+  const post = u.armour
+    ? add(anchor, sub(Math.imul((Math.imul(index | 0, 2654435761) >>> 22) & 255,
+                                div(SQUAD_WIDTH, Math.imul(255, ONE))),
+                      div(SQUAD_WIDTH, TWO)))
+    : riflePost(anchor, index);
   const dxWant = sub(post, u.x);
   const dxCap = mulFast(walk, dt);
   const dx = clamp(dxWant, neg(dxCap), dxCap);
@@ -272,6 +290,26 @@ export function stepUnit(u, rng, seamZ, truckX, truckZ, halfX, halfZ, dt, index)
  * every frame is thirty thousand comparisons for a decision that changes once
  * every few seconds.
  */
+/**
+ * Where a rifleman stands on his squad's anchor.
+ *
+ * `Army.Spawn` draws `squadOffsetX = Rand(-9f, 9f)` once and `StepInfantry`
+ * walks him to `squads[squad] + squadOffsetX` for the rest of his life. Here
+ * it comes off the slot index instead of a word, because there is no spare
+ * word in the unit - which does mean a replacement inherits the offset of the
+ * man whose slot it took, where C# draws a fresh one. Same distribution, one
+ * fewer degree of freedom.
+ *
+ * Shared, so that the post a man spawns on and the post he walks to cannot
+ * drift apart.
+ */
+export function riflePost(anchor, index) {
+  const offset = sub(Math.imul((Math.imul(index | 0, 2654435761) >>> 22) & 255,
+                               div(SQUAD_OFFSET, Math.imul(255, ONE))),
+                     div(SQUAD_OFFSET, TWO));
+  return add(anchor, offset);
+}
+
 export function pickRifleTarget(units, count, self, x, z, side) {
   let best = -1, bestD = RIFLE_RANGE;
   for (let i = 0; i < count; i++) {
