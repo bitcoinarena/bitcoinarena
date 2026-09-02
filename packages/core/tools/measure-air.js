@@ -108,6 +108,8 @@ const bandOf = (d) => Math.min(BANDS - 1, Math.floor(d / BAND));
 const bandArea = [...Array(BANDS)].map((_, k) => ((k + 1) ** 2 - k ** 2) / BANDS ** 2);
 
 const ref = JSON.parse(readFileSync(new URL('../test/vectors/csharp-gunships.json', import.meta.url), 'utf8'));
+/** The seeds the recording holds, read off its own setup block. */
+const REC_SEEDS = ref.setup.seeds;
 
 function pinSeam(st) { st.tape.fill(st.tape[0]); return st; }
 const start = (seed) => (SEAM0 ? pinSeam(init(seed)) : init(seed));
@@ -292,8 +294,65 @@ function measure(seed) {
                med: counts[counts.length >> 1], max: counts[counts.length - 1] };
     };
 
+    /**
+     * THE GATE: how deep is each side's line at the tick a bomb goes off?
+     *
+     * The plank is an air-OFF observation - measure-squads reads a spread of
+     * 1.0 from spawn to contact against the C#'s 0.9 growing to 6.5 - and the
+     * nineteen extra men is an air-ON quantity. Nobody had measured whether the
+     * core's line is still flat when its bombs actually land. If the spread has
+     * already opened by the time the first killing bomb falls, the plank cannot
+     * be what those bombs are finding, whatever else is.
+     *
+     * Living riflemen only, per side, at the top of the air phase - the same
+     * set and the same tick the blast counts its covered men over, and the same
+     * population measure-squads takes its z spread over (living, not armour,
+     * one side), so the 1.0 plank and the recording's 6.5 are on this scale.
+     *
+     * TWO WIDTHS, because side-wide cannot answer it on its own. Air on, the
+     * core replaces 84-118 riflemen a round from the edge, and a man walking in
+     * is a living rifleman of that side at whatever depth the walk has him at.
+     * Side-wide sd counts him, so the air's own churn can open the number
+     * without the fighting line ever having opened - and that would rule the
+     * plank out by an artefact, which is the mistake the depth pair already
+     * made once. LOCAL is the same sd over that side's men within LOCAL_HALF
+     * metres of the bomb in x: the piece of line the bomb is actually on. If
+     * the plank survives anywhere it survives there, and a bomb 16 m across
+     * cannot be finding a depth 60 m of front away.
+     */
+    const LOCAL_HALF = 30;
+    const lineSd = () => {
+      const out = {};
+      for (const side of [-1, 1]) {
+        const men = [];
+        for (let i = 0; i < UNITS; i++) {
+          const u = now[i];
+          if (!prev[i].alive || u.armour || u.side !== side) continue;
+          men.push(u);
+        }
+        const of = (g) => {
+          if (g.length === 0) return { n: 0, z: 0, sd: null };
+          const m = g.reduce((a, v) => a + v.z, 0) / g.length;
+          return { n: g.length, z: m,
+                   sd: Math.sqrt(g.reduce((a, v) => a + (v.z - m) ** 2, 0) / g.length) };
+        };
+        out[side] = { ...of(men), men };
+      }
+      return out;
+    };
+    const sd = landed.length ? lineSd() : null;
+    /** The same sd, over one side's men within LOCAL_HALF of x. */
+    const localSd = (side, x) => {
+      const g = sd[side].men.filter((u) => Math.abs(u.x - x) <= LOCAL_HALF);
+      if (g.length === 0) return { n: 0, sd: null };
+      const m = g.reduce((a, v) => a + v.z, 0) / g.length;
+      return { n: g.length,
+               sd: Math.sqrt(g.reduce((a, v) => a + (v.z - m) ** 2, 0) / g.length) };
+    };
+
     for (const b of landed) {
       const blast = { t, x: b.x, z: b.z, side: b.side, where: where(b),
+                      sdBull: sd[-1].sd, sdBear: sd[1].sd,
                       infIn: 0, armourIn: 0, inf: 0, infBull: 0, infBear: 0,
                       armour: 0, friendly: 0,
                       infInInner: 0, infInOuter: 0, infInner: 0, infOuter: 0,
@@ -330,6 +389,14 @@ function measure(seed) {
       };
       blast.sdX = spreadOf((u) => u.x);
       blast.sdZ = spreadOf((u) => u.z);
+      // The line this bomb landed on: whichever side gave it the most men. A
+      // bomb that found nobody has no line and is left out of the gate.
+      const bull = covered.filter((u) => u.side < 0).length;
+      blast.hitSide = covered.length === 0 ? 0 : (bull * 2 >= covered.length ? -1 : 1);
+      blast.sdHit = blast.hitSide === 0 ? null : (blast.hitSide < 0 ? blast.sdBull : blast.sdBear);
+      // The same, over the piece of line this bomb is standing on.
+      const loc = blast.hitSide === 0 ? { n: 0, sd: null } : localSd(blast.hitSide, b.x);
+      blast.sdHitLocal = loc.sd; blast.nHitLocal = loc.n;
       const sx = sweep('x', b), sz = sweep('z', b);
       blast.swXmean = sx.mean; blast.swXmed = sx.med; blast.swXmax = sx.max; blast.swXhit = sx.hit;
       blast.swZmean = sz.mean; blast.swZmed = sz.med; blast.swZmax = sz.max; blast.swZhit = sz.hit;
@@ -526,6 +593,222 @@ for (const r of rows) {
                 `sweepX=${b.swXmean.toFixed(2)} sweepZ=${b.swZmean.toFixed(2)} ` +
                 `sdX=${b.sdX.toFixed(1)} sdZ=${b.sdZ.toFixed(1)}`);
 }
+
+// ---------------------------------------------------------------------------
+// THE GATE: is the line still a plank when the bombs land?  Core only.
+//
+// The one named, measured rule difference the last pass turned up is that
+// RIFLE_WALK is a single constant where Army.Populate draws pace per man, so
+// the core's line arrives at contact as flat as it spawned (spread 1.0 against
+// the C#'s 0.9 growing to 6.5). It is a candidate for the nineteen extra men
+// the core's bombs cover - and it was measured AIR OFF, while the nineteen men
+// are an air-ON quantity. This asks the question in the condition it belongs
+// to: at the tick each detonation goes off, how deep is the line it lands on?
+//
+// If the spread has already opened before the bombs that do the killing fall,
+// the plank cannot be what they are finding, and (l)'s last term needs a
+// different candidate.
+const GATE_BANDS = [[0, 2], [2, 4], [4, 8], [8, Infinity]];
+/**
+ * One seed's detonations that caught infantry, banded by the depth of the line
+ * they landed on. `pick` chooses the width the banding is done at - side-wide
+ * or local - so the same arithmetic is run twice and the two are read against
+ * each other rather than one of them being taken on trust.
+ */
+const gateOf = (r, pick = (b) => b.sdHit) => {
+  const on = r.blasts.filter((b) => b.infIn > 0 && pick(b) !== null);
+  const bands = GATE_BANDS.map(([lo, hi]) => {
+    const g = on.filter((b) => pick(b) >= lo && pick(b) < hi);
+    return { bombs: g.length, men: g.reduce((a, b) => a + b.infIn, 0) };
+  });
+  const men = on.reduce((a, b) => a + b.infIn, 0);
+  const flat = on.filter((b) => pick(b) < 3).reduce((a, b) => a + b.infIn, 0);
+  const first = r.blasts.find((b) => b.inf > 0);
+  return { on, bands, men, flat, first,
+           wsd: men ? on.reduce((a, b) => a + pick(b) * b.infIn, 0) / men : 0 };
+};
+
+console.log('');
+console.log('AIRCORE ' + '='.repeat(70));
+console.log('AIRCORE GATE  the depth of the line each bomb lands on, at its own tick');
+console.log('AIRCORE   core only: the recording holds no positions. sd is of the covered');
+console.log('AIRCORE   side\'s living riflemen in z - measure-squads\' own population, so the');
+console.log('AIRCORE   plank\'s 1.0 and the C# line\'s 6.5 m are on this scale.');
+console.log('AIRCORE   TWO WIDTHS: side-wide counts the 84-118 men a round walking in as');
+console.log('AIRCORE   replacements, which the air itself creates; LOCAL is the same sd over');
+console.log('AIRCORE   that side\'s men within 30 m of the bomb in x, which is the piece of');
+console.log('AIRCORE   line a 16 m blast is actually standing on. LOCAL is the one that');
+console.log('AIRCORE   answers the plank; side-wide is printed beside it to show the gap.');
+if (HAS_AIR) {
+  for (const r of rows) {
+    for (const [tag, pick] of [['wide ', (b) => b.sdHit], ['local', (b) => b.sdHitLocal]]) {
+      const g = gateOf(r, pick);
+      const f = g.first;
+      console.log(`AIRCORE gate ${tag} seed=${r.seed} bombsOnMen=${g.on.length} coveredMen=${g.men} ` +
+                  `firstInfantryKillingBombAt=${f ? f.t.toFixed(1) : 'never'} ` +
+                  `lineSdThere=${f && pick(f) !== null ? pick(f).toFixed(1) : '-'} ` +
+                  `meanLineSd(weighted by men)=${g.wsd.toFixed(1)} ` +
+                  `menTakenWhileSd<3=${g.flat} (${g.men ? (g.flat / g.men).toFixed(2) : '-'})`);
+      console.log(`AIRCORE gate ${tag} seed=${r.seed} ` +
+                  GATE_BANDS.map(([lo, hi], k) => `sd ${lo}-${hi === Infinity ? '+' : hi}: ` +
+                    `${g.bands[k].bombs}b/${g.bands[k].men}m` +
+                    `(${g.bands[k].bombs ? (g.bands[k].men / g.bands[k].bombs).toFixed(1) : '-'})`).join('  ') +
+                  '   bombs/men(menPerBomb)');
+    }
+  }
+  // Pooled, because four seeds of ten bombs each is a thin band on its own.
+  for (const [tag, pick] of [['wide ', (b) => b.sdHit], ['local', (b) => b.sdHitLocal]]) {
+    const all = rows.flatMap((r) => gateOf(r, pick).on);
+    const men = all.reduce((a, b) => a + b.infIn, 0);
+    console.log(`AIRCORE gate POOLED ${tag} ` +
+                GATE_BANDS.map(([lo, hi]) => {
+                  const g = all.filter((b) => pick(b) >= lo && pick(b) < hi);
+                  const m = g.reduce((a, b) => a + b.infIn, 0);
+                  return `sd ${lo}-${hi === Infinity ? '+' : hi}: ${g.length}b/${m}m` +
+                         `(${g.length ? (m / g.length).toFixed(1) : '-'}, ${men ? (m / men).toFixed(2) : '-'} of the men)`;
+                }).join('  '));
+  }
+  // How many men the local window holds, so a small sd cannot be a small sample
+  // wearing a line's name.
+  const loc = rows.flatMap((r) => r.blasts.filter((b) => b.infIn > 0 && b.sdHitLocal !== null));
+  const ns = loc.map((b) => b.nHitLocal).sort((a, b) => a - b);
+  console.log(`AIRCORE gate the local window holds n = ${ns[0]}-${ns[ns.length - 1]} men ` +
+              `(median ${ns[ns.length >> 1]}) of the covered side, over ${ns.length} bombs`);
+  // What the recording can say about WHEN: its air series carries cumulative
+  // bombKills at five seconds, so the sample its first bomb death lands in is
+  // read off the file rather than remembered in the tool.
+  const firstRec = REC_SEEDS.map((seed) => {
+    const a = ref.passes[`gunships-${seed}`]?.air;
+    const row = a && a.find((x) => x.bombKills > 0);
+    return row ? row.t : null;
+  });
+  // Both sides infantry: the recording's `bombKills` counts men, armour is its
+  // own column, and r.firstKillingAt is the first bomb to kill ANYTHING.
+  console.log(`AIRCORE gate the recording's first bomb DEATH lands in the sample ending at ` +
+              `[${firstRec.join(', ')}] s; the core's first infantry-killing bomb is at ` +
+              `[${rows.map((r) => { const f = gateOf(r).first; return f ? f.t.toFixed(1) : 'never'; }).join(', ')}]` +
+              ' (a sample end against an exact tick, so the pair is coarse on the left)');
+} else {
+  console.log('AIRCORE gate  no air arm in this core - nothing to gate');
+}
+console.log('AIRCORE ' + '='.repeat(70));
+
+// ---------------------------------------------------------------------------
+// THE BOMB TOLL, PER FIVE SECONDS, CROSS-ENGINE.
+//
+// csharp-gunships.json carries an `air` array per pass - eighteen samples at
+// five seconds, with cumulative detonations, bomb deaths, armour killed and
+// armour lost - and this tool has only ever read `summary`. It is the one
+// cross-engine time series the air has.
+//
+// What it can and cannot be: `insideRadius` and the dud/effective split are
+// pass totals, so menPerEffectiveBomb itself cannot be sliced. What pairs per
+// window is kills per DETONATION - all detonations, duds included - and
+// because lethalityInRadius is 1.000 in both engines that is men per bomb with
+// the lethality divided out. It is NOT the published 4.47-6.25 against
+// 3.67-4.75 pair, whose denominator is the effective bombs only, and it is not
+// to be quoted as it.
+const airSeries = (seed) => ref.passes[`gunships-${seed}`]?.air ?? null;
+const WIN = 5;
+
+console.log('');
+console.log('AIRCORE ' + '='.repeat(70));
+console.log('AIRCORE WINDOW  bomb deaths per detonation, five-second windows, air on');
+console.log('AIRCORE   denominator is ALL detonations - duds included - not the effective');
+console.log('AIRCORE   ones. Not the menPerEffectiveBomb pair. Lethality is 1.000 in both');
+console.log("AIRCORE   engines, so this is men per detonation with the lethality divided out.");
+if (!HAS_AIR || !SEAM0) {
+  console.log(`AIRCORE   WITHHELD: ${HAS_AIR ? 'this run is not seam pinned' : 'this core has no air arm'}` +
+              ' - the recording is seam z=0 with the air on, and that is not a pair.');
+} else {
+  const totals = [];
+  for (const r of rows) {
+    const rec = airSeries(r.seed);
+    console.log('AIRCORE');
+    console.log(`AIRCORE window seed=${r.seed}` + (rec ? '' : '   (the recording holds no gunships pass for this seed)'));
+    console.log('AIRCORE   t     core bombs kills perBomb  |  REC bombs kills perBomb');
+    const core = [];
+    for (let t = WIN; t <= 90; t += WIN) {
+      const inWin = r.blasts.filter((b) => b.t > t - WIN && b.t <= t);
+      core.push({ t, bombs: inWin.length, kills: inWin.reduce((a, b) => a + b.inf, 0) });
+    }
+    const recWin = [];
+    if (rec) {
+      let pb = 0, pk = 0;
+      for (const row of rec) { recWin.push({ t: row.t, bombs: row.bombs - pb, kills: row.bombKills - pk });
+                               pb = row.bombs; pk = row.bombKills; }
+    }
+    const cell = (w) => w
+      ? `${String(w.bombs).padStart(5)} ${String(w.kills).padStart(5)}  ` +
+        `${(w.bombs ? (w.kills / w.bombs).toFixed(2) : '-').padStart(7)}`
+      : '    -     -        -';
+    for (let i = 0; i < core.length; i++)
+      console.log(`AIRCORE   ${String(core[i].t).padStart(2)}   ${cell(core[i])}  | ${cell(recWin[i])}`);
+    const sum = (ws, from = 0) => ws.slice(from).reduce((a, w) => ({ bombs: a.bombs + w.bombs, kills: a.kills + w.kills }),
+                                                        { bombs: 0, kills: 0 });
+    // Self-anchored as well as absolute: the sortie clock is on
+    // UnityEngine.Random in the C# and on the army stream in the core, so the
+    // two rounds are not in phase. From each engine's own first killing window
+    // onward, they are both measured from the moment their air started to bite.
+    const firstOf = (ws) => Math.max(0, ws.findIndex((w) => w.kills > 0));
+    const ca = sum(core), cf = sum(core, firstOf(core));
+    const ra = rec ? sum(recWin) : null, rf = rec ? sum(recWin, firstOf(recWin)) : null;
+    const say = (name, x) => x && console.log(
+      `AIRCORE   ${name.padEnd(22)} bombs=${String(x.bombs).padStart(3)} kills=${String(x.kills).padStart(3)} ` +
+      `perDetonation=${x.bombs ? (x.kills / x.bombs).toFixed(2) : '-'}`);
+    say('core whole round', ca); say('REC whole round', ra);
+    say('core from its first', cf); say('REC from its first', rf);
+    if (ra) totals.push({ seed: r.seed, ca, cf, ra, rf,
+                         cw: { win: core.slice(firstOf(core)) },
+                         rw: { win: recWin.slice(firstOf(recWin)) } });
+  }
+
+  if (totals.length) {
+    const per = (x) => x.kills / x.bombs;
+    const span = (f) => `${Math.min(...totals.map(f)).toFixed(2)}-${Math.max(...totals.map(f)).toFixed(2)}`;
+    const pool = (pick) => totals.reduce((a, s) => a + pick(s).kills, 0) /
+                           totals.reduce((a, s) => a + pick(s).bombs, 0);
+    console.log('AIRCORE');
+    console.log(`AIRCORE BOMB DEATHS PER DETONATION, ${totals.length} seeds, air on, seam pinned`);
+    console.log('AIRCORE ' + ' '.repeat(28) + 'per seed'.padEnd(16) + 'pooled');
+    const row = (name, pick) => console.log('AIRCORE ' + name.padEnd(28) +
+      span((s) => per(pick(s))).padEnd(16) + pool(pick).toFixed(2));
+    row('core, whole round', (s) => s.ca);
+    row('C# recording, whole round', (s) => s.ra);
+    row('core, from its first kill', (s) => s.cf);
+    row('C# from its first kill', (s) => s.rf);
+    // Early against late, anchored on each engine's own first killing window,
+    // pooled because ten bombs a seed cannot carry a trend. If the excess is
+    // only in the first windows it is the approach - the line arriving as a
+    // plank and being caught before it opens; if it is flat across the round
+    // it is the standing line, and the approach cannot be the cause.
+    console.log('AIRCORE');
+    console.log(`AIRCORE   the same, split at three windows past each engine's first killing`);
+    console.log('AIRCORE   window (w0-w2 is the first fifteen seconds of ITS air war)');
+    const half = (pick, from, to) => {
+      let bombs = 0, kills = 0;
+      for (const s of totals) {
+        const w = pick(s).win.slice(from, to);
+        bombs += w.reduce((a, v) => a + v.bombs, 0);
+        kills += w.reduce((a, v) => a + v.kills, 0);
+      }
+      return { bombs, kills };
+    };
+    const hrow = (name, pick) => {
+      const e = half(pick, 0, 3), l = half(pick, 3, Infinity);
+      console.log('AIRCORE   ' + name.padEnd(26) +
+        `w0-w2 ${(e.bombs ? (e.kills / e.bombs).toFixed(2) : '-').padStart(5)} (${e.kills}/${e.bombs})`.padEnd(24) +
+        `w3+ ${(l.bombs ? (l.kills / l.bombs).toFixed(2) : '-').padStart(5)} (${l.kills}/${l.bombs})`);
+    };
+    hrow('core', (s) => s.cw);
+    hrow('C# recording', (s) => s.rw);
+    console.log('AIRCORE   the counts themselves: core bombs [' + totals.map((s) => s.ca.bombs) +
+                '] kills [' + totals.map((s) => s.ca.kills) + ']');
+    console.log('AIRCORE                          REC  bombs [' + totals.map((s) => s.ra.bombs) +
+                '] kills [' + totals.map((s) => s.ra.kills) + ']');
+  }
+}
+console.log('AIRCORE ' + '='.repeat(70));
 
 // ---------------------------------------------------------------------------
 // The envelope, which is the only thing the recording claims can be matched.
