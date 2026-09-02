@@ -7,7 +7,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { init, step, runScore, setGround, setSolids, setArmour, HALF_X } from '../src/sim.js';
+import { init, step, runScore, setGround, setSolids, HALF_X } from '../src/sim.js';
 import { hash } from '../src/state.js';
 import * as scoring from '../src/rules/score.js';
 import * as gate from '../src/rules/gate.js';
@@ -21,6 +21,16 @@ const ONE = 65536;
  * so the core has to be measured on the same empty map - otherwise the test is
  * comparing a clear run against one that drove into a tank.
  */
+/**
+ * Empties the battlefield - and it does NOT stay empty on its own.
+ *
+ * `reinforce` sees a deficit the moment this runs and refills the slots within
+ * seconds. That was harmless while nothing in the core was solid; now that the
+ * truck is pushed out of the core's own armour, a fixture about the vehicle or
+ * the score gets shoved by tanks that walked back in. So the fixtures that are
+ * not about the army hold it clear every tick with `stepAlone` rather than
+ * clearing it once and hoping.
+ */
 function clearTheField(st) {
   const O_UNITS = 24, U_WORDS = 8, U_STATE = 5, UNITS = 96;
   for (let i = 0; i < UNITS; i++) st.i32[O_UNITS + i * U_WORDS + U_STATE] = 0;
@@ -28,6 +38,17 @@ function clearTheField(st) {
 
 const O_TRUCK = 5, T_X = 0, T_Z = 1, T_HP = 6;
 const O_SCORE = 17, S_EXPOSURE = 0, S_ELAPSED = 1, S_BESTX = 2, S_STATE = 5;
+
+/** One tick on an empty battlefield. See `clearTheField` for why every tick. */
+const stepAlone = (st, throttle, steer, brake) => {
+  clearTheField(st);
+  step(st, throttle, steer, brake | 0, 0, 0);
+};
+
+const driveAlone = (st, ticks, throttle, steer) => {
+  for (let t = 0; t < ticks; t++) stepAlone(st, throttle, steer, 0);
+  return st;
+};
 
 const drive = (st, ticks, throttle, steer) => {
   for (let t = 0; t < ticks; t++) step(st, throttle, steer, 0, 0, 0);
@@ -43,16 +64,19 @@ test('the score is multiplicative - any factor at zero collapses it', () => {
 
 test('standing still earns nothing, wherever it stands', () => {
   const st = init(11);
-  drive(st, 400, ONE, 0);                       // get clear of the apron
+  // On an empty field: this is a test of the SCORING rule, and a truck parked
+  // in a live battlefield is shoved around by armour that is solid now, so the
+  // fixture could no longer come to rest at all.
+  driveAlone(st, 400, ONE, 0);                  // get clear of the apron
 
   // Brake to a STOP before measuring. A truck rolling to a halt is still
   // gaining ground and is supposed to be paid for it - measuring from the
   // moment the brake goes on measures the coast, not the standing still.
-  for (let t = 0; t < 900; t++) step(st, 0, 0, ONE, 0, 0);
+  for (let t = 0; t < 900; t++) stepAlone(st, 0, 0, ONE);
   const settled = st.i32[O_TRUCK + T_X];
   const before = st.i32[O_SCORE + S_EXPOSURE];
 
-  for (let t = 0; t < 600; t++) step(st, 0, 0, ONE, 0, 0);
+  for (let t = 0; t < 600; t++) stepAlone(st, 0, 0, ONE);
   assert.equal(st.i32[O_TRUCK + T_X], settled, 'the fixture never came to rest');
   assert.equal(st.i32[O_SCORE + S_EXPOSURE], before,
     'a parked truck accrued exposure');
@@ -164,14 +188,19 @@ test('the core drives like the PhysX truck it replaces', async () => {
   const tol = ref.tolerance;
   const O = 5, HEAD = 2, VX = 3, VZ = 4, SPEED = 9, STEER = 11, HZ = 60, Q = 65536;
 
+  // Scales its inputs to Q16.16, unlike the file-level `drive` - and holds the
+  // field clear every tick, because this fixture is the VEHICLE against the
+  // PhysX recording and the core's armour is solid now.
   const drive = (s, n, th, st) => {
-    for (let i = 0; i < n; i++) step(s, Math.round(th * Q), Math.round(st * Q), 0, 0, 0);
+    for (let i = 0; i < n; i++) {
+      clearTheField(s);
+      step(s, Math.round(th * Q), Math.round(st * Q), 0, 0, 0);
+    }
   };
   const headDeg = (s) => (s.i32[O + HEAD] & 65535) * 360 / Q;
 
   {
     const s = init(1);
-    clearTheField(s);
     for (let t = 1; t <= 13; t++) {
       drive(s, HZ, 1, 0);
       const want = ref.accel[String(t)];
@@ -184,7 +213,6 @@ test('the core drives like the PhysX truck it replaces', async () => {
 
   for (const t of ref.turns) {
     const s = init(1);
-    clearTheField(s);
     drive(s, HZ * 8, 1, 0);
     drive(s, HZ * 5, 1, t.steer);
 
@@ -264,7 +292,7 @@ test('a hill costs the core what it costs Unity', async () => {
 
     const out = [];
     for (let k = 0; k < 60 * 22; k++) {
-      step(st, Q, 0, 0, 0, 0);
+      stepAlone(st, Q, 0, 0);
       out.push([st.i32[O + T_X] / Q, st.i32[O + T_SPEED] / Q]);
     }
     return out;
@@ -436,23 +464,46 @@ test('a distant wall does not eject the truck', () => {
  */
 test('armour blocks the truck and infantry does not', () => {
   const Q = 65536, O = 5, T_X = 0, T_Z = 1, T_SPEED = 9;
-  const O_UNITS = 24, U_WORDS = 8, U_X = 0, U_Z = 1, U_STATE = 5;
+  const O_UNITS = 24, U_WORDS = 8, U_X = 0, U_Z = 1, U_HP = 3, U_STATE = 5;
 
-  const run = (withTank) => {
+  // A real unit of the core's own, not a list handed in from outside.
+  //
+  // This used to place its tank with `setArmour`, which no longer exists: the
+  // solid armour is built inside `step()` from the core's units now, so a test
+  // that wants a tank in the road puts a TANK in the road. That is also what
+  // finally lets the infantry half of this test be a real case instead of an
+  // assumption - it used to say "infantry is never uploaded, so an empty
+  // armour list IS the infantry case", which asserted nothing about infantry.
+  //
+  // Slot 0 is armour and slot 1 is a rifleman: `isArmour(i)` is `(i & 3) === 0`.
+  const place = (st, slot, atX) => {
+    const b = O_UNITS + slot * U_WORDS;
+    st.i32[b + U_X] = atX;
+    st.i32[b + U_Z] = st.i32[O + T_Z];
+    st.i32[b + U_STATE] = 1;
+    st.i32[b + U_HP] = Math.round(60 * Q);
+  };
+
+  // Pinned every tick, because the obstacle is the point. Placed once, a core
+  // unit walks off to its holding line within a second and the fixture stops
+  // being about a truck meeting a tank. The old version of this test got a
+  // standing obstacle for free by handing a position list in from outside;
+  // that route is gone, so the fixture has to say plainly that it wants the
+  // tank to stay where it was put.
+  const run = (slot) => {
     const st = init(1);
-    clearTheField(st);
-    if (withTank) {
-      setArmour(st, 1, new Int32Array([
-        st.i32[O + T_X] + Math.round(30 * Q), st.i32[O + T_Z]]));
+    const at = st.i32[O + T_X] + Math.round(30 * Q);
+    for (let i = 0; i < 600; i++) {
+      clearTheField(st);
+      if (slot >= 0) place(st, slot, at);
+      step(st, Q, 0, 0, 0, 0);
     }
-    for (let i = 0; i < 600; i++) step(st, Q, 0, 0, 0, 0);
     return { x: st.i32[O + T_X] / Q, v: st.i32[O + T_SPEED] / Q };
   };
 
-  const clear = run(false);
-  const tank = run(true);
-  // Infantry is never uploaded, so an empty armour list IS the infantry case.
-  const man = clear;
+  const clear = run(-1);
+  const tank = run(0);
+  const man = run(1);
 
   assert.ok(tank.x < clear.x - 50,
     `der Panzer hat den Truck nicht aufgehalten - er kam bis ${tank.x.toFixed(1)}`);
@@ -460,7 +511,7 @@ test('armour blocks the truck and infantry does not', () => {
     `der Truck drueckt mit ${tank.v.toFixed(2)} m/s weiter in den Panzer`);
 
   // The stopping distance is the two radii plus the nose: about 6.3 m.
-  const gap = (clear.from ?? 0, 30 + (init(1).i32[O + T_X] / Q) - tank.x);
+  const gap = 30 + (init(1).i32[O + T_X] / Q) - tank.x;
   assert.ok(gap > 4 && gap < 9,
     `der Truck steht ${gap.toFixed(1)} m vor dem Panzer - erwartet etwa 6.3`);
 

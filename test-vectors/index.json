@@ -10,17 +10,17 @@
   {
    "name": "slalom",
    "ticks": 3600,
-   "final": "a82b3d4e46660ebb9151ed95979de2aa809d08d7092eb464df279d0bf056154b"
+   "final": "9782973529662114f5cf915e71004d2e22f61f6a2d51ed1e3b73eb12299e4be6"
   },
   {
    "name": "handbrake",
    "ticks": 3600,
-   "final": "3edfef4597b2d0922d233c9f29a0537dc9f8ddf45149f1267b367781f6c7f65d"
+   "final": "3f3609d9fad77e07ec78c37a88963e860acb8bc8b3b9572838294cc568a4ccc1"
   },
   {
    "name": "reverse",
    "ticks": 3600,
-   "final": "18511f354e6f70049d51ea853c318009566fc47a8e62e8e09ddbe71ac12a2703"
+   "final": "e8e7433c31e15a46a1ee7ba234ef89a87ccfa2d01709d6ab7c0e2e4ef9913546"
   },
   {
    "name": "idle",

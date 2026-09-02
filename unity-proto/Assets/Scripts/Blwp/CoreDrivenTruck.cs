@@ -68,7 +68,6 @@ namespace Blwp
         // mounting points for free.
         int _groundRevision = -1;
         int _solidCount = -1;
-        int[] _armour = new int[64 * 2];
         float _solidsChecked;
 
         // The tick just gone, so a frame landing between two ticks can be
@@ -293,27 +292,6 @@ namespace Blwp
                 Debug.LogWarning("[blwp] the core refused the collision world");
         }
 
-        /// <summary>
-        /// The tanks the player can see, every tick.
-        ///
-        /// Not the core's own army: that one is invisible, and colliding with
-        /// it meant the truck drove through everything on screen while being
-        /// held perfectly by ghosts.
-        /// </summary>
-        void UploadArmour()
-        {
-            var field = Battlefield.Current;
-            if (field == null || field.Army == null) return;
-
-            var list = field.Army.Armour;
-            int n = Mathf.Min(list.Count, _armour.Length / 2);
-            for (int i = 0; i < n; i++)
-            {
-                _armour[i * 2] = Mathf.RoundToInt(list[i].x * BlwpCore.ONE);
-                _armour[i * 2 + 1] = Mathf.RoundToInt(list[i].z * BlwpCore.ONE);
-            }
-            BlwpCore.SetArmour(_armour, n);
-        }
 
         void Update()
         {
@@ -323,7 +301,6 @@ namespace Blwp
 
             // A fixed step, caught up in whole ticks. Rendering interpolates
             // between them; the simulation never sees a partial one.
-            UploadArmour();
             _accumulator += Time.deltaTime;
             float step = 1f / Mathf.Max(1, tickHz);
             int guard = 0;

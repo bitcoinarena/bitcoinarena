@@ -4,9 +4,11 @@
 // gated on `terrain.Revision` and `UploadSolids` on a count checked once a
 // second, so both are round setup that happens to be re-checked. `UploadArmour`
 // is neither: it runs every frame, unguarded, straight out of `field.Army`.
-// `setUnits` has no caller anywhere - not in Unity, not in these tools, not in
-// the tests - so the host branch of the score's danger (`sim.js:881`) is dead
-// and the score already reads the core's own army.
+// BOTH ARE GONE NOW, and this tool is what says so. `setArmour` and `setUnits`
+// no longer exist, `BlwpSetArmour` is out of the jslib, `SetArmour` out of the
+// bridge and `UploadArmour` out of `CoreDrivenTruck`. The solid armour is built
+// inside `step()` from the core's own units, so section 1 below prints what the
+// core carries on its own and section 2 has nothing left to feed it with.
 //
 // (e) step 0. READ-ONLY. What does the core carry on its own, and what only
 // exists when Unity hands it over every tick?
@@ -17,7 +19,7 @@
 // per-tick host input that is not player input. `setUnits` has no Unity caller
 // at all.
 import { readFileSync } from 'node:fs';
-import { init, step, setArmour } from '../src/sim.js';
+import { init, step } from '../src/sim.js';
 import { hash, O_TRUCK, T_X, T_Z, T_HP } from '../src/state.js';
 const ONE = 65536;
 const DIR = new URL('../../../test-vectors/', import.meta.url).pathname;
@@ -42,24 +44,13 @@ for (const e of index.vectors) {
   console.log(`   ${e.name.padEnd(10)} st.armour.n over the round: ${r.seen.join(',')}` +
               `   truck hp ${(r.st.i32[O_TRUCK + T_HP] / ONE).toFixed(2)}`);
 }
-console.log('   The core simulates 24 tanks of its own. None of them is in st.armour,');
-console.log('   because nothing in step() ever writes it - only setArmour and setUnits do.');
+console.log('   Every one of the core\'s living tanks, every tick. It used to be 0 at');
+console.log('   every tick of every vector: the truck drove through all twenty-four.');
 console.log('');
 
-console.log('2. WHAT CHANGES WHEN A HOST FEEDS IT');
-const v = JSON.parse(readFileSync(DIR + 'straight.json', 'utf8'));
-const plain = run(v, null);
-// A tank put where the truck actually is, from t=600 on. The first attempt
-// parked one at (0, 30), which the truck on `straight` never comes within a
-// hull of - it proved nothing, and a null result from a test that could not
-// have fired is not a result.
-const one = new Int32Array(2);
-const fed = run(v, (st, t) => {
-  if (t < 600) return;
-  one[0] = st.i32[O_TRUCK + T_X];
-  one[1] = st.i32[O_TRUCK + T_Z];
-  setArmour(st, 1, one);
-});
-console.log(`   straight, no host        ${plain.h.slice(0, 16)}  x=${(plain.st.i32[O_TRUCK + T_X] / ONE).toFixed(1)} z=${(plain.st.i32[O_TRUCK + T_Z] / ONE).toFixed(1)}`);
-console.log(`   straight, host tank on the truck from t=600  ${fed.h.slice(0, 16)}  x=${(fed.st.i32[O_TRUCK + T_X] / ONE).toFixed(1)} z=${(fed.st.i32[O_TRUCK + T_Z] / ONE).toFixed(1)}`);
-console.log(`   same round? ${plain.h === fed.h ? 'YES' : 'NO - the outcome depends on per-tick host input'}`);
+console.log('2. AND NOTHING CAN FEED IT FROM OUTSIDE ANY MORE');
+console.log('   `setArmour` and `setUnits` are deleted, with `BlwpSetArmour` in the');
+console.log('   jslib, `SetArmour` in the bridge and `UploadArmour` in CoreDrivenTruck.');
+console.log('   Before they went, one host tank placed on the truck at t=600 of');
+console.log('   `straight` turned a round ending at x = +130.0 into one ending at');
+console.log('   x = -130.0, on a different hash. There is no such input left.');

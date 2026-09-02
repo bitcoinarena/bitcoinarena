@@ -91,14 +91,6 @@ mergeInto(LibraryManager.library, {
     return b.core.setSolids(b.st, count | 0, src.slice()) ? 1 : 0;
   },
 
-  // The tanks, this tick. Per-tick input, not setup: they move.
-  BlwpSetArmour: function (ptr, count) {
-    var b = Module.blwp;
-    if (!b) return 0;
-    var n = (count | 0) * 2;
-    var src = new Int32Array(Module.HEAP32.buffer, ptr, n);
-    return b.core.setArmour(b.st, count | 0, src.slice()) ? 1 : 0;
-  },
 
   // Put the truck back. A host command: the round ended, or it was written
   // off, and it belongs in the bay.

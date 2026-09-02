@@ -29,7 +29,6 @@ namespace Blwp
         [DllImport("__Internal")] private static extern int BlwpQueryParam(IntPtr name, IntPtr outp, int cap);
         [DllImport("__Internal")] private static extern int BlwpSetGround(IntPtr h, int cols, int rows);
         [DllImport("__Internal")] private static extern int BlwpSetSolids(IntPtr b, int count);
-        [DllImport("__Internal")] private static extern int BlwpSetArmour(IntPtr b, int count);
         [DllImport("__Internal")] private static extern int BlwpTeleport(int x, int z, int heading);
         [DllImport("__Internal")] private static extern int BlwpTakeImpact();
         public const bool Compiled = true;
@@ -43,7 +42,6 @@ namespace Blwp
         private static int BlwpQueryParam(IntPtr n, IntPtr o, int cap) => 0;
         private static int BlwpSetGround(IntPtr h, int c, int r) => 0;
         private static int BlwpSetSolids(IntPtr b, int n) => 0;
-        private static int BlwpSetArmour(IntPtr b, int n) => 0;
         private static int BlwpTeleport(int x, int z, int h) => 0;
         private static int BlwpTakeImpact() => 0;
         public const bool Compiled = false;
@@ -123,14 +121,6 @@ namespace Blwp
         /// screen belong to Unity's Battlefield, so the truck drove straight
         /// through everything visible while colliding perfectly with ghosts.
         /// Until the army itself moves into the core, its positions are input.
-        /// </summary>
-        public static bool SetArmour(int[] xz, int count)
-        {
-            if (!Available || xz == null || xz.Length < count * 2) return false;
-            var pin = GCHandle.Alloc(xz, GCHandleType.Pinned);
-            try { return BlwpSetArmour(pin.AddrOfPinnedObject(), count) != 0; }
-            finally { pin.Free(); }
-        }
 
         /// <summary>
         /// Puts the truck back where it started, stationary.

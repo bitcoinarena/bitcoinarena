@@ -99,49 +99,7 @@ export function setGround(st, cols, rows, heights) {
   return true;
 }
 
-/**
- * The tanks, as x and z pairs in Q16.16, for this tick.
- *
- * Per-tick input rather than round setup: they move. Recorded with the
- * steering, and replayed from the transcript the same way.
- */
-export function setArmour(st, count, xz) {
-  const n = Math.imul(count, 2);
-  if (count < 0 || xz.length < n) return false;
-  const a = new Int32Array(n);
-  a.set(xz.subarray(0, n));
-  st.armour = { n: count, xz: a };
-  return true;
-}
 
-/**
- * The whole enemy army for this tick: x, z and kind, three words each.
- *
- * Kind is 1 for armour and 0 for infantry. Both matter and for different
- * reasons - armour is solid and infantry is not, but BOTH count towards the
- * danger the score is paid for, and it was being computed from the core's own
- * invisible units. The player was scored on where ghosts were standing.
- */
-export function setUnits(st, count, data) {
-  const n = Math.imul(count, 3);
-  if (count < 0 || data.length < n) return false;
-  const u = new Int32Array(n);
-  u.set(data.subarray(0, n));
-  st.units = { n: count, u };
-
-  // The solid half, kept separately so the collision does not re-filter it
-  // sixty times a second.
-  let armour = 0;
-  const xz = new Int32Array(Math.imul(count, 2));
-  for (let i = 0; i < count; i++) {
-    if (u[Math.imul(i, 3) + 2] === 0) continue;
-    xz[Math.imul(armour, 2)] = u[Math.imul(i, 3)];
-    xz[Math.imul(armour, 2) + 1] = u[Math.imul(i, 3) + 1];
-    armour++;
-  }
-  st.armour = { n: armour, xz };
-  return true;
-}
 
 /**
  * Puts the truck back, stationary and pointing down the map.
@@ -216,8 +174,9 @@ export function init(seedWord) {
 
   // The tanks the player can see are the host's, and it sends them every
   // tick. Empty until it does.
-  st.armour = { n: 0, xz: new Int32Array(0) };
-  st.units = { n: 0, u: new Int32Array(0) };
+  // Sized once for every armour slot there can be. Filled from the core's own
+  // units at the top of each step; see `fillArmour`.
+  st.armour = { n: 0, xz: new Int32Array(Math.imul(UNITS >> 2, 2)) };
 
   // The squad anchors first, because a rifleman is put ON his post when he
   // spawns and cannot be if the post does not exist yet. C# reaches the same
@@ -574,15 +533,38 @@ const nextBelow = below;
  * everything else, so a node replaying the run sees exactly which ticks were
  * shielded - which is the difference between a practice mode and a cheat.
  */
-/** Reads a host-supplied unit as threatAt wants it. */
-function makeHostView(st) {
-  const u = { x: 0, z: 0, hp: ONE, armour: false };
-  return (i) => {
-    const b = Math.imul(i, 3);
-    u.x = st.units.u[b]; u.z = st.units.u[b + 1];
-    u.armour = st.units.u[b + 2] !== 0;
-    return u;
-  };
+
+/**
+ * The solid armour, from the core's OWN tanks.
+ *
+ * This used to arrive from Unity: `CoreDrivenTruck.UploadArmour` ran every
+ * frame out of `field.Army` and handed the positions in through `setArmour`.
+ * That was per-tick host input which is not player input, so a node replaying
+ * a transcript had nothing to supply it - measured, `st.armour.n` was 0 at
+ * every tick of every golden vector, and the truck drove through twenty-four
+ * of its own tanks. Feeding one host tank at the truck's position turned a
+ * round that ended at x = +130 into one that ended at x = -130, which is the
+ * whole of why the round was not replayable.
+ *
+ * Called at the TOP of the step, before the vehicle moves, so it reads the
+ * positions the army finished last tick with. That is deliberately the same
+ * one-frame staleness Unity had - it uploaded the previous frame's army - and
+ * `resolveArmour`'s own comment relies on it: the truck is pushed out of where
+ * the tanks were, not where they are about to be.
+ */
+function fillArmour(st) {
+  const s = st.i32;
+  const xz = st.armour.xz;
+  let n = 0;
+  for (let i = 0; i < UNITS; i++) {
+    if (!isArmour(i)) continue;
+    const b = unitBase(i);
+    if (s[b + U_STATE] === 0) continue;
+    xz[Math.imul(n, 2)] = s[b + U_X];
+    xz[Math.imul(n, 2) + 1] = s[b + U_Z];
+    n++;
+  }
+  st.armour.n = n;
 }
 
 export function step(st, throttle, steer, brake, handbrake, practice) {
@@ -590,6 +572,7 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
   const rng = s.subarray(O_RNG, O_RNG + 4);
   const T = O_TRUCK;
   s[O_TICK] = (s[O_TICK] + 1) | 0;
+  fillArmour(st);
 
   // ---- 1. vehicle --------------------------------------------------------
   const v = {
@@ -892,14 +875,11 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
       s[O_SCORE + S_STATE] === RUN_LIVE) {
     // The danger the player is actually in, from the army they can SEE.
     //
-    // This read the core's own units, which nothing draws - so the score was
-    // paid for standing near ghosts and withheld in the middle of a real
-    // firefight. The host sends the real ones every tick.
-    const hostUnits = st.units && st.units.n > 0;
-    const hostView = hostUnits ? makeHostView(st) : null;
-    const threat = hostUnits
-      ? threatAt(hostView, st.units.n, tx, tz)
-      : threatAt(view, UNITS, tx, tz);
+    // This once preferred units the HOST sent, because the core's own were
+    // "ghosts nothing draws". They are not ghosts any more - the army is the
+    // core's - and `setUnits` had no caller left anywhere in the project, so
+    // the preference was a dead branch guarding a dead setter. Both are gone.
+    const threat = threatAt(view, UNITS, tx, tz);
     s[O_SCORE + S_EXPOSURE] = accrue(
       s[O_SCORE + S_EXPOSURE], s[O_SCORE + S_BESTX], tx, threat, s[O_SCORE + S_CARGO]);
   }
