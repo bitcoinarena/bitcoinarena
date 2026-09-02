@@ -15,17 +15,17 @@
   {
    "name": "handbrake",
    "ticks": 3600,
-   "final": "7db1e9b52df8577cf4423b6653b1cd93917a6b9a8fbb15576c207e6d32f1fe01"
+   "final": "9983b5e9677d6679b78fcd09db7a3af9539fe35eba526d0667fa8890760d7808"
   },
   {
    "name": "reverse",
    "ticks": 3600,
-   "final": "bbf7f886abbb4e0aeb2812964e3488c44ce5ae10258dbfa6fc4d6b14beaed398"
+   "final": "c3ed3bd7ee84f407beb155b32fb239299690cc2301ef9a4f1b88bf929c67f879"
   },
   {
    "name": "idle",
    "ticks": 3600,
-   "final": "72388db0e0e04c7d24065345ebd67f24157c860f3786a0b418813d6ff43046b3"
+   "final": "2ada18f13f25f9a31e769284cb0c15613dc3cc901b24cfdc5478deec1000ac79"
   },
   {
    "name": "practice",

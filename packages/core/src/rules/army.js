@@ -25,6 +25,17 @@ export const ARMOUR_RANGE = Math.imul(46, ONE);
 export const COURIER_RANGE = Math.imul(34, ONE);
 export const COURIER_DAMAGE_MIN = Math.imul(5, ONE);
 export const COURIER_DAMAGE_SPAN = Math.imul(6, ONE);   // 5 to 11
+
+/**
+ * What a RIFLE round does to the truck: `Rand(1.5f, 3.5f)`, `Army.cs:737`.
+ *
+ * A different band from the tank's on purpose - the recorder tells the two
+ * weapons apart by the size of the hit, and with Heat at zero 1.5-3.5 and
+ * 5-11 do not meet. A rifleman does one point to another rifleman and this to
+ * the truck; the two are not the same number and never were.
+ */
+export const COURIER_RIFLE_MIN = Math.imul(3, ONE) >> 1;   // 1.5
+export const COURIER_RIFLE_SPAN = Math.imul(2, ONE);       // to 3.5
 export const RIFLE_HIT_PER_MIL = 45;        // 0.045 per shot
 // Closing speeds, measured off the C# army rather than chosen: it covers
 // -77.5 to -43.5 in five seconds with armour and -77.5 to -64.6 with

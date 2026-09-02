@@ -32,7 +32,8 @@
 import { readFileSync } from 'node:fs';
 import { init, step, teleport, UNITS } from '../src/sim.js';
 import * as L from '../src/state.js';
-import { pickTarget, RELOAD_MIN, RELOAD_SPAN, ARMOUR_RANGE, COURIER_RANGE as CR_FX } from '../src/rules/army.js';
+import { pickTarget, pickRifleTarget, RELOAD_MIN, RELOAD_SPAN, ARMOUR_RANGE,
+         COURIER_RANGE as CR_FX, RIFLE_RANGE as RR_FX } from '../src/rules/army.js';
 import { length2, sub, abs } from '../src/fixed.js';
 
 // The recording's courier pass is `air: "none"`, so this run must be too, or
@@ -110,10 +111,18 @@ function measure(seed) {
     }
     return o;
   };
+  // A read-only view of a unit for the pure target scans. Declared before the
+  // loop that uses it: pickTarget and pickRifleTarget are pure and draw
+  // nothing, which is what lets the rule's own choice be replayed here.
+  const peek = (k) => {
+    const bb = L.unitBase(k);
+    return { x: st.i32[bb + L.U_X], z: st.i32[bb + L.U_Z], hp: st.i32[bb + L.U_HP],
+             side: st.i32[bb + L.U_SIDE], armour: isArmour(k) };
+  };
   let prev = cool();
   let hpWas = hp0;
   const tally = { tank: 0, rifle: 0, ambiguous: 0, tankShots: 0, rifleShots: 0,
-                  gunShots: 0, engagedShots: 0, wouldCourier: 0, marginal: 0, diedAt: 0, guardWouldPass: 0 };
+                  gunShots: 0, engagedShots: 0, wouldCourier: 0, marginal: 0, diedAt: 0, guardWouldPass: 0, rifleCourier: 0 };
   const prevGun = [];
   for (let i = 0; i < UNITS; i++) prevGun[i] = st.i32[L.unitBase(i) + L.U_TARGET];
   for (let f = 0; f < ref.setup.durationSeconds * 60; f++) {
@@ -122,7 +131,7 @@ function measure(seed) {
     // Which weapons fired at the truck this tick, and how many points landed.
     const now = cool();
     const tx0 = q(st.i32[T + L.T_X]), tz0 = q(st.i32[T + L.T_Z]);
-    let tShots = 0, rShots = 0, courierThisTick = 0;
+    let tShots = 0, rShots = 0, courierThisTick = 0, rCourierTick = 0;
     for (let i = 0; i < UNITS; i++) {
       const a = prev[i], b = now[i];
       if (!a.alive || !b.alive || b.cool <= a.cool) continue;
@@ -133,7 +142,23 @@ function measure(seed) {
       // core that still carries the deleted weapon, which is how this tool
       // stays readable against an older build.
       if (isArmour(i)) { if (b.cool >= TANK_CLOCK[0] && b.cool <= TANK_CLOCK[1]) tShots++; }
-      else if (b.cool >= RIFLE_CLOCK[0]) rShots++;
+      else if (b.cool >= RIFLE_CLOCK[0]) {
+        // A reload-band write by a man near the truck is a SHOT, but after
+        // (j) it is only a shot AT THE TRUCK when he had a foe and the truck
+        // was nearer. Replayed the way the rule decides it: pickRifleTarget is
+        // pure and draws nothing.
+        rShots++;
+        const bb = L.unitBase(i);
+        const f2 = pickRifleTarget(peek, UNITS, i, st.i32[bb + L.U_X], st.i32[bb + L.U_Z],
+                                   st.i32[bb + L.U_SIDE]);
+        if (f2 >= 0) {
+          const f2b = L.unitBase(f2);
+          const cdr = Math.hypot(q(st.i32[bb + L.U_X]) - tx0, q(st.i32[bb + L.U_Z]) - tz0);
+          const fdr = Math.hypot(q(st.i32[bb + L.U_X] - st.i32[f2b + L.U_X]),
+                                 q(st.i32[bb + L.U_Z] - st.i32[f2b + L.U_Z]));
+          if (cdr < RIFLE_R && cdr < fdr) { tally.rifleCourier++; rCourierTick++; }
+        }
+      }
     }
     tally.tankShots += tShots; tally.rifleShots += rShots;
 
@@ -149,11 +174,6 @@ function measure(seed) {
     // Read at the end of the tick, where the rule reads it mid-loop: a tank
     // moves at most 7 m/s, so a shot within a tenth of a metre of the 34 m
     // gate could fall either way. Those are counted and printed as marginal.
-    const peek = (k) => {
-      const bb = L.unitBase(k);
-      return { x: st.i32[bb + L.U_X], z: st.i32[bb + L.U_Z], hp: st.i32[bb + L.U_HP],
-               side: st.i32[bb + L.U_SIDE], armour: isArmour(k) };
-    };
     for (let i = 0; i < UNITS; i++) {
       if (!isArmour(i)) continue;
       const bb = L.unitBase(i);
@@ -191,8 +211,8 @@ function measure(seed) {
       // it and is possible for the first time now that a tank writes 5-11 and
       // a rifleman one. A tick carrying both is counted as ambiguous and
       // printed rather than apportioned.
-      if (courierThisTick > 0 && rShots === 0) tally.tank += landed;
-      else if (rShots > 0 && courierThisTick === 0 && tShots === 0) tally.rifle += landed;
+      if (courierThisTick > 0 && rCourierTick === 0) tally.tank += landed;
+      else if (rCourierTick > 0 && courierThisTick === 0) tally.rifle += landed;
       else tally.ambiguous += landed;
     }
     if (tally.diedAt === 0 && st.i32[T + L.T_HP] <= 0) tally.diedAt = (f + 1) / 60;
@@ -241,7 +261,11 @@ for (const seed of SEEDS) {
     console.log(`COURIER    tanks within ${COURIER_RANGE} m    ${String(last.inTank).padStart(9)}  ${String(c.inTank).padStart(12)}`);
     console.log('');
     console.log('COURIER  WHERE THE CORE\'S POINTS COME FROM, split by the clock that fired');
-    console.log(`COURIER    shots at the truck      tank ${last.tankShots}   rifle ${last.rifleShots}`);
+    console.log(`COURIER    rifle shots AT THE TRUCK (foe held, truck nearer)  ${last.rifleCourier}` +
+                `   of ${last.rifleShots} rifle shots in reach`);
+    console.log(`COURIER    at the rifle's 0.045 roll that is ${(last.rifleCourier * 0.045).toFixed(1)} hits,` +
+                ` and at Rand(1.5,3.5) about ${(last.rifleCourier * 0.045 * 2.5).toFixed(1)} points`);
+    console.log('COURIER    against the recording\'s 6 hits and 13.88');
     console.log(`COURIER    points landed          tank ${last.tank.toFixed(2)}   rifle ${last.rifle.toFixed(2)}` +
                 `   ambiguous ${last.ambiguous.toFixed(2)}`);
     console.log('COURIER    ambiguous means both weapons fired in the same tick and the point');

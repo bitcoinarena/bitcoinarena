@@ -32,7 +32,7 @@ import {
 import { vehicleStep } from './rules/vehicle.js';
 import { flatGround, gradeAlong, heightAtWorld, DEFAULT_COLS, DEFAULT_ROWS } from './rules/ground.js';
 import { noSolids, resolveSolids, resolveArmour, BOX_WORDS } from './rules/solids.js';
-import { stepUnit, threatAt, pickTarget, pickRifleTarget, riflePost, RELOAD_MIN, RELOAD_SPAN, DAMAGE_MIN, DAMAGE_SPAN, BACKOFF_RANGE, HIT_PER_MIL, ARMOUR_RANGE, RIFLE_RANGE, RIFLE_HIT_PER_MIL, RIFLE_RELOAD_TICKS, RIFLE_RELOAD_TICKS_SPAN, RIFLE_LOOK_TICKS, RIFLE_LOOK_TICKS_SPAN, RIFLE_HP, RIFLE_DAMAGE, COURIER_RANGE, COURIER_DAMAGE_MIN, COURIER_DAMAGE_SPAN } from './rules/army.js';
+import { stepUnit, threatAt, pickTarget, pickRifleTarget, riflePost, RELOAD_MIN, RELOAD_SPAN, DAMAGE_MIN, DAMAGE_SPAN, BACKOFF_RANGE, HIT_PER_MIL, ARMOUR_RANGE, RIFLE_RANGE, RIFLE_HIT_PER_MIL, RIFLE_RELOAD_TICKS, RIFLE_RELOAD_TICKS_SPAN, RIFLE_LOOK_TICKS, RIFLE_LOOK_TICKS_SPAN, RIFLE_HP, RIFLE_DAMAGE, COURIER_RANGE, COURIER_DAMAGE_MIN, COURIER_DAMAGE_SPAN, COURIER_RIFLE_MIN, COURIER_RIFLE_SPAN } from './rules/army.js';
 import { accrue, earning, scoreOf } from './rules/score.js';
 import { outcome, RUN_LIVE, RUN_DELIVERED, RUN_WRECKED, RUN_MISSED } from './rules/gate.js';
 import { frontlineZ, SAMPLES } from './rules/frontline.js';
@@ -746,13 +746,14 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
     // the hit is rolled, because the C# sets it either way and a stream that
     // draws in a different order is a different program.
     //
-    // The courier branch is TODAY'S rule and not C#'s, and it is item (j)'s to
-    // replace: a C# rifleman fires at the truck only when he already has a man
-    // inside 26 m and the truck is nearer than that man, which is why six
-    // rifle rounds hit a truck parked in the fight for ninety seconds. What is
-    // here shoots the truck whenever it is in range. It does now do it on the
-    // rifle's own 2.5-4.5 s reload rather than the 0.7-1.7 s this counter used
-    // to run at, because the man only has the one clock.
+    // THE FOE IS LOOKED FOR FIRST, and that is the whole of the selection rule.
+    // Army.StepInfantry finds the nearest enemy rifleman, and a man with none
+    // inside 26 m sets a look clock and fires at NOTHING - not at the truck
+    // standing beside him. Only once he has a target does the courier come
+    // into it, and only when the truck is nearer than that target. This is why
+    // six rifle rounds hit a truck parked in the middle of the fight for
+    // ninety seconds where this core used to land two hundred and forty-six
+    // shots: it checked the truck first and let it win unconditionally.
     if (!u.armour && u.hp > 0) {
       if (s[b + U_COOLDOWN] > 0) s[b + U_COOLDOWN] = (s[b + U_COOLDOWN] - 1) | 0;
       else {
@@ -768,19 +769,39 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
         // approach's rifle clocks were spent firing a 2.5-4.5 s reload at a
         // truck 200 m off, and the truck took the hits. The trap is the one
         // army.js:417-421 already had written down.
-        const dxTruck = sub(u.x, tx), dzTruck = sub(u.z, tz);
-        if (abs(dxTruck) <= RIFLE_RANGE && abs(dzTruck) <= RIFLE_RANGE &&
-            length2(dxTruck, dzTruck) < RIFLE_RANGE) {
-          s[b + U_COOLDOWN] = (RIFLE_RELOAD_TICKS + nextBelow(rng, RIFLE_RELOAD_TICKS_SPAN)) | 0;
-          if (nextBelow(rng, 1000) < RIFLE_HIT_PER_MIL) courierDmg = add(courierDmg, ONE);
+        const foe = pickRifleTarget(peekAt, UNITS, i, u.x, u.z, u.side);
+        if (foe < 0) {
+          s[b + U_COOLDOWN] = (RIFLE_LOOK_TICKS + nextBelow(rng, RIFLE_LOOK_TICKS_SPAN)) | 0;
         } else {
-          const foe = pickRifleTarget(peekAt, UNITS, i, u.x, u.z, u.side);
-          if (foe < 0) {
-            s[b + U_COOLDOWN] = (RIFLE_LOOK_TICKS + nextBelow(rng, RIFLE_LOOK_TICKS_SPAN)) | 0;
-          } else {
-            s[b + U_COOLDOWN] = (RIFLE_RELOAD_TICKS + nextBelow(rng, RIFLE_RELOAD_TICKS_SPAN)) | 0;
-            if (nextBelow(rng, 1000) < RIFLE_HIT_PER_MIL) {
-              const fb = unitBase(foe);
+          s[b + U_COOLDOWN] = (RIFLE_RELOAD_TICKS + nextBelow(rng, RIFLE_RELOAD_TICKS_SPAN)) | 0;
+          const connects = nextBelow(rng, 1000) < RIFLE_HIT_PER_MIL;
+          const fb = unitBase(foe);
+
+          // The truck takes the shot only if it is inside the rifle's reach
+          // AND nearer than the man he had picked (Army.cs:725-731, Heat zero,
+          // which drops both widening terms). Axes before length2, the guard
+          // from (m): past ~181.5 m the sum of squares wraps and length2
+          // returns ZERO, and the truck read as standing on the man. Measured
+          // before that guard, 19-21% of the approach's rifle clocks were
+          // spent firing at a truck 200 m off. The foe needs no guard - he is
+          // inside RIFLE_RANGE by construction.
+          const dxTruck = sub(u.x, tx), dzTruck = sub(u.z, tz);
+          let onCourier = false;
+          if (abs(dxTruck) <= RIFLE_RANGE && abs(dzTruck) <= RIFLE_RANGE) {
+            const toTruck = length2(dxTruck, dzTruck);
+            if (toTruck < RIFLE_RANGE)
+              onCourier = toTruck < length2(sub(u.x, s[fb + U_X]), sub(u.z, s[fb + U_Z]));
+          }
+
+          if (connects) {
+            // Rand(1.5, 3.5) at the truck, one point at a man. Drawn in
+            // hundredths like every other damage in this file, so it is one
+            // draw either way and the stream keeps its shape.
+            if (onCourier) {
+              courierDmg = add(courierDmg,
+                add(COURIER_RIFLE_MIN,
+                    idiv(Math.imul(nextBelow(rng, 100), COURIER_RIFLE_SPAN), 100)));
+            } else {
               s[fb + U_HP] = max(0, sub(s[fb + U_HP], RIFLE_DAMAGE));
               if (s[fb + U_HP] === 0) s[fb + U_STATE] = 0;
             }
