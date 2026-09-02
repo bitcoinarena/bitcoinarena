@@ -2565,7 +2565,13 @@ function spawnUnit(s, rng, i) {
   // nobody. A front is made of two sides shooting on their own clocks.
   s[b + U_TARGET] = nextBelow(rng, 180);
   s[b + U_COOLDOWN] = nextBelow(rng, 120);
-  s[b + U_TARGET] = -1;
+  // The stagger used to be thrown away on the next line - `U_TARGET = -1` - so
+  // every tank could fire on its first tick of contact. The word is shared: it
+  // is the armour's reload counter and the rifleman's squad, and the -1 was
+  // there to clear it before the infantry branch below writes the squad into
+  // it. That branch overwrites it anyway, so the clear only ever cost the
+  // armour its stagger. Measured before it went: U_TARGET was -1 on every tank
+  // of every seed, one distinct value, against Army.cs:262's Rand(0f, 3f).
 
   // A rifleman picks a squad - `unit.squad = _rng.Next(squads.Count)` - and is
   // put straight on its post rather than walking in from wherever the x draw
