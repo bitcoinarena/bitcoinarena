@@ -507,6 +507,7 @@ function measure(seed) {
     enemyGround: detonated - offField - ownGround,
     sorties, sortiesBull, sortiesBear, airborneSeconds, bombsInAirSeconds,
     peakAirborne, peakBombs, ambiguous, sharedArmourKills, sharedInfKills,
+    stillFlying: prevBombs.filter((x) => x.live).length,
     doubleClaimedInf, doubleClaimedArmour, uniqueInfClaimed, claimedWithRifleInReach,
     inBands, killBands, infInInner, infInOuter, infInner, infOuter, blastsMismatched,
     infKills, armourKills, shellKills, riflemenKilled, armourLost, arrived,
@@ -638,20 +639,19 @@ const gateOf = (r, pick = (b) => b.sdHit) => {
 
 console.log('');
 console.log('AIRCORE ' + '='.repeat(70));
-console.log('AIRCORE SQUAD REACH  how many squads one blast reaches, and what that is worth');
-console.log('AIRCORE   CORE ONLY: the recording publishes no per-squad geometry. What the C#');
-console.log('AIRCORE   side contributes here is its own drawn RULE, read from Army.cs, not a');
-console.log('AIRCORE   column invented for it.');
+console.log('AIRCORE SQUAD REACH  how many squads one blast reaches. A DESCRIPTION, not a cause.');
+console.log('AIRCORE   CORE ONLY: the recording publishes no per-squad geometry, so nothing');
+console.log('AIRCORE   here is a pair. It says what the core does; it does not say the C# does');
+console.log('AIRCORE   otherwise, and no reading of it may be quoted as a difference.');
 console.log('AIRCORE');
-console.log('AIRCORE   Army.Spawn draws squadOffsetX = Rand(-9,9) AND squadOffsetZ = Rand(-5,5)');
-console.log('AIRCORE   per man (Army.cs:274-276), so a C# squad is a knot about 18 m wide and');
-console.log('AIRCORE   10 m deep - SMALLER than the 32 m across a blast covers, so a bomb on it');
-console.log('AIRCORE   takes that squad and stops. riflePost (army.js:306) returns an X offset');
-console.log('AIRCORE   only: the core has no squad DEPTH at all, so its squads smear down z and');
-console.log('AIRCORE   interpenetrate, and one blast can reach several at once.');
-console.log('AIRCORE');
-console.log('AIRCORE   This is the geometry the x sweep cannot see: the squad x-spread matches');
-console.log('AIRCORE   the C# draw (5.0 m against the rule\'s 5.196), and only z is loose.');
+console.log('AIRCORE   This block once carried the claim that the core has no squad depth. That');
+console.log('AIRCORE   is RETRACTED and wrong. army.js:137 and 142-143 already implement');
+console.log('AIRCORE   Army.cs:652\'s goalZ = front - Dir * (standoff + squadOffsetZ): RIFLE_SQUAD_Z');
+console.log('AIRCORE   gives each man -4.84..4.99 m, sd 2.851 against the C# draw Rand(-5,5)\'s');
+console.log('AIRCORE   2.887, over 69 distinct values in 72 slots. The 16.8 m that looked like a');
+console.log('AIRCORE   difference was a whole SIDE including the men still walking in from');
+console.log('AIRCORE   |z| = 79; in contact the core is 3.90-4.72 m against the 3.85 its own rule');
+console.log('AIRCORE   intends. The squad x-spread matches too, 5.0 m against the rule\'s 5.196.');
 if (HAS_AIR) {
   const reach = rows.flatMap((r) => r.blasts.filter((b) => b.infIn > 0));
   const byN = new Map();
@@ -886,6 +886,21 @@ console.log('AIRCORE ' + '='.repeat(70));
 const span = (f) => [Math.min(...rows.map(f)), Math.max(...rows.map(f))];
 const fmt = (v, d = 2) => (typeof v === 'number' ? v.toFixed(d) : String(v));
 
+// The recording's air-on passes, read per pass. `ref.envelope` carries only
+// seventeen of the quantities the file publishes; everything else has to be
+// spanned from the passes themselves, which is what `refSpan` is for. Declared
+// here rather than beside DECOMPOSE because CHECKS now uses it.
+const airPasses = Object.entries(ref.passes)
+  .filter(([, p]) => p.exit.air === 'on')
+  .map(([, p]) => p.summary);
+const refSpan = (f) => [Math.min(...airPasses.map(f)), Math.max(...airPasses.map(f))];
+const bothSides = (f, g) => [Math.min(...airPasses.flatMap((s) => [f(s), g(s)])),
+                             Math.max(...airPasses.flatMap((s) => [f(s), g(s)]))];
+
+// Each row is [name, core span, decimals, published span].
+// The fourth element is present when the quantity has no `ref.envelope` entry
+// and must be spanned off the passes. EVERY column on the right is a field the
+// recording publishes - none is derived for the comparison.
 const CHECKS = [
   ['sortiesPerRound', span((r) => r.sorties), 0],
   ['sortiesPerSide', [Math.min(...rows.flatMap((r) => [r.sortiesBull, r.sortiesBear])),
@@ -906,13 +921,59 @@ const CHECKS = [
   ['armourLostWithAir', span((r) => r.armourLost), 0],
   ['infantryAliveWithAir', [Math.min(...rows.flatMap((r) => [r.exit.bullInf, r.exit.bearInf])),
                             Math.max(...rows.flatMap((r) => [r.exit.bullInf, r.exit.bearInf]))], 0],
+
+  // Published from the first pass and never once compared. They were found by
+  // enumerating the file rather than by remembering it, which is how
+  // armour.insideRadius - the discriminator that localised (l)'s last term -
+  // turned up after sitting unused all along.
+  ['infantryInsideRadius', span((r) => r.infIn), 0, refSpan((s) => s.infantry.insideRadius)],
+  ['armourInsideRadius', span((r) => r.armourIn), 0, refSpan((s) => s.armour.insideRadius)],
+  ['bombsThatKilledArmour', span((r) => r.tankKillers), 0,
+                            refSpan((s) => s.armour.bombsThatKilledArmour)],
+  ['armourDestroyedByShell', span((r) => r.shellKills), 0,
+                             refSpan((s) => s.armour.destroyedByShell)],
+  ['infantryKilledByRifle', span((r) => r.riflemenKilled), 0,
+                            refSpan((s) => s.infantry.killedByRifle)],
+  ['bombsOwnGround', span((r) => r.ownGround), 0, refSpan((s) => s.bombs.ownGround)],
+  ['bombsEnemyGround', span((r) => r.enemyGround), 0, refSpan((s) => s.bombs.enemyGround)],
+  ['bombsStillFlyingAtEnd', span((r) => r.stillFlying), 0,
+                            refSpan((s) => s.bombs.stillFlyingAtEnd)],
+  ['bombsInAirSeconds', span((r) => r.bombsInAirSeconds), 1,
+                        refSpan((s) => s.sorties.bombsInAirSeconds)],
+  ['infantryKilledByBombsPerSide',
+   [Math.min(...rows.flatMap((r) => [r.infBull, r.infBear])),
+    Math.max(...rows.flatMap((r) => [r.infBull, r.infBear]))], 0,
+   bothSides((s) => s.infantry.bull, (s) => s.infantry.bear)],
+  ['doubleFireInfantry', span((r) => r.doubleClaimedInf), 0,
+                         refSpan((s) => s.doubleFire.infantry)],
+  ['doubleFireArmour', span((r) => r.doubleClaimedArmour), 0,
+                       refSpan((s) => s.doubleFire.armour)],
 ];
+
+// NOT a check, and the reason is worth keeping where the next reader will find
+// it. `summary.doubleFire.ambiguousBombMatch` is published and unused, and it
+// looks like a pair for this file's `ambiguous`. It is not. The recording
+// counts detonations it could not attribute to exactly ONE bomb, by comparing
+// positions (`GunshipReferenceTests.cs:120`, `b.x == p.x && b.z == p.y`) - a
+// property of floating point and of how a recorder identifies a bomb. This
+// file's `ambiguous` counts SLOTS REFILLED IN THE TICK THEY DIED (line 248),
+// which it prints under that name. Two unrelated quantities sharing a word.
+// Paired once during this pass, it read core [2, 3] against rec [0, 0] and
+// showed as the one OUTSIDE in thirty - a not-a-pair caught by the check
+// rather than by argument. The core has no counterpart at all: it identifies a
+// bomb by its slot, never by matching a position.
+console.log('');
+console.log('AIRCORE NOT COMPARED  doubleFire.ambiguousBombMatch is published and left out:');
+console.log('AIRCORE   the recording counts blasts it could not tie to one bomb by position;');
+console.log('AIRCORE   this file\'s `ambiguous` counts slots refilled in the tick they died.');
+console.log('AIRCORE   Same word, unrelated quantities. The core has no counterpart - it');
+console.log('AIRCORE   identifies a bomb by slot, never by matching a position.');
 
 console.log('');
 console.log('AIRCORE ENVELOPE  core [lo, hi]   vs   csharp-gunships.json [lo, hi]');
 let inside = 0;
-for (const [name, [lo, hi], d] of CHECKS) {
-  const r = ref.envelope[name];
+for (const [name, [lo, hi], d, published] of CHECKS) {
+  const r = published ?? ref.envelope[name];
   // Overlapping ranges, not containment: four seeds of a different army cannot
   // be expected to reproduce four seeds of the C# one exactly, and the
   // recording says as much.
@@ -931,10 +992,6 @@ console.log(`AIRCORE ENVELOPE ${inside}/${CHECKS.length} quantities overlap the 
 // summary.infantry.insideRadius against summary.bombs.effective - because the
 // envelope quotes only their product, and the product cannot say whether the
 // core's excess is more men under a bomb or more of them dying.
-const airPasses = Object.entries(ref.passes)
-  .filter(([, p]) => p.exit.air === 'on')
-  .map(([, p]) => p.summary);
-const refSpan = (f) => [Math.min(...airPasses.map(f)), Math.max(...airPasses.map(f))];
 const DERIVED = [
   ['menPerEffectiveBomb', span((r) => r.infIn / r.effective),
                           refSpan((s) => s.infantry.insideRadius / s.bombs.effective), 2],
@@ -953,17 +1010,11 @@ const DERIVED = [
 // of TANKS but more MEN, then the ground the bombs find is not busier and the
 // difference is in how the INFANTRY are arranged. Computed from the per-pass
 // rows, like DECOMPOSE, not from the envelope block.
-const ALSO = [
-  ['infantryInsideRadius', span((r) => r.infIn), refSpan((s) => s.infantry.insideRadius), 0],
-  ['armourInsideRadius', span((r) => r.armourIn), refSpan((s) => s.armour.insideRadius), 0],
-  ['bombsThatKilledArmour', span((r) => r.tankKillers),
-                            refSpan((s) => s.armour.bombsThatKilledArmour), 0],
-];
 console.log('');
 console.log('AIRCORE TANKS  the same ground, a different population');
-for (const [name, [lo, hi], [rlo, rhi], d] of ALSO)
-  console.log(`AIRCORE also ${name.padEnd(25)} core [${fmt(lo, d)}, ${fmt(hi, d)}]`.padEnd(70) +
-              `rec [${fmt(rlo, d)}, ${fmt(rhi, d)}]  ${!(hi < rlo || lo > rhi) ? 'OVERLAPS' : 'OUTSIDE'}`);
+console.log('AIRCORE   The three envelope rows this reads - infantryInsideRadius,');
+console.log('AIRCORE   armourInsideRadius, bombsThatKilledArmour - are checked above. What is');
+console.log('AIRCORE   here is the ratio, which is the whole point: same bombs, same ground.');
 {
   const ci = rows.reduce((a, r) => a + r.infIn, 0), ca = rows.reduce((a, r) => a + r.armourIn, 0);
   const ri = airPasses.reduce((a, s) => a + s.infantry.insideRadius, 0);
