@@ -1623,6 +1623,46 @@ function separatePair(s, a, b, xOff, zOff, sideOff) {
  */
 const CLEAR_RADIUS = idiv(Math.imul(16, ONE), 10);   // 1.6 m, C#'s `hard`
 
+/**
+ * Anyone under the wheels goes down.
+ *
+ * `Army.RunOver(x, z, 3.6f, speed, knock)` with `minSpeed = 2.5f`: below a
+ * walking pace nothing happens, because a truck edging forward should not mow
+ * down a line it is merely touching and a stationary one should not clear a
+ * space around itself.
+ *
+ * THE SPEED IS THE CORE'S OWN VELOCITY, and getting that right is the whole
+ * of this port. `Battlefield` reads `BlwpCore.Velocity` - which is (T_VX,
+ * T_VZ) - and takes its magnitude, falling back to `Rigidbody.linearVelocity`
+ * only when the core is not driving. That fallback is the PhysX remnant and
+ * the comment above it in the game says what it cost: the truck's body is
+ * kinematic, its linearVelocity is permanently zero, so run-over read a
+ * stationary truck and infantry stood in the road while the wheels went
+ * through them. The core has no such fallback and must not grow one.
+ *
+ * It is also NOT `T_WHEEL`. That is the vehicle's signed forward speed - the
+ * suspension model takes `abs()` of it wherever it needs a magnitude - so a
+ * truck reversing at 5 m/s would read as -5, sit below the 2.5 threshold and
+ * ride over nobody. C# takes a magnitude and so does this: the same quantity,
+ * not the nearest one to hand.
+ *
+ * `knock` is not ported. It exists to throw the body the way it was hit, and
+ * nothing in the core draws anything; it belongs with the rest of CombatFx.
+ */
+const RUN_OVER_RANGE = idiv(Math.imul(36, ONE), 10);   // 3.6 m, Battlefield.cs:144
+const RUN_OVER_MIN_SPEED = Math.imul(5, ONE) >> 1;     // 2.5 m/s, Army.RunOver's default
+
+/** The truck's speed as C# reads it: the magnitude of the core's own velocity. */
+const truckSpeed = (vx, vz) => length2(vx, vz);
+
+function runOver(s, b, tx, tz, speed, xOff, zOff) {
+  if (speed < RUN_OVER_MIN_SPEED) return 0;
+  const dx = sub(s[b + xOff], tx), dz = sub(s[b + zOff], tz);
+  if (abs(dx) >= RUN_OVER_RANGE || abs(dz) >= RUN_OVER_RANGE) return 0;
+  if (length2(dx, dz) >= RUN_OVER_RANGE) return 0;
+  return 1;
+}
+
 function clearOfTruck(s, b, tx, tz, xOff, zOff) {
   const ox = sub(s[b + xOff], tx), oz = sub(s[b + zOff], tz);
   if (abs(ox) >= CLEAR_RADIUS || abs(oz) >= CLEAR_RADIUS) return 0;
@@ -2479,6 +2519,29 @@ const sortieWait = (rng) => mulFast(SORTIE_SECONDS, between(rng, JITTER_MIN, JIT
 
 
 const UNITS = 96;
+/**
+ * The van is soft but not paper.
+ *
+ * `TruckHealth.Damage` is `Health -= amount / armour` with `armour = 1.5`, and
+ * the amount it is handed is the raw shell: `CourierHit?.Invoke(Rand(5f, 11f))`
+ * carries what the gun did, and that method's own summary says "Amount is
+ * before armour". So the divisor is a deliberate, dimensionless toughness knob
+ * on the game side - the tooltip says so in as many words - and not a units
+ * confusion or the leftover of a formula.
+ *
+ * The core had the raw amount and the same maxHealth of 100 and did not
+ * divide, which made its truck half again as soft as the one the game shipped.
+ * Measured on ONE hit sequence, parked at (0, 0) with the air off, three
+ * seeds: 100 points was reached at 24.9 / 14.5 / 16.1 s, and 150 - the same
+ * hits against a truck that divides them - at 33.5 / 21.0 / 23.7 s.
+ *
+ * A divisor on the HIT rather than a bigger pool, because that is the shape
+ * the rule has: C# applies `/armour` to every `Damage()` call it makes,
+ * including the crash path, so a truck that is tougher against shells is
+ * tougher against everything by the same factor.
+ */
+const TRUCK_ARMOUR = Math.imul(3, ONE) >> 1;   // 1.5, TruckHealth.armour
+
 const HALF_X = Math.imul(130, ONE);
 const HALF_Z = Math.imul(85, ONE);
 const TICK_DT = 1092;                       // 1/60 in Q16.16
@@ -3266,7 +3329,7 @@ function step(st, throttle, steer, brake, handbrake, practice) {
   // would defeat the point of practising.
   if (practice) s[O_SCORE + S_PRACTICE] = 1;
   else if (courierDmg > 0 && s[O_SCORE + S_STATE] === RUN_LIVE)
-    s[T + T_HP] = max(0, sub(s[T + T_HP], courierDmg));
+    s[T + T_HP] = max(0, sub(s[T + T_HP], div(courierDmg, TRUCK_ARMOUR)));
 
   // The squads walk. Between the unit loop and the air because that is where
   // Army.Update runs DriftSquads, and it decides where the men are standing
@@ -3327,6 +3390,22 @@ function step(st, throttle, steer, brake, handbrake, practice) {
   // same `if` in the game and not merely a neighbouring one.
   if (s[T + T_HP] > 0) {
     const tx2 = s[T + T_X], tz2 = s[T + T_Z];
+    // The truck's own velocity, never a host's and never `T_WHEEL`: see
+    // `runOver` in rules/army.js for what each of those would cost.
+    const speed = truckSpeed(s[T + T_VX], s[T + T_VZ]);
+    // Run-over FIRST and clearing second, which is Battlefield's order -
+    // `RunOver` at :144, `ClearPath` at :153. The other way round would move
+    // the men out of the wheels before the wheels were asked who was under
+    // them, and the rule would kill almost nobody.
+    for (let i = 0; i < UNITS; i++) {
+      if (isArmour(i)) continue;
+      const b = unitBase(i);
+      if (s[b + U_STATE] === 0) continue;
+      if (runOver(s, b, tx2, tz2, speed, U_X, U_Z)) {
+        s[b + U_HP] = 0;
+        s[b + U_STATE] = 0;
+      }
+    }
     for (let i = 0; i < UNITS; i++) {
       if (isArmour(i)) continue;
       const b = unitBase(i);

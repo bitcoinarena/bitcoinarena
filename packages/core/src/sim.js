@@ -42,6 +42,29 @@ import {
 } from './rules/air.js';
 
 export const UNITS = 96;
+/**
+ * The van is soft but not paper.
+ *
+ * `TruckHealth.Damage` is `Health -= amount / armour` with `armour = 1.5`, and
+ * the amount it is handed is the raw shell: `CourierHit?.Invoke(Rand(5f, 11f))`
+ * carries what the gun did, and that method's own summary says "Amount is
+ * before armour". So the divisor is a deliberate, dimensionless toughness knob
+ * on the game side - the tooltip says so in as many words - and not a units
+ * confusion or the leftover of a formula.
+ *
+ * The core had the raw amount and the same maxHealth of 100 and did not
+ * divide, which made its truck half again as soft as the one the game shipped.
+ * Measured on ONE hit sequence, parked at (0, 0) with the air off, three
+ * seeds: 100 points was reached at 24.9 / 14.5 / 16.1 s, and 150 - the same
+ * hits against a truck that divides them - at 33.5 / 21.0 / 23.7 s.
+ *
+ * A divisor on the HIT rather than a bigger pool, because that is the shape
+ * the rule has: C# applies `/armour` to every `Damage()` call it makes,
+ * including the crash path, so a truck that is tougher against shells is
+ * tougher against everything by the same factor.
+ */
+export const TRUCK_ARMOUR = Math.imul(3, ONE) >> 1;   // 1.5, TruckHealth.armour
+
 export const HALF_X = Math.imul(130, ONE);
 export const HALF_Z = Math.imul(85, ONE);
 const TICK_DT = 1092;                       // 1/60 in Q16.16
@@ -829,7 +852,7 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
   // would defeat the point of practising.
   if (practice) s[O_SCORE + S_PRACTICE] = 1;
   else if (courierDmg > 0 && s[O_SCORE + S_STATE] === RUN_LIVE)
-    s[T + T_HP] = max(0, sub(s[T + T_HP], courierDmg));
+    s[T + T_HP] = max(0, sub(s[T + T_HP], div(courierDmg, TRUCK_ARMOUR)));
 
   // The squads walk. Between the unit loop and the air because that is where
   // Army.Update runs DriftSquads, and it decides where the men are standing
