@@ -2675,6 +2675,7 @@ genesis_parameters {
   notice_period          for a rise in bond_min (§27A.3)
   bracket_table          the §5A.10 stake ceiling table
   bond_marker            the §25.1 discovery address
+  randomness_source      the beacon (see below)
 }
 ```
 
@@ -2689,10 +2690,32 @@ genesis_parameters {
 | `bond_maturity` | ~30 days | ~1 day | **100 blocks** |
 | `notice_period` | ~30 days | ~1 day | **10 blocks** |
 | stake ceiling | §5A.10 table | testnet sats | play money only |
+| beacon | drand | drand | **mock, seeded** |
 
 Two nodes and 2-of-2 on regtest is the point of it: the whole settlement
 path - hold invoices, VSS, a 2-of-2 FROST signature, the objection window,
 the payout table - runs on one laptop.
+
+### Where blocks come from on regtest
+
+There is a chain - regtest is a full Bitcoin node, just one whose blocks you
+mine yourself with `generatetoaddress`, instantly and for free. So nothing in
+the protocol changes shape: `census_height` is a real height, bonds are real
+UTXOs at a real depth, `bond_maturity` is a real `nLockTime`. Where mainnet
+waits thirty days for a bond to mature, you mine 100 blocks in a second.
+
+The beacon is the part that does **not** come from the chain. Committee
+selection uses the drand round at `committee_time` (§5A.5) precisely because
+it is published *after* `round_id` and nobody can grind against it. That
+property is worthless in a test and the dependency is harmful: an external
+service every regtest run must reach, and a seed you cannot fix, so no test
+can select a known committee twice.
+
+Regtest therefore declares `randomness_source = mock:<seed>` and the beacon
+becomes `H(seed ‖ committee_time)`. A test can then assert *which* nodes get
+selected instead of only that selection terminated. It is a genesis
+parameter like the rest, so `mock` is committed in `network_id` and cannot
+be pointed at mainnet.
 
 ### Why this cannot weaken mainnet
 
@@ -2721,10 +2744,19 @@ evidence about mainnet:
   disjoint subsets surface. With one possible subset there are no disjoint
   subsets and nothing to detect. The equivocation machinery can be tested
   for correctness, not for effectiveness.
-- **Player-node separation bites immediately.** §5A.13 voids entries when
-  conflicts drop a committee below threshold, and with two slots one
-  playing operator does it. That is correct behaviour and will be constant
-  during development; it is not a bug to be configured away.
+- **Player-node separation bites immediately - for the honest.** §5A.13
+  voids entries when declared conflicts drop a committee below threshold,
+  and with two slots one playing operator does it. Note what this is: a
+  check on a **self-declaration** (§5A.13), not detection. Nobody can tell
+  that an operator is playing if they simply declare nothing, on any
+  network. What regtest will show constantly is the honest case firing,
+  which is correct behaviour and not a bug to configure away.
+- **The chain is yours.** Whoever runs regtest mines every block, so the
+  census, the confirmation depths and the maturity locks are whatever that
+  person decides. Everything resting on chain state is trivially forgeable
+  there. That is what makes regtest useful - and it means a passing run is
+  evidence about the code's mechanics, never about the chain-based
+  security.
 
 ## 27A.5 Discrete changes: rough consensus
 
