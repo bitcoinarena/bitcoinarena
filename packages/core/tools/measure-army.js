@@ -22,9 +22,41 @@
 // recording holds. Any number compared against the recording wants this flag.
 //
 // --quiet drops the per-death list and prints the marks and the summary only.
+//
+// --core=DIR loads the core from somewhere else, which is the only way to turn
+// the air off: the core has no switch for it, and `ArmyReferenceTests` launches
+// no sorties, so every number this tool has printed since the air landed has
+// been an air-ON core beside an air-OFF recording. Checking one against the
+// other is what this flag is for:
+//
+//     git worktree add /tmp/noair <the commit before rules/air.js>
+//     node tools/measure-army.js 20260901 --seam0 --quiet \
+//       --core=/tmp/noair/packages/core/src
+//
+// Every line carries air=on or air=off for the same reason. A comparison that
+// does not say which condition it was made under is not a comparison.
 import { readFileSync } from 'node:fs';
-import { init, step, HALF_X, HALF_Z, UNITS } from '../src/sim.js';
-import { frontlineZ } from '../src/rules/frontline.js';
+
+const args = process.argv.slice(2);
+const SEAM0 = args.includes('--seam0');
+const QUIET = args.includes('--quiet');
+const CORE = (args.find((a) => a.startsWith('--core=')) || '--core=../src').slice(7);
+const SEEDS = args.filter((a) => !a.startsWith('--')).map(Number);
+if (SEEDS.length === 0) SEEDS.push(1);
+
+const base = new URL(CORE + '/', import.meta.url);
+const { init, step, HALF_X, HALF_Z, UNITS } = await import(new URL('sim.js', base).pathname);
+const { frontlineZ } = await import(new URL('rules/frontline.js', base).pathname);
+const L = await import(new URL('state.js', base).pathname);
+
+/**
+ * Whether the loaded core has an air arm at all.
+ *
+ * The helicopter slots are the tell: `O_HELIS` was appended to the layout with
+ * the air, so a core taken from before it does not have the word.
+ */
+const AIR = typeof L.O_HELIS === 'number' ? 'on' : 'off';
+const COND = (SEAM0 ? ' seam0' : '') + ' air=' + AIR;
 
 const Q = 65536;
 const O_UNITS = 24, U_WORDS = 8;
@@ -35,12 +67,6 @@ const RANGE = 46;                 // Army.ArmourRange, and ARMOUR_RANGE in the c
 const b = (i) => O_UNITS + i * U_WORDS;
 const isArmour = (i) => (i & 3) === 0;
 const squadOf = (i) => (i >> 3) % SQUADS;
-
-const args = process.argv.slice(2);
-const SEAM0 = args.includes('--seam0');
-const QUIET = args.includes('--quiet');
-const SEEDS = args.filter((a) => !a.startsWith('--')).map(Number);
-if (SEEDS.length === 0) SEEDS.push(1);
 
 /**
  * A state whose frontline sits at z=0, whatever the tape says.
@@ -138,7 +164,7 @@ function measure(seed) {
   const st = start(seed);
 
   const spawn = census(st);
-  console.log('ARMYCORE BEGIN  seed=' + seed + (SEAM0 ? ' seam0' : ''));
+  console.log('ARMYCORE BEGIN  seed=' + seed + COND);
   console.log(`ARMYCORE establishment armour=${spawn.filter((u) => u.armour).length} ` +
               `(bull ${spawn.filter((u) => u.armour && u.side < 0).length}, ` +
               `bear ${spawn.filter((u) => u.armour && u.side > 0).length}) ` +
@@ -413,7 +439,10 @@ const all = SEEDS.map(measure);
 // 71-83%" - are ranges ACROSS seeds and a single seed cannot be compared to
 // them at all.
 console.log('');
-console.log('ARMYCORE SUMMARY' + (SEAM0 ? ' (seam pinned at 0, the recording\'s condition)' : ' (seam where the tape puts it)'));
+console.log('ARMYCORE SUMMARY' + (SEAM0 ? ' (seam pinned at 0, the recording\'s condition)' : ' (seam where the tape puts it)')
+            + (AIR === 'on'
+               ? '  AIR=ON - the recording is air-off, so the loss columns are NOT like for like; --core= a pre-air worktree for that'
+               : '  AIR=OFF - the recording\'s own condition'));
 for (const s of all) {
   const at = (m) => s.marks[m];
   console.log(`ARMYCORE summary seed=${String(s.seed).padStart(9)} ` +
