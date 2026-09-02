@@ -2108,6 +2108,27 @@ provider and trusting one, and it is a few hundred lines: built in from the
 start it stays; retrofitted it never happens, because by then it works and
 nobody touches it.
 
+> **A client MUST verify every census entry against block headers it
+> obtained independently. It MUST NOT take a census, a committee or an
+> endpoint on the word of any API, including one operated by the same party
+> that ships the client.**
+
+This is normative rather than advisory because the failure is invisible
+from outside. A client that silently trusts a chain API behaves exactly
+like one that verifies - same screens, same rounds, same results - right up
+until the API returns a census that suits whoever runs it, and then the
+player has been playing against a committee that was never selected. There
+is no symptom to notice and nothing for the player to check.
+
+Whoever controls an unverified chain source controls which census a client
+sees, and therefore which committee it believes legitimate. That is the
+whole security of the round, delegated by omission.
+
+Running one's own chain servers does not change this. It buys availability,
+and for a stranger an API operated by the party that wrote the client is
+worth what that party's word is worth. Redundancy is not an argument about
+trust.
+
 ## 25.2 Which channel carries what *(new)*
 
 ```text
