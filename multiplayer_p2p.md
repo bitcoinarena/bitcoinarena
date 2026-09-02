@@ -2481,11 +2481,16 @@ No token, no treasury, no voting contract.
 
 | Parameter | Mechanism | Who |
 |---|---|---|
-| `node_fee_bps`, role split | bond-weighted median | the census |
-| `bond_min` per bracket, bracket table | bond-weighted median **with notice** | the census |
-| game difficulty: `E_reference`, corridor width, `T` clamps, `min_score`, `K`, `r` | bond-weighted median as defaults; a round MAY override in its contract | the census, then the round |
+| `node_fee_bps`, `proposal_deposit_sats` | bond-weighted median (§27A.2) | the census |
+| `bond_min` per bracket | bond-weighted median **with notice** (§27A.3) | the census |
+| the bracket set, `donation_bps`, `role_split` | config proposal, MONEY class (§27A.7) | a ballot of active bonds |
+| game difficulty, damage, army, round timings | config proposal, DESIGN class (§27A.7); a round MAY override within its contract | a ballot, then the round |
 | the donation set | signed by the donation authority | one key, nothing else (§27A.4) |
-| protocol rules, message formats, the core | software version; adoption is running it | nobody in particular |
+| `genesis_parameters`: committee shape, thresholds, beacon | **nothing.** Changing them is creating another network (§27A.6) | — |
+| protocol rules, message formats, the core | software version; adoption is running it (§27A.5) | nobody in particular |
+
+The split between the first rows and the third and fourth is the subject of
+§27A.7: **prices are discovered by median, design is decided by ballot.**
 
 ## 27A.2 Scalars: a median, not a ballot
 
@@ -2659,6 +2664,19 @@ The damage is bounded in every row: donations are voluntary, capped by
 `donation_bps_max`, and every recipient is displayed before wallet approval
 (§22A). A player who has donations switched off is unaffected by all of it.
 
+## 27A.5 Discrete changes: rough consensus
+
+New message types, changed rules, a different core - none of these is a
+number and none can be a median. There is no mechanism and deliberately so.
+A change ships as a software version; it takes effect when enough nodes run
+it that rounds using it can find a committee. Nodes advertise
+`supported_protocol_versions` (§5A.1) and a Round Contract names the one it
+needs, so a round that nobody supports simply finds no committee and never
+starts.
+
+This is slower and less tidy than a vote. It is also the only version that
+does not require someone to be in charge.
+
 ## 27A.6 Genesis parameters, and the test networks
 
 Everything above that a network cannot change about itself lives in one
@@ -2758,18 +2776,259 @@ evidence about mainnet:
   evidence about the code's mechanics, never about the chain-based
   security.
 
-## 27A.5 Discrete changes: rough consensus
+## 27A.7 Config proposals: the ballot, and where it belongs
 
-New message types, changed rules, a different core - none of these is a
-number and none can be a median. There is no mechanism and deliberately so.
-A change ships as a software version; it takes effect when enough nodes run
-it that rounds using it can find a committee. Nodes advertise
-`supported_protocol_versions` (§5A.1) and a Round Contract names the one it
-needs, so a round that nobody supports simply finds no committee and never
-starts.
+§27A.2 rejects voting for scalars and that stands. It does not cover
+everything, because **not every parameter is a scalar a node can hold an
+independent opinion about.**
 
-This is slower and less tidy than a vote. It is also the only version that
-does not require someone to be in charge.
+A damage table is thirty numbers that only make sense together. Take a
+bond-weighted median of each field separately and you get a table nobody
+proposed and nobody checked: armour medianed up by operators who wanted
+tougher trucks, shell damage medianed up by operators who wanted a harder
+game, and the result is a truck that cannot be killed by a hit that was
+balanced against the old armour. Componentwise medians of a coupled vector
+produce a configuration that is the average of several coherent designs and
+is itself incoherent.
+
+So the line is not "median good, ballot bad". It is:
+
+> **Prices are discovered. Design is decided.**
+>
+> A price - `node_fee_bps`, `bond_min` - is exactly the thing independent
+> declarations settle well, and the middle of them is meaningful. It stays a
+> median (§27A.2), with no proposal and no schedule.
+>
+> A design - the damage table, the score function, the army, the bracket
+> set, round timings - is a coupled object that must be adopted whole. It
+> gets a ballot, and you vote on a **complete named configuration**, never on
+> a field.
+
+### 27A.7.1 What is votable, with examples
+
+```text
+game_config {
+  timing {
+    round_duration_s        180      // how long a run lasts
+    entry_window_s          120      // lobby open before committee_time
+    loading_time_s          8        // held at the bay
+    claim_window_s          3600     // to take a payout
+  }
+
+  brackets {
+    stake_sats            [ 100, 1000, 10000, 100000 ]
+    max_players_per_round   64
+    min_players_per_round   2
+  }
+
+  score {                            // §11
+    E_reference             1.0
+    corridor_width          12.0
+    T_min, T_max            clamps
+    min_score               the floor below which a run does not place
+    K, r                    payout curve shape
+  }
+
+  damage {
+    rifle_hit_per_mil       550      // core: army.js
+    shell_damage            0.34     // fraction of condition per tank hit
+    gunship_burst           0.11
+    ram_lethal_speed        14.0     // m/s at which ramming armour kills
+    condition_power_floor   0.55     // how weak a wrecked truck drives
+  }
+
+  army {
+    squads                  12
+    armour_walk             6.8      // m/s
+    rifle_walk              2.6
+    spawn_count             96
+  }
+
+  economy {
+    donation_bps            inclusive share of the round amount (§27A)
+    role_split              game/verify vs settlement
+  }
+}
+```
+
+`config_hash = H(canonical(game_config))`, and it is **not** a scalar, a
+diff, or a set of independently addressable fields. It is one object.
+
+**Out of scope, permanently.** A proposal cannot touch `genesis_parameters`
+(§27A.6) - committee shape, thresholds, network identity - because changing
+those *is* creating a different network, and no vote can move you to another
+network. It cannot touch the donation set, which is the admin key's one job
+and nothing else's (§27A.4). And it cannot change protocol rules or message
+formats, which ship as software and are adopted by being run (§27A.5).
+
+### 27A.7.2 The proposal
+
+```text
+config_proposal {
+  network_id
+  parent          config_hash this replaces
+  config          the FULL object, never a diff
+  class           DESIGN | MONEY
+  activation_height
+  proposer        node pubkey with an active bond
+  deposit_txid    proposal deposit, paid to the donation set
+  signature
+}
+proposal_id = H(canonical(config_proposal))
+```
+
+**Full object, not a diff.** Two diffs passing in the same window would
+merge into a configuration nobody voted on. A full object cannot.
+
+**`parent` serialises competing proposals.** Both may pass; the first to
+activate becomes the config, and the second is void at its activation height
+because its parent is no longer current. Nothing needs to limit concurrency
+and nothing needs to break a tie - the same rule Bitcoin uses for two blocks
+at one height.
+
+**The deposit is spent, not staked.** It goes to the donation set outright:
+a fixed price for occupying the whole network's attention for a month.
+`proposal_deposit_sats` is itself a median scalar (§27A.2) - the network
+prices proposing through the mechanism that needs no proposal.
+
+### 27A.7.3 Votes are Bitcoin transactions
+
+This is the part that decides whether the whole scheme is sound, and the
+answer has to match the rest of the spec: there is no Nostr, no DNS seed and
+no server whose tally anyone has to trust.
+
+A vote is an `OP_RETURN` output on Bitcoin:
+
+```text
+OP_RETURN  "BLW"                  3 bytes
+           proposal_id[0:8]       8
+           choice                 1     YES | NO | ABSTAIN
+           schnorr_sig            64    by the BOND key over
+                                        H(proposal_id ‖ choice)
+                                  = 76 bytes, inside the 80-byte limit
+```
+
+The signature is the entire link to the bond. A verifier walks the census,
+and for each bonded node checks whether the signature verifies under that
+node's key. **The vote never spends the bond and cannot** - the bond is a
+timelocked output with a MuSig2 key path, and voting touches none of it.
+
+What this buys is the property §27A.2 was built for and that a gossiped
+tally would have destroyed:
+
+> The tally is a pure function of chain state. Every participant computes
+> the same result, and disagreement about the outcome reduces to
+> disagreement about Bitcoin.
+
+The cost is one small transaction per vote - about 150 vB, so a few hundred
+sats. Against a bond of hundreds of thousands of sats, voting a few times a
+year is noise, and it is a natural rate limit on anyone who would rather
+vote ten thousand times.
+
+**Eligibility** is an active bond at `vote_census_height = H_propose`: the
+census is snapshotted when the proposal is published, so no one can fund
+bonds in reaction to how a vote is going. One vote per bond outpoint, and
+the **last vote by block height wins**, so an operator can change their mind
+(ties inside a block: lower txid). Weight is the bond amount - the same
+weight sortition uses, so influence costs what an attack costs.
+
+**ABSTAIN counts for turnout but not for approval.** Without it a turnout
+floor is hostage to indifference: operators with nothing to say cannot
+distinguish themselves from operators who are gone, and a good proposal
+dies of quiet. ABSTAIN lets someone say *I am here and I do not care.*
+
+### 27A.7.4 Timings
+
+In block heights, because that is the only clock the network agrees on -
+the same clock the census already uses.
+
+| Phase | Blocks | ≈ | What happens |
+|---|---|---|---|
+| Review | 1008 | 7 d | Published, votes not yet counted. Time to find that it is broken *before* anybody has committed to it. |
+| Voting | 2016 | 14 d | `OP_RETURN` votes confirm. |
+| Cooldown | 2016 | 14 d | Outcome known, change **not** live. Operators upgrade; anyone who dislikes it exits or lets a bond lapse. |
+| Activation | at `activation_height` | | |
+| **Total** | **5040** | **~35 d** | |
+
+`activation_height` MUST be at or after the end of cooldown; a proposal that
+names an earlier one is invalid on its face.
+
+**Thresholds by class**, of the bonded capital in the snapshot:
+
+| | turnout | approval of non-abstaining weight |
+|---|---|---|
+| DESIGN - damage, army, score, timings | ≥ 30% | > 50% |
+| MONEY - brackets, `donation_bps`, `role_split` | ≥ 40% | ≥ 66% |
+
+Failing either is failing. A proposal that reaches quorum and misses
+approval is dead, not retried.
+
+The schedule and thresholds are themselves in `genesis_parameters`, so
+regtest runs 1 / 6 / 1 blocks and two operators can drive a whole governance
+cycle through to activation in under a minute.
+
+### 27A.7.5 Going live
+
+At `activation_height` the new config is the config. Two rules keep that
+from disturbing anything in flight:
+
+- **A round is bound to the config it was created under.** The Round
+  Contract carries `config_hash` alongside `network_id`. A round created
+  before activation and still running after it keeps its own rules to the
+  end. Nothing changes mid-flight, and no scoring is ever done under
+  parameters that differ from the ones the player entered under.
+- **A node that has not upgraded simply stops being selectable** for rounds
+  naming the new hash, exactly as with protocol versions (§27A.5). It is not
+  ejected and it is not slashed; it serves nothing and its bond is
+  recoverable as always.
+
+### 27A.7.6 When a passed config turns out to be broken
+
+There is no pause button, by construction. The admin key cannot do this and
+must not be able to (§27A.4). So the answer is the honest one:
+
+**Nodes refuse.** A config that makes rounds unplayable or unprofitable is a
+config nodes do not serve, so those rounds find no committee and never
+start. The network degrades to no rounds rather than to bad rounds, which is
+the correct direction.
+
+And a **repeal** runs on a short schedule - review 0, voting 1008, cooldown
+0 - but *only* if its `config` is byte-identical to an ancestor that was
+live before. It can go back, never forward. That cannot be abused into a
+fast path for new changes, because the only configurations it can reach are
+ones the network already ran.
+
+### 27A.7.7 The operator UI, and why it never holds a key
+
+Voting means signing with the **bond key**, which is the most valuable
+secret an operator has. The obvious product - a website where you log in and
+click YES - would mean handing that key to a website. It must not exist.
+
+Instead the UI is a client of the operator's **own node**:
+
+```text
+UI  --(operator token, over TLS to the node's own endpoint)-->  node
+                                                                 |
+                            builds, signs and broadcasts the vote tx
+```
+
+Pairing is a `blwp-operator:` URI - endpoint plus a 32-byte token the node
+prints on first start - pasted or scanned. The UI asks for an action; the
+node performs it. **No key ever leaves the node**, and there is no service
+in the middle to compromise, subpoena or shut down.
+
+Tokens are scoped, and the scoping gives a property worth stating plainly:
+
+| Scope | Can | Worst case if stolen |
+|---|---|---|
+| `read` | dashboards, income, bracket status | information disclosure |
+| `vote` | cast and change votes | **a wrong vote** |
+| `config` | edit declarations (§27A.2 medians), delivery addresses | wrong declared preferences |
+
+None of them can move money. The bond is spendable only by its recovery path
+after `bond_maturity` or by a valid slash, and no operator token touches
+either. **A fully compromised operator API costs a vote, never a bond** -
+which is why it is safe for this to be a convenient web UI at all.
 
 ---
 
@@ -2798,6 +3057,10 @@ does not require someone to be in charge.
 | Website compromised | Wallet approval still required; hashes/mirrors; donation cap limits the damage |
 | 5 game/verify nodes collude **and** the victim's transcript is unavailable | Residual result-integrity failure; five bonds slashable afterwards |
 | 5 settlement nodes collude | Residual settlement failure on in-transit funds; five bonds slashable |
+| A passed config makes rounds unplayable | Nodes decline to serve it; those rounds find no committee and never start. Repeal runs on the short schedule (§27A.7.6). No pause exists and none is needed |
+| Config activates mid-round | Cannot happen: a round is bound to the `config_hash` it was created under (§27A.7.5) |
+| Operator API token stolen | At worst a wrong vote. No token can spend a bond or reach player funds (§27A.7.7) |
+| Governance turnout below the floor | Proposal fails. The config in force is unchanged, which is the safe direction |
 
 No cell leaves funds in an undefined state, and no cell erases a `FINAL`
 result.
