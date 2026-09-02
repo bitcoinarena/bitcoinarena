@@ -191,7 +191,11 @@ public class Bootstrap : MonoBehaviour
                                                       truck.transform.position.z));
         // the chase camera is built further down, so both of these find it
         // themselves in Start rather than being handed a null here
-        Field.Army.CourierHit += _truckHealth.Damage;
+        // The C# army no longer hurts the truck. `CourierHit` used to be wired
+        // straight into `TruckHealth.Damage`, which computed the loss a second
+        // time - the core was already taking the same shell off its own `T_HP`
+        // and nothing read that back. One pool, and it is the core's; the view
+        // is handed a snapshot in `Update` below.
 
         var wasted = gameObject.AddComponent<WastedSequence>();
         wasted.health = _truckHealth;

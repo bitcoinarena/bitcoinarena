@@ -251,7 +251,9 @@ public class TruckHealthTests
         Assert.IsTrue(_health.IsInvulnerable,
             "der Schutz faellt weg, obwohl der Spieler noch auswaehlt");
 
-        _health.Damage(500f);
+        // `Damage` is gone: the core owns condition and this class only shows it.
+        // What these two assert is that a protected truck refuses to be WRITTEN
+        // OFF, which needs no damage API at all.
         _health.WriteOff();
         yield return null;
 
@@ -411,32 +413,6 @@ public class TruckHealthTests
             $"der Balken haengt {bar.y - diag.yMax:0} px unter dem Debug-Feld statt direkt darunter");
         Assert.AreEqual(diag.x, bar.x, 0.5f, "der Balken ist nicht am Debug-Feld ausgerichtet");
         Assert.AreEqual(diag.width, bar.width, 0.5f, "der Balken ist nicht so breit wie das Debug-Feld");
-    }
-
-    [UnityTest]
-    public IEnumerator IncomingFireCostsCondition()
-    {
-        Assert.IsNotNull(_field?.Army, "keine Armee");
-        yield return LeaveSpawn();
-
-        // through the event the armies actually raise, not through Damage()
-        _field.Army.CourierHit.Invoke(30f);
-        yield return null;
-
-        Assert.Less(_health.Fraction, 1f, "Beschuss hat dem Truck nichts getan");
-        Assert.IsFalse(_health.IsDestroyed, "ein einzelner Treffer sollte ihn nicht zerstoeren");
-    }
-
-    [UnityTest]
-    public IEnumerator EnoughFireWrecksIt()
-    {
-        yield return LeaveSpawn();
-        for (int i = 0; i < 12 && !_health.IsDestroyed; i++)
-        {
-            _field.Army.CourierHit.Invoke(20f);
-            yield return null;
-        }
-        Assert.IsTrue(_health.IsDestroyed, "der Truck haelt unbegrenzt Beschuss aus");
     }
 
     [UnityTest]

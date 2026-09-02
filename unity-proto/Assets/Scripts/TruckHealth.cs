@@ -112,22 +112,33 @@ public class TruckHealth : MonoBehaviour
 
     void Start() => EnsureInit();
 
-    /// <summary>Take a hit. Amount is before armour.</summary>
-    public void Damage(float amount)
+    /// <summary>
+    /// The condition the CORE says the truck is in.
+    ///
+    /// This class used to compute it: `Health -= amount / armour`, fed from
+    /// `Field.Army.CourierHit` at `Bootstrap.cs:194`. That was a second
+    /// simulation of the same thing - the core was already taking the hit off
+    /// its own `T_HP` and nothing read it back - and M1 says damage comes FROM
+    /// the core. So the arithmetic is gone, the armour divisor with it, and it
+    /// lives in `sim.js` where the shell already lands. There is one pool now.
+    ///
+    /// `armour` and `maxHealth` stay as FIELDS because the view still needs a
+    /// full-scale to draw a fraction against, and because the core's own
+    /// divisor is written against the same 1.5. Neither is used to work out
+    /// what a hit costs any more.
+    ///
+    /// The host calls this every frame with `BlwpCore.TruckHealth` and
+    /// `BlwpCore.RunState`. A test stands in for the core and calls it too -
+    /// that is stubbing the view's INPUT, not giving the view a second pool.
+    /// </summary>
+    public void ApplySnapshot(float health, bool wrecked)
     {
         EnsureInit();
-        if (IsDestroyed || IsInvulnerable || amount <= 0f) return;
-
-        Health -= amount / Mathf.Max(0.01f, armour);
-        LastHitAt = Time.unscaledTime;
-        if (chase != null) chase.Shake(Mathf.Min(0.6f, amount * 0.02f));
-        if (fx != null)
-            fx.Flash(transform.position + Vector3.up * 1.4f, 1.6f);
-
-        if (Health <= 0f) WriteOff();
+        Health = Mathf.Clamp(health, 0f, maxHealth);
+        if (Health < maxHealth) LastHitAt = Time.unscaledTime;
+        if (wrecked && !IsDestroyed) WriteOff();
     }
 
-    /// <summary>Destroy it outright, whatever condition it was in.</summary>
     public void WriteOff()
     {
         EnsureInit();
@@ -161,18 +172,33 @@ public class TruckHealth : MonoBehaviour
     {
         // Armour impacts come from the core now.
         //
-        // OnCollisionEnter below still exists and still holds the rule, but it
-        // cannot fire: the truck's Rigidbody is kinematic and the core writes
-        // its transform, so PhysX resolves nothing and reports nothing. The
-        // core notices the crash; the rule that decides what it costs stays
-        // exactly where it was.
+        // OnCollisionEnter used to sit below and hold the rule; it could not
+        // fire, because the truck's Rigidbody is kinematic and the core writes
+        // its transform, so PhysX resolved nothing and reported nothing.
+        // The crash is FELT here and costed nowhere. `TakeImpact` is the core's
+        // own impact word, so the shake and the bang are a reading of core
+        // state and stay; deciding what the crash costs was client arithmetic
+        // and has gone with the rest of it.
+        //
+        // THE CORE HAS NO CRASH DAMAGE YET. `T_HP` is written at spawn and
+        // reduced by courier fire and by nothing else, so until that rule
+        // exists a crash costs condition nowhere. It is a listed gap, not an
+        // oversight, and it is not fixed here by leaving a second pool behind.
+        // THE SNAPSHOT. Condition and the wrecked flag are read straight off
+        // the core every frame; this class decides neither. When there is no
+        // core answering - the editor, PlayMode, a standalone build, where
+        // `BlwpCore` is stubbed - nothing is read and the value stays as it
+        // was last set, which is how a test stands in for the core through
+        // `ApplySnapshot`. Stubbing the view's input, not a second pool.
+        if (Blwp.BlwpCore.Available)
+            ApplySnapshot(Blwp.BlwpCore.TruckHealth,
+                          Blwp.BlwpCore.RunState == 2);      // RUN_WRECKED
+
         float rammed = Blwp.BlwpCore.TakeImpact();
         if (rammed > 0.5f && !IsDestroyed && !IsInvulnerable)
         {
             if (chase != null) chase.Shake(Mathf.Min(1.2f, rammed * 0.09f));
             if (audio != null) audio.Impact(rammed);
-            if (rammed >= crashSpeed) WriteOff();
-            else Damage(rammed * 6f);
         }
 
         EnsureInit();
@@ -235,30 +261,10 @@ public class TruckHealth : MonoBehaviour
     }
 
     /// <summary>
-    /// Hitting armour. Tanks and burning hulls both sit on the unit layer and
-    /// both are several tonnes of steel; infantry carry no collider at all,
-    /// because they are meant to be run over rather than crashed into.
+    /// GONE, and the file's own comment above said why before it went: the
+    /// truck's Rigidbody is kinematic and the core writes its transform, so
+    /// PhysX resolves nothing and this could not fire. It was also the last
+    /// place a PhysX quantity touched condition - it costed a crash from
+    /// `collision.relativeVelocity` - which is exactly the shape M1 removes.
     /// </summary>
-    void OnCollisionEnter(Collision collision)
-    {
-        EnsureInit();
-        if (IsDestroyed || IsInvulnerable) return;
-        if (collision.gameObject.layer != ArmyRenderer.UnitLayer) return;
-
-        // A burnt-out hull is scenery. Hitting one costs paint however hard it
-        // is hit; only a live tank writes the truck off.
-        if (collision.collider.GetComponentInParent<BurntOutHull>() != null)
-        {
-            if (chase != null)
-                chase.Shake(Mathf.Min(0.9f, collision.relativeVelocity.magnitude * 0.06f));
-            Damage(collision.relativeVelocity.magnitude * 3f);
-            return;
-        }
-
-        float impact = collision.relativeVelocity.magnitude;
-        if (chase != null) chase.Shake(Mathf.Min(1.2f, impact * 0.09f));
-        if (audio != null) audio.Impact(impact);
-        if (impact >= crashSpeed) WriteOff();
-        else Damage(impact * 6f);       // a slow shunt still costs paint
-    }
 }

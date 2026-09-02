@@ -8,7 +8,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { init, step, runScore, setGround, setSolids, HALF_X } from '../src/sim.js';
-import { hash } from '../src/state.js';
+import { hash, O_AIR, AIR_BULL, AIR_BEAR } from '../src/state.js';
 import * as scoring from '../src/rules/score.js';
 import * as gate from '../src/rules/gate.js';
 
@@ -478,6 +478,57 @@ test('a distant wall does not eject the truck', () => {
  * finding about the world and it is written up in PRIORITIES; it is not a
  * reason to loosen either number until a route happens to produce a kill.
  */
+/**
+ * Incoming fire costs condition, and enough of it writes the truck off.
+ *
+ * These two came out of PlayMode, where they hurt the truck by calling
+ * `Field.Army.CourierHit.Invoke(...)` - the C# damage line, which is being
+ * cut. The claim is not a Unity claim: damage is an outcome and outcomes come
+ * from the core, so the assertion belongs where `T_HP` lives. Same setup the
+ * measurements use: the truck parked on the seam at (0, 0) where the fighting
+ * is, and the air held off so the only thing hurting it is the army's own
+ * courier fire.
+ *
+ * The air is pinned by writing the SORTIE CLOCKS, which are state words at
+ * `O_AIR`, and not by setting a property on `st` - a helper that did the
+ * latter held nothing off at all and every row it captioned "air off" was
+ * measured with bombs falling.
+ */
+const parkedUnderFire = (seed, ticks) => {
+  const Q = 65536, O = 5, T_X = 0, T_Z = 1, T_HP = 6;
+  const O_SCORE = 17, S_STATE = 5;
+  const st = init(seed);
+  const hold = () => {
+    st.i32[O_AIR + AIR_BULL] = 1 << 30;
+    st.i32[O_AIR + AIR_BEAR] = 1 << 30;
+    st.i32[O + T_X] = 0;
+    st.i32[O + T_Z] = 0;
+  };
+  hold();
+  for (let t = 0; t < ticks; t++) { step(st, 0, 0, 0, 0, 0); hold(); }
+  return { hp: st.i32[O + T_HP] / Q, state: st.i32[O_SCORE + S_STATE] };
+};
+
+test('incoming fire costs the truck condition', () => {
+  for (const seed of [20260901, 20268820, 20276739]) {
+    // Ten seconds: long enough for the army to reach it, short enough that
+    // none of the three has spent all hundred points yet - the corrected
+    // death times are 34.3 / 17.5 / 19.8 s.
+    const r = parkedUnderFire(seed, 60 * 10);
+    assert.ok(r.hp < 100, `seed ${seed}: der Truck steht nach 10 s unbeschaedigt da`);
+    assert.ok(r.hp > 0, `seed ${seed}: nach 10 s schon zerstoert - hp ${r.hp.toFixed(2)}`);
+  }
+});
+
+test('enough fire writes the truck off', () => {
+  for (const seed of [20260901, 20268820, 20276739]) {
+    const r = parkedUnderFire(seed, 60 * 90);
+    assert.equal(r.hp, 0, `seed ${seed}: haelt neunzig Sekunden Beschuss aus`);
+    assert.equal(r.state, gate.RUN_WRECKED,
+      `seed ${seed}: hp ist 0, aber der Lauf steht auf ${r.state} statt RUN_WRECKED`);
+  }
+});
+
 test('a truck at speed rides a rifleman down, and a crawling one does not', () => {
   const Q = 65536, O = 5, T_X = 0, T_Z = 1, T_VX = 3, T_VZ = 4;
   const O_UNITS = 24, U_WORDS = 8, U_X = 0, U_Z = 1, U_HP = 3, U_STATE = 5;

@@ -188,7 +188,9 @@ public class PracticeModeTests
         Blwp.PracticeMode.On = true;
         Assert.IsTrue(health.IsInvulnerable, "practice did not reach TruckHealth");
 
-        health.Damage(500f);
+        // `Damage` is gone: the core owns condition and this class only shows it.
+        // What these two assert is that a protected truck refuses to be WRITTEN
+        // OFF, which needs no damage API at all.
         health.WriteOff();
         yield return null;
         Assert.IsFalse(health.IsDestroyed, "the truck was destroyed while practising");
