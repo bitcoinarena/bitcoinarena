@@ -2490,8 +2490,9 @@ No token, no treasury, no voting contract.
 | **`node_fee_bps`**, the bracket set, `donation_bps`, `role_split` | set at genesis; changed by config proposal, MONEY class (§27A.7) | a ballot of active bonds |
 | game difficulty, damage, army, round timings | config proposal, DESIGN class (§27A.7); a round MAY override within its contract | a ballot, then the round |
 | the donation set | signed by the donation authority | one key, nothing else (§27A.4) |
-| `genesis_parameters`: committee shape, thresholds, beacon | **nothing.** Changing them is creating another network (§27A.6) | — |
-| protocol rules, message formats, the core | software version; adoption is running it (§27A.5) | nobody in particular |
+| `genesis_parameters`: committee shape, thresholds, beacon | not within a network. Changing them creates a **successor** network by hard fork (§27A.8) | a ballot, UPGRADE class |
+| the core, message formats, new unit types, new parameters | hard fork with a code commitment (§27A.8) | a ballot, UPGRADE class |
+| backwards-compatible protocol additions | software version; adoption is running it (§27A.5) | nobody in particular |
 
 The split between the first rows and the third and fourth is the subject of
 §27A.7: **prices are discovered by median, design is decided by ballot.**
@@ -2594,7 +2595,9 @@ what defines the network:
 ```text
 network_id = H( genesis_parameters
              || donation_authority_pubkey
-             || donation_recovery_pubkey )
+             || donation_recovery_pubkey
+             || predecessor            // 0 at genesis, else §27A.8
+             || fork_certificate_hash ) // 0 at genesis
 ```
 
 **A fork that replaces the key produces a different `network_id`.** Round
@@ -2692,16 +2695,24 @@ The damage is bounded in every row: donations are voluntary, capped by
 
 ## 27A.5 Discrete changes: rough consensus
 
-New message types, changed rules, a different core - none of these is a
-number and none can be a median. There is no mechanism and deliberately so.
-A change ships as a software version; it takes effect when enough nodes run
-it that rounds using it can find a committee. Nodes advertise
-`supported_protocol_versions` (§5A.1) and a Round Contract names the one it
-needs, so a round that nobody supports simply finds no committee and never
-starts.
+*(narrowed in v4.6.2: changes that break replay are §27A.8.)*
+
+This covers **backwards-compatible** additions only - an optional field, a
+new advertisement hint, an extra diagnostic message. They are not numbers
+and cannot be medians, and they need no mechanism: a change ships as a
+software version and takes effect when enough nodes run it that rounds using
+it can find a committee. Nodes advertise `supported_protocol_versions`
+(§5A.1) and a Round Contract names the one it needs, so a round nobody
+supports simply finds no committee and never starts.
 
 This is slower and less tidy than a vote. It is also the only version that
 does not require someone to be in charge.
+
+**Where it stops.** The moment a change alters what a transcript *is* - the
+core, the simulation, a new unit, a new message the committee must agree the
+meaning of - rough consensus is not enough, because deterministic replay
+(§13A) needs both sides to establish they ran the same code. Those are hard
+forks and go through §27A.8 with an explicit code commitment.
 
 ## 27A.6 Genesis parameters, and the test networks
 
@@ -2727,6 +2738,10 @@ genesis_parameters {
 **The genesis config.** `genesis_config_hash` is the `config_hash` of the
 first `game_config` (§27A.7.1) - the one with no `parent` - and it carries
 the network's opening `node_fee_bps`, brackets, damage table and timings.
+
+Changing any of this is not an operation within a network; it produces a
+**successor** network, which §27A.8 makes verifiable rather than merely
+possible.
 
 Being inside `genesis_parameters` it is committed in `network_id`, which
 settles what a launch *is*: you cannot start "the same network" with a 30%
@@ -3097,6 +3112,172 @@ after `bond_maturity` or by a valid slash, and no operator token touches
 either. **A fully compromised operator API costs a vote, never a bond** -
 which is why it is safe for this to be a convenient web UI at all.
 
+## 27A.8 Hard forks: a successor, not a stranger
+
+Everything so far can only change numbers. New message types, a changed
+core, a new unit on the battlefield, a parameter that does not exist yet -
+none of it fits, and §27A.5's answer (ship it, adoption is running it) is
+honest but incomplete: it cannot carry the network's identity, its bonds or
+its history across the change.
+
+And the change genuinely **is** a new network. `genesis_parameters` is
+committed in `network_id` (§27A.6), so altering the committee shape, the
+beacon or the core is by construction a different network with a different
+census. That is a property worth keeping, not a bug to route around.
+
+So the mechanism does not deny it. It makes the new network **provably the
+successor of the old one**:
+
+> `network_id` stops being a value and becomes a **chain**. A successor
+> commits to its predecessor, so descent is verifiable by anyone, from
+> Bitcoin alone, with no announcement to trust.
+
+### 27A.8.1 The fork certificate
+
+```text
+fork_certificate {
+  predecessor           network_id(n)
+  proposal_id           the ratified UPGRADE proposal
+  genesis_parameters    the successor's, in full
+  code_commitment {
+    source_tree_hash    reproducible-build manifest
+    core_wasm_hash      the deterministic core specifically
+    toolchain           pinned
+  }
+  activation_height
+  vote_proofs[]         txid + merkle path + block header, per vote
+  tally                 turnout and approval, by bonded weight
+}
+
+network_id(n+1) = H( genesis_parameters(n+1)
+                  || donation keys
+                  || predecessor = network_id(n)
+                  || H(fork_certificate) )
+```
+
+**This is what separates a hard fork from a random fork.** Anyone may copy
+the code and launch; what they cannot produce is a certificate whose votes
+are in the Bitcoin chain under the predecessor's census. A fork without one
+is a **sibling** - a new network starting from nothing, exactly as §27A.4
+always said. A fork with one is a **successor**.
+
+**`code_commitment` is why this class exists at all.** Deterministic replay
+(§13A) is only meaningful against a known core: two nodes disagreeing about
+a transcript must be able to establish that they ran the same code. So the
+core's hash is voted on explicitly and reproducibly, and a node verifies its
+own binary against it before serving. A change to the core is unavoidably a
+hard fork for exactly this reason - old nodes cannot replay new transcripts,
+and a replay that cannot be reproduced cannot settle money.
+
+### 27A.8.2 The UPGRADE class
+
+| | turnout | approval | review | voting | cooldown | total |
+|---|---|---|---|---|---|---|
+| DESIGN | 30% | >50% | 1008 | 1440 | 2016 | ~31 d |
+| MONEY | 40% | ≥66% | 1008 | 1440 | 2016 | ~31 d |
+| **UPGRADE** | **60%** | **≥80%** | **4032** | **4032** | **8064** | **~112 d** |
+
+A hard fork can change anything, including the thresholds that would govern
+the next one, so it carries the highest bar the network has and takes a
+season to happen. Four weeks of review before a single vote counts is the
+point: the review window is where an upgrade is found to be broken, and an
+upgrade is the change most able to be broken.
+
+### 27A.8.3 Bonds cross, but only if their operator says so
+
+A successor with an empty census is a successor in name only - every
+operator would have to post fresh capital and wait out `bond_maturity`,
+which in practice means the network can never upgrade at all.
+
+So bonds carry. A bond created under an ancestor is valid in the census of
+network `n+1` when its operator publishes a **re-affirmation**:
+
+```text
+OP_RETURN  "BLW"  FORK  network_id(n+1)[0:8]  schnorr_sig(bond key)
+```
+
+One small transaction, the same shape as a vote (§27A.7.3). It moves no
+capital, spends no bond, and starts no new maturity clock.
+
+**It is opt-in, per operator, and that is not a detail.** A vote decides
+what the successor *is*; it does not decide whose capital serves it.
+Carrying bonds automatically would let an 80% majority conscript the
+remaining 20% into a network they voted against, and a bond is a hostage in
+a way a vote is not - it is locked, it cannot be topped up, and it cannot be
+withdrawn before maturity.
+
+An operator who re-affirms nothing keeps a bond on network `n`, still
+recoverable at `bond_maturity` exactly as before. **Nothing about a fork can
+strand capital.**
+
+### 27A.8.4 How a client follows a fork it has never heard of
+
+A client meets a Round Contract naming a `network_id` it does not know. It
+asks any node for the fork certificate, and walks:
+
+```text
+unknown network_id
+  -> certificate -> predecessor
+  -> certificate -> predecessor
+  ...
+  -> the network_id COMPILED INTO THE CLIENT
+```
+
+At each step it checks the votes against Bitcoin itself - the proofs are
+txids and merkle paths, so this is header validation and nothing else.
+
+**The trust anchor is the client's own built-in `network_id`, never a
+server.** A client that has been offline for a year can rejoin across two
+forks without asking anybody's permission, and an attacker cannot splice in
+a link, because every link needs 80% of a census that existed on chain at
+the time. This is the same property §25.1 gives discovery: the answer comes
+from Bitcoin, so being lied to requires lying about Bitcoin.
+
+A client MAY refuse to follow automatically and ask the player. It MUST NOT
+follow a chain whose root it does not recognise.
+
+### 27A.8.5 What a hard fork still cannot do
+
+An 80% majority holds unlimited power over the *rules*. It holds none over
+*funds*, and the difference is where the safety of the whole scheme sits:
+
+- **In-flight rounds are untouched.** A round binds to its `network_id` and
+  `config_hash` at creation (§27A.7.5). Activation cannot reach into a round
+  that is running, and cannot rescore a `FINAL` result.
+- **Stakes are not reachable.** Settlement is HTLCs against a committee that
+  existed under the old rules; a new network cannot sign for an old one,
+  because the keys are the old census's.
+- **Bonds are not reachable.** They are timelocked outputs with recovery
+  paths that a fork does not rewrite. The worst a fork can do is decline to
+  count a bond in *its* census.
+- **The ancestor does not stop.** Nodes that do not re-affirm keep serving
+  network `n` with their census intact.
+
+> **A hard fork cannot steal. It can only leave, and take a name with it.**
+> The worst outcome of a hostile supermajority is a split network, not a
+> theft - and the split is legible, because both sides have certificates and
+> anyone can see which census ratified which.
+
+There is deliberately **no repeal** for an upgrade (§27A.7.6 repeals within
+a network; a fork is not within one). It needs none: the ancestor never
+stopped existing, so the way back is to keep running it.
+
+### 27A.8.6 Examples of what needs this class
+
+| Change | Why it is a fork, not a config |
+|---|---|
+| A new unit type - say a helicopter that lifts the truck | Adds state to the simulation. Old nodes cannot replay a transcript containing it, so no committee spanning versions can agree a score |
+| Changing the core's fixed-point width, or any `mulFast` rounding | Silently changes every score ever computed. Determinism is the product; this is the sharpest possible fork |
+| A parameter that does not exist yet - weather, night rounds, cargo types | `game_config` is a fixed shape and a ballot votes on a complete instance of it; a new field has nowhere to live |
+| A new message type in the committee protocol | 5-of-7 must agree on what a message *is* before it can agree on its contents |
+| Changing the committee shape, or the beacon | `genesis_parameters` - immutable by construction (§27A.6) |
+| Replacing drand with something else | Same, and it changes what "unpredictable" means for sortition |
+| Moving the bond script template to a new Taproot layout | Old and new bonds are not comparable capital; the census would be counting two different things |
+
+And, for contrast, what does **not** need it: damage numbers, round length,
+bracket sizes, the score curve, the node fee, the army's speeds. All of that
+is §27A.7, because none of it changes what a transcript *is*.
+
 ---
 
 # 28. Failure matrix
@@ -3128,6 +3309,9 @@ which is why it is safe for this to be a convenient web UI at all.
 | Config activates mid-round | Cannot happen: a round is bound to the `config_hash` it was created under (§27A.7.5) |
 | Operator API token stolen | At worst a wrong vote. No token can spend a bond or reach player funds (§27A.7.7) |
 | Governance turnout below the floor | Proposal fails. The config in force is unchanged, which is the safe direction |
+| Hostile supermajority passes a hard fork | The network splits; it is not robbed. In-flight rounds, stakes and bonds are all out of reach of a successor (§27A.8.5), and the ancestor keeps running for whoever does not re-affirm |
+| A fork is launched with no ratified certificate | It is a sibling network starting from an empty census, not a successor. Clients cannot walk it back to a root they recognise and will not follow it (§27A.8.4) |
+| Operator declines to re-affirm after a fork | Keeps serving the ancestor; bond recoverable at `bond_maturity` as always. No vote can conscript a bond onto a successor (§27A.8.3) |
 
 No cell leaves funds in an undefined state, and no cell erases a `FINAL`
 result.
