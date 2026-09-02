@@ -2485,9 +2485,9 @@ No token, no treasury, no voting contract.
 
 | Parameter | Mechanism | Who |
 |---|---|---|
-| `node_fee_bps`, `proposal_deposit_sats` | bond-weighted median (§27A.2) | the census |
+| `proposal_deposit_sats` | bond-weighted median (§27A.2) | the census |
 | `bond_min` per bracket | bond-weighted median **with notice** (§27A.3) | the census |
-| the bracket set, `donation_bps`, `role_split` | config proposal, MONEY class (§27A.7) | a ballot of active bonds |
+| **`node_fee_bps`**, the bracket set, `donation_bps`, `role_split` | set at genesis; changed by config proposal, MONEY class (§27A.7) | a ballot of active bonds |
 | game difficulty, damage, army, round timings | config proposal, DESIGN class (§27A.7); a round MAY override within its contract | a ballot, then the round |
 | the donation set | signed by the donation authority | one key, nothing else (§27A.4) |
 | `genesis_parameters`: committee shape, thresholds, beacon | **nothing.** Changing them is creating another network (§27A.6) | — |
@@ -2496,9 +2496,31 @@ No token, no treasury, no voting contract.
 The split between the first rows and the third and fourth is the subject of
 §27A.7: **prices are discovered by median, design is decided by ballot.**
 
-## 27A.2 Scalars: a median, not a ballot
+## 27A.2 Self-binding scalars: a median, not a ballot
 
-Every node declares its preferred value for each scalar in its
+A median is a mechanism for parameters the census may set **for itself**,
+and the test for whether a parameter qualifies is narrow:
+
+> **Declaring it must bind the declarer.**
+
+`bond_min` is capital the declaring node must itself post; a node voting the
+floor up prices itself out along with everyone else. `proposal_deposit_sats`
+is a price the declarer must also pay to propose. Both are self-binding, and
+a median over them is a genuine discovery of what the operators who must
+live under a number think it should be.
+
+**`node_fee_bps` fails this test and is not here** *(moved to §27A.7 in
+v4.6.2)*. The fee is paid by the **player** and declared exclusively by its
+**recipients**, so the loop only closes in one direction: an operator who
+finds the fee too low stops bonding and pushes the median up, while nothing
+whatever pushes it down, because players have no declaration and no rival
+network to move to. That is not a discovered price, it is a cartel setting
+its own take rate — and the fact that it drifts up quietly, with no proposal
+and no vote to point at, makes it worse rather than better. Anything paid by
+one group and set by another is a ballot (§27A.7), starting from a value
+fixed at genesis.
+
+Every node declares its preferred value for each qualifying scalar in its
 NodeAdvertisement. The value in force for a round is the **bond-weighted
 median** over the census at `census_height`.
 
@@ -2698,8 +2720,23 @@ genesis_parameters {
   bracket_table          the §5A.10 stake ceiling table
   bond_marker            the §25.1 discovery address
   randomness_source      the beacon (see below)
+  genesis_config_hash    the game_config the network starts on
 }
 ```
+
+**The genesis config.** `genesis_config_hash` is the `config_hash` of the
+first `game_config` (§27A.7.1) - the one with no `parent` - and it carries
+the network's opening `node_fee_bps`, brackets, damage table and timings.
+
+Being inside `genesis_parameters` it is committed in `network_id`, which
+settles what a launch *is*: you cannot start "the same network" with a 30%
+node fee, because a different opening config is a different `network_id` and
+therefore a different network with its own census and its own bonds.
+
+The config itself is **not** frozen - a MONEY-class ballot changes it
+(§27A.7). What is frozen is where the network started, so the whole chain of
+configs from genesis to now is a public record with a fixed root rather than
+a state whose origin nobody can check.
 
 ### Three networks
 
@@ -2713,6 +2750,7 @@ genesis_parameters {
 | `notice_period` | ~30 days | ~1 day | **10 blocks** |
 | stake ceiling | §5A.10 table | testnet sats | play money only |
 | beacon | drand | drand | **mock, seeded** |
+| governance | 1008 / 2016 / 2016 | 144 / 144 / 0 | **1 / 6 / 1** |
 
 Two nodes and 2-of-2 on regtest is the point of it: the whole settlement
 path - hold invoices, VSS, a 2-of-2 FROST signature, the objection window,
@@ -2797,16 +2835,18 @@ is itself incoherent.
 
 So the line is not "median good, ballot bad". It is:
 
-> **Prices are discovered. Design is decided.**
+> **What binds only the census, the census may median. Everything else is
+> decided, and decided visibly.**
 >
-> A price - `node_fee_bps`, `bond_min` - is exactly the thing independent
-> declarations settle well, and the middle of them is meaningful. It stays a
-> median (§27A.2), with no proposal and no schedule.
+> A self-binding scalar - `bond_min`, `proposal_deposit_sats` - stays a
+> median (§27A.2): no proposal, no schedule, and the declarer carries the
+> consequence of their own declaration.
 >
-> A design - the damage table, the score function, the army, the bracket
-> set, round timings - is a coupled object that must be adopted whole. It
-> gets a ballot, and you vote on a **complete named configuration**, never on
-> a field.
+> Everything else is a ballot. That covers two kinds of thing: coupled
+> designs that must be adopted whole - the damage table, the score function,
+> the army, round timings - and **anything one group pays and another sets**,
+> of which `node_fee_bps` is the important case (§27A.2). You vote on a
+> **complete named configuration**, never on a field.
 
 ### 27A.7.1 What is votable, with examples
 
@@ -2849,6 +2889,10 @@ game_config {
   }
 
   economy {
+    node_fee_bps            200      // 2% of the round amount, INCLUSIVE.
+                                     // A ballot, never a median: paid by the
+                                     // player, so it cannot be set by the
+                                     // operators alone (§27A.2)
     donation_bps            inclusive share of the round amount (§27A)
     role_split              game/verify vs settlement
   }
@@ -2962,7 +3006,7 @@ names an earlier one is invalid on its face.
 | | turnout | approval of non-abstaining weight |
 |---|---|---|
 | DESIGN - damage, army, score, timings | ≥ 30% | > 50% |
-| MONEY - brackets, `donation_bps`, `role_split` | ≥ 40% | ≥ 66% |
+| MONEY - `node_fee_bps`, brackets, `donation_bps`, `role_split` | ≥ 40% | ≥ 66% |
 
 Failing either is failing. A proposal that reaches quorum and misses
 approval is dead, not retried.
