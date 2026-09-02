@@ -59,8 +59,12 @@ const AIR = typeof L.O_HELIS === 'number' ? 'on' : 'off';
 const COND = (SEAM0 ? ' seam0' : '') + ' air=' + AIR;
 
 const Q = 65536;
-const O_UNITS = 24, U_WORDS = 8;
-const U_X = 0, U_Z = 1, U_SIDE = 2, U_HP = 3, U_STATE = 5;
+// TAKEN FROM THE LAYOUT, never typed. These were literals until the truck
+// block grew its thirteenth word and `O_UNITS` moved from 24 to 25 - after
+// which this tool read every unit field one word out and reported 0/0 living
+// units with a straight face. A measuring tool that prints zeroes is worse
+// than one that throws.
+const { O_UNITS, U_WORDS, U_X, U_Z, U_SIDE, U_HP, U_STATE } = L;
 const SQUADS = 8;
 const RANGE = 46;                 // Army.ArmourRange, and ARMOUR_RANGE in the core
 
