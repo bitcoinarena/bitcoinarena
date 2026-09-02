@@ -124,6 +124,27 @@ namespace Blwp
             Debug.Log("[blwp] core is driving");
         }
 
+        /// <summary>
+        /// The bay has shut and the player is let go: a round begins.
+        ///
+        /// Here rather than at the three endings, because the score card is
+        /// read out of the core AFTER a run finishes - `RunScore.Score` asks
+        /// `BlwpCore.RunScore()` - and resetting on arrival would blank the
+        /// card the player is looking at. Roll-out is the first moment nobody
+        /// is still reading the last round.
+        ///
+        /// The seed is the same one `Start` used, so the same drive produces
+        /// the same round: that is the point of the reset, not a side effect
+        /// of it.
+        /// </summary>
+        public void StartRound()
+        {
+            if (!Driving) return;
+            if (!BlwpCore.Restart(seed)) return;
+            _prevHeading = BlwpCore.TruckHeading;
+            Debug.Log("[blwp] round restarted in the core");
+        }
+
         void OnDisable()
         {
             if (Driving && _rb != null) _rb.isKinematic = _wasKinematic;

@@ -92,6 +92,18 @@ mergeInto(LibraryManager.library, {
   },
 
 
+  // Start a new round. A host command, and the ONLY way back to RUN_LIVE:
+  // `outcome` latches, `init` runs once in Start, and `teleport` moves the
+  // truck without touching a single score word - so round two used to be
+  // round one's leftovers. The core carries the uploaded relief and solids
+  // across itself; nothing here decides what a reset means.
+  BlwpRestart: function (seed) {
+    var b = Module.blwp;
+    if (!b) return 0;
+    b.st = b.core.restart(b.st, seed | 0);
+    return 1;
+  },
+
   // Put the truck back. A host command: the round ended, or it was written
   // off, and it belongs in the bay.
   BlwpTeleport: function (x, z, heading) {

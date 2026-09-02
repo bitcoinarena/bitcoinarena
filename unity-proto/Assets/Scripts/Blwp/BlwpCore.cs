@@ -29,6 +29,7 @@ namespace Blwp
         [DllImport("__Internal")] private static extern int BlwpQueryParam(IntPtr name, IntPtr outp, int cap);
         [DllImport("__Internal")] private static extern int BlwpSetGround(IntPtr h, int cols, int rows);
         [DllImport("__Internal")] private static extern int BlwpSetSolids(IntPtr b, int count);
+        [DllImport("__Internal")] private static extern int BlwpRestart(int seed);
         [DllImport("__Internal")] private static extern int BlwpTeleport(int x, int z, int heading);
         [DllImport("__Internal")] private static extern int BlwpTakeImpact();
         public const bool Compiled = true;
@@ -42,6 +43,7 @@ namespace Blwp
         private static int BlwpQueryParam(IntPtr n, IntPtr o, int cap) => 0;
         private static int BlwpSetGround(IntPtr h, int c, int r) => 0;
         private static int BlwpSetSolids(IntPtr b, int n) => 0;
+        private static int BlwpRestart(int seed) => 0;
         private static int BlwpTeleport(int x, int z, int h) => 0;
         private static int BlwpTakeImpact() => 0;
         public const bool Compiled = false;
@@ -89,6 +91,29 @@ namespace Blwp
                 }
             }
             return Available;
+        }
+
+        /// <summary>
+        /// Starts a new round in the core.
+        ///
+        /// `Init` runs once, in Start. Every ending - delivered, written off,
+        /// block missed - went through `TruckController.Respawn`, which moves
+        /// the truck and clears its momentum and touches no score word at all,
+        /// and `outcome` latches: once a run leaves RUN_LIVE nothing brings it
+        /// back. Read out of a live browser, round two began with twelve of
+        /// thirty words still holding round one, `S_STATE` 0 -> 1 among them,
+        /// and RUN_LIVE gates damage, danger, delivery and score. The second
+        /// round of a session was unplayable and looked perfectly normal.
+        ///
+        /// The reset is the core's own `init`, reached the same way the first
+        /// one was. Nothing here writes a state word: a host that clears
+        /// `S_STATE` and `T_HP` itself is simulating, and would have to keep
+        /// its own list of everything a round dirties.
+        /// </summary>
+        public static bool Restart(int seed)
+        {
+            if (!Available) return false;
+            return BlwpRestart(seed) == 1;
         }
 
         public static void Step(int throttle, int steer, int brake, int handbrake, int practice)

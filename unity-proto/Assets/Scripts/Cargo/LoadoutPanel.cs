@@ -74,6 +74,19 @@ public class LoadoutPanel : MonoBehaviour
         ConfirmedSats = bay.FeeCarried;
         if (yard != null) yard.Close();
         if (truck != null) truck.controlsLocked = false;
+
+        // And the round starts in the core. Without this the core played one
+        // round per session: `outcome` latches, `init` runs once in Start, and
+        // the respawn all three endings go through only moves the truck. A
+        // browser dump of round two against a fresh `init` had twelve of
+        // thirty words still carrying round one - `S_STATE` delivered, the
+        // danger, the dead, the replacement and sortie clocks - and RUN_LIVE
+        // gates damage, danger, delivery and score alike.
+        if (truck != null)
+        {
+            var core = truck.GetComponent<Blwp.CoreDrivenTruck>();
+            if (core != null) core.StartRound();
+        }
     }
 
     [Tooltip("How full AUTO will load the bed. Deliberately short of full: " +

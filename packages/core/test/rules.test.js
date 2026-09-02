@@ -7,13 +7,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { init, step, runScore, setGround, setSolids, HALF_X } from '../src/sim.js';
+import { init, step, restart, runScore, setGround, setSolids, groundAt, HALF_X } from '../src/sim.js';
 // Offsets are IMPORTED, never typed. They were typed in nine places in this
 // file, and when the truck block grew its thirteenth word every one of them
 // had to be found - which is the same drift that let `T_IMPACT` and
 // `S_EXPOSURE` share word 17 in the first place.
 import {
-  hash, O_AIR, AIR_BULL, AIR_BEAR,
+  hash, WORDS, O_AIR, AIR_BULL, AIR_BEAR,
   O_TRUCK, T_X, T_Z, T_HP, O_SCORE, S_EXPOSURE, S_ELAPSED, S_BESTX, S_STATE,
   O_UNITS, U_WORDS, U_X, U_Z, U_HP, U_STATE,
 } from '../src/state.js';
@@ -1246,4 +1246,50 @@ test('the two lines interpenetrate, so a blast can catch both sides', async () =
     `the closest opposing riflemen were ${closest.toFixed(1)} m apart, which is the ` +
     'old BACK_OFF_RANGE floor to the metre - the crowding rule is being applied to ' +
     'riflemen again');
+});
+
+test('a second round starts where the first one did', () => {
+  const SEED = 0x5eed1234;              // CoreDrivenTruck.seed, the browser's own
+
+  // A round is played out: the truck drives, men die, danger accrues, the
+  // replacement and sortie clocks run.
+  const a = init(SEED);
+  const relief = new Int32Array(33 * 33).fill(Math.imul(3, ONE));
+  setGround(a, 33, 33, relief);
+  const solids = new Int32Array([0, 0, 4 * ONE, 4 * ONE, 0, 6 * ONE]);
+  setSolids(a, 1, solids);
+  for (let f = 0; f < 900; f++) step(a, ONE, 0, 0, 0, 0);
+  assert.ok(a.i32[O_SCORE + S_EXPOSURE] > 0, 'the fixture never got into danger');
+
+  const b = restart(a, SEED);
+  const fresh = init(SEED);
+
+  // EVERY word, not the six a reader would think to check. The browser dump
+  // that found this listed twelve differences and the twelfth was a sortie
+  // clock nobody would have named in advance.
+  for (let w = 0; w < WORDS; w++) {
+    assert.equal(b.i32[w], fresh.i32[w],
+      `word ${w} carries the old round: ${b.i32[w]} instead of ${fresh.i32[w]}`);
+  }
+  assert.equal(hash(b), hash(fresh), 'a restarted round does not hash as a fresh one');
+
+  // The world the host uploaded is round setup, not round state, and survives.
+  // Dropping it would put the truck on a flat table for as long as it took
+  // Unity to notice and send the relief again.
+  assert.equal(groundAt(b, 0, 0), groundAt(a, 0, 0),
+    'the restart threw away the relief the host had uploaded');
+  assert.equal(b.solids.n, 1, 'the restart threw away the solids the host had uploaded');
+
+  // And the point of all of it: the same inputs after a restart produce the
+  // same round, tick for tick, as they did the first time.
+  const first = init(SEED);
+  setGround(first, 33, 33, relief);
+  setSolids(first, 1, solids);
+  const second = restart(a, SEED);
+  for (let f = 0; f < 300; f++) {
+    step(first, ONE, ONE >> 2, 0, 0, 0);
+    step(second, ONE, ONE >> 2, 0, 0, 0);
+  }
+  assert.equal(hash(second), hash(first),
+    'the second round diverges from the first on identical inputs');
 });

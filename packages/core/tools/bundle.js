@@ -69,6 +69,7 @@ for (const file of order) {
 }
 out += '\nreturn { init: init, step: step, hash: hash, runScore: runScore,\n';
 out += '         setGround: setGround, groundAt: groundAt, setSolids: setSolids, teleport: teleport,\n';
+out += '         restart: restart,\n';
 out += '         create: create, WORDS: WORDS };\n})();\n';
 out += 'if (typeof module !== "undefined") module.exports = BLWP;\n';
 

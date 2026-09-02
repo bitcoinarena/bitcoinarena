@@ -208,9 +208,21 @@ public class DeliveryGate : MonoBehaviour
         // was ever looked at, for the wreck. Now the core's verdict is the
         // verdict, and the geometry below is what the editor falls back on,
         // where `BlwpCore` is stubbed and there is nothing to ask.
+        //
+        // AND IT IS AN EDGE, NOT A LEVEL. `outcome` latches: the core returns
+        // RUN_DELIVERED for every tick after the arrival, not just the one it
+        // happened on. Read as a level, this banked the same run again on the
+        // first frame the bed had anything in it - measured in a browser, with
+        // the panel saying what it held: AUTO took 8 parcels, fill 0.86,
+        // loaded True, and the very next frame showed 0 parcels, NOTHING
+        // LOADED, the truck back in the bay and the camera flying the arrival
+        // a second time. The player could load but never roll out, so a
+        // session had exactly one round no matter what the core did.
         if (Blwp.BlwpCore.Available)
         {
-            if (Blwp.BlwpCore.RunState != 1) return;   // RUN_DELIVERED
+            if (Blwp.BlwpCore.RunState != 1) { _banked = false; return; }  // RUN_DELIVERED
+            if (_banked) return;
+            _banked = true;
         }
         else
         {
@@ -266,6 +278,9 @@ public class DeliveryGate : MonoBehaviour
     }
 
     float _reopenAt;
+
+    /// <summary>Whether the core's current RUN_DELIVERED has already been banked.</summary>
+    bool _banked;
 
     /// <summary>The far end of the run: the miner, or two posts if it is absent.</summary>
     void Build()

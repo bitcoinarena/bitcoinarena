@@ -195,6 +195,38 @@ export function setSolids(st, count, boxes) {
   return true;
 }
 
+/**
+ * Starts a new round without throwing away the world the host uploaded.
+ *
+ * `outcome` latches: once a run leaves RUN_LIVE nothing brings it back, and
+ * only `init` sets it live again. `BlwpCore.Init` runs once, in Start, and
+ * `teleport` - the host command all three round endings go through, delivery,
+ * write-off and missed block - moves the truck and clears its momentum and
+ * touches neither `S_STATE` nor `T_HP`. So every round after the first was the
+ * first round's leftovers. Measured in a browser, run 2 against a fresh
+ * `init`: twelve of thirty words carried over, `S_STATE` 0 -> 1 at the head of
+ * them, and that one alone withholds damage, exposure, delivery and score,
+ * because each is gated on RUN_LIVE. The second round was unplayable and
+ * looked fine.
+ *
+ * The reset belongs here and not in the host. A C# that wipes `S_STATE` and
+ * `T_HP` is simulating again, and would have to know every word a round
+ * touches - the replacement clocks, the sortie clocks, the tape, the dead
+ * units - which is the list that grows silently. `init` already knows it.
+ *
+ * What is NOT part of a round is the world the host uploaded: the relief and
+ * the solids are setup, agreed before the first tick and unchanged by playing.
+ * Carrying them over is not leniency, it is the difference between a restart
+ * and a truck driving over a flat table for however many frames it takes Unity
+ * to notice and re-send a terrain.
+ */
+export function restart(st, seedWord) {
+  const fresh = init(seedWord);
+  fresh.ground = st.ground;
+  fresh.solids = st.solids;
+  return fresh;
+}
+
 export function groundAt(st, x, z) {
   return heightAtWorld(st.ground, x, z, HALF_X, HALF_Z);
 }
