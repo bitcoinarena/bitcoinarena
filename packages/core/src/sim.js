@@ -32,7 +32,7 @@ import {
 import { vehicleStep } from './rules/vehicle.js';
 import { flatGround, gradeAlong, heightAtWorld, DEFAULT_COLS, DEFAULT_ROWS } from './rules/ground.js';
 import { noSolids, resolveSolids, resolveArmour, BOX_WORDS } from './rules/solids.js';
-import { stepUnit, threatAt, pickTarget, pickRifleTarget, riflePost, RELOAD_MIN, RELOAD_SPAN, DAMAGE_MIN, DAMAGE_SPAN, BACKOFF_RANGE, HIT_PER_MIL, ARMOUR_RANGE, RIFLE_RANGE, RIFLE_HIT_PER_MIL, RIFLE_RELOAD_TICKS, RIFLE_RELOAD_TICKS_SPAN, RIFLE_LOOK_TICKS, RIFLE_LOOK_TICKS_SPAN, RIFLE_HP, RIFLE_DAMAGE, COURIER_RANGE, COURIER_DAMAGE_MIN, COURIER_DAMAGE_SPAN, COURIER_RIFLE_MIN, COURIER_RIFLE_SPAN } from './rules/army.js';
+import { stepUnit, separatePair, threatAt, pickTarget, pickRifleTarget, riflePost, RELOAD_MIN, RELOAD_SPAN, DAMAGE_MIN, DAMAGE_SPAN, BACKOFF_RANGE, HIT_PER_MIL, ARMOUR_RANGE, RIFLE_RANGE, RIFLE_HIT_PER_MIL, RIFLE_RELOAD_TICKS, RIFLE_RELOAD_TICKS_SPAN, RIFLE_LOOK_TICKS, RIFLE_LOOK_TICKS_SPAN, RIFLE_HP, RIFLE_DAMAGE, COURIER_RANGE, COURIER_DAMAGE_MIN, COURIER_DAMAGE_SPAN, COURIER_RIFLE_MIN, COURIER_RIFLE_SPAN } from './rules/army.js';
 import { accrue, earning, scoreOf } from './rules/score.js';
 import { outcome, RUN_LIVE, RUN_DELIVERED, RUN_WRECKED, RUN_MISSED } from './rules/gate.js';
 import { frontlineZ, SAMPLES } from './rules/frontline.js';
@@ -650,6 +650,26 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
     peek.side = s[pb + U_SIDE]; peek.armour = isArmour(i);
     return peek;
   };
+  // Tanks are pushed out of each other BEFORE anything moves, which is where
+  // `Army.Update` does it - the first three lines of it, over every armour
+  // pair, ahead of StepArmour and StepInfantry. The position is protocol: a
+  // separation applied after the step would be resolving last tick's overlap
+  // against this tick's positions.
+  for (let i = 0; i < UNITS; i++) {
+    if (!isArmour(i)) continue;
+    const ab = unitBase(i);
+    // Alive is U_STATE, not U_HP: that is what `reinforce` counts and what the
+    // crowding scan skips on, and an unfilled slot is state 0. C# has no such
+    // question - `Army.Update` removes the dead from `Armour` before this runs.
+    if (s[ab + U_STATE] === 0) continue;
+    for (let j = i + 1; j < UNITS; j++) {
+      if (!isArmour(j)) continue;
+      const bb = unitBase(j);
+      if (s[bb + U_STATE] === 0) continue;
+      separatePair(s, ab, bb, U_X, U_Z, U_SIDE);
+    }
+  }
+
   for (let i = 0; i < UNITS; i++) {
     const b = unitBase(i);
     u.x = s[b + U_X]; u.z = s[b + U_Z]; u.hp = s[b + U_HP];

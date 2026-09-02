@@ -1552,6 +1552,50 @@ const BACK_OFF = Math.imul(6, ONE);             // metres of ground given
 const CROWD_WALK = mulFast(ARMOUR_WALK, 22938); // 0.35 * 6.8 m/s, StepArmour's cut
 const OVERRUN = Math.imul(14, ONE);
 
+/**
+ * Tanks do not stand inside each other.
+ *
+ * `Army.Update` opens with `Separate(Armour[i], Armour[j])` over every pair,
+ * before it steps anything, and the comment on it says the overlap was "the
+ * single most reported fault in the three.js build". This core had no such
+ * rule at all - `Separate` appeared in it only in comments explaining that the
+ * INFANTRY has none - and nothing recorded it, because in C# it is true by
+ * construction and a recording of a constant is not worth taking.
+ *
+ * It was tolerable while the armour held a ladder of fixed posts: 2.16% of
+ * pairs closer than C# allows, and the closest pair at a typical sample 3.61 m.
+ * Then an engaged tank was given its enemy's x to close on, which is what C#
+ * does - and two tanks closing on the SAME enemy converge on bitwise the same
+ * x. Measured after that change: 7.25% of pairs too close and the closest pair
+ * at a typical sample 0.03 m, which is two hulls occupying one point. The chase
+ * is not wrong; half a rule was ported. C# runs the chase and this together.
+ *
+ * The coincident case is skipped exactly as C# skips it - `d2 <= 1e-4f`, a
+ * hundredth of a metre - because a zero separation has no direction to push
+ * along. That only stays harmless while this runs from the first tick, which
+ * is why it is at the top of the army's step and not somewhere convenient.
+ */
+const FRIENDLY_SPACING = Math.imul(17, ONE) >> 1;   // 8.5 m, Army.FriendlySpacing
+const HOSTILE_SPACING = Math.imul(15, ONE) >> 1;    // 7.5 m, Army.HostileSpacing
+const COINCIDENT = 655;                             // 0.01 m, C#'s 1e-4 on d2
+
+function separatePair(s, a, b, xOff, zOff, sideOff) {
+  const min = s[a + sideOff] === s[b + sideOff] ? FRIENDLY_SPACING : HOSTILE_SPACING;
+  const dx = sub(s[b + xOff], s[a + xOff]), dz = sub(s[b + zOff], s[a + zOff]);
+  // Cheap axis reject first, which also keeps length2 well inside its range.
+  if (abs(dx) >= min || abs(dz) >= min) return;
+  const d = length2(dx, dz);
+  if (d <= COINCIDENT || d >= min) return;
+
+  const push = sub(min, d) >> 1;
+  const nx = div(dx, d), nz = div(dz, d);
+  const px = mulFast(nx, push), pz = mulFast(nz, push);
+  s[a + xOff] = sub(s[a + xOff], px);
+  s[a + zOff] = sub(s[a + zOff], pz);
+  s[b + xOff] = add(s[b + xOff], px);
+  s[b + zOff] = add(s[b + zOff], pz);
+}
+
 const SIDE_BULL = -1;
 const SIDE_BEAR = 1;
 
@@ -3002,6 +3046,26 @@ function step(st, throttle, steer, brake, handbrake, practice) {
     peek.side = s[pb + U_SIDE]; peek.armour = isArmour(i);
     return peek;
   };
+  // Tanks are pushed out of each other BEFORE anything moves, which is where
+  // `Army.Update` does it - the first three lines of it, over every armour
+  // pair, ahead of StepArmour and StepInfantry. The position is protocol: a
+  // separation applied after the step would be resolving last tick's overlap
+  // against this tick's positions.
+  for (let i = 0; i < UNITS; i++) {
+    if (!isArmour(i)) continue;
+    const ab = unitBase(i);
+    // Alive is U_STATE, not U_HP: that is what `reinforce` counts and what the
+    // crowding scan skips on, and an unfilled slot is state 0. C# has no such
+    // question - `Army.Update` removes the dead from `Armour` before this runs.
+    if (s[ab + U_STATE] === 0) continue;
+    for (let j = i + 1; j < UNITS; j++) {
+      if (!isArmour(j)) continue;
+      const bb = unitBase(j);
+      if (s[bb + U_STATE] === 0) continue;
+      separatePair(s, ab, bb, U_X, U_Z, U_SIDE);
+    }
+  }
+
   for (let i = 0; i < UNITS; i++) {
     const b = unitBase(i);
     u.x = s[b + U_X]; u.z = s[b + U_Z]; u.hp = s[b + U_HP];
