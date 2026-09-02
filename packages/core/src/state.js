@@ -43,7 +43,57 @@ export const A_ARMOUR_BULL = 0, A_ARMOUR_BEAR = 1;
 export const A_RIFLE_BULL = 2, A_RIFLE_BEAR = 3;
 export const A_WORDS = 4;
 
-export const WORDS = O_ARMY + A_WORDS;
+/**
+ * The air arm: the two sortie clocks, the gunships and the bombs in the air.
+ *
+ * Appended after the replacement clocks for the same reason those were appended
+ * after the units - every offset above this line stays where it was, so a change
+ * of layout is never also a silent change of meaning for a field that did not
+ * move. The hashes move regardless; bombs kill people.
+ *
+ * The clocks are state, not locals, for the reason the replacement clocks are:
+ * a verifier replaying a transcript has to arrive at the same bytes, and a
+ * timer outside the buffer is a timer two implementations can disagree about
+ * without either one noticing. In the C# they are worse than locals - they are
+ * on UnityEngine.Random, so the air war cannot be replayed from a seed at all.
+ */
+export const O_AIR = O_ARMY + A_WORDS;
+export const AIR_BULL = 0, AIR_BEAR = 1;
+export const AIR_WORDS = 2;
+
+/**
+ * Gunship slots. Two a side, and one a side is what the arithmetic allows.
+ *
+ * A sortie's transit is the full 208 m corridor at 20 m/s - 10.4 s - and the
+ * shortest gap the jitter can produce is 17 * 0.7 = 11.9 s, so a side's next
+ * gunship cannot enter before the last one has left. Two a side is the margin,
+ * and rules.test.js pins the invariant by watching the airborne count rather
+ * than trusting the arithmetic: if a launch ever found every slot busy the
+ * sortie would be dropped in silence, which is exactly the kind of quiet
+ * divergence this core exists to make impossible.
+ *
+ * Yaw and bank are not here. They are how a mesh tilts; nothing downstream
+ * reads them. Height IS here - it decides how long a bomb falls and therefore
+ * how far the 30 m/s along the track throws it, which is a third of the load
+ * landing off the field.
+ */
+export const O_HELIS = O_AIR + AIR_WORDS;
+export const MAX_HELIS = 4;
+export const H_WORDS = 8;
+export const H_STATE = 0, H_SIDE = 1, H_X = 2, H_Y = 3, H_Z = 4;
+export const H_DIR = 5, H_T = 6, H_DROPIN = 7;
+
+/**
+ * Bombs in the air. A gunship drops every 1.6-3.2 s and a bomb falls for about
+ * two, so two per gunship is the ceiling and four gunships cannot fill eight.
+ */
+export const O_BOMBS = O_HELIS + Math.imul(MAX_HELIS, H_WORDS);
+export const MAX_BOMBS = 8;
+export const B_WORDS = 8;
+export const B_STATE = 0, B_SIDE = 1, B_X = 2, B_Y = 3, B_Z = 4;
+export const B_VX = 5, B_VY = 6, B_VZ = 7;
+
+export const WORDS = O_BOMBS + Math.imul(MAX_BOMBS, B_WORDS);
 
 // truck fields, relative to O_TRUCK
 export const T_X = 0, T_Z = 1, T_HEADING = 2, T_VX = 3, T_VZ = 4;
@@ -83,6 +133,8 @@ export function create() {
 }
 
 export const unitBase = (i) => O_UNITS + Math.imul(i, U_WORDS);
+export const heliBase = (i) => O_HELIS + Math.imul(i, H_WORDS);
+export const bombBase = (i) => O_BOMBS + Math.imul(i, B_WORDS);
 
 /**
  * True on every machine this will realistically run on, and checked anyway.

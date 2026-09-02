@@ -13,9 +13,12 @@ import { ONE, HALF, add, sub, mulFast, div, idiv, clamp, min, max, abs, length2 
 import { seed } from './rng.js';
 import { sin, cos } from './trig.js';
 import {
-  create, unitBase, MAX_UNITS, O_UNITS, U_WORDS,
+  create, unitBase, heliBase, bombBase, MAX_UNITS, O_UNITS, U_WORDS,
   O_TICK, O_RNG, O_TRUCK, O_SCORE, O_ARMY,
   A_ARMOUR_BULL, A_ARMOUR_BEAR, A_RIFLE_BULL, A_RIFLE_BEAR,
+  O_AIR, AIR_BULL, AIR_BEAR, MAX_HELIS, MAX_BOMBS,
+  H_STATE, H_SIDE, H_X, H_Y, H_Z, H_DIR, H_T, H_DROPIN,
+  B_STATE, B_SIDE, B_X, B_Y, B_Z, B_VX, B_VY, B_VZ,
   T_X, T_Z, T_HEADING, T_VX, T_VZ, T_ANGVEL, T_HP, T_CARGO, T_FLAGS,
   T_WHEEL, T_THROTTLE, T_STEER, T_IMPACT,
   S_EXPOSURE, S_ELAPSED, S_BESTX, S_CARGO, S_DELIVERED, S_STATE, S_PRACTICE,
@@ -32,6 +35,10 @@ import { stepUnit, threatAt, pickTarget, RELOAD_MIN, RELOAD_SPAN, DAMAGE_MIN, DA
 import { accrue, earning, scoreOf } from './rules/score.js';
 import { outcome, RUN_LIVE, RUN_DELIVERED, RUN_WRECKED, RUN_MISSED } from './rules/gate.js';
 import { frontlineZ, SAMPLES } from './rules/frontline.js';
+import {
+  launchHeli, stepHeli, releaseBomb, stepBomb, bombDamage, blastReach, sortieWait,
+  AIR_RELEASE, AIR_GONE,
+} from './rules/air.js';
 
 export const UNITS = 96;
 export const HALF_X = Math.imul(130, ONE);
@@ -338,6 +345,153 @@ function reinforce(s, rng) {
   }
 }
 
+
+/**
+ * The air arm's tick: gunships fly, bombs fall, and the sortie clocks run.
+ *
+ * The ORDER is C#'s and it is protocol. Army.Update steps the helicopters and
+ * then the bombs, finishes with Reinforce, and only then does Battlefield call
+ * LaunchSorties - so a gunship sent this tick first moves on the next one, and
+ * every draw the air makes sits between the ground fight's shooting and the
+ * replacements walking on. Moving any of these three calls past another moves
+ * the whole war, not just the aircraft.
+ *
+ * Split into three functions for reading only; they are called back to back.
+ */
+function stepHelicopters(s, rng, seamAt, groundAt) {
+  const h = { side: 1, x: 0, y: 0, z: 0, dir: 0, t: 0, dropIn: 0 };
+  for (let i = 0; i < MAX_HELIS; i++) {
+    const b = heliBase(i);
+    if (s[b + H_STATE] === 0) continue;
+    h.side = s[b + H_SIDE]; h.x = s[b + H_X]; h.y = s[b + H_Y]; h.z = s[b + H_Z];
+    h.dir = s[b + H_DIR]; h.t = s[b + H_T]; h.dropIn = s[b + H_DROPIN];
+
+    const r = stepHeli(h, rng, seamAt, groundAt, TICK_DT);
+
+    s[b + H_X] = h.x; s[b + H_Y] = h.y; s[b + H_Z] = h.z;
+    s[b + H_T] = h.t; s[b + H_DROPIN] = h.dropIn;
+
+    // Never both in one tick: the drop gate is |x| < 92 and the exit is
+    // |x| > 104, so a gunship close enough to drop is nowhere near leaving.
+    if (r === AIR_RELEASE) release(s, rng, h, seamAt(h.x));
+    else if (r === AIR_GONE) s[b + H_STATE] = 0;
+  }
+}
+
+/**
+ * Puts a bomb in the first free rack.
+ *
+ * If every rack is full the bomb is lost, which is the one thing here that the
+ * C#'s unbounded List cannot do - and the reason rules.test.js watches the peak
+ * rather than trusting the eight. A core that silently swallowed a bomb would
+ * diverge from a verifier that had a rack free, and the divergence would be one
+ * dead squad at a time with nothing in the state to say why.
+ *
+ * The draw happens BEFORE the rack is looked for, so a lost bomb still costs
+ * the stream what a delivered one costs it. Otherwise a full rack would shift
+ * every draw after it and the loss would not be one bomb, it would be the rest
+ * of the round.
+ */
+function release(s, rng, h, front) {
+  const b = { side: 1, x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0 };
+  releaseBomb(b, h, rng, front);
+  for (let i = 0; i < MAX_BOMBS; i++) {
+    const o = bombBase(i);
+    if (s[o + B_STATE] !== 0) continue;
+    s[o + B_STATE] = 1; s[o + B_SIDE] = b.side;
+    s[o + B_X] = b.x; s[o + B_Y] = b.y; s[o + B_Z] = b.z;
+    s[o + B_VX] = b.vx; s[o + B_VY] = b.vy; s[o + B_VZ] = b.vz;
+    return;
+  }
+}
+
+function stepBombs(s, groundAt) {
+  const b = { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0 };
+  for (let i = 0; i < MAX_BOMBS; i++) {
+    const o = bombBase(i);
+    if (s[o + B_STATE] === 0) continue;
+    b.x = s[o + B_X]; b.y = s[o + B_Y]; b.z = s[o + B_Z];
+    b.vx = s[o + B_VX]; b.vy = s[o + B_VY]; b.vz = s[o + B_VZ];
+
+    const down = stepBomb(b, groundAt(b.x, b.z), TICK_DT);
+
+    s[o + B_X] = b.x; s[o + B_Z] = b.z; s[o + B_VY] = b.vy;
+    if (!down) { s[o + B_Y] = b.y; continue; }
+    s[o + B_Y] = groundAt(b.x, b.z);
+    s[o + B_STATE] = 0;
+    detonate(s, b.x, b.z);
+  }
+}
+
+/**
+ * A bomb is not a shell: it clears a circle.
+ *
+ * Everyone on foot inside sixteen metres dies whatever the distance - the blast
+ * does not ask whose men they are, which is why 11-29 of the riflemen a round
+ * are killed by their own side's aircraft - and armour takes 12 * (1 - d/16),
+ * so a tank dies at the centre and walks away from the edge.
+ *
+ * The armour loop is NOT guarded against units that are already dead, because
+ * the C# is not: RemoveAll runs at the end of Update, so a tank killed by a
+ * shell earlier in the same frame is still standing there when the bomb goes
+ * off. Measured over four seeds and ninety seconds it never once happened
+ * (doubleFire 0/0), so it is a latent defect and not a live one, and a guard
+ * added here would be a difference from the recording bought for nothing. It
+ * is invisible in this core in any case: taking damage off a corpse leaves it a
+ * corpse.
+ */
+function detonate(s, bx, bz) {
+  for (let i = 0; i < UNITS; i++) {
+    if (isArmour(i)) continue;
+    const b = unitBase(i);
+    if (blastReach(sub(s[b + U_X], bx), sub(s[b + U_Z], bz)) < 0) continue;
+    s[b + U_HP] = 0;
+    s[b + U_STATE] = 0;
+  }
+  for (let i = 0; i < UNITS; i++) {
+    if (!isArmour(i)) continue;
+    const b = unitBase(i);
+    const d = blastReach(sub(s[b + U_X], bx), sub(s[b + U_Z], bz));
+    if (d < 0) continue;
+    s[b + U_HP] = max(0, sub(s[b + U_HP], bombDamage(d)));
+    if (s[b + U_HP] === 0) s[b + U_STATE] = 0;
+  }
+}
+
+/**
+ * The two sortie clocks. Bull first, then Bear, and each side's jitter is drawn
+ * BEFORE its gunship, which is the order LaunchSorties runs them in.
+ *
+ * Both start at zero, so two gunships launch on the first tick of every round
+ * and both are wasted: the armies are still at |z| = 77 with the seam between
+ * them and the gunships fly the seam. The first killing bomb in the recording
+ * is at t = 16.7-26.4 s. That is not a bug to shave off the front of the round
+ * - it is what makes air a thing that arrives rather than a thing that is
+ * simply on.
+ */
+function launchSorties(s, rng, seamAt, groundAt) {
+  const h = { side: 1, x: 0, y: 0, z: 0, dir: 0, t: 0, dropIn: 0 };
+  for (let k = 0; k < 2; k++) {
+    const word = k === 0 ? AIR_BULL : AIR_BEAR;
+    const side = k === 0 ? -1 : 1;
+    s[O_AIR + word] = sub(s[O_AIR + word], TICK_DT);
+    if (s[O_AIR + word] > 0) continue;
+    s[O_AIR + word] = sortieWait(rng);
+    // Drawn before a slot is looked for, for the reason release() is: a sortie
+    // that finds no slot must still cost the stream what one that flies costs
+    // it, or the loss is the whole rest of the round rather than one gunship.
+    launchHeli(h, rng, side, seamAt, groundAt);
+    for (let i = 0; i < MAX_HELIS; i++) {
+      const b = heliBase(i);
+      if (s[b + H_STATE] !== 0) continue;
+      s[b + H_STATE] = 1; s[b + H_SIDE] = h.side;
+      s[b + H_X] = h.x; s[b + H_Y] = h.y; s[b + H_Z] = h.z;
+      s[b + H_DIR] = h.dir; s[b + H_T] = h.t; s[b + H_DROPIN] = h.dropIn;
+      break;
+    }
+  }
+}
+
 // re-exported so the draw order lives in one place
 import { below } from './rng.js';
 const nextBelow = below;
@@ -486,11 +640,28 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
   else if (hits > 0 && s[O_SCORE + S_STATE] === RUN_LIVE)
     s[T + T_HP] = max(0, sub(s[T + T_HP], Math.imul(hits, ONE)));
 
+  // ---- 2b. air -----------------------------------------------------------
+  // Gunships, then bombs, then replacements, then the sortie clocks. That is
+  // Army.Update's own order with Battlefield.LaunchSorties after it, and it is
+  // protocol: every one of these draws from the same stream the ground fight
+  // just used.
+  //
+  // The seam is read at the AIRCRAFT's x, not the truck's. The unit loop above
+  // takes one seam for the whole army because it is following the truck; a
+  // gunship crosses the entire two-hundred-metre corridor in ten seconds and
+  // the seam it stands off is the one under its own nose, as FrontlineAt(h.x)
+  // has it.
+  const seamAt = (x) => frontlineZ(st.tape, x, HALF_X, HALF_Z);
+  const groundAt = (x, z) => heightAtWorld(st.ground, x, z, HALF_X, HALF_Z);
+  stepHelicopters(s, rng, seamAt, groundAt);
+  stepBombs(s, groundAt);
+
   // Replacements walk on last, after everyone has moved and fired, which is
   // where C# Update puts it - RemoveAll, then Reinforce. Anything drawn here
   // is drawn after the tick's shooting, so moving this call moves the whole
   // army.
   reinforce(s, rng);
+  launchSorties(s, rng, seamAt, groundAt);
 
   // ---- 3. score ----------------------------------------------------------
   // danger is guns in range, not distance to a line

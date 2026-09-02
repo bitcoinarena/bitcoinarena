@@ -615,7 +615,7 @@ test('replacements keep both armies in contact for the whole round', async () =>
  * replacement clocks, rather than over a summary that could agree by accident.
  */
 test('a practice run and a live run field the same army, word for word', async () => {
-  const { O_UNITS, O_ARMY, A_WORDS } = await import('../src/state.js');
+  const { O_UNITS, WORDS } = await import('../src/state.js');
   const drive = (practice) => {
     const st = init(1);
     for (let i = 0; i < 3600; i++) step(st, ONE, 0, 0, 0, practice);
@@ -623,11 +623,344 @@ test('a practice run and a live run field the same army, word for word', async (
   };
   const live = drive(0), shielded = drive(1);
 
+  // To the END of the buffer, not to the replacement clocks. The air arm was
+  // appended after them and draws from the same stream, so a bomb released only
+  // in a scored run would take words out of it that a practice run did not and
+  // put every unit after it somewhere else - which is exactly the failure this
+  // test exists to catch, and the old bound would have walked straight past it.
   let differing = 0;
-  for (let w = O_UNITS; w < O_ARMY + A_WORDS; w++)
+  for (let w = O_UNITS; w < WORDS; w++)
     if (live.i32[w] !== shielded.i32[w]) differing++;
 
   assert.equal(differing, 0,
     `${differing} words of the army differ between a live and a practice run - ` +
     'something in the army is reading the practice flag');
+});
+
+// ---------------------------------------------------------------------------
+// The air arm.
+//
+// Held against test/vectors/csharp-gunships.json, and only against the
+// quantities that recording says can be held: its sortie clock and its gunship
+// direction are on UnityEngine.Random rather than on the army seed, so the C#
+// air war cannot be replayed from a seed at all and matching one to the digit
+// is not on offer. What IS on offer is the envelope across four seeds, and
+// tools/measure-air.js prints the whole of it beside the recording.
+//
+// What is asserted here is narrower on purpose: the handful of facts that would
+// go wrong silently. A sortie count drifting by one is a number to look at; a
+// gunship slot quietly swallowing a sortie is a desync.
+
+/** Every gunship currently airborne. */
+async function airborne(st) {
+  const L = await import('../src/state.js');
+  const out = [];
+  for (let i = 0; i < L.MAX_HELIS; i++) {
+    const b = L.heliBase(i);
+    if (st.i32[b + L.H_STATE] === 0) continue;
+    out.push({ i, side: st.i32[b + L.H_SIDE], x: st.i32[b + L.H_X],
+               y: st.i32[b + L.H_Y], z: st.i32[b + L.H_Z] });
+  }
+  return out;
+}
+
+/**
+ * Both clocks start at zero, so both sides launch on the first tick - and both
+ * sorties are wasted, because the armies are still eighty metres apart at the
+ * map's edges while the gunships fly the seam between them.
+ *
+ * The recording calls this out as a finding rather than a defect: the first
+ * killing bomb is at t = 16.7-26.4 s on every seed. It is what makes air
+ * something that arrives rather than something that is simply on, and a core
+ * that started the clocks anywhere else would be a different game.
+ */
+test('both sides launch on the first tick, and the first sorties are wasted', async () => {
+  const L = await import('../src/state.js');
+  const st = init(20260901);
+  step(st, 0, 0, 0, 0, 0);
+
+  const up = await airborne(st);
+  assert.equal(up.length, 2, 'the round did not open with a sortie from each side');
+  assert.deepEqual(up.map((h) => h.side).sort(), [-1, 1],
+    'both opening sorties came from the same army');
+
+  // Each enters at the corridor's edge, past the fighting and short of the
+  // depots it cannot fly through, and holds nineteen metres over the ground.
+  for (const h of up) {
+    assert.equal(Math.abs(h.x) > Math.imul(92, ONE), true,
+      'a gunship entered inside the box the armies are held in');
+    assert.equal(Math.abs(h.x) <= Math.imul(104, ONE) + Math.imul(20, ONE), true,
+      'a gunship entered beyond the air corridor');
+    assert.ok(h.y > Math.imul(15, ONE) && h.y < Math.imul(23, ONE),
+      `a gunship is at ${h.y / ONE} m, not the nineteen it holds`);
+  }
+
+  // And nobody is dead yet. The armies spawn at |z| = 79 and the gunships fly
+  // the seam, so the opening pass has nothing under it.
+  for (let i = 0; i < 96; i++)
+    assert.notEqual(st.i32[L.unitBase(i) + L.U_STATE], 0,
+      'a unit died on the first tick - the opening sortie is not landing on nobody');
+});
+
+/**
+ * No sortie is ever dropped for want of a slot.
+ *
+ * The core holds gunships in a fixed number of state words where the C# holds
+ * them in a List, and the arithmetic says four is two more than enough: a
+ * transit is 208 m at 20 m/s, ten and a half seconds, and the shortest gap the
+ * jitter can produce is 17 * 0.7 = 11.9. But arithmetic in a comment is not a
+ * guarantee, and the failure it guards against is the worst kind - a sortie
+ * silently swallowed here and flown by a verifier with a slot free, diverging
+ * one dead squad at a time.
+ *
+ * Watching the airborne count is what makes it observable: if the peak never
+ * reaches the number of slots, no launch can ever have found them all busy.
+ */
+test('a gunship always finds a slot, and so does a bomb', async () => {
+  const L = await import('../src/state.js');
+  for (const seed of [20260901, 20260902, 20260903, 20260904]) {
+    const st = init(seed);
+    let peakHelis = 0, peakBombs = 0;
+    for (let f = 0; f < 90 * 60; f++) {
+      step(st, 0, 0, 0, 0, 0);
+      let h = 0, b = 0;
+      for (let i = 0; i < L.MAX_HELIS; i++) if (st.i32[L.heliBase(i) + L.H_STATE] !== 0) h++;
+      for (let i = 0; i < L.MAX_BOMBS; i++) if (st.i32[L.bombBase(i) + L.B_STATE] !== 0) b++;
+      peakHelis = Math.max(peakHelis, h);
+      peakBombs = Math.max(peakBombs, b);
+    }
+    assert.ok(peakHelis < L.MAX_HELIS,
+      `seed ${seed} filled every gunship slot (${peakHelis} of ${L.MAX_HELIS}), so a ` +
+      'sortie may have been dropped without anything saying so');
+    assert.ok(peakBombs < L.MAX_BOMBS,
+      `seed ${seed} filled every bomb rack (${peakBombs} of ${L.MAX_BOMBS}), so a ` +
+      'bomb may have been swallowed without anything saying so');
+    // Two at a time is what the recording measures on every seed, and it is
+    // also the ceiling the cadence allows: one per side, never two of either.
+    assert.equal(peakHelis, 2, `seed ${seed} peaked at ${peakHelis} gunships, not the recorded 2`);
+  }
+});
+
+/**
+ * A third of every load lands off the field, and all of it in x.
+ *
+ * This is the recording's second finding and it is COPIED, not corrected. The
+ * release gate is on where the bomb is let go - |x| < 92 - and the bomb is not
+ * released where it lands: it inherits thirty metres a second along the
+ * gunship's own track and falls from nineteen metres, so it is thrown some
+ * sixty metres downrange and reaches |x| = 148-154 against a field that ends at
+ * 92. Between a quarter and a half of the bombs in a round hit nobody by
+ * construction.
+ *
+ * Narrowing the gate to where the bomb lands would be a one-line "fix" that
+ * deleted a third of the air war, and the two implementations would then
+ * disagree about every round anybody played.
+ */
+test('a third of the bombs land off the field, and all of it in x', async () => {
+  const L = await import('../src/state.js');
+  const landings = [];
+  for (const seed of [20260901, 20260902, 20260903, 20260904]) {
+    const st = init(seed);
+    // The seam at zero, which is the condition GunshipReferenceTests recorded
+    // under. It matters for the z half of this claim and not for the x half: a
+    // gunship stands 17-35 m off the seam and does not clamp to the field, so
+    // with the tape's own seam swinging to -57 a gunship can legitimately be
+    // over z = -92 and drop there. The C# does exactly the same - neither
+    // implementation holds aircraft inside HalfDepth - so that is faithful, not
+    // a fault, and it is simply not what the recording measured.
+    st.tape.fill(st.tape[0]);
+    let live = new Array(L.MAX_BOMBS).fill(false);
+    for (let f = 0; f < 90 * 60; f++) {
+      step(st, 0, 0, 0, 0, 0);
+      for (let i = 0; i < L.MAX_BOMBS; i++) {
+        const b = L.bombBase(i);
+        const now = st.i32[b + L.B_STATE] !== 0;
+        // The landing point is still in the slot: x and z are written before
+        // the state word is cleared, which is what makes this readable at all.
+        if (live[i] && !now) landings.push({ x: st.i32[b + L.B_X], z: st.i32[b + L.B_Z] });
+        live[i] = now;
+      }
+    }
+  }
+
+  assert.ok(landings.length > 100, `only ${landings.length} bombs fell across four rounds`);
+  const off = landings.filter((b) => Math.abs(b.x) >= Math.imul(92, ONE));
+  const share = off.length / landings.length;
+  assert.ok(share > 0.2 && share < 0.5,
+    `${(share * 100).toFixed(0)}% of bombs land outside |x| = 92; the recording has 26-42%`);
+
+  // Off in x, never in z. The bomb is thrown along the gunship's track, and the
+  // gunship's track is the x axis.
+  for (const b of landings)
+    assert.ok(Math.abs(b.z) <= Math.imul(79, ONE),
+      `a bomb landed at z = ${(b.z / ONE).toFixed(1)}, outside the field's depth - ` +
+      'the recording has every off-field landing in x and none in z');
+
+  const worst = Math.max(...landings.map((b) => Math.abs(b.x))) / ONE;
+  assert.ok(worst > 140 && worst < 165,
+    `the furthest bomb reached |x| = ${worst.toFixed(1)}; the recording has 148-154`);
+});
+
+/**
+ * The blast clears a circle, and it does not ask whose men are inside.
+ *
+ * Infantry inside sixteen metres die whatever the distance - that flatness is
+ * why one bomb is worth up to twenty-three men in the recording - and armour
+ * takes 12 * (1 - d/16), so a tank at the centre dies outright and one at the
+ * rim walks away untouched.
+ */
+test('a bomb kills a tank at the centre and leaves one at the rim', async () => {
+  const air = await import('../src/rules/air.js');
+  assert.equal(air.bombDamage(0), air.BOMB_DAMAGE, 'the centre of the blast is not full damage');
+  assert.equal(air.bombDamage(air.BOMB_RADIUS), 0, 'the rim of the blast still does damage');
+
+  // A tank has 60 to 100 hit points on this core's scale, so the blast kills
+  // outright inside about half the radius and only wounds outside it.
+  const atHalf = air.bombDamage(air.BOMB_RADIUS >> 1);
+  assert.ok(atHalf > Math.imul(55, ONE) && atHalf < Math.imul(65, ONE),
+    `eight metres out the blast is worth ${atHalf / ONE}, not the half of 120 it should be`);
+  assert.equal(air.bombDamage(air.BOMB_RADIUS + ONE), 0, 'the blast reaches past its own radius');
+});
+
+/**
+ * A bomb never touches the truck.
+ *
+ * Army.Detonate raises Bombed, Killed and Destroyed and NOT CourierHit: in the
+ * C# a bomb cannot hurt the player, however squarely it lands on them. That is
+ * a rule of the game and not an oversight in the recording, and a core that
+ * invented courier damage here would take health off a truck that every
+ * verifier replaying the round says is untouched.
+ *
+ * Planted rather than waited for: a bomb landing on the truck by chance is rare
+ * enough that a test waiting for one would be a test that usually proves
+ * nothing.
+ */
+test('a bomb landing on the truck does not scratch it', async () => {
+  const L = await import('../src/state.js');
+  const st = init(4);
+
+  // A quiet field: nothing alive to shoot, so anything that moves the truck's
+  // health this tick came from the bomb.
+  for (let i = 0; i < 96; i++) {
+    st.i32[L.unitBase(i) + L.U_STATE] = 0;
+    st.i32[L.unitBase(i) + L.U_HP] = 0;
+  }
+  const T = L.O_TRUCK;
+  const before = st.i32[T + L.T_HP], impact = st.i32[T + L.T_IMPACT];
+
+  // One tick above the ground, straight down, right on the cab.
+  const b = L.bombBase(0);
+  st.i32[b + L.B_STATE] = 1;
+  st.i32[b + L.B_SIDE] = -1;
+  st.i32[b + L.B_X] = st.i32[T + L.T_X];
+  st.i32[b + L.B_Z] = st.i32[T + L.T_Z];
+  st.i32[b + L.B_Y] = ONE;
+  st.i32[b + L.B_VX] = 0; st.i32[b + L.B_VZ] = 0;
+  st.i32[b + L.B_VY] = Math.imul(-100, ONE);
+
+  step(st, 0, 0, 0, 0, 0);
+
+  assert.equal(st.i32[b + L.B_STATE], 0, 'the planted bomb did not go off');
+  assert.equal(st.i32[T + L.T_HP], before,
+    'a bomb took health off the truck - Detonate has no CourierHit and the core must not invent one');
+  assert.equal(st.i32[T + L.T_IMPACT], impact, 'a bomb registered as an armour impact');
+});
+
+/**
+ * The air war replays from the seed, which is the one thing the C# cannot do.
+ *
+ * SendHelicopter draws its direction from UnityEngine.Random and LaunchSorties
+ * draws its jitter from the same place, so two C# machines given the same army
+ * seed fly different sorties and drop different bombs. That is fine for a
+ * single-player scene and fatal for a round that has to be replayed by
+ * strangers, and it is the reason every draw in this port comes off the state's
+ * own stream.
+ */
+test('the same seed flies the same sorties and a different one does not', async () => {
+  const L = await import('../src/state.js');
+  const fly = (seed) => {
+    const st = init(seed);
+    for (let f = 0; f < 60 * 40; f++) step(st, 0, 0, 0, 0, 0);
+    return st.i32.slice(L.O_AIR, L.WORDS).join(',');
+  };
+  assert.equal(fly(20260901), fly(20260901), 'one seed flew two different air wars');
+  assert.notEqual(fly(20260901), fly(20260902), 'two seeds flew the same air war');
+});
+
+/**
+ * The height smoothing is pinned to the tick it was evaluated for.
+ *
+ * `h.y += (wantY - h.y) * (1 - exp(-2 * dt))` is a float expression in the C#,
+ * and exp is exactly the libm call specified.test.js exists to demonstrate is
+ * not portable. It does not need to be evaluated at runtime, because dt is a
+ * constant - but the constant and the tick are then two numbers that have to
+ * agree, written in two different files, with nothing but a comment holding
+ * them together. This is the something.
+ */
+test('the gunship height constant matches the tick it was written for', async () => {
+  const air = await import('../src/rules/air.js');
+  const TICK_DT = 1092;                       // sim.js, 1/60 in Q16.16
+  const want = Math.round((1 - Math.exp(-2 * (TICK_DT / ONE))) * ONE);
+  assert.equal(air.Y_LERP, want,
+    `Y_LERP is ${air.Y_LERP} but the tick says ${want} - the tick changed and the ` +
+    'constant did not, so gunships are now holding height on the wrong curve');
+});
+
+/**
+ * No bomb in this core can ever kill men from both sides at once, and that is
+ * the one place the port does NOT reach the recording.
+ *
+ * The recording has 18-42% of a bomb's infantry victims on the dropper's own
+ * side; the core runs at 39-59%. The blast rule is not the reason - it is
+ * copied to the metre and does not ask whose men are inside - and neither is
+ * where the bombs land, which matches the recording on every published figure.
+ * It is where the men STAND. army.js backs a unit off whenever an enemy comes
+ * within BACK_OFF_RANGE, and that rule applies to riflemen as well as armour,
+ * so twenty-four metres is a hard floor on the distance between any two
+ * enemies. The blast radius is sixteen. The two lines therefore cannot be
+ * straddled, and which side a bomb kills is decided entirely by which side of
+ * the seam it fell on - so it comes out near the even split.
+ *
+ * The C# has no such floor: StepInfantry walks a man to his standoff and leaves
+ * him there, with no crowding rule at all and a rifle that reaches 26 m, so the
+ * two lines interpenetrate and a bomb on enemy ground still kills mostly
+ * enemies.
+ *
+ * That is item 2c's line, not the air arm's, and it is left alone here. It is
+ * pinned instead, because it is the kind of fact that explains a live
+ * divergence and would otherwise be rediscovered from scratch the next time
+ * somebody asks why friendly fire is high.
+ */
+test('no blast can straddle the two lines, which is why friendly fire is high', async () => {
+  const L = await import('../src/state.js');
+  const army = await import('../src/rules/army.js');
+  const air = await import('../src/rules/air.js');
+
+  assert.ok(army.BACKOFF_RANGE > air.BOMB_RADIUS,
+    'the back-off is now inside the blast radius, so bombs can catch both sides - ' +
+    'the friendly fire share should have moved towards the recording and this ' +
+    'test should be re-measured, not deleted');
+
+  const st = init(20260901);
+  st.tape.fill(st.tape[0]);                   // the seam the recording was made at
+  let closest = Infinity;
+  for (let f = 0; f < 90 * 60; f++) {
+    step(st, 0, 0, 0, 0, 0);
+    if ((f + 1) % 300 !== 0) continue;
+    const men = [];
+    for (let i = 0; i < 96; i++) {
+      if ((i & 3) === 0) continue;            // armour; the riflemen are the question
+      const b = L.unitBase(i);
+      if (st.i32[b + L.U_STATE] === 0) continue;
+      men.push({ side: st.i32[b + L.U_SIDE], x: st.i32[b + L.U_X], z: st.i32[b + L.U_Z] });
+    }
+    for (const a of men) for (const c of men) {
+      if (a.side === c.side) continue;
+      const dx = (a.x - c.x) / ONE, dz = (a.z - c.z) / ONE;
+      closest = Math.min(closest, Math.sqrt(dx * dx + dz * dz));
+    }
+  }
+  assert.ok(closest >= air.BOMB_RADIUS / ONE,
+    `two riflemen of opposite sides came within ${closest.toFixed(1)} m, inside the ` +
+    `${air.BOMB_RADIUS / ONE} m blast - the friendly fire measurement above is stale`);
 });

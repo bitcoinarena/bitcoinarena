@@ -10,13 +10,39 @@ namespace Blwp
     /// <summary>Word offsets into the core state buffer. Generated from state.js.</summary>
     public static class Layout
     {
+        public const int AIR_BEAR = 1;
+        public const int AIR_BULL = 0;
+        public const int AIR_WORDS = 2;
         public const int A_ARMOUR_BEAR = 1;
         public const int A_ARMOUR_BULL = 0;
         public const int A_RIFLE_BEAR = 3;
         public const int A_RIFLE_BULL = 2;
         public const int A_WORDS = 4;
+        public const int B_SIDE = 1;
+        public const int B_STATE = 0;
+        public const int B_VX = 5;
+        public const int B_VY = 6;
+        public const int B_VZ = 7;
+        public const int B_WORDS = 8;
+        public const int B_X = 2;
+        public const int B_Y = 3;
+        public const int B_Z = 4;
+        public const int H_DIR = 5;
+        public const int H_DROPIN = 7;
+        public const int H_SIDE = 1;
+        public const int H_STATE = 0;
+        public const int H_T = 6;
+        public const int H_WORDS = 8;
+        public const int H_X = 2;
+        public const int H_Y = 3;
+        public const int H_Z = 4;
+        public const int MAX_BOMBS = 8;
+        public const int MAX_HELIS = 4;
         public const int MAX_UNITS = 256;
+        public const int O_AIR = 2076;
         public const int O_ARMY = 2072;
+        public const int O_BOMBS = 2110;
+        public const int O_HELIS = 2078;
         public const int O_RNG = 1;
         public const int O_SCORE = 17;
         public const int O_TICK = 0;
@@ -51,7 +77,7 @@ namespace Blwp
         public const int U_WORDS = 8;
         public const int U_X = 0;
         public const int U_Z = 1;
-        public const int WORDS = 2076;
+        public const int WORDS = 2174;
 
         /// <summary>Where the core starts the truck, Q16.16 metres.</summary>
         public const int START_X = -6579814;
