@@ -2240,6 +2240,124 @@ stake to the Entry Contract via `payment_hash`, not via wallet permissions.
 
 ---
 
+# 24A. Playing many rounds without approving each one
+
+A round is two minutes and a stake is 100 sats, so a player who sits down
+for half an hour signs fifteen payments. That is not a payments problem, it
+is the reason they stop playing.
+
+It splits into two costs that have different answers, and conflating them is
+how this ends up custodial for no reason:
+
+| Cost | Fix | Custody |
+|---|---|---|
+| **Fifteen wallet approvals** | one NWC budget (§24A.1) | **none** |
+| **Fifteen Lightning payments** | a session balance (§24A.2) | bounded, bonded |
+
+Most of the annoyance is the first one, so it is solved first and without
+touching the trust model at all.
+
+## 24A.1 Budgeted play: one approval, still one payment per round
+
+Nostr Wallet Connect already carries a budget - "1000 sats per hour to this
+connection" - and that is exactly the shape needed. The player grants it
+once; the client pays each round's hold invoice inside it; no approval
+screen appears again until the budget is spent.
+
+**Nothing about settlement changes.** Every round still gets its own hold
+invoice, its own `payment_hash` bound to its own Entry Contract, its own
+VSS-shared preimage and its own expiry refund (§23). No node ever holds a
+balance, because there is no balance - there are fifteen ordinary entries
+that happened not to interrupt anybody.
+
+The caveat from §24 stands and matters more here, not less: **an NWC budget
+is wallet-side policy and encodes nothing about the round.** It bounds the
+loss if the client is compromised; it does not bind a payment to a contract.
+The binding is still `payment_hash` in the Entry Contract. So the client
+MUST show the running total and what it was spent on, and a budget MUST be
+time-boxed rather than open-ended.
+
+This is the recommended path, and for a wallet that supports budgets it is
+the whole answer.
+
+## 24A.2 Session balance, for wallets that cannot do that
+
+One payment of 1000 sats, ten rounds of 100. It requires somebody to hold
+the remainder between rounds, and this protocol has spent §23 arranging for
+nobody to hold anything - so it is stated plainly:
+
+> **A session balance is custody.** It is acceptable only because it is
+> bounded, and because the party holding it has posted a bond worth
+> materially more than it can steal.
+
+That is the same argument as §5A.10's stake ceiling, applied to a balance
+instead of a pot, and it gives the cap directly:
+
+```text
+session_cap_sats  <=  min(bond of each session-committee node) / K
+```
+
+with `K` the §5A.10 safety factor. A session that cannot be capped this way
+is not opened.
+
+### The session committee
+
+Drawn at session open by the ordinary bond-weighted sortition (§5A.6) from
+the settlement pool, and it holds for the session's life rather than the
+round's. Rounds keep their own per-round committees for everything else -
+this committee does one job, which is to hold a number.
+
+### The signed balance receipt
+
+After every round, the session committee threshold-signs the new balance and
+gives it to the player:
+
+```text
+balance_receipt {
+  session_id, network_id
+  round_id            the round just settled
+  sequence            strictly increasing
+  balance_sats
+  threshold signature
+}
+```
+
+This is the whole enforcement mechanism, and it is the reason the scheme is
+safe rather than merely small. A node that later denies the balance is
+contradicting its own signature, so the proof of theft is **one artifact the
+player already holds** - the same shape as every other slashing proof here
+(§13A). Refusing to sign a receipt is itself the offence, because a player
+with no receipt stops playing immediately and withdraws.
+
+### Withdrawal, and expiry
+
+The player may withdraw the remaining balance at any time, to a Lightning
+invoice of their choosing. The committee MUST pay within `withdraw_window`;
+failing to, against a held receipt, is slashable.
+
+At `session_expiry` the balance is returned unprompted. Expiry is the
+default, exactly as with a hold invoice: **doing nothing refunds the
+player**, and every failure mode has to route through that.
+
+### What a session must never become
+
+- **No balance across sessions.** It expires, it is returned, it does not
+  accrue. A permanent balance is an account, and an account is a bank.
+- **No transfers between players.** That is an exchange, and it would make
+  every node a money transmitter for a convenience feature.
+- **No interest, no yield, no lending of the float.** The float exists for
+  minutes and belongs to the player.
+- **No credit.** A round is never entered against a balance that is not
+  already there.
+
+### Where it sits in the plan
+
+M3.2, with the client and the wallet - after settlement works per-round.
+Building a balance before single-round custody is proven would mean debugging
+the hard part through an extra layer.
+
+---
+
 # 25. Lobby and discovery
 
 Finding a ROUND is not authoritative: project website, community sites, a
