@@ -919,6 +919,88 @@ Both quantities are computable by anyone from `census_root` and the chain,
 so a client can enforce this rule itself and refuse a round whose bracket
 exceeds what its census supports.
 
+### What the threshold buys, in numbers
+
+Selection is bond-weighted, so an attacker holding fraction `p` of the
+bonded capital wins each slot with probability `p`, and needs 5 of 7:
+
+| Share of bonded capital | Chance of controlling 5 of 7 |
+|---|---|
+| 20% | 0.5% |
+| 30% | 2.9% |
+| 40% | 9.6% |
+| **46%** | **16.6%** |
+| 50% | 22.7% |
+| 60% | 42.0% |
+| 70% | 64.7% |
+
+The 5-of-7 threshold is doing most of the work here. Even holding **forty
+per cent of all bonded capital in the role**, an attacker is in position
+roughly one round in ten.
+
+### The individual bond, derived
+
+§5A.10 fixes the aggregate. The per-node floor follows from it by dividing
+through, and lands in the same place from every row:
+
+```text
+10 nodes x bond_min >=  20 x pool   ->  bond_min >= 2.0 x pool
+15 nodes x bond_min >=  50 x pool   ->  bond_min >= 3.3 x pool
+25 nodes x bond_min >= 100 x pool   ->  bond_min >= 4.0 x pool
+50 nodes x bond_min >= 200 x pool   ->  bond_min >= 4.0 x pool
+```
+
+**`bond_min` is two to four times the largest round pool.**
+
+### Worked scenarios
+
+At 10 sat/vB, with a funding transaction of about 300 vB (it carries the
+advertisement in the witness), a later recovery spend of about 110 vB, and
+the 330 sat `BOND_MARKER` dust:
+
+| Round | Pool | Nodes | `bond_min` | One-off fees | Fees as share |
+|---|---|---|---|---|---|
+| 20 x 100 sat | 2,000 | 10 | 4,000 sat | 4,430 sat | **111%** |
+| 61 x 1,000 sat | 61,000 | 25 | 244,000 sat | 4,430 sat | 1.8% |
+| 200 x 1,000 sat | 200,000 | 50 | 800,000 sat | 4,430 sat | 0.6% |
+
+The capital comes back; the fees do not.
+
+And what an attacker at the 16.6% control probability faces:
+
+| Round | Capital to bond | Loot if he lands it | Lost if caught |
+|---|---|---|---|
+| small | 18,400 sat | 2,000 | 20,000 (**10x**) |
+| medium | 2,806,000 sat | 61,000 | 1,220,000 (**20x**) |
+| large | 18,400,000 sat | 200,000 | 4,000,000 (**20x**) |
+
+The middle row in plain terms: bond 0.028 BTC to be able to steal 61,000
+sat in one round out of six, and forfeit 1.22 million sat when caught. He
+must get away with it twenty times to pay for one slash, and the proof is
+self-verifying and can be submitted by anybody - so the probability of
+getting away with it is not close to the 95% he would need.
+
+### The fee floor, which is not in the table above
+
+At small stakes the arithmetic above is not what sets the bond. In the
+first row the derived `bond_min` is **4,000 sat - less than the fees to
+post it**. The 5A.10 requirement is satisfied trivially and is useless as
+guidance.
+
+In practice the floor is set by transaction cost, not by security: below
+roughly **50,000 sat** posting a bond is not worth doing, and that is ten
+to fifty times what security demands at small pools.
+
+This is a comfortable failure. Small rounds are **over-collateralised for
+free**: any bond worth posting at all is a large multiple of what the
+threat model needs. The security arithmetic only starts to bind at a pool
+of about 12,500 sat - twelve players at 1,000 sat, or a hundred and
+twenty-five at 100.
+
+> An implementation SHOULD therefore set `bond_min` to
+> `max(4 x max_round_pool, fee_floor)`, and state the fee floor it assumed,
+> since it moves with the fee market.
+
 ## 5A.11 Selection cannot be overwritten
 
 The Round Contract contains:
