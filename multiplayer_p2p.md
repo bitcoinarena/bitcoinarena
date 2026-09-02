@@ -925,10 +925,18 @@ take.
 
 ## 5A.7 Committee size and thresholds *(changed in v4.6)*
 
+Mainnet:
+
 ```text
 GAME/VERIFY:  7 slots, threshold 5
 SETTLEMENT:   7 slots, threshold 5
 ```
+
+These are **network parameters**, not constants: they come from
+`genesis_parameters` (§27A.6), which is committed in `network_id`. Test
+networks run smaller committees, and because the sizes are part of the
+network's identity a small-committee network can never be mistaken for
+this one.
 
 ## 5A.8 (removed)
 
@@ -2650,6 +2658,73 @@ CANNOT  make a player donate: the percentage is the player's, and zero
 The damage is bounded in every row: donations are voluntary, capped by
 `donation_bps_max`, and every recipient is displayed before wallet approval
 (§22A). A player who has donations switched off is unaffected by all of it.
+
+## 27A.6 Genesis parameters, and the test networks
+
+Everything above that a network cannot change about itself lives in one
+block, fixed when the network is created and committed in `network_id`:
+
+```text
+genesis_parameters {
+  chain                  mainnet | testnet | regtest
+  committee_slots        per role
+  committee_threshold    per role
+  census_min_nodes       per role
+  census_confirmations   depth for a bond output
+  bond_maturity          absolute locktime offset
+  notice_period          for a rise in bond_min (§27A.3)
+  bracket_table          the §5A.10 stake ceiling table
+  bond_marker            the §25.1 discovery address
+}
+```
+
+### Three networks
+
+| | mainnet | testnet | regtest |
+|---|---|---|---|
+| committee slots | 7 | 3 | **2** |
+| threshold | 5 | 2 | **2** |
+| minimum census | 10 | 3 | **2** |
+| confirmations | 6 | 2 | **1** |
+| `bond_maturity` | ~30 days | ~1 day | **100 blocks** |
+| `notice_period` | ~30 days | ~1 day | **10 blocks** |
+| stake ceiling | §5A.10 table | testnet sats | play money only |
+
+Two nodes and 2-of-2 on regtest is the point of it: the whole settlement
+path - hold invoices, VSS, a 2-of-2 FROST signature, the objection window,
+the payout table - runs on one laptop.
+
+### Why this cannot weaken mainnet
+
+`genesis_parameters` is committed in `network_id`, and every Round Contract
+carries `network_id`. A client or node built for mainnet therefore rejects
+a 2-of-2 contract **because it is a different network**, not because it
+checks a flag and hopes.
+
+There is no configuration switch that lowers a threshold, no environment
+variable, nothing to set wrongly in production. Lowering a threshold means
+being on another network with another census and another set of bonds -
+which is exactly what a test network is.
+
+### What a small committee does NOT test
+
+Regtest proves the code works. It does not exercise the threat model, and
+the difference is worth stating so nobody reads a green regtest run as
+evidence about mainnet:
+
+- **No fault tolerance.** At 2-of-2 one node offline is no quorum, and
+  every affected entry takes the void-and-refund path. On mainnet 5-of-7
+  survives two failures. Regtest will therefore fail in ways mainnet would
+  not, and passing it says nothing about liveness.
+- **The overlap argument is vacuous.** §13B rests on any two 5-subsets of 7
+  sharing at least three nodes, which is what makes a divergence sent to
+  disjoint subsets surface. With one possible subset there are no disjoint
+  subsets and nothing to detect. The equivocation machinery can be tested
+  for correctness, not for effectiveness.
+- **Player-node separation bites immediately.** §5A.13 voids entries when
+  conflicts drop a committee below threshold, and with two slots one
+  playing operator does it. That is correct behaviour and will be constant
+  during development; it is not a bug to be configured away.
 
 ## 27A.5 Discrete changes: rough consensus
 
