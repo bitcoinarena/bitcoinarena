@@ -270,7 +270,16 @@ export function stepUnit(u, rng, seamZ, truckX, truckZ, halfX, halfZ, dt, index)
   // truck is nearer. Measured, a truck parked in the C# fight for ninety
   // seconds takes 163 tank hits for 1271.7 points and 6 rifle hits for 13.9.
   if (!u.armour) return 0;
-  const d = length2(sub(u.x, truckX), sub(u.z, truckZ));
+  // Axes first, then length2 - the same guard as pickTarget and threatAt
+  // below, and for the reason spelled out at their call sites: past about
+  // 181.5 m the sum of squares overflows and length2 returns ZERO, so the
+  // truck read as standing on the tank. Measured before it was fixed, 1.2% of
+  // all live tank-ticks were in that state, firing at a truck they could not
+  // see. Item (j) rewrites this function for CourierRange 34 m; it must keep
+  // the rejection, or the overflow comes back with a wider threshold.
+  const dxTruck = sub(u.x, truckX), dzTruck = sub(u.z, truckZ);
+  if (abs(dxTruck) > RIFLE_RANGE || abs(dzTruck) > RIFLE_RANGE) return 0;
+  const d = length2(dxTruck, dzTruck);
   if (d >= RIFLE_RANGE) return 0;
 
   if (u.cooldown > 0) { u.cooldown = (u.cooldown - 1) | 0; return 1; }

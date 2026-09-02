@@ -719,8 +719,21 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
     if (!u.armour && u.hp > 0) {
       if (s[b + U_COOLDOWN] > 0) s[b + U_COOLDOWN] = (s[b + U_COOLDOWN] - 1) | 0;
       else {
-        const toTruck = length2(sub(u.x, tx), sub(u.z, tz));
-        if (toTruck < RIFLE_RANGE) {
+        // Rejected on each axis BEFORE length2, which is what every other
+        // scan in the core already does - pickRifleTarget (army.js:320),
+        // pickTarget (:379), threatAt (:423), the armour crowding scan below
+        // (sim.js:676) and the solids scan (solids.js:56-66).
+        //
+        // length2 squares its arguments in Q16.16, so a separation past about
+        // 181.5 m overflows the sum of squares past 2^31, wraps it negative
+        // and comes back as a distance of ZERO. Without this the truck read as
+        // standing on any man far enough away: measured, 19-21% of the
+        // approach's rifle clocks were spent firing a 2.5-4.5 s reload at a
+        // truck 200 m off, and the truck took the hits. The trap is the one
+        // army.js:417-421 already had written down.
+        const dxTruck = sub(u.x, tx), dzTruck = sub(u.z, tz);
+        if (abs(dxTruck) <= RIFLE_RANGE && abs(dzTruck) <= RIFLE_RANGE &&
+            length2(dxTruck, dzTruck) < RIFLE_RANGE) {
           s[b + U_COOLDOWN] = (RIFLE_RELOAD_TICKS + nextBelow(rng, RIFLE_RELOAD_TICKS_SPAN)) | 0;
           if (nextBelow(rng, 1000) < RIFLE_HIT_PER_MIL) hits = (hits + 1) | 0;
         } else {

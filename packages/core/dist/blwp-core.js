@@ -1648,7 +1648,16 @@ function stepUnit(u, rng, seamZ, truckX, truckZ, halfX, halfZ, dt, index) {
   // truck is nearer. Measured, a truck parked in the C# fight for ninety
   // seconds takes 163 tank hits for 1271.7 points and 6 rifle hits for 13.9.
   if (!u.armour) return 0;
-  const d = length2(sub(u.x, truckX), sub(u.z, truckZ));
+  // Axes first, then length2 - the same guard as pickTarget and threatAt
+  // below, and for the reason spelled out at their call sites: past about
+  // 181.5 m the sum of squares overflows and length2 returns ZERO, so the
+  // truck read as standing on the tank. Measured before it was fixed, 1.2% of
+  // all live tank-ticks were in that state, firing at a truck they could not
+  // see. Item (j) rewrites this function for CourierRange 34 m; it must keep
+  // the rejection, or the overflow comes back with a wider threshold.
+  const dxTruck = sub(u.x, truckX), dzTruck = sub(u.z, truckZ);
+  if (abs(dxTruck) > RIFLE_RANGE || abs(dzTruck) > RIFLE_RANGE) return 0;
+  const d = length2(dxTruck, dzTruck);
   if (d >= RIFLE_RANGE) return 0;
 
   if (u.cooldown > 0) { u.cooldown = (u.cooldown - 1) | 0; return 1; }
@@ -2934,8 +2943,21 @@ function step(st, throttle, steer, brake, handbrake, practice) {
     if (!u.armour && u.hp > 0) {
       if (s[b + U_COOLDOWN] > 0) s[b + U_COOLDOWN] = (s[b + U_COOLDOWN] - 1) | 0;
       else {
-        const toTruck = length2(sub(u.x, tx), sub(u.z, tz));
-        if (toTruck < RIFLE_RANGE) {
+        // Rejected on each axis BEFORE length2, which is what every other
+        // scan in the core already does - pickRifleTarget (army.js:320),
+        // pickTarget (:379), threatAt (:423), the armour crowding scan below
+        // (sim.js:676) and the solids scan (solids.js:56-66).
+        //
+        // length2 squares its arguments in Q16.16, so a separation past about
+        // 181.5 m overflows the sum of squares past 2^31, wraps it negative
+        // and comes back as a distance of ZERO. Without this the truck read as
+        // standing on any man far enough away: measured, 19-21% of the
+        // approach's rifle clocks were spent firing a 2.5-4.5 s reload at a
+        // truck 200 m off, and the truck took the hits. The trap is the one
+        // army.js:417-421 already had written down.
+        const dxTruck = sub(u.x, tx), dzTruck = sub(u.z, tz);
+        if (abs(dxTruck) <= RIFLE_RANGE && abs(dzTruck) <= RIFLE_RANGE &&
+            length2(dxTruck, dzTruck) < RIFLE_RANGE) {
           s[b + U_COOLDOWN] = (RIFLE_RELOAD_TICKS + nextBelow(rng, RIFLE_RELOAD_TICKS_SPAN)) | 0;
           if (nextBelow(rng, 1000) < RIFLE_HIT_PER_MIL) hits = (hits + 1) | 0;
         } else {
