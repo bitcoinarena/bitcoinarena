@@ -2935,9 +2935,28 @@ and nothing needs to break a tie - the same rule Bitcoin uses for two blocks
 at one height.
 
 **The deposit is spent, not staked.** It goes to the donation set outright:
-a fixed price for occupying the whole network's attention for a month.
-`proposal_deposit_sats` is itself a median scalar (§27A.2) - the network
-prices proposing through the mechanism that needs no proposal.
+a fixed price for occupying the whole network's attention for a month, and
+it is not refunded on success. Refunding it would make proposing free for
+anyone confident of passing, which is exactly the party a rate limit is for.
+
+`proposal_deposit_sats` is a median scalar (§27A.2) - the network prices
+proposing through the mechanism that needs no proposal - but it is
+**capped**, and the cap is what keeps it from becoming a censorship lever:
+
+```text
+proposal_deposit_sats  <=  bond_min(lowest bracket) / 100
+```
+
+The median is bond-weighted, so without a cap the largest bondholders set
+the price of proposing. A deposit of a million sats is nothing to them and
+total exclusion for a small operator, and they could raise it precisely
+because it binds them least - the self-binding test of §27A.2 is satisfied
+in nominal sats while failing in proportion to means.
+
+Tying it to the smallest `bond_min` fixes that: any node eligible to serve
+at all has already locked a hundred times the deposit, so the right to
+propose is implied by the right to participate and cannot be priced away by
+people with more capital.
 
 ### 27A.7.3 Votes are Bitcoin transactions
 
