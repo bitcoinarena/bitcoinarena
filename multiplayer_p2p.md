@@ -1962,6 +1962,65 @@ that finds no relay and has no direct `round_id` cannot start.
 > differs per client is one more thing that makes two players see different
 > rounds. Nothing is lost by fixing the shape of an advisory channel.
 
+## 25.2 Which channel carries what *(new)*
+
+```text
+node advertisements, round announcements     Nostr
+player -> node: inputs, checkpoints          direct WebSocket
+node <-> node: FROST, VSS, result assembly   direct, between endpoints
+equivocation proofs, objections, receipt     BOTH
+  gossip
+```
+
+The split is by **delivery guarantee**, not by convenience. Relays have
+none, no ordering, and drop events at their own discretion. A missed FROST
+round is a failed settlement, not a delay.
+
+**Why accusations go both ways.** An equivocation proof is two conflicting
+signed checkpoints - self-verifying, portable, no replay needed (§13B) - so
+it needs no trusted channel, only *some* channel. But it has a deadline
+(the objection window) and it accuses somebody. Sent only peer to peer, it
+may travel through the party it accuses, or through that party's siblings
+under a shared `operator_id` (§5A.13). Publishing to independent relays as
+well removes that, and the direct path keeps it inside the window.
+
+> Direct is fast and bounded; public is censorship-resistant. A proof that
+> is both accusing and time-limited needs both.
+
+## 25.3 Transport, stated plainly *(new)*
+
+There is no NAT traversal anywhere in this protocol and no peer discovery
+in the networking sense. Nodes are reachable servers with a declared
+`endpoint`; players are browsers, which can open connections and never
+accept them. The "P2P" in this document means **no central provider**, not
+peers behind routers finding each other. A browser can never be a node,
+which is why `blwp-node` is separate software.
+
+Two consequences that are cheaper to know now than in month four:
+
+**`wss://` is mandatory, and it is a real dependency.** A browser on an
+HTTPS page may not open `ws://` - mixed content is blocked - so every node
+serving players needs a valid certificate. In practice that means a
+certificate authority, in a protocol that otherwise removes central
+dependencies deliberately. Worse, if it is troublesome enough, operators
+end up behind two hosting providers or one proxy, and the decentralisation
+the whole census apparatus exists to produce is lost at the transport
+layer instead. Node software SHOULD make certificate provisioning a
+first-class setup step rather than an exercise for the operator.
+
+**A committed `endpoint` cannot change cheaply.** The bond output commits
+to `H(NodeAdvertisement)` (§5A.2) and the advertisement contains
+`endpoint`, so changing an address changes the hash and breaks the census
+entry until a new commitment confirms. A server move, a hosting change or
+a new IP therefore costs confirmation time and possibly a round.
+
+The fix is to commit to something stable that *carries* the address rather
+than to the address: the advertisement's replaceable Nostr event (§25.1)
+already holds the current `endpoint`, so the bond can commit to the key
+and the move becomes a republish rather than a new funding transaction.
+Implementations SHOULD prefer this. Committing directly to a literal
+endpoint is permitted and is a choice to run a node that cannot move.
+
 ---
 
 # 26. Reference client experience
