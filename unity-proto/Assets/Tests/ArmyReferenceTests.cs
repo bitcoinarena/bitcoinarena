@@ -135,7 +135,8 @@ public class ArmyReferenceTests
         int arrived = alive + armourLost - army.ArmourPerSide * 2;
         sb.AppendLine($"ARMYREF density tag={tag} t={t:0.0} inRange={dens:0.00} xspread={xspread:0.0} " +
                       $"shooters={shooters} perTarget={per:0.00} worst={worst} " +
-                      $"tanksAlive={alive} lost={armourLost} arrived={arrived}");
+                      $"tanksAlive={alive} lost={armourLost} arrived={arrived} " +
+                      $"xbands={XBands(army)}");
 
         sb.AppendLine($"ARMYREF t={t:0.0} tag={tag} " +
                       $"bullArmour n={an} z={ad:0.00} spread={av:0.00} " +
@@ -145,6 +146,43 @@ public class ArmyReferenceTests
     }
 
     /// <summary>Mean enemies inside 46 m, and how far the armour is spread along x.</summary>
+    /// <summary>
+    /// The armour's |x| in the bands the core is measured in.
+    ///
+    /// `xSpread` is a standard deviation, and a standard deviation cannot tell
+    /// a peak with stragglers from a flat spread: seventeen of twenty tanks
+    /// inside |x| &lt; 31 with three at +-90 gives sd 35, and so does an even
+    /// spread over +-60. The core reproduces this pass's xSpread to within a
+    /// metre and still puts less than half as many tanks near a point, so the
+    /// disagreement is the SHAPE and nothing published here could see it.
+    ///
+    /// Reads `Armour` and draws nothing. That matters: `Shot?.Invoke` and
+    /// `CourierHit?.Invoke` build their arguments inside the `?.`, so
+    /// SUBSCRIBING to them draws random numbers and makes a different battle.
+    /// Counting positions touches no event and no RNG, so these rows belong to
+    /// the same run as the ones beside them.
+    /// </summary>
+    static readonly float[] XBandEdges = { 10f, 20f, 31f, 45f, 60f, 80f };
+
+    static string XBands(Army army)
+    {
+        var n = new int[XBandEdges.Length + 1];
+        int total = 0;
+        foreach (var a in army.Armour)
+        {
+            if (a.hp <= 0f) continue;
+            total++;
+            float ax = Mathf.Abs(a.x);
+            int b = XBandEdges.Length;
+            for (int i = 0; i < XBandEdges.Length; i++)
+                if (ax < XBandEdges[i]) { b = i; break; }
+            n[b]++;
+        }
+        var sb = new StringBuilder();
+        for (int i = 0; i < n.Length; i++) sb.Append(i == 0 ? "" : ",").Append(n[i]);
+        return sb + $" of={total}";
+    }
+
     static void Density(Army army, out float inRange, out float xSpread)
     {
         float total = 0f; int n = 0;
@@ -416,7 +454,19 @@ public class InfantryReferenceTests
                 if (dx * dx + dz * dz < Army.CourierRange * Army.CourierRange) inTank++;
             }
 
+            // The denominator, published at last. `inTank` on its own says how
+            // many tanks are at the truck and not what share of the army that
+            // is, so every reader of it so far has had to guess an alive count
+            // - `Populate(12, 36)` is the establishment at t=0, not the count
+            // ninety seconds later, and reading it as one put a 71% in
+            // PRIORITIES that was never measured. Both counters are reads over
+            // the lists the loop above already walks; nothing here draws.
+            int tanksAlive = 0, menAlive = 0;
+            foreach (var u in army.Armour) if (u.hp > 0f) tanksAlive++;
+            foreach (var u in army.Infantry) if (u.hp > 0f) menAlive++;
+
             sb.AppendLine($"INFREF courier t={step * dt:0.0} tag={tag} " +
+                          $"tanksAlive={tanksAlive} menAlive={menAlive} " +
                           $"rifleHits={rifleHits} rifleDmg={rifleDmg:0.00} " +
                           $"tankHits={tankHits} tankDmg={tankDmg:0.00} " +
                           $"totalDmg={rifleDmg + tankDmg:0.00} " +

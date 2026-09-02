@@ -230,6 +230,34 @@ function measure(seed) {
                   ? `   | REC inRange=${rd.inRange} xspread=${rd.xSpread} shooters=${rd.shooters} ` +
                     `tanksAlive=${rd.tanksAlive} lost=${rd.lost} arrived=${rd.arrived}`
                   : ''));
+
+    // The armour's |x| in bands, beside the reference's own.
+    //
+    // This is the pair (o) was blocked on. `xspread` is a standard deviation
+    // and cannot tell a peak with stragglers from a flat spread, so the core
+    // matched it to within a metre while a share read off the courier pass
+    // said the two shapes were nothing alike. The reference now publishes the
+    // bands; nothing has to be inferred from a denominator again.
+    if (rd.xBands) {
+      const EDGES = [10, 20, 31, 45, 60, 80];
+      const NAMES = ['<10', '<20', '<31', '<45', '<60', '<80', '80+'];
+      const mine = new Array(NAMES.length).fill(0);
+      const living = us.filter((u) => u.armour && u.alive);
+      for (const u of living) {
+        const ax = Math.abs(u.x);
+        let b = EDGES.length;
+        for (let i = 0; i < EDGES.length; i++) if (ax < EDGES[i]) { b = i; break; }
+        mine[b]++;
+      }
+      const pct = (v, n) => (n ? (100 * v / n).toFixed(0) : '0').padStart(3);
+      const refN = rd.xBandsOf;
+      console.log(`ARMYCORE t=${mark.toFixed(0).padStart(2)} xbands core ` +
+        NAMES.map((k, i) => `${k}:${pct(mine[i], living.length)}%`).join(' ') +
+        `  of ${living.length}`);
+      console.log(`ARMYCORE t=${mark.toFixed(0).padStart(2)} xbands  REC ` +
+        NAMES.map((k) => `${k}:${pct(rd.xBands[k], refN)}%`).join(' ') +
+        `  of ${refN}`);
+    }
   }
   console.log('ARMYCORE END');
 
