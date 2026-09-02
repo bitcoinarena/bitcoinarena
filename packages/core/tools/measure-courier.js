@@ -64,6 +64,14 @@ const RIFLE_R = ref.setup.rifleRange;              // 26
 if (SEEDS.length === 0) SEEDS.push(ref.setup.seed);
 
 const Q = 65536, q = (v) => v / Q, fx = (m) => Math.round(m * Q);
+// The two clocks a courier shot writes, so the 23 points can be split without
+// touching a rule. A tank's courier fire lives in army.js and writes
+// U_COOLDOWN in the 40-99 band; nothing else writes an armour cooldown, the
+// gun's own reload being in U_TARGET. A rifleman has ONE clock and takes the
+// truck branch FIRST whenever the truck is inside 26 m (sim.js:722), so a
+// reload-band write by a man that close is a shot at the truck and not at a
+// foe. The bands do not meet.
+const TANK_CLOCK = [40, 99], RIFLE_CLOCK = [150, 269];
 const isArmour = (i) => (i & 3) === 0;
 const T = L.O_TRUCK;
 
@@ -86,9 +94,42 @@ function measure(seed) {
   const hp0 = st.i32[T + L.T_HP];
   const rows = [];
   const SAMPLE = 5 * 60;
+  const cool = () => {
+    const o = [];
+    for (let i = 0; i < UNITS; i++) {
+      const b = L.unitBase(i);
+      o.push({ cool: st.i32[b + L.U_COOLDOWN],
+               alive: st.i32[b + L.U_STATE] !== 0 && st.i32[b + L.U_HP] > 0,
+               x: q(st.i32[b + L.U_X]), z: q(st.i32[b + L.U_Z]) });
+    }
+    return o;
+  };
+  let prev = cool();
+  let hpWas = hp0;
+  const tally = { tank: 0, rifle: 0, ambiguous: 0, tankShots: 0, rifleShots: 0 };
   for (let f = 0; f < ref.setup.durationSeconds * 60; f++) {
     step(st, 0, 0, 0, 0, 0);
     holdAir(st);
+    // Which weapons fired at the truck this tick, and how many points landed.
+    const now = cool();
+    const tx0 = q(st.i32[T + L.T_X]), tz0 = q(st.i32[T + L.T_Z]);
+    let tShots = 0, rShots = 0;
+    for (let i = 0; i < UNITS; i++) {
+      const a = prev[i], b = now[i];
+      if (!a.alive || !b.alive || b.cool <= a.cool) continue;
+      if (Math.hypot(b.x - tx0, b.z - tz0) >= RIFLE_R) continue;
+      if (isArmour(i)) { if (b.cool >= TANK_CLOCK[0] && b.cool <= TANK_CLOCK[1]) tShots++; }
+      else if (b.cool >= RIFLE_CLOCK[0]) rShots++;
+    }
+    tally.tankShots += tShots; tally.rifleShots += rShots;
+    const landed = q(hpWas - st.i32[T + L.T_HP]);
+    hpWas = st.i32[T + L.T_HP];
+    if (landed > 0) {
+      if (tShots > 0 && rShots === 0) tally.tank += landed;
+      else if (rShots > 0 && tShots === 0) tally.rifle += landed;
+      else tally.ambiguous += landed;
+    }
+    prev = now;
     if ((f + 1) % SAMPLE) continue;
     const tx = q(st.i32[T + L.T_X]), tz = q(st.i32[T + L.T_Z]);
     let inRifle = 0, inTank = 0;
@@ -100,7 +141,7 @@ function measure(seed) {
       else if (d < RIFLE_R) inRifle++;
     }
     rows.push({ t: (f + 1) / 60, dmg: q(hp0 - st.i32[T + L.T_HP]), inRifle, inTank,
-                x: tx, z: tz });
+                x: tx, z: tz, ...tally });
   }
   return rows;
 }
@@ -131,5 +172,12 @@ for (const seed of SEEDS) {
     console.log(`COURIER    of it, rifle          not split  ${c.rifleDmg.toFixed(2).padStart(12)}   (${c.rifleHits} hits)`);
     console.log(`COURIER    riflemen within ${RIFLE_R} m ${String(last.inRifle).padStart(9)}  ${String(c.inRifle).padStart(12)}`);
     console.log(`COURIER    tanks within ${COURIER_RANGE} m    ${String(last.inTank).padStart(9)}  ${String(c.inTank).padStart(12)}`);
+    console.log('');
+    console.log('COURIER  WHERE THE CORE\'S POINTS COME FROM, split by the clock that fired');
+    console.log(`COURIER    shots at the truck      tank ${last.tankShots}   rifle ${last.rifleShots}`);
+    console.log(`COURIER    points landed          tank ${last.tank.toFixed(2)}   rifle ${last.rifle.toFixed(2)}` +
+                `   ambiguous ${last.ambiguous.toFixed(2)}`);
+    console.log('COURIER    ambiguous means both weapons fired in the same tick and the point');
+    console.log('COURIER    cannot be attributed from outside. It is printed, not apportioned.');
   }
 }
