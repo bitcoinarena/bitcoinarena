@@ -55,6 +55,35 @@ const isArmour = (i) => (i & 3) === 0;
 const RADIUS = HAS_AIR ? q(air.BOMB_RADIUS) : 16;
 const FRONT_X = 92, HALF_DEPTH = 79;
 
+const army = await import(new URL('rules/army.js', base).pathname);
+/** A rifleman's hit points and his reach. Both may be absent in the control. */
+const RIFLE_HP = typeof army.RIFLE_HP === 'number' ? q(army.RIFLE_HP) : 10;
+const RIFLE_RANGE = typeof army.RIFLE_RANGE === 'number' ? q(army.RIFLE_RANGE) : 26;
+
+/** What the blast is worth to a unit d metres out: the armour falloff, in metres. */
+const BOMB_PEAK = HAS_AIR ? q(air.BOMB_DAMAGE) : 120;
+const damageAt = (d) => (d >= RADIUS ? 0 : BOMB_PEAK * (1 - d / RADIUS));
+
+/**
+ * The ring where the falloff drops to a rifleman's hit points: 16 * (1 - 10/120)
+ * = 14.67 m.
+ *
+ * Nothing in either engine uses it - a bomb does not wound a rifleman, it
+ * clears the circle, in Army.Detonate and in sim.js alike. It is here because
+ * it is the SAME counter-check the armour line already carries ("could this
+ * bomb alone have killed him"), evaluated for a man who holds ten points, and
+ * because it splits the circle into the disc a falloff rule would have taken
+ * and the 16% of its area it would have left standing. If the core's men sit
+ * further out than the recording's, that is where it shows.
+ */
+const RING = RADIUS * (1 - RIFLE_HP / BOMB_PEAK);
+
+/** Two-metre bands out from the centre, and the share of the area each holds. */
+const BAND = 2;
+const BANDS = Math.round(RADIUS / BAND);
+const bandOf = (d) => Math.min(BANDS - 1, Math.floor(d / BAND));
+const bandArea = [...Array(BANDS)].map((_, k) => ((k + 1) ** 2 - k ** 2) / BANDS ** 2);
+
 const ref = JSON.parse(readFileSync(new URL('../test/vectors/csharp-gunships.json', import.meta.url), 'utf8'));
 
 function pinSeam(st) { st.tape.fill(st.tape[0]); return st; }
@@ -126,6 +155,23 @@ function measure(seed) {
   // a shell in the same tick must have helped. The recording attributes by
   // event order, which nothing outside the core can see.
   let sharedArmourKills = 0;
+  // The same counter-check for a rifleman, and the same formula: hit points
+  // against the falloff at his distance. He holds ten and the falloff is 120 at
+  // the centre, so it is true exactly outside RING - which is why the number is
+  // reported beside the ring split rather than instead of it.
+  let sharedInfKills = 0;
+  // A body inside two circles in one tick. Each bomb claims it, so infKills
+  // counts it twice; the C# recorder dedupes on the unit and reports the
+  // double-fires separately (doubleFire.infantry, 0 on all four seeds).
+  let doubleClaimedInf = 0, doubleClaimedArmour = 0, uniqueInfClaimed = 0;
+  // A bound, not an attribution: a claimed man who had an enemy rifleman
+  // inside 26 m at the top of the tick is a man a rifle could have taken
+  // first. The rifle fires in the unit loop, the bomb in the air phase after
+  // it, and from outside the core the two deaths look identical - so this is
+  // the largest number of bomb kills that could really be rifle kills.
+  let claimedWithRifleInReach = 0;
+  const inBands = new Array(BANDS).fill(0), killBands = new Array(BANDS).fill(0);
+  let infInInner = 0, infInOuter = 0, infInner = 0, infOuter = 0, blastsMismatched = 0;
 
   let prev = census(st);
   let prevHelis = helis(st);
@@ -168,36 +214,69 @@ function measure(seed) {
       // the air phase, so the post-step one is exact unless the slot was
       // refilled underneath it.
       const at = (a.alive && b.alive) ? (ambiguous++, a) : b;
-      dead.push({ i, armour: a.armour, side: a.side, x: at.x, z: at.z, hpWas: a.hp });
+      // Was there an enemy rifle on him when he fell? Start-of-tick positions:
+      // a rifleman covers 4 cm in a tick, so this is the same set the unit loop
+      // saw, and it is the only handle the outside has on what killed him.
+      let rifleInReach = false;
+      if (!a.armour)
+        for (let j = 0; j < UNITS && !rifleInReach; j++) {
+          const e = prev[j];
+          if (!e.alive || e.armour || e.side === a.side) continue;
+          rifleInReach = Math.hypot(e.x - at.x, e.z - at.z) <= RIFLE_RANGE;
+        }
+      dead.push({ i, armour: a.armour, side: a.side, x: at.x, z: at.z, hpWas: a.hp, rifleInReach });
       if (a.armour) armourLost++;
     }
 
     for (const b of landed) {
       const blast = { t, x: b.x, z: b.z, side: b.side, where: where(b),
                       infIn: 0, armourIn: 0, inf: 0, infBull: 0, infBear: 0,
-                      armour: 0, friendly: 0 };
+                      armour: 0, friendly: 0,
+                      infInInner: 0, infInOuter: 0, infInner: 0, infOuter: 0,
+                      meanIn: 0, meanKill: 0 };
       // Inside the circle when it went off. Positions do not change during the
       // air phase, so this is the same set Detonate saw.
+      //
+      // The distance is written down now, per man and per detonation, because
+      // the head count alone cannot say whether a bomb here is worth more than
+      // a bomb there for the density under it or for how far out it still
+      // kills. inBands is what a bomb COVERS, killBands what it TAKES.
+      let sumIn = 0;
       for (let i = 0; i < UNITS; i++) {
         const u = prev[i].alive ? now[i] : null;
         if (!u) continue;
         const d = Math.hypot(u.x - b.x, u.z - b.z);
         if (d > RADIUS) continue;
-        if (u.armour) blast.armourIn++; else blast.infIn++;
+        if (u.armour) { blast.armourIn++; continue; }
+        blast.infIn++;
+        sumIn += d;
+        inBands[bandOf(d)]++;
+        if (d > RING) { blast.infInOuter++; infInOuter++; } else { blast.infInInner++; infInInner++; }
       }
+      blast.meanIn = blast.infIn ? sumIn / blast.infIn : 0;
+      let sumKill = 0;
       for (const d of dead) {
         const dist = Math.hypot(d.x - b.x, d.z - b.z);
         if (dist > RADIUS) continue;
         if (d.armour) {
           blast.armour++;
-          if (d.hpWas > 120 * (1 - dist / RADIUS)) sharedArmourKills++;
+          if (d.claimed) doubleClaimedArmour++;
+          if (d.hpWas > damageAt(dist)) sharedArmourKills++;
         } else {
           blast.inf++;
           if (d.side < 0) blast.infBull++; else blast.infBear++;
           if (d.side === b.side) blast.friendly++;
+          if (d.claimed) doubleClaimedInf++; else uniqueInfClaimed++;
+          if (d.hpWas > damageAt(dist)) sharedInfKills++;
+          if (d.rifleInReach) claimedWithRifleInReach++;
+          sumKill += dist;
+          killBands[bandOf(dist)]++;
+          if (dist > RING) { blast.infOuter++; infOuter++; } else { blast.infInner++; infInner++; }
         }
         d.claimed = true;
       }
+      blast.meanKill = blast.inf ? sumKill / blast.inf : 0;
+      if (blast.inf !== blast.infIn) blastsMismatched++;
       blasts.push(blast);
     }
     for (const d of dead) {
@@ -235,7 +314,9 @@ function measure(seed) {
     seed, detonated, effective, offField, ownGround,
     enemyGround: detonated - offField - ownGround,
     sorties, sortiesBull, sortiesBear, airborneSeconds, bombsInAirSeconds,
-    peakAirborne, peakBombs, ambiguous, sharedArmourKills,
+    peakAirborne, peakBombs, ambiguous, sharedArmourKills, sharedInfKills,
+    doubleClaimedInf, doubleClaimedArmour, uniqueInfClaimed, claimedWithRifleInReach,
+    inBands, killBands, infInInner, infInOuter, infInner, infOuter, blastsMismatched,
     infKills, armourKills, shellKills, riflemenKilled, armourLost, arrived,
     infBull: sum((b) => b.infBull), infBear: sum((b) => b.infBear),
     friendly: sum((b) => b.friendly),
@@ -285,10 +366,38 @@ for (const r of rows) {
   if (r.ambiguous || r.sharedArmourKills)
     console.log(`AIRCORE caveat  seed=${r.seed} slotsRefilledInTheTickTheyDied=${r.ambiguous} ` +
                 `tanksABombAloneCouldNotHaveKilled=${r.sharedArmourKills}`);
+  // perEffectiveBomb, taken apart. The recording publishes insideRadius per
+  // pass, so both factors are comparable and not only their product.
+  console.log(`AIRCORE lethal  seed=${r.seed} effective=${r.effective} menInRadius=${r.infIn} ` +
+              `menPerEffectiveBomb=${r.effective ? (r.infIn / r.effective).toFixed(2) : '-'} ` +
+              `x lethalityInRadius=${r.infIn ? (r.infKills / r.infIn).toFixed(3) : '-'} ` +
+              `= perEffectiveBomb=${r.effective ? (r.infKills / r.effective).toFixed(2) : '-'} ` +
+              `blastsWhereKilledNotEqualCovered=${r.blastsMismatched}`);
+  console.log(`AIRCORE ring    seed=${r.seed} ring=${RING.toFixed(2)}m ` +
+              `covered inner=${r.infInInner} outer=${r.infInOuter} ` +
+              `(outerShare=${r.infIn ? (r.infInOuter / r.infIn).toFixed(2) : '-'}, ` +
+              `evenSpread=${(1 - (RING / RADIUS) ** 2).toFixed(2)}) ` +
+              `killed inner=${r.infInner} outer=${r.infOuter} ` +
+              `lethalityInner=${r.infInInner ? (r.infInner / r.infInInner).toFixed(3) : '-'} ` +
+              `lethalityOuter=${r.infInOuter ? (r.infOuter / r.infInOuter).toFixed(3) : '-'} ` +
+              `menABombAloneCouldNotHaveKilled=${r.sharedInfKills}`);
+  console.log(`AIRCORE bands   seed=${r.seed} d/m ` +
+              r.inBands.map((n, k) => `${k * BAND}-${(k + 1) * BAND}=${n}/${r.killBands[k]}` +
+                                      `(${r.infIn ? (n / r.infIn).toFixed(2) : '-'}` +
+                                      `|${bandArea[k].toFixed(2)})`).join(' ') +
+              '   covered/killed(share|evenShare)');
+  console.log(`AIRCORE claim   seed=${r.seed} claimedByBombs=${r.infKills} ` +
+              `distinctMen=${r.uniqueInfClaimed} claimedTwiceInOneTick=${r.doubleClaimedInf} ` +
+              `armourTwice=${r.doubleClaimedArmour} ` +
+              `withAnEnemyRifleInside${RIFLE_RANGE}m=${r.claimedWithRifleInReach} ` +
+              `(${r.infKills ? (r.claimedWithRifleInReach / r.infKills).toFixed(2) : '-'}) ` +
+              `byRifleOutsideEveryCircle=${r.riflemenKilled}`);
   if (BOMBS) for (const b of r.blasts)
     console.log(`AIRCORE bomb seed=${r.seed} t=${b.t.toFixed(1)} side=${b.side < 0 ? 'bull' : 'bear'} ` +
                 `x=${b.x.toFixed(1)} z=${b.z.toFixed(1)} where=${b.where} infIn=${b.infIn} ` +
-                `armourIn=${b.armourIn} inf=${b.inf} armour=${b.armour} friendly=${b.friendly}`);
+                `armourIn=${b.armourIn} inf=${b.inf} armour=${b.armour} friendly=${b.friendly} ` +
+                `coveredIn/Out=${b.infInInner}/${b.infInOuter} killedIn/Out=${b.infInner}/${b.infOuter} ` +
+                `meanD=${b.meanIn.toFixed(1)} meanKillD=${b.meanKill.toFixed(1)}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -332,3 +441,33 @@ for (const [name, [lo, hi], d] of CHECKS) {
               (r ? `rec [${fmt(r[0], d)}, ${fmt(r[1], d)}]  ${ok ? 'OVERLAPS' : 'OUTSIDE'}` : 'no reference'));
 }
 console.log(`AIRCORE ENVELOPE ${inside}/${CHECKS.length} quantities overlap the recording`);
+
+// ---------------------------------------------------------------------------
+// perEffectiveBomb, taken apart, against the recording's own passes.
+//
+// These two are NOT in the envelope block and are not counted in the 17. They
+// are computed here from the per-pass rows the recording already publishes -
+// summary.infantry.insideRadius against summary.bombs.effective - because the
+// envelope quotes only their product, and the product cannot say whether the
+// core's excess is more men under a bomb or more of them dying.
+const airPasses = Object.entries(ref.passes)
+  .filter(([, p]) => p.exit.air === 'on')
+  .map(([, p]) => p.summary);
+const refSpan = (f) => [Math.min(...airPasses.map(f)), Math.max(...airPasses.map(f))];
+const DERIVED = [
+  ['menPerEffectiveBomb', span((r) => r.infIn / r.effective),
+                          refSpan((s) => s.infantry.insideRadius / s.bombs.effective), 2],
+  ['lethalityInRadius', span((r) => r.infKills / r.infIn),
+                        refSpan((s) => s.infantry.killedByBombs / s.infantry.insideRadius), 3],
+  ['infantryPerEffectiveBomb', span((r) => r.infKills / r.effective),
+                               refSpan((s) => s.infantry.perEffectiveBomb), 2],
+];
+console.log('');
+console.log('AIRCORE DECOMPOSE  perEffectiveBomb = menPerEffectiveBomb x lethalityInRadius');
+for (const [name, [lo, hi], [rlo, rhi], d] of DERIVED) {
+  // A core with no air divides by zero here, and a NaN that prints OVERLAPS is
+  // worse than no line at all.
+  const has = Number.isFinite(lo) && Number.isFinite(hi);
+  console.log(`AIRCORE dec ${name.padEnd(26)} core ${has ? `[${fmt(lo, d)}, ${fmt(hi, d)}]` : '[no bombs]'}`.padEnd(70) +
+              `rec [${fmt(rlo, d)}, ${fmt(rhi, d)}]  ${!has ? 'NOT COMPARABLE' : !(hi < rlo || lo > rhi) ? 'OVERLAPS' : 'OUTSIDE'}`);
+}
