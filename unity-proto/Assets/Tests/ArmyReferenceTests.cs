@@ -110,7 +110,7 @@ public class ArmyReferenceTests
     /// One line of the table: where each side's units are relative to the
     /// seam, how fast they are closing, and how many are still alive.
     /// </summary>
-    static void Row(StringBuilder sb, Army army, float t, string tag, int armourLost)
+    internal static void Row(StringBuilder sb, Army army, float t, string tag, int armourLost)
     {
         Stats(army.Armour, Army.Side.Bull, out float av, out float ad, out int an);
         Stats(army.Armour, Army.Side.Bear, out float bv, out float bd, out int bn);
