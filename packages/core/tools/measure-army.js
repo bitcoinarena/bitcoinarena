@@ -225,9 +225,17 @@ function measure(seed) {
         ` z=${mean(aAlive.map((u) => u.z - seam)).toFixed(1)} sd=${stdev(aAlive.map((u) => u.z)).toFixed(1)}` +
         `  inf ${iAlive.length}/${inf.length} (${(100 * iAlive.length / inf.length).toFixed(0)}%)` +
         ` z=${mean(iAlive.map((u) => u.z - seam)).toFixed(1)}` +
+        // The infantry's SPREAD, which this line used to leave out on both
+        // sides although the recording carries it per row. It is the whole of
+        // (q): the men march in lockstep for the first half-minute and
+        // over-spread later, and spread decides who stands inside a 16 m
+        // blast. A comparison that prints the mean and drops the spread hides
+        // exactly the quantity in question.
+        ` sd=${stdev(iAlive.map((u) => u.z)).toFixed(1)}` +
         (refArm ? `   | REC armour ${refArm.n}/${refPass.armourPerSide} (${(100 * refArm.n / refPass.armourPerSide).toFixed(0)}%)` +
           ` z=${refArm.z.toFixed(1)} sd=${refArm.spread.toFixed(1)}` +
-          `  inf ${refInf.n}/${refPass.infantryPerSide} (${(100 * refInf.n / refPass.infantryPerSide).toFixed(0)}%)` : ''));
+          `  inf ${refInf.n}/${refPass.infantryPerSide} (${(100 * refInf.n / refPass.infantryPerSide).toFixed(0)}%)` +
+          ` z=${refInf.z.toFixed(1)} sd=${refInf.spread.toFixed(1)}` : ''));
     }
 
     // The question this file exists for: WHERE the dead are.
