@@ -56,19 +56,62 @@
 //              see, and that is the hypothesis under test, so it is never
 //              quoted as the C#'s answer.
 //
+// ---------------------------------------------------------------------------
+// AND THE ONE COMPARISON THAT HAS TO BE GUARDED: THE DEPTH
+//
+// The recording carries mean z and a z spread at EVERY sample, so the line's
+// depth is the one shape number that can be laid engine to engine after t=0.
+// It is also the one that is easiest to quote wrongly, and was: this tool
+// printed `z spread core 1.1-31.1  REC 3.5-25.7` with the core under air ON,
+// against a recording whose own `setup.air` is "none". Half that core's
+// riflemen are killed by bombs and replaced from the edge over the round; the
+// C# line in that column was never bombed at all. The two columns are two
+// different battles and the spread of a line is exactly the quantity the
+// difference moves, so the pair said nothing and read as if it did.
+//
+// So the pairing is now CONDITIONED, from the recording's own setup block:
+// `setup.air` must be "none" and `setup.seam` must be the pinned z=0 seam, or
+// the REC column is withheld and the reason is printed in its place. To get
+// the comparison, hold the core's air down with --sorties=off, which is what
+// ArmyReferenceTests does by simply never calling LaunchSorties.
+//
 //     node tools/measure-squads.js [seed ...] [--seam0] [--quiet] [--core=DIR]
+//                                    [--sorties=on|off|grounded]
 //
 // --seam0 pins the frontline at z=0, the recording's condition. --core=DIR
 // loads the core from elsewhere - a worktree from before a change is the
 // before half of a before-and-after. --quiet drops the per-sample rows.
 //
-// Prints; asserts nothing.
+// --sorties= holds the air down from OUT HERE, on whatever core is loaded, by
+// the same mechanism measure-infantry.js uses and for the same reason - no
+// rule is edited and nothing but the air's own state words is written:
+//
+//   off        the two sortie clocks are pinned high after every tick, so
+//              launchSorties never fires and the air draws NOTHING from the
+//              stream. This is the recording's own condition.
+//   grounded   the clocks run and their draws land on the stream as usual, but
+//              every gunship and bomb slot is cleared the tick it is filled.
+//              The sortie's draws are paid for; the bombs are not. The two
+//              hold modes say whether an answer is an artefact of WHICH draws
+//              were withheld.
+//
+// No hold makes one SEED comparable across conditions - every draw the air
+// makes comes off the same stream the ground fight uses, so air-off seed
+// 20260901 and air-on seed 20260901 are two battles, not one battle with the
+// bombs removed. Only the envelope over the four seeds is a comparison, which
+// is the rule the recording is read under too.
+//
+// Prints; asserts nothing, except that a held run really did stay on the
+// ground: in --sorties=off the gunships and bombs cleared must both be zero.
 import { readFileSync } from 'node:fs';
 
 const args = process.argv.slice(2);
 const SEAM0 = args.includes('--seam0');
 const QUIET = args.includes('--quiet');
 const CORE = (args.find((a) => a.startsWith('--core=')) || '--core=../src').slice(7);
+const SORTIES = (args.find((a) => a.startsWith('--sorties=')) || '--sorties=on').slice(10);
+if (!['on', 'off', 'grounded'].includes(SORTIES))
+  throw new Error('--sorties= takes on, off or grounded');
 const SEEDS = args.filter((a) => !a.startsWith('--')).map(Number);
 if (SEEDS.length === 0) SEEDS.push(20260901, 20260902, 20260903, 20260904);
 
@@ -79,6 +122,53 @@ const HAS_AIR = typeof L.O_HELIS === 'number';
 const { riflePost } = await import(new URL('rules/army.js', base).pathname);
 const rifleStand = (anchor, i) => Math.max(Math.imul(-88, Q), Math.min(Math.imul(88, Q), riflePost(anchor, i)));
 const air = HAS_AIR ? await import(new URL('rules/air.js', base).pathname) : null;
+// A core from before rules/air.js has no sortie clock and no gunship slots, so
+// there is nothing to hold down and the words the hold would write are not in
+// its layout. That core is air-off already; asking for the flag on it is a
+// mistake about which core is loaded, caught here rather than written to
+// state[NaN].
+if (SORTIES !== 'on' && !HAS_AIR)
+  throw new Error(`--sorties=${SORTIES} wants a core with an air arm; ${CORE} has none (it is air-off already)`);
+
+/** Which condition this run is under. Every line the tool prints carries it. */
+const MODE = SORTIES;
+const AIR_OFF = MODE === 'off' || MODE === 'grounded' || !HAS_AIR;
+const cond = () => (MODE === 'on' ? `air=${HAS_AIR ? 'on' : 'off'}` : `air=held(${MODE})`);
+
+/**
+ * Long enough that the clock never runs out: 2^30 in Q16.16 is 16384 seconds
+ * against a round of ninety, and launchSorties takes one tick off it per tick.
+ */
+const CLOCK_HIGH = 1 << 30;
+
+/**
+ * Holds the air down, from outside the rules. Called on the fresh state and
+ * again after every tick. In 'off' nothing should ever be live here at all and
+ * the counts are the evidence that the pin held; in 'grounded' the clearing IS
+ * the suppression. The units, the squads, the tape and the stream are left
+ * exactly as the core left them.
+ */
+function hold(st, tally) {
+  if (MODE === 'on') return st;
+  const s = st.i32;
+  if (MODE === 'off') {
+    s[L.O_AIR + L.AIR_BULL] = CLOCK_HIGH;
+    s[L.O_AIR + L.AIR_BEAR] = CLOCK_HIGH;
+  }
+  for (let i = 0; i < L.MAX_HELIS; i++) {
+    const o = L.heliBase(i);
+    if (s[o + L.H_STATE] === 0) continue;
+    s[o + L.H_STATE] = 0;
+    tally.helis++;
+  }
+  for (let i = 0; i < L.MAX_BOMBS; i++) {
+    const o = L.bombBase(i);
+    if (s[o + L.B_STATE] === 0) continue;
+    s[o + L.B_STATE] = 0;
+    tally.bombs++;
+  }
+  return st;
+}
 
 const Q = 65536;
 const q = (v) => v / Q;
@@ -92,6 +182,26 @@ const EDGE = 88;
 const STEP = 0.25;
 
 const ref = JSON.parse(readFileSync(new URL('../test/vectors/csharp-infantry.json', import.meta.url), 'utf8'));
+
+// ---------------------------------------------------------------------------
+// Is the core being run under the recording's own condition?
+//
+// Read off the recording's setup block rather than remembered here, so that a
+// re-record that turns the air on cannot leave this tool quoting a pair that
+// has stopped being a pair. Two things have to match, and only the depth
+// comparison needs them: the air, and the seam. (The t=0 x geometry does not -
+// it is formed at spawn, before either can have done anything.)
+const REC_AIR_OFF = ref.setup.air === 'none';
+const REC_SEAM0 = /z\s*=\s*0/.test(String(ref.setup.seam));
+const mismatch = [];
+if (REC_AIR_OFF !== AIR_OFF)
+  mismatch.push(AIR_OFF
+    ? `the recording is air-ON (setup.air=${JSON.stringify(ref.setup.air)}) and this core is air-off`
+    : `this core is air-ON and the recording is air-off (setup.air=${JSON.stringify(ref.setup.air)})`);
+if (REC_SEAM0 && !SEAM0) mismatch.push('the recording pins the seam at z=0 and this run does not (--seam0)');
+const COMPARABLE = mismatch.length === 0;
+const REC_TAG = COMPARABLE ? 'REC ' : 'REC*';
+
 const refPass = (seed) => ref.passes[seed === 20260901 ? 'line' : `line-${seed}`];
 const refRow = (seed, t) => {
   const p = refPass(seed);
@@ -327,7 +437,7 @@ const fmtFront = (fr) => `cover=${fr.cover.toFixed(2)} dud=${fr.dud.toFixed(2)} 
 // ---------------------------------------------------------------------------
 // The core.
 function pinSeam(st) { st.tape.fill(st.tape[0]); return st; }
-const start = (seed) => (SEAM0 ? pinSeam(init(seed)) : init(seed));
+const start = (seed, tally) => hold(SEAM0 ? pinSeam(init(seed)) : init(seed), tally);
 
 function coreGeometry(st) {
   const s = st.i32;
@@ -366,7 +476,7 @@ function realPairs(men, r) {
 function measure(seed) {
   const chk = replayCheck(seed);
   console.log('');
-  console.log(`SQUAD BEGIN seed=${seed}${SEAM0 ? ' seam0' : ''} air=${HAS_AIR ? 'on' : 'off'} ` +
+  console.log(`SQUAD BEGIN seed=${seed}${SEAM0 ? ' seam0' : ''} ${cond()} ` +
               `blast=${BLAST} squads/side core=${L.SQUADS_PER_SIDE} ` +
               `rec=${chk.ok ? chk.world.squads.bull.length : '?'}`);
   if (!chk.ok) {
@@ -377,7 +487,8 @@ function measure(seed) {
     console.log(`SQUAD replay ok seed=${seed} (t=0 row reproduced to the digit: ${chk.want})`);
   }
 
-  const st = start(seed);
+  const tally = { helis: 0, bombs: 0 };
+  const st = start(seed, tally);
   const rows = [];
   const recRows = [];
 
@@ -421,13 +532,16 @@ function measure(seed) {
     const rr = refRow(seed, t);
     console.log(`SQUAD t=${t.toFixed(0).padStart(2)} zspread core bull ${zs.bull.n}@${zs.bull.z.toFixed(1)}sd${zs.bull.spread.toFixed(1)} ` +
                 `bear ${zs.bear.n}@${zs.bear.z.toFixed(1)}sd${zs.bear.spread.toFixed(1)} lag=${lag.toFixed(1)}` +
-                (rr ? `  | REC bull ${rr.bullInf.n}@${rr.bullInf.z.toFixed(1)}sd${rr.bullInf.spread.toFixed(1)} ` +
+                (rr ? `  | ${REC_TAG} bull ${rr.bullInf.n}@${rr.bullInf.z.toFixed(1)}sd${rr.bullInf.spread.toFixed(1)} ` +
                       `bear ${rr.bearInf.n}@${rr.bearInf.z.toFixed(1)}sd${rr.bearInf.spread.toFixed(1)}` : ''));
   };
 
   sample(0, 0);
   for (let n = 1; n <= TICKS; n++) {
     step(st, 0, 0, 0, 0, 0);
+    // Between the tick and the sample, so nothing this tool reads ever sees an
+    // aircraft the hold means to have taken away.
+    hold(st, tally);
     if (n % SAMPLE === 0) sample(n * dt, n);
   }
 
@@ -459,13 +573,24 @@ function measure(seed) {
       rifle2d: span(held, (r) => r.rifle2d), nearest2d: span(held, (r) => r.nearest2d),
       lag: span(held, (r) => r.lag),
       zSpread: flat(held, (r) => [r.zBull.spread, r.zBear.spread]),
+      zBull: span(held, (r) => r.zBull.z), zBear: span(held, (r) => r.zBear.z),
+      standoff: flat(held, (r) => [Math.abs(r.zBull.z), Math.abs(r.zBear.z)]),
     },
+    // The recording's own depth over the same window. Its rows carry mean z
+    // and spread at every sample, which is the whole reason depth is a
+    // comparison at all - but see COMPARABLE: it is air-off, and quoting it
+    // beside an air-on core is what this tool got wrong before.
     recZ: (() => {
       const pass = refPass(seed);
       if (!pass) return null;
       const rs = pass.rows.filter((r) => r.t >= 25);
-      const vals = rs.flatMap((r) => [r.bullInf.spread, r.bearInf.spread]);
-      return [Math.min(...vals), Math.max(...vals)];
+      const sp = rs.flatMap((r) => [r.bullInf.spread, r.bearInf.spread]);
+      const bu = rs.map((r) => r.bullInf.z), be = rs.map((r) => r.bearInf.z);
+      const so = rs.flatMap((r) => [Math.abs(r.bullInf.z), Math.abs(r.bearInf.z)]);
+      return { spread: [Math.min(...sp), Math.max(...sp)],
+               bull: [Math.min(...bu), Math.max(...bu)],
+               bear: [Math.min(...be), Math.max(...be)],
+               standoff: [Math.min(...so), Math.max(...so)] };
     })(),
     proj: chk.ok ? {
       men: flat(recHeld, menPer), width: flat(recHeld, widths),
@@ -494,8 +619,17 @@ function measure(seed) {
               `rifle2d=${c.rifle2d[0]}-${c.rifle2d[1]} ` +
               `nearest2d=${c.nearest2d[0].toFixed(1)}-${c.nearest2d[1].toFixed(1)} ` +
               `zSpread=${c.zSpread[0].toFixed(1)}-${c.zSpread[1].toFixed(1)} ` +
+              `standoff=${c.standoff[0].toFixed(1)}-${c.standoff[1].toFixed(1)} ` +
               `lag=${c.lag[0].toFixed(1)}-${c.lag[1].toFixed(1)}` +
-              (sum.recZ ? `   REC zSpread=${sum.recZ[0].toFixed(1)}-${sum.recZ[1].toFixed(1)}` : ''));
+              (sum.recZ ? `   ${REC_TAG} zSpread=${sum.recZ.spread[0].toFixed(1)}-${sum.recZ.spread[1].toFixed(1)}` +
+                          ` standoff=${sum.recZ.standoff[0].toFixed(1)}-${sum.recZ.standoff[1].toFixed(1)}` : ''));
+  if (MODE !== 'on')
+    console.log(`SQUAD summary seed=${seed} held gunships=${tally.helis} bombs=${tally.bombs}` +
+                (MODE === 'off'
+                  ? (tally.helis === 0 && tally.bombs === 0
+                      ? '   (both zero: the clock pin held and nothing ever launched)'
+                      : '   *** NOT ZERO: the clock pin did NOT hold - this run is not air-off ***')
+                  : '   (cleared the tick they were filled; a bomb here would be a fault)'));
   if (chk.ok) {
     const p = sum.proj;
     console.log(`SQUAD summary seed=${seed} PROJ menPerKnot=${p.men[0]}-${p.men[1]} ` +
@@ -513,16 +647,20 @@ const all = SEEDS.map(measure);
 const ok = all.filter((a) => a.ok);
 
 const W = 18;
+/** A range. Joined with `to` when an endpoint is negative, because `-54.9--10.1` is not a number anybody can read. */
+const rng = (v, d) => (v[0] < 0 || v[1] < 0
+  ? `${v[0].toFixed(d)} to ${v[1].toFixed(d)}`
+  : `${v[0].toFixed(d)}-${v[1].toFixed(d)}`);
 const pair = (name, core, other, label, d = 1) => {
-  const left = `SQUAD ${name.padEnd(W)} core ${core[0].toFixed(d)}-${core[1].toFixed(d)}`;
-  console.log(other ? left.padEnd(46) + `  ${label} ${other[0].toFixed(d)}-${other[1].toFixed(d)}` : left);
+  const left = `SQUAD ${name.padEnd(W)} core ${rng(core, d)}`;
+  console.log(other ? left.padEnd(46) + `  ${label} ${rng(other, d)}` : left);
 };
 const merge = (list, pick) => [Math.min(...list.map((a) => pick(a)[0])), Math.max(...list.map((a) => pick(a)[1]))];
 const one = (list, pick) => [Math.min(...list.map(pick)), Math.max(...list.map(pick))];
 
 console.log('');
 console.log(`SQUAD ENVELOPE seeds ${SEEDS.join(',')}  replayed ${ok.length}/${all.length}` +
-            `  air=${HAS_AIR ? 'on' : 'off'}${SEAM0 ? ' seam0' : ''}`);
+            `  ${cond()}${SEAM0 ? ' seam0' : ''}`);
 console.log('SQUAD');
 console.log('SQUAD -- t=0: BOTH ENGINES MEASURED. Every man is on his post the tick he');
 console.log('SQUAD    spawns, in both, so the whole x geometry is formed up and exact.');
@@ -549,11 +687,37 @@ pair('front both', merge(all, (a) => a.core.both), ok.length ? merge(ok, (a) => 
 pair('rifleBoth', merge(all, (a) => a.core.rifleBoth), ok.length ? merge(ok, (a) => a.proj.rifleBoth) : null, 'PROJ', 2);
 pair('men under blast', merge(all, (a) => a.core.under), ok.length ? merge(ok, (a) => a.proj.under) : null, 'PROJ');
 console.log('SQUAD');
-console.log('SQUAD -- over the round, BOTH ENGINES MEASURED. The recording carries a z');
-console.log('SQUAD    spread at every sample, so the line\'s depth is a real comparison');
-console.log('SQUAD    where its x geometry after t=0 is not.');
-pair('z spread', merge(all, (a) => a.core.zSpread),
-     ok.length ? merge(all.filter((a) => a.recZ), (a) => a.recZ) : null, 'REC ');
+console.log('SQUAD -- over the round: the line\'s DEPTH. The recording carries mean z and');
+console.log('SQUAD    a z spread at every sample, so depth is the one shape number that can');
+console.log('SQUAD    be laid engine to engine after t=0 - and the ONLY one whose comparison');
+console.log('SQUAD    is conditional, because the air moves it.');
+const withZ = all.filter((a) => a.recZ);
+const recPick = (f) => (withZ.length ? merge(withZ, f) : null);
+if (COMPARABLE) {
+  console.log(`SQUAD    recording: air=${JSON.stringify(ref.setup.air)} seam=${JSON.stringify(ref.setup.seam)}`);
+  console.log(`SQUAD    this run:  ${cond()}${SEAM0 ? ' seam0' : ''}  -> LIKE FOR LIKE, quote these two together.`);
+  pair('z spread', merge(all, (a) => a.core.zSpread), recPick((a) => a.recZ.spread), 'REC ');
+  pair('mean z bull', merge(all, (a) => a.core.zBull), recPick((a) => a.recZ.bull), 'REC ');
+  pair('mean z bear', merge(all, (a) => a.core.zBear), recPick((a) => a.recZ.bear), 'REC ');
+  pair('standoff |mean z|', merge(all, (a) => a.core.standoff), recPick((a) => a.recZ.standoff), 'REC ');
+} else {
+  console.log(`SQUAD    recording: air=${JSON.stringify(ref.setup.air)} seam=${JSON.stringify(ref.setup.seam)}`);
+  console.log(`SQUAD    this run:  ${cond()}${SEAM0 ? ' seam0' : ''}`);
+  for (const m of mismatch) console.log(`SQUAD    *** NOT COMPARABLE: ${m}.`);
+  console.log('SQUAD    The REC depth column is WITHHELD. Half the core\'s riflemen are');
+  console.log('SQUAD    killed by bombs and replaced from the edge over the round, and the');
+  console.log('SQUAD    spread of a line is exactly what that moves. Run --sorties=off');
+  console.log('SQUAD    --seam0 for the pair. (The t=0 x geometry above is unaffected: it');
+  console.log('SQUAD    is formed at spawn, before the air or the seam can do anything.)');
+  pair('z spread', merge(all, (a) => a.core.zSpread), null, '');
+  pair('mean z bull', merge(all, (a) => a.core.zBull), null, '');
+  pair('mean z bear', merge(all, (a) => a.core.zBear), null, '');
+  pair('standoff |mean z|', merge(all, (a) => a.core.standoff), null, '');
+  const w = recPick((a) => a.recZ.spread), t = recPick((a) => a.recZ.standoff);
+  if (w) console.log(`SQUAD    (the recording's own, air-off, NOT to be paired with the above: ` +
+                     `z spread ${w[0].toFixed(1)}-${w[1].toFixed(1)}, standoff ${t[0].toFixed(1)}-${t[1].toFixed(1)})`);
+}
+if (!COMPARABLE) console.log('SQUAD    * a REC* row above is the recording under a condition this run is not.');
 console.log('SQUAD');
 console.log('SQUAD -- core only: the recording has no positions after t=0.');
 pair('post lag', merge(all, (a) => a.core.lag), null, '');

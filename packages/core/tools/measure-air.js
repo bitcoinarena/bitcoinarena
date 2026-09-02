@@ -15,6 +15,29 @@
 //
 // --bombs prints one line per detonation, in the recording's own shape.
 //
+// PER-DETONATION CONCENTRATION, and why the mean could not answer it.
+//
+// The air's excess was traced to one factor: lethality is exactly 1.000 in
+// both engines, so the whole of it is MEN COVERED - the core's bombs land on
+// more people, not on worse ground. `menPerEffectiveBomb` is 4.47-6.25 against
+// 3.67-4.75, and that is a mean over the round. A mean cannot say which of two
+// opposite things is true:
+//
+//   the line is uniformly denser, and every bomb finds a bit more, or
+//   the line is KNOTTED, and a few bombs find a crowd while the rest find the
+//   same handful the recording's do.
+//
+// So each detonation is now measured against its OWN counterfactual, at the
+// tick it went off: the same bomb slid along x at the same z, and slid along z
+// at the same x. That is the concentration - what this bomb found over what a
+// bomb at a random point on that line would have found - and it separates a
+// dense line from a lumpy one without a second engine.
+//
+// Core only, and marked so: the recording holds no distances and no positions,
+// only insideRadius and a detonation count for the whole pass. What the
+// recording CAN be held to is the mean, which is the DECOMPOSE block, and that
+// is where the comparison stays.
+//
 // --core=DIR loads the core from somewhere else, which is how the no-air
 // control is produced. The core has no switch for turning the air off and
 // should not grow one - a rule that can be disabled at runtime is a rule two
@@ -146,6 +169,7 @@ function measure(seed) {
   let airborneSeconds = 0, bombsInAirSeconds = 0, peakAirborne = 0, peakBombs = 0;
   const sortieTimes = { '-1': [], '1': [] };
   const blasts = [];
+  const sweepPool = { x: [], z: [] };
   // Slots that both died and were refilled inside one tick: their post-step
   // position is the replacement's, not the corpse's. Counted, not hidden.
   let ambiguous = 0;
@@ -228,6 +252,46 @@ function measure(seed) {
       if (a.armour) armourLost++;
     }
 
+    // Every rifleman standing at the top of this tick, gathered once for the
+    // whole tick's detonations: the concentration sweeps below read it a
+    // hundred times a bomb, and it is the same set the infIn loop counts.
+    const field = [];
+    if (landed.length)
+      for (let i = 0; i < UNITS; i++) {
+        if (!prev[i].alive || now[i].armour) continue;
+        field.push({ x: now[i].x, z: now[i].z });
+      }
+    /**
+     * The same bomb, slid along one axis, at the tick it actually went off.
+     *
+     * Along x it holds the blast's own z, so it asks what a bomb AT THIS DEPTH
+     * would have found at a random point of the front - the x geometry
+     * measure-squads already reads. Along z it holds the blast's own x and asks
+     * the same question down the line's depth, which is the axis the x sweep
+     * cannot see. Two-metre steps; the blast is 16 m across, so the sweep is
+     * far finer than the thing it is sweeping.
+     */
+    const sweep = (axis, b) => {
+      const counts = [];
+      const at = (cx, cz) => {
+        let n = 0;
+        for (const u of field) if (Math.hypot(u.x - cx, u.z - cz) <= RADIUS) n++;
+        return n;
+      };
+      if (axis === 'x') for (let x = -FRONT_X; x <= FRONT_X; x += 2) counts.push(at(x, b.z));
+      else for (let z = -HALF_DEPTH; z <= HALF_DEPTH; z += 2) counts.push(at(b.x, z));
+      counts.sort((p, q) => p - q);
+      // Two means, and the second is the stricter control. Most of the field is
+      // empty ground, so a mean over every point on the sweep is mostly
+      // measuring how much of the map has nobody on it. `hit` is the mean over
+      // the points that catch ANYBODY, which is the fair question: given a bomb
+      // that lands on men at all, does THIS one land on more of them?
+      const hits = counts.filter((v) => v > 0);
+      return { counts, mean: counts.reduce((a, c) => a + c, 0) / counts.length,
+               hit: hits.length ? hits.reduce((a, c) => a + c, 0) / hits.length : 0,
+               med: counts[counts.length >> 1], max: counts[counts.length - 1] };
+    };
+
     for (const b of landed) {
       const blast = { t, x: b.x, z: b.z, side: b.side, where: where(b),
                       infIn: 0, armourIn: 0, inf: 0, infBull: 0, infBear: 0,
@@ -242,6 +306,7 @@ function measure(seed) {
       // a bomb there for the density under it or for how far out it still
       // kills. inBands is what a bomb COVERS, killBands what it TAKES.
       let sumIn = 0;
+      const covered = [];
       for (let i = 0; i < UNITS; i++) {
         const u = prev[i].alive ? now[i] : null;
         if (!u) continue;
@@ -250,10 +315,29 @@ function measure(seed) {
         if (u.armour) { blast.armourIn++; continue; }
         blast.infIn++;
         sumIn += d;
+        covered.push(u);
         inBands[bandOf(d)]++;
         if (d > RING) { blast.infInOuter++; infInOuter++; } else { blast.infInInner++; infInInner++; }
       }
       blast.meanIn = blast.infIn ? sumIn / blast.infIn : 0;
+      // How the men it covers are laid out under it. sdX against sdZ says
+      // whether a crowded circle is a crowd across the front or a column down
+      // the line's depth, which is the shape the x geometry cannot report.
+      const spreadOf = (get) => {
+        if (covered.length === 0) return 0;
+        const m = covered.reduce((a, u) => a + get(u), 0) / covered.length;
+        return Math.sqrt(covered.reduce((a, u) => a + (get(u) - m) ** 2, 0) / covered.length);
+      };
+      blast.sdX = spreadOf((u) => u.x);
+      blast.sdZ = spreadOf((u) => u.z);
+      const sx = sweep('x', b), sz = sweep('z', b);
+      blast.swXmean = sx.mean; blast.swXmed = sx.med; blast.swXmax = sx.max; blast.swXhit = sx.hit;
+      blast.swZmean = sz.mean; blast.swZmed = sz.med; blast.swZmax = sz.max; blast.swZhit = sz.hit;
+      // Pooled, so the sweep can supply the NULL for the bombs' own spread of
+      // counts: a lumpy line makes a lumpy sweep too, and a top-quartile share
+      // means nothing without the share the same line gives a bomb thrown
+      // anywhere. Only x-sweeps at a depth a bomb actually reached are pooled.
+      if (b.where !== 'offfield') { sweepPool.x.push(...sx.counts); sweepPool.z.push(...sz.counts); }
       let sumKill = 0;
       for (const d of dead) {
         const dist = Math.hypot(d.x - b.x, d.z - b.z);
@@ -293,6 +377,39 @@ function measure(seed) {
     prev = now; prevHelis = nowHelis; prevBombs = nowBombs;
   }
 
+  // ---------------------------------------------------------------------
+  // Per-detonation concentration. Core only.
+  const onMen = blasts.filter((b) => b.infIn > 0);
+  const share = (xs) => {
+    if (xs.length === 0) return 0;
+    const c = [...xs].sort((a, b) => a - b);
+    const tot = c.reduce((a, v) => a + v, 0);
+    return tot ? c.slice(Math.ceil(c.length * 0.75)).reduce((a, v) => a + v, 0) / tot : 0;
+  };
+  const counts = onMen.map((b) => b.infIn).sort((a, b) => a - b);
+  const at = (f) => (counts.length ? counts[Math.min(counts.length - 1, Math.floor(f * counts.length))] : 0);
+  const agg = (f) => onMen.reduce((a, b) => a + f(b), 0);
+  const n = onMen.length || 1;
+  const totIn = counts.reduce((a, v) => a + v, 0);
+  // The ratio is of the TOTALS, not the mean of the per-bomb ratios: a bomb
+  // whose sweep mean is a fraction of a man would otherwise carry the whole
+  // number on its own.
+  const conc = {
+    onMen: onMen.length, med: at(0.5), p90: at(0.9), max: counts.length ? counts[counts.length - 1] : 0,
+    // The null is taken over the sweep points that catch anybody, for the same
+    // reason `hit` exists: empty ground is not a small bomb, it is no bomb, and
+    // pooling it makes any set of real detonations look evenly spread.
+    topQ: share(counts), topQnullX: share(sweepPool.x.filter((v) => v > 0)),
+    topQnullZ: share(sweepPool.z.filter((v) => v > 0)),
+    concX: agg((b) => b.swXmean) ? totIn / agg((b) => b.swXmean) : 0,
+    concZ: agg((b) => b.swZmean) ? totIn / agg((b) => b.swZmean) : 0,
+    concXhit: agg((b) => b.swXhit) ? totIn / agg((b) => b.swXhit) : 0,
+    concZhit: agg((b) => b.swZhit) ? totIn / agg((b) => b.swZhit) : 0,
+    swX: agg((b) => b.swXmean) / n, swZ: agg((b) => b.swZmean) / n,
+    swXhit: agg((b) => b.swXhit) / n, swZhit: agg((b) => b.swZhit) / n,
+    sdX: agg((b) => b.sdX) / n, sdZ: agg((b) => b.sdZ) / n,
+  };
+
   const exit = census(st);
   const alive = (armour, side) => exit.filter((u) => u.armour === armour && u.side === side && u.alive).length;
 
@@ -330,7 +447,7 @@ function measure(seed) {
     biggestArmour: Math.max(0, ...blasts.map((b) => b.armour)),
     bombsBefore30: blasts.filter((b) => b.t < 30).length,
     infBefore30: blasts.filter((b) => b.t < 30).reduce((a, b) => a + b.inf, 0),
-    intervals, blasts,
+    intervals, blasts, conc,
     exit: { bullArmour: alive(true, -1), bearArmour: alive(true, 1),
             bullInf: alive(false, -1), bearInf: alive(false, 1) },
   };
@@ -386,6 +503,14 @@ for (const r of rows) {
                                       `(${r.infIn ? (n / r.infIn).toFixed(2) : '-'}` +
                                       `|${bandArea[k].toFixed(2)})`).join(' ') +
               '   covered/killed(share|evenShare)');
+  const k = r.conc;
+  console.log(`AIRCORE conc    seed=${r.seed} bombsOnMen=${k.onMen} menPerBomb med=${k.med} p90=${k.p90} max=${k.max} ` +
+              `topQuartileShare=${k.topQ.toFixed(2)} (sweep null x=${k.topQnullX.toFixed(2)} z=${k.topQnullZ.toFixed(2)})`);
+  console.log(`AIRCORE conc    seed=${r.seed} sameBombAtARandom x=${k.swX.toFixed(2)} z=${k.swZ.toFixed(2)} men ` +
+              `-> concentrationX=${k.concX.toFixed(2)} concentrationZ=${k.concZ.toFixed(2)}`);
+  console.log(`AIRCORE conc    seed=${r.seed} ..that catches anybody x=${k.swXhit.toFixed(2)} z=${k.swZhit.toFixed(2)} men ` +
+              `-> concentrationX=${k.concXhit.toFixed(2)} concentrationZ=${k.concZhit.toFixed(2)}   ` +
+              `coveredMen sdX=${k.sdX.toFixed(1)} sdZ=${k.sdZ.toFixed(1)}`);
   console.log(`AIRCORE claim   seed=${r.seed} claimedByBombs=${r.infKills} ` +
               `distinctMen=${r.uniqueInfClaimed} claimedTwiceInOneTick=${r.doubleClaimedInf} ` +
               `armourTwice=${r.doubleClaimedArmour} ` +
@@ -397,7 +522,9 @@ for (const r of rows) {
                 `x=${b.x.toFixed(1)} z=${b.z.toFixed(1)} where=${b.where} infIn=${b.infIn} ` +
                 `armourIn=${b.armourIn} inf=${b.inf} armour=${b.armour} friendly=${b.friendly} ` +
                 `coveredIn/Out=${b.infInInner}/${b.infInOuter} killedIn/Out=${b.infInner}/${b.infOuter} ` +
-                `meanD=${b.meanIn.toFixed(1)} meanKillD=${b.meanKill.toFixed(1)}`);
+                `meanD=${b.meanIn.toFixed(1)} meanKillD=${b.meanKill.toFixed(1)} ` +
+                `sweepX=${b.swXmean.toFixed(2)} sweepZ=${b.swZmean.toFixed(2)} ` +
+                `sdX=${b.sdX.toFixed(1)} sdZ=${b.sdZ.toFixed(1)}`);
 }
 
 // ---------------------------------------------------------------------------

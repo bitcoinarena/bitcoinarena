@@ -381,6 +381,85 @@ function table(rows) {
     console.log(`INFCORE   ${name.padEnd(W)}off ${span(bombs(off))}  on ${span(bombs(on))}`);
   console.log(`INFCORE   ${'C# recording'.padEnd(W)}off ${span(cBombOff)}  on ${span(cBombOn)}`);
   console.log('INFCORE ' + '='.repeat(62));
+  bridge(rows, cRifleOff, cRifleOn, cBombOn);
+}
+
+/**
+ * THE SLOPE BRIDGE: how many rifle kills a round does one bomb death cost?
+ *
+ * The two open numbers are the core's rifle line (half the recording's) and
+ * the core's bomb toll (a third more than the recording's), and the standing
+ * question is whether they are ONE fact or two. A man taken by a bomb stops
+ * shooting and is replaced from the edge, so some of the rifle deficit is
+ * bought by the bomb excess by arithmetic alone - and how much is not a matter
+ * of opinion, because each engine publishes its OWN exchange rate:
+ *
+ *     slope = (rifle kills air-off - rifle kills air-on) / bomb kills air-on
+ *
+ * Both terms are measured in the same engine under its own two conditions, so
+ * the slope is a property of that engine and needs nothing from the other one.
+ * Every number here is already recorded: the C# column is csharp-gunships.json's
+ * noair and gunships passes, the core's is the two conditions run above.
+ *
+ * Of the means, and only of the means, for the reason the ratio above is: the
+ * air draws off the same stream the ground fight uses, so air-off seed X and
+ * air-on seed X are two battles and there is no seed-to-seed pairing to make.
+ * Four seeds is four points; the per-seed scatter is printed underneath so the
+ * slope is never read as tighter than the sample it came from.
+ *
+ * What it decides: if the core's slope IS the recording's, then the core's
+ * rifle line is what its bomb count implies and there is nothing further to
+ * find in the rifle rule - the whole of (l) is the bomb count, which is
+ * menPerEffectiveBomb, which is already an open measurement. Only a residual
+ * that survives the slope needs a new recorder pass to chase.
+ */
+function bridge(rows, cRifleOff, cRifleOn, cBombOn) {
+  const mean = (xs) => xs.reduce((a, c) => a + c, 0) / xs.length;
+  const kills = (all) => all.map((r) => r.rifleKills);
+  const bombs = (all) => all.map((r) => r.bombKills);
+  const cSlope = (mean(cRifleOff) - mean(cRifleOn)) / mean(cBombOn);
+
+  console.log('');
+  console.log('INFCORE ' + '='.repeat(62));
+  console.log('INFCORE THE SLOPE: rifle kills a round given up per man taken by a bomb');
+  console.log('INFCORE   slope = (rifleOff - rifleOn) / bombKillsOn, of the means, per engine');
+  console.log('INFCORE ' + ' '.repeat(26) + 'rifleOff'.padEnd(10) + 'rifleOn'.padEnd(10) +
+              'bombsOn'.padEnd(10) + 'slope');
+  const line = (name, ro, rn, bn) =>
+    console.log('INFCORE ' + name.padEnd(26) + ro.toFixed(1).padEnd(10) + rn.toFixed(1).padEnd(10) +
+                bn.toFixed(1).padEnd(10) + ((ro - rn) / bn).toFixed(3));
+  for (const [name, off, on] of rows)
+    line(name, mean(kills(off)), mean(kills(on)), mean(bombs(on)));
+  line('C# recording', mean(cRifleOff), mean(cRifleOn), mean(cBombOn));
+
+  // The gap the item is about, split into the three things that make it. The
+  // terms are constructed to sum to it exactly, so nothing hides in a rounding.
+  console.log('INFCORE');
+  console.log('INFCORE THE AIR-ON RIFLE GAP, taken apart at the recording\'s own slope:');
+  for (const [name, off, on] of rows) {
+    const ro = mean(kills(off)), rn = mean(kills(on)), bn = mean(bombs(on));
+    const gap = mean(cRifleOn) - rn;
+    const base = mean(cRifleOff) - ro;                  // already there with no air at all
+    const extra = cSlope * (bn - mean(cBombOn));        // bought by the extra bomb dead
+    const resid = gap - base - extra;                   // what the slope does NOT explain
+    console.log(`INFCORE   ${name}`);
+    console.log(`INFCORE     C# air-on ${mean(cRifleOn).toFixed(1)} - core air-on ${rn.toFixed(1)} ` +
+                `= ${gap.toFixed(1)} rifle kills a round, of which`);
+    console.log(`INFCORE       ${base.toFixed(1).padStart(5)}  was already there AIR OFF ` +
+                `(${mean(cRifleOff).toFixed(1)} vs ${ro.toFixed(1)}) - not the air's doing`);
+    console.log(`INFCORE       ${extra.toFixed(1).padStart(5)}  is the ${(bn - mean(cBombOn)).toFixed(1)} ` +
+                `extra men the core's bombs take, at the recording's own ${cSlope.toFixed(3)}`);
+    console.log(`INFCORE       ${resid.toFixed(1).padStart(5)}  is RESIDUAL - the core giving up more per bomb death ` +
+                `than the C# does`);
+  }
+
+  // Four points, printed, so the slope is read at the width of its sample.
+  console.log('INFCORE');
+  console.log('INFCORE the scatter the slope is drawn through (air-on, per seed):');
+  for (const [name, , on] of rows)
+    console.log(`INFCORE   ${name.padEnd(26)}bombs [${bombs(on)}]  rifle [${kills(on)}]`);
+  console.log(`INFCORE   ${'C# recording'.padEnd(26)}bombs [${cBombOn}]  rifle [${cRifleOn}]`);
+  console.log('INFCORE ' + '='.repeat(62));
 }
 
 if (SORTIES === 'both') {
