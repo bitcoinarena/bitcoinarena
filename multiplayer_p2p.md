@@ -3175,13 +3175,22 @@ and a replay that cannot be reproduced cannot settle money.
 |---|---|---|---|---|---|---|
 | DESIGN | 30% | >50% | 1008 | 1440 | 2016 | ~31 d |
 | MONEY | 40% | ≥66% | 1008 | 1440 | 2016 | ~31 d |
-| **UPGRADE** | **60%** | **≥80%** | **2016** | **2016** | **4320** | **~58 d** |
+| **UPGRADE** | **51%** | **≥66%** | **2016** | **2016** | **4320** | **~58 d** |
 
 A hard fork can change anything, including the thresholds that would govern
 the next one, so it carries the highest bar the network has - but the bar is
 the **threshold**, not the calendar. Waiting longer does not make an upgrade
 safer; it makes upgrading rare enough that the network stops being able to
 fix itself, which is its own failure mode.
+
+**What 51% and 66% actually cost an attacker.** Turnout is of all bonded
+capital and approval is of the weight that did not abstain, so the floor is
+their product: **~34% of the bonded capital can carry a fork** if the rest
+stay home. That is the price of a network that can still upgrade itself, and
+it is defensible only because §27A.8.5 holds - a fork reaching that bar wins
+the *name* and nothing else, while every bond, stake and running round stays
+out of its reach. Turnout is the defence that scales with attention: capital
+that shows up is capital an attacker must out-weigh, not merely outlast.
 
 **Scrutiny is 28 days, not 14.** Votes may be changed until the window
 closes (last vote by height wins, §27A.7.3), so a defect found on day 25 can
@@ -3213,8 +3222,8 @@ capital, spends no bond, and starts no new maturity clock.
 
 **It is opt-in, per operator, and that is not a detail.** A vote decides
 what the successor *is*; it does not decide whose capital serves it.
-Carrying bonds automatically would let an 80% majority conscript the
-remaining 20% into a network they voted against, and a bond is a hostage in
+Carrying bonds automatically would let a winning majority conscript the
+minority into a network they voted against, and a bond is a hostage in
 a way a vote is not - it is locked, it cannot be topped up, and it cannot be
 withdrawn before maturity.
 
@@ -3241,8 +3250,8 @@ txids and merkle paths, so this is header validation and nothing else.
 **The trust anchor is the client's own built-in `network_id`, never a
 server.** A client that has been offline for a year can rejoin across two
 forks without asking anybody's permission, and an attacker cannot splice in
-a link, because every link needs 80% of a census that existed on chain at
-the time. This is the same property §25.1 gives discovery: the answer comes
+a link, because every link needs a ratified supermajority of a census that
+existed on chain at the time. This is the same property §25.1 gives discovery: the answer comes
 from Bitcoin, so being lied to requires lying about Bitcoin.
 
 A client MAY refuse to follow automatically and ask the player. It MUST NOT
@@ -3250,8 +3259,9 @@ follow a chain whose root it does not recognise.
 
 ### 27A.8.5 What a hard fork still cannot do
 
-An 80% majority holds unlimited power over the *rules*. It holds none over
-*funds*, and the difference is where the safety of the whole scheme sits:
+A winning supermajority holds unlimited power over the *rules*. It holds
+none over *funds*, and the difference is where the safety of the whole
+scheme sits:
 
 - **In-flight rounds are untouched.** A round binds to its `network_id` and
   `config_hash` at creation (§27A.7.5). Activation cannot reach into a round
