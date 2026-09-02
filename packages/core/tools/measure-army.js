@@ -13,7 +13,7 @@
 //
 // Prints; asserts nothing. Same shape as tools/measure.js.
 //
-//     node tools/measure-army.js [seed ...] [--seam0] [--quiet]
+//     node tools/measure-army.js [seed ...] [--seam0] [--quiet] [--airoff]
 //
 // --seam0 pins the frontline at z=0, which is the condition the C# recording
 // was made under (ArmyReferenceTests sets FrontlineAt = _ => 0). Without it
@@ -41,6 +41,7 @@ const args = process.argv.slice(2);
 const SEAM0 = args.includes('--seam0');
 const QUIET = args.includes('--quiet');
 const CORE = (args.find((a) => a.startsWith('--core=')) || '--core=../src').slice(7);
+const AIROFF = args.includes('--airoff');
 const SEEDS = args.filter((a) => !a.startsWith('--')).map(Number);
 if (SEEDS.length === 0) SEEDS.push(1);
 
@@ -55,7 +56,23 @@ const L = await import(new URL('state.js', base).pathname);
  * The helicopter slots are the tell: `O_HELIS` was appended to the layout with
  * the air, so a core taken from before it does not have the word.
  */
-const AIR = typeof L.O_HELIS === 'number' ? 'on' : 'off';
+const AIR = typeof L.O_HELIS !== 'number' ? 'off' : AIROFF ? 'off(pinned)' : 'on';
+
+/**
+ * Hold both sortie clocks so far out that no sortie ever launches.
+ *
+ * `--core=` from a pre-air commit was the only way to do this, which meant
+ * comparing two different cores and calling the difference "the air". The
+ * clocks are STATE WORDS at `O_AIR + AIR_BULL/AIR_BEAR`, counted down by
+ * `TICK_DT` each step - writing `st.heliClock`, which is what an earlier
+ * version of this reasoning did, sets a property nothing reads, and every
+ * "air off" caption printed that way was wrong. Re-pinned every step because
+ * the core rewrites the clock when a sortie would have gone.
+ */
+const pinAir = AIROFF && typeof L.O_AIR === 'number'
+  ? (st) => { st.i32[L.O_AIR + L.AIR_BULL] = 0x40000000;
+              st.i32[L.O_AIR + L.AIR_BEAR] = 0x40000000; }
+  : () => {};
 const COND = (SEAM0 ? ' seam0' : '') + ' air=' + AIR;
 
 const Q = 65536;
@@ -181,7 +198,7 @@ function measure(seed) {
 
   let t = 0;
   for (const mark of MARKS) {
-    while (t < mark) { step(st, 0, 0, 0, 0, 0); t += 1 / 60; }
+    while (t < mark) { pinAir(st); step(st, 0, 0, 0, 0, 0); t += 1 / 60; }
     const us = census(st);
     const d = density(us);
     const seam = frontlineZ(st.tape, st.i32[5], HALF_X, HALF_Z) / Q;
@@ -311,7 +328,7 @@ function measure(seed) {
   for (let f = 0; f < 90 * 60; f++) {
     const before = {};
     for (let i = 0; i < UNITS; i++) if (isArmour(i) && wasAlive[i]) before[i] = at(i);
-    step(st2, 0, 0, 0, 0, 0);
+    pinAir(st2); step(st2, 0, 0, 0, 0, 0);
     const tNow = (f + 1) / 60;
     for (let i = 0; i < UNITS; i++) {
       if (!isArmour(i)) continue;
@@ -432,7 +449,7 @@ function measure(seed) {
   const st3 = start(seed);
   let t3 = 0;
   for (const mark of [20, 30, 40, 60]) {
-    while (t3 < mark) { step(st3, 0, 0, 0, 0, 0); t3 += 1 / 60; }
+    while (t3 < mark) { pinAir(st3); step(st3, 0, 0, 0, 0, 0); t3 += 1 / 60; }
     const live = [];
     for (let i = 0; i < UNITS; i++) {
       if (!isArmour(i)) continue;
