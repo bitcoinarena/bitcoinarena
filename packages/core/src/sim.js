@@ -206,6 +206,10 @@ export function init(seedWord) {
   s[O_TRUCK + T_Z] = START_Z;
   s[O_TRUCK + T_HEADING] = 16384;           // facing +x, down the map
   s[O_TRUCK + T_HP] = Math.imul(100, ONE);
+  // Which way a hurt truck pulls. Derived from the seed rather than drawn,
+  // because a draw here would shift every stream after it and draw order is
+  // protocol; C# takes it from `Random.value` once at Awake.
+  s[O_TRUCK + T_FLAGS] = (Math.imul(seedWord | 0, 2654435761) >>> 31) & 1;
   s[O_TRUCK + T_CARGO] = 45875;             // 0.7 of a bed
   s[O_SCORE + S_BESTX] = START_X;
   s[O_SCORE + S_CARGO] = 45875;
@@ -632,6 +636,9 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
     // and rebuilding this with a zero every tick left the truck on full lock
     // at 26 m/s - the correction below would have had nothing to correct.
     steerAngle: s[T + T_STEER], speed: s[T + T_WHEEL],
+    // Condition reaches the driving. `T_FLAGS` bit 0 is the pull direction,
+    // set once at init from the seed - see `vehicleStep`.
+    hp: s[T + T_HP], pull: (s[T + T_FLAGS] & 1) === 0 ? -1 : 1,
   };
   // The slope the truck is standing on, along its own nose.
   const grade = gradeAlong(st.ground, s[T + T_X], s[T + T_Z],

@@ -94,13 +94,27 @@ test('standing still earns nothing, wherever it stands', () => {
 
 test('a lap earns nothing - exposure is ground made good, not time', () => {
   const st = init(12);
-  drive(st, 600, ONE, 0);
+  // Full condition throughout, and the army deliberately NOT cleared: this
+  // fixture is about the scoring rule, which needs a live army for there to
+  // be any danger to accrue, and an empty field would leave it asserting that
+  // zero equals zero. What it must not have is the DRIVING changing under it -
+  // a hurt truck loses up to 45% of its throttle and takes a steering pull,
+  // and in reverse that ran the fixture past its own 6000 tick guard without
+  // ever reaching the mark it drives back to.
+  const T_HP_ = 6;
+  const healthy = (ticks, throttle, brake) => {
+    for (let t = 0; t < ticks; t++) {
+      st.i32[O_TRUCK + T_HP_] = ONE * 100;
+      step(st, throttle, 0, brake | 0, 0, 0);
+    }
+  };
+  healthy(600, ONE, 0);
 
   // Come to rest BEFORE taking the reading. A truck rolling to a halt covers
   // new ground and is paid for it, so a mark taken at the moment the brake
   // goes on is seven metres short of where the run actually reached - and the
   // test then blames the lap for exposure the coast had earned.
-  for (let t = 0; t < 900; t++) step(st, 0, 0, ONE, 0, 0);
+  healthy(900, 0, ONE);
   const mark = st.i32[O_SCORE + S_BESTX];
   const after = st.i32[O_SCORE + S_EXPOSURE];
 
@@ -109,12 +123,12 @@ test('a lap earns nothing - exposure is ground made good, not time', () => {
   // forward motion, which is correct physics and a useless fixture.
   const target = mark - ONE * 30;
   let guard = 0;
-  while (st.i32[O_TRUCK + T_X] > target && guard++ < 6000) step(st, -ONE, 0, 0, 0, 0);
+  while (st.i32[O_TRUCK + T_X] > target && guard++ < 6000) healthy(1, -ONE, 0);
   assert.ok(guard < 6000, 'the truck never reversed');
 
   // forward again, but stopping short of the mark
   guard = 0;
-  while (st.i32[O_TRUCK + T_X] < mark - ONE * 4 && guard++ < 4000) step(st, ONE, 0, 0, 0, 0);
+  while (st.i32[O_TRUCK + T_X] < mark - ONE * 4 && guard++ < 4000) healthy(1, ONE, 0);
   assert.ok(st.i32[O_TRUCK + T_X] < mark, 'the fixture got past its own mark');
   assert.equal(st.i32[O_SCORE + S_EXPOSURE], after,
     'ground already covered was paid for twice');
@@ -821,27 +835,50 @@ test('replacements keep both armies in contact for the whole round', async () =>
  * Compared over the whole army region, all ninety-six units and the four
  * replacement clocks, rather than over a summary that could agree by accident.
  */
-test('a practice run and a live run field the same army, word for word', async () => {
-  const { O_UNITS, WORDS } = await import('../src/state.js');
+/**
+ * Nothing but the truck's condition reads the practice flag.
+ *
+ * This used to drive two runs and demand the army match WORD FOR WORD. That
+ * held while practice could only change hit points and nothing read them - and
+ * it stopped holding the moment condition reached the driving, because a
+ * shielded truck keeps its throttle, drives somewhere else, and then clears
+ * and rides down different men. Measured: 429 army words and all four RNG
+ * words differ over sixty seconds. The army is diverging through the truck's
+ * POSITION, which is the game's own behaviour and not a leak of the flag.
+ *
+ * So the claim is stated as what it was always defending: the flag is read in
+ * exactly one place. Both runs are given a truck pinned to the same spot with
+ * the same hit points, so neither position nor condition can carry a
+ * difference, and then EVERY word of the state must agree except `S_PRACTICE`
+ * itself. A rule that branched on the flag anywhere - in the army, the air,
+ * the score - would show up here.
+ */
+test('nothing but the truck reads the practice flag', async () => {
+  const { WORDS, O_SCORE, S_PRACTICE, O_TRUCK, T_X, T_Z, T_VX, T_VZ, T_HP } =
+    await import('../src/state.js');
+
   const drive = (practice) => {
     const st = init(1);
-    for (let i = 0; i < 3600; i++) step(st, ONE, 0, 0, 0, practice);
+    const pin = () => {
+      st.i32[O_TRUCK + T_X] = 0;
+      st.i32[O_TRUCK + T_Z] = 0;
+      st.i32[O_TRUCK + T_VX] = 0;
+      st.i32[O_TRUCK + T_VZ] = 0;
+      st.i32[O_TRUCK + T_HP] = ONE * 100;
+    };
+    pin();
+    for (let i = 0; i < 3600; i++) { step(st, ONE, 0, 0, 0, practice); pin(); }
     return st;
   };
   const live = drive(0), shielded = drive(1);
 
-  // To the END of the buffer, not to the replacement clocks. The air arm was
-  // appended after them and draws from the same stream, so a bomb released only
-  // in a scored run would take words out of it that a practice run did not and
-  // put every unit after it somewhere else - which is exactly the failure this
-  // test exists to catch, and the old bound would have walked straight past it.
-  let differing = 0;
-  for (let w = O_UNITS; w < WORDS; w++)
-    if (live.i32[w] !== shielded.i32[w]) differing++;
+  const differ = [];
+  for (let w = 0; w < WORDS; w++)
+    if (live.i32[w] !== shielded.i32[w]) differ.push(w);
 
-  assert.equal(differing, 0,
-    `${differing} words of the army differ between a live and a practice run - ` +
-    'something in the army is reading the practice flag');
+  assert.deepEqual(differ, [O_SCORE + S_PRACTICE],
+    `words ${differ.join(', ')} differ between a live and a practice run - ` +
+    'only the practice word itself may, or something is reading the flag');
 });
 
 // ---------------------------------------------------------------------------

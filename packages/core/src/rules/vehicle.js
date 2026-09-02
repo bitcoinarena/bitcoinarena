@@ -90,7 +90,48 @@ const GRIP_HAND = 32768;        // 0.5 - with the handbrake on, the rear lets go
  * `v` is a plain object of Q16.16 fields so the caller can keep it wherever it
  * likes; sim.js keeps it in the state buffer. Inputs are Q16.16 in [-1, 1].
  */
+/**
+ * What being hurt costs the driving.
+ *
+ * `TruckController` held this: `hurt = 1 - condition`, and above 0.02 the
+ * throttle is scaled by `Lerp(1, 0.55, hurt)` and the steering takes a pull of
+ * `pull * hurt * 0.35` to one side. It ran on `condition`, which `TruckHealth`
+ * set from its own pool - a client rule reading a client number, and both are
+ * gone.
+ *
+ * IT WAS ALSO ALREADY DEAD where the core drives. `CoreDrivenTruck` makes the
+ * Rigidbody kinematic, and the block that follows this one in
+ * `TruckController` takes its speed from `_rb.linearVelocity`, which a
+ * kinematic body reports as zero - so the throttle and steer it adjusted were
+ * being fed to wheel colliders that resolve nothing. Porting those lines into
+ * the client would have been copying a PhysX-era corpse. The rule belongs
+ * where the throttle is actually spent, which is here. Nothing here reads a
+ * host velocity, and there is no 2-D coupling: the taper touches the throttle
+ * and the pull touches the steer, each on its own axis.
+ *
+ * Measured before it was written: over three seeds the truck is under 98 hit
+ * points for 91.4% of the ticks of a full-throttle run and 90.5% of a parked
+ * one, mean `hurt` 0.205 and 0.847. This is most of a round, not a corner.
+ *
+ * The pull direction is `Random.value < 0.5 ? -1 : 1` once at Awake in C#.
+ * Here it is derived from the seed rather than drawn, because draw order is
+ * protocol and a new draw at init would move every stream after it.
+ */
+const MAX_HP = Math.imul(100, ONE);
+const HURT_FLOOR = 1311;          // 0.02, TruckController's own threshold
+const HURT_TAPER = 29491;         // 0.45, so Lerp(1, 0.55, hurt) is 1 - 0.45*hurt
+const HURT_PULL = 22938;          // 0.35
+
 export function vehicleStep(v, throttle, steer, brake, handbrake, dt, grade) {
+  // Before anything else, as it is in TruckController: the condition block
+  // sits above the steering lock and the motor torque, so a hurt truck is
+  // steering and accelerating from already-reduced inputs.
+  const hurt = sub(ONE, clamp(div(v.hp, MAX_HP), 0, ONE));
+  if (hurt > HURT_FLOOR) {
+    throttle = mulFast(throttle, sub(ONE, mulFast(HURT_TAPER, hurt)));
+    steer = clamp(add(steer, Math.imul(v.pull, mulFast(HURT_PULL, hurt))), -ONE, ONE);
+  }
+
   // steering follows the input rather than snapping to it, which is most of
   // what makes a vehicle feel heavy
   //
