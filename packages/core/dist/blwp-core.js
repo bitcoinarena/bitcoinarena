@@ -721,6 +721,22 @@ function words(bytes) {
 
 const MAX_UNITS = 256;
 
+/**
+ * How many slots the simulation actually fields, and which of them are armour.
+ *
+ * Both lived in `sim.js` - `UNITS` exported, `ARMOUR_MASK` private - and so
+ * neither reached `BlwpLayout.cs`, which is generated from THIS file. A
+ * renderer reading core units would have had to walk all 256 slots and
+ * hand-copy `(i & 3) === 0` into C#, which is exactly the drift the generator
+ * exists to prevent: two descriptions of one buffer, and nothing throws when
+ * they disagree.
+ *
+ * Every fourth slot is armour. A mask rather than a remainder, so `UNITS` and
+ * this stay a power of two apart and the rule is one expression on both sides.
+ */
+const UNITS = 96;
+const ARMOUR_MASK = 3;
+
 // Word offsets into the Int32Array view.
 //
 // DERIVED FROM THE BLOCK SIZES, not typed, because typing them let two blocks
@@ -2571,7 +2587,10 @@ const sortieWait = (rng) => mulFast(SORTIE_SECONDS, between(rng, JITTER_MIN, JIT
 
 
 
-const UNITS = 96;
+// UNITS and ARMOUR_MASK live in state.js so the generated C# mirror carries
+// them; re-exported here because every tool and rule already reads them from
+// this module.
+
 /**
  * The van is soft but not paper.
  *
@@ -2644,7 +2663,7 @@ const START_X = -6579814;                   // -100.4 m, 14 m out on the apron
 const START_Z = 668467;                     // 10.2 m, the solo bay (14 of 24)
 // Every fourth unit is armour. A mask rather than a modulo: '%' is banned
 // outside the arithmetic files, and a power of two makes the ban free.
-const ARMOUR_MASK = 3;
+
 
 /** Every fourth unit is a tank. Shared, so the collision and the fighting agree. */
 const isArmour = (i) => (i & ARMOUR_MASK) === 0;

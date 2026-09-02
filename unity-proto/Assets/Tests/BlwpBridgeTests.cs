@@ -94,8 +94,17 @@ public class BlwpBridgeTests
     [Test]
     public void TheStateBufferIsTheSizeTheLayoutImplies()
     {
-        Assert.AreEqual(Layout.O_UNITS + Layout.MAX_UNITS * Layout.U_WORDS,
-                        BlwpCore.State.Length,
+        // `Layout.WORDS`, which is what the layout implies - not
+        // `O_UNITS + MAX_UNITS * U_WORDS`, which is where the UNITS end. That
+        // formula is 2073 against the core's 2181: it stops exactly at
+        // `O_ARMY`, before the replacement clocks, the air and the squads. The
+        // buffer was sized by it, `Init`'s guard refused the mismatch, and
+        // `Available` was false in every browser build - the truck fell back to
+        // PhysX and nothing of M1 ever ran on a screen. This test was green
+        // throughout, because it asserted the same wrong formula the code used.
+        // Found by running a WebGL build in a browser, which no editor test can
+        // do: `BlwpCore` is stubbed outside WebGL.
+        Assert.AreEqual(Layout.WORDS, BlwpCore.State.Length,
                         "the state array and the layout disagree about the buffer");
     }
 

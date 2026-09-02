@@ -769,7 +769,25 @@ public class ArmyRenderer : MonoBehaviour
                 }
             }
         }
+
+        // WHAT WAS ACTUALLY DRAWN, said out loud when it changes.
+        //
+        // Three picture comparisons failed to prove anything: with the game
+        // running, 500 ms of ordinary motion moved 53019 pixels against the
+        // 42094 that killing every unit moved, and freezing the core still
+        // left 44042 moving because rotors, HUD and camera do not stop. The
+        // scene animates more than the army does, so a screenshot cannot
+        // isolate it. A count can. This is instrumentation, not a rule: it
+        // decides nothing and only reports what the loops above placed.
+        int drawn = bullTanks + bearTanks + bull + bear;
+        if (drawn != _lastDrawn)
+        {
+            _lastDrawn = drawn;
+            Debug.Log($"[render] drew {drawn} units from the core");
+        }
     }
+
+    int _lastDrawn = -1;
 
     static void Place(Transform t, Vector3 pos, float yawRadians, Material mat)
     {

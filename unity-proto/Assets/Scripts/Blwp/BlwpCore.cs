@@ -53,7 +53,20 @@ namespace Blwp
         /// <summary>True once a core has been started and is answering.</summary>
         public static bool Available { get; private set; }
 
-        static int[] _state = new int[Layout.O_UNITS + Layout.MAX_UNITS * Layout.U_WORDS];
+        /// <summary>
+        /// The WHOLE state, `Layout.WORDS`, and not a formula that stops at
+        /// the units.
+        ///
+        /// This was `O_UNITS + MAX_UNITS * U_WORDS`, which is 2073 - exactly
+        /// `O_ARMY`, so the buffer ended where the replacement clocks, the air
+        /// and the squads begin, and came up 108 words short of the core's
+        /// 2181. `Init`'s own guard caught it and refused, which means
+        /// `Available` was false in every browser build: the truck fell back
+        /// to PhysX and nothing of M1 ever ran on a screen. No editor test
+        /// could see it - `BlwpCore` is stubbed outside WebGL - and it took a
+        /// headless browser against a real build to find.
+        /// </summary>
+        static int[] _state = new int[Layout.WORDS];
 
         /// <summary>The last state read, in words. Read-only by contract.</summary>
         public static int[] State => _state;

@@ -39,6 +39,19 @@ const abs = (a) => (a < 0 ? (-a) | 0 : a);
 const mulFast = (a, b) => ((a * b) / ONE) | 0;
 
 /**
+ * Rounding multiply, and rounding conversion back to a whole number. `mulFast`
+ * and `toInt` both throw the fraction away, which is right for the simulation -
+ * a truncation there is a rule, applied identically on every engine - but wrong
+ * where the value being produced is a *reported* number that some other
+ * implementation rounds. The score is the one such number: the old game ends on
+ * `Mathf.RoundToInt`, so the core has to round too or it sits a point low on
+ * roughly half of all runs. Same magnitude rules as `mulFast`: the caller must
+ * know |a*b| stays under 2^53.
+ */
+const mulRound = (a, b) => (((a * b) + (ONE >> 1)) / ONE) | 0;
+const toIntRound = (x) => (x + (ONE >> 1)) >> SHIFT;
+
+/**
  * Exact multiply for anything that could overflow the double's integer range.
  * BigInt is exact at any width; it allocates, so it stays off per-unit inner
  * loops by convention rather than by enforcement.
@@ -48,6 +61,40 @@ const mulWide = (a, b) =>
 
 /** Truncating divide. Returns 0 for a zero divisor rather than NaN or Infinity. */
 const div = (a, b) => (b === 0 ? 0 : ((a * ONE) / b) | 0);
+
+/**
+ * Rounding divide, the counterpart of `mulRound` and for the same reason: a
+ * quotient that feeds a *reported* number must not lose its fraction, or the
+ * loss compounds through the multiplies that follow it. Every truncation leans
+ * the same way, so they add rather than cancel. Only for those; `div` stays
+ * the simulation's divide.
+ */
+const divRound = (a, b) =>
+  b === 0 ? 0 : (((a * ONE) + ((b / 2) | 0)) / b) | 0;
+
+/**
+ * Rounded `a * b / c` without ever landing on the intermediate. A ratio taken
+ * on its own has to be stored as a Q16.16 fraction of at most 1.0, which
+ * quantises it to 1.5e-5 - and once that ratio is scaled up by a thousand the
+ * error is scaled with it. Kept as one expression the quotient is only ever
+ * rounded at the end, at the precision of the answer rather than the ratio.
+ * The caller must know |a*b| stays under 2^53.
+ */
+const mulDivRound = (a, b, c) =>
+  c === 0 ? 0 : (((a * b) + ((c / 2) | 0)) / c) | 0;
+
+/**
+ * Truncating divide of two PLAIN INTEGERS - not Q16.16 values.
+ *
+ * `div` scales its numerator by ONE first, which is right for fixed-point and
+ * wrong for a count. Splitting a hundred parts of something, or a byte into
+ * buckets, was being written as `x / n | 0` at the call site, which is exactly
+ * the arithmetic the guard exists to keep in one auditable file.
+ *
+ * Truncates towards zero, as `| 0` does, so it is the same value the inline
+ * form produced. Both arguments must already be int32.
+ */
+const idiv = (a, b) => (b === 0 ? 0 : (a / b) | 0);
 
 const min = (a, b) => (a < b ? a : b);
 const max = (a, b) => (a > b ? a : b);
@@ -674,14 +721,134 @@ function words(bytes) {
 
 const MAX_UNITS = 256;
 
-// word offsets into the Int32Array view
+/**
+ * How many slots the simulation actually fields, and which of them are armour.
+ *
+ * Both lived in `sim.js` - `UNITS` exported, `ARMOUR_MASK` private - and so
+ * neither reached `BlwpLayout.cs`, which is generated from THIS file. A
+ * renderer reading core units would have had to walk all 256 slots and
+ * hand-copy `(i & 3) === 0` into C#, which is exactly the drift the generator
+ * exists to prevent: two descriptions of one buffer, and nothing throws when
+ * they disagree.
+ *
+ * Every fourth slot is armour. A mask rather than a remainder, so `UNITS` and
+ * this stay a power of two apart and the rule is one expression on both sides.
+ */
+const UNITS = 96;
+const ARMOUR_MASK = 3;
+
+// Word offsets into the Int32Array view.
+//
+// DERIVED FROM THE BLOCK SIZES, not typed, because typing them let two blocks
+// share a word for a long time without anybody noticing. The truck was
+// declared as twelve words while its fields ran 0..12 - thirteen - so
+// `O_TRUCK + T_IMPACT` and `O_SCORE + S_EXPOSURE` were both word 17, and every
+// contact hard enough to beat the exposure so far overwrote the run's score
+// with a collision speed. Written this way the sizes and the fields can only
+// disagree in one place, and `no two blocks share a word` in the tests checks
+// that they do not.
 const O_TICK = 0;
-const O_RNG = 1;          // 4 words
-const O_TRUCK = 5;        // 12 words
-const O_SCORE = 17;       // 6 words
-const O_UNITS = 24;       // MAX_UNITS * U_WORDS
+const O_RNG = 1;
+const RNG_WORDS = 4;
+const O_TRUCK = O_RNG + RNG_WORDS;
+const TRUCK_WORDS = 13;   // fields 0..12, T_IMPACT included
+const O_SCORE = O_TRUCK + TRUCK_WORDS;
+const SCORE_WORDS = 7;   // fields 0..6, S_PRACTICE included
+const O_UNITS = O_SCORE + SCORE_WORDS;   // MAX_UNITS * U_WORDS follow
 const U_WORDS = 8;
-const WORDS = O_UNITS + Math.imul(MAX_UNITS, U_WORDS);
+
+/**
+ * The army's replacement clocks: how long until the next unit walks on, per
+ * side and per arm, in Q16.16 seconds.
+ *
+ * Appended AFTER the units so that every offset above this line stayed where
+ * it was. Growing the state moves every golden vector hash, but so does
+ * reinforcement itself - the checkpoints cover the whole buffer, including all
+ * ninety-six unit positions - so there is no layout that would have avoided
+ * regenerating them. The honest one is the one that reads.
+ *
+ * They are STATE rather than locals for the reason everything else here is:
+ * a verifier replaying a transcript has to arrive at the same bytes, and a
+ * timer living outside the buffer is a timer two implementations can disagree
+ * about without either one noticing.
+ */
+const O_ARMY = O_UNITS + Math.imul(MAX_UNITS, U_WORDS);
+const A_ARMOUR_BULL = 0, A_ARMOUR_BEAR = 1;
+const A_RIFLE_BULL = 2, A_RIFLE_BEAR = 3;
+const A_WORDS = 4;
+
+/**
+ * The air arm: the two sortie clocks, the gunships and the bombs in the air.
+ *
+ * Appended after the replacement clocks for the same reason those were appended
+ * after the units - every offset above this line stays where it was, so a change
+ * of layout is never also a silent change of meaning for a field that did not
+ * move. The hashes move regardless; bombs kill people.
+ *
+ * The clocks are state, not locals, for the reason the replacement clocks are:
+ * a verifier replaying a transcript has to arrive at the same bytes, and a
+ * timer outside the buffer is a timer two implementations can disagree about
+ * without either one noticing. In the C# they are worse than locals - they are
+ * on UnityEngine.Random, so the air war cannot be replayed from a seed at all.
+ */
+const O_AIR = O_ARMY + A_WORDS;
+const AIR_BULL = 0, AIR_BEAR = 1;
+const AIR_WORDS = 2;
+
+/**
+ * Gunship slots. Two a side, and one a side is what the arithmetic allows.
+ *
+ * A sortie's transit is the full 208 m corridor at 20 m/s - 10.4 s - and the
+ * shortest gap the jitter can produce is 17 * 0.7 = 11.9 s, so a side's next
+ * gunship cannot enter before the last one has left. Two a side is the margin,
+ * and rules.test.js pins the invariant by watching the airborne count rather
+ * than trusting the arithmetic: if a launch ever found every slot busy the
+ * sortie would be dropped in silence, which is exactly the kind of quiet
+ * divergence this core exists to make impossible.
+ *
+ * Yaw and bank are not here. They are how a mesh tilts; nothing downstream
+ * reads them. Height IS here - it decides how long a bomb falls and therefore
+ * how far the 30 m/s along the track throws it, which is a third of the load
+ * landing off the field.
+ */
+const O_HELIS = O_AIR + AIR_WORDS;
+const MAX_HELIS = 4;
+const H_WORDS = 8;
+const H_STATE = 0, H_SIDE = 1, H_X = 2, H_Y = 3, H_Z = 4;
+const H_DIR = 5, H_T = 6, H_DROPIN = 7;
+
+/**
+ * Bombs in the air. A gunship drops every 1.6-3.2 s and a bomb falls for about
+ * two, so two per gunship is the ceiling and four gunships cannot fill eight.
+ */
+const O_BOMBS = O_HELIS + Math.imul(MAX_HELIS, H_WORDS);
+const MAX_BOMBS = 8;
+const B_WORDS = 8;
+const B_STATE = 0, B_SIDE = 1, B_X = 2, B_Y = 3, B_Z = 4;
+const B_VX = 5, B_VY = 6, B_VZ = 7;
+
+/**
+ * Where each side's infantry squads are standing, along x.
+ *
+ * Three a side, which is `Army.EnsureSquads`'s own arithmetic at this
+ * establishment: `want = max(3, strength / 12)` and a side fields 36 riflemen.
+ *
+ * State rather than a function of the index, because the anchors are DRAWN -
+ * `Rand(-FrontX + 12, FrontX - 12)`, independently per side, so the two sides
+ * do not line up - and because DriftSquads walks each one by
+ * `sin(Time * 0.12 + i * 2.4) * 3.6 * dt` every tick and clamps it. A clamped
+ * integral is path-dependent: once an anchor has been held at the edge it has
+ * lost the excursion, and no closed form in the tick can say that.
+ *
+ * Appended after the bombs so every existing offset stays where it was.
+ * Armour is NOT here. C# tanks have no squad at all, and the core's own even
+ * ladder is what stops its two armies drifting apart sideways - see (a).
+ */
+const O_SQUADS = O_BOMBS + Math.imul(MAX_BOMBS, B_WORDS);
+const SQUADS_PER_SIDE = 3;
+const SQUAD_WORDS = Math.imul(SQUADS_PER_SIDE, 2);   // bull, then bear
+
+const WORDS = O_SQUADS + SQUAD_WORDS;
 
 // truck fields, relative to O_TRUCK
 const T_X = 0, T_Z = 1, T_HEADING = 2, T_VX = 3, T_VZ = 4;
@@ -721,6 +888,8 @@ function create() {
 }
 
 const unitBase = (i) => O_UNITS + Math.imul(i, U_WORDS);
+const heliBase = (i) => O_HELIS + Math.imul(i, H_WORDS);
+const bombBase = (i) => O_BOMBS + Math.imul(i, B_WORDS);
 
 /**
  * True on every machine this will realistically run on, and checked anyway.
@@ -941,7 +1110,48 @@ const GRIP_HAND = 32768;        // 0.5 - with the handbrake on, the rear lets go
  * `v` is a plain object of Q16.16 fields so the caller can keep it wherever it
  * likes; sim.js keeps it in the state buffer. Inputs are Q16.16 in [-1, 1].
  */
+/**
+ * What being hurt costs the driving.
+ *
+ * `TruckController` held this: `hurt = 1 - condition`, and above 0.02 the
+ * throttle is scaled by `Lerp(1, 0.55, hurt)` and the steering takes a pull of
+ * `pull * hurt * 0.35` to one side. It ran on `condition`, which `TruckHealth`
+ * set from its own pool - a client rule reading a client number, and both are
+ * gone.
+ *
+ * IT WAS ALSO ALREADY DEAD where the core drives. `CoreDrivenTruck` makes the
+ * Rigidbody kinematic, and the block that follows this one in
+ * `TruckController` takes its speed from `_rb.linearVelocity`, which a
+ * kinematic body reports as zero - so the throttle and steer it adjusted were
+ * being fed to wheel colliders that resolve nothing. Porting those lines into
+ * the client would have been copying a PhysX-era corpse. The rule belongs
+ * where the throttle is actually spent, which is here. Nothing here reads a
+ * host velocity, and there is no 2-D coupling: the taper touches the throttle
+ * and the pull touches the steer, each on its own axis.
+ *
+ * Measured before it was written: over three seeds the truck is under 98 hit
+ * points for 91.4% of the ticks of a full-throttle run and 90.5% of a parked
+ * one, mean `hurt` 0.205 and 0.847. This is most of a round, not a corner.
+ *
+ * The pull direction is `Random.value < 0.5 ? -1 : 1` once at Awake in C#.
+ * Here it is derived from the seed rather than drawn, because draw order is
+ * protocol and a new draw at init would move every stream after it.
+ */
+const MAX_HP = Math.imul(100, ONE);
+const HURT_FLOOR = 1311;          // 0.02, TruckController's own threshold
+const HURT_TAPER = 29491;         // 0.45, so Lerp(1, 0.55, hurt) is 1 - 0.45*hurt
+const HURT_PULL = 22938;          // 0.35
+
 function vehicleStep(v, throttle, steer, brake, handbrake, dt, grade) {
+  // Before anything else, as it is in TruckController: the condition block
+  // sits above the steering lock and the motor torque, so a hurt truck is
+  // steering and accelerating from already-reduced inputs.
+  const hurt = sub(ONE, clamp(div(v.hp, MAX_HP), 0, ONE));
+  if (hurt > HURT_FLOOR) {
+    throttle = mulFast(throttle, sub(ONE, mulFast(HURT_TAPER, hurt)));
+    steer = clamp(add(steer, Math.imul(v.pull, mulFast(HURT_PULL, hurt))), -ONE, ONE);
+  }
+
   // steering follows the input rather than snapping to it, which is most of
   // what makes a vehicle feel heavy
   //
@@ -1284,6 +1494,29 @@ const CORRECTION_CAP = 39322;
 
 const RIFLE_RANGE = Math.imul(26, ONE);
 const ARMOUR_RANGE = Math.imul(46, ONE);
+
+/**
+ * The courier's own reach and what a tank shell does to it.
+ *
+ * `Army.CourierRange` is 34 m, wider than the rifle's 26, and a hit takes
+ * `Rand(5f, 11f)` - `Army.cs:638`, with Heat at zero as every recording has
+ * it. Drawn in hundredths the way the shell's own damage is, so it is one
+ * draw either way and the stream does not change shape with the target.
+ */
+const COURIER_RANGE = Math.imul(34, ONE);
+const COURIER_DAMAGE_MIN = Math.imul(5, ONE);
+const COURIER_DAMAGE_SPAN = Math.imul(6, ONE);   // 5 to 11
+
+/**
+ * What a RIFLE round does to the truck: `Rand(1.5f, 3.5f)`, `Army.cs:737`.
+ *
+ * A different band from the tank's on purpose - the recorder tells the two
+ * weapons apart by the size of the hit, and with Heat at zero 1.5-3.5 and
+ * 5-11 do not meet. A rifleman does one point to another rifleman and this to
+ * the truck; the two are not the same number and never were.
+ */
+const COURIER_RIFLE_MIN = Math.imul(3, ONE) >> 1;   // 1.5
+const COURIER_RIFLE_SPAN = Math.imul(2, ONE);       // to 3.5
 const RIFLE_HIT_PER_MIL = 45;        // 0.045 per shot
 // Closing speeds, measured off the C# army rather than chosen: it covers
 // -77.5 to -43.5 in five seconds with armour and -77.5 to -64.6 with
@@ -1295,9 +1528,223 @@ const RIFLE_WALK = 170394;       // 2.6 m/s
 // of it; infantry closes further before it settles. Both sides doing this is
 // what makes a front rather than a breakthrough - the means oscillate about
 // the seam and never cross it.
+// What the C# army AIMS for. It settles much further back than this, and it
+// earns that distance rather than declaring it: StepArmour walks towards
+// front - Dir*9, and backs off whenever an enemy is inside 24 m. The mean of
+// 25 in the recording is the outcome of that give and take.
+//
+// It was declared at 25 for a while, as a stand-in for the behaviour, and the
+// difference matters: a declared distance holds every unit on one line, so
+// the fight is all or nothing - at 18 m apart both sides are ground to a
+// third in a minute, at 50 nobody is ever in range at all. Backing off
+// individually is what produces the scatter, and the scatter is what makes it
+// a grind.
 const ARMOUR_STANDOFF = Math.imul(9, ONE);
+const ARMOUR_SPREAD = Math.imul(10, ONE);
+
+// A rifleman's distance from the seam, and it is TWO numbers in the C#, added:
+//
+//     standoff     = Rand(4f, 12f)          Army.Spawn
+//     squadOffsetZ = Rand(-5f, 5f)          Army.Spawn, infantry only
+//     goalZ        = front - Dir * (standoff + squadOffsetZ)   StepInfantry
+//
+// So a man holds anywhere from 1 m PAST the seam to 17 m short of it, and the
+// sum of two uniforms is triangular - it piles up at 8. The core had a flat
+// 0 to 8, mean 4, so both lines stood four metres too far forward and half as
+// deep, which puts them eight metres closer together than the recording's.
+//
+// That is not a cosmetic difference. It is how densely the men pack where the
+// bombs fall: with the lines too close and too shallow the core killed 81-116
+// riflemen a round by bomb against the recording's 60-76, and only 42-49% of
+// its bombs hit nobody against 50-58%. Measured, both before and after.
 const RIFLE_STANDOFF = Math.imul(4, ONE);
+const RIFLE_SPREAD = Math.imul(8, ONE);      // + 0 to 8, so 4 to 12
+const RIFLE_SQUAD_Z = Math.imul(10, ONE);    // then -5 to +5
+
+/**
+ * Pushed this far past its own line, a unit is overrun and falls right back.
+ *
+ * This is the missing half of the front's shape. Advance-and-back-off alone
+ * settles every unit onto one line - the measured z spread collapsed from 23
+ * to 9 while the C# army holds 20 - and a single line means both armies meet
+ * at once and half the armour dies in the ten seconds after contact. Units
+ * thrown right back and coming forward again are what keeps the strip
+ * populated at different depths, so contact is a rolling local thing instead
+ * of one collision.
+ */
+const OVERRUN_DEPTH = Math.imul(14, ONE);   // Army.OverrunDepth
+const FALL_BACK = Math.imul(34, ONE);
+
+/** Inside this, a tank gives ground rather than closing further. */
+/** The battlefield's half width, as Army.FrontX has it. */
+const FRONT_X = Math.imul(92, ONE);
+
+/** Squad anchors along the front, and how wide a squad stands. */
+const SQUADS = 8;
+/**
+ * Picking a squad is a mask, not a remainder: '%' is division, and division
+ * lives in fixed.js. Which means SQUADS has to stay a power of two - so the
+ * mask is written from it rather than as a bare 7, and a change to five or
+ * twelve breaks loudly here instead of quietly assigning every unit to squad
+ * zero.
+ */
+const SQUAD_MASK = SQUADS - 1;
+const SQUAD_SPAN = Math.imul(76, ONE);     // anchors run from -76 to +76
+const SQUAD_WIDTH = Math.imul(16, ONE);    // each unit sits within 8 m of its anchor
+const SQUAD_OFFSET = Math.imul(18, ONE);   // a rifleman: Army.Spawn's Rand(-9, 9)
+const TWO = Math.imul(2, ONE);
+
+const BACK_OFF_RANGE = Math.imul(24, ONE);
+/**
+ * How much ground a crowded tank gives, and it is a DISTANCE.
+ *
+ * `StepArmour` says `goalZ = v.z - v.Dir * 6f` and then `speed *= 0.35f`. The
+ * six is a GOAL - a point six metres back - and the rate is the walk cut to a
+ * third. This line used to read `6 * ONE` and was spent as
+ * `dz = BACK_OFF * side * dt`, which is the six read as a SPEED: six metres a
+ * second, for as long as the crowding lasts, and squarely in z. Wrong unit and
+ * wrong component in one line.
+ *
+ * The fix is NOT to copy the number C# is left holding. Its backward rate is
+ * `0.35 * speed * 6/gl`, a leftover of steering at `foe.x` and at the seam in
+ * one vector - and that coupling was ported here once, measured, and reverted;
+ * the note on the lateral drift further down has the numbers. Reproducing a
+ * magnitude without its cause is the same mistake facing the other way.
+ *
+ * So this is stated in the core's own terms, which it can be because there is
+ * already a hold and a controller that walks to one: a crowded tank's hold
+ * moves six metres further back, it walks there at a third of its speed, and
+ * it STOPS. Bounded, in metres, no coupling - and unlike a velocity it cannot
+ * accumulate over a round.
+ */
+const BACK_OFF = Math.imul(6, ONE);             // metres of ground given
+const CROWD_WALK = mulFast(ARMOUR_WALK, 22938); // 0.35 * 6.8 m/s, StepArmour's cut
 const OVERRUN = Math.imul(14, ONE);
+
+/**
+ * Tanks do not stand inside each other.
+ *
+ * `Army.Update` opens with `Separate(Armour[i], Armour[j])` over every pair,
+ * before it steps anything, and the comment on it says the overlap was "the
+ * single most reported fault in the three.js build". This core had no such
+ * rule at all - `Separate` appeared in it only in comments explaining that the
+ * INFANTRY has none - and nothing recorded it, because in C# it is true by
+ * construction and a recording of a constant is not worth taking.
+ *
+ * It was tolerable while the armour held a ladder of fixed posts: 2.16% of
+ * pairs closer than C# allows, and the closest pair at a typical sample 3.61 m.
+ * Then an engaged tank was given its enemy's x to close on, which is what C#
+ * does - and two tanks closing on the SAME enemy converge on bitwise the same
+ * x. Measured after that change: 7.25% of pairs too close and the closest pair
+ * at a typical sample 0.03 m, which is two hulls occupying one point. The chase
+ * is not wrong; half a rule was ported. C# runs the chase and this together.
+ *
+ * The coincident case is skipped exactly as C# skips it - `d2 <= 1e-4f`, a
+ * hundredth of a metre - because a zero separation has no direction to push
+ * along. That only stays harmless while this runs from the first tick, which
+ * is why it is at the top of the army's step and not somewhere convenient.
+ */
+const FRIENDLY_SPACING = Math.imul(17, ONE) >> 1;   // 8.5 m, Army.FriendlySpacing
+const HOSTILE_SPACING = Math.imul(15, ONE) >> 1;    // 7.5 m, Army.HostileSpacing
+const COINCIDENT = 655;                             // 0.01 m, C#'s 1e-4 on d2
+
+function separatePair(s, a, b, xOff, zOff, sideOff) {
+  const min = s[a + sideOff] === s[b + sideOff] ? FRIENDLY_SPACING : HOSTILE_SPACING;
+  const dx = sub(s[b + xOff], s[a + xOff]), dz = sub(s[b + zOff], s[a + zOff]);
+  // Cheap axis reject first, which also keeps length2 well inside its range.
+  if (abs(dx) >= min || abs(dz) >= min) return;
+  const d = length2(dx, dz);
+  if (d <= COINCIDENT || d >= min) return;
+
+  const push = sub(min, d) >> 1;
+  const nx = div(dx, d), nz = div(dz, d);
+  const px = mulFast(nx, push), pz = mulFast(nz, push);
+  s[a + xOff] = sub(s[a + xOff], px);
+  s[a + zOff] = sub(s[a + zOff], pz);
+  s[b + xOff] = add(s[b + xOff], px);
+  s[b + zOff] = add(s[b + zOff], pz);
+}
+
+/**
+ * Nobody is left standing inside the cab.
+ *
+ * `Army.ClearPath` reads like a corridor rule - it takes a `halfWidth` of 7.5
+ * and an `ahead` of 26, and its anticipatory branch eases a man sideways out
+ * of the truck's path. THAT BRANCH NEVER RUNS. Its only call is
+ * `foreach (var u in Infantry) YieldTo(u, 0f, 0.9f, false, 1.6f)`, with
+ * `stepsAside` false and `rate` zero, and no other caller exists; the corridor,
+ * the urgency ramp and both parameters are dead code in the game they are in.
+ * What the game actually does is the last-resort half: a rifleman inside 1.6 m
+ * of the truck's centre is pushed back out to it.
+ *
+ * So that is what is ported. Porting the corridor would be porting something
+ * the old game never executed, and the envelope it would move is not evidence
+ * of anything. This also corrects a claim of mine in the step 2 measurement:
+ * the reason at most one man was ever inside 3.6 m was NOT this rule easing
+ * thirteen of them aside, because it eases nobody aside.
+ *
+ * ARMOUR IS DELIBERATELY ABSENT, as it is in C#, and for the reason its
+ * comment gives: two systems arguing over one overlap have no radius that
+ * satisfies both. Here `resolveArmour` already pushes the TRUCK out of the
+ * tanks, and this pushes the MAN out of the truck - one owner each.
+ *
+ * The radius is derived rather than typed: 1.6 m is 16 ONE over 10.
+ */
+const CLEAR_RADIUS = idiv(Math.imul(16, ONE), 10);   // 1.6 m, C#'s `hard`
+
+/**
+ * Anyone under the wheels goes down.
+ *
+ * `Army.RunOver(x, z, 3.6f, speed, knock)` with `minSpeed = 2.5f`: below a
+ * walking pace nothing happens, because a truck edging forward should not mow
+ * down a line it is merely touching and a stationary one should not clear a
+ * space around itself.
+ *
+ * THE SPEED IS THE CORE'S OWN VELOCITY, and getting that right is the whole
+ * of this port. `Battlefield` reads `BlwpCore.Velocity` - which is (T_VX,
+ * T_VZ) - and takes its magnitude, falling back to `Rigidbody.linearVelocity`
+ * only when the core is not driving. That fallback is the PhysX remnant and
+ * the comment above it in the game says what it cost: the truck's body is
+ * kinematic, its linearVelocity is permanently zero, so run-over read a
+ * stationary truck and infantry stood in the road while the wheels went
+ * through them. The core has no such fallback and must not grow one.
+ *
+ * It is also NOT `T_WHEEL`. That is the vehicle's signed forward speed - the
+ * suspension model takes `abs()` of it wherever it needs a magnitude - so a
+ * truck reversing at 5 m/s would read as -5, sit below the 2.5 threshold and
+ * ride over nobody. C# takes a magnitude and so does this: the same quantity,
+ * not the nearest one to hand.
+ *
+ * `knock` is not ported. It exists to throw the body the way it was hit, and
+ * nothing in the core draws anything; it belongs with the rest of CombatFx.
+ */
+const RUN_OVER_RANGE = idiv(Math.imul(36, ONE), 10);   // 3.6 m, Battlefield.cs:144
+const RUN_OVER_MIN_SPEED = Math.imul(5, ONE) >> 1;     // 2.5 m/s, Army.RunOver's default
+
+/** The truck's speed as C# reads it: the magnitude of the core's own velocity. */
+const truckSpeed = (vx, vz) => length2(vx, vz);
+
+function runOver(s, b, tx, tz, speed, xOff, zOff) {
+  if (speed < RUN_OVER_MIN_SPEED) return 0;
+  const dx = sub(s[b + xOff], tx), dz = sub(s[b + zOff], tz);
+  if (abs(dx) >= RUN_OVER_RANGE || abs(dz) >= RUN_OVER_RANGE) return 0;
+  if (length2(dx, dz) >= RUN_OVER_RANGE) return 0;
+  return 1;
+}
+
+function clearOfTruck(s, b, tx, tz, xOff, zOff) {
+  const ox = sub(s[b + xOff], tx), oz = sub(s[b + zOff], tz);
+  if (abs(ox) >= CLEAR_RADIUS || abs(oz) >= CLEAR_RADIUS) return 0;
+  const d = length2(ox, oz);
+  // Coincident is skipped exactly as C# skips it (`d2 > 1e-4f`): a zero
+  // separation has no direction to push along.
+  if (d <= COINCIDENT || d >= CLEAR_RADIUS) return 0;
+
+  const push = sub(CLEAR_RADIUS, d);
+  s[b + xOff] = add(s[b + xOff], mulFast(div(ox, d), push));
+  s[b + zOff] = add(s[b + zOff], mulFast(div(oz, d), push));
+  return 1;
+}
 
 const SIDE_BULL = -1;
 const SIDE_BEAR = 1;
@@ -1309,7 +1756,7 @@ const SIDE_BEAR = 1;
  * cooldown has expired - reload, then the hit roll. Nothing may be inserted
  * before the wobble or every recorded transcript stops replaying.
  */
-function stepUnit(u, rng, seamZ, truckX, truckZ, halfX, halfZ, dt) {
+function stepUnit(u, rng, seamZ, truckX, truckZ, halfX, halfZ, dt, index) {
   if (u.hp <= 0) return 0;
 
   const wobble = (below(rng, 64) - 32) | 0;
@@ -1323,7 +1770,28 @@ function stepUnit(u, rng, seamZ, truckX, truckZ, halfX, halfZ, dt) {
   // between them, which is what the C# army does and why its means oscillate
   // about zero for ninety seconds without ever crossing.
   const walk = u.armour ? ARMOUR_WALK : RIFLE_WALK;
-  const standoff = u.armour ? ARMOUR_STANDOFF : RIFLE_STANDOFF;
+  // Each unit holds at its OWN distance, scattered about the mean.
+  //
+  // A single stand-off for everyone puts the whole army on one line, and then
+  // it is all or nothing: at nine metres apart every tank is permanently
+  // inside the 46 m gun range and both sides are ground to a third in a
+  // minute; at fifty, nobody is ever in range and nobody dies at all. The C#
+  // army sits at a mean of 25 with a spread near 20, and that spread is what
+  // produces the trickle of engagements that makes it a grind.
+  //
+  // Derived from the index rather than stored: it must not change from tick to
+  // tick, and there is no spare word in the unit for it.
+  const scatter = (Math.imul(index | 0, 2654435761) >>> 20) & 1023;
+  // A second slice of the same hash, so the rifleman's two offsets are
+  // independent of each other the way the C#'s two draws are. Same hash and a
+  // different window rather than a second constant: one magic number is enough
+  // to have to justify.
+  const scatter2 = (Math.imul(index | 0, 2654435761) >>> 8) & 1023;
+  const standoff = u.armour
+    ? add(ARMOUR_STANDOFF,
+          sub(Math.imul(scatter, ARMOUR_SPREAD) >> 10, ARMOUR_SPREAD >> 1))
+    : add(add(RIFLE_STANDOFF, Math.imul(scatter, RIFLE_SPREAD) >> 10),
+          sub(Math.imul(scatter2, RIFLE_SQUAD_Z) >> 10, RIFLE_SQUAD_Z >> 1));
   // The side a unit BELONGS to, not the side it happens to be standing on.
   //
   // Taken from the current position, a unit that stepped over the seam had its
@@ -1333,21 +1801,198 @@ function stepUnit(u, rng, seamZ, truckX, truckZ, halfX, halfZ, dt) {
   const side = u.side < 0 ? -1 : 1;
   const hold = add(seamZ, Math.imul(side, standoff));
 
-  const gap = sub(hold, u.z);
-  const want = abs(gap) > mulFast(walk, dt) ? (gap > 0 ? ONE : -ONE) : 0;
-  const dz = mulFast(mulFast(walk, want), dt);
-  const dx = mulFast(mulFast(walk, sin(u.heading)), mulFast(dt, 26214));
+  // Give ground when something is too close.
+  //
+  // This is the whole of the front's shape. A unit that only advances stands
+  // on one line with every other unit; one that backs off when crowded ends up
+  // scattered through a contested strip, which is where the trickle of
+  // engagements comes from.
+  // Overrun: past our own line by more than a few metres, fall right back.
+  // NOT side: the Bull army spawns at negative z, so its side is -1 while its
+  // Dir - the way it faces and pushes - is +1. Using side made every unit read
+  // as overrun the moment it reached its own holding line, so the whole army
+  // sat on the fall-back line and never fired a shot.
+  const past = mulFast(sub(u.z, seamZ), Math.imul(-side, ONE));
+  const overrun = past > OVERRUN_DEPTH;
 
-  u.x = clamp(add(u.x, dx), -halfX, halfX);
+  let dz;
+  if (overrun) {
+    const back = add(seamZ, Math.imul(side, FALL_BACK));
+    const g = sub(back, u.z);
+    dz = mulFast(mulFast(walk, g > 0 ? ONE : -ONE), dt);
+  } else if (u.crowded) {
+    // Armour only, and `crowded` is now only ever set for armour - the scan
+    // in sim.js does not run for a rifleman at all.
+    //
+    // This is StepArmour's `if (engaged && foeD2 < 24*24)`: a tank that has
+    // another tank inside 24 m gives six metres of ground. C# INFANTRY has no
+    // such rule anywhere - Separate is called on Armour pairs only
+    // (Army.cs:325) and StepInfantry walks a man to his standoff and leaves
+    // him there. Applying it to riflemen held the two lines 24.0 m apart at
+    // every sample of every seed, which is wider than the 16 m blast, so no
+    // bomb in this core could ever catch men from both sides; the recording's
+    // lines come within 4.7 m of each other. That floor was the whole of the
+    // friendly-fire and dud-share gap the air arm was blamed for.
+    // Six metres further back than it would otherwise hold, walked to and then
+    // held - not a retreat that runs for as long as the crowding does.
+    const back = add(hold, Math.imul(side, BACK_OFF));
+    const g = sub(back, u.z);
+    const want = abs(g) > mulFast(CROWD_WALK, dt) ? (g > 0 ? ONE : -ONE) : 0;
+    dz = mulFast(mulFast(CROWD_WALK, want), dt);
+  } else {
+    const gap = sub(hold, u.z);
+    const want = abs(gap) > mulFast(walk, dt) ? (gap > 0 ? ONE : -ONE) : 0;
+    dz = mulFast(mulFast(walk, want), dt);
+  }
+  // Sideways: hold a squad position, not a random walk.
+  //
+  // A unit that wanders freely fills whatever room it is given. Clamped to the
+  // battlefield the core's armour still spread from 57 m to 87 m of standard
+  // deviation over a minute - past uniform, so they were piling at the edges -
+  // while the C# army holds 36 to 45 throughout. It holds it because units do
+  // not wander at all: EnsureSquads anchors them along the front and each unit
+  // keeps its own offset from its anchor.
+  //
+  // Without that the two armies drift apart sideways and stop meeting: by t=60
+  // seven tanks were alive and NOT ONE was shooting. The fight was over, and
+  // that is what looked like heavy attrition - all of it happened in the first
+  // thirty seconds and then nothing.
+  // Bit three and up, so that a squad holds one unit from EACH side.
+  //
+  // index % SQUADS collides with the side assignment: armour is every fourth
+  // index and the side is bit two, so armour fell into just two squads, one
+  // per army, and the two lines stood at opposite ends of the field. Twenty
+  // three of twenty four tanks survived a minute because not one of them ever
+  // saw an enemy.
+  // ARMOUR keeps the ladder. INFANTRY is given C#'s own geometry instead: three
+  // drawn anchors a side that walk, handed in as u.anchor, and a man sits at
+  // anchor + Rand(-9, 9) on it.
+  //
+  // The ladder is an invention of this core and it stays for the tanks, because
+  // C# armour has no squad at all - StepArmour steers at its foe's x - and
+  // without the ladder the two armies drifted apart sideways and stopped
+  // meeting. For the riflemen it was doing active harm: eight evenly spaced
+  // columns SHARED BY BOTH SIDES meant a bomb that caught anybody caught men
+  // of both armies, so half of what the air killed was its own (34-49 a round
+  // against the recording's 11-29), and eight knots spread over the front left
+  // too little empty ground for a bomb to fall on (dud share 0.38-0.46 against
+  // 0.50-0.58).
+  const squad = ((index | 0) >> 3) & SQUAD_MASK;
+  const anchor = u.armour
+    ? sub(Math.imul(squad, div(Math.imul(2, SQUAD_SPAN), Math.imul(SQUADS - 1, ONE))),
+          SQUAD_SPAN)
+    : u.anchor;
+  const ladder = add(anchor, sub(Math.imul((Math.imul(index | 0, 2654435761) >>> 22) & 255,
+                                           div(SQUAD_WIDTH, Math.imul(255, ONE))),
+                                 div(SQUAD_WIDTH, TWO)));
+  // An engaged tank closes on its enemy's x. IN X ONLY, and that is the whole
+  // difference from the version this core ported once and reverted.
+  //
+  // What was reverted steered at `(foe.x, seam - Dir*9)` as ONE normalised
+  // vector, the way StepArmour does. Normalising is what did the damage: the
+  // z component is then dragged along by the size of the x chase, the front
+  // lost its depth (z spread 9-12 down to 1.9-11.7) and one side was wiped out
+  // on two seeds. Here x and z stay on their own controllers - z is still the
+  // hold, clamped at its own walk, and knows nothing about the foe - so the
+  // depth cannot be spent on the chase. Both are measured below and in
+  // PRIORITIES, because a change that fixes presence by flattening the front
+  // has not fixed anything.
+  //
+  // The ladder stays for a tank with nobody to close on. It was invented here
+  // because armour left to a heading wobble random-walks to the map edges and
+  // stops meeting anything at all; it is a place to wait, not a place to fight
+  // from. Eight fixed posts from -76 to +76 put only two of them inside the
+  // truck's 34 m, which is why 35% of the armour was ever near it against the
+  // recording's 71% - the spread was right (sd 46 against C#'s 36-45) and the
+  // SHAPE was flat where the recording's is peaked.
+  const post = u.armour ? (u.engaged ? u.foeX : ladder) : riflePost(anchor, index);
+  const dxWant = sub(post, u.x);
+  const dxCap = mulFast(walk, dt);
+  const dx = clamp(dxWant, neg(dxCap), dxCap);
+
+  // Sideways: a slow drift. NOT a chase towards the engaged foe.
+  //
+  // StepArmour steers towards (foe.x, front - Dir*9) as one vector, and
+  // porting that coupling was the obvious way to get the depth the front is
+  // missing. Measured, it made things worse: the z spread fell from 9-12 to
+  // 1.9-11.7 and one side was wiped out on two seeds, because chasing pulls
+  // both armies onto the same x and concentrates the fighting rather than
+  // spreading it. Reverted rather than kept, since the whole point of the
+  // change was to raise that number.
+  // Held on the BATTLEFIELD, not merely on the map.
+  //
+  // The heading wobbles, so the lateral step is a random walk, and clamped at
+  // the map edge it is a random walk with 130 m of room: after thirty seconds
+  // the surviving tanks were spread from -130 to +130 with not one enemy
+  // inside gun range of another. The fight was a massacre in the first twenty
+  // seconds and then nothing at all, which is why attrition looked like twice
+  // the C# army's - it was not a faster grind, it was no grind.
+  //
+  // Unity holds every unit inside |x| < FrontX - 4 for exactly this reason.
+  const edge = sub(FRONT_X, Math.imul(4, ONE));
+  u.x = clamp(add(u.x, dx), neg(min(edge, halfX)), min(edge, halfX));
   u.z = clamp(add(u.z, dz), -halfZ, halfZ);
 
-  // in range of the courier?
-  const d = length2(sub(u.x, truckX), sub(u.z, truckZ));
-  if (d >= RIFLE_RANGE) return 0;
+  // The courier is NOT a weapon, and this function no longer has one.
+  //
+  // What stood here was a second gun bolted onto the tank: its own 40-99 tick
+  // clock, the rifle's 0.045 roll, a 26 m reach and one flat point of damage.
+  // The C# has nothing of the sort. `Army.StepArmour` fires the tank's ONE gun
+  // when it is engaged, and the courier is only a TARGET CHOICE inside that
+  // shot - taken when the truck is inside CourierRange and nearer than the
+  // enemy the tank had picked. So the parallel weapon is deleted rather than
+  // widened to 34 m, and the choice now lives in sim.js beside the gun, which
+  // is the only place that can see both the foe and the truck.
+  //
+  // Measured before it went: 263 shots a round for 11 points, against the
+  // recording's 163 hits for 1271.7.
+  return 0;
+}
 
-  if (u.cooldown > 0) { u.cooldown = (u.cooldown - 1) | 0; return 1; }
-  u.cooldown = (40 + below(rng, 60)) | 0;
-  return below(rng, 1000) < RIFLE_HIT_PER_MIL ? 2 : 1;   // 2 = a hit landed
+/**
+ * The nearest enemy RIFLEMAN inside rifle range, or -1.
+ *
+ * `Army.NearestEnemyInfantry`, and the counterpart of pickTarget: that one
+ * scans armour for a tank's gun, this one scans infantry for a rifle. A
+ * rifleman never shoots at a tank in the C# and does not here.
+ *
+ * Called when the shot goes off and not every tick, which is C#'s own choice
+ * and its own comment: a hundred and eighty men each scanning every other man
+ * every frame is thirty thousand comparisons for a decision that changes once
+ * every few seconds.
+ */
+/**
+ * Where a rifleman stands on his squad's anchor.
+ *
+ * `Army.Spawn` draws `squadOffsetX = Rand(-9f, 9f)` once and `StepInfantry`
+ * walks him to `squads[squad] + squadOffsetX` for the rest of his life. Here
+ * it comes off the slot index instead of a word, because there is no spare
+ * word in the unit - which does mean a replacement inherits the offset of the
+ * man whose slot it took, where C# draws a fresh one. Same distribution, one
+ * fewer degree of freedom.
+ *
+ * Shared, so that the post a man spawns on and the post he walks to cannot
+ * drift apart.
+ */
+function riflePost(anchor, index) {
+  const offset = sub(Math.imul((Math.imul(index | 0, 2654435761) >>> 22) & 255,
+                               div(SQUAD_OFFSET, Math.imul(255, ONE))),
+                     div(SQUAD_OFFSET, TWO));
+  return add(anchor, offset);
+}
+
+function pickRifleTarget(units, count, self, x, z, side) {
+  let best = -1, bestD = RIFLE_RANGE;
+  for (let i = 0; i < count; i++) {
+    if (i === self) continue;
+    const u = units(i);
+    if (u.hp <= 0 || u.side === side || u.armour) continue;
+    const dx = sub(u.x, x), dz = sub(u.z, z);
+    if (abs(dx) > bestD || abs(dz) > bestD) continue;
+    const d = length2(dx, dz);
+    if (d < bestD) { bestD = d; best = i; }
+  }
+  return best;
 }
 
 /**
@@ -1357,6 +2002,81 @@ function stepUnit(u, rng, seamZ, truckX, truckZ, halfX, halfZ, dt) {
  * the scale measured on the built map, where the seam runs 7 to 13 and the
  * run-in to the gate about 2.
  */
+// Fire between the two armies, ported from Army.StepArmour with Flow at zero.
+//
+// A tank engages the nearest enemy tank inside 46 m, reloads for 1.4 to 3.2
+// seconds and takes 1.1 to 2.4 hit points off it - and a tank has 6 to 10, so
+// it dies to about five hits over roughly ten seconds. That is the shape the
+// recording shows: twenty-four a side down to nineteen by t=15, then a grind
+// that neither side wins.
+//
+// Hit points here are the C# ones times ten, which is what the state buffer
+// already holds.
+const FIRE_RELOAD_MIN = 84;      // ticks, 1.4 s
+const FIRE_RELOAD_SPAN = 108;    // up to 3.2 s
+/**
+ * How often a shot connects. Near misses are part of the show.
+ *
+ * StepArmour rolls Random01() < 0.55 before taking anything off the target,
+ * and the core took a hit off every shot. That single line is most of why
+ * the core kept a third of its armour over a minute where the C# army keeps
+ * three quarters - and it was invisible in the constants, because reload,
+ * damage and hit points had all been matched exactly.
+ *
+ * Found by measuring rather than reading: the C# army fights with four to
+ * eight enemies in range per tank against the core's 0.3-0.75 and still loses
+ * far fewer, which said the fault could not be contact and had to be
+ * lethality per shot.
+ */
+const HIT_PER_MIL = 550;
+
+const FIRE_DAMAGE_MIN = Math.imul(11, ONE);
+const FIRE_DAMAGE_SPAN = Math.imul(13, ONE);
+
+/**
+ * One round of armour against armour.
+ *
+ * `units` is the same accessor threatAt takes; `self` is the index firing.
+ * Returns the index it hit, or -1. The caller applies the damage, because the
+ * state buffer is the caller's to write.
+ */
+function pickTarget(units, count, self, x, z, side) {
+  let best = -1, bestD = ARMOUR_RANGE;
+  for (let i = 0; i < count; i++) {
+    if (i === self) continue;
+    const u = units(i);
+    if (u.hp <= 0 || u.side === side || !u.armour) continue;
+    const dx = sub(u.x, x), dz = sub(u.z, z);
+    if (abs(dx) > bestD || abs(dz) > bestD) continue;
+    const d = length2(dx, dz);
+    if (d < bestD) { bestD = d; best = i; }
+  }
+  return best;
+}
+
+// The rifle, from Army.StepInfantry. A man reloads for 2.5 to 4.5 seconds
+// after a shot and looks again after 0.4 to 1.1 when he has nobody to shoot
+// at, and a hit takes one point off a man who has one - so a rifleman dies to
+// a single bullet. In this core he carries ten, because the buffer holds hit
+// points at ten times C#'s scale.
+const RIFLE_RELOAD_MIN = 150;    // ticks, 2.5 s
+const RIFLE_RELOAD_SPAN = 120;   // up to 4.5 s
+const RIFLE_LOOK_MIN = 24;       // 0.4 s, nothing in range
+const RIFLE_LOOK_SPAN = 42;      // up to 1.1 s
+
+const RIFLE_RELOAD_TICKS = RIFLE_RELOAD_MIN;
+const RIFLE_RELOAD_TICKS_SPAN = RIFLE_RELOAD_SPAN;
+const RIFLE_LOOK_TICKS = RIFLE_LOOK_MIN;
+const RIFLE_LOOK_TICKS_SPAN = RIFLE_LOOK_SPAN;
+const RIFLE_HP = Math.imul(10, ONE);
+const RIFLE_DAMAGE = Math.imul(10, ONE);
+
+const BACKOFF_RANGE = BACK_OFF_RANGE;
+const RELOAD_MIN = FIRE_RELOAD_MIN;
+const RELOAD_SPAN = FIRE_RELOAD_SPAN;
+const DAMAGE_MIN = FIRE_DAMAGE_MIN;
+const DAMAGE_SPAN = FIRE_DAMAGE_SPAN;
+
 const THREAT_FOR_FULL = Math.imul(10, ONE);
 
 function threatAt(units, count, x, z) {
@@ -1401,6 +2121,12 @@ const APRON_RADIUS = Math.imul(22, ONE);
 const T_FLOOR = 16384;      // 0.25
 const T_CEIL = 98304;       // 1.5
 
+// The time clamp, said in ticks: T = REFERENCE_TICKS / ticks held to
+// [0.25, 1.5] is exactly ticks held to [2600, 15600]. Written out so the two
+// forms cannot drift apart silently.
+const T_TICKS_MIN = 2600;   // REFERENCE_TICKS / 1.5
+const T_TICKS_MAX = 15600;  // REFERENCE_TICKS / 0.25
+
 /**
  * Accumulates exposure over GROUND MADE GOOD against a high-water mark.
  *
@@ -1420,11 +2146,11 @@ function accrue(exposure, bestX, x, threat, heat) {
 }
 
 const exposureFactor = (exposure) =>
-  clamp(div(exposure, EXPOSURE_REFERENCE), 0, ONE);
+  clamp(divRound(exposure, EXPOSURE_REFERENCE), 0, ONE);
 
 const timeFactor = (ticks) =>
   ticks <= 0 ? T_CEIL
-             : clamp(div(Math.imul(REFERENCE_TICKS, ONE), Math.imul(ticks, ONE)),
+             : clamp(divRound(Math.imul(REFERENCE_TICKS, ONE), Math.imul(ticks, ONE)),
                      T_FLOOR, T_CEIL);
 
 /**
@@ -1435,16 +2161,48 @@ const timeFactor = (ticks) =>
  * thing two implementations could round differently.
  */
 function scoreOf(exposure, ticks, cargo) {
-  const e = exposureFactor(exposure);
-  const t = timeFactor(ticks);
+  // NO FACTOR IS EVER FORMED ON ITS OWN. `exposureFactor` and `timeFactor`
+  // below are the readable statement of the rule and stay the tested ones, but
+  // each returns a fraction of at most 1.0 in Q16.16, quantised to 1.5e-5 -
+  // and this score multiplies by a thousand, which scales that error to 0.015
+  // points. Carrying the thousand from the first step instead, and rounding
+  // only at the end of each divide, leaves a grid of 1/65536 of a point.
+  //
+  // Both clamps survive the move. Exposure is clamped to the reference before
+  // dividing, which is the same as clamping the ratio at 1. Time is clamped on
+  // the TICKS, not the factor: T is 3900/ticks held to [0.25, 1.5], so ticks
+  // held to [2600, 15600] says the identical thing exactly, and it also gives
+  // an instant run its 1.5 without a separate branch.
+  //
+  // Magnitudes, since `mulDivRound` is only exact under 2^53: the largest
+  // intermediate is 1000 ONE * 190 ONE = 8.2e14, and no result passes 1500 ONE.
+  const ex = clamp(exposure, 0, EXPOSURE_REFERENCE);
+  const tk = clamp(ticks | 0, T_TICKS_MIN, T_TICKS_MAX);
   const c = clamp(cargo, 0, ONE);
-  const product = mulFast(mulFast(e, t), c);
-  return mulFast(Math.imul(1000, ONE), product) >> 16;
+  const scaled = mulDivRound(Math.imul(1000, ONE), ex, EXPOSURE_REFERENCE);
+  return toIntRound(mulRound(mulDivRound(scaled, REFERENCE_TICKS, tk), c));
 }
 
-/** Whether a spot earns anything at all: outside the apron, and gaining ground. */
-const earning = (distanceFromStart, gainingGround) =>
-  distanceFromStart >= APRON_RADIUS && gainingGround;
+/**
+ * Whether a spot earns anything at all: outside the apron, and gaining ground.
+ *
+ * Takes the two components rather than a distance, because the distance is
+ * exactly the thing that cannot be trusted here. `length2` squares its
+ * arguments in Q16.16, so a separation past about 181.5 m wraps the sum of
+ * squares past 2^31 and comes back as ZERO - and this map runs 260 m across
+ * with its start on the apron at x = -100.4, so a truck beyond x = 80.4 read
+ * as standing ON its start and stopped earning. Measured before the guard: the
+ * last 33.5 m of ground it gained was never paid for, and that is the run-in,
+ * where the danger is highest.
+ *
+ * The rejection runs the OPPOSITE way to the ones in army.js and solids.js.
+ * Those ask whether a point is INSIDE a radius, where a large axis rules the
+ * answer out; this asks whether it is OUTSIDE one, where a large axis PROVES
+ * it. Copying their shape unchanged would have kept the bug.
+ */
+const earning = (dx, dz, gainingGround) =>
+  gainingGround &&
+  (abs(dx) > APRON_RADIUS || abs(dz) > APRON_RADIUS || length2(dx, dz) >= APRON_RADIUS);
 
 // ---- rules/gate.js
 // The far end of the run, and the clock that ends it.
@@ -1522,6 +2280,285 @@ function frontlineZ(hist, x, halfX, halfZ) {
   return mulFast(t, mulFast(halfZ, 43690));
 }
 
+// ---- rules/air.js
+// The air arm, ported from Army.SendHelicopter / StepHelicopters / Release /
+// StepBombs / Detonate, and from Battlefield.LaunchSorties.
+//
+// Ported against test/vectors/csharp-gunships.json rather than against the C#
+// read out loud, and the recording changed what this file is. Battlefield's own
+// comment calls a sortie "an event you look up for"; measured, a gunship is
+// airborne 69-93% of the round and two are up at a time on every seed, because
+// both clocks start at zero and a 17 s cadence against a ~10 s transit is
+// continuous cover. Air is weather. The numbers below are chosen to reproduce
+// that, not the comment.
+//
+// Two behaviours here look like faults and are COPIED deliberately, because the
+// recording is the specification:
+//
+//   the release gate is on where the bomb is LET GO, not where it lands. A bomb
+//   inherits 30 m/s along the gunship's own track and falls from 19 m, so it is
+//   thrown some sixty metres downrange; released at |x| < 92 it reaches |x| =
+//   148-154 against a field that ends at 92. 26-42% of every load lands on
+//   nobody by construction. Narrowing the gate would "fix" a third of the air
+//   war out of existence.
+//
+//   the first sortie of every round is wasted. Both clocks start at zero, so
+//   two gunships launch on tick one, and both armies are still at |z| = 77 with
+//   the seam between them. The first killing bomb is at t = 16.7-26.4 s.
+//
+// What is NOT copied is the one thing that would have made the core
+// unverifiable: SendHelicopter draws its direction from UnityEngine.Random and
+// LaunchSorties draws its jitter from UnityEngine.Random, so the C# air arm
+// cannot be replayed from an army seed at all. Here every draw comes off the
+// state's own stream, in a fixed order, like everything else in the core.
+
+
+
+
+/**
+ * How far out a gunship may fly, and where it enters. Army.AirCorridorX.
+ *
+ * 104 rather than the map edge because the two depots are not scenery a
+ * helicopter can pass through: the post office stands to x = -114.4 and the
+ * miner's leading face is at 108.4. A gunship holds 19 m and both buildings are
+ * taller than that.
+ */
+const CORRIDOR_X = Math.imul(104, ONE);
+
+/** The drop gate. Army.FrontX - the box the two armies are held inside. */
+const DROP_GATE_X = Math.imul(92, ONE);
+
+/** 20 m/s, and StepHelicopters' comment explains the number. */
+const HELI_SPEED = Math.imul(20, ONE);
+
+/**
+ * How far off the seam a gunship stands, and how far it weaves either way.
+ * `26 + sin(t * 0.6) * 9` on its own side of the line.
+ */
+const STANDOFF = Math.imul(26, ONE);
+const WEAVE_Z = Math.imul(9, ONE);
+
+/** Height held over the ground, and its own slower weave. */
+const HEIGHT = Math.imul(19, ONE);
+const WEAVE_Y = Math.imul(3, ONE);
+
+/**
+ * The two weave rates, converted from radians a second to TURNS a second.
+ *
+ * Mathf.Sin takes radians; this core's sin takes Q16.16 turns, which is what
+ * makes wrapping a free mask and removes every question about pi. 0.6 rad/s is
+ * 0.6/2pi = 0.0954930 turns/s and 0.9 rad/s is 0.1432394, and those are the
+ * numbers written here in Q16.16. Getting this wrong is not a rounding error -
+ * it is a gunship weaving six times too fast.
+ */
+const WEAVE_Z_RATE = 6258;                 // 0.6 rad/s in turns/s
+const WEAVE_Y_RATE = 9387;                 // 0.9 rad/s in turns/s
+
+/**
+ * How hard the gunship chases the z it wants: Speed * dt * 1.6 per tick.
+ */
+const Z_CHASE = 104858;                    // 1.6
+
+/**
+ * The height smoothing, `1 - exp(-2 * dt)`, evaluated ONCE for the fixed tick.
+ *
+ * exp is not on the guard's whitelist and never will be - it is exactly the
+ * kind of libm call that differs between engines, which is what specified.test
+ * exists to demonstrate. It does not need to be: dt is a constant here, so
+ * 1 - exp(-2 * dt) is a constant too. Written out rather than computed, so
+ * there is nothing for a second implementation to disagree about.
+ *
+ * Against the TICK the core actually runs, not against a sixtieth: TICK_DT is
+ * 1092, which is 0.0166626 and not 0.0166667, and the two round to different
+ * numbers here. Writing 1 - exp(-2/60) gave 2149 where the tick asks for 2148 -
+ * a constant that looked derived and was not.
+ *
+ * If TICK_DT ever changes, this changes with it, and a comment is not enough -
+ * test/rules.test.js pins the pair.
+ */
+const Y_LERP = 2148;                // 1 - exp(-2 * 1092/65536)
+
+/**
+ * 9.81 m/s/s. Bombs are the only thing in this core that falls.
+ *
+ * Named for the bomb rather than for the world, and NOT shared with the
+ * identical constant in vehicle.js. Two reasons, and the second is the one that
+ * bit: the truck's is a slope term and this is a trajectory, so they agree by
+ * physics rather than by contract - and the bundler concatenates every rule
+ * module into ONE scope, where two files declaring `GRAVITY` is a redeclaration.
+ * That threw here, loudly, because both are `const`. terrain.js and cargo.js
+ * already both declare COLUMNS, with the values 128 and 2, and only escape
+ * because neither is reachable from sim.js. bundle.js refuses duplicate
+ * EXPORTED names and says why; it does not look at private ones, and a `var` or
+ * a `function` colliding there would not throw at all - it would quietly ship a
+ * different program. Worth widening, and not in this item.
+ */
+const BOMB_GRAVITY = 642908;
+
+/** The speed a bomb inherits along the gunship's track, and its aim across the seam. */
+const BOMB_VX = Math.imul(30, ONE);
+const BOMB_VZ_MIN = Math.imul(10, ONE);
+const BOMB_VZ_MAX = Math.imul(22, ONE);
+
+/** How long after entering, and then between drops. Rand(1.5,4) then Rand(1.6,3.2). */
+const FIRST_DROP_MIN = Math.imul(3, HALF);       // 1.5 s
+const FIRST_DROP_MAX = Math.imul(4, ONE);
+const NEXT_DROP_MIN = 104858;                    // 1.6 s
+const NEXT_DROP_MAX = 209715;                    // 3.2 s
+
+/**
+ * Army.BombRadius, and it is the reason bombs outkill rifles by a distance.
+ *
+ * Sixteen metres is wider than a squad stands - SQUAD_WIDTH is 16 - so a bomb
+ * on a post takes the post. Measured: 60-76 riflemen a round to bombs against
+ * 16-37 to rifles, and up to 23 men on one bomb.
+ */
+const BOMB_RADIUS = Math.imul(16, ONE);
+
+/**
+ * What a bomb does to armour at the centre of the blast, on the core's hit
+ * point scale.
+ *
+ * C# is `v.hp -= 12f * falloff` against hp of Rand(6,10); this core holds hit
+ * points at ten times that, so twelve becomes a hundred and twenty. A tank at
+ * the centre dies outright and one eight metres out takes half - which is why
+ * the armour share is the mirror of the infantry one: 9-12 tanks of 55-63 lost,
+ * 15-22%, where infantry is nearly all of it.
+ */
+const BOMB_DAMAGE = Math.imul(120, ONE);
+
+/** Battlefield.sortieSeconds, and its jitter. 17 s * [0.7, 1.4). */
+const SORTIE_SECONDS = Math.imul(17, ONE);
+const JITTER_MIN = 45875;                        // 0.7
+const JITTER_MAX = 91750;                        // 1.4
+
+/** stepHeli's answer. Never both: the gate is |x| < 92 and the exit is |x| > 104. */
+const AIR_NOTHING = 0, AIR_RELEASE = 1, AIR_GONE = 2;
+
+/**
+ * Where a gunship of `side` enters, and which way it runs.
+ *
+ * `dir` is drawn first and the entry x follows from it, because a gunship
+ * arrives from beyond the fighting rather than appearing over it. The drop
+ * delay is drawn second. That order is protocol.
+ *
+ * The C# takes dir off UnityEngine.Random, which is why its air arm cannot be
+ * replayed from an Army seed; here it comes off the round's own stream.
+ */
+function launchHeli(h, rng, side, seamAt, groundAt) {
+  const dir = below(rng, 2) === 0 ? ONE : neg(ONE);
+  h.dir = dir;
+  h.side = side;
+  h.x = dir > 0 ? neg(CORRIDOR_X) : CORRIDOR_X;
+  h.dropIn = between(rng, FIRST_DROP_MIN, FIRST_DROP_MAX);
+  // Dir - the way it faces and pushes - is the OPPOSITE of side: the Bull army
+  // is side -1 and its Dir is +1. So `front - Dir * 26` is `front + side * 26`,
+  // which puts each gunship 26 m onto its own ground. Writing this with side
+  // where C# writes Dir is the sign error that cost item 2c a round.
+  h.z = add(seamAt(h.x), Math.imul(side, STANDOFF));
+  h.y = add(groundAt(h.x, h.z), HEIGHT);
+  h.t = 0;
+}
+
+/**
+ * One tick of a gunship. `h` is a view over its state words.
+ *
+ * Draw order: the drop delay, and only when a bomb is actually released. The
+ * bomb's own aim is drawn in releaseBomb, immediately after - so a sortie's
+ * draws are delay, aim, delay, aim, and a verifier that reorders them gets
+ * another air war.
+ *
+ * Yaw and bank are deliberately absent. They are smoothing on a mesh: nothing
+ * downstream reads them, and putting them in the hashed state would put two
+ * Mathf.LerpAngle calls into the protocol for the sake of how a model tilts.
+ * Height is not scenery and is here - it decides how long a bomb falls, and
+ * therefore how far downrange the 30 m/s throws it.
+ */
+function stepHeli(h, rng, seamAt, groundAt, dt) {
+  h.t = add(h.t, dt);
+
+  h.x = add(h.x, mulFast(mulFast(h.dir, HELI_SPEED), dt));
+
+  // Chased, not snapped: the gunship leans onto the line it wants at 1.6 times
+  // its own forward speed, so a moving seam bends the track instead of teleporting it.
+  const wantZ = add(seamAt(h.x),
+                    Math.imul(h.side, add(STANDOFF, mulFast(sin(mulFast(h.t, WEAVE_Z_RATE)), WEAVE_Z))));
+  const reach = mulFast(mulFast(HELI_SPEED, dt), Z_CHASE);
+  h.z = add(h.z, clamp(sub(wantZ, h.z), neg(reach), reach));
+
+  const wantY = add(add(groundAt(h.x, h.z), HEIGHT),
+                    mulFast(sin(mulFast(h.t, WEAVE_Y_RATE)), WEAVE_Y));
+  h.y = add(h.y, mulFast(sub(wantY, h.y), Y_LERP));
+
+  // Drop on what it passes, but only over the box the armies are held in.
+  //
+  // The gate is on the RELEASE POINT and the bomb is not released where it
+  // lands. That is not an oversight to tidy up on the way past: it is 26-42% of
+  // every load, measured, and the recording is what this file is held to.
+  h.dropIn = sub(h.dropIn, dt);
+  if (h.dropIn <= 0 && abs(h.x) < DROP_GATE_X) {
+    h.dropIn = between(rng, NEXT_DROP_MIN, NEXT_DROP_MAX);
+    return AIR_RELEASE;
+  }
+
+  if (abs(h.x) > CORRIDOR_X) return AIR_GONE;
+  return AIR_NOTHING;
+}
+
+/**
+ * A bomb leaves the rack. `b` is a view over a free bomb's state words.
+ *
+ * It keeps the aircraft's height and its speed along the track, and is aimed
+ * across the seam at 10-22 m/s. Nothing steers it after this.
+ */
+function releaseBomb(b, h, rng, front) {
+  b.side = h.side;
+  b.x = h.x; b.y = h.y; b.z = h.z;
+  b.vx = mulFast(h.dir, BOMB_VX);
+  b.vy = 0;
+  // Mathf.Sign is +1 at exactly zero, which the core's sign() is not - it
+  // returns 0, and a bomb with no lateral speed would fall straight down onto
+  // the gunship's own line every time the seam passed under it.
+  b.vz = mulFast(sub(front, b.z) >= 0 ? ONE : neg(ONE), between(rng, BOMB_VZ_MIN, BOMB_VZ_MAX));
+}
+
+/** One tick of a falling bomb. True once it is at or below the ground. */
+function stepBomb(b, ground, dt) {
+  b.vy = sub(b.vy, mulFast(BOMB_GRAVITY, dt));
+  b.x = add(b.x, mulFast(b.vx, dt));
+  b.y = add(b.y, mulFast(b.vy, dt));
+  b.z = add(b.z, mulFast(b.vz, dt));
+  return b.y <= ground;
+}
+
+/**
+ * What the blast is worth to armour `d` metres from the centre: 12 * (1 - d/16)
+ * on the C# scale, a hundred and twenty on this one.
+ *
+ * Infantry does not go through this. A bomb does not wound a rifleman, it
+ * clears the circle - everyone inside dies whatever the distance - and that
+ * flatness is why one bomb is worth up to twenty-three men.
+ */
+function bombDamage(d) {
+  if (d >= BOMB_RADIUS) return 0;
+  return mulFast(BOMB_DAMAGE, sub(ONE, div(d, BOMB_RADIUS)));
+}
+
+/** Distance from a blast to a point, both Q16.16. Rejected per axis first. */
+function blastReach(dx, dz) {
+  if (abs(dx) > BOMB_RADIUS || abs(dz) > BOMB_RADIUS) return -1;
+  const d = length2(dx, dz);
+  return d > BOMB_RADIUS ? -1 : d;
+}
+
+/**
+ * How long until this side's next sortie: 17 s * [0.7, 1.4), so 11.9 to 23.8.
+ *
+ * The measured intervals across the four recorded seeds are 12.5 to 23.3, which
+ * is this distribution and not the "twenty-odd seconds" the comment claims.
+ */
+const sortieWait = (rng) => mulFast(SORTIE_SECONDS, between(rng, JITTER_MIN, JITTER_MAX));
+
 // ---- sim.js
 // One tick of the world.
 //
@@ -1549,7 +2586,61 @@ function frontlineZ(hist, x, halfX, halfZ) {
 
 
 
-const UNITS = 96;
+
+// UNITS and ARMOUR_MASK live in state.js so the generated C# mirror carries
+// them; re-exported here because every tool and rule already reads them from
+// this module.
+
+/**
+ * The van is soft but not paper.
+ *
+ * `TruckHealth.Damage` is `Health -= amount / armour` with `armour = 1.5`, and
+ * the amount it is handed is the raw shell: `CourierHit?.Invoke(Rand(5f, 11f))`
+ * carries what the gun did, and that method's own summary says "Amount is
+ * before armour". So the divisor is a deliberate, dimensionless toughness knob
+ * on the game side - the tooltip says so in as many words - and not a units
+ * confusion or the leftover of a formula.
+ *
+ * The core had the raw amount and the same maxHealth of 100 and did not
+ * divide, which made its truck half again as soft as the one the game shipped.
+ * Measured on ONE hit sequence, parked at (0, 0) with the air off, three
+ * seeds: 100 points was reached at 24.9 / 14.5 / 16.1 s, and 150 - the same
+ * hits against a truck that divides them - at 33.5 / 21.0 / 23.7 s.
+ *
+ * A divisor on the HIT rather than a bigger pool, because that is the shape
+ * the rule has: C# applies `/armour` to every `Damage()` call it makes,
+ * including the crash path, so a truck that is tougher against shells is
+ * tougher against everything by the same factor.
+ */
+const TRUCK_ARMOUR = Math.imul(3, ONE) >> 1;   // 1.5, TruckHealth.armour
+
+/**
+ * What a crash costs, which until now was nothing at all.
+ *
+ * The core noticed the impact and priced it nowhere: `T_IMPACT` was written
+ * for the host to read and `T_HP` was reduced by courier fire and by nothing
+ * else. `TruckHealth` held the rule - `rammed >= crashSpeed` writes the truck
+ * off, otherwise `Damage(rammed * 6f)` - and that was client-side simulation
+ * of an outcome, which is what M1 removes.
+ *
+ * The quantity is a SPEED and it always was: `TakeImpact` is `T_IMPACT / ONE`
+ * and the word is set in `resolveArmour` from the component of the truck's
+ * velocity along the contact normal. No distance was read as a speed here, so
+ * there is no units fault to avoid copying - the six is points per metre per
+ * second, and it is a rate, not a leftover.
+ *
+ * The six is applied BEFORE the armour divisor, because C# applied it inside
+ * `Damage`, which divided. So a shunt at 3 m/s costs 3 * 6 / 1.5 = 12 points,
+ * exactly as it did in the game.
+ *
+ * The burnt-out-hull branch - `impact * 3f`, and never a write-off - has no
+ * counterpart yet, because the core has no hulls. It is on the list with
+ * `Army.Wrecks`.
+ */
+const CRASH_WRITE_OFF = Math.imul(4, ONE);       // TruckHealth.crashSpeed
+const CRASH_FLOOR = ONE >> 1;                    // 0.5 m/s, below it nothing
+const CRASH_POINTS = Math.imul(6, ONE);          // points per m/s
+
 const HALF_X = Math.imul(130, ONE);
 const HALF_Z = Math.imul(85, ONE);
 const TICK_DT = 1092;                       // 1/60 in Q16.16
@@ -1572,7 +2663,7 @@ const START_X = -6579814;                   // -100.4 m, 14 m out on the apron
 const START_Z = 668467;                     // 10.2 m, the solo bay (14 of 24)
 // Every fourth unit is armour. A mask rather than a modulo: '%' is banned
 // outside the arithmetic files, and a power of two makes the ban free.
-const ARMOUR_MASK = 3;
+
 
 /** Every fourth unit is a tank. Shared, so the collision and the fighting agree. */
 const isArmour = (i) => (i & ARMOUR_MASK) === 0;
@@ -1607,49 +2698,7 @@ function setGround(st, cols, rows, heights) {
   return true;
 }
 
-/**
- * The tanks, as x and z pairs in Q16.16, for this tick.
- *
- * Per-tick input rather than round setup: they move. Recorded with the
- * steering, and replayed from the transcript the same way.
- */
-function setArmour(st, count, xz) {
-  const n = Math.imul(count, 2);
-  if (count < 0 || xz.length < n) return false;
-  const a = new Int32Array(n);
-  a.set(xz.subarray(0, n));
-  st.armour = { n: count, xz: a };
-  return true;
-}
 
-/**
- * The whole enemy army for this tick: x, z and kind, three words each.
- *
- * Kind is 1 for armour and 0 for infantry. Both matter and for different
- * reasons - armour is solid and infantry is not, but BOTH count towards the
- * danger the score is paid for, and it was being computed from the core's own
- * invisible units. The player was scored on where ghosts were standing.
- */
-function setUnits(st, count, data) {
-  const n = Math.imul(count, 3);
-  if (count < 0 || data.length < n) return false;
-  const u = new Int32Array(n);
-  u.set(data.subarray(0, n));
-  st.units = { n: count, u };
-
-  // The solid half, kept separately so the collision does not re-filter it
-  // sixty times a second.
-  let armour = 0;
-  const xz = new Int32Array(Math.imul(count, 2));
-  for (let i = 0; i < count; i++) {
-    if (u[Math.imul(i, 3) + 2] === 0) continue;
-    xz[Math.imul(armour, 2)] = u[Math.imul(i, 3)];
-    xz[Math.imul(armour, 2) + 1] = u[Math.imul(i, 3) + 1];
-    armour++;
-  }
-  st.armour = { n: armour, xz };
-  return true;
-}
 
 /**
  * Puts the truck back, stationary and pointing down the map.
@@ -1706,6 +2755,10 @@ function init(seedWord) {
   s[O_TRUCK + T_Z] = START_Z;
   s[O_TRUCK + T_HEADING] = 16384;           // facing +x, down the map
   s[O_TRUCK + T_HP] = Math.imul(100, ONE);
+  // Which way a hurt truck pulls. Derived from the seed rather than drawn,
+  // because a draw here would shift every stream after it and draw order is
+  // protocol; C# takes it from `Random.value` once at Awake.
+  s[O_TRUCK + T_FLAGS] = (Math.imul(seedWord | 0, 2654435761) >>> 31) & 1;
   s[O_TRUCK + T_CARGO] = 45875;             // 0.7 of a bed
   s[O_SCORE + S_BESTX] = START_X;
   s[O_SCORE + S_CARGO] = 45875;
@@ -1724,33 +2777,352 @@ function init(seedWord) {
 
   // The tanks the player can see are the host's, and it sends them every
   // tick. Empty until it does.
-  st.armour = { n: 0, xz: new Int32Array(0) };
-  st.units = { n: 0, u: new Int32Array(0) };
+  // Sized once for every armour slot there can be. Filled from the core's own
+  // units at the top of each step; see `fillArmour`.
+  st.armour = { n: 0, xz: new Int32Array(Math.imul(UNITS >> 2, 2)) };
 
-  for (let i = 0; i < UNITS; i++) {
-    const b = unitBase(i);
-    // draw order: x, z, side, hp, heading, cooldown
-    // The battlefield, and only the battlefield.
-    //
-    // This was the full width of the map, so a tank could be placed at x=-100
-    // - which is where the truck is parked. With the armour made solid the
-    // truck was then shoved off its own apron before the player touched
-    // anything. Unity holds its units to |x| < 88 for the same reason; these
-    // are the same bounds.
-    //
-    // And each side comes in at its OWN edge and walks up, rather than
-    // appearing at a random depth in the middle of the fighting.
-    const side = nextBelow(rng, 2) === 0 ? -1 : 1;
-    s[b + U_X] = Math.imul(nextBelow(rng, 176) - 88, ONE);
-    s[b + U_Z] = Math.imul(Math.imul(side, 79) - Math.imul(side, nextBelow(rng, 4)), ONE);
-    s[b + U_SIDE] = side;
-    s[b + U_HP] = Math.imul(60 + nextBelow(rng, 40), ONE);
-    s[b + U_HEADING] = nextBelow(rng, 65536);
-    s[b + U_STATE] = 1;
-    s[b + U_COOLDOWN] = nextBelow(rng, 120);
-    s[b + U_TARGET] = -1;
-  }
+  // The squad anchors first, because a rifleman is put ON his post when he
+  // spawns and cannot be if the post does not exist yet. C# reaches the same
+  // order the other way round - EnsureSquads runs inside the first infantry
+  // Spawn of a side - and the count is its own arithmetic: three a side, from
+  // `want = max(3, strength / 12)` at 36 riflemen.
+  //
+  // Drawn per side and independent of the other side's, which is the whole
+  // point: shared columns are what let one bomb kill men of both armies.
+  for (let k = 0; k < SQUAD_WORDS; k++)
+    s[O_SQUADS + k] = Math.imul(nextBelow(rng, 161) - 80, ONE);
+
+  for (let i = 0; i < UNITS; i++) spawnUnit(s, rng, i);
   return st;
+}
+
+/** Word holding squad `k` of `side`. Bull's three, then Bear's. */
+const squadWord = (side, k) => O_SQUADS + (side < 0 ? k : SQUADS_PER_SIDE + k);
+
+/**
+ * The squads walk, and the two sides' walk apart.
+ *
+ * `Army.DriftSquads`: every anchor moves by sin(Time * 0.12 + i * 2.4) * 3.6
+ * a second and is held inside the field. Angles here are Q16.16 TURNS, so a
+ * radian is 65536 / 2pi = 10430.22 units: 0.12 rad/s is 1252 units a second,
+ * and the 2.4 rad between squads is 25032.
+ *
+ * Draws nothing. It runs between the unit loop and the air because that is
+ * where Army.Update runs it, and the order is protocol even for a step that
+ * touches no random number - it decides where the men are standing when the
+ * bombs go off.
+ */
+function driftSquads(s) {
+  const angle = idiv(Math.imul(s[O_TICK], 1252), 60);
+  for (let k = 0; k < SQUADS_PER_SIDE; k++) {
+    const phase = (angle + Math.imul(k, 25032)) & 65535;
+    const step = mulFast(sin(phase), 3932);        // 3.6 m/s * (1/60) s
+    for (const side of [-1, 1]) {
+      const w = squadWord(side, k);
+      s[w] = clamp(add(s[w], step), Math.imul(-80, ONE), Math.imul(80, ONE));
+    }
+  }
+}
+
+/**
+ * The side a slot belongs to. Bit two, so that armour - every fourth index -
+ * alternates as well.
+ *
+ * Populate() in the C# army gives each side exactly the same armour and the
+ * same infantry. Flipping a coin per unit produced sixteen tanks against
+ * eight, and in a lethal exchange an advantage compounds - the larger side
+ * lost nobody while the smaller was wiped out. Both armies must start equal or
+ * there is no front to hold, only a countdown. Deriving the side from the
+ * index rather than drawing it also means a replacement always refills the
+ * side and the arm that lost the unit.
+ */
+const sideOf = (i) => (((i >> 2) & 1) === 0 ? -1 : 1);
+
+/**
+ * Put a unit on the field in slot `i`, at its own army's edge.
+ *
+ * One function for the two callers that need it - Populate at the start of a
+ * round and Reinforce during it - because C# has one Spawn() and two armies
+ * that spawn differently is a difference nobody would see until a replacement
+ * walked on somewhere a starter never could.
+ *
+ * Draw order: x, z, hp, heading, reload, cooldown, and for a rifleman a squad
+ * after them. It is part of the protocol: a verifier drawing them in another
+ * order gets another army.
+ *
+ * The x draw happens for a rifleman too and is then thrown away, because C#
+ * does exactly that - `float x = Rand(...)` at the top of Spawn and
+ * `unit.x = clamp(squads[squad] + squadOffsetX)` at the bottom of the
+ * infantry branch.
+ */
+function spawnUnit(s, rng, i) {
+  const b = unitBase(i);
+  // The battlefield, and only the battlefield.
+  //
+  // This was the full width of the map, so a tank could be placed at x=-100
+  // - which is where the truck is parked. With the armour made solid the
+  // truck was then shoved off its own apron before the player touched
+  // anything. Unity holds its units to |x| < 88 for the same reason; these
+  // are the same bounds.
+  //
+  // And each side comes in at its OWN edge and walks up, rather than
+  // appearing at a random depth in the middle of the fighting. C# Spawn does
+  // the same, and its comment says why: replacements arrive DURING the round,
+  // so a unit that appeared thirty metres from the fighting appeared in plain
+  // view.
+  const side = sideOf(i);
+  s[b + U_X] = Math.imul(nextBelow(rng, 176) - 88, ONE);
+  s[b + U_Z] = Math.imul(Math.imul(side, 79) - Math.imul(side, nextBelow(rng, 4)), ONE);
+  s[b + U_SIDE] = side;
+  // A tank has 6 to 10 hit points in the C# and a rifleman has exactly 1, and
+  // the ternary that says so draws NOTHING for a rifleman:
+  //
+  //     hp = vehicle ? Rand(6f, 10f) : 1f
+  //
+  // Ported with the draw as well as the value. Before this every unit in the
+  // core spawned with a tank's hit points, so a rifle round taking one man's
+  // worth of damage would have needed six to ten hits to kill him.
+  s[b + U_HP] = isArmour(i) ? Math.imul(60 + nextBelow(rng, 40), ONE) : RIFLE_HP;
+  s[b + U_HEADING] = nextBelow(rng, 65536);
+  s[b + U_STATE] = 1;
+
+  // Staggered reload, as the C# army staggers it at spawn.
+  //
+  // Left at zero, every tank fires on the first tick, in index order, and
+  // the side holding the lower indices wins every exchange before the other
+  // has fired at all: one army went from eleven to two while the other lost
+  // nobody. A front is made of two sides shooting on their own clocks.
+  s[b + U_TARGET] = nextBelow(rng, 180);
+  s[b + U_COOLDOWN] = nextBelow(rng, 120);
+  // The stagger used to be thrown away on the next line - `U_TARGET = -1` - so
+  // every tank could fire on its first tick of contact. The word is shared: it
+  // is the armour's reload counter and the rifleman's squad, and the -1 was
+  // there to clear it before the infantry branch below writes the squad into
+  // it. That branch overwrites it anyway, so the clear only ever cost the
+  // armour its stagger. Measured before it went: U_TARGET was -1 on every tank
+  // of every seed, one distinct value, against Army.cs:262's Rand(0f, 3f).
+
+  // A rifleman picks a squad - `unit.squad = _rng.Next(squads.Count)` - and is
+  // put straight on its post rather than walking in from wherever the x draw
+  // put him. U_TARGET is the armour's reload counter and a rifleman has no use
+  // for it, so his squad lives there.
+  if (!isArmour(i)) {
+    const k = nextBelow(rng, SQUADS_PER_SIDE);
+    s[b + U_TARGET] = k;
+    s[b + U_X] = clamp(riflePost(s[squadWord(side, k)], i),
+                       Math.imul(-88, ONE), Math.imul(88, ONE));
+  }
+}
+
+/**
+ * How many of each arm a side keeps in the field, and how long it waits for a
+ * replacement. Both follow from the slot scheme: armour is every fourth index,
+ * the side is bit two, so of ninety-six slots each side holds twelve tanks and
+ * thirty-six riflemen.
+ */
+const ARMOUR_PER_SIDE = UNITS >> 3;
+const RIFLE_PER_SIDE = Math.imul(3, UNITS >> 3);
+const REINFORCE_ARMOUR = Math.imul(6, ONE);        // Army.ReinforceSeconds
+const REINFORCE_RIFLE = Math.imul(5, HALF);        // Army.InfantryReinforceSeconds, 2.5 s
+
+/**
+ * The four replacement clocks, in the order they are served. Armour for both
+ * sides, then infantry for both, which is the order C# Reinforce runs them in
+ * - and the order is protocol, because each spawn draws from the same stream.
+ */
+const CLOCKS = [
+  { word: A_ARMOUR_BULL, side: -1, armour: true, want: ARMOUR_PER_SIDE, wait: REINFORCE_ARMOUR },
+  { word: A_ARMOUR_BEAR, side: 1, armour: true, want: ARMOUR_PER_SIDE, wait: REINFORCE_ARMOUR },
+  { word: A_RIFLE_BULL, side: -1, armour: false, want: RIFLE_PER_SIDE, wait: REINFORCE_RIFLE },
+  { word: A_RIFLE_BEAR, side: 1, armour: false, want: RIFLE_PER_SIDE, wait: REINFORCE_RIFLE },
+];
+
+/**
+ * Replace the dead, the way Army.Reinforce does.
+ *
+ * The cadence is not flat, and that is the whole design: `timer -= dt *
+ * deficit` brings the next replacement faster the further behind a side is.
+ * C#'s comment on that line says it was added because a fixed one-per-six-
+ * seconds cannot recover from a collapse - measured, one side sat at 0-1 tanks
+ * for five minutes while the other held eleven. The core reproduced that
+ * failure exactly before this existed: one army wiped inside thirty seconds,
+ * the survivors then standing still with nothing inside the 46 m gun for the
+ * remaining minute. Replacement is not a garnish on the army; it is what holds
+ * the front up.
+ *
+ * Not conditional on anything the player does, practice included. practice.json
+ * states that practice "changes nothing else - the army still fires and still
+ * counts towards danger, so the draw order is identical", and a replacement
+ * that only arrived in a scored run would break that promise silently.
+ */
+function reinforce(s, rng) {
+  for (const c of CLOCKS) {
+    // Alive, and the first free slot of that side and arm. One pass for both:
+    // the slot's index already fixes which army and which arm it refills.
+    let alive = 0, slot = -1;
+    for (let i = 0; i < UNITS; i++) {
+      if (isArmour(i) !== c.armour || sideOf(i) !== c.side) continue;
+      if (s[unitBase(i) + U_STATE] !== 0) alive = (alive + 1) | 0;
+      else if (slot < 0) slot = i;
+    }
+
+    const deficit = (c.want - alive) | 0;
+    if (deficit <= 0) continue;
+
+    // The clock only runs while a side is short, as C#'s does - it is not a
+    // spawn rate, it is a queue that starts when someone dies.
+    s[O_ARMY + c.word] = sub(s[O_ARMY + c.word], Math.imul(deficit, TICK_DT));
+    if (s[O_ARMY + c.word] > 0) continue;
+    s[O_ARMY + c.word] = c.wait;
+    if (slot >= 0) spawnUnit(s, rng, slot);
+  }
+}
+
+
+/**
+ * The air arm's tick: gunships fly, bombs fall, and the sortie clocks run.
+ *
+ * The ORDER is C#'s and it is protocol. Army.Update steps the helicopters and
+ * then the bombs, finishes with Reinforce, and only then does Battlefield call
+ * LaunchSorties - so a gunship sent this tick first moves on the next one, and
+ * every draw the air makes sits between the ground fight's shooting and the
+ * replacements walking on. Moving any of these three calls past another moves
+ * the whole war, not just the aircraft.
+ *
+ * Split into three functions for reading only; they are called back to back.
+ */
+function stepHelicopters(s, rng, seamAt, groundAt) {
+  const h = { side: 1, x: 0, y: 0, z: 0, dir: 0, t: 0, dropIn: 0 };
+  for (let i = 0; i < MAX_HELIS; i++) {
+    const b = heliBase(i);
+    if (s[b + H_STATE] === 0) continue;
+    h.side = s[b + H_SIDE]; h.x = s[b + H_X]; h.y = s[b + H_Y]; h.z = s[b + H_Z];
+    h.dir = s[b + H_DIR]; h.t = s[b + H_T]; h.dropIn = s[b + H_DROPIN];
+
+    const r = stepHeli(h, rng, seamAt, groundAt, TICK_DT);
+
+    s[b + H_X] = h.x; s[b + H_Y] = h.y; s[b + H_Z] = h.z;
+    s[b + H_T] = h.t; s[b + H_DROPIN] = h.dropIn;
+
+    // Never both in one tick: the drop gate is |x| < 92 and the exit is
+    // |x| > 104, so a gunship close enough to drop is nowhere near leaving.
+    if (r === AIR_RELEASE) release(s, rng, h, seamAt(h.x));
+    else if (r === AIR_GONE) s[b + H_STATE] = 0;
+  }
+}
+
+/**
+ * Puts a bomb in the first free rack.
+ *
+ * If every rack is full the bomb is lost, which is the one thing here that the
+ * C#'s unbounded List cannot do - and the reason rules.test.js watches the peak
+ * rather than trusting the eight. A core that silently swallowed a bomb would
+ * diverge from a verifier that had a rack free, and the divergence would be one
+ * dead squad at a time with nothing in the state to say why.
+ *
+ * The draw happens BEFORE the rack is looked for, so a lost bomb still costs
+ * the stream what a delivered one costs it. Otherwise a full rack would shift
+ * every draw after it and the loss would not be one bomb, it would be the rest
+ * of the round.
+ */
+function release(s, rng, h, front) {
+  const b = { side: 1, x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0 };
+  releaseBomb(b, h, rng, front);
+  for (let i = 0; i < MAX_BOMBS; i++) {
+    const o = bombBase(i);
+    if (s[o + B_STATE] !== 0) continue;
+    s[o + B_STATE] = 1; s[o + B_SIDE] = b.side;
+    s[o + B_X] = b.x; s[o + B_Y] = b.y; s[o + B_Z] = b.z;
+    s[o + B_VX] = b.vx; s[o + B_VY] = b.vy; s[o + B_VZ] = b.vz;
+    return;
+  }
+}
+
+function stepBombs(s, groundAt) {
+  const b = { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0 };
+  for (let i = 0; i < MAX_BOMBS; i++) {
+    const o = bombBase(i);
+    if (s[o + B_STATE] === 0) continue;
+    b.x = s[o + B_X]; b.y = s[o + B_Y]; b.z = s[o + B_Z];
+    b.vx = s[o + B_VX]; b.vy = s[o + B_VY]; b.vz = s[o + B_VZ];
+
+    const down = stepBomb(b, groundAt(b.x, b.z), TICK_DT);
+
+    s[o + B_X] = b.x; s[o + B_Z] = b.z; s[o + B_VY] = b.vy;
+    if (!down) { s[o + B_Y] = b.y; continue; }
+    s[o + B_Y] = groundAt(b.x, b.z);
+    s[o + B_STATE] = 0;
+    detonate(s, b.x, b.z);
+  }
+}
+
+/**
+ * A bomb is not a shell: it clears a circle.
+ *
+ * Everyone on foot inside sixteen metres dies whatever the distance - the blast
+ * does not ask whose men they are, which is why 11-29 of the riflemen a round
+ * are killed by their own side's aircraft - and armour takes 12 * (1 - d/16),
+ * so a tank dies at the centre and walks away from the edge.
+ *
+ * The armour loop is NOT guarded against units that are already dead, because
+ * the C# is not: RemoveAll runs at the end of Update, so a tank killed by a
+ * shell earlier in the same frame is still standing there when the bomb goes
+ * off. Measured over four seeds and ninety seconds it never once happened
+ * (doubleFire 0/0), so it is a latent defect and not a live one, and a guard
+ * added here would be a difference from the recording bought for nothing. It
+ * is invisible in this core in any case: taking damage off a corpse leaves it a
+ * corpse.
+ */
+function detonate(s, bx, bz) {
+  for (let i = 0; i < UNITS; i++) {
+    if (isArmour(i)) continue;
+    const b = unitBase(i);
+    if (blastReach(sub(s[b + U_X], bx), sub(s[b + U_Z], bz)) < 0) continue;
+    s[b + U_HP] = 0;
+    s[b + U_STATE] = 0;
+  }
+  for (let i = 0; i < UNITS; i++) {
+    if (!isArmour(i)) continue;
+    const b = unitBase(i);
+    const d = blastReach(sub(s[b + U_X], bx), sub(s[b + U_Z], bz));
+    if (d < 0) continue;
+    s[b + U_HP] = max(0, sub(s[b + U_HP], bombDamage(d)));
+    if (s[b + U_HP] === 0) s[b + U_STATE] = 0;
+  }
+}
+
+/**
+ * The two sortie clocks. Bull first, then Bear, and each side's jitter is drawn
+ * BEFORE its gunship, which is the order LaunchSorties runs them in.
+ *
+ * Both start at zero, so two gunships launch on the first tick of every round
+ * and both are wasted: the armies are still at |z| = 77 with the seam between
+ * them and the gunships fly the seam. The first killing bomb in the recording
+ * is at t = 16.7-26.4 s. That is not a bug to shave off the front of the round
+ * - it is what makes air a thing that arrives rather than a thing that is
+ * simply on.
+ */
+function launchSorties(s, rng, seamAt, groundAt) {
+  const h = { side: 1, x: 0, y: 0, z: 0, dir: 0, t: 0, dropIn: 0 };
+  for (let k = 0; k < 2; k++) {
+    const word = k === 0 ? AIR_BULL : AIR_BEAR;
+    const side = k === 0 ? -1 : 1;
+    s[O_AIR + word] = sub(s[O_AIR + word], TICK_DT);
+    if (s[O_AIR + word] > 0) continue;
+    s[O_AIR + word] = sortieWait(rng);
+    // Drawn before a slot is looked for, for the reason release() is: a sortie
+    // that finds no slot must still cost the stream what one that flies costs
+    // it, or the loss is the whole rest of the round rather than one gunship.
+    launchHeli(h, rng, side, seamAt, groundAt);
+    for (let i = 0; i < MAX_HELIS; i++) {
+      const b = heliBase(i);
+      if (s[b + H_STATE] !== 0) continue;
+      s[b + H_STATE] = 1; s[b + H_SIDE] = h.side;
+      s[b + H_X] = h.x; s[b + H_Y] = h.y; s[b + H_Z] = h.z;
+      s[b + H_DIR] = h.dir; s[b + H_T] = h.t; s[b + H_DROPIN] = h.dropIn;
+      break;
+    }
+  }
 }
 
 // re-exported so the draw order lives in one place
@@ -1764,15 +3136,38 @@ const nextBelow = below;
  * everything else, so a node replaying the run sees exactly which ticks were
  * shielded - which is the difference between a practice mode and a cheat.
  */
-/** Reads a host-supplied unit as threatAt wants it. */
-function makeHostView(st) {
-  const u = { x: 0, z: 0, hp: ONE, armour: false };
-  return (i) => {
-    const b = Math.imul(i, 3);
-    u.x = st.units.u[b]; u.z = st.units.u[b + 1];
-    u.armour = st.units.u[b + 2] !== 0;
-    return u;
-  };
+
+/**
+ * The solid armour, from the core's OWN tanks.
+ *
+ * This used to arrive from Unity: `CoreDrivenTruck.UploadArmour` ran every
+ * frame out of `field.Army` and handed the positions in through `setArmour`.
+ * That was per-tick host input which is not player input, so a node replaying
+ * a transcript had nothing to supply it - measured, `st.armour.n` was 0 at
+ * every tick of every golden vector, and the truck drove through twenty-four
+ * of its own tanks. Feeding one host tank at the truck's position turned a
+ * round that ended at x = +130 into one that ended at x = -130, which is the
+ * whole of why the round was not replayable.
+ *
+ * Called at the TOP of the step, before the vehicle moves, so it reads the
+ * positions the army finished last tick with. That is deliberately the same
+ * one-frame staleness Unity had - it uploaded the previous frame's army - and
+ * `resolveArmour`'s own comment relies on it: the truck is pushed out of where
+ * the tanks were, not where they are about to be.
+ */
+function fillArmour(st) {
+  const s = st.i32;
+  const xz = st.armour.xz;
+  let n = 0;
+  for (let i = 0; i < UNITS; i++) {
+    if (!isArmour(i)) continue;
+    const b = unitBase(i);
+    if (s[b + U_STATE] === 0) continue;
+    xz[Math.imul(n, 2)] = s[b + U_X];
+    xz[Math.imul(n, 2) + 1] = s[b + U_Z];
+    n++;
+  }
+  st.armour.n = n;
 }
 
 function step(st, throttle, steer, brake, handbrake, practice) {
@@ -1780,6 +3175,7 @@ function step(st, throttle, steer, brake, handbrake, practice) {
   const rng = s.subarray(O_RNG, O_RNG + 4);
   const T = O_TRUCK;
   s[O_TICK] = (s[O_TICK] + 1) | 0;
+  fillArmour(st);
 
   // ---- 1. vehicle --------------------------------------------------------
   const v = {
@@ -1789,6 +3185,9 @@ function step(st, throttle, steer, brake, handbrake, practice) {
     // and rebuilding this with a zero every tick left the truck on full lock
     // at 26 m/s - the correction below would have had nothing to correct.
     steerAngle: s[T + T_STEER], speed: s[T + T_WHEEL],
+    // Condition reaches the driving. `T_FLAGS` bit 0 is the pull direction,
+    // set once at init from the seed - see `vehicleStep`.
+    hp: s[T + T_HP], pull: (s[T + T_FLAGS] & 1) === 0 ? -1 : 1,
   };
   // The slope the truck is standing on, along its own nose.
   const grade = gradeAlong(st.ground, s[T + T_X], s[T + T_Z],
@@ -1812,6 +3211,20 @@ function step(st, throttle, steer, brake, handbrake, practice) {
   // The hardest armour impact this tick, for whatever applies damage.
   if (v.impact > s[T + T_IMPACT]) s[T + T_IMPACT] = v.impact;
 
+  // And what it costs. Priced from THIS tick's impact rather than from the
+  // accumulated word, which the host reads and clears on its own clock - the
+  // rule should charge for the crash that just happened, not for whatever is
+  // still sitting in the mailbox.
+  //
+  // `practice` withholds it exactly as it withholds courier fire; the apron
+  // does not, because the core has no invulnerable radius - that is a listed
+  // gap and not something to invent here.
+  if (!practice && s[O_SCORE + S_STATE] === RUN_LIVE && v.impact > CRASH_FLOOR) {
+    if (v.impact >= CRASH_WRITE_OFF) s[T + T_HP] = 0;
+    else s[T + T_HP] = max(0, sub(s[T + T_HP],
+                                  div(mulFast(v.impact, CRASH_POINTS), TRUCK_ARMOUR)));
+  }
+
   s[T + T_X] = clamp(v.x, -HALF_X, HALF_X);
   s[T + T_Z] = clamp(v.z, -HALF_Z, HALF_Z);
   s[T + T_HEADING] = v.heading;
@@ -1823,8 +3236,43 @@ function step(st, throttle, steer, brake, handbrake, practice) {
   // ---- 2. army -----------------------------------------------------------
   const tx = s[T + T_X], tz = s[T + T_Z];
   const seamZ = frontlineZ(st.tape, tx, HALF_X, HALF_Z);
-  let hits = 0;
-  const u = { x: 0, z: 0, hp: 0, heading: 0, cooldown: 0, armour: false, side: 1 };
+  // Damage dealt to the truck this tick, in Q16.16 rather than a count of
+  // hits. It used to be a tally of flat points because every courier hit was
+  // worth exactly one; a tank shell is Rand(5, 11), so the truck's damage has
+  // to be carried at its real size. The rifle still adds exactly ONE until
+  // its own half of (j) is done.
+  let courierDmg = 0;
+  const u = { x: 0, z: 0, hp: 0, heading: 0, cooldown: 0, armour: false, side: 1, crowded: false, engaged: false, foeX: 0 };
+
+  // A read-only view of any unit, for target selection. Declared before the
+  // loop that uses it, unlike the scoring one further down.
+  const peek = { x: 0, z: 0, hp: 0, armour: false, side: 1, crowded: false, engaged: false, foeX: 0 };
+  const peekAt = (i) => {
+    const pb = unitBase(i);
+    peek.x = s[pb + U_X]; peek.z = s[pb + U_Z]; peek.hp = s[pb + U_HP];
+    peek.side = s[pb + U_SIDE]; peek.armour = isArmour(i);
+    return peek;
+  };
+  // Tanks are pushed out of each other BEFORE anything moves, which is where
+  // `Army.Update` does it - the first three lines of it, over every armour
+  // pair, ahead of StepArmour and StepInfantry. The position is protocol: a
+  // separation applied after the step would be resolving last tick's overlap
+  // against this tick's positions.
+  for (let i = 0; i < UNITS; i++) {
+    if (!isArmour(i)) continue;
+    const ab = unitBase(i);
+    // Alive is U_STATE, not U_HP: that is what `reinforce` counts and what the
+    // crowding scan skips on, and an unfilled slot is state 0. C# has no such
+    // question - `Army.Update` removes the dead from `Armour` before this runs.
+    if (s[ab + U_STATE] === 0) continue;
+    for (let j = i + 1; j < UNITS; j++) {
+      if (!isArmour(j)) continue;
+      const bb = unitBase(j);
+      if (s[bb + U_STATE] === 0) continue;
+      separatePair(s, ab, bb, U_X, U_Z, U_SIDE);
+    }
+  }
+
   for (let i = 0; i < UNITS; i++) {
     const b = unitBase(i);
     u.x = s[b + U_X]; u.z = s[b + U_Z]; u.hp = s[b + U_HP];
@@ -1835,18 +3283,256 @@ function step(st, throttle, steer, brake, handbrake, practice) {
     // instead of the armour reaching the line first.
     u.armour = isArmour(i);
     u.side = s[b + U_SIDE];
-    const r = stepUnit(u, rng, seamZ, tx, tz, HALF_X, HALF_Z, TICK_DT);
+    // The post he is holding, read fresh every tick: the anchors walk.
+    u.anchor = u.armour ? 0 : s[squadWord(u.side, s[b + U_TARGET])];
+
+    // Is anything of the other side too close? Decided before the step, from
+    // the positions everyone had at the start of the tick, so the order units
+    // are visited in cannot change who gives ground.
+    // The nearest enemy, and whether it is close enough to crowd us. Both
+    // read from the positions everyone held at the START of the tick, so the
+    // order units are visited in cannot decide who gives ground or who is
+    // chasing whom.
+    u.crowded = false;
+    u.engaged = false;
+    u.foeX = 0;
+    // ARMOUR ONLY, on both sides of the test, because Army.NearestEnemy walks
+    // the Armour list and nothing else. A rifleman has no scan at all here -
+    // he has no crowding rule to feed and picks his target when he fires - and
+    // a tank is not crowded by riflemen, only by another tank.
+    if (u.armour) {
+      let nearest = ARMOUR_RANGE;   // plain name: the bundler cannot alias
+      for (let j = 0; j < UNITS; j++) {
+        if (j === i || !isArmour(j)) continue;
+        const jb = unitBase(j);
+        if (s[jb + U_STATE] === 0 || s[jb + U_SIDE] === u.side) continue;
+        const ddx = sub(s[jb + U_X], u.x), ddz = sub(s[jb + U_Z], u.z);
+        if (abs(ddx) > nearest || abs(ddz) > nearest) continue;
+        const dd = length2(ddx, ddz);
+        if (dd < BACKOFF_RANGE) u.crowded = true;
+        if (dd < nearest) { nearest = dd; u.engaged = true; u.foeX = s[jb + U_X]; }
+      }
+    }
+    // Moves the unit. Its return value used to say "a courier hit landed"; the
+    // tank's courier weapon is gone and the choice lives in the gun below, so
+    // there is nothing left to report and the call is made for its effect.
+    stepUnit(u, rng, seamZ, tx, tz, HALF_X, HALF_Z, TICK_DT, i);
+
+    // Armour fires on armour. Drawn in index order, always, so the transcript
+    // replays: a tank that fires earlier changes what the ones after it see.
+    if (u.armour && u.hp > 0) {
+      if (s[b + U_TARGET] > 0) s[b + U_TARGET] = (s[b + U_TARGET] - 1) | 0;
+      else {
+        const foe = pickTarget(peekAt, UNITS, i, u.x, u.z, u.side);
+        if (foe >= 0) {
+          // Rolled whether it hits BEFORE the reload is set, and the reload is
+          // set either way: a miss costs a shell and the time to load another.
+          const connects = nextBelow(rng, 1000) < HIT_PER_MIL;
+          const fb = unitBase(foe);
+
+          // THE COURIER IS A TARGET CHOICE, not a second gun. Army.cs:696-706:
+          // the truck outranks the enemy the tank had picked when it is inside
+          // CourierRange and NEARER than that enemy - "it is in everybody's way
+          // and nobody's army". Heat is zero in every recording, which drops
+          // the two widening terms and leaves a plain 34 m and a plain nearer.
+          //
+          // Axes before length2, the guard item (m) put on the old weapon,
+          // with its threshold moved to 34 with the range. Dropping it here
+          // would bring the overflow back through a wider gate: past ~181.5 m
+          // the sum of squares wraps and length2 returns ZERO, which read as
+          // the truck standing on the tank. The foe needs no such guard - it
+          // is inside ARMOUR_RANGE by construction.
+          const dxTruck = sub(u.x, tx), dzTruck = sub(u.z, tz);
+          let onCourier = false;
+          if (abs(dxTruck) <= COURIER_RANGE && abs(dzTruck) <= COURIER_RANGE) {
+            const toTruck = length2(dxTruck, dzTruck);
+            if (toTruck < COURIER_RANGE)
+              onCourier = toTruck < length2(sub(u.x, s[fb + U_X]), sub(u.z, s[fb + U_Z]));
+          }
+
+          if (connects) {
+            // One draw either way, and in hundredths like the shell's own
+            // damage, so the stream does not change shape with the target.
+            if (onCourier) {
+              courierDmg = add(courierDmg,
+                add(COURIER_DAMAGE_MIN,
+                    idiv(Math.imul(nextBelow(rng, 100), COURIER_DAMAGE_SPAN), 100)));
+            } else {
+              const hurt = add(DAMAGE_MIN, idiv(Math.imul(nextBelow(rng, 100), DAMAGE_SPAN), 100));
+              s[fb + U_HP] = max(0, sub(s[fb + U_HP], hurt));
+              if (s[fb + U_HP] === 0) s[fb + U_STATE] = 0;
+            }
+          }
+          s[b + U_TARGET] = (RELOAD_MIN + nextBelow(rng, RELOAD_SPAN)) | 0;
+        }
+      }
+    }
+    // The rifle, in the same place and for the same reason: it reads the other
+    // units, so it cannot live inside stepUnit.
+    //
+    // One clock and one shot on it, which is Army.StepInfantry's shape. The
+    // target is picked when the shot goes off, and the reload is set BEFORE
+    // the hit is rolled, because the C# sets it either way and a stream that
+    // draws in a different order is a different program.
+    //
+    // THE FOE IS LOOKED FOR FIRST, and that is the whole of the selection rule.
+    // Army.StepInfantry finds the nearest enemy rifleman, and a man with none
+    // inside 26 m sets a look clock and fires at NOTHING - not at the truck
+    // standing beside him. Only once he has a target does the courier come
+    // into it, and only when the truck is nearer than that target. This is why
+    // six rifle rounds hit a truck parked in the middle of the fight for
+    // ninety seconds where this core used to land two hundred and forty-six
+    // shots: it checked the truck first and let it win unconditionally.
+    if (!u.armour && u.hp > 0) {
+      if (s[b + U_COOLDOWN] > 0) s[b + U_COOLDOWN] = (s[b + U_COOLDOWN] - 1) | 0;
+      else {
+        // Rejected on each axis BEFORE length2, which is what every other
+        // scan in the core already does - pickRifleTarget (army.js:320),
+        // pickTarget (:379), threatAt (:423), the armour crowding scan below
+        // (sim.js:676) and the solids scan (solids.js:56-66).
+        //
+        // length2 squares its arguments in Q16.16, so a separation past about
+        // 181.5 m overflows the sum of squares past 2^31, wraps it negative
+        // and comes back as a distance of ZERO. Without this the truck read as
+        // standing on any man far enough away: measured, 19-21% of the
+        // approach's rifle clocks were spent firing a 2.5-4.5 s reload at a
+        // truck 200 m off, and the truck took the hits. The trap is the one
+        // army.js:417-421 already had written down.
+        const foe = pickRifleTarget(peekAt, UNITS, i, u.x, u.z, u.side);
+        if (foe < 0) {
+          s[b + U_COOLDOWN] = (RIFLE_LOOK_TICKS + nextBelow(rng, RIFLE_LOOK_TICKS_SPAN)) | 0;
+        } else {
+          s[b + U_COOLDOWN] = (RIFLE_RELOAD_TICKS + nextBelow(rng, RIFLE_RELOAD_TICKS_SPAN)) | 0;
+          const connects = nextBelow(rng, 1000) < RIFLE_HIT_PER_MIL;
+          const fb = unitBase(foe);
+
+          // The truck takes the shot only if it is inside the rifle's reach
+          // AND nearer than the man he had picked (Army.cs:725-731, Heat zero,
+          // which drops both widening terms). Axes before length2, the guard
+          // from (m): past ~181.5 m the sum of squares wraps and length2
+          // returns ZERO, and the truck read as standing on the man. Measured
+          // before that guard, 19-21% of the approach's rifle clocks were
+          // spent firing at a truck 200 m off. The foe needs no guard - he is
+          // inside RIFLE_RANGE by construction.
+          const dxTruck = sub(u.x, tx), dzTruck = sub(u.z, tz);
+          let onCourier = false;
+          if (abs(dxTruck) <= RIFLE_RANGE && abs(dzTruck) <= RIFLE_RANGE) {
+            const toTruck = length2(dxTruck, dzTruck);
+            if (toTruck < RIFLE_RANGE)
+              onCourier = toTruck < length2(sub(u.x, s[fb + U_X]), sub(u.z, s[fb + U_Z]));
+          }
+
+          if (connects) {
+            // Rand(1.5, 3.5) at the truck, one point at a man. Drawn in
+            // hundredths like every other damage in this file, so it is one
+            // draw either way and the stream keeps its shape.
+            if (onCourier) {
+              courierDmg = add(courierDmg,
+                add(COURIER_RIFLE_MIN,
+                    idiv(Math.imul(nextBelow(rng, 100), COURIER_RIFLE_SPAN), 100)));
+            } else {
+              s[fb + U_HP] = max(0, sub(s[fb + U_HP], RIFLE_DAMAGE));
+              if (s[fb + U_HP] === 0) s[fb + U_STATE] = 0;
+            }
+          }
+        }
+      }
+      u.cooldown = s[b + U_COOLDOWN];
+    }
+
     s[b + U_X] = u.x; s[b + U_Z] = u.z;
     s[b + U_HEADING] = u.heading; s[b + U_COOLDOWN] = u.cooldown;
-    if (r === 2) hits = (hits + 1) | 0;
   }
   // The army still fires, still walks, still counts towards danger - only the
   // damage is withheld. Skipping the shooting entirely would change the draw
   // order and make a practice run replay differently from a live one, which
   // would defeat the point of practising.
   if (practice) s[O_SCORE + S_PRACTICE] = 1;
-  else if (hits > 0 && s[O_SCORE + S_STATE] === RUN_LIVE)
-    s[T + T_HP] = max(0, sub(s[T + T_HP], Math.imul(hits, ONE)));
+  else if (courierDmg > 0 && s[O_SCORE + S_STATE] === RUN_LIVE)
+    s[T + T_HP] = max(0, sub(s[T + T_HP], div(courierDmg, TRUCK_ARMOUR)));
+
+  // The squads walk. Between the unit loop and the air because that is where
+  // Army.Update runs DriftSquads, and it decides where the men are standing
+  // when the bombs go off.
+  driftSquads(s);
+
+  // ---- 2b. air -----------------------------------------------------------
+  // Gunships, then bombs, then replacements, then the sortie clocks. That is
+  // Army.Update's own order with Battlefield.LaunchSorties after it, and it is
+  // protocol: every one of these draws from the same stream the ground fight
+  // just used.
+  //
+  // The seam is read at the AIRCRAFT's x, not the truck's. The unit loop above
+  // takes one seam for the whole army because it is following the truck; a
+  // gunship crosses the entire two-hundred-metre corridor in ten seconds and
+  // the seam it stands off is the one under its own nose, as FrontlineAt(h.x)
+  // has it.
+  const seamAt = (x) => frontlineZ(st.tape, x, HALF_X, HALF_Z);
+  const groundAt = (x, z) => heightAtWorld(st.ground, x, z, HALF_X, HALF_Z);
+  stepHelicopters(s, rng, seamAt, groundAt);
+  stepBombs(s, groundAt);
+
+  // Replacements walk on last, after everyone has moved and fired, which is
+  // where C# Update puts it - RemoveAll, then Reinforce. Anything drawn here
+  // is drawn after the tick's shooting, so moving this call moves the whole
+  // army.
+  reinforce(s, rng);
+  launchSorties(s, rng, seamAt, groundAt);
+
+  // Nobody left standing inside the cab.
+  //
+  // AFTER the whole army step, because that is where `Battlefield` calls it:
+  // `Army.Update(dt)` at :105 - which itself ends on RemoveAll and Reinforce -
+  // then `RunOver` at :144, then `ClearPath` at :153. Run-over will go
+  // immediately above this when it is ported; the order is the game's and not
+  // a preference, since clearing first would move the men out of the wheels
+  // before the wheels were asked who was under them.
+  //
+  // Infantry only, exactly as C# does it. `resolveArmour` up in the vehicle
+  // section already pushes the TRUCK out of the tanks, and C#'s own comment
+  // says why nothing should push the tanks as well: two systems arguing over
+  // one overlap have no radius that satisfies both.
+  //
+  // A WRECK CLEARS NOBODY. `Battlefield` wraps this whole block in
+  // `if (courier != null && (health == null || !health.IsDestroyed))`, so once
+  // the truck is written off C# stops both running men down and pushing them
+  // out. The first version of this port had no such guard and went on shoving
+  // riflemen out of a hulk the game considers gone.
+  //
+  // The core's quantity for "written off" is `T_HP`, and NOT `S_STATE`: the
+  // state word is recomputed down in the score section, after this, so here it
+  // still holds last tick's value and would let a wreck clear for one more
+  // tick. `T_HP` is current at this point because the courier damage above
+  // has already come off it. It is also not `TruckHealth` and not its `armour`
+  // divisor - that is the two-owner question and it is not being decided here.
+  //
+  // Run-over goes INSIDE this brace when it is ported, because it shares the
+  // same `if` in the game and not merely a neighbouring one.
+  if (s[T + T_HP] > 0) {
+    const tx2 = s[T + T_X], tz2 = s[T + T_Z];
+    // The truck's own velocity, never a host's and never `T_WHEEL`: see
+    // `runOver` in rules/army.js for what each of those would cost.
+    const speed = truckSpeed(s[T + T_VX], s[T + T_VZ]);
+    // Run-over FIRST and clearing second, which is Battlefield's order -
+    // `RunOver` at :144, `ClearPath` at :153. The other way round would move
+    // the men out of the wheels before the wheels were asked who was under
+    // them, and the rule would kill almost nobody.
+    for (let i = 0; i < UNITS; i++) {
+      if (isArmour(i)) continue;
+      const b = unitBase(i);
+      if (s[b + U_STATE] === 0) continue;
+      if (runOver(s, b, tx2, tz2, speed, U_X, U_Z)) {
+        s[b + U_HP] = 0;
+        s[b + U_STATE] = 0;
+      }
+    }
+    for (let i = 0; i < UNITS; i++) {
+      if (isArmour(i)) continue;
+      const b = unitBase(i);
+      if (s[b + U_STATE] === 0) continue;
+      clearOfTruck(s, b, tx2, tz2, U_X, U_Z);
+    }
+  }
 
   // ---- 3. score ----------------------------------------------------------
   // danger is guns in range, not distance to a line
@@ -1855,19 +3541,20 @@ function step(st, throttle, steer, brake, handbrake, practice) {
     return { x: s[b + U_X], z: s[b + U_Z], hp: s[b + U_HP],
              armour: (i & ARMOUR_MASK) === 0 };
   };
-  const fromStart = length2(sub(tx, START_X), sub(tz, START_Z));
+  // The apron test now takes the two components and owns its own guard, for
+  // the reason spelled out at `earning` in rules/score.js: the distance is the
+  // thing that overflows, and this test asks whether the truck is OUTSIDE a
+  // radius, so a large axis proves the answer rather than ruling it out.
   const gaining = tx > s[O_SCORE + S_BESTX];
-  if (earning(fromStart, gaining) && s[O_SCORE + S_STATE] === RUN_LIVE) {
+  if (earning(sub(tx, START_X), sub(tz, START_Z), gaining) &&
+      s[O_SCORE + S_STATE] === RUN_LIVE) {
     // The danger the player is actually in, from the army they can SEE.
     //
-    // This read the core's own units, which nothing draws - so the score was
-    // paid for standing near ghosts and withheld in the middle of a real
-    // firefight. The host sends the real ones every tick.
-    const hostUnits = st.units && st.units.n > 0;
-    const hostView = hostUnits ? makeHostView(st) : null;
-    const threat = hostUnits
-      ? threatAt(hostView, st.units.n, tx, tz)
-      : threatAt(view, UNITS, tx, tz);
+    // This once preferred units the HOST sent, because the core's own were
+    // "ghosts nothing draws". They are not ghosts any more - the army is the
+    // core's - and `setUnits` had no caller left anywhere in the project, so
+    // the preference was a dead branch guarding a dead setter. Both are gone.
+    const threat = threatAt(view, UNITS, tx, tz);
     s[O_SCORE + S_EXPOSURE] = accrue(
       s[O_SCORE + S_EXPOSURE], s[O_SCORE + S_BESTX], tx, threat, s[O_SCORE + S_CARGO]);
   }
@@ -1890,7 +3577,7 @@ const runScore = (st) =>
                 st.i32[O_SCORE + S_CARGO]);
 
 return { init: init, step: step, hash: hash, runScore: runScore,
-         setGround: setGround, groundAt: groundAt, setSolids: setSolids, setArmour: setArmour, teleport: teleport,
+         setGround: setGround, groundAt: groundAt, setSolids: setSolids, teleport: teleport,
          create: create, WORDS: WORDS };
 })();
 if (typeof module !== "undefined") module.exports = BLWP;
