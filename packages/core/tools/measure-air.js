@@ -110,6 +110,9 @@ const bandArea = [...Array(BANDS)].map((_, k) => ((k + 1) ** 2 - k ** 2) / BANDS
 const ref = JSON.parse(readFileSync(new URL('../test/vectors/csharp-gunships.json', import.meta.url), 'utf8'));
 /** The seeds the recording holds, read off its own setup block. */
 const REC_SEEDS = ref.setup.seeds;
+/** Pooled published men and effective bombs, for the SQUAD REACH comparison. */
+const REC_MEN = REC_SEEDS.reduce((a, s) => a + (ref.passes[`gunships-${s}`]?.summary.infantry.killedByBombs ?? 0), 0);
+const REC_EFF = REC_SEEDS.reduce((a, s) => a + (ref.passes[`gunships-${s}`]?.summary.bombs.effective ?? 0), 0);
 
 function pinSeam(st) { st.tape.fill(st.tape[0]); return st; }
 const start = (seed) => (SEAM0 ? pinSeam(init(seed)) : init(seed));
@@ -123,6 +126,9 @@ function census(st) {
       i, armour: isArmour(i), side: st.i32[o + L.U_SIDE],
       alive: st.i32[o + L.U_STATE] !== 0 && st.i32[o + L.U_HP] > 0,
       x: q(st.i32[o + L.U_X]), z: q(st.i32[o + L.U_Z]), hp: q(st.i32[o + L.U_HP]),
+      // U_TARGET is the armour's reload counter; for a rifleman it holds his
+      // squad, which is what SQUAD REACH below counts distinct values of.
+      squad: st.i32[o + L.U_TARGET],
     });
   }
   return out;
@@ -389,6 +395,8 @@ function measure(seed) {
       };
       blast.sdX = spreadOf((u) => u.x);
       blast.sdZ = spreadOf((u) => u.z);
+      // How many DISTINCT squads this one blast reached. See SQUAD REACH.
+      blast.squads = new Set(covered.map((u) => `${u.side}:${u.squad}`)).size;
       // The line this bomb landed on: whichever side gave it the most men. A
       // bomb that found nobody has no line and is left out of the gate.
       const bull = covered.filter((u) => u.side < 0).length;
@@ -627,6 +635,69 @@ const gateOf = (r, pick = (b) => b.sdHit) => {
   return { on, bands, men, flat, first,
            wsd: men ? on.reduce((a, b) => a + pick(b) * b.infIn, 0) / men : 0 };
 };
+
+console.log('');
+console.log('AIRCORE ' + '='.repeat(70));
+console.log('AIRCORE SQUAD REACH  how many squads one blast reaches, and what that is worth');
+console.log('AIRCORE   CORE ONLY: the recording publishes no per-squad geometry. What the C#');
+console.log('AIRCORE   side contributes here is its own drawn RULE, read from Army.cs, not a');
+console.log('AIRCORE   column invented for it.');
+console.log('AIRCORE');
+console.log('AIRCORE   Army.Spawn draws squadOffsetX = Rand(-9,9) AND squadOffsetZ = Rand(-5,5)');
+console.log('AIRCORE   per man (Army.cs:274-276), so a C# squad is a knot about 18 m wide and');
+console.log('AIRCORE   10 m deep - SMALLER than the 32 m across a blast covers, so a bomb on it');
+console.log('AIRCORE   takes that squad and stops. riflePost (army.js:306) returns an X offset');
+console.log('AIRCORE   only: the core has no squad DEPTH at all, so its squads smear down z and');
+console.log('AIRCORE   interpenetrate, and one blast can reach several at once.');
+console.log('AIRCORE');
+console.log('AIRCORE   This is the geometry the x sweep cannot see: the squad x-spread matches');
+console.log('AIRCORE   the C# draw (5.0 m against the rule\'s 5.196), and only z is loose.');
+if (HAS_AIR) {
+  const reach = rows.flatMap((r) => r.blasts.filter((b) => b.infIn > 0));
+  const byN = new Map();
+  for (const b of reach) {
+    const e = byN.get(b.squads) || { bombs: 0, men: 0 };
+    e.bombs++; e.men += b.infIn; byN.set(b.squads, e);
+  }
+  const menAll = reach.reduce((a, b) => a + b.infIn, 0);
+  for (const r of rows) {
+    const on = r.blasts.filter((b) => b.infIn > 0);
+    const one = on.filter((b) => b.squads === 1), many = on.filter((b) => b.squads > 1);
+    const sum = (g) => g.reduce((a, b) => a + b.infIn, 0);
+    console.log(`AIRCORE reach seed=${r.seed} bombsOnMen=${on.length} ` +
+                `oneSquad=${one.length}b/${sum(one)}m ` +
+                `severalSquads=${many.length}b/${sum(many)}m ` +
+                `maxSquads=${Math.max(...on.map((b) => b.squads))}`);
+  }
+  console.log('AIRCORE');
+  console.log('AIRCORE   squads reached   bombs   men   men/bomb   share of covered men');
+  for (const k of [...byN.keys()].sort((a, b) => a - b)) {
+    const e = byN.get(k);
+    console.log(`AIRCORE   ${String(k).padStart(14)}  ${String(e.bombs).padStart(6)}  ${String(e.men).padStart(4)}  ` +
+                `${(e.men / e.bombs).toFixed(2).padStart(8)}   ${(e.men / menAll).toFixed(2)}`);
+  }
+  // The counterfactual, built from the core's OWN single-squad mean so that
+  // nothing is imported from the other engine. It is deliberately STRICTER
+  // than the C# rule - two C# squads sitting within 16 m can share a bomb too -
+  // so it is an upper bound on what interpenetration is worth, not an estimate.
+  const one = reach.filter((b) => b.squads === 1), many = reach.filter((b) => b.squads > 1);
+  const oneMen = one.reduce((a, b) => a + b.infIn, 0);
+  const base = one.length ? oneMen / one.length : 0;
+  const eff = rows.reduce((a, r) => a + r.effective, 0);
+  const cf = (oneMen + many.length * base) / eff;
+  console.log('AIRCORE');
+  console.log(`AIRCORE   men a round        core ${(menAll / rows.length).toFixed(1)}   ` +
+              `capped at one squad ${((oneMen + many.length * base) / rows.length).toFixed(1)}`);
+  console.log(`AIRCORE   perEffectiveBomb   core ${(menAll / eff).toFixed(2)}   capped ${cf.toFixed(2)}` +
+              `   recording ${(REC_MEN / REC_EFF).toFixed(2)}`);
+  console.log(`AIRCORE   the excess this item is about is ${((menAll - REC_MEN) / rows.length).toFixed(1)} men a round;` +
+              ` the cap removes ${((menAll - oneMen - many.length * base) / rows.length).toFixed(1)},`);
+  console.log('AIRCORE   which OVERSHOOTS it - so interpenetration is more than sufficient to');
+  console.log('AIRCORE   carry the whole term, and the cap is an upper bound, not an estimate.');
+} else {
+  console.log('AIRCORE reach  no air arm in this core - nothing to reach with');
+}
+console.log('AIRCORE ' + '='.repeat(70));
 
 console.log('');
 console.log('AIRCORE ' + '='.repeat(70));
