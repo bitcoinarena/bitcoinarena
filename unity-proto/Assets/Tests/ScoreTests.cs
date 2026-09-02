@@ -453,15 +453,25 @@ public class ScoreTests
         // does next is destroy the truck and respawn it at the ramp, where the
         // rate is correctly zero. That is how this test first reported 0.00.
         float hot = 0f;
+        int frames = 0;
+        float elapsed = 0f;
         var rb = _truck.GetComponent<Rigidbody>();
         for (float t = 0f; t < 1.5f; t += Time.deltaTime)
         {
             float x = rb.position.x + 15f * Time.deltaTime;
             rb.position = new Vector3(x, rb.position.y, _field.FrontlineZ(x));
             yield return null;                               // driven, not parked
+            frames++; elapsed += Time.deltaTime;
             hot = Mathf.Max(hot, _score.Rate);
         }
 
+        // Printed before the assertion, because this test has been called a
+        // flake twice and a flake is a thing nobody has instrumented. The loop
+        // runs ONE iteration per frame for 1.5 s of wall time, so under load it
+        // gets fewer, larger steps - if `hot` tracks `frames`, the fixture is
+        // measuring the machine and not the rule.
+        Debug.Log($"HEATRATE hot={hot:0.000} frames={frames} " +
+                  $"meanDelta={(frames > 0 ? elapsed / frames : 0f):0.0000} elapsed={elapsed:0.000}");
         Assert.Greater(hot, 1f, $"a loaded run on the seam peaked at only {hot:0.00}");
         Assert.LessOrEqual(hot, 2.01f, "the rate escaped its stated 0..2 range");
     }

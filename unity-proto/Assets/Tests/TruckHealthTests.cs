@@ -118,9 +118,16 @@ public class TruckHealthTests
     /// because `Army.cs` is gone by then.
     ///
     /// `Battlefield.RunDown` already counts the kills, so nothing in the game
-    /// is touched to read it. The corridor census is computed here from
-    /// `Army.Infantry` and the truck's transform, which is what `ClearPath`
-    /// itself looks at.
+    /// is touched to read it.
+    ///
+    /// THE CORRIDOR CENSUS BELOW IS NOT WHAT `ClearPath` DOES, and an earlier
+    /// version of this comment said it was. Its corridor branch never runs:
+    /// the only call is `YieldTo(u, 0f, 0.9f, false, 1.6f)`, with `stepsAside`
+    /// false and `rate` zero, so `halfWidth` and `ahead` are dead parameters.
+    /// What it actually does is push a man back out to 1.6 m if he is inside
+    /// it, so nobody is left standing in the cab - and that is the depth
+    /// column, which is the one to compare the core against. The corridor
+    /// count is kept only to show how many men the truck passes near.
     ///
     /// Measurement, not an assertion. Watch the speed column: `Battlefield`
     /// takes it from the CORE when the core is driving and from a kinematic
@@ -148,8 +155,9 @@ public class TruckHealthTests
                   $"driving={(driver != null && driver.Driving)} " +
                   $"kinematic={(body != null && body.isKinematic)}");
 
-        int corridorPeak = 0, insidePeak = 0, samples = 0;
+        int corridorPeak = 0, insidePeak = 0, samples = 0, deepTicks = 0;
         long corridorSum = 0;
+        float penetration = 0f, deepest = 0f;
         for (int i = 1; i <= 120; i++)
         {
             // Steered at the nearest living rifleman rather than driven
@@ -189,6 +197,15 @@ public class TruckHealthTests
                 float across = -ox * dirZ + oz * dirX;
                 if (along > -4f && along < 26f && Mathf.Abs(across) < 8.3f) corridor++;
                 if (ox * ox + oz * oz < 3.6f * 3.6f) inside++;
+                // The quantity ClearPath owns: how far INTO the truck a man is.
+                float d = Mathf.Sqrt(ox * ox + oz * oz);
+                if (d < 1.6f)
+                {
+                    float depth = 1.6f - d;
+                    penetration += depth;
+                    if (depth > deepest) deepest = depth;
+                    if (depth > 0.02f) deepTicks++;
+                }
             }
             corridorSum += corridor; samples++;
             if (corridor > corridorPeak) corridorPeak = corridor;
@@ -204,7 +221,8 @@ public class TruckHealthTests
 
         Debug.Log($"RUNOVER END runDown={_field.RunDown} corridorPeak={corridorPeak} " +
                   $"corridorMean={(samples > 0 ? corridorSum / (double)samples : 0):0.00} " +
-                  $"within3.6mPeak={insidePeak}");
+                  $"within3.6mPeak={insidePeak} penetration={penetration:0.000} " +
+                  $"deepest={deepest:0.000} deepManSamples={deepTicks}");
         Assert.Greater(samples, 0);
     }
 

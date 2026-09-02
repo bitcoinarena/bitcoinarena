@@ -32,7 +32,7 @@ import {
 import { vehicleStep } from './rules/vehicle.js';
 import { flatGround, gradeAlong, heightAtWorld, DEFAULT_COLS, DEFAULT_ROWS } from './rules/ground.js';
 import { noSolids, resolveSolids, resolveArmour, BOX_WORDS } from './rules/solids.js';
-import { stepUnit, separatePair, threatAt, pickTarget, pickRifleTarget, riflePost, RELOAD_MIN, RELOAD_SPAN, DAMAGE_MIN, DAMAGE_SPAN, BACKOFF_RANGE, HIT_PER_MIL, ARMOUR_RANGE, RIFLE_RANGE, RIFLE_HIT_PER_MIL, RIFLE_RELOAD_TICKS, RIFLE_RELOAD_TICKS_SPAN, RIFLE_LOOK_TICKS, RIFLE_LOOK_TICKS_SPAN, RIFLE_HP, RIFLE_DAMAGE, COURIER_RANGE, COURIER_DAMAGE_MIN, COURIER_DAMAGE_SPAN, COURIER_RIFLE_MIN, COURIER_RIFLE_SPAN } from './rules/army.js';
+import { stepUnit, separatePair, clearOfTruck, threatAt, pickTarget, pickRifleTarget, riflePost, RELOAD_MIN, RELOAD_SPAN, DAMAGE_MIN, DAMAGE_SPAN, BACKOFF_RANGE, HIT_PER_MIL, ARMOUR_RANGE, RIFLE_RANGE, RIFLE_HIT_PER_MIL, RIFLE_RELOAD_TICKS, RIFLE_RELOAD_TICKS_SPAN, RIFLE_LOOK_TICKS, RIFLE_LOOK_TICKS_SPAN, RIFLE_HP, RIFLE_DAMAGE, COURIER_RANGE, COURIER_DAMAGE_MIN, COURIER_DAMAGE_SPAN, COURIER_RIFLE_MIN, COURIER_RIFLE_SPAN } from './rules/army.js';
 import { accrue, earning, scoreOf } from './rules/score.js';
 import { outcome, RUN_LIVE, RUN_DELIVERED, RUN_WRECKED, RUN_MISSED } from './rules/gate.js';
 import { frontlineZ, SAMPLES } from './rules/frontline.js';
@@ -858,6 +858,29 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
   // army.
   reinforce(s, rng);
   launchSorties(s, rng, seamAt, groundAt);
+
+  // Nobody left standing inside the cab.
+  //
+  // AFTER the whole army step, because that is where `Battlefield` calls it:
+  // `Army.Update(dt)` at :105 - which itself ends on RemoveAll and Reinforce -
+  // then `RunOver` at :144, then `ClearPath` at :153. Run-over will go
+  // immediately above this when it is ported; the order is the game's and not
+  // a preference, since clearing first would move the men out of the wheels
+  // before the wheels were asked who was under them.
+  //
+  // Infantry only, exactly as C# does it. `resolveArmour` up in the vehicle
+  // section already pushes the TRUCK out of the tanks, and C#'s own comment
+  // says why nothing should push the tanks as well: two systems arguing over
+  // one overlap have no radius that satisfies both.
+  {
+    const tx2 = s[T + T_X], tz2 = s[T + T_Z];
+    for (let i = 0; i < UNITS; i++) {
+      if (isArmour(i)) continue;
+      const b = unitBase(i);
+      if (s[b + U_STATE] === 0) continue;
+      clearOfTruck(s, b, tx2, tz2, U_X, U_Z);
+    }
+  }
 
   // ---- 3. score ----------------------------------------------------------
   // danger is guns in range, not distance to a line

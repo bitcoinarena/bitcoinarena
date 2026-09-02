@@ -1596,6 +1596,47 @@ function separatePair(s, a, b, xOff, zOff, sideOff) {
   s[b + zOff] = add(s[b + zOff], pz);
 }
 
+/**
+ * Nobody is left standing inside the cab.
+ *
+ * `Army.ClearPath` reads like a corridor rule - it takes a `halfWidth` of 7.5
+ * and an `ahead` of 26, and its anticipatory branch eases a man sideways out
+ * of the truck's path. THAT BRANCH NEVER RUNS. Its only call is
+ * `foreach (var u in Infantry) YieldTo(u, 0f, 0.9f, false, 1.6f)`, with
+ * `stepsAside` false and `rate` zero, and no other caller exists; the corridor,
+ * the urgency ramp and both parameters are dead code in the game they are in.
+ * What the game actually does is the last-resort half: a rifleman inside 1.6 m
+ * of the truck's centre is pushed back out to it.
+ *
+ * So that is what is ported. Porting the corridor would be porting something
+ * the old game never executed, and the envelope it would move is not evidence
+ * of anything. This also corrects a claim of mine in the step 2 measurement:
+ * the reason at most one man was ever inside 3.6 m was NOT this rule easing
+ * thirteen of them aside, because it eases nobody aside.
+ *
+ * ARMOUR IS DELIBERATELY ABSENT, as it is in C#, and for the reason its
+ * comment gives: two systems arguing over one overlap have no radius that
+ * satisfies both. Here `resolveArmour` already pushes the TRUCK out of the
+ * tanks, and this pushes the MAN out of the truck - one owner each.
+ *
+ * The radius is derived rather than typed: 1.6 m is 16 ONE over 10.
+ */
+const CLEAR_RADIUS = idiv(Math.imul(16, ONE), 10);   // 1.6 m, C#'s `hard`
+
+function clearOfTruck(s, b, tx, tz, xOff, zOff) {
+  const ox = sub(s[b + xOff], tx), oz = sub(s[b + zOff], tz);
+  if (abs(ox) >= CLEAR_RADIUS || abs(oz) >= CLEAR_RADIUS) return 0;
+  const d = length2(ox, oz);
+  // Coincident is skipped exactly as C# skips it (`d2 > 1e-4f`): a zero
+  // separation has no direction to push along.
+  if (d <= COINCIDENT || d >= CLEAR_RADIUS) return 0;
+
+  const push = sub(CLEAR_RADIUS, d);
+  s[b + xOff] = add(s[b + xOff], mulFast(div(ox, d), push));
+  s[b + zOff] = add(s[b + zOff], mulFast(div(oz, d), push));
+  return 1;
+}
+
 const SIDE_BULL = -1;
 const SIDE_BEAR = 1;
 
@@ -3254,6 +3295,29 @@ function step(st, throttle, steer, brake, handbrake, practice) {
   // army.
   reinforce(s, rng);
   launchSorties(s, rng, seamAt, groundAt);
+
+  // Nobody left standing inside the cab.
+  //
+  // AFTER the whole army step, because that is where `Battlefield` calls it:
+  // `Army.Update(dt)` at :105 - which itself ends on RemoveAll and Reinforce -
+  // then `RunOver` at :144, then `ClearPath` at :153. Run-over will go
+  // immediately above this when it is ported; the order is the game's and not
+  // a preference, since clearing first would move the men out of the wheels
+  // before the wheels were asked who was under them.
+  //
+  // Infantry only, exactly as C# does it. `resolveArmour` up in the vehicle
+  // section already pushes the TRUCK out of the tanks, and C#'s own comment
+  // says why nothing should push the tanks as well: two systems arguing over
+  // one overlap have no radius that satisfies both.
+  {
+    const tx2 = s[T + T_X], tz2 = s[T + T_Z];
+    for (let i = 0; i < UNITS; i++) {
+      if (isArmour(i)) continue;
+      const b = unitBase(i);
+      if (s[b + U_STATE] === 0) continue;
+      clearOfTruck(s, b, tx2, tz2, U_X, U_Z);
+    }
+  }
 
   // ---- 3. score ----------------------------------------------------------
   // danger is guns in range, not distance to a line
