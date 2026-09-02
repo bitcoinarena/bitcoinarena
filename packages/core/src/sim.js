@@ -863,9 +863,13 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
     return { x: s[b + U_X], z: s[b + U_Z], hp: s[b + U_HP],
              armour: (i & ARMOUR_MASK) === 0 };
   };
-  const fromStart = length2(sub(tx, START_X), sub(tz, START_Z));
+  // The apron test now takes the two components and owns its own guard, for
+  // the reason spelled out at `earning` in rules/score.js: the distance is the
+  // thing that overflows, and this test asks whether the truck is OUTSIDE a
+  // radius, so a large axis proves the answer rather than ruling it out.
   const gaining = tx > s[O_SCORE + S_BESTX];
-  if (earning(fromStart, gaining) && s[O_SCORE + S_STATE] === RUN_LIVE) {
+  if (earning(sub(tx, START_X), sub(tz, START_Z), gaining) &&
+      s[O_SCORE + S_STATE] === RUN_LIVE) {
     // The danger the player is actually in, from the army they can SEE.
     //
     // This read the core's own units, which nothing draws - so the score was

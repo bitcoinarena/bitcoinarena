@@ -1887,9 +1887,26 @@ function scoreOf(exposure, ticks, cargo) {
   return mulFast(Math.imul(1000, ONE), product) >> 16;
 }
 
-/** Whether a spot earns anything at all: outside the apron, and gaining ground. */
-const earning = (distanceFromStart, gainingGround) =>
-  distanceFromStart >= APRON_RADIUS && gainingGround;
+/**
+ * Whether a spot earns anything at all: outside the apron, and gaining ground.
+ *
+ * Takes the two components rather than a distance, because the distance is
+ * exactly the thing that cannot be trusted here. `length2` squares its
+ * arguments in Q16.16, so a separation past about 181.5 m wraps the sum of
+ * squares past 2^31 and comes back as ZERO - and this map runs 260 m across
+ * with its start on the apron at x = -100.4, so a truck beyond x = 80.4 read
+ * as standing ON its start and stopped earning. Measured before the guard: the
+ * last 33.5 m of ground it gained was never paid for, and that is the run-in,
+ * where the danger is highest.
+ *
+ * The rejection runs the OPPOSITE way to the ones in army.js and solids.js.
+ * Those ask whether a point is INSIDE a radius, where a large axis rules the
+ * answer out; this asks whether it is OUTSIDE one, where a large axis PROVES
+ * it. Copying their shape unchanged would have kept the bug.
+ */
+const earning = (dx, dz, gainingGround) =>
+  gainingGround &&
+  (abs(dx) > APRON_RADIUS || abs(dz) > APRON_RADIUS || length2(dx, dz) >= APRON_RADIUS);
 
 // ---- rules/gate.js
 // The far end of the run, and the clock that ends it.
@@ -3096,9 +3113,13 @@ function step(st, throttle, steer, brake, handbrake, practice) {
     return { x: s[b + U_X], z: s[b + U_Z], hp: s[b + U_HP],
              armour: (i & ARMOUR_MASK) === 0 };
   };
-  const fromStart = length2(sub(tx, START_X), sub(tz, START_Z));
+  // The apron test now takes the two components and owns its own guard, for
+  // the reason spelled out at `earning` in rules/score.js: the distance is the
+  // thing that overflows, and this test asks whether the truck is OUTSIDE a
+  // radius, so a large axis proves the answer rather than ruling it out.
   const gaining = tx > s[O_SCORE + S_BESTX];
-  if (earning(fromStart, gaining) && s[O_SCORE + S_STATE] === RUN_LIVE) {
+  if (earning(sub(tx, START_X), sub(tz, START_Z), gaining) &&
+      s[O_SCORE + S_STATE] === RUN_LIVE) {
     // The danger the player is actually in, from the army they can SEE.
     //
     // This read the core's own units, which nothing draws - so the score was
