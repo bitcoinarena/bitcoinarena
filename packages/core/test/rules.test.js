@@ -462,6 +462,55 @@ test('a distant wall does not eject the truck', () => {
  * bodies the player cannot get through - which is neither what the old game
  * did nor what anyone would expect of it.
  */
+/**
+ * Under the wheels, and only above a walking pace.
+ *
+ * `Army.RunOver` takes a radius of 3.6 m and a `minSpeed` of 2.5 m/s: a truck
+ * edging forward must not mow down a line it is merely touching, and a parked
+ * one must not clear a space around itself.
+ *
+ * A UNIT TEST AND NOT A DRIVE, deliberately. Driven routes could not make this
+ * rule fire at all: chasing the nearest man turns the truck until it scrubs its
+ * speed away (757 ticks with a man inside 3.6 m, not one of them above
+ * 2.5 m/s), and ploughing at the infantry centroid holds 17.89 m/s but is
+ * stopped by armour before it reaches anybody (98 ticks inside 3.6 m, again
+ * none above the threshold, closest 2.48 m at 0.02 m/s). That is a real
+ * finding about the world and it is written up in PRIORITIES; it is not a
+ * reason to loosen either number until a route happens to produce a kill.
+ */
+test('a truck at speed rides a rifleman down, and a crawling one does not', () => {
+  const Q = 65536, O = 5, T_X = 0, T_Z = 1, T_VX = 3, T_VZ = 4;
+  const O_UNITS = 24, U_WORDS = 8, U_X = 0, U_Z = 1, U_HP = 3, U_STATE = 5;
+
+  // Slot 1 is a rifleman: `isArmour(i)` is `(i & 3) === 0`.
+  const run = (vx) => {
+    const st = init(1);
+    clearTheField(st);
+    // BOTH INSIDE THE ARMY'S OWN FIELD. The truck starts in the bay at
+    // x = -100.4, and a unit is clamped to |x| < FrontX - 4 = 88 on its first
+    // tick - so a man placed beside the truck there is snapped 12 m away
+    // before the rule ever looks at him. That is what made the first version
+    // of this test report a survivor.
+    st.i32[O + T_X] = 0;
+    st.i32[O + T_Z] = 0;
+    const b = O_UNITS + 1 * U_WORDS;
+    st.i32[b + U_X] = st.i32[O + T_X] + Math.round(1.0 * Q);
+    st.i32[b + U_Z] = st.i32[O + T_Z];
+    st.i32[b + U_HP] = Q;
+    st.i32[b + U_STATE] = 1;
+    // The velocity the rule reads is the truck's own, not a wheel reading.
+    st.i32[O + T_VX] = Math.round(vx * Q);
+    st.i32[O + T_VZ] = 0;
+    step(st, 0, 0, 0, 0, 0);
+    return st.i32[b + U_STATE];
+  };
+
+  assert.equal(run(12), 0, 'ein Mann unter den Raedern bei 12 m/s steht noch');
+  assert.equal(run(-12), 0, 'rueckwaerts ueberfaehrt niemanden - die Regel liest einen Betrag');
+  assert.equal(run(2.4), 1, 'bei 2.4 m/s wurde jemand ueberfahren');
+  assert.equal(run(0), 1, 'der stehende Truck raeumt sich Platz');
+});
+
 test('armour blocks the truck and infantry does not', () => {
   const Q = 65536, O = 5, T_X = 0, T_Z = 1, T_SPEED = 9;
   const O_UNITS = 24, U_WORDS = 8, U_X = 0, U_Z = 1, U_HP = 3, U_STATE = 5;

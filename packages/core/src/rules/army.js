@@ -211,6 +211,46 @@ export function separatePair(s, a, b, xOff, zOff, sideOff) {
  */
 const CLEAR_RADIUS = idiv(Math.imul(16, ONE), 10);   // 1.6 m, C#'s `hard`
 
+/**
+ * Anyone under the wheels goes down.
+ *
+ * `Army.RunOver(x, z, 3.6f, speed, knock)` with `minSpeed = 2.5f`: below a
+ * walking pace nothing happens, because a truck edging forward should not mow
+ * down a line it is merely touching and a stationary one should not clear a
+ * space around itself.
+ *
+ * THE SPEED IS THE CORE'S OWN VELOCITY, and getting that right is the whole
+ * of this port. `Battlefield` reads `BlwpCore.Velocity` - which is (T_VX,
+ * T_VZ) - and takes its magnitude, falling back to `Rigidbody.linearVelocity`
+ * only when the core is not driving. That fallback is the PhysX remnant and
+ * the comment above it in the game says what it cost: the truck's body is
+ * kinematic, its linearVelocity is permanently zero, so run-over read a
+ * stationary truck and infantry stood in the road while the wheels went
+ * through them. The core has no such fallback and must not grow one.
+ *
+ * It is also NOT `T_WHEEL`. That is the vehicle's signed forward speed - the
+ * suspension model takes `abs()` of it wherever it needs a magnitude - so a
+ * truck reversing at 5 m/s would read as -5, sit below the 2.5 threshold and
+ * ride over nobody. C# takes a magnitude and so does this: the same quantity,
+ * not the nearest one to hand.
+ *
+ * `knock` is not ported. It exists to throw the body the way it was hit, and
+ * nothing in the core draws anything; it belongs with the rest of CombatFx.
+ */
+const RUN_OVER_RANGE = idiv(Math.imul(36, ONE), 10);   // 3.6 m, Battlefield.cs:144
+const RUN_OVER_MIN_SPEED = Math.imul(5, ONE) >> 1;     // 2.5 m/s, Army.RunOver's default
+
+/** The truck's speed as C# reads it: the magnitude of the core's own velocity. */
+export const truckSpeed = (vx, vz) => length2(vx, vz);
+
+export function runOver(s, b, tx, tz, speed, xOff, zOff) {
+  if (speed < RUN_OVER_MIN_SPEED) return 0;
+  const dx = sub(s[b + xOff], tx), dz = sub(s[b + zOff], tz);
+  if (abs(dx) >= RUN_OVER_RANGE || abs(dz) >= RUN_OVER_RANGE) return 0;
+  if (length2(dx, dz) >= RUN_OVER_RANGE) return 0;
+  return 1;
+}
+
 export function clearOfTruck(s, b, tx, tz, xOff, zOff) {
   const ox = sub(s[b + xOff], tx), oz = sub(s[b + zOff], tz);
   if (abs(ox) >= CLEAR_RADIUS || abs(oz) >= CLEAR_RADIUS) return 0;

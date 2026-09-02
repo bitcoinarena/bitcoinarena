@@ -32,7 +32,7 @@ import {
 import { vehicleStep } from './rules/vehicle.js';
 import { flatGround, gradeAlong, heightAtWorld, DEFAULT_COLS, DEFAULT_ROWS } from './rules/ground.js';
 import { noSolids, resolveSolids, resolveArmour, BOX_WORDS } from './rules/solids.js';
-import { stepUnit, separatePair, clearOfTruck, threatAt, pickTarget, pickRifleTarget, riflePost, RELOAD_MIN, RELOAD_SPAN, DAMAGE_MIN, DAMAGE_SPAN, BACKOFF_RANGE, HIT_PER_MIL, ARMOUR_RANGE, RIFLE_RANGE, RIFLE_HIT_PER_MIL, RIFLE_RELOAD_TICKS, RIFLE_RELOAD_TICKS_SPAN, RIFLE_LOOK_TICKS, RIFLE_LOOK_TICKS_SPAN, RIFLE_HP, RIFLE_DAMAGE, COURIER_RANGE, COURIER_DAMAGE_MIN, COURIER_DAMAGE_SPAN, COURIER_RIFLE_MIN, COURIER_RIFLE_SPAN } from './rules/army.js';
+import { stepUnit, separatePair, clearOfTruck, runOver, truckSpeed, threatAt, pickTarget, pickRifleTarget, riflePost, RELOAD_MIN, RELOAD_SPAN, DAMAGE_MIN, DAMAGE_SPAN, BACKOFF_RANGE, HIT_PER_MIL, ARMOUR_RANGE, RIFLE_RANGE, RIFLE_HIT_PER_MIL, RIFLE_RELOAD_TICKS, RIFLE_RELOAD_TICKS_SPAN, RIFLE_LOOK_TICKS, RIFLE_LOOK_TICKS_SPAN, RIFLE_HP, RIFLE_DAMAGE, COURIER_RANGE, COURIER_DAMAGE_MIN, COURIER_DAMAGE_SPAN, COURIER_RIFLE_MIN, COURIER_RIFLE_SPAN } from './rules/army.js';
 import { accrue, earning, scoreOf } from './rules/score.js';
 import { outcome, RUN_LIVE, RUN_DELIVERED, RUN_WRECKED, RUN_MISSED } from './rules/gate.js';
 import { frontlineZ, SAMPLES } from './rules/frontline.js';
@@ -890,6 +890,22 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
   // same `if` in the game and not merely a neighbouring one.
   if (s[T + T_HP] > 0) {
     const tx2 = s[T + T_X], tz2 = s[T + T_Z];
+    // The truck's own velocity, never a host's and never `T_WHEEL`: see
+    // `runOver` in rules/army.js for what each of those would cost.
+    const speed = truckSpeed(s[T + T_VX], s[T + T_VZ]);
+    // Run-over FIRST and clearing second, which is Battlefield's order -
+    // `RunOver` at :144, `ClearPath` at :153. The other way round would move
+    // the men out of the wheels before the wheels were asked who was under
+    // them, and the rule would kill almost nobody.
+    for (let i = 0; i < UNITS; i++) {
+      if (isArmour(i)) continue;
+      const b = unitBase(i);
+      if (s[b + U_STATE] === 0) continue;
+      if (runOver(s, b, tx2, tz2, speed, U_X, U_Z)) {
+        s[b + U_HP] = 0;
+        s[b + U_STATE] = 0;
+      }
+    }
     for (let i = 0; i < UNITS; i++) {
       if (isArmour(i)) continue;
       const b = unitBase(i);
