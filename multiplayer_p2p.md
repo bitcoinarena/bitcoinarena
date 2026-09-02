@@ -2750,7 +2750,7 @@ a state whose origin nobody can check.
 | `notice_period` | ~30 days | ~1 day | **10 blocks** |
 | stake ceiling | §5A.10 table | testnet sats | play money only |
 | beacon | drand | drand | **mock, seeded** |
-| governance | 1008 / 2016 / 2016 | 144 / 144 / 0 | **1 / 6 / 1** |
+| governance | 1008 / 1440 / 2016 | 144 / 144 / 0 | **1 / 6 / 1** |
 
 Two nodes and 2-of-2 on regtest is the point of it: the whole settlement
 path - hold invoices, VSS, a 2-of-2 FROST signature, the objection window,
@@ -3012,10 +3012,10 @@ the same clock the census already uses.
 | Phase | Blocks | ≈ | What happens |
 |---|---|---|---|
 | Review | 1008 | 7 d | Published, votes not yet counted. Time to find that it is broken *before* anybody has committed to it. |
-| Voting | 2016 | 14 d | `OP_RETURN` votes confirm. |
+| Voting | **1440** | **10 d** | `OP_RETURN` votes confirm. |
 | Cooldown | 2016 | 14 d | Outcome known, change **not** live. Operators upgrade; anyone who dislikes it exits or lets a bond lapse. |
 | Activation | at `activation_height` | | |
-| **Total** | **5040** | **~35 d** | |
+| **Total** | **4464** | **~31 d** | |
 
 `activation_height` MUST be at or after the end of cooldown; a proposal that
 names an earlier one is invalid on its face.
@@ -3059,7 +3059,7 @@ config nodes do not serve, so those rounds find no committee and never
 start. The network degrades to no rounds rather than to bad rounds, which is
 the correct direction.
 
-And a **repeal** runs on a short schedule - review 0, voting 1008, cooldown
+And a **repeal** runs on a short schedule - review 0, voting 720, cooldown
 0 - but *only* if its `config` is byte-identical to an ancestor that was
 live before. It can go back, never forward. That cannot be abused into a
 fast path for new changes, because the only configurations it can reach are
