@@ -556,6 +556,18 @@ advertisement signature valid under node_pubkey
 advertisement declares the role and a supported protocol version
 ```
 
+`bond_min(role)` is **named in the Round Contract**, not global. A round
+declares the bracket it plays at and the floor that goes with it, and a
+node is eligible for *that round* or not.
+
+> A bond that no longer reaches the floor for the large rounds is still
+> eligible for the small ones. The network stratifies; it does not evict.
+
+The alternative reading - one global floor that rises as the network grows
+- would eject nodes that did nothing wrong, and eject them at the worst
+moment: their capital is timelocked until `bond_maturity`, so they cannot
+raise it in response. Stratification costs nothing and keeps them serving.
+
 **Deliberately NOT eligibility criteria** *(removed in 4.6.1)*: uptime,
 heartbeat history, reputation, latency, geographic spread, or "no unslashed
 misbehaviour" as a live judgement. None of these is objectively observable
@@ -1046,6 +1058,64 @@ twenty-five at 100.
 > An implementation SHOULD therefore set `bond_min` to
 > `max(4 x max_round_pool, fee_floor)`, and state the fee floor it assumed,
 > since it moves with the fee market.
+
+## 5A.10B A node that is falling behind should say so *(new)*
+
+A hard floor with no warning is a bad experience: an operator watches fee
+income decline over weeks and has no way to tell whether the network grew,
+whether their node is unhealthy, or whether nothing is wrong at all.
+
+Everything needed to answer that is public. A node can compute its own
+standing from the chain, with no service to ask:
+
+```text
+own_weight      its bond, against total bonded capital in its role
+brackets_served rounds it was eligible for, of the rounds that ran
+headroom        own bond / bond_min of the largest bracket now common
+```
+
+Nodes SHOULD watch these and tell their operator **before** the floor is
+crossed rather than after. Two thresholds are worth distinguishing:
+
+- **falling share** - the network is growing and this node's selection rate
+  is dropping proportionally. Not a fault, and not urgent; the node is
+  still eligible for everything it was.
+- **losing brackets** - `bond_min` for the brackets now commonly played has
+  passed this node's bond. It has stopped being eligible for those rounds,
+  and its fee income has a floor under it that will not lift on its own.
+
+### Lead time is the point
+
+The warning has to arrive early enough to be actionable, and "actionable"
+is constrained by the bond itself: **a bond cannot be topped up.** It is one
+timelocked output, so raising a stake means funding a *second* bond and
+waiting for confirmations while the first stays locked until
+`bond_maturity`. An operator warned on the day they drop out is an operator
+who cannot respond for thirty days.
+
+Nodes SHOULD therefore warn while `headroom` is still above 1 - at a
+configured margin, reference 1.5x - and state plainly what would restore
+it: how much more capital, and by when.
+
+### How it is delivered
+
+Operator configuration, not protocol. Email, a Nostr direct message, a
+webhook, a log line, or nothing at all. A node with no notification
+configured MUST behave identically in every other respect: this is an
+operator convenience and nothing in the protocol may come to depend on a
+message having been delivered.
+
+### Multiple bond outputs
+
+Since a bond cannot be topped up, a node MAY hold **several** bond outputs
+in the same role, and its weight is their sum. Each must independently
+satisfy §5A.3 - template, marker, retrievable advertisement committing to
+the same `node_pubkey` and `operator_id`.
+
+This is what makes the warning above worth sending. Without it, responding
+to a lost bracket means abandoning a working bond and starting again; with
+it, an operator adds a second output and keeps the first until it matures
+naturally.
 
 ## 5A.11 Selection cannot be overwritten
 
