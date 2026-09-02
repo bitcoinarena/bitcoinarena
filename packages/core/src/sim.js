@@ -65,6 +65,33 @@ export const UNITS = 96;
  */
 export const TRUCK_ARMOUR = Math.imul(3, ONE) >> 1;   // 1.5, TruckHealth.armour
 
+/**
+ * What a crash costs, which until now was nothing at all.
+ *
+ * The core noticed the impact and priced it nowhere: `T_IMPACT` was written
+ * for the host to read and `T_HP` was reduced by courier fire and by nothing
+ * else. `TruckHealth` held the rule - `rammed >= crashSpeed` writes the truck
+ * off, otherwise `Damage(rammed * 6f)` - and that was client-side simulation
+ * of an outcome, which is what M1 removes.
+ *
+ * The quantity is a SPEED and it always was: `TakeImpact` is `T_IMPACT / ONE`
+ * and the word is set in `resolveArmour` from the component of the truck's
+ * velocity along the contact normal. No distance was read as a speed here, so
+ * there is no units fault to avoid copying - the six is points per metre per
+ * second, and it is a rate, not a leftover.
+ *
+ * The six is applied BEFORE the armour divisor, because C# applied it inside
+ * `Damage`, which divided. So a shunt at 3 m/s costs 3 * 6 / 1.5 = 12 points,
+ * exactly as it did in the game.
+ *
+ * The burnt-out-hull branch - `impact * 3f`, and never a write-off - has no
+ * counterpart yet, because the core has no hulls. It is on the list with
+ * `Army.Wrecks`.
+ */
+const CRASH_WRITE_OFF = Math.imul(4, ONE);       // TruckHealth.crashSpeed
+const CRASH_FLOOR = ONE >> 1;                    // 0.5 m/s, below it nothing
+const CRASH_POINTS = Math.imul(6, ONE);          // points per m/s
+
 export const HALF_X = Math.imul(130, ONE);
 export const HALF_Z = Math.imul(85, ONE);
 const TICK_DT = 1092;                       // 1/60 in Q16.16
@@ -627,6 +654,20 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
 
   // The hardest armour impact this tick, for whatever applies damage.
   if (v.impact > s[T + T_IMPACT]) s[T + T_IMPACT] = v.impact;
+
+  // And what it costs. Priced from THIS tick's impact rather than from the
+  // accumulated word, which the host reads and clears on its own clock - the
+  // rule should charge for the crash that just happened, not for whatever is
+  // still sitting in the mailbox.
+  //
+  // `practice` withholds it exactly as it withholds courier fire; the apron
+  // does not, because the core has no invulnerable radius - that is a listed
+  // gap and not something to invent here.
+  if (!practice && s[O_SCORE + S_STATE] === RUN_LIVE && v.impact > CRASH_FLOOR) {
+    if (v.impact >= CRASH_WRITE_OFF) s[T + T_HP] = 0;
+    else s[T + T_HP] = max(0, sub(s[T + T_HP],
+                                  div(mulFast(v.impact, CRASH_POINTS), TRUCK_ARMOUR)));
+  }
 
   s[T + T_X] = clamp(v.x, -HALF_X, HALF_X);
   s[T + T_Z] = clamp(v.z, -HALF_Z, HALF_Z);

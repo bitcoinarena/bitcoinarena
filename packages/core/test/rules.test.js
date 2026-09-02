@@ -529,6 +529,52 @@ test('enough fire writes the truck off', () => {
   }
 });
 
+/**
+ * A crash costs condition, and a hard one writes the truck off.
+ *
+ * `TruckHealth` held this and the client is not allowed to: `rammed >=
+ * crashSpeed` wrote it off, otherwise `Damage(rammed * 6f)`, and `Damage`
+ * divided by the armour. The quantity is a speed - `TakeImpact` is
+ * `T_IMPACT / ONE`, set in `resolveArmour` from the truck's velocity along
+ * the contact normal - so the six is points per metre per second.
+ *
+ * Driven into a pinned tank rather than poked at, because the impact word is
+ * only written when the collision actually resolves.
+ */
+test('crashing into armour costs condition, and hard enough writes it off', () => {
+  const Q = 65536, O = 5, T_X = 0, T_Z = 1, T_HP = 6;
+  const O_UNITS = 24, U_WORDS = 8, U_X = 0, U_Z = 1, U_HP = 3, U_STATE = 5;
+  const O_SCORE = 17, S_STATE = 5;
+
+  const driveInto = (ticks, throttle) => {
+    const st = init(1);
+    st.i32[O + T_X] = 0;
+    st.i32[O + T_Z] = 0;
+    const at = Math.round(14 * Q);
+    for (let t = 0; t < ticks; t++) {
+      clearTheField(st);
+      const b = O_UNITS + 0 * U_WORDS;          // slot 0 is armour
+      st.i32[b + U_X] = at;
+      st.i32[b + U_Z] = st.i32[O + T_Z];
+      st.i32[b + U_HP] = Math.round(60 * Q);
+      st.i32[b + U_STATE] = 1;
+      step(st, throttle, 0, 0, 0, 0);
+    }
+    return { hp: st.i32[O + T_HP] / Q, state: st.i32[O_SCORE + S_STATE] };
+  };
+
+  const hard = driveInto(180, Q);
+  assert.equal(hard.hp, 0, `voll in den Panzer gefahren und noch ${hard.hp.toFixed(1)} Punkte`);
+  assert.equal(hard.state, gate.RUN_WRECKED, 'hart aufgefahren, aber der Lauf laeuft weiter');
+
+  // Nothing to hit: the same drive with no tank must cost nothing at all, or
+  // the test above is measuring the road rather than the crash.
+  const st = init(1);
+  st.i32[O + T_X] = 0; st.i32[O + T_Z] = 0;
+  for (let t = 0; t < 180; t++) { clearTheField(st); step(st, Q, 0, 0, 0, 0); }
+  assert.equal(st.i32[O + T_HP] / Q, 100, 'der Truck verliert Punkte ohne etwas zu treffen');
+});
+
 test('a truck at speed rides a rifleman down, and a crawling one does not', () => {
   const Q = 65536, O = 5, T_X = 0, T_Z = 1, T_VX = 3, T_VZ = 4;
   const O_UNITS = 24, U_WORDS = 8, U_X = 0, U_Z = 1, U_HP = 3, U_STATE = 5;
