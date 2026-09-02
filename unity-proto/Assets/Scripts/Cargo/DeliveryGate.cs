@@ -167,7 +167,21 @@ public class DeliveryGate : MonoBehaviour
     {
         if (bay == null || !bay.IsLoaded) return;
         if (health != null && health.IsDestroyed) return;
+        Miss();
+    }
 
+    /// <summary>
+    /// Throw the run away. The DECISION is the caller's, and when a core is
+    /// answering the caller is the core.
+    ///
+    /// Split out so the core's `RUN_MISSED` does not have to pass the two
+    /// client conditions above on its way in. They are the fallback's own
+    /// reasoning about whether a run exists to lose, and putting a C# level
+    /// in front of a verdict the core has already reached is the shape this
+    /// letter has now removed three times.
+    /// </summary>
+    void Miss()
+    {
         Missed++;
         MissedAt = Time.unscaledTime;
 
@@ -196,7 +210,6 @@ public class DeliveryGate : MonoBehaviour
         }
 
         if (courier == null || bay == null) return;
-        if (health != null && health.IsDestroyed) return;
         if (!bay.IsLoaded) return;
 
         // WHO DECIDES A DELIVERY. The core, when there is one.
@@ -218,14 +231,34 @@ public class DeliveryGate : MonoBehaviour
         // LOADED, the truck back in the bay and the camera flying the arrival
         // a second time. The player could load but never roll out, so a
         // session had exactly one round no matter what the core did.
+        //
+        // AND THE VERDICT IS THE WHOLE VERDICT. `RUN_MISSED` had no reader at
+        // all: `Bootstrap` wired `clock.BlockClosed` straight to
+        // `MissTheBlock`, so the third outcome was decided by a Unity
+        // stopwatch while the core held a word for it. The two do not even
+        // measure the same thing - the core counts 9000 ticks from roll-out,
+        // `BlockClock` closes on wall time for everybody at once, so a run
+        // that starts ten seconds before the block closes has missed it in
+        // C# and has 140 s left in the core. The core's word is read here and
+        // the clock no longer decides; see `OnBlockClosed`.
+        //
+        // `IsDestroyed` USED TO STAND IN FRONT OF ALL OF THIS as a level - a
+        // C# flag that could swallow a delivery the core had already made.
+        // It could not fire in sequence, because a burning truck is not
+        // carrying freight, but it is the same shape as the bug above and it
+        // is gone from the core's path. The fallback keeps it: without a core
+        // there is nothing else to ask.
         if (Blwp.BlwpCore.Available)
         {
-            if (Blwp.BlwpCore.RunState != 1) { _banked = false; return; }  // RUN_DELIVERED
-            if (_banked) return;
-            _banked = true;
+            int state = Blwp.BlwpCore.RunState;
+            if (state != 1 && state != 3) { _settled = false; return; }
+            if (_settled) return;
+            _settled = true;
+            if (state == 3) { Miss(); return; }                        // RUN_MISSED
         }
         else
         {
+            if (health != null && health.IsDestroyed) return;
             var p = courier.position;
             if (p.x < gateX || Mathf.Abs(p.z) > halfMouth) return;
         }
@@ -279,8 +312,24 @@ public class DeliveryGate : MonoBehaviour
 
     float _reopenAt;
 
-    /// <summary>Whether the core's current RUN_DELIVERED has already been banked.</summary>
-    bool _banked;
+    /// <summary>Whether the core's current verdict has already been acted on.</summary>
+    bool _settled;
+
+    /// <summary>
+    /// The block clock closed. The CORE decides whether that ended a run.
+    ///
+    /// `BlockClock` seals the board on wall time and that is its own business,
+    /// but it must not also decide the player's round: `outcome` returns
+    /// RUN_MISSED off `S_ELAPSED`, which starts at roll-out, and a second
+    /// stopwatch in C# would end runs the core says are still live. Without a
+    /// core there is nothing to ask and the clock is the authority, which is
+    /// the editor's correct behaviour.
+    /// </summary>
+    public void OnBlockClosed()
+    {
+        if (Blwp.BlwpCore.Available) return;
+        MissTheBlock();
+    }
 
     /// <summary>The far end of the run: the miner, or two posts if it is absent.</summary>
     void Build()
