@@ -20,12 +20,18 @@
 // placed with `teleport`, the core's own respawn API: it writes position words
 // and clears the momentum, and it draws NOTHING from the stream.
 //
-// WHAT CAN AND CANNOT BE PAIRED TODAY. `totalDmg`, `inRifle` and `inTank` are
-// exact pairs. The rifle/tank SPLIT is not recoverable from the core, because
-// every core hit is one flat point: the two weapons have no distinct damage to
-// tell them apart by. That is not a gap in this tool - it is one of the four
-// faults item (j) exists to fix, and after (j) the split becomes readable the
-// same way the recording reads it.
+// WHAT CAN AND CANNOT BE PAIRED. `inRifle` and `inTank` are exact pairs at
+// every sample. The rifle/tank SPLIT is readable since (j): a tank writes
+// Rand(5, 11) and a rifleman Rand(1.5, 3.5), the two bands do not meet at Heat
+// zero, and this file tells them apart by size the way the recorder does.
+// Before (j) it could not - every core hit was one flat point - and that was
+// one of the four faults (j) existed to fix.
+//
+// `totalDmg` stops being a pair once the tanks do real work. The core's truck
+// holds 100 points and T_HP floors at zero, so it dies partway through and the
+// column goes blind, where the recorder accumulates past 100 because its
+// courier is a position and not a vehicle. Shots and hits do not saturate and
+// are what the acceptance is read from.
 //
 // Prints; asserts nothing.
 
@@ -89,9 +95,10 @@ console.log(`COURIER  recording: seed ${ref.setup.seed}, ${ref.setup.seam}, air 
 console.log('COURIER  the core is run AIR OFF to match, by pinning the sortie clocks from');
 console.log('COURIER  outside the rules - the recording\'s pass is air "none".');
 console.log(`COURIER  courierRange ${COURIER_RANGE} m, rifleRange ${RIFLE_R} m - both read off the file`);
-console.log('COURIER  rifle/tank split is NOT recoverable from the core: every core hit is one');
-console.log('COURIER  flat point, so there is no size to tell the two weapons apart by. That is');
-console.log('COURIER  one of the faults (j) exists to fix, not a gap in this tool.');
+console.log('COURIER  rifle and tank are told apart BY THE SIZE of the hit, the way the');
+console.log('COURIER  recorder does it: a tank takes Rand(5,11), a rifleman Rand(1.5,3.5), and');
+console.log('COURIER  the bands do not meet at heat 0. Before (j) every core hit was one flat');
+console.log('COURIER  point and no split was possible.');
 
 function measure(seed) {
   const st = init(seed);
@@ -255,8 +262,10 @@ for (const seed of SEEDS) {
     console.log('');
     console.log('COURIER  AT NINETY SECONDS          core        recording');
     console.log(`COURIER    total damage        ${last.dmg.toFixed(2).padStart(10)}  ${c.totalDmg.toFixed(2).padStart(12)}`);
-    console.log(`COURIER    of it, tank                  none  ${c.tankDmg.toFixed(2).padStart(12)}   (${c.tankHits} hits)`);
-    console.log(`COURIER    of it, rifle          not split  ${c.rifleDmg.toFixed(2).padStart(12)}   (${c.rifleHits} hits)`);
+    console.log(`COURIER    of it, tank         ${last.tank.toFixed(2).padStart(10)}  ${c.tankDmg.toFixed(2).padStart(12)}   (${c.tankHits} hits)`);
+    console.log(`COURIER    of it, rifle        ${last.rifle.toFixed(2).padStart(10)}  ${c.rifleDmg.toFixed(2).padStart(12)}   (${c.rifleHits} hits)`);
+    console.log(`COURIER    of it, ambiguous    ${last.ambiguous.toFixed(2).padStart(10)}` +
+                '               -   both weapons in one tick');
     console.log(`COURIER    riflemen within ${RIFLE_R} m ${String(last.inRifle).padStart(9)}  ${String(c.inRifle).padStart(12)}`);
     console.log(`COURIER    tanks within ${COURIER_RANGE} m    ${String(last.inTank).padStart(9)}  ${String(c.inTank).padStart(12)}`);
     console.log('');
