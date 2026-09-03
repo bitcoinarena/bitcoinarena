@@ -295,6 +295,19 @@ namespace Blwp
         /// </summary>
         public static int UnitSide(int i) => _state[Layout.UnitBase(i) + Layout.U_SIDE];
 
+        /// <summary>
+        /// The unit's reload counter, in ticks, whichever word holds it.
+        ///
+        /// A tank's lives in `U_TARGET` and a rifleman's in `U_COOLDOWN` -
+        /// the words are shared, because a rifleman has no reload to keep and
+        /// a tank has no squad. Both count DOWN, so a rise is a shot: 84 to
+        /// 191 ticks for a tank, 150 to 269 for a rifleman, against the 24 to
+        /// 65 a rifleman sets when he looks and finds nobody.
+        /// </summary>
+        public static int UnitReloadClock(int i) => UnitIsArmour(i)
+            ? _state[Layout.UnitBase(i) + Layout.U_TARGET]
+            : _state[Layout.UnitBase(i) + Layout.U_COOLDOWN];
+
         public static bool UnitAlive(int i) => _state[Layout.UnitBase(i) + Layout.U_STATE] != 0;
 
         public static bool UnitIsArmour(int i) => (i & Layout.ARMOUR_MASK) == 0;

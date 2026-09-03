@@ -925,7 +925,185 @@ public class CombatFx : MonoBehaviour
 
     /* --------------------------------------------------------------- clock */
 
-    void Update() => Step(Time.deltaTime);
+    void Update()
+    {
+        if (Blwp.BlwpCore.Available) PollCore();
+        Step(Time.deltaTime);
+    }
+
+    // ---- what the core did this tick ------------------------------------
+    //
+    // The five things `Bind` drew hung on `Army.Shot`, `.Fired`, `.Killed`,
+    // `.Destroyed` and `.Bombed` - events of a C# army that is never built.
+    // Measured in the player build before this: `army=null`, `pieces=0` for a
+    // whole drive, and `combat=0` sounds asked for.
+    //
+    // The core raises no events either, but it does not have to: every one of
+    // those five is a state transition in the buffer Unity already polls, and
+    // one frame of memory is enough to read them. The core steps once per
+    // Unity frame, so nothing is missed.
+    //
+    //   a tank fired      `U_TARGET` - the armour's reload counter - goes UP.
+    //                     It only ever counts down otherwise, so any rise is a
+    //                     shot. 84 to 191 ticks, `FIRE_RELOAD_MIN/SPAN`.
+    //   a rifleman fired  `U_COOLDOWN` rises to 150 or more. The reload band
+    //                     is 150-269 and the "looked and found nobody" band is
+    //                     24-65, so the two are disjoint and a look draws no
+    //                     muzzle flash.
+    //   somebody was hit  `U_HP` fell while still alive.
+    //   somebody died     `U_STATE` went 1 to 0.
+    //   a bomb went off   `B_STATE` went 1 to 0.
+    //
+    // NOTHING HERE DECIDES ANYTHING. No roll, no damage, no range test that
+    // costs anybody anything: the core has already fired, hit and killed, and
+    // this reads what it did. The target is picked the way `pickTarget` and
+    // `pickRifleTarget` pick it - nearest enemy of the same arm inside 46 m
+    // and 26 m - because the tracer has to end somewhere, and re-running the
+    // core's own rule on the core's own state is not a second opinion. A slot
+    // that changed alive-state this frame is skipped, so a spawn's staggered
+    // reload cannot read as a shot.
+    int[] _wasAlive, _wasClock;
+    float[] _wasHp;
+    bool[] _wasBomb;
+
+    void PollCore()
+    {
+        int n = Blwp.Layout.UNITS;
+        if (_wasAlive == null || _wasAlive.Length != n)
+        {
+            _wasAlive = new int[n]; _wasClock = new int[n]; _wasHp = new float[n];
+            for (int i = 0; i < n; i++)
+            {
+                _wasAlive[i] = Blwp.BlwpCore.UnitAlive(i) ? 1 : 0;
+                _wasClock[i] = Blwp.BlwpCore.UnitReloadClock(i);
+                _wasHp[i] = Blwp.BlwpCore.UnitHealth(i);
+            }
+            return;                       // first frame is the baseline, not an event
+        }
+
+        if (audio == null) audio = FindFirstObjectByType<GameAudio>();
+
+        for (int i = 0; i < n; i++)
+        {
+            bool alive = Blwp.BlwpCore.UnitAlive(i);
+            int clock = Blwp.BlwpCore.UnitReloadClock(i);
+            float hp = Blwp.BlwpCore.UnitHealth(i);
+            bool armour = Blwp.BlwpCore.UnitIsArmour(i);
+            bool wasAlive = _wasAlive[i] != 0;
+
+            if (wasAlive && !alive)
+            {
+                var at = LastSeen(i);
+                if (armour)
+                {
+                    TankExplosion(new Vector3(at.x, Ground(at.x, at.z), at.z),
+                                  Blwp.BlwpCore.UnitHeading(i) * Mathf.Deg2Rad);
+                    if (audio != null) audio.Destroyed(new Vector2(at.x, at.z));
+                }
+                else
+                {
+                    Body(new Vector3(at.x, Ground(at.x, at.z), at.z),
+                         Blwp.BlwpCore.UnitHeading(i) * Mathf.Deg2Rad,
+                         Blwp.BlwpCore.UnitSide(i) < 0);
+                    if (audio != null) audio.Hit(new Vector2(at.x, at.z));
+                }
+            }
+            else if (alive && wasAlive)
+            {
+                var at = Blwp.BlwpCore.UnitPosition(i, 0f);
+
+                if (hp < _wasHp[i] - 0.001f)
+                {
+                    Impact(new Vector3(at.x, Ground(at.x, at.z) + 1f, at.z), Vector2.zero);
+                    if (audio != null) audio.Hit(new Vector2(at.x, at.z));
+                }
+
+                // the reload counter rising is the shot; a rifleman's "look"
+                // clock is far below the reload band and draws nothing
+                bool fired = clock > _wasClock[i] && (armour || clock >= RifleReloadFloor);
+                if (fired) Muzzle(i, at, armour);
+            }
+
+            _wasAlive[i] = alive ? 1 : 0;
+            _wasClock[i] = clock;
+            _wasHp[i] = hp;
+        }
+
+        int bombs = Blwp.Layout.MAX_BOMBS;
+        if (_wasBomb == null || _wasBomb.Length != bombs)
+        {
+            _wasBomb = new bool[bombs];
+            for (int b = 0; b < bombs; b++) _wasBomb[b] = Blwp.BlwpCore.BombAlive(b);
+        }
+        else
+        {
+            for (int b = 0; b < bombs; b++)
+            {
+                bool live = Blwp.BlwpCore.BombAlive(b);
+                if (_wasBomb[b] && !live)
+                {
+                    var at = Blwp.BlwpCore.BombPosition(b);
+                    // the same burst `army.Bombed` drew, at the slot's last place
+                    var p = new Vector3(at.x, Ground(at.x, at.z), at.z);
+                    if (!FlipbookBurst(p + Vector3.up * 3f, 26, 1.1f))
+                        Fireball(p + Vector3.up * 2f, 11f, fireCoreMaterial, 0f, 0.3f);
+                    if (audio != null) audio.Destroyed(new Vector2(at.x, at.z));
+                }
+                _wasBomb[b] = live;
+            }
+        }
+    }
+
+    /// <summary>The reload band a rifleman's clock is set to when he shoots.</summary>
+    const int RifleReloadFloor = 150;
+
+    /// <summary>
+    /// Where a unit was before it died. `UnitPosition` still reads its last
+    /// coordinates - the core does not clear them - so this is the corpse's
+    /// place rather than the origin.
+    /// </summary>
+    Vector3 LastSeen(int i) => Blwp.BlwpCore.UnitPosition(i, 0f);
+
+    /// <summary>
+    /// Muzzle flash and tracer, ending at whoever the core would have shot at.
+    /// </summary>
+    void Muzzle(int i, Vector3 at, bool armour)
+    {
+        float range = armour ? 46f : 26f;
+        int side = Blwp.BlwpCore.UnitSide(i);
+        float bestD2 = range * range; float tx = 0f, tz = 0f; bool found = false;
+        for (int j = 0; j < Blwp.Layout.UNITS; j++)
+        {
+            if (j == i || !Blwp.BlwpCore.UnitAlive(j)) continue;
+            if (Blwp.BlwpCore.UnitIsArmour(j) != armour) continue;
+            if (Blwp.BlwpCore.UnitSide(j) == side) continue;
+            var o = Blwp.BlwpCore.UnitPosition(j, 0f);
+            float d2 = (o.x - at.x) * (o.x - at.x) + (o.z - at.z) * (o.z - at.z);
+            if (d2 < bestD2) { bestD2 = d2; tx = o.x; tz = o.z; found = true; }
+        }
+        // The core picks its target BEFORE the step and this reads the state
+        // after it, so now and then the man it shot has moved out of reach.
+        // The round still left the barrel: it goes down the unit's heading.
+        float yaw = found ? Mathf.Atan2(tx - at.x, tz - at.z)
+                          : Blwp.BlwpCore.UnitHeading(i) * Mathf.Deg2Rad;
+        float reach = found ? Mathf.Sqrt(bestD2) : range;
+        float lift = armour ? 2.1f : 1.5f;
+        float out_ = armour ? 4.6f : 0.8f;
+
+        var muzzle = new Vector3(at.x + Mathf.Sin(yaw) * out_, Ground(at.x, at.z) + lift,
+                                 at.z + Mathf.Cos(yaw) * out_);
+        var impact = new Vector3(at.x + Mathf.Sin(yaw) * reach, 0f, at.z + Mathf.Cos(yaw) * reach);
+        impact.y = Ground(impact.x, impact.z) + (armour ? 1.2f : 1.0f);
+
+        Flash(muzzle, armour ? 0.9f : 0.5f);
+        Tracer(muzzle, impact, tracerMaterial, armour ? 0.14f : 0.09f, armour ? 0.06f : 0.10f);
+        if (audio == null) return;
+        if (armour) audio.Cannon(new Vector2(at.x, at.z));
+        else audio.Rifle(new Vector2(at.x, at.z));
+    }
+
+    /// <summary>The sound and the light of a shot, and nothing that decides one.</summary>
+    public GameAudio audio;
 
     /// <summary>Public so a test can advance effects without waiting in real time.</summary>
     public void Step(float dt)

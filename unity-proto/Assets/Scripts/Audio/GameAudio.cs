@@ -88,7 +88,15 @@ public class GameAudio : MonoBehaviour
         if (_body == null) _body = truck.GetComponent<Rigidbody>();
         if (_body == null) return;
 
-        float speed = _body.linearVelocity.magnitude;
+        // THE ROAD SPEED COMES FROM THE CORE. This read
+        // `_body.linearVelocity.magnitude`, and the body is kinematic while the
+        // core drives - measured in the player build, `kinematic=True` and
+        // `linearVelocity=0.00` at speed, so the engine note followed the
+        // throttle alone and never the road. `T_WHEEL` is the core's own wheel
+        // speed and is what the HUD already reads.
+        float speed = Blwp.BlwpCore.Available
+            ? Blwp.BlwpCore.TruckSpeed
+            : _body.linearVelocity.magnitude;
         float throttle = Mathf.Abs(DriveInput.Throttle);
 
         // Revs chase the road speed but never fall to nothing, and they lift
