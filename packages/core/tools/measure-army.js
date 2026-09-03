@@ -42,8 +42,24 @@ const SEAM0 = args.includes('--seam0');
 const QUIET = args.includes('--quiet');
 const CORE = (args.find((a) => a.startsWith('--core=')) || '--core=../src').slice(7);
 const AIROFF = args.includes('--airoff');
+/**
+ * THE ENVELOPE SEEDS, pinned so the verdict is repeatable.
+ *
+ * The commit that first reported "78 of 78" says "Thirty-two seeds, air
+ * pinned, seam0" and does not say WHICH thirty-two, and neither does
+ * PRIORITIES.md, this file, or any script in the tree - searched. The seed set
+ * decides every range, so a verdict quoted without it is not a measurement.
+ *
+ * 1..32 is therefore the named standard from here on. It is a NEW standard,
+ * not a recovery of the old one: with these seeds the historical "78 of 78"
+ * does not reproduce - this file reads 68/72 with the air off and 66/72 with
+ * it on, and those OUTSIDE lines predate the change that was being judged when
+ * they were found. They are listed in PRIORITIES rather than carried silently.
+ */
+const ENVELOPE_SEEDS = Array.from({ length: 32 }, (_, i) => i + 1);
 const SEEDS = args.filter((a) => !a.startsWith('--')).map(Number);
-if (SEEDS.length === 0) SEEDS.push(1);
+const SEEDS_PINNED = SEEDS.length === 0;
+if (SEEDS_PINNED) SEEDS.push(...ENVELOPE_SEEDS);
 
 const base = new URL(CORE + '/', import.meta.url);
 const { init, step, HALF_X, HALF_Z, UNITS } = await import(new URL('sim.js', base).pathname);
@@ -574,9 +590,9 @@ for (const m of VMARKS) {
 }
 
 console.log('');
-console.log(`ARMYCORE ENVELOPE  core [lo, hi] across ${all.length} seed(s)` +
-            `   vs   csharp-army.json, pass '${REF_TAG}'` +
-            `   (${COND.trim()})`);
+console.log(`ARMYCORE ENVELOPE  core [lo, hi] across ${all.length} seeds` +
+            `   vs   csharp-army.json, pass '${REF_TAG}'   (${COND.trim()})`);
+console.log(`ARMYCORE env seeds ${SEEDS_PINNED ? '1..32, the pinned standard' : SEEDS.join(',') + ' - GIVEN ON THE COMMAND LINE, not the pinned set'}`);
 let inside = 0;
 for (const [label, mark, key, ref] of QUANT) {
   const vals = all.map((s2) => s2.marks[mark] && s2.marks[mark][key])
@@ -588,8 +604,15 @@ for (const [label, mark, key, ref] of QUANT) {
   console.log(`ARMYCORE env ${label.padEnd(26)} core [${lo.toFixed(2)}, ${hi.toFixed(2)}]`.padEnd(70) +
               ` rec ${Number(ref).toFixed(2)}  ${ok ? 'OVERLAPS' : 'OUTSIDE'}`);
 }
+// The denominator is fixed by construction - four marks, two sides, six
+// figures each, plus six density figures a mark - so N/M can be compared
+// between runs. If a mark ever goes missing from the recording the count
+// would silently shrink, so it is asserted rather than trusted.
+if (QUANT.length !== 72)
+  console.log(`ARMYCORE env WARNING check list is ${QUANT.length}, not the 72 this denominator assumes`);
 console.log(`ARMYCORE ENVELOPE ${inside}/${QUANT.length} quantities contain the recording` +
-            `   (${all.length} seeds - at sixteen this file has read OUTSIDE where thirty-two reads inside)`);
+            `   (${all.length} seeds${SEEDS_PINNED ? ', pinned 1..32' : ', NOT the pinned set'}` +
+            ` - at sixteen this file has read OUTSIDE where thirty-two reads inside)`);
 
 const rEnd = refPass.density[refPass.density.length - 1];
 console.log(`ARMYCORE reference '${REF_TAG}' for the same rows: ` +
