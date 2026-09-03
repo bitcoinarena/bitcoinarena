@@ -32,6 +32,14 @@ const CASES = [
     liq: (t) => (t === 300 ? Math.imul(2, 65536)
               : t === 1200 ? Math.imul(40000, 65536)
               : t === 2400 ? 0 : 0) },
+  // The queue alone is not enough: in `liquidation` the truck drives straight
+  // out of its apron and never meets the hole, so the fallout rule is never
+  // exercised and the transcript could not tell whether it exists. This one
+  // steers the truck up the field with a big load already down, so it drives
+  // through the crater and the digest carries the irradiation.
+  { name: 'fallout', seed: 0x0007, ticks: 3600,
+    input: () => ({ th: 65536, st: 0, br: 0, hb: 0, pr: 0 }),
+    liq: (t) => ([60, 180, 300, 420].includes(t) ? Math.imul(1000, 65536) : 0) },
 ];
 
 const index = [];

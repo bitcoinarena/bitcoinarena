@@ -297,6 +297,47 @@ function craterOf(load) {
   return { r, d: mulFast(r, 9830), rounds: add(Math.imul(10, ONE), mulFast(t, Math.imul(10, ONE))) >> 16 };
 }
 
+/**
+ * How hard the fallout bites at the centre of a crater, in health a second.
+ *
+ * BOTH ENDS ARE MEASURED, not chosen. Driven across the diameter at full
+ * throttle the truck spends 4.1, 4.8 and 6.3 seconds inside the radius of a
+ * 10, 100 and 1000 million crater, and the bowl profile it drives through
+ * integrates to 2.25, 2.66 and 3.51 second-equivalents. Against those two
+ * measurements the rule is anchored on quantities the core already carries:
+ *
+ *   the small end   one crossing costs about one shell. A courier hit is
+ *                   `Rand(5, 11)`, and the crossing of a 1 M crater is
+ *                   MEASURED at 9.9 health - inside that band. The first
+ *                   attempt used 4 a second on an integral guessed from the
+ *                   10 M crossing and cost 14.0, outside it; the constant
+ *                   follows the measurement rather than the estimate.
+ *   the large end   one crossing at full health is lethal. The truck has
+ *                   100, and the crossing of a 1000 M crater is measured at
+ *                   exactly that.
+ *
+ * Between them it rides the SAME normalised load the radius, the depth and
+ * the lifetime ride, recovered from the stored radius so it costs no state
+ * word. One rule, four consequences.
+ *
+ * The falloff is the bowl's own, `1 - (r/R)^2`: the fallout lies where the
+ * ground was thrown out of, so the deepest place is the worst place, and
+ * there is one shape in this letter rather than two.
+ *
+ * NOT divided by `TRUCK_ARMOUR`, and that is deliberate rather than
+ * forgotten. Every other hit on the truck is, because 1.5 is plating against
+ * a shell and a blast. The contract's word here is IRRADIATED, and plating is
+ * not what stops that; routing it through the divisor would also make the two
+ * anchors above mean something other than what they say.
+ */
+const FALLOUT_MIN = Math.imul(2, ONE);
+const FALLOUT_MAX = Math.imul(28, ONE);
+
+function falloutRate(R) {
+  const t = clamp(div(sub(R, CRATER_R_MIN), sub(CRATER_R_MAX, CRATER_R_MIN)), 0, ONE);
+  return add(FALLOUT_MIN, mulFast(t, sub(FALLOUT_MAX, FALLOUT_MIN)));
+}
+
 /** The crater slot to use: a free one, else the one with fewest rounds left. */
 function craterSlot(s) {
   let worst = -1, least = 0x7fffffff;
@@ -1213,6 +1254,28 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
   if (practice) s[O_SCORE + S_PRACTICE] = 1;
   else if (courierDmg > 0 && s[O_SCORE + S_STATE] === RUN_LIVE)
     s[T + T_HP] = max(0, sub(s[T + T_HP], div(courierDmg, TRUCK_ARMOUR)));
+
+  // ---- fallout -----------------------------------------------------------
+  // The truck is irradiated while it is in a crater. Withheld by `practice`
+  // and only while the run is live, exactly as the courier's damage above is,
+  // because a practice run that killed you would not be practice.
+  //
+  // After the truck has moved and after the army has fired, so the position
+  // read is the one the tick ends with. The order is protocol.
+  if (!practice && s[O_SCORE + S_STATE] === RUN_LIVE) {
+    for (let i = 0; i < MAX_CRATERS; i++) {
+      const b = craterBase(i);
+      const R = s[b + C_R];
+      if (R <= 0 || s[b + C_ROUNDS] <= 0) continue;
+      const dx = sub(s[T + T_X], s[b + C_X]), dz = sub(s[T + T_Z], s[b + C_Z]);
+      if (abs(dx) > R || abs(dz) > R) continue;
+      const r = length2(dx, dz);
+      if (r >= R) continue;
+      const f = div(r, R);
+      const dose = mulFast(mulFast(falloutRate(R), sub(ONE, mulFast(f, f))), TICK_DT);
+      s[T + T_HP] = max(0, sub(s[T + T_HP], dose));
+    }
+  }
 
   // The squads walk. Between the unit loop and the air because that is where
   // Army.Update runs DriftSquads, and it decides where the men are standing

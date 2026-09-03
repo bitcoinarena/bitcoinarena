@@ -36,6 +36,11 @@
    "name": "liquidation",
    "ticks": 3600,
    "final": "13dbdbf987abb5988c9dbc0c3eb8fbe34597a5e235053a1a7122d5a9c76d37a4"
+  },
+  {
+   "name": "fallout",
+   "ticks": 3600,
+   "final": "08c0137e1ff83979943c732d4a0cdf6a156b0537582f6451042444dc9565a8d3"
   }
  ]
 }
