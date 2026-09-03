@@ -212,6 +212,26 @@ function measure(seed) {
       bear: us.filter((u) => u.armour && u.side > 0 && u.alive).length,
     };
 
+    // The same numbers the lines below PRINT, kept so the envelope verdict at
+    // the bottom is computed from them rather than read off the text. It used
+    // to be read off the text: "78 of 78" was a person comparing 144 lines by
+    // eye, which is exactly the judgement this file exists to replace.
+    for (const side of [-1, 1]) {
+      const nm = side < 0 ? 'bull' : 'bear';
+      const arm = us.filter((u) => u.armour && u.side === side);
+      const inf = us.filter((u) => !u.armour && u.side === side);
+      const aA = arm.filter((u) => u.alive), iA = inf.filter((u) => u.alive);
+      summary.marks[mark][nm + 'ArmourN'] = aA.length;
+      summary.marks[mark][nm + 'ArmourZ'] = mean(aA.map((u) => u.z - seam));
+      summary.marks[mark][nm + 'ArmourSd'] = stdev(aA.map((u) => u.z));
+      summary.marks[mark][nm + 'InfN'] = iA.length;
+      summary.marks[mark][nm + 'InfZ'] = mean(iA.map((u) => u.z - seam));
+      summary.marks[mark][nm + 'InfSd'] = stdev(iA.map((u) => u.z));
+    }
+    summary.marks[mark].xspread = d.xSpread;
+    summary.marks[mark].perTarget = d.perTarget;
+    summary.marks[mark].worst = d.worst;
+
     for (const side of [-1, 1]) {
       const name = side < 0 ? 'bull' : 'bear';
       const arm = us.filter((u) => u.armour && u.side === side);
@@ -513,6 +533,64 @@ for (const s of all) {
     `lost/arrived=${s.deaths}/${s.arrivals}  ` +
     `contact lost from t=${s.contactLostAt === null ? '-' : s.contactLostAt.toFixed(0)}`);
 }
+// ---------------------------------------------------------------------------
+// THE ENVELOPE VERDICT.
+//
+// Until this existed the "78 of 78" in PRIORITIES.md was a person reading 144
+// printed lines. That is the judgement this file exists to replace, so the
+// verdict is computed: for every published quantity, the core's range ACROSS
+// SEEDS against the recording's value at the same mark. The recording is one
+// run per configuration - it carries no [lo, hi] of its own, unlike
+// `csharp-gunships.json` - so the test is the discipline this project already
+// uses in prose: THE RECORDING MUST LIE INSIDE THE CORE'S RANGE.
+//
+// Sample width is not a detail here. At sixteen seeds `worst` at t=30 and the
+// 46 m density at t=90 have both read OUTSIDE and both are inside at
+// thirty-two; the width is printed with the verdict so a run can never be
+// quoted without it.
+const VMARKS = [15, 30, 60, 90];
+const QUANT = [];
+for (const m of VMARKS) {
+  for (const nm of ['bull', 'bear']) {
+    const r = refAt(m);
+    if (!r) continue;
+    const ra = r[nm + 'Armour'], ri = r[nm + 'Inf'];
+    QUANT.push([`t=${m} ${nm} armour alive`, m, nm + 'ArmourN', ra.n]);
+    QUANT.push([`t=${m} ${nm} armour z`,     m, nm + 'ArmourZ', ra.z]);
+    QUANT.push([`t=${m} ${nm} armour sd`,    m, nm + 'ArmourSd', ra.spread]);
+    QUANT.push([`t=${m} ${nm} inf alive`,    m, nm + 'InfN', ri.n]);
+    QUANT.push([`t=${m} ${nm} inf z`,        m, nm + 'InfZ', ri.z]);
+    QUANT.push([`t=${m} ${nm} inf sd`,       m, nm + 'InfSd', ri.spread]);
+  }
+  const rd = refDensity(m);
+  if (rd && rd.inRange !== undefined) {
+    QUANT.push([`t=${m} density inRange`, m, 'inRange', rd.inRange]);
+    QUANT.push([`t=${m} density xspread`, m, 'xspread', rd.xSpread]);
+    QUANT.push([`t=${m} density shooters`, m, 'shooters', rd.shooters]);
+    QUANT.push([`t=${m} density tanksAlive`, m, 'tanks', rd.tanksAlive]);
+    QUANT.push([`t=${m} density perTarget`, m, 'perTarget', rd.perTarget]);
+    QUANT.push([`t=${m} density worst`, m, 'worst', rd.worst]);
+  }
+}
+
+console.log('');
+console.log(`ARMYCORE ENVELOPE  core [lo, hi] across ${all.length} seed(s)` +
+            `   vs   csharp-army.json, pass '${REF_TAG}'` +
+            `   (${COND.trim()})`);
+let inside = 0;
+for (const [label, mark, key, ref] of QUANT) {
+  const vals = all.map((s2) => s2.marks[mark] && s2.marks[mark][key])
+                  .filter((v) => typeof v === 'number' && !Number.isNaN(v));
+  if (!vals.length) continue;
+  const lo = Math.min(...vals), hi = Math.max(...vals);
+  const ok = ref >= lo && ref <= hi;
+  if (ok) inside++;
+  console.log(`ARMYCORE env ${label.padEnd(26)} core [${lo.toFixed(2)}, ${hi.toFixed(2)}]`.padEnd(70) +
+              ` rec ${Number(ref).toFixed(2)}  ${ok ? 'OVERLAPS' : 'OUTSIDE'}`);
+}
+console.log(`ARMYCORE ENVELOPE ${inside}/${QUANT.length} quantities contain the recording` +
+            `   (${all.length} seeds - at sixteen this file has read OUTSIDE where thirty-two reads inside)`);
+
 const rEnd = refPass.density[refPass.density.length - 1];
 console.log(`ARMYCORE reference '${REF_TAG}' for the same rows: ` +
   `alive ${refPass.density.filter((d) => d.t >= 15).map((d) => d.tanksAlive).join(',')} ` +
