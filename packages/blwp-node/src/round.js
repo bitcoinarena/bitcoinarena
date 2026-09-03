@@ -19,11 +19,20 @@ const same = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
 export class Round {
   constructor(db, now = () => Date.now()) { this.db = db; this.now = now; }
 
-  /** Opens a round. Returns its id - the tagged hash of the contract. */
+  /**
+   * Opens a round. Returns its id - the tagged hash of the contract.
+   *
+   * Opening the same contract twice is the SAME round, not a conflict: the id
+   * is the hash of the contract, so a repeat cannot mean anything else. It
+   * writes nothing and answers the same id, for the same reason a repeated
+   * batch answers zero - a client that never learned whether its message
+   * arrived is right to send it again, and a node that punishes that is
+   * making the client guess.
+   */
   open(contract) {
     const bytes = encodeRoundContract(contract);
     const id = roundId(contract);
-    this.db.prepare('INSERT INTO rounds (round_id, contract, state, opened_ms) VALUES (?, ?, ?, ?)')
+    this.db.prepare('INSERT OR IGNORE INTO rounds (round_id, contract, state, opened_ms) VALUES (?, ?, ?, ?)')
       .run(id, bytes, OPEN, this.now());
     return id;
   }
@@ -38,8 +47,10 @@ export class Round {
     const round = this.get(contract.roundId);
     if (!round) throw new Error('no such round');
     if (round.state !== OPEN) throw new Error('the round is closed');
+    // Same as the round above: the id is the hash of the contract, so the same
+    // entry sent twice is one player joining once.
     const id = entryId(contract);
-    this.db.prepare('INSERT INTO entries (entry_id, round_id, contract, joined_ms) VALUES (?, ?, ?, ?)')
+    this.db.prepare('INSERT OR IGNORE INTO entries (entry_id, round_id, contract, joined_ms) VALUES (?, ?, ?, ?)')
       .run(id, contract.roundId, encodeEntryContract(contract), this.now());
     return id;
   }

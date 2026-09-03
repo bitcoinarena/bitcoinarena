@@ -9,5 +9,8 @@
     "vectors": "node tools/make-vectors.js",
     "guard": "node tools/check-money.js",
     "acceptance": "npm run guard && npm test"
+  },
+  "devDependencies": {
+    "acorn": "^8.18.0"
   }
 }

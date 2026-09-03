@@ -103,3 +103,28 @@ test('the node does not step: nothing here imports the core', async () => {
       `${f} reaches for the simulator; the node stores and serves, it does not judge`);
   }
 });
+
+test('opening or joining twice is the same round and the same player', () => {
+  const r = fresh(), c = contract();
+  const first = r.open(c);
+  const again = r.open(c);
+  assert.equal(toHex(again), toHex(first), 'the id is the hash of the contract; a repeat is not a conflict');
+  assert.equal(r.db.prepare('SELECT COUNT(*) n FROM rounds').get().n, 1);
+
+  const e = entryFor(first);
+  assert.equal(toHex(r.enter(e)), toHex(r.enter(e)));
+  assert.equal(r.db.prepare('SELECT COUNT(*) n FROM entries').get().n, 1, 'one player, not two');
+});
+
+test('a round outlives the process that opened it', async () => {
+  const { rmSync } = await import('node:fs');
+  const path = '/tmp/blwp-node-persist.db';
+  rmSync(path, { force: true });
+  const c = contract();
+  let id;
+  { const r = new Round(openStore(path), () => 1); id = r.open(c); r.enter(entryFor(id)); }
+  { const r = new Round(openStore(path), () => 2);
+    assert.ok(r.get(id), 'the round is still there after a fresh handle');
+    assert.equal(r.db.prepare('SELECT COUNT(*) n FROM entries').get().n, 1); }
+  rmSync(path, { force: true });
+});
