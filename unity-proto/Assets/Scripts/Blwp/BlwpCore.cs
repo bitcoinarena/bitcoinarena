@@ -296,6 +296,61 @@ namespace Blwp
         public static float LastLiquidation =>
             _state[Layout.O_LIQ + Layout.L_LAST] / (float)ONE;
 
+        /// <summary>How many liquidation craters are open.</summary>
+        public static int CraterCount
+        {
+            get
+            {
+                int n = 0;
+                for (int i = 0; i < Layout.MAX_CRATERS; i++)
+                {
+                    int b = Layout.O_CRATERS + i * Layout.C_WORDS;
+                    if (_state[b + Layout.C_R] > 0 && _state[b + Layout.C_ROUNDS] > 0) n++;
+                }
+                return n;
+            }
+        }
+
+        /// <summary>Crater `i` of the open ones, in metres. -1 radius if there is none.</summary>
+        public static bool CraterAt(int nth, float y, out Vector3 where, out float radius)
+        {
+            int n = 0;
+            for (int i = 0; i < Layout.MAX_CRATERS; i++)
+            {
+                int b = Layout.O_CRATERS + i * Layout.C_WORDS;
+                if (_state[b + Layout.C_R] <= 0 || _state[b + Layout.C_ROUNDS] <= 0) continue;
+                if (n++ != nth) continue;
+                where = new Vector3(Metres(_state[b + Layout.C_X]), y, Metres(_state[b + Layout.C_Z]));
+                radius = Metres(_state[b + Layout.C_R]);
+                return true;
+            }
+            where = Vector3.zero; radius = 0f;
+            return false;
+        }
+
+        /// <summary>
+        /// Is this point inside an open crater - the question the warning asks.
+        ///
+        /// A distance against the core's OWN radius, which is the same test the
+        /// core makes before it applies a dose. It is not a second bowl: the
+        /// falloff, the rate and the dose all stay in `packages/core`, and
+        /// nothing here computes damage. The renderer is asking where the hole
+        /// is, not how much it hurts.
+        /// </summary>
+        public static bool Irradiated(float x, float z)
+        {
+            for (int i = 0; i < Layout.MAX_CRATERS; i++)
+            {
+                int b = Layout.O_CRATERS + i * Layout.C_WORDS;
+                float r = Metres(_state[b + Layout.C_R]);
+                if (r <= 0f || _state[b + Layout.C_ROUNDS] <= 0) continue;
+                float dx = x - Metres(_state[b + Layout.C_X]);
+                float dz = z - Metres(_state[b + Layout.C_Z]);
+                if (dx * dx + dz * dz < r * r) return true;
+            }
+            return false;
+        }
+
         /// <summary>True while a liquidation strike is armed this tick.</summary>
         public static bool StrikeArmed => _state[Layout.O_STRIKE + Layout.K_STATE] != 0;
 

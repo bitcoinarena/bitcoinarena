@@ -760,6 +760,100 @@ public class DriveHud : MonoBehaviour
     /// arrow at the edge of the screen when it is off camera, a distance when
     /// it is not.
     /// </summary>
+    /// <summary>
+    /// The liquidation crater: an atom on the hole, and a warning while the
+    /// truck is standing in it.
+    ///
+    /// The contract asks for exactly those two - "on-screen warning plus the
+    /// atom symbol" - so there is nothing else here. Both read the CORE: where
+    /// the craters are and how wide, and whether the truck's own position is
+    /// inside one. No damage is computed here and no second bowl is drawn; the
+    /// rate, the falloff and the dose stay in `packages/core`.
+    ///
+    /// Built on `DrawWaypoint`'s shape below - the same camera lookup, the
+    /// same `WorldToScreenPoint`, the same `Shadowed` - so the two markers
+    /// behave alike rather than each having their own idea of the screen.
+    /// </summary>
+    /// <summary>
+    /// The trefoil, drawn rather than typed.
+    ///
+    /// `\u2622` was typed first and the build's font has not got it: the
+    /// warning came up reading IRRADIATED with nothing either side of it, and
+    /// the crater carried a filled box - the missing-glyph square. A symbol
+    /// that renders as a box is not the symbol the contract asks for, so it is
+    /// three blades and a hub off the same 1x1 texture the rest of this file
+    /// draws its bars with.
+    /// </summary>
+    void Trefoil(Vector2 at, float size, Color colour)
+    {
+        var old = GUI.color;
+        GUI.color = colour;
+        for (int i = 0; i < 3; i++)
+        {
+            var m = GUI.matrix;
+            GUIUtility.RotateAroundPivot(60f + i * 120f, at);
+            GUI.DrawTexture(new Rect(at.x - size * 0.20f, at.y - size * 0.52f,
+                                     size * 0.40f, size * 0.40f), _flat);
+            GUI.matrix = m;
+        }
+        GUI.DrawTexture(new Rect(at.x - size * 0.13f, at.y - size * 0.13f,
+                                 size * 0.26f, size * 0.26f), _flat);
+        GUI.color = old;
+    }
+
+    void DrawFallout(int w, int h)
+    {
+        if (!Blwp.BlwpCore.Available || truck == null) return;
+        int open = Blwp.BlwpCore.CraterCount;
+        if (open == 0) return;
+
+        var cam = Camera.main;
+        if (cam == null)
+        {
+            var chase = Object.FindFirstObjectByType<ChaseCamera>();
+            cam = chase != null ? chase.GetComponent<Camera>() : null;
+        }
+        if (cam == null) return;
+
+        var mark = new GUIStyle(GUI.skin.label)
+        {
+            alignment = TextAnchor.MiddleCenter,
+            fontStyle = FontStyle.Bold,
+            fontSize = Mathf.RoundToInt(Mathf.Clamp(Mathf.Min(w, h) * 0.040f, 18f, 34f)),
+        };
+        var yellow = new Color(0.96f, 0.86f, 0.20f);
+
+        for (int i = 0; i < open; i++)
+        {
+            if (!Blwp.BlwpCore.CraterAt(i, truck.transform.position.y + 1.5f,
+                                        out var at, out float _)) continue;
+            var vp = cam.WorldToScreenPoint(at);
+            if (vp.z <= 0f) continue;                       // behind the camera
+            float x = Mathf.Clamp(vp.x, 20f, w - 20f);
+            float y = Mathf.Clamp(h - vp.y, 20f, h - 20f);
+            Trefoil(new Vector2(x, y), mark.fontSize * 1.6f, yellow);
+        }
+
+        var p = truck.transform.position;
+        if (!Blwp.BlwpCore.Irradiated(p.x, p.z)) return;
+
+        // Pulsed, like the wanted stars, because a warning that does not move
+        // reads as part of the furniture.
+        var warn = new GUIStyle(GUI.skin.label)
+        {
+            alignment = TextAnchor.MiddleCenter,
+            fontStyle = FontStyle.Bold,
+            fontSize = Mathf.RoundToInt(Mathf.Clamp(Mathf.Min(w, h) * 0.045f, 20f, 40f)),
+        };
+        var hot = new Color(0.96f, 0.86f, 0.20f,
+                            0.7f + 0.3f * Mathf.Sin(Time.unscaledTime * 6.5f));
+        var band = new Rect(0f, h * 0.30f, w, warn.fontSize * 1.6f);
+        Shadowed(band, "IRRADIATED", warn, hot);
+        float half = warn.fontSize * 3.0f;
+        Trefoil(new Vector2(w * 0.5f - half, band.y + band.height * 0.5f), warn.fontSize * 1.3f, hot);
+        Trefoil(new Vector2(w * 0.5f + half, band.y + band.height * 0.5f), warn.fontSize * 1.3f, hot);
+    }
+
     void DrawWaypoint(int w, int h)
     {
         if (gate == null || truck == null) return;
@@ -1038,6 +1132,7 @@ public class DriveHud : MonoBehaviour
         DrawExposure(w, h);
         DrawUnderFire(w, h);
         DrawWaypoint(w, h);
+        DrawFallout(w, h);
         DrawHealth(w, h);
         DrawWasted(w, h);
         DrawManifest(w, h);
