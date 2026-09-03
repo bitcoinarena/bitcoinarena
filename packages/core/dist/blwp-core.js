@@ -1522,7 +1522,7 @@ const RIFLE_HIT_PER_MIL = 45;        // 0.045 per shot
 // -77.5 to -43.5 in five seconds with armour and -77.5 to -64.6 with
 // infantry. See test/vectors/csharp-army.json.
 const ARMOUR_WALK = 445645;      // 6.8 m/s
-const RIFLE_WALK = 170394;       // 2.6 m/s
+const RIFLE_WALK = 182714;       // 2.788 m/s
 
 // A rifleman's own pace, as a factor on that.
 //
@@ -1598,6 +1598,67 @@ const ARMOUR_SPREAD = Math.imul(10, ONE);
 // bombs fall: with the lines too close and too shallow the core killed 81-116
 // riflemen a round by bomb against the recording's 60-76, and only 42-49% of
 // its bombs hit nobody against 50-58%. Measured, both before and after.
+// ---- the halt -----------------------------------------------------------
+//
+// `Army.cs:658-666`: a man stops for 0.4 to 1.8 s every 3 to 11 s, about
+// 13.6% of his time, and the clock that counts down to the next halt only
+// runs while he is walking - so the cycle is an interval and then a stop, and
+// BOTH are redrawn at the start of every stop. His first interval is seeded
+// shorter, `nextRest = Rand(2f, 9f)` at spawn.
+//
+// IN TICKS, because that is what this core counts. Seconds are the C#'s unit
+// and would be a number that means nothing here.
+const HALT_MIN = 24, HALT_SPAN = 84;        // 0.4 s .. 1.8 s
+const REST_MIN = 180, REST_SPAN = 480;      // 3 s .. 11 s
+const FIRST_MIN = 120, FIRST_SPAN = 420;    // 2 s .. 9 s, the spawn seed
+
+/**
+ * The k-th interval and the k-th stop of one man, from a hash.
+ *
+ * NOT from the stream. C# draws these in the middle of the step, interleaved
+ * with the firing draws, so taking them from the core's stream would move
+ * every draw after them in every round - and 77 of the 78 quantities this army
+ * is measured on currently sit inside the recording's envelope. A hash moves
+ * nothing.
+ *
+ * The draw is per (index, CYCLE), and that is the whole design. Drawing once
+ * per man - a fixed period and duty cycle, `tick % P < R` - was tried first
+ * and fails: it locks every man to his own ratio for ever, so the spread over
+ * a run never settles. Measured over 900 and 5400 ticks against the C# process
+ * itself: C# 12.09% then 13.60% with a spread of 4.79 falling to 1.84, the
+ * fixed-period version 14.67% both times with a spread stuck at 7.20 and 6.64.
+ * Redrawing per cycle reproduces the fall, because it reproduces the reason
+ * for it - a man who rerolls averages out and a man who does not, does not.
+ */
+function haltDraw(index, cycle, salt) {
+  let h = Math.imul(add(add(index | 0, Math.imul(cycle | 0, 0x9e3779b1)), salt), 2654435761);
+  h ^= h >>> 16;
+  return (Math.imul(h, 2654435761) >>> 20) & 1023;
+}
+
+/**
+ * Is this man standing still on this tick?
+ *
+ * The cycle a tick falls in is found by summing from zero, because nothing is
+ * stored: about eleven steps at ninety seconds and nineteen at a full block.
+ * The alternative was a ninth word per unit, which moves `O_ARMY`, `O_AIR`,
+ * `O_HELIS`, `O_BOMBS`, `O_SQUADS`, `WORDS`, `BlwpLayout.cs` and the C# state
+ * buffer - a protocol change for one comparison of seventy-eight.
+ */
+function standingStill(index, tick) {
+  let at = 0;
+  for (let k = 0; k < 512; k++) {
+    const first = k === 0;
+    const rest = add(first ? FIRST_MIN : REST_MIN,
+                     Math.imul(haltDraw(index, k, 0), first ? FIRST_SPAN : REST_SPAN) >> 10);
+    const stop = add(HALT_MIN, Math.imul(haltDraw(index, k, 1), HALT_SPAN) >> 10);
+    if (tick < add(at, rest)) return false;
+    if (tick < add(add(at, rest), stop)) return true;
+    at = add(add(at, rest), stop);
+  }
+  return false;
+}
+
 const RIFLE_STANDOFF = Math.imul(4, ONE);
 const RIFLE_SPREAD = Math.imul(8, ONE);      // + 0 to 8, so 4 to 12
 const RIFLE_SQUAD_Z = Math.imul(10, ONE);    // then -5 to +5
@@ -1797,7 +1858,7 @@ const SIDE_BEAR = 1;
  * cooldown has expired - reload, then the hit roll. Nothing may be inserted
  * before the wobble or every recorded transcript stops replaying.
  */
-function stepUnit(u, rng, seamZ, truckX, truckZ, halfX, halfZ, dt, index) {
+function stepUnit(u, rng, seamZ, truckX, truckZ, halfX, halfZ, dt, index, tick) {
   if (u.hp <= 0) return 0;
 
   const wobble = (below(rng, 64) - 32) | 0;
@@ -1810,7 +1871,18 @@ function stepUnit(u, rng, seamZ, truckX, truckZ, halfX, halfZ, dt, index) {
   // rounding advantage walks through; holding short leaves a contested strip
   // between them, which is what the C# army does and why its means oscillate
   // about zero for ninety seconds without ever crossing.
-  const walk = u.armour ? ARMOUR_WALK : mulFast(RIFLE_WALK, paceOf(index));
+  // A man who is standing still walks nowhere, in either axis. C# reaches the
+  // same place through `gait = halted ? 0f : ...` and by skipping the lateral
+  // station-keeping in the same tick.
+  //
+  // C#'s halt only STARTS when he is more than 2 m from his goal, and a due
+  // halt is postponed until that holds. This does not carry that across: it is
+  // a coupling between where he stands and when he stops, and the condition
+  // only bites once he is ON his post - which is not the approach the mark at
+  // t=15 measures. Named here rather than ported blind.
+  const still = !u.armour && standingStill(index, tick | 0);
+  const walk = u.armour ? ARMOUR_WALK
+             : still ? 0 : mulFast(RIFLE_WALK, paceOf(index));
   // Each unit holds at its OWN distance, scattered about the mean.
   //
   // A single stand-off for everyone puts the whole army on one line, and then
@@ -3389,7 +3461,7 @@ function step(st, throttle, steer, brake, handbrake, practice) {
     // Moves the unit. Its return value used to say "a courier hit landed"; the
     // tank's courier weapon is gone and the choice lives in the gun below, so
     // there is nothing left to report and the call is made for its effect.
-    stepUnit(u, rng, seamZ, tx, tz, HALF_X, HALF_Z, TICK_DT, i);
+    stepUnit(u, rng, seamZ, tx, tz, HALF_X, HALF_Z, TICK_DT, i, s[O_TICK]);
 
     // Armour fires on armour. Drawn in index order, always, so the transcript
     // replays: a tank that fires earlier changes what the ones after it see.

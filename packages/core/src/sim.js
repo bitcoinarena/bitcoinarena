@@ -802,7 +802,7 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
     // Moves the unit. Its return value used to say "a courier hit landed"; the
     // tank's courier weapon is gone and the choice lives in the gun below, so
     // there is nothing left to report and the call is made for its effect.
-    stepUnit(u, rng, seamZ, tx, tz, HALF_X, HALF_Z, TICK_DT, i);
+    stepUnit(u, rng, seamZ, tx, tz, HALF_X, HALF_Z, TICK_DT, i, s[O_TICK]);
 
     // Armour fires on armour. Drawn in index order, always, so the transcript
     // replays: a tank that fires earlier changes what the ones after it see.
