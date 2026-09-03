@@ -125,6 +125,71 @@ export function sqrt(x) {
  * fifty seconds. No overflow guard was needed: at the map's maximum speed the
  * intermediate is 3.4e12, comfortably inside the exact integer range.
  */
+/**
+ * Cube root, Q16.16 in and out.
+ *
+ * `Math.cbrt` is out for the same reason `Math.sqrt` is: it is a host
+ * function, and the poison test refuses every one of them. Newton on
+ * `y = (2y + x/y^2) / 3`, which is the cube-root iteration written in this
+ * file's own operations - `mulFast` for `y^2`, `div` for `x/y^2`, `idiv` for
+ * the third - so there is no arithmetic here that is not already tested.
+ *
+ * Twenty iterations from a power-of-two start. The iteration thirds its error
+ * when it is far out, so the largest input this core has - a liquidation
+ * capped at 32767 millions, whose root is 32 - is reached in a handful;
+ * twenty is the same work for every input, which keeps the cost off the
+ * input value.
+ *
+ * The last three lines are the correction. Newton lands within a unit but not
+ * always ON the floor, and a root that is one Q16.16 unit high would make a
+ * crater one fifteen-thousandth of a metre wider on one machine and not on
+ * another if any step ever rounded differently. So it is walked to the exact
+ * floor: the largest y whose cube does not exceed x.
+ *
+ * Bounds. The caller's x reaches 32767 * ONE = 2.147e9 and the root 32 * ONE.
+ * `mulFast(y, y)` peaks at 4.4e12 before its divide and `div(x, t)` at 1.4e14,
+ * both exact in a double long before 2^53. Above that the input would have to
+ * be a liquidation of thirty-two billion dollars, which `LIQ_MAX` refuses.
+ */
+export function cbrt(x) {
+  if (x <= 0) return 0;
+
+  // THE START MATTERS, and starting at 1.0 does not work. Newton's first step
+  // from there is `(2 + x) / 3`, which for x = 1000 lands on 334 - and 334
+  // squared in Q16.16 is 7.3e9, past a signed word, so `mulFast` wraps
+  // negative and the iteration is destroyed before it has begun. Measured:
+  // 1000 came out as 334.15 and 8000 as 2667.
+  //
+  // So the start is a power of two at the right size. `x` is ONE * v, so
+  // log2(x) = 16 + log2(v) and the root is ONE * v^(1/3) = 2^(16 + log2(v)/3).
+  // From there the iteration never overshoots and every intermediate stays
+  // inside the range the bounds note below promises.
+  let bits = -1;
+  for (let t = x; t > 0; t >>>= 1) bits++;
+  let shift = 16 + (((bits - 16) / 3) | 0);
+  if (shift < 0) shift = 0;
+  if (shift > 30) shift = 30;
+  let y = (1 << shift) | 0;
+  if (y < 1) y = 1;
+
+  for (let i = 0; i < 20; i++) {
+    const sq = mulFast(y, y);
+    if (sq <= 0) break;
+    y = idiv(add(add(y, y), div(x, sq)), 3);
+    if (y <= 0) { y = 1; break; }
+  }
+
+  // The cube is compared, never stored, so it is worked out in the double
+  // domain: `mulFast` would wrap at y = 32.0 exactly, where the true cube is
+  // 2^31, and a wrap in the CORRECTION would turn "too big" into "far too
+  // small" and walk the answer the wrong way. Exact to 2^53, which the bounds
+  // note below is well inside.
+  const cube = (v) => ((v * v) / ONE) * v / ONE;
+  while (y > 1 && cube(y) > x) y = (y - 1) | 0;
+  while (cube((y + 1) | 0) <= x) y = (y + 1) | 0;
+  return y;
+}
+
 export const length2 = (x, y) => {
   if (x === 0 && y === 0) return 0;
   return sqrt((mulFast(x, x) + mulFast(y, y)) | 0);

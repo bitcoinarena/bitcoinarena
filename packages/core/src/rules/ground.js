@@ -68,11 +68,10 @@ const REACH = Math.imul(3, ONE);
  * the span the reference measurement used, so the number the core fits is the
  * number PhysX was asked for.
  */
-export function gradeAlong(g, x, z, fx, fz, halfX, halfZ) {
+export function gradeAlong(sample, x, z, fx, fz) {
   const ax = add(x, mulFast(fx, REACH)), az = add(z, mulFast(fz, REACH));
   const bx = sub(x, mulFast(fx, REACH)), bz = sub(z, mulFast(fz, REACH));
-  const rise = sub(heightAtWorld(g, ax, az, halfX, halfZ),
-                   heightAtWorld(g, bx, bz, halfX, halfZ));
+  const rise = sub(sample(ax, az), sample(bx, bz));
   return div(rise, Math.imul(REACH, 2));
 }
 

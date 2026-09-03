@@ -9,7 +9,7 @@
 // and only if in range, its reload and hit roll. That sequence is the reason a
 // transcript recorded today can still be replayed next year.
 
-import { ONE, HALF, add, sub, mulFast, div, idiv, clamp, min, max, abs, length2 } from './fixed.js';
+import { ONE, HALF, add, sub, mulFast, div, idiv, clamp, min, max, abs, length2, cbrt } from './fixed.js';
 import { seed } from './rng.js';
 import { sin, cos } from './trig.js';
 import {
@@ -19,6 +19,7 @@ import {
   O_AIR, AIR_BULL, AIR_BEAR, MAX_HELIS, MAX_BOMBS,
   O_LIQ, L_PENDING, L_LAST, L_SERIAL, LIQ_MAX,
   O_STRIKE, K_STATE, K_X, K_Z, K_LOAD, K_SERIAL,
+  O_CRATERS, MAX_CRATERS, craterBase, C_X, C_Z, C_R, C_D, C_ROUNDS,
   H_STATE, H_SIDE, H_X, H_Y, H_Z, H_DIR, H_T, H_DROPIN,
   B_STATE, B_SIDE, B_X, B_Y, B_Z, B_VX, B_VY, B_VZ,
   T_X, T_Z, T_HEADING, T_VX, T_VZ, T_ANGVEL, T_HP, T_CARGO, T_FLAGS,
@@ -257,6 +258,56 @@ export function setSolids(st, count, boxes) {
  * anywhere near the line it falls on the front at x = 0, which is a place and
  * not a random draw.
  */
+/**
+ * The crater a load digs. Radius in metres Q16.16, depth with it.
+ *
+ * A crater follows the CUBE ROOT of the energy, which is also what makes the
+ * rule usable here: liquidations run over three decades, from a million to a
+ * billion, and a cube root turns that into a factor of ten instead of the
+ * 31.6 a square root would give. Both ends are quantities this core already
+ * names rather than numbers picked to taste - `BOMB_RADIUS`, 16 m, at one
+ * million, and the 40 m front band at a thousand.
+ *
+ * DEPTH IS 0.15 OF THE RADIUS, AND THAT NUMBER IS MEASURED, NOT CHOSEN. The
+ * geologist's ratio for a simple crater is a fifth of the diameter - 0.4 of
+ * the radius - and at 0.4 the truck is trapped: driven from the centre at
+ * full throttle it never leaves a 100 M crater or a 1000 M one in forty
+ * seconds, and takes 36.2 s to crawl out of the smallest.
+ *
+ * The wall's steepest gradient is exactly 2 * D/R. Driven up a constant slope
+ * the truck holds 0.45 - 2.03 m/s uphill - and at 0.50 it slides backwards.
+ * So D/R must be under 0.225. It is set at 0.15, a gradient of 0.30, which is
+ * the steepest wall where the truck still keeps more than a third of its
+ * 24.3 m/s flat-ground speed: 9.22 m/s. A crater is ground to be driven, not
+ * a hole to be caught in.
+ *
+ * Lifetime rides the same root, so one rule sets both: ten rounds at the
+ * small end, twenty at the large, which is the span (z) asks for.
+ */
+const CRATER_R_MIN = Math.imul(16, ONE);
+const CRATER_R_MAX = Math.imul(40, ONE);
+const CRATER_LOAD_MIN = ONE;                       // one million
+const CRATER_LOAD_MAX = Math.imul(1000, ONE);      // a thousand million
+
+function craterOf(load) {
+  const lo = cbrt(CRATER_LOAD_MIN), hi = cbrt(CRATER_LOAD_MAX);
+  const t = clamp(div(sub(cbrt(clamp(load, CRATER_LOAD_MIN, CRATER_LOAD_MAX)), lo),
+                      sub(hi, lo)), 0, ONE);
+  const r = add(CRATER_R_MIN, mulFast(t, sub(CRATER_R_MAX, CRATER_R_MIN)));
+  return { r, d: mulFast(r, 9830), rounds: add(Math.imul(10, ONE), mulFast(t, Math.imul(10, ONE))) >> 16 };
+}
+
+/** The crater slot to use: a free one, else the one with fewest rounds left. */
+function craterSlot(s) {
+  let worst = -1, least = 0x7fffffff;
+  for (let i = 0; i < MAX_CRATERS; i++) {
+    const b = craterBase(i);
+    if (s[b + C_ROUNDS] <= 0) return i;
+    if (s[b + C_ROUNDS] < least) { least = s[b + C_ROUNDS]; worst = i; }
+  }
+  return worst;
+}
+
 function strikePoint(s, seamAt) {
   let bestI = -1, bestN = 0;
   for (let i = 0; i < UNITS; i++) {
@@ -292,11 +343,64 @@ export function restart(st, seedWord) {
   const fresh = init(seedWord);
   fresh.ground = st.ground;
   fresh.solids = st.solids;
+  // The craters cross the round with the ground, one round older. This is why
+  // the lifetime is counted in ROUNDS and lives here: a round is a thing that
+  // ends, and a tick is not.
+  for (let i = 0; i < MAX_CRATERS; i++) {
+    const b = craterBase(i);
+    const left = (st.i32[b + C_ROUNDS] - 1) | 0;
+    if (left <= 0) continue;
+    fresh.i32[b + C_X] = st.i32[b + C_X];
+    fresh.i32[b + C_Z] = st.i32[b + C_Z];
+    fresh.i32[b + C_R] = st.i32[b + C_R];
+    fresh.i32[b + C_D] = st.i32[b + C_D];
+    fresh.i32[b + C_ROUNDS] = left;
+  }
   return fresh;
 }
 
+/**
+ * How deep the craters cut at a point, in metres Q16.16.
+ *
+ * A bowl, `d(r) = D * (1 - (r/R)^2)`: two multiplies, no trig, zero at the
+ * rim so there is no step for a wheel to catch on. No raised lip - that would
+ * be a second term and it is not in this step.
+ *
+ * They ADD where they overlap, which is what two explosions in one place do,
+ * and the whole thing is bounded by the eight slots.
+ */
+function craterCut(s, x, z) {
+  let cut = 0;
+  for (let i = 0; i < MAX_CRATERS; i++) {
+    const b = craterBase(i);
+    const R = s[b + C_R];
+    if (R <= 0 || s[b + C_ROUNDS] <= 0) continue;
+    const dx = sub(x, s[b + C_X]), dz = sub(z, s[b + C_Z]);
+    if (abs(dx) > R || abs(dz) > R) continue;
+    const r = length2(dx, dz);
+    if (r >= R) continue;
+    const t = div(r, R);                       // 0 at the centre, ONE at the rim
+    cut = add(cut, mulFast(s[b + C_D], sub(ONE, mulFast(t, t))));
+  }
+  return cut;
+}
+
+/**
+ * THE SURFACE, and the only place that answers what it is.
+ *
+ * The relief the host uploaded, less whatever the craters have taken out of
+ * it. Three readers used to sample `st.ground` on their own - the slope under
+ * the truck, the resolution against solids, and the air's `groundAt` - and
+ * three readers of one quantity is how two of them end up disagreeing. They
+ * all come through here now.
+ */
+export function surfaceAt(st, x, z) {
+  return sub(heightAtWorld(st.ground, x, z, HALF_X, HALF_Z),
+             craterCut(st.i32, x, z));
+}
+
 export function groundAt(st, x, z) {
-  return heightAtWorld(st.ground, x, z, HALF_X, HALF_Z);
+  return surfaceAt(st, x, z);
 }
 
 export function init(seedWord) {
@@ -793,6 +897,15 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
     s[O_STRIKE + K_Z] = at.z;
     s[O_STRIKE + K_LOAD] = s[O_LIQ + L_LAST];
     s[O_STRIKE + K_SERIAL] = (s[O_STRIKE + K_SERIAL] + 1) | 0;
+
+    // The hole, at the impact and nowhere near it.
+    const hole = craterOf(s[O_LIQ + L_LAST]);
+    const slot = craterBase(craterSlot(s));
+    s[slot + C_X] = at.x;
+    s[slot + C_Z] = at.z;
+    s[slot + C_R] = hole.r;
+    s[slot + C_D] = hole.d;
+    s[slot + C_ROUNDS] = hole.rounds;
   } else {
     s[O_STRIKE + K_STATE] = 0;
   }
@@ -811,16 +924,15 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
     hp: s[T + T_HP], pull: (s[T + T_FLAGS] & 1) === 0 ? -1 : 1,
   };
   // The slope the truck is standing on, along its own nose.
-  const grade = gradeAlong(st.ground, s[T + T_X], s[T + T_Z],
-                           sin(s[T + T_HEADING]), cos(s[T + T_HEADING]),
-                           HALF_X, HALF_Z);
+  const grade = gradeAlong((gx, gz) => surfaceAt(st, gx, gz), s[T + T_X], s[T + T_Z],
+                           sin(s[T + T_HEADING]), cos(s[T + T_HEADING]));
   vehicleStep(v, throttle, steer, brake, handbrake, TICK_DT, grade);
   // Out of the walls before the position is committed. After the vehicle
   // step, so it corrects where the truck WOULD have got to rather than
   // steering it away in advance - a wall has to be something you drive into.
   resolveSolids(v, st.solids,
                 sin(v.heading), cos(v.heading),
-                heightAtWorld(st.ground, v.x, v.z, HALF_X, HALF_Z));
+                surfaceAt(st, v.x, v.z));
 
   // And out of the armour. Last tick's tank positions, because the army has
   // not moved yet this tick - one frame stale, sixteen milliseconds, and it
@@ -1109,7 +1221,7 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
   // the seam it stands off is the one under its own nose, as FrontlineAt(h.x)
   // has it.
   const seamAt = (x) => frontlineZ(st.tape, x, HALF_X, HALF_Z);
-  const groundAt = (x, z) => heightAtWorld(st.ground, x, z, HALF_X, HALF_Z);
+  const groundAt = (x, z) => surfaceAt(st, x, z);
   stepHelicopters(s, rng, seamAt, groundAt);
   stepBombs(s, groundAt);
 

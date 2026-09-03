@@ -194,7 +194,33 @@ export const O_STRIKE = O_LIQ + LIQ_WORDS;
 export const STRIKE_WORDS = 5;
 export const K_STATE = 0, K_X = 1, K_Z = 2, K_LOAD = 3, K_SERIAL = 4;
 
-export const WORDS = O_STRIKE + STRIKE_WORDS;
+/**
+ * THE CRATERS.
+ *
+ * Their own list, NOT written into `st.ground.h`. Two reasons, both from the
+ * code as it stands: the host re-uploads the whole relief whenever
+ * `terrain.Revision` moves (`CoreDrivenTruck.cs:287`), which would erase a
+ * crater baked into it; and a crater that has replaced the relief can never
+ * expire, because the ground it replaced is gone. So the grid stays the
+ * upload, and the craters are a layer the surface reader subtracts.
+ *
+ * Eight of them. `restart` already carries `ground` and `solids` across a
+ * round, which is where the list lives too, and C_ROUNDS is decremented
+ * there - the lifetime is in ROUNDS because that is the unit (z) states it
+ * in, not in ticks.
+ *
+ * Full list: the strike overwrites the crater with the fewest rounds left,
+ * ties to the lowest index. Deterministic, and it is the oldest wound that
+ * gives way rather than the newest being refused.
+ */
+export const O_CRATERS = O_STRIKE + STRIKE_WORDS;
+export const MAX_CRATERS = 8;
+export const C_WORDS = 5;
+export const C_X = 0, C_Z = 1, C_R = 2, C_D = 3, C_ROUNDS = 4;
+
+export const craterBase = (i) => O_CRATERS + Math.imul(i, C_WORDS);
+
+export const WORDS = O_CRATERS + Math.imul(MAX_CRATERS, C_WORDS);
 
 // truck fields, relative to O_TRUCK
 export const T_X = 0, T_Z = 1, T_HEADING = 2, T_VX = 3, T_VZ = 4;

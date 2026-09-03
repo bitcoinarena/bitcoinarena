@@ -131,6 +131,71 @@ function sqrt(x) {
  * fifty seconds. No overflow guard was needed: at the map's maximum speed the
  * intermediate is 3.4e12, comfortably inside the exact integer range.
  */
+/**
+ * Cube root, Q16.16 in and out.
+ *
+ * `Math.cbrt` is out for the same reason `Math.sqrt` is: it is a host
+ * function, and the poison test refuses every one of them. Newton on
+ * `y = (2y + x/y^2) / 3`, which is the cube-root iteration written in this
+ * file's own operations - `mulFast` for `y^2`, `div` for `x/y^2`, `idiv` for
+ * the third - so there is no arithmetic here that is not already tested.
+ *
+ * Twenty iterations from a power-of-two start. The iteration thirds its error
+ * when it is far out, so the largest input this core has - a liquidation
+ * capped at 32767 millions, whose root is 32 - is reached in a handful;
+ * twenty is the same work for every input, which keeps the cost off the
+ * input value.
+ *
+ * The last three lines are the correction. Newton lands within a unit but not
+ * always ON the floor, and a root that is one Q16.16 unit high would make a
+ * crater one fifteen-thousandth of a metre wider on one machine and not on
+ * another if any step ever rounded differently. So it is walked to the exact
+ * floor: the largest y whose cube does not exceed x.
+ *
+ * Bounds. The caller's x reaches 32767 * ONE = 2.147e9 and the root 32 * ONE.
+ * `mulFast(y, y)` peaks at 4.4e12 before its divide and `div(x, t)` at 1.4e14,
+ * both exact in a double long before 2^53. Above that the input would have to
+ * be a liquidation of thirty-two billion dollars, which `LIQ_MAX` refuses.
+ */
+function cbrt(x) {
+  if (x <= 0) return 0;
+
+  // THE START MATTERS, and starting at 1.0 does not work. Newton's first step
+  // from there is `(2 + x) / 3`, which for x = 1000 lands on 334 - and 334
+  // squared in Q16.16 is 7.3e9, past a signed word, so `mulFast` wraps
+  // negative and the iteration is destroyed before it has begun. Measured:
+  // 1000 came out as 334.15 and 8000 as 2667.
+  //
+  // So the start is a power of two at the right size. `x` is ONE * v, so
+  // log2(x) = 16 + log2(v) and the root is ONE * v^(1/3) = 2^(16 + log2(v)/3).
+  // From there the iteration never overshoots and every intermediate stays
+  // inside the range the bounds note below promises.
+  let bits = -1;
+  for (let t = x; t > 0; t >>>= 1) bits++;
+  let shift = 16 + (((bits - 16) / 3) | 0);
+  if (shift < 0) shift = 0;
+  if (shift > 30) shift = 30;
+  let y = (1 << shift) | 0;
+  if (y < 1) y = 1;
+
+  for (let i = 0; i < 20; i++) {
+    const sq = mulFast(y, y);
+    if (sq <= 0) break;
+    y = idiv(add(add(y, y), div(x, sq)), 3);
+    if (y <= 0) { y = 1; break; }
+  }
+
+  // The cube is compared, never stored, so it is worked out in the double
+  // domain: `mulFast` would wrap at y = 32.0 exactly, where the true cube is
+  // 2^31, and a wrap in the CORRECTION would turn "too big" into "far too
+  // small" and walk the answer the wrong way. Exact to 2^53, which the bounds
+  // note below is well inside.
+  const cube = (v) => ((v * v) / ONE) * v / ONE;
+  while (y > 1 && cube(y) > x) y = (y - 1) | 0;
+  while (cube((y + 1) | 0) <= x) y = (y + 1) | 0;
+  return y;
+}
+
 const length2 = (x, y) => {
   if (x === 0 && y === 0) return 0;
   return sqrt((mulFast(x, x) + mulFast(y, y)) | 0);
@@ -900,7 +965,33 @@ const O_STRIKE = O_LIQ + LIQ_WORDS;
 const STRIKE_WORDS = 5;
 const K_STATE = 0, K_X = 1, K_Z = 2, K_LOAD = 3, K_SERIAL = 4;
 
-const WORDS = O_STRIKE + STRIKE_WORDS;
+/**
+ * THE CRATERS.
+ *
+ * Their own list, NOT written into `st.ground.h`. Two reasons, both from the
+ * code as it stands: the host re-uploads the whole relief whenever
+ * `terrain.Revision` moves (`CoreDrivenTruck.cs:287`), which would erase a
+ * crater baked into it; and a crater that has replaced the relief can never
+ * expire, because the ground it replaced is gone. So the grid stays the
+ * upload, and the craters are a layer the surface reader subtracts.
+ *
+ * Eight of them. `restart` already carries `ground` and `solids` across a
+ * round, which is where the list lives too, and C_ROUNDS is decremented
+ * there - the lifetime is in ROUNDS because that is the unit (z) states it
+ * in, not in ticks.
+ *
+ * Full list: the strike overwrites the crater with the fewest rounds left,
+ * ties to the lowest index. Deterministic, and it is the oldest wound that
+ * gives way rather than the newest being refused.
+ */
+const O_CRATERS = O_STRIKE + STRIKE_WORDS;
+const MAX_CRATERS = 8;
+const C_WORDS = 5;
+const C_X = 0, C_Z = 1, C_R = 2, C_D = 3, C_ROUNDS = 4;
+
+const craterBase = (i) => O_CRATERS + Math.imul(i, C_WORDS);
+
+const WORDS = O_CRATERS + Math.imul(MAX_CRATERS, C_WORDS);
 
 // truck fields, relative to O_TRUCK
 const T_X = 0, T_Z = 1, T_HEADING = 2, T_VX = 3, T_VZ = 4;
@@ -1054,11 +1145,10 @@ const REACH = Math.imul(3, ONE);
  * the span the reference measurement used, so the number the core fits is the
  * number PhysX was asked for.
  */
-function gradeAlong(g, x, z, fx, fz, halfX, halfZ) {
+function gradeAlong(sample, x, z, fx, fz) {
   const ax = add(x, mulFast(fx, REACH)), az = add(z, mulFast(fz, REACH));
   const bx = sub(x, mulFast(fx, REACH)), bz = sub(z, mulFast(fz, REACH));
-  const rise = sub(heightAtWorld(g, ax, az, halfX, halfZ),
-                   heightAtWorld(g, bx, bz, halfX, halfZ));
+  const rise = sub(sample(ax, az), sample(bx, bz));
   return div(rise, Math.imul(REACH, 2));
 }
 
@@ -3162,6 +3252,56 @@ function setSolids(st, count, boxes) {
  * anywhere near the line it falls on the front at x = 0, which is a place and
  * not a random draw.
  */
+/**
+ * The crater a load digs. Radius in metres Q16.16, depth with it.
+ *
+ * A crater follows the CUBE ROOT of the energy, which is also what makes the
+ * rule usable here: liquidations run over three decades, from a million to a
+ * billion, and a cube root turns that into a factor of ten instead of the
+ * 31.6 a square root would give. Both ends are quantities this core already
+ * names rather than numbers picked to taste - `BOMB_RADIUS`, 16 m, at one
+ * million, and the 40 m front band at a thousand.
+ *
+ * DEPTH IS 0.15 OF THE RADIUS, AND THAT NUMBER IS MEASURED, NOT CHOSEN. The
+ * geologist's ratio for a simple crater is a fifth of the diameter - 0.4 of
+ * the radius - and at 0.4 the truck is trapped: driven from the centre at
+ * full throttle it never leaves a 100 M crater or a 1000 M one in forty
+ * seconds, and takes 36.2 s to crawl out of the smallest.
+ *
+ * The wall's steepest gradient is exactly 2 * D/R. Driven up a constant slope
+ * the truck holds 0.45 - 2.03 m/s uphill - and at 0.50 it slides backwards.
+ * So D/R must be under 0.225. It is set at 0.15, a gradient of 0.30, which is
+ * the steepest wall where the truck still keeps more than a third of its
+ * 24.3 m/s flat-ground speed: 9.22 m/s. A crater is ground to be driven, not
+ * a hole to be caught in.
+ *
+ * Lifetime rides the same root, so one rule sets both: ten rounds at the
+ * small end, twenty at the large, which is the span (z) asks for.
+ */
+const CRATER_R_MIN = Math.imul(16, ONE);
+const CRATER_R_MAX = Math.imul(40, ONE);
+const CRATER_LOAD_MIN = ONE;                       // one million
+const CRATER_LOAD_MAX = Math.imul(1000, ONE);      // a thousand million
+
+function craterOf(load) {
+  const lo = cbrt(CRATER_LOAD_MIN), hi = cbrt(CRATER_LOAD_MAX);
+  const t = clamp(div(sub(cbrt(clamp(load, CRATER_LOAD_MIN, CRATER_LOAD_MAX)), lo),
+                      sub(hi, lo)), 0, ONE);
+  const r = add(CRATER_R_MIN, mulFast(t, sub(CRATER_R_MAX, CRATER_R_MIN)));
+  return { r, d: mulFast(r, 9830), rounds: add(Math.imul(10, ONE), mulFast(t, Math.imul(10, ONE))) >> 16 };
+}
+
+/** The crater slot to use: a free one, else the one with fewest rounds left. */
+function craterSlot(s) {
+  let worst = -1, least = 0x7fffffff;
+  for (let i = 0; i < MAX_CRATERS; i++) {
+    const b = craterBase(i);
+    if (s[b + C_ROUNDS] <= 0) return i;
+    if (s[b + C_ROUNDS] < least) { least = s[b + C_ROUNDS]; worst = i; }
+  }
+  return worst;
+}
+
 function strikePoint(s, seamAt) {
   let bestI = -1, bestN = 0;
   for (let i = 0; i < UNITS; i++) {
@@ -3197,11 +3337,64 @@ function restart(st, seedWord) {
   const fresh = init(seedWord);
   fresh.ground = st.ground;
   fresh.solids = st.solids;
+  // The craters cross the round with the ground, one round older. This is why
+  // the lifetime is counted in ROUNDS and lives here: a round is a thing that
+  // ends, and a tick is not.
+  for (let i = 0; i < MAX_CRATERS; i++) {
+    const b = craterBase(i);
+    const left = (st.i32[b + C_ROUNDS] - 1) | 0;
+    if (left <= 0) continue;
+    fresh.i32[b + C_X] = st.i32[b + C_X];
+    fresh.i32[b + C_Z] = st.i32[b + C_Z];
+    fresh.i32[b + C_R] = st.i32[b + C_R];
+    fresh.i32[b + C_D] = st.i32[b + C_D];
+    fresh.i32[b + C_ROUNDS] = left;
+  }
   return fresh;
 }
 
+/**
+ * How deep the craters cut at a point, in metres Q16.16.
+ *
+ * A bowl, `d(r) = D * (1 - (r/R)^2)`: two multiplies, no trig, zero at the
+ * rim so there is no step for a wheel to catch on. No raised lip - that would
+ * be a second term and it is not in this step.
+ *
+ * They ADD where they overlap, which is what two explosions in one place do,
+ * and the whole thing is bounded by the eight slots.
+ */
+function craterCut(s, x, z) {
+  let cut = 0;
+  for (let i = 0; i < MAX_CRATERS; i++) {
+    const b = craterBase(i);
+    const R = s[b + C_R];
+    if (R <= 0 || s[b + C_ROUNDS] <= 0) continue;
+    const dx = sub(x, s[b + C_X]), dz = sub(z, s[b + C_Z]);
+    if (abs(dx) > R || abs(dz) > R) continue;
+    const r = length2(dx, dz);
+    if (r >= R) continue;
+    const t = div(r, R);                       // 0 at the centre, ONE at the rim
+    cut = add(cut, mulFast(s[b + C_D], sub(ONE, mulFast(t, t))));
+  }
+  return cut;
+}
+
+/**
+ * THE SURFACE, and the only place that answers what it is.
+ *
+ * The relief the host uploaded, less whatever the craters have taken out of
+ * it. Three readers used to sample `st.ground` on their own - the slope under
+ * the truck, the resolution against solids, and the air's `groundAt` - and
+ * three readers of one quantity is how two of them end up disagreeing. They
+ * all come through here now.
+ */
+function surfaceAt(st, x, z) {
+  return sub(heightAtWorld(st.ground, x, z, HALF_X, HALF_Z),
+             craterCut(st.i32, x, z));
+}
+
 function groundAt(st, x, z) {
-  return heightAtWorld(st.ground, x, z, HALF_X, HALF_Z);
+  return surfaceAt(st, x, z);
 }
 
 function init(seedWord) {
@@ -3698,6 +3891,15 @@ function step(st, throttle, steer, brake, handbrake, practice) {
     s[O_STRIKE + K_Z] = at.z;
     s[O_STRIKE + K_LOAD] = s[O_LIQ + L_LAST];
     s[O_STRIKE + K_SERIAL] = (s[O_STRIKE + K_SERIAL] + 1) | 0;
+
+    // The hole, at the impact and nowhere near it.
+    const hole = craterOf(s[O_LIQ + L_LAST]);
+    const slot = craterBase(craterSlot(s));
+    s[slot + C_X] = at.x;
+    s[slot + C_Z] = at.z;
+    s[slot + C_R] = hole.r;
+    s[slot + C_D] = hole.d;
+    s[slot + C_ROUNDS] = hole.rounds;
   } else {
     s[O_STRIKE + K_STATE] = 0;
   }
@@ -3716,16 +3918,15 @@ function step(st, throttle, steer, brake, handbrake, practice) {
     hp: s[T + T_HP], pull: (s[T + T_FLAGS] & 1) === 0 ? -1 : 1,
   };
   // The slope the truck is standing on, along its own nose.
-  const grade = gradeAlong(st.ground, s[T + T_X], s[T + T_Z],
-                           sin(s[T + T_HEADING]), cos(s[T + T_HEADING]),
-                           HALF_X, HALF_Z);
+  const grade = gradeAlong((gx, gz) => surfaceAt(st, gx, gz), s[T + T_X], s[T + T_Z],
+                           sin(s[T + T_HEADING]), cos(s[T + T_HEADING]));
   vehicleStep(v, throttle, steer, brake, handbrake, TICK_DT, grade);
   // Out of the walls before the position is committed. After the vehicle
   // step, so it corrects where the truck WOULD have got to rather than
   // steering it away in advance - a wall has to be something you drive into.
   resolveSolids(v, st.solids,
                 sin(v.heading), cos(v.heading),
-                heightAtWorld(st.ground, v.x, v.z, HALF_X, HALF_Z));
+                surfaceAt(st, v.x, v.z));
 
   // And out of the armour. Last tick's tank positions, because the army has
   // not moved yet this tick - one frame stale, sixteen milliseconds, and it
@@ -4014,7 +4215,7 @@ function step(st, throttle, steer, brake, handbrake, practice) {
   // the seam it stands off is the one under its own nose, as FrontlineAt(h.x)
   // has it.
   const seamAt = (x) => frontlineZ(st.tape, x, HALF_X, HALF_Z);
-  const groundAt = (x, z) => heightAtWorld(st.ground, x, z, HALF_X, HALF_Z);
+  const groundAt = (x, z) => surfaceAt(st, x, z);
   stepHelicopters(s, rng, seamAt, groundAt);
   stepBombs(s, groundAt);
 
