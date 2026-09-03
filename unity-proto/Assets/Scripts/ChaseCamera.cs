@@ -276,7 +276,26 @@ public class ChaseCamera : MonoBehaviour
             return;
         }
 
-        Vector3 v = targetBody != null ? targetBody.linearVelocity : Vector3.zero;
+        // The truck's velocity, from the core.
+        //
+        // `targetBody.linearVelocity` is 0 for good - the body went kinematic
+        // when the core took the driving - and EVERY consumer below reads this
+        // one vector: the reach and the rise (speed01), the direction the
+        // camera settles behind (Atan2), the cornering load that drives the
+        // lean, and the lens. All five were reading a truck standing still
+        // while it was doing 19 m/s in the browser.
+        //
+        // Not `TruckSpeed`. That reads `T_WHEEL`, which despite the name
+        // holds `total` from `rules/vehicle.js:222` - the resultant BEFORE
+        // the 34 m/s cap is spent on it, while `T_VX`/`T_VZ` are written
+        // after. The two part company exactly where the cap bites: 12 ticks
+        // in 2400 on a hard drive, by up to 5.101 m/s. And a scalar carries
+        // no direction at all, so it could not feed the Atan2 below.
+        // `linearVelocity` was the planar body velocity; that is
+        // `T_VX`/`T_VZ`.
+        Vector3 v = Blwp.BlwpCore.Available
+                  ? Blwp.BlwpCore.Velocity
+                  : (targetBody != null ? targetBody.linearVelocity : Vector3.zero);
         v.y = 0f;
         float speed01 = Mathf.Clamp01(v.magnitude / topSpeed);
 
