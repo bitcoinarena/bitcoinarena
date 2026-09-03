@@ -8,7 +8,7 @@
 // could sit on it and be scored as though under fire.
 
 import { ONE, add, sub, neg, mulFast, div, idiv, clamp, min, max, abs, length2 } from '../fixed.js';
-import { sin, cos } from '../trig.js';
+import { sin, cos, atan2 } from '../trig.js';
 import { below } from '../rng.js';
 
 export const RIFLE_RANGE = Math.imul(26, ONE);
@@ -177,6 +177,17 @@ export function standingStill(index, tick) {
   }
   return false;
 }
+
+// A tank turns before it drives, and it never drives sideways.
+//
+//   `mvx*mvx + mvz*mvz > dt*dt*0.16f` is C#'s guard at 0.4 m/s, which for one
+//   tick at a sixtieth is 0.4/60 m = 437 in Q16.16 - a distance against a
+//   distance, not a speed against a step.
+//   `1 - exp(-2.2f * dt)` at a sixtieth is 0.03608 = 2365 of 65536.
+//   `|dz| > 0.6f` is the infantry's own walking test, 39322 in Q16.16.
+const TURN_FLOOR = 437;
+const TURN_RATE = 2365;
+const WALK_FACING_FLOOR = 39322;
 
 const RIFLE_STANDOFF = Math.imul(4, ONE);
 const RIFLE_SPREAD = Math.imul(8, ONE);      // + 0 to 8, so 4 to 12
@@ -380,8 +391,21 @@ export const SIDE_BEAR = 1;
 export function stepUnit(u, rng, seamZ, truckX, truckZ, halfX, halfZ, dt, index, tick) {
   if (u.hp <= 0) return 0;
 
-  const wobble = (below(rng, 64) - 32) | 0;
-  u.heading = (add(u.heading, wobble)) & 65535;
+  // THE DRAW STAYS, THE WOBBLE GOES.
+  //
+  // `heading += Rand(-32, 32)` was a random walk that knew nothing about where
+  // the unit was going, and the renderer draws the hull from it. Measured over
+  // sixteen seeds, the angle between a tank's travel and its drawn hull
+  // averaged 90.5 degrees, was past 45 three quarters of the time and past 90
+  // half of it: half the tanks on screen were sliding sideways or driving
+  // backwards. C# has no wobble anywhere.
+  //
+  // The DRAW is kept and its value thrown away. It is the first draw of the
+  // unit's tick and the comment above calls that order protocol - every
+  // transcript and every recorded pass replays this stream, and dropping a
+  // draw here would shift every draw after it for every unit of every round.
+  // Keeping it costs nothing; using it for a heading was the fault.
+  below(rng, 64);
 
   // Advance on the seam from our own side and hold short of it.
   //
@@ -561,9 +585,48 @@ export function stepUnit(u, rng, seamZ, truckX, truckZ, halfX, halfZ, dt, index,
   // the C# army's - it was not a faster grind, it was no grind.
   //
   // Unity holds every unit inside |x| < FrontX - 4 for exactly this reason.
+  // A TANK DRIVES WHERE IT IS POINTING, AND NOWHERE ELSE.
+  //
+  // C# turns the hull INTO its line of advance - `Army.cs:587-590`, a lerp at
+  // 2.2 per second - and that is enough there, because StepArmour moves along
+  // ONE goal vector so the direction of travel is smooth. This core steers x
+  // and z on separate controllers, deliberately: coupling them into one
+  // normalised vector was tried, measured and reverted, because the z
+  // component then gets dragged along by the size of the x chase and the front
+  // loses its depth. The price of keeping them apart is that the direction of
+  // travel jitters, so a hull that merely CHASES it still ends up 45.7 degrees
+  // off on average - measured, better than 90.5 and not the rule.
+  //
+  // So the constraint goes on the velocity, not on the drawing: the two
+  // controllers say how FAR to go, the heading says which way, and the step is
+  // taken along the heading. The tank turns towards where it wants to be at
+  // C#'s own rate and drives forward - it cannot strafe, because there is no
+  // longer a sideways component to strafe with.
+  let stepX = dx, stepZ = dz;
+  if (u.armour) {
+    const far = length2(dx, dz);
+    if (far > TURN_FLOOR) {
+      const want = atan2(dx, dz);
+      // the short way round, or a tank crossing north turns the long way home
+      const off = (((want - u.heading + 32768) & 65535) - 32768) | 0;
+      u.heading = add(u.heading, Math.imul(off, TURN_RATE) >> 16) & 65535;
+      stepX = mulFast(sin(u.heading), far);
+      stepZ = mulFast(cos(u.heading), far);
+    }
+  }
+
   const edge = sub(FRONT_X, Math.imul(4, ONE));
-  u.x = clamp(add(u.x, dx), neg(min(edge, halfX)), min(edge, halfX));
-  u.z = clamp(add(u.z, dz), -halfZ, halfZ);
+  u.x = clamp(add(u.x, stepX), neg(min(edge, halfX)), min(edge, halfX));
+  u.z = clamp(add(u.z, stepZ), -halfZ, halfZ);
+
+  // The rifleman is not a vehicle and C# does not treat him as one: he walks
+  // in z and holds his squad's x, and he simply FACES the way he is walking,
+  // or the enemy when he is dug in. `Army.cs:692-694`. No lerp, no constraint.
+  if (!u.armour) {
+    u.heading = (abs(stepZ) > WALK_FACING_FLOOR
+                   ? (stepZ > 0 ? 0 : 32768)
+                   : (u.side < 0 ? 0 : 32768)) | 0;
+  }
 
   // The courier is NOT a weapon, and this function no longer has one.
   //
