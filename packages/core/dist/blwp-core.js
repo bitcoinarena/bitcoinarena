@@ -1524,6 +1524,47 @@ const RIFLE_HIT_PER_MIL = 45;        // 0.045 per shot
 const ARMOUR_WALK = 445645;      // 6.8 m/s
 const RIFLE_WALK = 170394;       // 2.6 m/s
 
+// A rifleman's own pace, as a factor on that.
+//
+//     unit.pace = Rand(0.82f, 1.18f)        Army.cs:278, infantry only
+//     gait      = pace * (0.82 + 0.18 * sin(phase * 0.7))
+//     step      = min(3.4f * gait * dt, |dz|)
+//
+// DIMENSIONLESS, and a factor rather than a speed: 3.4 is the m/s in the C#
+// and 2.6 is the m/s here, and multiplying the existing constant by a mean-one
+// factor leaves the mean where it was measured and adds only the spread.
+//
+// The spread is the whole of item (q). Every man walked at exactly 2.6 m/s, so
+// a squad that set off together arrived together: infantry z-spread at t=15
+// was 1.09 against the recording's 4.3-4.4, which is the spawn jitter and
+// nothing else. Worked out from the C# ranges, `pace` alone accounts for about
+// 3.75 m of that 4.3 - the halt another 1.5 and the gait wave, over ten cycles
+// in fifteen seconds, none of it.
+const RIFLE_PACE_MIN = 53740;    // 0.82
+const RIFLE_PACE_SPAN = 23593;   // 0.36, so 0.82 to 1.18
+
+/**
+ * A man's pace, from his index rather than from the stream.
+ *
+ * `standoff` and `squadOffsetZ` are already derived this way - see `scatter`
+ * and `scatter2` in `holdLine` - because a spawn draw is protocol: inserting
+ * one shifts every draw after it, for every unit of every round, and the C#
+ * order this core was matched against has no room left in it. A hash costs
+ * nothing and shifts nothing.
+ *
+ * It needs a SECOND ROUND of mixing rather than a third window of the first.
+ * Bits 20..29 and 8..17 are already spoken for by the two offsets, and a
+ * window overlapping either would tie a man's speed to where he stands - a
+ * correlation the C# does not have, because its two draws are independent.
+ * Same magic number, applied twice, rather than a second one to justify.
+ */
+function paceOf(index) {
+  let h = Math.imul(index | 0, 2654435761);
+  h ^= h >>> 16;
+  return add(RIFLE_PACE_MIN, Math.imul((Math.imul(h, 2654435761) >>> 20) & 1023,
+                                       RIFLE_PACE_SPAN) >> 10);
+}
+
 // Where each kind stops. Armour pushes to the line and holds a little short
 // of it; infantry closes further before it settles. Both sides doing this is
 // what makes a front rather than a breakthrough - the means oscillate about
@@ -1769,7 +1810,7 @@ function stepUnit(u, rng, seamZ, truckX, truckZ, halfX, halfZ, dt, index) {
   // rounding advantage walks through; holding short leaves a contested strip
   // between them, which is what the C# army does and why its means oscillate
   // about zero for ninety seconds without ever crossing.
-  const walk = u.armour ? ARMOUR_WALK : RIFLE_WALK;
+  const walk = u.armour ? ARMOUR_WALK : mulFast(RIFLE_WALK, paceOf(index));
   // Each unit holds at its OWN distance, scattered about the mean.
   //
   // A single stand-off for everyone puts the whole army on one line, and then
