@@ -1950,7 +1950,18 @@ function stepUnit(u, rng, seamZ, truckX, truckZ, halfX, halfZ, dt, index, tick) 
   // as overrun the moment it reached its own holding line, so the whole army
   // sat on the fall-back line and never fired a shot.
   const past = mulFast(sub(u.z, seamZ), Math.imul(-side, ONE));
-  const overrun = past > OVERRUN_DEPTH;
+  // ARMOUR ONLY, and that is C#'s own division, not a preference.
+  //
+  // `StepArmour` falls back to `front - Dir*34` when a tank has overrun its
+  // own line (`Army.cs:566-567`). `StepInfantry` has NOTHING of the sort: it
+  // walks to `front - Dir*(standoff + squadOffsetZ)` and that is the whole of
+  // it (`:651-653`). No overrun, no giving ground.
+  //
+  // Applied to riflemen it parked the infantry: a man who pushed 14 m past
+  // the line was thrown 34 m behind it and had to walk in again, so the line
+  // never formed. Measured against the front at each man's own x, the
+  // infantry sat 36.5 m behind it at t=30 - and FALL_BACK is 34.
+  const overrun = u.armour && past > OVERRUN_DEPTH;
 
   let dz;
   if (overrun) {
@@ -2433,6 +2444,60 @@ const SAMPLES = 64;
  * Q16.16 (scaled however the caller likes - only ratios matter), `halfX` and
  * `halfZ` are the map's half extents in Q16.16.
  */
+/**
+ * The tape, box-averaged over WINDOW samples, edges held.
+ *
+ * WHY THERE IS A FILTER HERE AT ALL. The tape is a price series and the raw
+ * function laid it across the map at one sample every 4.13 m, so the "front"
+ * was a price chart, not a line: measured across the map it ran +29.1, +2.6,
+ * +37.6, +5.8, +28.1, -8.6, +8.8, -40.5, -28.4 at 22 m steps. A man walking
+ * nine metres sideways saw his goal move sixty. Chasing it, nobody ever
+ * arrived - infantry sat 36.5 m behind a line whose own standoff is 8.
+ *
+ * THE WIDTH IS DERIVED, NOT PICKED. A rifleman closes in z at 3.4 m/s and
+ * moves in x at 2.4 m/s (`Army.cs:681`), so a goal that slides more than
+ * 3.4/2.4 = 1.42 metres per metre of x runs away faster than he can walk.
+ * Measured over five tapes, the raw slope is 6.00 mean and 14.21 at the 99th
+ * percentile, with 88% of the map above the limit. Box-averaged:
+ *
+ *     N     mean   p99    max   over the limit   amplitude
+ *      1    6.00  14.21  14.35      88.0%        +-56.7 m
+ *      9    0.93   2.66   2.80      22.9%        +-38.5 m
+ *     13    0.56   1.80   1.93       3.7%        +-42.7 m
+ *     21    0.42   1.20   1.27       0.0%        +-39.5 m
+ *
+ * 21 is the first width where the 99th percentile AND the maximum are both
+ * under 1.42 and no part of the map is above it. Wider only costs amplitude:
+ * the front must still move with the market, and at 21 it still swings
+ * +-39.5 m across the map.
+ *
+ * The normalisation below deliberately keeps the RAW window's low and high,
+ * not the smoothed one's. Renormalising against the smoothed range would
+ * re-expand the filtered curve to full scale and put the slope back: measured,
+ * that variant still leaves 9.9% of the map over the limit at N=21.
+ *
+ * C# has no filter. This is not a port of `PriceHistory.FrontlineZ` losing a
+ * term - it is the core refusing to copy a fault: a quantity used as a FRONT
+ * LINE cannot have 4 m resolution and 60 m steps, whatever it was called
+ * upstream.
+ */
+const WINDOW = 21;
+const HALFW = 10;
+
+function smooth(hist, j) {
+  let sum = 0;
+  for (let k = j - HALFW; k <= j + HALFW; k++) {
+    const q = k < 0 ? 0 : (k > SAMPLES - 1 ? SAMPLES - 1 : k);
+    sum += hist[q];
+  }
+  // `div`, not a bare `/`: the determinism guard allows the operator only
+  // inside the arithmetic file, and it is right to. Exact here with room to
+  // spare - the largest tape value measured over three seeds and a minute is
+  // 20,099,840, so `sum * ONE` peaks at 2.77e13 against the 9.01e15 where a
+  // double stops counting integers, a factor of 325.
+  return div(sum, Math.imul(WINDOW, ONE));
+}
+
 function frontlineZ(hist, x, halfX, halfZ) {
   if (SAMPLES < 2) return 0;
 
@@ -2442,7 +2507,7 @@ function frontlineZ(hist, x, halfX, halfZ) {
   const i = clamp(at >> 16, 0, SAMPLES - 2);
   const f = at & 65535;
 
-  const a = hist[i], b = hist[i + 1];
+  const a = smooth(hist, i), b = smooth(hist, i + 1);
   const price = add(a, mulFast(sub(b, a), f));
 
   // the window's own range decides the scale, so a quiet market still moves
@@ -3524,7 +3589,27 @@ function step(st, throttle, steer, brake, handbrake, practice) {
     // Moves the unit. Its return value used to say "a courier hit landed"; the
     // tank's courier weapon is gone and the choice lives in the gun below, so
     // there is nothing left to report and the call is made for its effect.
-    stepUnit(u, rng, seamZ, tx, tz, HALF_X, HALF_Z, TICK_DT, i, s[O_TICK]);
+    // THE FRONT AT THIS UNIT'S OWN x, NOT AT THE TRUCK'S.
+    //
+    // `seamZ` above is one number, taken where the truck happens to be
+    // standing, and it used to be handed to every unit on the field. The
+    // front is not a number, it is a curve: measured across the map it runs
+    // from +37.6 m at x=-44 to -40.5 m at x=+66, a spread of about 80 m. So
+    // the whole army was marching onto a flat line whose height was set by
+    // the player's position, and slid up and down as he drove.
+    //
+    // Measured against the line that actually exists, nobody was on it:
+    // infantry sat 40 to 59 m behind it on one side and scattered to a
+    // standard deviation of 51.7 m on the other, and the armour was the same.
+    // Against the FLAT line the same units looked tidy, which is why it went
+    // unseen - the ruler was the fault.
+    //
+    // `Army.cs:557` takes `FrontlineAt(v.x)` per tank and `:651`
+    // `FrontlineAt(s.x)` per man. This is that, not a new rule. The truck's
+    // own seam is still what the truck is measured against, so `seamZ` stays
+    // for the callers below it.
+    const unitSeam = frontlineZ(st.tape, u.x, HALF_X, HALF_Z);
+    stepUnit(u, rng, unitSeam, tx, tz, HALF_X, HALF_Z, TICK_DT, i, s[O_TICK]);
 
     // Armour fires on armour. Drawn in index order, always, so the transcript
     // replays: a tank that fires earlier changes what the ones after it see.

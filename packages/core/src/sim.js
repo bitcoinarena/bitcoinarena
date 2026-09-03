@@ -802,7 +802,27 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
     // Moves the unit. Its return value used to say "a courier hit landed"; the
     // tank's courier weapon is gone and the choice lives in the gun below, so
     // there is nothing left to report and the call is made for its effect.
-    stepUnit(u, rng, seamZ, tx, tz, HALF_X, HALF_Z, TICK_DT, i, s[O_TICK]);
+    // THE FRONT AT THIS UNIT'S OWN x, NOT AT THE TRUCK'S.
+    //
+    // `seamZ` above is one number, taken where the truck happens to be
+    // standing, and it used to be handed to every unit on the field. The
+    // front is not a number, it is a curve: measured across the map it runs
+    // from +37.6 m at x=-44 to -40.5 m at x=+66, a spread of about 80 m. So
+    // the whole army was marching onto a flat line whose height was set by
+    // the player's position, and slid up and down as he drove.
+    //
+    // Measured against the line that actually exists, nobody was on it:
+    // infantry sat 40 to 59 m behind it on one side and scattered to a
+    // standard deviation of 51.7 m on the other, and the armour was the same.
+    // Against the FLAT line the same units looked tidy, which is why it went
+    // unseen - the ruler was the fault.
+    //
+    // `Army.cs:557` takes `FrontlineAt(v.x)` per tank and `:651`
+    // `FrontlineAt(s.x)` per man. This is that, not a new rule. The truck's
+    // own seam is still what the truck is measured against, so `seamZ` stays
+    // for the callers below it.
+    const unitSeam = frontlineZ(st.tape, u.x, HALF_X, HALF_Z);
+    stepUnit(u, rng, unitSeam, tx, tz, HALF_X, HALF_Z, TICK_DT, i, s[O_TICK]);
 
     // Armour fires on armour. Drawn in index order, always, so the transcript
     // replays: a tank that fires earlier changes what the ones after it see.

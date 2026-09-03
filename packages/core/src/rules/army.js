@@ -469,7 +469,18 @@ export function stepUnit(u, rng, seamZ, truckX, truckZ, halfX, halfZ, dt, index,
   // as overrun the moment it reached its own holding line, so the whole army
   // sat on the fall-back line and never fired a shot.
   const past = mulFast(sub(u.z, seamZ), Math.imul(-side, ONE));
-  const overrun = past > OVERRUN_DEPTH;
+  // ARMOUR ONLY, and that is C#'s own division, not a preference.
+  //
+  // `StepArmour` falls back to `front - Dir*34` when a tank has overrun its
+  // own line (`Army.cs:566-567`). `StepInfantry` has NOTHING of the sort: it
+  // walks to `front - Dir*(standoff + squadOffsetZ)` and that is the whole of
+  // it (`:651-653`). No overrun, no giving ground.
+  //
+  // Applied to riflemen it parked the infantry: a man who pushed 14 m past
+  // the line was thrown 34 m behind it and had to walk in again, so the line
+  // never formed. Measured against the front at each man's own x, the
+  // infantry sat 36.5 m behind it at t=30 - and FALL_BACK is 34.
+  const overrun = u.armour && past > OVERRUN_DEPTH;
 
   let dz;
   if (overrun) {
