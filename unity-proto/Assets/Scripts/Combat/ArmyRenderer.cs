@@ -418,8 +418,23 @@ public class ArmyRenderer : MonoBehaviour
     /// than per instance, because there are only ever a handful in the air and
     /// a pool per side would spend more on bookkeeping than it saves.
     /// </summary>
+    /// <summary>
+    /// The gunships, and the sound of them.
+    ///
+    /// `GameAudio.Rotors` had no caller at all: the helicopters flew over the
+    /// field from core state, rotors turning, in silence. It wants the NEAREST
+    /// one each frame or nothing when the sky is clear, so the nearest is
+    /// taken here, where the living ones are already being walked - measured
+    /// against the truck's own position, which the core publishes too. No new
+    /// state, no second reader, and nothing that decides anything.
+    /// </summary>
     void PlaceAircraft()
     {
+        if (audio == null) audio = FindFirstObjectByType<GameAudio>();
+        var ear = Blwp.BlwpCore.TruckPosition(0f);
+        float nearest = float.MaxValue;
+        Vector2? overhead = null;
+
         int helis = 0;
         for (int k = 0; k < Blwp.Layout.MAX_HELIS; k++) if (Blwp.BlwpCore.HeliAlive(k)) helis++;
         Fit(_helis, helis, MakeHelicopter);
@@ -437,8 +452,12 @@ public class ArmyRenderer : MonoBehaviour
             // faces along its run and banks for the look of it, so both are
             // derived here and no simulation is invented to supply them.
             float yaw = Blwp.BlwpCore.HeliDir(k) >= 0 ? 90f : -90f;
-            t.SetPositionAndRotation(Blwp.BlwpCore.HeliPosition(k),
+            var where = Blwp.BlwpCore.HeliPosition(k);
+            t.SetPositionAndRotation(where,
                                      Quaternion.Euler(0f, yaw + helicopterYawOffset, 0f));
+
+            float d2 = (where.x - ear.x) * (where.x - ear.x) + (where.z - ear.z) * (where.z - ear.z);
+            if (d2 < nearest) { nearest = d2; overhead = new Vector2(where.x, where.z); }
 
             var mat = Blwp.BlwpCore.HeliSide(k) < 0 ? bullMaterial : bearMaterial;
             foreach (var r in t.GetComponentsInChildren<MeshRenderer>(true))
@@ -451,6 +470,10 @@ public class ArmyRenderer : MonoBehaviour
                 if (rotors.tail != null) rotors.tail.Rotate(2200f * Time.deltaTime, 0f, 0f, Space.Self);
             }
         }
+
+        // Every frame, the nearest gunship or nothing - which is the contract
+        // `Rotors` documents and which nobody had ever called it with.
+        if (audio != null) audio.Rotors(overhead);
 
         int bombs = 0;
         for (int k = 0; k < Blwp.Layout.MAX_BOMBS; k++) if (Blwp.BlwpCore.BombAlive(k)) bombs++;
@@ -798,6 +821,9 @@ public class ArmyRenderer : MonoBehaviour
     }
 
     int _lastDrawn = -1;
+
+    /// <summary>The combat mixer, found once. Only ever told what the core did.</summary>
+    public GameAudio audio;
 
     /// <summary>
     /// Where each tank's barrel points, one entry per unit slot.
