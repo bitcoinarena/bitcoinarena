@@ -2971,6 +2971,7 @@ game_config {
 
 The army is simulated, not painted. Each tank and each rifleman has a
 named goal each tick (front, foe, or retreat) and steps toward it.
+Gunships run their own side of the front and bomb what they overfly.
 Units occupy the front line wherever `frontline_z(x)` sits — not a
 parking lot on their spawn side. Heading follows travel. This is M1
 playability: the enemies you see are doing a job, or the core has not
