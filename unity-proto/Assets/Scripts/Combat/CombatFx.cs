@@ -1002,9 +1002,8 @@ public class CombatFx : MonoBehaviour
                 }
                 else
                 {
-                    Body(new Vector3(at.x, Ground(at.x, at.z), at.z),
-                         Blwp.BlwpCore.UnitHeading(i) * Mathf.Deg2Rad,
-                         Blwp.BlwpCore.UnitSide(i) < 0);
+                    DrawCorpse(at.x, at.z, Blwp.BlwpCore.UnitHeading(i) * Mathf.Deg2Rad,
+                               Blwp.BlwpCore.UnitSide(i) < 0, Vector2.zero);
                     if (audio != null) audio.Hit(new Vector2(at.x, at.z));
                 }
             }
@@ -1044,9 +1043,7 @@ public class CombatFx : MonoBehaviour
                 {
                     var at = Blwp.BlwpCore.BombPosition(b);
                     // the same burst `army.Bombed` drew, at the slot's last place
-                    var p = new Vector3(at.x, Ground(at.x, at.z), at.z);
-                    if (!FlipbookBurst(p + Vector3.up * 3f, 26, 1.1f))
-                        Fireball(p + Vector3.up * 2f, 11f, fireCoreMaterial, 0f, 0.3f);
+                    DrawBombBurst(new Vector3(at.x, Ground(at.x, at.z), at.z));
                     if (audio != null) audio.Destroyed(new Vector2(at.x, at.z));
                 }
                 _wasBomb[b] = live;
@@ -1088,15 +1085,14 @@ public class CombatFx : MonoBehaviour
                           : Blwp.BlwpCore.UnitHeading(i) * Mathf.Deg2Rad;
         float reach = found ? Mathf.Sqrt(bestD2) : range;
         float lift = armour ? 2.1f : 1.5f;
-        float out_ = armour ? 4.6f : 0.8f;
+        float out_ = armour ? 4.6f : 0f;      // `Bind` put the rifle's flash on the man
 
         var muzzle = new Vector3(at.x + Mathf.Sin(yaw) * out_, Ground(at.x, at.z) + lift,
                                  at.z + Mathf.Cos(yaw) * out_);
         var impact = new Vector3(at.x + Mathf.Sin(yaw) * reach, 0f, at.z + Mathf.Cos(yaw) * reach);
         impact.y = Ground(impact.x, impact.z) + (armour ? 1.2f : 1.0f);
 
-        Flash(muzzle, armour ? 0.9f : 0.5f);
-        Tracer(muzzle, impact, tracerMaterial, armour ? 0.14f : 0.09f, armour ? 0.06f : 0.10f);
+        if (armour) DrawTankShot(muzzle, impact); else DrawRifleShot(muzzle, impact);
         if (audio == null) return;
         if (armour) audio.Cannon(new Vector2(at.x, at.z));
         else audio.Rifle(new Vector2(at.x, at.z));
@@ -1250,69 +1246,93 @@ public class CombatFx : MonoBehaviour
 
     /* ---------------------------------------------------------- army hooks */
 
+    // ---- what a shot, a corpse and a bomb LOOK like -----------------------
+    //
+    // Lifted out of `Bind` so the C# army's events and the core's own state
+    // transitions draw the SAME thing. They did not: the core-driven path had
+    // a smaller muzzle flash, a thinner tracer, no impact blast, a corpse
+    // sitting a proxy-box too low, and a bomb reduced to one fireball where
+    // this draws nine plus smoke, twenty-two sparks and a shockwave. Two
+    // callers copying one effect is how they drift apart, so now there is one
+    // copy and two callers.
+
+    /// <summary>A rifle round: a small flash and a thin tracer.</summary>
+    void DrawRifleShot(Vector3 muzzle, Vector3 impact)
+    {
+        Flash(muzzle, 0.5f);
+        Tracer(muzzle, impact, tracerMaterial, 0.09f, 0.10f);
+    }
+
+    /// <summary>A tank round: a big flash, a fat tracer, and it lands.</summary>
+    void DrawTankShot(Vector3 muzzle, Vector3 impact)
+    {
+        Flash(muzzle, 1.6f);
+        Tracer(muzzle, impact, tracerMaterial, 0.3f, 0.16f);
+        Blast(impact, 4.5f);
+    }
+
+    /// <summary>
+    /// A casualty, so it is not just a model changing state. The lift is the
+    /// proxy box's, and it is zero when there is a real body to stand up.
+    /// </summary>
+    void DrawCorpse(float x, float z, float heading, bool bull, Vector2 knock)
+    {
+        if (knock.sqrMagnitude > 0.01f)
+            Impact(new Vector3(x, Ground(x, z) + 1f, z), knock);
+        float lift = bodyPrefab != null ? 0f : 0.9f;
+        Body(new Vector3(x, Ground(x, z) + lift, z), heading, bull, knock);
+    }
+
+    /// <summary>
+    /// A bomb is not a tank going up. Everything is bigger and there is more
+    /// of it, because the whole point of a gunship is that it outweighs
+    /// anything on the ground.
+    /// </summary>
+    void DrawBombBurst(Vector3 p)
+    {
+        if (!FlipbookBurst(p + Vector3.up * 3f, 26, 1.1f))
+        {
+            Fireball(p + Vector3.up * 2f, 11f, fireCoreMaterial, 0f, 0.3f);
+            for (int i = 0; i < 8; i++)
+                Fireball(p + new Vector3(Random.Range(-5f, 5f), Random.Range(1f, 7f), Random.Range(-5f, 5f)),
+                         Random.Range(7f, 13f), fireMaterial, i * 0.05f, Random.Range(0.6f, 1f));
+        }
+        if (!SmokeBurst(p + Vector3.up * 5f, 16, Random.Range(5f, 9f)))
+            for (int i = 0; i < 10; i++)
+                Smoke(p + new Vector3(Random.Range(-3f, 3f), Random.Range(2f, 6f), Random.Range(-3f, 3f)),
+                      Random.Range(6f, 10f), i * 0.1f);
+
+        for (int i = 0; i < 22; i++)
+        {
+            float a = Random.Range(0f, Mathf.PI * 2f);
+            var v = new Vector3(Mathf.Sin(a), 0f, Mathf.Cos(a)) * Random.Range(10f, 26f);
+            v.y = Random.Range(10f, 24f);
+            if (i % 2 == 0) Spark(p + Vector3.up * 2f, v);
+            else Debris(p + Vector3.up * 2f, v, Random.Range(0.15f, 0.4f));
+        }
+        Shockwave(p);
+    }
+
     public void Bind(Army army)
     {
         army.Shot += (from, at) =>
-        {
-            var muzzle = new Vector3(from.x, Ground(from.x, from.z) + 1.5f, from.z);
-            var impact = new Vector3(at.x, Ground(at.x, at.y) + 1.0f, at.y);
-            Flash(muzzle, 0.5f);
-            Tracer(muzzle, impact, tracerMaterial, 0.09f, 0.10f);
-        };
+            DrawRifleShot(new Vector3(from.x, Ground(from.x, from.z) + 1.5f, from.z),
+                          new Vector3(at.x, Ground(at.x, at.y) + 1.0f, at.y));
 
         army.Fired += (from, at) =>
         {
             float yaw = from.turretYaw;
-            var muzzle = new Vector3(
-                from.x + Mathf.Sin(yaw) * 4.6f,
-                Ground(from.x, from.z) + 2.1f,
-                from.z + Mathf.Cos(yaw) * 4.6f);
-            var impact = new Vector3(at.x, Ground(at.x, at.y) + 1.2f, at.y);
-            Flash(muzzle, 1.6f);
-            Tracer(muzzle, impact, tracerMaterial, 0.3f, 0.16f);
-            Blast(impact, 4.5f);
+            DrawTankShot(new Vector3(from.x + Mathf.Sin(yaw) * 4.6f,
+                                     Ground(from.x, from.z) + 2.1f,
+                                     from.z + Mathf.Cos(yaw) * 4.6f),
+                         new Vector3(at.x, Ground(at.x, at.y) + 1.2f, at.y));
         };
 
         army.Killed += (u, knock) =>
-        {
-            // a hit you can see, so a casualty is not just a model changing state
-            if (knock.sqrMagnitude > 0.01f)
-                Impact(new Vector3(u.x, Ground(u.x, u.z) + 1f, u.z), knock);
-            // a model body stands on the ground; the proxy box is centred
-            float lift = bodyPrefab != null ? 0f : 0.9f;
-            Body(new Vector3(u.x, Ground(u.x, u.z) + lift, u.z), u.heading,
-                 u.side == Army.Side.Bull, knock);
-        };
+            DrawCorpse(u.x, u.z, u.heading, u.side == Army.Side.Bull, knock);
 
         army.Destroyed += v => TankExplosion(new Vector3(v.x, Ground(v.x, v.z), v.z), v.heading);
 
-        // A bomb is not a tank going up. Everything is bigger and there is more
-        // of it, because the whole point of a gunship is that it outweighs
-        // anything on the ground.
-        army.Bombed += at =>
-        {
-            var p = new Vector3(at.x, Ground(at.x, at.y), at.y);
-            if (!FlipbookBurst(p + Vector3.up * 3f, 26, 1.1f))
-            {
-                Fireball(p + Vector3.up * 2f, 11f, fireCoreMaterial, 0f, 0.3f);
-                for (int i = 0; i < 8; i++)
-                    Fireball(p + new Vector3(Random.Range(-5f, 5f), Random.Range(1f, 7f), Random.Range(-5f, 5f)),
-                             Random.Range(7f, 13f), fireMaterial, i * 0.05f, Random.Range(0.6f, 1f));
-            }
-            if (!SmokeBurst(p + Vector3.up * 5f, 16, Random.Range(5f, 9f)))
-                for (int i = 0; i < 10; i++)
-                    Smoke(p + new Vector3(Random.Range(-3f, 3f), Random.Range(2f, 6f), Random.Range(-3f, 3f)),
-                          Random.Range(6f, 10f), i * 0.1f);
-
-            for (int i = 0; i < 22; i++)
-            {
-                float a = Random.Range(0f, Mathf.PI * 2f);
-                var v = new Vector3(Mathf.Sin(a), 0f, Mathf.Cos(a)) * Random.Range(10f, 26f);
-                v.y = Random.Range(10f, 24f);
-                if (i % 2 == 0) Spark(p + Vector3.up * 2f, v);
-                else Debris(p + Vector3.up * 2f, v, Random.Range(0.15f, 0.4f));
-            }
-            Shockwave(p);
-        };
+        army.Bombed += at => DrawBombBurst(new Vector3(at.x, Ground(at.x, at.y), at.y));
     }
 }
