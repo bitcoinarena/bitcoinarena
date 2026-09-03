@@ -994,6 +994,13 @@ target or a cluster near the front, not a blind drop on the track. They stand an
 their own rear. A hull faces the way it drives. That is playability,
 not a later polish letter.
 
+**M1 liquidation bombers.** A Binance futures liquidation scrambles a
+bomber with an atomic load. Rare in live tape, so a simulation toggle
+fires them when the feed is quiet (HUD says sim). The strike is tactical
+near the front; blast size follows liquidation size; the crater lasts
+10–20 rounds and units avoid it. Driving the truck through fallout
+costs health and can kill, with a warning and the atom symbol.
+
 ### 15.3 What drives the spread
 
 **Driving feel (stage 1)** is the largest uncertainty and the only one that

@@ -2973,6 +2973,12 @@ The army is simulated, not painted. Each tank and each rifleman has a
 named goal each tick (front, foe, or retreat) and steps toward it.
 Gunships run their own side of the front and always aim a living target
 or a cluster near `frontline_z(x)`, not a timer-drop on empty ground.
+
+A second air arm is liquidation bombers. Each live futures liquidation
+scrambles one strike; a simulation toggle covers quiet tape. Aim is
+tactical near the front. Crater radius follows liquidation size, lasts
+10–20 rounds, and is avoided by units. The truck taking that ground is
+irradiated (health, death) with a visible atom warning. Not a gunship.
 Units occupy the front line wherever `frontline_z(x)` sits — not a
 parking lot on their spawn side. Heading follows travel. This is M1
 playability: the enemies you see are doing a job, or the core has not
