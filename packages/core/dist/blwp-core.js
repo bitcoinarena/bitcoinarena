@@ -848,7 +848,40 @@ const O_SQUADS = O_BOMBS + Math.imul(MAX_BOMBS, B_WORDS);
 const SQUADS_PER_SIDE = 3;
 const SQUAD_WORDS = Math.imul(SQUADS_PER_SIDE, 2);   // bull, then bear
 
-const WORDS = O_SQUADS + SQUAD_WORDS;
+/**
+ * THE LIQUIDATION QUEUE.
+ *
+ * A forced liquidation is not something the core can know: it happens on an
+ * exchange. The law is that identical inputs give identical results, so it
+ * enters as an INPUT and is carried in the state, where the digest covers it
+ * and a replay is closed. `step` is untouched - the queue is filled by
+ * `submitLiquidation` between ticks, exactly the way a live feed and a
+ * simulation clock both would, so the two are the same submitter and cannot
+ * drift apart.
+ *
+ * Appended after the squads, so no offset in front of it moves. `WORDS` grows,
+ * which rewrites every golden vector's digest - unavoidable for any state a
+ * replay has to carry, and the reason this is one letter's work and not a
+ * detail.
+ *
+ * L_PENDING  queued since the last tick, in MILLIONS of USD, Q16.16.
+ *            Millions because a liquidation is worth six to nine figures and
+ *            dollars in Q16.16 overflow a signed 32-bit word at $32,768. In
+ *            millions the same word reaches $32 billion with a resolution of
+ *            $15.26, which is finer than any crater will ever read.
+ * L_LAST     what the last tick consumed, so the strike can read it and a
+ *            test can see it without reaching inside `step`.
+ * L_SERIAL   how many have ever been accepted. The digest moves on every
+ *            submission, so a replay that dropped one cannot match.
+ */
+const O_LIQ = O_SQUADS + SQUAD_WORDS;
+const LIQ_WORDS = 3;
+const L_PENDING = 0, L_LAST = 1, L_SERIAL = 2;
+
+/** The largest liquidation the word can hold, in millions of USD, Q16.16. */
+const LIQ_MAX = Math.imul(32767, 65536);
+
+const WORDS = O_LIQ + LIQ_WORDS;
 
 // truck fields, relative to O_TRUCK
 const T_X = 0, T_Z = 1, T_HEADING = 2, T_VX = 3, T_VZ = 4;
@@ -3075,6 +3108,33 @@ function setSolids(st, count, boxes) {
  * and a truck driving over a flat table for however many frames it takes Unity
  * to notice and re-send a terrain.
  */
+/**
+ * Queues a liquidation for the next tick. Size in MILLIONS of USD, Q16.16.
+ *
+ * This is the whole of the client's part: a live Binance `!forceOrder@arr`
+ * message and the simulation clock are two callers of this one function, so
+ * the same size gives the same strike, the same crater and the same
+ * irradiation whichever of them sent it. Nothing is decided here.
+ *
+ * Two in one frame keep the LARGER, because the size is the crater and the
+ * bigger one is the crater you would see; `L_SERIAL` still counts both, so a
+ * replay that dropped one cannot match the digest. Sizes at or below zero are
+ * refused rather than clamped to nothing: a caller passing a bad number
+ * should learn it from the return value, not from a silent no-op that a
+ * replay would then have to reproduce.
+ *
+ * Returns true if it was queued.
+ */
+function submitLiquidation(st, size) {
+  const v = size | 0;
+  if (v <= 0) return false;
+  const s = st.i32;
+  const capped = v > LIQ_MAX ? LIQ_MAX : v;
+  if (capped > s[O_LIQ + L_PENDING]) s[O_LIQ + L_PENDING] = capped;
+  s[O_LIQ + L_SERIAL] = (s[O_LIQ + L_SERIAL] + 1) | 0;
+  return true;
+}
+
 function restart(st, seedWord) {
   const fresh = init(seedWord);
   fresh.ground = st.ground;
@@ -3562,6 +3622,14 @@ function step(st, throttle, steer, brake, handbrake, practice) {
   const rng = s.subarray(O_RNG, O_RNG + 4);
   const T = O_TRUCK;
   s[O_TICK] = (s[O_TICK] + 1) | 0;
+
+  // ---- 0. the liquidation queue ------------------------------------------
+  // First, before anything moves, and it draws no random number. The order of
+  // a tick is protocol: a strike that armed after the army had stepped would
+  // be a different battle, and a verifier stepping it the other way round
+  // would get a different digest from the same inputs.
+  s[O_LIQ + L_LAST] = s[O_LIQ + L_PENDING];
+  s[O_LIQ + L_PENDING] = 0;
   fillArmour(st);
 
   // ---- 1. vehicle --------------------------------------------------------
@@ -3998,7 +4066,7 @@ const runScore = (st) =>
 
 return { init: init, step: step, hash: hash, runScore: runScore,
          setGround: setGround, groundAt: groundAt, setSolids: setSolids, teleport: teleport,
-         restart: restart, frontAt: frontAt,
+         restart: restart, frontAt: frontAt, submitLiquidation: submitLiquidation,
          create: create, WORDS: WORDS };
 })();
 if (typeof module !== "undefined") module.exports = BLWP;

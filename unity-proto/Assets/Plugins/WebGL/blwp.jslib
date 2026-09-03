@@ -28,6 +28,16 @@ mergeInto(LibraryManager.library, {
   // work the line out again. The core smooths the price tape before laying it
   // across the map and C# does not, so a second copy of the rule put the drawn
   // territory 22.04 m from the men on average and 49.14 m at worst.
+  // Queues a liquidation for the next tick. Size in MILLIONS of USD, Q16.16.
+  // The live Binance feed and the simulation clock are two callers of this one
+  // function, which is what makes their strikes identical rather than merely
+  // similar. Nothing is decided here; the core decides.
+  BlwpLiquidation: function (size) {
+    var b = Module.blwp;
+    if (!b || !b.core.submitLiquidation) return 0;
+    return b.core.submitLiquidation(b.st, size | 0) ? 1 : 0;
+  },
+
   BlwpFrontlineZ: function (x) {
     var b = Module.blwp;
     if (!b || !b.core.frontAt) return 0;

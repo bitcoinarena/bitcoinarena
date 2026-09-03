@@ -11,7 +11,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { init, step } from '../src/sim.js';
+import { init, step, submitLiquidation } from '../src/sim.js';
 import { hash } from '../src/state.js';
 
 const require = createRequire(import.meta.url);
@@ -31,6 +31,8 @@ for (const entry of index.vectors) {
     const a = init(v.seed);
     const b = bundled.init(v.seed);
     for (let t = 0; t < v.ticks; t++) {
+      for (const [at, size] of v.liquidations || [])
+        if (at === t) { submitLiquidation(a, size); bundled.submitLiquidation(b, size); }
       const [th, sr, br, hb, pr] = v.inputs[t];
       step(a, th, sr, br, hb, pr);
       bundled.step(b, th, sr, br, hb, pr);

@@ -142,7 +142,40 @@ export const O_SQUADS = O_BOMBS + Math.imul(MAX_BOMBS, B_WORDS);
 export const SQUADS_PER_SIDE = 3;
 export const SQUAD_WORDS = Math.imul(SQUADS_PER_SIDE, 2);   // bull, then bear
 
-export const WORDS = O_SQUADS + SQUAD_WORDS;
+/**
+ * THE LIQUIDATION QUEUE.
+ *
+ * A forced liquidation is not something the core can know: it happens on an
+ * exchange. The law is that identical inputs give identical results, so it
+ * enters as an INPUT and is carried in the state, where the digest covers it
+ * and a replay is closed. `step` is untouched - the queue is filled by
+ * `submitLiquidation` between ticks, exactly the way a live feed and a
+ * simulation clock both would, so the two are the same submitter and cannot
+ * drift apart.
+ *
+ * Appended after the squads, so no offset in front of it moves. `WORDS` grows,
+ * which rewrites every golden vector's digest - unavoidable for any state a
+ * replay has to carry, and the reason this is one letter's work and not a
+ * detail.
+ *
+ * L_PENDING  queued since the last tick, in MILLIONS of USD, Q16.16.
+ *            Millions because a liquidation is worth six to nine figures and
+ *            dollars in Q16.16 overflow a signed 32-bit word at $32,768. In
+ *            millions the same word reaches $32 billion with a resolution of
+ *            $15.26, which is finer than any crater will ever read.
+ * L_LAST     what the last tick consumed, so the strike can read it and a
+ *            test can see it without reaching inside `step`.
+ * L_SERIAL   how many have ever been accepted. The digest moves on every
+ *            submission, so a replay that dropped one cannot match.
+ */
+export const O_LIQ = O_SQUADS + SQUAD_WORDS;
+export const LIQ_WORDS = 3;
+export const L_PENDING = 0, L_LAST = 1, L_SERIAL = 2;
+
+/** The largest liquidation the word can hold, in millions of USD, Q16.16. */
+export const LIQ_MAX = Math.imul(32767, 65536);
+
+export const WORDS = O_LIQ + LIQ_WORDS;
 
 // truck fields, relative to O_TRUCK
 export const T_X = 0, T_Z = 1, T_HEADING = 2, T_VX = 3, T_VZ = 4;

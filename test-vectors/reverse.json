@@ -3,7 +3,7 @@
  "seed": 4,
  "ticks": 3600,
  "units": 96,
- "note": "Inputs are Q16.16 in [-1,1]. Order per tick: throttle, steer, brake, handbrake, practice. Practice withholds damage but changes nothing else - the army still fires and still counts towards danger, so the draw order is identical.",
+ "note": "Inputs are Q16.16 in [-1,1]. Order per tick: throttle, steer, brake, handbrake, practice. `liquidations` are [tick, size] pairs handed to submitLiquidation before that tick, size in millions of USD Q16.16. Practice withholds damage but changes nothing else - the army still fires and still counts towards danger, so the draw order is identical.",
  "inputs": [
   [
    65536,
@@ -25206,30 +25206,31 @@
    0
   ]
  ],
+ "liquidations": [],
  "checkpoints": [
   {
    "tick": 600,
-   "hash": "58a36a6574853db5131c3314592eb77f45dd6157a07469d6b1ef7c330660de15"
+   "hash": "c55f6668df8c380f540d36c1fa424569c18e297e47e65ef13bc05cf0a33472a4"
   },
   {
    "tick": 1200,
-   "hash": "756fd0be2d00c112ea84f714568e2675db0e15cfde5b3db5b937113d3b67ed28"
+   "hash": "006128680feb22d2c0dc9dc7036c781f9f43bc0eb93924c867a5f344d553004b"
   },
   {
    "tick": 1800,
-   "hash": "f4e8d9f4ae697df98f72545d1537096eeeaaaf6bce6f0c3c8c882938a4cc7c2b"
+   "hash": "b1dc4cf197e5229cd85b6c12f3cdc1f6d657a6428bdb9a7441b083317abb766a"
   },
   {
    "tick": 2400,
-   "hash": "5a3020e2b271c112f214cc8328b3f282265437defb9136691508d31b37533cb5"
+   "hash": "007ab46446049fc791b5d19c08bff34718247c1d407c9b6bffc7967e384ea49c"
   },
   {
    "tick": 3000,
-   "hash": "13d93590cb17b4aec0ca59fa9f2e3ee1c7090a18bb234320c9a9fe8974f7d0e3"
+   "hash": "34b3d48f08da9c81366c8915684f0ea4bd37729f826c31190fc4cea8e06c3ce4"
   },
   {
    "tick": 3600,
-   "hash": "be424f671de1990fd8bf493d2961302055b1d66feea1c4b7cb6c6d8009174dc4"
+   "hash": "f0f2176d9250017448c214e519b1b82dfc681cf4653adbb2fc47fb2192f5fcd1"
   }
  ]
 }

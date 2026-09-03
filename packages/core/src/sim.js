@@ -17,6 +17,7 @@ import {
   O_TICK, O_RNG, O_TRUCK, O_SCORE, O_ARMY,
   A_ARMOUR_BULL, A_ARMOUR_BEAR, A_RIFLE_BULL, A_RIFLE_BEAR,
   O_AIR, AIR_BULL, AIR_BEAR, MAX_HELIS, MAX_BOMBS,
+  O_LIQ, L_PENDING, L_LAST, L_SERIAL, LIQ_MAX,
   H_STATE, H_SIDE, H_X, H_Y, H_Z, H_DIR, H_T, H_DROPIN,
   B_STATE, B_SIDE, B_X, B_Y, B_Z, B_VX, B_VY, B_VZ,
   T_X, T_Z, T_HEADING, T_VX, T_VZ, T_ANGVEL, T_HP, T_CARGO, T_FLAGS,
@@ -220,6 +221,33 @@ export function setSolids(st, count, boxes) {
  * and a truck driving over a flat table for however many frames it takes Unity
  * to notice and re-send a terrain.
  */
+/**
+ * Queues a liquidation for the next tick. Size in MILLIONS of USD, Q16.16.
+ *
+ * This is the whole of the client's part: a live Binance `!forceOrder@arr`
+ * message and the simulation clock are two callers of this one function, so
+ * the same size gives the same strike, the same crater and the same
+ * irradiation whichever of them sent it. Nothing is decided here.
+ *
+ * Two in one frame keep the LARGER, because the size is the crater and the
+ * bigger one is the crater you would see; `L_SERIAL` still counts both, so a
+ * replay that dropped one cannot match the digest. Sizes at or below zero are
+ * refused rather than clamped to nothing: a caller passing a bad number
+ * should learn it from the return value, not from a silent no-op that a
+ * replay would then have to reproduce.
+ *
+ * Returns true if it was queued.
+ */
+export function submitLiquidation(st, size) {
+  const v = size | 0;
+  if (v <= 0) return false;
+  const s = st.i32;
+  const capped = v > LIQ_MAX ? LIQ_MAX : v;
+  if (capped > s[O_LIQ + L_PENDING]) s[O_LIQ + L_PENDING] = capped;
+  s[O_LIQ + L_SERIAL] = (s[O_LIQ + L_SERIAL] + 1) | 0;
+  return true;
+}
+
 export function restart(st, seedWord) {
   const fresh = init(seedWord);
   fresh.ground = st.ground;
@@ -707,6 +735,14 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
   const rng = s.subarray(O_RNG, O_RNG + 4);
   const T = O_TRUCK;
   s[O_TICK] = (s[O_TICK] + 1) | 0;
+
+  // ---- 0. the liquidation queue ------------------------------------------
+  // First, before anything moves, and it draws no random number. The order of
+  // a tick is protocol: a strike that armed after the army had stepped would
+  // be a different battle, and a verifier stepping it the other way round
+  // would get a different digest from the same inputs.
+  s[O_LIQ + L_LAST] = s[O_LIQ + L_PENDING];
+  s[O_LIQ + L_PENDING] = 0;
   fillArmour(st);
 
   // ---- 1. vehicle --------------------------------------------------------

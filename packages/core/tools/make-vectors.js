@@ -5,7 +5,7 @@
 // the constants they were produced under - not a reference to this code.
 
 import { writeFileSync, mkdirSync } from 'node:fs';
-import { init, step, UNITS } from '../src/sim.js';
+import { init, step, submitLiquidation, UNITS } from '../src/sim.js';
 import { hash } from '../src/state.js';
 
 const DIR = new URL('../../../test-vectors/', import.meta.url).pathname;
@@ -23,14 +23,26 @@ const CASES = [
   // Practice is an input, so it needs a vector: the same drive shielded, which
   // must diverge from 'straight' at the first shot and set the practice word.
   { name: 'practice',  seed: 0x0001, ticks: 3600, input: () => ({ th: 65536, st: 0, br: 0, hb: 0, pr: 1 }) },
+  // A liquidation is an INPUT, not something the core decides, so the replay
+  // is only closed if the queue is in the vector too. Three sizes at three
+  // ticks: one small, one that the cap has to bite on, and one at zero to pin
+  // that a refused submission still leaves a digest a verifier can match.
+  { name: 'liquidation', seed: 0x0006, ticks: 3600,
+    input: () => ({ th: 65536, st: 0, br: 0, hb: 0, pr: 0 }),
+    liq: (t) => (t === 300 ? Math.imul(2, 65536)
+              : t === 1200 ? Math.imul(40000, 65536)
+              : t === 2400 ? 0 : 0) },
 ];
 
 const index = [];
 for (const c of CASES) {
   const st = init(c.seed);
   const checkpoints = [];
+  const queued = [];
   for (let t = 0; t < c.ticks; t++) {
     const i = c.input(t);
+    const q = c.liq ? c.liq(t) : 0;
+    if (q !== 0) { submitLiquidation(st, q); queued.push([t, q]); }
     step(st, i.th, i.st, i.br, i.hb, i.pr);
     if ((t + 1) % 600 === 0) checkpoints.push({ tick: t + 1, hash: hash(st) });
   }
@@ -39,11 +51,15 @@ for (const c of CASES) {
     seed: c.seed,
     ticks: c.ticks,
     units: UNITS,
-    note: 'Inputs are Q16.16 in [-1,1]. Order per tick: throttle, steer, brake, handbrake, practice. Practice withholds damage but changes nothing else - the army still fires and still counts towards danger, so the draw order is identical.',
+    note: 'Inputs are Q16.16 in [-1,1]. Order per tick: throttle, steer, brake, handbrake, practice. `liquidations` are [tick, size] pairs handed to submitLiquidation before that tick, size in millions of USD Q16.16. Practice withholds damage but changes nothing else - the army still fires and still counts towards danger, so the draw order is identical.',
     inputs: Array.from({ length: c.ticks }, (_, t) => {
       const i = c.input(t);
       return [i.th, i.st, i.br, i.hb, i.pr];
     }),
+    // Sparse on purpose: a liquidation is rare, and 3600 zeroes would say
+    // nothing a verifier needs. `[tick, size]`, size in millions of USD
+    // Q16.16, submitted BEFORE that tick's `step`.
+    liquidations: queued,
     checkpoints,
   };
   writeFileSync(DIR + c.name + '.json', JSON.stringify(vector, null, 1));

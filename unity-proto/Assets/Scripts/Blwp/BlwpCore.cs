@@ -25,6 +25,7 @@ namespace Blwp
         [DllImport("__Internal")] private static extern int BlwpReadState(IntPtr ptr, int wordCount);
         [DllImport("__Internal")] private static extern int BlwpStateHash(IntPtr ptr, int cap);
         [DllImport("__Internal")] private static extern int BlwpFrontlineZ(int x);
+        [DllImport("__Internal")] private static extern int BlwpLiquidation(int size);
         [DllImport("__Internal")] private static extern int BlwpRunScore();
         [DllImport("__Internal")] private static extern int BlwpStateWords();
         [DllImport("__Internal")] private static extern int BlwpQueryParam(IntPtr name, IntPtr outp, int cap);
@@ -40,6 +41,7 @@ namespace Blwp
         private static int BlwpReadState(IntPtr ptr, int wordCount) => 0;
         private static int BlwpStateHash(IntPtr ptr, int cap) => 0;
         private static int BlwpFrontlineZ(int x) => 0;
+        private static int BlwpLiquidation(int size) => 0;
         private static int BlwpRunScore() => 0;
         private static int BlwpStateWords() => 0;
         private static int BlwpQueryParam(IntPtr n, IntPtr o, int cap) => 0;
@@ -265,6 +267,38 @@ namespace Blwp
         /// 49.14 m at worst - at x=68 the core has the front at -8.3 m and the
         /// raw function at -57.4. So whoever DRAWS the front asks the core.
         /// </summary>
+        /// <summary>
+        /// Queues a liquidation for the core's next tick. `usd` is the dollar
+        /// value of the forced order, as `MarketFeed.Liquidation.UsdValue`
+        /// carries it.
+        ///
+        /// UNITS. The core takes MILLIONS of dollars in Q16.16, because a
+        /// liquidation is worth six to nine figures and dollars in Q16.16
+        /// overflow a signed word at $32,768. In millions the same word holds
+        /// $32 billion at a resolution of $15.26. The conversion is done in
+        /// `double` on purpose: a float loses the low digits of a nine-figure
+        /// number before the scaling ever happens.
+        ///
+        /// The live feed and the simulation clock both call this, and that is
+        /// the whole reason they cannot drift: the core sees one input, not
+        /// two sources.
+        /// </summary>
+        public static bool Liquidation(double usd)
+        {
+            if (!Available || !(usd > 0)) return false;
+            double scaled = System.Math.Round(usd / 1e6 * ONE);
+            if (scaled < 1) scaled = 1;                 // $15 or less still lands
+            if (scaled > Layout.LIQ_MAX) scaled = Layout.LIQ_MAX;
+            return BlwpLiquidation((int)scaled) != 0;
+        }
+
+        /// <summary>The liquidation the core consumed on its last tick, in millions of USD.</summary>
+        public static float LastLiquidation =>
+            _state[Layout.O_LIQ + Layout.L_LAST] / (float)ONE;
+
+        /// <summary>How many liquidations the core has accepted this run.</summary>
+        public static int LiquidationCount => _state[Layout.O_LIQ + Layout.L_SERIAL];
+
         public static float FrontlineZ(float x) =>
             Available ? BlwpFrontlineZ(Mathf.RoundToInt(x * ONE)) / (float)ONE : 0f;
 

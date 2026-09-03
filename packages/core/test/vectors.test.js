@@ -11,7 +11,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
-import { init, step } from '../src/sim.js';
+import { init, step, submitLiquidation } from '../src/sim.js';
 import { hash } from '../src/state.js';
 
 const DIR = new URL('../../../test-vectors/', import.meta.url).pathname;
@@ -23,6 +23,8 @@ for (const entry of index.vectors) {
     const st = init(v.seed);
     let checked = 0;
     for (let t = 0; t < v.ticks; t++) {
+      for (const [at, size] of v.liquidations || [])
+        if (at === t) submitLiquidation(st, size);
       const [th, sr, br, hb, pr] = v.inputs[t];
       step(st, th, sr, br, hb, pr);
       const cp = v.checkpoints[checked];
