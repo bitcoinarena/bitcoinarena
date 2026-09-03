@@ -989,8 +989,8 @@ wheel, not a mechanical port.
 **M1 army on screen.** Tanks, infantry and gunships are not decoration.
 Each pursues a real goal: close on the front, hold the line, engage a
 foe, or fall back if overrun — the same jobs `Army.cs` already names.
-Gunships run the length of the front on their own side and drop on what
-they pass. They stand and fly where the front is, not in a clump on
+Gunships run the length of the front on their own side and always aim a
+target or a cluster near the front, not a blind drop on the track. They stand and fly where the front is, not in a clump on
 their own rear. A hull faces the way it drives. That is playability,
 not a later polish letter.
 
