@@ -85,7 +85,25 @@ export function frontlineZ(hist, x, halfX, halfZ) {
   const span = sub(hi, lo);
   if (span <= 0) return 0;
 
-  // -1 .. +1 about the midpoint, then two thirds of the map's half depth
+  // -1 .. +1 about the midpoint, then C#'s own share of the map's half depth.
+  //
+  // 43690 stood here - two thirds - and `PriceHistory.FrontlineZ:128` returns
+  // `(n - 0.5) * worldDepth * 0.72`. With `n` in [0, 1] that is +-0.36 of the
+  // FULL depth, and `MempoolTerrain` has width 260 and depth 170, which are
+  // exactly twice the core's HALF_X 130 and HALF_Z 85. So C#'s amplitude is
+  // 0.72 of the HALF depth and the core's was 0.6667 of it: the same quantity
+  // in the same units, off by 8%, and +-56.7 m where C# has +-61.2 m.
+  //
+  // That 3.1 m of amplitude is depth C# MEANS, not tape noise, so it comes
+  // back. The other 18.8 m of the gap to C# is the jag this file filters out
+  // on purpose - 86% of the difference - and it stays out: a front a man
+  // cannot close on is not a front, whatever its amplitude.
+  //
+  // It changes no envelope quantity. Both verdicts are measured under
+  // `--seam0`, where the tape is flat, `span` is zero and this function
+  // returns 0 before it ever reaches the scale - 68/72 air off and 65/72 air
+  // on, identical to the digit with either constant. This is a wrong number
+  // made right, not a number tuned to a test.
   const t = sub(div(mulFast(sub(price, lo), Math.imul(2, ONE)), span), ONE);
-  return mulFast(t, mulFast(halfZ, 43690));
+  return mulFast(t, mulFast(halfZ, 47186));
 }
