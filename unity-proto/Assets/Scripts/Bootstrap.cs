@@ -94,6 +94,45 @@ public class Bootstrap : MonoBehaviour
     public SplashScreen Splash { get; private set; }
     public CombatFx Fx { get; private set; }
 
+    /// <summary>
+    /// The simulation clock, for when the feed is quiet.
+    ///
+    /// Liquidations are rare - the contract says so - and a feature nobody
+    /// ever sees is a feature that is not there. So when none has arrived for
+    /// as long as the feed itself keeps them, one is fired on a clock.
+    ///
+    /// Both numbers are the feed's own rather than invented: `MarketFeed`
+    /// drops a liquidation at `Age > 90f`, so ninety seconds is what that
+    /// feed calls "a while ago", and it is both the silence that starts the
+    /// clock and the interval it ticks at. The size is drawn across the span
+    /// the core's own crater rule is defined over, one million to a thousand
+    /// million; outside it the rule clamps and the hole stops growing.
+    ///
+    /// It goes through the SAME `BlwpCore.Liquidation` the live feed does.
+    /// That is the whole reason a simulated strike and a real one cannot look
+    /// different: the core is handed one input and cannot tell which sent it.
+    /// `Simulated` says which, for the HUD, and nothing else reads it.
+    /// </summary>
+    const float LiquidationSilence = 90f;
+
+    float _lastLiquidation, _nextSim;
+
+    /// <summary>True when the last liquidation the core saw was a simulated one.</summary>
+    public static bool Simulated { get; private set; }
+
+    void Update()
+    {
+        if (Market == null || !Blwp.BlwpCore.Available) return;
+        if (Market.Liquidations.Count > 0) { _lastLiquidation = Time.time; Simulated = false; }
+        if (Time.time - _lastLiquidation < LiquidationSilence) return;
+        if (Time.time < _nextSim) return;
+        _nextSim = Time.time + LiquidationSilence;
+
+        // one million to a thousand million, the span the crater rule spans
+        double usd = UnityEngine.Random.Range(1f, 1000f) * 1e6;
+        if (Blwp.BlwpCore.Liquidation(usd)) Simulated = true;
+    }
+
     void Start()
     {
         SharpenTextures();
@@ -105,6 +144,15 @@ public class Bootstrap : MonoBehaviour
         // live tape first: the frontline is the price chart, so everything
         // downstream wants it already ticking
         Market = gameObject.AddComponent<MarketFeed>();
+
+        // A forced liquidation is an INPUT to the core, and this is where it
+        // becomes one. Without this the whole liquidation arm - the strike,
+        // the crater, the paths round it, the irradiation, the warning - is
+        // built and unreachable, because the core is never told.
+        //
+        // `MarketFeed.OnLiquidation` had no subscriber at all before this;
+        // the only thing that read its list was a debug line counting them.
+        Market.OnLiquidation += (l) => Blwp.BlwpCore.Liquidation(l.UsdValue);
         Field = gameObject.AddComponent<Battlefield>();
         Field.terrain = _terrain;
         Field.market = Market;

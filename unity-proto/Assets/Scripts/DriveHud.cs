@@ -849,6 +849,18 @@ public class DriveHud : MonoBehaviour
                             0.7f + 0.3f * Mathf.Sin(Time.unscaledTime * 6.5f));
         var band = new Rect(0f, h * 0.30f, w, warn.fontSize * 1.6f);
         Shadowed(band, "IRRADIATED", warn, hot);
+
+        // The contract asks for a simulated strike to be MARKED as one. Same
+        // pictures either way - the core cannot tell a simulated liquidation
+        // from a live one, and neither can the drawing - so the only honest
+        // difference is a word saying which.
+        if (Bootstrap.Simulated)
+        {
+            var tag = new GUIStyle(_small) { alignment = TextAnchor.UpperCenter };
+            Shadowed(new Rect(0f, band.y + band.height, w, _small.fontSize * 1.6f),
+                     "SIM  -  no liquidation on the feed", tag,
+                     new Color(0.96f, 0.86f, 0.20f, 0.75f));
+        }
         float half = warn.fontSize * 3.0f;
         Trefoil(new Vector2(w * 0.5f - half, band.y + band.height * 0.5f), warn.fontSize * 1.3f, hot);
         Trefoil(new Vector2(w * 0.5f + half, band.y + band.height * 0.5f), warn.fontSize * 1.3f, hot);
