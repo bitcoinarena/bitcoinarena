@@ -25,6 +25,9 @@ export const TYPE_PAYOUT_TABLE = 0x07;
  */
 export const TYPE_INPUT_BATCH = 0x08;
 
+/** A whole round's inputs as one object - what a node hands over. */
+export const TYPE_TRANSCRIPT = 0x09;
+
 export const TAG = {
   roundContract: 'BLWP/v1/RoundContract',
   entryContract: 'BLWP/v1/EntryContract',
@@ -36,6 +39,7 @@ export const TAG = {
   result: 'BLWP/v1/Result',
   payoutTable: 'BLWP/v1/PayoutTable',
   inputBatch: 'BLWP/v1/InputBatch',
+  transcript: 'BLWP/v1/Transcript',
   remainder: 'BLWP/v1/Remainder',
 };
 

@@ -13,7 +13,36 @@ import { init, step } from '../src/sim.js';
 import { hash } from '../src/state.js';
 
 const path = process.argv[2];
-if (!path) { console.error('usage: replay.js <vector.json>'); process.exit(2); }
+if (!path) { console.error('usage: replay.js <vector.json | transcript.bin> [seed]'); process.exit(2); }
+
+// A TRANSCRIPT OFF THE WIRE, which is the thing this file's own comment said
+// the node's replay pool would need. A vector is a file we wrote; a transcript
+// is what a node hands over, and the whole point of M2.1 step 2 is that the
+// two replay to the same place. Told apart by the first byte - a transcript
+// carries its type - so neither needs a flag.
+const raw = readFileSync(path);
+if (raw[0] === 0x09) {
+  const { decodeTranscript, checkTranscript, flatten } =
+    await import('../../protocol/src/transcript.js');
+  const t = decodeTranscript(new Uint8Array(raw));
+  const chain = checkTranscript(t);
+  if (!chain.ok) { console.error(`the chain is broken at batch ${chain.at}: ${chain.why}`); process.exit(1); }
+
+  const { firstTick, ticks, liquidations } = flatten(t);
+  if (firstTick !== 0) { console.error(`this transcript starts at tick ${firstTick}, not 0`); process.exit(1); }
+
+  const seed = Number(process.argv[3] || 1);
+  const { submitLiquidation } = await import('../src/sim.js');
+  const st = init(seed);
+  const due = new Map(liquidations.map(([at, size]) => [at, size]));
+  for (let i = 0; i < ticks.length; i++) {
+    if (due.has(i)) submitLiquidation(st, due.get(i));
+    step(st, ticks[i][0], ticks[i][1], ticks[i][2], ticks[i][3], ticks[i][4]);
+  }
+  console.log(`${ticks.length} ticks, ${liquidations.length} liquidation(s)`);
+  console.log(hash(st));
+  process.exit(0);
+}
 
 const v = JSON.parse(readFileSync(path, 'utf8'));
 const st = init(v.seed);

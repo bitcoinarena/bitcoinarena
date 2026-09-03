@@ -6,7 +6,7 @@ import { encodeInputBatch, decodeInputBatch, batchId, batchTicks, INPUT_WORDS } 
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const sample = () => ({
-  roundId: b32(7), entryId: b32(9), firstTick: 120,
+  roundId: b32(7), entryId: b32(9), previousHash: new Uint8Array(32), firstTick: 120,
   ticks: [[65536, 0, 0, 0, 0], [65536, -22000, 0, 0, 0], [0, 0, 65536, 0, 1]],
   liquidations: [[121, 3 * 65536]],
 });
@@ -63,4 +63,12 @@ test('the id is tagged, so it cannot collide with a contract of the same bytes',
   // the tag is what separates them; the body alone would not
   assert.notEqual(toHex(batchId(sample())), toHex(bytes.slice(0, 32)));
   assert.equal(batchId(sample()).length, 32);
+});
+
+test('the chain field is carried, and changes the id', () => {
+  const a = sample();
+  const b = { ...sample(), previousHash: new Uint8Array(32).fill(3) };
+  assert.notEqual(toHex(batchId(a)), toHex(batchId(b)),
+    'two batches with the same inputs but different histories are different batches');
+  assert.deepEqual(decodeInputBatch(encodeInputBatch(b)).previousHash, b.previousHash);
 });

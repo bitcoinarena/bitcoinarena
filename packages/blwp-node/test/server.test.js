@@ -5,7 +5,8 @@ import assert from 'node:assert/strict';
 import { openStore } from '../src/store.js';
 import { serve } from '../src/server.js';
 import { encodeRoundContract, roundId, encodeEntryContract, entryId } from '../../protocol/src/contracts.js';
-import { encodeInputBatch } from '../../protocol/src/batch.js';
+import { encodeInputBatch, batchId } from '../../protocol/src/batch.js';
+import { GENESIS, decodeTranscript, checkTranscript, transcriptHash } from '../../protocol/src/transcript.js';
 import { toHex } from '../../protocol/src/hash.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
@@ -61,20 +62,38 @@ test('a round is opened, joined, played and closed by one process', async () => 
     assert.equal(toHex(joined.bytes), toHex(entryId(e)));
 
     const sock = await talk(node.port);
-    const batch = (first, n) => encodeInputBatch({
-      roundId: opened.bytes, entryId: joined.bytes, firstTick: first,
-      ticks: Array.from({ length: n }, (_, i) => [65536, first + i, 0, 0, 0]),
-      liquidations: first === 0 ? [[1, 3 * 65536]] : [],
-    });
+    let prev = GENESIS;
+    const batch = (first, n, chainTo = prev) => {
+      const b = {
+        roundId: opened.bytes, entryId: joined.bytes, previousHash: chainTo, firstTick: first,
+        ticks: Array.from({ length: n }, (_, i) => [65536, first + i, 0, 0, 0]),
+        liquidations: first === 0 ? [[1, 3 * 65536]] : [],
+      };
+      return { bytes: encodeInputBatch(b), id: batchId(b) };
+    };
 
-    assert.equal(await sock.say(batch(0, 60)), '60', 'sixty new ticks');
-    assert.equal(await sock.say(batch(0, 60)), '0', 'the same message again is a no-op');
-    assert.equal(await sock.say(batch(60, 60)), '60');
+    const one = batch(0, 60);
+    assert.equal(await sock.say(one.bytes), '60', 'sixty new ticks');
+    assert.equal(await sock.say(one.bytes), '0', 'the same message again is a no-op');
+    prev = one.id;
+    const two = batch(60, 60);
+    assert.equal(await sock.say(two.bytes), '60');
+    prev = two.id;
 
     assert.equal(await sock.say('close ' + toHex(opened.bytes)), 'closed');
     assert.equal(await sock.say('close ' + toHex(opened.bytes)), 'already closed');
-    assert.match(await sock.say(batch(120, 10)), /closed/, 'and it takes nothing after that');
+    assert.match(await sock.say(batch(120, 10).bytes), /closed/, 'and it takes nothing after that');
     sock.shut();
+
+    // The transcript as ONE object, fetched the way a second node would.
+    const got2 = await fetch(
+      `http://127.0.0.1:${node.port}/transcript?round=${toHex(opened.bytes)}&entry=${toHex(joined.bytes)}`);
+    assert.equal(got2.status, 200);
+    assert.equal(got2.headers.get('x-ticks'), '120');
+    const t2 = decodeTranscript(new Uint8Array(await got2.arrayBuffer()));
+    assert.deepEqual(checkTranscript(t2), { ok: true, ticks: 120 });
+    assert.equal(got2.headers.get('x-transcript-hash'), toHex(transcriptHash(t2)),
+      'the hash the node states is the hash of what it sent');
 
     const t = node.round.transcript(opened.bytes, joined.bytes);
     assert.equal(t.ticks.length, 120, 'the transcript is the round');

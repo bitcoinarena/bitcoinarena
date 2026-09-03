@@ -11,7 +11,8 @@
 import {
   encodeRoundContract, roundId, encodeEntryContract, entryId,
 } from '../../protocol/src/contracts.js';
-import { decodeInputBatch, batchTicks } from '../../protocol/src/batch.js';
+import { decodeInputBatch, batchTicks, batchId } from '../../protocol/src/batch.js';
+import { encodeTranscript, transcriptHash, checkTranscript, GENESIS } from '../../protocol/src/transcript.js';
 import { OPEN, CLOSED } from './store.js';
 
 const same = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
@@ -77,6 +78,19 @@ export class Round {
     const putLiq = this.db.prepare(
       'INSERT OR IGNORE INTO liquidations (round_id, entry_id, tick, size) VALUES (?, ?, ?, ?)');
 
+    // THE CHAIN, checked before anything is written. A batch that does not
+    // name the head is not a late arrival to be sorted later - it belongs to
+    // a different history, and storing it would make the transcript a bag
+    // again. A repeat of the CURRENT head is still a no-op, because that is
+    // the message a client re-sends when it never learned the first landed.
+    const id = batchId(b);
+    const seen = this.db.prepare(
+      'SELECT seq FROM batches WHERE round_id = ? AND entry_id = ? AND batch_id = ?')
+      .get(b.roundId, b.entryId, id);
+    const head = this.head(b.roundId, b.entryId);
+    if (!seen && !same(b.previousHash, head))
+      throw new Error('the batch does not follow the chain head');
+
     let fresh = 0;
     const at = batchTicks(b);
     for (let i = 0; i < b.ticks.length; i++) {
@@ -84,7 +98,44 @@ export class Round {
       fresh += put.run(b.roundId, b.entryId, at[i], words).changes;
     }
     for (const [tick, size] of b.liquidations) putLiq.run(b.roundId, b.entryId, tick, size);
+
+    if (!seen) {
+      const n = this.db.prepare(
+        'SELECT COUNT(*) c FROM batches WHERE round_id = ? AND entry_id = ?')
+        .get(b.roundId, b.entryId).c;
+      this.db.prepare(
+        'INSERT INTO batches (round_id, entry_id, seq, batch_id, bytes) VALUES (?, ?, ?, ?, ?)')
+        .run(b.roundId, b.entryId, n, id, bytes);
+    }
     return fresh;
+  }
+
+  /** The id of the last batch in the chain, or the genesis if there is none. */
+  head(roundIdBytes, entryIdBytes) {
+    const row = this.db.prepare(
+      'SELECT batch_id FROM batches WHERE round_id = ? AND entry_id = ? ORDER BY seq DESC LIMIT 1')
+      .get(roundIdBytes, entryIdBytes);
+    return row ? new Uint8Array(row.batch_id) : GENESIS;
+  }
+
+  /**
+   * The transcript as ONE object, in chain order: what a node hands over.
+   *
+   * Checked before it leaves, because a node that serves a broken chain has
+   * made the next verifier's problem out of its own.
+   */
+  handOver(roundIdBytes, entryIdBytes) {
+    const rows = this.db.prepare(
+      'SELECT bytes FROM batches WHERE round_id = ? AND entry_id = ? ORDER BY seq')
+      .all(roundIdBytes, entryIdBytes);
+    const t = {
+      roundId: new Uint8Array(roundIdBytes),
+      entryId: new Uint8Array(entryIdBytes),
+      batches: rows.map((r) => decodeInputBatch(new Uint8Array(r.bytes))),
+    };
+    const ok = checkTranscript(t);
+    if (!ok.ok) throw new Error(`the stored transcript is broken at ${ok.at}: ${ok.why}`);
+    return { bytes: encodeTranscript(t), hash: transcriptHash(t), ticks: ok.ticks };
   }
 
   close(id) {

@@ -48,6 +48,22 @@ export function openStore(path = ':memory:') {
       PRIMARY KEY (round_id, entry_id, tick)
     );
 
+    -- The batches themselves, kept whole and in chain order. The ticks table
+    -- above answers "what did the player press at tick N"; this one answers
+    -- "hand me the transcript", and they are different questions: the second
+    -- needs the bytes exactly as they were signed and chained, not a
+    -- reassembly of them.
+    CREATE TABLE IF NOT EXISTS batches (
+      round_id  BLOB NOT NULL,
+      entry_id  BLOB NOT NULL REFERENCES entries(entry_id),
+      seq       INTEGER NOT NULL,
+      batch_id  BLOB NOT NULL,
+      bytes     BLOB NOT NULL,
+      PRIMARY KEY (round_id, entry_id, seq)
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS batches_by_id
+      ON batches (round_id, entry_id, batch_id);
+
     -- Sparse, because a liquidation is rare, and keyed the same way so a
     -- repeat cannot double a strike.
     CREATE TABLE IF NOT EXISTS liquidations (

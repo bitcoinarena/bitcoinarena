@@ -14,6 +14,13 @@
 // played. They are sparse because they are rare: `[tick, size]`, the same
 // shape `test-vectors/*.json` uses.
 //
+// AND THEY ARE CHAINED. `previous_hash` is the spec's own field (section 11):
+// each batch names the one before it, so a transcript is an ordered object
+// rather than a bag of rows that happen to sit in a table. Without it, "hand
+// me the transcript" means "hand me whatever you have and trust it is all of
+// it"; with it, a missing or altered batch breaks the chain at a named place.
+// The first batch of a round chains to thirty-two zero bytes.
+//
 // Ticks are absolute, not relative to the batch. A repeat is then harmless -
 // the node writes the same tick number twice and keeps one - and a gap is
 // visible, because the numbers themselves say what is missing. That is the
@@ -31,6 +38,7 @@ export function encodeInputBatch(b) {
   w.u16(PROTOCOL_VERSION);
   w.bytes32(b.roundId);
   w.bytes32(b.entryId);
+  w.bytes32(b.previousHash);
   w.u32(b.firstTick);
 
   // The ticks themselves, five signed words each. Q16.16, the units the core
@@ -57,6 +65,7 @@ export function decodeInputBatch(bytes) {
   const b = {
     roundId: r.bytes32(),
     entryId: r.bytes32(),
+    previousHash: r.bytes32(),
     firstTick: r.u32(),
   };
   b.ticks = r.vec((rr) => {

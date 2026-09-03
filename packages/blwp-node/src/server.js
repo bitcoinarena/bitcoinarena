@@ -55,6 +55,18 @@ export function serve(db, { port = 0 } = {}) {
       if (req.method === 'POST' && url.pathname === '/entry')
         return bytes(res, 201, round.enter(decodeEntryContract(await read(req))));
 
+      if (req.method === 'GET' && url.pathname === '/transcript') {
+        const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
+        const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
+        const t = round.handOver(rid, eid);
+        res.writeHead(200, {
+          'content-type': 'application/octet-stream',
+          'x-transcript-hash': toHex(t.hash),
+          'x-ticks': String(t.ticks),
+        });
+        return res.end(Buffer.from(t.bytes));
+      }
+
       return text(res, 404, 'no such door');
     } catch (e) {
       // The message is the reason - "the round is closed", "no such entry" -
