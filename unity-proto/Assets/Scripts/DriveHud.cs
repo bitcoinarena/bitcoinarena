@@ -1066,9 +1066,25 @@ public class DriveHud : MonoBehaviour
                 if (a?.right != null && a.right.isGrounded) grounded++;
             }
             var rb = truck.GetComponent<Rigidbody>();
-            Line($"Tempo   {truck.SpeedKmh:0} km/h");
+            // Tempo and Drift, from the core when one answers.
+            //
+            // `SpeedKmh` is `_rb.linearVelocity.magnitude * 3.6f` and `Slip`
+            // is `|InverseTransformDirection(_rb.linearVelocity).x|`, both off
+            // a body that has been kinematic since the core took the driving.
+            // Measured in the player build: this panel read 0.00 km/h and
+            // 0.000 m/s while the truck was doing 68.16 km/h and sliding
+            // 2.645 m/s sideways. The zeroes are the dead body, not the rule.
+            //
+            // Tempo is `TruckSpeed`, which is what the MAIN readout above
+            // already reads, so the screen carries one speed and not two.
+            // Drift is `TruckSlip`, the chassis-frame projection from (t) -
+            // not a second formula worked out here.
+            bool core = Blwp.BlwpCore.Available;
+            float tempo = core ? Blwp.BlwpCore.TruckSpeed * 3.6f : truck.SpeedKmh;
+            float drift = core ? Blwp.BlwpCore.TruckSlip : truck.Slip;
+            Line($"Tempo   {tempo:0} km/h");
             Line($"Gas {DriveInput.Throttle:+0.0;-0.0; 0.0}  Lenk {DriveInput.Steer:+0.0;-0.0; 0.0}  {(DriveInput.Handbrake ? "HB" : "")}");
-            Line($"Drift   {truck.Slip:0.0} m/s   Raeder {grounded}/4");
+            Line($"Drift   {drift:0.0} m/s   Raeder {grounded}/4");
             if (rb != null) Line($"Pos     {rb.position.x:0}, {rb.position.z:0}");
         }
         if (market != null)
