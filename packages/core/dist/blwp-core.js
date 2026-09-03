@@ -2752,15 +2752,51 @@ function stepHeli(h, rng, seamAt, groundAt, dt) {
  * It keeps the aircraft's height and its speed along the track, and is aimed
  * across the seam at 10-22 m/s. Nothing steers it after this.
  */
-function releaseBomb(b, h, rng, front) {
+/**
+ * How long the bomb falls, in seconds, from a height above the ground.
+ *
+ * `vy` starts at zero and only gravity acts, so `h = g t^2 / 2` and
+ * `t = sqrt(2h/g)`. It is needed because the bomb has exactly ONE free axis:
+ * `vx` is inherited from the aircraft and nothing steers it afterwards, so
+ * where it lands in x is already decided at the moment of release and only z
+ * can be aimed. Knowing t turns "aim at that clump" into a speed.
+ */
+const fallTime = (above) =>
+  above <= 0 ? 0 : sqrt(div(Math.imul(2, above), BOMB_GRAVITY));
+
+/**
+ * `aimZ` is where the bomb should come down, or `NO_AIM` for the old rule.
+ */
+const NO_AIM = -2147483648;
+
+function releaseBomb(b, h, rng, front, aimZ, ground) {
   b.side = h.side;
   b.x = h.x; b.y = h.y; b.z = h.z;
   b.vx = mulFast(h.dir, BOMB_VX);
   b.vy = 0;
-  // Mathf.Sign is +1 at exactly zero, which the core's sign() is not - it
-  // returns 0, and a bomb with no lateral speed would fall straight down onto
-  // the gunship's own line every time the seam passed under it.
-  b.vz = mulFast(sub(front, b.z) >= 0 ? ONE : neg(ONE), between(rng, BOMB_VZ_MIN, BOMB_VZ_MAX));
+
+  // THE DRAW STAYS. It is protocol: the transcript is the sequence of draws,
+  // so the speed is drawn whether or not the aimed branch uses it.
+  const drawn = between(rng, BOMB_VZ_MIN, BOMB_VZ_MAX);
+
+  if (aimZ === NO_AIM) {
+    // Nothing worth hitting was within reach. Mathf.Sign is +1 at exactly
+    // zero, which the core's sign() is not - it returns 0, and a bomb with no
+    // lateral speed would fall straight down onto the gunship's own line every
+    // time the seam passed under it.
+    b.vz = mulFast(sub(front, b.z) >= 0 ? ONE : neg(ONE), drawn);
+    return;
+  }
+
+  // AIMED. The bomb keeps its own speed band - 10 to 22 m/s is what a bomb
+  // released from this aircraft does, and widening it to reach further would
+  // be inventing a weapon rather than aiming one. So the crossing speed is the
+  // one that puts it on the clump, clamped into that band; a clump beyond the
+  // band's reach is undershot rather than teleported to.
+  const t = fallTime(sub(b.y, ground));
+  const want = t > 0 ? div(sub(aimZ, b.z), t) : 0;
+  const dir = want >= 0 ? ONE : neg(ONE);
+  b.vz = mulFast(dir, clamp(abs(want), BOMB_VZ_MIN, BOMB_VZ_MAX));
 }
 
 /** One tick of a falling bomb. True once it is at or below the ground. */
@@ -3279,7 +3315,7 @@ function stepHelicopters(s, rng, seamAt, groundAt) {
 
     // Never both in one tick: the drop gate is |x| < 92 and the exit is
     // |x| > 104, so a gunship close enough to drop is nowhere near leaving.
-    if (r === AIR_RELEASE) release(s, rng, h, seamAt(h.x));
+    if (r === AIR_RELEASE) release(s, rng, h, seamAt(h.x), groundAt(h.x, h.z));
     else if (r === AIR_GONE) s[b + H_STATE] = 0;
   }
 }
@@ -3298,9 +3334,55 @@ function stepHelicopters(s, rng, seamAt, groundAt) {
  * every draw after it and the loss would not be one bomb, it would be the rest
  * of the round.
  */
-function release(s, rng, h, front) {
+/**
+ * Where this bomb should come down, or NO_AIM.
+ *
+ * THE RULE IS THE PLAYER'S, NOT C#'s. `Army.Release` drops on a timer and
+ * throws across the seam at a random 10-22 m/s - it aims at nothing, and the
+ * core copied that. A gunship that flies over an army and lets go on a clock
+ * is not tactical, so this core picks something to hit.
+ *
+ * What is free and what is not: `vx` is inherited from the aircraft and
+ * nothing steers the bomb afterwards, so the landing x is decided the moment
+ * it leaves the rack. Only z can be aimed. So the target has to be looked for
+ * where the bomb is ALREADY going - around `x + vx * fallTime` - and the
+ * choice is which clump of living enemies sits nearest the front there.
+ *
+ * Densest first, ties to the lower index, which is protocol: the scan runs in
+ * index order and a different order is a different battle.
+ */
+function aimPoint(s, h, front, ground) {
+  const t = fallTime(sub(h.y, ground));
+  if (t <= 0) return NO_AIM;
+  const landX = add(h.x, mulFast(mulFast(h.dir, Math.imul(30, ONE)), t));
+  const foe = h.side < 0 ? 1 : -1;
+
+  let bestI = -1, bestN = 0;
+  for (let i = 0; i < UNITS; i++) {
+    const b = unitBase(i);
+    if (s[b + U_STATE] === 0 || s[b + U_HP] <= 0) continue;
+    if ((s[b + U_SIDE] < 0 ? -1 : 1) !== foe) continue;
+    // Within the bomb's own reach of where it is going: one blast radius in x
+    // of the landing point, and inside the contested strip in z.
+    if (abs(sub(s[b + U_X], landX)) > BOMB_RADIUS) continue;
+    if (abs(sub(s[b + U_Z], front)) > Math.imul(40, ONE)) continue;
+    let n = 0;
+    for (let j = 0; j < UNITS; j++) {
+      const c = unitBase(j);
+      if (s[c + U_STATE] === 0 || s[c + U_HP] <= 0) continue;
+      if ((s[c + U_SIDE] < 0 ? -1 : 1) !== foe) continue;
+      if (abs(sub(s[c + U_X], s[b + U_X])) > BOMB_RADIUS) continue;
+      if (abs(sub(s[c + U_Z], s[b + U_Z])) > BOMB_RADIUS) continue;
+      n = (n + 1) | 0;
+    }
+    if (n > bestN) { bestN = n; bestI = i; }
+  }
+  return bestI < 0 ? NO_AIM : s[unitBase(bestI) + U_Z];
+}
+
+function release(s, rng, h, front, ground) {
   const b = { side: 1, x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0 };
-  releaseBomb(b, h, rng, front);
+  releaseBomb(b, h, rng, front, aimPoint(s, h, front, ground), ground);
   for (let i = 0; i < MAX_BOMBS; i++) {
     const o = bombBase(i);
     if (s[o + B_STATE] !== 0) continue;

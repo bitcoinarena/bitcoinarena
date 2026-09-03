@@ -29,7 +29,7 @@
 // cannot be replayed from an army seed at all. Here every draw comes off the
 // state's own stream, in a fixed order, like everything else in the core.
 
-import { ONE, HALF, add, sub, neg, mulFast, div, clamp, abs, length2 } from '../fixed.js';
+import { ONE, HALF, add, sub, neg, mulFast, div, clamp, abs, length2, sqrt } from '../fixed.js';
 import { sin } from '../trig.js';
 import { below, between } from '../rng.js';
 
@@ -229,15 +229,51 @@ export function stepHeli(h, rng, seamAt, groundAt, dt) {
  * It keeps the aircraft's height and its speed along the track, and is aimed
  * across the seam at 10-22 m/s. Nothing steers it after this.
  */
-export function releaseBomb(b, h, rng, front) {
+/**
+ * How long the bomb falls, in seconds, from a height above the ground.
+ *
+ * `vy` starts at zero and only gravity acts, so `h = g t^2 / 2` and
+ * `t = sqrt(2h/g)`. It is needed because the bomb has exactly ONE free axis:
+ * `vx` is inherited from the aircraft and nothing steers it afterwards, so
+ * where it lands in x is already decided at the moment of release and only z
+ * can be aimed. Knowing t turns "aim at that clump" into a speed.
+ */
+export const fallTime = (above) =>
+  above <= 0 ? 0 : sqrt(div(Math.imul(2, above), BOMB_GRAVITY));
+
+/**
+ * `aimZ` is where the bomb should come down, or `NO_AIM` for the old rule.
+ */
+export const NO_AIM = -2147483648;
+
+export function releaseBomb(b, h, rng, front, aimZ, ground) {
   b.side = h.side;
   b.x = h.x; b.y = h.y; b.z = h.z;
   b.vx = mulFast(h.dir, BOMB_VX);
   b.vy = 0;
-  // Mathf.Sign is +1 at exactly zero, which the core's sign() is not - it
-  // returns 0, and a bomb with no lateral speed would fall straight down onto
-  // the gunship's own line every time the seam passed under it.
-  b.vz = mulFast(sub(front, b.z) >= 0 ? ONE : neg(ONE), between(rng, BOMB_VZ_MIN, BOMB_VZ_MAX));
+
+  // THE DRAW STAYS. It is protocol: the transcript is the sequence of draws,
+  // so the speed is drawn whether or not the aimed branch uses it.
+  const drawn = between(rng, BOMB_VZ_MIN, BOMB_VZ_MAX);
+
+  if (aimZ === NO_AIM) {
+    // Nothing worth hitting was within reach. Mathf.Sign is +1 at exactly
+    // zero, which the core's sign() is not - it returns 0, and a bomb with no
+    // lateral speed would fall straight down onto the gunship's own line every
+    // time the seam passed under it.
+    b.vz = mulFast(sub(front, b.z) >= 0 ? ONE : neg(ONE), drawn);
+    return;
+  }
+
+  // AIMED. The bomb keeps its own speed band - 10 to 22 m/s is what a bomb
+  // released from this aircraft does, and widening it to reach further would
+  // be inventing a weapon rather than aiming one. So the crossing speed is the
+  // one that puts it on the clump, clamped into that band; a clump beyond the
+  // band's reach is undershot rather than teleported to.
+  const t = fallTime(sub(b.y, ground));
+  const want = t > 0 ? div(sub(aimZ, b.z), t) : 0;
+  const dir = want >= 0 ? ONE : neg(ONE);
+  b.vz = mulFast(dir, clamp(abs(want), BOMB_VZ_MIN, BOMB_VZ_MAX));
 }
 
 /** One tick of a falling bomb. True once it is at or below the ground. */

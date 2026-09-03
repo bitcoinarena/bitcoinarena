@@ -37,7 +37,7 @@ import { accrue, earning, scoreOf } from './rules/score.js';
 import { outcome, RUN_LIVE, RUN_DELIVERED, RUN_WRECKED, RUN_MISSED } from './rules/gate.js';
 import { frontlineZ, SAMPLES } from './rules/frontline.js';
 import {
-  launchHeli, stepHeli, releaseBomb, stepBomb, bombDamage, blastReach, sortieWait,
+  launchHeli, stepHeli, releaseBomb, stepBomb, bombDamage, blastReach, sortieWait, fallTime, NO_AIM, BOMB_RADIUS,
   AIR_RELEASE, AIR_GONE,
 } from './rules/air.js';
 
@@ -492,7 +492,7 @@ function stepHelicopters(s, rng, seamAt, groundAt) {
 
     // Never both in one tick: the drop gate is |x| < 92 and the exit is
     // |x| > 104, so a gunship close enough to drop is nowhere near leaving.
-    if (r === AIR_RELEASE) release(s, rng, h, seamAt(h.x));
+    if (r === AIR_RELEASE) release(s, rng, h, seamAt(h.x), groundAt(h.x, h.z));
     else if (r === AIR_GONE) s[b + H_STATE] = 0;
   }
 }
@@ -511,9 +511,55 @@ function stepHelicopters(s, rng, seamAt, groundAt) {
  * every draw after it and the loss would not be one bomb, it would be the rest
  * of the round.
  */
-function release(s, rng, h, front) {
+/**
+ * Where this bomb should come down, or NO_AIM.
+ *
+ * THE RULE IS THE PLAYER'S, NOT C#'s. `Army.Release` drops on a timer and
+ * throws across the seam at a random 10-22 m/s - it aims at nothing, and the
+ * core copied that. A gunship that flies over an army and lets go on a clock
+ * is not tactical, so this core picks something to hit.
+ *
+ * What is free and what is not: `vx` is inherited from the aircraft and
+ * nothing steers the bomb afterwards, so the landing x is decided the moment
+ * it leaves the rack. Only z can be aimed. So the target has to be looked for
+ * where the bomb is ALREADY going - around `x + vx * fallTime` - and the
+ * choice is which clump of living enemies sits nearest the front there.
+ *
+ * Densest first, ties to the lower index, which is protocol: the scan runs in
+ * index order and a different order is a different battle.
+ */
+function aimPoint(s, h, front, ground) {
+  const t = fallTime(sub(h.y, ground));
+  if (t <= 0) return NO_AIM;
+  const landX = add(h.x, mulFast(mulFast(h.dir, Math.imul(30, ONE)), t));
+  const foe = h.side < 0 ? 1 : -1;
+
+  let bestI = -1, bestN = 0;
+  for (let i = 0; i < UNITS; i++) {
+    const b = unitBase(i);
+    if (s[b + U_STATE] === 0 || s[b + U_HP] <= 0) continue;
+    if ((s[b + U_SIDE] < 0 ? -1 : 1) !== foe) continue;
+    // Within the bomb's own reach of where it is going: one blast radius in x
+    // of the landing point, and inside the contested strip in z.
+    if (abs(sub(s[b + U_X], landX)) > BOMB_RADIUS) continue;
+    if (abs(sub(s[b + U_Z], front)) > Math.imul(40, ONE)) continue;
+    let n = 0;
+    for (let j = 0; j < UNITS; j++) {
+      const c = unitBase(j);
+      if (s[c + U_STATE] === 0 || s[c + U_HP] <= 0) continue;
+      if ((s[c + U_SIDE] < 0 ? -1 : 1) !== foe) continue;
+      if (abs(sub(s[c + U_X], s[b + U_X])) > BOMB_RADIUS) continue;
+      if (abs(sub(s[c + U_Z], s[b + U_Z])) > BOMB_RADIUS) continue;
+      n = (n + 1) | 0;
+    }
+    if (n > bestN) { bestN = n; bestI = i; }
+  }
+  return bestI < 0 ? NO_AIM : s[unitBase(bestI) + U_Z];
+}
+
+function release(s, rng, h, front, ground) {
   const b = { side: 1, x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0 };
-  releaseBomb(b, h, rng, front);
+  releaseBomb(b, h, rng, front, aimPoint(s, h, front, ground), ground);
   for (let i = 0; i < MAX_BOMBS; i++) {
     const o = bombBase(i);
     if (s[o + B_STATE] !== 0) continue;
