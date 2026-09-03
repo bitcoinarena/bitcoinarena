@@ -39,7 +39,7 @@ test('a batch is stored tick by tick, and a repeat writes nothing', () => {
   const r = fresh(), c = contract();
   const rid = r.open(c); const e = entryFor(rid); const eid = r.enter(e);
   const bytes = encodeInputBatch({
-    roundId: rid, entryId: eid, previousHash: GENESIS, firstTick: 10,
+    roundId: rid, entryId: eid, previousHash: GENESIS, firstTick: 0,
     ticks: [[65536, 0, 0, 0, 0], [65536, 100, 0, 0, 0], [65536, 200, 0, 0, 0]],
     liquidations: [[11, 3 * 65536]],
   });
@@ -51,7 +51,7 @@ test('a batch is stored tick by tick, and a repeat writes nothing', () => {
   assert.deepEqual(t.liquidations, [[11, 3 * 65536]], 'nor is the strike doubled');
 });
 
-test('batches out of order land in tick order, and a gap is visible', () => {
+test('a batch that would leave a gap is refused, and says which tick is due', () => {
   const r = fresh(), c = contract();
   const rid = r.open(c); const e = entryFor(rid); const eid = r.enter(e);
   // The chain fixes the ORDER of batches; the ticks inside them may still
@@ -61,13 +61,16 @@ test('batches out of order land in tick order, and a gap is visible', () => {
       ticks: Array.from({ length: n }, (_, i) => [65536, first + i, 0, 0, 0]), liquidations: [] };
     return r.batch(encodeInputBatch(b));
   };
-  send(10, 2);            // 10, 11
-  send(20, 2);            // 20, 21 - a gap the numbers themselves name
-  assert.deepEqual(r.transcript(rid, eid).ticks.map((x) => x.tick), [10, 11, 20, 21]);
-  assert.deepEqual(r.gaps(rid, eid), [12, 13, 14, 15, 16, 17, 18, 19],
-    'the hole is the numbers themselves, not a shorter list');
+  send(0, 12);
+  // A gap is REFUSED, not stored. It used to be stored and shown by `gaps()`,
+  // and that let the node accept a transcript it could not later hand over -
+  // measured: ticks 0..9 then 20..29 went in, and handOver threw with nobody
+  // left to ask. The refusal names the tick it is waiting for, which is the
+  // one thing the client needs to carry on.
+  assert.throws(() => send(20, 2), /expected tick 12, got 20/);
+  assert.deepEqual(r.gaps(rid, eid), [], 'so there is never a hole to report');
   send(12, 8);
-  assert.deepEqual(r.gaps(rid, eid), [], 'and it closes when they arrive');
+  assert.deepEqual(r.transcript(rid, eid).ticks.map((x) => x.tick).slice(-1), [19]);
 });
 
 test('the words come back exactly as they went in', () => {
@@ -130,4 +133,19 @@ test('a round outlives the process that opened it', async () => {
     assert.ok(r.get(id), 'the round is still there after a fresh handle');
     assert.equal(r.db.prepare('SELECT COUNT(*) n FROM entries').get().n, 1); }
   rmSync(path, { force: true });
+});
+
+
+test('a player who joined late starts at his own joinTick, not at zero', () => {
+  const r = fresh(), c = contract();
+  const rid = r.open(c);
+  const eid = r.enter({ ...entryFor(rid), joinTick: 50 });
+  assert.equal(r.nextTick(rid, eid), 50, 'read off the contract he signed');
+  assert.throws(() => r.batch(encodeInputBatch({
+    roundId: rid, entryId: eid, previousHash: GENESIS, firstTick: 0,
+    ticks: [[0, 0, 0, 0, 0]], liquidations: [] })), /expected tick 50, got 0/);
+  assert.equal(r.batch(encodeInputBatch({
+    roundId: rid, entryId: eid, previousHash: GENESIS, firstTick: 50,
+    ticks: [[0, 0, 0, 0, 0], [0, 0, 0, 0, 0]], liquidations: [[51, 9]] })), 2);
+  assert.equal(r.handOver(rid, eid).ticks, 2);
 });

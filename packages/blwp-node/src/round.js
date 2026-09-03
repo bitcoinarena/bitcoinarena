@@ -9,7 +9,7 @@
 // of one; a round is a list of inputs until something verifies it, and that
 // something is the checkpoints in step 3.
 import {
-  encodeRoundContract, roundId, encodeEntryContract, entryId,
+  encodeRoundContract, roundId, encodeEntryContract, entryId, decodeEntryContract,
 } from '../../protocol/src/contracts.js';
 import { decodeInputBatch, batchTicks, batchId } from '../../protocol/src/batch.js';
 import { encodeTranscript, transcriptHash, checkTranscript, GENESIS } from '../../protocol/src/transcript.js';
@@ -91,8 +91,21 @@ export class Round {
     if (!seen && !same(b.previousHash, head))
       throw new Error('the batch does not follow the chain head');
 
-    let fresh = 0;
+    // AND IT MUST NOT LEAVE A HOLE. The chain fixes the order of the batches;
+    // this fixes the order of the ticks inside them, and it belongs HERE
+    // rather than at hand-over. A node that stores a gap has accepted a
+    // transcript it cannot later serve - measured: it took ticks 0..9 and then
+    // 20..29, and `handOver` then threw "expected tick 10, got 20" with
+    // nobody left to ask. Refusing at intake tells the one party who can still
+    // fix it, and names the tick it is waiting for.
     const at = batchTicks(b);
+    if (!seen && at.length) {
+      const next = this.nextTick(b.roundId, b.entryId);
+      if (at[0] !== next)
+        throw new Error(`expected tick ${next}, got ${at[0]}`);
+    }
+
+    let fresh = 0;
     for (let i = 0; i < b.ticks.length; i++) {
       const words = new Uint8Array(new Int32Array(b.ticks[i]).buffer);
       fresh += put.run(b.roundId, b.entryId, at[i], words).changes;
@@ -108,6 +121,23 @@ export class Round {
         .run(b.roundId, b.entryId, n, id, bytes);
     }
     return fresh;
+  }
+
+  /**
+   * The tick this entry's next batch has to start at.
+   *
+   * Not zero when it has none yet: `joinTick` is a field of the entry
+   * contract and a player who joined at tick 50 starts at 50. Reading it off
+   * the stored contract rather than assuming a start means the node uses the
+   * number the player already signed instead of one of its own.
+   */
+  nextTick(roundIdBytes, entryIdBytes) {
+    const row = this.db.prepare(
+      'SELECT MAX(tick) t FROM ticks WHERE round_id = ? AND entry_id = ?')
+      .get(roundIdBytes, entryIdBytes);
+    if (row && row.t !== null) return row.t + 1;
+    const e = this.db.prepare('SELECT contract FROM entries WHERE entry_id = ?').get(entryIdBytes);
+    return e ? decodeEntryContract(new Uint8Array(e.contract)).joinTick : 0;
   }
 
   /** The id of the last batch in the chain, or the genesis if there is none. */

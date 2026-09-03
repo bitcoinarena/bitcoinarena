@@ -77,6 +77,19 @@ test('flatten gives exactly what the core takes, in tick order', () => {
   assert.deepEqual(f.liquidations, [[4, 99 * 65536]]);
 });
 
+test('flatten rebases the liquidation ticks to the array it hands back', () => {
+  // On the wire they are absolute, because absolute is what makes a repeat
+  // harmless. A replay walks the array from zero, so a transcript that begins
+  // at tick 50 would otherwise put a strike at index 51 of a short array -
+  // nowhere - and replay to a different round with nothing to say so.
+  const t = chainOf(2);
+  for (const b of t.batches) b.firstTick += 50;
+  t.batches[1].liquidations = [[54, 7]];
+  const f = flatten(t);
+  assert.equal(f.firstTick, 50, 'the caller can still say where the round began');
+  assert.deepEqual(f.liquidations, [[4, 7]], 'but the index is into `ticks`');
+});
+
 test('the same batches always give the same transcript hash', () => {
   assert.equal(toHex(transcriptHash(chainOf(5))), toHex(transcriptHash(chainOf(5))));
   assert.notEqual(toHex(transcriptHash(chainOf(5))), toHex(transcriptHash(chainOf(4))));

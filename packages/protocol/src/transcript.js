@@ -75,6 +75,15 @@ export function checkTranscript(t) {
  * Not a convenience - it is the boundary. A verifier gets exactly what the
  * core's `step` and `submitLiquidation` take and nothing else, so there is no
  * second interpretation of a transcript anywhere.
+ *
+ * THE LIQUIDATION TICKS ARE REBASED to an index into `ticks`, and that is the
+ * whole reason this function exists rather than a caller reading the batches.
+ * On the wire they are absolute, because absolute is what makes a repeat
+ * harmless; a replay walks the array from zero. A transcript that begins at
+ * tick 50 would otherwise put a strike at index 51 of a two-element array -
+ * that is, nowhere - and the replay would be a different round with nothing
+ * to say it had gone wrong. `firstTick` is returned beside them so a caller
+ * can still say where the round began.
  */
 export function flatten(t) {
   const ticks = [];
@@ -85,5 +94,9 @@ export function flatten(t) {
   }
   const firstTick = t.batches.length ? t.batches[0].firstTick : 0;
   liquidations.sort((a, c) => a[0] - c[0] || a[1] - c[1]);
-  return { firstTick, ticks, liquidations };
+  return {
+    firstTick,
+    ticks,
+    liquidations: liquidations.map(([at, size]) => [at - firstTick, size]),
+  };
 }
