@@ -24,6 +24,7 @@ namespace Blwp
         [DllImport("__Internal")] private static extern int BlwpStep(int throttle, int steer, int brake, int handbrake, int practice);
         [DllImport("__Internal")] private static extern int BlwpReadState(IntPtr ptr, int wordCount);
         [DllImport("__Internal")] private static extern int BlwpStateHash(IntPtr ptr, int cap);
+        [DllImport("__Internal")] private static extern int BlwpFrontlineZ(int x);
         [DllImport("__Internal")] private static extern int BlwpRunScore();
         [DllImport("__Internal")] private static extern int BlwpStateWords();
         [DllImport("__Internal")] private static extern int BlwpQueryParam(IntPtr name, IntPtr outp, int cap);
@@ -38,6 +39,7 @@ namespace Blwp
         private static int BlwpStep(int t, int s, int b, int h, int p) => 0;
         private static int BlwpReadState(IntPtr ptr, int wordCount) => 0;
         private static int BlwpStateHash(IntPtr ptr, int cap) => 0;
+        private static int BlwpFrontlineZ(int x) => 0;
         private static int BlwpRunScore() => 0;
         private static int BlwpStateWords() => 0;
         private static int BlwpQueryParam(IntPtr n, IntPtr o, int cap) => 0;
@@ -252,6 +254,19 @@ namespace Blwp
         public static Vector3 TruckPosition(float y) => new Vector3(
             Metres(_state[Layout.O_TRUCK + Layout.T_X]), y,
             Metres(_state[Layout.O_TRUCK + Layout.T_Z]));
+
+        /// <summary>
+        /// Where the front line runs at a world x, in metres.
+        ///
+        /// The core smooths the price tape before laying it across the map;
+        /// `PriceHistory.FrontlineZ` does not, and cannot be made to without a
+        /// second copy of the rule that would drift. Measured over five tapes,
+        /// the smoothed line and the raw one are 22.04 m apart on average and
+        /// 49.14 m at worst - at x=68 the core has the front at -8.3 m and the
+        /// raw function at -57.4. So whoever DRAWS the front asks the core.
+        /// </summary>
+        public static float FrontlineZ(float x) =>
+            Available ? BlwpFrontlineZ(Mathf.RoundToInt(x * ONE)) / (float)ONE : 0f;
 
         public static float TruckHeading => Degrees(_state[Layout.O_TRUCK + Layout.T_HEADING]);
 

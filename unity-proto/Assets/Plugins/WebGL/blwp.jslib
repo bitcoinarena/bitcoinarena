@@ -24,6 +24,16 @@ mergeInto(LibraryManager.library, {
 
   // One tick. Inputs are Q16.16 in [-1, 1], the same units the core uses, so
   // no conversion happens at the boundary where a rounding rule could differ.
+  // The front line at a world x, Q16.16 metres. The RENDERER asks; it does not
+  // work the line out again. The core smooths the price tape before laying it
+  // across the map and C# does not, so a second copy of the rule put the drawn
+  // territory 22.04 m from the men on average and 49.14 m at worst.
+  BlwpFrontlineZ: function (x) {
+    var b = Module.blwp;
+    if (!b || !b.core.frontAt) return 0;
+    return b.core.frontAt(b.st, x | 0) | 0;
+  },
+
   BlwpStep: function (throttle, steer, brake, handbrake, practice) {
     var b = Module.blwp;
     if (!b) return 0;

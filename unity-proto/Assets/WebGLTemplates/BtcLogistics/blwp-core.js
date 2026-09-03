@@ -3864,6 +3864,19 @@ function step(st, throttle, steer, brake, handbrake, practice) {
   return st;
 }
 
+/**
+ * The front line at a world x, in metres Q16.16 - for the RENDERER to ask.
+ *
+ * The core smooths the tape before it lays it across the map
+ * (`rules/frontline.js`), and C# does not. Once the units stood on the
+ * smoothed line and `TerritoryMap` still painted the raw one, the two
+ * disagreed by 22.04 m on average and 49.14 m at worst - at x=68 the core had
+ * the front at -8.3 m while the drawing put it at -57.4. A picture that puts
+ * the line half a field away from the men standing on it is a lie, so the
+ * drawing asks the core rather than working it out again. One rule, one place.
+ */
+const frontAt = (st, x) => frontlineZ(st.tape, x | 0, HALF_X, HALF_Z);
+
 const runScore = (st) =>
   scoreOf(st.i32[O_SCORE + S_EXPOSURE],
                 st.i32[O_SCORE + S_ELAPSED],
@@ -3871,7 +3884,7 @@ const runScore = (st) =>
 
 return { init: init, step: step, hash: hash, runScore: runScore,
          setGround: setGround, groundAt: groundAt, setSolids: setSolids, teleport: teleport,
-         restart: restart,
+         restart: restart, frontAt: frontAt,
          create: create, WORDS: WORDS };
 })();
 if (typeof module !== "undefined") module.exports = BLWP;
