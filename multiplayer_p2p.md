@@ -2969,6 +2969,13 @@ game_config {
     spawn_count             96
   }
 
+The army is simulated, not painted. Each tank and each rifleman has a
+named goal each tick (front, foe, or retreat) and steps toward it.
+Units occupy the front line wherever `frontline_z(x)` sits — not a
+parking lot on their spawn side. Heading follows travel. This is M1
+playability: the enemies you see are doing a job, or the core has not
+replaced the old army yet.
+
   economy {
     node_fee_bps            200      // 2% of the round amount, INCLUSIVE.
                                      // A ballot, never a median: paid by the

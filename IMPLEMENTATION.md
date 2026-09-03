@@ -986,6 +986,12 @@ behaviour behind the handbrake, the grip and the camera pitch has to be
 derived again from scratch. That is an iteration with the player at the
 wheel, not a mechanical port.
 
+**M1 army on screen.** Tanks and infantry are not decoration. Each unit
+pursues a real goal: close on the front, hold the line, engage a foe, or
+fall back if overrun — the same jobs `Army.cs` already names. They stand
+where the front is, not in a clump on their own rear. A hull faces the
+way it drives. That is playability, not a later polish letter.
+
 ### 15.3 What drives the spread
 
 **Driving feel (stage 1)** is the largest uncertainty and the only one that
