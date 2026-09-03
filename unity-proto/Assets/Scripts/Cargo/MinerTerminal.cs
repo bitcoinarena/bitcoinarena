@@ -194,6 +194,7 @@ public class MinerTerminal : MonoBehaviour
         if (bars == null || bars.Length == 0 || screen == null) return;
 
         _barLabels = new TextMesh[bars.Length];
+        _tops = new Vector3[bars.Length];
         for (int i = 0; i < bars.Length; i++)
         {
             _barLabels[i] = MakeBarText(font, "BarFigure" + i, TextAnchor.LowerCenter,
@@ -255,10 +256,23 @@ public class MinerTerminal : MonoBehaviour
             if (previous.HasValue) pitch = Mathf.Max(pitch, Mathf.Abs(top.x - previous.Value.x));
             previous = top;
 
-            _barLabels[i].transform.localPosition = new Vector3(top.x, top.y + 0.4f, -0.2f);
+            _tops[i] = top;
         }
 
         if (pitch <= 0.001f) return;
+
+        // THE CEILING, taken from the lowest transaction row rather than from
+        // the authored -6. A figure rides its bar, and a bar at `maxBar` on a
+        // fee-war day stands where the rows are: the quiet market this was
+        // first photographed under held every bar short, which is luck, not a
+        // guarantee.
+        float rowBottom = 0f; bool haveRow = false;
+        if (_text != null && _text.Length > 0 && _text[_text.Length - 1] != null && _rowHeight != null)
+        {
+            rowBottom = _text[_text.Length - 1].transform.localPosition.y
+                      - _rowHeight[_rowHeight.Length - 1] * 0.5f;
+            haveRow = true;
+        }
 
         // Whichever runs out first, the pitch or the daylight over the bar.
         // A figure wider than its own bar reads as the neighbour's.
@@ -271,6 +285,14 @@ public class MinerTerminal : MonoBehaviour
             if (size.x < 0.001f || size.y < 0.001f) continue;
             float k = Mathf.Clamp(pitch * 0.92f / size.x, 0.001f, 5f);
             _barLabels[i].transform.localScale = new Vector3(k, k * verticalStretch, k);
+
+            // Anchored LowerCenter, so the figure grows upward from where it
+            // is put. It rides its bar until the bar would push it into the
+            // rows, and then it stops and lets the bar pass it.
+            float height = size.y * k * verticalStretch;
+            float y = _tops[i].y + 0.4f;
+            if (haveRow) y = Mathf.Min(y, rowBottom - height - 0.3f);
+            _barLabels[i].transform.localPosition = new Vector3(_tops[i].x, y, -0.2f);
         }
 
         if (_barUnit != null && previous.HasValue)
@@ -282,8 +304,10 @@ public class MinerTerminal : MonoBehaviour
                 _barUnit.transform.localScale = new Vector3(k, k * verticalStretch, k);
             }
             // at the quiet end of the curve, past the last bar
-            _barUnit.transform.localPosition = new Vector3(previous.Value.x - pitch,
-                                                           previous.Value.y + 0.4f, -0.2f);
+            float uh = mr != null ? mr.localBounds.size.y * _barUnit.transform.localScale.y : 0f;
+            float uy = previous.Value.y + 0.4f;
+            if (haveRow) uy = Mathf.Min(uy, rowBottom - uh - 0.3f);
+            _barUnit.transform.localPosition = new Vector3(previous.Value.x - pitch, uy, -0.2f);
         }
     }
 
@@ -307,6 +331,7 @@ public class MinerTerminal : MonoBehaviour
     TextMesh[] _barLabels;
     TextMesh _barUnit;
     int _labelRefit;
+    Vector3[] _tops;
     float _hashHeight = 6.5f;
 
     /// <summary>
