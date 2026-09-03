@@ -175,7 +175,26 @@ export const L_PENDING = 0, L_LAST = 1, L_SERIAL = 2;
 /** The largest liquidation the word can hold, in millions of USD, Q16.16. */
 export const LIQ_MAX = Math.imul(32767, 65536);
 
-export const WORDS = O_LIQ + LIQ_WORDS;
+/**
+ * THE STRIKE.
+ *
+ * One record, not a list. The queue keeps only the largest size submitted
+ * between two ticks, so at most one strike can be armed in a tick; a list is
+ * what the CRATERS will need, and they are their own step.
+ *
+ * K_SERIAL counts strikes, so "one accepted liquidation, one strike" is a
+ * subtraction rather than a story: it must track `L_SERIAL` minus the ones
+ * that lost a same-frame race to a larger size.
+ *
+ * K_LOAD is the size that armed it, unchanged and in the same unit - millions
+ * of USD, Q16.16. The crater will be derived from it later; carrying it as
+ * the size itself means nothing is invented here.
+ */
+export const O_STRIKE = O_LIQ + LIQ_WORDS;
+export const STRIKE_WORDS = 5;
+export const K_STATE = 0, K_X = 1, K_Z = 2, K_LOAD = 3, K_SERIAL = 4;
+
+export const WORDS = O_STRIKE + STRIKE_WORDS;
 
 // truck fields, relative to O_TRUCK
 export const T_X = 0, T_Z = 1, T_HEADING = 2, T_VX = 3, T_VZ = 4;

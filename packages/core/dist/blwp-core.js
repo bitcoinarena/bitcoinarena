@@ -881,7 +881,26 @@ const L_PENDING = 0, L_LAST = 1, L_SERIAL = 2;
 /** The largest liquidation the word can hold, in millions of USD, Q16.16. */
 const LIQ_MAX = Math.imul(32767, 65536);
 
-const WORDS = O_LIQ + LIQ_WORDS;
+/**
+ * THE STRIKE.
+ *
+ * One record, not a list. The queue keeps only the largest size submitted
+ * between two ticks, so at most one strike can be armed in a tick; a list is
+ * what the CRATERS will need, and they are their own step.
+ *
+ * K_SERIAL counts strikes, so "one accepted liquidation, one strike" is a
+ * subtraction rather than a story: it must track `L_SERIAL` minus the ones
+ * that lost a same-frame race to a larger size.
+ *
+ * K_LOAD is the size that armed it, unchanged and in the same unit - millions
+ * of USD, Q16.16. The crater will be derived from it later; carrying it as
+ * the size itself means nothing is invented here.
+ */
+const O_STRIKE = O_LIQ + LIQ_WORDS;
+const STRIKE_WORDS = 5;
+const K_STATE = 0, K_X = 1, K_Z = 2, K_LOAD = 3, K_SERIAL = 4;
+
+const WORDS = O_STRIKE + STRIKE_WORDS;
 
 // truck fields, relative to O_TRUCK
 const T_X = 0, T_Z = 1, T_HEADING = 2, T_VX = 3, T_VZ = 4;
@@ -3125,6 +3144,45 @@ function setSolids(st, count, boxes) {
  *
  * Returns true if it was queued.
  */
+/**
+ * Where a liquidation strike lands: the densest knot of living units within
+ * 40 m of the front at their own x.
+ *
+ * A place that matters, not a clock and not a die. It is deliberately NOT the
+ * gunship's `aimPoint`: that one searches around where a falling bomb is
+ * already going, because the aircraft's `vx` has already decided the landing
+ * x. A strike has no aircraft and no inherited speed, so the whole field is
+ * open to it and the only question is where the fighting is.
+ *
+ * Both sides count. A liquidation is not a side's weapon - it is the market
+ * hitting the battlefield - so the knot it picks is the knot that is there,
+ * whoever is standing in it.
+ *
+ * Index order, densest first, ties to the lower index. With nobody alive
+ * anywhere near the line it falls on the front at x = 0, which is a place and
+ * not a random draw.
+ */
+function strikePoint(s, seamAt) {
+  let bestI = -1, bestN = 0;
+  for (let i = 0; i < UNITS; i++) {
+    const b = unitBase(i);
+    if (s[b + U_STATE] === 0 || s[b + U_HP] <= 0) continue;
+    if (abs(sub(s[b + U_Z], seamAt(s[b + U_X]))) > Math.imul(40, ONE)) continue;
+    let n = 0;
+    for (let j = 0; j < UNITS; j++) {
+      const c = unitBase(j);
+      if (s[c + U_STATE] === 0 || s[c + U_HP] <= 0) continue;
+      if (abs(sub(s[c + U_X], s[b + U_X])) > BOMB_RADIUS) continue;
+      if (abs(sub(s[c + U_Z], s[b + U_Z])) > BOMB_RADIUS) continue;
+      n = (n + 1) | 0;
+    }
+    if (n > bestN) { bestN = n; bestI = i; }
+  }
+  if (bestI < 0) return { x: 0, z: seamAt(0) };
+  const b = unitBase(bestI);
+  return { x: s[b + U_X], z: s[b + U_Z] };
+}
+
 function submitLiquidation(st, size) {
   const v = size | 0;
   if (v <= 0) return false;
@@ -3630,6 +3688,19 @@ function step(st, throttle, steer, brake, handbrake, practice) {
   // would get a different digest from the same inputs.
   s[O_LIQ + L_LAST] = s[O_LIQ + L_PENDING];
   s[O_LIQ + L_PENDING] = 0;
+  if (s[O_LIQ + L_LAST] > 0) {
+    // One accepted liquidation, one strike, in the tick it is consumed. The
+    // load is the size itself in the unit it arrived in; nothing is scaled
+    // here, because the crater that reads it is its own step.
+    const at = strikePoint(s, (x) => frontlineZ(st.tape, x, HALF_X, HALF_Z));
+    s[O_STRIKE + K_STATE] = 1;
+    s[O_STRIKE + K_X] = at.x;
+    s[O_STRIKE + K_Z] = at.z;
+    s[O_STRIKE + K_LOAD] = s[O_LIQ + L_LAST];
+    s[O_STRIKE + K_SERIAL] = (s[O_STRIKE + K_SERIAL] + 1) | 0;
+  } else {
+    s[O_STRIKE + K_STATE] = 0;
+  }
   fillArmour(st);
 
   // ---- 1. vehicle --------------------------------------------------------

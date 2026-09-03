@@ -37,6 +37,11 @@ namespace Blwp
         public const int H_X = 2;
         public const int H_Y = 3;
         public const int H_Z = 4;
+        public const int K_LOAD = 3;
+        public const int K_SERIAL = 4;
+        public const int K_STATE = 0;
+        public const int K_X = 1;
+        public const int K_Z = 2;
         public const int LIQ_MAX = 2147418112;
         public const int LIQ_WORDS = 3;
         public const int L_LAST = 1;
@@ -53,6 +58,7 @@ namespace Blwp
         public const int O_RNG = 1;
         public const int O_SCORE = 18;
         public const int O_SQUADS = 2175;
+        public const int O_STRIKE = 2184;
         public const int O_TICK = 0;
         public const int O_TRUCK = 5;
         public const int O_UNITS = 25;
@@ -60,6 +66,7 @@ namespace Blwp
         public const int SCORE_WORDS = 7;
         public const int SQUADS_PER_SIDE = 3;
         public const int SQUAD_WORDS = 6;
+        public const int STRIKE_WORDS = 5;
         public const int S_BESTX = 2;
         public const int S_CARGO = 3;
         public const int S_DELIVERED = 4;
@@ -91,7 +98,7 @@ namespace Blwp
         public const int U_WORDS = 8;
         public const int U_X = 0;
         public const int U_Z = 1;
-        public const int WORDS = 2184;
+        public const int WORDS = 2189;
 
         /// <summary>Where the core starts the truck, Q16.16 metres.</summary>
         public const int START_X = -6579814;

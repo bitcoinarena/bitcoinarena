@@ -5,37 +5,37 @@
   {
    "name": "straight",
    "ticks": 3600,
-   "final": "68bd09402f545a0e7f9b3ecab41aeea8f2c94c8ae1bcbaaf625f01bbbec08b55"
+   "final": "23b26150304e7e9cf42fe12e229441da7804c9ead8e1cd26226a1274caadcc1b"
   },
   {
    "name": "slalom",
    "ticks": 3600,
-   "final": "19f31828f93cf18322beef48449d717ff9032088716af8d45377804d7d7b1f66"
+   "final": "f480ab98585a6e4a5695f7aaea1032b8a89d3fcab0ec083bd7cda47118b9fdfe"
   },
   {
    "name": "handbrake",
    "ticks": 3600,
-   "final": "44477dc8752f9fb085c4260cba1a254238580cfa8fd1d4607808589a66f34c26"
+   "final": "e224f5c1d4773f04745fa58d78d0df50645a21fea9138d333edd8e030218c280"
   },
   {
    "name": "reverse",
    "ticks": 3600,
-   "final": "f0f2176d9250017448c214e519b1b82dfc681cf4653adbb2fc47fb2192f5fcd1"
+   "final": "dc5f02726732e25bac009d6955467b9a69fcae4e68434292fe2ec50d9da21bca"
   },
   {
    "name": "idle",
    "ticks": 3600,
-   "final": "41b04f22742befe51d4357b92d161014ce5dc01ca338519a9d01624baa33583c"
+   "final": "9d2417fb64a8b9ca2a1960257dd7cca6aeebe88c3b3b86e5b95e9ecc7077db9c"
   },
   {
    "name": "practice",
    "ticks": 3600,
-   "final": "7b89307ed4754d4a6670a49868bd989fa7356dcd675fa0692e48d9805b8fb137"
+   "final": "8acc4aedd6fb7baa5164f7f1f517458275629ef1ef38a3c22c0f49239348784c"
   },
   {
    "name": "liquidation",
    "ticks": 3600,
-   "final": "fc2a01ce70ca5c557ebabdc145861c6a0e14688cd544a8d54228208fbe9193e9"
+   "final": "9370e0eb6f72199e4434fdb88ddadd35eb604f2df82fd512b83fb500eb93f57a"
   }
  ]
 }

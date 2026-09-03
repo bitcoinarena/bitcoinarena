@@ -296,6 +296,20 @@ namespace Blwp
         public static float LastLiquidation =>
             _state[Layout.O_LIQ + Layout.L_LAST] / (float)ONE;
 
+        /// <summary>True while a liquidation strike is armed this tick.</summary>
+        public static bool StrikeArmed => _state[Layout.O_STRIKE + Layout.K_STATE] != 0;
+
+        /// <summary>Where the strike landed, in metres. Only meaningful while armed.</summary>
+        public static Vector3 StrikeAt(float y) => new Vector3(
+            Metres(_state[Layout.O_STRIKE + Layout.K_X]), y,
+            Metres(_state[Layout.O_STRIKE + Layout.K_Z]));
+
+        /// <summary>The load that armed it, in millions of USD.</summary>
+        public static float StrikeLoad => Metres(_state[Layout.O_STRIKE + Layout.K_LOAD]);
+
+        /// <summary>How many strikes the core has made this run.</summary>
+        public static int StrikeCount => _state[Layout.O_STRIKE + Layout.K_SERIAL];
+
         /// <summary>How many liquidations the core has accepted this run.</summary>
         public static int LiquidationCount => _state[Layout.O_LIQ + Layout.L_SERIAL];
 
