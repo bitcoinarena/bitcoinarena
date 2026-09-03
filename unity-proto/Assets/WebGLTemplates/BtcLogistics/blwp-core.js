@@ -2292,10 +2292,18 @@ function stepUnit(u, rng, seamZ, truckX, truckZ, halfX, halfZ, dt, index, tick, 
       if (abs(dx) > reach || abs(dz) > reach) continue;
       const d = length2(dx, dz);
       if (d >= reach) continue;
-      if (d < 655) {                       // dead centre: a metre of nothing
-        u.x = add(u.x, reach);             // pushed one way, always the same way
-        continue;
-      }
+      // C#'s own guard, and C#'s own action: `AvoidWrecks` returns when
+      // `d2 < 1e-4`, which is the same hundredth of a metre. It is there to
+      // keep the divide below from a zero, and nothing more.
+      //
+      // It carried a push of my own until now - out by `reach` along x - so
+      // that a unit standing exactly on the centre could not be left in the
+      // bowl. Measured, it never happens: 0 of 345,600 unit-ticks. The reason
+      // is in the order, not in luck - the push runs AFTER the step, and a
+      // step is 0.04 to 0.11 m, always past the hundredth. So the push was a
+      // rule C# does not have, guarding a case that cannot arise, and it is
+      // gone rather than kept as decoration.
+      if (d < 655) continue;
       u.x = add(u.x, div(mulFast(dx, sub(reach, d)), d));
       u.z = add(u.z, div(mulFast(dz, sub(reach, d)), d));
     }
