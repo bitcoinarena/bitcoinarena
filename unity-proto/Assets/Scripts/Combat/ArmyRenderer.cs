@@ -705,20 +705,30 @@ public class ArmyRenderer : MonoBehaviour
                 if (mr != null && mr.sharedMaterial != mat) mr.sharedMaterial = mat;
             }
 
-            // THE TURRET FOLLOWS THE HULL. C# traversed it in world space on
-            // its own `turretYaw`; the core has no turret, and none is being
-            // invented here or anywhere else in C#. When the core reports an
-            // aim this reads it - until then a tank looks where it is going,
-            // which is at least true.
+            // THE TURRET LOOKS WHERE `StepArmour` WOULD HAVE LOOKED. It used
+            // to be glued to the hull, because the core has no turret word and
+            // is not getting one for a quantity that decides nothing. The aim
+            // is derived from core state and smoothed here; `LerpAngle` at
+            // 2.6 per second is C#'s own rate.
+            if (_turretYaw.Length != Blwp.Layout.UNITS)
+                _turretYaw = new float[Blwp.Layout.UNITS];
+            float aim = AimOf(i, at, heading, side);
+            _turretYaw[i] = Mathf.LerpAngle(_turretYaw[i] * Mathf.Rad2Deg, aim * Mathf.Rad2Deg,
+                                            1f - Mathf.Exp(-2.6f * Time.deltaTime)) * Mathf.Deg2Rad;
+            float yaw = _turretYaw[i];
+
             if (prefab)
             {
                 var turret = FindDeep(hull, "turret");
-                if (turret != null) turret.localRotation = Quaternion.identity;
+                // The model's turret is a child of the hull, so the hull's own
+                // rotation has to come off the world aim or the two would add.
+                if (turret != null)
+                    turret.localRotation = Quaternion.Euler(0f, (yaw - heading) * Mathf.Rad2Deg, 0f);
                 SpinRunningGear(hull);
             }
             else if (dense < _turrets.Count)
             {
-                Place(_turrets[dense], new Vector3(at.x, hull.position.y, at.z), heading, mat);
+                Place(_turrets[dense], new Vector3(at.x, hull.position.y, at.z), yaw, mat);
             }
             dense++;
         }
@@ -788,6 +798,60 @@ public class ArmyRenderer : MonoBehaviour
     }
 
     int _lastDrawn = -1;
+
+    /// <summary>
+    /// Where each tank's barrel points, one entry per unit slot.
+    ///
+    /// CLIENT MEMORY, NOT CORE STATE. `Army.cs` carried `turretYaw` on the
+    /// unit and traversed it in world space, and it read that word back
+    /// NOWHERE: a shot is `Random01() &lt; 0.55f` and the target is chosen by
+    /// distance and heat, so the barrel's angle decides nothing. Unread state
+    /// does not belong in a hashed core - it would cost `U_WORDS` 8 to 9,
+    /// every offset after it, every golden vector, `BlwpLayout.cs` and the C#
+    /// buffer, to move none of the seventy-eight numbers the core is compared
+    /// on. So the aim is derived here from state the core already publishes
+    /// and smoothed here, in the same class as the infantry's bob off
+    /// `BlwpCore.Tick` and the running gear. Nothing is written back.
+    /// </summary>
+    float[] _turretYaw = new float[0];
+
+    /// <summary>
+    /// Where a tank would be looking, following `StepArmour`'s own choice.
+    ///
+    /// Engaged - the nearest enemy TANK inside 46 m, which is what
+    /// `NearestEnemy` walks and what `foeD2 &lt; 46f * 46f` tests - and the
+    /// barrel goes straight to it. That half is C#'s rule exactly.
+    ///
+    /// Not engaged, C# sweeps across a point `(x + sin(phase) * 14,
+    /// front + Dir * 20)`. ONE SUBSTITUTION, and it is named rather than
+    /// hidden: the renderer has no frontline. The seam is derived inside the
+    /// core from the price tape every tick and is not a state word, so no
+    /// accessor can hand it over. The sweep is therefore taken about the
+    /// hull's own heading - which the core does publish, and which already
+    /// points down the map at the enemy - over the same 14 m of lateral
+    /// wander, at the distance of the nearest enemy tank when there is one.
+    /// Same shape, same rate, from what is actually available.
+    /// </summary>
+    static float AimOf(int i, Vector3 at, float heading, Army.Side side)
+    {
+        float bestD2 = float.MaxValue, fx = 0f, fz = 0f;
+        for (int j = 0; j < Blwp.Layout.UNITS; j++)
+        {
+            if (j == i || !Blwp.BlwpCore.UnitIsArmour(j) || !Blwp.BlwpCore.UnitAlive(j)) continue;
+            if (SideOf(j) == side) continue;
+            var o = Blwp.BlwpCore.UnitPosition(j, 0f);
+            float d2 = (o.x - at.x) * (o.x - at.x) + (o.z - at.z) * (o.z - at.z);
+            if (d2 < bestD2) { bestD2 = d2; fx = o.x; fz = o.z; }
+        }
+        if (bestD2 < 46f * 46f) return Mathf.Atan2(fx - at.x, fz - at.z);
+
+        // `v.phase += dt * 0.4f` in C#, off a per-unit draw. Off the tick and
+        // the slot here, the way the bob is: no state, same slow wander, and
+        // no two tanks in step.
+        float phase = Blwp.BlwpCore.Tick * (0.4f / 60f) + i * 0.7f;
+        float ahead = bestD2 < float.MaxValue ? Mathf.Sqrt(bestD2) : 30f;
+        return heading + Mathf.Atan2(Mathf.Sin(phase) * 14f, Mathf.Max(1f, ahead));
+    }
 
     static void Place(Transform t, Vector3 pos, float yawRadians, Material mat)
     {
