@@ -46,15 +46,29 @@ public class RoadNetwork : MonoBehaviour
     public float SurfaceHeight(float x, float z)
     {
         float ground = terrain != null ? terrain.SampleSurface(x, z) : 0f;
-        if (Model == null) return ground;
+        return ground + Lift(x, z);
+    }
+
+    /// <summary>
+    /// How far the deck stands above whatever the ground is here - zero off the
+    /// road, <see cref="lift"/> on it, faded across the shoulder.
+    ///
+    /// Split out of <see cref="SurfaceHeight"/> because the ground underneath it
+    /// is no longer Unity's to answer: the core knows about craters and the
+    /// terrain does not. The deck is drawn by Unity and only Unity, so the lift
+    /// stays here and is added to whichever surface the caller starts from.
+    /// </summary>
+    public float Lift(float x, float z)
+    {
+        if (Model == null) return 0f;
 
         var lane = Model.LaneAt(x, z, RoadModel.HalfWidth + Shoulder);
-        if (lane == null) return ground;
+        if (lane == null) return 0f;
 
         float d = Mathf.Abs(z - Model.CenterZ(lane.Value, x));
         float t = Mathf.InverseLerp(RoadModel.HalfWidth + Shoulder,
                                     RoadModel.HalfWidth, d);
-        return ground + lift * Mathf.Clamp01(t);
+        return lift * Mathf.Clamp01(t);
     }
 
     /// <summary>How far past the edge the deck height is blended out.</summary>

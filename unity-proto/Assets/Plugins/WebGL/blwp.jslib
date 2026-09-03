@@ -44,6 +44,20 @@ mergeInto(LibraryManager.library, {
     return b.core.frontAt(b.st, x | 0) | 0;
   },
 
+  // The surface at a world point, Q16.16 metres: the uploaded relief LESS what
+  // the craters have taken out of it. The renderer asks; it does not work the
+  // hole out again.
+  //
+  // Unity's own terrain is the relief BEFORE the strike - it has never heard of
+  // a crater - so a truck placed on `SampleSurface` hovered over its own hole by
+  // the crater's full depth, up to 6.00 m. The core already answers this for its
+  // own physics through one function; this is that same function, read out.
+  BlwpSurfaceAt: function (x, z) {
+    var b = Module.blwp;
+    if (!b || !b.core.groundAt) return 0;
+    return b.core.groundAt(b.st, x | 0, z | 0) | 0;
+  },
+
   BlwpStep: function (throttle, steer, brake, handbrake, practice) {
     var b = Module.blwp;
     if (!b) return 0;

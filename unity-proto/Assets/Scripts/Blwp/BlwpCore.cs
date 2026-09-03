@@ -25,6 +25,7 @@ namespace Blwp
         [DllImport("__Internal")] private static extern int BlwpReadState(IntPtr ptr, int wordCount);
         [DllImport("__Internal")] private static extern int BlwpStateHash(IntPtr ptr, int cap);
         [DllImport("__Internal")] private static extern int BlwpFrontlineZ(int x);
+        [DllImport("__Internal")] private static extern int BlwpSurfaceAt(int x, int z);
         [DllImport("__Internal")] private static extern int BlwpLiquidation(int size);
         [DllImport("__Internal")] private static extern int BlwpRunScore();
         [DllImport("__Internal")] private static extern int BlwpStateWords();
@@ -41,6 +42,7 @@ namespace Blwp
         private static int BlwpReadState(IntPtr ptr, int wordCount) => 0;
         private static int BlwpStateHash(IntPtr ptr, int cap) => 0;
         private static int BlwpFrontlineZ(int x) => 0;
+        private static int BlwpSurfaceAt(int x, int z) => 0;
         private static int BlwpLiquidation(int size) => 0;
         private static int BlwpRunScore() => 0;
         private static int BlwpStateWords() => 0;
@@ -370,6 +372,27 @@ namespace Blwp
 
         public static float FrontlineZ(float x) =>
             Available ? BlwpFrontlineZ(Mathf.RoundToInt(x * ONE)) / (float)ONE : 0f;
+
+        /// <summary>
+        /// The surface at a world point, in metres: the relief the host handed
+        /// over, LESS what the craters have taken out of it.
+        ///
+        /// The core already answers this for its own physics - `surfaceAt` in
+        /// sim.js is the one place that says what the ground is - and this is
+        /// that same function read back, not a second copy of it. Unity's
+        /// terrain cannot be made to agree: `MempoolTerrain` draws the relief
+        /// as it was before the strike and has never heard of a crater, so a
+        /// truck seated on `SampleSurface` hovered over its own hole by the
+        /// crater's full depth, measured at up to 6.00 m.
+        ///
+        /// This is the BARE surface. A road deck is laid a constant lift above
+        /// it, and that lift belongs to whoever draws the deck - see
+        /// `RoadNetwork.Lift`. Folding it in here would make the core the
+        /// author of a thing it does not simulate.
+        /// </summary>
+        public static float SurfaceAt(float x, float z) =>
+            Available ? BlwpSurfaceAt(Mathf.RoundToInt(x * ONE),
+                                      Mathf.RoundToInt(z * ONE)) / (float)ONE : 0f;
 
         public static float TruckHeading => Degrees(_state[Layout.O_TRUCK + Layout.T_HEADING]);
 

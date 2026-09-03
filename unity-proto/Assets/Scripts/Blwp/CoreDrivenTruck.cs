@@ -67,6 +67,13 @@ namespace Blwp
         // The colliders ARE children of the chassis, so they still give the
         // mounting points for free.
         int _groundRevision = -1;
+
+        /// <summary>
+        /// True once the core has actually taken the relief. Until it has, the
+        /// core's ground is flat zero, and asking it would drop the truck to
+        /// sea level for the frames between Start and the first upload.
+        /// </summary>
+        bool _reliefInCore;
         int _solidCount = -1;
         float _solidsChecked;
 
@@ -285,9 +292,14 @@ namespace Blwp
 
             const int cols = 160, rows = 96;      // the terrain's own grid
             if (BlwpCore.SetGround(terrain.HeightGrid(cols, rows), cols, rows))
+            {
+                _reliefInCore = true;
                 Debug.Log($"[blwp] relief uploaded, revision {_groundRevision}");
+            }
             else
+            {
                 Debug.LogWarning("[blwp] the core refused the relief - it stays flat");
+            }
         }
 
         /// <summary>
@@ -388,19 +400,29 @@ namespace Blwp
 
         /// <summary>
         /// The surface anything STANDS on here - the road deck where there is
-        /// one, the bare relief where there is not.
+        /// one, the bare surface where there is not.
         ///
-        /// Not terrain.SampleSurface: the deck is laid ABOVE the relief, so
-        /// wheels placed on the terrain sank into the road by exactly the lift
-        /// and looked right everywhere else. RoadNetwork carries this exact
-        /// warning in its own comment, having been caught by it before.
+        /// THE SURFACE COMES FROM THE CORE. `surfaceAt` is the one function that
+        /// says what the ground is, and it is the relief LESS the craters.
+        /// Unity's terrain is the relief alone: `MempoolTerrain` draws the hills
+        /// the round started with and has never heard of a strike, so a truck
+        /// seated on `SampleSurface` stood on a lid over its own hole and hovered
+        /// by the crater's full depth - 6.00 m at the deepest.
         ///
-        /// The core's physics still reads the bare relief, which is correct -
-        /// the deck is a constant lift, so it has the same slope as the ground
-        /// beneath it and changes nothing a truck would feel.
+        /// THE LIFT STAYS HERE. The deck is laid above the ground by a constant
+        /// the core does not simulate, so it is added on top of whatever the
+        /// surface is rather than folded into it. Wheels placed on the bare
+        /// surface sank into the road by exactly that lift; RoadNetwork carries
+        /// the same warning, having been caught by it before.
+        ///
+        /// Unity's terrain remains the fallback for the Editor, where there is
+        /// no core at all, and for the frames before the relief is uploaded.
         /// </summary>
         float Ground(float x, float z)
         {
+            if (BlwpCore.Available && _reliefInCore)
+                return BlwpCore.SurfaceAt(x, z) + (roads != null ? roads.Lift(x, z) : 0f);
+
             if (roads != null) return roads.SurfaceHeight(x, z);
             return terrain != null ? terrain.SampleSurface(x, z) : 0f;
         }
