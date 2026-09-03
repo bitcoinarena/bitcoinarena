@@ -1,0 +1,14 @@
+{
+  "name": "@blwp/node",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "One process, one round: open it, take an entry, store input batches, close it. No verification.",
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "start": "node src/main.js"
+  },
+  "dependencies": {
+    "ws": "^8.21.3"
+  }
+}

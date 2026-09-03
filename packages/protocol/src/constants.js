@@ -16,6 +16,15 @@ export const TYPE_CHECKPOINT = 0x05;
 export const TYPE_RESULT = 0x06;
 export const TYPE_PAYOUT_TABLE = 0x07;
 
+/**
+ * What a player sends while a round is running.
+ *
+ * The only message a node takes in M2.1 that was not already here, and the
+ * next free byte rather than a reuse: a batch digest must not be able to
+ * collide with a contract's.
+ */
+export const TYPE_INPUT_BATCH = 0x08;
+
 export const TAG = {
   roundContract: 'BLWP/v1/RoundContract',
   entryContract: 'BLWP/v1/EntryContract',
@@ -26,6 +35,7 @@ export const TAG = {
   checkpoint: 'BLWP/v1/Checkpoint',
   result: 'BLWP/v1/Result',
   payoutTable: 'BLWP/v1/PayoutTable',
+  inputBatch: 'BLWP/v1/InputBatch',
   remainder: 'BLWP/v1/Remainder',
 };
 

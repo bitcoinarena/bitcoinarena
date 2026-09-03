@@ -8,7 +8,12 @@
 import { readFileSync } from 'node:fs';
 import { parse } from 'acorn';
 
-const MONEY = ['payout.js', 'sortition.js', 'census.js', 'contracts.js', 'encode.js'];
+// `batch.js` is on the list although it moves no money: it carries Q16.16
+// words that go straight into the deterministic core, so a float literal there
+// would desync a player from the nodes verifying him exactly as one in
+// `contracts.js` would misprice him.
+const MONEY = ['payout.js', 'sortition.js', 'census.js', 'contracts.js', 'encode.js',
+               'batch.js'];
 const ROOT = new URL('../src/', import.meta.url).pathname;
 const problems = [];
 
