@@ -179,11 +179,134 @@ public class MinerTerminal : MonoBehaviour
 
         _rowHeight = high;
         FitRow(0);
+        BuildBarLabels(font);
+    }
+
+    /// <summary>
+    /// One number per bar, and the unit spelled out once for the row.
+    ///
+    /// Once, not twenty-four times: the panel's own rule is that a unit is
+    /// always spelled out, and a row of "32.5 sat/vB" repeated across the
+    /// screen would be a wall of units with the numbers lost in it.
+    /// </summary>
+    void BuildBarLabels(Font font)
+    {
+        if (bars == null || bars.Length == 0 || screen == null) return;
+
+        _barLabels = new TextMesh[bars.Length];
+        for (int i = 0; i < bars.Length; i++)
+        {
+            _barLabels[i] = MakeBarText(font, "BarFigure" + i, TextAnchor.LowerCenter,
+                                        new Color(0.60f, 1f, 0.72f));
+        }
+        _barUnit = MakeBarText(font, "BarUnit", TextAnchor.LowerCenter,
+                               new Color(0.42f, 1f, 0.55f, 0.75f));
+        _barUnit.text = "sat/vB";
+    }
+
+    TextMesh MakeBarText(Font font, string name, TextAnchor anchor, Color colour)
+    {
+        var go = new GameObject(name);
+        go.transform.SetParent(screen, false);
+        // The same half turn the rows take: TextMesh draws on its -Z face, so
+        // a child sharing the quad's orientation is read through the panel.
+        go.transform.localRotation = Quaternion.Euler(0f, 180f, 0f);
+        go.layer = screen.gameObject.layer;
+
+        var tm = go.AddComponent<TextMesh>();
+        tm.font = font;
+        tm.fontSize = 80;
+        tm.characterSize = 1f;          // real size comes from the bar pitch
+        tm.anchor = anchor;
+        tm.alignment = TextAlignment.Center;
+        tm.color = colour;
+        tm.text = "";
+
+        var mr = go.GetComponent<MeshRenderer>();
+        mr.sharedMaterial = font.material;
+        mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+        mr.receiveShadows = false;
+        return tm;
+    }
+
+    /// <summary>
+    /// Put each number over its own bar and size it to the bar pitch.
+    ///
+    /// Measured from the bars themselves rather than from the authored
+    /// numbers: the pitch is the distance between two bar centres in the
+    /// screen's own space, and the top is the bar renderer's world bounds
+    /// brought into the same space. Nothing here assumes the screen is 96 x 36
+    /// or that a bar is 11 m, because both are authored and both have moved.
+    /// </summary>
+    void PlaceBarLabels()
+    {
+        if (_barLabels == null || bars == null || screen == null) return;
+
+        float pitch = 0f;
+        Vector3? previous = null;
+        for (int i = 0; i < bars.Length && i < _barLabels.Length; i++)
+        {
+            if (bars[i] == null || _barLabels[i] == null) continue;
+            var r = bars[i].GetComponent<Renderer>();
+            if (r == null) continue;
+
+            var b = r.bounds;
+            var top = screen.InverseTransformPoint(new Vector3(b.center.x, b.max.y, b.center.z));
+            if (previous.HasValue) pitch = Mathf.Max(pitch, Mathf.Abs(top.x - previous.Value.x));
+            previous = top;
+
+            _barLabels[i].transform.localPosition = new Vector3(top.x, top.y + 0.4f, -0.2f);
+        }
+
+        if (pitch <= 0.001f) return;
+
+        // Whichever runs out first, the pitch or the daylight over the bar.
+        // A figure wider than its own bar reads as the neighbour's.
+        for (int i = 0; i < _barLabels.Length; i++)
+        {
+            if (_barLabels[i] == null) continue;
+            var mr = _barLabels[i].GetComponent<MeshRenderer>();
+            if (mr == null) continue;
+            var size = mr.localBounds.size;
+            if (size.x < 0.001f || size.y < 0.001f) continue;
+            float k = Mathf.Clamp(pitch * 0.92f / size.x, 0.001f, 5f);
+            _barLabels[i].transform.localScale = new Vector3(k, k * verticalStretch, k);
+        }
+
+        if (_barUnit != null && previous.HasValue)
+        {
+            var mr = _barUnit.GetComponent<MeshRenderer>();
+            if (mr != null && mr.localBounds.size.x > 0.001f)
+            {
+                float k = Mathf.Clamp(pitch * 1.6f / mr.localBounds.size.x, 0.001f, 5f);
+                _barUnit.transform.localScale = new Vector3(k, k * verticalStretch, k);
+            }
+            // at the quiet end of the curve, past the last bar
+            _barUnit.transform.localPosition = new Vector3(previous.Value.x - pitch,
+                                                           previous.Value.y + 0.4f, -0.2f);
+        }
     }
 
     float[] _rowHeight;
     TextMesh[] _amounts;
     TextMesh _header, _hash;
+
+    // ---- the figure behind each bar ---------------------------------------
+    //
+    // A bar carried its rate twice - as a log-compressed height and as a
+    // colour - and nowhere as a number. The height cannot be read back: it is
+    // `log10(1 + rate)` mapped between the tenth and ninetieth percentile of
+    // the twenty-four and then clamped, which is the right way to draw a fee
+    // curve and the wrong way to state one.
+    //
+    // The figure itself was already being computed and kept - `LiveCurve`
+    // writes it into `_live` and `Bars` hands the same array to `Paint`. So
+    // this draws what is already there rather than deriving a second number,
+    // on the same `shiftSeconds` clock, through the same TextMesh mechanism
+    // the transaction rows use. No overlay, no raycast, no second source.
+    TextMesh[] _barLabels;
+    TextMesh _barUnit;
+    int _labelRefit;
     float _hashHeight = 6.5f;
 
     /// <summary>
@@ -425,6 +548,13 @@ public class MinerTerminal : MonoBehaviour
                     _barTarget[i] = Mathf.Clamp(Mathf.Lerp(0.12f, maxBar, h), 0.12f, maxBar);
                 }
                 Paint(rates);
+
+                // The same array that just set every height and colour, said
+                // out loud. One decimal is what a fee rate is quoted to.
+                if (_barLabels != null)
+                    for (int i = 0; i < _barLabels.Length && i < rates.Length; i++)
+                        if (_barLabels[i] != null) _barLabels[i].text = rates[i].ToString("0.0");
+                _labelRefit = 2;      // TextMesh rebuilds at the end of the frame
             }
         }
 
@@ -439,6 +569,11 @@ public class MinerTerminal : MonoBehaviour
             s.y = Mathf.Lerp(s.y, _barTarget[i], k);
             bars[i].localScale = s;
         }
+
+        // Follows the bar it belongs to, so a figure never floats off its own
+        // column while the height eases into place.
+        PlaceBarLabels();
+        if (_labelRefit > 0 && --_labelRefit == 0) PlaceBarLabels();
     }
 
     float _nextShift;
