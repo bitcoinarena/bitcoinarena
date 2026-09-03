@@ -826,11 +826,18 @@ public class ArmyRenderer : MonoBehaviour
     /// front + Dir * 20)`. ONE SUBSTITUTION, and it is named rather than
     /// hidden: the renderer has no frontline. The seam is derived inside the
     /// core from the price tape every tick and is not a state word, so no
-    /// accessor can hand it over. The sweep is therefore taken about the
-    /// hull's own heading - which the core does publish, and which already
-    /// points down the map at the enemy - over the same 14 m of lateral
-    /// wander, at the distance of the nearest enemy tank when there is one.
-    /// Same shape, same rate, from what is actually available.
+    /// accessor can hand it over. The sweep is taken about the direction to
+    /// the nearest enemy tank instead - at any distance, not just inside 46 m
+    /// - over the same 14 m of lateral wander at that distance.
+    ///
+    /// MEASURED, because the first version of this centred the sweep on the
+    /// hull's own heading and that was wrong: against C#'s own centre, over
+    /// eight seeds at four marks, the hull heading sits a mean 77 to 84
+    /// degrees away and as much as 176, while the enemy's direction sits 22
+    /// to 27 away and at most 81. A tank not in contact is manoeuvring, and
+    /// where its hull points is not where the enemy line is. The sweep's
+    /// WIDTH was right either way - C# 12.6 to 13.9 degrees mean, this 11.9
+    /// to 12.5 - so only the centre moved.
     /// </summary>
     static float AimOf(int i, Vector3 at, float heading, Army.Side side)
     {
@@ -849,8 +856,10 @@ public class ArmyRenderer : MonoBehaviour
         // the slot here, the way the bob is: no state, same slow wander, and
         // no two tanks in step.
         float phase = Blwp.BlwpCore.Tick * (0.4f / 60f) + i * 0.7f;
-        float ahead = bestD2 < float.MaxValue ? Mathf.Sqrt(bestD2) : 30f;
-        return heading + Mathf.Atan2(Mathf.Sin(phase) * 14f, Mathf.Max(1f, ahead));
+        if (bestD2 == float.MaxValue) return heading;      // nobody left to look at
+        float ahead = Mathf.Sqrt(bestD2);
+        return Mathf.Atan2(fx - at.x, fz - at.z)
+             + Mathf.Atan2(Mathf.Sin(phase) * 14f, Mathf.Max(1f, ahead));
     }
 
     static void Place(Transform t, Vector3 pos, float yawRadians, Material mat)
