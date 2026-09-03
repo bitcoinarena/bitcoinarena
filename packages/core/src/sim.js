@@ -966,6 +966,16 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
   s[T + T_WHEEL] = v.speed;
   s[T + T_THROTTLE] = throttle;
 
+  // The live craters, gathered once for the whole army rather than eight
+  // slots re-read per unit per tick. Index order, which is protocol.
+  const craters = { n: 0, r: [] };
+  for (let i = 0; i < MAX_CRATERS; i++) {
+    const b = craterBase(i);
+    if (s[b + C_R] <= 0 || s[b + C_ROUNDS] <= 0) continue;
+    craters.r.push(s[b + C_X], s[b + C_Z], s[b + C_R]);
+    craters.n = (craters.n + 1) | 0;
+  }
+
   // ---- 2. army -----------------------------------------------------------
   const tx = s[T + T_X], tz = s[T + T_Z];
   const seamZ = frontlineZ(st.tape, tx, HALF_X, HALF_Z);
@@ -1069,7 +1079,7 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
     // own seam is still what the truck is measured against, so `seamZ` stays
     // for the callers below it.
     const unitSeam = frontlineZ(st.tape, u.x, HALF_X, HALF_Z);
-    stepUnit(u, rng, unitSeam, tx, tz, HALF_X, HALF_Z, TICK_DT, i, s[O_TICK]);
+    stepUnit(u, rng, unitSeam, tx, tz, HALF_X, HALF_Z, TICK_DT, i, s[O_TICK], craters);
 
     // Armour fires on armour. Drawn in index order, always, so the transcript
     // replays: a tank that fires earlier changes what the ones after it see.

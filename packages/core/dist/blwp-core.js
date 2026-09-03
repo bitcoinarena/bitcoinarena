@@ -2011,7 +2011,7 @@ const SIDE_BEAR = 1;
  * cooldown has expired - reload, then the hit roll. Nothing may be inserted
  * before the wobble or every recorded transcript stops replaying.
  */
-function stepUnit(u, rng, seamZ, truckX, truckZ, halfX, halfZ, dt, index, tick) {
+function stepUnit(u, rng, seamZ, truckX, truckZ, halfX, halfZ, dt, index, tick, craters) {
   if (u.hp <= 0) return 0;
 
   // THE DRAW STAYS, THE WOBBLE GOES.
@@ -2266,6 +2266,40 @@ function stepUnit(u, rng, seamZ, truckX, truckZ, halfX, halfZ, dt, index, tick) 
   const edge = sub(FRONT_X, Math.imul(4, ONE));
   u.x = clamp(add(u.x, stepX), neg(min(edge, halfX)), min(edge, halfX));
   u.z = clamp(add(u.z, stepZ), -halfZ, halfZ);
+
+  // OUT OF THE CRATERS.
+  //
+  // C# has this rule already and it is not the wrecks: `Army.AvoidWrecks`
+  // (`Army.cs:533-552`) pushes a unit out of a circle along the radius by
+  // `(r + size) - d`, with 3.2 m for a tank and 0.6 m for a man. Plain metres,
+  // no PhysX, no nav mesh, no terrain height - so it ports as it stands, and
+  // those two sizes come with it rather than being invented here. The WRECKS
+  // stay out; what is taken is the shape of the rule, not the feature whose
+  // share of the gap measured zero.
+  //
+  // A push, not a steer. It is the same class as the map edge two lines above
+  // and as `resolveSolids` for the truck: a place a unit may not be, resolved
+  // after the step rather than negotiated before it. The TRUCK is deliberately
+  // not here - it drives through the bowl, which step 3 measured it can.
+  if (craters) {
+    const size = u.armour ? Math.imul(3, ONE) + 13107 : 39322;   // 3.2 m, 0.6 m
+    for (let i = 0; i < craters.n; i++) {
+      const c = Math.imul(i, 3);
+      const R = craters.r[c + 2];
+      if (R <= 0) continue;
+      const dx = sub(u.x, craters.r[c]), dz = sub(u.z, craters.r[c + 1]);
+      const reach = add(R, size);
+      if (abs(dx) > reach || abs(dz) > reach) continue;
+      const d = length2(dx, dz);
+      if (d >= reach) continue;
+      if (d < 655) {                       // dead centre: a metre of nothing
+        u.x = add(u.x, reach);             // pushed one way, always the same way
+        continue;
+      }
+      u.x = add(u.x, div(mulFast(dx, sub(reach, d)), d));
+      u.z = add(u.z, div(mulFast(dz, sub(reach, d)), d));
+    }
+  }
 
   // The rifleman is not a vehicle and C# does not treat him as one: he walks
   // in z and holds his squad's x, and he simply FACES the way he is walking,
@@ -3960,6 +3994,16 @@ function step(st, throttle, steer, brake, handbrake, practice) {
   s[T + T_WHEEL] = v.speed;
   s[T + T_THROTTLE] = throttle;
 
+  // The live craters, gathered once for the whole army rather than eight
+  // slots re-read per unit per tick. Index order, which is protocol.
+  const craters = { n: 0, r: [] };
+  for (let i = 0; i < MAX_CRATERS; i++) {
+    const b = craterBase(i);
+    if (s[b + C_R] <= 0 || s[b + C_ROUNDS] <= 0) continue;
+    craters.r.push(s[b + C_X], s[b + C_Z], s[b + C_R]);
+    craters.n = (craters.n + 1) | 0;
+  }
+
   // ---- 2. army -----------------------------------------------------------
   const tx = s[T + T_X], tz = s[T + T_Z];
   const seamZ = frontlineZ(st.tape, tx, HALF_X, HALF_Z);
@@ -4063,7 +4107,7 @@ function step(st, throttle, steer, brake, handbrake, practice) {
     // own seam is still what the truck is measured against, so `seamZ` stays
     // for the callers below it.
     const unitSeam = frontlineZ(st.tape, u.x, HALF_X, HALF_Z);
-    stepUnit(u, rng, unitSeam, tx, tz, HALF_X, HALF_Z, TICK_DT, i, s[O_TICK]);
+    stepUnit(u, rng, unitSeam, tx, tz, HALF_X, HALF_Z, TICK_DT, i, s[O_TICK], craters);
 
     // Armour fires on armour. Drawn in index order, always, so the transcript
     // replays: a tank that fires earlier changes what the ones after it see.
