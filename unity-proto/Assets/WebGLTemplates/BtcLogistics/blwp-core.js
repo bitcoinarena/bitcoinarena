@@ -2102,9 +2102,23 @@ function stepUnit(u, rng, seamZ, truckX, truckZ, halfX, halfZ, dt, index, tick) 
       // the short way round, or a tank crossing north turns the long way home
       const off = (((want - u.heading + 32768) & 65535) - 32768) | 0;
       u.heading = add(u.heading, Math.imul(off, TURN_RATE) >> 16) & 65535;
-      stepX = mulFast(sin(u.heading), far);
-      stepZ = mulFast(cos(u.heading), far);
     }
+    // THE PROJECTION IS NOT GATED, and it used to be. Both lines sat inside
+    // the floor above, so below 0.4 m/s a tank kept `dx, dz` - the raw output
+    // of two separate controllers - and moved along that instead of along its
+    // hull. Measured: 1.4% of armour ticks, and in them the hull sits 89.7
+    // degrees from the movement. That is not the turn lag, it is a tank
+    // travelling sideways, which is the one thing (x) forbids.
+    //
+    // The floor is C#'s own - `Army.cs:456` updates the heading only when the
+    // step exceeds `dt * 0.4` - but in C# it gates ONLY the heading, because
+    // C# has no velocity constraint to gate: its step is always along its goal
+    // vector. Gating the core's projection with it copied a guard onto a rule
+    // it was never written for. The heading still stops updating below the
+    // floor, where the direction of a 6 mm step is noise; the tank still only
+    // ever drives where it points.
+    stepX = mulFast(sin(u.heading), far);
+    stepZ = mulFast(cos(u.heading), far);
   }
 
   const edge = sub(FRONT_X, Math.imul(4, ONE));
