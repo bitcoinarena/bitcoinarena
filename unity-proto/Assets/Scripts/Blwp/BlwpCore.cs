@@ -266,6 +266,39 @@ namespace Blwp
             _state[Layout.O_TRUCK + Layout.T_STEER] * 360f / 65536f;
         public static float TruckHealth => Metres(_state[Layout.O_TRUCK + Layout.T_HP]);
         public static float TruckSpeed => Metres(_state[Layout.O_TRUCK + Layout.T_WHEEL]);
+
+        /// <summary>
+        /// How fast the truck is moving SIDEWAYS, in m/s across its own nose.
+        ///
+        /// The core already works this out every tick and does not keep it.
+        /// `rules/vehicle.js:147-152` decomposes the velocity into the chassis
+        /// frame to spend the friction circle on it:
+        ///
+        ///     const fx = sin(v.heading), fz = cos(v.heading);
+        ///     const rx = fz, rz = neg(fx);            // right-hand normal
+        ///     let across = add(mulFast(v.vx, rx), mulFast(v.vz, rz));
+        ///
+        /// so this is that projection, taken from the words the core does
+        /// publish - `T_VX`, `T_VZ` and `T_HEADING` - rather than a sketch of
+        /// what sideways ought to mean. The axes are the file's: right is
+        /// (cos h, -sin h), NOT (sin h, cos h) rotated the other way, and
+        /// getting that backwards would report a corner as a straight line.
+        ///
+        /// It reads the velocity AFTER the step, so the lateral grip has
+        /// already been spent on it - the slip the truck actually ends the
+        /// tick with, which is the same instant PhysX's `linearVelocity` was
+        /// read at. A speed, in m/s. Not a distance, not a per-tick step.
+        /// </summary>
+        public static float TruckSlip
+        {
+            get
+            {
+                float h = TruckHeading * Mathf.Deg2Rad;
+                float vx = Metres(_state[Layout.O_TRUCK + Layout.T_VX]);
+                float vz = Metres(_state[Layout.O_TRUCK + Layout.T_VZ]);
+                return Mathf.Abs(vx * Mathf.Cos(h) - vz * Mathf.Sin(h));
+            }
+        }
         public static int Tick => _state[Layout.O_TICK];
         public static int RunState => _state[Layout.O_SCORE + Layout.S_STATE];
         public static float Exposure => Metres(_state[Layout.O_SCORE + Layout.S_EXPOSURE]);

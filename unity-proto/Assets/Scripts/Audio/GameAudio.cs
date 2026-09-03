@@ -110,7 +110,15 @@ public class GameAudio : MonoBehaviour
 
         // Tyre noise is the sideways slip, so it comes up in a corner and on
         // the handbrake rather than simply with speed.
-        float slip = Mathf.Clamp01(truck.Slip / 6f) * Mathf.Clamp01(speed / 6f);
+        // THE SIDEWAYS SPEED COMES FROM THE CORE TOO. `truck.Slip` is
+        // `|InverseTransformDirection(_rb.linearVelocity).x|`, and the body is
+        // kinematic while the core drives - measured in the player build,
+        // slip=0.00 at speed, so the tyres were wired and silent. The core
+        // works the same projection out every tick to spend its friction
+        // circle on; `TruckSlip` reads it back off the published words. One
+        // source, not two formulas side by side.
+        float across = Blwp.BlwpCore.Available ? Blwp.BlwpCore.TruckSlip : truck.Slip;
+        float slip = Mathf.Clamp01(across / 6f) * Mathf.Clamp01(speed / 6f);
         _tyres.pitch = Mathf.Lerp(0.8f, 1.5f, slip);
         _tyres.volume = Mathf.Lerp(_tyres.volume, effectVolume * 0.5f * slip,
                                    1f - Mathf.Exp(-8f * Time.deltaTime));
