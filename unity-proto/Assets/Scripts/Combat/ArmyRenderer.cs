@@ -85,6 +85,11 @@ public class ArmyRenderer : MonoBehaviour
     readonly List<Transform> _hulls = new List<Transform>();
     readonly List<Transform> _turrets = new List<Transform>();
     readonly List<Transform> _helis = new List<Transform>();
+    // Per gunship slot, for the nose and the bank derived from its travel.
+    readonly float[] _heliYaw = new float[Blwp.Layout.MAX_HELIS];
+    readonly float[] _heliBank = new float[Blwp.Layout.MAX_HELIS];
+    readonly Vector3[] _heliWas = new Vector3[Blwp.Layout.MAX_HELIS];
+    readonly bool[] _heliFlown = new bool[Blwp.Layout.MAX_HELIS];
     readonly List<Transform> _bombs = new List<Transform>();
     /// <summary>Main and tail rotor per airframe, so they can be spun.</summary>
     readonly Dictionary<Transform, (Transform main, Transform tail)> _heliRotors =
@@ -441,7 +446,10 @@ public class ArmyRenderer : MonoBehaviour
         int hn = 0;
         for (int k = 0; k < Blwp.Layout.MAX_HELIS; k++)
         {
-            if (!Blwp.BlwpCore.HeliAlive(k)) continue;
+            // A dead slot forgets its nose: the next sortie in it starts from
+            // its own crossing direction, not from where the last one was
+            // pointing when it left the field.
+            if (!Blwp.BlwpCore.HeliAlive(k)) { _heliFlown[k] = false; continue; }
             if (hn >= _helis.Count) break;
             var t = _helis[hn++];
             if (!t.gameObject.activeSelf) t.gameObject.SetActive(true);
@@ -451,10 +459,44 @@ public class ArmyRenderer : MonoBehaviour
             // yaw and no bank because neither decides anything. A gunship
             // faces along its run and banks for the look of it, so both are
             // derived here and no simulation is invented to supply them.
-            float yaw = Blwp.BlwpCore.HeliDir(k) >= 0 ? 90f : -90f;
+            // ... and DERIVED means from the travel, which the last version did
+            // not do. It took the nose straight from `H_DIR`, which is the way
+            // the gunship is CROSSING and is one number for the whole sortie,
+            // while the machine's z chases `seam(x) +- (26 + sin(t*0.6)*9)` at
+            // up to 29.5 m/s. Measured over 150 s: the drawn nose was 19.4 deg
+            // off the real travel on average, 37.0 at the 95th percentile and
+            // 55.9 at worst - a gunship crabbing sideways across its own run.
+            // The PATH was never wrong; only the nose was.
+            //
+            // So it is derived the way `Army.cs:443-451` derives it - nose to
+            // Atan2 of the step, eased at 3 per second, bank in proportion to
+            // how hard it is turning, clamped at 0.8 rad and eased at 3.5.
+            // Nothing in the simulation reads either, which is why they belong
+            // here and cost no layout word.
             var where = Blwp.BlwpCore.HeliPosition(k);
+            float yaw = _heliYaw[k];
+            if (!_heliFlown[k])
+            {
+                yaw = Blwp.BlwpCore.HeliDir(k) >= 0 ? 90f : -90f;
+                _heliBank[k] = 0f;
+                _heliFlown[k] = true;
+            }
+            else
+            {
+                float vx = where.x - _heliWas[k].x, vz = where.z - _heliWas[k].z;
+                if (vx * vx + vz * vz > 1e-8f)
+                {
+                    float want = Mathf.Atan2(vx, vz) * Mathf.Rad2Deg;
+                    float turn = Mathf.DeltaAngle(yaw, want) * Mathf.Deg2Rad;
+                    yaw = Mathf.LerpAngle(yaw, want, 1f - Mathf.Exp(-3f * Time.deltaTime));
+                    _heliBank[k] += (Mathf.Clamp(turn * 4.5f, -0.8f, 0.8f) - _heliBank[k])
+                                  * (1f - Mathf.Exp(-3.5f * Time.deltaTime));
+                }
+            }
+            _heliYaw[k] = yaw;
+            _heliWas[k] = where;
             t.SetPositionAndRotation(where,
-                                     Quaternion.Euler(0f, yaw + helicopterYawOffset, 0f));
+                Quaternion.Euler(0f, yaw + helicopterYawOffset, -_heliBank[k] * Mathf.Rad2Deg));
 
             float d2 = (where.x - ear.x) * (where.x - ear.x) + (where.z - ear.z) * (where.z - ear.z);
             if (d2 < nearest) { nearest = d2; overhead = new Vector2(where.x, where.z); }
