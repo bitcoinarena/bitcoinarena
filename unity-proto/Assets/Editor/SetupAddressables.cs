@@ -117,10 +117,63 @@ public static class SetupAddressables
         return 1;
     }
 
+    /// <summary>
+    /// Empty the folder the bundles are written into, before writing them.
+    ///
+    /// `BuildPlayerContent` is incremental and names every bundle by a hash of
+    /// its contents, so changing a model writes a NEW name and leaves the old
+    /// one where it was. Nothing else removes it: `BuildWebGL` mirrors the
+    /// build OUTPUT - it deletes and re-copies - but the source this copies
+    /// FROM had no such rule, and it is the source that grows.
+    ///
+    /// The failure it guards against is the one `CopyStreamedContent` already
+    /// describes from the other side: a catalogue asking for a hash the server
+    /// does not have is a 404 and a building that never appears, with nothing
+    /// a player can see. A stale twin is the same fault wearing the other
+    /// shoe - the server has a bundle nobody asks for, and it ships in every
+    /// deploy.
+    ///
+    /// The path is EVALUATED from the profile rather than assembled here, so
+    /// this cleans exactly where the build is about to write even if
+    /// `kRemoteBuildPath` is changed above.
+    ///
+    /// It costs a full rebuild of the bundles on every run instead of an
+    /// incremental one. That is the price of the folder being what the
+    /// catalogue says it is.
+    /// </summary>
+    static void ClearRemoteBuildPath()
+    {
+        var settings = AddressableAssetSettingsDefaultObject.Settings;
+        if (settings == null) return;
+
+        string raw = settings.profileSettings.GetValueByName(
+            settings.activeProfileId, AddressableAssetSettings.kRemoteBuildPath);
+        if (string.IsNullOrEmpty(raw)) return;
+
+        string path = settings.profileSettings.EvaluateString(settings.activeProfileId, raw);
+        if (string.IsNullOrEmpty(path)) return;
+
+        string full = Path.GetFullPath(Path.Combine(
+            Path.GetDirectoryName(Application.dataPath) ?? ".", path));
+        if (!Directory.Exists(full))
+        {
+            Debug.Log($"[SetupAddressables] nothing to clear at {full}");
+            return;
+        }
+
+        int had = Directory.GetFiles(full).Length;
+        long bytes = Directory.GetFiles(full).Sum(f => new FileInfo(f).Length);
+        Directory.Delete(full, true);
+        Directory.CreateDirectory(full);
+        Debug.Log($"[SetupAddressables] cleared {had} files " +
+                  $"({bytes / (1024f * 1024f):0.0} MB) from {full} before building");
+    }
+
     /// <summary>Build the bundles. Must run before the player build.</summary>
     public static void BuildContent()
     {
         Run();
+        ClearRemoteBuildPath();
         UnityEditor.AddressableAssets.Settings.AddressableAssetSettings.BuildPlayerContent(out var result);
         if (!string.IsNullOrEmpty(result.Error))
         {
