@@ -257,7 +257,11 @@ function measure(seed) {
                 `perTarget=${d.perTarget.toFixed(2)} worst=${d.worst} seam=${seam.toFixed(1)}` +
                 (rd.inRange !== undefined
                   ? `   | REC inRange=${rd.inRange} xspread=${rd.xSpread} shooters=${rd.shooters} ` +
-                    `tanksAlive=${rd.tanksAlive} lost=${rd.lost} arrived=${rd.arrived}`
+                    // perTarget and worst were held back on the recording's side
+                    // although the rows carry them. A comparison that prints a
+                    // quantity for one engine only is not a comparison.
+                    `tanksAlive=${rd.tanksAlive} perTarget=${rd.perTarget} worst=${rd.worst} ` +
+                    `lost=${rd.lost} arrived=${rd.arrived}`
                   : ''));
 
     // The armour's |x| in bands, beside the reference's own.
