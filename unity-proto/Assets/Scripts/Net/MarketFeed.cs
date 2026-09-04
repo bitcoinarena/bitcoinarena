@@ -12,22 +12,25 @@ public class MarketFeed : MonoBehaviour
 {
     const string SpotUrl =
         "wss://stream.binance.com:9443/stream?streams=btcusdt@aggTrade/btcusdt@ticker";
-    // EVERY Binance BTC market, not just BTCUSDT - the mapping was too narrow.
-    // Asked of the exchange rather than remembered: fapi/v1/exchangeInfo lists
-    // BTC-base symbols TRADING as BTCUSDT, BTCUSDC, BTCUSD1, BTCU and the two
-    // dated quarters; BTCDOMUSDT is dominance, not the coin, and its base asset
-    // is BTCDOM so it never matches. The quarters expire and are rolled - when
-    // they do, their stream simply goes quiet and `!forceOrder@arr` is still
-    // here as the backstop.
+    // ROUTED. Binance moved the futures streams behind /public and /market, and
+    // the old unrouted host only answers for /public - which is why a socket
+    // carrying bookTicker AND !forceOrder@arr flooded with one and never heard
+    // the other. Measured over 110 s from this machine:
     //
-    // `!forceOrder@arr` rides along because it proves the SUBSCRIPTION is alive
-    // across every symbol on the exchange, and `btcusdt@bookTicker` rides along
-    // as a heartbeat that never stops - measured 4397 messages in four seconds -
-    // so silence on this socket means the socket, not the market.
-    const string FuturesUrl =
-        "wss://fstream.binance.com/stream?streams=btcusdt@bookTicker/!forceOrder@arr" +
-        "/btcusdt@forceOrder/btcusdc@forceOrder/btcusd1@forceOrder/btcu@forceOrder" +
-        "/btcusdt_260925@forceOrder/btcusdt_261225@forceOrder";
+    //   /ws/!forceOrder@arr                     0 messages
+    //   /market/ws/!forceOrder@arr             42 messages
+    //   /public/ws/btcusdt@bookTicker       75635 messages
+    //   /market/stream?streams=btcusdt@forceOrder   0 messages
+    //
+    // So: the all-market stream on /market, and nothing else on this socket.
+    // Per-symbol forced orders return nothing even on the right route, and
+    // mixing a /public stream in is what broke it in the first place. BTC is
+    // filtered in code, where BTCDOM - dominance, not the coin - never matches.
+    //
+    // No separate heartbeat socket: this stream carries every symbol on the
+    // exchange and delivered 42 messages in 110 s on its own, so the silence
+    // window already tells a dead socket from a quiet market.
+    const string FuturesUrl = "wss://fstream.binance.com/market/ws/!forceOrder@arr";
     const string BybitUrl = "wss://stream.bybit.com/v5/public/linear";
     const string OkxUrl = "wss://ws.okx.com:8443/ws/v5/public";
 
@@ -281,9 +284,20 @@ public class MarketFeed : MonoBehaviour
     /// Bybit `allLiquidation.BTCUSDT`: data is an array of forced orders with a
     /// side, a size in BTC and a price.
     ///
-    /// The SIDE is read the way Binance's is - a forced Sell closes a long -
-    /// and that is an assumption until a real payload confirms it, which is why
-    /// the first one off each venue is logged whole.
+    /// THE SIDE IS THE POSITION, NOT THE ORDER. This was read the way Binance's
+    /// is - a forced Sell closes a long - and that was wrong, so every Bybit
+    /// strike flew the other side's skin.
+    ///
+    /// Settled against the price rather than against a field name, because the
+    /// price is the only ground truth here: a rising book forces shorts out, a
+    /// falling one forces longs. Scored over a 20-minute window, each print
+    /// against the move that led into it:
+    ///
+    ///   S=Buy  means a long was liquidated   17/17
+    ///   S=Sell means a long was liquidated    0/17
+    ///
+    /// Not a coincidence with OKX either - the two venues were only in the same
+    /// second three times, and never disagreed.
     /// </summary>
     void HandleBybit(Source v, string msg)
     {
@@ -294,7 +308,7 @@ public class MarketFeed : MonoBehaviour
         {
             if (Json.GetString(e, "s") != "BTCUSDT") continue;
             double qty = Json.GetDouble(e, "v"), price = Json.GetDouble(e, "p");
-            Raise(v, Json.GetString(e, "S") == "Sell", qty * price, price);
+            Raise(v, Json.GetString(e, "S") == "Buy", qty * price, price);
         }
     }
 
@@ -388,16 +402,6 @@ public class MarketFeed : MonoBehaviour
 
         string sym = Json.GetString(order, "s") ?? "";
         if (!sym.StartsWith("BTC") || sym.StartsWith("BTCDOM")) return;   // the coin only
-
-        // The per-symbol streams and the all-symbol one overlap, and a BTC
-        // liquidation would otherwise be counted twice. The combined socket
-        // names which stream each frame came off, so the overlap is decided
-        // rather than guessed: a per-symbol frame always fires, and an
-        // all-symbol frame fires only for a BTC market not already subscribed
-        // by name.
-        string from = Json.GetString(msg, "stream") ?? "";
-        if (from == "!forceOrder@arr" && FuturesUrl.Contains(sym.ToLowerInvariant() + "@forceOrder"))
-            return;
 
         double qty = Json.GetDouble(order, "q");
         double price = Json.GetDouble(order, "ap");
