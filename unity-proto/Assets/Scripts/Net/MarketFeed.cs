@@ -12,7 +12,24 @@ public class MarketFeed : MonoBehaviour
 {
     const string SpotUrl =
         "wss://stream.binance.com:9443/stream?streams=btcusdt@aggTrade/btcusdt@ticker";
-    const string FuturesUrl = "wss://fstream.binance.com/stream?streams=!forceOrder@arr";
+    // EVERY Binance BTC market, not just BTCUSDT - the mapping was too narrow.
+    // Asked of the exchange rather than remembered: fapi/v1/exchangeInfo lists
+    // BTC-base symbols TRADING as BTCUSDT, BTCUSDC, BTCUSD1, BTCU and the two
+    // dated quarters; BTCDOMUSDT is dominance, not the coin, and its base asset
+    // is BTCDOM so it never matches. The quarters expire and are rolled - when
+    // they do, their stream simply goes quiet and `!forceOrder@arr` is still
+    // here as the backstop.
+    //
+    // `!forceOrder@arr` rides along because it proves the SUBSCRIPTION is alive
+    // across every symbol on the exchange, and `btcusdt@bookTicker` rides along
+    // as a heartbeat that never stops - measured 4397 messages in four seconds -
+    // so silence on this socket means the socket, not the market.
+    const string FuturesUrl =
+        "wss://fstream.binance.com/stream?streams=btcusdt@bookTicker/!forceOrder@arr" +
+        "/btcusdt@forceOrder/btcusdc@forceOrder/btcusd1@forceOrder/btcu@forceOrder" +
+        "/btcusdt_260925@forceOrder/btcusdt_261225@forceOrder";
+    const string BybitUrl = "wss://stream.bybit.com/v5/public/linear";
+    const string OkxUrl = "wss://ws.okx.com:8443/ws/v5/public";
 
     [Serializable]
     public struct Liquidation
@@ -21,6 +38,8 @@ public class MarketFeed : MonoBehaviour
         public double UsdValue;
         public double Price;
         public float Age;
+        /// <summary>Which exchange it came off. The HUD names it.</summary>
+        public string Venue;
     }
 
     public double Price { get; private set; }
@@ -41,16 +60,50 @@ public class MarketFeed : MonoBehaviour
     /// with no message on this socket at all, not even a forced order in a
     /// symbol `HandleFutures` would have thrown away.
     /// </summary>
-    public string FuturesStatus { get; private set; } = "connecting";
+    public string FuturesStatus => Sources.Count > 0 ? Sources[0].Status : "none";
 
-    /// <summary>Messages drained off the futures socket. For a watcher to count.</summary>
-    public int FuturesMessages { get; private set; }
+    /// <summary>Messages drained off the Binance socket. For a watcher to count.</summary>
+    public int FuturesMessages => Sources.Count > 0 ? Sources[0].Messages : 0;
+
+    /// <summary>
+    /// One liquidation feed: a socket, its subscription, its keepalive and its
+    /// own health.
+    ///
+    /// Three of them rather than one, because one is not enough to check.
+    /// Binance's forced-order stream sits open and empty for very long stretches
+    /// - measured 0 messages in 180 s from node and from a bare browser page,
+    /// while bookTicker on the very same host gave 4397 in four seconds. So the
+    /// stream is quiet, not the host, and a second and third venue is the only
+    /// way to tell a quiet market from a broken subscription.
+    ///
+    /// The keepalive is not optional. Bybit dropped at 1006 and OKX at 4004
+    /// inside a minute with nothing sent; both document a ping and both were
+    /// measured closing without one.
+    /// </summary>
+    public class Source
+    {
+        public readonly string Name, Url, Subscribe, Ping;
+        public readonly float PingEvery;
+        public WebSocketClient Sock;
+        public float LastMsg, LastPing, Retry;
+        public bool Sent, Spoke, Logged;
+        /// <summary>Forced orders seen in ANY symbol. The liveness proof.</summary>
+        public int Forced;
+        public int Messages, Accepted;
+        public string Status = "connecting";
+
+        public Source(string name, string url, string subscribe, string ping, float every)
+        { Name = name; Url = url; Subscribe = subscribe; Ping = ping; PingEvery = every; }
+    }
+
+    /// <summary>Every liquidation feed, for the HUD to name.</summary>
+    public readonly List<Source> Sources = new List<Source>();
 
     public readonly List<Liquidation> Liquidations = new List<Liquidation>();
     public event Action<Liquidation> OnLiquidation;
 
-    WebSocketClient _spot, _futures;
-    float _lastSpot, _lastFutures, _lastPriceMove, _retrySpot, _retryFutures;
+    WebSocketClient _spot;
+    float _lastSpot, _lastPriceMove, _retrySpot;
 
     // A ticker that goes quiet for twelve seconds is broken. An EVENT stream is
     // not a ticker: forced orders arrive when they arrive. But this one carries
@@ -63,11 +116,38 @@ public class MarketFeed : MonoBehaviour
 
     void Start()
     {
-        _lastSpot = _lastFutures = _lastPriceMove = Time.realtimeSinceStartup;
+        float now = Time.realtimeSinceStartup;
+        _lastSpot = _lastPriceMove = now;
+
+        // Binance needs no subscription - the stream is in the URL - and no
+        // keepalive, because the server pings and both socket paths answer it.
+        // The other two need both, and were measured closing without them.
+        Sources.Add(new Source("binance", FuturesUrl, null, null, 0f));
+        Sources.Add(new Source("bybit", BybitUrl,
+            "{\"op\":\"subscribe\",\"args\":[\"allLiquidation.BTCUSDT\"]}",
+            "{\"op\":\"ping\"}", 20f));
+        Sources.Add(new Source("okx", OkxUrl,
+            "{\"op\":\"subscribe\",\"args\":[{\"channel\":\"liquidation-orders\",\"instType\":\"SWAP\"}]}",
+            "ping", 20f));
+        foreach (var v in Sources) { v.LastMsg = now; v.LastPing = now; }
+
         Connect();
     }
 
-    void Connect() { ConnectSpot(); ConnectFutures(); }
+    void Connect()
+    {
+        ConnectSpot();
+        foreach (var v in Sources) Open(v);
+    }
+
+    void Open(Source v)
+    {
+        v.Sock?.Dispose();
+        v.Sock = new WebSocketClient(v.Url);
+        v.Status = "connecting";
+        v.Sent = false;
+        v.Spoke = false;
+    }
 
     // Separately, because one of them dying is not a reason to drop the other.
     void ConnectSpot()
@@ -75,14 +155,6 @@ public class MarketFeed : MonoBehaviour
         _spot?.Dispose();
         _spot = new WebSocketClient(SpotUrl);
         Status = "connecting";
-    }
-
-    void ConnectFutures()
-    {
-        _futures?.Dispose();
-        _futures = new WebSocketClient(FuturesUrl);
-        FuturesStatus = "connecting";
-        _futuresSpoke = false;
     }
 
     /// <summary>What a socket looks like from outside: live, stale, or its own fault.</summary>
@@ -109,24 +181,7 @@ public class MarketFeed : MonoBehaviour
 
         if (_spot != null)
             foreach (var msg in _spot.Drain()) { _lastSpot = now; HandleSpot(msg); }
-        if (_futures != null)
-            foreach (var msg in _futures.Drain())
-            {
-                _lastFutures = now;
-                FuturesMessages++;
-                // The FUTURES socket carries the liquidations, and nothing here
-                // ever looked at it: `Status` and the retry below are both
-                // computed from the spot socket alone, so this one can be dead
-                // while the HUD says "live" and the price keeps ticking. One
-                // line, once, so a silent stream is visible instead of being
-                // mistaken for a quiet market.
-                if (!_futuresSpoke)
-                {
-                    _futuresSpoke = true;
-                    Debug.Log("[feed] futures stream is delivering");
-                }
-                HandleFutures(msg);
-            }
+        foreach (var v in Sources) Pump(v, now);
 
         // trade flow decays, so it reads as "right now" rather than "since boot"
         _flowAccum = Mathf.Lerp(_flowAccum, 0f, 1f - Mathf.Exp(-1.5f * Time.deltaTime));
@@ -144,7 +199,6 @@ public class MarketFeed : MonoBehaviour
         // and each of these two is judged on its OWN silence and reopened on its
         // own, because the price ticking says nothing about the liquidations.
         Status = Health(_spot, _lastSpot, SpotSilence, now);
-        FuturesStatus = Health(_futures, _lastFutures, FuturesSilence, now);
 
         if (Ailing(_spot, _lastSpot, SpotSilence, now) && now - _retrySpot > 6f)
         {
@@ -153,17 +207,142 @@ public class MarketFeed : MonoBehaviour
             Debug.Log("[feed] spot socket reopened");
             ConnectSpot();
         }
+    }
 
-        if (Ailing(_futures, _lastFutures, FuturesSilence, now) && now - _retryFutures > 15f)
+    /// <summary>
+    /// Drive one liquidation feed: subscribe when it opens, keep it alive,
+    /// drain it, and reopen it when it goes quiet.
+    /// </summary>
+    void Pump(Source v, float now)
+    {
+        if (v.Sock == null) { Open(v); return; }
+
+        // Subscribe once, and only after it is actually open - a frame sent to
+        // a socket still connecting goes nowhere.
+        if (!v.Sent && v.Sock.Status == WebSocketClient.State.Open)
         {
-            _retryFutures = now;
-            _lastFutures = now;
-            Debug.Log($"[feed] futures socket reopened after {FuturesMessages} messages");
-            ConnectFutures();
+            v.Sent = true;
+            if (!string.IsNullOrEmpty(v.Subscribe)) v.Sock.Send(v.Subscribe);
+            Debug.Log($"[feed] {v.Name} open, subscribe {(v.Subscribe == null ? "not needed" : "sent")}");
+        }
+
+        if (v.Sent && !string.IsNullOrEmpty(v.Ping) && now - v.LastPing > v.PingEvery)
+        {
+            v.LastPing = now;
+            v.Sock.Send(v.Ping);
+        }
+
+        foreach (var msg in v.Sock.Drain())
+        {
+            v.LastMsg = now;
+            v.Messages++;
+            if (!v.Spoke)
+            {
+                v.Spoke = true;
+                Debug.Log($"[feed] {v.Name} is delivering");
+            }
+            Take(v, msg);
+        }
+
+        v.Status = Health(v.Sock, v.LastMsg, FuturesSilence, now);
+        if (Ailing(v.Sock, v.LastMsg, FuturesSilence, now) && now - v.Retry > 15f)
+        {
+            v.Retry = now;
+            v.LastMsg = now;
+            Debug.Log($"[feed] {v.Name} reopened after {v.Messages} messages");
+            Open(v);
         }
     }
 
-    bool _futuresSpoke;
+    void Take(Source v, string msg)
+    {
+        switch (v.Name)
+        {
+            case "binance": HandleFutures(v, msg); break;
+            case "bybit": HandleBybit(v, msg); break;
+            case "okx": HandleOkx(v, msg); break;
+        }
+    }
+
+    void Raise(Source v, bool isLong, double usd, double price)
+    {
+        if (usd <= 0 || price <= 0) return;
+        v.Accepted++;
+        var liq = new Liquidation
+        {
+            Long = isLong, UsdValue = usd, Price = price, Age = 0f, Venue = v.Name,
+        };
+        Liquidations.Add(liq);
+        Debug.Log($"[feed] liquidation {v.Name} {(isLong ? "long" : "short")} ${usd:N0}");
+        OnLiquidation?.Invoke(liq);
+    }
+
+    /// <summary>
+    /// Bybit `allLiquidation.BTCUSDT`: data is an array of forced orders with a
+    /// side, a size in BTC and a price.
+    ///
+    /// The SIDE is read the way Binance's is - a forced Sell closes a long -
+    /// and that is an assumption until a real payload confirms it, which is why
+    /// the first one off each venue is logged whole.
+    /// </summary>
+    void HandleBybit(Source v, string msg)
+    {
+        var arr = Json.GetRaw(msg, "data");
+        if (arr == null || !arr.TrimStart().StartsWith("[")) return;
+        LogFirstPayload(v, msg);
+        foreach (var e in Json.Elements(arr))
+        {
+            if (Json.GetString(e, "s") != "BTCUSDT") continue;
+            double qty = Json.GetDouble(e, "v"), price = Json.GetDouble(e, "p");
+            Raise(v, Json.GetString(e, "S") == "Sell", qty * price, price);
+        }
+    }
+
+    /// <summary>
+    /// OKX `liquidation-orders`, SWAP: each entry carries `details`, and each
+    /// detail names the position side outright - "long" or "short" - so nothing
+    /// has to be inferred from an order side.
+    ///
+    /// SIZE IS IN BTC, and the first real payload is what says so. It read
+    /// `sz: "0.02"` on BTC-USDT-SWAP, and 0.02 cannot be a count of contracts:
+    /// the minimum order on that instrument is one whole contract. 0.02 BTC is
+    /// exactly two contracts of 0.01, so the field is the coin amount and the
+    /// price multiplies it straight. The first cut divided by a hundred and
+    /// made a $1,592 liquidation read as $16 - which would have dug the
+    /// smallest crater the rule has for every strike OKX ever sent.
+    /// </summary>
+    void HandleOkx(Source v, string msg)
+    {
+        var arr = Json.GetRaw(msg, "data");
+        if (arr == null || !arr.TrimStart().StartsWith("[")) return;
+        foreach (var e in Json.Elements(arr))
+        {
+            if (Json.GetString(e, "instId") != "BTC-USDT-SWAP") continue;
+            LogFirstPayload(v, msg);
+            var details = Json.GetRaw(e, "details");
+            if (details == null) continue;
+            foreach (var d in Json.Elements(details))
+            {
+                double sz = Json.GetDouble(d, "sz"), px = Json.GetDouble(d, "bkPx");
+                Raise(v, Json.GetString(d, "posSide") == "long", sz * px, px);
+            }
+        }
+    }
+
+    /// <summary>
+    /// The first real payload off a venue, whole, once.
+    ///
+    /// Every side and size mapping here is read off documentation, and this
+    /// letter has already been caught twice by a shape that was not what it was
+    /// assumed to be. One log line makes the assumption checkable instead of
+    /// permanent.
+    /// </summary>
+    void LogFirstPayload(Source v, string msg)
+    {
+        if (v.Accepted > 0 || v.Logged) return;
+        v.Logged = true;
+        Debug.Log($"[feed] {v.Name} first payload: {(msg.Length > 400 ? msg.Substring(0, 400) : msg)}");
+    }
 
     void HandleSpot(string msg)
     {
@@ -197,36 +376,42 @@ public class MarketFeed : MonoBehaviour
         Price = p;
     }
 
-    void HandleFutures(string msg)
+    void HandleFutures(Source v, string msg)
     {
         var data = Json.GetRaw(msg, "data") ?? msg;
         var order = Json.GetRaw(data, "o");
         if (order == null) return;
-        if (Json.GetString(order, "s") != "BTCUSDT") return;      // BTC only
+        // Counted for EVERY symbol: one forced order anywhere proves the
+        // subscription is alive, which a BTC-only counter never could - BTC can
+        // be quiet for an hour while the rest of the book is being cleared out.
+        v.Forced++;
+
+        string sym = Json.GetString(order, "s") ?? "";
+        if (!sym.StartsWith("BTC") || sym.StartsWith("BTCDOM")) return;   // the coin only
+
+        // The per-symbol streams and the all-symbol one overlap, and a BTC
+        // liquidation would otherwise be counted twice. The combined socket
+        // names which stream each frame came off, so the overlap is decided
+        // rather than guessed: a per-symbol frame always fires, and an
+        // all-symbol frame fires only for a BTC market not already subscribed
+        // by name.
+        string from = Json.GetString(msg, "stream") ?? "";
+        if (from == "!forceOrder@arr" && FuturesUrl.Contains(sym.ToLowerInvariant() + "@forceOrder"))
+            return;
 
         double qty = Json.GetDouble(order, "q");
         double price = Json.GetDouble(order, "ap");
         if (price <= 0) price = Json.GetDouble(order, "p");
         if (qty <= 0 || price <= 0) return;
 
-        // Every one of them, at the call site. Which side is liquidated decides
-        // which skin the bomber wears, and fourteen minutes of watching showed
-        // only the sideless simulated strike - so the question is whether this
-        // is ever reached at all.
-        Debug.Log($"[feed] liquidation {(Json.GetString(order, "S") == "SELL" ? "long" : "short")} " +
-                  $"${qty * price:N0}");
-
-        var liq = new Liquidation
-        {
-            // a forced SELL is a long position being closed out
-            Long = Json.GetString(order, "S") == "SELL",
-            UsdValue = qty * price,
-            Price = price,
-            Age = 0f,
-        };
-        Liquidations.Add(liq);
-        OnLiquidation?.Invoke(liq);
+        LogFirstPayload(v, msg);
+        // a forced SELL is a long position being closed out
+        Raise(v, Json.GetString(order, "S") == "SELL", qty * price, price);
     }
 
-    void OnDestroy() { _spot?.Dispose(); _futures?.Dispose(); }
+    void OnDestroy()
+    {
+        _spot?.Dispose();
+        foreach (var v in Sources) v.Sock?.Dispose();
+    }
 }

@@ -334,6 +334,62 @@ public class DriveHud : MonoBehaviour
     /// deadline that costs you the load has to be somewhere you cannot avoid
     /// seeing, and it goes red and pulses in the last thirty seconds.
     /// </summary>
+    /// <summary>
+    /// Which exchanges the liquidations come off, and whether each is talking.
+    ///
+    /// Named always, not only when broken. A feed that is silent for a whole
+    /// session looks exactly like a quiet market from the driving seat, and
+    /// that is what happened: Binance futures accepted the connection and never
+    /// sent a frame while the price ticked and the HUD said "live".
+    /// </summary>
+    string Venues()
+    {
+        if (market == null || market.Sources.Count == 0) return "no liq feed";
+        var sb = new System.Text.StringBuilder("liq ");
+        for (int i = 0; i < market.Sources.Count; i++)
+        {
+            var v = market.Sources[i];
+            if (i > 0) sb.Append(' ');
+            sb.Append(v.Name).Append(v.Status == "live" ? "" : "!");
+            // Forced orders anywhere, then BTC ones. A venue that is clearing
+            // out other books is alive even while BTC is quiet.
+            if (v.Forced > 0) sb.Append('/').Append(v.Forced);
+            if (v.Accepted > 0) sb.Append('×').Append(v.Accepted);
+        }
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// What was just liquidated, SUMMARISED.
+    ///
+    /// Twenty forced orders can land in one tick and a list of twenty lines is
+    /// unreadable from a moving truck. One line: the total, and which exchanges
+    /// it came off. Picture only - the core is handed each size on its own and
+    /// decides the crater from the largest, which this does not touch.
+    /// </summary>
+    void DrawLiquidations(int w, int h, float y)
+    {
+        if (market == null || market.Liquidations.Count == 0) return;
+
+        double usd = 0; int n = 0;
+        var seen = new System.Collections.Generic.List<string>();
+        foreach (var l in market.Liquidations)
+        {
+            if (l.Age > 8f) continue;              // the last few seconds only
+            usd += l.UsdValue; n++;
+            string v = l.Venue ?? "?";
+            if (!seen.Contains(v)) seen.Add(v);
+        }
+        if (n == 0) return;
+
+        string money = usd >= 1e6 ? $"${usd / 1e6:0.0}M" : $"${usd / 1e3:0}k";
+        string line = n == 1
+            ? $"LIQUIDATED  {money}  ·  {string.Join(" ", seen)}"
+            : $"LIQUIDATED  {money}  ·  {n} orders  ·  {string.Join(" ", seen)}";
+        Shadowed(new Rect(0, y, w, _sub.fontSize * 1.6f), line, _sub,
+                 new Color(1f, 0.72f, 0.25f));
+    }
+
     void DrawBlockTimer(int w, int h, float y)
     {
         if (block == null || block.Remaining <= 0f) return;
@@ -1111,13 +1167,13 @@ public class DriveHud : MonoBehaviour
                 // the line stays short in the normal case and cannot stay quiet
                 // in the case that actually happened: spot live, futures dead,
                 // and no liquidation for a whole session.
-                ? $"{chg:+0.00;-0.00;0.00}% 24h   ·   {market.Status}" +
-                  (market.FuturesStatus == "live" ? "" : $"   ·   liq {market.FuturesStatus}")
+                ? $"{chg:+0.00;-0.00;0.00}% 24h   ·   {market.Status}   ·   {Venues()}"
                 : $"verbinde … ({market.Status})";
             Shadowed(new Rect(0, h * 0.015f + _price.fontSize * 1.12f, w, _sub.fontSize * 1.6f),
                      sub, _sub, chg >= 0 ? Up : Down);
 
-            DrawBlockTimer(w, h, h * 0.015f + _price.fontSize * 1.12f + _sub.fontSize * 1.55f);
+            DrawLiquidations(w, h, h * 0.015f + _price.fontSize * 1.12f + _sub.fontSize * 1.55f);
+            DrawBlockTimer(w, h, h * 0.015f + _price.fontSize * 1.12f + _sub.fontSize * 2.7f);
         }
 
         // Everything the game HUD draws sits UNDER the loading window. IMGUI
