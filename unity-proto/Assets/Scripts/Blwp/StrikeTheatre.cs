@@ -611,10 +611,28 @@ namespace Blwp
             // inside the same tick - rare, and wrong every time it happened.
             // Same rule, mirrored: strictly greater wins, so the first of a tie
             // stays, exactly as it does in the core.
+            //
+            // A COLLISION is two liquidations arriving before the core has
+            // consumed the pending one - one drain of the sockets, one frame.
+            // Logged from both directions, because the loser is the incoming
+            // one or the one already waiting depending on which is bigger.
+            if (_pendingUsd > 0.0)
+            {
+                bool incomingWins = usd > _pendingUsd;
+                double kept = incomingWins ? usd : _pendingUsd;
+                double dropped = incomingWins ? _pendingUsd : usd;
+                bool? keptSide = incomingWins ? bear : _nextIsBear;
+                bool? droppedSide = incomingWins ? _nextIsBear : bear;
+                Debug.Log($"[strike] collision: keep ${kept:N0} {Side(keptSide)}" +
+                          $", drop ${dropped:N0} {Side(droppedSide)}");
+            }
+
             if (usd <= _pendingUsd) return;
             _pendingUsd = usd;
             _nextIsBear = bear;
         }
+
+        static string Side(bool? bear) => bear == null ? "no side" : (bear.Value ? "bear" : "bull");
 
         bool? _nextIsBear;
         double _pendingUsd;
