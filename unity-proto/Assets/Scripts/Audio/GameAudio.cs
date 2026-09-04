@@ -27,6 +27,13 @@ public class GameAudio : MonoBehaviour
     /// <summary>One-shots fired since start. Public so a test can see them.</summary>
     public int Fired { get; private set; }
 
+    /// <summary>
+    /// The strike's clip. It is SYNTHESISED in `Detonation()`, not imported, so
+    /// the only way to know it is not silence is to read its samples - which is
+    /// the first link of the chain from a consumed liquidation to a sound.
+    /// </summary>
+    public AudioClip StrikeClip => _detonation;
+
     AudioSource _engine, _tyres, _shots, _war, _rotor;
     AudioClip _impact, _explosion, _chime, _blip, _thud;
     AudioClip _cannon, _rifle, _ricochet, _boom, _detonation;
@@ -337,7 +344,25 @@ public class GameAudio : MonoBehaviour
     }
 
     /// <summary>An atom bomb going off. Louder than anything else here.</summary>
-    public void Strike() => Shot(_detonation, 1f, Random.Range(0.94f, 1.02f));
+    /// <summary>
+    /// The strike's voice, and the one place the whole chain can be read.
+    ///
+    /// `a11`: built and never heard. Everything between a consumed liquidation
+    /// and a sound is either upstream of here and already logged - the core's
+    /// strike serial, `StrikeTheatre`'s impact line - or it is one of the four
+    /// silent gates below. So they are printed at the moment they matter,
+    /// rather than being assumed from the inspector: whether the clip exists,
+    /// whether the source that would play it exists, what the effects level is,
+    /// and whether anything in the scene is listening at all. `Fired` counts
+    /// the one-shots that actually went to `PlayOneShot`.
+    /// </summary>
+    public void Strike()
+    {
+        Shot(_detonation, 1f, Random.Range(0.94f, 1.02f));
+        bool ear = FindFirstObjectByType<AudioListener>() != null;
+        Debug.Log($"[voice] strike fired={Fired} clip={(_detonation != null)} " +
+                  $"source={(_shots != null)} effectVolume={effectVolume:F2} listener={ear}");
+    }
 
     /// <summary>Two notes, for an arrival.</summary>
     static AudioClip Chime()
