@@ -151,6 +151,54 @@ public class StrikeLatchTests
         Assert.AreEqual("bear", t.Wearing(t.ArmedSide), "and the skin still follows it");
     }
 
+    /* -------------------------------------------- the core's own resolution */
+
+    /// <summary>
+    /// The core takes MILLIONS in Q16.16, so one step is $15.26. Two forced
+    /// orders inside one step are the same size to it, and it keeps the first.
+    /// </summary>
+    [Test]
+    public void OneStepIsFifteenDollarsAndAQuarter()
+    {
+        Assert.AreEqual(65536, BlwpCore.Scale(1_000_000), "a million is one");
+        Assert.AreEqual(BlwpCore.Scale(5_000_000), BlwpCore.Scale(5_000_005),
+                        "five dollars apart is one size");
+        Assert.AreNotEqual(BlwpCore.Scale(5_000_000), BlwpCore.Scale(5_000_010),
+                           "sixteen dollars apart is two");
+        Assert.AreEqual(1, BlwpCore.Scale(5), "a five dollar order still lands");
+        Assert.AreEqual(1, BlwpCore.Scale(10), "and ties with a ten dollar one");
+        Assert.AreEqual(0, BlwpCore.Scale(0), "nothing is nothing");
+    }
+
+    /// <summary>
+    /// The latch compares what the core compares. In raw dollars the 5,000,005
+    /// would have taken the slot and dressed the bomber in ITS side over the
+    /// other one's crater - the a10 fault, one resolution down.
+    /// </summary>
+    [Test]
+    public void ATieInsideOneStepKeepsTheFirstEvenThoughItIsFewerDollars()
+    {
+        var t = Rig();
+        t.NoteSubmitter(Bear, 5_000_000);
+        t.NoteSubmitter(Bull, 5_000_005);
+
+        Assert.AreEqual(5_000_000, t.PendingUsd, 1.0,
+                        "one step apart is a tie, and the core keeps the first");
+        Assert.AreEqual(Bear, t.PendingSide, "so the side stays with the first too");
+    }
+
+    /// <summary>A full step apart is a real ordering, and the larger wins.</summary>
+    [Test]
+    public void AFullStepApartTheLargerStillWins()
+    {
+        var t = Rig();
+        t.NoteSubmitter(Bear, 5_000_000);
+        t.NoteSubmitter(Bull, 5_000_020);
+
+        Assert.AreEqual(5_000_020, t.PendingUsd, 1.0);
+        Assert.AreEqual(Bull, t.PendingSide);
+    }
+
     /// <summary>
     /// A side with no model of its own flies the plain airframe rather than
     /// the other side's. There is no bull model streamed in the build yet.

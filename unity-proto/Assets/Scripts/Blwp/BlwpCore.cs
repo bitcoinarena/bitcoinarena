@@ -310,10 +310,34 @@ namespace Blwp
         public static bool Liquidation(double usd)
         {
             if (!Available || !(usd > 0)) return false;
+            return BlwpLiquidation(Scale(usd)) != 0;
+        }
+
+        /// <summary>
+        /// The size AS THE CORE WILL SEE IT: millions of USD in Q16.16, floored
+        /// at one step and clamped at `LIQ_MAX`.
+        ///
+        /// Its own function because two things have to agree on it. The core
+        /// compares scaled words when it decides which pending liquidation to
+        /// keep; anything that mirrors that decision has to compare the same
+        /// words, or the two disagree inside one step. One step is $15.26:
+        /// $5,000,000 and $5,000,005 are the SAME size to the core, which then
+        /// keeps the first of them, while a comparison in raw dollars would
+        /// keep the second - the crater sized by one liquidation and the skin
+        /// belonging to the other, which is the whole fault a10 is about.
+        /// Everything under $15.26 is one step as well, so a $5 and a $10
+        /// forced order are a tie and not an ordering.
+        ///
+        /// It is also the only part of the bridge that can be read back outside
+        /// a WebGL player: `Liquidation` itself goes through a stub there.
+        /// </summary>
+        public static int Scale(double usd)
+        {
+            if (!(usd > 0)) return 0;
             double scaled = System.Math.Round(usd / 1e6 * ONE);
             if (scaled < 1) scaled = 1;                 // $15 or less still lands
             if (scaled > Layout.LIQ_MAX) scaled = Layout.LIQ_MAX;
-            return BlwpLiquidation((int)scaled) != 0;
+            return (int)scaled;
         }
 
         /// <summary>The liquidation the core consumed on its last tick, in millions of USD.</summary>

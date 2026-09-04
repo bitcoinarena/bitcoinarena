@@ -611,6 +611,14 @@ namespace Blwp
             // Same rule, mirrored: strictly greater wins, so the first of a tie
             // stays, exactly as it does in the core.
             //
+            // COMPARED IN THE CORE'S OWN UNITS, not in dollars. The core sees
+            // millions in Q16.16, one step of which is $15.26, so $5,000,000
+            // and $5,000,005 are one size to it and it keeps the FIRST. In raw
+            // dollars this latch would have kept the second and dressed the
+            // bomber in its side over the other one's crater - the same fault
+            // one resolution down. `BlwpCore.Scale` is the one place that says
+            // what a size is worth.
+            //
             // READ THE SERIAL HERE, do not wait for Update to notice it. The
             // core is stepped from `CoreDrivenTruck`'s accumulator and the
             // three components have no fixed Update order, so if that one runs
@@ -636,7 +644,9 @@ namespace Blwp
                           $", drop ${dropped:N0} {Side(droppedSide)}");
             }
 
-            if (usd <= _pendingUsd) return;
+            int size = BlwpCore.Scale(usd);
+            if (size <= _pendingSize) return;
+            _pendingSize = size;
             _pendingUsd = usd;
             _nextIsBear = bear;
         }
@@ -680,6 +690,7 @@ namespace Blwp
             if (_pendingUsd > 0.0) _armedSide = _nextIsBear;
             _pendingSerial = serial;
             _pendingUsd = 0.0;
+            _pendingSize = 0;
             _nextIsBear = null;
         }
 
@@ -695,6 +706,7 @@ namespace Blwp
         bool? _nextIsBear;
         bool? _armedSide;
         double _pendingUsd;
+        int _pendingSize;                 // the same size in the core's units
         int _pendingSerial = -1;
         string _wearing = "";
         GameObject _airframe, _bearAirframe, _bullAirframe, _bombModel;
