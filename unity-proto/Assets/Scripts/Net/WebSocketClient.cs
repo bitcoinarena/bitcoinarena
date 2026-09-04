@@ -98,6 +98,21 @@ public class WebSocketClient : IDisposable
 
     public State Status => _state;
 
+    /// <summary>
+    /// Put a frame in the queue as if the socket had received it.
+    ///
+    /// For tests, and it exists because the thing worth testing is the DRAIN:
+    /// two forced orders that arrive between two frames are handled in one
+    /// pass of `MarketFeed.Update`, and that is where two liquidations meet
+    /// inside one frame. Waiting for the real book to do it took twenty
+    /// passive minutes and produced none. Editor and standalone only - the
+    /// browser build has no `_inbox`, it takes its frames from the page.
+    /// </summary>
+    public void Deliver(string text)
+    {
+        lock (_lock) _inbox.Enqueue(text);
+    }
+
     public IEnumerable<string> Drain()
     {
         while (true)
