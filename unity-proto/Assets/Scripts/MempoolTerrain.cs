@@ -60,6 +60,8 @@ public class MempoolTerrain : MonoBehaviour
 
     int _drawnCraters = -1, _drawnRevealed = -1;
     readonly Dictionary<long, float> _due = new Dictionary<long, float>();
+    readonly HashSet<long> _live = new HashSet<long>();
+    readonly List<long> _stale = new List<long>();
     readonly List<Vector3> _revealed = new List<Vector3>();
 
     /// <summary>
@@ -83,13 +85,14 @@ public class MempoolTerrain : MonoBehaviour
     {
         _revealed.Clear();
         if (!Blwp.BlwpCore.HasSurface) return;
-        if (_due.Count > 64) _due.Clear();       // craters expire; the keys should too
 
+        _live.Clear();
         int n = Blwp.BlwpCore.CraterCount;
         for (int i = 0; i < n; i++)
         {
             if (!Blwp.BlwpCore.CraterAt(i, 0f, out var at, out float r)) continue;
             long key = ((long)Mathf.RoundToInt(at.x * 8f) << 24) ^ Mathf.RoundToInt(at.z * 8f);
+            _live.Add(key);
             if (!_due.TryGetValue(key, out float due))
             {
                 due = Time.time + craterRevealDelay;
@@ -97,6 +100,20 @@ public class MempoolTerrain : MonoBehaviour
             }
             if (Time.time >= due) _revealed.Add(new Vector3(at.x, r, at.z));
         }
+
+        // Forget the craters that are gone, and ONLY those.
+        //
+        // A crater lasts ten to twenty rounds and then fills in, and `restart`
+        // clears the lot; this dictionary outlives both. Two ways that bit:
+        // a later strike landing on the same spot - and strikes land on units
+        // at the seam, so the same spot recurs - found a due time already in
+        // the past and opened its hole the instant it armed, with the bomb
+        // still in the air. And the blunt "clear everything past 64 keys" that
+        // stood here would hand an ALREADY OPEN crater a fresh delay, closing
+        // the hole under the player and opening it again seconds later.
+        _stale.Clear();
+        foreach (var k in _due.Keys) if (!_live.Contains(k)) _stale.Add(k);
+        foreach (var k in _stale) _due.Remove(k);
     }
 
     /// <summary>

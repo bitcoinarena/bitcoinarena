@@ -27,6 +27,7 @@ public class ModelStreamer : MonoBehaviour
     public const string BombKey = "model/bomb";
     public const string MinerKey = "model/miner";
     public const string PostKey = "model/postoffice";
+    public const string BomberKey = "model/bomber";
 
     public enum State { Waiting, Loading, Loaded, Failed }
 
@@ -105,6 +106,7 @@ public class ModelStreamer : MonoBehaviour
         Items.Add(new Item { label = "Bombs", key = BombKey });
         Items.Add(new Item { label = "Miner", key = MinerKey });
         Items.Add(new Item { label = "Post Office", key = PostKey });
+        Items.Add(new Item { label = "Bomber", key = BomberKey });
         StartCoroutine(Stream());
     }
 
@@ -159,6 +161,10 @@ public class ModelStreamer : MonoBehaviour
         yield return Fetch(BombKey, go =>
         {
             if (army != null) army.SetBombPrefab(go);
+            // The same shape the gunships drop, so the one the bomber lets go
+            // of is a bomb the player has already seen rather than a capsule.
+            var strike = FindFirstObjectByType<Blwp.StrikeTheatre>();
+            if (strike != null) strike.SetBombModel(go);
         });
 
         // Last, deliberately. It is the biggest single asset and the furthest
@@ -177,6 +183,15 @@ public class ModelStreamer : MonoBehaviour
         {
             var post = FindFirstObjectByType<PostOffice>();
             if (post != null) post.Show(go);
+        });
+
+        // The bomber is only wanted when a liquidation arms a strike, which is
+        // rare and never in the first seconds, so it goes behind everything a
+        // player is looking at from the start.
+        yield return Fetch(BomberKey, go =>
+        {
+            var strike = FindFirstObjectByType<Blwp.StrikeTheatre>();
+            if (strike != null) strike.SetAirframe(go);
         });
 
         Debug.Log($"[ModelStreamer] done: {Loaded} loaded, {Failed} failed");

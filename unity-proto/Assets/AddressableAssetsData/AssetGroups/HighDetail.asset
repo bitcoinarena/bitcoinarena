@@ -45,6 +45,11 @@ MonoBehaviour:
     m_ReadOnly: 0
     m_SerializedLabels: []
     FlaggedDuringContentUpdateRestriction: 0
+  - m_GUID: e29bbe5334192b258a9551dd10cd6037
+    m_Address: model/bomber
+    m_ReadOnly: 0
+    m_SerializedLabels: []
+    FlaggedDuringContentUpdateRestriction: 0
   - m_GUID: fcb334eb247ae3e488abb081c847cf09
     m_Address: model/soldier
     m_ReadOnly: 0

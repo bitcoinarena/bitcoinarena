@@ -30,6 +30,7 @@ public static class SetupAddressables
     public const string BombKey = "model/bomb";
     public const string MinerKey = "model/miner";
     public const string PostKey = "model/postoffice";
+    public const string BomberKey = "model/bomber";
 
     [MenuItem("Tools/BTC Logistics/Set Up Streaming")]
     public static void Run()
@@ -69,7 +70,17 @@ public static class SetupAddressables
         // over thickness around 2 at ten units long - a stubby body with a wide
         // tail, i.e. a free-fall bomb - and around 5 at thirty units, i.e.
         // rockets. This is the most detailed of the bombs at 1154 triangles.
-        marked += Mark(settings, group, BombKey, "rmb_23", "bomb");
+        // "bomber" CONTAINS "bomb", and Mark matches on substrings, so the
+        // bomber's airframe would answer to the bomb's key - and whichever of
+        // the two was marked last would win the asset. Named exclusion rather
+        // than ordering, because ordering is the kind of thing a later edit
+        // quietly reverses.
+        marked += MarkExcept(settings, group, BombKey, new[] { "bomber" }, "rmb_23", "bomb");
+        // The skinned variants live beside it - bomber-bear.glb and, in time,
+        // a bull - and every one of them contains "bomber". Without the
+        // exclusion this key binds to whichever the asset database happens to
+        // return last, which is not a thing to leave to chance.
+        marked += MarkExcept(settings, group, BomberKey, new[] { "-bear", "-bull" }, "bomber");
         marked += Mark(settings, group, MinerKey, "megastructure", "bitcoin_miner");
         marked += Mark(settings, group, PostKey, "post_office", "mempool_post");
 
@@ -91,6 +102,10 @@ public static class SetupAddressables
     /// <summary>Find a model by name and give it a stable address.</summary>
     static int Mark(AddressableAssetSettings settings, AddressableAssetGroup group,
                     string key, params string[] words)
+        => MarkExcept(settings, group, key, System.Array.Empty<string>(), words);
+
+    static int MarkExcept(AddressableAssetSettings settings, AddressableAssetGroup group,
+                          string key, string[] not, params string[] words)
     {
         string found = null;
         foreach (var guid in AssetDatabase.FindAssets("t:GameObject"))
@@ -99,6 +114,7 @@ public static class SetupAddressables
             if (path.ToLowerInvariant().Contains("/animation")) continue;
             string name = Path.GetFileNameWithoutExtension(path).ToLowerInvariant();
             if (!words.Any(w => name.Contains(w))) continue;
+            if (not.Any(w => name.Contains(w))) continue;
 
             var go = AssetDatabase.LoadAssetAtPath<GameObject>(path);
             if (go == null) continue;

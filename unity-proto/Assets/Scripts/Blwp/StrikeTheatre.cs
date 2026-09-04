@@ -168,8 +168,11 @@ namespace Blwp
             _from = new Vector3(_impact.x - dir * (ReleaseLead + Speed * RunIn), y, _impact.z);
             _to = new Vector3(_impact.x + dir * Speed * RunOut, y, _impact.z);
 
-            if (_plane == null) _plane = BuildPlane();
-            if (_bomb == null) _bomb = BuildBomb();
+            if (_plane == null)
+                _plane = _airframe != null ? Dress(_airframe, 34f, Vector3.zero) : BuildPlane();
+            if (_bomb == null)
+                // Nose from +Y round to +Z, the direction the flight code points it.
+                _bomb = _bombModel != null ? Dress(_bombModel, 4f, new Vector3(90f, 0f, 0f)) : BuildBomb();
             _plane.gameObject.SetActive(true);
             _bomb.gameObject.SetActive(false);
             _plane.SetPositionAndRotation(_from, Quaternion.LookRotation(new Vector3(dir, 0f, 0f)));
@@ -414,6 +417,79 @@ namespace Blwp
             go.transform.localScale = scale;
             go.GetComponent<MeshRenderer>().sharedMaterial = mat;
             return go.transform;
+        }
+
+        /// <summary>
+        /// Take the streamed airframe in place of the primitives.
+        ///
+        /// It arrives late and it may never arrive at all - a bundle can 404 -
+        /// so the primitives stay as the thing that flies until it lands, and
+        /// the swap happens between sorties rather than in the middle of one.
+        /// </summary>
+        public void SetAirframe(GameObject prefab)
+        {
+            if (prefab == null) return;
+            _airframe = prefab;
+            if (_plane != null) { Destroy(_plane.gameObject); _plane = null; }
+            Debug.Log("[strike] airframe model taken");
+        }
+
+        /// <summary>Take the streamed bomb in place of the primitive one.</summary>
+        public void SetBombModel(GameObject prefab)
+        {
+            if (prefab == null) return;
+            _bombModel = prefab;
+            if (_bomb != null) { Destroy(_bomb.gameObject); _bomb = null; }
+            Debug.Log("[strike] bomb model taken");
+        }
+
+        GameObject _airframe, _bombModel;
+
+        /// <summary>
+        /// Sit a streamed model in the same box the primitives occupied.
+        ///
+        /// A model carries whatever units and whatever pose its author used, so
+        /// nothing about it is worth trusting sight unseen. It is straightened
+        /// first, then its own renderer bounds are measured, then it is scaled
+        /// on its longest side to the size the flight was worked out against -
+        /// 34 m for the airframe, which is the span the run-in, the altitude
+        /// and the framing were all measured with.
+        /// </summary>
+        Transform Dress(GameObject prefab, float longest, Vector3 preRotate)
+        {
+            var go = Instantiate(prefab);
+            go.name = prefab.name + "_flying";
+            foreach (var c in go.GetComponentsInChildren<Collider>(true)) Destroy(c);
+
+            // Straighten it before measuring. The bomb in this pack is authored
+            // standing on its tail - measured 5.62 x 10.79 x 5.62 m, the long
+            // axis on Y - and a bomb that falls pointing at the sky is worse
+            // than a capsule.
+            go.transform.rotation = Quaternion.Euler(preRotate);
+
+            var rs = go.GetComponentsInChildren<Renderer>(true);
+            if (rs.Length == 0) { Debug.LogWarning("[strike] model has no renderer"); return go.transform; }
+            var b = rs[0].bounds;
+            for (int i = 1; i < rs.Length; i++) b.Encapsulate(rs[i].bounds);
+            Debug.Log($"[strike] model raw {b.size.x:F2} x {b.size.y:F2} x {b.size.z:F2} m");
+
+            // Scale on the LONGEST side, whichever it turns out to be. Scaling
+            // on the widest horizontal one put a 10.79 m upright bomb at 7.7 m
+            // tall, because its widest horizontal side was never the size that
+            // mattered.
+            float big = Mathf.Max(b.size.x, Mathf.Max(b.size.y, b.size.z));
+            if (big > 0.001f) go.transform.localScale *= longest / big;
+
+            // Re-centre on its own middle, so the point the flight code moves is
+            // the aircraft and not whatever the exporter called the origin.
+            var holder = new GameObject("Bomber").transform;
+            holder.SetParent(transform, true);
+            go.transform.SetParent(holder, true);
+            rs = holder.GetComponentsInChildren<Renderer>(true);
+            b = rs[0].bounds;
+            for (int i = 1; i < rs.Length; i++) b.Encapsulate(rs[i].bounds);
+            go.transform.position -= (b.center - holder.position);
+            return holder;
         }
 
         /// <summary>A stand-in four-engine bomber, about 24 m across the wing.</summary>
