@@ -60,7 +60,22 @@ public class MarketFeed : MonoBehaviour
         if (_spot != null)
             foreach (var msg in _spot.Drain()) { _lastMessage = now; HandleSpot(msg); }
         if (_futures != null)
-            foreach (var msg in _futures.Drain()) { _lastMessage = now; HandleFutures(msg); }
+            foreach (var msg in _futures.Drain())
+            {
+                _lastMessage = now;
+                // The FUTURES socket carries the liquidations, and nothing here
+                // ever looked at it: `Status` and the retry below are both
+                // computed from the spot socket alone, so this one can be dead
+                // while the HUD says "live" and the price keeps ticking. One
+                // line, once, so a silent stream is visible instead of being
+                // mistaken for a quiet market.
+                if (!_futuresSpoke)
+                {
+                    _futuresSpoke = true;
+                    Debug.Log("[feed] futures stream is delivering");
+                }
+                HandleFutures(msg);
+            }
 
         // trade flow decays, so it reads as "right now" rather than "since boot"
         _flowAccum = Mathf.Lerp(_flowAccum, 0f, 1f - Mathf.Exp(-1.5f * Time.deltaTime));
@@ -87,6 +102,12 @@ public class MarketFeed : MonoBehaviour
             Connect();
         }
     }
+
+    bool _futuresSpoke;
+
+    /// <summary>The futures socket's own state. `Status` only reports spot.</summary>
+    public string FuturesStatus =>
+        _futures == null ? "none" : _futures.Status.ToString().ToLower();
 
     void HandleSpot(string msg)
     {
@@ -131,6 +152,13 @@ public class MarketFeed : MonoBehaviour
         double price = Json.GetDouble(order, "ap");
         if (price <= 0) price = Json.GetDouble(order, "p");
         if (qty <= 0 || price <= 0) return;
+
+        // Every one of them, at the call site. Which side is liquidated decides
+        // which skin the bomber wears, and fourteen minutes of watching showed
+        // only the sideless simulated strike - so the question is whether this
+        // is ever reached at all.
+        Debug.Log($"[feed] liquidation {(Json.GetString(order, "S") == "SELL" ? "long" : "short")} " +
+                  $"${qty * price:N0}");
 
         var liq = new Liquidation
         {

@@ -196,8 +196,10 @@ namespace Blwp
             {
                 _plane = skin != null ? Dress(skin, 34f, Vector3.zero) : BuildPlane();
                 _wearing = wearing;
-                Debug.Log($"[strike] airframe {wearing}");
             }
+            // EVERY sortie, not only when the skin changes. Logging the change
+            // alone made a count of three strikes look like a count of one.
+            Debug.Log($"[strike] airframe {wearing}");
             if (_bomb == null)
                 // Nose from +Y round to +Z, the direction the flight code points it.
                 _bomb = _bombModel != null ? Dress(_bombModel, 4f, new Vector3(90f, 0f, 0f)) : BuildBomb();
