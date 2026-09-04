@@ -32,6 +32,7 @@ public static class SetupAddressables
     public const string PostKey = "model/postoffice";
     public const string BomberKey = "model/bomber";
     public const string BomberBearKey = "model/bomber-bear";
+    public const string BomberBullKey = "model/bomber-bull";
 
     [MenuItem("Tools/BTC Logistics/Set Up Streaming")]
     public static void Run()
@@ -83,6 +84,11 @@ public static class SetupAddressables
         // return last, which is not a thing to leave to chance.
         marked += MarkExcept(settings, group, BomberKey, new[] { "-bear", "-bull" }, "bomber");
         marked += Mark(settings, group, BomberBearKey, "bomber-bear");
+        // No bull model exists yet. Marking it costs nothing when the asset is
+        // absent - Mark says so and returns zero - and the moment a
+        // bomber-bull.glb lands beside the bear it is streamed without another
+        // edit here.
+        marked += Mark(settings, group, BomberBullKey, "bomber-bull");
         marked += Mark(settings, group, MinerKey, "megastructure", "bitcoin_miner");
         marked += Mark(settings, group, PostKey, "post_office", "mempool_post");
 

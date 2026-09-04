@@ -134,7 +134,7 @@ public class Bootstrap : MonoBehaviour
         double usd = UnityEngine.Random.Range(1f, 1000f) * 1e6;
         // No side: nobody submitted this but the clock. The picture flies the
         // default airframe rather than inventing one.
-        if (_strike != null) _strike.NoteSubmitter(null);
+        if (_strike != null) _strike.NoteSubmitter(null, usd);
         if (Blwp.BlwpCore.Liquidation(usd)) Simulated = true;
     }
 
@@ -165,7 +165,7 @@ public class Bootstrap : MonoBehaviour
         // the sky.
         Market.OnLiquidation += (l) =>
         {
-            if (_strike != null) _strike.NoteSubmitter(!l.Long);
+            if (_strike != null) _strike.NoteSubmitter(!l.Long, l.UsdValue);
             Blwp.BlwpCore.Liquidation(l.UsdValue);
         };
         Field = gameObject.AddComponent<Battlefield>();
@@ -709,6 +709,8 @@ public class Bootstrap : MonoBehaviour
         Fx.terrain = _terrain;
         Fx.roads = Roads;
         if (_strike != null) _strike.fx = Fx;
+        // the strike's own voice, wired where the rest of the audio is
+        if (_strike != null) _strike.audio = FindFirstObjectByType<GameAudio>();
         Fx.tracerMaterial = tracerMaterial;
         Fx.flashMaterial = flashMaterial;
         Fx.blastMaterial = blastMaterial;

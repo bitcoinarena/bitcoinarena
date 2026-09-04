@@ -29,7 +29,7 @@ public class GameAudio : MonoBehaviour
 
     AudioSource _engine, _tyres, _shots, _war, _rotor;
     AudioClip _impact, _explosion, _chime, _blip, _thud;
-    AudioClip _cannon, _rifle, _ricochet, _boom;
+    AudioClip _cannon, _rifle, _ricochet, _boom, _detonation;
     Rigidbody _body;
     float _rpm;
 
@@ -67,6 +67,7 @@ public class GameAudio : MonoBehaviour
         _rifle = Burst("rifle", 0.16f, 26f, 3800f);
         _ricochet = Burst("ricochet", 0.20f, 20f, 2600f);
         _boom = Burst("boom", 2.0f, 1.9f, 160f);
+        _detonation = Detonation();
     }
 
     AudioSource Make(string name, bool loop)
@@ -299,6 +300,44 @@ public class GameAudio : MonoBehaviour
         clip.SetData(data, 0);
         return clip;
     }
+
+    /// <summary>
+    /// The atom bomb: a crack, and then a roll that takes seconds to leave.
+    ///
+    /// Not `Burst`. Every other explosion here is one filtered noise burst with
+    /// an exponential decay, which is right for a tank and wrong for this - a
+    /// detonation of this size is heard as a sharp front and then a very low
+    /// roll that arrives after it and outlasts it by seconds. So two filters
+    /// over the same noise: a fast one for the crack, and a very slow one for
+    /// the roll, whose envelope RISES before it falls.
+    ///
+    /// Synthesised like every other clip in this file, so it costs nothing in
+    /// the download and cannot go missing from a bundle.
+    /// </summary>
+    static AudioClip Detonation()
+    {
+        const float Seconds = 4.5f;
+        int samples = Mathf.RoundToInt(Rate * Seconds);
+        var data = new float[samples];
+        var rng = new System.Random("detonation".GetHashCode());
+        float lo = 0f, mid = 0f;
+        for (int i = 0; i < samples; i++)
+        {
+            float w = (float)(rng.NextDouble() * 2.0 - 1.0);
+            lo = Mathf.Lerp(lo, w, 0.0016f);      // the roll, far below the crack
+            mid = Mathf.Lerp(mid, w, 0.020f);     // the crack itself
+            float t = i / (float)Rate;
+            float crack = Mathf.Exp(-8f * t);
+            float roll = Mathf.Exp(-0.7f * t) * (1f - Mathf.Exp(-11f * t));
+            data[i] = Mathf.Clamp(mid * 0.6f * crack + lo * 7f * roll, -1f, 1f);
+        }
+        var clip = AudioClip.Create("detonation", samples, 1, Rate, false);
+        clip.SetData(data, 0);
+        return clip;
+    }
+
+    /// <summary>An atom bomb going off. Louder than anything else here.</summary>
+    public void Strike() => Shot(_detonation, 1f, Random.Range(0.94f, 1.02f));
 
     /// <summary>Two notes, for an arrival.</summary>
     static AudioClip Chime()

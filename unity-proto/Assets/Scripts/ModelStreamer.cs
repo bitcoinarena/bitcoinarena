@@ -29,6 +29,7 @@ public class ModelStreamer : MonoBehaviour
     public const string PostKey = "model/postoffice";
     public const string BomberKey = "model/bomber";
     public const string BomberBearKey = "model/bomber-bear";
+    public const string BomberBullKey = "model/bomber-bull";
 
     public enum State { Waiting, Loading, Loaded, Failed }
 
@@ -201,7 +202,35 @@ public class ModelStreamer : MonoBehaviour
             if (strike != null) strike.SetBearAirframe(go);
         });
 
+        // The bull skin does not exist yet, so this asks QUIETLY: no item in the
+        // list, no red line in the loading panel, nothing for a player to read
+        // as broken. The instant a bomber-bull.glb is added it is picked up
+        // here without another change.
+        yield return Optional(BomberBullKey, go =>
+        {
+            var strike = FindFirstObjectByType<Blwp.StrikeTheatre>();
+            if (strike != null) strike.SetBullAirframe(go);
+        });
+
         Debug.Log($"[ModelStreamer] done: {Loaded} loaded, {Failed} failed");
+    }
+
+    /// <summary>
+    /// Ask for a key that may simply not be there.
+    ///
+    /// `Fetch` counts a missing key as a failure and shows it, which is right
+    /// for a model the game needs and wrong for one that has not been made yet.
+    /// </summary>
+    IEnumerator Optional(string key, System.Action<GameObject> apply)
+    {
+        var locations = Addressables.LoadResourceLocationsAsync(key);
+        yield return locations;
+        bool there = locations.Status == AsyncOperationStatus.Succeeded
+                  && locations.Result != null && locations.Result.Count > 0;
+        Addressables.Release(locations);
+        if (!there) { Debug.Log($"[ModelStreamer] {key} is not in this build - skipped"); yield break; }
+        Items.Add(new Item { label = key, key = key });
+        yield return Fetch(key, apply);
     }
 
     IEnumerator Fetch(string key, System.Action<GameObject> apply)

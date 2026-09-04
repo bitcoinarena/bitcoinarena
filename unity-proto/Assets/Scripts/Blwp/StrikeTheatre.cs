@@ -53,6 +53,7 @@ namespace Blwp
         public MempoolTerrain terrain;
         public RoadNetwork roads;
         public CombatFx fx;
+        public GameAudio audio;
 
 
         /// <summary>How far short of the impact the bomb leaves the aircraft.</summary>
@@ -98,6 +99,12 @@ namespace Blwp
             // was never the shade: it was an opaque surface laid over the whole
             // floor. What changed is what this material is drawn ON. See
             // ContaminationMesh.
+            // Same recipe as everything else this component makes: built from
+            // Shader.Find with _EMISSION on, because that is the only kind of
+            // runtime material this build has been shown to draw.
+            _fire = Skin(shader, new Color(1f, 0.85f, 0.6f), 0.1f,
+                         new Color(1f, 0.62f, 0.22f));
+
             _glow = new Material(shader);
             _glow.SetColor("_BaseColor", new Color(0.10f, 0.14f, 0.08f));
             _glow.SetFloat("_Smoothness", 0.05f);
@@ -135,6 +142,7 @@ namespace Blwp
         {
             if (!BlwpCore.Available) return;
             Fly(Time.deltaTime);
+            Column(Time.deltaTime);
             Glow();
 
             // THE SERIAL, not `StrikeArmed`. `K_STATE` is set for exactly one
@@ -148,6 +156,9 @@ namespace Blwp
             if (strikes == _seenStrikes) return;
             bool first = _seenStrikes < 0;
             _seenStrikes = strikes;
+            // The core has consumed what was pending, so the next liquidation
+            // starts a fresh comparison rather than losing to a spent one.
+            _pendingUsd = 0.0;
             if (first) return;                    // a reload, not a fresh strike
             Launch(BlwpCore.StrikeAt(0f));
         }
@@ -171,14 +182,21 @@ namespace Blwp
             // A long being liquidated is a BULL blown out of its position, so
             // bear is the other one. One boolean, and it is the only place the
             // side is decided.
-            bool bear = _nextIsBear == true && _bearAirframe != null;
-            if (_plane != null && bear != _planeIsBear) { Destroy(_plane.gameObject); _plane = null; }
+            // Bear, bull, or the plain airframe. A side with no skin of its own
+            // flies the plain one - there is no bull model yet and none is
+            // faked, so a bull liquidation is drawn by the aircraft that has no
+            // side rather than by the wrong one.
+            var skin = _airframe;
+            string wearing = _airframe != null ? "default" : "primitives";
+            if (_nextIsBear == true && _bearAirframe != null) { skin = _bearAirframe; wearing = "bear"; }
+            else if (_nextIsBear == false && _bullAirframe != null) { skin = _bullAirframe; wearing = "bull"; }
+
+            if (_plane != null && wearing != _wearing) { Destroy(_plane.gameObject); _plane = null; }
             if (_plane == null)
             {
-                var skin = bear ? _bearAirframe : _airframe;
                 _plane = skin != null ? Dress(skin, 34f, Vector3.zero) : BuildPlane();
-                _planeIsBear = bear;
-                Debug.Log($"[strike] airframe {(skin == null ? "primitives" : (bear ? "bear" : "default"))}");
+                _wearing = wearing;
+                Debug.Log($"[strike] airframe {wearing}");
             }
             if (_bomb == null)
                 // Nose from +Y round to +Z, the direction the flight code points it.
@@ -234,10 +252,108 @@ namespace Blwp
                 {
                     _bomb.gameObject.SetActive(false);
                     if (fx != null) { fx.Blast(_impact, 26f); fx.Flash(_impact + Vector3.up * 6f, 18f); }
+                    RaiseColumn(_impact);
+                    // Lazily, because Bootstrap builds the audio and this in an
+                    // order that is not this component's business to depend on.
+                    if (audio == null) audio = FindFirstObjectByType<GameAudio>();
+                    if (audio != null) audio.Strike();
                     Debug.Log($"[strike] impact at {_impact.x:F1},{_impact.z:F1}");
                 }
             }
             if (_t > 20f) { _t = -1f; if (_plane != null) _plane.gameObject.SetActive(false); }
+        }
+
+        /* ------------------------------------------------------- the column */
+
+        // A mushroom is a shape over time, so all of it is time. The stem
+        // reaches its full height in Rise seconds, the cap swells with it and
+        // then flattens, the whole thing cools from white through orange to
+        // ash, and it is gone by Gone.
+        const float Rise = 3.0f;          // seconds to full height
+        const float Gone = 8.0f;          // seconds until nothing is left
+        const float StemHigh = 55f;       // metres
+        const float StemWide = 7f;
+        const float CapWide = 34f;
+
+        Transform _stem, _cap, _skirt;
+        Material _fire;
+        float _cloud = -1f;
+        Vector3 _cloudAt;
+
+        /// <summary>
+        /// Put a column over the impact.
+        ///
+        /// The blast `CombatFx` draws is 26 m of fireball, which is what a tank
+        /// gets. An atom bomb is not a bigger tank: what says what it was is the
+        /// column standing over the field for several seconds after the flash,
+        /// long enough that a player who was looking the other way still turns
+        /// and sees it.
+        ///
+        /// Theatre, like the aircraft. Nothing here is asked by the core, the
+        /// core has no cloud, and the crater was dug before this is drawn.
+        /// </summary>
+        void RaiseColumn(Vector3 at)
+        {
+            _cloudAt = at;
+            _cloud = 0f;
+            if (_stem == null)
+            {
+                _stem = Part(transform, PrimitiveType.Cylinder, Vector3.zero,
+                             Vector3.one, Vector3.zero, _fire);
+                _cap = Part(transform, PrimitiveType.Sphere, Vector3.zero,
+                            Vector3.one, Vector3.zero, _fire);
+                _skirt = Part(transform, PrimitiveType.Sphere, Vector3.zero,
+                              Vector3.one, Vector3.zero, _fire);
+                foreach (var t in new[] { _stem, _cap, _skirt })
+                    t.GetComponent<MeshRenderer>().shadowCastingMode =
+                        UnityEngine.Rendering.ShadowCastingMode.Off;
+            }
+            foreach (var t in new[] { _stem, _cap, _skirt }) t.gameObject.SetActive(true);
+        }
+
+        void Column(float dt)
+        {
+            if (_cloud < 0f || _stem == null) return;
+            _cloud += dt;
+            if (_cloud > Gone)
+            {
+                _cloud = -1f;
+                foreach (var t in new[] { _stem, _cap, _skirt }) t.gameObject.SetActive(false);
+                return;
+            }
+
+            float rise = Mathf.Clamp01(_cloud / Rise);
+            float grow = 1f - Mathf.Exp(-3.2f * _cloud);      // fast, then easing
+            float fade = Mathf.Clamp01((Gone - _cloud) / (Gone - Rise));
+
+            float high = StemHigh * rise * fade;
+            _stem.localScale = new Vector3(StemWide * grow, high * 0.5f, StemWide * grow);
+            _stem.position = _cloudAt + Vector3.up * (high * 0.5f);
+
+            float capw = CapWide * grow * fade;
+            _cap.localScale = new Vector3(capw, capw * 0.55f, capw);
+            _cap.position = _cloudAt + Vector3.up * high;
+
+            // The skirt is the dust the blast pushes out along the ground, so it
+            // spreads wider than the cap and never leaves the surface.
+            float skirt = CapWide * 1.5f * grow * fade;
+            _skirt.localScale = new Vector3(skirt, skirt * 0.22f, skirt);
+            _skirt.position = _cloudAt + Vector3.up * (skirt * 0.08f);
+
+            // White, then orange, then ash. The colour IS the clock.
+            float heat = Mathf.Exp(-1.5f * _cloud);
+            var glow = Color.Lerp(new Color(0.28f, 0.26f, 0.24f),
+                                  new Color(1f, 0.62f, 0.22f), heat) * (0.25f + 1.9f * heat);
+            var body = Color.Lerp(new Color(0.34f, 0.32f, 0.30f),
+                                  new Color(1f, 0.85f, 0.6f), heat);
+            foreach (var t in new[] { _stem, _cap, _skirt })
+            {
+                var mr = t.GetComponent<MeshRenderer>();
+                mr.GetPropertyBlock(_block);
+                _block.SetColor("_BaseColor", body);
+                _block.SetColor("_EmissionColor", glow);
+                mr.SetPropertyBlock(_block);
+            }
         }
 
         /* --------------------------------------------------- the ground left */
@@ -440,7 +556,7 @@ namespace Blwp
         {
             if (prefab == null) return;
             _airframe = prefab;
-            if (_plane != null && !_planeIsBear) { Destroy(_plane.gameObject); _plane = null; }
+            if (_plane != null && _wearing == "default") { Destroy(_plane.gameObject); _plane = null; }
             Debug.Log("[strike] airframe model taken");
         }
 
@@ -453,7 +569,15 @@ namespace Blwp
             Debug.Log("[strike] bomb model taken");
         }
 
-        /// <summary>Take the bear-skinned airframe. There is no bull one yet.</summary>
+        /// <summary>Take the bull-skinned airframe, if one is ever built.</summary>
+        public void SetBullAirframe(GameObject prefab)
+        {
+            if (prefab == null) return;
+            _bullAirframe = prefab;
+            Debug.Log("[strike] bull airframe taken");
+        }
+
+        /// <summary>Take the bear-skinned airframe.</summary>
         public void SetBearAirframe(GameObject prefab)
         {
             if (prefab == null) return;
@@ -476,11 +600,24 @@ namespace Blwp
         /// ninety seconds of silence carries no side, so it flies the default
         /// airframe rather than an invented one.
         /// </summary>
-        public void NoteSubmitter(bool? bear) => _nextIsBear = bear;
+        public void NoteSubmitter(bool? bear, double usd)
+        {
+            // FOLLOW THE ONE THE CORE WILL KEEP. `submitLiquidation` takes the
+            // LARGEST size still pending for the next tick, and takes the first
+            // of a tie. A latch that simply remembered the last side put one
+            // liquidation's airframe over another's crater whenever two landed
+            // inside the same tick - rare, and wrong every time it happened.
+            // Same rule, mirrored: strictly greater wins, so the first of a tie
+            // stays, exactly as it does in the core.
+            if (usd <= _pendingUsd) return;
+            _pendingUsd = usd;
+            _nextIsBear = bear;
+        }
 
         bool? _nextIsBear;
-        bool _planeIsBear;
-        GameObject _airframe, _bearAirframe, _bombModel;
+        double _pendingUsd;
+        string _wearing = "";
+        GameObject _airframe, _bearAirframe, _bullAirframe, _bombModel;
 
         /// <summary>
         /// Sit a streamed model in the same box the primitives occupied.
