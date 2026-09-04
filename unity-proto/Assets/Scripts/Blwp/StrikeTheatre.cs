@@ -156,9 +156,7 @@ namespace Blwp
             if (strikes == _seenStrikes) return;
             bool first = _seenStrikes < 0;
             _seenStrikes = strikes;
-            // The core has consumed what was pending, so the next liquidation
-            // starts a fresh comparison rather than losing to a spent one.
-            _pendingUsd = 0.0;
+            Spent(strikes);
             if (first) return;                    // a reload, not a fresh strike
             Launch(BlwpCore.StrikeAt(0f));
         }
@@ -186,10 +184,15 @@ namespace Blwp
             // flies the plain one - there is no bull model yet and none is
             // faked, so a bull liquidation is drawn by the aircraft that has no
             // side rather than by the wrong one.
+            //
+            // `_armedSide`, NOT `_nextIsBear`: the side is handed over the
+            // moment the core's serial is seen to move, by whoever sees it
+            // first. Reading the live latch here drew the side of a liquidation
+            // that had arrived AFTER this strike was already dug. See Spent().
             var skin = _airframe;
             string wearing = _airframe != null ? "default" : "primitives";
-            if (_nextIsBear == true && _bearAirframe != null) { skin = _bearAirframe; wearing = "bear"; }
-            else if (_nextIsBear == false && _bullAirframe != null) { skin = _bullAirframe; wearing = "bull"; }
+            if (_armedSide == true && _bearAirframe != null) { skin = _bearAirframe; wearing = "bear"; }
+            else if (_armedSide == false && _bullAirframe != null) { skin = _bullAirframe; wearing = "bull"; }
 
             if (_plane != null && wearing != _wearing) { Destroy(_plane.gameObject); _plane = null; }
             if (_plane == null)
@@ -612,6 +615,16 @@ namespace Blwp
             // Same rule, mirrored: strictly greater wins, so the first of a tie
             // stays, exactly as it does in the core.
             //
+            // READ THE SERIAL HERE, do not wait for Update to notice it. The
+            // core is stepped from `CoreDrivenTruck`'s accumulator and the
+            // three components have no fixed Update order, so if that one runs
+            // after this component the consumption is seen a frame late. A
+            // liquidation arriving in that gap used to compare itself against a
+            // size the core had already spent, lose to a dead one, and leave
+            // the airframe wearing the wrong side. Measured with a forced
+            // order, not guessed: StrikeLatchTests.
+            Spent(BlwpCore.StrikeCount);
+
             // A COLLISION is two liquidations arriving before the core has
             // consumed the pending one - one drain of the sockets, one frame.
             // Logged from both directions, because the loser is the incoming
@@ -632,10 +645,39 @@ namespace Blwp
             _nextIsBear = bear;
         }
 
+        /// <summary>
+        /// The core has taken whatever was pending at `serial`, so the queue
+        /// starts empty again - and the side of what it took is HANDED OVER to
+        /// the drawing, because by the time the bomber is built the latch may
+        /// already hold a newer liquidation's side.
+        ///
+        /// Idempotent: called from `Update` when the serial is seen to move and
+        /// from `NoteSubmitter` before every comparison, whichever gets there
+        /// first in a frame. A second call with nothing pending leaves the
+        /// handed-over side alone rather than wiping it.
+        /// </summary>
+        void Spent(int serial)
+        {
+            if (serial == _pendingSerial) return;
+            if (_pendingUsd > 0.0) _armedSide = _nextIsBear;
+            _pendingSerial = serial;
+            _pendingUsd = 0.0;
+            _nextIsBear = null;
+        }
+
         static string Side(bool? bear) => bear == null ? "no side" : (bear.Value ? "bear" : "bull");
 
+        /// <summary>What the latch is holding for the core's next tick. Tests.</summary>
+        public double PendingUsd => _pendingUsd;
+        /// <summary>The side of what it is holding, null for none. Tests.</summary>
+        public bool? PendingSide => _nextIsBear;
+        /// <summary>The side of the liquidation the core has already taken.</summary>
+        public bool? ArmedSide => _armedSide;
+
         bool? _nextIsBear;
+        bool? _armedSide;
         double _pendingUsd;
+        int _pendingSerial = -1;
         string _wearing = "";
         GameObject _airframe, _bearAirframe, _bullAirframe, _bombModel;
 
