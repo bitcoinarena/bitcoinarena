@@ -967,7 +967,8 @@ public class ArmyRenderer : MonoBehaviour
     /// </summary>
     float Ground(float x, float z) =>
         roads != null ? roads.SurfaceHeight(x, z)
-                      : (terrain != null ? terrain.SampleSurface(x, z) : 0f);
+                      : (Blwp.BlwpCore.HasSurface ? Blwp.BlwpCore.SurfaceAt(x, z)
+                                                  : (terrain != null ? terrain.SampleSurface(x, z) : 0f));
 
     /// <summary>Eased attitude per pooled hull, so tanks do not jitter.</summary>
     readonly Dictionary<Transform, Vector2> _attitude = new Dictionary<Transform, Vector2>();

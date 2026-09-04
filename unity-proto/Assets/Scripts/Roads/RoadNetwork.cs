@@ -43,10 +43,30 @@ public class RoadNetwork : MonoBehaviour
     /// and off at the edge a tank half on the road would step 45 cm as it
     /// crossed the line.
     /// </summary>
-    public float SurfaceHeight(float x, float z)
+    public float SurfaceHeight(float x, float z) => Ground(x, z) + Lift(x, z);
+
+    /// <summary>
+    /// The bare ground here, with no deck on it - and it comes from the CORE.
+    ///
+    /// `surfaceAt` in sim.js is the one thing that says what the ground is, and
+    /// it is the relief LESS the craters. Unity's terrain is the relief alone:
+    /// `MempoolTerrain` draws the hills the round started with and has never
+    /// heard of a strike, so everything seated on `SampleSurface` stood on a
+    /// lid over the hole. Measured on the running build, at the centre of the
+    /// biggest crater the rule can make, the two answers were 4.418 m and
+    /// -1.562 m.
+    ///
+    /// This is the funnel. Everything that stands on the map - the truck, the
+    /// army, the effects, the gate, and the road ribbon itself - comes through
+    /// here, so there is one answer rather than six that drift apart.
+    ///
+    /// The terrain stays as the fallback for the Editor, where there is no core
+    /// at all, and for the frames before the relief has been uploaded.
+    /// </summary>
+    public float Ground(float x, float z)
     {
-        float ground = terrain != null ? terrain.SampleSurface(x, z) : 0f;
-        return ground + Lift(x, z);
+        if (Blwp.BlwpCore.HasSurface) return Blwp.BlwpCore.SurfaceAt(x, z);
+        return terrain != null ? terrain.SampleSurface(x, z) : 0f;
     }
 
     /// <summary>
@@ -134,6 +154,13 @@ public class RoadNetwork : MonoBehaviour
         // the ground itself counts: live mempool data reshapes it, and a road
         // built against the old heights ends up floating over the new ones
         float s = terrain != null ? terrain.Version * 1e5f : 0f;
+
+        // and so do the craters: the deck follows the ground into the hole, and
+        // a ribbon whose fingerprint ignored the strike would go on bridging it
+        // until something else happened to move. A serial and a count catch both
+        // ends - a crater arriving, and a crater expiring after its 10-20 rounds.
+        s += Blwp.BlwpCore.StrikeCount * 1e3f + Blwp.BlwpCore.CraterCount;
+
         foreach (var d in Model.Cuts) if (d.lane == lane) s += 1000f + Mathf.Round(d.x) + Mathf.Round(d.t);
         foreach (var w in Model.Wears) if (w.lane == lane) s += 7f + Mathf.Round(w.x) + Mathf.Round(w.wear * 20f);
         return s;
@@ -183,8 +210,8 @@ public class RoadNetwork : MonoBehaviour
             // itself on the other wherever the terrain slopes sideways.
             var left = new Vector3(x, 0f, z) - side * RoadModel.HalfWidth;
             var right = new Vector3(x, 0f, z) + side * RoadModel.HalfWidth;
-            float gl = terrain != null ? terrain.SampleSurface(left.x, left.z) : 0f;
-            float gr = terrain != null ? terrain.SampleSurface(right.x, right.z) : 0f;
+            float gl = Ground(left.x, left.z);
+            float gr = Ground(right.x, right.z);
 
             left.y = gl + lift - broken * 0.55f;
             right.y = gr + lift - broken * 0.55f + broken * 0.25f;

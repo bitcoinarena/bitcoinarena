@@ -68,12 +68,6 @@ namespace Blwp
         // mounting points for free.
         int _groundRevision = -1;
 
-        /// <summary>
-        /// True once the core has actually taken the relief. Until it has, the
-        /// core's ground is flat zero, and asking it would drop the truck to
-        /// sea level for the frames between Start and the first upload.
-        /// </summary>
-        bool _reliefInCore;
         int _solidCount = -1;
         float _solidsChecked;
 
@@ -292,14 +286,9 @@ namespace Blwp
 
             const int cols = 160, rows = 96;      // the terrain's own grid
             if (BlwpCore.SetGround(terrain.HeightGrid(cols, rows), cols, rows))
-            {
-                _reliefInCore = true;
                 Debug.Log($"[blwp] relief uploaded, revision {_groundRevision}");
-            }
             else
-            {
                 Debug.LogWarning("[blwp] the core refused the relief - it stays flat");
-            }
         }
 
         /// <summary>
@@ -420,10 +409,8 @@ namespace Blwp
         /// </summary>
         float Ground(float x, float z)
         {
-            if (BlwpCore.Available && _reliefInCore)
-                return BlwpCore.SurfaceAt(x, z) + (roads != null ? roads.Lift(x, z) : 0f);
-
             if (roads != null) return roads.SurfaceHeight(x, z);
+            if (BlwpCore.HasSurface) return BlwpCore.SurfaceAt(x, z);
             return terrain != null ? terrain.SampleSurface(x, z) : 0f;
         }
 

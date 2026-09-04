@@ -81,6 +81,8 @@ namespace Blwp
 
         public static bool Init(int seed)
         {
+            // A fresh core is a flat one until somebody uploads the relief.
+            HasRelief = false;
             Available = BlwpInit(seed) == 1;
             if (Available)
             {
@@ -153,9 +155,29 @@ namespace Blwp
         {
             if (!Available || heights == null || heights.Length < cols * rows) return false;
             var pin = GCHandle.Alloc(heights, GCHandleType.Pinned);
-            try { return BlwpSetGround(pin.AddrOfPinnedObject(), cols, rows) != 0; }
+            try
+            {
+                bool ok = BlwpSetGround(pin.AddrOfPinnedObject(), cols, rows) != 0;
+                if (ok) HasRelief = true;
+                return ok;
+            }
             finally { pin.Free(); }
         }
+
+        /// <summary>True once the core has actually taken the relief.</summary>
+        public static bool HasRelief { get; private set; }
+
+        /// <summary>
+        /// True when <see cref="SurfaceAt"/> is worth asking: a core is
+        /// answering AND it has been given the relief.
+        ///
+        /// Both halves matter. In the Editor there is no core at all and the
+        /// terrain is the only answer there is; in a browser build the core
+        /// starts flat and only learns the hills when the first upload lands,
+        /// so between Start and that upload it would put everything at sea
+        /// level. Whoever draws the ground asks this before believing it.
+        /// </summary>
+        public static bool HasSurface => Available && HasRelief;
 
         /// <summary>
         /// The tanks the player can see, for this tick.

@@ -51,6 +51,72 @@ public class MempoolTerrain : MonoBehaviour
 
     void Start() => StartCoroutine(PollMempool());
 
+    [Tooltip("Seconds between a strike arming in the core and the hole showing " +
+             "in the ground. The core digs the crater in the tick the " +
+             "liquidation is consumed; the bomb the player watches takes a few " +
+             "seconds to get there, and a hole that opened before the bomb " +
+             "landed would give the theatre away. Zero reveals immediately.")]
+    public float craterRevealDelay = 5.2f;
+
+    int _drawnCraters = -1, _drawnRevealed = -1;
+    readonly Dictionary<long, float> _due = new Dictionary<long, float>();
+    readonly List<Vector3> _revealed = new List<Vector3>();
+
+    /// <summary>
+    /// The craters this terrain has actually opened, as (x, radius, z).
+    ///
+    /// Whoever else draws a crater reads THIS, not the core's list, or it would
+    /// draw a hole the ground has not opened yet.
+    /// </summary>
+    public IReadOnlyList<Vector3> DrawnCraters => _revealed;
+
+    /// <summary>
+    /// Which open craters are due to be shown, registering any new one's due
+    /// time as it goes.
+    ///
+    /// PER CRATER, and not one timer for the terrain. The first cut kept a
+    /// single `_revealAt` and let `Build` dent whatever was open - and `Build`
+    /// is also called by the mempool poll, so a fetch landing inside the delay
+    /// opened the hole with the bomb still in the air. Photographed.
+    /// </summary>
+    void CollectRevealed()
+    {
+        _revealed.Clear();
+        if (!Blwp.BlwpCore.HasSurface) return;
+        if (_due.Count > 64) _due.Clear();       // craters expire; the keys should too
+
+        int n = Blwp.BlwpCore.CraterCount;
+        for (int i = 0; i < n; i++)
+        {
+            if (!Blwp.BlwpCore.CraterAt(i, 0f, out var at, out float r)) continue;
+            long key = ((long)Mathf.RoundToInt(at.x * 8f) << 24) ^ Mathf.RoundToInt(at.z * 8f);
+            if (!_due.TryGetValue(key, out float due))
+            {
+                due = Time.time + craterRevealDelay;
+                _due[key] = due;
+            }
+            if (Time.time >= due) _revealed.Add(new Vector3(at.x, r, at.z));
+        }
+    }
+
+    /// <summary>
+    /// Rebuild when the craters change, not when the mempool does.
+    ///
+    /// A strike does not touch the fee histogram, so nothing else here would
+    /// ever notice one. A crater that expires after its ten to twenty rounds is
+    /// filled in at once; a new one waits out `craterRevealDelay`, which is what
+    /// the second test is for - the count does not move when a hole becomes due,
+    /// only the number that are actually being drawn.
+    /// </summary>
+    void Update()
+    {
+        if (!Blwp.BlwpCore.HasSurface) return;
+        if (Blwp.BlwpCore.CraterCount != _drawnCraters) { Build(); return; }
+
+        CollectRevealed();
+        if (_revealed.Count != _drawnRevealed) Build();
+    }
+
     IEnumerator PollMempool()
     {
         while (true)
@@ -239,6 +305,9 @@ public class MempoolTerrain : MonoBehaviour
         Revision++;
 
         Version++;
+        CollectRevealed();
+        _drawnCraters = Blwp.BlwpCore.HasSurface ? Blwp.BlwpCore.CraterCount : 0;
+        _drawnRevealed = _revealed.Count;
         int vx = columns, vz = rows;
         if (_verts == null || _verts.Length != vx * vz) _verts = new Vector3[vx * vz];
         var uvs = new Vector2[vx * vz];
@@ -250,7 +319,30 @@ public class MempoolTerrain : MonoBehaviour
             {
                 float u = x / (float)(vx - 1);
                 int i = z * vx + x;
-                _verts[i] = new Vector3((u - 0.5f) * width, HeightAt(u, v), (v - 0.5f) * depth);
+                float wx = (u - 0.5f) * width, wz = (v - 0.5f) * depth;
+
+                // THE HOLE IS IN THE WORLD, not painted on it. Inside an open
+                // crater the drawn vertex is the CORE's surface - relief less
+                // the bowl the core dug - so the ground the player looks at is
+                // the ground the truck stands on. Outside one, nothing changes.
+                //
+                // Only the DRAWN mesh moves. `SampleSurface` and `HeightGrid`
+                // recompute from `HeightAt` and never read `_verts`, so the
+                // relief handed to the core stays the bare relief. That matters:
+                // feed it a dented surface and the next upload would dig the
+                // same hole again, and again, and the crater would grow without
+                // limit.
+                float h = HeightAt(u, v);
+                for (int k = 0; k < _revealed.Count; k++)
+                {
+                    // (x, radius, z) - see CollectRevealed.
+                    float dx = wx - _revealed[k].x, dz = wz - _revealed[k].z;
+                    if (dx * dx + dz * dz >= _revealed[k].y * _revealed[k].y) continue;
+                    h = Blwp.BlwpCore.SurfaceAt(wx, wz);
+                    break;
+                }
+
+                _verts[i] = new Vector3(wx, h, wz);
                 // 0..1 across the whole map: the territory texture is world-sized,
                 // so it must not tile or the frontline would appear five times
                 uvs[i] = new Vector2(u, v);

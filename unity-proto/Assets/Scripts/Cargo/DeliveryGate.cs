@@ -123,8 +123,7 @@ public class DeliveryGate : MonoBehaviour
             if (old != null) Destroy(old.gameObject);
         }
 
-        float ground = terrain != null ? terrain.SampleSurface(gateX, 0f) : 0f;
-        BuildMiner(ground);
+        BuildMiner(GateGround());
     }
 
     bool _minerUp;
@@ -141,10 +140,14 @@ public class DeliveryGate : MonoBehaviour
     /// </summary>
     void FollowTheGround()
     {
-        if (terrain == null || terrain.Version == _seenGround) return;
-        _seenGround = terrain.Version;
+        // The strike counts as the ground moving. A crater does not touch
+        // terrain.Version, so a building keyed to that alone went on standing
+        // over its own hole.
+        int rev = (terrain != null ? terrain.Version : 0) + Blwp.BlwpCore.StrikeCount * 100003;
+        if (rev == _seenGround) return;
+        _seenGround = rev;
 
-        float ground = terrain.SampleSurface(gateX, 0f);
+        float ground = GateGround();
         if (_miner != null) _miner.position = new Vector3(gateX, ground, 0f);
         if (_shell != null) _shell.position = new Vector3(gateX, ground, 0f);
     }
@@ -331,10 +334,22 @@ public class DeliveryGate : MonoBehaviour
         MissTheBlock();
     }
 
+    /// <summary>
+    /// The ground the building stands on, from the CORE.
+    ///
+    /// Same funnel as everything else on the map: `surfaceAt` is the relief
+    /// less the craters, and Unity's terrain is the relief alone. A strike at
+    /// the gate used to leave the miner standing on a lid over the hole.
+    /// The terrain is the fallback where no core answers - the Editor.
+    /// </summary>
+    float GateGround() =>
+        Blwp.BlwpCore.HasSurface ? Blwp.BlwpCore.SurfaceAt(gateX, 0f)
+                                 : (terrain != null ? terrain.SampleSurface(gateX, 0f) : 0f);
+
     /// <summary>The far end of the run: the miner, or two posts if it is absent.</summary>
     void Build()
     {
-        float ground = terrain != null ? terrain.SampleSurface(gateX, 0f) : 0f;
+        float ground = GateGround();
 
         // The mouth is the goal, so the trigger cannot be wider than the mouth.
         // Scaling the building without this left 34 m of trigger either side of

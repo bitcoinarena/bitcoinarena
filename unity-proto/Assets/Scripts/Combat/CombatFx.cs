@@ -223,7 +223,8 @@ public class CombatFx : MonoBehaviour
 
     float Ground(float x, float z) =>
         roads != null ? roads.SurfaceHeight(x, z)
-                      : (terrain != null ? terrain.SampleSurface(x, z) : 0f);
+                      : (Blwp.BlwpCore.HasSurface ? Blwp.BlwpCore.SurfaceAt(x, z)
+                                                  : (terrain != null ? terrain.SampleSurface(x, z) : 0f));
 
     /* ------------------------------------------------------------- effects */
 

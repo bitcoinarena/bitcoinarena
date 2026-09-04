@@ -94,6 +94,8 @@ public class Bootstrap : MonoBehaviour
     public SplashScreen Splash { get; private set; }
     public CombatFx Fx { get; private set; }
 
+    Blwp.StrikeTheatre _strike;
+
     /// <summary>
     /// The simulation clock, for when the feed is quiet.
     ///
@@ -207,6 +209,16 @@ public class Bootstrap : MonoBehaviour
         driver.terrain = _terrain;
         // The deck, not the bare relief: the truck stands on the road.
         driver.roads = FindFirstObjectByType<RoadNetwork>();
+
+        // What a liquidation looks like: an aircraft, a bomb, and the ground it
+        // leaves behind. Theatre - the core has no aircraft, and the hole is
+        // already dug by the time the bomb is drawn falling into it.
+        var strikeGo = new GameObject("StrikeTheatre");
+        strikeGo.transform.SetParent(transform, false);
+        var strike = strikeGo.AddComponent<Blwp.StrikeTheatre>();
+        strike.terrain = _terrain;
+        strike.roads = driver.roads;
+        _strike = strike;
 
         // Practice starts on in this build. The scene's value is the fallback;
         // ?practice=0 in the URL overrides it, so a link can hand somebody the
@@ -674,6 +686,7 @@ public class Bootstrap : MonoBehaviour
         Fx = fxGo.AddComponent<CombatFx>();
         Fx.terrain = _terrain;
         Fx.roads = Roads;
+        if (_strike != null) _strike.fx = Fx;
         Fx.tracerMaterial = tracerMaterial;
         Fx.flashMaterial = flashMaterial;
         Fx.blastMaterial = blastMaterial;
