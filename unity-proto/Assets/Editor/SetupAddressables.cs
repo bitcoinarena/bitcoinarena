@@ -31,6 +31,7 @@ public static class SetupAddressables
     public const string MinerKey = "model/miner";
     public const string PostKey = "model/postoffice";
     public const string BomberKey = "model/bomber";
+    public const string BomberBearKey = "model/bomber-bear";
 
     [MenuItem("Tools/BTC Logistics/Set Up Streaming")]
     public static void Run()
@@ -81,6 +82,7 @@ public static class SetupAddressables
         // exclusion this key binds to whichever the asset database happens to
         // return last, which is not a thing to leave to chance.
         marked += MarkExcept(settings, group, BomberKey, new[] { "-bear", "-bull" }, "bomber");
+        marked += Mark(settings, group, BomberBearKey, "bomber-bear");
         marked += Mark(settings, group, MinerKey, "megastructure", "bitcoin_miner");
         marked += Mark(settings, group, PostKey, "post_office", "mempool_post");
 

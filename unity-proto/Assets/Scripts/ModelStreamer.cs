@@ -28,6 +28,7 @@ public class ModelStreamer : MonoBehaviour
     public const string MinerKey = "model/miner";
     public const string PostKey = "model/postoffice";
     public const string BomberKey = "model/bomber";
+    public const string BomberBearKey = "model/bomber-bear";
 
     public enum State { Waiting, Loading, Loaded, Failed }
 
@@ -107,6 +108,7 @@ public class ModelStreamer : MonoBehaviour
         Items.Add(new Item { label = "Miner", key = MinerKey });
         Items.Add(new Item { label = "Post Office", key = PostKey });
         Items.Add(new Item { label = "Bomber", key = BomberKey });
+        Items.Add(new Item { label = "Bomber (bear)", key = BomberBearKey });
         StartCoroutine(Stream());
     }
 
@@ -192,6 +194,11 @@ public class ModelStreamer : MonoBehaviour
         {
             var strike = FindFirstObjectByType<Blwp.StrikeTheatre>();
             if (strike != null) strike.SetAirframe(go);
+        });
+        yield return Fetch(BomberBearKey, go =>
+        {
+            var strike = FindFirstObjectByType<Blwp.StrikeTheatre>();
+            if (strike != null) strike.SetBearAirframe(go);
         });
 
         Debug.Log($"[ModelStreamer] done: {Loaded} loaded, {Failed} failed");

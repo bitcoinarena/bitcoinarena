@@ -132,6 +132,9 @@ public class Bootstrap : MonoBehaviour
 
         // one million to a thousand million, the span the crater rule spans
         double usd = UnityEngine.Random.Range(1f, 1000f) * 1e6;
+        // No side: nobody submitted this but the clock. The picture flies the
+        // default airframe rather than inventing one.
+        if (_strike != null) _strike.NoteSubmitter(null);
         if (Blwp.BlwpCore.Liquidation(usd)) Simulated = true;
     }
 
@@ -154,7 +157,17 @@ public class Bootstrap : MonoBehaviour
         //
         // `MarketFeed.OnLiquidation` had no subscriber at all before this;
         // the only thing that read its list was a debug line counting them.
-        Market.OnLiquidation += (l) => Blwp.BlwpCore.Liquidation(l.UsdValue);
+        //
+        // The SIDE goes past the core, never into it. `l.Long` is a long being
+        // liquidated, i.e. a bull blown out, so bear is the other one - and it
+        // reaches the renderer only, which is the whole point: a liquidation
+        // changes the size, the crater and the fallout, not which mesh hangs in
+        // the sky.
+        Market.OnLiquidation += (l) =>
+        {
+            if (_strike != null) _strike.NoteSubmitter(!l.Long);
+            Blwp.BlwpCore.Liquidation(l.UsdValue);
+        };
         Field = gameObject.AddComponent<Battlefield>();
         Field.terrain = _terrain;
         Field.market = Market;

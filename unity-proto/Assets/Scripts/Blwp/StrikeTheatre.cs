@@ -168,8 +168,18 @@ namespace Blwp
             _from = new Vector3(_impact.x - dir * (ReleaseLead + Speed * RunIn), y, _impact.z);
             _to = new Vector3(_impact.x + dir * Speed * RunOut, y, _impact.z);
 
+            // A long being liquidated is a BULL blown out of its position, so
+            // bear is the other one. One boolean, and it is the only place the
+            // side is decided.
+            bool bear = _nextIsBear == true && _bearAirframe != null;
+            if (_plane != null && bear != _planeIsBear) { Destroy(_plane.gameObject); _plane = null; }
             if (_plane == null)
-                _plane = _airframe != null ? Dress(_airframe, 34f, Vector3.zero) : BuildPlane();
+            {
+                var skin = bear ? _bearAirframe : _airframe;
+                _plane = skin != null ? Dress(skin, 34f, Vector3.zero) : BuildPlane();
+                _planeIsBear = bear;
+                Debug.Log($"[strike] airframe {(skin == null ? "primitives" : (bear ? "bear" : "default"))}");
+            }
             if (_bomb == null)
                 // Nose from +Y round to +Z, the direction the flight code points it.
                 _bomb = _bombModel != null ? Dress(_bombModel, 4f, new Vector3(90f, 0f, 0f)) : BuildBomb();
@@ -430,7 +440,7 @@ namespace Blwp
         {
             if (prefab == null) return;
             _airframe = prefab;
-            if (_plane != null) { Destroy(_plane.gameObject); _plane = null; }
+            if (_plane != null && !_planeIsBear) { Destroy(_plane.gameObject); _plane = null; }
             Debug.Log("[strike] airframe model taken");
         }
 
@@ -443,7 +453,34 @@ namespace Blwp
             Debug.Log("[strike] bomb model taken");
         }
 
-        GameObject _airframe, _bombModel;
+        /// <summary>Take the bear-skinned airframe. There is no bull one yet.</summary>
+        public void SetBearAirframe(GameObject prefab)
+        {
+            if (prefab == null) return;
+            _bearAirframe = prefab;
+            Debug.Log("[strike] bear airframe taken");
+        }
+
+        /// <summary>
+        /// Who submitted the liquidation that is about to arm a strike - and it
+        /// comes PAST the core, not through it.
+        ///
+        /// The core takes a size and nothing else. It has no side word on the
+        /// liquidation, no field on the strike, and it must not grow one: which
+        /// mesh hangs in the sky cannot be allowed to change a crater, a dose or
+        /// a digest. The feed already knows - `MarketFeed.Liquidation.Long`, read
+        /// off Binance's "S" == "SELL" - so the picture reads it there and the
+        /// simulation never hears about it.
+        ///
+        /// `null` means nobody knows: the simulated liquidation that fires after
+        /// ninety seconds of silence carries no side, so it flies the default
+        /// airframe rather than an invented one.
+        /// </summary>
+        public void NoteSubmitter(bool? bear) => _nextIsBear = bear;
+
+        bool? _nextIsBear;
+        bool _planeIsBear;
+        GameObject _airframe, _bearAirframe, _bombModel;
 
         /// <summary>
         /// Sit a streamed model in the same box the primitives occupied.
