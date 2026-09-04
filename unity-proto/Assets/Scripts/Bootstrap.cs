@@ -567,6 +567,12 @@ public class Bootstrap : MonoBehaviour
         var root = new GameObject("Boundary");
         root.transform.SetParent(transform, false);
 
+        // Placed once here, and put back by this whenever the drawn ground
+        // moves - a mempool poll, or a crater taking the ground out from under
+        // a wall.
+        var keeper = root.AddComponent<Blwp.SettleOnCoreGround>();
+        keeper.terrain = terrain;
+
         float hw = terrain.width * 0.5f, hd = terrain.depth * 0.5f;
         // footprint only: the visual and the blocker each supply their own height
         var sides = new (string name, Vector3 centre, Vector2 footprint)[]
@@ -579,7 +585,7 @@ public class Bootstrap : MonoBehaviour
 
         foreach (var (name, centre, footprint) in sides)
         {
-            float ground = terrain.SampleWorld(centre.x, centre.z);
+            float ground = keeper.Surface(centre.x, centre.z);
 
             // what you see: a low barrier sitting on the ground
             var visual = GameObject.CreatePrimitive(PrimitiveType.Cube);
@@ -597,6 +603,9 @@ public class Bootstrap : MonoBehaviour
             blocker.transform.position = new Vector3(centre.x, ground + BlockHeight * 0.5f - 6f, centre.z);
             var bc = blocker.AddComponent<BoxCollider>();
             bc.size = new Vector3(footprint.x, BlockHeight, footprint.y);
+
+            keeper.Hold(visual.transform, centre.x, centre.z, VisibleHeight * 0.5f);
+            keeper.Hold(blocker.transform, centre.x, centre.z, BlockHeight * 0.5f - 6f);
         }
     }
 

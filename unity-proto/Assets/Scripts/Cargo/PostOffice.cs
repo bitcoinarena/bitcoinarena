@@ -115,17 +115,37 @@ public class PostOffice : MonoBehaviour
     /// </summary>
     float Ground()
     {
-        if (terrain == null) return 0f;
+        if (terrain == null && !Blwp.BlwpCore.HasSurface) return 0f;
         float low = float.MaxValue;
         for (int i = 0; i <= 8; i++)
         {
             float z = Mathf.Lerp(-ShellHalf, ShellHalf, i / 8f);
-            low = Mathf.Min(low, terrain.SampleSurface(postX, z));
-            low = Mathf.Min(low, terrain.SampleSurface(postX + bayStandoff, z));
-            low = Mathf.Min(low, terrain.SampleSurface(postX + ApronReach, z));
+            low = Mathf.Min(low, Surface(postX, z));
+            low = Mathf.Min(low, Surface(postX + bayStandoff, z));
+            low = Mathf.Min(low, Surface(postX + ApronReach, z));
         }
         return low;
     }
+
+    /// <summary>
+    /// The ground under the depot, from the CORE: relief less craters.
+    ///
+    /// Same funnel as the truck, the army, the roads and the gate. A strike
+    /// lands on a unit at the seam and reaches up to 40 m; the apron's own
+    /// sample columns run from x -114.4 out to -83.4, so a crater in the -50s
+    /// already touches one. Sampled at Unity's terrain the depot went on
+    /// standing at the height of ground that is no longer there, over its
+    /// own hole.
+    ///
+    /// The sampling rule itself does not change: the same twenty-seven points,
+    /// and still the LOWEST of them, so the building sits slightly proud
+    /// rather than hovering with the road running underneath.
+    ///
+    /// The terrain stays as the fallback where no core answers - the Editor.
+    /// </summary>
+    float Surface(float x, float z) =>
+        Blwp.BlwpCore.HasSurface ? Blwp.BlwpCore.SurfaceAt(x, z)
+                                 : (terrain != null ? terrain.SampleSurface(x, z) : 0f);
 
     public Vector3 BayFor(int bay)
     {
@@ -133,8 +153,7 @@ public class PostOffice : MonoBehaviour
         float x = postX + bayStandoff;
         // the ground the truck will actually rest on, not the ground at the
         // building's centre 78 m away
-        float ground = terrain != null ? terrain.SampleSurface(x, z) : 0f;
-        return new Vector3(x, ground + 1.4f, z);
+        return new Vector3(x, Surface(x, z) + 1.4f, z);
     }
 
     void Start()
