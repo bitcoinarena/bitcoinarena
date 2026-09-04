@@ -28,29 +28,79 @@ public class MarketFeed : MonoBehaviour
     /// <summary>Signed trade flow over the last few seconds: >0 buyers lifting offers.</summary>
     public float Flow { get; private set; }
     public bool Fresh => Price > 0 && Time.realtimeSinceStartup - _lastPriceMove < 20f;
+    /// <summary>The SPOT socket: price and flow.</summary>
     public string Status { get; private set; } = "connecting";
+
+    /// <summary>
+    /// The FUTURES socket: the liquidations, and its own state.
+    ///
+    /// Separate because it fails separately. `Status` was computed from `_spot`
+    /// alone and so was the retry under it, so a dead futures socket read as a
+    /// healthy feed for a whole session - the price kept ticking, the HUD said
+    /// "live", and not one liquidation ever arrived. Measured: twelve minutes
+    /// with no message on this socket at all, not even a forced order in a
+    /// symbol `HandleFutures` would have thrown away.
+    /// </summary>
+    public string FuturesStatus { get; private set; } = "connecting";
+
+    /// <summary>Messages drained off the futures socket. For a watcher to count.</summary>
+    public int FuturesMessages { get; private set; }
 
     public readonly List<Liquidation> Liquidations = new List<Liquidation>();
     public event Action<Liquidation> OnLiquidation;
 
     WebSocketClient _spot, _futures;
-    float _lastMessage, _lastPriceMove, _retrySpot, _retryFutures;
+    float _lastSpot, _lastFutures, _lastPriceMove, _retrySpot, _retryFutures;
+
+    // A ticker that goes quiet for twelve seconds is broken. An EVENT stream is
+    // not a ticker: forced orders arrive when they arrive. But this one carries
+    // every symbol on the exchange, so three minutes of complete silence is not
+    // a quiet market either - it is a socket nobody is talking to.
+    const float SpotSilence = 12f;
+    const float FuturesSilence = 180f;
     double _lastPrice;
     float _flowAccum;
 
     void Start()
     {
-        _lastMessage = _lastPriceMove = Time.realtimeSinceStartup;
+        _lastSpot = _lastFutures = _lastPriceMove = Time.realtimeSinceStartup;
         Connect();
     }
 
-    void Connect()
+    void Connect() { ConnectSpot(); ConnectFutures(); }
+
+    // Separately, because one of them dying is not a reason to drop the other.
+    void ConnectSpot()
     {
         _spot?.Dispose();
-        _futures?.Dispose();
         _spot = new WebSocketClient(SpotUrl);
-        _futures = new WebSocketClient(FuturesUrl);
         Status = "connecting";
+    }
+
+    void ConnectFutures()
+    {
+        _futures?.Dispose();
+        _futures = new WebSocketClient(FuturesUrl);
+        FuturesStatus = "connecting";
+        _futuresSpoke = false;
+    }
+
+    /// <summary>What a socket looks like from outside: live, stale, or its own fault.</summary>
+    static string Health(WebSocketClient c, float last, float silence, float now)
+    {
+        if (c == null) return "none";
+        var st = c.Status;
+        if (st != WebSocketClient.State.Open) return st.ToString().ToLower();
+        return now - last > silence ? "stale" : "live";
+    }
+
+    /// <summary>True when a socket needs opening again.</summary>
+    static bool Ailing(WebSocketClient c, float last, float silence, float now)
+    {
+        if (c == null) return true;
+        var st = c.Status;
+        return st == WebSocketClient.State.Error || st == WebSocketClient.State.Closed
+            || now - last > silence;
     }
 
     void Update()
@@ -58,11 +108,12 @@ public class MarketFeed : MonoBehaviour
         float now = Time.realtimeSinceStartup;
 
         if (_spot != null)
-            foreach (var msg in _spot.Drain()) { _lastMessage = now; HandleSpot(msg); }
+            foreach (var msg in _spot.Drain()) { _lastSpot = now; HandleSpot(msg); }
         if (_futures != null)
             foreach (var msg in _futures.Drain())
             {
-                _lastMessage = now;
+                _lastFutures = now;
+                FuturesMessages++;
                 // The FUTURES socket carries the liquidations, and nothing here
                 // ever looked at it: `Status` and the retry below are both
                 // computed from the spot socket alone, so this one can be dead
@@ -89,25 +140,30 @@ public class MarketFeed : MonoBehaviour
             if (l.Age > 90f) Liquidations.RemoveAt(i);
         }
 
-        // A socket that is open but silent is dead in every way that matters.
-        bool stale = now - _lastMessage > 12f;
-        var s = _spot?.Status ?? WebSocketClient.State.Error;
-        Status = stale ? "stale" : s == WebSocketClient.State.Open ? "live" : s.ToString().ToLower();
+        // A socket that is open but silent is dead in every way that matters -
+        // and each of these two is judged on its OWN silence and reopened on its
+        // own, because the price ticking says nothing about the liquidations.
+        Status = Health(_spot, _lastSpot, SpotSilence, now);
+        FuturesStatus = Health(_futures, _lastFutures, FuturesSilence, now);
 
-        if ((stale || s == WebSocketClient.State.Error || s == WebSocketClient.State.Closed)
-            && now - _retrySpot > 6f)
+        if (Ailing(_spot, _lastSpot, SpotSilence, now) && now - _retrySpot > 6f)
         {
             _retrySpot = now;
-            _lastMessage = now;
-            Connect();
+            _lastSpot = now;
+            Debug.Log("[feed] spot socket reopened");
+            ConnectSpot();
+        }
+
+        if (Ailing(_futures, _lastFutures, FuturesSilence, now) && now - _retryFutures > 15f)
+        {
+            _retryFutures = now;
+            _lastFutures = now;
+            Debug.Log($"[feed] futures socket reopened after {FuturesMessages} messages");
+            ConnectFutures();
         }
     }
 
     bool _futuresSpoke;
-
-    /// <summary>The futures socket's own state. `Status` only reports spot.</summary>
-    public string FuturesStatus =>
-        _futures == null ? "none" : _futures.Status.ToString().ToLower();
 
     void HandleSpot(string msg)
     {

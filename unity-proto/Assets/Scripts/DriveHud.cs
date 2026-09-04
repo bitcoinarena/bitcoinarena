@@ -1107,7 +1107,12 @@ public class DriveHud : MonoBehaviour
 
             double chg = market.DayChangePct;
             string sub = market.Price > 0
-                ? $"{chg:+0.00;-0.00;0.00}% 24h   ·   {market.Status}"
+                // The liquidation socket is named only when it is NOT well, so
+                // the line stays short in the normal case and cannot stay quiet
+                // in the case that actually happened: spot live, futures dead,
+                // and no liquidation for a whole session.
+                ? $"{chg:+0.00;-0.00;0.00}% 24h   ·   {market.Status}" +
+                  (market.FuturesStatus == "live" ? "" : $"   ·   liq {market.FuturesStatus}")
                 : $"verbinde … ({market.Status})";
             Shadowed(new Rect(0, h * 0.015f + _price.fontSize * 1.12f, w, _sub.fontSize * 1.6f),
                      sub, _sub, chg >= 0 ? Up : Down);
