@@ -92,10 +92,12 @@ namespace Blwp
             _bombSkin = Skin(shader, new Color(0.20f, 0.21f, 0.23f), 0.35f,
                              new Color(0.10f, 0.10f, 0.11f));
 
-            // Dark ground with a little green in it, not a green floor. The
-            // first cut ran the emission up to 1.4 and the crater came out as a
-            // flat lime field with the bowl's own shading washed out of it -
-            // photographed, and the shape of the hole was gone.
+            // These numbers are deliberately the ones from before. Turning the
+            // emission down was tried twice - 1.4, then 0.34 - and the crater
+            // was still a painted plate, just a darker one, because the fault
+            // was never the shade: it was an opaque surface laid over the whole
+            // floor. What changed is what this material is drawn ON. See
+            // ContaminationMesh.
             _glow = new Material(shader);
             _glow.SetColor("_BaseColor", new Color(0.10f, 0.14f, 0.08f));
             _glow.SetFloat("_Smoothness", 0.05f);
@@ -228,7 +230,7 @@ namespace Blwp
         /* --------------------------------------------------- the ground left */
 
         /// <summary>
-        /// A glowing floor in every open crater, rebuilt whenever the drawn
+        /// The contamination in every open crater, rebuilt whenever the drawn
         /// ground moves.
         ///
         /// Keyed to `MempoolTerrain.Version` rather than to the core's crater
@@ -273,7 +275,7 @@ namespace Blwp
                 float r = open[i].y;
                 var at = new Vector3(open[i].x, 0f, open[i].z);
                 var mf = _glows[i].GetComponent<MeshFilter>();
-                BowlMesh(mf.sharedMesh, at.x, at.z, r * 0.88f);
+                ContaminationMesh(mf.sharedMesh, at.x, at.z, r);
                 // The mesh is built in WORLD coordinates, so the object itself
                 // has to sit at the origin however its parent is placed.
                 _glows[i].SetPositionAndRotation(Vector3.zero, Quaternion.identity);
@@ -293,50 +295,94 @@ namespace Blwp
         }
 
         /// <summary>
-        /// A disc that lies in the bowl, sampled off the CORE's surface.
+        /// The contamination on the ground: a band on the crater's own edge and
+        /// a scatter of patches inside it, laid on the CORE's surface.
         ///
-        /// Not a second bowl: every vertex is `BlwpCore.SurfaceAt` plus a
-        /// centimetre of clearance, so it cannot disagree with the ground it is
-        /// lying in however the crater rule changes.
+        /// A FILLED DISC WAS WRONG. It covered the whole bowl, and an opaque
+        /// surface does not tint what is under it - it replaces it. Photographed
+        /// from the rim the crater read as a flat green plate with the curve
+        /// gone, and from the middle the entire frame was green with no ground
+        /// left in it. Taking the emission from 1.4 down to 0.34 changed the
+        /// shade and not the fault: it was still paint, just darker paint.
+        ///
+        /// So the floor is left alone and the shape carries itself. The band
+        /// sits between 0.90 and 1.00 of the crater's radius, which is the very
+        /// line `BlwpCore.Irradiated` tests - `dx*dx + dz*dz < r*r` - so the
+        /// player is shown where the dose actually begins rather than a painted
+        /// guess at it. The patches say the inside is not clean.
+        ///
+        /// Every vertex is `BlwpCore.SurfaceAt` plus a little clearance, so this
+        /// cannot disagree with the ground it lies on however the crater rule
+        /// changes. Nothing here is a second bowl and nothing is simulated.
         /// </summary>
-        void BowlMesh(Mesh mesh, float cx, float cz, float radius)
+        void ContaminationMesh(Mesh mesh, float cx, float cz, float radius)
         {
-            const int Rings = 10, Segs = 32;
-            var verts = new Vector3[1 + Rings * Segs];
-            var tris = new int[Segs * 3 + (Rings - 1) * Segs * 6];
+            const int Segs = 48;          // the band
+            const int Patches = 9, PatchSegs = 8;
+            const float Inner = 0.90f;
 
-            verts[0] = new Vector3(cx, Surface(cx, cz), cz);
-            for (int ring = 0; ring < Rings; ring++)
+            var verts = new List<Vector3>(Segs * 2 + Patches * (PatchSegs + 1));
+            var tris = new List<int>(Segs * 6 + Patches * PatchSegs * 3);
+
+            // --- the band on the edge ---------------------------------------
+            for (int ring = 0; ring < 2; ring++)
             {
-                float rr = radius * (ring + 1) / Rings;
+                float rr = radius * (ring == 0 ? Inner : 1f);
                 for (int s = 0; s < Segs; s++)
                 {
                     float a = s * Mathf.PI * 2f / Segs;
                     float x = cx + Mathf.Cos(a) * rr, z = cz + Mathf.Sin(a) * rr;
-                    verts[1 + ring * Segs + s] = new Vector3(x, Surface(x, z), z);
+                    verts.Add(new Vector3(x, Surface(x, z), z));
                 }
             }
-
-            int t = 0;
             for (int s = 0; s < Segs; s++)
             {
-                tris[t++] = 0; tris[t++] = 1 + (s + 1) % Segs; tris[t++] = 1 + s;
+                // Wound so the normal is UP. An earlier cut had both loops the
+                // other way round and the whole thing was culled - correctly
+                // built, correctly placed, and facing the rock.
+                int a = s, b = (s + 1) % Segs, c = a + Segs, d = b + Segs;
+                tris.Add(a); tris.Add(b); tris.Add(c);
+                tris.Add(b); tris.Add(d); tris.Add(c);
             }
-            for (int ring = 0; ring < Rings - 1; ring++)
-                for (int s = 0; s < Segs; s++)
+
+            // --- patches inside ---------------------------------------------
+            // Placed from the crater's own position, so they are the same every
+            // frame and every session: a scatter that crawled about would read
+            // as an effect rather than as ground.
+            uint seed = (uint)(Mathf.RoundToInt(cx * 8f) * 73856093)
+                      ^ (uint)(Mathf.RoundToInt(cz * 8f) * 19349663) ^ 0x9E3779B9u;
+            float Next()
+            {
+                seed = seed * 1664525u + 1013904223u;
+                return (seed >> 8) / 16777216f;
+            }
+
+            for (int k = 0; k < Patches; k++)
+            {
+                float ang = Next() * Mathf.PI * 2f;
+                float rad = radius * (0.15f + Next() * 0.62f);
+                float size = radius * (0.06f + Next() * 0.06f);
+                float px = cx + Mathf.Cos(ang) * rad, pz = cz + Mathf.Sin(ang) * rad;
+
+                int b0 = verts.Count;
+                verts.Add(new Vector3(px, Surface(px, pz), pz));
+                for (int s = 0; s < PatchSegs; s++)
                 {
-                    int a = 1 + ring * Segs + s, b = 1 + ring * Segs + (s + 1) % Segs;
-                    int c = a + Segs, d = b + Segs;
-                    // Wound so the normal is UP. Both loops were the other way
-                    // round at first and the whole disc was culled - a glow
-                    // correctly built, correctly placed, and facing the rock.
-                    tris[t++] = a; tris[t++] = b; tris[t++] = c;
-                    tris[t++] = b; tris[t++] = d; tris[t++] = c;
+                    float a = s * Mathf.PI * 2f / PatchSegs;
+                    float x = px + Mathf.Cos(a) * size, z = pz + Mathf.Sin(a) * size;
+                    verts.Add(new Vector3(x, Surface(x, z), z));
                 }
+                for (int s = 0; s < PatchSegs; s++)
+                {
+                    tris.Add(b0);
+                    tris.Add(b0 + 1 + (s + 1) % PatchSegs);
+                    tris.Add(b0 + 1 + s);
+                }
+            }
 
             mesh.Clear();
-            mesh.vertices = verts;
-            mesh.triangles = tris;
+            mesh.SetVertices(verts);
+            mesh.SetTriangles(tris, 0);
             mesh.RecalculateNormals();
             mesh.RecalculateBounds();
         }
