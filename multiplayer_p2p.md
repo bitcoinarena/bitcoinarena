@@ -2979,6 +2979,14 @@ scrambles one strike; a simulation toggle covers quiet tape. Aim is
 tactical near the front. Crater radius follows liquidation size, lasts
 10–20 rounds, and is avoided by units. The truck taking that ground is
 irradiated (health, death) with a visible atom warning. Not a gunship.
+The picture is M1 too (the owner 2026-09-03): Claude-designed bomber and
+atom-bomb-on-drop, Bitcoin skins for bears and for bulls, a crater the
+truck drives into after the bomb, radiation on the ground. HUD warning
+stays. Not a later polish letter. Feeds (the owner 2026-09-04): no free
+all-exchange tape; BTC liquidations from Binance, Bybit, OKX, Bitget,
+Gate.io, MEXC, Kraken Futures, Hyperliquid into the same strike. HUD
+shows amount per exchange; many in one tick become one summary (sums +
+exchanges). Wait until each venue has at least one hit, no time cap.
 Units occupy the front line wherever `frontline_z(x)` sits — not a
 parking lot on their spawn side. Heading follows travel. This is M1
 playability: the enemies you see are doing a job, or the core has not

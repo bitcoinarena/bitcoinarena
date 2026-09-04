@@ -1001,6 +1001,22 @@ near the front; blast size follows liquidation size; the crater lasts
 10–20 rounds and units avoid it. Driving the truck through fallout
 costs health and can kill, with a warning and the atom symbol.
 
+**M1 liquidation picture (the owner 2026-09-03).** The rules above are not
+enough until the player can see them. For now: stand-in models (plane,
+atom bomb, crater bowl). Claude Design later. The crater is a hole in the
+ground: after a bomb, the truck drives *into* that hole (core surface =
+uploaded relief minus crater). Radiation is visible on the ground; the
+warning and atom symbol stay. Presentation only — do not reopen the core
+rules.
+
+**M1 liquidation feeds and HUD (the owner 2026-09-04).** There is no free
+all-exchange liquidation feed. Subscribe BTC forced orders from Binance,
+Bybit, OKX, Bitget, Gate.io, MEXC, Kraken Futures and Hyperliquid, and
+merge them into the same OnLiquidation. Wait with no time cap until each
+exchange has delivered at least one. The HUD shows how much was
+liquidated on which exchange. Many in the same tick: one summary, sums
+and the exchanges named, not a row per order. Sim-toggle stays.
+
 ### 15.3 What drives the spread
 
 **Driving feel (stage 1)** is the largest uncertainty and the only one that
