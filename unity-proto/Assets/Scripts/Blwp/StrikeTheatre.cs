@@ -179,20 +179,16 @@ namespace Blwp
 
             // A long being liquidated is a BULL blown out of its position, so
             // bear is the other one. One boolean, and it is the only place the
-            // side is decided.
-            // Bear, bull, or the plain airframe. A side with no skin of its own
-            // flies the plain one - there is no bull model yet and none is
-            // faked, so a bull liquidation is drawn by the aircraft that has no
-            // side rather than by the wrong one.
+            // side is decided. Which model that side flies is Wearing().
             //
             // `_armedSide`, NOT `_nextIsBear`: the side is handed over the
             // moment the core's serial is seen to move, by whoever sees it
             // first. Reading the live latch here drew the side of a liquidation
             // that had arrived AFTER this strike was already dug. See Spent().
-            var skin = _airframe;
-            string wearing = _airframe != null ? "default" : "primitives";
-            if (_armedSide == true && _bearAirframe != null) { skin = _bearAirframe; wearing = "bear"; }
-            else if (_armedSide == false && _bullAirframe != null) { skin = _bullAirframe; wearing = "bull"; }
+            string wearing = Wearing(_armedSide);
+            var skin = wearing == "bear" ? _bearAirframe
+                     : wearing == "bull" ? _bullAirframe
+                     : _airframe;
 
             if (_plane != null && wearing != _wearing) { Destroy(_plane.gameObject); _plane = null; }
             if (_plane == null)
@@ -646,6 +642,24 @@ namespace Blwp
         }
 
         /// <summary>
+        /// Which skin a side flies. A side with no model of its own flies the
+        /// plain airframe on purpose - there is no bull model yet and none is
+        /// faked, so a bull liquidation is drawn by the aircraft that has no
+        /// side rather than by the wrong one, and "primitives" is the stand-in
+        /// built from boxes when nothing has been streamed at all.
+        ///
+        /// Its own method so that the choice can be read back without a camera,
+        /// a shader or a launch: StrikeLatchTests asks it what the bomber for a
+        /// given side would wear.
+        /// </summary>
+        public string Wearing(bool? side)
+        {
+            if (side == true && _bearAirframe != null) return "bear";
+            if (side == false && _bullAirframe != null) return "bull";
+            return _airframe != null ? "default" : "primitives";
+        }
+
+        /// <summary>
         /// The core has taken whatever was pending at `serial`, so the queue
         /// starts empty again - and the side of what it took is HANDED OVER to
         /// the drawing, because by the time the bomber is built the latch may
@@ -655,8 +669,12 @@ namespace Blwp
         /// from `NoteSubmitter` before every comparison, whichever gets there
         /// first in a frame. A second call with nothing pending leaves the
         /// handed-over side alone rather than wiping it.
+        ///
+        /// Public because `Update` cannot stand in for it in a test: it returns
+        /// at once unless `BlwpCore.Available`, and the core is a stub outside
+        /// a WebGL player. StrikeLatchTests drives this instead.
         /// </summary>
-        void Spent(int serial)
+        public void Spent(int serial)
         {
             if (serial == _pendingSerial) return;
             if (_pendingUsd > 0.0) _armedSide = _nextIsBear;

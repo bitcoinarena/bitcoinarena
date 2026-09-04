@@ -102,4 +102,66 @@ public class StrikeLatchTests
         t.NoteSubmitter(Bear, 5_000_000);
         Assert.IsNull(t.ArmedSide, "no strike has been consumed yet");
     }
+
+    /* ------------------------------------ two liquidations, one consumption */
+
+    /// <summary>
+    /// THE DOUBLE STRIKE, forced rather than waited for.
+    ///
+    /// Measured in the core first, with `tools`-style arithmetic against the
+    /// real module: two `submitLiquidation` calls before a tick raise the
+    /// SUBMISSION counter to 2 but move the STRIKE serial by exactly 1, dig
+    /// exactly one crater, and load it with the larger of the two - in either
+    /// order. Six hundred further ticks add nothing: the smaller is dropped,
+    /// not queued. So the picture owes one bomber wearing the larger's side,
+    /// and two skins over one crater would be the fault.
+    /// </summary>
+    [Test]
+    public void TwoInOneFrameLeaveOneStrikeWearingTheLargerSide()
+    {
+        var t = Rig();
+        t.SetBearAirframe(new GameObject("bear"));
+        t.SetBullAirframe(new GameObject("bull"));
+
+        t.NoteSubmitter(Bull, 1_000_000);       // the smaller, first
+        t.NoteSubmitter(Bear, 9_000_000);       // the larger, same frame
+        BlwpCore.State[Serial] = 1;             // the core takes ONE of them
+        t.Spent(1);                             // and the theatre notices
+
+        Assert.AreEqual(Bear, t.ArmedSide, "the crater belongs to the 9M bear");
+        Assert.AreEqual("bear", t.Wearing(t.ArmedSide), "so the bomber wears bear");
+        Assert.AreEqual(0.0, t.PendingUsd, 1.0,
+                        "the smaller is dropped by the core, not carried over");
+    }
+
+    /// <summary>The same the other way round, so the order is not the rule.</summary>
+    [Test]
+    public void TheLargerWinsWhicheverArrivesFirst()
+    {
+        var t = Rig();
+        t.SetBearAirframe(new GameObject("bear"));
+        t.SetBullAirframe(new GameObject("bull"));
+
+        t.NoteSubmitter(Bear, 9_000_000);
+        t.NoteSubmitter(Bull, 1_000_000);
+        BlwpCore.State[Serial] = 1;
+        t.Spent(1);
+
+        Assert.AreEqual(Bear, t.ArmedSide, "the crater still belongs to the 9M bear");
+        Assert.AreEqual("bear", t.Wearing(t.ArmedSide), "and the skin still follows it");
+    }
+
+    /// <summary>
+    /// A side with no model of its own flies the plain airframe rather than
+    /// the other side's. There is no bull model streamed in the build yet.
+    /// </summary>
+    [Test]
+    public void ASideWithNoModelFliesThePlainAirframeAndNotTheOtherSide()
+    {
+        var t = Rig();
+        t.SetBearAirframe(new GameObject("bear"));
+        Assert.AreEqual("bear", t.Wearing(Bear));
+        Assert.AreEqual("primitives", t.Wearing(Bull), "never the bear skin for a bull");
+        Assert.AreEqual("primitives", t.Wearing(null), "and never one for no side at all");
+    }
 }
