@@ -56,7 +56,7 @@ public class MempoolTerrain : MonoBehaviour
              "liquidation is consumed; the bomb the player watches takes a few " +
              "seconds to get there, and a hole that opened before the bomb " +
              "landed would give the theatre away. Zero reveals immediately.")]
-    public float craterRevealDelay = 5.2f;
+    public float craterRevealDelay = 6.4f;
 
     int _drawnCraters = -1, _drawnRevealed = -1;
     readonly Dictionary<long, float> _due = new Dictionary<long, float>();

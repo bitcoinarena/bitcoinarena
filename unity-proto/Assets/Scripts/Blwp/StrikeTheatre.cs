@@ -21,8 +21,14 @@ namespace Blwp
     /// numbers here and that delay are one setting in two places:
     ///
     ///   104 m of run-in at 26 m/s                      ->  4.00 s in sight
-    ///   release 32 m short, 22 m up, drawn at 30 m/s^2  ->  1.21 s of fall
-    ///                                                        5.21 s, call it 5.2
+    ///   release 61 m short, 22 m up, drawn at 8 m/s^2   ->  2.35 s of fall
+    ///                                                        6.35 s, call it 6.4
+    ///
+    /// The fall is deliberately slow. At a real 30 m/s^2 from 22 m it was over
+    /// in 1.21 s - two frames at the rate a headless browser renders, and not
+    /// long enough for a player to see what left the aircraft either. A retarded
+    /// fall is also what a free-fall nuclear weapon actually does, so that the
+    /// aircraft dropping it can get away.
     ///
     /// The altitude came down from 70 m to 22 and the speed from 60 m/s to 26,
     /// both measured rather than guessed: `WorldToScreenPoint` against the live
@@ -50,11 +56,11 @@ namespace Blwp
 
 
         /// <summary>How far short of the impact the bomb leaves the aircraft.</summary>
-        const float ReleaseLead = 32f;
+        const float ReleaseLead = 61f;
         const float Speed = 26f;          // m/s along the run-in
         const float Altitude = 22f;       // above the surface at the impact
         const float RunIn = 3.5f;         // seconds of approach before the release
-        const float Gravity = 30f;        // drawn, not simulated - see the class note
+        const float Gravity = 8f;         // drawn, not simulated - see the class note
         const float RunOut = 5f;          // seconds the aircraft stays visible after release
 
         Transform _plane, _bomb;
