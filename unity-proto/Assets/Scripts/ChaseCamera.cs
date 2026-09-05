@@ -28,6 +28,11 @@ public class ChaseCamera : MonoBehaviour
              "behind the truck. Zero keeps it until the next drag.")]
     public float recentreAfter = 2.5f;
 
+    [Tooltip("How fast the view eases back once it starts, per second. The " +
+             "view keeps a fraction exp(-rate * t) of where it was, so 2 " +
+             "leaves a thirtieth after 1.7 s.")]
+    public float recentreRate = 2f;
+
     public Mode View { get; private set; } = Mode.Follow;
     public void Toggle() => View = View == Mode.Follow ? Mode.God : Mode.Follow;
 
@@ -114,6 +119,8 @@ public class ChaseCamera : MonoBehaviour
     // Where the player has dragged the view to, relative to the automatic one.
     float _orbitYaw, _orbitPitch;
     float _worstOffNose, _worstRoll;
+    Vector3 _downAt;
+    bool _pointerDown, _onPad;
     float _dragIdle;
     bool _dragging;
     Vector3 _lastPointer;
@@ -172,18 +179,49 @@ public class ChaseCamera : MonoBehaviour
     ///
     /// Drags that begin on a driving pad are ignored: on a phone the pads are
     /// the controls, and a thumb sliding on one must steer, not pan.
+    ///
+    /// AND A TAP IS NOT A DRAG. Every touch outside a pad used to become a
+    /// look the instant it landed, so the view swung on the way to pressing
+    /// anything and the player lost the road for the seconds it took to come
+    /// back. A pointer has to travel first, and the distance is derived rather
+    /// than chosen: `dragYaw` degrees per screen width means one degree costs
+    /// `Screen.width / dragYaw` pixels, so the threshold IS one degree of aim.
+    /// A finger may wander that far on the way to a tap; further than that it
+    /// meant to look.
     /// </summary>
     void ReadDrag()
     {
-        bool held = Input.GetMouseButton(0);
-        Vector3 at = Input.mousePosition;
+        bool held = Held;
+        Vector3 at = Pointer;
 
-        if (held && !_dragging)
+        if (held && !_pointerDown)
         {
-            _dragging = !OverAPad(at);
+            _pointerDown = true;
+            _downAt = at;
             _lastPointer = at;
+            _onPad = OverAPad(at);
         }
-        else if (held && _dragging)
+        else if (!held)
+        {
+            _pointerDown = false;
+            _dragging = false;
+        }
+
+        // Past the dead zone, and not on a pad: this is a look.
+        if (held && !_dragging && !_onPad
+            && (at - _downAt).magnitude > DeadZonePixels)
+        {
+            _dragging = true;
+            // From exactly one dead zone along the way, not from wherever the
+            // pointer happens to be on the frame it crossed. Measured: with
+            // `_lastPointer = at` a drag that covered a quarter of the screen
+            // in one frame moved the aim by nothing at all, because the whole
+            // travel was swallowed. A finger moving a few pixels a frame would
+            // never have shown it, and a slow phone would.
+            _lastPointer = _downAt + (at - _downAt).normalized * DeadZonePixels;
+        }
+
+        if (held && _dragging)
         {
             Vector3 d = at - _lastPointer;
             _lastPointer = at;
@@ -191,19 +229,40 @@ public class ChaseCamera : MonoBehaviour
             _orbitPitch = Mathf.Clamp(_orbitPitch - d.y / Mathf.Max(1, Screen.height) * dragPitch,
                                       -pitchLimit, pitchLimit);
             _dragIdle = 0f;
+            return;                       // no easing back while still looking
         }
-        else
+
+        // Everything else eases back - including a finger resting inside the
+        // dead zone, which is a tap in progress and not a held view.
+        _dragIdle += Time.unscaledDeltaTime;
+        if (recentreAfter > 0f && _dragIdle > recentreAfter)
         {
-            _dragging = false;
-            _dragIdle += Time.unscaledDeltaTime;
-            if (recentreAfter > 0f && _dragIdle > recentreAfter)
-            {
-                float k = 1f - Mathf.Exp(-2f * Time.unscaledDeltaTime);
-                _orbitYaw = Mathf.Lerp(_orbitYaw, 0f, k);
-                _orbitPitch = Mathf.Lerp(_orbitPitch, 0f, k);
-            }
+            float k = 1f - Mathf.Exp(-recentreRate * Time.unscaledDeltaTime);
+            _orbitYaw = Mathf.Lerp(_orbitYaw, 0f, k);
+            _orbitPitch = Mathf.Lerp(_orbitPitch, 0f, k);
         }
     }
+
+    /// <summary>One degree of aim, in pixels of this screen.</summary>
+    public float DeadZonePixels => Mathf.Max(1f, Screen.width / Mathf.Max(1f, dragYaw));
+
+    /// <summary>Where the view has been dragged to, for a test to read it.</summary>
+    public float OrbitYaw => _orbitYaw;
+    public float OrbitPitch => _orbitPitch;
+
+    /// <summary>
+    /// The pointer, or a test's idea of one.
+    ///
+    /// Same shape as `TruckController.useExternalInput`: the camera cannot be
+    /// driven by `Input` in a test, and a look that is only ever measured
+    /// through a browser is measured once and never again.
+    /// </summary>
+    public bool useExternalPointer;
+    public bool externalPointerHeld;
+    public Vector3 externalPointerAt;
+
+    bool Held => useExternalPointer ? externalPointerHeld : Input.GetMouseButton(0);
+    Vector3 Pointer => useExternalPointer ? externalPointerAt : Input.mousePosition;
 
     /// <summary>True if a screen point is on one of the touch controls.</summary>
     public static bool OverAPad(Vector3 screenPoint)

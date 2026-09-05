@@ -177,3 +177,157 @@ public class CameraFeelTests
         yield return null;
     }
 }
+
+/// <summary>
+/// LOOKING AROUND, and coming back.
+///
+/// The driver may swing the view off the truck for a few seconds and it must
+/// return on its own, or looking costs the run. Two things were wrong with
+/// that on a phone: every touch outside a driving pad became a look the
+/// instant it landed - so a tap on the way to a button swung the view and the
+/// road went with it - and nothing here measured the coming back at all.
+///
+/// Driven through `useExternalPointer`, the same shape `TruckController` uses
+/// for its inputs. A look that can only be measured through a browser is
+/// measured once and never again.
+/// </summary>
+public class CameraLookTests
+{
+    [TearDown] public void ClearTheWorld() => TestWorld.TearDown();
+
+    GameObject _boot;
+    ChaseCamera _chase;
+
+    [UnitySetUp]
+    public IEnumerator SetUp()
+    {
+        _boot = new GameObject("Bootstrap");
+        _boot.AddComponent<Bootstrap>();
+        yield return null;
+        var splash = Object.FindFirstObjectByType<SplashScreen>();
+        if (splash != null && splash.Showing) splash.Play();
+        yield return null;
+
+        _chase = Object.FindFirstObjectByType<ChaseCamera>();
+        Assert.IsNotNull(_chase, "no chase camera");
+        _chase.useExternalPointer = true;
+        _chase.externalPointerHeld = false;
+        yield return null;
+    }
+
+    [UnityTearDown]
+    public IEnumerator TearDown()
+    {
+        if (_chase != null) _chase.useExternalPointer = false;
+        foreach (var go in Object.FindObjectsByType<GameObject>(FindObjectsSortMode.None))
+            if (go.transform.parent == null) Object.Destroy(go);
+        yield return null;
+    }
+
+    /// <summary>Somewhere in the open, clear of the driving pads.</summary>
+    Vector3 Clear() => new Vector3(Screen.width * 0.5f, Screen.height * 0.6f, 0f);
+
+    IEnumerator Point(Vector3 at, bool held)
+    {
+        _chase.externalPointerAt = at;
+        _chase.externalPointerHeld = held;
+        yield return null;
+    }
+
+    [UnityTest]
+    public IEnumerator ATapDoesNotStealTheDriveView()
+    {
+        float yaw = _chase.OrbitYaw, pitch = _chase.OrbitPitch;
+        var at = Clear();
+
+        // TWO PIXELS, an absolute number and not a multiple of the dead zone.
+        // The first cut of this wandered by 0.9 dead zones, so setting the
+        // dead zone to nothing made the tap a zero-movement tap and the test
+        // passed while proving nothing. A finger on the way to a button moves
+        // a couple of pixels whatever the camera thinks.
+        const float jitter = 2f;
+        Assert.Less(jitter, _chase.DeadZonePixels,
+            "the fixture's jitter has to be inside the dead zone to be a tap");
+
+        yield return Point(at, true);
+        yield return Point(at + new Vector3(jitter, 0f, 0f), true);
+        yield return Point(at + new Vector3(jitter, 0f, 0f), false);
+
+        Assert.AreEqual(yaw, _chase.OrbitYaw, 0.0001f,
+            $"a tap moved the view by {_chase.OrbitYaw - yaw:0.000} degrees of yaw");
+        Assert.AreEqual(pitch, _chase.OrbitPitch, 0.0001f, "a tap tilted the view");
+    }
+
+    [UnityTest]
+    public IEnumerator ARealDragStillLooksAround()
+    {
+        var at = Clear();
+        yield return Point(at, true);
+        // well past the dead zone: a quarter of the screen
+        yield return Point(at + new Vector3(Screen.width * 0.25f, 0f, 0f), true);
+
+        Assert.Greater(Mathf.Abs(_chase.OrbitYaw), 5f,
+            $"a real drag only moved the view {_chase.OrbitYaw:0.0} degrees");
+        yield return Point(at, false);
+    }
+
+    [UnityTest]
+    public IEnumerator TheDeadZoneIsOneDegreeOfAim()
+    {
+        // Derived, not chosen: dragYaw degrees across a screen width means a
+        // degree costs width/dragYaw pixels.
+        Assert.AreEqual(Screen.width / _chase.dragYaw, _chase.DeadZonePixels, 0.001f);
+
+        var at = Clear();
+        yield return Point(at, true);
+        yield return Point(at + new Vector3(_chase.DeadZonePixels * 4f, 0f, 0f), true);
+        // the dead zone is spent getting there, not charged to the aim as well
+        float expected = _chase.DeadZonePixels * 3f / Screen.width * _chase.dragYaw;
+        Assert.AreEqual(expected, _chase.OrbitYaw, 0.2f);
+        yield return Point(at, false);
+    }
+
+    [UnityTest]
+    public IEnumerator TheViewEasesBackToForwardOnItsOwn()
+    {
+        var at = Clear();
+        yield return Point(at, true);
+        yield return Point(at + new Vector3(Screen.width * 0.25f, 0f, 0f), true);
+        float looked = _chase.OrbitYaw;
+        Assert.Greater(Mathf.Abs(looked), 5f, "nothing to come back from");
+        yield return Point(at, false);
+
+        // it must NOT start coming back immediately - the look is held first
+        yield return new WaitForSeconds(_chase.recentreAfter * 0.5f);
+        Assert.AreEqual(looked, _chase.OrbitYaw, 0.5f,
+            "the view started drifting back before the hold was up");
+
+        float began = Time.unscaledTime;
+        float back = -1f;
+        while (Time.unscaledTime - began < 12f)
+        {
+            if (Mathf.Abs(_chase.OrbitYaw) < 0.5f) { back = Time.unscaledTime - began; break; }
+            yield return null;
+        }
+        Assert.GreaterOrEqual(back, 0f,
+            $"the view never came back - still {_chase.OrbitYaw:0.0} degrees off");
+        Debug.Log($"[look] {looked:0.0} deg -> under 0.5 deg in {back:0.00} s "
+                  + $"after a {_chase.recentreAfter:0.0} s hold, dead zone "
+                  + $"{_chase.DeadZonePixels:0.0} px of {Screen.width}");
+    }
+
+    [UnityTest]
+    public IEnumerator ADragOnADrivingPadSteersAndDoesNotLook()
+    {
+        // The pads are the controls on a phone; a thumb sliding on one must
+        // not take the view with it.
+        float yaw = _chase.OrbitYaw;
+        var onPad = new Vector3(Screen.width * 0.1f, Screen.height * 0.12f, 0f);
+        Assert.IsTrue(ChaseCamera.OverAPad(onPad), "the fixture is not on a pad");
+
+        yield return Point(onPad, true);
+        yield return Point(onPad + new Vector3(Screen.width * 0.25f, 0f, 0f), true);
+        Assert.AreEqual(yaw, _chase.OrbitYaw, 0.0001f, "a thumb on a pad panned the view");
+        yield return Point(onPad, false);
+    }
+}
