@@ -9,6 +9,7 @@
   "census",
   "sortition",
   "payout",
-  "contracts"
+  "contracts",
+  "checkpoint"
  ]
 }

@@ -17,6 +17,7 @@ import { buildCensus, leafHash, encodeEntry } from '../src/census.js';
 import { selectCommittee, ticketFor, weightOf } from '../src/sortition.js';
 import { computePayoutTable, rankWeights, DELIVERED, FAILED } from '../src/payout.js';
 import { encodeRoundContract, roundId, encodeEntryContract, entryId } from '../src/contracts.js';
+import { encodeCheckpoint, checkpointId, NO_PREVIOUS } from '../src/checkpoint.js';
 
 const DIR = new URL('../../../test-vectors/protocol/', import.meta.url).pathname;
 const load = (n) => JSON.parse(readFileSync(DIR + n + '.json', 'utf8'));
@@ -107,4 +108,26 @@ test('the contracts encode to the vectors, and so do their ids', () => {
   };
   assert.equal(toHex(encodeEntryContract(e)), v.entryContract.hex);
   assert.equal(toHex(entryId(e)), v.entryContract.entryId);
+});
+
+test('the checkpoint vectors replay', () => {
+  const v = load('checkpoint');
+  const first = {
+    roundId: b32(7), entryId: b32(9), tick: 600,
+    stateHash: b32(0x5a), inputChainHash: b32(0x1c), previousHash: NO_PREVIOUS,
+  };
+  assert.equal(toHex(encodeCheckpoint(first)), v.first.hex);
+  assert.equal(toHex(checkpointId(first)), v.first.checkpointId);
+  assert.equal(encodeCheckpoint(first).length, v.bytesOnTheWire);
+
+  const second = { ...first, tick: 660, stateHash: b32(0x5b), previousHash: checkpointId(first) };
+  assert.equal(toHex(encodeCheckpoint(second)), v.second.hex);
+  assert.equal(toHex(checkpointId(second)), v.second.checkpointId,
+    'the chain is part of the digest, so a re-parented checkpoint is a different one');
+
+  // Same round, entry and tick; different state. Two objects, which is what
+  // makes section 13B's forfeit a proof rather than an accusation.
+  const forged = { ...first, stateHash: b32(0x5b) };
+  assert.equal(toHex(checkpointId(forged)), v.equivocation.checkpointId);
+  assert.notEqual(toHex(checkpointId(forged)), toHex(checkpointId(first)));
 });

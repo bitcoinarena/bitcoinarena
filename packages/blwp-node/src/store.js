@@ -64,6 +64,26 @@ export function openStore(path = ':memory:') {
     CREATE UNIQUE INDEX IF NOT EXISTS batches_by_id
       ON batches (round_id, entry_id, batch_id);
 
+    -- THE CHECKPOINTS, and the key is the rule. Section 13B forfeits a player
+    -- who publishes two different checkpoints for the same tick; keyed
+    -- (round, entry, tick) that is not a policy anyone has to enforce, it is
+    -- the shape of the table. The checkpoint id sits beside it so the two
+    -- cases can be told apart: the SAME bytes again is a repeat and a no-op,
+    -- different bytes at the same key is the equivocation.
+    --
+    -- The bytes are kept whole. The node cannot recompute a state hash -
+    -- nothing in this package imports the core - so what it serves has to be
+    -- what it was given, byte for byte.
+    CREATE TABLE IF NOT EXISTS checkpoints (
+      round_id      BLOB NOT NULL,
+      entry_id      BLOB NOT NULL REFERENCES entries(entry_id),
+      tick          INTEGER NOT NULL,
+      checkpoint_id BLOB NOT NULL,
+      bytes         BLOB NOT NULL,
+      received_ms   INTEGER NOT NULL,
+      PRIMARY KEY (round_id, entry_id, tick)
+    );
+
     -- Sparse, because a liquidation is rare, and keyed the same way so a
     -- repeat cannot double a strike.
     CREATE TABLE IF NOT EXISTS liquidations (

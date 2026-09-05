@@ -13,6 +13,7 @@ import { buildCensus, leafHash, encodeEntry } from '../src/census.js';
 import { selectCommittee, ticketFor, weightOf } from '../src/sortition.js';
 import { computePayoutTable, rankWeights, DELIVERED, FAILED, FORFEIT, VOID } from '../src/payout.js';
 import { encodeRoundContract, roundId, encodeEntryContract, entryId } from '../src/contracts.js';
+import { encodeCheckpoint, checkpointId, NO_PREVIOUS } from '../src/checkpoint.js';
 
 const DIR = new URL('../../../test-vectors/protocol/', import.meta.url).pathname;
 mkdirSync(DIR, { recursive: true });
@@ -150,6 +151,36 @@ out.tagged = {
       'The version sits right after the type so an older reader fails loudly instead of mis-parsing.',
       'The node list is sorted and the encoder asserts it.',
       'Balance constants live in the contract because a client has to be able to see, before staking, whether the rank curve is flat.',
+    ],
+  };
+}
+
+/* -------------------------------------------------------------- checkpoint */
+{
+  const first = {
+    roundId: b32(7), entryId: b32(9), tick: 600,
+    stateHash: b32(0x5a), inputChainHash: b32(0x1c), previousHash: NO_PREVIOUS,
+  };
+  const second = { ...first, tick: 660, stateHash: b32(0x5b), previousHash: checkpointId(first) };
+  const forged = { ...first, stateHash: b32(0x5b) };
+  out.checkpoint = {
+    what: 'A checkpoint: the state hash at an agreed tick, chained to the one before it.',
+    protocolVersion: PROTOCOL_VERSION,
+    fields: ['type u8', 'version u16', 'roundId 32', 'entryId 32', 'tick u32',
+             'stateHash 32', 'inputChainHash 32', 'previousHash 32'],
+    bytesOnTheWire: encodeCheckpoint(first).length,
+    first: { hex: toHex(encodeCheckpoint(first)), checkpointId: toHex(checkpointId(first)) },
+    second: { hex: toHex(encodeCheckpoint(second)), checkpointId: toHex(checkpointId(second)) },
+    equivocation: {
+      what: 'The same round, entry and tick with a different state hash. A different object, and that is the point.',
+      hex: toHex(encodeCheckpoint(forged)),
+      checkpointId: toHex(checkpointId(forged)),
+    },
+    rules: [
+      'Nothing here is variable-length, so every checkpoint is the same size on the wire.',
+      'The first checkpoint of a round chains to thirty-two zero bytes, as an input batch does.',
+      'The entry id names the player: it is the hash of the contract that carries the key.',
+      'There is no signature in this version. It proves storage and equivocation, not that the player committed at that time.',
     ],
   };
 }

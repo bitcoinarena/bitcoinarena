@@ -18,6 +18,7 @@ import { createServer } from 'node:http';
 import { WebSocketServer } from 'ws';
 import { decodeRoundContract, decodeEntryContract } from '../../protocol/src/contracts.js';
 import { toHex } from '../../protocol/src/hash.js';
+import { TYPE_CHECKPOINT } from '../../protocol/src/constants.js';
 import { Round } from './round.js';
 
 const read = (req) => new Promise((resolve, reject) => {
@@ -67,6 +68,19 @@ export function serve(db, { port = 0 } = {}) {
         return res.end(Buffer.from(t.bytes));
       }
 
+      // The checkpoints as they arrived. Fixed-size records back to back, so
+      // a reader cuts them apart without a framing rule to agree on first.
+      if (req.method === 'GET' && url.pathname === '/checkpoints') {
+        const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
+        const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
+        const c = round.checkpoints(rid, eid);
+        res.writeHead(200, {
+          'content-type': 'application/octet-stream',
+          'x-checkpoints': String(c.count),
+        });
+        return res.end(Buffer.from(c.bytes));
+      }
+
       return text(res, 404, 'no such door');
     } catch (e) {
       // The message is the reason - "the round is closed", "no such entry" -
@@ -90,7 +104,12 @@ export function serve(db, { port = 0 } = {}) {
           }
           return sock.send('error unknown text message');
         }
-        sock.send(String(round.batch(new Uint8Array(data))));
+        // ONE SOCKET, TWO KINDS. The first byte is the protocol's type, so
+        // the message says what it is and the client needs no second
+        // connection and no envelope around it.
+        const bytes = new Uint8Array(data);
+        if (bytes[0] === TYPE_CHECKPOINT) return sock.send(round.checkpoint(bytes));
+        sock.send(String(round.batch(bytes)));
       } catch (e) {
         sock.send('error ' + e.message);
       }

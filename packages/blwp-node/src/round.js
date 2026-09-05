@@ -13,6 +13,8 @@ import {
 } from '../../protocol/src/contracts.js';
 import { decodeInputBatch, batchTicks, batchId } from '../../protocol/src/batch.js';
 import { encodeTranscript, transcriptHash, checkTranscript, GENESIS } from '../../protocol/src/transcript.js';
+import { decodeCheckpoint, checkpointId, NO_PREVIOUS } from '../../protocol/src/checkpoint.js';
+import { toHex } from '../../protocol/src/hash.js';
 import { OPEN, CLOSED } from './store.js';
 
 const same = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
@@ -146,6 +148,87 @@ export class Round {
       'SELECT batch_id FROM batches WHERE round_id = ? AND entry_id = ? ORDER BY seq DESC LIMIT 1')
       .get(roundIdBytes, entryIdBytes);
     return row ? new Uint8Array(row.batch_id) : GENESIS;
+  }
+
+  /**
+   * A checkpoint in. Returns 'stored' or 'repeat'; equivocation throws.
+   *
+   * THE THREE CASES, and only the middle one is a judgement call the code
+   * makes. Nothing at this key: store it. The SAME bytes again: a repeat,
+   * answered like a repeated batch is, because re-sending is the right thing
+   * for a client that never learned the first one landed. DIFFERENT bytes at
+   * the same (round, entry, tick): that is section 13B, and the refusal names
+   * both ids so the message itself is the proof rather than a report of one.
+   *
+   * The primary key would refuse the third case on its own - that is why it is
+   * shaped that way - but the error would be SQLite's wording and would not
+   * carry the other id. The key is still the guarantee; this only makes the
+   * reason legible.
+   *
+   * The node does not check the state hash. It cannot: nothing here imports
+   * the core, and that is deliberate - a daemon that recomputed the state
+   * would be a second simulator, and then two of them could disagree.
+   */
+  checkpoint(bytes) {
+    const c = decodeCheckpoint(bytes);
+    const round = this.get(c.roundId);
+    if (!round) throw new Error('no such round');
+    if (round.state !== OPEN) throw new Error('the round is closed');
+    const entry = this.db.prepare('SELECT round_id FROM entries WHERE entry_id = ?').get(c.entryId);
+    if (!entry) throw new Error('no such entry');
+    if (!same(new Uint8Array(entry.round_id), c.roundId)) throw new Error('entry is not in this round');
+
+    const id = checkpointId(c);
+    const at = this.db.prepare(
+      'SELECT checkpoint_id FROM checkpoints WHERE round_id = ? AND entry_id = ? AND tick = ?')
+      .get(c.roundId, c.entryId, c.tick);
+    if (at) {
+      if (same(new Uint8Array(at.checkpoint_id), id)) return 'repeat';
+      throw new Error(
+        `equivocation at tick ${c.tick}: ${toHex(at.checkpoint_id)} already stored, `
+        + `now ${toHex(id)}`);
+    }
+
+    // THE CHAIN, the same rule the batches follow. A `previousHash` nothing
+    // ever compares is decoration: it would let a checkpoint be re-parented
+    // onto a different history and still be accepted. The first one of a
+    // round chains to thirty-two zero bytes.
+    const head = this.checkpointHead(c.roundId, c.entryId);
+    if (!same(c.previousHash, head))
+      throw new Error('the checkpoint does not follow the chain head');
+
+    this.db.prepare(
+      'INSERT INTO checkpoints (round_id, entry_id, tick, checkpoint_id, bytes, received_ms) '
+      + 'VALUES (?, ?, ?, ?, ?, ?)')
+      .run(c.roundId, c.entryId, c.tick, id, bytes, Date.now());
+    return 'stored';
+  }
+
+  /** The id of the last checkpoint in the chain, or the genesis if there is none. */
+  checkpointHead(roundIdBytes, entryIdBytes) {
+    const row = this.db.prepare(
+      'SELECT checkpoint_id FROM checkpoints WHERE round_id = ? AND entry_id = ? '
+      + 'ORDER BY tick DESC LIMIT 1')
+      .get(roundIdBytes, entryIdBytes);
+    return row ? new Uint8Array(row.checkpoint_id) : NO_PREVIOUS;
+  }
+
+  /**
+   * Every checkpoint for an entry, in tick order, as the bytes that arrived.
+   *
+   * Concatenated and nothing else: a checkpoint carries no variable-length
+   * field, so the stream is self-delimiting and a reader can cut it into
+   * fixed-size records without a framing convention to agree on first.
+   */
+  checkpoints(roundIdBytes, entryIdBytes) {
+    const rows = this.db.prepare(
+      'SELECT bytes FROM checkpoints WHERE round_id = ? AND entry_id = ? ORDER BY tick')
+      .all(roundIdBytes, entryIdBytes);
+    const parts = rows.map((r) => new Uint8Array(r.bytes));
+    const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+    let at = 0;
+    for (const p of parts) { out.set(p, at); at += p.length; }
+    return { bytes: out, count: parts.length };
   }
 
   /**

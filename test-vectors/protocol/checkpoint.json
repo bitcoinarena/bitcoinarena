@@ -1,0 +1,34 @@
+{
+ "what": "A checkpoint: the state hash at an agreed tick, chained to the one before it.",
+ "protocolVersion": 1,
+ "fields": [
+  "type u8",
+  "version u16",
+  "roundId 32",
+  "entryId 32",
+  "tick u32",
+  "stateHash 32",
+  "inputChainHash 32",
+  "previousHash 32"
+ ],
+ "bytesOnTheWire": 167,
+ "first": {
+  "hex": "05000107070707070707070707070707070707070707070707070707070707070707070909090909090909090909090909090909090909090909090909090909090909000002585a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c0000000000000000000000000000000000000000000000000000000000000000",
+  "checkpointId": "6dceb224f3163d36780c839bed82db40dec92cdc310d2ae6028a7dfb1ad32dff"
+ },
+ "second": {
+  "hex": "05000107070707070707070707070707070707070707070707070707070707070707070909090909090909090909090909090909090909090909090909090909090909000002945b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c6dceb224f3163d36780c839bed82db40dec92cdc310d2ae6028a7dfb1ad32dff",
+  "checkpointId": "e73a5043568400af7d6fe278b6972a3c3278d05a5534b2fb3cb21ce3939d1632"
+ },
+ "equivocation": {
+  "what": "The same round, entry and tick with a different state hash. A different object, and that is the point.",
+  "hex": "05000107070707070707070707070707070707070707070707070707070707070707070909090909090909090909090909090909090909090909090909090909090909000002585b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c0000000000000000000000000000000000000000000000000000000000000000",
+  "checkpointId": "4e4e3836138dcdfc33662f030c6a5bc4de63469654ee54b0896d2728b5c9ba2c"
+ },
+ "rules": [
+  "Nothing here is variable-length, so every checkpoint is the same size on the wire.",
+  "The first checkpoint of a round chains to thirty-two zero bytes, as an input batch does.",
+  "The entry id names the player: it is the hash of the contract that carries the key.",
+  "There is no signature in this version. It proves storage and equivocation, not that the player committed at that time."
+ ]
+}
