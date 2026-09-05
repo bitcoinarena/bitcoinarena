@@ -15,6 +15,11 @@ MonoBehaviour:
   m_GroupName: HighDetail
   m_GUID: 02e5b451d3e334996bab058f229b52c4
   m_SerializeEntries:
+  - m_GUID: 0ff1d6c14dc03e772ac12b931c8d253a
+    m_Address: model/mushroom
+    m_ReadOnly: 0
+    m_SerializedLabels: []
+    FlaggedDuringContentUpdateRestriction: 0
   - m_GUID: 2769bb47fecb6f06d9644823b6ef493a
     m_Address: model/bomber-bull
     m_ReadOnly: 0

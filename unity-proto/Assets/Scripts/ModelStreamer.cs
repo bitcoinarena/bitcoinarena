@@ -29,6 +29,7 @@ public class ModelStreamer : MonoBehaviour
     public const string PostKey = "model/postoffice";
     public const string BomberKey = "model/bomber";
     public const string BomberBearKey = "model/bomber-bear";
+    public const string MushroomKey = "model/mushroom";
     public const string BomberBullKey = "model/bomber-bull";
 
     public enum State { Waiting, Loading, Loaded, Failed }
@@ -110,6 +111,7 @@ public class ModelStreamer : MonoBehaviour
         Items.Add(new Item { label = "Post Office", key = PostKey });
         Items.Add(new Item { label = "Bomber", key = BomberKey });
         Items.Add(new Item { label = "Bomber (bear)", key = BomberBearKey });
+        Items.Add(new Item { label = "Mushroom cloud", key = MushroomKey });
         StartCoroutine(Stream());
     }
 
@@ -200,6 +202,14 @@ public class ModelStreamer : MonoBehaviour
         {
             var strike = FindFirstObjectByType<Blwp.StrikeTheatre>();
             if (strike != null) strike.SetBearAirframe(go);
+        });
+
+        // The cloud, behind the bomber for the same reason: it is only wanted
+        // when a liquidation lands, and it is the largest of these assets.
+        yield return Fetch(MushroomKey, go =>
+        {
+            var strike = FindFirstObjectByType<Blwp.StrikeTheatre>();
+            if (strike != null) strike.SetMushroom(go);
         });
 
         // The bull skin does not exist yet, so this asks QUIETLY: no item in the

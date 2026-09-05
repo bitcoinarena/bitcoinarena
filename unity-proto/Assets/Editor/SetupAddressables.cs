@@ -33,6 +33,7 @@ public static class SetupAddressables
     public const string BomberKey = "model/bomber";
     public const string BomberBearKey = "model/bomber-bear";
     public const string BomberBullKey = "model/bomber-bull";
+    public const string MushroomKey = "model/mushroom";
 
     [MenuItem("Tools/BTC Logistics/Set Up Streaming")]
     public static void Run()
@@ -84,6 +85,11 @@ public static class SetupAddressables
         // return last, which is not a thing to leave to chance.
         marked += MarkExcept(settings, group, BomberKey, new[] { "-bear", "-bull" }, "bomber");
         marked += Mark(settings, group, BomberBearKey, "bomber-bear");
+        // The cloud the strike leaves. It was three primitives - a cylinder,
+        // a sphere and a flatter sphere - which is a stand-in and reads as
+        // one. The mesh is 5.5 MB and 248k triangles, so it is streamed like
+        // every other model rather than carried in the player.
+        marked += Mark(settings, group, MushroomKey, "mushroom-cloud", "mushroom");
         // No bull model exists yet. Marking it costs nothing when the asset is
         // absent - Mark says so and returns zero - and the moment a
         // bomber-bull.glb lands beside the bear it is streamed without another

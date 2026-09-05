@@ -277,6 +277,9 @@ namespace Blwp
         const float CapWide = 34f;
 
         Transform _stem, _cap, _skirt;
+        Transform _mushroom;
+        GameObject _mushroomModel;
+        Vector3 _mushroomFull = Vector3.one;
         Material _fire;
         float _cloud = -1f;
         Vector3 _cloudAt;
@@ -293,10 +296,56 @@ namespace Blwp
         /// Theatre, like the aircraft. Nothing here is asked by the core, the
         /// core has no cloud, and the crater was dug before this is drawn.
         /// </summary>
+        /// <summary>Take the streamed mushroom in place of the three primitives.</summary>
+        public void SetMushroom(GameObject prefab)
+        {
+            if (prefab == null) return;
+            _mushroomModel = prefab;
+            if (_mushroom != null) { Destroy(_mushroom.gameObject); _mushroom = null; }
+            Debug.Log("[strike] mushroom model taken");
+        }
+
         void RaiseColumn(Vector3 at)
         {
             _cloudAt = at;
             _cloud = 0f;
+
+            // THE MESH IF THERE IS ONE. The primitives - a cylinder, a sphere
+            // and a flatter sphere - were always a stand-in, and they read as
+            // one on a phone. They stay as the fallback for the seconds before
+            // the model has streamed, and for a build that has not got it.
+            if (_mushroomModel != null)
+            {
+                if (_mushroom == null)
+                {
+                    _mushroom = Dress(_mushroomModel, StemHigh, Vector3.zero);
+                    foreach (var mr in _mushroom.GetComponentsInChildren<MeshRenderer>())
+                        mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+                    _mushroomFull = _mushroom.localScale;
+                }
+                _mushroom.gameObject.SetActive(true);
+                if (_stem != null)
+                    foreach (var t in new[] { _stem, _cap, _skirt }) t.gameObject.SetActive(false);
+                // The size it ACTUALLY came out at, from the renderers, not
+                // the number that was asked for. `Dress` scales on the longest
+                // side, and whether that side is the height or the cap's width
+                // decides whether a 55 m column or a 55 m saucer is standing
+                // there.
+                var rs = _mushroom.GetComponentsInChildren<Renderer>();
+                string size = "no renderer";
+                if (rs.Length > 0)
+                {
+                    var bb = rs[0].bounds;
+                    for (int k = 1; k < rs.Length; k++) bb.Encapsulate(rs[k].bounds);
+                    size = $"{bb.size.x:F1} x {bb.size.y:F1} x {bb.size.z:F1} m, "
+                         + $"{rs.Length} renderer(s)";
+                }
+                Debug.Log($"[cloud] mushroom MESH at {at.x:F1},{at.z:F1}, asked for "
+                          + $"{StemHigh:F0} m, drawn {size}");
+                return;
+            }
+
+            Debug.Log($"[cloud] primitives at {at.x:F1},{at.z:F1} - no mesh streamed yet");
             if (_stem == null)
             {
                 _stem = Part(transform, PrimitiveType.Cylinder, Vector3.zero,
@@ -314,15 +363,30 @@ namespace Blwp
 
         void Column(float dt)
         {
-            if (_cloud < 0f || _stem == null) return;
+            if (_cloud < 0f) return;
             _cloud += dt;
             if (_cloud > Gone)
             {
                 _cloud = -1f;
-                foreach (var t in new[] { _stem, _cap, _skirt }) t.gameObject.SetActive(false);
+                if (_mushroom != null) _mushroom.gameObject.SetActive(false);
+                if (_stem != null)
+                    foreach (var t in new[] { _stem, _cap, _skirt }) t.gameObject.SetActive(false);
                 return;
             }
 
+            // The mesh grows and goes on the SAME clock the primitives used, so
+            // the shape changed and the timing did not: full height in `Rise`
+            // seconds, nothing left by `Gone`.
+            if (_mushroom != null && _mushroomModel != null)
+            {
+                float g = 1f - Mathf.Exp(-3.2f * _cloud);
+                float f = Mathf.Clamp01((Gone - _cloud) / (Gone - Rise));
+                _mushroom.localScale = _mushroomFull * (g * Mathf.Max(0.05f, f));
+                _mushroom.position = _cloudAt;
+                return;
+            }
+
+            if (_stem == null) return;
             float rise = Mathf.Clamp01(_cloud / Rise);
             float grow = 1f - Mathf.Exp(-3.2f * _cloud);      // fast, then easing
             float fade = Mathf.Clamp01((Gone - _cloud) / (Gone - Rise));
