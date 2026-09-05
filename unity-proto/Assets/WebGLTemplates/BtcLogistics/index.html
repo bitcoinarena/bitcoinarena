@@ -41,6 +41,68 @@
 <body>
   <canvas id="canvas" tabindex="-1"></canvas>
 
+  <script>
+  // GETTING SOUND OUT OF AN iPHONE.
+  //
+  // iOS Safari keeps every AudioContext suspended until one is resumed from
+  // inside a real gesture handler, and it wants something PLAYED in that same
+  // handler before it believes the context is in use. Unity's own unlock, and
+  // ours in AudioUnlock.jslib, both run from `SplashScreen.Play` - which is an
+  // OnGUI callback in the frame loop, not the gesture's call stack. Safari does
+  // not count that, and the game was silent on a phone while being fine on a
+  // desktop, where a resume alone is enough.
+  //
+  // So the unlock moves out here, into a listener that IS the gesture. It needs
+  // Unity's context, and Unity does not put it on `window` - reading
+  // `Module.WEBAudio.audioContext` in a Unity 6 build gave nothing while buffers
+  // were audibly starting. The only reliable handle is to take it as it is
+  // built, which is why this runs BEFORE the loader.
+  (function () {
+    var Orig = window.AudioContext || window.webkitAudioContext;
+    if (!Orig) return;
+    var seen = [];
+    var Wrapped = function () {
+      var c = new (Function.prototype.bind.apply(Orig, [null].concat([].slice.call(arguments))))();
+      seen.push(c);
+      return c;
+    };
+    Wrapped.prototype = Orig.prototype;
+    window.AudioContext = Wrapped;
+    window.webkitAudioContext = Wrapped;
+
+    var state = { contexts: seen, unlocks: 0, running: 0 };
+    window.__blwpAudio = state;
+
+    function unlock() {
+      state.unlocks++;
+      var running = 0;
+      for (var i = 0; i < seen.length; i++) {
+        var c = seen[i];
+        try {
+          if (c.state !== 'running' && c.resume) c.resume();
+          // the silent sample: this is the half iOS actually requires, and it
+          // has to be started here, not in a promise callback
+          var b = c.createBuffer(1, 1, 22050);
+          var s = c.createBufferSource();
+          s.buffer = b;
+          s.connect(c.destination);
+          (s.start || s.noteOn).call(s, 0);
+        } catch (e) { /* an older context: the resume will have to do */ }
+        if (c.state === 'running') running++;
+      }
+      state.running = running;
+      console.log('[audio] gesture #' + state.unlocks + ' contexts=' + seen.length +
+                  ' running=' + running);
+    }
+
+    // Every gesture, not just the first: Unity builds its context while the
+    // player loads, and on a phone the first tap may land before it exists.
+    ['pointerdown', 'touchend', 'mousedown', 'keydown'].forEach(function (n) {
+      document.addEventListener(n, unlock, { capture: true, passive: true });
+    });
+  })();
+  </script>
+
   <div id="boot">
     <div id="title">Bitcoin <span>Logistics</span> War</div>
     <div id="sub">{{{ PRODUCT_VERSION }}}</div>
