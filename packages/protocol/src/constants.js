@@ -28,6 +28,10 @@ export const TYPE_INPUT_BATCH = 0x08;
 /** A whole round's inputs as one object - what a node hands over. */
 export const TYPE_TRANSCRIPT = 0x09;
 
+// The receipt a node returns for a checkpoint (section 10). The spec names
+// the object but reserves no type for it, so this is the next free number.
+export const TYPE_CHECKPOINT_RECEIPT = 0x0a;
+
 export const TAG = {
   roundContract: 'BLWP/v1/RoundContract',
   entryContract: 'BLWP/v1/EntryContract',
@@ -36,6 +40,7 @@ export const TAG = {
   censusBranch: 'BLWP/v1/CensusBranch',
   ticket: 'BLWP/v1/Ticket',
   checkpoint: 'BLWP/v1/Checkpoint',
+  checkpointReceipt: 'BLWP/v1/CheckpointReceipt',
   result: 'BLWP/v1/Result',
   payoutTable: 'BLWP/v1/PayoutTable',
   inputBatch: 'BLWP/v1/InputBatch',

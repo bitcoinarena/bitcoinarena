@@ -18,6 +18,7 @@ import { selectCommittee, ticketFor, weightOf } from '../src/sortition.js';
 import { computePayoutTable, rankWeights, DELIVERED, FAILED } from '../src/payout.js';
 import { encodeRoundContract, roundId, encodeEntryContract, entryId } from '../src/contracts.js';
 import { encodeCheckpoint, checkpointId, NO_PREVIOUS } from '../src/checkpoint.js';
+import { encodeCheckpointReceipt, receiptId } from '../src/receipt.js';
 
 const DIR = new URL('../../../test-vectors/protocol/', import.meta.url).pathname;
 const load = (n) => JSON.parse(readFileSync(DIR + n + '.json', 'utf8'));
@@ -130,4 +131,25 @@ test('the checkpoint vectors replay', () => {
   const forged = { ...first, stateHash: b32(0x5b) };
   assert.equal(toHex(checkpointId(forged)), v.equivocation.checkpointId);
   assert.notEqual(toHex(checkpointId(forged)), toHex(checkpointId(first)));
+});
+
+test('the receipt vectors replay', () => {
+  const v = load('receipt');
+  const marked = {
+    roundId: b32(7), entryId: b32(9), tick: 600,
+    stateHash: b32(0x5a), inputChainHash: b32(0x1c), previousHash: NO_PREVIOUS,
+  };
+  const one = {
+    checkpointId: checkpointId(marked),
+    receivedAtMs: 1788600000000n,
+    nodePubkey: b32(0x2b),
+  };
+  assert.equal(toHex(encodeCheckpointReceipt(one)), v.receipt.hex);
+  assert.equal(toHex(receiptId(one)), v.receipt.receiptId);
+  assert.equal(encodeCheckpointReceipt(one).length, v.bytesOnTheWire);
+
+  const otherNode = { ...one, nodePubkey: b32(0x2c) };
+  assert.equal(toHex(receiptId(otherNode)), v.fromAnotherNode.receiptId);
+  assert.notEqual(toHex(receiptId(otherNode)), toHex(receiptId(one)),
+    'the signer is part of the receipt, so two nodes give two objects');
 });

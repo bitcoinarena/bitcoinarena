@@ -14,6 +14,7 @@ import { selectCommittee, ticketFor, weightOf } from '../src/sortition.js';
 import { computePayoutTable, rankWeights, DELIVERED, FAILED, FORFEIT, VOID } from '../src/payout.js';
 import { encodeRoundContract, roundId, encodeEntryContract, entryId } from '../src/contracts.js';
 import { encodeCheckpoint, checkpointId, NO_PREVIOUS, CHECKPOINT_BYTES, SIGNED_CHECKPOINT_BYTES } from '../src/checkpoint.js';
+import { encodeCheckpointReceipt, receiptId, RECEIPT_BYTES, SIGNED_RECEIPT_BYTES } from '../src/receipt.js';
 
 const DIR = new URL('../../../test-vectors/protocol/', import.meta.url).pathname;
 mkdirSync(DIR, { recursive: true });
@@ -184,6 +185,40 @@ out.tagged = {
       'The signature sits BESIDE the object, as a 64-byte suffix, so the id is the same whether or not the mark is signed and previousHash never has to move.',
       'What is signed is the checkpointId - the tagged hash - and not the raw encoding, so a signature cannot be replayed over another object with the same bytes.',
       'The player signs with the session key; the verifier is sessionPubkey on the Entry Contract. The curve is ed25519 and the verifying lives in the node, not here.',
+    ],
+  };
+}
+
+/* ----------------------------------------------------------------- receipt */
+{
+  const marked = {
+    roundId: b32(7), entryId: b32(9), tick: 600,
+    stateHash: b32(0x5a), inputChainHash: b32(0x1c), previousHash: NO_PREVIOUS,
+  };
+  const one = {
+    checkpointId: checkpointId(marked),
+    receivedAtMs: 1788600000000n,
+    nodePubkey: b32(0x2b),
+  };
+  const otherNode = { ...one, nodePubkey: b32(0x2c) };
+  out.receipt = {
+    what: 'A checkpoint receipt: a node saying it held this mark at this time.',
+    protocolVersion: PROTOCOL_VERSION,
+    fields: ['type u8', 'version u16', 'checkpointId 32', 'receivedAtMs u64', 'nodePubkey 32'],
+    bytesOnTheWire: RECEIPT_BYTES,
+    bytesSigned: SIGNED_RECEIPT_BYTES,
+    receipt: { hex: toHex(encodeCheckpointReceipt(one)), receiptId: toHex(receiptId(one)) },
+    fromAnotherNode: {
+      what: 'The same mark, the same instant, a different signer. Five receipts for one checkpoint are five objects.',
+      hex: toHex(encodeCheckpointReceipt(otherNode)),
+      receiptId: toHex(receiptId(otherNode)),
+    },
+    rules: [
+      'checkpointId alone names the mark: it is the tagged hash of an object that already carries the round and the entry.',
+      'nodePubkey is carried although IMPLEMENTATION.md\'s wire line omits it, because a receipt travels inside the round record where there is no connection to ask who signed. EntryReceipt carries it for the same reason.',
+      'The signature sits BESIDE the object, a 64-byte suffix, so the id does not move when it is signed.',
+      'receivedAtMs is the node\'s clock: evidence of what it saw and when, never a source of truth about the round.',
+      'Nothing issues one yet. A node signs with its own key and the daemon has none - that waits on the bond advertisement (M2.1 step 5b).',
     ],
   };
 }

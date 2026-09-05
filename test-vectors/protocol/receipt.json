@@ -1,0 +1,29 @@
+{
+ "what": "A checkpoint receipt: a node saying it held this mark at this time.",
+ "protocolVersion": 1,
+ "fields": [
+  "type u8",
+  "version u16",
+  "checkpointId 32",
+  "receivedAtMs u64",
+  "nodePubkey 32"
+ ],
+ "bytesOnTheWire": 75,
+ "bytesSigned": 139,
+ "receipt": {
+  "hex": "0a00016dceb224f3163d36780c839bed82db40dec92cdc310d2ae6028a7dfb1ad32dff000001a070de1e002b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
+  "receiptId": "02386c1c4ba991a823181fa3430b86518aa531e081f6c7fc5f395354d2dc1bbe"
+ },
+ "fromAnotherNode": {
+  "what": "The same mark, the same instant, a different signer. Five receipts for one checkpoint are five objects.",
+  "hex": "0a00016dceb224f3163d36780c839bed82db40dec92cdc310d2ae6028a7dfb1ad32dff000001a070de1e002c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c",
+  "receiptId": "9efd7ab683fb3bcc31d9d605f1a39bdedf659f43cbd1c2f46f729a9e27ebf7d9"
+ },
+ "rules": [
+  "checkpointId alone names the mark: it is the tagged hash of an object that already carries the round and the entry.",
+  "nodePubkey is carried although IMPLEMENTATION.md's wire line omits it, because a receipt travels inside the round record where there is no connection to ask who signed. EntryReceipt carries it for the same reason.",
+  "The signature sits BESIDE the object, a 64-byte suffix, so the id does not move when it is signed.",
+  "receivedAtMs is the node's clock: evidence of what it saw and when, never a source of truth about the round.",
+  "Nothing issues one yet. A node signs with its own key and the daemon has none - that waits on the bond advertisement (M2.1 step 5b)."
+ ]
+}

@@ -10,6 +10,7 @@
   "sortition",
   "payout",
   "contracts",
-  "checkpoint"
+  "checkpoint",
+  "receipt"
  ]
 }
