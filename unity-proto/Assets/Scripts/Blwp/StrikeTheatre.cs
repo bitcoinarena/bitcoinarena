@@ -322,6 +322,7 @@ namespace Blwp
         Transform _mushroom;
         GameObject _mushroomModel;
         Vector3 _mushroomFull = Vector3.one;
+        Vector3 _mushroomSize;   // the modelled size, measured once at full scale
         MeshRenderer[] _mushroomSkins;
         Transform _skirt3, _core3;
         Vector3 _skirtRest = Vector3.one, _coreRest = Vector3.one;
@@ -379,6 +380,12 @@ namespace Blwp
                         foreach (var m in mr.materials) m.EnableKeyword("_EMISSION");
                     }
                     _mushroomFull = _mushroom.localScale;
+                    {
+                        var ms = _mushroom.GetComponentsInChildren<Renderer>();
+                        var mb = ms[0].bounds;
+                        for (int k = 1; k < ms.Length; k++) mb.Encapsulate(ms[k].bounds);
+                        _mushroomSize = mb.size;
+                    }
 
                     // THE PARTS ARE IN THE ASSET. The GLB carries five named
                     // nodes - stem, cap, crown_billow, dust_skirt and
@@ -460,15 +467,29 @@ namespace Blwp
                 // side, and whether that side is the height or the cap's width
                 // decides whether a 55 m column or a 55 m saucer is standing
                 // there.
+                // MEASURED AT FULL SCALE, ONCE, at dress time - not here.
+                //
+                // This line used to measure the renderers at the instant of
+                // launch, and it told a lie I believed and filed as a bug: the
+                // FIRST strike of a round read "drawn 32.5 x 55.0 x 32.4 m"
+                // and every later one "drawn 2.6 x 2.8 x 2.6 m". The model was
+                // never re-scaled. `Column` sets the scale on the NEXT frame,
+                // so at launch the transform still carries the previous
+                // cloud's fade floor - `Mathf.Max(0.05f, f)` - and 55 x 0.05
+                // is 2.75. The clouds were full size all along: strikes two,
+                // three and four measured 49.2, 48.9 and 49.1 m across the
+                // skirt at t=1.7 s against the first's 48.7 m.
+                //
+                // The size a cloud comes out at is a property of the dressed
+                // model, so it is measured where the model is dressed, and the
+                // scale the transform happens to be carrying is printed beside
+                // it rather than mistaken for it.
                 var rs = _mushroom.GetComponentsInChildren<Renderer>();
-                string size = "no renderer";
-                if (rs.Length > 0)
-                {
-                    var bb = rs[0].bounds;
-                    for (int k = 1; k < rs.Length; k++) bb.Encapsulate(rs[k].bounds);
-                    size = $"{bb.size.x:F1} x {bb.size.y:F1} x {bb.size.z:F1} m, "
-                         + $"{rs.Length} renderer(s)";
-                }
+                float atNow = _mushroomFull.y > 0.0001f
+                            ? _mushroom.localScale.y / _mushroomFull.y : 0f;
+                string size = $"{_mushroomSize.x:F1} x {_mushroomSize.y:F1} x "
+                            + $"{_mushroomSize.z:F1} m modelled, {rs.Length} renderer(s), "
+                            + $"growing from {100f * atNow:F0}% of it";
                 Debug.Log($"[cloud] mushroom MESH at {at.x:F1},{at.z:F1}, asked for "
                           + $"{StemHigh:F0} m, drawn {size}");
                 return;
@@ -753,7 +774,15 @@ namespace Blwp
                             }
                         }
                     }
-                    Debug.Log($"[cloud] t={_cloud:F1}s body "
+                    string whole = "none";
+                    if (_mushroomSkins != null && _mushroomSkins.Length > 0)
+                    {
+                        var wb = _mushroomSkins[0].bounds;
+                        for (int k = 1; k < _mushroomSkins.Length; k++)
+                            wb.Encapsulate(_mushroomSkins[k].bounds);
+                        whole = $"{wb.size.x:F1} x {wb.size.y:F1} x {wb.size.z:F1} m";
+                    }
+                    Debug.Log($"[cloud] t={_cloud:F1}s cloud {whole} body "
                               + $"{meshBody.r:F2},{meshBody.g:F2},{meshBody.b:F2} glow "
                               + $"{meshGlow.r:F2},{meshGlow.g:F2},{meshGlow.b:F2}, "
                               + $"skirt {ring}, {seen}");
