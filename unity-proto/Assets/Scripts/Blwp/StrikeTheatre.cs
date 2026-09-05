@@ -281,6 +281,8 @@ namespace Blwp
         GameObject _mushroomModel;
         Vector3 _mushroomFull = Vector3.one;
         MeshRenderer[] _mushroomSkins;
+        Transform _skirt3, _core3;
+        Vector3 _skirtRest = Vector3.one, _coreRest = Vector3.one;
         float _saidHeat = -99f;
         Material _fire;
         float _cloud = -1f;
@@ -334,6 +336,22 @@ namespace Blwp
                         foreach (var m in mr.materials) m.EnableKeyword("_EMISSION");
                     }
                     _mushroomFull = _mushroom.localScale;
+
+                    // THE PARTS ARE IN THE ASSET. The GLB carries five named
+                    // nodes - stem, cap, crown_billow, dust_skirt and
+                    // fireball_core - and scaling the parent moved all five on
+                    // one curve, which is why the cloud read as a blob and the
+                    // dust along the ground disappeared. The old primitives
+                    // read as a mushroom because the stem, the cap and the
+                    // skirt grew on curves of their own; these are the same
+                    // curves, applied to the pieces that were already there.
+                    _skirt3 = Find(_mushroom, "dust_skirt");
+                    _core3 = Find(_mushroom, "fireball_core");
+                    _skirtRest = _skirt3 != null ? _skirt3.localScale : Vector3.one;
+                    _coreRest = _core3 != null ? _core3.localScale : Vector3.one;
+                    Debug.Log($"[cloud] parts: skirt {(_skirt3 != null ? "yes" : "MISSING")}, "
+                              + $"fireball {(_core3 != null ? "yes" : "MISSING")}, "
+                              + $"{_mushroomSkins.Length} renderers");
                 }
                 _mushroom.gameObject.SetActive(true);
                 if (_stem != null)
@@ -371,6 +389,14 @@ namespace Blwp
                         UnityEngine.Rendering.ShadowCastingMode.Off;
             }
             foreach (var t in new[] { _stem, _cap, _skirt }) t.gameObject.SetActive(true);
+        }
+
+        /// <summary>A child by name, anywhere under the dressed model.</summary>
+        static Transform Find(Transform root, string name)
+        {
+            foreach (var t in root.GetComponentsInChildren<Transform>())
+                if (t.name == name) return t;
+            return null;
         }
 
         /// <summary>
@@ -415,22 +441,67 @@ namespace Blwp
                 // goes out. Same curve, same clock - the colour IS the clock -
                 // driven through a property block so the streamed materials
                 // are not written to.
+                // THE SKIRT SPREADS, and it spreads along the ground rather
+                // than with the column. The old one reached 1.5 times the
+                // cap's width; this keeps that shape by pushing the asset's
+                // own skirt outward on its own curve while its height stays
+                // where the model put it.
+                if (_skirt3 != null)
+                {
+                    // 1.5 times the cap, which is what the primitive skirt
+                    // reached: `CapWide * 1.5` against the cap's `CapWide`.
+                    // The asset's skirt starts at about the cap's own width -
+                    // measured 31.8 m against 32.5 - so 0.6 more of it lands on
+                    // the same figure. A first cut used 1.6 and the ring
+                    // measured 81.8 m, half again wider than the cloud it
+                    // belongs to.
+                    float spread = 1f + 0.6f * (1f - Mathf.Exp(-1.1f * _cloud));
+                    _skirt3.localScale = new Vector3(_skirtRest.x * spread,
+                                                     _skirtRest.y,
+                                                     _skirtRest.z * spread);
+                }
+
+                // The fire goes out long before the smoke does, so the core
+                // shrinks away on a curve of its own instead of riding the
+                // whole cloud down.
+                if (_core3 != null)
+                {
+                    float core = Mathf.Exp(-1.1f * _cloud);
+                    _core3.localScale = _coreRest * Mathf.Max(0.001f, core);
+                }
+
                 Heat(_cloud, out var meshBody, out var meshGlow);
                 if (_mushroomSkins != null)
                     foreach (var mr in _mushroomSkins)
                     {
                         if (mr == null) continue;
+                        // Dust is not flame. The skirt takes the same body
+                        // colour and a fraction of the glow, or the ground
+                        // ring reads as a second fireball.
+                        bool dust = _skirt3 != null && mr.transform == _skirt3;
                         mr.GetPropertyBlock(_block);
                         _block.SetColor("_BaseColor", meshBody);
-                        _block.SetColor("_EmissionColor", meshGlow);
+                        _block.SetColor("_EmissionColor", dust ? meshGlow * 0.35f : meshGlow);
                         mr.SetPropertyBlock(_block);
                     }
-                if (_cloud - _saidHeat > 2.5f)
+                if (_cloud - _saidHeat > 1.2f)
                 {
                     _saidHeat = _cloud;
+                    // The skirt's own width, in world metres. Driving it is
+                    // one thing; a ring that actually spreads while the column
+                    // shrinks is the thing worth reading, and a photograph of
+                    // a two-second event keeps missing it.
+                    string ring = "none";
+                    if (_skirt3 != null)
+                    {
+                        var sr = _skirt3.GetComponent<Renderer>();
+                        if (sr != null)
+                            ring = $"{sr.bounds.size.x:F1} x {sr.bounds.size.z:F1} m";
+                    }
                     Debug.Log($"[cloud] t={_cloud:F1}s body "
                               + $"{meshBody.r:F2},{meshBody.g:F2},{meshBody.b:F2} glow "
-                              + $"{meshGlow.r:F2},{meshGlow.g:F2},{meshGlow.b:F2}");
+                              + $"{meshGlow.r:F2},{meshGlow.g:F2},{meshGlow.b:F2}, "
+                              + $"skirt {ring}");
                 }
                 return;
             }
