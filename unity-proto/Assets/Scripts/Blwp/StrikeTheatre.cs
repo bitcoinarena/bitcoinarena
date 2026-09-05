@@ -74,6 +74,7 @@ namespace Blwp
         // contamination decals out of the frame independently, so the same
         // strike can be photographed in all four combinations.
         bool _showSkirt = true, _showRings = true, _freeze = false;
+        bool _showColumn = true, _still = false;
         Renderer _skirtR;
         Vector3 _skirtRestPos;
         readonly List<Transform> _glows = new List<Transform>();
@@ -162,6 +163,23 @@ namespace Blwp
                 _freeze = !_freeze;
                 Debug.Log($"[cloud] probe: freeze {_freeze} at t={_cloud:F2}s");
             }
+            if (Input.GetKeyDown(KeyCode.Alpha6))
+            {
+                _showColumn = !_showColumn;
+                Debug.Log($"[cloud] probe: column {_showColumn}");
+            }
+            if (Input.GetKeyDown(KeyCode.Alpha0))
+            {
+                // The whole scene, not just the cloud. Tanks and burning
+                // wrecks kept moving under the last freeze, so a changed-pixel
+                // map could not tell the skirt from the army.
+                _still = !_still;
+                Time.timeScale = _still ? 0f : 1f;
+                Debug.Log($"[cloud] probe: still {_still}");
+            }
+            if (_mushroomSkins != null)
+                foreach (var mr in _mushroomSkins)
+                    if (mr != null && mr.transform != _skirt3) mr.enabled = _showColumn;
             if (_skirtR != null) _skirtR.enabled = _showSkirt;
 
             if (!BlwpCore.Available) return;
@@ -535,9 +553,14 @@ namespace Blwp
                     // reached: `CapWide * 1.5` against the cap's `CapWide`.
                     // The asset's skirt starts at about the cap's own width -
                     // measured 31.8 m against 32.5 - so 0.6 more of it lands on
-                    // the same figure. A first cut used 1.6 and the ring
-                    // measured 81.8 m, half again wider than the cloud it
-                    // belongs to.
+                    // the same figure.
+                    //
+                    // 1.0 was tried and rejected on the picture, not on a
+                    // number: it took the disc to 59.6 m and 59.2% of it clear
+                    // of the column, against 36.9% before, and the skirt
+                    // on/off deltas on the rim were +0.2, -1.9 and -0.1 -
+                    // inside the grass controls' own noise. A wider disc is
+                    // not a ring.
                     float spread = 1f + 0.6f * (1f - Mathf.Exp(-1.1f * _cloud));
                     _skirt3.localScale = new Vector3(_skirtRest.x * spread,
                                                      _skirtRest.y,
@@ -563,8 +586,27 @@ namespace Blwp
                     {
                         _skirt3.localPosition = _skirtRestPos;
                         var sb = _skirtR.bounds;
-                        _skirt3.position += Vector3.up
-                            * (Ground(sb.center.x, sb.center.z) - sb.min.y);
+
+                        // THE RIM, NOT THE MIDDLE. Seating the lowest vertex
+                        // on Ground() at the centre left the rim under the
+                        // hill: measured at t=1.6 s on a 48.3 m disc whose
+                        // whole height is 4.47 m -
+                        //
+                        //   centre g3.05 +0.00   N g5.64 +2.59
+                        //   E g2.77 -0.28        S g5.19 +2.14   W g5.53 +2.48
+                        //
+                        // three sides buried by more than half the mesh's own
+                        // height. The ground the disc has to clear is the
+                        // HIGHEST ground under it, so that is what it is
+                        // seated on; the low side stands a little proud, which
+                        // is what thrown-up dust does anyway.
+                        float rr = Mathf.Max(sb.extents.x, sb.extents.z);
+                        float top = Ground(sb.center.x, sb.center.z);
+                        top = Mathf.Max(top, Ground(sb.center.x, sb.center.z + rr));
+                        top = Mathf.Max(top, Ground(sb.center.x + rr, sb.center.z));
+                        top = Mathf.Max(top, Ground(sb.center.x, sb.center.z - rr));
+                        top = Mathf.Max(top, Ground(sb.center.x - rr, sb.center.z));
+                        _skirt3.position += Vector3.up * (top - sb.min.y);
                     }
                 }
 
@@ -649,6 +691,54 @@ namespace Blwp
                                     x0 = Mathf.Min(x0, sp.x); x1 = Mathf.Max(x1, sp.x);
                                     y0 = Mathf.Min(y0, sp.y); y1 = Mathf.Max(y1, sp.y);
                                 }
+                                // AND THE COLUMN'S OWN RECT, because what a
+                                // ring needs is room outside the cap. Bright
+                                // pixels cannot find the cap - by 1.5 s it has
+                                // cooled to a mid grey - so it is measured
+                                // from the renderers, like the skirt.
+                                float cx0 = float.MaxValue, cy0 = float.MaxValue;
+                                float cx1 = float.MinValue, cy1 = float.MinValue;
+                                if (_mushroomSkins != null)
+                                    foreach (var other in _mushroomSkins)
+                                    {
+                                        if (other == null || other.transform == _skirt3) continue;
+                                        var ob = other.bounds;
+                                        for (int i = 0; i < 8; i++)
+                                        {
+                                            var corner = ob.center + Vector3.Scale(ob.extents,
+                                                new Vector3((i & 1) == 0 ? -1 : 1,
+                                                            (i & 2) == 0 ? -1 : 1,
+                                                            (i & 4) == 0 ? -1 : 1));
+                                            var sp2 = cam.WorldToScreenPoint(corner);
+                                            cx0 = Mathf.Min(cx0, sp2.x); cx1 = Mathf.Max(cx1, sp2.x);
+                                            cy0 = Mathf.Min(cy0, sp2.y); cy1 = Mathf.Max(cy1, sp2.y);
+                                        }
+                                    }
+                                // WHERE THE GROUND IS UNDER THE WHOLE DISC,
+                                // not only under its middle. The lift seats
+                                // the mesh's lowest vertex on Ground() at the
+                                // centre; the terrain rolls, so the rim can
+                                // still be under it. The mesh's underside is
+                                // taken as `bounds.min.y` - the streamed mesh
+                                // has Read/Write off, so its vertices cannot
+                                // be walked - and extY says how flat that is.
+                                float rr = Mathf.Max(b.extents.x, b.extents.z);
+                                var probe = new (string, float, float)[]
+                                {
+                                    ("centre", 0f, 0f), ("N", 0f, rr), ("E", rr, 0f),
+                                    ("S", 0f, -rr), ("W", -rr, 0f),
+                                };
+                                var tab = new System.Text.StringBuilder();
+                                foreach (var (nm, dx, dz) in probe)
+                                {
+                                    float gy = Ground(b.center.x + dx, b.center.z + dz);
+                                    tab.Append($" {nm} g{gy:F2} buried{(gy - b.min.y):+0.00;-0.00}");
+                                }
+                                Debug.Log($"[cloud] ground under the skirt: mesh y {b.min.y:F2}"
+                                          + $"..{b.max.y:F2} extY {b.size.y:F2} r {rr:F1} m;{tab}");
+                                Debug.Log($"[cloud] column rect {cx0:F0},{cy0:F0} "
+                                          + $"{(cx1 - cx0):F0}x{(cy1 - cy0):F0} px vs skirt "
+                                          + $"{x0:F0},{y0:F0} {(x1 - x0):F0}x{(y1 - y0):F0} px");
                                 seen = $"visible {sr.isVisible}, rect {x0:F0},{y0:F0} "
                                      + $"{(x1 - x0):F0}x{(y1 - y0):F0} px of "
                                      + $"{Screen.width}x{Screen.height}, "
