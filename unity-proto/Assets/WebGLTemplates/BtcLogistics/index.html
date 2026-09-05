@@ -70,8 +70,31 @@
     window.AudioContext = Wrapped;
     window.webkitAudioContext = Wrapped;
 
-    var state = { contexts: seen, unlocks: 0, running: 0 };
+    var state = { contexts: seen, unlocks: 0, running: 0, media: 'none' };
     window.__blwpAudio = state;
+
+    // THE RINGER SWITCH.
+    //
+    // An unlocked, running AudioContext is still SILENT on an iPhone whose
+    // ring/silent switch is set to silent - iOS mutes Web Audio with the
+    // ringer unless the page owns a media PLAYBACK session. Photographed:
+    // Safari showed its speaker icon in the address bar (the system believed
+    // sound was playing) while the phone made none, with the silent-mode bell
+    // in the status bar.
+    //
+    // An <audio> element that is actually playing is what changes the session
+    // category. It carries half a second of silence on a loop, so it costs
+    // nothing to hear and everything to have. `playsinline` keeps iOS from
+    // taking it fullscreen, and it must be STARTED in the gesture like the
+    // context.
+    var keeper = document.createElement('audio');
+    keeper.setAttribute('playsinline', '');
+    keeper.loop = true;
+    keeper.preload = 'auto';
+    keeper.volume = 0.001;
+    keeper.src = 'data:audio/wav;base64,UklGRkQDAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YSADAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==';
+    keeper.style.display = 'none';
+    document.body.appendChild(keeper);
 
     function unlock() {
       state.unlocks++;
@@ -91,8 +114,20 @@
         if (c.state === 'running') running++;
       }
       state.running = running;
+
+      // and the media session, in this same handler
+      if (keeper.paused) {
+        var play = keeper.play();
+        if (play && play.then) {
+          play.then(function () { state.media = 'playing'; })
+              .catch(function (e) { state.media = 'refused: ' + e.name; });
+        } else {
+          state.media = 'playing';
+        }
+      }
       console.log('[audio] gesture #' + state.unlocks + ' contexts=' + seen.length +
-                  ' running=' + running);
+                  ' running=' + running + ' media=' + state.media +
+                  ' paused=' + keeper.paused);
     }
 
     // Every gesture, not just the first: Unity builds its context while the
