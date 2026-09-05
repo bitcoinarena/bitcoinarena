@@ -300,10 +300,23 @@ public class ChaseCamera : MonoBehaviour
         v.y = 0f;
         float speed01 = Mathf.Clamp01(v.magnitude / topSpeed);
 
-        // below a walking pace the velocity vector is noise, so fall back to the nose
-        float wanted = v.magnitude > 6f
-            ? Mathf.Atan2(v.x, v.z)
-            : target.eulerAngles.y * Mathf.Deg2Rad;
+        // THE NOSE, not the velocity vector.
+        //
+        // `c09f39b` put the camera behind `Atan2(v.x, v.z)` because the body
+        // velocity had been dead and five other things needed it. Reach, rise
+        // and the lens still read it below - they want a SPEED. The direction
+        // the camera settles behind is a different question, and the velocity
+        // answers it wrongly: in a corner that vector points where the truck is
+        // SLIDING. Measured on a slalom at 15.4 m/s, the camera ended up 8.7
+        // degrees off the nose with 5.8 degrees of slip under it, which is the
+        // driver looking at his own flank instead of the road.
+        //
+        // The nose is what the player steers, so the nose is what the camera
+        // sits behind. It also puts the look-at target and the position on the
+        // same basis: the goal below is built from this yaw and the aim point
+        // from `target.forward`, and those two only agreed when the truck was
+        // going exactly where it pointed.
+        float wanted = target.eulerAngles.y * Mathf.Deg2Rad;
         _yaw = Mathf.LerpAngle(_yaw * Mathf.Rad2Deg, wanted * Mathf.Rad2Deg,
                    1f - Mathf.Exp(-yawDamp * Time.deltaTime)) * Mathf.Deg2Rad;
 
