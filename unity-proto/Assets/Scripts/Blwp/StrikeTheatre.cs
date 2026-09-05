@@ -280,6 +280,8 @@ namespace Blwp
         Transform _mushroom;
         GameObject _mushroomModel;
         Vector3 _mushroomFull = Vector3.one;
+        MeshRenderer[] _mushroomSkins;
+        float _saidHeat = -99f;
         Material _fire;
         float _cloud = -1f;
         Vector3 _cloudAt;
@@ -309,6 +311,7 @@ namespace Blwp
         {
             _cloudAt = at;
             _cloud = 0f;
+            _saidHeat = -99f;
 
             // THE MESH IF THERE IS ONE. The primitives - a cylinder, a sphere
             // and a flatter sphere - were always a stand-in, and they read as
@@ -319,8 +322,17 @@ namespace Blwp
                 if (_mushroom == null)
                 {
                     _mushroom = Dress(_mushroomModel, StemHigh, Vector3.zero);
-                    foreach (var mr in _mushroom.GetComponentsInChildren<MeshRenderer>())
+                    _mushroomSkins = _mushroom.GetComponentsInChildren<MeshRenderer>();
+                    foreach (var mr in _mushroomSkins)
+                    {
                         mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+                        // The keyword, once, on this instance's own materials.
+                        // Without it a URP material ignores _EmissionColor
+                        // entirely - measured earlier in this build, where three
+                        // identical cubes were parked over the start bay and
+                        // only the emissive one drew at all.
+                        foreach (var m in mr.materials) m.EnableKeyword("_EMISSION");
+                    }
                     _mushroomFull = _mushroom.localScale;
                 }
                 _mushroom.gameObject.SetActive(true);
@@ -361,6 +373,19 @@ namespace Blwp
             foreach (var t in new[] { _stem, _cap, _skirt }) t.gameObject.SetActive(true);
         }
 
+        /// <summary>
+        /// White, then orange, then ash. The colour IS the clock, and it is one
+        /// function so the mesh and the primitive fallback cannot drift apart.
+        /// </summary>
+        static void Heat(float t, out Color body, out Color glow)
+        {
+            float heat = Mathf.Exp(-1.5f * t);
+            glow = Color.Lerp(new Color(0.28f, 0.26f, 0.24f),
+                              new Color(1f, 0.62f, 0.22f), heat) * (0.25f + 1.9f * heat);
+            body = Color.Lerp(new Color(0.34f, 0.32f, 0.30f),
+                              new Color(1f, 0.85f, 0.6f), heat);
+        }
+
         void Column(float dt)
         {
             if (_cloud < 0f) return;
@@ -383,6 +408,30 @@ namespace Blwp
                 float f = Mathf.Clamp01((Gone - _cloud) / (Gone - Rise));
                 _mushroom.localScale = _mushroomFull * (g * Mathf.Max(0.05f, f));
                 _mushroom.position = _cloudAt;
+
+                // THE HEAT, on the mesh. The primitives cooled white through
+                // orange to ash across the eight seconds and the mesh wore one
+                // colour for its whole life, which is a fireball that never
+                // goes out. Same curve, same clock - the colour IS the clock -
+                // driven through a property block so the streamed materials
+                // are not written to.
+                Heat(_cloud, out var meshBody, out var meshGlow);
+                if (_mushroomSkins != null)
+                    foreach (var mr in _mushroomSkins)
+                    {
+                        if (mr == null) continue;
+                        mr.GetPropertyBlock(_block);
+                        _block.SetColor("_BaseColor", meshBody);
+                        _block.SetColor("_EmissionColor", meshGlow);
+                        mr.SetPropertyBlock(_block);
+                    }
+                if (_cloud - _saidHeat > 2.5f)
+                {
+                    _saidHeat = _cloud;
+                    Debug.Log($"[cloud] t={_cloud:F1}s body "
+                              + $"{meshBody.r:F2},{meshBody.g:F2},{meshBody.b:F2} glow "
+                              + $"{meshGlow.r:F2},{meshGlow.g:F2},{meshGlow.b:F2}");
+                }
                 return;
             }
 
@@ -405,12 +454,7 @@ namespace Blwp
             _skirt.localScale = new Vector3(skirt, skirt * 0.22f, skirt);
             _skirt.position = _cloudAt + Vector3.up * (skirt * 0.08f);
 
-            // White, then orange, then ash. The colour IS the clock.
-            float heat = Mathf.Exp(-1.5f * _cloud);
-            var glow = Color.Lerp(new Color(0.28f, 0.26f, 0.24f),
-                                  new Color(1f, 0.62f, 0.22f), heat) * (0.25f + 1.9f * heat);
-            var body = Color.Lerp(new Color(0.34f, 0.32f, 0.30f),
-                                  new Color(1f, 0.85f, 0.6f), heat);
+            Heat(_cloud, out var body, out var glow);
             foreach (var t in new[] { _stem, _cap, _skirt })
             {
                 var mr = t.GetComponent<MeshRenderer>();
