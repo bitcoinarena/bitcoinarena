@@ -118,8 +118,27 @@ public class CameraFeelTests
             "die Erschuetterung klingt nicht ab - das liest sich als Kamerafehler");
     }
 
+    /// <summary>
+    /// THE HORIZON STAYS LEVEL WHILE STEERING.
+    ///
+    /// This test used to require the opposite - a lean of at least 1.2 degrees
+    /// into the corner - and the camera obliged with 5.4 degrees, measured on a
+    /// slalom in a real player. The requirement was reversed on 2026-09-05:
+    /// on a phone the tilted horizon is what takes the road away from the
+    /// driver, and the core has nothing to tilt with. Its truck is thirteen
+    /// integer words - x, z, heading, vx, vz, angular velocity, hp, cargo,
+    /// flags, wheel, throttle, steer, impact - and not one of them is a roll,
+    /// a bank or a pitch. The lean was a renderer flourish with no pose behind
+    /// it, so it is gone rather than tuned.
+    ///
+    /// The bound is 0.5 degrees, not "anything under twenty". The change
+    /// measured 0.0000009 degrees, so half a degree is room for arithmetic
+    /// noise and nothing else. An IMPACT may still roll the frame - that is
+    /// deliberate and it decays in a third of a second - so this drives on
+    /// open ground and asserts across the steering window only.
+    /// </summary>
     [UnityTest]
-    public IEnumerator TheCameraLeansIntoACorner()
+    public IEnumerator TheHorizonStaysLevelInACorner()
     {
         _truck.useExternalInput = true;
         _truck.externalThrottle = 1f;
@@ -127,27 +146,26 @@ public class CameraFeelTests
 
         var body = _truck.GetComponent<Rigidbody>();
         Assert.Greater(body.linearVelocity.magnitude, 6f,
-            "der Truck faehrt nicht - ohne Fahrt gibt es keine Kurvenlast zu messen");
+            "der Truck faehrt nicht - ohne Fahrt gibt es keine Kurve zu messen");
 
         float straight = _chase.transform.eulerAngles.z;
         _truck.externalSteer = 1f;
 
-        // The WORST lean over the corner, not a single reading at the end. The
-        // lean is eased in and the truck scrubs speed at full lock, so by the
-        // time the window closes it is already coming back - which is how this
-        // read 0.03 degrees while the camera was visibly leaning 6.
-        float lean = 0f;
+        // The WORST reading over the corner, not one at the end: the old lean
+        // was eased in and already coming back by the time the window closed,
+        // which is how an earlier cut of this read 0.03 degrees while the
+        // camera was visibly over at 6.
+        float roll = 0f;
         for (float t = 0f; t < 1.5f; t += 0.1f)
         {
             yield return new WaitForSeconds(0.1f);
-            lean = Mathf.Max(lean,
+            roll = Mathf.Max(roll,
                 Mathf.Abs(Mathf.DeltaAngle(straight, _chase.transform.eulerAngles.z)));
         }
         _truck.useExternalInput = false;
 
-        Assert.Greater(lean, 1.2f,
-            $"die Kamera legt sich mit {lean:0.0}° kaum in die Kurve");
-        Assert.Less(lean, 20f, "die Kamera kippt weg");
+        Assert.Less(roll, 0.5f,
+            $"die Kamera kippt den Horizont mit {roll:0.00}° in der Kurve");
     }
 
     [UnityTest]

@@ -56,9 +56,6 @@ public class ChaseCamera : MonoBehaviour
              "same as standing still.")]
     public float fovAtSpeed = 20f;
 
-    [Tooltip("How far the camera leans into a corner, in degrees.")]
-    public float leanDegrees = 6f;
-
     [Tooltip("How hard the camera is thrown by an impact.")]
     public float shakeScale = 1f;
     public float yawDamp = 2.8f;
@@ -149,7 +146,6 @@ public class ChaseCamera : MonoBehaviour
     public bool Flying => _flyLeft > 0f;
 
     float _shake;
-    float _lean;
     float _lastHeading;
     Camera _cam;
 
@@ -346,29 +342,29 @@ public class ChaseCamera : MonoBehaviour
         }
         transform.position = _pos;
 
-        // Lean into the corner, off the CORNERING LOAD - yaw rate times speed,
-        // which is the sideways acceleration the driver is actually feeling.
+        // NO LEAN. The horizon does not roll while steering.
         //
-        // Taking the sideways velocity instead, as this first did, measures
-        // how much the truck is sliding: a vehicle with grip barely slides at
-        // all, so a hard corner produced 0.7 degrees of lean and the camera sat
-        // there flat while the truck heeled over on its springs.
-        // Measured off the target's own heading rather than off a rigidbody:
-        // one less thing that can be unset, and it reads 0.3 degrees instead
-        // of 6 when it is.
-        float heading = target.eulerAngles.y;
-        float yawRate = Time.deltaTime > 0f
-            ? Mathf.DeltaAngle(_lastHeading, heading) * Mathf.Deg2Rad / Time.deltaTime : 0f;
-        _lastHeading = heading;
-        float forwardSpeed = Vector3.Dot(v, target.forward);
-        float corneringG = yawRate * forwardSpeed;              // m/s^2, signed
-        float wantedLean = Mathf.Clamp(corneringG / 7f, -1f, 1f) * leanDegrees;
-        _lean = Mathf.Lerp(_lean, wantedLean, 1f - Mathf.Exp(-3.5f * Time.deltaTime));
+        // It used to: the cornering load - yaw rate times forward speed - was
+        // clamped and multiplied by `leanDegrees` and fed straight into the
+        // camera's Z rotation, and it reached 5.4 degrees in a measured
+        // slalom. Nothing was wrong with the arithmetic and nothing came from
+        // PhysX: the yaw rate is read off the target's own heading and the
+        // speed off the core's velocity. It was simply the wrong thing to draw
+        // - a driver turning the wheel wants the road to stay level and to see
+        // where he is going, and a tilted horizon takes both away on a small
+        // screen. So the number is no longer computed and no longer applied.
+        //
+        // `_lastHeading` is still kept: the fly-in path sets it, and a future
+        // reading of the yaw rate should not start from a stale one.
+        _lastHeading = target.eulerAngles.y;
 
         // look down the road ahead, not at the tailgate
         Vector3 look = target.position + target.forward * (lookAhead * (0.4f + speed01)) + Vector3.up * 1.2f;
+        // The only thing left that can tilt the frame is an IMPACT, and that
+        // is meant to be felt: it decays in a third of a second and it is not
+        // steering.
         transform.rotation = Quaternion.LookRotation(look - _pos, Vector3.up)
-                           * Quaternion.Euler(0f, 0f, _lean + (_shake > 0.001f ? _shake * 2f : 0f));
+                           * Quaternion.Euler(0f, 0f, _shake > 0.001f ? _shake * 2f : 0f);
 
         // THE MEASUREMENT for the driving view, and it only ever prints a new
         // worst case. A per-frame line would drown the console; what this
@@ -381,7 +377,8 @@ public class ChaseCamera : MonoBehaviour
                                       Vector3.ProjectOnPlane(target.forward, Vector3.up));
         float roll = Mathf.DeltaAngle(0f, transform.eulerAngles.z);
         float slip = v.magnitude > 1f
-            ? Mathf.Abs(Mathf.DeltaAngle(Mathf.Atan2(v.x, v.z) * Mathf.Rad2Deg, heading)) : 0f;
+            ? Mathf.Abs(Mathf.DeltaAngle(Mathf.Atan2(v.x, v.z) * Mathf.Rad2Deg,
+                                         target.eulerAngles.y)) : 0f;
         if (offNose > _worstOffNose + 1f || Mathf.Abs(roll) > _worstRoll + 1f)
         {
             _worstOffNose = Mathf.Max(_worstOffNose, offNose);
