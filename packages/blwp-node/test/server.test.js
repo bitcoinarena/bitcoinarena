@@ -6,6 +6,7 @@ import { openStore } from '../src/store.js';
 import { serve } from '../src/server.js';
 import { encodeRoundContract, roundId, encodeEntryContract, entryId } from '../../protocol/src/contracts.js';
 import { encodeInputBatch, batchId } from '../../protocol/src/batch.js';
+import { encodeCheckpoint, decodeCheckpoint, checkpointId, NO_PREVIOUS } from '../../protocol/src/checkpoint.js';
 import { GENESIS, decodeTranscript, checkTranscript, transcriptHash } from '../../protocol/src/transcript.js';
 import { toHex } from '../../protocol/src/hash.js';
 
@@ -111,4 +112,78 @@ test('an entry for a round the node has not got is refused with a reason', async
     assert.equal(r.status, 400);
     assert.match(await r.text(), /no such round/);
   } finally { await node.close(); }
+});
+
+test('checkpoints cross the wire, and the refusals cross it too', async () => {
+  // THE SEAM. `Round.checkpoint` was covered and the wire was not: the type
+  // dispatch on /play and the GET both went untested, which is exactly where
+  // an object that works can still fail to arrive.
+  const node = await serve(openStore(), { port: 0 });
+  try {
+    const c = contract();
+    const rid = (await post(node.port, '/round', encodeRoundContract(c))).bytes;
+    const e = entryFor(rid);
+    const eid = (await post(node.port, '/entry', encodeEntryContract(e))).bytes;
+
+    const sock = await talk(node.port);
+
+    // real inputs first, because a mark names the batch that produced it
+    const b = {
+      roundId: rid, entryId: eid, previousHash: GENESIS, firstTick: 0,
+      ticks: Array.from({ length: 200 }, (_, i) => [65536, i, 0, 0, 0]),
+      liquidations: [],
+    };
+    assert.equal(await sock.say(encodeInputBatch(b)), '200', 'the batch landed');
+    const inputs = batchId(b);
+
+    const mark = (tick, state, previousHash) => ({
+      roundId: rid, entryId: eid, tick,
+      stateHash: b32(state), inputChainHash: inputs, previousHash,
+    });
+
+    // ONE SOCKET, TWO KINDS: the first byte is the protocol's type, so a
+    // checkpoint needs no second connection and no envelope.
+    const first = mark(60, 0x5a, NO_PREVIOUS);
+    assert.equal(await sock.say(encodeCheckpoint(first)), 'stored');
+    assert.equal(await sock.say(encodeCheckpoint(first)), 'repeat');
+
+    const second = mark(120, 0x5b, checkpointId(first));
+    assert.equal(await sock.say(encodeCheckpoint(second)), 'stored');
+
+    // equivocation, over the wire
+    const twin = mark(120, 0x5c, checkpointId(first));
+    const refused = await sock.say(encodeCheckpoint(twin));
+    assert.match(refused, /^error equivocation at tick 120/);
+    assert.ok(refused.includes(toHex(checkpointId(second))), 'the stored id crosses the wire too');
+
+    // and the backwards tick
+    const backwards = mark(90, 0x5d, checkpointId(second));
+    assert.match(await sock.say(encodeCheckpoint(backwards)),
+      /^error expected a tick after 120, got 90/);
+
+    // and inputs the node never saw
+    const invented = { ...mark(180, 0x5e, checkpointId(second)), inputChainHash: b32(0xee) };
+    assert.match(await sock.say(encodeCheckpoint(invented)),
+      /names inputs this node has not seen/);
+
+    sock.shut();
+
+    // GET /checkpoints: the two that were accepted, in tick order, as
+    // fixed-size records back to back.
+    const got = await fetch(
+      `http://127.0.0.1:${node.port}/checkpoints?round=${toHex(rid)}&entry=${toHex(eid)}`);
+    assert.equal(got.status, 200);
+    assert.equal(got.headers.get('x-checkpoints'), '2',
+      'only the two that were accepted - none of the three refusals stored a byte');
+    const body = new Uint8Array(await got.arrayBuffer());
+    const size = body.length / 2;
+    assert.deepEqual(
+      [decodeCheckpoint(body.slice(0, size)), decodeCheckpoint(body.slice(size))]
+        .map((m) => m.tick),
+      [60, 120]);
+    assert.equal(toHex(decodeCheckpoint(body.slice(0, size)).stateHash), toHex(b32(0x5a)),
+      'the bytes that come back are the bytes that went in');
+  } finally {
+    await node.close();
+  }
 });

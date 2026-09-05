@@ -192,10 +192,44 @@ export class Round {
     // THE CHAIN, the same rule the batches follow. A `previousHash` nothing
     // ever compares is decoration: it would let a checkpoint be re-parented
     // onto a different history and still be accepted. The first one of a
-    // round chains to thirty-two zero bytes.
+    // round chains to thirty-two zero bytes. Naming anything that is not the
+    // current head - including a parent the node has never stored - is
+    // refused here, because only the head can be named.
     const head = this.checkpointHead(c.roundId, c.entryId);
-    if (!same(c.previousHash, head))
+    if (!same(c.previousHash, head.id))
       throw new Error('the checkpoint does not follow the chain head');
+
+    // AND TIME RUNS ONE WAY. Naming the right parent is not enough: a mark at
+    // tick 30 that chains onto the mark at tick 60 passed every check above
+    // and was stored, and `GET /checkpoints` then handed back [30, 60] - the
+    // chain saying one order and the ticks another. That is the re-parenting
+    // defect `previousHash` exists to prevent, on the time axis instead of the
+    // history axis, so it is refused the same way and with the same shape of
+    // message the batch path uses.
+    if (head.tick !== null && c.tick <= head.tick)
+      throw new Error(`expected a tick after ${head.tick}, got ${c.tick}`);
+
+    // AND THE INPUTS MUST BE ONES THIS NODE HAS. `inputChainHash` says which
+    // inputs claim to have produced that state; unchecked it is the same
+    // decoration `previousHash` would have been, and a checkpoint could name
+    // a transcript nobody has.
+    //
+    // WHAT THIS DOES NOT CHECK, and cannot: that those inputs actually
+    // produce that state. That needs a replayer, and nothing in this package
+    // imports the core. The node checks it KNOWS the inputs named; proving
+    // they lead there is verification, and it has its own stage.
+    //
+    // The head at the moment of arrival is not demanded. A client may take a
+    // mark at tick 60 and send the batch covering 0..119 afterwards, which is
+    // a legitimate order over one socket, so what is required is that the
+    // named batch is one the node holds for this entry - or the genesis, for
+    // a mark taken before any batch was sent.
+    if (!same(c.inputChainHash, GENESIS)) {
+      const known = this.db.prepare(
+        'SELECT 1 k FROM batches WHERE round_id = ? AND entry_id = ? AND batch_id = ?')
+        .get(c.roundId, c.entryId, c.inputChainHash);
+      if (!known) throw new Error('the checkpoint names inputs this node has not seen');
+    }
 
     this.db.prepare(
       'INSERT INTO checkpoints (round_id, entry_id, tick, checkpoint_id, bytes, received_ms) '
@@ -204,13 +238,21 @@ export class Round {
     return 'stored';
   }
 
-  /** The id of the last checkpoint in the chain, or the genesis if there is none. */
+  /**
+   * The last checkpoint in the chain: its id and its tick.
+   *
+   * The tick comes back with it because both are needed to accept the next
+   * one - the id says which history it belongs to, the tick says it comes
+   * after. `null` means there is none yet, and the id is then the genesis.
+   */
   checkpointHead(roundIdBytes, entryIdBytes) {
     const row = this.db.prepare(
-      'SELECT checkpoint_id FROM checkpoints WHERE round_id = ? AND entry_id = ? '
+      'SELECT checkpoint_id, tick FROM checkpoints WHERE round_id = ? AND entry_id = ? '
       + 'ORDER BY tick DESC LIMIT 1')
       .get(roundIdBytes, entryIdBytes);
-    return row ? new Uint8Array(row.checkpoint_id) : NO_PREVIOUS;
+    return row
+      ? { id: new Uint8Array(row.checkpoint_id), tick: row.tick }
+      : { id: NO_PREVIOUS, tick: null };
   }
 
   /**
