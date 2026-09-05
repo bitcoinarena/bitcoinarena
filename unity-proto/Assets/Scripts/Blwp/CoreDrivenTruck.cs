@@ -81,6 +81,8 @@ namespace Blwp
         Quaternion[] _wheelBase;    // resting orientation, relative to the truck
         bool[] _wheelSteers;
         float _wheelRadius = 0.55f;
+        Vector3[] _wheelHub = new Vector3[0];   // pivot -> mesh centre, in the wheel's frame
+        float[] _wheelR = new float[0];         // the mesh's own radius, in world metres
 
         // How far the body's origin sits above the ground, measured off the
         // wheels rather than assumed.
@@ -195,14 +197,57 @@ namespace Blwp
             _wheelMount = mount.ToArray();
             _wheelBase = basis.ToArray();
 
+            // THE WHEEL'S OWN SIZE AND ITS OWN CENTRE.
+            //
+            // A wheel was seated one COLLIDER radius above the ground - 0.550 m
+            // - while the streamed mesh reaches 0.728 m from its pivot. The
+            // difference is 0.178 m and that is exactly how far the tyre was
+            // measured inside the road, standing still, with the core and the
+            // drawn terrain agreeing to a millimetre and no crater lag at all.
+            //
+            // It varies with angle, from 0.523 m to 0.728 m, because the mesh's
+            // bounds are not centred on the pivot: the wheel turns about a
+            // point that is not its middle, so it swings through the ground.
+            // Both are fixed by the same two numbers, taken from the renderer
+            // rather than from a collider that describes something else.
+            _wheelHub = new Vector3[t.Count];
+            _wheelR = new float[t.Count];
+            for (int i = 0; i < t.Count; i++)
+            {
+                var r = t[i].GetComponentInChildren<Renderer>();
+                if (r == null) { _wheelR[i] = _wheelRadius; continue; }
+                var lb = r.localBounds;
+                Vector3 world = r.transform.TransformPoint(lb.center) - t[i].position;
+                _wheelHub[i] = Quaternion.Inverse(t[i].rotation) * world;
+                float ry = r.transform.TransformVector(new Vector3(0f, lb.extents.y, 0f)).magnitude;
+                float rz = r.transform.TransformVector(new Vector3(0f, 0f, lb.extents.z)).magnitude;
+                _wheelR[i] = Mathf.Max(ry, rz);
+            }
+
             if (_wheelMount.Length > 0)
             {
                 float meanY = 0f;
                 foreach (var m in _wheelMount) meanY += m.y;
                 meanY /= _wheelMount.Length;
-                _bodyAboveGround = _wheelRadius - meanY;
+                // the body rides on the same radius the wheels do
+                float mean = 0f;
+                foreach (var r in _wheelR) mean += r;
+                if (_wheelR.Length > 0) mean /= _wheelR.Length; else mean = _wheelRadius;
+                _bodyAboveGround = mean - meanY;
             }
         }
+
+        /// <summary>
+        /// The radius the wheels are SEATED on, and the meshes being seated.
+        ///
+        /// Read-only, and here so the seating can be measured rather than
+        /// looked at: a wheel is placed one radius above the ground, so if the
+        /// radius is not the mesh's own the mesh sinks or floats by exactly
+        /// the difference and nothing in the game says so.
+        /// </summary>
+        public float WheelRadius => _wheelRadius;
+        public System.Collections.Generic.IReadOnlyList<Transform> Wheels => _wheels;
+        public float BodyAboveGround => _bodyAboveGround;
 
         /// <summary>True when the axles no longer point at the wheels we hold.</summary>
         bool WheelsWentStale()
@@ -237,6 +282,8 @@ namespace Blwp
         /// every wheel rolls at the speed the core reports. Purely visual, so
         /// the spin may use frame time - nothing here is read back.
         /// </summary>
+        float _nextSeatingSay;
+
         void PoseWheels()
         {
             // Bootstrap swaps the placeholder truck for the streamed model
@@ -244,7 +291,7 @@ namespace Blwp
             // the list collected once at startup goes stale. Cheap to notice,
             // and invisible if it is missed - the old wheels simply keep being
             // posed while the new ones sit wherever they were instantiated.
-            if (WheelsWentStale()) CollectWheels();
+            if (WheelsWentStale()) { CollectWheels(); _nextSeatingSay = 0f; }
             if (_wheels == null || _wheels.Length == 0) return;
 
             float steer = BlwpCore.TruckSteerDegrees;
@@ -264,11 +311,83 @@ namespace Blwp
                 // the body's plane leaves one corner buried and the opposite
                 // one in the air the moment the truck is across a slope.
                 var at = transform.TransformPoint(_wheelMount[i]);
-                if (terrain != null) at.y = Ground(at.x, at.z) + _wheelRadius;
+                var spin = transform.rotation * turn * _wheelBase[i]
+                         * Quaternion.Euler(_spin, 0f, 0f);
 
-                _wheels[i].SetPositionAndRotation(at,
-                    transform.rotation * turn * _wheelBase[i] * Quaternion.Euler(_spin, 0f, 0f));
+                // The MESH's centre goes one MESH radius above the ground, and
+                // the pivot is placed wherever that requires. Seating the pivot
+                // instead put the tyre 0.178 m into the road.
+                float radius = i < _wheelR.Length ? _wheelR[i] : _wheelRadius;
+                Vector3 hub = i < _wheelHub.Length ? spin * _wheelHub[i] : Vector3.zero;
+                if (terrain != null) at.y = Ground(at.x, at.z) + radius;
+                _wheels[i].SetPositionAndRotation(at - hub, spin);
+
+                // WHERE THE WHEEL ACTUALLY ENDED UP, once per set of wheels.
+                // A wheel is seated one `_wheelRadius` above the ground, and
+                // that radius comes off a WheelCollider - so if the streamed
+                // mesh is a different size the mesh sinks or floats by exactly
+                // the difference, and nothing in the game says so because the
+                // body is seated off the same number and looks right. The
+                // editor cannot see this: the wheels are streamed, so they
+                // only exist in a player.
+                if (Time.time > _nextSeatingSay && i == 0)
+                {
+                    var rs = _wheels[i].GetComponentsInChildren<Renderer>();
+                    if (rs.Length > 0)
+                    {
+                        var b = rs[0].bounds;
+                        for (int k = 1; k < rs.Length; k++) b.Encapsulate(rs[k].bounds);
+                        float g = Ground(at.x, at.z);
+                        // FOUR ANSWERS FOR ONE PLACE. The wheels float 2 cm
+                        // over `Ground`, so if they still look buried then
+                        // what is DRAWN under them is not what they stand on.
+                        // These are the candidates: the core's surface, the
+                        // terrain mesh's own idea of it, and the road deck on
+                        // top. Whichever disagrees is the one in the picture.
+                        // THE MESH'S OWN BOX, not its world one. `bounds` is
+                        // axis-aligned in WORLD space, so a rotated wheel
+                        // reports a bigger box without a vertex having moved.
+                        // `localBounds` cannot change with rotation at all, and
+                        // unlike `mesh.vertices` it does not need Read/Write on
+                        // the import - measured: the vertex scan came back as
+                        // float.MaxValue in a player, because the streamed model
+                        // is not readable at runtime.
+                        var lb = rs[0].localBounds;
+                        var e = lb.extents;
+                        string axle = e.x <= e.y && e.x <= e.z ? "X"
+                                    : e.y <= e.z ? "Y" : "Z";
+                        float localR = Mathf.Max(e.x, Mathf.Max(e.y, e.z));
+
+                        float core = BlwpCore.HasSurface
+                            ? BlwpCore.SurfaceAt(at.x, at.z) : float.NaN;
+                        float drawn = terrain != null
+                            ? terrain.SampleSurface(at.x, at.z) : float.NaN;
+                        float deck = roads != null ? roads.Lift(at.x, at.z) : 0f;
+                        float wear = roads != null ? roads.WearAt(at.x, at.z) : 0f;
+                        Debug.Log($"[wheel] {_wheels[i].name}: visual radius "
+                                  + $"{b.extents.y:F3} m, seated on {(i < _wheelR.Length ? _wheelR[i] : _wheelRadius):F3} m, "
+                                  + $"bottom {b.min.y:F3}, ground {g:F3}, "
+                                  + $"sunk {g - b.min.y:F3} m | core {core:F3}, "
+                                  + $"terrain {drawn:F3}, deck lift {deck:F3}, "
+                                  + $"ribbon wear {wear:F3}, core-terrain {core - drawn:F3}, "
+                                  + $"lane {(roads != null && roads.Model != null && roads.Model.LaneAt(at.x, at.z, 8.6f).HasValue ? roads.Model.LaneAt(at.x, at.z, 8.6f).Value.ToString() : "none")} "
+                                  + $"| local extents {e.x:F3},{e.y:F3},{e.z:F3} "
+                                  + $"-> axle {axle}, local radius {localR:F3}, "
+                                  + $"moving {BlwpCore.TruckSpeed:F1} m/s "
+                                  // THE TWO CRATER COUNTS. `restart` carries
+                                  // craters into the next round one round
+                                  // older, and the mesh reveals one only after
+                                  // `craterRevealDelay`. If the core is holding
+                                  // more holes than the terrain has drawn, the
+                                  // truck is standing in one that is not there
+                                  // to look at - which is the shape of "after
+                                  // round one or two, in the depot".
+                                  + $"| craters core {BlwpCore.CraterCount}, "
+                                  + $"drawn {(terrain != null ? terrain.DrawnCraters.Count : -1)}");
+                    }
+                }
             }
+            if (Time.time > _nextSeatingSay) _nextSeatingSay = Time.time + 2f;
         }
 
         /// <summary>

@@ -91,6 +91,23 @@ public class RoadNetwork : MonoBehaviour
         return lift * Mathf.Clamp01(t);
     }
 
+    /// <summary>
+    /// How far the DRAWN ribbon is lowered here by wear, in metres.
+    ///
+    /// The same expression the mesh builder uses, exposed as a point query so
+    /// the drawn deck and the seated deck can be compared at one place. They
+    /// are not the same today: `SurfaceHeight` gives the truck `lift` in full,
+    /// and the ribbon draws itself at `lift - wear`. Whether that is the gap
+    /// in the photograph is a measurement, not an argument.
+    /// </summary>
+    public float WearAt(float x, float z)
+    {
+        if (Model == null) return 0f;
+        var lane = Model.LaneAt(x, z, RoadModel.HalfWidth + Shoulder);
+        if (lane == null) return 0f;
+        return Model.SeverityAt(lane.Value, x) * Random01(x, lane.Value) * 0.9f * 0.55f;
+    }
+
     /// <summary>How far past the edge the deck height is blended out.</summary>
     public const float Shoulder = 2.6f;
 
