@@ -57,4 +57,37 @@ public class StrikeVoiceTests
         Assert.Greater(peak, 0.10f, "der Clip ist so gut wie still");
         Assert.Greater(rms, 0.01f, "der Clip ist so gut wie still");
     }
+
+    /// <summary>
+    /// A shot fired while the detonation is still playing must not bend it.
+    ///
+    /// `pitch` belongs to the AudioSource, not to the one-shot, and `Shot` sets
+    /// it before every PlayOneShot. The detonation runs for 4.5 s, so anything
+    /// else played on the same source during those seconds re-pitched a sound
+    /// that was already in the air - audible, and invisible to every test that
+    /// only checks the clip and the trigger. The strike has its own source now.
+    /// </summary>
+    [UnityTest]
+    public IEnumerator AShotDuringTheDetonationDoesNotBendIt()
+    {
+        var a = new GameObject("audio").AddComponent<GameAudio>();
+        yield return null;
+
+        a.Strike();
+        float before = a.StrikePitch;
+        Assert.AreNotEqual(0f, before, "die Schlagquelle fehlt");
+
+        // everything else that goes through the effects source, at pitches
+        // deliberately far from the strike's 0.94-1.02
+        a.Pickup(true);          // 1.25
+        a.Pickup(false);         // 0.85
+        a.Thud();                // 0.9 - 1.2
+        a.Delivered();           // 1.0
+        a.Explosion();           // 0.85 - 1.1
+        yield return null;
+
+        Debug.Log($"[voice] pitch vor {before:F3} nach {a.StrikePitch:F3}");
+        Assert.AreEqual(before, a.StrikePitch, 0.0001f,
+                        "ein anderer Effekt hat die laufende Detonation verstimmt");
+    }
 }

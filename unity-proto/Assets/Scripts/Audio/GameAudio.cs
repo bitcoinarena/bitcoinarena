@@ -34,7 +34,7 @@ public class GameAudio : MonoBehaviour
     /// </summary>
     public AudioClip StrikeClip => _detonation;
 
-    AudioSource _engine, _tyres, _shots, _war, _rotor;
+    AudioSource _engine, _tyres, _shots, _war, _rotor, _blast;
     AudioClip _impact, _explosion, _chime, _blip, _thud;
     AudioClip _cannon, _rifle, _ricochet, _boom, _detonation;
     Rigidbody _body;
@@ -58,6 +58,14 @@ public class GameAudio : MonoBehaviour
         // the truck's own impact - one source stealing from the other is what
         // makes a firefight sound thin.
         _war = Make("War", loop: false);
+
+        // The strike gets a source of its OWN, and it is not tidiness.
+        // `pitch` belongs to the AudioSource, not to the one-shot: `Shot` sets
+        // it before every PlayOneShot, so a rifle round or a kerb hit landing
+        // inside the detonation's 4.5 seconds re-pitched the detonation that
+        // was still playing. Nothing in a test could see that - the clip is
+        // right, the trigger is right, and the sound bends anyway.
+        _blast = Make("Blast", loop: false);
 
         _rotor = Make("Rotor", loop: true);
         _rotor.clip = RotorClip();
@@ -138,9 +146,33 @@ public class GameAudio : MonoBehaviour
     {
         if (clip == null || _shots == null) return;
         _shots.pitch = pitch;
-        _shots.PlayOneShot(clip, Mathf.Clamp01(volume * effectVolume));
+        float level = Mathf.Clamp01(volume * effectVolume);
+        _shots.PlayOneShot(clip, level);
         Fired++;
     }
+
+    /// <summary>
+    /// The strike, on its own source. Same recipe as `Shot`, and deliberately
+    /// not the same source: this one's pitch is set once per detonation and by
+    /// nothing else, so a shot fired during those 4.5 s cannot bend it.
+    /// </summary>
+    void Blast(AudioClip clip, float volume, float pitch)
+    {
+        if (clip == null || _blast == null) return;
+        _blast.pitch = pitch;
+        float level = Mathf.Clamp01(volume * effectVolume);
+        _blast.PlayOneShot(clip, level);
+        Fired++;
+        _detonationsPlayed++;
+        int sources = FindObjectsByType<AudioSource>(FindObjectsSortMode.None).Length;
+        Debug.Log($"[voice] PlayOneShot detonation #{_detonationsPlayed} " +
+                  $"level={level:F3} pitch={_blast.pitch:F3} sources={sources}");
+    }
+
+    /// <summary>The pitch the strike's own source is set to. Tests.</summary>
+    public float StrikePitch => _blast != null ? _blast.pitch : 0f;
+
+    int _detonationsPlayed;
 
     /// <summary>Metal on metal. Strength is roughly the impact speed.</summary>
     public void Impact(float strength) =>
@@ -358,7 +390,7 @@ public class GameAudio : MonoBehaviour
     /// </summary>
     public void Strike()
     {
-        Shot(_detonation, 1f, Random.Range(0.94f, 1.02f));
+        Blast(_detonation, 1f, Random.Range(0.94f, 1.02f));
         bool ear = FindFirstObjectByType<AudioListener>() != null;
         Debug.Log($"[voice] strike fired={Fired} clip={(_detonation != null)} " +
                   $"source={(_shots != null)} effectVolume={effectVolume:F2} listener={ear}");
