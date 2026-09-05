@@ -70,6 +70,12 @@ namespace Blwp
         int _seenStrikes = -1;
 
         Material _metal, _bombSkin, _glow;
+        // PROBE ONLY, uncommitted: keys 7 and 8 take the dust skirt and the
+        // contamination decals out of the frame independently, so the same
+        // strike can be photographed in all four combinations.
+        bool _showSkirt = true, _showRings = true, _freeze = false;
+        Renderer _skirtR;
+        Vector3 _skirtRestPos;
         readonly List<Transform> _glows = new List<Transform>();
         int _seenTerrain = -1;
         MaterialPropertyBlock _block;
@@ -110,6 +116,7 @@ namespace Blwp
             _glow.SetFloat("_Smoothness", 0.05f);
             _glow.EnableKeyword("_EMISSION");
             _glow.SetColor("_EmissionColor", new Color(0.10f, 0.34f, 0.09f));
+
         }
 
         /// <summary>
@@ -140,6 +147,23 @@ namespace Blwp
 
         void Update()
         {
+            if (Input.GetKeyDown(KeyCode.Alpha7))
+            {
+                _showSkirt = !_showSkirt;
+                Debug.Log($"[cloud] probe: skirt {_showSkirt}");
+            }
+            if (Input.GetKeyDown(KeyCode.Alpha8))
+            {
+                _showRings = !_showRings;
+                Debug.Log($"[cloud] probe: rings {_showRings}");
+            }
+            if (Input.GetKeyDown(KeyCode.Alpha9))
+            {
+                _freeze = !_freeze;
+                Debug.Log($"[cloud] probe: freeze {_freeze} at t={_cloud:F2}s");
+            }
+            if (_skirtR != null) _skirtR.enabled = _showSkirt;
+
             if (!BlwpCore.Available) return;
             Fly(Time.deltaTime);
             Column(Time.deltaTime);
@@ -283,6 +307,7 @@ namespace Blwp
         MeshRenderer[] _mushroomSkins;
         Transform _skirt3, _core3;
         Vector3 _skirtRest = Vector3.one, _coreRest = Vector3.one;
+        Color _dust = new Color(0.43f, 0.32f, 0.20f);
         float _saidHeat = -99f;
         Material _fire;
         float _cloud = -1f;
@@ -347,7 +372,63 @@ namespace Blwp
                     // curves, applied to the pieces that were already there.
                     _skirt3 = Find(_mushroom, "dust_skirt");
                     _core3 = Find(_mushroom, "fireball_core");
+                    // THE DUST IS NOT SMOKE, and it was being painted as if it
+                    // were. The GLB authors `dust_skirt` as a warm brown -
+                    // 0.434, 0.323, 0.202 - fully opaque, and the cooling drive
+                    // overwrote that with the cloud's ash grey. Same colour as
+                    // the column, and opaque over the grass, so from above the
+                    // ring merged into the mass instead of reading as dust on
+                    // the ground.
+                    //
+                    // Its own colour is kept, and the material is made
+                    // transparent so the ground shows through and the rim has
+                    // an edge. This is a runtime change to the instance's own
+                    // material - the asset on disk is untouched.
+                    if (_skirt3 != null)
+                    {
+                        var sr = _skirt3.GetComponent<Renderer>();
+                        _skirtR = sr;
+                        if (sr != null)
+                        {
+                            var m0 = sr.material;
+                            _dust = m0.HasProperty("_BaseColor")
+                                  ? m0.GetColor("_BaseColor") : new Color(0.43f, 0.32f, 0.20f);
+                            // WHETHER THE TRANSPARENCY WRITES BELOW CAN LAND
+                            // AT ALL. `_Surface` and `_ZWrite` are URP Lit's
+                            // property names; a Shader Graph only has the
+                            // properties its author exposed, and `SetFloat` on
+                            // a name a material does not carry is silently
+                            // ignored. So these two booleans say whether the
+                            // block under this is a fix or a no-op, and they
+                            // are printed rather than assumed.
+                            Debug.Log($"[cloud] dust material: shader {m0.shader.name}, "
+                                      + $"queue {m0.renderQueue}, colour "
+                                      + $"{_dust.r:F2},{_dust.g:F2},{_dust.b:F2},a{_dust.a:F2}, "
+                                      + $"_Surface {m0.HasProperty("_Surface")}, "
+                                      + $"_ZWrite {m0.HasProperty("_ZWrite")}");
+                            // THE MATERIAL IS THE ASSET'S OWN. Four recipes
+                            // were tried on this slot - a transparent blend,
+                            // an alpha cut, and Skin()'s plain opaque brown
+                            // that already draws the bomber and the fireball -
+                            // and every one of them photographed as nothing,
+                            // because the skirt was 23 m underground. None of
+                            // them was ever the hole, so none of them stays.
+                            // The GLB's own warm brown is what a dust skirt
+                            // should be, and it is left exactly as authored.
+                            Debug.Log($"[cloud] probe state: skirt {_showSkirt}, "
+                                      + $"rings {_showRings} over {_glows.Count} decal(s)");
+                        }
+                    }
                     _skirtRest = _skirt3 != null ? _skirt3.localScale : Vector3.one;
+                    _skirtRestPos = _skirt3 != null ? _skirt3.localPosition : Vector3.zero;
+                    // WHICH HIERARCHY THIS ACTUALLY IS. If the skirt were the
+                    // same transform as the column, the only way to raise it
+                    // would be to raise the whole cloud - and that would move
+                    // the stem and cap, which already draw correctly.
+                    if (_skirt3 != null)
+                        Debug.Log($"[cloud] skirt transform: own={(_skirt3 != _mushroom)} "
+                                  + $"parent={(_skirt3.parent != null ? _skirt3.parent.name : "none")} "
+                                  + $"localPos {_skirtRestPos.x:F2},{_skirtRestPos.y:F2},{_skirtRestPos.z:F2}");
                     _coreRest = _core3 != null ? _core3.localScale : Vector3.one;
                     Debug.Log($"[cloud] parts: skirt {(_skirt3 != null ? "yes" : "MISSING")}, "
                               + $"fireball {(_core3 != null ? "yes" : "MISSING")}, "
@@ -414,6 +495,8 @@ namespace Blwp
 
         void Column(float dt)
         {
+            if (_freeze) dt = 0f;   // probe: hold the picture still, uncommitted
+
             if (_cloud < 0f) return;
             _cloud += dt;
             if (_cloud > Gone)
@@ -459,6 +542,30 @@ namespace Blwp
                     _skirt3.localScale = new Vector3(_skirtRest.x * spread,
                                                      _skirtRest.y,
                                                      _skirtRest.z * spread);
+
+                    // AND IT SITS ON THE GROUND, which is the whole point of
+                    // a dust skirt and the reason it was never in a picture.
+                    //
+                    // The streamed model's origin is its CENTRE: measured at
+                    // dress time it runs y -27.5 .. +23.0 about that origin,
+                    // so placing the origin on the surface buries everything
+                    // below it. The stem and the cap are above and drew fine;
+                    // the skirt is the lowest part and sat 23 m under the
+                    // terrain - y -25.53 .. -21.05 against a ground of 1.86,
+                    // isVisible true and every fragment behind the hill.
+                    //
+                    // The lift is the mesh's own lowest vertex, not a chosen
+                    // number: reset to the authored local position, ask the
+                    // renderer where its bottom is now that it is scaled, and
+                    // raise it by exactly that gap. The skirt has its own
+                    // transform, so the stem and cap do not move.
+                    if (_skirtR != null)
+                    {
+                        _skirt3.localPosition = _skirtRestPos;
+                        var sb = _skirtR.bounds;
+                        _skirt3.position += Vector3.up
+                            * (Ground(sb.center.x, sb.center.z) - sb.min.y);
+                    }
                 }
 
                 // The fire goes out long before the smoke does, so the core
@@ -480,8 +587,22 @@ namespace Blwp
                         // ring reads as a second fireball.
                         bool dust = _skirt3 != null && mr.transform == _skirt3;
                         mr.GetPropertyBlock(_block);
-                        _block.SetColor("_BaseColor", meshBody);
-                        _block.SetColor("_EmissionColor", dust ? meshGlow * 0.35f : meshGlow);
+                        if (dust)
+                        {
+                            // DUST IS NOT SMOKE. The cooling curve drives the
+                            // column from a white flash down to ash grey, and
+                            // it was being written over the skirt as well, so
+                            // the ground dust wore the same colour as the mass
+                            // above it. It keeps the warm brown the asset
+                            // ships with instead.
+                            mr.SetPropertyBlock(null);
+                            continue;
+                        }
+                        else
+                        {
+                            _block.SetColor("_BaseColor", meshBody);
+                            _block.SetColor("_EmissionColor", meshGlow);
+                        }
                         mr.SetPropertyBlock(_block);
                     }
                 if (_cloud - _saidHeat > 1.2f)
@@ -492,16 +613,60 @@ namespace Blwp
                     // shrinks is the thing worth reading, and a photograph of
                     // a two-second event keeps missing it.
                     string ring = "none";
+                    // AND WHETHER IT IS ON SCREEN AT ALL. A skirt 48 m wide
+                    // that photographs as nothing has two possible causes -
+                    // it is drawn and invisible, or it is not drawn - and the
+                    // renderer answers which. The rect is in pixels from the
+                    // bottom left of the camera that is actually rendering.
+                    string seen = "no camera";
                     if (_skirt3 != null)
                     {
                         var sr = _skirt3.GetComponent<Renderer>();
                         if (sr != null)
+                        {
                             ring = $"{sr.bounds.size.x:F1} x {sr.bounds.size.z:F1} m";
+                            // NOT `Camera.main` alone - it returned null in
+                            // the player, because the camera that renders this
+                            // build is not tagged MainCamera. Whatever is
+                            // enabled and rendering is the camera the picture
+                            // came out of.
+                            var cam = Camera.main;
+                            if (cam == null)
+                                foreach (var c in Camera.allCameras)
+                                    if (c != null && c.isActiveAndEnabled) { cam = c; break; }
+                            if (cam != null)
+                            {
+                                var b = sr.bounds;
+                                float x0 = float.MaxValue, y0 = float.MaxValue;
+                                float x1 = float.MinValue, y1 = float.MinValue;
+                                for (int i = 0; i < 8; i++)
+                                {
+                                    var corner = b.center + Vector3.Scale(b.extents,
+                                        new Vector3((i & 1) == 0 ? -1 : 1,
+                                                    (i & 2) == 0 ? -1 : 1,
+                                                    (i & 4) == 0 ? -1 : 1));
+                                    var sp = cam.WorldToScreenPoint(corner);
+                                    x0 = Mathf.Min(x0, sp.x); x1 = Mathf.Max(x1, sp.x);
+                                    y0 = Mathf.Min(y0, sp.y); y1 = Mathf.Max(y1, sp.y);
+                                }
+                                seen = $"visible {sr.isVisible}, rect {x0:F0},{y0:F0} "
+                                     + $"{(x1 - x0):F0}x{(y1 - y0):F0} px of "
+                                     + $"{Screen.width}x{Screen.height}, "
+                                     // WHERE IT IS IN THE WORLD, at the frame
+                                     // that is photographed rather than at
+                                     // dress time. A disc that is drawing but
+                                     // sits under the terrain photographs
+                                     // exactly like one that never rasterizes.
+                                     + $"y {b.min.y:F2}..{b.max.y:F2} ground "
+                                     + $"{Ground(b.center.x, b.center.z):F2} at "
+                                     + $"{b.center.x:F1},{b.center.z:F1}";
+                            }
+                        }
                     }
                     Debug.Log($"[cloud] t={_cloud:F1}s body "
                               + $"{meshBody.r:F2},{meshBody.g:F2},{meshBody.b:F2} glow "
                               + $"{meshGlow.r:F2},{meshGlow.g:F2},{meshGlow.b:F2}, "
-                              + $"skirt {ring}");
+                              + $"skirt {ring}, {seen}");
                 }
                 return;
             }
@@ -563,6 +728,7 @@ namespace Blwp
             {
                 if (!_glows[i].gameObject.activeSelf) continue;
                 var mr = _glows[i].GetComponent<MeshRenderer>();
+                mr.enabled = _showRings;     // probe flag, uncommitted
                 mr.GetPropertyBlock(_block);
                 _block.SetColor("_EmissionColor", new Color(0.10f, 0.34f, 0.09f) * pulse);
                 mr.SetPropertyBlock(_block);
