@@ -10,6 +10,7 @@
 // something is the checkpoints in step 3.
 import {
   encodeRoundContract, roundId, encodeEntryContract, entryId, decodeEntryContract,
+  decodeRoundContract,
 } from '../../protocol/src/contracts.js';
 import { decodeInputBatch, batchTicks, batchId } from '../../protocol/src/batch.js';
 import { encodeTranscript, transcriptHash, checkTranscript, GENESIS } from '../../protocol/src/transcript.js';
@@ -95,6 +96,16 @@ export class Round {
     const head = this.head(b.roundId, b.entryId);
     if (!seen && !same(b.previousHash, head))
       throw new Error('the batch does not follow the chain head');
+
+    // AND IT MUST NOT BE LONGER THAN THE ROUND. `blockTicks` is a field of
+    // the contract this node already stores, so the ceiling comes from the
+    // round the player signed up to rather than from a number invented here.
+    // The transport already refuses a frame that could not decode at all;
+    // this refuses one that decodes and still could not be honest.
+    const blockTicks = decodeRoundContract(new Uint8Array(round.contract)).blockTicks;
+    if (b.ticks.length > blockTicks)
+      throw new Error(
+        `a batch carries at most the round's ${blockTicks} ticks, got ${b.ticks.length}`);
 
     // AND IT MUST NOT LEAVE A HOLE. The chain fixes the order of the batches;
     // this fixes the order of the ticks inside them, and it belongs HERE

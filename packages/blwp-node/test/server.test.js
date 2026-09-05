@@ -3,9 +3,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { openStore } from '../src/store.js';
-import { serve } from '../src/server.js';
+import { serve, MAX_FRAME_BYTES } from '../src/server.js';
 import { encodeRoundContract, roundId, encodeEntryContract, entryId } from '../../protocol/src/contracts.js';
-import { encodeInputBatch, batchId } from '../../protocol/src/batch.js';
+import { encodeInputBatch, batchId, MAX_INPUT_BATCH_BYTES } from '../../protocol/src/batch.js';
 import {
   encodeCheckpoint, decodeCheckpoint, checkpointId, NO_PREVIOUS,
   joinSigned, splitSigned, SIGNED_CHECKPOINT_BYTES, CHECKPOINT_BYTES,
@@ -212,6 +212,57 @@ test('checkpoints cross the wire, and the refusals cross it too', async () => {
       'the bytes that come back are the bytes that went in');
     assert.ok(ed25519.verify(marks[0].signature, checkpointId(first), sessionPubkey),
       'and the signature that comes back still verifies');
+  } finally {
+    await node.close();
+  }
+});
+
+test('the socket refuses a frame no protocol message could be', async () => {
+  // `ws` defaults to a hundred megabytes: a stranger could ask this daemon to
+  // allocate that before a byte was parsed. The cap is the longest message
+  // the protocol can encode - 1835087, the encoder's own u16 ceilings - so
+  // nothing legitimate is refused and nothing larger is read.
+  const node = await serve(openStore(), { port: 0 });
+  try {
+    assert.equal(MAX_FRAME_BYTES, MAX_INPUT_BATCH_BYTES);
+    assert.equal(MAX_FRAME_BYTES, 1835087);
+
+    const closed = await new Promise((resolve) => {
+      const sock = new WebSocket(`ws://127.0.0.1:${node.port}/play`);
+      sock.binaryType = 'arraybuffer';
+      sock.addEventListener('close', (e) => resolve({ code: e.code, reason: e.reason }));
+      sock.addEventListener('open', () => sock.send(new Uint8Array(MAX_FRAME_BYTES + 1)));
+    });
+    assert.equal(closed.code, 1009, 'the close code for a message too big');
+  } finally {
+    await node.close();
+  }
+});
+
+test('a batch longer than the round it belongs to is refused by name', async () => {
+  // The transport refuses what cannot decode; this refuses what decodes and
+  // still could not be honest. The ceiling is `blockTicks` off the contract
+  // the node already stores, so it is the round's own number.
+  const node = await serve(openStore(), { port: 0 });
+  try {
+    const c = contract();
+    const rid = (await post(node.port, '/round', encodeRoundContract(c))).bytes;
+    const eid = (await post(node.port, '/entry', encodeEntryContract(entryFor(rid)))).bytes;
+    const sock = await talk(node.port);
+
+    const tooLong = {
+      roundId: rid, entryId: eid, previousHash: GENESIS, firstTick: 0,
+      ticks: Array.from({ length: c.blockTicks + 1 }, (_, i) => [65536, i, 0, 0, 0]),
+      liquidations: [],
+    };
+    assert.match(await sock.say(encodeInputBatch(tooLong)),
+      new RegExp(`a batch carries at most the round's ${c.blockTicks} ticks, got ${c.blockTicks + 1}`));
+
+    // and the round is untouched by the refusal
+    const got = await fetch(
+      `http://127.0.0.1:${node.port}/transcript?round=${toHex(rid)}&entry=${toHex(eid)}`);
+    assert.equal(got.headers.get('x-ticks'), '0');
+    sock.shut();
   } finally {
     await node.close();
   }

@@ -80,6 +80,28 @@ export function decodeInputBatch(bytes) {
 
 export const batchId = (b) => taggedHash(TAG.inputBatch, encodeInputBatch(b));
 
+/**
+ * The most ticks a batch CAN carry, and it is not a policy: `Writer.vec`
+ * writes a u16 length, so a batch with more than this cannot be encoded and a
+ * frame claiming more cannot be decoded. The same ceiling holds the
+ * liquidations.
+ */
+export const MAX_BATCH_TICKS = 0xffff;
+
+/** Header, then five signed words a tick and eight bytes a liquidation. */
+const BATCH_HEADER_BYTES = 1 + 2 + 32 + 32 + 32 + 4;
+
+/**
+ * The largest batch that can decode at all: header, the tick vector at its
+ * ceiling, the liquidation vector at its ceiling. Measured against the
+ * encoder rather than reasoned about - a test builds one and compares.
+ *
+ * This is what a transport can refuse without inspecting: anything longer is
+ * not a short protocol message, it is not a protocol message.
+ */
+export const MAX_INPUT_BATCH_BYTES =
+  BATCH_HEADER_BYTES + 2 + MAX_BATCH_TICKS * 20 + 2 + MAX_BATCH_TICKS * 8;
+
 /** The absolute tick numbers a batch covers, in order. */
 export const batchTicks = (b) =>
   Array.from({ length: b.ticks.length }, (_, i) => b.firstTick + i);

@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { toHex } from '../src/hash.js';
-import { encodeInputBatch, decodeInputBatch, batchId, batchTicks, INPUT_WORDS } from '../src/batch.js';
+import { encodeInputBatch, decodeInputBatch, batchId, batchTicks, INPUT_WORDS, MAX_BATCH_TICKS, MAX_INPUT_BATCH_BYTES } from '../src/batch.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const sample = () => ({
@@ -71,4 +71,29 @@ test('the chain field is carried, and changes the id', () => {
   assert.notEqual(toHex(batchId(a)), toHex(batchId(b)),
     'two batches with the same inputs but different histories are different batches');
   assert.deepEqual(decodeInputBatch(encodeInputBatch(b)).previousHash, b.previousHash);
+});
+
+test('the ceiling the encoder sets is the one the transport is built on', () => {
+  // Built, not reasoned about: the largest batch that can encode at all, so a
+  // frame longer than this is not a protocol message and can be refused
+  // without being parsed.
+  const b = {
+    roundId: b32(7), entryId: b32(9), previousHash: new Uint8Array(32), firstTick: 0,
+    ticks: Array.from({ length: MAX_BATCH_TICKS }, () => [65536, 0, 0, 0, 0]),
+    liquidations: Array.from({ length: MAX_BATCH_TICKS }, (_, i) => [i, 1]),
+  };
+  assert.equal(encodeInputBatch(b).length, MAX_INPUT_BATCH_BYTES);
+  assert.equal(MAX_INPUT_BATCH_BYTES, 1835087);
+});
+
+test('a tick costs twenty bytes and a liquidation eight', () => {
+  const at = (n, l) => encodeInputBatch({
+    roundId: b32(7), entryId: b32(9), previousHash: new Uint8Array(32), firstTick: 0,
+    ticks: Array.from({ length: n }, () => [65536, 0, 0, 0, 0]),
+    liquidations: Array.from({ length: l }, (_, i) => [i, 1]),
+  }).length;
+  assert.equal(at(0, 0), 107, 'the header');
+  assert.equal(at(1, 0) - at(0, 0), 20);
+  assert.equal(at(0, 1) - at(0, 0), 8);
+  assert.equal(at(6, 0), 227, 'six ticks is one send at the spec\'s 10 Hz');
 });

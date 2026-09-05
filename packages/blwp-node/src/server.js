@@ -19,6 +19,28 @@ import { WebSocketServer } from 'ws';
 import { decodeRoundContract, decodeEntryContract } from '../../protocol/src/contracts.js';
 import { toHex } from '../../protocol/src/hash.js';
 import { TYPE_CHECKPOINT } from '../../protocol/src/constants.js';
+import { MAX_INPUT_BATCH_BYTES } from '../../protocol/src/batch.js';
+import { SIGNED_CHECKPOINT_BYTES } from '../../protocol/src/checkpoint.js';
+import { SIGNED_RECEIPT_BYTES } from '../../protocol/src/receipt.js';
+
+/**
+ * The largest frame this socket will accept, and it is derived rather than
+ * chosen: it is the longest message the protocol can encode at all. A batch's
+ * tick and liquidation vectors carry u16 lengths, so 1835087 bytes is the
+ * ceiling the encoder itself sets; a signed checkpoint is 231 and a signed
+ * receipt 139. Anything longer is not a large protocol message, it is not one.
+ *
+ * `ws` defaults to 104857600 - a hundred megabytes any stranger could ask the
+ * daemon to allocate before a single byte was parsed. This is fifty-seven
+ * times smaller and needs no policy number to justify.
+ *
+ * It is NOT tight. An honest client at the spec's 10 Hz sends six ticks, 227
+ * bytes; a whole 9000-tick round is 180107. Tightening it further means
+ * naming a maximum ticks per batch, which is a protocol-visible limit and a
+ * decision rather than a measurement, so it is not made here.
+ */
+export const MAX_FRAME_BYTES = Math.max(
+  MAX_INPUT_BATCH_BYTES, SIGNED_CHECKPOINT_BYTES, SIGNED_RECEIPT_BYTES);
 import { Round } from './round.js';
 
 const read = (req) => new Promise((resolve, reject) => {
@@ -92,8 +114,23 @@ export function serve(db, { port = 0 } = {}) {
   // Batches in, and one word back: how many ticks were new. A repeat answers
   // `0` rather than an error, because re-sending is the right thing for a
   // client that never learned whether the first one landed.
-  const wss = new WebSocketServer({ server: http, path: '/play' });
+  const wss = new WebSocketServer({
+    server: http,
+    path: '/play',
+    maxPayload: MAX_FRAME_BYTES,
+  });
   wss.on('connection', (sock) => {
+    // A FRAME OVER THE CAP IS AN ERROR EVENT, not a message, and an
+    // unhandled one takes the process down - measured: sending
+    // MAX_FRAME_BYTES + 1 threw `RangeError: Max payload size exceeded` out
+    // of the receiver with nothing listening. `ws` has already closed the
+    // connection with 1009 by then; what this adds is that the daemon
+    // survives it and says which connection it was.
+    sock.on('error', (e) => {
+      console.error(`[play] connection dropped: ${e.message}`);
+      if (sock.readyState === sock.OPEN) sock.close(1009, 'frame too large');
+    });
+
     sock.on('message', (data, isBinary) => {
       try {
         if (!isBinary) {
