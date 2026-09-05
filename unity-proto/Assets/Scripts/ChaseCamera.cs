@@ -121,6 +121,8 @@ public class ChaseCamera : MonoBehaviour
     float _worstOffNose, _worstRoll;
     Vector3 _downAt;
     bool _pointerDown, _onPad;
+    float _releasedAt = -1f, _releasedYaw;
+    bool _reported = true;
     float _dragIdle;
     bool _dragging;
     Vector3 _lastPointer;
@@ -203,6 +205,16 @@ public class ChaseCamera : MonoBehaviour
         }
         else if (!held)
         {
+            if (_pointerDown && !_dragging)
+                Debug.Log($"[look] tap over {(at - _downAt).magnitude:F1} px, "
+                          + $"view unmoved at {_orbitYaw:F3} deg");
+            if (_dragging)
+            {
+                _releasedAt = Time.unscaledTime;
+                _releasedYaw = _orbitYaw;
+                _reported = false;
+                Debug.Log($"[look] released at {_orbitYaw:F1} deg");
+            }
             _pointerDown = false;
             _dragging = false;
         }
@@ -212,6 +224,8 @@ public class ChaseCamera : MonoBehaviour
             && (at - _downAt).magnitude > DeadZonePixels)
         {
             _dragging = true;
+            Debug.Log($"[look] drag begins after {(at - _downAt).magnitude:F1} px "
+                      + $"(dead zone {DeadZonePixels:F1} px of {Screen.width})");
             // From exactly one dead zone along the way, not from wherever the
             // pointer happens to be on the frame it crossed. Measured: with
             // `_lastPointer = at` a drag that covered a quarter of the screen
@@ -240,6 +254,14 @@ public class ChaseCamera : MonoBehaviour
             float k = 1f - Mathf.Exp(-recentreRate * Time.unscaledDeltaTime);
             _orbitYaw = Mathf.Lerp(_orbitYaw, 0f, k);
             _orbitPitch = Mathf.Lerp(_orbitPitch, 0f, k);
+
+            // once, when it has actually come back
+            if (!_reported && Mathf.Abs(_orbitYaw) < 0.5f && _releasedAt > 0f)
+            {
+                _reported = true;
+                Debug.Log($"[look] back under 0.5 deg from {_releasedYaw:F1}, "
+                          + $"{Time.unscaledTime - _releasedAt:F2} s after release");
+            }
         }
     }
 
