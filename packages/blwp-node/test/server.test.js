@@ -6,7 +6,11 @@ import { openStore } from '../src/store.js';
 import { serve } from '../src/server.js';
 import { encodeRoundContract, roundId, encodeEntryContract, entryId } from '../../protocol/src/contracts.js';
 import { encodeInputBatch, batchId } from '../../protocol/src/batch.js';
-import { encodeCheckpoint, decodeCheckpoint, checkpointId, NO_PREVIOUS } from '../../protocol/src/checkpoint.js';
+import {
+  encodeCheckpoint, decodeCheckpoint, checkpointId, NO_PREVIOUS,
+  joinSigned, splitSigned, SIGNED_CHECKPOINT_BYTES, CHECKPOINT_BYTES,
+} from '../../protocol/src/checkpoint.js';
+import { ed25519 } from '@noble/curves/ed25519.js';
 import { GENESIS, decodeTranscript, checkTranscript, transcriptHash } from '../../protocol/src/transcript.js';
 import { toHex } from '../../protocol/src/hash.js';
 
@@ -19,10 +23,16 @@ const contract = () => ({
   timeFloor: 30, timeCeil: 150, minScore: 1, rankNumerator: 3, rankDenominator: 4,
   nodes: [b32(4)],
 });
+const session = ed25519.utils.randomSecretKey();
+const sessionPubkey = ed25519.getPublicKey(session);
 const entryFor = (rid) => ({
-  roundId: rid, playerPubkey: b32(5), sessionPubkey: b32(6),
+  roundId: rid, playerPubkey: b32(5), sessionPubkey,
   stakeCommitment: b32(7), stakeMsat: 100000n, feeMsat: 1000n, donationMsat: 0n, joinTick: 0,
 });
+
+/** What a client puts on the wire: the encoding, then the signature over its id. */
+const sign = (c, key = session) =>
+  joinSigned(encodeCheckpoint(c), ed25519.sign(checkpointId(c), key));
 
 const post = async (port, path, body) => {
   const r = await fetch(`http://127.0.0.1:${port}${path}`, { method: 'POST', body });
@@ -144,27 +154,44 @@ test('checkpoints cross the wire, and the refusals cross it too', async () => {
     // ONE SOCKET, TWO KINDS: the first byte is the protocol's type, so a
     // checkpoint needs no second connection and no envelope.
     const first = mark(60, 0x5a, NO_PREVIOUS);
-    assert.equal(await sock.say(encodeCheckpoint(first)), 'stored');
-    assert.equal(await sock.say(encodeCheckpoint(first)), 'repeat');
+    assert.equal(await sock.say(sign(first)), 'stored');
+    assert.equal(await sock.say(sign(first)), 'repeat');
 
     const second = mark(120, 0x5b, checkpointId(first));
-    assert.equal(await sock.say(encodeCheckpoint(second)), 'stored');
+    assert.equal(await sock.say(sign(second)), 'stored');
 
     // equivocation, over the wire
     const twin = mark(120, 0x5c, checkpointId(first));
-    const refused = await sock.say(encodeCheckpoint(twin));
+    const refused = await sock.say(sign(twin));
     assert.match(refused, /^error equivocation at tick 120/);
     assert.ok(refused.includes(toHex(checkpointId(second))), 'the stored id crosses the wire too');
 
     // and the backwards tick
     const backwards = mark(90, 0x5d, checkpointId(second));
-    assert.match(await sock.say(encodeCheckpoint(backwards)),
+    assert.match(await sock.say(sign(backwards)),
       /^error expected a tick after 120, got 90/);
 
     // and inputs the node never saw
     const invented = { ...mark(180, 0x5e, checkpointId(second)), inputChainHash: b32(0xee) };
-    assert.match(await sock.say(encodeCheckpoint(invented)),
+    assert.match(await sock.say(sign(invented)),
       /names inputs this node has not seen/);
+
+    // AND THE SIGNATURE, on the same seam. An unsigned mark has no shorter
+    // form to send, a stranger's key does not verify, and a body changed
+    // after signing does not either.
+    const third = mark(180, 0x5f, checkpointId(second));
+    assert.match(await sock.say(encodeCheckpoint(third)),
+      new RegExp(`a signed checkpoint is ${SIGNED_CHECKPOINT_BYTES} bytes, got ${CHECKPOINT_BYTES}`));
+
+    const stranger = ed25519.utils.randomSecretKey();
+    assert.match(await sock.say(sign(third, stranger)),
+      /does not verify under the entry's session key/);
+
+    const tampered = joinSigned(
+      encodeCheckpoint({ ...third, stateHash: b32(0x60) }),
+      sign(third).slice(CHECKPOINT_BYTES));
+    assert.match(await sock.say(tampered),
+      /does not verify under the entry's session key/);
 
     sock.shut();
 
@@ -174,15 +201,17 @@ test('checkpoints cross the wire, and the refusals cross it too', async () => {
       `http://127.0.0.1:${node.port}/checkpoints?round=${toHex(rid)}&entry=${toHex(eid)}`);
     assert.equal(got.status, 200);
     assert.equal(got.headers.get('x-checkpoints'), '2',
-      'only the two that were accepted - none of the three refusals stored a byte');
+      'only the two that were accepted - none of the six refusals stored a byte');
     const body = new Uint8Array(await got.arrayBuffer());
-    const size = body.length / 2;
-    assert.deepEqual(
-      [decodeCheckpoint(body.slice(0, size)), decodeCheckpoint(body.slice(size))]
-        .map((m) => m.tick),
-      [60, 120]);
-    assert.equal(toHex(decodeCheckpoint(body.slice(0, size)).stateHash), toHex(b32(0x5a)),
+    assert.equal(body.length, 2 * SIGNED_CHECKPOINT_BYTES,
+      'the wrapper crosses the read as well: 231 bytes a mark');
+    const size = SIGNED_CHECKPOINT_BYTES;
+    const marks = [splitSigned(body.slice(0, size)), splitSigned(body.slice(size))];
+    assert.deepEqual(marks.map((m) => decodeCheckpoint(m.body).tick), [60, 120]);
+    assert.equal(toHex(decodeCheckpoint(marks[0].body).stateHash), toHex(b32(0x5a)),
       'the bytes that come back are the bytes that went in');
+    assert.ok(ed25519.verify(marks[0].signature, checkpointId(first), sessionPubkey),
+      'and the signature that comes back still verifies');
   } finally {
     await node.close();
   }

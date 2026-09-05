@@ -12,6 +12,7 @@
   "previousHash 32"
  ],
  "bytesOnTheWire": 167,
+ "bytesSigned": 231,
  "first": {
   "hex": "05000107070707070707070707070707070707070707070707070707070707070707070909090909090909090909090909090909090909090909090909090909090909000002585a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c0000000000000000000000000000000000000000000000000000000000000000",
   "checkpointId": "6dceb224f3163d36780c839bed82db40dec92cdc310d2ae6028a7dfb1ad32dff"
@@ -29,6 +30,8 @@
   "Nothing here is variable-length, so every checkpoint is the same size on the wire.",
   "The first checkpoint of a round chains to thirty-two zero bytes, as an input batch does.",
   "The entry id names the player: it is the hash of the contract that carries the key.",
-  "There is no signature in this version. It proves storage and equivocation, not that the player committed at that time."
+  "The signature sits BESIDE the object, as a 64-byte suffix, so the id is the same whether or not the mark is signed and previousHash never has to move.",
+  "What is signed is the checkpointId - the tagged hash - and not the raw encoding, so a signature cannot be replayed over another object with the same bytes.",
+  "The player signs with the session key; the verifier is sessionPubkey on the Entry Contract. The curve is ed25519 and the verifying lives in the node, not here."
  ]
 }

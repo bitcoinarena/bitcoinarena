@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import { toHex } from '../src/hash.js';
 import {
   encodeCheckpoint, decodeCheckpoint, checkpointId, NO_PREVIOUS,
+  splitSigned, joinSigned, CHECKPOINT_BYTES, SIGNATURE_BYTES, SIGNED_CHECKPOINT_BYTES,
 } from '../src/checkpoint.js';
 import { TYPE_CHECKPOINT, TYPE_INPUT_BATCH } from '../src/constants.js';
 
@@ -68,4 +69,34 @@ test('trailing bytes are refused rather than ignored', () => {
   const longer = new Uint8Array(bytes.length + 1);
   longer.set(bytes);
   assert.throws(() => decodeCheckpoint(longer), /trailing bytes/);
+});
+
+/* ------------------------------------------------- the signature's wrapper */
+
+test('the encoder agrees with the length the wire is built on', () => {
+  assert.equal(encodeCheckpoint(sample()).length, CHECKPOINT_BYTES);
+  assert.equal(CHECKPOINT_BYTES, 167);
+  assert.equal(SIGNED_CHECKPOINT_BYTES, 231);
+});
+
+test('the signature is beside the object, so the id does not move when it is signed', () => {
+  const c = sample();
+  const before = toHex(checkpointId(c));
+  const wire = joinSigned(encodeCheckpoint(c), new Uint8Array(SIGNATURE_BYTES).fill(9));
+  assert.equal(toHex(checkpointId(decodeCheckpoint(splitSigned(wire).body))), before,
+    'previousHash names the same id whether the mark is signed or not');
+});
+
+test('a record of the wrong length is refused rather than mis-cut', () => {
+  const c = encodeCheckpoint(sample());
+  assert.throws(() => splitSigned(c), /a signed checkpoint is 231 bytes, got 167/);
+  assert.throws(() => joinSigned(c, new Uint8Array(10)), /a signature is 64 bytes, got 10/);
+});
+
+test('the halves come back exactly as they went in', () => {
+  const sig = new Uint8Array(SIGNATURE_BYTES).map((_, i) => i);
+  const wire = joinSigned(encodeCheckpoint(sample()), sig);
+  const { body, signature } = splitSigned(wire);
+  assert.equal(toHex(body), toHex(encodeCheckpoint(sample())));
+  assert.equal(toHex(signature), toHex(sig));
 });

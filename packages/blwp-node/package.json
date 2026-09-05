@@ -9,6 +9,7 @@
     "start": "node src/main.js"
   },
   "dependencies": {
+    "@noble/curves": "^2.4.0",
     "ws": "^8.21.3"
   }
 }

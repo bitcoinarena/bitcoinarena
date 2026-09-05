@@ -13,7 +13,7 @@ import { buildCensus, leafHash, encodeEntry } from '../src/census.js';
 import { selectCommittee, ticketFor, weightOf } from '../src/sortition.js';
 import { computePayoutTable, rankWeights, DELIVERED, FAILED, FORFEIT, VOID } from '../src/payout.js';
 import { encodeRoundContract, roundId, encodeEntryContract, entryId } from '../src/contracts.js';
-import { encodeCheckpoint, checkpointId, NO_PREVIOUS } from '../src/checkpoint.js';
+import { encodeCheckpoint, checkpointId, NO_PREVIOUS, CHECKPOINT_BYTES, SIGNED_CHECKPOINT_BYTES } from '../src/checkpoint.js';
 
 const DIR = new URL('../../../test-vectors/protocol/', import.meta.url).pathname;
 mkdirSync(DIR, { recursive: true });
@@ -169,6 +169,7 @@ out.tagged = {
     fields: ['type u8', 'version u16', 'roundId 32', 'entryId 32', 'tick u32',
              'stateHash 32', 'inputChainHash 32', 'previousHash 32'],
     bytesOnTheWire: encodeCheckpoint(first).length,
+    bytesSigned: SIGNED_CHECKPOINT_BYTES,
     first: { hex: toHex(encodeCheckpoint(first)), checkpointId: toHex(checkpointId(first)) },
     second: { hex: toHex(encodeCheckpoint(second)), checkpointId: toHex(checkpointId(second)) },
     equivocation: {
@@ -180,7 +181,9 @@ out.tagged = {
       'Nothing here is variable-length, so every checkpoint is the same size on the wire.',
       'The first checkpoint of a round chains to thirty-two zero bytes, as an input batch does.',
       'The entry id names the player: it is the hash of the contract that carries the key.',
-      'There is no signature in this version. It proves storage and equivocation, not that the player committed at that time.',
+      'The signature sits BESIDE the object, as a 64-byte suffix, so the id is the same whether or not the mark is signed and previousHash never has to move.',
+      'What is signed is the checkpointId - the tagged hash - and not the raw encoding, so a signature cannot be replayed over another object with the same bytes.',
+      'The player signs with the session key; the verifier is sessionPubkey on the Entry Contract. The curve is ed25519 and the verifying lives in the node, not here.',
     ],
   };
 }

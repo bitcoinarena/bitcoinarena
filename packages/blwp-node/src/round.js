@@ -13,7 +13,10 @@ import {
 } from '../../protocol/src/contracts.js';
 import { decodeInputBatch, batchTicks, batchId } from '../../protocol/src/batch.js';
 import { encodeTranscript, transcriptHash, checkTranscript, GENESIS } from '../../protocol/src/transcript.js';
-import { decodeCheckpoint, checkpointId, NO_PREVIOUS } from '../../protocol/src/checkpoint.js';
+import {
+  decodeCheckpoint, checkpointId, NO_PREVIOUS, splitSigned,
+} from '../../protocol/src/checkpoint.js';
+import { ed25519 } from '@noble/curves/ed25519.js';
 import { toHex } from '../../protocol/src/hash.js';
 import { OPEN, CLOSED } from './store.js';
 
@@ -170,15 +173,40 @@ export class Round {
    * would be a second simulator, and then two of them could disagree.
    */
   checkpoint(bytes) {
-    const c = decodeCheckpoint(bytes);
+    // The wire record is the checkpoint and then the 64 bytes that sign its
+    // id. A message of any other length is refused before anything is parsed,
+    // which is also what refuses an unsigned mark: there is no shorter form
+    // that means "no signature", so it cannot be omitted by accident.
+    const { body, signature } = splitSigned(bytes);
+    const c = decodeCheckpoint(body);
     const round = this.get(c.roundId);
     if (!round) throw new Error('no such round');
     if (round.state !== OPEN) throw new Error('the round is closed');
-    const entry = this.db.prepare('SELECT round_id FROM entries WHERE entry_id = ?').get(c.entryId);
+    const entry = this.db.prepare('SELECT round_id, contract FROM entries WHERE entry_id = ?')
+      .get(c.entryId);
     if (!entry) throw new Error('no such entry');
     if (!same(new Uint8Array(entry.round_id), c.roundId)) throw new Error('entry is not in this round');
 
     const id = checkpointId(c);
+
+    // THE SIGNATURE, over the tagged id and under the SESSION key.
+    //
+    // The key is not sent with the mark and is not trusted from it: it is read
+    // off the Entry Contract this node already stores, which the player's
+    // long-term key certified when they joined. A mark that carried its own
+    // key would prove only that whoever wrote it owned some key.
+    //
+    // The tagged id is signed rather than the raw encoding, so a signature
+    // here cannot be replayed as a signature over a different object that
+    // encodes to the same bytes.
+    //
+    // Checked BEFORE the chain and the tick, so an unsigned or forged mark
+    // never reaches a rule that could store it, and the refusal names the
+    // signature rather than whatever it collided with.
+    const sessionPubkey = decodeEntryContract(new Uint8Array(entry.contract)).sessionPubkey;
+    let ok = false;
+    try { ok = ed25519.verify(signature, id, sessionPubkey); } catch { ok = false; }
+    if (!ok) throw new Error('the signature does not verify under the entry\'s session key');
     const at = this.db.prepare(
       'SELECT checkpoint_id FROM checkpoints WHERE round_id = ? AND entry_id = ? AND tick = ?')
       .get(c.roundId, c.entryId, c.tick);
@@ -258,9 +286,10 @@ export class Round {
   /**
    * Every checkpoint for an entry, in tick order, as the bytes that arrived.
    *
-   * Concatenated and nothing else: a checkpoint carries no variable-length
+   * Concatenated and nothing else: a signed mark carries no variable-length
    * field, so the stream is self-delimiting and a reader can cut it into
-   * fixed-size records without a framing convention to agree on first.
+   * fixed-size records - 167 bytes of checkpoint and 64 of signature - without
+   * a framing convention to agree on first.
    */
   checkpoints(roundIdBytes, entryIdBytes) {
     const rows = this.db.prepare(

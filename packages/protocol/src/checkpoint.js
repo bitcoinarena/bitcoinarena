@@ -19,11 +19,28 @@
 // instead of two that could disagree, and it is the key the node already
 // stores rounds, ticks and batches under.
 //
-// NO SIGNATURE HERE. Section 10 also has `session_signature`, and without it
-// this object proves storage and equivocation but NOT that the player
-// committed to the state at that time. That claim needs the session key and
-// the node's `CheckpointReceipt` beside it, and it is its own slice. A field
-// left empty now would only look like the claim was made.
+// THE SIGNATURE SITS BESIDE IT, NOT INSIDE IT. Section 10 lists
+// `session_signature` as a field of the checkpoint; carrying it that way
+// would put it inside `checkpointId`, and then the id of a mark would change
+// the moment it was signed - so `previousHash` would have to name the signed
+// id and the chain would shift underneath. Beside it, the id is the same
+// whether or not the mark is signed, the chain rule stands, and the record
+// stays fixed-size.
+//
+// What is signed is the tagged id, not the raw encoding: every other object
+// in this protocol is committed to through its tagged hash, and keeping that
+// means a checkpoint signature can never be replayed as a signature over
+// some other object that happens to encode to the same bytes.
+//
+// The player signs, with the SESSION key - ephemeral, one per run, certified
+// by the entry key inside the Entry Contract, so the long-term key is used
+// once per entry and never per checkpoint. The verifier is `sessionPubkey`,
+// already a field of that contract.
+//
+// The algorithm and the verifying live in the node. This package stays free
+// of crypto dependencies for the same reason `hash.js` takes sha256 from the
+// core rather than a library: a thing that pins money should not gain a
+// dependency whose version could change its answer.
 //
 // The state hash comes from the CLIENT. `packages/core`'s `hash(st)` produces
 // it, and nothing in the node's `src/` imports the core - the node stores
@@ -80,3 +97,44 @@ export function decodeCheckpoint(bytes) {
 }
 
 export const checkpointId = (c) => taggedHash(TAG.checkpoint, encodeCheckpoint(c));
+
+/**
+ * The encoded checkpoint's length: 1 type, 2 version, 4 tick, five 32-byte
+ * fields. Nothing here is variable-length, which is what lets a stream of
+ * them be cut apart without a framing convention. A test asserts the encoder
+ * agrees with this number rather than trusting the arithmetic.
+ */
+export const CHECKPOINT_BYTES = 1 + 2 + 32 + 32 + 4 + 32 + 32 + 32;
+
+/** An ed25519 signature. The length is the wire's business, the curve is not. */
+export const SIGNATURE_BYTES = 64;
+
+/** A signed mark on the wire: the checkpoint, then its signature. */
+export const SIGNED_CHECKPOINT_BYTES = CHECKPOINT_BYTES + SIGNATURE_BYTES;
+
+/**
+ * Split a wire record into the part that is hashed and the part that signs it.
+ *
+ * The signature is deliberately NOT decoded here - this package does not know
+ * what curve it is - only separated, so the node can hand the two halves to a
+ * verifier and this one can go on knowing nothing about keys.
+ */
+export function splitSigned(bytes) {
+  if (bytes.length !== SIGNED_CHECKPOINT_BYTES)
+    throw new Error(
+      `a signed checkpoint is ${SIGNED_CHECKPOINT_BYTES} bytes, got ${bytes.length}`);
+  return {
+    body: bytes.subarray(0, CHECKPOINT_BYTES),
+    signature: bytes.subarray(CHECKPOINT_BYTES),
+  };
+}
+
+/** The wire record: the encoding followed by the 64 bytes that sign its id. */
+export function joinSigned(bytes, signature) {
+  if (signature.length !== SIGNATURE_BYTES)
+    throw new Error(`a signature is ${SIGNATURE_BYTES} bytes, got ${signature.length}`);
+  const out = new Uint8Array(SIGNED_CHECKPOINT_BYTES);
+  out.set(bytes, 0);
+  out.set(signature, CHECKPOINT_BYTES);
+  return out;
+}
