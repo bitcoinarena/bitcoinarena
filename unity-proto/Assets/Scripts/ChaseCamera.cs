@@ -116,6 +116,7 @@ public class ChaseCamera : MonoBehaviour
 
     // Where the player has dragged the view to, relative to the automatic one.
     float _orbitYaw, _orbitPitch;
+    float _worstOffNose, _worstRoll;
     float _dragIdle;
     bool _dragging;
     Vector3 _lastPointer;
@@ -355,6 +356,27 @@ public class ChaseCamera : MonoBehaviour
         Vector3 look = target.position + target.forward * (lookAhead * (0.4f + speed01)) + Vector3.up * 1.2f;
         transform.rotation = Quaternion.LookRotation(look - _pos, Vector3.up)
                            * Quaternion.Euler(0f, 0f, _lean + (_shake > 0.001f ? _shake * 2f : 0f));
+
+        // THE MEASUREMENT for the driving view, and it only ever prints a new
+        // worst case. A per-frame line would drown the console; what this
+        // letter needs is the extremes: how far the camera is looking away
+        // from the truck's nose, and how far the horizon has rolled. The slip
+        // angle is printed beside them because it is the suspected cause -
+        // the camera settles behind the velocity vector, and in a corner that
+        // is where the truck is sliding, not where it points.
+        float offNose = Vector3.Angle(Vector3.ProjectOnPlane(transform.forward, Vector3.up),
+                                      Vector3.ProjectOnPlane(target.forward, Vector3.up));
+        float roll = Mathf.DeltaAngle(0f, transform.eulerAngles.z);
+        float slip = v.magnitude > 1f
+            ? Mathf.Abs(Mathf.DeltaAngle(Mathf.Atan2(v.x, v.z) * Mathf.Rad2Deg, heading)) : 0f;
+        if (offNose > _worstOffNose + 1f || Mathf.Abs(roll) > _worstRoll + 1f)
+        {
+            _worstOffNose = Mathf.Max(_worstOffNose, offNose);
+            _worstRoll = Mathf.Max(_worstRoll, Mathf.Abs(roll));
+            Debug.Log($"[cam] off-nose {offNose:F1} deg (worst {_worstOffNose:F1}), " +
+                      $"roll {roll:F1} (worst {_worstRoll:F1}), slip {slip:F1}, " +
+                      $"speed {v.magnitude:F1}");
+        }
 
         // The lens opens up as it goes. This is most of the difference between
         // a truck that is moving and a truck that feels fast.
