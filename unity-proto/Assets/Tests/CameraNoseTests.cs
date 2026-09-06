@@ -80,6 +80,23 @@ public class CameraNoseTests
         return vp.z <= 0f ? -1f : vp.x;
     }
 
+    /// <summary>
+    /// The same point UP the frame: 0 is the bottom edge, 1 the top.
+    ///
+    /// Recorded because the horizontal place alone cannot see the one thing
+    /// the strike tilt could plausibly break - pitching the view up pushes
+    /// the road DOWN the picture, and a road that leaves under the bottom
+    /// edge is as gone as one that leaves at the side.
+    /// </summary>
+    float NoseUpScreen()
+    {
+        var cam = _chase.GetComponent<Camera>();
+        var ahead = _truck.transform.position + _truck.transform.forward * 20f
+                  + Vector3.up * 1.2f;
+        var vp = cam.WorldToViewportPoint(ahead);
+        return vp.z <= 0f ? -1f : vp.y;
+    }
+
     GameObject _boot;
     TruckController _truck;
     ChaseCamera _chase;
@@ -428,6 +445,8 @@ public class CameraNoseTests
 
         float worstPitch = 0f, worstPitchStep = 0f, worstYawStep = 0f, worstNose = 0f;
         float worstRoadLeft = 1f, worstRoadRight = 0f, worstPitchRate = 0f;
+        float roadLowest = 1f, roadHighest = 0f;
+        int frames = 0, offTheBottom = 0;
         float lastPitch = Pitch(), lastYaw = _chase.transform.eulerAngles.y;
         // SECONDS, NOT FRAMES. The first cut ran 300 frames, and headless
         // batchmode renders them as fast as it can: the whole loop was under a
@@ -465,6 +484,11 @@ public class CameraNoseTests
             float rx = NoseOnScreen();
             worstRoadLeft = Mathf.Min(worstRoadLeft, rx);
             worstRoadRight = Mathf.Max(worstRoadRight, rx);
+            float ry = NoseUpScreen();
+            frames++;
+            if (ry < 0f) offTheBottom++;
+            roadLowest = Mathf.Min(roadLowest, ry);
+            roadHighest = Mathf.Max(roadHighest, ry);
             lastPitch = p; lastYaw = y;
         }
         Debug.Log($"[a14] strike: cap stood {stood} frames, view pitch up to {worstPitch:F1} deg "
@@ -472,7 +496,10 @@ public class CameraNoseTests
                   + $"{worstPitchStep:F2} deg/frame ({worstPitchRate:F1} deg/s), worst yaw "
                   + $"step {worstYawStep:F2} deg/frame, "
                   + $"worst off-nose {worstNose:F1} deg, road across the frame "
-                  + $"{worstRoadLeft:F2}..{worstRoadRight:F2}");
+                  + $"{worstRoadLeft:F2}..{worstRoadRight:F2}, up the frame "
+                  + $"{roadLowest:F2}..{roadHighest:F2}, off the bottom for "
+                  + $"{offTheBottom} of {frames} frames "
+                  + $"({(frames > 0 ? 100f * offTheBottom / frames : 0f):F1}%)");
 
         Assert.Greater(stood, 0, "no cloud ever stood, so nothing here is a measurement");
         Assert.Greater(worstPitch, 1f,

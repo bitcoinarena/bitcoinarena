@@ -38,19 +38,45 @@ public class ArmyDamageReferenceTests
     public void MeasureWhatHitsAParkedTruck()
     {
         foreach (float z in new[] { 0f, -5f, -12f, -25f, -34f })
-            Run(z);
+            Run(z, 0f);
     }
 
-    static void Run(float z)
+    /// <summary>
+    /// WHAT THE FREIGHT CHOICE WAS SUPPOSED TO COST, and never did.
+    ///
+    /// `Army.Heat` is documented as "how badly both sides want the truck, set
+    /// from what it is carrying - without this the freight choice had no
+    /// consequence at all". It widens the reach the truck is noticed at
+    /// (`CourierRange * (1 + Heat * 1.4)`), lets the truck outrank a nearer
+    /// tank (`cd < fd * (1 + Heat * 2.5)`) and multiplies the shell
+    /// (`Rand(5,11) * (1 + Heat * 0.6)`).
+    ///
+    /// NOTHING IN THE SHIPPED C# EVER ASSIGNED IT. A grep for an assignment
+    /// finds two test files, both setting it to zero. So the field existed,
+    /// the rule existed, and the load never made the war want you more - which
+    /// is the same thing the core does today by hardcoding the Heat-zero
+    /// specialisation. This sweep is what the coupling would have been worth.
+    /// </summary>
+    [Test]
+    [Explicit("Measurement, not an assertion. Read the [hunted] lines out of the log.")]
+    public void MeasureWhatHeatWouldHaveCost()
     {
-        var army = new Army(20260901) { FrontlineAt = _ => 0f, Heat = 0f };
+        foreach (float heat in new[] { 0f, 0.5f, 1f })
+            Run(-25f, heat);
+    }
+
+    static void Run(float z, float heat)
+    {
+        var army = new Army(20260901) { FrontlineAt = _ => 0f, Heat = heat };
         army.Populate(ArmourPerSide, InfantryPerSide);
 
         int shells = 0, rounds = 0;
         float shellDmg = 0f, rifleDmg = 0f;
 
         // The bands are 5..11 and 1.5..3.5 at Heat 0, so three is the gap
-        // between them and not a number chosen to make a total come out.
+        // between them and not a number chosen to make a total come out. Heat
+        // widens the shell's band and not the rifle's, so above zero the split
+        // is reported as "3 and over" rather than claimed as exact.
         army.CourierHit += d =>
         {
             if (d >= 3f) { shells++; shellDmg += d; }
@@ -72,7 +98,7 @@ public class ArmyDamageReferenceTests
         }
 
         float shot = shellDmg + rifleDmg;
-        Debug.Log($"[hunted] C# parked at z={z:0.#}: {ticks / 60f:0.00} s, "
+        Debug.Log($"[hunted] C# parked at z={z:0.#} heat={heat:0.00}: {ticks / 60f:0.00} s, "
                   + $"{shells} shell(s) for {shellDmg:0.0}, {rounds} round(s) for "
                   + $"{rifleDmg:0.0}, tank share of damage to the truck "
                   + (shot > 0f ? $"{shellDmg / shot * 100f:0.0}%" : "no damage at all"));
