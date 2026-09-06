@@ -94,6 +94,7 @@ namespace Blwp
         // they were put on the ground where they belong, the body stayed up
         // and the truck looked jacked up on stilts.
         float _bodyAboveGround = 1.4f;
+        float _saidSeat = -99f;
         float _spin;
 
         void Awake()
@@ -574,6 +575,27 @@ namespace Blwp
             LastSurface = (fl + fr + rl + rr) * 0.25f;
             LastGrade = ((fl + fr) - (rl + rr)) / (4f * half);
             transform.SetPositionAndRotation(new Vector3(x, ride, z), _lie);
+
+            // THE TRUCK'S OWN LOWEST POINT against the ground it stands on,
+            // late in a run as well as early. `ride` is a plane fit plus a
+            // body offset, so a model whose origin is not its base sinks -
+            // the fault that put the dust skirt 23 m down and the mushroom's
+            // stem 26 m down earlier in this letter. Read off the renderers,
+            // not off the offset that was asked for.
+            if (Time.time - _saidSeat > 4f)
+            {
+                _saidSeat = Time.time;
+                var rs = GetComponentsInChildren<Renderer>();
+                if (rs.Length > 0)
+                {
+                    var bb = rs[0].bounds;
+                    for (int k = 1; k < rs.Length; k++) bb.Encapsulate(rs[k].bounds);
+                    Debug.Log($"[seat] truck at tick {BlwpCore.Tick}: bottom "
+                              + $"{(bb.min.y - LastSurface):+0.00;-0.00} m vs the ground, "
+                              + $"ride {ride:F2}, surface {LastSurface:F2}, "
+                              + $"body offset {_bodyAboveGround:F2}");
+                }
+            }
 
             if (_rb != null) _rb.position = transform.position;
             PoseWheels();

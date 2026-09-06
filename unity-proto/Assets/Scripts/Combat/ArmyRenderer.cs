@@ -745,6 +745,8 @@ public class ArmyRenderer : MonoBehaviour
         bool say = Time.time - _saidTanks > 4f;
         if (say) _saidTanks = Time.time;
         int liveArmour = 0, drawnArmour = 0, skipped = 0;
+        var seat = new int[7];
+        float deepest = float.MaxValue, highest = float.MinValue;
         float minX = float.MaxValue, maxX = float.MinValue;
         float minZ = float.MaxValue, maxZ = float.MinValue;
         float closest = float.MaxValue;
@@ -780,6 +782,23 @@ public class ArmyRenderer : MonoBehaviour
             drawnArmour++;
             if (say)
             {
+                // HOW FAR THE HULL'S LOWEST POINT IS FROM THE GROUND IT
+                // STANDS ON. `SeatOnTerrain` puts the transform's ORIGIN on
+                // the plane fit, and if a model's origin is not its base the
+                // hull sinks - which is exactly how the dust skirt ended up
+                // 23 m down and the mushroom's stem 26 m down earlier in this
+                // letter. Measured rather than assumed, and as a spread
+                // rather than a mean.
+                var hr = hull.GetComponentInChildren<Renderer>();
+                if (hr != null)
+                {
+                    float clear = hr.bounds.min.y - Ground(hull.position.x, hull.position.z);
+                    if (clear < deepest) deepest = clear;
+                    if (clear > highest) highest = clear;
+                    int k = clear < -1f ? 0 : clear < -0.3f ? 1 : clear < -0.05f ? 2
+                          : clear <= 0.05f ? 3 : clear <= 0.3f ? 4 : clear <= 1f ? 5 : 6;
+                    seat[k]++;
+                }
                 var w = hull.position;
                 foreach (var q in drawnAt)
                 {
@@ -824,6 +843,11 @@ public class ArmyRenderer : MonoBehaviour
             dense++;
         }
 
+        if (say && drawnArmour > 0)
+            Debug.Log($"[seat] tanks at tick {Blwp.BlwpCore.Tick}: hull bottom vs ground - "
+                      + $"under 1 m {seat[0]}, 0.3-1 m under {seat[1]}, 5-30 cm under {seat[2]}, "
+                      + $"on it {seat[3]}, 5-30 cm over {seat[4]}, 0.3-1 m over {seat[5]}, "
+                      + $"over 1 m {seat[6]}; deepest {deepest:F2} m, highest {highest:F2} m");
         if (say)
             Debug.Log($"[tanks] core alive {liveArmour}, drawn {drawnArmour}, "
                       + $"skipped for want of a hull {skipped}; drawn x "
