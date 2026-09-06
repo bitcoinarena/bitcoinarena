@@ -221,6 +221,44 @@ public class CombatFx : MonoBehaviour
         (mf.sharedMesh == _sphere ? _spheres : _cubes).Push(p.t);
     }
 
+    /// <summary>
+    /// A liquidation WIPES its radius. Everything burnt still standing inside
+    /// the hole goes, and its slot in `Army.Wrecks` with it, so the ground the
+    /// blast just opened is not furnished with the last battle.
+    ///
+    /// WHAT MARKS A WRECK HERE IS `BurntOutHull`, not the wreck slot. The
+    /// first cut keyed on `wreckIndex >= 0` and wiped nothing at all on the
+    /// running build: `ClaimWreckSlot` returns -1 when `army` is null, and
+    /// `army` is never assigned anywhere - the C# Army is retired, which is
+    /// what the eleven red PlayMode tests are about. Every hull therefore
+    /// carries index -1 and that filter threw them all away.
+    ///
+    /// `Retire` still releases the slot when there is one, so this stays
+    /// correct if `Army.Wrecks` is ever live again. The core has no word for a
+    /// wreck: `army.js` says so where it pushes LIVE units out of a crater,
+    /// "the WRECKS stay out". So there is no core list to wipe and none is
+    /// invented here; live units are the core's business and are not touched.
+    ///
+    /// Returns how many went, so the caller can say it rather than assume it.
+    /// </summary>
+    public int ClearWrecksIn(Vector3 at, float radius)
+    {
+        int gone = 0;
+        float r2 = radius * radius;
+        for (int i = _live.Count - 1; i >= 0; i--)
+        {
+            var p = _live[i];
+            if (p.t == null || p.t.GetComponent<BurntOutHull>() == null) continue;
+            var q = p.t.position;
+            float dx = q.x - at.x, dz = q.z - at.z;
+            if (dx * dx + dz * dz > r2) continue;
+            Retire(p);
+            _live.RemoveAt(i);
+            gone++;
+        }
+        return gone;
+    }
+
     float Ground(float x, float z) =>
         roads != null ? roads.SurfaceHeight(x, z)
                       : (Blwp.BlwpCore.HasSurface ? Blwp.BlwpCore.SurfaceAt(x, z)

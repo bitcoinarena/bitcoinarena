@@ -376,9 +376,16 @@ namespace Blwp
                 var p = h.transform.position;
                 if ((new Vector2(p.x, p.z) - new Vector2(at.x, at.z)).magnitude <= r) inside++;
             }
+            int wiped = fx != null ? fx.ClearWrecksIn(at, r) : 0;
+            int leftInside = 0;
+            foreach (var h in FindObjectsByType<BurntOutHull>(FindObjectsSortMode.None))
+            {
+                var p = h.transform.position;
+                if ((new Vector2(p.x, p.z) - new Vector2(at.x, at.z)).magnitude <= r) leftInside++;
+            }
             Debug.Log($"[crater] nearest crater {nearest:F1} m away, r {r:F1} m, "
-                      + $"{terrain.DrawnCraters.Count} open: {inside} wreck(s) inside it, "
-                      + $"{hulls} on the field");
+                      + $"{terrain.DrawnCraters.Count} open: {inside} wreck(s) inside it of "
+                      + $"{hulls} on the field, wiped {wiped}, {leftInside} left inside");
         }
 
         public void RaiseColumn(Vector3 at)

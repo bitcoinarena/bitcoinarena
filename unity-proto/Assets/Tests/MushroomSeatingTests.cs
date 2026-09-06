@@ -33,6 +33,12 @@ public class MushroomSeatingTests
     [UnityTearDown]
     public IEnumerator TearDown()
     {
+        // `WastedSequence` slows the clock when the truck is written off, and
+        // tearing the scene down mid-sequence leaves it slowed. The next
+        // time-sensitive test then measures nothing moving in two seconds -
+        // `PostOfficeTests.TheGogglesAnimate` went red exactly that way.
+        // `StrikeSeamTests` resets it for the same reason.
+        Time.timeScale = 1f;
         foreach (var go in Object.FindObjectsByType<GameObject>(FindObjectsSortMode.None))
             if (go.transform.parent == null) Object.Destroy(go);
         yield return null;
