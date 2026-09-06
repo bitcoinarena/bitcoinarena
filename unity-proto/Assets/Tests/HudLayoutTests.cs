@@ -80,6 +80,7 @@ public class HudLayoutTests
                                  _hud.BlockBoxHeight(w, h));
             var health = _hud.HealthBox(w, h);
             var danger = _hud.ExposureBox(w, h);
+            var warn = _hud.ExposureWarningBox(w, h);
             var practice = _hud.PracticeBox(w, h);
             var sim = _hud.SimBox(w, h);
 
@@ -101,13 +102,22 @@ public class HudLayoutTests
             Apart(health, danger, "the condition bar and the danger meter");
             Apart(health, practice, "the condition bar and the practice switch");
             Apart(danger, practice, "the danger meter and the practice switch");
+            Apart(danger, warn, "the danger meter and its warning");
+            Apart(warn, practice, "the exposure warning and the practice switch");
+            Apart(warn, sim, "the exposure warning and the SIM switch");
+            Apart(warn, block, "the exposure warning and the block board");
+            Apart(warn, health, "the exposure warning and the condition bar");
             Apart(practice, sim, "the practice switch and the SIM switch");
 
             // and it runs DOWN the screen in that order, which is what makes
             // it a column rather than a pile that happens not to touch
             Assert.GreaterOrEqual(health.y, block.yMax, $"condition is not under the block {at}");
             Assert.GreaterOrEqual(danger.y, health.yMax, $"danger is not under condition {at}");
-            Assert.GreaterOrEqual(practice.y, danger.yMax, $"practice is not under danger {at}");
+            Assert.GreaterOrEqual(warn.y, danger.yMax, $"the warning is not under danger {at}");
+            Assert.GreaterOrEqual(practice.y, warn.yMax, $"practice is not under the warning {at}");
+            Assert.AreEqual(health.x, warn.x, 0.01f, $"the warning left the column {at}");
+            Assert.AreEqual(health.width, warn.width, 0.01f,
+                $"the warning is not the column's width {at}");
         }
     }
 
@@ -422,6 +432,49 @@ public class HudLayoutTests
             float sub = Mathf.RoundToInt(Mathf.Min(w, h) * 0.045f);
             Assert.GreaterOrEqual(liq.height, sub,
                 $"the liquidation row is shorter than the text in it {at}");
+        }
+    }
+
+    /// <summary>
+    /// THE EXPOSURE WARNING, at the shape that actually presents as well as
+    /// the four that only exist as arithmetic.
+    ///
+    /// 733x293 is the size the editor's Game view gives and the only one a
+    /// frame can be taken at here, so it is checked with the rest: a later
+    /// player build must not inherit an overlap that was never measured
+    /// anywhere it could be seen.
+    /// </summary>
+    [Test]
+    public void TheExposureWarningClearsWhatItUsedToCross()
+    {
+        foreach (var size in new[] { new Vector2(1920, 1080), new Vector2(1024, 768),
+                                     new Vector2(844, 390),   new Vector2(1000, 360),
+                                     new Vector2(733, 293) })
+        {
+            int w = (int)size.x, h = (int)size.y;
+            string at = $"at {w}x{h}";
+
+            var warn = _hud.ExposureWarningBox(w, h);
+            var practice = _hud.PracticeBox(w, h);
+            var man = _hud.ManifestBox(w, h);
+            var wanted = _hud.WantedBox(w, h);
+            var clock = _hud.BlockTimerBox(w, h);
+            var liq = _hud.LiquidationBox(w, h);
+            var list = _hud.StreamingBox(w, h, 11);
+
+            void Apart(Rect a, Rect b, string what)
+                => Assert.IsFalse(a.Overlaps(b), $"{what} overlap {at}: {a} / {b}");
+
+            Apart(warn, practice, "the exposure warning and the practice switch");
+            Apart(warn, man, "the exposure warning and the score column");
+            Apart(warn, wanted, "the exposure warning and the wanted row");
+            Apart(warn, clock, "the exposure warning and the block clock");
+            Apart(warn, liq, "the exposure warning and the liquidation line");
+            Apart(warn, list, "the exposure warning and the model list");
+
+            Assert.GreaterOrEqual(warn.x, 0f, $"the warning runs off the left edge {at}");
+            Assert.LessOrEqual(warn.yMax, h, $"the warning runs off the bottom {at}");
+            Assert.Greater(warn.width, 60f, $"the warning has no width {at}");
         }
     }
 

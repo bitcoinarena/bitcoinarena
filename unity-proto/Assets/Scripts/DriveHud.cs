@@ -1036,6 +1036,30 @@ public class DriveHud : MonoBehaviour
     }
 
     /// <summary>
+    /// THE WARNING UNDER THE DANGER METER - "NO SCORE OUT HERE - GET CLOSER TO
+    /// THE FIGHTING" - and the row it stands in.
+    ///
+    /// It was drawn at `box.xMax - min(w * 0.75f, 560f)`: 560 px reaching LEFT
+    /// from the meter's right edge, into what used to be empty screen when the
+    /// meter lived in the top-right corner. Moving the meter into the left
+    /// column left the sentence running backwards across the practice switch
+    /// and off the edge - photographed at 733x293, drawn over PRACTICE - ON.
+    ///
+    /// It is a row of the column now, in the column's own width, and the row
+    /// is RESERVED whether or not the warning is showing. The alternative is a
+    /// switch that jumps half a centimetre down the screen the moment the
+    /// player drives out of the corridor, which is exactly when he is looking
+    /// at it. The same reasoning the meter itself carries about the stars.
+    /// </summary>
+    public Rect ExposureWarningBox(int w, int h)
+    {
+        float pad = Mathf.Max(8f, h * 0.02f);
+        var meter = ExposureBox(w, h);
+        return new Rect(meter.x, meter.yMax + pad * 0.25f,
+                        meter.width, SmallFont(w, h) * 1.5f);
+    }
+
+    /// <summary>
     /// The price line drawn in the corner while the loading panel is open.
     ///
     /// It is the ONE piece of the driving HUD that survives into the loadout
@@ -1317,8 +1341,24 @@ public class DriveHud : MonoBehaviour
     {
         float pad = Mathf.Max(10f, h * 0.025f);
         int min = Mathf.Min(w, h);
-        return new Rect(pad, ExposureBox(w, h).yMax + pad * 0.8f,
-                        Mathf.Min(w * 0.52f, 300f), Mathf.Max(42f, min * 0.070f));
+        // Below the warning row, not below the meter: the row is always there
+        // so the switch does not move when the warning appears.
+        float top = ExposureWarningBox(w, h).yMax + pad * 0.8f;
+        float bh = Mathf.Max(42f, min * 0.070f);
+
+        // AND THE PAIR SHRINKS RATHER THAN THE COLUMN LEAVING THE SCREEN.
+        // With the diagnostics panel up, a phone in landscape had 12 px under
+        // the SIM switch - clearance, not comfort, and written down as such -
+        // and the warning row spent it: the column ended 9 px past the bottom
+        // edge. Of everything in that column the two switches are the ones
+        // with slack in them, so they take the loss. Floored at 28 px, which
+        // still holds their two lines; below that the answer is fewer rows,
+        // not smaller ones.
+        float room = h - pad - top;
+        float need = bh * 1.78f + 6f;              // practice, gap, SIM at 0.78
+        if (need > room) bh = Mathf.Max(28f, (room - 6f) / 1.78f);
+
+        return new Rect(pad, top, Mathf.Min(w * 0.52f, 300f), bh);
     }
 
     /// <summary>The simulated-strike switch, directly under PRACTICE.</summary>
@@ -1421,18 +1461,61 @@ public class DriveHud : MonoBehaviour
             // screen; this sentence is not, and in the meter's box it lost its
             // second half off the left edge - "OUT OF THE FIGHT ·" and nothing
             // after it, which reads as a truncation bug rather than a warning.
-            var warn = new GUIStyle(_small) { alignment = TextAnchor.UpperRight, fontStyle = FontStyle.Bold };
+            // ONE LINE, NEVER WRAPPED. `GUI.skin.label` wraps by default and
+            // `CalcSize` measures the unwrapped width, so the fit below was
+            // computed for one line while the label broke into two - the
+            // second of which was drawn straight over the practice switch.
+            // Photographed at 733x293 as "... GET CLOSER TO THE / FIGHTING".
+            var warn = new GUIStyle(_small)
+            {
+                alignment = TextAnchor.UpperRight,
+                fontStyle = FontStyle.Bold,
+                wordWrap = false,
+                clipping = TextClipping.Clip,
+            };
             float k = 0.55f + 0.45f * Mathf.Sin(Time.unscaledTime * 4.5f);
-            float ww = Mathf.Min(w * 0.75f, 560f);
-            Shadowed(new Rect(box.xMax - ww, box.yMax + 2f, ww, lh),
+            var warnBox = ExposureWarningBox(w, h);
+
+            // AND IT SHRINKS TO THE COLUMN instead of reaching out of it. The
+            // sentence is about 45 characters and the column is 249 to 320 px
+            // wide at the shapes this is checked at, so at full size it does
+            // not fit - which is what the old 560 px box was working around.
+            // Floored at 9 px: below that the warning is not readable and the
+            // right answer would be a shorter sentence, not smaller type.
+            // THE VERDICT SURVIVES, THE INSTRUCTION GOES. Forty-eight
+            // characters do not fit a 243 px column at the 9 px floor - shrunk
+            // to fit they were clipped on the LEFT, which turned "NO SCORE OUT
+            // HERE" into "SCORE OUT HERE" and said the opposite. So where
+            // there is no room the sentence loses its second half rather than
+            // its first, and the type stays readable.
+            string full = stalled ? "NO SCORE FOR LAPS  ·  HEAD FOR THE DROP-OFF"
+                                  : "NO SCORE OUT HERE  ·  GET CLOSER TO THE FIGHTING";
+            string brief = stalled ? "NO SCORE FOR LAPS" : "NO SCORE OUT HERE";
+            string say = warn.CalcSize(new GUIContent(full)).x <= warnBox.width - 6f
+                       ? full
+                       : (warn.CalcSize(new GUIContent(brief)).x <= warnBox.width - 6f
+                          ? brief : full);
+            // A MARGIN, because the fit was a pixel or two short and the
+            // clipping takes it off the LEFT - "SCORE OUT HERE" where "NO
+            // SCORE OUT HERE" was meant, which reads as the opposite. Six
+            // pixels, and the fit is applied again after the round down.
+            float room = warnBox.width - 6f;
+            for (int pass = 0; pass < 3; pass++)
+            {
+                float need = warn.CalcSize(new GUIContent(say)).x;
+                if (need <= room || need <= 1f) break;
+                int smaller = Mathf.FloorToInt(warn.fontSize * room / need);
+                warn.fontSize = Mathf.Max(9, Mathf.Min(warn.fontSize - 1, smaller));
+                if (warn.fontSize <= 9) break;
+            }
+
+            Shadowed(warnBox,
                      // Both open with NO SCORE and close with the action.
                      // The previous pair buried the verdict in the middle -
                      // "NO GROUND GAINED · CIRCLING EARNS NOTHING" - and the
                      // eye lands on EARNING, which says the opposite of what
                      // the line means.
-                     stalled ? "NO SCORE FOR LAPS  ·  HEAD FOR THE DROP-OFF"
-                             : "NO SCORE OUT HERE  ·  GET CLOSER TO THE FIGHTING", warn,
-                     new Color(1f, 0.42f, 0.36f, k));
+                     say, warn, new Color(1f, 0.42f, 0.36f, k));
         }
     }
 
