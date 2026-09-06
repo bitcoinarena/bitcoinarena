@@ -24,7 +24,8 @@ public class DriveHud : MonoBehaviour
     public LoadoutPanel loadout;
     public BlockClock block;
     public Blwp.StrikeTheatre strike;
-    int _saidStrike = -1;
+    int _saidStrike = -1, _strikeSeen = -1;
+    float _strikeAt = -99f;
     public RunScore runScore;
 
     GUIStyle _price, _sub, _small;
@@ -371,7 +372,19 @@ public class DriveHud : MonoBehaviour
     /// </summary>
     void DrawLiquidations(int w, int h, float y)
     {
-        if (market == null || market.Liquidations.Count == 0) return;
+        // GATED ON THE CORE'S STRIKE, not on the feed's list, and both halves
+        // of that were wrong in the first cut of this.
+        //
+        // A SIMULATED strike never enters `market.Liquidations` at all - the
+        // clock hands its size straight to `BlwpCore.Liquidation` - so gating
+        // on that list left the HUD silent about a crater the core had just
+        // dug. And the list holds an order for ninety seconds, so the line
+        // also stopped fading: it stood for as long as anything was in the
+        // window, naming a strike a minute gone.
+        if (!Blwp.BlwpCore.Available) return;
+        int serial = Blwp.BlwpCore.StrikeCount;
+        if (serial != _strikeSeen) { _strikeSeen = serial; _strikeAt = Time.time; }
+        if (serial <= 0 || Time.time - _strikeAt > 8f) return;   // the last few seconds only
 
         // WHAT THE FEED SAW, which is not what ran. Kept only to say so in the
         // log: this summed every forced order of the last eight seconds and
@@ -381,14 +394,14 @@ public class DriveHud : MonoBehaviour
         // beside the one that actually landed.
         double usd = 0; int n = 0;
         var seen = new System.Collections.Generic.List<string>();
-        foreach (var l in market.Liquidations)
-        {
-            if (l.Age > 8f) continue;              // the last few seconds only
-            usd += l.UsdValue; n++;
-            string v = l.Venue ?? "?";
-            if (!seen.Contains(v)) seen.Add(v);
-        }
-        if (n == 0) return;
+        if (market != null)
+            foreach (var l in market.Liquidations)
+            {
+                if (l.Age > 8f) continue;
+                usd += l.UsdValue; n++;
+                string v = l.Venue ?? "?";
+                if (!seen.Contains(v)) seen.Add(v);
+            }
 
         // WHAT THE CORE TOOK. The size is the core's own `K_LOAD`, in millions,
         // read back out of the state it dug the crater from; the exchange is
