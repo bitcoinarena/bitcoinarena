@@ -738,9 +738,22 @@ public class ArmyRenderer : MonoBehaviour
         PlaceAircraft();
 
         int bullTanks = 0, bearTanks = 0, dense = 0;
+        // WHAT IS ACTUALLY DRAWN, against what the core holds. The core does
+        // not stack its armour - measured in node, the closest two tanks are
+        // 8.21 m apart across a 142 m spread - so if the picture is a heap the
+        // gap is here. Reported once every few seconds, not every frame.
+        bool say = Time.time - _saidTanks > 4f;
+        if (say) _saidTanks = Time.time;
+        int liveArmour = 0, drawnArmour = 0, skipped = 0;
+        float minX = float.MaxValue, maxX = float.MinValue;
+        float minZ = float.MaxValue, maxZ = float.MinValue;
+        float closest = float.MaxValue;
+        var drawnAt = say ? new System.Collections.Generic.List<Vector3>() : null;
+
         for (int i = 0; i < Blwp.Layout.UNITS; i++)
         {
             if (!Blwp.BlwpCore.UnitIsArmour(i) || !Blwp.BlwpCore.UnitAlive(i)) continue;
+            liveArmour++;
             var side = SideOf(i);
             var at = Blwp.BlwpCore.UnitPosition(i, 0f);
             float heading = Blwp.BlwpCore.UnitHeading(i) * Mathf.Deg2Rad;
@@ -751,7 +764,7 @@ public class ArmyRenderer : MonoBehaviour
             {
                 var pool = side == Army.Side.Bull ? _hullsBull : _hullsBear;
                 int idx = side == Army.Side.Bull ? bullTanks++ : bearTanks++;
-                if (idx >= pool.Count) continue;
+                if (idx >= pool.Count) { skipped++; continue; }
                 hull = pool[idx];
             }
             else
@@ -764,6 +777,19 @@ public class ArmyRenderer : MonoBehaviour
             if (!hull.gameObject.activeSelf) hull.gameObject.SetActive(true);
             SeatOnTerrain(hull, at.x, at.z, heading + (prefab ? tankYawOffset * Mathf.Deg2Rad : 0f),
                           3.4f, 1.8f, prefab ? 0f : 0.9f);
+            drawnArmour++;
+            if (say)
+            {
+                var w = hull.position;
+                foreach (var q in drawnAt)
+                {
+                    float d = Vector2.Distance(new Vector2(q.x, q.z), new Vector2(w.x, w.z));
+                    if (d < closest) closest = d;
+                }
+                drawnAt.Add(w);
+                if (w.x < minX) minX = w.x;  if (w.x > maxX) maxX = w.x;
+                if (w.z < minZ) minZ = w.z;  if (w.z > maxZ) maxZ = w.z;
+            }
             if (mat != null)
             {
                 var mr = hull.GetComponent<MeshRenderer>();
@@ -797,6 +823,13 @@ public class ArmyRenderer : MonoBehaviour
             }
             dense++;
         }
+
+        if (say)
+            Debug.Log($"[tanks] core alive {liveArmour}, drawn {drawnArmour}, "
+                      + $"skipped for want of a hull {skipped}; drawn x "
+                      + $"{minX:F1}..{maxX:F1} ({(maxX - minX):F1} m), z "
+                      + $"{minZ:F1}..{maxZ:F1} ({(maxZ - minZ):F1} m), "
+                      + $"closest pair {(closest < float.MaxValue ? closest.ToString("F2") : "n/a")} m");
 
         int bull = 0, bear = 0;
         for (int i = 0; i < Blwp.Layout.UNITS; i++)
@@ -882,6 +915,7 @@ public class ArmyRenderer : MonoBehaviour
     /// `BlwpCore.Tick` and the running gear. Nothing is written back.
     /// </summary>
     float[] _turretYaw = new float[0];
+    float _saidTanks = -99f;
 
     /// <summary>
     /// Where a tank would be looking, following `StepArmour`'s own choice.
