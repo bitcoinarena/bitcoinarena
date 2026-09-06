@@ -50,6 +50,17 @@ public class HudLayoutTests
         yield return null;
     }
 
+    /// <summary>
+    /// The five the chrome is checked at: four that a player build presents
+    /// and 733x293, the one the editor's Game view actually shows, so a
+    /// captured frame and the arithmetic are talking about the same set.
+    /// </summary>
+    static readonly Vector2[] Five =
+    {
+        new Vector2(1920, 1080), new Vector2(1024, 768), new Vector2(844, 390),
+        new Vector2(1000, 360),  new Vector2(733, 293),
+    };
+
     /// <summary>The shapes it ships at: phones both ways up, laptops, desktops.</summary>
     static readonly Vector2[] Sizes =
     {
@@ -192,7 +203,7 @@ public class HudLayoutTests
             Assert.LessOrEqual(head.xMax, sound.x, $"the headline reaches the settings {at}");
             Assert.LessOrEqual(head.xMax, debug.x, $"the headline reaches the settings {at}");
             // A gap or nothing, never a fiction.
-            Assert.IsTrue(head.width == 0f || head.width > 50f,
+            Assert.IsTrue(head.width == 0f || head.width >= DriveHud.UsableGap,
                 $"the headline claims {head.width:0} px, which is neither a gap nor nothing {at}");
         }
     }
@@ -339,7 +350,7 @@ public class HudLayoutTests
             // no gap and the headline is not drawn - a phone held upright has
             // the practice switch taking 52% of its width, and the columns
             // meet in the middle.
-            if (head.width >= 60f)
+            if (head.width > 0f)
                 Assert.GreaterOrEqual(wanted.x, head.xMax,
                     $"the wanted row reaches into the headline {at}");
             else
@@ -407,7 +418,7 @@ public class HudLayoutTests
             var wanted = _hud.WantedBox(w, h);
             var head = _hud.HeadlineBox(w, h);
 
-            if (head.width < 60f)
+            if (head.width <= 0f)
             {
                 Assert.AreEqual(0f, liq.width, 0.01f,
                     $"there is no gap here, so the line must not claim one {at}");
@@ -432,6 +443,92 @@ public class HudLayoutTests
             float sub = Mathf.RoundToInt(Mathf.Min(w, h) * 0.045f);
             Assert.GreaterOrEqual(liq.height, sub,
                 $"the liquidation row is shorter than the text in it {at}");
+        }
+    }
+
+    /// <summary>
+    /// THE LAST OF THE CHROME: the debug readout and the two cards, against
+    /// every number the driver reads.
+    ///
+    /// The debug panel is the SECOND debug thing on this screen - the F1
+    /// diagnostics box is top left and the condition bar already stacks under
+    /// it; this one is gated on the debug icon and lands in the corner the
+    /// score column was pushed into. The cards are deliberately in front of
+    /// the game for a few seconds, so what matters is that they do not cover
+    /// a CONTROL the player might be reaching for while they are up.
+    /// </summary>
+    [Test]
+    public void TheDebugPanelAndTheCardsClearTheControlsAndTheNumbers()
+    {
+        foreach (var size in Five)
+        {
+            int w = (int)size.x, h = (int)size.y;
+            string at = $"at {w}x{h}";
+
+            var dbg = _hud.DebugPanelBox(w, h, 8);          // the core-driving case
+
+            // TRY/FINALLY, because a failing assertion left this static set
+            // and the next four tests measured a HUD with the debug readout up
+            // that they never asked for - two of them went red for it.
+            GameSettings.Debug = true;
+            try
+            {
+            var man = _hud.ManifestBox(w, h);
+            var wanted = _hud.WantedBox(w, h);
+            var clock = _hud.BlockTimerBox(w, h);
+            var liq = _hud.LiquidationBox(w, h);
+            var list = _hud.StreamingBox(w, h, 11);
+            var practice = _hud.PracticeBox(w, h);
+            var sim = _hud.SimBox(w, h);
+            var health = _hud.HealthBox(w, h);
+            var warn = _hud.ExposureWarningBox(w, h);
+            var send = _hud.SendOffBox(w, h);
+            var arrive = _hud.ArrivalBox(w, h);
+
+            void Apart(Rect a, Rect b, string what)
+                => Assert.IsFalse(a.Overlaps(b), $"{what} overlap {at}: {a} / {b}");
+
+            Apart(dbg, man, "the debug readout and the score column");
+            Apart(dbg, wanted, "the debug readout and the wanted row");
+            Apart(dbg, clock, "the debug readout and the block clock");
+            Apart(dbg, liq, "the debug readout and the liquidation line");
+            Apart(dbg, list, "the debug readout and the model list");
+            Apart(dbg, health, "the debug readout and the condition bar");
+            Apart(dbg, practice, "the debug readout and the practice switch");
+            Assert.LessOrEqual(dbg.yMax, h, $"the debug readout runs off the bottom {at}");
+
+            // THE ROWS FIT THE PANELS. The block board claimed 3.20 lines and
+            // drew 3.77; both of these are built from a line count the same
+            // way, so both are asked whether the box holds what goes in it.
+            Assert.GreaterOrEqual(dbg.height, _hud.DebugPanelContentHeight(w, h, 8) - 0.01f,
+                $"the debug readout is drawn taller than its own box {at}");
+            var f1 = _hud.DiagnosticsBox(w, h);
+            Assert.GreaterOrEqual(f1.height, _hud.DiagnosticsContentHeight(w, h, 11) - 0.01f,
+                $"the F1 panel is drawn taller than its own box {at}");
+
+            // The cards may cover the SCENE - that is what a card is - but not
+            // the controls, and not the two numbers that say whether the run
+            // is still alive.
+            // the model list stands aside while a card is up, so they are not
+            // measured against each other - that is a gate, asserted below
+            Apart(send, practice, "the send-off card and the practice switch");
+            Apart(send, man, "the send-off card and the score column");
+            Apart(send, wanted, "the send-off card and the wanted row");
+            Apart(send, clock, "the send-off card and the block clock");
+            Apart(send, liq, "the send-off card and the liquidation line");
+            Apart(arrive, man, "the arrival card and the score column");
+            Apart(arrive, wanted, "the arrival card and the wanted row");
+            Apart(arrive, clock, "the arrival card and the block clock");
+            Apart(arrive, liq, "the arrival card and the liquidation line");
+            Apart(send, sim, "the send-off card and the SIM switch");
+            Apart(send, health, "the send-off card and the condition bar");
+            Apart(send, warn, "the send-off card and the exposure warning");
+            Apart(arrive, practice, "the arrival card and the practice switch");
+            Apart(arrive, sim, "the arrival card and the SIM switch");
+            Apart(arrive, health, "the arrival card and the condition bar");
+            Apart(arrive, warn, "the arrival card and the exposure warning");
+            }
+            finally { GameSettings.Debug = false; }
         }
     }
 

@@ -417,10 +417,7 @@ public class DriveHud : MonoBehaviour
 
         var style = new GUIStyle(_small) { alignment = TextAnchor.MiddleLeft };
         float lh = Mathf.Max(14f, h * 0.020f);
-        float bw = Mathf.Min(w * 0.42f, 260f);
-        var box = new Rect(w - bw - Mathf.Max(10f, h * 0.025f),
-                           TouchPad.RectFor(TouchPad.Pad.Debug, w, h).yMax + lh * 0.6f,
-                           bw, lh * lines.Count + lh * 0.6f);
+        var box = DebugPanelBox(w, h, lines.Count);
 
         GUI.color = new Color(0.02f, 0.03f, 0.05f, 0.72f);
         GUI.DrawTexture(box, _flat);
@@ -601,6 +598,18 @@ public class DriveHud : MonoBehaviour
             if (loadout == null) return false;
             float since = Time.unscaledTime - loadout.ConfirmedAt;
             return since >= 0f && since < SendOffHold;
+        }
+    }
+
+    /// <summary>Is the arrival card on screen this frame?</summary>
+    public bool ArrivalShowing
+    {
+        get
+        {
+            if (gate == null || ArrivalIsHiddenBy(SendOffShowing)) return false;
+            const float Hold = 5f;
+            bool missed = Time.unscaledTime - gate.MissedAt < Hold;
+            return missed || gate.SinceDelivery < Hold;
         }
     }
 
@@ -957,9 +966,34 @@ public class DriveHud : MonoBehaviour
         float head = Mathf.Clamp(Mathf.Min(w, h) * 0.055f, 20f, 46f);
         float sub = Mathf.RoundToInt(head * 0.5f);
         float padY = head * 0.5f;
-        float cardW = Mathf.Min(w * 0.92f, head * 26f);
-        return new Rect((w - cardW) * 0.5f, h * 0.20f, cardW,
-                        padY * 2f + head * 1.3f + sub * 1.3f);
+        return CardIn(w, h, padY * 2f + head * 1.3f + sub * 1.3f);
+    }
+
+    /// <summary>
+    /// Where a card stands: in the gap between the columns, under the block
+    /// clock.
+    ///
+    /// Both cards were 92% of the screen wide and centred on it, so they
+    /// covered the left column by construction - measured at 1024x768, the
+    /// send-off ran from x=41 across a condition bar at x=15. A card is a
+    /// takeover of the middle of the screen and that is what it is for, but
+    /// the middle of the screen is where the driver's numbers are, and a card
+    /// that hides the condition bar hides whether he is still alive.
+    ///
+    /// So it takes the gap, which is the one column with nothing permanent in
+    /// it, and stands below the block clock. It is narrower than it was; the
+    /// alternative is wider and on top of the numbers.
+    /// </summary>
+    Rect CardIn(int w, int h, float height)
+    {
+        float pad = Mathf.Max(10f, h * 0.022f);
+        var head = HeadlineBox(w, h);
+        if (head.width <= 0f)
+        {
+            float wide = Mathf.Min(w * 0.92f, 900f);
+            return new Rect((w - wide) * 0.5f, h * 0.20f, wide, height);
+        }
+        return new Rect(head.x, BlockTimerBox(w, h).yMax + pad, head.width, height);
     }
 
     /// <summary>The arrival card, in the same place and a little taller.</summary>
@@ -968,9 +1002,7 @@ public class DriveHud : MonoBehaviour
         float head = Mathf.Clamp(Mathf.Min(w, h) * 0.055f, 20f, 46f);
         float mid = Mathf.RoundToInt(head * 0.52f), line = Mathf.RoundToInt(head * 0.40f);
         float padY = head * 0.55f;
-        float cardW = Mathf.Min(w * 0.92f, head * 26f);
-        return new Rect((w - cardW) * 0.5f, h * 0.18f, cardW,
-                        padY * 2f + head * 1.35f + mid * 1.3f + line * 3.4f);
+        return CardIn(w, h, padY * 2f + head * 1.35f + mid * 1.3f + line * 3.4f);
     }
 
     /// <summary>The streaming list, right-hand side, one row per model.</summary>
@@ -996,7 +1028,7 @@ public class DriveHud : MonoBehaviour
         // old corner, because there is nowhere better and the alternative is
         // not drawing it.
         var head = HeadlineBox(w, h);
-        if (head.width < 60f)
+        if (head.width <= 0f)
         {
             float narrow = Mathf.Min(290f, w * 0.34f);
             return new Rect(w - narrow - pad, h * 0.30f, narrow, height);
@@ -1027,12 +1059,52 @@ public class DriveHud : MonoBehaviour
         float pad = Mathf.Max(8f, h * 0.02f);
         float roomy = SmallFont(w, h) * 1.5f;
         var head = HeadlineBox(w, h);
-        if (head.width < 60f) return roomy;
+        if (head.width <= 0f) return roomy;
 
         float top = BlockTimerBox(w, h).yMax + pad;
         float room = h - top - pad * 2f;
         if (room <= 0f) return roomy;
         return Mathf.Clamp(room / (items + 1), SmallFont(w, h), roomy);
+    }
+
+    /// <summary>
+    /// How tall the rows inside a panel actually are. Both panels lay their
+    /// lines out at `lh` apart from an inset, and both boxes are built from a
+    /// line count - so the two can drift the way the block board's did, where
+    /// the border claimed 3.20 lines and the drawing laid out 3.77.
+    /// </summary>
+    public float DebugPanelContentHeight(int w, int h, int lines)
+    {
+        float lh = Mathf.Max(14f, h * 0.020f);
+        return lh * 0.3f + lines * lh;
+    }
+
+    /// <summary>The same for the F1 diagnostics panel, top left.</summary>
+    public float DiagnosticsContentHeight(int w, int h, int lines)
+    {
+        float lh = SmallFont(w, h) * 1.45f;
+        return lh * lines;
+    }
+
+    /// <summary>
+    /// The debug readout, top right, under the debug icon.
+    ///
+    /// A second panel and not the F1 diagnostics box - that one is top LEFT
+    /// and the condition bar already stacks under it. This one is gated on the
+    /// debug icon and lands in the corner the score column was pushed into,
+    /// so the two have to be measured against each other rather than assumed
+    /// apart.
+    ///
+    /// `lines` is what `DrawDebug` builds: two when the core is not driving,
+    /// eight when it is.
+    /// </summary>
+    public Rect DebugPanelBox(int w, int h, int lines)
+    {
+        float lh = Mathf.Max(14f, h * 0.020f);
+        float bw = Mathf.Min(w * 0.42f, 260f);
+        return new Rect(w - bw - Mathf.Max(10f, h * 0.025f),
+                        TouchPad.RectFor(TouchPad.Pad.Debug, w, h).yMax + lh * 0.6f,
+                        bw, lh * lines + lh * 0.6f);
     }
 
     /// <summary>
@@ -1108,28 +1180,36 @@ public class DriveHud : MonoBehaviour
         // board's fault a third time, and the photograph still showed CARGO
         // cut by the top edge. The drawing takes its baseline from `yMax`, so
         // moving the box down moves the stack down with it.
-        // BELOW THE SETTINGS ICONS. On a short window the stack is pushed down
-        // off the pads and lands in the top-right corner, which is where the
-        // sound and debug buttons live - photographed at 733x293 with BANKED
-        // drawn behind them.
-        float top = Mathf.Max(TouchPad.RectFor(TouchPad.Pad.Debug, w, h).yMax + pad * 0.5f,
-                              Mathf.Max(pad, bottom - height));
-
-        // HOW FAR LEFT IT MAY RUN, and this is a trade with a measured cost
-        // either way. These are right-aligned lines, so a box narrower than
-        // the text clips it on the LEFT - that is why the box was the whole
-        // screen, and a photograph at 733x293 shows what a narrow one does:
-        // "CARGO 5 parcels - 2,795 sat" cut to "586 sat".
+        // BELOW THE SETTINGS ICONS, AND BELOW THE DEBUG READOUT WHEN IT IS UP.
         //
-        // The column sits at the BOTTOM of the screen, above the pads, and the
-        // left stack ends at the SIM switch. Where this box starts below that,
-        // there is nothing to the left of it and it can have the full width.
-        // Where the two would share a line, it takes the gap instead and the
-        // long lines are the price of a window too short to hold both.
+        // On a short window the stack is pushed down off the pads and lands in
+        // the top-right corner, which is where the sound and debug buttons
+        // live - photographed at 733x293 with BANKED drawn behind them. The
+        // debug readout drops into that same corner from the same icon, and
+        // measured at 1920x1080 it lay over the column from y=297 to y=483.
+        //
+        // The readout yields nothing and the column moves, because the readout
+        // is developer chrome behind a toggle and SCORE, BANKED and CARGO are
+        // what the player is playing for. Same shape as the condition bar
+        // stepping under the F1 panel.
+        float corner = TouchPad.RectFor(TouchPad.Pad.Debug, w, h).yMax + pad * 0.5f;
+        if (GameSettings.Debug) corner = DebugPanelBox(w, h, 8).yMax + pad * 0.5f;
+        float top = Mathf.Max(corner, Mathf.Max(pad, bottom - height));
+
+        // ALWAYS THE STRIP RIGHT OF THE GAP, never the full width.
+        //
+        // There was a branch here: below the SIM switch there is nothing to
+        // the left, so the column could have the whole screen and its long
+        // lines would not be clipped. It fired the moment the debug readout
+        // pushed the column down, and the column then swallowed the gap and
+        // was drawn over the model list - measured at 1920x1080, a box from
+        // x=27 across a list at x=371.
+        //
+        // A permanent layout cannot depend on which transient thing happens to
+        // be in the gap at the time. The strip is narrow and the type shrinks
+        // to it, which is already how the lines fit.
         var head = HeadlineBox(w, h);
-        float left = top >= SimBox(w, h).yMax || head.width <= 0f
-                   ? pad
-                   : head.xMax;
+        float left = head.width > 0f ? head.xMax : pad;
         return new Rect(left, top, w - pad - left, height);
     }
 
@@ -1314,6 +1394,13 @@ public class DriveHud : MonoBehaviour
         float s = TouchPad.ButtonSize(w, h), m = TouchPad.Margin(w, h);
         float right = Mathf.Min(w - (m + s * 0.7f) - pad, WantedBox(w, h).x - pad);
 
+        // And the debug readout, which is wider than the settings column it
+        // hangs from - 260 px against about 60 - so with it up the gap's right
+        // edge is ITS left edge. Measured at 1024x768: the readout reached to
+        // x=744.8 and the block clock's box ran to 753.
+        if (GameSettings.Debug)
+            right = Mathf.Min(right, DebugPanelBox(w, h, 8).x - pad);
+
         // AND IF THERE IS NO GAP, THERE IS NO GAP.
         //
         // This used to floor the width at 60 px, which invents room that does
@@ -1325,9 +1412,20 @@ public class DriveHud : MonoBehaviour
         // An empty box instead, and the drawing steps aside. The price is
         // worth less than the controls it would be sitting on, and this file
         // already does the same thing for the loading panel.
+        // A GAP OR NOTHING, and one threshold for which. The box used to
+        // report any positive room while the drawing refused to use anything
+        // under 60 px, so at 640x480 it claimed 34.88 px that nothing would
+        // ever be drawn in - a number that is neither a gap nor nothing, and
+        // every box measured from it inherited the fiction.
         float room = right - left;
-        return new Rect(left, 0f, room > 0f ? room : 0f, h);
+        return new Rect(left, 0f, room >= UsableGap ? room : 0f, h);
     }
+
+    /// <summary>
+    /// The narrowest gap worth drawing a headline in. Below it the price, the
+    /// clock, the cards and the model list all step aside instead.
+    /// </summary>
+    public const float UsableGap = 60f;
 
     /// <summary>
     /// The practice switch, under the whole left column.
@@ -1868,6 +1966,12 @@ public class DriveHud : MonoBehaviour
     void DrawStreamingPanel(int w, int h)
     {
         if (streamer == null || streamer.Items.Count == 0) return;
+
+        // AND NOT WHILE A CARD IS UP. Both stand in the gap - it is the only
+        // column with nothing permanent in it - and of the two, a list of
+        // model names is the one to drop while the player is being told what
+        // his run was worth.
+        if (SendOffShowing || ArrivalShowing) return;
         // gone once everything has settled, unless something failed - a failure
         // is worth leaving on screen
         if (streamer.AllDone && streamer.Failed == 0 && streamer.SinceDone > 4f) return;
@@ -1934,7 +2038,7 @@ public class DriveHud : MonoBehaviour
             string text = market.Price > 0 ? $"${market.Price:N0}" : "— — —";
             // No room between the columns: the headline is not drawn at all
             // rather than drawn on top of something that matters.
-            if (head.width < 60f) return;
+            if (head.width <= 0f) return;
             var colour = market.Fresh ? Color.white : new Color(1f, 1f, 1f, 0.55f);
 
             // AND IT SHRINKS TO FIT THE GAP rather than spilling out of it.
