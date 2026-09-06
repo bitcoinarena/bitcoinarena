@@ -400,6 +400,19 @@ namespace Blwp
         /// </summary>
         public void StepCloud(float dt) => Column(dt);
 
+        /// <summary>
+        /// AND THE CAP GOES WITH THE THEATRE.
+        ///
+        /// `CapCentre` is static, and `Column` only clears it where the cloud
+        /// reaches `Gone`. A theatre that goes away while a cloud is standing -
+        /// a restart, a scene change, a round that ends on a strike - therefore
+        /// left the last cap's world position published for good, and every
+        /// driving camera afterwards pitched up at a cloud that was not there.
+        /// Measured in the a14 probe, where a strike in one test tilted the
+        /// camera in the NEXT one.
+        /// </summary>
+        void OnDisable() => CapCentre = null;
+
         /// <summary>The crater floor under the cloud: the core's own surface.</summary>
         public float CloudFloor => _cloudFloor;
         /// <summary>The lowest point of everything that is not the dust skirt.</summary>
