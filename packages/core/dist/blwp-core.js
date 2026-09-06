@@ -3304,7 +3304,7 @@ function setSolids(st, count, boxes) {
  * names rather than numbers picked to taste - `BOMB_RADIUS`, 16 m, at one
  * million, and the 40 m front band at a thousand.
  *
- * DEPTH IS 0.15 OF THE RADIUS, AND THAT NUMBER IS MEASURED, NOT CHOSEN. The
+ * DEPTH IS 0.225 OF THE RADIUS, AND THAT NUMBER IS MEASURED, NOT CHOSEN. The
  * geologist's ratio for a simple crater is a fifth of the diameter - 0.4 of
  * the radius - and at 0.4 the truck is trapped: driven from the centre at
  * full throttle it never leaves a 100 M crater or a 1000 M one in forty
@@ -3312,10 +3312,25 @@ function setSolids(st, count, boxes) {
  *
  * The wall's steepest gradient is exactly 2 * D/R. Driven up a constant slope
  * the truck holds 0.45 - 2.03 m/s uphill - and at 0.50 it slides backwards.
- * So D/R must be under 0.225. It is set at 0.15, a gradient of 0.30, which is
- * the steepest wall where the truck still keeps more than a third of its
- * 24.3 m/s flat-ground speed: 9.22 m/s. A crater is ground to be driven, not
- * a hole to be caught in.
+ * So D/R must be under 0.225, and this sits ON that limit rather than half of
+ * it. A hole a player cannot see is not a crater, and 0.15 was the cautious
+ * end of the same rule rather than a second measurement.
+ *
+ * The whole ladder was driven again, from the crater floor at full throttle,
+ * to find where the wall actually beats the truck rather than where the
+ * arithmetic says it should:
+ *
+ *   D/R 0.150   1000 M floor  -6.00 m   out after  5.3 s
+ *   D/R 0.180   1000 M floor  -7.20 m   out after  5.4 s
+ *   D/R 0.200   1000 M floor  -8.00 m   out after  5.5 s
+ *   D/R 0.225   1000 M floor  -9.00 m   out after  5.7 s
+ *   D/R 0.250   1000 M floor -10.00 m   out after 10.8 s
+ *   D/R 0.300   1000 M floor -12.00 m   NEVER out in 40 s
+ *
+ * So the cliff is between 0.25 and 0.30, and 0.225 costs 0.4 s over 0.15.
+ * Doubling was asked for and is not available: at 0.30 the truck cannot leave
+ * the largest crater at all. A crater is ground to be driven, not a hole to
+ * be caught in.
  *
  * Lifetime rides the same root, so one rule sets both: ten rounds at the
  * small end, twenty at the large, which is the span (z) asks for.
@@ -3330,7 +3345,7 @@ function craterOf(load) {
   const t = clamp(div(sub(cbrt(clamp(load, CRATER_LOAD_MIN, CRATER_LOAD_MAX)), lo),
                       sub(hi, lo)), 0, ONE);
   const r = add(CRATER_R_MIN, mulFast(t, sub(CRATER_R_MAX, CRATER_R_MIN)));
-  return { r, d: mulFast(r, 9830), rounds: add(Math.imul(10, ONE), mulFast(t, Math.imul(10, ONE))) >> 16 };
+  return { r, d: mulFast(r, 14746), rounds: add(Math.imul(10, ONE), mulFast(t, Math.imul(10, ONE))) >> 16 };
 }
 
 /**
