@@ -515,9 +515,7 @@ public class DriveHud : MonoBehaviour
                       + $"\"{was} · {n} order(s) · {string.Join(" ", seen)}\"; "
                       + $"the core says \"{line}\"");
         }
-        var head = HeadlineBox(w, h);
-        Shadowed(new Rect(head.x, y, head.width, _sub.fontSize * 1.6f), line, _sub,
-                 new Color(1f, 0.72f, 0.25f));
+        Shadowed(LiquidationBox(w, h), line, _sub, new Color(1f, 0.72f, 0.25f));
     }
 
     void DrawBlockTimer(int w, int h, float y)
@@ -562,10 +560,42 @@ public class DriveHud : MonoBehaviour
     /// sats, to the miners - so the two ends of a run are visibly the same
     /// errand rather than two unrelated screens.
     /// </summary>
+    /// <summary>How long the send-off card stands after roll-out.</summary>
+    public const float SendOffHold = 3.4f;
+
+    /// <summary>Is the send-off card on screen this frame?</summary>
+    public bool SendOffShowing
+    {
+        get
+        {
+            if (loadout == null) return false;
+            float since = Time.unscaledTime - loadout.ConfirmedAt;
+            return since >= 0f && since < SendOffHold;
+        }
+    }
+
+    /// <summary>
+    /// THE ARRIVAL CARD YIELDS TO THE SEND-OFF.
+    ///
+    /// The two cards run on independent clocks - 3.4 s from roll-out, 5 s from
+    /// a delivery or a miss - so nothing stopped both from being up: deliver,
+    /// then confirm the next load inside five seconds, and both are drawn. They
+    /// sit at 18% and 20% down the screen and are taller than that gap, so they
+    /// would be laid on each other.
+    ///
+    /// Gated rather than moved, because two cards side by side on a phone are
+    /// two cards nobody can read - and of the pair, the one about the run that
+    /// has ENDED is the one to drop when a new run is starting.
+    ///
+    /// Static so the rule can be asserted without a scene and without waiting
+    /// five seconds for a clock.
+    /// </summary>
+    public static bool ArrivalIsHiddenBy(bool sendOffShowing) => sendOffShowing;
+
     void DrawSendOff(int w, int h)
     {
         if (loadout == null) return;
-        const float Hold = 3.4f;
+        const float Hold = SendOffHold;
         float since = Time.unscaledTime - loadout.ConfirmedAt;
         if (since < 0f || since >= Hold) return;
 
@@ -618,6 +648,8 @@ public class DriveHud : MonoBehaviour
     /// </summary>
     void DrawArrivalCard(int w, int h)
     {
+        if (ArrivalIsHiddenBy(SendOffShowing)) return;
+
         const float Hold = 5f;
         bool missed = Time.unscaledTime - gate.MissedAt < Hold;
         float since = missed ? Time.unscaledTime - gate.MissedAt : gate.SinceDelivery;
@@ -918,6 +950,88 @@ public class DriveHud : MonoBehaviour
         float lh = SmallFont(w, h) * 1.5f;
         float width = Mathf.Min(290f, w * 0.34f);
         return new Rect(w - width - pad, h * 0.30f, width, lh * (items + 1) + pad);
+    }
+
+    /// <summary>
+    /// What the streaming list says next to a model.
+    ///
+    /// IT WAS IN GERMAN, on the driving HUD, in a build whose every other
+    /// string is English: "aus Cache", "fehlgeschlagen", "wartet". No test
+    /// looked at it - the one German check in this project reads the model
+    /// LABELS, which have been English all along - and no photograph had ever
+    /// been taken of the HUD with the list up. The frame found it in one look.
+    ///
+    /// Static so the words can be asserted without a scene.
+    /// </summary>
+    public static string StreamMark(ModelStreamer.State state, float sizeMb, float progress)
+    {
+        switch (state)
+        {
+            case ModelStreamer.State.Loaded:
+                // zero means it came from cache, which is worth saying
+                return sizeMb > 0.01f ? $"{sizeMb:0.0} MB" : "cached";
+            case ModelStreamer.State.Failed:
+                return "failed";
+            case ModelStreamer.State.Loading:
+                return sizeMb > 0.01f
+                    ? $"{Mathf.RoundToInt(progress * 100f)} %  {sizeMb:0.0} MB"
+                    : $"{Mathf.RoundToInt(progress * 100f)} %";
+            default:
+                return "waiting";
+        }
+    }
+
+    /// <summary>
+    /// THE HEADLINE STACK, row by row: the price, the per-cent line, the
+    /// liquidation line and the block clock.
+    ///
+    /// Measured from the UNFITTED price size on purpose. The price shrinks
+    /// when the gap between the columns is narrow, and the rows underneath it
+    /// were placed from the shrunk size - so the ticker, the liquidation line
+    /// and the block clock all jumped up the screen the moment the price
+    /// gained a digit. The rows are where they are; only the price's own
+    /// glyphs change size inside its row.
+    ///
+    /// Row 0 is the price, 1 the per-cent line, 2 the liquidation line, 3 the
+    /// block clock, in the same 1.12 / 1.55 / 2.7 steps the drawing used.
+    /// </summary>
+    public float HeadlineRowY(int w, int h, int row)
+    {
+        float price = Mathf.RoundToInt(Mathf.Min(w, h) * 0.13f);
+        float sub = Mathf.RoundToInt(Mathf.Min(w, h) * 0.045f);
+        float top = h * 0.015f;
+        switch (row)
+        {
+            case 0: return top;
+            case 1: return top + price * 1.12f;
+            case 2: return top + price * 1.12f + sub * 1.55f;
+            default: return top + price * 1.12f + sub * 2.7f;
+        }
+    }
+
+    /// <summary>
+    /// The liquidation line - "LIQUIDATED $12.4M · binance" - third row of the
+    /// headline stack, in the gap between the columns like the rest of it.
+    /// </summary>
+    public Rect LiquidationBox(int w, int h)
+    {
+        var head = HeadlineBox(w, h);
+        // THE ROW'S OWN HEIGHT, which is the distance to the row under it -
+        // not the 1.6 line-heights the drawing asked for. Measured at
+        // 1920x1080 the rect was 78.4 px tall in a 56.4 px row, so it reached
+        // into the block clock below: a box claiming more than it has, which
+        // is the block board's fault again in a different corner. One line of
+        // the sub font is 49 px, so the room is enough for what is drawn.
+        float y = HeadlineRowY(w, h, 2);
+        return new Rect(head.x, y, head.width, HeadlineRowY(w, h, 3) - y);
+    }
+
+    /// <summary>The block clock under it, fourth row.</summary>
+    public Rect BlockTimerBox(int w, int h)
+    {
+        float font = Mathf.Clamp(Mathf.Min(w, h) * 0.055f, 22f, 46f);
+        var head = HeadlineBox(w, h);
+        return new Rect(head.x, HeadlineRowY(w, h, 3), head.width, font * 1.35f);
     }
 
     /// <summary>
@@ -1528,25 +1642,15 @@ public class DriveHud : MonoBehaviour
         foreach (var item in streamer.Items)
         {
             var style = new GUIStyle(_small);
-            string mark;
             switch (item.state)
             {
-                case ModelStreamer.State.Loaded:
-                    style.normal.textColor = Up;
-                    // zero means it came from cache, which is worth saying
-                    mark = item.sizeMb > 0.01f ? $"{item.sizeMb:0.0} MB" : "aus Cache";
-                    break;
-                case ModelStreamer.State.Failed:
-                    style.normal.textColor = Down; mark = "fehlgeschlagen"; break;
+                case ModelStreamer.State.Loaded: style.normal.textColor = Up; break;
+                case ModelStreamer.State.Failed: style.normal.textColor = Down; break;
                 case ModelStreamer.State.Loading:
-                    style.normal.textColor = new Color(1f, 0.82f, 0.35f);
-                    mark = item.sizeMb > 0.01f
-                        ? $"{Mathf.RoundToInt(item.progress * 100f)} %  {item.sizeMb:0.0} MB"
-                        : $"{Mathf.RoundToInt(item.progress * 100f)} %";
-                    break;
-                default:
-                    style.normal.textColor = new Color(0.65f, 0.68f, 0.72f); mark = "wartet"; break;
+                    style.normal.textColor = new Color(1f, 0.82f, 0.35f); break;
+                default: style.normal.textColor = new Color(0.65f, 0.68f, 0.72f); break;
             }
+            string mark = StreamMark(item.state, item.sizeMb, item.progress);
             GUI.Label(new Rect(box.x + pad * 0.6f, y, box.width, lh), $"{item.label}  {mark}", style);
             y += lh;
         }
@@ -1586,7 +1690,7 @@ public class DriveHud : MonoBehaviour
             if (wanted > head.width && wanted > 1f)
                 _price.fontSize = Mathf.Max(14, Mathf.FloorToInt(_price.fontSize * head.width / wanted));
 
-            Shadowed(new Rect(head.x, h * 0.015f, head.width, _price.fontSize * 1.3f),
+            Shadowed(new Rect(head.x, HeadlineRowY(w, h, 0), head.width, _price.fontSize * 1.3f),
                      text, _price, colour);
 
             double chg = market.DayChangePct;
@@ -1604,12 +1708,11 @@ public class DriveHud : MonoBehaviour
                 // the debug panel.
                 ? $"{chg:+0.00;-0.00;0.00}% 24h"
                 : $"verbinde … ({market.Status})";
-            Shadowed(new Rect(head.x, h * 0.015f + _price.fontSize * 1.12f,
-                              head.width, _sub.fontSize * 1.6f),
+            Shadowed(new Rect(head.x, HeadlineRowY(w, h, 1), head.width, _sub.fontSize * 1.6f),
                      sub, _sub, chg >= 0 ? Up : Down);
 
-            DrawLiquidations(w, h, h * 0.015f + _price.fontSize * 1.12f + _sub.fontSize * 1.55f);
-            DrawBlockTimer(w, h, h * 0.015f + _price.fontSize * 1.12f + _sub.fontSize * 2.7f);
+            DrawLiquidations(w, h, HeadlineRowY(w, h, 2));
+            DrawBlockTimer(w, h, HeadlineRowY(w, h, 3));
         }
 
         // Everything the game HUD draws sits UNDER the loading window. IMGUI

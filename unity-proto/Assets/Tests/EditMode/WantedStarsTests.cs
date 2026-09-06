@@ -72,3 +72,42 @@ public class WantedStarsTests
         Assert.AreEqual(0, DriveHud.StarsFor(Blwp.BlwpCore.Heat));
     }
 }
+
+/// <summary>
+/// THE STREAMING LIST SPEAKS ENGLISH.
+///
+/// It said "aus Cache", "fehlgeschlagen" and "wartet" on the driving HUD of a
+/// build whose every other string is English. The one German check in this
+/// project reads the model LABELS - which have been English all along - so
+/// nothing looked at the words beside them, and no photograph had ever been
+/// taken of the HUD with the list up. A captured frame found it in one look.
+/// </summary>
+public class StreamingWordsTests
+{
+    [Test]
+    public void NoGermanNextToAModelName()
+    {
+        string[] german = { "wartet", "Cache", "fehlgeschlagen", "geladen", "laedt", "ä", "ö", "ü" };
+
+        foreach (var state in new[] { ModelStreamer.State.Waiting, ModelStreamer.State.Loading,
+                                      ModelStreamer.State.Loaded, ModelStreamer.State.Failed })
+            foreach (float mb in new[] { 0f, 12.3f })
+            {
+                string mark = DriveHud.StreamMark(state, mb, 0.42f);
+                foreach (var bad in german)
+                    Assert.IsFalse(mark.Contains(bad),
+                        $"{state} with {mb:0.0} MB reads \"{mark}\", which is German");
+                Assert.IsNotEmpty(mark, $"{state} says nothing at all");
+            }
+    }
+
+    [Test]
+    public void TheWordsSayWhatTheStateIs()
+    {
+        Assert.AreEqual("waiting", DriveHud.StreamMark(ModelStreamer.State.Waiting, 0f, 0f));
+        Assert.AreEqual("failed", DriveHud.StreamMark(ModelStreamer.State.Failed, 0f, 0f));
+        Assert.AreEqual("cached", DriveHud.StreamMark(ModelStreamer.State.Loaded, 0f, 0f),
+            "a model that came from cache has no size to report");
+        Assert.AreEqual("12.3 MB", DriveHud.StreamMark(ModelStreamer.State.Loaded, 12.3f, 0f));
+    }
+}

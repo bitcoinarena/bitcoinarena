@@ -237,6 +237,26 @@ public class HudLayoutTests
                       + $"headline gap {head.x:0}..{head.xMax:0} ({head.width:0} px)");
         }
 
+        foreach (var size in new[] { new Vector2(1920, 1080), new Vector2(1024, 768),
+                                     new Vector2(844, 390),   new Vector2(1000, 360) })
+        {
+            int w = (int)size.x, h = (int)size.y;
+            var liq = _hud.LiquidationBox(w, h);
+            var clock = _hud.BlockTimerBox(w, h);
+            var health = _hud.HealthBox(w, h);
+            var wanted = _hud.WantedBox(w, h);
+            var send = _hud.SendOffBox(w, h);
+            var arrive = _hud.ArrivalBox(w, h);
+            Debug.Log($"[liq] {w}x{h}: line {liq.x:0}..{liq.xMax:0} x {liq.y:0}..{liq.yMax:0}; "
+                      + $"clear of the column by {liq.x - health.xMax:0} px, of the wanted row "
+                      + $"by {wanted.x - liq.xMax:0} px, of the block clock by "
+                      + $"{clock.y - liq.yMax:0} px");
+            Debug.Log($"[cards] {w}x{h}: send-off {send.y:0}..{send.yMax:0}, arrival "
+                      + $"{arrive.y:0}..{arrive.yMax:0}, they share "
+                      + $"{Mathf.Max(0f, Mathf.Min(send.yMax, arrive.yMax) - Mathf.Max(send.y, arrive.y)):0}"
+                      + $" px of height - gated, never both drawn");
+        }
+
         _hud.showDiagnostics = true;
         try
         {
@@ -335,6 +355,94 @@ public class HudLayoutTests
             Assert.LessOrEqual(send.xMax, w, $"the send-off card is off the edge {at}");
             Assert.LessOrEqual(arrive.yMax, h, $"the arrival card is off the bottom {at}");
             Assert.Greater(send.width, 60f, $"the send-off card has no width {at}");
+        }
+    }
+
+    /// <summary>
+    /// THE LIQUIDATION LINE, which is the last thing in the headline stack
+    /// with no rect of its own.
+    ///
+    /// It reads "LIQUIDATED $12.4M · binance" and it is the line that tells
+    /// the player what the crater in front of him was. It sits under the
+    /// ticker, in the gap - so it has three neighbours to clear: the rows
+    /// above and below it in its own stack, the column on the left, and the
+    /// wanted row on the right.
+    /// </summary>
+    [Test]
+    public void TheLiquidationLineClearsItsNeighbours()
+    {
+        foreach (var size in new[] { new Vector2(1920, 1080), new Vector2(1024, 768),
+                                     new Vector2(844, 390),   new Vector2(1000, 360) })
+        {
+            int w = (int)size.x, h = (int)size.y;
+            string at = $"at {w}x{h}";
+
+            var liq = _hud.LiquidationBox(w, h);
+            var clock = _hud.BlockTimerBox(w, h);
+            var health = _hud.HealthBox(w, h);
+            var danger = _hud.ExposureBox(w, h);
+            var practice = _hud.PracticeBox(w, h);
+            var wanted = _hud.WantedBox(w, h);
+            var head = _hud.HeadlineBox(w, h);
+
+            if (head.width < 60f)
+            {
+                Assert.AreEqual(0f, liq.width, 0.01f,
+                    $"there is no gap here, so the line must not claim one {at}");
+                continue;
+            }
+
+            void Apart(Rect a, Rect b, string what)
+                => Assert.IsFalse(a.Overlaps(b), $"{what} overlap {at}: {a} / {b}");
+
+            Apart(liq, health, "the liquidation line and the condition bar");
+            Apart(liq, danger, "the liquidation line and the danger meter");
+            Apart(liq, practice, "the liquidation line and the practice switch");
+            Apart(liq, wanted, "the liquidation line and the wanted row");
+            Apart(liq, clock, "the liquidation line and the block clock");
+
+            // its own stack: the ticker above it and the clock below
+            float ticker = _hud.HeadlineRowY(w, h, 1);
+            Assert.Greater(liq.y, ticker, $"the liquidation line is above the ticker {at}");
+            Assert.Greater(clock.y, liq.y, $"the block clock is above the liquidation line {at}");
+            Assert.LessOrEqual(liq.yMax, h, $"the liquidation line is off the bottom {at}");
+            // and the row is tall enough for the line drawn in it
+            float sub = Mathf.RoundToInt(Mathf.Min(w, h) * 0.045f);
+            Assert.GreaterOrEqual(liq.height, sub,
+                $"the liquidation row is shorter than the text in it {at}");
+        }
+    }
+
+    /// <summary>
+    /// THE TWO CARDS, against each other rather than only against the screen.
+    ///
+    /// The send-off is up for 3.4 s from roll-out and the arrival card for 5 s
+    /// from a delivery or a miss - two independent clocks, so nothing in the
+    /// code stops both running at once: deliver, and confirm the next load
+    /// inside five seconds, and both are drawn. They are 20% and 18% down the
+    /// screen and taller than that gap, so they would be laid on each other.
+    /// </summary>
+    [Test]
+    public void TheTwoCardsAreNeverUpTogether()
+    {
+        foreach (var size in new[] { new Vector2(1920, 1080), new Vector2(1024, 768),
+                                     new Vector2(844, 390),   new Vector2(1000, 360) })
+        {
+            int w = (int)size.x, h = (int)size.y;
+            string at = $"at {w}x{h}";
+            var send = _hud.SendOffBox(w, h);
+            var arrive = _hud.ArrivalBox(w, h);
+
+            // They DO share pixels - that is the point, and it is why one of
+            // them has to be gated out rather than moved: two cards side by
+            // side on a phone would be two unreadable cards.
+            Assert.IsTrue(send.Overlaps(arrive),
+                $"the cards no longer share space {at}; if they were separated, "
+                + "this test should be the overlap check instead of the gate");
+            Assert.IsTrue(DriveHud.ArrivalIsHiddenBy(sendOffShowing: true),
+                $"the arrival card is not gated on the send-off {at}");
+            Assert.IsFalse(DriveHud.ArrivalIsHiddenBy(sendOffShowing: false),
+                $"the arrival card is hidden with no send-off up {at}");
         }
     }
 
