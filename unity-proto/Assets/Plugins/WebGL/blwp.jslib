@@ -38,6 +38,14 @@ mergeInto(LibraryManager.library, {
     return b.core.submitLiquidation(b.st, size | 0) ? 1 : 0;
   },
 
+  // How hard the war hunts what is on the bed, Q16.16, handed over at
+  // roll-out. The core clamps it; this only carries it.
+  BlwpSetHeat: function (q) {
+    var b = Module.blwp;
+    if (!b || !b.core.setHeat) return 0;
+    return b.core.setHeat(b.st, q | 0) ? 1 : 0;
+  },
+
   BlwpFrontlineZ: function (x) {
     var b = Module.blwp;
     if (!b || !b.core.frontAt) return 0;

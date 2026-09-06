@@ -57,21 +57,21 @@ namespace Blwp
         public const int MAX_CRATERS = 8;
         public const int MAX_HELIS = 4;
         public const int MAX_UNITS = 256;
-        public const int O_AIR = 2077;
-        public const int O_ARMY = 2073;
-        public const int O_BOMBS = 2111;
-        public const int O_CRATERS = 2189;
-        public const int O_HELIS = 2079;
-        public const int O_LIQ = 2181;
+        public const int O_AIR = 2078;
+        public const int O_ARMY = 2074;
+        public const int O_BOMBS = 2112;
+        public const int O_CRATERS = 2190;
+        public const int O_HELIS = 2080;
+        public const int O_LIQ = 2182;
         public const int O_RNG = 1;
         public const int O_SCORE = 18;
-        public const int O_SQUADS = 2175;
-        public const int O_STRIKE = 2184;
+        public const int O_SQUADS = 2176;
+        public const int O_STRIKE = 2185;
         public const int O_TICK = 0;
         public const int O_TRUCK = 5;
-        public const int O_UNITS = 25;
+        public const int O_UNITS = 26;
         public const int RNG_WORDS = 4;
-        public const int SCORE_WORDS = 7;
+        public const int SCORE_WORDS = 8;
         public const int SQUADS_PER_SIDE = 3;
         public const int SQUAD_WORDS = 6;
         public const int STRIKE_WORDS = 5;
@@ -80,6 +80,7 @@ namespace Blwp
         public const int S_DELIVERED = 4;
         public const int S_ELAPSED = 1;
         public const int S_EXPOSURE = 0;
+        public const int S_HEAT = 7;
         public const int S_PRACTICE = 6;
         public const int S_STATE = 5;
         public const int TRUCK_WORDS = 13;
@@ -106,7 +107,7 @@ namespace Blwp
         public const int U_WORDS = 8;
         public const int U_X = 0;
         public const int U_Z = 1;
-        public const int WORDS = 2229;
+        public const int WORDS = 2230;
 
         /// <summary>Where the core starts the truck, Q16.16 metres.</summary>
         public const int START_X = -6579814;

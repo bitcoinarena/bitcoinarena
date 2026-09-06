@@ -87,6 +87,19 @@ public class LoadoutPanel : MonoBehaviour
             var core = truck.GetComponent<Blwp.CoreDrivenTruck>();
             if (core != null) core.StartRound();
         }
+
+        // AND WHAT THE LOAD COSTS, after the round has started because
+        // starting it clears the state this writes into.
+        //
+        // The war hunts a fat load harder: the reach a tank notices the truck
+        // at, whether the truck outranks the tank in front of it, and what a
+        // shell does all scale with this. The retired C# had the field and the
+        // rule and never assigned it, so the freight choice cost nothing;
+        // measured in the core, a full load is written off in 8.1 s against an
+        // empty one's 85.3 s at fifty metres behind the line.
+        //
+        // The number only; every consequence of it is the core's.
+        if (bay != null) Blwp.BlwpCore.SetHeat(bay.Heat);
     }
 
     [Tooltip("How full AUTO will load the bed. Deliberately short of full: " +

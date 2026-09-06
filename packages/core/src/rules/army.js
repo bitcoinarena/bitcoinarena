@@ -23,6 +23,56 @@ export const ARMOUR_RANGE = Math.imul(46, ONE);
  * draw either way and the stream does not change shape with the target.
  */
 export const COURIER_RANGE = Math.imul(34, ONE);
+
+/**
+ * WHAT THE LOAD BUYS THE WAR, from `Army.cs:625`, `:634` and `:638`.
+ *
+ * Heat widens the reach the truck is noticed at, lets it outrank a tank that
+ * is closer than it is, and multiplies the shell. The three factors are the
+ * C#'s own and are not re-chosen here: a tank at full heat notices the truck
+ * at 34 x 2.4 = 81.6 m, will leave a foe three and a half times nearer to
+ * shoot at it, and hits for 5-11 x 1.6.
+ *
+ * The rifle gets the narrower widening the C# gives it, `Army.cs:727`, and
+ * its damage is NOT scaled - the C# scales the shell and not the round, and
+ * the two bands are what the recorder tells the weapons apart by.
+ */
+export const HEAT_REACH_ARMOUR = 91750;    // 1.4
+export const HEAT_REACH_RIFLE = 52429;     // 0.8
+export const HEAT_OUTRANK = 163840;        // 2.5
+export const HEAT_SHELL = 39322;           // 0.6
+
+/**
+ * How far this arm notices the truck at, for a load hunted this hard.
+ *
+ * The three heat terms are written as three functions rather than inline
+ * arithmetic because a rule with three factors needs three tests: with them
+ * inline, zeroing the reach and zeroing the shell BOTH left the end-to-end
+ * measurements green - the outranking alone carried the whole effect - and a
+ * factor no test can kill is a factor nobody is holding.
+ */
+export const courierReach = (heat, armour) => {
+  const base = armour ? COURIER_RANGE : RIFLE_RANGE;
+  const per = armour ? HEAT_REACH_ARMOUR : HEAT_REACH_RIFLE;
+  return add(base, mulFast(base, mulFast(clamp(heat, 0, ONE), per)));
+};
+
+/**
+ * Whether the truck outranks the enemy this unit had picked.
+ *
+ * At heat zero this is the plain "nearer than the foe" the recordings were
+ * taken at; at full heat the truck wins from three and a half times as far.
+ */
+export const outranksTheFoe = (toTruck, toFoe, heat) =>
+  toTruck < add(toFoe, mulFast(toFoe, mulFast(clamp(heat, 0, ONE), HEAT_OUTRANK)));
+
+/**
+ * What a shell does to a load hunted this hard. The rifle's round is NOT
+ * scaled: the C# scales the shell and not the round, and the two damage bands
+ * are what a recorder tells the weapons apart by.
+ */
+export const shellForHeat = (shell, heat) =>
+  add(shell, mulFast(shell, mulFast(clamp(heat, 0, ONE), HEAT_SHELL)));
 export const COURIER_DAMAGE_MIN = Math.imul(5, ONE);
 export const COURIER_DAMAGE_SPAN = Math.imul(6, ONE);   // 5 to 11
 

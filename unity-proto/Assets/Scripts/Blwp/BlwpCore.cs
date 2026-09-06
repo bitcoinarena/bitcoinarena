@@ -35,6 +35,7 @@ namespace Blwp
         [DllImport("__Internal")] private static extern int BlwpRestart(int seed);
         [DllImport("__Internal")] private static extern int BlwpTeleport(int x, int z, int heading);
         [DllImport("__Internal")] private static extern int BlwpTakeImpact();
+        [DllImport("__Internal")] private static extern int BlwpSetHeat(int q);
         public const bool Compiled = true;
 #else
         private static int BlwpInit(int seed) => 0;
@@ -52,6 +53,7 @@ namespace Blwp
         private static int BlwpRestart(int seed) => 0;
         private static int BlwpTeleport(int x, int z, int h) => 0;
         private static int BlwpTakeImpact() => 0;
+        private static int BlwpSetHeat(int q) => 0;
         public const bool Compiled = false;
 #endif
 
@@ -214,6 +216,22 @@ namespace Blwp
         /// and come away unmarked.
         /// </summary>
         public static float TakeImpact() => Available ? BlwpTakeImpact() / (float)ONE : 0f;
+
+        /// <summary>
+        /// HOW HARD THE WAR HUNTS THIS LOAD, handed to the core at roll-out.
+        ///
+        /// The number is chosen in the yard - it is what the player put on the
+        /// bed - so it is an INPUT, like the throttle. What it costs is not:
+        /// the reach a tank notices the truck at, whether the truck outranks
+        /// the tank in front of it, and what a shell does are all decided in
+        /// the core, and the word lives in the hashed state so a transcript
+        /// carries the fire the player actually took.
+        ///
+        /// The retired C# had the same field on its own army, documented and
+        /// never assigned by anything that shipped.
+        /// </summary>
+        public static bool SetHeat(float heat01) =>
+            Available && BlwpSetHeat(Mathf.RoundToInt(Mathf.Clamp01(heat01) * ONE)) == 1;
 
         /// <summary>The truck's velocity, in metres a second.</summary>
         public static Vector3 Velocity => new Vector3(

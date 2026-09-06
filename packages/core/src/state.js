@@ -47,7 +47,7 @@ export const RNG_WORDS = 4;
 export const O_TRUCK = O_RNG + RNG_WORDS;
 export const TRUCK_WORDS = 13;   // fields 0..12, T_IMPACT included
 export const O_SCORE = O_TRUCK + TRUCK_WORDS;
-export const SCORE_WORDS = 7;   // fields 0..6, S_PRACTICE included
+export const SCORE_WORDS = 8;   // fields 0..7, S_HEAT included
 export const O_UNITS = O_SCORE + SCORE_WORDS;   // MAX_UNITS * U_WORDS follow
 export const U_WORDS = 8;
 
@@ -249,6 +249,27 @@ export const S_CARGO = 3, S_DELIVERED = 4, S_STATE = 5;
  * A flag Unity kept to itself would be invisible to every node.
  */
 export const S_PRACTICE = 6;
+
+/**
+ * HOW HARD THE WAR IS HUNTING THIS LOAD, 0..ONE.
+ *
+ * Its own word and NOT `S_CARGO`. `S_CARGO` is the score's cargo factor and
+ * `accrue` reads it as a heat as well; writing the hunt into it would tie how
+ * hard you are shot at to what the run pays, which is a coupling nobody asked
+ * for and which would move the scoring settled in a13.
+ *
+ * It is here rather than in Unity because it decides FIRE - the reach a tank
+ * notices the truck at, whether the truck outranks the tank in front of it,
+ * and what the shell does. Those are outcomes. `Army.Heat` in the retired C#
+ * carried exactly this intent, was documented as "set from what it is
+ * carrying; without this the freight choice had no consequence at all", and
+ * was never assigned by anything that shipped: measured, a full load would
+ * have died 2.1x faster than an empty one and never did.
+ *
+ * Zero until a host says otherwise, so a core that is never told stays where
+ * the recordings are.
+ */
+export const S_HEAT = 7;
 
 // unit fields, relative to a unit's base
 export const U_X = 0, U_Z = 1, U_SIDE = 2, U_HP = 3;

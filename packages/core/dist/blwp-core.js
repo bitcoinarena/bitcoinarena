@@ -818,7 +818,7 @@ const RNG_WORDS = 4;
 const O_TRUCK = O_RNG + RNG_WORDS;
 const TRUCK_WORDS = 13;   // fields 0..12, T_IMPACT included
 const O_SCORE = O_TRUCK + TRUCK_WORDS;
-const SCORE_WORDS = 7;   // fields 0..6, S_PRACTICE included
+const SCORE_WORDS = 8;   // fields 0..7, S_HEAT included
 const O_UNITS = O_SCORE + SCORE_WORDS;   // MAX_UNITS * U_WORDS follow
 const U_WORDS = 8;
 
@@ -1020,6 +1020,27 @@ const S_CARGO = 3, S_DELIVERED = 4, S_STATE = 5;
  * A flag Unity kept to itself would be invisible to every node.
  */
 const S_PRACTICE = 6;
+
+/**
+ * HOW HARD THE WAR IS HUNTING THIS LOAD, 0..ONE.
+ *
+ * Its own word and NOT `S_CARGO`. `S_CARGO` is the score's cargo factor and
+ * `accrue` reads it as a heat as well; writing the hunt into it would tie how
+ * hard you are shot at to what the run pays, which is a coupling nobody asked
+ * for and which would move the scoring settled in a13.
+ *
+ * It is here rather than in Unity because it decides FIRE - the reach a tank
+ * notices the truck at, whether the truck outranks the tank in front of it,
+ * and what the shell does. Those are outcomes. `Army.Heat` in the retired C#
+ * carried exactly this intent, was documented as "set from what it is
+ * carrying; without this the freight choice had no consequence at all", and
+ * was never assigned by anything that shipped: measured, a full load would
+ * have died 2.1x faster than an empty one and never did.
+ *
+ * Zero until a host says otherwise, so a core that is never told stays where
+ * the recordings are.
+ */
+const S_HEAT = 7;
 
 // unit fields, relative to a unit's base
 const U_X = 0, U_Z = 1, U_SIDE = 2, U_HP = 3;
@@ -1646,6 +1667,56 @@ const ARMOUR_RANGE = Math.imul(46, ONE);
  * draw either way and the stream does not change shape with the target.
  */
 const COURIER_RANGE = Math.imul(34, ONE);
+
+/**
+ * WHAT THE LOAD BUYS THE WAR, from `Army.cs:625`, `:634` and `:638`.
+ *
+ * Heat widens the reach the truck is noticed at, lets it outrank a tank that
+ * is closer than it is, and multiplies the shell. The three factors are the
+ * C#'s own and are not re-chosen here: a tank at full heat notices the truck
+ * at 34 x 2.4 = 81.6 m, will leave a foe three and a half times nearer to
+ * shoot at it, and hits for 5-11 x 1.6.
+ *
+ * The rifle gets the narrower widening the C# gives it, `Army.cs:727`, and
+ * its damage is NOT scaled - the C# scales the shell and not the round, and
+ * the two bands are what the recorder tells the weapons apart by.
+ */
+const HEAT_REACH_ARMOUR = 91750;    // 1.4
+const HEAT_REACH_RIFLE = 52429;     // 0.8
+const HEAT_OUTRANK = 163840;        // 2.5
+const HEAT_SHELL = 39322;           // 0.6
+
+/**
+ * How far this arm notices the truck at, for a load hunted this hard.
+ *
+ * The three heat terms are written as three functions rather than inline
+ * arithmetic because a rule with three factors needs three tests: with them
+ * inline, zeroing the reach and zeroing the shell BOTH left the end-to-end
+ * measurements green - the outranking alone carried the whole effect - and a
+ * factor no test can kill is a factor nobody is holding.
+ */
+const courierReach = (heat, armour) => {
+  const base = armour ? COURIER_RANGE : RIFLE_RANGE;
+  const per = armour ? HEAT_REACH_ARMOUR : HEAT_REACH_RIFLE;
+  return add(base, mulFast(base, mulFast(clamp(heat, 0, ONE), per)));
+};
+
+/**
+ * Whether the truck outranks the enemy this unit had picked.
+ *
+ * At heat zero this is the plain "nearer than the foe" the recordings were
+ * taken at; at full heat the truck wins from three and a half times as far.
+ */
+const outranksTheFoe = (toTruck, toFoe, heat) =>
+  toTruck < add(toFoe, mulFast(toFoe, mulFast(clamp(heat, 0, ONE), HEAT_OUTRANK)));
+
+/**
+ * What a shell does to a load hunted this hard. The rifle's round is NOT
+ * scaled: the C# scales the shell and not the round, and the two damage bands
+ * are what a recorder tells the weapons apart by.
+ */
+const shellForHeat = (shell, heat) =>
+  add(shell, mulFast(shell, mulFast(clamp(heat, 0, ONE), HEAT_SHELL)));
 const COURIER_DAMAGE_MIN = Math.imul(5, ONE);
 const COURIER_DAMAGE_SPAN = Math.imul(6, ONE);   // 5 to 11
 
@@ -4211,21 +4282,39 @@ function step(st, throttle, steer, brake, handbrake, practice) {
           // the sum of squares wraps and length2 returns ZERO, which read as
           // the truck standing on the tank. The foe needs no such guard - it
           // is inside ARMOUR_RANGE by construction.
+          // AND HOW HARD THE LOAD IS HUNTED WIDENS BOTH HALVES OF THAT.
+          //
+          // `S_HEAT` is zero unless a host has said otherwise, and at zero
+          // every line below reduces to the plain 34 m and the plain nearer
+          // that the recordings were taken at. Above zero it is `Army.cs`'s
+          // own rule: the reach grows by 1.4 x heat and the truck outranks a
+          // foe up to 2.5 x heat nearer than it.
+          //
+          // The axis guard from item (m) moves WITH the reach, as it did when
+          // the threshold moved to 34: at full heat that is 81.6 m, still far
+          // under the ~181.5 m where the sum of squares wraps and `length2`
+          // returns zero - which read as the truck standing on the tank.
+          const heat = s[O_SCORE + S_HEAT];
+          const reachA = courierReach(heat, true);
           const dxTruck = sub(u.x, tx), dzTruck = sub(u.z, tz);
           let onCourier = false;
-          if (abs(dxTruck) <= COURIER_RANGE && abs(dzTruck) <= COURIER_RANGE) {
+          if (abs(dxTruck) <= reachA && abs(dzTruck) <= reachA) {
             const toTruck = length2(dxTruck, dzTruck);
-            if (toTruck < COURIER_RANGE)
-              onCourier = toTruck < length2(sub(u.x, s[fb + U_X]), sub(u.z, s[fb + U_Z]));
+            if (toTruck < reachA)
+              onCourier = outranksTheFoe(
+                toTruck, length2(sub(u.x, s[fb + U_X]), sub(u.z, s[fb + U_Z])), heat);
           }
 
           if (connects) {
             // One draw either way, and in hundredths like the shell's own
             // damage, so the stream does not change shape with the target.
             if (onCourier) {
-              courierDmg = add(courierDmg,
-                add(COURIER_DAMAGE_MIN,
-                    idiv(Math.imul(nextBelow(rng, 100), COURIER_DAMAGE_SPAN), 100)));
+              // Scaled AFTER the draw, so heat changes what a shell does and
+              // never what the stream draws: one number either way, in the
+              // same order, whatever the load.
+              const shell = add(COURIER_DAMAGE_MIN,
+                    idiv(Math.imul(nextBelow(rng, 100), COURIER_DAMAGE_SPAN), 100));
+              courierDmg = add(courierDmg, shellForHeat(shell, heat));
             } else {
               const hurt = add(DAMAGE_MIN, idiv(Math.imul(nextBelow(rng, 100), DAMAGE_SPAN), 100));
               s[fb + U_HP] = max(0, sub(s[fb + U_HP], hurt));
@@ -4283,12 +4372,19 @@ function step(st, throttle, steer, brake, handbrake, practice) {
           // before that guard, 19-21% of the approach's rifle clocks were
           // spent firing at a truck 200 m off. The foe needs no guard - he is
           // inside RIFLE_RANGE by construction.
+          // The same widening in the rifleman's own terms: 0.8 x heat on his
+          // reach, not the tank's 1.4, and the same 2.5 on outranking. His
+          // ROUND is not scaled - the C# scales the shell and not the rifle,
+          // and the two damage bands are how the weapons are told apart.
+          const heatR = s[O_SCORE + S_HEAT];
+          const reachR = courierReach(heatR, false);
           const dxTruck = sub(u.x, tx), dzTruck = sub(u.z, tz);
           let onCourier = false;
-          if (abs(dxTruck) <= RIFLE_RANGE && abs(dzTruck) <= RIFLE_RANGE) {
+          if (abs(dxTruck) <= reachR && abs(dzTruck) <= reachR) {
             const toTruck = length2(dxTruck, dzTruck);
-            if (toTruck < RIFLE_RANGE)
-              onCourier = toTruck < length2(sub(u.x, s[fb + U_X]), sub(u.z, s[fb + U_Z]));
+            if (toTruck < reachR)
+              onCourier = outranksTheFoe(
+                toTruck, length2(sub(u.x, s[fb + U_X]), sub(u.z, s[fb + U_Z])), heatR);
           }
 
           if (connects) {
@@ -4475,6 +4571,25 @@ function step(st, throttle, steer, brake, handbrake, practice) {
  */
 const frontAt = (st, x) => frontlineZ(st.tape, x | 0, HALF_X, HALF_Z);
 
+/**
+ * HOW HARD THE WAR HUNTS THIS LOAD, handed over as round setup.
+ *
+ * The host knows what went on the bed; the core decides what that costs. It
+ * is one word in the hashed state, so a transcript carries it and a verifier
+ * replaying the round sees the same fire the player did - which it would not
+ * if the widening lived in Unity.
+ *
+ * Clamped here rather than trusted: a host that sends 4.0 gets 1.0, and the
+ * state stays inside the range every rule below reads it in.
+ */
+function setHeat(st, q16) {
+  st.i32[O_SCORE + S_HEAT] = clamp(q16 | 0, 0, ONE);
+  return true;
+}
+
+/** What the core is currently hunting this load at, 0..ONE. */
+const heatOf = (st) => st.i32[O_SCORE + S_HEAT];
+
 const runScore = (st) =>
   scoreOf(st.i32[O_SCORE + S_EXPOSURE],
                 st.i32[O_SCORE + S_ELAPSED],
@@ -4483,6 +4598,7 @@ const runScore = (st) =>
 return { init: init, step: step, hash: hash, runScore: runScore,
          setGround: setGround, groundAt: groundAt, setSolids: setSolids, teleport: teleport,
          restart: restart, frontAt: frontAt, submitLiquidation: submitLiquidation,
+         setHeat: setHeat, heatOf: heatOf,
          create: create, WORDS: WORDS };
 })();
 if (typeof module !== "undefined") module.exports = BLWP;

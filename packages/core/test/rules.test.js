@@ -7,7 +7,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { init, step, restart, runScore, setGround, setSolids, groundAt, HALF_X } from '../src/sim.js';
+import { init, step, restart, runScore, setGround, setSolids, groundAt, setHeat, heatOf, HALF_X } from '../src/sim.js';
 // Offsets are IMPORTED, never typed. They were typed in nine places in this
 // file, and when the truck block grew its thirteenth word every one of them
 // had to be found - which is the same drift that let `T_IMPACT` and
@@ -15,9 +15,10 @@ import { init, step, restart, runScore, setGround, setSolids, groundAt, HALF_X }
 import {
   hash, WORDS, O_AIR, AIR_BULL, AIR_BEAR, S_PRACTICE as L_S_PRACTICE,
   O_TRUCK, T_X, T_Z, T_HP, O_SCORE, S_EXPOSURE, S_ELAPSED, S_BESTX, S_STATE,
-  O_UNITS, U_WORDS, U_X, U_Z, U_HP, U_STATE,
+  O_UNITS, U_WORDS, U_X, U_Z, U_HP, U_STATE, T_VX, T_VZ,
 } from '../src/state.js';
 import * as scoring from '../src/rules/score.js';
+import * as army from '../src/rules/army.js';
 import * as gate from '../src/rules/gate.js';
 
 const ONE = 65536;
@@ -1315,4 +1316,108 @@ test('practice shields the truck in the core, not in the client', () => {
     assert.equal(shielded.i32[O_SCORE + L_S_PRACTICE], 1,
       `seed ${seed.toString(16)}: the practice flag was not recorded in the hashed state`);
   }
+});
+
+// ---------------------------------------------------------------------------
+// A HUNTED LOAD IS SHOT AT HARDER. M1.a13.
+//
+// The retired C# army carried this rule, documented as the whole point of
+// choosing freight - "without this the freight choice had no consequence at
+// all" - on a field nothing that shipped ever assigned. So a fat load was
+// hunted exactly as hard as an empty one, in every build, for the life of the
+// game. The rule is the core's now and this is what pins it.
+//
+// Parked on purpose. A driven truck confounds the measurement with where it
+// went; standing still, the only thing that changes between these runs is
+// what is on the bed.
+// ---------------------------------------------------------------------------
+
+/** Seconds a parked truck lasts at a given heat, and what hit it. */
+function survives(heatQ, z) {
+  const st = init(0x5eed1234);
+  const s = st.i32;
+  setHeat(st, heatQ);
+  let ticks = 0;
+  for (let t = 0; t < 90 * 60; t++) {
+    if (s[O_SCORE + S_STATE] !== 0) break;
+    s[O_TRUCK + T_X] = 0;
+    s[O_TRUCK + T_Z] = Math.round(z * ONE);
+    s[O_TRUCK + T_VX] = 0;
+    s[O_TRUCK + T_VZ] = 0;
+    step(st, 0, 0, 0, 0, 0);
+    ticks++;
+  }
+  return ticks / 60;
+}
+
+test('a hunted load is written off sooner than an empty one', () => {
+  const cold = survives(0, -25);
+  const hot = survives(65536, -25);
+  assert.ok(hot < cold * 0.8,
+    `heat has to cost something: empty lasted ${cold.toFixed(2)} s and a full `
+    + `load ${hot.toFixed(2)} s`);
+});
+
+test('and it tells further and further behind the line', () => {
+  // The reach is where heat does most of its work, so the gap has to WIDEN
+  // with distance: at the seam a tank is already in range of everything.
+  const near = survives(0, -25) / survives(65536, -25);
+  const far = survives(0, -50) / survives(65536, -50);
+  assert.ok(far > near,
+    `heat should matter more at fifty metres than at twenty-five: `
+    + `${far.toFixed(2)}x against ${near.toFixed(2)}x`);
+});
+
+test('an untold core hunts exactly as the recordings do', () => {
+  // Zero is the default and the recordings were taken at it, so a core nobody
+  // has spoken to must be bit-identical to one told zero.
+  const quiet = init(0x5eed1234);
+  const told = init(0x5eed1234);
+  setHeat(told, 0);
+  for (let t = 0; t < 600; t++) { step(quiet, 40000, 0, 0, 0, 0); step(told, 40000, 0, 0, 0, 0); }
+  assert.equal(hash(quiet), hash(told));
+});
+
+test('the core clamps a heat it is handed rather than trusting it', () => {
+  const st = init(1);
+  setHeat(st, 4 * 65536);
+  assert.equal(heatOf(st), 65536);
+  setHeat(st, -9);
+  assert.equal(heatOf(st), 0);
+});
+
+test('heat widens the reach the truck is noticed at, by arm', () => {
+  assert.equal(army.courierReach(0, true), 34 * ONE);
+  assert.equal(army.courierReach(0, false), 26 * ONE);
+  // 34 x 2.4 and 26 x 1.8 - the tank's widening is the larger, as in the C#.
+  //
+  // THE EXACT WORD, not a rounded metre. 1.4 and 0.8 are not representable in
+  // Q16.16 - 91750/65536 is 1.3999939 - so the product lands a few units under
+  // the real number, and both facts are asserted: the integer the rule
+  // actually produces, which any change to the factor moves, and that it is
+  // within a thousandth of a metre of what the C# meant.
+  assert.equal(army.courierReach(ONE, true), 5347724);
+  assert.ok(Math.abs(army.courierReach(ONE, true) - 34 * 2.4 * ONE) < 66);
+  assert.equal(army.courierReach(ONE, false), 3067090);
+  assert.ok(Math.abs(army.courierReach(ONE, false) - 26 * 1.8 * ONE) < 66);
+  assert.ok(army.courierReach(ONE / 2, true) > army.courierReach(0, true));
+  assert.equal(army.courierReach(4 * ONE, true), army.courierReach(ONE, true));
+});
+
+test('heat lets the truck outrank a foe that is nearer than it', () => {
+  const truck = 20 * ONE, foe = 10 * ONE;
+  assert.equal(army.outranksTheFoe(truck, foe, 0), false);   // plainly farther
+  assert.equal(army.outranksTheFoe(truck, foe, ONE), true);  // 10 x 3.5 = 35
+  assert.equal(army.outranksTheFoe(36 * ONE, foe, ONE), false);
+  // and at zero it is exactly the old strict "nearer than the foe"
+  assert.equal(army.outranksTheFoe(foe, foe, 0), false);
+});
+
+test('heat multiplies the shell and the arithmetic is the C#s', () => {
+  assert.equal(army.shellForHeat(10 * ONE, 0), 10 * ONE);
+  // x1.6, to the word: 39322/65536 is 0.6000061, so ten points become a
+  // sixteenth of a thousandth over sixteen.
+  assert.equal(army.shellForHeat(10 * ONE, ONE), 1048580);
+  assert.ok(Math.abs(army.shellForHeat(10 * ONE, ONE) - 16 * ONE) < 8);
+  assert.ok(Math.abs(army.shellForHeat(10 * ONE, ONE / 2) - 13 * ONE) < 8);
 });
