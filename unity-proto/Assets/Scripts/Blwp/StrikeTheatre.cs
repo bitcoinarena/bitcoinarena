@@ -67,6 +67,7 @@ namespace Blwp
         Transform _plane, _bomb;
         Vector3 _from, _to, _impact;
         float _t = -1f, _fall = -1f;
+        float _saidFly = -99f;
         int _seenStrikes = -1;
 
         Material _metal, _bombSkin, _glow;
@@ -213,10 +214,62 @@ namespace Blwp
             Debug.Log($"[strike] bomber away for {_impact.x:F1},{_impact.z:F1}");
         }
 
+        /// <summary>
+        /// Where a thing sits in the picture the player is driving with: is it
+        /// in front of the camera, what rect does it take, how much of that
+        /// rect survives the frame edges, and what share of the frame it is.
+        /// The same probe the cap used, because the cap turned out to be
+        /// entirely above the screen while every other number looked healthy.
+        /// </summary>
+        static string InFrame(Renderer r)
+        {
+            if (r == null) return "none";
+            var cam = Camera.main;
+            if (cam == null)
+                foreach (var c in Camera.allCameras)
+                    if (c != null && c.isActiveAndEnabled) { cam = c; break; }
+            if (cam == null) return "no camera";
+            var b = r.bounds;
+            float x0 = float.MaxValue, y0 = float.MaxValue;
+            float x1 = float.MinValue, y1 = float.MinValue;
+            bool front = false;
+            for (int i = 0; i < 8; i++)
+            {
+                var corner = b.center + Vector3.Scale(b.extents,
+                    new Vector3((i & 1) == 0 ? -1 : 1, (i & 2) == 0 ? -1 : 1,
+                                (i & 4) == 0 ? -1 : 1));
+                var sp = cam.WorldToScreenPoint(corner);
+                if (sp.z > 0f) front = true;
+                x0 = Mathf.Min(x0, sp.x); x1 = Mathf.Max(x1, sp.x);
+                y0 = Mathf.Min(y0, sp.y); y1 = Mathf.Max(y1, sp.y);
+            }
+            float ox = Mathf.Max(0f, Mathf.Min(x1, Screen.width) - Mathf.Max(x0, 0f));
+            float oy = Mathf.Max(0f, Mathf.Min(y1, Screen.height) - Mathf.Max(y0, 0f));
+            float share = front ? 100f * ox * oy / (Screen.width * Screen.height) : 0f;
+            return $"seen {r.isVisible}, front {front}, rect {x0:F0},{y0:F0} "
+                 + $"{(x1 - x0):F0}x{(y1 - y0):F0}, on screen {ox:F0}x{oy:F0} px = {share:F1}%"
+                 + (y1 > Screen.height ? ", CLIPPED at the top" : "");
+        }
+
         void Fly(float dt)
         {
             if (_t < 0f) return;
             _t += dt;
+
+            // THE APPROACH, in the driving picture. Six seconds pass between
+            // the warning and the hole, and if the aircraft and the bomb are
+            // off the top of the frame the player sees a crater with no cause
+            // - which is exactly what the cap was doing.
+            if (_t - _saidFly > 1.0f)
+            {
+                _saidFly = _t;
+                var pr = _plane != null && _plane.gameObject.activeSelf
+                       ? _plane.GetComponentInChildren<Renderer>() : null;
+                var br = _bomb != null && _bomb.gameObject.activeSelf
+                       ? _bomb.GetComponentInChildren<Renderer>() : null;
+                Debug.Log($"[fly] t={_t:F1}s plane {(pr != null ? InFrame(pr) : "not up")}");
+                if (br != null) Debug.Log($"[fly] t={_t:F1}s bomb  {InFrame(br)}");
+            }
 
             float ran = Speed * _t;
             float toRelease = Vector3.Distance(_from, _impact) - ReleaseLead;
