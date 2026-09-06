@@ -10,7 +10,21 @@
 import { ONE, add, sub, mulFast, mulRound, mulDivRound, toIntRound, div, divRound, clamp, min, max, abs, length2 } from '../fixed.js';
 
 /** Metres of ground made good at full danger for E = 1. */
-export const EXPOSURE_REFERENCE = Math.imul(190, ONE);
+// WHAT A FULL RUN OF RISK IS WORTH, and it was set too low to tell two runs
+// apart. the owner drove the seam and drove the edges and both paid about a
+// thousand.
+//
+// Exposure accrues as `threat * (1 + cargo) * forward metres`, and a run gains
+// about 180 m of x with a full bed doubling the multiplier - so a reference of
+// 190 was reached at an AVERAGE THREAT OF 0.53. The threat map itself is well
+// shaped, measured across the field: 0.00 at the corners, 1.00 at the seam.
+// Everything from half-dangerous upwards clamped to 1.0 and scored the same.
+//
+// 320 is the integral of the most dangerous run actually available - 180 m at
+// an average threat of about 0.9, doubled for cargo - so the ceiling is now
+// where the bravest line is rather than half way up. The edges, averaging
+// about 0.1, come out near 36: a ninth of the seam instead of the same score.
+export const EXPOSURE_REFERENCE = Math.imul(320, ONE);
 /** Par time in ticks, at 60 Hz. */
 export const REFERENCE_TICKS = 3900;
 /** No danger is earned within this of the start. */

@@ -281,6 +281,22 @@ namespace Blwp
                 if (ran > toRelease + Speed * RunOut) _plane.gameObject.SetActive(false);
             }
 
+            // THE SOUND OF THE RUN. Nearness is taken from the aircraft to the
+            // truck rather than to the impact: what the player hears is a
+            // plane passing over THEM.
+            if (audio == null) audio = FindFirstObjectByType<GameAudio>();
+            if (audio != null)
+            {
+                float near = 0f;
+                if (_plane != null && _plane.gameObject.activeSelf)
+                {
+                    var ear = Camera.main != null ? Camera.main.transform.position : _impact;
+                    float d = Vector3.Distance(_plane.position, ear);
+                    near = Mathf.Clamp01(1f - d / 260f);
+                }
+                audio.Bomber(near);
+            }
+
             // Release: the bomb keeps the aircraft's speed along the run and
             // falls under a gravity chosen so it arrives where the core already
             // put the hole.
@@ -292,6 +308,7 @@ namespace Blwp
                     _bomb.gameObject.SetActive(true);
                     _bomb.position = _from + dir * toRelease;
                 }
+                if (audio != null) audio.BombAway();
             }
             if (_fall < 0f) return;
 
@@ -330,7 +347,12 @@ namespace Blwp
                     Debug.Log($"[strike] impact at {_impact.x:F1},{_impact.z:F1}");
                 }
             }
-            if (_t > 20f) { _t = -1f; if (_plane != null) _plane.gameObject.SetActive(false); }
+            if (_t > 20f)
+            {
+                _t = -1f;
+                if (_plane != null) _plane.gameObject.SetActive(false);
+                if (audio != null) audio.Bomber(0f);
+            }
         }
 
         /* ------------------------------------------------------- the column */

@@ -36,7 +36,8 @@ public class GameAudio : MonoBehaviour
 
     AudioSource _engine, _tyres, _shots, _war, _rotor, _blast;
     AudioClip _impact, _explosion, _chime, _blip, _thud;
-    AudioClip _cannon, _rifle, _ricochet, _boom, _detonation;
+    AudioClip _cannon, _rifle, _ricochet, _boom, _detonation, _whistle;
+    AudioSource _drone;
     Rigidbody _body;
     float _rpm;
 
@@ -71,6 +72,17 @@ public class GameAudio : MonoBehaviour
         _rotor.clip = RotorClip();
         _rotor.volume = 0f;
         _rotor.Play();
+
+        // THE BOMBER, on its own looping source. the owner, 17:50: no sound for
+        // the plane, the bomb drop or the explosion. The detonation existed;
+        // these two did not exist at all, so there was nothing to repair -
+        // they had to be made.
+        _drone = Make("Bomber", loop: true);
+        _drone.clip = EngineClip();
+        _drone.volume = 0f;
+        _drone.pitch = 1.35f;          // higher than the truck's diesel
+        _drone.Play();
+        _whistle = Whistle();
 
         _impact = Burst("impact", 0.35f, 9f, 900f);
         _explosion = Burst("explosion", 1.6f, 2.4f, 220f);
@@ -388,12 +400,57 @@ public class GameAudio : MonoBehaviour
     /// and whether anything in the scene is listening at all. `Fired` counts
     /// the one-shots that actually went to `PlayOneShot`.
     /// </summary>
+    /// <summary>
+    /// The aircraft overhead, while it is on its run. Called every frame with
+    /// how near it is, 0 to 1, and 0 when there is no bomber.
+    /// </summary>
+    public void Bomber(float near)
+    {
+        if (_drone == null) return;
+        float want = Mathf.Clamp01(near);
+        _drone.volume = Mathf.Lerp(_drone.volume, effectVolume * 0.5f * want * want,
+                                   1f - Mathf.Exp(-3f * Time.deltaTime));
+        _drone.pitch = Mathf.Lerp(1.15f, 1.5f, want);
+    }
+
+    /// <summary>The bomb let go: a falling whistle, once.</summary>
+    public void BombAway()
+    {
+        Shot(_whistle, 0.85f, Random.Range(0.97f, 1.05f));
+        Debug.Log($"[voice] bomb away fired={Fired} clip={(_whistle != null)}");
+    }
+
     public void Strike()
     {
         Blast(_detonation, 1f, Random.Range(0.94f, 1.02f));
         bool ear = FindFirstObjectByType<AudioListener>() != null;
         Debug.Log($"[voice] strike fired={Fired} clip={(_detonation != null)} " +
                   $"source={(_shots != null)} effectVolume={effectVolume:F2} listener={ear}");
+    }
+
+    /// <summary>
+    /// A bomb falling: a tone that slides down while it gets louder, with a
+    /// breath of air noise over it. Four seconds, which is about the fall.
+    /// </summary>
+    static AudioClip Whistle()
+    {
+        int samples = Mathf.RoundToInt(Rate * 4f);
+        var data = new float[samples];
+        var rng = new System.Random(11);
+        float air = 0f, phase = 0f;
+        for (int i = 0; i < samples; i++)
+        {
+            float t = i / (float)samples;
+            // 1400 Hz down to 300: the drop is what says "coming down"
+            float hz = Mathf.Lerp(1400f, 300f, t * t);
+            phase += 2f * Mathf.PI * hz / Rate;
+            air = Mathf.Lerp(air, (float)(rng.NextDouble() * 2.0 - 1.0), 0.25f);
+            float swell = Mathf.Lerp(0.15f, 1f, t);
+            data[i] = Mathf.Clamp((Mathf.Sin(phase) * 0.55f + air * 0.25f) * swell, -1f, 1f);
+        }
+        var clip = AudioClip.Create("whistle", samples, 1, Rate, false);
+        clip.SetData(data, 0);
+        return clip;
     }
 
     /// <summary>Two notes, for an arrival.</summary>
