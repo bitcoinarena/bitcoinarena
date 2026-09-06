@@ -287,6 +287,7 @@ namespace Blwp
         float _saidSeat = -1f;   // so the seating is reported once a strike
         float _cloudFloor, _stemFoot, _skirtUnderside;
         int _seatings;
+        bool _countedWreckage;
 
         /// <summary>How many times the cloud has been seated. Zero means the
         /// seating never ran, and anything read off it is not a measurement.</summary>
@@ -342,8 +343,47 @@ namespace Blwp
         /// than a copy of it, because the editor's core is a stub and no
         /// liquidation will ever arrive in one.
         /// </summary>
+        /// <summary>
+        /// How much of the battlefield is still standing inside the hole. The
+        /// contract's word is that a liquidation WIPES its radius; nothing in
+        /// this build removes anything, so this counts what survives.
+        /// </summary>
+        void CountTheWreckage(Vector3 at)
+        {
+            // NOT AT THE MOMENT OF IMPACT. `terrain.DrawnCraters` is the
+            // terrain's own list and it does not carry the new hole until it
+            // has rebuilt, so a count taken in `RaiseColumn` found no radius
+            // and said nothing at all.
+            // AND IT ALWAYS SAYS SOMETHING. Two builds of this returned early
+            // and printed nothing, which reads exactly like "no wrecks" and is
+            // not the same claim at all.
+            if (terrain == null) { Debug.Log("[crater] no terrain"); return; }
+            float r = 0f, nearest = float.MaxValue;
+            foreach (var c in terrain.DrawnCraters)
+            {
+                float d = (new Vector2(c.x, c.z) - new Vector2(at.x, at.z)).magnitude;
+                if (d < nearest) { nearest = d; r = c.y; }
+            }
+            if (terrain.DrawnCraters.Count == 0)
+            {
+                Debug.Log($"[crater] the terrain has drawn no craters at all");
+                return;
+            }
+            int hulls = 0, inside = 0;
+            foreach (var h in FindObjectsByType<BurntOutHull>(FindObjectsSortMode.None))
+            {
+                hulls++;
+                var p = h.transform.position;
+                if ((new Vector2(p.x, p.z) - new Vector2(at.x, at.z)).magnitude <= r) inside++;
+            }
+            Debug.Log($"[crater] nearest crater {nearest:F1} m away, r {r:F1} m, "
+                      + $"{terrain.DrawnCraters.Count} open: {inside} wreck(s) inside it, "
+                      + $"{hulls} on the field");
+        }
+
         public void RaiseColumn(Vector3 at)
         {
+            _countedWreckage = false;
             _cloudAt = at;
             _cloud = 0f;
             _saidSeat = -1f;
@@ -825,6 +865,11 @@ namespace Blwp
                         for (int k = 1; k < _mushroomSkins.Length; k++)
                             wb.Encapsulate(_mushroomSkins[k].bounds);
                         whole = $"{wb.size.x:F1} x {wb.size.y:F1} x {wb.size.z:F1} m";
+                    }
+                    if (!_countedWreckage && _cloud > 1f)
+                    {
+                        _countedWreckage = true;
+                        CountTheWreckage(_cloudAt);
                     }
                     Debug.Log($"[cloud] t={_cloud:F1}s cloud {whole} body "
                               + $"{meshBody.r:F2},{meshBody.g:F2},{meshBody.b:F2} glow "
