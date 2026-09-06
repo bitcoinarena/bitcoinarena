@@ -285,29 +285,30 @@ public class PostOffice : MonoBehaviour
         var tm = Plate(plate, new Color(0.06f, 0.06f, 0.07f), 0.94f,
                        TextAnchor.MiddleCenter, default, "_text", 0.94f);
         _paper = tm;
-        // Short lines on purpose. The plate is portrait and Fit scales to the
-        // tighter of the two axes, so one long line forces the whole block
-        // small and leaves the page mostly empty - it filled a ninth of the
-        // plate that way.
-        // Shaped to the plate, which is 9.4 x 12.2 - portrait, about 0.77.
-        // Fit scales to the tighter axis, so a block much narrower or much
-        // squatter than the page leaves most of it empty however high the fill
-        // is set: raising it from 0.80 to 0.94 moved the coverage three points
-        // and no further, because the fill was never the limit.
-        // Shaped to the plate, which is 9.4 x 12.2 - portrait, about 0.77.
-        // Fit scales to the tighter axis, so a block much narrower or much
-        // squatter than the page leaves most of it empty however high the fill
-        // is set.
+        // SHAPED TO THE PLATE THAT IS THERE, which is LANDSCAPE.
+        //
+        // Every comment that used to sit here called the plate "9.4 x 12.2 -
+        // portrait, about 0.77" and cut the text into eleven short lines to
+        // match it. Measured on the running build, the plate is 73.8 x 52.5 -
+        // landscape, 1.41 - because the building streams in and swaps the mesh
+        // under a node that keeps its name. This is the same trap that held
+        // the page at 22% through four attempts, and it was still here, one
+        // layer along: the fill was raised to 0.94 and the block was still
+        // being shaped for a page that no longer exists.
+        //
+        //     plate 73.8 x 52.5, room 69.4 x 49.4, text 70.7 x 100.9,
+        //     k 0.489 -> drawn 34.6 x 49.4, covering 47% x 94%
+        //
+        // `Fit` takes the tighter axis, so a portrait block on a landscape
+        // plate fills the height, runs out, and leaves half the width empty
+        // however high the fill is set. Seven lines with the longest about
+        // twenty-two characters puts the block near the plate's own 1.41.
         tm.text = "BITCOIN\n" +
-                  "\n" +
                   "A Peer-to-Peer\n" +
-                  "Electronic\n" +
-                  "Cash System\n" +
+                  "Electronic Cash System\n" +
                   "\n" +
-                  "Satoshi\n" +
-                  "Nakamoto\n" +
+                  "Satoshi Nakamoto\n" +
                   "satoshin@gmx.com\n" +
-                  "\n" +
                   "31 Oct 2008";
         // Fitted here AND again once it has a mesh. TextMesh builds its own
         // geometry internally and Renderer.localBounds is empty on the frame
@@ -444,7 +445,26 @@ public class PostOffice : MonoBehaviour
         if (size.y < 0.001f || size.x < 0.001f) return;
         float k = Mathf.Clamp(Mathf.Min(room.y / size.y, room.x / size.x), 0.001f, 20f);
         tm.transform.localScale = Vector3.one * k;
+
+        // WHAT FIT IS ACTUALLY HOLDING. The rule this file cost the most time
+        // to learn: when a number will not move, print the numbers rather than
+        // form a fifth hypothesis. The whitepaper sat at 22% through four
+        // changes because `Fit` had been handed a 9.4 x 12.2 plate while the
+        // page on screen was 73.8 x 52.3 - the building streams in and swaps
+        // the mesh under a node that keeps its name.
+        if (tm == _paper && Time.time - _saidPaper > 5f)
+        {
+            _saidPaper = Time.time;
+            var plate = Room(tm.transform.parent);
+            Debug.Log($"[paper] plate {plate.x:F1} x {plate.y:F1}, room "
+                      + $"{room.x:F1} x {room.y:F1}, text {size.x:F1} x {size.y:F1}, "
+                      + $"k {k:F3} -> drawn {(size.x * k):F1} x {(size.y * k):F1}, "
+                      + $"covering {(100f * size.x * k / plate.x):F0}% x "
+                      + $"{(100f * size.y * k / plate.y):F0}% of the plate");
+        }
     }
+
+    float _saidPaper = -99f;
 
     void Wire(GameObject root)
     {
