@@ -584,9 +584,7 @@ public class DriveHud : MonoBehaviour
         };
 
         float padY = head * 0.5f;
-        float cardW = Mathf.Min(w * 0.92f, head * 26f);
-        var card = new Rect((w - cardW) * 0.5f, h * 0.20f, cardW,
-                            padY * 2f + head * 1.3f + sub.fontSize * 1.3f);
+        var card = SendOffBox(w, h);
 
         GUI.color = new Color(0.02f, 0.03f, 0.05f, 0.8f * k);
         GUI.DrawTexture(card, _flat);
@@ -653,10 +651,7 @@ public class DriveHud : MonoBehaviour
         };
 
         float padY = head * 0.55f;
-        float cardH = padY * 2f + head * 1.35f + mid.fontSize * 1.3f
-                    + line.fontSize * 3.4f;
-        float cardW = Mathf.Min(w * 0.92f, head * 26f);
-        var card = new Rect((w - cardW) * 0.5f, h * 0.18f, cardW, cardH);
+        var card = ArrivalBox(w, h);
 
         GUI.color = new Color(0.02f, 0.03f, 0.05f, 0.82f * k);
         GUI.DrawTexture(card, _flat);
@@ -836,11 +831,36 @@ public class DriveHud : MonoBehaviour
         var colour = Color.Lerp(new Color(1f, 0.86f, 0.35f), new Color(1f, 0.32f, 0.25f), heat);
         colour.a = pulse;
 
-        var box = new Rect(0f, pad, w - pad, style.fontSize * 1.4f);
-        Shadowed(box, new string('★', stars) + new string('☆', 5 - stars), style, colour);
+        // PIPS, DRAWN, not '★' and '☆'.
+        //
+        // In the 22:17 photo the word WANTED is on screen and the row above it
+        // is empty. Asked directly, both fonts a build can end up using report
+        // U+2605 present - but `HasCharacter` in the editor answers for the
+        // editor's font stack, and a browser has no OS fonts at all and falls
+        // back to what Unity embedded. That question cannot be settled from
+        // here, so it is removed instead of argued: five squares, filled for
+        // earned and outlined for not, from the same white texture the rest of
+        // this file draws with. The same reasoning as the settings icons.
+        var box = WantedBox(w, h);
+        float pip = box.height * 0.62f, step = pip * 1.35f;
+        for (int i = 0; i < 5; i++)
+        {
+            var r = new Rect(box.x + i * step, box.y + (box.height - pip) * 0.5f, pip, pip);
+            GUI.color = i < stars ? colour : new Color(colour.r, colour.g, colour.b, colour.a * 0.30f);
+            if (i < stars) GUI.DrawTexture(r, _flat);
+            else
+            {
+                float t = Mathf.Max(1f, pip * 0.14f);
+                GUI.DrawTexture(new Rect(r.x, r.y, r.width, t), _flat);
+                GUI.DrawTexture(new Rect(r.x, r.yMax - t, r.width, t), _flat);
+                GUI.DrawTexture(new Rect(r.x, r.y, t, r.height), _flat);
+                GUI.DrawTexture(new Rect(r.xMax - t, r.y, t, r.height), _flat);
+            }
+        }
+        GUI.color = Color.white;
 
         var sub = new GUIStyle(_small) { alignment = TextAnchor.UpperRight };
-        Shadowed(new Rect(0f, pad + style.fontSize * 1.25f, w - pad, _small.fontSize * 1.6f),
+        Shadowed(new Rect(box.x, box.yMax, box.width, _small.fontSize * 1.6f),
                  WantedWord(stars), sub, colour);
     }
 
@@ -853,6 +873,105 @@ public class DriveHud : MonoBehaviour
     /// star boundary, which is exactly when the player is looking at it.
     /// Public so a test can assert it never lands on the block board.
     /// </summary>
+    /// <summary>
+    /// THE TRANSIENT CARDS AND BANNERS, given rects someone can ask for.
+    ///
+    /// They are the ones the overlap test could not see, and several are the
+    /// same shape the price and the wanted row turned out to be: a box the
+    /// width of the screen with the text centred in it. A card that is 92% of
+    /// the width by construction cannot avoid the left column on a phone, so
+    /// it has to be checked rather than assumed - and where it does overlap,
+    /// that is a fact about a card that is deliberately in front of the game
+    /// for three seconds, not a layout accident. Which of those it is, is a
+    /// decision; measuring it is not.
+    ///
+    /// `DrawFallout` and `DrawWaypoint` are NOT here. They are markers
+    /// projected from a world position through the camera - where they land
+    /// depends on where the truck is looking, so they have no layout box and a
+    /// static rect for them would be a fiction.
+    /// </summary>
+    public Rect SendOffBox(int w, int h)
+    {
+        float head = Mathf.Clamp(Mathf.Min(w, h) * 0.055f, 20f, 46f);
+        float sub = Mathf.RoundToInt(head * 0.5f);
+        float padY = head * 0.5f;
+        float cardW = Mathf.Min(w * 0.92f, head * 26f);
+        return new Rect((w - cardW) * 0.5f, h * 0.20f, cardW,
+                        padY * 2f + head * 1.3f + sub * 1.3f);
+    }
+
+    /// <summary>The arrival card, in the same place and a little taller.</summary>
+    public Rect ArrivalBox(int w, int h)
+    {
+        float head = Mathf.Clamp(Mathf.Min(w, h) * 0.055f, 20f, 46f);
+        float mid = Mathf.RoundToInt(head * 0.52f), line = Mathf.RoundToInt(head * 0.40f);
+        float padY = head * 0.55f;
+        float cardW = Mathf.Min(w * 0.92f, head * 26f);
+        return new Rect((w - cardW) * 0.5f, h * 0.18f, cardW,
+                        padY * 2f + head * 1.35f + mid * 1.3f + line * 3.4f);
+    }
+
+    /// <summary>The streaming list, right-hand side, one row per model.</summary>
+    public Rect StreamingBox(int w, int h, int items)
+    {
+        float pad = Mathf.Max(8f, h * 0.02f);
+        float lh = SmallFont(w, h) * 1.5f;
+        float width = Mathf.Min(290f, w * 0.34f);
+        return new Rect(w - width - pad, h * 0.30f, width, lh * (items + 1) + pad);
+    }
+
+    /// <summary>
+    /// The IRRADIATED warning, in the gap for the reason UNDER FIRE is.
+    ///
+    /// It was the fourth `Rect(0, y, w, ...)` with centred text in this file.
+    /// The WASTED band is deliberately NOT one of these: it is a dark scrim
+    /// drawn the full width behind a word the size of the screen, on a run
+    /// that is already over, and covering the HUD is what it is for.
+    /// </summary>
+    public Rect IrradiatedBox(int w, int h)
+    {
+        float font = Mathf.Clamp(Mathf.Min(w, h) * 0.045f, 20f, 40f);
+        var head = HeadlineBox(w, h);
+        return new Rect(head.x, h * 0.30f, head.width, font * 1.6f);
+    }
+
+    /// <summary>
+    /// The UNDER FIRE banner's text line.
+    ///
+    /// In the GAP, not across the screen. It was `Rect(0, h * 0.14f, w, ...)`
+    /// with the text centred - the price's mistake for the third time - and
+    /// measured at 1920x1080 that box lay straight over the condition bar.
+    /// The text was centred so it LOOKED fine, which is exactly why it went
+    /// unseen: a box that covers the numbers a driver reads is a box that can
+    /// cover them the moment anything in it grows or moves.
+    /// </summary>
+    public Rect UnderFireBox(int w, int h)
+    {
+        float font = Mathf.RoundToInt(Mathf.Min(w, h) * 0.045f);
+        var head = HeadlineBox(w, h);
+        return new Rect(head.x, h * 0.14f, head.width, font * 1.5f);
+    }
+
+    /// <summary>
+    /// The wanted row, top right.
+    ///
+    /// It used to be `new Rect(0, pad, w - pad, ...)` - the width of the whole
+    /// screen, with the text right-aligned inside it. Right-aligned text in a
+    /// full-width box looks correct and is the same mistake the price had: the
+    /// BOX covers the block board, so nothing can be checked against it and
+    /// anything that grows in it reaches across the picture. It is the width
+    /// of what it draws now: five pips and the word under them.
+    /// </summary>
+    public Rect WantedBox(int w, int h)
+    {
+        float pad = Mathf.Max(10f, h * 0.025f);
+        float font = Mathf.Clamp(Mathf.Min(w, h) * 0.055f, 24f, 46f);
+        float height = font * 1.4f;
+        float pip = height * 0.62f;
+        float width = pip * 1.35f * 4f + pip;          // five pips and their gaps
+        return new Rect(w - pad - width, pad, width, height);
+    }
+
     /// <summary>
     /// The gap the centred headline is allowed to use.
     ///
@@ -868,13 +987,37 @@ public class DriveHud : MonoBehaviour
     /// </summary>
     public Rect HeadlineBox(int w, int h)
     {
+        // THE LEFT EDGE IS ASKED OF THE BOXES, not recomputed from two of
+        // their formulas. It was `max(block, practice)`, and the condition bar
+        // is neither: it inherits the diagnostics panel's FIXED 320 px, which
+        // is wider than the block board on a 1024-wide window. The banner's
+        // box then started 1.6 px inside it - measured, not noticed by eye.
         float pad = Mathf.Max(10f, h * 0.022f);
-        float blockW = Mathf.Min(300f, w * 0.24f) + pad;
-        float switchW = Mathf.Min(w * 0.52f, 300f);
-        float left = pad + Mathf.Max(blockW, switchW) + pad;
+        float blockRight = pad + Mathf.Min(300f, w * 0.24f) + pad;
+        float left = Mathf.Max(Mathf.Max(blockRight, PracticeBox(w, h).xMax),
+                               Mathf.Max(HealthBox(w, h).xMax, ExposureBox(w, h).xMax)) + pad;
+        // THE RIGHT EDGE IS WHICHEVER RIGHT-HAND THING REACHES FURTHEST IN.
+        //
+        // It was measured against the settings column alone, and the wanted
+        // row is wider than that: five pips and their gaps came 70 px further
+        // left than the icons at 1920x1080, so the headline's box ran under
+        // them. Both are asked, and the nearer one wins.
         float s = TouchPad.ButtonSize(w, h), m = TouchPad.Margin(w, h);
-        float right = w - (m + s * 0.7f) - pad;
-        return new Rect(left, 0f, Mathf.Max(60f, right - left), h);
+        float right = Mathf.Min(w - (m + s * 0.7f) - pad, WantedBox(w, h).x - pad);
+
+        // AND IF THERE IS NO GAP, THERE IS NO GAP.
+        //
+        // This used to floor the width at 60 px, which invents room that does
+        // not exist: on a phone held upright - 390 wide - the practice switch
+        // alone is 52% of the screen and the two columns meet in the middle.
+        // The floor put the headline's box 64 px INTO the wanted row and the
+        // arithmetic said everything was fine.
+        //
+        // An empty box instead, and the drawing steps aside. The price is
+        // worth less than the controls it would be sitting on, and this file
+        // already does the same thing for the loading panel.
+        float room = right - left;
+        return new Rect(left, 0f, room > 0f ? room : 0f, h);
     }
 
     /// <summary>
@@ -1039,7 +1182,7 @@ public class DriveHud : MonoBehaviour
             fontStyle = FontStyle.Bold,
             fontSize = Mathf.RoundToInt(Mathf.Min(w, h) * 0.045f),
         };
-        Shadowed(new Rect(0f, h * 0.14f, w, style.fontSize * 1.5f), "UNDER FIRE",
+        Shadowed(UnderFireBox(w, h), "UNDER FIRE",
                  style, new Color(1f, 0.35f, 0.3f, k));
     }
 
@@ -1138,7 +1281,7 @@ public class DriveHud : MonoBehaviour
         };
         var hot = new Color(0.96f, 0.86f, 0.20f,
                             0.7f + 0.3f * Mathf.Sin(Time.unscaledTime * 6.5f));
-        var band = new Rect(0f, h * 0.30f, w, warn.fontSize * 1.6f);
+        var band = IrradiatedBox(w, h);
         Shadowed(band, "IRRADIATED", warn, hot);
 
         // The contract asks for a simulated strike to be MARKED as one. Same
@@ -1148,13 +1291,16 @@ public class DriveHud : MonoBehaviour
         if (Bootstrap.Simulated)
         {
             var tag = new GUIStyle(_small) { alignment = TextAnchor.UpperCenter };
-            Shadowed(new Rect(0f, band.y + band.height, w, _small.fontSize * 1.6f),
+            Shadowed(new Rect(band.x, band.y + band.height, band.width, _small.fontSize * 1.6f),
                      "SIM  -  no liquidation on the feed", tag,
                      new Color(0.96f, 0.86f, 0.20f, 0.75f));
         }
         float half = warn.fontSize * 3.0f;
-        Trefoil(new Vector2(w * 0.5f - half, band.y + band.height * 0.5f), warn.fontSize * 1.3f, hot);
-        Trefoil(new Vector2(w * 0.5f + half, band.y + band.height * 0.5f), warn.fontSize * 1.3f, hot);
+        // The two radiation marks flank the word, so they follow the band
+        // rather than the middle of the screen.
+        float mid = band.x + band.width * 0.5f;
+        Trefoil(new Vector2(mid - half, band.y + band.height * 0.5f), warn.fontSize * 1.3f, hot);
+        Trefoil(new Vector2(mid + half, band.y + band.height * 0.5f), warn.fontSize * 1.3f, hot);
     }
 
     void DrawWaypoint(int w, int h)
@@ -1361,7 +1507,8 @@ public class DriveHud : MonoBehaviour
         float pad = Mathf.Max(8f, h * 0.02f);
         float lh = _small.fontSize * 1.5f;
         float width = Mathf.Min(290f, w * 0.34f);
-        var box = new Rect(w - width - pad, h * 0.30f, width, lh * (streamer.Items.Count + 1) + pad);
+        // measured in one place, so a test can ask where it is
+        var box = StreamingBox(w, h, streamer.Items.Count);
 
         GUI.color = new Color(0f, 0f, 0f, 0.45f);
         GUI.DrawTexture(box, _flat);
@@ -1426,6 +1573,9 @@ public class DriveHud : MonoBehaviour
         {
             var head = HeadlineBox(w, h);
             string text = market.Price > 0 ? $"${market.Price:N0}" : "— — —";
+            // No room between the columns: the headline is not drawn at all
+            // rather than drawn on top of something that matters.
+            if (head.width < 60f) return;
             var colour = market.Fresh ? Color.white : new Color(1f, 1f, 1f, 0.55f);
 
             // AND IT SHRINKS TO FIT THE GAP rather than spilling out of it.

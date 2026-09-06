@@ -56,6 +56,15 @@ public class HudLayoutTests
         new Vector2(1920, 1080), new Vector2(1600, 900), new Vector2(1366, 768),
         new Vector2(2560, 1440), new Vector2(844, 390),  new Vector2(390, 844),
         new Vector2(1024, 768),  new Vector2(640, 480),
+
+        // A WIDE, SHORT BROWSER WINDOW, and it is here for a reason rather
+        // than for a round number. The diagnostics panel is `min(320, w*0.34)`
+        // and the practice switch is `min(w*0.52, 300)`, so above about 940 px
+        // wide the panel is at its cap and the switch is at its own - and
+        // their pads differ, one from the height and one from a floor. At a
+        // short height the condition bar is then the widest thing in the
+        // column by 18 px, which no other shape in this list shows.
+        new Vector2(1000, 360),
     };
 
     [Test]
@@ -155,12 +164,26 @@ public class HudLayoutTests
             var sound = TouchPad.RectFor(TouchPad.Pad.Sound, w, h);
             var debug = TouchPad.RectFor(TouchPad.Pad.Debug, w, h);
 
+            // EVERY box in the column, not the two widest-looking ones. The
+            // condition bar inherits the diagnostics panel's fixed 320 px and
+            // is the widest thing in the column on a narrow window - 329.6
+            // against the practice switch's 312 at 640x480 - so a left edge
+            // measured from the block board and the switch alone is short
+            // exactly where the window is smallest.
+            var health = _hud.HealthBox(w, h);
+            var danger = _hud.ExposureBox(w, h);
             Assert.GreaterOrEqual(head.x, block.xMax, $"the headline reaches the block {at}");
             Assert.GreaterOrEqual(head.x, practice.xMax,
                 $"the headline reaches the practice switch {at}");
+            Assert.GreaterOrEqual(head.x, health.xMax,
+                $"the headline reaches the condition bar {at}");
+            Assert.GreaterOrEqual(head.x, danger.xMax,
+                $"the headline reaches the danger meter {at}");
             Assert.LessOrEqual(head.xMax, sound.x, $"the headline reaches the settings {at}");
             Assert.LessOrEqual(head.xMax, debug.x, $"the headline reaches the settings {at}");
-            Assert.Greater(head.width, 50f, $"the headline has no room left {at}");
+            // A gap or nothing, never a fiction.
+            Assert.IsTrue(head.width == 0f || head.width > 50f,
+                $"the headline claims {head.width:0} px, which is neither a gap nor nothing {at}");
         }
     }
 
@@ -192,6 +215,173 @@ public class HudLayoutTests
                 $"the settings row is wider than the view toggle above it {at}");
             Assert.LessOrEqual(sound.yMax, h, $"the settings fall off the bottom {at}");
         }
+    }
+
+    /// <summary>
+    /// The corners and the DEBUG column, printed so the fix is a table.
+    /// Explicit: a measurement, not an assertion.
+    /// </summary>
+    [Test]
+    [Explicit("Measurement, not an assertion. Read the [corner] and [debug] lines.")]
+    public void MeasureTheCornersAndTheDebugColumn()
+    {
+        foreach (var size in Sizes)
+        {
+            int w = (int)size.x, h = (int)size.y;
+            var wanted = _hud.WantedBox(w, h);
+            var head = _hud.HeadlineBox(w, h);
+            var fire = _hud.UnderFireBox(w, h);
+            Debug.Log($"[corner] {w}x{h}: wanted before 0..{w - Mathf.Max(10f, h * 0.025f):0} "
+                      + $"(the whole screen), now {wanted.x:0}..{wanted.xMax:0}; "
+                      + $"UNDER FIRE before 0..{w} now {fire.x:0}..{fire.xMax:0}; "
+                      + $"headline gap {head.x:0}..{head.xMax:0} ({head.width:0} px)");
+        }
+
+        _hud.showDiagnostics = true;
+        try
+        {
+            foreach (var size in new[] { new Vector2(1920, 1080), new Vector2(1366, 768),
+                                         new Vector2(844, 390), new Vector2(640, 480) })
+            {
+                int w = (int)size.x, h = (int)size.y;
+                Debug.Log($"[debug] {w}x{h} with DEBUG on: diag ends {_hud.DiagnosticsBox(w, h).yMax:0}, "
+                          + $"condition {_hud.HealthBox(w, h).y:0}, danger {_hud.ExposureBox(w, h).y:0}, "
+                          + $"practice {_hud.PracticeBox(w, h).y:0}, SIM ends {_hud.SimBox(w, h).yMax:0} "
+                          + $"of {h}");
+            }
+        }
+        finally { _hud.showDiagnostics = false; }
+    }
+
+    /// <summary>
+    /// THE REST OF THE HUD, which the first cut of this file could not see.
+    ///
+    /// The wanted row, the UNDER FIRE banner and the streaming list sit in the
+    /// same corners the column and the headline do, and none of them had a
+    /// rect anyone could ask for. The wanted row turned out to be the price's
+    /// mistake again - `Rect(0, pad, w - pad, ...)`, the width of the screen
+    /// with the text pushed right - so nothing could be checked against it.
+    ///
+    /// The two CARDS are deliberately in front of the game for a few seconds
+    /// and are checked against each other and the screen, not against the
+    /// column: a send-off that dodged the block board would be a worse card.
+    /// </summary>
+    [Test]
+    public void TheCornersAndBannersClearTheColumn()
+    {
+        foreach (var size in Sizes)
+        {
+            int w = (int)size.x, h = (int)size.y;
+            string at = $"at {w}x{h}";
+
+            float pad = Mathf.Max(10f, h * 0.022f);
+            var block = new Rect(pad, pad, Mathf.Min(300f, w * 0.24f) + pad,
+                                 _hud.BlockBoxHeight(w, h));
+            var health = _hud.HealthBox(w, h);
+            var danger = _hud.ExposureBox(w, h);
+            var practice = _hud.PracticeBox(w, h);
+            var wanted = _hud.WantedBox(w, h);
+            var fire = _hud.UnderFireBox(w, h);
+            var stream = _hud.StreamingBox(w, h, 11);       // the full model list
+            var head = _hud.HeadlineBox(w, h);
+
+            void Apart(Rect a, Rect b, string what)
+                => Assert.IsFalse(a.Overlaps(b), $"{what} overlap {at}: {a} / {b}");
+
+            // the wanted row is a corner, and corners do not touch the column
+            Apart(wanted, block, "the wanted row and the block board");
+            Apart(wanted, health, "the wanted row and the condition bar");
+            Apart(wanted, danger, "the wanted row and the danger meter");
+            Apart(wanted, practice, "the wanted row and the practice switch");
+            // Either there is a usable gap and the row clears it, or there is
+            // no gap and the headline is not drawn - a phone held upright has
+            // the practice switch taking 52% of its width, and the columns
+            // meet in the middle.
+            if (head.width >= 60f)
+                Assert.GreaterOrEqual(wanted.x, head.xMax,
+                    $"the wanted row reaches into the headline {at}");
+            else
+                Assert.AreEqual(0f, head.width, 0.01f,
+                    $"the headline claims room it has not got {at}");
+            Assert.LessOrEqual(wanted.xMax, w, $"the wanted row is off the right edge {at}");
+
+            // the streaming list is the other right-hand thing
+            Apart(stream, block, "the streaming list and the block board");
+            Apart(stream, health, "the streaming list and the condition bar");
+            Apart(stream, danger, "the streaming list and the danger meter");
+            Apart(stream, practice, "the streaming list and the practice switch");
+            Apart(stream, wanted, "the streaming list and the wanted row");
+
+            // UNDER FIRE is a banner across the middle. It may cross the
+            // headline - that is the point of a banner - but it must not be
+            // laid over the numbers the driver reads on the left.
+            Apart(fire, block, "the UNDER FIRE banner and the block board");
+            Apart(fire, health, "the UNDER FIRE banner and the condition bar");
+            Apart(fire, danger, "the UNDER FIRE banner and the danger meter");
+
+            // IRRADIATED is the same shape of banner and was the fourth
+            // full-width box in the file. The WASTED scrim is not checked: it
+            // is deliberately the width of the screen, behind a word the size
+            // of the screen, on a run that has already ended.
+            var rads = _hud.IrradiatedBox(w, h);
+            Apart(rads, block, "the IRRADIATED banner and the block board");
+            Apart(rads, health, "the IRRADIATED banner and the condition bar");
+            Apart(rads, danger, "the IRRADIATED banner and the danger meter");
+            Apart(rads, practice, "the IRRADIATED banner and the practice switch");
+
+            // and the two cards never draw at the same instant as each other
+            var send = _hud.SendOffBox(w, h);
+            var arrive = _hud.ArrivalBox(w, h);
+            Assert.LessOrEqual(send.xMax, w, $"the send-off card is off the edge {at}");
+            Assert.LessOrEqual(arrive.yMax, h, $"the arrival card is off the bottom {at}");
+            Assert.Greater(send.width, 60f, $"the send-off card has no width {at}");
+        }
+    }
+
+    /// <summary>
+    /// THE SAME COLUMN WITH THE DIAGNOSTICS PANEL UP, which is the state
+    /// the owner drives in.
+    ///
+    /// `HealthBox` switches its top between the block board and the
+    /// diagnostics box, and the danger meter, the practice switch and the SIM
+    /// switch are all measured from it - so the whole stack moves when DEBUG
+    /// is on and none of it was checked there.
+    /// </summary>
+    [Test]
+    public void TheColumnStillStacksWithTheDiagnosticsPanelUp()
+    {
+        _hud.showDiagnostics = true;
+        try
+        {
+            foreach (var size in new[] { new Vector2(1920, 1080), new Vector2(1366, 768),
+                                         new Vector2(844, 390), new Vector2(640, 480) })
+            {
+                int w = (int)size.x, h = (int)size.y;
+                string at = $"at {w}x{h} with DEBUG on";
+
+                var diag = _hud.DiagnosticsBox(w, h);
+                var health = _hud.HealthBox(w, h);
+                var danger = _hud.ExposureBox(w, h);
+                var practice = _hud.PracticeBox(w, h);
+                var sim = _hud.SimBox(w, h);
+
+                void Apart(Rect a, Rect b, string what)
+                    => Assert.IsFalse(a.Overlaps(b), $"{what} overlap {at}: {a} / {b}");
+
+                Apart(diag, health, "the diagnostics panel and the condition bar");
+                Apart(diag, danger, "the diagnostics panel and the danger meter");
+                Apart(diag, practice, "the diagnostics panel and the practice switch");
+                Apart(diag, sim, "the diagnostics panel and the SIM switch");
+                Apart(health, danger, "the condition bar and the danger meter");
+                Apart(danger, practice, "the danger meter and the practice switch");
+                Apart(practice, sim, "the practice switch and the SIM switch");
+
+                Assert.GreaterOrEqual(health.y, diag.yMax,
+                    $"the condition bar is not under the diagnostics panel {at}");
+                Assert.Less(sim.yMax, h, $"the column runs off the bottom {at}");
+            }
+        }
+        finally { _hud.showDiagnostics = false; }
     }
 
     /// <summary>
