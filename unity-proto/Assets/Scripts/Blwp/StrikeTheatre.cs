@@ -259,7 +259,20 @@ namespace Blwp
                     RaiseColumn(_impact);
                     // Lazily, because Bootstrap builds the audio and this in an
                     // order that is not this component's business to depend on.
+                    // WHICH ASSIGNMENT ACTUALLY PROVIDED IT. Bootstrap's line
+                    // for this sits inside BuildArmies behind
+                    // `if (_strike != null)`, and the theatre is made later, so
+                    // it is skipped - the same way the crater wipe's `fx` was.
+                    // It also looks up `GameAudio` before that component
+                    // exists. If anything is heard it is this lazy fetch, and
+                    // this says so rather than leaving it to be read off the
+                    // source.
+                    bool wired = audio != null;
                     if (audio == null) audio = FindFirstObjectByType<GameAudio>();
+                    Debug.Log($"[voice] strike: wired by Bootstrap {wired}, "
+                              + $"found lazily {(!wired && audio != null)}, "
+                              + $"audio {(audio != null ? "present" : "MISSING")}, "
+                              + $"clip {(audio != null && audio.StrikeClip != null ? "yes" : "none")}");
                     if (audio != null) audio.Strike();
                     Debug.Log($"[strike] impact at {_impact.x:F1},{_impact.z:F1}");
                 }
