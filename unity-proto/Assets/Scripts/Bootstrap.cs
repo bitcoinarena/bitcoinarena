@@ -122,12 +122,38 @@ public class Bootstrap : MonoBehaviour
     /// <summary>True when the last liquidation the core saw was a simulated one.</summary>
     public static bool Simulated { get; private set; }
 
-    void Update()
+    /// <summary>
+    /// Simulation held ON by hand, from the SIM switch under PRACTICE. While
+    /// it is on the silent-market wait is not required: the same simulated
+    /// liquidation is offered on its own cadence whether the books are quiet
+    /// or busy.
+    /// </summary>
+    public static bool SimForced { get; private set; }
+
+    /// <summary>
+    /// Turn the switch. Switching it ON fires one at once, so the player who
+    /// pressed it sees a strike rather than waiting out a cadence.
+    /// </summary>
+    public static void ToggleSim()
     {
-        if (Market == null || !Blwp.BlwpCore.Available) return;
-        if (Market.Liquidations.Count > 0) { _lastLiquidation = Time.time; Simulated = false; }
-        if (Time.time - _lastLiquidation < LiquidationSilence) return;
-        if (Time.time < _nextSim) return;
+        SimForced = !SimForced;
+        var boot = FindFirstObjectByType<Bootstrap>();
+        if (SimForced && boot != null) boot.FireSimulated("switch");
+    }
+
+    /// <summary>
+    /// ONE simulated liquidation, and it is the only implementation there is.
+    /// The silent-market clock calls it and so does the SIM switch, so there
+    /// is no second path that could dig a different hole.
+    ///
+    /// Nothing about the picture is built here. The size goes into
+    /// `BlwpCore.Liquidation` and the core decides the crater, the fallout and
+    /// the strike; the theatre is told only which side submitted it, and
+    /// nobody did, so it is told none.
+    /// </summary>
+    public bool FireSimulated(string why)
+    {
+        if (!Blwp.BlwpCore.Available) return false;
         _nextSim = Time.time + LiquidationSilence;
 
         // one million to a thousand million, the span the crater rule spans
@@ -135,7 +161,21 @@ public class Bootstrap : MonoBehaviour
         // No side: nobody submitted this but the clock. The picture flies the
         // default airframe rather than inventing one.
         if (_strike != null) _strike.NoteSubmitter(null, usd);
-        if (Blwp.BlwpCore.Liquidation(usd)) Simulated = true;
+        if (!Blwp.BlwpCore.Liquidation(usd)) return false;
+        Simulated = true;
+        Debug.Log($"[sim] simulated liquidation ${usd:N0} offered to the core ({why})");
+        return true;
+    }
+
+    void Update()
+    {
+        if (Market == null || !Blwp.BlwpCore.Available) return;
+        if (Market.Liquidations.Count > 0) { _lastLiquidation = Time.time; Simulated = false; }
+        // The switch stands in for the silence. Held on, it does not wait for
+        // a quiet market; left off, nothing changes and the old rule runs.
+        if (!SimForced && Time.time - _lastLiquidation < LiquidationSilence) return;
+        if (Time.time < _nextSim) return;
+        FireSimulated(SimForced ? "switch cadence" : "silent market");
     }
 
     void Start()
@@ -231,6 +271,13 @@ public class Bootstrap : MonoBehaviour
         var strike = strikeGo.AddComponent<Blwp.StrikeTheatre>();
         strike.terrain = _terrain;
         strike.roads = driver.roads;
+        // AND THE FX, HERE. It used to be wired inside BuildArmies, which runs
+        // long before this object exists, so `if (_strike != null)` was false
+        // and the assignment was quietly skipped - the same trap the comment
+        // below this describes for the truck. The consequence was silent: the
+        // crater wipe called through a null and took nothing, and the running
+        // build said so, "1 wreck(s) inside it ... wiped 0, 1 left inside".
+        strike.fx = Fx;
         _strike = strike;
 
         // Practice starts on in this build. The scene's value is the fallback;
@@ -709,7 +756,6 @@ public class Bootstrap : MonoBehaviour
         Fx = fxGo.AddComponent<CombatFx>();
         Fx.terrain = _terrain;
         Fx.roads = Roads;
-        if (_strike != null) _strike.fx = Fx;
         // the strike's own voice, wired where the rest of the audio is
         if (_strike != null) _strike.audio = FindFirstObjectByType<GameAudio>();
         Fx.tracerMaterial = tracerMaterial;

@@ -42,6 +42,15 @@ public class MushroomSeatingTests
         foreach (var go in Object.FindObjectsByType<GameObject>(FindObjectsSortMode.None))
             if (go.transform.parent == null) Object.Destroy(go);
         yield return null;
+
+        // AND PUT THE SCENE BACK, rather than leaving an empty world behind.
+        // Destroying every root leaves nothing for the next fixture to find,
+        // and `PostOfficeTests.TheGogglesAnimate` went red on exactly that -
+        // green alone, green after StrikeSeamTests which rigs Bootstrap the
+        // same way and does not run a round, red after either of these two.
+        UnityEngine.SceneManagement.SceneManager.LoadScene(
+            0, UnityEngine.SceneManagement.LoadSceneMode.Single);
+        yield return null;
     }
 
     /// <summary>

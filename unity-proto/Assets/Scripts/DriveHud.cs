@@ -236,6 +236,37 @@ public class DriveHud : MonoBehaviour
                  sub, new Color(1f, 1f, 1f, 0.7f));
 
         if (GUI.Button(box, GUIContent.none, GUIStyle.none)) Blwp.PracticeMode.Toggle();
+
+        // THE SIM SWITCH, under PRACTICE and only while PRACTICE is on. It is
+        // a rehearsal control: a player who wants to see what a liquidation
+        // does should not have to wait ninety seconds for the books to go
+        // quiet, and should not be able to reach for it in live fire.
+        //
+        // It fires the CORE's liquidation - `Bootstrap.FireSimulated`, the one
+        // the silent-market clock already calls - so the crater, the mushroom,
+        // the fallout and the hull wipe are the core's, not a picture built
+        // here. There is no second strike and no Unity crater.
+        if (!on) return;
+
+        var simBox = new Rect(box.x, box.y + box.height + 6f, box.width, box.height * 0.78f);
+        bool sim = Bootstrap.SimForced;
+        var simTint = sim ? new Color(1f, 0.72f, 0.25f) : new Color(0.65f, 0.70f, 0.78f);
+
+        GUI.color = new Color(0.02f, 0.03f, 0.05f, 0.72f);
+        GUI.DrawTexture(simBox, _flat);
+        GUI.color = new Color(simTint.r, simTint.g, simTint.b, 0.75f);
+        GUI.DrawTexture(new Rect(simBox.x, simBox.y, 3f, simBox.height), _flat);
+        GUI.color = Color.white;
+
+        Shadowed(new Rect(simBox.x + 12f, simBox.y + 1f, simBox.width - 16f, simBox.height * 0.55f),
+                 sim ? "SIM  ·  ON" : "SIM  ·  OFF", label, simTint);
+        Shadowed(new Rect(simBox.x + 12f, simBox.y + simBox.height * 0.50f,
+                          simBox.width - 16f, simBox.height * 0.46f),
+                 sim ? "firing liquidations  ·  tap to stop"
+                     : "tap to fire liquidations",
+                 sub, new Color(1f, 1f, 1f, 0.7f));
+
+        if (GUI.Button(simBox, GUIContent.none, GUIStyle.none)) Bootstrap.ToggleSim();
     }
 
     /// <summary>

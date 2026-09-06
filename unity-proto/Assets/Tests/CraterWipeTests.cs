@@ -33,6 +33,15 @@ public class CraterWipeTests
         foreach (var go in Object.FindObjectsByType<GameObject>(FindObjectsSortMode.None))
             if (go.transform.parent == null) Object.Destroy(go);
         yield return null;
+
+        // AND PUT THE SCENE BACK, rather than leaving an empty world behind.
+        // Destroying every root leaves nothing for the next fixture to find,
+        // and `PostOfficeTests.TheGogglesAnimate` went red on exactly that -
+        // green alone, green after StrikeSeamTests which rigs Bootstrap the
+        // same way and does not run a round, red after either of these two.
+        UnityEngine.SceneManagement.SceneManager.LoadScene(
+            0, UnityEngine.SceneManagement.LoadSceneMode.Single);
+        yield return null;
     }
 
     CombatFx _fx;
@@ -91,6 +100,23 @@ public class CraterWipeTests
                         "no burnt hull may be left standing inside the crater");
         Assert.AreEqual(1, HullsWithin(at + new Vector3(60f, 0f, 0f), 3f),
                         "and a hull outside the radius must be left alone");
+    }
+
+    /// <summary>
+    /// THE WIRING, not just the method. `StrikeTheatre.fx` was null in every
+    /// build: `Fx` is made inside BuildArmies and the theatre is made later,
+    /// so `if (_strike != null) _strike.fx = Fx;` was skipped without a word.
+    /// The wipe called through a null and took nothing, while the test above
+    /// passed because it called `ClearWrecksIn` directly.
+    /// </summary>
+    [UnityTest]
+    public IEnumerator TheTheatreCanReachTheWreckage()
+    {
+        yield return Rig();
+        var theatre = Object.FindFirstObjectByType<Blwp.StrikeTheatre>();
+        Assert.IsNotNull(theatre, "no StrikeTheatre in the scene");
+        Assert.IsNotNull(theatre.fx,
+            "the theatre cannot wipe a crater it has no CombatFx to wipe it with");
     }
 
     // There is no second test on `Army.Wrecks`. `CombatFx.army` is never
