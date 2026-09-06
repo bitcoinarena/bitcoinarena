@@ -70,11 +70,6 @@ namespace Blwp
         int _seenStrikes = -1;
 
         Material _metal, _bombSkin, _glow;
-        // PROBE ONLY, uncommitted: keys 7 and 8 take the dust skirt and the
-        // contamination decals out of the frame independently, so the same
-        // strike can be photographed in all four combinations.
-        bool _showSkirt = true, _showRings = true, _freeze = false;
-        bool _showColumn = true, _still = false;
         Renderer _skirtR;
         Vector3 _skirtRestPos;
         readonly List<Transform> _glows = new List<Transform>();
@@ -148,40 +143,6 @@ namespace Blwp
 
         void Update()
         {
-            if (Input.GetKeyDown(KeyCode.Alpha7))
-            {
-                _showSkirt = !_showSkirt;
-                Debug.Log($"[cloud] probe: skirt {_showSkirt}");
-            }
-            if (Input.GetKeyDown(KeyCode.Alpha8))
-            {
-                _showRings = !_showRings;
-                Debug.Log($"[cloud] probe: rings {_showRings}");
-            }
-            if (Input.GetKeyDown(KeyCode.Alpha9))
-            {
-                _freeze = !_freeze;
-                Debug.Log($"[cloud] probe: freeze {_freeze} at t={_cloud:F2}s");
-            }
-            if (Input.GetKeyDown(KeyCode.Alpha6))
-            {
-                _showColumn = !_showColumn;
-                Debug.Log($"[cloud] probe: column {_showColumn}");
-            }
-            if (Input.GetKeyDown(KeyCode.Alpha0))
-            {
-                // The whole scene, not just the cloud. Tanks and burning
-                // wrecks kept moving under the last freeze, so a changed-pixel
-                // map could not tell the skirt from the army.
-                _still = !_still;
-                Time.timeScale = _still ? 0f : 1f;
-                Debug.Log($"[cloud] probe: still {_still}");
-            }
-            if (_mushroomSkins != null)
-                foreach (var mr in _mushroomSkins)
-                    if (mr != null && mr.transform != _skirt3) mr.enabled = _showColumn;
-            if (_skirtR != null) _skirtR.enabled = _showSkirt;
-
             if (!BlwpCore.Available) return;
             Fly(Time.deltaTime);
             Column(Time.deltaTime);
@@ -442,8 +403,6 @@ namespace Blwp
                             // them was ever the hole, so none of them stays.
                             // The GLB's own warm brown is what a dust skirt
                             // should be, and it is left exactly as authored.
-                            Debug.Log($"[cloud] probe state: skirt {_showSkirt}, "
-                                      + $"rings {_showRings} over {_glows.Count} decal(s)");
                         }
                     }
                     _skirtRest = _skirt3 != null ? _skirt3.localScale : Vector3.one;
@@ -536,7 +495,6 @@ namespace Blwp
 
         void Column(float dt)
         {
-            if (_freeze) dt = 0f;   // probe: hold the picture still, uncommitted
 
             if (_cloud < 0f) return;
             _cloud += dt;
@@ -889,7 +847,6 @@ namespace Blwp
             {
                 if (!_glows[i].gameObject.activeSelf) continue;
                 var mr = _glows[i].GetComponent<MeshRenderer>();
-                mr.enabled = _showRings;     // probe flag, uncommitted
                 mr.GetPropertyBlock(_block);
                 _block.SetColor("_EmissionColor", new Color(0.10f, 0.34f, 0.09f) * pulse);
                 mr.SetPropertyBlock(_block);
