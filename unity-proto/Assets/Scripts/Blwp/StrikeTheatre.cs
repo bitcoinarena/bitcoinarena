@@ -285,6 +285,27 @@ namespace Blwp
         Vector3 _mushroomFull = Vector3.one;
         Vector3 _mushroomSize;   // the modelled size, measured once at full scale
         float _saidSeat = -1f;   // so the seating is reported once a strike
+        float _cloudFloor, _stemFoot, _skirtUnderside;
+        int _seatings;
+
+        /// <summary>How many times the cloud has been seated. Zero means the
+        /// seating never ran, and anything read off it is not a measurement.</summary>
+        public int Seatings => _seatings;
+
+        /// <summary>
+        /// One step of the cloud. `Update` runs this, and it is reachable so a
+        /// PlayMode test can drive it: `Update` gives up on `BlwpCore.Available`
+        /// and the editor's core is a stub, so nothing here would ever run in
+        /// a test otherwise.
+        /// </summary>
+        public void StepCloud(float dt) => Column(dt);
+
+        /// <summary>The crater floor under the cloud: the core's own surface.</summary>
+        public float CloudFloor => _cloudFloor;
+        /// <summary>The lowest point of everything that is not the dust skirt.</summary>
+        public float StemFoot => _stemFoot;
+        /// <summary>The lowest point of the dust skirt.</summary>
+        public float SkirtUnderside => _skirtUnderside;
         MeshRenderer[] _mushroomSkins;
         Transform _skirt3, _core3;
         Vector3 _skirtRest = Vector3.one, _coreRest = Vector3.one;
@@ -315,7 +336,13 @@ namespace Blwp
             Debug.Log("[strike] mushroom model taken");
         }
 
-        void RaiseColumn(Vector3 at)
+        /// <summary>
+        /// Stand a cloud at a point on the ground. The strike path calls this;
+        /// it is public so a PlayMode test can drive the real thing rather
+        /// than a copy of it, because the editor's core is a stub and no
+        /// liquidation will ever arrive in one.
+        /// </summary>
+        public void RaiseColumn(Vector3 at)
         {
             _cloudAt = at;
             _cloud = 0f;
@@ -546,6 +573,22 @@ namespace Blwp
                         float floor = Ground(_cloudAt.x, _cloudAt.z);
                         float gap = floor - colB.min.y;      // + buried, - floating
                         _mushroom.position += Vector3.up * gap;
+
+                        // ASK THE RENDERERS AGAIN. Reporting `colB.min.y + gap`
+                        // is a tautology - it is the floor by construction
+                        // whether the transform moved or not - and a test
+                        // built on it passed with the seating deleted.
+                        _cloudFloor = floor;
+                        var after = new Bounds(_cloudAt, Vector3.zero);
+                        bool anyAfter = false;
+                        foreach (var mr in _mushroomSkins)
+                        {
+                            if (mr == null || mr.transform == _skirt3) continue;
+                            if (!anyAfter) { after = mr.bounds; anyAfter = true; }
+                            else after.Encapsulate(mr.bounds);
+                        }
+                        _stemFoot = anyAfter ? after.min.y : float.NaN;
+                        _seatings++;
                         if (_cloud - _saidSeat > 1.2f || _saidSeat < 0f)
                         {
                             _saidSeat = _cloud;
@@ -628,6 +671,7 @@ namespace Blwp
                         top = Mathf.Max(top, Ground(sb.center.x, sb.center.z - rr));
                         top = Mathf.Max(top, Ground(sb.center.x - rr, sb.center.z));
                         _skirt3.position += Vector3.up * (top - sb.min.y);
+                        _skirtUnderside = _skirtR.bounds.min.y;   // measured, not assumed
                     }
                 }
 
