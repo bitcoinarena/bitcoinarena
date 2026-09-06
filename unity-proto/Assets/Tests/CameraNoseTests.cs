@@ -212,6 +212,59 @@ public class CameraNoseTests
     ///
     /// Explicit: a measurement, not an assertion.
     /// </summary>
+    /// <summary>
+    /// AND ON A PHONE-SHAPED FRAME, which is the shape that matters.
+    ///
+    /// The batchmode frame is 640x480 - four by three - and a phone in
+    /// landscape is about 2.16 to 1: much shorter for its width. The thing
+    /// just fixed is a VERTICAL fit, and a shorter frame is the unkind case
+    /// for it, so twenty metres being enough at 4:3 says nothing about the
+    /// screen the game is played on. The camera's aspect is forced here and
+    /// the same reading taken.
+    /// </summary>
+    [UnityTest]
+    [Explicit("Measurement, not an assertion. Read the [aspect] lines.")]
+    public IEnumerator MeasureTheRoadOnAPhoneShapedFrame()
+    {
+        yield return UpToSpeed(3f);
+        _truck.externalThrottle = 0f;
+        yield return new WaitForSeconds(1f);
+        var theatre = Object.FindFirstObjectByType<Blwp.StrikeTheatre>();
+        var cam = _chase.GetComponent<Camera>();
+
+        foreach (float aspect in new[] { 4f / 3f, 16f / 9f, 844f / 390f })
+        {
+            cam.aspect = aspect;
+            theatre.RaiseColumn(_truck.transform.position
+                                + _truck.transform.forward * 60f
+                                + _truck.transform.right * 45f);
+            float settle = Time.time;
+            while (Time.time - settle < 1.5f) { theatre.StepCloud(Time.deltaTime); yield return null; }
+
+            int frames = 0, offBottom = 0, capOff = 0;
+            float lowRoad = 1f, lowCap = 1f, highCap = 0f;
+            float from = Time.time;
+            while (Time.time - from < 2f)
+            {
+                theatre.StepCloud(Time.deltaTime);
+                yield return null;
+                var cap = Blwp.StrikeTheatre.CapCentre;
+                if (!cap.HasValue) continue;
+                frames++;
+                float ry = NoseUpScreen();
+                lowRoad = Mathf.Min(lowRoad, ry);
+                if (ry < 0f) offBottom++;
+                var cf = Frame(cap.Value);
+                if (cf.HasValue) { lowCap = Mathf.Min(lowCap, cf.Value.y); highCap = Mathf.Max(highCap, cf.Value.y); if (cf.Value.y > 1f) capOff++; }
+                else capOff++;
+            }
+            Debug.Log($"[aspect] {aspect:F2}:1 - road lowest {lowRoad:F2}, below the edge "
+                      + $"{offBottom}/{frames}, cap {lowCap:F2}..{highCap:F2}, off the top "
+                      + $"{capOff}, pull-back {_chase.cloudPullBack:F0} m");
+        }
+        cam.ResetAspect();
+    }
+
     [UnityTest]
     [Explicit("Measurement, not an assertion. Read the [ladder] lines.")]
     public IEnumerator MeasureHowFarBackFramesBoth()

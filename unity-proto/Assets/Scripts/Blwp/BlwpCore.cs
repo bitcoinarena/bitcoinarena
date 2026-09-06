@@ -233,6 +233,18 @@ namespace Blwp
         public static bool SetHeat(float heat01) =>
             Available && BlwpSetHeat(Mathf.RoundToInt(Mathf.Clamp01(heat01) * ONE)) == 1;
 
+        /// <summary>
+        /// How hard the war is hunting this load, 0..1, READ BACK from the
+        /// core rather than remembered on this side.
+        ///
+        /// The stars are drawn from this. Unity chooses the number in the yard
+        /// and hands it over at roll-out, but from then on the picture reads
+        /// the same word the shooting reads - otherwise the overlay is a
+        /// second opinion about the thing it is reporting, and the two drift
+        /// the first time one of the rules changes.
+        /// </summary>
+        public static float Heat => Metres(_state[Layout.O_SCORE + Layout.S_HEAT]);
+
         /// <summary>The truck's velocity, in metres a second.</summary>
         public static Vector3 Velocity => new Vector3(
             Metres(_state[Layout.O_TRUCK + Layout.T_VX]), 0f,

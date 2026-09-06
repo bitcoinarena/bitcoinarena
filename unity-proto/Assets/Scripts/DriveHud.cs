@@ -723,6 +723,18 @@ public class DriveHud : MonoBehaviour
     }
 
     /// <summary>
+    /// <summary>
+    /// Stars for a heat, 0 to 5. Public and static so the rule can be pinned
+    /// without a scene: it decides both how many stars are drawn and whether
+    /// the word reads HUNTED, and those two must not be able to disagree.
+    /// </summary>
+    public static int StarsFor(float heat) =>
+        Mathf.Clamp(Mathf.CeilToInt(heat * 5f), 0, 5);
+
+    /// <summary>The word under the stars. Four of five is being hunted.</summary>
+    public static string WantedWord(int stars) => stars >= 4 ? "HUNTED" : "WANTED";
+
+    /// <summary>
     /// The wanted level, top right, as stars.
     ///
     /// The risk was set at the loading ramp and then never mentioned again, so
@@ -731,9 +743,29 @@ public class DriveHud : MonoBehaviour
     /// </summary>
     void DrawWanted(int w, int h)
     {
-        if (bay == null || !bay.IsLoaded) return;
+        // THE CORE'S WORD, and only the core's.
+        //
+        // This used to read `bay.Heat` - Unity's own copy of the rule - while
+        // the shooting read the core's `S_HEAT`. The two agreed, because the
+        // formula is written twice and identically, which is exactly the
+        // arrangement that stops being true the first time one side changes.
+        // The yard still CHOOSES the number and hands it over at roll-out;
+        // from then on the picture reports the word the war is hunting with.
+        //
+        // The `bay.IsLoaded` gate went with it: an empty bed is heat zero and
+        // draws no stars by the same test that hides them at zero, so keeping
+        // the bed as a second opinion about whether to show anything bought
+        // nothing.
+        // AND ONLY WHILE THE RUN IS LIVE. The word survives the round in the
+        // core - it is cleared by the next roll-out, not by arriving - and the
+        // old `bay.IsLoaded` gate used to hide the stars when the bed emptied
+        // on delivery. Without a gate they would hang over the score card of a
+        // run that is already settled. Still one source: this is the core's
+        // own run state, not a second opinion about the load.
+        if (Blwp.BlwpCore.RunState != 0) return;
 
-        int stars = Mathf.Clamp(Mathf.CeilToInt(bay.Heat * 5f), 0, 5);
+        float heat = Blwp.BlwpCore.Heat;
+        int stars = StarsFor(heat);
         if (stars <= 0) return;
 
         float pad = Mathf.Max(10f, h * 0.025f);
@@ -745,9 +777,9 @@ public class DriveHud : MonoBehaviour
         };
 
         // a slow pulse at high heat, so a five star run never settles down
-        float pulse = bay.Heat > 0.55f
+        float pulse = heat > 0.55f
             ? 0.75f + 0.25f * Mathf.Sin(Time.unscaledTime * 5.5f) : 1f;
-        var colour = Color.Lerp(new Color(1f, 0.86f, 0.35f), new Color(1f, 0.32f, 0.25f), bay.Heat);
+        var colour = Color.Lerp(new Color(1f, 0.86f, 0.35f), new Color(1f, 0.32f, 0.25f), heat);
         colour.a = pulse;
 
         var box = new Rect(0f, pad, w - pad, style.fontSize * 1.4f);
@@ -755,7 +787,7 @@ public class DriveHud : MonoBehaviour
 
         var sub = new GUIStyle(_small) { alignment = TextAnchor.UpperRight };
         Shadowed(new Rect(0f, pad + style.fontSize * 1.25f, w - pad, _small.fontSize * 1.6f),
-                 stars >= 4 ? "HUNTED" : "WANTED", sub, colour);
+                 WantedWord(stars), sub, colour);
     }
 
     /// <summary>

@@ -1,0 +1,74 @@
+using NUnit.Framework;
+
+/// <summary>
+/// THE STARS AND THE SHOOTING READ ONE NUMBER.
+///
+/// The overlay used to take its heat from `CargoBay.Heat` - Unity's own copy
+/// of the rule - while the war took its heat from the core's `S_HEAT`. The two
+/// agreed only because the formula is written twice and identically, which is
+/// the arrangement that stops being true the first time one side is changed.
+/// The yard still chooses the number and hands it over at roll-out; from then
+/// on the picture reports the word the shooting uses.
+///
+/// What is pinned here is the display rule itself - how many stars a heat is
+/// worth and when the word becomes HUNTED - because those two must not be able
+/// to disagree with each other either, and because a rule with a ceiling and a
+/// threshold has edges worth naming.
+/// </summary>
+public class WantedStarsTests
+{
+    [Test]
+    public void NothingAboardIsNotWantedAtAll()
+    {
+        Assert.AreEqual(0, DriveHud.StarsFor(0f),
+            "an empty bed draws stars");
+    }
+
+    [Test]
+    public void TheFirstSatOfFeeIsAlreadyOneStar()
+    {
+        // Ceiling, not rounding: carrying anything at all is being wanted for
+        // something, and a load that pays is never at zero stars.
+        Assert.AreEqual(1, DriveHud.StarsFor(0.0001f));
+        Assert.AreEqual(1, DriveHud.StarsFor(0.2f));
+        Assert.AreEqual(2, DriveHud.StarsFor(0.21f));
+    }
+
+    [Test]
+    public void FiveIsTheCeilingAndItHolds()
+    {
+        Assert.AreEqual(5, DriveHud.StarsFor(1f));
+        Assert.AreEqual(5, DriveHud.StarsFor(4f),
+            "a heat past one must not draw six stars");
+        Assert.AreEqual(0, DriveHud.StarsFor(-1f),
+            "a negative heat must not draw negative stars");
+    }
+
+    /// <summary>
+    /// HUNTED is four stars of five, which is a heat over 0.6. The two sides
+    /// of that edge are both named so the word cannot drift off the stars.
+    /// </summary>
+    [Test]
+    public void HuntedIsTheTopTwoStarsAndNothingBelow()
+    {
+        Assert.AreEqual("WANTED", DriveHud.WantedWord(DriveHud.StarsFor(0.60f)));
+        Assert.AreEqual("HUNTED", DriveHud.WantedWord(DriveHud.StarsFor(0.61f)));
+        Assert.AreEqual("HUNTED", DriveHud.WantedWord(DriveHud.StarsFor(1f)));
+        Assert.AreEqual("WANTED", DriveHud.WantedWord(1));
+        Assert.AreEqual("HUNTED", DriveHud.WantedWord(4));
+    }
+
+    /// <summary>
+    /// A core that is not answering shows nothing rather than something made
+    /// up. This is the single-source rule stated as a fact about the build: in
+    /// the editor `BlwpCore.Available` is false because the core is a stub
+    /// outside a WebGL player, and the overlay has no second opinion to fall
+    /// back on - so the heat it reads is zero and the stars stay off.
+    /// </summary>
+    [Test]
+    public void WithNoCoreAnsweringThereAreNoStarsToInvent()
+    {
+        Assert.AreEqual(0f, Blwp.BlwpCore.Heat, 0.0001f);
+        Assert.AreEqual(0, DriveHud.StarsFor(Blwp.BlwpCore.Heat));
+    }
+}
