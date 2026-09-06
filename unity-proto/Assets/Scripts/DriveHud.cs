@@ -23,6 +23,8 @@ public class DriveHud : MonoBehaviour
     public CargoBay bay;
     public LoadoutPanel loadout;
     public BlockClock block;
+    public Blwp.StrikeTheatre strike;
+    int _saidStrike = -1;
     public RunScore runScore;
 
     GUIStyle _price, _sub, _small;
@@ -371,6 +373,12 @@ public class DriveHud : MonoBehaviour
     {
         if (market == null || market.Liquidations.Count == 0) return;
 
+        // WHAT THE FEED SAW, which is not what ran. Kept only to say so in the
+        // log: this summed every forced order of the last eight seconds and
+        // listed every exchange among them, while the core keeps ONE - the
+        // largest still pending - and digs one crater from it. The line named
+        // orders the core had already thrown away, and named their exchanges
+        // beside the one that actually landed.
         double usd = 0; int n = 0;
         var seen = new System.Collections.Generic.List<string>();
         foreach (var l in market.Liquidations)
@@ -382,10 +390,35 @@ public class DriveHud : MonoBehaviour
         }
         if (n == 0) return;
 
-        string money = usd >= 1e6 ? $"${usd / 1e6:0.0}M" : $"${usd / 1e3:0}k";
-        string line = n == 1
-            ? $"LIQUIDATED  {money}  ·  {string.Join(" ", seen)}"
-            : $"LIQUIDATED  {money}  ·  {n} orders  ·  {string.Join(" ", seen)}";
+        // WHAT THE CORE TOOK. The size is the core's own `K_LOAD`, in millions,
+        // read back out of the state it dug the crater from; the exchange is
+        // the one carried by the liquidation the latch was holding when the
+        // strike serial moved, and that latch follows the core's rule - largest
+        // wins, first of a tie, compared in the core's units.
+        float load = Blwp.BlwpCore.Available ? Blwp.BlwpCore.StrikeLoad : 0f;
+        string venue = strike != null ? strike.ArmedVenue : null;
+        if (load <= 0f) return;
+
+        // A REAL FORCED ORDER IS OFTEN SMALL. Most of what the live books
+        // throw off is hundreds of dollars, and the first cut of this printed
+        // every one of them as "$0k" because it only knew millions and
+        // thousands. Measured on the running feed: two strikes in a row read
+        // "$0k" and "$1k".
+        double dollars = load * 1e6;
+        string money = dollars >= 1e6 ? $"${dollars / 1e6:0.0}M"
+                     : dollars >= 1e3 ? $"${dollars / 1e3:0.0}k"
+                                      : $"${dollars:0}";
+        string line = $"LIQUIDATED  {money}  ·  {venue ?? "simulated"}";
+
+        if (Blwp.BlwpCore.StrikeCount != _saidStrike)
+        {
+            _saidStrike = Blwp.BlwpCore.StrikeCount;
+            string was = usd >= 1e6 ? $"${usd / 1e6:0.0}M"
+                       : usd >= 1e3 ? $"${usd / 1e3:0.0}k" : $"${usd:0}";
+            Debug.Log($"[hud] strike {_saidStrike}: the feed's summary said "
+                      + $"\"{was} · {n} order(s) · {string.Join(" ", seen)}\"; "
+                      + $"the core says \"{line}\"");
+        }
         Shadowed(new Rect(0, y, w, _sub.fontSize * 1.6f), line, _sub,
                  new Color(1f, 0.72f, 0.25f));
     }

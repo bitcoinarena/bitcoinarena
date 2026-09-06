@@ -165,7 +165,7 @@ public class Bootstrap : MonoBehaviour
         // the sky.
         Market.OnLiquidation += (l) =>
         {
-            if (_strike != null) _strike.NoteSubmitter(!l.Long, l.UsdValue);
+            if (_strike != null) _strike.NoteSubmitter(!l.Long, l.UsdValue, l.Venue);
             Blwp.BlwpCore.Liquidation(l.UsdValue);
         };
         Field = gameObject.AddComponent<Battlefield>();
@@ -360,6 +360,7 @@ public class Bootstrap : MonoBehaviour
         var hud = gameObject.AddComponent<DriveHud>();
         hud.truck = truck;
         hud.market = Market;
+        hud.strike = _strike;      // which liquidation the core took, and off which venue
         hud.field = Field;
         hud.streamer = _streamer;
         hud.health = _truckHealth;

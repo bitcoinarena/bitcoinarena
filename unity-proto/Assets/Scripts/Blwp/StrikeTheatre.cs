@@ -1160,7 +1160,7 @@ namespace Blwp
         /// ninety seconds of silence carries no side, so it flies the default
         /// airframe rather than an invented one.
         /// </summary>
-        public void NoteSubmitter(bool? bear, double usd)
+        public void NoteSubmitter(bool? bear, double usd, string venue = null)
         {
             // FOLLOW THE ONE THE CORE WILL KEEP. `submitLiquidation` takes the
             // LARGEST size still pending for the next tick, and takes the first
@@ -1208,6 +1208,7 @@ namespace Blwp
             _pendingSize = size;
             _pendingUsd = usd;
             _nextIsBear = bear;
+            _pendingVenue = venue;
         }
 
         /// <summary>
@@ -1246,11 +1247,25 @@ namespace Blwp
         public void Spent(int serial)
         {
             if (serial == _pendingSerial) return;
-            if (_pendingUsd > 0.0) _armedSide = _nextIsBear;
+            if (_pendingUsd > 0.0)
+            {
+                // The one the core KEPT, not the last one that arrived and not
+                // a sum of everything the feed saw. The latch already follows
+                // the core's own rule - largest wins, first of a tie, compared
+                // in the core's units - so what it is holding when the serial
+                // moves is the liquidation that dug this crater. Its size and
+                // its venue go over together, because a size off one order and
+                // a venue off another would name a liquidation that never
+                // happened.
+                _armedSide = _nextIsBear;
+                _armedUsd = _pendingUsd;
+                _armedVenue = _pendingVenue;
+            }
             _pendingSerial = serial;
             _pendingUsd = 0.0;
             _pendingSize = 0;
             _nextIsBear = null;
+            _pendingVenue = null;
         }
 
         static string Side(bool? bear) => bear == null ? "no side" : (bear.Value ? "bear" : "bull");
@@ -1262,8 +1277,16 @@ namespace Blwp
         /// <summary>The side of the liquidation the core has already taken.</summary>
         public bool? ArmedSide => _armedSide;
 
+        /// <summary>What the core actually took for the crater standing now.</summary>
+        public double ArmedUsd => _armedUsd;
+
+        /// <summary>Which exchange that one came off, or null if nobody sent it.</summary>
+        public string ArmedVenue => _armedVenue;
+
         bool? _nextIsBear;
         bool? _armedSide;
+        double _armedUsd;
+        string _pendingVenue, _armedVenue;
         double _pendingUsd;
         int _pendingSize;                 // the same size in the core's units
         int _pendingSerial = -1;

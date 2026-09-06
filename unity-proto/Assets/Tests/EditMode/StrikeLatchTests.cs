@@ -212,4 +212,63 @@ public class StrikeLatchTests
         Assert.AreEqual("primitives", t.Wearing(Bull), "never the bear skin for a bull");
         Assert.AreEqual("primitives", t.Wearing(null), "and never one for no side at all");
     }
+
+    /* ---------------------------------------- which one, and off which venue */
+
+    /// <summary>
+    /// The HUD names the liquidation that RAN. It used to sum every forced
+    /// order of the last eight seconds and list every exchange among them,
+    /// while the core keeps one - the largest still pending - and digs one
+    /// crater from it. So the line named orders the core had already thrown
+    /// away, and named their exchanges beside the one that actually landed.
+    /// </summary>
+    [Test]
+    public void TheVenueThatIsNamedIsTheOneTheCoreKept()
+    {
+        var t = Rig();
+        t.NoteSubmitter(Bull, 1_000_000, "bybit");
+        t.NoteSubmitter(Bear, 5_000_000, "okx");
+        t.NoteSubmitter(Bull, 2_000_000, "binance");
+
+        BlwpCore.State[Serial] = 1;              // the core consumes one
+        t.Spent(BlwpCore.StrikeCount);
+
+        Assert.AreEqual("okx", t.ArmedVenue,
+            "the exchange named must be the one the kept liquidation came off");
+        Assert.AreEqual(5_000_000, t.ArmedUsd, 1.0,
+            "and the size with it, off the same order");
+    }
+
+    /// <summary>
+    /// A size off one order and a venue off another would name a liquidation
+    /// that never happened, so they are taken together or not at all.
+    /// </summary>
+    [Test]
+    public void TheSizeAndTheVenueComeOffTheSameOrder()
+    {
+        var t = Rig();
+        t.NoteSubmitter(Bear, 9_000_000, "binance");
+        t.NoteSubmitter(Bull, 3_000_000, "bybit");   // loses, and takes its venue with it
+
+        BlwpCore.State[Serial] = 1;
+        t.Spent(BlwpCore.StrikeCount);
+
+        Assert.AreEqual("binance", t.ArmedVenue);
+        Assert.AreEqual(9_000_000, t.ArmedUsd, 1.0);
+        Assert.AreEqual(Bear, t.ArmedSide, "and the side too, still off that order");
+    }
+
+    /// <summary>Nobody sent a simulated strike, so it names no exchange.</summary>
+    [Test]
+    public void ASimulatedStrikeNamesNoExchange()
+    {
+        var t = Rig();
+        t.NoteSubmitter(null, 40_000_000);        // the clock, not a venue
+
+        BlwpCore.State[Serial] = 1;
+        t.Spent(BlwpCore.StrikeCount);
+
+        Assert.IsNull(t.ArmedVenue, "a strike nobody submitted has no exchange to name");
+        Assert.AreEqual(40_000_000, t.ArmedUsd, 1.0);
+    }
 }
