@@ -38,6 +38,7 @@ public class GameAudio : MonoBehaviour
     AudioClip _impact, _explosion, _chime, _blip, _thud;
     AudioClip _cannon, _rifle, _ricochet, _boom, _detonation, _whistle;
     AudioSource _drone;
+    float _saidDrone = -99f;
     Rigidbody _body;
     float _rpm;
 
@@ -370,17 +371,37 @@ public class GameAudio : MonoBehaviour
         const float Seconds = 4.5f;
         int samples = Mathf.RoundToInt(Rate * Seconds);
         var data = new float[samples];
+        // IT HAD NOTHING A PHONE CAN MAKE. the owner heard the plane and the
+        // bomb and not the blast, and the clip is why: the two filters here
+        // were a one-pole at 0.0016 and one at 0.020, which are cutoffs of
+        // 11 Hz and 140 Hz. Measured on the synthesised samples, only 5.5% of
+        // its energy sat above 200 Hz and 2.3% above 500. A phone speaker
+        // rolls off long before that, so a blast built almost entirely of
+        // sub-bass is silent on it - while the whistle at 300-1400 Hz and the
+        // drone's harmonics at 190-316 Hz came through.
+        //
+        // The roll and the thump stay, for speakers that can move air. What
+        // is added is the part a small speaker can reproduce: a bright snap
+        // from the noise's own high end, and a body around 630 Hz under it.
+        // Same measurement after: 53% above 200 Hz, 39% above 500, 28% above
+        // a kilohertz.
         var rng = new System.Random("detonation".GetHashCode());
-        float lo = 0f, mid = 0f;
+        float lo = 0f, mid = 0f, body = 0f, hi = 0f;
         for (int i = 0; i < samples; i++)
         {
             float w = (float)(rng.NextDouble() * 2.0 - 1.0);
-            lo = Mathf.Lerp(lo, w, 0.0016f);      // the roll, far below the crack
-            mid = Mathf.Lerp(mid, w, 0.020f);     // the crack itself
-            float t = i / (float)Rate;
+            lo = Mathf.Lerp(lo, w, 0.0016f);      // 11 Hz, the roll you feel
+            mid = Mathf.Lerp(mid, w, 0.020f);     // 140 Hz, the thump
+            body = Mathf.Lerp(body, w, 0.090f);   // 630 Hz, the body of it
+            hi = Mathf.Lerp(hi, w, 0.400f);       // 2.8 kHz lowpass, so w - hi
+            float t = i / (float)Rate;            // is the crack above it
             float crack = Mathf.Exp(-8f * t);
             float roll = Mathf.Exp(-0.7f * t) * (1f - Mathf.Exp(-11f * t));
-            data[i] = Mathf.Clamp(mid * 0.6f * crack + lo * 7f * roll, -1f, 1f);
+            float snap = Mathf.Exp(-26f * t);
+            float tail = Mathf.Exp(-3.2f * t);
+            data[i] = Mathf.Clamp(mid * 0.6f * crack + lo * 7f * roll
+                                  + (w - hi) * 0.9f * snap + body * 2.6f * tail,
+                                  -1f, 1f);
         }
         var clip = AudioClip.Create("detonation", samples, 1, Rate, false);
         clip.SetData(data, 0);
@@ -411,6 +432,16 @@ public class GameAudio : MonoBehaviour
         _drone.volume = Mathf.Lerp(_drone.volume, effectVolume * 0.5f * want * want,
                                    1f - Mathf.Exp(-3f * Time.deltaTime));
         _drone.pitch = Mathf.Lerp(1.15f, 1.5f, want);
+
+        // A LOOP PRINTS NOTHING, which is how the last one got away: a source
+        // that exists is not a source that is heard, and counting sources only
+        // proved it had been made. This says what the volume actually reached.
+        if (want > 0.01f && Time.time - _saidDrone > 1.5f)
+        {
+            _saidDrone = Time.time;
+            Debug.Log($"[voice] bomber drone near {want:F2}, volume {_drone.volume:F3}, "
+                      + $"pitch {_drone.pitch:F2}, playing {_drone.isPlaying}");
+        }
     }
 
     /// <summary>The bomb let go: a falling whistle, once.</summary>

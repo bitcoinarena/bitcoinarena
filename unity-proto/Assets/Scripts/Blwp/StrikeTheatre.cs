@@ -287,10 +287,21 @@ namespace Blwp
             if (audio == null) audio = FindFirstObjectByType<GameAudio>();
             if (audio != null)
             {
+                // NOT `Camera.main`. It is null in this build - the camera
+                // that renders is not tagged MainCamera, which is why the cap
+                // probe needed this same fallback - so the ear was falling
+                // back to the impact point and the drone's nearness was the
+                // distance from the plane to the hole rather than to the
+                // player. Measured as silent-in-practice, and reported before
+                // it was fixed.
                 float near = 0f;
                 if (_plane != null && _plane.gameObject.activeSelf)
                 {
-                    var ear = Camera.main != null ? Camera.main.transform.position : _impact;
+                    var cam = Camera.main;
+                    if (cam == null)
+                        foreach (var c in Camera.allCameras)
+                            if (c != null && c.isActiveAndEnabled) { cam = c; break; }
+                    var ear = cam != null ? cam.transform.position : _impact;
                     float d = Vector3.Distance(_plane.position, ear);
                     near = Mathf.Clamp01(1f - d / 260f);
                 }
