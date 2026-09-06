@@ -123,6 +123,7 @@ public class ChaseCamera : MonoBehaviour
     // Where the player has dragged the view to, relative to the automatic one.
     float _orbitYaw, _orbitPitch;
     float _cloudLook;
+    float _saidLook = -99f;
     float _worstOffNose, _worstRoll;
     Vector3 _downAt;
     bool _pointerDown, _onPad;
@@ -479,6 +480,18 @@ public class ChaseCamera : MonoBehaviour
                            * Mathf.Rad2Deg;
                 float lifted = Mathf.Min(want, cloudLookUp);
                 float aim = Mathf.Lerp(have, Mathf.Max(have, lifted), _cloudLook);
+
+                // WHICH OF THE THREE IT IS. The cap is clipped at the first
+                // instant only, and only close in, so the question is whether
+                // the view has finished tilting, whether the cloud is too
+                // tall, or whether the cap sits too high. This prints the
+                // blend and the angles, so it is not guessed.
+                if (Time.time - _saidLook > 0.9f)
+                {
+                    _saidLook = Time.time;
+                    Debug.Log($"[look] blend {_cloudLook:F2}, cap needs {want:F1} deg, "
+                              + $"allowed {lifted:F1}, was {have:F1}, aiming {aim:F1}");
+                }
                 // Re-aim at the same distance, so only the pitch moves.
                 Vector3 dir = (look - _pos); float len = dir.magnitude;
                 Vector2 f2 = new Vector2(dir.x, dir.z).normalized;
