@@ -1101,6 +1101,34 @@ public class CombatFx : MonoBehaviour
     Vector3 LastSeen(int i) => Blwp.BlwpCore.UnitPosition(i, 0f);
 
     /// <summary>
+    /// The courier's own reach against each arm, in metres: `COURIER_RANGE` for
+    /// a tank and `RIFLE_RANGE` for a rifleman, both from `rules/army.js`.
+    /// </summary>
+    public const float CourierReachForArmour = 34f;
+    public const float CourierReachForRifle = 26f;
+
+    /// <summary>
+    /// Whether this shot went at the truck rather than at the enemy the unit
+    /// had picked - the core's rule, in the core's own terms.
+    ///
+    /// `sim.js` takes the courier only when it is inside the reach for that
+    /// arm AND nearer than the foe, and only once a foe has been found at all:
+    /// a unit with nobody in range does not fire at the truck standing beside
+    /// it. Squared distances throughout, so nothing here takes a root the core
+    /// does not take either.
+    ///
+    /// Static and public because it is a rule with edges - reach, nearer, no
+    /// foe - and a rule with edges is worth pinning without a scene.
+    /// </summary>
+    public static bool ShotGoesAtTheCourier(bool armour, float toTruckSq,
+                                            bool foundFoe, float foeSq)
+    {
+        if (!foundFoe) return false;
+        float reach = armour ? CourierReachForArmour : CourierReachForRifle;
+        return toTruckSq < reach * reach && toTruckSq < foeSq;
+    }
+
+    /// <summary>
     /// Muzzle flash and tracer, ending at whoever the core would have shot at.
     /// </summary>
     void Muzzle(int i, Vector3 at, bool armour)
@@ -1117,6 +1145,30 @@ public class CombatFx : MonoBehaviour
             float d2 = (o.x - at.x) * (o.x - at.x) + (o.z - at.z) * (o.z - at.z);
             if (d2 < bestD2) { bestD2 = d2; tx = o.x; tz = o.z; found = true; }
         }
+        // AND THE COURIER, WHICH IS WHERE THE DAMAGE ACTUALLY WENT.
+        //
+        // Measured before this was written: both engines put 100% of a parked
+        // truck's damage on tank shells and write it off in twelve to twenty
+        // seconds. The picture said otherwise, because the search above only
+        // ever considers other UNITS - it skips the dead, the wrong arm and
+        // its own side, and the truck is not in the list at all - so the shell
+        // the core spent on the player was drawn going at some other tank.
+        // Hit hard, repeatedly, and never shown a barrel pointed at him.
+        //
+        // The old C# army skipped the truck here too, so this is not a leftover
+        // being copied. It is the core's own rule, `sim.js` at the armour and
+        // rifle firing sites: the courier outranks the enemy the unit had
+        // picked when it is inside the courier reach AND nearer than that
+        // enemy. Nothing is decided here - the core has already spent the
+        // shell - this only points the barrel where it went.
+        var truck = Blwp.BlwpCore.TruckPosition(0f);
+        float dtx = truck.x - at.x, dtz = truck.z - at.z;
+        float toTruck2 = dtx * dtx + dtz * dtz;
+        if (ShotGoesAtTheCourier(armour, toTruck2, found, bestD2))
+        {
+            tx = truck.x; tz = truck.z; bestD2 = toTruck2;
+        }
+
         // The core picks its target BEFORE the step and this reads the state
         // after it, so now and then the man it shot has moved out of reach.
         // The round still left the barrel: it goes down the unit's heading.
