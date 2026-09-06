@@ -144,7 +144,7 @@ public class SplashScreen : MonoBehaviour
     /// </summary>
     public struct Frame
     {
-        public Rect panel, head, copy, hint, play, spectate;
+        public Rect panel, head, copy, hint, play, spectate, build;
         public float pad;
     }
 
@@ -175,12 +175,21 @@ public class SplashScreen : MonoBehaviour
         float hintHigh = subFont * 1.5f;
         var hint = new Rect(panel.x + pad, row - gap - hintHigh, inner, hintHigh);
 
-        float top = head.yMax + ph * 0.03f;
+        // WHICH BUILD THIS IS, on its own line under the title bar.
+        //
+        // A row of its own rather than tucked into a corner of another one:
+        // twice in one session a measured fix "changed nothing on the phone"
+        // and both times the page was serving an older build than the one
+        // being argued about. It is only useful if it cannot be drawn over.
+        var build = new Rect(panel.x + pad, head.yMax + ph * 0.008f,
+                             inner, Mathf.Max(12f, subFont * 1.3f));
+
+        float top = build.yMax + ph * 0.02f;
         var copy = new Rect(panel.x + pad, top, inner,
                             Mathf.Max(0f, hint.y - pad * 0.25f - top));
 
         return new Frame { panel = panel, head = head, copy = copy, hint = hint,
-                           play = play, spectate = spectate, pad = pad };
+                           play = play, spectate = spectate, pad = pad, build = build };
     }
 
     void OnGUI()
@@ -234,6 +243,15 @@ public class SplashScreen : MonoBehaviour
         GUI.Label(new Rect(head.x + 3f, head.y + 4f, head.width, head.height), Title, _title);
         _title.normal.textColor = PanelSkin.Gold;
         GUI.Label(head, Title, _title);
+
+        // The build, right-aligned on its own row under the title bar.
+        var stamp = new GUIStyle(_sub)
+        {
+            alignment = TextAnchor.MiddleRight,
+            fontSize = Mathf.Max(10, Mathf.RoundToInt(_sub.fontSize * 0.8f)),
+        };
+        stamp.normal.textColor = new Color(1f, 1f, 1f, 0.5f);
+        GUI.Label(f.build, $"build {BuildStamp.Current}", stamp);
 
         Copy(f.copy.width, true, f.copy.x, f.copy.y);
         Buttons(f);

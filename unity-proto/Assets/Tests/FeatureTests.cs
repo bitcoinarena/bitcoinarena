@@ -321,6 +321,13 @@ public class FeatureTests
             Apart(f.hint, f.spectate, "der Hinweis und DEBUG SPECTATE");
             Apart(f.play, f.spectate, "die beiden Knoepfe");
             Apart(f.head, f.copy, "die Kopfzeile und der Text");
+            // The build stamp is a row of its own and has to stay one: it is
+            // only useful if nothing is drawn over it.
+            Apart(f.build, f.head, "the build stamp and the title bar");
+            Apart(f.build, f.copy, "the build stamp and the text");
+            Apart(f.build, f.hint, "the build stamp and the hint");
+            Apart(f.build, f.play, "the build stamp and PLAY");
+            Assert.Greater(f.build.height, 8f, $"the build stamp has no height {at}");
 
             // side by side, same height, same baseline - that is the alignment
             Assert.AreEqual(f.play.y, f.spectate.y, 0.01f, $"die Knoepfe stehen versetzt {at}");

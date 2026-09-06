@@ -477,23 +477,38 @@ public class ScoreTests
     }
 
     /// <summary>
-    /// The meter has to stay off the block board, which lives top left and
-    /// grows a row for every leaderboard entry. Checked at a browser-shaped
-    /// aspect, because that is what it ships at.
+    /// The meter sits UNDER the condition bar, in the same column.
+    ///
+    /// This test used to require the opposite - that the meter be to the RIGHT
+    /// of the whole left column - because the meter lived under the wanted
+    /// stars in the top right corner. the owner asked for condition and danger
+    /// stacked on 2026-09-06: they are the two numbers a driver reads about
+    /// the run he is in, and they were at opposite ends of the screen. The
+    /// requirement is reversed rather than relaxed, and it is checked at the
+    /// sizes the game is actually played at rather than one.
     /// </summary>
     [Test]
-    public void ExposureMeterClearsTheBlockBoard()
+    public void TheDangerMeterSitsUnderTheConditionBar()
     {
         var hud = Object.FindFirstObjectByType<DriveHud>();
         Assert.IsNotNull(hud);
 
-        int w = 1600, h = 720;
-        var meter = hud.ExposureBox(w, h);
-        var health = hud.HealthBox(w, h);
+        foreach (var size in new[] { new Vector2(1600, 720), new Vector2(1920, 1080),
+                                     new Vector2(844, 390), new Vector2(1366, 768) })
+        {
+            int w = (int)size.x, h = (int)size.y;
+            var meter = hud.ExposureBox(w, h);
+            var health = hud.HealthBox(w, h);
+            string at = $"at {w}x{h}";
 
-        Assert.Greater(meter.x, health.xMax,
-            "the exposure meter overlaps the top-left column");
-        Assert.Less(meter.yMax, h * 0.5f, "the meter drifted into the middle of the screen");
-        Assert.Greater(meter.width, 80f, "the meter is too narrow to read a fill off");
+            Assert.AreEqual(health.x, meter.x, 0.01f, $"the two are not in one column {at}");
+            Assert.AreEqual(health.width, meter.width, 0.01f,
+                $"the two are not the same width {at}");
+            Assert.GreaterOrEqual(meter.y, health.yMax,
+                $"the danger meter starts before the condition bar ends {at}");
+            Assert.IsFalse(meter.Overlaps(health), $"they overlap {at}");
+            Assert.Less(meter.yMax, h * 0.6f, $"the meter drifted into the middle {at}");
+            Assert.Greater(meter.width, 80f, $"the meter is too narrow to read a fill off {at}");
+        }
     }
 }

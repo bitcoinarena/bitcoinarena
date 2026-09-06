@@ -209,8 +209,7 @@ public class DriveHud : MonoBehaviour
 
         // Under the block clock, on the left, clear of the driving pads and of
         // the score column on the right.
-        var box = new Rect(pad, pad + BlockBoxHeight(w, h) + HealthBoxHeight(w, h) + pad * 1.4f,
-                           bw, bh);
+        var box = PracticeBox(w, h);
 
         bool on = Blwp.PracticeMode.On;
         var tint = on ? new Color(0.45f, 0.75f, 1f) : new Color(1f, 0.55f, 0.30f);
@@ -248,7 +247,7 @@ public class DriveHud : MonoBehaviour
         // here. There is no second strike and no Unity crater.
         if (!on) return;
 
-        var simBox = new Rect(box.x, box.y + box.height + 6f, box.width, box.height * 0.78f);
+        var simBox = SimBox(w, h);
         bool sim = Bootstrap.SimForced;
         var simTint = sim ? new Color(1f, 0.72f, 0.25f) : new Color(0.65f, 0.70f, 0.78f);
 
@@ -278,11 +277,58 @@ public class DriveHud : MonoBehaviour
     /// </summary>
     void DrawSettings(int w, int h)
     {
-        Button(TouchPad.RectFor(TouchPad.Pad.Sound, w, h),
-               GameSettings.Sound ? "SOUND" : "MUTED", GameSettings.Sound,
-               GameSettings.ToggleSound);
-        Button(TouchPad.RectFor(TouchPad.Pad.Debug, w, h),
-               "DEBUG", GameSettings.Debug, GameSettings.ToggleDebug);
+        IconButton(TouchPad.RectFor(TouchPad.Pad.Sound, w, h), Icon.Speaker,
+                   GameSettings.Sound, GameSettings.ToggleSound);
+        IconButton(TouchPad.RectFor(TouchPad.Pad.Debug, w, h), Icon.Bars,
+                   GameSettings.Debug, GameSettings.ToggleDebug);
+    }
+
+    enum Icon { Speaker, Bars }
+
+    /// <summary>
+    /// A settings control as a drawn glyph rather than a word.
+    ///
+    /// DRAWN, not typed: an emoji or a box-drawing character depends on
+    /// whatever font the player's browser hands Unity, and a missing glyph is
+    /// a blank square where a control used to be. These are rectangles from
+    /// the same white texture everything else in this file uses, so they look
+    /// the same in every build.
+    ///
+    /// The state is in the colour and in the slash, not in a caption: lit blue
+    /// is on, grey is off, and a muted speaker carries a bar across it.
+    /// </summary>
+    void IconButton(Rect r, Icon icon, bool on, System.Action onClick)
+    {
+        GUI.color = new Color(0.02f, 0.03f, 0.05f, on ? 0.78f : 0.55f);
+        GUI.DrawTexture(r, _flat);
+
+        var tint = on ? new Color(0.62f, 0.85f, 1f, 0.95f) : new Color(1f, 1f, 1f, 0.45f);
+        GUI.color = tint;
+
+        float u = r.height * 0.12f;                       // the glyph's unit
+        float cx = r.x + r.width * 0.5f, cy = r.y + r.height * 0.5f;
+
+        if (icon == Icon.Speaker)
+        {
+            // A box and a cone, built out of three rectangles: the body, and
+            // two steps that widen away from it.
+            GUI.DrawTexture(new Rect(cx - u * 2.2f, cy - u, u * 1.2f, u * 2f), _flat);
+            GUI.DrawTexture(new Rect(cx - u * 1.0f, cy - u * 1.6f, u * 0.9f, u * 3.2f), _flat);
+            GUI.DrawTexture(new Rect(cx - u * 0.1f, cy - u * 2.2f, u * 0.9f, u * 4.4f), _flat);
+            // and the bar that says it is off
+            if (!on)
+                GUI.DrawTexture(new Rect(cx - u * 2.6f, cy - u * 0.25f, u * 5.2f, u * 0.5f), _flat);
+        }
+        else
+        {
+            // Three bars: a readout, which is what the debug panel is.
+            for (int i = -1; i <= 1; i++)
+                GUI.DrawTexture(new Rect(cx - u * 2.2f, cy + i * u * 1.4f - u * 0.3f,
+                                         u * (i == 1 ? 2.8f : 4.4f), u * 0.6f), _flat);
+        }
+
+        GUI.color = Color.white;
+        if (GUI.Button(r, GUIContent.none, GUIStyle.none)) onClick();
     }
 
     void Button(Rect r, string label, bool on, System.Action onClick)
@@ -469,7 +515,8 @@ public class DriveHud : MonoBehaviour
                       + $"\"{was} · {n} order(s) · {string.Join(" ", seen)}\"; "
                       + $"the core says \"{line}\"");
         }
-        Shadowed(new Rect(0, y, w, _sub.fontSize * 1.6f), line, _sub,
+        var head = HeadlineBox(w, h);
+        Shadowed(new Rect(head.x, y, head.width, _sub.fontSize * 1.6f), line, _sub,
                  new Color(1f, 0.72f, 0.25f));
     }
 
@@ -492,11 +539,15 @@ public class DriveHud : MonoBehaviour
                          0.5f + 0.5f * Mathf.Sin(Time.unscaledTime * 6f))
             : new Color(1f, 0.86f, 0.35f);
 
-        Shadowed(new Rect(0f, y, w, style.fontSize * 1.35f),
+        // In the gap between the columns, like the price above it: full width
+        // and centred put "BLOCK 965,829 · 2:06" straight across the practice
+        // switch on a phone.
+        var head = HeadlineBox(w, h);
+        Shadowed(new Rect(head.x, y, head.width, style.fontSize * 1.35f),
                  $"BLOCK {block.Height:N0}   ·   {left / 60}:{left % 60:00}", style, colour);
 
         var sub = new GUIStyle(_small) { alignment = TextAnchor.UpperCenter };
-        Shadowed(new Rect(0f, y + style.fontSize * 1.2f, w, _small.fontSize * 1.6f),
+        Shadowed(new Rect(head.x, y + style.fontSize * 1.2f, head.width, _small.fontSize * 1.6f),
                  late ? "DELIVER BEFORE THE BLOCK IS MINED — OR LOSE THE LOAD"
                       : "the block is the round · arrive before it closes",
                  sub, new Color(1f, 1f, 1f, late ? 0.95f : 0.6f));
@@ -682,10 +733,10 @@ public class DriveHud : MonoBehaviour
         PanelSkin.Border(box, new Color(1f, 0.86f, 0.35f, 0.55f));
         PanelSkin.Corners(box, new Color(1f, 0.86f, 0.35f, 0.8f), 2f);
 
-        float y = pad + lh * 0.15f;
+        float y = pad + lh * BlockRows[0];
         Shadowed(new Rect(pad * 1.5f, y, bw, lh), $"BLOCK #{block.Height}", head,
                  new Color(1f, 0.86f, 0.35f));
-        y += lh;
+        y += lh * BlockRows[1];
 
         // the clock, running out
         var track = new Rect(pad * 1.5f, y, bw, lh * 0.42f);
@@ -697,28 +748,31 @@ public class DriveHud : MonoBehaviour
                                  Mathf.Max(0f, (track.width - 2f) * block.Fraction),
                                  track.height - 2f), _flat);
         GUI.color = Color.white;
-        y += lh * 0.62f;
+        y += lh * BlockRows[2];
 
         int secs = Mathf.CeilToInt(block.Remaining);
         Shadowed(new Rect(pad * 1.5f, y, bw, lh), $"{secs / 60}:{secs % 60:00} left", line,
                  new Color(1f, 1f, 1f, 0.85f));
-        y += lh;
+        y += lh * BlockRows[3];
         Shadowed(new Rect(pad * 1.5f, y, bw, lh),
                  $"in this block: {block.PendingSats:N0} sat  ·  {block.PendingBtc:0.###} BTC",
                  line, Up);
-        y += lh * 1.4f;
+        // `BlockRows[4]` is the pending line's own height - it is counted in
+        // the content total but it is not an advance, because the gap to the
+        // board is measured from that line's top.
+        y += lh * BlockBoardGap;
 
         if (block.Board.Count == 0) return;
 
         Shadowed(new Rect(pad * 1.5f, y, bw, lh), "BEST BLOCKS", head, new Color(1f, 1f, 1f, 0.8f));
-        y += lh;
+        y += lh * BlockBoardHead;
         for (int i = 0; i < block.Board.Count && i < 5; i++)
         {
             var b = block.Board[i];
             Shadowed(new Rect(pad * 1.5f, y, bw, lh),
                      $"{i + 1}.  #{b.height}   {b.sats:N0} sat   {b.btc:0.##} BTC",
                      line, i == 0 ? Up : new Color(1f, 1f, 1f, 0.7f));
-            y += lh * 0.95f;
+            y += lh * BlockBoardRow;
         }
     }
 
@@ -799,14 +853,68 @@ public class DriveHud : MonoBehaviour
     /// star boundary, which is exactly when the player is looking at it.
     /// Public so a test can assert it never lands on the block board.
     /// </summary>
-    public Rect ExposureBox(int w, int h)
+    /// <summary>
+    /// The gap the centred headline is allowed to use.
+    ///
+    /// The price was drawn into `new Rect(0, y, w, ...)` - the whole screen -
+    /// and centred in it. On a desktop that is fine because the columns are a
+    /// long way apart; on an iPhone the dollar sign of "$79,810" landed on top
+    /// of the block board. Photographed at 22:17.
+    ///
+    /// Centring inside the GAP instead keeps the headline where a headline
+    /// belongs and cannot reach either column, whatever the aspect. The left
+    /// edge is the widest thing in the left stack - the practice switch is
+    /// wider than the block board - and the right edge is the settings column.
+    /// </summary>
+    public Rect HeadlineBox(int w, int h)
+    {
+        float pad = Mathf.Max(10f, h * 0.022f);
+        float blockW = Mathf.Min(300f, w * 0.24f) + pad;
+        float switchW = Mathf.Min(w * 0.52f, 300f);
+        float left = pad + Mathf.Max(blockW, switchW) + pad;
+        float s = TouchPad.ButtonSize(w, h), m = TouchPad.Margin(w, h);
+        float right = w - (m + s * 0.7f) - pad;
+        return new Rect(left, 0f, Mathf.Max(60f, right - left), h);
+    }
+
+    /// <summary>
+    /// The practice switch, under the whole left column.
+    ///
+    /// It was measured from the block board and the condition bar only, so
+    /// adding the danger meter to that column laid the switch straight over
+    /// it. Public with the rest of the column so the whole stack can be
+    /// checked for overlap in one place rather than trusted.
+    /// </summary>
+    public Rect PracticeBox(int w, int h)
     {
         float pad = Mathf.Max(10f, h * 0.025f);
-        float starFont = Mathf.Clamp(Mathf.Min(w, h) * 0.055f, 24f, 46f);
-        float small = SmallFont(w, h);
-        float top = pad + starFont * 1.25f + small * 1.9f;
-        float width = Mathf.Min(w * 0.26f, 300f);
-        return new Rect(w - width - pad, top, width, small * 1.5f + Mathf.Max(10f, h * 0.020f));
+        int min = Mathf.Min(w, h);
+        return new Rect(pad, ExposureBox(w, h).yMax + pad * 0.8f,
+                        Mathf.Min(w * 0.52f, 300f), Mathf.Max(42f, min * 0.070f));
+    }
+
+    /// <summary>The simulated-strike switch, directly under PRACTICE.</summary>
+    public Rect SimBox(int w, int h)
+    {
+        var box = PracticeBox(w, h);
+        return new Rect(box.x, box.y + box.height + 6f, box.width, box.height * 0.78f);
+    }
+
+    public Rect ExposureBox(int w, int h)
+    {
+        // UNDER THE CONDITION BAR, in the same column and the same width.
+        //
+        // It used to sit top right, under the wanted stars, on the reasoning
+        // that stacking it on the stars would make it jump when the heat
+        // crossed a star boundary. True, and it solved that by putting the two
+        // things a driver reads together - how hurt am I, how much is this
+        // worth - at opposite ends of the screen. They are one column now:
+        // condition, then danger, directly beneath it.
+        var health = HealthBox(w, h);
+        float pad = Mathf.Max(8f, h * 0.02f);
+        float lh = SmallFont(w, h) * 1.5f;
+        return new Rect(health.x, health.yMax + pad * 0.4f,
+                        health.width, lh + Mathf.Max(8f, h * 0.018f));
     }
 
     /// <summary>
@@ -827,7 +935,19 @@ public class DriveHud : MonoBehaviour
     /// </summary>
     void DrawExposure(int w, int h)
     {
-        if (runScore == null || !runScore.Running) return;
+        if (runScore == null) return;
+
+        // AND IT SHOWS IN PRACTICE TOO, which is why it looked deleted.
+        //
+        // `RunScore.Running` is false while the truck is invulnerable, and
+        // practice makes it invulnerable - so the one meter that exists to
+        // TEACH a rule was hidden from exactly the mode a player learns in.
+        // the owner, 22:18: "old UI had exposure, we do not show it". It was
+        // never removed; it was switched off by the mode he was in.
+        //
+        // In practice it reads what it reads and banks nothing, which is the
+        // truth about practice and worth seeing.
+        if (!runScore.Running && !Blwp.PracticeMode.On) return;
 
         var box = ExposureBox(w, h);
         float lh = _small.fontSize * 1.5f;
@@ -1142,12 +1262,44 @@ public class DriveHud : MonoBehaviour
     }
 
     /// <summary>How tall the block readout is. Shared, so nothing lands on it.</summary>
-    public float BlockBoxHeight(int w, int h)
+    /// <summary>
+    /// The rows `DrawBlock` lays out, in line-heights, in order: the inset it
+    /// starts at, the title, the clock bar, the time left, and the pending
+    /// line.
+    ///
+    /// ONE LIST, WALKED BY BOTH the drawing and the measurement, because they
+    /// disagreed: the box claimed 3.20 lines and the content ran to 3.77, so
+    /// "in this block: 0 sat" was drawn OUTSIDE the yellow border and the
+    /// condition bar was laid on top of it. Photographed on an iPhone at
+    /// 22:17. With a leaderboard the box claimed 4.40 against 6.17 drawn.
+    ///
+    /// Two numbers for the same layout is how that happens, so there is one.
+    /// </summary>
+    static readonly float[] BlockRows = { 0.15f, 1f, 0.62f, 1f, 1f };
+
+    /// <summary>The gap, the heading and a row apiece, when there is a board.</summary>
+    const float BlockBoardGap = 1.4f, BlockBoardHead = 1f, BlockBoardRow = 0.95f;
+
+    /// <summary>How far down the box the drawing actually reaches.</summary>
+    public float BlockContentHeight(int w, int h)
     {
         if (block == null) return 0f;
         float lh = SmallFont(w, h) * 1.55f;
         int rows = Mathf.Min(5, block.Board.Count);
-        return lh * (3.2f + (rows > 0 ? 1.2f + rows * 0.95f : 0f));
+
+        float lines = 0f;
+        foreach (var step in BlockRows) lines += step;
+        if (rows > 0) lines += BlockBoardGap + BlockBoardHead + rows * BlockBoardRow;
+        return lh * lines;
+    }
+
+    /// <summary>How tall the block readout is. Shared, so nothing lands on it.</summary>
+    public float BlockBoxHeight(int w, int h)
+    {
+        if (block == null) return 0f;
+        // A fifth of a line of air under the last thing drawn, so the border
+        // does not sit on the text it is meant to contain.
+        return BlockContentHeight(w, h) + SmallFont(w, h) * 1.55f * 0.18f;
     }
 
     void DrawHealth(int w, int h)
@@ -1272,9 +1424,20 @@ public class DriveHud : MonoBehaviour
 
         if (market != null && !loading)
         {
+            var head = HeadlineBox(w, h);
             string text = market.Price > 0 ? $"${market.Price:N0}" : "— — —";
             var colour = market.Fresh ? Color.white : new Color(1f, 1f, 1f, 0.55f);
-            Shadowed(new Rect(0, h * 0.015f, w, _price.fontSize * 1.3f), text, _price, colour);
+
+            // AND IT SHRINKS TO FIT THE GAP rather than spilling out of it.
+            // A phone in landscape leaves about a third of its width between
+            // the two columns, and 13% of the short side is a wider number
+            // than that: measured, not assumed, off the style itself.
+            float wanted = _price.CalcSize(new GUIContent(text)).x;
+            if (wanted > head.width && wanted > 1f)
+                _price.fontSize = Mathf.Max(14, Mathf.FloorToInt(_price.fontSize * head.width / wanted));
+
+            Shadowed(new Rect(head.x, h * 0.015f, head.width, _price.fontSize * 1.3f),
+                     text, _price, colour);
 
             double chg = market.DayChangePct;
             string sub = market.Price > 0
@@ -1291,7 +1454,8 @@ public class DriveHud : MonoBehaviour
                 // the debug panel.
                 ? $"{chg:+0.00;-0.00;0.00}% 24h"
                 : $"verbinde … ({market.Status})";
-            Shadowed(new Rect(0, h * 0.015f + _price.fontSize * 1.12f, w, _sub.fontSize * 1.6f),
+            Shadowed(new Rect(head.x, h * 0.015f + _price.fontSize * 1.12f,
+                              head.width, _sub.fontSize * 1.6f),
                      sub, _sub, chg >= 0 ? Up : Down);
 
             DrawLiquidations(w, h, h * 0.015f + _price.fontSize * 1.12f + _sub.fontSize * 1.55f);

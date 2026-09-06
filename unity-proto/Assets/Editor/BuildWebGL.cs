@@ -82,6 +82,45 @@ public static class BuildWebGL
     }
 
     [MenuItem("Tools/BTC Logistics/Build WebGL")]
+    /// <summary>
+    /// Writes the commit this build was made at into `Resources/build.txt`,
+    /// so the loading screen can say which build is on the screen.
+    ///
+    /// Twice in one session a measured fix "changed nothing on the phone" and
+    /// both times the page was serving an older build than the one being
+    /// argued about. A number on the splash makes that a glance instead of an
+    /// argument. Read back by `BuildStamp`.
+    /// </summary>
+    static void StampTheBuild()
+    {
+        string sha = "unknown";
+        try
+        {
+            var p = new System.Diagnostics.Process
+            {
+                StartInfo = new System.Diagnostics.ProcessStartInfo("git", "rev-parse --short HEAD")
+                {
+                    WorkingDirectory = Application.dataPath,
+                    RedirectStandardOutput = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                }
+            };
+            p.Start();
+            sha = p.StandardOutput.ReadToEnd().Trim();
+            p.WaitForExit(4000);
+            if (string.IsNullOrWhiteSpace(sha)) sha = "unknown";
+        }
+        catch (Exception e) { UnityEngine.Debug.LogWarning($"[build] no git stamp: {e.Message}"); }
+
+        string dir = Path.Combine(Application.dataPath, "Resources");
+        Directory.CreateDirectory(dir);
+        File.WriteAllText(Path.Combine(dir, "build.txt"),
+                          $"{sha}  ·  {DateTime.UtcNow:yyyy-MM-dd HH:mm} UTC");
+        AssetDatabase.Refresh();
+        UnityEngine.Debug.Log($"[build] stamped {sha}");
+    }
+
     public static void Run()
     {
         // The core is rebuilt and copied into the template HERE, not by hand.
@@ -93,6 +132,7 @@ public static class BuildWebGL
         // deployed, and changed nothing at all on the phone, because the page
         // was still loading a bundle from three hours earlier.
         SyncCore.Run();
+        StampTheBuild();
 
         string output = DefaultOutput;
         var args = Environment.GetCommandLineArgs();

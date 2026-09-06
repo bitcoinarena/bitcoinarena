@@ -50,10 +50,16 @@ public static class TouchPad
             // same origin, so a click on SOUND also registered as a tap on the
             // view pad and flipped the camera to the god view - which reads as
             // the on-screen buttons not working at all.
+            // ICONS, side by side, not two stacked word-buttons. As text they
+            // were two grey slabs the height of the block board, stacked down
+            // the right edge of a phone, and MUTED and DEBUG are the two least
+            // interesting things on the screen. Square and paired they take one
+            // row instead of two and the same width the view toggle already
+            // uses, so the right column did not get wider.
             case Pad.Sound:     return new Rect(screenW - m - s * 0.7f,
-                                                m + s * 0.80f, s * 0.7f, s * 0.34f);
-            case Pad.Debug:     return new Rect(screenW - m - s * 0.7f,
-                                                m + s * 1.20f, s * 0.7f, s * 0.34f);
+                                                m + s * 0.80f, s * 0.34f, s * 0.34f);
+            case Pad.Debug:     return new Rect(screenW - m - s * 0.34f,
+                                                m + s * 0.80f, s * 0.34f, s * 0.34f);
             default:            return new Rect();
         }
     }
