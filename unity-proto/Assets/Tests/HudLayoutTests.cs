@@ -251,6 +251,18 @@ public class HudLayoutTests
                       + $"clear of the column by {liq.x - health.xMax:0} px, of the wanted row "
                       + $"by {wanted.x - liq.xMax:0} px, of the block clock by "
                       + $"{clock.y - liq.yMax:0} px");
+            var man = _hud.ManifestBox(w, h);
+            var wanted2 = _hud.WantedBox(w, h);
+            var str2 = _hud.StreamingBox(w, h, 11);
+            Debug.Log($"[stream] {w}x{h}: {str2.x:0}..{str2.xMax:0} x {str2.y:0}..{str2.yMax:0}; "
+                      + $"below the block clock by {str2.y - _hud.BlockTimerBox(w, h).yMax:0} px, "
+                      + $"left of the score column by {man.x - str2.xMax:0} px, bottom "
+                      + $"{h - str2.yMax:0} px above the screen edge");
+            Debug.Log($"[manifest] {w}x{h}: {man.x:0}..{man.xMax:0} x {man.y:0}..{man.yMax:0}; "
+                      + $"width {man.width:0} px, SIM ends {_hud.SimBox(w, h).yMax:0}; "
+                      + $"top clear of the screen edge by {man.y:0} px, of the wanted row by "
+                      + $"{man.y - wanted2.yMax:0} px, of the block clock by "
+                      + $"{man.y - _hud.BlockTimerBox(w, h).yMax:0} px");
             Debug.Log($"[cards] {w}x{h}: send-off {send.y:0}..{send.yMax:0}, arrival "
                       + $"{arrive.y:0}..{arrive.yMax:0}, they share "
                       + $"{Mathf.Max(0f, Mathf.Min(send.yMax, arrive.yMax) - Mathf.Max(send.y, arrive.y)):0}"
@@ -414,6 +426,75 @@ public class HudLayoutTests
     }
 
     /// <summary>
+    /// THE SCORE COLUMN AND THE STREAMING LIST, which the photograph caught
+    /// and no rectangle had ever been asked about.
+    ///
+    /// The score column had no rect: its box was the full screen width and it
+    /// grew upward off the top of a short window, with CARGO cut in half by
+    /// the edge. The streaming list sat a third of the way down the right-hand
+    /// side, which is where the block clock and the score column live, and was
+    /// drawn straight across both.
+    /// </summary>
+    [Test]
+    public void TheScoreColumnAndTheModelListKeepOffEverything()
+    {
+        foreach (var size in new[] { new Vector2(1920, 1080), new Vector2(1024, 768),
+                                     new Vector2(844, 390),   new Vector2(1000, 360) })
+        {
+            int w = (int)size.x, h = (int)size.y;
+            string at = $"at {w}x{h}";
+            float pad = Mathf.Max(10f, h * 0.025f);
+
+            var man = _hud.ManifestBox(w, h);
+            var list = _hud.StreamingBox(w, h, 11);
+            var clock = _hud.BlockTimerBox(w, h);
+            var liq = _hud.LiquidationBox(w, h);
+            var wanted = _hud.WantedBox(w, h);
+            var health = _hud.HealthBox(w, h);
+            var practice = _hud.PracticeBox(w, h);
+
+            void Apart(Rect a, Rect b, string what)
+                => Assert.IsFalse(a.Overlaps(b), $"{what} overlap {at}: {a} / {b}");
+
+            // THE FIRST LINE IS ON THE SCREEN. This is the fault in the photo.
+            Assert.GreaterOrEqual(man.y, pad - 0.01f,
+                $"the score column starts {man.y:0} px from the top - its first line is "
+                + $"clipped by the edge {at}");
+            Assert.LessOrEqual(man.yMax, h, $"the score column runs off the bottom {at}");
+            Assert.Greater(man.width, 60f, $"the score column has no width left {at}");
+            // the box holds the five rows drawn in it - the block board's
+            // fault twice already, and once more here
+            Assert.GreaterOrEqual(man.height, _hud.ManifestContentHeight(w, h) - 0.01f,
+                $"the score column is drawn taller than its own box {at}");
+
+            Apart(man, clock, "the score column and the block clock");
+            Apart(man, liq, "the score column and the liquidation line");
+            Apart(man, wanted, "the score column and the wanted row");
+            Apart(man, health, "the score column and the condition bar");
+            Apart(man, practice, "the score column and the practice switch");
+            Apart(man, TouchPad.RectFor(TouchPad.Pad.Sound, w, h),
+                  "the score column and the sound icon");
+            Apart(man, TouchPad.RectFor(TouchPad.Pad.Debug, w, h),
+                  "the score column and the debug icon");
+            Apart(man, TouchPad.RectFor(TouchPad.Pad.View, w, h),
+                  "the score column and the view toggle");
+
+            // and the list keeps off the two things it was drawn across
+            Apart(list, clock, "the model list and the block clock");
+            Apart(list, liq, "the model list and the liquidation line");
+            Apart(list, man, "the model list and the score column");
+            Apart(list, health, "the model list and the condition bar");
+            Apart(list, practice, "the model list and the practice switch");
+            Assert.LessOrEqual(list.yMax, h, $"the model list runs off the bottom {at}");
+
+            // a row is never tighter than the type in it
+            Assert.GreaterOrEqual(_hud.StreamingLineHeight(w, h, 11),
+                Mathf.Round(Mathf.Clamp(Mathf.Min(w, h) * 0.032f, 13f, 20f)),
+                $"the model list rows are drawn into each other {at}");
+        }
+    }
+
+    /// <summary>
     /// THE TWO CARDS, against each other rather than only against the screen.
     ///
     /// The send-off is up for 3.4 s from roll-out and the arrival card for 5 s
@@ -443,6 +524,35 @@ public class HudLayoutTests
                 $"the arrival card is not gated on the send-off {at}");
             Assert.IsFalse(DriveHud.ArrivalIsHiddenBy(sendOffShowing: false),
                 $"the arrival card is hidden with no send-off up {at}");
+        }
+    }
+
+    /// <summary>
+    /// THE ONE PIECE OF THE DRIVING HUD THAT SURVIVES INTO THE LOADOUT SCREEN.
+    ///
+    /// While the panel is open the HUD returns early and draws nothing else,
+    /// so the loadout is a different screen and is not this letter. The
+    /// exception is a price line in the corner, and whether it lands on the
+    /// panel's own frame had never been measured. It does not - the panel
+    /// starts at a tenth of the height and the line ends well above it - and
+    /// this holds that.
+    /// </summary>
+    [Test]
+    public void ThePriceInTheCornerKeepsOffTheLoadoutPanel()
+    {
+        var yard = Object.FindFirstObjectByType<PackageYard>();
+        if (yard == null) Assert.Ignore("no yard in this fixture to measure the panel against");
+
+        foreach (var size in new[] { new Vector2(1920, 1080), new Vector2(1024, 768),
+                                     new Vector2(844, 390),   new Vector2(1000, 360) })
+        {
+            int w = (int)size.x, h = (int)size.y;
+            var line = _hud.LoadingPriceBox(w, h);
+            var panel = yard.PanelRect(w, h);
+            Assert.IsFalse(line.Overlaps(panel),
+                $"the price line is drawn on the loadout panel at {w}x{h}: {line} / {panel}");
+            Assert.GreaterOrEqual(line.y, 0f, $"the price line is off the top at {w}x{h}");
+            Assert.Less(line.yMax, panel.y, $"the price line reaches the panel at {w}x{h}");
         }
     }
 

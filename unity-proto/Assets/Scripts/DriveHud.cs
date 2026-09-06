@@ -119,14 +119,14 @@ public class DriveHud : MonoBehaviour
         // clips it on the LEFT - which is why a narrow window showed "CORE ·
         // best 370" with the S cut off. Anchoring to the screen edge lets a
         // long line run leftwards as far as it needs.
-        float width = w - pad * 2f;
-        float x = pad;
+        var manifest = ManifestBox(w, h);
+        float width = manifest.width;
+        float x = manifest.x;
 
         // ABOVE the driving pads, measured off the pads themselves rather than
         // guessed at: throttle and brake are stacked in the bottom right corner
         // and the score was sitting across them.
-        float padsTop = TouchPad.RectFor(TouchPad.Pad.Up, w, h).y;
-        float bottom = padsTop - pad * 0.6f;
+        float bottom = manifest.yMax;
 
         // Banked is deliberately its own size: bigger than the small print,
         // smaller than the pending figure. It is the number that survives.
@@ -148,6 +148,36 @@ public class DriveHud : MonoBehaviour
         {
             y -= lineHeight;
             return new Rect(x, y, width, lineHeight);
+        }
+
+        // AND THE TYPE SHRINKS TO THE BOX, because the box can no longer be
+        // the whole screen. These lines are right-aligned, so anything wider
+        // than the box is cut off on the LEFT - photographed at 733x293 as
+        // "586 sat" where "CARGO 5 parcels - 2,795 sat" was meant. Measured at
+        // the shapes this is checked at, the free strip beside the left column
+        // is 143 to 279 px and the longest line wants more at full size.
+        //
+        // The same trick the price already uses on its own gap, applied to the
+        // group so the five rows keep their relative sizes. Floors at 10 px:
+        // below that it is not a number anybody reads, and the right answer
+        // would be to say less rather than to say it smaller.
+        {
+            string longest = bay != null && bay.IsLoaded
+                ? $"CARGO  {bay.Count} parcels  ·  {bay.FeeCarried:N0} sat" : "CARGO  empty";
+            string tailNow = runScore == null
+                ? $"{gate.Runs} runs delivered"
+                : $"best {runScore.Best:N0}  ·  {gate.Runs} runs  ·  {gate.SatsDelivered:N0} sat";
+            float widest = Mathf.Max(under.CalcSize(new GUIContent(longest)).x,
+                                     under.CalcSize(new GUIContent(tailNow)).x);
+            widest = Mathf.Max(widest, banked.CalcSize(new GUIContent("BANKED  000,000")).x);
+            widest = Mathf.Max(widest, score.CalcSize(new GUIContent("SCORE  000,000")).x);
+            if (widest > width && widest > 1f)
+            {
+                float k = width / widest;
+                score.fontSize = Mathf.Max(10, Mathf.FloorToInt(score.fontSize * k));
+                under.fontSize = Mathf.Max(10, Mathf.FloorToInt(under.fontSize * k));
+                banked.fontSize = Mathf.Max(10, Mathf.FloorToInt(banked.fontSize * k));
+            }
         }
 
         string tail = runScore == null
@@ -948,8 +978,149 @@ public class DriveHud : MonoBehaviour
     {
         float pad = Mathf.Max(8f, h * 0.02f);
         float lh = SmallFont(w, h) * 1.5f;
-        float width = Mathf.Min(290f, w * 0.34f);
-        return new Rect(w - width - pad, h * 0.30f, width, lh * (items + 1) + pad);
+        float height = lh * (items + 1) + pad;
+
+        // IN THE GAP, UNDER THE BLOCK CLOCK.
+        //
+        // It used to sit at `w - width - pad, h * 0.30f` - the right-hand side,
+        // a third of the way down - which is where the score column and the
+        // block clock also are. Photographed: the list was drawn straight
+        // across "BLOCK 965 ..." and over SCORE, BANKED and CARGO. The rect
+        // test could not see it because the list was only ever checked against
+        // the left column and the wanted row.
+        //
+        // The gap between the columns is the one place on this screen with
+        // nothing permanent in it, and a list that retires four seconds after
+        // the last model lands is exactly what belongs in a temporary space.
+        // Where there is no gap at all - a phone held upright - it keeps its
+        // old corner, because there is nowhere better and the alternative is
+        // not drawing it.
+        var head = HeadlineBox(w, h);
+        if (head.width < 60f)
+        {
+            float narrow = Mathf.Min(290f, w * 0.34f);
+            return new Rect(w - narrow - pad, h * 0.30f, narrow, height);
+        }
+
+        float width = Mathf.Min(290f, head.width);
+        float top = BlockTimerBox(w, h).yMax + pad;
+        return new Rect(head.x, top, width,
+                        StreamingLineHeight(w, h, items) * (items + 1) + pad);
+    }
+
+    /// <summary>
+    /// The pitch of one row in the streaming list.
+    ///
+    /// TIGHTENED TO THE ROOM RATHER THAN RUNNING OFF THE BOTTOM. Eleven models
+    /// at a comfortable pitch is 244 px, and a phone in landscape has 233 px
+    /// under the block clock - so the last row was a pixel off the screen at
+    /// 844x390 and twenty-one off at 1000x360. Shrinking the pitch keeps every
+    /// row visible; dropping rows would hide the model that failed, which is
+    /// the one worth seeing.
+    ///
+    /// It never goes below the font's own size, so rows cannot be drawn into
+    /// each other - measured, the tightest of the shapes checked is 17.8 px
+    /// against a 13 px font.
+    /// </summary>
+    public float StreamingLineHeight(int w, int h, int items)
+    {
+        float pad = Mathf.Max(8f, h * 0.02f);
+        float roomy = SmallFont(w, h) * 1.5f;
+        var head = HeadlineBox(w, h);
+        if (head.width < 60f) return roomy;
+
+        float top = BlockTimerBox(w, h).yMax + pad;
+        float room = h - top - pad * 2f;
+        if (room <= 0f) return roomy;
+        return Mathf.Clamp(room / (items + 1), SmallFont(w, h), roomy);
+    }
+
+    /// <summary>
+    /// The price line drawn in the corner while the loading panel is open.
+    ///
+    /// It is the ONE piece of the driving HUD that survives into the loadout
+    /// screen - everything else returns early - and it is there because the
+    /// price is not what the player is reading while choosing freight, but it
+    /// should not vanish either. Measured against the panel's own frame rather
+    /// than assumed to be clear of it.
+    /// </summary>
+    public Rect LoadingPriceBox(int w, int h) =>
+        new Rect(w * 0.02f, h * 0.012f, w * 0.4f, SmallFont(w, h) * 1.6f);
+
+    /// <summary>
+    /// THE SCORE COLUMN - score, banked, cargo and their two lines of small
+    /// print - stacked upward off the driving pads.
+    ///
+    /// It had no rect at all, and two things follow from that. Its box was
+    /// `w - pad * 2` wide, the full screen, for the written reason that a
+    /// right-aligned label in a narrow box is clipped on the LEFT - true, and
+    /// the same shape of mistake as the price, the wanted row and two banners
+    /// before it. And it grows UPWARD from the pads with no floor, so on a
+    /// short window it runs off the top: photographed at 733x293 with the
+    /// CARGO line cut in half by the edge of the screen.
+    ///
+    /// The left edge is the headline gap's right edge, so a long line still
+    /// has somewhere to run without reaching the column on the other side.
+    /// </summary>
+    public Rect ManifestBox(int w, int h)
+    {
+        float pad = Mathf.Max(10f, h * 0.025f);
+        int min = Mathf.Min(w, h);
+        float score = Mathf.Round(Mathf.Clamp(min * 0.075f, 30f, 74f));
+        float under = Mathf.Round(Mathf.Clamp(min * 0.030f, 15f, 26f));
+        float banked = Mathf.Round(Mathf.Clamp(min * 0.042f, 20f, 40f));
+
+        float height = ManifestContentHeight(w, h);
+        float bottom = TouchPad.RectFor(TouchPad.Pad.Up, w, h).y - pad * 0.6f;
+
+        // THE FIRST LINE STAYS ON THE SCREEN. If the stack does not fit above
+        // the pads it is pushed DOWN rather than off the top - the pads are
+        // touch targets that survive a little overlap, and a line nobody can
+        // read does not.
+        //
+        // The box keeps its FULL height when that happens. The first cut
+        // clamped the top and returned `bottom - top`, so the box shrank while
+        // the drawing kept stacking upward from the same place - the block
+        // board's fault a third time, and the photograph still showed CARGO
+        // cut by the top edge. The drawing takes its baseline from `yMax`, so
+        // moving the box down moves the stack down with it.
+        // BELOW THE SETTINGS ICONS. On a short window the stack is pushed down
+        // off the pads and lands in the top-right corner, which is where the
+        // sound and debug buttons live - photographed at 733x293 with BANKED
+        // drawn behind them.
+        float top = Mathf.Max(TouchPad.RectFor(TouchPad.Pad.Debug, w, h).yMax + pad * 0.5f,
+                              Mathf.Max(pad, bottom - height));
+
+        // HOW FAR LEFT IT MAY RUN, and this is a trade with a measured cost
+        // either way. These are right-aligned lines, so a box narrower than
+        // the text clips it on the LEFT - that is why the box was the whole
+        // screen, and a photograph at 733x293 shows what a narrow one does:
+        // "CARGO 5 parcels - 2,795 sat" cut to "586 sat".
+        //
+        // The column sits at the BOTTOM of the screen, above the pads, and the
+        // left stack ends at the SIM switch. Where this box starts below that,
+        // there is nothing to the left of it and it can have the full width.
+        // Where the two would share a line, it takes the gap instead and the
+        // long lines are the price of a window too short to hold both.
+        var head = HeadlineBox(w, h);
+        float left = top >= SimBox(w, h).yMax || head.width <= 0f
+                   ? pad
+                   : head.xMax;
+        return new Rect(left, top, w - pad - left, height);
+    }
+
+    /// <summary>
+    /// How tall the score column's five rows actually are: the tail line, the
+    /// caption, BANKED, SCORE and CARGO. Shared with the box, so the two
+    /// cannot drift.
+    /// </summary>
+    public float ManifestContentHeight(int w, int h)
+    {
+        int min = Mathf.Min(w, h);
+        float score = Mathf.Round(Mathf.Clamp(min * 0.075f, 30f, 74f));
+        float under = Mathf.Round(Mathf.Clamp(min * 0.030f, 15f, 26f));
+        float banked = Mathf.Round(Mathf.Clamp(min * 0.042f, 20f, 40f));
+        return under * 1.5f * 3f + banked * 1.3f + score * 1.25f;
     }
 
     /// <summary>
@@ -1619,9 +1790,10 @@ public class DriveHud : MonoBehaviour
         if (streamer.AllDone && streamer.Failed == 0 && streamer.SinceDone > 4f) return;
 
         float pad = Mathf.Max(8f, h * 0.02f);
-        float lh = _small.fontSize * 1.5f;
-        float width = Mathf.Min(290f, w * 0.34f);
-        // measured in one place, so a test can ask where it is
+        // ONE PITCH, asked of the same function the box uses - the box is
+        // sized from it, so a second copy here would put the last row outside
+        // the frame the border draws.
+        float lh = StreamingLineHeight(w, h, streamer.Items.Count);
         var box = StreamingBox(w, h, streamer.Items.Count);
 
         GUI.color = new Color(0f, 0f, 0f, 0.45f);
@@ -1725,7 +1897,7 @@ public class DriveHud : MonoBehaviour
         if (loading && market != null && market.Price > 0)
         {
             var small = new GUIStyle(_small) { alignment = TextAnchor.UpperLeft, fontStyle = FontStyle.Bold };
-            Shadowed(new Rect(w * 0.02f, h * 0.012f, w * 0.4f, _small.fontSize * 1.6f),
+            Shadowed(LoadingPriceBox(w, h),
                      $"${market.Price:N0}   {market.DayChangePct:+0.00;-0.00;0.00}% 24h",
                      small, market.DayChangePct >= 0 ? Up : Down);
         }

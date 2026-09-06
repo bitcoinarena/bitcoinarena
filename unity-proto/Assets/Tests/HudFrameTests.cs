@@ -31,6 +31,25 @@ public class HudFrameTests
     [Explicit("Needs a graphics device. Run without -nographics.")]
     public IEnumerator CaptureTheDrivingHud()
     {
+        // ASK FOR THE SHAPE. `-screen-width` / `-screen-height` are player
+        // arguments; in the editor the Game view decides its own size and
+        // ignores them, which is why the first capture came back 733x293 when
+        // 844x390 was asked for. `Screen.SetResolution` is the runtime request
+        // - whether the editor honours it is measured below, not assumed.
+        string want = System.Environment.GetEnvironmentVariable("HUD_SHOT_SIZE");
+        if (!string.IsNullOrEmpty(want))
+        {
+            var parts = want.Split('x');
+            if (parts.Length == 2 && int.TryParse(parts[0], out int ww)
+                                  && int.TryParse(parts[1], out int hh))
+            {
+                Screen.SetResolution(ww, hh, false);
+                for (int i = 0; i < 30; i++) yield return null;
+                Debug.Log($"[frame] asked for {ww}x{hh}, screen reports "
+                          + $"{Screen.width}x{Screen.height}");
+            }
+        }
+
         var boot = new GameObject("Bootstrap");
         boot.AddComponent<Bootstrap>();
         yield return null;
