@@ -321,7 +321,7 @@ namespace Blwp
         /// <summary>The lowest point of the dust skirt.</summary>
         public float SkirtUnderside => _skirtUnderside;
         MeshRenderer[] _mushroomSkins;
-        Transform _skirt3, _core3;
+        Transform _skirt3, _core3, _cap3;
         Vector3 _skirtRest = Vector3.one, _coreRest = Vector3.one;
         Color _dust = new Color(0.43f, 0.32f, 0.20f);
         float _saidHeat = -99f;
@@ -447,6 +447,11 @@ namespace Blwp
                     // curves, applied to the pieces that were already there.
                     _skirt3 = Find(_mushroom, "dust_skirt");
                     _core3 = Find(_mushroom, "fireball_core");
+                    // THE CAP, for M1.d: whether the head of the cloud is in
+                    // the picture the player is actually driving with. The
+                    // node names in the GLB are stem, cap, crown_billow,
+                    // dust_skirt and fireball_core.
+                    _cap3 = Find(_mushroom, "cap");
                     // THE DUST IS NOT SMOKE, and it was being painted as if it
                     // were. The GLB authors `dust_skirt` as a warm brown -
                     // 0.434, 0.323, 0.202 - fully opaque, and the cooling drive
@@ -891,6 +896,45 @@ namespace Blwp
                         _countedWreckage = true;
                         CountTheWreckage(_cloudAt);
                     }
+                    // IS THE CAP IN THE PICTURE, and how much of it. Not
+                    // the column, not the skirt: M1.d says the head of the
+                    // cloud is not seen from the driving camera, so the head
+                    // is what is measured - in frustum or not, and the share
+                    // of the frame it covers.
+                    string cap = "no cap";
+                    if (_cap3 != null)
+                    {
+                        var cr = _cap3.GetComponent<Renderer>();
+                        var cam3 = Camera.main;
+                        if (cam3 == null)
+                            foreach (var cc in Camera.allCameras)
+                                if (cc != null && cc.isActiveAndEnabled) { cam3 = cc; break; }
+                        if (cr != null && cam3 != null)
+                        {
+                            var cb = cr.bounds;
+                            float ax0 = float.MaxValue, ay0 = float.MaxValue;
+                            float ax1 = float.MinValue, ay1 = float.MinValue;
+                            bool front = false;
+                            for (int i = 0; i < 8; i++)
+                            {
+                                var corner = cb.center + Vector3.Scale(cb.extents,
+                                    new Vector3((i & 1) == 0 ? -1 : 1,
+                                                (i & 2) == 0 ? -1 : 1,
+                                                (i & 4) == 0 ? -1 : 1));
+                                var sp3 = cam3.WorldToScreenPoint(corner);
+                                if (sp3.z > 0f) front = true;
+                                ax0 = Mathf.Min(ax0, sp3.x); ax1 = Mathf.Max(ax1, sp3.x);
+                                ay0 = Mathf.Min(ay0, sp3.y); ay1 = Mathf.Max(ay1, sp3.y);
+                            }
+                            float ox = Mathf.Max(0f, Mathf.Min(ax1, Screen.width) - Mathf.Max(ax0, 0f));
+                            float oy = Mathf.Max(0f, Mathf.Min(ay1, Screen.height) - Mathf.Max(ay0, 0f));
+                            float share = front ? 100f * ox * oy / (Screen.width * Screen.height) : 0f;
+                            cap = $"cap visible {cr.isVisible}, in front {front}, "
+                                + $"rect {ax0:F0},{ay0:F0} {(ax1 - ax0):F0}x{(ay1 - ay0):F0}, "
+                                + $"on screen {ox:F0}x{oy:F0} px = {share:F1}% of the frame";
+                        }
+                    }
+                    Debug.Log($"[cap] t={_cloud:F1}s {cap}");
                     Debug.Log($"[cloud] t={_cloud:F1}s cloud {whole} body "
                               + $"{meshBody.r:F2},{meshBody.g:F2},{meshBody.b:F2} glow "
                               + $"{meshGlow.r:F2},{meshGlow.g:F2},{meshGlow.b:F2}, "
