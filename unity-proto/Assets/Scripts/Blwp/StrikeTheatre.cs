@@ -323,6 +323,7 @@ namespace Blwp
         GameObject _mushroomModel;
         Vector3 _mushroomFull = Vector3.one;
         Vector3 _mushroomSize;   // the modelled size, measured once at full scale
+        float _saidSeat = -1f;   // so the seating is reported once a strike
         MeshRenderer[] _mushroomSkins;
         Transform _skirt3, _core3;
         Vector3 _skirtRest = Vector3.one, _coreRest = Vector3.one;
@@ -357,6 +358,7 @@ namespace Blwp
         {
             _cloudAt = at;
             _cloud = 0f;
+            _saidSeat = -1f;
             _saidHeat = -99f;
 
             // THE MESH IF THERE IS ONE. The primitives - a cylinder, a sphere
@@ -556,6 +558,46 @@ namespace Blwp
                 float f = Mathf.Clamp01((Gone - _cloud) / (Gone - Rise));
                 _mushroom.localScale = _mushroomFull * (g * Mathf.Max(0.05f, f));
                 _mushroom.position = _cloudAt;
+
+                // AND THE STEM STANDS IN THE BOWL, on its base.
+                //
+                // `_cloudAt` is the impact point on the ground, and putting the
+                // transform there put the model's ORIGIN there - which is its
+                // middle, measured y -27.5 .. +23.0 about it on a model 55.0 m
+                // tall. So half the cloud was under the surface: the stem's
+                // foot was buried and the player saw a cap sitting on the
+                // grass with no column beneath it. It is the same fault that
+                // hid the dust skirt, left unfixed for the column.
+                //
+                // The lowest point of everything that is NOT the skirt is the
+                // stem's foot, so no node name is trusted for it, and the
+                // floor it stands on is `Ground` - the core's surface, relief
+                // LESS craters - which is the crater floor itself.
+                if (_mushroomSkins != null && _mushroomSkins.Length > 0)
+                {
+                    var colB = new Bounds(_cloudAt, Vector3.zero);
+                    bool anyCol = false;
+                    foreach (var mr in _mushroomSkins)
+                    {
+                        if (mr == null || mr.transform == _skirt3) continue;
+                        if (!anyCol) { colB = mr.bounds; anyCol = true; }
+                        else colB.Encapsulate(mr.bounds);
+                    }
+                    if (anyCol)
+                    {
+                        float floor = Ground(_cloudAt.x, _cloudAt.z);
+                        float gap = floor - colB.min.y;      // + buried, - floating
+                        _mushroom.position += Vector3.up * gap;
+                        if (_cloud - _saidSeat > 1.2f || _saidSeat < 0f)
+                        {
+                            _saidSeat = _cloud;
+                            Debug.Log($"[cloud] stem seat t={_cloud:F1}s: foot was {colB.min.y:F2}, "
+                                      + $"crater floor {floor:F2}, "
+                                      + $"{(gap > 0f ? "buried" : "floating")} {Mathf.Abs(gap):F2} m "
+                                      + $"-> foot now {floor:F2}");
+                        }
+                    }
+                }
 
                 // THE HEAT, on the mesh. The primitives cooled white through
                 // orange to ash across the eight seconds and the mesh wore one
