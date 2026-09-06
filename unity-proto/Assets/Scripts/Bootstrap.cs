@@ -756,8 +756,11 @@ public class Bootstrap : MonoBehaviour
         Fx = fxGo.AddComponent<CombatFx>();
         Fx.terrain = _terrain;
         Fx.roads = Roads;
-        // the strike's own voice, wired where the rest of the audio is
-        if (_strike != null) _strike.audio = FindFirstObjectByType<GameAudio>();
+        // The strike's voice is NOT wired here. It cannot be: the theatre is
+        // not made until later in the build and `GameAudio` is not made until
+        // after this method, so the line that used to sit here was skipped and
+        // would have handed over null if it had run. `StrikeTheatre` fetches
+        // `GameAudio` itself at the impact.
         Fx.tracerMaterial = tracerMaterial;
         Fx.flashMaterial = flashMaterial;
         Fx.blastMaterial = blastMaterial;
