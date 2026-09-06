@@ -412,10 +412,16 @@ public class DriveHud : MonoBehaviour
         // dug. And the list holds an order for ninety seconds, so the line
         // also stopped fading: it stood for as long as anything was in the
         // window, naming a strike a minute gone.
+        // ONLY WHILE THE CLOUD IS UP. the owner, 17:50: the line should appear
+        // with the mushroom, not before it. It ran on a timer of its own -
+        // eight seconds from the strike serial - so it could be on screen
+        // while there was nothing to see, and gone while the cloud still
+        // stood. The theatre publishes the cap's position for exactly as long
+        // as a cloud is standing, so that is the same clock the player's eye
+        // is on.
         if (!Blwp.BlwpCore.Available) return;
-        int serial = Blwp.BlwpCore.StrikeCount;
-        if (serial != _strikeSeen) { _strikeSeen = serial; _strikeAt = Time.time; }
-        if (serial <= 0 || Time.time - _strikeAt > 8f) return;   // the last few seconds only
+        if (Blwp.BlwpCore.StrikeCount <= 0) return;
+        if (!Blwp.StrikeTheatre.CapCentre.HasValue) return;
 
         // WHAT THE FEED SAW, which is not what ran. Kept only to say so in the
         // log: this summed every forced order of the last eight seconds and
@@ -1244,7 +1250,14 @@ public class DriveHud : MonoBehaviour
                 // the line stays short in the normal case and cannot stay quiet
                 // in the case that actually happened: spot live, futures dead,
                 // and no liquidation for a whole session.
-                ? $"{chg:+0.00;-0.00;0.00}% 24h   ·   {market.Status}   ·   {Venues()}"
+                // PRICE AND PER CENT, nothing else. the owner, 17:52: the feed
+                // roll - "live . liq binance/9 bybit okx" - ran the width of
+                // an iPhone straight through the scene. It was connection
+                // telemetry on the one line a player reads for the market, and
+                // the strike's own line already names the exchange that
+                // mattered. `Venues()` and `market.Status` are still there for
+                // the debug panel.
+                ? $"{chg:+0.00;-0.00;0.00}% 24h"
                 : $"verbinde … ({market.Status})";
             Shadowed(new Rect(0, h * 0.015f + _price.fontSize * 1.12f, w, _sub.fontSize * 1.6f),
                      sub, _sub, chg >= 0 ? Up : Down);

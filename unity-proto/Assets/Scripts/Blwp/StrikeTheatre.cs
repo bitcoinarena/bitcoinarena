@@ -665,9 +665,19 @@ namespace Blwp
             // seconds, nothing left by `Gone`.
             if (_mushroom != null && _mushroomModel != null)
             {
+                // IT GOES OUT, IT DOES NOT SHRINK. the owner, 17:45 on the
+                // phone: "when the liquidation mesh expires it must vanish,
+                // not scale down". It used to be multiplied by a fade that ran
+                // to a 5% floor, so a 55 m cloud became a three-metre bud
+                // hovering over the crater and then blinked out - which reads
+                // as a model failing, not as smoke clearing.
+                //
+                // It grows and then holds its size. `Gone` still ends it, and
+                // the parts keep their own curves - the fireball still dies
+                // back and the dust still spreads - so what leaves the picture
+                // is a full-sized cloud, at once.
                 float g = 1f - Mathf.Exp(-3.2f * _cloud);
-                float f = Mathf.Clamp01((Gone - _cloud) / (Gone - Rise));
-                _mushroom.localScale = _mushroomFull * (g * Mathf.Max(0.05f, f));
+                _mushroom.localScale = _mushroomFull * g;
                 _mushroom.position = _cloudAt;
 
                 // AND THE STEM STANDS IN THE BOWL, on its base.

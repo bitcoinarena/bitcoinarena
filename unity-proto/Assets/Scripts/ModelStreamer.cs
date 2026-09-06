@@ -105,13 +105,32 @@ public class ModelStreamer : MonoBehaviour
         if (bootstrap == null || bootstrap.truckModel == null)
             Items.Add(new Item { label = "Truck", key = TruckKey });
 
-        Items.Add(new Item { label = "Helicopter", key = HelicopterKey });
+        // THE STRIKE SET COMES EARLY NOW, and the reason is a photograph:
+        // the owner's iPhone showed a liquidation with stacked primitives for the
+        // cloud and the plain olive airframe, because the models a strike
+        // needs were at the BACK of the queue behind 22.3 MB of scenery.
+        // Measured, in bundle megabytes as downloaded:
+        //
+        //   bomb 0.07  bomber 0.06  bomber-bull 1.37  mushroom 4.74
+        //   soldier 0.56  tank 2.80  truck 0.15  helicopter 0.34
+        //   miner 1.99  postoffice 4.02  bomber-bear 12.30
+        //
+        // The old order reached the mushroom only after 22.3 of the 28.4 MB.
+        // This reaches it after 9.8, and everything a strike draws except the
+        // bear skin after 5.0. On a desktop line the mushroom was in place at
+        // 30.1 s; on a phone that tail is minutes, and a liquidation does not
+        // wait for it.
         Items.Add(new Item { label = "Bombs", key = BombKey });
+        Items.Add(new Item { label = "Bomber", key = BomberKey });
+        Items.Add(new Item { label = "Bomber (bull)", key = BomberBullKey });
+        Items.Add(new Item { label = "Mushroom cloud", key = MushroomKey });
+        Items.Add(new Item { label = "Helicopter", key = HelicopterKey });
         Items.Add(new Item { label = "Miner", key = MinerKey });
         Items.Add(new Item { label = "Post Office", key = PostKey });
-        Items.Add(new Item { label = "Bomber", key = BomberKey });
+        // Last on purpose: 12.30 MB, the largest single asset here by three
+        // times. Until it lands a bear strike flies the plain airframe, which
+        // is the fallback that already exists.
         Items.Add(new Item { label = "Bomber (bear)", key = BomberBearKey });
-        Items.Add(new Item { label = "Mushroom cloud", key = MushroomKey });
         StartCoroutine(Stream());
     }
 
@@ -159,10 +178,11 @@ public class ModelStreamer : MonoBehaviour
             {
                 if (bootstrap != null) bootstrap.SwapTruckModel(go);
             });
-        yield return Fetch(HelicopterKey, go =>
-        {
-            if (army != null) army.SetHelicopterPrefab(go);
-        });
+        // THE STRIKE SET FIRST, and cheapest first inside it. A liquidation
+        // can land at any moment - the silent-market clock fires one after
+        // ninety seconds - and the picture it draws must not be waiting behind
+        // the scenery. Bomb, plain airframe and bull skin cost 1.50 MB
+        // between them; the cloud is 4.74.
         yield return Fetch(BombKey, go =>
         {
             if (army != null) army.SetBombPrefab(go);
@@ -171,55 +191,58 @@ public class ModelStreamer : MonoBehaviour
             var strike = FindFirstObjectByType<Blwp.StrikeTheatre>();
             if (strike != null) strike.SetBombModel(go);
         });
-
-        // Last, deliberately. It is the biggest single asset and the furthest
-        // away - the player spends the first part of a run driving towards it,
-        // and the collision that makes it a wall is already in place.
-        yield return Fetch(MinerKey, go =>
-        {
-            var gate = FindFirstObjectByType<DeliveryGate>();
-            if (gate != null) gate.ShowMiner(go);
-        });
-
-        // The post office is behind the player at the start, so it can arrive
-        // last of all - the bay they are parked in is arithmetic and does not
-        // wait for it.
-        yield return Fetch(PostKey, go =>
-        {
-            var post = FindFirstObjectByType<PostOffice>();
-            if (post != null) post.Show(go);
-        });
-
-        // The bomber is only wanted when a liquidation arms a strike, which is
-        // rare and never in the first seconds, so it goes behind everything a
-        // player is looking at from the start.
         yield return Fetch(BomberKey, go =>
         {
             var strike = FindFirstObjectByType<Blwp.StrikeTheatre>();
             if (strike != null) strike.SetAirframe(go);
         });
-        yield return Fetch(BomberBearKey, go =>
+
+        // The bull skin EXISTS now - bomber-bull.glb, 1.37 MB as a bundle - so
+        // it is asked for like everything else and has a line in the panel. It
+        // used to go through `Optional`, quietly and last, on the grounds that
+        // the asset had not been made yet; that comment outlived the asset,
+        // and the cost was a bull liquidation flying the plain airframe with
+        // nothing in the HUD to say why.
+        yield return Fetch(BomberBullKey, go =>
         {
             var strike = FindFirstObjectByType<Blwp.StrikeTheatre>();
-            if (strike != null) strike.SetBearAirframe(go);
+            if (strike != null) strike.SetBullAirframe(go);
         });
-
-        // The cloud, behind the bomber for the same reason: it is only wanted
-        // when a liquidation lands, and it is the largest of these assets.
         yield return Fetch(MushroomKey, go =>
         {
             var strike = FindFirstObjectByType<Blwp.StrikeTheatre>();
             if (strike != null) strike.SetMushroom(go);
         });
 
-        // The bull skin does not exist yet, so this asks QUIETLY: no item in the
-        // list, no red line in the loading panel, nothing for a player to read
-        // as broken. The instant a bomber-bull.glb is added it is picked up
-        // here without another change.
-        yield return Optional(BomberBullKey, go =>
+        yield return Fetch(HelicopterKey, go =>
+        {
+            if (army != null) army.SetHelicopterPrefab(go);
+        });
+
+        // The miner is far away - the player spends the first part of a run
+        // driving towards it - and the collision that makes it a wall is
+        // already in place.
+        yield return Fetch(MinerKey, go =>
+        {
+            var gate = FindFirstObjectByType<DeliveryGate>();
+            if (gate != null) gate.ShowMiner(go);
+        });
+
+        // The post office is behind the player at the start, so it can wait:
+        // the bay they are parked in is arithmetic and does not need it.
+        yield return Fetch(PostKey, go =>
+        {
+            var strike = FindFirstObjectByType<PostOffice>();
+            if (strike != null) strike.Show(go);
+        });
+
+        // LAST, and it is the one asset worth waiting for: 12.30 MB, three
+        // times the next largest. Until it lands a bear strike flies the plain
+        // airframe rather than holding up the cloud behind it.
+        yield return Fetch(BomberBearKey, go =>
         {
             var strike = FindFirstObjectByType<Blwp.StrikeTheatre>();
-            if (strike != null) strike.SetBullAirframe(go);
+            if (strike != null) strike.SetBearAirframe(go);
         });
 
         Debug.Log($"[ModelStreamer] done: {Loaded} loaded, {Failed} failed");

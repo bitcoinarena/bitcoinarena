@@ -903,7 +903,7 @@ public class CombatFx : MonoBehaviour
         t.localScale = Vector3.one;
         var piece = new Piece
         {
-            t = t, life = 25f, baseScale = Vector3.one, kind = Kind.Wreck, isWreckModel = true,
+            t = t, life = 30f, baseScale = Vector3.one, kind = Kind.Wreck, isWreckModel = true,
             burnAt = 0.2f, wreckIndex = ClaimWreckSlot(at),
         };
         Add(piece);
@@ -957,7 +957,7 @@ public class CombatFx : MonoBehaviour
         // quietly behaved like a different feature.
         Add(new Piece
         {
-            t = t, life = 25f, baseScale = scale, kind = Kind.Wreck, burnAt = 0.2f,
+            t = t, life = 30f, baseScale = scale, kind = Kind.Wreck, burnAt = 0.2f,
             wreckIndex = ClaimWreckSlot(at),
         });
     }
@@ -1231,7 +1231,23 @@ public class CombatFx : MonoBehaviour
                         BurnBeat(p.t.position, Mathf.Clamp01(1f - k * 1.15f));
                     }
 
-                    if (k > 0.85f) p.t.localScale = p.baseScale * Mathf.Lerp(1f, 0f, (k - 0.85f) / 0.15f);
+                    // IT STANDS, THEN IT GOES. the owner, 17:53 on the phone:
+                    // a wreck must not shrink before it disappears. It used to
+                    // scale to nothing over the last 15% of its life, so a
+                    // burnt-out tank became a toy tank and then a speck - which
+                    // reads as the model failing rather than as wreckage being
+                    // cleared. It keeps its size for the whole of it and is
+                    // simply removed at the end.
+                    //
+                    // 30 s, not 25 and not 70. the owner asked for them to stand
+                    // longer. 70 s left 32 parts burning after a minute, and
+                    // 45 s still failed `EverythingClearsEventually` and
+                    // `EffectsRetireInsteadOfPilingUp`, which step 35 seconds
+                    // and require the field empty. That window is the ceiling
+                    // and it is not a threshold to move to fit a wish, so the
+                    // life goes to 30 s - longer than it was, inside every
+                    // assertion. If wrecks should stand longer than 35 s the
+                    // test horizon is the thing to discuss, not to edit.
                     break;
                 }
 
