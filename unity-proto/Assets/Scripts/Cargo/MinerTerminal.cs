@@ -51,6 +51,7 @@ public class MinerTerminal : MonoBehaviour
     TextMesh[] _text;
     float _nextRoll;
     float[] _barTarget;
+    float _saidBars = -99f;
 
     void Start()
     {
@@ -540,8 +541,26 @@ public class MinerTerminal : MonoBehaviour
             // now moves every time the sample is taken, and every movement is
             // a real one.
             var rates = LiveCurve(bars.Length);
-            if (rates == null && stats != null) rates = stats.FeeCurve(bars.Length);
-            if (rates == null && terrain != null) rates = terrain.FeeRates(bars.Length);
+            string from = "live mempool";
+            if (rates == null && stats != null) { rates = stats.FeeCurve(bars.Length); from = "ChainStats"; }
+            if (rates == null && terrain != null) { rates = terrain.FeeRates(bars.Length); from = "terrain"; }
+            if (rates == null) from = "nothing";
+
+            // WHAT THE BARS ARE SAYING, and where it came from. The labels
+            // print the same array that sets the heights, so if a number on
+            // screen disagrees with a bar the fault is downstream of here.
+            if (Time.time - _saidBars > 5f)
+            {
+                _saidBars = Time.time;
+                var say = new System.Text.StringBuilder();
+                if (rates != null)
+                    for (int i = 0; i < rates.Length && i < 6; i++)
+                        say.Append(i > 0 ? ", " : "").Append(rates[i].ToString("0.0"));
+                Debug.Log($"[bars] {bars.Length} bars from {from}: first six "
+                          + $"{say} sat/vB; labels "
+                          + $"{(_barLabels != null && _barLabels.Length > 0 && _barLabels[0] != null ? "\"" + _barLabels[0].text + "\"" : "none")}"
+                          + $", unit \"{(_barUnit != null ? _barUnit.text : "none")}\"");
+            }
 
             if (rates != null)
             {
