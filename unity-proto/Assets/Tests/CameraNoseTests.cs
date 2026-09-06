@@ -196,6 +196,77 @@ public class CameraNoseTests
     }
 
     /// <summary>
+    /// HOW FAR BACK IS FAR ENOUGH, and what it costs the truck.
+    ///
+    /// The pick was "pull back and frame both", so this walks the pull-back
+    /// and reports the two things that decide it: how much of the cloud's
+    /// life the road spends below the bottom edge, and how many pixels tall
+    /// the truck still draws. A rung that saves the road by turning the truck
+    /// into a speck is not a fix, and the number is here so that is not a
+    /// matter of opinion.
+    ///
+    /// One fresh cloud per rung, because a cloud is gone after eight seconds,
+    /// and a second and a half to let the position damp settle before the
+    /// sampling starts - otherwise the rung measures the camera travelling
+    /// rather than where it arrived.
+    ///
+    /// Explicit: a measurement, not an assertion.
+    /// </summary>
+    [UnityTest]
+    [Explicit("Measurement, not an assertion. Read the [ladder] lines.")]
+    public IEnumerator MeasureHowFarBackFramesBoth()
+    {
+        yield return UpToSpeed(3f);
+        _truck.externalThrottle = 0f;
+        yield return new WaitForSeconds(1f);
+        var theatre = Object.FindFirstObjectByType<Blwp.StrikeTheatre>();
+        Assert.IsNotNull(theatre);
+
+        foreach (var rung in new[] { (0f, 0f), (10f, 0f), (20f, 0f), (30f, 0f),
+                                     (45f, 0f), (60f, 0f), (20f, 6f), (30f, 8f) })
+        {
+            _chase.cloudPullBack = rung.Item1;
+            _chase.cloudLift = rung.Item2;
+            theatre.RaiseColumn(_truck.transform.position
+                                + _truck.transform.forward * 60f
+                                + _truck.transform.right * 45f);
+
+            float settle = Time.time;
+            // ON THE REAL CLOCK. The first cut stepped the cloud with dt 0 to
+            // "hold it at full height" and held it at NO height instead: the
+            // cap never grew, the tilt never engaged, and every rung reported
+            // a road at 0.47 and an aim of -3.8 degrees - a strike that had
+            // not happened. Rise is 3 s and Gone is 8, so a fresh column and
+            // 3.5 s of stepping is a cloud at full height with life to spare.
+            while (Time.time - settle < 1.5f) { theatre.StepCloud(Time.deltaTime); yield return null; }
+
+            int frames = 0, offBottom = 0, capOff = 0;
+            float lowRoad = 1f, lowCap = 1f, highCap = 0f, px = 99999f;
+            float from = Time.time;
+            while (Time.time - from < 2f)
+            {
+                theatre.StepCloud(Time.deltaTime);
+                yield return null;
+                var cap = Blwp.StrikeTheatre.CapCentre;
+                if (!cap.HasValue) continue;
+                frames++;
+                float ry = NoseUpScreen();
+                lowRoad = Mathf.Min(lowRoad, ry);
+                if (ry < 0f) offBottom++;
+                var cf = Frame(cap.Value);
+                if (cf.HasValue) { lowCap = Mathf.Min(lowCap, cf.Value.y); highCap = Mathf.Max(highCap, cf.Value.y); if (cf.Value.y > 1f) capOff++; }
+                else capOff++;
+                px = Mathf.Min(px, TruckPixels());
+            }
+            Debug.Log($"[ladder] pull-back {rung.Item1:F0} m lift {rung.Item2:F0} m: road "
+                      + $"lowest {lowRoad:F2}, below the edge {offBottom}/{frames}, cap "
+                      + $"{lowCap:F2}..{highCap:F2}, cap off the top {capOff}, truck "
+                      + $"{px:F0} px, aim {Pitch():F1} deg");
+        }
+        _chase.cloudPullBack = 0f; _chase.cloudLift = 0f;
+    }
+
+    /// <summary>
     /// THE CAP MUST BE FORGOTTEN WHEN THE THEATRE GOES.
     ///
     /// Found by the strike probe above, not looked for: its tilt showed up in
@@ -222,6 +293,26 @@ public class CameraNoseTests
         Assert.IsFalse(Blwp.StrikeTheatre.CapCentre.HasValue,
             $"the theatre is gone and the cap is still published at "
             + $"{Blwp.StrikeTheatre.CapCentre} - every camera after this tilts at a ghost");
+    }
+
+    /// <summary>Where a world point lands in the frame, or null behind the camera.</summary>
+    Vector3? Frame(Vector3 world)
+    {
+        var vp = _chase.GetComponent<Camera>().WorldToViewportPoint(world);
+        return vp.z <= 0f ? (Vector3?)null : vp;
+    }
+
+    /// <summary>
+    /// How tall the truck draws, in pixels of a 3 m body. This is the price of
+    /// pulling back and it has to be a number, not a feeling: "the truck is a
+    /// speck" is a claim about pixels.
+    /// </summary>
+    float TruckPixels()
+    {
+        var cam = _chase.GetComponent<Camera>();
+        var a = cam.WorldToScreenPoint(_truck.transform.position);
+        var b = cam.WorldToScreenPoint(_truck.transform.position + Vector3.up * 3f);
+        return a.z <= 0f ? 0f : Mathf.Abs(b.y - a.y);
     }
 
     /// <summary>How far above the horizontal the view is aimed.</summary>
@@ -446,62 +537,80 @@ public class CameraNoseTests
         float worstPitch = 0f, worstPitchStep = 0f, worstYawStep = 0f, worstNose = 0f;
         float worstRoadLeft = 1f, worstRoadRight = 0f, worstPitchRate = 0f;
         float roadLowest = 1f, roadHighest = 0f;
-        int frames = 0, offTheBottom = 0;
+        float capLowest = 1f, capHighest = 0f;
+        float truckPxLeast = 99999f;
+        int frames = 0, offTheBottom = 0, capOffTheTop = 0;
         float lastPitch = Pitch(), lastYaw = _chase.transform.eulerAngles.y;
-        // SECONDS, NOT FRAMES. The first cut ran 300 frames, and headless
-        // batchmode renders them as fast as it can: the whole loop was under a
-        // second of game time, the camera's 2.2/s ease reached a blend of 0.00,
-        // and the probe reported "view pitch up to 0.0 deg" for a tilt that
-        // works. The tilt then showed up in the NEXT test's log instead - see
-        // TheCapIsForgottenWhenTheTheatreGoes for what that turned out to be.
         int stood = 0;
         float from = Time.time;
         while (Time.time - from < 6f)
         {
             theatre.StepCloud(Time.deltaTime);
             yield return null;
-            if (Blwp.StrikeTheatre.CapCentre.HasValue) stood++;
+            var cap = Blwp.StrikeTheatre.CapCentre;
+            if (!cap.HasValue) continue;
+            stood++;
             float p = Pitch(), y = _chase.transform.eulerAngles.y;
             worstPitch = Mathf.Max(worstPitch, p);
             worstPitchStep = Mathf.Max(worstPitchStep, Mathf.Abs(p - lastPitch));
-            // AND THE RATE, because a step per frame says as much about the
-            // harness as about the camera: headless batchmode runs long frames,
-            // so the same ease reads as a big step here and a small one at 60
-            // fps. Degrees a second is the number that carries across.
             if (Time.deltaTime > 0.0001f)
-            {
-                float rate = Mathf.Abs(p - lastPitch) / Time.deltaTime;
-                if (rate > worstPitchRate)
-                {
-                    worstPitchRate = rate;
-                    Debug.Log($"[a14] pitch step {lastPitch:F2} -> {p:F2} deg in "
-                              + $"{Time.deltaTime * 1000f:F1} ms, {Time.time - from:F2} s "
-                              + $"into the cloud, blend-driven aim");
-                }
-            }
+                worstPitchRate = Mathf.Max(worstPitchRate,
+                                           Mathf.Abs(p - lastPitch) / Time.deltaTime);
             worstYawStep = Mathf.Max(worstYawStep, Mathf.Abs(Mathf.DeltaAngle(lastYaw, y)));
             worstNose = Mathf.Max(worstNose, OffNose());
-            float rx = NoseOnScreen();
+
+            float rx = NoseOnScreen(), ry = NoseUpScreen();
             worstRoadLeft = Mathf.Min(worstRoadLeft, rx);
             worstRoadRight = Mathf.Max(worstRoadRight, rx);
-            float ry = NoseUpScreen();
-            frames++;
-            if (ry < 0f) offTheBottom++;
             roadLowest = Mathf.Min(roadLowest, ry);
             roadHighest = Mathf.Max(roadHighest, ry);
+            frames++;
+            if (ry < 0f) offTheBottom++;
+
+            // THE CAP HAS TO STAY A MUSHROOM. Pulling back to save the road is
+            // only a fix if the head is still in the picture at the end of it.
+            var cf = Frame(cap.Value);
+            if (cf.HasValue)
+            {
+                capLowest = Mathf.Min(capLowest, cf.Value.y);
+                capHighest = Mathf.Max(capHighest, cf.Value.y);
+                if (cf.Value.y > 1f) capOffTheTop++;
+            }
+            else capOffTheTop++;
+
+            truckPxLeast = Mathf.Min(truckPxLeast, TruckPixels());
             lastPitch = p; lastYaw = y;
         }
         Debug.Log($"[a14] strike: cap stood {stood} frames, view pitch up to {worstPitch:F1} deg "
                   + $"of a {_chase.cloudLookUp:F0} deg clamp, worst pitch step "
                   + $"{worstPitchStep:F2} deg/frame ({worstPitchRate:F1} deg/s), worst yaw "
-                  + $"step {worstYawStep:F2} deg/frame, "
-                  + $"worst off-nose {worstNose:F1} deg, road across the frame "
-                  + $"{worstRoadLeft:F2}..{worstRoadRight:F2}, up the frame "
-                  + $"{roadLowest:F2}..{roadHighest:F2}, off the bottom for "
+                  + $"step {worstYawStep:F2} deg/frame, worst off-nose {worstNose:F1} deg, "
+                  + $"road across the frame {worstRoadLeft:F2}..{worstRoadRight:F2}, up the "
+                  + $"frame {roadLowest:F2}..{roadHighest:F2}, off the bottom for "
                   + $"{offTheBottom} of {frames} frames "
-                  + $"({(frames > 0 ? 100f * offTheBottom / frames : 0f):F1}%)");
+                  + $"({(frames > 0 ? 100f * offTheBottom / frames : 0f):F1}%), cap up the "
+                  + $"frame {capLowest:F2}..{capHighest:F2}, cap off the top for "
+                  + $"{capOffTheTop} frames, truck at least {truckPxLeast:F0} px tall, "
+                  + $"pull-back {_chase.cloudPullBack:F0} m, lift {_chase.cloudLift:F0} m, "
+                  + $"frame {Screen.width}x{Screen.height}");
 
         Assert.Greater(stood, 0, "no cloud ever stood, so nothing here is a measurement");
+
+        // THE HARD FLOOR: the road stays in the picture for the WHOLE cloud.
+        //
+        // Not a bound I chose - it is the requirement in its own words, and it
+        // is the one this letter closed bullet 1 without checking. Before the
+        // pull-back the road was under the bottom edge for 1250 of 1304 frames
+        // of a standing cloud; the measured ladder is in TASKBOOK.
+        Assert.AreEqual(0, offTheBottom,
+            $"the road was below the bottom of the frame for {offTheBottom} of {frames} "
+            + $"frames while a cloud stood - lowest {roadLowest:F2} up the picture");
+
+        // AND THE CAP IS STILL A MUSHROOM. Saving the road by cropping the
+        // head would be the same trade in the other direction.
+        Assert.AreEqual(0, capOffTheTop,
+            $"the cap left the top of the frame for {capOffTheTop} frames - it ran "
+            + $"{capLowest:F2}..{capHighest:F2} up the picture");
         Assert.Greater(worstPitch, 1f,
             "the view never tilted at all, so this measured nothing about the tilt");
         Assert.Less(worstYawStep, 1f,

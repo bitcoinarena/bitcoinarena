@@ -28,6 +28,16 @@ public class ChaseCamera : MonoBehaviour
     [Tooltip("Highest the driving view tilts up while a mushroom stands, in " +
              "degrees above the horizontal. Enough for the cap, not the sky.")]
     public float cloudLookUp = 26f;
+    [Tooltip("Extra metres the view pulls back while a mushroom stands, so " +
+             "the road and the cap can share the frame instead of taking " +
+             "turns. Measured, not chosen - see M1.a14 in TASKBOOK.")]
+    public float cloudPullBack = 20f;
+
+    [Tooltip("Extra metres the view rises while a mushroom stands. Height " +
+             "alone would tip the aim further down at the road; it is here " +
+             "so the pull-back does not end up looking along the ground.")]
+    public float cloudLift = 0f;
+
     [Tooltip("Seconds the view is held after a drag before it eases back " +
              "behind the truck. Zero keeps it until the next drag.")]
     public float recentreAfter = 2.5f;
@@ -403,10 +413,30 @@ public class ChaseCamera : MonoBehaviour
         _yaw = Mathf.LerpAngle(_yaw * Mathf.Rad2Deg, wanted * Mathf.Rad2Deg,
                    1f - Mathf.Exp(-yawDamp * Time.deltaTime)) * Mathf.Deg2Rad;
 
+        // HOW FAR INTO A STRIKE THE VIEW IS, decided here rather than further
+        // down, because the pull-back and the tilt are one movement and have
+        // to run off one number. It used to be computed only where the aim is
+        // raised, which is after the camera has already been placed.
+        var capNow = Blwp.StrikeTheatre.CapCentre;
+        _cloudLook = Mathf.Lerp(_cloudLook, capNow.HasValue ? 1f : 0f,
+                                1f - Mathf.Exp(-2.2f * Time.deltaTime));
+
         float yaw = _yaw + _orbitYaw * Mathf.Deg2Rad;
         Vector3 back = new Vector3(-Mathf.Sin(yaw), 0f, -Mathf.Cos(yaw));
         float reach = distance + distanceAtSpeed * speed01;
         float rise = height + heightAtSpeed * speed01;
+
+        // AND THE VIEW PULLS BACK TO FIT BOTH.
+        //
+        // Raising the aim to bring the cap into the picture pushed the road
+        // out of the bottom of it: measured at -0.05 up the frame and below
+        // the edge for 79.4% of a cloud's life. Lowering the clamp would trade
+        // the mushroom back for the road, which is not the trade. Standing
+        // further off shrinks the whole scene into the frame instead - it also
+        // drops the angle the cap needs, so the clamp stops biting on its own -
+        // and it costs the truck's size on screen, which is measured beside it.
+        reach += cloudPullBack * _cloudLook;
+        rise += cloudLift * _cloudLook;
 
         // Dragged pitch swings the camera up and over, or down towards the
         // ground, keeping its distance from the truck.
@@ -465,9 +495,7 @@ public class ChaseCamera : MonoBehaviour
         // Pictures only. Steering, throttle and brake are untouched, this is
         // not an orbit and not a second stick, and nothing here reads or
         // writes a core value.
-        var cap = Blwp.StrikeTheatre.CapCentre;
-        _cloudLook = Mathf.Lerp(_cloudLook, cap.HasValue ? 1f : 0f,
-                                1f - Mathf.Exp(-2.2f * Time.deltaTime));
+        var cap = capNow;
         if (_cloudLook > 0.001f && cap.HasValue)
         {
             Vector3 toCap = cap.Value - _pos;
