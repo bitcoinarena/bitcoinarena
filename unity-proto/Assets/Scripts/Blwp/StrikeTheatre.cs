@@ -322,6 +322,13 @@ namespace Blwp
         public float SkirtUnderside => _skirtUnderside;
         MeshRenderer[] _mushroomSkins;
         Transform _skirt3, _core3, _cap3;
+
+        /// <summary>
+        /// Where the head of the standing cloud is, for the driving camera.
+        /// Null while nothing is standing. Read only - the camera raises its
+        /// look point towards this; nothing about the strike depends on it.
+        /// </summary>
+        public static Vector3? CapCentre { get; private set; }
         Vector3 _skirtRest = Vector3.one, _coreRest = Vector3.one;
         Color _dust = new Color(0.43f, 0.32f, 0.20f);
         float _saidHeat = -99f;
@@ -593,6 +600,7 @@ namespace Blwp
             if (_cloud > Gone)
             {
                 _cloud = -1f;
+                CapCentre = null;
                 if (_mushroom != null) _mushroom.gameObject.SetActive(false);
                 if (_stem != null)
                     foreach (var t in new[] { _stem, _cap, _skirt }) t.gameObject.SetActive(false);
@@ -747,6 +755,15 @@ namespace Blwp
                 {
                     float core = Mathf.Exp(-1.1f * _cloud);
                     _core3.localScale = _coreRest * Mathf.Max(0.001f, core);
+                }
+
+                // The head's position, published for the driving camera. Set
+                // every frame the cloud is up and cleared when it is gone, so
+                // the camera has nothing to hold on to between strikes.
+                if (_cap3 != null)
+                {
+                    var capR = _cap3.GetComponent<Renderer>();
+                    CapCentre = capR != null ? capR.bounds.center : (Vector3?)null;
                 }
 
                 Heat(_cloud, out var meshBody, out var meshGlow);

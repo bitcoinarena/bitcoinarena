@@ -24,6 +24,10 @@ public class ChaseCamera : MonoBehaviour
     public float dragPitch = 120f;
     [Tooltip("How far the view may be tilted up and down, in degrees.")]
     public float pitchLimit = 55f;
+
+    [Tooltip("Highest the driving view tilts up while a mushroom stands, in " +
+             "degrees above the horizontal. Enough for the cap, not the sky.")]
+    public float cloudLookUp = 26f;
     [Tooltip("Seconds the view is held after a drag before it eases back " +
              "behind the truck. Zero keeps it until the next drag.")]
     public float recentreAfter = 2.5f;
@@ -118,6 +122,7 @@ public class ChaseCamera : MonoBehaviour
 
     // Where the player has dragged the view to, relative to the automatic one.
     float _orbitYaw, _orbitPitch;
+    float _cloudLook;
     float _worstOffNose, _worstRoll;
     Vector3 _downAt;
     bool _pointerDown, _onPad;
@@ -441,6 +446,46 @@ public class ChaseCamera : MonoBehaviour
 
         // look down the road ahead, not at the tailgate
         Vector3 look = target.position + target.forward * (lookAhead * (0.4f + speed01)) + Vector3.up * 1.2f;
+
+        // AND UP AT THE CLOUD WHILE ONE STANDS.
+        //
+        // Measured from this camera at 70 m: the cap was 0.0% of the frame at
+        // t=1.7 s and t=3.1 s, its rect running from y 794 to 1490 on a 720
+        // screen - the player saw a stem with no head. The column is 55 m and
+        // that scale is deliberate, so the view moves rather than the cloud.
+        //
+        // The look point is raised TOWARDS the head, never past it, and the
+        // lift is clamped so the camera cannot end up pointing at the sky: at
+        // most `cloudLookUp` degrees above the horizontal, which still leaves
+        // the road in the lower half of the frame. It eases in and out, so a
+        // strike does not snap the view, and it lets go the moment the cloud
+        // is gone because the theatre publishes nothing between strikes.
+        //
+        // Pictures only. Steering, throttle and brake are untouched, this is
+        // not an orbit and not a second stick, and nothing here reads or
+        // writes a core value.
+        var cap = Blwp.StrikeTheatre.CapCentre;
+        _cloudLook = Mathf.Lerp(_cloudLook, cap.HasValue ? 1f : 0f,
+                                1f - Mathf.Exp(-2.2f * Time.deltaTime));
+        if (_cloudLook > 0.001f && cap.HasValue)
+        {
+            Vector3 toCap = cap.Value - _pos;
+            float flat = new Vector2(toCap.x, toCap.z).magnitude;
+            if (flat > 0.5f)
+            {
+                float want = Mathf.Atan2(toCap.y, flat) * Mathf.Rad2Deg;
+                float have = Mathf.Atan2(look.y - _pos.y,
+                                         new Vector2(look.x - _pos.x, look.z - _pos.z).magnitude)
+                           * Mathf.Rad2Deg;
+                float lifted = Mathf.Min(want, cloudLookUp);
+                float aim = Mathf.Lerp(have, Mathf.Max(have, lifted), _cloudLook);
+                // Re-aim at the same distance, so only the pitch moves.
+                Vector3 dir = (look - _pos); float len = dir.magnitude;
+                Vector2 f2 = new Vector2(dir.x, dir.z).normalized;
+                float r = Mathf.Cos(aim * Mathf.Deg2Rad), u = Mathf.Sin(aim * Mathf.Deg2Rad);
+                look = _pos + new Vector3(f2.x * r, u, f2.y * r) * len;
+            }
+        }
         // The only thing left that can tilt the frame is an IMPACT, and that
         // is meant to be felt: it decays in a third of a second and it is not
         // steering.
