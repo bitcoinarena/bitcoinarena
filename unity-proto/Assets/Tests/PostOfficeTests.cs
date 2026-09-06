@@ -282,10 +282,17 @@ public class PostOfficeTests
             if (mf == null || mf.sharedMesh == null) continue;
             if (string.IsNullOrEmpty(tm.text) || tm.text == "—") continue;
 
-            var room = mf.sharedMesh.bounds.size;
+            // THE DRAWN PLATE, in world metres, which is the same number
+            // `PostOffice.Room` fits against. It used to read
+            // `mf.sharedMesh.bounds` - the mesh the plate was authored with -
+            // and so did the fit, so both agreed with each other and neither
+            // agreed with the screen: the whitepaper measured 89% full here
+            // while it was drawn four times taller and seven times wider than
+            // its plate, sprawled across the depot. One stale frame, twice.
             var mr = tm.GetComponent<MeshRenderer>();
-            float k = tm.transform.localScale.x;
-            float w = mr.localBounds.size.x * k, h = mr.localBounds.size.y * k;
+            var room = PostOffice.Room(plate);
+            var drawn = PostOffice.Face(mr.bounds.size);
+            float w = drawn.x, h = drawn.y;
 
             Assert.LessOrEqual(w, room.x + 0.01f,
                 $"{plate.name}: \"{tm.text}\" ist {w:0.0} m breit auf {room.x:0.0} m Platte");

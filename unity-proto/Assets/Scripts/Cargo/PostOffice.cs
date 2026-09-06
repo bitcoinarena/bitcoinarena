@@ -317,7 +317,6 @@ public class PostOffice : MonoBehaviour
     }
 
     TextMesh _paper;
-    bool _paperFitted;
 
     /// <summary>
     /// Keeps a printed page readable from further than arm's length.
@@ -382,26 +381,51 @@ public class PostOffice : MonoBehaviour
         // whole width of it, and scaling both by one number made a seven-digit
         // number that fitted in half the plate's WIDTH - which is a small
         // number on a big sign.
-        _room[tm] = new Vector2(room0.x * (wideFill > 0f ? wideFill : fill), room0.y * fill);
-        _roomAtWire[tm] = room0;
+        // FRACTIONS, not metres. What is kept is the share of the plate this
+        // lettering is entitled to; the plate's size is read fresh every fit,
+        // from what is drawn.
+        _room[tm] = new Vector2(wideFill > 0f ? wideFill : fill, fill);
         return tm;
     }
 
     /// <summary>
-    /// How much room a plate actually offers, in its own local units.
+    /// The face of the plate AS DRAWN, in world metres.
     ///
-    /// The model ships every display as a blank quad of a known size - 8.2 m
-    /// square on a block face, 24 x 6.4 on the unconfirmed counter - so the
-    /// space available is a fact that can be read off the mesh rather than a
-    /// number to be guessed. It was guessed, at 1.4 m for three lines of text
-    /// on an 8.2 m face, and from the road the block band read as blank.
+    /// It used to answer off `MeshFilter.sharedMesh.bounds` - the mesh the
+    /// plate was authored with - and that is a different object from the one
+    /// on screen: measured on the running build, the whitepaper's mesh says
+    /// 73.8 x 52.5 while the renderer draws 12.2 x 9.4 m. The page was fitted
+    /// to the first and photographed sprawled across the depot, and the test
+    /// that guards it read the same stale mesh and called it 89% full.
+    ///
+    /// The renderer's bounds are what the camera sees, so that is what both
+    /// the fit and its test ask now. A plate is flat, so its thinnest world
+    /// axis is thickness and the other two are the face.
     /// </summary>
-    static Vector2 Room(Transform plate)
+    public static Vector2 Room(Transform plate)
     {
-        var mf = plate.GetComponent<MeshFilter>();
-        var size = mf != null && mf.sharedMesh != null ? mf.sharedMesh.bounds.size
-                                                       : new Vector3(4f, 1f, 0f);
-        return new Vector2(Mathf.Max(0.2f, size.x), Mathf.Max(0.2f, size.y));
+        var mr = plate != null ? plate.GetComponent<Renderer>() : null;
+        if (mr == null)
+        {
+            var mf = plate != null ? plate.GetComponent<MeshFilter>() : null;
+            var s0 = mf != null && mf.sharedMesh != null ? mf.sharedMesh.bounds.size
+                                                         : new Vector3(4f, 1f, 0f);
+            return new Vector2(Mathf.Max(0.2f, s0.x), Mathf.Max(0.2f, s0.y));
+        }
+        return Face(mr.bounds.size);
+    }
+
+    /// <summary>
+    /// The two axes a flat thing is drawn on - the largest and the middle,
+    /// the smallest being its thickness - as (width, height) with width the
+    /// larger of the two.
+    /// </summary>
+    public static Vector2 Face(Vector3 size)
+    {
+        float big = Mathf.Max(size.x, Mathf.Max(size.y, size.z));
+        float small = Mathf.Min(size.x, Mathf.Min(size.y, size.z));
+        float mid = size.x + size.y + size.z - big - small;
+        return new Vector2(Mathf.Max(0.001f, big), Mathf.Max(0.001f, mid));
     }
 
     readonly Dictionary<TextMesh, Vector2> _room = new();
@@ -415,52 +439,42 @@ public class PostOffice : MonoBehaviour
     /// terminal fell into first.
     /// </summary>
     /// <summary>
-    /// Fit, but against the plate that is there NOW.
-    ///
-    /// The building streams in and swaps the mesh under nodes that keep their
-    /// names, so a size read when the display was wired can describe a plate
-    /// that no longer exists. That is how the whitepaper came to fill exactly
-    /// 22% of its own plate through four attempts to widen it: it was sized
-    /// perfectly, to something else.
+    /// Kept as the name the callers use. There is nothing to reconcile any
+    /// more: `Fit` reads the drawn plate every time it runs, so a plate that
+    /// has been swapped under its own name is simply measured again.
     /// </summary>
-    void Refit(TextMesh tm)
-    {
-        if (tm == null) return;
-        var live = Room(tm.transform.parent);
-        if (_room.TryGetValue(tm, out var had) && had.y > 0.001f)
-        {
-            float share = had.y / Mathf.Max(0.001f, _roomAtWire.TryGetValue(tm, out var w0) ? w0.y : had.y);
-            _room[tm] = new Vector2(live.x * (had.x / Mathf.Max(0.001f, w0.x)), live.y * share);
-        }
-        Fit(tm);
-    }
+    void Refit(TextMesh tm) => Fit(tm);
 
-    readonly Dictionary<TextMesh, Vector2> _roomAtWire = new();
 
+    /// <summary>
+    /// Scale the lettering to the share of its plate it is entitled to, in
+    /// the metres the camera sees.
+    ///
+    /// Relative, not absolute: the text's own drawn size is measured and the
+    /// scale is multiplied by the ratio it is short or over by, so one pass
+    /// lands on the target and every pass after it is a no-op.
+    /// </summary>
     void Fit(TextMesh tm)
     {
         var mr = tm.GetComponent<MeshRenderer>();
-        if (mr == null || !_room.TryGetValue(tm, out var room)) return;
-        var size = mr.localBounds.size;
-        if (size.y < 0.001f || size.x < 0.001f) return;
-        float k = Mathf.Clamp(Mathf.Min(room.y / size.y, room.x / size.x), 0.001f, 20f);
-        tm.transform.localScale = Vector3.one * k;
+        if (mr == null || !_room.TryGetValue(tm, out var share)) return;
+        if (tm.transform.parent == null) return;
 
-        // WHAT FIT IS ACTUALLY HOLDING. The rule this file cost the most time
-        // to learn: when a number will not move, print the numbers rather than
-        // form a fifth hypothesis. The whitepaper sat at 22% through four
-        // changes because `Fit` had been handed a 9.4 x 12.2 plate while the
-        // page on screen was 73.8 x 52.3 - the building streams in and swaps
-        // the mesh under a node that keeps its name.
+        Vector2 plate = Room(tm.transform.parent);
+        Vector2 text = Face(mr.bounds.size);
+        if (text.x < 0.001f || text.y < 0.001f) return;
+
+        float f = Mathf.Min(plate.x * share.x / text.x, plate.y * share.y / text.y);
+        if (f < 0.0001f || float.IsNaN(f)) return;
+        tm.transform.localScale *= Mathf.Clamp(f, 0.01f, 100f);
+
         if (tm == _paper && Time.time - _saidPaper > 5f)
         {
             _saidPaper = Time.time;
-            var plate = Room(tm.transform.parent);
-            Debug.Log($"[paper] plate {plate.x:F1} x {plate.y:F1}, room "
-                      + $"{room.x:F1} x {room.y:F1}, text {size.x:F1} x {size.y:F1}, "
-                      + $"k {k:F3} -> drawn {(size.x * k):F1} x {(size.y * k):F1}, "
-                      + $"covering {(100f * size.x * k / plate.x):F0}% x "
-                      + $"{(100f * size.y * k / plate.y):F0}% of the plate");
+            var after = Face(mr.bounds.size);
+            Debug.Log($"[paper] drawn plate {plate.x:F1} x {plate.y:F1} m, "
+                      + $"text {after.x:F1} x {after.y:F1} m, covering "
+                      + $"{(100f * after.x / plate.x):F0}% x {(100f * after.y / plate.y):F0}%");
         }
     }
 
@@ -576,25 +590,21 @@ public class PostOffice : MonoBehaviour
         // text and shrinks it again. Eight retries took the page to a fifth of
         // its plate and held it there, which is why the number would not move
         // however the fill or the line breaks were changed.
-        if (_paper != null && !_paperFitted)
+        // KEEP FITTING IT. `Fit` reads the drawn plate and the drawn text
+        // every time and multiplies the scale by the ratio it is short or
+        // over by, so the first pass with a real mesh lands on the target and
+        // every pass after it is a no-op. There is nothing left to latch:
+        // the plate that used to be swapped under this node is simply
+        // measured again.
+        //
+        // What was here instead re-derived the room at fit time and wrote
+        // METRES into `_room`, which now holds the fraction of the plate the
+        // lettering is entitled to - so the paper was told its share was 11.5
+        // and came out 107 m wide on a 12.2 m plate.
+        if (_paper != null)
         {
             var pmr = _paper.GetComponent<MeshRenderer>();
-            if (pmr != null && pmr.localBounds.size.y > 0.001f)
-            {
-                // The room is re-read HERE, not trusted from wire time.
-                //
-                // Room() saw a 9.4 x 12.2 sheet when the plate was wired and
-                // the same transform reports 73.8 x 52.3 x 168.3 by the time
-                // the text is fitted: the building streams in and swaps the
-                // mesh under a node that keeps its name. The text was sized
-                // perfectly - to a plate that no longer existed - which is why
-                // it measured 22% of the real one through every change to the
-                // fill, the line breaks and the timing. 11.47 / 52.25 = 0.2195.
-                var live = Room(_paper.transform.parent);
-                _room[_paper] = new Vector2(live.x * 0.94f, live.y * 0.94f);
-                Fit(_paper);
-                _paperFitted = true;
-            }
+            if (pmr != null && pmr.bounds.size.magnitude > 0.001f) Fit(_paper);
         }
 
         // The counter runs on its own clock. It is the one number on the
