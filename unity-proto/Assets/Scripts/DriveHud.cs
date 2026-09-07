@@ -481,6 +481,36 @@ public class DriveHud : MonoBehaviour
             ? $"{changePct:+0.00;-0.00;0.00}% 24h"
             : $"connecting … ({status})";
 
+    /// <summary>
+    /// THE DEBUG PANEL'S ROWS, as words rather than as inline strings.
+    ///
+    /// This panel is behind the DEBUG icon, which is on the driving HUD, so a
+    /// player can open it - and every row in it was German: "Tempo", "Gas",
+    /// "Lenk", "Raeder", "Fluss", "Panzer gruen/rot", "Soldaten", "Luft",
+    /// "Bombe(n)". The sweep that found the connecting word missed all of
+    /// them, because it looked for a list of German words that did not contain
+    /// any of these; the second sweep looked for umlaut-free German too.
+    ///
+    /// They are functions for the same reason `PriceSubline` is: what the test
+    /// reads has to be what the panel draws. The row COUNT is unchanged, which
+    /// is what `DiagnosticsContentHeight` and `DebugPanelBox` are measured on.
+    /// </summary>
+    public static string SpeedRow(float kmh) => $"Speed   {kmh:0} km/h";
+
+    public static string InputRow(float throttle, float steer, bool handbrake)
+        => $"Thr {throttle:+0.0;-0.0; 0.0}  Steer {steer:+0.0;-0.0; 0.0}  {(handbrake ? "HB" : "")}";
+
+    public static string DriftRow(float drift, int grounded)
+        => $"Drift   {drift:0.0} m/s   Wheels {grounded}/4";
+
+    public static string FlowRow(float flow) => $"Flow    {flow:+0.00;-0.00; 0.00}";
+
+    public static string ArmourRow(int bull, int bear) => $"Armour   green {bull}  red {bear}";
+
+    public static string InfantryRow(int bull, int bear) => $"Infantry green {bull}  red {bear}";
+
+    public static string AirRow(int helis, int bombs) => $"Air      {helis} heli  {bombs} bomb(s)";
+
     string Venues()
     {
         if (market == null || market.Sources.Count == 0) return "no liq feed";
@@ -2255,7 +2285,7 @@ public class DriveHud : MonoBehaviour
                 if (a?.right != null && a.right.isGrounded) grounded++;
             }
             var rb = truck.GetComponent<Rigidbody>();
-            // Tempo and Drift, from the core when one answers.
+            // Speed and Drift, from the core when one answers.
             //
             // `SpeedKmh` is `_rb.linearVelocity.magnitude * 3.6f` and `Slip`
             // is `|InverseTransformDirection(_rb.linearVelocity).x|`, both off
@@ -2264,21 +2294,21 @@ public class DriveHud : MonoBehaviour
             // 0.000 m/s while the truck was doing 68.16 km/h and sliding
             // 2.645 m/s sideways. The zeroes are the dead body, not the rule.
             //
-            // Tempo is `TruckSpeed`, which is what the MAIN readout above
+            // Speed is `TruckSpeed`, which is what the MAIN readout above
             // already reads, so the screen carries one speed and not two.
             // Drift is `TruckSlip`, the chassis-frame projection from (t) -
             // not a second formula worked out here.
             bool core = Blwp.BlwpCore.Available;
             float tempo = core ? Blwp.BlwpCore.TruckSpeed * 3.6f : truck.SpeedKmh;
             float drift = core ? Blwp.BlwpCore.TruckSlip : truck.Slip;
-            Line($"Tempo   {tempo:0} km/h");
-            Line($"Gas {DriveInput.Throttle:+0.0;-0.0; 0.0}  Lenk {DriveInput.Steer:+0.0;-0.0; 0.0}  {(DriveInput.Handbrake ? "HB" : "")}");
-            Line($"Drift   {drift:0.0} m/s   Raeder {grounded}/4");
+            Line(SpeedRow(tempo));
+            Line(InputRow(DriveInput.Throttle, DriveInput.Steer, DriveInput.Handbrake));
+            Line(DriftRow(drift, grounded));
             if (rb != null) Line($"Pos     {rb.position.x:0}, {rb.position.z:0}");
         }
         if (market != null)
         {
-            Line($"Fluss   {market.Flow:+0.00;-0.00; 0.00}");
+            Line(FlowRow(market.Flow));
             Line($"Liquid. {market.Liquidations.Count} / 90 s");
         }
         if (Blwp.BlwpCore.Available)
@@ -2295,9 +2325,9 @@ public class DriveHud : MonoBehaviour
             }
             for (int i = 0; i < Blwp.Layout.MAX_HELIS; i++) if (Blwp.BlwpCore.HeliAlive(i)) heli++;
             for (int i = 0; i < Blwp.Layout.MAX_BOMBS; i++) if (Blwp.BlwpCore.BombAlive(i)) bomb++;
-            Line($"Panzer   gruen {ab}  rot {ar}");
-            Line($"Soldaten gruen {ib}  rot {ir}");
-            Line($"Luft     {heli} Heli  {bomb} Bombe(n)");
+            Line(ArmourRow(ab, ar));
+            Line(InfantryRow(ib, ir));
+            Line(AirRow(heli, bomb));
         }
         if (field != null && truck != null)
         {

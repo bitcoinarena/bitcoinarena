@@ -53,7 +53,7 @@ public class MempoolFeed : MonoBehaviour
     /// <summary>True once real transactions have arrived.</summary>
     public bool Fresh { get; private set; }
 
-    public string Status { get; private set; } = "verbinde …";
+    public string Status { get; private set; } = "connecting …";
 
     /// <summary>
     /// Freight on the ramp from the first frame.
@@ -68,7 +68,7 @@ public class MempoolFeed : MonoBehaviour
     void Awake()
     {
         Offers = Synthetic(keep);
-        Status = "lade Mempool …";
+        Status = "loading the mempool …";
     }
 
     void Start() => StartCoroutine(Poll());

@@ -63,3 +63,63 @@ public class PriceSublineTests
             "a real price, however small, is a price");
     }
 }
+
+
+/// <summary>
+/// AND EVERY ROW OF THE DEBUG PANEL, which is on the driving HUD behind the
+/// DEBUG icon and so is something a player can open.
+///
+/// Every row of it was German - "Tempo", "Gas", "Lenk", "Raeder", "Fluss",
+/// "Panzer gruen/rot", "Soldaten", "Luft", "Bombe(n)" - and the sweep that
+/// found the connecting word walked straight past all of them, because it
+/// searched for a list of German words that happened not to include any of
+/// these. None of them carries an umlaut, which is what a lazy check looks
+/// for. This one names the words that were actually there.
+/// </summary>
+public class DebugPanelWordsTests
+{
+    static readonly string[] German =
+    {
+        "Tempo", "Gas ", "Lenk", "Raeder", "Fluss", "Panzer", "Soldaten",
+        "gruen", "Luft", "Bombe", "verbinde", "lade ",
+        "ä", "ö", "ü", "ß",
+    };
+
+    static void NoGerman(string row)
+    {
+        Assert.IsNotEmpty(row, "a debug row says nothing at all");
+        foreach (var bad in German)
+            Assert.IsFalse(row.Contains(bad), $"the row reads \"{row}\", which is German");
+    }
+
+    [Test]
+    public void EveryRowIsEnglish()
+    {
+        NoGerman(DriveHud.SpeedRow(68.2f));
+        NoGerman(DriveHud.InputRow(0.8f, -0.3f, true));
+        NoGerman(DriveHud.InputRow(0f, 0f, false));
+        NoGerman(DriveHud.DriftRow(2.645f, 4));
+        NoGerman(DriveHud.FlowRow(-0.42f));
+        NoGerman(DriveHud.ArmourRow(3, 4));
+        NoGerman(DriveHud.InfantryRow(11, 9));
+        NoGerman(DriveHud.AirRow(2, 1));
+    }
+
+    /// <summary>
+    /// And they still say the numbers they are read for. These are the values
+    /// measured in the player build when the panel was found reading zeroes
+    /// off a kinematic body: 68.16 km/h and 2.645 m/s of slip.
+    /// </summary>
+    [Test]
+    public void TheRowsStillCarryTheirNumbers()
+    {
+        Assert.AreEqual("Speed   68 km/h", DriveHud.SpeedRow(68.16f));
+        Assert.AreEqual("Drift   2.6 m/s   Wheels 4/4", DriveHud.DriftRow(2.645f, 4));
+        Assert.AreEqual("Armour   green 3  red 4", DriveHud.ArmourRow(3, 4));
+        Assert.AreEqual("Infantry green 11  red 9", DriveHud.InfantryRow(11, 9));
+        Assert.AreEqual("Air      2 heli  1 bomb(s)", DriveHud.AirRow(2, 1));
+        Assert.AreEqual("Flow    -0.42", DriveHud.FlowRow(-0.42f));
+        StringAssert.Contains("HB", DriveHud.InputRow(1f, 0f, true));
+        StringAssert.DoesNotContain("HB", DriveHud.InputRow(1f, 0f, false));
+    }
+}
