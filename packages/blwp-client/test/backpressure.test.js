@@ -18,6 +18,11 @@ import { serve } from '../../blwp-node/src/server.js';
 import { roundId, entryId } from '../../protocol/src/contracts.js';
 import { Client } from '../src/client.js';
 
+// FUNDED, because these are rounds somebody paid for. A node started without
+// being told who pays refuses everything now - disk is spent only on stakes
+// that exist - so a test that means to play a round has to say so.
+const FUNDED = { funded: () => true };
+
 const require = createRequire(import.meta.url);
 const core = require('../../core/dist/blwp-core.js');
 
@@ -50,7 +55,7 @@ function slowLink(client, ms, watch) {
 }
 
 async function rig(ms) {
-  const node = await serve(openStore(), { port: 0 });
+  const node = await serve(openStore(), { port: 0, ...FUNDED });
   const watch = { inFlight: 0, worst: 0 };
   const client = new Client({ base: `http://127.0.0.1:${node.port}`, core, sign, verify });
   const c = {

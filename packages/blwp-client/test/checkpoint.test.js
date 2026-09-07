@@ -38,6 +38,11 @@ import {
 } from '../../protocol/src/receipt.js';
 import { createServer } from 'node:http';
 
+// FUNDED, because these are rounds somebody paid for. A node started without
+// being told who pays refuses everything now - disk is spent only on stakes
+// that exist - so a test that means to play a round has to say so.
+const FUNDED = { funded: () => true };
+
 const require = createRequire(import.meta.url);
 const core = require('../../core/dist/blwp-core.js');
 
@@ -73,7 +78,7 @@ const marks = async (port, rid, eid) => {
 };
 
 async function rig() {
-  const node = await serve(openStore(), { port: 0 });
+  const node = await serve(openStore(), { port: 0, ...FUNDED });
   // The committee is this node's own key, because that is what it will sign
   // its receipts with and the contract is where a client learns to expect it.
   const client = new Client({ base: `http://127.0.0.1:${node.port}`, core, sign, verify });
@@ -369,8 +374,8 @@ test('a reconnecting client recovers the same receipts, byte for byte', async ()
  * was made on.
  */
 test('a receipt gossiped to a second node is recoverable from that node too', async () => {
-  const one = await serve(openStore(), { port: 0 });
-  const two = await serve(openStore(), { port: 0 });
+  const one = await serve(openStore(), { port: 0, ...FUNDED });
+  const two = await serve(openStore(), { port: 0, ...FUNDED });
   try {
     const committee = [one.round.pubkey, two.round.pubkey];
     const c = { ...contract(), nodes: committee };
