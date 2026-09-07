@@ -111,3 +111,50 @@ public class StreamingWordsTests
         Assert.AreEqual("12.3 MB", DriveHud.StreamMark(ModelStreamer.State.Loaded, 12.3f, 0f));
     }
 }
+
+/// <summary>
+/// THE DANGER RATE IS A DIFFERENCE, NOT A SCALED ONE.
+///
+/// `RunScore` multiplied the core's exposure by a C# `exposureReference` of
+/// 190 before differencing it - the value a13 replaced with 320 in the core,
+/// applied to a number already in the core's own units. Measured on a drive
+/// the core gains 0.255, 1.386 and 1.700 of exposure per metre; times 190
+/// that is 48, 263 and 323, and the 0..2 clamp pinned the meter at 2.00 for
+/// the whole run. The bright cap, the cold test and the stalled warning were
+/// all reading a saturated constant.
+///
+/// So the units are pinned here: what goes in comes out, divided by the
+/// ground, and nothing scales it.
+/// </summary>
+public class DangerRateTests
+{
+    [Test]
+    public void TheRateIsExposureGainedPerMetreAndNothingElse()
+    {
+        // the three readings the core actually produced, a metre apart
+        Assert.AreEqual(0.255f, RunScore.RateFrom(10.255f, 10f, 1f), 0.0001f);
+        Assert.AreEqual(1.386f, RunScore.RateFrom(11.386f, 10f, 1f), 0.0001f);
+        Assert.AreEqual(1.700f, RunScore.RateFrom(11.7f, 10f, 1f), 0.0001f);
+
+        // ten metres of ground for the same gain is a tenth of the rate
+        Assert.AreEqual(0.17f, RunScore.RateFrom(11.7f, 10f, 10f), 0.0001f);
+    }
+
+    [Test]
+    public void TheRateIsHeldInsideTheBandTheMeterDraws()
+    {
+        Assert.AreEqual(2f, RunScore.RateFrom(100f, 0f, 1f), 0.0001f,
+            "the meter is drawn 0..2 and the cap is what stops a spike leaving it");
+        Assert.AreEqual(0f, RunScore.RateFrom(0f, 100f, 1f), 0.0001f,
+            "exposure never falls, so a negative rate is not a reading");
+    }
+
+    [Test]
+    public void NoGroundMadeGoodIsNoRateAtAll()
+    {
+        Assert.AreEqual(0f, RunScore.RateFrom(50f, 10f, 0f), 0.0001f,
+            "standing still paid a rate");
+        Assert.AreEqual(0f, RunScore.RateFrom(50f, 10f, 0.00001f), 0.0001f,
+            "a rounding error of ground paid a rate");
+    }
+}

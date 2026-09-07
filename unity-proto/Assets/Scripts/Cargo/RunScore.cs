@@ -43,9 +43,9 @@ public class RunScore : MonoBehaviour
              "scored 1.00 and the number carried no information at all.")]
     public float threatForFull = 10f;
 
-    [Tooltip("Seam-metres for a full exposure score. A run that covers the " +
-             "whole distance to the gate along the frontline reaches E = 1.")]
-    public float exposureReference = 190f;
+    // `exposureReference` is gone, and its tooltip with it. It was 190 - the
+    // value a13 replaced with 320 in the core - and it was being multiplied
+    // into a number that was already in the core's own units.
 
     [Tooltip("Par time for the run, in seconds. Faster than this scores above 1.")]
     public float referenceSeconds = 65f;
@@ -209,10 +209,19 @@ public class RunScore : MonoBehaviour
             // on. The core integrates `exposure += rate * gained`, so the rate
             // IS the exposure it gained per metre of new ground, and that is
             // read back rather than recomputed.
-            float now = Blwp.BlwpCore.Exposure * Mathf.Max(0.01f, exposureReference);
-            Rate = MakingProgress && gained > 0.0001f
-                ? Mathf.Clamp((now - _coreExposure) / gained, 0f, 2f)
-                : 0f;
+            // NO MULTIPLIER. `BlwpCore.Exposure` is the core's exposure word in
+            // its own units - the live daily reads 94.63 of a 320 reference -
+            // and this multiplied it by `exposureReference`, a C# constant
+            // still carrying 190, the value the core replaced with 320 in a13.
+            //
+            // Measured on a drive: the core gains 0.255, then 1.386, then
+            // 1.700 of exposure per metre - a real gradient inside the 0..2
+            // band this meter is documented for. Times 190 that is 48, 263,
+            // 323, and the clamp pinned it at 2.00 for the whole run. The
+            // bright cap, the "cold" test and the stalled warning were all
+            // reading a saturated constant.
+            float now = Blwp.BlwpCore.Exposure;
+            Rate = RateFrom(now, _coreExposure, MakingProgress ? gained : 0f);
             _coreExposure = now;
             if (Rate > 0.0001f) LastLiveRate = Rate;
             if (MakingProgress) _bestX = x;
@@ -224,6 +233,15 @@ public class RunScore : MonoBehaviour
         // time. The core is the only thing that scores a run now; with no core
         // answering, nothing accrues and the HUD says zero.
     }
+
+    /// <summary>
+    /// Exposure gained per metre of new ground, clamped to the band the meter
+    /// is drawn in. Static and public so the UNITS can be pinned without a
+    /// core: this is a difference of two core readings divided by a distance,
+    /// and nothing scales it.
+    /// </summary>
+    public static float RateFrom(float now, float before, float gained) =>
+        gained > 0.0001f ? Mathf.Clamp((now - before) / gained, 0f, 2f) : 0f;
 
     /// <summary>
     /// The last rate the core paid while the truck was gaining ground.
