@@ -381,7 +381,23 @@ public class CameraNoseTests
         _truck.externalThrottle = 1f;
         _truck.externalSteer = 0f;
         _truck.externalHandbrake = false;
-        yield return new WaitForSeconds(seconds);
+
+        // DRIVE UNTIL IT IS MOVING, not for a fixed count of seconds.
+        //
+        // Five seconds of throttle got the truck to 14.0 m/s alone and to 5.3
+        // under load - the whole suite, a browser and two builds sharing the
+        // machine - and the case guard then refused the case, correctly, as a
+        // measurement of nothing. The guard is not the thing to relax: it is
+        // the only reason a camera test on a stationary truck cannot pass. So
+        // the fixture waits for the speed instead, and still gives up rather
+        // than pretend.
+        float began = Time.time;
+        while (Time.time - began < seconds * 4f)
+        {
+            yield return null;
+            if (Velocity().magnitude >= 12f) break;
+        }
+        yield return new WaitForSeconds(0.25f);
     }
 
     /// <summary>
