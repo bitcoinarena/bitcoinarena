@@ -23,7 +23,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  holdSettlement, settlementAction, holdAfter, SETTLE, CANCEL, NOTHING,
+  holdSettlement, settlementAction, holdAfter, invoiceMatchesEntry,
+  SETTLE, CANCEL, NOTHING,
   HELD, SETTLED, CANCELLED, EXPIRED,
   SETTLEMENT_THRESHOLD, DELIVERED, FAILED, FORFEIT, VOID,
 } from '../src/payout.js';
@@ -268,4 +269,46 @@ test('a hold nobody acts on expires, whatever was supposed to happen to it', () 
   // an unauthorised cancel is not a settle by another name
   assert.equal(holdAfter({ action: CANCEL, authorised: false }).state, HELD);
   assert.throws(() => holdAfter({ action: 'RELEASE' }), /not something that can be done to a hold/);
+});
+
+/**
+ * THE LAST CHECK BEFORE THE MONEY IS IN FLIGHT.
+ *
+ * 23.1: the endpoint issues a hold invoice for `payment_hash`, the player's
+ * wallet pays it, and from that moment the stake is committed. Nothing checked
+ * that invoice against the entry the player signed - an invoice for another
+ * hash commits the money to a preimage the committee's shares do not
+ * reconstruct, so nobody could ever settle it and nobody could prove why.
+ */
+test('a player pays an invoice only for the hash and amount their entry signed', () => {
+  const stakeCommitment = new Uint8Array(32).fill(0xa7);
+  const entry = { stakeCommitment, stakeMsat: 100000n };
+
+  const good = invoiceMatchesEntry({ paymentHash: stakeCommitment, amountMsat: 100000n, entry });
+  assert.equal(good.ok, true, good.why);
+  assert.match(good.why, /the ones this entry signed/);
+
+  // another hash: the shares would reconstruct a preimage for a different one
+  const elsewhere = invoiceMatchesEntry({
+    paymentHash: new Uint8Array(32).fill(0xbb), amountMsat: 100000n, entry,
+  });
+  assert.equal(elsewhere.ok, false);
+  assert.match(elsewhere.why, /nobody could ever settle it/);
+
+  // one byte of the hash
+  const nearly = new Uint8Array(stakeCommitment);
+  nearly[31] ^= 1;
+  assert.equal(invoiceMatchesEntry({ paymentHash: nearly, amountMsat: 100000n, entry }).ok, false);
+
+  // more than the round was signed for, and less than it
+  for (const amountMsat of [100001n, 99999n, 0n, 1000000n]) {
+    const said = invoiceMatchesEntry({ paymentHash: stakeCommitment, amountMsat, entry });
+    assert.equal(said.ok, false, String(amountMsat));
+    assert.match(said.why, new RegExp(`asks ${amountMsat} msat and the entry staked 100000`));
+  }
+
+  // and the shapes that are not an invoice at all
+  assert.equal(invoiceMatchesEntry({ paymentHash: stakeCommitment, amountMsat: 100000n }).ok, false);
+  assert.equal(invoiceMatchesEntry({ paymentHash: stakeCommitment, amountMsat: 100000, entry }).ok, false);
+  assert.equal(invoiceMatchesEntry({ paymentHash: new Uint8Array(31), amountMsat: 100000n, entry }).ok, false);
 });

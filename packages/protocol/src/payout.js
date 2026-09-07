@@ -438,3 +438,52 @@ export function holdAfter({ action, authorised = false, nobodyActs = false }) {
     ? { state: SETTLED, hasIt: 'the pool', why: 'the preimage was released' }
     : { state: CANCELLED, hasIt: 'the payer', why: 'handed back to its owner' };
 }
+
+/**
+ * SHOULD A PLAYER PAY THIS INVOICE?
+ *
+ * The last thing a player does before their money is in flight, and until now
+ * nothing checked it. 23.1: the endpoint "issues a hold invoice for
+ * `payment_hash`", the player's wallet pays it, and from that moment the stake
+ * is committed - so an invoice for the wrong hash or the wrong amount is a
+ * mistake that cannot be taken back.
+ *
+ *   the payment hash   must be the `stakeCommitment` the entry contract
+ *                      already carries. An invoice for any other hash commits
+ *                      the money to a preimage the committee's shares do not
+ *                      reconstruct, so nobody can ever settle it and nobody
+ *                      can prove why.
+ *   the amount         must be `stakeMsat` exactly. Over, and the player has
+ *                      staked more than the round they signed; under, and the
+ *                      pool the winner is paid from is short.
+ *
+ * BOTH COME OFF THE SIGNED ENTRY CONTRACT, so this needs nothing from a node
+ * and takes nobody's word: the player is checking an invoice against the thing
+ * they themselves signed. Fees and the donation are charged ON TOP at entry
+ * (18) and are not part of the held stake, which is why the comparison is
+ * exact rather than a floor.
+ *
+ * IT DOES NOT ISSUE, SETTLE OR CANCEL ANYTHING. There is no Lightning here.
+ */
+export function invoiceMatchesEntry({ paymentHash, amountMsat, entry }) {
+  if (!entry || !(entry.stakeCommitment instanceof Uint8Array))
+    return { ok: false, why: 'no entry contract to check the invoice against' };
+  if (!(paymentHash instanceof Uint8Array) || paymentHash.length !== 32)
+    return { ok: false, why: 'a payment hash is 32 bytes' };
+  if (typeof amountMsat !== 'bigint')
+    return { ok: false, why: 'an amount is BigInt millisatoshi' };
+
+  const hex = (u8) => [...u8].map((b) => b.toString(16).padStart(2, '0')).join('');
+  if (hex(paymentHash) !== hex(entry.stakeCommitment))
+    return {
+      ok: false,
+      why: `that invoice is for ${hex(paymentHash)}, and this entry commits to `
+        + `${hex(entry.stakeCommitment)}: nobody could ever settle it`,
+    };
+  if (amountMsat !== entry.stakeMsat)
+    return {
+      ok: false,
+      why: `that invoice asks ${amountMsat} msat and the entry staked ${entry.stakeMsat}`,
+    };
+  return { ok: true, why: 'the hash and the amount are the ones this entry signed' };
+}

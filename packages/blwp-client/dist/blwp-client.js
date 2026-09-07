@@ -430,6 +430,14 @@ const TYPE_TRANSCRIPT = 0x09;
 // the object but reserves no type for it, so this is the next free number.
 const TYPE_CHECKPOINT_RECEIPT = 0x0a;
 
+/**
+ * 13A's objection. The spec reserves neither a type nor a tag for it - it
+ * gives the field list and nothing else - so both are new here, the way
+ * `CheckpointReceipt` needed both, and both follow the numbering already in
+ * use rather than starting a second one.
+ */
+const TYPE_OBJECTION = 0x0b;
+
 const TAG = {
   roundContract: 'BLWP/v1/RoundContract',
   entryContract: 'BLWP/v1/EntryContract',
@@ -443,6 +451,8 @@ const TAG = {
   payoutTable: 'BLWP/v1/PayoutTable',
   inputBatch: 'BLWP/v1/InputBatch',
   transcript: 'BLWP/v1/Transcript',
+  objection: 'BLWP/v1/Objection',
+  vssShare: 'BLWP/v1/VssShare',
   remainder: 'BLWP/v1/Remainder',
 };
 
@@ -496,6 +506,32 @@ function bondMarker() {
  * rather than one somebody remembered.
  */
 const OBJECTION_WINDOW_REFERENCE_MS = 600000n;
+
+/**
+ * WHICH CUSTODY CONSTRUCTION A ROUND USES. Section 23.6 names two and says
+ * "The Round Contract names which construction it uses":
+ *
+ *   THRESHOLD_LN   a threshold-signed Lightning node - FROST-style Schnorr
+ *                  over channel operations - which 23.6 calls "the cleanest
+ *                  fit, and emerging technology rather than a solved product"
+ *   FEDERATION     a Fedimint-class federation with a Lightning gateway,
+ *                  "production-ready today, with an identical trust statement"
+ *
+ * "V1 deployments should use the mature one and migrate when threshold-LN
+ * hardens", so a round has to SAY which one it ran under: the residual is the
+ * same either way (22: five colluding bonded operators control in-transit
+ * funds) but a player is entitled to know which construction they staked into,
+ * and a round settled under one cannot be replayed as if it were the other.
+ *
+ * Naming them is not implementing them. Neither construction exists in this
+ * repo and this field does not bring one.
+ */
+const CUSTODY = ['THRESHOLD_LN', 'FEDERATION'];
+const custodyByte = (which) => {
+  const at = CUSTODY.indexOf(which);
+  if (at < 0) throw new Error(`${which} is not one of ${CUSTODY.join(', ')}`);
+  return at;
+};
 
 // ---- protocol/src/checkpoint.js
 // A checkpoint: where the player says the world was, at a tick both sides
@@ -749,6 +785,12 @@ function encodeRoundContract(c) {
   // The player signs up to it with the rest of the round.
   w.u64(c.objectionWindowMs);
 
+  // WHICH CUSTODY CONSTRUCTION THE STAKE SITS IN, section 23.6: "The Round
+  // Contract names which construction it uses." The two have the same residual
+  // and different maturity, and a player is entitled to know which one they
+  // staked into before they pay. Naming it is not implementing it.
+  w.u8(custodyByte(c.custody));
+
   w.u32(c.censusHeight);
   w.bytes32(c.censusRoot);
   w.bytes32(c.committeeSeed);
@@ -783,6 +825,7 @@ function decodeRoundContract(bytes) {
     startTimeMs: r.u64(),
     entryCloseMs: r.u64(),
     objectionWindowMs: r.u64(),
+    custody: CUSTODY[r.u8()],
     censusHeight: r.u32(),
     censusRoot: r.bytes32(),
     committeeSeed: r.bytes32(),

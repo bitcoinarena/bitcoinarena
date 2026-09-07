@@ -12,6 +12,7 @@ import { Writer, Reader } from './encode.js';
 import { taggedHash } from './hash.js';
 import {
   TAG, PROTOCOL_VERSION, TYPE_ROUND_CONTRACT, TYPE_ENTRY_CONTRACT, ROLES,
+  CUSTODY, custodyByte,
 } from './constants.js';
 
 /**
@@ -33,6 +34,12 @@ export function encodeRoundContract(c) {
   // operator chooses - and the operator is the party a veto exists against.
   // The player signs up to it with the rest of the round.
   w.u64(c.objectionWindowMs);
+
+  // WHICH CUSTODY CONSTRUCTION THE STAKE SITS IN, section 23.6: "The Round
+  // Contract names which construction it uses." The two have the same residual
+  // and different maturity, and a player is entitled to know which one they
+  // staked into before they pay. Naming it is not implementing it.
+  w.u8(custodyByte(c.custody));
 
   w.u32(c.censusHeight);
   w.bytes32(c.censusRoot);
@@ -68,6 +75,7 @@ export function decodeRoundContract(bytes) {
     startTimeMs: r.u64(),
     entryCloseMs: r.u64(),
     objectionWindowMs: r.u64(),
+    custody: CUSTODY[r.u8()],
     censusHeight: r.u32(),
     censusRoot: r.bytes32(),
     committeeSeed: r.bytes32(),
