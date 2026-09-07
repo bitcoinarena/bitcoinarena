@@ -25,6 +25,13 @@ import { ed25519 } from '@noble/curves/ed25519.js';
 import { toHex } from '../../protocol/src/hash.js';
 import { OPEN, CLOSED, nodeIdentity } from './store.js';
 
+/**
+ * Five, of the seven a committee has (13C). The same number the client uses to
+ * decide a mark is live, and for the same reason: no smaller set of nodes can
+ * make a chain canonical, so an operator cannot spend a short committee.
+ */
+export const RECEIPTS_FOR_CANONICAL = 5;
+
 const same = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
 
 export class Round {
@@ -477,6 +484,91 @@ export class Round {
     const ok = checkTranscript(t);
     if (!ok.ok) throw new Error(`the stored transcript is broken at ${ok.at}: ${ok.why}`);
     return { bytes: encodeTranscript(t), hash: transcriptHash(t), ticks: ok.ticks };
+  }
+
+  /**
+   * THE CANONICAL TRANSCRIPT, section 13C.
+   *
+   * "For each player, the canonical transcript is the longest checkpoint chain
+   * that carries receipts from at least 5 committee nodes, together with the
+   * input batches whose hashes it commits to. All nodes replay that object, so
+   * 'node A saw more than node B' cannot by itself produce disagreement."
+   *
+   * SELECTION, NOT SIMULATION. Nothing here replays anything and nothing here
+   * imports the core - a daemon that recomputed the state would be a second
+   * simulator, and then two of them could disagree, which is the whole thing
+   * this protocol is built to avoid. What this does is choose: which marks the
+   * committee has actually carried, and which inputs those marks commit to.
+   *
+   * LONGEST, so a chain that goes live and then falls short is not served
+   * whole. The marks the committee carried are canonical and the ones after
+   * them are not - and the answer says how many were left behind rather than
+   * quietly handing over a shorter object as if it were everything.
+   *
+   * DISTINCT MEMBERS, not receipts: `receiptCount` counts different keys, so
+   * five answers from one node are one node saying it five times.
+   */
+  canonicalTranscript(roundIdBytes, entryIdBytes) {
+    const marks = this.db.prepare(
+      'SELECT checkpoint_id, tick, bytes FROM checkpoints '
+      + 'WHERE round_id = ? AND entry_id = ? ORDER BY tick')
+      .all(roundIdBytes, entryIdBytes);
+    if (!marks.length) throw new Error('no checkpoints for that entry');
+
+    // The longest PREFIX every mark of which the committee has carried. A gap
+    // ends it: a later mark that five members receipted is not canonical if
+    // the mark it chains onto was never carried, because the chain is what
+    // makes it mean anything.
+    let live = 0;
+    while (live < marks.length
+      && this.receiptCount(marks[live].checkpoint_id) >= RECEIPTS_FOR_CANONICAL) live++;
+
+    if (live === 0) {
+      const held = this.receiptCount(marks[0].checkpoint_id);
+      throw new Error(
+        `no checkpoint of that entry is carried by ${RECEIPTS_FOR_CANONICAL} committee `
+        + `members: the first has ${held}`);
+    }
+
+    // AND THE INPUTS THOSE MARKS COMMIT TO. The last canonical mark names a
+    // batch chain head, and the batches up to it are the ones it committed to;
+    // anything after that head was never part of what the committee carried.
+    const last = decodeCheckpoint(splitSigned(new Uint8Array(marks[live - 1].bytes)).body);
+    const rows = this.db.prepare(
+      'SELECT bytes FROM batches WHERE round_id = ? AND entry_id = ? ORDER BY seq')
+      .all(roundIdBytes, entryIdBytes);
+
+    const batches = [];
+    let head = GENESIS;
+    let found = toHex(last.inputChainHash) === toHex(GENESIS);
+    for (const row of rows) {
+      if (found) break;
+      const b = decodeInputBatch(new Uint8Array(row.bytes));
+      batches.push(b);
+      head = batchId(b);
+      if (toHex(head) === toHex(last.inputChainHash)) found = true;
+    }
+    if (!found)
+      throw new Error(
+        `the last carried checkpoint commits to input chain ${toHex(last.inputChainHash)}, `
+        + 'which this node does not hold');
+
+    const t = {
+      roundId: new Uint8Array(roundIdBytes),
+      entryId: new Uint8Array(entryIdBytes),
+      batches,
+    };
+    const ok = checkTranscript(t);
+    if (!ok.ok) throw new Error(`the carried transcript is broken at ${ok.at}: ${ok.why}`);
+
+    return {
+      bytes: encodeTranscript(t),
+      hash: transcriptHash(t),
+      ticks: ok.ticks,
+      marks: live,
+      dropped: marks.length - live,
+      throughTick: marks[live - 1].tick,
+    };
   }
 
   close(id) {

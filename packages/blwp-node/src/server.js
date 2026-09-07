@@ -66,7 +66,8 @@ const CORS = {
   // The headers a client actually reads answers out of. Without this a page
   // sees the body and none of the counts.
   'access-control-expose-headers':
-    'x-state, x-ticks, x-transcript-hash, x-checkpoints, x-receipts',
+    'x-state, x-ticks, x-transcript-hash, x-checkpoints, x-receipts, '
+    + 'x-marks, x-dropped, x-through-tick',
 };
 
 const bytes = (res, code, body) => {
@@ -133,6 +134,29 @@ export function serve(db, { port = 0, funded = NOTHING_IS_FUNDED } = {}) {
         if (!funded({ kind: 'entry', contract }))
           return text(res, 402, 'this node stores nothing for an entry nobody has funded');
         return bytes(res, 201, round.enter(contract));
+      }
+
+      // THE CANONICAL TRANSCRIPT (13C), which is not the same object as the
+      // transcript above: that one is everything this node was given, and this
+      // one is only what the committee has carried. A node serving the first
+      // where the second was asked for would be handing over marks four
+      // members never saw.
+      if (req.method === 'GET' && url.pathname === '/canonical') {
+        const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
+        const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
+        let c;
+        try { c = round.canonicalTranscript(rid, eid); }
+        catch (e) { return text(res, 409, e.message); }
+        res.writeHead(200, {
+          'content-type': 'application/octet-stream',
+          'x-transcript-hash': toHex(c.hash),
+          'x-ticks': String(c.ticks),
+          'x-marks': String(c.marks),
+          'x-dropped': String(c.dropped),
+          'x-through-tick': String(c.throughTick),
+          ...CORS,
+        });
+        return res.end(Buffer.from(c.bytes));
       }
 
       if (req.method === 'GET' && url.pathname === '/transcript') {
