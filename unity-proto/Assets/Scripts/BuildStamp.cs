@@ -9,14 +9,19 @@ using UnityEngine;
 /// the loading screen turns that from an argument into a glance.
 ///
 /// The value is written by `BuildWebGL.Run` into `Resources/build.txt` at
-/// build time, from the commit the build was made at. In the editor there is
-/// no such file and it reads "dev", which is the honest answer there.
+/// build time: `0.0.<commits on this branch>`, the shape the owner asked for on
+/// 2026-09-07. It goes up by one per commit, which a hash does not, and
+/// `git rev-list --count` maps it back. The same number is put on the player
+/// version, so the LOADING screen and the SPLASH cannot drift apart.
+///
+/// In the editor there may be no such file, and then it reads "dev", which is
+/// the honest answer there.
 /// </summary>
 public static class BuildStamp
 {
     static string _value;
 
-    /// <summary>The short commit and the build date, or "dev" in the editor.</summary>
+    /// <summary>`0.0.xxx`, or "dev" in an editor with no stamp.</summary>
     public static string Current
     {
         get

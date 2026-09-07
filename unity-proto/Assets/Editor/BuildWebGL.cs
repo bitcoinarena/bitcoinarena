@@ -93,12 +93,32 @@ public static class BuildWebGL
     /// </summary>
     static void StampTheBuild()
     {
-        string sha = "unknown";
+        // 0.0.<commits on this branch>. Asked for in that shape by the owner
+        // 2026-09-07 07:39, and it is a number that goes up by one per commit
+        // rather than a hash nobody can order: 0.0.551 is one build after
+        // 0.0.550, and `git rev-list --count` maps it back to the commit.
+        string count = Git("rev-list --count HEAD");
+        string version = "0.0." + (string.IsNullOrWhiteSpace(count) ? "0" : count);
+
+        string dir = Path.Combine(Application.dataPath, "Resources");
+        Directory.CreateDirectory(dir);
+        // The SPLASH reads this file. The LOADING SCREEN reads the player
+        // version through the template's {{{ PRODUCT_VERSION }}}, so both are
+        // set from the one number here and cannot drift apart.
+        File.WriteAllText(Path.Combine(dir, "build.txt"), version);
+        PlayerSettings.bundleVersion = version;
+        AssetDatabase.Refresh();
+        UnityEngine.Debug.Log($"[build] stamped {version} ({Git("rev-parse --short HEAD")})");
+    }
+
+    /// <summary>One git command, or an empty string if git will not answer.</summary>
+    static string Git(string args)
+    {
         try
         {
             var p = new System.Diagnostics.Process
             {
-                StartInfo = new System.Diagnostics.ProcessStartInfo("git", "rev-parse --short HEAD")
+                StartInfo = new System.Diagnostics.ProcessStartInfo("git", args)
                 {
                     WorkingDirectory = Application.dataPath,
                     RedirectStandardOutput = true,
@@ -107,18 +127,15 @@ public static class BuildWebGL
                 }
             };
             p.Start();
-            sha = p.StandardOutput.ReadToEnd().Trim();
+            string outp = p.StandardOutput.ReadToEnd().Trim();
             p.WaitForExit(4000);
-            if (string.IsNullOrWhiteSpace(sha)) sha = "unknown";
+            return outp;
         }
-        catch (Exception e) { UnityEngine.Debug.LogWarning($"[build] no git stamp: {e.Message}"); }
-
-        string dir = Path.Combine(Application.dataPath, "Resources");
-        Directory.CreateDirectory(dir);
-        File.WriteAllText(Path.Combine(dir, "build.txt"),
-                          $"{sha}  ·  {DateTime.UtcNow:yyyy-MM-dd HH:mm} UTC");
-        AssetDatabase.Refresh();
-        UnityEngine.Debug.Log($"[build] stamped {sha}");
+        catch (Exception e)
+        {
+            UnityEngine.Debug.LogWarning($"[build] no git stamp: {e.Message}");
+            return "";
+        }
     }
 
     public static void Run()

@@ -140,12 +140,12 @@
 
   <div id="boot">
     <div id="title">Bitcoin <span>Logistics</span> War</div>
-    <div id="sub">{{{ PRODUCT_VERSION }}}</div>
+    <div id="sub">build {{{ PRODUCT_VERSION }}}</div>
     <div id="pct">0%</div>
     <div id="track"><div id="bar"></div></div>
-    <div id="stage">Verbindung wird aufgebaut …</div>
-    <div id="note"><span id="total">…</span> werden geladen. Beim ersten Mal dauert es am
-      längsten — danach liegt vieles im Browser-Cache.</div>
+    <div id="stage">Connecting …</div>
+    <div id="note"><span id="total">…</span> to load. The first time is the
+      slowest — after that most of it is in the browser cache.</div>
     <div id="err"></div>
   </div>
 
@@ -170,13 +170,13 @@
     // known: the template cannot see the files it will be shipped beside.
     const TOTAL_MB = '__TOTAL_MB__';
     document.getElementById('total').textContent =
-      TOTAL_MB.indexOf('_') === 0 ? 'Einige Megabyte' : TOTAL_MB + ' MB';
+      TOTAL_MB.indexOf('_') === 0 ? 'A few megabytes' : TOTAL_MB + ' MB';
 
     const STAGES = [
-      [0.00, 'Programm wird geladen …'],
-      [0.35, 'Spieldaten werden geladen …'],
-      [0.80, 'Schlachtfeld wird aufgebaut …'],
-      [0.97, 'Fast fertig …'],
+      [0.00, 'Loading the program …'],
+      [0.35, 'Loading the game data …'],
+      [0.80, 'Building the battlefield …'],
+      [0.97, 'Almost there …'],
     ];
 
     function show(p) {
@@ -222,7 +222,7 @@
 
     const script = document.createElement('script');
     script.src = 'Build/{{{ LOADER_FILENAME }}}';
-    script.onerror = () => fail('Der Loader konnte nicht geladen werden.');
+    script.onerror = () => fail('The loader could not be loaded.');
     script.onload = () => {
       createUnityInstance(canvas, config, show)
         .then(() => {
