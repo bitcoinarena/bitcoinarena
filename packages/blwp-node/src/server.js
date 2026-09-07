@@ -21,6 +21,7 @@ import { toHex } from '../../protocol/src/hash.js';
 import { TYPE_CHECKPOINT } from '../../protocol/src/constants.js';
 import { MAX_INPUT_BATCH_BYTES } from '../../protocol/src/batch.js';
 import { SIGNED_CHECKPOINT_BYTES } from '../../protocol/src/checkpoint.js';
+import { TYPE_CHECKPOINT_RECEIPT } from '../../protocol/src/constants.js';
 import { SIGNED_RECEIPT_BYTES } from '../../protocol/src/receipt.js';
 
 /**
@@ -103,6 +104,23 @@ export function serve(db, { port = 0 } = {}) {
         return res.end(Buffer.from(c.bytes));
       }
 
+      // THE RECEIPTS, beside the marks and in the same shape.
+      //
+      // A client can recompute every mark it ever sent - it made them - but it
+      // cannot rebuild a signature over one. So the receipts are the only part
+      // of its own round it must be able to ASK for, and without this door a
+      // client that reconnected had lost them.
+      if (req.method === 'GET' && url.pathname === '/receipts') {
+        const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
+        const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
+        const r = round.receipts(rid, eid);
+        res.writeHead(200, {
+          'content-type': 'application/octet-stream',
+          'x-receipts': String(r.count),
+        });
+        return res.end(Buffer.from(r.bytes));
+      }
+
       return text(res, 404, 'no such door');
     } catch (e) {
       // The message is the reason - "the round is closed", "no such entry" -
@@ -146,6 +164,10 @@ export function serve(db, { port = 0 } = {}) {
         // connection and no envelope around it.
         const bytes = new Uint8Array(data);
         if (bytes[0] === TYPE_CHECKPOINT) return sock.send(round.checkpoint(bytes));
+        // A RECEIPT COMING IN is a peer offering one it issued - section 10's
+        // gossip. The first byte says so, the same way it says a mark is a
+        // mark, so gossip needs no second port and no envelope.
+        if (bytes[0] === TYPE_CHECKPOINT_RECEIPT) return sock.send(round.takeReceipt(bytes));
         sock.send(String(round.batch(bytes)));
       } catch (e) {
         sock.send('error ' + e.message);

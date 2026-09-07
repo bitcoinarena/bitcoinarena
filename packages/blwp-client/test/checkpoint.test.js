@@ -22,6 +22,7 @@ import { createRequire } from 'node:module';
 import { ed25519 } from '@noble/curves/ed25519.js';
 
 import { openStore } from '../../blwp-node/src/store.js';
+import { encodeRoundContract, encodeEntryContract } from '../../protocol/src/contracts.js';
 import { serve } from '../../blwp-node/src/server.js';
 import { roundId, entryId } from '../../protocol/src/contracts.js';
 import {
@@ -326,4 +327,146 @@ test('re-sending a mark returns the receipt already issued, not a second one', a
       'a repeat was given a fresh time, so the player now has two for one commitment');
     assert.deepEqual(r.checkpointId, first.id);
   } finally { client.close(); await node.close(); }
+});
+
+/**
+ * A CLIENT THAT COMES BACK CAN GET ITS RECEIPTS AGAIN.
+ *
+ * It can rebuild every mark it sent - it made them - but not a signature over
+ * one. Before `/receipts` existed, a dropped socket lost them for good, and a
+ * receipt that cannot be recovered is not evidence of anything later.
+ */
+test('a reconnecting client recovers the same receipts, byte for byte', async () => {
+  const { node, client, rid, eid } = await rig();
+  try {
+    const first = await client.checkpoint(driven(60), { roundId: rid, entryId: eid, tick: 60 });
+    const second = await client.checkpoint(driven(120), { roundId: rid, entryId: eid, tick: 120 });
+    client.close();
+
+    // a NEW client, as a reconnect is: it holds the contract, so it knows the
+    // committee, and it knows nothing else about what it was given
+    const back = new Client({ base: `http://127.0.0.1:${node.port}`, core, sign, verify });
+    back.nodes = [node.round.pubkey];
+    const got = await back.recoverReceipts({ roundId: rid, entryId: eid });
+
+    assert.equal(got.length, 2);
+    assert.deepEqual(got[0].receipt.checkpointId, first.id);
+    assert.deepEqual(got[1].receipt.checkpointId, second.id);
+    assert.equal(got[0].receipt.receivedAtMs, first.receipt.receivedAtMs,
+      'the recovered receipt is not the one that was issued');
+    assert.equal(got[0].bytes.length, SIGNED_RECEIPT_BYTES);
+  } finally { await node.close(); }
+});
+
+/**
+ * GOSSIP ACROSS TWO REAL NODES, over the wire.
+ *
+ * One node takes the mark and receipts it; the other is on the same committee
+ * and is offered that receipt on its own /play socket. It keeps it only after
+ * the three checks, and a client can then recover it from EITHER of them -
+ * which is the point of gossip: the evidence outlives the one connection it
+ * was made on.
+ */
+test('a receipt gossiped to a second node is recoverable from that node too', async () => {
+  const one = await serve(openStore(), { port: 0 });
+  const two = await serve(openStore(), { port: 0 });
+  try {
+    const committee = [one.round.pubkey, two.round.pubkey];
+    const c = { ...contract(), nodes: committee };
+    const e = entryFor(roundId(c));
+
+    // both nodes hold the round and the entry - a committee member has the
+    // contract, which is where it reads the committee from
+    for (const n of [one, two]) {
+      const base = `http://127.0.0.1:${n.port}`;
+      await fetch(`${base}/round`, { method: 'POST', body: encodeRoundContract(c) });
+      await fetch(`${base}/entry`, { method: 'POST', body: encodeEntryContract(e) });
+    }
+
+    const client = new Client({ base: `http://127.0.0.1:${one.port}`, core, sign, verify });
+    client.nodes = committee;
+    await client.connect();
+    const sent = await client.checkpoint(driven(60),
+      { roundId: roundId(c), entryId: entryId(e), tick: 60 });
+    assert.equal(sent.answer, 'receipted');
+    client.close();
+
+    // the mark has to reach the second node before a receipt for it can, or
+    // there is nothing there for the receipt to be about
+    const gossip = new Client({ base: `http://127.0.0.1:${two.port}`, core, sign, verify });
+    gossip.nodes = committee;
+    await gossip.connect();
+    const mine = await gossip.checkpoint(driven(60),
+      { roundId: roundId(c), entryId: entryId(e), tick: 60 });
+    assert.deepEqual(mine.id, sent.id, 'the same mark must have the same id on both nodes');
+
+    // now the first node's receipt is offered to the second
+    const offered = one.round.receiptFor(sent.id);
+    assert.equal(await gossip.send(offered), 'held');
+    assert.equal(two.round.receiptCount(sent.id), 2,
+      'the second node should hold its own and the gossiped one');
+    gossip.close();
+
+    // and a client can recover both from the second node
+    const back = new Client({ base: `http://127.0.0.1:${two.port}`, core, sign, verify });
+    back.nodes = committee;
+    const got = await back.recoverReceipts({ roundId: roundId(c), entryId: entryId(e) });
+    assert.equal(got.length, 2);
+    assert.ok(got.some((g) => toHex(g.bytes) === toHex(offered)),
+      'the gossiped receipt did not come back byte for byte');
+  } finally { await one.close(); await two.close(); }
+});
+
+/**
+ * AND WHAT COMES BACK FROM /receipts IS CHECKED, not taken.
+ *
+ * A recovered receipt is the evidence a player will still be holding at
+ * settlement. A client that verified the ones handed to it live and then
+ * swallowed whatever a reconnect returned would be trusting the node exactly
+ * where it matters most - after the connection it was made on is gone.
+ *
+ * A real node cannot be made to serve a bad one, so this is a stub, the same
+ * way the round-id disagreement is.
+ */
+test('a recovered receipt that does not verify, or is from a stranger, is refused', async () => {
+  const nodeKey = ed25519.utils.randomSecretKey();
+  const nodePubkey = ed25519.getPublicKey(nodeKey);
+  const stranger = ed25519.utils.randomSecretKey();
+
+  let serve139 = null;
+  const stub = createServer((req, res) => {
+    res.writeHead(200, { 'content-type': 'application/octet-stream' });
+    res.end(Buffer.from(serve139));
+  });
+  await new Promise((r) => stub.listen(0, '127.0.0.1', r));
+  const port = stub.address().port;
+
+  const at = (base) => {
+    const c = new Client({ base, core, sign, verify });
+    c.nodes = [nodePubkey];
+    return c;
+  };
+  const where = { roundId: b32(1), entryId: b32(2) };
+
+  try {
+    // 1. the committee's key claimed, signed by somebody else
+    const claimed = { checkpointId: b32(3), receivedAtMs: 1788770000000n, nodePubkey };
+    serve139 = joinSignedReceipt(encodeCheckpointReceipt(claimed),
+                                 ed25519.sign(receiptId(claimed), stranger));
+    await assert.rejects(() => at(`http://127.0.0.1:${port}`).recoverReceipts(where),
+      /does not verify under its own key$/);
+
+    // 2. an honest receipt from somebody who is not on the committee
+    const outsiderKey = ed25519.getPublicKey(stranger);
+    const outsider = { checkpointId: b32(3), receivedAtMs: 1788770000000n, nodePubkey: outsiderKey };
+    serve139 = joinSignedReceipt(encodeCheckpointReceipt(outsider),
+                                 ed25519.sign(receiptId(outsider), stranger));
+    await assert.rejects(() => at(`http://127.0.0.1:${port}`).recoverReceipts(where),
+      /is not on this round's committee$/);
+
+    // 3. and a body that is not a whole number of receipts
+    serve139 = new Uint8Array(200);
+    await assert.rejects(() => at(`http://127.0.0.1:${port}`).recoverReceipts(where),
+      /200 bytes is not a whole number of 139-byte receipts/);
+  } finally { await new Promise((r) => stub.close(r)); }
 });

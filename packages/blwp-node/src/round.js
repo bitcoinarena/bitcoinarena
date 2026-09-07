@@ -18,7 +18,8 @@ import {
   decodeCheckpoint, checkpointId, NO_PREVIOUS, splitSigned,
 } from '../../protocol/src/checkpoint.js';
 import {
-  encodeCheckpointReceipt, receiptId, joinSignedReceipt,
+  encodeCheckpointReceipt, decodeCheckpointReceipt, receiptId,
+  joinSignedReceipt, splitSignedReceipt, SIGNED_RECEIPT_BYTES,
 } from '../../protocol/src/receipt.js';
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { toHex } from '../../protocol/src/hash.js';
@@ -55,7 +56,9 @@ export class Round {
    * encode the same way.
    */
   receiptFor(id) {
-    const kept = this.db.prepare('SELECT bytes FROM receipts WHERE checkpoint_id = ?').get(id);
+    const kept = this.db.prepare(
+      'SELECT bytes FROM receipts WHERE checkpoint_id = ? AND node_pubkey = ?')
+      .get(id, this.identity.pubkey);
     if (kept) return new Uint8Array(kept.bytes);
 
     const r = {
@@ -65,8 +68,98 @@ export class Round {
     };
     const bytes = joinSignedReceipt(
       encodeCheckpointReceipt(r), ed25519.sign(receiptId(r), this.identity.secret));
-    this.db.prepare('INSERT INTO receipts (checkpoint_id, bytes) VALUES (?, ?)').run(id, bytes);
+    this.db.prepare('INSERT INTO receipts (checkpoint_id, node_pubkey, bytes) VALUES (?, ?, ?)')
+      .run(id, this.identity.pubkey, bytes);
     return bytes;
+  }
+
+  /**
+   * A receipt from SOMEBODY ELSE, offered by a peer.
+   *
+   * Section 10's gossip is what makes a player's equivocation surface quickly
+   * rather than at settlement, and section 13C counts a chain as canonical
+   * when it carries receipts from at least five committee nodes - so a node
+   * has to be able to hold receipts it did not issue.
+   *
+   * It is stored only after the same three checks a client makes, and for the
+   * same reason: a receipt is evidence, and evidence taken on trust is not
+   * evidence. The mark must be one this node holds, or there is nothing for
+   * the receipt to be about and no contract to read a committee from; the
+   * signer must be on THAT round's committee, which the node reads off the
+   * round contract it already stores; and the signature must verify.
+   *
+   * A repeat is byte-identical and a no-op. A DIFFERENT receipt from the same
+   * member for the same mark is that member contradicting itself, and it is
+   * refused by name rather than stored beside the first.
+   */
+  takeReceipt(bytes) {
+    if (bytes.length !== SIGNED_RECEIPT_BYTES)
+      throw new Error(`a signed receipt is ${SIGNED_RECEIPT_BYTES} bytes, got ${bytes.length}`);
+    const { body, signature } = splitSignedReceipt(bytes);
+    const r = decodeCheckpointReceipt(body);
+
+    const mark = this.db.prepare(
+      'SELECT round_id FROM checkpoints WHERE checkpoint_id = ?').get(r.checkpointId);
+    if (!mark) throw new Error('a receipt for a mark this node has not got');
+
+    const round = this.get(new Uint8Array(mark.round_id));
+    const committee = decodeRoundContract(new Uint8Array(round.contract)).nodes;
+    if (!committee.some((n) => same(n, r.nodePubkey)))
+      throw new Error(
+        `${toHex(r.nodePubkey)} is not on this round's committee`);
+
+    let ok = false;
+    try { ok = ed25519.verify(signature, receiptId(r), r.nodePubkey); } catch { ok = false; }
+    if (!ok) throw new Error(`the receipt from ${toHex(r.nodePubkey)} does not verify`);
+
+    const held = this.db.prepare(
+      'SELECT bytes FROM receipts WHERE checkpoint_id = ? AND node_pubkey = ?')
+      .get(r.checkpointId, r.nodePubkey);
+    if (held) {
+      if (same(new Uint8Array(held.bytes), bytes)) return 'held';
+      throw new Error(
+        `${toHex(r.nodePubkey)} has already receipted ${toHex(r.checkpointId)} differently`);
+    }
+
+    this.db.prepare('INSERT INTO receipts (checkpoint_id, node_pubkey, bytes) VALUES (?, ?, ?)')
+      .run(r.checkpointId, r.nodePubkey, bytes);
+    return 'held';
+  }
+
+  /**
+   * Every receipt this node holds for an entry's marks, in tick order and then
+   * by signer, as fixed-size records back to back - the same shape
+   * `checkpoints` comes back in, so a reader cuts them apart without a framing
+   * rule to agree on first.
+   *
+   * This is what a reconnecting client asks for. Its receipts are the only
+   * thing it cannot rebuild by itself: it can recompute every mark it sent,
+   * but not a signature over one.
+   */
+  receipts(roundId, entryId) {
+    const rows = this.db.prepare(
+      'SELECT r.bytes bytes FROM receipts r JOIN checkpoints c '
+      + 'ON c.checkpoint_id = r.checkpoint_id '
+      + 'WHERE c.round_id = ? AND c.entry_id = ? ORDER BY c.tick, r.node_pubkey')
+      .all(roundId, entryId);
+    const out = new Uint8Array(rows.length * SIGNED_RECEIPT_BYTES);
+    rows.forEach((row, i) => out.set(new Uint8Array(row.bytes), i * SIGNED_RECEIPT_BYTES));
+    return { count: rows.length, bytes: out };
+  }
+
+  /**
+   * How many DIFFERENT committee members have receipted a mark.
+   *
+   * Section 13C: the canonical transcript is the longest chain carrying
+   * receipts from at least five committee nodes. This counts; it does not
+   * decide. Whether five is enough for a given round is the committee's
+   * business and needs the other six nodes to exist, which is the next
+   * sub-item and not this one.
+   */
+  receiptCount(checkpointId) {
+    return this.db.prepare(
+      'SELECT COUNT(DISTINCT node_pubkey) n FROM receipts WHERE checkpoint_id = ?')
+      .get(checkpointId).n;
   }
 
   /**

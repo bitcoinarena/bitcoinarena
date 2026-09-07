@@ -227,5 +227,40 @@ export class Client {
     return r;
   }
 
+  /**
+   * The receipts this node holds for a round, checked the same way as the ones
+   * that came back live.
+   *
+   * This is what a client asks for after a reconnect. It can recompute every
+   * mark it ever sent, because it built them; it cannot rebuild a signature
+   * over one, so the receipts are the only part of its own round it has to
+   * fetch. Verified rather than trusted for the same reason as before: a
+   * receipt taken on a node's word is not evidence of anything.
+   */
+  async recoverReceipts({ roundId, entryId }) {
+    const r = await fetch(
+      `${this.base}/receipts?round=${toHex(roundId)}&entry=${toHex(entryId)}`);
+    if (!r.ok) throw new Error(`the node refused the receipts: ${(await r.text()).trim()}`);
+    const bytes = new Uint8Array(await r.arrayBuffer());
+    if (bytes.length % SIGNED_RECEIPT_BYTES !== 0)
+      throw new Error(
+        `${bytes.length} bytes is not a whole number of ${SIGNED_RECEIPT_BYTES}-byte receipts`);
+
+    const out = [];
+    for (let at = 0; at < bytes.length; at += SIGNED_RECEIPT_BYTES) {
+      const one = bytes.subarray(at, at + SIGNED_RECEIPT_BYTES);
+      const { body, signature } = splitSignedReceipt(one);
+      const rec = decodeCheckpointReceipt(body);
+      if (!this.nodes.some((n) => toHex(n) === toHex(rec.nodePubkey)))
+        throw new Error(
+          `a receipt signed by ${toHex(rec.nodePubkey)}, which is not on this round's committee`);
+      if (!this.verify(signature, receiptId(rec), rec.nodePubkey))
+        throw new Error(
+          `the receipt from ${toHex(rec.nodePubkey)} does not verify under its own key`);
+      out.push({ receipt: rec, bytes: one });
+    }
+    return out;
+  }
+
   close() { if (this.sock) this.sock.close(); }
 }

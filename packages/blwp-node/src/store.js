@@ -95,10 +95,24 @@ export function openStore(path = ':memory:') {
     -- that state at approximately that real time. So the receipt is stored
     -- once and re-served, and the key is the checkpoint it answers rather than
     -- (round, entry, tick), because the mark's own id is what it commits to.
+    --
+    -- AND THE SIGNER IS PART OF THE KEY, because gossip puts other nodes'
+    -- receipts in here too. Section 13C counts a chain as canonical when it
+    -- carries receipts from at least five committee nodes, so the same mark
+    -- must be able to hold seven of them - one per member - while a second,
+    -- different receipt from the SAME member for that mark is a node
+    -- contradicting itself and is refused by name.
     CREATE TABLE IF NOT EXISTS receipts (
-      checkpoint_id BLOB PRIMARY KEY,
-      bytes         BLOB NOT NULL
+      checkpoint_id BLOB NOT NULL,
+      node_pubkey   BLOB NOT NULL,
+      bytes         BLOB NOT NULL,
+      PRIMARY KEY (checkpoint_id, node_pubkey)
     );
+
+    -- A mark is looked up by its own id when a receipt arrives for it - from
+    -- this node or from a peer - and the table above is keyed by
+    -- (round, entry, tick), which cannot answer that question.
+    CREATE INDEX IF NOT EXISTS checkpoints_by_id ON checkpoints (checkpoint_id);
 
     -- THIS NODE'S OWN KEY. One row, and the CHECK is what makes it one: a
     -- daemon with two identities would sign some receipts with each and a

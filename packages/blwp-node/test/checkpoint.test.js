@@ -17,7 +17,8 @@ import { mkdtempSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
-  decodeCheckpointReceipt, receiptId, splitSignedReceipt, SIGNED_RECEIPT_BYTES,
+  decodeCheckpointReceipt, encodeCheckpointReceipt, receiptId, joinSignedReceipt,
+  splitSignedReceipt, SIGNED_RECEIPT_BYTES,
 } from '../../protocol/src/receipt.js';
 import { encodeInputBatch, batchId } from '../../protocol/src/batch.js';
 import { GENESIS } from '../../protocol/src/transcript.js';
@@ -55,9 +56,9 @@ const sign = (c, key = session) =>
  * the rig sends real inputs and the marks name the real batch, which is what
  * a client does.
  */
-function rig() {
-  const r = new Round(openStore(), () => 1234);
-  const rid = r.open(contract());
+function rig({ nodes, round } = {}) {
+  const r = round || new Round(openStore(), () => 1234);
+  const rid = r.open(nodes ? { ...contract(), nodes } : contract());
   const eid = r.enter(entryFor(rid));
 
   const b = {
@@ -305,4 +306,122 @@ test('the node keeps its identity across a reopen of the same store', () => {
   // and a different store is a different node, or every daemon would be one
   const elsewhere = new Round(openStore(join(mkdtempSync(join(tmpdir(), 'blwp-')), 'node.db')));
   assert.notDeepEqual(elsewhere.pubkey, key, 'two separate nodes share one identity');
+});
+
+/* ------------------------------------------------------------ the receipts */
+
+/**
+ * A RECONNECTING CLIENT CAN GET ITS RECEIPTS BACK.
+ *
+ * It can recompute every mark it ever sent - it built them - but it cannot
+ * rebuild a signature over one. The receipts are the only part of its own
+ * round it has to be able to ask for, and until this door existed a client
+ * that dropped its socket had lost them for good.
+ */
+test('the receipts come back for an entry, in tick order and the same bytes', () => {
+  const { r, rid, eid, send, last } = rig();
+  const one = send(60, 0x5a);
+  const id60 = checkpointId(last());
+  const two = send(120, 0x5b);
+  const id120 = checkpointId(last());
+
+  const got = r.receipts(rid, eid);
+  assert.equal(got.count, 2);
+  assert.equal(got.bytes.length, 2 * SIGNED_RECEIPT_BYTES);
+  assert.deepEqual(got.bytes.subarray(0, SIGNED_RECEIPT_BYTES), one,
+    'the first receipt back is not the one that was issued');
+  assert.deepEqual(got.bytes.subarray(SIGNED_RECEIPT_BYTES), two,
+    'the second receipt back is not the one that was issued');
+
+  // and in TICK order, which is the order they were issued in
+  const at = (i) => decodeCheckpointReceipt(
+    splitSignedReceipt(got.bytes.subarray(i * SIGNED_RECEIPT_BYTES,
+                                          (i + 1) * SIGNED_RECEIPT_BYTES)).body);
+  assert.deepEqual(at(0).checkpointId, id60);
+  assert.deepEqual(at(1).checkpointId, id120);
+});
+
+/**
+ * GOSSIP: a receipt another node issued, checked before it is kept.
+ *
+ * Section 10 has committee members exchanging what they receipted so a
+ * player's equivocation surfaces quickly rather than at settlement. A node
+ * that stored what a peer said without checking would be repeating a rumour,
+ * so the same three checks the client makes are made here - and the committee
+ * is read off the round contract this node already holds, not off the message.
+ */
+test('a peer\'s receipt is kept only after the mark, the committee and the signature check out', () => {
+  const peer = ed25519.utils.randomSecretKey();
+  const peerKey = ed25519.getPublicKey(peer);
+  const stranger = ed25519.utils.randomSecretKey();
+
+  const { r, rid, eid, send, last } = rig({ nodes: [b32(4), peerKey] });
+  send(60, 0x5a);
+  const markId = checkpointId(last());
+
+  const issue = (id, key, when = 1788770000000n, claimed = null) => {
+    const rec = { checkpointId: id, receivedAtMs: when, nodePubkey: claimed || ed25519.getPublicKey(key) };
+    return joinSignedReceipt(encodeCheckpointReceipt(rec), ed25519.sign(receiptId(rec), key));
+  };
+
+  // the peer is on the committee and signs its own receipt: kept
+  assert.equal(r.takeReceipt(issue(markId, peer)), 'held');
+  assert.equal(r.receiptCount(markId), 2, 'this node\'s own and the peer\'s');
+
+  // the same one again is a no-op, not a second row
+  assert.equal(r.takeReceipt(issue(markId, peer)), 'held');
+  assert.equal(r.receiptCount(markId), 2);
+
+  // a stranger's, correctly signed, is refused by name
+  assert.throws(() => r.takeReceipt(issue(markId, stranger)),
+    /is not on this round's committee$/);
+
+  // the peer's key claimed, signed by somebody else
+  assert.throws(() => r.takeReceipt(issue(markId, stranger, 1788770000000n, peerKey)),
+    /does not verify$/);
+
+  // a receipt for a mark this node has never seen
+  assert.throws(() => r.takeReceipt(issue(b32(0x77), peer)),
+    /a receipt for a mark this node has not got/);
+
+  // and the peer contradicting itself: same mark, same key, a different time
+  assert.throws(() => r.takeReceipt(issue(markId, peer, 1788779999999n)),
+    /has already receipted .* differently$/);
+  assert.equal(r.receiptCount(markId), 2, 'nothing was stored beside the first');
+});
+
+/**
+ * FIVE OF SEVEN, counted rather than decided.
+ *
+ * Section 13C: the canonical transcript is the longest checkpoint chain that
+ * carries receipts from at least five committee nodes. What one node with
+ * gossip can prove is the COUNT - how many different members have receipted a
+ * mark - and that is measured here with a seven-member committee. Whether a
+ * count is enough, and what happens when it is not, is the committee's rule
+ * and needs the other six daemons to exist; it is not invented here.
+ */
+test('a mark can carry a receipt from every member, and the count is what 13C asks for', () => {
+  const members = Array.from({ length: 6 }, () => ed25519.utils.randomSecretKey());
+  const keys = members.map((k) => ed25519.getPublicKey(k));
+
+  // seven: this node plus six peers
+  const store = openStore();
+  const seat = new Round(store);
+  const { r, send, last } = rig({ nodes: [seat.pubkey, ...keys], round: seat });
+  send(60, 0x5a);
+  const markId = checkpointId(last());
+
+  assert.equal(r.receiptCount(markId), 1, 'only the node that took the mark has receipted it');
+
+  members.slice(0, 4).forEach((k) => {
+    const rec = { checkpointId: markId, receivedAtMs: 1788770000000n, nodePubkey: ed25519.getPublicKey(k) };
+    r.takeReceipt(joinSignedReceipt(encodeCheckpointReceipt(rec), ed25519.sign(receiptId(rec), k)));
+  });
+  assert.equal(r.receiptCount(markId), 5, 'five of seven, which is 13C\'s threshold');
+
+  members.slice(4).forEach((k) => {
+    const rec = { checkpointId: markId, receivedAtMs: 1788770000000n, nodePubkey: ed25519.getPublicKey(k) };
+    r.takeReceipt(joinSignedReceipt(encodeCheckpointReceipt(rec), ed25519.sign(receiptId(rec), k)));
+  });
+  assert.equal(r.receiptCount(markId), 7, 'a mark can carry one from every member');
 });
