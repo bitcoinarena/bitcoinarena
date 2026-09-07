@@ -1,0 +1,199 @@
+// TWO PROVIDERS, OR NO ANSWER.
+//
+// Section 25.1 is normative about where a client's chain comes from: "block
+// headers from several independent sources, most work wins", and then "a list
+// provider can OMIT but not FORGE, and omission is answered by asking a second
+// one. This is the difference between using a provider and trusting one."
+//
+// Forging is already impossible - a header that does not follow the one before
+// it is not a chain, and the work is arithmetic over bytes nobody chooses.
+// Omission is not: a provider that leaves out the block a bond is in looks
+// exactly like one that never had it. So the thing measured here is what a
+// client does with SEVERAL answers, including answers that conflict.
+//
+// REAL HTTP, LOCAL ONLY. The providers are `node:http` servers on 127.0.0.1,
+// the way the receipt tests stub a lying node. Nothing in this file reaches the
+// internet, and the headers it serves are real mainnet bytes written down once.
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { createServer } from 'node:http';
+
+import { fromHex, toHex } from '../../protocol/src/hash.js';
+import { blockHashOf, workOf, HEADER_BYTES } from '../../protocol/src/chain.js';
+import { hash256 } from '../../protocol/src/tx.js';
+import { blockOf } from '../../protocol/tools/bond.js';
+import { agreedChain, headersOverHttp } from '../src/headers.js';
+
+// mainnet 499998, 499999 and 500000, fetched once and written down. Each names
+// the one before it, which is the only thing that makes three headers a chain.
+const MAINNET = [
+  '00000020c61dd21dd5f1c3d2e556d83f74ece599a256f658947434000000000000000000'
+  + 'c11119defe5057e0b57a56e02ed4249746085414f4111daeeb7838a079aaf843bf09385a'
+  + '45960018151b5421',
+  '00000020ecf348128755dbeea5deb8eddf64566d9d4e59bc65d485000000000000000000'
+  + '901f0d92a66ee7dcefd02fa282ca63ce85288bab628253da31ef259b24abe8a0470a385a'
+  + '45960018e8d672f8',
+  '000000201929eb850a74427d0440cf6b518308837566cd6d0662790000000000000000001f'
+  + '6231ed3de07345b607ec2a39b2d01bec2fe10dfb7f516ba4958a42691c95316d0a385a45'
+  + '9600185599fc5c',
+].map(fromHex);
+
+/** A provider that serves headers back to back, as a real one would. */
+async function serving(headers) {
+  const body = Buffer.concat(headers.map((h) => Buffer.from(h)));
+  const s = createServer((req, res) => {
+    res.writeHead(200, { 'content-type': 'application/octet-stream' });
+    res.end(body);
+  });
+  await new Promise((r) => s.listen(0, '127.0.0.1', r));
+  const url = `http://127.0.0.1:${s.address().port}/`;
+  return { server: s, url, bytes: body.length, get: () => headersOverHttp(url) };
+}
+
+/** A linked run of synthetic headers, for the cases mainnet cannot supply. */
+function run(n, { previous = new Uint8Array(32), bits = [0x17, 0x19, 0x60, 0x45], seed = 1 } = {}) {
+  const out = [];
+  let prev = previous;
+  for (let i = 0; i < n; i++) {
+    const { header } = blockOf(hash256, [new Uint8Array(32).fill(seed + i)], { previous: prev, bits });
+    out.push(header);
+    prev = blockHashOf(header);
+  }
+  return out;
+}
+
+test('two providers that agree give a chain, and it is the real one', async () => {
+  const a = await serving(MAINNET);
+  const b = await serving(MAINNET);
+  try {
+    assert.equal(a.bytes, 3 * HEADER_BYTES);
+    const seen = await agreedChain([a.get, b.get]);
+    assert.equal(seen.ok, true, seen.why);
+    assert.equal(seen.headers.length, 3);
+    assert.equal(seen.agreed, 2);
+    assert.deepEqual(seen.refused, []);
+    // the tip is block 500000, and the work is the sum of three real headers
+    assert.equal(toHex(blockHashOf(seen.headers[2]).reverse()),
+      '00000000000000000024fb37364cbf81fd49cc2d51c09c75c35433c3a1945d04');
+    assert.equal(seen.work, MAINNET.reduce((w, h) => w + workOf(h), 0n));
+  } finally { a.server.close(); b.server.close(); }
+});
+
+/**
+ * OMISSION IS THE EXPECTED CASE, not a disagreement. A provider that is behind,
+ * or that leaves blocks out, has said nothing untrue - it has said less - and
+ * the one with more work simply carries it. Refusing here would mean a client
+ * stopped whenever one of its sources lagged, which is every day.
+ */
+test('a provider that leaves blocks out is carried, not refused', async () => {
+  const whole = await serving(MAINNET);
+  const short = await serving(MAINNET.slice(0, 2));
+  try {
+    const seen = await agreedChain([short.get, whole.get]);
+    assert.equal(seen.ok, true, seen.why);
+    assert.equal(seen.headers.length, 3);
+    assert.equal(seen.from, 1);
+    assert.equal(seen.agreed, 2);
+  } finally { whole.server.close(); short.server.close(); }
+});
+
+/**
+ * A FORK IS REFUSED RATHER THAN RESOLVED. Most work is Bitcoin's rule for a
+ * node holding the whole chain; here two providers forking means at least one
+ * is lying or broken, and taking the heavier one would be guessing which.
+ */
+test('providers that fork are refused, and the stray block is named', async () => {
+  const left = run(3, { seed: 1 });
+  const right = [left[0], ...run(2, { previous: blockHashOf(left[0]), seed: 90 })];
+  const a = await serving(left);
+  const b = await serving(right);
+  try {
+    const seen = await agreedChain([a.get, b.get]);
+    assert.equal(seen.ok, false);
+    assert.match(seen.why, /do not agree on the chain/);
+    // the named block is one the winner does not hold
+    const winner = new Set(left.concat(right).map((h) => toHex(blockHashOf(h))));
+    assert.ok(winner.has(seen.why.split(': ')[1].split(' ')[0]));
+  } finally { a.server.close(); b.server.close(); }
+});
+
+/**
+ * ONE SOURCE IS NOT A SOURCE. Not because it is probably lying, but because
+ * nothing it says can be weighed: a short chain from one provider and a short
+ * chain from a provider that is hiding a block are the same bytes.
+ */
+test('one provider is refused however good the chain looks', async () => {
+  const only = await serving(MAINNET);
+  try {
+    // AND NOBODY IS ASKED. A list too short to weigh is refused before a
+    // request goes out - measured after a mutant survived on the verdict
+    // alone, because the later count refuses it too. Asking anyway would tell
+    // a provider which round a player is looking at, for an answer that was
+    // never going to be used.
+    let calls = 0;
+    const counted = () => { calls++; return only.get(); };
+    const alone = await agreedChain([counted]);
+    assert.equal(alone.ok, false);
+    assert.match(alone.why, /1 providers is fewer than the 2 it takes/);
+    assert.equal(calls, 0);
+
+    // and the same chain offered by two is fine, so it is the count that
+    // decides and not the chain
+    const twice = await agreedChain([only.get, only.get]);
+    assert.equal(twice.ok, true, twice.why);
+  } finally { only.server.close(); }
+});
+
+test('a chain that does not link is discarded, and it is named', async () => {
+  const good = await serving(MAINNET);
+  const broken = await serving([MAINNET[2], MAINNET[0], MAINNET[1]]);
+  const alsoGood = await serving(MAINNET);
+  try {
+    // two good and one broken: the broken one is named and the answer stands
+    const seen = await agreedChain([good.get, broken.get, alsoGood.get]);
+    assert.equal(seen.ok, true, seen.why);
+    assert.equal(seen.agreed, 2);
+    assert.equal(seen.refused.length, 1);
+    assert.match(seen.refused[0], /provider 1: this header does not follow the one before it/);
+
+    // one good and one broken is one source, and one source is refused
+    const no = await agreedChain([good.get, broken.get]);
+    assert.equal(no.ok, false);
+    assert.match(no.why, /only 1 of 2 providers gave a chain/);
+    assert.match(no.refused, /does not follow the one before it/);
+  } finally { good.server.close(); broken.server.close(); alsoGood.server.close(); }
+});
+
+test('a provider that errors or never answers is counted, not waited for', async () => {
+  const good = await serving(MAINNET);
+  const alsoGood = await serving(MAINNET);
+  const angry = createServer((req, res) => { res.writeHead(500); res.end('no'); });
+  await new Promise((r) => angry.listen(0, '127.0.0.1', r));
+  const angryUrl = `http://127.0.0.1:${angry.address().port}/`;
+  const silent = () => new Promise(() => {});          // answers never
+  try {
+    const seen = await agreedChain(
+      [good.get, () => headersOverHttp(angryUrl), silent, alsoGood.get],
+      { timeoutMs: 50 });
+    assert.equal(seen.ok, true, seen.why);
+    assert.equal(seen.agreed, 2);
+    assert.equal(seen.refused.length, 2);
+    assert.match(seen.refused[0], /provider 1: the provider answered 500/);
+    assert.match(seen.refused[1], /provider 2: no answer in 50 ms/);
+  } finally { good.server.close(); alsoGood.server.close(); angry.close(); }
+});
+
+test('bytes that are not whole headers are not headers', async () => {
+  const ragged = createServer((req, res) => {
+    res.writeHead(200, { 'content-type': 'application/octet-stream' });
+    res.end(Buffer.alloc(120));
+  });
+  await new Promise((r) => ragged.listen(0, '127.0.0.1', r));
+  const url = `http://127.0.0.1:${ragged.address().port}/`;
+  try {
+    await assert.rejects(headersOverHttp(url), /120 bytes is not a whole number of headers/);
+    const seen = await agreedChain([() => headersOverHttp(url), () => headersOverHttp(url)]);
+    assert.equal(seen.ok, false);
+    assert.match(seen.why, /only 0 of 2 providers gave a chain/);
+  } finally { ragged.close(); }
+});
