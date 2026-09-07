@@ -114,7 +114,8 @@ test('a node is reached because a transaction says where it is', async () => {
     assert.equal(seen.ok, true, seen.why);
     assert.equal(seen.endpoint, endpoint);
 
-    const client = await Client.at(discovery, { core, sign, verify, contract: c });
+    const client = await Client.at(discovery,
+      { core, sign, verify, contract: c, roundIdGiven: roundId(c) });
     assert.equal(client.base, `http://127.0.0.1:${node.port}`);
     assert.notEqual(client.base, DECOY);
 
@@ -148,7 +149,8 @@ test('a proven node that is not on this round s committee is refused at the door
     // and this round's committee is somebody else
     const c = contract([operatorPubkey]);
     await assert.rejects(
-      Client.at({ ...discovery, committee: undefined }, { core, sign, verify, contract: c }),
+      Client.at({ ...discovery, committee: undefined },
+        { core, sign, verify, contract: c, roundIdGiven: roundId(c) }),
       new RegExp(`${toHex(strangerPubkey)}, which is not on this round's committee`));
 
     // NOTHING REACHED THEM. Not a round, not an entry, not a tick - the node
@@ -177,12 +179,14 @@ test('an advertisement not signed by the node it names is refused', async () => 
     bondTransaction(a),                                    // 64 zero bytes
   ]) {
     await assert.rejects(
-      Client.at(chainWith(bad), { core, sign, verify, contract: c }),
+      Client.at(chainWith(bad),
+        { core, sign, verify, contract: c, roundIdGiven: roundId(c) }),
       /is not signed by the node it names/);
   }
 
   // and the honest one, for contrast, resolves
-  const good = await Client.at(chainWith(bondFor(a)), { core, sign, verify, contract: c });
+  const good = await Client.at(chainWith(bondFor(a)),
+    { core, sign, verify, contract: c, roundIdGiven: roundId(c) });
   assert.equal(good.base, 'http://127.0.0.1:9999');
 });
 
@@ -205,7 +209,8 @@ test('an endpoint that is not a secure socket address never becomes the base', a
     assert.equal(isSocketAddress(endpoint), false, endpoint);
     const a = advertFor(endpoint);
     await assert.rejects(
-      Client.at(chainWith(bondFor(a)), { core, sign, verify, contract: c }),
+      Client.at(chainWith(bondFor(a)),
+        { core, sign, verify, contract: c, roundIdGiven: roundId(c) }),
       /is not a secure socket address/, endpoint);
   }
 
@@ -216,7 +221,7 @@ test('an endpoint that is not a secure socket address never becomes the base', a
   assert.equal(isSocketAddress('ws://localhost:8080'), true);
 
   const fine = await Client.at(chainWith(bondFor(advertFor('wss://node.example:443'))),
-    { core, sign, verify, contract: c });
+    { core, sign, verify, contract: c, roundIdGiven: roundId(c) });
   assert.equal(fine.base, 'https://node.example:443');
 });
 
@@ -235,7 +240,8 @@ test('a page that swaps the endpoint is refused by name and reaches nothing', as
   assert.match(no.why, /commits to a different advertisement/);
 
   await assert.rejects(
-    Client.at({ ...discovery, signedAdvert: courier(swapped) }, { core, sign, verify, contract: c }),
+    Client.at({ ...discovery, signedAdvert: courier(swapped) },
+      { core, sign, verify, contract: c, roundIdGiven: roundId(c) }),
     /no proven endpoint: the bond output commits to a different advertisement/);
 
   // the honest body, carried by the same page, is taken
@@ -271,6 +277,75 @@ test('there is no fallback: without a proof there is no address', () => {
   assert.equal(globalThis.BLWP_NODE, DECOY);
   assert.throws(() => endpointFor({ ...chainWith(transaction), chains: [] }),
     /no proven endpoint/);
+});
+
+/**
+ * WHICH ROUND, AND WHO SAYS SO.
+ *
+ * The committee check is circular without this. The page writes the contract,
+ * so the page writes `nodes`, so the page picks the committee that its own
+ * advertisement then satisfies - and it satisfies it honestly, with a real
+ * bond, a real merkle proof and a real signature. Every check in this file
+ * passes. What does not pass is the arithmetic: change one node in that list
+ * and the contract hashes to a different round than the one the player was
+ * sent to.
+ *
+ * Section 25.1 step 1 is "a link, QR, copied round_id - carries nothing", and
+ * carrying nothing is exactly why it is enough: every id here is the tagged
+ * hash OF the object it names.
+ */
+test('a contract that is not the round the player was given is refused', async () => {
+  // The round the player was invited to: a committee that is not the page's.
+  const honest = contract([b32(0x0e), b32(0x0f)]);
+  const invited = roundId(honest);
+
+  // The page writes its own round instead, naming its own node - which has a
+  // real bond, a real proof and a real signature, and would otherwise pass.
+  const theirs = await serve(openStore(), { port: 0, ...FUNDED });
+  try {
+    const forged = contract([operatorPubkey]);
+    const discovery = chainWith(bondFor(advertFor(`ws://127.0.0.1:${theirs.port}`)));
+
+    // the advertisement is beyond reproach against the page's own contract
+    assert.equal(reach(discovery).ok, true);
+
+    await assert.rejects(
+      Client.at(discovery,
+        { core, sign, verify, contract: forged, roundIdGiven: invited }),
+      new RegExp(`the page offered round ${toHex(roundId(forged))}, `
+        + `which is not the round ${toHex(invited)} you were given`));
+
+    // NOTHING RAN. No openRound, no socket - the node is asked about both
+    // rounds and has never heard of either.
+    for (const id of [roundId(forged), invited]) {
+      const r = await fetch(`http://127.0.0.1:${theirs.port}/round?id=${toHex(id)}`);
+      assert.equal(r.status, 404);
+    }
+    const t = await fetch(`http://127.0.0.1:${theirs.port}/transcript`
+      + `?round=${toHex(roundId(forged))}&entry=${toHex(b32(5))}`);
+    assert.equal(t.headers.get('x-ticks'), '0');
+    assert.deepEqual(decodeTranscript(new Uint8Array(await t.arrayBuffer())).batches, []);
+  } finally { await theirs.close(); }
+});
+
+test('a player who arrived with no round id has nothing to check, and is refused', async () => {
+  const c = contract([operatorPubkey]);
+  const discovery = chainWith(bondFor(advertFor('wss://node.example:443')));
+  for (const given of [undefined, null, b32(7).slice(0, 31), toHex(roundId(c))]) {
+    await assert.rejects(
+      Client.at(discovery, { core, sign, verify, contract: c, roundIdGiven: given }),
+      /nothing to check the page's contract against/, String(given));
+  }
+
+  // AND THE WRONG ROUND IS THE ANSWER GIVEN, even when the discovery is broken
+  // too. Not an ordering claim about the resolution - `reach` is pure, sends
+  // nothing, and moving it either side of this is unobservable - but about
+  // which refusal reaches the player: "you are not on the round you were sent
+  // to" is the one they can act on, and a chain complaint would bury it.
+  await assert.rejects(
+    Client.at({ ...discovery, chains: [] },
+      { core, sign, verify, contract: c, roundIdGiven: roundId(contract([b32(0x0e)])) }),
+    /which is not the round/);
 });
 
 /**

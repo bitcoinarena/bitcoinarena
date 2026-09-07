@@ -257,6 +257,18 @@ mergeInto(LibraryManager.library, {
       var contract = (typeof BLWP_ROUND !== 'undefined') ? BLWP_ROUND : null;
       var seat = (typeof BLWP_ENTRY !== 'undefined') ? BLWP_ENTRY : null;
       if (!contract || !seat) throw new Error('the page did not say which round to play');
+
+      // THE ROUND THE PLAYER WAS GIVEN, off the address bar and not out of the
+      // page's own script. Section 25.1 step 1 is "a link, QR, copied round_id"
+      // - it comes from whoever invited the player, and it is the one thing in
+      // this whole path that the page did not write. `Client.at` refuses unless
+      // BLWP_ROUND hashes to it, which is what stops a page naming its own
+      // nodes as the committee and then satisfying its own choice.
+      var given = null;
+      try {
+        var q = new URLSearchParams(window.location.search).get('round');
+        if (q) given = BLWPCLIENT.fromHex(q);
+      } catch (e) { given = null; }
       var entry = Object.assign({}, seat, {
         roundId: C.roundId(contract), sessionPubkey: net.sessionPubkey,
       });
@@ -277,7 +289,7 @@ mergeInto(LibraryManager.library, {
       // receipt refusing it is a round trip too late to take any of it back.
       return C.Client.at(blwpDiscovery(), {
         core: { hash: function (st) { return b.core.hash(st); } },
-        sign: signer, verify: verify, contract: contract,
+        sign: signer, verify: verify, contract: contract, roundIdGiven: given,
       }).then(function (client) {
         net.client = client;
         return net.opened(contract, entry);

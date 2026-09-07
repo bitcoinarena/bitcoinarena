@@ -136,9 +136,35 @@ export class Client {
    * the node's own fixtures talk to a process on localhost that has no bond
    * and never will - and a test that wants the real door calls this one.
    */
-  static async at(discovery, { core, sign, verify, contract }) {
+  static async at(discovery, { core, sign, verify, contract, roundIdGiven }) {
     if (!contract || !contract.nodes)
       throw new Error('no round contract, so there is no committee to check against');
+
+    // WHICH ROUND, AND WHO SAYS SO. This is checked before anything else,
+    // because everything else is checked AGAINST it.
+    //
+    // Section 25.1 step 1 is "a link, QR, copied round_id - carries nothing",
+    // and the "carries nothing" is the point: the id is all the player has,
+    // and it is enough, because every id in this protocol is the tagged hash
+    // OF the object. So the contract the page hands over must hash to the id
+    // the player was given, or it is a different round.
+    //
+    // Without this the committee check below is circular. The page writes the
+    // contract, so the page writes `nodes`, so the page chooses the committee
+    // its own advertisement then satisfies - with a real bond, a real merkle
+    // proof and a real signature, every one of which would pass. Binding the
+    // id costs one hash and makes the whole door mean something: change a
+    // single node in that list and the contract hashes to something else.
+    //
+    // Required, not optional. A player who arrived with no id has nothing to
+    // check and there is no safe way to guess one.
+    if (!(roundIdGiven instanceof Uint8Array) || roundIdGiven.length !== 32)
+      throw new Error('no round id from the player, so there is nothing to '
+        + 'check the page\'s contract against');
+    const named = roundId(contract);
+    if (toHex(named) !== toHex(roundIdGiven))
+      throw new Error(`the page offered round ${toHex(named)}, which is not `
+        + `the round ${toHex(roundIdGiven)} you were given`);
 
     const seen = reach({ ...discovery, committee: contract.nodes });
     if (!seen.ok) throw new Error(`no proven endpoint: ${seen.why}`);
