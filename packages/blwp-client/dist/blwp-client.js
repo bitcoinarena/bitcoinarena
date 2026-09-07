@@ -438,6 +438,19 @@ const TYPE_CHECKPOINT_RECEIPT = 0x0a;
  */
 const TYPE_OBJECTION = 0x0b;
 
+/**
+ * 5A.3B's fraud proof. Same story as the objection: the spec names the
+ * artifact - "the two contradicting signatures, or the transcript + receipts
+ * + replay, or the payout table + its inputs" - and reserves neither a type
+ * nor a tag, so both are the next free number here.
+ *
+ * It needs its own tag for a reason step 4 makes concrete: the slashing
+ * transaction carries `H(fraud_proof)` in an OP_RETURN, so that hash is what
+ * a stranger re-derives years later to check a spend was justified. A digest
+ * that could collide with some other object's is a slash nobody can audit.
+ */
+const TYPE_SLASH_PROOF = 0x0c;
+
 const TAG = {
   roundContract: 'BLWP/v1/RoundContract',
   entryContract: 'BLWP/v1/EntryContract',
@@ -452,6 +465,7 @@ const TAG = {
   inputBatch: 'BLWP/v1/InputBatch',
   transcript: 'BLWP/v1/Transcript',
   objection: 'BLWP/v1/Objection',
+  slashProof: 'BLWP/v1/SlashProof',
   vssShare: 'BLWP/v1/VssShare',
   remainder: 'BLWP/v1/Remainder',
 };

@@ -12,8 +12,10 @@ import { parse } from 'acorn';
 // words that go straight into the deterministic core, so a float literal there
 // would desync a player from the nodes verifying him exactly as one in
 // `contracts.js` would misprice him.
+// `slash.js` is on it because a bond is money: what that file decides is
+// whether an output the node owns may be spent away from it.
 const MONEY = ['payout.js', 'sortition.js', 'census.js', 'contracts.js', 'encode.js',
-               'batch.js', 'transcript.js', 'chain.js', 'tx.js'];
+               'batch.js', 'transcript.js', 'chain.js', 'tx.js', 'slash.js'];
 const ROOT = new URL('../src/', import.meta.url).pathname;
 const problems = [];
 
