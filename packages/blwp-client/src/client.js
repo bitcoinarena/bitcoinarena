@@ -66,11 +66,26 @@ export async function markState(core, st, {
   // field is thirty-two raw bytes. `fromHex` is the protocol's own, so the two
   // ends of this line agree by construction rather than by two spellings of
   // the same loop.
-  //
+  return markHashed(core.hash(st), { roundId, entryId, tick, previousHash, inputChainHash }, sign);
+}
+
+/**
+ * The same mark, from a hash that was already taken.
+ *
+ * Separated because a checkpoint says where the world was AT A TICK, and the
+ * hash therefore has to be read at that tick - not when a queue gets round to
+ * it. Whoever takes it early passes it here. It used to be smuggled through a
+ * fake core object whose `hash` returned the string it had been handed, which
+ * worked and read like a trick; this is the same thing said plainly.
+ */
+export async function markHashed(hex, {
+  roundId, entryId, tick,
+  previousHash = NO_PREVIOUS,
+  inputChainHash = GENESIS,
+}, sign) {
   // Checked rather than trusted: a core that answered anything but 64 hex
   // characters would otherwise be silently truncated or padded into a mark
   // that signs cleanly and commits to the wrong state.
-  const hex = core.hash(st);
   if (typeof hex !== 'string' || !/^[0-9a-f]{64}$/.test(hex))
     throw new Error(`the core did not answer a state hash: ${String(hex).slice(0, 80)}`);
   const stateHash = fromHex(hex);
@@ -112,6 +127,16 @@ export class Client {
     this.batchHead = GENESIS;     // and the input chain's, which is a separate chain
     this.nextTick = 0;            // the tick the node is owed next
     this.nodes = [];              // the committee, off the round's own contract
+    this.hold = [];               // ticks waiting to go out
+    this.held = 0;
+    this.dropped = 0;
+    this.maxHold = 0;
+    this.chunk = 600;
+    this.batchesSent = 0;
+    this.marksSent = 0;
+    this.marksSkipped = 0;
+    this.publishing = null;
+    this.marking = null;
     this.said = [];
   }
 
@@ -206,8 +231,18 @@ export class Client {
    * parent nobody has, and every mark after it would be refused for a reason
    * that had nothing to do with it.
    */
+  /** A mark from a hash already taken - see `markHashed`. */
+  async mark(hex, { roundId, entryId, tick, inputChainHash = GENESIS }) {
+    const built = await markHashed(hex, {
+      roundId, entryId, tick, previousHash: this.head, inputChainHash,
+    }, this.sign);
+    const answer = await this.send(built.bytes);
+    if (typeof answer === 'string') return { ...built, answer, receipt: null };
+    return { ...built, answer: 'receipted', receipt: this.readReceipt(answer, built.id) };
+  }
+
   async checkpoint(st, { roundId, entryId, tick, inputChainHash = GENESIS }) {
-    const mark = await markState(this.core, st, {
+    const mark = await markHashed(this.core.hash(st), {
       roundId, entryId, tick, previousHash: this.head, inputChainHash,
     }, this.sign);
     const answer = await this.send(mark.bytes);
@@ -381,6 +416,108 @@ export class Client {
 
     return { ticks: ok.ticks, batches: t.batches.length, nextTick: this.nextTick,
              batchHead: this.batchHead, head: this.head, receipts: marks.length };
+  }
+
+  /**
+   * Which round this client is playing, and how long it is.
+   *
+   * `blockTicks` is the round's own length, off the contract, and it is the
+   * only bound on the hold that means anything: inputs for more ticks than the
+   * round HAS are inputs for a round that is over. The node already refuses a
+   * batch longer than it, so the number comes from the contract rather than
+   * from taste.
+   */
+  setRound({ roundId, entryId, blockTicks }) {
+    this.where = { roundId, entryId };
+    this.maxHold = blockTicks | 0;
+    this.chunk = Math.min(600, this.maxHold || 600);
+    this.hold = [];
+    this.held = 0;
+    this.dropped = 0;
+    this.batchesSent = 0;
+    this.marksSent = 0;
+    this.marksSkipped = 0;
+    this.publishing = null;
+    this.marking = null;
+  }
+
+  /**
+   * One tick's five words, kept until they can go out.
+   *
+   * Ticks are the transcript, so they are never thrown away while there is
+   * room: unpublished inputs cannot be replayed and cost the player the run.
+   * Past the round's own length they are counted rather than kept, because a
+   * hold longer than the round is inputs for a round that has ended - and a
+   * count is what makes a stall visible instead of silent.
+   */
+  record(words) {
+    if (this.hold.length >= this.maxHold) { this.dropped++; return false; }
+    this.hold.push(words);
+    this.held = this.hold.length;
+    return true;
+  }
+
+  /**
+   * Publish what is held, ONE batch at a time.
+   *
+   * The old shape appended a link to a promise chain on every sixth tick
+   * whether or not the one before had finished, so a slow node grew a queue
+   * nobody watched - and the `bufferedAmount` check sat inside a link, which
+   * defers work without bounding anything. One in flight means there is no
+   * queue to grow: what is not sent yet is simply still held, where it is
+   * counted.
+   */
+  drain() {
+    if (this.publishing || !this.hold.length || !this.where) return this.publishing;
+    if (this.sock && this.sock.bufferedAmount > 262144) return null;
+
+    const words = this.hold.slice(0, this.chunk);
+    this.hold = this.hold.slice(words.length);
+    this.held = this.hold.length;
+
+    this.publishing = this.batch(words, this.where).then((r) => {
+      if (r.accepted) this.batchesSent++;
+      // A refused batch is not a published one, and dropping it would leave a
+      // hole the node will not accept across - the run would end at the gap.
+      else { this.hold = words.concat(this.hold); this.held = this.hold.length; }
+      this.publishing = null;
+      return r;
+    }).catch((e) => {
+      this.hold = words.concat(this.hold);
+      this.held = this.hold.length;
+      this.publishing = null;
+      throw e;
+    });
+    return this.publishing;
+  }
+
+  /**
+   * A mark for a tick, or a count that one was missed.
+   *
+   * A checkpoint says where the world WAS at a tick. One that could not go out
+   * while its moment passed is not that moment any more, so it is skipped
+   * rather than queued behind the traffic - which is also what stops a slow
+   * link turning into a flood of marks the instant it clears. Ticks are the
+   * opposite and are never dropped while there is room: they are the
+   * transcript.
+   */
+  markNow(stateHash, tick, inputChainHash = GENESIS) {
+    if (this.marking || !this.where) { this.marksSkipped++; return null; }
+    this.marking = this.mark(stateHash, {
+      roundId: this.where.roundId, entryId: this.where.entryId, tick, inputChainHash,
+    }).then((r) => {
+      if (r.answer === 'receipted') this.marksSent++;
+      this.marking = null;
+      return r;
+    }).catch((e) => { this.marking = null; throw e; });
+    return this.marking;
+  }
+
+  /** Waits for whatever is on the wire, so a test can measure a settled state. */
+  async settle() {
+    while (this.publishing || this.marking) {
+      try { await Promise.all([this.publishing, this.marking]); } catch { /* named elsewhere */ }
+    }
   }
 
   close() { if (this.sock) this.sock.close(); }

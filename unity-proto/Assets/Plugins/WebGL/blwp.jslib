@@ -197,23 +197,11 @@ mergeInto(LibraryManager.library, {
     if (Module.blwpNet) return 1;                      // already running
 
     var base = UTF8ToString(urlPtr);
-    var contractTicks = (typeof BLWP_ROUND !== 'undefined' && BLWP_ROUND)
-      ? (BLWP_ROUND.blockTicks | 0) : 0;
     var net = Module.blwpNet = {
       state: 'opening', error: '', ticks: [], tick: null,
       batches: 0, marks: 0, batchEvery: batchEvery | 0, markEvery: markEvery | 0,
-      seen: 0, client: null, where: null, lost: 0, drops: 0, resumedAt: -1,
-      tries: 0, backoff: 0, held: 0, stalls: 0,
-      // AT MOST THIS MANY TICKS IN ONE BATCH.
-      //
-      // The node refuses a batch longer than the round's own `blockTicks`, so
-      // a long outage that drained as ONE batch would be refused for ever -
-      // the ticks go back in the hold and are re-sent, and the run is stuck
-      // from that moment. Measured on this machine the core runs about 43
-      // ticks a second, so the wall is reached after roughly two and a half
-      // minutes of outage at 60 Hz. Draining in chunks turns that into
-      // several ordinary batches.
-      chunk: (contractTicks && contractTicks < 600) ? contractTicks : 600,
+      seen: 0, client: null, where: null, drops: 0, resumedAt: -1,
+      tries: 0, backoff: 0,
       // ONE AT A TIME, and this is not tidiness.
       //
       // Both chains hang off state the client updates when an answer comes
@@ -266,10 +254,6 @@ mergeInto(LibraryManager.library, {
       // The round and the entry the page was told to play. Both contracts are
       // built HERE and their ids computed here, so the node is never asked what
       // this round is called.
-      // Named by the page, never by the node and never invented here. A round
-      // contract is agreed before anyone moves; a lobby will set this one day
-      // and until then whoever runs the page does. Unset means no session,
-      // which is the shipping default.
       var contract = (typeof BLWP_ROUND !== 'undefined') ? BLWP_ROUND : null;
       var seat = (typeof BLWP_ENTRY !== 'undefined') ? BLWP_ENTRY : null;
       if (!contract || !seat) throw new Error('the page did not say which round to play');
@@ -278,12 +262,7 @@ mergeInto(LibraryManager.library, {
       });
       net.where = { roundId: C.roundId(contract), entryId: C.entryId(entry) };
       net.client = new C.Client({
-        // The "core" the client is given here answers with a hash that was
-        // already taken, at the tick the mark names. The client's contract is
-        // only that `hash(st)` returns the core's own 64 hex characters, and
-        // freezing it is what keeps a queued mark honest about which tick it
-        // is for.
-        base: base, core: { hash: function (st) { return st.frozen; } },
+        base: base, core: { hash: function (st) { return b.core.hash(st); } },
         sign: signer,
         verify: function (sig, msg, key) {
           // Verifying a receipt is the page's job too, and the same curve.
@@ -291,26 +270,11 @@ mergeInto(LibraryManager.library, {
             .then(function (k) { return crypto.subtle.verify({ name: 'Ed25519' }, k, sig, msg); });
         },
       });
-      // WHEN THE SOCKET GOES, come back on a new one and read both chains
-      // off the node. The client answers everything in flight by name, so the
-      // queue is not left holding a promise that can never settle; what is
-      // left is to reconnect and ask where the node got to.
-      //
-      // The ticks are NOT thrown away while it is down. A transcript has to be
-      // contiguous - the node refuses a gap at intake, where a client can
-      // still fix it - so they pile up and go out in order once the socket is
-      // back, from the tick the node says it is owed.
-      // KEEP TRYING, with a backoff, until the run is over.
-      //
-      // One attempt was the whole of it before, so a node that was still
-      // restarting at that moment left the session in `error` and nothing ever
-      // tried again - every tick and every mark from that instant on went
-      // unpublished, and section 11 is blunt about what unpublished inputs
-      // cost. A one-second blip in the wrong place cost the rest of the round.
-      //
-      // The backoff doubles from a second to eight, which is slow enough not
-      // to hammer a node that is down and quick enough that a blip costs a
-      // second rather than a run.
+
+      // KEEP TRYING, with a backoff, until the run is over. One attempt was
+      // the whole of it once, so a node still restarting at that moment left
+      // the session finished - every tick and every mark after it unpublished,
+      // and section 11 is blunt about what that costs.
       net.reconnect = function () {
         if (net.state === 'gone') return;
         net.state = 'dropped';
@@ -342,66 +306,34 @@ mergeInto(LibraryManager.library, {
 
       return net.client.openRound(contract)
         .then(function () { return net.client.join(entry); })
-        .then(function () { return net.client.connect(); });
-    };
-
-    net.publish = function () {
-      // AND NEVER MORE THAN A CHUNK AT A TIME. What is left stays held and
-      // goes out behind it, so a long outage drains as several ordinary
-      // batches instead of one the node is bound to refuse.
-      var words = net.ticks.slice(0, net.chunk);
-      net.ticks = net.ticks.slice(words.length);
-      net.chain = net.chain.then(function () {
-        if (net.state !== 'ready') { net.ticks = words.concat(net.ticks); return; }
-
-        // WATCH WHAT IS ALREADY WAITING TO GO OUT. IMPLEMENTATION.md: "ws
-        // buffers without limit. Watch bufferedAmount; above a threshold drop
-        // ghost frames first - they are non-authoritative by definition - and
-        // never receipts." There are no ghost frames yet, so the rule here is
-        // the part that does apply: do not add to a socket that is already
-        // backed up. The ticks stay held and go out when it has drained.
-        var sock = net.client.sock;
-        if (sock && sock.bufferedAmount > 262144) {
-          net.stalls++;
-          net.ticks = words.concat(net.ticks);
-          return;
-        }
-        return net.client.batch(words, net.where).then(function (r) {
-          if (r.accepted) { net.batches++; return; }
-          // PUT THEM BACK, in front of whatever has arrived since. A refused
-          // batch is not a published one, and dropping it would leave a hole
-          // in a chain the node refuses to accept across - the run would end
-          // at the gap with the inputs after it unusable.
-          net.ticks = words.concat(net.ticks);
-          net.error = String(r.answer);
+        .then(function () { return net.client.connect(); })
+        .then(function () {
+          // THE HOLD, THE DRAIN AND THE SKIPPING ALL LIVE IN THE CLIENT.
+          //
+          // They used to be here, in a promise chain this file appended to on
+          // every sixth tick whether or not the one before had finished - a
+          // queue nobody bounded, in the one place that cannot be tested.
+          // Moved into `@blwp/client` they are measured against a real node by
+          // `backpressure.test.js`, and the page and the tests run one set of
+          // rules instead of two that look alike.
+          net.client.setRound({
+            roundId: net.where.roundId, entryId: net.where.entryId,
+            blockTicks: contract.blockTicks | 0,
+          });
         });
-      }).catch(function (e) { net.error = String(e.message || e); });
-    };
-
-    net.mark = function (core) {
-      // The state is read WHEN THE MARK IS TAKEN, not when the queue reaches
-      // it: a checkpoint says where the world was at a tick, so hashing it a
-      // few frames later would commit to a different world than the tick names.
-      var at = net.seen;
-      var hash = b.core.hash(core.st);
-      net.chain = net.chain.then(function () {
-        return net.client.checkpoint({ frozen: hash }, {
-          roundId: net.where.roundId, entryId: net.where.entryId, tick: at,
-        }).then(function (r) { if (r.answer === 'receipted') net.marks++; });
-      }).catch(function (e) { net.error = String(e.message || e); });
     };
 
     net.tick = function (words) {
-      if (net.state === 'gone') return;
-      // Kept even while the socket is down, and counted even while it is
-      // opening: the tick number is the core's, not the network's, and a
-      // transcript with a hole in it is one the node will not accept across.
-      net.ticks.push(words);
+      if (net.state === 'gone' || !net.client) return;
+      net.client.record(words);
       net.seen++;
       if (net.state !== 'ready') return;
-      net.held = net.ticks.length;
-      if (net.batchEvery > 0 && net.ticks.length >= net.batchEvery) net.publish();
-      if (net.markEvery > 0 && net.seen % net.markEvery === 0) net.mark(b);
+      if (net.batchEvery > 0 && net.seen % net.batchEvery === 0) net.client.drain();
+      // The hash is taken HERE, at the tick the mark names - a checkpoint says
+      // where the world was at that tick, and hashing it when a queue got
+      // round to it would commit to a different world.
+      if (net.markEvery > 0 && net.seen % net.markEvery === 0)
+        net.client.markNow(b.core.hash(b.st), net.seen);
     };
     return 1;
   },
@@ -410,10 +342,13 @@ mergeInto(LibraryManager.library, {
   // a status nobody checks.
   BlwpNetStatus: function (ptr, cap) {
     var net = Module.blwpNet;
+    var c = net && net.client;
     var line = net
-      ? net.state + ' batches ' + net.batches + ' marks ' + net.marks
-        + ' tick ' + net.seen + ' held ' + net.ticks.length
-        + (net.stalls ? ' stalls ' + net.stalls : '')
+      ? net.state + ' batches ' + (c ? c.batchesSent : 0)
+        + ' marks ' + (c ? c.marksSent : 0)
+        + ' tick ' + net.seen + ' held ' + (c ? c.held : 0)
+        + (c && c.dropped ? ' dropped ' + c.dropped : '')
+        + (c && c.marksSkipped ? ' skipped ' + c.marksSkipped : '')
         + (net.drops ? ' drops ' + net.drops + ' tries ' + net.tries
                        + ' resumed ' + net.resumedAt : '')
         + (net.error ? ' (' + net.error + ')' : '')
@@ -438,7 +373,8 @@ mergeInto(LibraryManager.library, {
   // How many marks this node has receipted for us. The one number that says the
   // round is being witnessed rather than merely sent.
   BlwpNetMarks: function () {
-    return Module.blwpNet ? (Module.blwpNet.marks | 0) : 0;
+    var n = Module.blwpNet;
+    return (n && n.client) ? (n.client.marksSent | 0) : 0;
   },
 
   BlwpQueryParam: function (namePtr, outPtr, cap) {
