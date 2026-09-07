@@ -31,7 +31,7 @@ import {
 import { GENESIS, encodeTranscript } from '../../protocol/src/transcript.js';
 import { batchId } from '../../protocol/src/batch.js';
 import { toHex } from '../../protocol/src/hash.js';
-import { Client, markState } from '../src/client.js';
+import { Client, markState, RECEIPTS_FOR_LIVE } from '../src/client.js';
 import {
   decodeCheckpointReceipt, receiptId, splitSignedReceipt, encodeCheckpointReceipt,
   joinSignedReceipt, SIGNED_RECEIPT_BYTES,
@@ -77,12 +77,44 @@ const marks = async (port, rid, eid) => {
   return { count: Number(r.headers.get('x-checkpoints')), bytes: new Uint8Array(await r.arrayBuffer()) };
 };
 
+/**
+ * THE OTHER SIX OF THE COMMITTEE, as keys rather than as daemons.
+ *
+ * Section 13C wants receipts from five committee nodes before a checkpoint
+ * chain is canonical, and there is one real node here. The rest are real
+ * Ed25519 keys that sign real `CheckpointReceipt`s, fed to the client through
+ * the same door a gossiped receipt arrives by - so nothing is stubbed except
+ * who is at the other end of the wire, and every signature the client accepts
+ * it verified itself.
+ */
+const peers = Array.from({ length: 6 }, () => ed25519.utils.randomSecretKey());
+const peerKeys = peers.map((k) => ed25519.getPublicKey(k));
+
+/** One committee member's receipt for a mark, signed for real. */
+function receiptFrom(secret, markId, receivedAtMs) {
+  const r = {
+    checkpointId: markId, nodePubkey: ed25519.getPublicKey(secret), receivedAtMs,
+  };
+  return joinSignedReceipt(encodeCheckpointReceipt(r), ed25519.sign(receiptId(r), secret));
+}
+
+/**
+ * Carries a mark to the five 13C asks for: the node's own receipt plus four
+ * more, each verified by the client the same three ways.
+ */
+function carry(client, mark, howMany = 4) {
+  for (let i = 0; i < howMany; i++) {
+    client.readReceipt(receiptFrom(peers[i], mark.id, 1000n + BigInt(i)), mark.id);
+  }
+  return client.witnessed(mark.id);
+}
+
 async function rig() {
   const node = await serve(openStore(), { port: 0, ...FUNDED });
-  // The committee is this node's own key, because that is what it will sign
-  // its receipts with and the contract is where a client learns to expect it.
+  // The committee is this node plus six more keys, because 13C counts five of
+  // seven and one node cannot be five however many times it answers.
   const client = new Client({ base: `http://127.0.0.1:${node.port}`, core, sign, verify });
-  const c = { ...contract(), nodes: [node.round.pubkey] };
+  const c = { ...contract(), nodes: [node.round.pubkey, ...peerKeys] };
   const rid = await client.openRound(c);
   assert.deepEqual(rid, roundId(c), 'the node named a different round than the contract hashes to');
   const e = entryFor(rid);
@@ -187,6 +219,7 @@ test('a refusal does not move the client\'s chain head', async () => {
   try {
     const stored = await client.checkpoint(driven(60), { roundId: rid, entryId: eid, tick: 60 });
     assert.equal(stored.answer, 'receipted');
+    assert.equal(carry(client, stored), 5, 'the mark has to be live before the head moves');
 
     const backwards = await client.checkpoint(driven(30), { roundId: rid, entryId: eid, tick: 30 });
     assert.equal(backwards.answer, 'error expected a tick after 60, got 30');
@@ -346,16 +379,23 @@ test('a reconnecting client recovers the same receipts, byte for byte', async ()
   const { node, client, rid, eid } = await rig();
   try {
     const first = await client.checkpoint(driven(60), { roundId: rid, entryId: eid, tick: 60 });
+    carry(client, first);
     const second = await client.checkpoint(driven(120), { roundId: rid, entryId: eid, tick: 120 });
     client.close();
 
     // a NEW client, as a reconnect is: it holds the contract, so it knows the
     // committee, and it knows nothing else about what it was given
     const back = new Client({ base: `http://127.0.0.1:${node.port}`, core, sign, verify });
-    back.nodes = [node.round.pubkey];
+    back.nodes = [node.round.pubkey, ...peerKeys];
     const got = await back.recoverReceipts({ roundId: rid, entryId: eid });
 
     assert.equal(got.length, 2);
+    // AND A RECOVERED RECEIPT COUNTS TOWARDS THE FIVE. A client that came back
+    // and had to start its counting from nothing would need the whole
+    // committee to receipt every mark a second time, which is not what 13C
+    // asks and not what a reconnect is.
+    assert.equal(back.witnessed(first.id), 1);
+    assert.equal(back.live(first.id), false, 'one recovered receipt is not a quorum');
     assert.deepEqual(got[0].receipt.checkpointId, first.id);
     assert.deepEqual(got[1].receipt.checkpointId, second.id);
     assert.equal(got[0].receipt.receivedAtMs, first.receipt.receivedAtMs,
@@ -512,7 +552,7 @@ test('a client that reconnects carries on from the tick the node is owed', async
 
     // the socket drops and a new client comes back knowing only the contract
     const back = new Client({ base: `http://127.0.0.1:${node.port}`, core, sign, verify });
-    back.nodes = [node.round.pubkey];
+    back.nodes = [node.round.pubkey, ...peerKeys];
     assert.equal(back.nextTick, 0, 'and it starts knowing nothing about the round');
 
     const got = await back.resume({ roundId: rid, entryId: eid });
@@ -656,5 +696,101 @@ test('a client that reconnects on the same round carries on', async () => {
     assert.equal(next.accepted, 200, `the node refused the batch after a reconnect: ${next.answer}`);
     const after = await client.checkpoint(driven(400), { roundId: rid, entryId: eid, tick: 400 });
     assert.equal(after.answer, 'receipted', `the node refused the mark after a reconnect: ${after.answer}`);
+  } finally { client.close(); await node.close(); }
+});
+
+/**
+ * A MARK IS LIVE AT FIVE, NOT AT ONE.
+ *
+ * The head used to move on the first verified receipt - true as far as it went
+ * and thinner than it sounded, because 13C makes the canonical transcript "the
+ * longest checkpoint chain that carries receipts from at least 5 committee
+ * nodes". Between one and four a mark is witnessed by somebody and carried by
+ * nobody, and building the next mark onto it would put the run on a link that
+ * can never be canonical - which is how an operator with a short committee
+ * gets paid for one.
+ *
+ * PENDING IS NOT FAILED. Nothing here voids a run or loses it for a player.
+ * What happens to a run whose marks never reach five is the no-quorum rule,
+ * it decides FORFEIT against VOID, and it is settlement rather than a client.
+ */
+test('a mark is live at five distinct committee receipts, and pending below', async () => {
+  const { node, client, rid, eid } = await rig();
+  try {
+    assert.equal(RECEIPTS_FOR_LIVE, 5);
+
+    // 0: nothing has been sent, so nothing is witnessed and the head is where
+    // a round starts
+    const before = client.head;
+    assert.deepEqual(before, NO_PREVIOUS);
+
+    const mark = await client.checkpoint(driven(60), { roundId: rid, entryId: eid, tick: 60 });
+    assert.equal(mark.answer, 'receipted');
+
+    // 1: the node that stored it has receipted it, and that is not five
+    assert.equal(client.witnessed(mark.id), 1);
+    assert.equal(client.live(mark.id), false);
+    assert.deepEqual(client.head, before, 'one receipt moved the head');
+
+    // 4: three more committee members, still pending
+    for (let i = 0; i < 3; i++) {
+      client.readReceipt(receiptFrom(peers[i], mark.id, 2000n + BigInt(i)), mark.id);
+    }
+    assert.equal(client.witnessed(mark.id), 4);
+    assert.equal(client.live(mark.id), false);
+    assert.deepEqual(client.head, before, 'four receipts moved the head');
+
+    // 5: the threshold, and only now does the head move
+    client.readReceipt(receiptFrom(peers[3], mark.id, 2003n), mark.id);
+    assert.equal(client.witnessed(mark.id), 5);
+    assert.equal(client.live(mark.id), true);
+    assert.deepEqual(client.head, mark.id);
+
+    // 7: the whole committee, and it is the same one head
+    client.readReceipt(receiptFrom(peers[4], mark.id, 2004n), mark.id);
+    client.readReceipt(receiptFrom(peers[5], mark.id, 2005n), mark.id);
+    assert.equal(client.witnessed(mark.id), 7);
+    assert.equal(client.live(mark.id), true);
+    assert.deepEqual(client.head, mark.id, 'the head moved twice for one mark');
+  } finally { client.close(); await node.close(); }
+});
+
+/**
+ * FIVE RECEIPTS FROM ONE NODE IS ONE NODE SAYING IT FIVE TIMES. 13C counts
+ * committee NODES, so the count is over distinct signers - and a receipt that
+ * fails any of the three checks does not count at all, because a client that
+ * counted what it could not verify would be counting the operator's word.
+ */
+test('the same signer five times is one, and an unverifiable receipt is none', async () => {
+  const { node, client, rid, eid } = await rig();
+  try {
+    const mark = await client.checkpoint(driven(60), { roundId: rid, entryId: eid, tick: 60 });
+    assert.equal(client.witnessed(mark.id), 1);
+
+    // the same committee member, over and over
+    for (let i = 0; i < 5; i++) {
+      client.readReceipt(receiptFrom(peers[0], mark.id, 3000n + BigInt(i)), mark.id);
+    }
+    assert.equal(client.witnessed(mark.id), 2, 'one signer counted more than once');
+    assert.equal(client.live(mark.id), false);
+
+    // a stranger who is not on the committee
+    const stranger = ed25519.utils.randomSecretKey();
+    assert.throws(() => client.readReceipt(receiptFrom(stranger, mark.id, 4000n), mark.id),
+      /is not on this round's committee/);
+
+    // a committee member's key claimed, signed by somebody else
+    const forged = joinSignedReceipt(
+      encodeCheckpointReceipt({ checkpointId: mark.id, nodePubkey: peerKeys[1], receivedAtMs: 5000n }),
+      ed25519.sign(b32(1), stranger));
+    assert.throws(() => client.readReceipt(forged, mark.id), /does not verify under its own key/);
+
+    // and an honest receipt for a different mark
+    const elsewhere = receiptFrom(peers[1], b32(0x7e), 6000n);
+    assert.throws(() => client.readReceipt(elsewhere, mark.id), /the receipt is for /);
+
+    assert.equal(client.witnessed(mark.id), 2, 'a refused receipt was counted');
+    assert.equal(client.live(mark.id), false);
+    assert.deepEqual(client.head, NO_PREVIOUS);
   } finally { client.close(); await node.close(); }
 });

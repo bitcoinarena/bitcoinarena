@@ -2413,6 +2413,16 @@ async function discover({
 
 
 /**
+ * Five, out of the seven a committee has.
+ *
+ * Section 13C: the canonical transcript is "the longest checkpoint chain that
+ * carries receipts from at least 5 committee nodes". It is a threshold and not
+ * a preference - the point of it is that no smaller set of nodes can make a
+ * mark count, so an operator cannot spend a short committee as a win.
+ */
+const RECEIPTS_FOR_LIVE = 5;
+
+/**
  * A checkpoint over the state a core is holding, signed and ready for the wire.
  *
  * `core.hash(st)` is the only thing read out of the simulation, and it is read
@@ -2579,6 +2589,10 @@ class Client {
     this.verify = verify;
     this.sock = null;
     this.head = NO_PREVIOUS;      // the mark chain head this client has published
+    // WHO HAS WITNESSED WHAT. Mark id -> the distinct committee keys that have
+    // receipted it. A Set because five receipts from one node is one node
+    // saying the same thing five times, and 13C counts NODES.
+    this.witnesses = new Map();
     this.batchHead = GENESIS;     // and the input chain's, which is a separate chain
     this.nextTick = 0;            // the tick the node is owed next
     this.nodes = [];              // the committee, off the round's own contract
@@ -2745,8 +2759,43 @@ class Client {
       throw new Error(
         `the receipt from ${toHex(r.nodePubkey)} does not verify under its own key`);
 
-    this.head = markId;
+    // THE HEAD MOVES ON LIVE, NOT ON THE FIRST RECEIPT.
+    //
+    // It used to move here, on one verified receipt out of seven - which was
+    // true as far as it went and thinner than it sounded. Section 13C counts
+    // FIVE committee nodes before a checkpoint chain is canonical, so between
+    // one and four a mark is PENDING: witnessed by somebody, carried by
+    // nobody. Chaining the next mark onto a parent that four nodes have never
+    // agreed to would build a run on a link that cannot be canonical, and the
+    // operator of a short committee could then be paid for it.
+    //
+    // Pending is not failed. Nothing here voids a run or loses it for the
+    // player: what happens to a run whose marks never reach five is the
+    // no-quorum rule, it decides FORFEIT against VOID, and it is settlement
+    // rather than a client.
+    this.witness(r);
+    if (this.live(markId)) this.head = markId;
     return r;
+  }
+
+  /** Records one verified receipt against its mark, and answers the count. */
+  witness(r) {
+    const id = toHex(r.checkpointId);
+    const seen = this.witnesses.get(id) || new Set();
+    seen.add(toHex(r.nodePubkey));
+    this.witnesses.set(id, seen);
+    return seen.size;
+  }
+
+  /** How many DISTINCT committee members have receipted this mark. */
+  witnessed(markId) {
+    const seen = this.witnesses.get(toHex(markId));
+    return seen ? seen.size : 0;
+  }
+
+  /** Is this mark carried by enough of the committee to be worth anything? */
+  live(markId) {
+    return this.witnessed(markId) >= RECEIPTS_FOR_LIVE;
   }
 
   /**
@@ -2779,6 +2828,7 @@ class Client {
       if (!this.verify(signature, receiptId(rec), rec.nodePubkey))
         throw new Error(
           `the receipt from ${toHex(rec.nodePubkey)} does not verify under its own key`);
+      this.witness(rec);
       out.push({ receipt: rec, bytes: one });
     }
     return out;
