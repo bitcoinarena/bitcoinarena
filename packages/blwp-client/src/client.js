@@ -25,9 +25,11 @@
 import {
   encodeCheckpoint, checkpointId, joinSigned, NO_PREVIOUS,
 } from '../../protocol/src/checkpoint.js';
-import { encodeRoundContract, encodeEntryContract } from '../../protocol/src/contracts.js';
+import {
+  encodeRoundContract, encodeEntryContract, roundId, entryId,
+} from '../../protocol/src/contracts.js';
 import { GENESIS } from '../../protocol/src/transcript.js';
-import { fromHex } from '../../protocol/src/hash.js';
+import { fromHex, toHex } from '../../protocol/src/hash.js';
 
 /**
  * A checkpoint over the state a core is holding, signed and ready for the wire.
@@ -76,6 +78,13 @@ export function markState(core, st, {
  * `fetch` and `WebSocket` are the platform's, in a browser and in Node alike,
  * so this carries no transport dependency of its own.
  */
+function agrees(mine, theirs, what) {
+  if (theirs.length !== mine.length || mine.some((b, i) => b !== theirs[i]))
+    throw new Error(
+      `the node calls this ${what} ${toHex(theirs)}, and its contract hashes to ${toHex(mine)}`);
+  return mine;
+}
+
 export class Client {
   constructor({ base, core, sign }) {
     this.base = base;
@@ -86,22 +95,38 @@ export class Client {
     this.said = [];
   }
 
-  /** Opens a round. The node answers with the round's own id. */
+  /**
+   * Opens a round, and does NOT take the node's word for what it is called.
+   *
+   * An id here is the tagged hash of a contract the client itself wrote, so
+   * the client can compute it and has no reason to be told it. Taking the
+   * answer instead would mean every mark of the round is filed under an id
+   * the player cannot show belongs to their own contract - and the whole
+   * point of this protocol is that a node is not trusted. The node's answer
+   * is still read, and it is read as AGREEMENT: if it names something else,
+   * that is a disagreement about which round this is and there is nothing to
+   * play until it is settled.
+   */
   async openRound(contract) {
+    const mine = roundId(contract);
     const r = await fetch(`${this.base}/round`, {
       method: 'POST', body: encodeRoundContract(contract),
     });
     if (r.status !== 201) throw new Error(`the node refused the round: ${(await r.text()).trim()}`);
-    return new Uint8Array(await r.arrayBuffer());
+    return agrees(mine, new Uint8Array(await r.arrayBuffer()), 'round');
   }
 
-  /** Joins it. The entry contract carries the session key the marks are signed with. */
+  /**
+   * Joins it. The entry contract carries the session key the marks are signed
+   * with, and its id is checked the same way and for the same reason.
+   */
   async join(entry) {
+    const mine = entryId(entry);
     const r = await fetch(`${this.base}/entry`, {
       method: 'POST', body: encodeEntryContract(entry),
     });
     if (r.status !== 201) throw new Error(`the node refused the entry: ${(await r.text()).trim()}`);
-    return new Uint8Array(await r.arrayBuffer());
+    return agrees(mine, new Uint8Array(await r.arrayBuffer()), 'entry');
   }
 
   /**

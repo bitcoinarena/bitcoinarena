@@ -30,6 +30,7 @@ import {
 import { GENESIS } from '../../protocol/src/transcript.js';
 import { toHex } from '../../protocol/src/hash.js';
 import { Client, markState } from '../src/client.js';
+import { createServer } from 'node:http';
 
 const require = createRequire(import.meta.url);
 const core = require('../../core/dist/blwp-core.js');
@@ -181,4 +182,46 @@ test('a refusal does not move the client\'s chain head', async () => {
     const second = decodeCheckpoint(splitSigned(got.bytes.slice(SIGNED_CHECKPOINT_BYTES)).body);
     assert.deepEqual(second.previousHash, stored.id, 'the stored chain does not link');
   } finally { client.close(); await node.close(); }
+});
+
+
+/**
+ * THE IDS ARE THE CLIENT'S OWN, NOT THE NODE'S WORD FOR THEM.
+ *
+ * A round id is the tagged hash of a contract the client wrote, so it can
+ * compute it and has no reason to be told it. Taking the node's answer would
+ * file every mark of the round under an id the player cannot show belongs to
+ * their contract, and a node is not trusted here - that is the whole premise.
+ *
+ * A stub that answers 201 with the wrong thirty-two bytes stands in for that,
+ * because a real node cannot be made to lie without changing it.
+ */
+test('a node that names a different round is a disagreement, not an id', async () => {
+  const liar = createServer((req, res) => {
+    res.writeHead(201, { 'content-type': 'application/octet-stream' });
+    res.end(Buffer.from(b32(99)));
+  });
+  await new Promise((r) => liar.listen(0, '127.0.0.1', r));
+  const port = liar.address().port;
+  try {
+    const client = new Client({ base: `http://127.0.0.1:${port}`, core, sign });
+    const c = contract();
+    await assert.rejects(
+      () => client.openRound(c),
+      (e) => {
+        assert.match(e.message, /^the node calls this round /);
+        assert.ok(e.message.includes(toHex(roundId(c))),
+          'the refusal must name the id the contract actually hashes to');
+        return true;
+      });
+
+    const e = entryFor(roundId(c));
+    await assert.rejects(
+      () => client.join(e),
+      (err) => {
+        assert.match(err.message, /^the node calls this entry /);
+        assert.ok(err.message.includes(toHex(entryId(e))));
+        return true;
+      });
+  } finally { await new Promise((r) => liar.close(r)); }
 });
