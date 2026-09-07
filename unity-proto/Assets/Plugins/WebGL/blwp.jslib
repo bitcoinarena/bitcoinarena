@@ -428,6 +428,9 @@ mergeInto(LibraryManager.library, {
     // THE PROVIDERS ARE FUNCTIONS THE PAGE SUPPLIES, and that is the whole
     // shape of this: the client speaks Bitcoin's own bytes - 80-byte headers
     // and a merkle branch of 32-byte hashes - and never an explorer's JSON.
+    // EACH ONE MUST CARRY A `tag` NAMING ITS SOURCE - `BLWPCLIENT.httpProvider`
+    // sets it from the URL - or the door refuses it: two functions closing over
+    // one address are one source, not two.
     // Translating a real chain API into these functions is an adapter and it
     // lives out here, where it can be changed without touching anything that
     // decides.

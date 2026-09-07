@@ -210,6 +210,41 @@ export async function discover({
   //
   // `ask` is deliberately NOT here. It names the range of chain to fetch, and
   // a lie about it can only omit - which is what a second provider answers.
+  // AND EVERY PROVIDER HAS TO SAY WHO IT IS.
+  //
+  // "Several independent SOURCES" is the rule, and a source is a server, not a
+  // call. Two functions closing over one address are one source however they
+  // are listed, and on this path the page writes the functions - so without a
+  // declared tag the two-provider floor counted calls, which is weaker than
+  // the words and is the same shape of hole as `least`: a rule that held in
+  // the library and never fired at the door.
+  //
+  // A tag is a DECLARATION and not a proof. A page that puts two different
+  // tags on one machine is believed, and cannot be caught from in here: two
+  // honest providers on the same chain return the same bytes, so there is no
+  // signal to read. What the tag buys is that the obvious case - one address
+  // listed twice - is refused, and that a lie has to be written down as a lie
+  // rather than being the default.
+  for (const [what, list] of [['header', headers], ['bond', bonds]]) {
+    const said = new Map();
+    for (let i = 0; i < (list || []).length; i++) {
+      const tag = list[i] && list[i].tag;
+      if (typeof tag !== 'string' || !tag.length)
+        return {
+          ok: false,
+          why: `${what} provider ${i} does not say which source it is: a `
+            + 'provider must carry a tag, or two calls to one server count as two sources',
+        };
+      if (said.has(tag))
+        return {
+          ok: false,
+          why: `${what} providers ${said.get(tag)} and ${i} are the same source, `
+            + `${tag}: one server listed twice is not two`,
+        };
+      said.set(tag, i);
+    }
+  }
+
   for (const [name, value] of [['least', least], ['timeoutMs', timeoutMs]]) {
     if (value !== undefined)
       return {

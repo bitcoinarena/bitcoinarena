@@ -128,13 +128,20 @@ function layered(raw, extra) {
  */
 function asProviders(raw) {
   return {
-    headers: [() => raw.chain, () => raw.chain],
-    bonds: [() => ({
+    headers: [tagged('one.example', () => raw.chain), tagged('two.example', () => raw.chain)],
+    bonds: [tagged('one.example', () => ({
       transaction: raw.transaction, branch: raw.branch, position: raw.position,
-    })],
+    }))],
     committee: raw.committee,
     signedAdvert: raw.signedAdvert,
   };
+}
+
+/** A provider that says which source it is, the way `httpProvider` does. */
+function tagged(tag, get) {
+  const f = (...a) => get(...a);
+  f.tag = tag;
+  return f;
 }
 
 test('a node is reached because a transaction says where it is', async () => {
@@ -440,7 +447,9 @@ test('the door will not open on one provider, or without an anchor', async () =>
   // AND provenBond runs on this path: a provider offering a proof that lands
   // in no block of the agreed chain is refused, by that name.
   await assert.rejects(
-    Client.at({ ...asked, bonds: [() => ({ transaction, branch: [b32(0x55)], position: 0 })] }, door),
+    Client.at({ ...asked,
+      bonds: [tagged('liar.example', () => ({ transaction, branch: [b32(0x55)], position: 0 }))],
+    }, door),
     /no bond: no provider proved that bond into the chain/);
 });
 
@@ -466,8 +475,8 @@ test('a self-consistent world of the attackers own making is refused', async () 
   const { header } = blockOf(hash256, [txid, sibling], { previous: blockHashOf(root) });
   const mine = [root, header];
   const asked = {
-    headers: [() => mine, () => mine],
-    bonds: [() => ({ transaction: his, branch: [sibling], position: 0 })],
+    headers: [tagged('his-one.example', () => mine), tagged('his-two.example', () => mine)],
+    bonds: [tagged('his-one.example', () => ({ transaction: his, branch: [sibling], position: 0 }))],
     committee: [operatorPubkey],
   };
 
@@ -545,13 +554,98 @@ test('the page still says which part of the chain to ask for', async () => {
   const c = contract([operatorPubkey]);
   const seen = [];
   const client = await Client.at({
-    headers: [(q) => { seen.push(q); return raw.chain; }, (q) => { seen.push(q); return raw.chain; }],
-    bonds: [(q) => { seen.push(q); return { transaction, branch: raw.branch, position: raw.position }; }],
+    headers: [tagged('a.example', (q) => { seen.push(q); return raw.chain; }),
+      tagged('b.example', (q) => { seen.push(q); return raw.chain; })],
+    bonds: [tagged('a.example', (q) => { seen.push(q); return { transaction, branch: raw.branch, position: raw.position }; })],
     committee: raw.committee,
     ask: { from: 0, count: 2 },
   }, { core, sign, verify, contract: c, roundIdGiven: roundId(c) });
   assert.equal(client.base, 'https://node.example:443');
   assert.deepEqual(seen, [{ from: 0, count: 2 }, { from: 0, count: 2 }, { from: 0, count: 2 }]);
+});
+
+/**
+ * TWO PROVIDERS MEANS TWO SOURCES, NOT TWO CALLS.
+ *
+ * The origin tag existed and only `httpProvider` set it, so it never fired
+ * where it matters: on this path the PAGE writes the functions, and two of them
+ * closing over one address counted as two. Same shape as `least` - a rule that
+ * held in the library and not at the door.
+ *
+ * A tag is a declaration, not a proof, and the limit is measured below rather
+ * than assumed away.
+ */
+test('the same origin twice is not two providers, however the page passes it', async () => {
+  const transaction = bondFor(advertFor('wss://node.example:443'));
+  const raw = chainWith(transaction);
+  const c = contract([operatorPubkey]);
+  const door = { core, sign, verify, contract: c, roundIdGiven: roundId(c) };
+  const chain = () => raw.chain;
+  const bond = () => ({
+    transaction, branch: raw.branch, position: raw.position,
+  });
+  const bonds = [tagged('one.example', bond)];
+
+  // two raw functions, the way a page wrote them before this
+  await assert.rejects(Client.at({ headers: [chain, chain], bonds, committee: raw.committee }, door),
+    /header provider 0 does not say which source it is/);
+
+  // one that says who it is and one that does not
+  await assert.rejects(Client.at({
+    headers: [tagged('one.example', chain), chain], bonds, committee: raw.committee,
+  }, door), /header provider 1 does not say which source it is/);
+
+  // two that say the same thing: one server listed twice
+  await assert.rejects(Client.at({
+    headers: [tagged('one.example', chain), tagged('one.example', chain)],
+    bonds,
+    committee: raw.committee,
+  }, door), /header providers 0 and 1 are the same source, one.example: one server listed twice is not two/);
+
+  // a bond provider with no tag is refused the same way - one class of
+  // provider, one rule
+  await assert.rejects(Client.at({
+    headers: [tagged('one.example', chain), tagged('two.example', chain)],
+    bonds: [bond],
+    committee: raw.committee,
+  }, door), /bond provider 0 does not say which source it is/);
+
+  // and two that name different sources are two providers, and it opens
+  const client = await Client.at({
+    headers: [tagged('one.example', chain), tagged('two.example', chain)],
+    bonds,
+    committee: raw.committee,
+  }, door);
+  assert.equal(client.base, 'https://node.example:443');
+});
+
+/**
+ * THE LIMIT, MEASURED RATHER THAN ASSUMED AWAY. A page that puts two different
+ * tags on one machine is believed. There is nothing to read: two honest
+ * providers on the same chain return the same bytes, so agreement is exactly
+ * what an honest pair looks like, and the client has no network identity to
+ * check a name against. What the tag buys is that the obvious case is refused
+ * and a lie has to be written down as one.
+ */
+test('two tags on one server cannot be caught from inside the client', async () => {
+  const transaction = bondFor(advertFor('wss://node.example:443'));
+  const raw = chainWith(transaction);
+  const c = contract([operatorPubkey]);
+  const door = { core, sign, verify, contract: c, roundIdGiven: roundId(c) };
+
+  // ONE server behind both names, and it is counted
+  let calls = 0;
+  const server = () => { calls++; return raw.chain; };
+  const client = await Client.at({
+    headers: [tagged('pretending-one.example', server), tagged('pretending-two.example', server)],
+    bonds: [tagged('pretending-one.example', () => ({
+      transaction, branch: raw.branch, position: raw.position,
+    }))],
+    committee: raw.committee,
+  }, door);
+
+  assert.equal(client.base, 'https://node.example:443');
+  assert.equal(calls, 2, 'one server answered twice and the client could not tell');
 });
 
 /**
