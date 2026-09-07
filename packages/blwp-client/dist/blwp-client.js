@@ -2912,10 +2912,20 @@ class Client {
     // read as a client that had lost a tick and would end the run for it.
     this.offered = this.nextTick + this.hold.length;
 
-    // AND THE MARKS' HEAD, which is the other chain and is lost the same way.
-    // A resume that left it at the start of the round would have every later
-    // mark refused for not following the head - the reconnect would look
-    // fixed until the first checkpoint after it.
+    // AND THE MARKS' HEAD, which is the other chain and was lost the same way -
+    // but it is NOT taken from the node's last mark.
+    //
+    // That is what this used to do, and it was the 5-of-7 rule standing in one
+    // function and missing in the next: after a drop the client adopted
+    // whatever the node held, on that node's word alone. A run that lost its
+    // socket was then chaining onto a mark four committee members had never
+    // seen, and the operator of a short committee was paid for it.
+    //
+    // So the marks are walked NEWEST FIRST and the first one that five
+    // distinct committee keys have receipted becomes the head. The receipts
+    // are the ones just recovered, each verified here; a duplicate signer
+    // cannot inflate the count and a receipt that fails its mark, the
+    // committee or its signature never reached the count at all.
     const marks = await this.recoverReceipts({ roundId, entryId });
     const c = await fetch(
       `${this.base}/checkpoints?round=${toHex(roundId)}&entry=${toHex(entryId)}`);
@@ -2923,13 +2933,22 @@ class Client {
     if (cb.length % SIGNED_CHECKPOINT_BYTES !== 0)
       throw new Error(
         `${cb.length} bytes is not a whole number of ${SIGNED_CHECKPOINT_BYTES}-byte marks`);
-    if (cb.length) {
-      const lastMark = cb.subarray(cb.length - SIGNED_CHECKPOINT_BYTES);
-      this.head = checkpointId(decodeCheckpoint(splitSigned(lastMark).body));
+
+    // AND IF NONE OF THEM IS LIVE, THE HEAD STAYS WHERE THIS CLIENT CAN PROVE
+    // IT BELONGS. Not the node's last mark, and not a refusal either: a
+    // disconnect is not an escape hatch, and a slow committee must still be
+    // able to carry the run. What comes after that head is published again,
+    // which is what lets the committee catch up.
+    let adopted = null;
+    for (let at = cb.length - SIGNED_CHECKPOINT_BYTES; at >= 0; at -= SIGNED_CHECKPOINT_BYTES) {
+      const id = checkpointId(decodeCheckpoint(splitSigned(cb.subarray(at, at + SIGNED_CHECKPOINT_BYTES)).body));
+      if (this.live(id)) { adopted = id; break; }
     }
+    if (adopted) this.head = adopted;
 
     return { ticks: ok.ticks, batches: t.batches.length, nextTick: this.nextTick,
-             batchHead: this.batchHead, head: this.head, receipts: marks.length };
+             batchHead: this.batchHead, head: this.head, receipts: marks.length,
+             live: adopted !== null, witnessed: adopted ? this.witnessed(adopted) : 0 };
   }
 
   /**

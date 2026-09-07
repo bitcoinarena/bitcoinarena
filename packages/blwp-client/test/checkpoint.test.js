@@ -109,6 +109,21 @@ function carry(client, mark, howMany = 4) {
   return client.witnessed(mark.id);
 }
 
+/**
+ * The same four, but LEFT WITH THE NODE, over the gossip door a peer's receipt
+ * really arrives by. A client that reconnects recovers what the node holds, so
+ * a mark is only live after a drop if the committee's receipts survived the
+ * drop too.
+ */
+async function gossipCarry(client, mark, howMany = 4) {
+  for (let i = 0; i < howMany; i++) {
+    // The encoding already carries its own type byte, so the receipt goes on
+    // the wire exactly as it was signed - adding a frame made it 140 bytes and
+    // the node said so.
+    assert.equal(await client.send(receiptFrom(peers[i], mark.id, 1000n + BigInt(i))), 'held');
+  }
+}
+
 async function rig() {
   const node = await serve(openStore(), { port: 0, ...FUNDED });
   // The committee is this node plus six more keys, because 13C counts five of
@@ -548,6 +563,9 @@ test('a client that reconnects carries on from the tick the node is owed', async
     const mark = await client.checkpoint(driven(400),
       { roundId: rid, entryId: eid, tick: 400, inputChainHash: two.batch ? batchId(two.batch) : GENESIS });
     assert.equal(mark.answer, 'receipted');
+    // four more committee members receipt it, and the node keeps them, so the
+    // mark is live for whoever comes back and recovers them
+    await gossipCarry(client, mark);
     client.close();
 
     // the socket drops and a new client comes back knowing only the contract
@@ -561,7 +579,9 @@ test('a client that reconnects carries on from the tick the node is owed', async
     assert.equal(got.nextTick, 400, 'the node is owed tick 400 next');
     assert.deepEqual(got.batchHead, client.batchHead, 'the input chain head is not the one published');
     assert.deepEqual(got.head, mark.id, 'the mark chain head is not the one published');
-    assert.equal(got.receipts, 1);
+    assert.equal(got.receipts, 5);
+    assert.equal(got.witnessed, 5, 'the head was adopted on fewer than five');
+    assert.equal(got.live, true);
 
     // and it can carry on: the next batch and the next mark are both accepted,
     // which is the whole point - a wrong head or a wrong tick is refused.
@@ -682,6 +702,7 @@ test('a client that reconnects on the same round carries on', async () => {
     await client.batch(rolling(200), { roundId: rid, entryId: eid });
     const mark = await client.checkpoint(driven(200), { roundId: rid, entryId: eid, tick: 200 });
     assert.equal(mark.answer, 'receipted');
+    await gossipCarry(client, mark);          // and the committee carries it
 
     client.close();
     await new Promise((r) => setTimeout(r, 200));
@@ -691,6 +712,7 @@ test('a client that reconnects on the same round carries on', async () => {
     const got = await client.resume({ roundId: rid, entryId: eid });
     assert.equal(got.nextTick, 200);
     assert.deepEqual(got.head, mark.id);
+    assert.equal(got.witnessed, 5);
 
     const next = await client.batch(rolling(200), { roundId: rid, entryId: eid });
     assert.equal(next.accepted, 200, `the node refused the batch after a reconnect: ${next.answer}`);
@@ -793,4 +815,110 @@ test('the same signer five times is one, and an unverifiable receipt is none', a
     assert.equal(client.live(mark.id), false);
     assert.deepEqual(client.head, NO_PREVIOUS);
   } finally { client.close(); await node.close(); }
+});
+
+/**
+ * AND THE RESUME PATH COUNTS TO FIVE TOO.
+ *
+ * The rule landed in `readReceipt` and was missing one function away. `resume`
+ * set the head to whatever mark the node happened to hold last, on that node's
+ * word alone - so a run that lost its socket came back chaining onto a mark
+ * four committee members had never seen, which is exactly what an operator
+ * with a short committee needs.
+ *
+ * A disconnect is not an escape hatch either: when nothing recovered is live
+ * the head stays where the client can prove it belongs and the run carries on,
+ * rather than the session being refused.
+ */
+test('a reconnect adopts a head only at five, and never the node s last mark', async () => {
+  for (const carried of [0, 3, 4]) {
+    const { node, client, rid, eid } = await rig();
+    try {
+      await client.batch(rolling(200), { roundId: rid, entryId: eid });
+      const mark = await client.checkpoint(driven(200),
+        { roundId: rid, entryId: eid, tick: 200 });
+      assert.equal(mark.answer, 'receipted');
+      await gossipCarry(client, mark, carried);   // 1, 4 or 5 on the node
+      client.close();
+
+      const back = new Client({ base: `http://127.0.0.1:${node.port}`, core, sign, verify });
+      back.nodes = [node.round.pubkey, ...peerKeys];
+      const before = back.head;
+      assert.deepEqual(before, NO_PREVIOUS);
+
+      const got = await back.resume({ roundId: rid, entryId: eid });
+      assert.equal(got.receipts, carried + 1, 'the node did not hold what was gossiped to it');
+      if (carried + 1 < 5) {
+        // 1 and 4: the node holds a mark, and it is not the head
+        assert.equal(got.live, false);
+        assert.equal(got.witnessed, 0);
+        assert.deepEqual(got.head, before,
+          `resume adopted a head on ${carried + 1} receipts`);
+        assert.deepEqual(back.head, NO_PREVIOUS);
+        // and the run is not refused - the client is still told where to carry on
+        assert.equal(got.nextTick, 200);
+      } else {
+        assert.equal(got.live, true);
+        assert.equal(got.witnessed, 5);
+        assert.deepEqual(got.head, mark.id);
+      }
+      assert.equal(back.witnessed(mark.id), carried + 1,
+        'recovered receipts did not count towards the mark');
+    } finally { await node.close(); }
+  }
+});
+
+/** The last LIVE mark is adopted, not the last mark. */
+test('a reconnect walks back to the newest mark five members carried', async () => {
+  const { node, client, rid, eid } = await rig();
+  try {
+    const first = await client.checkpoint(driven(60), { roundId: rid, entryId: eid, tick: 60 });
+    await gossipCarry(client, first);           // five: this one is carried
+    carry(client, first);                       // and the client knows it, so it can chain on
+    const second = await client.checkpoint(driven(120), { roundId: rid, entryId: eid, tick: 120 });
+    assert.equal(second.answer, 'receipted');   // one receipt only
+    client.close();
+
+    const back = new Client({ base: `http://127.0.0.1:${node.port}`, core, sign, verify });
+    back.nodes = [node.round.pubkey, ...peerKeys];
+    const got = await back.resume({ roundId: rid, entryId: eid });
+
+    assert.equal(got.receipts, 6, 'five for the first mark and one for the second');
+    assert.deepEqual(got.head, first.id, 'the newest mark was adopted, not the newest LIVE one');
+    assert.notDeepEqual(got.head, second.id);
+    assert.equal(back.witnessed(first.id), 5);
+    assert.equal(back.witnessed(second.id), 1);
+    assert.equal(back.live(second.id), false);
+  } finally { await node.close(); }
+});
+
+/**
+ * AND WITH TWO LIVE MARKS IT IS THE NEWEST, not the first one that qualifies.
+ * Adopting the oldest live mark would republish everything after it and read
+ * as correct, which is why it is measured rather than assumed.
+ */
+test('a reconnect adopts the NEWEST live mark, not the oldest', async () => {
+  const { node, client, rid, eid } = await rig();
+  try {
+    const first = await client.checkpoint(driven(60), { roundId: rid, entryId: eid, tick: 60 });
+    await gossipCarry(client, first);
+    carry(client, first);
+    const second = await client.checkpoint(driven(120), { roundId: rid, entryId: eid, tick: 120 });
+    await gossipCarry(client, second);          // both are carried by five
+    carry(client, second);
+    const third = await client.checkpoint(driven(180), { roundId: rid, entryId: eid, tick: 180 });
+    assert.equal(third.answer, 'receipted');    // and this one by one
+    client.close();
+
+    const back = new Client({ base: `http://127.0.0.1:${node.port}`, core, sign, verify });
+    back.nodes = [node.round.pubkey, ...peerKeys];
+    const got = await back.resume({ roundId: rid, entryId: eid });
+
+    assert.equal(back.witnessed(first.id), 5);
+    assert.equal(back.witnessed(second.id), 5);
+    assert.equal(back.witnessed(third.id), 1);
+    assert.deepEqual(got.head, second.id, 'the oldest live mark was adopted, not the newest');
+    assert.notDeepEqual(got.head, first.id);
+    assert.notDeepEqual(got.head, third.id);
+  } finally { await node.close(); }
 });
