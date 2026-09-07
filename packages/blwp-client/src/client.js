@@ -750,6 +750,28 @@ export class Client {
    */
   record(words) {
     if (this.ended) return false;
+
+    // A CLIENT THAT HAS NOT BEEN TOLD WHICH ROUND IT IS PLAYING IS NOT
+    // HOLDING A TRANSCRIPT, and must not end a run it never began.
+    //
+    // Found in a browser and only findable there. `Client.at` resolves before
+    // `setRound` does - opening a round, joining it and connecting are three
+    // more round trips - and the game is already ticking at 60 Hz through all
+    // of them. So `record` ran against a client whose `maxHold` was still the
+    // constructor's 0 and whose `offered` was undefined: the first tick of
+    // every session read as a dropped one and VOIDed the run before a byte
+    // had been published. `a tick was dropped at NaN: the hold was full at 0`.
+    //
+    // It was there before any of this door was, and it was invisible: nothing
+    // was told, so the page carried on looking healthy while the client had
+    // quietly given up. It shows now because a VOID stops the truck, which is
+    // what makes this the bug a green suite could not have shown.
+    //
+    // Refused rather than held: the round these ticks would belong to does not
+    // exist yet, and the entry's `joinTick` is what says where a player's
+    // transcript begins.
+    if (!this.where) return false;
+
     this.offered++;
     if (this.hold.length >= this.maxHold) {
       // THE FIRST DROPPED TICK ENDS THE RUN. It used to be counted and the

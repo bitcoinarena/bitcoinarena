@@ -1,4 +1,5 @@
 using NUnit.Framework;
+using UnityEngine;
 
 /// <summary>
 /// WHEN A SESSION IS ASKED FOR, and when it is not.
@@ -149,6 +150,36 @@ public class NetSessionTests
                                      "FORFEIT", "PAID", "DELIVERED" })
             Assert.IsFalse(line.ToUpperInvariant().Contains(word),
                 $"the HUD claimed an outcome: {word} in \"{line}\"");
+    }
+
+    /// <summary>
+    /// AND IT DOES NOT SIT ON THE BLOCK CLOCK.
+    ///
+    /// Photographed on the built player: the first version hung this off the
+    /// UNDER FIRE line and landed straight across "BLOCK 965,982 - 0:55" and
+    /// the drop-off marker. The horizontal rule - the gap between the columns,
+    /// never the whole width - had been obeyed, and the vertical one had never
+    /// been asked. It is a row of the headline stack now.
+    /// </summary>
+    [Test]
+    public void TheStoppedLineSitsUnderTheHeadlineStack()
+    {
+        var hud = new GameObject("hud").AddComponent<DriveHud>();
+        try
+        {
+            foreach (var size in new[] { (1280, 660), (1920, 1080), (844, 390), (390, 844) })
+            {
+                var box = hud.RunStoppedBox(size.Item1, size.Item2);
+                var clock = hud.BlockTimerBox(size.Item1, size.Item2);
+                var head = hud.HeadlineBox(size.Item1, size.Item2);
+                Assert.GreaterOrEqual(box.y, clock.yMax,
+                    $"the line sits on the block clock at {size.Item1}x{size.Item2}");
+                Assert.AreEqual(head.x, box.x, 0.5f, "and it is in the gap, not on a column");
+                Assert.LessOrEqual(box.width, head.width + 0.5f,
+                    "a full-width box is the mistake this file has made four times");
+            }
+        }
+        finally { Object.DestroyImmediate(hud.gameObject); }
     }
 
     [Test]

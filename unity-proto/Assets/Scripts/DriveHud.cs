@@ -1820,17 +1820,24 @@ public class DriveHud : MonoBehaviour
     }
 
     /// <summary>
-    /// In the gap the headline is allowed to use, under the UNDER FIRE line.
+    /// UNDER THE HEADLINE STACK, not floating above it.
     ///
     /// Not `Rect(0, y, w, ...)` with the text centred, which is the mistake
-    /// this file records making four times: a full-width box looks right and
-    /// covers the numbers a driver reads the moment anything in it grows.
+    /// this file records making four times. But the gap alone was not enough:
+    /// the first version hung this off `UnderFireBox` and photographed on the
+    /// real player it landed straight across "BLOCK 965,982 · 0:55" and the
+    /// drop-off marker, two lines of yellow over each other. The horizontal
+    /// rule was obeyed and the vertical one had never been asked.
+    ///
+    /// So it is a ROW of the same stack the price, the liquidation line and
+    /// the block clock are rows of: it starts where the block clock's box
+    /// ends, and it moves when that one does.
     /// </summary>
     public Rect RunStoppedBox(int w, int h)
     {
         float font = Mathf.RoundToInt(Mathf.Min(w, h) * 0.030f);
-        var fire = UnderFireBox(w, h);
-        return new Rect(fire.x, fire.yMax + font * 0.6f, fire.width, font * 2.6f);
+        var clock = BlockTimerBox(w, h);
+        return new Rect(clock.x, clock.yMax + font * 0.8f, clock.width, font * 2.8f);
     }
 
     void DrawRunStopped(int w, int h)

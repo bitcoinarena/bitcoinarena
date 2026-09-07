@@ -647,3 +647,46 @@ test('a socket that opens onto an ended run does not say ready', async () => {
     assert.equal(client.status(0).split(' ')[0], 'ended');
   } finally { client.close(); await node.close(); }
 });
+
+/**
+ * A CLIENT WITH NO ROUND DOES NOT END A RUN IT NEVER BEGAN.
+ *
+ * Found in a browser, on the built page, and findable nowhere else: every test
+ * in this file calls `setRound` before it records anything, and the game does
+ * not. `Client.at` resolves three round trips before `setRound` does - open,
+ * join, connect - and Unity ticks at 60 Hz through all of them, so `record`
+ * ran against a client whose `maxHold` was still 0 and whose `offered` was
+ * undefined. Every session VOIDed on its first tick, before a byte was
+ * published: "a tick was dropped at NaN: the hold was full at 0".
+ *
+ * It was there before this door was and it was invisible, because nothing was
+ * told and the page went on looking healthy. It shows now because a VOID stops
+ * the truck.
+ */
+test('ticks offered before the round is known do not end the run', async () => {
+  const { node, client } = await rig(0);
+  try {
+    // A fresh client is exactly what `Client.at` hands the page back.
+    const early = new Client({ base: client.base, core, sign, verify });
+    assert.equal(early.maxHold, 0, 'the constructor has no round to bound a hold by');
+
+    for (let i = 0; i < 600; i++)
+      assert.equal(early.record([45875, 0, 0, 0, 0]), false, 'a tick was taken with no round');
+
+    // `ended` is UNDEFINED on a fresh client, not false: `setRound` is what
+    // sets it, and `setRound` is exactly what has not happened yet. Asserting
+    // `=== false` here failed on the truth rather than on the fault.
+    assert.ok(!early.ended, 'the run ended before it had begun');
+    assert.equal(early.ending, undefined, 'and a word was set for a round nobody was playing');
+    // The observed corruption by name: `offered` was `undefined++`, which is
+    // NaN, and that NaN is what the page printed back as the tick a run died
+    // on. Untouched here, because nothing was counted at all.
+    assert.equal(Number.isNaN(early.offered), false, 'the offered count went to NaN');
+    assert.ok(!early.dropped, 'a tick was counted as dropped before there was a round');
+
+    // and once it knows the round, it takes them
+    early.setRound({ roundId: b32(1), entryId: b32(2), blockTicks: 600 });
+    assert.equal(early.record([45875, 0, 0, 0, 0]), true);
+    assert.equal(early.held, 1);
+  } finally { client.close(); await node.close(); }
+});

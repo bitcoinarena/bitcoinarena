@@ -430,6 +430,14 @@ const TYPE_TRANSCRIPT = 0x09;
 // the object but reserves no type for it, so this is the next free number.
 const TYPE_CHECKPOINT_RECEIPT = 0x0a;
 
+/**
+ * 13A's objection. The spec reserves neither a type nor a tag for it - it
+ * gives the field list and nothing else - so both are new here, the way
+ * `CheckpointReceipt` needed both, and both follow the numbering already in
+ * use rather than starting a second one.
+ */
+const TYPE_OBJECTION = 0x0b;
+
 const TAG = {
   roundContract: 'BLWP/v1/RoundContract',
   entryContract: 'BLWP/v1/EntryContract',
@@ -443,6 +451,8 @@ const TAG = {
   payoutTable: 'BLWP/v1/PayoutTable',
   inputBatch: 'BLWP/v1/InputBatch',
   transcript: 'BLWP/v1/Transcript',
+  objection: 'BLWP/v1/Objection',
+  vssShare: 'BLWP/v1/VssShare',
   remainder: 'BLWP/v1/Remainder',
 };
 
@@ -452,6 +462,75 @@ const roleByte = (role) => {
   const i = ROLES.indexOf(role);
   if (i < 0) throw new Error('unknown role: ' + role);
   return i;
+};
+
+/**
+ * THE ONE ADDRESS EVERY BOND PAYS A DUST OUTPUT TO.
+ *
+ * Section 25.1: "A P2TR output is a 32-byte key and looks like every other
+ * one, so a bond cannot be recognised from its output... OP_RETURN does not
+ * help either: BIP158 compact filters exclude it." Hence the requirement:
+ * "Every bond funding transaction MUST pay a dust output to BOND_MARKER, a
+ * single address fixed by this protocol." One address for every bond, so it
+ * appears in the compact filters and any light client can find every bond that
+ * has ever existed without asking anyone. It costs one dust output, once.
+ *
+ * IT IS NOT CHOSEN HERE, and that is deliberate rather than unfinished. The
+ * marker is part of the network's identity in the same way `genesis_parameters`
+ * is: introducing or changing it later makes every bond posted before it
+ * unfindable, so it has to be settled once, before the first bond exists, and
+ * never again. Writing a plausible address into this file would be settling it
+ * by accident in a source tree, which is exactly how such a thing gets decided
+ * without anyone deciding it.
+ *
+ * So it is null, and `bondMarker()` refuses rather than returning something
+ * that would silently match nothing. A search for bonds that quietly found
+ * none would look exactly like a network with no nodes in it.
+ */
+const BOND_MARKER = null;
+
+function bondMarker() {
+  if (BOND_MARKER === null)
+    throw new Error(
+      'BOND_MARKER has not been chosen. It is fixed once, before the first bond '
+      + 'is posted, and every bond ever posted is unfindable without it');
+  return BOND_MARKER;
+}
+
+/**
+ * The objection window's reference length: ten minutes, in milliseconds.
+ *
+ * Section 13A gives "reference: 10 minutes, contract-defined". A REFERENCE is
+ * not a default: the number lives in the round contract the player signed, and
+ * this is here so a round can be written with the figure the spec suggests
+ * rather than one somebody remembered.
+ */
+const OBJECTION_WINDOW_REFERENCE_MS = 600000n;
+
+/**
+ * WHICH CUSTODY CONSTRUCTION A ROUND USES. Section 23.6 names two and says
+ * "The Round Contract names which construction it uses":
+ *
+ *   THRESHOLD_LN   a threshold-signed Lightning node - FROST-style Schnorr
+ *                  over channel operations - which 23.6 calls "the cleanest
+ *                  fit, and emerging technology rather than a solved product"
+ *   FEDERATION     a Fedimint-class federation with a Lightning gateway,
+ *                  "production-ready today, with an identical trust statement"
+ *
+ * "V1 deployments should use the mature one and migrate when threshold-LN
+ * hardens", so a round has to SAY which one it ran under: the residual is the
+ * same either way (22: five colluding bonded operators control in-transit
+ * funds) but a player is entitled to know which construction they staked into,
+ * and a round settled under one cannot be replayed as if it were the other.
+ *
+ * Naming them is not implementing them. Neither construction exists in this
+ * repo and this field does not bring one.
+ */
+const CUSTODY = ['THRESHOLD_LN', 'FEDERATION'];
+const custodyByte = (which) => {
+  const at = CUSTODY.indexOf(which);
+  if (at < 0) throw new Error(`${which} is not one of ${CUSTODY.join(', ')}`);
+  return at;
 };
 
 // ---- protocol/src/checkpoint.js
@@ -595,6 +674,83 @@ function joinSigned(bytes, signature) {
   return out;
 }
 
+/**
+ * IS THIS A PROOF THAT THE PLAYER SIGNED TWO WORLDS AT ONE TICK?
+ *
+ * Section 13B: "A player who publishes two different checkpoints for the same
+ * (round_id, player_pubkey, tick), or two chains that diverge at any tick,
+ * forfeits the entry... The two conflicting signed checkpoints are a complete,
+ * portable proof; no replay is needed."
+ *
+ * PORTABLE is the word that matters. This takes the two signed records and the
+ * session key the entry named, and answers from those alone - no node is
+ * asked, no transcript is replayed, and nothing about a committee is needed.
+ * Whoever holds the two records can check them, which is what makes 13B's
+ * "nodes MUST publish such a proof" worth anything.
+ *
+ * TWO SHAPES, both from the two records alone. Two marks at one tick
+ * contradict each other; two marks naming one parent are two chains, because
+ * a chain has one child per parent. 13B calls both "two chains that diverge",
+ * and a proof that needed a third record would not be portable.
+ *
+ * `verify` is injected, as everywhere else here: this package carries no curve.
+ * It may answer a promise, so this does too.
+ */
+async function provesEquivocation(a, b, sessionPubkey, verify) {
+  let one; let two;
+  try {
+    one = splitSigned(a);
+    two = splitSigned(b);
+  } catch (e) { return { ok: false, why: `that is not a signed checkpoint: ${e.message}` }; }
+
+  const x = decodeCheckpoint(one.body);
+  const y = decodeCheckpoint(two.body);
+
+  const alike = (p, q) => p.length === q.length && p.every((v, i) => v === q[i]);
+  if (!alike(x.roundId, y.roundId) || !alike(x.entryId, y.entryId))
+    return { ok: false, why: 'those two marks are not from the same entry' };
+  // 13B HAS TWO LIMBS: "two different checkpoints for the same (round_id,
+  // player_pubkey, tick), OR two chains that diverge at any tick".
+  //
+  // The first is a contradiction at one tick. The second is a FORK: a chain
+  // has one child per parent, so two marks naming the same parent are two
+  // chains, whatever ticks they sit at. Both are provable from the two records
+  // alone, which is what 13B means by portable; anything needing a third
+  // record, or the chain in between, is not.
+  const sameTick = x.tick === y.tick;
+  const sameParent = alike(x.previousHash, y.previousHash);
+  if (!sameTick && !sameParent)
+    return {
+      ok: false,
+      why: `those two marks are at ticks ${x.tick} and ${y.tick} and name `
+        + 'different parents, so they can be one chain',
+    };
+
+  // THE SAME MARK TWICE IS NOT EQUIVOCATION. A player re-sending what it
+  // already sent is the ordinary case, and calling it a forfeit would take a
+  // stake for a dropped socket.
+  const idX = checkpointId(x);
+  const idY = checkpointId(y);
+  if (alike(idX, idY))
+    return { ok: false, why: 'those are the same mark, sent twice' };
+
+  // AND BOTH HAVE TO BE THE PLAYER'S. Anyone can write two conflicting
+  // objects; only the session key the entry named can sign them, and without
+  // that check this would forfeit a stake on somebody else's forgery.
+  if (!await verify(one.signature, idX, sessionPubkey))
+    return { ok: false, why: 'the first mark is not signed by that entry' };
+  if (!await verify(two.signature, idY, sessionPubkey))
+    return { ok: false, why: 'the second mark is not signed by that entry' };
+
+  return {
+    ok: true,
+    how: sameTick ? 'two marks at one tick' : 'two chains from one parent',
+    tick: x.tick,
+    ticks: [x.tick, y.tick],
+    ids: [idX, idY],
+  };
+}
+
 // ---- protocol/src/contracts.js
 // The two artifacts everything else hangs off.
 //
@@ -621,6 +777,20 @@ function encodeRoundContract(c) {
   w.bytes32(c.simCoreHash);
   w.u64(c.startTimeMs);
   w.u64(c.entryCloseMs);
+
+  // HOW LONG ANYONE HAS TO OBJECT, in milliseconds. Section 13A: "the window
+  // W (reference: 10 minutes, CONTRACT-DEFINED)". It is in the contract and
+  // not a constant here because a window the caller chooses is a window the
+  // operator chooses - and the operator is the party a veto exists against.
+  // The player signs up to it with the rest of the round.
+  w.u64(c.objectionWindowMs);
+
+  // WHICH CUSTODY CONSTRUCTION THE STAKE SITS IN, section 23.6: "The Round
+  // Contract names which construction it uses." The two have the same residual
+  // and different maturity, and a player is entitled to know which one they
+  // staked into before they pay. Naming it is not implementing it.
+  w.u8(custodyByte(c.custody));
+
   w.u32(c.censusHeight);
   w.bytes32(c.censusRoot);
   w.bytes32(c.committeeSeed);
@@ -654,6 +824,8 @@ function decodeRoundContract(bytes) {
     simCoreHash: r.bytes32(),
     startTimeMs: r.u64(),
     entryCloseMs: r.u64(),
+    objectionWindowMs: r.u64(),
+    custody: CUSTODY[r.u8()],
     censusHeight: r.u32(),
     censusRoot: r.bytes32(),
     committeeSeed: r.bytes32(),
@@ -855,9 +1027,35 @@ const batchTicks = (b) =>
 // verifier queries and hopes it asked for everything. This is that thing:
 // the round, the entry, and the batches in chain order.
 //
-// Checkpoints belong in it later (§13C names them first), and they are M2.1
-// step 3. Their absence here is why `transcriptHash` covers the inputs only,
-// and it is stated rather than left to be discovered.
+// AND THE CHECKPOINT CHAIN, which §13C names FIRST: the canonical transcript
+// is "the longest checkpoint chain that carries receipts from at least 5
+// committee nodes, TOGETHER WITH the input batches whose hashes it commits
+// to". For a while this object carried the second half only, and the cost was
+// measured rather than argued: three nodes carrying three different mark
+// chains over one set of batches - two marks against three, and a third node
+// whose player committed to a DIFFERENT world at the last tick - all produced
+// one `transcriptHash`, and therefore one `resultId` for the committee to
+// sign. The thing a result pins has to be the thing that is replayed, and
+// what a replay is checked against is the state the player signed.
+//
+// THE MARKS ARE CARRIED SIGNED, and the hash covers the signature. That is
+// the opposite of the rule one object down - a checkpoint's own id is taken
+// before it is signed, so the chain does not shift underneath it - and the
+// reason is that this is a container, not an identity. What must be pinned
+// here is exactly the bytes a node hands over and a committee signs a result
+// about; a signature outside the hash would let a node serve marks with
+// nobody's signature on them and still match the hash the result named.
+//
+// WHOSE signature it is stays the caller's business, as everywhere in this
+// package: there is no curve here, so `checkTranscript` checks the chain, the
+// ticks and what the marks commit to, and the session key that verifies them
+// lives in the entry contract.
+//
+// A transcript with NO marks is still a transcript - it is what a node hands
+// a client back on resume, where the marks travel on their own endpoint and
+// are checked there against receipts. It is not the canonical object, and the
+// difference shows in the hash rather than being a matter of who is asking.
+
 
 
 
@@ -877,6 +1075,11 @@ function encodeTranscript(t) {
     ww.u16(bytes.length);
     ww.bytes(bytes, bytes.length);
   });
+
+  // The marks, in chain order, each a whole signed record. No length prefix:
+  // a signed checkpoint has no variable-length field, so the count is enough
+  // and a reader cuts them at a fixed stride.
+  w.vec(t.marks || [], (m, ww) => ww.bytes(m, SIGNED_CHECKPOINT_BYTES));
   return w.finish();
 }
 
@@ -886,6 +1089,7 @@ function decodeTranscript(bytes) {
   if (r.u16() !== PROTOCOL_VERSION) throw new Error('unknown protocol version');
   const t = { roundId: r.bytes32(), entryId: r.bytes32() };
   t.batches = r.vec((rr) => decodeInputBatch(rr.bytes(rr.u16())));
+  t.marks = r.vec((rr) => rr.bytes(SIGNED_CHECKPOINT_BYTES));
   if (r.at !== bytes.length) throw new Error('trailing bytes after the transcript');
   return t;
 }
@@ -893,28 +1097,108 @@ function decodeTranscript(bytes) {
 const transcriptHash = (t) => taggedHash(TAG.transcript, encodeTranscript(t));
 
 /**
- * Checks the chain and the tick order, and says WHERE it broke rather than
- * that it broke. A verifier that only learns "invalid" has to bisect by hand.
+ * Checks both chains, the tick order, and what the marks commit to - and says
+ * WHERE it broke rather than that it broke. A verifier that only learns
+ * "invalid" has to bisect by hand.
  *
- * Returns `{ ok: true, ticks }` or `{ ok: false, at, why }`.
+ * Returns `{ ok: true, ticks, marks, throughTick }` or
+ * `{ ok: false, in, at, why }`, where `in` is 'batch' or 'mark' because the
+ * two are numbered separately and an index alone would name two places.
+ *
+ * WHAT THE MARKS ARE CHECKED AGAINST IS THIS OBJECT AND NOTHING ELSE. Every
+ * mark's `inputChainHash` has to be a head this transcript actually reaches -
+ * §11's "a transcript whose inputs were never published cannot be replayed"
+ * turned from a sentence into a refusal - and the heads may not go backwards,
+ * because a later mark on an earlier input head is a rewind and not a chain.
+ * The last mark's head must be the LAST batch: inputs past the last carried
+ * mark are inputs no committee stood behind, and a transcript that carried
+ * them would hand a replay ticks nobody receipted.
+ *
+ * `throughTick` is the tick of the last mark, or `null` when there are none.
  */
 function checkTranscript(t) {
   let previous = GENESIS;
   let expect = null;
   let ticks = 0;
+
+  // Which input heads this transcript reaches, in order. GENESIS is index 0 -
+  // a mark taken before any batch went out commits to it - so a head's index
+  // is directly comparable and "did not go backwards" is one number test.
+  const heads = new Map([[toHex(GENESIS), 0]]);
+
   for (let i = 0; i < t.batches.length; i++) {
     const b = t.batches[i];
-    if (!same(b.roundId, t.roundId)) return { ok: false, at: i, why: 'batch is for another round' };
-    if (!same(b.entryId, t.entryId)) return { ok: false, at: i, why: 'batch is for another entry' };
-    if (!same(b.previousHash, previous)) return { ok: false, at: i, why: 'the chain is broken here' };
+    if (!same(b.roundId, t.roundId))
+      return { ok: false, in: 'batch', at: i, why: 'batch is for another round' };
+    if (!same(b.entryId, t.entryId))
+      return { ok: false, in: 'batch', at: i, why: 'batch is for another entry' };
+    if (!same(b.previousHash, previous))
+      return { ok: false, in: 'batch', at: i, why: 'the chain is broken here' };
     const at = batchTicks(b);
     if (expect !== null && at[0] !== expect)
-      return { ok: false, at: i, why: `expected tick ${expect}, got ${at[0]}` };
+      return { ok: false, in: 'batch', at: i, why: `expected tick ${expect}, got ${at[0]}` };
     expect = at.length ? at[at.length - 1] + 1 : expect;
     ticks += at.length;
     previous = batchId(b);
+    heads.set(toHex(previous), i + 1);
   }
-  return { ok: true, ticks };
+
+  const marks = t.marks || [];
+  let parent = NO_PREVIOUS;
+  let lastTick = null;
+  let lastHead = 0;
+  let body = null;
+
+  for (let i = 0; i < marks.length; i++) {
+    if (marks[i].length !== SIGNED_CHECKPOINT_BYTES)
+      return {
+        ok: false,
+        in: 'mark',
+        at: i,
+        why: `${marks[i].length} bytes is not a ${SIGNED_CHECKPOINT_BYTES}-byte signed mark`,
+      };
+    try { body = decodeCheckpoint(splitSigned(marks[i]).body); }
+    catch (e) { return { ok: false, in: 'mark', at: i, why: e.message }; }
+
+    if (!same(body.roundId, t.roundId))
+      return { ok: false, in: 'mark', at: i, why: 'mark is for another round' };
+    if (!same(body.entryId, t.entryId))
+      return { ok: false, in: 'mark', at: i, why: 'mark is for another entry' };
+    if (!same(body.previousHash, parent))
+      return { ok: false, in: 'mark', at: i, why: 'the mark chain is broken here' };
+    if (lastTick !== null && body.tick <= lastTick)
+      return {
+        ok: false,
+        in: 'mark',
+        at: i,
+        why: `tick ${body.tick} does not come after ${lastTick}`,
+      };
+
+    const head = heads.get(toHex(body.inputChainHash));
+    if (head === undefined)
+      return {
+        ok: false,
+        in: 'mark',
+        at: i,
+        why: 'the mark commits to inputs this transcript does not carry',
+      };
+    if (head < lastHead)
+      return { ok: false, in: 'mark', at: i, why: 'the mark commits to earlier inputs than the one before it' };
+
+    parent = checkpointId(body);
+    lastTick = body.tick;
+    lastHead = head;
+  }
+
+  if (marks.length && lastHead !== t.batches.length)
+    return {
+      ok: false,
+      in: 'mark',
+      at: marks.length - 1,
+      why: `the last mark commits through batch ${lastHead} and the transcript carries ${t.batches.length}`,
+    };
+
+  return { ok: true, ticks, marks: marks.length, throughTick: lastTick };
 }
 
 /**
@@ -1059,6 +1343,1294 @@ function joinSignedReceipt(bytes, signature) {
   return out;
 }
 
+// ---- protocol/src/advert.js
+// A node advertisement: who a node is, and where to reach it.
+//
+// WHY IT IS ON THE CHAIN AT ALL. Section 25.1 is blunt about the difference
+// between finding a round and finding the nodes: "Finding a ROUND is not
+// authoritative: project website, community sites, a direct link, a QR code,
+// or a copied round_id... Finding the NODES is a different matter and is not
+// left open: it is chain state."
+//
+// So the four steps of its table are answered like this: a round comes from a
+// link and carries nothing; which nodes count is the bond outputs confirmed
+// and unspent at `census_height`; which are on the committee is arithmetic,
+// already in `sortition.js`; and WHERE TO REACH THEM is this object, carried
+// by the bond funding transaction. There is no directory, no relay network and
+// no seed list belonging to this protocol, and this is the piece that makes
+// that possible rather than merely stated.
+//
+// IT IS NOT WHAT MAKES A NODE ELIGIBLE. Section 5A.1: "The advertisement is
+// not what makes a node eligible. The bond output is. The advertisement is the
+// body that the bond output commits to, so that chain data alone identifies
+// both the node and its terms." That is why `bondOutpoint` is mandatory here -
+// the object points back at the thing that gives it weight - and why the
+// commitment lives in `chain.js` rather than here.
+//
+// THE SIGNATURE SITS BESIDE IT, as it does for a checkpoint and a receipt, and
+// for the same reason twice over. Inside, it would be covered by `advertId`,
+// so the id of an advertisement would change the moment it was signed - and
+// the bond output commits to the BODY, which is fixed when the funding
+// transaction is built. Section 5A.1 lists `signature` among the fields; this
+// keeps it adjacent so the commitment and the id are both stable.
+
+
+
+function encodeAdvert(a) {
+  const w = new Writer();
+  w.u8(TYPE_ADVERT);
+  w.u16(PROTOCOL_VERSION);
+
+  w.bytes32(a.nodePubkey);
+
+  // SELF-DECLARED and marked as such by section 5A.13, so it is carried as a
+  // string and never treated as proof of anything.
+  w.str(a.operatorId);
+
+  w.vec([...a.protocolVersions].sort((x, y) => x - y), (v, ww) => ww.u16(v));
+  w.vec([...a.roles].sort(), (r, ww) => ww.u8(roleByte(r)),
+        { sortedBy: (x, y) => (x < y ? -1 : x > y ? 1 : 0) });
+
+  // The endpoint is the whole point of the object. It is fixed for the life of
+  // the bond: section 25.1 says a server move means a new funding transaction
+  // and new confirmations, "and the two cannot both be had: anything that
+  // makes an address cheap to change is something outside the chain that must
+  // be running".
+  w.str(a.endpoint);
+  w.str(a.region);
+  w.u8(a.capacityClass);
+
+  w.bytes32(a.softwareHash);
+  w.u32(a.settlementCapabilities);
+  w.u32(a.lightningCapabilities);
+
+  // MANDATORY (5A.1): the census entry itself. Without it an advertisement
+  // says where to reach somebody with no way to say which bond gives them
+  // standing.
+  w.bytes32(a.bondTxid);
+  w.u32(a.bondVout);
+  w.u16(a.bondScriptTemplateVersion);
+
+  w.bytes32(a.payoutPubkey);
+  w.u64(a.timestamp);
+  return w.finish();
+}
+
+function decodeAdvert(bytes) {
+  const r = new Reader(bytes);
+  const type = r.u8();
+  if (type !== TYPE_ADVERT) throw new Error('not an advertisement: type ' + type);
+  const version = r.u16();
+  if (version !== PROTOCOL_VERSION) throw new Error('unknown protocol version');
+
+  const a = {
+    nodePubkey: r.bytes32(),
+    operatorId: r.str(),
+    protocolVersions: r.vec((rr) => rr.u16()),
+    roles: r.vec((rr) => {
+      const i = rr.u8();
+      if (i < 0 || i >= ROLES.length) throw new Error('unknown role index ' + i);
+      return ROLES[i];
+    }),
+    endpoint: r.str(),
+    region: r.str(),
+    capacityClass: r.u8(),
+    softwareHash: r.bytes32(),
+    settlementCapabilities: r.u32(),
+    lightningCapabilities: r.u32(),
+    bondTxid: r.bytes32(),
+    bondVout: r.u32(),
+    bondScriptTemplateVersion: r.u16(),
+    payoutPubkey: r.bytes32(),
+    timestamp: r.u64(),
+  };
+  if (r.at !== bytes.length) throw new Error('trailing bytes after the advertisement');
+  return a;
+}
+
+/**
+ * What the bond output commits to.
+ *
+ * `TAG.advert` was reserved in `constants.js` before anything used it; this is
+ * the object it was reserved for.
+ */
+const advertId = (a) => taggedHash(TAG.advert, encodeAdvert(a));
+
+/** The 64 bytes the node's own key puts beside it, as for every other object here. */
+const ADVERT_SIGNATURE_BYTES = 64;
+
+function joinSignedAdvert(bytes, signature) {
+  if (signature.length !== ADVERT_SIGNATURE_BYTES)
+    throw new Error(`a signature is ${ADVERT_SIGNATURE_BYTES} bytes, got ${signature.length}`);
+  const out = new Uint8Array(bytes.length + ADVERT_SIGNATURE_BYTES);
+  out.set(bytes, 0);
+  out.set(signature, bytes.length);
+  return out;
+}
+
+function splitSignedAdvert(bytes) {
+  if (bytes.length <= ADVERT_SIGNATURE_BYTES)
+    throw new Error(`a signed advertisement is longer than ${ADVERT_SIGNATURE_BYTES} bytes`);
+  return {
+    body: bytes.subarray(0, bytes.length - ADVERT_SIGNATURE_BYTES),
+    signature: bytes.subarray(bytes.length - ADVERT_SIGNATURE_BYTES),
+  };
+}
+
+// ---- protocol/src/tx.js
+// A Bitcoin transaction, read far enough to find an endpoint in it.
+//
+// Section 25.1 puts discovery in the funding transaction itself: the body of
+// the advertisement rides in the witness, and the bond output commits to
+// `H(NodeAdvertisement)`. That is what makes discovery need no directory - but
+// only if the commitment is READ OUT OF THE TRANSACTION. Handed in beside it,
+// a commitment is worth nothing: whoever hands over the advertisement hands
+// over the hash of the advertisement they wanted, and every check passes.
+//
+// So the txid is COMPUTED here, never accepted. It is the double hash of the
+// transaction without its marker, flag and witness - the one number a page
+// cannot choose without changing the bytes it is derived from - and it is what
+// the merkle proof must then be about.
+//
+// NOTHING HERE IS BITCOIN CONSENSUS. No script is executed, no signature is
+// checked, no amount is summed. It parses a serialization and answers two
+// questions: what is this transaction called, and what does it commit to.
+
+/** Bitcoin hashes twice, everywhere. */
+const hash256 = (bytes) => sha256bytes(sha256bytes(bytes));
+
+/** OP_RETURN: the opcode that makes an output a commitment rather than money. */
+const OP_RETURN = 0x6a;
+
+function need(bytes, at, n, what) {
+  if (at + n > bytes.length)
+    throw new Error(`the transaction ends inside its ${what}`);
+  return at + n;
+}
+
+/**
+ * Bitcoin's variable-length integer.
+ *
+ * Refuses the long forms of a short number. A parser that accepted `fd0100`
+ * for 1 would give two byte strings the same meaning, and the txid is a hash
+ * OF the bytes - two spellings would be two names for one transaction.
+ */
+function readVarint(bytes, at) {
+  need(bytes, at, 1, 'length');
+  const first = bytes[at];
+  if (first < 0xfd) return { value: first, next: at + 1 };
+  if (first === 0xfd) {
+    need(bytes, at, 3, 'length');
+    const v = bytes[at + 1] | (bytes[at + 2] << 8);
+    if (v < 0xfd) throw new Error('a length is written longer than it needs to be');
+    return { value: v, next: at + 3 };
+  }
+  if (first === 0xfe) {
+    need(bytes, at, 5, 'length');
+    const v = (bytes[at + 1] | (bytes[at + 2] << 8) | (bytes[at + 3] << 16)
+      | (bytes[at + 4] << 24)) >>> 0;
+    if (v <= 0xffff) throw new Error('a length is written longer than it needs to be');
+    return { value: v, next: at + 5 };
+  }
+  // 0xff is eight bytes. A transaction that large does not exist and a length
+  // past what an array can hold is refused rather than truncated.
+  throw new Error('a length larger than this parser will read');
+}
+
+function readSlice(bytes, at, what) {
+  const { value, next } = readVarint(bytes, at);
+  const end = need(bytes, next, value, what);
+  return { bytes: bytes.slice(next, end), next: end };
+}
+
+/**
+ * Parses a transaction and computes its txid.
+ *
+ * The txid covers version, inputs, outputs and locktime and NOT the witness -
+ * that is what segwit is - so a body carried in the witness is not committed
+ * to by the name of the transaction. It is committed to by an output, and
+ * `commitmentsOf` is where that is read. Both halves are needed and neither is
+ * enough: the witness says what the advertisement is, the output says that
+ * this transaction meant it.
+ */
+function parseTransaction(raw) {
+  if (!(raw instanceof Uint8Array) || raw.length < 10)
+    throw new Error(`a transaction is more than ${raw && raw.length} bytes`);
+
+  let at = need(raw, 0, 4, 'version');
+  const version = (raw[0] | (raw[1] << 8) | (raw[2] << 16) | (raw[3] << 24)) >>> 0;
+
+  const segwit = raw[4] === 0x00 && raw[5] === 0x01;
+  if (segwit) at += 2;
+  const bodyFrom = at;
+
+  const ins = readVarint(raw, at);
+  if (ins.value === 0) throw new Error('a transaction with no inputs');
+  at = ins.next;
+  const inputs = [];
+  for (let i = 0; i < ins.value; i++) {
+    const end = need(raw, at, 36, 'outpoint');
+    const previousTxid = raw.slice(at, at + 32);
+    const previousVout = (raw[at + 32] | (raw[at + 33] << 8)
+      | (raw[at + 34] << 16) | (raw[at + 35] << 24)) >>> 0;
+    const script = readSlice(raw, end, 'input script');
+    at = need(raw, script.next, 4, 'sequence');
+    inputs.push({ previousTxid, previousVout, script: script.bytes });
+  }
+
+  const outs = readVarint(raw, at);
+  at = outs.next;
+  const outputs = [];
+  for (let i = 0; i < outs.value; i++) {
+    const end = need(raw, at, 8, 'value');
+    let value = 0n;
+    for (let b = 7; b >= 0; b--) value = (value << 8n) | BigInt(raw[at + b]);
+    const script = readSlice(raw, end, 'output script');
+    at = script.next;
+    outputs.push({ value, script: script.bytes });
+  }
+  const bodyTo = at;
+
+  const witnesses = [];
+  if (segwit) {
+    for (let i = 0; i < inputs.length; i++) {
+      const items = readVarint(raw, at);
+      at = items.next;
+      const stack = [];
+      for (let k = 0; k < items.value; k++) {
+        const item = readSlice(raw, at, 'witness item');
+        at = item.next;
+        stack.push(item.bytes);
+      }
+      witnesses.push(stack);
+    }
+  }
+
+  const end = need(raw, at, 4, 'locktime');
+  const locktime = (raw[at] | (raw[at + 1] << 8) | (raw[at + 2] << 16)
+    | (raw[at + 3] << 24)) >>> 0;
+  if (end !== raw.length)
+    throw new Error(`${raw.length - end} bytes left over after the transaction`);
+
+  // The name of the transaction: the same bytes with the witness taken out.
+  const stripped = new Uint8Array(4 + (bodyTo - bodyFrom) + 4);
+  stripped.set(raw.subarray(0, 4), 0);
+  stripped.set(raw.subarray(bodyFrom, bodyTo), 4);
+  stripped.set(raw.subarray(at, at + 4), 4 + (bodyTo - bodyFrom));
+
+  return {
+    version, segwit, inputs, outputs, witnesses, locktime,
+    txid: hash256(stripped),
+  };
+}
+
+/**
+ * What the outputs commit to: the data push of every `OP_RETURN`.
+ *
+ * A bond output commits to `H(NodeAdvertisement)` "either in an OP_RETURN
+ * output of the funding transaction or in the taproot script path" (5A.2).
+ * Only the first form is readable from the transaction alone - a taproot
+ * script path is invisible until it is spent - so that is the one discovery
+ * can use, and a bond whose commitment is only in the script path is not
+ * findable by this. It is not refused here; it is simply not present.
+ */
+function commitmentsOf(tx) {
+  const out = [];
+  for (const o of tx.outputs) {
+    const s = o.script;
+    if (s.length < 2 || s[0] !== OP_RETURN) continue;
+    const op = s[1];
+    let from = 2;
+    let n = 0;
+    if (op >= 1 && op <= 75) n = op;
+    else if (op === 0x4c && s.length >= 3) { n = s[2]; from = 3; }
+    else if (op === 0x4d && s.length >= 4) { n = s[2] | (s[3] << 8); from = 4; }
+    else continue;
+    if (from + n !== s.length) continue;     // a push that does not fill the script
+    out.push(s.slice(from, from + n));
+  }
+  return out;
+}
+
+/** Every witness item of every input, flattened - a place to look, not a claim. */
+function witnessItemsOf(tx) {
+  const out = [];
+  for (const stack of tx.witnesses) for (const item of stack) out.push(item);
+  return out;
+}
+
+// ---- protocol/src/chain.js
+// Reading Bitcoin without trusting whoever handed it to you.
+//
+// Section 25.1 is normative about this, and says why it is normative rather
+// than advisory: "A client MUST verify every census entry against block
+// headers it obtained independently. It MUST NOT take a census, a committee or
+// an endpoint on the word of any API, including one operated by the same party
+// that ships the client... A client that silently trusts a chain API behaves
+// exactly like one that verifies - same screens, same rounds, same results -
+// right up until the API returns a census that suits whoever runs it, and then
+// the player has been playing against a committee that was never selected.
+// There is no symptom to notice and nothing for the player to check."
+//
+// So these are the primitives that make a provider usable without being
+// trusted. They fetch nothing: a proof and a header are handed in, and what
+// comes back is whether they hold together. "A list provider can then OMIT but
+// not FORGE, and omission is answered by asking a second one."
+//
+// NOTHING HERE IS BITCOIN CONSENSUS. It does not validate scripts, amounts or
+// difficulty retargeting; it answers two questions only - is this transaction
+// in this header's block, and which of these header chains carries the most
+// work. That is what discovery needs and it is deliberately not more.
+
+
+
+
+/** A block header is exactly this, and a shorter one is not a header. */
+const HEADER_BYTES = 80;
+
+/**
+ * BITCOIN'S FIRST BLOCK, in hashing order.
+ *
+ * Not a parameter and not a choice: this number IS mainnet, the way a network
+ * id is. Anyone can check it, it can never go stale, and no operator can
+ * change it. It is here because a chain has to be anchored to something the
+ * client already knows - a set of headers that link and are mined is only a
+ * chain of SOMETHING, and mining a short easy one costs almost nothing.
+ *
+ * WHAT IT COSTS TO USE THIS ONE. Section 25.1 says "80 bytes a block; under
+ * 4 MB for all of history". That figure is wrong: at 900,000 blocks it is
+ * 68.7 MB, seventeen times what the spec says, and no browser will fetch it to
+ * open a round. So a deployment will anchor on a later block instead - which is
+ * a constant somebody must choose and keep - and choosing it is not this
+ * slice's to make. What is decided here is that there MUST be one.
+ */
+const BITCOIN_MAINNET_GENESIS = fromHex(
+  '6fe28c0ab6f1b372c1a6a246ae63f74f931e8365e15a089c68d6190000000000');
+
+/**
+ * And the eighty bytes themselves, so a chain can actually START here.
+ *
+ * The hash above is enough to REFUSE with; this is what an honest chain has to
+ * contain, and it is written down rather than fetched because it has been the
+ * same eighty bytes since 2009 and will not change. Nothing takes it on trust:
+ * `blockHashOf` of these bytes is the hash above, and a test says so, which is
+ * the only reason to believe either of them.
+ */
+const BITCOIN_MAINNET_GENESIS_HEADER = fromHex(
+  '01000000000000000000000000000000000000000000000000000000000000000000000'
+  + '03ba3edfd7a7b12b27ac72c3e67768f617fc81bc3888a51323a9fb8aa4b1e5e4a29ab5f'
+  + '49ffff001d1dac2b7c');
+
+const sameBytes = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
+
+function header(bytes) {
+  if (!(bytes instanceof Uint8Array) || bytes.length !== HEADER_BYTES)
+    throw new Error(`a block header is ${HEADER_BYTES} bytes, got ${bytes && bytes.length}`);
+  return bytes;
+}
+
+/** The previous block's hash, bytes 4..36, in the order the header stores it. */
+const previousHashOf = (h) => header(h).slice(4, 36);
+
+/** The merkle root the header commits to, bytes 36..68. */
+const merkleRootOf = (h) => header(h).slice(36, 68);
+
+/** A block's own id: the double hash of its 80 bytes. */
+const blockHashOf = (h) => hash256(header(h));
+
+/**
+ * The target a header CLAIMS, from its compact form at bytes 72..76.
+ *
+ * Claims, because these four bytes are written by whoever hands the header
+ * over. Nothing about them is proof of anything until `meetsTarget` compares
+ * them against the hash, and that is the whole reason this is a separate
+ * function from the work it implies.
+ */
+function targetOf(h) {
+  const b = header(h);
+  const exponent = b[75];
+  const mantissa = (b[74] << 16) | (b[73] << 8) | b[72];
+  // The high bit of the mantissa is a sign bit. A negative target is not a
+  // target, and Bitcoin has never had a valid header carrying one.
+  if (mantissa === 0 || (mantissa & 0x800000)) return 0n;
+  return exponent <= 3
+    ? BigInt(mantissa) >> BigInt(8 * (3 - exponent))
+    : BigInt(mantissa) << BigInt(8 * (exponent - 3));
+}
+
+/**
+ * WAS THIS HEADER ACTUALLY MINED?
+ *
+ * The one question that makes "most work wins" mean anything. Without it the
+ * work of a chain is a number the provider chose: the difficulty lives in four
+ * bytes of the header, so anybody can write down a target of 1, claim
+ * 5.8 * 10^76 of work for a header nobody mined, and outweigh the whole of
+ * Bitcoin by thirty-two orders of magnitude. Measured before this existed: one
+ * fabricated header beat mainnet 499998-500000 by exactly that.
+ *
+ * The comparison is numeric, and the byte order is the usual trap: a block
+ * hash is stored and displayed reversed from the way it is read as a number,
+ * so it is the REVERSED bytes that must come out below the target.
+ */
+function meetsTarget(h) {
+  const target = targetOf(h);
+  if (target <= 0n) return false;
+  let value = 0n;
+  for (const b of blockHashOf(h).reverse()) value = (value << 8n) | BigInt(b);
+  return value <= target;
+}
+
+/**
+ * The work one header stands for.
+ *
+ * Work is 2^256 / (target + 1), which is how much hashing the block is
+ * expected to have cost. BigInt because the numbers are far past what a double
+ * can hold exactly, and a comparison that silently rounded would pick the
+ * wrong chain. It says nothing about whether the work was DONE - see
+ * `meetsTarget` - and a caller that sums this without asking that question is
+ * adding up somebody else's arithmetic.
+ */
+function workOf(h) {
+  const target = targetOf(h);
+  if (target <= 0n) return 0n;
+  return (1n << 256n) / (target + 1n);
+}
+
+/**
+ * Is this a chain - each header naming the one before it - and what is it
+ * worth?
+ *
+ * A list of headers that do not link is not a chain and is worth nothing,
+ * however many of them there are. Answering with `false` rather than throwing
+ * because a caller is comparing sources, and a bad source is an ordinary
+ * event.
+ */
+function chainWork(headers) {
+  if (!headers.length) return { ok: false, why: 'no headers', work: 0n };
+  let work = 0n;
+  for (let i = 0; i < headers.length; i++) {
+    try { header(headers[i]); } catch (e) { return { ok: false, at: i, why: e.message, work: 0n }; }
+    if (i > 0 && !sameBytes(previousHashOf(headers[i]), blockHashOf(headers[i - 1])))
+      return { ok: false, at: i, why: 'this header does not follow the one before it', work: 0n };
+    // Before its work is added, not after: a header nobody mined contributes
+    // whatever difficulty its author felt like writing down.
+    if (!meetsTarget(headers[i]))
+      return {
+        ok: false, at: i, work: 0n,
+        why: 'this header was not mined: its hash does not meet the target it claims',
+      };
+    work += workOf(headers[i]);
+  }
+  return { ok: true, work };
+}
+
+/**
+ * Most work wins, which is Bitcoin's own rule and not a vote.
+ *
+ * Section 25.1: "block headers from several independent sources, most work
+ * wins". A chain that does not link is not in the running at all - it is not a
+ * chain - and ties go to the first source offered, so the answer does not
+ * depend on the order two equal chains happened to arrive in.
+ */
+function mostWork(sources) {
+  let best = null;
+  for (let i = 0; i < sources.length; i++) {
+    const seen = chainWork(sources[i]);
+    if (!seen.ok) continue;
+    if (best === null || seen.work > best.work) best = { at: i, work: seen.work, headers: sources[i] };
+  }
+  return best;
+}
+
+/**
+ * Does this header's block contain this transaction?
+ *
+ * BYTE ORDER IS THE TRAP HERE, and it is the reason this takes bytes rather
+ * than the hex strings an API hands over. A txid is displayed reversed from
+ * the way it is hashed, and so is a merkle root; the header stores the root in
+ * hashing order. Everything below is in HASHING order, and a caller that
+ * passes what an API printed will get a refusal rather than a wrong answer,
+ * because the root will simply not match.
+ *
+ * `position` is the transaction's index in the block, and its bits say which
+ * side each step of the branch goes on - the low bit first. That is Bitcoin's
+ * encoding, not a choice made here.
+ */
+function merkleRootFromProof(txid, branch, position) {
+  if (!(txid instanceof Uint8Array) || txid.length !== 32)
+    throw new Error('a txid is 32 bytes in hashing order');
+  if (!Number.isInteger(position) || position < 0)
+    throw new Error('a position is a non-negative whole number');
+
+  let node = txid.slice();
+  let index = position;
+  for (const step of branch) {
+    if (!(step instanceof Uint8Array) || step.length !== 32)
+      throw new Error('every step of a merkle branch is 32 bytes');
+    const pair = new Uint8Array(64);
+    if (index & 1) { pair.set(step, 0); pair.set(node, 32); }
+    else { pair.set(node, 0); pair.set(step, 32); }
+    node = hash256(pair);
+    index >>= 1;
+  }
+  return node;
+}
+
+/**
+ * The whole question, in one answer: is this transaction in this block?
+ *
+ * This is what makes an advertisement worth reading. A provider hands over a
+ * transaction and a branch; if they do not rebuild the root the header already
+ * commits to, the provider is making it up, and nothing further is looked at.
+ */
+function provesTransaction(headerBytes, txid, branch, position) {
+  const root = merkleRootOf(headerBytes);
+  try { return sameBytes(merkleRootFromProof(txid, branch, position), root); }
+  catch { return false; }
+}
+
+/**
+ * The whole of step 4: where do I reach this node, and why should I believe it?
+ *
+ * Section 5A.1: "The advertisement is not what makes a node eligible. The bond
+ * output is. The advertisement is the body that the bond output commits to, so
+ * that chain data alone identifies both the node and its terms."
+ *
+ * WHAT IS HANDED IN IS RAW BYTES, NOT FINDINGS. The transaction, a branch, a
+ * header. The txid is computed from the transaction and the commitment is read
+ * out of its outputs, because the earlier shape of this function took both as
+ * arguments and that made the proof theatre: whoever handed over the
+ * advertisement also handed over the hash of the advertisement they wanted,
+ * their own txid to go with it, and every check passed. The page could put any
+ * endpoint it liked behind a real block. Now the only inputs are bytes whose
+ * hashes it does not control.
+ *
+ *   the transaction is really in the block   or a provider invented it
+ *   an output really commits to THIS body    or a provider swapped the endpoint
+ *
+ * The second is the one that matters in practice, because a swapped endpoint
+ * is invisible: the node is real, the bond is real, and the player connects to
+ * whoever the provider preferred. So the answer names which failed.
+ *
+ * The body may come from the transaction's own witness (25.1: "the body of
+ * 5A.1 is carried in the witness of the funding transaction") or be handed in
+ * beside it. It does not matter which, and that is the point - the witness is
+ * not covered by the txid, so a body from either place has to earn its standing
+ * from the committed output, and one that cannot is refused the same way.
+ *
+ * THE SIGNATURE IS RETURNED, NOT CHECKED. 5A.1 ends the body with "signature -
+ * by node_pubkey over all of the above", and this package carries no crypto on
+ * purpose: a curve in here would be an implementation of the thing that pins
+ * money, sitting in every consumer, that nobody audits. So a body must ARRIVE
+ * signed - 64 bytes beside it, or it is not an advertisement - and the caller
+ * that owns a verifier is the one that says whether the signature is good.
+ * `blwp-client` refuses the session if it is not.
+ */
+function acceptAdvert({ transaction, signedAdvert, header, branch, position }) {
+  let tx;
+  try { tx = parseTransaction(transaction); }
+  catch (e) { return { ok: false, why: `that is not a transaction: ${e.message}` }; }
+
+  if (!provesTransaction(header, tx.txid, branch, position))
+    return { ok: false, why: 'the transaction is not in that block' };
+
+  const commitments = commitmentsOf(tx);
+  if (!commitments.length)
+    return { ok: false, why: 'no output of that transaction commits to anything' };
+
+  // Every body on offer, from the witness first, and the one handed in last:
+  // order decides nothing, since a body is taken only if an output commits to
+  // it, and a transaction that committed to two of them would be one operator
+  // advertising twice rather than an ambiguity to resolve here.
+  const offered = [];
+  const read = (bytes) => {
+    try {
+      const { body, signature } = splitSignedAdvert(bytes);
+      offered.push({ advert: decodeAdvert(body), signature });
+    } catch { /* not a signed body; most witness items are not */ }
+  };
+  for (const item of witnessItemsOf(tx)) read(item);
+  if (signedAdvert) read(signedAdvert);
+
+  const taken = offered.find((o) =>
+    commitments.some((c) => sameBytes(c, advertId(o.advert))));
+  if (!taken)
+    return { ok: false, why: 'the bond output commits to a different advertisement' };
+
+  // The advertisement must point back at the bond that gives it standing, or
+  // it says where to reach somebody with nothing to say why they count. An
+  // all-zero txid is the only value a body CAN carry when it rides in the
+  // transaction it names - 5A.1 makes bond_outpoint mandatory and 25.1 puts
+  // the body in the same transaction, so the txid is not knowable when the
+  // body is signed. Reading it as "the transaction carrying me" is the only
+  // reading available; which output is the bond still waits on BOND_MARKER,
+  // and neither is settled here.
+  const carriesUs = taken.advert.bondTxid.every((b) => b === 0);
+  if (!carriesUs && !sameBytes(taken.advert.bondTxid, tx.txid))
+    return { ok: false, why: 'the advertisement names a different bond transaction' };
+  if (taken.advert.bondVout >= tx.outputs.length)
+    return { ok: false, why: 'the advertisement names an output that transaction does not have' };
+
+  return {
+    ok: true,
+    endpoint: taken.advert.endpoint,
+    nodePubkey: taken.advert.nodePubkey,
+    signature: taken.signature,
+    txid: tx.txid,
+    advert: taken.advert,
+  };
+}
+
+// ---- blwp-client/src/headers.js
+// WHERE THE CHAIN COMES FROM, AND WHY MORE THAN ONE OF THEM.
+//
+// Section 25.1: "block headers from several independent sources, most work
+// wins... A list provider can then OMIT but not FORGE, and omission is
+// answered by asking a second one. This is the difference between using a
+// provider and trusting one."
+//
+// FORGING IS ALREADY IMPOSSIBLE - a header that does not follow the one before
+// it is not part of a chain, and the work is arithmetic over bytes nobody can
+// choose. OMISSION IS NOT. A provider that simply leaves out the block a bond
+// is in looks exactly like a provider that has never heard of it, and a client
+// with one source cannot tell those apart. That is the whole reason this file
+// takes a list.
+//
+// SO ONE SOURCE IS REFUSED, always, however good it looks. Not because it is
+// probably lying but because nothing it says can be weighed. Running our own
+// instances does not change that: for a stranger an API operated by whoever
+// wrote the client is worth what that party's word is worth, and redundancy is
+// not an argument about trust.
+//
+// AND A DISAGREEMENT IS REFUSED RATHER THAN RESOLVED. Bitcoin's own rule is
+// most work wins, and that is right for a node with the whole chain; here the
+// question is different. Two providers whose chains fork are two providers of
+// whom at least one is lying or broken, and picking the heavier one would be
+// guessing which - so the answer is that there is no answer yet, by name. A
+// SHORTER chain is not a disagreement: it is omission, it is the case this
+// design expects, and the longer one simply carries it.
+
+
+
+/**
+ * One provider's answer, over HTTP, as 80-byte records back to back.
+ *
+ * THE CALLER GIVES THE WHOLE URL. No host and no path is written here: this
+ * protocol has no chain API of its own, and inventing one - even as a default
+ * - would put an address in the client that a player never chose. What a real
+ * provider's URLs look like is a separate question from what a client does
+ * with the bytes, and only the second one is decided here.
+ *
+ * THE BODY IS BOUNDED AND THE READ IS ABORTABLE. A provider is not trusted, and
+ * an untrusted party that can make a client allocate as much memory as it likes
+ * is a provider that can stop the game without ever telling a lie. The cap is
+ * counted while reading rather than only on `content-length`, because that
+ * header is the provider's word too.
+ */
+async function headersOverHttp(url, { fetcher = fetch, signal, maxHeaders = 100000 } = {}) {
+  const cap = maxHeaders * HEADER_BYTES;
+  const r = await fetcher(url, { signal });
+  if (!r.ok) throw new Error(`the provider answered ${r.status}`);
+
+  const offered = Number(r.headers.get('content-length') || 0);
+  if (offered > cap)
+    throw new Error(`the provider offered ${offered} bytes, more than the ${cap} this client reads`);
+
+  let body;
+  if (r.body && r.body.getReader) {
+    const reader = r.body.getReader();
+    const parts = [];
+    let total = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.length;
+      if (total > cap) {
+        await reader.cancel();
+        throw new Error(`the provider sent more than the ${cap} bytes this client reads`);
+      }
+      parts.push(value);
+    }
+    body = new Uint8Array(total);
+    let at = 0;
+    for (const part of parts) { body.set(part, at); at += part.length; }
+  } else {
+    body = new Uint8Array(await r.arrayBuffer());
+    if (body.length > cap)
+      throw new Error(`the provider sent more than the ${cap} bytes this client reads`);
+  }
+
+  if (body.length === 0 || body.length % HEADER_BYTES !== 0)
+    throw new Error(`${body.length} bytes is not a whole number of headers`);
+  const out = [];
+  for (let at = 0; at < body.length; at += HEADER_BYTES)
+    out.push(body.subarray(at, at + HEADER_BYTES));
+  return out;
+}
+
+/**
+ * A provider bound to one address, and TAGGED with it.
+ *
+ * The tag is the whole reason this exists. `agreedChain` needs several
+ * INDEPENDENT sources, and two calls to the same server are one source however
+ * many times it is listed - a mistake that reads as success, which is the worst
+ * kind. Independence cannot be established from inside a client in general:
+ * two different hostnames can be one machine, and nothing here can tell. What
+ * can be caught is the obvious case, and it is caught by name.
+ *
+ * `where` may be a function of the question, for a provider whose URL carries
+ * the range being asked about; then the tag has to be given, because there is
+ * no address to read one off yet.
+ */
+function httpProvider(where, { tag, ...rest } = {}) {
+  const at = (ask) => (typeof where === 'function' ? where(ask) : where);
+  const get = (ask, opts) => headersOverHttp(at(ask), { ...rest, ...opts });
+  get.tag = tag || (typeof where === 'string' ? new URL(where).origin : undefined);
+  return get;
+}
+
+const tips = (headers) => headers.map((h) => toHex(blockHashOf(h)));
+
+/**
+ * Ask several providers and answer only if they can be weighed against each
+ * other.
+ *
+ * A provider is a function returning headers in order. It is injected rather
+ * than built here for the same reason signing is: transport belongs to whoever
+ * runs the client, and a module that decides things should not also decide who
+ * it talks to.
+ *
+ * `least` is 2 and is not a tuning knob - it is the whole property. One source
+ * is a directory, which is the thing 25.1 exists to remove.
+ */
+async function agreedChain(providers, { least = 2, timeoutMs = 10000, ask, anchor } = {}) {
+  // AN ANCHOR IS NOT OPTIONAL, and it may not come from the page.
+  //
+  // Agreement and mining together still only prove that a set of headers is a
+  // chain of SOMETHING. Mining a short chain at trivial difficulty costs
+  // almost nothing, so a client whose whole provider list belongs to one
+  // operator - two hostnames, one machine, which an origin tag catches only
+  // when it is obvious - would take that operator's fork by default, because
+  // there is nothing heavier to compare it against. The anchor is what makes
+  // the winner have to be BITCOIN's chain: a block the client already knows,
+  // which the chain must contain.
+  //
+  // It is a caller's argument rather than a page's value on purpose. An anchor
+  // an attacker supplies is no anchor - he would name a block of his own fork -
+  // so this has to come from the client, and `BITCOIN_MAINNET_GENESIS` is one
+  // that can never go stale or be argued with.
+  if (!(anchor instanceof Uint8Array) || anchor.length !== 32)
+    return { ok: false, why: 'no anchor: a chain of headers that link and are mined is still only a chain of something' };
+
+  if (!providers || providers.length < least)
+    return { ok: false, why: `${(providers || []).length} providers is fewer than the ${least} it takes to weigh one against another` };
+
+  // Two listings of one server are one source. Checked before anyone is asked,
+  // for the same reason the count is: the request would be wasted and it would
+  // tell that server what is being looked for.
+  const tags = new Map();
+  for (let i = 0; i < providers.length; i++) {
+    const tag = providers[i] && providers[i].tag;
+    if (!tag) continue;
+    if (tags.has(tag))
+      return { ok: false, why: `providers ${tags.get(tag)} and ${i} are the same source, ${tag}` };
+    tags.set(tag, i);
+  }
+
+  const answers = await Promise.all(providers.map(async (p, at) => {
+    let timer;
+    try {
+      // A provider that never answers must not stop the ones that did. The
+      // timer is cleared and unreferenced either way, or a client that got its
+      // chain would sit waiting for a source it no longer needs.
+      // The read is aborted, not merely abandoned: a provider that never
+      // answers would otherwise hold a socket open for the rest of the run.
+      const stop = new AbortController();
+      const headers = await Promise.race([
+        Promise.resolve().then(() => p(ask, { signal: stop.signal })),
+        new Promise((_, no) => {
+          timer = setTimeout(() => {
+            stop.abort();
+            no(new Error(`no answer in ${timeoutMs} ms`));
+          }, timeoutMs);
+          if (timer.unref) timer.unref();
+        }),
+      ]);
+      const seen = chainWork(headers);
+      if (!seen.ok) return { at, ok: false, why: seen.why };
+      const hashes = tips(headers);
+      // Checked per source, not only on the winner: a chain that does not hold
+      // the anchor is not an inferior answer to the question, it is an answer
+      // to a different one, and it must not be weighed at all.
+      if (!hashes.includes(toHex(anchor)))
+        return { at, ok: false, why: `this chain does not contain ${toHex(anchor)}, the block this client is anchored to` };
+      return { at, ok: true, headers, work: seen.work, hashes };
+    } catch (e) {
+      return { at, ok: false, why: e.message };
+    } finally { clearTimeout(timer); }
+  }));
+
+  const good = answers.filter((a) => a.ok);
+  const bad = answers.filter((a) => !a.ok);
+  if (good.length < least) {
+    const said = bad.map((b) => `provider ${b.at}: ${b.why}`).join('; ');
+    return {
+      ok: false,
+      why: `only ${good.length} of ${providers.length} providers gave a chain, `
+        + `which is fewer than the ${least} it takes to weigh one against another`,
+      refused: said,
+    };
+  }
+
+  // Most work wins - Bitcoin's rule, not a vote - and then every other answer
+  // has to be a part of that one. A source whose headers are all in the best
+  // chain has merely left some out, which is the case this design expects; a
+  // source holding a block the best chain does not have is a fork, and there
+  // is no honest way to choose between them here.
+  let best = good[0];
+  for (const a of good) if (a.work > best.work) best = a;
+  const inBest = new Set(best.hashes);
+
+  for (const a of good) {
+    // ANSWERS ABOUT DIFFERENT PARTS OF THE CHAIN used to be told apart from a
+    // fork here, and that branch is gone rather than left unreachable: every
+    // chain that gets this far contains the anchor, so any two of them share
+    // at least that block, and no test or mutant could ever reach it again. A
+    // provider whose range does not reach the anchor is refused earlier, by
+    // name, which is the same fact said in the right place.
+    const stray = a.hashes.find((h) => !inBest.has(h));
+    if (stray) {
+      return {
+        ok: false,
+        why: `providers ${best.at} and ${a.at} do not agree on the chain: `
+          + `${stray} is not in the one with the most work`,
+      };
+    }
+  }
+
+  return {
+    ok: true,
+    headers: best.headers,
+    work: best.work,
+    from: best.at,
+    agreed: good.length,
+    refused: bad.map((b) => `provider ${b.at}: ${b.why}`),
+  };
+}
+
+// ---- blwp-client/src/bond.js
+// THE BOND, IN A BLOCK THAT WAS ACTUALLY MINED.
+//
+// Section 25.1 gives a browser three lines of work: headers from several
+// independent sources with most work winning, "bond transaction plus a merkle
+// proof, from any chain API", and then "verify: proof against header,
+// H(advertisement) against the bond output's commitment".
+//
+// The first line is `headers.js` and it needs AGREEMENT, because the weight of
+// a chain means nothing except in comparison. This line does not, and the
+// difference is worth saying out loud rather than copying the pattern: a bond
+// proof carries its own proof. It rebuilds a merkle root that a mined header
+// already commits to, so a provider cannot forge one at any price - the only
+// lie available is to withhold it, and withholding is answered by asking the
+// next provider, not by taking a vote.
+//
+// SO ONE PROVIDER IS ENOUGH HERE, and two are needed there, and neither is a
+// preference.
+
+
+
+/**
+ * Does this proof land in a block of this chain?
+ *
+ * The chain is re-checked here rather than taken on the caller's word - it is
+ * one pass over headers that are already in hand, and it is the difference
+ * between "a block" and "80 bytes somebody handed me". Every header in a chain
+ * that passes has met the target it claims, so a fabricated header carrying a
+ * merkle root of the attacker's choosing cannot be the block a bond is proven
+ * into: the chain holding it is not a chain.
+ *
+ * The txid is computed from the transaction, never accepted beside it, for the
+ * same reason it is computed in `acceptAdvert`.
+ */
+function provenBond({ chain, transaction, branch, position }) {
+  const linked = chainWork(chain || []);
+  if (!linked.ok)
+    return { ok: false, why: `that is not a mined chain: ${linked.why}` };
+
+  let tx;
+  try { tx = parseTransaction(transaction); }
+  catch (e) { return { ok: false, why: `that is not a transaction: ${e.message}` }; }
+
+  for (const header of chain) {
+    if (!provesTransaction(header, tx.txid, branch, position)) continue;
+    return {
+      ok: true,
+      txid: tx.txid,
+      transaction,
+      branch,
+      position,
+      header,
+      blockHash: blockHashOf(header),
+    };
+  }
+  return {
+    ok: false,
+    why: `the transaction ${toHex(tx.txid.slice().reverse())} is not proven `
+      + 'into any block of that chain',
+  };
+}
+
+/**
+ * Ask providers for a bond until one of them proves it.
+ *
+ * IN ORDER, AND THE FIRST PROOF WINS, which is not laziness: a proof is not an
+ * opinion, so there is nothing for a second provider to add except the same
+ * bytes. What a second provider is for is the case where the first says
+ * nothing - "omission is answered by asking a second one" - and that is why
+ * every refusal is kept and handed back rather than swallowed.
+ *
+ * A provider is a function, like a header provider is, and for the same
+ * reason: the shape a chain API puts a merkle proof in is nobody's standard,
+ * and writing one API's field names into the client would be adopting a second
+ * protocol without saying so.
+ */
+async function askForBond(providers, { chain, ask, timeoutMs = 10000 } = {}) {
+  const refused = [];
+  for (let at = 0; at < (providers || []).length; at++) {
+    let timer;
+    try {
+      const stop = new AbortController();
+      const offer = await Promise.race([
+        Promise.resolve().then(() => providers[at](ask, { signal: stop.signal })),
+        new Promise((_, no) => {
+          timer = setTimeout(() => {
+            stop.abort();
+            no(new Error(`no answer in ${timeoutMs} ms`));
+          }, timeoutMs);
+          if (timer.unref) timer.unref();
+        }),
+      ]);
+      const seen = provenBond({ chain, ...offer });
+      if (seen.ok) return { ...seen, from: at, refused };
+      refused.push(`provider ${at}: ${seen.why}`);
+    } catch (e) {
+      refused.push(`provider ${at}: ${e.message}`);
+    } finally { clearTimeout(timer); }
+  }
+  return {
+    ok: false,
+    why: refused.length
+      ? 'no provider proved that bond into the chain'
+      : 'no providers to ask for the bond',
+    refused,
+  };
+}
+
+// ---- blwp-client/src/directory.js
+// WHERE TO TALK, AND WHY.
+//
+// Section 25.1: "A client finds nodes by reading Bitcoin. There is no
+// directory, no relay network and no seed list belonging to this protocol."
+// This file is the client's half of step 4 - "where do I reach them? the
+// NodeAdvertisement, carried by the bond funding transaction".
+//
+// WHAT IT REPLACES. The endpoint used to be `BLWP_NODE`, a page global. Every
+// stranger who loaded the page reached whatever address whoever shipped the
+// page had written into it, and there was nothing in the client that could
+// tell a real node from any other server. Section 25.1 is normative about
+// exactly that: a client "MUST NOT take a census, a committee or an endpoint on
+// the word of any API, including one operated by the same party that ships the
+// client", because "there is no symptom to notice and nothing for the player to
+// check".
+//
+// A PAGE MAY STILL CARRY THE BYTES. That is not the same thing and it is the
+// whole design: the page hands over a transaction, a branch and headers, and
+// none of those are things it can choose. The txid is computed from the
+// transaction, the branch has to rebuild a header's own merkle root, and the
+// endpoint is only read out of a body an output of that transaction commits
+// to. A page that swaps the endpoint is refused by name.
+//
+// WHAT IS STILL MISSING, AND IT IS NOT THIS SLICE. Where the headers come from.
+// One source cannot be weighed: "block headers from several independent
+// sources, most work wins", and then "a list provider can omit but not forge,
+// and omission is answered by asking a second one". `mostWork` is here and takes
+// as many chains as it is given - nothing fetches yet, and until something does,
+// a client is only as sure as the chain it was handed.
+
+
+
+
+
+/**
+ * Is this a socket address at all?
+ *
+ * Section 25.1: "Then connect `wss://` to the `endpoint` from the verified
+ * advertisement." The endpoint is a string a bonded operator committed to on
+ * chain, which makes it THEIRS - it does not make it a URL. Without this the
+ * client would take whatever was committed and hand it to `WebSocket` after a
+ * blind `replace(/^ws/, 'http')`, so a body carrying `http://...`, a bare
+ * host, or something that is not an address at all would become the base a
+ * round is played on.
+ *
+ * `ws://` is allowed for loopback only, because a test node on this machine
+ * has no certificate and refusing it would mean the tests could not drive the
+ * real door. Nothing else: a plaintext socket to another host is exactly the
+ * one thing a committed endpoint must not be able to ask a player for.
+ */
+const LOOPBACK = /^ws:\/\/(127\.0\.0\.1|localhost|\[::1\])(:\d+)?(\/|$)/;
+function isSocketAddress(endpoint) {
+  if (typeof endpoint !== 'string') return false;
+  if (LOOPBACK.test(endpoint)) return true;
+  return /^wss:\/\/[^/?#\s]+(\/|$)/.test(endpoint);
+}
+
+/**
+ * The endpoint, or the reason there is not one.
+ *
+ * The proof is tried against every header of the best chain rather than
+ * against a header named by the caller: being handed a header is not being
+ * handed a block, and a header that is not in the chain the client accepted is
+ * one somebody made up. The transaction has to be in a block that is in the
+ * chain, not merely in something 80 bytes long.
+ *
+ * AND THE NODE HAS TO BE ONE OF THIS ROUND'S. Section 25.1 is four steps, and
+ * step 3 - "which are on the committee?" - is computed rather than fetched, so
+ * the answer is already in the round's own contract. Step 4 is "where do I
+ * reach THEM". Proving an advertisement without reading step 3's answer proves
+ * only that somebody, somewhere, posted a bond: a page could hand over a real,
+ * bonded, header-proven node with no standing in this round and the client
+ * would open the round there and publish its whole section 11 transcript to a
+ * stranger before the first receipt refused. A committee is therefore
+ * REQUIRED, not optional - an absent one is a refusal, because the version of
+ * this that takes an empty list and shrugs is the version that ships.
+ */
+function reach({
+  chain, chains, transaction, signedAdvert, branch, position, committee,
+}) {
+  if (!committee || !committee.length)
+    return { ok: false, why: 'no committee to check the node against' };
+
+  // A CHAIN THAT WAS ALREADY AGREED, or a list to weigh here. `chain` is what
+  // `agreedChain` hands back after two independent providers were compared,
+  // and it is the one a live client should be passing: weighing a single list
+  // handed over by one party is arithmetic, not evidence. Both are re-checked
+  // - every header must link and must have met the target it claims - so a
+  // fabricated block cannot be the one a bond is proven into whichever door it
+  // came through.
+  let headers; let work; let from = null;
+  if (chain) {
+    const linked = chainWork(chain);
+    if (!linked.ok) return { ok: false, why: `that is not a mined chain: ${linked.why}` };
+    headers = chain; work = linked.work;
+  } else {
+    const best = mostWork(chains || []);
+    if (!best) return { ok: false, why: 'no chain of headers to check against' };
+    headers = best.headers; work = best.work; from = best.at;
+  }
+
+  let refusal = 'the transaction is not in any block of that chain';
+  for (const header of headers) {
+    const seen = acceptAdvert({ transaction, signedAdvert, header, branch, position });
+    if (!seen.ok) {
+      // A header that proves the transaction and then fails on the commitment
+      // is a more specific answer than "not in this one", and it is the answer
+      // that matters: the block is real and the endpoint was swapped anyway.
+      if (seen.why !== 'the transaction is not in that block') refusal = seen.why;
+      continue;
+    }
+
+    if (!committee.some((n) => toHex(n) === toHex(seen.nodePubkey))) {
+      return {
+        ok: false,
+        why: `the advertisement is for ${toHex(seen.nodePubkey)}, `
+          + "which is not on this round's committee",
+      };
+    }
+    if (!isSocketAddress(seen.endpoint)) {
+      return {
+        ok: false,
+        why: `the advertisement's endpoint ${JSON.stringify(seen.endpoint)} `
+          + 'is not a secure socket address',
+      };
+    }
+
+    return {
+      ok: true,
+      endpoint: seen.endpoint,
+      nodePubkey: seen.nodePubkey,
+      signature: seen.signature,
+      advertId: advertId(seen.advert),
+      txid: seen.txid,
+      blockHash: blockHashOf(header),
+      work,
+      from,
+    };
+  }
+  return { ok: false, why: refusal };
+}
+
+/**
+ * The base URL a client talks to, from a proven advertisement only.
+ *
+ * Throws rather than answering, because there is no degraded mode here: a
+ * client that could not prove where to go has nothing to fall back to that
+ * would not be the page's word again.
+ *
+ * THIS DOES NOT CHECK THE SIGNATURE - it cannot, because verifying is
+ * asynchronous in a browser and this answer is wanted synchronously, and
+ * because a curve does not belong in this package. It is a gate, not the door:
+ * `Client.at` is the door, it is asynchronous, and nothing is sent to the node
+ * until the signature has verified there.
+ */
+function endpointFor(discovery) {
+  const seen = reach(discovery);
+  if (!seen.ok) throw new Error(`no proven endpoint: ${seen.why}`);
+  // 25.1 connects `wss://` to the endpoint; the client's own base is the HTTP
+  // origin of the same node, and `connect()` turns it back into a socket.
+  return seen.endpoint.replace(/^ws/, 'http');
+}
+
+/**
+ * THE WHOLE OF STEP 4, FROM PROVIDERS RATHER THAN FROM A PAGE.
+ *
+ * Everything above this was a library nothing used. `reach` verified whatever
+ * chain it was handed, which proves that a chain and a proof agree with each
+ * other and NOTHING about Bitcoin: a page that wrote both wrote a consistent
+ * pair. Section 25.1 is normative about what a CLIENT does, so until the door
+ * asks providers itself, the chain source is not the client's chain source.
+ *
+ * A PROVIDER IS A FUNCTION AND THE CLIENT SPEAKS BITCOIN'S OWN SHAPES:
+ * 80-byte headers back to back, and a merkle proof as 32-byte hashes with an
+ * index. No explorer's JSON is parsed in here and no host or path is written
+ * here. Translating a real chain API into these functions is an adapter, it
+ * belongs to whoever runs the page or the node, and it is deliberately not
+ * part of this package - a client that spoke one explorer's schema would have
+ * adopted a second protocol without saying so.
+ *
+ * `anchor` is an argument for the same reason: which block a deployment
+ * anchors on is a constant somebody must choose, and choosing it here would
+ * settle it by accident.
+ */
+/** Two, and it is the whole property rather than a setting. */
+const PROVIDERS_NEEDED = 2;
+
+/** How long the client waits on a provider before giving up on it. */
+const PROVIDER_WAIT_MS = 10000;
+
+async function discover({
+  headers, bonds, anchor, committee, signedAdvert, ask, least, timeoutMs,
+}) {
+  // THE RULES ARE THE CLIENT'S. THE PAGE SAYS WHERE TO ASK, AND NOTHING ELSE.
+  //
+  // Each of these was a caller's argument, which meant a page's argument, and
+  // each one alone undoes the whole chain source:
+  //
+  //   least       set it to 1 and "several independent sources, most work
+  //               wins" becomes one source, whose short chain and whose
+  //               hidden block are the same bytes. Measured before this was
+  //               refused: a page passing `least: 1` opened a round on a
+  //               single provider it also supplied.
+  //   timeoutMs   how long a client waits is the client's patience, not the
+  //               page's. Zero refuses every honest provider; enormous hangs
+  //               the run on one the page controls.
+  //
+  // `ask` is deliberately NOT here. It names the range of chain to fetch, and
+  // a lie about it can only omit - which is what a second provider answers.
+  // AND EVERY PROVIDER HAS TO SAY WHO IT IS.
+  //
+  // "Several independent SOURCES" is the rule, and a source is a server, not a
+  // call. Two functions closing over one address are one source however they
+  // are listed, and on this path the page writes the functions - so without a
+  // declared tag the two-provider floor counted calls, which is weaker than
+  // the words and is the same shape of hole as `least`: a rule that held in
+  // the library and never fired at the door.
+  //
+  // A tag is a DECLARATION and not a proof. A page that puts two different
+  // tags on one machine is believed, and cannot be caught from in here: two
+  // honest providers on the same chain return the same bytes, so there is no
+  // signal to read. What the tag buys is that the obvious case - one address
+  // listed twice - is refused, and that a lie has to be written down as a lie
+  // rather than being the default.
+  for (const [what, list] of [['header', headers], ['bond', bonds]]) {
+    const said = new Map();
+    for (let i = 0; i < (list || []).length; i++) {
+      const tag = list[i] && list[i].tag;
+      if (typeof tag !== 'string' || !tag.length)
+        return {
+          ok: false,
+          why: `${what} provider ${i} does not say which source it is: a `
+            + 'provider must carry a tag, or two calls to one server count as two sources',
+        };
+      if (said.has(tag))
+        return {
+          ok: false,
+          why: `${what} providers ${said.get(tag)} and ${i} are the same source, `
+            + `${tag}: one server listed twice is not two`,
+        };
+      said.set(tag, i);
+    }
+  }
+
+  for (const [name, value] of [['least', least], ['timeoutMs', timeoutMs]]) {
+    if (value !== undefined)
+      return {
+        ok: false,
+        why: `${name} is the client's own and may not be supplied: how many `
+          + 'providers must agree, and how long to wait for them, are not '
+          + 'settings for whoever handed over the providers',
+      };
+  }
+
+  // THE ANCHOR IS THE CLIENT'S, AND A PAGE THAT OFFERS ONE IS REFUSED.
+  //
+  // This was the last hop where the whole chain source came apart. Weighing,
+  // mining and the bond proof were all honest, and then the block everything
+  // was anchored TO arrived from the page - so an attacker who supplied the
+  // providers supplied the block he wanted to sit on, and his own little mined
+  // world contained it by construction. An anchor somebody else chooses is not
+  // an anchor; it is the same trust, one level down, wearing the word.
+  //
+  // Genesis is the one block that needs no decision from anybody: it is
+  // mainnet's identity, it cannot go stale, and anyone can check it. Whether a
+  // deployment later anchors on a nearer block to avoid carrying history is a
+  // constant somebody must choose, and choosing it here would settle it by
+  // accident.
+  if (anchor !== undefined)
+    return {
+      ok: false,
+      why: 'the anchor is the client\'s own and may not be supplied: a block '
+        + 'chosen by whoever handed over the chain is not a block the client knows',
+    };
+
+  const chain = await agreedChain(headers, {
+    anchor: BITCOIN_MAINNET_GENESIS, ask,
+    least: PROVIDERS_NEEDED, timeoutMs: PROVIDER_WAIT_MS,
+  });
+  if (!chain.ok) return { ok: false, why: `no chain: ${chain.why}`, refused: chain.refused };
+
+  const bond = await askForBond(bonds, {
+    chain: chain.headers, ask, timeoutMs: PROVIDER_WAIT_MS,
+  });
+  if (!bond.ok) return { ok: false, why: `no bond: ${bond.why}`, refused: bond.refused };
+
+  const seen = reach({
+    chain: chain.headers,
+    transaction: bond.transaction,
+    branch: bond.branch,
+    position: bond.position,
+    signedAdvert,
+    committee,
+  });
+  if (!seen.ok) return seen;
+  return {
+    ...seen,
+    work: chain.work,
+    agreed: chain.agreed,
+    fromChain: chain.from,
+    fromBond: bond.from,
+  };
+}
+
 // ---- blwp-client/src/client.js
 // THE PLAYER'S HALF OF THE PROTOCOL.
 //
@@ -1089,6 +2661,17 @@ function joinSignedReceipt(bytes, signature) {
 
 
 
+
+
+/**
+ * Five, out of the seven a committee has.
+ *
+ * Section 13C: the canonical transcript is "the longest checkpoint chain that
+ * carries receipts from at least 5 committee nodes". It is a threshold and not
+ * a preference - the point of it is that no smaller set of nodes can make a
+ * mark count, so an operator cannot spend a short committee as a win.
+ */
+const RECEIPTS_FOR_LIVE = 5;
 
 /**
  * A checkpoint over the state a core is holding, signed and ready for the wire.
@@ -1167,6 +2750,87 @@ function agrees(mine, theirs, what) {
 }
 
 class Client {
+  /**
+   * A client that reaches a node because Bitcoin says where it is, AND because
+   * this round's own contract says that node is one of its committee.
+   *
+   * The one door the game uses, and everything it refuses it refuses HERE -
+   * before the round is opened, before an entry is joined, before a single
+   * batch of section 11 input is published. That ordering is the whole point.
+   * A proven advertisement for a node with no standing in this round used to
+   * be caught at the first receipt, which is one round trip too late: by then
+   * the entry contract and the opening batches are on a stranger's disk, and
+   * section 11 makes publishing the client's duty, not something it can take
+   * back.
+   *
+   * Asynchronous because the last check is a signature and the browser's
+   * Ed25519 is asynchronous. `verify` is injected for the same reason it is
+   * injected everywhere else here: the curve belongs to whoever runs the
+   * client. The constructor below still takes a bare `base`, because tests and
+   * the node's own fixtures talk to a process on localhost that has no bond
+   * and never will - and a test that wants the real door calls this one.
+   */
+  static async at(discovery, { core, sign, verify, contract, roundIdGiven }) {
+    if (!contract || !contract.nodes)
+      throw new Error('no round contract, so there is no committee to check against');
+
+    // WHICH ROUND, AND WHO SAYS SO. This is checked before anything else,
+    // because everything else is checked AGAINST it.
+    //
+    // Section 25.1 step 1 is "a link, QR, copied round_id - carries nothing",
+    // and the "carries nothing" is the point: the id is all the player has,
+    // and it is enough, because every id in this protocol is the tagged hash
+    // OF the object. So the contract the page hands over must hash to the id
+    // the player was given, or it is a different round.
+    //
+    // Without this the committee check below is circular. The page writes the
+    // contract, so the page writes `nodes`, so the page chooses the committee
+    // its own advertisement then satisfies - with a real bond, a real merkle
+    // proof and a real signature, every one of which would pass. Binding the
+    // id costs one hash and makes the whole door mean something: change a
+    // single node in that list and the contract hashes to something else.
+    //
+    // Required, not optional. A player who arrived with no id has nothing to
+    // check and there is no safe way to guess one.
+    if (!(roundIdGiven instanceof Uint8Array) || roundIdGiven.length !== 32)
+      throw new Error('no round id from the player, so there is nothing to '
+        + 'check the page\'s contract against');
+    const named = roundId(contract);
+    if (toHex(named) !== toHex(roundIdGiven))
+      throw new Error(`the page offered round ${toHex(named)}, which is not `
+        + `the round ${toHex(roundIdGiven)} you were given`);
+
+    // THE CHAIN AND THE BOND ARE ASKED FOR, NEVER ACCEPTED. A ready-made chain
+    // or a ready-made proof is refused here rather than verified, because
+    // verifying a pair somebody else chose proves only that they agree with
+    // each other. This is the door; the library below it will still check
+    // anything it is handed, and that is exactly why the door must not hand it
+    // what the page said.
+    for (const handed of ['chain', 'chains', 'transaction', 'branch', 'position']) {
+      if (discovery[handed] !== undefined)
+        throw new Error(`the ${handed} must come from a provider, not from whoever `
+          + 'opened the page: two things that agree with each other are not Bitcoin');
+    }
+
+    const seen = await discover({ ...discovery, committee: contract.nodes });
+    if (!seen.ok) throw new Error(`no proven endpoint: ${seen.why}`);
+
+    // 5A.1 ends the body with "signature - by node_pubkey over all of the
+    // above". The tagged id is what is signed, as everywhere else in this
+    // protocol, so a signature here can never be replayed as a signature over
+    // some other object that happens to encode to the same bytes. Weaker than
+    // the bond output's commitment - which already binds this body to money on
+    // chain - but it is what says the key the advertisement NAMES is the key
+    // that wrote it, and it is listed.
+    if (!await verify(seen.signature, seen.advertId, seen.nodePubkey))
+      throw new Error(`the advertisement for ${toHex(seen.nodePubkey)} `
+        + 'is not signed by the node it names');
+
+    return new Client({
+      base: seen.endpoint.replace(/^ws/, 'http'), core, sign, verify,
+    });
+  }
+
   constructor({ base, core, sign, verify }) {
     this.base = base;
     this.core = core;
@@ -1176,6 +2840,10 @@ class Client {
     this.verify = verify;
     this.sock = null;
     this.head = NO_PREVIOUS;      // the mark chain head this client has published
+    // WHO HAS WITNESSED WHAT. Mark id -> the distinct committee keys that have
+    // receipted it. A Set because five receipts from one node is one node
+    // saying the same thing five times, and 13C counts NODES.
+    this.witnesses = new Map();
     this.batchHead = GENESIS;     // and the input chain's, which is a separate chain
     this.nextTick = 0;            // the tick the node is owed next
     this.nodes = [];              // the committee, off the round's own contract
@@ -1190,6 +2858,29 @@ class Client {
     this.publishing = null;
     this.marking = null;
     this.said = [];
+
+    // THE RECONNECT, which used to live in the jslib where nothing could
+    // measure it. `reconnecting` is the one in flight; `drops`, `tries` and
+    // `backoff` are what a status line reads. `sleep` and `now` are injected
+    // for the same reason `sign` is: a test that had to wait eight real
+    // seconds to see the cap would not be run.
+    // THE SESSION'S ONE WORD, and it lives here rather than in the page.
+    //
+    // `opening` until a socket is up, `ready` while one is, `dropped` while
+    // the loop is trying, `ended` once the run is over and never anything
+    // again. It was the page's before: the page learned `ended` only when
+    // `reconnect` answered null, which is the socket-DOWN path - so a VOID
+    // that happened with the socket still up (a slow node filling the hold)
+    // left the page printing `ready` beside the run's own ENDED VOID. Two
+    // words about one session, and the first is the one a reader trusts.
+    // Here there is one word, and `node --test` can load the file it is in.
+    this.state = 'opening';
+    this.reconnecting = null;
+    this.drops = 0;
+    this.tries = 0;
+    this.backoff = 0;
+    this.resumedAt = null;
+    this.sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   }
 
   /**
@@ -1249,7 +2940,11 @@ class Client {
         const waiting = this.said.shift();
         if (waiting) waiting(typeof e.data === 'string' ? e.data : new Uint8Array(e.data));
       });
-      sock.addEventListener('open', () => { this.sock = sock; resolve(this); });
+      sock.addEventListener('open', () => {
+        this.sock = sock;
+        if (!this.ended) this.state = 'ready';
+        resolve(this);
+      });
 
       // A DROPPED SOCKET IS NOT AN ERROR, it is the normal thing that happens
       // to a socket. Everything still waiting for an answer is told so by
@@ -1262,9 +2957,69 @@ class Client {
         const waiting = this.said;
         this.said = [];
         for (const w of waiting) w('error the socket closed');
+        this.drops++;
+        this.state = 'dropped';
         if (this.onDrop) this.onDrop();
       });
     });
+  }
+
+  /**
+   * THE SOCKET CAME BACK, OR IT DID NOT YET.
+   *
+   * This loop was in `blwp.jslib`, which is the one file the JS suites cannot
+   * reach - so the rule that decides whether a dropped player keeps their run
+   * had no test at all, while the hold and the drain beside it had a file of
+   * their own. It is here now and the page calls it, so there is one set of
+   * rules instead of two that look alike.
+   *
+   * ONE IN FLIGHT, whatever the drop rate. A second caller gets the promise
+   * the first is already waiting on: two loops would open two sockets, and the
+   * `close` handler on the losing one would fire a third.
+   *
+   * IT KEEPS TRYING, with a backoff, and that is deliberate. One attempt was
+   * the whole of it once, and a node still restarting at that moment left the
+   * session finished - every tick and every mark after it unpublished, which
+   * §11 is blunt about the cost of. A two-second restart must not end a run.
+   *
+   * AND IT STOPS WHEN THE RUN HAS ENDED. `endRun` has already said VOID on
+   * the publish path; a loop that went on reconnecting would hand the page a
+   * live socket for a run with no honest transcript, and the page would show
+   * `ready`. Nothing here decides an outcome - it only declines to re-open a
+   * door on a run that is over.
+   */
+  reconnect(where = this.where) {
+    if (this.ended) return null;
+    if (this.reconnecting) return this.reconnecting;
+    if (!where) throw new Error('no round to reconnect to: setRound was never called');
+
+    this.tries = 0;
+    this.backoff = 0;
+    this.reconnecting = (async () => {
+      // Checked EVERY time round, not once on the way in: a run can end while
+      // this is asleep - the game keeps handing over ticks, and the tick that
+      // will not fit the hold ends it.
+      while (!this.ended) {
+        this.tries++;
+        try {
+          await this.connect();
+          const r = await this.resume(where);
+          this.resumedAt = r.nextTick;
+          this.backoff = 0;
+          this.state = 'ready';
+          return r;
+        } catch (e) {
+          this.error = String(e.message || e);
+          this.state = this.ended ? 'ended' : 'dropped';
+          if (this.sock) { const sk = this.sock; this.sock = null; try { sk.close(); } catch { /* gone */ } }
+          this.backoff = this.backoff ? Math.min(this.backoff * 2, 8000) : 1000;
+          await this.sleep(this.backoff);
+        }
+      }
+      return null;
+    })().finally(() => { this.reconnecting = null; });
+
+    return this.reconnecting;
   }
 
   send(message) {
@@ -1342,8 +3097,43 @@ class Client {
       throw new Error(
         `the receipt from ${toHex(r.nodePubkey)} does not verify under its own key`);
 
-    this.head = markId;
+    // THE HEAD MOVES ON LIVE, NOT ON THE FIRST RECEIPT.
+    //
+    // It used to move here, on one verified receipt out of seven - which was
+    // true as far as it went and thinner than it sounded. Section 13C counts
+    // FIVE committee nodes before a checkpoint chain is canonical, so between
+    // one and four a mark is PENDING: witnessed by somebody, carried by
+    // nobody. Chaining the next mark onto a parent that four nodes have never
+    // agreed to would build a run on a link that cannot be canonical, and the
+    // operator of a short committee could then be paid for it.
+    //
+    // Pending is not failed. Nothing here voids a run or loses it for the
+    // player: what happens to a run whose marks never reach five is the
+    // no-quorum rule, it decides FORFEIT against VOID, and it is settlement
+    // rather than a client.
+    this.witness(r);
+    if (this.live(markId)) this.head = markId;
     return r;
+  }
+
+  /** Records one verified receipt against its mark, and answers the count. */
+  witness(r) {
+    const id = toHex(r.checkpointId);
+    const seen = this.witnesses.get(id) || new Set();
+    seen.add(toHex(r.nodePubkey));
+    this.witnesses.set(id, seen);
+    return seen.size;
+  }
+
+  /** How many DISTINCT committee members have receipted this mark. */
+  witnessed(markId) {
+    const seen = this.witnesses.get(toHex(markId));
+    return seen ? seen.size : 0;
+  }
+
+  /** Is this mark carried by enough of the committee to be worth anything? */
+  live(markId) {
+    return this.witnessed(markId) >= RECEIPTS_FOR_LIVE;
   }
 
   /**
@@ -1376,6 +3166,7 @@ class Client {
       if (!this.verify(signature, receiptId(rec), rec.nodePubkey))
         throw new Error(
           `the receipt from ${toHex(rec.nodePubkey)} does not verify under its own key`);
+      this.witness(rec);
       out.push({ receipt: rec, bytes: one });
     }
     return out;
@@ -1431,6 +3222,23 @@ class Client {
    * whole.
    */
   async resume({ roundId, entryId }) {
+    // A RUN THAT ENDED STAYS ENDED, and a socket coming back does not undo it.
+    //
+    // `endRun` said VOID on the publish path: the hold filled, a tick was
+    // dropped, and no transcript from there can be replayed. This used to
+    // answer such a client with a tick number and a chain head anyway, and the
+    // page read that as a healthy session - status `ready`, the player still
+    // driving, every later tick silently discarded and nobody told. That is a
+    // disconnect working as an escape hatch, and in the operator's favour: a
+    // link the operator owns ends the run and the client shows no sign of it.
+    //
+    // Refused by name and with NO NUMBERS. This decides nothing - the outcome
+    // was decided where the fault happened - it only declines to re-animate it.
+    if (this.ended)
+      throw new Error(
+        `this run ended ${this.ending}: ${this.endingReason} - a socket coming `
+        + 'back does not resume it');
+
     const r = await fetch(
       `${this.base}/transcript?round=${toHex(roundId)}&entry=${toHex(entryId)}`);
     if (!r.ok) throw new Error(`the node refused the transcript: ${(await r.text()).trim()}`);
@@ -1445,7 +3253,7 @@ class Client {
         + `and this client asked about ${toHex(roundId)} ${toHex(entryId)}`);
 
     const ok = checkTranscript(t);
-    if (!ok.ok) throw new Error(`the transcript is broken at batch ${ok.at}: ${ok.why}`);
+    if (!ok.ok) throw new Error(`the transcript is broken at ${ok.in} ${ok.at}: ${ok.why}`);
 
     const last = t.batches[t.batches.length - 1];
     this.batchHead = last ? batchId(last) : GENESIS;
@@ -1459,10 +3267,20 @@ class Client {
     // read as a client that had lost a tick and would end the run for it.
     this.offered = this.nextTick + this.hold.length;
 
-    // AND THE MARKS' HEAD, which is the other chain and is lost the same way.
-    // A resume that left it at the start of the round would have every later
-    // mark refused for not following the head - the reconnect would look
-    // fixed until the first checkpoint after it.
+    // AND THE MARKS' HEAD, which is the other chain and was lost the same way -
+    // but it is NOT taken from the node's last mark.
+    //
+    // That is what this used to do, and it was the 5-of-7 rule standing in one
+    // function and missing in the next: after a drop the client adopted
+    // whatever the node held, on that node's word alone. A run that lost its
+    // socket was then chaining onto a mark four committee members had never
+    // seen, and the operator of a short committee was paid for it.
+    //
+    // So the marks are walked NEWEST FIRST and the first one that five
+    // distinct committee keys have receipted becomes the head. The receipts
+    // are the ones just recovered, each verified here; a duplicate signer
+    // cannot inflate the count and a receipt that fails its mark, the
+    // committee or its signature never reached the count at all.
     const marks = await this.recoverReceipts({ roundId, entryId });
     const c = await fetch(
       `${this.base}/checkpoints?round=${toHex(roundId)}&entry=${toHex(entryId)}`);
@@ -1470,13 +3288,22 @@ class Client {
     if (cb.length % SIGNED_CHECKPOINT_BYTES !== 0)
       throw new Error(
         `${cb.length} bytes is not a whole number of ${SIGNED_CHECKPOINT_BYTES}-byte marks`);
-    if (cb.length) {
-      const lastMark = cb.subarray(cb.length - SIGNED_CHECKPOINT_BYTES);
-      this.head = checkpointId(decodeCheckpoint(splitSigned(lastMark).body));
+
+    // AND IF NONE OF THEM IS LIVE, THE HEAD STAYS WHERE THIS CLIENT CAN PROVE
+    // IT BELONGS. Not the node's last mark, and not a refusal either: a
+    // disconnect is not an escape hatch, and a slow committee must still be
+    // able to carry the run. What comes after that head is published again,
+    // which is what lets the committee catch up.
+    let adopted = null;
+    for (let at = cb.length - SIGNED_CHECKPOINT_BYTES; at >= 0; at -= SIGNED_CHECKPOINT_BYTES) {
+      const id = checkpointId(decodeCheckpoint(splitSigned(cb.subarray(at, at + SIGNED_CHECKPOINT_BYTES)).body));
+      if (this.live(id)) { adopted = id; break; }
     }
+    if (adopted) this.head = adopted;
 
     return { ticks: ok.ticks, batches: t.batches.length, nextTick: this.nextTick,
-             batchHead: this.batchHead, head: this.head, receipts: marks.length };
+             batchHead: this.batchHead, head: this.head, receipts: marks.length,
+             live: adopted !== null, witnessed: adopted ? this.witnessed(adopted) : 0 };
   }
 
   /**
@@ -1524,6 +3351,15 @@ class Client {
     this.ended = true;
     this.ending = 'VOID';
     this.endingReason = reason;
+
+    // SAID BEFORE THE SOCKET IS CLOSED, and that ordering is the whole point.
+    // The `close` listener returns at its first line once `ended` is set - the
+    // run is over, not dropped - so nothing downstream would ever hear about a
+    // VOID that happened while the socket was still up. The word is set and
+    // the hook fires here, on the path the fault actually took.
+    this.state = 'ended';
+    if (this.onEnd) this.onEnd(this.ending, this.endingReason);
+
     if (this.sock) { const s = this.sock; this.sock = null; try { s.close(); } catch { /* gone */ } }
   }
 
@@ -1538,6 +3374,28 @@ class Client {
    */
   record(words) {
     if (this.ended) return false;
+
+    // A CLIENT THAT HAS NOT BEEN TOLD WHICH ROUND IT IS PLAYING IS NOT
+    // HOLDING A TRANSCRIPT, and must not end a run it never began.
+    //
+    // Found in a browser and only findable there. `Client.at` resolves before
+    // `setRound` does - opening a round, joining it and connecting are three
+    // more round trips - and the game is already ticking at 60 Hz through all
+    // of them. So `record` ran against a client whose `maxHold` was still the
+    // constructor's 0 and whose `offered` was undefined: the first tick of
+    // every session read as a dropped one and VOIDed the run before a byte
+    // had been published. `a tick was dropped at NaN: the hold was full at 0`.
+    //
+    // It was there before any of this door was, and it was invisible: nothing
+    // was told, so the page carried on looking healthy while the client had
+    // quietly given up. It shows now because a VOID stops the truck, which is
+    // what makes this the bug a green suite could not have shown.
+    //
+    // Refused rather than held: the round these ticks would belong to does not
+    // exist yet, and the entry's `joinTick` is what says where a player's
+    // transcript begins.
+    if (!this.where) return false;
+
     this.offered++;
     if (this.hold.length >= this.maxHold) {
       // THE FIRST DROPPED TICK ENDS THE RUN. It used to be counted and the
@@ -1568,6 +3426,14 @@ class Client {
    */
   drain() {
     if (this.ended || this.publishing || !this.hold.length || !this.where) return this.publishing;
+
+    // AND NOTHING GOES OUT WHILE THERE IS NO SOCKET. Without this the words
+    // were sliced out of the hold, handed to a `send` that answered `error
+    // there is no socket`, and concatenated back - 550 of those in a 3000-tick
+    // outage, and `held` read up to `chunk` short the whole time because the
+    // rows were in a doomed promise rather than in the hold. A status line
+    // that under-reports a hold is the one number a stalled player has.
+    if (!this.sock || this.sock.readyState !== 1) return null;
 
     // AND THE NUMBERS MUST AGREE BEFORE ANYTHING LEAVES.
     //
@@ -1618,7 +3484,14 @@ class Client {
     // A mark after the run has ended would commit to a world whose inputs
     // nobody can produce - it names a tick the transcript cannot reach.
     if (this.ended) return null;
-    if (this.marking || !this.where) { this.marksSkipped++; return null; }
+    // A mark needs a socket for the same reason a batch does, and one that
+    // cannot go out while its moment passes is skipped - which is what the
+    // count is for. Counted rather than silently dropped, so an outage is
+    // visible in the same number a slow link is.
+    if (this.marking || !this.where || !this.sock || this.sock.readyState !== 1) {
+      this.marksSkipped++;
+      return null;
+    }
     this.marking = this.mark(stateHash, {
       roundId: this.where.roundId, entryId: this.where.entryId, tick, inputChainHash,
     }).then((r) => {
@@ -1627,6 +3500,26 @@ class Client {
       return r;
     }).catch((e) => { this.marking = null; throw e; });
     return this.marking;
+  }
+
+  /**
+   * THE ONE LINE A DEBUG PANEL READS, built here rather than in the page.
+   *
+   * It was assembled in `blwp.jslib`, which is the file `node --test` cannot
+   * load - and that is exactly how it came to print the page's `ready` beside
+   * this run's own `ENDED VOID`, and survive an audit saying so. A line built
+   * where it can be loaded is a line a test can read the first word of.
+   *
+   * `seen` is the game's tick counter and comes from the caller: the client
+   * counts what it published, not what the renderer drew.
+   */
+  status(seen = 0) {
+    return `${this.state} batches ${this.batchesSent} marks ${this.marksSent}`
+      + ` tick ${seen} held ${this.held}`
+      + (this.dropped ? ` dropped ${this.dropped}` : '')
+      + (this.marksSkipped ? ` skipped ${this.marksSkipped}` : '')
+      + (this.drops ? ` drops ${this.drops} tries ${this.tries} resumed ${this.resumedAt}` : '')
+      + (this.ended ? ` ${this.ending} ${this.endingReason}` : '');
   }
 
   /** Waits for whatever is on the wire, so a test can measure a settled state. */
@@ -1640,6 +3533,10 @@ class Client {
 }
 
 return { Client: Client, markState: markState,
+         reach: reach, endpointFor: endpointFor,
+         discover: discover, agreedChain: agreedChain,
+         askForBond: askForBond, provenBond: provenBond,
+         headersOverHttp: headersOverHttp, httpProvider: httpProvider,
          GENESIS: GENESIS, NO_PREVIOUS: NO_PREVIOUS,
          encodeRoundContract: encodeRoundContract, roundId: roundId,
          encodeEntryContract: encodeEntryContract, entryId: entryId,
