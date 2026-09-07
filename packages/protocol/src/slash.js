@@ -28,8 +28,10 @@
 import { Writer, Reader } from './encode.js';
 import { taggedHash, toHex } from './hash.js';
 import {
-  PROTOCOL_VERSION, TYPE_SLASH_PROOF, TYPE_PAYOUT_TABLE, TYPE_SETTLEMENT_RECORD, TAG,
+  PROTOCOL_VERSION, TYPE_SLASH_PROOF, TYPE_PAYOUT_TABLE, TYPE_SETTLEMENT_RECORD,
+  TYPE_RESULT, TAG,
 } from './constants.js';
+import { entryId } from './contracts.js';
 import { decodePlayerResult, resultId, splitSignedResult } from './result.js';
 import {
   computePayoutTable, payoutTableId, decodePayoutTable,
@@ -81,9 +83,17 @@ export const SETTLED_WITHOUT_AUTHORITY = 'SETTLED_WITHOUT_AUTHORITY';
  */
 export const TWO_RESULTS = 'TWO_RESULTS';
 
+/**
+ * 5A.3 row 5: "Signing for a round in which the operator played (5A.13)",
+ * proof "Entry Contract + node signature". Being conflicted is not the
+ * offence - signing while conflicted is.
+ */
+export const OPERATOR_PLAYED = 'OPERATOR_PLAYED';
+
 // In 5A.3's own document order, which is the order they are being written in.
 export const OFFENCES = [
   TWO_RESULTS, REPLAY_CONTRADICTS, TABLE_IS_NOT_F, SETTLED_WITHOUT_AUTHORITY,
+  OPERATOR_PLAYED,
 ];
 
 /**
@@ -655,5 +665,144 @@ export function slashHoldsOnDoubleSign({ proof, signedResults, advert, committee
     commitment: slashCommitment(proof),
     ids: { named, other },
     why: 'the node signed two different results for one player of one round',
+  };
+}
+
+/**
+ * WHAT THE ACCUSED SIGNED, WHICHEVER OF THE THREE IT WAS.
+ *
+ * 5A.13 names all three: "its result signatures, payout-table signatures and
+ * settlement participation are invalid". So a conflicted node is slashable for
+ * any of them, and the type byte the object already carries says which - no
+ * discriminator is invented and no caller has to declare one.
+ */
+function signedThing(bytes) {
+  if (!(bytes instanceof Uint8Array) || !bytes.length) return null;
+  try {
+    if (bytes[0] === TYPE_RESULT) {
+      const body = decodePlayerResult(splitSignedResult(bytes).body);
+      return { kind: 'result', roundId: body.roundId, nodePubkey: body.nodePubkey, id: resultId(body) };
+    }
+    if (bytes[0] === TYPE_PAYOUT_TABLE) {
+      const t = decodePayoutTable(bytes);
+      // A table carries no signer: it is the round's table and the signature
+      // sits beside it, so the node it accuses is the proof's, not the object's.
+      return { kind: 'payout table', roundId: t.roundId, nodePubkey: null, id: payoutTableId(t) };
+    }
+    if (bytes[0] === TYPE_SETTLEMENT_RECORD) {
+      const r = decodeSettlementRecord(bytes);
+      return { kind: 'settlement record', roundId: r.roundId, nodePubkey: r.nodePubkey, id: settlementRecordId(r) };
+    }
+  } catch { return null; }
+  return null;
+}
+
+/**
+ * THE OPERATOR A DECLARATION NAMES, or nothing at all.
+ *
+ * 5A.13: `operator_id` is "a pubkey", and it is also "a self-declaration...
+ * not a proof of identity". This package carries it as a STRING for exactly
+ * that reason - `advert.js` says so where it encodes one - so reading it as a
+ * key is done here and only here: sixty-four lowercase hex characters, the way
+ * `toHex` writes one, and anything else declares no key.
+ *
+ * That is not a weakness of the check, it is 5A.13's own scope: "an attacker
+ * who runs nodes and plays simply declares nothing, or declares unrelated ids,
+ * and the rule does not fire... this rule is defence in depth, not a Sybil
+ * control". A declaration that names no key conflicts with nobody, and the
+ * spec says so before this file does.
+ */
+export function operatorKeyOf(advert) {
+  const said = advert && advert.operatorId;
+  if (typeof said !== 'string' || !/^[0-9a-f]{64}$/.test(said)) return null;
+  const key = new Uint8Array(32);
+  for (let i = 0; i < 32; i++) key[i] = parseInt(said.slice(i * 2, i * 2 + 2), 16);
+  return key;
+}
+
+/**
+ * DID THIS NODE SIGN FOR A ROUND ITS OWN OPERATOR PLAYED? 5A.3 row 5.
+ *
+ * 5A.13: "A selected node may not sign anything for a round in which its
+ * operator has an Entry Contract... If a selected node's `operator_id` also
+ * signed an Entry Contract in that round, the node is conflicted: its result
+ * signatures, payout-table signatures and settlement participation are
+ * invalid, and it earns no fee share. Signing anyway is a slashable offence
+ * with a one-artifact proof."
+ *
+ * NOTHING IS INJECTED. Like rows 1, 3 and 4 this only compares and reads what
+ * two objects already say, so no attesting party enters at any point.
+ *
+ * BEING CONFLICTED IS NOT THE OFFENCE. SIGNING IS. An operator is free to
+ * play a round their node was selected for - what 5A.13 forbids is that node
+ * signing in it, and the remedy for the committee falling below its threshold
+ * is ENTRY_VOID, a refund, not somebody's bond. A conflicted node that signed
+ * nothing has taken nothing from anybody, and this returns no slash for it.
+ */
+export function slashHoldsOnConflict({ proof, entry, signedByNode, advert, committee }) {
+  if (!Array.isArray(committee) || !committee.length)
+    return { slashed: false, why: 'no committee, so nobody was serving this round' };
+  if (!committee.some((k) => hex(k) === hex(proof.nodePubkey)))
+    return {
+      slashed: false,
+      why: `${hex(proof.nodePubkey)} is not on this round's committee, so it signed nothing it owed`,
+    };
+
+  if (!advert || hex(advert.nodePubkey) !== hex(proof.nodePubkey))
+    return { slashed: false, why: 'no advertisement from the accused node to read its operator from' };
+
+  const operator = operatorKeyOf(advert);
+  if (!operator)
+    return {
+      slashed: false,
+      why: 'that advertisement declares no operator key, and 5A.13 does not fire '
+        + 'on a declaration that names nobody',
+    };
+
+  if (!entry || !(entry.roundId instanceof Uint8Array))
+    return { slashed: false, why: 'no entry contract to show the operator played' };
+  if (hex(entry.roundId) !== hex(proof.roundId))
+    return { slashed: false, why: 'the entry attached is for a different round' };
+  if (hex(entry.playerPubkey) !== hex(operator))
+    return {
+      slashed: false,
+      why: `the entry was signed by ${hex(entry.playerPubkey)} and the node declared `
+        + `operator ${hex(operator)}: 5A.13 fires on a DECLARED conflict and nothing else`,
+    };
+  if (hex(proof.playerPubkey) !== hex(operator))
+    return { slashed: false, why: 'the proof names a different player than the entry does' };
+  if (hex(proof.transcriptHash) !== hex(entryId(entry)))
+    return { slashed: false, why: 'the proof is measured against a different entry' };
+
+  // AND THE SIGNING, which is the offence itself.
+  const thing = signedThing(signedByNode);
+  if (!thing)
+    return {
+      slashed: false,
+      why: 'nothing the node signed is attached: being conflicted is not the '
+        + 'offence, signing anyway is',
+    };
+  if (hex(thing.id) !== hex(proof.signedResultId))
+    return { slashed: false, why: `the ${thing.kind} attached is not the one this proof names` };
+  if (hex(thing.roundId) !== hex(proof.roundId))
+    return { slashed: false, why: `the ${thing.kind} attached is for a different round` };
+  if (thing.nodePubkey && hex(thing.nodePubkey) !== hex(proof.nodePubkey))
+    return { slashed: false, why: `the ${thing.kind} attached was signed by a different node` };
+
+  if (hex(advert.bondTxid) !== hex(proof.bondTxid) || advert.bondVout !== proof.bondVout)
+    return {
+      slashed: false,
+      why: `the proof names bond ${hex(proof.bondTxid)}:${proof.bondVout} and the node `
+        + `advertised ${hex(advert.bondTxid)}:${advert.bondVout}`,
+    };
+
+  return {
+    slashed: true,
+    offence: OPERATOR_PLAYED,
+    bond: { txid: proof.bondTxid, vout: proof.bondVout },
+    commitment: slashCommitment(proof),
+    signed: thing.kind,
+    operator,
+    why: `the node's declared operator has an entry in this round, and it signed a ${thing.kind} anyway`,
   };
 }
