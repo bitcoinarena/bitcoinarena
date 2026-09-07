@@ -12,7 +12,7 @@
 // BOND_MARKER has no value yet and inventing one would settle a genesis
 // parameter by accident. What is built is therefore a bond transaction that a
 // light client could not FIND; everything about reading it once found holds.
-import { encodeAdvert, advertId } from '../src/advert.js';
+import { encodeAdvert, advertId, joinSignedAdvert } from '../src/advert.js';
 
 const varint = (n) => {
   if (n < 0xfd) return [n];
@@ -36,7 +36,10 @@ const push = (bytes) => [...varint(bytes.length), ...bytes];
  */
 export function bondTransaction(advert, {
   commitment = advertId(advert),
-  body = encodeAdvert(advert),
+  // 64 zero bytes by default, which is a signature that verifies under no key.
+  // A fixture that forgets to sign is refused rather than quietly accepted.
+  signature = new Uint8Array(64),
+  body = joinSignedAdvert(encodeAdvert(advert), signature),
   value = 100000000,
   previousTxid = new Uint8Array(32).fill(0xab),
   previousVout = 0,

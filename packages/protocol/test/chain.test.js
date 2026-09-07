@@ -14,7 +14,9 @@ import {
   HEADER_BYTES, hash256, merkleRootOf, previousHashOf, blockHashOf, workOf,
   chainWork, mostWork, merkleRootFromProof, provesTransaction, acceptAdvert,
 } from '../src/chain.js';
-import { encodeAdvert, decodeAdvert, advertId } from '../src/advert.js';
+import {
+  encodeAdvert, decodeAdvert, advertId, joinSignedAdvert,
+} from '../src/advert.js';
 import { parseTransaction } from '../src/tx.js';
 import { fromHex, toHex } from '../src/hash.js';
 import { bondTransaction, blockOf } from '../tools/bond.js';
@@ -23,6 +25,12 @@ import { bondTransaction, blockOf } from '../tools/bond.js';
 // built - by `tools/bond.js`, which is not part of the protocol - and put in a
 // two-transaction block of its own. What reads it is measured against real
 // mainnet bytes in tx.test.js and below; only the shape is assembled here.
+// A body offered BESIDE the transaction, the way a page hands one over. It
+// arrives signed or it is not an advertisement; whether the signature is any
+// good is the client's question, not this package's - no curve lives here.
+const courier = (a, signature = new Uint8Array(64)) =>
+  joinSignedAdvert(encodeAdvert(a), signature);
+
 const blockAround = (txid, sibling = new Uint8Array(32).fill(0x99)) => ({
   ...blockOf(hash256, [txid, sibling]), branch: [sibling], position: 0,
 });
@@ -200,12 +208,16 @@ test('a page that swaps the endpoint is refused, and cannot supply the hash', ()
   const raw = bondTransaction(a, { body: new Uint8Array(0) });
   const { header, branch, position } = blockAround(parseTransaction(raw).txid);
 
-  const no = acceptAdvert({ transaction: raw, advert: swapped, header, branch, position });
+  const no = acceptAdvert({
+    transaction: raw, signedAdvert: courier(swapped), header, branch, position,
+  });
   assert.equal(no.ok, false);
   assert.match(no.why, /commits to a different advertisement/);
 
   // the honest body, offered the same way, is taken - the page is a courier
-  const yes = acceptAdvert({ transaction: raw, advert: a, header, branch, position });
+  const yes = acceptAdvert({
+    transaction: raw, signedAdvert: courier(a), header, branch, position,
+  });
   assert.equal(yes.ok, true, yes.why);
 
   // and when the transaction does carry the body, offering another changes
@@ -213,8 +225,8 @@ test('a page that swaps the endpoint is refused, and cannot supply the hash', ()
   const carried = bondTransaction(a);
   const b = blockAround(parseTransaction(carried).txid);
   const still = acceptAdvert({
-    transaction: carried, advert: swapped, header: b.header, branch: b.branch,
-    position: b.position,
+    transaction: carried, signedAdvert: courier(swapped), header: b.header,
+    branch: b.branch, position: b.position,
   });
   assert.equal(still.ok, true, still.why);
   assert.equal(still.endpoint, 'wss://node.example:443');
@@ -222,7 +234,7 @@ test('a page that swaps the endpoint is refused, and cannot supply the hash', ()
 
 test('a real mainnet transaction in a real block advertises nothing', () => {
   const seen = acceptAdvert({
-    transaction: COINBASE_500000, advert: advert(), header: HEADER_500000,
+    transaction: COINBASE_500000, signedAdvert: courier(advert()), header: HEADER_500000,
     branch: BRANCH_FOR_COINBASE, position: 0,
   });
   assert.equal(seen.ok, false);
@@ -266,4 +278,35 @@ test('an advertisement pointing at some other bond, or at no output, is refused'
   });
   assert.equal(no.ok, false);
   assert.match(no.why, /an output that transaction does not have/);
+});
+
+/**
+ * A BODY ARRIVES SIGNED OR IT IS NOT AN ADVERTISEMENT. 5A.1 ends the object
+ * with "signature - by node_pubkey over all of the above", so 64 bytes ride
+ * beside it. This package does not say whether they are GOOD - there is no
+ * curve in here, on purpose - it says they are there and hands them back, and
+ * a caller that ignored them would be ignoring something it was given.
+ */
+test('an unsigned body is not an advertisement, and the signature comes back', () => {
+  const a = { ...advert(), bondTxid: new Uint8Array(32) };
+  const signature = new Uint8Array(64).fill(0xa7);
+
+  const signed = bondTransaction(a, { signature });
+  const at = blockAround(parseTransaction(signed).txid);
+  const ok = acceptAdvert({
+    transaction: signed, header: at.header, branch: at.branch, position: at.position,
+  });
+  assert.equal(ok.ok, true, ok.why);
+  assert.equal(toHex(ok.signature), toHex(signature));
+
+  // the same body with nothing beside it: the witness item is the bare
+  // encoding, which is not a signed advertisement and is not read as one
+  const bare = bondTransaction(a, { body: encodeAdvert(a) });
+  const there = blockAround(parseTransaction(bare).txid);
+  const no = acceptAdvert({
+    transaction: bare, header: there.header, branch: there.branch,
+    position: there.position,
+  });
+  assert.equal(no.ok, false);
+  assert.match(no.why, /commits to a different advertisement/);
 });

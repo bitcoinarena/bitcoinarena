@@ -261,15 +261,31 @@ mergeInto(LibraryManager.library, {
         roundId: C.roundId(contract), sessionPubkey: net.sessionPubkey,
       });
       net.where = { roundId: C.roundId(contract), entryId: C.entryId(entry) };
-      net.client = new C.Client({
-        base: base, core: { hash: function (st) { return b.core.hash(st); } },
-        sign: signer,
-        verify: function (sig, msg, key) {
-          // Verifying a receipt is the page's job too, and the same curve.
-          return crypto.subtle.importKey('raw', key, { name: 'Ed25519' }, false, ['verify'])
-            .then(function (k) { return crypto.subtle.verify({ name: 'Ed25519' }, k, sig, msg); });
-        },
+      var verify = function (sig, msg, key) {
+        // Verifying a receipt is the page's job too, and the same curve.
+        return crypto.subtle.importKey('raw', key, { name: 'Ed25519' }, false, ['verify'])
+          .then(function (k) { return crypto.subtle.verify({ name: 'Ed25519' }, k, sig, msg); });
+      };
+
+      // THE DOOR. `base` above is only what the gate answered so that C# would
+      // ask for a session at all; the address the client actually talks to is
+      // resolved again HERE, against this round's own committee and with the
+      // advertisement's signature verified, and nothing is sent until it is.
+      // Section 25.1 step 3 is computed from the contract and step 4 has to
+      // reach those nodes: a bonded stranger with a real proof would otherwise
+      // be handed the entry and the whole section 11 transcript, and the first
+      // receipt refusing it is a round trip too late to take any of it back.
+      return C.Client.at(blwpDiscovery(), {
+        core: { hash: function (st) { return b.core.hash(st); } },
+        sign: signer, verify: verify, contract: contract,
+      }).then(function (client) {
+        net.client = client;
+        return net.opened(contract, entry);
       });
+    };
+
+    net.opened = function (contract, entry) {
+      var C = BLWPCLIENT;
 
       // KEEP TRYING, with a backoff, until the run is over. One attempt was
       // the whole of it once, so a node still restarting at that moment left
@@ -359,6 +375,37 @@ mergeInto(LibraryManager.library, {
     return n;
   },
 
+  // THE PAGE'S BYTES, TURNED INTO A CLAIM. Read in one place so the two doors
+  // that need it - the gate below and the session itself - cannot drift apart
+  // and check different things.
+  //
+  // Hashes are taken in the order an API PRINTS them, reversed from the order
+  // Bitcoin hashes them in, because that is what a page author will copy. The
+  // reversal happens here, once, and nowhere else. The committee comes off the
+  // round the page named, not off the advertisement: section 25.1 step 3 is
+  // computed from the contract, and step 4 has to reach THOSE nodes.
+  // Declared on both users because Emscripten includes a `$`-prefixed library
+  // helper only when a dependency asks for it; without these the call would be
+  // eliminated from the build and fail in the page rather than here.
+  BlwpNetNodeUrl__deps: ['$blwpDiscovery'],
+  BlwpNetStart__deps: ['$blwpDiscovery'],
+  $blwpDiscovery: function () {
+    var d = (typeof BLWP_ADVERT !== 'undefined') ? BLWP_ADVERT : null;
+    var round = (typeof BLWP_ROUND !== 'undefined') ? BLWP_ROUND : null;
+    if (!d) throw new Error('the page carried no advertisement');
+    var reversed = function (hex) { return BLWPCLIENT.fromHex(hex).reverse(); };
+    return {
+      transaction: BLWPCLIENT.fromHex(d.transaction),
+      signedAdvert: d.signedAdvert ? BLWPCLIENT.fromHex(d.signedAdvert) : undefined,
+      branch: (d.branch || []).map(reversed),
+      position: d.position | 0,
+      chains: (d.chains || []).map(function (c) {
+        return c.map(function (h) { return BLWPCLIENT.fromHex(h); });
+      }),
+      committee: round ? round.nodes : null,
+    };
+  },
+
   // WHICH NODE, AND WHY THAT ONE.
   //
   // This used to be `BLWP_NODE`, a global written into the page: every stranger
@@ -376,28 +423,21 @@ mergeInto(LibraryManager.library, {
   // body one of that transaction's outputs commits to. Swap the endpoint and
   // there is no address at all.
   //
+  // THIS IS A GATE, NOT THE DOOR. It answers synchronously because C# asks for
+  // the address once, at scene start, and it therefore cannot check the
+  // advertisement's signature - verifying is asynchronous in a browser. The
+  // signature is checked in `net.open` below, by `Client.at`, before the round
+  // is opened and so before anything at all is sent. Both check the committee.
+  //
   // WHAT IS NOT DONE HERE. Where the headers come from. "Block headers from
   // several independent sources, most work wins" is step 5c; until something
   // fetches, a page that omits the honest chain is not yet answered - it still
   // cannot forge one.
-  //
-  // Hashes are taken in the order an API PRINTS them - reversed from the order
-  // Bitcoin hashes them in - because that is what a page author will copy. The
-  // reversal happens here, once, and nowhere else.
   BlwpNetNodeUrl: function (ptr, cap) {
     var url = '';
-    var d = (typeof BLWP_ADVERT !== 'undefined') ? BLWP_ADVERT : null;
-    if (d && typeof BLWPCLIENT !== 'undefined') {
+    if (typeof BLWPCLIENT !== 'undefined') {
       try {
-        var reversed = function (hex) { return BLWPCLIENT.fromHex(hex).reverse(); };
-        url = BLWPCLIENT.endpointFor({
-          transaction: BLWPCLIENT.fromHex(d.transaction),
-          branch: (d.branch || []).map(reversed),
-          position: d.position | 0,
-          chains: (d.chains || []).map(function (c) {
-            return c.map(function (h) { return BLWPCLIENT.fromHex(h); });
-          }),
-        });
+        url = BLWPCLIENT.endpointFor(blwpDiscovery());
       } catch (e) {
         // Named, not swallowed: "no proven endpoint: ..." says which half failed,
         // and an empty answer means no session rather than a session with

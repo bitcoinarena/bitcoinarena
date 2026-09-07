@@ -22,6 +22,7 @@ import { hash256, parseTransaction } from '../../protocol/src/tx.js';
 import { blockHashOf } from '../../protocol/src/chain.js';
 import { bondTransaction, blockOf } from '../../protocol/tools/bond.js';
 import { reach as moduleReach } from '../src/directory.js';
+import { advertId, encodeAdvert, joinSignedAdvert } from '../../protocol/src/advert.js';
 
 const require = createRequire(import.meta.url);
 const bundled = require('../dist/blwp-client.js');
@@ -109,22 +110,32 @@ test('the bundle refuses a receipt the modules would refuse', () => {
  */
 test('the bundle proves an endpoint exactly as the modules do', () => {
   const b32 = (n) => new Uint8Array(32).fill(n);
+  const secret = ed25519.utils.randomSecretKey();
+  const nodePubkey = ed25519.getPublicKey(secret);
   const advert = {
-    nodePubkey: b32(1), operatorId: 'somebody', protocolVersions: [1],
+    nodePubkey, operatorId: 'somebody', protocolVersions: [1],
     roles: ['game', 'verify'], endpoint: 'wss://node.example:443', region: 'eu-west',
     capacityClass: 2, softwareHash: b32(3), settlementCapabilities: 0,
     lightningCapabilities: 0, bondTxid: new Uint8Array(32), bondVout: 0,
     bondScriptTemplateVersion: 1, payoutPubkey: b32(4), timestamp: 1788700000000n,
   };
-  const transaction = bondTransaction(advert);
+  const signed = (a) => bondTransaction(a, { signature: ed25519.sign(advertId(a), secret) });
+  const transaction = signed(advert);
   const sibling = b32(0x99);
   const first = blockOf(hash256, [b32(0x01)]).header;
   const { header } = blockOf(hash256, [parseTransaction(transaction).txid, sibling],
     { previous: blockHashOf(first) });
-  const discovery = { chains: [[first, header]], transaction, branch: [sibling], position: 0 };
+  const discovery = {
+    chains: [[first, header]], transaction, branch: [sibling], position: 0,
+    committee: [nodePubkey],
+  };
 
   assert.equal(bundled.reach(discovery).endpoint, moduleReach(discovery).endpoint);
   assert.equal(bundled.endpointFor(discovery), 'https://node.example:443');
+
+  // the committee is checked in the bundle too, not only in the modules
+  assert.throws(() => bundled.endpointFor({ ...discovery, committee: [b32(0x77)] }),
+    /which is not on this round's committee/);
 
   // and the swap is refused in the bundle too, by the same name
   const swapped = { ...advert, endpoint: 'wss://somewhere-else.example:443' };
@@ -132,6 +143,7 @@ test('the bundle proves an endpoint exactly as the modules do', () => {
   const at = blockOf(hash256, [parseTransaction(bare.transaction).txid, sibling],
     { previous: blockHashOf(first) });
   bare.chains = [[first, at.header]];
-  assert.throws(() => bundled.endpointFor({ ...bare, advert: swapped }),
+  const courier = joinSignedAdvert(encodeAdvert(swapped), ed25519.sign(advertId(swapped), secret));
+  assert.throws(() => bundled.endpointFor({ ...bare, signedAdvert: courier }),
     /commits to a different advertisement/);
 });

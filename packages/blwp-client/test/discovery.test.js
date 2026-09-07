@@ -28,11 +28,14 @@ import { ed25519 } from '@noble/curves/ed25519.js';
 import { openStore } from '../../blwp-node/src/store.js';
 import { serve } from '../../blwp-node/src/server.js';
 import { roundId } from '../../protocol/src/contracts.js';
+import { decodeTranscript } from '../../protocol/src/transcript.js';
 import { hash256, parseTransaction } from '../../protocol/src/tx.js';
 import { blockHashOf } from '../../protocol/src/chain.js';
+import { advertId, encodeAdvert, joinSignedAdvert } from '../../protocol/src/advert.js';
+import { toHex } from '../../protocol/src/hash.js';
 import { bondTransaction, blockOf } from '../../protocol/tools/bond.js';
 import { Client } from '../src/client.js';
-import { reach, endpointFor } from '../src/directory.js';
+import { reach, endpointFor, isSocketAddress } from '../src/directory.js';
 
 const require = createRequire(import.meta.url);
 const core = require('../../core/dist/blwp-core.js');
@@ -57,8 +60,16 @@ const contract = (nodes) => ({
   nodes,
 });
 
-const advertFor = (endpoint) => ({
-  nodePubkey: b32(1), operatorId: 'somebody', protocolVersions: [1],
+// REAL KEYS, because the advertisement's signature is now checked. `operator`
+// is the node that will be on the committee; `stranger` is a node with a real
+// bond and a real proof and no standing in this round at all.
+const operator = ed25519.utils.randomSecretKey();
+const operatorPubkey = ed25519.getPublicKey(operator);
+const stranger = ed25519.utils.randomSecretKey();
+const strangerPubkey = ed25519.getPublicKey(stranger);
+
+const advertFor = (endpoint, nodePubkey = operatorPubkey) => ({
+  nodePubkey, operatorId: 'somebody', protocolVersions: [1],
   roles: ['game', 'verify'], endpoint, region: 'eu-west', capacityClass: 2,
   softwareHash: b32(3), settlementCapabilities: 0, lightningCapabilities: 0,
   // All zero: the bond is an output of the transaction that carries this body,
@@ -67,6 +78,10 @@ const advertFor = (endpoint) => ({
   payoutPubkey: b32(4), timestamp: 1788700000000n,
 });
 
+/** The bond transaction a node would post, with its body actually signed. */
+const bondFor = (a, secret = operator) =>
+  bondTransaction(a, { signature: ed25519.sign(advertId(a), secret) });
+
 /**
  * A two-block chain with the bond transaction in the second.
  *
@@ -74,12 +89,14 @@ const advertFor = (endpoint) => ({
  * the chain it accepted rather than a header it was pointed at - a header
  * handed over on its own is not a block, it is 80 bytes.
  */
-function chainWith(transaction) {
+function chainWith(transaction, committee = [operatorPubkey]) {
   const txid = parseTransaction(transaction).txid;
   const sibling = b32(0x99);
   const first = blockOf(hash256, [b32(0x01)]).header;
   const { header } = blockOf(hash256, [txid, sibling], { previous: blockHashOf(first) });
-  return { chains: [[first, header]], transaction, branch: [sibling], position: 0 };
+  return {
+    chains: [[first, header]], transaction, branch: [sibling], position: 0, committee,
+  };
 }
 
 test('a node is reached because a transaction says where it is', async () => {
@@ -88,45 +105,146 @@ test('a node is reached because a transaction says where it is', async () => {
     // The advertisement is written AFTER the node has a port, which is the only
     // fixture-shaped thing here: on mainnet the endpoint is fixed for the life
     // of the bond and the node is brought up to match it. `ws://` rather than
-    // the `wss://` of 25.1 because a test node has no certificate.
+    // the `wss://` of 25.1 because a test node on loopback has no certificate.
     const endpoint = `ws://127.0.0.1:${node.port}`;
-    const discovery = chainWith(bondTransaction(advertFor(endpoint)));
+    const discovery = chainWith(bondFor(advertFor(endpoint)));
+    const c = contract([operatorPubkey]);
 
     const seen = reach(discovery);
     assert.equal(seen.ok, true, seen.why);
     assert.equal(seen.endpoint, endpoint);
 
-    const client = Client.at(discovery, { core, sign, verify });
+    const client = await Client.at(discovery, { core, sign, verify, contract: c });
     assert.equal(client.base, `http://127.0.0.1:${node.port}`);
     assert.notEqual(client.base, DECOY);
 
     // and it is a working address, not merely a string: a real round opens on it
-    const c = contract([node.round.pubkey]);
     assert.deepEqual(await client.openRound(c), roundId(c));
   } finally { await node.close(); }
 });
 
-test('a page that swaps the endpoint is refused by name and reaches nothing', () => {
+/**
+ * THE ONE THIS SLICE EXISTS FOR, and it would have passed at 606f54d.
+ *
+ * A REAL bond, a REAL proof, a REAL signature - and a node with no standing in
+ * this round. `Client.at` used to drop `nodePubkey` on the floor and the
+ * committee was consulted only when a receipt came back, which is a round trip
+ * too late: by then the entry contract and the opening batches are on the
+ * stranger's disk, and section 11 makes publishing the client's duty, not
+ * something it can take back.
+ *
+ * So the refusal is measured where it has to happen - before the round exists -
+ * and it is measured by asking the stranger's own node what it has afterwards.
+ */
+test('a proven node that is not on this round s committee is refused at the door', async () => {
+  const theirs = await serve(openStore(), { port: 0, ...FUNDED });
+  try {
+    const a = advertFor(`ws://127.0.0.1:${theirs.port}`, strangerPubkey);
+    const discovery = chainWith(bondFor(a, stranger), [strangerPubkey]);
+
+    // the advertisement itself is beyond reproach: proven, committed, signed
+    assert.equal(reach(discovery).ok, true);
+
+    // and this round's committee is somebody else
+    const c = contract([operatorPubkey]);
+    await assert.rejects(
+      Client.at({ ...discovery, committee: undefined }, { core, sign, verify, contract: c }),
+      new RegExp(`${toHex(strangerPubkey)}, which is not on this round's committee`));
+
+    // NOTHING REACHED THEM. Not a round, not an entry, not a tick - the node
+    // is ASKED rather than trusted, and it has never heard of this round. The
+    // transcript door answers 200 to anybody, so the number that matters is
+    // `x-ticks`: section 11 input published to a stranger, and it is zero.
+    const r = await fetch(`http://127.0.0.1:${theirs.port}/round?id=${toHex(roundId(c))}`);
+    assert.equal(r.status, 404);
+    const t = await fetch(`http://127.0.0.1:${theirs.port}/transcript`
+      + `?round=${toHex(roundId(c))}&entry=${toHex(b32(5))}`);
+    assert.equal(t.headers.get('x-ticks'), '0');
+    const held = decodeTranscript(new Uint8Array(await t.arrayBuffer()));
+    assert.deepEqual(held.batches, []);
+  } finally { await theirs.close(); }
+});
+
+test('an advertisement not signed by the node it names is refused', async () => {
+  const endpoint = 'ws://127.0.0.1:9999';
+  const a = advertFor(endpoint);
+  const c = contract([operatorPubkey]);
+
+  // signed by somebody else, and by the operator over a different body
+  for (const bad of [
+    bondTransaction(a, { signature: ed25519.sign(advertId(a), stranger) }),
+    bondTransaction(a, { signature: ed25519.sign(advertId(advertFor('ws://127.0.0.1:1')), operator) }),
+    bondTransaction(a),                                    // 64 zero bytes
+  ]) {
+    await assert.rejects(
+      Client.at(chainWith(bad), { core, sign, verify, contract: c }),
+      /is not signed by the node it names/);
+  }
+
+  // and the honest one, for contrast, resolves
+  const good = await Client.at(chainWith(bondFor(a)), { core, sign, verify, contract: c });
+  assert.equal(good.base, 'http://127.0.0.1:9999');
+});
+
+/**
+ * THE ENDPOINT IS A STRING SOMEBODY COMMITTED TO, NOT A URL. Committing to it
+ * on chain makes it theirs; it does not make it an address. Without this the
+ * client would `replace(/^ws/, 'http')` whatever was there and dial it.
+ */
+test('an endpoint that is not a secure socket address never becomes the base', async () => {
+  const c = contract([operatorPubkey]);
+  for (const endpoint of [
+    'http://node.example',                  // the scheme 25.1 does not use
+    'https://node.example',
+    'node.example:443',                     // a bare host
+    'wss:/node.example',                    // one slash short
+    'ws://node.example:443',                // plaintext to another host
+    'javascript:alert(1)',
+    '',
+  ]) {
+    assert.equal(isSocketAddress(endpoint), false, endpoint);
+    const a = advertFor(endpoint);
+    await assert.rejects(
+      Client.at(chainWith(bondFor(a)), { core, sign, verify, contract: c }),
+      /is not a secure socket address/, endpoint);
+  }
+
+  // wss anywhere, ws only on loopback
+  assert.equal(isSocketAddress('wss://node.example:443'), true);
+  assert.equal(isSocketAddress('wss://node.example/play'), true);
+  assert.equal(isSocketAddress('ws://127.0.0.1:8080'), true);
+  assert.equal(isSocketAddress('ws://localhost:8080'), true);
+
+  const fine = await Client.at(chainWith(bondFor(advertFor('wss://node.example:443'))),
+    { core, sign, verify, contract: c });
+  assert.equal(fine.base, 'https://node.example:443');
+});
+
+test('a page that swaps the endpoint is refused by name and reaches nothing', async () => {
   const honest = advertFor('ws://127.0.0.1:9999');
+  const c = contract([operatorPubkey]);
   // The transaction carries no body, so the page offers one - and offers the
   // decoy in it. This is the whole attack: real bond, real block, its address.
   const transaction = bondTransaction(honest, { body: new Uint8Array(0) });
   const discovery = chainWith(transaction);
+  const courier = (a) => joinSignedAdvert(encodeAdvert(a), ed25519.sign(advertId(a), operator));
 
   const swapped = { ...honest, endpoint: 'ws://127.0.0.1:1' };
-  const no = reach({ ...discovery, advert: swapped });
+  const no = reach({ ...discovery, signedAdvert: courier(swapped) });
   assert.equal(no.ok, false);
   assert.match(no.why, /commits to a different advertisement/);
 
-  assert.throws(() => Client.at({ ...discovery, advert: swapped }, { core, sign, verify }),
+  await assert.rejects(
+    Client.at({ ...discovery, signedAdvert: courier(swapped) }, { core, sign, verify, contract: c }),
     /no proven endpoint: the bond output commits to a different advertisement/);
 
   // the honest body, carried by the same page, is taken
-  assert.equal(reach({ ...discovery, advert: honest }).endpoint, 'ws://127.0.0.1:9999');
+  assert.equal(reach({ ...discovery, signedAdvert: courier(honest) }).endpoint,
+    'ws://127.0.0.1:9999');
 });
 
 test('a header that is not in the chain proves nothing', () => {
-  const transaction = bondTransaction(advertFor('ws://127.0.0.1:9999'));
+  const transaction = bondFor(advertFor('ws://127.0.0.1:9999'));
   const real = chainWith(transaction);
 
   // the same proof, offered against a chain that does not contain that block
@@ -140,10 +258,14 @@ test('a header that is not in the chain proves nothing', () => {
   assert.equal(reach({ ...real, chains: [broken] }).ok, false);
   assert.equal(reach({ ...real, chains: [] }).ok, false);
   assert.match(reach({ ...real, chains: [] }).why, /no chain of headers/);
+
+  // and a committee is required, not optional: an absent one is a refusal
+  assert.match(reach({ ...real, committee: [] }).why, /no committee to check/);
+  assert.match(reach({ ...real, committee: undefined }).why, /no committee to check/);
 });
 
 test('there is no fallback: without a proof there is no address', () => {
-  const transaction = bondTransaction(advertFor('ws://127.0.0.1:9999'));
+  const transaction = bondFor(advertFor('ws://127.0.0.1:9999'));
   // The decoy is set, the client is asked for an endpoint, and the honest
   // answer is a refusal rather than the page's address.
   assert.equal(globalThis.BLWP_NODE, DECOY);

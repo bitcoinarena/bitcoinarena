@@ -28,6 +28,31 @@
 // as many chains as it is given - nothing fetches yet, and until something does,
 // a client is only as sure as the chain it was handed.
 import { acceptAdvert, mostWork, blockHashOf } from '../../protocol/src/chain.js';
+import { advertId } from '../../protocol/src/advert.js';
+import { toHex } from '../../protocol/src/hash.js';
+
+/**
+ * Is this a socket address at all?
+ *
+ * Section 25.1: "Then connect `wss://` to the `endpoint` from the verified
+ * advertisement." The endpoint is a string a bonded operator committed to on
+ * chain, which makes it THEIRS - it does not make it a URL. Without this the
+ * client would take whatever was committed and hand it to `WebSocket` after a
+ * blind `replace(/^ws/, 'http')`, so a body carrying `http://...`, a bare
+ * host, or something that is not an address at all would become the base a
+ * round is played on.
+ *
+ * `ws://` is allowed for loopback only, because a test node on this machine
+ * has no certificate and refusing it would mean the tests could not drive the
+ * real door. Nothing else: a plaintext socket to another host is exactly the
+ * one thing a committed endpoint must not be able to ask a player for.
+ */
+const LOOPBACK = /^ws:\/\/(127\.0\.0\.1|localhost|\[::1\])(:\d+)?(\/|$)/;
+export function isSocketAddress(endpoint) {
+  if (typeof endpoint !== 'string') return false;
+  if (LOOPBACK.test(endpoint)) return true;
+  return /^wss:\/\/[^/?#\s]+(\/|$)/.test(endpoint);
+}
 
 /**
  * The endpoint, or the reason there is not one.
@@ -37,29 +62,62 @@ import { acceptAdvert, mostWork, blockHashOf } from '../../protocol/src/chain.js
  * handed a block, and a header that is not in the chain the client accepted is
  * one somebody made up. The transaction has to be in a block that is in the
  * chain, not merely in something 80 bytes long.
+ *
+ * AND THE NODE HAS TO BE ONE OF THIS ROUND'S. Section 25.1 is four steps, and
+ * step 3 - "which are on the committee?" - is computed rather than fetched, so
+ * the answer is already in the round's own contract. Step 4 is "where do I
+ * reach THEM". Proving an advertisement without reading step 3's answer proves
+ * only that somebody, somewhere, posted a bond: a page could hand over a real,
+ * bonded, header-proven node with no standing in this round and the client
+ * would open the round there and publish its whole section 11 transcript to a
+ * stranger before the first receipt refused. A committee is therefore
+ * REQUIRED, not optional - an absent one is a refusal, because the version of
+ * this that takes an empty list and shrugs is the version that ships.
  */
-export function reach({ chains, transaction, advert, branch, position }) {
+export function reach({ chains, transaction, signedAdvert, branch, position, committee }) {
+  if (!committee || !committee.length)
+    return { ok: false, why: 'no committee to check the node against' };
+
   const best = mostWork(chains || []);
   if (!best) return { ok: false, why: 'no chain of headers to check against' };
 
   let refusal = 'the transaction is not in any block of that chain';
   for (const header of best.headers) {
-    const seen = acceptAdvert({ transaction, advert, header, branch, position });
-    if (seen.ok) {
+    const seen = acceptAdvert({ transaction, signedAdvert, header, branch, position });
+    if (!seen.ok) {
+      // A header that proves the transaction and then fails on the commitment
+      // is a more specific answer than "not in this one", and it is the answer
+      // that matters: the block is real and the endpoint was swapped anyway.
+      if (seen.why !== 'the transaction is not in that block') refusal = seen.why;
+      continue;
+    }
+
+    if (!committee.some((n) => toHex(n) === toHex(seen.nodePubkey))) {
       return {
-        ok: true,
-        endpoint: seen.endpoint,
-        nodePubkey: seen.nodePubkey,
-        txid: seen.txid,
-        blockHash: blockHashOf(header),
-        work: best.work,
-        chain: best.at,
+        ok: false,
+        why: `the advertisement is for ${toHex(seen.nodePubkey)}, `
+          + "which is not on this round's committee",
       };
     }
-    // A header that proves the transaction and then fails on the commitment is
-    // a more specific answer than "not in this one", and it is the answer that
-    // matters: the block is real and the endpoint was swapped anyway.
-    if (seen.why !== 'the transaction is not in that block') refusal = seen.why;
+    if (!isSocketAddress(seen.endpoint)) {
+      return {
+        ok: false,
+        why: `the advertisement's endpoint ${JSON.stringify(seen.endpoint)} `
+          + 'is not a secure socket address',
+      };
+    }
+
+    return {
+      ok: true,
+      endpoint: seen.endpoint,
+      nodePubkey: seen.nodePubkey,
+      signature: seen.signature,
+      advertId: advertId(seen.advert),
+      txid: seen.txid,
+      blockHash: blockHashOf(header),
+      work: best.work,
+      chain: best.at,
+    };
   }
   return { ok: false, why: refusal };
 }
@@ -70,6 +128,12 @@ export function reach({ chains, transaction, advert, branch, position }) {
  * Throws rather than answering, because there is no degraded mode here: a
  * client that could not prove where to go has nothing to fall back to that
  * would not be the page's word again.
+ *
+ * THIS DOES NOT CHECK THE SIGNATURE - it cannot, because verifying is
+ * asynchronous in a browser and this answer is wanted synchronously, and
+ * because a curve does not belong in this package. It is a gate, not the door:
+ * `Client.at` is the door, it is asynchronous, and nothing is sent to the node
+ * until the signature has verified there.
  */
 export function endpointFor(discovery) {
   const seen = reach(discovery);

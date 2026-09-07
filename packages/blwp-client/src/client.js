@@ -37,7 +37,7 @@ import { fromHex, toHex } from '../../protocol/src/hash.js';
 import {
   decodeCheckpointReceipt, receiptId, splitSignedReceipt, SIGNED_RECEIPT_BYTES,
 } from '../../protocol/src/receipt.js';
-import { endpointFor } from './directory.js';
+import { reach } from './directory.js';
 
 /**
  * A checkpoint over the state a core is holding, signed and ready for the wire.
@@ -117,18 +117,46 @@ function agrees(mine, theirs, what) {
 
 export class Client {
   /**
-   * A client that reaches a node because Bitcoin says where it is.
+   * A client that reaches a node because Bitcoin says where it is, AND because
+   * this round's own contract says that node is one of its committee.
    *
-   * The one door the game uses. `base` is not passed in: it is READ OFF a
-   * proven advertisement, so there is nowhere in the live path for a page to
-   * put an address of its own. Section 25.1 makes that normative - "it MUST
-   * NOT take a census, a committee or an endpoint on the word of any API,
-   * including one operated by the same party that ships the client" - and the
-   * constructor below still takes a `base` because tests and the node's own
-   * fixtures talk to a process on localhost that has no bond and never will.
+   * The one door the game uses, and everything it refuses it refuses HERE -
+   * before the round is opened, before an entry is joined, before a single
+   * batch of section 11 input is published. That ordering is the whole point.
+   * A proven advertisement for a node with no standing in this round used to
+   * be caught at the first receipt, which is one round trip too late: by then
+   * the entry contract and the opening batches are on a stranger's disk, and
+   * section 11 makes publishing the client's duty, not something it can take
+   * back.
+   *
+   * Asynchronous because the last check is a signature and the browser's
+   * Ed25519 is asynchronous. `verify` is injected for the same reason it is
+   * injected everywhere else here: the curve belongs to whoever runs the
+   * client. The constructor below still takes a bare `base`, because tests and
+   * the node's own fixtures talk to a process on localhost that has no bond
+   * and never will - and a test that wants the real door calls this one.
    */
-  static at(discovery, { core, sign, verify }) {
-    return new Client({ base: endpointFor(discovery), core, sign, verify });
+  static async at(discovery, { core, sign, verify, contract }) {
+    if (!contract || !contract.nodes)
+      throw new Error('no round contract, so there is no committee to check against');
+
+    const seen = reach({ ...discovery, committee: contract.nodes });
+    if (!seen.ok) throw new Error(`no proven endpoint: ${seen.why}`);
+
+    // 5A.1 ends the body with "signature - by node_pubkey over all of the
+    // above". The tagged id is what is signed, as everywhere else in this
+    // protocol, so a signature here can never be replayed as a signature over
+    // some other object that happens to encode to the same bytes. Weaker than
+    // the bond output's commitment - which already binds this body to money on
+    // chain - but it is what says the key the advertisement NAMES is the key
+    // that wrote it, and it is listed.
+    if (!await verify(seen.signature, seen.advertId, seen.nodePubkey))
+      throw new Error(`the advertisement for ${toHex(seen.nodePubkey)} `
+        + 'is not signed by the node it names');
+
+    return new Client({
+      base: seen.endpoint.replace(/^ws/, 'http'), core, sign, verify,
+    });
   }
 
   constructor({ base, core, sign, verify }) {

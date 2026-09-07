@@ -19,7 +19,7 @@
 // difficulty retargeting; it answers two questions only - is this transaction
 // in this header's block, and which of these header chains carries the most
 // work. That is what discovery needs and it is deliberately not more.
-import { advertId, decodeAdvert } from './advert.js';
+import { advertId, decodeAdvert, splitSignedAdvert } from './advert.js';
 import {
   hash256, parseTransaction, commitmentsOf, witnessItemsOf,
 } from './tx.js';
@@ -180,8 +180,16 @@ export function provesTransaction(headerBytes, txid, branch, position) {
  * beside it. It does not matter which, and that is the point - the witness is
  * not covered by the txid, so a body from either place has to earn its standing
  * from the committed output, and one that cannot is refused the same way.
+ *
+ * THE SIGNATURE IS RETURNED, NOT CHECKED. 5A.1 ends the body with "signature -
+ * by node_pubkey over all of the above", and this package carries no crypto on
+ * purpose: a curve in here would be an implementation of the thing that pins
+ * money, sitting in every consumer, that nobody audits. So a body must ARRIVE
+ * signed - 64 bytes beside it, or it is not an advertisement - and the caller
+ * that owns a verifier is the one that says whether the signature is good.
+ * `blwp-client` refuses the session if it is not.
  */
-export function acceptAdvert({ transaction, advert, header, branch, position }) {
+export function acceptAdvert({ transaction, signedAdvert, header, branch, position }) {
   let tx;
   try { tx = parseTransaction(transaction); }
   catch (e) { return { ok: false, why: `that is not a transaction: ${e.message}` }; }
@@ -198,13 +206,17 @@ export function acceptAdvert({ transaction, advert, header, branch, position }) 
   // it, and a transaction that committed to two of them would be one operator
   // advertising twice rather than an ambiguity to resolve here.
   const offered = [];
-  for (const item of witnessItemsOf(tx)) {
-    try { offered.push(decodeAdvert(item)); } catch { /* not a body; most are not */ }
-  }
-  if (advert) offered.push(advert);
+  const read = (bytes) => {
+    try {
+      const { body, signature } = splitSignedAdvert(bytes);
+      offered.push({ advert: decodeAdvert(body), signature });
+    } catch { /* not a signed body; most witness items are not */ }
+  };
+  for (const item of witnessItemsOf(tx)) read(item);
+  if (signedAdvert) read(signedAdvert);
 
-  const taken = offered.find((body) =>
-    commitments.some((c) => sameBytes(c, advertId(body))));
+  const taken = offered.find((o) =>
+    commitments.some((c) => sameBytes(c, advertId(o.advert))));
   if (!taken)
     return { ok: false, why: 'the bond output commits to a different advertisement' };
 
@@ -216,17 +228,18 @@ export function acceptAdvert({ transaction, advert, header, branch, position }) 
   // body is signed. Reading it as "the transaction carrying me" is the only
   // reading available; which output is the bond still waits on BOND_MARKER,
   // and neither is settled here.
-  const carriesUs = taken.bondTxid.every((b) => b === 0);
-  if (!carriesUs && !sameBytes(taken.bondTxid, tx.txid))
+  const carriesUs = taken.advert.bondTxid.every((b) => b === 0);
+  if (!carriesUs && !sameBytes(taken.advert.bondTxid, tx.txid))
     return { ok: false, why: 'the advertisement names a different bond transaction' };
-  if (taken.bondVout >= tx.outputs.length)
+  if (taken.advert.bondVout >= tx.outputs.length)
     return { ok: false, why: 'the advertisement names an output that transaction does not have' };
 
   return {
     ok: true,
-    endpoint: taken.endpoint,
-    nodePubkey: taken.nodePubkey,
+    endpoint: taken.advert.endpoint,
+    nodePubkey: taken.advert.nodePubkey,
+    signature: taken.signature,
     txid: tx.txid,
-    advert: taken,
+    advert: taken.advert,
   };
 }

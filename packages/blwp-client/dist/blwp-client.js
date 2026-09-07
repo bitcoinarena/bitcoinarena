@@ -1587,8 +1587,16 @@ function provesTransaction(headerBytes, txid, branch, position) {
  * beside it. It does not matter which, and that is the point - the witness is
  * not covered by the txid, so a body from either place has to earn its standing
  * from the committed output, and one that cannot is refused the same way.
+ *
+ * THE SIGNATURE IS RETURNED, NOT CHECKED. 5A.1 ends the body with "signature -
+ * by node_pubkey over all of the above", and this package carries no crypto on
+ * purpose: a curve in here would be an implementation of the thing that pins
+ * money, sitting in every consumer, that nobody audits. So a body must ARRIVE
+ * signed - 64 bytes beside it, or it is not an advertisement - and the caller
+ * that owns a verifier is the one that says whether the signature is good.
+ * `blwp-client` refuses the session if it is not.
  */
-function acceptAdvert({ transaction, advert, header, branch, position }) {
+function acceptAdvert({ transaction, signedAdvert, header, branch, position }) {
   let tx;
   try { tx = parseTransaction(transaction); }
   catch (e) { return { ok: false, why: `that is not a transaction: ${e.message}` }; }
@@ -1605,13 +1613,17 @@ function acceptAdvert({ transaction, advert, header, branch, position }) {
   // it, and a transaction that committed to two of them would be one operator
   // advertising twice rather than an ambiguity to resolve here.
   const offered = [];
-  for (const item of witnessItemsOf(tx)) {
-    try { offered.push(decodeAdvert(item)); } catch { /* not a body; most are not */ }
-  }
-  if (advert) offered.push(advert);
+  const read = (bytes) => {
+    try {
+      const { body, signature } = splitSignedAdvert(bytes);
+      offered.push({ advert: decodeAdvert(body), signature });
+    } catch { /* not a signed body; most witness items are not */ }
+  };
+  for (const item of witnessItemsOf(tx)) read(item);
+  if (signedAdvert) read(signedAdvert);
 
-  const taken = offered.find((body) =>
-    commitments.some((c) => sameBytes(c, advertId(body))));
+  const taken = offered.find((o) =>
+    commitments.some((c) => sameBytes(c, advertId(o.advert))));
   if (!taken)
     return { ok: false, why: 'the bond output commits to a different advertisement' };
 
@@ -1623,18 +1635,19 @@ function acceptAdvert({ transaction, advert, header, branch, position }) {
   // body is signed. Reading it as "the transaction carrying me" is the only
   // reading available; which output is the bond still waits on BOND_MARKER,
   // and neither is settled here.
-  const carriesUs = taken.bondTxid.every((b) => b === 0);
-  if (!carriesUs && !sameBytes(taken.bondTxid, tx.txid))
+  const carriesUs = taken.advert.bondTxid.every((b) => b === 0);
+  if (!carriesUs && !sameBytes(taken.advert.bondTxid, tx.txid))
     return { ok: false, why: 'the advertisement names a different bond transaction' };
-  if (taken.bondVout >= tx.outputs.length)
+  if (taken.advert.bondVout >= tx.outputs.length)
     return { ok: false, why: 'the advertisement names an output that transaction does not have' };
 
   return {
     ok: true,
-    endpoint: taken.endpoint,
-    nodePubkey: taken.nodePubkey,
+    endpoint: taken.advert.endpoint,
+    nodePubkey: taken.advert.nodePubkey,
+    signature: taken.signature,
     txid: tx.txid,
-    advert: taken,
+    advert: taken.advert,
   };
 }
 
@@ -1669,6 +1682,31 @@ function acceptAdvert({ transaction, advert, header, branch, position }) {
 // as many chains as it is given - nothing fetches yet, and until something does,
 // a client is only as sure as the chain it was handed.
 
+
+
+/**
+ * Is this a socket address at all?
+ *
+ * Section 25.1: "Then connect `wss://` to the `endpoint` from the verified
+ * advertisement." The endpoint is a string a bonded operator committed to on
+ * chain, which makes it THEIRS - it does not make it a URL. Without this the
+ * client would take whatever was committed and hand it to `WebSocket` after a
+ * blind `replace(/^ws/, 'http')`, so a body carrying `http://...`, a bare
+ * host, or something that is not an address at all would become the base a
+ * round is played on.
+ *
+ * `ws://` is allowed for loopback only, because a test node on this machine
+ * has no certificate and refusing it would mean the tests could not drive the
+ * real door. Nothing else: a plaintext socket to another host is exactly the
+ * one thing a committed endpoint must not be able to ask a player for.
+ */
+const LOOPBACK = /^ws:\/\/(127\.0\.0\.1|localhost|\[::1\])(:\d+)?(\/|$)/;
+function isSocketAddress(endpoint) {
+  if (typeof endpoint !== 'string') return false;
+  if (LOOPBACK.test(endpoint)) return true;
+  return /^wss:\/\/[^/?#\s]+(\/|$)/.test(endpoint);
+}
+
 /**
  * The endpoint, or the reason there is not one.
  *
@@ -1677,29 +1715,62 @@ function acceptAdvert({ transaction, advert, header, branch, position }) {
  * handed a block, and a header that is not in the chain the client accepted is
  * one somebody made up. The transaction has to be in a block that is in the
  * chain, not merely in something 80 bytes long.
+ *
+ * AND THE NODE HAS TO BE ONE OF THIS ROUND'S. Section 25.1 is four steps, and
+ * step 3 - "which are on the committee?" - is computed rather than fetched, so
+ * the answer is already in the round's own contract. Step 4 is "where do I
+ * reach THEM". Proving an advertisement without reading step 3's answer proves
+ * only that somebody, somewhere, posted a bond: a page could hand over a real,
+ * bonded, header-proven node with no standing in this round and the client
+ * would open the round there and publish its whole section 11 transcript to a
+ * stranger before the first receipt refused. A committee is therefore
+ * REQUIRED, not optional - an absent one is a refusal, because the version of
+ * this that takes an empty list and shrugs is the version that ships.
  */
-function reach({ chains, transaction, advert, branch, position }) {
+function reach({ chains, transaction, signedAdvert, branch, position, committee }) {
+  if (!committee || !committee.length)
+    return { ok: false, why: 'no committee to check the node against' };
+
   const best = mostWork(chains || []);
   if (!best) return { ok: false, why: 'no chain of headers to check against' };
 
   let refusal = 'the transaction is not in any block of that chain';
   for (const header of best.headers) {
-    const seen = acceptAdvert({ transaction, advert, header, branch, position });
-    if (seen.ok) {
+    const seen = acceptAdvert({ transaction, signedAdvert, header, branch, position });
+    if (!seen.ok) {
+      // A header that proves the transaction and then fails on the commitment
+      // is a more specific answer than "not in this one", and it is the answer
+      // that matters: the block is real and the endpoint was swapped anyway.
+      if (seen.why !== 'the transaction is not in that block') refusal = seen.why;
+      continue;
+    }
+
+    if (!committee.some((n) => toHex(n) === toHex(seen.nodePubkey))) {
       return {
-        ok: true,
-        endpoint: seen.endpoint,
-        nodePubkey: seen.nodePubkey,
-        txid: seen.txid,
-        blockHash: blockHashOf(header),
-        work: best.work,
-        chain: best.at,
+        ok: false,
+        why: `the advertisement is for ${toHex(seen.nodePubkey)}, `
+          + "which is not on this round's committee",
       };
     }
-    // A header that proves the transaction and then fails on the commitment is
-    // a more specific answer than "not in this one", and it is the answer that
-    // matters: the block is real and the endpoint was swapped anyway.
-    if (seen.why !== 'the transaction is not in that block') refusal = seen.why;
+    if (!isSocketAddress(seen.endpoint)) {
+      return {
+        ok: false,
+        why: `the advertisement's endpoint ${JSON.stringify(seen.endpoint)} `
+          + 'is not a secure socket address',
+      };
+    }
+
+    return {
+      ok: true,
+      endpoint: seen.endpoint,
+      nodePubkey: seen.nodePubkey,
+      signature: seen.signature,
+      advertId: advertId(seen.advert),
+      txid: seen.txid,
+      blockHash: blockHashOf(header),
+      work: best.work,
+      chain: best.at,
+    };
   }
   return { ok: false, why: refusal };
 }
@@ -1710,6 +1781,12 @@ function reach({ chains, transaction, advert, branch, position }) {
  * Throws rather than answering, because there is no degraded mode here: a
  * client that could not prove where to go has nothing to fall back to that
  * would not be the page's word again.
+ *
+ * THIS DOES NOT CHECK THE SIGNATURE - it cannot, because verifying is
+ * asynchronous in a browser and this answer is wanted synchronously, and
+ * because a curve does not belong in this package. It is a gate, not the door:
+ * `Client.at` is the door, it is asynchronous, and nothing is sent to the node
+ * until the signature has verified there.
  */
 function endpointFor(discovery) {
   const seen = reach(discovery);
@@ -1829,18 +1906,46 @@ function agrees(mine, theirs, what) {
 
 class Client {
   /**
-   * A client that reaches a node because Bitcoin says where it is.
+   * A client that reaches a node because Bitcoin says where it is, AND because
+   * this round's own contract says that node is one of its committee.
    *
-   * The one door the game uses. `base` is not passed in: it is READ OFF a
-   * proven advertisement, so there is nowhere in the live path for a page to
-   * put an address of its own. Section 25.1 makes that normative - "it MUST
-   * NOT take a census, a committee or an endpoint on the word of any API,
-   * including one operated by the same party that ships the client" - and the
-   * constructor below still takes a `base` because tests and the node's own
-   * fixtures talk to a process on localhost that has no bond and never will.
+   * The one door the game uses, and everything it refuses it refuses HERE -
+   * before the round is opened, before an entry is joined, before a single
+   * batch of section 11 input is published. That ordering is the whole point.
+   * A proven advertisement for a node with no standing in this round used to
+   * be caught at the first receipt, which is one round trip too late: by then
+   * the entry contract and the opening batches are on a stranger's disk, and
+   * section 11 makes publishing the client's duty, not something it can take
+   * back.
+   *
+   * Asynchronous because the last check is a signature and the browser's
+   * Ed25519 is asynchronous. `verify` is injected for the same reason it is
+   * injected everywhere else here: the curve belongs to whoever runs the
+   * client. The constructor below still takes a bare `base`, because tests and
+   * the node's own fixtures talk to a process on localhost that has no bond
+   * and never will - and a test that wants the real door calls this one.
    */
-  static at(discovery, { core, sign, verify }) {
-    return new Client({ base: endpointFor(discovery), core, sign, verify });
+  static async at(discovery, { core, sign, verify, contract }) {
+    if (!contract || !contract.nodes)
+      throw new Error('no round contract, so there is no committee to check against');
+
+    const seen = reach({ ...discovery, committee: contract.nodes });
+    if (!seen.ok) throw new Error(`no proven endpoint: ${seen.why}`);
+
+    // 5A.1 ends the body with "signature - by node_pubkey over all of the
+    // above". The tagged id is what is signed, as everywhere else in this
+    // protocol, so a signature here can never be replayed as a signature over
+    // some other object that happens to encode to the same bytes. Weaker than
+    // the bond output's commitment - which already binds this body to money on
+    // chain - but it is what says the key the advertisement NAMES is the key
+    // that wrote it, and it is listed.
+    if (!await verify(seen.signature, seen.advertId, seen.nodePubkey))
+      throw new Error(`the advertisement for ${toHex(seen.nodePubkey)} `
+        + 'is not signed by the node it names');
+
+    return new Client({
+      base: seen.endpoint.replace(/^ws/, 'http'), core, sign, verify,
+    });
   }
 
   constructor({ base, core, sign, verify }) {
