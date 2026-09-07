@@ -197,10 +197,23 @@ mergeInto(LibraryManager.library, {
     if (Module.blwpNet) return 1;                      // already running
 
     var base = UTF8ToString(urlPtr);
+    var contractTicks = (typeof BLWP_ROUND !== 'undefined' && BLWP_ROUND)
+      ? (BLWP_ROUND.blockTicks | 0) : 0;
     var net = Module.blwpNet = {
       state: 'opening', error: '', ticks: [], tick: null,
       batches: 0, marks: 0, batchEvery: batchEvery | 0, markEvery: markEvery | 0,
       seen: 0, client: null, where: null, lost: 0, drops: 0, resumedAt: -1,
+      tries: 0, backoff: 0, held: 0, stalls: 0,
+      // AT MOST THIS MANY TICKS IN ONE BATCH.
+      //
+      // The node refuses a batch longer than the round's own `blockTicks`, so
+      // a long outage that drained as ONE batch would be refused for ever -
+      // the ticks go back in the hold and are re-sent, and the run is stuck
+      // from that moment. Measured on this machine the core runs about 43
+      // ticks a second, so the wall is reached after roughly two and a half
+      // minutes of outage at 60 Hz. Draining in chunks turns that into
+      // several ordinary batches.
+      chunk: (contractTicks && contractTicks < 600) ? contractTicks : 600,
       // ONE AT A TIME, and this is not tidiness.
       //
       // Both chains hang off state the client updates when an answer comes
@@ -287,23 +300,44 @@ mergeInto(LibraryManager.library, {
       // contiguous - the node refuses a gap at intake, where a client can
       // still fix it - so they pile up and go out in order once the socket is
       // back, from the tick the node says it is owed.
-      net.client.onDrop = function () {
+      // KEEP TRYING, with a backoff, until the run is over.
+      //
+      // One attempt was the whole of it before, so a node that was still
+      // restarting at that moment left the session in `error` and nothing ever
+      // tried again - every tick and every mark from that instant on went
+      // unpublished, and section 11 is blunt about what unpublished inputs
+      // cost. A one-second blip in the wrong place cost the rest of the round.
+      //
+      // The backoff doubles from a second to eight, which is slow enough not
+      // to hammer a node that is down and quick enough that a blip costs a
+      // second rather than a run.
+      net.reconnect = function () {
         if (net.state === 'gone') return;
-        net.drops++;
         net.state = 'dropped';
+        net.tries++;
         net.chain = net.chain.then(function () {
           return net.client.connect()
             .then(function () { return net.client.resume(net.where); })
             .then(function (r) {
               net.resumedAt = r.nextTick;
+              net.backoff = 0;
               net.state = 'ready';
-              console.log('[blwp] resumed at tick ' + r.nextTick
-                + ', ' + r.batches + ' batches and ' + r.receipts + ' receipts behind us');
+              console.log('[blwp] resumed at tick ' + r.nextTick + ' after ' + net.tries
+                + ' try(s), ' + r.batches + ' batches and ' + r.receipts + ' behind us');
+            })
+            .catch(function (e) {
+              net.error = String(e.message || e);
+              net.backoff = net.backoff ? Math.min(net.backoff * 2, 8000) : 1000;
+              setTimeout(net.reconnect, net.backoff);
             });
-        }).catch(function (e) {
-          net.state = 'error';
-          net.error = String(e.message || e);
         });
+      };
+      net.client.onDrop = function () {
+        if (net.state === 'gone' || net.state === 'dropped') return;
+        net.drops++;
+        net.tries = 0;
+        net.backoff = 0;
+        net.reconnect();
       };
 
       return net.client.openRound(contract)
@@ -312,10 +346,26 @@ mergeInto(LibraryManager.library, {
     };
 
     net.publish = function () {
-      var words = net.ticks;
-      net.ticks = [];
+      // AND NEVER MORE THAN A CHUNK AT A TIME. What is left stays held and
+      // goes out behind it, so a long outage drains as several ordinary
+      // batches instead of one the node is bound to refuse.
+      var words = net.ticks.slice(0, net.chunk);
+      net.ticks = net.ticks.slice(words.length);
       net.chain = net.chain.then(function () {
         if (net.state !== 'ready') { net.ticks = words.concat(net.ticks); return; }
+
+        // WATCH WHAT IS ALREADY WAITING TO GO OUT. IMPLEMENTATION.md: "ws
+        // buffers without limit. Watch bufferedAmount; above a threshold drop
+        // ghost frames first - they are non-authoritative by definition - and
+        // never receipts." There are no ghost frames yet, so the rule here is
+        // the part that does apply: do not add to a socket that is already
+        // backed up. The ticks stay held and go out when it has drained.
+        var sock = net.client.sock;
+        if (sock && sock.bufferedAmount > 262144) {
+          net.stalls++;
+          net.ticks = words.concat(net.ticks);
+          return;
+        }
         return net.client.batch(words, net.where).then(function (r) {
           if (r.accepted) { net.batches++; return; }
           // PUT THEM BACK, in front of whatever has arrived since. A refused
@@ -342,13 +392,14 @@ mergeInto(LibraryManager.library, {
     };
 
     net.tick = function (words) {
-      if (net.state === 'error' || net.state === 'gone') return;
+      if (net.state === 'gone') return;
       // Kept even while the socket is down, and counted even while it is
       // opening: the tick number is the core's, not the network's, and a
       // transcript with a hole in it is one the node will not accept across.
       net.ticks.push(words);
       net.seen++;
       if (net.state !== 'ready') return;
+      net.held = net.ticks.length;
       if (net.batchEvery > 0 && net.ticks.length >= net.batchEvery) net.publish();
       if (net.markEvery > 0 && net.seen % net.markEvery === 0) net.mark(b);
     };
@@ -362,7 +413,9 @@ mergeInto(LibraryManager.library, {
     var line = net
       ? net.state + ' batches ' + net.batches + ' marks ' + net.marks
         + ' tick ' + net.seen + ' held ' + net.ticks.length
-        + (net.drops ? ' drops ' + net.drops + ' resumed ' + net.resumedAt : '')
+        + (net.stalls ? ' stalls ' + net.stalls : '')
+        + (net.drops ? ' drops ' + net.drops + ' tries ' + net.tries
+                       + ' resumed ' + net.resumedAt : '')
         + (net.error ? ' (' + net.error + ')' : '')
       : 'off';
     var n = Math.min(line.length, (cap | 0) - 1);

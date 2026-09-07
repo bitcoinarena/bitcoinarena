@@ -205,7 +205,16 @@ export function serve(db, { port = 0 } = {}) {
     http.listen(port, '127.0.0.1', () => resolve({
       http, wss, round,
       port: http.address().port,
-      close: () => new Promise((r) => { wss.close(); http.close(r); }),
+      // Closed so it actually closes. `http.close` waits for open connections
+      // to end, and a play socket does not end on its own - a harness that
+      // took the node away hung instead, and the page kept publishing to a
+      // server that was supposed to be gone.
+      close: () => new Promise((r) => {
+        for (const sock of wss.clients) sock.terminate();
+        wss.close();
+        http.closeAllConnections();
+        http.close(r);
+      }),
     }));
   });
 }
