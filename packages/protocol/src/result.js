@@ -43,6 +43,22 @@ export const outcomeByte = (outcome) => {
 };
 
 /**
+ * And back. `decodePlayerResult` had this inline; a second object writing an
+ * outcome needs the same inverse, and two copies of one mapping is two places
+ * for a byte to come to mean different things.
+ *
+ * ENTRY_VOID is deliberately not one of these. It is payout.js's fifth word
+ * for an entry that never activated, and it has no byte here because widening
+ * `OUTCOMES` would move every result id. Nothing needs one: 23.2 gives VOID
+ * and ENTRY_VOID the same action, which is to do nothing at all.
+ */
+export const outcomeOf = (byte) => {
+  const word = OUTCOMES[byte];
+  if (!word) throw new Error(`${byte} is not one of the four outcome bytes`);
+  return word;
+};
+
+/**
  * Five, of the seven a committee has (13).
  *
  * The same number as 13C's canonical transcript and the client's live-at-five,

@@ -300,6 +300,22 @@ export const NOTHING = 'NOTHING';     // let it expire; the wallet is refunded a
 export const SETTLEMENT_THRESHOLD = 5;
 
 /**
+ * The three actions on the wire. Order is protocol: it indexes `actionByte`,
+ * and a record that encoded them by name would let two implementations spell
+ * one action two ways.
+ */
+export const ACTIONS = [SETTLE, CANCEL, NOTHING];
+export const actionByte = (action) => {
+  const i = ACTIONS.indexOf(action);
+  if (i < 0) throw new Error('unknown settlement action: ' + action);
+  return i;
+};
+export const actionOf = (byte) => {
+  if (!ACTIONS[byte]) throw new Error('unknown settlement action byte: ' + byte);
+  return ACTIONS[byte];
+};
+
+/**
  * WHAT EACH OUTCOME DOES TO ITS HOLD INVOICE, AND WHAT IT TAKES TO DO IT.
  *
  * Section 23.2, and the shape of the table is the safety property:

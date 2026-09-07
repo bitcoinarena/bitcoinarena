@@ -53,6 +53,14 @@ export const TYPE_OBJECTION = 0x0b;
  */
 export const TYPE_SLASH_PROOF = 0x0c;
 
+/**
+ * The settlement record of 5A.3 row 4: what a settlement node DID to a hold
+ * invoice, and the conditions it published for having done it. 23.2's table
+ * names the action and the requirements; the spec reserves no type for the
+ * record itself, so this is the next free number, like the objection's.
+ */
+export const TYPE_SETTLEMENT_RECORD = 0x0d;
+
 export const TAG = {
   roundContract: 'BLWP/v1/RoundContract',
   entryContract: 'BLWP/v1/EntryContract',
@@ -72,6 +80,7 @@ export const TAG = {
   // rather than the table's, because a proof binds to the inputs and a
   // signature binds to the table, and the two must never be interchangeable.
   payoutInputs: 'BLWP/v1/PayoutInputs',
+  settlementRecord: 'BLWP/v1/SettlementRecord',
   vssShare: 'BLWP/v1/VssShare',
   remainder: 'BLWP/v1/Remainder',
 };

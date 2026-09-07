@@ -28,11 +28,14 @@
 import { Writer, Reader } from './encode.js';
 import { taggedHash, toHex } from './hash.js';
 import {
-  PROTOCOL_VERSION, TYPE_SLASH_PROOF, TYPE_PAYOUT_TABLE, TAG,
+  PROTOCOL_VERSION, TYPE_SLASH_PROOF, TYPE_PAYOUT_TABLE, TYPE_SETTLEMENT_RECORD, TAG,
 } from './constants.js';
 import { decodePlayerResult, resultId, splitSignedResult } from './result.js';
-import { computePayoutTable, payoutTableId, decodePayoutTable } from './payout.js';
-import { outcomeByte } from './result.js';
+import {
+  computePayoutTable, payoutTableId, decodePayoutTable,
+  settlementAction, actionByte, actionOf, NOTHING,
+} from './payout.js';
+import { outcomeByte, outcomeOf } from './result.js';
 
 const hex = (b) => toHex(b);
 
@@ -58,7 +61,17 @@ export const REPLAY_CONTRADICTS = 'REPLAY_CONTRADICTS';
  */
 export const TABLE_IS_NOT_F = 'TABLE_IS_NOT_F';
 
-export const OFFENCES = [REPLAY_CONTRADICTS, TABLE_IS_NOT_F];
+/**
+ * 5A.3 row 4: "Settlement action without the required 5-of-7 result and payout
+ * signatures", proof "the settlement record".
+ *
+ * 23.2's table is the law and `settlementAction` is that table, so like row 3
+ * this needs no attesting party: the record's own published conditions are
+ * recomputed and compared with what was done.
+ */
+export const SETTLED_WITHOUT_AUTHORITY = 'SETTLED_WITHOUT_AUTHORITY';
+
+export const OFFENCES = [REPLAY_CONTRADICTS, TABLE_IS_NOT_F, SETTLED_WITHOUT_AUTHORITY];
 
 /**
  * The proof body. The signed result it accuses travels BESIDE it, like every
@@ -346,4 +359,152 @@ export function payoutInputsId({ roundId, entries, minScore = 0 }) {
     ww.u64(e.stakeMsat);
   });
   return taggedHash(TAG.payoutInputs, w.finish());
+}
+
+/**
+ * THE SETTLEMENT RECORD, 5A.3 row 4's proof.
+ *
+ * 23.2's table is the law: DELIVERED cancels on 5-of-7 settlement signatures,
+ * FAILED and FORFEIT settle only on a FINAL result with 5 preimage shares and
+ * 5-of-7 settlement signatures, and VOID needs nobody to act at all. The
+ * record is what a settlement node DID and the conditions it published for
+ * having done it - the same shape row 3 uses, where the accusation is measured
+ * against what the accused itself put its name to.
+ *
+ * The spec names no encoding for it, so this fills the type reserved above the
+ * way the objection and the payout table did.
+ *
+ * THE ENTRY IS IN IT. A settlement action is about one player's hold invoice,
+ * and a record without the entry would be an action against no particular
+ * money - and its signature would carry to any entry of the round.
+ */
+export function encodeSettlementRecord(r) {
+  const w = new Writer();
+  w.u8(TYPE_SETTLEMENT_RECORD);
+  w.u16(PROTOCOL_VERSION);
+  w.bytes32(r.roundId);
+  w.bytes32(r.entryId);
+  w.bytes32(r.nodePubkey);
+  w.u8(actionByte(r.action));
+
+  // WHAT THE NODE SAID IT HAD. Every one of 23.2's conditions, as the node
+  // published them: the outcome it acted on, whether that player qualified,
+  // how far the result had got, and the two counts.
+  w.u8(outcomeByte(r.outcome));
+  w.u8(r.qualifies ? 1 : 0);
+  w.str(r.state || '');
+  w.u16(r.shares | 0);
+  w.u16(r.signatures | 0);
+  return w.finish();
+}
+
+export function decodeSettlementRecord(bytes) {
+  const r = new Reader(bytes);
+  if (r.u8() !== TYPE_SETTLEMENT_RECORD) throw new Error('not a settlement record');
+  if (r.u16() !== PROTOCOL_VERSION) throw new Error('unknown protocol version');
+  const out = {
+    roundId: r.bytes32(),
+    entryId: r.bytes32(),
+    nodePubkey: r.bytes32(),
+    action: actionOf(r.u8()),
+    outcome: outcomeOf(r.u8()),
+    qualifies: r.u8() === 1,
+    state: r.str(),
+    shares: r.u16(),
+    signatures: r.u16(),
+  };
+  if (r.at !== bytes.length) throw new Error('trailing bytes after the settlement record');
+  return out;
+}
+
+export const settlementRecordId = (r) =>
+  taggedHash(TAG.settlementRecord, encodeSettlementRecord(r));
+
+/**
+ * DID THIS NODE ACT WITHOUT THE AUTHORITY IT NEEDED? 5A.3 row 4.
+ *
+ * "Settlement action without the required 5-of-7 result and payout signatures.
+ * Proof: the settlement record."
+ *
+ * NOTHING IS INJECTED, as in row 3: `settlementAction` is 23.2's table and it
+ * is in this package, so the check recomputes what the record's own published
+ * conditions authorised and compares it with what was done. No attester, and
+ * so no attester who could slash without cause.
+ *
+ * TWO WAYS TO BE WRONG, and they are different offences of the same row:
+ *   - the action was not authorised at all - the counts the node itself
+ *     published do not meet 23.2's requirements
+ *   - the action was not the one those conditions call for - settling where
+ *     23.2 cancels, or acting at all on a VOID, which "needs nobody to act"
+ *
+ * AND ONLY MONEY LEAVING IS AN OFFENCE. A node that did LESS than it was
+ * entitled to has taken nothing from anybody: 23.2's whole safety property is
+ * that "the default path - nobody acting - is always the refund", so inaction
+ * cannot be the thing a bond is taken for. NOTHING where a cancel was due
+ * leaves the player their money by expiry, and slashing it would invert the
+ * one direction the design is built to keep safe.
+ */
+export function slashHoldsOnSettlement({ proof, signedRecord, advert, committee }) {
+  if (!Array.isArray(committee) || !committee.length)
+    return { slashed: false, why: 'no committee, so nobody was serving this round' };
+  if (!committee.some((k) => hex(k) === hex(proof.nodePubkey)))
+    return {
+      slashed: false,
+      why: `${hex(proof.nodePubkey)} is not on this round's committee, so it settled nothing it owed`,
+    };
+
+  if (!(signedRecord instanceof Uint8Array) || !signedRecord.length)
+    return { slashed: false, why: 'no settlement record attached to check against 23.2' };
+  let record;
+  try { record = decodeSettlementRecord(signedRecord); }
+  catch (e) { return { slashed: false, why: `the evidence is not a settlement record: ${e.message}` }; }
+
+  if (hex(settlementRecordId(record)) !== hex(proof.signedResultId))
+    return { slashed: false, why: 'the record attached is not the one this proof names' };
+  if (hex(record.roundId) !== hex(proof.roundId))
+    return { slashed: false, why: 'the record attached is for a different round' };
+  if (hex(record.nodePubkey) !== hex(proof.nodePubkey))
+    return { slashed: false, why: 'the record attached was written by a different node' };
+
+  // 23.2, recomputed from the node's OWN published conditions.
+  const due = settlementAction({
+    outcome: record.outcome,
+    qualifies: record.qualifies,
+    state: record.state,
+    shares: record.shares,
+    signatures: record.signatures,
+  });
+
+  if (record.action === NOTHING)
+    return {
+      slashed: false,
+      why: 'the node did nothing, and nobody acting is 23.2\'s refund path: '
+        + 'a bond is not taken for leaving money where it was',
+    };
+
+  if (due.action === record.action && due.authorised)
+    return { slashed: false, why: `23.2 authorised ${record.action} on those conditions` };
+
+  const why = due.action !== record.action
+    ? `23.2 calls for ${due.action} on those conditions and the node did ${record.action}`
+    : `${record.action} needed ${due.missing.join(', ')}`;
+
+  if (!advert || hex(advert.nodePubkey) !== hex(proof.nodePubkey))
+    return { slashed: false, why: 'no advertisement from the accused node to name its bond' };
+  if (hex(advert.bondTxid) !== hex(proof.bondTxid) || advert.bondVout !== proof.bondVout)
+    return {
+      slashed: false,
+      why: `the proof names bond ${hex(proof.bondTxid)}:${proof.bondVout} and the node `
+        + `advertised ${hex(advert.bondTxid)}:${advert.bondVout}`,
+    };
+
+  return {
+    slashed: true,
+    offence: SETTLED_WITHOUT_AUTHORITY,
+    bond: { txid: proof.bondTxid, vout: proof.bondVout },
+    commitment: slashCommitment(proof),
+    due: due.action,
+    missing: due.missing,
+    why,
+  };
 }

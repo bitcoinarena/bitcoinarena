@@ -16,8 +16,7 @@ import {
   computePayoutTable, encodePayoutTable, decodePayoutTable, payoutTableId,
 } from '../src/payout.js';
 import {
-  slashHoldsOnTable, payoutInputsId, slashCommitment, TABLE_IS_NOT_F, OFFENCES,
-  REPLAY_CONTRADICTS,
+  slashHoldsOnTable, payoutInputsId, slashCommitment, TABLE_IS_NOT_F,
 } from '../src/slash.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
@@ -49,11 +48,6 @@ const advert = { nodePubkey: NODE, bondTxid: BOND, bondVout: 3 };
 const ask = (bytes, over = {}) => slashHoldsOnTable({
   proof: proofFor(bytes), signedTable: bytes, advert, committee,
   entries, minScore: MIN, ...over,
-});
-
-test('two offences are implemented and the other four are not pretended', () => {
-  assert.deepEqual(OFFENCES, [REPLAY_CONTRADICTS, TABLE_IS_NOT_F],
-    '5A.3 lists six rows and this holds two of them');
 });
 
 /**

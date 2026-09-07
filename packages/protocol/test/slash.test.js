@@ -18,7 +18,7 @@ import {
 } from '../src/result.js';
 import {
   encodeSlashProof, decodeSlashProof, slashProofId, slashCommitment,
-  slashHolds, REPLAY_CONTRADICTS,
+  slashHolds, OFFENCES, REPLAY_CONTRADICTS, TABLE_IS_NOT_F, SETTLED_WITHOUT_AUTHORITY,
 } from '../src/slash.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
@@ -50,10 +50,21 @@ const ask = (over = {}) => {
   });
 };
 
-// WHICH OF 5A.3'S SIX ROWS ARE IMPLEMENTED is asserted in `slash-table.test.js`,
-// where the second one was added. One claim, one place: two files counting the
-// same list is two files to forget to update, and the one that is forgotten
-// goes green while saying something false.
+/**
+ * WHICH OF 5A.3'S SIX ROWS ARE IMPLEMENTED, in one place and this one.
+ *
+ * It has moved twice now - it lived in whichever file added a row last, so
+ * every new row broke the previous file's count. Here it is a claim about the
+ * MODULE rather than about a row, which is what it always was, and adding the
+ * fourth row touches this line and no other.
+ *
+ * The names are not pretended: 5A.3 lists six offences and a name in this
+ * array that answers nothing reads as coverage of one.
+ */
+test('three of 5A.3\'s six rows are implemented, and the other three are not pretended', () => {
+  assert.deepEqual(OFFENCES,
+    [REPLAY_CONTRADICTS, TABLE_IS_NOT_F, SETTLED_WITHOUT_AUTHORITY]);
+});
 
 /**
  * THE ONE THIS SLICE EXISTS FOR, before and after.
