@@ -5,9 +5,9 @@
 // integer division with an explicit remainder, and the remainder is then
 // distributed by a rule rather than dropped.
 
-import { Writer } from './encode.js';
+import { Writer, Reader } from './encode.js';
 import { taggedHash, bytesToBigInt } from './hash.js';
-import { TAG } from './constants.js';
+import { TAG, TYPE_PAYOUT_TABLE, PROTOCOL_VERSION } from './constants.js';
 
 export const DELIVERED = 'DELIVERED';
 export const FAILED = 'FAILED';
@@ -168,6 +168,53 @@ export function computePayoutTable({ roundId, entries, minScore = 0 }) {
     table: activated.map((e) => ({ pubkey: e.pubkey, amountMsat: payouts.get(e) })),
   };
 }
+
+/**
+ * THE TABLE AS BYTES, so a node can sign one thing and a stranger can check
+ * the same thing years later.
+ *
+ * §20 fixes `F` and says "nodes sign the payout-table hash" - it does not fix
+ * the bytes that hash is taken over. `TYPE_PAYOUT_TABLE` was reserved for this
+ * object before anything used it, so filling that slot is the same move the
+ * objection made when the spec gave a field list and no encoding: the layout
+ * is written down here rather than left for two implementations to guess at
+ * differently.
+ *
+ * THE ROUND IS IN IT. Without it a table is a list of amounts that could
+ * belong to any round with the same players, and a signature over it would
+ * carry across rounds - which is exactly the replay a tagged hash exists to
+ * stop one level down.
+ *
+ * THE ORDER IS THE TABLE'S OWN. `computePayoutTable` returns rows in
+ * `activated` order, which is the caller's entry order, so it is sorted here
+ * by pubkey: two honest nodes handed the same entries in a different order
+ * must sign the same bytes, or `F` being deterministic buys nothing.
+ */
+export function encodePayoutTable({ roundId, table }) {
+  const w = new Writer();
+  w.u8(TYPE_PAYOUT_TABLE);
+  w.u16(PROTOCOL_VERSION);
+  w.bytes32(roundId);
+  const rows = [...table].sort((a, b) => compareBytes(a.pubkey, b.pubkey));
+  w.vec(rows, (row, ww) => {
+    ww.bytes32(row.pubkey);
+    ww.u64(row.amountMsat);
+  });
+  return w.finish();
+}
+
+export function decodePayoutTable(bytes) {
+  const r = new Reader(bytes);
+  if (r.u8() !== TYPE_PAYOUT_TABLE) throw new Error('not a payout table');
+  if (r.u16() !== PROTOCOL_VERSION) throw new Error('unknown protocol version');
+  const roundId = r.bytes32();
+  const table = r.vec((rr) => ({ pubkey: rr.bytes32(), amountMsat: rr.u64() }));
+  if (r.at !== bytes.length) throw new Error('trailing bytes after the payout table');
+  return { roundId, table };
+}
+
+/** What §20's "nodes sign the payout-table hash" means, in bytes. */
+export const payoutTableId = (t) => taggedHash(TAG.payoutTable, encodePayoutTable(t));
 
 function compareBytes(a, b) {
   for (let i = 0; i < a.length && i < b.length; i++)

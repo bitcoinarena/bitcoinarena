@@ -466,6 +466,10 @@ const TAG = {
   transcript: 'BLWP/v1/Transcript',
   objection: 'BLWP/v1/Objection',
   slashProof: 'BLWP/v1/SlashProof',
+  // The membership and floor a payout table was computed FROM. Its own tag
+  // rather than the table's, because a proof binds to the inputs and a
+  // signature binds to the table, and the two must never be interchangeable.
+  payoutInputs: 'BLWP/v1/PayoutInputs',
   vssShare: 'BLWP/v1/VssShare',
   remainder: 'BLWP/v1/Remainder',
 };

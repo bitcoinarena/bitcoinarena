@@ -27,8 +27,12 @@
 // not exist yet, and adding one moves every round id. It is named and left.
 import { Writer, Reader } from './encode.js';
 import { taggedHash, toHex } from './hash.js';
-import { PROTOCOL_VERSION, TYPE_SLASH_PROOF, TAG } from './constants.js';
+import {
+  PROTOCOL_VERSION, TYPE_SLASH_PROOF, TYPE_PAYOUT_TABLE, TAG,
+} from './constants.js';
 import { decodePlayerResult, resultId, splitSignedResult } from './result.js';
+import { computePayoutTable, payoutTableId, decodePayoutTable } from './payout.js';
+import { outcomeByte } from './result.js';
 
 const hex = (b) => toHex(b);
 
@@ -40,7 +44,21 @@ const hex = (b) => toHex(b);
  * as coverage.
  */
 export const REPLAY_CONTRADICTS = 'REPLAY_CONTRADICTS';
-export const OFFENCES = [REPLAY_CONTRADICTS];
+
+/**
+ * 5A.3 row 3: "Signing a payout table that does not equal
+ * `F(contract, membership, results)`", proof "the table and its inputs".
+ *
+ * §20 is what makes it mechanical: "PayoutTable = F(RoundContract, Membership,
+ * FinalResults). Deterministic. Nodes sign the payout-table hash... A node
+ * signing a table that does not equal F(...) of its published inputs is
+ * slashable." So the check is a recomputation and a comparison of two hashes,
+ * and no verdict is injected at all - unlike the replay, this one nobody has
+ * to attest to, because `F` is right here.
+ */
+export const TABLE_IS_NOT_F = 'TABLE_IS_NOT_F';
+
+export const OFFENCES = [REPLAY_CONTRADICTS, TABLE_IS_NOT_F];
 
 /**
  * The proof body. The signed result it accuses travels BESIDE it, like every
@@ -194,4 +212,138 @@ export function slashHolds({
     commitment: slashCommitment(proof),
     why: 'the node signed a result the canonical transcript does not replay to',
   };
+}
+
+/**
+ * DOES THIS TABLE SLASH THIS BOND? 5A.3 row 3.
+ *
+ * §20: "PayoutTable = F(RoundContract, Membership, FinalResults).
+ * Deterministic. Nodes sign the payout-table hash; 5-of-7 matching signatures
+ * make it final. A node signing a table that does not equal F(...) of its
+ * published inputs is slashable."
+ *
+ * NOTHING IS INJECTED HERE, and that is the difference from the replay
+ * offence. `F` is `computePayoutTable`, it is in this package, and it is the
+ * same function the node, the client and the replayer already share - so this
+ * needs no attesting party at all, and 5A.3B's residual about one who "can, in
+ * principle, slash without cause" does not reach this row.
+ *
+ * ITS PUBLISHED INPUTS, not the accuser's. The entries and the score floor are
+ * what the accused node published; recomputing from an accuser's own inputs
+ * would let them pick a set that disagrees with anything. The caller has to
+ * say what those inputs were, and `inputsHash` is how the proof is bound to
+ * them - see `payoutInputsId`.
+ *
+ * AND F ITSELF MAY REFUSE. `computePayoutTable` throws when its own invariant
+ * breaks - paid against staked - and a table whose inputs cannot be computed
+ * at all is not evidence that the signer was dishonest about them. That is
+ * refused as unusable rather than counted as an offence.
+ */
+export function slashHoldsOnTable({
+  proof, signedTable, advert, committee, entries, minScore = 0,
+}) {
+  if (!Array.isArray(committee) || !committee.length)
+    return { slashed: false, why: 'no committee, so nobody was serving this round' };
+  if (!committee.some((k) => hex(k) === hex(proof.nodePubkey)))
+    return {
+      slashed: false,
+      why: `${hex(proof.nodePubkey)} is not on this round's committee, so it signed nothing it owed`,
+    };
+
+  // THE EVIDENCE IS THE TABLE THE PROOF NAMES. The id the node signed is what
+  // travels in `signedResultId` - the field names the object under accusation,
+  // and for this row that object is a table rather than a result.
+  if (!(signedTable instanceof Uint8Array) || !signedTable.length)
+    return { slashed: false, why: 'no signed table attached to check against F' };
+  let claimed;
+  try { claimed = decodePayoutTable(signedTable); }
+  catch (e) { return { slashed: false, why: `the evidence is not a payout table: ${e.message}` }; }
+
+  if (hex(payoutTableId(claimed)) !== hex(proof.signedResultId))
+    return { slashed: false, why: 'the table attached is not the one this proof names' };
+  if (hex(claimed.roundId) !== hex(proof.roundId))
+    return { slashed: false, why: 'the table attached is for a different round' };
+
+  // THE INPUTS THE PROOF IS BOUND TO. Without this the accuser recomputes from
+  // whatever entries suit them and every honest table is slashable.
+  if (!Array.isArray(entries) || !entries.length)
+    return { slashed: false, why: 'no published inputs to recompute F from' };
+  // ANSWERED, NEVER THROWN. Malformed inputs are a thing an accuser can hand
+  // in, so committing to them has to be a refusal like every other check here
+  // - a decision function that raises on bad evidence hands its caller an
+  // exception where it asked for a verdict, and the caller least able to cope
+  // with that is a node acting on somebody else's accusation.
+  let inputs;
+  try { inputs = payoutInputsId({ roundId: proof.roundId, entries, minScore }); }
+  catch (e) { return { slashed: false, why: `those inputs cannot be committed to: ${e.message}` }; }
+  if (hex(proof.transcriptHash) !== hex(inputs))
+    return {
+      slashed: false,
+      why: 'the proof is bound to different inputs than the ones handed in',
+    };
+
+  let honest;
+  try {
+    honest = computePayoutTable({ roundId: claimed.roundId, entries, minScore });
+  } catch (e) {
+    return { slashed: false, why: `F cannot be computed from those inputs: ${e.message}` };
+  }
+
+  const wanted = payoutTableId({ roundId: claimed.roundId, table: honest.table });
+  if (hex(wanted) === hex(payoutTableId(claimed)))
+    return { slashed: false, why: 'the table signed is exactly F of its published inputs' };
+
+  if (!advert || hex(advert.nodePubkey) !== hex(proof.nodePubkey))
+    return { slashed: false, why: 'no advertisement from the accused node to name its bond' };
+  if (hex(advert.bondTxid) !== hex(proof.bondTxid) || advert.bondVout !== proof.bondVout)
+    return {
+      slashed: false,
+      why: `the proof names bond ${hex(proof.bondTxid)}:${proof.bondVout} and the node `
+        + `advertised ${hex(advert.bondTxid)}:${advert.bondVout}`,
+    };
+
+  return {
+    slashed: true,
+    offence: TABLE_IS_NOT_F,
+    bond: { txid: proof.bondTxid, vout: proof.bondVout },
+    commitment: slashCommitment(proof),
+    expected: wanted,
+    why: 'the table signed is not F of the inputs the node published',
+  };
+}
+
+/**
+ * THE INPUTS, AS ONE HASH, so a proof can be bound to them.
+ *
+ * §20's offence is about a table against "its published inputs", so a proof
+ * that did not name them would be an accusation with a free variable: whoever
+ * checks it later could recompute from a different membership and get a
+ * different answer. This is the membership and the floor, in the order `F`
+ * itself sorts by, so two people who publish the same inputs commit to the
+ * same 32 bytes.
+ *
+ * It rides in the proof's `transcriptHash` field rather than adding one:
+ * that field is "the object this offence is measured against", and for the
+ * replay row that object is a transcript while for this row it is the inputs.
+ * One field, one meaning - what was published that the signature is wrong
+ * about - and no widening of a body that is already committed to on chain.
+ */
+export function payoutInputsId({ roundId, entries, minScore = 0 }) {
+  const w = new Writer();
+  w.u8(TYPE_PAYOUT_TABLE);
+  w.u16(PROTOCOL_VERSION);
+  w.bytes32(roundId);
+  w.u32(minScore);
+  const rows = [...entries].sort((a, b) => {
+    for (let i = 0; i < a.pubkey.length && i < b.pubkey.length; i++)
+      if (a.pubkey[i] !== b.pubkey[i]) return a.pubkey[i] - b.pubkey[i];
+    return 0;
+  });
+  w.vec(rows, (e, ww) => {
+    ww.bytes32(e.pubkey);
+    ww.u8(outcomeByte(e.outcome));
+    ww.u32(e.score);
+    ww.u64(e.stakeMsat);
+  });
+  return taggedHash(TAG.payoutInputs, w.finish());
 }

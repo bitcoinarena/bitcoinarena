@@ -18,7 +18,7 @@ import {
 } from '../src/result.js';
 import {
   encodeSlashProof, decodeSlashProof, slashProofId, slashCommitment,
-  slashHolds, REPLAY_CONTRADICTS, OFFENCES,
+  slashHolds, REPLAY_CONTRADICTS,
 } from '../src/slash.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
@@ -50,10 +50,10 @@ const ask = (over = {}) => {
   });
 };
 
-test('one offence is implemented and the other five are not pretended', () => {
-  assert.deepEqual(OFFENCES, [REPLAY_CONTRADICTS],
-    'a name that answers nothing reads as coverage; 5A.3 lists six and this holds one');
-});
+// WHICH OF 5A.3'S SIX ROWS ARE IMPLEMENTED is asserted in `slash-table.test.js`,
+// where the second one was added. One claim, one place: two files counting the
+// same list is two files to forget to update, and the one that is forgotten
+// goes green while saying something false.
 
 /**
  * THE ONE THIS SLICE EXISTS FOR, before and after.
