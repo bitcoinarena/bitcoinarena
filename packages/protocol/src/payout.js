@@ -202,71 +202,135 @@ export function noQuorumOutcome({ signatures, needed, equivocationProven }) {
   };
 }
 
-/** What must happen to a hold invoice. */
-export const SETTLE = 'SETTLE';
-export const CANCEL = 'CANCEL';
+/** What must happen to a hold invoice, section 23.2. */
+export const SETTLE = 'SETTLE';       // release the preimage; the stake enters the pool
+export const CANCEL = 'CANCEL';       // hand it back; can only return money to its owner
+export const NOTHING = 'NOTHING';     // let it expire; the wallet is refunded automatically
+
+/** 5-of-7, the threshold on both preimage shares and settlement signatures. */
+export const SETTLEMENT_THRESHOLD = 5;
 
 /**
- * WHAT HAPPENS TO EACH PLAYER'S HELD STAKE.
+ * WHAT EACH OUTCOME DOES TO ITS HOLD INVOICE, AND WHAT IT TAKES TO DO IT.
  *
- * Section 13C: "the entry becomes VOID, THE STAKE IS REFUNDED BY LETTING THE
- * HTLC EXPIRE, and the entry is excluded from the pool and from the payout
- * table." The exclusion was already true and measured; what happens to the
- * money was not written anywhere, and a stake nobody decides about is a stake
- * the operator is holding.
+ * Section 23.2, and the shape of the table is the safety property:
  *
- * A stake is a hold invoice: the payer's money is committed and the operator
- * can either SETTLE it - release the preimage and take it - or CANCEL it and
- * let it expire back to the payer. There are only those two, and every entry
- * gets exactly one.
+ *   DELIVERED (qualifying)  Cancel the HTLC -> the stake returns to the player
+ *                           Requires 5-of-7 settlement signatures; "cancelling
+ *                           can only return money to its owner"
+ *   FAILED / FORFEIT        Settle the HTLC -> the stake enters the pool wallet
+ *                           Requires a FINAL result, an elapsed window, no
+ *                           valid objection, at least 5 preimage shares, and
+ *                           5-of-7 settlement signatures
+ *   VOID                    DO NOTHING. "The HTLC expires and the wallet is
+ *                           refunded automatically."
  *
- *   VOID        CANCEL. The fault was the operator's, so the operator takes
- *               nothing. This is the whole of the rule.
- *   everything
- *   else        SETTLE. The stake joins the pot the payout table shares out,
- *               which is why `paid == staked` there over the same entries.
+ * "The default path - nobody acting - is always the refund. That is what makes
+ * infrastructure failure safe." So VOID is not a cancel: a cancel needs five
+ * of seven signatures, and a refund that needed somebody to act would be a
+ * refund an operator could withhold by doing nothing. Inaction has to be the
+ * safe direction, and only SETTLE moves money away from the player.
  *
- * AND THE OPERATOR CANNOT COME OUT AHEAD. `settledMsat` is what may be taken
- * and `paidMsat` is what the table hands back, and they are checked equal
- * here rather than assumed - if a VOID stake ever reached the settled side,
- * that equality is what breaks. This says nothing about Lightning: it decides
- * which of the two things is done to each invoice, and doing it is the
- * operator's plumbing.
+ * The conditions come in as facts already established elsewhere - `finality`
+ * answers the first three, and the share and signature counts belong to the
+ * settlement committee. Nothing is assumed true: a missing one is named.
+ */
+export function settlementAction({
+  outcome, qualifies = false, state, shares = 0, signatures = 0,
+  needed = SETTLEMENT_THRESHOLD,
+}) {
+  if (outcome === VOID)
+    return {
+      action: NOTHING,
+      authorised: true,
+      missing: [],
+      why: 'the HTLC expires and the wallet is refunded automatically; nobody has to act',
+    };
+
+  if (outcome === DELIVERED) {
+    const missing = signatures >= needed
+      ? [] : [`${signatures} of ${needed} settlement signatures`];
+    return {
+      action: CANCEL,
+      authorised: !missing.length,
+      missing,
+      why: qualifies
+        ? 'the stake returns to the player, and cancelling can only return money to its owner'
+        : 'below the score, the stake was never at risk and returns to its owner',
+    };
+  }
+
+  // FAILED and FORFEIT: the only direction that takes money from a player, and
+  // the only one with five conditions on it.
+  const missing = [];
+  if (state !== 'FINAL') missing.push(`the result is ${state || 'not final'}`);
+  if (shares < needed) missing.push(`${shares} of ${needed} preimage shares`);
+  if (signatures < needed) missing.push(`${signatures} of ${needed} settlement signatures`);
+  return {
+    action: SETTLE,
+    authorised: !missing.length,
+    missing,
+    why: missing.length
+      ? 'the stake stays where it is until every condition is met'
+      : 'the stake enters the pool wallet',
+  };
+}
+
+/**
+ * WHAT HAPPENS TO EACH PLAYER'S HELD STAKE, AND WHAT THE POOL IS MADE OF.
+ *
+ * Section 13C sends a VOID stake back "by letting the HTLC expire"; 23.2 says
+ * which of the three things each outcome does. Only losers' stakes move: the
+ * pool wallet is exactly the settled ones, and a qualifier's own stake never
+ * leaves them - it comes back by cancelling their own invoice, and what they
+ * are PAID from the pool is their winnings on top.
+ *
+ * That is why the equality below is over SHARES and not over amounts. The
+ * table hands a qualifier `stake + share`; the stake half is their own money
+ * returning, and only the share half comes out of the pool.
  */
 export function holdSettlement({ roundId, entries, minScore = 0 }) {
   const table = computePayoutTable({ roundId, entries, minScore });
+  const settles = new Set(table.settling);
   const paidTo = new Map(table.table.map((r, i) => [i, r.amountMsat]));
 
-  // THE TABLE SAYS WHICH STAKES MOVE, and this only carries out its answer.
-  // A VOID entry is not activated at all; a delivered player below the score
-  // is activated and keeps their stake, which is the same CANCEL for a
-  // different reason.
-  const settles = new Set(table.settling);
-  const actions = entries.map((e) => (settles.has(e)
-    ? { entry: e, action: SETTLE, why: `${e.outcome}: the stake joins the pot the table shares out` }
-    : {
-      entry: e,
-      action: CANCEL,
-      why: e.outcome === VOID
-        ? 'VOID: the fault was not the player\'s, so the stake goes back'
-        : `${e.outcome} below the score: the stake was never at risk`,
-    }));
+  const actions = entries.map((e) => {
+    const said = settlementAction({
+      outcome: e.outcome,
+      qualifies: e.outcome === DELIVERED && e.score >= minScore,
+      // the conditions themselves are the caller's to establish; this says
+      // which action each entry is FOR, which is what the pool depends on
+      state: 'FINAL', shares: SETTLEMENT_THRESHOLD, signatures: SETTLEMENT_THRESHOLD,
+    });
+    // A delivered player never has their stake settled, whatever the table's
+    // pot arithmetic says: 23.2 cancels it back to them.
+    const action = settles.has(e) && e.outcome !== DELIVERED ? SETTLE : said.action;
+    return { entry: e, action, why: said.why };
+  });
 
-  const activated = entries.filter((e) => e.outcome !== VOID);
-  const settledMsat = actions
+  const poolMsat = actions
     .filter((a) => a.action === SETTLE)
     .reduce((s, a) => s + a.entry.stakeMsat, 0n);
   const refundedMsat = actions
-    .filter((a) => a.action === CANCEL)
+    .filter((a) => a.action !== SETTLE)
     .reduce((s, a) => s + a.entry.stakeMsat, 0n);
-  const paidMsat = [...paidTo.values()].reduce((s, v) => s + v, 0n);
 
-  // A VOID hold that was settled would show up here and nowhere else: the
-  // operator would be holding money the table never hands back.
-  if (activated.length && settledMsat !== paidMsat)
+  // What the pool actually hands out: each row's amount less the entry's own
+  // stake, since that half never entered the pool.
+  const rows = entries.filter((e) => e.outcome !== VOID);
+  let sharesMsat = 0n;
+  rows.forEach((e, i) => {
+    const amount = paidTo.get(i) || 0n;
+    sharesMsat += amount > e.stakeMsat ? amount - e.stakeMsat : 0n;
+  });
+
+  if (rows.length && poolMsat !== sharesMsat)
     throw new Error(
-      `the operator would keep ${settledMsat - paidMsat} msat: settled ${settledMsat} `
-      + `against ${paidMsat} paid out`);
+      `the operator would keep ${poolMsat - sharesMsat} msat: a pool of ${poolMsat} `
+      + `against ${sharesMsat} handed out`);
 
-  return { actions, settledMsat, refundedMsat, paidMsat, table };
+  return {
+    actions, poolMsat, refundedMsat, sharesMsat, table,
+    settledMsat: poolMsat, paidMsat: sharesMsat,
+  };
 }
