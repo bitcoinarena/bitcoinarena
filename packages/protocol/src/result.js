@@ -119,20 +119,42 @@ export function splitSignedResult(bytes) {
  * HOW MANY COMMITTEE MEMBERS HAVE SIGNED THE SAME RESULT.
  *
  * "Once 5-of-7 nodes sign the IDENTICAL result" - so it is not a count of
- * signatures over a player, it is a count of distinct signers over one id.
- * Two nodes signing different results for one player are a disagreement, and
- * counting them together would turn that into finality.
+ * signatures over a player, it is a count of distinct COMMITTEE members over
+ * one id. Three things, and each was a way to be wrong:
  *
- * Nothing is verified here: the caller passes what it has checked, because
- * this package carries no curve. Signers are counted as a SET, so one node
- * answering five times is one node.
+ *   the same id      two nodes signing different results are a disagreement,
+ *                    and adding them together would turn that into finality
+ *   distinct nodes   one node answering five times is one node
+ *   ON THE COMMITTEE five strangers signing the same bytes used to come back
+ *                    PROVISIONALLY_FINAL, measured. Nobody is on a committee
+ *                    by signing something.
+ *
+ * A SIGNER WHO IS NOT ON THE COMMITTEE IS IGNORED, not refused. Refusing would
+ * let anybody stop a round finalising by sending one stray signature, which is
+ * a cheaper attack than the one it prevents. They are counted and named
+ * instead.
+ *
+ * The committee is REQUIRED. An absent one is a refusal, because the version
+ * of this that takes an empty list and counts everybody is the version that
+ * ships.
+ *
+ * Signatures are not verified here: this package carries no curve, so the
+ * caller passes what it has checked. Committee membership is not a signature
+ * question - it is a set - which is why it belongs here and is done here.
  */
-export function provisionallyFinal(signedBy, needed = RESULTS_FOR_FINAL) {
+export function provisionallyFinal(signedBy, { committee, needed = RESULTS_FOR_FINAL } = {}) {
+  const hex = (u8) => [...u8].map((b) => b.toString(16).padStart(2, '0')).join('');
+  if (!Array.isArray(committee) || !committee.length)
+    return { final: false, signers: 0, why: 'no committee to check the signers against' };
+
+  const seats = new Set(committee.map(hex));
   const byResult = new Map();
+  let strangers = 0;
   for (const { resultId: id, nodePubkey } of signedBy) {
-    const key = [...id].map((b) => b.toString(16).padStart(2, '0')).join('');
+    if (!seats.has(hex(nodePubkey))) { strangers++; continue; }
+    const key = hex(id);
     const who = byResult.get(key) || new Set();
-    who.add([...nodePubkey].map((b) => b.toString(16).padStart(2, '0')).join(''));
+    who.add(hex(nodePubkey));
     byResult.set(key, who);
   }
 
@@ -140,14 +162,24 @@ export function provisionallyFinal(signedBy, needed = RESULTS_FOR_FINAL) {
   for (const [key, who] of byResult) {
     if (best === null || who.size > best.signers) best = { resultId: key, signers: who.size };
   }
-  if (best === null) return { final: false, signers: 0, why: 'nobody has signed a result' };
+  if (best === null) {
+    return {
+      final: false,
+      signers: 0,
+      strangers,
+      why: strangers
+        ? `nobody on the committee has signed a result; ${strangers} signature(s) came from elsewhere`
+        : 'nobody has signed a result',
+    };
+  }
 
   return {
     final: best.signers >= needed,
     resultId: best.resultId,
     signers: best.signers,
+    strangers,
     why: best.signers >= needed
-      ? `${best.signers} of ${needed} signed the same result: PROVISIONALLY_FINAL`
+      ? `${best.signers} of ${needed} committee members signed the same result: PROVISIONALLY_FINAL`
       : `${best.signers} of ${needed} on the strongest result, which is not enough`,
   };
 }

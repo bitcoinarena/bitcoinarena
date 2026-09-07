@@ -118,35 +118,86 @@ test('one node signs it and anybody can verify, and a tampered result cannot', (
  * five distinct nodes on ONE id. Two nodes signing different results are a
  * disagreement, and adding them together would turn that into finality.
  */
-test('five distinct nodes on the same result, and not five on different ones', () => {
+test('five distinct committee members on the same result, and nothing else', () => {
   assert.equal(RESULTS_FOR_FINAL, 5);
   const agreed = resultId(result());
   const other = resultId(result({ score: 7 }));
   const key = (n) => b32(n);
+  const committee = [1, 2, 3, 4, 5, 6, 7].map(key);
+  const seen = (signedBy) => provisionallyFinal(signedBy, { committee });
 
   const four = [1, 2, 3, 4].map((n) => ({ resultId: agreed, nodePubkey: key(n) }));
-  assert.equal(provisionallyFinal(four).final, false);
-  assert.match(provisionallyFinal(four).why, /4 of 5 on the strongest result/);
+  assert.equal(seen(four).final, false);
+  assert.match(seen(four).why, /4 of 5 on the strongest result/);
 
   const five = [...four, { resultId: agreed, nodePubkey: key(5) }];
-  assert.equal(provisionallyFinal(five).final, true);
-  assert.equal(provisionallyFinal(five).signers, 5);
-  assert.match(provisionallyFinal(five).why, /PROVISIONALLY_FINAL/);
+  assert.equal(seen(five).final, true);
+  assert.equal(seen(five).signers, 5);
+  assert.match(seen(five).why, /PROVISIONALLY_FINAL/);
 
   // one node saying it five times is one node
   const shouting = [1, 1, 1, 1, 1].map(() => ({ resultId: agreed, nodePubkey: key(1) }));
-  assert.equal(provisionallyFinal(shouting).final, false);
-  assert.equal(provisionallyFinal(shouting).signers, 1);
+  assert.equal(seen(shouting).final, false);
+  assert.equal(seen(shouting).signers, 1);
 
   // a committee split three and four ways is not final at seven signatures
   const split = [
     ...[1, 2, 3].map((n) => ({ resultId: agreed, nodePubkey: key(n) })),
     ...[4, 5, 6, 7].map((n) => ({ resultId: other, nodePubkey: key(n) })),
   ];
-  const seen = provisionallyFinal(split);
-  assert.equal(seen.final, false, 'a split committee was called final');
-  assert.equal(seen.signers, 4, 'the strongest side is four, not seven');
+  assert.equal(seen(split).final, false, 'a split committee was called final');
+  assert.equal(seen(split).signers, 4, 'the strongest side is four, not seven');
 
-  assert.equal(provisionallyFinal([]).final, false);
-  assert.match(provisionallyFinal([]).why, /nobody has signed a result/);
+  assert.equal(seen([]).final, false);
+  assert.match(seen([]).why, /nobody has signed a result/);
+});
+
+/**
+ * NOBODY IS ON A COMMITTEE BY SIGNING SOMETHING.
+ *
+ * Measured before this was checked: five keys on no committee at all, signing
+ * the same bytes, came back "5 of 5 signed the same result:
+ * PROVISIONALLY_FINAL". A result is final when the round's own committee says
+ * so, and a stranger's signature is not a seat.
+ */
+test('strangers cannot make a result final, and cannot stop one either', () => {
+  const agreed = resultId(result());
+  const key = (n) => b32(n);
+  const committee = [1, 2, 3, 4, 5, 6, 7].map(key);
+
+  const strangers = [91, 92, 93, 94, 95].map((n) => ({ resultId: agreed, nodePubkey: key(n) }));
+  const none = provisionallyFinal(strangers, { committee });
+  assert.equal(none.final, false, 'five strangers made a result final');
+  assert.equal(none.signers, 0);
+  assert.equal(none.strangers, 5);
+  assert.match(none.why, /nobody on the committee has signed a result; 5 signature\(s\) came from elsewhere/);
+
+  // AND ONE STRAY SIGNATURE CANNOT BLOCK A ROUND. Ignoring them rather than
+  // refusing matters: refusing would be a cheaper attack than the one it stops.
+  const real = [1, 2, 3, 4, 5].map((n) => ({ resultId: agreed, nodePubkey: key(n) }));
+  const withStray = provisionallyFinal([...real, { resultId: agreed, nodePubkey: key(99) }],
+    { committee });
+  assert.equal(withStray.final, true, 'one stray signature stopped a finalised round');
+  assert.equal(withStray.signers, 5);
+  assert.equal(withStray.strangers, 1);
+
+  // a committee is required rather than optional
+  for (const bad of [undefined, null, [], 'seven']) {
+    const said = provisionallyFinal(real, { committee: bad });
+    assert.equal(said.final, false, String(bad));
+    assert.match(said.why, /no committee to check the signers against/);
+  }
+});
+
+/** An outcome byte that is not one of the four is refused on the way in. */
+test('a result carrying an unknown outcome byte does not decode', () => {
+  const bytes = encodePlayerResult(result());
+  bytes[67] = 9;                       // the outcome byte, past the four
+  assert.throws(() => decodePlayerResult(bytes), /not one of the four outcomes/);
+
+  const short = encodePlayerResult(result()).slice(0, RESULT_BYTES - 1);
+  assert.throws(() => decodePlayerResult(short));
+  const long = new Uint8Array(RESULT_BYTES + 1);
+  long.set(encodePlayerResult(result()));
+  assert.throws(() => decodePlayerResult(long), /trailing bytes after the result/);
 });
