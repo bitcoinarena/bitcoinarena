@@ -74,7 +74,17 @@ export const TABLE_IS_NOT_F = 'TABLE_IS_NOT_F';
  */
 export const SETTLED_WITHOUT_AUTHORITY = 'SETTLED_WITHOUT_AUTHORITY';
 
-export const OFFENCES = [REPLAY_CONTRADICTS, TABLE_IS_NOT_F, SETTLED_WITHOUT_AUTHORITY];
+/**
+ * 5A.3 row 1: "Signing two different results for the same (round, player)",
+ * proof "the two signed results". The purest of them - nothing is recomputed,
+ * replayed or injected, because the two objects ARE the offence.
+ */
+export const TWO_RESULTS = 'TWO_RESULTS';
+
+// In 5A.3's own document order, which is the order they are being written in.
+export const OFFENCES = [
+  TWO_RESULTS, REPLAY_CONTRADICTS, TABLE_IS_NOT_F, SETTLED_WITHOUT_AUTHORITY,
+];
 
 /**
  * The proof body. The signed result it accuses travels BESIDE it, like every
@@ -535,5 +545,115 @@ export function slashHoldsOnSettlement({ proof, signedRecord, advert, committee 
     due: due.action,
     missing: due.missing,
     why,
+  };
+}
+
+/**
+ * THE TWO IDS OF A DOUBLE-SIGNING, IN ONE ORDER AND ONLY ONE.
+ *
+ * 5A.3 row 1 is about a PAIR, and a pair that could be written either way
+ * round is two proofs of one offence with two different commitments. 5A.3B
+ * step 4 puts H(fraud_proof) on chain and rests the whole audit story on it -
+ * "anyone can fetch the proof later and re-verify it" - so an offence that
+ * could be minted twice is an offence a slasher could commit to twice and an
+ * auditor could not tell apart from two separate ones.
+ *
+ * Sorted by their bytes: the lower id is the one the proof NAMES, the higher
+ * rides in the field that means "the object this offence is measured against",
+ * which for this row is the other result.
+ */
+const lower = (a, b) => {
+  for (let i = 0; i < a.length && i < b.length; i++)
+    if (a[i] !== b[i]) return a[i] < b[i];
+  return false;
+};
+export const orderedResultIds = (idA, idB) =>
+  (lower(idA, idB) ? { named: idA, other: idB } : { named: idB, other: idA });
+
+/**
+ * DID THIS NODE SIGN TWO DIFFERENT RESULTS FOR ONE PLAYER? 5A.3 row 1.
+ *
+ * "Signing two different results for the same (round, player). Proof: the two
+ * signed results."
+ *
+ * THE PUREST OF THE FOUR. Rows 3 and 4 recompute an `F`; this one compares.
+ * Nothing is recomputed, nothing is replayed and nothing is injected, so there
+ * is no attesting party at any point - the two objects ARE the offence, which
+ * is what 5A.3 means by "a portable artifact anyone can check" and what 13B
+ * already means one level down, where two marks at one tick forfeit a player.
+ *
+ * The same rule with the sides swapped: there a player who says two things
+ * about one tick loses the stake, here a node that says two things about one
+ * player loses the bond. Neither needs anybody's word.
+ *
+ * THE SAME RESULT TWICE IS NOT AN OFFENCE, exactly as it is not one in 13B: a
+ * node re-sending what it already sent is the ordinary case, and taking a bond
+ * for a retransmission would punish a dropped socket.
+ */
+export function slashHoldsOnDoubleSign({ proof, signedResults, advert, committee }) {
+  if (!Array.isArray(committee) || !committee.length)
+    return { slashed: false, why: 'no committee, so nobody was serving this round' };
+  if (!committee.some((k) => hex(k) === hex(proof.nodePubkey)))
+    return {
+      slashed: false,
+      why: `${hex(proof.nodePubkey)} is not on this round's committee, so it signed nothing it owed`,
+    };
+
+  if (!Array.isArray(signedResults) || signedResults.length !== 2)
+    return {
+      slashed: false,
+      why: 'this offence is a PAIR: two signed results, and no other number of them',
+    };
+
+  const bodies = [];
+  for (const [at, bytes] of signedResults.entries()) {
+    try { bodies.push(decodePlayerResult(splitSignedResult(bytes).body)); }
+    catch (e) { return { slashed: false, why: `result ${at} is not a signed result: ${e.message}` }; }
+  }
+  const [x, y] = bodies;
+
+  // A REPEAT IS NOT A CONTRADICTION, the same rule 13B keeps for marks.
+  const idX = resultId(x);
+  const idY = resultId(y);
+  if (hex(idX) === hex(idY))
+    return { slashed: false, why: 'those are the same result, signed twice' };
+
+  // BOTH HAVE TO BE THE ACCUSED'S, AND ABOUT ONE PLAYER OF ONE ROUND. Two
+  // results by different nodes are a committee disagreeing, which is 13C's
+  // no-quorum case; two about different players are two honest answers.
+  for (const [at, b] of bodies.entries()) {
+    if (hex(b.nodePubkey) !== hex(proof.nodePubkey))
+      return { slashed: false, why: `result ${at} was signed by a different node` };
+    if (hex(b.roundId) !== hex(proof.roundId))
+      return { slashed: false, why: `result ${at} is for a different round` };
+    if (hex(b.playerPubkey) !== hex(proof.playerPubkey))
+      return { slashed: false, why: `result ${at} is for a different player` };
+  }
+
+  // AND THE PAIR IS NAMED IN ONE ORDER, so one offence has one commitment.
+  const { named, other } = orderedResultIds(idX, idY);
+  if (hex(proof.signedResultId) !== hex(named) || hex(proof.transcriptHash) !== hex(other))
+    return {
+      slashed: false,
+      why: 'the pair is named in the wrong order: the lower id is the one the '
+        + 'proof names, or one offence could be minted as two proofs',
+    };
+
+  if (!advert || hex(advert.nodePubkey) !== hex(proof.nodePubkey))
+    return { slashed: false, why: 'no advertisement from the accused node to name its bond' };
+  if (hex(advert.bondTxid) !== hex(proof.bondTxid) || advert.bondVout !== proof.bondVout)
+    return {
+      slashed: false,
+      why: `the proof names bond ${hex(proof.bondTxid)}:${proof.bondVout} and the node `
+        + `advertised ${hex(advert.bondTxid)}:${advert.bondVout}`,
+    };
+
+  return {
+    slashed: true,
+    offence: TWO_RESULTS,
+    bond: { txid: proof.bondTxid, vout: proof.bondVout },
+    commitment: slashCommitment(proof),
+    ids: { named, other },
+    why: 'the node signed two different results for one player of one round',
   };
 }
