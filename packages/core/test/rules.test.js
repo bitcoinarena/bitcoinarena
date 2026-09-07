@@ -1409,9 +1409,9 @@ test('heat lets the truck outrank a foe that is nearer than it', () => {
 
 test('heat multiplies the shell and the arithmetic is the C#s', () => {
   assert.equal(army.shellForHeat(10 * ONE, 0), 10 * ONE);
-  // x1.3 at full heat (M1.a16), heat zero unchanged.
-  assert.ok(Math.abs(army.shellForHeat(10 * ONE, ONE) - 13 * ONE) < 8);
-  assert.ok(Math.abs(army.shellForHeat(10 * ONE, ONE / 2) - 11.5 * ONE) < 8);
+  // x1.22 at full heat (M1.a16), heat zero unchanged.
+  assert.ok(Math.abs(army.shellForHeat(10 * ONE, ONE) - 12.2 * ONE) < 16);
+  assert.ok(Math.abs(army.shellForHeat(10 * ONE, ONE / 2) - 11.1 * ONE) < 16);
 });
 
 // ---------------------------------------------------------------------------

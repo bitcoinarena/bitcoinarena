@@ -35,13 +35,13 @@ export const COURIER_RANGE = Math.imul(34, ONE);
  * keep it hard, 30-40% of committed runs should get through.
  *
  * A tank at full heat now notices at 34 x 1.3 = 44.2 m, will leave a foe
- * half again nearer to shoot at the truck, and hits for 5-11 x 1.3. The
+ * half again nearer to shoot at the truck, and hits for 5-11 x 1.22. The
  * rifle's round is still not scaled.
  */
 export const HEAT_REACH_ARMOUR = 19661;    // 0.3
 export const HEAT_REACH_RIFLE = 13107;     // 0.2
 export const HEAT_OUTRANK = 32768;         // 0.5
-export const HEAT_SHELL = 19661;           // 0.3
+export const HEAT_SHELL = 14418;           // 0.22
 
 /**
  * How far this arm notices the truck at, for a load hunted this hard.
