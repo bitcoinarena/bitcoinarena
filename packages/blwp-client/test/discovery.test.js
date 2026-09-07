@@ -37,7 +37,9 @@ import { advertId, encodeAdvert, joinSignedAdvert } from '../../protocol/src/adv
 import { toHex } from '../../protocol/src/hash.js';
 import { bondTransaction, blockOf } from '../../protocol/tools/bond.js';
 import { Client } from '../src/client.js';
-import { reach, endpointFor, isSocketAddress, discover } from '../src/directory.js';
+import {
+  reach, endpointFor, isSocketAddress, discover, PROVIDERS_NEEDED,
+} from '../src/directory.js';
 
 const require = createRequire(import.meta.url);
 const core = require('../../core/dist/blwp-core.js');
@@ -484,6 +486,72 @@ test('a self-consistent world of the attackers own making is refused', async () 
   await assert.rejects(
     Client.at({ ...asked, anchor: blockHashOf(root) }, door),
     /the anchor is the client's own and may not be supplied/);
+});
+
+/**
+ * THE RULES ARE THE CLIENT'S, AND THE PAGE ONLY SAYS WHERE TO ASK.
+ *
+ * The anchor was one of these and was fixed first; `least` is the same fault
+ * with a smaller word. Measured through `Client.at` before it was refused: a
+ * page passing `least: 1` opened a round on a single provider it had also
+ * supplied, and "several independent sources, most work wins" was one source.
+ * A short chain and a chain with a block hidden are the same bytes, so one
+ * source cannot be weighed at all - which is why two is a property and not a
+ * setting.
+ */
+test('a page cannot lower the two-provider floor, or set the client s patience', async () => {
+  const transaction = bondFor(advertFor('wss://node.example:443'));
+  const raw = chainWith(transaction);
+  const c = contract([operatorPubkey]);
+  const door = { core, sign, verify, contract: c, roundIdGiven: roundId(c) };
+  const asked = asProviders(raw);
+  const one = { ...asked, headers: [asked.headers[0]] };
+
+  // one provider is refused already, and stays refused
+  await assert.rejects(Client.at(one, door),
+    /no chain: 1 providers is fewer than the 2 it takes/);
+
+  // and asking for a lower floor is refused by name rather than obeyed
+  await assert.rejects(Client.at({ ...one, least: 1 }, door),
+    /least is the client's own and may not be supplied/);
+  await assert.rejects(Client.at({ ...asked, least: 1 }, door),
+    /least is the client's own and may not be supplied/);
+  await assert.rejects(Client.at({ ...asked, least: 5 }, door),
+    /least is the client's own and may not be supplied/);
+
+  // how long to wait is the client's patience, not the page's: zero would
+  // refuse every honest provider, enormous would hang the run on one the page
+  // controls
+  for (const timeoutMs of [0, 1, 60000, 999999999]) {
+    await assert.rejects(Client.at({ ...asked, timeoutMs }, door),
+      /timeoutMs is the client's own and may not be supplied/, String(timeoutMs));
+  }
+
+  // the floor is two, and it is named rather than buried in a call
+  assert.equal(PROVIDERS_NEEDED, 2);
+
+  // and with nothing of the client's supplied, the same two providers open it
+  const client = await Client.at(asked, door);
+  assert.equal(client.base, 'https://node.example:443');
+});
+
+/**
+ * `ask` STAYS THE PAGE'S. It names which range of chain to fetch, and a lie
+ * about it can only omit - which is the one lie a second provider answers.
+ */
+test('the page still says which part of the chain to ask for', async () => {
+  const transaction = bondFor(advertFor('wss://node.example:443'));
+  const raw = chainWith(transaction);
+  const c = contract([operatorPubkey]);
+  const seen = [];
+  const client = await Client.at({
+    headers: [(q) => { seen.push(q); return raw.chain; }, (q) => { seen.push(q); return raw.chain; }],
+    bonds: [(q) => { seen.push(q); return { transaction, branch: raw.branch, position: raw.position }; }],
+    committee: raw.committee,
+    ask: { from: 0, count: 2 },
+  }, { core, sign, verify, contract: c, roundIdGiven: roundId(c) });
+  assert.equal(client.base, 'https://node.example:443');
+  assert.deepEqual(seen, [{ from: 0, count: 2 }, { from: 0, count: 2 }, { from: 0, count: 2 }]);
 });
 
 /**

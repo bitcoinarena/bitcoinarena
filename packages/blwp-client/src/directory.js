@@ -185,9 +185,41 @@ export function endpointFor(discovery) {
  * anchors on is a constant somebody must choose, and choosing it here would
  * settle it by accident.
  */
+/** Two, and it is the whole property rather than a setting. */
+export const PROVIDERS_NEEDED = 2;
+
+/** How long the client waits on a provider before giving up on it. */
+export const PROVIDER_WAIT_MS = 10000;
+
 export async function discover({
   headers, bonds, anchor, committee, signedAdvert, ask, least, timeoutMs,
 }) {
+  // THE RULES ARE THE CLIENT'S. THE PAGE SAYS WHERE TO ASK, AND NOTHING ELSE.
+  //
+  // Each of these was a caller's argument, which meant a page's argument, and
+  // each one alone undoes the whole chain source:
+  //
+  //   least       set it to 1 and "several independent sources, most work
+  //               wins" becomes one source, whose short chain and whose
+  //               hidden block are the same bytes. Measured before this was
+  //               refused: a page passing `least: 1` opened a round on a
+  //               single provider it also supplied.
+  //   timeoutMs   how long a client waits is the client's patience, not the
+  //               page's. Zero refuses every honest provider; enormous hangs
+  //               the run on one the page controls.
+  //
+  // `ask` is deliberately NOT here. It names the range of chain to fetch, and
+  // a lie about it can only omit - which is what a second provider answers.
+  for (const [name, value] of [['least', least], ['timeoutMs', timeoutMs]]) {
+    if (value !== undefined)
+      return {
+        ok: false,
+        why: `${name} is the client's own and may not be supplied: how many `
+          + 'providers must agree, and how long to wait for them, are not '
+          + 'settings for whoever handed over the providers',
+      };
+  }
+
   // THE ANCHOR IS THE CLIENT'S, AND A PAGE THAT OFFERS ONE IS REFUSED.
   //
   // This was the last hop where the whole chain source came apart. Weighing,
@@ -210,11 +242,14 @@ export async function discover({
     };
 
   const chain = await agreedChain(headers, {
-    anchor: BITCOIN_MAINNET_GENESIS, ask, least, timeoutMs,
+    anchor: BITCOIN_MAINNET_GENESIS, ask,
+    least: PROVIDERS_NEEDED, timeoutMs: PROVIDER_WAIT_MS,
   });
   if (!chain.ok) return { ok: false, why: `no chain: ${chain.why}`, refused: chain.refused };
 
-  const bond = await askForBond(bonds, { chain: chain.headers, ask, timeoutMs });
+  const bond = await askForBond(bonds, {
+    chain: chain.headers, ask, timeoutMs: PROVIDER_WAIT_MS,
+  });
   if (!bond.ok) return { ok: false, why: `no bond: ${bond.why}`, refused: bond.refused };
 
   const seen = reach({
