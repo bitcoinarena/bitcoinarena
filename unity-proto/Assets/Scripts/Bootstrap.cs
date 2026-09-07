@@ -266,6 +266,11 @@ public class Bootstrap : MonoBehaviour
         // What a liquidation looks like: an aircraft, a bomb, and the ground it
         // leaves behind. Theatre - the core has no aircraft, and the hole is
         // already dug by the time the bomb is drawn falling into it.
+        // Only with `-autoplay` on the command line: a player that drives its
+        // own first ten seconds so a build can be photographed at a shape the
+        // editor will not present. Nothing constructs this otherwise.
+        if (AutoPlay.Asked) new GameObject("AutoPlay").AddComponent<AutoPlay>();
+
         var strikeGo = new GameObject("StrikeTheatre");
         strikeGo.transform.SetParent(transform, false);
         var strike = strikeGo.AddComponent<Blwp.StrikeTheatre>();

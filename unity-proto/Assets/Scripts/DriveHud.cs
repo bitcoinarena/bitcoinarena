@@ -1306,7 +1306,15 @@ public class DriveHud : MonoBehaviour
     {
         float font = Mathf.Clamp(Mathf.Min(w, h) * 0.055f, 22f, 46f);
         var head = HeadlineBox(w, h);
-        return new Rect(head.x, HeadlineRowY(w, h, 3), head.width, font * 1.35f);
+
+        // THE SUB-LINE IS PART OF IT. `DrawBlockTimer` draws "BLOCK 965,853 -
+        // 2:23" and then "the block is the round - arrive before it closes"
+        // under it at `font * 1.2`, while the box stopped at `font * 1.35` - so
+        // the sentence was outside its own rect, and the model list, which is
+        // measured to sit below this box, was drawn across it. Photographed on
+        // a real 844x390 player. The block board's fault in a fourth place.
+        return new Rect(head.x, HeadlineRowY(w, h, 3), head.width,
+                        font * 1.2f + SmallFont(w, h) * 1.6f);
     }
 
     /// <summary>
