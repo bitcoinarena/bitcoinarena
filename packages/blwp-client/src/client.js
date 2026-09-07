@@ -525,7 +525,7 @@ export class Client {
         + `and this client asked about ${toHex(roundId)} ${toHex(entryId)}`);
 
     const ok = checkTranscript(t);
-    if (!ok.ok) throw new Error(`the transcript is broken at batch ${ok.at}: ${ok.why}`);
+    if (!ok.ok) throw new Error(`the transcript is broken at ${ok.in} ${ok.at}: ${ok.why}`);
 
     const last = t.batches[t.batches.length - 1];
     this.batchHead = last ? batchId(last) : GENESIS;

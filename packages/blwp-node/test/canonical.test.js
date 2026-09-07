@@ -18,9 +18,11 @@ import { Round, RECEIPTS_FOR_CANONICAL } from '../src/round.js';
 import { serve } from '../src/server.js';
 import { roundId, entryId } from '../../protocol/src/contracts.js';
 import { encodeInputBatch, batchId } from '../../protocol/src/batch.js';
-import { GENESIS, decodeTranscript } from '../../protocol/src/transcript.js';
 import {
-  encodeCheckpoint, checkpointId, NO_PREVIOUS, joinSigned,
+  GENESIS, decodeTranscript, checkTranscript, transcriptHash,
+} from '../../protocol/src/transcript.js';
+import {
+  encodeCheckpoint, decodeCheckpoint, checkpointId, NO_PREVIOUS, joinSigned, splitSigned,
 } from '../../protocol/src/checkpoint.js';
 import {
   encodeCheckpointReceipt, receiptId, joinSignedReceipt,
@@ -225,4 +227,53 @@ test('the inputs are the ones the carried marks commit to, not all of them', () 
   assert.equal(toHex(batchId(t.batches[0])), toHex(batchId(batch)));
   assert.equal(c.ticks, 200);
   assert.equal(c.marks, 2);
+});
+
+/**
+ * AND THE MARKS ARE IN THE OBJECT, which is what 13C names FIRST.
+ *
+ * The canonical transcript is "the longest checkpoint chain ... TOGETHER WITH
+ * the input batches whose hashes it commits to". For a while this served the
+ * second half only, and the cost is measured below: two nodes that carried
+ * different chains over the same batch handed back the same `transcriptHash`,
+ * and a `PlayerResult` names nothing else. What the committee signs has to be
+ * the object a replay is checked against, and what a replay is checked
+ * against is the state the player signed at each mark.
+ */
+test('the canonical object carries the marks, and a stranger can check them', () => {
+  const { round, rid, eid } = played([5, 5]);
+  const c = round.canonicalTranscript(rid, eid);
+  const t = decodeTranscript(c.bytes);
+
+  assert.equal(t.marks.length, 2, 'the chain the committee carried travels with the inputs');
+  assert.deepEqual(checkTranscript(t), { ok: true, ticks: 200, marks: 2, throughTick: 120 });
+  assert.equal(toHex(transcriptHash(t)), toHex(c.hash), 'the hash is of what was served');
+
+  // and the player really signed each of them: no node is asked and no
+  // committee is needed, only the session key the entry already names.
+  for (const m of t.marks) {
+    const { body, signature } = splitSigned(m);
+    assert.equal(ed25519.verify(signature, checkpointId(decodeCheckpoint(body)), sessionPubkey), true);
+  }
+});
+
+test('two nodes that carried different chains no longer hand back one hash', () => {
+  // One round, one entry, one batch of 200 ticks, and the same selection rule
+  // applied at two moments: first when only the opening mark had five members
+  // behind it, then when the second did too. That IS "node A saw more than
+  // node B" - the difference is receipts and nothing else.
+  const { round, rid, eid, ids } = played([5, 1]);
+
+  const b = round.canonicalTranscript(rid, eid);
+  assert.equal(b.marks, 1);
+
+  for (let i = 0; i < 4; i++) round.takeReceipt(receiptFrom(peers[i], ids[1], 2000n + BigInt(i)));
+  const a = round.canonicalTranscript(rid, eid);
+  assert.equal(a.marks, 2);
+  assert.notEqual(toHex(a.hash), toHex(b.hash), 'the served objects differ, so their hashes do');
+
+  // and the inputs alone - all this used to hash - are byte-identical, which
+  // is why the collision was there to find at all.
+  const strip = (x) => ({ ...decodeTranscript(x.bytes), marks: [] });
+  assert.equal(toHex(transcriptHash(strip(a))), toHex(transcriptHash(strip(b))));
 });

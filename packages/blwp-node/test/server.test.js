@@ -115,7 +115,10 @@ test('a round is opened, joined, played and closed by one process', async () => 
     assert.equal(got2.status, 200);
     assert.equal(got2.headers.get('x-ticks'), '120');
     const t2 = decodeTranscript(new Uint8Array(await got2.arrayBuffer()));
-    assert.deepEqual(checkTranscript(t2), { ok: true, ticks: 120 });
+    assert.deepEqual(checkTranscript(t2), { ok: true, ticks: 120, marks: 0, throughTick: null },
+      'the store\'s own copy, for a resume: the marks travel on /checkpoints, '
+      + 'where the client checks them against receipts rather than taking the '
+      + 'node\'s word for its own last mark');
     assert.equal(got2.headers.get('x-transcript-hash'), toHex(transcriptHash(t2)),
       'the hash the node states is the hash of what it sent');
 

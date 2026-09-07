@@ -528,9 +528,18 @@ export class Round {
       roundId: new Uint8Array(roundIdBytes),
       entryId: new Uint8Array(entryIdBytes),
       batches: rows.map((r) => decodeInputBatch(new Uint8Array(r.bytes))),
+
+      // NO MARKS. This is the store's own copy, handed to a client that is
+      // resuming, and the marks it needs travel on `/checkpoints` where the
+      // client checks each one against the receipts it recovered - a node's
+      // word for its own last mark is exactly what `resume` refuses to take.
+      // An empty chain here is not a shortcut: it is the difference between
+      // this object and the canonical one, and it shows in the hash.
+      marks: [],
     };
     const ok = checkTranscript(t);
-    if (!ok.ok) throw new Error(`the stored transcript is broken at ${ok.at}: ${ok.why}`);
+    if (!ok.ok)
+      throw new Error(`the stored transcript is broken at ${ok.in} ${ok.at}: ${ok.why}`);
     return { bytes: encodeTranscript(t), hash: transcriptHash(t), ticks: ok.ticks };
   }
 
@@ -601,21 +610,31 @@ export class Round {
         `the last carried checkpoint commits to input chain ${toHex(last.inputChainHash)}, `
         + 'which this node does not hold');
 
+    // AND THE MARKS THEMSELVES GO IN THE OBJECT, not just their count in the
+    // answer. §13C names the checkpoint chain FIRST and the batches second,
+    // and for a while this served the second half only: two nodes carrying
+    // different mark chains over one set of batches - even a node whose
+    // player had committed to a different world at the last tick - handed
+    // back one `transcriptHash`, so the committee signed results that were
+    // indistinguishable by id. What every node replays has to include what
+    // the replay is checked against.
     const t = {
       roundId: new Uint8Array(roundIdBytes),
       entryId: new Uint8Array(entryIdBytes),
       batches,
+      marks: marks.slice(0, live).map((m) => new Uint8Array(m.bytes)),
     };
     const ok = checkTranscript(t);
-    if (!ok.ok) throw new Error(`the carried transcript is broken at ${ok.at}: ${ok.why}`);
+    if (!ok.ok)
+      throw new Error(`the carried transcript is broken at ${ok.in} ${ok.at}: ${ok.why}`);
 
     return {
       bytes: encodeTranscript(t),
       hash: transcriptHash(t),
       ticks: ok.ticks,
-      marks: live,
+      marks: ok.marks,
       dropped: marks.length - live,
-      throughTick: marks[live - 1].tick,
+      throughTick: ok.throughTick,
     };
   }
 

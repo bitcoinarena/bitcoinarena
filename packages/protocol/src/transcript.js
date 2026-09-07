@@ -5,13 +5,41 @@
 // verifier queries and hopes it asked for everything. This is that thing:
 // the round, the entry, and the batches in chain order.
 //
-// Checkpoints belong in it later (§13C names them first), and they are M2.1
-// step 3. Their absence here is why `transcriptHash` covers the inputs only,
-// and it is stated rather than left to be discovered.
+// AND THE CHECKPOINT CHAIN, which §13C names FIRST: the canonical transcript
+// is "the longest checkpoint chain that carries receipts from at least 5
+// committee nodes, TOGETHER WITH the input batches whose hashes it commits
+// to". For a while this object carried the second half only, and the cost was
+// measured rather than argued: three nodes carrying three different mark
+// chains over one set of batches - two marks against three, and a third node
+// whose player committed to a DIFFERENT world at the last tick - all produced
+// one `transcriptHash`, and therefore one `resultId` for the committee to
+// sign. The thing a result pins has to be the thing that is replayed, and
+// what a replay is checked against is the state the player signed.
+//
+// THE MARKS ARE CARRIED SIGNED, and the hash covers the signature. That is
+// the opposite of the rule one object down - a checkpoint's own id is taken
+// before it is signed, so the chain does not shift underneath it - and the
+// reason is that this is a container, not an identity. What must be pinned
+// here is exactly the bytes a node hands over and a committee signs a result
+// about; a signature outside the hash would let a node serve marks with
+// nobody's signature on them and still match the hash the result named.
+//
+// WHOSE signature it is stays the caller's business, as everywhere in this
+// package: there is no curve here, so `checkTranscript` checks the chain, the
+// ticks and what the marks commit to, and the session key that verifies them
+// lives in the entry contract.
+//
+// A transcript with NO marks is still a transcript - it is what a node hands
+// a client back on resume, where the marks travel on their own endpoint and
+// are checked there against receipts. It is not the canonical object, and the
+// difference shows in the hash rather than being a matter of who is asking.
 import { Writer, Reader } from './encode.js';
-import { taggedHash } from './hash.js';
+import { taggedHash, toHex } from './hash.js';
 import { PROTOCOL_VERSION, TYPE_TRANSCRIPT, TAG } from './constants.js';
 import { encodeInputBatch, decodeInputBatch, batchId, batchTicks } from './batch.js';
+import {
+  decodeCheckpoint, checkpointId, splitSigned, NO_PREVIOUS, SIGNED_CHECKPOINT_BYTES,
+} from './checkpoint.js';
 
 export const GENESIS = new Uint8Array(32);
 
@@ -28,6 +56,11 @@ export function encodeTranscript(t) {
     ww.u16(bytes.length);
     ww.bytes(bytes, bytes.length);
   });
+
+  // The marks, in chain order, each a whole signed record. No length prefix:
+  // a signed checkpoint has no variable-length field, so the count is enough
+  // and a reader cuts them at a fixed stride.
+  w.vec(t.marks || [], (m, ww) => ww.bytes(m, SIGNED_CHECKPOINT_BYTES));
   return w.finish();
 }
 
@@ -37,6 +70,7 @@ export function decodeTranscript(bytes) {
   if (r.u16() !== PROTOCOL_VERSION) throw new Error('unknown protocol version');
   const t = { roundId: r.bytes32(), entryId: r.bytes32() };
   t.batches = r.vec((rr) => decodeInputBatch(rr.bytes(rr.u16())));
+  t.marks = r.vec((rr) => rr.bytes(SIGNED_CHECKPOINT_BYTES));
   if (r.at !== bytes.length) throw new Error('trailing bytes after the transcript');
   return t;
 }
@@ -44,28 +78,108 @@ export function decodeTranscript(bytes) {
 export const transcriptHash = (t) => taggedHash(TAG.transcript, encodeTranscript(t));
 
 /**
- * Checks the chain and the tick order, and says WHERE it broke rather than
- * that it broke. A verifier that only learns "invalid" has to bisect by hand.
+ * Checks both chains, the tick order, and what the marks commit to - and says
+ * WHERE it broke rather than that it broke. A verifier that only learns
+ * "invalid" has to bisect by hand.
  *
- * Returns `{ ok: true, ticks }` or `{ ok: false, at, why }`.
+ * Returns `{ ok: true, ticks, marks, throughTick }` or
+ * `{ ok: false, in, at, why }`, where `in` is 'batch' or 'mark' because the
+ * two are numbered separately and an index alone would name two places.
+ *
+ * WHAT THE MARKS ARE CHECKED AGAINST IS THIS OBJECT AND NOTHING ELSE. Every
+ * mark's `inputChainHash` has to be a head this transcript actually reaches -
+ * §11's "a transcript whose inputs were never published cannot be replayed"
+ * turned from a sentence into a refusal - and the heads may not go backwards,
+ * because a later mark on an earlier input head is a rewind and not a chain.
+ * The last mark's head must be the LAST batch: inputs past the last carried
+ * mark are inputs no committee stood behind, and a transcript that carried
+ * them would hand a replay ticks nobody receipted.
+ *
+ * `throughTick` is the tick of the last mark, or `null` when there are none.
  */
 export function checkTranscript(t) {
   let previous = GENESIS;
   let expect = null;
   let ticks = 0;
+
+  // Which input heads this transcript reaches, in order. GENESIS is index 0 -
+  // a mark taken before any batch went out commits to it - so a head's index
+  // is directly comparable and "did not go backwards" is one number test.
+  const heads = new Map([[toHex(GENESIS), 0]]);
+
   for (let i = 0; i < t.batches.length; i++) {
     const b = t.batches[i];
-    if (!same(b.roundId, t.roundId)) return { ok: false, at: i, why: 'batch is for another round' };
-    if (!same(b.entryId, t.entryId)) return { ok: false, at: i, why: 'batch is for another entry' };
-    if (!same(b.previousHash, previous)) return { ok: false, at: i, why: 'the chain is broken here' };
+    if (!same(b.roundId, t.roundId))
+      return { ok: false, in: 'batch', at: i, why: 'batch is for another round' };
+    if (!same(b.entryId, t.entryId))
+      return { ok: false, in: 'batch', at: i, why: 'batch is for another entry' };
+    if (!same(b.previousHash, previous))
+      return { ok: false, in: 'batch', at: i, why: 'the chain is broken here' };
     const at = batchTicks(b);
     if (expect !== null && at[0] !== expect)
-      return { ok: false, at: i, why: `expected tick ${expect}, got ${at[0]}` };
+      return { ok: false, in: 'batch', at: i, why: `expected tick ${expect}, got ${at[0]}` };
     expect = at.length ? at[at.length - 1] + 1 : expect;
     ticks += at.length;
     previous = batchId(b);
+    heads.set(toHex(previous), i + 1);
   }
-  return { ok: true, ticks };
+
+  const marks = t.marks || [];
+  let parent = NO_PREVIOUS;
+  let lastTick = null;
+  let lastHead = 0;
+  let body = null;
+
+  for (let i = 0; i < marks.length; i++) {
+    if (marks[i].length !== SIGNED_CHECKPOINT_BYTES)
+      return {
+        ok: false,
+        in: 'mark',
+        at: i,
+        why: `${marks[i].length} bytes is not a ${SIGNED_CHECKPOINT_BYTES}-byte signed mark`,
+      };
+    try { body = decodeCheckpoint(splitSigned(marks[i]).body); }
+    catch (e) { return { ok: false, in: 'mark', at: i, why: e.message }; }
+
+    if (!same(body.roundId, t.roundId))
+      return { ok: false, in: 'mark', at: i, why: 'mark is for another round' };
+    if (!same(body.entryId, t.entryId))
+      return { ok: false, in: 'mark', at: i, why: 'mark is for another entry' };
+    if (!same(body.previousHash, parent))
+      return { ok: false, in: 'mark', at: i, why: 'the mark chain is broken here' };
+    if (lastTick !== null && body.tick <= lastTick)
+      return {
+        ok: false,
+        in: 'mark',
+        at: i,
+        why: `tick ${body.tick} does not come after ${lastTick}`,
+      };
+
+    const head = heads.get(toHex(body.inputChainHash));
+    if (head === undefined)
+      return {
+        ok: false,
+        in: 'mark',
+        at: i,
+        why: 'the mark commits to inputs this transcript does not carry',
+      };
+    if (head < lastHead)
+      return { ok: false, in: 'mark', at: i, why: 'the mark commits to earlier inputs than the one before it' };
+
+    parent = checkpointId(body);
+    lastTick = body.tick;
+    lastHead = head;
+  }
+
+  if (marks.length && lastHead !== t.batches.length)
+    return {
+      ok: false,
+      in: 'mark',
+      at: marks.length - 1,
+      why: `the last mark commits through batch ${lastHead} and the transcript carries ${t.batches.length}`,
+    };
+
+  return { ok: true, ticks, marks: marks.length, throughTick: lastTick };
 }
 
 /**

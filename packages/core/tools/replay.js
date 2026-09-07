@@ -26,7 +26,7 @@ if (raw[0] === 0x09) {
     await import('../../protocol/src/transcript.js');
   const t = decodeTranscript(new Uint8Array(raw));
   const chain = checkTranscript(t);
-  if (!chain.ok) { console.error(`the chain is broken at batch ${chain.at}: ${chain.why}`); process.exit(1); }
+  if (!chain.ok) { console.error(`the chain is broken at ${chain.in} ${chain.at}: ${chain.why}`); process.exit(1); }
 
   const { firstTick, ticks, liquidations } = flatten(t);
   if (firstTick !== 0) { console.error(`this transcript starts at tick ${firstTick}, not 0`); process.exit(1); }
