@@ -15,6 +15,27 @@ export const FORFEIT = 'FORFEIT';
 export const VOID = 'VOID';
 
 /**
+ * An entry that never left the door.
+ *
+ * Section 14's ladder names both - "VOID / ENTRY_VOID (refund; reachable only
+ * from PROVISIONAL)" - and section 18 gives them one pool rule: "VOID and
+ * ENTRY_VOID entries neither contribute to nor draw from the pool." 23.2 gives
+ * them one hold: do nothing, it expires, the wallet is refunded.
+ *
+ * So they behave alike everywhere money is counted, and they are still two
+ * words, because they say different things about what happened. VOID is a
+ * round that was played and could not be settled; ENTRY_VOID is an entry that
+ * never activated - section 16: "before stake commitment: no financial entry
+ * exists; no loss". Writing the second as the first would record a round
+ * nobody played.
+ */
+export const ENTRY_VOID = 'ENTRY_VOID';
+
+/** The two words that mean the stake goes home and the pool never sees it. */
+export const REFUNDS = [VOID, ENTRY_VOID];
+export const isRefund = (outcome) => REFUNDS.includes(outcome);
+
+/**
  * Rank weights as EXACT INTEGERS.
  *
  * The curve is geometric with r = 3/4 (spec 18A.4). Written as a float it
@@ -70,7 +91,7 @@ export function computePayoutTable({ roundId, entries, minScore = 0 }) {
     if (typeof e.stakeMsat !== 'bigint')
       throw new Error('stakes must be BigInt millisatoshi');
 
-  const activated = entries.filter((e) => e.outcome !== VOID);
+  const activated = entries.filter((e) => !isRefund(e.outcome));
   const pool = activated
     .filter((e) => e.outcome === FAILED || e.outcome === FORFEIT)
     .reduce((s, e) => s + e.stakeMsat, 0n);
@@ -143,6 +164,7 @@ export function computePayoutTable({ roundId, entries, minScore = 0 }) {
     qualifiers: qualifiers.length,
     payingRanks: k,
     settling,
+    activated,
     table: activated.map((e) => ({ pubkey: e.pubkey, amountMsat: payouts.get(e) })),
   };
 }
@@ -179,11 +201,31 @@ function compareBytes(a, b) {
  * player's own conduct costs the stake, and a synonym would be a second word
  * for one outcome and a second place to get it wrong.
  */
-export function noQuorumOutcome({ signatures, needed, equivocationProven }) {
+export function noQuorumOutcome({ signatures, needed, equivocationProven, state }) {
   if (!Number.isInteger(signatures) || signatures < 0)
     throw new Error('signatures is a count of committee members, and cannot be negative');
   if (!Number.isInteger(needed) || needed <= 0)
     throw new Error('the threshold is a positive count of committee members');
+
+  // A FINAL RESULT CANNOT BE VOIDED, AND THIS IS WHERE THAT IS SAID.
+  //
+  // Section 14's ladder: "PROVISIONAL -> VOID / ENTRY_VOID (refund; REACHABLE
+  // ONLY FROM PROVISIONAL)", and its opening line: "once a player's result is
+  // FINAL, later infrastructure failure does not erase it."
+  //
+  // Measured before this refusal existed: a result that five committee members
+  // had signed, whose objection window had closed, answered FINAL - and this
+  // function, asked afterwards with a low count, answered VOID. Both were
+  // right on their own and nothing crossed them, so a settled round could be
+  // refunded after the fact. That is the escape hatch section 14 exists to
+  // shut, and it is the operator's as much as the player's: a node that went
+  // quiet after finality could unmake a loss.
+  if (state === 'FINAL')
+    return {
+      outcome: null,
+      why: 'that result is already FINAL, and a later failure does not erase it: '
+        + 'VOID is reachable only from PROVISIONAL',
+    };
 
   if (signatures >= needed)
     return { outcome: null, why: `the committee agreed: ${signatures} of ${needed}` };
@@ -239,7 +281,7 @@ export function settlementAction({
   outcome, qualifies = false, state, shares = 0, signatures = 0,
   needed = SETTLEMENT_THRESHOLD,
 }) {
-  if (outcome === VOID)
+  if (isRefund(outcome))
     return {
       action: NOTHING,
       authorised: true,
@@ -317,7 +359,13 @@ export function holdSettlement({ roundId, entries, minScore = 0 }) {
 
   // What the pool actually hands out: each row's amount less the entry's own
   // stake, since that half never entered the pool.
-  const rows = entries.filter((e) => e.outcome !== VOID);
+  //
+  // THE ROWS COME FROM THE TABLE, not from a second filter over the entries.
+  // They are matched to amounts BY INDEX, so a filter here that disagreed with
+  // the one there would line the wrong amount up against the wrong entry - and
+  // a mutant that changed only this one proved the two could drift without any
+  // test noticing.
+  const rows = table.activated;
   let sharesMsat = 0n;
   rows.forEach((e, i) => {
     const amount = paidTo.get(i) || 0n;

@@ -26,8 +26,12 @@ import { openStore } from '../src/store.js';
 import { Round } from '../src/round.js';
 import { serve } from '../src/server.js';
 import {
-  noQuorumOutcome, computePayoutTable, DELIVERED, FORFEIT, VOID,
+  noQuorumOutcome, computePayoutTable, holdSettlement, settlementAction,
+  holdAfter, isRefund, REFUNDS, SETTLE, CANCEL, NOTHING, EXPIRED,
+  DELIVERED, FORFEIT, VOID, ENTRY_VOID,
 } from '../../protocol/src/payout.js';
+import { resultId } from '../../protocol/src/result.js';
+import { finality, FINAL, PROVISIONALLY_FINAL } from '../../protocol/src/objection.js';
 import {
   encodeCheckpoint, checkpointId, NO_PREVIOUS, joinSigned, provesEquivocation,
   SIGNED_CHECKPOINT_BYTES,
@@ -157,4 +161,104 @@ test('a count that is not a count is refused rather than guessed', () => {
     assert.equal(noQuorumOutcome({ signatures: 3, needed: 5, equivocationProven: said }).outcome,
       VOID, String(said));
   }
+});
+
+/**
+ * A FINAL RESULT CANNOT BE VOIDED.
+ *
+ * Section 14: "once a player's result is FINAL, later infrastructure failure
+ * does not erase it", and its ladder puts VOID and ENTRY_VOID reachable ONLY
+ * from PROVISIONAL.
+ *
+ * Measured before this refusal existed: a result five committee members had
+ * signed, whose objection window had closed, answered FINAL - and
+ * noQuorumOutcome, asked afterwards with a low count, answered VOID. Both
+ * functions were right on their own and nothing crossed them, so a settled
+ * round could be refunded after the fact.
+ */
+test('a result that is already FINAL is not voided by a later low count', () => {
+  const committee = [1, 2, 3, 4, 5, 6, 7].map(b32);
+  const r = {
+    roundId: b32(1), playerPubkey: b32(2), outcome: DELIVERED, score: 1,
+    transcriptHash: b32(3), simCoreHash: b32(4), nodePubkey: committee[0],
+  };
+  const signedBy = [0, 1, 2, 3, 4].map((i) => ({ resultId: resultId(r), nodePubkey: committee[i] }));
+  const at = 10000n;
+  const closed = finality({
+    signedBy, committee, contract: { objectionWindowMs: 600000n },
+    provisionalAtMs: at, now: at + 600000n,
+  });
+  assert.equal(closed.state, FINAL);
+
+  // asked anyway, with a count that would have voided a provisional result
+  const after = noQuorumOutcome({
+    signatures: 3, needed: NEEDED, equivocationProven: false, state: closed.state,
+  });
+  assert.equal(after.outcome, null, 'a FINAL result was voided');
+  assert.notEqual(after.outcome, VOID);
+  assert.match(after.why, /already FINAL/);
+  assert.match(after.why, /reachable only from PROVISIONAL/);
+
+  // and the hold is not refunded a second time: FINAL is not a refund state
+  const entries = [
+    { entryId: b32(1), pubkey: b32(1), outcome: DELIVERED, score: 100, stakeMsat: 100000n },
+    { entryId: b32(2), pubkey: b32(2), outcome: FORFEIT, score: 0, stakeMsat: 100000n },
+  ];
+  const s = holdSettlement({ roundId: b32(9), minScore: 1, entries });
+  assert.equal(s.refundedMsat, 100000n, 'only the winner s own stake goes home');
+  assert.equal(s.poolMsat, 100000n);
+
+  // FROM PROVISIONAL, the same low count still voids
+  const provisional = noQuorumOutcome({
+    signatures: 3, needed: NEEDED, equivocationProven: false, state: PROVISIONALLY_FINAL,
+  });
+  assert.equal(provisional.outcome, VOID);
+  assert.match(provisional.why, /nothing shows the player caused it/);
+
+  // and with no state given at all it behaves as it always did
+  assert.equal(noQuorumOutcome({ signatures: 3, needed: NEEDED }).outcome, VOID);
+});
+
+/**
+ * ENTRY_VOID IS BLWP'S FIFTH WORD, not a synonym for VOID.
+ *
+ * Section 14's ladder and section 18's pool rule name both, and 23.2 gives
+ * them the same hold. They behave alike everywhere money is counted - the
+ * stake goes home, the pool never sees it - and they stay two words because
+ * they say different things: VOID is a round played and unsettleable,
+ * ENTRY_VOID is an entry that never activated.
+ */
+test('an entry that never activated is ENTRY_VOID, and neither word touches the pool', () => {
+  const winner = { entryId: b32(1), pubkey: b32(1), outcome: DELIVERED, score: 100, stakeMsat: 100000n };
+  const loser = { entryId: b32(2), pubkey: b32(2), outcome: FORFEIT, score: 0, stakeMsat: 100000n };
+  const voided = { entryId: b32(3), pubkey: b32(3), outcome: VOID, score: 0, stakeMsat: 100000n };
+  const never = { entryId: b32(4), pubkey: b32(4), outcome: ENTRY_VOID, score: 0, stakeMsat: 100000n };
+
+  const s = holdSettlement({ roundId: b32(9), minScore: 1, entries: [winner, loser, voided, never] });
+  const said = new Map(s.actions.map((a) => [a.entry, a.action]));
+
+  assert.equal(said.get(never), NOTHING, 'a never-activated entry was made to act');
+  assert.equal(said.get(voided), NOTHING);
+  assert.equal(said.get(loser), SETTLE);
+  assert.equal(said.get(winner), CANCEL);
+
+  assert.equal(s.poolMsat, 100000n, 'a refunded entry contributed to the pool');
+  assert.equal(s.refundedMsat, 300000n, 'the winner s, the void and the never-activated');
+  assert.equal(s.poolMsat - s.sharesMsat, 0n);
+
+  // "VOID and ENTRY_VOID entries neither contribute to nor draw from the pool"
+  assert.equal(s.table.table.length, 2, 'a refunded entry is in the payout table');
+  assert.equal(s.table.table[0].amountMsat, 200000n);
+
+  // the words are distinct: one is not written as the other
+  assert.notEqual(ENTRY_VOID, VOID);
+  assert.deepEqual(REFUNDS, [VOID, ENTRY_VOID]);
+  assert.equal(isRefund(ENTRY_VOID), true);
+  assert.equal(isRefund(FORFEIT), false);
+
+  // and it needs nothing to refund, exactly as VOID does
+  const said2 = settlementAction({ outcome: ENTRY_VOID, state: 'SUSPENDED', shares: 0, signatures: 0 });
+  assert.equal(said2.action, NOTHING);
+  assert.equal(said2.authorised, true);
+  assert.equal(holdAfter({ action: said2.action }).state, EXPIRED);
 });
