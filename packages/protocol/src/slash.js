@@ -29,7 +29,7 @@ import { Writer, Reader } from './encode.js';
 import { taggedHash, toHex } from './hash.js';
 import {
   PROTOCOL_VERSION, TYPE_SLASH_PROOF, TYPE_PAYOUT_TABLE, TYPE_SETTLEMENT_RECORD,
-  TYPE_RESULT, TAG,
+  TYPE_RESULT, TYPE_FEE_CLAIM, TYPE_SERVICE_RECORD, ROLES, roleByte, TAG,
 } from './constants.js';
 import { entryId } from './contracts.js';
 import { decodePlayerResult, resultId, splitSignedResult } from './result.js';
@@ -90,10 +90,18 @@ export const TWO_RESULTS = 'TWO_RESULTS';
  */
 export const OPERATOR_PLAYED = 'OPERATOR_PLAYED';
 
+/**
+ * 5A.3 row 6: "Claiming a fee share without meeting the availability rule
+ * (22A)", proof "the receipt record". Claiming nothing is not the offence -
+ * 22A redistributes an unearned share rather than taking a bond for one
+ * nobody asked for.
+ */
+export const FEE_WITHOUT_SERVICE = 'FEE_WITHOUT_SERVICE';
+
 // In 5A.3's own document order, which is the order they are being written in.
 export const OFFENCES = [
   TWO_RESULTS, REPLAY_CONTRADICTS, TABLE_IS_NOT_F, SETTLED_WITHOUT_AUTHORITY,
-  OPERATOR_PLAYED,
+  OPERATOR_PLAYED, FEE_WITHOUT_SERVICE,
 ];
 
 /**
@@ -804,5 +812,227 @@ export function slashHoldsOnConflict({ proof, entry, signedByNode, advert, commi
     signed: thing.kind,
     operator,
     why: `the node's declared operator has an entry in this round, and it signed a ${thing.kind} anyway`,
+  };
+}
+
+/**
+ * 22A'S TWO OBJECTS: what a node claims, and what it actually did.
+ *
+ * "Each eligible slot receives 1.00% / 7 of gross volume for its role...
+ * A selected node earns its share only if it performed the contract-defined
+ * minimum service: for game/verify, the required receipts plus replay and
+ * signing; for settlement, participation in the settlement protocol during the
+ * settlement window. A conflicted node (5A.13) never qualifies."
+ *
+ * The claim is one node's demand for one role of one round. The role is in it
+ * because 22A pays the two pools separately and "an operator selected for both
+ * roles earns both shares, because it performs both services" - a claim that
+ * did not say which role would be a claim on either.
+ */
+export function encodeFeeClaim(c) {
+  const w = new Writer();
+  w.u8(TYPE_FEE_CLAIM);
+  w.u16(PROTOCOL_VERSION);
+  w.bytes32(c.roundId);
+  w.bytes32(c.nodePubkey);
+  w.u8(roleByte(c.role));
+  w.u64(c.amountMsat);
+  return w.finish();
+}
+
+export function decodeFeeClaim(bytes) {
+  const r = new Reader(bytes);
+  if (r.u8() !== TYPE_FEE_CLAIM) throw new Error('not a fee claim');
+  if (r.u16() !== PROTOCOL_VERSION) throw new Error('unknown protocol version');
+  const c = {
+    roundId: r.bytes32(),
+    nodePubkey: r.bytes32(),
+    role: ROLES[r.u8()],
+    amountMsat: r.u64(),
+  };
+  if (!c.role) throw new Error('unknown role byte in a fee claim');
+  if (r.at !== bytes.length) throw new Error('trailing bytes after the fee claim');
+  return c;
+}
+
+export const feeClaimId = (c) => taggedHash(TAG.feeClaim, encodeFeeClaim(c));
+
+/**
+ * WHAT THE NODE ACTUALLY DID, in the unit its own role is measured in.
+ *
+ * `served` is receipts for game and verify - 22A's "the required receipts" -
+ * and settlement participations for settlement. ONE COUNT AND NOT TWO
+ * SCHEMES: the roles are measured in different units and the rule over them is
+ * the same rule, so the unit belongs to the role and the arithmetic does not
+ * fork. What each unit IS stays 22A's sentence and is not redefined here.
+ */
+export function encodeServiceRecord(r) {
+  const w = new Writer();
+  w.u8(TYPE_SERVICE_RECORD);
+  w.u16(PROTOCOL_VERSION);
+  w.bytes32(r.roundId);
+  w.bytes32(r.nodePubkey);
+  w.u8(roleByte(r.role));
+  w.u32(r.served);
+  return w.finish();
+}
+
+export function decodeServiceRecord(bytes) {
+  const r = new Reader(bytes);
+  if (r.u8() !== TYPE_SERVICE_RECORD) throw new Error('not a service record');
+  if (r.u16() !== PROTOCOL_VERSION) throw new Error('unknown protocol version');
+  const out = {
+    roundId: r.bytes32(),
+    nodePubkey: r.bytes32(),
+    role: ROLES[r.u8()],
+    served: r.u32(),
+  };
+  if (!out.role) throw new Error('unknown role byte in a service record');
+  if (r.at !== bytes.length) throw new Error('trailing bytes after the service record');
+  return out;
+}
+
+export const serviceRecordId = (r) => taggedHash(TAG.serviceRecord, encodeServiceRecord(r));
+
+/**
+ * THE RECORD AND THE MINIMUM, AS ONE HASH, so a proof binds to both.
+ *
+ * The same discipline row 3 needed: an accusation whose threshold the accuser
+ * picks after the fact is an accusation with a free variable, and every honest
+ * claim is then slashable by choosing a higher number.
+ *
+ * THE MINIMUM HAS NO FIELD IN THE ROUND CONTRACT, and that is stated rather
+ * than papered over. 22A says "contract-defined minimum service" and
+ * `encodeRoundContract` defines no such field - measured, it carries none - so
+ * the number is handed in and bound here, exactly as `minScore` is handed to
+ * `computePayoutTable` while living in the contract. Adding the field is what
+ * would make one minimum canonical for a whole network, and adding a field
+ * moves every round id, which is the same blocker the slash distribution has.
+ */
+export function feeInputsId({ roundId, role, minimumServed, recordId }) {
+  const w = new Writer();
+  w.u8(TYPE_SERVICE_RECORD);
+  w.u16(PROTOCOL_VERSION);
+  w.bytes32(roundId);
+  w.u8(roleByte(role));
+  w.u32(minimumServed);
+  w.bytes32(recordId);
+  return taggedHash(TAG.feeInputs, w.finish());
+}
+
+/**
+ * DID THIS NODE CLAIM A FEE SHARE 22A DOES NOT ALLOW? 5A.3 row 6.
+ *
+ * "Claiming a fee share without meeting the availability rule (22A). Proof:
+ * the receipt record."
+ *
+ * Nothing is injected: two objects, a bound threshold, and comparisons.
+ *
+ * TWO WAYS TO FAIL 22A, and the spec gives both in one paragraph:
+ *   - the node did not perform the minimum service for its role
+ *   - the node was CONFLICTED, and "a conflicted node (5A.13) never qualifies"
+ *     however much service it performed
+ *
+ * CLAIMING NOTHING IS NOT AN OFFENCE. 22A's remedy for a share nobody earned
+ * is redistribution - "unearned shares are redistributed pro rata among the
+ * other eligible nodes in the same role pool, keeping the total at 2%" - so a
+ * node that took nothing has cost nobody anything, and its bond is not at
+ * stake. A node that served and claimed is doing exactly what the fee is for.
+ */
+export function slashHoldsOnFeeClaim({
+  proof, signedClaim, serviceRecord, minimumServed, advert, committee,
+  entry = null,
+}) {
+  if (!Array.isArray(committee) || !committee.length)
+    return { slashed: false, why: 'no committee, so nobody was serving this round' };
+  if (!committee.some((k) => hex(k) === hex(proof.nodePubkey)))
+    return {
+      slashed: false,
+      why: `${hex(proof.nodePubkey)} is not on this round's committee, so it was owed no share`,
+    };
+
+  if (!advert || hex(advert.nodePubkey) !== hex(proof.nodePubkey))
+    return { slashed: false, why: 'no advertisement from the accused node to name its bond' };
+
+  let claim;
+  try { claim = decodeFeeClaim(signedClaim); }
+  catch (e) { return { slashed: false, why: `the evidence is not a fee claim: ${e.message}` }; }
+  if (hex(feeClaimId(claim)) !== hex(proof.signedResultId))
+    return { slashed: false, why: 'the claim attached is not the one this proof names' };
+  if (hex(claim.roundId) !== hex(proof.roundId))
+    return { slashed: false, why: 'the claim attached is for a different round' };
+  if (hex(claim.nodePubkey) !== hex(proof.nodePubkey))
+    return { slashed: false, why: 'the claim attached was made by a different node' };
+
+  // A NODE THAT TOOK NOTHING HAS COST NOBODY ANYTHING. 22A redistributes an
+  // unearned share; it does not take a bond for one that was never claimed.
+  if (claim.amountMsat <= 0n)
+    return {
+      slashed: false,
+      why: 'that claim is for nothing, and 22A redistributes an unearned share '
+        + 'rather than slashing a node that asked for none',
+    };
+
+  let record;
+  try { record = decodeServiceRecord(serviceRecord); }
+  catch (e) { return { slashed: false, why: `the evidence is not a service record: ${e.message}` }; }
+  if (hex(record.roundId) !== hex(proof.roundId))
+    return { slashed: false, why: 'the record attached is for a different round' };
+  if (hex(record.nodePubkey) !== hex(proof.nodePubkey))
+    return { slashed: false, why: 'the record attached is about a different node' };
+  if (record.role !== claim.role)
+    return {
+      slashed: false,
+      why: `the claim is for ${claim.role} and the record is about ${record.role}: `
+        + '22A pays the two pools separately and a share is earned in its own role',
+    };
+
+  if (!Number.isInteger(minimumServed) || minimumServed < 0)
+    return { slashed: false, why: 'no minimum service to measure the record against' };
+  const bound = feeInputsId({
+    roundId: proof.roundId, role: claim.role, minimumServed,
+    recordId: serviceRecordId(record),
+  });
+  if (hex(proof.transcriptHash) !== hex(bound))
+    return {
+      slashed: false,
+      why: 'the proof is bound to a different record or a different minimum '
+        + 'than the ones handed in',
+    };
+
+  // 22A: A CONFLICTED NODE NEVER QUALIFIES, whatever it served.
+  let conflicted = false;
+  const operator = operatorKeyOf(advert);
+  if (operator && entry && entry.playerPubkey
+      && hex(entry.roundId || EMPTY) === hex(proof.roundId)
+      && hex(entry.playerPubkey) === hex(operator))
+    conflicted = true;
+
+  if (!conflicted && record.served >= minimumServed)
+    return {
+      slashed: false,
+      why: `it served ${record.served} of the ${minimumServed} its role required, `
+        + 'and 22A is what that fee is for',
+    };
+
+  if (hex(advert.bondTxid) !== hex(proof.bondTxid) || advert.bondVout !== proof.bondVout)
+    return {
+      slashed: false,
+      why: `the proof names bond ${hex(proof.bondTxid)}:${proof.bondVout} and the node `
+        + `advertised ${hex(advert.bondTxid)}:${advert.bondVout}`,
+    };
+
+  return {
+    slashed: true,
+    offence: FEE_WITHOUT_SERVICE,
+    bond: { txid: proof.bondTxid, vout: proof.bondVout },
+    commitment: slashCommitment(proof),
+    claimedMsat: claim.amountMsat,
+    served: record.served,
+    required: minimumServed,
+    conflicted,
+    why: conflicted
+      ? 'a conflicted node never qualifies for a share, and it claimed one'
+      : `it claimed a ${claim.role} share having served ${record.served} of ${minimumServed}`,
   };
 }

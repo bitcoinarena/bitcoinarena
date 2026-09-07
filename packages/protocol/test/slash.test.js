@@ -19,7 +19,7 @@ import {
 import {
   encodeSlashProof, decodeSlashProof, slashProofId, slashCommitment,
   slashHolds, OFFENCES, TWO_RESULTS, REPLAY_CONTRADICTS, TABLE_IS_NOT_F,
-  SETTLED_WITHOUT_AUTHORITY, OPERATOR_PLAYED,
+  SETTLED_WITHOUT_AUTHORITY, OPERATOR_PLAYED, FEE_WITHOUT_SERVICE,
 } from '../src/slash.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
@@ -62,11 +62,11 @@ const ask = (over = {}) => {
  * The names are not pretended: 5A.3 lists six offences and a name in this
  * array that answers nothing reads as coverage of one.
  */
-test('five of 5A.3\'s six rows are implemented, and the last is not pretended', () => {
+test('all six of 5A.3\'s rows are implemented, in the table\'s own order', () => {
   assert.deepEqual(OFFENCES,
     [TWO_RESULTS, REPLAY_CONTRADICTS, TABLE_IS_NOT_F, SETTLED_WITHOUT_AUTHORITY,
-     OPERATOR_PLAYED],
-    'and in 5A.3\'s own document order, which is the order they were written in');
+     OPERATOR_PLAYED, FEE_WITHOUT_SERVICE],
+    '5A.3 lists six offences and every one of them now has a predicate');
 });
 
 /**

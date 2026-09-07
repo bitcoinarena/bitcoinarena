@@ -61,6 +61,15 @@ export const TYPE_SLASH_PROOF = 0x0c;
  */
 export const TYPE_SETTLEMENT_RECORD = 0x0d;
 
+/**
+ * 22A's fee share, as the two objects row 6 of 5A.3 needs: what a node CLAIMS
+ * for a round and a role, and the record of what it actually did. The spec
+ * gives the arithmetic and the availability rule and reserves no types, so
+ * these are the next free numbers, like the objection's and the record's.
+ */
+export const TYPE_FEE_CLAIM = 0x0e;
+export const TYPE_SERVICE_RECORD = 0x0f;
+
 export const TAG = {
   roundContract: 'BLWP/v1/RoundContract',
   entryContract: 'BLWP/v1/EntryContract',
@@ -81,6 +90,11 @@ export const TAG = {
   // signature binds to the table, and the two must never be interchangeable.
   payoutInputs: 'BLWP/v1/PayoutInputs',
   settlementRecord: 'BLWP/v1/SettlementRecord',
+  feeClaim: 'BLWP/v1/FeeClaim',
+  serviceRecord: 'BLWP/v1/ServiceRecord',
+  // The record and the minimum a claim is measured against, bound as one hash
+  // so an accuser cannot choose either of them after the fact.
+  feeInputs: 'BLWP/v1/FeeInputs',
   vssShare: 'BLWP/v1/VssShare',
   remainder: 'BLWP/v1/Remainder',
 };
