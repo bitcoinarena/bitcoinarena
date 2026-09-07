@@ -32,6 +32,14 @@ export const TYPE_TRANSCRIPT = 0x09;
 // the object but reserves no type for it, so this is the next free number.
 export const TYPE_CHECKPOINT_RECEIPT = 0x0a;
 
+/**
+ * 13A's objection. The spec reserves neither a type nor a tag for it - it
+ * gives the field list and nothing else - so both are new here, the way
+ * `CheckpointReceipt` needed both, and both follow the numbering already in
+ * use rather than starting a second one.
+ */
+export const TYPE_OBJECTION = 0x0b;
+
 export const TAG = {
   roundContract: 'BLWP/v1/RoundContract',
   entryContract: 'BLWP/v1/EntryContract',
@@ -45,6 +53,7 @@ export const TAG = {
   payoutTable: 'BLWP/v1/PayoutTable',
   inputBatch: 'BLWP/v1/InputBatch',
   transcript: 'BLWP/v1/Transcript',
+  objection: 'BLWP/v1/Objection',
   remainder: 'BLWP/v1/Remainder',
 };
 
@@ -88,3 +97,13 @@ export function bondMarker() {
       + 'is posted, and every bond ever posted is unfindable without it');
   return BOND_MARKER;
 }
+
+/**
+ * The objection window's reference length: ten minutes, in milliseconds.
+ *
+ * Section 13A gives "reference: 10 minutes, contract-defined". A REFERENCE is
+ * not a default: the number lives in the round contract the player signed, and
+ * this is here so a round can be written with the figure the spec suggests
+ * rather than one somebody remembered.
+ */
+export const OBJECTION_WINDOW_REFERENCE_MS = 600000n;

@@ -131,7 +131,7 @@ out.tagged = {
 /* --------------------------------------------------------------- contracts */
 {
   const c = {
-    simCoreHash: b32(1), startTimeMs: 1788200000000n, entryCloseMs: 1788200060000n,
+    simCoreHash: b32(1), startTimeMs: 1788200000000n, entryCloseMs: 1788200060000n, objectionWindowMs: 600000n,
     censusHeight: 964900, censusRoot: b32(2), committeeSeed: b32(3),
     stakeMsat: 100000n, bondMinSats: 100000n, blockTicks: 9000,
     exposureReference: 12451840, corridorHalfWidth: 3014656, spawnFreeRadius: 1441792,

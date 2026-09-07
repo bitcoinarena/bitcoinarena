@@ -487,6 +487,16 @@ function bondMarker() {
   return BOND_MARKER;
 }
 
+/**
+ * The objection window's reference length: ten minutes, in milliseconds.
+ *
+ * Section 13A gives "reference: 10 minutes, contract-defined". A REFERENCE is
+ * not a default: the number lives in the round contract the player signed, and
+ * this is here so a round can be written with the figure the spec suggests
+ * rather than one somebody remembered.
+ */
+const OBJECTION_WINDOW_REFERENCE_MS = 600000n;
+
 // ---- protocol/src/checkpoint.js
 // A checkpoint: where the player says the world was, at a tick both sides
 // named beforehand.
@@ -731,6 +741,14 @@ function encodeRoundContract(c) {
   w.bytes32(c.simCoreHash);
   w.u64(c.startTimeMs);
   w.u64(c.entryCloseMs);
+
+  // HOW LONG ANYONE HAS TO OBJECT, in milliseconds. Section 13A: "the window
+  // W (reference: 10 minutes, CONTRACT-DEFINED)". It is in the contract and
+  // not a constant here because a window the caller chooses is a window the
+  // operator chooses - and the operator is the party a veto exists against.
+  // The player signs up to it with the rest of the round.
+  w.u64(c.objectionWindowMs);
+
   w.u32(c.censusHeight);
   w.bytes32(c.censusRoot);
   w.bytes32(c.committeeSeed);
@@ -764,6 +782,7 @@ function decodeRoundContract(bytes) {
     simCoreHash: r.bytes32(),
     startTimeMs: r.u64(),
     entryCloseMs: r.u64(),
+    objectionWindowMs: r.u64(),
     censusHeight: r.u32(),
     censusRoot: r.bytes32(),
     committeeSeed: r.bytes32(),

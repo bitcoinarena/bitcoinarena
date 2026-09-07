@@ -26,6 +26,14 @@ export function encodeRoundContract(c) {
   w.bytes32(c.simCoreHash);
   w.u64(c.startTimeMs);
   w.u64(c.entryCloseMs);
+
+  // HOW LONG ANYONE HAS TO OBJECT, in milliseconds. Section 13A: "the window
+  // W (reference: 10 minutes, CONTRACT-DEFINED)". It is in the contract and
+  // not a constant here because a window the caller chooses is a window the
+  // operator chooses - and the operator is the party a veto exists against.
+  // The player signs up to it with the rest of the round.
+  w.u64(c.objectionWindowMs);
+
   w.u32(c.censusHeight);
   w.bytes32(c.censusRoot);
   w.bytes32(c.committeeSeed);
@@ -59,6 +67,7 @@ export function decodeRoundContract(bytes) {
     simCoreHash: r.bytes32(),
     startTimeMs: r.u64(),
     entryCloseMs: r.u64(),
+    objectionWindowMs: r.u64(),
     censusHeight: r.u32(),
     censusRoot: r.bytes32(),
     committeeSeed: r.bytes32(),

@@ -59,7 +59,7 @@ async function rig(ms) {
   const watch = { inFlight: 0, worst: 0 };
   const client = new Client({ base: `http://127.0.0.1:${node.port}`, core, sign, verify });
   const c = {
-    simCoreHash: b32(1), startTimeMs: 1000n, entryCloseMs: 2000n, censusHeight: 900000,
+    simCoreHash: b32(1), startTimeMs: 1000n, entryCloseMs: 2000n, objectionWindowMs: 600000n, censusHeight: 900000,
     censusRoot: b32(2), committeeSeed: b32(3), stakeMsat: 100000n, bondMinSats: 50000n,
     blockTicks: 600, exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
     timeFloor: 30, timeCeil: 150, minScore: 1, rankNumerator: 3, rankDenominator: 4,
