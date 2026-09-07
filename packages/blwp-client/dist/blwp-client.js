@@ -1454,21 +1454,59 @@ const merkleRootOf = (h) => header(h).slice(36, 68);
 const blockHashOf = (h) => hash256(header(h));
 
 /**
- * The work one header stands for, from its compact target at bytes 72..76.
+ * The target a header CLAIMS, from its compact form at bytes 72..76.
+ *
+ * Claims, because these four bytes are written by whoever hands the header
+ * over. Nothing about them is proof of anything until `meetsTarget` compares
+ * them against the hash, and that is the whole reason this is a separate
+ * function from the work it implies.
+ */
+function targetOf(h) {
+  const b = header(h);
+  const exponent = b[75];
+  const mantissa = (b[74] << 16) | (b[73] << 8) | b[72];
+  // The high bit of the mantissa is a sign bit. A negative target is not a
+  // target, and Bitcoin has never had a valid header carrying one.
+  if (mantissa === 0 || (mantissa & 0x800000)) return 0n;
+  return exponent <= 3
+    ? BigInt(mantissa) >> BigInt(8 * (3 - exponent))
+    : BigInt(mantissa) << BigInt(8 * (exponent - 3));
+}
+
+/**
+ * WAS THIS HEADER ACTUALLY MINED?
+ *
+ * The one question that makes "most work wins" mean anything. Without it the
+ * work of a chain is a number the provider chose: the difficulty lives in four
+ * bytes of the header, so anybody can write down a target of 1, claim
+ * 5.8 * 10^76 of work for a header nobody mined, and outweigh the whole of
+ * Bitcoin by thirty-two orders of magnitude. Measured before this existed: one
+ * fabricated header beat mainnet 499998-500000 by exactly that.
+ *
+ * The comparison is numeric, and the byte order is the usual trap: a block
+ * hash is stored and displayed reversed from the way it is read as a number,
+ * so it is the REVERSED bytes that must come out below the target.
+ */
+function meetsTarget(h) {
+  const target = targetOf(h);
+  if (target <= 0n) return false;
+  let value = 0n;
+  for (const b of blockHashOf(h).reverse()) value = (value << 8n) | BigInt(b);
+  return value <= target;
+}
+
+/**
+ * The work one header stands for.
  *
  * Work is 2^256 / (target + 1), which is how much hashing the block is
  * expected to have cost. BigInt because the numbers are far past what a double
  * can hold exactly, and a comparison that silently rounded would pick the
- * wrong chain.
+ * wrong chain. It says nothing about whether the work was DONE - see
+ * `meetsTarget` - and a caller that sums this without asking that question is
+ * adding up somebody else's arithmetic.
  */
 function workOf(h) {
-  const b = header(h);
-  const exponent = b[75];
-  const mantissa = (b[74] << 16) | (b[73] << 8) | b[72];
-  if (mantissa === 0) return 0n;
-  const target = exponent <= 3
-    ? BigInt(mantissa) >> BigInt(8 * (3 - exponent))
-    : BigInt(mantissa) << BigInt(8 * (exponent - 3));
+  const target = targetOf(h);
   if (target <= 0n) return 0n;
   return (1n << 256n) / (target + 1n);
 }
@@ -1489,6 +1527,13 @@ function chainWork(headers) {
     try { header(headers[i]); } catch (e) { return { ok: false, at: i, why: e.message, work: 0n }; }
     if (i > 0 && !sameBytes(previousHashOf(headers[i]), blockHashOf(headers[i - 1])))
       return { ok: false, at: i, why: 'this header does not follow the one before it', work: 0n };
+    // Before its work is added, not after: a header nobody mined contributes
+    // whatever difficulty its author felt like writing down.
+    if (!meetsTarget(headers[i]))
+      return {
+        ok: false, at: i, work: 0n,
+        why: 'this header was not mined: its hash does not meet the target it claims',
+      };
     work += workOf(headers[i]);
   }
   return { ok: true, work };
@@ -1727,15 +1772,32 @@ function isSocketAddress(endpoint) {
  * REQUIRED, not optional - an absent one is a refusal, because the version of
  * this that takes an empty list and shrugs is the version that ships.
  */
-function reach({ chains, transaction, signedAdvert, branch, position, committee }) {
+function reach({
+  chain, chains, transaction, signedAdvert, branch, position, committee,
+}) {
   if (!committee || !committee.length)
     return { ok: false, why: 'no committee to check the node against' };
 
-  const best = mostWork(chains || []);
-  if (!best) return { ok: false, why: 'no chain of headers to check against' };
+  // A CHAIN THAT WAS ALREADY AGREED, or a list to weigh here. `chain` is what
+  // `agreedChain` hands back after two independent providers were compared,
+  // and it is the one a live client should be passing: weighing a single list
+  // handed over by one party is arithmetic, not evidence. Both are re-checked
+  // - every header must link and must have met the target it claims - so a
+  // fabricated block cannot be the one a bond is proven into whichever door it
+  // came through.
+  let headers; let work; let from = null;
+  if (chain) {
+    const linked = chainWork(chain);
+    if (!linked.ok) return { ok: false, why: `that is not a mined chain: ${linked.why}` };
+    headers = chain; work = linked.work;
+  } else {
+    const best = mostWork(chains || []);
+    if (!best) return { ok: false, why: 'no chain of headers to check against' };
+    headers = best.headers; work = best.work; from = best.at;
+  }
 
   let refusal = 'the transaction is not in any block of that chain';
-  for (const header of best.headers) {
+  for (const header of headers) {
     const seen = acceptAdvert({ transaction, signedAdvert, header, branch, position });
     if (!seen.ok) {
       // A header that proves the transaction and then fails on the commitment
@@ -1768,8 +1830,8 @@ function reach({ chains, transaction, signedAdvert, branch, position, committee 
       advertId: advertId(seen.advert),
       txid: seen.txid,
       blockHash: blockHashOf(header),
-      work: best.work,
-      chain: best.at,
+      work,
+      from,
     };
   }
   return { ok: false, why: refusal };

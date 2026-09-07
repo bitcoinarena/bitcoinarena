@@ -27,7 +27,7 @@
 // and omission is answered by asking a second one". `mostWork` is here and takes
 // as many chains as it is given - nothing fetches yet, and until something does,
 // a client is only as sure as the chain it was handed.
-import { acceptAdvert, mostWork, blockHashOf } from '../../protocol/src/chain.js';
+import { acceptAdvert, mostWork, chainWork, blockHashOf } from '../../protocol/src/chain.js';
 import { advertId } from '../../protocol/src/advert.js';
 import { toHex } from '../../protocol/src/hash.js';
 
@@ -74,15 +74,32 @@ export function isSocketAddress(endpoint) {
  * REQUIRED, not optional - an absent one is a refusal, because the version of
  * this that takes an empty list and shrugs is the version that ships.
  */
-export function reach({ chains, transaction, signedAdvert, branch, position, committee }) {
+export function reach({
+  chain, chains, transaction, signedAdvert, branch, position, committee,
+}) {
   if (!committee || !committee.length)
     return { ok: false, why: 'no committee to check the node against' };
 
-  const best = mostWork(chains || []);
-  if (!best) return { ok: false, why: 'no chain of headers to check against' };
+  // A CHAIN THAT WAS ALREADY AGREED, or a list to weigh here. `chain` is what
+  // `agreedChain` hands back after two independent providers were compared,
+  // and it is the one a live client should be passing: weighing a single list
+  // handed over by one party is arithmetic, not evidence. Both are re-checked
+  // - every header must link and must have met the target it claims - so a
+  // fabricated block cannot be the one a bond is proven into whichever door it
+  // came through.
+  let headers; let work; let from = null;
+  if (chain) {
+    const linked = chainWork(chain);
+    if (!linked.ok) return { ok: false, why: `that is not a mined chain: ${linked.why}` };
+    headers = chain; work = linked.work;
+  } else {
+    const best = mostWork(chains || []);
+    if (!best) return { ok: false, why: 'no chain of headers to check against' };
+    headers = best.headers; work = best.work; from = best.at;
+  }
 
   let refusal = 'the transaction is not in any block of that chain';
-  for (const header of best.headers) {
+  for (const header of headers) {
     const seen = acceptAdvert({ transaction, signedAdvert, header, branch, position });
     if (!seen.ok) {
       // A header that proves the transaction and then fails on the commitment
@@ -115,8 +132,8 @@ export function reach({ chains, transaction, signedAdvert, branch, position, com
       advertId: advertId(seen.advert),
       txid: seen.txid,
       blockHash: blockHashOf(header),
-      work: best.work,
-      chain: best.at,
+      work,
+      from,
     };
   }
   return { ok: false, why: refusal };
