@@ -200,7 +200,7 @@ mergeInto(LibraryManager.library, {
     var net = Module.blwpNet = {
       state: 'opening', error: '', ticks: [], tick: null,
       batches: 0, marks: 0, batchEvery: batchEvery | 0, markEvery: markEvery | 0,
-      seen: 0, client: null, where: null, lost: 0,
+      seen: 0, client: null, where: null, lost: 0, drops: 0, resumedAt: -1,
       // ONE AT A TIME, and this is not tidiness.
       //
       // Both chains hang off state the client updates when an answer comes
@@ -278,6 +278,34 @@ mergeInto(LibraryManager.library, {
             .then(function (k) { return crypto.subtle.verify({ name: 'Ed25519' }, k, sig, msg); });
         },
       });
+      // WHEN THE SOCKET GOES, come back on a new one and read both chains
+      // off the node. The client answers everything in flight by name, so the
+      // queue is not left holding a promise that can never settle; what is
+      // left is to reconnect and ask where the node got to.
+      //
+      // The ticks are NOT thrown away while it is down. A transcript has to be
+      // contiguous - the node refuses a gap at intake, where a client can
+      // still fix it - so they pile up and go out in order once the socket is
+      // back, from the tick the node says it is owed.
+      net.client.onDrop = function () {
+        if (net.state === 'gone') return;
+        net.drops++;
+        net.state = 'dropped';
+        net.chain = net.chain.then(function () {
+          return net.client.connect()
+            .then(function () { return net.client.resume(net.where); })
+            .then(function (r) {
+              net.resumedAt = r.nextTick;
+              net.state = 'ready';
+              console.log('[blwp] resumed at tick ' + r.nextTick
+                + ', ' + r.batches + ' batches and ' + r.receipts + ' receipts behind us');
+            });
+        }).catch(function (e) {
+          net.state = 'error';
+          net.error = String(e.message || e);
+        });
+      };
+
       return net.client.openRound(contract)
         .then(function () { return net.client.join(entry); })
         .then(function () { return net.client.connect(); });
@@ -287,9 +315,15 @@ mergeInto(LibraryManager.library, {
       var words = net.ticks;
       net.ticks = [];
       net.chain = net.chain.then(function () {
+        if (net.state !== 'ready') { net.ticks = words.concat(net.ticks); return; }
         return net.client.batch(words, net.where).then(function (r) {
-          if (r.accepted) net.batches++;
-          else { net.lost += words.length; net.error = String(r.answer); }
+          if (r.accepted) { net.batches++; return; }
+          // PUT THEM BACK, in front of whatever has arrived since. A refused
+          // batch is not a published one, and dropping it would leave a hole
+          // in a chain the node refuses to accept across - the run would end
+          // at the gap with the inputs after it unusable.
+          net.ticks = words.concat(net.ticks);
+          net.error = String(r.answer);
         });
       }).catch(function (e) { net.error = String(e.message || e); });
     };
@@ -308,9 +342,13 @@ mergeInto(LibraryManager.library, {
     };
 
     net.tick = function (words) {
-      if (net.state !== 'ready') return;
+      if (net.state === 'error' || net.state === 'gone') return;
+      // Kept even while the socket is down, and counted even while it is
+      // opening: the tick number is the core's, not the network's, and a
+      // transcript with a hole in it is one the node will not accept across.
       net.ticks.push(words);
       net.seen++;
+      if (net.state !== 'ready') return;
       if (net.batchEvery > 0 && net.ticks.length >= net.batchEvery) net.publish();
       if (net.markEvery > 0 && net.seen % net.markEvery === 0) net.mark(b);
     };
@@ -323,7 +361,8 @@ mergeInto(LibraryManager.library, {
     var net = Module.blwpNet;
     var line = net
       ? net.state + ' batches ' + net.batches + ' marks ' + net.marks
-        + ' tick ' + net.seen + (net.lost ? ' lost ' + net.lost : '')
+        + ' tick ' + net.seen + ' held ' + net.ticks.length
+        + (net.drops ? ' drops ' + net.drops + ' resumed ' + net.resumedAt : '')
         + (net.error ? ' (' + net.error + ')' : '')
       : 'off';
     var n = Math.min(line.length, (cap | 0) - 1);

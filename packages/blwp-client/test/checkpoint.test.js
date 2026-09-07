@@ -598,3 +598,58 @@ test('a transcript for another round, or a broken chain, is refused by name', as
       /the transcript will not decode: /);
   } finally { await new Promise((r) => stub.close(r)); }
 });
+
+/**
+ * A DROPPED SOCKET IS TOLD ABOUT, and nothing is left waiting for an answer
+ * that can no longer arrive.
+ *
+ * A publish that never settles stops the queue behind it for the rest of the
+ * run, so everything in flight is answered by name when the socket goes - in
+ * the same shape a refusal takes, because a caller that already handles "the
+ * node said no" then handles this too without a second path.
+ */
+test('when the socket goes, what was in flight is answered and the owner is told', async () => {
+  const { node, client, rid, eid } = await rig();
+  try {
+    let dropped = 0;
+    client.onDrop = () => { dropped++; };
+
+    await client.batch(rolling(200), { roundId: rid, entryId: eid });
+    client.close();
+    await new Promise((r) => setTimeout(r, 200));
+
+    assert.equal(dropped, 1, 'the owner was not told the socket had gone');
+    const after = await client.batch(rolling(200), { roundId: rid, entryId: eid });
+    assert.equal(after.answer, 'error there is no socket',
+      'a send on a dead socket must answer, not throw');
+    assert.equal(client.nextTick, 200, 'and it must not move the chain');
+  } finally { await node.close(); }
+});
+
+/**
+ * AND THE CLIENT CAN COME BACK ON A NEW SOCKET and carry on, which is what a
+ * reconnect is: the same client, a fresh connection, both chains read back off
+ * the node, and the next batch and mark accepted.
+ */
+test('a client that reconnects on the same round carries on', async () => {
+  const { node, client, rid, eid } = await rig();
+  try {
+    await client.batch(rolling(200), { roundId: rid, entryId: eid });
+    const mark = await client.checkpoint(driven(200), { roundId: rid, entryId: eid, tick: 200 });
+    assert.equal(mark.answer, 'receipted');
+
+    client.close();
+    await new Promise((r) => setTimeout(r, 200));
+
+    // the same client, a new socket, and the two numbers read back
+    await client.connect();
+    const got = await client.resume({ roundId: rid, entryId: eid });
+    assert.equal(got.nextTick, 200);
+    assert.deepEqual(got.head, mark.id);
+
+    const next = await client.batch(rolling(200), { roundId: rid, entryId: eid });
+    assert.equal(next.accepted, 200, `the node refused the batch after a reconnect: ${next.answer}`);
+    const after = await client.checkpoint(driven(400), { roundId: rid, entryId: eid, tick: 400 });
+    assert.equal(after.answer, 'receipted', `the node refused the mark after a reconnect: ${after.answer}`);
+  } finally { client.close(); await node.close(); }
+});

@@ -173,10 +173,28 @@ export class Client {
         if (waiting) waiting(typeof e.data === 'string' ? e.data : new Uint8Array(e.data));
       });
       sock.addEventListener('open', () => { this.sock = sock; resolve(this); });
+
+      // A DROPPED SOCKET IS NOT AN ERROR, it is the normal thing that happens
+      // to a socket. Everything still waiting for an answer is told so by
+      // name, or it would wait for one that can no longer arrive - a publish
+      // that never settles stops the queue behind it for the rest of the run.
+      sock.addEventListener('close', () => {
+        if (this.sock !== sock) return;                 // already replaced
+        this.sock = null;
+        const waiting = this.said;
+        this.said = [];
+        for (const w of waiting) w('error the socket closed');
+        if (this.onDrop) this.onDrop();
+      });
     });
   }
 
   send(message) {
+    // Answered rather than thrown, and in the same shape a refusal takes, so
+    // a caller that already handles "the node said no" handles this too. A
+    // throw here would escape the publish queue and take the run with it.
+    if (!this.sock || this.sock.readyState !== 1)
+      return Promise.resolve('error there is no socket');
     return new Promise((r) => { this.said.push(r); this.sock.send(message); });
   }
 
