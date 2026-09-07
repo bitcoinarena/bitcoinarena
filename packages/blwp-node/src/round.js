@@ -626,16 +626,65 @@ export class Round {
    * settlement, and this object is only the evidence for it.
    */
   equivocation(roundIdBytes, entryIdBytes) {
-    const rows = this.db.prepare(
+    const out = this.db.prepare(
       'SELECT tick, stored_bytes, offered_bytes, seen_ms FROM equivocations '
       + 'WHERE round_id = ? AND entry_id = ? ORDER BY tick')
+      .all(roundIdBytes, entryIdBytes)
+      .map((r) => ({
+        how: 'two marks at one tick',
+        tick: r.tick,
+        stored: new Uint8Array(r.stored_bytes),
+        offered: new Uint8Array(r.offered_bytes),
+        seenMs: r.seen_ms,
+      }));
+
+    // AND THE FORK LIMB, which this node held and could not publish.
+    //
+    // A mark refused for not following the head sits in `offered_marks`; the
+    // chain it contradicts sits in `checkpoints`. Both records were here and
+    // the door answered 204, which is 13B's "nodes MUST publish such a proof
+    // when they hold one" being false while every test passed - the same-tick
+    // pair was measured through the door and the fork pair was measured
+    // through `provesEquivocation`, and nothing crossed them.
+    //
+    // The pairing is the proof's own rule and not a new one: a stored mark at
+    // the same TICK contradicts it, and a stored mark naming the same PARENT
+    // is the other chain. Nothing here decides - `provesEquivocation` does -
+    // and the bytes served are the same bytes a stranger already knows how to
+    // check.
+    const kept = this.db.prepare(
+      'SELECT tick, checkpoint_id, bytes, seen_ms FROM offered_marks '
+      + 'WHERE round_id = ? AND entry_id = ? ORDER BY tick')
       .all(roundIdBytes, entryIdBytes);
-    return rows.map((r) => ({
-      tick: r.tick,
-      stored: new Uint8Array(r.stored_bytes),
-      offered: new Uint8Array(r.offered_bytes),
-      seenMs: r.seen_ms,
-    }));
+    if (kept.length) {
+      const chain = this.db.prepare(
+        'SELECT tick, checkpoint_id, bytes FROM checkpoints '
+        + 'WHERE round_id = ? AND entry_id = ? ORDER BY tick')
+        .all(roundIdBytes, entryIdBytes)
+        .map((r) => ({
+          tick: r.tick,
+          id: new Uint8Array(r.checkpoint_id),
+          bytes: new Uint8Array(r.bytes),
+          mark: decodeCheckpoint(splitSigned(new Uint8Array(r.bytes)).body),
+        }));
+
+      for (const k of kept) {
+        const offered = new Uint8Array(k.bytes);
+        const mine = decodeCheckpoint(splitSigned(offered).body);
+        const against = chain.find((c) => c.tick === k.tick)
+          || chain.find((c) => same(c.mark.previousHash, mine.previousHash));
+        if (!against) continue;                  // nothing of ours contradicts it
+        if (same(against.id, new Uint8Array(k.checkpoint_id))) continue;   // the same mark
+        out.push({
+          how: against.tick === k.tick ? 'two marks at one tick' : 'two chains from one parent',
+          tick: k.tick,
+          stored: against.bytes,
+          offered,
+          seenMs: k.seen_ms,
+        });
+      }
+    }
+    return out.sort((a, b) => a.tick - b.tick);
   }
 
   /**

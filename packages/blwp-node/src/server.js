@@ -67,7 +67,8 @@ const CORS = {
   // sees the body and none of the counts.
   'access-control-expose-headers':
     'x-state, x-ticks, x-transcript-hash, x-checkpoints, x-receipts, '
-    + 'x-marks, x-dropped, x-through-tick, x-equivocations, x-ticks-at',
+    + 'x-marks, x-dropped, x-through-tick, x-equivocations, x-ticks-at, '
+    + 'x-foreign-receipts',
 };
 
 const bytes = (res, code, body) => {
@@ -147,6 +148,23 @@ export function serve(db, { port = 0, funded = NOTHING_IS_FUNDED } = {}) {
         if (!entry) return text(res, 404, 'no such entry');
         res.writeHead(200, { 'content-type': 'application/octet-stream', ...CORS });
         return res.end(Buffer.from(entry));
+      }
+
+      // WHAT THIS NODE HAS SEEN RECEIPTED THAT IT HAS NOT GOT. 13B's gossip
+      // signal, and the only thing that surfaces a split committee before
+      // settlement: a member has receipted a mark this node never held. It is
+      // not a proof and it is not a vote - it says where to go looking, and
+      // evidence nobody can ask for does nothing at all.
+      if (req.method === 'GET' && url.pathname === '/foreign-receipts') {
+        const held = round.foreignReceipts();
+        if (!held.length) return text(res, 204, 'this node holds no receipt for a mark it has not got');
+        const body = Buffer.concat(held.map((f) => Buffer.from(f.bytes)));
+        res.writeHead(200, {
+          'content-type': 'application/octet-stream',
+          'x-foreign-receipts': String(held.length),
+          ...CORS,
+        });
+        return res.end(body);
       }
 
       // 13B'S PROOF, which a node MUST publish when it holds one. The answer

@@ -24,7 +24,8 @@ import {
 } from '../../protocol/src/checkpoint.js';
 import { GENESIS } from '../../protocol/src/transcript.js';
 import {
-  encodeCheckpointReceipt, receiptId, joinSignedReceipt,
+  encodeCheckpointReceipt, decodeCheckpointReceipt, receiptId, joinSignedReceipt,
+  splitSignedReceipt,
 } from '../../protocol/src/receipt.js';
 import { toHex } from '../../protocol/src/hash.js';
 import { decodeEntryContract } from '../../protocol/src/contracts.js';
@@ -338,4 +339,135 @@ test('a stranger with the proof and the entry can check it, and without the entr
     assert.equal(missing.status, 404);
     assert.match(await missing.text(), /no such entry/);
   } finally { await node.close(); }
+});
+
+/**
+ * THE FORK PROOF, PUBLISHED. The node held both records and answered 204.
+ *
+ * Measured before this: first mark at 60, child A at 120 accepted, child B at
+ * 180 on the same parent refused - `equivocations` 0, `offered_marks` 1,
+ * GET /equivocation 204. 13B says nodes MUST publish such a proof when they
+ * hold one, and this one held it in two tables the door only read one of. The
+ * same-tick pair was measured through the door and the fork pair through
+ * `provesEquivocation`; nothing crossed them, so nothing caught it.
+ */
+test('a node that holds a fork proof publishes it, where it used to answer 204', async () => {
+  const { round, rid, eid, mark } = played();
+  const parent = checkpointId(mark);
+  const childA = { ...mark, tick: 120, stateHash: b32(0xa1), previousHash: parent };
+  round.checkpoint(signedBy(childA));
+  const childB = { ...mark, tick: 180, stateHash: b32(0xb2), previousHash: parent };
+  assert.throws(() => round.checkpoint(signedBy(childB)), /does not follow the chain head/);
+
+  // both records are still here, and the chain is untouched
+  assert.equal(round.offeredMarks(rid, eid).length, 1);
+  assert.equal(round.checkpoints(rid, eid).count, 2);
+
+  const held = round.equivocation(rid, eid);
+  assert.equal(held.length, 1, 'the fork proof was held and not published');
+  assert.equal(held[0].how, 'two chains from one parent');
+
+  const node = await serve(round.db, { port: 0, funded: () => true });
+  try {
+    const base = `http://127.0.0.1:${node.port}`;
+    const r = await fetch(`${base}/equivocation?round=${toHex(rid)}&entry=${toHex(eid)}`);
+    assert.equal(r.status, 200, 'the door still answers 204 on a fork it holds');
+    assert.equal(r.headers.get('x-equivocations'), '1');
+    const body = new Uint8Array(await r.arrayBuffer());
+    assert.equal(body.length, 2 * SIGNED_CHECKPOINT_BYTES);
+
+    // A STRANGER with only the entry id, and no second format to learn
+    const got = await fetch(`${base}/entry?id=${toHex(eid)}`);
+    const entry = decodeEntryContract(new Uint8Array(await got.arrayBuffer()));
+    const seen = await provesEquivocation(
+      body.subarray(0, SIGNED_CHECKPOINT_BYTES),
+      body.subarray(SIGNED_CHECKPOINT_BYTES), entry.sessionPubkey, verify);
+    assert.equal(seen.ok, true, seen.why);
+    assert.equal(seen.how, 'two chains from one parent');
+    assert.deepEqual(seen.ticks, [120, 180]);
+  } finally { await node.close(); }
+});
+
+/** And the same-tick limb still publishes, beside it. */
+test('the same-tick proof still publishes, and both are served together', async () => {
+  const { round, rid, eid, mark } = played();
+  assert.throws(() => round.checkpoint(signedBy({ ...mark, stateHash: b32(0x22) })),
+    /equivocation at tick 60/);
+
+  const parent = checkpointId(mark);
+  round.checkpoint(signedBy({ ...mark, tick: 120, stateHash: b32(0xa1), previousHash: parent }));
+  assert.throws(
+    () => round.checkpoint(signedBy({ ...mark, tick: 180, stateHash: b32(0xb2), previousHash: parent })),
+    /does not follow the chain head/);
+
+  const held = round.equivocation(rid, eid);
+  assert.equal(held.length, 2);
+  assert.deepEqual(held.map((h) => h.how).sort(),
+    ['two chains from one parent', 'two marks at one tick']);
+
+  const node = await serve(round.db, { port: 0, funded: () => true });
+  try {
+    const r = await fetch(
+      `http://127.0.0.1:${node.port}/equivocation?round=${toHex(rid)}&entry=${toHex(eid)}`);
+    assert.equal(r.headers.get('x-equivocations'), '2');
+    assert.equal((await r.arrayBuffer()).byteLength, 4 * SIGNED_CHECKPOINT_BYTES);
+  } finally { await node.close(); }
+});
+
+/**
+ * AND AN HONEST STALE HEAD IS NOT A FORK. A client that re-sends a mark after
+ * a drop names a parent that is no longer the head; it is refused and kept,
+ * and it must not be published as a proof, because nothing of ours contradicts
+ * it. Publishing that would forfeit a stake for a dropped socket.
+ */
+test('a refused mark that contradicts nothing is not published as a proof', () => {
+  const { round, rid, eid, mark } = played();
+  const parent = checkpointId(mark);
+  round.checkpoint(signedBy({ ...mark, tick: 120, stateHash: b32(0xa1), previousHash: parent }));
+
+  // a mark naming a parent this node has never held at all
+  assert.throws(
+    () => round.checkpoint(signedBy({ ...mark, tick: 240, stateHash: b32(0xc3), previousHash: b32(0x7e) })),
+    /does not follow the chain head/);
+
+  assert.equal(round.offeredMarks(rid, eid).length, 1, 'it was kept, as evidence');
+  assert.deepEqual(round.equivocation(rid, eid), [], 'and it was published as a proof');
+});
+
+/**
+ * THE SPLIT-COMMITTEE SIGNAL, ASKED FOR. A receipt for a mark this node never
+ * got is the only thing that surfaces two chains sent to disjoint subsets
+ * before settlement, and it was kept where nobody could ask for it.
+ */
+test('a node publishes the receipts it holds for marks it has not got', async () => {
+  const { round, mark } = played();
+  const elsewhere = { ...mark, tick: 120, stateHash: b32(0x99), previousHash: checkpointId(mark) };
+  const member = ed25519.utils.randomSecretKey();
+  const r = {
+    checkpointId: checkpointId(elsewhere),
+    nodePubkey: ed25519.getPublicKey(member),
+    receivedAtMs: 7000n,
+  };
+  const receipt = joinSignedReceipt(encodeCheckpointReceipt(r), ed25519.sign(receiptId(r), member));
+
+  const empty = await serve(played().round.db, { port: 0, funded: () => true });
+  const node = await serve(round.db, { port: 0, funded: () => true });
+  try {
+    // nothing held yet
+    const none = await fetch(`http://127.0.0.1:${empty.port}/foreign-receipts`);
+    assert.equal(none.status, 204);
+
+    assert.throws(() => round.takeReceipt(receipt), /has not got/);
+
+    const got = await fetch(`http://127.0.0.1:${node.port}/foreign-receipts`);
+    assert.equal(got.status, 200);
+    assert.equal(got.headers.get('x-foreign-receipts'), '1');
+    const body = new Uint8Array(await got.arrayBuffer());
+    assert.equal(toHex(body), toHex(receipt), 'the bytes a member signed came back changed');
+
+    // and a stranger can read whose it is, and what it names, without asking
+    const back = decodeCheckpointReceipt(splitSignedReceipt(body).body);
+    assert.deepEqual(back.nodePubkey, ed25519.getPublicKey(member));
+    assert.deepEqual(back.checkpointId, checkpointId(elsewhere));
+  } finally { await node.close(); await empty.close(); }
 });
