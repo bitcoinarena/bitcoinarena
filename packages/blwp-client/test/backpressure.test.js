@@ -92,9 +92,12 @@ test('the hold cannot grow past the round it belongs to', async () => {
     for (let i = 0; i < 1800; i++) client.record([45875, 0, 0, 0, 0]);
 
     assert.equal(client.held, 600, 'the hold grew past the round');
-    assert.ok(client.dropped > 0, 'and it did not say so');
-    assert.equal(client.dropped, 1200,
-      'every tick past the round is counted, so a stall is visible rather than silent');
+    // ONE drop, not 1200: the run ends on the first tick that will not fit,
+    // rather than counting the other 1199 while publishing a chain that no
+    // longer says which tick carried which input.
+    assert.equal(client.dropped, 1, 'the run must end on the first dropped tick');
+    assert.equal(client.ended, true);
+    assert.equal(client.ending, 'VOID');
   } finally { client.close(); await node.close(); }
 });
 
@@ -140,5 +143,142 @@ test('marks are skipped rather than queued when one is already going', async () 
     assert.equal(client.marksSent, 1, 'more than one mark was on the wire');
     assert.equal(client.marksSkipped, 5,
       'a mark that could not go out must be counted, or a stall is invisible');
+  } finally { client.close(); await node.close(); }
+});
+
+/* ------------------------------------------------------ the run has an end */
+
+/**
+ * A DROPPED TICK ENDS THE RUN INSTEAD OF MINTING A FALSE TRANSCRIPT.
+ *
+ * `batch` numbers a batch by a COUNT of published ticks, so from the first
+ * dropped tick the chain would say 600, 601, 602 while those words are the
+ * inputs from tick 1800 - a stream that reads as continuous while skipping
+ * inputs, which a verifier would replay into a different world from the one
+ * the player was in. That is the money-law failure, and a bound alone does not
+ * prevent it: what prevents it is stopping.
+ *
+ * The ending is VOID - the spec's word for a fault that is not the player's.
+ * Not PLAYER_LOST, because a slow node filling the hold must not become a
+ * house win; not DELIVERED, because nothing was. And a player cannot use it as
+ * a way out either: the round has no transcript anybody can replay, which is
+ * the same answer whoever caused it.
+ */
+test('the first dropped tick ends the run, and nothing more is published', async () => {
+  const { node, client, rid, eid } = await rig(0);
+  try {
+    // fill the round exactly, publish it, then offer one tick too many
+    for (let i = 0; i < 600; i++) client.record([45875, 0, 0, 0, 0]);
+    await client.drain();
+    await client.settle();
+
+    const publishedBefore = client.batchesSent;
+    const firstTickBefore = client.nextTick;
+    assert.equal(client.dropped, 0, 'nothing should have been dropped yet');
+    assert.equal(client.ended, false);
+
+    // the hold fills again while nothing is draining, and then overflows
+    for (let i = 0; i < 601; i++) client.record([45875, 0, 0, 0, 0]);
+
+    assert.equal(client.dropped, 1, 'exactly the tick that would not fit');
+    assert.equal(client.ended, true, 'the run must end on the first dropped tick');
+    assert.equal(client.ending, 'VOID');
+    assert.notEqual(client.ending, 'PLAYER_LOST');
+    assert.notEqual(client.ending, 'DELIVERED');
+    assert.match(client.endingReason, /the hold was full at 600/);
+
+    // and nothing leaves after it, however hard it is asked
+    assert.equal(client.drain(), null, 'a batch left the client after the run ended');
+    assert.equal(client.markNow('ab'.repeat(32), 1800), null, 'a mark left after the run ended');
+    await client.settle();
+    assert.equal(client.batchesSent, publishedBefore, 'the publish count moved after the end');
+    assert.equal(client.nextTick, firstTickBefore, 'the tick numbering moved after the end');
+
+    // the node holds the honest part and nothing beyond it
+    const r = await fetch(`http://127.0.0.1:${node.port}/transcript`
+      + `?round=${Buffer.from(rid).toString('hex')}&entry=${Buffer.from(eid).toString('hex')}`);
+    assert.equal(Number(r.headers.get('x-ticks')), 600,
+      'the node holds exactly the ticks that were honestly published');
+  } finally { client.close(); await node.close(); }
+});
+
+/**
+ * AND THE NUMBERS ARE CHECKED BEFORE ANYTHING LEAVES, as a second line.
+ *
+ * Every tick a client accepts is either published or still held, so
+ * `nextTick + held` has to equal what was offered. If those part, the next
+ * batch would put the wrong words at the wrong tick - so it does not go.
+ */
+test('a batch that would name ticks it does not carry is refused, not sent', async () => {
+  const { node, client } = await rig(0);
+  try {
+    for (let i = 0; i < 10; i++) client.record([45875, 0, 0, 0, 0]);
+    // a tick vanishes from the hold without going anywhere - the shape of any
+    // bug that could lose one
+    client.hold.pop();
+
+    assert.equal(client.drain(), null, 'a mislabelled batch was allowed out');
+    assert.equal(client.ended, true);
+    assert.equal(client.ending, 'VOID');
+    assert.match(client.endingReason, /would name ticks it does not carry/);
+    assert.equal(client.batchesSent, 0);
+  } finally { client.close(); await node.close(); }
+});
+
+/**
+ * AND A RUN THAT NEVER DROPPED A TICK IS UNTOUCHED - the reconnect and resume
+ * path still carries on at the tick the node is owed. The ending is for a
+ * client that cannot be honest, not for one that had a bad connection.
+ */
+test('a session that dropped nothing still reconnects and carries on', async () => {
+  const { node, client, rid, eid } = await rig(0);
+  try {
+    for (let i = 0; i < 300; i++) client.record([45875, 0, 0, 0, 0]);
+    await client.drain();
+    await client.settle();
+    assert.equal(client.dropped, 0);
+
+    client.close();
+    await wait(200);
+    assert.equal(client.ended, false, 'a dropped socket is not a dropped tick');
+
+    await client.connect();
+    const got = await client.resume({ roundId: rid, entryId: eid });
+    assert.equal(got.nextTick, 300, 'it resumes at the tick the node is owed');
+
+    // no setRound here: that starts a session, and this is the same one
+    // carrying on. `resume` has already put the published position back.
+    const before = client.batchesSent;
+    for (let i = 0; i < 60; i++) client.record([45875, 0, 0, 0, 0]);
+    await client.drain();
+    await client.settle();
+    assert.equal(client.batchesSent, before + 1, 'it could not publish after the reconnect');
+    assert.equal(client.ended, false, 'carrying on after a reconnect must not end the run');
+    assert.equal(client.nextTick, 360, 'and it carries on at the tick it left, not from zero');
+  } finally { client.close(); await node.close(); }
+});
+
+/**
+ * AND THE FREEZE IS THE FREEZE, not the arithmetic guard standing in for it.
+ *
+ * When a tick is dropped the two checks fire together - the run ends AND the
+ * numbers part - so a test on that path passes even if `drain` never looked at
+ * `ended`. Measured: removing the `ended` check from `drain` left every other
+ * test green. This is the case that tells them apart: a run ended for any
+ * reason at all, with the hold and the counts still agreeing.
+ */
+test('once the run has ended, nothing leaves even though the numbers agree', async () => {
+  const { node, client } = await rig(0);
+  try {
+    for (let i = 0; i < 10; i++) client.record([45875, 0, 0, 0, 0]);
+    assert.equal(client.nextTick + client.held, client.offered, 'the counts should agree here');
+
+    client.endRun('ended for a reason that is not a dropped tick');
+    assert.equal(client.ending, 'VOID');
+
+    assert.equal(client.drain(), null, 'a batch left a session that had ended');
+    await client.settle();
+    assert.equal(client.batchesSent, 0, 'the publish count moved after the end');
+    assert.equal(client.held, 10, 'and what was held stayed held');
   } finally { client.close(); await node.close(); }
 });

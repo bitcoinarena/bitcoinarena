@@ -204,6 +204,7 @@ export class Client {
       // name, or it would wait for one that can no longer arrive - a publish
       // that never settles stops the queue behind it for the rest of the run.
       sock.addEventListener('close', () => {
+        if (this.ended) return;                         // the run is over, not dropped
         if (this.sock !== sock) return;                 // already replaced
         this.sock = null;
         const waiting = this.said;
@@ -398,6 +399,14 @@ export class Client {
     this.batchHead = last ? batchId(last) : GENESIS;
     this.nextTick = last ? batchTicks(last).at(-1) + 1 : 0;
 
+    // AND THE COUNT OF WHAT THIS CLIENT HAS ACCEPTED IS RECONCILED WITH IT.
+    //
+    // `offered` exists so that `nextTick + held` can be checked against it
+    // before a batch goes out. A resume moves `nextTick` to whatever the node
+    // is owed, so the count has to move with it or the very next drain would
+    // read as a client that had lost a tick and would end the run for it.
+    this.offered = this.nextTick + this.hold.length;
+
     // AND THE MARKS' HEAD, which is the other chain and is lost the same way.
     // A resume that left it at the start of the round would have every later
     // mark refused for not following the head - the reconnect would look
@@ -439,6 +448,31 @@ export class Client {
     this.marksSkipped = 0;
     this.publishing = null;
     this.marking = null;
+    this.offered = 0;
+    this.ended = false;
+    this.ending = null;
+    this.endingReason = '';
+  }
+
+  /**
+   * THE RUN HAS NO HONEST TRANSCRIPT, so it ends here.
+   *
+   * Not a defeat and not a delivery: this is a publish-path failure, and the
+   * spec's word for a fault that is not the player's is VOID. A slow node that
+   * filled the hold must not become a house win, and a player must not be able
+   * to use a drop as a way out of a run that was going badly - the round simply
+   * has no transcript anybody can replay, and that is what is said.
+   *
+   * Everything outbound stops. A client that cannot be honest about which tick
+   * carried which input should say so rather than keep publishing a stream
+   * that reads as a valid round and is not one.
+   */
+  endRun(reason) {
+    if (this.ended) return;
+    this.ended = true;
+    this.ending = 'VOID';
+    this.endingReason = reason;
+    if (this.sock) { const s = this.sock; this.sock = null; try { s.close(); } catch { /* gone */ } }
   }
 
   /**
@@ -451,7 +485,20 @@ export class Client {
    * count is what makes a stall visible instead of silent.
    */
   record(words) {
-    if (this.hold.length >= this.maxHold) { this.dropped++; return false; }
+    if (this.ended) return false;
+    this.offered++;
+    if (this.hold.length >= this.maxHold) {
+      // THE FIRST DROPPED TICK ENDS THE RUN. It used to be counted and the
+      // publishing carried on, and that was the fault: `batch` numbers a batch
+      // by a COUNT of published ticks, so from the first drop onward the chain
+      // says 600, 601, 602 while those words are the inputs from tick 1800 -
+      // a stream that looks continuous while skipping inputs, which a verifier
+      // would replay into a different world than the player was in.
+      this.dropped++;
+      this.endRun(`a tick was dropped at ${this.offered}: the hold was full at `
+        + `${this.maxHold}, so no transcript from here can be replayed`);
+      return false;
+    }
     this.hold.push(words);
     this.held = this.hold.length;
     return true;
@@ -468,7 +515,21 @@ export class Client {
    * counted.
    */
   drain() {
-    if (this.publishing || !this.hold.length || !this.where) return this.publishing;
+    if (this.ended || this.publishing || !this.hold.length || !this.where) return this.publishing;
+
+    // AND THE NUMBERS MUST AGREE BEFORE ANYTHING LEAVES.
+    //
+    // A batch goes out as `firstTick: nextTick`, so every tick this client has
+    // ever accepted is either published or still held: `nextTick + held` has to
+    // equal what was offered. If it does not, a tick went missing somewhere
+    // and the next batch would put the wrong words at the wrong tick. The
+    // first drop already ends the run; this is the second line, and it catches
+    // any other way the two could part.
+    if (this.nextTick + this.hold.length !== this.offered) {
+      this.endRun(`${this.offered} ticks offered but ${this.nextTick} published and `
+        + `${this.hold.length} held: a batch here would name ticks it does not carry`);
+      return null;
+    }
     if (this.sock && this.sock.bufferedAmount > 262144) return null;
 
     const words = this.hold.slice(0, this.chunk);
@@ -502,6 +563,9 @@ export class Client {
    * transcript.
    */
   markNow(stateHash, tick, inputChainHash = GENESIS) {
+    // A mark after the run has ended would commit to a world whose inputs
+    // nobody can produce - it names a tick the transcript cannot reach.
+    if (this.ended) return null;
     if (this.marking || !this.where) { this.marksSkipped++; return null; }
     this.marking = this.mark(stateHash, {
       roundId: this.where.roundId, entryId: this.where.entryId, tick, inputChainHash,
