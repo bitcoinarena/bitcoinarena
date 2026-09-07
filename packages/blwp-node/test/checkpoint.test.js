@@ -13,6 +13,12 @@ import {
   joinSigned, splitSigned, SIGNED_CHECKPOINT_BYTES, CHECKPOINT_BYTES,
 } from '../../protocol/src/checkpoint.js';
 import { ed25519 } from '@noble/curves/ed25519.js';
+import { mkdtempSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import {
+  decodeCheckpointReceipt, receiptId, splitSignedReceipt, SIGNED_RECEIPT_BYTES,
+} from '../../protocol/src/receipt.js';
 import { encodeInputBatch, batchId } from '../../protocol/src/batch.js';
 import { GENESIS } from '../../protocol/src/transcript.js';
 import { toHex } from '../../protocol/src/hash.js';
@@ -67,28 +73,63 @@ function rig() {
     roundId: rid, entryId: eid, tick,
     stateHash: b32(state), inputChainHash: inputs, previousHash: previous,
   });
+  // `send` advances the chain, so the mark it built is kept: asking `make`
+  // for it again afterwards would build a DIFFERENT one, chained onto itself.
+  let last = null;
   const send = (tick, state) => {
     const c = make(tick, state);
+    last = c;
     const answer = r.checkpoint(sign(c));
-    if (answer === 'stored') previous = checkpointId(c);
+    if (answer instanceof Uint8Array) previous = checkpointId(c);
     return answer;
   };
-  return { r, rid, eid, inputs, make, send };
+  return { r, rid, eid, inputs, make, send, last: () => last };
 }
 
-test('a checkpoint is stored, and the same one again is a no-op', () => {
+/**
+ * WHAT AN ANSWER TO A CHECKPOINT NOW IS.
+ *
+ * It used to be the word 'stored' or 'repeat'. Those said whether the database
+ * had changed, which is the node's business; what a player needs back is
+ * evidence, and a receipt is evidence a third party can check without asking
+ * this node anything. So every one of these assertions reads the receipt
+ * rather than a word - and reads it the way a client would, by recomputing the
+ * id and verifying the signature under the node's own key.
+ */
+function receiptOver(round, answer, c) {
+  assert.ok(answer instanceof Uint8Array, `the answer is not bytes: ${answer}`);
+  assert.equal(answer.length, SIGNED_RECEIPT_BYTES);
+  const { body, signature } = splitSignedReceipt(answer);
+  const r = decodeCheckpointReceipt(body);
+  assert.deepEqual(r.checkpointId, checkpointId(c), 'the receipt answers a different mark');
+  assert.deepEqual(r.nodePubkey, round.pubkey, 'the receipt is not this node\'s');
+  assert.ok(ed25519.verify(signature, receiptId(r), round.pubkey),
+    'the receipt does not verify under the key the node publishes');
+  return r;
+}
+
+test('a checkpoint is receipted, and the same one again gets the SAME receipt', () => {
   const { r, make } = rig();
   const c = make(60, 0x5a);
-  assert.equal(r.checkpoint(sign(c)), 'stored');
-  assert.equal(r.checkpoint(sign(c)), 'repeat',
-    're-sending is what a client does when it never learned the first landed');
+  const first = r.checkpoint(sign(c));
+  const firstReceipt = receiptOver(r, first, c);
+
+  // Re-sending is what a client does when it never learned the first landed,
+  // and it must not be given a second time for one commitment: section 10's
+  // claim is that the player committed to that state at approximately that
+  // real time, and two times would make that claim ambiguous.
+  const again = r.checkpoint(sign(c));
+  const againReceipt = receiptOver(r, again, c);
+  assert.deepEqual(again, first, 'a repeat was answered with different bytes');
+  assert.equal(againReceipt.receivedAtMs, firstReceipt.receivedAtMs,
+    'a repeat was given a fresh timestamp');
 });
 
 test('two different checkpoints at one tick are refused by name', () => {
   const { r, make } = rig();
   const honest = make(60, 0x5a);
   const other = { ...make(60, 0x5b) };
-  assert.equal(r.checkpoint(sign(honest)), 'stored');
+  receiptOver(r, r.checkpoint(sign(honest)), honest);
   assert.throws(() => r.checkpoint(sign(other)), (e) => {
     assert.match(e.message, /equivocation at tick 60/);
     // Both ids are in the refusal, so the message IS the proof rather than a
@@ -100,8 +141,8 @@ test('two different checkpoints at one tick are refused by name', () => {
 });
 
 test('the chain is checked, so a checkpoint cannot be re-parented', () => {
-  const { r, make, send } = rig();
-  assert.equal(send(60, 0x5a), 'stored');
+  const { r, make, send, last } = rig();
+  receiptOver(r, send(60, 0x5a), last());
   // tick 120 claiming to follow the genesis instead of the checkpoint at 60
   const orphan = { ...make(120, 0x5b), previousHash: NO_PREVIOUS };
   assert.throws(() => r.checkpoint(sign(orphan)),
@@ -149,8 +190,8 @@ test('a mark cannot run backwards through its own parent', () => {
   // Measured before the rule existed: tick 60 stored, then tick 30 naming the
   // tick-60 mark as its parent was ALSO stored, and the read handed back
   // [30, 60] - the chain claiming one order and the ticks another.
-  const { r, rid, eid, make, send } = rig();
-  assert.equal(send(60, 0x5a), 'stored');
+  const { r, rid, eid, make, send, last } = rig();
+  receiptOver(r, send(60, 0x5a), last());
   const backwards = make(30, 0x5b);          // chains onto the mark at 60
   assert.throws(() => r.checkpoint(sign(backwards)),
     /expected a tick after 60, got 30/);
@@ -183,7 +224,7 @@ test('a mark taken before any batch may name the genesis', () => {
     roundId: rid, entryId: eid, tick: 0,
     stateHash: b32(0x5a), inputChainHash: GENESIS, previousHash: NO_PREVIOUS,
   };
-  assert.equal(r.checkpoint(sign(c)), 'stored');
+  receiptOver(r, r.checkpoint(sign(c)), c);
 });
 
 /* -------------------------------------------------------------- signatures */
@@ -237,4 +278,31 @@ test('a signed mark is 231 bytes on the wire', () => {
   const { make } = rig();
   assert.equal(sign(make(60, 0x5a)).length, 231);
   assert.equal(CHECKPOINT_BYTES, 167);
+});
+
+/**
+ * THE NODE IS THE SAME NODE AFTER A RESTART.
+ *
+ * A receipt is only worth something because it names the key that signed it
+ * and that key can be checked against the round's committee. A daemon that
+ * minted a fresh key on every start would invalidate every receipt it had
+ * ever issued the moment it was restarted - and the player holding one would
+ * have no way to tell that from a forgery.
+ *
+ * So it is read off the store, and this opens the same FILE twice to show it.
+ * An in-memory store cannot show it: there is nothing to reopen.
+ */
+test('the node keeps its identity across a reopen of the same store', () => {
+  const path = join(mkdtempSync(join(tmpdir(), 'blwp-')), 'node.db');
+
+  const first = new Round(openStore(path));
+  const key = first.pubkey;
+  assert.equal(key.length, 32);
+
+  const again = new Round(openStore(path));
+  assert.deepEqual(again.pubkey, key, 'the node came back as somebody else');
+
+  // and a different store is a different node, or every daemon would be one
+  const elsewhere = new Round(openStore(join(mkdtempSync(join(tmpdir(), 'blwp-')), 'node.db')));
+  assert.notDeepEqual(elsewhere.pubkey, key, 'two separate nodes share one identity');
 });

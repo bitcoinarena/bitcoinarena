@@ -30,6 +30,10 @@ import {
 import { GENESIS } from '../../protocol/src/transcript.js';
 import { toHex } from '../../protocol/src/hash.js';
 import { Client, markState } from '../src/client.js';
+import {
+  decodeCheckpointReceipt, receiptId, splitSignedReceipt, encodeCheckpointReceipt,
+  joinSignedReceipt, SIGNED_RECEIPT_BYTES,
+} from '../../protocol/src/receipt.js';
 import { createServer } from 'node:http';
 
 const require = createRequire(import.meta.url);
@@ -39,6 +43,7 @@ const b32 = (n) => new Uint8Array(32).fill(n);
 const session = ed25519.utils.randomSecretKey();
 const sessionPubkey = ed25519.getPublicKey(session);
 const sign = (id) => ed25519.sign(id, session);
+const verify = (sig, msg, key) => { try { return ed25519.verify(sig, msg, key); } catch { return false; } };
 
 const contract = () => ({
   simCoreHash: b32(1), startTimeMs: 1000n, entryCloseMs: 2000n,
@@ -67,8 +72,10 @@ const marks = async (port, rid, eid) => {
 
 async function rig() {
   const node = await serve(openStore(), { port: 0 });
-  const client = new Client({ base: `http://127.0.0.1:${node.port}`, core, sign });
-  const c = contract();
+  // The committee is this node's own key, because that is what it will sign
+  // its receipts with and the contract is where a client learns to expect it.
+  const client = new Client({ base: `http://127.0.0.1:${node.port}`, core, sign, verify });
+  const c = { ...contract(), nodes: [node.round.pubkey] };
   const rid = await client.openRound(c);
   assert.deepEqual(rid, roundId(c), 'the node named a different round than the contract hashes to');
   const e = entryFor(rid);
@@ -87,7 +94,13 @@ test('the client sends a state hash and the node stores it at that tick', async 
     assert.notEqual(own, core.hash(core.init(7)), 'a driven core must not hash like a fresh one');
 
     const sent = await client.checkpoint(st, { roundId: rid, entryId: eid, tick: 120 });
-    assert.equal(sent.answer, 'stored', `the node refused the mark: ${sent.answer}`);
+    assert.equal(sent.answer, 'receipted', `the node refused the mark: ${sent.answer}`);
+
+    // THE RECEIPT, checked by the client and recomputed here independently.
+    assert.ok(sent.receipt, 'no receipt came back');
+    assert.deepEqual(sent.receipt.checkpointId, sent.id);
+    assert.deepEqual(sent.receipt.nodePubkey, node.round.pubkey);
+    assert.ok(sent.receipt.receivedAtMs > 0n, 'a receipt with no time is not evidence of one');
 
     // AND THE NODE IS HOLDING WHAT THE CLIENT COMPUTED, not merely something.
     const got = await marks(node.port, rid, eid);
@@ -111,7 +124,7 @@ test('a second, different hash at the same tick is refused as equivocation', asy
   const { node, client, rid, eid } = await rig();
   try {
     const first = await client.checkpoint(driven(60), { roundId: rid, entryId: eid, tick: 60 });
-    assert.equal(first.answer, 'stored');
+    assert.equal(first.answer, 'receipted');
 
     // The same tick, a state the core reached by a DIFFERENT drive - which is
     // what section 13B forfeits a player for publishing.
@@ -135,7 +148,7 @@ test('a mark naming a parent that is not the head is refused', async () => {
   const { node, client, rid, eid } = await rig();
   try {
     assert.equal((await client.checkpoint(driven(60), { roundId: rid, entryId: eid, tick: 60 })).answer,
-                 'stored');
+                 'receipted');
 
     // The head has moved on; this one still chains to the start of the round.
     const orphan = markState(core, driven(120),
@@ -166,14 +179,14 @@ test('a refusal does not move the client\'s chain head', async () => {
   const { node, client, rid, eid } = await rig();
   try {
     const stored = await client.checkpoint(driven(60), { roundId: rid, entryId: eid, tick: 60 });
-    assert.equal(stored.answer, 'stored');
+    assert.equal(stored.answer, 'receipted');
 
     const backwards = await client.checkpoint(driven(30), { roundId: rid, entryId: eid, tick: 30 });
     assert.equal(backwards.answer, 'error expected a tick after 60, got 30');
     assert.equal((await marks(node.port, rid, eid)).count, 1, 'the refused mark must not be stored');
 
     const next = await client.checkpoint(driven(120), { roundId: rid, entryId: eid, tick: 120 });
-    assert.equal(next.answer, 'stored',
+    assert.equal(next.answer, 'receipted',
       'a refusal left the client chaining onto a parent the node never stored');
     assert.equal((await marks(node.port, rid, eid)).count, 2);
 
@@ -204,7 +217,7 @@ test('a node that names a different round is a disagreement, not an id', async (
   await new Promise((r) => liar.listen(0, '127.0.0.1', r));
   const port = liar.address().port;
   try {
-    const client = new Client({ base: `http://127.0.0.1:${port}`, core, sign });
+    const client = new Client({ base: `http://127.0.0.1:${port}`, core, sign, verify });
     const c = contract();
     await assert.rejects(
       () => client.openRound(c),
@@ -224,4 +237,93 @@ test('a node that names a different round is a disagreement, not an id', async (
         return true;
       });
   } finally { await new Promise((r) => liar.close(r)); }
+});
+
+/**
+ * THE THREE WAYS A RECEIPT CAN BE WRONG, and each one is refused by its own
+ * name.
+ *
+ * A real node signs correctly, so these are built by hand: the client's rule
+ * is what is under test, not the node's honesty. Which matters, because the
+ * whole point of a receipt is that it is worth something LATER - section 12
+ * puts `receipts[]` in the round record and section 13B builds its proof out
+ * of signed objects - so a client that accepted a receipt for another mark, or
+ * one from a key that is not on the committee, would be collecting evidence
+ * that proves nothing.
+ *
+ * Reported as three failures and not one on purpose: a single "bad receipt"
+ * would hide which of them happened, and they are not the same accusation.
+ */
+test('a receipt for another mark, a stranger, or a bad signature are three different refusals', async () => {
+  const { node, client, rid, eid } = await rig();
+  try {
+    const sent = await client.checkpoint(driven(60), { roundId: rid, entryId: eid, tick: 60 });
+    assert.equal(sent.answer, 'receipted');
+
+    const nodeKey = node.round.identity;
+    const forge = (r, key = nodeKey.secret) =>
+      joinSignedReceipt(encodeCheckpointReceipt(r), ed25519.sign(receiptId(r), key));
+    const now = 1788770000000n;
+
+    // 1. the right node, the right signature, the WRONG mark
+    const elsewhere = forge({ checkpointId: b32(0x77), receivedAtMs: now, nodePubkey: nodeKey.pubkey });
+    assert.throws(() => client.readReceipt(elsewhere, sent.id), (e) => {
+      assert.match(e.message, /^the receipt is for 7777/);
+      assert.ok(e.message.includes(toHex(sent.id)), 'the mark actually sent must be named');
+      return true;
+    });
+
+    // 2. a real signature over a real receipt, by somebody who is not on the
+    //    committee this round's contract names
+    const stranger = ed25519.utils.randomSecretKey();
+    const strangerKey = ed25519.getPublicKey(stranger);
+    const outsider = forge({ checkpointId: sent.id, receivedAtMs: now, nodePubkey: strangerKey }, stranger);
+    assert.throws(() => client.readReceipt(outsider, sent.id), (e) => {
+      assert.match(e.message, /is not on this round's committee$/);
+      assert.ok(e.message.includes(toHex(strangerKey)));
+      return true;
+    });
+
+    // 3. the committee's key claimed, and a signature that does not verify
+    //    under it - which is what a forgery looks like from the outside
+    const claimed = { checkpointId: sent.id, receivedAtMs: now, nodePubkey: nodeKey.pubkey };
+    const lie = joinSignedReceipt(encodeCheckpointReceipt(claimed), ed25519.sign(receiptId(claimed), stranger));
+    assert.throws(() => client.readReceipt(lie, sent.id),
+      /does not verify under its own key$/);
+
+    // and a truncated one is refused before any of that is read
+    assert.throws(() => client.readReceipt(lie.subarray(0, 100), sent.id),
+      /a receipt is 139 bytes, the node sent 100/);
+  } finally { client.close(); await node.close(); }
+});
+
+/**
+ * A RE-SENT MARK GETS THE SAME RECEIPT, byte for byte and time for time.
+ *
+ * Re-sending is what a client does when it never learned the first one
+ * landed. Section 10's claim is that the player committed to that state at
+ * approximately that real time, and a second receipt with a later timestamp
+ * would hand the player two times for one commitment - so the node keeps the
+ * receipt and re-serves it rather than making a new one.
+ */
+test('re-sending a mark returns the receipt already issued, not a second one', async () => {
+  const { node, client, rid, eid } = await rig();
+  try {
+    const st = driven(90);
+    const first = await client.checkpoint(st, { roundId: rid, entryId: eid, tick: 90 });
+    assert.equal(first.answer, 'receipted');
+
+    // the same mark again: the head has moved, so it is rebuilt by hand with
+    // the parent it actually had
+    const again = markState(core, st,
+      { roundId: rid, entryId: eid, tick: 90, previousHash: NO_PREVIOUS }, sign);
+    assert.deepEqual(again.id, first.id, 'the same mark must have the same id');
+
+    const answer = await client.send(again.bytes);
+    assert.equal(answer.length, SIGNED_RECEIPT_BYTES);
+    const r = decodeCheckpointReceipt(splitSignedReceipt(answer).body);
+    assert.equal(r.receivedAtMs, first.receipt.receivedAtMs,
+      'a repeat was given a fresh time, so the player now has two for one commitment');
+    assert.deepEqual(r.checkpointId, first.id);
+  } finally { client.close(); await node.close(); }
 });

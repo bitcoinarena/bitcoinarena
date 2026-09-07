@@ -17,14 +17,57 @@ import { encodeTranscript, transcriptHash, checkTranscript, GENESIS } from '../.
 import {
   decodeCheckpoint, checkpointId, NO_PREVIOUS, splitSigned,
 } from '../../protocol/src/checkpoint.js';
+import {
+  encodeCheckpointReceipt, receiptId, joinSignedReceipt,
+} from '../../protocol/src/receipt.js';
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { toHex } from '../../protocol/src/hash.js';
-import { OPEN, CLOSED } from './store.js';
+import { OPEN, CLOSED, nodeIdentity } from './store.js';
 
 const same = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
 
 export class Round {
-  constructor(db, now = () => Date.now()) { this.db = db; this.now = now; }
+  constructor(db, now = () => Date.now()) {
+    this.db = db;
+    this.now = now;
+    // Read once, and made on the first ask if the file has none. A node that
+    // could not sign would have to answer a checkpoint with something other
+    // than a receipt, and there is no such answer.
+    this.identity = nodeIdentity(db);
+  }
+
+  /** This node's public key, which is what a client checks a receipt against. */
+  get pubkey() { return this.identity.pubkey; }
+
+  /**
+   * The receipt for a mark: made once, kept, and re-served ever after.
+   *
+   * `IMPLEMENTATION.md` gives the wire as `S -> C RECEIPT { checkpoint_hash,
+   * received_at, node_sig }`, and section 10 says what it is FOR: it proves
+   * the player committed to that state at approximately that real time. So a
+   * re-sent mark must get the same time back, not a new one - two times for
+   * one commitment is exactly the claim the receipt is supposed to make
+   * unambiguous. The store is what makes that true rather than a promise.
+   *
+   * What is signed is the tagged `receiptId`, not the raw encoding, for the
+   * reason every other signature in this protocol is: a signature over bytes
+   * can be replayed as a signature over a different object that happens to
+   * encode the same way.
+   */
+  receiptFor(id) {
+    const kept = this.db.prepare('SELECT bytes FROM receipts WHERE checkpoint_id = ?').get(id);
+    if (kept) return new Uint8Array(kept.bytes);
+
+    const r = {
+      checkpointId: id,
+      receivedAtMs: BigInt(this.now()),
+      nodePubkey: this.identity.pubkey,
+    };
+    const bytes = joinSignedReceipt(
+      encodeCheckpointReceipt(r), ed25519.sign(receiptId(r), this.identity.secret));
+    this.db.prepare('INSERT INTO receipts (checkpoint_id, bytes) VALUES (?, ?)').run(id, bytes);
+    return bytes;
+  }
 
   /**
    * Opens a round. Returns its id - the tagged hash of the contract.
@@ -165,7 +208,17 @@ export class Round {
   }
 
   /**
-   * A checkpoint in. Returns 'stored' or 'repeat'; equivocation throws.
+   * A checkpoint in. Answers with this node's signed RECEIPT for it, whether
+   * it was stored now or had already been stored; equivocation throws.
+   *
+   * It used to answer the words 'stored' and 'repeat'. Those said whether the
+   * database had changed, which is the node's business and not the player's:
+   * what a player needs back is evidence, and a receipt is evidence a third
+   * party can check without asking this node anything. The two cases answer
+   * the SAME bytes on purpose - a client that re-sends because it never
+   * learned the first one landed is not in a different position from one that
+   * did, and telling them apart would only invite them to be handled
+   * differently.
    *
    * THE THREE CASES, and only the middle one is a judgement call the code
    * makes. Nothing at this key: store it. The SAME bytes again: a repeat,
@@ -222,7 +275,7 @@ export class Round {
       'SELECT checkpoint_id FROM checkpoints WHERE round_id = ? AND entry_id = ? AND tick = ?')
       .get(c.roundId, c.entryId, c.tick);
     if (at) {
-      if (same(new Uint8Array(at.checkpoint_id), id)) return 'repeat';
+      if (same(new Uint8Array(at.checkpoint_id), id)) return this.receiptFor(id);
       throw new Error(
         `equivocation at tick ${c.tick}: ${toHex(at.checkpoint_id)} already stored, `
         + `now ${toHex(id)}`);
@@ -274,7 +327,7 @@ export class Round {
       'INSERT INTO checkpoints (round_id, entry_id, tick, checkpoint_id, bytes, received_ms) '
       + 'VALUES (?, ?, ?, ?, ?, ?)')
       .run(c.roundId, c.entryId, c.tick, id, bytes, Date.now());
-    return 'stored';
+    return this.receiptFor(id);
   }
 
   /**

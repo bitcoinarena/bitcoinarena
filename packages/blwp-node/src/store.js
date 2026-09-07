@@ -13,6 +13,7 @@
 // Nothing here steps the core. The node stores and serves; it does not judge.
 // Verification arrives with the checkpoints and is measured on its own.
 import { DatabaseSync } from 'node:sqlite';
+import { ed25519 } from '@noble/curves/ed25519.js';
 
 export const OPEN = 0, CLOSED = 1;
 
@@ -84,6 +85,36 @@ export function openStore(path = ':memory:') {
       PRIMARY KEY (round_id, entry_id, tick)
     );
 
+    -- THE RECEIPTS THIS NODE HAS ISSUED, keyed by the mark they answer.
+    --
+    -- A receipt says "I held this mark at this time", and a mark re-sent by a
+    -- client that never learned the first one landed must get the SAME answer
+    -- back - the same time, the same signature, the same bytes. A fresh
+    -- timestamp on a repeat would hand the player two different times for one
+    -- commitment, and section 10's whole claim is that the player committed to
+    -- that state at approximately that real time. So the receipt is stored
+    -- once and re-served, and the key is the checkpoint it answers rather than
+    -- (round, entry, tick), because the mark's own id is what it commits to.
+    CREATE TABLE IF NOT EXISTS receipts (
+      checkpoint_id BLOB PRIMARY KEY,
+      bytes         BLOB NOT NULL
+    );
+
+    -- THIS NODE'S OWN KEY. One row, and the CHECK is what makes it one: a
+    -- daemon with two identities would sign some receipts with each and a
+    -- client checking them against the committee would be right to refuse
+    -- half of them.
+    --
+    -- It is the whole of the identity this cut needs. Where a key comes to be
+    -- KNOWN to strangers is the bond advertisement, M2.1 step 5b, and that is
+    -- discovery: it is not what lets a node sign. A client already holds the
+    -- key it should expect, in the Round Contract's nodes list.
+    CREATE TABLE IF NOT EXISTS identity (
+      one    INTEGER PRIMARY KEY CHECK (one = 0),
+      secret BLOB NOT NULL,
+      pubkey BLOB NOT NULL
+    );
+
     -- Sparse, because a liquidation is rare, and keyed the same way so a
     -- repeat cannot double a strike.
     CREATE TABLE IF NOT EXISTS liquidations (
@@ -95,4 +126,22 @@ export function openStore(path = ':memory:') {
     );
   `);
   return db;
+}
+
+/**
+ * The node's own keypair, made once and kept.
+ *
+ * Generated on first ask and read from the file every time after, so a daemon
+ * that restarts is the same node to every client that has one of its receipts.
+ * A node that made a fresh key on each start would invalidate every receipt it
+ * had ever issued the moment it was restarted.
+ */
+export function nodeIdentity(db) {
+  const row = db.prepare('SELECT secret, pubkey FROM identity WHERE one = 0').get();
+  if (row) return { secret: new Uint8Array(row.secret), pubkey: new Uint8Array(row.pubkey) };
+
+  const secret = ed25519.utils.randomSecretKey();
+  const pubkey = ed25519.getPublicKey(secret);
+  db.prepare('INSERT INTO identity (one, secret, pubkey) VALUES (0, ?, ?)').run(secret, pubkey);
+  return { secret, pubkey };
 }

@@ -30,6 +30,9 @@ import {
 } from '../../protocol/src/contracts.js';
 import { GENESIS } from '../../protocol/src/transcript.js';
 import { fromHex, toHex } from '../../protocol/src/hash.js';
+import {
+  decodeCheckpointReceipt, receiptId, splitSignedReceipt, SIGNED_RECEIPT_BYTES,
+} from '../../protocol/src/receipt.js';
 
 /**
  * A checkpoint over the state a core is holding, signed and ready for the wire.
@@ -86,12 +89,16 @@ function agrees(mine, theirs, what) {
 }
 
 export class Client {
-  constructor({ base, core, sign }) {
+  constructor({ base, core, sign, verify }) {
     this.base = base;
     this.core = core;
     this.sign = sign;
+    // Verifying is injected for the same reason signing is: the curve belongs
+    // to whoever runs the client, and this file should not decide it.
+    this.verify = verify;
     this.sock = null;
     this.head = NO_PREVIOUS;      // the chain head this client has published
+    this.nodes = [];              // the committee, off the round's own contract
     this.said = [];
   }
 
@@ -108,6 +115,10 @@ export class Client {
    * play until it is settled.
    */
   async openRound(contract) {
+    // The committee is in the contract the client itself wrote, so the key a
+    // receipt must carry is known before a single mark is sent - no census,
+    // no directory, nothing taken on a node's word.
+    this.nodes = [...contract.nodes];
     const mine = roundId(contract);
     const r = await fetch(`${this.base}/round`, {
       method: 'POST', body: encodeRoundContract(contract),
@@ -139,10 +150,14 @@ export class Client {
   connect() {
     return new Promise((resolve, reject) => {
       const sock = new WebSocket(`${this.base.replace(/^http/, 'ws')}/play`);
+      // Binary arrives as a Blob otherwise, and `new Uint8Array(blob)` is
+      // silently EMPTY rather than an error - measured: a 139-byte receipt
+      // read back as a zero-length array and the reply was never understood.
+      sock.binaryType = 'arraybuffer';
       sock.addEventListener('error', (e) => reject(new Error(e.message || 'socket error')));
       sock.addEventListener('message', (e) => {
         const waiting = this.said.shift();
-        if (waiting) waiting(typeof e.data === 'string' ? e.data : e.data);
+        if (waiting) waiting(typeof e.data === 'string' ? e.data : new Uint8Array(e.data));
       });
       sock.addEventListener('open', () => { this.sock = sock; resolve(this); });
     });
@@ -165,8 +180,51 @@ export class Client {
       roundId, entryId, tick, previousHash: this.head, inputChainHash,
     }, this.sign);
     const answer = await this.send(mark.bytes);
-    if (answer === 'stored') this.head = mark.id;
-    return { ...mark, answer };
+
+    // A REFUSAL IS A STRING AND STAYS ONE. The node names its reasons -
+    // "equivocation at tick 60", "expected a tick after 60" - and a client
+    // that turned them into an exception would lose the name.
+    if (typeof answer === 'string') return { ...mark, answer, receipt: null };
+
+    return { ...mark, answer: 'receipted', receipt: this.readReceipt(answer, mark.id) };
+  }
+
+  /**
+   * The node's answer to a mark, checked rather than believed.
+   *
+   * A receipt is the only thing the player gets back that is worth anything
+   * later: section 12 puts `receipts[]` in the round record, and section 13B's
+   * equivocation proof is built out of signed objects, not out of a node
+   * having said a word once. So every part of it is checked here, and each
+   * way it can be wrong is refused BY NAME - a receipt for another mark, a
+   * key that is not on this round's committee, and a signature that does not
+   * verify are three different failures and a client that reported them as
+   * one would be hiding which.
+   *
+   * The head moves only after all three pass. It used to move on the word
+   * 'stored'; a client that advanced its chain on an answer it had not
+   * checked would be chaining onto a commitment nobody has promised to hold.
+   */
+  readReceipt(bytes, markId) {
+    if (bytes.length !== SIGNED_RECEIPT_BYTES)
+      throw new Error(`a receipt is ${SIGNED_RECEIPT_BYTES} bytes, the node sent ${bytes.length}`);
+    const { body, signature } = splitSignedReceipt(bytes);
+    const r = decodeCheckpointReceipt(body);
+
+    if (toHex(r.checkpointId) !== toHex(markId))
+      throw new Error(
+        `the receipt is for ${toHex(r.checkpointId)}, and the mark just sent was ${toHex(markId)}`);
+
+    if (!this.nodes.some((n) => toHex(n) === toHex(r.nodePubkey)))
+      throw new Error(
+        `the receipt is signed by ${toHex(r.nodePubkey)}, which is not on this round's committee`);
+
+    if (!this.verify(signature, receiptId(r), r.nodePubkey))
+      throw new Error(
+        `the receipt from ${toHex(r.nodePubkey)} does not verify under its own key`);
+
+    this.head = markId;
+    return r;
   }
 
   close() { if (this.sock) this.sock.close(); }

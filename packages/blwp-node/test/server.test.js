@@ -13,6 +13,9 @@ import {
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { GENESIS, decodeTranscript, checkTranscript, transcriptHash } from '../../protocol/src/transcript.js';
 import { toHex } from '../../protocol/src/hash.js';
+import {
+  decodeCheckpointReceipt, receiptId, splitSignedReceipt, SIGNED_RECEIPT_BYTES,
+} from '../../protocol/src/receipt.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const contract = () => ({
@@ -41,10 +44,14 @@ const post = async (port, path, body) => {
 
 const talk = (port) => new Promise((resolve) => {
   const sock = new WebSocket(`ws://127.0.0.1:${port}/play`);
+  // A binary answer arrives as a Blob unless this is asked for, and
+  // `new Uint8Array(blob)` is silently empty rather than an error - measured:
+  // the receipt came back as a 139-byte Blob and read as a zero-length array.
+  sock.binaryType = 'arraybuffer';
   const said = [];
   sock.addEventListener('message', (e) => {
     const v = said.shift();
-    if (v) v(typeof e.data === 'string' ? e.data : e.data);
+    if (v) v(typeof e.data === 'string' ? e.data : new Uint8Array(e.data));
   });
   sock.addEventListener('open', () => resolve({
     say: (m) => new Promise((r) => { said.push(r); sock.send(m); }),
@@ -152,13 +159,28 @@ test('checkpoints cross the wire, and the refusals cross it too', async () => {
     });
 
     // ONE SOCKET, TWO KINDS: the first byte is the protocol's type, so a
-    // checkpoint needs no second connection and no envelope.
+    // checkpoint needs no second connection and no envelope. And the ANSWER
+    // says which kind it was the same way - a batch is answered with a count,
+    // a checkpoint with this node's signed receipt over it.
+    const receipt = (answer, c) => {
+      const b = answer;
+      assert.equal(b.length, SIGNED_RECEIPT_BYTES, `expected a receipt, got ${answer}`);
+      const { body, signature } = splitSignedReceipt(b);
+      const r = decodeCheckpointReceipt(body);
+      assert.deepEqual(r.checkpointId, checkpointId(c), 'the receipt answers a different mark');
+      assert.deepEqual(r.nodePubkey, node.round.pubkey);
+      assert.ok(ed25519.verify(signature, receiptId(r), node.round.pubkey),
+        'the receipt does not verify under the key the node publishes');
+      return b;
+    };
+
     const first = mark(60, 0x5a, NO_PREVIOUS);
-    assert.equal(await sock.say(sign(first)), 'stored');
-    assert.equal(await sock.say(sign(first)), 'repeat');
+    const firstReceipt = receipt(await sock.say(sign(first)), first);
+    assert.deepEqual(receipt(await sock.say(sign(first)), first), firstReceipt,
+      'a re-sent mark must get the same receipt back, not a second time for one commitment');
 
     const second = mark(120, 0x5b, checkpointId(first));
-    assert.equal(await sock.say(sign(second)), 'stored');
+    receipt(await sock.say(sign(second)), second);
 
     // equivocation, over the wire
     const twin = mark(120, 0x5c, checkpointId(first));
