@@ -12,9 +12,12 @@ import assert from 'node:assert/strict';
 import { createHash, randomBytes } from 'node:crypto';
 
 import {
-  splitSecret, reconstruct, openStake, shareIsConsistent, shareCommitment,
-  FIELD, SHARES_NEEDED, SHARES_TOTAL,
+  splitSecret, reconstruct, openStake, handoutOutcome, shareIsConsistent,
+  shareCommitment, FIELD, SHARES_NEEDED, SHARES_TOTAL,
 } from '../src/shares.js';
+import {
+  holdSettlement, SETTLE, CANCEL, DELIVERED, FORFEIT, VOID,
+} from '../src/payout.js';
 import { toHex } from '../src/hash.js';
 
 const preimage = new Uint8Array(randomBytes(32));
@@ -240,4 +243,68 @@ test('a subset that rebuilds something is not mistaken for one that rebuilt P', 
 
   // an honest set still opens, and its answer hashes to the commitment
   assert.deepEqual(reconstruct(honest.slice(0, 5), { stakeCommitment }), preimage);
+});
+
+/**
+ * A HANDOUT NOBODY CAN OPEN IS FORFEIT, NOT VOID.
+ *
+ * VOID is the operator-fault path: nobody acts, the HTLC expires, the stake
+ * goes home. A player who deals three of their own seven seats from a second
+ * polynomial has broken settlement of their own stake, and calling that VOID
+ * would hand a loser their money back for having done it - the same family as
+ * escaping by disconnect.
+ */
+test('a handout no five seats can open forfeits, and does not refund the dealer', () => {
+  const other = new Uint8Array(randomBytes(32));
+  const honest = split().shares;
+  const second = splitSecret(other, { coefficients: coefficients.map((x) => x + 99n) }).shares;
+  const stakeCommitment = sha256(preimage);
+
+  const sabotaged = openStake(honest.map((s, i) => (i >= 4 ? second[i] : s)), { stakeCommitment });
+  assert.equal(sabotaged.ok, false);
+  assert.equal(sabotaged.opens, 0, 'the k=3 handout opened after all');
+
+  const said = handoutOutcome(sabotaged);
+  assert.equal(said.outcome, FORFEIT);
+  assert.notEqual(said.outcome, VOID, 'a sabotaged handout was treated as an operator fault');
+  assert.match(said.why, /the player dealt them/);
+  assert.match(said.why, /not the operator's fault/);
+
+  // an honest handout is nothing to do with this rule
+  const fine = handoutOutcome(openStake(honest, { stakeCommitment }));
+  assert.equal(fine.outcome, null);
+  assert.match(fine.why, /the preimage opened/);
+
+  assert.throws(() => handoutOutcome(undefined), /not an answer from openStake/);
+  assert.throws(() => handoutOutcome({ ok: 'no' }), /not an answer from openStake/);
+});
+
+/**
+ * AND THE MONEY FOLLOWS. The dealer does not get their stake back, the house
+ * does not pocket it, and a winner's stake still never enters the pool.
+ */
+test('the saboteur s stake pays the winner, and the operator takes none of it', () => {
+  const b = (n) => new Uint8Array(32).fill(n);
+  const winner = { entryId: b(1), pubkey: b(1), outcome: DELIVERED, score: 100, stakeMsat: 100000n };
+  const saboteur = { entryId: b(2), pubkey: b(2), outcome: FORFEIT, score: 0, stakeMsat: 100000n };
+
+  const s = holdSettlement({ roundId: b(9), minScore: 1, entries: [winner, saboteur] });
+  const said = new Map(s.actions.map((a) => [a.entry, a.action]));
+
+  assert.equal(said.get(saboteur), SETTLE, 'the saboteur s stake was handed back');
+  assert.equal(said.get(winner), CANCEL, 'the winner s stake entered the pool');
+  assert.equal(s.poolMsat, 100000n);
+  assert.equal(s.refundedMsat, 100000n, 'only the winner s own stake goes home');
+  assert.equal(s.sharesMsat, 100000n);
+  assert.equal(s.poolMsat - s.sharesMsat, 0n, 'the house kept the difference');
+  assert.equal(s.table.table[0].amountMsat, 200000n, 'the winner is paid from the forfeited stake');
+
+  // and had it been VOID, the dealer would have had it back and the winner
+  // nothing - which is the escape this classification closes
+  const asVoid = holdSettlement({
+    roundId: b(9), minScore: 1, entries: [winner, { ...saboteur, outcome: VOID }],
+  });
+  assert.equal(asVoid.poolMsat, 0n);
+  assert.equal(asVoid.refundedMsat, 200000n);
+  assert.equal(asVoid.table.table[0].amountMsat, 100000n, 'only the stake back');
 });

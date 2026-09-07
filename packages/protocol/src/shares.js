@@ -190,3 +190,36 @@ export function openStake(shares, { needed = SHARES_NEEDED, stakeCommitment } = 
       : `opened by seats ${openedBy.join(',')}`,
   };
 }
+
+/**
+ * A HANDOUT NO FIVE SEATS CAN OPEN IS THE DEALER'S DOING.
+ *
+ * The player IS the dealer of their own stake preimage: 23.1 has them split P
+ * and encrypt one share to each settlement seat. A handout where no five of
+ * the seven open the committed P did not happen to anybody - it was made, and
+ * only the player could have made it. Measured: three seats given a second
+ * polynomial's share leaves 0 of the 21 subsets able to open it, while all
+ * seven still pass their holders' checks.
+ *
+ * SO IT IS FORFEIT AND NOT VOID, and the difference is the whole of it. VOID
+ * is the operator-fault path - nobody acts, the HTLC expires, the stake goes
+ * home - so classifying a sabotaged handout as VOID would hand a losing player
+ * their money back for having broken the settlement themselves. That is the
+ * same family as escaping by disconnect, and 13C is explicit that the only way
+ * a player can cause a failure is one that forfeits.
+ *
+ * NOT A JUDGEMENT, AND NOT A GUESS. A settlement committee that cannot open a
+ * preimage has tried every subset; `openStake` is that attempt, and this reads
+ * its answer. A handout that opens is nothing to do with this function.
+ */
+export function handoutOutcome(opened) {
+  if (!opened || typeof opened.ok !== 'boolean')
+    throw new Error('that is not an answer from openStake');
+  if (opened.ok)
+    return { outcome: null, why: `the preimage opened: ${opened.why}` };
+  return {
+    outcome: 'FORFEIT',
+    why: `no five of the seven shares open the committed preimage, and the player `
+      + 'dealt them: sabotaging settlement of your own stake is not the operator\'s fault',
+  };
+}
