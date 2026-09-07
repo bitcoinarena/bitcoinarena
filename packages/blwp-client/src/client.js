@@ -240,6 +240,17 @@ export class Client {
     // `backoff` are what a status line reads. `sleep` and `now` are injected
     // for the same reason `sign` is: a test that had to wait eight real
     // seconds to see the cap would not be run.
+    // THE SESSION'S ONE WORD, and it lives here rather than in the page.
+    //
+    // `opening` until a socket is up, `ready` while one is, `dropped` while
+    // the loop is trying, `ended` once the run is over and never anything
+    // again. It was the page's before: the page learned `ended` only when
+    // `reconnect` answered null, which is the socket-DOWN path - so a VOID
+    // that happened with the socket still up (a slow node filling the hold)
+    // left the page printing `ready` beside the run's own ENDED VOID. Two
+    // words about one session, and the first is the one a reader trusts.
+    // Here there is one word, and `node --test` can load the file it is in.
+    this.state = 'opening';
     this.reconnecting = null;
     this.drops = 0;
     this.tries = 0;
@@ -305,7 +316,11 @@ export class Client {
         const waiting = this.said.shift();
         if (waiting) waiting(typeof e.data === 'string' ? e.data : new Uint8Array(e.data));
       });
-      sock.addEventListener('open', () => { this.sock = sock; resolve(this); });
+      sock.addEventListener('open', () => {
+        this.sock = sock;
+        if (!this.ended) this.state = 'ready';
+        resolve(this);
+      });
 
       // A DROPPED SOCKET IS NOT AN ERROR, it is the normal thing that happens
       // to a socket. Everything still waiting for an answer is told so by
@@ -319,6 +334,7 @@ export class Client {
         this.said = [];
         for (const w of waiting) w('error the socket closed');
         this.drops++;
+        this.state = 'dropped';
         if (this.onDrop) this.onDrop();
       });
     });
@@ -366,9 +382,11 @@ export class Client {
           const r = await this.resume(where);
           this.resumedAt = r.nextTick;
           this.backoff = 0;
+          this.state = 'ready';
           return r;
         } catch (e) {
           this.error = String(e.message || e);
+          this.state = this.ended ? 'ended' : 'dropped';
           if (this.sock) { const sk = this.sock; this.sock = null; try { sk.close(); } catch { /* gone */ } }
           this.backoff = this.backoff ? Math.min(this.backoff * 2, 8000) : 1000;
           await this.sleep(this.backoff);
@@ -709,6 +727,15 @@ export class Client {
     this.ended = true;
     this.ending = 'VOID';
     this.endingReason = reason;
+
+    // SAID BEFORE THE SOCKET IS CLOSED, and that ordering is the whole point.
+    // The `close` listener returns at its first line once `ended` is set - the
+    // run is over, not dropped - so nothing downstream would ever hear about a
+    // VOID that happened while the socket was still up. The word is set and
+    // the hook fires here, on the path the fault actually took.
+    this.state = 'ended';
+    if (this.onEnd) this.onEnd(this.ending, this.endingReason);
+
     if (this.sock) { const s = this.sock; this.sock = null; try { s.close(); } catch { /* gone */ } }
   }
 
@@ -827,6 +854,26 @@ export class Client {
       return r;
     }).catch((e) => { this.marking = null; throw e; });
     return this.marking;
+  }
+
+  /**
+   * THE ONE LINE A DEBUG PANEL READS, built here rather than in the page.
+   *
+   * It was assembled in `blwp.jslib`, which is the file `node --test` cannot
+   * load - and that is exactly how it came to print the page's `ready` beside
+   * this run's own `ENDED VOID`, and survive an audit saying so. A line built
+   * where it can be loaded is a line a test can read the first word of.
+   *
+   * `seen` is the game's tick counter and comes from the caller: the client
+   * counts what it published, not what the renderer drew.
+   */
+  status(seen = 0) {
+    return `${this.state} batches ${this.batchesSent} marks ${this.marksSent}`
+      + ` tick ${seen} held ${this.held}`
+      + (this.dropped ? ` dropped ${this.dropped}` : '')
+      + (this.marksSkipped ? ` skipped ${this.marksSkipped}` : '')
+      + (this.drops ? ` drops ${this.drops} tries ${this.tries} resumed ${this.resumedAt}` : '')
+      + (this.ended ? ` ${this.ending} ${this.endingReason}` : '');
   }
 
   /** Waits for whatever is on the wire, so a test can measure a settled state. */

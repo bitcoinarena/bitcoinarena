@@ -150,6 +150,50 @@ namespace Blwp
             Debug.Log("[blwp] round restarted in the core");
         }
 
+        /// <summary>
+        /// A ROUND THAT CANNOT BE SETTLED IS NOT DRIVEN ON.
+        ///
+        /// The client ends a run - VOID - when its hold fills and no transcript
+        /// from there can be replayed. Nothing in the game was told: the truck
+        /// kept driving, the core kept stepping, and the player finished a round
+        /// nobody could pay out.
+        ///
+        /// Its own function because it is a RULE, and rules here are measured.
+        /// `BlwpNet` is a stub outside a WebGL player, so nothing in an editor
+        /// will ever answer `true` - which is exactly why the rule has to be
+        /// readable without one. Unity decides no outcome: the word and the
+        /// reason are the client's, and this only says when to stop presenting
+        /// a live run.
+        /// </summary>
+        public static bool ShouldStop(bool driving, bool ended) => driving && ended;
+
+        /// <summary>
+        /// Whether the player's inputs still reach the core.
+        ///
+        /// The same answer from two directions: the game's own lock, and a run
+        /// that is over. Steering a round that cannot be settled is the thing
+        /// this door is about, so the second is not a convenience.
+        /// </summary>
+        public static bool LocksControls(bool controlsLocked, bool ended)
+            => controlsLocked || ended;
+
+        /// <summary>
+        /// Hands the truck back and stops stepping, once, saying why.
+        ///
+        /// The same handover `OnDisable` does - the rigidbody stops being
+        /// externally driven - so a stopped run leaves the truck in the state
+        /// the rest of the game already knows how to hold. Nothing is scored
+        /// and no outcome is chosen: the reason is repeated, not decided.
+        /// </summary>
+        public void StopDriving(string why)
+        {
+            if (!Driving) return;
+            if (_rb != null) _rb.isKinematic = _wasKinematic;
+            if (_truck != null) _truck.externallyDriven = false;
+            Driving = false;
+            Debug.Log($"[blwp] the core stopped driving: {why}");
+        }
+
         void OnDisable()
         {
             if (Driving && _rb != null) _rb.isKinematic = _wasKinematic;
@@ -512,6 +556,7 @@ namespace Blwp
 
         void Update()
         {
+            if (ShouldStop(Driving, BlwpNet.Ended)) { StopDriving(BlwpNet.Ending()); return; }
             if (!Driving) return;
             UploadGround();
             UploadSolids();
@@ -547,7 +592,7 @@ namespace Blwp
         /// rounding rule could differ between the recorded transcript and the
         /// replay, so it happens once and is easy to audit.
         /// </summary>
-        bool Locked => _truck != null && _truck.controlsLocked;
+        bool Locked => LocksControls(_truck != null && _truck.controlsLocked, BlwpNet.Ended);
 
         int Throttle() => Q(Locked ? 0f : DriveInput.Throttle);
         int Steer() => Q(Locked ? 0f : DriveInput.Steer);

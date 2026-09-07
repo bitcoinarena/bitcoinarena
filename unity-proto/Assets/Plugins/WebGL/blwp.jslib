@@ -198,6 +198,11 @@ mergeInto(LibraryManager.library, {
 
     var base = UTF8ToString(urlPtr);
     var net = Module.blwpNet = {
+      // `state` here is ONLY the word before a client exists - opening, or
+      // error if the session never got off the ground. Once there is a client
+      // the session's word is `client.state`, in a file `node --test` can
+      // load: the page used to keep its own, learned `ended` on the
+      // socket-down path alone, and printed `ready` beside a run's ENDED VOID.
       state: 'opening', error: '', ticks: [], tick: null,
       batches: 0, marks: 0, batchEvery: batchEvery | 0, markEvery: markEvery | 0,
       seen: 0, client: null, where: null, resumedAt: -1,
@@ -235,8 +240,9 @@ mergeInto(LibraryManager.library, {
         net.sessionPubkey = new Uint8Array(raw);
         return net.open(base, sign);
       })
-      .then(function () { net.state = 'ready'; })
       .catch(function (e) {
+        // No client, so the page's own word is the only one there is.
+        net.client = null;
         net.state = 'error';
         net.error = String(e && e.message ? e.message : e);
         console.error('[blwp] session: ' + net.error);
@@ -303,21 +309,19 @@ mergeInto(LibraryManager.library, {
       // whatever the drop rate, keeps trying with a backoff so a two-second
       // node restart does not end a session, and STOPS once the run has ended
       // - a VOID run must not come back as `ready`.
+      // THE RUN ENDING IS ITS OWN EVENT, and it fires on the path the fault
+      // took. `endRun` closes the socket, and the close listener returns at
+      // its first line once the run is over - so a VOID with the socket still
+      // up (a slow node filling the hold) reached nothing here. It does now,
+      // before that early return, and the word and the reason are the
+      // client's: this prints them and picks neither.
+      net.client.onEnd = function (word, why) {
+        console.log('[blwp] run ended ' + word + ': ' + why);
+      };
       net.client.onDrop = function () {
-        if (net.state === 'gone') return;
-        net.state = 'dropped';
         net.client.reconnect(net.where).then(function (r) {
-          if (net.state === 'gone') return;
-          if (!r) {
-            // The run ended while the socket was down. The client says which
-            // word and why; nothing here decides one.
-            net.state = 'ended';
-            net.error = net.client.endingReason || '';
-            console.log('[blwp] run ended ' + net.client.ending + ': ' + net.error);
-            return;
-          }
+          if (!r) return;              // the run ended; onEnd has already said so
           net.resumedAt = r.nextTick;
-          net.state = 'ready';
           console.log('[blwp] resumed at tick ' + r.nextTick + ' after '
             + net.client.tries + ' try(s), ' + r.batches + ' batches and '
             + r.receipts + ' behind us');
@@ -344,10 +348,10 @@ mergeInto(LibraryManager.library, {
     };
 
     net.tick = function (words) {
-      if (net.state === 'gone' || !net.client) return;
+      if (!net.client) return;
       net.client.record(words);
       net.seen++;
-      if (net.state !== 'ready') return;
+      if (net.client.state !== 'ready') return;
       if (net.batchEvery > 0 && net.seen % net.batchEvery === 0) net.client.drain();
       // The hash is taken HERE, at the tick the mark names - a checkpoint says
       // where the world was at that tick, and hashing it when a queue got
@@ -363,17 +367,11 @@ mergeInto(LibraryManager.library, {
   BlwpNetStatus: function (ptr, cap) {
     var net = Module.blwpNet;
     var c = net && net.client;
-    var line = net
-      ? net.state + ' batches ' + (c ? c.batchesSent : 0)
-        + ' marks ' + (c ? c.marksSent : 0)
-        + ' tick ' + net.seen + ' held ' + (c ? c.held : 0)
-        + (c && c.dropped ? ' dropped ' + c.dropped : '')
-        + (c && c.marksSkipped ? ' skipped ' + c.marksSkipped : '')
-        + (c && c.drops ? ' drops ' + c.drops + ' tries ' + c.tries
-                          + ' resumed ' + net.resumedAt : '')
-        + (c && c.ended ? ' ENDED ' + c.ending : '')
-        + (net.error ? ' (' + net.error + ')' : '')
-      : 'off';
+    // ONE WORD, and it is the client's whenever there is a client. Assembling
+    // it here is how `ready` came to be printed beside a run's own ENDED VOID.
+    var line = !net ? 'off'
+      : c ? c.status(net.seen) + (net.error ? ' (' + net.error + ')' : '')
+          : net.state + (net.error ? ' (' + net.error + ')' : '');
     var n = Math.min(line.length, (cap | 0) - 1);
     for (var i = 0; i < n; i++) Module.HEAPU8[ptr + i] = line.charCodeAt(i);
     Module.HEAPU8[ptr + n] = 0;
@@ -471,6 +469,32 @@ mergeInto(LibraryManager.library, {
 
   // How many marks this node has receipted for us. The one number that says the
   // round is being witnessed rather than merely sent.
+  // HAS THIS RUN ENDED, AND WITH WHICH WORD. The one signal the game acts on:
+  // `<WORD> <reason>`, or nothing at all while the run is alive. The client
+  // holds both; this copies them out and decides neither.
+  //
+  // A polled debug string is not this. That is text for a panel, and nothing
+  // consumed it - a player went on driving a round that could not be settled
+  // because no part of the game was ever told.
+  // The same question as a number, because it is asked every tick and every
+  // input read: a pinned buffer per frame to learn "no" would be a cost paid
+  // by every player for the case that has not happened.
+  BlwpNetEnded: function () {
+    var n = Module.blwpNet;
+    return (n && n.client && n.client.ended) ? 1 : 0;
+  },
+
+  BlwpNetEnding: function (ptr, cap) {
+    var n = Module.blwpNet;
+    var c = n && n.client;
+    if (!c || !c.ended) { Module.HEAPU8[ptr] = 0; return 0; }
+    var line = c.ending + ' ' + (c.endingReason || '');
+    var k = Math.min(line.length, (cap | 0) - 1);
+    for (var i = 0; i < k; i++) Module.HEAPU8[ptr + i] = line.charCodeAt(i) & 255;
+    Module.HEAPU8[ptr + k] = 0;
+    return k;
+  },
+
   BlwpNetMarks: function () {
     var n = Module.blwpNet;
     return (n && n.client) ? (n.client.marksSent | 0) : 0;

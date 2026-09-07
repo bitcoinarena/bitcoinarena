@@ -83,5 +83,44 @@ public class NetSessionTests
         Assert.AreEqual(0, Blwp.BlwpNet.Marks);
         Assert.IsFalse(Blwp.BlwpNet.Start("http://node"),
             "an editor must not report that it opened a session");
+        Assert.AreEqual("", Blwp.BlwpNet.Ending(), "and it has no run to have ended");
+        Assert.IsFalse(Blwp.BlwpNet.Ended);
+    }
+
+    /// <summary>
+    /// A ROUND THAT CANNOT BE SETTLED IS NOT DRIVEN ON.
+    ///
+    /// The client says VOID when its hold fills and no transcript from there
+    /// can be replayed - and until this rule existed nothing in the game was
+    /// told. The truck kept driving, the core kept stepping, and a player
+    /// finished a round nobody could pay out.
+    ///
+    /// The word and the reason are the CLIENT'S. Unity reads them; it does not
+    /// choose one, and there is no branch here on which word it was.
+    /// </summary>
+    [Test]
+    public void AnEndedRunStopsBeingDriven()
+    {
+        Assert.IsTrue(Blwp.CoreDrivenTruck.ShouldStop(true, true),
+            "a VOID run must stop being stepped, not merely stop publishing");
+        Assert.IsFalse(Blwp.CoreDrivenTruck.ShouldStop(true, false),
+            "a live run keeps driving: an outage is not an ending");
+        Assert.IsFalse(Blwp.CoreDrivenTruck.ShouldStop(false, true),
+            "and a truck the core never drove is not stopped by it");
+    }
+
+    /// <summary>
+    /// And the player stops steering it. Two directions to one answer: the
+    /// game's own lock, and a run that is over.
+    /// </summary>
+    [Test]
+    public void AnEndedRunTakesNoMoreInput()
+    {
+        Assert.IsTrue(Blwp.CoreDrivenTruck.LocksControls(false, true),
+            "steering a round that cannot settle is the thing this door is about");
+        Assert.IsTrue(Blwp.CoreDrivenTruck.LocksControls(true, false),
+            "the game's own lock still locks");
+        Assert.IsFalse(Blwp.CoreDrivenTruck.LocksControls(false, false),
+            "and a live run is driven by the player, as it always was");
     }
 }

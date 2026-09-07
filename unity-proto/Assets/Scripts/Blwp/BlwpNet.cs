@@ -31,12 +31,16 @@ namespace Blwp
 #if UNITY_WEBGL && !UNITY_EDITOR
         [DllImport("__Internal")] private static extern int BlwpNetStart(IntPtr url, int batchEvery, int markEvery);
         [DllImport("__Internal")] private static extern int BlwpNetStatus(IntPtr ptr, int cap);
+        [DllImport("__Internal")] private static extern int BlwpNetEnded();
+        [DllImport("__Internal")] private static extern int BlwpNetEnding(IntPtr ptr, int cap);
         [DllImport("__Internal")] private static extern int BlwpNetMarks();
         [DllImport("__Internal")] private static extern int BlwpNetNodeUrl(IntPtr ptr, int cap);
         public const bool Compiled = true;
 #else
         private static int BlwpNetStart(IntPtr url, int batchEvery, int markEvery) => 0;
         private static int BlwpNetStatus(IntPtr ptr, int cap) => 0;
+        private static int BlwpNetEnded() => 0;
+        private static int BlwpNetEnding(IntPtr ptr, int cap) => 0;
         private static int BlwpNetMarks() => 0;
         private static int BlwpNetNodeUrl(IntPtr ptr, int cap) => 0;
         public const bool Compiled = false;
@@ -120,6 +124,42 @@ namespace Blwp
             }
             finally { handle.Free(); }
         }
+
+        /// <summary>
+        /// THE RUN'S ENDING, or an empty string while it is still alive.
+        ///
+        /// `<WORD> <reason>` - today always VOID and why - and it is the
+        /// CLIENT'S word, read out of the session, not a judgement made here.
+        /// Unity does not decide an outcome; the deterministic core and the
+        /// protocol do, and this is the game being told.
+        ///
+        /// It is a signal and not a panel line. `Status()` is text nobody
+        /// consumed, which is how a player went on steering a round that could
+        /// not be settled: the hold had filled, the client had stopped
+        /// publishing, and nothing in the game had been told.
+        /// </summary>
+        public static string Ending()
+        {
+            if (!Compiled) return "";
+            var bytes = new byte[256];
+            var handle = GCHandle.Alloc(bytes, GCHandleType.Pinned);
+            try
+            {
+                int n = BlwpNetEnding(handle.AddrOfPinnedObject(), bytes.Length);
+                return n > 0 ? System.Text.Encoding.UTF8.GetString(bytes, 0, n) : "";
+            }
+            finally { handle.Free(); }
+        }
+
+        /// <summary>
+        /// Whether this run is over. False when there is no session at all, so
+        /// a player who was given no node plays exactly the game that shipped
+        /// before any of this existed.
+        /// </summary>
+        /// Asked every tick and on every input read, so it is an int across
+        /// the boundary: pinning a buffer per frame to be told "no" is a cost
+        /// every player would pay for the case that has not happened.
+        public static bool Ended => Running && BlwpNetEnded() != 0;
 
         /// <summary>
         /// How many of this run's marks a node has receipted.

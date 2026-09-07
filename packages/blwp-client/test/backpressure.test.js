@@ -520,3 +520,130 @@ test('the hold still caps at blockTicks while the socket is down, and overflow i
     assert.equal(client.ending, 'VOID');
   } finally { client.close(); await node.close(); }
 });
+
+// ---------------------------------------------------------------------------
+// THE SESSION'S ONE WORD.
+//
+// It was the page's, in `blwp.jslib`, which is the file `node --test` cannot
+// load - and that is how it came to be wrong and to survive an audit saying
+// so. The page learned `ended` only when `reconnect` answered null, which is
+// the socket-DOWN path; a VOID with the socket still UP left it printing
+// `ready` beside the run's own ENDED VOID. Two words about one session.
+//
+// The word and the line are the client's now, so these are readable here.
+
+test('a VOID with the socket still up says ended, not ready', async () => {
+  const { node, client } = await rig(0);
+  try {
+    for (let i = 0; i < 6; i++) client.record([45875, 0, 0, 0, 0]);
+    await client.drain();
+    await client.settle();
+    assert.equal(client.state, 'ready', 'the socket is up and the run is alive');
+
+    // The slow-node case: the hold fills and the first tick that will not fit
+    // ends the run. The socket never dropped.
+    let told = null;
+    client.onEnd = (word, why) => { told = `${word} ${why}`; };
+    for (let i = 0; i < 2000; i++) client.record([45875, 0, 0, 0, 0]);
+
+    assert.equal(client.ended, true);
+    assert.equal(client.state, 'ended', 'the word was still ready on a run that had ended');
+    assert.match(told || '', /^VOID a tick was dropped at \d+/,
+      'endRun must say so before the close listener returns early');
+
+    const line = client.status(1234);
+    assert.match(line, /^ended /, 'the line must open with the word the session is in');
+    assert.equal(/\bready\b/.test(line), false, `ready was printed beside a VOID: ${line}`);
+    assert.match(line, /VOID a tick was dropped/, 'and it must say which word and why');
+  } finally { client.close(); await node.close(); }
+});
+
+test('the word follows the socket: ready, dropped, ready again', async () => {
+  const { node, client, rid, eid } = await rig(0);
+  try {
+    for (let i = 0; i < 60; i++) client.record([45875, 0, 0, 0, 0]);
+    await client.drain();
+    await client.settle();
+    assert.equal(client.state, 'ready');
+
+    client.close();
+    await wait(100);
+    assert.equal(client.state, 'dropped', 'a dropped socket is not an ended run');
+    assert.equal(client.ended, false);
+    assert.match(client.status(60), /^dropped /);
+
+    fastSleep(client);
+    const r = await client.reconnect({ roundId: rid, entryId: eid });
+    assert.notEqual(r, null);
+    assert.equal(client.state, 'ready', 'a resumed run is ready again');
+  } finally { client.close(); await node.close(); }
+});
+
+test('a run that ends while the socket is down ends in the word too', async () => {
+  const { node, client, rid, eid } = await rig(0);
+  try {
+    await node.close();
+    client.close();
+    await wait(50);
+    assert.equal(client.state, 'dropped');
+
+    let told = 0;
+    client.onEnd = () => { told++; };
+    client.sleep = async () => {
+      for (let i = 0; i < 700; i++) client.record([45875, 0, 0, 0, 0]);
+    };
+    const back = client.reconnect({ roundId: rid, entryId: eid });
+    const done = await Promise.race([back, wait(1000).then(() => 'still trying')]);
+    assert.equal(done, null);
+    assert.equal(client.state, 'ended');
+    assert.equal(told, 1, 'the ending is one event, not one per attempt');
+    // The leading word, not a search: `dropped 1` further along the line is
+    // the count of dropped TICKS and `drops 1` the count of dropped sockets.
+    // Both are true and neither is the session's state.
+    assert.equal(client.status(0).split(' ')[0], 'ended',
+      `a stale word survived the ending: ${client.status(0)}`);
+  } finally {
+    client.ended = true;
+    client.sleep = () => new Promise(() => {});
+    client.close();
+  }
+});
+
+test('the ending is said once, whatever else goes wrong afterwards', async () => {
+  const { node, client } = await rig(0);
+  try {
+    let told = 0;
+    client.onEnd = () => { told++; };
+    client.endRun('measured');
+    client.endRun('measured again');
+    client.close();
+    await wait(50);
+    assert.equal(told, 1, 'a second ending would be a second word about one run');
+    assert.equal(client.state, 'ended');
+    assert.equal(client.ending, 'VOID');
+  } finally { client.close(); await node.close(); }
+});
+
+/**
+ * A SOCKET OPENING DOES NOT MAKE AN ENDED RUN LIVE.
+ *
+ * Found by a mutant that survived: removing the `ended` guard in `connect`
+ * left every test green. The window is real - the game keeps handing over
+ * ticks while a reconnect is in flight, so the hold can fill and end the run
+ * between the socket being asked for and the socket opening. The loop's own
+ * catch would put the word back a moment later, which is a moment in which a
+ * panel and a game are reading `ready` on a round that cannot be settled.
+ */
+test('a socket that opens onto an ended run does not say ready', async () => {
+  const { node, client } = await rig(0);
+  try {
+    client.close();
+    await wait(50);
+    client.endRun('the hold filled while the socket was being asked for');
+    assert.equal(client.state, 'ended');
+
+    await client.connect();
+    assert.equal(client.state, 'ended', 'an open socket made an ended run look live');
+    assert.equal(client.status(0).split(' ')[0], 'ended');
+  } finally { client.close(); await node.close(); }
+});
