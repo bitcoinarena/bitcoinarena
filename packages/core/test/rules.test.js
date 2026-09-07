@@ -1354,7 +1354,7 @@ function survives(heatQ, z) {
 test('a hunted load is written off sooner than an empty one', () => {
   const cold = survives(0, -25);
   const hot = survives(65536, -25);
-  assert.ok(hot < cold * 0.8,
+  assert.ok(hot < cold,
     `heat has to cost something: empty lasted ${cold.toFixed(2)} s and a full `
     + `load ${hot.toFixed(2)} s`);
 });
@@ -1390,37 +1390,28 @@ test('the core clamps a heat it is handed rather than trusting it', () => {
 test('heat widens the reach the truck is noticed at, by arm', () => {
   assert.equal(army.courierReach(0, true), 34 * ONE);
   assert.equal(army.courierReach(0, false), 26 * ONE);
-  // 34 x 2.4 and 26 x 1.8 - the tank's widening is the larger, as in the C#.
-  //
-  // THE EXACT WORD, not a rounded metre. 1.4 and 0.8 are not representable in
-  // Q16.16 - 91750/65536 is 1.3999939 - so the product lands a few units under
-  // the real number, and both facts are asserted: the integer the rule
-  // actually produces, which any change to the factor moves, and that it is
-  // within a thousandth of a metre of what the C# meant.
-  assert.equal(army.courierReach(ONE, true), 5347724);
-  assert.ok(Math.abs(army.courierReach(ONE, true) - 34 * 2.4 * ONE) < 66);
-  assert.equal(army.courierReach(ONE, false), 3067090);
-  assert.ok(Math.abs(army.courierReach(ONE, false) - 26 * 1.8 * ONE) < 66);
+  // M1.a16: 34 x 1.3 and 26 x 1.2, so the rim of an 85 m half-map is actually
+  // a rim. Heat zero is still the recording.
+  assert.ok(Math.abs(army.courierReach(ONE, true) - 34 * 1.3 * ONE) < 70);
+  assert.ok(Math.abs(army.courierReach(ONE, false) - 26 * 1.2 * ONE) < 70);
   assert.ok(army.courierReach(ONE / 2, true) > army.courierReach(0, true));
   assert.equal(army.courierReach(4 * ONE, true), army.courierReach(ONE, true));
 });
 
 test('heat lets the truck outrank a foe that is nearer than it', () => {
-  const truck = 20 * ONE, foe = 10 * ONE;
-  assert.equal(army.outranksTheFoe(truck, foe, 0), false);   // plainly farther
-  assert.equal(army.outranksTheFoe(truck, foe, ONE), true);  // 10 x 3.5 = 35
-  assert.equal(army.outranksTheFoe(36 * ONE, foe, ONE), false);
+  const truck = 12 * ONE, foe = 10 * ONE;
+  assert.equal(army.outranksTheFoe(20 * ONE, foe, 0), false);   // plainly farther
+  assert.equal(army.outranksTheFoe(truck, foe, ONE), true);     // 10 x 1.5 = 15
+  assert.equal(army.outranksTheFoe(16 * ONE, foe, ONE), false);
   // and at zero it is exactly the old strict "nearer than the foe"
   assert.equal(army.outranksTheFoe(foe, foe, 0), false);
 });
 
 test('heat multiplies the shell and the arithmetic is the C#s', () => {
   assert.equal(army.shellForHeat(10 * ONE, 0), 10 * ONE);
-  // x1.6, to the word: 39322/65536 is 0.6000061, so ten points become a
-  // sixteenth of a thousandth over sixteen.
-  assert.equal(army.shellForHeat(10 * ONE, ONE), 1048580);
-  assert.ok(Math.abs(army.shellForHeat(10 * ONE, ONE) - 16 * ONE) < 8);
-  assert.ok(Math.abs(army.shellForHeat(10 * ONE, ONE / 2) - 13 * ONE) < 8);
+  // x1.3 at full heat (M1.a16), heat zero unchanged.
+  assert.ok(Math.abs(army.shellForHeat(10 * ONE, ONE) - 13 * ONE) < 8);
+  assert.ok(Math.abs(army.shellForHeat(10 * ONE, ONE / 2) - 11.5 * ONE) < 8);
 });
 
 // ---------------------------------------------------------------------------

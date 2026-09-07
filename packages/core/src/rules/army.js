@@ -28,19 +28,20 @@ export const COURIER_RANGE = Math.imul(34, ONE);
  * WHAT THE LOAD BUYS THE WAR, from `Army.cs:625`, `:634` and `:638`.
  *
  * Heat widens the reach the truck is noticed at, lets it outrank a tank that
- * is closer than it is, and multiplies the shell. The three factors are the
- * C#'s own and are not re-chosen here: a tank at full heat notices the truck
- * at 34 x 2.4 = 81.6 m, will leave a foe three and a half times nearer to
- * shoot at it, and hits for 5-11 x 1.6.
+ * is closer than it is, and multiplies the shell. Heat ZERO is still the C#
+ * recording. Full heat used the C# 1.4 / 2.5 / 0.6 factors and covered the
+ * whole 85 m half-map (tanks noticed at 81.6 m), so the rim was not a rim
+ * and a loaded run could not reach the gate. M1.a16 (the owner 2026-09-07):
+ * keep it hard, 30-40% of committed runs should get through.
  *
- * The rifle gets the narrower widening the C# gives it, `Army.cs:727`, and
- * its damage is NOT scaled - the C# scales the shell and not the round, and
- * the two bands are what the recorder tells the weapons apart by.
+ * A tank at full heat now notices at 34 x 1.3 = 44.2 m, will leave a foe
+ * half again nearer to shoot at the truck, and hits for 5-11 x 1.3. The
+ * rifle's round is still not scaled.
  */
-export const HEAT_REACH_ARMOUR = 91750;    // 1.4
-export const HEAT_REACH_RIFLE = 52429;     // 0.8
-export const HEAT_OUTRANK = 163840;        // 2.5
-export const HEAT_SHELL = 39322;           // 0.6
+export const HEAT_REACH_ARMOUR = 19661;    // 0.3
+export const HEAT_REACH_RIFLE = 13107;     // 0.2
+export const HEAT_OUTRANK = 32768;         // 0.5
+export const HEAT_SHELL = 19661;           // 0.3
 
 /**
  * How far this arm notices the truck at, for a load hunted this hard.

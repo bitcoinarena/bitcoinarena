@@ -2192,6 +2192,12 @@ public class DriveHud : MonoBehaviour
         Styles();
         int w = Screen.width, h = Screen.height;
 
+        // SPECTATE: price only (the owner 2026-09-07, a13 / a16).
+        // The free camera is looking at the map; every other box is driving
+        // chrome. EXIT stays on SpectatorCamera.
+        var spectator = Object.FindFirstObjectByType<SpectatorCamera>();
+        bool spectating = spectator != null && spectator.Active;
+
         /* ---------------------------------------------------- headline price */
         // The loading panel needs the top of the screen, and the price is not
         // what the player is reading while choosing freight. It steps aside
@@ -2223,9 +2229,12 @@ public class DriveHud : MonoBehaviour
             Shadowed(new Rect(head.x, HeadlineRowY(w, h, 1), head.width, _sub.fontSize * 1.6f),
                      sub, _sub, chg >= 0 ? Up : Down);
 
+            if (spectating) return;
+
             DrawLiquidations(w, h, HeadlineRowY(w, h, 2));
             DrawBlockTimer(w, h, HeadlineRowY(w, h, 3));
         }
+        else if (spectating) return;
 
         // Everything the game HUD draws sits UNDER the loading window. IMGUI
         // has no z-order between components - it draws in whatever order the
