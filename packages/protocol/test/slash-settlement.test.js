@@ -34,9 +34,13 @@ const lawful = (over = {}) => ({
   shares: SETTLEMENT_THRESHOLD, signatures: SETTLEMENT_THRESHOLD, ...over,
 });
 
+// `transcriptHash` is the object this offence is measured against, which for a
+// settlement is the ENTRY whose invoice was acted on; `playerPubkey` is empty,
+// because this row names no player - the entry does.
 const proofFor = (bytes, over = {}) => ({
-  roundId: ROUND, playerPubkey: b32(0xa1), nodePubkey: NODE,
-  transcriptHash: b32(0), signedResultId: settlementRecordId(decodeSettlementRecord(bytes)),
+  roundId: ROUND, playerPubkey: new Uint8Array(32), nodePubkey: NODE,
+  transcriptHash: decodeSettlementRecord(bytes).entryId,
+  signedResultId: settlementRecordId(decodeSettlementRecord(bytes)),
   bondTxid: BOND, bondVout: 3, ...over,
 });
 
@@ -199,6 +203,37 @@ test('a stranger cannot be slashed for a round they were not settling', () => {
   assert.equal(no.slashed, false);
   assert.match(no.why, /is not on this round's committee/);
   assert.equal(ask(lawful({ signatures: 4 }), { committee: [] }).slashed, false);
+});
+
+/**
+ * NO FIELD OF THE PROOF IS LEFT FREE ON THIS ROW.
+ *
+ * Rows 2 and 3 pin both of these and this one pinned neither - a hole in a
+ * body whose hash goes on chain, because an accuser could vary them at will
+ * and mint unboundedly many different valid proofs of one offence. And the
+ * record names an ENTRY rather than a player, so a free `playerPubkey` could
+ * put somebody's name on a settlement that was never about them.
+ */
+test('a proof cannot name another entry, or a player at all', () => {
+  const bytes = encodeSettlementRecord(lawful({ signatures: 4 }));
+
+  const elsewhere = slashHoldsOnSettlement({
+    proof: proofFor(bytes, { transcriptHash: b32(0x77) }),
+    signedRecord: bytes, advert, committee,
+  });
+  assert.equal(elsewhere.slashed, false);
+  assert.match(elsewhere.why, /measured against a different entry/);
+
+  const named = slashHoldsOnSettlement({
+    proof: proofFor(bytes, { playerPubkey: b32(0xa1) }),
+    signedRecord: bytes, advert, committee,
+  });
+  assert.equal(named.slashed, false);
+  assert.match(named.why, /this row names no player/);
+
+  // and the entry the record DID act on is the one that holds
+  assert.equal(ask(lawful({ signatures: 4, entryId: b32(0x0e) })).slashed, true,
+    'the proof follows the record\'s own entry');
 });
 
 test('the record survives the round trip and every field is inside its id', () => {

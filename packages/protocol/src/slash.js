@@ -39,6 +39,9 @@ import { outcomeByte, outcomeOf } from './result.js';
 
 const hex = (b) => toHex(b);
 
+/** Thirty-two zero bytes: a field this row deliberately does not use. */
+const EMPTY = new Uint8Array(32);
+
 /**
  * The offences of 5A.3, by the name this file uses for them.
  *
@@ -465,6 +468,32 @@ export function slashHoldsOnSettlement({ proof, signedRecord, advert, committee 
     return { slashed: false, why: 'the record attached is for a different round' };
   if (hex(record.nodePubkey) !== hex(proof.nodePubkey))
     return { slashed: false, why: 'the record attached was written by a different node' };
+
+  // AND NO FIELD OF THE PROOF IS LEFT FREE ON THIS ROW.
+  //
+  // Rows 2 and 3 pin both of these and this one pinned neither, which is a
+  // hole in a body whose hash goes on chain: an accuser could vary them at
+  // will and produce unboundedly many different valid proofs of one offence,
+  // each with a different commitment. Worse for `playerPubkey` - the record
+  // names an ENTRY and not a player, so a proof could name somebody who had
+  // nothing to do with the settlement and a reader would take them for the
+  // victim.
+  //
+  // `transcriptHash` means "the object this offence is measured against", and
+  // for a settlement that is the entry whose hold invoice was acted on. The
+  // player is left to the entry rather than repeated: this row names no player
+  // directly, so the field is required to be empty instead of plausible.
+  if (hex(proof.transcriptHash) !== hex(record.entryId))
+    return {
+      slashed: false,
+      why: 'the proof is measured against a different entry than the record acted on',
+    };
+  if (hex(proof.playerPubkey) !== hex(EMPTY))
+    return {
+      slashed: false,
+      why: 'this row names no player: the entry does, and a proof naming one '
+        + 'would put somebody\'s name on a settlement that is not about them',
+    };
 
   // 23.2, recomputed from the node's OWN published conditions.
   const due = settlementAction({
