@@ -18,6 +18,7 @@ using UnityEngine;
 public static class SyncCore
 {
     const string CoreDir = "../packages/core";
+    const string ClientDir = "../packages/blwp-client";
 
     [MenuItem("Tools/BTC Logistics/Sync Deterministic Core")]
     public static void Run()
@@ -41,6 +42,26 @@ public static class SyncCore
         string to = Path.Combine(Application.dataPath, "WebGLTemplates/BtcLogistics/blwp-core.js");
         File.Copy(from, to, true);
         UnityEngine.Debug.Log($"[SyncCore] copied bundle ({new FileInfo(to).Length / 1024} KB) into the template");
+
+        // AND THE CLIENT, for the same reason and in the same breath.
+        //
+        // The page loads two bundles: the core it draws from and the client it
+        // commits through. They are built from one tree and have to move
+        // together - a page holding a client that signs a state hash a
+        // different core produced is the exact fault this menu item exists to
+        // prevent, one layer out.
+        string clientRoot = Path.GetFullPath(Path.Combine(Application.dataPath, "..", ClientDir));
+        if (Directory.Exists(clientRoot))
+        {
+            if (!Node(clientRoot, "tools/bundle.js", out string clientOut)) return;
+            UnityEngine.Debug.Log("[SyncCore] " + clientOut.Trim());
+            string cFrom = Path.Combine(clientRoot, "dist/blwp-client.js");
+            string cTo = Path.Combine(Application.dataPath,
+                                      "WebGLTemplates/BtcLogistics/blwp-client.js");
+            File.Copy(cFrom, cTo, true);
+            UnityEngine.Debug.Log(
+                $"[SyncCore] copied client ({new FileInfo(cTo).Length / 1024} KB) into the template");
+        }
 
         AssetDatabase.Refresh();
     }

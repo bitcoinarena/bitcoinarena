@@ -258,6 +258,15 @@ public class Bootstrap : MonoBehaviour
         // rather than a compile-time switch - the editor has no JavaScript, and
         // a scene that only works in one of the two is a scene nobody can
         // iterate on.
+        // THE BLWP SESSION, if this page was given a node to play against.
+        //
+        // It publishes nothing itself - the inputs go to the network from
+        // inside the core's own step, so the transcript is the words the core
+        // consumed - and it decides only WHEN a session should exist. With no
+        // node named it does nothing at all, which is every build that has
+        // shipped so far.
+        gameObject.AddComponent<Blwp.NetSession>();
+
         var driver = truck.gameObject.AddComponent<Blwp.CoreDrivenTruck>();
         driver.terrain = _terrain;
         // The deck, not the bare relief: the truck stands on the road.

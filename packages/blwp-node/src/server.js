@@ -51,12 +51,30 @@ const read = (req) => new Promise((resolve, reject) => {
   req.on('error', reject);
 });
 
+// A BROWSER IS THE CLIENT, and a browser will never be on this origin.
+//
+// The daemon has no cookies and no session: every write is authorised by a
+// signature over a tagged hash, and every read is of things a player already
+// holds. There is nothing for an origin check to protect, and without these
+// headers a page cannot read a single answer - measured: a round was opened
+// and the response was unreadable, so the client's own `join` failed with
+// "Failed to fetch" and the round existed with nobody in it.
+const CORS = {
+  'access-control-allow-origin': '*',
+  'access-control-allow-methods': 'GET, POST, OPTIONS',
+  'access-control-allow-headers': 'content-type',
+  // The headers a client actually reads answers out of. Without this a page
+  // sees the body and none of the counts.
+  'access-control-expose-headers':
+    'x-state, x-ticks, x-transcript-hash, x-checkpoints, x-receipts',
+};
+
 const bytes = (res, code, body) => {
-  res.writeHead(code, { 'content-type': 'application/octet-stream' });
+  res.writeHead(code, { 'content-type': 'application/octet-stream', ...CORS });
   res.end(Buffer.from(body));
 };
 const text = (res, code, msg) => {
-  res.writeHead(code, { 'content-type': 'text/plain' });
+  res.writeHead(code, { 'content-type': 'text/plain', ...CORS });
   res.end(msg + '\n');
 };
 
@@ -66,13 +84,18 @@ export function serve(db, { port = 0 } = {}) {
   const http = createServer(async (req, res) => {
     try {
       const url = new URL(req.url, 'http://node');
+
+      // The preflight a browser sends before a POST it cannot classify as
+      // simple. Answered and nothing else: there is no state to change here.
+      if (req.method === 'OPTIONS') { res.writeHead(204, CORS); return res.end(); }
+
       if (req.method === 'POST' && url.pathname === '/round')
         return bytes(res, 201, round.open(decodeRoundContract(await read(req))));
 
       if (req.method === 'GET' && url.pathname === '/round') {
         const row = round.get(Buffer.from(url.searchParams.get('id') || '', 'hex'));
         if (!row) return text(res, 404, 'no such round');
-        res.writeHead(200, { 'content-type': 'application/octet-stream', 'x-state': String(row.state) });
+        res.writeHead(200, { 'content-type': 'application/octet-stream', 'x-state': String(row.state), ...CORS });
         return res.end(Buffer.from(row.contract));
       }
 
@@ -87,6 +110,7 @@ export function serve(db, { port = 0 } = {}) {
           'content-type': 'application/octet-stream',
           'x-transcript-hash': toHex(t.hash),
           'x-ticks': String(t.ticks),
+          ...CORS,
         });
         return res.end(Buffer.from(t.bytes));
       }
@@ -100,6 +124,7 @@ export function serve(db, { port = 0 } = {}) {
         res.writeHead(200, {
           'content-type': 'application/octet-stream',
           'x-checkpoints': String(c.count),
+          ...CORS,
         });
         return res.end(Buffer.from(c.bytes));
       }
@@ -117,6 +142,7 @@ export function serve(db, { port = 0 } = {}) {
         res.writeHead(200, {
           'content-type': 'application/octet-stream',
           'x-receipts': String(r.count),
+          ...CORS,
         });
         return res.end(Buffer.from(r.bytes));
       }

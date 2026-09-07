@@ -156,6 +156,19 @@
        realm and cannot import. -->
   <script src="blwp-core.js"></script>
 
+  <!-- THE BLWP CLIENT, beside the core and never inside it.
+       The core is what the game is drawn from; the client is what the player's
+       commitments are published through. Two bundles, one tree, copied
+       together by SyncCore - a page holding a client that signs a state hash a
+       different core produced is the fault that arrangement exists to prevent.
+
+       No session is opened unless a round is named. A player who was given
+       none gets exactly the game that shipped before any of this, which is why
+       BLWP_ROUND is undefined here rather than filled in with something
+       plausible: a round contract is agreed before anyone moves, and inventing
+       one in the page would be inventing a lobby. -->
+  <script src="blwp-client.js"></script>
+
   <script>
     const boot = document.getElementById('boot');
     const bar = document.getElementById('bar');
