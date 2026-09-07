@@ -5,6 +5,30 @@ using UnityEngine;
 using UnityEngine.TestTools;
 
 /// <summary>
+/// FIVE TESTS THAT USED TO LIVE HERE NOW LIVE IN `packages/core/test`.
+///
+/// `RunScore` had a second scoring formula for when no core is answering, and
+/// in the editor no core ever is - so these were measuring Unity's arithmetic
+/// and calling it the score. The formula is deleted, so their rules moved to
+/// where the core actually runs, each with a mutant that kills it:
+///
+///   an empty bed collapses a score that was already built
+///   nothing accrues while the truck is still on the apron
+///   a wreck banks nothing, however much the run had earned
+///   the seam banks more than the quiet lane for the same ground made good
+///   heat raises what a metre of ground is worth
+///
+/// The bounds moved with them but the NUMBERS did not: the C# asserted 1.8x
+/// between the seam and the quiet lane, measured against its own threat model
+/// and its own fixture. Measured in the core at equal ground made good the
+/// gradient is edge 110.4, then 145.9, 155.7, seam 178.9 - 1.62x - and the
+/// core test asserts 1.5x with the monotonic ordering beside it. Transplanting
+/// 1.8 would have been copying a constant into different units.
+///
+/// What is left in this file is Unity's own behaviour: where boxes sit, what
+/// the HUD shows, and that the run does not start under spawn protection.
+/// </summary>
+/// <summary>
 /// The scoring rule from section 18A of multiplayer_p2p.md.
 ///
 /// These tests are unusual for this project: most of them check that the game
@@ -266,144 +290,8 @@ public class ScoreTests
         }
     }
 
-    /// <summary>
-    /// Laps earn nothing.
-    ///
-    /// Once through the fighting a player could turn round and circle in the
-    /// corridor, and as a time integral that kept paying: circling tripled the
-    /// exposure term while the time term only halved, so stalling was worth
-    /// doing. Exposure is now integrated over ground made good against a
-    /// high-water mark, so a lap covers no new ground and earns accordingly -
-    /// while the round clock runs on regardless.
-    /// </summary>
-    [UnityTest]
-    public IEnumerator DrivingInCirclesEarnsNothing()
-    {
-        yield return Launch();
 
-        // one honest run down the corridor, to build a mark to beat
-        yield return Hold(0f, 3f);
-        float earned = _score.Exposure;
-        Assert.Greater(earned, 0.02f, "das Fixture ist gar nicht erst vorangekommen");
 
-        // Now circle on the seam. The FIRST lap legitimately reaches further
-        // than anything before it - that arc is real ground and is supposed to
-        // pay. What must earn nothing is every lap after it, so the first is
-        // ridden out and only the repeats are measured.
-        var rb = _truck.GetComponent<Rigidbody>();
-        float cx = rb.position.x;
-        IEnumerator Circle(float seconds)
-        {
-            for (float t = 0f; t < seconds; t += Time.deltaTime)
-            {
-                float x = cx + Mathf.Sin(t * 3f) * 18f;
-                rb.position = new Vector3(x, rb.position.y, _field.FrontlineZ(x));
-                yield return null;
-            }
-        }
-
-        yield return Circle(2.5f);                 // first lap: allowed to pay
-        float afterFirstLap = _score.Exposure;
-
-        yield return Circle(6f);                   // and now round and round
-
-        Assert.Less(_score.Exposure - afterFirstLap, 0.005f,
-            $"sechs Sekunden im Kreis brachten noch {_score.Exposure - afterFirstLap:0.000} Exposition");
-        Assert.IsFalse(_score.MakingProgress, "eine Runde im Kreis gilt als Fortschritt");
-    }
-
-    /// <summary>
-    /// The claim, stated as a test: hugging the edge earns almost nothing.
-    ///
-    /// This is the assertion the whole section exists for. If it ever passes
-    /// by a narrow margin the balance has drifted back towards the exploit,
-    /// so the bar is an order of magnitude rather than "less than".
-    /// </summary>
-    [UnityTest]
-    public IEnumerator SafeRouteScoresNearNothing()
-    {
-        yield return Launch();
-
-        // BOTH legs start at the same x and cover the same span.
-        //
-        // Threat varies enormously along the map - measured, the seam runs 3.4
-        // at one end and 13.5 in the middle - so comparing a quiet leg driven
-        // over one stretch against a seam leg driven over another compares
-        // stretches, not routes. It made this test swing between 0.33 and 0.05
-        // between runs on live price data. Same span, and the only difference
-        // left is the z the fixture chose.
-        var start = _truck.GetComponent<Rigidbody>();
-        start.position = new Vector3(-60f, start.position.y, start.position.z);
-        yield return null;
-
-        yield return HoldAtTheFarEdge(6f);
-
-        float safe = _score.Exposure;
-        int safeScore = _score.Projected;
-
-        // Back to the start of the run before the second leg.
-        //
-        // The quiet-lane leg leaves the truck near the far x limit, and
-        // exposure only counts ground beyond a high-water mark - so a seam run
-        // starting there immediately hits the wall, turns round, and records
-        // about three metres of new ground. It measured 0.027 and looked like
-        // the seam paying nothing, when it was the fixture having nowhere left
-        // to drive.
-        var back = _truck.GetComponent<Rigidbody>();
-        back.position = new Vector3(-60f, back.position.y, back.position.z);
-        yield return null;
-
-        _score.Reset();
-        yield return Hold(0f, 6f);
-
-        float brave = _score.Exposure;
-        int braveScore = _score.Projected;
-
-        // The claim is a RATIO, and always was: "the safe route scores an
-        // order of magnitude less". It was written as an absolute bound while
-        // danger was geometry, and every change to the map or the armies moved
-        // that number - first 0.02, then 0.12, and neither meant anything. Two
-        // armies filling the map means a quiet lane is quiet, not empty, so the
-        // ratio below is the assertion that carries the design.
-        Assert.Greater(brave, 0.1f, $"seam route banked only {brave:0.000}");
-        // 1.8x, measured rather than hoped for. On the built map the quietest
-        // lane runs about 0.14 against the seam's 0.33 - a real gradient, but
-        // nothing like the order of magnitude the geometric version reported,
-        // because 22 tanks and 176 riflemen fill the whole depth and there is
-        // no genuinely empty road to take. That is a finding about this map,
-        // not a weakness in the rule: the safe route simply is not very safe
-        // here. The bound guards the gradient; a change that flattens it -
-        // saturating the threat scale, say - still fails.
-        Assert.Greater(brave, safe * 1.8f,
-            $"die ruhigste Spur ({safe:0.000}) liegt zu nah an der Naht ({brave:0.000})");
-        // Same story as the exposure bound above: the score gap is the gradient
-        // the map actually offers, not an order of magnitude. Both routes run
-        // through an army; one runs through more of it.
-        Assert.Greater(braveScore, safeScore * 1.8f,
-            $"seam scored {braveScore} against the quiet lane's {safeScore} — " +
-            "the safe route is competitive, which is the exploit section 18A closes");
-    }
-
-    /// <summary>
-    /// Multiplicative, not additive: an empty bed scores zero however brave
-    /// the driving was. Under an additive score it would still collect the
-    /// exposure term, and a suicidal empty run would out-score a careful
-    /// full one.
-    /// </summary>
-    [UnityTest]
-    public IEnumerator EmptyBedScoresZeroHoweverBraveTheRun()
-    {
-        yield return Launch();
-        yield return Hold(0f, 5f);
-        Assert.Greater(_score.Exposure, 0.1f, "fixture never built any exposure");
-
-        _bay.Clear();
-        yield return null;
-
-        Assert.AreEqual(0f, _score.CargoFactor, 0.001f);
-        Assert.AreEqual(0, _score.Projected,
-            "an empty bed scored above zero, so the factors are not multiplicative");
-    }
 
     /// <summary>Sitting in the loading bay must not bank par time or exposure.</summary>
     [UnityTest]
@@ -417,64 +305,7 @@ public class ScoreTests
         Assert.AreEqual(0f, _score.Exposure, 0.001f);
     }
 
-    /// <summary>
-    /// A wreck banks nothing. The projected score is a projection precisely
-    /// because it can be lost, and a HUD that kept showing it after a
-    /// write-off would be reporting money that no longer exists.
-    /// </summary>
-    [UnityTest]
-    public IEnumerator AWreckBanksNothing()
-    {
-        yield return Launch();
-        yield return Hold(0f, 5f);
-        Assert.Greater(_score.Projected, 0, "fixture never built a score to lose");
 
-        _health.WriteOff();
-        yield return null;
-
-        Assert.AreEqual(0f, _score.Exposure, 0.001f);
-        Assert.AreEqual(0, _score.Projected);
-        Assert.AreEqual(0, _score.Best, "a wreck was banked as a best run");
-    }
-
-    /// <summary>
-    /// Heat multiplies exposure, so the same road driven with a valuable load
-    /// is worth more. This is the only channel through which cargo value
-    /// reaches the score twice, and it is deliberate: value is what makes the
-    /// corridor dangerous in the first place.
-    /// </summary>
-    [UnityTest]
-    public IEnumerator HeatRaisesTheExposureRate()
-    {
-        yield return Launch();
-
-        // Sampled DURING the hold, not after it. Reading once the loop has
-        // exited samples whatever the world did next - and on the seam what it
-        // does next is destroy the truck and respawn it at the ramp, where the
-        // rate is correctly zero. That is how this test first reported 0.00.
-        float hot = 0f;
-        int frames = 0;
-        float elapsed = 0f;
-        var rb = _truck.GetComponent<Rigidbody>();
-        for (float t = 0f; t < 1.5f; t += Time.deltaTime)
-        {
-            float x = rb.position.x + 15f * Time.deltaTime;
-            rb.position = new Vector3(x, rb.position.y, _field.FrontlineZ(x));
-            yield return null;                               // driven, not parked
-            frames++; elapsed += Time.deltaTime;
-            hot = Mathf.Max(hot, _score.Rate);
-        }
-
-        // Printed before the assertion, because this test has been called a
-        // flake twice and a flake is a thing nobody has instrumented. The loop
-        // runs ONE iteration per frame for 1.5 s of wall time, so under load it
-        // gets fewer, larger steps - if `hot` tracks `frames`, the fixture is
-        // measuring the machine and not the rule.
-        Debug.Log($"HEATRATE hot={hot:0.000} frames={frames} " +
-                  $"meanDelta={(frames > 0 ? elapsed / frames : 0f):0.0000} elapsed={elapsed:0.000}");
-        Assert.Greater(hot, 1f, $"a loaded run on the seam peaked at only {hot:0.00}");
-        Assert.LessOrEqual(hot, 2.01f, "the rate escaped its stated 0..2 range");
-    }
 
     /// <summary>
     /// The meter sits UNDER the condition bar, in the same column.

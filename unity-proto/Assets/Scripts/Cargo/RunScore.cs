@@ -62,7 +62,21 @@ public class RunScore : MonoBehaviour
     /// </summary>
     public bool MakingProgress { get; private set; }
 
-    /// <summary>True while the deterministic core is the authority.</summary>
+    /// <summary>
+    /// THE CORE IS THE AUTHORITY, AND THERE IS NO LONGER A SECOND ONE.
+    ///
+    /// This used to gate between the core and a C# formula that scored the run
+    /// on its own. On the deploy path the C# half never ran - but in the
+    /// editor the core is a stub, so it ALWAYS ran there, and four PlayMode
+    /// tests were measuring Unity's arithmetic and calling it the score. The
+    /// rules they carried - an empty bed collapses a built score, the apron
+    /// banks nothing, a wreck banks nothing, the seam pays more than the quiet
+    /// lane for the same ground - now live in `packages/core/test`, where the
+    /// core actually runs, each with a mutant that kills it.
+    ///
+    /// With no core answering these read zero, and that is the honest answer:
+    /// no core, no score.
+    /// </summary>
     static bool FromCore => Blwp.BlwpCore.Available;
 
     /// <summary>E in the spec: 0..1, danger integrated over ground made good.</summary>
@@ -73,9 +87,7 @@ public class RunScore : MonoBehaviour
     /// danger, over different positions, at different rates. Whichever one the
     /// HUD happened to read was the score the player saw, and it was not the
     /// one the round would eventually be settled on.
-    public float Exposure => FromCore
-        ? Mathf.Clamp01(Blwp.BlwpCore.Exposure)
-        : Mathf.Clamp01(_exposure / Mathf.Max(0.01f, exposureReference));
+    public float Exposure => Mathf.Clamp01(Blwp.BlwpCore.Exposure);
 
     /// <summary>
     /// The instantaneous rate, unnormalised. Zero at the map edge, 1 on the
@@ -101,9 +113,7 @@ public class RunScore : MonoBehaviour
     public float CargoFactor => bay != null ? Mathf.Clamp01(bay.Fill) : 0f;
 
     /// <summary>What this run would score if it were delivered right now.</summary>
-    public int Projected => FromCore
-        ? Blwp.BlwpCore.RunScore()
-        : Mathf.RoundToInt(1000f * Exposure * TimeFactor * CargoFactor);
+    public int Projected => Blwp.BlwpCore.RunScore();
 
     /// <summary>Score of the last delivered run, for the breakdown card.</summary>
     public int LastScore { get; private set; }
@@ -204,47 +214,39 @@ public class RunScore : MonoBehaviour
                 ? Mathf.Clamp((now - _coreExposure) / gained, 0f, 2f)
                 : 0f;
             _coreExposure = now;
+            if (Rate > 0.0001f) LastLiveRate = Rate;
             if (MakingProgress) _bestX = x;
             return;
         }
 
-        Rate = MakingProgress ? RateNow() : 0f;
-
-        if (MakingProgress)
-        {
-            _exposure += RateNow() * gained;
-            _bestX = x;
-        }
+        // NO SECOND OPINION. What used to be here integrated a C# threat over
+        // C# positions into a C# exposure, and it ran in the editor every
+        // time. The core is the only thing that scores a run now; with no core
+        // answering, nothing accrues and the HUD says zero.
     }
+
+    /// <summary>
+    /// The last rate the core paid while the truck was gaining ground.
+    ///
+    /// Kept because "not earning" has two different causes and they need
+    /// different advice: out of the corridor, or in it and driving in circles.
+    /// The live `Rate` is zero in both, so the HUD used to tell them apart by
+    /// calling `RateNow()` - a second C# threat model - and that is exactly
+    /// what has been deleted. This is the core's own last warm reading.
+    /// </summary>
+    public float LastLiveRate { get; private set; }
 
     /// <summary>Last exposure read out of the core, for the rate above.</summary>
     float _coreExposure;
 
-    /// <summary>
-    /// proximity * (1 + heat), straight out of section 18A.3.
-    ///
-    /// Heat multiplies rather than adds for the same reason exposure does in
-    /// the score: a valuable load driven around the outside must not collect a
-    /// risk bonus it never actually ran.
-    /// </summary>
-    public float RateNow()
-    {
-        if (courier == null || field == null) return 0f;
-        var p = courier.position;
+    // `RateNow()` and its threat model are gone. It walked the C# army - and
+    // with no C# army left it fell through to a geometry fallback - to
+    // recompute a danger the core already integrates. It multiplied by
+    // `bay.Heat`, Unity's own copy of a rule the core owns, which made it a
+    // second opinion about the two things this rebuild exists to move.
+    // `ThreatAt` below is kept only for the editor gizmo that draws the
+    // corridor; nothing scores from it.
 
-        // The apron earns nothing, whatever the tape does.
-        //
-        // The frontline moves with the price and sometimes drifts within a few
-        // dozen metres of the spawn point. Standing there, freshly loaded and
-        // still protected, then paid exposure for doing precisely nothing -
-        // and once protection lifted it kept paying, because proximity does
-        // not care whether you drove anywhere.
-        if (truck != null &&
-            Vector3.Distance(p, truck.spawnPosition) < spawnFreeRadius) return 0f;
-
-        float heat = bay != null ? bay.Heat : 0f;
-        return ThreatAt(p) * (1f + heat);
-    }
 
     /// <summary>
     /// How dangerous this spot actually is: guns in range, not geometry.

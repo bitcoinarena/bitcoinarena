@@ -1633,7 +1633,11 @@ public class DriveHud : MonoBehaviour
         // Two different reasons to earn nothing, and they need different
         // advice. Out of the corridor: get closer to the fighting. In the
         // corridor but not gaining ground: circling pays nothing, drive on.
-        bool stalled = !runScore.MakingProgress && runScore.RateNow() >= 0.03f;
+        // WHICH KIND OF NOTHING. Out of the corridor, or in it and going
+        // round in circles - the live rate is zero in both, so this used to
+        // ask `RateNow()`, a second C# threat model, which has been deleted.
+        // The core's own last warm reading tells them apart.
+        bool stalled = !runScore.MakingProgress && runScore.LastLiveRate >= 0.03f;
 
         var label = new GUIStyle(_small) { alignment = TextAnchor.UpperRight, fontStyle = FontStyle.Bold };
         Shadowed(new Rect(box.x, box.y, box.width, lh),

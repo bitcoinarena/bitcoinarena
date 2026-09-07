@@ -19,6 +19,7 @@ import {
 } from '../src/state.js';
 import * as scoring from '../src/rules/score.js';
 import * as army from '../src/rules/army.js';
+import * as layout from '../src/state.js';
 import * as gate from '../src/rules/gate.js';
 
 const ONE = 65536;
@@ -1420,4 +1421,149 @@ test('heat multiplies the shell and the arithmetic is the C#s', () => {
   assert.equal(army.shellForHeat(10 * ONE, ONE), 1048580);
   assert.ok(Math.abs(army.shellForHeat(10 * ONE, ONE) - 16 * ONE) < 8);
   assert.ok(Math.abs(army.shellForHeat(10 * ONE, ONE / 2) - 13 * ONE) < 8);
+});
+
+// ---------------------------------------------------------------------------
+// THE THREE RULES THE UNITY TESTS WERE USING A C# FORMULA TO CHECK.
+//
+// `RunScore.Projected` had a second scoring formula for when no core is
+// answering, and in the editor no core ever is - so three PlayMode tests were
+// measuring Unity's arithmetic and calling it the score. The formula is being
+// deleted, so the rules move here, where the core actually runs.
+//
+// `scoreOf(full, REFERENCE_TICKS, 0) === 0` above already states the empty bed
+// as arithmetic. What that does not say is what the PlayMode test said: that a
+// score already BUILT collapses when the bed is emptied. These are the
+// whole-run forms.
+// ---------------------------------------------------------------------------
+
+/** Drive east at full throttle for a while and hand back the state. */
+function driven(ticks, practice = 1) {
+  const st = init(0x5eed1234);
+  for (let t = 0; t < ticks; t++) step(st, ONE, 0, 0, 0, practice);
+  return st;
+}
+
+test('an empty bed collapses a score that was already built', () => {
+  const st = driven(1200);
+  const s = st.i32;
+  assert.ok(s[O_SCORE + S_EXPOSURE] > 0, 'the drive built no exposure to lose');
+  const before = runScore(st);
+  assert.ok(before > 0, `the drive scored ${before}, so there is nothing to collapse`);
+
+  s[O_SCORE + layout.S_CARGO] = 0;
+  assert.equal(runScore(st), 0,
+    `an empty bed scored ${runScore(st)} after ${before} - the factors are not `
+    + 'multiplicative');
+});
+
+test('nothing accrues while the truck is still on the apron', () => {
+  // DRIVING, not parked. The first cut of this held the truck still and was
+  // green with the apron rule deleted - `accrue` pays only for ground made
+  // good, so a stationary truck earns nothing whatever `earning` says. It
+  // proved the wrong thing.
+  //
+  // The apron is 22 m. Measured from a standstill at full throttle: 16.8 m out
+  // at tick 180 with exposure 0, and 22.3 m out at tick 210 with exposure
+  // 4290. So the boundary is driven across, and both sides are asserted.
+  const st = init(0x5eed1234);
+  const s = st.i32;
+  const x0 = s[O_TRUCK + T_X];
+  for (let t = 0; t < 180; t++) step(st, ONE, 0, 0, 0, 1);
+
+  const inside = (s[O_TRUCK + T_X] - x0) / ONE;
+  assert.ok(inside > 10 && inside < 22,
+    `the fixture drove ${inside.toFixed(1)} m, which is not inside the apron`);
+  assert.equal(s[O_SCORE + S_EXPOSURE], 0,
+    `gaining ground inside the apron banked ${s[O_SCORE + S_EXPOSURE]} of exposure`);
+  assert.equal(runScore(st), 0, 'the apron paid a score');
+
+  for (let t = 0; t < 40; t++) step(st, ONE, 0, 0, 0, 1);
+  const outside = (s[O_TRUCK + T_X] - x0) / ONE;
+  assert.ok(outside > 22, `the fixture never left the apron - ${outside.toFixed(1)} m`);
+  assert.ok(s[O_SCORE + S_EXPOSURE] > 0,
+    'past the apron the same driving still banked nothing, so this measured nothing');
+});
+
+test('a wreck banks nothing, however much the run had earned', () => {
+  const st = driven(1200);
+  const s = st.i32;
+  const standing = runScore(st);
+  assert.ok(standing > 0, 'the drive earned nothing to lose');
+  assert.equal(s[O_SCORE + layout.S_DELIVERED], 0, 'a live run had already banked');
+
+  // Written off where it stands. The outcome word turns over on the next tick
+  // and `S_DELIVERED` is only ever written on an ARRIVAL.
+  s[O_TRUCK + T_HP] = 0;
+  step(st, 0, 0, 0, 0, 1);
+
+  assert.equal(s[O_SCORE + S_STATE], gate.RUN_WRECKED, 'the write-off did not land');
+  assert.equal(s[O_SCORE + layout.S_DELIVERED], 0,
+    `a wreck banked ${s[O_SCORE + layout.S_DELIVERED] / ONE} after standing at ${standing}`);
+});
+
+test('the seam banks more than the quiet lane for the same ground made good', () => {
+  // THE FOURTH RULE the deleted C# formula was carrying. It compared
+  // `_score.Projected` down two routes and asserted 1.8x - a number measured
+  // against Unity's own arithmetic and its own fixture, which is exactly the
+  // sort of constant that must not be transplanted.
+  //
+  // Measured here instead, at the SAME ground made good so the comparison is
+  // not confounded by distance - the first cut let each lane run for a fixed
+  // number of ticks and one of them only reached x=15.5 while another reached
+  // 130, which compares nothing:
+  //
+  //   lane z=70 (edge)  exposure 110.4  score 362
+  //   lane z=45         exposure 145.9  score 479
+  //   lane z=20         exposure 155.7  score 511
+  //   lane z= 0 (seam)  exposure 178.9  score 587
+  //
+  // Monotonic, and the seam pays 1.62x the edge. The bound is 1.5x: room for
+  // the map's own drift, and nowhere near enough to survive a flattened threat
+  // scale, which is the failure it guards.
+  const TARGET = 60 * ONE;
+  const lane = (z) => {
+    const st = init(0x5eed1234);
+    const s = st.i32;
+    let ticks = 0;
+    while (s[O_TRUCK + T_X] < TARGET && ticks < 5400) {
+      s[O_TRUCK + T_Z] = Math.round(z * ONE);
+      s[O_TRUCK + T_VZ] = 0;
+      step(st, ONE, 0, 0, 0, 1);
+      ticks++;
+    }
+    assert.ok(s[O_TRUCK + T_X] >= TARGET, `lane z=${z} never made the ground`);
+    return { exposure: s[O_SCORE + S_EXPOSURE], score: runScore(st) };
+  };
+
+  const edge = lane(70), mid = lane(45), inner = lane(20), seam = lane(0);
+
+  assert.ok(seam.exposure > edge.exposure * 1.5,
+    `the seam banked ${(seam.exposure / ONE).toFixed(1)} against the edge's `
+    + `${(edge.exposure / ONE).toFixed(1)} - the quiet lane is competitive`);
+  assert.ok(seam.score > edge.score * 1.5,
+    `the seam scored ${seam.score} against the edge's ${edge.score}`);
+  assert.ok(mid.exposure > edge.exposure && inner.exposure > mid.exposure
+            && seam.exposure > inner.exposure,
+    'the gradient is not monotonic across the four lanes: '
+    + [edge, mid, inner, seam].map(l => (l.exposure / ONE).toFixed(1)).join(' '));
+});
+
+test('heat raises what a metre of ground is worth', () => {
+  // The fifth rule the deleted C# formula carried: a hotter load earns more
+  // for the same metre through the same danger. `accrue` is
+  // `exposure += threat * (1 + heat) * gained`, so this is exact arithmetic
+  // and gets an exact assertion rather than a ratio.
+  const gained = 10 * ONE, threat = ONE / 2;          // half danger, ten metres
+  const cold = scoring.accrue(0, 0, gained, threat, 0);
+  const warm = scoring.accrue(0, 0, gained, threat, ONE);
+
+  assert.equal(cold, 5 * ONE, `half danger over ten metres paid ${cold / ONE}`);
+  assert.equal(warm, 10 * ONE, `at full heat the same metre paid ${warm / ONE}`);
+  assert.equal(warm, cold * 2, 'full heat must double the rate, not add to it');
+
+  // and it is a MULTIPLIER on danger, not a floor under it: no danger pays
+  // nothing however hot the load.
+  assert.equal(scoring.accrue(0, 0, gained, 0, ONE), 0,
+    'a hot load earned something out of the fighting');
 });
