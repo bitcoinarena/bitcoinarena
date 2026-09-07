@@ -91,9 +91,29 @@ const hex = (u8) => [...u8].map((b) => b.toString(16).padStart(2, '0')).join('')
  */
 export function objectionHolds({
   objection, receipts, committee, transcriptHash, replayDiffers,
+  roundId, signedResultId,
 }) {
   if (!Array.isArray(committee) || !committee.length)
     return { holds: false, why: 'no committee to check the receipts against' };
+
+  // AN OBJECTION IS ABOUT ONE RESULT OF ONE ROUND, and until this was checked
+  // it was about none: an objection naming another round entirely held, and
+  // suspended this one. Measured. The receipts were the committee's and the
+  // replay differed, so every check that existed passed - they were simply
+  // checks about a different round.
+  //
+  // Required, not optional: a caller that does not say which result is being
+  // objected to cannot be told whether this objection is about it.
+  if (!(roundId instanceof Uint8Array) || !(signedResultId instanceof Uint8Array))
+    return { holds: false, why: 'no round and result to check this objection against' };
+  if (hex(objection.roundId) !== hex(roundId))
+    return { holds: false, why: `that objection is about round ${hex(objection.roundId)}, not this one` };
+  if (hex(objection.signedResultId) !== hex(signedResultId))
+    return {
+      holds: false,
+      why: `that objection is about result ${hex(objection.signedResultId)}, `
+        + 'and this is a different one',
+    };
   if (!Array.isArray(receipts) || !receipts.length)
     return { holds: false, why: 'an objection carries the receipts that back it, and this carries none' };
 
@@ -113,7 +133,11 @@ export function objectionHolds({
   if (replayDiffers !== true)
     return { holds: false, why: 'no replay has contradicted the signed result' };
 
-  return { holds: true, why: 'the receipts are the committee\'s and a replay contradicts the signed result' };
+  return {
+    holds: true,
+    atMs: objection.atMs,
+    why: 'the receipts are the committee\'s and a replay contradicts the signed result',
+  };
 }
 
 /**
@@ -134,18 +158,36 @@ export function finality({
   if (typeof window !== 'bigint')
     return { state: null, why: 'the round contract does not say how long the objection window is' };
 
-  const held = objections.find((o) => o.holds);
-  if (held) {
+  // THE WINDOW IS WORKED OUT FIRST, and that ordering is the rule rather than
+  // tidiness. This used to look for a holding objection before it looked at
+  // the clock, so an objection dated long after the close suspended a result
+  // that was already FINAL - measured at 999999 ms past it. Section 13A opens
+  // the window AFTER PROVISIONALLY_FINAL, and section 14 is blunt about the
+  // other end: "once a player's result is FINAL, later infrastructure failure
+  // does not erase it". Anyone able to produce one valid objection could
+  // otherwise un-finalise a settled round at any time.
+  const closesAtMs = BigInt(provisionalAtMs) + window;
+  const open = BigInt(now) < closesAtMs;
+
+  // AND AN OBJECTION COUNTS ONLY IF IT AROSE WHILE THE WINDOW WAS OPEN. Its
+  // own timestamp, not the moment somebody chose to present it.
+  const inTime = objections.filter((o) => o.holds
+    && o.atMs !== undefined
+    && BigInt(o.atMs) >= BigInt(provisionalAtMs)
+    && BigInt(o.atMs) < closesAtMs);
+  const late = objections.filter((o) => o.holds && !inTime.includes(o));
+
+  if (inTime.length) {
     return {
       state: SUSPENDED,
       why: 'a valid objection suspends finality: the committee re-runs the canonical '
         + 'transcript, and 13C applies only if that re-run cannot reach five of seven',
+      closesAtMs,
       signers: agreed.signers,
     };
   }
 
-  const closesAtMs = BigInt(provisionalAtMs) + window;
-  if (BigInt(now) < closesAtMs) {
+  if (open) {
     return {
       state: PROVISIONALLY_FINAL,
       why: `the objection window closes at ${closesAtMs} and it is ${now}`,
@@ -156,8 +198,11 @@ export function finality({
 
   return {
     state: FINAL,
-    why: `the window closed at ${closesAtMs} with no valid objection`,
+    why: late.length
+      ? `the window closed at ${closesAtMs}; ${late.length} objection(s) came too late to reopen it`
+      : `the window closed at ${closesAtMs} with no valid objection`,
     closesAtMs,
+    late: late.length,
     signers: agreed.signers,
   };
 }

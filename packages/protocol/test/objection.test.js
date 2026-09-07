@@ -46,9 +46,14 @@ const signedBy = (n) => Array.from({ length: n }, (_, i) =>
 const objection = (over = {}) => ({
   roundId: b32(1), playerPubkey: b32(2), transcriptHash: b32(3),
   signedResultId: resultId(result()), claimedOutcome: FAILED, claimedScore: 0,
-  objectorPubkey: b32(0x9e), atMs: 5000n, ...over,
+  // inside the window the tests open at 10000: an objection dated before the
+  // result was even provisional is not one the window ever ran for
+  objectorPubkey: b32(0x9e), atMs: 10001n, ...over,
 });
 const committeeReceipts = () => [1, 2, 3, 4, 5].map((n) => ({ nodePubkey: committee[n - 1] }));
+
+/** An objection is always checked AGAINST a round and a result; these are it. */
+const about = { roundId: b32(1), signedResultId: resultId(result()) };
 
 test('the window is a field of the round the player signed, not a constant', () => {
   const c = contract();
@@ -69,7 +74,7 @@ test('an objection survives the wire, and every field is in its id', () => {
   for (const over of [
     { roundId: b32(9) }, { playerPubkey: b32(9) }, { transcriptHash: b32(9) },
     { signedResultId: b32(9) }, { claimedOutcome: DELIVERED }, { claimedScore: 7 },
-    { objectorPubkey: b32(9) }, { atMs: 6000n },
+    { objectorPubkey: b32(9) }, { atMs: 10002n },
   ]) {
     assert.notEqual(toHex(objectionId(objection(over))), toHex(objectionId(o)),
       JSON.stringify(Object.keys(over)));
@@ -132,7 +137,7 @@ test('the window closes at the contract s length, to the millisecond', () => {
 test('a strangers receipt set makes the objection invalid, whoever sent it', () => {
   const strangers = [91, 92, 93].map((n) => ({ nodePubkey: b32(n) }));
   const no = objectionHolds({
-    objection: objection(), receipts: strangers, committee, replayDiffers: true,
+    objection: objection(), receipts: strangers, committee, replayDiffers: true, ...about,
   });
   assert.equal(no.holds, false);
   assert.match(no.why, /is not from this round's committee/);
@@ -141,6 +146,7 @@ test('a strangers receipt set makes the objection invalid, whoever sent it', () 
   // is a stranger in both, because anyone may object
   const yes = objectionHolds({
     objection: objection(), receipts: committeeReceipts(), committee, replayDiffers: true,
+    ...about,
   });
   assert.equal(yes.holds, true);
 
@@ -148,13 +154,13 @@ test('a strangers receipt set makes the objection invalid, whoever sent it', () 
   for (const who of [b32(0x77), b32(0x88), b32(0x02)]) {
     assert.equal(objectionHolds({
       objection: objection({ objectorPubkey: who }), receipts: committeeReceipts(),
-      committee, replayDiffers: true,
+      committee, replayDiffers: true, ...about,
     }).holds, true, toHex(who));
   }
 
   // no replay, no objection: a claim is not a contradiction
   const unreplayed = objectionHolds({
-    objection: objection(), receipts: committeeReceipts(), committee,
+    objection: objection(), receipts: committeeReceipts(), committee, ...about,
   });
   assert.equal(unreplayed.holds, false);
   assert.match(unreplayed.why, /no replay has contradicted the signed result/);
@@ -162,13 +168,13 @@ test('a strangers receipt set makes the objection invalid, whoever sent it', () 
   // receipts for another transcript than the one the objection names
   const elsewhere = objectionHolds({
     objection: objection(), receipts: committeeReceipts(), committee,
-    transcriptHash: b32(9), replayDiffers: true,
+    transcriptHash: b32(9), replayDiffers: true, ...about,
   });
   assert.equal(elsewhere.holds, false);
   assert.match(elsewhere.why, /a different transcript/);
 
-  assert.equal(objectionHolds({ objection: objection(), receipts: [], committee, replayDiffers: true }).holds, false);
-  assert.equal(objectionHolds({ objection: objection(), receipts: committeeReceipts(), committee: [], replayDiffers: true }).holds, false);
+  assert.equal(objectionHolds({ objection: objection(), receipts: [], committee, replayDiffers: true, ...about }).holds, false);
+  assert.equal(objectionHolds({ objection: objection(), receipts: committeeReceipts(), committee: [], replayDiffers: true, ...about }).holds, false);
 });
 
 /**
@@ -181,6 +187,7 @@ test('a valid objection inside the window suspends finality, and does not void i
   const at = 10000n;
   const holds = objectionHolds({
     objection: objection(), receipts: committeeReceipts(), committee, replayDiffers: true,
+    ...about,
   });
   assert.equal(holds.holds, true);
 
@@ -197,9 +204,117 @@ test('a valid objection inside the window suspends finality, and does not void i
   // an objection that does not hold changes nothing
   const idle = objectionHolds({
     objection: objection(), receipts: committeeReceipts(), committee, replayDiffers: false,
+    ...about,
   });
   assert.equal(finality({
     signedBy: signedBy(5), committee, contract: c, provisionalAtMs: at,
     now: at + 1n, objections: [idle],
   }).state, PROVISIONALLY_FINAL);
+});
+
+/**
+ * A LATE OBJECTION LEAVES A FINAL RESULT FINAL.
+ *
+ * Measured before this was checked: an objection dated 999999 ms past the
+ * close held, and `finality` answered SUSPENDED - because it looked for a
+ * holding objection before it looked at the clock. Section 13A opens the
+ * window AFTER PROVISIONALLY_FINAL, and section 14 is blunt about the other
+ * end: "once a player's result is FINAL, later infrastructure failure does not
+ * erase it". Anyone able to produce one valid objection could otherwise
+ * un-finalise a settled round at any time.
+ */
+test('an objection after the window closes cannot reopen a final result', () => {
+  const c = contract();
+  const at = 10000n;
+  const closes = at + OBJECTION_WINDOW_REFERENCE_MS;
+
+  const late = objectionHolds({
+    objection: objection({ atMs: closes + 999999n }),
+    receipts: committeeReceipts(), committee, replayDiffers: true, ...about,
+  });
+  assert.equal(late.holds, true, 'the objection itself is sound - it is only late');
+  assert.equal(late.atMs, closes + 999999n);
+
+  const seen = finality({
+    signedBy: signedBy(5), committee, contract: c, provisionalAtMs: at,
+    now: closes + 999999n, objections: [late],
+  });
+  assert.equal(seen.state, FINAL, 'a late objection un-finalised a settled round');
+  assert.equal(seen.late, 1);
+  assert.match(seen.why, /came too late to reopen it/);
+
+  // one millisecond inside the close still suspends, so the boundary is the
+  // window and not the wording
+  const justInTime = objectionHolds({
+    objection: objection({ atMs: closes - 1n }),
+    receipts: committeeReceipts(), committee, replayDiffers: true, ...about,
+  });
+  assert.equal(finality({
+    signedBy: signedBy(5), committee, contract: c, provisionalAtMs: at,
+    now: closes + 999999n, objections: [justInTime],
+  }).state, SUSPENDED, 'an objection raised inside the window stopped counting');
+
+  // AT THE CLOSING MILLISECOND IT IS ALREADY SHUT, the same boundary the state
+  // uses: `now === closesAtMs` is FINAL, so an objection dated there is late.
+  const onTheDot = objectionHolds({
+    objection: objection({ atMs: closes }),
+    receipts: committeeReceipts(), committee, replayDiffers: true, ...about,
+  });
+  const atClose = finality({
+    signedBy: signedBy(5), committee, contract: c, provisionalAtMs: at,
+    now: closes, objections: [onTheDot],
+  });
+  assert.equal(atClose.state, FINAL, 'an objection at the closing millisecond reopened it');
+  assert.equal(atClose.late, 1);
+
+  // and one dated before the result was provisional at all
+  const early = objectionHolds({
+    objection: objection({ atMs: at - 1n }),
+    receipts: committeeReceipts(), committee, replayDiffers: true, ...about,
+  });
+  assert.equal(finality({
+    signedBy: signedBy(5), committee, contract: c, provisionalAtMs: at,
+    now: at + 1n, objections: [early],
+  }).state, PROVISIONALLY_FINAL);
+});
+
+/**
+ * AN OBJECTION IS ABOUT ONE RESULT OF ONE ROUND.
+ *
+ * Measured before this was checked: an objection naming another round entirely
+ * held, and suspended this one. Every check that existed passed - the receipts
+ * were the committee's and the replay differed - they were simply checks about
+ * a different round.
+ */
+test('an objection about another round, or another result, does not touch this one', () => {
+  const c = contract();
+  const at = 10000n;
+  const good = { receipts: committeeReceipts(), committee, replayDiffers: true };
+
+  const elsewhere = objectionHolds({
+    objection: objection({ roundId: b32(0x77), signedResultId: b32(0x77) }), ...good, ...about,
+  });
+  assert.equal(elsewhere.holds, false);
+  assert.match(elsewhere.why, /is about round 7777/);
+
+  const otherResult = objectionHolds({
+    objection: objection({ signedResultId: b32(0x55) }), ...good, ...about,
+  });
+  assert.equal(otherResult.holds, false);
+  assert.match(otherResult.why, /is about result 5555/);
+
+  // neither suspends anything
+  for (const held of [elsewhere, otherResult]) {
+    assert.equal(finality({
+      signedBy: signedBy(5), committee, contract: c, provisionalAtMs: at,
+      now: at + 1n, objections: [held],
+    }).state, PROVISIONALLY_FINAL);
+  }
+
+  // and a caller that does not say which result is being objected to is
+  // refused rather than assumed
+  assert.equal(objectionHolds({ objection: objection(), ...good }).holds, false);
+  assert.match(objectionHolds({ objection: objection(), ...good }).why,
+    /no round and result to check this objection against/);
+  assert.equal(objectionHolds({ objection: objection(), ...good, roundId: b32(1) }).holds, false);
 });
