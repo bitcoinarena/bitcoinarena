@@ -471,3 +471,58 @@ test('a node publishes the receipts it holds for marks it has not got', async ()
     assert.deepEqual(back.checkpointId, checkpointId(elsewhere));
   } finally { await node.close(); await empty.close(); }
 });
+
+/**
+ * THE THIRD DOOR THAT THREW THE RECORD AWAY.
+ *
+ * A mark at tick 30 naming the mark at 60 as its parent passes the head check
+ * and dies on the monotonic-tick rule. It used to die unkept - and if the
+ * player then sends an honest child of that same parent, those two marks name
+ * one parent and are a fork by 13B's own rule, with the earlier record already
+ * gone. Two doors had been fixed and this one had not, which is the same shape
+ * of hole three times over.
+ */
+test('a mark refused for a backwards tick is kept, and pairs as a fork later', async () => {
+  const { round, rid, eid, mark } = played();
+  const parent = checkpointId(mark);
+
+  // the player signs a state at tick 30 that claims to follow tick 60
+  const backwards = { ...mark, tick: 30, stateHash: b32(0xb0), previousHash: parent };
+  assert.throws(() => round.checkpoint(signedBy(backwards)),
+    /expected a tick after 60, got 30/);
+  assert.equal(round.offeredMarks(rid, eid).length, 1, 'the record was thrown away');
+
+  // nothing of ours contradicts it yet, so nothing is published
+  assert.deepEqual(round.equivocation(rid, eid), []);
+
+  // and then an honest child of the same parent arrives
+  const honest = { ...mark, tick: 120, stateHash: b32(0xa1), previousHash: parent };
+  round.checkpoint(signedBy(honest));
+
+  const held = round.equivocation(rid, eid);
+  assert.equal(held.length, 1, 'two children of one parent were not paired');
+  assert.equal(held[0].how, 'two chains from one parent');
+
+  const node = await serve(round.db, { port: 0, funded: () => true });
+  try {
+    const base = `http://127.0.0.1:${node.port}`;
+    const r = await fetch(`${base}/equivocation?round=${toHex(rid)}&entry=${toHex(eid)}`);
+    assert.equal(r.status, 200);
+    const body = new Uint8Array(await r.arrayBuffer());
+    const e = decodeEntryContract(new Uint8Array(
+      await (await fetch(`${base}/entry?id=${toHex(eid)}`)).arrayBuffer()));
+    const seen = await provesEquivocation(
+      body.subarray(0, SIGNED_CHECKPOINT_BYTES),
+      body.subarray(SIGNED_CHECKPOINT_BYTES), e.sessionPubkey, verify);
+    assert.equal(seen.ok, true, seen.why);
+    assert.equal(seen.how, 'two chains from one parent');
+  } finally { await node.close(); }
+});
+
+/** A repeat of the mark already stored is still not evidence of anything. */
+test('re-sending the stored mark keeps nothing and publishes nothing', () => {
+  const { round, rid, eid, mark } = played();
+  round.checkpoint(signedBy(mark));            // the same bytes again
+  assert.equal(round.offeredMarks(rid, eid).length, 0);
+  assert.deepEqual(round.equivocation(rid, eid), []);
+});

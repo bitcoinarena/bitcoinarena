@@ -426,10 +426,7 @@ export class Round {
       // parent this node never made the head. Throwing it away destroyed the
       // record, exactly as the same-tick case used to. Whether it proves
       // anything is `provesEquivocation`'s answer, not this door's.
-      this.db.prepare(
-        'INSERT OR IGNORE INTO offered_marks '
-        + '(round_id, entry_id, tick, checkpoint_id, bytes, seen_ms) VALUES (?, ?, ?, ?, ?, ?)')
-        .run(c.roundId, c.entryId, c.tick, id, bytes, this.now());
+      this.keepOffered(c, id, bytes);
       throw new Error('the checkpoint does not follow the chain head');
     }
 
@@ -440,8 +437,17 @@ export class Round {
     // defect `previousHash` exists to prevent, on the time axis instead of the
     // history axis, so it is refused the same way and with the same shape of
     // message the batch path uses.
-    if (head.tick !== null && c.tick <= head.tick)
+    if (head.tick !== null && c.tick <= head.tick) {
+      // AND THIS ONE IS KEPT TOO, the third door that used to throw the record
+      // away. A mark at tick 30 naming the mark at 60 as its parent passes the
+      // head check and dies here - and if the player later sends an honest
+      // child of that same parent, those two name one parent and are a fork by
+      // 13B's own rule, with the earlier record already gone. Same shape as the
+      // two before it: a refusal that discards evidence, in a door no test
+      // crossed.
+      this.keepOffered(c, id, bytes);
       throw new Error(`expected a tick after ${head.tick}, got ${c.tick}`);
+    }
 
     // AND THE INPUTS MUST BE ONES THIS NODE HAS. `inputChainHash` says which
     // inputs claim to have produced that state; unchecked it is the same
@@ -711,6 +717,21 @@ export class Round {
         bytes: new Uint8Array(r.bytes),
         seenMs: r.seen_ms,
       }));
+  }
+
+  /**
+   * A signed mark this node refused, kept beside the chain it accepted.
+   *
+   * ONE PLACE, because there is more than one way to be refused and every one
+   * of them used to destroy the record. It never joins the chain and it is not
+   * a head; whether it proves anything is `equivocation`'s pairing and
+   * `provesEquivocation`'s answer.
+   */
+  keepOffered(c, id, bytes) {
+    this.db.prepare(
+      'INSERT OR IGNORE INTO offered_marks '
+      + '(round_id, entry_id, tick, checkpoint_id, bytes, seen_ms) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(c.roundId, c.entryId, c.tick, id, bytes, this.now());
   }
 
   /** Signed marks this node refused and kept, beside the chain it did accept. */
