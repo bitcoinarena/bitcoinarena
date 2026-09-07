@@ -34,6 +34,15 @@ namespace Blwp
         /// <summary>Marks a node has receipted for this run.</summary>
         public int Marks { get; private set; }
 
+        /// <summary>
+        /// The run's ending, or empty while it is alive: `&lt;WORD&gt; &lt;reason&gt;`.
+        ///
+        /// Polled like the rest, and it is what the HUD draws from. Unity does
+        /// not decide it - the client holds the word and the reason, and this
+        /// carries them.
+        /// </summary>
+        public string Ending { get; private set; } = "";
+
         float _nextPoll;
 
         /// <summary>
@@ -73,6 +82,7 @@ namespace Blwp
             _nextPoll = Time.unscaledTime + 0.5f;
             Status = BlwpNet.Running ? BlwpNet.Status() : "off";
             Marks = BlwpNet.Marks;
+            Ending = BlwpNet.Ending();
         }
     }
 }

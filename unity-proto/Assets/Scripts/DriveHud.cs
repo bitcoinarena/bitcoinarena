@@ -34,6 +34,8 @@ public class DriveHud : MonoBehaviour
     static readonly Color Up = new Color(0.30f, 0.88f, 0.48f);
     static readonly Color Down = new Color(1f, 0.42f, 0.42f);
 
+    Blwp.NetSession _session;
+
     void Awake()
     {
         _flat = new Texture2D(1, 1); _flat.SetPixel(0, 0, Color.white); _flat.Apply();
@@ -1791,6 +1793,66 @@ public class DriveHud : MonoBehaviour
     /// around them they read as part of the scenery rather than as fire coming
     /// this way.
     /// </summary>
+    /// <summary>
+    /// WHAT A PLAYER IS TOLD WHEN THE RUN STOPS, and what they are not.
+    ///
+    /// The client ends a run when it can no longer produce a transcript
+    /// anybody could replay. Until this line existed the reason went to
+    /// `Debug.Log` - the browser console - so the truck stopped and the player
+    /// was told nothing at all.
+    ///
+    /// IT MUST NOT LOOK SETTLED. The client's word is `VOID`, and that is the
+    /// protocol's name for what a COMMITTEE decides under the no-quorum rule -
+    /// not something a browser may announce. What this client knows is that it
+    /// cannot record any more of this round, so that is what is said, in the
+    /// client's own words about the cause. What the entry pays is nobody's
+    /// business here, and no word for it is printed.
+    ///
+    /// `ending` is `<WORD> <reason>` off the bridge, or empty while the run is
+    /// alive. The word is dropped and the reason kept.
+    /// </summary>
+    public static string RunStoppedLine(string ending)
+    {
+        if (string.IsNullOrEmpty(ending)) return "";
+        int space = ending.IndexOf(' ');
+        string why = space < 0 ? "" : ending.Substring(space + 1).Trim();
+        return why.Length == 0 ? "RUN STOPPED" : "RUN STOPPED - " + why;
+    }
+
+    /// <summary>
+    /// In the gap the headline is allowed to use, under the UNDER FIRE line.
+    ///
+    /// Not `Rect(0, y, w, ...)` with the text centred, which is the mistake
+    /// this file records making four times: a full-width box looks right and
+    /// covers the numbers a driver reads the moment anything in it grows.
+    /// </summary>
+    public Rect RunStoppedBox(int w, int h)
+    {
+        float font = Mathf.RoundToInt(Mathf.Min(w, h) * 0.030f);
+        var fire = UnderFireBox(w, h);
+        return new Rect(fire.x, fire.yMax + font * 0.6f, fire.width, font * 2.6f);
+    }
+
+    void DrawRunStopped(int w, int h)
+    {
+        // Found once and kept. A session that never existed leaves this null
+        // for the life of the scene, which is a player who was given no node
+        // to play against: they see exactly the HUD that shipped before any of
+        // this existed.
+        if (_session == null) _session = Object.FindFirstObjectByType<Blwp.NetSession>();
+        string line = RunStoppedLine(_session != null ? _session.Ending : "");
+        if (line.Length == 0) return;
+
+        var style = new GUIStyle(GUI.skin.label)
+        {
+            alignment = TextAnchor.UpperCenter,
+            fontStyle = FontStyle.Bold,
+            fontSize = Mathf.RoundToInt(Mathf.Min(w, h) * 0.030f),
+            wordWrap = true,
+        };
+        Shadowed(RunStoppedBox(w, h), line, style, new Color(1f, 0.78f, 0.25f, 1f));
+    }
+
     void DrawUnderFire(int w, int h)
     {
         if (health == null) return;
@@ -2264,6 +2326,7 @@ public class DriveHud : MonoBehaviour
         DrawWanted(w, h);
         DrawExposure(w, h);
         DrawUnderFire(w, h);
+        DrawRunStopped(w, h);
         DrawWaypoint(w, h);
         DrawFallout(w, h);
         DrawHealth(w, h);

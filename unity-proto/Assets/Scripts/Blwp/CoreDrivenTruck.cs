@@ -178,27 +178,55 @@ namespace Blwp
             => controlsLocked || ended;
 
         /// <summary>
-        /// Hands the truck back and stops stepping, once, saying why.
+        /// Stops stepping and LOCKS the truck, once, saying why.
         ///
-        /// The same handover `OnDisable` does - the rigidbody stops being
-        /// externally driven - so a stopped run leaves the truck in the state
-        /// the rest of the game already knows how to hold. Nothing is scored
-        /// and no outcome is chosen: the reason is repeated, not decided.
+        /// Not the handover `OnDisable` does. That one gives the truck back to
+        /// the player, which is right when a component is disabled and wrong
+        /// when a round can no longer be settled - and it was what this did at
+        /// first, so the core stopped and the player drove on under PhysX.
+        /// Nothing is scored and no outcome is chosen: the reason is repeated,
+        /// not decided.
         /// </summary>
         public void StopDriving(string why)
         {
             if (!Driving) return;
-            if (_rb != null) _rb.isKinematic = _wasKinematic;
-            if (_truck != null) _truck.externallyDriven = false;
-            Driving = false;
+            HandBack(lockControls: true);
             Debug.Log($"[blwp] the core stopped driving: {why}");
+        }
+
+        /// <summary>
+        /// Gives the truck back to the physics controller, and says whether the
+        /// player may drive it afterwards.
+        ///
+        /// ONE HANDOVER, because there were two. `StopDriving` and `OnDisable`
+        /// each wrote the same three lines, which is how they drift - and the
+        /// first version of the stop proved it: it handed the truck back
+        /// EXACTLY as `OnDisable` does, so the core stopped stepping and the
+        /// player carried on driving the round under PhysX. The core stopping
+        /// was never the point; the player not driving a round that cannot be
+        /// settled was.
+        ///
+        /// `controlsLocked` is the lock the rest of the game already uses -
+        /// `LoadoutPanel` at the bay, `SplashScreen` at the title - and it is
+        /// the handbrake rather than merely no throttle, so a truck on a slope
+        /// stands still instead of rolling into the war unmanned. Disabling the
+        /// component in the ordinary way does NOT lock it: that is a handover,
+        /// not an ending.
+        /// </summary>
+        public void HandBack(bool lockControls)
+        {
+            if (_rb != null) _rb.isKinematic = _wasKinematic;
+            if (_truck != null)
+            {
+                _truck.externallyDriven = false;
+                if (lockControls) _truck.controlsLocked = true;
+            }
+            Driving = false;
         }
 
         void OnDisable()
         {
-            if (Driving && _rb != null) _rb.isKinematic = _wasKinematic;
-            if (Driving && _truck != null) _truck.externallyDriven = false;
-            Driving = false;
+            if (Driving) HandBack(lockControls: false);
         }
 
         /// <summary>Remembers where each wheel sits on the truck.</summary>

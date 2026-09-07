@@ -123,4 +123,41 @@ public class NetSessionTests
         Assert.IsFalse(Blwp.CoreDrivenTruck.LocksControls(false, false),
             "and a live run is driven by the player, as it always was");
     }
+
+    /// <summary>
+    /// WHAT THE PLAYER IS TOLD, AND WHAT THEY ARE NOT.
+    ///
+    /// The client's word is `VOID`, which is the protocol's name for what a
+    /// COMMITTEE decides under the no-quorum rule - not something a browser may
+    /// announce. What this client knows is that it cannot record any more of
+    /// this round, and that is all the screen says. A payout word on a HUD
+    /// would be a browser-side outcome, which is the one thing the whole design
+    /// forbids.
+    /// </summary>
+    [Test]
+    public void TheStoppedLineSaysWhyAndNotWhatItPays()
+    {
+        const string ending = "VOID a tick was dropped at 601: the hold was full at 600, "
+                              + "so no transcript from here can be replayed";
+        string line = DriveHud.RunStoppedLine(ending);
+
+        Assert.IsTrue(line.StartsWith("RUN STOPPED"), line);
+        StringAssert.Contains("the hold was full at 600", line,
+            "the player is told why, in the client's own words");
+
+        foreach (var word in new[] { "VOID", "REFUND", "REFUNDED", "WON", "LOST",
+                                     "FORFEIT", "PAID", "DELIVERED" })
+            Assert.IsFalse(line.ToUpperInvariant().Contains(word),
+                $"the HUD claimed an outcome: {word} in \"{line}\"");
+    }
+
+    [Test]
+    public void ALiveRunSaysNothingAtAll()
+    {
+        Assert.AreEqual("", DriveHud.RunStoppedLine(""),
+            "a banner on a healthy run is a banner nobody reads on a broken one");
+        Assert.AreEqual("", DriveHud.RunStoppedLine(null));
+        Assert.AreEqual("RUN STOPPED", DriveHud.RunStoppedLine("VOID"),
+            "and a word with no reason still stops the run rather than saying nothing");
+    }
 }
