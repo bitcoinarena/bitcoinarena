@@ -135,3 +135,52 @@ function compareBytes(a, b) {
     if (a[i] !== b[i]) return a[i] - b[i];
   return a.length - b.length;
 }
+
+/**
+ * WHAT AN ENTRY BECOMES WHEN THE COMMITTEE COULD NOT AGREE.
+ *
+ * Section 13C's no-quorum rule, and its asymmetry is the whole of it: "a
+ * player cannot manufacture a refund by causing disagreement, because the only
+ * way a player can cause it is equivocation, and equivocation forfeits.
+ * Everything else that goes wrong is the infrastructure's fault and refunds."
+ *
+ *   a result with 5-of-7            the committee agreed; this rule does not
+ *                                   apply and says so rather than guessing
+ *   a proven fork, no quorum        FORFEIT. The stake joins the loser pool.
+ *   no proof, no quorum             VOID. The entry is excluded from the pool
+ *                                   and from the payout table, and the stake
+ *                                   goes back.
+ *
+ * THE PROOF IS TAKEN AS ALREADY CHECKED, and that is deliberate rather than
+ * lax: `provesEquivocation` verifies signatures and needs a curve, this
+ * package carries none, and a decision that re-verified would need one here.
+ * The caller passes what it has verified - a node that publishes a proof has
+ * verified it, and a caller that passes `true` on an unchecked object has
+ * forfeited somebody's stake on its own say-so.
+ *
+ * PLAYER_LOST IS NOT A WORD HERE. FORFEIT already names the case where the
+ * player's own conduct costs the stake, and a synonym would be a second word
+ * for one outcome and a second place to get it wrong.
+ */
+export function noQuorumOutcome({ signatures, needed, equivocationProven }) {
+  if (!Number.isInteger(signatures) || signatures < 0)
+    throw new Error('signatures is a count of committee members, and cannot be negative');
+  if (!Number.isInteger(needed) || needed <= 0)
+    throw new Error('the threshold is a positive count of committee members');
+
+  if (signatures >= needed)
+    return { outcome: null, why: `the committee agreed: ${signatures} of ${needed}` };
+
+  if (equivocationProven === true)
+    return {
+      outcome: FORFEIT,
+      why: `no quorum at ${signatures} of ${needed}, and the player signed two `
+        + 'chains: 13B forfeits the entry',
+    };
+
+  return {
+    outcome: VOID,
+    why: `no quorum at ${signatures} of ${needed}, and nothing shows the player `
+      + 'caused it: the fault is the operator side and the stake goes back',
+  };
+}
