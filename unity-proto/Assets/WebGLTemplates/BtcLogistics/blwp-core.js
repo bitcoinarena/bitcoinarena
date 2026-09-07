@@ -1672,19 +1672,20 @@ const COURIER_RANGE = Math.imul(34, ONE);
  * WHAT THE LOAD BUYS THE WAR, from `Army.cs:625`, `:634` and `:638`.
  *
  * Heat widens the reach the truck is noticed at, lets it outrank a tank that
- * is closer than it is, and multiplies the shell. The three factors are the
- * C#'s own and are not re-chosen here: a tank at full heat notices the truck
- * at 34 x 2.4 = 81.6 m, will leave a foe three and a half times nearer to
- * shoot at it, and hits for 5-11 x 1.6.
+ * is closer than it is, and multiplies the shell. Heat ZERO is still the C#
+ * recording. Full heat used the C# 1.4 / 2.5 / 0.6 factors and covered the
+ * whole 85 m half-map (tanks noticed at 81.6 m), so the rim was not a rim
+ * and a loaded run could not reach the gate. M1.a16 (the owner 2026-09-07):
+ * keep it hard, 30-40% of committed runs should get through.
  *
- * The rifle gets the narrower widening the C# gives it, `Army.cs:727`, and
- * its damage is NOT scaled - the C# scales the shell and not the round, and
- * the two bands are what the recorder tells the weapons apart by.
+ * A tank at full heat now notices at 34 x 1.3 = 44.2 m, will leave a foe
+ * half again nearer to shoot at the truck, and hits for 5-11 x 1.22. The
+ * rifle's round is still not scaled.
  */
-const HEAT_REACH_ARMOUR = 91750;    // 1.4
-const HEAT_REACH_RIFLE = 52429;     // 0.8
-const HEAT_OUTRANK = 163840;        // 2.5
-const HEAT_SHELL = 39322;           // 0.6
+const HEAT_REACH_ARMOUR = 19661;    // 0.3
+const HEAT_REACH_RIFLE = 13107;     // 0.2
+const HEAT_OUTRANK = 32768;         // 0.5
+const HEAT_SHELL = 14418;           // 0.22
 
 /**
  * How far this arm notices the truck at, for a load hunted this hard.
@@ -2587,6 +2588,21 @@ const EXPOSURE_REFERENCE = Math.imul(320, ONE);
 const REFERENCE_TICKS = 3900;
 /** No danger is earned within this of the start. */
 const APRON_RADIUS = Math.imul(22, ONE);
+
+/** Metres off the seam at which a metre of ground pays nothing. */
+const FRONT_SCORE_SPAN = Math.imul(40, ONE);
+
+/**
+ * How much of the local threat counts for the score, from distance to the
+ * front. 1 on the seam, 0 at 40 m and beyond. Quadratic so a rim far from
+ * the fighting is not a slightly quieter lane (the owner 2026-09-07).
+ */
+const frontWeight = (z, seam) => {
+  const sep = abs(sub(z, seam));
+  if (sep >= FRONT_SCORE_SPAN) return 0;
+  const t = sub(ONE, div(sep, FRONT_SCORE_SPAN));
+  return mulFast(t, t);
+};
 
 const T_FLOOR = 16384;      // 0.25
 const T_CEIL = 98304;       // 1.5
@@ -4541,7 +4557,7 @@ function step(st, throttle, steer, brake, handbrake, practice) {
     // "ghosts nothing draws". They are not ghosts any more - the army is the
     // core's - and `setUnits` had no caller left anywhere in the project, so
     // the preference was a dead branch guarding a dead setter. Both are gone.
-    const threat = threatAt(view, UNITS, tx, tz);
+    const threat = mulFast(threatAt(view, UNITS, tx, tz), frontWeight(tz, seamZ));
     s[O_SCORE + S_EXPOSURE] = accrue(
       s[O_SCORE + S_EXPOSURE], s[O_SCORE + S_BESTX], tx, threat, s[O_SCORE + S_CARGO]);
   }
