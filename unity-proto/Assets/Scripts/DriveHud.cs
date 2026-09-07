@@ -457,6 +457,30 @@ public class DriveHud : MonoBehaviour
     /// that is what happened: Binance futures accepted the connection and never
     /// sent a frame while the price ticked and the HUD said "live".
     /// </summary>
+    /// <summary>
+    /// THE LINE UNDER THE PRICE.
+    ///
+    /// Its own function because it is a WORD the player reads, and the words
+    /// on this HUD are pinned by tests rather than checked by eye - the German
+    /// on the streamed model list was found by a photograph and not by the one
+    /// German check this project had, which reads the labels beside it.
+    ///
+    /// PRICE AND PER CENT, nothing else, once a price has arrived. the owner,
+    /// 17:52: the feed roll - "live . liq binance/9 bybit okx" - ran the width
+    /// of an iPhone straight through the scene. It was connection telemetry on
+    /// the one line a player reads for the market, and the strike's own line
+    /// already names the exchange that mattered. `Venues()` and
+    /// `market.Status` are still there for the debug panel.
+    ///
+    /// Before a price arrives it says so. It used to say it in German -
+    /// "verbinde … (connecting)" - which is the last German word that was left
+    /// anywhere a driver looks.
+    /// </summary>
+    public static string PriceSubline(double price, double changePct, string status)
+        => price > 0
+            ? $"{changePct:+0.00;-0.00;0.00}% 24h"
+            : $"connecting … ({status})";
+
     string Venues()
     {
         if (market == null || market.Sources.Count == 0) return "no liq feed";
@@ -2165,20 +2189,7 @@ public class DriveHud : MonoBehaviour
                      text, _price, colour);
 
             double chg = market.DayChangePct;
-            string sub = market.Price > 0
-                // The liquidation socket is named only when it is NOT well, so
-                // the line stays short in the normal case and cannot stay quiet
-                // in the case that actually happened: spot live, futures dead,
-                // and no liquidation for a whole session.
-                // PRICE AND PER CENT, nothing else. the owner, 17:52: the feed
-                // roll - "live . liq binance/9 bybit okx" - ran the width of
-                // an iPhone straight through the scene. It was connection
-                // telemetry on the one line a player reads for the market, and
-                // the strike's own line already names the exchange that
-                // mattered. `Venues()` and `market.Status` are still there for
-                // the debug panel.
-                ? $"{chg:+0.00;-0.00;0.00}% 24h"
-                : $"verbinde … ({market.Status})";
+            string sub = PriceSubline(market.Price, chg, market.Status);
             Shadowed(new Rect(head.x, HeadlineRowY(w, h, 1), head.width, _sub.fontSize * 1.6f),
                      sub, _sub, chg >= 0 ? Up : Down);
 
