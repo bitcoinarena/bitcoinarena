@@ -250,6 +250,59 @@ namespace Blwp
         public System.Collections.Generic.IReadOnlyList<Transform> Wheels => _wheels;
         public float BodyAboveGround => _bodyAboveGround;
 
+        /// <summary>
+        /// WHERE ONE WHEEL ACTUALLY ENDED UP, in numbers a rotation cannot fake.
+        ///
+        /// `Renderer.bounds` is axis-aligned in WORLD space, so a spinning
+        /// wheel reports a taller box every frame without one vertex having
+        /// moved, and `ground - bounds.min.y` - the number the browser probe
+        /// called `sunk` - grows with it. Measured on the daily: standing at
+        /// the depot the box half-height is 0.523 m and the bury is 0.000; the
+        /// moment the wheel turns the half-height runs 0.539..0.763 m and the
+        /// bury runs 0.016..0.240 m, matching `half-height - 0.523` to within
+        /// a millimetre on all thirteen driving samples while the mesh's own
+        /// local extents never moved off 0.415, 0.680, 0.680.
+        ///
+        /// So `Box` is kept, because it is what a screenshot of the old probe
+        /// shows, and `Tyre` is the reading that means something: the mesh's
+        /// CENTRE against the height it is seated at. The wheel is a disc
+        /// whose two cross-axle extents are equal, so its distance from centre
+        /// to rim is the same at every spin angle - which makes `Tyre` the
+        /// only one of the two that answers "is the tyre in the road".
+        /// </summary>
+        public struct WheelSeating
+        {
+            public float Ground;      // the surface under this wheel
+            public float Radius;      // the mesh's own radius, in world metres
+            public float CentreY;     // where the mesh's middle actually is
+            public float BoxBottomY;  // the world-aligned box's lowest face
+
+            /// <summary>Metres of tyre under the road. Rotation-proof.</summary>
+            public float Tyre => Ground + Radius - CentreY;
+
+            /// <summary>What the world-aligned box claims. Inflates when turning.</summary>
+            public float Box => Ground - BoxBottomY;
+        }
+
+        /// <summary>Reads wheel `i` after a `PoseWheels`. False if it has none.</summary>
+        public bool SeatingOf(int i, out WheelSeating seating)
+        {
+            seating = default;
+            if (_wheels == null || i < 0 || i >= _wheels.Length || _wheels[i] == null) return false;
+
+            var rs = _wheels[i].GetComponentsInChildren<Renderer>();
+            if (rs.Length == 0) return false;
+            var b = rs[0].bounds;
+            for (int k = 1; k < rs.Length; k++) b.Encapsulate(rs[k].bounds);
+
+            var at = transform.TransformPoint(_wheelMount[i]);
+            seating.Ground = Ground(at.x, at.z);
+            seating.Radius = i < _wheelR.Length ? _wheelR[i] : _wheelRadius;
+            seating.CentreY = b.center.y;
+            seating.BoxBottomY = b.min.y;
+            return true;
+        }
+
         /// <summary>True when the axles no longer point at the wheels we hold.</summary>
         bool WheelsWentStale()
         {
@@ -285,7 +338,15 @@ namespace Blwp
         /// </summary>
         float _nextSeatingSay;
 
-        void PoseWheels()
+        /// <summary>
+        /// Puts the wheel meshes where the core's drive says they are.
+        ///
+        /// The steer angle, the road speed and the frame time are handed in
+        /// rather than read here, so the seating can be run - unchanged - in
+        /// an editor where `BlwpCore` is a stub and would answer nothing but
+        /// zero. The Update call site passes the core's own three numbers.
+        /// </summary>
+        public void PoseWheels(float steer, float speed, float dt)
         {
             // Bootstrap swaps the placeholder truck for the streamed model
             // after Start and hands the axles a different set of wheels, so
@@ -295,12 +356,9 @@ namespace Blwp
             if (WheelsWentStale()) { CollectWheels(); _nextSeatingSay = 0f; }
             if (_wheels == null || _wheels.Length == 0) return;
 
-            float steer = BlwpCore.TruckSteerDegrees;
-            float speed = BlwpCore.TruckSpeed;
-
             // Once per frame, not once per wheel: advancing it inside the loop
             // left every wheel on a slightly different angle.
-            _spin += speed / _wheelRadius * Mathf.Rad2Deg * Time.deltaTime;
+            _spin += speed / _wheelRadius * Mathf.Rad2Deg * dt;
             if (_spin > 360f || _spin < -360f) _spin %= 360f;
 
             for (int i = 0; i < _wheels.Length; i++)
@@ -368,7 +426,9 @@ namespace Blwp
                         Debug.Log($"[wheel] {_wheels[i].name}: visual radius "
                                   + $"{b.extents.y:F3} m, seated on {(i < _wheelR.Length ? _wheelR[i] : _wheelRadius):F3} m, "
                                   + $"bottom {b.min.y:F3}, ground {g:F3}, "
-                                  + $"sunk {g - b.min.y:F3} m | core {core:F3}, "
+                                  + $"box sunk {g - b.min.y:F3} m, tyre sunk "
+                                  + $"{(SeatingOf(i, out var seat) ? seat.Tyre : float.NaN):F3} m "
+                                  + $"| core {core:F3}, "
                                   + $"terrain {drawn:F3}, deck lift {deck:F3}, "
                                   + $"ribbon wear {wear:F3}, core-terrain {core - drawn:F3}, "
                                   + $"lane {(roads != null && roads.Model != null && roads.Model.LaneAt(at.x, at.z, 8.6f).HasValue ? roads.Model.LaneAt(at.x, at.z, 8.6f).Value.ToString() : "none")} "
@@ -598,7 +658,7 @@ namespace Blwp
             }
 
             if (_rb != null) _rb.position = transform.position;
-            PoseWheels();
+            PoseWheels(BlwpCore.TruckSteerDegrees, BlwpCore.TruckSpeed, Time.deltaTime);
         }
     }
 }

@@ -873,6 +873,45 @@ public class Bootstrap : MonoBehaviour
     /// WheelColliders drive: left in place they turn with the chassis and never
     /// spin, which is the fault this project already fixed once in three.js.
     /// </summary>
+    /// <summary>
+    /// The model's box measured along the TRUCK's own axes.
+    ///
+    /// `Renderer.bounds` is axis-aligned in WORLD space, so a truck standing
+    /// at an angle is measured across its diagonal and comes out longer than
+    /// it is. Sizing off that made the streamed truck a DIFFERENT SIZE on
+    /// every heading: over eight rounds that differed by nothing except which
+    /// way the truck was pointing, the same wheel came back seated on 0.503,
+    /// 0.488, 0.486, 0.493, 0.507 and 0.518 m. The sole had the same fault -
+    /// the world box's floor is below the model's own - so a truck delivered
+    /// at an angle was also set down at the wrong height.
+    ///
+    /// Each renderer's OWN box is carried corner by corner into `space`,
+    /// which is exact under any rotation and needs no Read/Write on the
+    /// import. Same family as the wheel: a box around a turned thing is not
+    /// the thing.
+    /// </summary>
+    static Bounds Measure(Renderer[] renderers, Transform space)
+    {
+        bool any = false;
+        var box = new Bounds();
+        foreach (var r in renderers)
+        {
+            if (r == null) continue;
+            var lb = r.localBounds;
+            var l2w = r.transform.localToWorldMatrix;
+            for (int c = 0; c < 8; c++)
+            {
+                var corner = new Vector3((c & 1) == 0 ? lb.min.x : lb.max.x,
+                                         (c & 2) == 0 ? lb.min.y : lb.max.y,
+                                         (c & 4) == 0 ? lb.min.z : lb.max.z);
+                var p = space.InverseTransformPoint(l2w.MultiplyPoint3x4(corner));
+                if (!any) { box = new Bounds(p, Vector3.zero); any = true; }
+                else box.Encapsulate(p);
+            }
+        }
+        return box;
+    }
+
     void NormaliseTruckModel(GameObject body, Transform root)
     {
         var renderers = body.GetComponentsInChildren<Renderer>(true);
@@ -882,23 +921,15 @@ public class Bootstrap : MonoBehaviour
             return;
         }
 
-        Bounds World()
-        {
-            var b = renderers[0].bounds;
-            foreach (var r in renderers) b.Encapsulate(r.bounds);
-            return b;
-        }
-
-        var bounds = World();
+        var bounds = Measure(renderers, root);
         // longest horizontal axis is the length, whichever way it was modelled
         float longest = Mathf.Max(bounds.size.x, bounds.size.z);
         const float WantedLength = 6.4f;
         if (longest > 0.0001f) body.transform.localScale = Vector3.one * (WantedLength / longest);
 
-        // measure again after scaling, in the TRUCK's space, not the world's
-        bounds = World();
-        float soleLocalY = root.InverseTransformPoint(
-            new Vector3(bounds.center.x, bounds.min.y, bounds.center.z)).y;
+        // measure again after scaling
+        bounds = Measure(renderers, root);
+        float soleLocalY = bounds.min.y;
         const float ContactPatch = -0.75f;      // where the tyres meet the ground
         body.transform.localPosition = new Vector3(0f, ContactPatch - soleLocalY, 0f);
 
