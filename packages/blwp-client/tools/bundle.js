@@ -69,6 +69,9 @@ for (const file of order) {
 }
 out += '\nreturn { Client: Client, markState: markState,\n';
 out += '         reach: reach, endpointFor: endpointFor,\n';
+out += '         discover: discover, agreedChain: agreedChain,\n';
+out += '         askForBond: askForBond, provenBond: provenBond,\n';
+out += '         headersOverHttp: headersOverHttp, httpProvider: httpProvider,\n';
 out += '         GENESIS: GENESIS, NO_PREVIOUS: NO_PREVIOUS,\n';
 out += '         encodeRoundContract: encodeRoundContract, roundId: roundId,\n';
 out += '         encodeEntryContract: encodeEntryContract, entryId: entryId,\n';

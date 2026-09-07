@@ -35,7 +35,7 @@ import { advertId, encodeAdvert, joinSignedAdvert } from '../../protocol/src/adv
 import { toHex } from '../../protocol/src/hash.js';
 import { bondTransaction, blockOf } from '../../protocol/tools/bond.js';
 import { Client } from '../src/client.js';
-import { reach, endpointFor, isSocketAddress } from '../src/directory.js';
+import { reach, endpointFor, isSocketAddress, discover } from '../src/directory.js';
 
 const require = createRequire(import.meta.url);
 const core = require('../../core/dist/blwp-core.js');
@@ -94,8 +94,36 @@ function chainWith(transaction, committee = [operatorPubkey]) {
   const sibling = b32(0x99);
   const first = blockOf(hash256, [b32(0x01)]).header;
   const { header } = blockOf(hash256, [txid, sibling], { previous: blockHashOf(first) });
+  const chain = [first, header];
   return {
-    chains: [[first, header]], transaction, branch: [sibling], position: 0, committee,
+    chains: [chain], chain, transaction, branch: [sibling], position: 0, committee,
+  };
+}
+
+/**
+ * The verification layer's own view of the fixture: everything except the
+ * chain, so a test can offer the chain the way it means to. `chain` beats
+ * `chains` in `reach`, and leaving both in silently ignored the override.
+ */
+function layered(raw, extra) {
+  const { chain, chains, ...rest } = raw;
+  return { ...rest, ...extra };
+}
+
+/**
+ * THE SAME FIXTURE, AS THE DOOR NOW TAKES IT: two functions that answer with
+ * headers, one that answers with a bond and its proof, and the block this
+ * client is anchored to. Nothing here is a ready-made chain.
+ */
+function asProviders(raw, { anchor } = {}) {
+  return {
+    headers: [() => raw.chain, () => raw.chain],
+    bonds: [() => ({
+      transaction: raw.transaction, branch: raw.branch, position: raw.position,
+    })],
+    anchor: anchor || blockHashOf(raw.chain[0]),
+    committee: raw.committee,
+    signedAdvert: raw.signedAdvert,
   };
 }
 
@@ -114,7 +142,7 @@ test('a node is reached because a transaction says where it is', async () => {
     assert.equal(seen.ok, true, seen.why);
     assert.equal(seen.endpoint, endpoint);
 
-    const client = await Client.at(discovery,
+    const client = await Client.at(asProviders(discovery),
       { core, sign, verify, contract: c, roundIdGiven: roundId(c) });
     assert.equal(client.base, `http://127.0.0.1:${node.port}`);
     assert.notEqual(client.base, DECOY);
@@ -149,7 +177,7 @@ test('a proven node that is not on this round s committee is refused at the door
     // and this round's committee is somebody else
     const c = contract([operatorPubkey]);
     await assert.rejects(
-      Client.at({ ...discovery, committee: undefined },
+      Client.at({ ...asProviders(discovery), committee: undefined },
         { core, sign, verify, contract: c, roundIdGiven: roundId(c) }),
       new RegExp(`${toHex(strangerPubkey)}, which is not on this round's committee`));
 
@@ -179,13 +207,13 @@ test('an advertisement not signed by the node it names is refused', async () => 
     bondTransaction(a),                                    // 64 zero bytes
   ]) {
     await assert.rejects(
-      Client.at(chainWith(bad),
+      Client.at(asProviders(chainWith(bad)),
         { core, sign, verify, contract: c, roundIdGiven: roundId(c) }),
       /is not signed by the node it names/);
   }
 
   // and the honest one, for contrast, resolves
-  const good = await Client.at(chainWith(bondFor(a)),
+  const good = await Client.at(asProviders(chainWith(bondFor(a))),
     { core, sign, verify, contract: c, roundIdGiven: roundId(c) });
   assert.equal(good.base, 'http://127.0.0.1:9999');
 });
@@ -209,7 +237,7 @@ test('an endpoint that is not a secure socket address never becomes the base', a
     assert.equal(isSocketAddress(endpoint), false, endpoint);
     const a = advertFor(endpoint);
     await assert.rejects(
-      Client.at(chainWith(bondFor(a)),
+      Client.at(asProviders(chainWith(bondFor(a))),
         { core, sign, verify, contract: c, roundIdGiven: roundId(c) }),
       /is not a secure socket address/, endpoint);
   }
@@ -220,7 +248,7 @@ test('an endpoint that is not a secure socket address never becomes the base', a
   assert.equal(isSocketAddress('ws://127.0.0.1:8080'), true);
   assert.equal(isSocketAddress('ws://localhost:8080'), true);
 
-  const fine = await Client.at(chainWith(bondFor(advertFor('wss://node.example:443'))),
+  const fine = await Client.at(asProviders(chainWith(bondFor(advertFor('wss://node.example:443')))),
     { core, sign, verify, contract: c, roundIdGiven: roundId(c) });
   assert.equal(fine.base, 'https://node.example:443');
 });
@@ -240,7 +268,7 @@ test('a page that swaps the endpoint is refused by name and reaches nothing', as
   assert.match(no.why, /commits to a different advertisement/);
 
   await assert.rejects(
-    Client.at({ ...discovery, signedAdvert: courier(swapped) },
+    Client.at({ ...asProviders(discovery), signedAdvert: courier(swapped) },
       { core, sign, verify, contract: c, roundIdGiven: roundId(c) }),
     /no proven endpoint: the bond output commits to a different advertisement/);
 
@@ -255,15 +283,15 @@ test('a header that is not in the chain proves nothing', () => {
 
   // the same proof, offered against a chain that does not contain that block
   const strangers = blockOf(hash256, [b32(0x02)]).header;
-  const no = reach({ ...real, chains: [[strangers]] });
+  const no = reach(layered(real, { chains: [[strangers]] }));
   assert.equal(no.ok, false);
   assert.match(no.why, /not in any block of that chain/);
 
   // and headers that do not link are not a chain at all, however many
-  const broken = [real.chains[0][1], real.chains[0][0]];
-  assert.equal(reach({ ...real, chains: [broken] }).ok, false);
-  assert.equal(reach({ ...real, chains: [] }).ok, false);
-  assert.match(reach({ ...real, chains: [] }).why, /no chain of headers/);
+  const broken = [real.chain[1], real.chain[0]];
+  assert.equal(reach(layered(real, { chains: [broken] })).ok, false);
+  assert.equal(reach(layered(real, { chains: [] })).ok, false);
+  assert.match(reach(layered(real, { chains: [] })).why, /no chain of headers/);
 
   // and a committee is required, not optional: an absent one is a refusal
   assert.match(reach({ ...real, committee: [] }).why, /no committee to check/);
@@ -275,7 +303,7 @@ test('there is no fallback: without a proof there is no address', () => {
   // The decoy is set, the client is asked for an endpoint, and the honest
   // answer is a refusal rather than the page's address.
   assert.equal(globalThis.BLWP_NODE, DECOY);
-  assert.throws(() => endpointFor({ ...chainWith(transaction), chains: [] }),
+  assert.throws(() => endpointFor(layered(chainWith(transaction), { chains: [] })),
     /no proven endpoint/);
 });
 
@@ -310,7 +338,7 @@ test('a contract that is not the round the player was given is refused', async (
     assert.equal(reach(discovery).ok, true);
 
     await assert.rejects(
-      Client.at(discovery,
+      Client.at(asProviders(discovery),
         { core, sign, verify, contract: forged, roundIdGiven: invited }),
       new RegExp(`the page offered round ${toHex(roundId(forged))}, `
         + `which is not the round ${toHex(invited)} you were given`));
@@ -333,7 +361,7 @@ test('a player who arrived with no round id has nothing to check, and is refused
   const discovery = chainWith(bondFor(advertFor('wss://node.example:443')));
   for (const given of [undefined, null, b32(7).slice(0, 31), toHex(roundId(c))]) {
     await assert.rejects(
-      Client.at(discovery, { core, sign, verify, contract: c, roundIdGiven: given }),
+      Client.at(asProviders(discovery), { core, sign, verify, contract: c, roundIdGiven: given }),
       /nothing to check the page's contract against/, String(given));
   }
 
@@ -343,9 +371,93 @@ test('a player who arrived with no round id has nothing to check, and is refused
   // which refusal reaches the player: "you are not on the round you were sent
   // to" is the one they can act on, and a chain complaint would bury it.
   await assert.rejects(
-    Client.at({ ...discovery, chains: [] },
+    Client.at({ ...asProviders(discovery), headers: [] },
       { core, sign, verify, contract: c, roundIdGiven: roundId(contract([b32(0x0e)])) }),
     /which is not the round/);
+});
+
+/**
+ * THE DOOR ASKS; IT DOES NOT ACCEPT.
+ *
+ * Everything the chain source measures was, until now, a library nothing used.
+ * `reach` verified whatever chain it was handed - which proves that a chain and
+ * a proof agree with each other and nothing whatever about Bitcoin, because a
+ * page that wrote both wrote a consistent pair. Section 25.1 is normative about
+ * what a CLIENT does, so the door has to do the asking.
+ */
+test('a chain handed to the door is refused, however consistent it is', async () => {
+  const transaction = bondFor(advertFor('wss://node.example:443'));
+  const raw = chainWith(transaction);
+  const c = contract([operatorPubkey]);
+  const door = { core, sign, verify, contract: c, roundIdGiven: roundId(c) };
+
+  // This bundle is perfect: mined headers that link, a real proof into one of
+  // them, a bond committing to a signed advertisement for a committee member.
+  // The verification layer accepts it, and says so here so the refusal below
+  // cannot be mistaken for the bundle being bad.
+  assert.equal(reach(raw).ok, true);
+
+  for (const handed of ['chain', 'chains', 'transaction', 'branch', 'position']) {
+    const offered = { ...asProviders(raw), [handed]: raw[handed] };
+    await assert.rejects(Client.at(offered, door),
+      new RegExp(`the ${handed} must come from a provider, not from whoever opened the page`));
+  }
+
+  // and asked for through providers, the very same bytes open the round
+  const client = await Client.at(asProviders(raw), door);
+  assert.equal(client.base, 'https://node.example:443');
+});
+
+/**
+ * AND THE CHAIN RULES ARE THE DOOR'S RULES NOW, not a library's. One provider
+ * is not enough, the anchor is not optional, and the bond is asked for rather
+ * than supplied - measured through `Client.at`, not through `agreedChain`.
+ */
+test('the door will not open on one provider, or without an anchor', async () => {
+  const transaction = bondFor(advertFor('wss://node.example:443'));
+  const raw = chainWith(transaction);
+  const c = contract([operatorPubkey]);
+  const door = { core, sign, verify, contract: c, roundIdGiven: roundId(c) };
+  const asked = asProviders(raw);
+
+  await assert.rejects(Client.at({ ...asked, headers: [asked.headers[0]] }, door),
+    /no chain: 1 providers is fewer than the 2 it takes/);
+  await assert.rejects(Client.at({ ...asked, anchor: undefined }, door),
+    /no chain: no anchor/);
+  await assert.rejects(Client.at({ ...asked, anchor: b32(0x5a) }, door),
+    /no chain: only 0 of 2 providers gave a chain/);
+  await assert.rejects(Client.at({ ...asked, bonds: [] }, door),
+    /no bond: no providers to ask for the bond/);
+
+  // AND provenBond runs on this path: a provider offering a proof that lands
+  // in no block of the agreed chain is refused, by that name.
+  await assert.rejects(
+    Client.at({ ...asked, bonds: [() => ({ transaction, branch: [b32(0x55)], position: 0 })] }, door),
+    /no bond: no provider proved that bond into the chain/);
+});
+
+/**
+ * AN INTERNALLY CONSISTENT BUNDLE IS NOT ENOUGH, and this is the whole point of
+ * the cut. The attacker mines his own little chain, puts his own bond in it,
+ * signs his own advertisement, and serves all of it from two providers that
+ * agree with each other completely. Every check inside the client passes except
+ * the one that asks whether this is Bitcoin.
+ */
+test('a self-consistent world of the attackers own making is refused', async () => {
+  const his = bondFor(advertFor('wss://the-attackers-node:443'));
+  const mine = chainWith(his);
+  const c = contract([operatorPubkey]);
+  const door = { core, sign, verify, contract: c, roundIdGiven: roundId(c) };
+
+  // anchored on his own first block, it all hangs together
+  assert.equal((await Client.at(asProviders(mine), door)).base,
+    'https://the-attackers-node:443');
+
+  // anchored on a block this client actually knows, none of it is weighed
+  const honest = blockOf(hash256, [b32(0x0a)]).header;
+  await assert.rejects(
+    Client.at(asProviders(mine, { anchor: blockHashOf(honest) }), door),
+    /no chain: only 0 of 2 providers gave a chain/);
 });
 
 /**

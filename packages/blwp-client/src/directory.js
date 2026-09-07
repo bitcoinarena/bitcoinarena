@@ -28,6 +28,8 @@
 // as many chains as it is given - nothing fetches yet, and until something does,
 // a client is only as sure as the chain it was handed.
 import { acceptAdvert, mostWork, chainWork, blockHashOf } from '../../protocol/src/chain.js';
+import { agreedChain } from './headers.js';
+import { askForBond } from './bond.js';
 import { advertId } from '../../protocol/src/advert.js';
 import { toHex } from '../../protocol/src/hash.js';
 
@@ -158,4 +160,52 @@ export function endpointFor(discovery) {
   // 25.1 connects `wss://` to the endpoint; the client's own base is the HTTP
   // origin of the same node, and `connect()` turns it back into a socket.
   return seen.endpoint.replace(/^ws/, 'http');
+}
+
+/**
+ * THE WHOLE OF STEP 4, FROM PROVIDERS RATHER THAN FROM A PAGE.
+ *
+ * Everything above this was a library nothing used. `reach` verified whatever
+ * chain it was handed, which proves that a chain and a proof agree with each
+ * other and NOTHING about Bitcoin: a page that wrote both wrote a consistent
+ * pair. Section 25.1 is normative about what a CLIENT does, so until the door
+ * asks providers itself, the chain source is not the client's chain source.
+ *
+ * A PROVIDER IS A FUNCTION AND THE CLIENT SPEAKS BITCOIN'S OWN SHAPES:
+ * 80-byte headers back to back, and a merkle proof as 32-byte hashes with an
+ * index. No explorer's JSON is parsed in here and no host or path is written
+ * here. Translating a real chain API into these functions is an adapter, it
+ * belongs to whoever runs the page or the node, and it is deliberately not
+ * part of this package - a client that spoke one explorer's schema would have
+ * adopted a second protocol without saying so.
+ *
+ * `anchor` is an argument for the same reason: which block a deployment
+ * anchors on is a constant somebody must choose, and choosing it here would
+ * settle it by accident.
+ */
+export async function discover({
+  headers, bonds, anchor, committee, signedAdvert, ask, least, timeoutMs,
+}) {
+  const chain = await agreedChain(headers, { anchor, ask, least, timeoutMs });
+  if (!chain.ok) return { ok: false, why: `no chain: ${chain.why}`, refused: chain.refused };
+
+  const bond = await askForBond(bonds, { chain: chain.headers, ask, timeoutMs });
+  if (!bond.ok) return { ok: false, why: `no bond: ${bond.why}`, refused: bond.refused };
+
+  const seen = reach({
+    chain: chain.headers,
+    transaction: bond.transaction,
+    branch: bond.branch,
+    position: bond.position,
+    signedAdvert,
+    committee,
+  });
+  if (!seen.ok) return seen;
+  return {
+    ...seen,
+    work: chain.work,
+    agreed: chain.agreed,
+    fromChain: chain.from,
+    fromBond: bond.from,
+  };
 }

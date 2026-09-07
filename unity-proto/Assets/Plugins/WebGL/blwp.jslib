@@ -403,63 +403,73 @@ mergeInto(LibraryManager.library, {
   BlwpNetStart__deps: ['$blwpDiscovery'],
   $blwpDiscovery: function () {
     var d = (typeof BLWP_ADVERT !== 'undefined') ? BLWP_ADVERT : null;
+    var c = (typeof BLWP_CHAIN !== 'undefined') ? BLWP_CHAIN : null;
     var round = (typeof BLWP_ROUND !== 'undefined') ? BLWP_ROUND : null;
-    if (!d) throw new Error('the page carried no advertisement');
-    var reversed = function (hex) { return BLWPCLIENT.fromHex(hex).reverse(); };
+    if (!c) throw new Error('the page carried no chain providers');
+
+    // A READY-MADE CHAIN IS REFUSED, NOT VERIFIED. The page used to hand over
+    // the headers AND the bond proof, and the client checked them against each
+    // other - which proves that whoever wrote them wrote a consistent pair and
+    // nothing whatever about Bitcoin. If any of these is still being offered,
+    // the page is on the old path and should be told so rather than quietly
+    // taken at its word.
+    for (var i = 0; i < 4; i++) {
+      var handed = ['chains', 'chain', 'transaction', 'branch'][i];
+      if (d && d[handed] !== undefined)
+        throw new Error('BLWP_ADVERT still carries ' + handed
+          + ': the chain and the bond come from providers now');
+    }
+
+    if (!c.headers || c.headers.length < 2)
+      throw new Error('two chain providers are needed, and the page gave '
+        + ((c.headers && c.headers.length) | 0));
+    if (!c.bonds || !c.bonds.length)
+      throw new Error('the page gave nowhere to ask for the bond');
+    if (!c.anchor)
+      throw new Error('the page gave no anchor, and the client will not guess one');
+
+    // THE PROVIDERS ARE FUNCTIONS THE PAGE SUPPLIES, and that is the whole
+    // shape of this: the client speaks Bitcoin's own bytes - 80-byte headers
+    // and a merkle branch of 32-byte hashes - and never an explorer's JSON.
+    // Translating a real chain API into these functions is an adapter and it
+    // lives out here, where it can be changed without touching anything that
+    // decides.
+    //
+    // The anchor is the page's to CARRY and not to choose: which block a
+    // deployment anchors on is a constant, and a client that guessed one would
+    // settle it by accident. A wrong one refuses everything, loudly.
     return {
-      transaction: BLWPCLIENT.fromHex(d.transaction),
-      signedAdvert: d.signedAdvert ? BLWPCLIENT.fromHex(d.signedAdvert) : undefined,
-      branch: (d.branch || []).map(reversed),
-      position: d.position | 0,
-      chains: (d.chains || []).map(function (c) {
-        return c.map(function (h) { return BLWPCLIENT.fromHex(h); });
-      }),
+      headers: c.headers,
+      bonds: c.bonds,
+      anchor: BLWPCLIENT.fromHex(c.anchor).reverse(),
+      signedAdvert: (d && d.signedAdvert) ? BLWPCLIENT.fromHex(d.signedAdvert) : undefined,
       committee: round ? round.nodes : null,
     };
   },
 
-  // WHICH NODE, AND WHY THAT ONE.
+  // IS THERE A SESSION TO TRY? Not "which node" any more, and the name stays
+  // only because renaming it is C# and C# is not this cut.
   //
-  // This used to be `BLWP_NODE`, a global written into the page: every stranger
-  // who loaded it reached whatever address whoever shipped the page had put
-  // there. Section 25.1 forbids exactly that - a client "MUST NOT take a
-  // census, a committee or an endpoint on the word of any API, including one
-  // operated by the same party that ships the client" - and says why it is
-  // normative: the failure has no symptom, "same screens, same rounds, same
-  // results", until the address is somebody else's.
+  // This used to answer with an address. It cannot: the address is now read
+  // off a bond transaction proven into a chain two providers agreed on, and
+  // every one of those steps is a fetch. What C# does with the answer is ask
+  // whether it is empty, so what it needs is whether a session is worth
+  // opening - and the address is resolved where it can be, in `net.open`,
+  // before a single byte is sent to anybody.
   //
-  // The page still carries the bytes, and that is fine, because they are bytes
-  // it cannot choose. It hands over a bond transaction, a merkle branch and
-  // block headers; the txid is hashed out of the transaction, the branch has to
-  // rebuild a header's own merkle root, and the endpoint is only read out of a
-  // body one of that transaction's outputs commits to. Swap the endpoint and
-  // there is no address at all.
-  //
-  // THIS IS A GATE, NOT THE DOOR. It answers synchronously because C# asks for
-  // the address once, at scene start, and it therefore cannot check the
-  // advertisement's signature - verifying is asynchronous in a browser. The
-  // signature is checked in `net.open` below, by `Client.at`, before the round
-  // is opened and so before anything at all is sent. Both check the committee.
-  //
-  // WHAT IS NOT DONE HERE. Where the headers come from. "Block headers from
-  // several independent sources, most work wins" is step 5c; until something
-  // fetches, a page that omits the honest chain is not yet answered - it still
-  // cannot forge one.
+  // An empty answer means no session, which is still the shipping default.
   BlwpNetNodeUrl: function (ptr, cap) {
-    var url = '';
-    if (typeof BLWPCLIENT !== 'undefined') {
-      try {
-        url = BLWPCLIENT.endpointFor(blwpDiscovery());
-      } catch (e) {
-        // Named, not swallowed: "no proven endpoint: ..." says which half failed,
-        // and an empty answer means no session rather than a session with
-        // whoever was convenient.
+    var line = '';
+    try {
+      blwpDiscovery();
+      line = 'the chain';
+    } catch (e) {
+      if (typeof BLWP_CHAIN !== 'undefined')
         console.error('[blwp] ' + (e && e.message ? e.message : e));
-        url = '';
-      }
+      line = '';
     }
-    var n = Math.min(url.length, (cap | 0) - 1);
-    for (var i = 0; i < n; i++) Module.HEAPU8[ptr + i] = url.charCodeAt(i);
+    var n = Math.min(line.length, (cap | 0) - 1);
+    for (var i = 0; i < n; i++) Module.HEAPU8[ptr + i] = line.charCodeAt(i);
     Module.HEAPU8[ptr + n] = 0;
     return n;
   },

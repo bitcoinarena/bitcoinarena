@@ -37,7 +37,7 @@ import { fromHex, toHex } from '../../protocol/src/hash.js';
 import {
   decodeCheckpointReceipt, receiptId, splitSignedReceipt, SIGNED_RECEIPT_BYTES,
 } from '../../protocol/src/receipt.js';
-import { reach } from './directory.js';
+import { discover } from './directory.js';
 
 /**
  * A checkpoint over the state a core is holding, signed and ready for the wire.
@@ -166,7 +166,19 @@ export class Client {
       throw new Error(`the page offered round ${toHex(named)}, which is not `
         + `the round ${toHex(roundIdGiven)} you were given`);
 
-    const seen = reach({ ...discovery, committee: contract.nodes });
+    // THE CHAIN AND THE BOND ARE ASKED FOR, NEVER ACCEPTED. A ready-made chain
+    // or a ready-made proof is refused here rather than verified, because
+    // verifying a pair somebody else chose proves only that they agree with
+    // each other. This is the door; the library below it will still check
+    // anything it is handed, and that is exactly why the door must not hand it
+    // what the page said.
+    for (const handed of ['chain', 'chains', 'transaction', 'branch', 'position']) {
+      if (discovery[handed] !== undefined)
+        throw new Error(`the ${handed} must come from a provider, not from whoever `
+          + 'opened the page: two things that agree with each other are not Bitcoin');
+    }
+
+    const seen = await discover({ ...discovery, committee: contract.nodes });
     if (!seen.ok) throw new Error(`no proven endpoint: ${seen.why}`);
 
     // 5A.1 ends the body with "signature - by node_pubkey over all of the
