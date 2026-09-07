@@ -447,6 +447,67 @@ public class HudLayoutTests
     }
 
     /// <summary>
+    /// EVERY COMBINATION OF THE TWO DEBUG PANELS against the numbers.
+    ///
+    /// There are two of them and they are independent: the F1 diagnostics box
+    /// top left, and the readout that hangs from the debug icon top right. The
+    /// condition bar stacks under the first and the score column under the
+    /// second, so the four states are four different layouts and only two had
+    /// ever been walked.
+    /// </summary>
+    [Test]
+    public void NeitherDebugPanelEverCoversTheScoreOrTheClock()
+    {
+        foreach (var size in Five)
+        {
+            int w = (int)size.x, h = (int)size.y;
+            foreach (bool dbg in new[] { false, true })
+                foreach (bool f1 in new[] { false, true })
+                {
+                    GameSettings.Debug = dbg;
+                    _hud.showDiagnostics = f1;
+                    try
+                    {
+                        string at = $"at {w}x{h} debug={dbg} f1={f1}";
+                        var man = _hud.ManifestBox(w, h);
+                        var clock = _hud.BlockTimerBox(w, h);
+                        var health = _hud.HealthBox(w, h);
+                        var diag = _hud.DiagnosticsBox(w, h);
+                        var read = _hud.DebugPanelBox(w, h, 8);
+
+                        void Apart(Rect a, Rect b, string what)
+                            => Assert.IsFalse(a.Overlaps(b), $"{what} overlap {at}: {a} / {b}");
+
+                        Apart(health, man, "the condition bar and the score column");
+                        Apart(health, clock, "the condition bar and the block clock");
+                        if (f1)
+                        {
+                            Apart(diag, man, "the F1 panel and the score column");
+                            Apart(diag, clock, "the F1 panel and the block clock");
+                        }
+                        // An empty rect means the readout is not drawn here at
+                        // all - there was not room for it and the score both.
+                        if (dbg && read.height > 0f)
+                        {
+                            Apart(read, man, "the corner readout and the score column");
+                            Apart(read, clock, "the corner readout and the block clock");
+                        }
+                        Assert.LessOrEqual(man.yMax, h, $"the score column leaves the screen {at}");
+
+                        if (w == 844 && h == 390)
+                            Debug.Log($"[panels] debug={dbg} f1={f1}: F1 {diag.x:0},{diag.y:0} "
+                                      + $"{diag.width:0}x{diag.height:0}; readout {read.x:0},"
+                                      + $"{read.y:0} {read.width:0}x{read.height:0}; condition "
+                                      + $"{health.x:0},{health.y:0} {health.width:0}x{health.height:0}; "
+                                      + $"score {man.x:0},{man.y:0} {man.width:0}x{man.height:0}; "
+                                      + $"clock {clock.x:0},{clock.y:0} {clock.width:0}x{clock.height:0}");
+                    }
+                    finally { GameSettings.Debug = false; _hud.showDiagnostics = false; }
+                }
+        }
+    }
+
+    /// <summary>
     /// THE LAST OF THE CHROME: the debug readout and the two cards, against
     /// every number the driver reads.
     ///
@@ -488,6 +549,7 @@ public class HudLayoutTests
             void Apart(Rect a, Rect b, string what)
                 => Assert.IsFalse(a.Overlaps(b), $"{what} overlap {at}: {a} / {b}");
 
+            if (dbg.height > 0f) {
             Apart(dbg, man, "the debug readout and the score column");
             Apart(dbg, wanted, "the debug readout and the wanted row");
             Apart(dbg, clock, "the debug readout and the block clock");
@@ -496,12 +558,14 @@ public class HudLayoutTests
             Apart(dbg, health, "the debug readout and the condition bar");
             Apart(dbg, practice, "the debug readout and the practice switch");
             Assert.LessOrEqual(dbg.yMax, h, $"the debug readout runs off the bottom {at}");
+            }
 
             // THE ROWS FIT THE PANELS. The block board claimed 3.20 lines and
             // drew 3.77; both of these are built from a line count the same
             // way, so both are asked whether the box holds what goes in it.
-            Assert.GreaterOrEqual(dbg.height, _hud.DebugPanelContentHeight(w, h, 8) - 0.01f,
-                $"the debug readout is drawn taller than its own box {at}");
+            if (dbg.height > 0f)
+                Assert.GreaterOrEqual(dbg.height, _hud.DebugPanelContentHeight(w, h, 8) - 0.01f,
+                    $"the debug readout is drawn taller than its own box {at}");
             var f1 = _hud.DiagnosticsBox(w, h);
             Assert.GreaterOrEqual(f1.height, _hud.DiagnosticsContentHeight(w, h, 11) - 0.01f,
                 $"the F1 panel is drawn taller than its own box {at}");
@@ -527,6 +591,18 @@ public class HudLayoutTests
             Apart(arrive, sim, "the arrival card and the SIM switch");
             Apart(arrive, health, "the arrival card and the condition bar");
             Apart(arrive, warn, "the arrival card and the exposure warning");
+
+            // THE CARDS HOLD WHAT IS DRAWN IN THEM. The box sized itself from
+            // one head formula and the drawing used two others - 21.45 against
+            // 23 at 844x390 - so the content was taller than the frame meant
+            // to hold it, and nobody saw it because a card is up for three
+            // seconds.
+            Assert.GreaterOrEqual(send.height, _hud.CardContentHeight(w, h, false) - 0.01f,
+                $"the send-off card is drawn taller than its own box {at}");
+            Assert.GreaterOrEqual(arrive.height, _hud.CardContentHeight(w, h, true) - 0.01f,
+                $"the arrival card is drawn taller than its own box {at}");
+            Assert.Greater(send.width, 150f, $"the send-off card is too narrow to read {at}");
+            Assert.Greater(arrive.width, 150f, $"the arrival card is too narrow to read {at}");
             }
             finally { GameSettings.Debug = false; }
         }

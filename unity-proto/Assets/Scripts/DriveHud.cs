@@ -418,6 +418,7 @@ public class DriveHud : MonoBehaviour
         var style = new GUIStyle(_small) { alignment = TextAnchor.MiddleLeft };
         float lh = Mathf.Max(14f, h * 0.020f);
         var box = DebugPanelBox(w, h, lines.Count);
+        if (box.height <= 0f) return;      // no room for it and the score both
 
         GUI.color = new Color(0.02f, 0.03f, 0.05f, 0.72f);
         GUI.DrawTexture(box, _flat);
@@ -641,7 +642,7 @@ public class DriveHud : MonoBehaviour
         float k = Mathf.Clamp01((Hold - since) / (Hold * 0.3f));
         int min = Mathf.Min(w, h);
 
-        int head = Mathf.RoundToInt(Mathf.Min(w * 0.034f, min * 0.060f));
+        int head = Mathf.RoundToInt(CardHead(w, h, false));
         var big = new GUIStyle(GUI.skin.label)
         {
             alignment = TextAnchor.UpperCenter, fontStyle = FontStyle.Bold, fontSize = head,
@@ -654,6 +655,15 @@ public class DriveHud : MonoBehaviour
 
         float padY = head * 0.5f;
         var card = SendOffBox(w, h);
+
+        // AND THE WORDS FIT THE CARD. The card stands in the gap now, which is
+        // 371 px on a phone in landscape and not the 92% of the screen it used
+        // to take, so a headline sized for the old width would be cut off at
+        // both ends by the centring. Same shrink the price and the score
+        // column use, floored at 11 px.
+        FitInto(big, $"DELIVERING  {loadout.ConfirmedSats:N0} sat  TO THE MINERS",
+                card.width - 16f, 11);
+        FitInto(sub, "GOOD LUCK!", card.width - 16f, 10);
 
         GUI.color = new Color(0.02f, 0.03f, 0.05f, 0.8f * k);
         GUI.DrawTexture(card, _flat);
@@ -705,7 +715,7 @@ public class DriveHud : MonoBehaviour
         // square and ran off both sides - "…to the miner" with the s missing.
         // It is also drawn on a dark plate: the card lands over sky and
         // explosions, and pale text on a fireball is unreadable however large.
-        int head = Mathf.RoundToInt(Mathf.Min(w * 0.040f, min * 0.070f));
+        int head = Mathf.RoundToInt(CardHead(w, h, true));
         var big = new GUIStyle(GUI.skin.label)
         {
             alignment = TextAnchor.UpperCenter, fontStyle = FontStyle.Bold, fontSize = head,
@@ -723,6 +733,12 @@ public class DriveHud : MonoBehaviour
 
         float padY = head * 0.55f;
         var card = ArrivalBox(w, h);
+
+        // The same fit as the send-off, on the longest line each style draws.
+        FitInto(big, "BLOCK MINED WITHOUT YOU", card.width - 16f, 11);
+        FitInto(mid, "SCORE  +000,000", card.width - 16f, 10);
+        FitInto(line, "those fees go to the miners — the score is what the run pays you",
+                card.width - 16f, 9);
 
         GUI.color = new Color(0.02f, 0.03f, 0.05f, 0.82f * k);
         GUI.DrawTexture(card, _flat);
@@ -963,10 +979,66 @@ public class DriveHud : MonoBehaviour
     /// </summary>
     public Rect SendOffBox(int w, int h)
     {
-        float head = Mathf.Clamp(Mathf.Min(w, h) * 0.055f, 20f, 46f);
-        float sub = Mathf.RoundToInt(head * 0.5f);
+        float head = CardHead(w, h, false);
+        float sub = Mathf.RoundToInt(head * 0.78f);
         float padY = head * 0.5f;
-        return CardIn(w, h, padY * 2f + head * 1.3f + sub * 1.3f);
+        return CardIn(w, h, padY * 2f + head * 1.3f + sub * 1.4f);
+    }
+
+    /// <summary>
+    /// How tall each card's rows actually are, from the same head size the
+    /// drawing uses. The box and the drawing had three different formulas for
+    /// that number and nothing compared them.
+    /// </summary>
+    public float CardContentHeight(int w, int h, bool arrival)
+    {
+        float head = CardHead(w, h, arrival);
+        if (arrival)
+        {
+            float mid = Mathf.RoundToInt(head * 0.52f), line = Mathf.RoundToInt(head * 0.40f);
+            return head * 0.55f * 2f + head * 1.35f + mid * 1.3f + line * 3.4f;
+        }
+        float sub = Mathf.RoundToInt(head * 0.78f);
+        return head * 0.5f * 2f + head * 1.3f + sub * 1.4f;
+    }
+
+    /// <summary>
+    /// Shrinks a style until the given line fits the given width.
+    ///
+    /// Three places in this file were doing this by hand - the price into its
+    /// gap, the score column into its strip, the exposure warning into the
+    /// column - and each got it slightly differently. One floor, one loop, one
+    /// margin, and a style that cannot go below `floor` because below that the
+    /// answer is fewer words rather than smaller ones.
+    /// </summary>
+    static void FitInto(GUIStyle style, string line, float width, int floor)
+    {
+        if (width <= 1f || string.IsNullOrEmpty(line)) return;
+        for (int pass = 0; pass < 4; pass++)
+        {
+            float need = style.CalcSize(new GUIContent(line)).x;
+            if (need <= width || need <= 1f || style.fontSize <= floor) return;
+            style.fontSize = Mathf.Max(floor,
+                Mathf.Min(style.fontSize - 1, Mathf.FloorToInt(style.fontSize * width / need)));
+        }
+    }
+
+    /// <summary>
+    /// The headline size on each card, asked in ONE place.
+    ///
+    /// The box used `clamp(min(w, h) * 0.055, 20, 46)` and the drawing used
+    /// `round(min(w * 0.034, min * 0.060))` for the send-off and `0.040 /
+    /// 0.070` for the arrival - three formulas for the same number. At
+    /// 844x390 the box sized itself for 21.45 and the send-off drew at 23, so
+    /// the content was taller than the frame that was meant to hold it. The
+    /// block board's fault a fifth time, and the only reason it was not
+    /// visible is that the card is up for three seconds.
+    /// </summary>
+    public static float CardHead(int w, int h, bool arrival)
+    {
+        int min = Mathf.Min(w, h);
+        return Mathf.RoundToInt(arrival ? Mathf.Min(w * 0.040f, min * 0.070f)
+                                        : Mathf.Min(w * 0.034f, min * 0.060f));
     }
 
     /// <summary>
@@ -999,7 +1071,7 @@ public class DriveHud : MonoBehaviour
     /// <summary>The arrival card, in the same place and a little taller.</summary>
     public Rect ArrivalBox(int w, int h)
     {
-        float head = Mathf.Clamp(Mathf.Min(w, h) * 0.055f, 20f, 46f);
+        float head = CardHead(w, h, true);
         float mid = Mathf.RoundToInt(head * 0.52f), line = Mathf.RoundToInt(head * 0.40f);
         float padY = head * 0.55f;
         return CardIn(w, h, padY * 2f + head * 1.35f + mid * 1.3f + line * 3.4f);
@@ -1102,9 +1174,19 @@ public class DriveHud : MonoBehaviour
     {
         float lh = Mathf.Max(14f, h * 0.020f);
         float bw = Mathf.Min(w * 0.42f, 260f);
-        return new Rect(w - bw - Mathf.Max(10f, h * 0.025f),
-                        TouchPad.RectFor(TouchPad.Pad.Debug, w, h).yMax + lh * 0.6f,
-                        bw, lh * lines + lh * 0.6f);
+        float pad = Mathf.Max(10f, h * 0.025f);
+        var box = new Rect(w - bw - pad,
+                           TouchPad.RectFor(TouchPad.Pad.Debug, w, h).yMax + lh * 0.6f,
+                           bw, lh * lines + lh * 0.6f);
+
+        // AND IT IS NOT DRAWN AT ALL WHERE IT WOULD PUSH THE SCORE OFF THE
+        // SCREEN. The score column steps under this panel, and on a 360-tall
+        // window there is not room for both: measured, the column ended at
+        // y=365 of 360. Of the two, one is eight lines of developer numbers
+        // behind a toggle and the other is what the player is playing for, so
+        // where they do not both fit the readout goes.
+        if (box.yMax + pad * 0.5f + ManifestContentHeight(w, h) > h) return new Rect();
+        return box;
     }
 
     /// <summary>
@@ -1193,7 +1275,11 @@ public class DriveHud : MonoBehaviour
         // what the player is playing for. Same shape as the condition bar
         // stepping under the F1 panel.
         float corner = TouchPad.RectFor(TouchPad.Pad.Debug, w, h).yMax + pad * 0.5f;
-        if (GameSettings.Debug) corner = DebugPanelBox(w, h, 8).yMax + pad * 0.5f;
+        if (GameSettings.Debug)
+        {
+            var readout = DebugPanelBox(w, h, 8);
+            if (readout.height > 0f) corner = readout.yMax + pad * 0.5f;
+        }
         float top = Mathf.Max(corner, Mathf.Max(pad, bottom - height));
 
         // ALWAYS THE STRIP RIGHT OF THE GAP, never the full width.
@@ -1407,7 +1493,14 @@ public class DriveHud : MonoBehaviour
         // edge is ITS left edge. Measured at 1024x768: the readout reached to
         // x=744.8 and the block clock's box ran to 753.
         if (GameSettings.Debug)
-            right = Mathf.Min(right, DebugPanelBox(w, h, 8).x - pad);
+        {
+            // Only when it is actually drawn. An empty rect is at x=0, and
+            // clamping to that took the gap negative - the headline vanished
+            // and the score column took the whole width across the condition
+            // bar. Measured at 1000x360.
+            var readout = DebugPanelBox(w, h, 8);
+            if (readout.height > 0f) right = Mathf.Min(right, readout.x - pad);
+        }
 
         // AND IF THERE IS NO GAP, THERE IS NO GAP.
         //
