@@ -54,14 +54,14 @@ function slowLink(client, ms, watch) {
   };
 }
 
-async function rig(ms) {
+async function rig(ms, blockTicks = 600) {
   const node = await serve(openStore(), { port: 0, ...FUNDED });
   const watch = { inFlight: 0, worst: 0 };
   const client = new Client({ base: `http://127.0.0.1:${node.port}`, core, sign, verify });
   const c = {
     simCoreHash: b32(1), startTimeMs: 1000n, entryCloseMs: 2000n, objectionWindowMs: 600000n, custody: 'FEDERATION', censusHeight: 900000,
     censusRoot: b32(2), committeeSeed: b32(3), stakeMsat: 100000n, bondMinSats: 50000n,
-    blockTicks: 600, exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
+    blockTicks, exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
     timeFloor: 30, timeCeil: 150, minScore: 1, rankNumerator: 3, rankDenominator: 4,
     nodes: [node.round.pubkey],
   };
@@ -285,5 +285,238 @@ test('once the run has ended, nothing leaves even though the numbers agree', asy
     await client.settle();
     assert.equal(client.batchesSent, 0, 'the publish count moved after the end');
     assert.equal(client.held, 10, 'and what was held stayed held');
+  } finally { client.close(); await node.close(); }
+});
+
+// ---------------------------------------------------------------------------
+// THE RECONNECT, WHICH USED TO LIVE WHERE NOTHING COULD MEASURE IT.
+//
+// The loop was in `blwp.jslib` - the one file these suites cannot reach - so
+// the rule that decides whether a dropped player keeps their run had no test,
+// while the hold and the drain beside it had this file. Measured at 8c8c68a:
+// 19 lines in the client suites mention a reconnect and every one of them
+// drives `connect()` + `resume()` by hand; nothing touched the loop, its
+// backoff, or the condition it stops on.
+//
+// The sleep is injected so the 1s/2s/4s/8s ladder can be watched in
+// milliseconds. Everything else here is a real node.
+
+/** Replaces the wait with a log of what was waited for. */
+function fastSleep(client) {
+  const slept = [];
+  client.sleep = (ms) => { slept.push(ms); return Promise.resolve(); };
+  return slept;
+}
+
+test('a reconnect keeps trying with a backoff, so a restart does not end a run', async () => {
+  const { node, client, rid, eid } = await rig(0);
+  try {
+    for (let i = 0; i < 60; i++) client.record([45875, 0, 0, 0, 0]);
+    await client.drain();
+    await client.settle();
+
+    // The node goes away and comes back, the way a restart looks from here.
+    const port = node.port;
+    await node.close();
+    client.close();
+    await wait(50);
+
+    const slept = fastSleep(client);
+    const back = client.reconnect({ roundId: rid, entryId: eid });
+    await wait(60);
+    const again = await serve(node.round.db, { port, ...FUNDED });
+    try {
+      const r = await back;
+      assert.notEqual(r, null, 'the run was abandoned instead of resumed');
+      assert.equal(r.nextTick, 60, 'it resumed at the tick the node is owed');
+      assert.equal(client.ended, false, 'a restart is not a dropped tick');
+      assert.ok(client.tries > 1, `one attempt was the whole of it: ${client.tries}`);
+      assert.deepEqual(slept.slice(0, 4), [1000, 2000, 4000, 8000].slice(0, slept.length > 4 ? 4 : slept.length),
+        'the ladder doubles');
+      assert.ok(slept.every((ms) => ms <= 8000), `the backoff ran past its cap: ${slept}`);
+    } finally { await again.close(); }
+  } finally { client.close(); }
+});
+
+test('one reconnect is in flight however hard the drops come', async () => {
+  const { node, client, rid, eid } = await rig(0);
+  try {
+    await node.close();
+    client.close();
+    await wait(50);
+    fastSleep(client);
+
+    // Twenty callers, which is what a socket flapping looks like from `onDrop`.
+    const many = Array.from({ length: 20 }, () => client.reconnect({ roundId: rid, entryId: eid }));
+    assert.equal(new Set(many).size, 1, 'a second caller opened a second loop');
+
+    // and it is still one after the loop has been round several times
+    await wait(80);
+    assert.equal(client.reconnect({ roundId: rid, entryId: eid }), client.reconnecting);
+
+    // AND ENDING THE RUN STOPS IT. Raced for the same reason as below: a loop
+    // that ignored `ended` would spin here rather than fail here.
+    client.endRun('measured, so the loop can stop');
+    const done = await Promise.race([
+      Promise.all(many).then(() => 'stopped'),
+      wait(1000).then(() => 'still trying'),
+    ]);
+    assert.equal(done, 'stopped', 'the loop went on after the run had ended');
+    assert.equal(client.reconnecting, null, 'the loop did not let go when it finished');
+  } finally {
+    // PARKED, not left running. A loop that ignored `ended` would go on
+    // opening sockets after the assertion above had already failed, and a
+    // suite that stalls says nothing about which rule broke.
+    client.ended = true;
+    client.sleep = () => new Promise(() => {});
+    client.close();
+  }
+});
+
+/**
+ * A VOID RUN STAYS VOID WHEN THE SOCKET COMES BACK.
+ *
+ * Measured at 8c8c68a: fill the hold, `endRun` says VOID - and `resume` then
+ * answered `{ticks:6, batches:1, nextTick:6, receipts:1, live:false}` anyway.
+ * The page read that as a healthy session: status `ready`, the player still
+ * driving, every later tick silently discarded by `record`, and nobody told.
+ * A link the operator owns had ended the run and the client showed no sign.
+ */
+test('after a hold-full VOID, resume refuses by name and returns no numbers', async () => {
+  const { node, client, rid, eid } = await rig(0);
+  try {
+    for (let i = 0; i < 6; i++) client.record([45875, 0, 0, 0, 0]);
+    await client.drain();
+    await client.settle();
+    for (let i = 0; i < 2000; i++) client.record([45875, 0, 0, 0, 0]);
+    assert.equal(client.ended, true);
+    assert.equal(client.ending, 'VOID');
+
+    // the socket is fine - this is not about reaching the node
+    await assert.rejects(
+      () => client.resume({ roundId: rid, entryId: eid }),
+      /this run ended VOID: .*a socket coming back does not resume it/,
+      'a VOID run was handed a tick number to carry on from');
+
+    assert.equal(client.nextTick, 6, 'and nothing moved: no tick number was invented');
+    assert.equal(client.ending, 'VOID', 'and no second word was set');
+  } finally { client.close(); await node.close(); }
+});
+
+test('a reconnect on an ended run does not open a socket', async () => {
+  const { node, client, rid, eid } = await rig(0);
+  try {
+    client.close();
+    await wait(50);
+    client.endRun('the hold filled while the socket was down');
+    assert.equal(client.ending, 'VOID');
+
+    assert.equal(client.reconnect({ roundId: rid, entryId: eid }), null,
+      'a run with no honest transcript was given a live socket');
+    await wait(50);
+    assert.equal(client.sock, null, 'a socket was opened for a run that is over');
+    assert.equal(client.tries, 0, 'it tried anyway');
+  } finally { client.close(); await node.close(); }
+});
+
+/**
+ * AND A RUN THAT ENDS WHILE THE LOOP IS ASLEEP STOPS THE LOOP.
+ *
+ * The game keeps handing over ticks through an outage, so the tick that will
+ * not fit the hold ends the run in the middle of the backoff. `ended` is read
+ * every time round rather than once on the way in.
+ */
+test('a run that ends mid-backoff is not resumed when the node returns', async () => {
+  const { node, client, rid, eid } = await rig(0);
+  try {
+    const port = node.port;
+    await node.close();
+    client.close();
+    await wait(50);
+
+    // The game keeps handing over ticks through the outage, so the hold fills
+    // while the loop is between attempts - which is exactly where `ended` has
+    // to be read again rather than once on the way in.
+    client.sleep = async () => {
+      for (let i = 0; i < 700; i++) client.record([45875, 0, 0, 0, 0]);
+    };
+    // RACED, because the failure this is about is a loop that never stops.
+    // Awaiting it plainly would hang the suite instead of failing it, and a
+    // run that hangs says nothing about which rule broke.
+    const back = client.reconnect({ roundId: rid, entryId: eid });
+    const done = await Promise.race([back, wait(1000).then(() => 'still trying')]);
+    assert.equal(done, null,
+      `the loop went round again after the run had ended: ${done}`);
+    assert.equal(client.ending, 'VOID');
+    assert.equal(client.sock, null, 'and it left no socket open behind it');
+
+    // and the node coming back afterwards changes nothing
+    const again = await serve(node.round.db, { port, ...FUNDED });
+    try {
+      assert.equal(client.reconnect({ roundId: rid, entryId: eid }), null);
+      await wait(50);
+      assert.equal(client.sock, null, 'an ended run was given a socket when the node returned');
+    } finally { await again.close(); }
+  } finally {
+    // PARKED, not left running. A loop that ignored `ended` would go on
+    // opening sockets after the assertion above had already failed, and a
+    // suite that stalls says nothing about which rule broke.
+    client.ended = true;
+    client.sleep = () => new Promise(() => {});
+    client.close();
+  }
+});
+
+test('nothing is offered to a wire that is not there', async () => {
+  // The page's own round length, so a 3000-tick outage fits inside it and this
+  // measures the wire and not the hold bound, which has its own test below.
+  const { node, client } = await rig(0, 9000);
+  try {
+    for (let i = 0; i < 6; i++) client.record([45875, 0, 0, 0, 0]);
+    client.close();
+    await wait(50);
+
+    const sends = [];
+    const real = client.send.bind(client);
+    client.send = (m) => { sends.push(m.length); return real(m); };
+
+    // 3000 ticks of outage at the page's cadence: a batch every sixth, a mark
+    // every sixtieth. Measured at 8c8c68a: 550 messages handed to a socket
+    // that was not there, and `held` reading up to `chunk` short the whole
+    // time because the rows sat in a doomed promise.
+    for (let i = 0; i < 3000; i++) {
+      client.record([45875, 0, 0, 0, 0]);
+      if ((i + 1) % 6 === 0) client.drain();
+      if ((i + 1) % 60 === 0) client.markNow('ab'.repeat(32), i + 1);
+    }
+    await client.settle();
+
+    assert.equal(sends.length, 0, `${sends.length} messages were sent with no socket`);
+    assert.equal(client.held, 3006, 'the hold under-reported what it is holding');
+    assert.equal(client.nextTick + client.held, client.offered, 'and the counts still agree');
+    assert.equal(client.marksSkipped, 50, 'a mark that could not go out must be counted');
+    assert.equal(client.ended, false, 'an outage inside the round is not an ending');
+  } finally { client.close(); await node.close(); }
+});
+
+/**
+ * AND THE BOUND IS STILL THE ROUND, not a number chosen for an outage. A
+ * client that is down for longer than the round it is playing has inputs for a
+ * round that has ended, and the first tick that will not fit is VOID.
+ */
+test('the hold still caps at blockTicks while the socket is down, and overflow is VOID', async () => {
+  const { node, client } = await rig(0);
+  try {
+    client.close();
+    await wait(50);
+    for (let i = 0; i < 1200; i++) {
+      client.record([45875, 0, 0, 0, 0]);
+      if ((i + 1) % 6 === 0) client.drain();
+    }
+    assert.equal(client.maxHold, 600, 'the bound is the round, off the contract');
+    assert.equal(client.held, 600);
+    assert.equal(client.dropped, 1, 'the run must end on the first dropped tick');
+    assert.equal(client.ended, true);
+    assert.equal(client.ending, 'VOID');
   } finally { client.close(); await node.close(); }
 });

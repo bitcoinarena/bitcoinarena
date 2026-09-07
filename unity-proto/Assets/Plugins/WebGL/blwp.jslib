@@ -200,19 +200,16 @@ mergeInto(LibraryManager.library, {
     var net = Module.blwpNet = {
       state: 'opening', error: '', ticks: [], tick: null,
       batches: 0, marks: 0, batchEvery: batchEvery | 0, markEvery: markEvery | 0,
-      seen: 0, client: null, where: null, drops: 0, resumedAt: -1,
-      tries: 0, backoff: 0,
-      // ONE AT A TIME, and this is not tidiness.
-      //
-      // Both chains hang off state the client updates when an answer comes
-      // back - the next tick owed, and the two heads. Two publishes in flight
-      // at once build the second from the state the first has not finished
-      // moving, so it names a tick the node is not owed and is refused for a
-      // gap. Measured before this queue existed: 20 marks went through - about
-      // twenty seconds of play, so twelve hundred ticks - and 75 ticks of
-      // input reached the node. The rest were refused and thrown away, and
-      // section 11 is blunt about what unpublished inputs cost.
-      chain: Promise.resolve(),
+      seen: 0, client: null, where: null, resumedAt: -1,
+      // ONE AT A TIME, and this is not tidiness - but the queue that enforced
+      // it is not here any more. Both chains hang off state the client updates
+      // when an answer comes back; two publishes in flight at once build the
+      // second from state the first has not finished moving, so it names a
+      // tick the node is not owed and is refused for a gap. Measured before
+      // anything enforced it: 20 marks went through - about twenty seconds of
+      // play, twelve hundred ticks - and 75 ticks of input reached the node.
+      // `drain`, `markNow` and now `reconnect` each hold their own one-in-
+      // flight in `@blwp/client`, where a test can watch them.
     };
 
     // THE SESSION KEY, made here and kept here.
@@ -299,37 +296,32 @@ mergeInto(LibraryManager.library, {
     net.opened = function (contract, entry) {
       var C = BLWPCLIENT;
 
-      // KEEP TRYING, with a backoff, until the run is over. One attempt was
-      // the whole of it once, so a node still restarting at that moment left
-      // the session finished - every tick and every mark after it unpublished,
-      // and section 11 is blunt about what that costs.
-      net.reconnect = function () {
+      // THE RECONNECT LIVES IN THE CLIENT NOW, for the same reason the hold
+      // and the drain moved there: this file is the one place the JS suites
+      // cannot reach, and the rule that decides whether a dropped player keeps
+      // their run had no test at all. `client.reconnect()` is one in flight
+      // whatever the drop rate, keeps trying with a backoff so a two-second
+      // node restart does not end a session, and STOPS once the run has ended
+      // - a VOID run must not come back as `ready`.
+      net.client.onDrop = function () {
         if (net.state === 'gone') return;
         net.state = 'dropped';
-        net.tries++;
-        net.chain = net.chain.then(function () {
-          return net.client.connect()
-            .then(function () { return net.client.resume(net.where); })
-            .then(function (r) {
-              net.resumedAt = r.nextTick;
-              net.backoff = 0;
-              net.state = 'ready';
-              console.log('[blwp] resumed at tick ' + r.nextTick + ' after ' + net.tries
-                + ' try(s), ' + r.batches + ' batches and ' + r.receipts + ' behind us');
-            })
-            .catch(function (e) {
-              net.error = String(e.message || e);
-              net.backoff = net.backoff ? Math.min(net.backoff * 2, 8000) : 1000;
-              setTimeout(net.reconnect, net.backoff);
-            });
+        net.client.reconnect(net.where).then(function (r) {
+          if (net.state === 'gone') return;
+          if (!r) {
+            // The run ended while the socket was down. The client says which
+            // word and why; nothing here decides one.
+            net.state = 'ended';
+            net.error = net.client.endingReason || '';
+            console.log('[blwp] run ended ' + net.client.ending + ': ' + net.error);
+            return;
+          }
+          net.resumedAt = r.nextTick;
+          net.state = 'ready';
+          console.log('[blwp] resumed at tick ' + r.nextTick + ' after '
+            + net.client.tries + ' try(s), ' + r.batches + ' batches and '
+            + r.receipts + ' behind us');
         });
-      };
-      net.client.onDrop = function () {
-        if (net.state === 'gone' || net.state === 'dropped') return;
-        net.drops++;
-        net.tries = 0;
-        net.backoff = 0;
-        net.reconnect();
       };
 
       return net.client.openRound(contract)
@@ -377,8 +369,9 @@ mergeInto(LibraryManager.library, {
         + ' tick ' + net.seen + ' held ' + (c ? c.held : 0)
         + (c && c.dropped ? ' dropped ' + c.dropped : '')
         + (c && c.marksSkipped ? ' skipped ' + c.marksSkipped : '')
-        + (net.drops ? ' drops ' + net.drops + ' tries ' + net.tries
-                       + ' resumed ' + net.resumedAt : '')
+        + (c && c.drops ? ' drops ' + c.drops + ' tries ' + c.tries
+                          + ' resumed ' + net.resumedAt : '')
+        + (c && c.ended ? ' ENDED ' + c.ending : '')
         + (net.error ? ' (' + net.error + ')' : '')
       : 'off';
     var n = Math.min(line.length, (cap | 0) - 1);

@@ -2858,6 +2858,18 @@ class Client {
     this.publishing = null;
     this.marking = null;
     this.said = [];
+
+    // THE RECONNECT, which used to live in the jslib where nothing could
+    // measure it. `reconnecting` is the one in flight; `drops`, `tries` and
+    // `backoff` are what a status line reads. `sleep` and `now` are injected
+    // for the same reason `sign` is: a test that had to wait eight real
+    // seconds to see the cap would not be run.
+    this.reconnecting = null;
+    this.drops = 0;
+    this.tries = 0;
+    this.backoff = 0;
+    this.resumedAt = null;
+    this.sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   }
 
   /**
@@ -2930,9 +2942,66 @@ class Client {
         const waiting = this.said;
         this.said = [];
         for (const w of waiting) w('error the socket closed');
+        this.drops++;
         if (this.onDrop) this.onDrop();
       });
     });
+  }
+
+  /**
+   * THE SOCKET CAME BACK, OR IT DID NOT YET.
+   *
+   * This loop was in `blwp.jslib`, which is the one file the JS suites cannot
+   * reach - so the rule that decides whether a dropped player keeps their run
+   * had no test at all, while the hold and the drain beside it had a file of
+   * their own. It is here now and the page calls it, so there is one set of
+   * rules instead of two that look alike.
+   *
+   * ONE IN FLIGHT, whatever the drop rate. A second caller gets the promise
+   * the first is already waiting on: two loops would open two sockets, and the
+   * `close` handler on the losing one would fire a third.
+   *
+   * IT KEEPS TRYING, with a backoff, and that is deliberate. One attempt was
+   * the whole of it once, and a node still restarting at that moment left the
+   * session finished - every tick and every mark after it unpublished, which
+   * §11 is blunt about the cost of. A two-second restart must not end a run.
+   *
+   * AND IT STOPS WHEN THE RUN HAS ENDED. `endRun` has already said VOID on
+   * the publish path; a loop that went on reconnecting would hand the page a
+   * live socket for a run with no honest transcript, and the page would show
+   * `ready`. Nothing here decides an outcome - it only declines to re-open a
+   * door on a run that is over.
+   */
+  reconnect(where = this.where) {
+    if (this.ended) return null;
+    if (this.reconnecting) return this.reconnecting;
+    if (!where) throw new Error('no round to reconnect to: setRound was never called');
+
+    this.tries = 0;
+    this.backoff = 0;
+    this.reconnecting = (async () => {
+      // Checked EVERY time round, not once on the way in: a run can end while
+      // this is asleep - the game keeps handing over ticks, and the tick that
+      // will not fit the hold ends it.
+      while (!this.ended) {
+        this.tries++;
+        try {
+          await this.connect();
+          const r = await this.resume(where);
+          this.resumedAt = r.nextTick;
+          this.backoff = 0;
+          return r;
+        } catch (e) {
+          this.error = String(e.message || e);
+          if (this.sock) { const sk = this.sock; this.sock = null; try { sk.close(); } catch { /* gone */ } }
+          this.backoff = this.backoff ? Math.min(this.backoff * 2, 8000) : 1000;
+          await this.sleep(this.backoff);
+        }
+      }
+      return null;
+    })().finally(() => { this.reconnecting = null; });
+
+    return this.reconnecting;
   }
 
   send(message) {
@@ -3135,6 +3204,23 @@ class Client {
    * whole.
    */
   async resume({ roundId, entryId }) {
+    // A RUN THAT ENDED STAYS ENDED, and a socket coming back does not undo it.
+    //
+    // `endRun` said VOID on the publish path: the hold filled, a tick was
+    // dropped, and no transcript from there can be replayed. This used to
+    // answer such a client with a tick number and a chain head anyway, and the
+    // page read that as a healthy session - status `ready`, the player still
+    // driving, every later tick silently discarded and nobody told. That is a
+    // disconnect working as an escape hatch, and in the operator's favour: a
+    // link the operator owns ends the run and the client shows no sign of it.
+    //
+    // Refused by name and with NO NUMBERS. This decides nothing - the outcome
+    // was decided where the fault happened - it only declines to re-animate it.
+    if (this.ended)
+      throw new Error(
+        `this run ended ${this.ending}: ${this.endingReason} - a socket coming `
+        + 'back does not resume it');
+
     const r = await fetch(
       `${this.base}/transcript?round=${toHex(roundId)}&entry=${toHex(entryId)}`);
     if (!r.ok) throw new Error(`the node refused the transcript: ${(await r.text()).trim()}`);
@@ -3292,6 +3378,14 @@ class Client {
   drain() {
     if (this.ended || this.publishing || !this.hold.length || !this.where) return this.publishing;
 
+    // AND NOTHING GOES OUT WHILE THERE IS NO SOCKET. Without this the words
+    // were sliced out of the hold, handed to a `send` that answered `error
+    // there is no socket`, and concatenated back - 550 of those in a 3000-tick
+    // outage, and `held` read up to `chunk` short the whole time because the
+    // rows were in a doomed promise rather than in the hold. A status line
+    // that under-reports a hold is the one number a stalled player has.
+    if (!this.sock || this.sock.readyState !== 1) return null;
+
     // AND THE NUMBERS MUST AGREE BEFORE ANYTHING LEAVES.
     //
     // A batch goes out as `firstTick: nextTick`, so every tick this client has
@@ -3341,7 +3435,14 @@ class Client {
     // A mark after the run has ended would commit to a world whose inputs
     // nobody can produce - it names a tick the transcript cannot reach.
     if (this.ended) return null;
-    if (this.marking || !this.where) { this.marksSkipped++; return null; }
+    // A mark needs a socket for the same reason a batch does, and one that
+    // cannot go out while its moment passes is skipped - which is what the
+    // count is for. Counted rather than silently dropped, so an outage is
+    // visible in the same number a slow link is.
+    if (this.marking || !this.where || !this.sock || this.sock.readyState !== 1) {
+      this.marksSkipped++;
+      return null;
+    }
     this.marking = this.mark(stateHash, {
       roundId: this.where.roundId, entryId: this.where.entryId, tick, inputChainHash,
     }).then((r) => {
