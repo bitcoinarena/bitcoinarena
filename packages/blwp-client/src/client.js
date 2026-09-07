@@ -55,7 +55,7 @@ import {
  * `GENESIS` for a mark taken before any batch was sent, which the node allows
  * by name.
  */
-export function markState(core, st, {
+export async function markState(core, st, {
   roundId, entryId, tick,
   previousHash = NO_PREVIOUS,
   inputChainHash = GENESIS,
@@ -76,7 +76,14 @@ export function markState(core, st, {
   const stateHash = fromHex(hex);
   const c = { roundId, entryId, tick, stateHash, inputChainHash, previousHash };
   const id = checkpointId(c);
-  return { checkpoint: c, id, bytes: joinSigned(encodeCheckpoint(c), sign(id)) };
+  // AWAITED, so the browser's own Ed25519 can be used.
+  //
+  // `crypto.subtle` is async and a vendored JS curve is not - and vendoring
+  // one would put a signing implementation in the trust path of the thing
+  // that pins money, which is the same objection `tools/bundle.js` records
+  // about bundlers. Awaiting a value that is not a promise costs nothing, so
+  // a synchronous signer still works exactly as it did.
+  return { checkpoint: c, id, bytes: joinSigned(encodeCheckpoint(c), await sign(id)) };
 }
 
 /**
@@ -182,7 +189,7 @@ export class Client {
    * that had nothing to do with it.
    */
   async checkpoint(st, { roundId, entryId, tick, inputChainHash = GENESIS }) {
-    const mark = markState(this.core, st, {
+    const mark = await markState(this.core, st, {
       roundId, entryId, tick, previousHash: this.head, inputChainHash,
     }, this.sign);
     const answer = await this.send(mark.bytes);

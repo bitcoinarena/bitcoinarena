@@ -153,7 +153,7 @@ test('a mark naming a parent that is not the head is refused', async () => {
                  'receipted');
 
     // The head has moved on; this one still chains to the start of the round.
-    const orphan = markState(core, driven(120),
+    const orphan = await markState(core, driven(120),
       { roundId: rid, entryId: eid, tick: 120, previousHash: NO_PREVIOUS }, sign);
     const answer = await client.send(orphan.bytes);
 
@@ -317,7 +317,7 @@ test('re-sending a mark returns the receipt already issued, not a second one', a
 
     // the same mark again: the head has moved, so it is rebuilt by hand with
     // the parent it actually had
-    const again = markState(core, st,
+    const again = await markState(core, st,
       { roundId: rid, entryId: eid, tick: 90, previousHash: NO_PREVIOUS }, sign);
     assert.deepEqual(again.id, first.id, 'the same mark must have the same id');
 
