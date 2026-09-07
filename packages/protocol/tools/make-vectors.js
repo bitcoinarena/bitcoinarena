@@ -15,6 +15,7 @@ import { computePayoutTable, rankWeights, DELIVERED, FAILED, FORFEIT, VOID } fro
 import { encodeRoundContract, roundId, encodeEntryContract, entryId } from '../src/contracts.js';
 import { encodeCheckpoint, checkpointId, NO_PREVIOUS, CHECKPOINT_BYTES, SIGNED_CHECKPOINT_BYTES } from '../src/checkpoint.js';
 import { encodeCheckpointReceipt, receiptId, RECEIPT_BYTES, SIGNED_RECEIPT_BYTES } from '../src/receipt.js';
+import { encodeAdvert, advertId, ADVERT_SIGNATURE_BYTES } from '../src/advert.js';
 
 const DIR = new URL('../../../test-vectors/protocol/', import.meta.url).pathname;
 mkdirSync(DIR, { recursive: true });
@@ -222,6 +223,44 @@ out.tagged = {
     ],
   };
 }
+
+/* --------------------------------------------------------------- advertisement */
+{
+  const one = {
+    nodePubkey: b32(0x11), operatorId: 'example operator', protocolVersions: [1],
+    roles: ['game', 'verify'], endpoint: 'wss://node.example:443', region: 'eu-west',
+    capacityClass: 2, softwareHash: b32(0x33), settlementCapabilities: 0,
+    lightningCapabilities: 0, bondTxid: b32(0x44), bondVout: 0,
+    bondScriptTemplateVersion: 1, payoutPubkey: b32(0x55), timestamp: 1788700000000n,
+  };
+  const moved = { ...one, endpoint: 'wss://somewhere-else.example:443' };
+  out.advert = {
+    what: 'A node advertisement: who a node is, and where to reach it. The bond output commits to its hash.',
+    protocolVersion: PROTOCOL_VERSION,
+    fields: [
+      'type u8', 'version u16', 'nodePubkey 32', 'operatorId str',
+      'protocolVersions vec<u16>', 'roles vec<u8>', 'endpoint str', 'region str',
+      'capacityClass u8', 'softwareHash 32', 'settlementCapabilities u32',
+      'lightningCapabilities u32', 'bondTxid 32', 'bondVout u32',
+      'bondScriptTemplateVersion u16', 'payoutPubkey 32', 'timestamp u64',
+    ],
+    signatureBytes: ADVERT_SIGNATURE_BYTES,
+    advert: { hex: toHex(encodeAdvert(one)), advertId: toHex(advertId(one)) },
+    withTheEndpointSwapped: {
+      what: 'The same node, one field changed. A different id, which is the whole point: the bond output commits to the body.',
+      hex: toHex(encodeAdvert(moved)),
+      advertId: toHex(advertId(moved)),
+    },
+    rules: [
+      'The advertisement is NOT what makes a node eligible (5A.1). The bond output is; this is the body it commits to.',
+      'bondOutpoint is mandatory, so chain data alone identifies both the node and its terms.',
+      'The signature sits BESIDE the object, as for a checkpoint and a receipt: inside, the id would move the moment it was signed, and the bond output commits to a body fixed when the funding transaction is built.',
+      'The endpoint is fixed for the life of the bond. A server move means a new funding transaction and new confirmations (25.1).',
+      'operatorId is self-declared (5A.13) and is never treated as proof of identity.',
+    ],
+  };
+}
+
 
 for (const [name, body] of Object.entries(out))
   writeFileSync(DIR + name + '.json', JSON.stringify(body, null, 1) + '\n');

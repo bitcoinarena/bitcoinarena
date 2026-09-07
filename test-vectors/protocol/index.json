@@ -11,6 +11,7 @@
   "payout",
   "contracts",
   "checkpoint",
-  "receipt"
+  "receipt",
+  "advert"
  ]
 }

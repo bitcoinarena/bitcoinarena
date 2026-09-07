@@ -1,0 +1,40 @@
+{
+ "what": "A node advertisement: who a node is, and where to reach it. The bond output commits to its hash.",
+ "protocolVersion": 1,
+ "fields": [
+  "type u8",
+  "version u16",
+  "nodePubkey 32",
+  "operatorId str",
+  "protocolVersions vec<u16>",
+  "roles vec<u8>",
+  "endpoint str",
+  "region str",
+  "capacityClass u8",
+  "softwareHash 32",
+  "settlementCapabilities u32",
+  "lightningCapabilities u32",
+  "bondTxid 32",
+  "bondVout u32",
+  "bondScriptTemplateVersion u16",
+  "payoutPubkey 32",
+  "timestamp u64"
+ ],
+ "signatureBytes": 64,
+ "advert": {
+  "hex": "030001111111111111111111111111111111111111111111111111111111111111111100106578616d706c65206f70657261746f72000100010002000100167773733a2f2f6e6f64652e6578616d706c653a343433000765752d77657374023333333333333333333333333333333333333333333333333333333333333333000000000000000044444444444444444444444444444444444444444444444444444444444444440000000000015555555555555555555555555555555555555555555555555555555555555555000001a076d3ff00",
+  "advertId": "73595c42fa6163ccb2729bd0bdcfc00bd61d57357bb8dc03c727ce6802386efa"
+ },
+ "withTheEndpointSwapped": {
+  "what": "The same node, one field changed. A different id, which is the whole point: the bond output commits to the body.",
+  "hex": "030001111111111111111111111111111111111111111111111111111111111111111100106578616d706c65206f70657261746f72000100010002000100207773733a2f2f736f6d6577686572652d656c73652e6578616d706c653a343433000765752d77657374023333333333333333333333333333333333333333333333333333333333333333000000000000000044444444444444444444444444444444444444444444444444444444444444440000000000015555555555555555555555555555555555555555555555555555555555555555000001a076d3ff00",
+  "advertId": "879d6317b5ebdb110a53e8270f661402df4994f867b7cb9c0b0a252539dab928"
+ },
+ "rules": [
+  "The advertisement is NOT what makes a node eligible (5A.1). The bond output is; this is the body it commits to.",
+  "bondOutpoint is mandatory, so chain data alone identifies both the node and its terms.",
+  "The signature sits BESIDE the object, as for a checkpoint and a receipt: inside, the id would move the moment it was signed, and the bond output commits to a body fixed when the funding transaction is built.",
+  "The endpoint is fixed for the life of the bond. A server move means a new funding transaction and new confirmations (25.1).",
+  "operatorId is self-declared (5A.13) and is never treated as proof of identity."
+ ]
+}

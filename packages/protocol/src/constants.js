@@ -55,3 +55,36 @@ export const roleByte = (role) => {
   if (i < 0) throw new Error('unknown role: ' + role);
   return i;
 };
+
+/**
+ * THE ONE ADDRESS EVERY BOND PAYS A DUST OUTPUT TO.
+ *
+ * Section 25.1: "A P2TR output is a 32-byte key and looks like every other
+ * one, so a bond cannot be recognised from its output... OP_RETURN does not
+ * help either: BIP158 compact filters exclude it." Hence the requirement:
+ * "Every bond funding transaction MUST pay a dust output to BOND_MARKER, a
+ * single address fixed by this protocol." One address for every bond, so it
+ * appears in the compact filters and any light client can find every bond that
+ * has ever existed without asking anyone. It costs one dust output, once.
+ *
+ * IT IS NOT CHOSEN HERE, and that is deliberate rather than unfinished. The
+ * marker is part of the network's identity in the same way `genesis_parameters`
+ * is: introducing or changing it later makes every bond posted before it
+ * unfindable, so it has to be settled once, before the first bond exists, and
+ * never again. Writing a plausible address into this file would be settling it
+ * by accident in a source tree, which is exactly how such a thing gets decided
+ * without anyone deciding it.
+ *
+ * So it is null, and `bondMarker()` refuses rather than returning something
+ * that would silently match nothing. A search for bonds that quietly found
+ * none would look exactly like a network with no nodes in it.
+ */
+export const BOND_MARKER = null;
+
+export function bondMarker() {
+  if (BOND_MARKER === null)
+    throw new Error(
+      'BOND_MARKER has not been chosen. It is fixed once, before the first bond '
+      + 'is posted, and every bond ever posted is unfindable without it');
+  return BOND_MARKER;
+}
