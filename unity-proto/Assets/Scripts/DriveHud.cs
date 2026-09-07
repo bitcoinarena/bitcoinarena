@@ -137,7 +137,14 @@ public class DriveHud : MonoBehaviour
             fontSize = Mathf.RoundToInt(Mathf.Clamp(min * 0.042f, 20f, 40f)),
         };
 
-        bool live = runScore != null && runScore.Running;
+        // AND IN PRACTICE TOO, for the reason the danger meter carries: the
+        // truck is invulnerable in practice, `RunScore.Running` is false while
+        // it is, and the score line then showed the LAST run's number - zero
+        // on a first drive. Photographed on the daily at 1024x768: the core's
+        // own readout said tick 824 and DANGER read x1.00 while SCORE read 0,
+        // and the core's `runScore` on the same drive returns 432 at ten
+        // seconds and 642 by the time the truck is at the far end.
+        bool live = runScore != null && (runScore.Running || Blwp.PracticeMode.On);
         int pending = runScore == null ? 0 : (live ? runScore.Projected : runScore.LastScore);
 
         // Stacked bottom-up so adding a row never silently overlaps the one
