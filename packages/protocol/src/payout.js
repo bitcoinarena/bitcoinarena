@@ -87,6 +87,20 @@ export function computePayoutTable({ roundId, entries, minScore = 0 }) {
       return compareBytes(a.pubkey, b.pubkey);
     });
 
+  // WHOSE STAKE ACTUALLY ENTERS THE POT.
+  //
+  // Not every activated entry. A delivered player below the score "keeps their
+  // stake and simply does not place" - the comment above has always said so -
+  // and the table paid them ZERO, which with a settled hold is the operator
+  // keeping it. With no loser in the round the pool is empty, the check below
+  // was skipped, and nothing noticed. They are excluded from the pot instead:
+  // their hold is cancelled and the money never leaves them.
+  //
+  // This set is returned, so `holdSettlement` cannot decide it differently.
+  // Two places deciding which stakes move is two places to get it wrong.
+  const keepsTheirStake = (e) => e.outcome === DELIVERED && e.score < minScore;
+  const settling = activated.filter((e) => !keepsTheirStake(e));
+
   const payouts = new Map();
   for (const e of activated) payouts.set(e, 0n);
   for (const e of qualifiers) payouts.set(e, e.stakeMsat);      // stake back
@@ -115,17 +129,20 @@ export function computePayoutTable({ roundId, entries, minScore = 0 }) {
   }
 
   const paid = [...payouts.values()].reduce((s, v) => s + v, 0n);
-  const staked = activated.reduce((s, e) => s + e.stakeMsat, 0n);
+  const staked = settling.reduce((s, e) => s + e.stakeMsat, 0n);
 
   // Fees and donations are charged ON TOP of the stake at entry (spec 18), so
-  // they never appear here - which is exactly why this equality is clean.
-  if (pool > 0n && qualifiers.length > 0 && paid !== staked)
+  // they never appear here - which is exactly why this equality is clean. It
+  // no longer waits for a non-empty pool: an empty one was where the cautious
+  // player's stake went missing.
+  if (qualifiers.length > 0 && paid !== staked)
     throw new Error(`payout invariant broken: paid ${paid} against staked ${staked}`);
 
   return {
     pool,
     qualifiers: qualifiers.length,
     payingRanks: k,
+    settling,
     table: activated.map((e) => ({ pubkey: e.pubkey, amountMsat: payouts.get(e) })),
   };
 }
@@ -220,11 +237,22 @@ export function holdSettlement({ roundId, entries, minScore = 0 }) {
   const table = computePayoutTable({ roundId, entries, minScore });
   const paidTo = new Map(table.table.map((r, i) => [i, r.amountMsat]));
 
-  const activated = entries.filter((e) => e.outcome !== VOID);
-  const actions = entries.map((e) => (e.outcome === VOID
-    ? { entry: e, action: CANCEL, why: 'VOID: the fault was not the player\'s, so the stake goes back' }
-    : { entry: e, action: SETTLE, why: `${e.outcome}: the stake joins the pot the table shares out` }));
+  // THE TABLE SAYS WHICH STAKES MOVE, and this only carries out its answer.
+  // A VOID entry is not activated at all; a delivered player below the score
+  // is activated and keeps their stake, which is the same CANCEL for a
+  // different reason.
+  const settles = new Set(table.settling);
+  const actions = entries.map((e) => (settles.has(e)
+    ? { entry: e, action: SETTLE, why: `${e.outcome}: the stake joins the pot the table shares out` }
+    : {
+      entry: e,
+      action: CANCEL,
+      why: e.outcome === VOID
+        ? 'VOID: the fault was not the player\'s, so the stake goes back'
+        : `${e.outcome} below the score: the stake was never at risk`,
+    }));
 
+  const activated = entries.filter((e) => e.outcome !== VOID);
   const settledMsat = actions
     .filter((a) => a.action === SETTLE)
     .reduce((s, a) => s + a.entry.stakeMsat, 0n);

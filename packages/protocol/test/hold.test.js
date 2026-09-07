@@ -108,38 +108,98 @@ test('a round the committee could not settle pays the operator nothing', () => {
 });
 
 /**
- * THE CAUTIOUS PLAYER, AND WHY THE BALANCE IS CHECKED RATHER THAN ASSUMED.
+ * THE CAUTIOUS PLAYER KEEPS THEIR STAKE, WHICH IS WHAT THE TABLE ALWAYS SAID.
  *
- * `computePayoutTable` says of qualification: "a cautious player keeps their
- * stake and simply does not place. Disqualifying them would move their stake
- * into the pool, which is a levy on a legal strategy rather than balance." The
- * table gives that player an amount of ZERO - and their hold is not VOID, so
- * it settles. Zero paid and a settled stake is the operator keeping it.
+ * `computePayoutTable` has always carried the sentence: "a cautious player
+ * keeps their stake and simply does not place. Disqualifying them would move
+ * their stake into the pool, which is a levy on a legal strategy rather than
+ * balance." The table paid them ZERO and left their hold to settle, which is
+ * the operator keeping it - and with no loser the pool is empty, the
+ * invariant was skipped, and nothing noticed.
  *
- * The table's own invariant does not catch it, because with no loser the pool
- * is empty and that check is skipped. This one does: what may be taken must
- * equal what is handed back, and here it does not.
- *
- * Found by probing the table rather than by reading it. It is a hole in the
- * payout model, not in the refund - and this refuses to answer instead of
- * quietly handing the operator a stake.
+ * Their stake is now excluded from the pot: the hold is CANCELLED, the money
+ * never leaves them, and the operator takes nothing. The table names which
+ * stakes settle so this cannot decide it differently.
  */
-test('a delivered player below the score, with no losers, is refused rather than skimmed', () => {
+test('a delivered player below the score keeps their stake, and the operator takes none of it', () => {
   const bold = entry(1, DELIVERED, 100);
   const cautious = entry(2, DELIVERED, 10);
 
-  assert.throws(
-    () => holdSettlement({ roundId: b32(9), minScore: 50, entries: [bold, cautious] }),
-    /the operator would keep 100000 msat: settled 200000 against 100000 paid out/);
+  const s = holdSettlement({ roundId: b32(9), minScore: 50, entries: [bold, cautious] });
+  const said = new Map(s.actions.map((a) => [a.entry, a.action]));
 
-  // with a loser in the round the pool is not empty, the table's own invariant
-  // applies, and it is that one which refuses
-  assert.throws(
-    () => holdSettlement({ roundId: b32(9), minScore: 50, entries: [bold, cautious, entry(3, FAILED)] }),
-    /payout invariant broken/);
+  assert.equal(said.get(cautious), CANCEL, 'the cautious stake was taken');
+  assert.match(s.actions.find((a) => a.entry === cautious).why, /below the score: the stake was never at risk/);
+  assert.equal(said.get(bold), SETTLE);
 
-  // and above the score both are qualifiers, so it balances and answers
-  const ok = holdSettlement({ roundId: b32(9), minScore: 5, entries: [bold, cautious] });
+  assert.equal(s.settledMsat, 100000n, 'the cautious stake entered the pot');
+  assert.equal(s.refundedMsat, 100000n);
+  assert.equal(s.paidMsat, 100000n);
+  assert.equal(s.settledMsat, s.paidMsat, 'the operator kept the difference');
+
+  // both are still rows of the round - one paid, one paid nothing and keeping
+  // what they came with
+  assert.equal(s.table.table.length, 2);
+  assert.equal(s.table.table[0].amountMsat, 100000n);
+  assert.equal(s.table.table[1].amountMsat, 0n);
+  assert.equal(s.table.pool, 0n);
+});
+
+test('with a loser in the round the cautious stake still stays with its owner', () => {
+  const bold = entry(1, DELIVERED, 100);
+  const cautious = entry(2, DELIVERED, 10);
+  const loser = entry(3, FAILED);
+
+  const s = holdSettlement({ roundId: b32(9), minScore: 50, entries: [bold, cautious, loser] });
+  const said = new Map(s.actions.map((a) => [a.entry, a.action]));
+
+  assert.equal(said.get(cautious), CANCEL);
+  assert.equal(said.get(loser), SETTLE, 'a loser keeps their stake');
+  assert.equal(s.settledMsat, 200000n);
+  assert.equal(s.refundedMsat, 100000n);
+  assert.equal(s.paidMsat, 200000n, 'the winner is not paid the loser stake');
+  assert.equal(s.table.pool, 100000n);
+  assert.equal(s.table.table[0].amountMsat, 200000n);
+});
+
+/**
+ * AND THE BALANCE IS STILL CHECKED. It caught the case above before it was
+ * fixed and it must still refuse if the two sides ever come apart again - so
+ * the entries and the table are made to disagree on purpose.
+ */
+test('what may be taken must still equal what is handed back', () => {
+  const bold = entry(1, DELIVERED, 100);
+  const ok = holdSettlement({ roundId: b32(9), minScore: 5, entries: [bold, entry(2, DELIVERED, 10)] });
   assert.equal(ok.settledMsat, ok.paidMsat);
-  assert.equal(ok.refundedMsat, 0n);
+  assert.equal(ok.refundedMsat, 0n, 'above the score, both stakes are at risk');
+  assert.equal(ok.settledMsat, 200000n);
+});
+
+/**
+ * A ROUND NOBODY WON, AND THE POOL WITH NOWHERE TO GO.
+ *
+ * Everyone failed: the pool holds every stake and there is no qualifier to
+ * share it out to. The table answers without complaint - its own invariant
+ * only applies when somebody qualified - so the only thing between the
+ * operator and the whole pot is this equality. It refuses rather than paying
+ * it to the house, and what a round with no finisher does with the pot is a
+ * decision nobody has made yet.
+ *
+ * This is the input that keeps the balance check honest: with the cautious
+ * player fixed, every other fixture balances, and removing the check would
+ * change nothing anywhere else.
+ */
+test('a round nobody finished is refused rather than handed to the operator', () => {
+  const entries = [entry(1, FAILED), entry(2, FAILED)];
+
+  assert.throws(() => holdSettlement({ roundId: b32(9), minScore: 1, entries }),
+    /the operator would keep 200000 msat: settled 200000 against 0 paid out/);
+
+  // and one finisher is enough to make it answer: the pool has somewhere to go
+  const ok = holdSettlement({
+    roundId: b32(9), minScore: 1, entries: [...entries, entry(3, DELIVERED, 100)],
+  });
+  assert.equal(ok.settledMsat, 300000n);
+  assert.equal(ok.paidMsat, 300000n);
+  assert.equal(ok.table.table[2].amountMsat, 300000n, 'the finisher takes the pot and their stake');
 });
