@@ -23,11 +23,31 @@ import { advertId, decodeAdvert, splitSignedAdvert } from './advert.js';
 import {
   hash256, parseTransaction, commitmentsOf, witnessItemsOf,
 } from './tx.js';
+import { fromHex } from './hash.js';
 
 export { hash256 };
 
 /** A block header is exactly this, and a shorter one is not a header. */
 export const HEADER_BYTES = 80;
+
+/**
+ * BITCOIN'S FIRST BLOCK, in hashing order.
+ *
+ * Not a parameter and not a choice: this number IS mainnet, the way a network
+ * id is. Anyone can check it, it can never go stale, and no operator can
+ * change it. It is here because a chain has to be anchored to something the
+ * client already knows - a set of headers that link and are mined is only a
+ * chain of SOMETHING, and mining a short easy one costs almost nothing.
+ *
+ * WHAT IT COSTS TO USE THIS ONE. Section 25.1 says "80 bytes a block; under
+ * 4 MB for all of history". That figure is wrong: at 900,000 blocks it is
+ * 68.7 MB, seventeen times what the spec says, and no browser will fetch it to
+ * open a round. So a deployment will anchor on a later block instead - which is
+ * a constant somebody must choose and keep - and choosing it is not this
+ * slice's to make. What is decided here is that there MUST be one.
+ */
+export const BITCOIN_MAINNET_GENESIS = fromHex(
+  '6fe28c0ab6f1b372c1a6a246ae63f74f931e8365e15a089c68d6190000000000');
 
 const sameBytes = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
 

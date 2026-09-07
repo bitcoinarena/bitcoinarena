@@ -120,7 +120,25 @@ const tips = (headers) => headers.map((h) => toHex(blockHashOf(h)));
  * `least` is 2 and is not a tuning knob - it is the whole property. One source
  * is a directory, which is the thing 25.1 exists to remove.
  */
-export async function agreedChain(providers, { least = 2, timeoutMs = 10000, ask } = {}) {
+export async function agreedChain(providers, { least = 2, timeoutMs = 10000, ask, anchor } = {}) {
+  // AN ANCHOR IS NOT OPTIONAL, and it may not come from the page.
+  //
+  // Agreement and mining together still only prove that a set of headers is a
+  // chain of SOMETHING. Mining a short chain at trivial difficulty costs
+  // almost nothing, so a client whose whole provider list belongs to one
+  // operator - two hostnames, one machine, which an origin tag catches only
+  // when it is obvious - would take that operator's fork by default, because
+  // there is nothing heavier to compare it against. The anchor is what makes
+  // the winner have to be BITCOIN's chain: a block the client already knows,
+  // which the chain must contain.
+  //
+  // It is a caller's argument rather than a page's value on purpose. An anchor
+  // an attacker supplies is no anchor - he would name a block of his own fork -
+  // so this has to come from the client, and `BITCOIN_MAINNET_GENESIS` is one
+  // that can never go stale or be argued with.
+  if (!(anchor instanceof Uint8Array) || anchor.length !== 32)
+    return { ok: false, why: 'no anchor: a chain of headers that link and are mined is still only a chain of something' };
+
   if (!providers || providers.length < least)
     return { ok: false, why: `${(providers || []).length} providers is fewer than the ${least} it takes to weigh one against another` };
 
@@ -157,7 +175,13 @@ export async function agreedChain(providers, { least = 2, timeoutMs = 10000, ask
       ]);
       const seen = chainWork(headers);
       if (!seen.ok) return { at, ok: false, why: seen.why };
-      return { at, ok: true, headers, work: seen.work, hashes: tips(headers) };
+      const hashes = tips(headers);
+      // Checked per source, not only on the winner: a chain that does not hold
+      // the anchor is not an inferior answer to the question, it is an answer
+      // to a different one, and it must not be weighed at all.
+      if (!hashes.includes(toHex(anchor)))
+        return { at, ok: false, why: `this chain does not contain ${toHex(anchor)}, the block this client is anchored to` };
+      return { at, ok: true, headers, work: seen.work, hashes };
     } catch (e) {
       return { at, ok: false, why: e.message };
     } finally { clearTimeout(timer); }
@@ -185,17 +209,12 @@ export async function agreedChain(providers, { least = 2, timeoutMs = 10000, ask
   const inBest = new Set(best.hashes);
 
   for (const a of good) {
-    // ANSWERS ABOUT DIFFERENT PARTS OF THE CHAIN ARE NOT A DISAGREEMENT, and
-    // calling them one would refuse two honest providers whose ranges happen
-    // not to overlap. It is still no answer - nothing has been weighed - but
-    // it is a different fact and the caller is told which.
-    if (!a.hashes.some((h) => inBest.has(h))) {
-      return {
-        ok: false,
-        why: `providers ${best.at} and ${a.at} answered about different parts of `
-          + 'the chain and share no block, so neither can be weighed against the other',
-      };
-    }
+    // ANSWERS ABOUT DIFFERENT PARTS OF THE CHAIN used to be told apart from a
+    // fork here, and that branch is gone rather than left unreachable: every
+    // chain that gets this far contains the anchor, so any two of them share
+    // at least that block, and no test or mutant could ever reach it again. A
+    // provider whose range does not reach the anchor is refused earlier, by
+    // name, which is the same fact said in the right place.
     const stray = a.hashes.find((h) => !inBest.has(h));
     if (stray) {
       return {

@@ -19,7 +19,9 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 
 import { fromHex, toHex } from '../../protocol/src/hash.js';
-import { blockHashOf, workOf, meetsTarget, HEADER_BYTES } from '../../protocol/src/chain.js';
+import {
+  blockHashOf, workOf, meetsTarget, HEADER_BYTES, BITCOIN_MAINNET_GENESIS,
+} from '../../protocol/src/chain.js';
 import { hash256 } from '../../protocol/src/tx.js';
 import { blockOf } from '../../protocol/tools/bond.js';
 import { agreedChain, headersOverHttp, httpProvider } from '../src/headers.js';
@@ -37,6 +39,11 @@ const MAINNET = [
   + '6231ed3de07345b607ec2a39b2d01bec2fe10dfb7f516ba4958a42691c95316d0a385a45'
   + '9600185599fc5c',
 ].map(fromHex);
+
+// THE ANCHOR THESE TESTS USE. Real mainnet 499998, which is in the fixture
+// chain below - a deployment would anchor on genesis or on a later block it
+// ships, and either way the client brings it rather than the page.
+const ANCHOR = () => blockHashOf(MAINNET[0]);
 
 /** A provider that serves headers back to back, as a real one would. */
 async function serving(headers) {
@@ -67,7 +74,7 @@ test('two providers that agree give a chain, and it is the real one', async () =
   const b = await serving(MAINNET);
   try {
     assert.equal(a.bytes, 3 * HEADER_BYTES);
-    const seen = await agreedChain([a.get, b.get]);
+    const seen = await agreedChain([a.get, b.get], { anchor: ANCHOR() });
     assert.equal(seen.ok, true, seen.why);
     assert.equal(seen.headers.length, 3);
     assert.equal(seen.agreed, 2);
@@ -89,7 +96,7 @@ test('a provider that leaves blocks out is carried, not refused', async () => {
   const whole = await serving(MAINNET);
   const short = await serving(MAINNET.slice(0, 2));
   try {
-    const seen = await agreedChain([short.get, whole.get]);
+    const seen = await agreedChain([short.get, whole.get], { anchor: ANCHOR() });
     assert.equal(seen.ok, true, seen.why);
     assert.equal(seen.headers.length, 3);
     assert.equal(seen.from, 1);
@@ -108,7 +115,8 @@ test('providers that fork are refused, and the stray block is named', async () =
   const a = await serving(left);
   const b = await serving(right);
   try {
-    const seen = await agreedChain([a.get, b.get]);
+    // both hold the block this client is anchored to, and diverge after it
+    const seen = await agreedChain([a.get, b.get], { anchor: blockHashOf(left[0]) });
     assert.equal(seen.ok, false);
     assert.match(seen.why, /do not agree on the chain/);
     // the named block is one the winner does not hold
@@ -132,7 +140,7 @@ test('one provider is refused however good the chain looks', async () => {
     // never going to be used.
     let calls = 0;
     const counted = () => { calls++; return only.get(); };
-    const alone = await agreedChain([counted]);
+    const alone = await agreedChain([counted], { anchor: ANCHOR() });
     assert.equal(alone.ok, false);
     assert.match(alone.why, /1 providers is fewer than the 2 it takes/);
     assert.equal(calls, 0);
@@ -141,7 +149,7 @@ test('one provider is refused however good the chain looks', async () => {
     // count of sources that decides and not the chain
     const elsewhere = await serving(MAINNET);
     try {
-      const two = await agreedChain([httpProvider(only.url), httpProvider(elsewhere.url)]);
+      const two = await agreedChain([httpProvider(only.url), httpProvider(elsewhere.url)], { anchor: ANCHOR() });
       assert.equal(two.ok, true, two.why);
     } finally { elsewhere.server.close(); }
 
@@ -152,7 +160,7 @@ test('one provider is refused however good the chain looks', async () => {
     const p = httpProvider(only.url);
     const counting = (...a) => { asked++; return p(...a); };
     counting.tag = p.tag;
-    const same = await agreedChain([p, counting]);
+    const same = await agreedChain([p, counting], { anchor: ANCHOR() });
     assert.equal(same.ok, false);
     assert.match(same.why, /providers 0 and 1 are the same source, http:\/\/127.0.0.1:/);
     assert.equal(asked, 0);
@@ -165,14 +173,14 @@ test('a chain that does not link is discarded, and it is named', async () => {
   const alsoGood = await serving(MAINNET);
   try {
     // two good and one broken: the broken one is named and the answer stands
-    const seen = await agreedChain([good.get, broken.get, alsoGood.get]);
+    const seen = await agreedChain([good.get, broken.get, alsoGood.get], { anchor: ANCHOR() });
     assert.equal(seen.ok, true, seen.why);
     assert.equal(seen.agreed, 2);
     assert.equal(seen.refused.length, 1);
     assert.match(seen.refused[0], /provider 1: this header does not follow the one before it/);
 
     // one good and one broken is one source, and one source is refused
-    const no = await agreedChain([good.get, broken.get]);
+    const no = await agreedChain([good.get, broken.get], { anchor: ANCHOR() });
     assert.equal(no.ok, false);
     assert.match(no.why, /only 1 of 2 providers gave a chain/);
     assert.match(no.refused, /does not follow the one before it/);
@@ -189,7 +197,7 @@ test('a provider that errors or never answers is counted, not waited for', async
   try {
     const seen = await agreedChain(
       [good.get, () => headersOverHttp(angryUrl), silent, alsoGood.get],
-      { timeoutMs: 50 });
+      { timeoutMs: 50, anchor: ANCHOR() });
     assert.equal(seen.ok, true, seen.why);
     assert.equal(seen.agreed, 2);
     assert.equal(seen.refused.length, 2);
@@ -207,7 +215,7 @@ test('bytes that are not whole headers are not headers', async () => {
   const url = `http://127.0.0.1:${ragged.address().port}/`;
   try {
     await assert.rejects(headersOverHttp(url), /120 bytes is not a whole number of headers/);
-    const seen = await agreedChain([() => headersOverHttp(url), () => headersOverHttp(url)]);
+    const seen = await agreedChain([() => headersOverHttp(url), () => headersOverHttp(url)], { anchor: ANCHOR() });
     assert.equal(seen.ok, false);
     assert.match(seen.why, /only 0 of 2 providers gave a chain/);
   } finally { ragged.close(); }
@@ -251,7 +259,7 @@ test('honest chain plus one fabricated header does not win', async () => {
   try {
     // two providers, one of them the attacker: his chain is not a chain, so
     // one source is left, and one source is refused
-    const two = await agreedChain([a.get, b.get]);
+    const two = await agreedChain([a.get, b.get], { anchor: ANCHOR() });
     assert.equal(two.ok, false);
     assert.match(two.why, /only 1 of 2 providers gave a chain/);
     assert.match(two.refused, /provider 1: this header was not mined/);
@@ -259,7 +267,7 @@ test('honest chain plus one fabricated header does not win', async () => {
     // and with two honest providers he is simply discarded, not obeyed
     const also = await serving(honest);
     try {
-      const three = await agreedChain([a.get, b.get, also.get]);
+      const three = await agreedChain([a.get, b.get, also.get], { anchor: ANCHOR() });
       assert.equal(three.ok, true, three.why);
       assert.equal(three.headers.length, 3, 'the fabricated header must not be in the chain');
       assert.equal(three.agreed, 2);
@@ -274,7 +282,7 @@ test('a chain of pure invention is refused for being unmined, not for forking', 
   const a = await serving(MAINNET);
   const b = await serving(fake);
   try {
-    const seen = await agreedChain([a.get, b.get]);
+    const seen = await agreedChain([a.get, b.get], { anchor: ANCHOR() });
     assert.equal(seen.ok, false);
     // the REASON matters: before the hash was checked this was refused as a
     // disagreement, which is the right answer for the wrong reason and would
@@ -296,7 +304,7 @@ test('providers with no address to compare are taken at their word', async () =>
   try {
     const bare = () => a.get();
     assert.equal(bare.tag, undefined);
-    const seen = await agreedChain([bare, bare]);
+    const seen = await agreedChain([bare, bare], { anchor: ANCHOR() });
     assert.equal(seen.ok, true, seen.why);
   } finally { a.server.close(); }
 });
@@ -307,25 +315,96 @@ test('providers with no address to compare are taken at their word', async () =>
  * word used for a provider that is lying. They are told apart now, and the ask
  * is handed to the provider so an honest pair can be asked the same thing.
  */
-test('answers about different parts of the chain are not a fork', async () => {
-  const early = run(3, { seed: 1 });
-  const late = run(3, { seed: 40 });                 // links, but shares nothing
+/**
+ * A RANGE THAT DOES NOT REACH THE ANCHOR IS NOT AN ANSWER.
+ *
+ * This used to be told apart from a fork - two honest providers whose answers
+ * shared no block were refused with a different name. The anchor made that
+ * branch unreachable: every chain that gets weighed contains the anchor, so any
+ * two of them share at least that block. The same fact is said earlier now, per
+ * source, and the branch was deleted rather than left where nothing could reach
+ * it.
+ */
+test('a chain that does not reach the anchor is refused, by name', async () => {
+  const early = MAINNET;
+  const late = run(3, { seed: 40 });                 // links and is mined, but not ours
   const a = await serving(early);
   const b = await serving(late);
   try {
-    const seen = await agreedChain([a.get, b.get]);
+    const seen = await agreedChain([a.get, b.get], { anchor: ANCHOR() });
     assert.equal(seen.ok, false);
-    assert.match(seen.why, /answered about different parts of the chain and share no block/);
-    assert.doesNotMatch(seen.why, /do not agree on the chain/);
+    assert.match(seen.why, /only 1 of 2 providers gave a chain/);
+    assert.match(seen.refused, /provider 1: this chain does not contain .*, the block this client is anchored to/);
   } finally { a.server.close(); b.server.close(); }
 
-  // and the question reaches the provider, so a pair CAN be asked the same one
+  // and the question still reaches the provider
   const asked = [];
-  const one = (q) => { asked.push(q); return early; };
-  const two = (q) => { asked.push(q); return early; };
-  const seen = await agreedChain([one, two], { ask: { from: 499998, count: 3 } });
+  const one = (q) => { asked.push(q); return MAINNET; };
+  const two = (q) => { asked.push(q); return MAINNET; };
+  const seen = await agreedChain([one, two],
+    { ask: { from: 499998, count: 3 }, anchor: ANCHOR() });
   assert.equal(seen.ok, true, seen.why);
   assert.deepEqual(asked, [{ from: 499998, count: 3 }, { from: 499998, count: 3 }]);
+});
+
+/**
+ * THE REST OF THE CHAIN SOURCE. Agreement and mining together prove only that
+ * a set of headers is a chain of SOMETHING, and mining a short easy chain costs
+ * almost nothing. A client whose whole provider list is one operator would take
+ * that operator's fork by default, because there is nothing heavier to weigh it
+ * against. The anchor is what makes the winner have to be Bitcoin's chain.
+ */
+test('two agreeing providers serving a cheap fork are refused without the anchor', async () => {
+  // A fork that is entirely his: linked, mined, self-consistent, and served by
+  // two providers that agree with each other perfectly.
+  const his = run(4, { seed: 200 });
+  assert.equal(his.every(meetsTarget), true, 'his chain really is mined');
+
+  const a = await serving(his);
+  const b = await serving(his);
+  try {
+    // without an anchor there is nothing to refuse him with, and that is why
+    // the anchor is required rather than optional
+    const none = await agreedChain([a.get, b.get], {});
+    assert.equal(none.ok, false);
+    assert.match(none.why, /no anchor: a chain of headers that link and are mined is still only a chain of something/);
+
+    // with one, his chain is not weighed at all - it is an answer to another
+    // question - and both of his providers are named
+    const anchored = await agreedChain([httpProvider(a.url), httpProvider(b.url)],
+      { anchor: ANCHOR() });
+    assert.equal(anchored.ok, false);
+    assert.match(anchored.why, /only 0 of 2 providers gave a chain/);
+    assert.match(anchored.refused, /provider 0: this chain does not contain/);
+    assert.match(anchored.refused, /provider 1: this chain does not contain/);
+  } finally { a.server.close(); b.server.close(); }
+
+  // and the honest chain, which does contain it, is accepted
+  const honestOne = await serving(MAINNET);
+  const honestTwo = await serving(MAINNET);
+  try {
+    const seen = await agreedChain([httpProvider(honestOne.url), httpProvider(honestTwo.url)],
+      { anchor: ANCHOR() });
+    assert.equal(seen.ok, true, seen.why);
+    assert.equal(seen.headers.length, 3);
+    assert.equal(seen.work, MAINNET.reduce((w, h) => w + workOf(h), 0n));
+  } finally { honestOne.server.close(); honestTwo.server.close(); }
+});
+
+test('the anchor is a block the client brings, and genesis is one nobody can argue with', async () => {
+  assert.equal(toHex(BITCOIN_MAINNET_GENESIS.slice().reverse()),
+    '000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f');
+  assert.equal(BITCOIN_MAINNET_GENESIS.length, 32);
+
+  // an anchor that is not 32 bytes is not an anchor
+  const a = await serving(MAINNET);
+  try {
+    for (const bad of [undefined, null, 'a hex string', new Uint8Array(31)]) {
+      const seen = await agreedChain([a.get, a.get], { anchor: bad });
+      assert.equal(seen.ok, false, String(bad));
+      assert.match(seen.why, /no anchor/);
+    }
+  } finally { a.server.close(); }
 });
 
 test('a body larger than the client reads is refused, not allocated', async () => {
@@ -383,7 +462,7 @@ test('a provider that never answers has its read aborted, not abandoned', async 
   const alsoGood = await serving(MAINNET);
   try {
     const seen = await agreedChain(
-      [good.get, httpProvider(url), alsoGood.get], { timeoutMs: 60 });
+      [good.get, httpProvider(url), alsoGood.get], { timeoutMs: 60, anchor: ANCHOR() });
     assert.equal(seen.ok, true, seen.why);
     assert.match(seen.refused[0], /provider 1: no answer in 60 ms/);
     await new Promise((r) => setTimeout(r, 50));
