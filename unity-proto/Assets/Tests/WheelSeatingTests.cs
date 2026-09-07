@@ -69,6 +69,16 @@ public class WheelSeatingTests
 
     IEnumerator Rig()
     {
+        // ONE WORLD, and it is this fixture's. Other fixtures leave theirs
+        // standing, and `FindFirstObjectByType` then hands over a LEFTOVER
+        // truck - seated by a leftover road network whose terrain has since
+        // been destroyed, so its `Ground` answers 0 while its ribbons still
+        // hold the mesh they were built with. That is not a fault in the road:
+        // it went red at 2.98 m over a road that is fine, in the full suite
+        // only, and passed alone.
+        TestWorld.TearDown();
+        yield return null;
+
         var boot = new GameObject("Bootstrap");
         _boot = boot.AddComponent<Bootstrap>();
         for (int i = 0; i < 6; i++) yield return null;
@@ -311,6 +321,28 @@ public class WheelSeatingTests
         // was there: 2.34 m of disagreement about a road that is fine.
         var roads = _driver.roads;
         Assert.IsNotNull(roads, "the truck is not seated by any road network");
+
+        // And it is a LIVE network. A destroyed terrain answers 0 for the
+        // ground under every ribbon it still holds, which reads as metres of
+        // disagreement about a road nobody has touched.
+        Assert.IsNotNull(roads.terrain,
+            "the road network the truck is seated by has lost its terrain, so "
+            + "its ground is 0 and nothing measured against it means anything");
+
+        // LET THE RIBBON CATCH UP FIRST. The ground comes from a live fetch and
+        // reshapes under the road; `RoadNetwork.Update` notices within 0.25 s
+        // and rebuilds. Measuring across that window compares a surface
+        // sampled now against a mesh built against the heights of a moment
+        // ago - it went red at 2.34 m that way, in the full suite only, where
+        // the fetch lands mid-test. So the terrain version is held still for
+        // two rebuild ticks before anything is read. Nothing is relaxed; the
+        // two sides are simply made the same age.
+        for (int wait = 0; wait < 20; wait++)
+        {
+            int was = roads.terrain.Version;
+            for (int f = 0; f < 36; f++) yield return null;
+            if (roads.terrain.Version == was) break;
+        }
 
         float worst = 0f;
         var where = Vector3.zero;
