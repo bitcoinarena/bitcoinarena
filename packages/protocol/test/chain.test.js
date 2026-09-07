@@ -13,6 +13,7 @@ import assert from 'node:assert/strict';
 import {
   HEADER_BYTES, hash256, merkleRootOf, previousHashOf, blockHashOf, workOf,
   chainWork, mostWork, merkleRootFromProof, provesTransaction, acceptAdvert,
+  targetOf, meetsTarget,
 } from '../src/chain.js';
 import {
   encodeAdvert, decodeAdvert, advertId, joinSignedAdvert,
@@ -309,4 +310,56 @@ test('an unsigned body is not an advertisement, and the signature comes back', (
   });
   assert.equal(no.ok, false);
   assert.match(no.why, /commits to a different advertisement/);
+});
+
+/**
+ * WAS IT MINED? The question that makes "most work wins" mean anything.
+ *
+ * The difficulty lives in four bytes of the header, so it is written by
+ * whoever hands the header over. Until the hash is compared against it, the
+ * work of a chain is a number somebody chose - and the number they can choose
+ * is not slightly bigger, it is thirty-two orders of magnitude bigger than the
+ * whole of Bitcoin.
+ */
+test('a header is only worth its work if the work was actually done', () => {
+  // the three real headers below are mined, and are the proof this is not
+  // simply refusing everything
+  assert.equal(meetsTarget(HEADER_100000), true);
+  assert.equal(meetsTarget(HEADER_500000), true);
+  assert.equal(chainWork([HEADER_100000]).ok, true);
+
+  // a header nobody mined, claiming a target of 1
+  const fake = new Uint8Array(80);
+  fake[72] = 0x01; fake[75] = 0x03;
+  assert.equal(targetOf(fake), 1n);
+  assert.equal(meetsTarget(fake), false);
+  // and the work it CLAIMS is 2^256 / 2, which is why the claim cannot stand
+  assert.equal(workOf(fake), (1n << 256n) / 2n);
+  assert.ok(workOf(fake) > workOf(HEADER_500000) * 10n ** 30n);
+
+  const no = chainWork([fake]);
+  assert.equal(no.ok, false);
+  assert.match(no.why, /was not mined: its hash does not meet the target it claims/);
+  assert.equal(no.work, 0n);
+});
+
+test('an unmined chain is not in the running, however much it claims', () => {
+  const fake = new Uint8Array(80);
+  fake[72] = 0x01; fake[75] = 0x03;
+  const best = mostWork([[fake], [HEADER_500000]]);
+  assert.equal(best.at, 1);
+  assert.deepEqual(best.headers, [HEADER_500000]);
+  assert.equal(mostWork([[fake]]), null);
+});
+
+test('a target that is zero or negative is not a target', () => {
+  const zero = new Uint8Array(80);           // mantissa 0
+  assert.equal(targetOf(zero), 0n);
+  assert.equal(workOf(zero), 0n);
+  assert.equal(meetsTarget(zero), false);
+
+  const negative = new Uint8Array(80);       // the mantissa's high bit is a sign
+  negative[72] = 0x00; negative[73] = 0x00; negative[74] = 0x80; negative[75] = 0x1d;
+  assert.equal(targetOf(negative), 0n);
+  assert.equal(meetsTarget(negative), false);
 });

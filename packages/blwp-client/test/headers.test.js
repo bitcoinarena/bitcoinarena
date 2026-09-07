@@ -19,7 +19,7 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 
 import { fromHex, toHex } from '../../protocol/src/hash.js';
-import { blockHashOf, workOf, HEADER_BYTES } from '../../protocol/src/chain.js';
+import { blockHashOf, workOf, meetsTarget, HEADER_BYTES } from '../../protocol/src/chain.js';
 import { hash256 } from '../../protocol/src/tx.js';
 import { blockOf } from '../../protocol/tools/bond.js';
 import { agreedChain, headersOverHttp } from '../src/headers.js';
@@ -51,11 +51,11 @@ async function serving(headers) {
 }
 
 /** A linked run of synthetic headers, for the cases mainnet cannot supply. */
-function run(n, { previous = new Uint8Array(32), bits = [0x17, 0x19, 0x60, 0x45], seed = 1 } = {}) {
+function run(n, { previous = new Uint8Array(32), seed = 1 } = {}) {
   const out = [];
   let prev = previous;
   for (let i = 0; i < n; i++) {
-    const { header } = blockOf(hash256, [new Uint8Array(32).fill(seed + i)], { previous: prev, bits });
+    const { header } = blockOf(hash256, [new Uint8Array(32).fill(seed + i)], { previous: prev });
     out.push(header);
     prev = blockHashOf(header);
   }
@@ -196,4 +196,76 @@ test('bytes that are not whole headers are not headers', async () => {
     assert.equal(seen.ok, false);
     assert.match(seen.why, /only 0 of 2 providers gave a chain/);
   } finally { ragged.close(); }
+});
+
+/** A header nobody mined, linked onto a chain, claiming a target of 1. */
+function unmined(previous) {
+  const h = new Uint8Array(80);
+  h.set([0x00, 0x00, 0x00, 0x20], 0);
+  h.set(previous, 4);
+  h.set(new Uint8Array(32).fill(0xbb), 36);      // a merkle root of his choosing
+  h[72] = 0x01; h[75] = 0x03;
+  return h;
+}
+
+/**
+ * THE ATTACK THIS CUT EXISTS FOR, and the fork rule did not stop it.
+ *
+ * A provider who serves the HONEST chain plus one header of his own on the end
+ * is a superset: every honest provider's blocks are in his, so there is no
+ * stray and nothing to disagree about. He then wins on work, because the work
+ * was four bytes he wrote down. Measured before the hash was checked:
+ *
+ *   accepted: true, from provider 1, headers 4
+ *   the winning chain ended in 803e37e6...  merkle root bbbb...bbbb
+ *   honest work   24135148547246749491129
+ *   claimed work  57896044618658097711785492504343953926634992332820282043...
+ *
+ * That merkle root is what a bond proof would have been checked against.
+ */
+test('honest chain plus one fabricated header does not win', async () => {
+  const honest = MAINNET;
+  const attacker = [...honest, unmined(blockHashOf(honest[2]))];
+  assert.equal(meetsTarget(attacker[3]), false);
+  // he still CLAIMS more work than the whole honest chain, by far
+  assert.ok(attacker.reduce((w, h) => w + workOf(h), 0n)
+    > honest.reduce((w, h) => w + workOf(h), 0n) * 10n ** 30n);
+
+  const a = await serving(honest);
+  const b = await serving(attacker);
+  try {
+    // two providers, one of them the attacker: his chain is not a chain, so
+    // one source is left, and one source is refused
+    const two = await agreedChain([a.get, b.get]);
+    assert.equal(two.ok, false);
+    assert.match(two.why, /only 1 of 2 providers gave a chain/);
+    assert.match(two.refused, /provider 1: this header was not mined/);
+
+    // and with two honest providers he is simply discarded, not obeyed
+    const also = await serving(honest);
+    try {
+      const three = await agreedChain([a.get, b.get, also.get]);
+      assert.equal(three.ok, true, three.why);
+      assert.equal(three.headers.length, 3, 'the fabricated header must not be in the chain');
+      assert.equal(three.agreed, 2);
+      assert.match(three.refused[0], /provider 1: this header was not mined/);
+      assert.equal(three.work, honest.reduce((w, h) => w + workOf(h), 0n));
+    } finally { also.server.close(); }
+  } finally { a.server.close(); b.server.close(); }
+});
+
+test('a chain of pure invention is refused for being unmined, not for forking', async () => {
+  const fake = [unmined(new Uint8Array(32))];
+  const a = await serving(MAINNET);
+  const b = await serving(fake);
+  try {
+    const seen = await agreedChain([a.get, b.get]);
+    assert.equal(seen.ok, false);
+    // the REASON matters: before the hash was checked this was refused as a
+    // disagreement, which is the right answer for the wrong reason and would
+    // have let the superset above through
+    assert.match(seen.why, /only 1 of 2 providers gave a chain/);
+    assert.doesNotMatch(seen.why, /do not agree on the chain/);
+    assert.match(seen.refused, /was not mined/);
+  } finally { a.server.close(); b.server.close(); }
 });

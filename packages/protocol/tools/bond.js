@@ -13,6 +13,7 @@
 // parameter by accident. What is built is therefore a bond transaction that a
 // light client could not FIND; everything about reading it once found holds.
 import { encodeAdvert, advertId, joinSignedAdvert } from '../src/advert.js';
+import { meetsTarget } from '../src/chain.js';
 
 const varint = (n) => {
   if (n < 0xfd) return [n];
@@ -65,8 +66,21 @@ export function bondTransaction(advert, {
   return new Uint8Array(out);
 }
 
-/** A block of two transactions, and the 80-byte header that commits to them. */
-export function blockOf(hash256, txids, { previous = new Uint8Array(32), bits = [0x17, 0x19, 0x60, 0x45], time = 0x5a380a6d } = {}) {
+/**
+ * A block of transactions, and the 80-byte header that commits to them - MINED.
+ *
+ * The nonce is ground until the hash meets the target, because a header that
+ * was not mined is now refused, and a fixture that could not be refused would
+ * be measuring nothing. The default difficulty is deliberately trivial - a
+ * target just under 2^255, so roughly every second nonce works - since the
+ * point of these fixtures is the structure, and mining at mainnet difficulty in
+ * a test is not possible.
+ */
+export function blockOf(hash256, txids, {
+  previous = new Uint8Array(32),
+  bits = [0x20, 0x7f, 0xff, 0xff],
+  time = 0x5a380a6d,
+} = {}) {
   let level = txids.map((t) => t.slice());
   while (level.length > 1) {
     const next = [];
@@ -83,5 +97,10 @@ export function blockOf(hash256, txids, { previous = new Uint8Array(32), bits = 
   header.set(level[0], 36);
   header.set(u32(time), 68);
   header.set([bits[3], bits[2], bits[1], bits[0]], 72);
-  return { header, root: level[0] };
+
+  for (let nonce = 0; ; nonce++) {
+    header.set(u32(nonce), 76);
+    if (meetsTarget(header)) return { header, root: level[0], nonce };
+    if (nonce > 5000000) throw new Error('these bits are too hard to mine in a test');
+  }
 }

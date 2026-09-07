@@ -47,21 +47,59 @@ export const merkleRootOf = (h) => header(h).slice(36, 68);
 export const blockHashOf = (h) => hash256(header(h));
 
 /**
- * The work one header stands for, from its compact target at bytes 72..76.
+ * The target a header CLAIMS, from its compact form at bytes 72..76.
+ *
+ * Claims, because these four bytes are written by whoever hands the header
+ * over. Nothing about them is proof of anything until `meetsTarget` compares
+ * them against the hash, and that is the whole reason this is a separate
+ * function from the work it implies.
+ */
+export function targetOf(h) {
+  const b = header(h);
+  const exponent = b[75];
+  const mantissa = (b[74] << 16) | (b[73] << 8) | b[72];
+  // The high bit of the mantissa is a sign bit. A negative target is not a
+  // target, and Bitcoin has never had a valid header carrying one.
+  if (mantissa === 0 || (mantissa & 0x800000)) return 0n;
+  return exponent <= 3
+    ? BigInt(mantissa) >> BigInt(8 * (3 - exponent))
+    : BigInt(mantissa) << BigInt(8 * (exponent - 3));
+}
+
+/**
+ * WAS THIS HEADER ACTUALLY MINED?
+ *
+ * The one question that makes "most work wins" mean anything. Without it the
+ * work of a chain is a number the provider chose: the difficulty lives in four
+ * bytes of the header, so anybody can write down a target of 1, claim
+ * 5.8 * 10^76 of work for a header nobody mined, and outweigh the whole of
+ * Bitcoin by thirty-two orders of magnitude. Measured before this existed: one
+ * fabricated header beat mainnet 499998-500000 by exactly that.
+ *
+ * The comparison is numeric, and the byte order is the usual trap: a block
+ * hash is stored and displayed reversed from the way it is read as a number,
+ * so it is the REVERSED bytes that must come out below the target.
+ */
+export function meetsTarget(h) {
+  const target = targetOf(h);
+  if (target <= 0n) return false;
+  let value = 0n;
+  for (const b of blockHashOf(h).reverse()) value = (value << 8n) | BigInt(b);
+  return value <= target;
+}
+
+/**
+ * The work one header stands for.
  *
  * Work is 2^256 / (target + 1), which is how much hashing the block is
  * expected to have cost. BigInt because the numbers are far past what a double
  * can hold exactly, and a comparison that silently rounded would pick the
- * wrong chain.
+ * wrong chain. It says nothing about whether the work was DONE - see
+ * `meetsTarget` - and a caller that sums this without asking that question is
+ * adding up somebody else's arithmetic.
  */
 export function workOf(h) {
-  const b = header(h);
-  const exponent = b[75];
-  const mantissa = (b[74] << 16) | (b[73] << 8) | b[72];
-  if (mantissa === 0) return 0n;
-  const target = exponent <= 3
-    ? BigInt(mantissa) >> BigInt(8 * (3 - exponent))
-    : BigInt(mantissa) << BigInt(8 * (exponent - 3));
+  const target = targetOf(h);
   if (target <= 0n) return 0n;
   return (1n << 256n) / (target + 1n);
 }
@@ -82,6 +120,13 @@ export function chainWork(headers) {
     try { header(headers[i]); } catch (e) { return { ok: false, at: i, why: e.message, work: 0n }; }
     if (i > 0 && !sameBytes(previousHashOf(headers[i]), blockHashOf(headers[i - 1])))
       return { ok: false, at: i, why: 'this header does not follow the one before it', work: 0n };
+    // Before its work is added, not after: a header nobody mined contributes
+    // whatever difficulty its author felt like writing down.
+    if (!meetsTarget(headers[i]))
+      return {
+        ok: false, at: i, work: 0n,
+        why: 'this header was not mined: its hash does not meet the target it claims',
+      };
     work += workOf(headers[i]);
   }
   return { ok: true, work };
