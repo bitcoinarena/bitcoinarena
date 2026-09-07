@@ -67,7 +67,7 @@ const CORS = {
   // sees the body and none of the counts.
   'access-control-expose-headers':
     'x-state, x-ticks, x-transcript-hash, x-checkpoints, x-receipts, '
-    + 'x-marks, x-dropped, x-through-tick',
+    + 'x-marks, x-dropped, x-through-tick, x-equivocations, x-ticks-at',
 };
 
 const bytes = (res, code, body) => {
@@ -134,6 +134,25 @@ export function serve(db, { port = 0, funded = NOTHING_IS_FUNDED } = {}) {
         if (!funded({ kind: 'entry', contract }))
           return text(res, 402, 'this node stores nothing for an entry nobody has funded');
         return bytes(res, 201, round.enter(contract));
+      }
+
+      // 13B'S PROOF, which a node MUST publish when it holds one. The answer
+      // is the two signed marks back to back, per tick, and 204 when this node
+      // has never seen the player sign two worlds at once.
+      if (req.method === 'GET' && url.pathname === '/equivocation') {
+        const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
+        const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
+        const found = round.equivocation(rid, eid);
+        if (!found.length) return text(res, 204, 'no equivocation held for that entry');
+        const body = Buffer.concat(found.flatMap(
+          (f) => [Buffer.from(f.stored), Buffer.from(f.offered)]));
+        res.writeHead(200, {
+          'content-type': 'application/octet-stream',
+          'x-equivocations': String(found.length),
+          'x-ticks-at': found.map((f) => f.tick).join(','),
+          ...CORS,
+        });
+        return res.end(body);
       }
 
       // THE CANONICAL TRANSCRIPT (13C), which is not the same object as the

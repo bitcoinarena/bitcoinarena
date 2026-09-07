@@ -376,6 +376,22 @@ export class Round {
       .get(c.roundId, c.entryId, c.tick);
     if (at) {
       if (same(new Uint8Array(at.checkpoint_id), id)) return this.receiptFor(id);
+
+      // KEPT, THEN REFUSED. The mark does not become a checkpoint and the
+      // chain the committee carries is untouched - but the two signed marks
+      // together are 13B's complete portable proof, and a node that refuses
+      // the second and throws it away has destroyed the only thing that shows
+      // what the player did. 13B: "Nodes MUST publish such a proof when they
+      // hold one."
+      const stored = this.db.prepare(
+        'SELECT bytes FROM checkpoints WHERE round_id = ? AND entry_id = ? AND tick = ?')
+        .get(c.roundId, c.entryId, c.tick);
+      this.db.prepare(
+        'INSERT OR IGNORE INTO equivocations '
+        + '(round_id, entry_id, tick, stored_bytes, offered_bytes, seen_ms) '
+        + 'VALUES (?, ?, ?, ?, ?, ?)')
+        .run(c.roundId, c.entryId, c.tick, stored.bytes, bytes, this.now());
+
       throw new Error(
         `equivocation at tick ${c.tick}: ${toHex(at.checkpoint_id)} already stored, `
         + `now ${toHex(id)}`);
@@ -569,6 +585,31 @@ export class Round {
       dropped: marks.length - live,
       throughTick: marks[live - 1].tick,
     };
+  }
+
+  /**
+   * 13B'S PROOF, IF THIS NODE HOLDS ONE.
+   *
+   * Two signed checkpoints for one `(round, entry, tick)` with different ids.
+   * Anyone can check it: the ids differ, the tick is the same, and both
+   * signatures verify under the entry's own session key. No replay, no
+   * committee, no core - which is why it is the one part of the no-quorum rule
+   * a single node can hold up on its own.
+   *
+   * Answered as the two records and nothing else; what a forfeit costs is
+   * settlement, and this object is only the evidence for it.
+   */
+  equivocation(roundIdBytes, entryIdBytes) {
+    const rows = this.db.prepare(
+      'SELECT tick, stored_bytes, offered_bytes, seen_ms FROM equivocations '
+      + 'WHERE round_id = ? AND entry_id = ? ORDER BY tick')
+      .all(roundIdBytes, entryIdBytes);
+    return rows.map((r) => ({
+      tick: r.tick,
+      stored: new Uint8Array(r.stored_bytes),
+      offered: new Uint8Array(r.offered_bytes),
+      seenMs: r.seen_ms,
+    }));
   }
 
   close(id) {

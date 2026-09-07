@@ -102,6 +102,28 @@ export function openStore(path = ':memory:') {
     -- must be able to hold seven of them - one per member - while a second,
     -- different receipt from the SAME member for that mark is a node
     -- contradicting itself and is refused by name.
+    -- A PLAYER WHO SIGNED TWO DIFFERENT WORLDS AT ONE TICK.
+    --
+    -- Section 13B: "A player who publishes two different checkpoints for the
+    -- same (round_id, player_pubkey, tick)... forfeits the entry", and "the two
+    -- conflicting signed checkpoints are a complete, portable proof; no replay
+    -- is needed". Nodes MUST publish such a proof when they hold one.
+    --
+    -- The second mark is still REFUSED - it does not become a checkpoint, and
+    -- the chain the committee carries is unchanged. It is kept here as
+    -- evidence, beside the first, because a node that refused it and threw it
+    -- away destroyed the only thing that proves what the player did. That is
+    -- what this node used to do.
+    CREATE TABLE IF NOT EXISTS equivocations (
+      round_id      BLOB NOT NULL,
+      entry_id      BLOB NOT NULL REFERENCES entries(entry_id),
+      tick          INTEGER NOT NULL,
+      stored_bytes  BLOB NOT NULL,
+      offered_bytes BLOB NOT NULL,
+      seen_ms       INTEGER NOT NULL,
+      PRIMARY KEY (round_id, entry_id, tick)
+    );
+
     CREATE TABLE IF NOT EXISTS receipts (
       checkpoint_id BLOB NOT NULL,
       node_pubkey   BLOB NOT NULL,

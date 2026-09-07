@@ -138,3 +138,55 @@ export function joinSigned(bytes, signature) {
   out.set(signature, CHECKPOINT_BYTES);
   return out;
 }
+
+/**
+ * IS THIS A PROOF THAT THE PLAYER SIGNED TWO WORLDS AT ONE TICK?
+ *
+ * Section 13B: "A player who publishes two different checkpoints for the same
+ * (round_id, player_pubkey, tick), or two chains that diverge at any tick,
+ * forfeits the entry... The two conflicting signed checkpoints are a complete,
+ * portable proof; no replay is needed."
+ *
+ * PORTABLE is the word that matters. This takes the two signed records and the
+ * session key the entry named, and answers from those alone - no node is
+ * asked, no transcript is replayed, and nothing about a committee is needed.
+ * Whoever holds the two records can check them, which is what makes 13B's
+ * "nodes MUST publish such a proof" worth anything.
+ *
+ * `verify` is injected, as everywhere else here: this package carries no curve.
+ * It may answer a promise, so this does too.
+ */
+export async function provesEquivocation(a, b, sessionPubkey, verify) {
+  let one; let two;
+  try {
+    one = splitSigned(a);
+    two = splitSigned(b);
+  } catch (e) { return { ok: false, why: `that is not a signed checkpoint: ${e.message}` }; }
+
+  const x = decodeCheckpoint(one.body);
+  const y = decodeCheckpoint(two.body);
+
+  const alike = (p, q) => p.length === q.length && p.every((v, i) => v === q[i]);
+  if (!alike(x.roundId, y.roundId) || !alike(x.entryId, y.entryId))
+    return { ok: false, why: 'those two marks are not from the same entry' };
+  if (x.tick !== y.tick)
+    return { ok: false, why: `those two marks are at ticks ${x.tick} and ${y.tick}` };
+
+  // THE SAME MARK TWICE IS NOT EQUIVOCATION. A player re-sending what it
+  // already sent is the ordinary case, and calling it a forfeit would take a
+  // stake for a dropped socket.
+  const idX = checkpointId(x);
+  const idY = checkpointId(y);
+  if (alike(idX, idY))
+    return { ok: false, why: 'those are the same mark, sent twice' };
+
+  // AND BOTH HAVE TO BE THE PLAYER'S. Anyone can write two conflicting
+  // objects; only the session key the entry named can sign them, and without
+  // that check this would forfeit a stake on somebody else's forgery.
+  if (!await verify(one.signature, idX, sessionPubkey))
+    return { ok: false, why: 'the first mark is not signed by that entry' };
+  if (!await verify(two.signature, idY, sessionPubkey))
+    return { ok: false, why: 'the second mark is not signed by that entry' };
+
+  return { ok: true, tick: x.tick, ids: [idX, idY] };
+}
