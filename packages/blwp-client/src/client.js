@@ -23,12 +23,16 @@
 // an opinion about which core the player is running, which is the one thing it
 // must not have.
 import {
-  encodeCheckpoint, checkpointId, joinSigned, NO_PREVIOUS,
+  encodeCheckpoint, decodeCheckpoint, checkpointId, joinSigned, splitSigned,
+  NO_PREVIOUS, SIGNED_CHECKPOINT_BYTES,
 } from '../../protocol/src/checkpoint.js';
 import {
   encodeRoundContract, encodeEntryContract, roundId, entryId,
 } from '../../protocol/src/contracts.js';
-import { GENESIS } from '../../protocol/src/transcript.js';
+import {
+  GENESIS, decodeTranscript, checkTranscript,
+} from '../../protocol/src/transcript.js';
+import { encodeInputBatch, batchId, batchTicks } from '../../protocol/src/batch.js';
 import { fromHex, toHex } from '../../protocol/src/hash.js';
 import {
   decodeCheckpointReceipt, receiptId, splitSignedReceipt, SIGNED_RECEIPT_BYTES,
@@ -97,7 +101,9 @@ export class Client {
     // to whoever runs the client, and this file should not decide it.
     this.verify = verify;
     this.sock = null;
-    this.head = NO_PREVIOUS;      // the chain head this client has published
+    this.head = NO_PREVIOUS;      // the mark chain head this client has published
+    this.batchHead = GENESIS;     // and the input chain's, which is a separate chain
+    this.nextTick = 0;            // the tick the node is owed next
     this.nodes = [];              // the committee, off the round's own contract
     this.said = [];
   }
@@ -260,6 +266,96 @@ export class Client {
       out.push({ receipt: rec, bytes: one });
     }
     return out;
+  }
+
+  /**
+   * Publishes a stretch of inputs.
+   *
+   * Section 11: inputs are hash-chained, and the client keeps its own copy -
+   * "publishing is the client's duty, and unpublished inputs cost the player
+   * the run". So the chain head and the next due tick live here, and the node
+   * is never asked to remember them on the client's behalf.
+   *
+   * `ticks` is five Q16.16 words each, exactly what the core's `step` takes.
+   * Nothing is computed from them here; they are carried.
+   */
+  async batch(ticks, { roundId, entryId, liquidations = [] }) {
+    const b = {
+      roundId, entryId,
+      previousHash: this.batchHead,
+      firstTick: this.nextTick,
+      ticks,
+      liquidations,
+    };
+    const answer = await this.send(encodeInputBatch(b));
+
+    // The node answers how many ticks were NEW. A refusal is a named string
+    // and the chain must not move on one, the same rule the marks follow.
+    if (typeof answer !== 'string' || !/^[0-9]+$/.test(answer)) return { batch: b, answer };
+    this.batchHead = batchId(b);
+    this.nextTick = b.firstTick + ticks.length;
+    return { batch: b, answer, accepted: Number(answer) };
+  }
+
+  /**
+   * WHERE THE NODE GOT TO, after a socket dropped.
+   *
+   * The daemon never asks for a retransmission - publishing is the client's
+   * duty - so what a reconnecting client needs is not its batches back but
+   * the two numbers that let it carry on: the next tick this node is owed and
+   * the chain head to hang it off. Both are in the transcript it already
+   * serves, and the marks' head is in the checkpoints beside it.
+   *
+   * Checked, not taken. The node checks the chain before serving, and that is
+   * exactly why the client must check it again: a client that resumed from a
+   * head a node made up would build every later batch onto a history nobody
+   * has, and would only find out at settlement.
+   *
+   * There is no signature to check here, and none is invented: an `InputBatch`
+   * carries none in this protocol - the chain hash is its integrity - so the
+   * checks that apply are that the transcript is for the round and entry this
+   * client asked about, that the chain is unbroken, and that the records are
+   * whole.
+   */
+  async resume({ roundId, entryId }) {
+    const r = await fetch(
+      `${this.base}/transcript?round=${toHex(roundId)}&entry=${toHex(entryId)}`);
+    if (!r.ok) throw new Error(`the node refused the transcript: ${(await r.text()).trim()}`);
+
+    let t;
+    try { t = decodeTranscript(new Uint8Array(await r.arrayBuffer())); }
+    catch (e) { throw new Error(`the transcript will not decode: ${e.message}`); }
+
+    if (toHex(t.roundId) !== toHex(roundId) || toHex(t.entryId) !== toHex(entryId))
+      throw new Error(
+        `the transcript is for round ${toHex(t.roundId)} entry ${toHex(t.entryId)}, `
+        + `and this client asked about ${toHex(roundId)} ${toHex(entryId)}`);
+
+    const ok = checkTranscript(t);
+    if (!ok.ok) throw new Error(`the transcript is broken at batch ${ok.at}: ${ok.why}`);
+
+    const last = t.batches[t.batches.length - 1];
+    this.batchHead = last ? batchId(last) : GENESIS;
+    this.nextTick = last ? batchTicks(last).at(-1) + 1 : 0;
+
+    // AND THE MARKS' HEAD, which is the other chain and is lost the same way.
+    // A resume that left it at the start of the round would have every later
+    // mark refused for not following the head - the reconnect would look
+    // fixed until the first checkpoint after it.
+    const marks = await this.recoverReceipts({ roundId, entryId });
+    const c = await fetch(
+      `${this.base}/checkpoints?round=${toHex(roundId)}&entry=${toHex(entryId)}`);
+    const cb = new Uint8Array(await c.arrayBuffer());
+    if (cb.length % SIGNED_CHECKPOINT_BYTES !== 0)
+      throw new Error(
+        `${cb.length} bytes is not a whole number of ${SIGNED_CHECKPOINT_BYTES}-byte marks`);
+    if (cb.length) {
+      const lastMark = cb.subarray(cb.length - SIGNED_CHECKPOINT_BYTES);
+      this.head = checkpointId(decodeCheckpoint(splitSigned(lastMark).body));
+    }
+
+    return { ticks: ok.ticks, batches: t.batches.length, nextTick: this.nextTick,
+             batchHead: this.batchHead, head: this.head, receipts: marks.length };
   }
 
   close() { if (this.sock) this.sock.close(); }

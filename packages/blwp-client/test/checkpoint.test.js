@@ -28,7 +28,8 @@ import { roundId, entryId } from '../../protocol/src/contracts.js';
 import {
   decodeCheckpoint, checkpointId, splitSigned, NO_PREVIOUS, SIGNED_CHECKPOINT_BYTES,
 } from '../../protocol/src/checkpoint.js';
-import { GENESIS } from '../../protocol/src/transcript.js';
+import { GENESIS, encodeTranscript } from '../../protocol/src/transcript.js';
+import { batchId } from '../../protocol/src/batch.js';
 import { toHex } from '../../protocol/src/hash.js';
 import { Client, markState } from '../src/client.js';
 import {
@@ -468,5 +469,132 @@ test('a recovered receipt that does not verify, or is from a stranger, is refuse
     serve139 = new Uint8Array(200);
     await assert.rejects(() => at(`http://127.0.0.1:${port}`).recoverReceipts(where),
       /200 bytes is not a whole number of 139-byte receipts/);
+  } finally { await new Promise((r) => stub.close(r)); }
+});
+
+/* --------------------------------------------------------- the batch chain */
+
+/** Two hundred ticks of nothing in particular, in the units `step` takes. */
+const rolling = (n) => Array.from({ length: n }, (_, i) => [45875, 0, 0, 0, 0]);
+
+/**
+ * A DROPPED SOCKET MUST NOT LOSE WHAT WAS ALREADY PUBLISHED.
+ *
+ * Section 11 hash-chains the inputs and leaves publishing to the client: the
+ * daemon never asks for a retransmission, and unpublished inputs cost the
+ * player the run. So a reconnecting client does not want its batches BACK - it
+ * has them - it wants the two numbers that let it carry on: the tick the node
+ * is owed next and the head to hang it off.
+ *
+ * Measured before this existed: /transcript already served 8287 bytes and 400
+ * ticks, and nothing in the client asked for any of it or checked a byte.
+ */
+test('a client that reconnects carries on from the tick the node is owed', async () => {
+  const { node, client, rid, eid } = await rig();
+  try {
+    assert.equal(client.nextTick, 0, 'a fresh client owes the round from its start');
+    const one = await client.batch(rolling(200), { roundId: rid, entryId: eid });
+    assert.equal(one.accepted, 200);
+    const two = await client.batch(rolling(200), { roundId: rid, entryId: eid });
+    assert.equal(two.accepted, 200);
+    assert.equal(client.nextTick, 400);
+
+    // a mark as well, so the OTHER chain has a head to recover too
+    const mark = await client.checkpoint(driven(400),
+      { roundId: rid, entryId: eid, tick: 400, inputChainHash: two.batch ? batchId(two.batch) : GENESIS });
+    assert.equal(mark.answer, 'receipted');
+    client.close();
+
+    // the socket drops and a new client comes back knowing only the contract
+    const back = new Client({ base: `http://127.0.0.1:${node.port}`, core, sign, verify });
+    back.nodes = [node.round.pubkey];
+    assert.equal(back.nextTick, 0, 'and it starts knowing nothing about the round');
+
+    const got = await back.resume({ roundId: rid, entryId: eid });
+    assert.equal(got.batches, 2);
+    assert.equal(got.ticks, 400);
+    assert.equal(got.nextTick, 400, 'the node is owed tick 400 next');
+    assert.deepEqual(got.batchHead, client.batchHead, 'the input chain head is not the one published');
+    assert.deepEqual(got.head, mark.id, 'the mark chain head is not the one published');
+    assert.equal(got.receipts, 1);
+
+    // and it can carry on: the next batch and the next mark are both accepted,
+    // which is the whole point - a wrong head or a wrong tick is refused.
+    await back.connect();
+    const three = await back.batch(rolling(200), { roundId: rid, entryId: eid });
+    assert.equal(three.accepted, 200, `the node refused the batch after a resume: ${three.answer}`);
+    const next = await back.checkpoint(driven(600), { roundId: rid, entryId: eid, tick: 600,
+      inputChainHash: batchId(three.batch) });
+    assert.equal(next.answer, 'receipted', `the node refused the mark after a resume: ${next.answer}`);
+    back.close();
+  } finally { await node.close(); }
+});
+
+/**
+ * A REFUSED BATCH DOES NOT MOVE THE CLIENT'S CHAIN, for the same reason a
+ * refused mark does not: the next one would hang off a head nobody has.
+ */
+test('a batch the node refuses leaves the client where it was', async () => {
+  const { node, client, rid, eid } = await rig();
+  try {
+    await client.batch(rolling(200), { roundId: rid, entryId: eid });
+    const head = client.batchHead, tick = client.nextTick;
+
+    // a gap: the node names the tick it is owed and stores nothing
+    client.nextTick = 400;
+    const gap = await client.batch(rolling(200), { roundId: rid, entryId: eid });
+    assert.match(gap.answer, /^error /, `expected a refusal, got ${gap.answer}`);
+    assert.deepEqual(client.batchHead, head, 'a refusal moved the input chain head');
+
+    client.nextTick = tick;
+    const good = await client.batch(rolling(200), { roundId: rid, entryId: eid });
+    assert.equal(good.accepted, 200, 'the client could not carry on after a refusal');
+  } finally { client.close(); await node.close(); }
+});
+
+/**
+ * AND A TRANSCRIPT IS CHECKED, NOT TAKEN.
+ *
+ * The node checks the chain before it serves, which is exactly why the client
+ * checks it again: resuming from a head a node made up would build every later
+ * batch onto a history nobody has, and the player would find out at
+ * settlement. A real node will not serve a broken one, so this is a stub.
+ *
+ * There is no signature to check - an InputBatch carries none in this
+ * protocol, the chain hash is its integrity - and none is invented here.
+ */
+test('a transcript for another round, or a broken chain, is refused by name', async () => {
+  let body = null;
+  const stub = createServer((req, res) => {
+    res.writeHead(200, { 'content-type': 'application/octet-stream' });
+    res.end(Buffer.from(body));
+  });
+  await new Promise((r) => stub.listen(0, '127.0.0.1', r));
+  const port = stub.address().port;
+  const back = () => new Client({ base: `http://127.0.0.1:${port}`, core, sign, verify });
+  const rid = b32(1), eid = b32(2);
+  const batchOf = (roundId, entryId, previousHash, firstTick) => ({
+    roundId, entryId, previousHash, firstTick, ticks: rolling(10), liquidations: [],
+  });
+
+  try {
+    // 1. a transcript about somebody else's round
+    body = encodeTranscript({ roundId: b32(9), entryId: eid,
+      batches: [batchOf(b32(9), eid, GENESIS, 0)] });
+    await assert.rejects(() => back().resume({ roundId: rid, entryId: eid }),
+      /the transcript is for round 0909/);
+
+    // 2. the right round, a chain that does not link
+    body = encodeTranscript({ roundId: rid, entryId: eid, batches: [
+      batchOf(rid, eid, GENESIS, 0),
+      batchOf(rid, eid, b32(0x77), 10),        // names a parent nobody has
+    ] });
+    await assert.rejects(() => back().resume({ roundId: rid, entryId: eid }),
+      /the transcript is broken at batch 1: the chain is broken here/);
+
+    // 3. bytes that are not a transcript at all
+    body = new Uint8Array(40);
+    await assert.rejects(() => back().resume({ roundId: rid, entryId: eid }),
+      /the transcript will not decode: /);
   } finally { await new Promise((r) => stub.close(r)); }
 });
