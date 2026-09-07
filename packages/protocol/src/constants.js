@@ -54,6 +54,7 @@ export const TAG = {
   inputBatch: 'BLWP/v1/InputBatch',
   transcript: 'BLWP/v1/Transcript',
   objection: 'BLWP/v1/Objection',
+  vssShare: 'BLWP/v1/VssShare',
   remainder: 'BLWP/v1/Remainder',
 };
 
