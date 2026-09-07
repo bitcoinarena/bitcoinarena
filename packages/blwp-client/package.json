@@ -1,0 +1,14 @@
+{
+  "name": "@blwp/client",
+  "version": "0.0.1",
+  "type": "module",
+  "private": true,
+  "description": "The player's half of the protocol: it opens a round, joins, and commits to the core's state at agreed ticks.",
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
+  "devDependencies": {
+    "@noble/curves": "^2.4.0",
+    "ws": "^8.21.3"
+  }
+}
