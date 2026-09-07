@@ -31,6 +31,23 @@ public class MarketFeed : MonoBehaviour
     // exchange and delivered 42 messages in 110 s on its own, so the silence
     // window already tells a dead socket from a quiet market.
     const string FuturesUrl = "wss://fstream.binance.com/market/ws/!forceOrder@arr";
+
+    // THE COIN-MARGINED BOOK, which is a different exchange underneath.
+    //
+    // BTCUSD_PERP is settled in coin, not in USDT, and its forced orders never
+    // appear on fstream - so a coin-margined liquidation paid the player
+    // nothing at all, in any build. The stream is Binance's own, named in
+    // their docs (COIN-M "All Market Liquidation Order Streams", base
+    // wss://dstream.binance.com, stream !forceOrder@arr), and the /market
+    // route is the one the 2026-04-23 change notice leaves standing.
+    //
+    // It carries BOTH books. Measured over 300 s: 588 messages, 214 symbols,
+    // of which three were coin-M contracts - ETHUSD_PERP, BTCUSD_PERP,
+    // XRPUSD_PERP - and the rest USDT-M names fstream is already delivering.
+    // Half a percent. That is why `IsCoinMargined` is not a nicety: without
+    // it this socket would double every USDT-M liquidation on the map.
+    const string CoinMarginedUrl =
+        "wss://dstream.binance.com/market/stream?streams=!forceOrder@arr";
     const string BybitUrl = "wss://stream.bybit.com/v5/public/linear";
     const string OkxUrl = "wss://ws.okx.com:8443/ws/v5/public";
 
@@ -126,6 +143,7 @@ public class MarketFeed : MonoBehaviour
         // keepalive, because the server pings and both socket paths answer it.
         // The other two need both, and were measured closing without them.
         Sources.Add(new Source("binance", FuturesUrl, null, null, 0f));
+        Sources.Add(new Source("binance-cm", CoinMarginedUrl, null, null, 0f));
         Sources.Add(new Source("bybit", BybitUrl,
             "{\"op\":\"subscribe\",\"args\":[\"allLiquidation.BTCUSDT\"]}",
             "{\"op\":\"ping\"}", 20f));
@@ -262,6 +280,7 @@ public class MarketFeed : MonoBehaviour
         switch (v.Name)
         {
             case "binance": HandleFutures(v, msg); break;
+            case "binance-cm": HandleCoinMargined(v, msg); break;
             case "bybit": HandleBybit(v, msg); break;
             case "okx": HandleOkx(v, msg); break;
         }
@@ -411,6 +430,68 @@ public class MarketFeed : MonoBehaviour
         LogFirstPayload(v, msg);
         // a forced SELL is a long position being closed out
         Raise(v, Json.GetString(order, "S") == "SELL", qty * price, price);
+    }
+
+    /// <summary>
+    /// Is this Binance's name for a COIN-margined contract?
+    ///
+    /// Not "has an underscore": USDT-M has dated contracts too, and
+    /// BTCUSDT_261225 arrived on this very socket during the capture. The
+    /// shape is a base, then USD, then the underscore - BTCUSD_PERP,
+    /// BTCUSD_260925 - where a USDT-M dated name has USDT before it.
+    ///
+    /// Checked against Binance's own two lists rather than reasoned about:
+    /// of dapi's 30 coin-M symbols this accepts 30, and of fapi's 897 USDT-M
+    /// symbols it accepts 0, including all four of fapi's underscore names.
+    /// </summary>
+    public static bool IsCoinMargined(string symbol)
+    {
+        if (string.IsNullOrEmpty(symbol)) return false;
+        int bar = symbol.IndexOf('_');
+        return bar > 3 && symbol.Substring(0, bar).EndsWith("USD");
+    }
+
+    /// <summary>
+    /// What a coin-margined forced order is worth in dollars.
+    ///
+    /// The quantity on this book is CONTRACTS, not coin. Reading it the way
+    /// the USDT-M handler does - `q * price` - would have called a single
+    /// BTCUSD_PERP contract $79,000 of liquidation when it is $100 of it, and
+    /// reading it as coin would have paid nothing recognisable either.
+    ///
+    /// The sizes are Binance's, off dapi's exchangeInfo: BTCUSD_PERP,
+    /// BTCUSD_260925 and BTCUSD_261225 are 100 USD a contract, and the other
+    /// twenty-seven coin-M symbols are 10 USD.
+    /// </summary>
+    public static double CoinMarginedUsd(string symbol, double contracts)
+        => contracts * (symbol != null && symbol.StartsWith("BTC") ? 100.0 : 10.0);
+
+    /// <summary>
+    /// The coin-margined socket. Same payload shape as `HandleFutures` - it is
+    /// the same `forceOrder` event - and two things different: only coin-M
+    /// names are taken, because the USDT-M ones on this socket are already
+    /// arriving on the other, and the value is contracts times contract size
+    /// rather than quantity times price.
+    /// </summary>
+    public void HandleCoinMargined(Source v, string msg)
+    {
+        var data = Json.GetRaw(msg, "data") ?? msg;
+        var order = Json.GetRaw(data, "o");
+        if (order == null) return;
+        v.Forced++;
+
+        string sym = Json.GetString(order, "s") ?? "";
+        if (!IsCoinMargined(sym)) return;                 // fstream has this one
+        if (!sym.StartsWith("BTC") || sym.StartsWith("BTCDOM")) return;   // the coin only
+
+        double contracts = Json.GetDouble(order, "q");
+        double price = Json.GetDouble(order, "ap");
+        if (price <= 0) price = Json.GetDouble(order, "p");
+        if (contracts <= 0 || price <= 0) return;
+
+        LogFirstPayload(v, msg);
+        // a forced SELL is a long position being closed out, as on the other book
+        Raise(v, Json.GetString(order, "S") == "SELL", CoinMarginedUsd(sym, contracts), price);
     }
 
     void OnDestroy()
