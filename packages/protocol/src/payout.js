@@ -184,3 +184,61 @@ export function noQuorumOutcome({ signatures, needed, equivocationProven }) {
       + 'caused it: the fault is the operator side and the stake goes back',
   };
 }
+
+/** What must happen to a hold invoice. */
+export const SETTLE = 'SETTLE';
+export const CANCEL = 'CANCEL';
+
+/**
+ * WHAT HAPPENS TO EACH PLAYER'S HELD STAKE.
+ *
+ * Section 13C: "the entry becomes VOID, THE STAKE IS REFUNDED BY LETTING THE
+ * HTLC EXPIRE, and the entry is excluded from the pool and from the payout
+ * table." The exclusion was already true and measured; what happens to the
+ * money was not written anywhere, and a stake nobody decides about is a stake
+ * the operator is holding.
+ *
+ * A stake is a hold invoice: the payer's money is committed and the operator
+ * can either SETTLE it - release the preimage and take it - or CANCEL it and
+ * let it expire back to the payer. There are only those two, and every entry
+ * gets exactly one.
+ *
+ *   VOID        CANCEL. The fault was the operator's, so the operator takes
+ *               nothing. This is the whole of the rule.
+ *   everything
+ *   else        SETTLE. The stake joins the pot the payout table shares out,
+ *               which is why `paid == staked` there over the same entries.
+ *
+ * AND THE OPERATOR CANNOT COME OUT AHEAD. `settledMsat` is what may be taken
+ * and `paidMsat` is what the table hands back, and they are checked equal
+ * here rather than assumed - if a VOID stake ever reached the settled side,
+ * that equality is what breaks. This says nothing about Lightning: it decides
+ * which of the two things is done to each invoice, and doing it is the
+ * operator's plumbing.
+ */
+export function holdSettlement({ roundId, entries, minScore = 0 }) {
+  const table = computePayoutTable({ roundId, entries, minScore });
+  const paidTo = new Map(table.table.map((r, i) => [i, r.amountMsat]));
+
+  const activated = entries.filter((e) => e.outcome !== VOID);
+  const actions = entries.map((e) => (e.outcome === VOID
+    ? { entry: e, action: CANCEL, why: 'VOID: the fault was not the player\'s, so the stake goes back' }
+    : { entry: e, action: SETTLE, why: `${e.outcome}: the stake joins the pot the table shares out` }));
+
+  const settledMsat = actions
+    .filter((a) => a.action === SETTLE)
+    .reduce((s, a) => s + a.entry.stakeMsat, 0n);
+  const refundedMsat = actions
+    .filter((a) => a.action === CANCEL)
+    .reduce((s, a) => s + a.entry.stakeMsat, 0n);
+  const paidMsat = [...paidTo.values()].reduce((s, v) => s + v, 0n);
+
+  // A VOID hold that was settled would show up here and nowhere else: the
+  // operator would be holding money the table never hands back.
+  if (activated.length && settledMsat !== paidMsat)
+    throw new Error(
+      `the operator would keep ${settledMsat - paidMsat} msat: settled ${settledMsat} `
+      + `against ${paidMsat} paid out`);
+
+  return { actions, settledMsat, refundedMsat, paidMsat, table };
+}
