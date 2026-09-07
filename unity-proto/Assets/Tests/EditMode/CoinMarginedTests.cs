@@ -200,3 +200,71 @@ public class CoinMarginedFeedTests
         Assert.AreEqual(1, _cm.Accepted, "and only one of the three is ours to pay");
     }
 }
+
+/// <summary>
+/// AND WHAT THE CORE IS TOLD, which is the only part that changes the game.
+///
+/// `Bootstrap` hands every accepted liquidation to `BlwpCore.Liquidation(usd)`
+/// and nothing else decides a strike: the C# side gets the SIDE and the venue
+/// for the renderer, while the size, the crater, its depth and its lifetime
+/// are the core's. So the question this letter has to answer about the two
+/// engines is not "do they agree" - there is no second engine sizing a strike
+/// any more - it is whether the new book reaches the core in the SAME units as
+/// the old one. `BlwpCore.Scale` is the whole conversion and is readable
+/// outside a WebGL player, so it can be measured here rather than argued.
+/// </summary>
+public class CoinMarginedCoreUnitsTests
+{
+    // the order captured off dstream: 197 contracts of BTCUSD_PERP
+    const double CapturedUsd = 19700.0;
+
+    [Test]
+    public void OneBookAndOneRule()
+    {
+        // A coin-margined liquidation of a given dollar value and a USDT-M one
+        // of the same value are the same input. They go through one `Raise`,
+        // one `OnLiquidation` and one `Scale`, and this says so in numbers.
+        Assert.AreEqual(Blwp.BlwpCore.Scale(CapturedUsd),
+                        Blwp.BlwpCore.Scale(19700.0),
+                        "the core must see one liquidation rule, not one per book");
+    }
+
+    [Test]
+    public void TheCapturedOrderIsRealSizeToTheCore()
+    {
+        // millions of USD in Q16.16: 0.0197 * 65536 = 1291.06, rounded.
+        Assert.AreEqual(1291, Blwp.BlwpCore.Scale(CapturedUsd));
+        Assert.AreEqual(0, Blwp.BlwpCore.Scale(0),
+            "and before this letter that is what the core was told: nothing");
+    }
+
+    /// <summary>
+    /// The wrong reading is not a rounding error at the core either. Valued
+    /// the USDT-M way the same order would have been 1,023,655 steps against
+    /// 1,291 - a strike 793 times the size, and the crater follows the cube
+    /// root of it, so about nine times the radius.
+    /// </summary>
+    [Test]
+    public void TheUsdtMarginedReadingWouldHaveBeenAnotherStrikeEntirely()
+    {
+        int right = Blwp.BlwpCore.Scale(CapturedUsd);
+        int wrong = Blwp.BlwpCore.Scale(197 * 79288.0);
+        Assert.AreEqual(1291, right);
+        Assert.AreEqual(1023655, wrong);
+        Assert.Greater(wrong / (double)right, 700.0);
+    }
+
+    /// <summary>
+    /// And the smallest coin-margined order there can be still reaches the
+    /// core. One BTC contract is 100 USD, and the core's step is $15.26, so it
+    /// arrives as 7 steps rather than being floored away - which is the thing
+    /// worth checking about a book whose quantities are small integers.
+    /// </summary>
+    [Test]
+    public void EvenASingleContractIsNotRoundedAway()
+    {
+        double oneContract = MarketFeed.CoinMarginedUsd("BTCUSD_PERP", 1);
+        Assert.AreEqual(100.0, oneContract, 0.001);
+        Assert.AreEqual(7, Blwp.BlwpCore.Scale(oneContract));
+    }
+}

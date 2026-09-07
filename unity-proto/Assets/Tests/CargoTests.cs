@@ -748,10 +748,29 @@ public class CargoTests
         var panel = Object.FindFirstObjectByType<LoadoutPanel>();
         Assert.IsTrue(panel.IsOpen, "die Rampe ist zu");
 
+        // WHAT THIS IS WATCHING FOR IS A THROW, and it used to watch for it by
+        // requiring the console to be SILENT - `LogAssert.NoUnexpectedReceived`
+        // fails on an ordinary Log too. That made it a hostage of whatever else
+        // happened to speak in those twenty frames: it went red the day a fourth
+        // liquidation socket was added, on the line "[feed] binance-cm open,
+        // subscribe not needed", which has nothing to do with drawing a window.
+        //
+        // So it listens for the thing itself. An exception inside OnGUI takes
+        // the window with it, and an Error or an Assert is just as much a
+        // failure to draw; a Log is not.
+        var trouble = new System.Collections.Generic.List<string>();
+        Application.LogCallback watch = (msg, stack, type) =>
+        {
+            if (type == LogType.Exception || type == LogType.Error || type == LogType.Assert)
+                trouble.Add($"{type}: {msg}");
+        };
+        Application.logMessageReceived += watch;
+
         // several frames, because the hazard tape and the scan line move
         for (int i = 0; i < 20; i++) yield return null;
 
-        LogAssert.NoUnexpectedReceived();
+        Application.logMessageReceived -= watch;
+        Assert.IsEmpty(trouble, "drawing the chrome threw: " + string.Join(" | ", trouble));
         Assert.IsTrue(panel.IsOpen, "das Fenster hat sich beim Zeichnen geschlossen");
     }
 
