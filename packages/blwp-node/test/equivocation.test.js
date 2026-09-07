@@ -23,7 +23,11 @@ import {
   splitSigned, provesEquivocation, SIGNED_CHECKPOINT_BYTES,
 } from '../../protocol/src/checkpoint.js';
 import { GENESIS } from '../../protocol/src/transcript.js';
+import {
+  encodeCheckpointReceipt, receiptId, joinSignedReceipt,
+} from '../../protocol/src/receipt.js';
 import { toHex } from '../../protocol/src/hash.js';
+import { decodeEntryContract } from '../../protocol/src/contracts.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const session = ed25519.utils.randomSecretKey();
@@ -110,11 +114,14 @@ test('a repeat, another tick, another entry and a forgery are all refused', asyn
   assert.equal(same.ok, false);
   assert.match(same.why, /the same mark, sent twice/);
 
-  // two marks at different ticks are a chain, not a contradiction
-  const later = signedBy({ ...mark, tick: 120, stateHash: b32(0x33) });
+  // two marks at different ticks that name different parents ARE a chain: the
+  // second follows the first, which is what playing a round looks like
+  const later = signedBy({
+    ...mark, tick: 120, stateHash: b32(0x33), previousHash: checkpointId(mark),
+  });
   const ticks = await provesEquivocation(mine, later, sessionPubkey, verify);
   assert.equal(ticks.ok, false);
-  assert.match(ticks.why, /at ticks 60 and 120/);
+  assert.match(ticks.why, /at ticks 60 and 120 and name different parents/);
 
   // and two marks from different entries are two players
   const elsewhere = signedBy({ ...mark, entryId: b32(0x7e), stateHash: b32(0x44) });
@@ -171,4 +178,164 @@ test('the node publishes the proof it holds, and says so when it holds none', as
     const none = await at(b.port, clean.rid, clean.eid);
     assert.equal(none.status, 204);
   } finally { await a.close(); await b.close(); }
+});
+
+/**
+ * THE SECOND LIMB: TWO CHAINS THAT DIVERGE AT ANY TICK.
+ *
+ * 13B is "two different checkpoints for the same (round_id, player_pubkey,
+ * tick), OR two chains that diverge at any tick". The first is a contradiction
+ * at one tick; the second is a FORK - a chain has one child per parent, so two
+ * marks naming the same parent are two chains whatever ticks they sit at. Both
+ * are provable from the two records alone, which is what portable means.
+ *
+ * This is what the split-committee attack leaves behind: chain A to three
+ * nodes, chain B to four, every node locally consistent, and the two records
+ * only meeting when somebody brings them together.
+ */
+test('two marks naming one parent are two chains, at whatever ticks', async () => {
+  const { mark } = played();
+  const parent = checkpointId(mark);
+
+  // the player builds two children on one parent, at different ticks
+  const a = signedBy({ ...mark, tick: 120, stateHash: b32(0xa1), previousHash: parent });
+  const b = signedBy({ ...mark, tick: 180, stateHash: b32(0xb2), previousHash: parent });
+
+  const seen = await provesEquivocation(a, b, sessionPubkey, verify);
+  assert.equal(seen.ok, true, seen.why);
+  assert.equal(seen.how, 'two chains from one parent');
+  assert.deepEqual(seen.ticks, [120, 180]);
+  assert.notEqual(toHex(seen.ids[0]), toHex(seen.ids[1]));
+
+  // and two first marks of one round are two chains from the start
+  const first = signedBy({ ...mark, stateHash: b32(0xc3) });
+  const alsoFirst = signedBy({ ...mark, tick: 90, stateHash: b32(0xd4) });
+  const start = await provesEquivocation(first, alsoFirst, sessionPubkey, verify);
+  assert.equal(start.ok, true, start.why);
+  assert.equal(start.how, 'two chains from one parent');
+
+  // the same-tick limb still says what it always said
+  const sameTick = await provesEquivocation(
+    signedBy(mark), signedBy({ ...mark, stateHash: b32(0xe5) }), sessionPubkey, verify);
+  assert.equal(sameTick.ok, true, sameTick.why);
+  assert.equal(sameTick.how, 'two marks at one tick');
+
+  // a forgery is still not a forfeit, on either limb
+  const stranger = ed25519.utils.randomSecretKey();
+  const forged = signedBy({ ...mark, tick: 180, stateHash: b32(0xf6), previousHash: parent },
+    stranger);
+  const fake = await provesEquivocation(a, forged, sessionPubkey, verify);
+  assert.equal(fake.ok, false);
+  assert.match(fake.why, /not signed by that entry/);
+});
+
+/**
+ * THE SPLIT COMMITTEE, on one node. A player sends chain A here and chain B
+ * elsewhere; this node holds A, and the only thing that says B exists is a
+ * committee member's receipt for a mark this node never got. That receipt used
+ * to be dropped at the door.
+ */
+test('a receipt for a mark this node never got is kept as evidence', () => {
+  const { round, rid, eid, mark } = played();
+  const elsewhere = { ...mark, tick: 120, stateHash: b32(0x99), previousHash: checkpointId(mark) };
+  const theirId = checkpointId(elsewhere);
+  const member = ed25519.utils.randomSecretKey();
+  const receipt = (() => {
+    const r = {
+      checkpointId: theirId, nodePubkey: ed25519.getPublicKey(member), receivedAtMs: 7000n,
+    };
+    return joinSignedReceipt(encodeCheckpointReceipt(r), ed25519.sign(receiptId(r), member));
+  })();
+
+  assert.equal(round.foreignReceipts().length, 0);
+  assert.throws(() => round.takeReceipt(receipt), /a receipt for a mark this node has not got/);
+
+  const kept = round.foreignReceipts();
+  assert.equal(kept.length, 1, 'the divergence signal was dropped');
+  assert.deepEqual(kept[0].checkpointId, theirId);
+  assert.deepEqual(kept[0].nodePubkey, ed25519.getPublicKey(member));
+
+  // AND IT IS NOT A VOTE. It counts towards nothing: the mark is not this
+  // node's, and receiptCount is about marks this node holds.
+  assert.equal(round.receiptCount(checkpointId(mark)), 1);
+
+  // a receipt whose signature does not verify is not evidence of anything
+  const rubbish = new Uint8Array(receipt);
+  rubbish[rubbish.length - 1] ^= 0xff;
+  assert.throws(() => round.takeReceipt(rubbish), /does not verify/);
+  assert.equal(round.foreignReceipts().length, 1, 'a bad signature was kept as evidence');
+});
+
+/**
+ * AND THE SECOND CHAIN ITSELF, brought here by a peer. It is refused - it does
+ * not join the chain and it is not a second head - and it is kept, so the two
+ * records can be put side by side on one node.
+ */
+test('a peer s copy of the other chain is refused and kept beside ours', async () => {
+  const { round, rid, eid, mark } = played();
+  const theirs = { ...mark, tick: 120, stateHash: b32(0x99), previousHash: b32(0x7e) };
+
+  assert.throws(() => round.checkpoint(signedBy(theirs)),
+    /the checkpoint does not follow the chain head/);
+
+  const offered = round.offeredMarks(rid, eid);
+  assert.equal(offered.length, 1);
+  assert.equal(offered[0].tick, 120);
+
+  // the carried chain is untouched: one checkpoint, and it is ours
+  assert.equal(round.checkpoints(rid, eid).count, 1);
+  assert.deepEqual(
+    checkpointId(decodeCheckpoint(splitSigned(round.checkpoints(rid, eid).bytes).body)),
+    checkpointId(mark));
+});
+
+/**
+ * PORTABLE MEANS A STRANGER CAN CHECK IT.
+ *
+ * 13B: "the two conflicting signed checkpoints are a complete, portable proof;
+ * no replay is needed". They are not, on their own: the signatures verify
+ * under the entry's session key, and until this node served the entry there
+ * was no way to obtain it. Somebody holding the proof could read it and could
+ * not check it, which is most of what portable was supposed to buy.
+ */
+test('a stranger with the proof and the entry can check it, and without the entry cannot', async () => {
+  const guilty = played();
+  const other = { ...guilty.mark, stateHash: b32(0x22) };
+  assert.throws(() => guilty.round.checkpoint(signedBy(other)), /equivocation/);
+
+  const node = await serve(guilty.round.db, { port: 0, funded: () => true });
+  try {
+    const base = `http://127.0.0.1:${node.port}`;
+
+    // A STRANGER. It holds the entry id and nothing else - no contract, no
+    // session key, no transcript, and it never watched the round.
+    const proof = await fetch(
+      `${base}/equivocation?round=${toHex(guilty.rid)}&entry=${toHex(guilty.eid)}`);
+    assert.equal(proof.status, 200);
+    const body = new Uint8Array(await proof.arrayBuffer());
+    const a = body.subarray(0, SIGNED_CHECKPOINT_BYTES);
+    const b = body.subarray(SIGNED_CHECKPOINT_BYTES);
+
+    // without the key there is nothing to verify against, and guessing one
+    // answers no - which is the honest failure, not a pass
+    const guessed = await provesEquivocation(a, b, b32(0x00), verify);
+    assert.equal(guessed.ok, false);
+    assert.match(guessed.why, /not signed by that entry/);
+
+    // with the entry door, the key comes off the contract the player signed
+    const got = await fetch(`${base}/entry?id=${toHex(guilty.eid)}`);
+    assert.equal(got.status, 200);
+    const entry = decodeEntryContract(new Uint8Array(await got.arrayBuffer()));
+    assert.deepEqual(entry.sessionPubkey, sessionPubkey);
+
+    const seen = await provesEquivocation(a, b, entry.sessionPubkey, verify);
+    assert.equal(seen.ok, true, seen.why);
+    assert.equal(seen.how, 'two marks at one tick');
+    assert.equal(seen.tick, 60);
+
+    // and an entry nobody has is a named 404, not an empty answer
+    const missing = await fetch(`${base}/entry?id=${toHex(b32(0x7e))}`);
+    assert.equal(missing.status, 404);
+    assert.match(await missing.text(), /no such entry/);
+  } finally { await node.close(); }
 });

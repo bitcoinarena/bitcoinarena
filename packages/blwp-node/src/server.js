@@ -136,6 +136,19 @@ export function serve(db, { port = 0, funded = NOTHING_IS_FUNDED } = {}) {
         return bytes(res, 201, round.enter(contract));
       }
 
+      // THE ENTRY CONTRACT, so 13B's proof is portable to somebody who was not
+      // here. The two signed marks mean nothing without the session key they
+      // must verify under, and that key is a field of the entry the player
+      // signed. Without this door a stranger holding the proof can read it and
+      // cannot check it, which is most of what "portable" was supposed to buy.
+      if (req.method === 'GET' && url.pathname === '/entry') {
+        const eid = Buffer.from(url.searchParams.get('id') || '', 'hex');
+        const entry = round.entry(eid);
+        if (!entry) return text(res, 404, 'no such entry');
+        res.writeHead(200, { 'content-type': 'application/octet-stream', ...CORS });
+        return res.end(Buffer.from(entry));
+      }
+
       // 13B'S PROOF, which a node MUST publish when it holds one. The answer
       // is the two signed marks back to back, per tick, and 204 when this node
       // has never seen the player sign two worlds at once.

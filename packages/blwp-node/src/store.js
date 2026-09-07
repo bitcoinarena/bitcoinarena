@@ -124,6 +124,43 @@ export function openStore(path = ':memory:') {
       PRIMARY KEY (round_id, entry_id, tick)
     );
 
+    -- A RECEIPT FOR A MARK THIS NODE HAS NEVER SEEN.
+    --
+    -- Dropped at the door until now, and that is the signal 13B built receipt
+    -- gossip FOR: "a divergence sent to disjoint node subsets surfaces within
+    -- a window rather than at settlement". A player who sends chain A to three
+    -- nodes and chain B to four leaves every node locally consistent, and the
+    -- only thing that shows it is a committee member receipting a mark the
+    -- others never got.
+    --
+    -- It is kept UNATTRIBUTED on purpose. A receipt carries a checkpoint id, a
+    -- signer and a time - not a round - so a node holding one for an unknown
+    -- mark cannot say which entry it belongs to, and cannot check the signer
+    -- against a committee it cannot look up. What it can check is that the
+    -- signature verifies under the key the receipt itself names, and that is
+    -- what is stored: somebody receipted something this node has not got.
+    -- A SIGNED MARK THIS NODE REFUSED, KEPT BESIDE THE CHAIN IT ACCEPTED.
+    -- Usually an honest client with a stale head; sometimes the second chain
+    -- of 13B. It never joins the chain, and whether it proves anything is
+    -- provesEquivocation's answer rather than this table's.
+    CREATE TABLE IF NOT EXISTS offered_marks (
+      round_id      BLOB NOT NULL,
+      entry_id      BLOB NOT NULL REFERENCES entries(entry_id),
+      tick          INTEGER NOT NULL,
+      checkpoint_id BLOB NOT NULL,
+      bytes         BLOB NOT NULL,
+      seen_ms       INTEGER NOT NULL,
+      PRIMARY KEY (round_id, entry_id, checkpoint_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS foreign_receipts (
+      checkpoint_id BLOB NOT NULL,
+      node_pubkey   BLOB NOT NULL,
+      bytes         BLOB NOT NULL,
+      seen_ms       INTEGER NOT NULL,
+      PRIMARY KEY (checkpoint_id, node_pubkey)
+    );
+
     CREATE TABLE IF NOT EXISTS receipts (
       checkpoint_id BLOB NOT NULL,
       node_pubkey   BLOB NOT NULL,

@@ -107,7 +107,21 @@ export class Round {
 
     const mark = this.db.prepare(
       'SELECT round_id FROM checkpoints WHERE checkpoint_id = ?').get(r.checkpointId);
-    if (!mark) throw new Error('a receipt for a mark this node has not got');
+    if (!mark) {
+      // KEPT, NOT DROPPED. This is 13B's divergence signal: a committee member
+      // has receipted a mark this node never got, which is what a player
+      // sending two chains to disjoint subsets looks like from here. The
+      // signature is checked under the key the receipt names - the only check
+      // available without a round to read a committee from - and it is filed
+      // unattributed until the mark itself turns up.
+      if (!ed25519.verify(signature, receiptId(r), r.nodePubkey))
+        throw new Error(`the receipt from ${toHex(r.nodePubkey)} does not verify`);
+      this.db.prepare(
+        'INSERT OR IGNORE INTO foreign_receipts '
+        + '(checkpoint_id, node_pubkey, bytes, seen_ms) VALUES (?, ?, ?, ?)')
+        .run(r.checkpointId, r.nodePubkey, bytes, this.now());
+      throw new Error('a receipt for a mark this node has not got');
+    }
 
     const round = this.get(new Uint8Array(mark.round_id));
     const committee = decodeRoundContract(new Uint8Array(round.contract)).nodes;
@@ -404,8 +418,20 @@ export class Round {
     // current head - including a parent the node has never stored - is
     // refused here, because only the head can be named.
     const head = this.checkpointHead(c.roundId, c.entryId);
-    if (!same(c.previousHash, head.id))
+    if (!same(c.previousHash, head.id)) {
+      // AND THIS ONE IS KEPT TOO. A mark that names a parent which is not the
+      // head is usually an honest client with a stale head - it is refused
+      // either way and it does not join the chain. But it is ALSO what the
+      // other limb of 13B looks like arriving here: a second chain, built on a
+      // parent this node never made the head. Throwing it away destroyed the
+      // record, exactly as the same-tick case used to. Whether it proves
+      // anything is `provesEquivocation`'s answer, not this door's.
+      this.db.prepare(
+        'INSERT OR IGNORE INTO offered_marks '
+        + '(round_id, entry_id, tick, checkpoint_id, bytes, seen_ms) VALUES (?, ?, ?, ?, ?, ?)')
+        .run(c.roundId, c.entryId, c.tick, id, bytes, this.now());
       throw new Error('the checkpoint does not follow the chain head');
+    }
 
     // AND TIME RUNS ONE WAY. Naming the right parent is not enough: a mark at
     // tick 30 that chains onto the mark at tick 60 passed every check above
@@ -610,6 +636,40 @@ export class Round {
       offered: new Uint8Array(r.offered_bytes),
       seenMs: r.seen_ms,
     }));
+  }
+
+  /**
+   * The entry contract, as the player signed it.
+   *
+   * The session key is in it, and 13B's proof cannot be checked without one -
+   * so a node that publishes the proof and not this has published something
+   * nobody can verify.
+   */
+  entry(entryIdBytes) {
+    const row = this.db.prepare('SELECT contract FROM entries WHERE entry_id = ?')
+      .get(entryIdBytes);
+    return row ? new Uint8Array(row.contract) : null;
+  }
+
+  /** Receipts this node holds for marks it has never seen. 13B's signal. */
+  foreignReceipts() {
+    return this.db.prepare(
+      'SELECT checkpoint_id, node_pubkey, bytes, seen_ms FROM foreign_receipts '
+      + 'ORDER BY seen_ms').all()
+      .map((r) => ({
+        checkpointId: new Uint8Array(r.checkpoint_id),
+        nodePubkey: new Uint8Array(r.node_pubkey),
+        bytes: new Uint8Array(r.bytes),
+        seenMs: r.seen_ms,
+      }));
+  }
+
+  /** Signed marks this node refused and kept, beside the chain it did accept. */
+  offeredMarks(roundIdBytes, entryIdBytes) {
+    return this.db.prepare(
+      'SELECT tick, bytes FROM offered_marks WHERE round_id = ? AND entry_id = ? ORDER BY tick')
+      .all(roundIdBytes, entryIdBytes)
+      .map((r) => ({ tick: r.tick, bytes: new Uint8Array(r.bytes) }));
   }
 
   close(id) {

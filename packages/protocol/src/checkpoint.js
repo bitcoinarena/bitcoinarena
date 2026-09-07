@@ -153,6 +153,11 @@ export function joinSigned(bytes, signature) {
  * Whoever holds the two records can check them, which is what makes 13B's
  * "nodes MUST publish such a proof" worth anything.
  *
+ * TWO SHAPES, both from the two records alone. Two marks at one tick
+ * contradict each other; two marks naming one parent are two chains, because
+ * a chain has one child per parent. 13B calls both "two chains that diverge",
+ * and a proof that needed a third record would not be portable.
+ *
  * `verify` is injected, as everywhere else here: this package carries no curve.
  * It may answer a promise, so this does too.
  */
@@ -169,8 +174,22 @@ export async function provesEquivocation(a, b, sessionPubkey, verify) {
   const alike = (p, q) => p.length === q.length && p.every((v, i) => v === q[i]);
   if (!alike(x.roundId, y.roundId) || !alike(x.entryId, y.entryId))
     return { ok: false, why: 'those two marks are not from the same entry' };
-  if (x.tick !== y.tick)
-    return { ok: false, why: `those two marks are at ticks ${x.tick} and ${y.tick}` };
+  // 13B HAS TWO LIMBS: "two different checkpoints for the same (round_id,
+  // player_pubkey, tick), OR two chains that diverge at any tick".
+  //
+  // The first is a contradiction at one tick. The second is a FORK: a chain
+  // has one child per parent, so two marks naming the same parent are two
+  // chains, whatever ticks they sit at. Both are provable from the two records
+  // alone, which is what 13B means by portable; anything needing a third
+  // record, or the chain in between, is not.
+  const sameTick = x.tick === y.tick;
+  const sameParent = alike(x.previousHash, y.previousHash);
+  if (!sameTick && !sameParent)
+    return {
+      ok: false,
+      why: `those two marks are at ticks ${x.tick} and ${y.tick} and name `
+        + 'different parents, so they can be one chain',
+    };
 
   // THE SAME MARK TWICE IS NOT EQUIVOCATION. A player re-sending what it
   // already sent is the ordinary case, and calling it a forfeit would take a
@@ -188,5 +207,11 @@ export async function provesEquivocation(a, b, sessionPubkey, verify) {
   if (!await verify(two.signature, idY, sessionPubkey))
     return { ok: false, why: 'the second mark is not signed by that entry' };
 
-  return { ok: true, tick: x.tick, ids: [idX, idY] };
+  return {
+    ok: true,
+    how: sameTick ? 'two marks at one tick' : 'two chains from one parent',
+    tick: x.tick,
+    ticks: [x.tick, y.tick],
+    ids: [idX, idY],
+  };
 }
