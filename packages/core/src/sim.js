@@ -36,7 +36,7 @@ import { vehicleStep } from './rules/vehicle.js';
 import { flatGround, gradeAlong, heightAtWorld, DEFAULT_COLS, DEFAULT_ROWS } from './rules/ground.js';
 import { noSolids, resolveSolids, resolveArmour, BOX_WORDS } from './rules/solids.js';
 import { stepUnit, separatePair, clearOfTruck, runOver, truckSpeed, threatAt, pickTarget, pickRifleTarget, riflePost, RELOAD_MIN, RELOAD_SPAN, DAMAGE_MIN, DAMAGE_SPAN, BACKOFF_RANGE, HIT_PER_MIL, ARMOUR_RANGE, RIFLE_RANGE, RIFLE_HIT_PER_MIL, RIFLE_RELOAD_TICKS, RIFLE_RELOAD_TICKS_SPAN, RIFLE_LOOK_TICKS, RIFLE_LOOK_TICKS_SPAN, RIFLE_HP, RIFLE_DAMAGE, COURIER_RANGE, COURIER_DAMAGE_MIN, COURIER_DAMAGE_SPAN, COURIER_RIFLE_MIN, COURIER_RIFLE_SPAN, courierReach, outranksTheFoe, shellForHeat } from './rules/army.js';
-import { accrue, earning, scoreOf } from './rules/score.js';
+import { accrue, earning, scoreOf, frontWeight } from './rules/score.js';
 import { outcome, RUN_LIVE, RUN_DELIVERED, RUN_WRECKED, RUN_MISSED } from './rules/gate.js';
 import { frontlineZ, SAMPLES } from './rules/frontline.js';
 import {
@@ -1420,7 +1420,7 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
     // "ghosts nothing draws". They are not ghosts any more - the army is the
     // core's - and `setUnits` had no caller left anywhere in the project, so
     // the preference was a dead branch guarding a dead setter. Both are gone.
-    const threat = threatAt(view, UNITS, tx, tz);
+    const threat = mulFast(threatAt(view, UNITS, tx, tz), frontWeight(tz, seamZ));
     s[O_SCORE + S_EXPOSURE] = accrue(
       s[O_SCORE + S_EXPOSURE], s[O_SCORE + S_BESTX], tx, threat, s[O_SCORE + S_CARGO]);
   }

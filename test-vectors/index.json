@@ -5,22 +5,22 @@
   {
    "name": "straight",
    "ticks": 3600,
-   "final": "b24395a7ec8ddff63ddc90e929e39d5362b7c15633bd1c76e243dc752e726482"
+   "final": "88c39534f031163167898092096811a9f111a84390264becd5c21cdccc891883"
   },
   {
    "name": "slalom",
    "ticks": 3600,
-   "final": "552cf2f33255bc0f36ded3ed95efdc429b1a7f59039e323e8a36695ab0849b7e"
+   "final": "d02e125ad80fa4828ef46fab36bb0a44ef4527c560d0a5d9f9c8740a900be02a"
   },
   {
    "name": "handbrake",
    "ticks": 3600,
-   "final": "e230a66d79b2d234b7998388075788e2097d61a2020f7e093ae15768b1d8b12b"
+   "final": "35304f05bf8dcd4a40d1f4a4b08f939264dd96e742b91ccca83e92009c83a2dc"
   },
   {
    "name": "reverse",
    "ticks": 3600,
-   "final": "1b24ba38abedfe558f3f25ace399830d6d00d6fde6042daeccfc68f830f6cc1e"
+   "final": "0193d6a9c171fd9954630ab5ddf1320ed14990882f2cb5f51c9ca8f4cfe16960"
   },
   {
    "name": "idle",
@@ -30,17 +30,17 @@
   {
    "name": "practice",
    "ticks": 3600,
-   "final": "69668187ea79840c6c860dc33b5b5030e1a54804cfdf42d84f03031aaaffb2f1"
+   "final": "ad25e00c590c9913fdd5c4aab3e57f5c4eae8bba86ae43cfec0724e80e496fae"
   },
   {
    "name": "liquidation",
    "ticks": 3600,
-   "final": "5832556a727a88d4a7295d83f608d928ee985d285465c8263bf730909579cec0"
+   "final": "f8c893ebcdd78b510346906d10de1ee5af746b3eed930ba1c8ea08391f13ae2d"
   },
   {
    "name": "fallout",
    "ticks": 3600,
-   "final": "96150cf6032d195025166a6df5e167ac94d290913d4c29ade4e6144d9bb2f1e1"
+   "final": "2897fdf54b90e2f43a7319e0fe5af3c043c408904a9498a89f995e78b44b5e88"
   }
  ]
 }

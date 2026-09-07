@@ -1504,14 +1504,8 @@ test('the seam banks more than the quiet lane for the same ground made good', ()
   // number of ticks and one of them only reached x=15.5 while another reached
   // 130, which compares nothing:
   //
-  //   lane z=70 (edge)  exposure 110.4  score 362
-  //   lane z=45         exposure 145.9  score 479
-  //   lane z=20         exposure 155.7  score 511
-  //   lane z= 0 (seam)  exposure 178.9  score 587
-  //
-  // Monotonic, and the seam pays 1.62x the edge. The bound is 1.5x: room for
-  // the map's own drift, and nowhere near enough to survive a flattened threat
-  // scale, which is the failure it guards.
+  // Far from the front pays nothing. The bound is 10x, not 1.5x: a quiet
+  // rim was still banking hundreds, which is the failure this guards.
   const TARGET = 60 * ONE;
   const lane = (z) => {
     const st = init(0x5eed1234);
@@ -1527,17 +1521,22 @@ test('the seam banks more than the quiet lane for the same ground made good', ()
     return { exposure: s[O_SCORE + S_EXPOSURE], score: runScore(st) };
   };
 
-  const edge = lane(70), mid = lane(45), inner = lane(20), seam = lane(0);
+  const edge = lane(62), inner = lane(20), seam = lane(0);
 
-  assert.ok(seam.exposure > edge.exposure * 1.5,
-    `the seam banked ${(seam.exposure / ONE).toFixed(1)} against the edge's `
-    + `${(edge.exposure / ONE).toFixed(1)} - the quiet lane is competitive`);
-  assert.ok(seam.score > edge.score * 1.5,
-    `the seam scored ${seam.score} against the edge's ${edge.score}`);
-  assert.ok(mid.exposure > edge.exposure && inner.exposure > mid.exposure
-            && seam.exposure > inner.exposure,
-    'the gradient is not monotonic across the four lanes: '
-    + [edge, mid, inner, seam].map(l => (l.exposure / ONE).toFixed(1)).join(' '));
+  assert.ok(edge.exposure < ONE,
+    `the rim still banked ${(edge.exposure / ONE).toFixed(1)} m of exposure`);
+  assert.ok(seam.exposure > inner.exposure,
+    `inner ${(inner.exposure / ONE).toFixed(1)} vs seam ${(seam.exposure / ONE).toFixed(1)}`);
+  assert.ok(seam.score > Math.max(1, edge.score) * 10,
+    `the seam scored ${seam.score} against the rim's ${edge.score}`);
+});
+
+test('ground far from the front pays nothing', () => {
+  assert.equal(scoring.frontWeight(0, 0), ONE);
+  assert.equal(scoring.frontWeight(40 * ONE, 0), 0);
+  assert.equal(scoring.frontWeight(62 * ONE, 0), 0);
+  const at20 = scoring.frontWeight(20 * ONE, 0);
+  assert.ok(at20 > ONE / 8 && at20 < ONE / 2, `20 m off the seam weighted ${at20 / ONE}`);
 });
 
 test('heat raises what a metre of ground is worth', () => {

@@ -30,6 +30,21 @@ export const REFERENCE_TICKS = 3900;
 /** No danger is earned within this of the start. */
 export const APRON_RADIUS = Math.imul(22, ONE);
 
+/** Metres off the seam at which a metre of ground pays nothing. */
+export const FRONT_SCORE_SPAN = Math.imul(40, ONE);
+
+/**
+ * How much of the local threat counts for the score, from distance to the
+ * front. 1 on the seam, 0 at 40 m and beyond. Quadratic so a rim far from
+ * the fighting is not a slightly quieter lane (the owner 2026-09-07).
+ */
+export const frontWeight = (z, seam) => {
+  const sep = abs(sub(z, seam));
+  if (sep >= FRONT_SCORE_SPAN) return 0;
+  const t = sub(ONE, div(sep, FRONT_SCORE_SPAN));
+  return mulFast(t, t);
+};
+
 export const T_FLOOR = 16384;      // 0.25
 export const T_CEIL = 98304;       // 1.5
 
