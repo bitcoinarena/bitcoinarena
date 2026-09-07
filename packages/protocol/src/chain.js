@@ -49,6 +49,20 @@ export const HEADER_BYTES = 80;
 export const BITCOIN_MAINNET_GENESIS = fromHex(
   '6fe28c0ab6f1b372c1a6a246ae63f74f931e8365e15a089c68d6190000000000');
 
+/**
+ * And the eighty bytes themselves, so a chain can actually START here.
+ *
+ * The hash above is enough to REFUSE with; this is what an honest chain has to
+ * contain, and it is written down rather than fetched because it has been the
+ * same eighty bytes since 2009 and will not change. Nothing takes it on trust:
+ * `blockHashOf` of these bytes is the hash above, and a test says so, which is
+ * the only reason to believe either of them.
+ */
+export const BITCOIN_MAINNET_GENESIS_HEADER = fromHex(
+  '01000000000000000000000000000000000000000000000000000000000000000000000'
+  + '03ba3edfd7a7b12b27ac72c3e67768f617fc81bc3888a51323a9fb8aa4b1e5e4a29ab5f'
+  + '49ffff001d1dac2b7c');
+
 const sameBytes = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
 
 function header(bytes) {

@@ -30,7 +30,9 @@ import { serve } from '../../blwp-node/src/server.js';
 import { roundId } from '../../protocol/src/contracts.js';
 import { decodeTranscript } from '../../protocol/src/transcript.js';
 import { hash256, parseTransaction } from '../../protocol/src/tx.js';
-import { blockHashOf } from '../../protocol/src/chain.js';
+import {
+  blockHashOf, BITCOIN_MAINNET_GENESIS, BITCOIN_MAINNET_GENESIS_HEADER,
+} from '../../protocol/src/chain.js';
 import { advertId, encodeAdvert, joinSignedAdvert } from '../../protocol/src/advert.js';
 import { toHex } from '../../protocol/src/hash.js';
 import { bondTransaction, blockOf } from '../../protocol/tools/bond.js';
@@ -89,10 +91,17 @@ const bondFor = (a, secret = operator) =>
  * the chain it accepted rather than a header it was pointed at - a header
  * handed over on its own is not a block, it is 80 bytes.
  */
+/**
+ * A CHAIN THAT STARTS WHERE BITCOIN STARTS. The first header is the real
+ * genesis block - eighty bytes that have not changed since 2009, mined at the
+ * difficulty of the day - and the bond's block is mined onto it. An honest
+ * chain contains the block the client knows because it IS the block the client
+ * knows, not because a fixture said so.
+ */
 function chainWith(transaction, committee = [operatorPubkey]) {
   const txid = parseTransaction(transaction).txid;
   const sibling = b32(0x99);
-  const first = blockOf(hash256, [b32(0x01)]).header;
+  const first = BITCOIN_MAINNET_GENESIS_HEADER;
   const { header } = blockOf(hash256, [txid, sibling], { previous: blockHashOf(first) });
   const chain = [first, header];
   return {
@@ -115,13 +124,12 @@ function layered(raw, extra) {
  * headers, one that answers with a bond and its proof, and the block this
  * client is anchored to. Nothing here is a ready-made chain.
  */
-function asProviders(raw, { anchor } = {}) {
+function asProviders(raw) {
   return {
     headers: [() => raw.chain, () => raw.chain],
     bonds: [() => ({
       transaction: raw.transaction, branch: raw.branch, position: raw.position,
     })],
-    anchor: anchor || blockHashOf(raw.chain[0]),
     committee: raw.committee,
     signedAdvert: raw.signedAdvert,
   };
@@ -422,10 +430,8 @@ test('the door will not open on one provider, or without an anchor', async () =>
 
   await assert.rejects(Client.at({ ...asked, headers: [asked.headers[0]] }, door),
     /no chain: 1 providers is fewer than the 2 it takes/);
-  await assert.rejects(Client.at({ ...asked, anchor: undefined }, door),
-    /no chain: no anchor/);
   await assert.rejects(Client.at({ ...asked, anchor: b32(0x5a) }, door),
-    /no chain: only 0 of 2 providers gave a chain/);
+    /the anchor is the client's own and may not be supplied/);
   await assert.rejects(Client.at({ ...asked, bonds: [] }, door),
     /no bond: no providers to ask for the bond/);
 
@@ -445,19 +451,62 @@ test('the door will not open on one provider, or without an anchor', async () =>
  */
 test('a self-consistent world of the attackers own making is refused', async () => {
   const his = bondFor(advertFor('wss://the-attackers-node:443'));
-  const mine = chainWith(his);
   const c = contract([operatorPubkey]);
   const door = { core, sign, verify, contract: c, roundIdGiven: roundId(c) };
 
-  // anchored on his own first block, it all hangs together
-  assert.equal((await Client.at(asProviders(mine), door)).base,
-    'https://the-attackers-node:443');
+  // HIS WHOLE WORLD. He mines his own first block rather than starting where
+  // Bitcoin starts, puts his bond in the next one, signs his own
+  // advertisement for a node on this round's committee, and serves all of it
+  // from two providers that agree with each other completely.
+  const txid = parseTransaction(his).txid;
+  const sibling = b32(0x99);
+  const root = blockOf(hash256, [b32(0xf0)]).header;
+  const { header } = blockOf(hash256, [txid, sibling], { previous: blockHashOf(root) });
+  const mine = [root, header];
+  const asked = {
+    headers: [() => mine, () => mine],
+    bonds: [() => ({ transaction: his, branch: [sibling], position: 0 })],
+    committee: [operatorPubkey],
+  };
 
-  // anchored on a block this client actually knows, none of it is weighed
-  const honest = blockOf(hash256, [b32(0x0a)]).header;
-  await assert.rejects(
-    Client.at(asProviders(mine, { anchor: blockHashOf(honest) }), door),
+  // every check inside the client passes except the one that asks whether this
+  // is Bitcoin - the library, handed his chain, accepts it
+  assert.equal(reach({
+    chain: mine, transaction: his, branch: [sibling], position: 0,
+    committee: [operatorPubkey],
+  }).ok, true);
+
+  // and the door does not, because his chain does not contain genesis
+  await assert.rejects(Client.at(asked, door),
     /no chain: only 0 of 2 providers gave a chain/);
+
+  // nor when he offers the block he would rather be anchored to
+  await assert.rejects(
+    Client.at({ ...asked, anchor: blockHashOf(root) }, door),
+    /the anchor is the client's own and may not be supplied/);
+});
+
+/**
+ * THE BLOCK THE CLIENT KNOWS, and the only reason to believe it is a
+ * measurement: these eighty bytes hash to the block id everybody knows mainnet
+ * by. Nothing here is taken on trust, including the constant this whole slice
+ * rests on.
+ */
+test('the anchor the client brings is Bitcoin s first block', async () => {
+  assert.equal(toHex(blockHashOf(BITCOIN_MAINNET_GENESIS_HEADER).reverse()),
+    '000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f');
+  assert.equal(toHex(blockHashOf(BITCOIN_MAINNET_GENESIS_HEADER)),
+    toHex(BITCOIN_MAINNET_GENESIS));
+  assert.equal(BITCOIN_MAINNET_GENESIS_HEADER.length, 80);
+
+  // and an honest chain that really contains it opens the round
+  const transaction = bondFor(advertFor('wss://node.example:443'));
+  const raw = chainWith(transaction);
+  assert.equal(toHex(blockHashOf(raw.chain[0])), toHex(BITCOIN_MAINNET_GENESIS));
+  const c = contract([operatorPubkey]);
+  const client = await Client.at(asProviders(raw),
+    { core, sign, verify, contract: c, roundIdGiven: roundId(c) });
+  assert.equal(client.base, 'https://node.example:443');
 });
 
 /**

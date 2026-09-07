@@ -27,7 +27,9 @@
 // and omission is answered by asking a second one". `mostWork` is here and takes
 // as many chains as it is given - nothing fetches yet, and until something does,
 // a client is only as sure as the chain it was handed.
-import { acceptAdvert, mostWork, chainWork, blockHashOf } from '../../protocol/src/chain.js';
+import {
+  acceptAdvert, mostWork, chainWork, blockHashOf, BITCOIN_MAINNET_GENESIS,
+} from '../../protocol/src/chain.js';
 import { agreedChain } from './headers.js';
 import { askForBond } from './bond.js';
 import { advertId } from '../../protocol/src/advert.js';
@@ -186,7 +188,30 @@ export function endpointFor(discovery) {
 export async function discover({
   headers, bonds, anchor, committee, signedAdvert, ask, least, timeoutMs,
 }) {
-  const chain = await agreedChain(headers, { anchor, ask, least, timeoutMs });
+  // THE ANCHOR IS THE CLIENT'S, AND A PAGE THAT OFFERS ONE IS REFUSED.
+  //
+  // This was the last hop where the whole chain source came apart. Weighing,
+  // mining and the bond proof were all honest, and then the block everything
+  // was anchored TO arrived from the page - so an attacker who supplied the
+  // providers supplied the block he wanted to sit on, and his own little mined
+  // world contained it by construction. An anchor somebody else chooses is not
+  // an anchor; it is the same trust, one level down, wearing the word.
+  //
+  // Genesis is the one block that needs no decision from anybody: it is
+  // mainnet's identity, it cannot go stale, and anyone can check it. Whether a
+  // deployment later anchors on a nearer block to avoid carrying history is a
+  // constant somebody must choose, and choosing it here would settle it by
+  // accident.
+  if (anchor !== undefined)
+    return {
+      ok: false,
+      why: 'the anchor is the client\'s own and may not be supplied: a block '
+        + 'chosen by whoever handed over the chain is not a block the client knows',
+    };
+
+  const chain = await agreedChain(headers, {
+    anchor: BITCOIN_MAINNET_GENESIS, ask, least, timeoutMs,
+  });
   if (!chain.ok) return { ok: false, why: `no chain: ${chain.why}`, refused: chain.refused };
 
   const bond = await askForBond(bonds, { chain: chain.headers, ask, timeoutMs });

@@ -1456,6 +1456,20 @@ const HEADER_BYTES = 80;
 const BITCOIN_MAINNET_GENESIS = fromHex(
   '6fe28c0ab6f1b372c1a6a246ae63f74f931e8365e15a089c68d6190000000000');
 
+/**
+ * And the eighty bytes themselves, so a chain can actually START here.
+ *
+ * The hash above is enough to REFUSE with; this is what an honest chain has to
+ * contain, and it is written down rather than fetched because it has been the
+ * same eighty bytes since 2009 and will not change. Nothing takes it on trust:
+ * `blockHashOf` of these bytes is the hash above, and a test says so, which is
+ * the only reason to believe either of them.
+ */
+const BITCOIN_MAINNET_GENESIS_HEADER = fromHex(
+  '01000000000000000000000000000000000000000000000000000000000000000000000'
+  + '03ba3edfd7a7b12b27ac72c3e67768f617fc81bc3888a51323a9fb8aa4b1e5e4a29ab5f'
+  + '49ffff001d1dac2b7c');
+
 const sameBytes = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
 
 function header(bytes) {
@@ -2249,7 +2263,30 @@ function endpointFor(discovery) {
 async function discover({
   headers, bonds, anchor, committee, signedAdvert, ask, least, timeoutMs,
 }) {
-  const chain = await agreedChain(headers, { anchor, ask, least, timeoutMs });
+  // THE ANCHOR IS THE CLIENT'S, AND A PAGE THAT OFFERS ONE IS REFUSED.
+  //
+  // This was the last hop where the whole chain source came apart. Weighing,
+  // mining and the bond proof were all honest, and then the block everything
+  // was anchored TO arrived from the page - so an attacker who supplied the
+  // providers supplied the block he wanted to sit on, and his own little mined
+  // world contained it by construction. An anchor somebody else chooses is not
+  // an anchor; it is the same trust, one level down, wearing the word.
+  //
+  // Genesis is the one block that needs no decision from anybody: it is
+  // mainnet's identity, it cannot go stale, and anyone can check it. Whether a
+  // deployment later anchors on a nearer block to avoid carrying history is a
+  // constant somebody must choose, and choosing it here would settle it by
+  // accident.
+  if (anchor !== undefined)
+    return {
+      ok: false,
+      why: 'the anchor is the client\'s own and may not be supplied: a block '
+        + 'chosen by whoever handed over the chain is not a block the client knows',
+    };
+
+  const chain = await agreedChain(headers, {
+    anchor: BITCOIN_MAINNET_GENESIS, ask, least, timeoutMs,
+  });
   if (!chain.ok) return { ok: false, why: `no chain: ${chain.why}`, refused: chain.refused };
 
   const bond = await askForBond(bonds, { chain: chain.headers, ask, timeoutMs });

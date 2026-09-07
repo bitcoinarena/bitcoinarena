@@ -425,9 +425,6 @@ mergeInto(LibraryManager.library, {
         + ((c.headers && c.headers.length) | 0));
     if (!c.bonds || !c.bonds.length)
       throw new Error('the page gave nowhere to ask for the bond');
-    if (!c.anchor)
-      throw new Error('the page gave no anchor, and the client will not guess one');
-
     // THE PROVIDERS ARE FUNCTIONS THE PAGE SUPPLIES, and that is the whole
     // shape of this: the client speaks Bitcoin's own bytes - 80-byte headers
     // and a merkle branch of 32-byte hashes - and never an explorer's JSON.
@@ -435,13 +432,15 @@ mergeInto(LibraryManager.library, {
     // lives out here, where it can be changed without touching anything that
     // decides.
     //
-    // The anchor is the page's to CARRY and not to choose: which block a
-    // deployment anchors on is a constant, and a client that guessed one would
-    // settle it by accident. A wrong one refuses everything, loudly.
+    // THE ANCHOR IS NOT HERE, and that is the point. The page names WHERE to
+    // ask; it does not name the block the client already knows. It used to,
+    // and that undid everything above it - whoever supplied the providers also
+    // supplied the block his own little mined chain was built on, so it
+    // contained the anchor by construction. `Client.at` brings genesis, and
+    // refuses an anchor that arrives with the providers.
     return {
       headers: c.headers,
       bonds: c.bonds,
-      anchor: BLWPCLIENT.fromHex(c.anchor).reverse(),
       signedAdvert: (d && d.signedAdvert) ? BLWPCLIENT.fromHex(d.signedAdvert) : undefined,
       committee: round ? round.nodes : null,
     };
