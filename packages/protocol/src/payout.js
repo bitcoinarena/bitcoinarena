@@ -334,3 +334,59 @@ export function holdSettlement({ roundId, entries, minScore = 0 }) {
     settledMsat: poolMsat, paidMsat: sharesMsat,
   };
 }
+
+/** Where a hold invoice can end up. */
+export const HELD = 'HELD';           // in flight: accepted, in nobody's balance
+export const SETTLED = 'SETTLED';     // the preimage was released; the pool has it
+export const CANCELLED = 'CANCELLED'; // handed back on purpose; the payer has it
+export const EXPIRED = 'EXPIRED';     // nobody acted; the payer has it
+
+/**
+ * WHERE A HOLD ENDS UP, AS STATE RATHER THAN AS A WORD.
+ *
+ * 23.1: the HTLC is "in flight - accepted but not settled. It is in nobody's
+ * balance." 23.2 gives each outcome one of three things to do to it, and 23.2
+ * ends: "The default path - nobody acting - is always the refund. That is what
+ * makes infrastructure failure safe."
+ *
+ * So the state machine has exactly one shape and it leans one way:
+ *
+ *   nobody acts            EXPIRED, whatever the outcome was. This is the
+ *                          default and it returns the money.
+ *   NOTHING (a VOID)       EXPIRED. Not CANCELLED - a cancel is an ACT, and it
+ *                          needs five of seven; a refund that needed an act is
+ *                          one an operator could withhold.
+ *   SETTLE, authorised     SETTLED, and the pool has it
+ *   CANCEL, authorised     CANCELLED, and the payer has it
+ *   anything unauthorised  HELD - and a hold nobody may act on expires, which
+ *                          is the same refund by another road
+ *
+ * NO INVOICE IS ISSUED HERE and none is settled: this says which end a hold
+ * must reach. Reaching it is a Lightning endpoint, and everything about
+ * `invoice` and `htlc` in this package was a comment until now.
+ */
+export function holdAfter({ action, authorised = false, nobodyActs = false }) {
+  if (![SETTLE, CANCEL, NOTHING].includes(action))
+    throw new Error(`${action} is not something that can be done to a hold`);
+
+  if (action === NOTHING || nobodyActs)
+    return {
+      state: EXPIRED,
+      hasIt: 'the payer',
+      why: action === NOTHING
+        ? 'the HTLC expires and the wallet is refunded: nobody has to act'
+        : 'nobody acted, and the default path is always the refund',
+    };
+
+  if (!authorised)
+    return {
+      state: HELD,
+      hasIt: 'nobody',
+      why: 'in flight, in nobody\'s balance, until every condition is met - and '
+        + 'if they never are, it expires back to the payer',
+    };
+
+  return action === SETTLE
+    ? { state: SETTLED, hasIt: 'the pool', why: 'the preimage was released' }
+    : { state: CANCELLED, hasIt: 'the payer', why: 'handed back to its owner' };
+}

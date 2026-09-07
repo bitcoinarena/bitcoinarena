@@ -23,7 +23,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  holdSettlement, settlementAction, SETTLE, CANCEL, NOTHING,
+  holdSettlement, settlementAction, holdAfter, SETTLE, CANCEL, NOTHING,
+  HELD, SETTLED, CANCELLED, EXPIRED,
   SETTLEMENT_THRESHOLD, DELIVERED, FAILED, FORFEIT, VOID,
 } from '../src/payout.js';
 
@@ -212,4 +213,59 @@ test('a void hold, a settled one and a cancelled one in one round stay three thi
   assert.equal(allSafe.poolMsat, 0n);
   assert.equal(allSafe.refundedMsat, 300000n);
   assert.equal(allSafe.table.table[0].amountMsat, 100000n);
+});
+
+/**
+ * WHERE EACH HOLD ACTUALLY ENDS, as invoice state rather than as a word.
+ *
+ * Until now `invoice` and `htlc` appeared four times across the source
+ * packages and every one was a comment. The three fates were words on a decision; this is
+ * the end each one reaches, and the point is that VOID reaches EXPIRED and not
+ * CANCELLED - a cancel is an ACT needing five of seven, and a refund that
+ * needed an act is one an operator could withhold by doing nothing.
+ */
+test('a void hold expires, a forfeited one settles, a winner s is cancelled', () => {
+  const winner = entry(1, DELIVERED, 100);
+  const loser = entry(2, FORFEIT);
+  const voided = entry(3, VOID);
+
+  const s = holdSettlement({ roundId: b32(9), minScore: 1, entries: [winner, loser, voided] });
+  const ends = s.actions.map((a) => holdAfter({
+    action: a.action,
+    authorised: settlementAction({
+      outcome: a.entry.outcome,
+      qualifies: a.entry.outcome === DELIVERED && a.entry.score >= 1,
+      ...ready,
+    }).authorised,
+  }));
+
+  assert.deepEqual(ends.map((e) => e.state), [CANCELLED, SETTLED, EXPIRED]);
+  assert.deepEqual(ends.map((e) => e.hasIt), ['the payer', 'the pool', 'the payer']);
+  assert.notEqual(ends[2].state, CANCELLED, 'a VOID refund was made into an act');
+  assert.notEqual(ends[2].state, SETTLED, 'a VOID stake was taken');
+  assert.match(ends[2].why, /nobody has to act/);
+
+  // and the money says the same thing
+  assert.equal(s.poolMsat, 100000n, 'the pool is the forfeited stake alone');
+  assert.equal(s.refundedMsat, 200000n);
+  assert.equal(s.poolMsat - s.sharesMsat, 0n, 'the house kept something');
+  assert.equal(s.table.table.length, 2, 'the void entry is in the payout table');
+});
+
+test('a hold nobody acts on expires, whatever was supposed to happen to it', () => {
+  for (const action of [SETTLE, CANCEL, NOTHING]) {
+    const end = holdAfter({ action, authorised: true, nobodyActs: true });
+    assert.equal(end.state, EXPIRED, action);
+    assert.equal(end.hasIt, 'the payer');
+  }
+
+  // and one that may not be acted on yet is in nobody's balance
+  const waiting = holdAfter({ action: SETTLE, authorised: false });
+  assert.equal(waiting.state, HELD);
+  assert.equal(waiting.hasIt, 'nobody');
+  assert.match(waiting.why, /if they never are, it expires back to the payer/);
+
+  // an unauthorised cancel is not a settle by another name
+  assert.equal(holdAfter({ action: CANCEL, authorised: false }).state, HELD);
+  assert.throws(() => holdAfter({ action: 'RELEASE' }), /not something that can be done to a hold/);
 });
