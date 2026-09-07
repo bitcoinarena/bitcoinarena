@@ -25,11 +25,18 @@
 // It is NOT Feldman: it does not prove the dealer used ONE polynomial for all
 // seven seats, which needs commitments in a group with a hard discrete log,
 // and this package carries no group for the same reason it carries no curve.
-// A dealer who wanted to hand out inconsistent shares would be caught at
-// reconstruction rather than at handout, and that limit is stated rather than
-// papered over.
+// A dealer who wants to hand out inconsistent shares is caught at
+// RECONSTRUCTION rather than at handout, and the price of that is measured
+// rather than guessed: splitting with two polynomials and giving three seats
+// the second one leaves every share passing its own commitment and NONE of the
+// twenty-one five-subsets able to open the committed P. Closing that at
+// handout needs commitments in a group with a hard discrete log - Feldman -
+// and this package carries no group for the same reason it carries no curve.
+// What is closed here instead is the quieter half: a subset that rebuilds
+// SOMETHING is no longer mistaken for one that rebuilt P.
 import { taggedHash, toHex } from './hash.js';
 import { TAG } from './constants.js';
+import { sha256bytes } from '../../core/src/sha256.js';
 
 /** 2^521 - 1. A 32-byte secret is nowhere near it, which is the point. */
 export const FIELD = (1n << 521n) - 1n;
@@ -110,7 +117,7 @@ export function shareIsConsistent(share, commitment) {
  * function that handed that back would be handing back a wrong preimage that
  * looks exactly like a right one.
  */
-export function reconstruct(shares, { needed = SHARES_NEEDED } = {}) {
+export function reconstruct(shares, { needed = SHARES_NEEDED, stakeCommitment } = {}) {
   const seats = new Set(shares.map((s) => s.seat));
   if (seats.size !== shares.length)
     throw new Error('two shares for one seat are one share');
@@ -129,5 +136,57 @@ export function reconstruct(shares, { needed = SHARES_NEEDED } = {}) {
     }
     secret = mod(secret + term);
   }
-  return toBytes32(secret);
+  const opened = toBytes32(secret);
+
+  // AND IF THE COMMITMENT IS TO HAND, THE ANSWER IS CHECKED AGAINST IT.
+  //
+  // Measured: a dealer who splits with two polynomials hands out seven shares
+  // that each pass their own seat, and of the twenty-one five-subsets, TWO
+  // still produce a well-formed 32-byte value that is not P. Handed back
+  // unchecked, that is a wrong preimage which looks exactly like a right one.
+  // `stakeCommitment` is H(P) and it is in the entry contract the player
+  // signed, so a caller settling a stake always has it.
+  if (stakeCommitment !== undefined) {
+    if (toHex(sha256bytes(opened)) !== toHex(stakeCommitment))
+      throw new Error('those shares rebuild something that is not the committed preimage');
+  }
+  return opened;
+}
+
+/**
+ * Try every combination of `needed` shares until one opens the committed
+ * preimage, and say how the whole set behaved.
+ *
+ * This is what a settlement committee actually does, and it is also the
+ * measurement of the hole below it: a dealer is free to hand out shares that
+ * each pass their seat and yet leave NO subset able to open P.
+ */
+export function openStake(shares, { needed = SHARES_NEEDED, stakeCommitment } = {}) {
+  const subsets = [];
+  const walk = (from, taken) => {
+    if (taken.length === needed) { subsets.push(taken.slice()); return; }
+    for (let i = from; i < shares.length; i++) { taken.push(shares[i]); walk(i + 1, taken); taken.pop(); }
+  };
+  walk(0, []);
+
+  let opened = null;
+  let openedBy = null;
+  let refused = 0;
+  for (const five of subsets) {
+    try {
+      const back = reconstruct(five, { needed, stakeCommitment });
+      if (opened === null) { opened = back; openedBy = five.map((s) => s.seat); }
+    } catch { refused++; }
+  }
+  return {
+    ok: opened !== null,
+    preimage: opened,
+    openedBy,
+    subsets: subsets.length,
+    opens: subsets.length - refused,
+    refused,
+    why: opened === null
+      ? `none of the ${subsets.length} ways to pick ${needed} shares opens the committed preimage`
+      : `opened by seats ${openedBy.join(',')}`,
+  };
 }

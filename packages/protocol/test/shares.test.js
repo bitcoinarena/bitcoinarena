@@ -12,7 +12,7 @@ import assert from 'node:assert/strict';
 import { createHash, randomBytes } from 'node:crypto';
 
 import {
-  splitSecret, reconstruct, shareIsConsistent, shareCommitment,
+  splitSecret, reconstruct, openStake, shareIsConsistent, shareCommitment,
   FIELD, SHARES_NEEDED, SHARES_TOTAL,
 } from '../src/shares.js';
 import { toHex } from '../src/hash.js';
@@ -151,4 +151,93 @@ test('shares differ with the secret and with the randomness', () => {
   assert.notEqual(a.shares[0].value, c.shares[0].value);
   assert.deepEqual(reconstruct(b.shares.slice(0, 5)), other);
   assert.deepEqual(reconstruct(c.shares.slice(0, 5)), preimage);
+});
+
+/**
+ * WHAT A DISHONEST DEALER CAN STILL DO, MEASURED RATHER THAN GUESSED.
+ *
+ * The contract of this piece is SHARE-TO-SEAT BINDING, not polynomial binding.
+ * A dealer who splits with two polynomials and gives some seats the second one
+ * hands out shares that EACH pass their own seat commitment, and nothing here
+ * catches it at handout. It is caught at reconstruction, and this counts what
+ * that costs.
+ *
+ * The player is the dealer, and the stake is theirs to lose - so a dealer who
+ * mis-shares is a player arranging that a loss can never be settled.
+ */
+test('a two-polynomial dealer: how many of the twenty-one five-subsets open P', () => {
+  const other = new Uint8Array(randomBytes(32));
+  const honest = split().shares;
+  const second = splitSecret(other, { coefficients: coefficients.map((x) => x + 99n) }).shares;
+  const stakeCommitment = sha256(preimage);
+
+  // k seats are given the second polynomial's share instead of their own
+  const counts = [];
+  for (let k = 0; k <= 3; k++) {
+    const mixed = honest.map((s, i) => (i >= 7 - k ? second[i] : s));
+
+    // EVERY ONE OF THEM STILL PASSES ITS OWN SEAT. That is the whole point:
+    // nothing at handout can tell.
+    for (let i = 0; i < mixed.length; i++) {
+      const published = i >= 7 - k ? second[i].commitment : honest[i].commitment;
+      assert.equal(shareIsConsistent(mixed[i], published), true, `seat ${i + 1} at k=${k}`);
+    }
+
+    const seen = openStake(mixed, { stakeCommitment });
+    assert.equal(seen.subsets, 21);
+    counts.push([k, seen.opens, seen.refused, seen.ok]);
+  }
+
+  assert.deepEqual(counts, [
+    [0, 21, 0, true],     // honest: every five opens it
+    [1, 6, 15, true],     // one bad share: the six subsets avoiding it still open it
+    [2, 1, 20, true],     // two: exactly one subset is left
+    [3, 0, 21, false],    // THREE: no five can open the committed preimage at all
+  ]);
+
+  // and the answer names it rather than handing back a wrong preimage
+  const worst = openStake(honest.map((s, i) => (i >= 4 ? second[i] : s)), { stakeCommitment });
+  assert.equal(worst.ok, false);
+  assert.equal(worst.preimage, null);
+  assert.match(worst.why, /none of the 21 ways to pick 5 shares opens the committed preimage/);
+});
+
+/**
+ * AND THE QUIETER HALF IS CLOSED. Without the commitment, two of those
+ * twenty-one subsets hand back a well-formed 32-byte value that is not P - a
+ * wrong preimage that looks exactly like a right one. With it, they refuse.
+ */
+test('a subset that rebuilds something is not mistaken for one that rebuilt P', () => {
+  const other = new Uint8Array(randomBytes(32));
+  const honest = split().shares;
+  const second = splitSecret(other, { coefficients: coefficients.map((x) => x + 99n) }).shares;
+  const mixed = honest.map((s, i) => (i >= 4 ? second[i] : s));
+  const stakeCommitment = sha256(preimage);
+
+  let wrongAccepted = 0;
+  let refusedForSize = 0;
+  let refusedForCommitment = 0;
+  for (const five of everyChoice(mixed, 5)) {
+    let unchecked = null;
+    try { unchecked = reconstruct(five); } catch { refusedForSize++; }
+    if (unchecked && toHex(unchecked) !== toHex(preimage)) wrongAccepted++;
+    try { reconstruct(five, { stakeCommitment }); }
+    catch (e) {
+      if (/not the committed preimage/.test(e.message)) refusedForCommitment++;
+    }
+  }
+  // HOW MANY LAND INSIDE 32 BYTES IS LUCK, not a property: a mixed
+  // interpolation lands somewhere in a 521-bit field, and the count moved
+  // between runs when it was asserted directly. What does not move is that
+  // the ones which DO land there are wrong, and that with the commitment
+  // checked every single subset is refused.
+  assert.ok(wrongAccepted > 0, 'no subset produced a wrong preimage to catch');
+  assert.equal(wrongAccepted, 21 - refusedForSize,
+    'a subset produced 32 bytes that were actually P');
+  assert.equal(refusedForCommitment, wrongAccepted,
+    'the commitment check missed one the unchecked path let through');
+  assert.equal(refusedForSize + refusedForCommitment, 21, 'a subset got through');
+
+  // an honest set still opens, and its answer hashes to the commitment
+  assert.deepEqual(reconstruct(honest.slice(0, 5), { stakeCommitment }), preimage);
 });
