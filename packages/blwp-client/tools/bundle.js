@@ -34,15 +34,19 @@ function walk(file) {
 }
 walk(SRC + 'client.js');
 
-// One scope, so a name exported twice would silently shadow itself and the
-// survivor would depend on file order. Refuse rather than ship a bundle that
-// is quietly a different program from the modules.
+// One scope, so a name declared twice would collide. EVERY top-level name is
+// checked, not only the exported ones: two files with a private helper of the
+// same name are the dangerous case, because nothing in either module says so.
+// A duplicated `const` throws when the page loads, which is loud; a duplicated
+// `function` or `var` silently keeps one of them and the survivor depends on
+// file order, which is a different program from the modules with no symptom.
+// Measured: `chain.js` and `transcript.js` each had a private `same`.
 const declared = new Map();
 for (const file of order) {
   for (const m of readFileSync(file, 'utf8')
-    .matchAll(/^export\s+(?:async\s+)?(?:const|function|class|let|var)\s+([A-Za-z_$][\w$]*)/gm)) {
+    .matchAll(/^(?:export\s+)?(?:async\s+)?(?:const|function|class|let|var)\s+([A-Za-z_$][\w$]*)/gm)) {
     if (declared.has(m[1]) && declared.get(m[1]) !== file) {
-      console.error(`bundle: ${m[1]} is exported by both `
+      console.error(`bundle: ${m[1]} is declared at the top level of both `
         + `${relative(ROOT, declared.get(m[1]))} and ${relative(ROOT, file)}`);
       process.exit(1);
     }
@@ -64,6 +68,7 @@ for (const file of order) {
   out += '\n// ---- ' + relative(ROOT, file) + '\n' + body;
 }
 out += '\nreturn { Client: Client, markState: markState,\n';
+out += '         reach: reach, endpointFor: endpointFor,\n';
 out += '         GENESIS: GENESIS, NO_PREVIOUS: NO_PREVIOUS,\n';
 out += '         encodeRoundContract: encodeRoundContract, roundId: roundId,\n';
 out += '         encodeEntryContract: encodeEntryContract, entryId: entryId,\n';

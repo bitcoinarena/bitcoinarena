@@ -359,11 +359,53 @@ mergeInto(LibraryManager.library, {
     return n;
   },
 
-  // WHICH NODE, named by the page for the same reason the round is: a lobby
-  // will say one day, and until then whoever runs the page does. Empty means
-  // no session, which is the shipping default.
+  // WHICH NODE, AND WHY THAT ONE.
+  //
+  // This used to be `BLWP_NODE`, a global written into the page: every stranger
+  // who loaded it reached whatever address whoever shipped the page had put
+  // there. Section 25.1 forbids exactly that - a client "MUST NOT take a
+  // census, a committee or an endpoint on the word of any API, including one
+  // operated by the same party that ships the client" - and says why it is
+  // normative: the failure has no symptom, "same screens, same rounds, same
+  // results", until the address is somebody else's.
+  //
+  // The page still carries the bytes, and that is fine, because they are bytes
+  // it cannot choose. It hands over a bond transaction, a merkle branch and
+  // block headers; the txid is hashed out of the transaction, the branch has to
+  // rebuild a header's own merkle root, and the endpoint is only read out of a
+  // body one of that transaction's outputs commits to. Swap the endpoint and
+  // there is no address at all.
+  //
+  // WHAT IS NOT DONE HERE. Where the headers come from. "Block headers from
+  // several independent sources, most work wins" is step 5c; until something
+  // fetches, a page that omits the honest chain is not yet answered - it still
+  // cannot forge one.
+  //
+  // Hashes are taken in the order an API PRINTS them - reversed from the order
+  // Bitcoin hashes them in - because that is what a page author will copy. The
+  // reversal happens here, once, and nowhere else.
   BlwpNetNodeUrl: function (ptr, cap) {
-    var url = (typeof BLWP_NODE !== 'undefined' && BLWP_NODE) ? String(BLWP_NODE) : '';
+    var url = '';
+    var d = (typeof BLWP_ADVERT !== 'undefined') ? BLWP_ADVERT : null;
+    if (d && typeof BLWPCLIENT !== 'undefined') {
+      try {
+        var reversed = function (hex) { return BLWPCLIENT.fromHex(hex).reverse(); };
+        url = BLWPCLIENT.endpointFor({
+          transaction: BLWPCLIENT.fromHex(d.transaction),
+          branch: (d.branch || []).map(reversed),
+          position: d.position | 0,
+          chains: (d.chains || []).map(function (c) {
+            return c.map(function (h) { return BLWPCLIENT.fromHex(h); });
+          }),
+        });
+      } catch (e) {
+        // Named, not swallowed: "no proven endpoint: ..." says which half failed,
+        // and an empty answer means no session rather than a session with
+        // whoever was convenient.
+        console.error('[blwp] ' + (e && e.message ? e.message : e));
+        url = '';
+      }
+    }
     var n = Math.min(url.length, (cap | 0) - 1);
     for (var i = 0; i < n; i++) Module.HEAPU8[ptr + i] = url.charCodeAt(i);
     Module.HEAPU8[ptr + n] = 0;

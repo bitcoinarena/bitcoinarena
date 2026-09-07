@@ -19,16 +19,17 @@
 // difficulty retargeting; it answers two questions only - is this transaction
 // in this header's block, and which of these header chains carries the most
 // work. That is what discovery needs and it is deliberately not more.
-import { sha256bytes } from '../../core/src/sha256.js';
-import { advertId } from './advert.js';
+import { advertId, decodeAdvert } from './advert.js';
+import {
+  hash256, parseTransaction, commitmentsOf, witnessItemsOf,
+} from './tx.js';
 
-/** Bitcoin hashes twice, everywhere. */
-export const hash256 = (bytes) => sha256bytes(sha256bytes(bytes));
+export { hash256 };
 
 /** A block header is exactly this, and a shorter one is not a header. */
 export const HEADER_BYTES = 80;
 
-const same = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
+const sameBytes = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
 
 function header(bytes) {
   if (!(bytes instanceof Uint8Array) || bytes.length !== HEADER_BYTES)
@@ -79,7 +80,7 @@ export function chainWork(headers) {
   let work = 0n;
   for (let i = 0; i < headers.length; i++) {
     try { header(headers[i]); } catch (e) { return { ok: false, at: i, why: e.message, work: 0n }; }
-    if (i > 0 && !same(previousHashOf(headers[i]), blockHashOf(headers[i - 1])))
+    if (i > 0 && !sameBytes(previousHashOf(headers[i]), blockHashOf(headers[i - 1])))
       return { ok: false, at: i, why: 'this header does not follow the one before it', work: 0n };
     work += workOf(headers[i]);
   }
@@ -147,7 +148,7 @@ export function merkleRootFromProof(txid, branch, position) {
  */
 export function provesTransaction(headerBytes, txid, branch, position) {
   const root = merkleRootOf(headerBytes);
-  try { return same(merkleRootFromProof(txid, branch, position), root); }
+  try { return sameBytes(merkleRootFromProof(txid, branch, position), root); }
   catch { return false; }
 }
 
@@ -156,29 +157,76 @@ export function provesTransaction(headerBytes, txid, branch, position) {
  *
  * Section 5A.1: "The advertisement is not what makes a node eligible. The bond
  * output is. The advertisement is the body that the bond output commits to, so
- * that chain data alone identifies both the node and its terms." Two things
- * have to hold, and neither is enough alone:
+ * that chain data alone identifies both the node and its terms."
+ *
+ * WHAT IS HANDED IN IS RAW BYTES, NOT FINDINGS. The transaction, a branch, a
+ * header. The txid is computed from the transaction and the commitment is read
+ * out of its outputs, because the earlier shape of this function took both as
+ * arguments and that made the proof theatre: whoever handed over the
+ * advertisement also handed over the hash of the advertisement they wanted,
+ * their own txid to go with it, and every check passed. The page could put any
+ * endpoint it liked behind a real block. Now the only inputs are bytes whose
+ * hashes it does not control.
  *
  *   the transaction is really in the block   or a provider invented it
- *   the output really commits to THIS body   or a provider swapped the endpoint
+ *   an output really commits to THIS body    or a provider swapped the endpoint
  *
- * The second is the one that matters most in practice, because a swapped
- * endpoint is invisible: the node is real, the bond is real, and the player
- * connects to whoever the provider preferred. So the answer names which of the
- * two failed rather than saying no.
+ * The second is the one that matters in practice, because a swapped endpoint
+ * is invisible: the node is real, the bond is real, and the player connects to
+ * whoever the provider preferred. So the answer names which failed.
+ *
+ * The body may come from the transaction's own witness (25.1: "the body of
+ * 5A.1 is carried in the witness of the funding transaction") or be handed in
+ * beside it. It does not matter which, and that is the point - the witness is
+ * not covered by the txid, so a body from either place has to earn its standing
+ * from the committed output, and one that cannot is refused the same way.
  */
-export function acceptAdvert({ advert, commitment, header, txid, branch, position }) {
-  if (!provesTransaction(header, txid, branch, position))
+export function acceptAdvert({ transaction, advert, header, branch, position }) {
+  let tx;
+  try { tx = parseTransaction(transaction); }
+  catch (e) { return { ok: false, why: `that is not a transaction: ${e.message}` }; }
+
+  if (!provesTransaction(header, tx.txid, branch, position))
     return { ok: false, why: 'the transaction is not in that block' };
 
-  const id = advertId(advert);
-  if (!same(id, commitment))
+  const commitments = commitmentsOf(tx);
+  if (!commitments.length)
+    return { ok: false, why: 'no output of that transaction commits to anything' };
+
+  // Every body on offer, from the witness first, and the one handed in last:
+  // order decides nothing, since a body is taken only if an output commits to
+  // it, and a transaction that committed to two of them would be one operator
+  // advertising twice rather than an ambiguity to resolve here.
+  const offered = [];
+  for (const item of witnessItemsOf(tx)) {
+    try { offered.push(decodeAdvert(item)); } catch { /* not a body; most are not */ }
+  }
+  if (advert) offered.push(advert);
+
+  const taken = offered.find((body) =>
+    commitments.some((c) => sameBytes(c, advertId(body))));
+  if (!taken)
     return { ok: false, why: 'the bond output commits to a different advertisement' };
 
   // The advertisement must point back at the bond that gives it standing, or
-  // it says where to reach somebody with nothing to say why they count.
-  if (!same(advert.bondTxid, txid))
+  // it says where to reach somebody with nothing to say why they count. An
+  // all-zero txid is the only value a body CAN carry when it rides in the
+  // transaction it names - 5A.1 makes bond_outpoint mandatory and 25.1 puts
+  // the body in the same transaction, so the txid is not knowable when the
+  // body is signed. Reading it as "the transaction carrying me" is the only
+  // reading available; which output is the bond still waits on BOND_MARKER,
+  // and neither is settled here.
+  const carriesUs = taken.bondTxid.every((b) => b === 0);
+  if (!carriesUs && !sameBytes(taken.bondTxid, tx.txid))
     return { ok: false, why: 'the advertisement names a different bond transaction' };
+  if (taken.bondVout >= tx.outputs.length)
+    return { ok: false, why: 'the advertisement names an output that transaction does not have' };
 
-  return { ok: true, endpoint: advert.endpoint, nodePubkey: advert.nodePubkey };
+  return {
+    ok: true,
+    endpoint: taken.endpoint,
+    nodePubkey: taken.nodePubkey,
+    txid: tx.txid,
+    advert: taken,
+  };
 }

@@ -15,7 +15,17 @@ import {
   chainWork, mostWork, merkleRootFromProof, provesTransaction, acceptAdvert,
 } from '../src/chain.js';
 import { encodeAdvert, decodeAdvert, advertId } from '../src/advert.js';
+import { parseTransaction } from '../src/tx.js';
 import { fromHex, toHex } from '../src/hash.js';
+import { bondTransaction, blockOf } from '../tools/bond.js';
+
+// There is no BLWP bond on mainnet to point at, so the bond transaction is
+// built - by `tools/bond.js`, which is not part of the protocol - and put in a
+// two-transaction block of its own. What reads it is measured against real
+// mainnet bytes in tx.test.js and below; only the shape is assembled here.
+const blockAround = (txid, sibling = new Uint8Array(32).fill(0x99)) => ({
+  ...blockOf(hash256, [txid, sibling]), branch: [sibling], position: 0,
+});
 
 /** A txid as an API prints it is REVERSED from the way it is hashed. */
 const txidBytes = (displayHex) => fromHex(displayHex).reverse();
@@ -124,46 +134,136 @@ test('an advertisement survives the wire unchanged', () => {
   assert.throws(() => decodeAdvert(encodeAdvert(a).slice(0, 20)));
 });
 
+/* ------------------------------------ and the whole of step 4, on real bytes */
+
+// mainnet block 500000 and the merkle proof for its coinbase, fetched once.
+// A real transaction, really in a real block, that commits to something that
+// is not an advertisement - which is what almost every transaction on Bitcoin
+// is, and therefore the case a reader meets most often.
+// mainnet block 500000, its coinbase, as in tx.test.js.
+const COINBASE_500000 = fromHex(
+  '01000000000101000000000000000000000000000000000000000000000000000000'
+  + '0000000000ffffffff4b0320a107046f0a385a632f4254432e434f4d2ffabe6d6dbd'
+  + 'd0ee86f9a1badfd0aa1b3c9dac8d90840cf973f7b2590d6c9adde1a6e0974a010000'
+  + '000000000001283da9a172020000000000ffffffff02c994bb5e0000000017a91422'
+  + '8f554bbf766d6f9cc828de1126e3d35d15e5fe870000000000000000266a24aa21a9'
+  + 'ed10109f4b82aa3ed7ec9d02a2a90246478b3308c8b85daf62fe501d58d05727a401'
+  + '20000000000000000000000000000000000000000000000000000000000000000000'
+  + '000000');
+const HEADER_500000 = fromHex(
+  '000000201929eb850a74427d0440cf6b518308837566cd6d06627900000000000000'
+  + '00001f6231ed3de07345b607ec2a39b2d01bec2fe10dfb7f516ba4958a42691c9531'
+  + '6d0a385a459600185599fc5c');
+const BRANCH_FOR_COINBASE = [
+  'fe6c48bbfdc025670f4db0340650ba5a50f9307b091d9aaa19aa44291961c69f',
+  '7c343e2d73c945204dbba26d4d270ccc607b3d2390471f064366bb812ac811fc',
+  'd85eaeedd2a212e8e0dfa163026bb485816f8a6ab6a588425921a0e6ca88adce',
+  '5c85ad415712389a75c2a29cfb82d4793b7747bcb3e37090e67685d25cc8bbdf',
+  'c8c85eda3df7d7c4bf105f3d0db8a4dbfcca798811ae903598cf093ff44d0575',
+  'be2a2e75e200878839736a4e8242bbdac5ece9434335b3298af2922faca4040e',
+  'f28ac132df10d4c5e02a648ea4b99832aebbc4e7999859771a10785b23f43ecb',
+  '8620b2fd60bcf1ba0bbac2ccbd6b7e301870d335faa17e0e258b3ffc93b43ae6',
+  '9141cff8144ecb7a804ce63c6a34ff1a75c741292fa8f99ebf6291565115cbd8',
+  '377a893c2d5446106cc25840ba4e98c47a293a2a6586d8e0ed483d7fdacd38bd',
+  'd9af63a572e83ecfdf88aa74c6640a444684acf048e6f7184c3cab8e39e9f593',
+  '6fa2420ff6d2fa3a41c5a41ecdc76ef880a97d7083d2484bdf0b79dc8b667596',
+].map(txidBytes);
+
 /**
- * AND THE WHOLE OF STEP 4. Both halves have to hold: the transaction is really
- * in the block, and the output really commits to THIS body. A swapped endpoint
- * is the invisible one - the node is real and the bond is real, and the player
- * connects to whoever the provider preferred - so it is refused by its own name.
+ * THE PART THAT USED TO BE THEATRE.
+ *
+ * This function took `commitment` and `txid` as arguments. Whoever handed over
+ * the advertisement handed those over too, so a page could publish any endpoint
+ * it liked behind a real block and every check passed: it supplied the hash of
+ * the body it wanted believed. Both are now COMPUTED from the transaction -
+ * the txid by hashing it, the commitment by reading its outputs - and the only
+ * things a caller supplies are bytes whose hashes it does not control.
  */
-test('an endpoint is accepted only when the chain says so', () => {
-  const a = advert();
-  const ok = acceptAdvert({
-    advert: a, commitment: advertId(a), header: HEADER_100000,
-    txid: txidBytes(TX_AT_1), branch: BRANCH_FOR_1, position: 1,
-  });
+test('the endpoint comes out of the transaction, not out of the caller', () => {
+  const a = { ...advert(), bondTxid: new Uint8Array(32) };
+  const raw = bondTransaction(a);
+  const txid = parseTransaction(raw).txid;
+  const { header, branch, position } = blockAround(txid);
+
+  // nothing handed in but bytes: the body is read from the witness
+  const ok = acceptAdvert({ transaction: raw, header, branch, position });
   assert.equal(ok.ok, true, ok.why);
   assert.equal(ok.endpoint, 'wss://node.example:443');
+  assert.equal(toHex(ok.txid), toHex(txid));
+});
 
-  // the provider swapped the endpoint and left the commitment alone
+test('a page that swaps the endpoint is refused, and cannot supply the hash', () => {
+  const a = { ...advert(), bondTxid: new Uint8Array(32) };
   const swapped = { ...a, endpoint: 'wss://whoever-the-provider-prefers:443' };
-  const no = acceptAdvert({
-    advert: swapped, commitment: advertId(a), header: HEADER_100000,
-    txid: txidBytes(TX_AT_1), branch: BRANCH_FOR_1, position: 1,
-  });
+
+  // the transaction carries no body at all, so the page offers its own
+  const raw = bondTransaction(a, { body: new Uint8Array(0) });
+  const { header, branch, position } = blockAround(parseTransaction(raw).txid);
+
+  const no = acceptAdvert({ transaction: raw, advert: swapped, header, branch, position });
   assert.equal(no.ok, false);
   assert.match(no.why, /commits to a different advertisement/);
 
-  // the provider invented the transaction
-  const bent = BRANCH_FOR_1.map((b) => b.slice());
-  bent[1][5] ^= 0x80;
-  const nope = acceptAdvert({
-    advert: a, commitment: advertId(a), header: HEADER_100000,
-    txid: txidBytes(TX_AT_1), branch: bent, position: 1,
+  // the honest body, offered the same way, is taken - the page is a courier
+  const yes = acceptAdvert({ transaction: raw, advert: a, header, branch, position });
+  assert.equal(yes.ok, true, yes.why);
+
+  // and when the transaction does carry the body, offering another changes
+  // nothing: the committed one wins
+  const carried = bondTransaction(a);
+  const b = blockAround(parseTransaction(carried).txid);
+  const still = acceptAdvert({
+    transaction: carried, advert: swapped, header: b.header, branch: b.branch,
+    position: b.position,
   });
+  assert.equal(still.ok, true, still.why);
+  assert.equal(still.endpoint, 'wss://node.example:443');
+});
+
+test('a real mainnet transaction in a real block advertises nothing', () => {
+  const seen = acceptAdvert({
+    transaction: COINBASE_500000, advert: advert(), header: HEADER_500000,
+    branch: BRANCH_FOR_COINBASE, position: 0,
+  });
+  assert.equal(seen.ok, false);
+  assert.match(seen.why, /commits to a different advertisement/);
+});
+
+test('an invented transaction, and one that is not a transaction, are refused', () => {
+  const a = { ...advert(), bondTxid: new Uint8Array(32) };
+  const raw = bondTransaction(a);
+  const { header, branch, position } = blockAround(parseTransaction(raw).txid);
+
+  const bent = branch.map((x) => x.slice());
+  bent[0][5] ^= 0x80;
+  const nope = acceptAdvert({ transaction: raw, header, branch: bent, position });
   assert.equal(nope.ok, false);
   assert.match(nope.why, /not in that block/);
 
-  // and an advertisement that points at some other bond
-  const elsewhere = { ...a, bondTxid: b32(9) };
+  const rubbish = acceptAdvert({
+    transaction: raw.slice(0, 40), header, branch, position,
+  });
+  assert.equal(rubbish.ok, false);
+  assert.match(rubbish.why, /not a transaction/);
+});
+
+test('an advertisement pointing at some other bond, or at no output, is refused', () => {
+  const elsewhere = { ...advert(), bondTxid: b32(9) };
+  const raw = bondTransaction(elsewhere);
+  const at = blockAround(parseTransaction(raw).txid);
   const other = acceptAdvert({
-    advert: elsewhere, commitment: advertId(elsewhere), header: HEADER_100000,
-    txid: txidBytes(TX_AT_1), branch: BRANCH_FOR_1, position: 1,
+    transaction: raw, header: at.header, branch: at.branch, position: at.position,
   });
   assert.equal(other.ok, false);
   assert.match(other.why, /different bond transaction/);
+
+  // the bond output it names is not in the transaction that carries it
+  const past = { ...advert(), bondTxid: new Uint8Array(32), bondVout: 7 };
+  const raw2 = bondTransaction(past);
+  const at2 = blockAround(parseTransaction(raw2).txid);
+  const no = acceptAdvert({
+    transaction: raw2, header: at2.header, branch: at2.branch, position: at2.position,
+  });
+  assert.equal(no.ok, false);
+  assert.match(no.why, /an output that transaction does not have/);
 });

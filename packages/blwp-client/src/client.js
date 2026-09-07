@@ -37,6 +37,7 @@ import { fromHex, toHex } from '../../protocol/src/hash.js';
 import {
   decodeCheckpointReceipt, receiptId, splitSignedReceipt, SIGNED_RECEIPT_BYTES,
 } from '../../protocol/src/receipt.js';
+import { endpointFor } from './directory.js';
 
 /**
  * A checkpoint over the state a core is holding, signed and ready for the wire.
@@ -115,6 +116,21 @@ function agrees(mine, theirs, what) {
 }
 
 export class Client {
+  /**
+   * A client that reaches a node because Bitcoin says where it is.
+   *
+   * The one door the game uses. `base` is not passed in: it is READ OFF a
+   * proven advertisement, so there is nowhere in the live path for a page to
+   * put an address of its own. Section 25.1 makes that normative - "it MUST
+   * NOT take a census, a committee or an endpoint on the word of any API,
+   * including one operated by the same party that ships the client" - and the
+   * constructor below still takes a `base` because tests and the node's own
+   * fixtures talk to a process on localhost that has no bond and never will.
+   */
+  static at(discovery, { core, sign, verify }) {
+    return new Client({ base: endpointFor(discovery), core, sign, verify });
+  }
+
   constructor({ base, core, sign, verify }) {
     this.base = base;
     this.core = core;

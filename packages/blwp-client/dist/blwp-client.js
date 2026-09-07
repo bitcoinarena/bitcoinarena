@@ -454,6 +454,39 @@ const roleByte = (role) => {
   return i;
 };
 
+/**
+ * THE ONE ADDRESS EVERY BOND PAYS A DUST OUTPUT TO.
+ *
+ * Section 25.1: "A P2TR output is a 32-byte key and looks like every other
+ * one, so a bond cannot be recognised from its output... OP_RETURN does not
+ * help either: BIP158 compact filters exclude it." Hence the requirement:
+ * "Every bond funding transaction MUST pay a dust output to BOND_MARKER, a
+ * single address fixed by this protocol." One address for every bond, so it
+ * appears in the compact filters and any light client can find every bond that
+ * has ever existed without asking anyone. It costs one dust output, once.
+ *
+ * IT IS NOT CHOSEN HERE, and that is deliberate rather than unfinished. The
+ * marker is part of the network's identity in the same way `genesis_parameters`
+ * is: introducing or changing it later makes every bond posted before it
+ * unfindable, so it has to be settled once, before the first bond exists, and
+ * never again. Writing a plausible address into this file would be settling it
+ * by accident in a source tree, which is exactly how such a thing gets decided
+ * without anyone deciding it.
+ *
+ * So it is null, and `bondMarker()` refuses rather than returning something
+ * that would silently match nothing. A search for bonds that quietly found
+ * none would look exactly like a network with no nodes in it.
+ */
+const BOND_MARKER = null;
+
+function bondMarker() {
+  if (BOND_MARKER === null)
+    throw new Error(
+      'BOND_MARKER has not been chosen. It is fixed once, before the first bond '
+      + 'is posted, and every bond ever posted is unfindable without it');
+  return BOND_MARKER;
+}
+
 // ---- protocol/src/checkpoint.js
 // A checkpoint: where the player says the world was, at a tick both sides
 // named beforehand.
@@ -1059,6 +1092,633 @@ function joinSignedReceipt(bytes, signature) {
   return out;
 }
 
+// ---- protocol/src/advert.js
+// A node advertisement: who a node is, and where to reach it.
+//
+// WHY IT IS ON THE CHAIN AT ALL. Section 25.1 is blunt about the difference
+// between finding a round and finding the nodes: "Finding a ROUND is not
+// authoritative: project website, community sites, a direct link, a QR code,
+// or a copied round_id... Finding the NODES is a different matter and is not
+// left open: it is chain state."
+//
+// So the four steps of its table are answered like this: a round comes from a
+// link and carries nothing; which nodes count is the bond outputs confirmed
+// and unspent at `census_height`; which are on the committee is arithmetic,
+// already in `sortition.js`; and WHERE TO REACH THEM is this object, carried
+// by the bond funding transaction. There is no directory, no relay network and
+// no seed list belonging to this protocol, and this is the piece that makes
+// that possible rather than merely stated.
+//
+// IT IS NOT WHAT MAKES A NODE ELIGIBLE. Section 5A.1: "The advertisement is
+// not what makes a node eligible. The bond output is. The advertisement is the
+// body that the bond output commits to, so that chain data alone identifies
+// both the node and its terms." That is why `bondOutpoint` is mandatory here -
+// the object points back at the thing that gives it weight - and why the
+// commitment lives in `chain.js` rather than here.
+//
+// THE SIGNATURE SITS BESIDE IT, as it does for a checkpoint and a receipt, and
+// for the same reason twice over. Inside, it would be covered by `advertId`,
+// so the id of an advertisement would change the moment it was signed - and
+// the bond output commits to the BODY, which is fixed when the funding
+// transaction is built. Section 5A.1 lists `signature` among the fields; this
+// keeps it adjacent so the commitment and the id are both stable.
+
+
+
+function encodeAdvert(a) {
+  const w = new Writer();
+  w.u8(TYPE_ADVERT);
+  w.u16(PROTOCOL_VERSION);
+
+  w.bytes32(a.nodePubkey);
+
+  // SELF-DECLARED and marked as such by section 5A.13, so it is carried as a
+  // string and never treated as proof of anything.
+  w.str(a.operatorId);
+
+  w.vec([...a.protocolVersions].sort((x, y) => x - y), (v, ww) => ww.u16(v));
+  w.vec([...a.roles].sort(), (r, ww) => ww.u8(roleByte(r)),
+        { sortedBy: (x, y) => (x < y ? -1 : x > y ? 1 : 0) });
+
+  // The endpoint is the whole point of the object. It is fixed for the life of
+  // the bond: section 25.1 says a server move means a new funding transaction
+  // and new confirmations, "and the two cannot both be had: anything that
+  // makes an address cheap to change is something outside the chain that must
+  // be running".
+  w.str(a.endpoint);
+  w.str(a.region);
+  w.u8(a.capacityClass);
+
+  w.bytes32(a.softwareHash);
+  w.u32(a.settlementCapabilities);
+  w.u32(a.lightningCapabilities);
+
+  // MANDATORY (5A.1): the census entry itself. Without it an advertisement
+  // says where to reach somebody with no way to say which bond gives them
+  // standing.
+  w.bytes32(a.bondTxid);
+  w.u32(a.bondVout);
+  w.u16(a.bondScriptTemplateVersion);
+
+  w.bytes32(a.payoutPubkey);
+  w.u64(a.timestamp);
+  return w.finish();
+}
+
+function decodeAdvert(bytes) {
+  const r = new Reader(bytes);
+  const type = r.u8();
+  if (type !== TYPE_ADVERT) throw new Error('not an advertisement: type ' + type);
+  const version = r.u16();
+  if (version !== PROTOCOL_VERSION) throw new Error('unknown protocol version');
+
+  const a = {
+    nodePubkey: r.bytes32(),
+    operatorId: r.str(),
+    protocolVersions: r.vec((rr) => rr.u16()),
+    roles: r.vec((rr) => {
+      const i = rr.u8();
+      if (i < 0 || i >= ROLES.length) throw new Error('unknown role index ' + i);
+      return ROLES[i];
+    }),
+    endpoint: r.str(),
+    region: r.str(),
+    capacityClass: r.u8(),
+    softwareHash: r.bytes32(),
+    settlementCapabilities: r.u32(),
+    lightningCapabilities: r.u32(),
+    bondTxid: r.bytes32(),
+    bondVout: r.u32(),
+    bondScriptTemplateVersion: r.u16(),
+    payoutPubkey: r.bytes32(),
+    timestamp: r.u64(),
+  };
+  if (r.at !== bytes.length) throw new Error('trailing bytes after the advertisement');
+  return a;
+}
+
+/**
+ * What the bond output commits to.
+ *
+ * `TAG.advert` was reserved in `constants.js` before anything used it; this is
+ * the object it was reserved for.
+ */
+const advertId = (a) => taggedHash(TAG.advert, encodeAdvert(a));
+
+/** The 64 bytes the node's own key puts beside it, as for every other object here. */
+const ADVERT_SIGNATURE_BYTES = 64;
+
+function joinSignedAdvert(bytes, signature) {
+  if (signature.length !== ADVERT_SIGNATURE_BYTES)
+    throw new Error(`a signature is ${ADVERT_SIGNATURE_BYTES} bytes, got ${signature.length}`);
+  const out = new Uint8Array(bytes.length + ADVERT_SIGNATURE_BYTES);
+  out.set(bytes, 0);
+  out.set(signature, bytes.length);
+  return out;
+}
+
+function splitSignedAdvert(bytes) {
+  if (bytes.length <= ADVERT_SIGNATURE_BYTES)
+    throw new Error(`a signed advertisement is longer than ${ADVERT_SIGNATURE_BYTES} bytes`);
+  return {
+    body: bytes.subarray(0, bytes.length - ADVERT_SIGNATURE_BYTES),
+    signature: bytes.subarray(bytes.length - ADVERT_SIGNATURE_BYTES),
+  };
+}
+
+// ---- protocol/src/tx.js
+// A Bitcoin transaction, read far enough to find an endpoint in it.
+//
+// Section 25.1 puts discovery in the funding transaction itself: the body of
+// the advertisement rides in the witness, and the bond output commits to
+// `H(NodeAdvertisement)`. That is what makes discovery need no directory - but
+// only if the commitment is READ OUT OF THE TRANSACTION. Handed in beside it,
+// a commitment is worth nothing: whoever hands over the advertisement hands
+// over the hash of the advertisement they wanted, and every check passes.
+//
+// So the txid is COMPUTED here, never accepted. It is the double hash of the
+// transaction without its marker, flag and witness - the one number a page
+// cannot choose without changing the bytes it is derived from - and it is what
+// the merkle proof must then be about.
+//
+// NOTHING HERE IS BITCOIN CONSENSUS. No script is executed, no signature is
+// checked, no amount is summed. It parses a serialization and answers two
+// questions: what is this transaction called, and what does it commit to.
+
+/** Bitcoin hashes twice, everywhere. */
+const hash256 = (bytes) => sha256bytes(sha256bytes(bytes));
+
+/** OP_RETURN: the opcode that makes an output a commitment rather than money. */
+const OP_RETURN = 0x6a;
+
+function need(bytes, at, n, what) {
+  if (at + n > bytes.length)
+    throw new Error(`the transaction ends inside its ${what}`);
+  return at + n;
+}
+
+/**
+ * Bitcoin's variable-length integer.
+ *
+ * Refuses the long forms of a short number. A parser that accepted `fd0100`
+ * for 1 would give two byte strings the same meaning, and the txid is a hash
+ * OF the bytes - two spellings would be two names for one transaction.
+ */
+function readVarint(bytes, at) {
+  need(bytes, at, 1, 'length');
+  const first = bytes[at];
+  if (first < 0xfd) return { value: first, next: at + 1 };
+  if (first === 0xfd) {
+    need(bytes, at, 3, 'length');
+    const v = bytes[at + 1] | (bytes[at + 2] << 8);
+    if (v < 0xfd) throw new Error('a length is written longer than it needs to be');
+    return { value: v, next: at + 3 };
+  }
+  if (first === 0xfe) {
+    need(bytes, at, 5, 'length');
+    const v = (bytes[at + 1] | (bytes[at + 2] << 8) | (bytes[at + 3] << 16)
+      | (bytes[at + 4] << 24)) >>> 0;
+    if (v <= 0xffff) throw new Error('a length is written longer than it needs to be');
+    return { value: v, next: at + 5 };
+  }
+  // 0xff is eight bytes. A transaction that large does not exist and a length
+  // past what an array can hold is refused rather than truncated.
+  throw new Error('a length larger than this parser will read');
+}
+
+function readSlice(bytes, at, what) {
+  const { value, next } = readVarint(bytes, at);
+  const end = need(bytes, next, value, what);
+  return { bytes: bytes.slice(next, end), next: end };
+}
+
+/**
+ * Parses a transaction and computes its txid.
+ *
+ * The txid covers version, inputs, outputs and locktime and NOT the witness -
+ * that is what segwit is - so a body carried in the witness is not committed
+ * to by the name of the transaction. It is committed to by an output, and
+ * `commitmentsOf` is where that is read. Both halves are needed and neither is
+ * enough: the witness says what the advertisement is, the output says that
+ * this transaction meant it.
+ */
+function parseTransaction(raw) {
+  if (!(raw instanceof Uint8Array) || raw.length < 10)
+    throw new Error(`a transaction is more than ${raw && raw.length} bytes`);
+
+  let at = need(raw, 0, 4, 'version');
+  const version = (raw[0] | (raw[1] << 8) | (raw[2] << 16) | (raw[3] << 24)) >>> 0;
+
+  const segwit = raw[4] === 0x00 && raw[5] === 0x01;
+  if (segwit) at += 2;
+  const bodyFrom = at;
+
+  const ins = readVarint(raw, at);
+  if (ins.value === 0) throw new Error('a transaction with no inputs');
+  at = ins.next;
+  const inputs = [];
+  for (let i = 0; i < ins.value; i++) {
+    const end = need(raw, at, 36, 'outpoint');
+    const previousTxid = raw.slice(at, at + 32);
+    const previousVout = (raw[at + 32] | (raw[at + 33] << 8)
+      | (raw[at + 34] << 16) | (raw[at + 35] << 24)) >>> 0;
+    const script = readSlice(raw, end, 'input script');
+    at = need(raw, script.next, 4, 'sequence');
+    inputs.push({ previousTxid, previousVout, script: script.bytes });
+  }
+
+  const outs = readVarint(raw, at);
+  at = outs.next;
+  const outputs = [];
+  for (let i = 0; i < outs.value; i++) {
+    const end = need(raw, at, 8, 'value');
+    let value = 0n;
+    for (let b = 7; b >= 0; b--) value = (value << 8n) | BigInt(raw[at + b]);
+    const script = readSlice(raw, end, 'output script');
+    at = script.next;
+    outputs.push({ value, script: script.bytes });
+  }
+  const bodyTo = at;
+
+  const witnesses = [];
+  if (segwit) {
+    for (let i = 0; i < inputs.length; i++) {
+      const items = readVarint(raw, at);
+      at = items.next;
+      const stack = [];
+      for (let k = 0; k < items.value; k++) {
+        const item = readSlice(raw, at, 'witness item');
+        at = item.next;
+        stack.push(item.bytes);
+      }
+      witnesses.push(stack);
+    }
+  }
+
+  const end = need(raw, at, 4, 'locktime');
+  const locktime = (raw[at] | (raw[at + 1] << 8) | (raw[at + 2] << 16)
+    | (raw[at + 3] << 24)) >>> 0;
+  if (end !== raw.length)
+    throw new Error(`${raw.length - end} bytes left over after the transaction`);
+
+  // The name of the transaction: the same bytes with the witness taken out.
+  const stripped = new Uint8Array(4 + (bodyTo - bodyFrom) + 4);
+  stripped.set(raw.subarray(0, 4), 0);
+  stripped.set(raw.subarray(bodyFrom, bodyTo), 4);
+  stripped.set(raw.subarray(at, at + 4), 4 + (bodyTo - bodyFrom));
+
+  return {
+    version, segwit, inputs, outputs, witnesses, locktime,
+    txid: hash256(stripped),
+  };
+}
+
+/**
+ * What the outputs commit to: the data push of every `OP_RETURN`.
+ *
+ * A bond output commits to `H(NodeAdvertisement)` "either in an OP_RETURN
+ * output of the funding transaction or in the taproot script path" (5A.2).
+ * Only the first form is readable from the transaction alone - a taproot
+ * script path is invisible until it is spent - so that is the one discovery
+ * can use, and a bond whose commitment is only in the script path is not
+ * findable by this. It is not refused here; it is simply not present.
+ */
+function commitmentsOf(tx) {
+  const out = [];
+  for (const o of tx.outputs) {
+    const s = o.script;
+    if (s.length < 2 || s[0] !== OP_RETURN) continue;
+    const op = s[1];
+    let from = 2;
+    let n = 0;
+    if (op >= 1 && op <= 75) n = op;
+    else if (op === 0x4c && s.length >= 3) { n = s[2]; from = 3; }
+    else if (op === 0x4d && s.length >= 4) { n = s[2] | (s[3] << 8); from = 4; }
+    else continue;
+    if (from + n !== s.length) continue;     // a push that does not fill the script
+    out.push(s.slice(from, from + n));
+  }
+  return out;
+}
+
+/** Every witness item of every input, flattened - a place to look, not a claim. */
+function witnessItemsOf(tx) {
+  const out = [];
+  for (const stack of tx.witnesses) for (const item of stack) out.push(item);
+  return out;
+}
+
+// ---- protocol/src/chain.js
+// Reading Bitcoin without trusting whoever handed it to you.
+//
+// Section 25.1 is normative about this, and says why it is normative rather
+// than advisory: "A client MUST verify every census entry against block
+// headers it obtained independently. It MUST NOT take a census, a committee or
+// an endpoint on the word of any API, including one operated by the same party
+// that ships the client... A client that silently trusts a chain API behaves
+// exactly like one that verifies - same screens, same rounds, same results -
+// right up until the API returns a census that suits whoever runs it, and then
+// the player has been playing against a committee that was never selected.
+// There is no symptom to notice and nothing for the player to check."
+//
+// So these are the primitives that make a provider usable without being
+// trusted. They fetch nothing: a proof and a header are handed in, and what
+// comes back is whether they hold together. "A list provider can then OMIT but
+// not FORGE, and omission is answered by asking a second one."
+//
+// NOTHING HERE IS BITCOIN CONSENSUS. It does not validate scripts, amounts or
+// difficulty retargeting; it answers two questions only - is this transaction
+// in this header's block, and which of these header chains carries the most
+// work. That is what discovery needs and it is deliberately not more.
+
+
+
+/** A block header is exactly this, and a shorter one is not a header. */
+const HEADER_BYTES = 80;
+
+const sameBytes = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
+
+function header(bytes) {
+  if (!(bytes instanceof Uint8Array) || bytes.length !== HEADER_BYTES)
+    throw new Error(`a block header is ${HEADER_BYTES} bytes, got ${bytes && bytes.length}`);
+  return bytes;
+}
+
+/** The previous block's hash, bytes 4..36, in the order the header stores it. */
+const previousHashOf = (h) => header(h).slice(4, 36);
+
+/** The merkle root the header commits to, bytes 36..68. */
+const merkleRootOf = (h) => header(h).slice(36, 68);
+
+/** A block's own id: the double hash of its 80 bytes. */
+const blockHashOf = (h) => hash256(header(h));
+
+/**
+ * The work one header stands for, from its compact target at bytes 72..76.
+ *
+ * Work is 2^256 / (target + 1), which is how much hashing the block is
+ * expected to have cost. BigInt because the numbers are far past what a double
+ * can hold exactly, and a comparison that silently rounded would pick the
+ * wrong chain.
+ */
+function workOf(h) {
+  const b = header(h);
+  const exponent = b[75];
+  const mantissa = (b[74] << 16) | (b[73] << 8) | b[72];
+  if (mantissa === 0) return 0n;
+  const target = exponent <= 3
+    ? BigInt(mantissa) >> BigInt(8 * (3 - exponent))
+    : BigInt(mantissa) << BigInt(8 * (exponent - 3));
+  if (target <= 0n) return 0n;
+  return (1n << 256n) / (target + 1n);
+}
+
+/**
+ * Is this a chain - each header naming the one before it - and what is it
+ * worth?
+ *
+ * A list of headers that do not link is not a chain and is worth nothing,
+ * however many of them there are. Answering with `false` rather than throwing
+ * because a caller is comparing sources, and a bad source is an ordinary
+ * event.
+ */
+function chainWork(headers) {
+  if (!headers.length) return { ok: false, why: 'no headers', work: 0n };
+  let work = 0n;
+  for (let i = 0; i < headers.length; i++) {
+    try { header(headers[i]); } catch (e) { return { ok: false, at: i, why: e.message, work: 0n }; }
+    if (i > 0 && !sameBytes(previousHashOf(headers[i]), blockHashOf(headers[i - 1])))
+      return { ok: false, at: i, why: 'this header does not follow the one before it', work: 0n };
+    work += workOf(headers[i]);
+  }
+  return { ok: true, work };
+}
+
+/**
+ * Most work wins, which is Bitcoin's own rule and not a vote.
+ *
+ * Section 25.1: "block headers from several independent sources, most work
+ * wins". A chain that does not link is not in the running at all - it is not a
+ * chain - and ties go to the first source offered, so the answer does not
+ * depend on the order two equal chains happened to arrive in.
+ */
+function mostWork(sources) {
+  let best = null;
+  for (let i = 0; i < sources.length; i++) {
+    const seen = chainWork(sources[i]);
+    if (!seen.ok) continue;
+    if (best === null || seen.work > best.work) best = { at: i, work: seen.work, headers: sources[i] };
+  }
+  return best;
+}
+
+/**
+ * Does this header's block contain this transaction?
+ *
+ * BYTE ORDER IS THE TRAP HERE, and it is the reason this takes bytes rather
+ * than the hex strings an API hands over. A txid is displayed reversed from
+ * the way it is hashed, and so is a merkle root; the header stores the root in
+ * hashing order. Everything below is in HASHING order, and a caller that
+ * passes what an API printed will get a refusal rather than a wrong answer,
+ * because the root will simply not match.
+ *
+ * `position` is the transaction's index in the block, and its bits say which
+ * side each step of the branch goes on - the low bit first. That is Bitcoin's
+ * encoding, not a choice made here.
+ */
+function merkleRootFromProof(txid, branch, position) {
+  if (!(txid instanceof Uint8Array) || txid.length !== 32)
+    throw new Error('a txid is 32 bytes in hashing order');
+  if (!Number.isInteger(position) || position < 0)
+    throw new Error('a position is a non-negative whole number');
+
+  let node = txid.slice();
+  let index = position;
+  for (const step of branch) {
+    if (!(step instanceof Uint8Array) || step.length !== 32)
+      throw new Error('every step of a merkle branch is 32 bytes');
+    const pair = new Uint8Array(64);
+    if (index & 1) { pair.set(step, 0); pair.set(node, 32); }
+    else { pair.set(node, 0); pair.set(step, 32); }
+    node = hash256(pair);
+    index >>= 1;
+  }
+  return node;
+}
+
+/**
+ * The whole question, in one answer: is this transaction in this block?
+ *
+ * This is what makes an advertisement worth reading. A provider hands over a
+ * transaction and a branch; if they do not rebuild the root the header already
+ * commits to, the provider is making it up, and nothing further is looked at.
+ */
+function provesTransaction(headerBytes, txid, branch, position) {
+  const root = merkleRootOf(headerBytes);
+  try { return sameBytes(merkleRootFromProof(txid, branch, position), root); }
+  catch { return false; }
+}
+
+/**
+ * The whole of step 4: where do I reach this node, and why should I believe it?
+ *
+ * Section 5A.1: "The advertisement is not what makes a node eligible. The bond
+ * output is. The advertisement is the body that the bond output commits to, so
+ * that chain data alone identifies both the node and its terms."
+ *
+ * WHAT IS HANDED IN IS RAW BYTES, NOT FINDINGS. The transaction, a branch, a
+ * header. The txid is computed from the transaction and the commitment is read
+ * out of its outputs, because the earlier shape of this function took both as
+ * arguments and that made the proof theatre: whoever handed over the
+ * advertisement also handed over the hash of the advertisement they wanted,
+ * their own txid to go with it, and every check passed. The page could put any
+ * endpoint it liked behind a real block. Now the only inputs are bytes whose
+ * hashes it does not control.
+ *
+ *   the transaction is really in the block   or a provider invented it
+ *   an output really commits to THIS body    or a provider swapped the endpoint
+ *
+ * The second is the one that matters in practice, because a swapped endpoint
+ * is invisible: the node is real, the bond is real, and the player connects to
+ * whoever the provider preferred. So the answer names which failed.
+ *
+ * The body may come from the transaction's own witness (25.1: "the body of
+ * 5A.1 is carried in the witness of the funding transaction") or be handed in
+ * beside it. It does not matter which, and that is the point - the witness is
+ * not covered by the txid, so a body from either place has to earn its standing
+ * from the committed output, and one that cannot is refused the same way.
+ */
+function acceptAdvert({ transaction, advert, header, branch, position }) {
+  let tx;
+  try { tx = parseTransaction(transaction); }
+  catch (e) { return { ok: false, why: `that is not a transaction: ${e.message}` }; }
+
+  if (!provesTransaction(header, tx.txid, branch, position))
+    return { ok: false, why: 'the transaction is not in that block' };
+
+  const commitments = commitmentsOf(tx);
+  if (!commitments.length)
+    return { ok: false, why: 'no output of that transaction commits to anything' };
+
+  // Every body on offer, from the witness first, and the one handed in last:
+  // order decides nothing, since a body is taken only if an output commits to
+  // it, and a transaction that committed to two of them would be one operator
+  // advertising twice rather than an ambiguity to resolve here.
+  const offered = [];
+  for (const item of witnessItemsOf(tx)) {
+    try { offered.push(decodeAdvert(item)); } catch { /* not a body; most are not */ }
+  }
+  if (advert) offered.push(advert);
+
+  const taken = offered.find((body) =>
+    commitments.some((c) => sameBytes(c, advertId(body))));
+  if (!taken)
+    return { ok: false, why: 'the bond output commits to a different advertisement' };
+
+  // The advertisement must point back at the bond that gives it standing, or
+  // it says where to reach somebody with nothing to say why they count. An
+  // all-zero txid is the only value a body CAN carry when it rides in the
+  // transaction it names - 5A.1 makes bond_outpoint mandatory and 25.1 puts
+  // the body in the same transaction, so the txid is not knowable when the
+  // body is signed. Reading it as "the transaction carrying me" is the only
+  // reading available; which output is the bond still waits on BOND_MARKER,
+  // and neither is settled here.
+  const carriesUs = taken.bondTxid.every((b) => b === 0);
+  if (!carriesUs && !sameBytes(taken.bondTxid, tx.txid))
+    return { ok: false, why: 'the advertisement names a different bond transaction' };
+  if (taken.bondVout >= tx.outputs.length)
+    return { ok: false, why: 'the advertisement names an output that transaction does not have' };
+
+  return {
+    ok: true,
+    endpoint: taken.endpoint,
+    nodePubkey: taken.nodePubkey,
+    txid: tx.txid,
+    advert: taken,
+  };
+}
+
+// ---- blwp-client/src/directory.js
+// WHERE TO TALK, AND WHY.
+//
+// Section 25.1: "A client finds nodes by reading Bitcoin. There is no
+// directory, no relay network and no seed list belonging to this protocol."
+// This file is the client's half of step 4 - "where do I reach them? the
+// NodeAdvertisement, carried by the bond funding transaction".
+//
+// WHAT IT REPLACES. The endpoint used to be `BLWP_NODE`, a page global. Every
+// stranger who loaded the page reached whatever address whoever shipped the
+// page had written into it, and there was nothing in the client that could
+// tell a real node from any other server. Section 25.1 is normative about
+// exactly that: a client "MUST NOT take a census, a committee or an endpoint on
+// the word of any API, including one operated by the same party that ships the
+// client", because "there is no symptom to notice and nothing for the player to
+// check".
+//
+// A PAGE MAY STILL CARRY THE BYTES. That is not the same thing and it is the
+// whole design: the page hands over a transaction, a branch and headers, and
+// none of those are things it can choose. The txid is computed from the
+// transaction, the branch has to rebuild a header's own merkle root, and the
+// endpoint is only read out of a body an output of that transaction commits
+// to. A page that swaps the endpoint is refused by name.
+//
+// WHAT IS STILL MISSING, AND IT IS NOT THIS SLICE. Where the headers come from.
+// One source cannot be weighed: "block headers from several independent
+// sources, most work wins", and then "a list provider can omit but not forge,
+// and omission is answered by asking a second one". `mostWork` is here and takes
+// as many chains as it is given - nothing fetches yet, and until something does,
+// a client is only as sure as the chain it was handed.
+
+/**
+ * The endpoint, or the reason there is not one.
+ *
+ * The proof is tried against every header of the best chain rather than
+ * against a header named by the caller: being handed a header is not being
+ * handed a block, and a header that is not in the chain the client accepted is
+ * one somebody made up. The transaction has to be in a block that is in the
+ * chain, not merely in something 80 bytes long.
+ */
+function reach({ chains, transaction, advert, branch, position }) {
+  const best = mostWork(chains || []);
+  if (!best) return { ok: false, why: 'no chain of headers to check against' };
+
+  let refusal = 'the transaction is not in any block of that chain';
+  for (const header of best.headers) {
+    const seen = acceptAdvert({ transaction, advert, header, branch, position });
+    if (seen.ok) {
+      return {
+        ok: true,
+        endpoint: seen.endpoint,
+        nodePubkey: seen.nodePubkey,
+        txid: seen.txid,
+        blockHash: blockHashOf(header),
+        work: best.work,
+        chain: best.at,
+      };
+    }
+    // A header that proves the transaction and then fails on the commitment is
+    // a more specific answer than "not in this one", and it is the answer that
+    // matters: the block is real and the endpoint was swapped anyway.
+    if (seen.why !== 'the transaction is not in that block') refusal = seen.why;
+  }
+  return { ok: false, why: refusal };
+}
+
+/**
+ * The base URL a client talks to, from a proven advertisement only.
+ *
+ * Throws rather than answering, because there is no degraded mode here: a
+ * client that could not prove where to go has nothing to fall back to that
+ * would not be the page's word again.
+ */
+function endpointFor(discovery) {
+  const seen = reach(discovery);
+  if (!seen.ok) throw new Error(`no proven endpoint: ${seen.why}`);
+  // 25.1 connects `wss://` to the endpoint; the client's own base is the HTTP
+  // origin of the same node, and `connect()` turns it back into a socket.
+  return seen.endpoint.replace(/^ws/, 'http');
+}
+
 // ---- blwp-client/src/client.js
 // THE PLAYER'S HALF OF THE PROTOCOL.
 //
@@ -1084,6 +1744,7 @@ function joinSignedReceipt(bytes, signature) {
 // bundle loaded through `require`. Importing either here would give this file
 // an opinion about which core the player is running, which is the one thing it
 // must not have.
+
 
 
 
@@ -1167,6 +1828,21 @@ function agrees(mine, theirs, what) {
 }
 
 class Client {
+  /**
+   * A client that reaches a node because Bitcoin says where it is.
+   *
+   * The one door the game uses. `base` is not passed in: it is READ OFF a
+   * proven advertisement, so there is nowhere in the live path for a page to
+   * put an address of its own. Section 25.1 makes that normative - "it MUST
+   * NOT take a census, a committee or an endpoint on the word of any API,
+   * including one operated by the same party that ships the client" - and the
+   * constructor below still takes a `base` because tests and the node's own
+   * fixtures talk to a process on localhost that has no bond and never will.
+   */
+  static at(discovery, { core, sign, verify }) {
+    return new Client({ base: endpointFor(discovery), core, sign, verify });
+  }
+
   constructor({ base, core, sign, verify }) {
     this.base = base;
     this.core = core;
@@ -1640,6 +2316,7 @@ class Client {
 }
 
 return { Client: Client, markState: markState,
+         reach: reach, endpointFor: endpointFor,
          GENESIS: GENESIS, NO_PREVIOUS: NO_PREVIOUS,
          encodeRoundContract: encodeRoundContract, roundId: roundId,
          encodeEntryContract: encodeEntryContract, entryId: entryId,

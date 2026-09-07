@@ -18,6 +18,10 @@ import { roundId, entryId } from '../../protocol/src/contracts.js';
 import { checkpointId, NO_PREVIOUS } from '../../protocol/src/checkpoint.js';
 import { GENESIS } from '../../protocol/src/transcript.js';
 import { toHex } from '../../protocol/src/hash.js';
+import { hash256, parseTransaction } from '../../protocol/src/tx.js';
+import { blockHashOf } from '../../protocol/src/chain.js';
+import { bondTransaction, blockOf } from '../../protocol/tools/bond.js';
+import { reach as moduleReach } from '../src/directory.js';
 
 const require = createRequire(import.meta.url);
 const bundled = require('../dist/blwp-client.js');
@@ -93,4 +97,41 @@ test('the bundle refuses a receipt the modules would refuse', () => {
   const a = said(one), b = said(other);
   assert.ok(a, 'the bundle accepted a 100-byte receipt');
   assert.equal(a, b, 'the two builds refuse with different words');
+});
+
+/**
+ * DISCOVERY IN THE BUNDLE, because the bundle is the only copy the browser has.
+ *
+ * The jslib calls `endpointFor` on this object to decide where to talk. If the
+ * bundled copy answered differently from the modules - or, worse, threw and
+ * left the page to fall back on an address of its own - the tests above would
+ * still pass and the game would still connect, to whoever the page preferred.
+ */
+test('the bundle proves an endpoint exactly as the modules do', () => {
+  const b32 = (n) => new Uint8Array(32).fill(n);
+  const advert = {
+    nodePubkey: b32(1), operatorId: 'somebody', protocolVersions: [1],
+    roles: ['game', 'verify'], endpoint: 'wss://node.example:443', region: 'eu-west',
+    capacityClass: 2, softwareHash: b32(3), settlementCapabilities: 0,
+    lightningCapabilities: 0, bondTxid: new Uint8Array(32), bondVout: 0,
+    bondScriptTemplateVersion: 1, payoutPubkey: b32(4), timestamp: 1788700000000n,
+  };
+  const transaction = bondTransaction(advert);
+  const sibling = b32(0x99);
+  const first = blockOf(hash256, [b32(0x01)]).header;
+  const { header } = blockOf(hash256, [parseTransaction(transaction).txid, sibling],
+    { previous: blockHashOf(first) });
+  const discovery = { chains: [[first, header]], transaction, branch: [sibling], position: 0 };
+
+  assert.equal(bundled.reach(discovery).endpoint, moduleReach(discovery).endpoint);
+  assert.equal(bundled.endpointFor(discovery), 'https://node.example:443');
+
+  // and the swap is refused in the bundle too, by the same name
+  const swapped = { ...advert, endpoint: 'wss://somewhere-else.example:443' };
+  const bare = { ...discovery, transaction: bondTransaction(advert, { body: new Uint8Array(0) }) };
+  const at = blockOf(hash256, [parseTransaction(bare.transaction).txid, sibling],
+    { previous: blockHashOf(first) });
+  bare.chains = [[first, at.header]];
+  assert.throws(() => bundled.endpointFor({ ...bare, advert: swapped }),
+    /commits to a different advertisement/);
 });

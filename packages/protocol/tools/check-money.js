@@ -13,7 +13,7 @@ import { parse } from 'acorn';
 // would desync a player from the nodes verifying him exactly as one in
 // `contracts.js` would misprice him.
 const MONEY = ['payout.js', 'sortition.js', 'census.js', 'contracts.js', 'encode.js',
-               'batch.js', 'transcript.js'];
+               'batch.js', 'transcript.js', 'chain.js', 'tx.js'];
 const ROOT = new URL('../src/', import.meta.url).pathname;
 const problems = [];
 
