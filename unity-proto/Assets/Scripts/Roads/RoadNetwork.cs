@@ -43,7 +43,48 @@ public class RoadNetwork : MonoBehaviour
     /// and off at the edge a tank half on the road would step 45 cm as it
     /// crossed the line.
     /// </summary>
-    public float SurfaceHeight(float x, float z) => Ground(x, z) + Lift(x, z);
+    public float SurfaceHeight(float x, float z)
+    {
+        float bare = Ground(x, z);
+        if (Model == null) return bare;
+
+        var lane = Model.LaneAt(x, z, RoadModel.HalfWidth + Shoulder);
+        if (lane == null) return bare;
+
+        // THE RIBBON'S OWN SURFACE, not a second opinion about it.
+        //
+        // The mesh lays two vertices per cross-section and spans them flat, so
+        // the drawn road is a CHORD between its edges - and things standing on
+        // it were seated on the ground under their own feet instead, which
+        // over a crest is above that chord and in a hollow below it. Measured
+        // against the ribbon's own vertices in a built world: 0.272 m of float
+        // at (59.7, 45.2), the tyre in the air over the road it is on.
+        //
+        // Wear is the other half. The mesh drops its left edge by
+        // `broken * 0.55` and its right by `broken * 0.30`, drawing a worn
+        // stretch as a rut, and the seating knew nothing about it.
+        //
+        // So the surface is built here the way the mesh builds it, at a point
+        // instead of at a vertex: the same `side`, the same edge samples, the
+        // same wear, and the same shoulder fade so nothing steps at the edge.
+        float centreZ = Model.CenterZ(lane.Value, x);
+        float slope = Model.CenterZ(lane.Value, x + 1f) - Model.CenterZ(lane.Value, x - 1f);
+        var side = new Vector3(-slope, 0f, 2f).normalized;
+
+        float gl = Ground(x - side.x * RoadModel.HalfWidth, centreZ - side.z * RoadModel.HalfWidth);
+        float gr = Ground(x + side.x * RoadModel.HalfWidth, centreZ + side.z * RoadModel.HalfWidth);
+
+        float across = (z - centreZ) * side.z;
+        float t = Mathf.Clamp01((across + RoadModel.HalfWidth) / (2f * RoadModel.HalfWidth));
+
+        float broken = Model.SeverityAt(lane.Value, x) * Random01(x, lane.Value) * 0.9f;
+        float deck = Mathf.Lerp(gl, gr, t) + lift - broken * 0.55f + broken * 0.25f * t;
+
+        float d = Mathf.Abs(z - centreZ);
+        float fade = Mathf.Clamp01(Mathf.InverseLerp(RoadModel.HalfWidth + Shoulder,
+                                                     RoadModel.HalfWidth, d));
+        return Mathf.Lerp(bare, deck, fade);
+    }
 
     /// <summary>
     /// The bare ground here, with no deck on it - and it comes from the CORE.
@@ -94,11 +135,11 @@ public class RoadNetwork : MonoBehaviour
     /// <summary>
     /// How far the DRAWN ribbon is lowered here by wear, in metres.
     ///
-    /// The same expression the mesh builder uses, exposed as a point query so
-    /// the drawn deck and the seated deck can be compared at one place. They
-    /// are not the same today: `SurfaceHeight` gives the truck `lift` in full,
-    /// and the ribbon draws itself at `lift - wear`. Whether that is the gap
-    /// in the photograph is a measurement, not an argument.
+    /// The left edge's drop, exposed as a point query so the diagnostic can
+    /// print it. The gap this used to name - `SurfaceHeight` giving the truck
+    /// `lift` in full while the ribbon drew itself at `lift - wear` - was
+    /// measured at 0.272 m and is closed: `SurfaceHeight` builds the ribbon's
+    /// surface the way the mesh builds it, wear and all.
     /// </summary>
     public float WearAt(float x, float z)
     {

@@ -54,7 +54,12 @@ public class WheelSeatingTests
         yield return null;
     }
 
-    const float TyreRadius = 0.55f;   // the stand-in's, in world metres
+    // The stand-in's own size, in world metres. Deliberately NOT the
+    // WheelCollider's 0.550 m: with the two the same, a wheel rolling on the
+    // collider's radius and one rolling on the mesh's turn through the same
+    // angle, and a test of which it uses proves nothing. The real streamed
+    // wheel is 0.523 m against the same collider and has the same property.
+    const float TyreRadius = 0.62f;
     const float TyreWidth  = 0.40f;
 
     Bootstrap _boot;
@@ -276,6 +281,119 @@ public class WheelSeatingTests
             + "measuring a turning wheel and proves nothing about the probe");
         Assert.Less(worstTyre, 0.01f,
             $"the tyre moved {worstTyre:F3} m while the box grew {worstBox:F3} m");
+    }
+
+    /// <summary>
+    /// THE ROAD IS DRAWN WHERE THINGS ARE SEATED ON IT.
+    ///
+    /// `RoadNetwork` says so itself, in a comment that ends "whether that is
+    /// the gap in the photograph is a measurement, not an argument":
+    /// `SurfaceHeight` gives the truck the deck lift IN FULL, and the ribbon
+    /// mesh lays its vertices at `lift - broken * 0.55` on one edge and
+    /// `lift - broken * 0.55 + broken * 0.25` on the other. A worn stretch is
+    /// therefore drawn BELOW the height everything standing on it is seated
+    /// at, and the tyre floats over the rut by that difference.
+    ///
+    /// The measurement is taken against the ribbon's OWN vertices rather than
+    /// against the formula, so it cannot pass by re-deriving the thing it is
+    /// checking. Vertices in a cut section are skipped: a severity over 0.82
+    /// has no triangles, so nothing is drawn there to stand on.
+    /// </summary>
+    [UnityTest]
+    public IEnumerator TheRoadIsDrawnWhereThingsAreSeatedOnIt()
+    {
+        yield return Rig();
+
+        // The network the TRUCK is seated by, not whichever one the scene
+        // hands over first. The full suite leaves earlier worlds standing, and
+        // a road network whose terrain has since been destroyed answers 0 for
+        // the ground while still holding the ribbon it built when the terrain
+        // was there: 2.34 m of disagreement about a road that is fine.
+        var roads = _driver.roads;
+        Assert.IsNotNull(roads, "the truck is not seated by any road network");
+
+        float worst = 0f;
+        var where = Vector3.zero;
+        int checkedPairs = 0;
+
+        foreach (var mf in roads.GetComponentsInChildren<MeshFilter>())
+        {
+            if (!mf.name.StartsWith("Road_")) continue;
+            var mesh = mf.sharedMesh;
+            if (mesh == null) continue;
+
+            var drawn = new System.Collections.Generic.HashSet<int>(mesh.triangles);
+            var v = mesh.vertices;
+            var l2w = mf.transform.localToWorldMatrix;
+
+            for (int i = 0; i + 1 < v.Length; i += 2)
+            {
+                if (!drawn.Contains(i) || !drawn.Contains(i + 1)) continue;
+                var centre = (l2w.MultiplyPoint3x4(v[i]) + l2w.MultiplyPoint3x4(v[i + 1])) * 0.5f;
+                float gap = roads.SurfaceHeight(centre.x, centre.z) - centre.y;
+                checkedPairs++;
+                if (Mathf.Abs(gap) > Mathf.Abs(worst)) { worst = gap; where = centre; }
+            }
+        }
+
+        Assert.Greater(checkedPairs, 100,
+            "no drawn road was found, so nothing here is a measurement");
+        Assert.Less(Mathf.Abs(worst), 0.02f,
+            $"a wheel seated on the road stands {worst:F3} m above the ribbon "
+            + $"that is drawn there, at ({where.x:F1}, {where.z:F1}). "
+            + $"{checkedPairs} drawn cross-sections checked");
+    }
+
+    /// <summary>
+    /// THE TYRE TURNS ONCE PER CIRCUMFERENCE OF THE TYRE.
+    ///
+    /// The spin was advanced on the WheelCollider's 0.550 m while every
+    /// seating line used the mesh's 0.523 m - the same leftover 3bd4208 took
+    /// out of the seating and left behind in the rolling. A wheel that rolls
+    /// on a radius 5.2% larger than the one it is drawn as turns that much
+    /// too slowly, and slips against the road for the whole drive.
+    ///
+    /// Measured rather than declared: the wheel's own rotation is summed
+    /// frame by frame and compared with the ground covered. Nine metres of
+    /// road on the streamed 0.523 m tyre is 986 degrees; on the collider's
+    /// 0.550 m it is 937.
+    /// </summary>
+    [UnityTest]
+    public IEnumerator TheWheelRollsOnTheSizeItIsDrawnAs()
+    {
+        yield return Rig();
+        yield return NewRound(1);
+        yield return Roll(1, 0f, 0f);
+
+        Assert.IsTrue(_driver.SeatingOf(0, out var seat), "no wheel 0");
+        var wheel = _driver.Wheels[0];
+
+        // Without this the test is vacuous, and it silently was: the stand-in
+        // was 0.550 m, the collider is 0.550 m, and both radii turn the wheel
+        // through the same angle.
+        Assert.Greater(Mathf.Abs(seat.Radius - _driver.WheelRadius), 0.02f,
+            $"the mesh ({seat.Radius:F3} m) and the collider "
+            + $"({_driver.WheelRadius:F3} m) are the same size here, so this "
+            + "test cannot tell which of them the wheel rolls on");
+
+        const float Speed = 9f, Dt = 1f / 60f;
+        const int Frames = 60;
+        var was = wheel.rotation;
+        float turned = 0f;
+        for (int f = 0; f < Frames; f++)
+        {
+            yield return Roll(1, 0f, Speed);
+            turned += Quaternion.Angle(was, wheel.rotation);
+            was = wheel.rotation;
+        }
+
+        float ground = Speed * Dt * Frames;
+        float wanted = ground / seat.Radius * Mathf.Rad2Deg;
+        Assert.AreEqual(wanted, turned, 6f,
+            $"{ground:F2} m of road turned the wheel {turned:F0} deg, and a "
+            + $"{seat.Radius:F3} m tyre covering it turns {wanted:F0} deg. "
+            + $"Rolling radius {_driver.RollRadius:F3} m, collider "
+            + $"{_driver.WheelRadius:F3} m");
     }
 
     /// <summary>

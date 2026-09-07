@@ -81,6 +81,7 @@ namespace Blwp
         Quaternion[] _wheelBase;    // resting orientation, relative to the truck
         bool[] _wheelSteers;
         float _wheelRadius = 0.55f;
+        float _rollRadius = 0.55f;   // the MESH's radius, which is what it rolls on
         Vector3[] _wheelHub = new Vector3[0];   // pivot -> mesh centre, in the wheel's frame
         float[] _wheelR = new float[0];         // the mesh's own radius, in world metres
 
@@ -235,6 +236,15 @@ namespace Blwp
                 foreach (var r in _wheelR) mean += r;
                 if (_wheelR.Length > 0) mean /= _wheelR.Length; else mean = _wheelRadius;
                 _bodyAboveGround = mean - meanY;
+
+                // AND THE WHEEL ROLLS ON THE SIZE IT IS DRAWN AS.
+                //
+                // The spin was advanced on the COLLIDER's radius while every
+                // seating line used the mesh's, which is the same leftover
+                // 3bd4208 took out of the seating and left in the rolling:
+                // 0.550 m against 0.523 m, so the tyre turned 5.2% slower than
+                // the ground it stands on and slipped for the whole drive.
+                _rollRadius = mean;
             }
         }
 
@@ -247,6 +257,7 @@ namespace Blwp
         /// the difference and nothing in the game says so.
         /// </summary>
         public float WheelRadius => _wheelRadius;
+        public float RollRadius => _rollRadius;
         public System.Collections.Generic.IReadOnlyList<Transform> Wheels => _wheels;
         public float BodyAboveGround => _bodyAboveGround;
 
@@ -358,7 +369,7 @@ namespace Blwp
 
             // Once per frame, not once per wheel: advancing it inside the loop
             // left every wheel on a slightly different angle.
-            _spin += speed / _wheelRadius * Mathf.Rad2Deg * dt;
+            _spin += speed / _rollRadius * Mathf.Rad2Deg * dt;
             if (_spin > 360f || _spin < -360f) _spin %= 360f;
 
             for (int i = 0; i < _wheels.Length; i++)
@@ -389,7 +400,11 @@ namespace Blwp
                 // body is seated off the same number and looks right. The
                 // editor cannot see this: the wheels are streamed, so they
                 // only exist in a player.
-                if (Time.time > _nextSeatingSay && i == 0)
+                // Behind the DEBUG toggle now that the letter is closed. It
+                // is the instrument that produced the finding and a future
+                // re-measurement wants it, but a shipping build should not be
+                // writing a console line every two seconds forever.
+                if (GameSettings.Debug && Time.time > _nextSeatingSay && i == 0)
                 {
                     var rs = _wheels[i].GetComponentsInChildren<Renderer>();
                     if (rs.Length > 0)
