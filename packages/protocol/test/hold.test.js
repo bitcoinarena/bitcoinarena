@@ -165,3 +165,51 @@ test('a round nobody finished is refused rather than handed to the operator', ()
   assert.equal(ok.sharesMsat, 200000n);
   assert.equal(ok.table.table[2].amountMsat, 300000n, 'the finisher takes the pot and their stake');
 });
+
+/**
+ * THE THREE FATES OF A HOLD, SIDE BY SIDE.
+ *
+ * Each was measured on its own; this pins them against each other, because the
+ * property is that they are DIFFERENT and each stays what it is when the other
+ * two are in the same round.
+ *
+ *   a winner    CANCEL - their stake never enters the pool
+ *   a loser     SETTLE - and only with every condition of 23.2 met
+ *   VOID        NOTHING - and nobody has to act for the refund
+ */
+test('a void hold, a settled one and a cancelled one in one round stay three things', () => {
+  const winner = entry(1, DELIVERED, 100);
+  const loser = entry(2, FORFEIT);
+  const voided = entry(3, VOID);
+
+  const s = holdSettlement({ roundId: b32(9), minScore: 1, entries: [winner, loser, voided] });
+  assert.deepEqual(s.actions.map((a) => a.action), [CANCEL, SETTLE, NOTHING]);
+
+  assert.equal(s.poolMsat, 100000n, 'the pool is the loser s stake alone');
+  assert.equal(s.refundedMsat, 200000n, 'the winner s and the void stake both stay put');
+  assert.equal(s.sharesMsat, 100000n);
+  assert.equal(s.poolMsat - s.sharesMsat, 0n, 'the house kept something');
+  assert.equal(s.table.table[0].amountMsat, 200000n);
+  assert.equal(s.table.table.length, 2, 'the void entry is in the payout table');
+
+  // AND WHAT EACH ONE COSTS TO DO. Only VOID needs nothing at all: a refund
+  // that waited on five signatures is one an operator could withhold.
+  const asked = (outcome, over = {}) => settlementAction({
+    outcome, qualifies: outcome === DELIVERED, state: 'SUSPENDED', shares: 0, signatures: 0, ...over,
+  });
+  assert.equal(asked(VOID).authorised, true);
+  assert.deepEqual(asked(VOID).missing, []);
+  assert.equal(asked(DELIVERED).authorised, false);
+  assert.equal(asked(FORFEIT).authorised, false);
+  assert.equal(asked(FORFEIT).missing.length, 3, 'a settle needs three things it did not have');
+
+  // the same round with the loser voided instead: the winner is paid nothing
+  // beyond their own stake, and the pool is empty
+  const allSafe = holdSettlement({
+    roundId: b32(9), minScore: 1, entries: [winner, { ...loser, outcome: VOID }, voided],
+  });
+  assert.deepEqual(allSafe.actions.map((a) => a.action), [CANCEL, NOTHING, NOTHING]);
+  assert.equal(allSafe.poolMsat, 0n);
+  assert.equal(allSafe.refundedMsat, 300000n);
+  assert.equal(allSafe.table.table[0].amountMsat, 100000n);
+});
