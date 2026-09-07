@@ -22,7 +22,7 @@ import { fromHex, toHex } from '../../protocol/src/hash.js';
 import { blockHashOf, workOf, meetsTarget, HEADER_BYTES } from '../../protocol/src/chain.js';
 import { hash256 } from '../../protocol/src/tx.js';
 import { blockOf } from '../../protocol/tools/bond.js';
-import { agreedChain, headersOverHttp } from '../src/headers.js';
+import { agreedChain, headersOverHttp, httpProvider } from '../src/headers.js';
 
 // mainnet 499998, 499999 and 500000, fetched once and written down. Each names
 // the one before it, which is the only thing that makes three headers a chain.
@@ -137,10 +137,25 @@ test('one provider is refused however good the chain looks', async () => {
     assert.match(alone.why, /1 providers is fewer than the 2 it takes/);
     assert.equal(calls, 0);
 
-    // and the same chain offered by two is fine, so it is the count that
-    // decides and not the chain
-    const twice = await agreedChain([only.get, only.get]);
-    assert.equal(twice.ok, true, twice.why);
+    // and the same chain from two DIFFERENT servers is fine, so it is the
+    // count of sources that decides and not the chain
+    const elsewhere = await serving(MAINNET);
+    try {
+      const two = await agreedChain([httpProvider(only.url), httpProvider(elsewhere.url)]);
+      assert.equal(two.ok, true, two.why);
+    } finally { elsewhere.server.close(); }
+
+    // ONE SERVER LISTED TWICE IS ONE SOURCE. This used to read as success -
+    // agreed 2, from a single machine - which is the worst kind of wrong,
+    // because it looks exactly like the thing it is not.
+    let asked = 0;
+    const p = httpProvider(only.url);
+    const counting = (...a) => { asked++; return p(...a); };
+    counting.tag = p.tag;
+    const same = await agreedChain([p, counting]);
+    assert.equal(same.ok, false);
+    assert.match(same.why, /providers 0 and 1 are the same source, http:\/\/127.0.0.1:/);
+    assert.equal(asked, 0);
   } finally { only.server.close(); }
 });
 
@@ -268,4 +283,117 @@ test('a chain of pure invention is refused for being unmined, not for forking', 
     assert.doesNotMatch(seen.why, /do not agree on the chain/);
     assert.match(seen.refused, /was not mined/);
   } finally { a.server.close(); b.server.close(); }
+});
+
+/**
+ * INDEPENDENCE IS NOT CHECKABLE, ONLY THE OBVIOUS CASE IS. Two hostnames can be
+ * one machine and nothing here can tell, so a tag catches a mistake and never
+ * proves a thing. Untagged providers are counted as distinct because there is
+ * nothing else to do with them - said out loud rather than left implied.
+ */
+test('providers with no address to compare are taken at their word', async () => {
+  const a = await serving(MAINNET);
+  try {
+    const bare = () => a.get();
+    assert.equal(bare.tag, undefined);
+    const seen = await agreedChain([bare, bare]);
+    assert.equal(seen.ok, true, seen.why);
+  } finally { a.server.close(); }
+});
+
+/**
+ * A RANGE IS A QUESTION, AND TWO HONEST PROVIDERS CAN ANSWER DIFFERENT ONES.
+ * Before this, chains that shared no block were refused as a fork - the same
+ * word used for a provider that is lying. They are told apart now, and the ask
+ * is handed to the provider so an honest pair can be asked the same thing.
+ */
+test('answers about different parts of the chain are not a fork', async () => {
+  const early = run(3, { seed: 1 });
+  const late = run(3, { seed: 40 });                 // links, but shares nothing
+  const a = await serving(early);
+  const b = await serving(late);
+  try {
+    const seen = await agreedChain([a.get, b.get]);
+    assert.equal(seen.ok, false);
+    assert.match(seen.why, /answered about different parts of the chain and share no block/);
+    assert.doesNotMatch(seen.why, /do not agree on the chain/);
+  } finally { a.server.close(); b.server.close(); }
+
+  // and the question reaches the provider, so a pair CAN be asked the same one
+  const asked = [];
+  const one = (q) => { asked.push(q); return early; };
+  const two = (q) => { asked.push(q); return early; };
+  const seen = await agreedChain([one, two], { ask: { from: 499998, count: 3 } });
+  assert.equal(seen.ok, true, seen.why);
+  assert.deepEqual(asked, [{ from: 499998, count: 3 }, { from: 499998, count: 3 }]);
+});
+
+test('a body larger than the client reads is refused, not allocated', async () => {
+  // 4001 headers offered where 4000 is the cap, in BOTH shapes a provider can
+  // send them. The two are different refusals on purpose: one is caught on the
+  // provider's own declaration, before a byte of body is pulled off the wire,
+  // and the other is caught while reading, because that declaration is the
+  // provider's word like everything else it says.
+  const big = Buffer.alloc(4001 * HEADER_BYTES);
+
+  const declared = createServer((q, r) => {
+    r.writeHead(200, { 'content-length': String(big.length) });
+    r.end(big);
+  });
+  await new Promise((r) => declared.listen(0, '127.0.0.1', r));
+
+  const silentAboutLength = createServer((q, r) => {
+    r.writeHead(200, { 'transfer-encoding': 'chunked' });
+    r.write(big.subarray(0, 100000));
+    r.write(big.subarray(100000));
+    r.end();
+  });
+  await new Promise((r) => silentAboutLength.listen(0, '127.0.0.1', r));
+
+  const at = (s) => `http://127.0.0.1:${s.address().port}/`;
+  try {
+    await assert.rejects(headersOverHttp(at(declared), { maxHeaders: 4000 }),
+      /the provider offered 320080 bytes, more than the 320000 this client reads/);
+    await assert.rejects(headersOverHttp(at(silentAboutLength), { maxHeaders: 4000 }),
+      /the provider sent more than the 320000 bytes this client reads/);
+
+    // and the same through the provider the client would actually build
+    await assert.rejects(httpProvider(at(declared), { maxHeaders: 4000 })(),
+      /more than the 320000/);
+
+    // under the cap it is read as usual, both ways
+    assert.equal((await headersOverHttp(at(declared), { maxHeaders: 4001 })).length, 4001);
+    assert.equal((await headersOverHttp(at(silentAboutLength), { maxHeaders: 4001 })).length, 4001);
+  } finally {
+    declared.closeAllConnections(); declared.close();
+    silentAboutLength.closeAllConnections(); silentAboutLength.close();
+  }
+});
+
+test('a provider that never answers has its read aborted, not abandoned', async () => {
+  let aborted = false;
+  const hanging = createServer((req, res) => {
+    req.on('aborted', () => { aborted = true; });
+    res.writeHead(200, { 'content-type': 'application/octet-stream' });
+    // headers sent, body never finished
+  });
+  await new Promise((r) => hanging.listen(0, '127.0.0.1', r));
+  const url = `http://127.0.0.1:${hanging.address().port}/`;
+  const good = await serving(MAINNET);
+  const alsoGood = await serving(MAINNET);
+  try {
+    const seen = await agreedChain(
+      [good.get, httpProvider(url), alsoGood.get], { timeoutMs: 60 });
+    assert.equal(seen.ok, true, seen.why);
+    assert.match(seen.refused[0], /provider 1: no answer in 60 ms/);
+    await new Promise((r) => setTimeout(r, 50));
+    assert.equal(aborted, true, 'the socket was left open');
+  } finally {
+    good.server.close(); alsoGood.server.close();
+    // The sockets are destroyed, not merely stopped from accepting new ones.
+    // Without this the suite HANGS instead of failing when the abort is taken
+    // out - and a hang is not a measurement, it is a test that cannot report.
+    hanging.closeAllConnections();
+    hanging.close();
+  }
 });

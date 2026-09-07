@@ -37,17 +37,73 @@ import { toHex } from '../../protocol/src/hash.js';
  * - would put an address in the client that a player never chose. What a real
  * provider's URLs look like is a separate question from what a client does
  * with the bytes, and only the second one is decided here.
+ *
+ * THE BODY IS BOUNDED AND THE READ IS ABORTABLE. A provider is not trusted, and
+ * an untrusted party that can make a client allocate as much memory as it likes
+ * is a provider that can stop the game without ever telling a lie. The cap is
+ * counted while reading rather than only on `content-length`, because that
+ * header is the provider's word too.
  */
-export async function headersOverHttp(url, { fetcher = fetch } = {}) {
-  const r = await fetcher(url);
+export async function headersOverHttp(url, { fetcher = fetch, signal, maxHeaders = 100000 } = {}) {
+  const cap = maxHeaders * HEADER_BYTES;
+  const r = await fetcher(url, { signal });
   if (!r.ok) throw new Error(`the provider answered ${r.status}`);
-  const body = new Uint8Array(await r.arrayBuffer());
+
+  const offered = Number(r.headers.get('content-length') || 0);
+  if (offered > cap)
+    throw new Error(`the provider offered ${offered} bytes, more than the ${cap} this client reads`);
+
+  let body;
+  if (r.body && r.body.getReader) {
+    const reader = r.body.getReader();
+    const parts = [];
+    let total = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.length;
+      if (total > cap) {
+        await reader.cancel();
+        throw new Error(`the provider sent more than the ${cap} bytes this client reads`);
+      }
+      parts.push(value);
+    }
+    body = new Uint8Array(total);
+    let at = 0;
+    for (const part of parts) { body.set(part, at); at += part.length; }
+  } else {
+    body = new Uint8Array(await r.arrayBuffer());
+    if (body.length > cap)
+      throw new Error(`the provider sent more than the ${cap} bytes this client reads`);
+  }
+
   if (body.length === 0 || body.length % HEADER_BYTES !== 0)
     throw new Error(`${body.length} bytes is not a whole number of headers`);
   const out = [];
   for (let at = 0; at < body.length; at += HEADER_BYTES)
     out.push(body.subarray(at, at + HEADER_BYTES));
   return out;
+}
+
+/**
+ * A provider bound to one address, and TAGGED with it.
+ *
+ * The tag is the whole reason this exists. `agreedChain` needs several
+ * INDEPENDENT sources, and two calls to the same server are one source however
+ * many times it is listed - a mistake that reads as success, which is the worst
+ * kind. Independence cannot be established from inside a client in general:
+ * two different hostnames can be one machine, and nothing here can tell. What
+ * can be caught is the obvious case, and it is caught by name.
+ *
+ * `where` may be a function of the question, for a provider whose URL carries
+ * the range being asked about; then the tag has to be given, because there is
+ * no address to read one off yet.
+ */
+export function httpProvider(where, { tag, ...rest } = {}) {
+  const at = (ask) => (typeof where === 'function' ? where(ask) : where);
+  const get = (ask, opts) => headersOverHttp(at(ask), { ...rest, ...opts });
+  get.tag = tag || (typeof where === 'string' ? new URL(where).origin : undefined);
+  return get;
 }
 
 const tips = (headers) => headers.map((h) => toHex(blockHashOf(h)));
@@ -64,9 +120,21 @@ const tips = (headers) => headers.map((h) => toHex(blockHashOf(h)));
  * `least` is 2 and is not a tuning knob - it is the whole property. One source
  * is a directory, which is the thing 25.1 exists to remove.
  */
-export async function agreedChain(providers, { least = 2, timeoutMs = 10000 } = {}) {
+export async function agreedChain(providers, { least = 2, timeoutMs = 10000, ask } = {}) {
   if (!providers || providers.length < least)
     return { ok: false, why: `${(providers || []).length} providers is fewer than the ${least} it takes to weigh one against another` };
+
+  // Two listings of one server are one source. Checked before anyone is asked,
+  // for the same reason the count is: the request would be wasted and it would
+  // tell that server what is being looked for.
+  const tags = new Map();
+  for (let i = 0; i < providers.length; i++) {
+    const tag = providers[i] && providers[i].tag;
+    if (!tag) continue;
+    if (tags.has(tag))
+      return { ok: false, why: `providers ${tags.get(tag)} and ${i} are the same source, ${tag}` };
+    tags.set(tag, i);
+  }
 
   const answers = await Promise.all(providers.map(async (p, at) => {
     let timer;
@@ -74,10 +142,16 @@ export async function agreedChain(providers, { least = 2, timeoutMs = 10000 } = 
       // A provider that never answers must not stop the ones that did. The
       // timer is cleared and unreferenced either way, or a client that got its
       // chain would sit waiting for a source it no longer needs.
+      // The read is aborted, not merely abandoned: a provider that never
+      // answers would otherwise hold a socket open for the rest of the run.
+      const stop = new AbortController();
       const headers = await Promise.race([
-        Promise.resolve().then(() => p()),
+        Promise.resolve().then(() => p(ask, { signal: stop.signal })),
         new Promise((_, no) => {
-          timer = setTimeout(() => no(new Error(`no answer in ${timeoutMs} ms`)), timeoutMs);
+          timer = setTimeout(() => {
+            stop.abort();
+            no(new Error(`no answer in ${timeoutMs} ms`));
+          }, timeoutMs);
           if (timer.unref) timer.unref();
         }),
       ]);
@@ -111,6 +185,17 @@ export async function agreedChain(providers, { least = 2, timeoutMs = 10000 } = 
   const inBest = new Set(best.hashes);
 
   for (const a of good) {
+    // ANSWERS ABOUT DIFFERENT PARTS OF THE CHAIN ARE NOT A DISAGREEMENT, and
+    // calling them one would refuse two honest providers whose ranges happen
+    // not to overlap. It is still no answer - nothing has been weighed - but
+    // it is a different fact and the caller is told which.
+    if (!a.hashes.some((h) => inBest.has(h))) {
+      return {
+        ok: false,
+        why: `providers ${best.at} and ${a.at} answered about different parts of `
+          + 'the chain and share no block, so neither can be weighed against the other',
+      };
+    }
     const stray = a.hashes.find((h) => !inBest.has(h));
     if (stray) {
       return {
