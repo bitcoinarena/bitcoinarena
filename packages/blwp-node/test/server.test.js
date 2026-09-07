@@ -17,6 +17,12 @@ import {
   decodeCheckpointReceipt, receiptId, splitSignedReceipt, SIGNED_RECEIPT_BYTES,
 } from '../../protocol/src/receipt.js';
 
+// FUNDED, because these are rounds somebody paid for. A node started without
+// being told who pays refuses everything now - disk is spent only on stakes
+// that exist - so a test that means to play a round has to say so.
+const FUNDED = { funded: () => true };
+
+
 const b32 = (n) => new Uint8Array(32).fill(n);
 const contract = () => ({
   simCoreHash: b32(1), startTimeMs: 1000n, entryCloseMs: 2000n,
@@ -60,7 +66,7 @@ const talk = (port) => new Promise((resolve) => {
 });
 
 test('a round is opened, joined, played and closed by one process', async () => {
-  const node = await serve(openStore(), { port: 0 });
+  const node = await serve(openStore(), { port: 0, ...FUNDED });
   try {
     const c = contract();
     const opened = await post(node.port, '/round', encodeRoundContract(c));
@@ -122,7 +128,7 @@ test('a round is opened, joined, played and closed by one process', async () => 
 });
 
 test('an entry for a round the node has not got is refused with a reason', async () => {
-  const node = await serve(openStore(), { port: 0 });
+  const node = await serve(openStore(), { port: 0, ...FUNDED });
   try {
     const r = await fetch(`http://127.0.0.1:${node.port}/entry`,
       { method: 'POST', body: encodeEntryContract(entryFor(b32(99))) });
@@ -135,7 +141,7 @@ test('checkpoints cross the wire, and the refusals cross it too', async () => {
   // THE SEAM. `Round.checkpoint` was covered and the wire was not: the type
   // dispatch on /play and the GET both went untested, which is exactly where
   // an object that works can still fail to arrive.
-  const node = await serve(openStore(), { port: 0 });
+  const node = await serve(openStore(), { port: 0, ...FUNDED });
   try {
     const c = contract();
     const rid = (await post(node.port, '/round', encodeRoundContract(c))).bytes;
@@ -244,7 +250,7 @@ test('the socket refuses a frame no protocol message could be', async () => {
   // allocate that before a byte was parsed. The cap is the longest message
   // the protocol can encode - 1835087, the encoder's own u16 ceilings - so
   // nothing legitimate is refused and nothing larger is read.
-  const node = await serve(openStore(), { port: 0 });
+  const node = await serve(openStore(), { port: 0, ...FUNDED });
   try {
     assert.equal(MAX_FRAME_BYTES, MAX_INPUT_BATCH_BYTES);
     assert.equal(MAX_FRAME_BYTES, 1835087);
@@ -265,7 +271,7 @@ test('a batch longer than the round it belongs to is refused by name', async () 
   // The transport refuses what cannot decode; this refuses what decodes and
   // still could not be honest. The ceiling is `blockTicks` off the contract
   // the node already stores, so it is the round's own number.
-  const node = await serve(openStore(), { port: 0 });
+  const node = await serve(openStore(), { port: 0, ...FUNDED });
   try {
     const c = contract();
     const rid = (await post(node.port, '/round', encodeRoundContract(c))).bytes;

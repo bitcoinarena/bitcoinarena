@@ -78,7 +78,30 @@ const text = (res, code, msg) => {
   res.end(msg + '\n');
 };
 
-export function serve(db, { port = 0 } = {}) {
+/**
+ * WHO PAYS FOR THE DISK.
+ *
+ * `IMPLEMENTATION.md`: "A funded entry is required before the node stores one
+ * byte of transcript. Disk is spent only on stakes that exist - the main
+ * anti-DoS lever." Measured before this existed: a stranger who had funded
+ * nothing opened 200 rounds and the node answered 201 to every one and wrote
+ * 200 rows, then took an entry in one of them for nothing as well.
+ *
+ * The node cannot decide funding by itself. A stake is a hold invoice on
+ * Lightning and there is no payment layer here yet, so what this daemon does
+ * is REFUSE until something it trusts says otherwise - the operator supplies
+ * that, and the default is no. A daemon that assumed funding would be the
+ * flood lever rather than the guard against it, and a default of yes is the
+ * kind of thing nobody notices until the disk is full.
+ *
+ * It is deliberately not a message on the wire: inventing a funding message
+ * would be inventing the payment protocol, and that is not this step's to
+ * write. What is this step's is that nothing is written until the answer is
+ * yes.
+ */
+export const NOTHING_IS_FUNDED = () => false;
+
+export function serve(db, { port = 0, funded = NOTHING_IS_FUNDED } = {}) {
   const round = new Round(db);
 
   const http = createServer(async (req, res) => {
@@ -89,8 +112,14 @@ export function serve(db, { port = 0 } = {}) {
       // simple. Answered and nothing else: there is no state to change here.
       if (req.method === 'OPTIONS') { res.writeHead(204, CORS); return res.end(); }
 
-      if (req.method === 'POST' && url.pathname === '/round')
-        return bytes(res, 201, round.open(decodeRoundContract(await read(req))));
+      if (req.method === 'POST' && url.pathname === '/round') {
+        const contract = decodeRoundContract(await read(req));
+        // Asked BEFORE anything is decoded into the database, so a refusal
+        // costs a parse and nothing else.
+        if (!funded({ kind: 'round', contract }))
+          return text(res, 402, 'this node stores nothing for a round nobody has funded');
+        return bytes(res, 201, round.open(contract));
+      }
 
       if (req.method === 'GET' && url.pathname === '/round') {
         const row = round.get(Buffer.from(url.searchParams.get('id') || '', 'hex'));
@@ -99,8 +128,12 @@ export function serve(db, { port = 0 } = {}) {
         return res.end(Buffer.from(row.contract));
       }
 
-      if (req.method === 'POST' && url.pathname === '/entry')
-        return bytes(res, 201, round.enter(decodeEntryContract(await read(req))));
+      if (req.method === 'POST' && url.pathname === '/entry') {
+        const contract = decodeEntryContract(await read(req));
+        if (!funded({ kind: 'entry', contract }))
+          return text(res, 402, 'this node stores nothing for an entry nobody has funded');
+        return bytes(res, 201, round.enter(contract));
+      }
 
       if (req.method === 'GET' && url.pathname === '/transcript') {
         const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
