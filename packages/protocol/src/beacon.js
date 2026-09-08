@@ -22,7 +22,8 @@
 // all. The first is arithmetic; the second is evidence, and evidence is what
 // this file asks the caller for and refuses to assume.
 import { toHex, taggedHash } from './hash.js';
-import { TAG } from './constants.js';
+import { TAG, networkOf } from './constants.js';
+import { genesisFor } from './genesis.js';
 
 const cat = (...parts) => {
   const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
@@ -75,30 +76,45 @@ export function committeeSeedFrom({
  * because "I do not know when this was published" and "it was published late
  * enough" must never be the same answer.
  */
-export function beaconIsAfterRound(contract, { height } = {}) {
-  if (!contract || !Number.isInteger(contract.censusHeight))
-    return { ok: false, why: 'that round names no census height to measure a beacon against' };
-  if (!Number.isInteger(height))
-    return { ok: false, why: 'that randomness names no height, so nothing says it came after the round' };
-  if (height <= contract.censusHeight) {
+export function beaconIsAfterRound(contract, { height, timeMs } = {}) {
+  // WHICH BEACON, AND WHEN: both are the contract's now, and 5A.5 ties the
+  // randomness to `committee_time` rather than to anything about the census.
+  // Before this the check measured the beacon against `census_height` and said
+  // so - what it could prove, not what the rule asks - because the field did
+  // not exist. It does now.
+  if (!contract || typeof contract.committeeTimeMs !== 'bigint')
+    return { ok: false, why: 'that round names no committee time, so nothing says when its beacon is due' };
+  if (typeof contract.randomnessRule !== 'string' || !contract.randomnessRule)
+    return { ok: false, why: 'that round names no randomness rule, so nothing says which beacon seeds it' };
+
+  const network = contract.networkId ? networkOf(contract.networkId) : null;
+  if (network === null)
+    return { ok: false, why: 'that round names a network this build has no genesis for' };
+  const source = genesisFor(network).randomnessSource;
+  if (contract.randomnessRule !== source)
     return {
       ok: false,
-      why: `that randomness is from height ${height}, at or below the round's own census height `
-        + `${contract.censusHeight} - the creator held that chain state when the round was made`,
+      why: `that round names randomness rule "${contract.randomnessRule}" where ${network} was `
+        + `born reading "${source}"`,
     };
-  }
-  return { ok: true, height, provenAfter: contract.censusHeight };
+
+  // A BEACON WITH NO TIME IS NOT A LATE BEACON. "I do not know when this was
+  // published" and "it was published after committee_time" must never be the
+  // same answer, so a caller with no timestamp gets a refusal.
+  if (typeof timeMs !== 'bigint')
+    return { ok: false, why: 'that randomness names no time, so nothing says it came after committee_time' };
+  if (timeMs <= contract.committeeTimeMs)
+    return {
+      ok: false,
+      why: `that randomness is from ${timeMs}, at or before this round's committee time `
+        + `${contract.committeeTimeMs} - the creator could have held it when the round was made`,
+    };
+
+  return { ok: true, height, timeMs, provenAfter: contract.committeeTimeMs };
 }
 
-/**
- * THE TWO TOGETHER: a seed only from randomness that has shown it came later.
- *
- * Written as one call because the two halves are one rule. A caller that could
- * take the hash without the ordering check would be back at v4.4, computing a
- * committee from a value the creator picked.
- */
-export function committeeSeedFromBeacon(contract, { roundId, randomness, height }) {
-  const later = beaconIsAfterRound(contract, { height });
+export function committeeSeedFromBeacon(contract, { roundId, randomness, height, timeMs }) {
+  const later = beaconIsAfterRound(contract, { height, timeMs });
   if (!later.ok) return later;
   if (!is32(contract.censusRoot))
     return { ok: false, why: 'that round names no census root' };
@@ -118,6 +134,7 @@ export function committeeSeedFromBeacon(contract, { roundId, randomness, height 
         roundRandomness: randomness,
       }),
       height,
+      timeMs,
       rootsAreOne: true,
     };
   } catch (err) { return { ok: false, why: err.message }; }

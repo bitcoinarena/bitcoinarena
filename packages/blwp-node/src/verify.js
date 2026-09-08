@@ -43,7 +43,7 @@ function beaconFor(randomnessFor, contract, roundIdBytes, entry, entryId) {
   const hash = given && (given.hash || (given instanceof Uint8Array ? given : undefined));
   const height = given && given.height;
   const seeded = committeeSeedFromBeacon(contract, {
-    roundId: roundIdBytes, randomness: hash, height,
+    roundId: roundIdBytes, randomness: hash, height, timeMs: given && given.timeMs,
   });
   return seeded.ok
     ? { ok: true, hash, height, committeeSeed: seeded.seed, rootsAreOne: seeded.rootsAreOne }

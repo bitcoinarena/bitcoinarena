@@ -31,7 +31,7 @@ const HEIGHT = 900000;
 // THE BEACON these rounds are seeded from, owned by the fixture the way the
 // census root is: a value published ABOVE the census height, which is what
 // `beaconIsAfterRound` can prove until `committee_time` exists.
-const BEACON = { hash: new Uint8Array(32).fill(0xbe), height: 900005 };
+const BEACON = { hash: new Uint8Array(32).fill(0xbe), height: 900005, timeMs: 900n };
 const TIP = HEIGHT + 10;
 const FROM = HEIGHT - 20;
 
@@ -56,7 +56,7 @@ const contractWith = (nodes, censusRoot) => ({
   gameVerifySlots: 2, settlementSlots: 2, simCoreHash: b32(1), startTimeMs: 1000n,
   entryCloseMs: 2000n, objectionWindowMs: 600000n, custody: 'FEDERATION',
   slashMinimumServed: 20, slashRemainder: 'BURN', donationSetId: b32(0xd0),
-  censusHeight: HEIGHT, censusRoot, committeeSeed: b32(3), stakeMsat: 100000n,
+  censusHeight: HEIGHT, censusRoot, committeeTimeMs: 500n, randomnessRule: 'bitcoin-block-hash', stakeMsat: 100000n,
   bondMinSats: 50000n, blockTicks: 9000, exposureReference: 1000, corridorHalfWidth: 40,
   spawnFreeRadius: 20, timeFloor: 30, timeCeil: 150, minScore: 1,
   rankNumerator: 3, rankDenominator: 4, nodes,

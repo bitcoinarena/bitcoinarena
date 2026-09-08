@@ -41,7 +41,7 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 // The fixture owns this beacon exactly as the daemon's tests own theirs; the
 // node still refuses to invent one, which is why it has to be given.
 const BEACON = b32(0xbe);
-const FUNDED = { funded: () => true, randomnessFor: () => ({ hash: BEACON, height: 900000 }) };
+const FUNDED = { funded: () => true, randomnessFor: () => ({ hash: BEACON, height: 900000, timeMs: 900n }) };
 
 const wordsAt = (n) => (t) => [45875, ((t * (977 + n)) % 30000) - 15000, (t % 700) < 40 ? 65536 : 0, 0, 0];
 
@@ -53,7 +53,7 @@ async function rig() {
     settlementSlots: 7, simCoreHash: b32(1), startTimeMs: 1000n, entryCloseMs: 2000n,
     objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20,
     slashRemainder: 'BURN', donationSetId: b32(0xd0), censusHeight: 900000, censusRoot: b32(2),
-    committeeSeed: b32(3), stakeMsat: 100000n, bondMinSats: 50000n, blockTicks: 9000,
+    committeeTimeMs: 500n, randomnessRule: 'bitcoin-block-hash', stakeMsat: 100000n, bondMinSats: 50000n, blockTicks: 9000,
     exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
     timeFloor: 30, timeCeil: 150, minScore: 1, rankNumerator: 3, rankDenominator: 4,
     nodes: [node.round.pubkey],

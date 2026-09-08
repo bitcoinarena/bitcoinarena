@@ -109,7 +109,19 @@ export function encodeRoundContract(c) {
   w.u32(c.censusConfirmations);
 
   w.bytes32(c.censusRoot);
-  w.bytes32(c.committeeSeed);
+
+  // WHEN THE COMMITTEE COMES INTO EXISTENCE, and where its randomness comes
+  // from. Section 6 lists both; this contract carried neither, and in their
+  // place it carried a `committee_seed` - thirty-two bytes the AUTHOR wrote,
+  // which the lottery read. That is the grinding attack 5A.5 exists to close:
+  // 34 offline tries were enough to seat a chosen pair out of eight bonded
+  // nodes. The seed is derived from the beacon now, so the field is gone, and
+  // these two say WHICH beacon and WHEN - never its value, which does not
+  // exist yet when a round is published.
+  //
+  // "committee_time  beacon value appears -> committees selected & verified"
+  w.u64(c.committeeTimeMs);
+  w.str(c.randomnessRule);
 
   // HOW MANY SEATS EACH POOL HAS, section 5A.7: "GAME/VERIFY: 7 slots... 
   // SETTLEMENT: 7 slots". Section 6 carries them and says what they mean:
@@ -168,7 +180,8 @@ export function decodeRoundContract(bytes) {
     censusHeight: r.u32(),
     censusConfirmations: r.u32(),
     censusRoot: r.bytes32(),
-    committeeSeed: r.bytes32(),
+    committeeTimeMs: r.u64(),
+    randomnessRule: r.str(),
     gameVerifySlots: r.u8(),
     settlementSlots: r.u8(),
     stakeMsat: r.u64(),

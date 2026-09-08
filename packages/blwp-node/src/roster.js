@@ -64,13 +64,18 @@ export class Roster {
   seedFor(roundIdBytes, contract) {
     const given = this.randomnessFor({ contract, roundIdBytes });
     const randomness = given instanceof Uint8Array ? given : given && given.hash;
-    const height = given && given.height;
     if (!randomness)
       return {
         ok: false,
         why: 'this node has no beacon for that round, so it cannot say who the census seats',
       };
-    return committeeSeedFromBeacon(contract, { roundId: roundIdBytes, randomness, height });
+    // THE BLOCK'S OWN TIME, because 5A.5 ties the randomness to
+    // `committee_time` and a height cannot answer that: the rule is "the first
+    // Bitcoin block after committee_time", so what matters is when the block
+    // was, not how deep it is.
+    return committeeSeedFromBeacon(contract, {
+      roundId: roundIdBytes, randomness, height: given && given.height, timeMs: given && given.timeMs,
+    });
   }
 
   /**

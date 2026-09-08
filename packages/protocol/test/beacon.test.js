@@ -23,7 +23,7 @@ const contract = {
   settlementSlots: 7, simCoreHash: b32(1), startTimeMs: 1000n, entryCloseMs: 2000n,
   objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20,
   slashRemainder: 'BURN', donationSetId: b32(0xd0), censusHeight: 900000,
-  censusRoot: b32(2), committeeSeed: b32(3), stakeMsat: 100000n, bondMinSats: 50000n,
+  censusRoot: b32(2), committeeTimeMs: 500n, randomnessRule: 'bitcoin-block-hash', stakeMsat: 100000n, bondMinSats: 50000n,
   blockTicks: 9000, exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
   timeFloor: 30, timeCeil: 150, minScore: 1, rankNumerator: 3, rankDenominator: 4,
   nodes: [1, 2, 3, 4, 5, 6, 7].map((n) => b32(0xc0 + n)),
@@ -111,30 +111,38 @@ test('one seed selects one committee, and a different beacon selects another', (
 });
 
 /**
- * A HASH THE CREATOR COULD HAVE HAD IS REFUSED.
+ * A HASH THE CREATOR COULD HAVE HAD IS REFUSED, AND THE LINE IS COMMITTEE_TIME.
  *
- * The contract commits to `census_height`, so chain state at or below it was
- * demonstrably in the creator's hands when the round was made. A beacon from
- * there is the v4.4 attack with extra steps.
+ * It used to be `census_height`, because that was the only ordering the
+ * contract could prove: 5A.5 ties the randomness to `committee_time` and the
+ * field did not exist. It does now - "committee_time: beacon value appears ->
+ * committees selected & verified" - so the rule is the one the spec states
+ * rather than the one the fields allowed.
  */
-test('randomness from a height the round already knew is rejected', () => {
-  const at = (height) => beaconIsAfterRound(contract, { height });
+test('randomness from at or before committee_time is rejected', () => {
+  const at = (timeMs) => beaconIsAfterRound(contract, { height: contract.censusHeight + 1, timeMs });
 
-  assert.equal(at(contract.censusHeight).ok, false, 'the census height itself was accepted');
-  assert.equal(at(contract.censusHeight - 1).ok, false);
-  assert.equal(at(0).ok, false);
-  assert.match(at(contract.censusHeight).why, /at or below the round's own census height/);
-  assert.match(at(contract.censusHeight).why, /held that chain state when the round was made/);
+  assert.equal(at(contract.committeeTimeMs).ok, false, 'the committee time itself was accepted');
+  assert.equal(at(contract.committeeTimeMs - 1n).ok, false);
+  assert.equal(at(0n).ok, false);
+  assert.match(at(contract.committeeTimeMs).why, /at or before this round's committee time/);
+  assert.match(at(contract.committeeTimeMs).why, /could have held it when the round was made/);
 
-  assert.equal(at(contract.censusHeight + 1).ok, true, 'a later block was refused');
-  assert.equal(at(contract.censusHeight + 1).provenAfter, contract.censusHeight);
+  assert.equal(at(contract.committeeTimeMs + 1n).ok, true, 'a later block was refused');
+  assert.equal(at(contract.committeeTimeMs + 1n).provenAfter, contract.committeeTimeMs);
 
-  // NO HEIGHT IS NOT A LATE HEIGHT. "I do not know when this was published"
-  // and "it was published late enough" must never be the same answer.
-  assert.equal(beaconIsAfterRound(contract, {}).ok, false);
-  assert.match(beaconIsAfterRound(contract, {}).why, /names no height/);
-  assert.equal(beaconIsAfterRound(contract, { height: 900000.5 }).ok, false);
-  assert.match(beaconIsAfterRound({}, { height: 1 }).why, /no census height/);
+  // NO TIME IS NOT A LATE TIME. "I do not know when this was published" and
+  // "it was published late enough" must never be the same answer.
+  assert.equal(beaconIsAfterRound(contract, { height: 1 }).ok, false);
+  assert.match(beaconIsAfterRound(contract, { height: 1 }).why, /names no time/);
+
+  // AND THE ROUND HAS TO SAY WHICH BEACON, AND WHEN.
+  assert.match(beaconIsAfterRound({ ...contract, committeeTimeMs: undefined }, { timeMs: 900n }).why,
+    /names no committee time/);
+  assert.match(beaconIsAfterRound({ ...contract, randomnessRule: undefined }, { timeMs: 900n }).why,
+    /names no randomness rule/);
+  assert.match(beaconIsAfterRound({ ...contract, randomnessRule: 'drand' }, { timeMs: 900n }).why,
+    /names randomness rule "drand" where regtest was born reading "bitcoin-block-hash"/);
 });
 
 /**
@@ -142,12 +150,14 @@ test('randomness from a height the round already knew is rejected', () => {
  */
 test('a seed is not produced from randomness that has not shown it came later', () => {
   const early = committeeSeedFromBeacon(contract,
-    { roundId: RID, randomness: PUBLISHED, height: contract.censusHeight });
+    { roundId: RID, randomness: PUBLISHED, height: contract.censusHeight + 1,
+      timeMs: contract.committeeTimeMs });
   assert.equal(early.ok, false);
   assert.equal(early.seed, undefined, 'a seed came back from randomness the creator already had');
 
   const late = committeeSeedFromBeacon(contract,
-    { roundId: RID, randomness: PUBLISHED, height: contract.censusHeight + 1 });
+    { roundId: RID, randomness: PUBLISHED, height: contract.censusHeight + 1,
+      timeMs: contract.committeeTimeMs + 1n });
   assert.equal(late.ok, true, late.why);
   assert.deepEqual(late.seed, committeeSeedFrom({
     censusRootGameVerify: contract.censusRoot, censusRootSettlement: contract.censusRoot,

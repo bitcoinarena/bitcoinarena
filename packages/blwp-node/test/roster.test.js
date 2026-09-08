@@ -30,7 +30,8 @@ const HEIGHT = 900000;
 // THE BEACON these rounds are seeded from, owned by the fixture the way the
 // census root is: a value published ABOVE the census height, which is what
 // `beaconIsAfterRound` can prove until `committee_time` exists.
-const BEACON = { hash: new Uint8Array(32).fill(0xbe), height: 900005 };
+const COMMITTEE_TIME = 500n;
+const BEACON = { hash: new Uint8Array(32).fill(0xbe), height: 900005, timeMs: 900n };
 const TIP = HEIGHT + 10;
 const FROM = HEIGHT - 20;
 
@@ -40,7 +41,7 @@ const contractFor = (over = {}) => ({
   startTimeMs: 1000n, entryCloseMs: 2000n, objectionWindowMs: 600000n,
   custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'BURN',
   donationSetId: b32(0xd0), censusHeight: HEIGHT, censusRoot: b32(2),
-  committeeSeed: b32(3), stakeMsat: 100000n, bondMinSats: 50000n, blockTicks: 9000,
+  committeeTimeMs: COMMITTEE_TIME, randomnessRule: 'bitcoin-block-hash', stakeMsat: 100000n, bondMinSats: 50000n, blockTicks: 9000,
   exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
   timeFloor: 30, timeCeil: 150, minScore: 1, rankNumerator: 3, rankDenominator: 4,
   nodes: [b32(4)], ...over,
@@ -351,16 +352,16 @@ test('a node with no beacon, or one the creator already had, seats nobody', () =
   assert.equal(seats.ok, false, 'a node with no beacon seated a committee anyway');
   assert.match(seats.why, /no beacon for that round/);
 
-  // A BEACON THE CREATOR ALREADY HELD: at or below the round's census height,
-  // that chain state was in hand when the round was made - which is the whole
-  // of what makes grinding worthless.
-  for (const height of [HEIGHT, HEIGHT - 1]) {
+  // A BEACON THE CREATOR COULD HAVE HELD: at or before the round's own
+  // committee time, which is where 5A.5 draws the line now that the field
+  // exists - "committee_time: beacon value appears".
+  for (const timeMs of [COMMITTEE_TIME, COMMITTEE_TIME - 1n, 0n]) {
     const early = new Roster(round, {
       chainFor: () => chainWith(bonds),
-      randomnessFor: () => ({ hash: BEACON.hash, height }),
+      randomnessFor: () => ({ hash: BEACON.hash, height: BEACON.height, timeMs }),
     });
     const out = early.committeeFor(rid, 'game');
-    assert.equal(out.ok, false, `a beacon at height ${height} seeded a round it predates`);
-    assert.match(out.why, /the creator held that chain state when the round was made/);
+    assert.equal(out.ok, false, `a beacon at ${timeMs} seeded a round it predates`);
+    assert.match(out.why, /at or before this round's committee time/);
   }
 });

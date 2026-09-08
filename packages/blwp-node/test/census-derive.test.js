@@ -481,7 +481,7 @@ test('a bond spent after the census height keeps its place, its amount and its s
   });
   const nb = parseTransaction(neighbour);
   const round = {
-    ...contract, bondMinSats: 50000n, committeeSeed: b32(1), gameVerifySlots: 2,
+    ...contract, bondMinSats: 50000n, committeeTimeMs: 500n, randomnessRule: 'bitcoin-block-hash', gameVerifySlots: 2,
   };
   const byTxid = new Map([[toHex(tx.txid), bond], [toHex(nb.txid), neighbour]]);
   const at = (place) => deriveCensus(view(place), {
@@ -503,7 +503,9 @@ test('a bond spent after the census height keeps its place, its amount and its s
   assert.equal(mine.bondSats, 60000n, 'the amount changed with a later spend');
   assert.equal(toHex(later.root), toHex(untouched.root), 'a later spend moved the census root');
   const seats = selectCommittee({
-    entries: later.entries, contract: round, role: 'game', committeeSeed: round.committeeSeed });
+    // The seed a beacon would have produced: a contract names none, and this
+    // test is about a spend keeping its seat, not about where seeds come from.
+    entries: later.entries, contract: round, role: 'game', committeeSeed: b32(0x11) });
   assert.equal(seats.length, 2);
   assert.equal(seats.some((e) => toHex(e.txid) === toHex(tx.txid)), true,
     'the bond spent after the census lost its seat');

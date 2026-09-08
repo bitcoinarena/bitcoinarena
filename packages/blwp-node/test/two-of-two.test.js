@@ -34,7 +34,7 @@ test('a 2-slot round is canonical at two distinct receipts', () => {
     startTimeMs: 1000n, entryCloseMs: 2000n, objectionWindowMs: 600000n,
     custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'BURN',
     donationSetId: b32(0xd0), censusHeight: 900000, censusRoot: b32(2),
-    committeeSeed: b32(3), stakeMsat: 100000n, bondMinSats: 50000n, blockTicks: 9000,
+    committeeTimeMs: 500n, randomnessRule: 'bitcoin-block-hash', stakeMsat: 100000n, bondMinSats: 50000n, blockTicks: 9000,
     exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
     timeFloor: 30, timeCeil: 150, minScore: 1, rankNumerator: 3, rankDenominator: 4,
     nodes: [round.pubkey, b32(9)],

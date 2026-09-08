@@ -20,12 +20,16 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { selectCommittee } from '../../protocol/src/sortition.js';
 import { committeeSeedFrom, committeeSeedFromBeacon } from '../../protocol/src/beacon.js';
-import { roundId } from '../../protocol/src/contracts.js';
+import { roundId, encodeRoundContract, decodeRoundContract } from '../../protocol/src/contracts.js';
 import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
 import { taggedHash, toHex } from '../../protocol/src/hash.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const CENSUS_HEIGHT = 900000;
+// 5A.5 ties the randomness to `committee_time`, so the fixture owns one and a
+// beacon is a block with a TIME - the first one after it.
+const COMMITTEE_TIME = 500n;
+const AFTER = 900n;
 const census = (n) => Array.from({ length: n }, (_, i) => ({
   txid: b32(i + 1), vout: 0, pubkey: b32(0x40 + i), bondSats: 100000n,
   height: CENSUS_HEIGHT, roles: ['game'], spent: false,
@@ -35,7 +39,7 @@ const contract = (over = {}) => ({
   gameVerifySlots: 2, settlementSlots: 2, simCoreHash: b32(1), startTimeMs: 1000n,
   entryCloseMs: 2000n, objectionWindowMs: 600000n, custody: 'FEDERATION',
   slashMinimumServed: 20, slashRemainder: 'BURN', donationSetId: b32(0xd0),
-  censusHeight: CENSUS_HEIGHT, censusRoot: b32(2), committeeSeed: b32(3),
+  censusHeight: CENSUS_HEIGHT, censusRoot: b32(2), committeeTimeMs: 500n, randomnessRule: 'bitcoin-block-hash',
   stakeMsat: 100000n, bondMinSats: 100000n, blockTicks: 9000, exposureReference: 1000,
   corridorHalfWidth: 40, spawnFreeRadius: 20, timeFloor: 30, timeCeil: 150,
   minScore: 1, rankNumerator: 3, rankDenominator: 4, nodes: [b32(4)], ...over,
@@ -85,25 +89,28 @@ test('a chosen seed can no longer choose the committee', () => {
     /drawn on the seed its beacon produced/);
 });
 
-test('no contract can name the seed its own beacon derives', () => {
-  // Why the field could not simply be CHECKED: the seed depends on round_id,
-  // and round_id hashes the contract the field sits on. Six steps, and the
-  // value never settles - a fixed point would be a 2^256 search, not a
-  // construction.
-  let seed = b32(0);
-  const seen = new Set();
-  for (let i = 0; i < 6; i++) {
-    const c = contract({ committeeSeed: seed });
-    const derived = committeeSeedFrom({
-      censusRootGameVerify: c.censusRoot, censusRootSettlement: c.censusRoot,
-      roundId: roundId(c), roundRandomness: b32(0xbe),
-    });
-    assert.notDeepEqual(toHex(derived), toHex(seed),
-      `a contract named its own derived seed at step ${i}`);
-    assert.equal(seen.has(toHex(derived)), false, 'the derivation cycled');
-    seen.add(toHex(derived));
-    seed = derived;
-  }
+test('a contract carries no committee seed at all, so stray bytes change nothing', () => {
+  // WHY THE FIELD WENT RATHER THAN GETTING A CHECK. While it existed, a
+  // contract could not name the seed its own beacon derives either: `round_id`
+  // hashes the contract, so the value it would have to carry depends on
+  // itself. Measured while it was still there - six iterations, never a fixed
+  // point - which is why the field stopped being an input instead of starting
+  // to be compared. Section 6's contract has no such field, and now neither
+  // does this one.
+  const clean = contract();
+  const withStray = contract({ committeeSeed: b32(0x5e) });
+
+  assert.deepEqual(toHex(encodeRoundContract(withStray)), toHex(encodeRoundContract(clean)),
+    'a stray committeeSeed reached the encoding');
+  assert.deepEqual(toHex(roundId(withStray)), toHex(roundId(clean)),
+    'a stray committeeSeed moved the round id, so it is still part of the round');
+  assert.equal(decodeRoundContract(encodeRoundContract(withStray)).committeeSeed, undefined,
+    'a decoded contract still hands back a committee seed');
+
+  // and what the contract DOES carry is which beacon and when
+  const back = decodeRoundContract(encodeRoundContract(clean));
+  assert.equal(back.committeeTimeMs, COMMITTEE_TIME);
+  assert.equal(back.randomnessRule, 'bitcoin-block-hash');
 });
 
 test('the seed is the beacon\'s, and a beacon the creator already had is refused', () => {
@@ -111,7 +118,7 @@ test('the seed is the beacon\'s, and a beacon the creator already had is refused
   const rid = roundId(c);
 
   const later = committeeSeedFromBeacon(c, {
-    roundId: rid, randomness: b32(0xbe), height: CENSUS_HEIGHT + 5,
+    roundId: rid, randomness: b32(0xbe), height: CENSUS_HEIGHT + 5, timeMs: AFTER,
   });
   assert.equal(later.ok, true, later.why);
   assert.deepEqual(later.seed, committeeSeedFrom({
@@ -122,21 +129,28 @@ test('the seed is the beacon\'s, and a beacon the creator already had is refused
   // A DIFFERENT BEACON IS A DIFFERENT COMMITTEE, or the randomness would be
   // decoration.
   const other = committeeSeedFromBeacon(c, {
-    roundId: rid, randomness: b32(0x9c), height: CENSUS_HEIGHT + 5,
+    roundId: rid, randomness: b32(0x9c), height: CENSUS_HEIGHT + 5, timeMs: AFTER,
   });
   assert.notDeepEqual(toHex(other.seed), toHex(later.seed));
 
-  // AND RANDOMNESS THE CREATOR ALREADY HELD IS REFUSED: at or below the
-  // round's own census height, that chain state was in hand when the round was
-  // made.
-  for (const height of [CENSUS_HEIGHT, CENSUS_HEIGHT - 1, 0]) {
-    const early = committeeSeedFromBeacon(c, { roundId: rid, randomness: b32(0xbe), height });
-    assert.equal(early.ok, false, `a beacon at height ${height} seeded a round it predates`);
-    assert.match(early.why, /the creator held that chain state when the round was made/);
+  // AND RANDOMNESS FROM AT OR BEFORE COMMITTEE_TIME IS REFUSED: the creator
+  // could have held it when the round was made, which is the whole of what
+  // 5A.5's ordering buys. The rule is the round's own `committee_time` now,
+  // not a census height standing in for it.
+  for (const timeMs of [COMMITTEE_TIME, COMMITTEE_TIME - 1n, 0n]) {
+    const early = committeeSeedFromBeacon(c, {
+      roundId: rid, randomness: b32(0xbe), height: CENSUS_HEIGHT + 5, timeMs,
+    });
+    assert.equal(early.ok, false, `a beacon at ${timeMs} seeded a round it predates`);
+    assert.match(early.why, /at or before this round's committee time/);
   }
 
-  // and no height at all is not "late enough"
-  assert.equal(committeeSeedFromBeacon(c, { roundId: rid, randomness: b32(0xbe) }).ok, false);
+  // and no time at all is not "late enough"
+  const undated = committeeSeedFromBeacon(c, {
+    roundId: rid, randomness: b32(0xbe), height: CENSUS_HEIGHT + 5,
+  });
+  assert.equal(undated.ok, false);
+  assert.match(undated.why, /names no time/);
 });
 
 test('a seed that is not thirty-two bytes is not a seed', () => {
@@ -145,4 +159,49 @@ test('a seed that is not thirty-two bytes is not a seed', () => {
     assert.throws(() => selectCommittee({
       entries: field, contract: contract(), role: 'game', committeeSeed: bad,
     }), /drawn on the seed its beacon produced/, `${bad && bad.length} bytes passed as a seed`);
+});
+
+test('a round that names no committee time, or the wrong beacon, seeds nothing', () => {
+  const rid = roundId(contract());
+
+  // WHICH BEACON AND WHEN are the round's to say - section 6 lists both, and
+  // this contract carried neither until now.
+  const noTime = committeeSeedFromBeacon({ ...contract(), committeeTimeMs: undefined },
+    { roundId: rid, randomness: b32(0xbe), height: CENSUS_HEIGHT + 5, timeMs: AFTER });
+  assert.equal(noTime.ok, false, 'a round with no committee time was seeded anyway');
+  assert.match(noTime.why, /names no committee time/);
+
+  const noRule = committeeSeedFromBeacon({ ...contract(), randomnessRule: undefined },
+    { roundId: rid, randomness: b32(0xbe), height: CENSUS_HEIGHT + 5, timeMs: AFTER });
+  assert.equal(noRule.ok, false);
+  assert.match(noRule.why, /names no randomness rule/);
+
+  // AND THE RULE IS THE NETWORK'S. `randomness_source` is a genesis parameter
+  // (27A.6): a round cannot name a beacon its network was not born reading.
+  const wrong = committeeSeedFromBeacon({ ...contract(), randomnessRule: 'drand' },
+    { roundId: rid, randomness: b32(0xbe), height: CENSUS_HEIGHT + 5, timeMs: AFTER });
+  assert.equal(wrong.ok, false, 'a round chose its own beacon');
+  assert.match(wrong.why, /names randomness rule "drand" where regtest was born reading "bitcoin-block-hash"/);
+});
+
+test('two beacons that differ only after committee_time seat different committees', () => {
+  // The randomness has to DECIDE something, or binding it to committee_time
+  // would be ceremony. Eight bonded nodes and two slots, so the draw has room
+  // to differ.
+  const field = census(8);
+  const c = contract();
+  const rid = roundId(c);
+  const seatedBy = (randomness) => {
+    const seeded = committeeSeedFromBeacon(c, {
+      roundId: rid, randomness, height: CENSUS_HEIGHT + 5, timeMs: AFTER,
+    });
+    assert.equal(seeded.ok, true, seeded.why);
+    return selectCommittee({ entries: field, contract: c, role: 'game', committeeSeed: seeded.seed })
+      .map((e) => toHex(e.pubkey)).sort();
+  };
+
+  const one = seatedBy(b32(0xbe));
+  assert.deepEqual(one, seatedBy(b32(0xbe)), 'one beacon seated two committees');
+  assert.notDeepEqual(one, seatedBy(b32(0x9c)),
+    'two beacons seated the same pair, so the randomness decides nothing');
 });

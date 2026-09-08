@@ -45,7 +45,7 @@ const RANDOMNESS = b32(0x9b);
 // height is above the contract's census height, which is the ordering this
 // contract can prove.
 const HEIGHT = 900001;
-const BEACON = { hash: RANDOMNESS, height: HEIGHT };
+const BEACON = { hash: RANDOMNESS, height: HEIGHT, timeMs: 900n };
 const TICKS = 600;
 const wordsAt = (t) => [45875, ((t * 977) % 30000) - 15000, (t % 700) < 40 ? 65536 : 0, 0, 0];
 
@@ -58,7 +58,7 @@ const contractFor = (nodePubkey) => ({
   settlementSlots: 2, simCoreHash: b32(1), startTimeMs: 1000n, entryCloseMs: 2000n,
   objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20,
   slashRemainder: 'BURN', donationSetId: b32(0xd0), censusHeight: 900000, censusRoot: b32(2),
-  committeeSeed: b32(3), stakeMsat: 100000n, bondMinSats: 50000n, blockTicks: 9000,
+  committeeTimeMs: 500n, randomnessRule: 'bitcoin-block-hash', stakeMsat: 100000n, bondMinSats: 50000n, blockTicks: 9000,
   exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
   timeFloor: 30, timeCeil: 150, minScore: 1, rankNumerator: 3, rankDenominator: 4,
   nodes: [nodePubkey, schnorr.getPublicKey(peer)],
@@ -231,7 +231,7 @@ test('a daemon with no beacon, or one it could have known, signs nothing and say
 
     assert.equal(answers.length, 1, 'the close queued no work at all');
     assert.equal(answers[0].stored, false);
-    assert.match(answers[0].why, /names no height, so nothing says it came after the round/);
+    assert.match(answers[0].why, /names no time, so nothing says it came after committee_time/);
     assert.equal((await results(node.port, rid, eid)).count, 0);
     assert.equal(node.verifier.queued[0].refused, answers[0].why,
       'the refusal was not recorded where the queue could be asked about it');
@@ -512,8 +512,11 @@ test('a peer that serves forged or foreign records adds nothing to the store', a
  * a result for such a round would be signing under a committee the creator
  * chose.
  */
-test('a beacon at or below the round\'s census height is refused before anything is replayed', async () => {
-  const early = { hash: RANDOMNESS, height: 900000 };        // the census height itself
+test('a beacon at or before the round\'s committee time is refused before anything is replayed', async () => {
+  // 5A.5 draws the line at `committee_time` now that the contract carries one:
+  // "committee_time: beacon value appears -> committees selected & verified".
+  // It used to be the census height, which was what the fields could prove.
+  const early = { hash: RANDOMNESS, height: HEIGHT, timeMs: 500n };   // the committee time itself
   const node = await serve(openStore(':memory:'), { port: 0, ...FUNDED, randomnessFor: () => early });
   try {
     const { rid, eid } = await roundThrough(node);
@@ -521,8 +524,8 @@ test('a beacon at or below the round\'s census height is refused before anything
 
     assert.equal(answers[0].stored, false);
     assert.match(answers[0].why,
-      /from height 900000, at or below the round's own census height 900000/);
-    assert.match(answers[0].why, /held that chain state when the round was made/);
+      /from 500, at or before this round's committee time 500/);
+    assert.match(answers[0].why, /could have held it when the round was made/);
     assert.equal((await results(node.port, rid, eid)).count, 0);
 
     // NOT REPLAYED AT ALL, not replayed and then discarded: a round whose
@@ -561,7 +564,7 @@ test('two daemons given the same published hash and height derive the same seed 
 
     // IT IS 5A.5'S OWN VALUE, not something this daemon made up.
     assert.deepEqual(seedA, committeeSeedFromBeacon(c,
-      { roundId: rid, randomness: RANDOMNESS, height: HEIGHT }).seed);
+      { roundId: rid, randomness: RANDOMNESS, height: HEIGHT, timeMs: BEACON.timeMs }).seed);
 
     // AND THE SAME SEED PICKS THE SAME SEATS.
     const entries = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) => ({
@@ -580,7 +583,7 @@ test('two daemons given the same published hash and height derive the same seed 
     // a different published hash would have picked different seats, which is
     // what makes grinding the round id worthless
     const other = committeeSeedFromBeacon(c,
-      { roundId: rid, randomness: b32(0x9c), height: HEIGHT }).seed;
+      { roundId: rid, randomness: b32(0x9c), height: HEIGHT, timeMs: BEACON.timeMs }).seed;
     assert.notDeepEqual(seatsOf(seedA), seatsOf(other));
   } finally { await a.close(); await b.close(); }
 });

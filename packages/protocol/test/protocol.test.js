@@ -23,6 +23,9 @@ const spanning = (from, tip) =>
 
 
 const b32 = (n) => new Uint8Array(32).fill(n);
+// What a beacon would have produced. A contract names no seed - section 6 has
+// no such field - so the lottery's input is stated where it is used.
+const SEED = b32(11);
 const pk = (n) => b32(n);
 
 /* ---------------------------------------------------------------- encoding */
@@ -120,13 +123,13 @@ test('selection never divides, and heavier bonds win more often', () => {
 
   let heavyWins = 0;
   for (let s = 0; s < 200; s++) {
-    const pick = selectCommittee({ entries, role: 'game', contract: {
-        committeeSeed: b32(s % 256), gameVerifySlots: 3, bondMinSats: 100000n,
-        networkId: NETWORK_ID_REGTEST,
-      }, committeeSeed: {
-        committeeSeed: b32(s % 256), gameVerifySlots: 3, bondMinSats: 100000n,
-        networkId: NETWORK_ID_REGTEST,
-      }.committeeSeed });
+    const pick = selectCommittee({
+      entries, role: 'game',
+      contract: { gameVerifySlots: 3, bondMinSats: 100000n, networkId: NETWORK_ID_REGTEST },
+      // A DIFFERENT SEED EVERY ROUND, which is what a beacon gives: the point
+      // of the run is that weight decides across many draws, not one.
+      committeeSeed: b32(s % 256),
+    });
     if (pick.some((e) => e.txid[0] === 1)) heavyWins++;
   }
   // fifty times the bond in a field of twenty, three slots: it should appear
@@ -142,11 +145,11 @@ test('the same seed picks the same committee', () => {
   // and the network id is what says which genesis. A bare contract without one
   // is refused now, the same way the census refuses one.
   const round = {
-    committeeSeed: b32(11), gameVerifySlots: 2, bondMinSats: 100000n,
+    committeeTimeMs: 500n, randomnessRule: 'bitcoin-block-hash', gameVerifySlots: 2, bondMinSats: 100000n,
     networkId: NETWORK_ID_REGTEST,
   };
-  const a = selectCommittee({ entries, contract: round, role: 'game', committeeSeed: round.committeeSeed });
-  const b = selectCommittee({ entries, contract: round, role: 'game', committeeSeed: round.committeeSeed });
+  const a = selectCommittee({ entries, contract: round, role: 'game', committeeSeed: SEED });
+  const b = selectCommittee({ entries, contract: round, role: 'game', committeeSeed: SEED });
   assert.deepEqual(a.map((e) => e.txid[0]), b.map((e) => e.txid[0]));
 
   // AND THE SIZE IS THE ROUND'S. It was a caller number: nobody had to forge a
@@ -154,16 +157,16 @@ test('the same seed picks the same committee', () => {
   // is explicit that the counts are "echoed for readability; MUST equal
   // genesis_parameters... A contract disagreeing with the network it names is
   // invalid, NOT A SMALLER COMMITTEE."
-  assert.equal(selectCommittee({ entries, contract: round, role: 'game', committeeSeed: round.committeeSeed }).length, 2);
-  assert.equal(selectCommittee({ entries, contract: { ...round, gameVerifySlots: 5 }, role: 'game', committeeSeed: round.committeeSeed }).length, 5);
+  assert.equal(selectCommittee({ entries, contract: round, role: 'game', committeeSeed: SEED }).length, 2);
+  assert.equal(selectCommittee({ entries, contract: { ...round, gameVerifySlots: 5 }, role: 'game', committeeSeed: SEED }).length, 5);
 
   // a settlement seat count is a different number, and a role with no pool has
   // no committee at all rather than a silent zero
   assert.equal(selectCommittee({
     entries: entries.map((e) => ({ ...e, roles: ['settlement'] })),
     contract: { ...round, settlementSlots: 4 }, role: 'settlement',
-    committeeSeed: round.committeeSeed }).length, 4);
-  assert.throws(() => selectCommittee({ entries, contract: round, role: 'relay', committeeSeed: round.committeeSeed }),
+    committeeSeed: SEED }).length, 4);
+  assert.throws(() => selectCommittee({ entries, contract: round, role: 'relay', committeeSeed: SEED }),
     /names no committee size for relay/);
   // THE SEED IS NOT A CONTRACT FIELD ANY MORE. A caller that brings none is
   // refused for that, and the refusal says where a seed comes from - the
@@ -181,7 +184,7 @@ test('the same seed picks the same committee', () => {
   for (const floor of [0n, -1n])
     assert.throws(() => selectCommittee({
       entries, contract: { ...round, bondMinSats: floor }, role: 'game',
-      committeeSeed: round.committeeSeed }),
+      committeeSeed: SEED }),
     /names no positive bond floor/, `a floor of ${floor} was accepted`);
 
   // AND A CALLER CANNOT REACH ANY OF THE THREE. Held fixed, the old arguments
@@ -195,14 +198,14 @@ test('the same seed picks the same committee', () => {
     height: 1, roles: ['game'], spent: false,
   }));
   const fair = selectCommittee({
-    entries: uneven, contract: round, role: 'game', committeeSeed: round.committeeSeed });
+    entries: uneven, contract: round, role: 'game', committeeSeed: SEED });
   // The values chosen here are the ones proven below to MOVE the answer when
   // the round moves them - `bondMin: 1n` looked inert and was not a test:
   // weightOf floors bond/bondMin, so scaling the floor scales every weight
   // alike and cannot reorder anybody.
   for (const extra of [{ slots: 5 }, { slots: 1 }, { bondMin: 2000000n }]) {
     const tried = selectCommittee({
-      entries: uneven, contract: round, role: 'game', committeeSeed: round.committeeSeed, ...extra });
+      entries: uneven, contract: round, role: 'game', committeeSeed: SEED, ...extra });
     assert.equal(tried.length, 2, `a caller passing ${Object.keys(extra)[0]} resized the committee`);
     assert.deepEqual(tried.map((e) => e.txid[0]), fair.map((e) => e.txid[0]),
       `a caller passing ${Object.keys(extra)[0]} changed who sits`);
@@ -216,7 +219,7 @@ test('the same seed picks the same committee', () => {
   assert.deepEqual(
     selectCommittee({
       entries: uneven, contract: { ...round, committeeSeed: b32(99) }, role: 'game',
-      committeeSeed: round.committeeSeed }).map((e) => e.txid[0]),
+      committeeSeed: SEED }).map((e) => e.txid[0]),
     fair.map((e) => e.txid[0]),
     'the lottery still reads the contract\'s committeeSeed');
 
@@ -229,7 +232,7 @@ test('the same seed picks the same committee', () => {
   // and the other two, moved on the ROUND, still change the answer
   assert.notDeepEqual(
     selectCommittee({ entries: uneven, contract: { ...round, bondMinSats: 2000000n }, role: 'game',
-      committeeSeed: round.committeeSeed })
+      committeeSeed: SEED })
       .map((e) => e.txid[0]), fair.map((e) => e.txid[0]));
 });
 
@@ -328,7 +331,7 @@ test('a flat rank curve is flagged before anyone stakes', () => {
 function sampleContract() {
   return {
     networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations: 6, gameVerifySlots: 7, settlementSlots: 7, simCoreHash: b32(1), startTimeMs: 1788200000000n, entryCloseMs: 1788200060000n, objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'BURN', donationSetId: new Uint8Array(32).fill(0xd0),
-    censusHeight: 964900, censusRoot: b32(2), committeeSeed: b32(3),
+    censusHeight: 964900, censusRoot: b32(2), committeeTimeMs: 500n, randomnessRule: 'bitcoin-block-hash',
     stakeMsat: 100000n, bondMinSats: 100000n, blockTicks: 9000,
     exposureReference: 12451840, corridorHalfWidth: 3014656, spawnFreeRadius: 1441792,
     timeFloor: 16384, timeCeil: 98304, minScore: 1,

@@ -35,7 +35,7 @@ const contract = {
   startTimeMs: 1000n, entryCloseMs: 2000n, objectionWindowMs: 600000n,
   custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'BURN',
   donationSetId: b32(0xd0), censusHeight: 900000,
-  censusRoot: b32(2), committeeSeed: b32(3), stakeMsat: 100000n,
+  censusRoot: b32(2), committeeTimeMs: 500n, randomnessRule: 'bitcoin-block-hash', stakeMsat: 100000n,
   bondMinSats: 50000n, blockTicks: 600, exposureReference: 1000,
   corridorHalfWidth: 40, spawnFreeRadius: 20, timeFloor: 30, timeCeil: 150,
   minScore: 1, rankNumerator: 3, rankDenominator: 4,
@@ -421,8 +421,11 @@ test('pseudonym, cargo and live status cannot be injected, and each names its bl
  * with no signature forged anywhere.
  */
 test("a final from another round is not on this round's board, and is named", () => {
-  // the same committee, a different round: one field moves, so the id moves
-  const other = { ...contract, committeeSeed: b32(0x5e) };
+  // the same committee, a different round: one field moves, so the id moves.
+  // It used to be `committeeSeed` - a field that no longer exists, since the
+  // seed is derived from the beacon - so the round moves by its committee time
+  // instead, which is a field section 6 actually names.
+  const other = { ...contract, committeeTimeMs: contract.committeeTimeMs + 1n };
   const OTHER = roundId(other);
   assert.notDeepEqual(OTHER, ROUND, 'the two contracts hashed the same');
 

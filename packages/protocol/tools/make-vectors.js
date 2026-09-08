@@ -9,6 +9,7 @@ import { writeFileSync, mkdirSync } from 'node:fs';
 import { Writer } from '../src/encode.js';
 import { taggedHash, toHex } from '../src/hash.js';
 import { TAG, PROTOCOL_VERSION } from '../src/constants.js';
+import { NETWORK_ID_REGTEST } from '../src/genesis-ids.js';
 import { commitCensus, leafHash, encodeEntry } from '../src/census.js';
 import { selectCommittee, ticketFor, weightOf } from '../src/sortition.js';
 import { computePayoutTable, rankWeights, DELIVERED, FAILED, FORFEIT, VOID } from '../src/payout.js';
@@ -98,8 +99,10 @@ out.tagged = {
       weight: weightOf(e.bondSats, 100000n).toString(),
       ticket: ticketFor(seed, e, 'game').toString(),
     })),
-    selected: selectCommittee({ entries, role: 'game',
-      contract: { committeeSeed: seed, gameVerifySlots: 3, bondMinSats: 100000n } })
+    // The seed is the lottery's input, not a contract field: 5A.5 derives it
+    // from the beacon and section 6's contract carries none.
+    selected: selectCommittee({ entries, role: 'game', committeeSeed: seed,
+      contract: { networkId: NETWORK_ID_REGTEST, gameVerifySlots: 3, bondMinSats: 100000n } })
       .map((e) => toHex(e.txid)),
     rules: [
       'Weight is bond / bond_min, floored, minimum one. LINEAR.',
@@ -143,7 +146,7 @@ out.tagged = {
 {
   const c = {
     networkId: b32(0x4e), configHash: b32(0x43), censusConfirmations: 6, gameVerifySlots: 7, settlementSlots: 7, simCoreHash: b32(1), startTimeMs: 1788200000000n, entryCloseMs: 1788200060000n, objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'BURN', donationSetId: new Uint8Array(32).fill(0xd0),
-    censusHeight: 964900, censusRoot: b32(2), committeeSeed: b32(3),
+    censusHeight: 964900, censusRoot: b32(2), committeeTimeMs: 500n, randomnessRule: 'bitcoin-block-hash',
     stakeMsat: 100000n, bondMinSats: 100000n, blockTicks: 9000,
     exposureReference: 12451840, corridorHalfWidth: 3014656, spawnFreeRadius: 1441792,
     timeFloor: 16384, timeCeil: 98304, minScore: 1, rankNumerator: 3, rankDenominator: 4,
