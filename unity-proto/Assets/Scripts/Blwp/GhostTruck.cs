@@ -43,6 +43,17 @@ namespace Blwp
         void Awake() => StripPhysics();
 
         /// <summary>
+        /// And again whenever a child appears.
+        ///
+        /// Awake runs once. A truck model is STREAMED in this project -
+        /// `ModelStreamer` parents it later - and a model arrives with the
+        /// colliders its author gave it, so a ghost that only stripped at Awake
+        /// would be clean for a second and solid afterwards. Unity calls this
+        /// when a child is added, which is exactly that moment.
+        /// </summary>
+        void OnTransformChildrenChanged() => StripPhysics();
+
+        /// <summary>
         /// Removes every Collider and Rigidbody under this object.
         ///
         /// DestroyImmediate rather than Destroy: Destroy runs at the end of the

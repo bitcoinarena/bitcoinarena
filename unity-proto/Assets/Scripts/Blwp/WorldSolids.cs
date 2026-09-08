@@ -16,6 +16,15 @@ namespace Blwp
     ///   - triggers, which are there to notice the truck, not to stop it
     ///   - the loading panel's own layer, which is rendered off the map
     ///   - the truck itself
+    ///   - ANY GHOST. Spec 0.9: another player must not be able to change my
+    ///     odds "by ramming me, BLOCKING A ROAD, pushing me". This function is
+    ///     how the scene becomes walls inside the core, so a ghost that ever
+    ///     carried a BoxCollider would be uploaded as one - and it would pass
+    ///     every other test above, because `GhostTruck` strips the Rigidbody
+    ///     and a collider added afterwards has no `attachedRigidbody` to
+    ///     exclude it by. That is a competitor blocking a road, arriving
+    ///     through `setSolids` rather than through `step`'s arguments, so the
+    ///     missing parameter never sees it.
     /// </summary>
     public static class WorldSolids
     {
@@ -30,6 +39,13 @@ namespace Blwp
             if (c.gameObject.layer == PackageYard.YardLayer) return false;
             if (c.attachedRigidbody != null) return false;
             if (truck != null && c.transform.IsChildOf(truck)) return false;
+
+            // Asked of the component, not of a name, a tag or a layer: those
+            // are editable in an inspector by somebody who does not know what
+            // they decide, and this one decides whether a player can wall
+            // another player in.
+            if (c.GetComponentInParent<GhostTruck>(true) != null) return false;
+
             return true;
         }
 

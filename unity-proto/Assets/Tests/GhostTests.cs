@@ -125,6 +125,80 @@ public class GhostTests
     }
 
     /// <summary>
+    /// A GHOST NEVER BECOMES A WALL INSIDE THE CORE.
+    ///
+    /// `WorldSolids.Gather` is how the scene turns into boxes the core will not
+    /// let the truck drive through. It scans every BoxCollider in the scene, so
+    /// it is a door into the SIMULATION that does not go through step's
+    /// arguments at all - and a ghost passes every one of its other exclusions:
+    /// it is not a trigger, not on the yard layer, not a child of the truck,
+    /// and it has no attachedRigidbody, because the rigidbody was stripped.
+    ///
+    /// 0.9: another player must not change my odds "by ramming me, BLOCKING A
+    /// ROAD, pushing me". A ghost uploaded as a solid is a road blocked.
+    /// </summary>
+    [Test]
+    public void AGhostIsNeverUploadedToTheCoreAsASolid()
+    {
+        var truck = new GameObject("local truck");
+
+        // a real building: this is the control, and it must be gathered
+        var wall = GameObject.CreatePrimitive(PrimitiveType.Cube);
+        wall.name = "a building";
+        wall.transform.position = new Vector3(50f, 0f, 50f);
+        wall.transform.localScale = new Vector3(8f, 4f, 8f);
+
+        Blwp.WorldSolids.Gather(truck.transform, out int withoutGhost);
+        Assert.Greater(withoutGhost, 0, "the control building was not gathered either");
+
+        // a ghost that has somehow been given a collider AFTER Awake - a
+        // streamed model, a prefab edit, a careless AddComponent
+        var go = SpawnGhost("ghost", new Vector3(20f, 0f, 20f));
+        var late = go.AddComponent<BoxCollider>();
+        late.size = new Vector3(4f, 2f, 4f);
+
+        Assert.IsNotNull(go.GetComponent<BoxCollider>(),
+            "the fixture did not manage to give the ghost a collider");
+        Assert.IsNull(late.attachedRigidbody,
+            "the fixture's collider has a rigidbody, so IsWorld would exclude it for the wrong reason");
+        Assert.IsFalse(late.isTrigger);
+
+        Assert.IsFalse(Blwp.WorldSolids.IsWorld(late, truck.transform),
+            "a ghost's collider counted as part of the solid world");
+
+        Blwp.WorldSolids.Gather(truck.transform, out int withGhost);
+        Assert.AreEqual(withoutGhost, withGhost,
+            "a ghost was uploaded to the core as a wall the truck cannot pass");
+    }
+
+    /// <summary>
+    /// AND A MODEL THAT ARRIVES LATER IS STRIPPED WHEN IT ARRIVES.
+    ///
+    /// Awake runs once, and this project STREAMS its truck model in -
+    /// `ModelStreamer` parents it afterwards, with whatever colliders its
+    /// author gave it. A ghost that only stripped at Awake would be clean for
+    /// a second and solid after that.
+    /// </summary>
+    [Test]
+    public void AStreamedModelDoesNotGiveAGhostItsPhysicsBack()
+    {
+        var go = SpawnGhost("ghost", Vector3.zero);
+        var ghost = go.GetComponent<GhostTruck>();
+        Assert.IsFalse(ghost.CarriesPhysics());
+
+        // the model arrives, carrying what a model carries
+        var model = GameObject.CreatePrimitive(PrimitiveType.Capsule);
+        model.name = "streamed truck";
+        model.AddComponent<Rigidbody>();
+        model.transform.SetParent(go.transform);
+
+        Assert.IsFalse(ghost.CarriesPhysics(),
+            "a model parented in after Awake left the ghost solid");
+        Assert.AreEqual(0, go.GetComponentsInChildren<Collider>(true).Length);
+        Assert.AreEqual(0, go.GetComponentsInChildren<Rigidbody>(true).Length);
+    }
+
+    /// <summary>
     /// A GHOST HOLDS NO REFERENCE TO THE SIMULATION. Asserted structurally, the
     /// way the core asserts step's argument list: a field that could reach the
     /// core is a field somebody can write through.
