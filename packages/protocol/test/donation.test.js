@@ -12,7 +12,8 @@ import assert from 'node:assert/strict';
 import { toHex } from '../src/hash.js';
 import {
   donationSetStands, splitDonation, donationAfterFailures, donatedMsat,
-  encodeDonationSet, decodeDonationSet, donationSetId, DONATION_BPS_TOTAL,
+  encodeDonationSet, decodeDonationSet, donationSetId, canonicalLnurl, isMixedCase,
+  DONATION_BPS_TOTAL,
 } from '../src/donation.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
@@ -201,9 +202,12 @@ test('a round\'s donations exclude the entries that were refunded', () => {
 // The donation set was the only one that did not, which is what stopped two
 // independent nodes agreeing on WHICH set a player donated under.
 
-test('a set round-trips, and every field that decides money is inside its id', () => {
+test('a set round-trips as its canonical form, and every field is inside its id', () => {
+  // CANONICAL, not verbatim: bech32 says case carries no meaning in an
+  // address, so the bytes carry the lowered form and a set typed in upper
+  // comes back lowered. The payee is the same payee either way.
   const back = decodeDonationSet(encodeDonationSet(three));
-  assert.deepEqual(back, three);
+  assert.deepEqual(back, three.map((r) => ({ ...r, lnurl: canonicalLnurl(r.lnurl) })));
   assert.equal(toHex(donationSetId(back)), toHex(donationSetId(three)));
 
   // an address changed is a different set: 22A's "a donation to an undisclosed
@@ -296,4 +300,83 @@ test('a zero donation answers what is owed, and never that the set stands', () =
   // question either way
   assert.equal(splitDonation({ donationMsat: 10n, recipients: evenly }).owed, true);
   assert.equal(splitDonation({ donationMsat: 10n, recipients: wouldNotStand }).owed, false);
+});
+
+// ---------------------------------------------------------------------------
+// AN LNURL IS BECH32, AND BECH32 DECIDES ITS OWN CASE RULES.
+//
+// Treating the string as opaque bytes was a hole, measured on the delivered
+// code: `[{LNURL1ABC, 5000}, {lnurl1abc, 5000}]` STOOD - one party holding two
+// shares, which is exactly what the duplicate check exists to prevent - and
+// the same payee produced two different set ids, so two honest nodes handed
+// the same recipients in different case disagreed about which set was used.
+
+test('a payee is the same payee whatever case the address is typed in', () => {
+  const upper = [{ lnurl: 'LNURL1ABC', shareBps: 5000 },
+                 { lnurl: 'LNURL2DEF', shareBps: 5000 }];
+  const lower = upper.map((r) => ({ ...r, lnurl: r.lnurl.toLowerCase() }));
+
+  assert.equal(donationSetStands(upper).ok, true);
+  assert.equal(donationSetStands(lower).ok, true);
+  assert.equal(toHex(donationSetId(upper)), toHex(donationSetId(lower)),
+    'two honest nodes must not disagree because one typed the address in caps');
+
+  // and the money follows the same identity
+  const a = splitDonation({ donationMsat: 1001n, recipients: upper });
+  const b = splitDonation({ donationMsat: 1001n, recipients: lower });
+  assert.deepEqual(a.shares.map((s) => s.amountMsat), b.shares.map((s) => s.amountMsat));
+});
+
+test('one payee under two spellings is one payee, and does not stand', () => {
+  const twice = [{ lnurl: 'LNURL1ABC', shareBps: 5000 },
+                 { lnurl: 'lnurl1abc', shareBps: 5000 }];
+  const seen = donationSetStands(twice);
+  assert.equal(seen.ok, false, 'one party was allowed to hold two shares');
+  assert.match(seen.why, /is listed twice, which is one party with two shares/);
+  assert.throws(() => donationSetId(twice), /does not stand/);
+
+  // the other way round is the same answer
+  assert.equal(donationSetStands([...twice].reverse()).ok, false);
+});
+
+test('mixed case does not stand, because bech32 does not allow it', () => {
+  for (const lnurl of ['LnUrL1abc', 'lnurl1ABC', 'LNURL1abc'])
+    assert.match(donationSetStands([{ lnurl, shareBps: 10000 }]).why,
+      /mixed case, which bech32 does not allow/, lnurl);
+
+  // all-upper and all-lower both stand; digits and separators are neither
+  for (const lnurl of ['LNURL1ABC', 'lnurl1abc', 'lnurl1', '1234'])
+    assert.equal(donationSetStands([{ lnurl, shareBps: 10000 }]).ok, true, lnurl);
+});
+
+test('the fold is ASCII, so no locale can move an address', () => {
+  assert.equal(canonicalLnurl('LNURL1ABC'), 'lnurl1abc');
+  assert.equal(canonicalLnurl('lnurl1abc'), 'lnurl1abc', 'a lowered address is unchanged');
+  assert.equal(canonicalLnurl('1234'), '1234');
+
+  // `toLowerCase` is Unicode and maps these; the fold must not, or two
+  // implementations could canonicalise one address two ways
+  assert.equal(canonicalLnurl('İ'), 'İ', 'a dotted capital I is left alone');
+  assert.equal(canonicalLnurl('Ä'), 'Ä', 'and so is a non-ASCII letter');
+
+  assert.equal(isMixedCase('LnUrL'), true);
+  assert.equal(isMixedCase('LNURL1'), false);
+  assert.equal(isMixedCase('lnurl1'), false);
+  assert.equal(isMixedCase('1234'), false);
+});
+
+/**
+ * AND A SET THAT WAS ALREADY CANONICAL KEEPS THE ID IT HAD. Lowercase was
+ * already the fold's output, so nothing published in lower moved.
+ */
+test('an all-lower set keeps exactly the id it already had', () => {
+  const lower = [{ lnurl: 'lnurl1abc', shareBps: 3333 },
+                 { lnurl: 'lnurl2def', shareBps: 3333 },
+                 { lnurl: 'lnurl3ghi', shareBps: 3334 }];
+  // Measured against the pre-fold code itself, not reasoned about: both give
+  // 44022895c61f07fd, because lowercase was already what the fold outputs, so
+  // the bytes never moved for anything published in lower.
+  assert.equal(toHex(donationSetId(lower)).slice(0, 16), '44022895c61f07fd');
+  assert.equal(toHex(donationSetId(lower)),
+    toHex(donationSetId(lower.map((r) => ({ ...r, lnurl: r.lnurl.toUpperCase() })))));
 });

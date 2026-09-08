@@ -32,6 +32,47 @@ import { isRefund } from './payout.js';
 export const DONATION_BPS_TOTAL = 10000;
 
 /**
+ * AN LNURL IS BECH32, AND BECH32 DECIDES ITS OWN CASE RULES.
+ *
+ * Two of them, and both are the encoding's, not this file's invention:
+ * a string may not be MIXED case, and case carries no meaning - `LNURL1ABC`
+ * and `lnurl1abc` are one address.
+ *
+ * Treating the string as opaque bytes instead was measured and was a hole:
+ * `[{LNURL1ABC, 5000}, {lnurl1abc, 5000}]` stood, which is ONE PARTY HOLDING
+ * TWO SHARES - exactly what the duplicate check exists to prevent - and the
+ * same payee produced two different set ids, so two honest nodes handed the
+ * same recipients in different case disagreed about which set was used.
+ *
+ * FOLDED IN ASCII AND NOT BY `toLowerCase`, deliberately. `toLowerCase` is
+ * Unicode and in a Turkish locale maps `I` to a dotless `ı`, so two
+ * implementations of this protocol could canonicalise one address two ways and
+ * disagree about who is being paid. Bech32 is ASCII; the fold is ASCII.
+ */
+const upper = (c) => c >= 65 && c <= 90;
+const lower = (c) => c >= 97 && c <= 122;
+
+export function canonicalLnurl(lnurl) {
+  let out = '';
+  for (let i = 0; i < lnurl.length; i++) {
+    const c = lnurl.charCodeAt(i);
+    out += upper(c) ? String.fromCharCode(c + 32) : lnurl[i];
+  }
+  return out;
+}
+
+export function isMixedCase(lnurl) {
+  let hasUpper = false;
+  let hasLower = false;
+  for (let i = 0; i < lnurl.length; i++) {
+    const c = lnurl.charCodeAt(i);
+    if (upper(c)) hasUpper = true;
+    else if (lower(c)) hasLower = true;
+  }
+  return hasUpper && hasLower;
+}
+
+/**
  * DOES THIS SET STAND?
  *
  * A set whose shares do not sum to exactly 10000 is not a division of the
@@ -53,12 +94,27 @@ export function donationSetStands(recipients) {
     if (!Number.isInteger(r.shareBps) || r.shareBps < 0)
       return { ok: false, why: `recipient ${at} has no whole share in basis points` };
 
+    // BECH32 FORBIDS MIXED CASE, so an address in it is not an address.
+    if (isMixedCase(r.lnurl))
+      return {
+        ok: false,
+        why: `recipient ${at} is mixed case, which bech32 does not allow in an address`,
+      };
+
     // ONE RECIPIENT LISTED TWICE IS TWO SHARES FOR ONE PARTY, and the set is
     // "a parameter the network can hold an opinion about" - an opinion it
     // cannot form if the same address can appear under two weights.
-    if (seen.has(r.lnurl))
-      return { ok: false, why: `${r.lnurl} is listed twice, which is one party with two shares` };
-    seen.add(r.lnurl);
+    //
+    // COMPARED CANONICALLY, because case carries no meaning in bech32: the two
+    // spellings of one payee are one payee, and listing both was measured
+    // standing before this line existed.
+    const key = canonicalLnurl(r.lnurl);
+    if (seen.has(key))
+      return {
+        ok: false,
+        why: `${r.lnurl} is listed twice, which is one party with two shares`,
+      };
+    seen.add(key);
     sum += r.shareBps;
   }
 
@@ -204,11 +260,12 @@ export function encodeDonationSet(recipients) {
   w.u8(TYPE_DONATION_SET);
   w.u16(PROTOCOL_VERSION);
   w.vec(recipients, (r, ww) => {
-    // The address as the player was shown it: 22A's "the client MUST show
-    // every recipient before wallet approval. A donation to an undisclosed
-    // address is not a donation." Bytes that hashed something else would make
-    // that promise uncheckable.
-    ww.str(r.lnurl);
+    // THE ADDRESS, CANONICALLY. 22A's "the client MUST show every recipient
+    // before wallet approval - a donation to an undisclosed address is not a
+    // donation" is about WHICH payee, and bech32 says case is not part of
+    // that: the same list typed in upper and in lower is the same set and must
+    // therefore hash to one id, or two honest nodes disagree over spelling.
+    ww.str(canonicalLnurl(r.lnurl));
     ww.u16(r.shareBps);
   });
   return w.finish();
