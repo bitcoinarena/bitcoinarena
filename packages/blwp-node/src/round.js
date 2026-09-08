@@ -24,13 +24,18 @@ import {
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { toHex } from '../../protocol/src/hash.js';
 import { OPEN, CLOSED, nodeIdentity } from './store.js';
+import { receiptsNeeded } from '../../protocol/src/genesis.js';
 
 /**
- * Five, of the seven a committee has (13C). The same number the client uses to
- * decide a mark is live, and for the same reason: no smaller set of nodes can
- * make a chain canonical, so an operator cannot spend a short committee.
+ * 5-of-7 unless the round's contract is the 2-slot test genesis.
  */
-export const RECEIPTS_FOR_CANONICAL = 5;
+export const RECEIPTS_FOR_CANONICAL = receiptsNeeded(7);
+
+function neededForRound(db, roundIdBytes) {
+  const row = db.prepare('SELECT contract FROM rounds WHERE round_id = ?').get(roundIdBytes);
+  if (!row) return RECEIPTS_FOR_CANONICAL;
+  return receiptsNeeded(decodeRoundContract(new Uint8Array(row.contract)).gameVerifySlots);
+}
 
 const same = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
 
@@ -576,14 +581,15 @@ export class Round {
     // ends it: a later mark that five members receipted is not canonical if
     // the mark it chains onto was never carried, because the chain is what
     // makes it mean anything.
+    const need = neededForRound(this.db, roundIdBytes);
     let live = 0;
     while (live < marks.length
-      && this.receiptCount(marks[live].checkpoint_id) >= RECEIPTS_FOR_CANONICAL) live++;
+      && this.receiptCount(marks[live].checkpoint_id) >= need) live++;
 
     if (live === 0) {
       const held = this.receiptCount(marks[0].checkpoint_id);
       throw new Error(
-        `no checkpoint of that entry is carried by ${RECEIPTS_FOR_CANONICAL} committee `
+        `no checkpoint of that entry is carried by ${need} committee `
         + `members: the first has ${held}`);
     }
 

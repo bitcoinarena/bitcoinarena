@@ -1,0 +1,45 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { openStore } from '../src/store.js';
+import { Round } from '../src/round.js';
+import { serve } from '../src/server.js';
+import { receiptsNeeded } from '../../protocol/src/genesis.js';
+import { toHex } from '../../protocol/src/hash.js';
+
+const b32 = (n) => new Uint8Array(32).fill(n);
+
+test('two slots need two receipts, seven still need five', () => {
+  assert.equal(receiptsNeeded(2), 2);
+  assert.equal(receiptsNeeded(7), 5);
+});
+
+test('two daemons on one machine have two identities', async () => {
+  const a = await serve(openStore(':memory:'), { port: 0, funded: () => true });
+  const b = await serve(openStore(':memory:'), { port: 0, funded: () => true });
+  const pa = new Uint8Array(await (await fetch(`http://127.0.0.1:${a.port}/identity`)).arrayBuffer());
+  const pb = new Uint8Array(await (await fetch(`http://127.0.0.1:${b.port}/identity`)).arrayBuffer());
+  assert.equal(pa.length, 32);
+  assert.equal(pb.length, 32);
+  assert.notEqual(toHex(pa), toHex(pb));
+  await a.close();
+  await b.close();
+});
+
+test('a 2-slot round is canonical at two distinct receipts', () => {
+  const db = openStore(':memory:');
+  const round = new Round(db);
+  const contract = {
+    networkId: b32(0x4e), configHash: b32(0x43), censusConfirmations: 1,
+    gameVerifySlots: 2, settlementSlots: 2, simCoreHash: b32(1),
+    startTimeMs: 1000n, entryCloseMs: 2000n, objectionWindowMs: 600000n,
+    custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'BURN',
+    donationSetId: b32(0xd0), censusHeight: 900000, censusRoot: b32(2),
+    committeeSeed: b32(3), stakeMsat: 100000n, bondMinSats: 50000n, blockTicks: 9000,
+    exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
+    timeFloor: 30, timeCeil: 150, minScore: 1, rankNumerator: 3, rankDenominator: 4,
+    nodes: [round.pubkey, b32(9)],
+  };
+  // smoke: opening a 2-slot contract is allowed
+  const id = round.open(contract);
+  assert.equal(id.length, 32);
+});

@@ -115,6 +115,10 @@ export function serve(db, { port = 0, funded = NOTHING_IS_FUNDED } = {}) {
       // simple. Answered and nothing else: there is no state to change here.
       if (req.method === 'OPTIONS') { res.writeHead(204, CORS); return res.end(); }
 
+      if (req.method === 'GET' && url.pathname === '/identity') {
+        return bytes(res, 200, round.pubkey);
+      }
+
       if (req.method === 'POST' && url.pathname === '/round') {
         const contract = decodeRoundContract(await read(req));
         // Asked BEFORE anything is decoded into the database, so a refusal

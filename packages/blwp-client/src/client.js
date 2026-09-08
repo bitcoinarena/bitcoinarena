@@ -1,12 +1,19 @@
 // THE PLAYER'S HALF OF THE PROTOCOL.
 //
-// The node is a store. It takes rounds, entries, batches and checkpoints, it
-// refuses the ones that break a rule, and it cannot recompute any of them -
-// `blwp-node/src` imports no core on purpose, because a daemon that recomputed
-// the state would be a second simulator and then two of them could disagree.
+// The node is a store. It takes rounds, entries, batches and checkpoints and
+// refuses the ones that break a rule, and it does not recompute any of them
+// WHILE THE RUN IS ON: a daemon stepping the core alongside the player would
+// be a second simulator, two engines each with its own idea of the present,
+// and nothing to say which one is the game.
 //
-// So the state hash has to come from HERE, off the same core the player is
-// watching. That is the whole reason this file exists.
+// So the state hash of a LIVE run has to come from HERE, off the same core the
+// player is watching. That is the whole reason this file exists.
+//
+// After the run is over the node does replay it, in `blwp-node/src/replay.js`
+// and nowhere else - section 13 makes a result final when five of seven nodes
+// agree, and a node that could not replay would be agreeing to whatever it was
+// told. That is one simulator run twice over the same inputs, which is the
+// only claim determinism ever made; it is not a second engine.
 //
 // WHAT IT IS NOT. It is not a simulator and it holds no rule: it never decides
 // a score, a crater, a hit or a winner. It reads a hash the core produced,
@@ -48,6 +55,13 @@ import { discover } from './directory.js';
  * mark count, so an operator cannot spend a short committee as a win.
  */
 export const RECEIPTS_FOR_LIVE = 5;
+
+/** 2-of-2 on this build's test nets; 5-of-7 on a seven-seat contract. */
+export function receiptsForLive(contract) {
+  const slots = contract?.gameVerifySlots ?? contract?.nodes?.length;
+  if (slots === 2) return 2;
+  return RECEIPTS_FOR_LIVE;
+}
 
 /**
  * A checkpoint over the state a core is holding, signed and ready for the wire.
@@ -223,6 +237,7 @@ export class Client {
     this.batchHead = GENESIS;     // and the input chain's, which is a separate chain
     this.nextTick = 0;            // the tick the node is owed next
     this.nodes = [];              // the committee, off the round's own contract
+    this.gameVerifySlots = 7;
     this.hold = [];               // ticks waiting to go out
     this.held = 0;
     this.dropped = 0;
@@ -276,6 +291,7 @@ export class Client {
     // receipt must carry is known before a single mark is sent - no census,
     // no directory, nothing taken on a node's word.
     this.nodes = [...contract.nodes];
+    this.gameVerifySlots = contract.gameVerifySlots || this.nodes.length;
     const mine = roundId(contract);
     const r = await fetch(`${this.base}/round`, {
       method: 'POST', body: encodeRoundContract(contract),
@@ -509,7 +525,10 @@ export class Client {
 
   /** Is this mark carried by enough of the committee to be worth anything? */
   live(markId) {
-    return this.witnessed(markId) >= RECEIPTS_FOR_LIVE;
+    return this.witnessed(markId) >= receiptsForLive({
+      gameVerifySlots: this.gameVerifySlots,
+      nodes: this.nodes,
+    });
   }
 
   /**

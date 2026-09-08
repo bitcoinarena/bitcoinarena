@@ -114,6 +114,13 @@ export function computeNetworkId({ genesis, authorityPubkey, recoveryPubkey }) {
   );
 }
 
+/** 2 slots → 2-of-2 (this build). 7 slots → 5-of-7. */
+export function receiptsNeeded(slots) {
+  if (slots === 2) return 2;
+  if (slots === 7) return 5;
+  throw new Error(`no committee threshold for ${slots} slots`);
+}
+
 export function genesisFor(network) {
   if (network === 'regtest')
     return testnetShape('bitcoin-regtest', bondMarker('regtest'));
