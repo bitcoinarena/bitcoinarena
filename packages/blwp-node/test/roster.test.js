@@ -16,11 +16,14 @@ import { Roster } from '../src/roster.js';
 import { serve } from '../src/server.js';
 import { chainOf } from '../../protocol/tools/chainview.js';
 import { bondTransaction } from '../../protocol/tools/bond.js';
-import { encodeRoundContract, roundId } from '../../protocol/src/contracts.js';
+import { encodeRoundContract, decodeRoundContract, roundId } from '../../protocol/src/contracts.js';
 import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
 import { genesisFor } from '../../protocol/src/genesis.js';
 import { toHex } from '../../protocol/src/hash.js';
 import { keyFor, bondFor } from './curve.js';
+import { deriveCensus } from '../../protocol/src/census.js';
+import { parseTransaction } from '../../protocol/src/tx.js';
+import { bondSetFor } from '../src/curve.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const HEIGHT = 900000;
@@ -56,9 +59,37 @@ const chainWith = (bonds) => {
   return chainOf(blocks, FROM);
 };
 
+/**
+ * WHAT THE CHAIN GIVES, computed the way whoever opens a round computes it
+ * before writing `censusRoot` into the contract. Every round names one, and
+ * this node refuses a round whose named root is not what the blocks produce -
+ * so a fixture has to be a round somebody could really have opened.
+ */
+function rootFor(bonds, over = {}) {
+  // THROUGH THE ENCODING, because that is the contract the daemon reads: the
+  // store keeps the bytes and hands back what `decodeRoundContract` makes of
+  // them, protocol version and all. A root derived from the loose fixture
+  // object would be a root of a contract nobody published.
+  const contract = decodeRoundContract(encodeRoundContract(contractFor(over)));
+  const view = chainWith(bonds);
+  const byTxid = new Map();
+  for (const block of view.blocks)
+    for (const raw of block.transactions) byTxid.set(toHex(parseTransaction(raw).txid), raw);
+  const census = deriveCensus(view, {
+    contract,
+    bond: bondSetFor('regtest'),
+    resolve: (e) => {
+      const raw = byTxid.get(toHex(e.txid));
+      return raw ? { transaction: raw } : null;
+    },
+  });
+  assert.equal(census.ok, true, census.why);
+  return census.root;
+}
+
 function daemon(bonds, over = {}) {
   const round = new Round(openStore(), () => 1234);
-  const contract = contractFor(over);
+  const contract = contractFor({ ...over, censusRoot: rootFor(bonds, over) });
   const rid = round.open(contract);
   const roster = new Roster(round, { chainFor: () => chainWith(bonds) });
   return { round, rid, contract, roster };
@@ -143,7 +174,7 @@ test('the caller cannot name a minimum of its own', () => {
 
 test('a node with no chain view holds no round, and says which it is missing', () => {
   const round = new Round(openStore(), () => 1234);
-  const rid = round.open(contractFor());
+  const rid = round.open(contractFor({ censusRoot: rootFor([bondOf(0x11), bondOf(0x12)]) }));
   const blind = new Roster(round);        // the default: no source of blocks
 
   const census = blind.censusFor(rid);
@@ -161,7 +192,7 @@ test('the committee door answers off the chain, and refuses a short census by na
     port: 0, funded: () => true, chainFor: () => chainWith(bonds),
   });
   try {
-    const c = contractFor();
+    const c = contractFor({ censusRoot: rootFor(bonds) });
     await fetch(`http://127.0.0.1:${node.port}/round`, { method: 'POST', body: encodeRoundContract(c) });
     const rid = toHex(roundId(c));
 
@@ -180,7 +211,7 @@ test('the committee door answers off the chain, and refuses a short census by na
     port: 0, funded: () => true, chainFor: () => chainWith([bondOf(0x11)]),
   });
   try {
-    const c = contractFor();
+    const c = contractFor({ censusRoot: rootFor([bondOf(0x11)]) });
     await fetch(`http://127.0.0.1:${thin.port}/round`, { method: 'POST', body: encodeRoundContract(c) });
     const got = await fetch(`http://127.0.0.1:${thin.port}/committee?round=${toHex(roundId(c))}&role=game`);
     assert.equal(got.status, 409, 'a short census was served as a committee');
@@ -228,4 +259,43 @@ test('a bond the census excluded is never seated, however many slots there are',
   assert.equal(seats.committee.length, 2, 'a third seat was filled from somewhere');
   assert.equal(seats.committee.some((e) => toHex(e.pubkey) === toHex(keyFor(0x13))), false,
     'a bond the chain refused was seated on the committee');
+});
+
+test('a round whose census root is not the chain\'s is refused, not served', () => {
+  // 5A.4 on a contract whose census root is not what its census derives to:
+  // it "IS INVALID and no honest node will issue receipts against it". Every
+  // contract names a root, and on this path nothing compared it with the
+  // blocks - so a round could name any thirty-two bytes, and this node would
+  // derive a different census, seat a committee from it and serve that. Which
+  // is the divergence 5A.2 removes, arriving from the round's own header.
+  const bonds = [bondOf(0x11), bondOf(0x12)];
+  const honest = rootFor(bonds);
+
+  const round = new Round(openStore(), () => 1234);
+  const rid = round.open(contractFor({ censusRoot: b32(0x5a) }));
+  const roster = new Roster(round, { chainFor: () => chainWith(bonds) });
+
+  const census = roster.censusFor(rid);
+  assert.equal(census.ok, false, 'a round naming somebody else\'s census root was served');
+  assert.match(census.why, /names census root 5a5a5a5a5a5a5a5a and the chain gives/);
+  assert.match(census.why, new RegExp(`gives ${toHex(honest).slice(0, 16)} at height ${HEIGHT}`),
+    'the refusal does not say what the chain actually gives');
+
+  // and no committee comes out of a census that was refused
+  const seats = roster.committeeFor(rid, 'game');
+  assert.equal(seats.ok, false);
+  assert.equal(seats.committee, undefined);
+
+  // THE SAME BLOCKS, THE ROOT THEY REALLY PRODUCE: held.
+  const good = new Round(openStore(), () => 1234);
+  const goodId = good.open(contractFor({ censusRoot: honest }));
+  const right = new Roster(good, { chainFor: () => chainWith(bonds) });
+  assert.equal(right.committeeFor(goodId, 'game').ok, true);
+
+  // AND A ROUND THAT NAMES NO ROOT AT ALL IS NOT A ROUND EITHER. A contract
+  // always carries thirty-two bytes there, so this is the shape a caller
+  // building one by hand would hit.
+  const bare = new Roster(good, { chainFor: () => chainWith(bonds) });
+  bare.round = { get: () => ({ contract: encodeRoundContract(contractFor({ censusRoot: b32(0) })) }) };
+  assert.match(bare.censusFor(goodId).why, /names census root 0000000000000000 and the chain gives/);
 });

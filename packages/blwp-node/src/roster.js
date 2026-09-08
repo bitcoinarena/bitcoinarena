@@ -70,7 +70,7 @@ export class Roster {
       }
     }
 
-    return deriveCensus(view, {
+    const census = deriveCensus(view, {
       contract,
       bond: bondSetFor(network),
       resolve: (e) => {
@@ -78,6 +78,32 @@ export class Roster {
         return raw ? { transaction: raw } : null;
       },
     });
+    if (!census.ok) return census;
+
+    // AND IT HAS TO BE THIS ROUND'S CENSUS.
+    //
+    // Every contract names a `censusRoot`, and on this path nothing compared
+    // it with what the chain actually gives. A round could name any
+    // thirty-two bytes, and this node would derive a different census, seat a
+    // committee out of it, and serve that - which is the divergence 5A.2
+    // exists to remove, arriving from the round's own header. The spec is
+    // blunt: a round whose census root is not the one its census derives to
+    // "IS INVALID and no honest node will issue receipts against it".
+    //
+    // The comparison is against the root DERIVED HERE, from blocks, at the
+    // contract's own height - not against a list anybody presented, which is
+    // what `censusRootMatchesRound` is for when somebody else brings entries.
+    if (!(contract.censusRoot instanceof Uint8Array) || contract.censusRoot.length !== 32)
+      return { ok: false, why: 'that round names no census root to check against the chain' };
+    if (!census.root.every((b, i) => b === contract.censusRoot[i]))
+      return {
+        ok: false,
+        why: `that round names census root ${toHex(contract.censusRoot).slice(0, 16)} and the `
+          + `chain gives ${toHex(census.root).slice(0, 16)} at height ${contract.censusHeight}`,
+        root: census.root,
+      };
+
+    return census;
   }
 
   /**
