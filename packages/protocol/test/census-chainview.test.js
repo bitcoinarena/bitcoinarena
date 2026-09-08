@@ -296,6 +296,101 @@ test('a shorter chain view is a different set of inputs, and says what it could 
 });
 
 /**
+ * A TIE ON WORK IS NOT DECIDED BY WHOEVER SPOKE FIRST.
+ *
+ * Measured before this: two chains of equal work, one carrying the bond and
+ * one not, gave eligible 1 offered one way round and eligible 0 the other -
+ * the same two inputs, two different censuses, chosen by the order a caller
+ * happened to list them. 5A.2 says "two parties with the same chain compute
+ * the same census", and that was not true of a tie.
+ *
+ * `mostWork` still takes the first of an equal pair, which is right for a NODE
+ * choosing its own tip: that is Bitcoin's first-seen rule and a node is
+ * allowed to have been somewhere when a block arrived. A census is not allowed
+ * it, so the census breaks the tie on the tip hash - the work itself, so
+ * nobody can choose it after the fact.
+ */
+test('two chains of equal work give one census, whichever order they arrive in', () => {
+  const withBond = view(WITH_BOND);
+  const without = view(WITHOUT);
+  assert.equal(chainViewOf(withBond).work, chainViewOf(without).work, 'the fixture is not a tie');
+
+  const a = derive([withBond, without]);
+  const b = derive([without, withBond]);
+  assert.equal(toHex(a.root), toHex(b.root), 'the order two equal chains arrived in chose the census');
+  assert.equal(a.entries.length, b.entries.length);
+
+  // and the winner is the one with the lower tip hash, not the first offered
+  const tip = (v) => toHex(blockHashOf(chainViewOf(v).blocks[chainViewOf(v).blocks.length - 1].header));
+  const lower = tip(withBond) < tip(without) ? withBond : without;
+  assert.equal(toHex(derive([withBond, without]).root), toHex(derive([lower]).root));
+
+  // AND THE WHOLE HASH DECIDES IT, NOT ITS FIRST BYTE. A mutant that compared
+  // one byte survived, because the fixtures above differ there - two tips
+  // sharing a first byte would fall through the comparison and go back to
+  // whoever spoke first. Found by searching for such a pair, which needs
+  // chains that genuinely DIFFER: mining is deterministic here, so a variant
+  // is made by putting a different transaction in the first block.
+  const byFirstByte = new Map();
+  let pair = null;
+  for (let n = 0; n < 600 && !pair; n++) {
+    const tx = bondTransaction(advertFor(0x11), { previousTxid: b32(n % 256), previousVout: n >> 8 });
+    const v = minedChain([{ transactions: [tx] }, { transactions: [] }], HEIGHT - 1);
+    const tipHash = blockHashOf(v.blocks[1].header);
+    const seen = byFirstByte.get(tipHash[0]);
+    if (seen && toHex(blockHashOf(seen.blocks[1].header)) !== toHex(tipHash)) pair = [seen, v];
+    else if (!seen) byFirstByte.set(tipHash[0], v);
+  }
+
+  assert.ok(pair, 'no two tips sharing a first byte were found, so this asserts nothing');
+  const [x, y] = pair;
+  assert.equal(blockHashOf(x.blocks[1].header)[0], blockHashOf(y.blocks[1].header)[0]);
+  assert.equal(chainViewOf(x).work, chainViewOf(y).work, 'the pair is not a tie');
+
+  const pick = (set) => {
+    const best = bestChainView(set);
+    return toHex(blockHashOf(best.blocks[best.blocks.length - 1].header));
+  };
+  assert.equal(pick([x, y]), pick([y, x]),
+    'two tips sharing a first byte were decided by arrival order');
+
+  // three-way, in every order, is still one answer
+  const third = view({ [HEIGHT - 15]: [BOND] });
+  const roots = [
+    [withBond, without, third], [third, withBond, without], [without, third, withBond],
+  ].map((set) => toHex(derive(set).root));
+  assert.equal(new Set(roots).size, 1, 'three equal chains gave more than one census');
+});
+
+/**
+ * AND A BLOCK CANNOT BE EMPTIED BY OFFERING NOTHING FOR IT.
+ *
+ * Measured: a real header committing to a real merkle root, handed over with
+ * its transaction list stripped, was accepted as a chain and the bond in it
+ * vanished from the census - eligible 0, ok true. 25.1 lets a provider OMIT,
+ * and omission is answered by asking another; but a view that contradicts its
+ * own header is not omitting, it is claiming a block Bitcoin does not have.
+ */
+test('a block offered with no transactions must have a header that says so', () => {
+  const full = view(WITH_BOND);
+  assert.equal(chainViewOf(full).ok, true);
+
+  const stripped = {
+    blocks: full.blocks.map((b, i) => (i === 0 ? { header: b.header, transactions: [] } : b)),
+    firstHeight: full.firstHeight,
+  };
+  const no = chainViewOf(stripped);
+  assert.equal(no.ok, false, 'a header was emptied of the transactions it commits to');
+  assert.match(no.why, new RegExp(`block ${FROM} is offered with no transactions, `
+    + 'and its header commits to some'));
+  assert.match(derive([stripped]).why, /is offered with no transactions/);
+
+  // a block that really carries nothing is still fine: its header commits to
+  // nothing either, which is what the padding in these fixtures is
+  assert.equal(chainViewOf(view(WITHOUT)).ok, true);
+});
+
+/**
  * A BAG OF BLOCKS IS NOT A CHAIN, and each way of not being one says so.
  */
 test('headers, links and containment are all required', () => {

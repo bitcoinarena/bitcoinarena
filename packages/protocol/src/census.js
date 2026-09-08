@@ -7,7 +7,7 @@ import { taggedHash, fromHex, toHex } from './hash.js';
 import { TAG, ROLES, PROTOCOL_VERSION, TYPE_CENSUS_LEAF } from './constants.js';
 import { parseTransaction, commitmentsOf, witnessItemsOf, blockMerkleRoot } from './tx.js';
 import {
-  recognizeBond, isTaprootOutput, BOND_UNCHECKED, chainWork, mostWork, merkleRootOf,
+  recognizeBond, isTaprootOutput, BOND_UNCHECKED, chainWork, merkleRootOf, blockHashOf,
 } from './chain.js';
 import { decodeAdvert, splitSignedAdvert, advertId } from './advert.js';
 
@@ -357,14 +357,28 @@ export function chainViewOf(view) {
     try { ids = view.blocks[i].transactions.map((raw) => parseTransaction(raw).txid); }
     catch (e) { return { ok: false, why: `block ${height} carries something that is not a transaction: ${e.message}` }; }
 
+    const claimed = merkleRootOf(view.blocks[i].header);
     if (ids.length) {
       const root = blockMerkleRoot(ids);
-      const claimed = merkleRootOf(view.blocks[i].header);
       if (!root.every((b, k) => b === claimed[k]))
         return {
           ok: false,
           why: `block ${height} does not contain the transactions offered with it`,
         };
+    } else if (!claimed.every((b) => b === 0)) {
+      // AND A BLOCK CANNOT BE EMPTIED BY OFFERING NOTHING FOR IT. Measured: a
+      // real header committing to a real merkle root, handed over with its
+      // transaction list stripped, was accepted as a chain and the bond in it
+      // simply vanished from the census. 25.1 allows a provider to OMIT, and
+      // the answer to omission is asking another - but a view that CONTRADICTS
+      // ITS OWN HEADER is not omitting, it is claiming a block Bitcoin does
+      // not have. Every real block has at least a coinbase, so the only
+      // transaction list consistent with no transactions is a root of zero.
+      return {
+        ok: false,
+        why: `block ${height} is offered with no transactions, and its header `
+          + 'commits to some',
+      };
     }
     blocks.push({ height, header: view.blocks[i].header, transactions: view.blocks[i].transactions });
   }
@@ -404,8 +418,21 @@ function viewOrThrow(view) {
  * 25.1: "block headers from several independent sources, most work wins... A
  * list provider can then OMIT but not FORGE, and omission is answered by
  * asking a second one." A view that is not a chain is not in the running - it
- * is not a competing answer, it is a bad source - and ties go to the first
- * offered so the answer does not depend on arrival order.
+ * is not a competing answer, it is a bad source.
+ *
+ * A TIE IS BROKEN BY THE TIP HASH, NOT BY WHICHEVER ARRIVED FIRST.
+ *
+ * `mostWork` takes the first of an equal pair, which is right for a NODE
+ * choosing its own tip - that is Bitcoin's first-seen rule, and a node is
+ * allowed to have been somewhere when a block arrived. A CENSUS is not allowed
+ * that: 5A.2 says "two parties with the same chain compute the same census",
+ * and measured before this, two equal-work chains gave eligible 1 offered one
+ * way round and eligible 0 the other, from the same two inputs.
+ *
+ * The tip hash is the intrinsic value to break it on: it is the work itself,
+ * so nobody can pick it after the fact, and both parties compute the same
+ * comparison from the same two chains. Lower hash wins, arbitrarily but
+ * fixed - what matters is that it is the same everywhere.
  */
 export function bestChainView(views) {
   const offered = Array.isArray(views) ? views : [views];
@@ -414,8 +441,19 @@ export function bestChainView(views) {
   if (!running.length)
     return { ok: false, why: checked.length ? checked[0].why : 'no chain to read the census from' };
 
+  const tipOf = (v) => blockHashOf(v.blocks[v.blocks.length - 1].header);
   let best = running[0];
-  for (const v of running) if (v.work > best.work) best = v;
+  for (const v of running) {
+    if (v.work > best.work) { best = v; continue; }
+    if (v.work < best.work) continue;
+    const a = tipOf(v);
+    const b = tipOf(best);
+    for (let i = 0; i < 32; i++) {
+      if (a[i] === b[i]) continue;
+      if (a[i] < b[i]) best = v;
+      break;
+    }
+  }
   return { ...best, refused: checked.filter((v) => !v.ok).map((v) => v.why) };
 }
 
