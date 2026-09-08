@@ -115,6 +115,77 @@ test('with nobody to pay, that half is burned rather than shared out', () => {
   assert.equal(nobody.shares.size, 0);
 });
 
+/**
+ * A SLASHED NODE NEVER RECEIVES ITS OWN BOND.
+ *
+ * 5A.3 pays "the REMAINING honest committee members", and this file said so in
+ * a comment while the code took `honestCommittee` as given - so a caller could
+ * list the slashed node and hand it back half its own bond. Measured before
+ * the filter existed: 25000 of 100000 satoshi.
+ *
+ * AND THE EXCLUDED SHARE IS BURNED, not spread over the rest. Dividing among
+ * the survivors would pay them MORE the more of their colleagues were caught,
+ * which is a reward for a round going wrong - measured while fixing this, one
+ * of two members excluded took the other from 25000 to 50000.
+ */
+test('a slashed node receives none of its own bond, and its share burns', () => {
+  const accused = honest[0];
+  const seen = slashDistribution({
+    bondSats: 100000n, roundId: ROUND, contract: toCommittee,
+    affectedPlayers: players, honestCommittee: honest, slashed: [accused],
+  });
+  assert.equal(seen.shares.get(toHex(accused)), undefined, 'it collected from its own slashing');
+  assert.equal(seen.shares.get(toHex(honest[1])), 25000n,
+    'and the survivor is not paid more for its colleague being caught');
+  assert.equal(seen.burned, 25000n, 'the excluded share must burn, not move');
+  assert.equal(total(seen), 100000n);
+
+  // two caught in one round: neither collects from the other's bond
+  const both = slashDistribution({
+    bondSats: 100000n, roundId: ROUND, contract: toCommittee,
+    affectedPlayers: players, honestCommittee: honest, slashed: honest,
+  });
+  assert.equal(both.shares.get(toHex(honest[0])), undefined);
+  assert.equal(both.shares.get(toHex(honest[1])), undefined);
+  assert.equal(both.burned, 50000n);
+  assert.equal(total(both), 100000n);
+
+  // and with nobody slashed the committee half is untouched
+  const clean = slashDistribution({
+    bondSats: 100000n, roundId: ROUND, contract: toCommittee,
+    affectedPlayers: players, honestCommittee: honest,
+  });
+  assert.equal(clean.shares.get(toHex(honest[0])), 25000n);
+  assert.equal(clean.burned, 0n);
+});
+
+test('an excluded member takes no leftover satoshi either', () => {
+  // 101 does not divide by two, so somebody is rounded up; it must not be the
+  // node whose bond this is.
+  //
+  // THE ACCUSED HERE IS THE ONE THAT SORTS FIRST, and that is the whole test.
+  // The first version excluded the OTHER one, so the leftover landed on the
+  // same node whether or not the excluded member was skipped, and a mutant
+  // that let an excluded member take it survived at 0 red. Measured for this
+  // round: 0x23 is first in `H(roundId || pubkey)` order.
+  const accused = honest[1];
+  assert.equal(toHex(accused).slice(0, 4), '2323', 'the sort order this case depends on moved');
+
+  const r = slashDistribution({
+    bondSats: 101n, roundId: ROUND, contract: toCommittee,
+    affectedPlayers: [], honestCommittee: honest, slashed: [accused],
+  });
+  assert.equal(r.shares.get(toHex(accused)), undefined,
+    'the node whose bond this is was rounded up into a share of it');
+  // 51 over two is 25 each with one over: the survivor takes its 25 plus the
+  // leftover satoshi, and the excluded member's 25 burns.
+  assert.equal(r.shares.get(toHex(honest[0])), 26n, 'and the survivor took the leftover');
+  // 75 burned: 50 because there are no affected players to pay, and 25 the
+  // excluded member's share. Both are burns, and neither becomes income.
+  assert.equal(r.burned, 75n, 'the excluded share burned rather than moving');
+  assert.equal(total(r), 101n);
+});
+
 test('a bond of nothing pays nothing, and money is BigInt satoshi', () => {
   const none = slashDistribution({ bondSats: 0n, roundId: ROUND, contract: burn,
     affectedPlayers: players });

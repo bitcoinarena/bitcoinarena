@@ -33,7 +33,11 @@ const entries = [
   { pubkey: b32(0xa3), outcome: 'FAILED', score: 0, stakeMsat: 100000n },
   { pubkey: b32(0xa4), outcome: 'FORFEIT', score: 0, stakeMsat: 100000n },
 ];
+// THE FLOOR IS THE ROUND'S, not this test's. It was an argument until the
+// contract was read here, and whoever writes a proof would otherwise pick the
+// floor F is recomputed at - a different floor is a different honest table.
 const MIN = 100;
+const contract = { minScore: MIN };
 
 const honest = () => computePayoutTable({ roundId: ROUND, entries, minScore: MIN });
 const tableOf = (rows) => encodePayoutTable({ roundId: ROUND, table: rows });
@@ -47,7 +51,7 @@ const proofFor = (bytes, over = {}) => ({
 const advert = { nodePubkey: NODE, bondTxid: BOND, bondVout: 3 };
 const ask = (bytes, over = {}) => slashHoldsOnTable({
   proof: proofFor(bytes), signedTable: bytes, advert, committee,
-  entries, minScore: MIN, ...over,
+  entries, contract, ...over,
 });
 
 /**
@@ -104,7 +108,7 @@ test('the round is inside the table, so a signature cannot cross rounds', () => 
   const elsewhere = encodePayoutTable({ roundId: b32(0x02), table: honest().table });
   const no = slashHoldsOnTable({
     proof: proofFor(elsewhere), signedTable: elsewhere, advert, committee,
-    entries, minScore: MIN,
+    entries, contract,
   });
   assert.equal(no.slashed, false);
   assert.match(no.why, /different round/);
@@ -124,18 +128,26 @@ test('an accuser cannot swap the inputs F is recomputed from', () => {
 
   const swapped = slashHoldsOnTable({
     proof: proofFor(right), signedTable: right, advert, committee,
-    entries: theirs, minScore: MIN,
+    entries: theirs, contract,
   });
   assert.equal(swapped.slashed, false);
   assert.match(swapped.why, /bound to different inputs/);
 
-  // and the floor is one of the inputs, not a free argument
+  // AND THE FLOOR IS THE CONTRACT'S. A prover who names a higher one is
+  // recomputing F at a floor nobody signed up to, and F at another floor is a
+  // different honest table - measured: f5abb801d78b2153 at 0 against
+  // f69f32a60d912403 at 999 on the same entries.
   const floorMoved = slashHoldsOnTable({
     proof: proofFor(right), signedTable: right, advert, committee,
-    entries, minScore: 600,
+    entries, contract: { minScore: 600 },
   });
   assert.equal(floorMoved.slashed, false);
   assert.match(floorMoved.why, /bound to different inputs/);
+
+  for (const bad of [undefined, {}, { minScore: -1 }, { minScore: 1.5 }, { minScore: '100' }])
+    assert.equal(ask(right, { contract: bad }).slashed, false,
+      'a contract that names no floor is not a licence to pick one');
+  assert.match(ask(right, { contract: undefined }).why, /no round contract to read the score floor/);
 
   assert.equal(ask(right, { entries: [] }).slashed, false);
   assert.match(ask(right, { entries: [] }).why, /no published inputs/);
@@ -147,14 +159,14 @@ test('the evidence has to be the table the proof names', () => {
     (i === 0 ? { ...r, amountMsat: r.amountMsat - 1n } : r)));
 
   const mismatched = slashHoldsOnTable({
-    proof: proofFor(right), signedTable: wrong, advert, committee, entries, minScore: MIN,
+    proof: proofFor(right), signedTable: wrong, advert, committee, entries, contract,
   });
   assert.equal(mismatched.slashed, false);
   assert.match(mismatched.why, /not the one this proof names/);
 
   for (const bad of [undefined, new Uint8Array(0), new Uint8Array(9)]) {
     const no = slashHoldsOnTable({
-      proof: proofFor(right), signedTable: bad, advert, committee, entries, minScore: MIN,
+      proof: proofFor(right), signedTable: bad, advert, committee, entries, contract,
     });
     assert.equal(no.slashed, false);
     assert.match(no.why, /no signed table|not a payout table/);
@@ -167,14 +179,14 @@ test('the accuser cannot name a bond the node never advertised', () => {
 
   const someoneElses = slashHoldsOnTable({
     proof: proofFor(wrong, { bondTxid: b32(0x99) }), signedTable: wrong,
-    advert, committee, entries, minScore: MIN,
+    advert, committee, entries, contract,
   });
   assert.equal(someoneElses.slashed, false);
   assert.match(someoneElses.why, /the proof names bond 9999/);
 
   const wrongVout = slashHoldsOnTable({
     proof: proofFor(wrong, { bondVout: 4 }), signedTable: wrong,
-    advert, committee, entries, minScore: MIN,
+    advert, committee, entries, contract,
   });
   assert.equal(wrongVout.slashed, false, 'a different output is a different bond');
   assert.equal(ask(wrong, { advert: undefined }).slashed, false);
@@ -186,7 +198,7 @@ test('a stranger cannot be slashed for a round they were not serving', () => {
   const no = slashHoldsOnTable({
     proof: proofFor(wrong, { nodePubkey: b32(0x66) }), signedTable: wrong,
     advert: { nodePubkey: b32(0x66), bondTxid: BOND, bondVout: 3 },
-    committee, entries, minScore: MIN,
+    committee, entries, contract,
   });
   assert.equal(no.slashed, false);
   assert.match(no.why, /is not on this round's committee/);
@@ -210,7 +222,7 @@ test('inputs that cannot be used are refused, not counted as an offence', () => 
   assert.doesNotThrow(() => {
     no = slashHoldsOnTable({
       proof: proofFor(bytes), signedTable: bytes, advert, committee,
-      entries: broken, minScore: MIN,
+      entries: broken, contract,
     });
   }, 'a decision function raised where it was asked for a verdict');
   assert.equal(no.slashed, false);

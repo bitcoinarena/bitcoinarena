@@ -285,10 +285,27 @@ export function slashHolds({
  * refused as unusable rather than counted as an offence.
  */
 export function slashHoldsOnTable({
-  proof, signedTable, advert, committee, entries, minScore = 0,
+  proof, signedTable, advert, committee, entries, contract,
 }) {
   if (!Array.isArray(committee) || !committee.length)
     return { slashed: false, why: 'no committee, so nobody was serving this round' };
+
+  // THE SCORE FLOOR COMES OFF THE ROUND CONTRACT, not off the accuser.
+  //
+  // It was an argument here, defaulted to zero, while `minScore` has been a
+  // signed field of the contract all along. Binding it into `payoutInputsId`
+  // stopped an accuser SWAPPING it after the fact and did nothing about the
+  // accuser CHOOSING it: whoever writes the proof picks the floor, and F at
+  // another floor is a different table, so a node whose table was right is
+  // slashed for it. Measured on the same entries: F is f5abb801d78b2153 at a
+  // floor of 0 and f69f32a60d912403 at 999.
+  //
+  // The same fault the fee minimum had, on a different row, and the same fix:
+  // the number every player and node signed up to is the only one that
+  // produces a table here.
+  if (!contract || !Number.isInteger(contract.minScore) || contract.minScore < 0)
+    return { slashed: false, why: 'no round contract to read the score floor from' };
+  const minScore = contract.minScore;
   if (!committee.some((k) => hex(k) === hex(proof.nodePubkey)))
     return {
       slashed: false,
@@ -1066,7 +1083,8 @@ export function slashHoldsOnFeeClaim({
  *
  * THE ACCUSED IS NOT ONE OF THE REMAINING HONEST MEMBERS. "the REMAINING
  * honest committee members" - a node does not collect a share of its own
- * slashing, and neither does any other node slashed in the same round.
+ * slashing, and neither does any other node slashed in the same round. Pass
+ * them in `slashed`; they are filtered out and their share is burned.
  *
  * REMAINDERS the way this repo already does them: floor each share, then hand
  * the leftover out one satoshi at a time in ascending `H(roundId || pubkey)`,
@@ -1076,6 +1094,7 @@ export function slashHoldsOnFeeClaim({
  */
 export function slashDistribution({
   bondSats, roundId, contract, affectedPlayers = [], honestCommittee = [],
+  slashed = [],
 }) {
   if (typeof bondSats !== 'bigint' || bondSats < 0n)
     throw new Error('a bond is BigInt satoshi');
@@ -1088,20 +1107,54 @@ export function slashDistribution({
   const shares = new Map();
   let burned = 0n;
 
-  const hand = (who, amount) => {
+  /**
+   * Splits `amount` over `who`, and pays only those not in `out`.
+   *
+   * THE DIVISOR IS THE WHOLE SET, which is the point of the exclusion. Simply
+   * removing a slashed member and dividing among the rest pays the survivors
+   * MORE the more of their colleagues were caught - measured while writing
+   * this: one of two committee members excluded took the other from 25000 to
+   * 50000, which is a reward for a round going wrong. The excluded shares are
+   * burned instead.
+   */
+  const hand = (who, amount, out = new Set()) => {
+    const paid = who.filter((k) => !out.has(hex(k)));
     if (!who.length || amount <= 0n) { burned += amount > 0n ? amount : 0n; return; }
     const each = amount / BigInt(who.length);
     let left = amount - each * BigInt(who.length);
-    for (const k of who) shares.set(hex(k), (shares.get(hex(k)) || 0n) + each);
-    for (const k of remainderKeys(roundId, who)) {
+    for (const k of who) {
+      if (out.has(hex(k))) { burned += each; continue; }
+      shares.set(hex(k), (shares.get(hex(k)) || 0n) + each);
+    }
+    // The leftover satoshis follow the same order and skip the same people.
+    for (const k of remainderKeys(roundId, paid)) {
       if (left <= 0n) break;
-      shares.set(hex(k), shares.get(hex(k)) + 1n);
+      shares.set(hex(k), (shares.get(hex(k)) || 0n) + 1n);
       left -= 1n;
     }
+    burned += left;
   };
 
+  // "THE REMAINING HONEST COMMITTEE MEMBERS" IS A FILTER, NOT A COMMENT.
+  //
+  // This said so and did not do it: `honestCommittee` was taken as given, so a
+  // caller could list the slashed node and hand it back half its own bond -
+  // measured at 25000 of 100000 satoshi before this line existed. A documented
+  // claim that is not a check is not a check, and this one let an operator
+  // write itself the bond by a door the halves constant does not cover.
+  //
+  // Every node slashed in the round is out, not only the accused: two nodes
+  // caught in one round would otherwise each collect from the other's bond,
+  // which is the same income by a longer route.
+  //
+  // AND THEIR SHARE IS BURNED RATHER THAN SPREAD OVER THE REST. Redistributing
+  // it would pay the honest members MORE the more of their colleagues were
+  // slashed, which is a reward for a round going wrong. Burning is the only
+  // direction that cannot become somebody's income.
+  const out = new Set(slashed.map(hex));
+
   hand(affectedPlayers, toPlayers);
-  if (contract.slashRemainder === 'COMMITTEE') hand(honestCommittee, rest);
+  if (contract.slashRemainder === 'COMMITTEE') hand(honestCommittee, rest, out);
   else burned += rest;
 
   const paid = [...shares.values()].reduce((a, b) => a + b, 0n);
