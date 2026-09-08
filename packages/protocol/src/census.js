@@ -5,6 +5,7 @@
 import { Writer } from './encode.js';
 import { taggedHash, fromHex, toHex } from './hash.js';
 import { TAG, ROLES, PROTOCOL_VERSION, TYPE_CENSUS_LEAF } from './constants.js';
+import { parseTransaction } from './tx.js';
 
 /**
  * One census entry, encoded.
@@ -186,4 +187,81 @@ export function censusRootMatchesRound(contract, {
       why: 'the censusRoot this round names is not the one its entries derive '
         + `to at height ${contract.censusHeight}`,
     };
+}
+
+/**
+ * 5A.4 STEP 1, SCAN: the chain says where an output was and whether it is
+ * still there. Not the party handing the census over.
+ *
+ * "SCAN all outputs created at or before census_height whose script matches
+ * the bond template (5A.3B) and that are unspent at census_height with >=
+ * census_confirmations depth."
+ *
+ * WHAT THIS DOES AND WHAT IT CANNOT. Three of those four conjuncts are read
+ * off the blocks here: WHERE an outpoint was created, WHETHER it was spent at
+ * or before the census height, and HOW DEEP it is. `buildCensus` applied all
+ * three already - to fields the caller supplied. That is the difference: a
+ * census used to be a bag of entries someone asserted heights and spends for,
+ * and this derives both from the chain, so a publisher who lies about either
+ * is caught by anyone holding the same blocks.
+ *
+ * THE FOURTH CONJUNCT IS NOT HERE AND IS NOT FAKED. Finding which outputs are
+ * bonds at all needs `BOND_MARKER` - 25.1's single dust address that puts every
+ * bond in the compact filters - and `BOND_MARKER` is `null` in this protocol
+ * by a decision recorded in `constants.js`: it is a genesis parameter, fixed
+ * once before the first bond exists, and writing a plausible address into a
+ * source tree would settle it by accident. `bondMarker()` throws for exactly
+ * that reason. So the candidate outpoints come IN - from the advertisements a
+ * node already holds, which name `bondTxid` and `bondVout` - and enumerating
+ * them from the chain alone waits on that parameter, not on a daemon.
+ *
+ * A BLOCK IS `{ height, transactions }`, transactions being raw bytes. Nothing
+ * here fetches: the caller brings the blocks, and two callers holding the same
+ * blocks get the same census or neither does.
+ */
+export function scanCensus(blocks, { censusHeight, minConfirmations, tipHeight, candidates }) {
+  if (!Array.isArray(blocks)) throw new Error('scan needs blocks to read');
+  if (!Array.isArray(candidates)) throw new Error('scan needs the outpoints to look for');
+  if (!Number.isInteger(censusHeight)) throw new Error('scan needs a census height');
+
+  const createdAt = new Map();
+  const spentAt = new Map();
+
+  for (const block of blocks) {
+    if (!Number.isInteger(block.height)) throw new Error('a block names its height');
+
+    // AT OR BEFORE THE CENSUS HEIGHT, and nothing after it. A block later than
+    // the census is a block the census did not see, and reading it would make
+    // the answer depend on when a node happened to ask.
+    if (block.height > censusHeight) continue;
+
+    for (const raw of block.transactions) {
+      const tx = parseTransaction(raw);
+      const txid = toHex(tx.txid);
+      for (let vout = 0; vout < tx.outputs.length; vout++)
+        if (!createdAt.has(`${txid}:${vout}`)) createdAt.set(`${txid}:${vout}`, block.height);
+      for (const input of tx.inputs)
+        spentAt.set(`${toHex(input.previousTxid)}:${input.previousVout}`, block.height);
+    }
+  }
+
+  const found = [];
+  const missing = [];
+  for (const c of candidates) {
+    const key = `${toHex(c.txid)}:${c.vout}`;
+    const height = createdAt.get(key);
+
+    // AN OUTPOINT THE CHAIN DOES NOT CARRY IS NOT AN ENTRY. It is named rather
+    // than silently dropped: a census that quietly lost a bond and one that
+    // never had it look identical from the root alone.
+    if (height === undefined) { missing.push({ ...c, why: 'no such outpoint at or before that height' }); continue; }
+
+    found.push({ ...c, height, spent: spentAt.has(key) });
+  }
+
+  return {
+    entries: found,
+    missing,
+    census: buildCensus(found, { censusHeight, minConfirmations, tipHeight }),
+  };
 }
