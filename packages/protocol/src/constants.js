@@ -82,6 +82,21 @@ export const TYPE_SERVICE_RECORD = 0x0f;
  */
 export const TYPE_DONATION_SET = 0x10;
 
+/**
+ * A PICTURE OF SOMEBODY ELSE'S TRUCK, AND NOTHING ELSE.
+ *
+ * 0.9: "Other trucks are visible ghosts with no collision... Another player
+ * must not be able to change my financial odds by ramming me, blocking a road,
+ * pushing me, damaging me, drawing my enemies away, pulling enemies toward me,
+ * sacrificing themselves for me, or colluding physically."
+ *
+ * 0.10: "Ghost snapshots are never inputs to this calculation." It has its own
+ * type byte because it must never be mistakable for a message that IS an
+ * input - an InputBatch and a Ghost differ in their first byte, before a
+ * decoder has read anything else.
+ */
+export const TYPE_GHOST = 0x11;
+
 export const TAG = {
   roundContract: 'BLWP/v1/RoundContract',
   entryContract: 'BLWP/v1/EntryContract',
@@ -111,6 +126,10 @@ export const TAG = {
   // every seat's share. A proof names which table, or the accuser picks one.
   feeTable: 'BLWP/v1/FeeTable',
   donationSet: 'BLWP/v1/DonationSet',
+  // A picture of another player's truck. Its own tag so a ghost's id can never
+  // collide with a checkpoint's or a batch's over the same bytes: 0.10 says a
+  // ghost is never an input, and a shared tag would be one way to forget it.
+  ghost: 'BLWP/v1/Ghost',
   // The census entries a contract's root is checked against, and the height
   // they were taken at. Its own tag: a proof binds to the INPUTS, and a
   // signature binds to the root, and the two must never be interchangeable.
