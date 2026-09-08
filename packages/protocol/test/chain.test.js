@@ -278,7 +278,45 @@ test('an advertisement pointing at some other bond, or at no output, is refused'
     transaction: raw2, header: at2.header, branch: at2.branch, position: at2.position,
   });
   assert.equal(no.ok, false);
-  assert.match(no.why, /an output that transaction does not have/);
+  assert.match(no.why, /no such output/);
+
+  // AND THE OUTPUT IT NAMES HAS TO BE A BOND. This door used to check only
+  // that the vout existed, so an advertisement declaring the OP_RETURN as its
+  // bond was accepted and its ENDPOINT handed back - a transaction with no
+  // bond in it presented to a client as a bonded node. 25.1 step 2 is "which
+  // nodes count? Bitcoin: bond outputs", and step 4 reads the endpoint from
+  // that same transaction.
+  const atReturn = { ...advert(), bondTxid: new Uint8Array(32), bondVout: 1 };
+  const raw3 = bondTransaction(atReturn);
+  const tx3 = parseTransaction(raw3);
+  assert.equal(tx3.outputs[1].value, 0n, 'vout 1 is not the OP_RETURN');
+  const at3 = blockAround(tx3.txid);
+  const empty = acceptAdvert({
+    transaction: raw3, header: at3.header, branch: at3.branch, position: at3.position,
+  });
+  assert.equal(empty.ok, false, 'an endpoint was handed back for a bond that is an OP_RETURN');
+  assert.match(empty.why, /not a taproot output/);
+});
+
+/**
+ * And the bond it accepted comes back measured, not merely accepted: the
+ * output's own value, and the three rules the chain cannot show.
+ */
+test('an accepted advertisement carries the bond it was proven against', () => {
+  // the all-zero txid, the reading 25.1 forces: the body rides in the
+  // transaction it names, so the txid is not knowable when the body is signed
+  const raw = bondTransaction({ ...advert(), bondTxid: new Uint8Array(32) });
+  const tx = parseTransaction(raw);
+  const at = blockAround(tx.txid);
+  const ok = acceptAdvert({
+    transaction: raw, header: at.header, branch: at.branch, position: at.position,
+  });
+
+  assert.equal(ok.ok, true, ok.why);
+  assert.equal(ok.bondVout, 0);
+  assert.equal(ok.bondSats, tx.outputs[0].value);
+  assert.equal(ok.unchecked.length, 3);
+  assert.match(ok.unchecked[0], /BOND_MARKER/);
 });
 
 /**

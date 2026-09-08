@@ -20,6 +20,7 @@
 // in this header's block, and which of these header chains carries the most
 // work. That is what discovery needs and it is deliberately not more.
 import { advertId, decodeAdvert, splitSignedAdvert } from './advert.js';
+import { recognizeBond } from './census.js';
 import {
   hash256, parseTransaction, commitmentsOf, witnessItemsOf,
 } from './tx.js';
@@ -299,19 +300,18 @@ export function acceptAdvert({ transaction, signedAdvert, header, branch, positi
   if (!taken)
     return { ok: false, why: 'the bond output commits to a different advertisement' };
 
-  // The advertisement must point back at the bond that gives it standing, or
-  // it says where to reach somebody with nothing to say why they count. An
-  // all-zero txid is the only value a body CAN carry when it rides in the
-  // transaction it names - 5A.1 makes bond_outpoint mandatory and 25.1 puts
-  // the body in the same transaction, so the txid is not knowable when the
-  // body is signed. Reading it as "the transaction carrying me" is the only
-  // reading available; which output is the bond still waits on BOND_MARKER,
-  // and neither is settled here.
-  const carriesUs = taken.advert.bondTxid.every((b) => b === 0);
-  if (!carriesUs && !sameBytes(taken.advert.bondTxid, tx.txid))
-    return { ok: false, why: 'the advertisement names a different bond transaction' };
-  if (taken.advert.bondVout >= tx.outputs.length)
-    return { ok: false, why: 'the advertisement names an output that transaction does not have' };
+  // THE OUTPUT IT POINTS AT HAS TO BE A BOND. This used to check only that the
+  // vout existed, so an advertisement declaring the OP_RETURN as its bond was
+  // accepted and its endpoint handed back - measured: a transaction with no
+  // bond in it at all presented as a bonded node, on the door the PLAYER walks
+  // through. 25.1 step 2 is "which nodes count? Bitcoin: bond outputs", and
+  // step 4 reads the endpoint from that same transaction, so an endpoint whose
+  // bond is a zero-value OP_RETURN is a node with nothing at stake.
+  //
+  // The same recognition the census uses, for the same reason and with the
+  // same three rules it cannot read.
+  const bond = recognizeBond(tx, taken.advert.bondVout, taken.advert);
+  if (!bond.ok) return { ok: false, why: bond.why };
 
   return {
     ok: true,
@@ -319,6 +319,9 @@ export function acceptAdvert({ transaction, signedAdvert, header, branch, positi
     nodePubkey: taken.advert.nodePubkey,
     signature: taken.signature,
     txid: tx.txid,
+    bondVout: taken.advert.bondVout,
+    bondSats: bond.valueSats,
+    unchecked: bond.unchecked,
     advert: taken.advert,
   };
 }
