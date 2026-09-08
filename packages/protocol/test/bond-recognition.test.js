@@ -153,6 +153,39 @@ test('the value reported is the named output\'s, not the first taproot one', () 
     /names output 1 as its bond, not 0/);
 });
 
+/**
+ * AN OUTPUT HOLDING NOTHING IS NOT A BOND, whatever shape it is.
+ *
+ * 5A.3: "The bond is what makes identity expensive. Without it, a Sybil
+ * attacker creates arbitrarily many nodes for free and buys arbitrarily many
+ * selection chances - the flaw that made v4.4 unsafe." A zero-value P2TR
+ * output costs its fee and nothing else.
+ *
+ * Measured before this: with a round naming a floor of zero, a census admitted
+ * a zero-sat taproot output as a bond, and `selectCommittee` then THREW from
+ * inside `weightOf` - a division by zero reaching a caller that had only asked
+ * who was on the committee.
+ */
+test('a taproot output worth nothing is not a bond', () => {
+  const empty = bondTransaction(advertFor(0x18), {
+    previousTxid: b32(0xb8), previousVout: 0, value: 0,
+  });
+  const tx = parseTransaction(empty);
+
+  assert.equal(tx.outputs[0].value, 0n);
+  assert.equal(isTaprootOutput(tx.outputs[0].script), true, 'the shape is right; the value is not');
+  assert.match(recognizeBond(tx, 0, advertFor(0x18)).why, /holds nothing, so there is no bond at stake/);
+
+  // one satoshi is a bond, and a bad one - the ROUND's floor is what says how
+  // small is too small, and a round may set it low; nothing may set it to none
+  const dust = parseTransaction(bondTransaction(advertFor(0x19), {
+    previousTxid: b32(0xb9), previousVout: 0, value: 1,
+  }));
+  const ok = recognizeBond(dust, 0, advertFor(0x19));
+  assert.equal(ok.ok, true, ok.why);
+  assert.equal(ok.valueSats, 1n);
+});
+
 test('an output that is not there is not a bond', () => {
   const tx = parseTransaction(bondOf(0x14));
   for (const vout of [2, 9, -1, 1.5, undefined])

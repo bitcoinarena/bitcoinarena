@@ -74,8 +74,13 @@ export function selectCommittee({ entries, contract, role, exclude }) {
     throw new Error(`that round names no committee size for ${role}`);
   if (!(contract.committeeSeed instanceof Uint8Array))
     throw new Error('that round names no committee seed');
-  if (typeof contract.bondMinSats !== 'bigint')
-    throw new Error('that round names no bond floor to weigh against');
+  // A POSITIVE FLOOR, because the weight is bond/floor and a floor of zero is
+  // not a small floor - it is a division by zero, and `weightOf` threw from
+  // underneath here rather than this answering. It is also the thing 5A.3
+  // warns about: a floor of nothing makes identity free, "the flaw that made
+  // v4.4 unsafe".
+  if (typeof contract.bondMinSats !== 'bigint' || contract.bondMinSats <= 0n)
+    throw new Error('that round names no positive bond floor to weigh against');
   const committeeSeed = contract.committeeSeed;
   const bondMin = contract.bondMinSats;
 

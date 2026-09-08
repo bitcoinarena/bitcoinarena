@@ -433,6 +433,16 @@ export function recognizeBond(tx, vout, advert) {
       why: 'that output is not a taproot output, so it is not the bond 5A.3B describes',
     };
 
+  // AND AN OUTPUT HOLDING NOTHING IS NOT A BOND, whatever shape it is. 5A.3:
+  // "The bond is what makes identity expensive. Without it, a Sybil attacker
+  // creates arbitrarily many nodes for free and buys arbitrarily many
+  // selection chances - the flaw that made v4.4 unsafe." A zero-value output
+  // costs its fee and nothing else, so a census that counted them would be
+  // that flaw with extra steps. The ROUND's floor is a separate question and
+  // a round may set it low; nothing may set it to nothing.
+  if (tx.outputs[vout].value <= 0n)
+    return { ok: false, why: 'that output holds nothing, so there is no bond at stake' };
+
   if (!advert || !Number.isInteger(advert.bondVout))
     return { ok: false, why: 'that advertisement names no bond output' };
   if (advert.bondVout !== vout)

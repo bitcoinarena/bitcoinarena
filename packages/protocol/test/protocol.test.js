@@ -142,7 +142,15 @@ test('the same seed picks the same committee', () => {
   assert.throws(() => selectCommittee({ entries, contract: { gameVerifySlots: 2, bondMinSats: 1n }, role: 'game' }),
     /names no committee seed/);
   assert.throws(() => selectCommittee({ entries, contract: { gameVerifySlots: 2, committeeSeed: b32(11) }, role: 'game' }),
-    /names no bond floor/);
+    /names no positive bond floor/);
+
+  // A FLOOR OF ZERO IS NOT A SMALL FLOOR. The weight is bond/floor, so zero
+  // is a division by zero - `weightOf` threw from underneath this rather than
+  // this answering - and 5A.3 says what it means besides: a floor of nothing
+  // makes identity free, "the flaw that made v4.4 unsafe".
+  for (const floor of [0n, -1n])
+    assert.throws(() => selectCommittee({ entries, contract: { ...round, bondMinSats: floor }, role: 'game' }),
+      /names no positive bond floor/, `a floor of ${floor} was accepted`);
 
   // AND A CALLER CANNOT REACH ANY OF THE THREE. Held fixed, the old arguments
   // are inert: there is no parameter left to pass one through.
