@@ -42,7 +42,11 @@ import { BITCOIN_MAINNET_GENESIS_HEADER, blockHashOf } from '../../protocol/src/
 import { hash256, parseTransaction } from '../../protocol/src/tx.js';
 import { advertId } from '../../protocol/src/advert.js';
 import { bondTransaction, blockOf } from '../../protocol/tools/bond.js';
-import { encodeRoundContract, roundId } from '../../protocol/src/contracts.js';
+import { encodeRoundContract, decodeRoundContract, roundId } from '../../protocol/src/contracts.js';
+import { deriveCensus } from '../../protocol/src/census.js';
+import { bondSetFor, tweakPoint, combine } from '../src/curve.js';
+import { bondOutputKey, bondInternalKey } from '../../protocol/src/bond-script.js';
+import { genesisFor } from '../../protocol/src/genesis.js';
 import { MIN_ENTRY_WINDOW_MS } from '../../protocol/src/constants.js';
 import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
 
@@ -89,29 +93,82 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   // to the advertisement and the advertisement carries the address. So a fixed
   // port is asked for and the daemon must get it; port 0 would name an address
   // nobody can put in a bond that is already mined.
-  if (!portA) throw new Error('this needs a fixed port for node A: the bond commits to its address');
-  const endpointA = `ws://${host}:${portA}`;
-  const advert = {
-    nodePubkey: idA.pubkey, operatorId: '2of2', protocolVersions: [1],
-    roles: ['game', 'verify'], endpoint: endpointA,
-    region: 'eu-west', capacityClass: 2, softwareHash: b32(3),
-    settlementCapabilities: 0, lightningCapabilities: 0,
-    bondTxid: new Uint8Array(32), bondVout: 0, bondScriptTemplateVersion: 1,
-    payoutPubkey: b32(4), timestamp: BigInt(Date.now()),
-  };
-  // BIP-340, because letter 26 made a node's identity ITS BOND KEY: every
-  // signature a node makes is schnorr under the key its bond was posted with,
-  // and an ed25519 signature here is refused at the door by name.
-  const signedAdvert = schnorr.sign(advertId(advert), idA.secret);
-  const transaction = bondTransaction(advert, { signature: signedAdvert });
+  if (!portA || !portB)
+    throw new Error('this needs fixed ports: a bond commits to the address it advertises');
+  const idB = nodeIdentity(dbB);
 
-  const sibling = b32(0x99);
-  const txid = parseTransaction(transaction).txid;
-  const { header } = blockOf(hash256, [txid, sibling],
-    { previous: blockHashOf(BITCOIN_MAINNET_GENESIS_HEADER) });
-  const chain = [BITCOIN_MAINNET_GENESIS_HEADER, header];
+  // ONE BOND EACH, AND THAT IS NOT A DETAIL. `seatRound` compares the seats
+  // the census gives with the keys the contract names and refuses when they
+  // differ - letter 26's ruling that the seated set is the only list that
+  // counts. A 2-of-2 whose chain bonded one of its two nodes would be refused
+  // by its own daemons, which is exactly what should happen and is why both
+  // are bonded here.
+  const bonded = [
+    { id: idA, port: portA, db: dbA },
+    { id: idB, port: portB, db: dbB },
+  ].map(({ id, port }) => {
+    const advert = {
+      nodePubkey: id.pubkey, operatorId: '2of2', protocolVersions: [1],
+      // ALL THREE ROLES, because this network's genesis asks for two nodes in
+      // each and there are only two nodes. A 2-of-2 where one seat is a game
+      // node and the other a settlement node is not a 2-of-2, it is two
+      // committees of one. Measured: with 'game' and 'verify' alone the census
+      // carried 0 settlement nodes where regtest was born needing 2.
+      roles: ['game', 'verify', 'settlement'], endpoint: `ws://${host}:${port}`,
+      region: 'eu-west', capacityClass: 2, softwareHash: b32(3),
+      settlementCapabilities: 0, lightningCapabilities: 0,
+      bondTxid: new Uint8Array(32), bondVout: 0, bondScriptTemplateVersion: 1,
+      payoutPubkey: b32(4), timestamp: BigInt(Date.now()),
+    };
+    // BIP-340, because letter 26 made a node's identity ITS BOND KEY: every
+    // signature a node makes is schnorr under the key its bond was posted
+    // with, and an ed25519 signature here is refused at the door by name.
+    const signature = schnorr.sign(advertId(advert), id.secret);
+    // THE OUTPUT KEY IS THE ONE 5A.3B BUILDS, not the fixture filler. Letter 24
+    // made the census rebuild a bond's key from the node key, the network's
+    // arbitration set and its maturity, and refuse one that does not rebuild -
+    // so a bond paying 0x77 repeated is a bond the census counts as nothing.
+    // Measured: with the filler the census carried 0 game nodes where regtest
+    // was born needing 2.
+    const g = genesisFor('regtest');
+    const built = bondOutputKey({
+      nodeKey: id.pubkey,
+      arbitrationKeys: g.arbitrationKeys,
+      arbitrationK: g.arbitrationK,
+      bondMaturity: g.bondMaturity,
+      internalKey: bondInternalKey(
+        { nodeKey: id.pubkey, arbitrationKeys: g.arbitrationKeys }, { combine }).internalKey,
+    }, { tweakPoint, combine });
+    const transaction = bondTransaction(advert, { signature, outputKey: built.outputKey });
+    return { advert, signature, transaction, txid: parseTransaction(transaction).txid };
+  });
+
+  // ONE BLOCK EACH AND ONE TRANSACTION IN IT. A chain view checks that a
+  // block's transactions hash to the root ITS OWN header commits to, so every
+  // leaf has to be a real transaction - a bare 32-byte sibling is a txid and
+  // is refused by name ("carries something that is not a transaction"). With
+  // a single leaf the root IS the txid and the merkle branch is empty, which
+  // is a proof this tool can write down without a proof builder.
+  const built = [];
+  let previous = blockHashOf(BITCOIN_MAINNET_GENESIS_HEADER);
+  for (const one of bonded) {
+    const { header } = blockOf(hash256, [one.txid], { previous });
+    built.push({ header, transactions: [one.transaction] });
+    previous = blockHashOf(header);
+  }
+  const chain = [BITCOIN_MAINNET_GENESIS_HEADER, ...built.map((b) => b.header)];
   const headerBytes = new Uint8Array(chain.length * 80);
   chain.forEach((h, i) => headerBytes.set(h, i * 80));
+
+  // THE VIEW THE CENSUS IS DERIVED FROM. Heights 1 and 2 - genesis carries no
+  // transactions this tool has, and a census does not need it. `transactions`
+  // must hash to the header's own root, so the sibling leaf is carried as the
+  // raw 32 bytes it was mined as.
+  const censusBlocks = built.map((b, i) => ({
+    header: b.header,
+    transactions: [bonded[i].transaction],
+  }));
+  const censusView = { blocks: censusBlocks, firstHeight: 1 };
 
   // THE TWO DOORS THE JOIN URL NEEDS, on the daemons themselves.
   //
@@ -120,10 +177,14 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   // and 25.1 asks for independent ones. What makes it hold here is that there
   // are TWO daemons and `agreedChain` counts ORIGINS - and that this is a
   // local test round on a fixture chain, not a claim about Bitcoin.
-  const bondProof = { hex: toHex(transaction), merkle: [toHex(sibling)], pos: 0 };
-  const a = await serve(dbA, { port: portA, host, funded, headerBytes, bondProof,
+  const bondProof = { hex: toHex(bonded[0].transaction), merkle: [], pos: 0 };
+  // AND THE DAEMONS SEE THE CHAIN, which is what makes `POST /round` seat
+  // anybody at all: `server.js` seats only when it has a view, and this tool
+  // gave none, so the beacon was read and nobody was ever seated on it.
+  const chainFor = () => censusView;
+  const a = await serve(dbA, { port: portA, host, funded, headerBytes, bondProof, chainFor,
     ...(randomnessFor ? { randomnessFor } : {}) });
-  const b = await serve(dbB, { port: portB, host, funded, headerBytes, bondProof,
+  const b = await serve(dbB, { port: portB, host, funded, headerBytes, bondProof, chainFor,
     ...(randomnessFor ? { randomnessFor } : {}) });
   if (a.port !== portA)
     throw new Error(`node A came up on ${a.port} and the bond names ${portA}`);
@@ -145,35 +206,72 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     startTimeMs: committeeTimeMs + MIN_ENTRY_WINDOW_MS,
     entryCloseMs: committeeTimeMs + MIN_ENTRY_WINDOW_MS + 120000n,
     objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20,
-    slashRemainder: 'BURN', donationSetId: b32(0xd0), censusHeight: 900000,
-    censusRoot: b32(2), stakeMsat: 100000n, bondMinSats: 50000n, blockTicks: 9000,
+    slashRemainder: 'BURN', donationSetId: b32(0xd0), censusHeight: 2,
+    censusRoot: new Uint8Array(32), stakeMsat: 100000n, bondMinSats: 50000n, blockTicks: 9000,
     exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
     timeFloor: 30, timeCeil: 150, minScore: 1, rankNumerator: 3, rankDenominator: 4,
     nodes: [a.round.pubkey, b.round.pubkey],
   };
-  const body = encodeRoundContract(contract);
-  const opened = [];
-  for (const node of [a, b]) {
-    const r = await fetch(`http://${host}:${node.port}/round`, { method: 'POST', body });
-    if (!r.ok) throw new Error(`${node.port} refused the round: ${await r.text()}`);
-    opened.push(toHex(new Uint8Array(await r.arrayBuffer())));
-  }
-  const id = toHex(roundId(contract));
+  // THE CENSUS ROOT IS THE CHAIN'S, NOT A NUMBER THIS TOOL LIKES.
+  //
+  // It was 32 bytes of 2, which is why seating could never have run here even
+  // with a chain view: `censusFor` refuses a round whose named root is not the
+  // one its own blocks derive to. Derived from the SAME contract the round
+  // will carry and the same view the daemons are handed, so the two cannot
+  // disagree - the root is the only field that is filled in afterwards,
+  // because it is the hash OF the answer.
+  // DERIVED FROM THE CONTRACT AS THE DAEMON WILL SEE IT: encoded and decoded
+  // back. `protocolVersion` is written by the encoder and read by the decoder
+  // rather than typed into a literal, and the census refuses a round that
+  // names none - so deriving from the object in hand would ask a different
+  // question from the one the node asks.
+  const asSeen = decodeRoundContract(encodeRoundContract(contract));
+  const census = deriveCensus(censusView, {
+    contract: asSeen,
+    bond: bondSetFor('regtest'),
+    resolve: (e) => {
+      const one = bonded.find((b) => toHex(b.txid) === toHex(e.txid));
+      return one ? { transaction: one.transaction } : null;
+    },
+  });
+  if (!census.ok) throw new Error('this tool could not derive its own census: ' + census.why);
+  contract.censusRoot = census.root;
 
-  // AND THE BEACON IS READ NOW, for THIS round's committee_time, because the
-  // question the daemons will ask is synchronous and the answer is a fetch.
-  // What comes back is kept only if the rule accepted it; a refusal is carried
-  // out to the caller so an operator sees "no beacon and why" rather than a
-  // node that quietly seats nobody.
+  // AND THE BEACON IS READ BEFORE THE ROUND IS POSTED, because posting is when
+  // a node seats: `POST /round` calls `seatRound`, seating needs the committee
+  // seed, and the seed is this beacon. Read after, the daemons refuse the
+  // round with "this node has no beacon for that round" - measured, that is
+  // exactly what happened the first time this was wired.
+  //
+  // It is also the real order. 5A.5 has the committee form AT committee_time;
+  // a node that has not seen the beacon has nothing to form it from.
   let beaconSeen = null;
   if (beacon) {
-    // A CHAIN THAT CANNOT BE READ IS NOT A ROUND THAT CANNOT EXIST. The read
-    // failing must not take the daemons down with it: the round opens, the
-    // node holds no beacon, and seating says so. Carried as a refusal rather
-    // than thrown, so an operator reads one line instead of a stack.
+    // A CHAIN THAT CANNOT BE READ IS NOT A ROUND THAT CANNOT EXIST for the
+    // caller of this tool: the refusal is carried out rather than thrown, so
+    // an operator reads one line instead of a stack. The daemons will still
+    // refuse to seat, by name, which is the honest end of it.
     try { beaconSeen = await beacon.refresh(contract); }
     catch (e) { beaconSeen = { ok: false, why: e.message }; }
   }
+
+  // WHAT IS OPENED IS CLOSED, even when the round is refused. A daemon left
+  // listening after a throw is a port nobody frees and a test run that never
+  // exits - measured, the first version of this hung the suite.
+  const body = encodeRoundContract(contract);
+  const opened = [];
+  try {
+    for (const node of [a, b]) {
+      const r = await fetch(`http://${host}:${node.port}/round`, { method: 'POST', body });
+      if (!r.ok) throw new Error(`${node.port} refused the round: ${await r.text()}`);
+      opened.push(toHex(new Uint8Array(await r.arrayBuffer())));
+    }
+  } catch (e) {
+    await a.close(); await b.close();
+    throw e;
+  }
+  const id = toHex(roundId(contract));
+
   if (opened.some((o) => o !== id))
     throw new Error('the two daemons named the round differently: ' + opened.join(' '));
 
@@ -183,14 +281,14 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   const url = `${page}/?round=${id}`
     + `&node=http://${host}:${a.port},http://${host}:${b.port}`
     + `&bond=http://${host}:${a.port}/bond`
-    + `&advert=${toHex(signedAdvert)}`;
+    + `&advert=${toHex(bonded[0].signature)}`;
 
   return {
     id, url, contract, a, b, beacon: beaconSeen,
     nodes: [`http://${host}:${a.port}`, `http://${host}:${b.port}`],
     headers: [`http://${host}:${a.port}/headers`, `http://${host}:${b.port}/headers`],
     bond: `http://${host}:${a.port}/bond`,
-    advert: toHex(signedAdvert),
+    advert: toHex(bonded[0].signature),
     async close() { await a.close(); await b.close(); },
   };
 }
