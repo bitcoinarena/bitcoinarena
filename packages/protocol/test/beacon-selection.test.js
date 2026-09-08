@@ -11,8 +11,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { beaconFromChain, medianTimePast, MEDIAN_TIME_SPAN,
-  committeeSeedFromBeacon } from '../src/beacon.js';
+import { beaconFromChain, beaconIsTheChains, beaconIsAfterRound, medianTimePast,
+  MEDIAN_TIME_SPAN, committeeSeedFromBeacon } from '../src/beacon.js';
 import { blockOf } from '../tools/bond.js';
 import { hash256, blockHashOf, blockTimeOf } from '../src/chain.js';
 import { toHex } from '../src/hash.js';
@@ -185,4 +185,43 @@ test('a round with no committee time or no depth is refused rather than defaulte
     /names no confirmation depth/);
   assert.match(beaconFromChain(contract(), { headers: [], firstHeight: 0 }).why,
     /at least one header/);
+});
+
+/**
+ * LATE IS NOT THE SAME AS RIGHT.
+ *
+ * `beaconIsAfterRound` asks only whether a beacon came after committee_time,
+ * and that is all it CAN ask - it is handed a height and a time and no chain.
+ * A node that has a chain can ask the other half: is this the block the chain
+ * names? Without it, an operator hands their node any late block and picks the
+ * seed, which is 5A.5's attack with one extra step.
+ */
+test('a late block that is not the first one is refused, not accepted for being late', () => {
+  const view = chainOf(15);
+  const named = beaconFromChain(contract(), view);
+  assert.equal(named.height, 112);
+
+  // the honest one passes both directions
+  const ok = beaconIsTheChains(contract(), named, view);
+  assert.equal(ok.ok, true, ok.why);
+
+  // 113 is later than committee_time too, and 27's own check would let it by
+  const later = {
+    height: 113,
+    hash: blockHashOf(view.headers[113 - FIRST]),
+    timeMs: BigInt(medianTimePast(view.headers, FIRST, 113)) * 1000n,
+  };
+  assert.equal(beaconIsAfterRound(contract({ censusConfirmations: 1 }), later).ok, true,
+    'the older check was supposed to accept a late block');
+  const seen = beaconIsTheChains(contract(), later, view);
+  assert.equal(seen.ok, false);
+  assert.match(seen.why, /is block 113 where this chain names 112/);
+  assert.match(seen.why, /a later block is a block somebody chose/);
+
+  // and the right height with the wrong hash or the wrong time is refused too
+  assert.match(beaconIsTheChains(contract(), { ...named, hash: b32(0xbe) }, view).why,
+    /carries a hash block 112 does not have/);
+  assert.match(beaconIsTheChains(contract(), { ...named, timeMs: named.timeMs + 1n }, view).why,
+    /median time past is/);
+  assert.match(beaconIsTheChains(contract(), null, view).why, /no beacon was offered/);
 });

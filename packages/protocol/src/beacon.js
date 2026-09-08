@@ -281,3 +281,44 @@ export function beaconFromChain(contract, view) {
     depth,
   };
 }
+
+/**
+ * IS THE BEACON SOMEBODY HANDED ME THE ONE THIS CHAIN NAMES?
+ *
+ * `beaconFromChain` derives the answer; this refuses a different one. They are
+ * two directions of the same rule and both are needed, because a node does not
+ * always derive its own: `roster.js` and `verify.js` take a beacon from their
+ * caller, and `beaconIsAfterRound` only asks whether it came AFTER
+ * committee_time. Late is not the same as right. A block six hours past
+ * committee_time is late, and if it is not the FIRST such block then whoever
+ * chose it chose the seed, which is the grinding this letter closes with one
+ * extra step.
+ *
+ * So: same height, same hash, same time, or a refusal that names both.
+ */
+export function beaconIsTheChains(contract, beacon, view) {
+  const named = beaconFromChain(contract, view);
+  if (!named.ok) return named;
+  if (!beacon || typeof beacon !== 'object')
+    return { ok: false, why: 'no beacon was offered to check against the chain' };
+
+  if (beacon.height !== named.height)
+    return {
+      ok: false,
+      why: `that beacon is block ${beacon.height} where this chain names ${named.height} `
+        + `as the first after committee time ${contract.committeeTimeMs}: a later block is `
+        + 'a block somebody chose',
+    };
+  if (!(beacon.hash instanceof Uint8Array) || toHex(beacon.hash) !== toHex(named.hash))
+    return {
+      ok: false,
+      why: `that beacon carries a hash block ${named.height} does not have`,
+    };
+  if (beacon.timeMs !== named.timeMs)
+    return {
+      ok: false,
+      why: `that beacon says it was published at ${beacon.timeMs} where block `
+        + `${named.height}'s median time past is ${named.timeMs}`,
+    };
+  return { ok: true, height: named.height, hash: named.hash, timeMs: named.timeMs, depth: named.depth };
+}
