@@ -22,8 +22,9 @@
 // that it runs in a worker and the transcript comes off the wire rather than
 // off disk." Same loop, same order, no second reading of the rules.
 import { isMainThread, parentPort, workerData, Worker } from 'node:worker_threads';
-import { init, step, submitLiquidation } from '../../core/src/sim.js';
-import { hash } from '../../core/src/state.js';
+import { init, step, submitLiquidation, runScore } from '../../core/src/sim.js';
+import { hash, O_SCORE, S_STATE } from '../../core/src/state.js';
+import { RUN_LIVE, RUN_DELIVERED } from '../../core/src/rules/gate.js';
 import { INPUT_WORDS } from '../../protocol/src/batch.js';
 import { receiptsNeeded } from '../../protocol/src/genesis.js';
 
@@ -124,8 +125,27 @@ export function replay(transcript, entry, { seedWord, marks = [] } = {}) {
     }
   }
 
+  // WHAT THE RUN CAME TO, read off the state the replay reached rather than
+  // off anything the player said about it.
+  //
+  // The core ends a run LIVE, DELIVERED, WRECKED or MISSED (rules/gate.js) and
+  // section 13's PlayerResult carries `result`. DELIVERED is the only one of
+  // the four that delivered; wrecked and missed are both FAILED, which is the
+  // whole of the difference the money cares about - 18 pays a delivery and
+  // pools the rest. FORFEIT, VOID and ENTRY_VOID are NOT here and cannot be:
+  // they are facts about a stake or an entry, not about a drive, and a replay
+  // that returned one would be answering a question it was never asked.
+  //
+  // A run still LIVE at the last stored tick has no outcome at all. That is
+  // not FAILED - the transcript simply stops - and saying otherwise would let
+  // a lost connection be scored as a lost run.
+  const ended = st.i32[O_SCORE + S_STATE];
+  const outcome = ended === RUN_LIVE ? null : (ended === RUN_DELIVERED ? 'DELIVERED' : 'FAILED');
+
   return {
     ok: true,
+    outcome,
+    score: runScore(st),
     ticks: ticks.length,
     liquidations: due.size,
     stateHash: hash(st),
