@@ -14,12 +14,14 @@ import {
   bondInternalKey, aggregateKeys, keyAggCoefficients,
 } from '../../protocol/src/bond-script.js';
 import { genesisFor } from '../../protocol/src/genesis.js';
+import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
 import { taggedHash, toHex } from '../../protocol/src/hash.js';
 import { bondTransaction } from '../../protocol/tools/bond.js';
 import { parseTransaction } from '../../protocol/src/tx.js';
 import { recognizeBond, bondKeyMatches, acceptAdvert } from '../../protocol/src/chain.js';
-import { resolveCensus } from '../../protocol/src/census.js';
+import { resolveCensus, deriveCensus } from '../../protocol/src/census.js';
 import { blockOf } from '../../protocol/tools/bond.js';
+import { chainOf } from '../../protocol/tools/chainview.js';
 import { hash256 } from '../../protocol/src/chain.js';
 import { BOND_SCRIPT_TEMPLATE_VERSION } from '../../protocol/src/bond-script.js';
 
@@ -567,4 +569,71 @@ test("the player's door refuses the same three bonds", () => {
     assert.equal(blind.ok, true, `${what}: the door changed without being given the set`);
     assert.equal(blind.unchecked.some((u) => /script template/.test(u)), true);
   }
+});
+
+/**
+ * THE SCAN FINDS ITS OWN CANDIDATES, AND THE CURVE REFUSES THE STRANGER.
+ *
+ * 5A.4 step 1 is "scan for the round's BOND_MARKER", not "be handed a list",
+ * and `scanCensus` now does that. The protocol package can measure that it
+ * FINDS them; it cannot measure that a found output is the poster's own bond,
+ * because that recompute is a point addition and that package carries no
+ * curve - with no set injected the template check is honestly parked in
+ * `unchecked`, so a stranger's key is found and COUNTED there.
+ *
+ * This is the caller that brings a curve, so this is the only place where
+ * "found by the marker alone, then refused by name" can be seen end to end.
+ */
+test('a bond the scan found by itself is refused when its key does not recompute', () => {
+  const honest = schnorr.getPublicKey(schnorr.utils.randomSecretKey());
+  const liar = schnorr.getPublicKey(schnorr.utils.randomSecretKey());
+  const quiet = schnorr.getPublicKey(schnorr.utils.randomSecretKey());
+
+  const good = bondTransaction(bodyFor(honest), {
+    outputKey: bondFor(honest), previousTxid: b32(0xd1),
+  });
+  // Marked, committed, taproot, a whole bitcoin, deep enough - and a stranger's
+  // key. Every rule that does not need a curve passes it.
+  const bad = bondTransaction(bodyFor(liar), {
+    outputKey: schnorr.getPublicKey(schnorr.utils.randomSecretKey()),
+    previousTxid: b32(0xd2),
+  });
+  // A real bond that never paid the marker. It is a fine transaction and it is
+  // not this round's chain state, so the scan must not reach it at all.
+  const unmarked = bondTransaction(bodyFor(quiet), {
+    outputKey: bondFor(quiet), marker: false, previousTxid: b32(0xd3),
+  });
+
+  const CENSUS = 900000, TIP = CENSUS + 6, FROM = CENSUS - 20;
+  const at = { [CENSUS - 20]: [good], [CENSUS - 10]: [bad, unmarked] };
+  const blocks = [];
+  for (let h = FROM; h <= TIP; h++) blocks.push({ transactions: at[h] || [] });
+
+  const byKey = new Map([
+    [toHex(honest), good], [toHex(liar), bad], [toHex(quiet), unmarked],
+  ]);
+  const contract = {
+    bondMinSats: 50000n, protocolVersion: 1, networkId: NETWORK_ID_REGTEST,
+    censusHeight: CENSUS, censusConfirmations: 6,
+  };
+  // NO `candidates`. Nobody hands this census a single outpoint.
+  const out = deriveCensus(chainOf(blocks, FROM), {
+    contract, bond: BOND,
+    resolve: (e) => ({ transaction: byKey.get(toHex(e.pubkey)) }),
+  });
+  assert.equal(out.ok, true, out.why);
+
+  assert.equal(out.entries.length, 1,
+    `expected the honest bond alone; excluded: ${out.excluded.map((e) => e.why).join(' | ')}`);
+  assert.deepEqual(out.entries[0].pubkey, honest);
+
+  // FOUND, then named - not quietly skipped in the scan.
+  const refused = out.excluded.find((e) => toHex(e.pubkey) === toHex(liar));
+  assert.ok(refused, 'the stranger was dropped silently instead of named');
+  assert.match(refused.why, /not the taproot tweak of the keys and maturity it declares/);
+
+  // and the unmarked bond was never a candidate, in either list
+  const seen = [...out.entries, ...out.excluded].map((e) => toHex(e.pubkey));
+  assert.equal(seen.includes(toHex(quiet)), false,
+    'an output that never paid this round\'s marker was scanned anyway');
 });

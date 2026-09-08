@@ -351,3 +351,57 @@ test('the derivation names what it does not check', () => {
   assert.match(out.unchecked[0], /bond script template/);
   assert.match(out.unchecked[1], /no curve in this package/);
 });
+
+/**
+ * ONE CENSUS, WHETHER THE OUTPOINTS WERE HANDED OVER OR FOUND.
+ *
+ * A scan that produced a DIFFERENT set from the same chain would be a second
+ * census, and the whole argument of 5A.2 is that two parties with the same
+ * chain compute the same one. So the root is the test: same blocks, same root,
+ * whether the list came from a caller or from the blocks themselves.
+ */
+test('the root from a self-found scan is the root from the same outpoints handed in', () => {
+  const r = rig();
+
+  const handed = derive(r);
+  assert.equal(handed.ok, true, handed.why);
+
+  const found = deriveCensus(view(r.at), { contract, resolve: r.resolve });
+  assert.equal(found.ok, true, found.why);
+
+  assert.deepEqual(toHex(found.root), toHex(handed.root),
+    'the census the chain produced is not the census the list produced');
+  assert.equal(found.entries.length, handed.entries.length);
+  assert.deepEqual(found.entries.map((e) => toHex(e.txid)).sort(),
+    handed.entries.map((e) => toHex(e.txid)).sort());
+});
+
+/**
+ * THE SCAN REPORTS THE OUTPOINT THE BODY NAMED.
+ *
+ * Measured with a mutant: recording output 0 whatever the advertisement said
+ * left every test green, because in every fixture the bond IS output 0. It is
+ * not a harmless normalisation - the marker output is 330 sats, so a body
+ * pointing at it must fail the round's floor, and a scan that quietly points
+ * at output 0 instead hands RESOLVE a whole bitcoin and counts the node in.
+ */
+test('a body naming the marker as its bond is scanned there and refused by the floor', () => {
+  const advert = advertFor(0x45, { bondVout: 1 });
+  const wrong = bondTransaction(advert, { previousTxid: b32(0x82), previousVout: 0 });
+  const r = rig({ extraBlocks: { [HEIGHT - 9]: [wrong] } });
+
+  const found = deriveCensus(view(r.at), {
+    contract,
+    resolve: (e) => (toHex(e.pubkey) === toHex(b32(0x45))
+      ? { transaction: wrong } : r.resolve(e)),
+  });
+  assert.equal(found.ok, true, found.why);
+
+  const refused = found.excluded.find((e) => toHex(e.pubkey) === toHex(b32(0x45)));
+  assert.ok(refused, 'the body that pointed at the marker was counted in');
+  assert.equal(refused.vout, 1, 'the scan moved the outpoint to the richer output');
+  assert.match(refused.why, /that bond is 330 where this round's floor is 50000/);
+
+  // and the honest three still make the same root
+  assert.deepEqual(toHex(found.root), toHex(derive(r).root));
+});

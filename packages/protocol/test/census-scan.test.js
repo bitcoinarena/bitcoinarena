@@ -24,16 +24,18 @@ import assert from 'node:assert/strict';
 import { toHex } from '../src/hash.js';
 import { parseTransaction } from '../src/tx.js';
 import { BOND_MARKER, bondMarker } from '../src/constants.js';
+import { NETWORK_ID_TESTNET4 } from '../src/genesis-ids.js';
 import { bondTransaction } from '../tools/bond.js';
 import { scanCensus } from '../src/census.js';
 import { chainOf as minedChain } from '../tools/chainview.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
-const advertFor = (n) => ({
+const advertFor = (n, over = {}) => ({
   nodePubkey: b32(n), operatorId: 'operator', protocolVersions: [1], roles: ['game'],
   endpoint: `ws://node${n}`, region: 'eu-west', capacityClass: 1, softwareHash: b32(2),
   settlementCapabilities: 0, lightningCapabilities: 0, bondTxid: new Uint8Array(32),
   bondVout: 0, bondScriptTemplateVersion: 1, payoutPubkey: b32(3), timestamp: 1788700000000n,
+  ...over,
 });
 const bondOf = (n) => bondTransaction(advertFor(n), { previousTxid: b32(0xa0 + n), previousVout: 0 });
 
@@ -279,8 +281,15 @@ test('scan refuses to work on nothing rather than inventing a census', () => {
   const { at, candidates } = rig();
   assert.throws(() => scanCensus(undefined, { contract: round(), candidates }),
     /a chain view is at least one block/);
-  assert.throws(() => scanCensus(view(at), { contract: round() }),
-    /needs the outpoints/);
+  // OMITTING THE LIST IS NOT NOTHING ANY MORE - it means "ask the chain", which
+  // is what 5A.4 step 1 says a participant does. Handing something that is not
+  // a list still throws: a caller who built one and got it wrong should hear
+  // about it rather than have the chain quietly scanned instead.
+  assert.equal(scanCensus(view(at), { contract: round() }).entries.length, 3);
+  assert.throws(() => scanCensus(view(at), { contract: round(), candidates: null }),
+    /takes the outpoints as a list/);
+  assert.throws(() => scanCensus(view(at), { contract: round(), candidates: 'all of them' }),
+    /takes the outpoints as a list/);
   assert.throws(() => scanCensus(view(at), { contract: {}, candidates }), /names no census height/);
 
   // AND A BAG OF BLOCKS IS NOT A CHAIN. What used to be the input is now
@@ -291,4 +300,122 @@ test('scan refuses to work on nothing rather than inventing a census', () => {
     /at least one block/);
   assert.throws(() => scanCensus({ blocks: view(at).blocks }, { contract: round(), candidates }),
     /says which height it starts at/);
+});
+
+/**
+ * THE CENSUS FINDS THE BONDS ITSELF.
+ *
+ * 5A.4 step 1: "SCAN all outputs created at or before census_height whose
+ * script matches the bond template". 25.1 answers "which nodes count?" with
+ * "Bitcoin: bond outputs" - not "whatever list you were handed". Until now
+ * this function threw unless somebody supplied the outpoints, so every census
+ * in this tree was a census of a list somebody else made: a directory with
+ * extra steps.
+ *
+ * The rule it walks by is 5A.2's own findability - the dust output to this
+ * network's BOND_MARKER, "without it the census is unfindable in practice".
+ */
+test('SCAN finds the bonds by marker, without being handed the outpoints', () => {
+  const { at, ids, candidates } = rig();
+
+  // A DOZEN TRANSACTIONS THAT ARE NOT BONDS, in the same blocks: a coinbase,
+  // ordinary spends, and transactions carrying no marker at all.
+  const noise = [];
+  for (let i = 0; i < 12; i++) {
+    noise.push(bondTransaction(advertFor(0x90 + i), {
+      previousTxid: b32(0x60 + i), previousVout: 0, network: 'regtest',
+      commitment: b32(0xee),          // commits to an advertisement nobody carries
+    }));
+  }
+  const noisy = {
+    [HEIGHT - 20]: [...(at[HEIGHT - 20] || []), ...noise.slice(0, 6)],
+    [HEIGHT - 10]: [...(at[HEIGHT - 10] || []), ...noise.slice(6)],
+  };
+
+  const seen = scanCensus(view(noisy), { contract: round() });
+  assert.equal(seen.entries.length, 3,
+    `expected the three bonds, got ${seen.entries.length}`);
+  assert.deepEqual(seen.entries.map((e) => toHex(e.txid)).sort(),
+    ids.map((t) => toHex(t)).sort(), 'the scan found something other than the bonds');
+
+  // and what it found carries the outpoint, the key and the roles - off the
+  // chain and the advertisement rather than off a caller's list.
+  //
+  // NOT THE AMOUNT. This used to assert `bondSats > 0`, which passed and meant
+  // nothing: RESOLVE reads `output.valueSats` off the funding transaction and
+  // overwrites the field before the floor is applied or a leaf is hashed, so
+  // whatever the scan wrote there was never read. The scan no longer writes
+  // one, and this says so, so putting one back is a failing test rather than a
+  // number a later caller might trust.
+  for (const e of seen.entries) {
+    assert.equal(e.vout, 0);
+    assert.equal('bondSats' in e, false, 'the scan is claiming an amount again');
+    assert.deepEqual(e.roles, ['game']);
+  }
+
+  // THE SAME CENSUS, NOT A SECOND ONE: the self-found list and the handed-in
+  // list end at the same entries.
+  const handed = scanCensus(view(noisy), { contract: round(), candidates });
+  assert.deepEqual(seen.entries.map((e) => toHex(e.txid)).sort(),
+    handed.entries.map((e) => toHex(e.txid)).sort());
+});
+
+test('a transaction with no marker, or another network\'s marker, is not scanned', () => {
+  const bonds = [bondOf(0x11)];
+  const unmarked = bondTransaction(advertFor(0x21), {
+    previousTxid: b32(0x71), previousVout: 0, marker: false,
+  });
+  const elsewhere = bondTransaction(advertFor(0x22), {
+    previousTxid: b32(0x72), previousVout: 0, network: 'testnet',
+  });
+
+  const at = { [HEIGHT - 20]: [bonds[0], unmarked, elsewhere] };
+  const seen = scanCensus(view(at), { contract: round() });
+
+  assert.equal(seen.entries.length, 1, 'the scan took something that is not marked for this network');
+  assert.deepEqual(seen.entries[0].pubkey, b32(0x11));
+});
+
+/**
+ * AND THE MARKER IS THE ROUND'S NETWORK, NOT THIS BUILD'S FAVOURITE.
+ *
+ * Measured with a mutant: hardcoding 'regtest' in the scan left every test
+ * above green, because every round above IS regtest. A round on another
+ * network has to be the one that says so, or the marker check is decoration
+ * that happens to agree with the fixtures.
+ */
+test("the round's own network decides which marker the scan looks for", () => {
+  const here = bondTransaction(advertFor(0x31), {
+    previousTxid: b32(0x73), previousVout: 0, network: 'testnet',
+  });
+  const elsewhere = bondTransaction(advertFor(0x32), {
+    previousTxid: b32(0x74), previousVout: 0, network: 'regtest',
+  });
+  const at = { [HEIGHT - 20]: [here, elsewhere] };
+
+  const seen = scanCensus(view(at), { contract: round({ networkId: NETWORK_ID_TESTNET4 }) });
+  assert.equal(seen.entries.length, 1,
+    'a testnet4 round scanned something marked for another chain');
+  assert.deepEqual(seen.entries[0].pubkey, b32(0x31));
+});
+
+/**
+ * A BODY THAT NAMES AN OUTPUT ITS OWN TRANSACTION DOES NOT HAVE.
+ *
+ * There is no outpoint there, so there is nothing to carry forward and
+ * nothing to refuse: it is not a candidate. The mutant that reads output 0
+ * whenever the named one is missing turns that into a phantom entry which
+ * then gets excluded as "no such outpoint" - an invented outpoint, named.
+ */
+test('a marked transaction whose body names an output it does not have is no candidate', () => {
+  const phantom = bondTransaction(advertFor(0x33, { bondVout: 9 }), {
+    previousTxid: b32(0x75), previousVout: 0,
+  });
+  const at = { [HEIGHT - 20]: [bondOf(0x11), phantom] };
+
+  const seen = scanCensus(view(at), { contract: round() });
+  assert.equal(seen.entries.length, 1);
+  assert.deepEqual(seen.entries[0].pubkey, b32(0x11));
+  assert.equal(seen.excluded.some((e) => toHex(e.pubkey) === toHex(b32(0x33))), false,
+    'the scan invented an outpoint for a vout that does not exist');
 });

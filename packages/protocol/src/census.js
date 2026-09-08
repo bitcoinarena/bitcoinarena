@@ -8,6 +8,7 @@ import { TAG, ROLES, PROTOCOL_VERSION, TYPE_CENSUS_LEAF, networkOf } from './con
 import { parseTransaction, commitmentsOf, witnessItemsOf, blockMerkleRoot } from './tx.js';
 import {
   recognizeBond, isTaprootOutput, BOND_UNCHECKED, chainWork, merkleRootOf, blockHashOf,
+  paysBondMarker,
 } from './chain.js';
 import { decodeAdvert, splitSignedAdvert, advertId } from './advert.js';
 
@@ -526,18 +527,109 @@ export function chainFactsAt(blocks, censusHeight) {
   return { createdAt, spentAt, outputAt };
 }
 
+/**
+ * WHICH ADVERTISEMENT DOES THIS TRANSACTION COMMIT TO?
+ *
+ * 5A.2: the bond output "commits to H(NodeAdvertisement)... the body itself
+ * travels in the witness of the same transaction, so it is retrievable by
+ * anyone with the chain and there is nothing to serve and nothing to keep
+ * running". So a transaction answers this about itself, and SCAN and RESOLVE
+ * ask it the same way rather than two ways.
+ */
+function committedAdvertIn(tx) {
+  const commitments = commitmentsOf(tx);
+  if (!commitments.length) return null;
+  for (const item of witnessItemsOf(tx)) {
+    try {
+      const { body } = splitSignedAdvert(item);
+      const advert = decodeAdvert(body);
+      const id = advertId(advert);
+      if (commitments.some((c) => c.length === 32 && id.every((b, i) => b === c[i]))) return advert;
+    } catch { /* not a signed body; most witness items are not */ }
+  }
+  return null;
+}
+
+/**
+ * FINDING THE BONDS WITHOUT BEING TOLD WHERE THEY ARE, 5A.4 step 1.
+ *
+ * Until now SCAN threw unless a caller handed it the outpoints, so every
+ * census in this tree was a census of a list somebody else made - and 25.1
+ * answers "which nodes count?" with "Bitcoin: bond outputs", not "whatever you
+ * were given". A census that has to be told what to look for is a directory
+ * with extra steps.
+ *
+ * The rule is 5A.2's own findability: a funding transaction MUST pay a dust
+ * output to this network's BOND_MARKER, "without it the census is unfindable
+ * in practice". So a marked transaction is one to read, and the body it
+ * commits to says which of its outputs is the bond.
+ *
+ * WHAT IS *NOT* DONE HERE. The output is not recomputed against the template
+ * and the advertisement's signature is not checked - both belong to RESOLVE
+ * and both already happen there. A scan that quietly dropped a marked
+ * transaction whose output does not recompute would turn an exclusion anybody
+ * can audit into a silence nobody can: the entry is FOUND here and refused by
+ * name later.
+ */
+function candidatesIn(blocks, censusHeight, network) {
+  const found = [];
+  for (const block of blocks) {
+    if (block.height > censusHeight) continue;
+    for (const raw of block.transactions) {
+      let tx;
+      try { tx = parseTransaction(raw); } catch { continue; }
+      if (!paysBondMarker(tx, network)) continue;
+
+      const advert = committedAdvertIn(tx);
+      if (!advert) continue;
+      // THE BODY NAMES THE OUTPOINT, and a body that names an output this
+      // transaction does not have has named no outpoint at all - there is
+      // nothing for RESOLVE to read and nothing to exclude by name.
+      if (!tx.outputs[advert.bondVout]) continue;
+
+      // NO AMOUNT. The scan used to copy the output's value in beside the
+      // outpoint, and measured, nothing ever read it: RESOLVE takes
+      // `output.valueSats` off the funding transaction itself and overwrites
+      // the field before the floor is applied or a leaf is hashed. A number
+      // carried along that no rule consults is one a later caller can start
+      // trusting, so the scan stops writing one.
+      found.push({
+        txid: tx.txid,
+        vout: advert.bondVout,
+        pubkey: advert.nodePubkey,
+        roles: advert.roles,
+      });
+    }
+  }
+  return found;
+}
+
 export function scanCensus(view, { contract, candidates }) {
   const chain = viewOrThrow(view);
-  if (!Array.isArray(candidates)) throw new Error('scan needs the outpoints to look for');
   const { censusHeight, censusConfirmations, tipHeight } = depthRuleOf(contract, chain);
   const blocks = chain.blocks;
   const firstHeight = chain.firstHeight;
 
   const { createdAt, spentAt } = chainFactsAt(blocks, censusHeight);
 
+  // GIVEN A LIST, THIS IS WHAT IT ALWAYS WAS. Absent one, the chain is asked -
+  // which is what 5A.4 step 1 says a participant does, and what makes the
+  // census a function of Bitcoin rather than of whoever answered first.
+  const network = contract && contract.networkId ? networkOf(contract.networkId) : undefined;
+  if (!Array.isArray(candidates) && contract && contract.networkId && network === null)
+    throw new Error('that round names a network this build has no genesis for');
+  // A LIST THAT IS NOT A LIST IS STILL A MISTAKE. Omitting it means "ask the
+  // chain"; handing something that is not an array means a caller built one
+  // and got it wrong, and scanning the chain instead would bury that.
+  if (candidates !== undefined && !Array.isArray(candidates))
+    throw new Error('scan takes the outpoints as a list, or none at all and reads the chain');
+  const looking = candidates === undefined
+    ? candidatesIn(blocks, censusHeight, network || 'regtest')
+    : candidates;
+
   const found = [];
   const excluded = [];
-  for (const c of candidates) {
+  for (const c of looking) {
     const key = `${toHex(c.txid)}:${c.vout}`;
     const height = createdAt.get(key);
 

@@ -45,6 +45,10 @@ export function bondTransaction(advert, {
   previousVout = 0,
   network = 'regtest',
   outputKey = new Uint8Array(32).fill(0x77),
+  // A TRANSACTION THAT PAYS NO MARKER, for a fixture that needs one. 5A.2
+  // makes the dust output mandatory, so this builds something the census must
+  // NOT find - there is no other way to write that case.
+  marker = true,
 } = {}) {
   // A P2TR output: OP_1 <32 bytes>. "A P2TR output is a 32-byte key and looks
   // like every other one" (25.1) - which is exactly why the marker is needed.
@@ -66,9 +70,9 @@ export function bondTransaction(advert, {
     ...previousTxid, ...u32(previousVout),
     ...varint(0),                                // no scriptSig; the witness carries it
     ...u32(0xffffffff),
-    ...varint(3),
+    ...varint(marker ? 3 : 2),
     ...u64(value), ...push(bondScript),
-    ...u64(330), ...push(markerScript),
+    ...(marker ? [...u64(330), ...push(markerScript)] : []),
     ...u64(0), ...push(opReturn),
     ...varint(1), ...push([...body]),            // one witness item: the advertisement
     ...u32(0),                                   // locktime
