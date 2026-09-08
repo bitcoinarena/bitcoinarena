@@ -119,14 +119,18 @@ export function signResult(result, secretKey) {
  * The threshold comes off the contract's own slots through `receiptsNeeded`.
  * Nothing in this file knows that seven means five.
  */
-export function verifiedFinal(records, { contract }) {
-  if (!contract || !Array.isArray(contract.nodes) || !contract.nodes.length)
-    return { ok: false, why: 'that round names no committee' };
+export function verifiedFinal(records, { contract, seats: seated }) {
+  // THE SEATS ARE THE CENSUS'S. They used to be `contract.nodes` - the list a
+  // round's author wrote - so a result from a key the chain never seated
+  // counted towards a final. 26's ruling: the seated set is the only list
+  // that counts, and a round nobody seated has no committee at all.
+  if (!Array.isArray(seated) || !seated.length)
+    return { ok: false, why: 'that round has no seated committee to count against' };
   let needed;
   try { needed = receiptsNeeded(contract.gameVerifySlots); }
   catch (err) { return { ok: false, why: err.message }; }
 
-  const seats = new Set(contract.nodes.map(hex));
+  const seats = new Set(seated.map(hex));
   const seen = new Set();
   const byRun = new Map();
   let forged = 0, doubled = 0, strangers = 0;

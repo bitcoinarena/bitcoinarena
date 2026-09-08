@@ -182,6 +182,18 @@ export function openStore(path = ':memory:') {
     -- KNOWN to strangers is the bond advertisement, M2.1 step 5b, and that is
     -- discovery: it is not what lets a node sign. A client already holds the
     -- key it should expect, in the Round Contract's nodes list.
+    -- WHO THIS ROUND SEATED, from the census at its own census_height.
+    --
+    -- A round's committee is not a list its author typed: 5A.4 seats it from
+    -- the chain census, and this is where that answer is kept so every trust
+    -- check reads the same one. A round with no rows here was never seated by
+    -- this node, and it issues no receipts against it.
+    CREATE TABLE IF NOT EXISTS seats (
+      round_id BLOB NOT NULL,
+      pubkey   BLOB NOT NULL,
+      PRIMARY KEY (round_id, pubkey)
+    );
+
     CREATE TABLE IF NOT EXISTS identity (
       one    INTEGER PRIMARY KEY CHECK (one = 0),
       secret BLOB NOT NULL,

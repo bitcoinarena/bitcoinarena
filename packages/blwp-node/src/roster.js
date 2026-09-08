@@ -107,6 +107,63 @@ export class Roster {
   }
 
   /**
+   * EVERY SEAT THIS ROUND HAS, over the roles its contract names slots for.
+   *
+   * A contract carries one flat `nodes` list, so the seated set is the union
+   * of the role committees - a node seated for either pool is seated.
+   */
+  seatsFor(roundIdBytes) {
+    const seats = new Map();
+    for (const role of ['game', 'settlement']) {
+      const picked = this.committeeFor(roundIdBytes, role);
+      if (!picked.ok) return picked;
+      for (const e of picked.committee) seats.set(toHex(e.pubkey), e.pubkey);
+    }
+    return { ok: true, seats: [...seats.values()] };
+  }
+
+  /**
+   * SEAT THE ROUND, and refuse one whose contract names anybody else.
+   *
+   * 26's ruling: the seated set from the chain census is the only list that
+   * counts. `contract.nodes` is what a round's author wrote down, so it is
+   * CHECKED against the seats - exactly, both ways - and a contract naming a
+   * stranger, omitting a seated node, or being a different set altogether is
+   * refused by name rather than rewritten or accepted on overlap.
+   *
+   * The seats are stored, so `takeReceipt` and the verdict read the census's
+   * answer rather than each deciding for themselves.
+   */
+  seatRound(roundIdBytes) {
+    const row = this.round.get(roundIdBytes);
+    if (!row) return { ok: false, why: 'this node holds no such round' };
+    const contract = decodeRoundContract(new Uint8Array(row.contract));
+
+    const seated = this.seatsFor(roundIdBytes);
+    if (!seated.ok) return seated;
+
+    const named = Array.isArray(contract.nodes) ? contract.nodes : [];
+    const have = new Set(seated.seats.map(toHex));
+    const says = new Set(named.map(toHex));
+
+    const strangers = [...says].filter((k) => !have.has(k));
+    const missing = [...have].filter((k) => !says.has(k));
+    if (strangers.length || missing.length)
+      return {
+        ok: false,
+        why: `that round names ${named.length} committee ${named.length === 1 ? 'key' : 'keys'} and `
+          + `the census seats ${seated.seats.length}: `
+          + `${strangers.length} the chain did not seat`
+          + `${strangers.length ? ` (${strangers[0].slice(0, 16)})` : ''}, `
+          + `${missing.length} seated ${missing.length === 1 ? 'node' : 'nodes'} it does not name`
+          + `${missing.length ? ` (${missing[0].slice(0, 16)})` : ''}`,
+      };
+
+    this.round.seat(roundIdBytes, seated.seats);
+    return { ok: true, seats: seated.seats };
+  }
+
+  /**
    * The committee for a role, or the reason this round cannot be held.
    *
    * `selectCommittee` is what refuses a census smaller than the network's

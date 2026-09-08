@@ -226,7 +226,9 @@ export class Verifier {
     }
 
     const held = this.round.results(roundIdBytes, entryIdBytes);
-    const seen = verifiedFinal(held.map((r) => r.bytes), { contract });
+    const seen = verifiedFinal(held.map((r) => r.bytes), {
+      contract, seats: this.round.seats(roundIdBytes),
+    });
     return { ok: true, fetched, kept, refused, held: held.length, ...seen };
   }
 

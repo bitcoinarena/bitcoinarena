@@ -59,6 +59,32 @@ export class Round {
     this.identity = nodeIdentity(db);
   }
 
+  /**
+   * WHAT THE CENSUS SEATED FOR THIS ROUND, written once by whoever derived it.
+   *
+   * The keys are the census's, not a list off the contract: `contract.nodes`
+   * is what a round's author wrote down, and letter 26's ruling is that the
+   * seated set is the only list that counts. Kept here so `takeReceipt` and
+   * the verdict read the same answer instead of each deciding for itself.
+   */
+  seat(roundIdBytes, keys) {
+    if (!Array.isArray(keys) || !keys.length)
+      throw new Error('a round is seated with the keys the census gave, not with none');
+    const put = this.db.prepare('INSERT OR IGNORE INTO seats (round_id, pubkey) VALUES (?, ?)');
+    for (const k of keys) {
+      if (!(k instanceof Uint8Array) || k.length !== 32)
+        throw new Error('a seat is a 32-byte key');
+      put.run(roundIdBytes, k);
+    }
+    return keys.length;
+  }
+
+  /** The seated keys, or an empty list if this node never seated that round. */
+  seats(roundIdBytes) {
+    return this.db.prepare('SELECT pubkey FROM seats WHERE round_id = ? ORDER BY pubkey')
+      .all(roundIdBytes).map((r) => new Uint8Array(r.pubkey));
+  }
+
   /** This node's public key, which is what a client checks a receipt against. */
   get pubkey() { return this.identity.pubkey; }
 
@@ -138,8 +164,18 @@ export class Round {
       throw new Error('a receipt for a mark this node has not got');
     }
 
-    const round = this.get(new Uint8Array(mark.round_id));
-    const committee = decodeRoundContract(new Uint8Array(round.contract)).nodes;
+    // THE SEATED KEYS, NOT THE CONTRACT'S LIST.
+    //
+    // `contract.nodes` is what a round's author wrote down; the committee is
+    // what the census seated at `census_height` (26's ruling). A key on the
+    // contract that the chain did not seat is a stranger, and a node that
+    // never seated this round has no committee to check against - so it
+    // refuses rather than falling back to the author's list, which is the back
+    // door this replaces.
+    const roundId = new Uint8Array(mark.round_id);
+    const committee = this.seats(roundId);
+    if (!committee.length)
+      throw new Error('this node has not seated that round, so it knows no committee for it');
     if (!committee.some((n) => same(n, r.nodePubkey)))
       throw new Error(
         `${toHex(r.nodePubkey)} is not on this round's committee`);

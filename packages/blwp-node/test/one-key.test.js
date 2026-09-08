@@ -106,6 +106,10 @@ test('a receipt is BIP-340 under the node key, and an ed25519 one is refused', (
     spawnFreeRadius: 20, timeFloor: 30, timeCeil: 150, minScore: 1,
     rankNumerator: 3, rankDenominator: 4, nodes: [round.pubkey, peerKey],
   });
+  // The round is seated with the two keys its contract names - stated, since
+  // this file is about the CURVE and not about seating.
+  round.seat(rid, [round.pubkey, peerKey]);
+
   const session = ed25519.utils.randomSecretKey();
   const entry = {
     roundId: rid, playerPubkey: b32(5), sessionPubkey: ed25519.getPublicKey(session),

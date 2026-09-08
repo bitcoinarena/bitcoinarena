@@ -8,6 +8,7 @@
 // this test handed it.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { assumeSeated } from './seating.js';
 import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
@@ -110,6 +111,10 @@ async function roundThrough(node, {
   const c = contract || contractFor(node.round ? node.round.pubkey : b32(0));
   const rid = roundId(c);
   assert.equal((await post(node.port, '/round', encodeRoundContract(c))).status, 201);
+  // WHO THE CENSUS SEATED, stated: this file is about replay, results and
+  // thresholds, not about seating - which `roster.test.js` measures from real
+  // blocks. Nothing in src/ seats from a contract.
+  assumeSeated(node.round, rid, c.nodes);
 
   const entry = {
     roundId: rid, playerPubkey: b32(5), sessionPubkey: ed25519.getPublicKey(session),
@@ -359,10 +364,12 @@ test('two daemons each fetch the other\'s result and a 2-of-2 counts to two', as
     assert.notDeepEqual(held[0].resultId, held[1].resultId,
       'two records that name different signers produced one id');
 
-    // and a seat that is not on the committee does not count, however well it
-    // signs: the contract names the seats, not whoever answers.
+    // and a signer the census did not seat does not count, however well it
+    // signs: since letter 26 the SEATED set names the committee, not whoever
+    // answers and not a list on the contract.
     const outsider = { ...c, nodes: [a.round.pubkey, b32(0xee)] };
-    const short = verifiedFinal(held.map((r) => r.bytes), { contract: outsider });
+    const short = verifiedFinal(held.map((r) => r.bytes),
+      { contract: outsider, seats: outsider.nodes });
     assert.equal(short.final, false, 'a stranger was counted as a seat');
     assert.equal(short.strangers, 1);
 

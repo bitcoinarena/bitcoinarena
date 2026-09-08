@@ -6,6 +6,7 @@
 // different bytes is section 13B's equivocation, and it is refused by name.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { assumeSeated } from './seating.js';
 import { openStore } from '../src/store.js';
 import { Round } from '../src/round.js';
 import {
@@ -59,7 +60,9 @@ const sign = (c, key = session) =>
  */
 function rig({ nodes, round } = {}) {
   const r = round || new Round(openStore(), () => 1234);
-  const rid = r.open(nodes ? { ...contract(), nodes } : contract());
+  const c = nodes ? { ...contract(), nodes } : contract();
+  const rid = r.open(c);
+  assumeSeated(r, rid, c.nodes);
   const eid = r.enter(entryFor(rid));
 
   const b = {
@@ -220,7 +223,9 @@ test('a mark taken before any batch may name the genesis', () => {
   // A client that checkpoints at tick 0 has sent nothing yet, and refusing it
   // would make the first mark impossible.
   const r = new Round(openStore(), () => 1234);
-  const rid = r.open(contract());
+  const c2 = contract();
+  const rid = r.open(c2);
+  assumeSeated(r, rid, c2.nodes);
   const eid = r.enter(entryFor(rid));
   const c = {
     roundId: rid, entryId: eid, tick: 0,

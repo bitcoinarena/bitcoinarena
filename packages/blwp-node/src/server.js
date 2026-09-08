@@ -169,7 +169,22 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // costs a parse and nothing else.
         if (!funded({ kind: 'round', contract }))
           return text(res, 402, 'this node stores nothing for a round nobody has funded');
-        return bytes(res, 201, round.open(contract));
+        const id = round.open(contract);
+
+        // AND SEAT IT FROM THE CHAIN, when this node can see one. The seated
+        // set is the only committee that counts (26), so a contract naming
+        // anybody the census did not seat is refused HERE - the round is
+        // stored, and it has no seats, so it issues no receipts and counts no
+        // results until somebody seats it honestly.
+        //
+        // A node with no chain view seats nothing and says nothing: it cannot
+        // check the list, so it does not pretend to. What it must not do is
+        // fall back to the author's list, and it does not.
+        if (chainFor) {
+          const seated = roster.seatRound(id);
+          if (!seated.ok) return text(res, 409, seated.why);
+        }
+        return bytes(res, 201, id);
       }
 
       if (req.method === 'GET' && url.pathname === '/round') {

@@ -8,6 +8,7 @@
 // does, so here a signature that does not verify never reaches the count.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { assumeSeated } from './seating.js';
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { openStore } from '../src/store.js';
@@ -62,6 +63,7 @@ function stored(ticks, { player = 5 } = {}) {
   const c = contract();
   const r = new Round(openStore(), () => 1234);
   const rid = r.open(c);
+  assumeSeated(r, rid, c.nodes);
   const entry = {
     roundId: rid, playerPubkey: b32(player), sessionPubkey: ed25519.getPublicKey(session),
     stakeCommitment: b32(7), stakeMsat: 100000n, feeMsat: 1000n, donationMsat: 0n,
@@ -159,14 +161,14 @@ test('nodes that replayed the same run sign the same result, and five of seven v
   };
   const record = [0, 1, 2, 3, 4, 5, 6].map(recordFor);
 
-  const five = verifiedFinal(record.slice(0, 5), { contract: s.contract });
+  const five = verifiedFinal(record.slice(0, 5), { contract: s.contract, seats: s.contract.nodes });
   assert.equal(five.ok, true, five.why);
   assert.equal(five.needed, 5, 'the threshold did not come off the contract');
   assert.equal(five.final, true, five.why);
   assert.equal(five.agreed, 5);
 
   // FOUR IS NOT FIVE.
-  const four = verifiedFinal(record.slice(0, 4), { contract: s.contract });
+  const four = verifiedFinal(record.slice(0, 4), { contract: s.contract, seats: s.contract.nodes });
   assert.equal(four.final, false);
   assert.equal(four.agreed, 4);
   assert.match(four.why, /4 of 5 agree/);
@@ -178,7 +180,7 @@ test('nodes that replayed the same run sign the same result, and five of seven v
     entryId: s.canonical.entryId, nodePubkey: COMMITTEE[4] });
   const split = [...record.slice(0, 4),
     joinSignedResult(otherRun.encoded, signResult(otherRun.result, secrets[4]).signature)];
-  const disagreed = verifiedFinal(split, { contract: s.contract });
+  const disagreed = verifiedFinal(split, { contract: s.contract, seats: s.contract.nodes });
   assert.equal(disagreed.final, false, 'four on one run and one on another was called five');
   assert.equal(disagreed.agreed, 4);
 
@@ -187,13 +189,13 @@ test('nodes that replayed the same run sign the same result, and five of seven v
     transcript: s.canonical, entryId: s.canonical.entryId, nodePubkey: COMMITTEE[4] });
   const forged = [...record.slice(0, 4),
     joinSignedResult(built5.encoded, signResult(built5.result, secrets[5]).signature)];
-  const bad = verifiedFinal(forged, { contract: s.contract });
+  const bad = verifiedFinal(forged, { contract: s.contract, seats: s.contract.nodes });
   assert.equal(bad.forged, 1);
   assert.equal(bad.final, false, 'a signature from the wrong key was counted');
 
   // ONE SEAT, ONE VOTE.
   const doubled = [...record.slice(0, 4), record[3]];
-  const twice = verifiedFinal(doubled, { contract: s.contract });
+  const twice = verifiedFinal(doubled, { contract: s.contract, seats: s.contract.nodes });
   assert.equal(twice.doubled, 1);
   assert.equal(twice.final, false, 'one seat carried two votes');
 
@@ -204,7 +206,7 @@ test('nodes that replayed the same run sign the same result, and five of seven v
     nodePubkey: schnorr.getPublicKey(strangerSecret) });
   const outside = [...record.slice(0, 4),
     joinSignedResult(strangerBuilt.encoded, signResult(strangerBuilt.result, strangerSecret).signature)];
-  const out = verifiedFinal(outside, { contract: s.contract });
+  const out = verifiedFinal(outside, { contract: s.contract, seats: s.contract.nodes });
   assert.equal(out.strangers, 1);
   assert.equal(out.final, false);
 });
@@ -248,13 +250,17 @@ test('the committee size decides the threshold, and an unknown size is refused',
   };
 
   const two = { ...s.contract, gameVerifySlots: 2, nodes: COMMITTEE.slice(0, 2) };
-  const both = verifiedFinal([recordFor(0), recordFor(1)], { contract: two });
+  const both = verifiedFinal([recordFor(0), recordFor(1)], { contract: two, seats: two.nodes });
   assert.equal(both.needed, 2, 'a two-slot round did not need two');
   assert.equal(both.final, true, both.why);
-  assert.equal(verifiedFinal([recordFor(0)], { contract: two }).final, false);
+  assert.equal(verifiedFinal([recordFor(0)], { contract: two, seats: two.nodes }).final, false);
 
   const five = { ...s.contract, gameVerifySlots: 5 };
-  assert.match(verifiedFinal([recordFor(0)], { contract: five }).why, /no committee threshold for 5/);
+  // SEATS SUPPLIED, so the refusal measured here is the THRESHOLD one and not
+  // "that round has no seated committee": the two are different refusals and
+  // this test is about the second.
+  assert.match(verifiedFinal([recordFor(0)], { contract: five, seats: five.nodes }).why,
+    /no committee threshold for 5/);
 });
 
 /**

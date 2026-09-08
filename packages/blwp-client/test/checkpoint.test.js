@@ -23,6 +23,7 @@ import { ed25519 } from '@noble/curves/ed25519.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
 
 import { openStore } from '../../blwp-node/src/store.js';
+import { assumeSeated } from '../../blwp-node/test/seating.js';
 import { encodeRoundContract, encodeEntryContract } from '../../protocol/src/contracts.js';
 import { serve } from '../../blwp-node/src/server.js';
 import { roundId, entryId } from '../../protocol/src/contracts.js';
@@ -133,6 +134,11 @@ async function rig() {
   const c = { ...contract(), nodes: [node.round.pubkey, ...peerKeys] };
   const rid = await client.openRound(c);
   assert.deepEqual(rid, roundId(c), 'the node named a different round than the contract hashes to');
+  // WHO THE CENSUS SEATED, stated: since letter 26 a node trusts the seated
+  // keys and refuses a round it never seated. This file is about marks and
+  // receipts; the seating rule itself is measured in blwp-node's
+  // `seated-committee.test.js`, from real blocks.
+  assumeSeated(node.round, rid, c.nodes);
   const e = entryFor(rid);
   const eid = await client.join(e);
   assert.deepEqual(eid, entryId(e), 'the node named a different entry than the contract hashes to');
@@ -437,12 +443,14 @@ test('a receipt gossiped to a second node is recoverable from that node too', as
     const c = { ...contract(), nodes: committee };
     const e = entryFor(roundId(c));
 
-    // both nodes hold the round and the entry - a committee member has the
-    // contract, which is where it reads the committee from
+    // both nodes hold the round and the entry, and both SEATED it: since
+    // letter 26 a committee member reads its committee from the seats the
+    // census gave, not from the contract it was handed.
     for (const n of [one, two]) {
       const base = `http://127.0.0.1:${n.port}`;
       await fetch(`${base}/round`, { method: 'POST', body: encodeRoundContract(c) });
       await fetch(`${base}/entry`, { method: 'POST', body: encodeEntryContract(e) });
+      assumeSeated(n.round, roundId(c), committee);
     }
 
     const client = new Client({ base: `http://127.0.0.1:${one.port}`, core, sign, verify });
