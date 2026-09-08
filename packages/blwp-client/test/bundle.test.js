@@ -56,7 +56,7 @@ test('the bundle and the modules name a round and an entry identically', () => {
 
   const e = {
     roundId: roundId(c), playerPubkey: b32(5), sessionPubkey: ed25519.getPublicKey(key),
-    stakeCommitment: b32(7), stakeMsat: 100000n, feeMsat: 1000n, donationMsat: 0n, joinTick: 0,
+    stakeCommitment: b32(7), stakeMsat: 100000n, feeMsat: 1000n, donationMsat: 0n, joinTick: 0, worldSecret: b32(0x5e),
   };
   assert.equal(toHex(bundled.entryId(e)), toHex(entryId(e)));
 });

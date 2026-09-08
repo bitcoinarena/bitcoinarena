@@ -334,6 +334,7 @@ export function next(s) {                       // s: Int32Array(4)
 
 Seeding: the player sub-seed (32 bytes, from `H(round_randomness ‖ pubkey ‖
 secret ‖ join_tick)`) is expanded into the four words with `splitmix32`. The
+secret is a field of the Entry Contract (the owner 2026-09-08), so a node can replay. The
 **draw order is part of the protocol** and must be documented rule by rule —
 two implementations that draw the same numbers in a different order produce
 different worlds. Every rule module therefore takes an explicit stream

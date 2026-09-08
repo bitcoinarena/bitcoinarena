@@ -137,6 +137,7 @@ export const TAG = {
   // collide with a checkpoint's or a batch's over the same bytes: 0.10 says a
   // ghost is never an input, and a shared tag would be one way to forget it.
   ghost: 'BLWP/v1/Ghost',
+  playerSubSeed: 'BLWP/v1/PlayerSubSeed',
   // The census entries a contract's root is checked against, and the height
   // they were taken at. Its own tag: a proof binds to the INPUTS, and a
   // signature binds to the root, and the two must never be interchangeable.

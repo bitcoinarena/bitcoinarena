@@ -32,7 +32,7 @@ const contract = () => ({
 });
 const entryFor = (rid, joinTick = 0) => ({
   roundId: rid, playerPubkey: b32(5), sessionPubkey: b32(6), stakeCommitment: b32(7),
-  stakeMsat: 100000n, feeMsat: 1000n, donationMsat: 0n, joinTick,
+  stakeMsat: 100000n, feeMsat: 1000n, donationMsat: 0n, joinTick, worldSecret: b32(0x5e),
 });
 
 /**
@@ -201,10 +201,12 @@ test('the replay refuses a seed it was not given, a wrong start, and a gap', () 
   // THE SEED IS NOT INVENTED HERE. 0.10's private world does not say where
   // `secret` comes from, so a real round is not replayable yet and the refusal
   // says which clause is missing rather than looking like a bug.
-  const noSeed = replay(transcript, entry);
-  assert.equal(noSeed.ok, false);
-  assert.equal(noSeed.why, NO_SEED_RULE);
-  assert.match(noSeed.why, /`secret` is the player's/);
+  const noSecret = replay(transcript, { ...entry, worldSecret: undefined });
+  assert.equal(noSecret.ok, false);
+  assert.equal(noSecret.why, NO_SEED_RULE);
+  const noRnd = replay(transcript, entry);
+  assert.equal(noRnd.ok, false);
+  assert.match(noRnd.why, /no randomness/);
   assert.equal(replay(transcript, entry, { seedWord: 1.5 }).ok, false, 'a fractional seed was accepted');
 
   // a transcript that does not begin where the entry says
@@ -259,7 +261,7 @@ test('the worker replays to the same hash at every mark', async () => {
   assert.equal(lateGot.agrees, true);
 
   // a refusal survives the thread boundary as a refusal, not as a crash
-  const noSeed = await replayInWorker(transcript, entry);
+  const noSeed = await replayInWorker(transcript, { ...entry, worldSecret: undefined });
   assert.equal(noSeed.ok, false);
   assert.equal(noSeed.why, NO_SEED_RULE);
 });

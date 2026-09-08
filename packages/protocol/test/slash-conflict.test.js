@@ -33,7 +33,7 @@ const advert = { nodePubkey: NODE, operatorId: toHex(OPERATOR), bondTxid: BOND, 
 const entry = {
   roundId: ROUND, playerPubkey: OPERATOR, sessionPubkey: b32(0x0b),
   stakeCommitment: b32(0x0c), stakeMsat: 100000n, feeMsat: 1000n,
-  donationMsat: 0n, joinTick: 0,
+  donationMsat: 0n, joinTick: 0, worldSecret: b32(0x5e),
 };
 
 const result = {

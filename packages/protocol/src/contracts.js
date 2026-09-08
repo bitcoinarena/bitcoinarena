@@ -247,6 +247,8 @@ export function encodeEntryContract(e) {
   w.u64(e.feeMsat);
   w.u64(e.donationMsat);
   w.u32(e.joinTick);
+  // the owner 2026-09-08: the world secret is on the entry so a node can replay.
+  w.bytes32(e.worldSecret);
   return w.finish();
 }
 
@@ -264,6 +266,7 @@ export function decodeEntryContract(bytes) {
     feeMsat: r.u64(),
     donationMsat: r.u64(),
     joinTick: r.u32(),
+    worldSecret: r.bytes32(),
   };
   r.end();
   return e;

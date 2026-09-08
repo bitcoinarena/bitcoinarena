@@ -27,6 +27,7 @@ import { hash, O_SCORE, S_STATE } from '../../core/src/state.js';
 import { RUN_LIVE, RUN_DELIVERED } from '../../core/src/rules/gate.js';
 import { INPUT_WORDS } from '../../protocol/src/batch.js';
 import { receiptsNeeded } from '../../protocol/src/genesis.js';
+import { seedWordForEntry } from '../../protocol/src/seed.js';
 
 const hex = (b) => {
   if (typeof b === 'string') return b.toLowerCase();
@@ -36,7 +37,7 @@ const hex = (b) => {
 };
 
 /**
- * WHY A SEED IS ASKED FOR AND NEVER DERIVED HERE.
+ * WHY A SEED IS DERIVED FROM THE ENTRY.
  *
  * IMPLEMENTATION.md names the player sub-seed as
  * `H(round_randomness || pubkey || secret || join_tick)`. Three of those four
@@ -46,14 +47,11 @@ const hex = (b) => {
  * one. Writing that hash here would settle a protocol question by implementing
  * it, which is the BOND_MARKER and checkpoint class of decision.
  *
- * So this refuses rather than guesses. A test may hand in a number it owns -
- * that is a fixture measuring the loop, not a rule about rounds - and a real
- * round cannot be replayed until somebody says where the secret comes from.
- * The refusal says so in those words, so nobody reads the gap as a bug.
+ * the owner 2026-09-08: the secret is on the Entry Contract. A node derives the
+ * seed; a fixture may still hand in seedWord. Missing secret or randomness is
+ * a refusal, not a guess.
  */
-export const NO_SEED_RULE = 'no seed derivation is settled: the player sub-seed is '
-  + 'H(round_randomness || pubkey || secret || join_tick) and `secret` is the player\'s, '
-  + 'with no clause saying it ever reaches a verifier - so a seed must be handed in';
+export const NO_SEED_RULE = 'that entry carries no world secret to replay from';
 
 /**
  * REPLAY ONE PLAYER'S RUN FROM WHAT THE NODE ALREADY STORES.
@@ -69,8 +67,15 @@ export const NO_SEED_RULE = 'no seed derivation is settled: the player sub-seed 
  * that disagrees is named. A disagreement is not decided here - section 13
  * needs five of seven and one node is not a committee - it is reported.
  */
-export function replay(transcript, entry, { seedWord, marks = [] } = {}) {
-  if (!Number.isInteger(seedWord)) return { ok: false, why: NO_SEED_RULE };
+export function replay(transcript, entry, { seedWord, roundRandomness, marks = [] } = {}) {
+  if (!Number.isInteger(seedWord)) {
+    if (!(entry?.worldSecret instanceof Uint8Array) || entry.worldSecret.length !== 32)
+      return { ok: false, why: NO_SEED_RULE };
+    if (!(roundRandomness instanceof Uint8Array) || roundRandomness.length !== 32)
+      return { ok: false, why: 'that round names no randomness to mix the player seed' };
+    try { seedWord = seedWordForEntry(entry, roundRandomness); }
+    catch (e) { return { ok: false, why: String(e.message || e) }; }
+  }
   if (!transcript || !Array.isArray(transcript.ticks))
     return { ok: false, why: 'that is not a transcript this node stored' };
   if (!entry || !Number.isInteger(entry.joinTick))

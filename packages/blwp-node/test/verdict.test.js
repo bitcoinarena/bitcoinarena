@@ -43,7 +43,7 @@ function stored(ticks) {
   const rid = r.open(c);
   const entry = {
     roundId: rid, playerPubkey: b32(5), sessionPubkey: b32(6), stakeCommitment: b32(7),
-    stakeMsat: 100000n, feeMsat: 1000n, donationMsat: 0n, joinTick: 0,
+    stakeMsat: 100000n, feeMsat: 1000n, donationMsat: 0n, joinTick: 0, worldSecret: b32(0x5e),
   };
   const eid = r.enter(entry);
   const rows = [];

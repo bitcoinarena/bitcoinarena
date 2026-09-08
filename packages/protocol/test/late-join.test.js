@@ -29,7 +29,7 @@ import {
 const b32 = (n) => new Uint8Array(32).fill(n);
 const entryAt = (joinTick, over = {}) => ({
   roundId: b32(1), playerPubkey: b32(7), sessionPubkey: b32(8), stakeCommitment: b32(9),
-  stakeMsat: 100000n, feeMsat: 2000n, donationMsat: 0n, joinTick, ...over,
+  stakeMsat: 100000n, feeMsat: 2000n, donationMsat: 0n, joinTick, worldSecret: b32(0x5e), ...over,
 });
 
 /** A chain of `n` batches of three ticks, beginning at `first`. */

@@ -59,7 +59,7 @@ async function playing() {
   });
   const eid = await client.join({
     roundId: rid, playerPubkey: b32(5), sessionPubkey: ed25519.getPublicKey(session),
-    stakeCommitment: b32(7), stakeMsat: 100000n, feeMsat: 1000n, donationMsat: 0n, joinTick: 0,
+    stakeCommitment: b32(7), stakeMsat: 100000n, feeMsat: 1000n, donationMsat: 0n, joinTick: 0, worldSecret: b32(0x5e),
   });
   await client.connect();
   client.setRound({ roundId: rid, entryId: eid, blockTicks: 600 });

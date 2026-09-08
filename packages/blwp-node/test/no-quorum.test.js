@@ -58,7 +58,7 @@ function player(round, rid, seed, { forks = false } = {}) {
   const session = ed25519.utils.randomSecretKey();
   const eid = round.enter({
     roundId: rid, playerPubkey: b32(seed), sessionPubkey: ed25519.getPublicKey(session),
-    stakeCommitment: b32(7), stakeMsat: 100000n, feeMsat: 1000n, donationMsat: 0n, joinTick: 0,
+    stakeCommitment: b32(7), stakeMsat: 100000n, feeMsat: 1000n, donationMsat: 0n, joinTick: 0, worldSecret: b32(0x5e),
   });
   const sign = (m) => joinSigned(encodeCheckpoint(m), ed25519.sign(checkpointId(m), session));
   const first = {
