@@ -19,7 +19,7 @@
 // discipline the census needed on the tip hash and interest management needed
 // on the entry id.
 import { RESULTS_FOR_FINAL, provisionallyFinal } from './result.js';
-import { VOID, ENTRY_VOID, compareBytes } from './payout.js';
+import { VOID, ENTRY_VOID, compareBytes, computePayoutTable } from './payout.js';
 
 /**
  * Fields 0.11 lists that a signed final cannot supply, and the reason for each.
@@ -52,7 +52,69 @@ export const NOT_ON_A_FINAL = [
  * a board that showed the others would be showing a node's opinion beside a
  * committee's decision as though they were the same kind of thing.
  */
-export function leaderboard(rows, { contract, needed = RESULTS_FOR_FINAL } = {}) {
+/**
+ * WHAT EACH PLAYER WAS PAID, AND THE BOARD DID NOT WORK IT OUT.
+ *
+ * Section 20 makes the table `F(contract, membership, results)`, and a second
+ * thing that produced amounts would be a second scoring path. So the board is
+ * not handed a table - it is handed the INPUTS and calls `computePayoutTable`,
+ * the one implementation. A caller cannot pass a forged table because there is
+ * no argument for one, which is the same shape as the core's missing ghost
+ * parameter: the guarantee is the absence.
+ *
+ * AND THE INPUTS HAVE TO BE THIS ROUND'S. An entry claiming DELIVERED for a
+ * player the committee marked FAILED is an input that would pay somebody for a
+ * run they did not have, so every payout entry is checked against the final
+ * the board already accepted: same outcome, same score, and no entry for a
+ * player who has no final at all.
+ *
+ * A PLAYER THE TABLE DOES NOT LIST HAS NO AMOUNT FIELD. Not zero: zero is a
+ * paid amount - the table lists everybody who was activated, and one of them
+ * placing outside the paying ranks is paid nothing - and "paid nothing" must
+ * stay distinguishable from "not in the table at all", which is what a
+ * refunded player is.
+ */
+function payoutsFor(payout, finals) {
+  if (!payout) return { ok: true, amounts: null };
+  if (!Array.isArray(payout.entries))
+    return { ok: false, why: 'that payout names no entries to compute a table from' };
+
+  const byKey = new Map(finals.map((f) => [hex(f.playerPubkey), f]));
+  for (const e of payout.entries) {
+    if (!e || !(e.pubkey instanceof Uint8Array))
+      return { ok: false, why: 'a payout entry names no player' };
+    const final = byKey.get(hex(e.pubkey));
+    if (!final)
+      return {
+        ok: false,
+        why: 'that payout counts a player the committee has made no result final for',
+      };
+    if (e.outcome !== final.outcome)
+      return {
+        ok: false,
+        why: `that payout says ${e.outcome} for a player whose final result is ${final.outcome}`,
+      };
+    if (e.score !== final.score)
+      return {
+        ok: false,
+        why: `that payout scores a player ${e.score} where the final says ${final.score}`,
+      };
+  }
+
+  let table;
+  try { table = computePayoutTable(payout); }
+  catch (err) { return { ok: false, why: `that payout cannot be computed: ${err.message}` }; }
+
+  return { ok: true, amounts: new Map(table.table.map((r) => [hex(r.pubkey), r.amountMsat])) };
+}
+
+const hex = (b) => {
+  let s = '';
+  for (const v of b) s += v.toString(16).padStart(2, '0');
+  return s;
+};
+
+export function leaderboard(rows, { contract, needed = RESULTS_FOR_FINAL, payout } = {}) {
   if (!contract || !Array.isArray(contract.nodes) || !contract.nodes.length)
     return { ok: false, why: 'that round names no committee to check signatures against' };
   if (!Array.isArray(rows))
@@ -99,6 +161,10 @@ export function leaderboard(rows, { contract, needed = RESULTS_FOR_FINAL } = {})
     else ranked.push(entry);
   }
 
+  // The amounts, from the round's own inputs through section 20's function.
+  const paid = payoutsFor(payout, [...ranked, ...unranked]);
+  if (!paid.ok) return { ok: false, why: paid.why };
+
   // Score descending, then the key. Never arrival, and never a comparison that
   // can return 0 for two different players: `Array.prototype.sort` is stable in
   // every engine now, but "stable" means it keeps the INPUT order, and the
@@ -106,11 +172,17 @@ export function leaderboard(rows, { contract, needed = RESULTS_FOR_FINAL } = {})
   ranked.sort((a, b) => (b.score - a.score) || compareBytes(a.playerPubkey, b.playerPubkey));
   unranked.sort((a, b) => compareBytes(a.playerPubkey, b.playerPubkey));
 
+  // PAYOUT IS A COLUMN, NOT A SORT KEY. The order was settled by the score and
+  // the player key; adding money to it would let a table decide a place.
+  const withPay = (e) => (paid.amounts && paid.amounts.has(hex(e.playerPubkey))
+    ? { ...e, payoutMsat: paid.amounts.get(hex(e.playerPubkey)) }
+    : { ...e });
+
   return {
     ok: true,
     rows: [
-      ...ranked.map((e, i) => ({ ...e, rank: i + 1 })),
-      ...unranked.map((e) => ({ ...e, rank: null })),
+      ...ranked.map((e, i) => ({ ...withPay(e), rank: i + 1 })),
+      ...unranked.map((e) => ({ ...withPay(e), rank: null })),
     ],
     ranked: ranked.length,
     excluded,

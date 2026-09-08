@@ -16,6 +16,7 @@ import { toHex } from '../src/hash.js';
 import { resultId, RESULTS_FOR_FINAL } from '../src/result.js';
 import { DELIVERED, FAILED, FORFEIT, VOID } from '../src/payout.js';
 import { leaderboard, NOT_ON_A_FINAL } from '../src/leaderboard.js';
+import { computePayoutTable } from '../src/payout.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const COMMITTEE = [1, 2, 3, 4, 5, 6, 7].map((n) => b32(0xc0 + n));
@@ -163,4 +164,127 @@ test('the board carries no money and names what a final cannot tell it', () => {
   assert.deepEqual(leaderboard([], { contract }).rows, []);
   assert.match(leaderboard(undefined, { contract }).why, /no results/);
   assert.equal(leaderboard([{}, { result: null }], { contract }).excluded.length, 2);
+});
+
+/**
+ * WHAT EACH PLAYER WAS PAID, AND THE BOARD DID NOT WORK IT OUT.
+ *
+ * Section 20 makes the table F(contract, membership, results). The board is
+ * not handed a table - there is no argument for one - it is handed the INPUTS
+ * and calls the one implementation, so a forged table cannot be passed at all.
+ * That is the same shape as the core's missing ghost parameter: the guarantee
+ * is the absence.
+ */
+test('the board shows each player\'s payout from the round\'s own table', () => {
+  const rows = [row(0x21, 900), row(0x22, 800), row(0x23, 700, FAILED)];
+  const entries = [
+    { pubkey: b32(0x21), stakeMsat: 100000n, outcome: DELIVERED, score: 900 },
+    { pubkey: b32(0x22), stakeMsat: 100000n, outcome: DELIVERED, score: 800 },
+    { pubkey: b32(0x23), stakeMsat: 100000n, outcome: FAILED, score: 700 },
+  ];
+
+  const board = leaderboard(rows, { contract, payout: { entries, minScore: 1 } });
+  assert.equal(board.ok, true, board.why);
+
+  // the amounts are the table's, key for key
+  const table = computePayoutTable({ entries, minScore: 1 });
+  const owed = new Map(table.table.map((r) => [r.pubkey[0], r.amountMsat]));
+  for (const r of board.rows)
+    assert.equal(r.payoutMsat, owed.get(r.playerPubkey[0]),
+      `the board paid ${r.playerPubkey[0].toString(16)} something the table did not`);
+
+  // AND ZERO IS A PAID AMOUNT. The loser is in the table at 0n, and that must
+  // read differently from a player the table does not list at all.
+  const loser = board.rows.find((r) => r.playerPubkey[0] === 0x23);
+  assert.equal(loser.payoutMsat, 0n, 'the loser is not shown as paid nothing');
+  assert.equal('payoutMsat' in loser, true);
+
+  // shuffled input: same rows, same amounts
+  const again = leaderboard([...rows].reverse(), { contract, payout: { entries, minScore: 1 } });
+  assert.deepEqual(again.rows.map((r) => [r.playerPubkey[0], r.rank, r.payoutMsat]),
+    board.rows.map((r) => [r.playerPubkey[0], r.rank, r.payoutMsat]));
+
+  // and payout is a COLUMN, not a sort key: the order is the same with and
+  // without it
+  const noMoney = leaderboard(rows, { contract });
+  assert.deepEqual(noMoney.rows.map((r) => r.playerPubkey[0]),
+    board.rows.map((r) => r.playerPubkey[0]), 'money moved somebody');
+  assert.equal('payoutMsat' in noMoney.rows[0], false,
+    'a board with no payout inputs invented a column');
+
+  // A FIXTURE WHERE THE TWO ORDERS DISAGREE, because one where they agree
+  // measures nothing: a FAILED run with the HIGHEST score is ranked first and
+  // paid nothing, while a lower-scoring delivery is ranked second and paid.
+  const crossed = [row(0x31, 900, FAILED), row(0x32, 500)];
+  const crossedEntries = [
+    { pubkey: b32(0x31), stakeMsat: 100000n, outcome: FAILED, score: 900 },
+    { pubkey: b32(0x32), stakeMsat: 100000n, outcome: DELIVERED, score: 500 },
+  ];
+  const mixed = leaderboard(crossed, { contract, payout: { entries: crossedEntries, minScore: 1 } });
+
+  assert.deepEqual(mixed.rows.map((r) => r.playerPubkey[0]), [0x31, 0x32],
+    'the board was ordered by money rather than by score');
+  assert.equal(mixed.rows[0].payoutMsat, 0n, 'the top of the board was paid');
+  assert.ok(mixed.rows[1].payoutMsat > 0n, 'the paid player is not paid');
+});
+
+/**
+ * A PLAYER THE TABLE DOES NOT LIST HAS NO AMOUNT FIELD - not zero. A refunded
+ * run is not in the table at all (section 18: it neither contributes nor
+ * draws), and "not in the table" must stay distinguishable from "paid
+ * nothing".
+ */
+test('a refunded player has no amount, while a player paid nothing has zero', () => {
+  const rows = [row(0x21, 900), row(0x22, 800, VOID), row(0x23, 700, FAILED)];
+  const entries = [
+    { pubkey: b32(0x21), stakeMsat: 100000n, outcome: DELIVERED, score: 900 },
+    { pubkey: b32(0x22), stakeMsat: 100000n, outcome: VOID, score: 800 },
+    { pubkey: b32(0x23), stakeMsat: 100000n, outcome: FAILED, score: 700 },
+  ];
+
+  const board = leaderboard(rows, { contract, payout: { entries, minScore: 1 } });
+  const by = (n) => board.rows.find((r) => r.playerPubkey[0] === n);
+
+  assert.equal('payoutMsat' in by(0x22), false, 'a refunded run was given an amount');
+  assert.equal(by(0x22).rank, null);
+  assert.equal(by(0x23).payoutMsat, 0n);
+  assert.equal('payoutMsat' in by(0x23), true, 'paid nothing was shown as not in the table');
+});
+
+/**
+ * THE INPUTS HAVE TO BE THIS ROUND'S. An entry claiming a better outcome or
+ * score than the committee made final would pay somebody for a run they did
+ * not have - and a caller cannot pass a table instead, because there is no
+ * argument for one.
+ */
+test('a payout input that disagrees with the final results is refused', () => {
+  const rows = [row(0x21, 900), row(0x22, 800, FAILED)];
+  const honest = [
+    { pubkey: b32(0x21), stakeMsat: 100000n, outcome: DELIVERED, score: 900 },
+    { pubkey: b32(0x22), stakeMsat: 100000n, outcome: FAILED, score: 800 },
+  ];
+  assert.equal(leaderboard(rows, { contract, payout: { entries: honest, minScore: 1 } }).ok, true);
+
+  const promoted = honest.map((e, i) => (i === 1 ? { ...e, outcome: DELIVERED } : e));
+  assert.match(leaderboard(rows, { contract, payout: { entries: promoted, minScore: 1 } }).why,
+    /says DELIVERED for a player whose final result is FAILED/);
+
+  const inflated = honest.map((e, i) => (i === 1 ? { ...e, score: 9999 } : e));
+  assert.match(leaderboard(rows, { contract, payout: { entries: inflated, minScore: 1 } }).why,
+    /scores a player 9999 where the final says 800/);
+
+  const stranger = [...honest, { pubkey: b32(0x99), stakeMsat: 100000n, outcome: DELIVERED, score: 999 }];
+  assert.match(leaderboard(rows, { contract, payout: { entries: stranger, minScore: 1 } }).why,
+    /counts a player the committee has made no result final for/);
+
+  // AN AMOUNT WRITTEN ON THE CALLER'S OWN OBJECTS IS IGNORED, the same way an
+  // injected rank is: the board reads the table it computed, not the object.
+  const lied = honest.map((e) => ({ ...e, amountMsat: 999999999n, payoutMsat: 999999999n }));
+  const board = leaderboard(rows, { contract, payout: { entries: lied, minScore: 1 } });
+  assert.equal(board.ok, true, board.why);
+  for (const r of board.rows)
+    assert.notEqual(r.payoutMsat, 999999999n, 'an amount written on the input reached the board');
+
+  assert.match(leaderboard(rows, { contract, payout: {} }).why, /names no entries/);
+  assert.match(leaderboard(rows, { contract, payout: { entries: [{}] } }).why, /names no player/);
 });
