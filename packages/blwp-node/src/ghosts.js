@@ -18,8 +18,11 @@
 // builds a frame around it, so the guard that counts the files reaching the
 // simulator still counts one.
 import { encodeGhost, ghostBinds } from '../../protocol/src/ghost.js';
+import { interestSet, GHOST_SUBSCRIPTIONS } from '../../protocol/src/interest.js';
+import { decodeRoundContract, decodeEntryContract } from '../../protocol/src/contracts.js';
+import { toHex as hex } from '../../protocol/src/hash.js';
 import { batchId, batchTicks } from '../../protocol/src/batch.js';
-import { GENESIS } from '../../protocol/src/transcript.js';
+import { GENESIS, decodeTranscript } from '../../protocol/src/transcript.js';
 import { replay } from './replay.js';
 
 const same = (a, b) => a instanceof Uint8Array && b instanceof Uint8Array
@@ -117,4 +120,130 @@ export function ghostForChecked(options) {
   }, options.entry);
   if (!bound.ok) return { ok: false, why: `that picture does not bind: ${bound.why}` };
   return { ...made, unchecked: bound.unchecked };
+}
+
+/**
+ * THE PICTURES A ROUND CAN SHOW, AND WHO GETS WHICH.
+ *
+ * One instance per daemon. It holds two things and no simulator: a cache of
+ * frames already produced, keyed by round, entry and tick, and the round
+ * store to ask what has been published. Every picture in it came out of
+ * `ghostFor`, which came out of `replay.js`.
+ *
+ * THE CACHE IS PER TICK because that is what a picture is. A tick already
+ * photographed is served from here rather than replayed again - a replay is
+ * minutes of simulation and a subscriber asking twice must not cost twice -
+ * and a tick nobody asked for is never produced.
+ *
+ * THE RANDOMNESS IS NOT INVENTED HERE, for the reason `verify.js` gives at
+ * length: the world seed mixes a future Bitcoin block hash, and a node that
+ * made one up would be seeding a world its peers could not reproduce. No
+ * source, no picture, and the refusal says which.
+ */
+export class Ghosts {
+  constructor(round, { randomnessFor = () => undefined, limit = GHOST_SUBSCRIPTIONS } = {}) {
+    this.round = round;
+    this.randomnessFor = randomnessFor;
+    this.limit = limit;
+    this.frames = new Map();
+    this.made = 0;
+    this.served = 0;
+  }
+
+  #randomnessOf(roundIdBytes, entry, entryId) {
+    const row = this.round.get(roundIdBytes);
+    if (!row) return null;
+    const contract = decodeRoundContract(new Uint8Array(row.contract));
+    const given = this.randomnessFor({ contract, roundIdBytes, entry, entryId });
+    if (given instanceof Uint8Array) return given;
+    return (given && given.hash) || null;
+  }
+
+  /** The last tick this node holds for an entry, or null if it holds none. */
+  playedThrough(roundIdBytes, entryIdBytes) {
+    const held = this.round.entry(entryIdBytes);
+    if (!held) return null;
+    // `nextTick` answers the JOIN TICK for an entry that has published
+    // nothing, which is letter 19's rule and exactly the case where there is
+    // no picture: a truck that has not been driven yet.
+    const start = decodeEntryContract(held).joinTick;
+    const next = this.round.nextTick(roundIdBytes, entryIdBytes);
+    return next > start ? next - 1 : null;
+  }
+
+  /**
+   * ONE FRAME, produced once. `{ ok, bytes }` or `{ ok: false, why }`, and the
+   * refusal is cached too: a tick that cannot be photographed will not become
+   * photographable by asking again, and re-replaying to learn that costs the
+   * same minutes as a picture.
+   */
+  frameFor(roundIdBytes, entryIdBytes, tick) {
+    const key = `${hex(roundIdBytes)}:${hex(entryIdBytes)}:${tick}`;
+    const had = this.frames.get(key);
+    if (had) { this.served++; return had; }
+
+    const bytes = this.round.entry(entryIdBytes);
+    if (!bytes) return { ok: false, why: 'no such entry on this node' };
+    const held = decodeEntryContract(bytes);
+    const roundRandomness = this.#randomnessOf(roundIdBytes, held, entryIdBytes);
+    if (!roundRandomness)
+      return { ok: false, why: 'that round has no randomness yet, so there is no world to picture' };
+
+    // THE BATCHES THE NODE HOLDS, chain-checked on the way out - `handOver`
+    // refuses to serve a broken chain, so a picture is never built on one.
+    let batches = [];
+    try { batches = decodeTranscript(this.round.handOver(roundIdBytes, entryIdBytes).bytes).batches; }
+    catch (e) { return { ok: false, why: e.message }; }
+
+    const made = ghostForChecked({
+      transcript: this.round.transcript(roundIdBytes, entryIdBytes),
+      entry: held,
+      batches,
+      roundId: new Uint8Array(roundIdBytes),
+      entryId: new Uint8Array(entryIdBytes),
+      tick,
+      roundRandomness,
+    });
+    this.frames.set(key, made);
+    if (made.ok) this.made++;
+    return made;
+  }
+
+  /** The latest frame an entry can prove, or the reason there is none. */
+  latest(roundIdBytes, entryIdBytes) {
+    const at = this.playedThrough(roundIdBytes, entryIdBytes);
+    if (at === null)
+      return { ok: false, why: 'that entry has published no inputs, so there is nothing to be a picture of' };
+    return this.frameFor(roundIdBytes, entryIdBytes, at);
+  }
+
+  /**
+   * WHAT ONE VIEWER IS SHOWN: the interest set of piece 3, over positions that
+   * came from replays rather than from anything anybody announced.
+   *
+   * The viewer is never in it - `interestSet` drops them by entry id, and a
+   * player does not need a picture of the truck they are driving.
+   */
+  setFor(roundIdBytes, viewerEntryId) {
+    const seen = [];
+    for (const { entryId } of this.round.entriesOf(roundIdBytes)) {
+      const made = this.latest(roundIdBytes, entryId);
+      if (!made.ok) continue;
+      seen.push({
+        entryId: new Uint8Array(entryId),
+        playerPubkey: made.ghost.playerPubkey,
+        x: made.ghost.x, z: made.ghost.z,
+        bytes: made.bytes, tick: made.ghost.tick,
+      });
+    }
+
+    const me = seen.find((o) => hex(o.entryId) === hex(viewerEntryId));
+    // A VIEWER WITH NO RUN OF THEIR OWN still has neighbours, and they are
+    // measured from where the viewer is - which is nowhere yet. 5A says
+    // nothing about it; the honest answer is the leaders' half only, so the
+    // origin is not used as a position somebody could be near.
+    const viewer = me || { entryId: new Uint8Array(viewerEntryId), x: 0, z: 0 };
+    return interestSet(viewer, seen, { limit: this.limit })
+      .map((o) => ({ entryId: o.entryId, tick: o.tick, bytes: o.bytes }));
+  }
 }

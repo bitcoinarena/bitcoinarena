@@ -19,7 +19,7 @@ import { WebSocketServer } from 'ws';
 import { decodeRoundContract, decodeEntryContract } from '../../protocol/src/contracts.js';
 import { toHex } from '../../protocol/src/hash.js';
 import { TYPE_CHECKPOINT } from '../../protocol/src/constants.js';
-import { MAX_INPUT_BATCH_BYTES } from '../../protocol/src/batch.js';
+import { MAX_INPUT_BATCH_BYTES, decodeInputBatch } from '../../protocol/src/batch.js';
 import { SIGNED_CHECKPOINT_BYTES } from '../../protocol/src/checkpoint.js';
 import { TYPE_CHECKPOINT_RECEIPT } from '../../protocol/src/constants.js';
 import { bearsAuthority } from '../../protocol/src/frames.js';
@@ -49,6 +49,7 @@ export const MAX_FRAME_BYTES = Math.max(
 import { CLOSED } from './store.js';
 import { Round } from './round.js';
 import { Verifier } from './verify.js';
+import { Ghosts } from './ghosts.js';
 
 const read = (req) => new Promise((resolve, reject) => {
   const parts = [];
@@ -107,6 +108,8 @@ const text = (res, code, msg) => {
  * write. What is this step's is that nothing is written until the answer is
  * yes.
  */
+const hexOf = (b) => Buffer.from(b).toString('hex');
+
 export const NOTHING_IS_FUNDED = () => false;
 
 export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FUNDED,
@@ -119,6 +122,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // the round's randomness beacon - a future Bitcoin block hash this daemon
   // does not read yet - and a node given none runs the whole path and stops
   // there, with the refusal recorded rather than a world invented.
+  // WHAT SHOWS OTHER PLAYERS' TRUCKS. Pictures only: 0.10 says a ghost is
+  // never an input to anybody's simulation, and the frames it hands out came
+  // out of `replay.js` like everything else that touches the core.
+  const ghosts = new Ghosts(round, { ...(randomnessFor ? { randomnessFor } : {}) });
+
   const verifier = new Verifier(round, {
     ...(randomnessFor ? { randomnessFor } : {}),
     // WHERE THE OTHER SEATS ANSWER. A contract names a committee by KEY, and a
@@ -324,7 +332,42 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     path: '/play',
     maxPayload: MAX_FRAME_BYTES,
   });
+  // WHO IS ON THE OTHER END OF A CONNECTION, and nothing is pushed to one that
+  // has not said. A socket used to be anonymous - it took input batches and
+  // answered a number - so the node had no way to address anybody, which is
+  // why no picture could be delivered however well it could be produced.
+  const watching = new Map();
+
+  /**
+   * What one subscriber has not been shown yet, marked as shown.
+   *
+   * ALREADY SEEN AT THAT TICK IS NOT NEWS: a subscriber gets a picture when
+   * there is a new one, not once per batch anybody publishes.
+   */
+  const freshFor = (who) => {
+    const out = [];
+    for (const frame of ghosts.setFor(who.roundId, who.entryId)) {
+      const at = `${hexOf(frame.entryId)}:${frame.tick}`;
+      if (who.shown.get(hexOf(frame.entryId)) === at) continue;
+      who.shown.set(hexOf(frame.entryId), at);
+      out.push(frame);
+    }
+    return out;
+  };
+
+  /** Push one round's interest set to every subscriber but the entry itself. */
+  const showRound = (roundIdBytes) => {
+    let sent = 0;
+    for (const [sock, who] of watching) {
+      if (hexOf(who.roundId) !== hexOf(roundIdBytes)) continue;
+      if (sock.readyState !== sock.OPEN) continue;
+      for (const frame of freshFor(who)) { sock.send(frame.bytes); sent++; }
+    }
+    return sent;
+  };
+
   wss.on('connection', (sock) => {
+    sock.on('close', () => watching.delete(sock));
     // A FRAME OVER THE CAP IS AN ERROR EVENT, not a message, and an
     // unhandled one takes the process down - measured: sending
     // MAX_FRAME_BYTES + 1 threw `RangeError: Max payload size exceeded` out
@@ -340,6 +383,44 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       try {
         if (!isBinary) {
           const t = data.toString();
+          // SPAWN AND SUBSCRIBE, one word: this connection says which round
+          // and which entry it is, and from then on it is shown the others.
+          // A text control message like `close`, not a new wire type - the
+          // frames that go out are the protocol's TYPE_GHOST and the control
+          // channel stays the node's own.
+          if (t === 'watch' || t.startsWith('watch ')) {
+            const [, rid, eid] = t.trim().split(/\s+/);
+            const roundId = Buffer.from(rid || '', 'hex');
+            const entryId = Buffer.from(eid || '', 'hex');
+            if (roundId.length !== 32 || entryId.length !== 32)
+              return sock.send('error a watch names a round and an entry');
+            if (!round.get(roundId)) return sock.send('error no such round');
+            const held = round.entry(entryId);
+            if (!held) return sock.send('error no such entry');
+            if (hexOf(decodeEntryContract(held).roundId) !== hexOf(roundId))
+              return sock.send('error that entry is in another round');
+            const already = watching.get(sock);
+            if (already && hexOf(already.entryId) !== hexOf(entryId))
+              return sock.send('error this connection is already watching as another entry');
+
+            const who = {
+              roundId: new Uint8Array(roundId),
+              entryId: new Uint8Array(entryId),
+              shown: (already && already.shown) || new Map(),
+            };
+            watching.set(sock, who);
+
+            // AND THE FIELD AS IT STANDS, so a player joining late sees the
+            // trucks already driving instead of waiting for the next batch.
+            // THE COUNT GOES FIRST and the frames follow it: a client that
+            // reads "watching 3" knows three pictures are coming, and a push
+            // that overtook its own answer would arrive before the client had
+            // been told it was subscribed at all.
+            const fresh = freshFor(who);
+            sock.send(`watching ${fresh.length}`);
+            for (const frame of fresh) sock.send(frame.bytes);
+            return undefined;
+          }
           if (t.startsWith('close ')) {
             const id = Buffer.from(t.slice(6).trim(), 'hex');
             const shut = round.close(id);
@@ -394,7 +475,17 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const stands = bearsAuthority(bytes, 'an input');
         if (!stands.ok) return sock.send('error ' + stands.why);
 
-        sock.send(String(round.batch(bytes)));
+        const took = round.batch(bytes);
+        sock.send(String(took));
+
+        // A NEW TICK IS A NEW PICTURE. The batch that just landed moved
+        // somebody's truck, so everybody watching that round is shown the
+        // interest set again - and the entry that published it is not shown
+        // itself, because `interestSet` drops the viewer by id.
+        if (took > 0) {
+          try { showRound(decodeInputBatch(bytes).roundId); }
+          catch (e) { console.error(`[ghosts] ${e.message}`); }
+        }
       } catch (e) {
         sock.send('error ' + e.message);
       }
@@ -403,7 +494,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
 
   return new Promise((resolve) => {
     http.listen(port, host, () => resolve({
-      http, wss, round, host, verifier,
+      http, wss, round, host, verifier, ghosts,
+      watching: () => watching.size,
       port: http.address().port,
       // Closed so it actually closes. `http.close` waits for open connections
       // to end, and a play socket does not end on its own - a harness that
