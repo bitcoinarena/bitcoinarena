@@ -380,3 +380,34 @@ test('an all-lower set keeps exactly the id it already had', () => {
   assert.equal(toHex(donationSetId(lower)),
     toHex(donationSetId(lower.map((r) => ({ ...r, lnurl: r.lnurl.toUpperCase() })))));
 });
+
+/**
+ * ONE SET HAS ONE BYTE STRING, AND A STRANGER'S DO NOT COUNT.
+ *
+ * The encoder folds, so nothing this package writes is ever uppercase - but a
+ * stranger does not use this encoder. Measured on the delivered fold:
+ * hand-crafted bytes spelling the payee `LNURL1ABC` decoded happily and stood,
+ * leaving one set with two byte strings. A committee comparing what it
+ * received, or hashing it directly instead of re-encoding, would see two
+ * different sets and disagree - the very disagreement folding was adopted to
+ * remove.
+ */
+test('bytes that are not the set\'s own encoding are refused', () => {
+  const name = Buffer.from('LNURL1ABC', 'ascii');
+  const crafted = new Uint8Array(Buffer.concat([
+    Buffer.from([0x10, 0x00, 0x01, 0x00, 0x01, 0x00, name.length]),
+    name,
+    Buffer.from([0x27, 0x10]),                       // 10000 basis points
+  ]));
+  assert.throws(() => decodeDonationSet(crafted), /is not canonical/,
+    'a second byte string for one set was accepted');
+
+  // and the canonical bytes for that same payee decode as they always did
+  const honest = encodeDonationSet([{ lnurl: 'LNURL1ABC', shareBps: 10000 }]);
+  assert.deepEqual(decodeDonationSet(honest), [{ lnurl: 'lnurl1abc', shareBps: 10000 }]);
+
+  // the encoder cannot produce a non-canonical string in the first place:
+  // typed in either case it writes the same bytes
+  assert.equal(toHex(encodeDonationSet([{ lnurl: 'LNURL1ABC', shareBps: 10000 }])),
+               toHex(encodeDonationSet([{ lnurl: 'lnurl1abc', shareBps: 10000 }])));
+});

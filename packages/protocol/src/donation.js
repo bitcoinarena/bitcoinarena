@@ -283,6 +283,26 @@ export function decodeDonationSet(bytes) {
   // does not stand.
   const stands = donationSetStands(recipients);
   if (!stands.ok) throw new Error(`that set does not stand: ${stands.why}`);
+
+  // AND THE BYTES THEMSELVES MUST BE CANONICAL, or one set has two of them.
+  //
+  // The encoder folds, so nothing this package writes is ever uppercase - but
+  // a stranger does not use this encoder. Hand-crafted bytes spelling the
+  // payee `LNURL1ABC` decoded happily and stood, which left ONE SET WITH TWO
+  // BYTE STRINGS: a committee comparing what it received, or hashing it
+  // directly instead of re-encoding, would see two different sets and
+  // disagree - the very disagreement folding was adopted to remove. Measured
+  // before this check existed.
+  //
+  // Refused rather than quietly folded on the way in: bytes that are not the
+  // set's own encoding are not that set, and accepting them would make the id
+  // depend on who did the hashing.
+  for (const [at, r] of recipients.entries())
+    if (r.lnurl !== canonicalLnurl(r.lnurl))
+      throw new Error(
+        `recipient ${at} is not canonical: a set has one encoding, and these `
+        + 'bytes are not it');
+
   return recipients;
 }
 
