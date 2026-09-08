@@ -344,6 +344,25 @@ mergeInto(LibraryManager.library, {
             roundId: net.where.roundId, entryId: net.where.entryId,
             blockTicks: contract.blockTicks | 0,
           });
+
+          // AND ASK TO BE SHOWN THE OTHER TRUCKS.
+          //
+          // The rule for what is kept is not here: `watchGhosts` is in
+          // `@blwp/client`, where `node --test` can measure it, for the same
+          // reason the hold and the drain moved there. This file only says
+          // WHEN to ask - once the round and the entry are known - and holds
+          // the field the renderer drains.
+          //
+          // A ghost is a picture (0.10). Nothing from it ever reaches
+          // `Module.blwp`: the core is driven by this player's own inputs and
+          // by nothing else.
+          try {
+            net.ghosts = BLWPCLIENT.watchGhosts(net.client, net.where);
+          } catch (e) {
+            // A page that cannot be shown the others still plays its own run.
+            console.error('[blwp] ghosts unavailable: ' + (e && e.message));
+            net.ghosts = null;
+          }
         });
     };
 

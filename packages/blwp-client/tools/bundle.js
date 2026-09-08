@@ -33,6 +33,11 @@ function walk(file) {
   order.push(file);
 }
 walk(SRC + 'client.js');
+// AND THE PAGE'S OWN HALF. `ghost-field.js` is what a page does with a picture
+// once the client has decoded one; the client does not import it, because a
+// client that publishes a run should not depend on whether anybody is drawing
+// the others.
+walk(SRC + 'ghost-field.js');
 
 // One scope, so a name declared twice would collide. EVERY top-level name is
 // checked, not only the exported ones: two files with a private helper of the
@@ -75,6 +80,7 @@ out += '         headersOverHttp: headersOverHttp, httpProvider: httpProvider,\n
 out += '         GENESIS: GENESIS, NO_PREVIOUS: NO_PREVIOUS,\n';
 out += '         encodeRoundContract: encodeRoundContract, roundId: roundId,\n';
 out += '         encodeEntryContract: encodeEntryContract, entryId: entryId,\n';
+out += '         watchGhosts: watchGhosts, GHOST_BACKLOG: GHOST_BACKLOG,\n';
 out += '         toHex: toHex, fromHex: fromHex };\n})();\n';
 out += 'if (typeof module !== "undefined") module.exports = BLWPCLIENT;\n';
 
