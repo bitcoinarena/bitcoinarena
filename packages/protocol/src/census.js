@@ -499,6 +499,13 @@ export function bestChainView(views) {
 export function chainFactsAt(blocks, censusHeight) {
   const createdAt = new Map();
   const spentAt = new Map();
+  // AND THE OUTPUT ITSELF, for a caller that wants the script without going
+  // back to the blocks. RESOLVE does not need it: a resolved transaction is
+  // pinned to the entry's txid, and a transaction with that txid cannot have
+  // different outputs - the txid IS the hash of them. Reading the script here
+  // and comparing it there would be a check that can never fail, which is a
+  // worse thing to have than no check at all.
+  const outputAt = new Map();
 
   for (const block of blocks) {
     if (block.height > censusHeight) continue;
@@ -506,13 +513,17 @@ export function chainFactsAt(blocks, censusHeight) {
     for (const raw of block.transactions) {
       const tx = parseTransaction(raw);
       const txid = toHex(tx.txid);
-      for (let vout = 0; vout < tx.outputs.length; vout++)
-        if (!createdAt.has(`${txid}:${vout}`)) createdAt.set(`${txid}:${vout}`, block.height);
+      for (let vout = 0; vout < tx.outputs.length; vout++) {
+        const key = `${txid}:${vout}`;
+        if (createdAt.has(key)) continue;
+        createdAt.set(key, block.height);
+        outputAt.set(key, tx.outputs[vout]);
+      }
       for (const input of tx.inputs)
         spentAt.set(`${toHex(input.previousTxid)}:${input.previousVout}`, block.height);
     }
   }
-  return { createdAt, spentAt };
+  return { createdAt, spentAt, outputAt };
 }
 
 export function scanCensus(view, { contract, candidates }) {

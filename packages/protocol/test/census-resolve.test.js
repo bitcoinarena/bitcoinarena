@@ -497,6 +497,20 @@ test('RESOLVE reads spentness and depth off the chain rather than off the entry'
   assert.equal(honest.chainChecked, true);
   assert.equal(honest.unchecked.some((u) => /unspent and deep enough/.test(u)), false);
 
+  // THE SCRIPT NEEDS NO SEPARATE CHECK, and that is worth stating rather than
+  // testing: a resolved transaction is pinned to the entry's TXID, and a
+  // transaction with that txid cannot carry different outputs, because the
+  // txid is the hash of them. A peer swapping the output has to change the
+  // txid, and then it is refused as a different transaction.
+  const swapped = bondTransaction(advertFor(0x11), {
+    previousTxid: b32(0xa0 + 0x11), previousVout: 0, value: 70000,
+  });
+  const lied = resolveCensus([entryFor(live, 0x11)], {
+    contract: round(), resolve: () => ({ transaction: swapped }), view,
+  });
+  assert.equal(lied.eligible.length, 0, "a peer's own output was counted in place of the chain's");
+  assert.match(lied.excluded[0].why, /different transaction than the entry names/);
+
   // FIVE: with no view, exactly today's behaviour, and the gap is named.
   const blind = resolveCensus(entries, { contract: round(), resolve });
   assert.equal(blind.eligible.length, 2, 'without a chain view the spent bond was counted, as before');
