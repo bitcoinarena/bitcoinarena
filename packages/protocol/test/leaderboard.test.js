@@ -397,8 +397,8 @@ test('pseudonym, cargo and live status cannot be injected, and each names its bl
 
   // EACH NOTICE NAMES A SOURCE AND A BLOCKER
   const [pseudonym, cargo, live] = NOT_ON_A_FINAL;
-  assert.match(pseudonym, /the player key is on the row/);
-  assert.match(pseudonym, /SCHEME is unchosen/);
+  assert.match(pseudonym, /the player key on the row/);
+  assert.match(pseudonym, /custom name is local browser storage/);
   assert.match(cargo, /comes from REPLAYING the transcript/);
   assert.match(cargo, /M2\.3/);
   assert.match(live, /marks and ghosts/);

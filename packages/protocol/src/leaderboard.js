@@ -45,15 +45,13 @@ import { VOID, ENTRY_VOID, compareBytes, computePayoutTable } from './payout.js'
  * rows.
  */
 export const NOT_ON_A_FINAL = [
-  // The key IS on the row, so a client can render whatever it likes from it.
-  // What is not settled is HOW: 0.12 says "clients MAY derive a friendly
-  // pseudonym (brave-otter-4711)" and specifies no scheme. Two nodes with
-  // different wordlists would show one player under two names, so a scheme is
-  // a thing somebody chooses once - the BOND_MARKER and checkpoint class - and
-  // writing a plausible wordlist here would settle it by accident.
-  'pseudonym (0.12: "clients MAY derive a friendly pseudonym" - the player key '
-  + 'is on the row and the SCHEME is unchosen; a wordlist picked here would '
-  + 'settle it by accident, and two wordlists would name one player twice)',
+  // The key IS on the row. Default name is derived in display-name.js so every
+  // client shows the same adjective-animal-NNNN. A custom name is browser-local
+  // and is not a column of this board - injecting one here would be a second
+  // identity the signed final does not carry.
+  'pseudonym (0.12: default is adjective-animal-NNNN from the player key on the '
+  + 'row via displayNameFromKey; a custom name is local browser storage and is '
+  + 'not a column of this board)',
 
   // The core carries cargo in its state, so a replay has it. A final does not,
   // and this board reads finals.

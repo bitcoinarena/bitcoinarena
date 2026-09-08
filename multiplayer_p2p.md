@@ -254,9 +254,22 @@ The leaderboard is presentation, not authority.
 ## 0.12 Player identity
 
 A keypair. The public key identifies the player; the private key signs Entry
-Contracts, session data and protocol messages. Clients may derive a friendly
-pseudonym (`brave-otter-4711`). No email or password. Wallet identity and
-game identity need not be the same key.
+Contracts, session data and protocol messages. No email or password. Wallet
+identity and game identity need not be the same key.
+
+**Display name (the owner 2026-09-08, M3).** Default is derived from the player
+public key so every client shows the same string:
+`taggedHash('BLWP/v1/DISPLAY_NAME', pubkey)` → `adjective-animal-NNNN`
+(64 adjectives, 64 animals, four-digit number). Locked in
+`packages/protocol/src/display-name.js`. The name is **changeable**: a custom
+name lives next to the secret in the browser, not on the signed final. Other
+players' board rows always show the default derived from *their* key. The
+current display name (custom if set, else default) is the LNURL-pay `comment`
+on donations, truncated to `commentAllowed`.
+
+**Browser key (M3).** The secret is stored in the browser (`blwp.player.v1`)
+with a backup download/import the player triggers. It is never uploaded to a
+node.
 
 ## 0.13 Original money model vs BLWP money model
 
