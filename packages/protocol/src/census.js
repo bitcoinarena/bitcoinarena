@@ -487,20 +487,20 @@ export function bestChainView(views) {
  * here fetches: the caller brings the blocks, and two callers holding the same
  * blocks get the same census or neither does.
  */
-export function scanCensus(view, { contract, candidates }) {
-  const chain = viewOrThrow(view);
-  if (!Array.isArray(candidates)) throw new Error('scan needs the outpoints to look for');
-  const { censusHeight, censusConfirmations, tipHeight } = depthRuleOf(contract, chain);
-  const blocks = chain.blocks;
-  const firstHeight = chain.firstHeight;
-
+/**
+ * WHEN EACH OUTPOINT APPEARED AND WHETHER IT WAS SPENT, read off the blocks.
+ *
+ * One reader, used by SCAN and by RESOLVE, because two readers of the same
+ * chain are two answers waiting to differ. 5A.2 makes the census "a pure
+ * function of the chain up to census_height", so nothing after that height is
+ * looked at: a block later than the census is a block the census did not see,
+ * and reading it would make the answer depend on when a node happened to ask.
+ */
+export function chainFactsAt(blocks, censusHeight) {
   const createdAt = new Map();
   const spentAt = new Map();
 
   for (const block of blocks) {
-    // AT OR BEFORE THE CENSUS HEIGHT, and nothing after it. A block later than
-    // the census is a block the census did not see, and reading it would make
-    // the answer depend on when a node happened to ask.
     if (block.height > censusHeight) continue;
 
     for (const raw of block.transactions) {
@@ -512,6 +512,17 @@ export function scanCensus(view, { contract, candidates }) {
         spentAt.set(`${toHex(input.previousTxid)}:${input.previousVout}`, block.height);
     }
   }
+  return { createdAt, spentAt };
+}
+
+export function scanCensus(view, { contract, candidates }) {
+  const chain = viewOrThrow(view);
+  if (!Array.isArray(candidates)) throw new Error('scan needs the outpoints to look for');
+  const { censusHeight, censusConfirmations, tipHeight } = depthRuleOf(contract, chain);
+  const blocks = chain.blocks;
+  const firstHeight = chain.firstHeight;
+
+  const { createdAt, spentAt } = chainFactsAt(blocks, censusHeight);
 
   const found = [];
   const excluded = [];
@@ -678,7 +689,7 @@ function resolveBody(seen, entry, verifyAdvert) {
   };
 }
 
-export function resolveCensus(entries, { contract, resolve, verifyAdvert, bond }) {
+export function resolveCensus(entries, { contract, resolve, verifyAdvert, bond, view }) {
   if (!contract || typeof contract.bondMinSats !== 'bigint')
     return { ok: false, why: 'that round names no bond floor to measure against' };
 
@@ -692,6 +703,27 @@ export function resolveCensus(entries, { contract, resolve, verifyAdvert, bond }
     return { ok: false, why: 'that round names no protocol version' };
   if (typeof resolve !== 'function')
     return { ok: false, why: 'no way to retrieve an advertisement body' };
+
+  // THE CHAIN'S OWN ANSWER ABOUT EACH OUTPOINT, when a caller brings the view.
+  //
+  // 5A.2: "a node is in the census if and only if it has a bond output on
+  // Bitcoin, CONFIRMED AND UNSPENT at census_height". Until now this function
+  // re-applied that RULE to values the entry carried - `e.height`, `e.spent` -
+  // so whoever composed the entries decided whether a bond was live. A node
+  // resolving a census from somebody else's list could be told a spent bond
+  // was unspent, on the single criterion the whole of eligibility rests on.
+  //
+  // Re-applying a rule to a claimed fact is not verification. With a view the
+  // facts are READ, the claims are compared against them, and a disagreement
+  // excludes the entry by name rather than being quietly overwritten - a list
+  // that lies about the chain is a list to distrust, not to correct.
+  let facts = null;
+  let depth = null;
+  if (view) {
+    const chain = viewOrThrow(view);
+    depth = depthRuleOf(contract, chain);
+    facts = chainFactsAt(chain.blocks, depth.censusHeight);
+  }
 
   const eligible = [];
   const excluded = [];
@@ -726,6 +758,42 @@ export function resolveCensus(entries, { contract, resolve, verifyAdvert, bond }
     // set the census counts what it always counted and still lists the gap.
     const output = recognizeBond(read.tx, e.vout, read.advert, bond ? { bond } : {});
     if (!output.ok) { excluded.push({ ...e, why: output.why }); continue; }
+
+    let chainSays = null;
+    if (facts) {
+      const key = `${toHex(e.txid)}:${e.vout}`;
+      const height = facts.createdAt.get(key);
+      if (height === undefined) {
+        excluded.push({ ...e, why: 'the chain does not carry that outpoint at or before the census height' });
+        continue;
+      }
+      if (Number.isInteger(e.height) && e.height !== height) {
+        excluded.push({
+          ...e,
+          why: `that entry claims height ${e.height} and the chain says ${height}`,
+        });
+        continue;
+      }
+      if (facts.spentAt.has(key)) {
+        excluded.push({
+          ...e,
+          why: `that bond was spent at height ${facts.spentAt.get(key)}, so nothing is at stake`,
+        });
+        continue;
+      }
+      const deep = depth.tipHeight - height + 1;
+      if (deep < depth.censusConfirmations) {
+        excluded.push({
+          ...e,
+          why: `that bond is ${deep} block(s) deep and this round asks for `
+            + `${depth.censusConfirmations}`,
+        });
+        continue;
+      }
+      // The chain's own numbers replace the claimed ones from here on: an
+      // entry that agreed is an entry whose height came from the blocks.
+      chainSays = { height, spent: false };
+    }
 
     // AND THE AMOUNT IS THE CHAIN'S. This was the entry's own claim, measured:
     // an output worth 60000 sats, an entry claiming 100000000000, accepted -
@@ -774,6 +842,9 @@ export function resolveCensus(entries, { contract, resolve, verifyAdvert, bond }
     // and the payout table all read that key afterwards.
     eligible.push({
       ...e,
+      // The chain's height and spend state where a view gave them, so what
+      // goes into a root is what the blocks said and not what a list claimed.
+      ...(chainSays || {}),
       bondSats,
       pubkey: read.advert.nodePubkey,
       roles,
@@ -793,11 +864,19 @@ export function resolveCensus(entries, { contract, resolve, verifyAdvert, bond }
     // signature needs a curve, the script template needs the network's set and
     // a curve. Reporting either as unchecked after checking it would be as
     // wrong as not checking it.
-    unchecked: BOND_UNCHECKED.filter((u) => {
-      if (verifyAdvert && /advertisement signature/.test(u)) return false;
-      if (bond && /script template/.test(u)) return false;
-      return true;
-    }),
+    chainChecked: !!view,
+    unchecked: [
+      ...BOND_UNCHECKED.filter((u) => {
+        if (verifyAdvert && /advertisement signature/.test(u)) return false;
+        if (bond && /script template/.test(u)) return false;
+        return true;
+      }),
+      // AND THE ONE THIS FUNCTION ITSELF CANNOT ANSWER WITHOUT A CHAIN. Named
+      // rather than silently taken from the entry, because "the list said so"
+      // is not a check and a reader deserves to know which it got.
+      ...(view ? [] : ['whether the output is unspent and deep enough at '
+        + 'census_height (no chain view was given, so the entry was believed)']),
+    ],
   };
 }
 
@@ -844,7 +923,12 @@ export function deriveCensus(views, { contract, candidates, resolve, verifyAdver
     return { ok: false, why: `that census cannot be scanned: ${e.message}` };
   }
 
-  const resolved = resolveCensus(scanned.entries, { contract, resolve, verifyAdvert, bond });
+  // THE CHAIN GOES DOWN WITH THEM. Derive holds the view it just scanned, so
+  // resolving from entries whose height and spend state it could re-read and
+  // did not would be the door-nobody-walks-through fault one function deeper.
+  const resolved = resolveCensus(scanned.entries, {
+    contract, resolve, verifyAdvert, bond, view: chain,
+  });
   if (!resolved.ok) return resolved;
 
   let census;
@@ -867,5 +951,6 @@ export function deriveCensus(views, { contract, candidates, resolve, verifyAdver
       ...resolved.excluded.map((e) => ({ ...e, step: 'resolve' })),
     ],
     unchecked: resolved.unchecked,
+    chainChecked: resolved.chainChecked,
   };
 }

@@ -255,7 +255,9 @@ test('what it does not check, it names', () => {
   const { entries, map } = rig();
   const seen = resolveCensus(entries, { contract, resolve: resolverFor(map) });
 
-  assert.equal(seen.unchecked.length, 2);
+  assert.equal(seen.unchecked.length, 3);
+  assert.equal(seen.unchecked.some((u) => /unspent and deep enough/.test(u)), true);
+  assert.equal(seen.chainChecked, false);
   assert.match(seen.unchecked[0], /bond script template/);
   assert.match(seen.unchecked[1], /advertisement signature/);
 });
@@ -413,4 +415,91 @@ test('RESOLVE checks the advertisement signature when its caller brings a curve'
   });
   assert.equal(sigOnly.eligible.length, 0, 'an unsigned body was made eligible');
   assert.match(sigOnly.excluded[0].why, /carries an empty signature/);
+});
+
+/**
+ * WHAT THE CHAIN SAYS, NOT WHAT THE LIST CLAIMS.
+ *
+ * 5A.2 makes a node eligible "if and only if it has a bond output on Bitcoin,
+ * CONFIRMED AND UNSPENT at census_height". RESOLVE used to re-apply that rule
+ * to the entry's own `height` and `spent` - so whoever composed the list
+ * decided whether a bond was live, on the single criterion the whole of
+ * eligibility rests on. Re-applying a rule to a claimed fact is not
+ * verification.
+ */
+test('RESOLVE reads spentness and depth off the chain rather than off the entry', async () => {
+  const { chainOf } = await import('../tools/chainview.js');
+
+  // THE TIP SITS JUST ABOVE THE CENSUS, so a bond funded shortly before it is
+  // genuinely shallow. Depth is measured from the TIP, not from the census
+  // height - at a tip ten blocks past the census nothing at or below it could
+  // ever be under six, and a fixture built that way would prove nothing.
+  const HEIGHT = 900000;
+  const TIP = 900002;
+  const round = (over = {}) => ({
+    bondMinSats: 50000n, protocolVersion: PROTOCOL_VERSION,
+    censusHeight: HEIGHT, censusConfirmations: 6, ...over,
+  });
+
+  const live = bondOf(0x11);
+  const doomed = bondOf(0x12);
+  const shallow = bondOf(0x13);
+  const spend = bondTransaction(advertFor(0x50), {
+    previousTxid: parseTransaction(doomed).txid, previousVout: 0,
+  });
+
+  // A chain that funds three bonds and spends one of them, all at or before
+  // the census height.
+  const at = {
+    [HEIGHT - 20]: [live, doomed],
+    [HEIGHT - 8]: [spend],
+    [HEIGHT - 2]: [shallow],          // 899998: five deep at tip 900002
+  };
+  const blocks = [];
+  for (let h = HEIGHT - 20; h <= TIP; h++) blocks.push({ transactions: at[h] || [] });
+  const view = chainOf(blocks, HEIGHT - 20);
+
+  const entryFor = (tx, n, over = {}) => ({
+    txid: parseTransaction(tx).txid, vout: 0, pubkey: b32(n),
+    bondSats: 60000n, height: HEIGHT - 20, roles: ['game'], spent: false, ...over,
+  });
+  const byKey = new Map([[0x11, live], [0x12, doomed], [0x13, shallow]]);
+  const resolve = (e) => ({ transaction: byKey.get(e.pubkey[0]) });
+
+  // ONE: a spent bond, whose entry says it is not.
+  const entries = [entryFor(live, 0x11), entryFor(doomed, 0x12)];
+  const seen = resolveCensus(entries, { contract: round(), resolve, view });
+  assert.equal(seen.ok, true, seen.why);
+  assert.equal(seen.eligible.length, 1,
+    `expected one live bond, got ${seen.eligible.length}: ${seen.excluded.map((e) => e.why).join(' | ')}`);
+  assert.deepEqual(seen.eligible[0].pubkey, b32(0x11));
+  assert.match(seen.excluded[0].why, new RegExp(`spent at height ${HEIGHT - 8}, so nothing is at stake`));
+
+  // TWO: a bond too shallow, whose entry claims an older height.
+  const lying = entryFor(shallow, 0x13, { height: HEIGHT - 20 });
+  const tooNew = resolveCensus([lying], { contract: round(), resolve, view });
+  assert.equal(tooNew.eligible.length, 0, 'a three-deep bond was counted for a six-deep round');
+  assert.match(tooNew.excluded[0].why, /claims height 899980 and the chain says 899998/);
+
+  // THREE: the claim is not quietly corrected either - a list that lies about
+  // the chain is a list to distrust, not to fix.
+  const honestHeight = entryFor(shallow, 0x13, { height: HEIGHT - 2 });
+  const stillShallow = resolveCensus([honestHeight], { contract: round(), resolve, view });
+  assert.equal(stillShallow.eligible.length, 0);
+  assert.match(stillShallow.excluded[0].why, /5 block\(s\) deep and this round asks for 6/);
+
+  // FOUR: an honest set is unchanged, and the height that reaches the root is
+  // the chain's.
+  const honest = resolveCensus([entryFor(live, 0x11)], { contract: round(), resolve, view });
+  assert.equal(honest.eligible.length, 1);
+  assert.equal(honest.eligible[0].height, HEIGHT - 20);
+  assert.equal(honest.eligible[0].spent, false);
+  assert.equal(honest.chainChecked, true);
+  assert.equal(honest.unchecked.some((u) => /unspent and deep enough/.test(u)), false);
+
+  // FIVE: with no view, exactly today's behaviour, and the gap is named.
+  const blind = resolveCensus(entries, { contract: round(), resolve });
+  assert.equal(blind.eligible.length, 2, 'without a chain view the spent bond was counted, as before');
+  assert.equal(blind.chainChecked, false);
+  assert.equal(blind.unchecked.some((u) => /unspent and deep enough/.test(u)), true);
 });

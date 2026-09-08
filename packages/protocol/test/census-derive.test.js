@@ -337,7 +337,17 @@ test('a derivation it cannot do is refused with its reason', () => {
  */
 test('the derivation names what it does not check', () => {
   const out = derive(rig());
+  // THREE now: the two the chain door cannot read, and the one this function
+  // cannot answer without a chain view - whether the output is unspent and
+  // deep enough. Named rather than taken from the entry, because "the list
+  // said so" is not a check.
+  // TWO, not three: the derivation holds the chain it just scanned and passes
+  // it down, so "unspent and deep enough" is a thing it CHECKED rather than a
+  // gap it has to name. The two that remain are the two the chain door cannot
+  // read without a curve and a set.
   assert.equal(out.unchecked.length, 2);
+  assert.equal(out.unchecked.some((u) => /unspent and deep enough/.test(u)), false);
+  assert.equal(out.chainChecked, true, 'the derivation resolved without the chain it had');
   assert.match(out.unchecked[0], /bond script template/);
   assert.match(out.unchecked[1], /no curve in this package/);
 });
