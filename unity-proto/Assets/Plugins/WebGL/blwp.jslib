@@ -381,6 +381,34 @@ mergeInto(LibraryManager.library, {
     return 1;
   },
 
+  // ONE PICTURE ACROSS THE BRIDGE, and this is the only ghost channel there
+  // is. The rule for WHAT is kept lives in `@blwp/client` where `node --test`
+  // can measure it (`watchGhosts`); this hands the oldest kept picture to C#
+  // and nothing else. A second channel here would be a rule with no test.
+  //
+  // Twelve ints: the entry id as eight words, then x, z, heading and the tick
+  // those three were taken at. Returns how many were written, 0 when the page
+  // is holding nothing.
+  BlwpNextGhost: function (ptr, cap) {
+    var net = Module.blwpNet;
+    var field = net && net.ghosts;
+    if (!field || cap < 12) return 0;
+    var got = field.drain(1);
+    if (!got.length) return 0;
+    var g = got[0];
+    var out = ptr >> 2;
+    for (var i = 0; i < 8; i++) {
+      var b = i * 4;
+      HEAP32[out + i] = (g.entryId[b] << 24) | (g.entryId[b + 1] << 16)
+        | (g.entryId[b + 2] << 8) | g.entryId[b + 3];
+    }
+    HEAP32[out + 8] = g.x | 0;
+    HEAP32[out + 9] = g.z | 0;
+    HEAP32[out + 10] = g.heading | 0;
+    HEAP32[out + 11] = g.tick | 0;
+    return 12;
+  },
+
   // The status line, as ASCII, for the debug panel. A status nobody can read is
   // a status nobody checks.
   BlwpNetStatus: function (ptr, cap) {
