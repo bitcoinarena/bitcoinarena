@@ -43,16 +43,22 @@ test('five of seven comes off genesis, beside the maturity', () => {
 /**
  * THE TWO LEAVES, AS 5A.3B WRITES THEM.
  */
-test('the recovery leaf is the node key, a checksig and the maturity', () => {
+test('the recovery leaf locks the time first and ends on a signature', () => {
   const leaf = recoveryLeaf(NODE, 100);
-  assert.equal(leaf[0], 0x20, 'the key is not pushed as 32 bytes');
-  assert.deepEqual(leaf.subarray(1, 33), NODE);
-  assert.equal(leaf[33], 0xad, 'CHECKSIGVERIFY');
-  assert.equal(leaf[34], 0x01, 'a locktime of 100 is one byte');
-  assert.equal(leaf[35], 100);
-  assert.equal(leaf[36], 0xb1, 'CHECKLOCKTIMEVERIFY');
-  assert.equal(leaf[37], 0x75, 'DROP');
+
+  // <maturity> CLTV DROP <node_key> CHECKSIG. The other order - the one 5A.3B
+  // writes - ends on DROP with an empty stack, and a script that ends empty
+  // does not spend. This is the path that returns the node's money if
+  // arbitration disappears, so it has to be the one that runs.
+  assert.equal(leaf[0], 0x01, 'a locktime of 100 is one byte');
+  assert.equal(leaf[1], 100);
+  assert.equal(leaf[2], 0xb1, 'CHECKLOCKTIMEVERIFY');
+  assert.equal(leaf[3], 0x75, 'DROP');
+  assert.equal(leaf[4], 0x20, 'the key is not pushed as 32 bytes');
+  assert.deepEqual(leaf.subarray(5, 37), NODE);
+  assert.equal(leaf[37], 0xac, 'CHECKSIG');
   assert.equal(leaf.length, 38);
+  assert.equal(leaf[leaf.length - 1] === 0x75, false, 'the leaf still ends on DROP');
 
   // THE MATURITY IS IN THE BYTES, so a different one is a different leaf and
   // therefore a different output key. That is the point of path A.
@@ -60,16 +66,25 @@ test('the recovery leaf is the node key, a checksig and the maturity', () => {
   assert.notDeepEqual(recoveryLeaf(b32(0x12), 100), leaf);
 
   // a locktime whose top byte would read as negative is padded
-  assert.equal(recoveryLeaf(NODE, 200)[34], 0x02);
-  assert.equal(recoveryLeaf(NODE, 200)[36], 0x00, 'a high byte was not padded');
+  assert.equal(recoveryLeaf(NODE, 200)[0], 0x02);
+  assert.equal(recoveryLeaf(NODE, 200)[2], 0x00, 'a high byte was not padded');
 });
 
-test('the slash leaf is k of m over sorted keys', () => {
+test('the slash leaf counts signatures the way tapscript does', () => {
   const leaf = slashLeaf(ARBITRATION, 5);
-  assert.equal(leaf[0], 0x55, 'OP_5');
-  assert.equal(leaf[leaf.length - 2], 0x57, 'OP_7');
-  assert.equal(leaf[leaf.length - 1], 0xae, 'CHECKMULTISIG');
-  assert.equal(leaf.length, 1 + 7 * 33 + 1 + 1);
+
+  // <k1> CHECKSIG <k2> CHECKSIGADD ... <k7> CHECKSIGADD <5> NUMEQUAL.
+  // CHECKMULTISIG is not in tapscript at all (BIP-342), so a leaf using it is
+  // invalid the moment it is revealed - and its hash would already be in the
+  // output key by then.
+  assert.equal(leaf[0], 0x20);
+  assert.equal(leaf[33], 0xac, 'the first key is a plain CHECKSIG');
+  assert.equal(leaf[34], 0x20);
+  assert.equal(leaf[67], 0xba, 'the second key adds to the count');
+  assert.equal(leaf[leaf.length - 2], 0x55, 'OP_5, the quorum to compare against');
+  assert.equal(leaf[leaf.length - 1], 0x9c, 'NUMEQUAL');
+  assert.equal(leaf.includes(0xae), false, 'CHECKMULTISIG is still in the leaf');
+  assert.equal(leaf.length, 7 * 33 + 7 + 1 + 1);
 
   // SORTED, so one arrangement is one leaf however the keys were listed
   assert.deepEqual(slashLeaf([...ARBITRATION].reverse(), 5), leaf);

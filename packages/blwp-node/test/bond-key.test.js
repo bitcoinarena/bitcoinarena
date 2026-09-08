@@ -100,8 +100,12 @@ test('a mutated key, maturity or leaf fails the recompute', () => {
   const stranger = schnorr.getPublicKey(schnorr.utils.randomSecretKey());
   assert.equal(bondOutputKeyMatches(stranger, inputs, { tweakPoint }).ok, false);
 
-  // and the slash leaf really is the sorted five-of-seven the genesis names
-  assert.equal(slashLeaf(ARBITRATION, genesis.arbitrationK)[0], 0x55);
+  // and the slash leaf really is the sorted five-of-seven the genesis names,
+  // in tapscript's counting form: keys first, the quorum compared at the end.
+  const leaf = slashLeaf(ARBITRATION, genesis.arbitrationK);
+  assert.equal(leaf[0], 0x20, 'the leaf does not start with a key');
+  assert.equal(leaf[leaf.length - 2], 0x50 + genesis.arbitrationK, 'the quorum is not k');
+  assert.equal(leaf[leaf.length - 1], 0x9c, 'NUMEQUAL');
   assert.equal(genesis.arbitrationM, ARBITRATION.length);
 });
 

@@ -22,31 +22,40 @@
 // caller passes `tweakPoint`, exactly as 23's advertisement check passes
 // `verifyAdvert`.
 //
-// TWO PLACES THE SPEC'S BYTES WOULD NOT EXECUTE, written as the spec writes
-// them and named rather than quietly repaired:
+// THE LEAVES ARE THE SPEND PROGRAMS, SO THEY HAVE TO RUN.
 //
-//   1. Path A ends `... CHECKLOCKTIMEVERIFY DROP`, which leaves an EMPTY
-//      stack. A script that ends empty fails; a spendable recovery leaf ends
-//      in a signature check. 5A.3B calls path A "the one to get right",
-//      because it is what returns the money if arbitration disappears - so
-//      before any bond holds value this has to be settled, and it is not
-//      settled by a library quietly reordering two opcodes.
-//   2. Path B uses CHECKMULTISIG, which tapscript (BIP-342) removed; the
-//      tapscript spelling is CHECKSIGADD.
+// 5A.3B writes path A as `<node_key> CHECKSIGVERIFY <bond_maturity>
+// CHECKLOCKTIMEVERIFY DROP` and path B with CHECKMULTISIG. Neither would ever
+// spend: the first ends with DROP and therefore an EMPTY stack, and Bitcoin
+// requires a true left on it; the second uses an opcode tapscript removed
+// (BIP-342), so the leaf is invalid the moment it is revealed.
 //
-// Neither affects THIS letter, which builds an output key and never spends
-// one: the leaves are hashed, not run. Both are recorded so that whoever
-// writes the spend finds them named rather than discovering them with money
-// in the output.
+// A leaf is not documentation. It is the program that moves the money, and its
+// hash is in the output key - so hashing the faults would mean either a bond
+// that can never pay out, or changing the key later and invalidating every
+// bond already posted. The whitepaper is intent; it is not a licence to hash
+// an unspendable script, exactly as a leftover constant in C# was not a
+// licence to copy a wrong unit.
+//
+// So the INTENT is implemented:
+//
+//   path A   <maturity> CLTV DROP <node_key> CHECKSIG
+//            the timelock first, then the signature that leaves the true
+//   path B   <k1> CHECKSIG <k2> CHECKSIGADD ... <km> CHECKSIGADD <k> NUMEQUAL
+//            BIP-342's own counting form, which is what tapscript runs
+//
+// Both say what 5A.3B says - the node alone after maturity, the quorum before
+// it - in bytes that a node can actually spend with.
 import { taggedHash } from './hash.js';
 
 /** BIP-341's leaf version for tapscript. */
 export const TAPLEAF_VERSION = 0xc0;
 
-const OP_CHECKSIGVERIFY = 0xad;
 const OP_CHECKLOCKTIMEVERIFY = 0xb1;
 const OP_DROP = 0x75;
-const OP_CHECKMULTISIG = 0xae;
+const OP_CHECKSIG = 0xac;
+const OP_CHECKSIGADD = 0xba;
+const OP_NUMEQUAL = 0x9c;
 
 const cat = (...parts) => {
   const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
@@ -91,8 +100,13 @@ const pushKey = (key) => {
  * is not one anybody should post.
  */
 export function recoveryLeaf(nodeKey, bondMaturity) {
-  return cat(pushKey(nodeKey), Uint8Array.from([OP_CHECKSIGVERIFY]),
-    pushNumber(bondMaturity), Uint8Array.from([OP_CHECKLOCKTIMEVERIFY, OP_DROP]));
+  // THE LOCKTIME FIRST, THEN THE SIGNATURE. CLTV leaves its own argument on
+  // the stack, so it is dropped and the signature check supplies the true the
+  // script must end with. The other order - the spec's - ends on DROP with
+  // nothing left, and a script that ends empty does not spend.
+  return cat(pushNumber(bondMaturity),
+    Uint8Array.from([OP_CHECKLOCKTIMEVERIFY, OP_DROP]),
+    pushKey(nodeKey), Uint8Array.from([OP_CHECKSIG]));
 }
 
 /**
@@ -111,8 +125,18 @@ export function slashLeaf(arbitrationKeys, k) {
     return 0;
   });
   if (k > sorted.length) throw new RangeError(`${k} of ${sorted.length} cannot be satisfied`);
-  return cat(smallNumber(k), ...sorted.map(pushKey),
-    smallNumber(sorted.length), Uint8Array.from([OP_CHECKMULTISIG]));
+
+  // BIP-342'S COUNTING FORM, because tapscript removed CHECKMULTISIG: the
+  // first key checks and leaves 0 or 1, every later key ADDS to that running
+  // count, and the total is compared with k. A spender supplies an empty
+  // signature for each key it does not have, which counts as zero without
+  // failing the script.
+  const parts = [pushKey(sorted[0]), Uint8Array.from([OP_CHECKSIG])];
+  for (const key of sorted.slice(1)) {
+    parts.push(pushKey(key), Uint8Array.from([OP_CHECKSIGADD]));
+  }
+  parts.push(smallNumber(k), Uint8Array.from([OP_NUMEQUAL]));
+  return cat(...parts);
 }
 
 /** BIP-341: tagged_hash("TapLeaf", version || compact_size(script) || script). */
