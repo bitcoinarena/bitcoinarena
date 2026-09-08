@@ -19,7 +19,7 @@ import { ed25519 } from '@noble/curves/ed25519.js';
 import { openStore } from '../../blwp-node/src/store.js';
 import { serve } from '../../blwp-node/src/server.js';
 import { Client } from '../src/client.js';
-import { encodeInputBatch } from '../../protocol/src/batch.js';
+import { encodeInputBatch, decodeInputBatch } from '../../protocol/src/batch.js';
 import { GENESIS } from '../../protocol/src/transcript.js';
 import { encodeEntryContract, entryId as entryIdOf } from '../../protocol/src/contracts.js';
 import { seedWordForEntry } from '../../protocol/src/seed.js';
@@ -330,4 +330,86 @@ test('a subscription comes back with the socket', async () => {
     assert.equal(seen.length, 2, 'no picture arrived after the socket came back');
     assert.deepEqual(toHex(seen[1].entryId), toHex(theirEid));
   } finally { await node.close(); }
+});
+
+/**
+ * A PICTURE CHANGES NOTHING THIS CLIENT PUBLISHES.
+ *
+ * 0.10: another player's truck is a picture, NEVER an input to my simulation.
+ * Piece 1 pinned that where the core is called - `step` takes one state and
+ * one player's five inputs, and a seventh argument kills the mutants that try
+ * - and piece 4 pinned it in Unity, where a ghost is stripped of every
+ * collider. The consume path this letter added is the third place the rule has
+ * to hold, and it had no assertion of its own: a client that let a picture
+ * touch its tick counter, its hold or its chain would be simulating somebody
+ * else's truck in mine.
+ *
+ * So: two identical runs, one of them rained on with pictures, compared by
+ * everything the client publishes.
+ */
+test('pictures change nothing this client publishes', async () => {
+  const runOf = async (withPictures) => {
+    const { node, client, rid, eid, theirEid, drive } = await rig();
+    try {
+      const seen = [];
+      client.onGhost = (g) => seen.push(g);
+      if (withPictures) {
+        drive(0, 120);
+        await client.watch(rid, eid);
+        await wait(40);
+      }
+
+      // WHAT WAS PUBLISHED, as the run rather than as bytes. The two rigs get
+      // their own node identity, so their contracts and therefore their round
+      // and entry ids differ - comparing raw frames would compare the
+      // fixture, not the run. What has to be identical is the ticks, their
+      // order and the chain they were sent on.
+      const sent = [];
+      const real = client.send.bind(client);
+      client.send = (m) => {
+        if (typeof m !== 'string') {
+          const b = decodeInputBatch(m);
+          sent.push({
+            firstTick: b.firstTick, ticks: b.ticks.map((w) => w.join(',')).join('|'),
+            liquidations: JSON.stringify(b.liquidations),
+            chained: toHex(b.previousHash) === toHex(GENESIS) ? 'genesis' : 'to the batch before',
+          });
+        }
+        return real(m);
+      };
+
+      for (let i = 0; i < 200; i++) client.record([45875, ((i * 31) % 20000) - 10000, 0, 0, 0]);
+      await client.drain();
+      if (withPictures) { drive(120, 60); await wait(40); }
+      for (let i = 0; i < 100; i++) client.record([45875, 0, 65536, 0, 0]);
+      await client.drain();
+      await wait(40);
+
+      return {
+        sent, pictures: seen.length,
+        offered: client.offered, nextTick: client.nextTick, held: client.held,
+        batchesSent: client.batchesSent, head: toHex(client.head || GENESIS),
+        state: client.state, ended: client.ended,
+      };
+    } finally { await node.close(); }
+  };
+
+  const quiet = await runOf(false);
+  const busy = await runOf(true);
+
+  assert.equal(quiet.pictures, 0, 'the quiet run was shown pictures after all');
+  assert.equal(busy.pictures > 0, true, 'the busy run was shown none, so it proves nothing');
+
+  // THE BYTES THIS CLIENT PUT ON THE WIRE, identical: same ticks, same order,
+  // same chain. If a picture had reached the simulation, a batch would carry
+  // different words or a different head.
+  assert.deepEqual(busy.sent, quiet.sent,
+    'a picture changed what this client published');
+  assert.equal(busy.offered, quiet.offered);
+  assert.equal(busy.nextTick, quiet.nextTick);
+  assert.equal(busy.held, quiet.held);
+  assert.equal(busy.batchesSent, quiet.batchesSent);
+  assert.equal(busy.head, quiet.head, 'a picture moved this run\'s input chain');
+  assert.equal(busy.state, quiet.state);
+  assert.equal(busy.ended, quiet.ended);
 });
