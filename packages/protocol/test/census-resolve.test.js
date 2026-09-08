@@ -209,9 +209,10 @@ test('what it does not check, it names', () => {
   const { entries, map } = rig();
   const seen = resolveCensus(entries, { contract, resolve: resolverFor(map) });
 
-  assert.equal(seen.unchecked.length, 2);
-  assert.match(seen.unchecked[0], /bond script template/);
-  assert.match(seen.unchecked[1], /advertisement signature/);
+  assert.equal(seen.unchecked.length, 3);
+  assert.match(seen.unchecked[0], /BOND_MARKER/);
+  assert.match(seen.unchecked[1], /bond script template/);
+  assert.match(seen.unchecked[2], /advertisement signature/);
 });
 
 test('a round with no floor, or no resolver, is answered rather than guessed at', () => {

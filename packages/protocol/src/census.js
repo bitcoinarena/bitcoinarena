@@ -375,6 +375,80 @@ export function scanCensus(blocks, { contract, tipHeight, candidates }) {
  * cannot be had is excluded rather than allowed to break the census.
  */
 /**
+ * IS THIS OUTPUT A BOND? Answered from chain data, not from being told.
+ *
+ * The census used to take a caller's word for which output was the bond. It
+ * checked the transaction and the commitment and never looked at the OUTPUT,
+ * so an entry could point anywhere in a real bond transaction and be counted -
+ * measured before this existed: a candidate at vout 1, the OP_RETURN, value
+ * zero, was accepted as a bond by `deriveCensus`. A publisher could point an
+ * entry at a change output instead and inflate its own weight.
+ *
+ * TWO OF THE FIVE RULES CAN BE READ, AND THREE CANNOT:
+ *
+ *   readable   the output is P2TR. 5A.3B: "A P2TR output with three spend
+ *              paths". The paths are hidden; the class is not - witness v1,
+ *              a 32-byte program, `OP_1 <32 bytes>`. An OP_RETURN or a P2PKH
+ *              is not the thing 5A.3B describes, whatever else is true.
+ *   readable   the advertisement names THIS outpoint. 5A.1 makes the bond
+ *              outpoint mandatory, so a body that points somewhere else is
+ *              not this output's body. The all-zero txid is read as "the
+ *              transaction carrying me", the same reading `acceptAdvert`
+ *              settled: 25.1 puts the body in the transaction it names, so
+ *              the txid is not knowable when the body is signed.
+ *
+ *   BLOCKED    the dust output to BOND_MARKER (25.1). The marker is null by
+ *              decision. NO BRANCH IS WRITTEN FOR IT: code that would check
+ *              a value nobody has chosen cannot be tested, and shipping an
+ *              untested path that looks ready is the same fault as writing a
+ *              plausible address into `constants.js`.
+ *   BLOCKED    the script tree is 5A.3B's template. Taproot reveals a branch
+ *              only when it is spent, which is the point of using it.
+ *   BLOCKED    the advertisement signature. No curve in this package.
+ *
+ * So this says "counts as a bond as far as the chain can show" and names what
+ * it could not look at. It never says "is a bond" - nothing here can.
+ */
+export function isTaprootOutput(script) {
+  // OP_1 (0x51) then a 32-byte push (0x20): a witness v1 program, BIP341.
+  return script instanceof Uint8Array && script.length === 34
+    && script[0] === 0x51 && script[1] === 0x20;
+}
+
+export const BOND_UNCHECKED = [
+  'the dust output to BOND_MARKER (25.1: the marker is null by decision)',
+  'the bond script template (5A.3B: a taproot output hides it until spent)',
+  'the advertisement signature (no curve in this package)',
+];
+
+export function recognizeBond(tx, vout, advert) {
+  if (!tx || !Array.isArray(tx.outputs))
+    return { ok: false, why: 'that is not a parsed transaction' };
+  if (!Number.isInteger(vout) || vout < 0 || vout >= tx.outputs.length)
+    return { ok: false, why: 'that transaction has no such output' };
+
+  if (!isTaprootOutput(tx.outputs[vout].script))
+    return {
+      ok: false,
+      why: 'that output is not a taproot output, so it is not the bond 5A.3B describes',
+    };
+
+  if (!advert || !Number.isInteger(advert.bondVout))
+    return { ok: false, why: 'that advertisement names no bond output' };
+  if (advert.bondVout !== vout)
+    return {
+      ok: false,
+      why: `that advertisement names output ${advert.bondVout} as its bond, not ${vout}`,
+    };
+
+  const carriesUs = advert.bondTxid.every((b) => b === 0);
+  if (!carriesUs && !advert.bondTxid.every((b, i) => b === tx.txid[i]))
+    return { ok: false, why: 'that advertisement names a different bond transaction' };
+
+  return { ok: true, valueSats: tx.outputs[vout].value, unchecked: BOND_UNCHECKED };
+}
+
+/**
  * The body an output commits to, or why there is none.
  *
  * The same reading `acceptAdvert` does, without its inclusion proof: bodies
@@ -415,7 +489,7 @@ function resolveBody(seen, entry) {
     commitments.some((c) => c.length === 32 && advertId(a).every((b, i) => b === c[i])));
   if (!taken)
     return { ok: false, why: 'the bond output commits to a different advertisement' };
-  return { ok: true, advert: taken, advertId: advertId(taken) };
+  return { ok: true, advert: taken, advertId: advertId(taken), tx };
 }
 
 export function resolveCensus(entries, { contract, resolve }) {
@@ -454,6 +528,13 @@ export function resolveCensus(entries, { contract, resolve }) {
     // narrower of it - read the committed hash, retrieve the body, match.
     const read = resolveBody(seen, e);
     if (!read.ok) { excluded.push({ ...e, why: read.why }); continue; }
+
+    // AND THE OUTPUT ITSELF HAS TO LOOK LIKE A BOND. Until this, the census
+    // checked the transaction and the commitment and never the output, so an
+    // entry could name any vout of a real bond transaction - the OP_RETURN
+    // included - and be counted.
+    const bond = recognizeBond(read.tx, e.vout, read.advert);
+    if (!bond.ok) { excluded.push({ ...e, why: bond.why }); continue; }
 
     // THE FLOOR IS THE ROUND'S. 5A.3: "bond_min(role) is named in the Round
     // Contract, not global... a node is eligible for THAT ROUND or not."
@@ -500,8 +581,7 @@ export function resolveCensus(entries, { contract, resolve }) {
     ok: true,
     eligible,
     excluded,
-    unchecked: ['bond script template (5A.3B: a taproot output hides it)',
-                'advertisement signature (no curve in this package)'],
+    unchecked: BOND_UNCHECKED,
   };
 }
 

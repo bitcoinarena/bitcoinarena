@@ -330,7 +330,8 @@ test('a derivation it cannot do is refused with its reason', () => {
  */
 test('the derivation names what it does not check', () => {
   const out = derive(rig());
-  assert.equal(out.unchecked.length, 2);
-  assert.match(out.unchecked[0], /bond script template/);
-  assert.match(out.unchecked[1], /no curve in this package/);
+  assert.equal(out.unchecked.length, 3);
+  assert.match(out.unchecked[0], /BOND_MARKER \(25.1: the marker is null/);
+  assert.match(out.unchecked[1], /bond script template/);
+  assert.match(out.unchecked[2], /no curve in this package/);
 });
