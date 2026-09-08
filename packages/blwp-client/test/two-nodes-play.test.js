@@ -150,6 +150,20 @@ test('two daemons, one page: the other truck arrives where its own transcript pu
       out.push(g.x, g.z, g.heading, g.tick);
       return out;
     };
+    // THE NUMBER, IN THE LOG. The assertions above already equate the two,
+    // but a number nobody can read is a number nobody can check: the pose the
+    // page was SHOWN, beside the pose the other player's own transcript drives
+    // this core to, at both ticks.
+    if (process.env.DUMP_GHOSTS || process.env.PRINT_POSE) {
+      const row = (tag, g, c) => console.log(
+        `  ${tag}  ghost x ${g.x} z ${g.z} heading ${g.heading}`
+        + `   transcript x ${c.x} z ${c.z} heading ${c.heading}`
+        + `   delta ${g.x - c.x} ${g.z - c.z} ${g.heading - c.heading}`);
+      console.log('the other truck, as shown against as driven:');
+      row('tick  59:', first, at.get(59));
+      row('tick 119:', later, at.get(119));
+    }
+
     if (process.env.DUMP_GHOSTS) {
       // Twelve ints a line, the way `BlwpNextGhost` writes them, so the
       // renderer's test needs no JSON reader to draw what a player was
