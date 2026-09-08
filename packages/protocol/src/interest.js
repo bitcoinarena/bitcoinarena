@@ -127,6 +127,8 @@ export function interestSet(viewer, others, { limit = GHOST_SUBSCRIPTIONS, board
   // watched as a neighbour or not at all, which is what "presentation" means
   // when the presentation is of results that do not exist yet.
   const rank = standings(board);
+  // `whose` is null for anybody without a player key, and the map never holds
+  // a null key, so this is the same test written once instead of twice.
   const placed = pool.filter((o) => rank.has(whose(o)));
 
   const leaders = placed.sort(byThen((o) => rank.get(whose(o))));
@@ -153,8 +155,17 @@ const hex = (b) => {
 };
 const key = (o) => hex(o.entryId);
 
-/** Whose standing this row is: the board keys by player, the set by entry. */
-const whose = (o) => hex(o.playerPubkey || o.entryId);
+/**
+ * Whose standing this is. A board keys by PLAYER; a subscription keys by
+ * ENTRY, and the two are different namespaces.
+ *
+ * Somebody with no player key has no standing - not a standing looked up under
+ * their entry id. That fallback was here and it was measured granting a
+ * leaders seat to an object with no player key at all, on a board that
+ * happened to rank those bytes. A silent fallback across namespaces is how one
+ * identifier quietly becomes another.
+ */
+const whose = (o) => (o.playerPubkey ? hex(o.playerPubkey) : null);
 
 /**
  * Every viewer's set, and what it costs to send.

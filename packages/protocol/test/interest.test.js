@@ -353,3 +353,66 @@ test('a standing is looked up by the player key, not by the entry id', () => {
 });
 
 const toHexish = (b) => [...b].map((v) => v.toString(16)).join('');
+
+/**
+ * A TRUCK WITH NO PLAYER KEY HAS NO STANDING - not one borrowed from its entry
+ * id.
+ *
+ * A board keys by player; a subscription keys by entry. They are different
+ * namespaces, and the lookup used to fall back from one to the other. Measured
+ * before it was removed: an object with no `playerPubkey` at all took a
+ * leaders seat, on a board that ranked those same bytes as a player key.
+ */
+test('an other with no player key is never a leader', () => {
+  const far = { entryId: id(5), x: 900 * 65536, z: 0 };              // no player key
+  const a = { entryId: id(6), playerPubkey: id(6), x: 65536, z: 0 };
+  const b = { entryId: id(7), playerPubkey: id(7), x: 2 * 65536, z: 0 };
+  const viewer = { entryId: id(9), x: 0, z: 0 };
+
+  // a board that ranks the FAR one's entry-id bytes as though they were a
+  // player key - the only way the old fallback could be seen
+  const board = { rows: [{ playerPubkey: id(5), rank: 1 }] };
+
+  const set = interestSet(viewer, [far, a, b], { limit: 2, board })
+    .map((o) => o.entryId[31]);
+  assert.equal(set.includes(5), false,
+    'a truck with no player key took a leaders seat under its entry id');
+  assert.deepEqual(set.sort(), [6, 7], 'the seats did not go to the nearest');
+
+  // and the same truck WITH the key is a leader, so this is the key and not
+  // the distance doing the work
+  const named = { ...far, playerPubkey: id(5) };
+  const withKey = interestSet(viewer, [named, a, b], { limit: 2, board })
+    .map((o) => o.entryId[31]);
+  assert.equal(withKey.includes(5), true, 'the board\'s leader lost its seat');
+});
+
+/**
+ * AND THE BOARD REACHES THE FUNCTION A NODE ACTUALLY CALLS.
+ *
+ * `fanOut` is what runs once per broadcast; `interestSet` is what it calls. A
+ * refactor that dropped the board on the way through would empty the leaders
+ * half for every player at once, and only the `interestSet` tests would have
+ * noticed.
+ */
+test('fanOut carries the board through to every viewer', () => {
+  const players = [
+    { entryId: id(1), playerPubkey: id(1), x: 900 * 65536, z: 0 },   // far, ranked 1
+    { entryId: id(2), playerPubkey: id(2), x: 65536, z: 0 },
+    { entryId: id(3), playerPubkey: id(3), x: 2 * 65536, z: 0 },
+    { entryId: id(4), playerPubkey: id(4), x: 3 * 65536, z: 0 },
+  ];
+  const board = boardOf([[1, 900]]);
+
+  const seen = (r, n) => [...r.sets.values()][n].map((o) => o.entryId[31]).sort();
+  const withBoard = fanOut(players, { limit: 2, board });
+  const without = fanOut(players, { limit: 2 });
+
+  assert.deepEqual(seen(withBoard, 1), [1, 3], 'the leader did not reach this viewer');
+  assert.deepEqual(seen(without, 1), [3, 4], 'without a board the nearest should fill both');
+  assert.notDeepEqual(seen(withBoard, 1), seen(without, 1),
+    'the board made no difference, so fanOut is dropping it');
+
+  // every viewer gets the same budget either way
+  assert.equal(withBoard.frames, without.frames);
+});
