@@ -4,7 +4,7 @@
 
 import { Writer } from './encode.js';
 import { taggedHash, fromHex, toHex } from './hash.js';
-import { TAG, ROLES, PROTOCOL_VERSION, TYPE_CENSUS_LEAF } from './constants.js';
+import { TAG, ROLES, PROTOCOL_VERSION, TYPE_CENSUS_LEAF, networkOf } from './constants.js';
 import { parseTransaction, commitmentsOf, witnessItemsOf, blockMerkleRoot } from './tx.js';
 import {
   recognizeBond, isTaprootOutput, BOND_UNCHECKED, chainWork, merkleRootOf, blockHashOf,
@@ -728,6 +728,14 @@ export function resolveCensus(entries, { contract, resolve, verifyAdvert, bond, 
   // facts are READ, the claims are compared against them, and a disagreement
   // excludes the entry by name rather than being quietly overwritten - a list
   // that lies about the chain is a list to distrust, not to correct.
+  // WHICH NETWORK THIS ROUND IS FOR, off its own contract. A contract naming a
+  // network this build has no genesis for is refused rather than checked
+  // against a guess: `networkOf` answers null, and a census that cannot say
+  // where to look for a bond cannot say a bond is findable.
+  const network = contract && contract.networkId ? networkOf(contract.networkId) : undefined;
+  if (contract && contract.networkId && network === null)
+    return { ok: false, why: 'that round names a network this build has no genesis for' };
+
   let facts = null;
   let depth = null;
   if (view) {
@@ -767,7 +775,15 @@ export function resolveCensus(entries, { contract, resolve, verifyAdvert, bond, 
     // the key a node's own keys produce, and the census is where that has to
     // be asked, because this is what decides who may hold a round. Without the
     // set the census counts what it always counted and still lists the gap.
-    const output = recognizeBond(read.tx, e.vout, read.advert, bond ? { bond } : {});
+    // THE MARKER IS CHECKED ON THE CONTRACT'S OWN NETWORK. `recognizeBond`
+    // defaults to regtest, and the census held the round's `networkId` and
+    // never passed it - so a testnet4 census would have looked for the regtest
+    // marker, which is a different address, and accepted a bond posted on
+    // another chain. 5A.2 makes that dust output the whole of findability.
+    const output = recognizeBond(read.tx, e.vout, read.advert, {
+      ...(bond ? { bond } : {}),
+      ...(network ? { network } : {}),
+    });
     if (!output.ok) { excluded.push({ ...e, why: output.why }); continue; }
 
     let chainSays = null;

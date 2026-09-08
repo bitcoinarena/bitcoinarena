@@ -679,7 +679,13 @@ const BOND_MARKER = BOND_MARKER_MAINNET;
 
 function bondMarker(network) {
   if (network === 'regtest') return BOND_MARKER_REGTEST;
-  if (network === 'testnet') return BOND_MARKER_TESTNET;
+  // BOTH NAMES FOR ONE NETWORK, as `networkAnchor` already takes them. The
+  // chain is called `bitcoin-testnet4` in genesis and `testnet` here, and a
+  // census that looked up its marker by the id got 'testnet4' back and was
+  // told no marker had been chosen - for a network that has one. Two
+  // vocabularies for one chain is a translation waiting to be forgotten at a
+  // call site, so both are answered here instead.
+  if (network === 'testnet' || network === 'testnet4') return BOND_MARKER_TESTNET;
   throw new Error(
     'BOND_MARKER for ' + String(network || 'mainnet') + ' has not been chosen. '
     + 'Regtest and testnet are set; mainnet is fixed once, before the first '
@@ -709,6 +715,28 @@ function networkAnchor(network) {
   if (network === 'regtest') return NETWORK_ID_REGTEST;
   if (network === 'testnet4' || network === 'testnet') return NETWORK_ID_TESTNET4;
   throw new Error('NETWORK_ID for ' + network + ' has not been chosen');
+}
+
+/**
+ * AND THE SAME QUESTION BACKWARDS: which network is this id?
+ *
+ * A round contract names its network by ID, and the findability rule names it
+ * by MARKER - "every bond funding transaction MUST also pay a dust output to
+ * BOND_MARKER" (5A.2), one address per network. A census holding the id and
+ * checking the marker of some other network is checking a fact about a chain
+ * it is not on, and the markers differ, so it would accept a bond posted
+ * somewhere else entirely.
+ *
+ * Null for an id this build does not know: a contract for a network nobody
+ * here has genesis for is not a contract whose bonds can be found, and saying
+ * so beats guessing regtest.
+ */
+function networkOf(networkId) {
+  if (!(networkId instanceof Uint8Array) || networkId.length !== 32) return null;
+  const same = (a) => a.every((b, i) => b === networkId[i]);
+  if (same(NETWORK_ID_REGTEST)) return 'regtest';
+  if (same(NETWORK_ID_TESTNET4)) return 'testnet4';
+  return null;
 }
 
 /**

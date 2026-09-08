@@ -517,3 +517,70 @@ test('RESOLVE reads spentness and depth off the chain rather than off the entry'
   assert.equal(blind.chainChecked, false);
   assert.equal(blind.unchecked.some((u) => /unspent and deep enough/.test(u)), true);
 });
+
+/**
+ * THE MARKER IS THE ONE THE ROUND'S OWN NETWORK USES.
+ *
+ * 5A.2: "every bond funding transaction MUST also pay a dust output to
+ * BOND_MARKER... Without it the census is unfindable in practice." One address
+ * per network, and they differ. The census held the round's `networkId` and
+ * passed nothing, so `recognizeBond` fell back to regtest - and a testnet4
+ * census would have accepted a bond posted on regtest, because it was looking
+ * for the wrong dust output.
+ */
+test('a census checks the marker of its own network, not the default', async () => {
+  const { NETWORK_ID_REGTEST, NETWORK_ID_TESTNET4 } = await import('../src/genesis-ids.js');
+  const { bondMarker } = await import('../src/constants.js');
+
+  // The two markers really are different addresses.
+  assert.notDeepEqual(bondMarker('regtest'), bondMarker('testnet'));
+
+  const onRegtest = bondTransaction(advertFor(0x11), {
+    previousTxid: b32(0xa1), previousVout: 0, network: 'regtest',
+  });
+  const onTestnet = bondTransaction(advertFor(0x11), {
+    previousTxid: b32(0xa2), previousVout: 0, network: 'testnet',
+  });
+  const entryFor = (tx) => ({
+    txid: parseTransaction(tx).txid, vout: 0, pubkey: b32(0x11),
+    bondSats: 60000n, height: 900000, roles: ['game'], spent: false,
+  });
+  const round = (networkId) => ({
+    bondMinSats: 50000n, protocolVersion: PROTOCOL_VERSION, networkId,
+  });
+
+  // A TESTNET4 ROUND REFUSES THE REGTEST MARKER and takes its own.
+  const wrongChain = resolveCensus([entryFor(onRegtest)], {
+    contract: round(NETWORK_ID_TESTNET4), resolve: () => ({ transaction: onRegtest }),
+  });
+  assert.equal(wrongChain.eligible.length, 0, 'a testnet4 census counted a regtest bond');
+  assert.match(wrongChain.excluded[0].why, /no dust output to BOND_MARKER/);
+
+  const rightChain = resolveCensus([entryFor(onTestnet)], {
+    contract: round(NETWORK_ID_TESTNET4), resolve: () => ({ transaction: onTestnet }),
+  });
+  assert.equal(rightChain.eligible.length, 1,
+    `a testnet4 census refused a testnet4 bond: ${rightChain.excluded.map((e) => e.why).join(' | ')}`);
+
+  // AND THE MIRROR: a regtest round takes the regtest marker and not the other.
+  assert.equal(resolveCensus([entryFor(onRegtest)], {
+    contract: round(NETWORK_ID_REGTEST), resolve: () => ({ transaction: onRegtest }),
+  }).eligible.length, 1);
+  assert.equal(resolveCensus([entryFor(onTestnet)], {
+    contract: round(NETWORK_ID_REGTEST), resolve: () => ({ transaction: onTestnet }),
+  }).eligible.length, 0, 'a regtest census counted a testnet4 bond');
+
+  // A NETWORK THIS BUILD HAS NO GENESIS FOR IS REFUSED, not guessed at.
+  const nowhere = resolveCensus([entryFor(onRegtest)], {
+    contract: round(b32(0x77)), resolve: () => ({ transaction: onRegtest }),
+  });
+  assert.equal(nowhere.ok, false);
+  assert.match(nowhere.why, /no genesis for/);
+
+  // and a contract with no networkId behaves as before, so nothing that used
+  // to work stopped working
+  assert.equal(resolveCensus([entryFor(onRegtest)], {
+    contract: { bondMinSats: 50000n, protocolVersion: PROTOCOL_VERSION },
+    resolve: () => ({ transaction: onRegtest }),
+  }).eligible.length, 1);
+});
