@@ -50,6 +50,7 @@ import { CLOSED } from './store.js';
 import { Round } from './round.js';
 import { Verifier } from './verify.js';
 import { Ghosts } from './ghosts.js';
+import { Roster } from './roster.js';
 
 const read = (req) => new Promise((resolve, reject) => {
   const parts = [];
@@ -122,8 +123,13 @@ export const GHOST_BACKLOG_BYTES = 262144;
 export const NOTHING_IS_FUNDED = () => false;
 
 export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FUNDED,
-  randomnessFor, peers = [] } = {}) {
+  randomnessFor, chainFor, peers = [] } = {}) {
   const round = new Round(db);
+
+  // WHO MAY HOLD A ROUND, from the chain. The census stopped being library
+  // code here: this is the daemon's only caller of it, and `chainFor` is the
+  // blocks - asked for, never invented, the same way the randomness is.
+  const roster = new Roster(round, { ...(chainFor ? { chainFor } : {}) });
 
   // WHAT HEARS A ROUND CLOSING. Section 13 replays once the run is over, so
   // the close is the event and this is what listens for it. The world secret
@@ -323,6 +329,28 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           ...CORS,
         });
         return res.end(Buffer.from(r.bytes));
+      }
+
+      // WHO IS ON THE COMMITTEE FOR THIS ROUND, answered off the chain: the
+      // census at `census_height`, then the round's own lottery over it. A
+      // round whose census is too small to hold one is refused BY NAME here,
+      // not quietly served with a shorter committee.
+      if (req.method === 'GET' && url.pathname === '/committee') {
+        const id = Buffer.from(url.searchParams.get('round') || '', 'hex');
+        const role = url.searchParams.get('role') || 'game';
+        if (id.length !== 32) return text(res, 400, 'that is not a round id');
+        const seats = roster.committeeFor(id, role);
+        if (!seats.ok) return text(res, 409, seats.why);
+        res.writeHead(200, {
+          'content-type': 'application/octet-stream',
+          'x-eligible': String(seats.eligible),
+          'x-seats': String(seats.committee.length),
+          'x-census-root': toHex(seats.root),
+          ...CORS,
+        });
+        const out = new Uint8Array(seats.committee.length * 32);
+        seats.committee.forEach((e, i) => out.set(e.pubkey, i * 32));
+        return res.end(Buffer.from(out));
       }
 
       return text(res, 404, 'no such door');
@@ -531,7 +559,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
 
   return new Promise((resolve) => {
     http.listen(port, host, () => resolve({
-      http, wss, round, host, verifier, ghosts,
+      http, wss, round, host, verifier, ghosts, roster,
       watching: () => watching.size,
       shed: () => shed,
       port: http.address().port,
