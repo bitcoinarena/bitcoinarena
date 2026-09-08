@@ -12,6 +12,15 @@ import { selectCommittee, weightOf, ticketFor } from '../src/sortition.js';
 import { computePayoutTable, rankWeights, payingRanks, DELIVERED, FAILED, FORFEIT, VOID } from '../src/payout.js';
 import { encodeRoundContract, decodeRoundContract, roundId, contractWarnings } from '../src/contracts.js';
 
+/**
+ * A view spanning the census height: from it to `tip`. A view that begins
+ * after `census_height` carries no block the census is about and is refused,
+ * so a fixture cannot start at the tip and call itself a chain.
+ */
+const spanning = (from, tip) =>
+  minedChain(Array.from({ length: tip - from + 1 }, () => ({ transactions: [] })), from);
+
+
 const b32 = (n) => new Uint8Array(32).fill(n);
 const pk = (n) => b32(n);
 
@@ -70,7 +79,7 @@ test('the census is immutable for a height', () => {
                        height: 800000 + n, roles: ['game'], spent: false });
   const args = {
     contract: { censusHeight: 900000, censusConfirmations: 6 },
-    view: minedChain([{ transactions: [] }], 900100),
+    view: spanning(900000, 900100),
   };
   const a = commitCensus([mk(3), mk(1), mk(2)], args);
   const b = commitCensus([mk(2), mk(3), mk(1)], args);
@@ -84,7 +93,7 @@ test('immature and spent bonds are excluded', () => {
   const c = commitCensus(
     [mk(1, 800000, false), mk(2, 900099, false), mk(3, 800000, true)],
     { contract: { censusHeight: 900000, censusConfirmations: 6 },
-      view: minedChain([{ transactions: [] }], 900100) });
+      view: spanning(900000, 900100) });
   assert.deepEqual(c.entries.map((e) => e.txid[0]), [1]);
 });
 

@@ -159,6 +159,39 @@ test('a chain that ends before the census height is refused, not counted backwar
 });
 
 /**
+ * AND A CHAIN THAT BEGINS AFTER THE CENSUS HEIGHT IS REFUSED TOO - the mirror
+ * of the rule above.
+ *
+ * Measured: it returned ok, an empty census, and "no such outpoint between
+ * height 900001 and 900000", a range that runs backwards, from a view that had
+ * not seen one block the census is about.
+ */
+test('a chain that begins after the census height is refused, not answered emptily', () => {
+  const after = (from) => {
+    const blocks = [];
+    for (let h = from; h <= from + 4; h++) blocks.push({ transactions: [] });
+    return minedChain(blocks, from);
+  };
+
+  for (const from of [HEIGHT + 1, HEIGHT + 5]) {
+    const seen = derive([after(from)]);
+    assert.equal(seen.ok, false, `a view starting at ${from} was answered`);
+    assert.match(seen.why,
+      new RegExp(`begins at height ${from}, after this round's census height ${HEIGHT}`));
+    assert.equal(/between height \d+ and \d+/.test(seen.why), false,
+      'a backwards range was reported as a search');
+  }
+
+  // one block, exactly at the census height, is a view of this census: it
+  // begins at it and ends at it, and both boundaries are inclusive
+  const exact = minedChain([{ transactions: [BOND] }], HEIGHT);
+  const seen = derive([exact]);
+  assert.equal(seen.ok, true, seen.why);
+  assert.equal(seen.entries.length, 0, 'a bond one confirmation deep passed a floor of six');
+  assert.match(seen.excluded[0].why, /1 confirmations deep where this round needs 6/);
+});
+
+/**
  * AND THE TIP IS NOT A NUMBER ANYBODY CAN NAME. There is no argument left to
  * pass one through, and a hand-made object claiming to be a checked view is
  * refused: the stamp is a module-private symbol.

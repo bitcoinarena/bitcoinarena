@@ -114,6 +114,17 @@ function depthRuleOf(contract, view) {
       `that chain ends at height ${view.tipHeight}, before this round's census `
       + `height ${contract.censusHeight}`);
 
+  // AND A VIEW THAT BEGINS AFTER IT CARRIES NO BLOCK THE CENSUS IS ABOUT.
+  // Measured: it returned ok, an empty census, and the reason "no such outpoint
+  // between height 900001 and 900000" - a range that runs backwards, from a
+  // view that had not seen a single block at or before the census height. The
+  // mirror of the rule above: one end of the window has to be on each side of
+  // `census_height` or the view is not looking at this census at all.
+  if (view.firstHeight > contract.censusHeight)
+    throw new Error(
+      `that chain begins at height ${view.firstHeight}, after this round's census `
+      + `height ${contract.censusHeight}`);
+
   return {
     censusHeight: contract.censusHeight,
     censusConfirmations: contract.censusConfirmations,

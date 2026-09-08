@@ -21,6 +21,15 @@ import { encodeCheckpoint, checkpointId, NO_PREVIOUS } from '../src/checkpoint.j
 import { encodeCheckpointReceipt, receiptId } from '../src/receipt.js';
 import { chainOf as minedChain } from '../tools/chainview.js';
 
+/**
+ * A view spanning the census height: from it to `tip`. A view that begins
+ * after `census_height` carries no block the census is about and is refused,
+ * so a fixture cannot start at the tip and call itself a chain.
+ */
+const spanning = (from, tip) =>
+  minedChain(Array.from({ length: tip - from + 1 }, () => ({ transactions: [] })), from);
+
+
 const DIR = new URL('../../../test-vectors/protocol/', import.meta.url).pathname;
 const load = (n) => JSON.parse(readFileSync(DIR + n + '.json', 'utf8'));
 const b32 = (n) => new Uint8Array(32).fill(n);
@@ -46,7 +55,7 @@ test('the census root matches, and so does every leaf', () => {
   });
   const c = commitCensus(
     [mk(7, 100000, 800007), mk(3, 500000, 800003), mk(11, 100000, 800011), mk(5, 2000000, 800005)],
-    { contract: { censusHeight: 900000, censusConfirmations: 6 }, view: minedChain([{ transactions: [] }], 900100) });
+    { contract: { censusHeight: 900000, censusConfirmations: 6 }, view: spanning(900000, 900100) });
 
   assert.equal(c.entries.length, v.entries.length);
   c.entries.forEach((e, i) => {
