@@ -444,9 +444,18 @@ test('a peer that serves forged or foreign records adds nothing to the store', a
     const foreign = joinSignedResult(
       encodePlayerResult(elsewhere), ed25519.sign(resultId(elsewhere), peer));
 
-    const body = new Uint8Array(2 * SIGNED_RESULT_BYTES);
+    // AND ONE ABOUT ANOTHER PLAYER of this very round, signed impeccably by a
+    // real seat. A PlayerResult names no entry, so only the player check can
+    // refuse it - and without that check this record would take the seat's row
+    // under this entry and keep the seat's true answer out for good.
+    const somebodyElse = { ...mine, playerPubkey: b32(0x42), nodePubkey: ed25519.getPublicKey(peer) };
+    const wrongPlayer = joinSignedResult(
+      encodePlayerResult(somebodyElse), ed25519.sign(resultId(somebodyElse), peer));
+
+    const body = new Uint8Array(3 * SIGNED_RESULT_BYTES);
     body.set(forged, 0);
     body.set(foreign, SIGNED_RESULT_BYTES);
+    body.set(wrongPlayer, 2 * SIGNED_RESULT_BYTES);
 
     liar = createServer((req, res) => {
       res.writeHead(200, { 'content-type': 'application/octet-stream' });
@@ -456,7 +465,7 @@ test('a peer that serves forged or foreign records adds nothing to the store', a
     node.verifier.peers = [`http://127.0.0.1:${liar.address().port}`];
 
     const got = await node.verifier.gather(rid, eid);
-    assert.equal(got.fetched, 2, 'the peer served nothing to refuse');
+    assert.equal(got.fetched, 3, 'the peer served nothing to refuse');
     assert.equal(got.kept, 0, 'a forged or foreign record was written to the store');
     assert.equal(got.held, 1, 'the store grew from a peer that proved nothing');
     assert.equal(got.final, false, 'one seat of two was called final');

@@ -111,6 +111,10 @@ export const TAG = {
   censusLeaf: 'BLWP/v1/CensusLeaf',
   censusBranch: 'BLWP/v1/CensusBranch',
   ticket: 'BLWP/v1/Ticket',
+  // 5A.5's committee seed. Its own tag because this repo's H is a tagged hash
+  // everywhere else, and a seed that shared a tag with anything could be
+  // produced by hashing that other thing.
+  committeeSeed: 'BLWP/v1/CommitteeSeed',
   checkpoint: 'BLWP/v1/Checkpoint',
   checkpointReceipt: 'BLWP/v1/CheckpointReceipt',
   result: 'BLWP/v1/Result',

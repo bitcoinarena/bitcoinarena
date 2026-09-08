@@ -157,6 +157,12 @@ export class Verifier {
     if (!row) return { ok: false, why: 'no such round' };
     const contract = decodeRoundContract(new Uint8Array(row.contract));
 
+    // WHOSE RUN THIS IS, off the entry the node itself stores.
+    const mine = this.round.entriesOf(roundIdBytes)
+      .find((e) => hex(e.entryId) === hex(entryIdBytes));
+    if (!mine) return { ok: false, why: 'no such entry in that round' };
+    const playerPubkey = mine.entry.playerPubkey;
+
     let fetched = 0, kept = 0, refused = 0;
     for (const peer of this.peers) {
       let body;
@@ -170,7 +176,7 @@ export class Verifier {
       for (let at = 0; at + SIGNED_RESULT_BYTES <= body.length; at += SIGNED_RESULT_BYTES) {
         fetched++;
         const record = body.subarray(at, at + SIGNED_RESULT_BYTES);
-        if (this.#keepPeerResult(roundIdBytes, entryIdBytes, record)) kept++;
+        if (this.#keepPeerResult(roundIdBytes, entryIdBytes, record, playerPubkey)) kept++;
       }
     }
 
@@ -180,7 +186,7 @@ export class Verifier {
   }
 
   /** One record from a peer, believed only as far as it can be checked. */
-  #keepPeerResult(roundIdBytes, entryIdBytes, record) {
+  #keepPeerResult(roundIdBytes, entryIdBytes, record, playerPubkey) {
     let result, signature;
     try {
       const split = splitSignedResult(record);
@@ -188,10 +194,18 @@ export class Verifier {
       result = decodePlayerResult(split.body);
     } catch { return false; }
 
-    // IT MUST BE ABOUT THIS RUN. A record for another round or another player
-    // filed under this one would be a peer choosing what this node believes it
-    // holds - the same fault the transcript binding fixed on the way in.
+    // IT MUST BE ABOUT THIS RUN, and a PlayerResult names its round and its
+    // PLAYER - never an entry - so both are checked and the entry is what the
+    // player is looked up from.
+    //
+    // The player half is not tidiness. The store keys a result by (round,
+    // entry, signer), so a record about another player filed under this entry
+    // would take that seat's row - and the seat's true record, arriving later,
+    // would be ignored as a duplicate. One peer could then stop any seat's
+    // real answer from ever being stored, without forging a signature.
     if (hex(result.roundId) !== hex(roundIdBytes)) return false;
+    if (!(playerPubkey instanceof Uint8Array)
+      || hex(result.playerPubkey) !== hex(playerPubkey)) return false;
 
     const id = resultId(result);
     let ok = false;
