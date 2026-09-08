@@ -216,7 +216,10 @@ export function decodePayoutTable(bytes) {
 /** What §20's "nodes sign the payout-table hash" means, in bytes. */
 export const payoutTableId = (t) => taggedHash(TAG.payoutTable, encodePayoutTable(t));
 
-function compareBytes(a, b) {
+// Exported because `interest.js` needs the same total order over ids, and a
+// second copy of a comparator is a second place for it to drift - the reason
+// `slotsForRole` imports 22A's pool mapping rather than restating it.
+export function compareBytes(a, b) {
   for (let i = 0; i < a.length && i < b.length; i++)
     if (a[i] !== b[i]) return a[i] - b[i];
   return a.length - b.length;
