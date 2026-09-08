@@ -37,6 +37,7 @@ import { Writer, Reader } from './encode.js';
 import { taggedHash, toHex } from './hash.js';
 import { PROTOCOL_VERSION, TYPE_TRANSCRIPT, TAG } from './constants.js';
 import { encodeInputBatch, decodeInputBatch, batchId, batchTicks } from './batch.js';
+import { entryId } from './contracts.js';
 import {
   decodeCheckpoint, checkpointId, splitSigned, NO_PREVIOUS, SIGNED_CHECKPOINT_BYTES,
 } from './checkpoint.js';
@@ -212,5 +213,72 @@ export function flatten(t) {
     firstTick,
     ticks,
     liquidations: liquidations.map(([at, size]) => [at - firstTick, size]),
+  };
+}
+
+/**
+ * DOES THIS TRANSCRIPT BELONG TO THAT ENTRY, AND DID IT BEGIN WHERE THE ENTRY
+ * SAYS IT JOINED?
+ *
+ * 0.8: "Late join is a normal feature, not merely reconnect. Each accepted
+ * entrant receives the same contract-defined mission duration `T_run`, even
+ * when wall-clock start times differ." Section 7: "Late joins simply add more
+ * Entry Contracts. The Round Contract is never rewritten."
+ *
+ * So a late entrant's world does not begin at tick 0 - it begins at the tick
+ * their own Entry Contract names, and `joinTick` is the field that says which.
+ * Measured before this existed: an entry that joined at tick 50 had its
+ * transcript ACCEPTED beginning at 0, at 50 and at 500, all three, because
+ * `checkTranscript` is handed a transcript and never the entry it is for. A
+ * player could publish a run that started earlier than they joined, or one
+ * that skipped the first four hundred ticks, and every check passed.
+ *
+ * The entry is signed and the tick is in it, so this is the same discipline as
+ * everywhere else here: the thing being checked is bound to the thing that was
+ * signed, and whoever brings the transcript does not also get to choose what
+ * it is checked against.
+ *
+ * WHAT THIS CANNOT SAY is how LONG the run may be. 0.8's "same contract-defined
+ * mission duration T_run" needs `player_run_duration`, which section 6 names
+ * and this Round Contract does not carry - one of the eighteen absent names
+ * audited during item 16, parked because adding one moves every round id. It
+ * is reported as unchecked rather than assumed.
+ */
+export function transcriptBelongsToEntry(transcript, entry) {
+  if (!transcript || !Array.isArray(transcript.batches))
+    return { ok: false, why: 'that is not a transcript' };
+  if (!entry || !Number.isInteger(entry.joinTick))
+    return { ok: false, why: 'that entry names no join tick' };
+
+  const same = (a, b) => a instanceof Uint8Array && b instanceof Uint8Array
+    && a.length === b.length && a.every((v, i) => v === b[i]);
+
+  if (!same(entryId(entry), transcript.entryId))
+    return { ok: false, why: 'that is a different entry than the transcript names' };
+  if (!same(entry.roundId, transcript.roundId))
+    return { ok: false, why: 'that entry is for another round' };
+
+  if (!transcript.batches.length)
+    return {
+      ok: false,
+      why: 'that transcript carries no inputs, so there is nothing that began anywhere',
+    };
+
+  const first = batchTicks(transcript.batches[0]);
+  if (!first.length)
+    return { ok: false, why: 'that transcript begins with a batch carrying no ticks' };
+
+  if (first[0] !== entry.joinTick)
+    return {
+      ok: false,
+      why: `that transcript begins at tick ${first[0]} and that entry joined at `
+        + `${entry.joinTick}`,
+    };
+
+  return {
+    ok: true,
+    joinTick: entry.joinTick,
+    unchecked: ['the run length (section 6 names player_run_duration and this '
+      + 'contract does not carry it)'],
   };
 }
