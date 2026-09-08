@@ -43,3 +43,46 @@ for (const entry of index.vectors) {
     assert.equal(bundled.hash(b), entry.final);
   });
 }
+
+/**
+ * EVERY NAME THE MODULES EXPORT IS DECLARED IN THE BUNDLE.
+ *
+ * Found the hard way: the bundler stripped `export { ... }` lists with a lazy
+ * match that CROSSED LINES, so an `export { UNITS, ARMOUR_MASK };` early in
+ * `sim.js` and an `export { TICK_DT } from './tick.js';` later in the same
+ * file matched as one span and deleted the fifty-five lines between them -
+ * including `export const HALF_X`. The bundle kept nine USES of it and no
+ * declaration, so the page threw "HALF_X is not defined" on the first step.
+ * Nothing noticed, because the committed bundle predated the re-export and the
+ * suites load the committed file.
+ *
+ * A test that runs the bundle catches it only for the paths it drives. This
+ * catches it for every name, which is the shape of the fault: a declaration
+ * silently gone while its callers stay.
+ */
+test('every exported name in src is declared in the bundle', async () => {
+  const { readFileSync, readdirSync } = await import('node:fs');
+  const src = new URL('../src/', import.meta.url).pathname;
+  const dist = readFileSync(new URL('../dist/blwp-core.js', import.meta.url).pathname, 'utf8');
+
+  // THE MODULES THE BUNDLE ACTUALLY CARRIES, read off its own markers. Files
+  // nothing imports are not in it and their exports are not missing - only a
+  // name from a module that IS in there and has lost its declaration is the
+  // fault this catches.
+  const included = [...dist.matchAll(/^\/\/ ---- (\S+\.js)$/gm)].map((m) => m[1]);
+  assert.ok(included.length >= 10, `the bundle names only ${included.length} modules`);
+  const files = included.map((rel) => src + rel);
+
+  const missing = [];
+  let checked = 0;
+  for (const file of files) {
+    for (const m of readFileSync(file, 'utf8')
+      .matchAll(/^export\s+(?:async\s+)?(?:const|function|class|let|var)\s+([A-Za-z_$][\w$]*)/gm)) {
+      checked++;
+      const declared = new RegExp(`^(?:async\\s+)?(?:const|function|class|let|var)\\s+${m[1]}\\b`, 'm');
+      if (!declared.test(dist)) missing.push(`${m[1]} (${file.split('/').pop()})`);
+    }
+  }
+  assert.ok(checked > 50, `only ${checked} exported names were checked`);
+  assert.deepEqual(missing, [], `the bundle uses names it never declares: ${missing.join(', ')}`);
+});

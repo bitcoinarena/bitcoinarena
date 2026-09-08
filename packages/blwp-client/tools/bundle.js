@@ -67,8 +67,19 @@ for (const file of order) {
   const body = readFileSync(file, 'utf8')
     .replace(/^import\s[\s\S]*?;\s*$/gm, '')
     .replace(/^export\s+\*\s+from\s+[^;]*;\s*$/gm, '')
-    .replace(/^export\s+\{[\s\S]*?\}\s*from\s+[^;]*;\s*$/gm, '')
-    .replace(/^export\s+\{[\s\S]*?\};\s*$/gm, '')
+    // A LIST OF NAMES ON ONE LINE, and not a lazy match that crosses them.
+    //
+    // These two used to read `\{[\s\S]*?\}`, which spans lines: with an
+    // `export { A, B };` early in a file and an `export { C } from './x.js';`
+    // later, the match started at the first and ran to the second, DELETING
+    // every declaration in between. Measured on `core/src/sim.js`: line 51's
+    // `export { UNITS, ARMOUR_MASK };` and line 106's `export { TICK_DT } from
+    // './tick.js';` swallowed 55 lines, including `export const HALF_X` - and
+    // the bundle still carried nine USES of it, so the page threw
+    // "HALF_X is not defined" on the first step. The committed bundle predated
+    // that re-export, which is the only reason anybody had a working one.
+    .replace(/^export\s*\{[^{}]*\}\s*from\s+[^;]*;\s*$/gm, '')
+    .replace(/^export\s*\{[^{}]*\}\s*;\s*$/gm, '')
     .replace(/^export\s+(async\s+)?(const|function|class|let|var)\s/gm, '$1$2 ');
   out += '\n// ---- ' + relative(ROOT, file) + '\n' + body;
 }

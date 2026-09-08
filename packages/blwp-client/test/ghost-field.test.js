@@ -198,6 +198,17 @@ test('the page ships the client it is written against, and one consumer of onGho
     `the template ships ${shipped.length} bytes and the bundle is ${built.length}`);
   assert.equal(Buffer.compare(shipped, built), 0, 'the template\'s client is not this bundle');
 
+  // AND THE CORE THE PAGE LOADS IS THE ONE THE PACKAGES BUILD. Same class of
+  // fault, found the same day: the template's `blwp-core.js` was stale, and
+  // the moment anything re-bundled it the page got a core whose `HALF_X`
+  // declaration the bundler had eaten - nine uses, no declaration, a throw on
+  // the first step. Two copies of a built file drift; a test that compares
+  // them does not.
+  const shippedCore = readFileSync(root + 'unity-proto/Assets/WebGLTemplates/BtcLogistics/blwp-core.js');
+  const builtCore = readFileSync(root + 'packages/core/dist/blwp-core.js');
+  assert.equal(Buffer.compare(shippedCore, builtCore), 0,
+    `the template ships ${shippedCore.length} bytes of core and the build is ${builtCore.length}`);
+
   // AND THE PAGE ASKS. `blwp.jslib` is the one file these suites cannot load,
   // so what is checked here is that it calls the module that CAN be measured -
   // not that it reimplements the rule beside it.
