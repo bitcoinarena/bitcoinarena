@@ -79,7 +79,7 @@ export function isSocketAddress(endpoint) {
  * this that takes an empty list and shrugs is the version that ships.
  */
 export function reach({
-  chain, chains, transaction, signedAdvert, branch, position, committee, bond,
+  chain, chains, transaction, signedAdvert, branch, position, committee, bond, network,
 }) {
   if (!committee || !committee.length)
     return { ok: false, why: 'no committee to check the node against' };
@@ -107,7 +107,7 @@ export function reach({
     // The bond option travels with it: a page holding the network's
     // arbitration set and a curve can have the output key rebuilt, and one
     // that holds neither gets exactly what it got before.
-    const seen = acceptAdvert({ transaction, signedAdvert, header, branch, position, bond });
+    const seen = acceptAdvert({ transaction, signedAdvert, header, branch, position, bond, network });
     if (!seen.ok) {
       // A header that proves the transaction and then fails on the commitment
       // is a more specific answer than "not in this one", and it is the answer

@@ -330,3 +330,50 @@ test('a signed advertisement over somebody else\'s bond output is refused', asyn
   assert.equal(STILL_UNCHECKED.some((u) => /advertisement signature/.test(u)), false);
   assert.equal(honest.length, 32);
 });
+
+/**
+ * THE DOOR A PLAYER WALKS THROUGH CHECKS THE MARKER OF THE ROUND'S NETWORK.
+ *
+ * 5A.2 makes the dust output to BOND_MARKER the whole of findability, one
+ * address per network. This door had no opinion about which network it was on,
+ * so it looked for the regtest output whatever the round said - and what comes
+ * back from here is an ENDPOINT a player connects to, backed by a bond that
+ * might have been posted on another chain entirely.
+ */
+test('an advertisement is checked against its own network\'s marker, not always regtest', async () => {
+  const { bondMarker } = await import('../../protocol/src/constants.js');
+  assert.notDeepEqual(bondMarker('regtest'), bondMarker('testnet'));
+
+  const a = advertFor('wss://bonded.example:443');
+  const at = (tx) => {
+    const sibling = new Uint8Array(32).fill(0x99);
+    return { ...blockOf(hash256, [parseTransaction(tx).txid, sibling]), branch: [sibling], position: 0 };
+  };
+  const onRegtest = bondTransaction(a, {
+    signature: ed25519.sign(advertId(a), secret), network: 'regtest',
+  });
+  const onTestnet = bondTransaction(a, {
+    signature: ed25519.sign(advertId(a), secret), network: 'testnet', previousTxid: b32(0xb2),
+  });
+
+  // A TESTNET ROUND TAKES THE TESTNET BOND AND REFUSES THE REGTEST ONE.
+  const good = acceptSignedAdvert({ transaction: onTestnet, ...at(onTestnet), network: 'testnet' });
+  assert.equal(good.ok, true, good.why);
+  assert.equal(good.endpoint, a.endpoint);
+
+  const wrongChain = acceptSignedAdvert({ transaction: onRegtest, ...at(onRegtest), network: 'testnet' });
+  assert.equal(wrongChain.ok, false, 'a testnet round took a bond posted on regtest');
+  assert.match(wrongChain.why, /no dust output to BOND_MARKER/);
+
+  // AND THE MIRROR, so the check is the network's and not a preference for one.
+  assert.equal(acceptSignedAdvert({ transaction: onRegtest, ...at(onRegtest), network: 'regtest' }).ok,
+    true);
+  assert.equal(acceptSignedAdvert({ transaction: onTestnet, ...at(onTestnet), network: 'regtest' }).ok,
+    false, 'a regtest round took a bond posted on testnet');
+
+  // WITH NO NETWORK NAMED it behaves as it always did - regtest - so nothing
+  // that worked before stopped working, and a caller that knows the round is
+  // the one that says otherwise.
+  assert.equal(acceptSignedAdvert({ transaction: onRegtest, ...at(onRegtest) }).ok, true);
+  assert.equal(acceptSignedAdvert({ transaction: onTestnet, ...at(onTestnet) }).ok, false);
+});

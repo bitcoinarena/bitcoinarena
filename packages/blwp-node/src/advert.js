@@ -50,14 +50,14 @@ export const STILL_UNCHECKED = [
  * transaction that is not theirs, and those are three different mistakes.
  */
 export function acceptSignedAdvert({
-  transaction, signedAdvert, header, branch, position, bond,
+  transaction, signedAdvert, header, branch, position, bond, network,
 }) {
   // THE BOND OPTION GOES THROUGH. A door that swallowed it would check the
   // signature and then accept whatever thirty-two bytes the poster put in the
   // output - and a caller holding the network's arbitration set would have no
   // way to say so. What the daemon does with it is not this letter's; that it
   // CAN be said is.
-  const seen = acceptAdvert({ transaction, signedAdvert, header, branch, position, bond });
+  const seen = acceptAdvert({ transaction, signedAdvert, header, branch, position, bond, network });
   if (!seen.ok) return seen;
 
   if (!(seen.signature instanceof Uint8Array) || seen.signature.length !== 64)

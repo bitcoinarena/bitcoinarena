@@ -423,7 +423,9 @@ export function recognizeBond(tx, vout, advert, { network = 'regtest', bond } = 
  * that owns a verifier is the one that says whether the signature is good.
  * `blwp-client` refuses the session if it is not.
  */
-export function acceptAdvert({ transaction, signedAdvert, header, branch, position, bond }) {
+export function acceptAdvert({
+  transaction, signedAdvert, header, branch, position, bond, network,
+}) {
   let tx;
   try { tx = parseTransaction(transaction); }
   catch (e) { return { ok: false, why: `that is not a transaction: ${e.message}` }; }
@@ -468,7 +470,20 @@ export function acceptAdvert({ transaction, signedAdvert, header, branch, positi
   // and with the same answer when it is given the same facts: an endpoint
   // whose bond is not the bond that node's keys produce is an endpoint backed
   // by somebody else's output.
-  const seen = recognizeBond(tx, taken.advert.bondVout, taken.advert, bond ? { bond } : {});
+  // THE MARKER IS THE ONE THE ROUND'S NETWORK USES, and this door had no
+  // opinion about which network it was on - so it looked for the regtest dust
+  // output whatever the round said, and a bond posted on another chain would
+  // have satisfied 5A.2's findability rule here. The census learned this a
+  // commit ago; the door a PLAYER walks through is the one where it matters
+  // most, because what comes back is an endpoint they will connect to.
+  //
+  // It arrives from the caller, like `bond`: this function is handed a
+  // transaction and a proof, never a contract, so it cannot read the network
+  // off anything it holds.
+  const seen = recognizeBond(tx, taken.advert.bondVout, taken.advert, {
+    ...(bond ? { bond } : {}),
+    ...(network ? { network } : {}),
+  });
   if (!seen.ok) return { ok: false, why: seen.why };
 
   return {
