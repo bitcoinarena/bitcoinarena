@@ -18,7 +18,8 @@
 // key, which is intrinsic and cannot be chosen after the fact - the same tie
 // discipline the census needed on the tip hash and interest management needed
 // on the entry id.
-import { RESULTS_FOR_FINAL, provisionallyFinal } from './result.js';
+import { RESULTS_FOR_FINAL, provisionallyFinal, resultId } from './result.js';
+import { roundId } from './contracts.js';
 import { VOID, ENTRY_VOID, compareBytes, computePayoutTable } from './payout.js';
 
 /**
@@ -180,15 +181,48 @@ export function leaderboard(rows, {
   if (!Array.isArray(rows))
     return { ok: false, why: 'no results to build a board from' };
 
+  // WHICH ROUND THIS BOARD IS OF, and the contract answers it - not a caller.
+  //
+  // Section 1: "All accepted players belong to the SAME logical round and
+  // payout pool." A board is of one round or it is of nothing: hand it two
+  // rounds' finals and it would interleave them into a single rank sequence,
+  // and a player who came third of four would be shown seventh of eight
+  // without a single forged signature. Nothing in the finality check would
+  // notice, because a foreign round's results are perfectly well signed - by
+  // a foreign committee.
+  //
+  // The id is COMPUTED from the contract, not read off a field a caller
+  // fills. There is no `thisRound` argument for the same reason there is no
+  // payout table argument: a number a caller picks is a number the operator
+  // picks. If the contract cannot be hashed the board refuses to build,
+  // because a board that cannot say which round it is of is worse than none.
+  let round;
+  try { round = roundId(contract); }
+  catch (err) {
+    return { ok: false, why: `that round contract cannot be hashed, so there is no round to check results against: ${err.message}` };
+  }
+
   const committee = contract.nodes;
   const ranked = [];
   const unranked = [];
   const excluded = [];
 
+  // ONE FINAL PER PLAYER. Keyed by the player, holding the result's id, so a
+  // repeat can be told from a contradiction.
+  const byPlayer = new Map();
+
   for (const row of rows) {
     const r = row && row.result;
     if (!r || !(r.playerPubkey instanceof Uint8Array)) {
       excluded.push({ why: 'that row carries no player result' });
+      continue;
+    }
+
+    if (!(r.roundId instanceof Uint8Array) || compareBytes(r.roundId, round) !== 0) {
+      excluded.push({
+        playerPubkey: r.playerPubkey,
+        why: 'that result is final for a different round than this contract',
+      });
       continue;
     }
 
@@ -201,12 +235,38 @@ export function leaderboard(rows, {
       continue;
     }
 
+    // A PLAYER APPEARS ONCE, AND THE BOARD DOES NOT PICK BETWEEN CLAIMS.
+    //
+    // The same final handed in twice is a repeat: one row, and every rank
+    // below it stays where it was. Two DIFFERENT finals for one player is not
+    // a repeat - it is a committee contradicting itself, and 14 makes that a
+    // conflict to be settled, not a presentation question. So the board shows
+    // neither and names both: choosing the higher score would let whoever
+    // obtained a second signature set decide a rank, and choosing the first
+    // one handed over would let arrival order decide it, which is the fault
+    // this whole file is built against.
+    const rid = resultId(r);
+    const key = hex(r.playerPubkey);
+    const prior = byPlayer.get(key);
+    if (prior) {
+      if (compareBytes(prior.rid, rid) === 0) {
+        excluded.push({
+          playerPubkey: r.playerPubkey,
+          why: 'that same final was handed in more than once',
+        });
+      } else {
+        prior.conflict = true;
+      }
+      continue;
+    }
+
     const entry = {
       playerPubkey: r.playerPubkey,
       outcome: r.outcome,
       score: r.score,
       signers: seen.signers,
     };
+    byPlayer.set(key, { rid, entry, conflict: false });
 
     // A REFUND IS NOT A PLACE. Section 18: "VOID and ENTRY_VOID entries neither
     // contribute to nor draw from the pool" - so ranking them last would put a
@@ -219,6 +279,23 @@ export function leaderboard(rows, {
     // pool: it played and lost, which is a place.
     if (entry.outcome === VOID || entry.outcome === ENTRY_VOID) unranked.push(entry);
     else ranked.push(entry);
+  }
+
+  // The contradicted players come off, deterministically: the exclusions are
+  // added in key order, so two nodes handed the same rows in different orders
+  // report the same list and not merely the same rows.
+  const conflicted = [...byPlayer.values()].filter((v) => v.conflict)
+    .sort((a, b) => compareBytes(a.entry.playerPubkey, b.entry.playerPubkey));
+  for (const v of conflicted) {
+    const drop = (list) => {
+      const i = list.indexOf(v.entry);
+      if (i >= 0) list.splice(i, 1);
+    };
+    drop(ranked); drop(unranked);
+    excluded.push({
+      playerPubkey: v.entry.playerPubkey,
+      why: 'two different results are final for that player, and the board is not the place to choose between them',
+    });
   }
 
   // The amounts, from the round's own inputs through section 20's function.

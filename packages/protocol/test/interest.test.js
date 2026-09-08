@@ -17,11 +17,29 @@ import {
 } from '../src/interest.js';
 import { leaderboard } from '../src/leaderboard.js';
 import { resultId, RESULTS_FOR_FINAL } from '../src/result.js';
+import { roundId } from '../src/contracts.js';
 import { DELIVERED, VOID } from '../src/payout.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const COMMITTEE = [1, 2, 3, 4, 5, 6, 7].map((n) => b32(0xc0 + n));
-const contract = { nodes: COMMITTEE };
+/**
+ * A WHOLE ROUND CONTRACT: the board is of one round, and it computes which
+ * round from the contract's own bytes, so a stub carrying only `nodes` has no
+ * id to check finals against and refuses to build a board at all.
+ */
+const contract = {
+  networkId: b32(0x4e), configHash: b32(0x43), censusConfirmations: 6,
+  gameVerifySlots: 7, settlementSlots: 7, simCoreHash: b32(1),
+  startTimeMs: 1000n, entryCloseMs: 2000n, objectionWindowMs: 600000n,
+  custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'BURN',
+  donationSetId: b32(0xd0), censusHeight: 900000,
+  censusRoot: b32(2), committeeSeed: b32(3), stakeMsat: 100000n,
+  bondMinSats: 50000n, blockTicks: 600, exposureReference: 1000,
+  corridorHalfWidth: 40, spawnFreeRadius: 20, timeFloor: 30, timeCeil: 150,
+  minScore: 1, rankNumerator: 3, rankDenominator: 4,
+  nodes: COMMITTEE,
+};
+const ROUND = roundId(contract);
 
 /**
  * A REAL BOARD, built by `leaderboard` from signed finals - not a hand-written
@@ -35,7 +53,7 @@ const contract = { nodes: COMMITTEE };
 const boardOf = (standings, outcome = DELIVERED) => leaderboard(
   standings.map(([p, score]) => {
     const result = {
-      roundId: b32(1), playerPubkey: id(p), outcome, score,
+      roundId: ROUND, playerPubkey: id(p), outcome, score,
       transcriptHash: b32(3), simCoreHash: b32(4), nodePubkey: COMMITTEE[0],
     };
     const rid = resultId(result);
