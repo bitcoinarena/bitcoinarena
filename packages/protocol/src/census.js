@@ -5,7 +5,8 @@
 import { Writer } from './encode.js';
 import { taggedHash, fromHex, toHex } from './hash.js';
 import { TAG, ROLES, PROTOCOL_VERSION, TYPE_CENSUS_LEAF } from './constants.js';
-import { parseTransaction } from './tx.js';
+import { parseTransaction, commitmentsOf, witnessItemsOf } from './tx.js';
+import { decodeAdvert, splitSignedAdvert, advertId } from './advert.js';
 
 /**
  * One census entry, encoded.
@@ -263,5 +264,150 @@ export function scanCensus(blocks, { censusHeight, minConfirmations, tipHeight, 
     entries: found,
     missing,
     census: buildCensus(found, { censusHeight, minConfirmations, tipHeight }),
+  };
+}
+
+/**
+ * 5A.4 STEP 2 (RESOLVE) AND THE 5A.3 FILTERS THAT NEED NOTHING PARKED.
+ *
+ * "RESOLVE: for each, read the committed H(advertisement) and retrieve the
+ * body from the node, a mirror, or any peer. Hash must match. UNRETRIEVABLE
+ * BODY -> EXCLUDED (identically for everyone: the hash is public, the content
+ * is missing for all)."
+ *
+ * That parenthesis is the whole reason this can be a rule at all. A missing
+ * body is missing for every participant, so excluding it keeps the census
+ * canonical instead of making it depend on who could reach what. An entry
+ * nobody can resolve is OUT, and it is out the same way everywhere.
+ *
+ * THREE OF 5A.3's SIX CRITERIA ARE APPLIED HERE, and they are the three that
+ * wait on nothing parked:
+ *
+ *   - the committed advertisement body is retrievable and hash-matching
+ *   - `bond_amount >= bond_min(role)`, the floor the ROUND names: "bond_min
+ *     (role) is named in the Round Contract, not global"
+ *   - the advertisement declares the role and a supported protocol version
+ *
+ * THE OTHER THREE ARE NOT WORKED AROUND. The bond script template cannot be
+ * read off a taproot output - 5A.3B is explicit that the paths nobody uses are
+ * never revealed - which is the same wall `BOND_MARKER` stands behind. And the
+ * advertisement signature needs a curve this package does not carry, exactly
+ * as `provesEquivocation` needs one from its caller. Both are named in the
+ * answer rather than silently passed.
+ *
+ * `resolve` is injected. It is handed an entry and returns the transaction
+ * that funded it, or nothing: retrieval is a fetch, and this package fetches
+ * nothing. A resolver that throws is a resolver that failed, and a body that
+ * cannot be had is excluded rather than allowed to break the census.
+ */
+/**
+ * The body an output commits to, or why there is none.
+ *
+ * The same reading `acceptAdvert` does, without its inclusion proof: bodies
+ * ride in the witness, an output commits to one by its tagged id, and the one
+ * taken is the one committed to. Order decides nothing - a transaction
+ * committing to two bodies would be one operator advertising twice, not an
+ * ambiguity to settle here.
+ */
+function resolveBody(seen, entry) {
+  let tx;
+  try { tx = parseTransaction(seen.transaction); }
+  catch (e) { return { ok: false, why: `that is not a transaction: ${e.message}` }; }
+
+  // IT HAS TO BE THIS ENTRY'S OWN TRANSACTION. 5A.4 resolves the body "for
+  // each" output, and a body is only that output's if the transaction is the
+  // one the outpoint names. Found by a test that failed honestly: handing back
+  // ANOTHER node's bond resolved happily, because a coherent transaction
+  // commits to its own body - so an entry at one outpoint could be resolved
+  // with an advertisement from somewhere else entirely, endpoint and all.
+  if (!entry.txid.every((b, i) => b === tx.txid[i]))
+    return { ok: false, why: 'that is a different transaction than the entry names' };
+
+  const commitments = commitmentsOf(tx);
+  if (!commitments.length)
+    return { ok: false, why: 'no output of that transaction commits to anything' };
+
+  const offered = [];
+  const read = (bytes) => {
+    try {
+      const { body } = splitSignedAdvert(bytes);
+      offered.push(decodeAdvert(body));
+    } catch { /* not a signed body; most witness items are not */ }
+  };
+  for (const item of witnessItemsOf(tx)) read(item);
+  if (seen.signedAdvert) read(seen.signedAdvert);
+
+  const taken = offered.find((a) =>
+    commitments.some((c) => c.length === 32 && advertId(a).every((b, i) => b === c[i])));
+  if (!taken)
+    return { ok: false, why: 'the bond output commits to a different advertisement' };
+  return { ok: true, advert: taken };
+}
+
+export function resolveCensus(entries, { contract, resolve, supportedVersions = [PROTOCOL_VERSION] }) {
+  if (!contract || typeof contract.bondMinSats !== 'bigint')
+    return { ok: false, why: 'that round names no bond floor to measure against' };
+  if (typeof resolve !== 'function')
+    return { ok: false, why: 'no way to retrieve an advertisement body' };
+
+  const eligible = [];
+  const excluded = [];
+
+  for (const e of entries) {
+    let seen = null;
+    try { seen = resolve(e); }
+    catch { seen = null; }
+
+    if (!seen || !seen.transaction) {
+      excluded.push({ ...e, why: 'the committed advertisement body could not be retrieved' });
+      continue;
+    }
+
+    // INCLUSION IS NOT RE-PROVED HERE, and that is deliberate. `acceptAdvert`
+    // bundles a merkle proof with the resolution because it is used where
+    // nothing has established the transaction is in the chain. SCAN has: it
+    // read the blocks. Demanding a header and a branch again would make
+    // RESOLVE ask for what step 1 already answered, and 5A.4 asks something
+    // narrower of it - read the committed hash, retrieve the body, match.
+    const read = resolveBody(seen, e);
+    if (!read.ok) { excluded.push({ ...e, why: read.why }); continue; }
+
+    // THE FLOOR IS THE ROUND'S. 5A.3: "bond_min(role) is named in the Round
+    // Contract, not global... a node is eligible for THAT ROUND or not."
+    if (e.bondSats < contract.bondMinSats) {
+      excluded.push({
+        ...e,
+        why: `that bond is ${e.bondSats} where this round's floor is ${contract.bondMinSats}`,
+      });
+      continue;
+    }
+
+    // AND THE ADVERTISEMENT HAS TO DECLARE WHAT IT IS. A body that names no
+    // role this census is for, or speaks no version this software does, is a
+    // node that has not said it can serve the round it is being counted into.
+    const roles = read.advert.roles || [];
+    if (!roles.length) { excluded.push({ ...e, why: 'that advertisement declares no role' }); continue; }
+
+    const versions = read.advert.protocolVersions || [];
+    if (!versions.some((v) => supportedVersions.includes(v))) {
+      excluded.push({
+        ...e,
+        why: `that advertisement speaks ${versions.join(', ') || 'no version'} and this `
+          + `census supports ${supportedVersions.join(', ')}`,
+      });
+      continue;
+    }
+
+    // The RESOLVED roles replace whatever the entry claimed: the body is what
+    // the bond committed to, and the entry beside it is somebody's summary.
+    eligible.push({ ...e, roles, advert: read.advert, nodePubkey: read.advert.nodePubkey });
+  }
+
+  return {
+    ok: true,
+    eligible,
+    excluded,
+    unchecked: ['bond script template (5A.3B: a taproot output hides it)',
+                'advertisement signature (no curve in this package)'],
   };
 }
