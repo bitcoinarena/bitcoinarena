@@ -16,7 +16,39 @@ import {
   joinSignedResult, splitSignedResult, decodePlayerResult, resultId, SIGNED_RESULT_BYTES,
 } from '../../protocol/src/result.js';
 import { decodeRoundContract } from '../../protocol/src/contracts.js';
+import { committeeSeedFromBeacon } from '../../protocol/src/beacon.js';
 import { ed25519 } from '@noble/curves/ed25519.js';
+
+/**
+ * WHAT A BEACON IS WORTH TO THIS NODE, worked out once per round.
+ *
+ * The published value feeds TWO seeds and they are not the same number:
+ *
+ *   world seed      H(round_randomness || pubkey || worldSecret || joinTick),
+ *                   per player, and what `replay` rebuilds the run from
+ *   committee seed  H(census roots || round_id || round_randomness), 5A.5,
+ *                   and what decides which nodes hold the round
+ *
+ * One SOURCE feeds both, because they must be the same round's randomness, and
+ * they stay two numbers because they answer different questions. Collapsing
+ * them would make a player's private world a function of the committee's seed.
+ *
+ * AND NEITHER IS PRODUCED FROM A VALUE THAT PROVES NOTHING. A hash with no
+ * height, or one from a height the round already committed to, is refused
+ * here - before a run is replayed rather than after - because a round whose
+ * committee could have been ground is not a round to sign a result for.
+ */
+function beaconFor(randomnessFor, contract, roundIdBytes, entry, entryId) {
+  const given = randomnessFor({ contract, roundIdBytes, entry, entryId });
+  const hash = given && (given.hash || (given instanceof Uint8Array ? given : undefined));
+  const height = given && given.height;
+  const seeded = committeeSeedFromBeacon(contract, {
+    roundId: roundIdBytes, randomness: hash, height,
+  });
+  return seeded.ok
+    ? { ok: true, hash, height, committeeSeed: seeded.seed, rootsAreOne: seeded.rootsAreOne }
+    : seeded;
+}
 
 /**
  * WHERE THE ROUND'S RANDOMNESS COMES FROM, AND IT IS NOT INVENTED HERE.
@@ -49,6 +81,8 @@ export class Verifier {
      * still not be a seat.
      */
     this.peers = peers;
+    /** The committee seed each closed round derived, by round id. */
+    this.seeds = new Map();
     this.pool = pool;
     /** What the last close produced, so a caller can wait for it or read it. */
     this.done = [];
@@ -76,6 +110,16 @@ export class Verifier {
 
     this.queued = [];
     const work = this.round.entriesOf(roundIdBytes).map(({ entryId, entry }) => {
+      // THE BEACON BEFORE THE REPLAY. A round whose committee could have been
+      // ground is not a round to spend a worker on, and it is certainly not
+      // one to sign a result for.
+      const beacon = beaconFor(this.randomnessFor, contract, roundIdBytes, entry, entryId);
+      if (!beacon.ok) {
+        this.queued.push({ entryId, objected: false, refused: beacon.why });
+        return Promise.resolve({ entryId, stored: false, why: beacon.why });
+      }
+      this.seeds.set(hex(roundIdBytes), beacon.committeeSeed);
+
       const transcript = this.round.transcript(roundIdBytes, entryId);
       const objected = this.round.objected(roundIdBytes, entryId);
       this.queued.push({ entryId, objected });
@@ -84,7 +128,8 @@ export class Verifier {
         objected,
         transcript,
         entry,
-        options: { roundRandomness: this.randomnessFor({ contract, roundIdBytes, entry, entryId }) },
+        // The WORLD seed's half of the same published value.
+        options: { roundRandomness: beacon.hash },
       }).then((answer) => this.#keep({ roundIdBytes, entryId, entry, contract, answer }));
     });
 
@@ -237,12 +282,16 @@ export class Verifier {
       .find((e) => hex(e.entryId) === hex(entryIdBytes));
     if (!found) return null;
 
+    const beacon = beaconFor(this.randomnessFor, contract, roundIdBytes, found.entry, entryIdBytes);
+    if (!beacon.ok) return null;
+    this.seeds.set(hex(roundIdBytes), beacon.committeeSeed);
+
     const work = this.pool.submit({
       key: `${hex(roundIdBytes)}:${hex(entryIdBytes)}:retry`,
       objected: this.round.objected(roundIdBytes, entryIdBytes),
       transcript: this.round.transcript(roundIdBytes, entryIdBytes),
       entry: found.entry,
-      options: { roundRandomness: this.randomnessFor({ contract, roundIdBytes, entry: found.entry, entryId: entryIdBytes }) },
+      options: { roundRandomness: beacon.hash },
     }).then((answer) => this.#keep({
       roundIdBytes, entryId: entryIdBytes, entry: found.entry, contract, answer,
     }));

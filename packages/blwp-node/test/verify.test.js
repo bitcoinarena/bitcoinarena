@@ -27,6 +27,8 @@ import { verifiedFinal } from '../src/verdict.js';
 import { GENESIS } from '../../protocol/src/transcript.js';
 import { toHex } from '../../protocol/src/hash.js';
 import { seedWordForEntry } from '../../protocol/src/seed.js';
+import { committeeSeedFromBeacon } from '../../protocol/src/beacon.js';
+import { selectCommittee } from '../../protocol/src/sortition.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const FUNDED = { funded: () => true };
@@ -35,6 +37,12 @@ const FUNDED = { funded: () => true };
 // keys. The SEED is no longer the fixture's: it derives from this and the
 // entry's own world secret, which the owner put on the entry in e942580.
 const RANDOMNESS = b32(0x9b);
+// A beacon is a value AND a height: a hash on its own carries no date, and
+// "published after the round" is the whole of what makes it worth using. The
+// height is above the contract's census height, which is the ordering this
+// contract can prove.
+const HEIGHT = 900001;
+const BEACON = { hash: RANDOMNESS, height: HEIGHT };
 const TICKS = 600;
 const wordsAt = (t) => [45875, ((t * 977) % 30000) - 15000, (t % 700) < 40 ? 65536 : 0, 0, 0];
 
@@ -164,7 +172,7 @@ const settle = async (node) => {
  * behind, and this test never called `submit`.
  */
 test('a round closed on a running daemon leaves a signed result nobody asked it for', async () => {
-  const node = await serve(openStore(':memory:'), { port: 0, ...FUNDED, randomnessFor: () => RANDOMNESS });
+  const node = await serve(openStore(':memory:'), { port: 0, ...FUNDED, randomnessFor: () => BEACON });
   try {
     const { rid, eid, contract } = await roundThrough(node);
     await settle(node);
@@ -208,7 +216,7 @@ test('a round closed on a running daemon leaves a signed result nobody asked it 
  * runs the whole path - close, queue, worker - and records the refusal rather
  * than inventing a world.
  */
-test('a daemon with no randomness replays nothing and says what it is missing', async () => {
+test('a daemon with no beacon, or one it could have known, signs nothing and says why', async () => {
   const node = await serve(openStore(':memory:'), { port: 0, ...FUNDED });
   try {
     const { rid, eid } = await roundThrough(node);
@@ -216,8 +224,10 @@ test('a daemon with no randomness replays nothing and says what it is missing', 
 
     assert.equal(answers.length, 1, 'the close queued no work at all');
     assert.equal(answers[0].stored, false);
-    assert.match(answers[0].why, /names no randomness to mix the player seed/);
+    assert.match(answers[0].why, /names no height, so nothing says it came after the round/);
     assert.equal((await results(node.port, rid, eid)).count, 0);
+    assert.equal(node.verifier.queued[0].refused, answers[0].why,
+      'the refusal was not recorded where the queue could be asked about it');
   } finally { await node.close(); }
 });
 
@@ -226,7 +236,7 @@ test('a daemon with no randomness replays nothing and says what it is missing', 
  * priority rule needed to be more than an arrangement between tests.
  */
 test('an objection recorded over the wire reaches the pool as an objected job', async () => {
-  const node = await serve(openStore(':memory:'), { port: 0, ...FUNDED, randomnessFor: () => RANDOMNESS });
+  const node = await serve(openStore(':memory:'), { port: 0, ...FUNDED, randomnessFor: () => BEACON });
   try {
     const { rid, eid } = await roundThrough(node, { objectFirst: true });
     assert.equal(node.round.objected(rid, eid), true, 'the node did not record the objection');
@@ -261,7 +271,7 @@ test('an objection recorded over the wire reaches the pool as an objected job', 
  * a divergence in the run rather than in what was carried.
  */
 test('a transcript no committee has carried is replayed and not signed', async () => {
-  const node = await serve(openStore(':memory:'), { port: 0, ...FUNDED, randomnessFor: () => RANDOMNESS });
+  const node = await serve(openStore(':memory:'), { port: 0, ...FUNDED, randomnessFor: () => BEACON });
   try {
     const { rid, eid } = await roundThrough(node, { carried: false });
     const answers = await Promise.all(node.verifier.done);
@@ -283,8 +293,8 @@ test('a transcript no committee has carried is replayed and not signed', async (
  * `run-2of2` binds on Tailscale, over real sockets here.
  */
 test('two daemons each fetch the other\'s result and a 2-of-2 counts to two', async () => {
-  const a = await serve(openStore(':memory:'), { port: 0, ...FUNDED, randomnessFor: () => RANDOMNESS });
-  const b = await serve(openStore(':memory:'), { port: 0, ...FUNDED, randomnessFor: () => RANDOMNESS });
+  const a = await serve(openStore(':memory:'), { port: 0, ...FUNDED, randomnessFor: () => BEACON });
+  const b = await serve(openStore(':memory:'), { port: 0, ...FUNDED, randomnessFor: () => BEACON });
   try {
     // ONE CONTRACT, naming both seats. Neither node is the committee; the
     // contract is, and it names them by key.
@@ -371,7 +381,7 @@ test('two daemons each fetch the other\'s result and a 2-of-2 counts to two', as
  * answer away: a late receipt would leave that run permanently unsigned.
  */
 test('a receipt arriving after the close produces the result the replay could not sign', async () => {
-  const node = await serve(openStore(':memory:'), { port: 0, ...FUNDED, randomnessFor: () => RANDOMNESS });
+  const node = await serve(openStore(':memory:'), { port: 0, ...FUNDED, randomnessFor: () => BEACON });
   try {
     // Closed with the mark held by ONE of two seats, so there is no canonical
     // transcript and nothing to sign over.
@@ -421,7 +431,7 @@ test('a receipt arriving after the close produces the result the replay could no
  * that decides what this node holds.
  */
 test('a peer that serves forged or foreign records adds nothing to the store', async () => {
-  const node = await serve(openStore(':memory:'), { port: 0, ...FUNDED, randomnessFor: () => RANDOMNESS });
+  const node = await serve(openStore(':memory:'), { port: 0, ...FUNDED, randomnessFor: () => BEACON });
   let liar;
   try {
     const { rid, eid } = await roundThrough(node);
@@ -482,4 +492,83 @@ test('a peer that serves forged or foreign records adds nothing to the store', a
     if (liar) await new Promise((r) => liar.close(r));
     await node.close();
   }
+});
+
+/**
+ * A HASH THE ROUND'S CREATOR COULD HAVE HELD IS NOT A BEACON.
+ *
+ * 5A.5's whole point: in v4.4 the creator chose round_id while the randomness
+ * was already known, so "grinding round_ids offline until both committees
+ * consisted of his own nodes was trivial and undetectable". A node that signed
+ * a result for such a round would be signing under a committee the creator
+ * chose.
+ */
+test('a beacon at or below the round\'s census height is refused before anything is replayed', async () => {
+  const early = { hash: RANDOMNESS, height: 900000 };        // the census height itself
+  const node = await serve(openStore(':memory:'), { port: 0, ...FUNDED, randomnessFor: () => early });
+  try {
+    const { rid, eid } = await roundThrough(node);
+    const answers = await Promise.all(node.verifier.done);
+
+    assert.equal(answers[0].stored, false);
+    assert.match(answers[0].why,
+      /from height 900000, at or below the round's own census height 900000/);
+    assert.match(answers[0].why, /held that chain state when the round was made/);
+    assert.equal((await results(node.port, rid, eid)).count, 0);
+
+    // NOT REPLAYED AT ALL, not replayed and then discarded: a round whose
+    // committee could have been ground is not worth a worker.
+    assert.equal(node.verifier.queued[0].objected, false);
+    assert.equal(node.verifier.queued[0].refused, answers[0].why);
+    assert.equal(node.verifier.seeds.size, 0, 'a seed was kept for a round that was refused');
+
+    // and a retry does not get round it either
+    assert.equal(node.verifier.retry(rid, eid), null);
+  } finally { await node.close(); }
+});
+
+/**
+ * TWO DAEMONS, ONE PUBLISHED HASH AND HEIGHT, ONE COMMITTEE SEED.
+ *
+ * The seed is what 5A.5 selects seats from, so two nodes that disagreed about
+ * it would disagree about who the committee is - which is the one thing a
+ * committee cannot survive.
+ */
+test('two daemons given the same published hash and height derive the same seed and seats', async () => {
+  const a = await serve(openStore(':memory:'), { port: 0, ...FUNDED, randomnessFor: () => BEACON });
+  const b = await serve(openStore(':memory:'), { port: 0, ...FUNDED, randomnessFor: () => BEACON });
+  try {
+    const c = { ...contractFor(a.round.pubkey), nodes: [a.round.pubkey, b.round.pubkey] };
+    const seatB = { secret: b.round.identity.secret, pubkey: b.round.pubkey };
+    const seatA = { secret: a.round.identity.secret, pubkey: a.round.pubkey };
+    const { rid } = await roundThrough(a, { contract: c, seat: seatB });
+    await roundThrough(b, { contract: c, seat: seatA });
+    await settle(a); await settle(b);
+
+    const seedA = a.verifier.seeds.get(toHex(rid));
+    const seedB = b.verifier.seeds.get(toHex(rid));
+    assert.ok(seedA, 'the daemon derived no committee seed');
+    assert.deepEqual(seedA, seedB, 'two daemons on one beacon derived two seeds');
+
+    // IT IS 5A.5'S OWN VALUE, not something this daemon made up.
+    assert.deepEqual(seedA, committeeSeedFromBeacon(c,
+      { roundId: rid, randomness: RANDOMNESS, height: HEIGHT }).seed);
+
+    // AND THE SAME SEED PICKS THE SAME SEATS.
+    const entries = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) => ({
+      txid: b32(n), vout: 0, pubkey: b32(0xa0 + n), bondSats: 100000n,
+      height: 1, roles: ['game'], spent: false,
+    }));
+    const seatsOf = (seed) => selectCommittee({
+      entries, role: 'game', contract: { ...c, committeeSeed: seed },
+    }).map((e) => toHex(e.pubkey));
+    assert.deepEqual(seatsOf(seedA), seatsOf(seedB));
+    assert.equal(seatsOf(seedA).length, c.gameVerifySlots);
+
+    // a different published hash would have picked different seats, which is
+    // what makes grinding the round id worthless
+    const other = committeeSeedFromBeacon(c,
+      { roundId: rid, randomness: b32(0x9c), height: HEIGHT }).seed;
+    assert.notDeepEqual(seatsOf(seedA), seatsOf(other));
+  } finally { await a.close(); await b.close(); }
 });
