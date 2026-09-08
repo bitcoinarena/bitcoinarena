@@ -212,6 +212,57 @@ test('nobody can assert a tip, and nobody can assert a chain', () => {
 });
 
 /**
+ * A WINDOW IS NOT THE CHAIN, AND A SHORT ONE SAYS SO RATHER THAN CLAIMING THE
+ * BOND IS NOT THERE.
+ *
+ * Measured: a view starting after the bond's funding block returned ok, an
+ * empty census, a different root, and the reason "no such outpoint at or
+ * before that height" - a claim about Bitcoin that the view had not looked far
+ * enough back to make. 5A.2 says the eligible set is "a pure function of the
+ * chain up to census_height", and two parties with the same chain but
+ * different windows were quietly computing different censuses.
+ *
+ * The window cannot be made unnecessary here - a bond can be funded at any
+ * height and enumerating them needs BOND_MARKER - so the fix is that the
+ * window is COMMITTED and the refusal is honest: a shorter view is a different
+ * set of inputs, and `boundTo` catches it.
+ */
+test('a shorter chain view is a different set of inputs, and says what it could not see', () => {
+  const full = view(WITH_BOND);
+  const short = (() => {
+    const blocks = [];
+    for (let h = HEIGHT - 10; h <= TIP; h++) blocks.push({ transactions: [] });
+    return minedChain(blocks, HEIGHT - 10);
+  })();
+
+  const whole = derive([full]);
+  const part = derive([short]);
+  assert.equal(whole.entries.length, 1);
+  assert.equal(part.entries.length, 0);
+  assert.match(part.excluded[0].why,
+    new RegExp(`no such outpoint between height ${HEIGHT - 10} and ${HEIGHT}, `
+      + 'and this chain view does not reach further back'));
+  assert.equal(/at or before that height/.test(part.excluded[0].why), false,
+    'the short view claimed the chain does not carry a bond it never looked for');
+
+  // and the two are not interchangeable under one commitment: the window is in
+  // the committed inputs, so a root taken over a short view does not pass as
+  // one taken over a long view
+  const entries = whole.entries;
+  assert.notEqual(
+    toHex(censusInputsId({ contract, view: full, entries })),
+    toHex(censusInputsId({ contract, view: short, entries })),
+    'two different windows committed to the same inputs');
+
+  const round = { ...contract, censusRoot: whole.root };
+  const swapped = censusRootMatchesRound(round, {
+    entries, view: short, boundTo: censusInputsId({ contract, view: full, entries }),
+  });
+  assert.equal(swapped.ok, false, 'a short window passed under a long window\'s commitment');
+  assert.match(swapped.why, /not the census entries that were published/);
+});
+
+/**
  * A BAG OF BLOCKS IS NOT A CHAIN, and each way of not being one says so.
  */
 test('headers, links and containment are all required', () => {

@@ -184,13 +184,25 @@ export function commitCensus(entries, { contract, view }) {
  * sorts by `(funding_txid, vout)`, which cannot be chosen after the fact.
  */
 export function censusInputsId({ contract, view, entries }) {
-  const { censusHeight, censusConfirmations, tipHeight } = depthRuleOf(contract, viewOrThrow(view));
+  const chain = viewOrThrow(view);
+  const { censusHeight, censusConfirmations, tipHeight } = depthRuleOf(contract, chain);
+  const firstHeight = chain.firstHeight;
   const w = new Writer();
   w.u8(TYPE_CENSUS_LEAF);
   w.u16(PROTOCOL_VERSION);
   w.u32(censusHeight);
   w.u32(censusConfirmations);
   w.u32(tipHeight);
+
+  // AND WHERE THE CHAIN THE ROOT WAS TAKEN OVER STARTED. Measured: a view
+  // beginning after a bond's funding block reports that bond as "no such
+  // outpoint" and derives a DIFFERENT root, ok and all - so two parties with
+  // the same chain but different windows agreed on nothing and were told
+  // nothing. 5A.2 says the eligible set is "a pure function of the chain up to
+  // census_height", and a window is not the chain. Committing the start does
+  // not make a short window correct; it makes it a different set of inputs,
+  // which is what `boundTo` is for.
+  w.u32(firstHeight);
   w.vec([...entries].sort(compareEntries), (e, ww) => {
     ww.bytes(encodeEntry(e), encodeEntry(e).length);
     ww.u8(e.spent ? 1 : 0);
@@ -431,6 +443,7 @@ export function scanCensus(view, { contract, candidates }) {
   if (!Array.isArray(candidates)) throw new Error('scan needs the outpoints to look for');
   const { censusHeight, censusConfirmations, tipHeight } = depthRuleOf(contract, chain);
   const blocks = chain.blocks;
+  const firstHeight = chain.firstHeight;
 
   const createdAt = new Map();
   const spentAt = new Map();
@@ -460,8 +473,20 @@ export function scanCensus(view, { contract, candidates }) {
     // AN OUTPOINT THE CHAIN DOES NOT CARRY IS NOT AN ENTRY. It is named rather
     // than silently dropped: a census that quietly lost a bond and one that
     // never had it look identical from the root alone.
+    //
+    // AND THE REASON SAYS WHAT THIS VIEW ACTUALLY KNOWS. A window that begins
+    // after a bond's funding block cannot tell "not in the chain" from "below
+    // where I start", and it used to claim the first. It still excludes the
+    // entry - there is nothing else it could do with an outpoint it cannot see
+    // - but it no longer asserts something it has not looked at.
     if (height === undefined) {
-      excluded.push({ ...c, why: 'no such outpoint at or before that height' });
+      excluded.push({
+        ...c,
+        why: firstHeight > 0
+          ? `no such outpoint between height ${firstHeight} and ${censusHeight}, `
+            + 'and this chain view does not reach further back'
+          : 'no such outpoint at or before that height',
+      });
       continue;
     }
 

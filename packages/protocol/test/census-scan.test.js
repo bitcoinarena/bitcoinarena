@@ -105,8 +105,13 @@ test('an outpoint the chain does not carry is named, not silently dropped', () =
 
   assert.equal(seen.entries.length, 3);
   assert.equal(seen.excluded.length, 1);
-  assert.match(seen.excluded[0].why, /no such outpoint at or before that height/,
+  assert.match(seen.excluded[0].why, /no such outpoint between height \d+ and \d+/,
     'a census that quietly lost a bond and one that never had it look the same from the root');
+
+  // AND THE REASON SAYS WHAT THIS VIEW KNOWS, not more. A window beginning
+  // after a bond's funding block cannot tell "not in the chain" from "below
+  // where I start", and it used to claim the first.
+  assert.match(seen.excluded[0].why, /does not reach further back/);
 });
 
 /**
