@@ -17,7 +17,10 @@ import { genesisFor } from '../../protocol/src/genesis.js';
 import { taggedHash, toHex } from '../../protocol/src/hash.js';
 import { bondTransaction } from '../../protocol/tools/bond.js';
 import { parseTransaction } from '../../protocol/src/tx.js';
-import { recognizeBond, bondKeyMatches } from '../../protocol/src/chain.js';
+import { recognizeBond, bondKeyMatches, acceptAdvert } from '../../protocol/src/chain.js';
+import { resolveCensus } from '../../protocol/src/census.js';
+import { blockOf } from '../../protocol/tools/bond.js';
+import { hash256 } from '../../protocol/src/chain.js';
 import { BOND_SCRIPT_TEMPLATE_VERSION } from '../../protocol/src/bond-script.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
@@ -446,4 +449,122 @@ test('recognizeBond recomputes the output key and drops it from unchecked', () =
   const seen2 = bondKeyMatches(tx.outputs[0].script, v2, bond);
   assert.equal(seen2.ok, false);
   assert.match(seen2.why, /names bond script template 2, and this is template 1/);
+});
+
+/**
+ * THE CENSUS AND THE PLAYER'S DOOR BOTH ASK THE QUESTION NOW.
+ *
+ * A door nobody walks through is not a door. `recognizeBond` learned to rebuild
+ * the key a node's own keys produce, and until this the census and
+ * `acceptAdvert` called it without the set - so eligibility, and the endpoint a
+ * player is handed, still rested on whatever thirty-two bytes the poster wrote.
+ */
+const g = genesisFor('regtest');
+const BOND = {
+  arbitrationKeys: g.arbitrationKeys, arbitrationK: g.arbitrationK,
+  bondMaturity: g.bondMaturity, tweakPoint, combine,
+};
+
+const bodyFor = (nodeKey, over = {}) => ({
+  nodePubkey: nodeKey, operatorId: 'operator', protocolVersions: [1], roles: ['game'],
+  endpoint: 'ws://node', region: 'eu-west', capacityClass: 1, softwareHash: b32(2),
+  settlementCapabilities: 0, lightningCapabilities: 0, bondTxid: new Uint8Array(32),
+  bondVout: 0, bondScriptTemplateVersion: BOND_SCRIPT_TEMPLATE_VERSION,
+  payoutPubkey: b32(3), timestamp: 1788700000000n, ...over,
+});
+
+/** A bond for a node key, over the network's set unless told otherwise. */
+const bondFor = (nodeKey, { maturity = g.bondMaturity, set = g.arbitrationKeys } = {}) =>
+  bondOutputKey({
+    nodeKey, arbitrationKeys: set, arbitrationK: g.arbitrationK, bondMaturity: maturity,
+    internalKey: bondInternalKey({ nodeKey, arbitrationKeys: set }, { combine }).internalKey,
+  }, { tweakPoint, combine }).outputKey;
+
+test('the census counts the honest bond and excludes the stranger by name', () => {
+  const honest = schnorr.getPublicKey(schnorr.utils.randomSecretKey());
+  const liar = schnorr.getPublicKey(schnorr.utils.randomSecretKey());
+
+  // one real bond, and one whose output is a stranger's taproot key - which is
+  // indistinguishable on chain, since a P2TR output is thirty-two bytes.
+  const good = bondTransaction(bodyFor(honest), { outputKey: bondFor(honest) });
+  const bad = bondTransaction(bodyFor(liar), {
+    outputKey: schnorr.getPublicKey(schnorr.utils.randomSecretKey()),
+    previousTxid: b32(0xb1),
+  });
+  const entryOf = (tx, key) => ({
+    txid: parseTransaction(tx).txid, vout: 0, pubkey: key,
+    bondSats: 60000n, height: 900000, roles: ['game'], spent: false,
+  });
+  const byKey = new Map([[toHex(honest), good], [toHex(liar), bad]]);
+  const resolve = (e) => ({ transaction: byKey.get(toHex(e.pubkey)) });
+  const contract = { bondMinSats: 50000n, protocolVersion: 1 };
+  const entries = [entryOf(good, honest), entryOf(bad, liar)];
+
+  const seen = resolveCensus(entries, { contract, resolve, bond: BOND });
+  assert.equal(seen.ok, true, seen.why);
+  assert.equal(seen.eligible.length, 1,
+    `expected one eligible, got ${seen.eligible.length}; excluded: ${seen.excluded.map((e) => e.why).join(' | ')}`);
+  assert.deepEqual(seen.eligible[0].pubkey, honest);
+  assert.equal(seen.excluded.length, 1);
+  assert.match(seen.excluded[0].why, /not the taproot tweak of the keys and maturity it declares/);
+
+  // AND THE UNCHECKED LIST SHRINKS ONLY WHEN IT CAN.
+  assert.equal(seen.unchecked.some((u) => /script template/.test(u)), false);
+  const blind = resolveCensus(entries, { contract, resolve });
+  assert.equal(blind.eligible.length, 2, 'without the set the census used to count both, and must still');
+  assert.equal(blind.unchecked.some((u) => /script template/.test(u)), true);
+});
+
+test('a bond already mature at posting is excluded by the census, not only by the door', () => {
+  const node = schnorr.getPublicKey(schnorr.utils.randomSecretKey());
+  const cheap = bondTransaction(bodyFor(node), { outputKey: bondFor(node, { maturity: 1 }) });
+  const entry = {
+    txid: parseTransaction(cheap).txid, vout: 0, pubkey: node,
+    bondSats: 60000n, height: 900000, roles: ['game'], spent: false,
+  };
+  const contract = { bondMinSats: 50000n, protocolVersion: 1 };
+
+  const seen = resolveCensus([entry], { contract, resolve: () => ({ transaction: cheap }), bond: BOND });
+  assert.equal(seen.eligible.length, 0,
+    'a bond withdrawable the moment it was posted was counted as one at stake');
+  assert.match(seen.excluded[0].why, /not the taproot tweak/);
+
+  // and without the set it is counted, exactly as before
+  assert.equal(resolveCensus([entry], { contract, resolve: () => ({ transaction: cheap }) })
+    .eligible.length, 1);
+});
+
+test("the player's door refuses the same three bonds", () => {
+  const node = schnorr.getPublicKey(schnorr.utils.randomSecretKey());
+  const at = (tx) => {
+    const txid = parseTransaction(tx).txid;
+    const sibling = new Uint8Array(32).fill(0x99);
+    return { ...blockOf(hash256, [txid, sibling]), branch: [sibling], position: 0 };
+  };
+
+  const good = bondTransaction(bodyFor(node), { outputKey: bondFor(node) });
+  const ok = acceptAdvert({ transaction: good, ...at(good), bond: BOND });
+  assert.equal(ok.ok, true, ok.why);
+  assert.equal(ok.unchecked.some((u) => /script template/.test(u)), false);
+
+  // a stranger's taproot output, an already-mature bond, and a set of the
+  // poster's own choosing - each refused at the door a player walks through
+  const cases = [
+    ['a stranger\'s output', schnorr.getPublicKey(schnorr.utils.randomSecretKey())],
+    ['an already-mature bond', bondFor(node, { maturity: 1 })],
+    ['the poster\'s own set', bondFor(node, {
+      set: [1, 2, 3, 4, 5, 6, 7].map(() => schnorr.getPublicKey(schnorr.utils.randomSecretKey())),
+    })],
+  ];
+  for (const [what, outputKey] of cases) {
+    const tx = bondTransaction(bodyFor(node), { outputKey, previousTxid: b32(0xc1) });
+    const seen = acceptAdvert({ transaction: tx, ...at(tx), bond: BOND });
+    assert.equal(seen.ok, false, `${what} was accepted`);
+    assert.match(seen.why, /not the taproot tweak/);
+
+    // and without the set the door answers as it always did
+    const blind = acceptAdvert({ transaction: tx, ...at(tx) });
+    assert.equal(blind.ok, true, `${what}: the door changed without being given the set`);
+    assert.equal(blind.unchecked.some((u) => /script template/.test(u)), true);
+  }
 });

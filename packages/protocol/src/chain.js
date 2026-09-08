@@ -423,7 +423,7 @@ export function recognizeBond(tx, vout, advert, { network = 'regtest', bond } = 
  * that owns a verifier is the one that says whether the signature is good.
  * `blwp-client` refuses the session if it is not.
  */
-export function acceptAdvert({ transaction, signedAdvert, header, branch, position }) {
+export function acceptAdvert({ transaction, signedAdvert, header, branch, position, bond }) {
   let tx;
   try { tx = parseTransaction(transaction); }
   catch (e) { return { ok: false, why: `that is not a transaction: ${e.message}` }; }
@@ -464,8 +464,12 @@ export function acceptAdvert({ transaction, signedAdvert, header, branch, positi
   //
   // The same recognition the census uses, for the same reason and with the
   // same three rules it cannot read.
-  const bond = recognizeBond(tx, taken.advert.bondVout, taken.advert);
-  if (!bond.ok) return { ok: false, why: bond.why };
+  // THE DOOR A PLAYER WALKS THROUGH asks the same question the census asks,
+  // and with the same answer when it is given the same facts: an endpoint
+  // whose bond is not the bond that node's keys produce is an endpoint backed
+  // by somebody else's output.
+  const seen = recognizeBond(tx, taken.advert.bondVout, taken.advert, bond ? { bond } : {});
+  if (!seen.ok) return { ok: false, why: seen.why };
 
   return {
     ok: true,
@@ -474,8 +478,8 @@ export function acceptAdvert({ transaction, signedAdvert, header, branch, positi
     signature: taken.signature,
     txid: tx.txid,
     bondVout: taken.advert.bondVout,
-    bondSats: bond.valueSats,
-    unchecked: bond.unchecked,
+    bondSats: seen.valueSats,
+    unchecked: seen.unchecked,
     advert: taken.advert,
   };
 }

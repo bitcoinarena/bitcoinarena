@@ -678,7 +678,7 @@ function resolveBody(seen, entry, verifyAdvert) {
   };
 }
 
-export function resolveCensus(entries, { contract, resolve, verifyAdvert }) {
+export function resolveCensus(entries, { contract, resolve, verifyAdvert, bond }) {
   if (!contract || typeof contract.bondMinSats !== 'bigint')
     return { ok: false, why: 'that round names no bond floor to measure against' };
 
@@ -719,8 +719,13 @@ export function resolveCensus(entries, { contract, resolve, verifyAdvert }) {
     // checked the transaction and the commitment and never the output, so an
     // entry could name any vout of a real bond transaction - the OP_RETURN
     // included - and be counted.
-    const bond = recognizeBond(read.tx, e.vout, read.advert);
-    if (!bond.ok) { excluded.push({ ...e, why: bond.why }); continue; }
+    // AND WITH THE NETWORK'S OWN SET AND A CURVE, THE OUTPUT KEY TOO. A door
+    // nobody walks through is not a door: `recognizeBond` learned to rebuild
+    // the key a node's own keys produce, and the census is where that has to
+    // be asked, because this is what decides who may hold a round. Without the
+    // set the census counts what it always counted and still lists the gap.
+    const output = recognizeBond(read.tx, e.vout, read.advert, bond ? { bond } : {});
+    if (!output.ok) { excluded.push({ ...e, why: output.why }); continue; }
 
     // AND THE AMOUNT IS THE CHAIN'S. This was the entry's own claim, measured:
     // an output worth 60000 sats, an entry claiming 100000000000, accepted -
@@ -732,7 +737,7 @@ export function resolveCensus(entries, { contract, resolve, verifyAdvert }) {
     // made v4.4 unsafe." A bond that is asserted rather than observed costs
     // nothing, so believing the claim reinstates exactly that flaw. The leaf
     // hashes this number too, so the lie went into the census root.
-    const bondSats = bond.valueSats;
+    const bondSats = output.valueSats;
 
     // THE FLOOR IS THE ROUND'S. 5A.3: "bond_min(role) is named in the Round
     // Contract, not global... a node is eligible for THAT ROUND or not."
@@ -784,9 +789,15 @@ export function resolveCensus(entries, { contract, resolve, verifyAdvert }) {
     // WHAT IS STILL UNCHECKED SHRINKS WHEN A CALLER BRINGS A CURVE. Reporting
     // the signature as unchecked after checking it would be as wrong as not
     // checking it: the list is what a reader is asked to take on trust.
-    unchecked: verifyAdvert
-      ? BOND_UNCHECKED.filter((u) => !/advertisement signature/.test(u))
-      : BOND_UNCHECKED,
+    // WHAT IS STILL UNCHECKED SHRINKS AS CALLERS BRING WHAT IT TAKES: the
+    // signature needs a curve, the script template needs the network's set and
+    // a curve. Reporting either as unchecked after checking it would be as
+    // wrong as not checking it.
+    unchecked: BOND_UNCHECKED.filter((u) => {
+      if (verifyAdvert && /advertisement signature/.test(u)) return false;
+      if (bond && /script template/.test(u)) return false;
+      return true;
+    }),
   };
 }
 
@@ -820,7 +831,7 @@ export function resolveCensus(entries, { contract, resolve, verifyAdvert }) {
  * spent, and the advertisement signature needs a curve this package does not
  * carry. Neither is skipped quietly.
  */
-export function deriveCensus(views, { contract, candidates, resolve, verifyAdvert }) {
+export function deriveCensus(views, { contract, candidates, resolve, verifyAdvert, bond }) {
   // MOST WORK WINS, HERE, before anything is read. Two chains that disagree
   // about Bitcoin are not two censuses: one of them is the chain.
   const chain = bestChainView(views);
@@ -833,7 +844,7 @@ export function deriveCensus(views, { contract, candidates, resolve, verifyAdver
     return { ok: false, why: `that census cannot be scanned: ${e.message}` };
   }
 
-  const resolved = resolveCensus(scanned.entries, { contract, resolve, verifyAdvert });
+  const resolved = resolveCensus(scanned.entries, { contract, resolve, verifyAdvert, bond });
   if (!resolved.ok) return resolved;
 
   let census;
