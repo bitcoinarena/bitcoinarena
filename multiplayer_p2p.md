@@ -2318,6 +2318,11 @@ state, and §25.1 says exactly how.
 
 ## 25.1 Discovery is chain state *(new)*
 
+Playable M2 on regtest/testnet4 uses this section, not a later milestone:
+bond outputs, census, committee_time, and the advertisement in the funding
+transaction. Lightning settlement is M3. Committee size is genesis: 2-of-2
+on those nets, 5-of-7 on mainnet.
+
 A client finds nodes by reading Bitcoin. There is no directory, no relay
 network and no seed list belonging to this protocol.
 
