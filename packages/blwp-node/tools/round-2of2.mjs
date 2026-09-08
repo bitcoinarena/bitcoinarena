@@ -29,6 +29,10 @@
  */
 import { schnorr } from '@noble/curves/secp256k1.js';
 
+import { createServer } from 'node:http';
+import { existsSync, readFileSync, statSync } from 'node:fs';
+import { extname, join, normalize } from 'node:path';
+
 import { openStore, nodeIdentity } from '../src/store.js';
 import { serve } from '../src/server.js';
 import { toHex } from '../../protocol/src/hash.js';
@@ -152,20 +156,88 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   };
 }
 
+/**
+ * THE BUILT PAGE, FROM THIS MACHINE, OVER http.
+ *
+ * The daily is https and these daemons are http on loopback or a tailnet. An
+ * https page fetching `http://127.0.0.1` is a mixed-content request and a
+ * browser may refuse it - and that refusal looks exactly like a chain provider
+ * that never answered, which is the worst kind of wall: it fails where the
+ * evidence points somewhere else.
+ *
+ * So the same build is served here, over the same scheme as the daemons. The
+ * page is byte for byte the deployed one; only where it is fetched from
+ * changes. The daemons are still a different ORIGIN (a different port), which
+ * is why their doors carry access-control-allow-origin.
+ *
+ * The content types matter: Unity's loader will not start a wasm module served
+ * as text/plain, and Cloudflare gets them from `_headers`, which is not a
+ * thing a plain server reads.
+ */
+const MIME = {
+  '.html': 'text/html', '.js': 'application/javascript', '.json': 'application/json',
+  '.css': 'text/css', '.wasm': 'application/wasm', '.png': 'image/png',
+  '.jpg': 'image/jpeg', '.data': 'application/octet-stream',
+  '.bundle': 'application/octet-stream', '.symbols': 'application/octet-stream',
+};
+const typeOf = (file) => {
+  if (file.endsWith('.wasm.unityweb')) return 'application/wasm';
+  if (file.endsWith('.js.unityweb')) return 'application/javascript';
+  if (file.endsWith('.data.unityweb')) return 'application/octet-stream';
+  return MIME[extname(file)] || 'application/octet-stream';
+};
+
+export function servePage(build, { host = '127.0.0.1', port = 8000 } = {}) {
+  return new Promise((ok, no) => {
+    const s = createServer((req, res) => {
+      let path = decodeURIComponent(req.url.split('?')[0]);
+      if (path === '/') path = '/index.html';
+      // No climbing out of the build directory, even from a local page.
+      const file = join(build, normalize(path).replace(/^(\.\.[/\\])+/, ''));
+      if (!file.startsWith(build) || !existsSync(file) || !statSync(file).isFile()) {
+        res.writeHead(404); return res.end('no');
+      }
+      res.writeHead(200, { 'content-type': typeOf(file) });
+      res.end(readFileSync(file));
+    });
+    s.on('error', no);
+    s.listen(port, host, () => ok({ server: s, port: s.address().port }));
+  });
+}
+
 // Run directly: stand it up on the addresses an operator can reach, and print
 // the one line a person opens in two tabs.
 if (import.meta.url === `file://${process.argv[1]}`) {
   const host = process.env.BLWP_BIND || '127.0.0.1';
+  const build = process.env.BLWP_BUILD
+    || new URL('../../../unity-proto/build/webgl', import.meta.url).pathname;
+
+  // THE PAGE IS SERVED FROM HERE unless somebody names another one, because
+  // the daily is https and these daemons are not. Same build, same scheme as
+  // the nodes, no mixed content to lose the evidence in.
+  let page = process.env.BLWP_PAGE;
+  let pageServer = null;
+  if (!page) {
+    if (existsSync(join(build, 'index.html'))) {
+      pageServer = await servePage(build, { host, port: Number(process.env.BLWP_PAGE_PORT || 8000) });
+      page = `http://${host}:${pageServer.port}`;
+    } else {
+      page = 'https://btc-logistics-core.pages.dev';
+      console.log('NOTE: no build at ' + build + ', so the daily is named instead.');
+    }
+  }
+
   const round = await standUpRound({
     host,
     portA: Number(process.env.BLWP_PORT_A || 8080),
     portB: Number(process.env.BLWP_PORT_B || 8081),
-    page: process.env.BLWP_PAGE || 'https://btc-logistics-core.pages.dev',
+    page,
   });
   console.log('round     ' + round.id);
   console.log('daemons   ' + round.nodes.join('  '));
   console.log('headers   ' + round.headers.join('  '));
   console.log('bond      ' + round.bond);
+  console.log('page      ' + (pageServer ? 'served here from ' + build : page));
   console.log('');
   console.log('Open this in TWO tabs - each tab is its own player, because the');
   console.log('key is kept in sessionStorage:');
