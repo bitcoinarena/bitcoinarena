@@ -11,6 +11,7 @@ import { schnorr, secp256k1 } from '@noble/curves/secp256k1.js';
 import {
   bondOutputKey, bondOutputKeyMatches, bondTapTree, recoveryLeaf, slashLeaf, tapLeafHash,
   controlBlockFor, rootFromControlBlock, TAPLEAF_VERSION,
+  bondInternalKey, aggregateKeys, keyAggCoefficients,
 } from '../../protocol/src/bond-script.js';
 import { genesisFor } from '../../protocol/src/genesis.js';
 import { taggedHash, toHex } from '../../protocol/src/hash.js';
@@ -42,7 +43,23 @@ const genesis = genesisFor('regtest');
 const NODE = schnorr.getPublicKey(schnorr.utils.randomSecretKey());
 const ARBITRATION = [1, 2, 3, 4, 5, 6, 7]
   .map(() => schnorr.getPublicKey(schnorr.utils.randomSecretKey()));
-const INTERNAL = schnorr.getPublicKey(schnorr.utils.randomSecretKey());
+/** BIP-327's sum: Q = sum a_i * P_i, with each key lifted from x-only. */
+const combine = (terms) => {
+  let sum = null;
+  for (const { key, coefficient } of terms) {
+    const point = schnorr.utils.lift_x(big(key)).multiply(big(coefficient));
+    sum = sum === null ? point : sum.add(point);
+  }
+  return schnorr.utils.pointToBytes(sum);
+};
+
+/**
+ * THE INTERNAL KEY IS DERIVED FROM THE NAMED KEYS, not chosen. A fixture that
+ * invented one would be testing a bond whose cooperative path belongs to
+ * nobody in particular.
+ */
+const INTERNAL = bondInternalKey({ nodeKey: NODE, arbitrationKeys: ARBITRATION },
+  { combine }).internalKey;
 const inputs = {
   nodeKey: NODE, arbitrationKeys: ARBITRATION, arbitrationK: genesis.arbitrationK,
   bondMaturity: genesis.bondMaturity, internalKey: INTERNAL,
@@ -67,7 +84,7 @@ test('the tagged hashes are the ones the curve library computes', () => {
  * Q IS A POINT ON THE CURVE, and the same inputs give the same one.
  */
 test('the output key is the taproot tweak of the named keys and maturity', () => {
-  const built = bondOutputKey(inputs, { tweakPoint });
+  const built = bondOutputKey(inputs, { tweakPoint, combine });
   assert.equal(built.ok, true, built.why);
   assert.equal(built.outputKey.length, 32);
 
@@ -76,7 +93,7 @@ test('the output key is the taproot tweak of the named keys and maturity', () =>
 
   // TWO NODES WITH THE SAME FACTS BUILD THE SAME BOND. Anything else and a
   // verifier could not tell a bond from a stranger's output.
-  assert.deepEqual(bondOutputKey(inputs, { tweakPoint }).outputKey, built.outputKey);
+  assert.deepEqual(bondOutputKey(inputs, { tweakPoint, combine }).outputKey, built.outputKey);
 
   // AND IT IS NOT THE INTERNAL KEY. A tweak of zero would leave the arbitration
   // tree out of the output entirely.
@@ -88,8 +105,8 @@ test('the output key is the taproot tweak of the named keys and maturity', () =>
  * THE RECOMPUTE REFUSES EVERY MOVED INPUT, on the real curve.
  */
 test('a mutated key, maturity or leaf fails the recompute', () => {
-  const built = bondOutputKey(inputs, { tweakPoint });
-  assert.equal(bondOutputKeyMatches(built.outputKey, inputs, { tweakPoint }).ok, true);
+  const built = bondOutputKey(inputs, { tweakPoint, combine });
+  assert.equal(bondOutputKeyMatches(built.outputKey, inputs, { tweakPoint, combine }).ok, true);
 
   const moved = [
     ['the node key', { nodeKey: schnorr.getPublicKey(schnorr.utils.randomSecretKey()) }],
@@ -98,18 +115,32 @@ test('a mutated key, maturity or leaf fails the recompute', () => {
     ['an arbitration key', {
       arbitrationKeys: [...ARBITRATION.slice(1), schnorr.getPublicKey(schnorr.utils.randomSecretKey())],
     }],
-    ['the internal key', { internalKey: schnorr.getPublicKey(schnorr.utils.randomSecretKey()) }],
   ];
   for (const [what, over] of moved) {
-    const seen = bondOutputKeyMatches(built.outputKey, { ...inputs, ...over }, { tweakPoint });
+    // The internal key is RE-DERIVED for each: it is a function of the node
+    // and arbitration keys, so a case that carried the old one would be
+    // refused by the aggregate check and never reach the tweak at all.
+    const withKeys = { ...inputs, ...over };
+    const derived = bondInternalKey(withKeys, { combine });
+    const seen = bondOutputKeyMatches(built.outputKey,
+      { ...withKeys, internalKey: derived.ok ? derived.internalKey : withKeys.internalKey },
+      { tweakPoint, combine });
     assert.equal(seen.ok, false, `${what} did not move the output key`);
     assert.match(seen.why, /not the taproot tweak/);
   }
 
+  // AND A CHOSEN INTERNAL KEY IS REFUSED EARLIER AND HARDER - a different
+  // mistake, and the more serious one.
+  const chosen = bondOutputKeyMatches(built.outputKey,
+    { ...inputs, internalKey: schnorr.getPublicKey(schnorr.utils.randomSecretKey()) },
+    { tweakPoint, combine });
+  assert.equal(chosen.ok, false);
+  assert.match(chosen.why, /not the MuSig2 aggregate/);
+
   // A STRANGER'S TAPROOT OUTPUT IS NOT A BOND. Any 32 bytes look like a P2TR
   // key on chain (25.1), which is exactly why recomputing is the only check.
   const stranger = schnorr.getPublicKey(schnorr.utils.randomSecretKey());
-  assert.equal(bondOutputKeyMatches(stranger, inputs, { tweakPoint }).ok, false);
+  assert.equal(bondOutputKeyMatches(stranger, inputs, { tweakPoint, combine }).ok, false);
 
   // and the slash leaf really is the sorted five-of-seven the genesis names,
   // in tapscript's counting form: keys first, the quorum compared at the end.
@@ -125,7 +156,7 @@ test('a mutated key, maturity or leaf fails the recompute', () => {
  * the output key now something a verifier can check rather than filler.
  */
 test('a bond built with the template is recognised, and its key recomputes', () => {
-  const built = bondOutputKey(inputs, { tweakPoint });
+  const built = bondOutputKey(inputs, { tweakPoint, combine });
   const advert = {
     nodePubkey: NODE, operatorId: 'operator', protocolVersions: [1], roles: ['game'],
     endpoint: 'ws://node', region: 'eu-west', capacityClass: 1, softwareHash: b32(2),
@@ -142,7 +173,7 @@ test('a bond built with the template is recognised, and its key recomputes', () 
   // THE 32 BYTES ON CHAIN ARE THE ONES THE TEMPLATE PRODUCES.
   const onChain = tx.outputs[0].script.subarray(2, 34);
   assert.deepEqual(onChain, built.outputKey);
-  assert.equal(bondOutputKeyMatches(onChain, inputs, { tweakPoint }).ok, true);
+  assert.equal(bondOutputKeyMatches(onChain, inputs, { tweakPoint, combine }).ok, true);
   assert.equal(onChain.every((b) => b === 0x77), false, 'the filler key is still being posted');
 
   // AND THE ONE THING LEFT UNCHECKED IS STILL NAMED. The chain door cannot
@@ -160,7 +191,7 @@ test('a bond built with the template is recognised, and its key recomputes', () 
  * was posted to. A control block that did not is a leaf that cannot spend.
  */
 test('both leaves reconstruct the on-chain output key from their control block', () => {
-  const built = bondOutputKey(inputs, { tweakPoint });
+  const built = bondOutputKey(inputs, { tweakPoint, combine });
   assert.equal(built.ok, true, built.why);
 
   // THE PARITY IS INFORMATION THE 32 BYTES DO NOT CARRY. `lift_x` always
@@ -207,4 +238,87 @@ test('both leaves reconstruct the on-chain output key from their control block',
   // and so does the right sibling under the wrong leaf
   const swapped = rootFromControlBlock(leafOf.slash, controlBlockFor('recovery', built).controlBlock);
   assert.notDeepEqual(tweakPoint(swapped.internalKey, swapped.tweak).outputKey, built.outputKey);
+});
+
+/**
+ * THE KEY PATH BELONGS TO THE NAMED KEYS, AND TO NOBODY ELSE.
+ *
+ * 5A.3B makes the internal key MuSig2(node_key, arbitration_aggregate_key).
+ * A template that accepted thirty-two bytes for it would let a node post a
+ * bond whose cooperative spend is a key only that node holds - and every check
+ * would still pass, because the key would be an input to the check rather than
+ * a fact derived from the keys the bond names.
+ */
+test('the internal key is the MuSig2 aggregate of the node and arbitration keys', () => {
+  const derived = bondInternalKey({ nodeKey: NODE, arbitrationKeys: ARBITRATION }, { combine });
+  assert.equal(derived.ok, true, derived.why);
+  assert.equal(derived.internalKey.length, 32);
+  assert.deepEqual(derived.internalKey, INTERNAL);
+
+  // IT IS TWO STEPS, as the spec names two things: the arbitration set
+  // aggregates to one key, and the internal key is the node with that.
+  const set = aggregateKeys(ARBITRATION, { combine });
+  assert.deepEqual(derived.arbitrationAggregate, set.key);
+  assert.deepEqual(derived.internalKey, aggregateKeys([NODE, set.key], { combine }).key);
+
+  // REPRODUCIBLE, and it is not the plain sum of the keys: every key gets a
+  // coefficient, which is what stops a participant choosing their key so the
+  // aggregate comes out as one they alone control.
+  assert.deepEqual(bondInternalKey({ nodeKey: NODE, arbitrationKeys: ARBITRATION },
+    { combine }).internalKey, derived.internalKey);
+  assert.notDeepEqual(derived.internalKey, NODE);
+  assert.notDeepEqual(derived.internalKey, set.key);
+
+  // A DIFFERENT NODE IS A DIFFERENT KEY PATH.
+  const other = schnorr.getPublicKey(schnorr.utils.randomSecretKey());
+  assert.notDeepEqual(
+    bondInternalKey({ nodeKey: other, arbitrationKeys: ARBITRATION }, { combine }).internalKey,
+    derived.internalKey);
+
+  // AND SO IS A DIFFERENT ARBITRATION SET.
+  assert.notDeepEqual(
+    bondInternalKey({ nodeKey: NODE, arbitrationKeys: [...ARBITRATION.slice(1), other] },
+      { combine }).internalKey, derived.internalKey);
+
+  // BIP-327 gives the SECOND distinct key a coefficient of one; without that
+  // this aggregate would agree with no other MuSig2 implementation, and a key
+  // path nobody else can sign is a key path that does not exist.
+  const terms = keyAggCoefficients([NODE, set.key]);
+  assert.equal(terms[1].coefficient[31], 1);
+  assert.equal(terms[1].coefficient.slice(0, 31).every((b) => b === 0), true);
+  assert.notEqual(terms[0].coefficient[31], 1);
+});
+
+/**
+ * AND THE TEMPLATE HOLDS A CALLER TO IT.
+ */
+test('a bond whose internal key is not that aggregate is refused', () => {
+  const good = bondOutputKey(inputs, { tweakPoint, combine });
+  assert.equal(good.ok, true, good.why);
+  assert.deepEqual(good.internalKey, INTERNAL);
+
+  // A key path only the node controls, offered as the internal key.
+  const mine = schnorr.getPublicKey(schnorr.utils.randomSecretKey());
+  const stuffed = bondOutputKey({ ...inputs, internalKey: mine }, { tweakPoint, combine });
+  assert.equal(stuffed.ok, false, 'a bond kept a key path of the caller\'s choosing');
+  assert.match(stuffed.why, /not the MuSig2 aggregate of the node and arbitration keys/);
+
+  // the recompute refuses it too, so a verifier cannot be handed one either
+  assert.equal(bondOutputKeyMatches(good.outputKey, { ...inputs, internalKey: mine },
+    { tweakPoint, combine }).ok, false);
+
+  // AND THE WHOLE THING STILL RECOMPUTES END TO END with the derived key.
+  assert.equal(bondOutputKeyMatches(good.outputKey, inputs, { tweakPoint, combine }).ok, true);
+  const block = controlBlockFor('recovery', good);
+  const back = rootFromControlBlock(tapLeafHash(recoveryLeaf(NODE, genesis.bondMaturity)),
+    block.controlBlock);
+  assert.deepEqual(tweakPoint(back.internalKey, back.tweak).outputKey, good.outputKey);
+
+  // ONE CURVE IS NOT ENOUGH, and this is the bypass beside the door: a caller
+  // passing only the tweak could otherwise still choose the internal key. The
+  // two are the same curve - anything that can add t*G can add a_i*P_i - so
+  // asking for both costs nothing and closes it.
+  const oneCurve = bondOutputKey(inputs, { tweakPoint });
+  assert.equal(oneCurve.ok, false, 'a tweak curve alone still built a bond');
+  assert.match(oneCurve.why, /no curve was given to aggregate the key path/);
 });

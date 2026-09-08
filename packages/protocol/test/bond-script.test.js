@@ -14,13 +14,25 @@ import {
   controlBlockFor, rootFromControlBlock,
 } from '../src/bond-script.js';
 import { genesisFor } from '../src/genesis.js';
+import { bondInternalKey } from '../src/bond-script.js';
 import { toHex, taggedHash } from '../src/hash.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const NODE = b32(0x11);
 const ARBITRATION = [1, 2, 3, 4, 5, 6, 7].map((n) => b32(0xa0 + n));
-const INTERNAL = b32(0x22);
 const genesis = genesisFor('regtest');
+
+/**
+ * A stub aggregate: the sum is H(each key and its coefficient), which is not a
+ * group but is a function - enough to show the internal key is DERIVED from
+ * the named keys rather than chosen, which is what this package is responsible
+ * for. The real point arithmetic is one package over.
+ */
+const combine = (terms) => taggedHash('TestAggregate',
+  Uint8Array.from(terms.flatMap((t) => [...t.key, ...t.coefficient])));
+
+const INTERNAL = bondInternalKey({ nodeKey: NODE, arbitrationKeys: ARBITRATION },
+  { combine }).internalKey;
 
 const inputs = {
   nodeKey: NODE, arbitrationKeys: ARBITRATION, arbitrationK: genesis.arbitrationK,
@@ -136,11 +148,11 @@ test('the tree is BIP-341: tagged leaf, sorted branch, tweak over the root', () 
  * the key answers whether 32 bytes on chain are it.
  */
 test('an output key recomputes from its inputs, and refuses when one moves', () => {
-  const built = bondOutputKey(inputs, { tweakPoint });
+  const built = bondOutputKey(inputs, { tweakPoint, combine });
   assert.equal(built.ok, true, built.why);
   assert.equal(built.outputKey.length, 32);
 
-  const good = bondOutputKeyMatches(built.outputKey, inputs, { tweakPoint });
+  const good = bondOutputKeyMatches(built.outputKey, inputs, { tweakPoint, combine });
   assert.equal(good.ok, true, good.why);
 
   // EVERY DECLARED INPUT MOVES THE KEY. If one did not, it could be changed
@@ -151,25 +163,43 @@ test('an output key recomputes from its inputs, and refuses when one moves', () 
     ['the maturity', { bondMaturity: 101 }],
     ['the quorum', { arbitrationK: 4 }],
     ['an arbitration key', { arbitrationKeys: [...ARBITRATION.slice(1), b32(0xff)] }],
-    ['the internal key', { internalKey: b32(0x23) }],
   ];
   for (const [what, over] of moved) {
-    const seen = bondOutputKeyMatches(built.outputKey, { ...inputs, ...over }, { tweakPoint });
+    // The internal key is re-derived for each, because it is a FUNCTION of the
+    // node and arbitration keys - a case that kept the old one would be
+    // refused by the aggregate check and never reach the tweak.
+    const withKeys = { ...inputs, ...over };
+    const derived = bondInternalKey(withKeys, { combine });
+    const seen = bondOutputKeyMatches(built.outputKey,
+      { ...withKeys, internalKey: derived.ok ? derived.internalKey : withKeys.internalKey },
+      { tweakPoint, combine });
     assert.equal(seen.ok, false, `${what} did not move the output key`);
     assert.match(seen.why, /not the taproot tweak of the keys and maturity it declares/);
   }
 
+  // AND AN INTERNAL KEY THE CALLER CHOSE IS REFUSED BEFORE THE TWEAK IS EVEN
+  // TAKEN - a stronger refusal, and a different mistake.
+  const stuffed = bondOutputKeyMatches(built.outputKey, { ...inputs, internalKey: b32(0x23) },
+    { tweakPoint, combine });
+  assert.equal(stuffed.ok, false);
+  assert.match(stuffed.why, /not the MuSig2 aggregate of the node and arbitration keys/);
+
   // NO CURVE IS NOT A PASS. A caller with nothing to add the tweak with is
   // told so, rather than handed a key it did not compute.
   assert.equal(bondOutputKey(inputs).ok, false);
-  assert.match(bondOutputKey(inputs).why, /no curve was given/);
+  assert.match(bondOutputKey(inputs).why, /no curve was given to add the tweak/);
   assert.equal(bondOutputKeyMatches(built.outputKey, inputs).ok, false);
 
+  // AND ONE CURVE IS NOT ENOUGH. A caller passing only the tweak could still
+  // choose the internal key, which is the bypass beside the door.
+  assert.match(bondOutputKey(inputs, { tweakPoint }).why,
+    /no curve was given to aggregate the key path/);
+
   // and 32 bytes is what an output key is
-  assert.match(bondOutputKeyMatches(new Uint8Array(31), inputs, { tweakPoint }).why,
+  assert.match(bondOutputKeyMatches(new Uint8Array(31), inputs, { tweakPoint, combine }).why,
     /not a 32-byte taproot output key/);
   assert.match(bondOutputKey({ ...inputs, internalKey: b32(1).subarray(0, 16) },
-    { tweakPoint }).why, /internal key is 32 bytes/);
+    { tweakPoint, combine }).why, /internal key is 32 bytes/);
 });
 
 /**
@@ -187,7 +217,7 @@ test('the bond builder no longer writes a key derived from nothing', async () =>
     bondVout: 0, bondScriptTemplateVersion: 1, payoutPubkey: b32(3),
     timestamp: 1788700000000n,
   };
-  const built = bondOutputKey(inputs, { tweakPoint });
+  const built = bondOutputKey(inputs, { tweakPoint, combine });
   const tx = parseTransaction(bondTransaction(advert, { outputKey: built.outputKey }));
 
   const script = tx.outputs[0].script;
@@ -207,7 +237,7 @@ test('the bond builder no longer writes a key derived from nothing', async () =>
  * that arbitration cannot freeze one forever.
  */
 test('each leaf gets a control block that proves it belongs to the output', () => {
-  const built = bondOutputKey(inputs, { tweakPoint });
+  const built = bondOutputKey(inputs, { tweakPoint, combine });
   assert.equal(built.ok, true, built.why);
   assert.equal(built.parity === 0 || built.parity === 1, true, 'the parity was not kept');
 
@@ -258,12 +288,12 @@ test('each leaf gets a control block that proves it belongs to the output', () =
 test('a curve that answers without the parity is refused', () => {
   const halfAnswer = (internalKey, tweak) => taggedHash('TestTweak',
     Uint8Array.from([...internalKey, ...tweak]));
-  const seen = bondOutputKey(inputs, { tweakPoint: halfAnswer });
+  const seen = bondOutputKey(inputs, { tweakPoint: halfAnswer, combine });
   assert.equal(seen.ok, false);
   assert.match(seen.why, /did not return a 32-byte key|even or odd/);
 
   const twoish = () => ({ outputKey: b32(1), parity: 2 });
-  assert.match(bondOutputKey(inputs, { tweakPoint: twoish }).why, /even or odd/);
+  assert.match(bondOutputKey(inputs, { tweakPoint: twoish, combine }).why, /even or odd/);
 });
 
 /**
@@ -272,13 +302,19 @@ test('a curve that answers without the parity is refused', () => {
  * posted would be spending a different tree.
  */
 test('the tree and the output key are the ones the spendable leaves produce', () => {
-  const built = bondOutputKey(inputs, { tweakPoint });
+  const built = bondOutputKey(inputs, { tweakPoint, combine });
   assert.equal(toHex(built.merkleRoot),
     '4e8367ddbb37d1d8f78db1fceaef3bb2067c37b94e5786810270a19b68aaf938',
     'the merkle root moved, so the leaf programs are not the ones measured');
+  // The output key under the stub curve moved once - not because the leaves
+  // moved, which the root above still holds, but because this fixture stopped
+  // stuffing an internal key and started DERIVING it from the named keys.
+  // 704bf508... was the value while the internal key was a made-up b32(0x22).
   assert.equal(toHex(built.outputKey),
-    '704bf508a57b0ec51898ee67a523184ff344025a6f80ff98dbfe4db210d2b4fd',
+    '9e0435f63d2fada85daf74878d805d4a30fcfe35794b6b662d534024921656ff',
     'the output key moved under the stub curve');
+  assert.notEqual(toHex(built.outputKey),
+    '704bf508a57b0ec51898ee67a523184ff344025a6f80ff98dbfe4db210d2b4fd');
 
   // and the empty-stack order is what it used to be, which is why it moved
   assert.notEqual(toHex(built.merkleRoot),

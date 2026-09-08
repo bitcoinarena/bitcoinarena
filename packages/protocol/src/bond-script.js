@@ -159,13 +159,119 @@ export const tapTweak = (internalKey, merkleRoot) =>
   taggedHash('TapTweak', cat(internalKey, merkleRoot));
 
 /**
+ * THE INTERNAL KEY IS DERIVED, NOT CHOSEN.
+ *
+ * 5A.3B: the key path is `MuSig2(node_key, arbitration_aggregate_key)`, and
+ * it is the path that moves the money without revealing anything - "a
+ * cooperative release and a cooperative slash are the same transaction". A
+ * template that ACCEPTED thirty-two bytes for it would let whoever calls it
+ * choose that path: a node could post a bond whose cooperative spend is a key
+ * only it holds, and every check would pass, because the internal key was an
+ * input to the check rather than a fact derived from the named keys. That is
+ * the fault taken out of the census depth, the committee size, the bond floor
+ * and the payout table, on the one path where nobody would ever see it.
+ *
+ * BIP-327's KeyAgg, and the coefficients are this package's to compute:
+ *
+ *     L    = H("KeyAgg list", pk1 || pk2 || ... )
+ *     a_i  = H("KeyAgg coefficient", L || pk_i)      with a_i = 1 for the
+ *            SECOND distinct key, which is BIP-327's own optimisation
+ *     Q    = sum a_i * P_i
+ *
+ * The sum is curve work and belongs to the caller, like every other point
+ * operation here. The coefficients are hashing, which is this package's.
+ *
+ * KEY AGGREGATION ONLY. No session, no nonces, nothing signed: this says what
+ * the key IS, not how it is used.
+ */
+export function keyAggCoefficients(keys) {
+  if (!Array.isArray(keys) || !keys.length) throw new TypeError('an aggregate needs keys');
+  for (const key of keys) if (!is32(key)) throw new TypeError('an aggregated key is 32 bytes');
+
+  const list = taggedHash('KeyAgg list', cat(...keys));
+
+  // BIP-327 gives the SECOND DISTINCT key a coefficient of one, so the common
+  // two-key case costs one multiplication instead of two. Skipping it would
+  // produce a self-consistent aggregate that no other MuSig2 implementation
+  // agrees with - and a key path nobody else can sign is a key path that does
+  // not exist.
+  let second = null;
+  for (const key of keys) {
+    if (!sameKey(key, keys[0])) { second = key; break; }
+  }
+
+  return keys.map((key) => ({
+    key,
+    coefficient: second && sameKey(key, second)
+      ? ONE_COEFFICIENT
+      : taggedHash('KeyAgg coefficient', cat(list, key)),
+  }));
+}
+
+const sameKey = (a, b) => a.every((v, i) => v === b[i]);
+const ONE_COEFFICIENT = (() => {
+  const one = new Uint8Array(32);
+  one[31] = 1;
+  return one;
+})();
+
+/**
+ * The aggregate itself, with the caller's curve doing the sum.
+ */
+export function aggregateKeys(keys, { combine } = {}) {
+  if (typeof combine !== 'function')
+    return { ok: false, why: 'no curve was given to add the keys with' };
+  let terms;
+  try { terms = keyAggCoefficients(keys); }
+  catch (e) { return { ok: false, why: e.message }; }
+
+  let key;
+  try { key = combine(terms); }
+  catch (e) { return { ok: false, why: `that curve refused the aggregate: ${e.message}` }; }
+  if (!is32(key)) return { ok: false, why: 'that curve did not return a 32-byte aggregate' };
+  return { ok: true, key, terms };
+}
+
+/**
+ * 5A.3B'S OWN INTERNAL KEY: the node and the arbitration set, aggregated in
+ * that order.
+ *
+ * The arbitration keys are aggregated FIRST, into the one key 5A.3B calls
+ * `arbitration_aggregate_key`, and the internal key is the aggregate of the
+ * node's key with that. Two steps, because the spec names two things - and
+ * because the arbitration aggregate is the same for every bond on a network
+ * while the node's key is not.
+ */
+export function bondInternalKey({ nodeKey, arbitrationKeys }, { combine } = {}) {
+  if (!is32(nodeKey)) return { ok: false, why: 'the node key is 32 bytes' };
+  const set = aggregateKeys(arbitrationKeys, { combine });
+  if (!set.ok) return set;
+  const both = aggregateKeys([nodeKey, set.key], { combine });
+  if (!both.ok) return both;
+  return { ok: true, internalKey: both.key, arbitrationAggregate: set.key };
+}
+
+/**
  * THE WHOLE TREE, AS HASHES: the two leaves, their branch, and the tweak.
  *
  * Returned separately from the output key because everything here is this
  * package's to compute and the last step is not.
  */
-export function bondTapTree({ nodeKey, arbitrationKeys, arbitrationK, bondMaturity, internalKey }) {
+export function bondTapTree({
+  nodeKey, arbitrationKeys, arbitrationK, bondMaturity, internalKey,
+}, { combine } = {}) {
   if (!is32(internalKey)) throw new TypeError('the internal key is 32 bytes');
+
+  // AND IT HAS TO BE THE ONE THE NAMED KEYS PRODUCE. A caller with a curve is
+  // held to it; one without gets the tree it asked for and no promise that the
+  // key path belongs to anybody in particular, which is what `bondOutputKey`
+  // says out loud when it refuses to build without a curve.
+  if (combine) {
+    const want = bondInternalKey({ nodeKey, arbitrationKeys }, { combine });
+    if (!want.ok) throw new Error(want.why);
+    if (!sameKey(want.internalKey, internalKey))
+      throw new Error('that internal key is not the MuSig2 aggregate of the node and arbitration keys');
+  }
   const a = tapLeafHash(recoveryLeaf(nodeKey, bondMaturity));
   const b = tapLeafHash(slashLeaf(arbitrationKeys, arbitrationK));
   const merkleRoot = tapBranchHash(a, b);
@@ -187,11 +293,20 @@ export function bondTapTree({ nodeKey, arbitrationKeys, arbitrationK, bondMaturi
  * brought a different internal key gets a different Q and its bond will not
  * recompute, which is the check doing its job rather than a special case.
  */
-export function bondOutputKey(inputs, { tweakPoint } = {}) {
+export function bondOutputKey(inputs, { tweakPoint, combine } = {}) {
   if (typeof tweakPoint !== 'function')
     return { ok: false, why: 'no curve was given to add the tweak with' };
+
+  // BOTH CURVES OR NEITHER. Requiring the tweak and not the aggregate would
+  // leave a door open beside the one just shut: a caller could pass the tweak
+  // alone and still choose the internal key, which is the whole fault this
+  // check exists against. The two are the same curve - anything that can add
+  // t*G can add a_i*P_i - so asking for both costs a caller nothing and closes
+  // the bypass.
+  if (typeof combine !== 'function')
+    return { ok: false, why: 'no curve was given to aggregate the key path with' };
   let tree;
-  try { tree = bondTapTree(inputs); }
+  try { tree = bondTapTree(inputs, { combine }); }
   catch (e) { return { ok: false, why: e.message }; }
 
   // THE PARITY IS PART OF THE ANSWER, not a detail the x-only form may drop.
@@ -280,9 +395,9 @@ export function rootFromControlBlock(leafHash, controlBlock) {
  * mistakes: a key that is not the node's, a maturity that is not the
  * network's, and a tree that is not this template.
  */
-export function bondOutputKeyMatches(onChain, inputs, { tweakPoint } = {}) {
+export function bondOutputKeyMatches(onChain, inputs, { tweakPoint, combine } = {}) {
   if (!is32(onChain)) return { ok: false, why: 'that is not a 32-byte taproot output key' };
-  const built = bondOutputKey(inputs, { tweakPoint });
+  const built = bondOutputKey(inputs, { tweakPoint, combine });
   if (!built.ok) return built;
   if (!built.outputKey.every((b, i) => b === onChain[i])) {
     return {
