@@ -209,7 +209,7 @@
     function fail(message) {
       err.textContent = message;
       err.classList.add('show');
-      stage.textContent = 'Start fehlgeschlagen';
+      stage.textContent = 'Could not start';
     }
 
     const canvas = document.getElementById('canvas');
@@ -233,6 +233,42 @@
     resize();
     window.addEventListener('resize', resize);
 
+    // THE ROUND THIS PAGE WAS SENT TO, if it was sent to one.
+    //
+    // The page still refuses to INVENT a round - there is no contract written
+    // down here and there never will be. What it can do is be told about one
+    // that already exists: `?round=` names an id the daemons agreed on before
+    // anybody opened this page, `node=` names who holds it, and the contract
+    // is fetched and then HASHED - a node that answers with a different round
+    // is refused rather than played. Every rule in that sentence is in
+    // `@blwp/client`, where `node --test` drives it against real daemons; this
+    // is only where the answer is put.
+    //
+    // BEFORE UNITY, not beside it: `NetSession` reads once, at Start, whether
+    // there is a session to open, so a fetch that landed later would be a
+    // round nobody joined.
+    //
+    // Two tabs are two players, because the key is in `sessionStorage` and
+    // that is per tab. Without a round named, none of this runs and the page
+    // is the single-player daily it has always been.
+    async function joinTheRoundIfOneWasNamed() {
+      if (typeof BLWPCLIENT === 'undefined') return;
+      const named = await BLWPCLIENT.joinFromQuery(location.search);
+      if (!named) return;
+
+      window.BLWP_ROUND = named.round;
+      window.BLWP_CHAIN = named.chain;
+      window.BLWP_ADVERT = named.advert;
+      window.BLWP_ENTRY = BLWPCLIENT.entryFor(named.round, {
+        playerPubkey: BLWPCLIENT.tabIdentity({
+          storage: window.sessionStorage,
+          random: (n) => crypto.getRandomValues(new Uint8Array(n)),
+        }),
+        random: (n) => crypto.getRandomValues(new Uint8Array(n)),
+      });
+      console.log('[blwp] joining round ' + named.roundIdHex + ' from ' + named.from);
+    }
+
     const script = document.createElement('script');
     script.src = 'Build/{{{ LOADER_FILENAME }}}';
     script.onerror = () => fail('The loader could not be loaded.');
@@ -246,7 +282,10 @@
         })
         .catch(fail);
     };
-    document.body.appendChild(script);
+
+    joinTheRoundIfOneWasNamed()
+      .then(() => document.body.appendChild(script))
+      .catch((e) => fail('That round link cannot be used: ' + e.message));
   </script>
 </body>
 </html>

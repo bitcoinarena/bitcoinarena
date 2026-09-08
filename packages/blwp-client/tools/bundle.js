@@ -38,6 +38,10 @@ walk(SRC + 'client.js');
 // client that publishes a run should not depend on whether anybody is drawing
 // the others.
 walk(SRC + 'ghost-field.js');
+// AND THE WAY IN. `join.js` is what a page does with its own URL before the
+// client exists at all: nothing imports it, because a client that publishes a
+// run must not depend on how the page was told which round to publish to.
+walk(SRC + 'join.js');
 
 // One scope, so a name declared twice would collide. EVERY top-level name is
 // checked, not only the exported ones: two files with a private helper of the
@@ -92,6 +96,10 @@ out += '         GENESIS: GENESIS, NO_PREVIOUS: NO_PREVIOUS,\n';
 out += '         encodeRoundContract: encodeRoundContract, roundId: roundId,\n';
 out += '         encodeEntryContract: encodeEntryContract, entryId: entryId,\n';
 out += '         watchGhosts: watchGhosts, GHOST_BACKLOG: GHOST_BACKLOG,\n';
+out += '         joinQuery: joinQuery, joinFromQuery: joinFromQuery,\n';
+out += '         fetchRound: fetchRound, bondProvider: bondProvider,\n';
+out += '         tabIdentity: tabIdentity, entryFor: entryFor,\n';
+out += '         decodeRoundContract: decodeRoundContract,\n';
 out += '         toHex: toHex, fromHex: fromHex };\n})();\n';
 out += 'if (typeof module !== "undefined") module.exports = BLWPCLIENT;\n';
 
