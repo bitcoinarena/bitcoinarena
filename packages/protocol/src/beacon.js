@@ -98,6 +98,29 @@ export function beaconIsAfterRound(contract, { height, timeMs } = {}) {
         + `born reading "${source}"`,
     };
 
+  // AND A FALLBACK IS THE SAME BEACON OR IT IS NOTHING.
+  //
+  // Section 6 lists `randomness_fallback` beside the rule: "first block hash
+  // after committee_time". On a network born reading `bitcoin-block-hash` that
+  // IS the rule - there is nothing else it could name - so the only honest
+  // values are absent, empty, or the born rule itself. Anything else is a
+  // SECOND randomness source, and a second source is a second committee: a
+  // creator who could fall back to a beacon of their own choosing would pick
+  // the one that seats their nodes, which is 5A.5's whole attack with an extra
+  // step.
+  //
+  // The field does not encode, so a foreign fallback cannot arrive over the
+  // wire at all - `decodeRoundContract` produces none. This refuses one on a
+  // contract OBJECT, which is the only place it could still appear.
+  const fallback = contract.randomnessFallback;
+  if (fallback !== undefined && fallback !== null && fallback !== ''
+      && fallback !== source)
+    return {
+      ok: false,
+      why: `that round names randomness fallback "${fallback}" where ${network} was born `
+        + `reading "${source}" - a fallback is the same beacon or it is nothing`,
+    };
+
   // A BEACON WITH NO TIME IS NOT A LATE BEACON. "I do not know when this was
   // published" and "it was published after committee_time" must never be the
   // same answer, so a caller with no timestamp gets a refusal.

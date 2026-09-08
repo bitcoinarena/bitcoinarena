@@ -205,3 +205,42 @@ test('two beacons that differ only after committee_time seat different committee
   assert.notDeepEqual(one, seatedBy(b32(0x9c)),
     'two beacons seated the same pair, so the randomness decides nothing');
 });
+
+test('a fallback is the same beacon or it is nothing', () => {
+  // Section 6 lists `randomness_fallback` beside the rule: "first block hash
+  // after committee_time". On a network born reading `bitcoin-block-hash` that
+  // IS the rule, so the only honest values are absent, empty, or the born rule
+  // itself. Anything else is a SECOND randomness source - and a second source
+  // is a second committee, since a creator free to fall back would fall back
+  // to the beacon that seats their own nodes.
+  const rid = roundId(contract());
+  const seeded = (randomnessFallback) => committeeSeedFromBeacon(
+    { ...contract(), randomnessFallback },
+    { roundId: rid, randomness: b32(0xbe), height: CENSUS_HEIGHT + 5, timeMs: AFTER });
+
+  for (const allowed of [undefined, null, '', 'bitcoin-block-hash']) {
+    const out = seeded(allowed);
+    assert.equal(out.ok, true, `a fallback of ${JSON.stringify(allowed)} was refused: ${out.why}`);
+  }
+
+  // AND THE SEED IS THE SAME ONE, so an allowed fallback changes nothing about
+  // which committee sits - it is the same beacon by construction.
+  assert.deepEqual(seeded('bitcoin-block-hash').seed, seeded(undefined).seed);
+
+  for (const foreign of ['drand', 'mock:7', 'bitcoin-block-height', 'BITCOIN-BLOCK-HASH']) {
+    const out = seeded(foreign);
+    assert.equal(out.ok, false, `a fallback of "${foreign}" was accepted`);
+    assert.match(out.why, /a fallback is the same beacon or it is nothing/);
+    assert.match(out.why, new RegExp(`names randomness fallback "${foreign}"`));
+    assert.equal(out.seed, undefined, 'a seed came back from a round with a second beacon');
+  }
+
+  // AND IT CANNOT ARRIVE OVER THE WIRE AT ALL: the field does not encode, so a
+  // decoded contract carries none whatever the sender wrote.
+  const wire = decodeRoundContract(encodeRoundContract({ ...contract(), randomnessFallback: 'drand' }));
+  assert.equal(wire.randomnessFallback, undefined,
+    'a foreign fallback survived the encoding, so the wire can carry a second beacon');
+  assert.equal(committeeSeedFromBeacon(wire,
+    { roundId: roundId(wire), randomness: b32(0xbe), height: CENSUS_HEIGHT + 5, timeMs: AFTER }).ok,
+  true);
+});
