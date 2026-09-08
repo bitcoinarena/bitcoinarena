@@ -321,3 +321,96 @@ test('the roles come from the resolved advertisement, not from the entry', () =>
     'the census believed a role the advertisement never declared');
   assert.deepEqual(seen.eligible[0].advert.roles, ['game']);
 });
+
+/**
+ * THE CENSUS NO LONGER TAKES A BODY NOBODY SIGNED - once its caller brings a
+ * curve.
+ *
+ * RESOLVE used to split the signed advertisement and throw the signature away,
+ * so eligibility rested on a body that had only been COMMITTED to, never
+ * authored. The commitment is the heavier half and it stands: an attacker
+ * cannot swap the endpoint of a bond that is not theirs without spending it.
+ * But 5A.1 lists the signature, and a census that skipped it was letting a
+ * body into the set that nobody had shown belonged to the key it names.
+ *
+ * This package still carries no curve, and must not: it is the one every other
+ * package reads. So the caller brings one, the way `provesEquivocation` takes
+ * one - and when nobody brings it the gap is named in `unchecked` exactly as
+ * before, rather than a body being called signed because nobody looked.
+ */
+test('RESOLVE checks the advertisement signature when its caller brings a curve', async () => {
+  const { advertId } = await import('../src/advert.js');
+
+  // A STUB CURVE, because this package has none and must not: it is the one
+  // every other package reads. What is measured here is the INJECTION - that
+  // the signature reaches a verifier, that a refusal excludes the entry, and
+  // that the unchecked list shrinks. The real ed25519 does the same thing one
+  // package over, where the dependency already lives.
+  const MINE = new Uint8Array(64).fill(0x11);
+  const verifyAdvert = (sig, id, pub) =>
+    sig.every((b) => b === 0x11) && id.length === 32 && pub.length === 32;
+
+  const advert = advertFor(0x11);
+  const signedWith = (signature) => bondTransaction(advert, {
+    previousTxid: b32(0xa1), previousVout: 0, signature,
+  });
+  const entryOf = (transaction) => ({
+    txid: parseTransaction(transaction).txid, vout: 0, pubkey: b32(0x11),
+    bondSats: 60000n, height: 900000, roles: ['game'], spent: false,
+  });
+
+  const mine = signedWith(MINE);
+  const ok = resolveCensus([entryOf(mine)], {
+    contract, resolve: () => ({ transaction: mine }), verifyAdvert,
+  });
+  assert.equal(ok.ok, true, ok.why);
+  assert.equal(ok.eligible.length, 1, `the signed node was excluded: ${JSON.stringify(ok.excluded)}`);
+
+  // AND THE LIST OF WHAT IS STILL UNCHECKED SHRINKS, because reporting the
+  // signature as unchecked after checking it would be as wrong as not
+  // checking it.
+  assert.equal(ok.unchecked.some((u) => /advertisement signature/.test(u)), false);
+  assert.equal(ok.unchecked.some((u) => /script template/.test(u)), true,
+    'the taproot script template is still hidden until the output is spent');
+
+  // A BODY THE VERIFIER REFUSES IS NOT IN THE CENSUS.
+  const theirs = signedWith(new Uint8Array(64).fill(0x22));
+  const forged = resolveCensus([entryOf(theirs)], {
+    contract, resolve: () => ({ transaction: theirs }), verifyAdvert,
+  });
+  assert.equal(forged.eligible.length, 0, 'a body the verifier refused was counted');
+  assert.match(forged.excluded[0].why, /not signed by the node it names/);
+
+  // WITHOUT A CURVE IT IS COUNTED AND THE GAP IS NAMED - unchanged behaviour
+  // for a caller that has none, which is what keeps this package curve-free.
+  const blind = resolveCensus([entryOf(theirs)], {
+    contract, resolve: () => ({ transaction: theirs }),
+  });
+  assert.equal(blind.eligible.length, 1);
+  assert.equal(blind.unchecked.some((u) => /advertisement signature/.test(u)), true);
+
+  // ZEROS VERIFY EACH OTHER ON ED25519, and a bond builder's default signature
+  // is 64 of them, so both halves are refused before any curve is consulted.
+  // EACH CASE ISOLATES ONE CHECK: a fixture where both are zero would pass
+  // with either check missing, and prove neither.
+  const always = () => true;
+
+  // the zero KEY, carrying a signature that is not empty at all
+  const nobody = advertFor(0x11, { nodePubkey: new Uint8Array(32) });
+  const keyed = bondTransaction(nobody, {
+    previousTxid: b32(0xa2), previousVout: 0, signature: new Uint8Array(64).fill(0x33),
+  });
+  const keyOnly = resolveCensus([{ ...entryOf(keyed), pubkey: new Uint8Array(32) }], {
+    contract, resolve: () => ({ transaction: keyed }), verifyAdvert: always,
+  });
+  assert.equal(keyOnly.eligible.length, 0, 'the zero key was made eligible');
+  assert.match(keyOnly.excluded[0].why, /zero key, which nobody holds/);
+
+  // the empty SIGNATURE, under a key that is real
+  const unsigned = bondTransaction(advert, { previousTxid: b32(0xa3), previousVout: 0 });
+  const sigOnly = resolveCensus([entryOf(unsigned)], {
+    contract, resolve: () => ({ transaction: unsigned }), verifyAdvert: always,
+  });
+  assert.equal(sigOnly.eligible.length, 0, 'an unsigned body was made eligible');
+  assert.match(sigOnly.excluded[0].why, /carries an empty signature/);
+});

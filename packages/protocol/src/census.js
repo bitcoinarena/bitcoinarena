@@ -611,7 +611,7 @@ export function scanCensus(view, { contract, candidates }) {
  * committing to two bodies would be one operator advertising twice, not an
  * ambiguity to settle here.
  */
-function resolveBody(seen, entry) {
+function resolveBody(seen, entry, verifyAdvert) {
   let tx;
   try { tx = parseTransaction(seen.transaction); }
   catch (e) { return { ok: false, why: `that is not a transaction: ${e.message}` }; }
@@ -629,24 +629,56 @@ function resolveBody(seen, entry) {
   if (!commitments.length)
     return { ok: false, why: 'no output of that transaction commits to anything' };
 
+  // THE SIGNATURE IS KEPT WITH THE BODY, not dropped on the way past. It used
+  // to be discarded here - `const { body } = split...` and the other half
+  // thrown away - so a census entry was built from a body nobody had shown was
+  // its author's, and the gap was named in `unchecked` instead. Naming a gap
+  // is right when nothing can close it; it is not right once a caller can.
   const offered = [];
   const read = (bytes) => {
     try {
-      const { body } = splitSignedAdvert(bytes);
-      offered.push(decodeAdvert(body));
+      const { body, signature } = splitSignedAdvert(bytes);
+      offered.push({ advert: decodeAdvert(body), signature });
     } catch { /* not a signed body; most witness items are not */ }
   };
   for (const item of witnessItemsOf(tx)) read(item);
   if (seen.signedAdvert) read(seen.signedAdvert);
 
-  const taken = offered.find((a) =>
-    commitments.some((c) => c.length === 32 && advertId(a).every((b, i) => b === c[i])));
+  const taken = offered.find((o) =>
+    commitments.some((c) => c.length === 32 && advertId(o.advert).every((b, i) => b === c[i])));
   if (!taken)
     return { ok: false, why: 'the bond output commits to a different advertisement' };
-  return { ok: true, advert: taken, advertId: advertId(taken), tx };
+
+  // AND IF THE CALLER BROUGHT A CURVE, THE SIGNATURE IS CHECKED HERE.
+  //
+  // This package carries none and must not: it is the one every other package
+  // reads, and a hash that pins money should not gain a dependency whose
+  // version could change its answer. So `verifyAdvert` is injected the way
+  // `provesEquivocation` takes one - and when it is absent the gap is named in
+  // `unchecked` exactly as before, rather than a body being called signed
+  // because nobody looked.
+  //
+  // A KEY OF NOTHING AND A SIGNATURE OF NOTHING VERIFY EACH OTHER on ed25519,
+  // measured: zero decodes to a point of small order and the equation closes
+  // trivially. That is refused here whatever the caller's curve says, because
+  // no census entry should rest on a key nobody holds.
+  if (verifyAdvert) {
+    const zero = (b) => b.every((v) => v === 0);
+    if (zero(taken.advert.nodePubkey))
+      return { ok: false, why: 'that advertisement names the zero key, which nobody holds' };
+    if (zero(taken.signature))
+      return { ok: false, why: 'that advertisement carries an empty signature' };
+    if (!verifyAdvert(taken.signature, advertId(taken.advert), taken.advert.nodePubkey))
+      return { ok: false, why: 'that advertisement is not signed by the node it names' };
+  }
+
+  return {
+    ok: true, advert: taken.advert, advertId: advertId(taken.advert), tx,
+    signatureChecked: !!verifyAdvert,
+  };
 }
 
-export function resolveCensus(entries, { contract, resolve }) {
+export function resolveCensus(entries, { contract, resolve, verifyAdvert }) {
   if (!contract || typeof contract.bondMinSats !== 'bigint')
     return { ok: false, why: 'that round names no bond floor to measure against' };
 
@@ -680,7 +712,7 @@ export function resolveCensus(entries, { contract, resolve }) {
     // read the blocks. Demanding a header and a branch again would make
     // RESOLVE ask for what step 1 already answered, and 5A.4 asks something
     // narrower of it - read the committed hash, retrieve the body, match.
-    const read = resolveBody(seen, e);
+    const read = resolveBody(seen, e, verifyAdvert);
     if (!read.ok) { excluded.push({ ...e, why: read.why }); continue; }
 
     // AND THE OUTPUT ITSELF HAS TO LOOK LIKE A BOND. Until this, the census
@@ -749,7 +781,12 @@ export function resolveCensus(entries, { contract, resolve }) {
     ok: true,
     eligible,
     excluded,
-    unchecked: BOND_UNCHECKED,
+    // WHAT IS STILL UNCHECKED SHRINKS WHEN A CALLER BRINGS A CURVE. Reporting
+    // the signature as unchecked after checking it would be as wrong as not
+    // checking it: the list is what a reader is asked to take on trust.
+    unchecked: verifyAdvert
+      ? BOND_UNCHECKED.filter((u) => !/advertisement signature/.test(u))
+      : BOND_UNCHECKED,
   };
 }
 
@@ -783,7 +820,7 @@ export function resolveCensus(entries, { contract, resolve }) {
  * spent, and the advertisement signature needs a curve this package does not
  * carry. Neither is skipped quietly.
  */
-export function deriveCensus(views, { contract, candidates, resolve }) {
+export function deriveCensus(views, { contract, candidates, resolve, verifyAdvert }) {
   // MOST WORK WINS, HERE, before anything is read. Two chains that disagree
   // about Bitcoin are not two censuses: one of them is the chain.
   const chain = bestChainView(views);
@@ -796,7 +833,7 @@ export function deriveCensus(views, { contract, candidates, resolve }) {
     return { ok: false, why: `that census cannot be scanned: ${e.message}` };
   }
 
-  const resolved = resolveCensus(scanned.entries, { contract, resolve });
+  const resolved = resolveCensus(scanned.entries, { contract, resolve, verifyAdvert });
   if (!resolved.ok) return resolved;
 
   let census;

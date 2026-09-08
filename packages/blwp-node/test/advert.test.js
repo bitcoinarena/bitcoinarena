@@ -205,3 +205,52 @@ test('the zero key and the empty signature do not sign each other', async () => 
   assert.equal(empty.ok, false);
   assert.match(empty.why, /carries an empty signature/);
 });
+
+/**
+ * AND THE CENSUS ITSELF, WITH A REAL CURVE.
+ *
+ * The door above is the one a client walks through. The census is the one that
+ * decides who may be a committee at all, and it used to split the signed body
+ * and throw the signature away - so eligibility rested on a body that had been
+ * committed to and never authored. It takes a verifier now; this is that
+ * verifier, on the curve this daemon already signs with.
+ */
+test('the census takes a body signed by the key it names, and refuses one that is not', async () => {
+  const { resolveCensus } = await import('../../protocol/src/census.js');
+  const verifyAdvert = (sig, id, pub) => {
+    try { return ed25519.verify(sig, id, pub); } catch { return false; }
+  };
+
+  const a = advertFor('wss://census.example:443');
+  const bondFrom = (key) => bondTransaction(a, {
+    previousTxid: b32(0xa1), previousVout: 0, signature: ed25519.sign(advertId(a), key),
+  });
+  const entryOf = (transaction) => ({
+    txid: parseTransaction(transaction).txid, vout: 0, pubkey: NODE,
+    bondSats: 60000n, height: 900000, roles: ['game'], spent: false,
+  });
+  const contract = { bondMinSats: 50000n, protocolVersion: 1 };
+
+  const mine = bondFrom(secret);
+  const ok = resolveCensus([entryOf(mine)], {
+    contract, resolve: () => ({ transaction: mine }), verifyAdvert,
+  });
+  assert.equal(ok.ok, true, ok.why);
+  assert.equal(ok.eligible.length, 1, `refused its own signer: ${JSON.stringify(ok.excluded)}`);
+  assert.equal(ok.unchecked.some((u) => /advertisement signature/.test(u)), false);
+
+  const theirs = bondFrom(other);
+  const forged = resolveCensus([entryOf(theirs)], {
+    contract, resolve: () => ({ transaction: theirs }), verifyAdvert,
+  });
+  assert.equal(forged.eligible.length, 0, 'a body signed by another key was made eligible');
+  assert.match(forged.excluded[0].why, /not signed by the node it names/);
+
+  // and without the verifier the same body is eligible and the gap is named -
+  // which is what the census did for every body until now
+  const blind = resolveCensus([entryOf(theirs)], {
+    contract, resolve: () => ({ transaction: theirs }),
+  });
+  assert.equal(blind.eligible.length, 1);
+  assert.equal(blind.unchecked.some((u) => /advertisement signature/.test(u)), true);
+});
