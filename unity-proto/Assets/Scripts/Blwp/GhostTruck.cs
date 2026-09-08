@@ -91,10 +91,28 @@ namespace Blwp
         /// at the edge, where a float is a picture rather than a result. The
         /// core never sees them again.
         /// </summary>
-        public void Show(int x, int z, int heading)
+        public void Show(int x, int z, int heading) => Show(x, z, heading, null);
+
+        /// <summary>
+        /// The same picture, standing on a ground somebody worked out.
+        ///
+        /// A GHOSTS frame carries no height and cannot: the map is the fee
+        /// histogram and it moves under every player, so where the road is at
+        /// this x and z is a fact of THIS page's world, not of that player's
+        /// run. `y` null keeps whatever height the object had.
+        ///
+        /// AND THE HEADING IS IN TURNS. The word is the core's T_HEADING, the
+        /// same word `BlwpCore.TruckHeading` reads for the local truck, and the
+        /// core measures a heading as a fraction of a full turn in Q16.16 -
+        /// 16384 is a quarter turn, which is the 90 degrees the M1 build reads
+        /// out at the start line. Dividing it by 65536 the way a metre is
+        /// divided gave 0.25 degrees: a truck driving east drawn pointing
+        /// north, on a word the local truck has always read correctly.
+        /// </summary>
+        public void Show(int x, int z, int heading, float? y)
         {
-            transform.position = new Vector3(x / ONE, transform.position.y, z / ONE);
-            transform.rotation = Quaternion.Euler(0f, heading / ONE, 0f);
+            transform.position = new Vector3(x / ONE, y ?? transform.position.y, z / ONE);
+            transform.rotation = Quaternion.Euler(0f, BlwpCore.Degrees(heading), 0f);
         }
 
         /// <summary>

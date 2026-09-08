@@ -272,6 +272,24 @@ public class Bootstrap : MonoBehaviour
         // The deck, not the bare relief: the truck stands on the road.
         driver.roads = FindFirstObjectByType<RoadNetwork>();
 
+        // THE OTHER PLAYERS' TRUCKS. Nothing built this before, which is the
+        // whole reason the hop was dead in a shipped page: `GhostField` was in
+        // no scene and no script constructed it, so `BlwpNextGhost` was never
+        // called and the pictures the JS client had already queued were drained
+        // by nobody. Every test of the field made its own field, so the set
+        // stayed green over a player that drew no ghost at all.
+        //
+        // It is seated on the SAME surface the local truck stands on - a
+        // picture carries x, z and a heading and cannot carry a height, because
+        // the map is the fee histogram and moves under everyone - and it draws
+        // with a body of the same truck, fitted by the same rule and carrying
+        // no physics.
+        _ghosts = new GameObject("Ghosts");
+        _ghosts.transform.SetParent(transform, false);
+        var ghosts = _ghosts.AddComponent<Blwp.GhostField>();
+        ghosts.Model = BuildGhostBody();
+        ghosts.Seat = (x, z) => driver.Ground(x, z) + driver.BodyAboveGround;
+
         // What a liquidation looks like: an aircraft, a bomb, and the ground it
         // leaves behind. Theatre - the core has no aircraft, and the hole is
         // already dug by the time the bomb is drawn falling into it.
@@ -715,10 +733,60 @@ public class Bootstrap : MonoBehaviour
                 if (_wheelTaken < _modelWheels.Count) axle.leftMesh = _modelWheels[_wheelTaken++];
                 if (_wheelTaken < _modelWheels.Count) axle.rightMesh = _modelWheels[_wheelTaken++];
             }
+        // AND THE GHOSTS DRAW THE SAME TRUCK. The model streams in after the
+        // scene is built, so a field made at start holds the proxy; without
+        // this every other player stays a box for the whole session.
+        var field = _ghosts != null ? _ghosts.GetComponent<Blwp.GhostField>() : null;
+        if (field != null)
+        {
+            var was = field.Model;
+            field.Model = BuildGhostBody();
+            if (was != null) Destroy(was);
+        }
+
         Debug.Log("[Bootstrap] truck model swapped in");
     }
 
+    /// <summary>
+    /// The body a ghost is drawn with: this truck, at this size, inert.
+    ///
+    /// Kept INACTIVE - it is a template, not a truck standing at the origin -
+    /// and `GhostField` activates each clone. The streamed model when there is
+    /// one, the same proxy box `BuildTruck` falls back to when there is not, so
+    /// a page that never finishes streaming still shows where the others are.
+    ///
+    /// `FitTruckBody` and not `NormaliseTruckModel`: lifting the wheels out
+    /// writes `_modelWheels`, and that list belongs to the local truck's axles.
+    /// </summary>
+    GameObject BuildGhostBody()
+    {
+        var template = new GameObject("GhostBody");
+        template.transform.SetParent(transform, false);
+        template.SetActive(false);
+
+        if (truckModel != null)
+        {
+            var body = Instantiate(truckModel, template.transform);
+            body.name = "Body";
+            body.transform.localPosition = Vector3.zero;
+            FitTruckBody(body, template.transform);
+            DressTruckBody(body);
+        }
+        else
+        {
+            var box = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            box.name = "BodyProxy";
+            box.transform.SetParent(template.transform, false);
+            box.transform.localScale = new Vector3(2.4f, 2.2f, 6.2f);
+            box.transform.localPosition = new Vector3(0f, 1.0f, 0f);
+            StripColliders(box);
+            if (bodyMaterial != null) box.GetComponent<MeshRenderer>().sharedMaterial = bodyMaterial;
+        }
+        return template;
+    }
+
     ModelStreamer _streamer;
+    GameObject _ghosts;
     Transform _truckRoot;
     TruckController _truck;
     TruckHealth _truckHealth;
@@ -921,26 +989,43 @@ public class Bootstrap : MonoBehaviour
         return box;
     }
 
-    void NormaliseTruckModel(GameObject body, Transform root)
+    /// <summary>
+    /// A truck model at the size and height the rig expects, and nothing else.
+    ///
+    /// Split out of `NormaliseTruckModel` because a GHOST needs exactly this
+    /// half and none of the other: the wheels must NOT be lifted out of a
+    /// ghost's body, since lifting them writes `_modelWheels`, which is the
+    /// list the LOCAL truck's axles are handed. One rule for how big a truck is
+    /// and where its sole sits, used by both.
+    /// </summary>
+    /// <summary>How long a truck is, whatever the model was authored at.</summary>
+    const float TruckBodyLength = 6.4f;
+
+    bool FitTruckBody(GameObject body, Transform root)
     {
         var renderers = body.GetComponentsInChildren<Renderer>(true);
         if (renderers.Length == 0)
         {
             Debug.LogWarning("[Bootstrap] truck model has no renderers");
-            return;
+            return false;
         }
 
         var bounds = Measure(renderers, root);
         // longest horizontal axis is the length, whichever way it was modelled
         float longest = Mathf.Max(bounds.size.x, bounds.size.z);
-        const float WantedLength = 6.4f;
-        if (longest > 0.0001f) body.transform.localScale = Vector3.one * (WantedLength / longest);
+        if (longest > 0.0001f) body.transform.localScale = Vector3.one * (TruckBodyLength / longest);
 
         // measure again after scaling
         bounds = Measure(renderers, root);
         float soleLocalY = bounds.min.y;
         const float ContactPatch = -0.75f;      // where the tyres meet the ground
         body.transform.localPosition = new Vector3(0f, ContactPatch - soleLocalY, 0f);
+        return true;
+    }
+
+    void NormaliseTruckModel(GameObject body, Transform root)
+    {
+        if (!FitTruckBody(body, root)) return;
 
         _modelWheels.Clear();
         foreach (var t in body.GetComponentsInChildren<Transform>(true))
@@ -965,11 +1050,25 @@ public class Bootstrap : MonoBehaviour
             w.SetParent(null, true);
         }
 
+        int converted = DressTruckBody(body);
+        Debug.Log($"[Bootstrap] truck model scaled to {TruckBodyLength}m, " +
+                  $"{_modelWheels.Count} wheels lifted out, {converted} materials converted");
+    }
+
+    /// <summary>
+    /// A truck body with no colliders and materials this pipeline can draw.
+    ///
+    /// The pack ships Built-in materials. In a URP build that shader is not
+    /// there at all, so the body renders NOTHING while still casting a shadow -
+    /// which looks exactly like a truck-shaped hole in the world. A ghost needs
+    /// this as much as the local truck does, and for the collider strip it
+    /// needs it more: `GhostTruck` strips again in Awake, but a body that
+    /// arrives clean never has a solid frame at all.
+    /// </summary>
+    int DressTruckBody(GameObject body)
+    {
         foreach (var c in body.GetComponentsInChildren<Collider>(true)) Destroy(c);
 
-        // The pack ships Built-in materials. In a URP build that shader is not
-        // there at all, so the body renders NOTHING while still casting a
-        // shadow - which looks exactly like a truck-shaped hole in the world.
         int converted = 0;
         foreach (var r in body.GetComponentsInChildren<Renderer>(true))
         {
@@ -977,8 +1076,7 @@ public class Bootstrap : MonoBehaviour
             for (int i = 0; i < mats.Length; i++) { mats[i] = ToUrp(r.sharedMaterials[i]); converted++; }
             r.sharedMaterials = mats;
         }
-        Debug.Log($"[Bootstrap] truck model scaled to {WantedLength}m, " +
-                  $"{_modelWheels.Count} wheels lifted out, {converted} materials converted");
+        return converted;
     }
 
     /// <summary>

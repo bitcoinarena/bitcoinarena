@@ -675,7 +675,7 @@ namespace Blwp
         /// Unity's terrain remains the fallback for the Editor, where there is
         /// no core at all, and for the frames before the relief is uploaded.
         /// </summary>
-        float Ground(float x, float z)
+        public float Ground(float x, float z)
         {
             if (roads != null) return roads.SurfaceHeight(x, z);
             if (BlwpCore.HasSurface) return BlwpCore.SurfaceAt(x, z);

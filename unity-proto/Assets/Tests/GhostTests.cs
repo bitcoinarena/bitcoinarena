@@ -232,11 +232,20 @@ public class GhostTests
         var go = SpawnGhost("ghost", Vector3.zero);
         var ghost = go.GetComponent<GhostTruck>();
 
-        ghost.Show(3 * 65536, -4 * 65536, 90 * 65536);
+        // A QUARTER TURN, NOT "90 IN Q16.16". The heading word is the core's
+        // own T_HEADING and the core measures a heading in TURNS - which is
+        // what `BlwpCore.TruckHeading` reads for the local truck, and why the
+        // M1 build reads out "heading 90" from the word 16384. This line used
+        // to pass `90 * 65536` and expect 90 degrees, which asserted a unit the
+        // core does not use; the ghost's own conversion was written to match
+        // it, so a truck driving east was drawn pointing north.
+        ghost.Show(3 * 65536, -4 * 65536, 16384);
 
         Assert.AreEqual(3f, go.transform.position.x, 0.0001f);
         Assert.AreEqual(-4f, go.transform.position.z, 0.0001f);
         Assert.AreEqual(90f, go.transform.rotation.eulerAngles.y, 0.01f);
+        Assert.AreEqual(BlwpCore.Degrees(16384), go.transform.rotation.eulerAngles.y, 0.01f,
+            "a ghost reads the heading word differently from the local truck");
 
         // negative and fractional words survive: a truck west of the origin at
         // half a metre is ordinary

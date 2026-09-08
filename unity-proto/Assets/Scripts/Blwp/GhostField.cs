@@ -70,6 +70,18 @@ namespace Blwp
         /// <summary>The body every ghost is drawn with. A test may leave it null.</summary>
         public GameObject Model;
 
+        /// <summary>
+        /// What the ground is under a drawn ghost, in metres.
+        ///
+        /// A picture carries x, z and a heading and says nothing about height,
+        /// because height is not a protocol fact: the map is the fee histogram
+        /// and it moves under everybody. The player hands the same surface the
+        /// local truck stands on; a test hands whatever it wants to measure.
+        /// Left null, a ghost keeps the y it had, which is what every ghost did
+        /// before this existed - y = 0, metres under the road.
+        /// </summary>
+        public Func<float, float, float> Seat;
+
         public int Shown { get; private set; }
         public int Trucks => trucks.Count;
 
@@ -132,9 +144,17 @@ namespace Blwp
                 ghost = body.GetComponent<GhostTruck>();
                 if (ghost == null) ghost = body.AddComponent<GhostTruck>();
                 trucks[picture.Entry] = ghost;
+
+                // A TEMPLATE IS KEPT INACTIVE SO IT IS NOT ITSELF IN THE SCENE,
+                // and a clone of it inherits that. A ghost nobody activates is
+                // a ghost nobody sees, which is the same as no ghost at all.
+                body.SetActive(true);
             }
 
-            ghost.Show(picture.X, picture.Z, picture.Heading);
+            var seat = Seat != null
+                ? Seat(picture.X / GhostTruck.ONE, picture.Z / GhostTruck.ONE)
+                : (float?)null;
+            ghost.Show(picture.X, picture.Z, picture.Heading, seat);
             Shown++;
         }
     }
