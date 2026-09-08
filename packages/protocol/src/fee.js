@@ -185,3 +185,62 @@ const fromHex = (s) => {
   for (let i = 0; i < out.length; i++) out[i] = parseInt(s.slice(i * 2, i * 2 + 2), 16);
   return out;
 };
+
+/**
+ * WHAT ONE ENTRY OWES IN FEE, 18's way: ON TOP of the stake.
+ *
+ * "Node fees and the player-selected donation are charged on top of the stake
+ * at entry and therefore do not reduce the pool." So `stakeMsat` is the gross
+ * stake, the fee rides beside it, and 2% of it is what the player was charged.
+ *
+ * THE RATE IS A CONSTANT AND NOT A CONTRACT FIELD. 22A calls it "2%,
+ * identical for everyone", so one rate covers every entry of every round; a
+ * field would let an operator price its own round's fee, which is the fault
+ * contract fields exist to prevent rather than one to import.
+ *
+ * 22A's Collection section describes the opposite - a 100 sat commitment
+ * yielding a 96 sat net stake - and it contradicts 18 AND 22A's own worked
+ * example, where 61 x 100 sat gross gives a 122 sat fee, exactly what 61
+ * players paying 2 sat each hand over. The net reading gives 117.12 sat, which
+ * is not a whole satoshi. Collection's 96 is the error and is not implemented.
+ *
+ * The same integer floor the table uses, so one rate is applied one way.
+ */
+export const entryFeeMsat = (stakeMsat) => {
+  if (typeof stakeMsat !== 'bigint') throw new Error('a stake is BigInt millisatoshi');
+  if (stakeMsat < 0n) throw new Error('a stake cannot be negative');
+  return (stakeMsat * BigInt(NODE_FEE_BPS)) / 10000n;
+};
+
+/**
+ * DOES THIS ENTRY'S FEE STAND?
+ *
+ * An entry whose `feeMsat` is not 2% of its own `stakeMsat` does not, and it
+ * matters in both directions. Too little and the round collected less than the
+ * table will owe its nodes. TOO MUCH AND THE EXCESS IS INCOME: the fee table
+ * computes from the stakes, so a millisatoshi over is a millisatoshi the table
+ * never allocates to anybody and that stays with whoever collected it.
+ *
+ * Answered rather than thrown for a malformed entry, like every other decision
+ * in this package: a caller that asked whether an entry stands should be told,
+ * not made to catch.
+ */
+export function feeMatchesEntry(entry) {
+  if (!entry || typeof entry.stakeMsat !== 'bigint' || typeof entry.feeMsat !== 'bigint')
+    return { ok: false, why: 'an entry carries a BigInt millisatoshi stake and fee' };
+  if (entry.stakeMsat < 0n || entry.feeMsat < 0n)
+    return { ok: false, why: 'a stake and a fee cannot be negative' };
+
+  const owed = entryFeeMsat(entry.stakeMsat);
+  if (entry.feeMsat === owed)
+    return { ok: true, owed, why: `${owed} is 2% of ${entry.stakeMsat}` };
+
+  return {
+    ok: false,
+    owed,
+    why: entry.feeMsat > owed
+      ? `that entry was charged ${entry.feeMsat} where 2% of ${entry.stakeMsat} is ${owed}: `
+        + `the ${entry.feeMsat - owed} over is money no fee table allocates`
+      : `that entry was charged ${entry.feeMsat} where 2% of ${entry.stakeMsat} is ${owed}`,
+  };
+}

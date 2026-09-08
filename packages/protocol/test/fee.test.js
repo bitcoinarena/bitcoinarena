@@ -15,7 +15,8 @@ import { toHex } from '../src/hash.js';
 import { roundId } from '../src/contracts.js';
 import { remainderOrder } from '../src/payout.js';
 import {
-  nodeFeeTable, grossVolumeMsat, feeOwed, poolOfRole, NODE_FEE_BPS, POOL_BPS,
+  nodeFeeTable, grossVolumeMsat, feeOwed, poolOfRole, entryFeeMsat, feeMatchesEntry,
+  NODE_FEE_BPS, POOL_BPS,
   GAME_VERIFY, SETTLEMENT, POOLS,
 } from '../src/fee.js';
 
@@ -209,4 +210,102 @@ test('a round nobody staked in owes nobody anything', () => {
   assert.equal(t.fee, 0n);
   assert.equal(paid(t), 0n);
   assert.equal(t.unallocated, 0n);
+});
+
+// ---------------------------------------------------------------------------
+// AND WHAT ONE ENTRY OWES, 18's way.
+//
+// "Node fees and the player-selected donation are charged ON TOP of the stake
+// at entry and therefore do not reduce the pool." So `stakeMsat` is the gross
+// stake and 2% of it is what the player was charged beside it.
+//
+// 22A's Collection section describes the opposite - a 100 sat commitment
+// giving a 96 sat net stake - and contradicts both 18 and 22A's own worked
+// example: 61 x 100 sat gross is a 122 sat fee, exactly what 61 players paying
+// 2 sat each hand over, while the net reading gives 117.12 sat and no whole
+// satoshi. Collection's 96 is the error and is not implemented.
+
+test('a fee is two percent of that entry\'s own stake, on top of it', () => {
+  assert.equal(entryFeeMsat(100000n), 2000n);
+  assert.equal(entryFeeMsat(0n), 0n, 'a stake of nothing owes nothing');
+
+  // 22A's worked example, in millisatoshi: 61 players at 100 sat
+  const perPlayer = entryFeeMsat(100000n);
+  assert.equal(perPlayer * 61n, 122000n, '122 sat, which is 22A\'s own number');
+
+  for (const bad of [100000, '100000', undefined])
+    assert.throws(() => entryFeeMsat(bad), /BigInt millisatoshi/);
+  assert.throws(() => entryFeeMsat(-1n), /cannot be negative/);
+});
+
+test('an honest two percent stands and anything else does not', () => {
+  const ok = feeMatchesEntry({ stakeMsat: 100000n, feeMsat: 2000n });
+  assert.equal(ok.ok, true, ok.why);
+  assert.equal(ok.owed, 2000n);
+
+  const over = feeMatchesEntry({ stakeMsat: 100000n, feeMsat: 2001n });
+  assert.equal(over.ok, false, 'one millisatoshi over stood');
+  assert.equal(over.owed, 2000n);
+  assert.match(over.why, /the 1 over is money no fee table allocates/);
+
+  const under = feeMatchesEntry({ stakeMsat: 100000n, feeMsat: 1999n });
+  assert.equal(under.ok, false, 'one millisatoshi under stood');
+
+  const none = feeMatchesEntry({ stakeMsat: 100000n, feeMsat: 0n });
+  assert.equal(none.ok, false, 'a positive stake with no fee stood');
+  assert.equal(none.owed, 2000n);
+});
+
+/**
+ * TOO MUCH IS THE DIRECTION THAT BECOMES INCOME. The fee table computes from
+ * the stakes, so a millisatoshi over what 2% comes to is a millisatoshi the
+ * table never allocates to anybody and that stays with whoever collected it.
+ */
+test('an over-charged fee is never allocated by the table', () => {
+  const overcharged = { pubkey: b32(0xa1), outcome: 'DELIVERED', score: 500,
+    stakeMsat: 100000n, feeMsat: 9999n };
+  assert.equal(feeMatchesEntry(overcharged).ok, false);
+
+  const t = nodeFeeTable({ contract, entries: [overcharged], pools, eligible: all });
+  assert.equal(t.gross, 100000n, 'the base is the stake, and the fee rides beside it');
+  assert.equal(t.fee, 2000n, 'the table owes 2% of the stake, not what was charged');
+  assert.equal(paid(t) + t.unallocated, 2000n,
+    'the 7999 over is allocated to nobody, which is why the entry must not stand');
+});
+
+test('a malformed entry is answered, not thrown at the caller', () => {
+  for (const bad of [undefined, null, {}, { stakeMsat: 100000n }, { feeMsat: 2000n },
+                     { stakeMsat: 100000, feeMsat: 2000 }])
+    assert.equal(feeMatchesEntry(bad).ok, false);
+  assert.match(feeMatchesEntry({}).why, /BigInt millisatoshi/);
+  assert.match(feeMatchesEntry({ stakeMsat: -1n, feeMsat: 0n }).why, /cannot be negative/);
+  assert.match(feeMatchesEntry({ stakeMsat: 1n, feeMsat: -1n }).why, /cannot be negative/);
+});
+
+/**
+ * AND THE FLOOR DOES NOT AGGREGATE, which is measured here rather than
+ * reconciled by invention.
+ *
+ * Each entry pays `floor(2% of its own stake)`; the table owes
+ * `floor(2% of the sum)`. Those are not the same number: seven stakes of
+ * 33333 msat collect 4662 and the table owes 4666, and three of 49 collect
+ * nothing at all while the table owes 2. The gap is at most one millisatoshi
+ * per entry and is always in the same direction - collected <= owed - so it
+ * can never become income, which is why it is recorded and not patched. 22A
+ * defines the fee on the gross and says nothing about which rounding a
+ * collector uses; picking one here would be inventing a rule.
+ */
+test('per-entry floors can collect less than the table owes, never more', () => {
+  const cases = [[2, 149n, 4n, 5n], [7, 33333n, 4662n, 4666n], [3, 49n, 0n, 2n],
+                 [61, 100000n, 122000n, 122000n]];
+  for (const [n, stake, collected, owedOnGross] of cases) {
+    const each = entryFeeMsat(stake);
+    assert.equal(each * BigInt(n), collected, `${n} x ${stake} collected`);
+
+    const many = Array.from({ length: n }, (_, i) =>
+      ({ pubkey: b32(0xc0 + i), outcome: 'DELIVERED', score: 500, stakeMsat: stake }));
+    const t = nodeFeeTable({ contract, entries: many, pools, eligible: all });
+    assert.equal(t.fee, owedOnGross, `${n} x ${stake} owed`);
+    assert.ok(collected <= owedOnGross, 'a collector must never gather more than the table owes');
+  }
 });
