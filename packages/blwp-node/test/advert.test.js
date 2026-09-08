@@ -10,6 +10,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { ed25519 } from '@noble/curves/ed25519.js';
+import { secp256k1 } from '@noble/curves/secp256k1.js';
 import { acceptSignedAdvert, advertIsSigned, STILL_UNCHECKED } from '../src/advert.js';
 import { acceptAdvert, BOND_UNCHECKED, hash256 } from '../../protocol/src/chain.js';
 import {
@@ -253,4 +254,79 @@ test('the census takes a body signed by the key it names, and refuses one that i
   });
   assert.equal(blind.eligible.length, 1);
   assert.equal(blind.unchecked.some((u) => /advertisement signature/.test(u)), true);
+});
+
+/**
+ * THE BOND OPTION REACHES THE END OF THIS DOOR.
+ *
+ * A door that swallowed it would check the signature and then accept whatever
+ * thirty-two bytes the poster wrote in the output - and a caller holding the
+ * network's arbitration set would have no way to say so. What a daemon does
+ * with the set is a later letter's; that it CAN be said is this one's.
+ */
+test('a signed advertisement over somebody else\'s bond output is refused', async () => {
+  const { schnorr } = await import('@noble/curves/secp256k1.js');
+  const { genesisFor } = await import('../../protocol/src/genesis.js');
+  const {
+    bondOutputKey, bondInternalKey, BOND_SCRIPT_TEMPLATE_VERSION,
+  } = await import('../../protocol/src/bond-script.js');
+
+  const big = (b) => BigInt('0x' + toHex(b));
+  const tweakPoint = (internalKey, tweak) => {
+    const P = schnorr.utils.lift_x(big(internalKey));
+    const Q = P.add(secp256k1.Point.BASE.multiply(big(tweak)));
+    return { outputKey: schnorr.utils.pointToBytes(Q), parity: Number(Q.toAffine().y & 1n) };
+  };
+  const combine = (terms) => {
+    let sum = null;
+    for (const { key, coefficient } of terms) {
+      const point = schnorr.utils.lift_x(big(key)).multiply(big(coefficient));
+      sum = sum === null ? point : sum.add(point);
+    }
+    return schnorr.utils.pointToBytes(sum);
+  };
+
+  const g = genesisFor('regtest');
+  const bond = {
+    arbitrationKeys: g.arbitrationKeys, arbitrationK: g.arbitrationK,
+    bondMaturity: g.bondMaturity, tweakPoint, combine,
+  };
+
+  // The node signs with ed25519 and bonds with secp: two keys, two curves,
+  // exactly as 5A.1 and 5A.3B have it.
+  const bondSecret = schnorr.utils.randomSecretKey();
+  const bondKey = schnorr.getPublicKey(bondSecret);
+  const honest = bondOutputKey({
+    nodeKey: bondKey, arbitrationKeys: g.arbitrationKeys, arbitrationK: g.arbitrationK,
+    bondMaturity: g.bondMaturity,
+    internalKey: bondInternalKey({ nodeKey: bondKey, arbitrationKeys: g.arbitrationKeys },
+      { combine }).internalKey,
+  }, { tweakPoint, combine }).outputKey;
+
+  // The advertisement names the BOND key, so the output can be rebuilt from it.
+  const a = { ...advertFor('wss://bonded.example:443'), nodePubkey: bondKey };
+  const signedFor = (secret) => ed25519.sign(advertId(a), secret);
+  const ed = ed25519.utils.randomSecretKey();
+  void signedFor; void ed;
+
+  const built = (outputKey) => {
+    const tx = bondTransaction(a, { outputKey, signature: new Uint8Array(64).fill(7) });
+    return { transaction: tx, ...blockAround(parseTransaction(tx).txid) };
+  };
+
+  // A bond that is not this node's - the output key is a stranger's taproot -
+  // is refused once the set is handed in, and accepted without it.
+  const stranger = built(schnorr.getPublicKey(schnorr.utils.randomSecretKey()));
+  const withSet = acceptSignedAdvert({ ...stranger, bond });
+  assert.equal(withSet.ok, false, "a stranger's output passed the door");
+  assert.match(withSet.why, /not the taproot tweak/);
+
+  const withoutSet = acceptSignedAdvert(stranger);
+  assert.equal(withoutSet.ok, false, 'the signature is still checked either way');
+  assert.match(withoutSet.why, /not signed by/, 'the refusal changed shape without the set');
+
+  // AND THE UNCHECKED LIST SHRINKS BY BOTH, INDEPENDENTLY: the signature comes
+  // off because this door reads it, the template because the set was given.
+  assert.equal(STILL_UNCHECKED.some((u) => /advertisement signature/.test(u)), false);
+  assert.equal(honest.length, 32);
 });

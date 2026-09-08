@@ -49,8 +49,15 @@ export const STILL_UNCHECKED = [
  * they signed with the wrong key, signed a different body, or pointed at a
  * transaction that is not theirs, and those are three different mistakes.
  */
-export function acceptSignedAdvert({ transaction, signedAdvert, header, branch, position }) {
-  const seen = acceptAdvert({ transaction, signedAdvert, header, branch, position });
+export function acceptSignedAdvert({
+  transaction, signedAdvert, header, branch, position, bond,
+}) {
+  // THE BOND OPTION GOES THROUGH. A door that swallowed it would check the
+  // signature and then accept whatever thirty-two bytes the poster put in the
+  // output - and a caller holding the network's arbitration set would have no
+  // way to say so. What the daemon does with it is not this letter's; that it
+  // CAN be said is.
+  const seen = acceptAdvert({ transaction, signedAdvert, header, branch, position, bond });
   if (!seen.ok) return seen;
 
   if (!(seen.signature instanceof Uint8Array) || seen.signature.length !== 64)
@@ -86,7 +93,14 @@ export function acceptSignedAdvert({ transaction, signedAdvert, header, branch, 
     };
   }
 
-  return { ...seen, advertId: id, unchecked: STILL_UNCHECKED };
+  // What is left unchecked is what the chain door could not read MINUS the
+  // signature this one just read. With a bond given it has already dropped the
+  // script template, so the two shrink independently and neither is claimed.
+  return {
+    ...seen,
+    advertId: id,
+    unchecked: seen.unchecked.filter((u) => !/advertisement signature/.test(u)),
+  };
 }
 
 /**
