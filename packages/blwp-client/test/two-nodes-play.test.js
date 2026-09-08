@@ -71,7 +71,7 @@ test('two daemons, one page: the other truck arrives where its own transcript pu
     const mine = {
       roundId: rid, playerPubkey: b32(5), sessionPubkey: ed25519.getPublicKey(session),
       stakeCommitment: b32(7), stakeMsat: 100000n, feeMsat: 1000n, donationMsat: 0n,
-      joinTick: 0, worldSecret: b32(0x5e),
+      joinTick: 0, worldSecret: b32(0x5e), vssSharesRef: new Uint8Array(32),
     };
     const eid = await client.join(mine);
     await client.connect();
@@ -79,7 +79,7 @@ test('two daemons, one page: the other truck arrives where its own transcript pu
 
     // THE OTHER PLAYER, a second identity in the same round, whose run node A
     // holds: 60 ticks published before this page ever subscribes.
-    const theirs = { ...mine, playerPubkey: b32(9), sessionPubkey: b32(10), worldSecret: b32(0x59) };
+    const theirs = { ...mine, playerPubkey: b32(9), sessionPubkey: b32(10), worldSecret: b32(0x59), vssSharesRef: new Uint8Array(32) };
     await fetch(`http://127.0.0.1:${a.port}/entry`, { method: 'POST', body: encodeEntryContract(theirs) });
     const theirEid = entryIdOf(theirs);
     const publish = (first, count) => {

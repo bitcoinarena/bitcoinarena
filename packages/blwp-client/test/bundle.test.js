@@ -57,7 +57,7 @@ test('the bundle and the modules name a round and an entry identically', () => {
 
   const e = {
     roundId: roundId(c), playerPubkey: b32(5), sessionPubkey: schnorr.getPublicKey(key),
-    stakeCommitment: b32(7), stakeMsat: 100000n, feeMsat: 1000n, donationMsat: 0n, joinTick: 0, worldSecret: b32(0x5e),
+    stakeCommitment: b32(7), stakeMsat: 100000n, feeMsat: 1000n, donationMsat: 0n, joinTick: 0, worldSecret: b32(0x5e), vssSharesRef: new Uint8Array(32),
   };
   assert.equal(toHex(bundled.entryId(e)), toHex(entryId(e)));
 });

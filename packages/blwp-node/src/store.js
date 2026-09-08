@@ -194,6 +194,22 @@ export function openStore(path = ':memory:') {
       PRIMARY KEY (round_id, pubkey)
     );
 
+    -- THE SHARES A PLAYER PUBLISHED FOR THEIR STAKE PREIMAGE, once this node
+    -- has checked them. 23.1's vss_shares_ref on an Entry Contract names a
+    -- row here, and an entry that names one this node never accepted is
+    -- refused: a seat that cannot check a handout has no business letting the
+    -- round it gates begin.
+    --
+    -- Only accepted handouts are stored, so the presence of a row IS the
+    -- answer. A refused one leaves nothing behind - there is no state a
+    -- second attempt could inherit.
+    CREATE TABLE IF NOT EXISTS handouts (
+      handout_id  BLOB PRIMARY KEY,
+      round_id    BLOB NOT NULL,
+      bytes       BLOB NOT NULL,
+      accepted_ms INTEGER NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS identity (
       one    INTEGER PRIMARY KEY CHECK (one = 0),
       secret BLOB NOT NULL,

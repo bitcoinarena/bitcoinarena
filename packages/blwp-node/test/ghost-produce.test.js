@@ -37,7 +37,7 @@ const contract = () => ({
 });
 const entryFor = (rid, joinTick = 0) => ({
   roundId: rid, playerPubkey: b32(5), sessionPubkey: b32(6), stakeCommitment: b32(7),
-  stakeMsat: 100000n, feeMsat: 1000n, donationMsat: 0n, joinTick, worldSecret: b32(0x5e),
+  stakeMsat: 100000n, feeMsat: 1000n, donationMsat: 0n, joinTick, worldSecret: b32(0x5e), vssSharesRef: new Uint8Array(32),
 });
 
 // The fixture owns this seed exactly as `replay.test.js` owns its 7: nothing

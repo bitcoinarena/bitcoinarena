@@ -62,7 +62,7 @@ async function rig() {
   const mine = {
     roundId: rid, playerPubkey: b32(5), sessionPubkey: ed25519.getPublicKey(session),
     stakeCommitment: b32(7), stakeMsat: 100000n, feeMsat: 1000n, donationMsat: 0n,
-    joinTick: 0, worldSecret: b32(0x5e),
+    joinTick: 0, worldSecret: b32(0x5e), vssSharesRef: new Uint8Array(32),
   };
   const eid = await client.join(mine);
   await client.connect();
@@ -73,7 +73,7 @@ async function rig() {
   // with what arrives, so the other player needs no client of its own.
   const theirs = {
     roundId: rid, playerPubkey: b32(9), sessionPubkey: b32(10), stakeCommitment: b32(7),
-    stakeMsat: 100000n, feeMsat: 1000n, donationMsat: 0n, joinTick: 0, worldSecret: b32(0x59),
+    stakeMsat: 100000n, feeMsat: 1000n, donationMsat: 0n, joinTick: 0, worldSecret: b32(0x59), vssSharesRef: new Uint8Array(32),
   };
   await fetch(`http://127.0.0.1:${node.port}/entry`, { method: 'POST', body: encodeEntryContract(theirs) });
   const theirEid = entryIdOf(theirs);

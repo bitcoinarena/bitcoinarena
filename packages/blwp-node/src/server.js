@@ -24,6 +24,13 @@ import { SIGNED_CHECKPOINT_BYTES } from '../../protocol/src/checkpoint.js';
 import { TYPE_CHECKPOINT_RECEIPT } from '../../protocol/src/constants.js';
 import { bearsAuthority } from '../../protocol/src/frames.js';
 import {
+  decodeHandout, encodeHandout, handoutId, acceptHandout,
+} from '../../protocol/src/handout.js';
+// THE GROUP THE HANDOUT CHECK NEEDS. The protocol package carries no curve on
+// purpose, so the daemon brings one - the same secp256k1 it already brings to
+// the census, and the same one the bonds and BIP-340 use.
+import { feldmanGroup } from './curve.js';
+import {
   SIGNED_RECEIPT_BYTES, decodeCheckpointReceipt, splitSignedReceipt,
 } from '../../protocol/src/receipt.js';
 import { SIGNED_RESULT_BYTES } from '../../protocol/src/result.js';
@@ -226,6 +233,35 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (!row) return text(res, 404, 'no such round');
         res.writeHead(200, { 'content-type': 'application/octet-stream', 'x-state': String(row.state), ...CORS });
         return res.end(Buffer.from(row.contract));
+      }
+
+      // THE SHARES A PLAYER SPLIT THEIR STAKE PREIMAGE INTO, checked here and
+      // kept only if they are one polynomial.
+      //
+      // This is the door letter 29 exists for. `acceptHandout` runs 23.1's own
+      // question - does each share lie on the published polynomial - and it
+      // needs a group, which this file has and the protocol package does not.
+      // A dealer who split with two polynomials is refused HERE, before any
+      // entry naming these shares can be accepted, instead of at settlement
+      // when no five seats can open the preimage and there is nothing to do.
+      if (req.method === 'POST' && url.pathname === '/handout') {
+        let handout;
+        try { handout = decodeHandout(await read(req)); }
+        catch (e) { return text(res, 400, 'that is not a handout: ' + e.message); }
+
+        const seen = acceptHandout(handout, { curve: feldmanGroup });
+        if (!seen.ok) return text(res, 409, seen.why);
+
+        const id = handoutId(handout);
+        round.rememberHandout({ id, roundId: handout.roundId, bytes: encodeHandout(handout) });
+        return bytes(res, 201, id);
+      }
+
+      if (req.method === 'GET' && url.pathname === '/handout') {
+        const held = round.handout(Buffer.from(url.searchParams.get('id') || '', 'hex'));
+        if (!held) return text(res, 404, 'this node has accepted no such handout');
+        res.writeHead(200, { 'content-type': 'application/octet-stream', ...CORS });
+        return res.end(Buffer.from(held.bytes));
       }
 
       if (req.method === 'POST' && url.pathname === '/entry') {

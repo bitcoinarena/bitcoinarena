@@ -289,12 +289,57 @@ export class Round {
     if (now < opensAt)
       throw new Error(
         `that round's committee forms at ${opensAt} and it is ${now}: entry opens then`);
+    // AND THE SHARES IT NAMES MUST BE SHARES THIS NODE CHECKED.
+    //
+    // 23.1: `vss_shares_ref` points at the published shares. An entry that
+    // names a handout this node never accepted is an entry whose stake this
+    // node could not settle - and the whole of letter 29 is that a dealer who
+    // splits with two polynomials is caught HERE, at the door, rather than at
+    // reconstruction when there is nothing left to do about it.
+    //
+    // 32 zero bytes means the entry publishes no shares, which is every entry
+    // in M2 - there is no stake behind the preimage yet. That is accepted, and
+    // it is not the same bytes as an entry that forgot the field, because the
+    // field is in the signed id either way.
+    const ref = contract.vssSharesRef;
+    if (ref && !ref.every((b) => b === 0)) {
+      const held = this.handout(ref);
+      if (!held)
+        throw new Error('that entry names shares this node has not accepted: '
+          + 'publish the handout first, and it is refused if it is not one polynomial');
+      if (!held.roundId.every((b, i) => b === contract.roundId[i]))
+        throw new Error('that handout was published for another round');
+    }
+
     // Same as the round above: the id is the hash of the contract, so the same
     // entry sent twice is one player joining once.
     const id = entryId(contract);
     this.db.prepare('INSERT OR IGNORE INTO entries (entry_id, round_id, contract, joined_ms) VALUES (?, ?, ?, ?)')
       .run(id, contract.roundId, encodeEntryContract(contract), this.now());
     return id;
+  }
+
+  /**
+   * Keeps a handout this node has ALREADY CHECKED.
+   *
+   * The check needs a group and this class carries no curve, exactly as the
+   * protocol package does not - `server.js` brings one to the door. What is
+   * kept here is the answer, and only a yes: a refused handout leaves nothing
+   * behind for a second attempt to inherit.
+   */
+  rememberHandout({ id, roundId, bytes }) {
+    this.db.prepare(
+      'INSERT OR IGNORE INTO handouts (handout_id, round_id, bytes, accepted_ms) VALUES (?, ?, ?, ?)')
+      .run(id, roundId, bytes, this.now());
+    return id;
+  }
+
+  /** An accepted handout by its id, or nothing. */
+  handout(id) {
+    const row = this.db.prepare('SELECT round_id, bytes FROM handouts WHERE handout_id = ?')
+      .get(Buffer.from(id));
+    if (!row) return null;
+    return { roundId: new Uint8Array(row.round_id), bytes: new Uint8Array(row.bytes) };
   }
 
   /**

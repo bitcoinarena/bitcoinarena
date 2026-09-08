@@ -20,7 +20,7 @@ import {
   TYPE_CHECKPOINT, TYPE_RESULT, TYPE_PAYOUT_TABLE, TYPE_INPUT_BATCH,
   TYPE_TRANSCRIPT, TYPE_CHECKPOINT_RECEIPT, TYPE_OBJECTION, TYPE_SLASH_PROOF,
   TYPE_SETTLEMENT_RECORD, TYPE_FEE_CLAIM, TYPE_SERVICE_RECORD,
-  TYPE_DONATION_SET, TYPE_GHOST,
+  TYPE_DONATION_SET, TYPE_GHOST, TYPE_VSS_HANDOUT,
 } from './constants.js';
 
 /**
@@ -50,6 +50,7 @@ export const FRAMES = new Map([
   [TYPE_SETTLEMENT_RECORD, { name: 'SettlementRecord', authority: true }],
   [TYPE_FEE_CLAIM, { name: 'FeeClaim', authority: true }],
   [TYPE_SERVICE_RECORD, { name: 'ServiceRecord', authority: true }],
+  [TYPE_VSS_HANDOUT, { name: 'VssHandout', authority: true }],
   [TYPE_DONATION_SET, { name: 'DonationSet', authority: true }],
 
   // THE ONLY ONE. 0.9's ghost: something to look at, and nothing else.

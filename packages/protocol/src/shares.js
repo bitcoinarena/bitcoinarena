@@ -83,12 +83,19 @@ function inverse(a) {
   return result;
 }
 
-const toBigInt = (bytes) => {
+/**
+ * A scalar and its 32 bytes, exported because the wire needs the same pair.
+ *
+ * `handout.js` encodes share values and would otherwise declare its own copy -
+ * which the bundler refuses by name, and rightly: two functions with one name
+ * in one scope is a program whose behaviour depends on file order.
+ */
+export const scalarFrom32 = (bytes) => {
   let v = 0n;
   for (const b of bytes) v = (v << 8n) | BigInt(b);
   return v;
 };
-const toBytes32 = (v) => {
+export const scalarTo32 = (v) => {
   const out = new Uint8Array(32);
   let n = v;
   for (let i = 31; i >= 0; i--) { out[i] = Number(n & 255n); n >>= 8n; }
@@ -115,7 +122,7 @@ export function splitSecret(secret, { seats = SHARES_TOTAL, needed = SHARES_NEED
   // not, and the answer is another preimage rather than this one reduced:
   // reducing changes the number the payment hash already commits to, so the
   // shares would open something the Entry Contract does not name.
-  if (toBigInt(secret) >= FIELD)
+  if (scalarFrom32(secret) >= FIELD)
     throw new Error('that preimage is not below the group order: generate another, '
       + 'because reducing it would change the number its payment hash commits to');
   if (!Number.isInteger(needed) || needed < 2)
@@ -125,7 +132,7 @@ export function splitSecret(secret, { seats = SHARES_TOTAL, needed = SHARES_NEED
   if (!Array.isArray(coefficients) || coefficients.length !== needed - 1)
     throw new Error(`a threshold of ${needed} needs ${needed - 1} coefficients`);
 
-  const a = [toBigInt(secret), ...coefficients.map(mod)];
+  const a = [scalarFrom32(secret), ...coefficients.map(mod)];
   const shares = [];
   for (let seat = 1; seat <= seats; seat++) {
     let value = 0n;
@@ -196,11 +203,18 @@ export function checkHandout({ shares, commitments, curve, published } = {}) {
   for (let i = 0; i < shares.length; i++) {
     const share = shares[i];
     const against = published ? published[i] : share.commitment;
-    const transit = shareIsConsistent(share, against);
+    // A HANDOUT ON THE WIRE CARRIES NO PER-SHARE HASH, and that is right: the
+    // hash commitment answers "is this the value published for this seat",
+    // and on the wire the bytes ARE that value - the entry's `vss_shares_ref`
+    // is what binds them. So with nothing to compare against, the transit half
+    // does not apply and the polynomial half is the whole check. It is skipped
+    // rather than passed silently: `why` still comes from the check that ran.
+    const transit = against === undefined ? true : shareIsConsistent(share, against);
     const dealer = shareOpensTo(share, { commitments, curve });
     // BOTH HALVES THROUGH THE ONE DOOR TOO, so the collected answer and a
     // single seat's own answer can never disagree about the same share.
-    if (transit && dealer.ok !== shareIsConsistent(share, against, { commitments, curve }))
+    if (against !== undefined && transit
+        && dealer.ok !== shareIsConsistent(share, against, { commitments, curve }))
       throw new Error(`seat ${share.seat}: the two ways of asking disagree`);
     seats.push({
       seat: share.seat,
@@ -271,7 +285,7 @@ export function reconstruct(shares, { needed = SHARES_NEEDED, stakeCommitment } 
     }
     secret = mod(secret + term);
   }
-  const opened = toBytes32(secret);
+  const opened = scalarTo32(secret);
 
   // AND IF THE COMMITMENT IS TO HAND, THE ANSWER IS CHECKED AGAINST IT.
   //

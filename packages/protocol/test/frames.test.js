@@ -12,7 +12,7 @@ import assert from 'node:assert/strict';
 import {
   TYPE_GHOST, TYPE_INPUT_BATCH, TYPE_CHECKPOINT, TYPE_CHECKPOINT_RECEIPT,
   TYPE_CENSUS_LEAF, TYPE_ADVERT, TYPE_RESULT, TYPE_PAYOUT_TABLE, TYPE_OBJECTION,
-  TYPE_SLASH_PROOF, TYPE_ROUND_CONTRACT,
+  TYPE_SLASH_PROOF, TYPE_ROUND_CONTRACT, TYPE_VSS_HANDOUT,
 } from '../src/constants.js';
 import { FRAMES, frameOf, bearsAuthority, droppable, admit } from '../src/frames.js';
 import { encodeGhost } from '../src/ghost.js';
@@ -38,10 +38,15 @@ test('one type carries no authority, and it is the ghost', () => {
   // and every other type this package has is in the map, deciding something
   for (const type of [TYPE_ROUND_CONTRACT, TYPE_INPUT_BATCH, TYPE_CHECKPOINT,
                       TYPE_CHECKPOINT_RECEIPT, TYPE_CENSUS_LEAF, TYPE_ADVERT,
-                      TYPE_RESULT, TYPE_PAYOUT_TABLE, TYPE_OBJECTION, TYPE_SLASH_PROOF])
+                      TYPE_RESULT, TYPE_PAYOUT_TABLE, TYPE_OBJECTION, TYPE_SLASH_PROOF,
+                      TYPE_VSS_HANDOUT])
     assert.equal(FRAMES.get(type).authority, true, 'type 0x' + type.toString(16));
 
-  assert.equal(FRAMES.size, 17, 'a type was added without saying what it decides');
+  // 18 since the VSS handout: a seat refuses an entry whose handout it cannot
+  // check, so that object gates play and carries authority. Saying so here is
+  // the whole point of this guard - the count is not a number to keep green,
+  // it is the question "what does the new one decide" asked out loud.
+  assert.equal(FRAMES.size, 18, 'a type was added without saying what it decides');
 });
 
 /**

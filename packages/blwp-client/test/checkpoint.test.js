@@ -64,7 +64,7 @@ const contract = () => ({
 });
 const entryFor = (rid) => ({
   roundId: rid, playerPubkey: b32(5), sessionPubkey,
-  stakeCommitment: b32(7), stakeMsat: 100000n, feeMsat: 1000n, donationMsat: 0n, joinTick: 0, worldSecret: b32(0x5e),
+  stakeCommitment: b32(7), stakeMsat: 100000n, feeMsat: 1000n, donationMsat: 0n, joinTick: 0, worldSecret: b32(0x5e), vssSharesRef: new Uint8Array(32),
 });
 
 /** A core that has actually been driven, so its hash is a state and not a seed. */

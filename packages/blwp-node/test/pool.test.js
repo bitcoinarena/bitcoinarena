@@ -32,7 +32,7 @@ const entryFor = (rid, joinTick = 0) => ({
   // derive the world it replays. These fixtures still hand `replay` a
   // `seedWord` directly, which is the fixture owning its own number; what the
   // entry carries here is only what the encoder now requires.
-  worldSecret: b32(0x5c),
+  worldSecret: b32(0x5c), vssSharesRef: new Uint8Array(32),
 });
 
 /** The fixture's own number, the way the client's checkpoint test owns its 7. */

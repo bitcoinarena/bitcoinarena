@@ -22,6 +22,7 @@
 import { decodeRoundContract, roundId } from '../../protocol/src/contracts.js';
 import { toHex, fromHex } from '../../protocol/src/hash.js';
 import { httpProvider } from './headers.js';
+import { NO_SHARES } from '../../protocol/src/handout.js';
 
 /** How the query names each thing. One key, one meaning, all optional but `round`. */
 export const JOIN_KEYS = ['round', 'node', 'headers', 'bond', 'advert'];
@@ -211,6 +212,11 @@ export function entryFor(round, { playerPubkey, random, joinTick = 0 } = {}) {
     playerPubkey,
     stakeCommitment: random(32),
     worldSecret: random(32),
+    // 23.1's `vss_shares_ref`, and this entry publishes no shares: there is no
+    // stake behind the preimage in M2, so there is nothing yet to split. The
+    // field is in the signed bytes either way, so an entry that has shares and
+    // one that has none can never be the same entry id.
+    vssSharesRef: NO_SHARES,
     stakeMsat: round.stakeMsat,
     feeMsat: 0n,
     donationMsat: 0n,

@@ -201,7 +201,7 @@ test('a seated key with a bad signature and a well-signed stranger fail differen
   const eid = round.enter({
     roundId: rid, playerPubkey: b32(5), sessionPubkey: ed25519.getPublicKey(session),
     stakeCommitment: b32(7), stakeMsat: 100000n, feeMsat: 1000n, donationMsat: 0n,
-    joinTick: 0, worldSecret: b32(0x5e),
+    joinTick: 0, worldSecret: b32(0x5e), vssSharesRef: new Uint8Array(32),
   });
   const mark = {
     roundId: rid, entryId: eid, tick: 0, stateHash: b32(0x11),
@@ -253,7 +253,7 @@ test('a round nobody seated trusts nobody', async () => {
   const eid = round.enter({
     roundId: rid, playerPubkey: b32(5), sessionPubkey: ed25519.getPublicKey(session),
     stakeCommitment: b32(7), stakeMsat: 100000n, feeMsat: 1000n, donationMsat: 0n,
-    joinTick: 0, worldSecret: b32(0x5e),
+    joinTick: 0, worldSecret: b32(0x5e), vssSharesRef: new Uint8Array(32),
   });
   const mark = {
     roundId: rid, entryId: eid, tick: 0, stateHash: b32(0x11),

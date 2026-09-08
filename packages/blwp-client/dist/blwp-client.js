@@ -581,6 +581,17 @@ const TYPE_DONATION_SET = 0x10;
  */
 const TYPE_GHOST = 0x11;
 
+/**
+ * THE SHARES A PLAYER PUBLISHED FOR THEIR STAKE PREIMAGE, and the polynomial
+ * they were cut from. 23.1's `vss_shares_ref` points at one of these.
+ *
+ * IT DECIDES SOMETHING, which is why it is a type of its own rather than a
+ * blob beside an entry: a seat refuses an entry whose handout it cannot check,
+ * so this object gates play. A Ghost is the only frame in this protocol that
+ * decides nothing, and this is not a Ghost.
+ */
+const TYPE_VSS_HANDOUT = 0x12;
+
 const TAG = {
   roundContract: 'BLWP/v1/RoundContract',
   entryContract: 'BLWP/v1/EntryContract',
@@ -624,6 +635,10 @@ const TAG = {
   // signature binds to the root, and the two must never be interchangeable.
   censusInputs: 'BLWP/v1/CensusInputs',
   vssShare: 'BLWP/v1/VssShare',
+  // The id of a whole handout - the polynomial's commitments - which is what
+  // an Entry Contract's `vss_shares_ref` names. Its own tag, so a ref can
+  // never be produced by hashing a single share.
+  vssHandout: 'BLWP/v1/VssHandout',
   remainder: 'BLWP/v1/Remainder',
 };
 
@@ -1287,6 +1302,17 @@ function encodeEntryContract(e) {
   w.u32(e.joinTick);
   // the owner 2026-09-08: the world secret is on the entry so a node can replay.
   w.bytes32(e.worldSecret);
+  // 23.1's `vss_shares_ref`: the id of the handout this entry's stake preimage
+  // was split into. IN THE SIGNED BYTES, because that is the whole of what it
+  // buys - a reference a player could change after signing would let a dealer
+  // swap the polynomial under a committee that had already checked one.
+  //
+  // 32 zero bytes is a real value and means "this entry publishes no shares",
+  // which is every entry in M2 until a stake exists to protect. It is not a
+  // default the encoder supplies: a caller says which it means, because an
+  // entry that forgot the field and an entry that has no shares must not be
+  // the same bytes by accident.
+  w.bytes32(e.vssSharesRef);
   return w.finish();
 }
 
@@ -1305,6 +1331,7 @@ function decodeEntryContract(bytes) {
     donationMsat: r.u64(),
     joinTick: r.u32(),
     worldSecret: r.bytes32(),
+    vssSharesRef: r.bytes32(),
   };
   r.end();
   return e;
@@ -5112,6 +5139,507 @@ function watchGhosts(client, where, { limit = GHOST_BACKLOG } = {}) {
   return field;
 }
 
+// ---- protocol/src/shares.js
+// THE STAKE PREIMAGE, SPLIT SEVEN WAYS SO FIVE CAN PUT IT BACK.
+//
+// Section 23.1: "The player splits P with verifiable secret sharing (Shamir,
+// threshold 5-of-7) and encrypts one share to each settlement-committee
+// member; vss_shares_ref points at the published shares. Verifiability means
+// each node can confirm its share is consistent without reconstructing P."
+//
+// And 23.4 says what it buys: "Settling a loser's HTLC requires reconstructing
+// P, which requires 5 of the 7 shares, which the mechanical rule releases only
+// against a FINAL result." So four colluding settlement nodes hold nothing at
+// all, and that is the property measured here rather than asserted.
+//
+// THE FIELD IS SECP256K1'S SCALAR ORDER, and it is not a free choice. Feldman
+// commits to a polynomial by publishing g^a for each coefficient, so the
+// exponents have to be scalars OF THE GROUP the commitments live in - and the
+// group is the curve this system already trusts for bonds and BIP-340, because
+// a second group would be a second thing to audit for one property.
+//
+// It used to be 2^521 - 1, a Mersenne prime chosen so a 32-byte preimage fit
+// with room to spare. The order is a little BELOW 2^256, so that room is gone
+// and a 32-byte preimage can be too large - about one in 2^128, and it is
+// REFUSED BY NAME rather than reduced. Reducing would change the number whose
+// hash the player already put in the Entry Contract, so the shares would open
+// a preimage the payment hash does not name.
+//
+// Every operation is exact integer arithmetic on BigInt. No float goes near
+// this, for the same reason none goes near the payout table.
+//
+// WHAT "VERIFIABLE" MEANS, IN TWO LAYERS THAT CATCH DIFFERENT THINGS.
+//
+// The first is a hash commitment per share: a holder checks the value it was
+// handed against the value that was published for its seat, so a share
+// corrupted in transit or swapped by whoever passed it on is caught. It says
+// nothing about the DEALER, because the dealer wrote both.
+//
+// The second is Feldman, and it is what 23.1's "verifiability" is for. The
+// dealer publishes g^a for every coefficient, and a seat checks
+//
+//     g^(its share)  ==  product of C_j ^ (its seat number ^ j)
+//
+// which holds only if that share lies on the ONE polynomial those commitments
+// describe. It is checked without reconstructing anything and by anybody, not
+// only by the holder.
+//
+// THE HOLE THIS CLOSES, MEASURED RATHER THAN ASSERTED. A dealer who splits
+// with two polynomials and gives three seats the second one hands out seven
+// shares that each pass their own hash commitment, and leaves NONE of the
+// twenty-one five-subsets able to open the committed P - a stake that can
+// never be settled, dealt by the player who stakes it. With the polynomial
+// commitments those three seats refuse the share the moment they are handed
+// it, so the entry never becomes an entry.
+//
+// THE GROUP IS INJECTED, like every other curve operation in this package.
+// `packages/protocol` carries no curve on purpose - it does the arithmetic and
+// the refusals, and whoever has a curve brings it.
+
+
+
+/**
+ * secp256k1's group order. Written out rather than imported, because this
+ * package holds no curve - a constant is a number and a curve is code.
+ */
+const FIELD =
+  0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141n;
+
+/** 5-of-7, the same threshold as the receipts and the signatures. */
+const SHARES_NEEDED = 5;
+const SHARES_TOTAL = 7;
+
+const mod = (n) => ((n % FIELD) + FIELD) % FIELD;
+
+/** Fermat, since the field is prime: a^(p-2) is a's inverse. */
+function inverse(a) {
+  let result = 1n;
+  let base = mod(a);
+  let e = FIELD - 2n;
+  while (e > 0n) {
+    if (e & 1n) result = mod(result * base);
+    base = mod(base * base);
+    e >>= 1n;
+  }
+  return result;
+}
+
+/**
+ * A scalar and its 32 bytes, exported because the wire needs the same pair.
+ *
+ * `handout.js` encodes share values and would otherwise declare its own copy -
+ * which the bundler refuses by name, and rightly: two functions with one name
+ * in one scope is a program whose behaviour depends on file order.
+ */
+const scalarFrom32 = (bytes) => {
+  let v = 0n;
+  for (const b of bytes) v = (v << 8n) | BigInt(b);
+  return v;
+};
+const scalarTo32 = (v) => {
+  const out = new Uint8Array(32);
+  let n = v;
+  for (let i = 31; i >= 0; i--) { out[i] = Number(n & 255n); n >>= 8n; }
+  if (n !== 0n) throw new Error('that value does not fit in 32 bytes');
+  return out;
+};
+
+/** What a seat can check its own share against, without reconstructing. */
+const shareCommitment = (seat, value) =>
+  taggedHash(TAG.vssShare, new TextEncoder().encode(`${seat}:${value.toString(16)}`));
+
+/**
+ * Split a 32-byte secret into `seats` shares, `needed` of which rebuild it.
+ *
+ * The polynomial's constant term is the secret and the rest are the caller's
+ * randomness - injected, because this package has no business deciding where
+ * randomness comes from, and a test needs the same split twice.
+ */
+function splitSecret(secret, { seats = SHARES_TOTAL, needed = SHARES_NEEDED,
+  coefficients, curve } = {}) {
+  if (!(secret instanceof Uint8Array) || secret.length !== 32)
+    throw new Error('a stake preimage is 32 bytes');
+  // BELOW THE ORDER, OR IT IS NOT A SCALAR. About one preimage in 2^128 is
+  // not, and the answer is another preimage rather than this one reduced:
+  // reducing changes the number the payment hash already commits to, so the
+  // shares would open something the Entry Contract does not name.
+  if (scalarFrom32(secret) >= FIELD)
+    throw new Error('that preimage is not below the group order: generate another, '
+      + 'because reducing it would change the number its payment hash commits to');
+  if (!Number.isInteger(needed) || needed < 2)
+    throw new Error('a threshold below two is not a threshold');
+  if (!Number.isInteger(seats) || seats < needed)
+    throw new Error(`${seats} seats cannot carry a threshold of ${needed}`);
+  if (!Array.isArray(coefficients) || coefficients.length !== needed - 1)
+    throw new Error(`a threshold of ${needed} needs ${needed - 1} coefficients`);
+
+  const a = [scalarFrom32(secret), ...coefficients.map(mod)];
+  const shares = [];
+  for (let seat = 1; seat <= seats; seat++) {
+    let value = 0n;
+    for (let j = a.length - 1; j >= 0; j--) value = mod(value * BigInt(seat) + a[j]);
+    shares.push({ seat, value, commitment: shareCommitment(seat, value) });
+  }
+
+  // AND THE POLYNOMIAL ITSELF, WHEN THERE IS A GROUP TO COMMIT IN. One point
+  // per coefficient, the constant term first - so C_0 is g^P, which is why a
+  // seat can check its share against the polynomial without anybody learning
+  // P: the discrete log is the whole security of it.
+  const commitments = curve
+    ? a.map((coefficient) => curve.pointFromScalar(coefficient))
+    : undefined;
+  return { shares, needed, seats, ...(commitments ? { commitments } : {}) };
+}
+
+/**
+ * DOES THIS SHARE LIE ON THE POLYNOMIAL THE DEALER PUBLISHED?
+ *
+ * Feldman: g^s must equal the product of C_j raised to (seat ^ j). A seat
+ * checks this on its own, learns nothing about P by doing it, and refuses at
+ * HANDOUT rather than leaving a stake that no five seats can ever settle.
+ *
+ * A SEAT WITH NO COMMITMENTS REFUSES, and that is not pedantry: "I was given
+ * no way to check" and "I checked and it is fine" are different answers, and a
+ * function that returned the second for the first would make the whole layer
+ * optional at the dealer's choice.
+ */
+function shareOpensTo(share, { commitments, curve } = {}) {
+  if (!share || !Number.isInteger(share.seat) || share.seat < 1)
+    return { ok: false, why: 'that is not a share of any seat' };
+  if (!Array.isArray(commitments) || commitments.length === 0)
+    return { ok: false, why: 'this share names no polynomial, so nothing about the dealer can be checked' };
+  if (!curve || typeof curve.pointFromScalar !== 'function'
+      || typeof curve.combinePoints !== 'function')
+    return { ok: false, why: 'checking a share against a polynomial needs a group, and none was injected' };
+
+  const terms = [];
+  let power = 1n;
+  for (const point of commitments) {
+    terms.push({ point, coefficient: power });
+    power = mod(power * BigInt(share.seat));
+  }
+
+  const wanted = curve.combinePoints(terms);
+  const got = curve.pointFromScalar(mod(share.value));
+  if (toHex(got) !== toHex(wanted))
+    return {
+      ok: false,
+      why: `seat ${share.seat} was handed a share that is not on the polynomial the dealer published`,
+    };
+  return { ok: true, why: `seat ${share.seat} lies on the published polynomial` };
+}
+
+/**
+ * EVERY SEAT'S OWN CHECK, AND WHAT THE HANDOUT LOOKS LIKE FROM OUTSIDE.
+ *
+ * This is not a committee decision and it is not settlement: it is each seat
+ * doing what 23.1 gives it to do, collected so the dealer's handout can be
+ * described by a number. `refused` is the figure this letter moves.
+ */
+function checkHandout({ shares, commitments, curve, published } = {}) {
+  if (!Array.isArray(shares) || shares.length === 0)
+    throw new Error('a handout of no shares is not a handout');
+
+  const seats = [];
+  for (let i = 0; i < shares.length; i++) {
+    const share = shares[i];
+    const against = published ? published[i] : share.commitment;
+    // A HANDOUT ON THE WIRE CARRIES NO PER-SHARE HASH, and that is right: the
+    // hash commitment answers "is this the value published for this seat",
+    // and on the wire the bytes ARE that value - the entry's `vss_shares_ref`
+    // is what binds them. So with nothing to compare against, the transit half
+    // does not apply and the polynomial half is the whole check. It is skipped
+    // rather than passed silently: `why` still comes from the check that ran.
+    const transit = against === undefined ? true : shareIsConsistent(share, against);
+    const dealer = shareOpensTo(share, { commitments, curve });
+    // BOTH HALVES THROUGH THE ONE DOOR TOO, so the collected answer and a
+    // single seat's own answer can never disagree about the same share.
+    if (against !== undefined && transit
+        && dealer.ok !== shareIsConsistent(share, against, { commitments, curve }))
+      throw new Error(`seat ${share.seat}: the two ways of asking disagree`);
+    seats.push({
+      seat: share.seat,
+      ok: transit && dealer.ok,
+      why: !transit
+        ? `seat ${share.seat} was handed a value that is not the one published for it`
+        : dealer.why,
+    });
+  }
+  const refused = seats.filter((s) => !s.ok);
+  return {
+    ok: refused.length === 0,
+    seats,
+    refused: refused.length,
+    accepted: seats.length - refused.length,
+    why: refused.length === 0
+      ? `all ${seats.length} seats lie on one polynomial`
+      : `${refused.length} of ${seats.length} seats refused their share: `
+        + refused.map((s) => s.why).join('; '),
+  };
+}
+
+/**
+ * IS THIS SHARE CONSISTENT - with what was published for its seat, and with
+ * the polynomial the dealer published?
+ *
+ * Two questions and they catch different things, which is why both are here
+ * and why the second is optional rather than folded into the first. The hash
+ * commitment says the value is the one published for this seat: it catches
+ * transit and a swap by whoever passed it on, and it is BLIND to the dealer,
+ * who wrote both sides of it. Given the polynomial as well, this also asks
+ * 23.1's own question - is the share on the one polynomial - which is the
+ * question a dishonest dealer fails.
+ *
+ * Called with two arguments it is exactly what it always was, and the test
+ * that measures the blindness calls it that way on purpose.
+ */
+function shareIsConsistent(share, commitment, { commitments, curve } = {}) {
+  if (toHex(shareCommitment(share.seat, share.value)) !== toHex(commitment)) return false;
+  if (commitments === undefined && curve === undefined) return true;
+  return shareOpensTo(share, { commitments, curve }).ok;
+}
+
+/**
+ * Put the secret back from `needed` shares, and refuse below that.
+ *
+ * REFUSES, rather than answering something. Four shares interpolate a
+ * perfectly good polynomial of their own - they simply do not name P - and a
+ * function that handed that back would be handing back a wrong preimage that
+ * looks exactly like a right one.
+ */
+function reconstruct(shares, { needed = SHARES_NEEDED, stakeCommitment } = {}) {
+  const seats = new Set(shares.map((s) => s.seat));
+  if (seats.size !== shares.length)
+    throw new Error('two shares for one seat are one share');
+  if (shares.length < needed)
+    throw new Error(`${shares.length} shares cannot reconstruct anything: ${needed} are needed`);
+
+  const use = shares.slice(0, needed);
+  let secret = 0n;
+  for (let i = 0; i < use.length; i++) {
+    let term = use[i].value;
+    for (let j = 0; j < use.length; j++) {
+      if (i === j) continue;
+      const xi = BigInt(use[i].seat);
+      const xj = BigInt(use[j].seat);
+      term = mod(term * mod(-xj) * inverse(xi - xj));
+    }
+    secret = mod(secret + term);
+  }
+  const opened = scalarTo32(secret);
+
+  // AND IF THE COMMITMENT IS TO HAND, THE ANSWER IS CHECKED AGAINST IT.
+  //
+  // Measured: a dealer who splits with two polynomials hands out seven shares
+  // that each pass their own seat, and of the twenty-one five-subsets, TWO
+  // still produce a well-formed 32-byte value that is not P. Handed back
+  // unchecked, that is a wrong preimage which looks exactly like a right one.
+  // `stakeCommitment` is H(P) and it is in the entry contract the player
+  // signed, so a caller settling a stake always has it.
+  if (stakeCommitment !== undefined) {
+    if (toHex(sha256bytes(opened)) !== toHex(stakeCommitment))
+      throw new Error('those shares rebuild something that is not the committed preimage');
+  }
+  return opened;
+}
+
+/**
+ * Try every combination of `needed` shares until one opens the committed
+ * preimage, and say how the whole set behaved.
+ *
+ * This is what a settlement committee actually does, and it is also the
+ * measurement of the hole below it: a dealer is free to hand out shares that
+ * each pass their seat and yet leave NO subset able to open P.
+ */
+function openStake(shares, { needed = SHARES_NEEDED, stakeCommitment } = {}) {
+  const subsets = [];
+  const walk = (from, taken) => {
+    if (taken.length === needed) { subsets.push(taken.slice()); return; }
+    for (let i = from; i < shares.length; i++) { taken.push(shares[i]); walk(i + 1, taken); taken.pop(); }
+  };
+  walk(0, []);
+
+  let opened = null;
+  let openedBy = null;
+  let refused = 0;
+  for (const five of subsets) {
+    try {
+      const back = reconstruct(five, { needed, stakeCommitment });
+      if (opened === null) { opened = back; openedBy = five.map((s) => s.seat); }
+    } catch { refused++; }
+  }
+  return {
+    ok: opened !== null,
+    preimage: opened,
+    openedBy,
+    subsets: subsets.length,
+    opens: subsets.length - refused,
+    refused,
+    why: opened === null
+      ? `none of the ${subsets.length} ways to pick ${needed} shares opens the committed preimage`
+      : `opened by seats ${openedBy.join(',')}`,
+  };
+}
+
+/**
+ * A HANDOUT NO FIVE SEATS CAN OPEN IS THE DEALER'S DOING.
+ *
+ * The player IS the dealer of their own stake preimage: 23.1 has them split P
+ * and encrypt one share to each settlement seat. A handout where no five of
+ * the seven open the committed P did not happen to anybody - it was made, and
+ * only the player could have made it. Measured: three seats given a second
+ * polynomial's share leaves 0 of the 21 subsets able to open it, while all
+ * seven still pass their holders' checks.
+ *
+ * SO IT IS FORFEIT AND NOT VOID, and the difference is the whole of it. VOID
+ * is the operator-fault path - nobody acts, the HTLC expires, the stake goes
+ * home - so classifying a sabotaged handout as VOID would hand a losing player
+ * their money back for having broken the settlement themselves. That is the
+ * same family as escaping by disconnect, and 13C is explicit that the only way
+ * a player can cause a failure is one that forfeits.
+ *
+ * NOT A JUDGEMENT, AND NOT A GUESS. A settlement committee that cannot open a
+ * preimage has tried every subset; `openStake` is that attempt, and this reads
+ * its answer. A handout that opens is nothing to do with this function.
+ */
+function handoutOutcome(opened) {
+  if (!opened || typeof opened.ok !== 'boolean')
+    throw new Error('that is not an answer from openStake');
+  if (opened.ok)
+    return { outcome: null, why: `the preimage opened: ${opened.why}` };
+  return {
+    outcome: 'FORFEIT',
+    why: `no five of the seven shares open the committed preimage, and the player `
+      + 'dealt them: sabotaging settlement of your own stake is not the operator\'s fault',
+  };
+}
+
+// ---- protocol/src/handout.js
+// THE SHARES A PLAYER PUBLISHED, AND THE POLYNOMIAL THEY WERE CUT FROM.
+//
+// 23.1 step 2: "The player splits P with verifiable secret sharing (Shamir,
+// threshold 5-of-7) and encrypts one share to each settlement-committee
+// member; `vss_shares_ref` points at the published shares." This is the object
+// that reference points at.
+//
+// `shares.js` is the arithmetic - split, reconstruct, and the Feldman check
+// that a share lies on the published polynomial. This is the wire: what a
+// player hands the committee, what its id is, and what a seat asks before it
+// accepts an entry. They are separate files because the maths has no business
+// knowing a byte order and the wire has no business knowing a field.
+//
+// THE SHARES ARE IN THE CLEAR HERE AND THAT IS NOT SAFE FOR MONEY. 23.1 says
+// "encrypts one share to each settlement-committee member", and this does not:
+// anybody who reads a handout reads five shares and rebuilds P. In M2 that
+// takes nothing, because M2 asks for no money and distributes none - there is
+// no stake behind the preimage to steal. It becomes REQUIRED at the same
+// moment the hold invoice does, it needs a key agreement nobody has chosen,
+// and it is M3. A build that pays sats must not use this file as it stands.
+//
+// WHAT IT DOES BUY NOW: a dealer cannot hand out shares that no five seats can
+// open. That property does not depend on the shares being secret, which is why
+// it can be had first.
+
+
+
+
+/** A commitment is a compressed point: 33 bytes, sign included. */
+const COMMITMENT_BYTES = 33;
+
+function encodeHandout(h) {
+  const w = new Writer();
+  w.u8(TYPE_VSS_HANDOUT);
+  w.u16(PROTOCOL_VERSION);
+  w.bytes32(h.roundId);
+  w.bytes32(h.playerPubkey);
+  // THE THRESHOLD IS ON THE OBJECT because a seat has to know how many
+  // coefficients the commitments SHOULD be before it counts them: a dealer who
+  // published four commitments for a threshold of five has published a
+  // different polynomial, not a shorter list.
+  w.u16(h.needed);
+  w.vec(h.commitments, (c, ww) => ww.bytes(c, COMMITMENT_BYTES));
+  // SORTED BY SEAT, asserted rather than sorted: the order is inside the id
+  // the entry names, so a caller that shuffles must be refused and not
+  // quietly corrected.
+  w.vec(h.shares, (s, ww) => { ww.u16(s.seat); ww.bytes32(scalarTo32(s.value)); },
+    { sortedBy: (a, b) => a.seat - b.seat });
+  return w.finish();
+}
+
+function decodeHandout(bytes) {
+  const r = new Reader(bytes);
+  if (r.u8() !== TYPE_VSS_HANDOUT) throw new Error('not a VssHandout');
+  const version = r.u16();
+  if (version !== PROTOCOL_VERSION) throw new Error('protocol version ' + version);
+  const h = {
+    roundId: r.bytes32(),
+    playerPubkey: r.bytes32(),
+    needed: r.u16(),
+    commitments: r.vec((rr) => rr.bytes(COMMITMENT_BYTES)),
+    shares: r.vec((rr) => ({ seat: rr.u16(), value: scalarFrom32(rr.bytes32()) })),
+  };
+  r.end();
+  return h;
+}
+
+/**
+ * The name an Entry Contract's `vss_shares_ref` carries.
+ *
+ * The tagged hash of the WHOLE handout, so the reference binds the shares and
+ * the polynomial together: an entry names one handout and no other, and a
+ * dealer cannot swap the polynomial under a reference that was already signed.
+ */
+const handoutId = (h) => taggedHash(TAG.vssHandout, encodeHandout(h));
+
+/** An entry that publishes no shares carries this, and it is not a handout. */
+const NO_SHARES = new Uint8Array(32);
+
+/**
+ * IS THIS HANDOUT ONE A SEAT CAN ACT ON?
+ *
+ * Shape first, then 23.1's own question. The shape checks are not ceremony:
+ * a threshold that disagrees with the number of commitments, two shares for
+ * one seat, or a seat numbered zero all describe a handout that would pass a
+ * per-share check and still be unopenable, which is the whole family this
+ * letter exists to close.
+ */
+function acceptHandout(handout, { curve } = {}) {
+  if (!handout || !Array.isArray(handout.shares) || handout.shares.length === 0)
+    return { ok: false, why: 'a handout of no shares is not a handout' };
+  if (!Array.isArray(handout.commitments) || handout.commitments.length === 0)
+    return { ok: false, why: 'a handout that publishes no polynomial cannot be checked' };
+  if (handout.commitments.length !== handout.needed)
+    return {
+      ok: false,
+      why: `a threshold of ${handout.needed} is a polynomial of ${handout.needed} `
+        + `coefficients, and this handout publishes ${handout.commitments.length}`,
+    };
+  if (handout.shares.length < handout.needed)
+    return {
+      ok: false,
+      why: `${handout.shares.length} shares cannot carry a threshold of ${handout.needed}`,
+    };
+
+  const seats = new Set();
+  for (const s of handout.shares) {
+    if (!Number.isInteger(s.seat) || s.seat < 1)
+      return { ok: false, why: 'a share of seat zero is a share of the secret itself' };
+    if (seats.has(s.seat))
+      return { ok: false, why: `two shares for seat ${s.seat} are one share` };
+    seats.add(s.seat);
+    if (typeof s.value !== 'bigint' || s.value < 0n || s.value >= FIELD)
+      return { ok: false, why: `seat ${s.seat} holds a value that is not a scalar of the group` };
+  }
+
+  const seen = checkHandout({
+    shares: handout.shares.map((s) => ({ ...s, commitment: undefined })),
+    published: handout.shares.map(() => undefined),
+    commitments: handout.commitments,
+    curve,
+  });
+  return seen.ok ? { ok: true, why: seen.why } : { ok: false, why: seen.why };
+}
+
 // ---- blwp-client/src/join.js
 // THE ROUND A PAGE WAS SENT TO, NAMED IN ITS OWN URL.
 //
@@ -5134,6 +5662,7 @@ function watchGhosts(client, where, { limit = GHOST_BACKLOG } = {}) {
 // first server felt like returning - a different stake, a different committee,
 // a different core hash - which is precisely the substitution the round id
 // exists to prevent. Same rule as the entry a resuming client re-hashes.
+
 
 
 
@@ -5325,6 +5854,11 @@ function entryFor(round, { playerPubkey, random, joinTick = 0 } = {}) {
     playerPubkey,
     stakeCommitment: random(32),
     worldSecret: random(32),
+    // 23.1's `vss_shares_ref`, and this entry publishes no shares: there is no
+    // stake behind the preimage in M2, so there is nothing yet to split. The
+    // field is in the signed bytes either way, so an entry that has shares and
+    // one that has none can never be the same entry id.
+    vssSharesRef: NO_SHARES,
     stakeMsat: round.stakeMsat,
     feeMsat: 0n,
     donationMsat: 0n,

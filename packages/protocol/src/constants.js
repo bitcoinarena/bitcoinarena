@@ -120,6 +120,17 @@ export const TYPE_DONATION_SET = 0x10;
  */
 export const TYPE_GHOST = 0x11;
 
+/**
+ * THE SHARES A PLAYER PUBLISHED FOR THEIR STAKE PREIMAGE, and the polynomial
+ * they were cut from. 23.1's `vss_shares_ref` points at one of these.
+ *
+ * IT DECIDES SOMETHING, which is why it is a type of its own rather than a
+ * blob beside an entry: a seat refuses an entry whose handout it cannot check,
+ * so this object gates play. A Ghost is the only frame in this protocol that
+ * decides nothing, and this is not a Ghost.
+ */
+export const TYPE_VSS_HANDOUT = 0x12;
+
 export const TAG = {
   roundContract: 'BLWP/v1/RoundContract',
   entryContract: 'BLWP/v1/EntryContract',
@@ -163,6 +174,10 @@ export const TAG = {
   // signature binds to the root, and the two must never be interchangeable.
   censusInputs: 'BLWP/v1/CensusInputs',
   vssShare: 'BLWP/v1/VssShare',
+  // The id of a whole handout - the polynomial's commitments - which is what
+  // an Entry Contract's `vss_shares_ref` names. Its own tag, so a ref can
+  // never be produced by hashing a single share.
+  vssHandout: 'BLWP/v1/VssHandout',
   remainder: 'BLWP/v1/Remainder',
 };
 

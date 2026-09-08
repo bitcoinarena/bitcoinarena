@@ -32,7 +32,7 @@ const contract = () => ({
 });
 const entryFor = (rid, joinTick = 0) => ({
   roundId: rid, playerPubkey: b32(5), sessionPubkey: b32(6), stakeCommitment: b32(7),
-  stakeMsat: 100000n, feeMsat: 1000n, donationMsat: 0n, joinTick, worldSecret: b32(0x5e),
+  stakeMsat: 100000n, feeMsat: 1000n, donationMsat: 0n, joinTick, worldSecret: b32(0x5e), vssSharesRef: new Uint8Array(32),
 });
 
 /**
@@ -201,7 +201,7 @@ test('the replay refuses a seed it was not given, a wrong start, and a gap', () 
   // THE SEED IS NOT INVENTED HERE. 0.10's private world does not say where
   // `secret` comes from, so a real round is not replayable yet and the refusal
   // says which clause is missing rather than looking like a bug.
-  const noSecret = replay(transcript, { ...entry, worldSecret: undefined });
+  const noSecret = replay(transcript, { ...entry, worldSecret: undefined, vssSharesRef: new Uint8Array(32) });
   assert.equal(noSecret.ok, false);
   assert.equal(noSecret.why, NO_SEED_RULE);
   const noRnd = replay(transcript, entry);
@@ -261,7 +261,7 @@ test('the worker replays to the same hash at every mark', async () => {
   assert.equal(lateGot.agrees, true);
 
   // a refusal survives the thread boundary as a refusal, not as a crash
-  const noSeed = await replayInWorker(transcript, { ...entry, worldSecret: undefined });
+  const noSeed = await replayInWorker(transcript, { ...entry, worldSecret: undefined, vssSharesRef: new Uint8Array(32) });
   assert.equal(noSeed.ok, false);
   assert.equal(noSeed.why, NO_SEED_RULE);
 });
@@ -301,7 +301,7 @@ test('seven nodes each replay their own tables and only the honest six agree', a
 test('a node that refused to replay produces no state at all', async () => {
   const TICKS = 300;
   const { transcript, entry } = stored(TICKS);
-  const refused = replay(transcript, { ...entry, worldSecret: undefined });
+  const refused = replay(transcript, { ...entry, worldSecret: undefined, vssSharesRef: new Uint8Array(32) });
   assert.equal(refused.ok, false);
   assert.equal(refused.stateHash, undefined, 'a refusal carried a state hash');
 });

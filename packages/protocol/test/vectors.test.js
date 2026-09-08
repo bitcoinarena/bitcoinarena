@@ -122,7 +122,7 @@ test('the contracts encode to the vectors, and so do their ids', () => {
   const e = {
     roundId: roundId(c), playerPubkey: b32(21), sessionPubkey: b32(22),
     stakeCommitment: b32(23), stakeMsat: 100000n, feeMsat: 2000n,
-    donationMsat: 1000n, joinTick: 0, worldSecret: b32(0x5e),
+    donationMsat: 1000n, joinTick: 0, worldSecret: b32(0x5e), vssSharesRef: new Uint8Array(32),
   };
   assert.equal(toHex(encodeEntryContract(e)), v.entryContract.hex);
   assert.equal(toHex(entryId(e)), v.entryContract.entryId);

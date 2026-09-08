@@ -40,7 +40,7 @@ const session = ed25519.utils.randomSecretKey();
 const entryFor = (rid) => ({
   roundId: rid, playerPubkey: b32(5), sessionPubkey: ed25519.getPublicKey(session),
   stakeCommitment: b32(7), stakeMsat: 100000n, feeMsat: 1000n, donationMsat: 0n,
-  joinTick: 0, worldSecret: b32(0x5e),
+  joinTick: 0, worldSecret: b32(0x5e), vssSharesRef: new Uint8Array(32),
 });
 
 test('a round that leaves no time to enter is refused, and the boundary itself lives', () => {

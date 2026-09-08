@@ -114,7 +114,7 @@ test('a receipt is BIP-340 under the node key, and an ed25519 one is refused', (
   const entry = {
     roundId: rid, playerPubkey: b32(5), sessionPubkey: ed25519.getPublicKey(session),
     stakeCommitment: b32(7), stakeMsat: 100000n, feeMsat: 1000n, donationMsat: 0n,
-    joinTick: 0, worldSecret: b32(0x5e),
+    joinTick: 0, worldSecret: b32(0x5e), vssSharesRef: new Uint8Array(32),
   };
   const eid = round.enter(entry);
 

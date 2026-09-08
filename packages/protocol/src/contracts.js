@@ -262,6 +262,17 @@ export function encodeEntryContract(e) {
   w.u32(e.joinTick);
   // the owner 2026-09-08: the world secret is on the entry so a node can replay.
   w.bytes32(e.worldSecret);
+  // 23.1's `vss_shares_ref`: the id of the handout this entry's stake preimage
+  // was split into. IN THE SIGNED BYTES, because that is the whole of what it
+  // buys - a reference a player could change after signing would let a dealer
+  // swap the polynomial under a committee that had already checked one.
+  //
+  // 32 zero bytes is a real value and means "this entry publishes no shares",
+  // which is every entry in M2 until a stake exists to protect. It is not a
+  // default the encoder supplies: a caller says which it means, because an
+  // entry that forgot the field and an entry that has no shares must not be
+  // the same bytes by accident.
+  w.bytes32(e.vssSharesRef);
   return w.finish();
 }
 
@@ -280,6 +291,7 @@ export function decodeEntryContract(bytes) {
     donationMsat: r.u64(),
     joinTick: r.u32(),
     worldSecret: r.bytes32(),
+    vssSharesRef: r.bytes32(),
   };
   r.end();
   return e;
