@@ -29,6 +29,7 @@ import { toHex } from '../../protocol/src/hash.js';
 import { BITCOIN_MAINNET_GENESIS_HEADER, blockHashOf } from '../../protocol/src/chain.js';
 import { hash256 } from '../../protocol/src/tx.js';
 import { blockOf } from '../../protocol/tools/bond.js';
+import { toHex as hex } from '../../protocol/src/hash.js';
 
 const require = createRequire(import.meta.url);
 const core = require('../../core/dist/blwp-core.js');
@@ -47,8 +48,46 @@ const fromHexHere = (hex) => {
   return out;
 };
 
+/**
+ * A BITCOIND, WITHOUT A BITCOIND.
+ *
+ * The 2-of-2 tool used to answer every beacon question with a constant, and a
+ * committee drawn on a constant is a committee its operator chose. That is
+ * gone, so these nodes need a chain - and a suite that needs a daemon is a
+ * suite nobody runs. This is the same fake node `chain-rpc.test.js` uses: a
+ * real mined chain, served over the RPC calls the reader makes, with its
+ * timestamps straddling now so the round's own committee_time has a block
+ * after it.
+ */
+function chainNode({ blocks = 40, spacing = 600 } = {}) {
+  const b32 = (n) => new Uint8Array(32).fill(n);
+  const now = Math.floor(Date.now() / 1000);
+  const headers = [];
+  let previous = new Uint8Array(32);
+  for (let i = 0; i < blocks; i++) {
+    // Half the chain before now and half after, so a block whose MEDIAN is
+    // after committee_time exists with depth to spare. The median lags the tip
+    // by five blocks, which is why the crossing point is not the middle.
+    const time = now + (i - 20) * spacing;
+    const { header } = blockOf(hash256, [b32(i + 1)], { previous, time });
+    headers.push(header);
+    previous = blockHashOf(header);
+  }
+  const firstHeight = 0;            // a regtest starts at genesis, and so does this
+  return async (method, params = []) => {
+    if (method === 'getblockcount') return firstHeight + headers.length - 1;
+    if (method === 'getblockhash') return hex(blockHashOf(headers[params[0] - firstHeight]));
+    if (method === 'getblockheader') {
+      const at = headers.findIndex((h) => hex(blockHashOf(h)) === params[0]);
+      return hex(headers[at]);
+    }
+    throw new Error('this fake node was asked ' + method);
+  };
+}
+
 test('a person opens the printed URL twice and the two tabs are on one round', async () => {
-  const round = await standUpRound({ host: "127.0.0.1", portA: 18080, portB: 18081 });
+  const round = await standUpRound({ host: "127.0.0.1", portA: 18080, portB: 18081,
+    rpc: chainNode() });
   const tabs = [];
   try {
     // WHAT THE PAGE DOES WITH ITS OWN ADDRESS BAR, on the URL the operator
@@ -138,7 +177,8 @@ test('a person opens the printed URL twice and the two tabs are on one round', a
 });
 
 test('two daemons whose chains disagree stop the join by name', async () => {
-  const round = await standUpRound({ host: '127.0.0.1', portA: 18082, portB: 18083 });
+  const round = await standUpRound({ host: '127.0.0.1', portA: 18082, portB: 18083,
+    rpc: chainNode() });
   try {
     const named = await joinFromQuery(new URL(round.url).search);
 

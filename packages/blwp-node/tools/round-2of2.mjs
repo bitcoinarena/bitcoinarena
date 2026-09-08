@@ -34,6 +34,8 @@ import { existsSync, readFileSync, statSync } from 'node:fs';
 import { extname, join, normalize } from 'node:path';
 
 import { openStore, nodeIdentity } from '../src/store.js';
+import { chainBeacon } from '../src/beacon-source.js';
+import { bitcoindRpc } from '../src/chain-rpc.js';
 import { serve } from '../src/server.js';
 import { toHex } from '../../protocol/src/hash.js';
 import { BITCOIN_MAINNET_GENESIS_HEADER, blockHashOf } from '../../protocol/src/chain.js';
@@ -52,9 +54,25 @@ const b32 = (n) => new Uint8Array(32).fill(n);
  * second arrangement that looks like it.
  */
 export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8081,
-                                     store = ':memory:', page = 'https://btc-logistics-core.pages.dev' } = {}) {
+                                     store = ':memory:', rpc = null,
+                                     page = 'https://btc-logistics-core.pages.dev' } = {}) {
   const funded = () => true;
-  const randomnessFor = () => ({ hash: b32(0xbe), height: 900005, timeMs: 900n });
+
+  // THE BEACON IS THE CHAIN'S OR THERE IS NONE.
+  //
+  // This used to answer `{ hash: 0xbe repeated, height: 900005, timeMs: 900 }`
+  // to every question - a committee drawn on a constant, which is a committee
+  // its operator chose, and the exact thing 5A.5 exists to stop. It is gone.
+  //
+  // Given a bitcoind (RT and RPCPORT), the seed is the first block whose median
+  // time is after this round's committee_time, read over RPC. Given none, this
+  // node HAS no beacon: `randomnessFor` is not passed at all, the daemons'
+  // defaults answer nothing, and 27's rule turns that into "this node has no
+  // beacon for that round, so it cannot say who the census seats". A round
+  // still opens and a player still plays; nobody is seated on an invented
+  // number.
+  const beacon = rpc ? chainBeacon({ call: rpc }) : null;
+  const randomnessFor = beacon ? beacon.for : undefined;
 
   // THE KEY BEFORE THE DAEMON. The advertisement names the key that signs it,
   // the bond commits to the advertisement, and the daemon serves the chain
@@ -103,8 +121,10 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   // are TWO daemons and `agreedChain` counts ORIGINS - and that this is a
   // local test round on a fixture chain, not a claim about Bitcoin.
   const bondProof = { hex: toHex(transaction), merkle: [toHex(sibling)], pos: 0 };
-  const a = await serve(dbA, { port: portA, host, funded, randomnessFor, headerBytes, bondProof });
-  const b = await serve(dbB, { port: portB, host, funded, randomnessFor, headerBytes, bondProof });
+  const a = await serve(dbA, { port: portA, host, funded, headerBytes, bondProof,
+    ...(randomnessFor ? { randomnessFor } : {}) });
+  const b = await serve(dbB, { port: portB, host, funded, headerBytes, bondProof,
+    ...(randomnessFor ? { randomnessFor } : {}) });
   if (a.port !== portA)
     throw new Error(`node A came up on ${a.port} and the bond names ${portA}`);
 
@@ -139,6 +159,21 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     opened.push(toHex(new Uint8Array(await r.arrayBuffer())));
   }
   const id = toHex(roundId(contract));
+
+  // AND THE BEACON IS READ NOW, for THIS round's committee_time, because the
+  // question the daemons will ask is synchronous and the answer is a fetch.
+  // What comes back is kept only if the rule accepted it; a refusal is carried
+  // out to the caller so an operator sees "no beacon and why" rather than a
+  // node that quietly seats nobody.
+  let beaconSeen = null;
+  if (beacon) {
+    // A CHAIN THAT CANNOT BE READ IS NOT A ROUND THAT CANNOT EXIST. The read
+    // failing must not take the daemons down with it: the round opens, the
+    // node holds no beacon, and seating says so. Carried as a refusal rather
+    // than thrown, so an operator reads one line instead of a stack.
+    try { beaconSeen = await beacon.refresh(contract); }
+    catch (e) { beaconSeen = { ok: false, why: e.message }; }
+  }
   if (opened.some((o) => o !== id))
     throw new Error('the two daemons named the round differently: ' + opened.join(' '));
 
@@ -151,7 +186,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     + `&advert=${toHex(signedAdvert)}`;
 
   return {
-    id, url, contract, a, b,
+    id, url, contract, a, b, beacon: beaconSeen,
     nodes: [`http://${host}:${a.port}`, `http://${host}:${b.port}`],
     headers: [`http://${host}:${a.port}/headers`, `http://${host}:${b.port}/headers`],
     bond: `http://${host}:${a.port}/bond`,
@@ -231,10 +266,23 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     }
   }
 
+  // A BITCOIND IF ONE IS NAMED, AND NO PRETENDING IF NOT.
+  //   RT=<datadir> RPCPORT=<port> node tools/round-2of2.mjs
+  // Its own datadir and its own port: this is not the node anybody's money is
+  // on, and it is not the 2-of-2's own store.
+  const rt = process.env.RT;
+  const rpc = rt
+    ? bitcoindRpc({
+        url: `http://127.0.0.1:${process.env.RPCPORT || '29643'}/`,
+        cookiePath: `${rt}/regtest/.cookie`,
+      })
+    : null;
+
   const round = await standUpRound({
     host,
     portA: Number(process.env.BLWP_PORT_A || 8080),
     portB: Number(process.env.BLWP_PORT_B || 8081),
+    rpc,
     page,
   });
   console.log('round     ' + round.id);
@@ -242,6 +290,13 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   console.log('headers   ' + round.headers.join('  '));
   console.log('bond      ' + round.bond);
   console.log('page      ' + (pageServer ? 'served here from ' + build : page));
+  console.log('beacon    ' + (!rpc
+    ? 'NONE - no RT= bitcoind named, so these nodes seat nobody rather than '
+      + 'seating on an invented number'
+    : round.beacon && round.beacon.ok
+      ? `block ${round.beacon.height}, ${round.beacon.depth} deep, `
+        + `hash ${toHex(round.beacon.hash)}`
+      : `NONE - ${round.beacon ? round.beacon.why : 'the chain was not read'}`));
   console.log('');
   console.log('Open this in TWO tabs - each tab is its own player, because the');
   console.log('key is kept in sessionStorage:');
