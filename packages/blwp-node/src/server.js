@@ -22,6 +22,7 @@ import { TYPE_CHECKPOINT } from '../../protocol/src/constants.js';
 import { MAX_INPUT_BATCH_BYTES } from '../../protocol/src/batch.js';
 import { SIGNED_CHECKPOINT_BYTES } from '../../protocol/src/checkpoint.js';
 import { TYPE_CHECKPOINT_RECEIPT } from '../../protocol/src/constants.js';
+import { bearsAuthority } from '../../protocol/src/frames.js';
 import { SIGNED_RECEIPT_BYTES } from '../../protocol/src/receipt.js';
 
 /**
@@ -301,6 +302,17 @@ export function serve(db, { port = 0, funded = NOTHING_IS_FUNDED } = {}) {
         // gossip. The first byte says so, the same way it says a mark is a
         // mark, so gossip needs no second port and no envelope.
         if (bytes[0] === TYPE_CHECKPOINT_RECEIPT) return sock.send(round.takeReceipt(bytes));
+
+        // AND EVERYTHING ELSE IS NOT AUTOMATICALLY AN INPUT. This used to fall
+        // straight into `round.batch`, so the door's rule was "anything that
+        // is not a mark or a receipt is a tick". A ghost was refused there, but
+        // by `decodeInputBatch` noticing its own type byte - an accident of the
+        // decoder, answering "not an input batch", which says what the frame is
+        // not. 0.10 needs the other sentence: a picture carries no authority,
+        // and it is told that here, before a handler sees it.
+        const stands = bearsAuthority(bytes, 'an input');
+        if (!stands.ok) return sock.send('error ' + stands.why);
+
         sock.send(String(round.batch(bytes)));
       } catch (e) {
         sock.send('error ' + e.message);

@@ -1,0 +1,136 @@
+// A PICTURE CARRIES NO AUTHORITY, AND IT IS THE FIRST THING SHED.
+//
+// 0.9 / 0.10: other trucks are ghosts, and "ghost snapshots are never inputs
+// to this calculation". The core keeps the "never an input" half by having no
+// argument one could arrive through. This file keeps the rest: a ghost must
+// not stand in for anything that DECIDES something - a batch that becomes a
+// tick, a mark that becomes a receipt, a leaf that becomes a seat, an
+// advertisement that becomes a bond - and when a queue is full it is a picture
+// that goes, never the evidence.
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import {
+  TYPE_GHOST, TYPE_INPUT_BATCH, TYPE_CHECKPOINT, TYPE_CHECKPOINT_RECEIPT,
+  TYPE_CENSUS_LEAF, TYPE_ADVERT, TYPE_RESULT, TYPE_PAYOUT_TABLE, TYPE_OBJECTION,
+  TYPE_SLASH_PROOF, TYPE_ROUND_CONTRACT,
+} from '../src/constants.js';
+import { FRAMES, frameOf, bearsAuthority, droppable, admit } from '../src/frames.js';
+import { encodeGhost } from '../src/ghost.js';
+
+const b32 = (n) => new Uint8Array(32).fill(n);
+const GHOST = encodeGhost({
+  roundId: b32(1), entryId: b32(2), playerPubkey: b32(7), tick: 4,
+  inputChainHash: b32(3), x: 1, z: 2, heading: 3,
+});
+const framed = (type) => new Uint8Array([type, 0, 1]);
+
+/**
+ * EXACTLY ONE FRAME IN THE PROTOCOL IS A PICTURE. Asserted as a count, not as
+ * a spot check: a new type that forgot to say what it decides would show up
+ * here rather than in whatever accepted it first.
+ */
+test('one type carries no authority, and it is the ghost', () => {
+  const pictures = [...FRAMES.entries()].filter(([, f]) => !f.authority);
+  assert.equal(pictures.length, 1, 'something else became a picture');
+  assert.equal(pictures[0][0], TYPE_GHOST);
+  assert.equal(pictures[0][1].name, 'Ghost');
+
+  // and every other type this package has is in the map, deciding something
+  for (const type of [TYPE_ROUND_CONTRACT, TYPE_INPUT_BATCH, TYPE_CHECKPOINT,
+                      TYPE_CHECKPOINT_RECEIPT, TYPE_CENSUS_LEAF, TYPE_ADVERT,
+                      TYPE_RESULT, TYPE_PAYOUT_TABLE, TYPE_OBJECTION, TYPE_SLASH_PROOF])
+    assert.equal(FRAMES.get(type).authority, true, 'type 0x' + type.toString(16));
+
+  assert.equal(FRAMES.size, 17, 'a type was added without saying what it decides');
+});
+
+/**
+ * A GHOST OFFERED AS AN INPUT, A VOTE, A CENSUS ENTRY OR A BOND IS REFUSED,
+ * and the refusal says what it is rather than what it is not.
+ */
+test('a ghost cannot stand as an input, a receipt, a census entry or a bond', () => {
+  for (const as of ['an input', 'a receipt', 'a census entry', 'a bond',
+                    'an objection', 'a result', 'a payout table']) {
+    const no = bearsAuthority(GHOST, as);
+    assert.equal(no.ok, false, `a ghost was accepted as ${as}`);
+    assert.equal(no.name, 'Ghost');
+    assert.equal(no.why, `a Ghost is a picture and carries no authority, so it cannot be ${as}`);
+
+    // the refusal names the frame, not the absence of another one
+    assert.equal(/not an input batch|not a checkpoint/.test(no.why), false);
+  }
+
+  // and the things that do decide something are admitted, so the check is not
+  // simply refusing everything
+  for (const type of [TYPE_INPUT_BATCH, TYPE_CHECKPOINT, TYPE_CHECKPOINT_RECEIPT,
+                      TYPE_CENSUS_LEAF, TYPE_ADVERT])
+    assert.equal(bearsAuthority(framed(type), 'an input').ok, true, 'type 0x' + type.toString(16));
+
+  // a byte this protocol does not use is refused by number, not assumed safe
+  const unknown = bearsAuthority(framed(0x7f), 'an input');
+  assert.equal(unknown.ok, false);
+  assert.match(unknown.why, /no frame of this protocol begins with 0x7f/);
+  assert.equal(bearsAuthority(new Uint8Array(0), 'an input').ok, false);
+  assert.equal(frameOf(undefined), undefined);
+});
+
+/**
+ * WHEN THE QUEUE IS FULL, THE PICTURE GOES.
+ *
+ * IMPLEMENTATION section 7: "above a threshold drop ghost frames first - they
+ * are non-authoritative by definition - and never receipts." §11 says why the
+ * order is not a preference: "publishing is the client's duty, and unpublished
+ * inputs cost the player the run", so a node that shed a batch to make room
+ * for a picture would be taking a run away over rendering.
+ */
+test('a full mixed queue sheds ghosts and keeps every frame that decides something', () => {
+  const q = [framed(TYPE_INPUT_BATCH), GHOST, framed(TYPE_CHECKPOINT), GHOST,
+             framed(TYPE_CHECKPOINT_RECEIPT)];
+
+  const { queue, dropped } = admit(q, framed(TYPE_INPUT_BATCH), 4);
+  const names = (list) => list.map((f) => FRAMES.get(f[0]).name);
+
+  assert.deepEqual(names(dropped), ['Ghost', 'Ghost'], 'the drop order was not pictures first');
+  assert.deepEqual(names(queue),
+    ['InputBatch', 'Checkpoint', 'CheckpointReceipt', 'InputBatch']);
+  assert.equal(queue.some((f) => f[0] === TYPE_GHOST), false);
+  assert.equal(queue.length, 4);
+
+  // the oldest picture goes first, so a queue under sustained pressure sheds
+  // in arrival order rather than by whichever the scan happened to reach
+  const two = admit([GHOST, framed(TYPE_CHECKPOINT), GHOST], framed(TYPE_INPUT_BATCH), 3);
+  assert.deepEqual(names(two.dropped), ['Ghost']);
+  assert.deepEqual(names(two.queue), ['Checkpoint', 'Ghost', 'InputBatch']);
+
+  // under the limit nothing is shed at all
+  const room = admit([framed(TYPE_CHECKPOINT)], GHOST, 4);
+  assert.deepEqual(room.dropped, []);
+  assert.equal(room.queue.length, 2);
+});
+
+/**
+ * AND WITH NO PICTURE LEFT TO SHED, THE NEWCOMER IS REFUSED RATHER THAN
+ * EVIDENCE DISCARDED. A queue that made room by throwing away a batch it had
+ * already accepted would lose a run to relieve pressure.
+ */
+test('a queue of nothing but evidence refuses the newcomer instead of shedding it', () => {
+  const full = [framed(TYPE_CHECKPOINT), framed(TYPE_INPUT_BATCH),
+                framed(TYPE_CHECKPOINT_RECEIPT)];
+
+  const late = admit(full, framed(TYPE_INPUT_BATCH), 3);
+  assert.equal(late.queue.length, 3);
+  assert.deepEqual(late.queue, full, 'an accepted frame was discarded to make room');
+  assert.equal(late.dropped.length, 1);
+  assert.equal(late.dropped[0][0], TYPE_INPUT_BATCH, 'the newcomer should be the one refused');
+
+  // a ghost arriving at a full queue of evidence is refused too - it does not
+  // get to displace a receipt just because it is newer
+  const picture = admit(full, GHOST, 3);
+  assert.deepEqual(picture.queue, full);
+  assert.equal(picture.dropped[0][0], TYPE_GHOST);
+
+  assert.equal(droppable(GHOST), true);
+  assert.equal(droppable(framed(TYPE_CHECKPOINT_RECEIPT)), false);
+  assert.equal(droppable(framed(0x7f)), false, 'an unknown frame is not assumed sheddable');
+  assert.throws(() => admit([], GHOST, 0), /positive limit/);
+});
