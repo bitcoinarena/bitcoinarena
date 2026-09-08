@@ -486,6 +486,21 @@ const TYPE_SERVICE_RECORD = 0x0f;
  */
 const TYPE_DONATION_SET = 0x10;
 
+/**
+ * A PICTURE OF SOMEBODY ELSE'S TRUCK, AND NOTHING ELSE.
+ *
+ * 0.9: "Other trucks are visible ghosts with no collision... Another player
+ * must not be able to change my financial odds by ramming me, blocking a road,
+ * pushing me, damaging me, drawing my enemies away, pulling enemies toward me,
+ * sacrificing themselves for me, or colluding physically."
+ *
+ * 0.10: "Ghost snapshots are never inputs to this calculation." It has its own
+ * type byte because it must never be mistakable for a message that IS an
+ * input - an InputBatch and a Ghost differ in their first byte, before a
+ * decoder has read anything else.
+ */
+const TYPE_GHOST = 0x11;
+
 const TAG = {
   roundContract: 'BLWP/v1/RoundContract',
   entryContract: 'BLWP/v1/EntryContract',
@@ -515,6 +530,10 @@ const TAG = {
   // every seat's share. A proof names which table, or the accuser picks one.
   feeTable: 'BLWP/v1/FeeTable',
   donationSet: 'BLWP/v1/DonationSet',
+  // A picture of another player's truck. Its own tag so a ghost's id can never
+  // collide with a checkpoint's or a batch's over the same bytes: 0.10 says a
+  // ghost is never an input, and a shared tag would be one way to forget it.
+  ghost: 'BLWP/v1/Ghost',
   // The census entries a contract's root is checked against, and the height
   // they were taken at. Its own tag: a proof binds to the INPUTS, and a
   // signature binds to the root, and the two must never be interchangeable.
@@ -1350,6 +1369,7 @@ const batchTicks = (b) =>
 
 
 
+
 const GENESIS = new Uint8Array(32);
 
 const same = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
@@ -1521,6 +1541,73 @@ function flatten(t) {
     firstTick,
     ticks,
     liquidations: liquidations.map(([at, size]) => [at - firstTick, size]),
+  };
+}
+
+/**
+ * DOES THIS TRANSCRIPT BELONG TO THAT ENTRY, AND DID IT BEGIN WHERE THE ENTRY
+ * SAYS IT JOINED?
+ *
+ * 0.8: "Late join is a normal feature, not merely reconnect. Each accepted
+ * entrant receives the same contract-defined mission duration `T_run`, even
+ * when wall-clock start times differ." Section 7: "Late joins simply add more
+ * Entry Contracts. The Round Contract is never rewritten."
+ *
+ * So a late entrant's world does not begin at tick 0 - it begins at the tick
+ * their own Entry Contract names, and `joinTick` is the field that says which.
+ * Measured before this existed: an entry that joined at tick 50 had its
+ * transcript ACCEPTED beginning at 0, at 50 and at 500, all three, because
+ * `checkTranscript` is handed a transcript and never the entry it is for. A
+ * player could publish a run that started earlier than they joined, or one
+ * that skipped the first four hundred ticks, and every check passed.
+ *
+ * The entry is signed and the tick is in it, so this is the same discipline as
+ * everywhere else here: the thing being checked is bound to the thing that was
+ * signed, and whoever brings the transcript does not also get to choose what
+ * it is checked against.
+ *
+ * WHAT THIS CANNOT SAY is how LONG the run may be. 0.8's "same contract-defined
+ * mission duration T_run" needs `player_run_duration`, which section 6 names
+ * and this Round Contract does not carry - one of the eighteen absent names
+ * audited during item 16, parked because adding one moves every round id. It
+ * is reported as unchecked rather than assumed.
+ */
+function transcriptBelongsToEntry(transcript, entry) {
+  if (!transcript || !Array.isArray(transcript.batches))
+    return { ok: false, why: 'that is not a transcript' };
+  if (!entry || !Number.isInteger(entry.joinTick))
+    return { ok: false, why: 'that entry names no join tick' };
+
+  const same = (a, b) => a instanceof Uint8Array && b instanceof Uint8Array
+    && a.length === b.length && a.every((v, i) => v === b[i]);
+
+  if (!same(entryId(entry), transcript.entryId))
+    return { ok: false, why: 'that is a different entry than the transcript names' };
+  if (!same(entry.roundId, transcript.roundId))
+    return { ok: false, why: 'that entry is for another round' };
+
+  if (!transcript.batches.length)
+    return {
+      ok: false,
+      why: 'that transcript carries no inputs, so there is nothing that began anywhere',
+    };
+
+  const first = batchTicks(transcript.batches[0]);
+  if (!first.length)
+    return { ok: false, why: 'that transcript begins with a batch carrying no ticks' };
+
+  if (first[0] !== entry.joinTick)
+    return {
+      ok: false,
+      why: `that transcript begins at tick ${first[0]} and that entry joined at `
+        + `${entry.joinTick}`,
+    };
+
+  return {
+    ok: true,
+    joinTick: entry.joinTick,
+    unchecked: ['the run length (section 6 names player_run_duration and this '
+      + 'contract does not carry it)'],
   };
 }
 
@@ -3627,6 +3714,29 @@ class Client {
    * client asked about, that the chain is unbroken, and that the records are
    * whole.
    */
+  /**
+   * This entry's own contract, fetched and then checked against its id.
+   *
+   * The id IS the hash of the bytes, so this needs no trust: a node that hands
+   * back another entry, or the same one with a friendlier `joinTick`, does not
+   * hash to what was asked for. 25.1's rule about chain providers is the same
+   * rule - a provider may omit, and it may not forge.
+   */
+  async entryFor(id) {
+    const r = await fetch(`${this.base}/entry?id=${toHex(id)}`);
+    if (!r.ok) throw new Error(`the node has no entry ${toHex(id)}: ${(await r.text()).trim()}`);
+
+    let entry;
+    try { entry = decodeEntryContract(new Uint8Array(await r.arrayBuffer())); }
+    catch (e) { throw new Error(`that entry will not decode: ${e.message}`); }
+
+    if (toHex(entryId(entry)) !== toHex(id))
+      throw new Error(
+        `the node returned entry ${toHex(entryId(entry))} for ${toHex(id)}, `
+        + 'so that is not the contract this player signed');
+    return entry;
+  }
+
   async resume({ roundId, entryId }) {
     // A RUN THAT ENDED STAYS ENDED, and a socket coming back does not undo it.
     //
@@ -3661,9 +3771,29 @@ class Client {
     const ok = checkTranscript(t);
     if (!ok.ok) throw new Error(`the transcript is broken at ${ok.in} ${ok.at}: ${ok.why}`);
 
+    // AND IT BEGINS WHERE THIS PLAYER JOINED, which for a late entrant is not
+    // tick zero.
+    //
+    // 0.8: "late join is a normal feature, not merely reconnect", and section
+    // 7: "late joins simply add more Entry Contracts". So the tick a run
+    // starts at is in the entry the player signed, and this line used to fall
+    // back to 0 when the node returned an empty transcript - a player who
+    // joined at 50 and reconnected before publishing anything would have
+    // resumed numbering from 0, and every batch after that would be the inputs
+    // of one tick carrying the number of another.
+    //
+    // THE ENTRY IS FETCHED AND THEN HASHED, not taken on the node's word: its
+    // id is the hash of its bytes, so a node that returned somebody else's
+    // entry - or an edited one with a friendlier join tick - fails the
+    // comparison. Nothing here trusts the answer; it checks it.
+    const entry = await this.entryFor(entryId);
+    const belongs = transcriptBelongsToEntry(t, entry);
+    if (!belongs.ok && t.batches.length)
+      throw new Error(`the transcript is not this entry's run: ${belongs.why}`);
+
     const last = t.batches[t.batches.length - 1];
     this.batchHead = last ? batchId(last) : GENESIS;
-    this.nextTick = last ? batchTicks(last).at(-1) + 1 : 0;
+    this.nextTick = last ? batchTicks(last).at(-1) + 1 : entry.joinTick;
 
     // AND THE COUNT OF WHAT THIS CLIENT HAS ACCEPTED IS RECONCILED WITH IT.
     //

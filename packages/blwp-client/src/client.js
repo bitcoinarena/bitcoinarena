@@ -27,10 +27,10 @@ import {
   NO_PREVIOUS, SIGNED_CHECKPOINT_BYTES,
 } from '../../protocol/src/checkpoint.js';
 import {
-  encodeRoundContract, encodeEntryContract, roundId, entryId,
+  encodeRoundContract, encodeEntryContract, decodeEntryContract, roundId, entryId,
 } from '../../protocol/src/contracts.js';
 import {
-  GENESIS, decodeTranscript, checkTranscript,
+  GENESIS, decodeTranscript, checkTranscript, transcriptBelongsToEntry,
 } from '../../protocol/src/transcript.js';
 import { encodeInputBatch, batchId, batchTicks } from '../../protocol/src/batch.js';
 import { fromHex, toHex } from '../../protocol/src/hash.js';
@@ -597,6 +597,29 @@ export class Client {
    * client asked about, that the chain is unbroken, and that the records are
    * whole.
    */
+  /**
+   * This entry's own contract, fetched and then checked against its id.
+   *
+   * The id IS the hash of the bytes, so this needs no trust: a node that hands
+   * back another entry, or the same one with a friendlier `joinTick`, does not
+   * hash to what was asked for. 25.1's rule about chain providers is the same
+   * rule - a provider may omit, and it may not forge.
+   */
+  async entryFor(id) {
+    const r = await fetch(`${this.base}/entry?id=${toHex(id)}`);
+    if (!r.ok) throw new Error(`the node has no entry ${toHex(id)}: ${(await r.text()).trim()}`);
+
+    let entry;
+    try { entry = decodeEntryContract(new Uint8Array(await r.arrayBuffer())); }
+    catch (e) { throw new Error(`that entry will not decode: ${e.message}`); }
+
+    if (toHex(entryId(entry)) !== toHex(id))
+      throw new Error(
+        `the node returned entry ${toHex(entryId(entry))} for ${toHex(id)}, `
+        + 'so that is not the contract this player signed');
+    return entry;
+  }
+
   async resume({ roundId, entryId }) {
     // A RUN THAT ENDED STAYS ENDED, and a socket coming back does not undo it.
     //
@@ -631,9 +654,29 @@ export class Client {
     const ok = checkTranscript(t);
     if (!ok.ok) throw new Error(`the transcript is broken at ${ok.in} ${ok.at}: ${ok.why}`);
 
+    // AND IT BEGINS WHERE THIS PLAYER JOINED, which for a late entrant is not
+    // tick zero.
+    //
+    // 0.8: "late join is a normal feature, not merely reconnect", and section
+    // 7: "late joins simply add more Entry Contracts". So the tick a run
+    // starts at is in the entry the player signed, and this line used to fall
+    // back to 0 when the node returned an empty transcript - a player who
+    // joined at 50 and reconnected before publishing anything would have
+    // resumed numbering from 0, and every batch after that would be the inputs
+    // of one tick carrying the number of another.
+    //
+    // THE ENTRY IS FETCHED AND THEN HASHED, not taken on the node's word: its
+    // id is the hash of its bytes, so a node that returned somebody else's
+    // entry - or an edited one with a friendlier join tick - fails the
+    // comparison. Nothing here trusts the answer; it checks it.
+    const entry = await this.entryFor(entryId);
+    const belongs = transcriptBelongsToEntry(t, entry);
+    if (!belongs.ok && t.batches.length)
+      throw new Error(`the transcript is not this entry's run: ${belongs.why}`);
+
     const last = t.batches[t.batches.length - 1];
     this.batchHead = last ? batchId(last) : GENESIS;
-    this.nextTick = last ? batchTicks(last).at(-1) + 1 : 0;
+    this.nextTick = last ? batchTicks(last).at(-1) + 1 : entry.joinTick;
 
     // AND THE COUNT OF WHAT THIS CLIENT HAS ACCEPTED IS RECONCILED WITH IT.
     //
