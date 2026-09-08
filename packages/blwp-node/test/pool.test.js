@@ -28,6 +28,11 @@ const contract = () => ({
 const entryFor = (rid, joinTick = 0) => ({
   roundId: rid, playerPubkey: b32(5), sessionPubkey: b32(6), stakeCommitment: b32(7),
   stakeMsat: 100000n, feeMsat: 1000n, donationMsat: 0n, joinTick,
+  // the owner put the world secret on the Entry Contract (e942580) so a node can
+  // derive the world it replays. These fixtures still hand `replay` a
+  // `seedWord` directly, which is the fixture owning its own number; what the
+  // entry carries here is only what the encoder now requires.
+  worldSecret: b32(0x5c),
 });
 
 /** The fixture's own number, the way the client's checkpoint test owns its 7. */
@@ -163,11 +168,13 @@ test('through the pool: same hashes, same refusal, and a late run starts at its 
   assert.notEqual(a.stateHash, b.stateHash, 'the two runs are the same, so the fixture proves nothing');
   assert.equal(b.agrees, true, 'the late run was replayed from the wrong tick');
 
-  // THE REFUSAL SHAPE SURVIVES THE QUEUE. A real round is still not replayable
-  // and the pool does not paper over it.
+  // THE REFUSAL SHAPE SURVIVES THE QUEUE. A run whose world cannot be derived
+  // is refused with the reason, and the pool does not paper over it: the seed
+  // now comes from the entry's own secret and the round's randomness, and the
+  // randomness is a future Bitcoin block hash no node here draws.
   const refused = await pool.submit({ key: 'no-seed', transcript: s0.transcript, entry: s0.entry });
   assert.equal(refused.ok, false);
-  assert.match(refused.why, /`secret` is the player's/);
+  assert.match(refused.why, /names no randomness to mix the player seed/);
 
   assert.throws(() => pool.submit({ transcript: s0.transcript }), /needs a key/);
 });

@@ -252,10 +252,16 @@ export function networkAnchor(network) {
  * Live core numbers: exposure 320 m, mouth 34 m, apron 22 m, front span 40 m,
  * T 0.25..1.5, rank 3/4, block 9000 ticks, node fee 2.00%, current heat.
  */
-export const GENESIS_CONFIG_HASH = GENESIS_CONFIG_HASH_ID;
+// RE-EXPORTED, NOT RE-DECLARED. `export const GENESIS_CONFIG_HASH = ...` here
+// made a SECOND top-level binding of a name `genesis-ids.js` already owns, and
+// the client bundler refuses that by design - it flattens the modules into one
+// scope, so two top-level declarations of one name is two different values
+// under one name for whoever reads it last. The build had been failing since
+// the name arrived, which took the client's whole suite with it.
+export { GENESIS_CONFIG_HASH } from './genesis-ids.js';
 
 export function genesisConfigHash() {
-  return GENESIS_CONFIG_HASH;
+  return GENESIS_CONFIG_HASH_ID;
 }
 
 /**

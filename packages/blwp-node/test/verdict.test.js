@@ -15,12 +15,22 @@ import { replayInWorker } from '../src/replay.js';
 import { resultFrom, signResult, verifiedFinal } from '../src/verdict.js';
 import { resultId } from '../../protocol/src/result.js';
 import { transcriptHash } from '../../protocol/src/transcript.js';
-import { encodeInputBatch } from '../../protocol/src/batch.js';
-import { GENESIS, decodeTranscript } from '../../protocol/src/transcript.js';
+import { encodeInputBatch, batchId } from '../../protocol/src/batch.js';
+import { GENESIS } from '../../protocol/src/transcript.js';
+import { encodeCheckpoint, checkpointId, joinSigned, NO_PREVIOUS } from '../../protocol/src/checkpoint.js';
+import { encodeCheckpointReceipt, receiptId, joinSignedReceipt } from '../../protocol/src/receipt.js';
+import { init, step } from '../../core/src/sim.js';
+import { hash } from '../../core/src/state.js';
+import { seedWordForEntry } from '../../protocol/src/seed.js';
 import { toHex } from '../../protocol/src/hash.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
-const SEED = 7;
+// The round's randomness beacon is a future Bitcoin block hash (5A) that this
+// daemon does not read yet, so the fixture owns these 32 bytes. The seed is no
+// longer a number anyone picks: it derives from this and the world secret
+// the owner put on the Entry Contract.
+const RANDOMNESS = b32(0x9b);
+const session = ed25519.utils.randomSecretKey();
 const wordsAt = (t) => [45875, ((t * 977) % 30000) - 15000, (t % 700) < 40 ? 65536 : 0, 0, 0];
 
 const secrets = [0, 1, 2, 3, 4, 5, 6].map(() => ed25519.utils.randomSecretKey());
@@ -36,14 +46,25 @@ const contract = () => ({
   nodes: COMMITTEE,
 });
 
-/** A stored run, and the transcript object the node hands over. */
-function stored(ticks) {
+/**
+ * A STORED RUN WHOSE TRANSCRIPT IS CANONICAL BY 13C'S OWN GATE.
+ *
+ * The fixture used to hand-build the Transcript object, which meant the thing
+ * being signed was not the thing the committee carries. Here the player's mark
+ * is signed under the session key its entry names, a second seat receipts it,
+ * and `Round#canonicalTranscript` is what produces the object - so the gate is
+ * exercised rather than stepped around. Seven slots need five receipts, and
+ * the node issues its own when it takes the mark, so four members supply the
+ * rest - `receiptsNeeded`'s number, not one chosen here.
+ */
+function stored(ticks, { player = 5 } = {}) {
   const c = contract();
   const r = new Round(openStore(), () => 1234);
   const rid = r.open(c);
   const entry = {
-    roundId: rid, playerPubkey: b32(5), sessionPubkey: b32(6), stakeCommitment: b32(7),
-    stakeMsat: 100000n, feeMsat: 1000n, donationMsat: 0n, joinTick: 0, worldSecret: b32(0x5e),
+    roundId: rid, playerPubkey: b32(player), sessionPubkey: ed25519.getPublicKey(session),
+    stakeCommitment: b32(7), stakeMsat: 100000n, feeMsat: 1000n, donationMsat: 0n,
+    joinTick: 0, worldSecret: b32(0x5e),
   };
   const eid = r.enter(entry);
   const rows = [];
@@ -53,13 +74,32 @@ function stored(ticks) {
   };
   assert.equal(r.batch(encodeInputBatch(batch)), ticks);
 
-  // THE TRANSCRIPT OBJECT SECTION 13 HASHES, as distinct from the flat rows
-  // the replay walks. `Round#canonicalTranscript` builds this one from marks
-  // the committee receipted (13C) and is tested where it lives; this fixture
-  // is about what a node SIGNS once it has one, so it hands over the same
-  // shape without staging five receipts to get there.
-  const canonical = { roundId: rid, entryId: eid, batches: [batch], marks: [] };
-  return { contract: c, entry, transcript: r.transcript(rid, eid), canonical };
+  // The player's own state at the last tick, off the same core, seeded the way
+  // the entry's world secret and the round's randomness say.
+  const st = init(seedWordForEntry(entry, RANDOMNESS));
+  for (let t = 0; t < ticks; t++) step(st, ...wordsAt(t));
+  const stateHash = Uint8Array.from(hash(st).match(/../g).map((x) => parseInt(x, 16)));
+
+  const mark = {
+    roundId: rid, entryId: eid, tick: ticks, stateHash,
+    inputChainHash: batchId(batch), previousHash: NO_PREVIOUS,
+    sessionPubkey: ed25519.getPublicKey(session),
+  };
+  const mid = checkpointId(mark);
+  r.checkpoint(joinSigned(encodeCheckpoint(mark), ed25519.sign(mid, session)));
+
+  // AND THE SEATS THAT CARRY IT. Seven slots need five receipts; the node
+  // issues its own when it takes the mark, so four committee members supply
+  // the rest. Fewer would leave the transcript uncarried and canonical would
+  // refuse - which is the gate, and it is not stepped around here.
+  for (let i = 0; i < 4; i++) {
+    const receipt = { checkpointId: mid, receivedAtMs: 1234n, nodePubkey: COMMITTEE[i] };
+    r.takeReceipt(joinSignedReceipt(encodeCheckpointReceipt(receipt),
+      ed25519.sign(receiptId(receipt), secrets[i])));
+  }
+
+  return { contract: c, entry, transcript: r.transcript(rid, eid),
+    canonical: r.canonicalTranscript(rid, eid) };
 }
 
 /**
@@ -69,21 +109,25 @@ function stored(ticks) {
  */
 test('nodes that replayed the same run sign the same result, and five of seven verify', async () => {
   const s = stored(600);
-  const answer = await replayInWorker(s.transcript, s.entry, { seedWord: SEED });
+  const answer = await replayInWorker(s.transcript, s.entry, { roundRandomness: RANDOMNESS });
   assert.equal(answer.ok, true, answer.why);
 
   const signed = COMMITTEE.map((nodePubkey, i) => {
     const built = resultFrom({ answer, contract: s.contract, entry: s.entry,
-      transcript: s.canonical, nodePubkey });
+      transcript: s.canonical, entryId: s.canonical.entryId, nodePubkey });
     assert.equal(built.ok, true, built.why);
     return { built: built.result, ...signResult(built.result, secrets[i]) };
   });
 
   // THE SCORE AND THE OUTCOME ARE READ OFF THE REPLAYED STATE, not defaulted.
-  // 230 is what this run earns and FAILED is what it came to - a fixture that
+  // 257 is what this run earns and FAILED is what it came to - a fixture that
   // only checked the two agreed with each other could not tell a real score
   // from a zero every node produced alike.
-  assert.equal(answer.score, 230, 'the run no longer scores what this fixture was measured against');
+  //
+  // It was 230 while the fixture chose the seed itself. The world is now the
+  // one the entry's own secret and the round's randomness produce, so it is a
+  // different world and a different score - measured, not adjusted to pass.
+  assert.equal(answer.score, 257, 'the run no longer scores what this fixture was measured against');
   assert.equal(answer.outcome, 'FAILED');
   for (const x of signed) {
     assert.equal(x.built.score, answer.score, 'the signed score is not the replayed one');
@@ -91,7 +135,7 @@ test('nodes that replayed the same run sign the same result, and five of seven v
     // AND THE TRANSCRIPT HASH IS THE TRANSCRIPT'S. It is the field that says
     // WHICH run was replayed, so any other 32 bytes would let one signature
     // stand for a different transcript.
-    assert.deepEqual(x.built.transcriptHash, transcriptHash(s.canonical));
+    assert.deepEqual(x.built.transcriptHash, s.canonical.hash);
     assert.notDeepEqual(x.built.transcriptHash, x.built.simCoreHash,
       'the transcript hash is the sim hash, so the result names no particular run');
   }
@@ -160,7 +204,7 @@ test('nodes that replayed the same run sign the same result, and five of seven v
  */
 test('a run that has not ended is not signed as a failure', async () => {
   const s = stored(120);                     // far short of the block
-  const answer = await replayInWorker(s.transcript, s.entry, { seedWord: SEED });
+  const answer = await replayInWorker(s.transcript, s.entry, { roundRandomness: RANDOMNESS });
   assert.equal(answer.ok, true, answer.why);
   assert.equal(answer.outcome, null, 'a run cut short was given an outcome');
   assert.equal(typeof answer.score, 'number');
@@ -171,11 +215,11 @@ test('a run that has not ended is not signed as a failure', async () => {
   assert.match(built.why, /still LIVE at its last stored tick/);
 
   // and a replay that refused outright is not signable either
-  const noSeed = await replayInWorker(s.transcript, s.entry);
+  const noSeed = await replayInWorker(s.transcript, s.entry, {});
   const none = resultFrom({ answer: noSeed, contract: s.contract, entry: s.entry,
     transcript: s.canonical, nodePubkey: COMMITTEE[0] });
   assert.equal(none.ok, false);
-  assert.match(none.why, /`secret` is the player's/);
+  assert.match(none.why, /names no randomness to mix the player seed/);
 });
 
 /**
@@ -183,7 +227,7 @@ test('a run that has not ended is not signed as a failure', async () => {
  */
 test('the committee size decides the threshold, and an unknown size is refused', async () => {
   const s = stored(600);
-  const answer = await replayInWorker(s.transcript, s.entry, { seedWord: SEED });
+  const answer = await replayInWorker(s.transcript, s.entry, { roundRandomness: RANDOMNESS });
   const one = resultFrom({ answer, contract: s.contract, entry: s.entry,
     transcript: s.canonical, nodePubkey: COMMITTEE[0] }).result;
   const id = resultId(one);
@@ -197,4 +241,40 @@ test('the committee size decides the threshold, and an unknown size is refused',
 
   const five = { ...s.contract, gameVerifySlots: 5 };
   assert.match(verifiedFinal([over(0)], { contract: five }).why, /no committee threshold for 5/);
+});
+
+/**
+ * A TRANSCRIPT HAS TO BE THE ENTRY'S OWN.
+ *
+ * The result takes its player and its round off the ENTRY and its hash off the
+ * TRANSCRIPT, and nothing was checking the two were the same run. A pairing a
+ * caller got wrong - or chose - would produce a properly signed result
+ * attributing one player's drive to another, and the board pays on exactly
+ * this object.
+ */
+test('a result cannot be signed over another player\'s transcript', async () => {
+  const mine = stored(600);
+  const theirs = stored(600, { player: 6 });
+  const answer = await replayInWorker(mine.transcript, mine.entry, { roundRandomness: RANDOMNESS });
+  assert.equal(answer.ok, true, answer.why);
+
+  // the two runs are different objects, so the fixture can tell them apart
+  assert.notDeepEqual(mine.canonical.entryId, theirs.canonical.entryId);
+
+  const crossed = resultFrom({
+    answer, contract: mine.contract, entry: mine.entry,
+    transcript: theirs.canonical, entryId: mine.canonical.entryId,
+    nodePubkey: COMMITTEE[0],
+  });
+  assert.equal(crossed.ok, false);
+  assert.match(crossed.why, /belongs to another (player|round)/);
+
+  // and a transcript that names no run at all is refused rather than hashed
+  const nameless = resultFrom({
+    answer, contract: mine.contract, entry: mine.entry,
+    transcript: { batches: [], marks: [] }, entryId: mine.canonical.entryId,
+    nodePubkey: COMMITTEE[0],
+  });
+  assert.equal(nameless.ok, false);
+  assert.match(nameless.why, /names no round or no entry/);
 });

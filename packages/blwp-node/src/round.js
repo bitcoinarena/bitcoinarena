@@ -635,6 +635,13 @@ export class Round {
       throw new Error(`the carried transcript is broken at ${ok.in} ${ok.at}: ${ok.why}`);
 
     return {
+      // WHICH RUN THIS IS, carried out with the digest. Without them a caller
+      // holding a canonical transcript and an entry cannot check that the two
+      // are the same run, and a result takes its player from the entry and its
+      // hash from here - so a wrong pairing would sign one player's drive
+      // under another's name.
+      roundId: t.roundId,
+      entryId: t.entryId,
       bytes: encodeTranscript(t),
       hash: transcriptHash(t),
       ticks: ok.ticks,
@@ -790,6 +797,74 @@ export class Round {
       ticks: ticks.map((r) => ({ tick: r.tick, words: [...new Int32Array(new Uint8Array(r.words).buffer)] })),
       liquidations: liq.map((r) => [r.tick, r.size]),
     };
+  }
+
+  /**
+   * EVERY ENTRY OF A ROUND, so a daemon that has just closed one can find the
+   * runs it must replay without being told what they are.
+   */
+  entriesOf(roundIdBytes) {
+    return this.db.prepare(
+      'SELECT entry_id, contract FROM entries WHERE round_id = ? ORDER BY entry_id')
+      .all(roundIdBytes)
+      .map((r) => ({
+        entryId: new Uint8Array(r.entry_id),
+        entry: decodeEntryContract(new Uint8Array(r.contract)),
+      }));
+  }
+
+  /**
+   * KEEP A SIGNED RESULT. `bytes` is the protocol's signed record - the body
+   * this node encoded and the signature over its id - stored whole, so what is
+   * served later is what was signed and not a re-encoding of it.
+   *
+   * One seat, one result: a node that signed twice would be equivocating, and
+   * the primary key says so rather than keeping both.
+   */
+  putResult(roundIdBytes, entryIdBytes, nodePubkey, resultIdBytes, bytes) {
+    return this.db.prepare(
+      'INSERT OR IGNORE INTO results (round_id, entry_id, node_pubkey, result_id, bytes, seen_ms) '
+      + 'VALUES (?, ?, ?, ?, ?, ?)')
+      .run(roundIdBytes, entryIdBytes, nodePubkey, resultIdBytes, bytes, this.now()).changes;
+  }
+
+  /** Every signed result this node holds for a run, its own included. */
+  results(roundIdBytes, entryIdBytes) {
+    return this.db.prepare(
+      'SELECT node_pubkey, result_id, bytes, seen_ms FROM results '
+      + 'WHERE round_id = ? AND entry_id = ? ORDER BY node_pubkey')
+      .all(roundIdBytes, entryIdBytes)
+      .map((r) => ({
+        nodePubkey: new Uint8Array(r.node_pubkey),
+        resultId: new Uint8Array(r.result_id),
+        bytes: new Uint8Array(r.bytes),
+        seenMs: r.seen_ms,
+      }));
+  }
+
+  /**
+   * RECORD AN OBJECTION AGAINST A RUN (13A intake only).
+   *
+   * What an objection COSTS and who may make one is the objection protocol and
+   * is not decided here. What is decided here is that the node knows one
+   * exists, because the replay queue puts objected runs first and a priority
+   * nothing can ever set is a priority that does not exist.
+   */
+  object(roundIdBytes, entryIdBytes) {
+    if (!this.get(roundIdBytes)) throw new Error('no such round');
+    const e = this.db.prepare('SELECT round_id FROM entries WHERE entry_id = ?').get(entryIdBytes);
+    if (!e) throw new Error('no such entry');
+    if (!same(new Uint8Array(e.round_id), roundIdBytes)) throw new Error('entry is not in this round');
+    return this.db.prepare(
+      'INSERT OR IGNORE INTO objections (round_id, entry_id, seen_ms) VALUES (?, ?, ?)')
+      .run(roundIdBytes, entryIdBytes, this.now()).changes === 1;
+  }
+
+  /** Is there an objection against this run? */
+  objected(roundIdBytes, entryIdBytes) {
+    return !!this.db.prepare(
+      'SELECT 1 FROM objections WHERE round_id = ? AND entry_id = ?')
+      .get(roundIdBytes, entryIdBytes);
   }
 
   /** Which tick numbers are missing between the first and the last stored. */

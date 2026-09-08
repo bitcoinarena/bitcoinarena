@@ -197,6 +197,38 @@ export function openStore(path = ':memory:') {
       size      INTEGER NOT NULL,
       PRIMARY KEY (round_id, entry_id, tick)
     );
+
+    -- WHAT THIS NODE REPLAYED AND SIGNED, section 13's PlayerResult.
+    --
+    -- A node that signs a result and keeps it nowhere has told nobody: five
+    -- of seven can only agree on results that can be handed over. Stored as
+    -- the signed record - body then signature, the protocol's own 232-byte
+    -- shape - so what is served is exactly what was signed rather than a
+    -- re-encoding that might differ by a byte.
+    --
+    -- Keyed by the SIGNER as well as the run, because a node keeps the
+    -- results of others beside its own and one seat may hold only one.
+    CREATE TABLE IF NOT EXISTS results (
+      round_id    BLOB NOT NULL,
+      entry_id    BLOB NOT NULL REFERENCES entries(entry_id),
+      node_pubkey BLOB NOT NULL,
+      result_id   BLOB NOT NULL,
+      bytes       BLOB NOT NULL,
+      seen_ms     INTEGER NOT NULL,
+      PRIMARY KEY (round_id, entry_id, node_pubkey)
+    );
+
+    -- AN OBJECTION AGAINST A RUN, 13A. Only what the pool needs to know that
+    -- one exists: the run it is against and when it arrived. The objection
+    -- PROTOCOL - who may file, what it costs, how it is settled - is not here
+    -- and is not invented here; this is the intake, so the queue that already
+    -- puts objections first can have something in it on a running daemon.
+    CREATE TABLE IF NOT EXISTS objections (
+      round_id BLOB NOT NULL,
+      entry_id BLOB NOT NULL REFERENCES entries(entry_id),
+      seen_ms  INTEGER NOT NULL,
+      PRIMARY KEY (round_id, entry_id)
+    );
   `);
   return db;
 }

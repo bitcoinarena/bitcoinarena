@@ -21,7 +21,7 @@
 // result ids is what section 13 asks for. The hash is the reason the ids
 // match, not a thing to sign beside them.
 import { ed25519 } from '@noble/curves/ed25519.js';
-import { resultId, provisionallyFinal } from '../../protocol/src/result.js';
+import { resultId, provisionallyFinal, encodePlayerResult } from '../../protocol/src/result.js';
 import { transcriptHash } from '../../protocol/src/transcript.js';
 import { receiptsNeeded } from '../../protocol/src/genesis.js';
 
@@ -37,7 +37,7 @@ const hex = (b) => [...b].map((v) => v.toString(16).padStart(2, '0')).join('');
  * because a node that could be told what a run came to would not need to
  * replay it.
  */
-export function resultFrom({ answer, contract, entry, transcript, nodePubkey }) {
+export function resultFrom({ answer, contract, entry, transcript, entryId, nodePubkey }) {
   if (!answer || !answer.ok) return { ok: false, why: answer ? answer.why : 'no replay to sign' };
   if (answer.outcome === null)
     return { ok: false, why: 'that run is still LIVE at its last stored tick, so it came to nothing yet' };
@@ -47,19 +47,40 @@ export function resultFrom({ answer, contract, entry, transcript, nodePubkey }) 
     return { ok: false, why: 'that entry names no round or no player' };
   if (!(nodePubkey instanceof Uint8Array)) return { ok: false, why: 'no node is signing this' };
 
-  return {
-    ok: true,
-    result: {
-      roundId: entry.roundId,
-      playerPubkey: entry.playerPubkey,
-      outcome: answer.outcome,
-      score: answer.score,
-      transcriptHash: transcriptHash(transcript),
-      simCoreHash: contract.simCoreHash,
-      nodePubkey,
-    },
+  // AND THE TRANSCRIPT HAS TO BE THIS ENTRY'S.
+  //
+  // The result takes its player and its round off the ENTRY and its hash off
+  // the TRANSCRIPT. Nothing was checking that the two were the same run, so a
+  // pairing a caller got wrong - or chose - would produce a properly signed
+  // result attributing one player's drive to another, and the board pays on
+  // exactly this object. The transcript names its own round and entry, so the
+  // check is a comparison and not a new field.
+  if (!transcript || !(transcript.roundId instanceof Uint8Array)
+    || !(transcript.entryId instanceof Uint8Array))
+    return { ok: false, why: 'that transcript names no round or no entry to belong to' };
+  if (!same(transcript.roundId, entry.roundId))
+    return { ok: false, why: 'that transcript belongs to another round than the entry' };
+  if (entryId instanceof Uint8Array && !same(transcript.entryId, entryId))
+    return { ok: false, why: 'that transcript belongs to another player than the entry' };
+
+  const result = {
+    roundId: entry.roundId,
+    playerPubkey: entry.playerPubkey,
+    outcome: answer.outcome,
+    score: answer.score,
+    // The canonical transcript already carries its own digest; a second
+    // encoding here could differ from the one the committee agreed on.
+    transcriptHash: transcript.hash instanceof Uint8Array
+      ? transcript.hash : transcriptHash(transcript),
+    simCoreHash: contract.simCoreHash,
+    nodePubkey,
   };
+  // The bytes come back with it: what is stored and served must be what was
+  // signed, not a re-encoding that could differ.
+  return { ok: true, result, encoded: encodePlayerResult(result) };
 }
+
+const same = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
 
 /**
  * The signature sits BESIDE the result, over its id, the way every signature

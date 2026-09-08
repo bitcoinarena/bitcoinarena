@@ -51,6 +51,11 @@ const contract = () => ({
 const entryFor = (rid, joinTick) => ({
   roundId: rid, playerPubkey: b32(5), sessionPubkey,
   stakeCommitment: b32(7), stakeMsat: 100000n, feeMsat: 1000n, donationMsat: 0n, joinTick,
+  // The world secret the entry carries so a node can derive the world it
+  // replays (the owner, e942580). Nothing in this file uses it - a late join is
+  // about which TICK a run starts at - but an entry without one no longer
+  // encodes, and an entry that does not encode has no id to be late with.
+  worldSecret: b32(0x5c),
 });
 
 async function joinedAt(joinTick) {

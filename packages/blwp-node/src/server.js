@@ -24,6 +24,7 @@ import { SIGNED_CHECKPOINT_BYTES } from '../../protocol/src/checkpoint.js';
 import { TYPE_CHECKPOINT_RECEIPT } from '../../protocol/src/constants.js';
 import { bearsAuthority } from '../../protocol/src/frames.js';
 import { SIGNED_RECEIPT_BYTES } from '../../protocol/src/receipt.js';
+import { SIGNED_RESULT_BYTES } from '../../protocol/src/result.js';
 
 /**
  * The largest frame this socket will accept, and it is derived rather than
@@ -44,6 +45,7 @@ import { SIGNED_RECEIPT_BYTES } from '../../protocol/src/receipt.js';
 export const MAX_FRAME_BYTES = Math.max(
   MAX_INPUT_BATCH_BYTES, SIGNED_CHECKPOINT_BYTES, SIGNED_RECEIPT_BYTES);
 import { Round } from './round.js';
+import { Verifier } from './verify.js';
 
 const read = (req) => new Promise((resolve, reject) => {
   const parts = [];
@@ -104,8 +106,17 @@ const text = (res, code, msg) => {
  */
 export const NOTHING_IS_FUNDED = () => false;
 
-export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FUNDED } = {}) {
+export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FUNDED,
+  randomnessFor } = {}) {
   const round = new Round(db);
+
+  // WHAT HEARS A ROUND CLOSING. Section 13 replays once the run is over, so
+  // the close is the event and this is what listens for it. The world secret
+  // is on the entry now, so the seed derives itself; what is still outside is
+  // the round's randomness beacon - a future Bitcoin block hash this daemon
+  // does not read yet - and a node given none runs the whole path and stops
+  // there, with the refusal recorded rather than a world invented.
+  const verifier = new Verifier(round, randomnessFor ? { randomnessFor } : {});
 
   const http = createServer(async (req, res) => {
     try {
@@ -229,6 +240,34 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
 
       // The checkpoints as they arrived. Fixed-size records back to back, so
       // a reader cuts them apart without a framing rule to agree on first.
+      // WHAT THIS NODE REPLAYED AND SIGNED, so another node can have it
+      // without replaying. Section 13's own record, body then signature, as
+      // many as this node holds for that run.
+      if (req.method === 'GET' && url.pathname === '/results') {
+        const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
+        const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
+        const held = round.results(rid, eid);
+        const out = new Uint8Array(held.length * SIGNED_RESULT_BYTES);
+        held.forEach((r, i) => out.set(r.bytes, i * SIGNED_RESULT_BYTES));
+        res.writeHead(200, {
+          'content-type': 'application/octet-stream',
+          'x-results': String(held.length), ...CORS,
+        });
+        return res.end(Buffer.from(out));
+      }
+
+      // AN OBJECTION AGAINST A RUN (13A intake). What an objection costs and
+      // who may file one is the objection protocol and is not decided here;
+      // that the node KNOWS of one is what lets the replay queue put it first.
+      if (req.method === 'POST' && url.pathname === '/objection') {
+        const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
+        const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
+        try {
+          const fresh = round.object(rid, eid);
+          return text(res, fresh ? 201 : 200, fresh ? 'objected' : 'already objected');
+        } catch (err) { return text(res, 404, err.message); }
+      }
+
       if (req.method === 'GET' && url.pathname === '/checkpoints') {
         const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
         const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
@@ -293,7 +332,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           const t = data.toString();
           if (t.startsWith('close ')) {
             const id = Buffer.from(t.slice(6).trim(), 'hex');
-            return sock.send(round.close(id) ? 'closed' : 'already closed');
+            const shut = round.close(id);
+            // A CLOSED ROUND IS REPLAYED, and by the daemon rather than by
+            // whoever asked. The promises are deliberately not awaited here:
+            // the socket is told the round is shut, and the replays run on
+            // their own threads through the pool.
+            if (shut) verifier.onRoundClosed(id);
+            return sock.send(shut ? 'closed' : 'already closed');
           }
           return sock.send('error unknown text message');
         }
@@ -326,7 +371,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
 
   return new Promise((resolve) => {
     http.listen(port, host, () => resolve({
-      http, wss, round, host,
+      http, wss, round, host, verifier,
       port: http.address().port,
       // Closed so it actually closes. `http.close` waits for open connections
       // to end, and a play socket does not end on its own - a harness that

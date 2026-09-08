@@ -17,14 +17,19 @@ import { hash } from '../../core/src/state.js';
 import { encodeRoundContract, encodeEntryContract, roundId, entryId } from '../../protocol/src/contracts.js';
 import { encodeInputBatch, batchId } from '../../protocol/src/batch.js';
 import { encodeCheckpoint, checkpointId, joinSigned, NO_PREVIOUS } from '../../protocol/src/checkpoint.js';
-import { encodeCheckpointReceipt, receiptId, joinSignedReceipt } from '../../protocol/src/receipt.js';
+import { encodeCheckpointReceipt, receiptId, joinSignedReceipt, SIGNED_RECEIPT_BYTES } from '../../protocol/src/receipt.js';
 import { splitSignedResult, decodePlayerResult, resultId, SIGNED_RESULT_BYTES } from '../../protocol/src/result.js';
 import { GENESIS } from '../../protocol/src/transcript.js';
 import { toHex } from '../../protocol/src/hash.js';
+import { seedWordForEntry } from '../../protocol/src/seed.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const FUNDED = { funded: () => true };
-const SEED = 7;                       // the fixture's own number, as ever
+// The round's randomness is a future Bitcoin block hash (5A) that this daemon
+// does not read yet, so the fixture owns these 32 bytes the way it owns the
+// keys. The SEED is no longer the fixture's: it derives from this and the
+// entry's own world secret, which the owner put on the entry in e942580.
+const RANDOMNESS = b32(0x9b);
 const TICKS = 600;
 const wordsAt = (t) => [45875, ((t * 977) % 30000) - 15000, (t % 700) < 40 ? 65536 : 0, 0, 0];
 
@@ -47,20 +52,31 @@ const post = (port, path, body) =>
   fetch(`http://127.0.0.1:${port}${path}`, { method: 'POST', body });
 
 function socket(port) {
-  const ws = new WebSocket(`ws://127.0.0.1:${port}`);
+  const ws = new WebSocket(`ws://127.0.0.1:${port}/play`);
   const said = [];
   ws.on('message', (d, bin) => said.push(bin ? new Uint8Array(d) : d.toString()));
   const open = new Promise((r) => ws.once('open', r));
   return {
     ws, said, open,
-    say: (m) => new Promise((r) => { const n = said.length; ws.send(m); const t = setInterval(() => {
-      if (said.length > n) { clearInterval(t); r(said[n]); } }, 2); }),
+    say: (m) => new Promise((resolve, reject) => {
+      const n = said.length;
+      let waited = 0;
+      ws.send(m);
+      const t = setInterval(() => {
+        if (said.length > n) { clearInterval(t); return resolve(said[n]); }
+        // A DAEMON THAT NEVER ANSWERS MUST FAIL, NOT HANG. The first version
+        // of this helper waited forever and took the whole node suite with
+        // it when the socket path was wrong - a red test that never says so
+        // is worse than a red test.
+        if ((waited += 2) > 20000) { clearInterval(t); reject(new Error(`no answer to ${typeof m === 'string' ? m : 'a binary frame'} in 20s`)); }
+      }, 2);
+    }),
   };
 }
 
 /** The player's own run, off the same core the client would be drawing from. */
-function play(ticks) {
-  const st = init(SEED);
+function play(ticks, entry) {
+  const st = init(seedWordForEntry(entry, RANDOMNESS));
   for (let t = 0; t < ticks; t++) step(st, ...wordsAt(t));
   return hash(st);
 }
@@ -69,7 +85,7 @@ function play(ticks) {
  * A WHOLE ROUND THROUGH THE DAEMON'S OWN DOORS: contract, entry, inputs, a
  * mark, the second seat's receipt for it, and then "close".
  */
-async function roundThrough(node, { objectFirst = false } = {}) {
+async function roundThrough(node, { objectFirst = false, carried = true } = {}) {
   const c = contractFor(node.round ? node.round.pubkey : b32(0));
   const rid = roundId(c);
   assert.equal((await post(node.port, '/round', encodeRoundContract(c))).status, 201);
@@ -91,17 +107,23 @@ async function roundThrough(node, { objectFirst = false } = {}) {
 
   // THE MARK, signed by the session key the entry names.
   const mark = {
-    roundId: rid, entryId: eid, tick: TICKS, stateHash: hexToBytes(play(TICKS)),
+    roundId: rid, entryId: eid, tick: TICKS, stateHash: hexToBytes(play(TICKS, entry)),
     inputChainHash: batchId(batch), previousHash: NO_PREVIOUS,
     sessionPubkey: ed25519.getPublicKey(session),
   };
   const mid = checkpointId(mark);
-  assert.equal(await s.say(joinSigned(encodeCheckpoint(mark), ed25519.sign(mid, session))), 'receipted');
+  // The node answers a mark with the RECEIPT it issued, not with a word.
+  const receipted = await s.say(joinSigned(encodeCheckpoint(mark), ed25519.sign(mid, session)));
+  assert.equal(receipted.length, SIGNED_RECEIPT_BYTES,
+    `the node refused the mark: ${typeof receipted === 'string' ? receipted : receipted.length + ' bytes'}`);
 
   // AND THE SECOND SEAT'S RECEIPT, which is what makes it canonical (13C).
-  const receipt = { checkpointId: mid, receivedAtMs: 1234n, nodePubkey: ed25519.getPublicKey(peer) };
-  const rbody = encodeCheckpointReceipt(receipt);
-  assert.equal(await s.say(joinSignedReceipt(rbody, ed25519.sign(receiptId(receipt), peer))), 'kept');
+  // Withheld when the caller wants to see what an uncarried transcript does.
+  if (carried) {
+    const receipt = { checkpointId: mid, receivedAtMs: 1234n, nodePubkey: ed25519.getPublicKey(peer) };
+    const rbody = encodeCheckpointReceipt(receipt);
+    assert.equal(await s.say(joinSignedReceipt(rbody, ed25519.sign(receiptId(receipt), peer))), 'held');
+  }
 
   if (objectFirst) {
     const r = await post(node.port, `/objection?round=${toHex(rid)}&entry=${toHex(eid)}`);
@@ -128,7 +150,7 @@ const settle = async (node) => { for (const p of node.verifier.done) await p; };
  * behind, and this test never called `submit`.
  */
 test('a round closed on a running daemon leaves a signed result nobody asked it for', async () => {
-  const node = await serve(openStore(':memory:'), { port: 0, ...FUNDED, seedFor: () => SEED });
+  const node = await serve(openStore(':memory:'), { port: 0, ...FUNDED, randomnessFor: () => RANDOMNESS });
   try {
     const { rid, eid, contract } = await roundThrough(node);
     await settle(node);
@@ -144,7 +166,22 @@ test('a round closed on a running daemon leaves a signed result nobody asked it 
     assert.deepEqual(result.nodePubkey, node.round.pubkey, 'the node signed under somebody else');
     assert.deepEqual(result.simCoreHash, contract.simCoreHash);
     assert.equal(result.outcome, 'FAILED');
-    assert.equal(result.score, 230, 'the stored score is not the one the replay found');
+    assert.equal(result.score, 257, 'the stored score is not the one the replay found');
+
+    // THE HASH IS THE CANONICAL TRANSCRIPT'S, 13C's own object - the prefix of
+    // marks the committee receipted. A node that signed over the rows it
+    // happened to hold would be signing a different object from its peers.
+    assert.deepEqual(result.transcriptHash, node.round.canonicalTranscript(rid, eid).hash,
+      'the signed hash is not the canonical transcript this node carries');
+
+    // AND A SECOND REPLAY DOES NOT REWRITE WHAT THIS SEAT ALREADY SIGNED. One
+    // seat, one result: a node that could replace its own would be able to
+    // change its answer after the committee had seen it.
+    const before = got.bytes;
+    for (const p of node.verifier.onRoundClosed(rid)) await p;
+    const after = await results(node.port, rid, eid);
+    assert.equal(after.count, 1, 'a second replay stored a second result for one seat');
+    assert.deepEqual(after.bytes, before, 'a second replay rewrote what the seat had signed');
 
     // THE SIGNATURE IS THE NODE'S OWN, over the id of what it stored.
     assert.ok(ed25519.verify(signature, resultId(result), node.round.pubkey),
@@ -157,7 +194,7 @@ test('a round closed on a running daemon leaves a signed result nobody asked it 
  * runs the whole path - close, queue, worker - and records the refusal rather
  * than inventing a world.
  */
-test('a daemon with no seed replays nothing and says which clause is missing', async () => {
+test('a daemon with no randomness replays nothing and says what it is missing', async () => {
   const node = await serve(openStore(':memory:'), { port: 0, ...FUNDED });
   try {
     const { rid, eid } = await roundThrough(node);
@@ -165,7 +202,7 @@ test('a daemon with no seed replays nothing and says which clause is missing', a
 
     assert.equal(answers.length, 1, 'the close queued no work at all');
     assert.equal(answers[0].stored, false);
-    assert.match(answers[0].why, /`secret` is the player's/);
+    assert.match(answers[0].why, /names no randomness to mix the player seed/);
     assert.equal((await results(node.port, rid, eid)).count, 0);
   } finally { await node.close(); }
 });
@@ -175,20 +212,49 @@ test('a daemon with no seed replays nothing and says which clause is missing', a
  * priority rule needed to be more than an arrangement between tests.
  */
 test('an objection recorded over the wire reaches the pool as an objected job', async () => {
-  const node = await serve(openStore(':memory:'), { port: 0, ...FUNDED, seedFor: () => SEED });
+  const node = await serve(openStore(':memory:'), { port: 0, ...FUNDED, randomnessFor: () => RANDOMNESS });
   try {
     const { rid, eid } = await roundThrough(node, { objectFirst: true });
     assert.equal(node.round.objected(rid, eid), true, 'the node did not record the objection');
+
+    // AND IT REACHED THE POOL AS AN OBJECTED JOB. Recording an objection the
+    // queue never hears is the same as not recording one: the priority rule
+    // proved in pool.test.js only means anything if the daemon sets the flag.
+    assert.deepEqual(node.verifier.queued.map((q) => q.objected), [true],
+      'the daemon queued the run without the objection it had just recorded');
+
     await settle(node);
     assert.equal((await results(node.port, rid, eid)).count, 1);
 
     // a second objection against the same run is not a second objection
     const again = await post(node.port, `/objection?round=${toHex(rid)}&entry=${toHex(eid)}`);
     assert.equal(again.status, 200);
-    assert.equal(await again.text(), 'already objected');
+    assert.equal((await again.text()).trim(), 'already objected');
 
     // and one against a run this node has never heard of is refused
     const nowhere = await post(node.port, `/objection?round=${toHex(rid)}&entry=${toHex(b32(0x99))}`);
     assert.equal(nowhere.status, 404);
+  } finally { await node.close(); }
+});
+
+/**
+ * AND A TRANSCRIPT THE COMMITTEE HAS NOT CARRIED IS NOT SIGNED OVER.
+ *
+ * 13C makes the canonical transcript the prefix of marks enough members have
+ * receipted. With one of two seats holding the mark there is no canonical
+ * transcript, and a node that signed anyway would be signing a different
+ * object from the one its peers will sign - the disagreement would look like
+ * a divergence in the run rather than in what was carried.
+ */
+test('a transcript no committee has carried is replayed and not signed', async () => {
+  const node = await serve(openStore(':memory:'), { port: 0, ...FUNDED, randomnessFor: () => RANDOMNESS });
+  try {
+    const { rid, eid } = await roundThrough(node, { carried: false });
+    const answers = await Promise.all(node.verifier.done);
+
+    assert.equal(answers.length, 1, 'the close queued no work');
+    assert.equal(answers[0].stored, false, 'a result was signed over an uncarried transcript');
+    assert.match(answers[0].why, /carried by 2 committee members|no checkpoints/);
+    assert.equal((await results(node.port, rid, eid)).count, 0);
   } finally { await node.close(); }
 });
