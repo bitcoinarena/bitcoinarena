@@ -17,7 +17,7 @@ import {
 } from '../../protocol/src/result.js';
 import { decodeRoundContract } from '../../protocol/src/contracts.js';
 import { committeeSeedFromBeacon } from '../../protocol/src/beacon.js';
-import { ed25519 } from '@noble/curves/ed25519.js';
+import { schnorr } from '@noble/curves/secp256k1.js';
 
 /**
  * WHAT A BEACON IS WORTH TO THIS NODE, worked out once per round.
@@ -254,7 +254,7 @@ export class Verifier {
 
     const id = resultId(result);
     let ok = false;
-    try { ok = ed25519.verify(signature, id, result.nodePubkey); } catch { ok = false; }
+    try { ok = schnorr.verify(signature, id, result.nodePubkey); } catch { ok = false; }
     if (!ok) return false;
 
     return this.round.putResult(

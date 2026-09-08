@@ -12,6 +12,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { ed25519 } from '@noble/curves/ed25519.js';
+import { schnorr } from '@noble/curves/secp256k1.js';
 
 import { Client as ModuleClient, markState as moduleMark } from '../src/client.js';
 import { roundId, entryId } from '../../protocol/src/contracts.js';
@@ -55,7 +56,7 @@ test('the bundle and the modules name a round and an entry identically', () => {
   assert.equal(toHex(bundled.roundId(c)), toHex(roundId(c)));
 
   const e = {
-    roundId: roundId(c), playerPubkey: b32(5), sessionPubkey: ed25519.getPublicKey(key),
+    roundId: roundId(c), playerPubkey: b32(5), sessionPubkey: schnorr.getPublicKey(key),
     stakeCommitment: b32(7), stakeMsat: 100000n, feeMsat: 1000n, donationMsat: 0n, joinTick: 0, worldSecret: b32(0x5e),
   };
   assert.equal(toHex(bundled.entryId(e)), toHex(entryId(e)));
@@ -111,7 +112,7 @@ test('the bundle refuses a receipt the modules would refuse', () => {
 test('the bundle proves an endpoint exactly as the modules do', () => {
   const b32 = (n) => new Uint8Array(32).fill(n);
   const secret = ed25519.utils.randomSecretKey();
-  const nodePubkey = ed25519.getPublicKey(secret);
+  const nodePubkey = schnorr.getPublicKey(secret);
   const advert = {
     nodePubkey, operatorId: 'somebody', protocolVersions: [1],
     roles: ['game', 'verify'], endpoint: 'wss://node.example:443', region: 'eu-west',
@@ -119,7 +120,7 @@ test('the bundle proves an endpoint exactly as the modules do', () => {
     lightningCapabilities: 0, bondTxid: new Uint8Array(32), bondVout: 0,
     bondScriptTemplateVersion: 1, payoutPubkey: b32(4), timestamp: 1788700000000n,
   };
-  const signed = (a) => bondTransaction(a, { signature: ed25519.sign(advertId(a), secret) });
+  const signed = (a) => bondTransaction(a, { signature: schnorr.sign(advertId(a), secret) });
   const transaction = signed(advert);
   const sibling = b32(0x99);
   const first = blockOf(hash256, [b32(0x01)]).header;
@@ -143,7 +144,7 @@ test('the bundle proves an endpoint exactly as the modules do', () => {
   const at = blockOf(hash256, [parseTransaction(bare.transaction).txid, sibling],
     { previous: blockHashOf(first) });
   bare.chains = [[first, at.header]];
-  const courier = joinSignedAdvert(encodeAdvert(swapped), ed25519.sign(advertId(swapped), secret));
+  const courier = joinSignedAdvert(encodeAdvert(swapped), schnorr.sign(advertId(swapped), secret));
   assert.throws(() => bundled.endpointFor({ ...bare, signedAdvert: courier }),
     /commits to a different advertisement/);
 });

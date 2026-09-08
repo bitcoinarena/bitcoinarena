@@ -11,7 +11,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
 import { ed25519 } from '@noble/curves/ed25519.js';
-import { secp256k1 } from '@noble/curves/secp256k1.js';
+import { schnorr, secp256k1 } from '@noble/curves/secp256k1.js';
 import { acceptSignedAdvert, advertIsSigned, STILL_UNCHECKED } from '../src/advert.js';
 import { acceptAdvert, BOND_UNCHECKED, hash256 } from '../../protocol/src/chain.js';
 import {
@@ -23,7 +23,7 @@ import { toHex } from '../../protocol/src/hash.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const secret = ed25519.utils.randomSecretKey();
-const NODE = ed25519.getPublicKey(secret);
+const NODE = schnorr.getPublicKey(secret);
 const other = ed25519.utils.randomSecretKey();
 
 const advertFor = (endpoint = 'wss://node.example:443', nodePubkey = NODE) => ({
@@ -36,7 +36,7 @@ const advertFor = (endpoint = 'wss://node.example:443', nodePubkey = NODE) => ({
 
 /** The body, signed by whoever is given - the signature sits BESIDE it. */
 const courier = (a, key = secret) =>
-  joinSignedAdvert(encodeAdvert(a), ed25519.sign(advertId(a), key));
+  joinSignedAdvert(encodeAdvert(a), schnorr.sign(advertId(a), key));
 
 const blockAround = (txid, sibling = new Uint8Array(32).fill(0x99)) => ({
   ...blockOf(hash256, [txid, sibling]), branch: [sibling], position: 0,
@@ -52,7 +52,7 @@ const blockAround = (txid, sibling = new Uint8Array(32).fill(0x99)) => ({
  * caller offers.
  */
 function onChain(a, key = secret) {
-  const transaction = bondTransaction(a, { signature: ed25519.sign(advertId(a), key) });
+  const transaction = bondTransaction(a, { signature: schnorr.sign(advertId(a), key) });
   const { header, branch, position } = blockAround(parseTransaction(transaction).txid);
   return { transaction, header, branch, position };
 }
@@ -123,7 +123,7 @@ test('a signature that covers another body is refused', () => {
   const elsewhere = advertFor('wss://whoever-the-provider-prefers:443');
 
   // the signature is over the OTHER body, carried beside this one
-  const mismatched = joinSignedAdvert(encodeAdvert(a), ed25519.sign(advertId(elsewhere), secret));
+  const mismatched = joinSignedAdvert(encodeAdvert(a), schnorr.sign(advertId(elsewhere), secret));
   const seen = advertIsSigned(mismatched);
   assert.equal(seen.ok, false);
   assert.match(seen.why, /not signed by/);
@@ -219,13 +219,17 @@ test('the zero key and the empty signature do not sign each other', async () => 
  */
 test('the census takes a body signed by the key it names, and refuses one that is not', async () => {
   const { resolveCensus } = await import('../../protocol/src/census.js');
+  // BIP-340 UNDER THE ONE KEY (letter 26). This used to be ed25519, which is
+  // what made a node's identity a different animal from its census entry: the
+  // bond is derived from `node_pubkey` on secp256k1, so a body signed on
+  // another curve could never be the same key that posted the bond.
   const verifyAdvert = (sig, id, pub) => {
-    try { return ed25519.verify(sig, id, pub); } catch { return false; }
+    try { return schnorr.verify(sig, id, pub); } catch { return false; }
   };
 
   const a = advertFor('wss://census.example:443');
   const bondFrom = (key) => bondTransaction(a, {
-    previousTxid: b32(0xa1), previousVout: 0, signature: ed25519.sign(advertId(a), key),
+    previousTxid: b32(0xa1), previousVout: 0, signature: schnorr.sign(advertId(a), key),
   });
   const entryOf = (transaction) => ({
     txid: parseTransaction(transaction).txid, vout: 0, pubkey: NODE,
@@ -238,7 +242,10 @@ test('the census takes a body signed by the key it names, and refuses one that i
     contract, resolve: () => ({ transaction: mine }), verifyAdvert,
   });
   assert.equal(ok.ok, true, ok.why);
-  assert.equal(ok.eligible.length, 1, `refused its own signer: ${JSON.stringify(ok.excluded)}`);
+  // The reasons, not the objects: an entry carries BigInt sats, and
+  // JSON.stringify over one throws - so a failing assertion used to raise a
+  // TypeError instead of saying what was refused.
+  assert.equal(ok.eligible.length, 1, `refused its own signer: ${ok.excluded.map((e) => e.why).join(' | ')}`);
   assert.equal(ok.unchecked.some((u) => /advertisement signature/.test(u)), false);
 
   const theirs = bondFrom(other);
@@ -266,7 +273,6 @@ test('the census takes a body signed by the key it names, and refuses one that i
  * with the set is a later letter's; that it CAN be said is this one's.
  */
 test('a signed advertisement over somebody else\'s bond output is refused', async () => {
-  const { schnorr } = await import('@noble/curves/secp256k1.js');
   const { genesisFor } = await import('../../protocol/src/genesis.js');
   const {
     bondOutputKey, bondInternalKey, BOND_SCRIPT_TEMPLATE_VERSION,
@@ -306,7 +312,7 @@ test('a signed advertisement over somebody else\'s bond output is refused', asyn
 
   // The advertisement names the BOND key, so the output can be rebuilt from it.
   const a = { ...advertFor('wss://bonded.example:443'), nodePubkey: bondKey };
-  const signedFor = (secret) => ed25519.sign(advertId(a), secret);
+  const signedFor = (secret) => schnorr.sign(advertId(a), secret);
   const ed = ed25519.utils.randomSecretKey();
   void signedFor; void ed;
 
@@ -351,10 +357,10 @@ test('an advertisement is checked against its own network\'s marker, not always 
     return { ...blockOf(hash256, [parseTransaction(tx).txid, sibling]), branch: [sibling], position: 0 };
   };
   const onRegtest = bondTransaction(a, {
-    signature: ed25519.sign(advertId(a), secret), network: 'regtest',
+    signature: schnorr.sign(advertId(a), secret), network: 'regtest',
   });
   const onTestnet = bondTransaction(a, {
-    signature: ed25519.sign(advertId(a), secret), network: 'testnet', previousTxid: b32(0xb2),
+    signature: schnorr.sign(advertId(a), secret), network: 'testnet', previousTxid: b32(0xb2),
   });
 
   // A TESTNET ROUND TAKES THE TESTNET BOND AND REFUSES THE REGTEST ONE.

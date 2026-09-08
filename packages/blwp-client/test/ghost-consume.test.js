@@ -15,6 +15,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { ed25519 } from '@noble/curves/ed25519.js';
+import { schnorr } from '@noble/curves/secp256k1.js';
 
 import { openStore } from '../../blwp-node/src/store.js';
 import { serve } from '../../blwp-node/src/server.js';
@@ -34,7 +35,7 @@ const core = require('../../core/dist/blwp-core.js');
 const b32 = (n) => new Uint8Array(32).fill(n);
 const session = ed25519.utils.randomSecretKey();
 const sign = (id) => ed25519.sign(id, session);
-const verify = (sig, msg, key) => { try { return ed25519.verify(sig, msg, key); } catch { return false; } };
+const verify = (sig, msg, key) => { try { return schnorr.verify(sig, msg, key); } catch { return false; } };
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // The fixture owns this beacon exactly as the daemon's tests own theirs; the

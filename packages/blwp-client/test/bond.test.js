@@ -16,6 +16,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { ed25519 } from '@noble/curves/ed25519.js';
+import { schnorr } from '@noble/curves/secp256k1.js';
 
 import { fromHex, toHex } from '../../protocol/src/hash.js';
 import { blockHashOf, meetsTarget, merkleRootFromProof } from '../../protocol/src/chain.js';
@@ -27,7 +28,7 @@ import { reach } from '../src/directory.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const operator = ed25519.utils.randomSecretKey();
-const operatorPubkey = ed25519.getPublicKey(operator);
+const operatorPubkey = schnorr.getPublicKey(operator);
 
 const advertFor = (endpoint) => ({
   nodePubkey: operatorPubkey, operatorId: 'somebody', protocolVersions: [1],
@@ -36,7 +37,7 @@ const advertFor = (endpoint) => ({
   bondTxid: new Uint8Array(32), bondVout: 0, bondScriptTemplateVersion: 1,
   payoutPubkey: b32(4), timestamp: 1788700000000n,
 });
-const bondFor = (a) => bondTransaction(a, { signature: ed25519.sign(advertId(a), operator) });
+const bondFor = (a) => bondTransaction(a, { signature: schnorr.sign(advertId(a), operator) });
 
 /** A mined block holding the bond, and a mined block before it. */
 function chainWith(transaction, sibling = b32(0x99)) {

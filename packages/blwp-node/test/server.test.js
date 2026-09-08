@@ -11,6 +11,7 @@ import {
   joinSigned, splitSigned, SIGNED_CHECKPOINT_BYTES, CHECKPOINT_BYTES,
 } from '../../protocol/src/checkpoint.js';
 import { ed25519 } from '@noble/curves/ed25519.js';
+import { schnorr } from '@noble/curves/secp256k1.js';
 import { GENESIS, decodeTranscript, checkTranscript, transcriptHash } from '../../protocol/src/transcript.js';
 import { toHex } from '../../protocol/src/hash.js';
 import {
@@ -178,7 +179,7 @@ test('checkpoints cross the wire, and the refusals cross it too', async () => {
       const r = decodeCheckpointReceipt(body);
       assert.deepEqual(r.checkpointId, checkpointId(c), 'the receipt answers a different mark');
       assert.deepEqual(r.nodePubkey, node.round.pubkey);
-      assert.ok(ed25519.verify(signature, receiptId(r), node.round.pubkey),
+      assert.ok(schnorr.verify(signature, receiptId(r), node.round.pubkey),
         'the receipt does not verify under the key the node publishes');
       return b;
     };

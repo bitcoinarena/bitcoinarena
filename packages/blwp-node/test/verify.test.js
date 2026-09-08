@@ -10,6 +10,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
 import { ed25519 } from '@noble/curves/ed25519.js';
+import { schnorr } from '@noble/curves/secp256k1.js';
 import { WebSocket } from 'ws';
 import { createServer } from 'node:http';
 import { openStore } from '../src/store.js';
@@ -59,7 +60,7 @@ const contractFor = (nodePubkey) => ({
   committeeSeed: b32(3), stakeMsat: 100000n, bondMinSats: 50000n, blockTicks: 9000,
   exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
   timeFloor: 30, timeCeil: 150, minScore: 1, rankNumerator: 3, rankDenominator: 4,
-  nodes: [nodePubkey, ed25519.getPublicKey(peer)],
+  nodes: [nodePubkey, schnorr.getPublicKey(peer)],
 });
 
 const post = (port, path, body) =>
@@ -104,7 +105,7 @@ async function roundThrough(node, {
   // WHICH SEAT CARRIES THE MARK. A receipt only counts from a key the round's
   // committee names, so a test with a different committee has to hand in the
   // seat that belongs to it.
-  seat = { secret: peer, pubkey: ed25519.getPublicKey(peer) },
+  seat = { secret: peer, pubkey: schnorr.getPublicKey(peer) },
 } = {}) {
   const c = contract || contractFor(node.round ? node.round.pubkey : b32(0));
   const rid = roundId(c);
@@ -142,7 +143,7 @@ async function roundThrough(node, {
   if (carried) {
     const receipt = { checkpointId: mid, receivedAtMs: 1234n, nodePubkey: seat.pubkey };
     const rbody = encodeCheckpointReceipt(receipt);
-    assert.equal(await s.say(joinSignedReceipt(rbody, ed25519.sign(receiptId(receipt), seat.secret))), 'held');
+    assert.equal(await s.say(joinSignedReceipt(rbody, schnorr.sign(receiptId(receipt), seat.secret))), 'held');
   }
 
   if (objectFirst) {
@@ -207,7 +208,7 @@ test('a round closed on a running daemon leaves a signed result nobody asked it 
     assert.deepEqual(after.bytes, before, 'a second replay rewrote what the seat had signed');
 
     // THE SIGNATURE IS THE NODE'S OWN, over the id of what it stored.
-    assert.ok(ed25519.verify(signature, resultId(result), node.round.pubkey),
+    assert.ok(schnorr.verify(signature, resultId(result), node.round.pubkey),
       'the stored signature does not verify under the node that served it');
   } finally { await node.close(); }
 });
@@ -394,7 +395,7 @@ test('a receipt arriving after the close produces the result the replay could no
     // NOW THE SECOND SEAT CARRIES IT, on the same socket a peer would use.
     const receipt = { checkpointId: mark.id, receivedAtMs: 4321n, nodePubkey: mark.seat.pubkey };
     const said = await socket.say(joinSignedReceipt(
-      encodeCheckpointReceipt(receipt), ed25519.sign(receiptId(receipt), mark.seat.secret)));
+      encodeCheckpointReceipt(receipt), schnorr.sign(receiptId(receipt), mark.seat.secret)));
     assert.equal(said, 'held');
 
     await node.verifier.settling;
@@ -415,7 +416,7 @@ test('a receipt arriving after the close produces the result the replay could no
     // AND A SECOND LATE RECEIPT DOES NOT SIGN IT AGAIN. One seat, one result.
     const again = { checkpointId: mark.id, receivedAtMs: 4321n, nodePubkey: mark.seat.pubkey };
     await socket.say(joinSignedReceipt(
-      encodeCheckpointReceipt(again), ed25519.sign(receiptId(again), mark.seat.secret)));
+      encodeCheckpointReceipt(again), schnorr.sign(receiptId(again), mark.seat.secret)));
     await node.verifier.settling;
     assert.equal((await results(node.port, rid, eid)).count, 1);
 
@@ -446,22 +447,22 @@ test('a peer that serves forged or foreign records adds nothing to the store', a
     const stranger = ed25519.utils.randomSecretKey();
     const forged = joinSignedResult(
       splitSignedResult(own).body,
-      ed25519.sign(resultId(mine), stranger));                 // wrong key, right bytes
+      schnorr.sign(resultId(mine), stranger));                 // wrong key, right bytes
     // The foreign one is otherwise IMPECCABLE: a real seat of this round's
     // committee, signing correctly - about a different round. Only the check
     // that a record is about the run it is filed under can refuse it, so the
     // fixture would not notice that check missing if this were forged too.
-    const elsewhere = { ...mine, roundId: b32(0x77), nodePubkey: ed25519.getPublicKey(peer) };
+    const elsewhere = { ...mine, roundId: b32(0x77), nodePubkey: schnorr.getPublicKey(peer) };
     const foreign = joinSignedResult(
-      encodePlayerResult(elsewhere), ed25519.sign(resultId(elsewhere), peer));
+      encodePlayerResult(elsewhere), schnorr.sign(resultId(elsewhere), peer));
 
     // AND ONE ABOUT ANOTHER PLAYER of this very round, signed impeccably by a
     // real seat. A PlayerResult names no entry, so only the player check can
     // refuse it - and without that check this record would take the seat's row
     // under this entry and keep the seat's true answer out for good.
-    const somebodyElse = { ...mine, playerPubkey: b32(0x42), nodePubkey: ed25519.getPublicKey(peer) };
+    const somebodyElse = { ...mine, playerPubkey: b32(0x42), nodePubkey: schnorr.getPublicKey(peer) };
     const wrongPlayer = joinSignedResult(
-      encodePlayerResult(somebodyElse), ed25519.sign(resultId(somebodyElse), peer));
+      encodePlayerResult(somebodyElse), schnorr.sign(resultId(somebodyElse), peer));
 
     const body = new Uint8Array(3 * SIGNED_RESULT_BYTES);
     body.set(forged, 0);

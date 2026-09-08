@@ -9,6 +9,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { ed25519 } from '@noble/curves/ed25519.js';
+import { schnorr } from '@noble/curves/secp256k1.js';
 import { openStore } from '../src/store.js';
 import { Round } from '../src/round.js';
 import { replayInWorker } from '../src/replay.js';
@@ -34,7 +35,7 @@ const session = ed25519.utils.randomSecretKey();
 const wordsAt = (t) => [45875, ((t * 977) % 30000) - 15000, (t % 700) < 40 ? 65536 : 0, 0, 0];
 
 const secrets = [0, 1, 2, 3, 4, 5, 6].map(() => ed25519.utils.randomSecretKey());
-const COMMITTEE = secrets.map((s) => ed25519.getPublicKey(s));
+const COMMITTEE = secrets.map((s) => schnorr.getPublicKey(s));
 const contract = () => ({
   networkId: b32(0x4e), configHash: b32(0x43), censusConfirmations: 6, gameVerifySlots: 7,
   settlementSlots: 7, simCoreHash: b32(1), startTimeMs: 1000n, entryCloseMs: 2000n,
@@ -95,7 +96,7 @@ function stored(ticks, { player = 5 } = {}) {
   for (let i = 0; i < 4; i++) {
     const receipt = { checkpointId: mid, receivedAtMs: 1234n, nodePubkey: COMMITTEE[i] };
     r.takeReceipt(joinSignedReceipt(encodeCheckpointReceipt(receipt),
-      ed25519.sign(receiptId(receipt), secrets[i])));
+      schnorr.sign(receiptId(receipt), secrets[i])));
   }
 
   return { contract: c, entry, transcript: r.transcript(rid, eid),
@@ -200,7 +201,7 @@ test('nodes that replayed the same run sign the same result, and five of seven v
   const strangerSecret = ed25519.utils.randomSecretKey();
   const strangerBuilt = resultFrom({ answer, contract: s.contract, entry: s.entry,
     transcript: s.canonical, entryId: s.canonical.entryId,
-    nodePubkey: ed25519.getPublicKey(strangerSecret) });
+    nodePubkey: schnorr.getPublicKey(strangerSecret) });
   const outside = [...record.slice(0, 4),
     joinSignedResult(strangerBuilt.encoded, signResult(strangerBuilt.result, strangerSecret).signature)];
   const out = verifiedFinal(outside, { contract: s.contract });

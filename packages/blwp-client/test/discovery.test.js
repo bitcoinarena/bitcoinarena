@@ -24,6 +24,7 @@ import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { readdirSync, readFileSync } from 'node:fs';
 import { ed25519 } from '@noble/curves/ed25519.js';
+import { schnorr } from '@noble/curves/secp256k1.js';
 
 import { openStore } from '../../blwp-node/src/store.js';
 import { serve } from '../../blwp-node/src/server.js';
@@ -51,7 +52,7 @@ globalThis.BLWP_NODE = DECOY;
 
 const session = ed25519.utils.randomSecretKey();
 const sign = (id) => ed25519.sign(id, session);
-const verify = (sig, msg, key) => { try { return ed25519.verify(sig, msg, key); } catch { return false; } };
+const verify = (sig, msg, key) => { try { return schnorr.verify(sig, msg, key); } catch { return false; } };
 const b32 = (n) => new Uint8Array(32).fill(n);
 const FUNDED = { funded: () => true };
 
@@ -68,9 +69,9 @@ const contract = (nodes) => ({
 // is the node that will be on the committee; `stranger` is a node with a real
 // bond and a real proof and no standing in this round at all.
 const operator = ed25519.utils.randomSecretKey();
-const operatorPubkey = ed25519.getPublicKey(operator);
+const operatorPubkey = schnorr.getPublicKey(operator);
 const stranger = ed25519.utils.randomSecretKey();
-const strangerPubkey = ed25519.getPublicKey(stranger);
+const strangerPubkey = schnorr.getPublicKey(stranger);
 
 const advertFor = (endpoint, nodePubkey = operatorPubkey) => ({
   nodePubkey, operatorId: 'somebody', protocolVersions: [1],
@@ -84,7 +85,7 @@ const advertFor = (endpoint, nodePubkey = operatorPubkey) => ({
 
 /** The bond transaction a node would post, with its body actually signed. */
 const bondFor = (a, secret = operator) =>
-  bondTransaction(a, { signature: ed25519.sign(advertId(a), secret) });
+  bondTransaction(a, { signature: schnorr.sign(advertId(a), secret) });
 
 /**
  * A two-block chain with the bond transaction in the second.
@@ -219,8 +220,8 @@ test('an advertisement not signed by the node it names is refused', async () => 
 
   // signed by somebody else, and by the operator over a different body
   for (const bad of [
-    bondTransaction(a, { signature: ed25519.sign(advertId(a), stranger) }),
-    bondTransaction(a, { signature: ed25519.sign(advertId(advertFor('ws://127.0.0.1:1')), operator) }),
+    bondTransaction(a, { signature: schnorr.sign(advertId(a), stranger) }),
+    bondTransaction(a, { signature: schnorr.sign(advertId(advertFor('ws://127.0.0.1:1')), operator) }),
     bondTransaction(a),                                    // 64 zero bytes
   ]) {
     await assert.rejects(
@@ -277,7 +278,7 @@ test('a page that swaps the endpoint is refused by name and reaches nothing', as
   // decoy in it. This is the whole attack: real bond, real block, its address.
   const transaction = bondTransaction(honest, { body: new Uint8Array(0) });
   const discovery = chainWith(transaction);
-  const courier = (a) => joinSignedAdvert(encodeAdvert(a), ed25519.sign(advertId(a), operator));
+  const courier = (a) => joinSignedAdvert(encodeAdvert(a), schnorr.sign(advertId(a), operator));
 
   const swapped = { ...honest, endpoint: 'ws://127.0.0.1:1' };
   const no = reach({ ...discovery, signedAdvert: courier(swapped) });

@@ -20,7 +20,7 @@
 // outcome from it, so they produce the same result id, and five identical
 // result ids is what section 13 asks for. The hash is the reason the ids
 // match, not a thing to sign beside them.
-import { ed25519 } from '@noble/curves/ed25519.js';
+import { schnorr } from '@noble/curves/secp256k1.js';
 import {
   resultId, encodePlayerResult, decodePlayerResult, splitSignedResult, SIGNED_RESULT_BYTES,
 } from '../../protocol/src/result.js';
@@ -91,7 +91,7 @@ const same = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
  */
 export function signResult(result, secretKey) {
   const id = resultId(result);
-  return { resultId: id, nodePubkey: result.nodePubkey, signature: ed25519.sign(id, secretKey) };
+  return { resultId: id, nodePubkey: result.nodePubkey, signature: schnorr.sign(id, secretKey) };
 }
 
 /**
@@ -148,7 +148,7 @@ export function verifiedFinal(records, { contract }) {
     seen.add(who);
 
     let ok = false;
-    try { ok = ed25519.verify(signature, resultId(result), result.nodePubkey); } catch { ok = false; }
+    try { ok = schnorr.verify(signature, resultId(result), result.nodePubkey); } catch { ok = false; }
     if (!ok) { forged++; continue; }
 
     const run = hex(runId(result));

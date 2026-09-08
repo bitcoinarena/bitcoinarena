@@ -24,7 +24,7 @@
 // where it lives: inside, the signature would be covered by `advertId`, so the
 // id would move the moment the body was signed - and the bond commits to the
 // body as it was when the funding transaction was built.
-import { ed25519 } from '@noble/curves/ed25519.js';
+import { schnorr } from '@noble/curves/secp256k1.js';
 import { acceptAdvert } from '../../protocol/src/chain.js';
 import { advertId, decodeAdvert, splitSignedAdvert } from '../../protocol/src/advert.js';
 
@@ -85,7 +85,7 @@ export function acceptSignedAdvert({
   // object that happens to encode the same way.
   const id = advertId(seen.advert);
   let ok = false;
-  try { ok = ed25519.verify(seen.signature, id, seen.nodePubkey); } catch { ok = false; }
+  try { ok = schnorr.verify(seen.signature, id, seen.nodePubkey); } catch { ok = false; }
   if (!ok) {
     return {
       ok: false,
@@ -131,7 +131,7 @@ export function advertIsSigned(bytes) {
 
   const id = advertId(advert);
   let ok = false;
-  try { ok = ed25519.verify(signature, id, advert.nodePubkey); } catch { ok = false; }
+  try { ok = schnorr.verify(signature, id, advert.nodePubkey); } catch { ok = false; }
   if (!ok) {
     return {
       ok: false,

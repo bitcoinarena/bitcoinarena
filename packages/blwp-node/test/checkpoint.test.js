@@ -13,6 +13,7 @@ import {
   joinSigned, splitSigned, SIGNED_CHECKPOINT_BYTES, CHECKPOINT_BYTES,
 } from '../../protocol/src/checkpoint.js';
 import { ed25519 } from '@noble/curves/ed25519.js';
+import { schnorr } from '@noble/curves/secp256k1.js';
 import { mkdtempSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -104,7 +105,7 @@ function receiptOver(round, answer, c) {
   const r = decodeCheckpointReceipt(body);
   assert.deepEqual(r.checkpointId, checkpointId(c), 'the receipt answers a different mark');
   assert.deepEqual(r.nodePubkey, round.pubkey, 'the receipt is not this node\'s');
-  assert.ok(ed25519.verify(signature, receiptId(r), round.pubkey),
+  assert.ok(schnorr.verify(signature, receiptId(r), round.pubkey),
     'the receipt does not verify under the key the node publishes');
   return r;
 }
@@ -352,7 +353,7 @@ test('the receipts come back for an entry, in tick order and the same bytes', ()
  */
 test('a peer\'s receipt is kept only after the mark, the committee and the signature check out', () => {
   const peer = ed25519.utils.randomSecretKey();
-  const peerKey = ed25519.getPublicKey(peer);
+  const peerKey = schnorr.getPublicKey(peer);
   const stranger = ed25519.utils.randomSecretKey();
 
   const { r, rid, eid, send, last } = rig({ nodes: [b32(4), peerKey] });
@@ -360,8 +361,8 @@ test('a peer\'s receipt is kept only after the mark, the committee and the signa
   const markId = checkpointId(last());
 
   const issue = (id, key, when = 1788770000000n, claimed = null) => {
-    const rec = { checkpointId: id, receivedAtMs: when, nodePubkey: claimed || ed25519.getPublicKey(key) };
-    return joinSignedReceipt(encodeCheckpointReceipt(rec), ed25519.sign(receiptId(rec), key));
+    const rec = { checkpointId: id, receivedAtMs: when, nodePubkey: claimed || schnorr.getPublicKey(key) };
+    return joinSignedReceipt(encodeCheckpointReceipt(rec), schnorr.sign(receiptId(rec), key));
   };
 
   // the peer is on the committee and signs its own receipt: kept
@@ -402,7 +403,7 @@ test('a peer\'s receipt is kept only after the mark, the committee and the signa
  */
 test('a mark can carry a receipt from every member, and the count is what 13C asks for', () => {
   const members = Array.from({ length: 6 }, () => ed25519.utils.randomSecretKey());
-  const keys = members.map((k) => ed25519.getPublicKey(k));
+  const keys = members.map((k) => schnorr.getPublicKey(k));
 
   // seven: this node plus six peers
   const store = openStore();
@@ -414,14 +415,14 @@ test('a mark can carry a receipt from every member, and the count is what 13C as
   assert.equal(r.receiptCount(markId), 1, 'only the node that took the mark has receipted it');
 
   members.slice(0, 4).forEach((k) => {
-    const rec = { checkpointId: markId, receivedAtMs: 1788770000000n, nodePubkey: ed25519.getPublicKey(k) };
-    r.takeReceipt(joinSignedReceipt(encodeCheckpointReceipt(rec), ed25519.sign(receiptId(rec), k)));
+    const rec = { checkpointId: markId, receivedAtMs: 1788770000000n, nodePubkey: schnorr.getPublicKey(k) };
+    r.takeReceipt(joinSignedReceipt(encodeCheckpointReceipt(rec), schnorr.sign(receiptId(rec), k)));
   });
   assert.equal(r.receiptCount(markId), 5, 'five of seven, which is 13C\'s threshold');
 
   members.slice(4).forEach((k) => {
-    const rec = { checkpointId: markId, receivedAtMs: 1788770000000n, nodePubkey: ed25519.getPublicKey(k) };
-    r.takeReceipt(joinSignedReceipt(encodeCheckpointReceipt(rec), ed25519.sign(receiptId(rec), k)));
+    const rec = { checkpointId: markId, receivedAtMs: 1788770000000n, nodePubkey: schnorr.getPublicKey(k) };
+    r.takeReceipt(joinSignedReceipt(encodeCheckpointReceipt(rec), schnorr.sign(receiptId(rec), k)));
   });
   assert.equal(r.receiptCount(markId), 7, 'a mark can carry one from every member');
 });

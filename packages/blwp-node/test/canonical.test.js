@@ -12,6 +12,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { ed25519 } from '@noble/curves/ed25519.js';
+import { schnorr } from '@noble/curves/secp256k1.js';
 
 import { openStore } from '../src/store.js';
 import { Round, RECEIPTS_FOR_CANONICAL } from '../src/round.js';
@@ -35,7 +36,7 @@ const sessionPubkey = ed25519.getPublicKey(session);
 
 /** Seven committee keys; the node's own is added to the contract at open. */
 const peers = Array.from({ length: 7 }, () => ed25519.utils.randomSecretKey());
-const peerKeys = peers.map((k) => ed25519.getPublicKey(k));
+const peerKeys = peers.map((k) => schnorr.getPublicKey(k));
 
 const contract = (nodes) => ({
   networkId: b32(0x4e), configHash: b32(0x43), censusConfirmations: 6, gameVerifySlots: 7, settlementSlots: 7, simCoreHash: b32(1), startTimeMs: 1000n, entryCloseMs: 2000n, objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'BURN', donationSetId: new Uint8Array(32).fill(0xd0),
@@ -52,8 +53,8 @@ const entryFor = (rid) => ({
 
 const signedMark = (c) => joinSigned(encodeCheckpoint(c), ed25519.sign(checkpointId(c), session));
 const receiptFrom = (secret, id, ms) => {
-  const r = { checkpointId: id, nodePubkey: ed25519.getPublicKey(secret), receivedAtMs: ms };
-  return joinSignedReceipt(encodeCheckpointReceipt(r), ed25519.sign(receiptId(r), secret));
+  const r = { checkpointId: id, nodePubkey: schnorr.getPublicKey(secret), receivedAtMs: ms };
+  return joinSignedReceipt(encodeCheckpointReceipt(r), schnorr.sign(receiptId(r), secret));
 };
 
 /**

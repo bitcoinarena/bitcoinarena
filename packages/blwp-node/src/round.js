@@ -22,6 +22,7 @@ import {
   joinSignedReceipt, splitSignedReceipt, SIGNED_RECEIPT_BYTES,
 } from '../../protocol/src/receipt.js';
 import { ed25519 } from '@noble/curves/ed25519.js';
+import { schnorr } from '@noble/curves/secp256k1.js';
 import { toHex } from '../../protocol/src/hash.js';
 import { OPEN, CLOSED, nodeIdentity } from './store.js';
 import { receiptsNeeded } from '../../protocol/src/genesis.js';
@@ -38,6 +39,15 @@ function neededForRound(db, roundIdBytes) {
 }
 
 const same = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
+
+/**
+ * A NODE'S SIGNATURE, BIP-340 under its one key (26's ruling). Answered rather
+ * than thrown: a malformed key or signature is a refusal, and `schnorr.verify`
+ * throws on both.
+ */
+const verifyNode = (signature, message, pubkey) => {
+  try { return schnorr.verify(signature, message, pubkey); } catch { return false; }
+};
 
 export class Round {
   constructor(db, now = () => Date.now()) {
@@ -79,7 +89,7 @@ export class Round {
       nodePubkey: this.identity.pubkey,
     };
     const bytes = joinSignedReceipt(
-      encodeCheckpointReceipt(r), ed25519.sign(receiptId(r), this.identity.secret));
+      encodeCheckpointReceipt(r), schnorr.sign(receiptId(r), this.identity.secret));
     this.db.prepare('INSERT INTO receipts (checkpoint_id, node_pubkey, bytes) VALUES (?, ?, ?)')
       .run(id, this.identity.pubkey, bytes);
     return bytes;
@@ -119,7 +129,7 @@ export class Round {
       // signature is checked under the key the receipt names - the only check
       // available without a round to read a committee from - and it is filed
       // unattributed until the mark itself turns up.
-      if (!ed25519.verify(signature, receiptId(r), r.nodePubkey))
+      if (!verifyNode(signature, receiptId(r), r.nodePubkey))
         throw new Error(`the receipt from ${toHex(r.nodePubkey)} does not verify`);
       this.db.prepare(
         'INSERT OR IGNORE INTO foreign_receipts '
@@ -135,14 +145,21 @@ export class Round {
         `${toHex(r.nodePubkey)} is not on this round's committee`);
 
     let ok = false;
-    try { ok = ed25519.verify(signature, receiptId(r), r.nodePubkey); } catch { ok = false; }
+    ok = verifyNode(signature, receiptId(r), r.nodePubkey);
     if (!ok) throw new Error(`the receipt from ${toHex(r.nodePubkey)} does not verify`);
 
     const held = this.db.prepare(
       'SELECT bytes FROM receipts WHERE checkpoint_id = ? AND node_pubkey = ?')
       .get(r.checkpointId, r.nodePubkey);
     if (held) {
-      if (same(new Uint8Array(held.bytes), bytes)) return 'held';
+      // WHAT WAS SIGNED, not the signature over it. BIP-340 is randomised, so
+      // one node signing one receipt twice produces two different signatures -
+      // and comparing the signed BYTES called that "receipted differently",
+      // which is an equivocation charge against a node that said the same
+      // thing twice. Equivocation is two different BODIES; two signatures over
+      // one body are two ways of saying it.
+      const heldBody = splitSignedReceipt(new Uint8Array(held.bytes)).body;
+      if (same(heldBody, body)) return 'held';
       throw new Error(
         `${toHex(r.nodePubkey)} has already receipted ${toHex(r.checkpointId)} differently`);
     }
@@ -388,6 +405,9 @@ export class Round {
     // signature rather than whatever it collided with.
     const sessionPubkey = decodeEntryContract(new Uint8Array(entry.contract)).sessionPubkey;
     let ok = false;
+    // THE PLAYER'S SESSION KEY IS STILL ED25519 and is not a node key: it
+    // signs marks, it bonds nothing, and 26's one-key ruling is about
+    // `node_pubkey`.
     try { ok = ed25519.verify(signature, id, sessionPubkey); } catch { ok = false; }
     if (!ok) throw new Error('the signature does not verify under the entry\'s session key');
     const at = this.db.prepare(

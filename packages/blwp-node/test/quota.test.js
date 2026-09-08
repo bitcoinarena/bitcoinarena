@@ -16,6 +16,7 @@ import { mkdtempSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { ed25519 } from '@noble/curves/ed25519.js';
+import { schnorr } from '@noble/curves/secp256k1.js';
 
 import { openStore } from '../src/store.js';
 import { serve, NOTHING_IS_FUNDED } from '../src/server.js';
@@ -34,7 +35,7 @@ const contract = (n = 1) => ({
   nodes: [b32(4)],
 });
 const entryFor = (rid) => ({
-  roundId: rid, playerPubkey: b32(5), sessionPubkey: ed25519.getPublicKey(key),
+  roundId: rid, playerPubkey: b32(5), sessionPubkey: schnorr.getPublicKey(key),
   stakeCommitment: b32(7), stakeMsat: 100000n, feeMsat: 1000n, donationMsat: 0n, joinTick: 0, worldSecret: b32(0x5e),
 });
 

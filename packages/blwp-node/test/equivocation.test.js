@@ -14,6 +14,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { ed25519 } from '@noble/curves/ed25519.js';
+import { schnorr } from '@noble/curves/secp256k1.js';
 
 import { openStore } from '../src/store.js';
 import { Round } from '../src/round.js';
@@ -243,9 +244,9 @@ test('a receipt for a mark this node never got is kept as evidence', () => {
   const member = ed25519.utils.randomSecretKey();
   const receipt = (() => {
     const r = {
-      checkpointId: theirId, nodePubkey: ed25519.getPublicKey(member), receivedAtMs: 7000n,
+      checkpointId: theirId, nodePubkey: schnorr.getPublicKey(member), receivedAtMs: 7000n,
     };
-    return joinSignedReceipt(encodeCheckpointReceipt(r), ed25519.sign(receiptId(r), member));
+    return joinSignedReceipt(encodeCheckpointReceipt(r), schnorr.sign(receiptId(r), member));
   })();
 
   assert.equal(round.foreignReceipts().length, 0);
@@ -254,7 +255,7 @@ test('a receipt for a mark this node never got is kept as evidence', () => {
   const kept = round.foreignReceipts();
   assert.equal(kept.length, 1, 'the divergence signal was dropped');
   assert.deepEqual(kept[0].checkpointId, theirId);
-  assert.deepEqual(kept[0].nodePubkey, ed25519.getPublicKey(member));
+  assert.deepEqual(kept[0].nodePubkey, schnorr.getPublicKey(member));
 
   // AND IT IS NOT A VOTE. It counts towards nothing: the mark is not this
   // node's, and receiptCount is about marks this node holds.
@@ -445,10 +446,10 @@ test('a node publishes the receipts it holds for marks it has not got', async ()
   const member = ed25519.utils.randomSecretKey();
   const r = {
     checkpointId: checkpointId(elsewhere),
-    nodePubkey: ed25519.getPublicKey(member),
+    nodePubkey: schnorr.getPublicKey(member),
     receivedAtMs: 7000n,
   };
-  const receipt = joinSignedReceipt(encodeCheckpointReceipt(r), ed25519.sign(receiptId(r), member));
+  const receipt = joinSignedReceipt(encodeCheckpointReceipt(r), schnorr.sign(receiptId(r), member));
 
   const empty = await serve(played().round.db, { port: 0, funded: () => true });
   const node = await serve(round.db, { port: 0, funded: () => true });
@@ -467,7 +468,7 @@ test('a node publishes the receipts it holds for marks it has not got', async ()
 
     // and a stranger can read whose it is, and what it names, without asking
     const back = decodeCheckpointReceipt(splitSignedReceipt(body).body);
-    assert.deepEqual(back.nodePubkey, ed25519.getPublicKey(member));
+    assert.deepEqual(back.nodePubkey, schnorr.getPublicKey(member));
     assert.deepEqual(back.checkpointId, checkpointId(elsewhere));
   } finally { await node.close(); await empty.close(); }
 });

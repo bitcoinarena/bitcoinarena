@@ -16,6 +16,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { ed25519 } from '@noble/curves/ed25519.js';
+import { schnorr } from '@noble/curves/secp256k1.js';
 
 import { openStore } from '../../blwp-node/src/store.js';
 import { serve } from '../../blwp-node/src/server.js';
@@ -28,7 +29,7 @@ const JSLIB = new URL('../../../unity-proto/Assets/Plugins/WebGL/blwp.jslib', im
 const b32 = (n) => new Uint8Array(32).fill(n);
 const session = ed25519.utils.randomSecretKey();
 const sign = (id) => ed25519.sign(id, session);
-const verify = (s, m, k) => { try { return ed25519.verify(s, m, k); } catch { return false; } };
+const verify = (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } };
 const FUNDED = { funded: () => true };
 
 /** The exports, and the fake heap they write into. */

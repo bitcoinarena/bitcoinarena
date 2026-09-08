@@ -13,7 +13,7 @@
 // Nothing here steps the core. The node stores and serves; it does not judge.
 // Verification arrives with the checkpoints and is measured on its own.
 import { DatabaseSync } from 'node:sqlite';
-import { ed25519 } from '@noble/curves/ed25519.js';
+import { schnorr } from '@noble/curves/secp256k1.js';
 
 export const OPEN = 0, CLOSED = 1;
 
@@ -241,12 +241,48 @@ export function openStore(path = ':memory:') {
  * A node that made a fresh key on each start would invalidate every receipt it
  * had ever issued the moment it was restarted.
  */
+/**
+ * ONE KEY, AND IT IS THE BOND KEY.
+ *
+ * This was an ed25519 key, and that made the node's identity a different
+ * ANIMAL from its census entry: 5A.3B derives a bond output from `node_pubkey`
+ * on secp256k1, so an ed25519 identity could never be the key a bond is posted
+ * under. Measured before this changed: of 500 fresh ed25519 identities, 235
+ * happened to be valid secp x-only points and the node held the secp secret
+ * for NONE of them. So "the committee is the seated census" was not a rule
+ * anybody could satisfy - the trusted list and the seated list could not
+ * contain the same bytes.
+ *
+ * It is one key now: x-only secp256k1, the key a bond is built from, the key
+ * an advertisement is signed with, and the key a receipt is signed with -
+ * BIP-340 throughout.
+ *
+ * A NODE THAT ALREADY HAS A SECRET KEEPS IT. The pubkey column is recomputed
+ * from it, so an existing daemon changes IDENTITY - its old ed25519 key names
+ * nobody now - rather than losing its file. That is a rotation and it is
+ * written down in TASKBOOK: receipts issued under the old key verify under
+ * nothing, which is the honest consequence of the two key spaces having been
+ * wrong to begin with.
+ */
 export function nodeIdentity(db) {
   const row = db.prepare('SELECT secret, pubkey FROM identity WHERE one = 0').get();
-  if (row) return { secret: new Uint8Array(row.secret), pubkey: new Uint8Array(row.pubkey) };
+  if (row) {
+    const secret = new Uint8Array(row.secret);
+    const held = new Uint8Array(row.pubkey);
+    let pubkey;
+    try { pubkey = schnorr.getPublicKey(secret); }
+    catch { pubkey = null; }
+    // A secret this curve cannot use is not a secret this node can sign with.
+    // Astronomically unlikely from 32 random bytes and refused rather than
+    // worked around, because the alternative is a node that cannot receipt.
+    if (!pubkey) throw new Error('this node\'s stored secret is not a key it can sign with');
+    if (!held.every((b, i) => b === pubkey[i]))
+      db.prepare('UPDATE identity SET pubkey = ? WHERE one = 0').run(pubkey);
+    return { secret, pubkey };
+  }
 
-  const secret = ed25519.utils.randomSecretKey();
-  const pubkey = ed25519.getPublicKey(secret);
+  const secret = schnorr.utils.randomSecretKey();
+  const pubkey = schnorr.getPublicKey(secret);
   db.prepare('INSERT INTO identity (one, secret, pubkey) VALUES (0, ?, ?)').run(secret, pubkey);
   return { secret, pubkey };
 }

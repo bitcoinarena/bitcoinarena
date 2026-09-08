@@ -20,6 +20,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { ed25519 } from '@noble/curves/ed25519.js';
+import { schnorr } from '@noble/curves/secp256k1.js';
 
 import { openStore } from '../../blwp-node/src/store.js';
 import { encodeRoundContract, encodeEntryContract } from '../../protocol/src/contracts.js';
@@ -50,7 +51,7 @@ const b32 = (n) => new Uint8Array(32).fill(n);
 const session = ed25519.utils.randomSecretKey();
 const sessionPubkey = ed25519.getPublicKey(session);
 const sign = (id) => ed25519.sign(id, session);
-const verify = (sig, msg, key) => { try { return ed25519.verify(sig, msg, key); } catch { return false; } };
+const verify = (sig, msg, key) => { try { return schnorr.verify(sig, msg, key); } catch { return false; } };
 
 const contract = () => ({
   networkId: b32(0x4e), configHash: b32(0x43), censusConfirmations: 6, gameVerifySlots: 7, settlementSlots: 7, simCoreHash: b32(1), startTimeMs: 1000n, entryCloseMs: 2000n, objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'BURN', donationSetId: new Uint8Array(32).fill(0xd0),
@@ -88,14 +89,14 @@ const marks = async (port, rid, eid) => {
  * it verified itself.
  */
 const peers = Array.from({ length: 6 }, () => ed25519.utils.randomSecretKey());
-const peerKeys = peers.map((k) => ed25519.getPublicKey(k));
+const peerKeys = peers.map((k) => schnorr.getPublicKey(k));
 
 /** One committee member's receipt for a mark, signed for real. */
 function receiptFrom(secret, markId, receivedAtMs) {
   const r = {
-    checkpointId: markId, nodePubkey: ed25519.getPublicKey(secret), receivedAtMs,
+    checkpointId: markId, nodePubkey: schnorr.getPublicKey(secret), receivedAtMs,
   };
-  return joinSignedReceipt(encodeCheckpointReceipt(r), ed25519.sign(receiptId(r), secret));
+  return joinSignedReceipt(encodeCheckpointReceipt(r), schnorr.sign(receiptId(r), secret));
 }
 
 /**
@@ -317,7 +318,7 @@ test('a receipt for another mark, a stranger, or a bad signature are three diffe
 
     const nodeKey = node.round.identity;
     const forge = (r, key = nodeKey.secret) =>
-      joinSignedReceipt(encodeCheckpointReceipt(r), ed25519.sign(receiptId(r), key));
+      joinSignedReceipt(encodeCheckpointReceipt(r), schnorr.sign(receiptId(r), key));
     const now = 1788770000000n;
 
     // 1. the right node, the right signature, the WRONG mark
@@ -331,7 +332,7 @@ test('a receipt for another mark, a stranger, or a bad signature are three diffe
     // 2. a real signature over a real receipt, by somebody who is not on the
     //    committee this round's contract names
     const stranger = ed25519.utils.randomSecretKey();
-    const strangerKey = ed25519.getPublicKey(stranger);
+    const strangerKey = schnorr.getPublicKey(stranger);
     const outsider = forge({ checkpointId: sent.id, receivedAtMs: now, nodePubkey: strangerKey }, stranger);
     assert.throws(() => client.readReceipt(outsider, sent.id), (e) => {
       assert.match(e.message, /is not on this round's committee$/);
@@ -342,7 +343,7 @@ test('a receipt for another mark, a stranger, or a bad signature are three diffe
     // 3. the committee's key claimed, and a signature that does not verify
     //    under it - which is what a forgery looks like from the outside
     const claimed = { checkpointId: sent.id, receivedAtMs: now, nodePubkey: nodeKey.pubkey };
-    const lie = joinSignedReceipt(encodeCheckpointReceipt(claimed), ed25519.sign(receiptId(claimed), stranger));
+    const lie = joinSignedReceipt(encodeCheckpointReceipt(claimed), schnorr.sign(receiptId(claimed), stranger));
     assert.throws(() => client.readReceipt(lie, sent.id),
       /does not verify under its own key$/);
 
@@ -491,7 +492,7 @@ test('a receipt gossiped to a second node is recoverable from that node too', as
  */
 test('a recovered receipt that does not verify, or is from a stranger, is refused', async () => {
   const nodeKey = ed25519.utils.randomSecretKey();
-  const nodePubkey = ed25519.getPublicKey(nodeKey);
+  const nodePubkey = schnorr.getPublicKey(nodeKey);
   const stranger = ed25519.utils.randomSecretKey();
 
   let serve139 = null;
@@ -513,15 +514,15 @@ test('a recovered receipt that does not verify, or is from a stranger, is refuse
     // 1. the committee's key claimed, signed by somebody else
     const claimed = { checkpointId: b32(3), receivedAtMs: 1788770000000n, nodePubkey };
     serve139 = joinSignedReceipt(encodeCheckpointReceipt(claimed),
-                                 ed25519.sign(receiptId(claimed), stranger));
+                                 schnorr.sign(receiptId(claimed), stranger));
     await assert.rejects(() => at(`http://127.0.0.1:${port}`).recoverReceipts(where),
       /does not verify under its own key$/);
 
     // 2. an honest receipt from somebody who is not on the committee
-    const outsiderKey = ed25519.getPublicKey(stranger);
+    const outsiderKey = schnorr.getPublicKey(stranger);
     const outsider = { checkpointId: b32(3), receivedAtMs: 1788770000000n, nodePubkey: outsiderKey };
     serve139 = joinSignedReceipt(encodeCheckpointReceipt(outsider),
-                                 ed25519.sign(receiptId(outsider), stranger));
+                                 schnorr.sign(receiptId(outsider), stranger));
     await assert.rejects(() => at(`http://127.0.0.1:${port}`).recoverReceipts(where),
       /is not on this round's committee$/);
 

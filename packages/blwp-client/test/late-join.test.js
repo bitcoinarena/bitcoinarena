@@ -25,6 +25,7 @@ import * as core from '../../core/src/index.js';
 import { roundId, entryId } from '../../protocol/src/contracts.js';
 import { toHex } from '../../protocol/src/hash.js';
 import { ed25519 } from '@noble/curves/ed25519.js';
+import { schnorr } from '@noble/curves/secp256k1.js';
 import { createServer } from 'node:http';
 import { encodeEntryContract } from '../../protocol/src/contracts.js';
 import { encodeTranscript, GENESIS } from '../../protocol/src/transcript.js';
@@ -32,7 +33,7 @@ import { batchId } from '../../protocol/src/batch.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const secret = b32(0x11);
-const sessionPubkey = ed25519.getPublicKey(secret);
+const sessionPubkey = schnorr.getPublicKey(secret);
 const sign = async (m) => ed25519.sign(m, secret);
 const verify = async (sig, m, pk) => ed25519.verify(sig, m, pk);
 const FUNDED = { funded: () => true };
