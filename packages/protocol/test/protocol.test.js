@@ -3,6 +3,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { NETWORK_ID_REGTEST } from '../src/genesis-ids.js';
 import { Writer, Reader } from '../src/encode.js';
 import { taggedHash, toHex, fromHex } from '../src/hash.js';
 import { TAG, CUSTODY, SLASH_REMAINDERS } from '../src/constants.js';
@@ -121,7 +122,10 @@ test('selection never divides, and heavier bonds win more often', () => {
   for (let s = 0; s < 200; s++) {
     const pick = selectCommittee({
       entries, role: 'game',
-      contract: { committeeSeed: b32(s % 256), gameVerifySlots: 3, bondMinSats: 100000n } });
+      contract: {
+        committeeSeed: b32(s % 256), gameVerifySlots: 3, bondMinSats: 100000n,
+        networkId: NETWORK_ID_REGTEST,
+      } });
     if (pick.some((e) => e.txid[0] === 1)) heavyWins++;
   }
   // fifty times the bond in a field of twenty, three slots: it should appear
@@ -133,7 +137,13 @@ test('the same seed picks the same committee', () => {
   const mk = (n) => ({ txid: b32(n), vout: 0, pubkey: pk(n), bondSats: 100000n,
                        height: 1, roles: ['game'], spent: false });
   const entries = [1, 2, 3, 4, 5].map(mk);
-  const round = { committeeSeed: b32(11), gameVerifySlots: 2, bondMinSats: 100000n };
+  // A ROUND NAMES ITS NETWORK, because the census minimum is a genesis fact
+  // and the network id is what says which genesis. A bare contract without one
+  // is refused now, the same way the census refuses one.
+  const round = {
+    committeeSeed: b32(11), gameVerifySlots: 2, bondMinSats: 100000n,
+    networkId: NETWORK_ID_REGTEST,
+  };
   const a = selectCommittee({ entries, contract: round, role: 'game' });
   const b = selectCommittee({ entries, contract: round, role: 'game' });
   assert.deepEqual(a.map((e) => e.txid[0]), b.map((e) => e.txid[0]));
@@ -292,7 +302,7 @@ test('a flat rank curve is flagged before anyone stakes', () => {
 
 function sampleContract() {
   return {
-    networkId: b32(0x4e), configHash: b32(0x43), censusConfirmations: 6, gameVerifySlots: 7, settlementSlots: 7, simCoreHash: b32(1), startTimeMs: 1788200000000n, entryCloseMs: 1788200060000n, objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'BURN', donationSetId: new Uint8Array(32).fill(0xd0),
+    networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations: 6, gameVerifySlots: 7, settlementSlots: 7, simCoreHash: b32(1), startTimeMs: 1788200000000n, entryCloseMs: 1788200060000n, objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'BURN', donationSetId: new Uint8Array(32).fill(0xd0),
     censusHeight: 964900, censusRoot: b32(2), committeeSeed: b32(3),
     stakeMsat: 100000n, bondMinSats: 100000n, blockTicks: 9000,
     exposureReference: 12451840, corridorHalfWidth: 3014656, spawnFreeRadius: 1441792,

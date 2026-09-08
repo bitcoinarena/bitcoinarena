@@ -470,27 +470,47 @@ test('a bond spent after the census height keeps its place, its amount and its s
   const spend = bondTransaction(advertFor(0x50), {
     previousTxid: tx.txid, previousVout: 0,
   });
+  // A SECOND BONDED NODE, because a census of one cannot hold a round at all:
+  // regtest was born needing two, and `selectCommittee` refuses to slice a
+  // committee out of anything smaller. The claim under test is unchanged - a
+  // bond spent AFTER the census keeps its place, its amount and its seat - and
+  // it needs a census that is a census.
+  const neighbour = bondTransaction(advertFor(0x1b), {
+    previousTxid: b32(0xbb), previousVout: 0, value: 60000,
+    outputKey: bondFor(keyFor(0x1b)),
+  });
+  const nb = parseTransaction(neighbour);
   const round = {
-    ...contract, bondMinSats: 50000n, committeeSeed: b32(1), gameVerifySlots: 1,
+    ...contract, bondMinSats: 50000n, committeeSeed: b32(1), gameVerifySlots: 2,
   };
+  const byTxid = new Map([[toHex(tx.txid), bond], [toHex(nb.txid), neighbour]]);
   const at = (place) => deriveCensus(view(place), {
     contract: round, bond: BOND,
-    candidates: [{ txid: tx.txid, vout: 0, pubkey: b32(0xEE), bondSats: 60000n, roles: ['game'] }],
-    resolve: () => ({ transaction: bond }),
+    candidates: [
+      { txid: tx.txid, vout: 0, pubkey: b32(0xEE), bondSats: 60000n, roles: ['game'] },
+      { txid: nb.txid, vout: 0, pubkey: b32(0xEE), bondSats: 60000n, roles: ['game'] },
+    ],
+    resolve: (e) => ({ transaction: byTxid.get(toHex(e.txid)) }),
   });
-  const funded = { [HEIGHT - 20]: [bond] };
+  const funded = { [HEIGHT - 20]: [bond, neighbour] };
 
   const untouched = at(funded);
   const later = at({ ...funded, [HEIGHT + 5]: [spend] });
 
-  assert.equal(later.entries.length, 1, 'a spend after the census removed the bond');
-  assert.equal(later.entries[0].bondSats, 60000n, 'the amount changed with a later spend');
+  assert.equal(later.entries.length, 2, 'a spend after the census removed the bond');
+  const mine = later.entries.find((e) => toHex(e.txid) === toHex(tx.txid));
+  assert.ok(mine, 'the spent-later bond is not in the census');
+  assert.equal(mine.bondSats, 60000n, 'the amount changed with a later spend');
   assert.equal(toHex(later.root), toHex(untouched.root), 'a later spend moved the census root');
-  assert.equal(selectCommittee({ entries: later.entries, contract: round, role: 'game' }).length, 1);
+  const seats = selectCommittee({ entries: later.entries, contract: round, role: 'game' });
+  assert.equal(seats.length, 2);
+  assert.equal(seats.some((e) => toHex(e.txid) === toHex(tx.txid)), true,
+    'the bond spent after the census lost its seat');
 
   // and the boundary is "at or before": spent IN the census block is out
   const atHeight = at({ ...funded, [HEIGHT]: [spend] });
-  assert.equal(atHeight.entries.length, 0);
+  assert.equal(atHeight.entries.length, 1, 'the spent bond is still counted');
+  assert.equal(toHex(atHeight.entries[0].txid), toHex(nb.txid));
   assert.match(atHeight.excluded[0].why, /already spent at the census height/);
 
   // INCLUDING A BOND FUNDED AND SPENT IN THE SAME BLOCK, which a mutant

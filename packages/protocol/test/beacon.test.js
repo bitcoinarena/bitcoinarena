@@ -9,6 +9,7 @@
 // was trivial and undetectable".
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { NETWORK_ID_REGTEST } from '../src/genesis-ids.js';
 import {
   committeeSeedFrom, beaconIsAfterRound, committeeSeedFromBeacon,
 } from '../src/beacon.js';
@@ -18,7 +19,7 @@ import { toHex } from '../src/hash.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const contract = {
-  networkId: b32(0x4e), configHash: b32(0x43), censusConfirmations: 6, gameVerifySlots: 7,
+  networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations: 6, gameVerifySlots: 7,
   settlementSlots: 7, simCoreHash: b32(1), startTimeMs: 1000n, entryCloseMs: 2000n,
   objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20,
   slashRemainder: 'BURN', donationSetId: b32(0xd0), censusHeight: 900000,

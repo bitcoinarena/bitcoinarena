@@ -54,6 +54,60 @@ export const leafHash = (e) => taggedHash(TAG.censusLeaf, encodeEntry(e));
  * and the census order feeds the committee seed. A txid cannot be chosen after
  * the funding transaction is confirmed.
  */
+/**
+ * HOW MANY BONDED NODES A ROUND OF THIS NETWORK NEEDS, and where that comes
+ * from.
+ *
+ * `census_min_nodes` is a GENESIS parameter - "everything above that a network
+ * cannot change about itself lives in one block, fixed when the network is
+ * created and committed in `network_id`" - and the three networks name 10, 3
+ * and 2. Measured before this: it was written into the network id and read by
+ * nothing. Not one file in any `src/` and not one test consulted it, so the
+ * one number that says whether a round can be held at all was decoration.
+ *
+ * A caller does not get to pass it. That is the same discipline the
+ * arbitration set needed in 24 and the confirmation depth needed in 25: a
+ * number a caller picks is a number the operator picks, and an operator who
+ * can lower the minimum can hold a round on a census of one.
+ *
+ * PER ROLE, WITH ONE FIELD. The spec writes `census_min_nodes per role`; this
+ * build carries a single `u16`, so the one number is applied to each role
+ * separately - which is stricter than splitting it and does not move a single
+ * network id. The gap is written down in TASKBOOK rather than closed by
+ * inventing a second genesis field.
+ */
+export function censusMinimumFor(contract) {
+  if (!contract || !contract.networkId)
+    throw new Error('that round names no network, so nothing says how small a census is too small');
+  const network = networkOf(contract.networkId);
+  if (network === null)
+    throw new Error('that round names a network this build has no genesis for');
+  const minimum = genesisFor(network).censusMinNodes;
+  if (!Number.isInteger(minimum) || minimum <= 0)
+    throw new Error(`${network} names no minimum census, so no round of it can be held`);
+  return { network, minimum };
+}
+
+/**
+ * IS THIS CENSUS BIG ENOUGH TO HOLD A ROUND FOR THAT ROLE?
+ *
+ * Answered by name, because "false" tells a node nothing it can act on and
+ * nothing it can show a player. The count is of entries DECLARING THE ROLE,
+ * which is what 5A.3 makes eligibility mean - a settlement node is not a game
+ * node that happens to be bonded.
+ */
+export function meetsCensusMinimum(entries, contract, role) {
+  const { network, minimum } = censusMinimumFor(contract);
+  const have = (entries || []).filter((e) => (e.roles || []).includes(role)).length;
+  if (have < minimum)
+    return {
+      ok: false, have, need: minimum, network,
+      why: `that census carries ${have} ${role} node${have === 1 ? '' : 's'} where `
+        + `${network} was born needing ${minimum}`,
+    };
+  return { ok: true, have, need: minimum, network };
+}
+
 export function compareEntries(a, b) {
   for (let i = 0; i < 32; i++) {
     if (a.txid[i] !== b.txid[i]) return a.txid[i] < b.txid[i] ? -1 : 1;

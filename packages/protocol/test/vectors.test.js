@@ -10,6 +10,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { NETWORK_ID_REGTEST } from '../src/genesis-ids.js';
 import { readFileSync } from 'node:fs';
 import { Writer } from '../src/encode.js';
 import { taggedHash, toHex, fromHex } from '../src/hash.js';
@@ -78,7 +79,13 @@ test('tickets, weights and the chosen committee match', () => {
   });
   const picked = selectCommittee({
     entries, role: 'game',
-    contract: { committeeSeed: seed, gameVerifySlots: 3, bondMinSats: BigInt(v.bondMin) } });
+    // The vector pins the LOTTERY - seed, weights, tickets - and the round it
+    // is drawn for names its network like any other, because the census
+    // minimum is a genesis fact. Five entries clear regtest's two.
+    contract: {
+      committeeSeed: seed, gameVerifySlots: 3, bondMinSats: BigInt(v.bondMin),
+      networkId: NETWORK_ID_REGTEST,
+    } });
   assert.deepEqual(picked.map((e) => toHex(e.txid)), v.selected);
 });
 

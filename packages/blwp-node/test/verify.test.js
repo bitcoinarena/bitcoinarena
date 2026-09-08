@@ -8,6 +8,7 @@
 // this test handed it.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { WebSocket } from 'ws';
 import { createServer } from 'node:http';
@@ -51,7 +52,7 @@ const peer = ed25519.utils.randomSecretKey();          // the second committee s
 
 /** Two slots, so two receipts make a mark canonical - genesis.js's own rule. */
 const contractFor = (nodePubkey) => ({
-  networkId: b32(0x4e), configHash: b32(0x43), censusConfirmations: 1, gameVerifySlots: 2,
+  networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations: 1, gameVerifySlots: 2,
   settlementSlots: 2, simCoreHash: b32(1), startTimeMs: 1000n, entryCloseMs: 2000n,
   objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20,
   slashRemainder: 'BURN', donationSetId: b32(0xd0), censusHeight: 900000, censusRoot: b32(2),

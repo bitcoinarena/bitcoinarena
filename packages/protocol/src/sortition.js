@@ -3,7 +3,7 @@
 import { Writer } from './encode.js';
 import { taggedHash, bytesToBigInt } from './hash.js';
 import { TAG, roleByte } from './constants.js';
-import { compareEntries } from './census.js';
+import { compareEntries, meetsCensusMinimum } from './census.js';
 import { poolOfRole, GAME_VERIFY, SETTLEMENT } from './fee.js';
 
 /**
@@ -83,6 +83,22 @@ export function selectCommittee({ entries, contract, role, exclude }) {
     throw new Error('that round names no positive bond floor to weigh against');
   const committeeSeed = contract.committeeSeed;
   const bondMin = contract.bondMinSats;
+
+  // AND THE CENSUS HAS TO BE BIG ENOUGH TO HOLD A ROUND AT ALL.
+  //
+  // Without this the function ended in `slice(0, slots)`, so a census with one
+  // eligible node and a contract naming two slots gave back a COMMITTEE OF
+  // ONE - silently, with no refusal anywhere - which is the thing section 13
+  // exists to prevent arriving through the front door. `census_min_nodes` is
+  // the network's own answer to "too small", and on all three networks it is
+  // at least the slot count, so meeting it also means there are enough nodes
+  // to fill the seats.
+  //
+  // BEFORE EXCLUSIONS, on purpose: `exclude` is for a re-draw, and excluding a
+  // node does not unbond it. What is measured here is the census, not the
+  // attempt.
+  const enough = meetsCensusMinimum(entries, contract, role);
+  if (!enough.ok) throw new Error(enough.why);
 
   const excluded = new Set((exclude || []).map((e) => outpointKey(e)));
 
