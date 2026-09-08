@@ -48,3 +48,45 @@ export function bondSetFor(network) {
     combine,
   };
 }
+
+/**
+ * THE GROUP A FELDMAN COMMITMENT LIVES IN, which is this same curve.
+ *
+ * 23.1 wants shares whose consistency a node can confirm "without
+ * reconstructing P", and that needs commitments in a group where the discrete
+ * log is hard: publish g^a for each coefficient and a seat can check its share
+ * lies on that polynomial while learning nothing about the constant term.
+ *
+ * secp256k1 and not a second group, for the same reason the node's identity
+ * moved onto it: one curve is one thing to audit. The points are COMPRESSED,
+ * 33 bytes, because a Feldman check needs the whole point - an x-only key
+ * throws away the sign, and g^s = product only holds up to that sign, which is
+ * exactly the check being made.
+ */
+export const pointFromScalar = (scalar) => {
+  const k = typeof scalar === 'bigint' ? scalar : big(scalar);
+  // ZERO HAS NO POINT ON THIS CURVE and the caller must not be handed one that
+  // looks like it does. A zero coefficient is legal in a polynomial, so this
+  // is a real case rather than a defensive line: the identity is written as
+  // the 33 zero bytes, which is not a valid encoding of any point, so nothing
+  // can mistake it for one.
+  if (k % secp256k1.Point.Fn.ORDER === 0n) return new Uint8Array(33);
+  return secp256k1.Point.BASE.multiply(k % secp256k1.Point.Fn.ORDER).toBytes(true);
+};
+
+/** Sum of coefficient * point, in the same encoding, for the same reason. */
+export const combinePoints = (terms) => {
+  let sum = null;
+  for (const { point, coefficient } of terms) {
+    const k = (typeof coefficient === 'bigint' ? coefficient : big(coefficient))
+      % secp256k1.Point.Fn.ORDER;
+    if (k === 0n) continue;                       // 0 * anything is the identity
+    if (point.length === 33 && point.every((b) => b === 0)) continue;   // identity * k
+    const p = secp256k1.Point.fromBytes(point).multiply(k);
+    sum = sum === null ? p : sum.add(p);
+  }
+  return sum === null ? new Uint8Array(33) : sum.toBytes(true);
+};
+
+/** What `splitSecret` and `shareOpensTo` are handed when a node checks a handout. */
+export const feldmanGroup = { pointFromScalar, combinePoints };

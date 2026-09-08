@@ -10,36 +10,59 @@
 // against a FINAL result." So four colluding settlement nodes hold nothing at
 // all, and that is the property measured here rather than asserted.
 //
-// THE FIELD IS 2^521 - 1, a Mersenne prime anybody can check, and it is used
-// because a 32-byte preimage has to fit in one field element with room to
-// spare. Reducing P into a smaller field would change the number whose hash
-// the player already committed to.
+// THE FIELD IS SECP256K1'S SCALAR ORDER, and it is not a free choice. Feldman
+// commits to a polynomial by publishing g^a for each coefficient, so the
+// exponents have to be scalars OF THE GROUP the commitments live in - and the
+// group is the curve this system already trusts for bonds and BIP-340, because
+// a second group would be a second thing to audit for one property.
+//
+// It used to be 2^521 - 1, a Mersenne prime chosen so a 32-byte preimage fit
+// with room to spare. The order is a little BELOW 2^256, so that room is gone
+// and a 32-byte preimage can be too large - about one in 2^128, and it is
+// REFUSED BY NAME rather than reduced. Reducing would change the number whose
+// hash the player already put in the Entry Contract, so the shares would open
+// a preimage the payment hash does not name.
 //
 // Every operation is exact integer arithmetic on BigInt. No float goes near
 // this, for the same reason none goes near the payout table.
 //
-// WHAT "VERIFIABLE" MEANS HERE, AND WHAT IT DOES NOT. Each share carries a
-// commitment a holder can check against the share it was given, so a share
-// corrupted in transit or swapped by whoever passed it on is caught without
-// reconstructing anything. That is the literal reading of 23.1's sentence.
-// It is NOT Feldman: it does not prove the dealer used ONE polynomial for all
-// seven seats, which needs commitments in a group with a hard discrete log,
-// and this package carries no group for the same reason it carries no curve.
-// A dealer who wants to hand out inconsistent shares is caught at
-// RECONSTRUCTION rather than at handout, and the price of that is measured
-// rather than guessed: splitting with two polynomials and giving three seats
-// the second one leaves every share passing its own commitment and NONE of the
-// twenty-one five-subsets able to open the committed P. Closing that at
-// handout needs commitments in a group with a hard discrete log - Feldman -
-// and this package carries no group for the same reason it carries no curve.
-// What is closed here instead is the quieter half: a subset that rebuilds
-// SOMETHING is no longer mistaken for one that rebuilt P.
+// WHAT "VERIFIABLE" MEANS, IN TWO LAYERS THAT CATCH DIFFERENT THINGS.
+//
+// The first is a hash commitment per share: a holder checks the value it was
+// handed against the value that was published for its seat, so a share
+// corrupted in transit or swapped by whoever passed it on is caught. It says
+// nothing about the DEALER, because the dealer wrote both.
+//
+// The second is Feldman, and it is what 23.1's "verifiability" is for. The
+// dealer publishes g^a for every coefficient, and a seat checks
+//
+//     g^(its share)  ==  product of C_j ^ (its seat number ^ j)
+//
+// which holds only if that share lies on the ONE polynomial those commitments
+// describe. It is checked without reconstructing anything and by anybody, not
+// only by the holder.
+//
+// THE HOLE THIS CLOSES, MEASURED RATHER THAN ASSERTED. A dealer who splits
+// with two polynomials and gives three seats the second one hands out seven
+// shares that each pass their own hash commitment, and leaves NONE of the
+// twenty-one five-subsets able to open the committed P - a stake that can
+// never be settled, dealt by the player who stakes it. With the polynomial
+// commitments those three seats refuse the share the moment they are handed
+// it, so the entry never becomes an entry.
+//
+// THE GROUP IS INJECTED, like every other curve operation in this package.
+// `packages/protocol` carries no curve on purpose - it does the arithmetic and
+// the refusals, and whoever has a curve brings it.
 import { taggedHash, toHex } from './hash.js';
 import { TAG } from './constants.js';
 import { sha256bytes } from '../../core/src/sha256.js';
 
-/** 2^521 - 1. A 32-byte secret is nowhere near it, which is the point. */
-export const FIELD = (1n << 521n) - 1n;
+/**
+ * secp256k1's group order. Written out rather than imported, because this
+ * package holds no curve - a constant is a number and a curve is code.
+ */
+export const FIELD =
+  0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141n;
 
 /** 5-of-7, the same threshold as the receipts and the signatures. */
 export const SHARES_NEEDED = 5;
@@ -84,9 +107,17 @@ export const shareCommitment = (seat, value) =>
  * randomness - injected, because this package has no business deciding where
  * randomness comes from, and a test needs the same split twice.
  */
-export function splitSecret(secret, { seats = SHARES_TOTAL, needed = SHARES_NEEDED, coefficients } = {}) {
+export function splitSecret(secret, { seats = SHARES_TOTAL, needed = SHARES_NEEDED,
+  coefficients, curve } = {}) {
   if (!(secret instanceof Uint8Array) || secret.length !== 32)
     throw new Error('a stake preimage is 32 bytes');
+  // BELOW THE ORDER, OR IT IS NOT A SCALAR. About one preimage in 2^128 is
+  // not, and the answer is another preimage rather than this one reduced:
+  // reducing changes the number the payment hash already commits to, so the
+  // shares would open something the Entry Contract does not name.
+  if (toBigInt(secret) >= FIELD)
+    throw new Error('that preimage is not below the group order: generate another, '
+      + 'because reducing it would change the number its payment hash commits to');
   if (!Number.isInteger(needed) || needed < 2)
     throw new Error('a threshold below two is not a threshold');
   if (!Number.isInteger(seats) || seats < needed)
@@ -101,7 +132,91 @@ export function splitSecret(secret, { seats = SHARES_TOTAL, needed = SHARES_NEED
     for (let j = a.length - 1; j >= 0; j--) value = mod(value * BigInt(seat) + a[j]);
     shares.push({ seat, value, commitment: shareCommitment(seat, value) });
   }
-  return { shares, needed, seats };
+
+  // AND THE POLYNOMIAL ITSELF, WHEN THERE IS A GROUP TO COMMIT IN. One point
+  // per coefficient, the constant term first - so C_0 is g^P, which is why a
+  // seat can check its share against the polynomial without anybody learning
+  // P: the discrete log is the whole security of it.
+  const commitments = curve
+    ? a.map((coefficient) => curve.pointFromScalar(coefficient))
+    : undefined;
+  return { shares, needed, seats, ...(commitments ? { commitments } : {}) };
+}
+
+/**
+ * DOES THIS SHARE LIE ON THE POLYNOMIAL THE DEALER PUBLISHED?
+ *
+ * Feldman: g^s must equal the product of C_j raised to (seat ^ j). A seat
+ * checks this on its own, learns nothing about P by doing it, and refuses at
+ * HANDOUT rather than leaving a stake that no five seats can ever settle.
+ *
+ * A SEAT WITH NO COMMITMENTS REFUSES, and that is not pedantry: "I was given
+ * no way to check" and "I checked and it is fine" are different answers, and a
+ * function that returned the second for the first would make the whole layer
+ * optional at the dealer's choice.
+ */
+export function shareOpensTo(share, { commitments, curve } = {}) {
+  if (!share || !Number.isInteger(share.seat) || share.seat < 1)
+    return { ok: false, why: 'that is not a share of any seat' };
+  if (!Array.isArray(commitments) || commitments.length === 0)
+    return { ok: false, why: 'this share names no polynomial, so nothing about the dealer can be checked' };
+  if (!curve || typeof curve.pointFromScalar !== 'function'
+      || typeof curve.combinePoints !== 'function')
+    return { ok: false, why: 'checking a share against a polynomial needs a group, and none was injected' };
+
+  const terms = [];
+  let power = 1n;
+  for (const point of commitments) {
+    terms.push({ point, coefficient: power });
+    power = mod(power * BigInt(share.seat));
+  }
+
+  const wanted = curve.combinePoints(terms);
+  const got = curve.pointFromScalar(mod(share.value));
+  if (toHex(got) !== toHex(wanted))
+    return {
+      ok: false,
+      why: `seat ${share.seat} was handed a share that is not on the polynomial the dealer published`,
+    };
+  return { ok: true, why: `seat ${share.seat} lies on the published polynomial` };
+}
+
+/**
+ * EVERY SEAT'S OWN CHECK, AND WHAT THE HANDOUT LOOKS LIKE FROM OUTSIDE.
+ *
+ * This is not a committee decision and it is not settlement: it is each seat
+ * doing what 23.1 gives it to do, collected so the dealer's handout can be
+ * described by a number. `refused` is the figure this letter moves.
+ */
+export function checkHandout({ shares, commitments, curve, published } = {}) {
+  if (!Array.isArray(shares) || shares.length === 0)
+    throw new Error('a handout of no shares is not a handout');
+
+  const seats = [];
+  for (let i = 0; i < shares.length; i++) {
+    const share = shares[i];
+    const against = published ? published[i] : share.commitment;
+    const transit = shareIsConsistent(share, against);
+    const dealer = shareOpensTo(share, { commitments, curve });
+    seats.push({
+      seat: share.seat,
+      ok: transit && dealer.ok,
+      why: !transit
+        ? `seat ${share.seat} was handed a value that is not the one published for it`
+        : dealer.why,
+    });
+  }
+  const refused = seats.filter((s) => !s.ok);
+  return {
+    ok: refused.length === 0,
+    seats,
+    refused: refused.length,
+    accepted: seats.length - refused.length,
+    why: refused.length === 0
+      ? `all ${seats.length} seats lie on one polynomial`
+      : `${refused.length} of ${seats.length} seats refused their share: `
+        + refused.map((s) => s.why).join('; '),
+  };
 }
 
 /** Does this share match what was published for its seat? */

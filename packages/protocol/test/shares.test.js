@@ -13,7 +13,7 @@ import { createHash, randomBytes } from 'node:crypto';
 
 import {
   splitSecret, reconstruct, openStake, handoutOutcome, shareIsConsistent,
-  shareCommitment, FIELD, SHARES_NEEDED, SHARES_TOTAL,
+  shareCommitment, shareOpensTo, checkHandout, FIELD, SHARES_NEEDED, SHARES_TOTAL,
 } from '../src/shares.js';
 import {
   holdSettlement, SETTLE, CANCEL, DELIVERED, FORFEIT, VOID,
@@ -37,11 +37,36 @@ const everyChoice = (list, k) => {
   return out;
 };
 
-test('the field is a prime a thirty-two byte secret fits inside with room', () => {
-  assert.equal(FIELD, (1n << 521n) - 1n);
-  assert.ok(FIELD > (1n << 256n), 'a 32-byte secret would not fit');
+test('the field is the order of the group the commitments live in', () => {
+  // NOT A FREE CHOICE ANY MORE. Feldman publishes g^a per coefficient, so the
+  // exponents are scalars of that group - and the group is secp256k1, the one
+  // this system already trusts for bonds and BIP-340, rather than a second one
+  // to audit. It used to be 2^521 - 1, which no group here has.
+  assert.equal(FIELD,
+    0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141n);
+  assert.notEqual(FIELD, (1n << 521n) - 1n, 'still the old Mersenne field');
+  assert.ok(FIELD < (1n << 256n), 'the order is below 2^256, which is why a preimage can be too big');
   assert.equal(SHARES_NEEDED, 5);
   assert.equal(SHARES_TOTAL, 7);
+});
+
+test('a preimage at or above the order is refused, never reduced', () => {
+  // The room a 32-byte secret used to have is gone: about one preimage in
+  // 2^128 is not a scalar. Reducing it would change the number whose hash the
+  // player already put in the Entry Contract, so the shares would open a
+  // preimage the payment hash does not name - which is why this refuses.
+  const tooBig = new Uint8Array(32).fill(0xff);
+  assert.ok(BigInt('0x' + toHex(tooBig)) > FIELD);
+  assert.throws(() => splitSecret(tooBig, { coefficients }),
+    /not below the group order/);
+
+  // and the largest one that IS a scalar still splits
+  const largest = new Uint8Array(32);
+  let n = FIELD - 1n;
+  for (let i = 31; i >= 0; i--) { largest[i] = Number(n & 255n); n >>= 8n; }
+  const out = splitSecret(largest, { coefficients });
+  assert.equal(out.shares.length, 7);
+  assert.deepEqual(reconstruct(out.shares.slice(0, 5)), largest);
 });
 
 test('one share per seat, and each seat can check its own without rebuilding P', () => {
@@ -229,11 +254,15 @@ test('a subset that rebuilds something is not mistaken for one that rebuilt P', 
       if (/not the committed preimage/.test(e.message)) refusedForCommitment++;
     }
   }
-  // HOW MANY LAND INSIDE 32 BYTES IS LUCK, not a property: a mixed
-  // interpolation lands somewhere in a 521-bit field, and the count moved
-  // between runs when it was asserted directly. What does not move is that
-  // the ones which DO land there are wrong, and that with the commitment
-  // checked every single subset is refused.
+  // AND THE FIELD CHANGE MADE THIS WORSE, WHICH IS WORTH SAYING. In the old
+  // 2^521 - 1 field a mixed interpolation almost never landed inside 32 bytes,
+  // so most subsets were refused for their SIZE and only a couple came back as
+  // a plausible wrong preimage. The order of secp256k1 is below 2^256, so
+  // every element fits in 32 bytes and every one of these subsets now hands
+  // back something well-formed. The size accident is gone; the commitment
+  // check is what catches them, and it catches all of them.
+  console.log(`  mixed subsets: ${wrongAccepted} well-formed and wrong, `
+    + `${refusedForSize} too big to be a preimage, ${refusedForCommitment} caught by the commitment`);
   assert.ok(wrongAccepted > 0, 'no subset produced a wrong preimage to catch');
   assert.equal(wrongAccepted, 21 - refusedForSize,
     'a subset produced 32 bytes that were actually P');
@@ -307,4 +336,125 @@ test('the saboteur s stake pays the winner, and the operator takes none of it', 
   assert.equal(asVoid.poolMsat, 0n);
   assert.equal(asVoid.refundedMsat, 200000n);
   assert.equal(asVoid.table.table[0].amountMsat, 100000n, 'only the stake back');
+});
+
+/**
+ * FELDMAN, AS THE RULE IT IS - the security of it is measured elsewhere.
+ *
+ * The group here is Z_n under addition, written as a point-shaped 33 bytes.
+ * It is a real group and the algebra of the check is identical, which is what
+ * this file is for: `packages/protocol` carries no curve, so a test of it that
+ * imported one would give the whole suite a dependency the source does not
+ * have. Its discrete log is trivial, so it proves nothing about SECRECY - the
+ * same handout is measured under real secp256k1 in
+ * `blwp-node/test/shares-feldman.test.js`, where a curve already lives.
+ */
+const zn = {
+  pointFromScalar(k) {
+    const out = new Uint8Array(33);
+    let v = ((k % FIELD) + FIELD) % FIELD;
+    for (let i = 32; i >= 1; i--) { out[i] = Number(v & 255n); v >>= 8n; }
+    return out;
+  },
+  combinePoints(terms) {
+    let sum = 0n;
+    for (const { point, coefficient } of terms) {
+      let v = 0n;
+      for (let i = 1; i < 33; i++) v = (v << 8n) | BigInt(point[i]);
+      sum = (sum + v * (((coefficient % FIELD) + FIELD) % FIELD)) % FIELD;
+    }
+    return zn.pointFromScalar(sum);
+  },
+};
+
+test('a split with a group publishes one commitment per coefficient, and every seat lies on it', () => {
+  const out = splitSecret(preimage, { coefficients, curve: zn });
+  assert.equal(out.commitments.length, SHARES_NEEDED,
+    'a threshold of five is a polynomial of five coefficients');
+  for (const c of out.commitments) assert.equal(c.length, 33);
+
+  for (const share of out.shares) {
+    const seen = shareOpensTo(share, { commitments: out.commitments, curve: zn });
+    assert.equal(seen.ok, true, seen.why);
+  }
+
+  // AND THE CONSTANT TERM IS THE ONE THE PREIMAGE NAMES: C_0 is g^P, which is
+  // why the check tells a seat nothing it did not already have.
+  assert.deepEqual(out.commitments[0], zn.pointFromScalar(BigInt('0x' + toHex(preimage))));
+});
+
+test('a seat with no polynomial, or no group, refuses rather than approving', () => {
+  const out = splitSecret(preimage, { coefficients, curve: zn });
+  const share = out.shares[0];
+
+  // THE ANSWER, NOT ONLY THE SENTENCE. A mutant that kept every one of these
+  // messages and returned ok:true survived the first version of this test:
+  // "I was given no way to check" read as "I checked and it is fine", which is
+  // the whole layer made optional at the dealer's choice.
+  for (const [what, given] of [
+    ['no commitments at all', { curve: zn }],
+    ['an empty list of them', { commitments: [], curve: zn }],
+    ['no group', { commitments: out.commitments }],
+    ['a group with no operations', { commitments: out.commitments, curve: {} }],
+  ]) {
+    const seen = shareOpensTo(share, given);
+    assert.equal(seen.ok, false, `${what} was accepted as a check that passed`);
+    assert.match(seen.why, /names no polynomial|needs a group/);
+  }
+  assert.equal(shareOpensTo(share, { commitments: out.commitments, curve: zn }).ok, true);
+
+  // and a handout nobody can check is a handout that is refused, seat by seat
+  const blind = checkHandout({ shares: out.shares, curve: zn });
+  assert.equal(blind.refused, 7, blind.why);
+  assert.equal(blind.ok, false);
+});
+
+/**
+ * THE FIGURE THIS LETTER MOVES.
+ *
+ * The same two-polynomial dealer the file already builds: three seats are
+ * handed a share from a second polynomial. Every one of the seven still passes
+ * its own hash commitment - that check is about transit, and the dealer wrote
+ * both sides of it - and none of the twenty-one five-subsets can open the
+ * committed preimage, so the stake could never be settled.
+ *
+ * With the polynomial published, those three seats refuse the share at
+ * HANDOUT. The 0-of-21 handout stops being something the committee discovers
+ * at settlement and becomes something the seats reject before play.
+ */
+test('a two-polynomial dealer is refused at handout: 0 of 7 becomes 3 of 7', () => {
+  const other = new Uint8Array(randomBytes(32));
+  const honest = splitSecret(preimage, { coefficients, curve: zn });
+  const second = splitSecret(other, { coefficients: coefficients.map((x) => x + 99n), curve: zn });
+  const stakeCommitment = sha256(preimage);
+
+  const mixed = honest.shares.map((s, i) => (i >= 4 ? second.shares[i] : s));
+  const published = honest.shares.map((s, i) => (i >= 4 ? second.shares[i].commitment : s.commitment));
+
+  // BEFORE: the hash commitments alone see nothing wrong.
+  const transitOnly = mixed.filter((s, i) => !shareIsConsistent(s, published[i])).length;
+  assert.equal(transitOnly, 0, 'the per-share commitments were supposed to be blind to this');
+
+  // and the committee finds out at settlement, too late, with no way to settle
+  const opened = openStake(mixed, { stakeCommitment });
+  assert.equal(opened.subsets, 21);
+  assert.equal(opened.opens, 0);
+  assert.equal(handoutOutcome(opened).outcome, 'FORFEIT');
+
+  // AFTER: the three seats given the second polynomial refuse their share.
+  const handout = checkHandout({ shares: mixed, published, commitments: honest.commitments, curve: zn });
+  assert.equal(handout.refused, 3, handout.why);
+  assert.equal(handout.accepted, 4);
+  assert.equal(handout.ok, false);
+  assert.deepEqual(handout.seats.filter((s) => !s.ok).map((s) => s.seat), [5, 6, 7]);
+  assert.match(handout.why, /not on the polynomial the dealer published/);
+
+  console.log(`  two-polynomial dealer: refused at handout ${transitOnly} of 7 with the hash `
+    + `commitments alone, ${handout.refused} of 7 with the polynomial published`);
+
+  // AND THE HONEST DEALER IS UNTOUCHED.
+  const good = checkHandout({ shares: honest.shares, commitments: honest.commitments, curve: zn });
+  assert.equal(good.refused, 0, good.why);
+  assert.equal(good.ok, true);
+  assert.equal(openStake(honest.shares, { stakeCommitment }).opens, 21);
 });
