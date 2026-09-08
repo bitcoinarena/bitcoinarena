@@ -468,6 +468,18 @@ const TYPE_SETTLEMENT_RECORD = 0x0d;
 const TYPE_FEE_CLAIM = 0x0e;
 const TYPE_SERVICE_RECORD = 0x0f;
 
+/**
+ * 22A's donation set: the recipients and their shares, as bytes.
+ *
+ * The spec gives the set as JSON and names no type, so this is the next free
+ * number like the fee claim's and the record's. It needs one for the reason
+ * every other money object here does: without an encoding a set is a local
+ * array, two nodes cannot agree WHICH set was published, and a committee has
+ * nothing to check. 22A eventually hashes it into the Round Contract; the hash
+ * has to exist before anything can carry it.
+ */
+const TYPE_DONATION_SET = 0x10;
+
 const TAG = {
   roundContract: 'BLWP/v1/RoundContract',
   entryContract: 'BLWP/v1/EntryContract',
@@ -496,6 +508,7 @@ const TAG = {
   // The whole 22A table a claim is measured against: the gross, the fee and
   // every seat's share. A proof names which table, or the accuser picks one.
   feeTable: 'BLWP/v1/FeeTable',
+  donationSet: 'BLWP/v1/DonationSet',
   vssShare: 'BLWP/v1/VssShare',
   remainder: 'BLWP/v1/Remainder',
 };

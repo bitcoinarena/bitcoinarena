@@ -9,9 +9,10 @@
 // separately; copying either onto the other would be inventing a third.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { toHex } from '../src/hash.js';
 import {
   donationSetStands, splitDonation, donationAfterFailures, donatedMsat,
-  DONATION_BPS_TOTAL,
+  encodeDonationSet, decodeDonationSet, donationSetId, DONATION_BPS_TOTAL,
 } from '../src/donation.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
@@ -77,7 +78,7 @@ test('the same recipient twice is refused rather than quietly doubled', () => {
 
 test('the donation is split by the shares, to the millisatoshi', () => {
   const even = splitDonation({ donationMsat: 2000n, recipients: evenly });
-  assert.equal(even.ok, true);
+  assert.equal(even.owed, true);
   assert.deepEqual(even.shares.map((s) => s.amountMsat), [1000n, 1000n]);
   assert.equal(paidTotal(even), 2000n);
 
@@ -95,7 +96,7 @@ test('the donation is split by the shares, to the millisatoshi', () => {
 test('the remainder goes to the first recipient, and the split is exact', () => {
   for (const amount of [1n, 3n, 7n, 999n, 2001n, 100003n, 999999999n]) {
     const r = splitDonation({ donationMsat: amount, recipients: three });
-    assert.equal(r.ok, true);
+    assert.equal(r.owed, true);
     assert.equal(paidTotal(r), amount, `${amount} did not add up`);
     for (const s of r.shares) assert.ok(s.amountMsat >= 0n);
   }
@@ -125,18 +126,18 @@ test('the remainder goes to the first recipient, and the split is exact', () => 
  */
 test('donations switched off pay nothing, whatever the set says', () => {
   const off = splitDonation({ donationMsat: 0n, recipients: evenly });
-  assert.equal(off.ok, true);
+  assert.equal(off.owed, true);
   assert.deepEqual(off.shares.map((s) => s.amountMsat), [0n, 0n]);
   assert.match(off.why, /donations are off/);
 
   const broken = splitDonation({ donationMsat: 0n, recipients: [{ lnurl: 'A', shareBps: 1 }] });
-  assert.equal(broken.ok, true, '22A: the set is irrelevant to an entry that donates nothing');
+  assert.equal(broken.owed, true, '22A: the set is irrelevant to an entry that donates nothing');
   assert.equal(paidTotal(broken), 0n);
 });
 
 test('a donation that is not money is answered, not thrown at the caller', () => {
   for (const bad of [2000, '2000', undefined, null])
-    assert.equal(splitDonation({ donationMsat: bad, recipients: evenly }).ok, false);
+    assert.equal(splitDonation({ donationMsat: bad, recipients: evenly }).owed, false);
   assert.match(splitDonation({ donationMsat: -1n, recipients: evenly }).why, /cannot be negative/);
   assert.match(splitDonation({ donationMsat: 1n, recipients: [] }).why, /names nobody/,
     'a positive donation still needs a set that stands');
@@ -190,4 +191,109 @@ test('a round\'s donations exclude the entries that were refunded', () => {
     { pubkey: b32(0xa4), outcome: 'ENTRY_VOID', donationMsat: 9000n },
   ];
   assert.equal(donatedMsat(entries), 3000n, 'a refunded entry donated money that never moved');
+});
+
+// ---------------------------------------------------------------------------
+// AND THE SET AS BYTES, so a committee can check one instead of being handed
+// an array.
+//
+// Every other object here that decides money encodes and carries a tagged id.
+// The donation set was the only one that did not, which is what stopped two
+// independent nodes agreeing on WHICH set a player donated under.
+
+test('a set round-trips, and every field that decides money is inside its id', () => {
+  const back = decodeDonationSet(encodeDonationSet(three));
+  assert.deepEqual(back, three);
+  assert.equal(toHex(donationSetId(back)), toHex(donationSetId(three)));
+
+  // an address changed is a different set: 22A's "a donation to an undisclosed
+  // address is not a donation" is uncheckable if the bytes hashed another one
+  const was = toHex(donationSetId(three));
+  const renamed = three.map((r, i) => (i === 1 ? { ...r, lnurl: 'LNURL9' } : r));
+  assert.notEqual(toHex(donationSetId(renamed)), was, 'the address');
+
+  // and a share changed is a different set
+  const reweighted = [{ lnurl: 'LNURL1', shareBps: 3334 }, { lnurl: 'LNURL2', shareBps: 3333 },
+                      { lnurl: 'LNURL3', shareBps: 3333 }];
+  assert.notEqual(toHex(donationSetId(reweighted)), was, 'the share');
+
+  // a recipient added or removed likewise
+  assert.notEqual(toHex(donationSetId(evenly)), was, 'the recipients');
+
+  const longer = new Uint8Array(encodeDonationSet(three).length + 1);
+  longer.set(encodeDonationSet(three));
+  assert.throws(() => decodeDonationSet(longer), /trailing bytes/);
+  assert.throws(() => decodeDonationSet(new Uint8Array([0x01, 0x00, 0x01])), /not a donation set/);
+});
+
+/**
+ * REORDERING IS A DIFFERENT SET, and this is the one place in the package
+ * where a vector is deliberately NOT sorted. Everywhere else sorting is what
+ * makes two honest callers agree; here 22A gives the remainder to "the first
+ * recipient in the set as published", so the order decides who is topped up
+ * and a sorted encoding would hide a real difference in who gets paid.
+ */
+test('reordering the recipients is a different set, because order pays somebody', () => {
+  const forwards = donationSetId(three);
+  const backwards = donationSetId([...three].reverse());
+  assert.notEqual(toHex(forwards), toHex(backwards),
+    'a reordered set pays the remainder to somebody else and must not share an id');
+
+  // and the money follows the order, which is why the id must
+  const a = splitDonation({ donationMsat: 2001n, recipients: three });
+  const b = splitDonation({ donationMsat: 2001n, recipients: [...three].reverse() });
+  assert.equal(a.shares[0].lnurl, 'LNURL1');
+  assert.equal(b.shares[0].lnurl, 'LNURL3');
+  assert.notEqual(a.shares[0].amountMsat, b.shares[1].amountMsat);
+});
+
+/**
+ * A SET THAT DOES NOT STAND DOES NOT ENCODE. Otherwise there would be bytes
+ * with a real tagged id naming shares that sum to 9999 - an object as
+ * published-looking as an honest one that hands out a different amount than
+ * the player chose.
+ */
+test('a set that does not stand cannot be given an id at all', () => {
+  for (const bad of [
+    [{ lnurl: 'A', shareBps: 9999 }],
+    [{ lnurl: 'A', shareBps: 5000 }, { lnurl: 'B', shareBps: 5001 }],
+    [{ lnurl: 'SAME', shareBps: 5000 }, { lnurl: 'SAME', shareBps: 5000 }],
+    [],
+  ]) {
+    assert.throws(() => encodeDonationSet(bad), /does not stand/, JSON.stringify(bad));
+    assert.throws(() => donationSetId(bad), /does not stand/);
+  }
+});
+
+test('bytes that do not stand are refused on the way in as well as out', () => {
+  // A stranger is exactly who might send a set that does not stand, so the
+  // decoder checks too rather than trusting that the encoder was ours.
+  const honest = encodeDonationSet(evenly);
+  const tampered = new Uint8Array(honest);
+  tampered[tampered.length - 1] -= 1;            // 5000 -> 4999, so 9999 in all
+  assert.throws(() => decodeDonationSet(tampered), /does not stand/);
+});
+
+/**
+ * AND THE ZERO-DONATION ANSWER IS `owed`, NOT `ok`.
+ *
+ * 22A: the set is irrelevant to an entry that donates nothing, so a zero
+ * donation succeeds even against a set that would not stand. A field called
+ * `ok` invited a caller to read that as "this set stands", which it never
+ * said. Whether a set stands is `donationSetStands`, a different question with
+ * a different name.
+ */
+test('a zero donation answers what is owed, and never that the set stands', () => {
+  const wouldNotStand = [{ lnurl: 'A', shareBps: 1 }];
+  const off = splitDonation({ donationMsat: 0n, recipients: wouldNotStand });
+
+  assert.equal(off.owed, true, '22A: nothing is owed, and the set is irrelevant');
+  assert.equal('ok' in off, false, 'the answer must not be readable as "this set stands"');
+  assert.equal(donationSetStands(wouldNotStand).ok, false, 'and that set does NOT stand');
+  assert.throws(() => donationSetId(wouldNotStand), /does not stand/);
+
+  // the same field answers a real split, so a caller reads one word for one
+  // question either way
+  assert.equal(splitDonation({ donationMsat: 10n, recipients: evenly }).owed, true);
+  assert.equal(splitDonation({ donationMsat: 10n, recipients: wouldNotStand }).owed, false);
 });

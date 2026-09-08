@@ -23,6 +23,9 @@
 // here: a recipient is an opaque `lnurl` string, because this package pays
 // nobody and inventing a payment layer to test one would be inventing a
 // second protocol.
+import { Writer, Reader } from './encode.js';
+import { taggedHash } from './hash.js';
+import { PROTOCOL_VERSION, TYPE_DONATION_SET, TAG } from './constants.js';
 import { isRefund } from './payout.js';
 
 /** Basis points, and 22A's MUST: the shares sum to exactly this. */
@@ -83,16 +86,24 @@ export function donationSetStands(recipients) {
  * A PLAYER WHO DONATES NOTHING PAYS NOTHING, and the set is irrelevant to that
  * entry - 22A says so - so a zero donation is answered without judging the
  * set at all.
+ *
+ * THE ANSWER IS `owed`, NOT `ok`, and the difference is the whole reason it
+ * was renamed. A zero donation returns successfully with a set that would NOT
+ * stand, because 22A says the set is irrelevant to that entry - and a field
+ * called `ok` invites a caller to read that as "this set stands", which it
+ * does not say and must never be taken to. `owed` says what this function
+ * actually answers: what each recipient is owed. Whether a set stands is
+ * `donationSetStands`, and it is a different question with a different name.
  */
 export function splitDonation({ donationMsat, recipients }) {
   if (typeof donationMsat !== 'bigint')
-    return { ok: false, why: 'a donation is BigInt millisatoshi' };
+    return { owed: false, why: 'a donation is BigInt millisatoshi' };
   if (donationMsat < 0n)
-    return { ok: false, why: 'a donation cannot be negative' };
+    return { owed: false, why: 'a donation cannot be negative' };
 
   if (donationMsat === 0n)
     return {
-      ok: true,
+      owed: true,
       shares: (Array.isArray(recipients) ? recipients : []).map((r) => ({
         lnurl: r && r.lnurl, amountMsat: 0n,
       })),
@@ -100,7 +111,7 @@ export function splitDonation({ donationMsat, recipients }) {
     };
 
   const stands = donationSetStands(recipients);
-  if (!stands.ok) return { ok: false, why: stands.why };
+  if (!stands.ok) return { owed: false, why: stands.why };
 
   const shares = recipients.map((r) => ({
     lnurl: r.lnurl,
@@ -116,7 +127,7 @@ export function splitDonation({ donationMsat, recipients }) {
   if (total !== donationMsat)
     throw new Error(`donation split broken: ${total} of ${donationMsat}`);
 
-  return { ok: true, shares, why: `${donationMsat} split over ${shares.length} recipients` };
+  return { owed: true, shares, why: `${donationMsat} split over ${shares.length} recipients` };
 }
 
 /**
@@ -161,3 +172,63 @@ export function donationAfterFailures({ shares, failed = [] }) {
  */
 export const donatedMsat = (entries) =>
   entries.filter((e) => !isRefund(e.outcome)).reduce((sum, e) => sum + e.donationMsat, 0n);
+
+/**
+ * THE SET AS BYTES, so a committee can check one instead of being handed an
+ * array.
+ *
+ * Every other object here that decides money encodes and carries a tagged id -
+ * the payout table, the settlement record, the fee claim, the service record,
+ * the slash proof - and until this the donation set was the only one that did
+ * not. That is what stopped two independent nodes agreeing on WHICH set a
+ * player donated under, and nothing could be bound to one.
+ *
+ * THE ORDER IS PART OF THE SET AND IS NOT SORTED. Everywhere else in this
+ * package a vector is sorted so that two honest callers agree - the payout
+ * table by pubkey, the committee by key - and here that would be a bug: 22A
+ * gives the remainder to "the first recipient in the set AS PUBLISHED", so the
+ * order decides who is topped up. A set reordered is a set that pays somebody
+ * else the odd millisatoshi, and it must therefore be a different set with a
+ * different id.
+ *
+ * A SET THAT DOES NOT STAND DOES NOT ENCODE. There would otherwise be bytes
+ * with a real tagged id naming shares that sum to 9999 - an object that looks
+ * exactly as published as an honest one and hands out a different amount than
+ * the player chose. Refused at the encoder, so no such id can exist.
+ */
+export function encodeDonationSet(recipients) {
+  const stands = donationSetStands(recipients);
+  if (!stands.ok) throw new Error(`that set does not stand: ${stands.why}`);
+
+  const w = new Writer();
+  w.u8(TYPE_DONATION_SET);
+  w.u16(PROTOCOL_VERSION);
+  w.vec(recipients, (r, ww) => {
+    // The address as the player was shown it: 22A's "the client MUST show
+    // every recipient before wallet approval. A donation to an undisclosed
+    // address is not a donation." Bytes that hashed something else would make
+    // that promise uncheckable.
+    ww.str(r.lnurl);
+    ww.u16(r.shareBps);
+  });
+  return w.finish();
+}
+
+export function decodeDonationSet(bytes) {
+  const r = new Reader(bytes);
+  if (r.u8() !== TYPE_DONATION_SET) throw new Error('not a donation set');
+  if (r.u16() !== PROTOCOL_VERSION) throw new Error('unknown protocol version');
+  const recipients = r.vec((rr) => ({ lnurl: rr.str(), shareBps: rr.u16() }));
+  if (r.at !== bytes.length) throw new Error('trailing bytes after the donation set');
+
+  // Checked on the way in as well as on the way out: bytes are where a set
+  // arrives from a stranger, and a stranger is exactly who might send one that
+  // does not stand.
+  const stands = donationSetStands(recipients);
+  if (!stands.ok) throw new Error(`that set does not stand: ${stands.why}`);
+  return recipients;
+}
+
+/** What 22A means by naming a set: one hash, over the recipients as published. */
+export const donationSetId = (recipients) =>
+  taggedHash(TAG.donationSet, encodeDonationSet(recipients));
