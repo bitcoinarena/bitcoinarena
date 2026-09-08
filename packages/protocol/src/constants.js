@@ -111,6 +111,10 @@ export const TAG = {
   // every seat's share. A proof names which table, or the accuser picks one.
   feeTable: 'BLWP/v1/FeeTable',
   donationSet: 'BLWP/v1/DonationSet',
+  // The census entries a contract's root is checked against, and the height
+  // they were taken at. Its own tag: a proof binds to the INPUTS, and a
+  // signature binds to the root, and the two must never be interchangeable.
+  censusInputs: 'BLWP/v1/CensusInputs',
   vssShare: 'BLWP/v1/VssShare',
   remainder: 'BLWP/v1/Remainder',
 };

@@ -4,7 +4,7 @@
 
 import { Writer } from './encode.js';
 import { taggedHash, fromHex, toHex } from './hash.js';
-import { TAG, ROLES } from './constants.js';
+import { TAG, ROLES, PROTOCOL_VERSION, TYPE_CENSUS_LEAF } from './constants.js';
 
 /**
  * One census entry, encoded.
@@ -83,4 +83,107 @@ export function buildCensus(entries, { censusHeight, minConfirmations, tipHeight
 
   const leaves = eligible.map(leafHash);
   return { entries: eligible, leaves, root: merkleRoot(leaves) };
+}
+
+/**
+ * THE ENTRIES A ROOT WAS TAKEN OVER, AS ONE HASH.
+ *
+ * 5A.4 makes the root a function of a set and a height: "census_root[role] =
+ * Merkle root over their canonical serialization". So a check that a contract
+ * names the right root is a comparison against a SET, and a set an accuser
+ * chooses is no check at all - hand in a different list and any honest
+ * contract looks wrong.
+ *
+ * The same discipline `payoutInputsId` needed for row 3 of 5A.3, and for the
+ * same reason: whoever presents the accusation must be bound to the inputs
+ * before the arithmetic is worth anything.
+ *
+ * SORTED THE CENSUS'S OWN WAY, by outpoint, not by a second rule invented
+ * here. 5A.4 is explicit that sorting by `H(node_pubkey)` is grindable - "a
+ * node can mine a pubkey to sit anywhere it likes" - and the census already
+ * sorts by `(funding_txid, vout)`, which cannot be chosen after the fact.
+ */
+export function censusInputsId({ censusHeight, minConfirmations, tipHeight, entries }) {
+  const w = new Writer();
+  w.u8(TYPE_CENSUS_LEAF);
+  w.u16(PROTOCOL_VERSION);
+  w.u32(censusHeight);
+  w.u32(minConfirmations);
+  w.u32(tipHeight);
+  w.vec([...entries].sort(compareEntries), (e, ww) => {
+    ww.bytes(encodeEntry(e), encodeEntry(e).length);
+    ww.u8(e.spent ? 1 : 0);
+  });
+  return taggedHash(TAG.censusInputs, w.finish());
+}
+
+/**
+ * DOES THIS ROUND NAME THE ROOT ITS OWN CENSUS DERIVES TO?
+ *
+ * 5A.4: "The Round Contract names `census_height` and both roots. Any
+ * participant recomputes them; A CONTRACT WHOSE ROOTS DO NOT MATCH THE CHAIN
+ * IS INVALID and no honest node will issue receipts against it."
+ *
+ * Until this, `censusRoot` was named by every contract and read by no code at
+ * all - measured with a grep before the check was written. A round could name
+ * any thirty-two bytes and be played, which makes the committee whatever the
+ * round's author said it was.
+ *
+ * THE HEIGHT IS THE CONTRACT'S, not the caller's. Recomputing at another
+ * height is recomputing a different census, and a caller who could choose it
+ * could make an honest contract look wrong.
+ *
+ * Answered rather than thrown, like every other decision in this package: a
+ * malformed census is a refusal with a reason, not an exception handed to
+ * whoever asked whether a round may be played.
+ */
+export function censusRootMatchesRound(contract, {
+  entries, minConfirmations, tipHeight, boundTo,
+}) {
+  if (!contract || !(contract.censusRoot instanceof Uint8Array)
+      || contract.censusRoot.length !== 32)
+    return { ok: false, why: 'that round names no census root' };
+  if (!Number.isInteger(contract.censusHeight))
+    return { ok: false, why: 'that round names no census height' };
+  if (!Array.isArray(entries))
+    return { ok: false, why: 'no census entries to derive a root from' };
+
+  // AND THE ENTRIES ARE THE PUBLISHED ONES, not whichever set the asker
+  // brought. A root is a function of a SET and a height, so a caller free to
+  // choose the set can make any honest contract look wrong by handing in a
+  // different list - the same free variable row 3 of 5A.3 had before its
+  // inputs were bound, and the same fix: whoever presents the question is
+  // bound to the inputs before the arithmetic means anything.
+  if (!(boundTo instanceof Uint8Array) || boundTo.length !== 32)
+    return { ok: false, why: 'no committed census inputs to check those entries against' };
+
+  let bound;
+  try { bound = censusInputsId({ censusHeight: contract.censusHeight, minConfirmations, tipHeight, entries }); }
+  catch (e) { return { ok: false, why: `those census inputs cannot be committed to: ${e.message}` }; }
+  if (!bound.every((b, i) => b === boundTo[i]))
+    return {
+      ok: false,
+      why: 'those are not the census entries that were published: the set, the '
+        + 'height or the depth rule differs from what was committed to',
+    };
+
+  let census;
+  try {
+    census = buildCensus(entries, {
+      censusHeight: contract.censusHeight, minConfirmations, tipHeight,
+    });
+  } catch (e) {
+    return { ok: false, why: `that census cannot be built: ${e.message}` };
+  }
+
+  const same = census.root.every((b, i) => b === contract.censusRoot[i]);
+  return same
+    ? { ok: true, root: census.root, entries: census.entries.length, why: 'the censusRoot is the one those entries derive to' }
+    : {
+      ok: false,
+      root: census.root,
+      entries: census.entries.length,
+      why: 'the censusRoot this round names is not the one its entries derive '
+        + `to at height ${contract.censusHeight}`,
+    };
 }
