@@ -159,4 +159,76 @@ public class GhostInThePlayerTests
         Assert.AreEqual(surface + driver.BodyAboveGround, y, 0.05f,
             "the other truck is not standing on the ground the local truck stands on");
     }
+
+    /// <summary>
+    /// THE DRAWN POSE, IN THE SHIPPING PLAYER, AGAINST THE TRANSCRIPT.
+    ///
+    /// Not a field this test built: the one `Bootstrap` builds, with the body
+    /// it chose and the seat it wired. The twelve ints are handed in through
+    /// the field's own `Source`, which is the door `Draw` takes either way -
+    /// the only difference from a live page is where the ints came from, and
+    /// `two-nodes-play.test.js` already measures that half against two real
+    /// daemons at delta zero.
+    ///
+    /// The residual is REPORTED in metres and degrees rather than assumed: a
+    /// Q16.16 word divided into a float is not exact, and a number nobody
+    /// prints is a number nobody checks.
+    /// </summary>
+    [UnityTest]
+    public IEnumerator TheDrawnPoseIsTheTranscriptPose()
+    {
+        new GameObject("Bootstrap").AddComponent<Bootstrap>();
+        yield return null;
+        yield return null;
+
+        var field = Object.FindFirstObjectByType<GhostField>();
+        Assert.IsNotNull(field, "the player builds no ghost field");
+
+        var frames = Frames();
+        var queue = new System.Collections.Generic.Queue<GhostPicture>();
+        foreach (var w in frames) queue.Enqueue(Picture(w));
+        field.Source = () => queue.Count > 0 ? queue.Dequeue() : (GhostPicture?)null;
+
+        // WHAT THE WORLD THE CORE IS GIVEN LOOKS LIKE WITH NOBODY DRAWN.
+        WorldSolids.Gather(null, out var without);
+
+        Assert.AreEqual(1, field.Draw(1), "the player drew none of the pictures it was given");
+        var ghost = field.GetComponentInChildren<GhostTruck>(true);
+        Assert.IsNotNull(ghost, "no truck was drawn for the other identity");
+
+        var first = Picture(frames[0]);
+        var at = ghost.transform.position;
+        float dx = at.x - first.X / ONE, dz = at.z - first.Z / ONE;
+        float dh = Mathf.DeltaAngle(BlwpCore.Degrees(first.Heading),
+                                    ghost.transform.rotation.eulerAngles.y);
+        TestContext.WriteLine($"tick {first.Tick}: drawn ({at.x:F4}, {at.z:F4}) "
+            + $"heading {ghost.transform.rotation.eulerAngles.y:F4} | transcript "
+            + $"({first.X / ONE:F4}, {first.Z / ONE:F4}) heading "
+            + $"{BlwpCore.Degrees(first.Heading):F4} | delta x {dx:F6} z {dz:F6} "
+            + $"heading {dh:F6}");
+        Assert.AreEqual(0f, dx, 0.0001f, "the drawn truck is not at the x its transcript reached");
+        Assert.AreEqual(0f, dz, 0.0001f);
+        Assert.AreEqual(0f, dh, 0.0001f);
+
+        // AND IT MOVES with the second picture, sixty ticks later.
+        var later = Picture(frames[1]);
+        Assert.AreEqual(1, field.Draw(1), "the second picture was not drawn");
+        Assert.AreEqual(1, field.Trucks, "the second picture made a second truck");
+        var moved = ghost.transform.position;
+        float dx2 = moved.x - later.X / ONE, dz2 = moved.z - later.Z / ONE;
+        TestContext.WriteLine($"tick {later.Tick}: drawn ({moved.x:F4}, {moved.z:F4}) "
+            + $"| delta x {dx2:F6} z {dz2:F6} | it moved {(moved - at).magnitude:F3} m");
+        Assert.AreEqual(0f, dx2, 0.0001f, "the truck did not move to where its later picture says");
+        Assert.AreEqual(0f, dz2, 0.0001f);
+        Assert.Greater((moved - at).magnitude, 0.5f, "the run does not move, so this proves nothing");
+
+        // AND THE WORLD THE CORE IS GIVEN DID NOT GROW BY A BOX.
+        WorldSolids.Gather(null, out var with);
+        TestContext.WriteLine($"solids without the other truck {without}, with it drawn {with}; "
+            + $"colliders {field.GetComponentsInChildren<Collider>(true).Length}, "
+            + $"rigidbodies {field.GetComponentsInChildren<Rigidbody>(true).Length}");
+        Assert.AreEqual(without, with, "the drawn truck became a wall in the world the core is given");
+        Assert.AreEqual(0, field.GetComponentsInChildren<Collider>(true).Length);
+        Assert.AreEqual(0, field.GetComponentsInChildren<Rigidbody>(true).Length);
+    }
 }
