@@ -674,7 +674,22 @@ export function scanCensus(view, { contract, candidates }) {
       excluded.push({ ...entry, why: 'that output was already spent at the census height' });
       continue;
     }
-    const depth = tipHeight - height + 1;
+    // DEPTH IS MEASURED AT THE CENSUS HEIGHT, NOT AT THE TIP.
+    //
+    // Found by a mutant that survived: swapping `tipHeight` for `censusHeight`
+    // here broke nothing, because every fixture had the two close enough
+    // together not to matter. They are not the same rule. 5A.4 step 1 is
+    // "unspent AT CENSUS_HEIGHT with >= census_confirmations depth", and the
+    // whole point of "given census_height, EVERY PARTICIPANT RUNS THE SAME
+    // FIVE STEPS" is that the answer cannot depend on when it is asked.
+    //
+    // Measured against the tip it did: a bond two blocks under census_height
+    // was shallow to a node whose view ended at the census and deep to a node
+    // ten blocks later, so two honest participants deriving the same round
+    // would get different committees - the divergence 5A.2 exists to remove.
+    // `depthRuleOf` already refuses a view that ends before census_height, so
+    // this number is always the one the census asks about.
+    const depth = censusHeight - height + 1;
     if (depth < censusConfirmations) {
       excluded.push({
         ...entry,

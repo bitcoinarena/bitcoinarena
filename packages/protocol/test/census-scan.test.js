@@ -424,3 +424,36 @@ test('a marked transaction whose body names an output it does not have is no can
   assert.equal(seen.excluded.some((e) => toHex(e.pubkey) === toHex(b32(0x33))), false,
     'the scan invented an outpoint for a vout that does not exist');
 });
+
+/**
+ * DEPTH IS MEASURED AT THE CENSUS HEIGHT, NOT AT THE TIP.
+ *
+ * Found by a mutant that survived every test in this tree: `tipHeight` and
+ * `censusHeight` were interchangeable here because no fixture put a bond in
+ * the gap between them. They are not interchangeable. 5A.4 step 1 says
+ * "unspent AT CENSUS_HEIGHT with >= census_confirmations depth", and the point
+ * of "given census_height, every participant runs the same five steps" is that
+ * the answer does not depend on when it is asked.
+ *
+ * Measured against the tip it did: this bond is two blocks under the census
+ * and seven under a tip five blocks later, so one participant would count it
+ * and another would not - the divergence 5A.2 exists to remove.
+ */
+test('a bond two blocks under the census stays shallow however far the tip has moved', () => {
+  const fresh = bondOf(0x17);
+  const at = { [HEIGHT - 20]: [bondOf(0x11)], [HEIGHT - 1]: [fresh] };
+  const candidates = [
+    { txid: parseTransaction(bondOf(0x11)).txid, vout: 0, pubkey: b32(0x11), bondSats: 60000n, roles: ['game'] },
+    { txid: parseTransaction(fresh).txid, vout: 0, pubkey: b32(0x17), bondSats: 60000n, roles: ['game'] },
+  ];
+
+  for (const tip of [HEIGHT, HEIGHT + 5, HEIGHT + 50]) {
+    const seen = scanCensus(view(at, tip), { contract: round(), candidates });
+    assert.equal(seen.entries.length, 1,
+      `at tip ${tip} the census took ${seen.entries.length} bonds, so its answer moved with the chain`);
+    assert.deepEqual(seen.entries[0].pubkey, b32(0x11));
+    const thin = seen.excluded.find((e) => toHex(e.pubkey) === toHex(b32(0x17)));
+    assert.match(thin.why, /is 2 confirmations deep where this round needs 6/,
+      `at tip ${tip} the depth was not the census's own`);
+  }
+});
