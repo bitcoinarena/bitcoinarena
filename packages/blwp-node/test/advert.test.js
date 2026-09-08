@@ -1,0 +1,207 @@
+// THE KEY THE ADVERTISEMENT NAMES IS THE KEY THAT WROTE IT.
+//
+// 5A.1 ends the body with "signature - by node_pubkey over all of the above",
+// and until now nothing checked it: `acceptAdvert` handed back a list of what
+// it could not look at, and the signature was on it - "no curve in this
+// package". The chain half is unchanged and still does the heavier work: the
+// bond output commits to H(NodeAdvertisement), so the endpoint of somebody
+// else's bond cannot be swapped without spending it. This is the smaller
+// claim, and 5A.1 lists it.
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { ed25519 } from '@noble/curves/ed25519.js';
+import { acceptSignedAdvert, advertIsSigned, STILL_UNCHECKED } from '../src/advert.js';
+import { acceptAdvert, BOND_UNCHECKED, hash256 } from '../../protocol/src/chain.js';
+import {
+  encodeAdvert, decodeAdvert, advertId, joinSignedAdvert,
+} from '../../protocol/src/advert.js';
+import { bondTransaction, blockOf } from '../../protocol/tools/bond.js';
+import { parseTransaction } from '../../protocol/src/tx.js';
+import { toHex } from '../../protocol/src/hash.js';
+
+const b32 = (n) => new Uint8Array(32).fill(n);
+const secret = ed25519.utils.randomSecretKey();
+const NODE = ed25519.getPublicKey(secret);
+const other = ed25519.utils.randomSecretKey();
+
+const advertFor = (endpoint = 'wss://node.example:443', nodePubkey = NODE) => ({
+  nodePubkey, operatorId: 'somebody', protocolVersions: [1],
+  roles: ['game', 'verify'], endpoint, region: 'eu-west', capacityClass: 2,
+  softwareHash: b32(3), settlementCapabilities: 0, lightningCapabilities: 0,
+  bondTxid: new Uint8Array(32), bondVout: 0, bondScriptTemplateVersion: 1,
+  payoutPubkey: b32(4), timestamp: 1788700000000n,
+});
+
+/** The body, signed by whoever is given - the signature sits BESIDE it. */
+const courier = (a, key = secret) =>
+  joinSignedAdvert(encodeAdvert(a), ed25519.sign(advertId(a), key));
+
+const blockAround = (txid, sibling = new Uint8Array(32).fill(0x99)) => ({
+  ...blockOf(hash256, [txid, sibling]), branch: [sibling], position: 0,
+});
+
+/**
+ * A bond transaction carrying that SIGNED body, and the block that proves it.
+ *
+ * 5A.2: "the body itself travels in the witness of the same transaction, so it
+ * is retrievable by anyone with the chain and there is nothing to serve". So
+ * the signature has to be in the transaction, not handed alongside it - which
+ * is also why `acceptAdvert` takes the body it finds on chain over anything a
+ * caller offers.
+ */
+function onChain(a, key = secret) {
+  const transaction = bondTransaction(a, { signature: ed25519.sign(advertId(a), key) });
+  const { header, branch, position } = blockAround(parseTransaction(transaction).txid);
+  return { transaction, header, branch, position };
+}
+
+/**
+ * BEFORE AND AFTER, on one fixture: the chain door says the signature is
+ * unchecked, and this door checks it.
+ */
+test('the chain door leaves the signature unchecked and this one does not', () => {
+  const a = advertFor();
+  const chain = onChain(a);
+  const signed = courier(a);
+
+  const before = acceptAdvert({ ...chain, signedAdvert: signed });
+  void signed;
+  assert.equal(before.ok, true, before.why);
+  assert.ok(BOND_UNCHECKED.some((u) => /advertisement signature/.test(u)),
+    'the chain door no longer says the signature is unchecked');
+
+  const after = acceptSignedAdvert({ ...chain, signedAdvert: signed });
+  assert.equal(after.ok, true, after.why);
+  assert.equal(STILL_UNCHECKED.some((u) => /advertisement signature/.test(u)), false,
+    'this door still lists the signature as unchecked after checking it');
+  assert.deepEqual(after.unchecked, STILL_UNCHECKED);
+  assert.equal(STILL_UNCHECKED.length, BOND_UNCHECKED.length - 1,
+    'exactly one thing should have come off the list');
+
+  // and everything the chain door found is still there
+  assert.deepEqual(after.nodePubkey, NODE);
+  assert.equal(after.endpoint, a.endpoint);
+  assert.equal(after.bondSats > 0n, true);
+  assert.deepEqual(after.advertId, advertId(a));
+});
+
+/**
+ * SIGNED BY ANOTHER KEY IS NOT SIGNED. The body still commits correctly and
+ * the bond is still a bond - which is the point: this is the one failure the
+ * chain cannot see.
+ */
+test('an advertisement signed by another key is refused by name', () => {
+  const a = advertFor();
+  const chain = onChain(a);
+
+  const chainWrong = onChain(a, other);          // signed by somebody else
+  const wrong = acceptSignedAdvert(chainWrong);
+  assert.equal(wrong.ok, false);
+  assert.match(wrong.why, new RegExp(`not signed by ${toHex(NODE)}, the node it names`));
+
+  // THE CHAIN DOOR ACCEPTS THAT SAME TRANSACTION, which is why this one
+  // exists: the bond is a bond and the commitment matches, and the only thing
+  // wrong with it is a signature nothing was checking.
+  assert.equal(acceptAdvert(chainWrong).ok, true);
+
+  // an empty signature is not a signature either
+  const unsigned = bondTransaction(a);           // 64 zero bytes by default
+  const at = blockAround(parseTransaction(unsigned).txid);
+  assert.equal(acceptSignedAdvert({ transaction: unsigned, ...at }).ok, false);
+});
+
+/**
+ * A GOOD SIGNATURE OVER A DIFFERENT BODY IS NOT A SIGNATURE OVER THIS ONE.
+ *
+ * This is the swap the commitment already refuses on chain; checked here too,
+ * because a caller holding a body and a signature has no block to lean on.
+ */
+test('a signature that covers another body is refused', () => {
+  const a = advertFor();
+  const elsewhere = advertFor('wss://whoever-the-provider-prefers:443');
+
+  // the signature is over the OTHER body, carried beside this one
+  const mismatched = joinSignedAdvert(encodeAdvert(a), ed25519.sign(advertId(elsewhere), secret));
+  const seen = advertIsSigned(mismatched);
+  assert.equal(seen.ok, false);
+  assert.match(seen.why, /not signed by/);
+
+  // and the same body with its own signature passes
+  const right = advertIsSigned(courier(a));
+  assert.equal(right.ok, true, right.why);
+  assert.deepEqual(right.advertId, advertId(a));
+  assert.deepEqual(right.signedBy, NODE);
+  assert.deepEqual(decodeAdvert(encodeAdvert(right.advert)), a);
+
+  // A BODY THAT VERIFIES IS NOT A BOND. Eligibility is the bond output's
+  // business; a door that returned "ok" for a signature alone would be the
+  // gossip census 4.6.1 removed.
+  assert.equal(right.bondSats, undefined);
+  assert.equal(right.endpoint, undefined);
+
+  assert.equal(advertIsSigned(new Uint8Array(10)).ok, false);
+  assert.match(advertIsSigned(new Uint8Array(10)).why, /not a signed advertisement/);
+});
+
+/**
+ * AND A BODY POINTING AT A TRANSACTION THAT IS NOT THE ONE IT ARRIVED IN is
+ * refused - by the chain door, before this one is reached, and this door does
+ * not paper over it.
+ */
+test('an advertisement naming another transaction is refused with the chain door\'s reason', () => {
+  const a = advertFor();
+  const chain = onChain(a);
+
+  void chain;
+  // A body claiming its bond is in some OTHER transaction, carried and
+  // committed to by the one it actually arrived in, and signed perfectly.
+  const elsewhere = { ...a, bondTxid: b32(0x77) };
+  const seen = acceptSignedAdvert(onChain(elsewhere));
+  assert.equal(seen.ok, false);
+  assert.match(seen.why, /names a different bond transaction/);
+
+  // a perfect signature does not rescue it, and the refusal is the chain's
+  // reason rather than a signature complaint
+  assert.equal(/not signed by/.test(seen.why), false,
+    'a chain refusal was reported as a signature failure');
+});
+
+/**
+ * A KEY OF NOTHING AND A SIGNATURE OF NOTHING VERIFY EACH OTHER.
+ *
+ * Measured on the curve this door uses: `ed25519.verify(zeros64, anything,
+ * zeros32)` returns TRUE - zero decodes to a point of small order and the
+ * equation closes trivially. `bondTransaction` fills an unsigned body with
+ * exactly 64 zero bytes and calls them "a signature that verifies under no
+ * key"; they verify under one. So an advertisement naming the zero key and
+ * carrying no signature would otherwise be accepted as signed by the node it
+ * names, and its endpoint handed to a player.
+ */
+test('the zero key and the empty signature do not sign each other', async () => {
+  const { ed25519: curve } = await import('@noble/curves/ed25519.js');
+  assert.equal(curve.verify(new Uint8Array(64), b32(0x5a), new Uint8Array(32)), true,
+    'the curve no longer accepts zeros, so this fixture proves nothing');
+
+  // an advertisement naming the zero key, unsigned - what a bond builder
+  // produces by default
+  const nobody = advertFor('wss://nobody.example:443', new Uint8Array(32));
+  const raw = bondTransaction(nobody);
+  const at = blockAround(parseTransaction(raw).txid);
+
+  const seen = acceptSignedAdvert({ transaction: raw, ...at });
+  assert.equal(seen.ok, false, 'the zero key signed itself');
+  assert.match(seen.why, /names the zero key, which nobody holds/);
+
+  // the chain door has no opinion about it, which is the point
+  assert.equal(acceptAdvert({ transaction: raw, ...at }).ok, true);
+
+  // and on a body with no block behind it, both halves are refused
+  const body = advertIsSigned(joinSignedAdvert(encodeAdvert(nobody), new Uint8Array(64)));
+  assert.equal(body.ok, false);
+  assert.match(body.why, /zero key/);
+
+  const real = advertFor();
+  const empty = advertIsSigned(joinSignedAdvert(encodeAdvert(real), new Uint8Array(64)));
+  assert.equal(empty.ok, false);
+  assert.match(empty.why, /carries an empty signature/);
+});
