@@ -69,6 +69,12 @@ export class Writer {
   }
 
   bytes(b, expected) {
+    // SAID BY NAME, not crashed. A missing field used to read `undefined.length`
+    // and hand the caller "Cannot read properties of undefined" - which names
+    // neither the field nor the length it wanted, and every other refusal in
+    // this encoder does both.
+    if (!(b instanceof Uint8Array))
+      throw new Error(`expected ${expected === undefined ? '' : expected + ' '}bytes, got ${b === undefined ? 'nothing' : typeof b}`);
     if (expected !== undefined && b.length !== expected)
       throw new Error('expected ' + expected + ' bytes, got ' + b.length);
     this._need(b.length);

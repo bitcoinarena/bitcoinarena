@@ -10,10 +10,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { toHex } from '../src/hash.js';
+import { roundId, encodeRoundContract, decodeRoundContract } from '../src/contracts.js';
 import {
   donationSetStands, splitDonation, donationAfterFailures, donatedMsat,
   encodeDonationSet, decodeDonationSet, donationSetId, canonicalLnurl, isMixedCase,
-  DONATION_BPS_TOTAL,
+  donationSetMatchesRound, DONATION_BPS_TOTAL,
 } from '../src/donation.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
@@ -410,4 +411,75 @@ test('bytes that are not the set\'s own encoding are refused', () => {
   // typed in either case it writes the same bytes
   assert.equal(toHex(encodeDonationSet([{ lnurl: 'LNURL1ABC', shareBps: 10000 }])),
                toHex(encodeDonationSet([{ lnurl: 'lnurl1abc', shareBps: 10000 }])));
+});
+
+// ---------------------------------------------------------------------------
+// AND WHICH SET A ROUND NAMED, 22A: "The set is named in the Round Contract
+// and its HASH IS PART OF THE CONTRACT HASH, so it cannot change after entry."
+//
+// Until this a set had an id and nothing named which one applied, so two
+// honest nodes could agree on a set's bytes and still disagree about whether
+// it was this round's - the last way a player's donation could be split by a
+// list nobody signed up to.
+
+const roundWith = (donationSetId) => ({
+  simCoreHash: b32(1), startTimeMs: 1000n, entryCloseMs: 2000n, objectionWindowMs: 600000n,
+  custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'BURN', donationSetId,
+  censusHeight: 900000, censusRoot: b32(2), committeeSeed: b32(3), stakeMsat: 100000n,
+  bondMinSats: 50000n, blockTicks: 600, exposureReference: 1000, corridorHalfWidth: 40,
+  spawnFreeRadius: 20, timeFloor: 30, timeCeil: 150, minScore: 1,
+  rankNumerator: 3, rankDenominator: 4, nodes: [b32(9)],
+});
+
+test('a round names one donation set, and another set is not it', () => {
+  const contract = roundWith(donationSetId(three));
+  assert.equal(donationSetMatchesRound(contract, three).ok, true);
+
+  // the same payees in another order are a different set - the order decides
+  // who takes the remainder - so they are not the set this round named
+  const reordered = donationSetMatchesRound(contract, [...three].reverse());
+  assert.equal(reordered.ok, false);
+  assert.match(reordered.why, /not the one this round named/);
+
+  assert.equal(donationSetMatchesRound(contract, evenly).ok, false);
+  assert.equal(donationSetMatchesRound(roundWith(b32(0xd0)), three).ok, false);
+});
+
+test('a set that does not stand can never be the set a round named', () => {
+  const wontStand = [{ lnurl: 'lnurl1abc', shareBps: 9999 }];
+  assert.throws(() => donationSetId(wontStand), /does not stand/,
+    'a non-standing set has no id, so no contract can name it');
+
+  // and presenting one against any round is a refusal, not a crash
+  const seen = donationSetMatchesRound(roundWith(b32(0xd0)), wontStand);
+  assert.equal(seen.ok, false);
+  assert.match(seen.why, /does not stand/);
+});
+
+test('a round that names no set is answered, not crashed at', () => {
+  for (const bad of [undefined, {}, { donationSetId: 'not bytes' },
+                     { donationSetId: new Uint8Array(31) }])
+    assert.match(donationSetMatchesRound(bad, three).why, /names no donation set/);
+});
+
+/**
+ * AND THE ID IS INSIDE THE ROUND ID, which is what 22A's "it cannot change
+ * after entry" actually rests on. Measured against the pre-change encoder:
+ * the contract grew 211 to 243 bytes and its id moved
+ * 5b0b853d321cd581... to 71a39572bb516259...
+ */
+test('the donation set is inside the round id, so it cannot change after entry', () => {
+  const here = roundWith(donationSetId(three));
+  const there = roundWith(donationSetId(evenly));
+  assert.notDeepEqual(roundId(here), roundId(there),
+    'a round naming another set must be another round');
+
+  const back = decodeRoundContract(encodeRoundContract(here));
+  assert.deepEqual(back.donationSetId, here.donationSetId);
+  assert.equal(toHex(roundId(back)), toHex(roundId(here)));
+
+  // a round that names nothing does not encode, and says which field by name
+  const missing = { ...here };
+  delete missing.donationSetId;
+  assert.throws(() => encodeRoundContract(missing), /expected 32 bytes, got nothing/);
 });

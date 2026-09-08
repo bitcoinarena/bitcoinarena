@@ -28,7 +28,7 @@ const all = new Set([...game, ...settle].map(toHex));
 
 const contract = {
   simCoreHash: b32(1), startTimeMs: 1000n, entryCloseMs: 2000n, objectionWindowMs: 600000n,
-  custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'BURN', censusHeight: 900000,
+  custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'BURN', donationSetId: new Uint8Array(32).fill(0xd0), censusHeight: 900000,
   censusRoot: b32(2), committeeSeed: b32(3), stakeMsat: 100000n, bondMinSats: 50000n,
   blockTicks: 600, exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
   timeFloor: 30, timeCeil: 150, minScore: 1, rankNumerator: 3, rankDenominator: 4,

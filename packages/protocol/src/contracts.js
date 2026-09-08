@@ -57,6 +57,21 @@ export function encodeRoundContract(c) {
   // operator write itself the whole bond.
   w.u8(slashRemainderByte(c.slashRemainder));
 
+  // WHICH DONATION SET THIS ROUND'S ENTRIES WERE MADE UNDER, section 22A:
+  // "The set is named in the Round Contract and its HASH IS PART OF THE
+  // CONTRACT HASH, so it cannot change after entry."
+  //
+  // The id and not the set itself, which is what the spec asks for and keeps
+  // the contract small. Before this a set had an id and nothing named which
+  // one applied, so two honest nodes could agree on a set's bytes and still
+  // disagree about whether it was the round's - the last way one player's
+  // donation could be split by a list nobody signed up to.
+  //
+  // A SET THAT DOES NOT STAND CANNOT REACH HERE, because `donationSetId`
+  // refuses to hash one: shares that do not sum to 10000, a payee listed
+  // twice, or a mixed-case address all throw before there is an id to name.
+  w.bytes32(c.donationSetId);
+
   w.u32(c.censusHeight);
   w.bytes32(c.censusRoot);
   w.bytes32(c.committeeSeed);
@@ -94,6 +109,7 @@ export function decodeRoundContract(bytes) {
     custody: CUSTODY[r.u8()],
     slashMinimumServed: r.u32(),
     slashRemainder: slashRemainderOf(r.u8()),
+    donationSetId: r.bytes32(),
     censusHeight: r.u32(),
     censusRoot: r.bytes32(),
     committeeSeed: r.bytes32(),

@@ -309,3 +309,34 @@ export function decodeDonationSet(bytes) {
 /** What 22A means by naming a set: one hash, over the recipients as published. */
 export const donationSetId = (recipients) =>
   taggedHash(TAG.donationSet, encodeDonationSet(recipients));
+
+/**
+ * IS THIS THE SET THE ROUND NAMED? 22A's binding, checked.
+ *
+ * "The set is named in the Round Contract and its hash is part of the contract
+ * hash, SO IT CANNOT CHANGE AFTER ENTRY." A set with an id and nothing naming
+ * which one applies leaves two honest nodes able to agree on a set's bytes and
+ * still disagree about whether it was this round's - and a player's donation
+ * split by a list nobody signed up to.
+ *
+ * Answered rather than thrown, like every other decision here: a set that does
+ * not stand has no id at all, and that is a refusal rather than a crash.
+ */
+export function donationSetMatchesRound(contract, recipients) {
+  if (!contract || !(contract.donationSetId instanceof Uint8Array)
+      || contract.donationSetId.length !== 32)
+    return { ok: false, why: 'that round names no donation set' };
+
+  let id;
+  try { id = donationSetId(recipients); }
+  catch (e) { return { ok: false, why: e.message }; }
+
+  const same = id.every((b, i) => b === contract.donationSetId[i]);
+  return same
+    ? { ok: true, why: 'that is the set this round named' }
+    : {
+      ok: false,
+      why: 'that set is not the one this round named, and 22A says it cannot '
+        + 'change after entry',
+    };
+}
