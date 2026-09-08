@@ -169,7 +169,13 @@ export function bondTapTree({ nodeKey, arbitrationKeys, arbitrationK, bondMaturi
   const a = tapLeafHash(recoveryLeaf(nodeKey, bondMaturity));
   const b = tapLeafHash(slashLeaf(arbitrationKeys, arbitrationK));
   const merkleRoot = tapBranchHash(a, b);
-  return { recovery: a, slash: b, merkleRoot, tweak: tapTweak(internalKey, merkleRoot) };
+  // The internal key comes back with the tree because a control block needs
+  // it: a caller holding the hashes and not the key it was tweaked from could
+  // not prove a leaf belongs to anything.
+  return {
+    internalKey, recovery: a, slash: b, merkleRoot,
+    tweak: tapTweak(internalKey, merkleRoot),
+  };
 }
 
 /**
@@ -188,12 +194,82 @@ export function bondOutputKey(inputs, { tweakPoint } = {}) {
   try { tree = bondTapTree(inputs); }
   catch (e) { return { ok: false, why: e.message }; }
 
-  let outputKey;
-  try { outputKey = tweakPoint(inputs.internalKey, tree.tweak); }
+  // THE PARITY IS PART OF THE ANSWER, not a detail the x-only form may drop.
+  //
+  // An output key is published x-only, and that is fine for RECOGNISING one.
+  // It is not enough to SPEND one: the control block's first byte carries the
+  // y-parity of Q in its low bit, and a spender that guesses it wrong has an
+  // invalid witness. So the curve is asked for both halves, and a curve that
+  // answers with 32 bytes alone is refused rather than assumed even - because
+  // an assumed parity is a bond that cannot be recovered half the time, and
+  // path A exists so that a bond can ALWAYS be recovered.
+  let answer;
+  try { answer = tweakPoint(inputs.internalKey, tree.tweak); }
   catch (e) { return { ok: false, why: `that curve refused the tweak: ${e.message}` }; }
-  if (!is32(outputKey)) return { ok: false, why: 'that curve did not return a 32-byte key' };
 
-  return { ok: true, outputKey, ...tree };
+  const outputKey = answer && answer.outputKey;
+  const parity = answer && answer.parity;
+  if (!is32(outputKey)) return { ok: false, why: 'that curve did not return a 32-byte key' };
+  if (parity !== 0 && parity !== 1)
+    return { ok: false, why: 'that curve did not say whether the output key is even or odd' };
+
+  return { ok: true, outputKey, parity, ...tree };
+}
+
+/**
+ * THE CONTROL BLOCK: what a spender shows to prove a leaf belongs to the
+ * output it is spending.
+ *
+ * BIP-341 gives it as `(leaf_version | parity) || internal_key || path`, and
+ * for a two-leaf tree the path is one sibling hash - 65 bytes. Without it
+ * NEITHER leaf is reachable: the output key hides the tree, which is the point,
+ * so the tree has to be handed over at spend time. A bond whose control block
+ * nobody could build would be a bond nobody could recover, and path A exists
+ * precisely so that arbitration cannot freeze one forever.
+ *
+ * `path` names which leaf is being spent, and the sibling is the OTHER one -
+ * a control block that named its own leaf as the sibling would rebuild a
+ * different root and prove nothing.
+ */
+export function controlBlockFor(path, { recovery, slash, internalKey, parity }) {
+  if (path !== 'recovery' && path !== 'slash')
+    return { ok: false, why: `a bond has a recovery path and a slash path, not ${path}` };
+  if (!is32(internalKey)) return { ok: false, why: 'the internal key is 32 bytes' };
+  if (!is32(recovery) || !is32(slash)) return { ok: false, why: 'both leaf hashes are 32 bytes' };
+  if (parity !== 0 && parity !== 1)
+    return { ok: false, why: 'a control block carries the output key parity, and none was given' };
+
+  const sibling = path === 'recovery' ? slash : recovery;
+  return {
+    ok: true,
+    path,
+    controlBlock: cat(Uint8Array.from([TAPLEAF_VERSION | parity]), internalKey, sibling),
+  };
+}
+
+/**
+ * AND THE SAME THING READ BACKWARDS: the root a control block proves for a
+ * leaf, which is what lets a verifier rebuild Q and compare.
+ *
+ * This is the check a spender's own witness has to pass, so it is written once
+ * and used from both sides rather than trusted in one direction.
+ */
+export function rootFromControlBlock(leafHash, controlBlock) {
+  if (!is32(leafHash)) return { ok: false, why: 'a leaf hash is 32 bytes' };
+  if (!(controlBlock instanceof Uint8Array) || controlBlock.length < 33
+    || (controlBlock.length - 33) % 32 !== 0)
+    return { ok: false, why: 'a control block is 33 bytes plus one hash per level' };
+
+  const parity = controlBlock[0] & 1;
+  if ((controlBlock[0] & 0xfe) !== TAPLEAF_VERSION)
+    return { ok: false, why: 'that control block names another leaf version' };
+
+  const internalKey = controlBlock.subarray(1, 33);
+  let root = leafHash;
+  for (let at = 33; at < controlBlock.length; at += 32) {
+    root = tapBranchHash(root, controlBlock.subarray(at, at + 32));
+  }
+  return { ok: true, parity, internalKey, merkleRoot: root, tweak: tapTweak(internalKey, root) };
 }
 
 /**

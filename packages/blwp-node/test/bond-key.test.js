@@ -10,6 +10,7 @@ import assert from 'node:assert/strict';
 import { schnorr, secp256k1 } from '@noble/curves/secp256k1.js';
 import {
   bondOutputKey, bondOutputKeyMatches, bondTapTree, recoveryLeaf, slashLeaf, tapLeafHash,
+  controlBlockFor, rootFromControlBlock, TAPLEAF_VERSION,
 } from '../../protocol/src/bond-script.js';
 import { genesisFor } from '../../protocol/src/genesis.js';
 import { taggedHash, toHex } from '../../protocol/src/hash.js';
@@ -20,11 +21,21 @@ import { recognizeBond } from '../../protocol/src/chain.js';
 const b32 = (n) => new Uint8Array(32).fill(n);
 const big = (b) => BigInt('0x' + toHex(b));
 
-/** BIP-341: Q = P + t*G, with P lifted from its x-only form. */
+/**
+ * BIP-341: Q = P + t*G, with P lifted from its x-only form.
+ *
+ * The PARITY comes back with it. An output key is published x-only, which is
+ * enough to recognise one and not enough to spend one: the control block's
+ * first byte carries the y-parity, and a spender that guesses it has an invalid
+ * witness half the time.
+ */
 const tweakPoint = (internalKey, tweak) => {
   const P = schnorr.utils.lift_x(big(internalKey));
   const Q = P.add(secp256k1.Point.BASE.multiply(big(tweak)));
-  return schnorr.utils.pointToBytes(Q);
+  return {
+    outputKey: schnorr.utils.pointToBytes(Q),
+    parity: Number(Q.toAffine().y & 1n),
+  };
 };
 
 const genesis = genesisFor('regtest');
@@ -138,4 +149,62 @@ test('a bond built with the template is recognised, and its key recomputes', () 
   // recompute for itself - it is handed no keys and no maturity - so it still
   // says so, and this test is what a caller holding them can do about it.
   assert.equal(seen.unchecked.some((u) => /script template/.test(u)), true);
+});
+
+/**
+ * THE CONTROL BLOCK REBUILDS THE VERY KEY THAT IS ON CHAIN.
+ *
+ * This is the check a spender's witness has to pass, done on the real curve:
+ * take the leaf, take the control block, rebuild the root, tweak the internal
+ * key by it, and see whether the point that comes out is the output the bond
+ * was posted to. A control block that did not is a leaf that cannot spend.
+ */
+test('both leaves reconstruct the on-chain output key from their control block', () => {
+  const built = bondOutputKey(inputs, { tweakPoint });
+  assert.equal(built.ok, true, built.why);
+
+  // THE PARITY IS INFORMATION THE 32 BYTES DO NOT CARRY. `lift_x` always
+  // returns the EVEN point for an x-only key, so a spender that read the
+  // output off the chain and lifted it would believe the parity is always 0 -
+  // and be wrong whenever the real Q is odd. That is why the curve is asked
+  // and the answer is kept.
+  assert.equal(Number(schnorr.utils.lift_x(big(built.outputKey)).toAffine().y & 1n), 0,
+    'lift_x no longer returns the even point, so this argument needs remaking');
+  assert.equal(built.parity, tweakPoint(INTERNAL, built.tweak).parity,
+    "the parity is not the curve's answer");
+  assert.equal(built.parity === 0 || built.parity === 1, true);
+
+  const leafOf = {
+    recovery: tapLeafHash(recoveryLeaf(NODE, genesis.bondMaturity)),
+    slash: tapLeafHash(slashLeaf(ARBITRATION, genesis.arbitrationK)),
+  };
+
+  for (const path of ['recovery', 'slash']) {
+    const block = controlBlockFor(path, built);
+    assert.equal(block.ok, true, block.why);
+    assert.equal(block.controlBlock.length, 65);
+    assert.equal(block.controlBlock[0] & 1, built.parity, 'the parity is not in the first byte');
+    assert.equal(block.controlBlock[0] & 0xfe, TAPLEAF_VERSION);
+    assert.deepEqual(block.controlBlock.subarray(33),
+      path === 'recovery' ? built.slash : built.recovery,
+      'the sibling is not the other leaf');
+
+    // REBUILD Q FROM WHAT A SPENDER SHOWS, and it is the key on chain.
+    const back = rootFromControlBlock(leafOf[path], block.controlBlock);
+    assert.equal(back.ok, true, back.why);
+    const again = tweakPoint(back.internalKey, back.tweak);
+    assert.deepEqual(again.outputKey, built.outputKey,
+      `the ${path} path does not rebuild the output it is spending`);
+    assert.equal(again.parity, built.parity);
+  }
+
+  // A CONTROL BLOCK NAMING THE WRONG SIBLING REBUILDS SOMETHING ELSE, so the
+  // spend it belongs to would be for another output.
+  const lying = controlBlockFor('recovery', { ...built, slash: b32(0x99) });
+  const wrong = rootFromControlBlock(leafOf.recovery, lying.controlBlock);
+  assert.notDeepEqual(tweakPoint(wrong.internalKey, wrong.tweak).outputKey, built.outputKey);
+
+  // and so does the right sibling under the wrong leaf
+  const swapped = rootFromControlBlock(leafOf.slash, controlBlockFor('recovery', built).controlBlock);
+  assert.notDeepEqual(tweakPoint(swapped.internalKey, swapped.tweak).outputKey, built.outputKey);
 });

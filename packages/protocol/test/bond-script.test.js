@@ -11,6 +11,7 @@ import assert from 'node:assert/strict';
 import {
   recoveryLeaf, slashLeaf, tapLeafHash, tapBranchHash, tapTweak,
   bondTapTree, bondOutputKey, bondOutputKeyMatches, TAPLEAF_VERSION,
+  controlBlockFor, rootFromControlBlock,
 } from '../src/bond-script.js';
 import { genesisFor } from '../src/genesis.js';
 import { toHex, taggedHash } from '../src/hash.js';
@@ -26,9 +27,15 @@ const inputs = {
   bondMaturity: genesis.bondMaturity, internalKey: INTERNAL,
 };
 
-/** A stub curve: Q = H(P || t), which is not a group but is a function. */
-const tweakPoint = (internalKey, tweak) => taggedHash('TestTweak',
-  Uint8Array.from([...internalKey, ...tweak]));
+/**
+ * A stub curve: Q = H(P || t), which is not a group but is a function - and it
+ * answers with the parity too, because a curve that only returned 32 bytes
+ * could not say whether Q is even or odd, and the control block needs that bit.
+ */
+const tweakPoint = (internalKey, tweak) => {
+  const outputKey = taggedHash('TestTweak', Uint8Array.from([...internalKey, ...tweak]));
+  return { outputKey, parity: outputKey[31] & 1 };
+};
 
 /**
  * K AND M COME OFF GENESIS, so every node on a network builds one tree.
@@ -189,4 +196,91 @@ test('the bond builder no longer writes a key derived from nothing', async () =>
   assert.deepEqual(script.subarray(2, 34), built.outputKey);
   assert.equal(script.subarray(2, 34).every((b) => b === 0x77), false,
     'the bond output is still the filler key');
+});
+
+/**
+ * THE CONTROL BLOCK, WITHOUT WHICH NEITHER LEAF IS REACHABLE.
+ *
+ * The output key hides the tree - that is what taproot is for - so a spender
+ * has to hand the tree over at spend time. A bond whose control block nobody
+ * could build is a bond nobody could recover, and path A exists precisely so
+ * that arbitration cannot freeze one forever.
+ */
+test('each leaf gets a control block that proves it belongs to the output', () => {
+  const built = bondOutputKey(inputs, { tweakPoint });
+  assert.equal(built.ok, true, built.why);
+  assert.equal(built.parity === 0 || built.parity === 1, true, 'the parity was not kept');
+
+  for (const path of ['recovery', 'slash']) {
+    const block = controlBlockFor(path, built);
+    assert.equal(block.ok, true, block.why);
+
+    // BIP-341: (leaf_version | parity) || internal_key || one sibling
+    assert.equal(block.controlBlock.length, 65, 'a two-leaf tree proves in 65 bytes');
+    assert.equal(block.controlBlock[0] & 0xfe, TAPLEAF_VERSION);
+    assert.equal(block.controlBlock[0] & 1, built.parity, 'the parity is not in the first byte');
+    assert.deepEqual(block.controlBlock.subarray(1, 33), INTERNAL);
+
+    // THE SIBLING IS THE OTHER LEAF. Naming its own leaf would rebuild a
+    // different root and prove nothing.
+    const sibling = path === 'recovery' ? built.slash : built.recovery;
+    assert.deepEqual(block.controlBlock.subarray(33), sibling);
+
+    // AND IT REBUILDS THE ROOT THIS OUTPUT COMMITTED TO.
+    const leaf = path === 'recovery'
+      ? tapLeafHash(recoveryLeaf(NODE, 100)) : tapLeafHash(slashLeaf(ARBITRATION, 5));
+    const back = rootFromControlBlock(leaf, block.controlBlock);
+    assert.equal(back.ok, true, back.why);
+    assert.deepEqual(back.merkleRoot, built.merkleRoot);
+    assert.deepEqual(back.tweak, built.tweak);
+    assert.equal(back.parity, built.parity);
+  }
+
+  // A CONTROL BLOCK NAMING THE WRONG SIBLING PROVES A DIFFERENT TREE.
+  const wrong = controlBlockFor('recovery', { ...built, slash: b32(0x99) });
+  const leaf = tapLeafHash(recoveryLeaf(NODE, 100));
+  assert.notDeepEqual(rootFromControlBlock(leaf, wrong.controlBlock).merkleRoot, built.merkleRoot);
+
+  // and the refusals
+  assert.match(controlBlockFor('key', built).why, /recovery path and a slash path/);
+  assert.match(controlBlockFor('recovery', { ...built, parity: undefined }).why,
+    /carries the output key parity/);
+  assert.match(rootFromControlBlock(leaf, new Uint8Array(40)).why, /33 bytes plus one hash/);
+  assert.match(rootFromControlBlock(leaf, new Uint8Array(65)).why, /another leaf version/);
+});
+
+/**
+ * A CURVE THAT WILL NOT SAY WHETHER Q IS EVEN OR ODD CANNOT BUILD A BOND.
+ *
+ * An assumed parity is a bond that cannot be recovered half the time, and the
+ * recovery path exists so that a bond can ALWAYS be recovered.
+ */
+test('a curve that answers without the parity is refused', () => {
+  const halfAnswer = (internalKey, tweak) => taggedHash('TestTweak',
+    Uint8Array.from([...internalKey, ...tweak]));
+  const seen = bondOutputKey(inputs, { tweakPoint: halfAnswer });
+  assert.equal(seen.ok, false);
+  assert.match(seen.why, /did not return a 32-byte key|even or odd/);
+
+  const twoish = () => ({ outputKey: b32(1), parity: 2 });
+  assert.match(bondOutputKey(inputs, { tweakPoint: twoish }).why, /even or odd/);
+});
+
+/**
+ * THE LEAF FIX IS PINNED. These two numbers are what the programs of this
+ * template produce; if either moves, the leaves moved, and every bond already
+ * posted would be spending a different tree.
+ */
+test('the tree and the output key are the ones the spendable leaves produce', () => {
+  const built = bondOutputKey(inputs, { tweakPoint });
+  assert.equal(toHex(built.merkleRoot),
+    '4e8367ddbb37d1d8f78db1fceaef3bb2067c37b94e5786810270a19b68aaf938',
+    'the merkle root moved, so the leaf programs are not the ones measured');
+  assert.equal(toHex(built.outputKey),
+    '704bf508a57b0ec51898ee67a523184ff344025a6f80ff98dbfe4db210d2b4fd',
+    'the output key moved under the stub curve');
+
+  // and the empty-stack order is what it used to be, which is why it moved
+  assert.notEqual(toHex(built.merkleRoot),
+    'bcd9435549f84e683dbc3cfaaf0949b0ba2dea542e08b1edf5d005cd93106a1f');
 });
