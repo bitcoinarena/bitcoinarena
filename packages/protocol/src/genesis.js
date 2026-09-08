@@ -60,6 +60,21 @@ export function encodeGenesisParameters(p) {
   w.u16(p.censusMinNodes);
   w.u32(p.censusConfirmations);
   w.u32(p.bondMaturity);
+
+  // WHO CAN SLASH, AND HOW MANY OF THEM. 5A.3B's script path B is
+  // "<k-of-m arbitration keys> CHECKMULTISIG - the arbitration quorum, any
+  // time before maturity", and the two numbers decide what the bond output
+  // key even is: the leaf hashes them, the tapbranch hashes the leaf, and the
+  // output key is the tweak of that. A round that disagreed about k or m
+  // would compute a different output key for the same node and refuse a bond
+  // that is perfectly good.
+  //
+  // They are genesis and not contract, the same class as `bondMaturity`: a
+  // per-round k is a per-round arbitration set, and the set is what the
+  // residual in 5A.3B is about. Five of seven, matching every other committee
+  // in this protocol.
+  w.u8(p.arbitrationK);
+  w.u8(p.arbitrationM);
   w.u32(p.noticePeriod);
   w.bytes32(p.bondMarker);
   w.str(p.randomnessSource);
@@ -84,6 +99,8 @@ export function testnetShape(chain, marker) {
     censusMinNodes: 2,
     censusConfirmations: 1,
     bondMaturity: 100,
+    arbitrationK: 5,
+    arbitrationM: 7,
     noticePeriod: 144,
     bondMarker: marker,
     randomnessSource: RANDOMNESS_SOURCE,

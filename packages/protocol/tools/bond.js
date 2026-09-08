@@ -44,10 +44,18 @@ export function bondTransaction(advert, {
   previousTxid = new Uint8Array(32).fill(0xab),
   previousVout = 0,
   network = 'regtest',
+  outputKey = new Uint8Array(32).fill(0x77),
 } = {}) {
   // A P2TR output: OP_1 <32 bytes>. "A P2TR output is a 32-byte key and looks
   // like every other one" (25.1) - which is exactly why the marker is needed.
-  const bondScript = [0x51, 0x20, ...new Uint8Array(32).fill(0x77)];
+  //
+  // THOSE 32 BYTES USED TO BE 0x77 REPEATED: a key derived from nothing, which
+  // no verifier could ever recompute, so every fixture bond was unfalsifiable.
+  // Now the caller passes the output key `bond-script.js` builds from the node
+  // key, the arbitration set and the maturity - and a caller that passes none
+  // gets the old filler, which is fine for a fixture testing the marker or the
+  // commitment and useless for one testing the key.
+  const bondScript = [0x51, 0x20, ...outputKey];
   const markerScript = [0x51, 0x20, ...bondMarker(network)];
   const opReturn = [0x6a, ...push([...commitment])];
 
