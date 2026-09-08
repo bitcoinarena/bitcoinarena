@@ -23,7 +23,9 @@ import { MAX_INPUT_BATCH_BYTES } from '../../protocol/src/batch.js';
 import { SIGNED_CHECKPOINT_BYTES } from '../../protocol/src/checkpoint.js';
 import { TYPE_CHECKPOINT_RECEIPT } from '../../protocol/src/constants.js';
 import { bearsAuthority } from '../../protocol/src/frames.js';
-import { SIGNED_RECEIPT_BYTES } from '../../protocol/src/receipt.js';
+import {
+  SIGNED_RECEIPT_BYTES, decodeCheckpointReceipt, splitSignedReceipt,
+} from '../../protocol/src/receipt.js';
 import { SIGNED_RESULT_BYTES } from '../../protocol/src/result.js';
 
 /**
@@ -44,6 +46,7 @@ import { SIGNED_RESULT_BYTES } from '../../protocol/src/result.js';
  */
 export const MAX_FRAME_BYTES = Math.max(
   MAX_INPUT_BATCH_BYTES, SIGNED_CHECKPOINT_BYTES, SIGNED_RECEIPT_BYTES);
+import { CLOSED } from './store.js';
 import { Round } from './round.js';
 import { Verifier } from './verify.js';
 
@@ -107,7 +110,7 @@ const text = (res, code, msg) => {
 export const NOTHING_IS_FUNDED = () => false;
 
 export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FUNDED,
-  randomnessFor } = {}) {
+  randomnessFor, peers = [] } = {}) {
   const round = new Round(db);
 
   // WHAT HEARS A ROUND CLOSING. Section 13 replays once the run is over, so
@@ -116,7 +119,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // the round's randomness beacon - a future Bitcoin block hash this daemon
   // does not read yet - and a node given none runs the whole path and stops
   // there, with the refusal recorded rather than a world invented.
-  const verifier = new Verifier(round, randomnessFor ? { randomnessFor } : {});
+  const verifier = new Verifier(round, {
+    ...(randomnessFor ? { randomnessFor } : {}),
+    // WHERE THE OTHER SEATS ANSWER. A contract names a committee by KEY, and a
+    // key is not an address - finding one is discovery's job (25.1), not this
+    // letter's - so the operator says where they are and the contract still
+    // says whose signatures count.
+    peers,
+  });
 
   const http = createServer(async (req, res) => {
     try {
@@ -337,7 +347,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             // whoever asked. The promises are deliberately not awaited here:
             // the socket is told the round is shut, and the replays run on
             // their own threads through the pool.
-            if (shut) verifier.onRoundClosed(id);
+            // Replay every entry, and then ASK THE OTHER SEATS. Serving a
+            // result nobody fetches is a committee of one: the count section
+            // 13 asks for only exists on a node holding more than its own
+            // signature.
+            if (shut) verifier.settleRound(id).catch((e) => console.error(`[verify] ${e.message}`));
             return sock.send(shut ? 'closed' : 'already closed');
           }
           return sock.send('error unknown text message');
@@ -350,7 +364,25 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // A RECEIPT COMING IN is a peer offering one it issued - section 10's
         // gossip. The first byte says so, the same way it says a mark is a
         // mark, so gossip needs no second port and no envelope.
-        if (bytes[0] === TYPE_CHECKPOINT_RECEIPT) return sock.send(round.takeReceipt(bytes));
+        if (bytes[0] === TYPE_CHECKPOINT_RECEIPT) {
+          const answer = round.takeReceipt(bytes);
+          // A RECEIPT CAN COMPLETE WHAT A REPLAY COULD NOT SIGN. 13C's
+          // canonical prefix grows as receipts arrive, so a run replayed
+          // before its transcript was carried signs now, with nothing else
+          // changed. Without this the node would have found the answer and
+          // thrown it away.
+          try {
+            const run = round.runOf(decodeCheckpointReceipt(splitSignedReceipt(bytes).body).checkpointId);
+            const held = run && round.get(run.roundId);
+            if (run && held && held.state === CLOSED) {
+              const again = verifier.retry(run.roundId, run.entryId);
+              if (again) again.then((d) => (d && d.stored
+                ? verifier.gather(run.roundId, run.entryId) : null))
+                .catch((e) => console.error(`[verify] ${e.message}`));
+            }
+          } catch (e) { console.error(`[verify] ${e.message}`); }
+          return sock.send(answer);
+        }
 
         // AND EVERYTHING ELSE IS NOT AUTOMATICALLY AN INPUT. This used to fall
         // straight into `round.batch`, so the door's rule was "anything that

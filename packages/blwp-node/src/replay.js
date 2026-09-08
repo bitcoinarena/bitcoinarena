@@ -26,7 +26,6 @@ import { init, step, submitLiquidation, runScore } from '../../core/src/sim.js';
 import { hash, O_SCORE, S_STATE } from '../../core/src/state.js';
 import { RUN_LIVE, RUN_DELIVERED } from '../../core/src/rules/gate.js';
 import { INPUT_WORDS } from '../../protocol/src/batch.js';
-import { receiptsNeeded } from '../../protocol/src/genesis.js';
 import { seedWordForEntry } from '../../protocol/src/seed.js';
 
 const hex = (b) => {
@@ -194,68 +193,6 @@ export function replayInWorker(transcript, entry, options = {}) {
       if (!answered) reject(new Error(`the replay worker exited with ${code} before answering`));
     });
   });
-}
-
-/**
- * FIVE OF SEVEN, ON A STATE HASH RATHER THAN ON SOMEBODY'S WORD.
- *
- * Section 13 makes a result final when the committee's threshold agrees. Until
- * now the daemon could only count signatures over a number the player supplied;
- * these are answers each node computed for itself from what it already stores,
- * which is the difference between five nodes agreeing and five nodes being told
- * the same thing.
- *
- * THE THRESHOLD IS NOT A NUMBER ANYONE HERE PICKS. `slots` comes off the round
- * contract - letter 16 moved it there precisely so a caller could not shrink a
- * committee - and `receiptsNeeded` turns it into the count. Five of seven is
- * the whole security argument; five of two is not.
- *
- * ONE ANSWER PER IDENTITY. A node counted twice is the same fault as a
- * signature counted twice, so a repeated key is refused rather than tallied.
- */
-export function agreeOnState(answers, { slots } = {}) {
-  let needed;
-  try { needed = receiptsNeeded(slots); }
-  catch (err) { return { ok: false, why: err.message }; }
-
-  if (!Array.isArray(answers) || answers.length === 0)
-    return { ok: false, why: 'no node has answered yet' };
-
-  const seen = new Set();
-  const tally = new Map();
-  let refused = 0;
-  for (const a of answers) {
-    if (!a || !a.nodePubkey) return { ok: false, why: 'an answer names no node' };
-    const who = hex(a.nodePubkey);
-    if (seen.has(who)) return { ok: false, why: 'the same node answered twice' };
-    seen.add(who);
-    if (!a.ok || typeof a.stateHash !== 'string') { refused++; continue; }
-    tally.set(a.stateHash, (tally.get(a.stateHash) || 0) + 1);
-  }
-
-  let best = null;
-  const reached = [];
-  for (const [stateHash, count] of tally) {
-    if (best === null || count > best.count) best = { stateHash, count };
-    if (count >= needed) reached.push(stateHash);
-  }
-  // Cannot happen while a threshold is a majority, and refused rather than
-  // resolved if a later one is not: two finals for one run is the thing
-  // finality exists to prevent.
-  if (reached.length > 1)
-    return { ok: false, why: 'two different states each reached the threshold' };
-
-  const final = reached.length === 1;
-  return {
-    ok: true,
-    final,
-    stateHash: final ? reached[0] : null,
-    agreed: best ? best.count : 0,
-    needed,
-    answered: answers.length,
-    refused,
-    why: final ? null : `${best ? best.count : 0} of ${needed} agree on any one state`,
-  };
 }
 
 // THE WORKER SIDE OF THE SAME FILE. Only reached when this module is started

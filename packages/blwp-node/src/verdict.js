@@ -21,7 +21,9 @@
 // result ids is what section 13 asks for. The hash is the reason the ids
 // match, not a thing to sign beside them.
 import { ed25519 } from '@noble/curves/ed25519.js';
-import { resultId, provisionallyFinal, encodePlayerResult } from '../../protocol/src/result.js';
+import {
+  resultId, encodePlayerResult, decodePlayerResult, splitSignedResult, SIGNED_RESULT_BYTES,
+} from '../../protocol/src/result.js';
 import { transcriptHash } from '../../protocol/src/transcript.js';
 import { receiptsNeeded } from '../../protocol/src/genesis.js';
 
@@ -96,40 +98,95 @@ export function signResult(result, secretKey) {
  * FIVE OF SEVEN, VERIFIED - which is the part `@blwp/protocol` cannot do.
  *
  * The board says outright that it COUNTS signatures rather than verifying
- * them, because that package carries no curve. This one does, so here a
+ * them, because that package carries no curve. This one has a curve, so here a
  * signature that does not verify is not a signature: it is dropped before the
- * count, and the count is then `provisionallyFinal`'s, unchanged.
+ * count.
+ *
+ * AGREEMENT IS ON THE RUN, NOT ON THE BYTES. Section 13's PlayerResult carries
+ * `node_pubkey`, so two seats that replayed the same run to the same answer
+ * still produce two different result IDS - the record names who made it. Their
+ * ids can never match, and counting ids would put every honest committee at
+ * one of seven forever. What "the identical result" means is the identical
+ * RUN: same round, same player, same outcome, same score, same transcript,
+ * same core. So the tally key is the result with the signer removed - a
+ * grouping computed here, never signed and never sent, so it adds no object to
+ * the protocol.
+ *
+ * ONE SEAT, ONE VOTE. A node that signed two results has equivocated; counting
+ * both would let one seat carry two votes and dropping the later one would let
+ * arrival order decide which.
  *
  * The threshold comes off the contract's own slots through `receiptsNeeded`.
  * Nothing in this file knows that seven means five.
  */
-export function verifiedFinal(signedBy, { contract }) {
+export function verifiedFinal(records, { contract }) {
   if (!contract || !Array.isArray(contract.nodes) || !contract.nodes.length)
     return { ok: false, why: 'that round names no committee' };
   let needed;
   try { needed = receiptsNeeded(contract.gameVerifySlots); }
   catch (err) { return { ok: false, why: err.message }; }
 
+  const seats = new Set(contract.nodes.map(hex));
   const seen = new Set();
-  const good = [];
-  let forged = 0, doubled = 0;
-  for (const s of signedBy || []) {
-    if (!s || !(s.resultId instanceof Uint8Array) || !(s.nodePubkey instanceof Uint8Array)
-      || !(s.signature instanceof Uint8Array)) { forged++; continue; }
+  const byRun = new Map();
+  let forged = 0, doubled = 0, strangers = 0;
 
-    // ONE SEAT, ONE SIGNATURE. A node that signs two different results has
-    // equivocated; counting both would let one seat carry two votes, and
-    // dropping only the later one would make arrival order decide which.
-    const who = hex(s.nodePubkey);
+  for (const rec of records || []) {
+    const bytes = rec instanceof Uint8Array ? rec : rec && rec.bytes;
+    if (!(bytes instanceof Uint8Array) || bytes.length !== SIGNED_RESULT_BYTES) { forged++; continue; }
+
+    let result, signature;
+    try {
+      const split = splitSignedResult(bytes);
+      signature = split.signature;
+      result = decodePlayerResult(split.body);
+    } catch { forged++; continue; }
+
+    const who = hex(result.nodePubkey);
+    if (!seats.has(who)) { strangers++; continue; }
     if (seen.has(who)) { doubled++; continue; }
     seen.add(who);
 
     let ok = false;
-    try { ok = ed25519.verify(s.signature, s.resultId, s.nodePubkey); } catch { ok = false; }
-    if (ok) good.push({ resultId: s.resultId, nodePubkey: s.nodePubkey });
-    else forged++;
+    try { ok = ed25519.verify(signature, resultId(result), result.nodePubkey); } catch { ok = false; }
+    if (!ok) { forged++; continue; }
+
+    const run = hex(runId(result));
+    byRun.set(run, (byRun.get(run) || 0) + 1);
   }
 
-  const seat = provisionallyFinal(good, { committee: contract.nodes, needed });
-  return { ok: true, needed, verified: good.length, forged, doubled, ...seat };
+  let best = null;
+  const reached = [];
+  for (const [run, count] of byRun) {
+    if (best === null || count > best.count) best = { run, count };
+    if (count >= needed) reached.push(run);
+  }
+  // Cannot happen while a threshold is a majority, and refused rather than
+  // resolved if a later one is not: two finals for one run is the thing
+  // finality exists to prevent.
+  if (reached.length > 1)
+    return { ok: false, why: 'two different runs each reached the threshold' };
+
+  const final = reached.length === 1;
+  return {
+    ok: true,
+    final,
+    runId: final ? reached[0] : null,
+    agreed: best ? best.count : 0,
+    needed,
+    verified: seen.size - doubled - forged >= 0 ? [...seen].length : 0,
+    forged,
+    doubled,
+    strangers,
+    why: final ? null : `${best ? best.count : 0} of ${needed} agree on any one run`,
+  };
 }
+
+/**
+ * THE RUN A RESULT DESCRIBES, with the signer taken out.
+ *
+ * Not a protocol object: nothing signs this and nothing sends it. It exists so
+ * two seats' records can be asked "is this the same run?" without the answer
+ * being "no, because you are not me".
+ */
+const runId = (r) => resultId({ ...r, nodePubkey: new Uint8Array(32) });

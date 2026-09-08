@@ -828,6 +828,22 @@ export class Round {
       .run(roundIdBytes, entryIdBytes, nodePubkey, resultIdBytes, bytes, this.now()).changes;
   }
 
+  /** Which run a mark belongs to, so a receipt can say what it completed. */
+  runOf(checkpointIdBytes) {
+    const row = this.db.prepare(
+      'SELECT round_id, entry_id FROM checkpoints WHERE checkpoint_id = ?').get(checkpointIdBytes);
+    return row
+      ? { roundId: new Uint8Array(row.round_id), entryId: new Uint8Array(row.entry_id) }
+      : null;
+  }
+
+  /** Has this node already signed a result for that run? */
+  hasResult(roundIdBytes, entryIdBytes, nodePubkey) {
+    return !!this.db.prepare(
+      'SELECT 1 FROM results WHERE round_id = ? AND entry_id = ? AND node_pubkey = ?')
+      .get(roundIdBytes, entryIdBytes, nodePubkey);
+  }
+
   /** Every signed result this node holds for a run, its own included. */
   results(roundIdBytes, entryIdBytes) {
     return this.db.prepare(

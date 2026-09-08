@@ -10,6 +10,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { WebSocket } from 'ws';
+import { createServer } from 'node:http';
 import { openStore } from '../src/store.js';
 import { serve } from '../src/server.js';
 import { init, step } from '../../core/src/sim.js';
@@ -18,7 +19,11 @@ import { encodeRoundContract, encodeEntryContract, roundId, entryId } from '../.
 import { encodeInputBatch, batchId } from '../../protocol/src/batch.js';
 import { encodeCheckpoint, checkpointId, joinSigned, NO_PREVIOUS } from '../../protocol/src/checkpoint.js';
 import { encodeCheckpointReceipt, receiptId, joinSignedReceipt, SIGNED_RECEIPT_BYTES } from '../../protocol/src/receipt.js';
-import { splitSignedResult, decodePlayerResult, resultId, SIGNED_RESULT_BYTES } from '../../protocol/src/result.js';
+import {
+  splitSignedResult, decodePlayerResult, resultId, encodePlayerResult,
+  joinSignedResult, SIGNED_RESULT_BYTES,
+} from '../../protocol/src/result.js';
+import { verifiedFinal } from '../src/verdict.js';
 import { GENESIS } from '../../protocol/src/transcript.js';
 import { toHex } from '../../protocol/src/hash.js';
 import { seedWordForEntry } from '../../protocol/src/seed.js';
@@ -85,8 +90,14 @@ function play(ticks, entry) {
  * A WHOLE ROUND THROUGH THE DAEMON'S OWN DOORS: contract, entry, inputs, a
  * mark, the second seat's receipt for it, and then "close".
  */
-async function roundThrough(node, { objectFirst = false, carried = true } = {}) {
-  const c = contractFor(node.round ? node.round.pubkey : b32(0));
+async function roundThrough(node, {
+  objectFirst = false, carried = true, contract, keepSocket = false,
+  // WHICH SEAT CARRIES THE MARK. A receipt only counts from a key the round's
+  // committee names, so a test with a different committee has to hand in the
+  // seat that belongs to it.
+  seat = { secret: peer, pubkey: ed25519.getPublicKey(peer) },
+} = {}) {
+  const c = contract || contractFor(node.round ? node.round.pubkey : b32(0));
   const rid = roundId(c);
   assert.equal((await post(node.port, '/round', encodeRoundContract(c))).status, 201);
 
@@ -120,9 +131,9 @@ async function roundThrough(node, { objectFirst = false, carried = true } = {}) 
   // AND THE SECOND SEAT'S RECEIPT, which is what makes it canonical (13C).
   // Withheld when the caller wants to see what an uncarried transcript does.
   if (carried) {
-    const receipt = { checkpointId: mid, receivedAtMs: 1234n, nodePubkey: ed25519.getPublicKey(peer) };
+    const receipt = { checkpointId: mid, receivedAtMs: 1234n, nodePubkey: seat.pubkey };
     const rbody = encodeCheckpointReceipt(receipt);
-    assert.equal(await s.say(joinSignedReceipt(rbody, ed25519.sign(receiptId(receipt), peer))), 'held');
+    assert.equal(await s.say(joinSignedReceipt(rbody, ed25519.sign(receiptId(receipt), seat.secret))), 'held');
   }
 
   if (objectFirst) {
@@ -131,8 +142,8 @@ async function roundThrough(node, { objectFirst = false, carried = true } = {}) 
   }
 
   assert.equal(await s.say(`close ${toHex(rid)}`), 'closed');
-  s.ws.close();
-  return { rid, eid, contract: c };
+  if (!keepSocket) s.ws.close();
+  return { rid, eid, contract: c, socket: s, mark: { id: mid, seat } };
 }
 
 const hexToBytes = (h) => Uint8Array.from(h.match(/../g).map((x) => parseInt(x, 16)));
@@ -143,7 +154,10 @@ const results = async (port, rid, eid) => {
 };
 
 /** Wait for the daemon's own work to finish, without doing any of it. */
-const settle = async (node) => { for (const p of node.verifier.done) await p; };
+const settle = async (node) => {
+  for (const p of node.verifier.done) await p;
+  await node.verifier.settling;               // and the asking the close set off
+};
 
 /**
  * THE MEASUREMENT: a round closed over the socket leaves a signed result
@@ -257,4 +271,206 @@ test('a transcript no committee has carried is replayed and not signed', async (
     assert.match(answers[0].why, /carried by 2 committee members|no checkpoints/);
     assert.equal((await results(node.port, rid, eid)).count, 0);
   } finally { await node.close(); }
+});
+
+/**
+ * TWO SEATS, AND EACH ENDS UP HOLDING THE OTHER'S SIGNATURE.
+ *
+ * Serving a result nobody fetches is a committee of one writing in a diary.
+ * Section 13 needs the threshold to have signed the IDENTICAL result, and that
+ * is only checkable on a node holding more than its own signature. Two
+ * daemons, two identities, one contract naming both - the same shape
+ * `run-2of2` binds on Tailscale, over real sockets here.
+ */
+test('two daemons each fetch the other\'s result and a 2-of-2 counts to two', async () => {
+  const a = await serve(openStore(':memory:'), { port: 0, ...FUNDED, randomnessFor: () => RANDOMNESS });
+  const b = await serve(openStore(':memory:'), { port: 0, ...FUNDED, randomnessFor: () => RANDOMNESS });
+  try {
+    // ONE CONTRACT, naming both seats. Neither node is the committee; the
+    // contract is, and it names them by key.
+    const c = {
+      ...contractFor(a.round.pubkey),
+      nodes: [a.round.pubkey, b.round.pubkey],
+    };
+    assert.notDeepEqual(a.round.pubkey, b.round.pubkey, 'two daemons share one identity');
+
+    // Each is told where the other answers. A key is not an address: the
+    // contract says whose signatures count, the operator says where they are.
+    a.verifier.peers = [`http://127.0.0.1:${b.port}`];
+    b.verifier.peers = [`http://127.0.0.1:${a.port}`];
+
+    // Each daemon's mark is carried by the OTHER seat, which is what the
+    // contract names and what 13C's threshold counts.
+    const seatB = { secret: b.round.identity.secret, pubkey: b.round.pubkey };
+    const seatA = { secret: a.round.identity.secret, pubkey: a.round.pubkey };
+    const first = await roundThrough(a, { contract: c, seat: seatB });
+    const second = await roundThrough(b, { contract: c, seat: seatA });
+    assert.equal(toHex(first.rid), toHex(second.rid), 'the two nodes are not in the same round');
+    await settle(a); await settle(b);
+
+    // THE DAEMON ALREADY ASKED. Closing a round replays it and then fetches
+    // the other seats, so the node that closed SECOND holds both signatures
+    // with nothing in this test having called `gather`.
+    const auto = await results(b.port, first.rid, first.eid);
+    assert.equal(auto.count, 2,
+      'the second daemon to close did not fetch the first one\'s result by itself');
+    assert.equal(auto.bytes.length, 2 * SIGNED_RESULT_BYTES);
+
+    // AND NOW THEY ASK. Two of two, counted against the contract's slots.
+    const gotA = await a.verifier.gather(first.rid, first.eid);
+    const gotB = await b.verifier.gather(first.rid, first.eid);
+
+    assert.equal(gotA.ok, true, gotA.why);
+    assert.equal(gotA.fetched >= 1, true, 'the peer served no result');
+    assert.equal(gotA.held, 2, 'the node does not hold two results');
+    assert.equal(gotA.needed, 2, 'the threshold did not come off the contract');
+    assert.equal(gotA.verified, 2);
+    assert.equal(gotA.final, true, gotA.why);
+    assert.equal(gotB.final, true, gotB.why);
+
+    // THE TWO RECORDS DESCRIBE ONE RUN AND NAME TWO SIGNERS.
+    //
+    // Their result IDS cannot match and must not be expected to: section 13's
+    // PlayerResult carries `node_pubkey`, so a record names who made it. What
+    // "the identical result" means is the identical RUN, and that is what the
+    // two agree on - same player, same outcome, same score, same transcript,
+    // same core - while the seats differ.
+    const held = a.round.results(first.rid, first.eid);
+    assert.equal(held.length, 2);
+    const [one, two] = held.map((r) => decodePlayerResult(splitSignedResult(r.bytes).body));
+    assert.notDeepEqual(one.nodePubkey, two.nodePubkey, 'one seat signed twice');
+    assert.deepEqual(one.playerPubkey, two.playerPubkey);
+    assert.equal(one.outcome, two.outcome);
+    assert.equal(one.score, two.score);
+    assert.deepEqual(one.transcriptHash, two.transcriptHash);
+    assert.deepEqual(one.simCoreHash, two.simCoreHash);
+    assert.notDeepEqual(held[0].resultId, held[1].resultId,
+      'two records that name different signers produced one id');
+
+    // and a seat that is not on the committee does not count, however well it
+    // signs: the contract names the seats, not whoever answers.
+    const outsider = { ...c, nodes: [a.round.pubkey, b32(0xee)] };
+    const short = verifiedFinal(held.map((r) => r.bytes), { contract: outsider });
+    assert.equal(short.final, false, 'a stranger was counted as a seat');
+    assert.equal(short.strangers, 1);
+
+    // ASKING AGAIN CHANGES NOTHING: one seat, one result.
+    const again = await a.verifier.gather(first.rid, first.eid);
+    assert.equal(again.held, 2, 'a second fetch stored the peer\'s result twice');
+    assert.equal(again.kept, 0, 'a record already held was written again');
+    assert.equal(again.final, true);
+  } finally { await a.close(); await b.close(); }
+});
+
+/**
+ * A RECEIPT THAT ARRIVES LATE STILL MAKES A RESULT.
+ *
+ * 13C's canonical prefix grows as receipts come in, so a run replayed before
+ * its transcript was carried is not a failure - it is an EARLY one. Without a
+ * retry the node would have replayed it, found the answer, and thrown the
+ * answer away: a late receipt would leave that run permanently unsigned.
+ */
+test('a receipt arriving after the close produces the result the replay could not sign', async () => {
+  const node = await serve(openStore(':memory:'), { port: 0, ...FUNDED, randomnessFor: () => RANDOMNESS });
+  try {
+    // Closed with the mark held by ONE of two seats, so there is no canonical
+    // transcript and nothing to sign over.
+    const { rid, eid, socket, mark } = await roundThrough(node, { carried: false, keepSocket: true });
+    await settle(node);
+    assert.equal((await results(node.port, rid, eid)).count, 0,
+      'a result was signed over a transcript nobody had carried');
+
+    // NOW THE SECOND SEAT CARRIES IT, on the same socket a peer would use.
+    const receipt = { checkpointId: mark.id, receivedAtMs: 4321n, nodePubkey: mark.seat.pubkey };
+    const said = await socket.say(joinSignedReceipt(
+      encodeCheckpointReceipt(receipt), ed25519.sign(receiptId(receipt), mark.seat.secret)));
+    assert.equal(said, 'held');
+
+    await node.verifier.settling;
+    for (const p of node.verifier.done) await p;
+
+    const now = await results(node.port, rid, eid);
+    assert.equal(now.count, 1, 'the late receipt did not produce a result');
+    const result = decodePlayerResult(splitSignedResult(now.bytes).body);
+    assert.deepEqual(result.transcriptHash, node.round.canonicalTranscript(rid, eid).hash);
+    assert.equal(result.score, 257);
+
+    // AND THE SEAT DOES NOT REPLAY AGAIN FOR A RUN IT HAS SIGNED. Asked
+    // directly, the retry declines rather than queueing work whose answer the
+    // store would only throw away.
+    assert.equal(node.verifier.retry(rid, eid), null,
+      'a seat that has signed was queued to replay again');
+
+    // AND A SECOND LATE RECEIPT DOES NOT SIGN IT AGAIN. One seat, one result.
+    const again = { checkpointId: mark.id, receivedAtMs: 4321n, nodePubkey: mark.seat.pubkey };
+    await socket.say(joinSignedReceipt(
+      encodeCheckpointReceipt(again), ed25519.sign(receiptId(again), mark.seat.secret)));
+    await node.verifier.settling;
+    assert.equal((await results(node.port, rid, eid)).count, 1);
+
+    socket.ws.close();
+  } finally { await node.close(); }
+});
+
+/**
+ * WHAT COMES BACK FROM A PEER IS NOT BELIEVED BECAUSE IT CAME BACK.
+ *
+ * A fetched record is 232 bytes of somebody's claim. It is checked against the
+ * signature under the key it names and against the run it is filed under; a
+ * peer that could write into this node's tables by answering would be a peer
+ * that decides what this node holds.
+ */
+test('a peer that serves forged or foreign records adds nothing to the store', async () => {
+  const node = await serve(openStore(':memory:'), { port: 0, ...FUNDED, randomnessFor: () => RANDOMNESS });
+  let liar;
+  try {
+    const { rid, eid } = await roundThrough(node);
+    await settle(node);
+    assert.equal((await results(node.port, rid, eid)).count, 1);
+
+    // The node's own record, re-signed with a key it does not belong to, and
+    // a perfectly good record about a DIFFERENT round.
+    const own = (await results(node.port, rid, eid)).bytes;
+    const mine = decodePlayerResult(splitSignedResult(own).body);
+    const stranger = ed25519.utils.randomSecretKey();
+    const forged = joinSignedResult(
+      splitSignedResult(own).body,
+      ed25519.sign(resultId(mine), stranger));                 // wrong key, right bytes
+    // The foreign one is otherwise IMPECCABLE: a real seat of this round's
+    // committee, signing correctly - about a different round. Only the check
+    // that a record is about the run it is filed under can refuse it, so the
+    // fixture would not notice that check missing if this were forged too.
+    const elsewhere = { ...mine, roundId: b32(0x77), nodePubkey: ed25519.getPublicKey(peer) };
+    const foreign = joinSignedResult(
+      encodePlayerResult(elsewhere), ed25519.sign(resultId(elsewhere), peer));
+
+    const body = new Uint8Array(2 * SIGNED_RESULT_BYTES);
+    body.set(forged, 0);
+    body.set(foreign, SIGNED_RESULT_BYTES);
+
+    liar = createServer((req, res) => {
+      res.writeHead(200, { 'content-type': 'application/octet-stream' });
+      res.end(Buffer.from(body));
+    });
+    await new Promise((r) => liar.listen(0, '127.0.0.1', r));
+    node.verifier.peers = [`http://127.0.0.1:${liar.address().port}`];
+
+    const got = await node.verifier.gather(rid, eid);
+    assert.equal(got.fetched, 2, 'the peer served nothing to refuse');
+    assert.equal(got.kept, 0, 'a forged or foreign record was written to the store');
+    assert.equal(got.held, 1, 'the store grew from a peer that proved nothing');
+    assert.equal(got.final, false, 'one seat of two was called final');
+
+    // AND A PEER THAT IS SIMPLY DOWN IS NOT A FAULT, only a peer that answered
+    // nothing: a committee that stopped counting when a node was offline would
+    // be a committee any one node could stall.
+    node.verifier.peers = ['http://127.0.0.1:1'];
+    const quiet = await node.verifier.gather(rid, eid);
+    assert.equal(quiet.ok, true, quiet.why);
+    assert.equal(quiet.refused, 1);
+    assert.equal(quiet.held, 1);
+  } finally {
+    if (liar) await new Promise((r) => liar.close(r));
+    await node.close();
+  }
 });

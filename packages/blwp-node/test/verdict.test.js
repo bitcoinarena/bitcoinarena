@@ -13,7 +13,7 @@ import { openStore } from '../src/store.js';
 import { Round } from '../src/round.js';
 import { replayInWorker } from '../src/replay.js';
 import { resultFrom, signResult, verifiedFinal } from '../src/verdict.js';
-import { resultId } from '../../protocol/src/result.js';
+import { resultId, joinSignedResult } from '../../protocol/src/result.js';
 import { transcriptHash } from '../../protocol/src/transcript.js';
 import { encodeInputBatch, batchId } from '../../protocol/src/batch.js';
 import { GENESIS } from '../../protocol/src/transcript.js';
@@ -146,54 +146,66 @@ test('nodes that replayed the same run sign the same result, and five of seven v
   for (const x of signed) assert.equal(x.built.score, signed[0].built.score);
   for (const x of signed) assert.equal(x.built.outcome, signed[0].built.outcome);
 
-  // FIVE OF SEVEN ON ONE RESULT. Every node signs its own result object
-  // (its own key is a field), so agreement is on the run, not on the bytes:
-  // rebuild each node's view of ONE node's result and sign that.
-  const one = resultFrom({ answer, contract: s.contract, entry: s.entry,
-    transcript: s.canonical, nodePubkey: COMMITTEE[0] }).result;
-  const id = resultId(one);
-  const over = (i) => ({ resultId: id, nodePubkey: COMMITTEE[i], signature: ed25519.sign(id, secrets[i]) });
+  // FIVE OF SEVEN ON ONE RUN.
+  //
+  // Each seat signs its OWN record - section 13's PlayerResult names its
+  // signer - so their ids differ by construction and the agreement is on the
+  // run they describe, not on bytes that could never match.
+  const recordFor = (i) => {
+    const built = resultFrom({ answer, contract: s.contract, entry: s.entry,
+      transcript: s.canonical, entryId: s.canonical.entryId, nodePubkey: COMMITTEE[i] });
+    return joinSignedResult(built.encoded, signResult(built.result, secrets[i]).signature);
+  };
+  const record = [0, 1, 2, 3, 4, 5, 6].map(recordFor);
 
-  const five = verifiedFinal([0, 1, 2, 3, 4].map(over), { contract: s.contract });
+  const five = verifiedFinal(record.slice(0, 5), { contract: s.contract });
   assert.equal(five.ok, true, five.why);
   assert.equal(five.needed, 5, 'the threshold did not come off the contract');
-  assert.equal(five.verified, 5);
   assert.equal(five.final, true, five.why);
+  assert.equal(five.agreed, 5);
 
   // FOUR IS NOT FIVE.
-  const four = verifiedFinal([0, 1, 2, 3].map(over), { contract: s.contract });
+  const four = verifiedFinal(record.slice(0, 4), { contract: s.contract });
   assert.equal(four.final, false);
-  assert.equal(four.verified, 4);
+  assert.equal(four.agreed, 4);
+  assert.match(four.why, /4 of 5 agree/);
 
-  // A SIGNATURE OVER A DIFFERENT RESULT IS NOT A SIGNATURE OVER THIS ONE.
-  const otherId = resultId({ ...one, score: one.score + 1 });
-  const lying = [over(0), over(1), over(2), over(3),
-    { resultId: otherId, nodePubkey: COMMITTEE[4], signature: ed25519.sign(otherId, secrets[4]) }];
-  const split = verifiedFinal(lying, { contract: s.contract });
-  assert.equal(split.verified, 5, 'the fifth signature does verify - it is over another result');
-  assert.equal(split.final, false, 'four on one result and one on another was called five');
+  // FOUR ON ONE RUN AND A FIFTH ON ANOTHER IS NOT FIVE. The fifth verifies
+  // perfectly and describes a different drive.
+  const otherRun = resultFrom({ answer: { ...answer, score: answer.score + 1 },
+    contract: s.contract, entry: s.entry, transcript: s.canonical,
+    entryId: s.canonical.entryId, nodePubkey: COMMITTEE[4] });
+  const split = [...record.slice(0, 4),
+    joinSignedResult(otherRun.encoded, signResult(otherRun.result, secrets[4]).signature)];
+  const disagreed = verifiedFinal(split, { contract: s.contract });
+  assert.equal(disagreed.final, false, 'four on one run and one on another was called five');
+  assert.equal(disagreed.agreed, 4);
 
-  // A FORGERY IS DROPPED BEFORE THE COUNT, which is what this package can do
-  // and the protocol package says it cannot.
-  const forged = [over(0), over(1), over(2), over(3),
-    { resultId: id, nodePubkey: COMMITTEE[4], signature: ed25519.sign(id, secrets[5]) }];
+  // A SIGNATURE MADE WITH THE WRONG KEY IS NOT A SIGNATURE.
+  const built5 = resultFrom({ answer, contract: s.contract, entry: s.entry,
+    transcript: s.canonical, entryId: s.canonical.entryId, nodePubkey: COMMITTEE[4] });
+  const forged = [...record.slice(0, 4),
+    joinSignedResult(built5.encoded, signResult(built5.result, secrets[5]).signature)];
   const bad = verifiedFinal(forged, { contract: s.contract });
-  assert.equal(bad.verified, 4);
   assert.equal(bad.forged, 1);
   assert.equal(bad.final, false, 'a signature from the wrong key was counted');
 
-  // A NODE COUNTED TWICE IS NOT TWO NODES.
-  const doubled = [over(0), over(1), over(2), over(3), over(3)];
+  // ONE SEAT, ONE VOTE.
+  const doubled = [...record.slice(0, 4), record[3]];
   const twice = verifiedFinal(doubled, { contract: s.contract });
   assert.equal(twice.doubled, 1);
-  assert.equal(twice.verified, 4);
   assert.equal(twice.final, false, 'one seat carried two votes');
 
-  // and a stranger's perfectly good signature is not a seat
-  const stranger = ed25519.utils.randomSecretKey();
-  const outside = [over(0), over(1), over(2), over(3),
-    { resultId: id, nodePubkey: ed25519.getPublicKey(stranger), signature: ed25519.sign(id, stranger) }];
-  assert.equal(verifiedFinal(outside, { contract: s.contract }).final, false);
+  // AND A STRANGER'S PERFECTLY GOOD SIGNATURE IS NOT A SEAT.
+  const strangerSecret = ed25519.utils.randomSecretKey();
+  const strangerBuilt = resultFrom({ answer, contract: s.contract, entry: s.entry,
+    transcript: s.canonical, entryId: s.canonical.entryId,
+    nodePubkey: ed25519.getPublicKey(strangerSecret) });
+  const outside = [...record.slice(0, 4),
+    joinSignedResult(strangerBuilt.encoded, signResult(strangerBuilt.result, strangerSecret).signature)];
+  const out = verifiedFinal(outside, { contract: s.contract });
+  assert.equal(out.strangers, 1);
+  assert.equal(out.final, false);
 });
 
 /**
@@ -228,19 +240,20 @@ test('a run that has not ended is not signed as a failure', async () => {
 test('the committee size decides the threshold, and an unknown size is refused', async () => {
   const s = stored(600);
   const answer = await replayInWorker(s.transcript, s.entry, { roundRandomness: RANDOMNESS });
-  const one = resultFrom({ answer, contract: s.contract, entry: s.entry,
-    transcript: s.canonical, nodePubkey: COMMITTEE[0] }).result;
-  const id = resultId(one);
-  const over = (i) => ({ resultId: id, nodePubkey: COMMITTEE[i], signature: ed25519.sign(id, secrets[i]) });
+  const recordFor = (i) => {
+    const built = resultFrom({ answer, contract: s.contract, entry: s.entry,
+      transcript: s.canonical, entryId: s.canonical.entryId, nodePubkey: COMMITTEE[i] });
+    return joinSignedResult(built.encoded, signResult(built.result, secrets[i]).signature);
+  };
 
   const two = { ...s.contract, gameVerifySlots: 2, nodes: COMMITTEE.slice(0, 2) };
-  const both = verifiedFinal([over(0), over(1)], { contract: two });
+  const both = verifiedFinal([recordFor(0), recordFor(1)], { contract: two });
   assert.equal(both.needed, 2, 'a two-slot round did not need two');
   assert.equal(both.final, true, both.why);
-  assert.equal(verifiedFinal([over(0)], { contract: two }).final, false);
+  assert.equal(verifiedFinal([recordFor(0)], { contract: two }).final, false);
 
   const five = { ...s.contract, gameVerifySlots: 5 };
-  assert.match(verifiedFinal([over(0)], { contract: five }).why, /no committee threshold for 5/);
+  assert.match(verifiedFinal([recordFor(0)], { contract: five }).why, /no committee threshold for 5/);
 });
 
 /**
