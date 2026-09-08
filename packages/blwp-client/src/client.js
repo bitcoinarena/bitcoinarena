@@ -44,6 +44,8 @@ import { fromHex, toHex } from '../../protocol/src/hash.js';
 import {
   decodeCheckpointReceipt, receiptId, splitSignedReceipt, SIGNED_RECEIPT_BYTES,
 } from '../../protocol/src/receipt.js';
+import { decodeGhost } from '../../protocol/src/ghost.js';
+import { TYPE_GHOST } from '../../protocol/src/constants.js';
 import { discover } from './directory.js';
 
 /**
@@ -250,6 +252,18 @@ export class Client {
     this.marking = null;
     this.said = [];
 
+    // WHAT ARRIVES UNASKED. A GHOSTS frame is not an answer to anything: the
+    // node pushes it when somebody else's truck moves, so it cannot go into
+    // the queue that pairs replies with requests. Measured before this
+    // existed: every message went to `said.shift()`, so a picture arriving
+    // while a batch was in flight WAS the answer to that batch - the client
+    // read "the node stored N ticks" off 147 bytes of somebody's truck, and
+    // the real answer then went to the next request, and so on for the rest
+    // of the run. One socket, two kinds, and the type byte says which - the
+    // same rule the node applies to what comes the other way.
+    this.ghosts = 0;
+    this.onGhost = null;
+
     // THE RECONNECT, which used to live in the jslib where nothing could
     // measure it. `reconnecting` is the one in flight; `drops`, `tries` and
     // `backoff` are what a status line reads. `sleep` and `now` are injected
@@ -329,8 +343,20 @@ export class Client {
       sock.binaryType = 'arraybuffer';
       sock.addEventListener('error', (e) => reject(new Error(e.message || 'socket error')));
       sock.addEventListener('message', (e) => {
+        if (typeof e.data !== 'string') {
+          const bytes = new Uint8Array(e.data);
+          // A PICTURE IS NOT A REPLY. Everything else binary that comes back -
+          // a receipt for a mark - is, so the test is the type byte and not
+          // "is it binary": a client that routed all bytes to a handler would
+          // lose its receipts instead of its answers.
+          if (bytes[0] === TYPE_GHOST) return this.takeGhost(bytes);
+          const waitingForBytes = this.said.shift();
+          if (waitingForBytes) waitingForBytes(bytes);
+          return undefined;
+        }
         const waiting = this.said.shift();
-        if (waiting) waiting(typeof e.data === 'string' ? e.data : new Uint8Array(e.data));
+        if (waiting) waiting(e.data);
+        return undefined;
       });
       sock.addEventListener('open', () => {
         this.sock = sock;
@@ -412,6 +438,34 @@ export class Client {
     })().finally(() => { this.reconnecting = null; });
 
     return this.reconnecting;
+  }
+
+  /**
+   * ONE PICTURE IN. Decoded here so a page never sees bytes, counted so a
+   * status line can say the world is populated, and handed on if anybody is
+   * listening. A frame nobody listens for is dropped rather than queued: it is
+   * a 5 Hz picture of a truck that has already moved, and a backlog of them is
+   * worse than none.
+   *
+   * NOTHING HERE IS AN INPUT. 0.10: another player's truck is a picture, never
+   * an input to my simulation. This client hands it to a renderer and to
+   * nothing else.
+   */
+  takeGhost(bytes) {
+    let ghost;
+    try { ghost = decodeGhost(bytes); }
+    catch { this.badGhosts = (this.badGhosts || 0) + 1; return; }
+    this.ghosts++;
+    if (this.onGhost) this.onGhost(ghost);
+  }
+
+  /**
+   * SUBSCRIBE: tell the node which round and entry this is, and be shown the
+   * others. The answer is `watching N` and the N frames follow it, which is
+   * why they cannot share the answer queue.
+   */
+  watch(round, entry) {
+    return this.send(`watch ${toHex(round)} ${toHex(entry)}`);
   }
 
   send(message) {
