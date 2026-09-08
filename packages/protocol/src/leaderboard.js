@@ -28,12 +28,43 @@ import { VOID, ENTRY_VOID, compareBytes, computePayoutTable } from './payout.js'
  * same as a column somebody forgot, and the first is a decision while the
  * second is a bug.
  */
+/**
+ * THE THREE 0.11 FIELDS A SIGNED FINAL CANNOT SUPPLY, each with what WOULD
+ * supply it and what stands in the way.
+ *
+ * A reason alone is only half an answer. "Not on a final" tells a caller not
+ * to expect the column; it does not tell them whether anyone is coming for it,
+ * which is the difference between a decision somebody owes and a task somebody
+ * forgot. Each line below names the source and the blocker, so the absence can
+ * be argued with rather than merely observed.
+ *
+ * NONE OF THE THREE IS FAKED FROM THE CLIENT. A board that guessed at any of
+ * them would be showing a player something no node could reproduce, and the
+ * whole point of this file is that two players comparing screens see the same
+ * rows.
+ */
 export const NOT_ON_A_FINAL = [
-  'pseudonym (0.12: "clients MAY derive a friendly pseudonym" - a rendering of '
-  + 'the player key, not a protocol field)',
-  'cargo statistics (not carried on a signed final and not derivable from one)',
-  'live run status (a final is after the run; live status would come from marks '
-  + 'and ghosts, which is a different letter)',
+  // The key IS on the row, so a client can render whatever it likes from it.
+  // What is not settled is HOW: 0.12 says "clients MAY derive a friendly
+  // pseudonym (brave-otter-4711)" and specifies no scheme. Two nodes with
+  // different wordlists would show one player under two names, so a scheme is
+  // a thing somebody chooses once - the BOND_MARKER and checkpoint class - and
+  // writing a plausible wordlist here would settle it by accident.
+  'pseudonym (0.12: "clients MAY derive a friendly pseudonym" - the player key '
+  + 'is on the row and the SCHEME is unchosen; a wordlist picked here would '
+  + 'settle it by accident, and two wordlists would name one player twice)',
+
+  // The core carries cargo in its state, so a replay has it. A final does not,
+  // and this board reads finals.
+  'cargo statistics (not on a final; the core holds cargo in its state, so it '
+  + 'comes from REPLAYING the transcript - the replay pool of M2.3, not a '
+  + 'field anyone can add to a result)',
+
+  // Marks are published during the run and ghosts are its pictures; both reach
+  // a client through the daemon.
+  'live run status (a final is after the run; it would come from marks and '
+  + 'ghosts, which reach a client through the daemon - BLOCKED ON 22, the same '
+  + 'dependency as putting this board on a screen)',
 ];
 
 /**

@@ -334,3 +334,60 @@ test('the board says it counted signatures rather than verifying them', () => {
   assert.equal(paid.unchecked.length, 4);
   assert.equal(paidChecked.unchecked.length, 3);
 });
+
+/**
+ * THE THREE FIELDS A FINAL CANNOT SUPPLY: nobody can slip one in, and the
+ * board says what would fill each and what stands in the way.
+ *
+ * A reason alone is half an answer. "Not on a final" tells a caller not to
+ * expect the column; it does not say whether anyone is coming for it, which is
+ * the difference between a decision somebody owes and a task somebody forgot.
+ */
+test('pseudonym, cargo and live status cannot be injected, and each names its blocker', () => {
+  // a result and a row dressed with all three, plus a caller's own guesses
+  const dressed = {
+    ...resultFor(0x21, 900),
+    pseudonym: 'brave-otter-4711', cargoDelivered: 99, liveStatus: 'driving',
+  };
+  const id = resultId(dressed);
+  const rows = [{
+    result: dressed,
+    signedBy: COMMITTEE.slice(0, RESULTS_FOR_FINAL).map((nodePubkey) => ({ resultId: id, nodePubkey })),
+    pseudonym: 'injected', cargoDelivered: 1, liveStatus: 'winning',
+  }];
+
+  // A SECOND RUNNER, ONE THE CARGO WOULD OVERTAKE. 900 is behind 950, and
+  // 900 + 99 cargo is ahead of it: if any of the three fields reached the
+  // ordering, these two would swap.
+  rows.push(row(0x22, 950));
+
+  const board = leaderboard(rows, { contract });
+  assert.equal(board.ok, true, board.why);
+  assert.deepEqual(Object.keys(board.rows[1]).sort(),
+    ['outcome', 'playerPubkey', 'rank', 'score', 'signers'],
+    'the board grew a column from something a caller wrote');
+  for (const k of ['pseudonym', 'cargoDelivered', 'liveStatus'])
+    assert.equal(k in board.rows[1], false, `${k} leaked onto the row`);
+
+  // and the dressing moved nothing: same rows, same order, same ranks, as the
+  // two plain results
+  const plain = leaderboard([row(0x21, 900), row(0x22, 950)], { contract });
+  assert.deepEqual(board.rows, plain.rows, 'a field a final cannot carry moved a row');
+  assert.deepEqual(board.rows.map((r) => [toHex(r.playerPubkey).slice(0, 2), r.rank]),
+    [['22', 1], ['21', 2]], 'the cargo count overtook a higher score');
+
+  // EACH NOTICE NAMES A SOURCE AND A BLOCKER
+  const [pseudonym, cargo, live] = NOT_ON_A_FINAL;
+  assert.match(pseudonym, /the player key is on the row/);
+  assert.match(pseudonym, /SCHEME is unchosen/);
+  assert.match(cargo, /comes from REPLAYING the transcript/);
+  assert.match(cargo, /M2\.3/);
+  assert.match(live, /marks and ghosts/);
+  assert.match(live, /BLOCKED ON 22/);
+
+  // they are reported in the same shape as the committee-signature notice
+  assert.equal(board.unchecked.length, 4);
+  assert.equal(board.unchecked[0], SIGNATURES_NOT_VERIFIED);
+  assert.deepEqual(board.unchecked.slice(1), NOT_ON_A_FINAL);
+  for (const u of board.unchecked) assert.equal(typeof u, 'string');
+});
