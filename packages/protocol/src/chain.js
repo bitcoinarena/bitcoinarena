@@ -85,6 +85,19 @@ export const merkleRootOf = (h) => header(h).slice(36, 68);
 export const blockHashOf = (h) => hash256(header(h));
 
 /**
+ * The time a header claims, from bytes 68..72, LITTLE-ENDIAN and in SECONDS.
+ *
+ * It is a claim and not a clock: a miner may write a timestamp up to two hours
+ * ahead of its own, and a header's time need not exceed the one before it.
+ * Nothing may compare this to a protocol instant on its own - that is what the
+ * median time past is for.
+ */
+export const blockTimeOf = (h) => {
+  const b = header(h);
+  return ((b[71] << 24) | (b[70] << 16) | (b[69] << 8) | b[68]) >>> 0;
+};
+
+/**
  * The target a header CLAIMS, from its compact form at bytes 72..76.
  *
  * Claims, because these four bytes are written by whoever hands the header

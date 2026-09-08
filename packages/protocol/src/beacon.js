@@ -24,6 +24,7 @@
 import { toHex, taggedHash } from './hash.js';
 import { TAG, networkOf } from './constants.js';
 import { genesisFor } from './genesis.js';
+import { blockHashOf, blockTimeOf, chainWork } from './chain.js';
 
 const cat = (...parts) => {
   const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
@@ -161,4 +162,122 @@ export function committeeSeedFromBeacon(contract, { roundId, randomness, height,
       rootsAreOne: true,
     };
   } catch (err) { return { ok: false, why: err.message }; }
+}
+
+/**
+ * BIP-113's span: a block's time is the median of ELEVEN, itself included.
+ *
+ * Bitcoin Core's `CBlockIndex::GetMedianTimePast` walks back eleven entries
+ * starting at the block itself, so the median covers heights N-10..N. Written
+ * out rather than guessed, because eleven-with-itself and eleven-before-it are
+ * different numbers on the same chain.
+ */
+export const MEDIAN_TIME_SPAN = 11;
+
+/**
+ * The median time past at `at`, in seconds, from headers in height order.
+ *
+ * `headers[0]` is `firstHeight`. Answers null when the view does not reach
+ * back far enough - "I cannot compute it here" and "it is early" must never
+ * be the same answer.
+ */
+export function medianTimePast(headers, firstHeight, at) {
+  const last = at - firstHeight;
+  const first = last - MEDIAN_TIME_SPAN + 1;
+  if (first < 0 || last >= headers.length) return null;
+  const times = [];
+  for (let i = first; i <= last; i++) times.push(blockTimeOf(headers[i]));
+  times.sort((a, b) => a - b);
+  return times[(MEDIAN_TIME_SPAN - 1) >> 1];
+}
+
+/**
+ * WHICH BLOCK SEEDS THIS ROUND'S COMMITTEE, from the chain and nothing else.
+ *
+ * 5A.5 names a beacon by TIME - "round_randomness = drand.round(committee_time)"
+ * - so that every node lands on the same value without anybody naming it. This
+ * network reads Bitcoin instead of drand (`genesis.randomnessSource` is
+ * `bitcoin-block-hash`), and a source is not a selection: two honest nodes
+ * polling at different moments would take different tips, derive different
+ * seeds and seat different committees. This is the missing half.
+ *
+ * THE HEIGHT IS DERIVED, NEVER NAMED. It is not on the contract, not on the
+ * entry and not an argument: an author who names the height picks the block,
+ * and picking the block is grinding the committee, which is the whole attack
+ * 5A.5 exists to close. What the contract commits to is `committee_time` and
+ * the source, and that is the commitment.
+ *
+ * THE FIRST BLOCK WHOSE MEDIAN TIME PAST IS AFTER `committee_time`. Not the
+ * tip, which moves; not the header's own nTime, which a miner may write two
+ * hours ahead and which need not increase. STRICTLY after, and that is a
+ * correction to the instruction rather than a liberty: `beaconIsAfterRound`
+ * already refuses a beacon AT committee_time - the creator could have held it
+ * when the round was made - so selecting a block at that instant would hand
+ * the validator a block it must reject. Selection and validation agree, and
+ * the stricter of the two wins.
+ *
+ * AND DEEP ENOUGH, by the round's own `censusConfirmations` rather than a
+ * second knob. A hash one block deep can be reorged out, and a reorg that
+ * changes the seed changes who sits. Too shallow is refused - not seated on,
+ * not closed on, not invented around.
+ */
+export function beaconFromChain(contract, view) {
+  if (!contract || typeof contract.committeeTimeMs !== 'bigint')
+    return { ok: false, why: 'that round names no committee time, so nothing says which block seeds it' };
+  if (!Number.isInteger(contract.censusConfirmations) || contract.censusConfirmations < 1)
+    return { ok: false, why: 'that round names no confirmation depth, so nothing says when a beacon is settled' };
+
+  // HEADERS, WHICH IS WHAT A PROVIDER SERVES. 25.1's sources hand 80-byte
+  // headers back to back and `agreedChain` weighs those; a beacon needs a
+  // hash and a time and neither is in a transaction, so asking for whole
+  // blocks here would demand of a provider something the protocol never asks
+  // it for. Mined and linked are still checked, by the same function the
+  // work comparison uses.
+  if (!view || !Array.isArray(view.headers) || !view.headers.length)
+    return { ok: false, why: 'a chain view is at least one header' };
+  if (!Number.isInteger(view.firstHeight))
+    return { ok: false, why: 'a chain view says which height it starts at' };
+  const chain = chainWork(view.headers);
+  if (!chain.ok)
+    return { ok: false, why: `this view is not a chain: ${chain.why}` };
+
+  const headers = view.headers;
+  const firstHeight = view.firstHeight;
+  const tipHeight = firstHeight + headers.length - 1;
+  const after = contract.committeeTimeMs;
+  let chosen = null;
+  for (let h = firstHeight; h <= tipHeight; h++) {
+    const mtp = medianTimePast(headers, firstHeight, h);
+    if (mtp === null) continue;                  // no median here yet
+    if (BigInt(mtp) * 1000n > after) { chosen = { height: h, mtp }; break; }
+  }
+
+  if (chosen === null) {
+    const reach = medianTimePast(headers, firstHeight, tipHeight);
+    return {
+      ok: false,
+      why: reach === null
+        ? `this view is ${headers.length} blocks and a median time past is taken over `
+          + `${MEDIAN_TIME_SPAN}, so it says nothing about when any of them was`
+        : `no block in this view is after this round's committee time ${after}: the `
+          + `last one's median time past is ${BigInt(reach) * 1000n}`,
+    };
+  }
+
+  const depth = tipHeight - chosen.height + 1;
+  if (depth < contract.censusConfirmations)
+    return {
+      ok: false,
+      why: `the block that seeds this round is ${depth} deep and this round asks for `
+        + `${contract.censusConfirmations}: a hash that shallow can be reorged out, and a `
+        + 'reorg that changes the seed changes who sits',
+    };
+
+  return {
+    ok: true,
+    height: chosen.height,
+    hash: blockHashOf(headers[chosen.height - firstHeight]),
+    timeMs: BigInt(chosen.mtp) * 1000n,
+    depth,
+  };
 }
