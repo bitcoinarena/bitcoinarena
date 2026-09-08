@@ -23,7 +23,9 @@
 // off disk." Same loop, same order, no second reading of the rules.
 import { isMainThread, parentPort, workerData, Worker } from 'node:worker_threads';
 import { init, step, submitLiquidation, runScore } from '../../core/src/sim.js';
-import { hash, O_SCORE, S_STATE } from '../../core/src/state.js';
+import {
+  hash, O_SCORE, S_STATE, O_TRUCK, T_X, T_Z, T_HEADING,
+} from '../../core/src/state.js';
 import { RUN_LIVE, RUN_DELIVERED } from '../../core/src/rules/gate.js';
 import { INPUT_WORDS } from '../../protocol/src/batch.js';
 import { seedWordForEntry } from '../../protocol/src/seed.js';
@@ -65,8 +67,20 @@ export const NO_SEED_RULE = 'that entry carries no world secret to replay from';
  * compared against the state THIS core reaches at that tick, and the first
  * that disagrees is named. A disagreement is not decided here - section 13
  * needs five of seven and one node is not a committee - it is reported.
+ *
+ * `pictures` are ticks a GHOST is wanted for (0.9 / 0.10): three truck words,
+ * read off this same run at the tick it asks for. They are taken HERE, inside
+ * the one loop, and not by a caller stepping its own copy - a second stepping
+ * path would agree today and be the live parallel simulator the moment either
+ * side changed. `ghosts.js` builds the frame and never touches the core.
+ *
+ * A PICTURE AT TICK N IS THE TRUCK AFTER N WAS STEPPED, which is not the mark
+ * convention above and is deliberate: a mark names the state it REACHED
+ * (published after stepping N-1), while a ghost names THE TICK IT IS A PICTURE
+ * OF, because 11's input chain covers ticks and `ghostBinds` checks the tick
+ * against the inputs that cover it. The same state is mark N+1 and ghost N.
  */
-export function replay(transcript, entry, { seedWord, roundRandomness, marks = [] } = {}) {
+export function replay(transcript, entry, { seedWord, roundRandomness, marks = [], pictures = [] } = {}) {
   if (!Number.isInteger(seedWord)) {
     if (!(entry?.worldSecret instanceof Uint8Array) || entry.worldSecret.length !== 32)
       return { ok: false, why: NO_SEED_RULE };
@@ -103,6 +117,8 @@ export function replay(transcript, entry, { seedWord, roundRandomness, marks = [
   // replay.
   const due = new Map((transcript.liquidations || []).map(([at, size]) => [at, size]));
   const want = new Map(marks.map((m) => [m.tick, hex(m.stateHash)]));
+  const wanted = new Set(pictures);
+  const taken = new Map();
 
   const st = init(seedWord);
   let checked = 0;
@@ -117,6 +133,19 @@ export function replay(transcript, entry, { seedWord, roundRandomness, marks = [
   for (const t of ticks) {
     if (due.has(t.tick)) submitLiquidation(st, due.get(t.tick));
     step(st, t.words[0], t.words[1], t.words[2], t.words[3], t.words[4]);
+
+    // THE PICTURE, if this tick is one somebody asked for. Three words and no
+    // more: x, z, heading are what draws a truck on a map, and every other
+    // word of the state would be a claim about somebody's run that a 5 Hz
+    // frame cannot prove and a renderer does not need.
+    if (wanted.has(t.tick)) {
+      taken.set(t.tick, {
+        tick: t.tick,
+        x: st.i32[O_TRUCK + T_X],
+        z: st.i32[O_TRUCK + T_Z],
+        heading: st.i32[O_TRUCK + T_HEADING],
+      });
+    }
 
     // A CHECKPOINT AT TICK N IS THE STATE AFTER N HAS BEEN STEPPED. The
     // client's own marks are made that way - it drives the core and then
@@ -149,6 +178,10 @@ export function replay(transcript, entry, { seedWord, roundRandomness, marks = [
   return {
     ok: true,
     outcome,
+    // Every tick that was asked for and reached, in the order asked. A tick
+    // this run never got to is simply absent - the caller is refusing it by
+    // name, and a zeroed picture would be a truck somewhere it never was.
+    pictures: pictures.map((at) => taken.get(at)).filter(Boolean),
     score: runScore(st),
     ticks: ticks.length,
     liquidations: due.size,
