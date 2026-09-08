@@ -536,12 +536,25 @@ export function resolveCensus(entries, { contract, resolve }) {
     const bond = recognizeBond(read.tx, e.vout, read.advert);
     if (!bond.ok) { excluded.push({ ...e, why: bond.why }); continue; }
 
+    // AND THE AMOUNT IS THE CHAIN'S. This was the entry's own claim, measured:
+    // an output worth 60000 sats, an entry claiming 100000000000, accepted -
+    // and carrying weight 2000000 into `selectCommittee` instead of weight 1.
+    //
+    // 5A.3 says why that is not a detail: "The bond is what makes identity
+    // expensive. Without it, a Sybil attacker creates arbitrarily many nodes
+    // for free and buys arbitrarily many selection chances - the flaw that
+    // made v4.4 unsafe." A bond that is asserted rather than observed costs
+    // nothing, so believing the claim reinstates exactly that flaw. The leaf
+    // hashes this number too, so the lie went into the census root.
+    const bondSats = bond.valueSats;
+
     // THE FLOOR IS THE ROUND'S. 5A.3: "bond_min(role) is named in the Round
     // Contract, not global... a node is eligible for THAT ROUND or not."
-    if (e.bondSats < contract.bondMinSats) {
+    if (bondSats < contract.bondMinSats) {
       excluded.push({
         ...e,
-        why: `that bond is ${e.bondSats} where this round's floor is ${contract.bondMinSats}`,
+        bondSats,
+        why: `that bond is ${bondSats} where this round's floor is ${contract.bondMinSats}`,
       });
       continue;
     }
@@ -570,6 +583,7 @@ export function resolveCensus(entries, { contract, resolve }) {
     // and the payout table all read that key afterwards.
     eligible.push({
       ...e,
+      bondSats,
       pubkey: read.advert.nodePubkey,
       roles,
       advert: read.advert,

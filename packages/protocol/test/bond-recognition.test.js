@@ -123,6 +123,36 @@ test('an output the advertisement does not name is not its bond', () => {
   assert.match(recognizeBond(tx, 0, undefined).why, /names no bond output/);
 });
 
+/**
+ * AND THE AMOUNT IS THE NAMED OUTPUT'S. A funding transaction that pays a bond
+ * and returns change to another taproot address is ordinary, and then the bond
+ * is not vout 0 - so reading "the first output" would report somebody else's
+ * money as the bond. Found by a mutant that survived while every fixture had
+ * its bond at vout 0 with only an OP_RETURN beside it.
+ */
+test('the value reported is the named output\'s, not the first taproot one', () => {
+  const tx = parseTransaction(bondOf(0x17));
+  const taproot = tx.outputs[0].script;
+
+  // change at vout 0, the bond at vout 1: both P2TR, different values
+  const withChange = {
+    ...tx,
+    outputs: [
+      { value: 900000000n, script: taproot },
+      { value: 60000n, script: taproot },
+      tx.outputs[1],
+    ],
+  };
+
+  const bond = recognizeBond(withChange, 1, advertFor(0x17, { bondVout: 1 }));
+  assert.equal(bond.ok, true, bond.why);
+  assert.equal(bond.valueSats, 60000n, 'the change output was reported as the bond');
+
+  // and the change is not a bond, because the advertisement does not name it
+  assert.match(recognizeBond(withChange, 0, advertFor(0x17, { bondVout: 1 })).why,
+    /names output 1 as its bond, not 0/);
+});
+
 test('an output that is not there is not a bond', () => {
   const tx = parseTransaction(bondOf(0x14));
   for (const vout of [2, 9, -1, 1.5, undefined])

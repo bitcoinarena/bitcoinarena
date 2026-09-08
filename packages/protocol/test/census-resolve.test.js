@@ -43,8 +43,22 @@ const advertFor = (n, over = {}) => ({
   bondTxid: new Uint8Array(32), bondVout: 0, bondScriptTemplateVersion: 1,
   payoutPubkey: b32(3), timestamp: 1788700000000n, ...over,
 });
-const bondOf = (n, over = {}) =>
-  bondTransaction(advertFor(n, over), { previousTxid: b32(0xa0 + n), previousVout: 0 });
+const bondOf = (n, over = {}, value) =>
+  bondTransaction(advertFor(n, over), {
+    previousTxid: b32(0xa0 + n), previousVout: 0, ...(value === undefined ? {} : { value }),
+  });
+
+/** A bond FUNDED at a given number of sats, entry and transaction together. */
+const funded = (n, sats) => {
+  const transaction = bondOf(n, {}, sats);
+  return {
+    seen: { transaction },
+    entry: {
+      txid: parseTransaction(transaction).txid, vout: 0, pubkey: b32(n),
+      bondSats: 60000n, height: 900000, roles: ['game'], spent: false,
+    },
+  };
+};
 
 const contract = { bondMinSats: 50000n, protocolVersion: PROTOCOL_VERSION };
 const entryFor = (n, over = {}) => ({
@@ -118,24 +132,56 @@ test('a body that is not the one the bond committed to is excluded', () => {
  * below the large rounds' floor is still eligible for the small ones.
  */
 test('a bond under this round\'s floor is out, and the same bond is in a smaller round', () => {
-  const { entries, map } = rig();
-  entries[1] = { ...entries[1], bondSats: 49999n };
+  // FUNDED at 49999, not merely claimed to be: the amount is read off the
+  // output now, so a fixture that only asserts one measures nothing.
+  const small = funded(0x12, 49999);
 
-  const strict = resolveCensus(entries, { contract, resolve: resolverFor(map) });
-  assert.equal(strict.eligible.length, 2);
+  const strict = resolveCensus([small.entry], { contract, resolve: () => small.seen });
+  assert.equal(strict.eligible.length, 0);
   assert.match(strict.excluded[0].why, /that bond is 49999 where this round's floor is 50000/);
 
-  const smaller = resolveCensus(entries, {
-    contract: { bondMinSats: 10000n, protocolVersion: PROTOCOL_VERSION }, resolve: resolverFor(map),
+  const smaller = resolveCensus([small.entry], {
+    contract: { bondMinSats: 10000n, protocolVersion: PROTOCOL_VERSION },
+    resolve: () => small.seen,
   });
-  assert.equal(smaller.eligible.length, 3,
-    'the network stratifies; it does not evict');
+  assert.equal(smaller.eligible.length, 1, 'the network stratifies; it does not evict');
 
   // exactly the floor is in: 5A.3 says >=
-  const exact = resolveCensus([{ ...entries[1], bondSats: 50000n }], {
-    contract, resolve: resolverFor(map),
+  const exact = funded(0x12, 50000);
+  assert.equal(resolveCensus([exact.entry], { contract, resolve: () => exact.seen }).eligible.length, 1);
+});
+
+/**
+ * AND THE AMOUNT IS THE CHAIN'S, NOT THE ENTRY'S.
+ *
+ * Measured before this was true: an output worth 60000 sats, an entry claiming
+ * 100000000000, ACCEPTED - and carrying weight 2000000 into `selectCommittee`
+ * instead of weight 1. 5A.3 says why that is not a detail: "The bond is what
+ * makes identity expensive. Without it, a Sybil attacker creates arbitrarily
+ * many nodes for free and buys arbitrarily many selection chances - the flaw
+ * that made v4.4 unsafe." A bond that is asserted rather than observed costs
+ * nothing. The leaf hashes this number, so the lie reached the census root.
+ */
+test('the bond amount is the output\'s, not the number the entry claims', () => {
+  const real = funded(0x14, 60000);
+
+  for (const claim of [60000n, 1n, 100000000000n, undefined]) {
+    const out = resolveCensus([{ ...real.entry, bondSats: claim }], {
+      contract: { bondMinSats: 50000n, protocolVersion: PROTOCOL_VERSION },
+      resolve: () => real.seen,
+    });
+    assert.equal(out.eligible.length, 1, `a claim of ${claim} changed eligibility`);
+    assert.equal(out.eligible[0].bondSats, 60000n, `a claim of ${claim} reached the census`);
+  }
+
+  // a claim cannot buy a way over the floor either: the output is 49999
+  const under = funded(0x15, 49999);
+  const lying = resolveCensus([{ ...under.entry, bondSats: 100000000000n }], {
+    contract, resolve: () => under.seen,
   });
-  assert.equal(exact.eligible.length, 1);
+  assert.equal(lying.eligible.length, 0, 'a claimed amount bought a place in the census');
+  assert.match(lying.excluded[0].why, /that bond is 49999 /);
+  assert.equal(lying.excluded[0].bondSats, 49999n, 'the refusal repeated the claim back');
 });
 
 test('an advertisement that declares no role, or no version we speak, is out', () => {
