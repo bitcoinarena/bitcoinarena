@@ -10,7 +10,7 @@
 // something is the checkpoints in step 3.
 import {
   encodeRoundContract, roundId, encodeEntryContract, entryId, decodeEntryContract,
-  decodeRoundContract,
+  decodeRoundContract, roundWindowsAreValid,
 } from '../../protocol/src/contracts.js';
 import { decodeInputBatch, batchTicks, batchId } from '../../protocol/src/batch.js';
 import { encodeTranscript, transcriptHash, checkTranscript, GENESIS } from '../../protocol/src/transcript.js';
@@ -252,6 +252,14 @@ export class Round {
    * making the client guess.
    */
   open(contract) {
+    // A ROUND NOBODY CAN JOIN IS NOT A ROUND. 5A.5: entry opens when the
+    // committee forms, and `start_time >= committee_time + min_entry_window`
+    // is the time anybody has to use it. A contract that leaves none is
+    // refused here rather than stored and discovered later by a player whose
+    // entry can never be built.
+    const windows = roundWindowsAreValid(contract);
+    if (!windows.ok) throw new Error(windows.why);
+
     const bytes = encodeRoundContract(contract);
     const id = roundId(contract);
     this.db.prepare('INSERT OR IGNORE INTO rounds (round_id, contract, state, opened_ms) VALUES (?, ?, ?, ?)')
@@ -269,6 +277,18 @@ export class Round {
     const round = this.get(contract.roundId);
     if (!round) throw new Error('no such round');
     if (round.state !== OPEN) throw new Error('the round is closed');
+
+    // AND NOT BEFORE THE COMMITTEE EXISTS. `entry_open_time == committee_time`
+    // is 5A.5's own equality, and it is not a preference: 23.1 encrypts the
+    // preimage shares TO the settlement committee, so an entry built earlier
+    // would be encrypted to nobody. The lobby shows "committee: pending" until
+    // then and offers no entry button; this is the same rule at the door,
+    // where it cannot be skipped by a client that does not draw a lobby.
+    const opensAt = decodeRoundContract(new Uint8Array(round.contract)).committeeTimeMs;
+    const now = BigInt(this.now());
+    if (now < opensAt)
+      throw new Error(
+        `that round's committee forms at ${opensAt} and it is ${now}: entry opens then`);
     // Same as the round above: the id is the hash of the contract, so the same
     // entry sent twice is one player joining once.
     const id = entryId(contract);

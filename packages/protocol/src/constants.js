@@ -15,6 +15,22 @@ import {
 
 export const PROTOCOL_VERSION = 1;
 
+/**
+ * THE ENTRY WINDOW, from 5A.5's own line:
+ *
+ *   committee_time  >= published_at + min_publication_lead   (reference: 5 min)
+ *   entry_open_time == committee_time
+ *   start_time      >= committee_time + min_entry_window     (reference: 60 s)
+ *
+ * Entry opens when the committee exists, because the preimage shares are
+ * encrypted TO the settlement committee (23.1) - an entry cannot be built
+ * before there is one. So the window between them is the whole time anybody
+ * has to enter, and a round that leaves none is a round nobody can join.
+ *
+ * The number is the spec's reference, not a taste: sixty seconds.
+ */
+export const MIN_ENTRY_WINDOW_MS = 60000n;
+
 export const TYPE_ROUND_CONTRACT = 0x01;
 export const TYPE_ENTRY_CONTRACT = 0x02;
 export const TYPE_ADVERT = 0x03;

@@ -12,7 +12,7 @@ import { Writer, Reader } from './encode.js';
 import { taggedHash } from './hash.js';
 import {
   TAG, PROTOCOL_VERSION, TYPE_ROUND_CONTRACT, TYPE_ENTRY_CONTRACT, ROLES,
-  CUSTODY, custodyByte, slashRemainderByte, slashRemainderOf,
+  CUSTODY, custodyByte, slashRemainderByte, slashRemainderOf, MIN_ENTRY_WINDOW_MS,
 } from './constants.js';
 
 /**
@@ -300,6 +300,53 @@ function compare32(a, b) {
  * protocol does not forbid it - balance is not protocol - but a player is
  * entitled to know before paying.
  */
+/**
+ * THE 5A.5 WINDOWS: is there time to enter this round at all?
+ *
+ *   entry_open_time == committee_time
+ *   start_time      >= committee_time + min_entry_window
+ *
+ * ENTRY OPENS AT COMMITTEE_TIME, and that is not a policy this contract can
+ * set differently: 23.1 encrypts the preimage shares TO the settlement
+ * committee, so an entry cannot be constructed before the committee exists.
+ * There is no separate `entry_open_time` on this contract and there must not
+ * be one - a second field could disagree with `committee_time`, and the spec's
+ * own line is an equality, not a range. So the equality holds by construction
+ * and what is checked here is the half that can be got wrong: the window
+ * AFTER it.
+ *
+ * A round with no window is not a strict round, it is one nobody can join -
+ * the committee appears and the round has already begun.
+ */
+export function roundWindowsAreValid(c) {
+  if (!c || typeof c.committeeTimeMs !== 'bigint')
+    return { ok: false, why: 'that round names no committee time, so nothing says when entry opens' };
+  if (typeof c.startTimeMs !== 'bigint')
+    return { ok: false, why: 'that round names no start time' };
+
+  const opensAt = c.committeeTimeMs;
+  const earliestStart = opensAt + MIN_ENTRY_WINDOW_MS;
+  if (c.startTimeMs < earliestStart)
+    return {
+      ok: false,
+      opensAt,
+      why: `that round starts at ${c.startTimeMs} and its committee forms at ${opensAt}, `
+        + `leaving ${c.startTimeMs - opensAt}ms to enter where this protocol asks for `
+        + `${MIN_ENTRY_WINDOW_MS}`,
+    };
+
+  // AND THE LAST LATE JOIN CANNOT BE BEFORE THE FIRST. `entry_close_time` is
+  // the end of the same window entry_open_time begins.
+  if (typeof c.entryCloseMs === 'bigint' && c.entryCloseMs < opensAt)
+    return {
+      ok: false,
+      opensAt,
+      why: `that round closes entry at ${c.entryCloseMs}, before its committee forms at ${opensAt}`,
+    };
+
+  return { ok: true, opensAt, earliestStart };
+}
+
 export function contractWarnings(c) {
   const out = [];
   // Integer comparison, not a quotient. This is only a client warning and a

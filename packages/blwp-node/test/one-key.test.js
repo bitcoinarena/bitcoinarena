@@ -98,7 +98,7 @@ test('a receipt is BIP-340 under the node key, and an ed25519 one is refused', (
   const peerKey = schnorr.getPublicKey(peer);
   const rid = round.open({
     networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations: 6,
-    gameVerifySlots: 2, settlementSlots: 2, simCoreHash: b32(1), startTimeMs: 1000n,
+    gameVerifySlots: 2, settlementSlots: 2, simCoreHash: b32(1), startTimeMs: 60500n,
     entryCloseMs: 2000n, objectionWindowMs: 600000n, custody: 'FEDERATION',
     slashMinimumServed: 20, slashRemainder: 'BURN', donationSetId: b32(0xd0),
     censusHeight: 900000, censusRoot: b32(2), committeeTimeMs: 500n, randomnessRule: 'bitcoin-block-hash', stakeMsat: 100000n,

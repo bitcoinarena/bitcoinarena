@@ -476,6 +476,22 @@ const ARBITRATION_KEYS_TESTNET4 = [
 
 const PROTOCOL_VERSION = 1;
 
+/**
+ * THE ENTRY WINDOW, from 5A.5's own line:
+ *
+ *   committee_time  >= published_at + min_publication_lead   (reference: 5 min)
+ *   entry_open_time == committee_time
+ *   start_time      >= committee_time + min_entry_window     (reference: 60 s)
+ *
+ * Entry opens when the committee exists, because the preimage shares are
+ * encrypted TO the settlement committee (23.1) - an entry cannot be built
+ * before there is one. So the window between them is the whole time anybody
+ * has to enter, and a round that leaves none is a round nobody can join.
+ *
+ * The number is the spec's reference, not a taste: sixty seconds.
+ */
+const MIN_ENTRY_WINDOW_MS = 60000n;
+
 const TYPE_ROUND_CONTRACT = 0x01;
 const TYPE_ENTRY_CONTRACT = 0x02;
 const TYPE_ADVERT = 0x03;
@@ -1309,6 +1325,53 @@ function compare32(a, b) {
  * protocol does not forbid it - balance is not protocol - but a player is
  * entitled to know before paying.
  */
+/**
+ * THE 5A.5 WINDOWS: is there time to enter this round at all?
+ *
+ *   entry_open_time == committee_time
+ *   start_time      >= committee_time + min_entry_window
+ *
+ * ENTRY OPENS AT COMMITTEE_TIME, and that is not a policy this contract can
+ * set differently: 23.1 encrypts the preimage shares TO the settlement
+ * committee, so an entry cannot be constructed before the committee exists.
+ * There is no separate `entry_open_time` on this contract and there must not
+ * be one - a second field could disagree with `committee_time`, and the spec's
+ * own line is an equality, not a range. So the equality holds by construction
+ * and what is checked here is the half that can be got wrong: the window
+ * AFTER it.
+ *
+ * A round with no window is not a strict round, it is one nobody can join -
+ * the committee appears and the round has already begun.
+ */
+function roundWindowsAreValid(c) {
+  if (!c || typeof c.committeeTimeMs !== 'bigint')
+    return { ok: false, why: 'that round names no committee time, so nothing says when entry opens' };
+  if (typeof c.startTimeMs !== 'bigint')
+    return { ok: false, why: 'that round names no start time' };
+
+  const opensAt = c.committeeTimeMs;
+  const earliestStart = opensAt + MIN_ENTRY_WINDOW_MS;
+  if (c.startTimeMs < earliestStart)
+    return {
+      ok: false,
+      opensAt,
+      why: `that round starts at ${c.startTimeMs} and its committee forms at ${opensAt}, `
+        + `leaving ${c.startTimeMs - opensAt}ms to enter where this protocol asks for `
+        + `${MIN_ENTRY_WINDOW_MS}`,
+    };
+
+  // AND THE LAST LATE JOIN CANNOT BE BEFORE THE FIRST. `entry_close_time` is
+  // the end of the same window entry_open_time begins.
+  if (typeof c.entryCloseMs === 'bigint' && c.entryCloseMs < opensAt)
+    return {
+      ok: false,
+      opensAt,
+      why: `that round closes entry at ${c.entryCloseMs}, before its committee forms at ${opensAt}`,
+    };
+
+  return { ok: true, opensAt, earliestStart };
+}
+
 function contractWarnings(c) {
   const out = [];
   // Integer comparison, not a quotient. This is only a client warning and a

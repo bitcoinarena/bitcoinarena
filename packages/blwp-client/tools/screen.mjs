@@ -84,7 +84,7 @@ const bondApi = await listen((req, res) => {
 // thirty-second round. No rule is changed - the bound is still the round's
 // own length, which is the whole point of it.
 const contract = {
-  simCoreHash: b32(1), startTimeMs: 1000n, entryCloseMs: 2000n,
+  simCoreHash: b32(1), startTimeMs: 60500n, entryCloseMs: 2000n,
   objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'BURN', donationSetId: new Uint8Array(32).fill(0xd0), censusHeight: 900000,
   censusRoot: b32(2), committeeSeed: b32(3), stakeMsat: 100000n,
   bondMinSats: 50000n, blockTicks: 1800, exposureReference: 1000,

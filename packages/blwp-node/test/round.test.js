@@ -10,7 +10,7 @@ import { toHex } from '../../protocol/src/hash.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const contract = () => ({
-  networkId: b32(0x4e), configHash: b32(0x43), censusConfirmations: 6, gameVerifySlots: 7, settlementSlots: 7, simCoreHash: b32(1), startTimeMs: 1000n, entryCloseMs: 2000n, objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'BURN', donationSetId: new Uint8Array(32).fill(0xd0),
+  networkId: b32(0x4e), configHash: b32(0x43), censusConfirmations: 6, gameVerifySlots: 7, settlementSlots: 7, simCoreHash: b32(1), startTimeMs: 60500n, entryCloseMs: 2000n, objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'BURN', donationSetId: new Uint8Array(32).fill(0xd0),
   censusHeight: 900000, censusRoot: b32(2), committeeTimeMs: 500n, randomnessRule: 'bitcoin-block-hash',
   stakeMsat: 100000n, bondMinSats: 50000n, blockTicks: 9000,
   exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
@@ -146,8 +146,10 @@ test('a round outlives the process that opened it', async () => {
   rmSync(path, { force: true });
   const c = contract();
   let id;
-  { const r = new Round(openStore(path), () => 1); id = r.open(c); r.enter(entryFor(id)); }
-  { const r = new Round(openStore(path), () => 2);
+  // The clock is after the committee forms, because entry opens then (5A.5).
+  // This test is about a round surviving a restart, not about the window.
+  { const r = new Round(openStore(path), () => 600); id = r.open(c); r.enter(entryFor(id)); }
+  { const r = new Round(openStore(path), () => 700);
     assert.ok(r.get(id), 'the round is still there after a fresh handle');
     assert.equal(r.db.prepare('SELECT COUNT(*) n FROM entries').get().n, 1); }
   rmSync(path, { force: true });
