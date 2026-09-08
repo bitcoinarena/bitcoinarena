@@ -45,7 +45,7 @@ const verify = (s, m, k) => { try { return ed25519.verify(s, m, k); } catch { re
 const NEEDED = 5;
 
 const contract = () => ({
-  simCoreHash: b32(1), startTimeMs: 1000n, entryCloseMs: 2000n, objectionWindowMs: 600000n, custody: 'FEDERATION',
+  simCoreHash: b32(1), startTimeMs: 1000n, entryCloseMs: 2000n, objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'BURN',
   censusHeight: 900000, censusRoot: b32(2), committeeSeed: b32(3),
   stakeMsat: 100000n, bondMinSats: 50000n, blockTicks: 9000,
   exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
@@ -185,7 +185,7 @@ test('a result that is already FINAL is not voided by a later low count', () => 
   const signedBy = [0, 1, 2, 3, 4].map((i) => ({ resultId: resultId(r), nodePubkey: committee[i] }));
   const at = 10000n;
   const closed = finality({
-    signedBy, committee, contract: { objectionWindowMs: 600000n }, custody: 'FEDERATION',
+    signedBy, committee, contract: { objectionWindowMs: 600000n }, custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'BURN',
     provisionalAtMs: at, now: at + 600000n,
   });
   assert.equal(closed.state, FINAL);

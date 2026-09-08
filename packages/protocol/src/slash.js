@@ -29,7 +29,8 @@ import { Writer, Reader } from './encode.js';
 import { taggedHash, toHex } from './hash.js';
 import {
   PROTOCOL_VERSION, TYPE_SLASH_PROOF, TYPE_PAYOUT_TABLE, TYPE_SETTLEMENT_RECORD,
-  TYPE_RESULT, TYPE_FEE_CLAIM, TYPE_SERVICE_RECORD, ROLES, roleByte, TAG,
+  TYPE_RESULT, TYPE_FEE_CLAIM, TYPE_SERVICE_RECORD, ROLES, roleByte,
+  SLASH_REMAINDERS, SLASH_TO_PLAYERS_BPS, TAG,
 } from './constants.js';
 import { entryId } from './contracts.js';
 import { decodePlayerResult, resultId, splitSignedResult } from './result.js';
@@ -940,9 +941,20 @@ export function feeInputsId({ roundId, role, minimumServed, recordId }) {
  * stake. A node that served and claimed is doing exactly what the fee is for.
  */
 export function slashHoldsOnFeeClaim({
-  proof, signedClaim, serviceRecord, minimumServed, advert, committee,
+  proof, signedClaim, serviceRecord, contract, advert, committee,
   entry = null,
 }) {
+  // THE MINIMUM COMES OFF THE ROUND CONTRACT, not off the accuser.
+  //
+  // It was an argument until the contract carried it, and a minimum the caller
+  // chooses is a minimum the operator chooses - the same fault the objection
+  // window was moved into the contract to fix, and worse here, because this
+  // number decides whether a bond is taken. The player and every node signed
+  // up to it with the rest of the round, and it is covered by the round id.
+  if (!contract || !Number.isInteger(contract.slashMinimumServed)
+      || contract.slashMinimumServed < 0)
+    return { slashed: false, why: 'no round contract to read the minimum service from' };
+  const minimumServed = contract.slashMinimumServed;
   if (!Array.isArray(committee) || !committee.length)
     return { slashed: false, why: 'no committee, so nobody was serving this round' };
   if (!committee.some((k) => hex(k) === hex(proof.nodePubkey)))
@@ -987,8 +999,6 @@ export function slashHoldsOnFeeClaim({
         + '22A pays the two pools separately and a share is earned in its own role',
     };
 
-  if (!Number.isInteger(minimumServed) || minimumServed < 0)
-    return { slashed: false, why: 'no minimum service to measure the record against' };
   const bound = feeInputsId({
     roundId: proof.roundId, role: claim.role, minimumServed,
     recordId: serviceRecordId(record),
@@ -996,8 +1006,8 @@ export function slashHoldsOnFeeClaim({
   if (hex(proof.transcriptHash) !== hex(bound))
     return {
       slashed: false,
-      why: 'the proof is bound to a different record or a different minimum '
-        + 'than the ones handed in',
+      why: 'the proof is bound to a different record, round or minimum than '
+        + 'the contract and the record handed in',
     };
 
   // 22A: A CONFLICTED NODE NEVER QUALIFIES, whatever it served.
@@ -1035,4 +1045,85 @@ export function slashHoldsOnFeeClaim({
       ? 'a conflicted node never qualifies for a share, and it claimed one'
       : `it claimed a ${claim.role} share having served ${record.served} of ${minimumServed}`,
   };
+}
+
+/**
+ * WHERE A SLASHED BOND GOES, section 5A.3.
+ *
+ * "Slashed bonds are distributed: half to the affected players of that round,
+ * half burned or to the remaining honest committee members of the round, as
+ * fixed by the Round Contract."
+ *
+ * PURE, AND IT MOVES NOTHING. This says who is owed what out of a bond that
+ * has been spent; spending it is 5A.3B steps 3 and 5, an arbitration set with
+ * MuSig2 keys, and is not here.
+ *
+ * THE HALVES ARE THE SPEC'S AND THE DESTINATION IS THE CONTRACT'S. A contract
+ * that could move the proportions would let an operator write itself the whole
+ * bond, which is the fault a contract field exists to prevent rather than one
+ * to import. So `SLASH_TO_PLAYERS_BPS` is a constant and `slashRemainder` is
+ * the field - burned, or to the remaining honest committee.
+ *
+ * THE ACCUSED IS NOT ONE OF THE REMAINING HONEST MEMBERS. "the REMAINING
+ * honest committee members" - a node does not collect a share of its own
+ * slashing, and neither does any other node slashed in the same round.
+ *
+ * REMAINDERS the way this repo already does them: floor each share, then hand
+ * the leftover out one satoshi at a time in ascending `H(roundId || pubkey)`,
+ * the rule 22A names for fees and `payout.js` already uses for the pool. With
+ * nobody to pay - no affected players, or a burn - that half is burned, which
+ * is the only direction that cannot quietly become somebody's income.
+ */
+export function slashDistribution({
+  bondSats, roundId, contract, affectedPlayers = [], honestCommittee = [],
+}) {
+  if (typeof bondSats !== 'bigint' || bondSats < 0n)
+    throw new Error('a bond is BigInt satoshi');
+  if (!contract || !SLASH_REMAINDERS.includes(contract.slashRemainder))
+    throw new Error('the round contract fixes where the other half goes');
+
+  const toPlayers = (bondSats * BigInt(SLASH_TO_PLAYERS_BPS)) / 10000n;
+  const rest = bondSats - toPlayers;
+
+  const shares = new Map();
+  let burned = 0n;
+
+  const hand = (who, amount) => {
+    if (!who.length || amount <= 0n) { burned += amount > 0n ? amount : 0n; return; }
+    const each = amount / BigInt(who.length);
+    let left = amount - each * BigInt(who.length);
+    for (const k of who) shares.set(hex(k), (shares.get(hex(k)) || 0n) + each);
+    for (const k of remainderKeys(roundId, who)) {
+      if (left <= 0n) break;
+      shares.set(hex(k), shares.get(hex(k)) + 1n);
+      left -= 1n;
+    }
+  };
+
+  hand(affectedPlayers, toPlayers);
+  if (contract.slashRemainder === 'COMMITTEE') hand(honestCommittee, rest);
+  else burned += rest;
+
+  const paid = [...shares.values()].reduce((a, b) => a + b, 0n);
+  if (paid + burned !== bondSats)
+    throw new Error(`slash distribution broken: ${paid} paid and ${burned} burned of ${bondSats}`);
+
+  return { toPlayers, burned, shares };
+}
+
+/** Ascending `H(roundId || pubkey)`, the order 22A names and payout.js uses. */
+function remainderKeys(roundId, keys) {
+  return [...keys].sort((a, b) => {
+    const x = taggedHash(TAG.remainder, concat(roundId, a));
+    const y = taggedHash(TAG.remainder, concat(roundId, b));
+    for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) return x[i] - y[i];
+    return 0;
+  });
+}
+
+function concat(a, b) {
+  const out = new Uint8Array(a.length + b.length);
+  out.set(a, 0);
+  out.set(b, a.length);
+  return out;
 }

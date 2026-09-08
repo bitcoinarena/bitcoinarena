@@ -99,6 +99,39 @@ export const TAG = {
   remainder: 'BLWP/v1/Remainder',
 };
 
+/**
+ * WHERE THE OTHER HALF OF A SLASHED BOND GOES, and it is the one thing 5A.3
+ * leaves to the contract.
+ *
+ * "Slashed bonds are distributed: half to the affected players of that round,
+ * half burned or to the remaining honest committee members of the round, as
+ * fixed by the Round Contract."
+ *
+ * The alternative in that sentence is BURNED or TO THE COMMITTEE, and that is
+ * what a round fixes. THE HALVES ARE NOT A FIELD: the spec states them as
+ * numbers, and a contract that could move them would let an operator write
+ * itself the whole bond - which is the fault putting anything in the contract
+ * is meant to stop, not one to import. Order is protocol: it indexes the byte.
+ */
+export const SLASH_REMAINDERS = ['BURN', 'COMMITTEE'];
+export const slashRemainderByte = (where) => {
+  const at = SLASH_REMAINDERS.indexOf(where);
+  if (at < 0) throw new Error(`${where} is not one of ${SLASH_REMAINDERS.join(', ')}`);
+  return at;
+};
+export const slashRemainderOf = (byte) => {
+  const where = SLASH_REMAINDERS[byte];
+  if (!where) throw new Error(`${byte} is not a slash remainder byte`);
+  return where;
+};
+
+/**
+ * Half, in basis points, and a CONSTANT rather than a field for the reason
+ * above. 5A.3 says half to the affected players; the contract says where the
+ * rest goes, not how much of it there is.
+ */
+export const SLASH_TO_PLAYERS_BPS = 5000;
+
 /** Roles a bonded node can stand for. Order is protocol: it indexes roleByte. */
 export const ROLES = ['game', 'verify', 'settlement', 'relay'];
 export const roleByte = (role) => {

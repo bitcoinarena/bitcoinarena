@@ -25,6 +25,11 @@ const ROUND = b32(0x01);
 const OPERATOR = b32(0xaa);
 const BOND = b32(0x55);
 const MINIMUM = 20;
+// THE MINIMUM IS THE ROUND'S, not this test's. It was an argument until the
+// contract carried it, and a minimum a caller picks is one an operator picks -
+// the same fault the objection window was moved in here to fix, and worse,
+// because this number decides whether a bond is taken.
+const contract = { slashMinimumServed: MINIMUM, slashRemainder: 'BURN' };
 const committee = [NODE, b32(0x22), b32(0x23), b32(0x24), b32(0x25), b32(0x26), b32(0x27)];
 const advert = { nodePubkey: NODE, operatorId: 'somebody', bondTxid: BOND, bondVout: 3 };
 
@@ -45,8 +50,7 @@ const proofFor = (claim, record, minimum = MINIMUM, over = {}) => ({
 
 const ask = (claim, record, over = {}) => slashHoldsOnFeeClaim({
   proof: proofFor(claim, record), signedClaim: encodeFeeClaim(claim),
-  serviceRecord: encodeServiceRecord(record), minimumServed: MINIMUM,
-  advert, committee, ...over,
+  serviceRecord: encodeServiceRecord(record), contract, advert, committee, ...over,
 });
 
 /**
@@ -129,22 +133,23 @@ test('an accuser cannot raise the bar after the fact, or swap the record', () =>
 
   const raised = slashHoldsOnFeeClaim({
     proof: proofFor(claim, record), signedClaim: encodeFeeClaim(claim),
-    serviceRecord: encodeServiceRecord(record), minimumServed: 999,
-    advert, committee,
+    serviceRecord: encodeServiceRecord(record),
+    contract: { ...contract, slashMinimumServed: 999 }, advert, committee,
   });
   assert.equal(raised.slashed, false);
-  assert.match(raised.why, /bound to a different record or a different minimum/);
+  assert.match(raised.why, /bound to a different record, round or minimum/);
 
   const swapped = slashHoldsOnFeeClaim({
     proof: proofFor(claim, record), signedClaim: encodeFeeClaim(claim),
-    serviceRecord: encodeServiceRecord(recordOf({ served: 0 })), minimumServed: MINIMUM,
-    advert, committee,
+    serviceRecord: encodeServiceRecord(recordOf({ served: 0 })), contract, advert, committee,
   });
   assert.equal(swapped.slashed, false, 'the accuser handed in a record the proof did not name');
-  assert.match(swapped.why, /bound to a different record or a different minimum/);
+  assert.match(swapped.why, /bound to a different record, round or minimum/);
 
-  for (const bad of [undefined, -1, 1.5, '20'])
-    assert.equal(ask(claim, record, { minimumServed: bad }).slashed, false);
+  for (const bad of [undefined, { slashMinimumServed: -1 }, { slashMinimumServed: 1.5 },
+                     { slashMinimumServed: '20' }, {}])
+    assert.equal(ask(claim, record, { contract: bad }).slashed, false,
+      'a contract that names no minimum is not a licence to pick one');
 });
 
 /**
@@ -162,7 +167,7 @@ test('neither the claim nor the bound record may be left free', () => {
 
   const boundLoose = ask(claim, record, { proof: proofFor(claim, record, MINIMUM, { transcriptHash: b32(0x7e) }) });
   assert.equal(boundLoose.slashed, false, 'the record and minimum were never bound');
-  assert.match(boundLoose.why, /bound to a different record or a different minimum/);
+  assert.match(boundLoose.why, /bound to a different record, round or minimum/);
 });
 
 test('a share is earned in its own role, and 22A pays the pools separately', () => {
@@ -170,7 +175,7 @@ test('a share is earned in its own role, and 22A pays the pools separately', () 
   const record = recordOf({ role: 'verify', served: 0 });
   const no = slashHoldsOnFeeClaim({
     proof: proofFor(claim, record), signedClaim: encodeFeeClaim(claim),
-    serviceRecord: encodeServiceRecord(record), minimumServed: MINIMUM, advert, committee,
+    serviceRecord: encodeServiceRecord(record), contract, advert, committee,
   });
   assert.equal(no.slashed, false);
   assert.match(no.why, /the claim is for settlement and the record is about verify/);
@@ -191,7 +196,7 @@ test('the claim and the record have to be this round\'s and this node\'s', () =>
     const no = slashHoldsOnFeeClaim({
       proof: proofFor(other, recordOf({ served: 19 }), MINIMUM, { signedResultId: feeClaimId(other) }),
       signedClaim: encodeFeeClaim(other), serviceRecord: encodeServiceRecord(recordOf({ served: 19 })),
-      minimumServed: MINIMUM, advert, committee,
+      contract, advert, committee,
     });
     assert.equal(no.slashed, false);
     assert.match(no.why, why);
@@ -204,7 +209,7 @@ test('the claim and the record have to be this round\'s and this node\'s', () =>
     const record = recordOf({ served: 19, ...over });
     const no = slashHoldsOnFeeClaim({
       proof: proofFor(claim, record), signedClaim: encodeFeeClaim(claim),
-      serviceRecord: encodeServiceRecord(record), minimumServed: MINIMUM, advert, committee,
+      serviceRecord: encodeServiceRecord(record), contract, advert, committee,
     });
     assert.equal(no.slashed, false);
     assert.match(no.why, why);
@@ -235,8 +240,7 @@ test('a stranger cannot be slashed for a round they were not serving', () => {
   const no = slashHoldsOnFeeClaim({
     proof: proofFor(claim, record, MINIMUM, { nodePubkey: b32(0x66) }),
     signedClaim: encodeFeeClaim(claim), serviceRecord: encodeServiceRecord(record),
-    minimumServed: MINIMUM,
-    advert: { nodePubkey: b32(0x66), bondTxid: BOND, bondVout: 3 }, committee,
+    contract, advert: { nodePubkey: b32(0x66), bondTxid: BOND, bondVout: 3 }, committee,
   });
   assert.equal(no.slashed, false);
   assert.match(no.why, /is not on this round's committee/);

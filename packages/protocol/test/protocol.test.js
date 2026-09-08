@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Writer, Reader } from '../src/encode.js';
 import { taggedHash, toHex, fromHex } from '../src/hash.js';
-import { TAG, CUSTODY } from '../src/constants.js';
+import { TAG, CUSTODY, SLASH_REMAINDERS } from '../src/constants.js';
 import { buildCensus, merkleRoot, compareEntries, leafHash } from '../src/census.js';
 import { selectCommittee, weightOf, ticketFor } from '../src/sortition.js';
 import { computePayoutTable, rankWeights, payingRanks, DELIVERED, FAILED, FORFEIT, VOID } from '../src/payout.js';
@@ -215,7 +215,7 @@ test('a flat rank curve is flagged before anyone stakes', () => {
 
 function sampleContract() {
   return {
-    simCoreHash: b32(1), startTimeMs: 1788200000000n, entryCloseMs: 1788200060000n, objectionWindowMs: 600000n, custody: 'FEDERATION',
+    simCoreHash: b32(1), startTimeMs: 1788200000000n, entryCloseMs: 1788200060000n, objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'BURN',
     censusHeight: 964900, censusRoot: b32(2), committeeSeed: b32(3),
     stakeMsat: 100000n, bondMinSats: 100000n, blockTicks: 9000,
     exposureReference: 12451840, corridorHalfWidth: 3014656, spawnFreeRadius: 1441792,
@@ -249,4 +249,49 @@ test('a round names which custody construction it uses, and it is in the id', ()
   assert.throws(() => encodeRoundContract({ ...c, custody: 'CUSTODIAN' }),
     /CUSTODIAN is not one of THRESHOLD_LN, FEDERATION/);
   assert.throws(() => encodeRoundContract({ ...c, custody: undefined }), /is not one of/);
+});
+
+/**
+ * A THRESHOLD THE OPERATOR PICKS IS NOT A THRESHOLD.
+ *
+ * 22A: "A selected node earns its share only if it performed the
+ * CONTRACT-DEFINED minimum service". It was an argument to the slashing check
+ * until this field existed, and a minimum a caller chooses is one an operator
+ * chooses - the same fault the objection window was moved in here to fix, and
+ * worse, because this number decides whether a bond is taken. The player and
+ * every node sign up to it with the rest of the round.
+ */
+test('the minimum service a fee is earned by is in the round, and in its id', () => {
+  const c = sampleContract();
+  const back = decodeRoundContract(encodeRoundContract(c));
+  assert.equal(back.slashMinimumServed, c.slashMinimumServed);
+
+  const higher = { ...c, slashMinimumServed: c.slashMinimumServed + 1 };
+  assert.notDeepEqual(roundId(higher), roundId(c),
+    'a different bar is a different round, or an operator could raise it after entry');
+});
+
+/**
+ * AND WHERE A SLASHED BOND'S OTHER HALF GOES, 5A.3: "half to the affected
+ * players of that round, half burned or to the remaining honest committee
+ * members of the round, AS FIXED BY THE ROUND CONTRACT."
+ *
+ * The alternative is the field. The HALVES are not: the spec states them as
+ * numbers, and a contract that could move them would let an operator write
+ * itself the whole bond - the fault a contract field exists to prevent rather
+ * than one to import.
+ */
+test('a round fixes where a slashed bond\'s other half goes, and it is in the id', () => {
+  const c = sampleContract();
+  const back = decodeRoundContract(encodeRoundContract(c));
+  assert.equal(back.slashRemainder, c.slashRemainder);
+  assert.deepEqual(SLASH_REMAINDERS, ['BURN', 'COMMITTEE']);
+
+  const other = { ...c, slashRemainder: c.slashRemainder === 'BURN' ? 'COMMITTEE' : 'BURN' };
+  assert.notDeepEqual(roundId(other), roundId(c));
+  assert.equal(decodeRoundContract(encodeRoundContract(other)).slashRemainder, other.slashRemainder);
+
+  assert.throws(() => encodeRoundContract({ ...c, slashRemainder: 'THE OPERATOR' }),
+    /is not one of BURN, COMMITTEE/);
+  assert.throws(() => encodeRoundContract({ ...c, slashRemainder: undefined }), /is not one of/);
 });
