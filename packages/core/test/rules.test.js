@@ -1182,7 +1182,13 @@ test('the same seed flies the same sorties and a different one does not', async 
  */
 test('the gunship height constant matches the tick it was written for', async () => {
   const air = await import('../src/rules/air.js');
-  const TICK_DT = 1092;                       // sim.js, 1/60 in Q16.16
+  // THE TICK THE CORE PUBLISHES, not a copy of it. This test used to declare
+  // its own `const TICK_DT = 1092`, so the pair it exists to hold together
+  // could have come apart without it noticing: sim.js could move to 1100 and
+  // the assertion would still be checking 1092 against a constant written for
+  // 1092.
+  const { TICK_DT } = await import('../src/tick.js');
+  assert.equal(TICK_DT, 1092, 'the tick moved; every constant written for it must move too');
   const want = Math.round((1 - Math.exp(-2 * (TICK_DT / ONE))) * ONE);
   assert.equal(air.Y_LERP, want,
     `Y_LERP is ${air.Y_LERP} but the tick says ${want} - the tick changed and the ` +

@@ -9,6 +9,7 @@
 // and only if in range, its reload and hit roll. That sequence is the reason a
 // transcript recorded today can still be replayed next year.
 
+import { TICK_DT } from './tick.js';
 import { ONE, HALF, add, sub, mulFast, div, idiv, clamp, min, max, abs, length2, cbrt } from './fixed.js';
 import { seed } from './rng.js';
 import { sin, cos } from './trig.js';
@@ -100,7 +101,9 @@ const CRASH_POINTS = Math.imul(6, ONE);          // points per m/s
 
 export const HALF_X = Math.imul(130, ONE);
 export const HALF_Z = Math.imul(85, ONE);
-const TICK_DT = 1092;                       // 1/60 in Q16.16
+// The tick itself lives in `tick.js`, which is what the protocol reads: one
+// definition of how long a tick is, not one here and another there.
+export { TICK_DT } from './tick.js';
 // The loading bay, and it has to be the SAME bay Unity draws.
 //
 // This was -114, which is postX - the facade line itself. The truck spawned
