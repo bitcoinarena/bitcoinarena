@@ -13,7 +13,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { Writer } from '../src/encode.js';
 import { taggedHash, toHex, fromHex } from '../src/hash.js';
-import { buildCensus, leafHash, encodeEntry } from '../src/census.js';
+import { commitCensus, leafHash, encodeEntry } from '../src/census.js';
 import { selectCommittee, ticketFor, weightOf } from '../src/sortition.js';
 import { computePayoutTable, rankWeights, DELIVERED, FAILED } from '../src/payout.js';
 import { encodeRoundContract, roundId, encodeEntryContract, entryId } from '../src/contracts.js';
@@ -40,10 +40,10 @@ test('the primitive encoding matches the vector byte for byte', () => {
 test('the census root matches, and so does every leaf', () => {
   const v = load('census');
   const mk = (n, bond, height) => ({
-    txid: b32(n), vout: n % 3, pubkey: b32(200 - n),
+    txid: b32(n), vout: n % 3, pubkey: b32(200 - n), advertId: b32(n + 60),
     bondSats: BigInt(bond), height, roles: ['game', 'verify'], spent: false,
   });
-  const c = buildCensus(
+  const c = commitCensus(
     [mk(7, 100000, 800007), mk(3, 500000, 800003), mk(11, 100000, 800011), mk(5, 2000000, 800005)],
     { censusHeight: 900000, minConfirmations: 6, tipHeight: 900100 });
 

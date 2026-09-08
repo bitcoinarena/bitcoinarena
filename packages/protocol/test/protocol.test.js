@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { Writer, Reader } from '../src/encode.js';
 import { taggedHash, toHex, fromHex } from '../src/hash.js';
 import { TAG, CUSTODY, SLASH_REMAINDERS } from '../src/constants.js';
-import { buildCensus, merkleRoot, compareEntries, leafHash } from '../src/census.js';
+import { commitCensus, merkleRoot, compareEntries, leafHash } from '../src/census.js';
 import { selectCommittee, weightOf, ticketFor } from '../src/sortition.js';
 import { computePayoutTable, rankWeights, payingRanks, DELIVERED, FAILED, FORFEIT, VOID } from '../src/payout.js';
 import { encodeRoundContract, decodeRoundContract, roundId, contractWarnings } from '../src/contracts.js';
@@ -64,18 +64,20 @@ test('an odd merkle level promotes rather than duplicates', () => {
 });
 
 test('the census is immutable for a height', () => {
-  const mk = (n) => ({ txid: b32(n), vout: 0, pubkey: pk(n), bondSats: 100000n,
+  const mk = (n) => ({ txid: b32(n), vout: 0, pubkey: pk(n), advertId: b32(n + 90),
+                       bondSats: 100000n,
                        height: 800000 + n, roles: ['game'], spent: false });
   const args = { censusHeight: 900000, minConfirmations: 6, tipHeight: 900100 };
-  const a = buildCensus([mk(3), mk(1), mk(2)], args);
-  const b = buildCensus([mk(2), mk(3), mk(1)], args);
+  const a = commitCensus([mk(3), mk(1), mk(2)], args);
+  const b = commitCensus([mk(2), mk(3), mk(1)], args);
   assert.equal(toHex(a.root), toHex(b.root), 'input order changed the root');
 });
 
 test('immature and spent bonds are excluded', () => {
-  const mk = (n, h, spent) => ({ txid: b32(n), vout: 0, pubkey: pk(n), bondSats: 100000n,
+  const mk = (n, h, spent) => ({ txid: b32(n), vout: 0, pubkey: pk(n), advertId: b32(n + 90),
+                                 bondSats: 100000n,
                                  height: h, roles: ['game'], spent });
-  const c = buildCensus(
+  const c = commitCensus(
     [mk(1, 800000, false), mk(2, 900099, false), mk(3, 800000, true)],
     { censusHeight: 900000, minConfirmations: 6, tipHeight: 900100 });
   assert.deepEqual(c.entries.map((e) => e.txid[0]), [1]);

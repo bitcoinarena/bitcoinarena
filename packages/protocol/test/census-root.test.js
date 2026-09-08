@@ -12,19 +12,19 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { toHex } from '../src/hash.js';
 import {
-  buildCensus, censusInputsId, censusRootMatchesRound, merkleRoot, leafHash,
+  commitCensus, censusInputsId, censusRootMatchesRound, merkleRoot, leafHash,
 } from '../src/census.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const entryAt = (n, vout = 0, over = {}) => ({
-  txid: b32(n), vout, pubkey: b32(n + 0x40), bondSats: 60000n,
+  txid: b32(n), vout, pubkey: b32(n + 0x40), advertId: b32(n + 0x60), bondSats: 60000n,
   height: 900000, roles: ['game'], spent: false, ...over,
 });
 const entries = [entryAt(0x11), entryAt(0x12, 1), entryAt(0x13)];
 const HEIGHT = 900000;
 const depth = { minConfirmations: 6, tipHeight: 900010 };
 
-const built = () => buildCensus(entries, { censusHeight: HEIGHT, ...depth });
+const built = () => commitCensus(entries, { censusHeight: HEIGHT, ...depth });
 const bound = () => censusInputsId({ censusHeight: HEIGHT, ...depth, entries });
 const roundWith = (censusRoot, over = {}) => ({ censusHeight: HEIGHT, censusRoot, ...over });
 const ask = (over = {}) => censusRootMatchesRound(
@@ -37,8 +37,8 @@ const ask = (over = {}) => censusRootMatchesRound(
  * committee if they cannot agree on this.
  */
 test('the same entries at the same height derive the same root', () => {
-  const a = buildCensus(entries, { censusHeight: HEIGHT, ...depth });
-  const b = buildCensus([...entries].reverse(), { censusHeight: HEIGHT, ...depth });
+  const a = commitCensus(entries, { censusHeight: HEIGHT, ...depth });
+  const b = commitCensus([...entries].reverse(), { censusHeight: HEIGHT, ...depth });
   assert.equal(toHex(a.root), toHex(b.root),
     'the order a node happened to receive entries in must not move the root');
   assert.equal(a.entries.length, 3);
@@ -63,7 +63,7 @@ test('a round naming any other root is refused, and the refusal names censusRoot
   const flipped = new Uint8Array(built().root);
   flipped[0] ^= 1;
   for (const root of [flipped, b32(0), b32(0x99),
-                      buildCensus([entryAt(0x21)], { censusHeight: HEIGHT, ...depth }).root]) {
+                      commitCensus([entryAt(0x21)], { censusHeight: HEIGHT, ...depth }).root]) {
     const no = censusRootMatchesRound(roundWith(root), { entries, ...depth, boundTo: bound() });
     assert.equal(no.ok, false, toHex(root).slice(0, 8));
     assert.match(no.why, /censusRoot/, 'the refusal must name the field');
@@ -79,7 +79,7 @@ test('a round naming any other root is refused, and the refusal names censusRoot
  */
 test('the census height comes off the contract, not off the asker', () => {
   const later = entries.map((e) => ({ ...e, height: HEIGHT + 5 }));
-  const atLater = buildCensus(later, { censusHeight: HEIGHT + 5, ...depth, tipHeight: 900020 });
+  const atLater = commitCensus(later, { censusHeight: HEIGHT + 5, ...depth, tipHeight: 900020 });
 
   // the same entries, a contract naming the later height and the later root
   const seen = censusRootMatchesRound(
@@ -147,7 +147,7 @@ test('a round that names no root or no height is answered, not crashed at', () =
 
 /**
  * A CENSUS THAT CANNOT BE BUILT IS A REFUSAL, NOT AN EXCEPTION handed to
- * whoever asked whether a round may be played. `buildCensus` throws on a
+ * whoever asked whether a round may be played. `commitCensus` throws on a
  * duplicate outpoint, which is exactly what a hostile publication would carry.
  */
 test('a census that cannot be built is refused with its reason', () => {

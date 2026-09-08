@@ -9,7 +9,7 @@ import { writeFileSync, mkdirSync } from 'node:fs';
 import { Writer } from '../src/encode.js';
 import { taggedHash, toHex } from '../src/hash.js';
 import { TAG, PROTOCOL_VERSION } from '../src/constants.js';
-import { buildCensus, leafHash, encodeEntry } from '../src/census.js';
+import { commitCensus, leafHash, encodeEntry } from '../src/census.js';
 import { selectCommittee, ticketFor, weightOf } from '../src/sortition.js';
 import { computePayoutTable, rankWeights, DELIVERED, FAILED, FORFEIT, VOID } from '../src/payout.js';
 import { encodeRoundContract, roundId, encodeEntryContract, entryId } from '../src/contracts.js';
@@ -53,12 +53,12 @@ out.tagged = {
 /* ------------------------------------------------------------------ census */
 {
   const mk = (n, bond, height) => ({
-    txid: b32(n), vout: n % 3, pubkey: b32(200 - n),
+    txid: b32(n), vout: n % 3, pubkey: b32(200 - n), advertId: b32(n + 60),
     bondSats: BigInt(bond), height, roles: ['game', 'verify'], spent: false,
   });
   const entries = [mk(7, 100000, 800007), mk(3, 500000, 800003),
                    mk(11, 100000, 800011), mk(5, 2000000, 800005)];
-  const c = buildCensus(entries, { censusHeight: 900000, minConfirmations: 6, tipHeight: 900100 });
+  const c = commitCensus(entries, { censusHeight: 900000, minConfirmations: 6, tipHeight: 900100 });
   out.census = {
     what: 'Census canonicalisation: filter by height, maturity and spentness; sort by (txid, vout); Merkle-root the tagged leaves.',
     entries: c.entries.map((e) => ({

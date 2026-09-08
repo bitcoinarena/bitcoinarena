@@ -12,6 +12,14 @@ import { decodeAdvert, splitSignedAdvert, advertId } from './advert.js';
  * One census entry, encoded.
  *
  * The outpoint leads because it is what the entry is sorted and identified by.
+ *
+ * `pubkey` IS THE ADVERTISEMENT'S DECLARED KEY, not a candidate's claim about
+ * it. RESOLVE overwrites the field with `advert.nodePubkey` before anything
+ * hashes it, for the same reason it overwrites `roles`: the body is what the
+ * bond committed to, and the row beside it is somebody's transcription. A leaf
+ * over the transcription would let a publisher put a key that never bonded
+ * into the census, and the committee seed, the receipts and the payout all
+ * read that key.
  */
 export function encodeEntry(e) {
   const w = new Writer();
@@ -67,12 +75,33 @@ export function merkleRoot(leaves) {
 }
 
 /**
- * Canonical census: filter to the height, sort, hash, root.
+ * 5A.4 STEPS 4 AND 5: sort by outpoint, hash the leaves, root them.
  *
  * Immutable per height by construction - the same inputs give the same root,
  * which is what lets a node compute it once and cache it forever.
+ *
+ * NO ROOT OVER AN UNRESOLVED ENTRY. Every entry must carry the id of the
+ * advertisement it resolved to, and RESOLVE is the only thing that puts one
+ * there. This is not a flag: `advertId` is the hash the bond output committed
+ * to, the thing step 2 exists to find. Without the guard the natural way to
+ * use this package - scan, then root - skipped steps 2 and 3 in silence and
+ * produced a root over nodes nobody had checked.
+ *
+ * 5A.4 wants that hash IN the leaf ("outpoint || advertisement hash || ..."),
+ * where this leaf still carries a pubkey. That divergence is recorded and not
+ * fixed here because it moves every census root; requiring the hash to be
+ * KNOWN costs nothing and moves nothing.
+ *
+ * The height, depth and spend filters are re-applied rather than trusted from
+ * upstream. SCAN read them off the chain; repeating them here means a set that
+ * reaches this function by some other road cannot smuggle a late or spent
+ * output into a root.
  */
-export function buildCensus(entries, { censusHeight, minConfirmations, tipHeight }) {
+export function commitCensus(entries, { censusHeight, minConfirmations, tipHeight }) {
+  for (const e of entries)
+    if (!(e.advertId instanceof Uint8Array) || e.advertId.length !== 32)
+      throw new Error('that entry has not been resolved: no advertisement stands behind it');
+
   const eligible = entries
     .filter((e) => e.height <= censusHeight)
     .filter((e) => tipHeight - e.height + 1 >= minConfirmations)
@@ -171,7 +200,7 @@ export function censusRootMatchesRound(contract, {
 
   let census;
   try {
-    census = buildCensus(entries, {
+    census = commitCensus(entries, {
       censusHeight: contract.censusHeight, minConfirmations, tipHeight,
     });
   } catch (e) {
@@ -200,8 +229,8 @@ export function censusRootMatchesRound(contract, {
  *
  * WHAT THIS DOES AND WHAT IT CANNOT. Three of those four conjuncts are read
  * off the blocks here: WHERE an outpoint was created, WHETHER it was spent at
- * or before the census height, and HOW DEEP it is. `buildCensus` applied all
- * three already - to fields the caller supplied. That is the difference: a
+ * or before the census height, and HOW DEEP it is. `commitCensus` applies all
+ * three too - to fields the caller supplied. That is the difference: a
  * census used to be a bag of entries someone asserted heights and spends for,
  * and this derives both from the chain, so a publisher who lies about either
  * is caught by anyone holding the same blocks.
@@ -247,7 +276,7 @@ export function scanCensus(blocks, { censusHeight, minConfirmations, tipHeight, 
   }
 
   const found = [];
-  const missing = [];
+  const excluded = [];
   for (const c of candidates) {
     const key = `${toHex(c.txid)}:${c.vout}`;
     const height = createdAt.get(key);
@@ -255,16 +284,39 @@ export function scanCensus(blocks, { censusHeight, minConfirmations, tipHeight, 
     // AN OUTPOINT THE CHAIN DOES NOT CARRY IS NOT AN ENTRY. It is named rather
     // than silently dropped: a census that quietly lost a bond and one that
     // never had it look identical from the root alone.
-    if (height === undefined) { missing.push({ ...c, why: 'no such outpoint at or before that height' }); continue; }
+    if (height === undefined) {
+      excluded.push({ ...c, why: 'no such outpoint at or before that height' });
+      continue;
+    }
 
-    found.push({ ...c, height, spent: spentAt.has(key) });
+    const entry = { ...c, height, spent: spentAt.has(key) };
+
+    // SCAN APPLIES ITS OWN CONJUNCTS. It used to hand its findings to the
+    // commit step and let that do the filtering, which made SCAN a lookup and
+    // the root the only place the rules lived. 5A.4 puts "unspent at
+    // census_height with >= census_confirmations depth" in step 1, so step 1
+    // decides it, and says which rule dropped whom.
+    if (entry.spent) {
+      excluded.push({ ...entry, why: 'that output was already spent at the census height' });
+      continue;
+    }
+    const depth = tipHeight - height + 1;
+    if (depth < minConfirmations) {
+      excluded.push({
+        ...entry,
+        why: `that output is ${depth} confirmations deep where this census needs ${minConfirmations}`,
+      });
+      continue;
+    }
+
+    found.push(entry);
   }
 
-  return {
-    entries: found,
-    missing,
-    census: buildCensus(found, { censusHeight, minConfirmations, tipHeight }),
-  };
+  // NO `census` FIELD. It used to return one, and it was a root taken before
+  // RESOLVE and FILTER had run - the most natural way to use this package gave
+  // back a census over nodes whose advertisements nobody had read. A premature
+  // root is not a return value; `deriveCensus` is where a root comes from.
+  return { entries: found, excluded };
 }
 
 /**
@@ -341,7 +393,7 @@ function resolveBody(seen, entry) {
     commitments.some((c) => c.length === 32 && advertId(a).every((b, i) => b === c[i])));
   if (!taken)
     return { ok: false, why: 'the bond output commits to a different advertisement' };
-  return { ok: true, advert: taken };
+  return { ok: true, advert: taken, advertId: advertId(taken) };
 }
 
 export function resolveCensus(entries, { contract, resolve, supportedVersions = [PROTOCOL_VERSION] }) {
@@ -398,9 +450,19 @@ export function resolveCensus(entries, { contract, resolve, supportedVersions = 
       continue;
     }
 
-    // The RESOLVED roles replace whatever the entry claimed: the body is what
-    // the bond committed to, and the entry beside it is somebody's summary.
-    eligible.push({ ...e, roles, advert: read.advert, nodePubkey: read.advert.nodePubkey });
+    // THE RESOLVED BODY REPLACES WHATEVER THE ENTRY CLAIMED - the roles, and
+    // the key. The body is what the bond committed to; the entry beside it is
+    // somebody's summary. The key mattered more than the roles and was missed
+    // the first time: the leaf hashes `pubkey`, so a census over transcriptions
+    // would name a key that never bonded, and the committee seed, the receipts
+    // and the payout table all read that key afterwards.
+    eligible.push({
+      ...e,
+      pubkey: read.advert.nodePubkey,
+      roles,
+      advert: read.advert,
+      advertId: read.advertId,
+    });
   }
 
   return {
@@ -409,5 +471,69 @@ export function resolveCensus(entries, { contract, resolve, supportedVersions = 
     excluded,
     unchecked: ['bond script template (5A.3B: a taproot output hides it)',
                 'advertisement signature (no curve in this package)'],
+  };
+}
+
+/**
+ * 5A.4, ALL FIVE STEPS, AND THE ONLY PLACE A CENSUS ROOT COMES FROM.
+ *
+ * "Given `census_height`, EVERY PARTICIPANT RUNS THE SAME FIVE STEPS." Five
+ * steps that only join when a caller remembers to join them are not a
+ * derivation, they are parts - and the parts were reachable in the wrong
+ * order. `scanCensus` handed back a root of its own with steps 2 and 3
+ * unrun, so the shortest path through this package produced a census over
+ * nodes whose advertisements nobody had read. That is the defect this closes:
+ *
+ *   1. SCAN     the blocks say where each candidate outpoint was created,
+ *               whether it was spent by the census height, and how deep it is.
+ *   2. RESOLVE  the committed advertisement body, retrieved and hash-matched.
+ *   3. FILTER   5A.3's objective criteria, the three that wait on nothing.
+ *   4. SORT     ascending by (funding_txid, vout), which cannot be ground.
+ *   5. COMMIT   the tagged leaves, Merkle-rooted, promotion on an odd level.
+ *
+ * Steps 1 and 2-3 are still separately callable, because a node wants to know
+ * WHY somebody was dropped and at which step. Neither of them returns a root.
+ *
+ * Every exclusion comes back, from either step, carrying the step that made it
+ * and the reason. A census that quietly lost a bond and one that never had it
+ * look identical from the root alone, and a node accused of publishing the
+ * wrong census needs to be able to point at the rule that removed a name.
+ *
+ * The two 5A.3 criteria this cannot apply come back in `unchecked` as they do
+ * from RESOLVE: the bond script template is unreadable until the output is
+ * spent, and the advertisement signature needs a curve this package does not
+ * carry. Neither is skipped quietly.
+ */
+export function deriveCensus(blocks, {
+  censusHeight, minConfirmations, tipHeight, candidates,
+  contract, resolve, supportedVersions = [PROTOCOL_VERSION],
+}) {
+  let scanned;
+  try {
+    scanned = scanCensus(blocks, { censusHeight, minConfirmations, tipHeight, candidates });
+  } catch (e) {
+    return { ok: false, why: `that census cannot be scanned: ${e.message}` };
+  }
+
+  const resolved = resolveCensus(scanned.entries, { contract, resolve, supportedVersions });
+  if (!resolved.ok) return resolved;
+
+  let census;
+  try {
+    census = commitCensus(resolved.eligible, { censusHeight, minConfirmations, tipHeight });
+  } catch (e) {
+    return { ok: false, why: `that census cannot be committed: ${e.message}` };
+  }
+
+  return {
+    ok: true,
+    entries: census.entries,
+    leaves: census.leaves,
+    root: census.root,
+    excluded: [
+      ...scanned.excluded.map((e) => ({ ...e, step: 'scan' })),
+      ...resolved.excluded.map((e) => ({ ...e, step: 'resolve' })),
+    ],
+    unchecked: resolved.unchecked,
   };
 }
