@@ -81,11 +81,10 @@ test('tickets, weights and the chosen committee match', () => {
     entries, role: 'game',
     // The vector pins the LOTTERY - seed, weights, tickets - and the round it
     // is drawn for names its network like any other, because the census
-    // minimum is a genesis fact. Five entries clear regtest's two.
-    contract: {
-      committeeSeed: seed, gameVerifySlots: 3, bondMinSats: BigInt(v.bondMin),
-      networkId: NETWORK_ID_REGTEST,
-    } });
+    // minimum is a genesis fact. Five entries clear regtest's two. The seed is
+    // an argument now: a beacon fixes it, and no contract names it.
+    contract: { gameVerifySlots: 3, bondMinSats: BigInt(v.bondMin), networkId: NETWORK_ID_REGTEST },
+    committeeSeed: seed });
   assert.deepEqual(picked.map((e) => toHex(e.txid)), v.selected);
 });
 

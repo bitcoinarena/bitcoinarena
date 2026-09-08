@@ -21,7 +21,7 @@
 // creator could have known when they chose their round must not be usable at
 // all. The first is arithmetic; the second is evidence, and evidence is what
 // this file asks the caller for and refuses to assume.
-import { taggedHash } from './hash.js';
+import { toHex, taggedHash } from './hash.js';
 import { TAG } from './constants.js';
 
 const cat = (...parts) => {

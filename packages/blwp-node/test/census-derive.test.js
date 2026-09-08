@@ -502,7 +502,8 @@ test('a bond spent after the census height keeps its place, its amount and its s
   assert.ok(mine, 'the spent-later bond is not in the census');
   assert.equal(mine.bondSats, 60000n, 'the amount changed with a later spend');
   assert.equal(toHex(later.root), toHex(untouched.root), 'a later spend moved the census root');
-  const seats = selectCommittee({ entries: later.entries, contract: round, role: 'game' });
+  const seats = selectCommittee({
+    entries: later.entries, contract: round, role: 'game', committeeSeed: round.committeeSeed });
   assert.equal(seats.length, 2);
   assert.equal(seats.some((e) => toHex(e.txid) === toHex(tx.txid)), true,
     'the bond spent after the census lost its seat');

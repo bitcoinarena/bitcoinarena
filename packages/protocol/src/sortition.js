@@ -60,7 +60,7 @@ export function weightOf(bondSats, bondMin) {
  * symptom is two nodes disagreeing when their scores are close, which is the
  * worst failure profile there is - rare, unreproducible, and load-dependent.
  */
-export function selectCommittee({ entries, contract, role, exclude }) {
+export function selectCommittee({ entries, contract, role, exclude, committeeSeed }) {
   // EVERY NUMBER THAT DECIDES THE COMMITTEE COMES OFF THE CONTRACT.
   //
   // All three used to be arguments. Section 6 on the slot counts: "echoed for
@@ -72,8 +72,30 @@ export function selectCommittee({ entries, contract, role, exclude }) {
   const slots = slotsForRole(contract, role);
   if (!Number.isInteger(slots))
     throw new Error(`that round names no committee size for ${role}`);
-  if (!(contract.committeeSeed instanceof Uint8Array))
-    throw new Error('that round names no committee seed');
+  // THE SEED IS THE BEACON'S, AND IT IS AN ARGUMENT.
+  //
+  // It used to be read off `contract.committeeSeed` - thirty-two bytes the
+  // round's AUTHOR wrote - so the lottery was a function of a value the
+  // creator chose. Measured on a fixed census of eight bonded nodes with two
+  // slots: 34 offline candidate seeds were enough to seat a chosen pair, and
+  // since the seated set became the only trusted list that is the whole
+  // committee. That is v4.4's grinding attack, which 5A.5 exists to close:
+  //
+  //   committee_seed = H(census_root_gv || census_root_settle
+  //                      || round_id || round_randomness)
+  //
+  // and the spec's Round Contract carries `randomness_rule`,
+  // `randomness_fallback`, `committee_time` and `entry_open_time` - and NO
+  // committee seed, because a contract cannot name one: `round_id` hashes the
+  // contract, so a contract carrying the seed derived from its own id has no
+  // fixed point. Measured, six iterations, never equal.
+  //
+  // So the caller brings the seed its beacon produced. No fallback to the
+  // field: a caller with no beacon gets a refusal, because "I have no
+  // randomness" and "the committee is whatever the contract says" must never
+  // be the same answer.
+  if (!(committeeSeed instanceof Uint8Array) || committeeSeed.length !== 32)
+    throw new Error('a committee is drawn on the seed its beacon produced, not on one a contract names');
   // A POSITIVE FLOOR, because the weight is bond/floor and a floor of zero is
   // not a small floor - it is a division by zero, and `weightOf` threw from
   // underneath here rather than this answering. It is also the thing 5A.3
@@ -81,7 +103,6 @@ export function selectCommittee({ entries, contract, role, exclude }) {
   // v4.4 unsafe".
   if (typeof contract.bondMinSats !== 'bigint' || contract.bondMinSats <= 0n)
     throw new Error('that round names no positive bond floor to weigh against');
-  const committeeSeed = contract.committeeSeed;
   const bondMin = contract.bondMinSats;
 
   // AND THE CENSUS HAS TO BE BIG ENOUGH TO HOLD A ROUND AT ALL.

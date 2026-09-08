@@ -20,6 +20,7 @@ import { decodeRoundContract } from '../../protocol/src/contracts.js';
 import { parseTransaction } from '../../protocol/src/tx.js';
 import { networkOf } from '../../protocol/src/constants.js';
 import { toHex } from '../../protocol/src/hash.js';
+import { committeeSeedFromBeacon } from '../../protocol/src/beacon.js';
 import { bondSetFor } from './curve.js';
 
 /**
@@ -33,10 +34,43 @@ import { bondSetFor } from './curve.js';
  */
 export const NO_CHAIN_VIEW = () => undefined;
 
+/**
+ * AND WHERE THE BEACON COMES FROM, which is not here either.
+ *
+ * 5A.5's seed is `H(roots || round_id || round_randomness)` and the randomness
+ * is the network's `randomness_source` - `bitcoin-block-hash` on every network
+ * this build knows. A node given none seats nobody: "I have no beacon" and
+ * "the committee is whatever the contract says" must never be the same answer,
+ * because the second is the grinding attack.
+ */
+export const NO_BEACON = () => undefined;
+
 export class Roster {
-  constructor(round, { chainFor = NO_CHAIN_VIEW } = {}) {
+  constructor(round, { chainFor = NO_CHAIN_VIEW, randomnessFor = NO_BEACON } = {}) {
     this.round = round;
     this.chainFor = chainFor;
+    this.randomnessFor = randomnessFor;
+  }
+
+  /**
+   * THE SEED THIS ROUND IS SEATED WITH, from the beacon and never from the
+   * contract's own bytes.
+   *
+   * The field is checked against it - a round naming a seed its beacon does
+   * not produce is refused by name - and the seed handed to the lottery is the
+   * BEACON'S, so even a caller that skipped the comparison could not seat from
+   * chosen bytes.
+   */
+  seedFor(roundIdBytes, contract) {
+    const given = this.randomnessFor({ contract, roundIdBytes });
+    const randomness = given instanceof Uint8Array ? given : given && given.hash;
+    const height = given && given.height;
+    if (!randomness)
+      return {
+        ok: false,
+        why: 'this node has no beacon for that round, so it cannot say who the census seats',
+      };
+    return committeeSeedFromBeacon(contract, { roundId: roundIdBytes, randomness, height });
   }
 
   /**
@@ -176,9 +210,19 @@ export class Roster {
 
     const row = this.round.get(roundIdBytes);
     const contract = decodeRoundContract(new Uint8Array(row.contract));
+
+    // THE LOTTERY IS DRAWN ON THE BEACON'S SEED. Not on `contract.committeeSeed`:
+    // that field is the author's claim about it, and 34 offline tries were
+    // enough to make it seat a chosen pair.
+    const seeded = this.seedFor(roundIdBytes, contract);
+    if (!seeded.ok) return { ok: false, why: seeded.why, root: census.root };
+
     let committee;
-    try { committee = selectCommittee({ entries: census.entries, contract, role }); }
-    catch (e) { return { ok: false, why: e.message, root: census.root }; }
+    try {
+      committee = selectCommittee({
+        entries: census.entries, contract, role, committeeSeed: seeded.seed,
+      });
+    } catch (e) { return { ok: false, why: e.message, root: census.root }; }
 
     return {
       ok: true,

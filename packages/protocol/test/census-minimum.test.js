@@ -47,10 +47,12 @@ test('the minimum is the network\'s, and it comes from genesis', () => {
   // operator who can lower this holds rounds on a census of one.
   const thin = census(1);
   for (const tried of [{ minimum: 1 }, { censusMinNodes: 1 }, { min: 1 }]) {
-    assert.throws(() => selectCommittee({ entries: thin, contract: round(NETWORK_ID_REGTEST), role: 'game', ...tried }),
+    assert.throws(() => selectCommittee({
+      entries: thin, contract: round(NETWORK_ID_REGTEST), role: 'game', committeeSeed: b32(11), ...tried }),
       /where regtest was born needing 2/, `a caller set the minimum with ${Object.keys(tried)[0]}`);
     assert.throws(() => selectCommittee({
       entries: thin, contract: { ...round(NETWORK_ID_REGTEST), ...tried }, role: 'game',
+      committeeSeed: b32(11),
     }), /where regtest was born needing 2/, `a contract field ${Object.keys(tried)[0]} lowered the minimum`);
   }
 });
@@ -62,18 +64,18 @@ test('regtest holds a round on two and refuses one, by name', () => {
   assert.equal(two.ok, true, two.why);
   assert.equal(two.have, 2);
   assert.equal(two.need, 2);
-  assert.equal(selectCommittee({ entries: census(2), contract: c, role: 'game' }).length, 2);
+  assert.equal(selectCommittee({ entries: census(2), contract: c, role: 'game', committeeSeed: b32(11) }).length, 2);
 
   const one = meetsCensusMinimum(census(1), c, 'game');
   assert.equal(one.ok, false, 'a census of one was held to be enough');
   assert.match(one.why, /that census carries 1 game node where regtest was born needing 2/);
-  assert.throws(() => selectCommittee({ entries: census(1), contract: c, role: 'game' }),
+  assert.throws(() => selectCommittee({ entries: census(1), contract: c, role: 'game', committeeSeed: b32(11) }),
     /that census carries 1 game node where regtest was born needing 2/);
 
   const none = meetsCensusMinimum([], c, 'game');
   assert.equal(none.ok, false);
   assert.match(none.why, /carries 0 game nodes where regtest was born needing 2/);
-  assert.throws(() => selectCommittee({ entries: [], contract: c, role: 'game' }),
+  assert.throws(() => selectCommittee({ entries: [], contract: c, role: 'game', committeeSeed: b32(11) }),
     /carries 0 game nodes/);
 });
 
@@ -82,14 +84,14 @@ test('testnet4 is judged by testnet4\'s number, and says so by name', () => {
   const c = round(NETWORK_ID_TESTNET4, { gameVerifySlots: need, settlementSlots: need });
 
   assert.equal(meetsCensusMinimum(census(need), c, 'game').ok, true);
-  assert.equal(selectCommittee({ entries: census(need), contract: c, role: 'game' }).length, need);
+  assert.equal(selectCommittee({ entries: census(need), contract: c, role: 'game', committeeSeed: b32(11) }).length, need);
 
   const short = meetsCensusMinimum(census(need - 1), c, 'game');
   assert.equal(short.ok, false, 'testnet4 held a round one node short');
   assert.equal(short.need, need);
   assert.match(short.why, new RegExp(`where testnet4 was born needing ${need}`),
     'the refusal does not name the network whose number it applied');
-  assert.throws(() => selectCommittee({ entries: census(need - 1), contract: c, role: 'game' }),
+  assert.throws(() => selectCommittee({ entries: census(need - 1), contract: c, role: 'game', committeeSeed: b32(11) }),
     new RegExp(`testnet4 was born needing ${need}`));
 
   // AND THE ANSWER IS THE ROUND'S, not the entries'. The same census put to a
@@ -112,7 +114,7 @@ test('the minimum is per role, not per census', () => {
     const seen = meetsCensusMinimum(mixed, c, role);
     assert.equal(seen.ok, false, `${role} was held on a census of one`);
     assert.equal(seen.have, 1);
-    assert.throws(() => selectCommittee({ entries: mixed, contract: c, role }),
+    assert.throws(() => selectCommittee({ entries: mixed, contract: c, role, committeeSeed: b32(11) }),
       new RegExp(`carries 1 ${role} node where regtest was born needing 2`));
   }
 
@@ -126,11 +128,11 @@ test('a round on a network this build has no genesis for is refused, not given a
   const nowhere = round(b32(0x77));
   assert.throws(() => censusMinimumFor(nowhere), /no genesis for/);
   assert.throws(() => meetsCensusMinimum(census(1), nowhere, 'game'), /no genesis for/);
-  assert.throws(() => selectCommittee({ entries: census(1), contract: nowhere, role: 'game' }),
+  assert.throws(() => selectCommittee({ entries: census(1), contract: nowhere, role: 'game', committeeSeed: b32(11) }),
     /no genesis for/, 'an unknown network was treated as needing nobody');
 
   const nameless = { committeeSeed: b32(11), gameVerifySlots: 2, bondMinSats: 100000n };
-  assert.throws(() => selectCommittee({ entries: census(1), contract: nameless, role: 'game' }),
+  assert.throws(() => selectCommittee({ entries: census(1), contract: nameless, role: 'game', committeeSeed: b32(11) }),
     /names no network/);
 });
 
@@ -145,7 +147,7 @@ test('exactly the minimum is enough, and one fewer is not', () => {
       `${name} refused a census of exactly its minimum`);
     assert.equal(meetsCensusMinimum(census(need - 1), c, 'game').ok, false,
       `${name} held a round one node short`);
-    assert.equal(selectCommittee({ entries: census(need), contract: c, role: 'game' }).length, need);
+    assert.equal(selectCommittee({ entries: census(need), contract: c, role: 'game', committeeSeed: b32(11) }).length, need);
   }
 });
 
@@ -160,6 +162,6 @@ test('a short census yields no committee at all, where it used to yield a short 
   assert.equal(scored.slice(0, c.gameVerifySlots).length, 1,
     'the old arithmetic did not give one seat, so this is not the case it fixed');
 
-  assert.throws(() => selectCommittee({ entries: one, contract: c, role: 'game' }),
+  assert.throws(() => selectCommittee({ entries: one, contract: c, role: 'game', committeeSeed: b32(11) }),
     /carries 1 game node where regtest was born needing 2/);
 });

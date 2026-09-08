@@ -129,7 +129,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // WHO MAY HOLD A ROUND, from the chain. The census stopped being library
   // code here: this is the daemon's only caller of it, and `chainFor` is the
   // blocks - asked for, never invented, the same way the randomness is.
-  const roster = new Roster(round, { ...(chainFor ? { chainFor } : {}) });
+  const roster = new Roster(round, {
+    ...(chainFor ? { chainFor } : {}),
+    // The same beacon the verifier reads: one source, so a node cannot seat
+    // one committee and sign results against another.
+    ...(randomnessFor ? { randomnessFor } : {}),
+  });
 
   // WHAT HEARS A ROUND CLOSING. Section 13 replays once the run is over, so
   // the close is the event and this is what listens for it. The world secret

@@ -568,8 +568,11 @@ test('two daemons given the same published hash and height derive the same seed 
       txid: b32(n), vout: 0, pubkey: b32(0xa0 + n), bondSats: 100000n,
       height: 1, roles: ['game'], spent: false,
     }));
+    // THE SEED IS THE BEACON'S, handed to the lottery: the contract carries no
+    // seed the selection reads, which is what makes grinding a round id
+    // worthless rather than merely expensive.
     const seatsOf = (seed) => selectCommittee({
-      entries, role: 'game', contract: { ...c, committeeSeed: seed },
+      entries, role: 'game', contract: c, committeeSeed: seed,
     }).map((e) => toHex(e.pubkey));
     assert.deepEqual(seatsOf(seedA), seatsOf(seedB));
     assert.equal(seatsOf(seedA).length, c.gameVerifySlots);

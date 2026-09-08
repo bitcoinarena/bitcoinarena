@@ -28,6 +28,10 @@ import { toHex } from '../../protocol/src/hash.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const HEIGHT = 900000;
+// THE BEACON these rounds are seeded from, owned by the fixture the way the
+// census root is: a value published ABOVE the census height, which is what
+// `beaconIsAfterRound` can prove until `committee_time` exists.
+const BEACON = { hash: new Uint8Array(32).fill(0xbe), height: 900005 };
 const TIP = HEIGHT + 10;
 const FROM = HEIGHT - 20;
 
@@ -84,7 +88,7 @@ test('two daemons bond their own identities and are seated from the chain', asyn
     const root = rootFor(bonds, keys);
 
     for (const node of [a, b]) {
-      const roster = new Roster(node.round, { chainFor: () => chainWith(bonds) });
+      const roster = new Roster(node.round, { chainFor: () => chainWith(bonds), randomnessFor: () => BEACON });
       const c = contractWith(keys, root);
       const rid = node.round.open(c);
       const seated = roster.seatRound(rid);
@@ -107,7 +111,7 @@ test('a contract that names a stranger, or misses a seated node, is refused by n
     const keys = [mine, other];
     const bonds = [bondOfKey(mine, 1), bondOfKey(other, 2)];
     const root = rootFor(bonds, keys);
-    const roster = new Roster(node.round, { chainFor: () => chainWith(bonds) });
+    const roster = new Roster(node.round, { chainFor: () => chainWith(bonds), randomnessFor: () => BEACON });
 
     const seat = (nodes) => {
       const c = contractWith(nodes, root);
@@ -153,7 +157,7 @@ test('the round door refuses a chain-unsupported committee, and seats a supporte
   const root = rootFor(bonds, keys);
 
   const node = await serve(openStore(':memory:'), {
-    port: 0, funded: () => true, chainFor: () => chainWith(bonds),
+    port: 0, funded: () => true, chainFor: () => chainWith(bonds), randomnessFor: () => BEACON,
   });
   try {
     const good = contractWith(keys, root);
@@ -185,7 +189,7 @@ test('a seated key with a bad signature and a well-signed stranger fail differen
   const peer = new Round(openStore(':memory:'), () => 1234);
   const keys = [round.pubkey, peer.pubkey];
   const bonds = [bondOfKey(keys[0], 1), bondOfKey(keys[1], 2)];
-  const roster = new Roster(round, { chainFor: () => chainWith(bonds) });
+  const roster = new Roster(round, { chainFor: () => chainWith(bonds), randomnessFor: () => BEACON });
   const rid = round.open(contractWith(keys, rootFor(bonds, keys)));
   assert.equal(roster.seatRound(rid).ok, true);
 

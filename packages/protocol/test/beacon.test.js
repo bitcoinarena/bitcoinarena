@@ -96,9 +96,11 @@ test('one seed selects one committee, and a different beacon selects another', (
     roundId: RID, roundRandomness: randomness,
   });
 
+  // THE SEED IS THE BEACON'S, handed to the lottery. It is no longer read off
+  // the contract at all - a contract cannot name it, since `round_id` hashes
+  // the contract that would carry it.
   const pick = (randomness) => selectCommittee({
-    entries, role: 'game',
-    contract: { ...contract, committeeSeed: seedOf(randomness) },
+    entries, role: 'game', contract, committeeSeed: seedOf(randomness),
   }).map((e) => toHex(e.pubkey));
 
   const one = pick(PUBLISHED);

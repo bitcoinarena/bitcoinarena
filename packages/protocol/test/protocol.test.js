@@ -120,12 +120,13 @@ test('selection never divides, and heavier bonds win more often', () => {
 
   let heavyWins = 0;
   for (let s = 0; s < 200; s++) {
-    const pick = selectCommittee({
-      entries, role: 'game',
-      contract: {
+    const pick = selectCommittee({ entries, role: 'game', contract: {
         committeeSeed: b32(s % 256), gameVerifySlots: 3, bondMinSats: 100000n,
         networkId: NETWORK_ID_REGTEST,
-      } });
+      }, committeeSeed: {
+        committeeSeed: b32(s % 256), gameVerifySlots: 3, bondMinSats: 100000n,
+        networkId: NETWORK_ID_REGTEST,
+      }.committeeSeed });
     if (pick.some((e) => e.txid[0] === 1)) heavyWins++;
   }
   // fifty times the bond in a field of twenty, three slots: it should appear
@@ -144,8 +145,8 @@ test('the same seed picks the same committee', () => {
     committeeSeed: b32(11), gameVerifySlots: 2, bondMinSats: 100000n,
     networkId: NETWORK_ID_REGTEST,
   };
-  const a = selectCommittee({ entries, contract: round, role: 'game' });
-  const b = selectCommittee({ entries, contract: round, role: 'game' });
+  const a = selectCommittee({ entries, contract: round, role: 'game', committeeSeed: round.committeeSeed });
+  const b = selectCommittee({ entries, contract: round, role: 'game', committeeSeed: round.committeeSeed });
   assert.deepEqual(a.map((e) => e.txid[0]), b.map((e) => e.txid[0]));
 
   // AND THE SIZE IS THE ROUND'S. It was a caller number: nobody had to forge a
@@ -153,28 +154,35 @@ test('the same seed picks the same committee', () => {
   // is explicit that the counts are "echoed for readability; MUST equal
   // genesis_parameters... A contract disagreeing with the network it names is
   // invalid, NOT A SMALLER COMMITTEE."
-  assert.equal(selectCommittee({ entries, contract: round, role: 'game' }).length, 2);
-  assert.equal(selectCommittee({ entries, contract: { ...round, gameVerifySlots: 5 }, role: 'game' }).length, 5);
+  assert.equal(selectCommittee({ entries, contract: round, role: 'game', committeeSeed: round.committeeSeed }).length, 2);
+  assert.equal(selectCommittee({ entries, contract: { ...round, gameVerifySlots: 5 }, role: 'game', committeeSeed: round.committeeSeed }).length, 5);
 
   // a settlement seat count is a different number, and a role with no pool has
   // no committee at all rather than a silent zero
   assert.equal(selectCommittee({
     entries: entries.map((e) => ({ ...e, roles: ['settlement'] })),
-    contract: { ...round, settlementSlots: 4 }, role: 'settlement' }).length, 4);
-  assert.throws(() => selectCommittee({ entries, contract: round, role: 'relay' }),
+    contract: { ...round, settlementSlots: 4 }, role: 'settlement',
+    committeeSeed: round.committeeSeed }).length, 4);
+  assert.throws(() => selectCommittee({ entries, contract: round, role: 'relay', committeeSeed: round.committeeSeed }),
     /names no committee size for relay/);
+  // THE SEED IS NOT A CONTRACT FIELD ANY MORE. A caller that brings none is
+  // refused for that, and the refusal says where a seed comes from - the
+  // beacon - rather than pointing at a field the spec's contract does not have.
   assert.throws(() => selectCommittee({ entries, contract: { gameVerifySlots: 2, bondMinSats: 1n }, role: 'game' }),
-    /names no committee seed/);
-  assert.throws(() => selectCommittee({ entries, contract: { gameVerifySlots: 2, committeeSeed: b32(11) }, role: 'game' }),
-    /names no positive bond floor/);
+    /drawn on the seed its beacon produced/);
+  assert.throws(() => selectCommittee({
+    entries, contract: { gameVerifySlots: 2 }, role: 'game', committeeSeed: b32(11) }),
+  /names no positive bond floor/);
 
   // A FLOOR OF ZERO IS NOT A SMALL FLOOR. The weight is bond/floor, so zero
   // is a division by zero - `weightOf` threw from underneath this rather than
   // this answering - and 5A.3 says what it means besides: a floor of nothing
   // makes identity free, "the flaw that made v4.4 unsafe".
   for (const floor of [0n, -1n])
-    assert.throws(() => selectCommittee({ entries, contract: { ...round, bondMinSats: floor }, role: 'game' }),
-      /names no positive bond floor/, `a floor of ${floor} was accepted`);
+    assert.throws(() => selectCommittee({
+      entries, contract: { ...round, bondMinSats: floor }, role: 'game',
+      committeeSeed: round.committeeSeed }),
+    /names no positive bond floor/, `a floor of ${floor} was accepted`);
 
   // AND A CALLER CANNOT REACH ANY OF THE THREE. Held fixed, the old arguments
   // are inert: there is no parameter left to pass one through.
@@ -186,25 +194,42 @@ test('the same seed picks the same committee', () => {
     txid: b32(n), vout: 0, pubkey: pk(n), bondSats: BigInt(n) * 400000n,
     height: 1, roles: ['game'], spent: false,
   }));
-  const fair = selectCommittee({ entries: uneven, contract: round, role: 'game' });
+  const fair = selectCommittee({
+    entries: uneven, contract: round, role: 'game', committeeSeed: round.committeeSeed });
   // The values chosen here are the ones proven below to MOVE the answer when
   // the round moves them - `bondMin: 1n` looked inert and was not a test:
   // weightOf floors bond/bondMin, so scaling the floor scales every weight
   // alike and cannot reorder anybody.
-  for (const extra of [{ slots: 5 }, { slots: 1 }, { committeeSeed: b32(99) }, { bondMin: 2000000n }]) {
-    const tried = selectCommittee({ entries: uneven, contract: round, role: 'game', ...extra });
+  for (const extra of [{ slots: 5 }, { slots: 1 }, { bondMin: 2000000n }]) {
+    const tried = selectCommittee({
+      entries: uneven, contract: round, role: 'game', committeeSeed: round.committeeSeed, ...extra });
     assert.equal(tried.length, 2, `a caller passing ${Object.keys(extra)[0]} resized the committee`);
     assert.deepEqual(tried.map((e) => e.txid[0]), fair.map((e) => e.txid[0]),
       `a caller passing ${Object.keys(extra)[0]} changed who sits`);
   }
 
-  // and each of those three, moved on the ROUND, does change the answer -
-  // otherwise the paragraph above proves only that the numbers do nothing
+  // AND THE SEED IS NO LONGER ONE OF THEM. It used to be a contract field, so
+  // "a caller cannot pass one" was the protection; the field was the hole -
+  // 34 offline tries picked a committee out of an eight-node census. The seed
+  // is an argument now, fixed by the beacon, and the contract's own bytes are
+  // NOT READ: moving them changes nobody.
+  assert.deepEqual(
+    selectCommittee({
+      entries: uneven, contract: { ...round, committeeSeed: b32(99) }, role: 'game',
+      committeeSeed: round.committeeSeed }).map((e) => e.txid[0]),
+    fair.map((e) => e.txid[0]),
+    'the lottery still reads the contract\'s committeeSeed');
+
+  // while the seed the BEACON produced does decide it, or the argument would
+  // be inert and this test would prove nothing
   assert.notDeepEqual(
-    selectCommittee({ entries: uneven, contract: { ...round, committeeSeed: b32(99) }, role: 'game' })
+    selectCommittee({ entries: uneven, contract: round, role: 'game', committeeSeed: b32(99) })
       .map((e) => e.txid[0]), fair.map((e) => e.txid[0]));
+
+  // and the other two, moved on the ROUND, still change the answer
   assert.notDeepEqual(
-    selectCommittee({ entries: uneven, contract: { ...round, bondMinSats: 2000000n }, role: 'game' })
+    selectCommittee({ entries: uneven, contract: { ...round, bondMinSats: 2000000n }, role: 'game',
+      committeeSeed: round.committeeSeed })
       .map((e) => e.txid[0]), fair.map((e) => e.txid[0]));
 });
 
