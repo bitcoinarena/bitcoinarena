@@ -15,7 +15,8 @@ import { parse } from 'acorn';
 // `slash.js` is on it because a bond is money: what that file decides is
 // whether an output the node owns may be spent away from it.
 const MONEY = ['payout.js', 'sortition.js', 'census.js', 'contracts.js', 'encode.js',
-               'batch.js', 'transcript.js', 'chain.js', 'tx.js', 'slash.js', 'fee.js'];
+               'batch.js', 'transcript.js', 'chain.js', 'tx.js', 'slash.js', 'fee.js',
+               'donation.js'];
 const ROOT = new URL('../src/', import.meta.url).pathname;
 const problems = [];
 
