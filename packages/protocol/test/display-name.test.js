@@ -33,11 +33,12 @@ test('a custom name replaces the default, an empty one does not', () => {
   assert.equal(normalizeDisplayName('x'.repeat(33)), null);
 });
 
-test('the donation comment is the current display name, truncated to the LNURL cap', () => {
-  assert.equal(donationCommentFor(key(4), 'Ada'), 'Ada');
-  assert.equal(donationCommentFor(key(4), null, 140), displayNameFromKey(key(4)));
-  assert.equal(donationCommentFor(key(4), 'Ada', 2), 'Ad');
-  assert.equal(donationCommentFor(key(4), 'Ada', 0), '');
+test('the donation comment is the public key as hex, not the display name', () => {
+  const hex = '04'.repeat(32);
+  assert.equal(donationCommentFor(key(4)), hex);
+  assert.equal(donationCommentFor(key(4), 140), hex);
+  assert.equal(donationCommentFor(key(4), 63), '');
+  assert.notEqual(donationCommentFor(key(4)), displayNameFromKey(key(4)));
 });
 
 test('the browser record keeps the secret as hex and drops a bad custom name', () => {

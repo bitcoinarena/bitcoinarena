@@ -4,7 +4,8 @@
 // client shows the same string for the same player. A player may override it.
 // The override lives next to the secret in the browser, not on the signed
 // final, so the board still cannot be injected with a name (letter 20).
-// Donation LNURL comments carry the current display name (custom or default).
+// Donation LNURL comments carry the player public key as hex, not the name
+// (the owner 2026-09-08 18:59).
 //
 //   default = adjective-animal-NNNN
 //   digest  = taggedHash('BLWP/v1/DISPLAY_NAME', playerPubkey)
@@ -77,17 +78,18 @@ export function normalizeDisplayName(raw) {
   return s;
 }
 
-/** Name to show and to put in a donation comment. */
+/** Name to show on the board and in the client. Not the donation comment. */
 export function displayNameFor(playerPubkey, custom) {
   return normalizeDisplayName(custom) || displayNameFromKey(playerPubkey);
 }
 
-/** LNURL-pay comment: the current display name, cut to commentAllowed. */
-export function donationCommentFor(playerPubkey, custom, commentAllowed = 140) {
-  const name = displayNameFor(playerPubkey, custom);
+/** LNURL-pay comment: the player public key as hex. Not the display name. */
+export function donationCommentFor(playerPubkey, commentAllowed = 140) {
+  requirePubkey(playerPubkey);
+  const hex = toHex(playerPubkey);
   const max = Number(commentAllowed);
-  if (!Number.isFinite(max) || max <= 0) return '';
-  return name.length <= max ? name : name.slice(0, max);
+  if (!Number.isFinite(max) || max < hex.length) return '';
+  return hex;
 }
 
 /**

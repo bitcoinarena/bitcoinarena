@@ -264,8 +264,9 @@ public key so every client shows the same string:
 `packages/protocol/src/display-name.js`. The name is **changeable**: a custom
 name lives next to the secret in the browser, not on the signed final. Other
 players' board rows always show the default derived from *their* key. The
-current display name (custom if set, else default) is the LNURL-pay `comment`
-on donations, truncated to `commentAllowed`.
+LNURL-pay `comment` on donations is the player **public key as hex**, not the
+display name (the owner 2026-09-08). It is omitted if `commentAllowed` is under
+64 characters.
 
 **Browser key (M3).** The secret is stored in the browser (`blwp.player.v1`)
 with a backup download/import the player triggers. It is never uploaded to a
