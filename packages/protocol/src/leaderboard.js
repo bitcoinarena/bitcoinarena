@@ -37,6 +37,27 @@ export const NOT_ON_A_FINAL = [
 ];
 
 /**
+ * THE ONE THING THAT DECIDES WHETHER A ROW APPEARS, AND THIS PACKAGE CANNOT
+ * CHECK IT.
+ *
+ * `provisionallyFinal` counts `{ resultId, nodePubkey }` pairs against the
+ * round's committee. It does not verify a signature, and `result.js` says why:
+ * "this package carries no curve, so the caller passes what it has checked."
+ * That boundary is right. What was wrong is that the BOARD did not say so.
+ *
+ * Five entries in an array were counted as five committee signatures, and the
+ * answer came back looking exactly like a verified one. Every other door here
+ * names its curve boundary - `resolveCensus` returns "advertisement signature
+ * (no curve in this package)", `acceptAdvert` the same, `provesEquivocation`
+ * takes its verify from the caller - and this was the one place that did not.
+ * A caller who assembled `signedBy` without checking anything would have had
+ * no way to tell from the answer.
+ */
+export const SIGNATURES_NOT_VERIFIED =
+  'committee signatures (counted against the round\'s committee, not verified: '
+  + 'no curve in this package, so a caller passes what it has checked)';
+
+/**
  * The board, from results the committee has actually stood behind.
  *
  * `rows` are `{ result, signedBy }`: the PlayerResult, and who signed it as
@@ -114,7 +135,15 @@ const hex = (b) => {
   return s;
 };
 
-export function leaderboard(rows, { contract, needed = RESULTS_FOR_FINAL, payout } = {}) {
+/**
+ * `signaturesVerified` is the caller saying it has already checked them. It is
+ * a claim about the caller's own work, not about the data, so it changes the
+ * REPORT and nothing else: the same rows, the same order, the same amounts. A
+ * caller that lies here has lied to itself.
+ */
+export function leaderboard(rows, {
+  contract, needed = RESULTS_FOR_FINAL, payout, signaturesVerified = false,
+} = {}) {
   if (!contract || !Array.isArray(contract.nodes) || !contract.nodes.length)
     return { ok: false, why: 'that round names no committee to check signatures against' };
   if (!Array.isArray(rows))
@@ -186,6 +215,8 @@ export function leaderboard(rows, { contract, needed = RESULTS_FOR_FINAL, payout
     ],
     ranked: ranked.length,
     excluded,
-    unchecked: NOT_ON_A_FINAL,
+    unchecked: signaturesVerified
+      ? NOT_ON_A_FINAL
+      : [SIGNATURES_NOT_VERIFIED, ...NOT_ON_A_FINAL],
   };
 }

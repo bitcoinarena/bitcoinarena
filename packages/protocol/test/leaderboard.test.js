@@ -15,7 +15,9 @@ import assert from 'node:assert/strict';
 import { toHex } from '../src/hash.js';
 import { resultId, RESULTS_FOR_FINAL } from '../src/result.js';
 import { DELIVERED, FAILED, FORFEIT, VOID } from '../src/payout.js';
-import { leaderboard, NOT_ON_A_FINAL } from '../src/leaderboard.js';
+import {
+  leaderboard, NOT_ON_A_FINAL, SIGNATURES_NOT_VERIFIED,
+} from '../src/leaderboard.js';
 import { computePayoutTable } from '../src/payout.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
@@ -154,11 +156,12 @@ test('the board carries no money and names what a final cannot tell it', () => {
         `the board carries ${key}, which reads like money`);
   }
 
-  assert.deepEqual(board.unchecked, NOT_ON_A_FINAL);
-  assert.equal(board.unchecked.length, 3);
-  assert.match(board.unchecked[0], /pseudonym/);
-  assert.match(board.unchecked[1], /cargo statistics/);
-  assert.match(board.unchecked[2], /live run status/);
+  assert.deepEqual(board.unchecked, [SIGNATURES_NOT_VERIFIED, ...NOT_ON_A_FINAL]);
+  assert.equal(board.unchecked.length, 4);
+  assert.match(board.unchecked[0], /committee signatures/);
+  assert.match(board.unchecked[1], /pseudonym/);
+  assert.match(board.unchecked[2], /cargo statistics/);
+  assert.match(board.unchecked[3], /live run status/);
 
   // an empty round is a board with no rows, not a refusal
   assert.deepEqual(leaderboard([], { contract }).rows, []);
@@ -287,4 +290,47 @@ test('a payout input that disagrees with the final results is refused', () => {
 
   assert.match(leaderboard(rows, { contract, payout: {} }).why, /names no entries/);
   assert.match(leaderboard(rows, { contract, payout: { entries: [{}] } }).why, /names no player/);
+});
+
+/**
+ * THE ONE THING THAT DECIDES WHETHER A ROW APPEARS, NAMED AS UNCHECKED.
+ *
+ * `provisionallyFinal` counts `{ resultId, nodePubkey }` pairs against the
+ * round's committee; it does not verify a signature, because this package
+ * carries no curve. That boundary is right. What was wrong is that the board
+ * did not SAY so: five entries in an array were counted as five committee
+ * signatures and the answer came back looking exactly like a verified one,
+ * while every other door here names its curve boundary.
+ */
+test('the board says it counted signatures rather than verifying them', () => {
+  const rows = [row(0x21, 900), row(0x22, 800)];
+  const board = leaderboard(rows, { contract });
+
+  assert.equal(board.unchecked[0], SIGNATURES_NOT_VERIFIED);
+  assert.match(board.unchecked[0], /counted against the round's committee, not verified/);
+  assert.match(board.unchecked[0], /no curve in this package/);
+
+  // A CALLER THAT HAS CHECKED CAN SAY SO, and it changes the report and
+  // nothing else: the claim is about the caller's own work, not about the
+  // data, so the rows, the order and the amounts are byte for byte the same.
+  const checked = leaderboard(rows, { contract, signaturesVerified: true });
+  assert.deepEqual(checked.unchecked, NOT_ON_A_FINAL);
+  assert.equal(checked.unchecked.length, 3);
+  assert.equal(checked.unchecked.some((u) => /committee signatures/.test(u)), false);
+
+  assert.deepEqual(checked.rows, board.rows, 'the claim moved a row');
+  assert.equal(checked.ranked, board.ranked);
+  assert.deepEqual(checked.excluded, board.excluded);
+
+  // and with payouts in play it is still only the report that moves
+  const entries = [
+    { pubkey: b32(0x21), stakeMsat: 100000n, outcome: DELIVERED, score: 900 },
+    { pubkey: b32(0x22), stakeMsat: 100000n, outcome: DELIVERED, score: 800 },
+  ];
+  const paid = leaderboard(rows, { contract, payout: { entries, minScore: 1 } });
+  const paidChecked = leaderboard(rows,
+    { contract, payout: { entries, minScore: 1 }, signaturesVerified: true });
+  assert.deepEqual(paidChecked.rows, paid.rows, 'the claim moved a payout');
+  assert.equal(paid.unchecked.length, 4);
+  assert.equal(paidChecked.unchecked.length, 3);
 });
