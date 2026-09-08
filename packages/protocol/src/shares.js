@@ -198,6 +198,10 @@ export function checkHandout({ shares, commitments, curve, published } = {}) {
     const against = published ? published[i] : share.commitment;
     const transit = shareIsConsistent(share, against);
     const dealer = shareOpensTo(share, { commitments, curve });
+    // BOTH HALVES THROUGH THE ONE DOOR TOO, so the collected answer and a
+    // single seat's own answer can never disagree about the same share.
+    if (transit && dealer.ok !== shareIsConsistent(share, against, { commitments, curve }))
+      throw new Error(`seat ${share.seat}: the two ways of asking disagree`);
     seats.push({
       seat: share.seat,
       ok: transit && dealer.ok,
@@ -219,9 +223,25 @@ export function checkHandout({ shares, commitments, curve, published } = {}) {
   };
 }
 
-/** Does this share match what was published for its seat? */
-export function shareIsConsistent(share, commitment) {
-  return toHex(shareCommitment(share.seat, share.value)) === toHex(commitment);
+/**
+ * IS THIS SHARE CONSISTENT - with what was published for its seat, and with
+ * the polynomial the dealer published?
+ *
+ * Two questions and they catch different things, which is why both are here
+ * and why the second is optional rather than folded into the first. The hash
+ * commitment says the value is the one published for this seat: it catches
+ * transit and a swap by whoever passed it on, and it is BLIND to the dealer,
+ * who wrote both sides of it. Given the polynomial as well, this also asks
+ * 23.1's own question - is the share on the one polynomial - which is the
+ * question a dishonest dealer fails.
+ *
+ * Called with two arguments it is exactly what it always was, and the test
+ * that measures the blindness calls it that way on purpose.
+ */
+export function shareIsConsistent(share, commitment, { commitments, curve } = {}) {
+  if (toHex(shareCommitment(share.seat, share.value)) !== toHex(commitment)) return false;
+  if (commitments === undefined && curve === undefined) return true;
+  return shareOpensTo(share, { commitments, curve }).ok;
 }
 
 /**

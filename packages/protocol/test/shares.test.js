@@ -458,3 +458,28 @@ test('a two-polynomial dealer is refused at handout: 0 of 7 becomes 3 of 7', () 
   assert.equal(good.ok, true);
   assert.equal(openStake(honest.shares, { stakeCommitment }).opens, 21);
 });
+
+test('one door answers both questions, and two arguments is still the old one', () => {
+  const other = new Uint8Array(randomBytes(32));
+  const honest = splitSecret(preimage, { coefficients, curve: zn });
+  const second = splitSecret(other, { coefficients: coefficients.map((x) => x + 99n), curve: zn });
+  const mixed = honest.shares.map((s, i) => (i >= 4 ? second.shares[i] : s));
+  const published = honest.shares.map((s, i) => (i >= 4 ? second.shares[i].commitment : s.commitment));
+
+  // TWO ARGUMENTS: the hash commitment alone, blind to the dealer, as before.
+  assert.equal(mixed.filter((s, i) => !shareIsConsistent(s, published[i])).length, 0);
+
+  // THREE: the same call also asks whether the share is on the polynomial.
+  const refused = mixed.filter((s, i) =>
+    !shareIsConsistent(s, published[i], { commitments: honest.commitments, curve: zn }));
+  assert.equal(refused.length, 3);
+  assert.deepEqual(refused.map((s) => s.seat), [5, 6, 7]);
+
+  // an honest seat passes both ways, and a corrupted value fails both
+  assert.equal(shareIsConsistent(honest.shares[0], honest.shares[0].commitment,
+    { commitments: honest.commitments, curve: zn }), true);
+  const bent = { ...honest.shares[0], value: honest.shares[0].value + 1n };
+  assert.equal(shareIsConsistent(bent, honest.shares[0].commitment), false);
+  assert.equal(shareIsConsistent(bent, honest.shares[0].commitment,
+    { commitments: honest.commitments, curve: zn }), false);
+});
