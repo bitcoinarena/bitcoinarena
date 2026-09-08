@@ -36,8 +36,11 @@ const bondOf = (n, over = {}) =>
   bondTransaction(advertFor(n, over), { previousTxid: b32(0xa0 + n), previousVout: 0 });
 
 const HEIGHT = 900000;
-const depth = { minConfirmations: 6, tipHeight: 900010 };
-const contract = { bondMinSats: 50000n, protocolVersion: PROTOCOL_VERSION };
+const TIP = 900010;
+const contract = {
+  bondMinSats: 50000n, protocolVersion: PROTOCOL_VERSION,
+  censusHeight: HEIGHT, censusConfirmations: 6,
+};
 
 /**
  * Three bonds in two blocks, and a resolver that hands back the funding
@@ -74,8 +77,7 @@ function rig({ claims = () => b32(0xEE), extraBlocks = [], extraCandidates = [] 
 }
 
 const derive = (r, over = {}) => deriveCensus(r.blocks, {
-  censusHeight: HEIGHT, ...depth, candidates: r.candidates,
-  contract, resolve: r.resolve, ...over,
+  tipHeight: TIP, candidates: r.candidates, contract, resolve: r.resolve, ...over,
 });
 
 /**
@@ -148,11 +150,11 @@ test('the roles in the census are the advertisement\'s too', () => {
  */
 test('a root cannot be taken over unresolved entries', () => {
   const r = rig();
-  const scanned = scanCensus(r.blocks, { censusHeight: HEIGHT, ...depth, candidates: r.candidates });
+  const scanned = scanCensus(r.blocks, { contract, tipHeight: TIP, candidates: r.candidates });
 
   assert.equal(scanned.census, undefined, 'scan handed back a root again');
   assert.throws(
-    () => commitCensus(scanned.entries, { censusHeight: HEIGHT, ...depth }),
+    () => commitCensus(scanned.entries, { contract, tipHeight: TIP }),
     /has not been resolved/,
     'a census root was taken over nodes nobody had read the advertisement of',
   );
@@ -161,16 +163,16 @@ test('a root cannot be taken over unresolved entries', () => {
   const resolved = derive(r).entries;
   assert.throws(
     () => commitCensus([...resolved.slice(1), { ...resolved[0], advertId: undefined }],
-      { censusHeight: HEIGHT, ...depth }),
+      { contract, tipHeight: TIP }),
     /has not been resolved/);
-  assert.doesNotThrow(() => commitCensus(resolved, { censusHeight: HEIGHT, ...depth }));
+  assert.doesNotThrow(() => commitCensus(resolved, { contract, tipHeight: TIP }));
 
   // and the guard is a COMMITMENT, not a flag: the advertisement id is
   // thirty-two bytes because it is a hash, so sixteen is not a short id, it is
   // not an id. A mutant that only checked the field existed survived here.
   assert.throws(
     () => commitCensus([{ ...resolved[0], advertId: new Uint8Array(16) }],
-      { censusHeight: HEIGHT, ...depth }),
+      { contract, tipHeight: TIP }),
     /has not been resolved/);
 });
 
@@ -198,7 +200,7 @@ test('exclusions come back from both steps, each carrying its step', () => {
   // and 0x13 resolves to a body nobody can retrieve -> resolve drops it
   const gone = toHex(r.ids.get(0x13));
   const out = deriveCensus(r.blocks, {
-    censusHeight: HEIGHT, ...depth, candidates: r.candidates, contract,
+    tipHeight: TIP, candidates: r.candidates, contract,
     resolve: (e) => (toHex(e.txid) === gone ? null : r.resolve(e)),
   });
 
@@ -213,7 +215,7 @@ test('exclusions come back from both steps, each carrying its step', () => {
 
   // and the root really is the root of what survived, not of what was asked for
   assert.equal(toHex(out.root),
-    toHex(commitCensus(out.entries, { censusHeight: HEIGHT, ...depth }).root));
+    toHex(commitCensus(out.entries, { contract, tipHeight: TIP }).root));
 });
 
 /**
@@ -225,9 +227,9 @@ test('a derived census satisfies the round that names its root', () => {
   const r = rig();
   const out = derive(r);
 
-  const round = { censusHeight: HEIGHT, censusRoot: out.root };
-  const boundTo = censusInputsId({ censusHeight: HEIGHT, ...depth, entries: out.entries });
-  const yes = censusRootMatchesRound(round, { entries: out.entries, ...depth, boundTo });
+  const round = { censusHeight: HEIGHT, censusConfirmations: 6, censusRoot: out.root };
+  const boundTo = censusInputsId({ contract, tipHeight: TIP, entries: out.entries });
+  const yes = censusRootMatchesRound(round, { entries: out.entries, tipHeight: TIP, boundTo });
   assert.equal(yes.ok, true, yes.why);
 
   // spend one bond before the census height and the chain derives elsewhere
@@ -237,8 +239,8 @@ test('a derived census satisfies the round that names its root', () => {
   assert.notEqual(toHex(after.root), toHex(out.root));
 
   const no = censusRootMatchesRound(round, {
-    entries: after.entries, ...depth,
-    boundTo: censusInputsId({ censusHeight: HEIGHT, ...depth, entries: after.entries }),
+    entries: after.entries, tipHeight: TIP,
+    boundTo: censusInputsId({ contract, tipHeight: TIP, entries: after.entries }),
   });
   assert.equal(no.ok, false, 'a round stood against a chain that no longer holds its census');
   assert.match(no.why, /censusRoot/);
@@ -257,6 +259,47 @@ test('the order the candidates arrived in does not move the root', () => {
 });
 
 /**
+ * THE DEPTH RULE IS THE ROUND'S, AND A CALLER CANNOT REACH IT.
+ *
+ * 5A.11: "The Round Contract contains: `census_height, census_confirmations`."
+ * The height was already taken off the contract - `censusRootMatchesRound`
+ * says so in its own comment - and the depth beside it was still an argument,
+ * so a caller could recompute an honest census under a rule nobody signed up
+ * to. The census picks the committee, so that was picking the committee.
+ *
+ * Measured with the contract HELD FIXED: passing a depth of 1 alongside
+ * changes nothing, because there is no longer a parameter to pass. Moving the
+ * ROUND's number does change it, which is what makes the field load-bearing.
+ */
+test('a caller cannot choose the confirmation depth; the round does', () => {
+  const r = rig();
+  const honest = derive(r);
+  assert.equal(honest.entries.length, 3);
+
+  // a caller trying the old argument, and every spelling of it
+  for (const extra of [{ minConfirmations: 1 }, { censusConfirmations: 1 },
+                       { minConfirmations: 999 }, { censusHeight: 1 }]) {
+    const tried = deriveCensus(r.blocks, {
+      contract, tipHeight: TIP, candidates: r.candidates, resolve: r.resolve, ...extra,
+    });
+    assert.equal(tried.entries.length, honest.entries.length);
+    assert.equal(toHex(tried.root), toHex(honest.root),
+      `a caller passing ${Object.keys(extra)[0]} moved the census`);
+  }
+
+  // and the ROUND moving it does move the census: at 999 confirmations
+  // nothing is deep enough, and the reason names the round's number
+  const strict = derive(r, { contract: { ...contract, censusConfirmations: 999 } });
+  assert.equal(strict.entries.length, 0);
+  assert.notEqual(toHex(strict.root), toHex(honest.root));
+  assert.match(strict.excluded[0].why, /where this round needs 999/);
+
+  // the height and the depth now have the same owner, which was the point
+  assert.match(derive(r, { contract: { ...contract, censusConfirmations: undefined } }).why,
+    /names no confirmation depth/);
+});
+
+/**
  * And it answers rather than throwing, like everything else here: a caller
  * asking whether a census can be derived gets a reason, not an exception.
  */
@@ -264,10 +307,16 @@ test('a derivation it cannot do is refused with its reason', () => {
   const r = rig();
 
   assert.equal(deriveCensus(undefined, {
-    censusHeight: HEIGHT, ...depth, candidates: r.candidates, contract, resolve: r.resolve,
+    tipHeight: TIP, candidates: r.candidates, contract, resolve: r.resolve,
   }).why, 'that census cannot be scanned: scan needs blocks to read');
 
-  assert.match(derive(r, { contract: {} }).why, /names no bond floor/);
+  // a contract with nothing on it fails at the FIRST step that needs it, and
+  // says which number it was missing rather than defaulting one
+  assert.match(derive(r, { contract: {} }).why, /cannot be scanned: that round names no census height/);
+  assert.match(derive(r, { contract: { censusHeight: HEIGHT } }).why,
+    /cannot be scanned: that round names no confirmation depth/);
+  assert.match(derive(r, { contract: { censusHeight: HEIGHT, censusConfirmations: 6 } }).why,
+    /names no bond floor/);
   assert.match(derive(r, { resolve: undefined }).why, /no way to retrieve/);
 
   // a duplicate outpoint is the commit step's refusal, and it survives the trip

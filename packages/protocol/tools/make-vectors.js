@@ -58,7 +58,7 @@ out.tagged = {
   });
   const entries = [mk(7, 100000, 800007), mk(3, 500000, 800003),
                    mk(11, 100000, 800011), mk(5, 2000000, 800005)];
-  const c = commitCensus(entries, { censusHeight: 900000, minConfirmations: 6, tipHeight: 900100 });
+  const c = commitCensus(entries, { contract: { censusHeight: 900000, censusConfirmations: 6 }, tipHeight: 900100 });
   out.census = {
     what: 'Census canonicalisation: filter by height, maturity and spentness; sort by (txid, vout); Merkle-root the tagged leaves.',
     entries: c.entries.map((e) => ({
@@ -88,7 +88,8 @@ out.tagged = {
       weight: weightOf(e.bondSats, 100000n).toString(),
       ticket: ticketFor(seed, e, 'game').toString(),
     })),
-    selected: selectCommittee({ entries, committeeSeed: seed, role: 'game', slots: 3, bondMin: 100000n })
+    selected: selectCommittee({ entries, role: 'game',
+      contract: { committeeSeed: seed, gameVerifySlots: 3, bondMinSats: 100000n } })
       .map((e) => toHex(e.txid)),
     rules: [
       'Weight is bond / bond_min, floored, minimum one. LINEAR.',
@@ -131,7 +132,7 @@ out.tagged = {
 /* --------------------------------------------------------------- contracts */
 {
   const c = {
-    networkId: b32(0x4e), configHash: b32(0x43), simCoreHash: b32(1), startTimeMs: 1788200000000n, entryCloseMs: 1788200060000n, objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'BURN', donationSetId: new Uint8Array(32).fill(0xd0),
+    networkId: b32(0x4e), configHash: b32(0x43), censusConfirmations: 6, gameVerifySlots: 7, settlementSlots: 7, simCoreHash: b32(1), startTimeMs: 1788200000000n, entryCloseMs: 1788200060000n, objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'BURN', donationSetId: new Uint8Array(32).fill(0xd0),
     censusHeight: 964900, censusRoot: b32(2), committeeSeed: b32(3),
     stakeMsat: 100000n, bondMinSats: 100000n, blockTicks: 9000,
     exposureReference: 12451840, corridorHalfWidth: 3014656, spawnFreeRadius: 1441792,

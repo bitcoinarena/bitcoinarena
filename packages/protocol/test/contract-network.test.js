@@ -31,7 +31,7 @@ import {
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const sample = () => ({
-  networkId: b32(0x4e), configHash: b32(0x43), simCoreHash: b32(1),
+  networkId: b32(0x4e), configHash: b32(0x43), censusConfirmations: 6, gameVerifySlots: 7, settlementSlots: 7, simCoreHash: b32(1),
   startTimeMs: 1788200000000n, entryCloseMs: 1788200060000n,
   objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20,
   slashRemainder: 'BURN', donationSetId: b32(0xd0),
@@ -74,6 +74,37 @@ test('the network and the config are each in the round id', () => {
 
   // and the same contract twice is the same id, so the movement is the field
   assert.equal(toHex(roundId(sample())), base);
+});
+
+/**
+ * THE DEPTH RULE AND THE TWO SEAT COUNTS ARE THE ROUND'S, AND THEY ARE THREE
+ * DIFFERENT NUMBERS.
+ *
+ * 5A.11 pairs the depth with the height: "The Round Contract contains:
+ * `census_height, census_confirmations`". Section 6 carries the seat counts and
+ * says what a disagreement means: "MUST equal genesis_parameters... A contract
+ * disagreeing with the network it names is invalid, NOT A SMALLER COMMITTEE."
+ *
+ * The two counts are tested UNEQUAL. A mutant that swapped them survived while
+ * every fixture used seven and seven, which proved only that seven is seven.
+ */
+test('the depth and the two seat counts round-trip as three separate numbers', () => {
+  const c = { ...sample(), censusConfirmations: 6, gameVerifySlots: 7, settlementSlots: 3 };
+  const back = decodeRoundContract(encodeRoundContract(c));
+  assert.equal(back.censusConfirmations, 6);
+  assert.equal(back.gameVerifySlots, 7);
+  assert.equal(back.settlementSlots, 3, 'the settlement seats came back as the game seats');
+
+  const base = toHex(roundId(c));
+  assert.notEqual(toHex(roundId({ ...c, censusConfirmations: 7 })), base, 'the depth');
+  assert.notEqual(toHex(roundId({ ...c, gameVerifySlots: 5 })), base, 'the game seats');
+  assert.notEqual(toHex(roundId({ ...c, settlementSlots: 5 })), base, 'the settlement seats');
+
+  // and swapping the two is a different round, which it would not be if the
+  // encoder wrote them in one order and the decoder read them in the other
+  const swapped = { ...c, gameVerifySlots: c.settlementSlots, settlementSlots: c.gameVerifySlots };
+  assert.notEqual(toHex(roundId(swapped)), base);
+  assert.equal(decodeRoundContract(encodeRoundContract(swapped)).gameVerifySlots, 3);
 });
 
 /**

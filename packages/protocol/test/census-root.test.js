@@ -22,13 +22,14 @@ const entryAt = (n, vout = 0, over = {}) => ({
 });
 const entries = [entryAt(0x11), entryAt(0x12, 1), entryAt(0x13)];
 const HEIGHT = 900000;
-const depth = { minConfirmations: 6, tipHeight: 900010 };
+const TIP = 900010;
+const at = (h = HEIGHT, over = {}) => ({ censusHeight: h, censusConfirmations: 6, ...over });
 
-const built = () => commitCensus(entries, { censusHeight: HEIGHT, ...depth });
-const bound = () => censusInputsId({ censusHeight: HEIGHT, ...depth, entries });
-const roundWith = (censusRoot, over = {}) => ({ censusHeight: HEIGHT, censusRoot, ...over });
+const built = () => commitCensus(entries, { contract: at(), tipHeight: TIP });
+const bound = () => censusInputsId({ contract: at(), tipHeight: TIP, entries });
+const roundWith = (censusRoot, over = {}) => ({ censusHeight: HEIGHT, censusConfirmations: 6, censusRoot, ...over });
 const ask = (over = {}) => censusRootMatchesRound(
-  roundWith(built().root), { entries, ...depth, boundTo: bound(), ...over },
+  roundWith(built().root), { entries, tipHeight: TIP, boundTo: bound(), ...over },
 );
 
 /**
@@ -37,8 +38,8 @@ const ask = (over = {}) => censusRootMatchesRound(
  * committee if they cannot agree on this.
  */
 test('the same entries at the same height derive the same root', () => {
-  const a = commitCensus(entries, { censusHeight: HEIGHT, ...depth });
-  const b = commitCensus([...entries].reverse(), { censusHeight: HEIGHT, ...depth });
+  const a = commitCensus(entries, { contract: at(), tipHeight: TIP });
+  const b = commitCensus([...entries].reverse(), { contract: at(), tipHeight: TIP });
   assert.equal(toHex(a.root), toHex(b.root),
     'the order a node happened to receive entries in must not move the root');
   assert.equal(a.entries.length, 3);
@@ -63,8 +64,8 @@ test('a round naming any other root is refused, and the refusal names censusRoot
   const flipped = new Uint8Array(built().root);
   flipped[0] ^= 1;
   for (const root of [flipped, b32(0), b32(0x99),
-                      commitCensus([entryAt(0x21)], { censusHeight: HEIGHT, ...depth }).root]) {
-    const no = censusRootMatchesRound(roundWith(root), { entries, ...depth, boundTo: bound() });
+                      commitCensus([entryAt(0x21)], { contract: at(), tipHeight: TIP }).root]) {
+    const no = censusRootMatchesRound(roundWith(root), { entries, tipHeight: TIP, boundTo: bound() });
     assert.equal(no.ok, false, toHex(root).slice(0, 8));
     assert.match(no.why, /censusRoot/, 'the refusal must name the field');
     assert.match(no.why, /is not the one its entries derive to at height 900000/);
@@ -79,20 +80,20 @@ test('a round naming any other root is refused, and the refusal names censusRoot
  */
 test('the census height comes off the contract, not off the asker', () => {
   const later = entries.map((e) => ({ ...e, height: HEIGHT + 5 }));
-  const atLater = commitCensus(later, { censusHeight: HEIGHT + 5, ...depth, tipHeight: 900020 });
+  const atLater = commitCensus(later, { contract: at(HEIGHT + 5), tipHeight: 900020 });
 
   // the same entries, a contract naming the later height and the later root
   const seen = censusRootMatchesRound(
     roundWith(atLater.root, { censusHeight: HEIGHT + 5 }),
-    { entries: later, minConfirmations: 6, tipHeight: 900020,
-      boundTo: censusInputsId({ censusHeight: HEIGHT + 5, minConfirmations: 6, tipHeight: 900020, entries: later }) },
+    { entries: later, tipHeight: 900020,
+      boundTo: censusInputsId({ contract: at(HEIGHT + 5), tipHeight: 900020, entries: later }) },
   );
   assert.equal(seen.ok, true, seen.why);
 
   // and that same set against the ORIGINAL height's contract is refused
   const no = censusRootMatchesRound(roundWith(built().root, { censusHeight: HEIGHT }),
-    { entries: later, ...depth,
-      boundTo: censusInputsId({ censusHeight: HEIGHT, ...depth, entries: later }) });
+    { entries: later, tipHeight: TIP,
+      boundTo: censusInputsId({ contract: at(), tipHeight: TIP, entries: later }) });
   assert.equal(no.ok, false);
 });
 
@@ -112,36 +113,51 @@ test('an accuser cannot swap the entries under the root', () => {
   // dropping one is the same answer
   assert.equal(ask({ entries: entries.slice(0, 2) }).ok, false);
 
-  // and so is changing the depth rule the set was published under
-  assert.equal(ask({ minConfirmations: 1 }).ok, false);
+  // and so is changing the depth rule the set was published under - which is
+  // now the ROUND's number, so this is a contract that disagrees with its own
+  // published inputs rather than a caller who brought a different one
+  const shallower = censusRootMatchesRound(
+    roundWith(built().root, { censusConfirmations: 1 }),
+    { entries, tipHeight: TIP, boundTo: bound() });
+  assert.equal(shallower.ok, false, 'a round moved its depth rule under a published census');
   assert.equal(ask({ tipHeight: 900011 }).ok, false);
 
   for (const bad of [undefined, b32(0).slice(0, 31), 'not bytes'])
     assert.match(censusRootMatchesRound(roundWith(built().root),
-      { entries, ...depth, boundTo: bad }).why, /no committed census inputs/);
+      { entries, tipHeight: TIP, boundTo: bad }).why, /no committed census inputs/);
 });
 
 test('the committed inputs cover the set, the height and the depth rule', () => {
   const was = toHex(bound());
-  assert.notEqual(toHex(censusInputsId({ censusHeight: HEIGHT + 1, ...depth, entries })), was, 'the height');
-  assert.notEqual(toHex(censusInputsId({ censusHeight: HEIGHT, ...depth, minConfirmations: 7, entries })), was, 'the depth');
-  assert.notEqual(toHex(censusInputsId({ censusHeight: HEIGHT, ...depth, tipHeight: 900011, entries })), was, 'the tip');
-  assert.notEqual(toHex(censusInputsId({ censusHeight: HEIGHT, ...depth, entries: [...entries, entryAt(0x14)] })), was, 'the set');
-  assert.notEqual(toHex(censusInputsId({ censusHeight: HEIGHT, ...depth,
+  assert.notEqual(toHex(censusInputsId({ contract: at(HEIGHT + 1), tipHeight: TIP, entries })), was, 'the height');
+  assert.notEqual(toHex(censusInputsId({ contract: at(HEIGHT, { censusConfirmations: 7 }), tipHeight: TIP, entries })), was, 'the depth');
+  assert.notEqual(toHex(censusInputsId({ contract: at(), tipHeight: 900011, entries })), was, 'the tip');
+  assert.notEqual(toHex(censusInputsId({ contract: at(), tipHeight: TIP, entries: [...entries, entryAt(0x14)] })), was, 'the set');
+  assert.notEqual(toHex(censusInputsId({ contract: at(), tipHeight: TIP,
     entries: entries.map((e, i) => (i === 0 ? { ...e, spent: true } : e)) })), was, 'a spend');
 
   // the order the caller lists them in is NOT one of them: 5A.4 sorts by
   // outpoint, and a set is the same set however it arrived
-  assert.equal(toHex(censusInputsId({ censusHeight: HEIGHT, ...depth, entries: [...entries].reverse() })), was);
+  assert.equal(toHex(censusInputsId({ contract: at(), tipHeight: TIP, entries: [...entries].reverse() })), was);
 });
 
 test('a round that names no root or no height is answered, not crashed at', () => {
   for (const bad of [undefined, {}, { censusRoot: 'not bytes', censusHeight: HEIGHT },
                      { censusRoot: b32(0).slice(0, 31), censusHeight: HEIGHT }])
-    assert.match(censusRootMatchesRound(bad, { entries, ...depth, boundTo: bound() }).why,
+    assert.match(censusRootMatchesRound(bad, { entries, tipHeight: TIP, boundTo: bound() }).why,
       /names no census root/);
-  assert.match(censusRootMatchesRound({ censusRoot: b32(1) }, { entries, ...depth, boundTo: bound() }).why,
+  assert.match(censusRootMatchesRound({ censusRoot: b32(1) }, { entries, tipHeight: TIP, boundTo: bound() }).why,
     /names no census height/);
+
+  // and a round with a height but no depth rule is answered the same way: the
+  // depth is the round's now, so a round that does not name one names nothing.
+  //
+  // ASSERTED EXACTLY, not by substring. The commit step refuses the same round
+  // for the same reason further down, wrapped as "those census inputs cannot be
+  // committed to: ...", so a loose match let a mutant that deleted this guard
+  // survive on the wrapped text.
+  assert.equal(censusRootMatchesRound({ censusRoot: b32(1), censusHeight: HEIGHT },
+    { entries, tipHeight: TIP, boundTo: bound() }).why, 'that round names no confirmation depth');
   assert.match(ask({ entries: undefined }).why, /no census entries/);
 });
 
@@ -150,11 +166,24 @@ test('a round that names no root or no height is answered, not crashed at', () =
  * whoever asked whether a round may be played. `commitCensus` throws on a
  * duplicate outpoint, which is exactly what a hostile publication would carry.
  */
+test('a bond too shallow for the round is not in the root it derives to', () => {
+  // A mutant that dropped the depth filter from the COMMIT step survived,
+  // because every entry in this file is far deeper than the rule and the scan
+  // step catches the rest. Commit re-applies it deliberately - a set reaching
+  // it by another road must not smuggle a shallow output into a root.
+  const deep = commitCensus(entries, { contract: at(), tipHeight: TIP });
+  assert.equal(deep.entries.length, 3);
+
+  const shallow = commitCensus(entries, { contract: at(HEIGHT, { censusConfirmations: 20 }), tipHeight: TIP });
+  assert.equal(shallow.entries.length, 0, 'a bond eleven deep was rooted under a rule of twenty');
+  assert.notEqual(toHex(shallow.root), toHex(deep.root));
+});
+
 test('a census that cannot be built is refused with its reason', () => {
   const twice = [entryAt(0x11), entryAt(0x11)];
   const seen = censusRootMatchesRound(roundWith(b32(0x99)), {
-    entries: twice, ...depth,
-    boundTo: censusInputsId({ censusHeight: HEIGHT, ...depth, entries: twice }),
+    entries: twice, tipHeight: TIP,
+    boundTo: censusInputsId({ contract: at(), tipHeight: TIP, entries: twice }),
   });
   assert.equal(seen.ok, false);
   assert.match(seen.why, /that census cannot be built: duplicate outpoint/);

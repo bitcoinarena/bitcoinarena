@@ -97,8 +97,33 @@ export function encodeRoundContract(c) {
   w.bytes32(c.donationSetId);
 
   w.u32(c.censusHeight);
+
+  // HOW DEEP A BOND HAS TO BE, section 5A.11: "The Round Contract contains:
+  // census_height, census_confirmations". It sits next to the height because
+  // 5A.11 puts it there and because the two answer one question together.
+  //
+  // It was a caller argument on every census function, beside a height that
+  // was already taken off the contract on purpose. A caller who picks the
+  // depth picks which bonds are in the census, and the census picks the
+  // committee - the same fault the version filter had, in the same file.
+  w.u32(c.censusConfirmations);
+
   w.bytes32(c.censusRoot);
   w.bytes32(c.committeeSeed);
+
+  // HOW MANY SEATS EACH POOL HAS, section 5A.7: "GAME/VERIFY: 7 slots... 
+  // SETTLEMENT: 7 slots". Section 6 carries them and says what they mean:
+  // "echoed for readability; MUST equal genesis_parameters, which network_id
+  // commits to. A contract disagreeing with the network it names is invalid,
+  // NOT A SMALLER COMMITTEE."
+  //
+  // That last clause is why they are here. `selectCommittee` took `slots` from
+  // whoever called it, so nobody had to forge a census to shrink a committee -
+  // they could pass a smaller number. Five of seven is the whole security
+  // argument; five of two is not.
+  w.u8(c.gameVerifySlots);
+  w.u8(c.settlementSlots);
+
   w.u64(c.stakeMsat);
   w.u64(c.bondMinSats);
   w.u16(c.blockTicks);
@@ -141,8 +166,11 @@ export function decodeRoundContract(bytes) {
     slashRemainder: slashRemainderOf(r.u8()),
     donationSetId: r.bytes32(),
     censusHeight: r.u32(),
+    censusConfirmations: r.u32(),
     censusRoot: r.bytes32(),
     committeeSeed: r.bytes32(),
+    gameVerifySlots: r.u8(),
+    settlementSlots: r.u8(),
     stakeMsat: r.u64(),
     bondMinSats: r.u64(),
     blockTicks: r.u16(),

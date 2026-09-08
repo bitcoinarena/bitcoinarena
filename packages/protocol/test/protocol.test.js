@@ -67,7 +67,7 @@ test('the census is immutable for a height', () => {
   const mk = (n) => ({ txid: b32(n), vout: 0, pubkey: pk(n), advertId: b32(n + 90),
                        bondSats: 100000n,
                        height: 800000 + n, roles: ['game'], spent: false });
-  const args = { censusHeight: 900000, minConfirmations: 6, tipHeight: 900100 };
+  const args = { contract: { censusHeight: 900000, censusConfirmations: 6 }, tipHeight: 900100 };
   const a = commitCensus([mk(3), mk(1), mk(2)], args);
   const b = commitCensus([mk(2), mk(3), mk(1)], args);
   assert.equal(toHex(a.root), toHex(b.root), 'input order changed the root');
@@ -79,7 +79,7 @@ test('immature and spent bonds are excluded', () => {
                                  height: h, roles: ['game'], spent });
   const c = commitCensus(
     [mk(1, 800000, false), mk(2, 900099, false), mk(3, 800000, true)],
-    { censusHeight: 900000, minConfirmations: 6, tipHeight: 900100 });
+    { contract: { censusHeight: 900000, censusConfirmations: 6 }, tipHeight: 900100 });
   assert.deepEqual(c.entries.map((e) => e.txid[0]), [1]);
 });
 
@@ -106,7 +106,8 @@ test('selection never divides, and heavier bonds win more often', () => {
   let heavyWins = 0;
   for (let s = 0; s < 200; s++) {
     const pick = selectCommittee({
-      entries, committeeSeed: b32(s % 256), role: 'game', slots: 3, bondMin: 100000n });
+      entries, role: 'game',
+      contract: { committeeSeed: b32(s % 256), gameVerifySlots: 3, bondMinSats: 100000n } });
     if (pick.some((e) => e.txid[0] === 1)) heavyWins++;
   }
   // fifty times the bond in a field of twenty, three slots: it should appear
@@ -118,9 +119,61 @@ test('the same seed picks the same committee', () => {
   const mk = (n) => ({ txid: b32(n), vout: 0, pubkey: pk(n), bondSats: 100000n,
                        height: 1, roles: ['game'], spent: false });
   const entries = [1, 2, 3, 4, 5].map(mk);
-  const a = selectCommittee({ entries, committeeSeed: b32(11), role: 'game', slots: 2, bondMin: 100000n });
-  const b = selectCommittee({ entries, committeeSeed: b32(11), role: 'game', slots: 2, bondMin: 100000n });
+  const round = { committeeSeed: b32(11), gameVerifySlots: 2, bondMinSats: 100000n };
+  const a = selectCommittee({ entries, contract: round, role: 'game' });
+  const b = selectCommittee({ entries, contract: round, role: 'game' });
   assert.deepEqual(a.map((e) => e.txid[0]), b.map((e) => e.txid[0]));
+
+  // AND THE SIZE IS THE ROUND'S. It was a caller number: nobody had to forge a
+  // census to shrink a committee, they could pass a smaller `slots`. Section 6
+  // is explicit that the counts are "echoed for readability; MUST equal
+  // genesis_parameters... A contract disagreeing with the network it names is
+  // invalid, NOT A SMALLER COMMITTEE."
+  assert.equal(selectCommittee({ entries, contract: round, role: 'game' }).length, 2);
+  assert.equal(selectCommittee({ entries, contract: { ...round, gameVerifySlots: 5 }, role: 'game' }).length, 5);
+
+  // a settlement seat count is a different number, and a role with no pool has
+  // no committee at all rather than a silent zero
+  assert.equal(selectCommittee({
+    entries: entries.map((e) => ({ ...e, roles: ['settlement'] })),
+    contract: { ...round, settlementSlots: 4 }, role: 'settlement' }).length, 4);
+  assert.throws(() => selectCommittee({ entries, contract: round, role: 'relay' }),
+    /names no committee size for relay/);
+  assert.throws(() => selectCommittee({ entries, contract: { gameVerifySlots: 2, bondMinSats: 1n }, role: 'game' }),
+    /names no committee seed/);
+  assert.throws(() => selectCommittee({ entries, contract: { gameVerifySlots: 2, committeeSeed: b32(11) }, role: 'game' }),
+    /names no bond floor/);
+
+  // AND A CALLER CANNOT REACH ANY OF THE THREE. Held fixed, the old arguments
+  // are inert: there is no parameter left to pass one through.
+  //
+  // The bonds are UNEQUAL on purpose: `bondMin` normalises the weights, so a
+  // field of identical bonds would weigh the same under any floor and the
+  // caller's number would look inert when it was not.
+  const uneven = [1, 2, 3, 4, 5].map((n) => ({
+    txid: b32(n), vout: 0, pubkey: pk(n), bondSats: BigInt(n) * 400000n,
+    height: 1, roles: ['game'], spent: false,
+  }));
+  const fair = selectCommittee({ entries: uneven, contract: round, role: 'game' });
+  // The values chosen here are the ones proven below to MOVE the answer when
+  // the round moves them - `bondMin: 1n` looked inert and was not a test:
+  // weightOf floors bond/bondMin, so scaling the floor scales every weight
+  // alike and cannot reorder anybody.
+  for (const extra of [{ slots: 5 }, { slots: 1 }, { committeeSeed: b32(99) }, { bondMin: 2000000n }]) {
+    const tried = selectCommittee({ entries: uneven, contract: round, role: 'game', ...extra });
+    assert.equal(tried.length, 2, `a caller passing ${Object.keys(extra)[0]} resized the committee`);
+    assert.deepEqual(tried.map((e) => e.txid[0]), fair.map((e) => e.txid[0]),
+      `a caller passing ${Object.keys(extra)[0]} changed who sits`);
+  }
+
+  // and each of those three, moved on the ROUND, does change the answer -
+  // otherwise the paragraph above proves only that the numbers do nothing
+  assert.notDeepEqual(
+    selectCommittee({ entries: uneven, contract: { ...round, committeeSeed: b32(99) }, role: 'game' })
+      .map((e) => e.txid[0]), fair.map((e) => e.txid[0]));
+  assert.notDeepEqual(
+    selectCommittee({ entries: uneven, contract: { ...round, bondMinSats: 2000000n }, role: 'game' })
+      .map((e) => e.txid[0]), fair.map((e) => e.txid[0]));
 });
 
 /* ------------------------------------------------------------------ payout */
@@ -217,7 +270,7 @@ test('a flat rank curve is flagged before anyone stakes', () => {
 
 function sampleContract() {
   return {
-    networkId: b32(0x4e), configHash: b32(0x43), simCoreHash: b32(1), startTimeMs: 1788200000000n, entryCloseMs: 1788200060000n, objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'BURN', donationSetId: new Uint8Array(32).fill(0xd0),
+    networkId: b32(0x4e), configHash: b32(0x43), censusConfirmations: 6, gameVerifySlots: 7, settlementSlots: 7, simCoreHash: b32(1), startTimeMs: 1788200000000n, entryCloseMs: 1788200060000n, objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'BURN', donationSetId: new Uint8Array(32).fill(0xd0),
     censusHeight: 964900, censusRoot: b32(2), committeeSeed: b32(3),
     stakeMsat: 100000n, bondMinSats: 100000n, blockTicks: 9000,
     exposureReference: 12451840, corridorHalfWidth: 3014656, spawnFreeRadius: 1441792,

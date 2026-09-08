@@ -75,6 +75,27 @@ export function merkleRoot(leaves) {
 }
 
 /**
+ * THE HEIGHT AND THE DEPTH, BOTH OFF THE CONTRACT.
+ *
+ * 5A.11: "The Round Contract contains: `census_height, census_confirmations`."
+ * The height was taken from the contract already and the depth beside it was
+ * still an argument, so a caller could recompute an honest census at a depth
+ * nobody signed up to - and a census is what picks the committee.
+ *
+ * `tipHeight` stays the caller's, and that is not the same thing: the tip is
+ * OBSERVED chain state, not a rule. Two participants at different tips are two
+ * participants at different moments; two participants at different depths are
+ * two participants under different law.
+ */
+function depthRuleOf(contract) {
+  if (!contract || !Number.isInteger(contract.censusHeight))
+    throw new Error('that round names no census height');
+  if (!Number.isInteger(contract.censusConfirmations))
+    throw new Error('that round names no confirmation depth');
+  return { censusHeight: contract.censusHeight, censusConfirmations: contract.censusConfirmations };
+}
+
+/**
  * 5A.4 STEPS 4 AND 5: sort by outpoint, hash the leaves, root them.
  *
  * Immutable per height by construction - the same inputs give the same root,
@@ -97,14 +118,16 @@ export function merkleRoot(leaves) {
  * reaches this function by some other road cannot smuggle a late or spent
  * output into a root.
  */
-export function commitCensus(entries, { censusHeight, minConfirmations, tipHeight }) {
+export function commitCensus(entries, { contract, tipHeight }) {
+  const { censusHeight, censusConfirmations } = depthRuleOf(contract);
+
   for (const e of entries)
     if (!(e.advertId instanceof Uint8Array) || e.advertId.length !== 32)
       throw new Error('that entry has not been resolved: no advertisement stands behind it');
 
   const eligible = entries
     .filter((e) => e.height <= censusHeight)
-    .filter((e) => tipHeight - e.height + 1 >= minConfirmations)
+    .filter((e) => tipHeight - e.height + 1 >= censusConfirmations)
     .filter((e) => !e.spent)
     .sort(compareEntries);
 
@@ -134,12 +157,13 @@ export function commitCensus(entries, { censusHeight, minConfirmations, tipHeigh
  * node can mine a pubkey to sit anywhere it likes" - and the census already
  * sorts by `(funding_txid, vout)`, which cannot be chosen after the fact.
  */
-export function censusInputsId({ censusHeight, minConfirmations, tipHeight, entries }) {
+export function censusInputsId({ contract, tipHeight, entries }) {
+  const { censusHeight, censusConfirmations } = depthRuleOf(contract);
   const w = new Writer();
   w.u8(TYPE_CENSUS_LEAF);
   w.u16(PROTOCOL_VERSION);
   w.u32(censusHeight);
-  w.u32(minConfirmations);
+  w.u32(censusConfirmations);
   w.u32(tipHeight);
   w.vec([...entries].sort(compareEntries), (e, ww) => {
     ww.bytes(encodeEntry(e), encodeEntry(e).length);
@@ -168,14 +192,14 @@ export function censusInputsId({ censusHeight, minConfirmations, tipHeight, entr
  * malformed census is a refusal with a reason, not an exception handed to
  * whoever asked whether a round may be played.
  */
-export function censusRootMatchesRound(contract, {
-  entries, minConfirmations, tipHeight, boundTo,
-}) {
+export function censusRootMatchesRound(contract, { entries, tipHeight, boundTo }) {
   if (!contract || !(contract.censusRoot instanceof Uint8Array)
       || contract.censusRoot.length !== 32)
     return { ok: false, why: 'that round names no census root' };
   if (!Number.isInteger(contract.censusHeight))
     return { ok: false, why: 'that round names no census height' };
+  if (!Number.isInteger(contract.censusConfirmations))
+    return { ok: false, why: 'that round names no confirmation depth' };
   if (!Array.isArray(entries))
     return { ok: false, why: 'no census entries to derive a root from' };
 
@@ -189,7 +213,7 @@ export function censusRootMatchesRound(contract, {
     return { ok: false, why: 'no committed census inputs to check those entries against' };
 
   let bound;
-  try { bound = censusInputsId({ censusHeight: contract.censusHeight, minConfirmations, tipHeight, entries }); }
+  try { bound = censusInputsId({ contract, tipHeight, entries }); }
   catch (e) { return { ok: false, why: `those census inputs cannot be committed to: ${e.message}` }; }
   if (!bound.every((b, i) => b === boundTo[i]))
     return {
@@ -200,9 +224,7 @@ export function censusRootMatchesRound(contract, {
 
   let census;
   try {
-    census = commitCensus(entries, {
-      censusHeight: contract.censusHeight, minConfirmations, tipHeight,
-    });
+    census = commitCensus(entries, { contract, tipHeight });
   } catch (e) {
     return { ok: false, why: `that census cannot be built: ${e.message}` };
   }
@@ -249,10 +271,10 @@ export function censusRootMatchesRound(contract, {
  * here fetches: the caller brings the blocks, and two callers holding the same
  * blocks get the same census or neither does.
  */
-export function scanCensus(blocks, { censusHeight, minConfirmations, tipHeight, candidates }) {
+export function scanCensus(blocks, { contract, tipHeight, candidates }) {
   if (!Array.isArray(blocks)) throw new Error('scan needs blocks to read');
   if (!Array.isArray(candidates)) throw new Error('scan needs the outpoints to look for');
-  if (!Number.isInteger(censusHeight)) throw new Error('scan needs a census height');
+  const { censusHeight, censusConfirmations } = depthRuleOf(contract);
 
   const createdAt = new Map();
   const spentAt = new Map();
@@ -301,10 +323,10 @@ export function scanCensus(blocks, { censusHeight, minConfirmations, tipHeight, 
       continue;
     }
     const depth = tipHeight - height + 1;
-    if (depth < minConfirmations) {
+    if (depth < censusConfirmations) {
       excluded.push({
         ...entry,
-        why: `that output is ${depth} confirmations deep where this census needs ${minConfirmations}`,
+        why: `that output is ${depth} confirmations deep where this round needs ${censusConfirmations}`,
       });
       continue;
     }
@@ -513,12 +535,10 @@ export function resolveCensus(entries, { contract, resolve }) {
  * spent, and the advertisement signature needs a curve this package does not
  * carry. Neither is skipped quietly.
  */
-export function deriveCensus(blocks, {
-  censusHeight, minConfirmations, tipHeight, candidates, contract, resolve,
-}) {
+export function deriveCensus(blocks, { contract, tipHeight, candidates, resolve }) {
   let scanned;
   try {
-    scanned = scanCensus(blocks, { censusHeight, minConfirmations, tipHeight, candidates });
+    scanned = scanCensus(blocks, { contract, tipHeight, candidates });
   } catch (e) {
     return { ok: false, why: `that census cannot be scanned: ${e.message}` };
   }
@@ -528,7 +548,7 @@ export function deriveCensus(blocks, {
 
   let census;
   try {
-    census = commitCensus(resolved.eligible, { censusHeight, minConfirmations, tipHeight });
+    census = commitCensus(resolved.eligible, { contract, tipHeight });
   } catch (e) {
     return { ok: false, why: `that census cannot be committed: ${e.message}` };
   }

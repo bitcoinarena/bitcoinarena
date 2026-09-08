@@ -45,7 +45,7 @@ test('the census root matches, and so does every leaf', () => {
   });
   const c = commitCensus(
     [mk(7, 100000, 800007), mk(3, 500000, 800003), mk(11, 100000, 800011), mk(5, 2000000, 800005)],
-    { censusHeight: 900000, minConfirmations: 6, tipHeight: 900100 });
+    { contract: { censusHeight: 900000, censusConfirmations: 6 }, tipHeight: 900100 });
 
   assert.equal(c.entries.length, v.entries.length);
   c.entries.forEach((e, i) => {
@@ -67,7 +67,8 @@ test('tickets, weights and the chosen committee match', () => {
     assert.equal(ticketFor(seed, e, 'game').toString(), v.tickets[i].ticket);
   });
   const picked = selectCommittee({
-    entries, committeeSeed: seed, role: 'game', slots: 3, bondMin: BigInt(v.bondMin) });
+    entries, role: 'game',
+    contract: { committeeSeed: seed, gameVerifySlots: 3, bondMinSats: BigInt(v.bondMin) } });
   assert.deepEqual(picked.map((e) => toHex(e.txid)), v.selected);
 });
 
@@ -92,7 +93,7 @@ test('the payout table matches the specification worked example', () => {
 test('the contracts encode to the vectors, and so do their ids', () => {
   const v = load('contracts');
   const c = {
-    networkId: b32(0x4e), configHash: b32(0x43), simCoreHash: b32(1), startTimeMs: 1788200000000n, entryCloseMs: 1788200060000n, objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'BURN', donationSetId: new Uint8Array(32).fill(0xd0),
+    networkId: b32(0x4e), configHash: b32(0x43), censusConfirmations: 6, gameVerifySlots: 7, settlementSlots: 7, simCoreHash: b32(1), startTimeMs: 1788200000000n, entryCloseMs: 1788200060000n, objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'BURN', donationSetId: new Uint8Array(32).fill(0xd0),
     censusHeight: 964900, censusRoot: b32(2), committeeSeed: b32(3),
     stakeMsat: 100000n, bondMinSats: 100000n, blockTicks: 9000,
     exposureReference: 12451840, corridorHalfWidth: 3014656, spawnFreeRadius: 1441792,
