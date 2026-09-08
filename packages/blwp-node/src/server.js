@@ -104,7 +104,7 @@ const text = (res, code, msg) => {
  */
 export const NOTHING_IS_FUNDED = () => false;
 
-export function serve(db, { port = 0, funded = NOTHING_IS_FUNDED } = {}) {
+export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FUNDED } = {}) {
   const round = new Round(db);
 
   const http = createServer(async (req, res) => {
@@ -325,8 +325,8 @@ export function serve(db, { port = 0, funded = NOTHING_IS_FUNDED } = {}) {
   });
 
   return new Promise((resolve) => {
-    http.listen(port, '127.0.0.1', () => resolve({
-      http, wss, round,
+    http.listen(port, host, () => resolve({
+      http, wss, round, host,
       port: http.address().port,
       // Closed so it actually closes. `http.close` waits for open connections
       // to end, and a play socket does not end on its own - a harness that

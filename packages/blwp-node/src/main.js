@@ -9,5 +9,6 @@ import { serve } from './server.js';
 
 const port = Number(process.argv[2] || 8080);
 const path = process.argv[3] || 'round.db';
-const node = await serve(openStore(path), { port });
-console.log(`blwp-node on http://127.0.0.1:${node.port}  (${path})`);
+const host = process.env.BLWP_BIND || '127.0.0.1';
+const node = await serve(openStore(path), { port, host });
+console.log(`blwp-node on http://${host}:${node.port}  (${path})`);
