@@ -179,3 +179,33 @@ export function witnessItemsOf(tx) {
   for (const stack of tx.witnesses) for (const item of stack) out.push(item);
   return out;
 }
+
+/**
+ * THE MERKLE ROOT OF A BLOCK'S TRANSACTIONS, Bitcoin's way.
+ *
+ * An odd level DUPLICATES the last hash here, which is exactly the rule the
+ * census refuses to use - `merkleRoot` in `census.js` promotes instead, and
+ * says why: duplication is CVE-2012-2459 and lets two leaf sets share a root.
+ *
+ * This one has no such freedom. It is not a construction of ours, it is a
+ * question about a block that already exists, and the only useful answer is
+ * the one Bitcoin's own header agrees with. Getting it "right" here would
+ * simply fail to match every real block.
+ */
+export function blockMerkleRoot(txids) {
+  if (!txids.length) throw new Error('a block has at least a coinbase');
+  let level = txids;
+  while (level.length > 1) {
+    const next = [];
+    for (let i = 0; i < level.length; i += 2) {
+      const left = level[i];
+      const right = i + 1 < level.length ? level[i + 1] : level[i];
+      const pair = new Uint8Array(64);
+      pair.set(left, 0);
+      pair.set(right, 32);
+      next.push(hash256(pair));
+    }
+    level = next;
+  }
+  return level[0];
+}

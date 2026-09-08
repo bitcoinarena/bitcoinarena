@@ -26,6 +26,7 @@ import { parseTransaction } from '../src/tx.js';
 import { BOND_MARKER, bondMarker } from '../src/constants.js';
 import { bondTransaction } from '../tools/bond.js';
 import { scanCensus } from '../src/census.js';
+import { chainOf as minedChain } from '../tools/chainview.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const advertFor = (n) => ({
@@ -45,16 +46,26 @@ const HEIGHT = 900000;
 const TIP = 900010;
 const round = (over = {}) => ({ censusHeight: HEIGHT, censusConfirmations: 6, ...over });
 
-function chainOf() {
+/**
+ * A REAL CHAIN, MINED. The census refuses a header whose hash misses its
+ * target and a block whose transactions do not hash to the root its header
+ * commits to, so a test cannot hand it a bag of blocks any more. `at` places
+ * the given blocks at their heights and pads the rest so the view runs to
+ * `tip` - a chain is contiguous or it is not a chain.
+ */
+const view = (at, tip = TIP, from = HEIGHT - 20) => {
+  const blocks = [];
+  for (let h = from; h <= tip; h++) blocks.push({ transactions: at[h] || [] });
+  return minedChain(blocks, from);
+};
+
+function rig() {
   const bonds = [bondOf(0x11), bondOf(0x12), bondOf(0x13)];
   const ids = bonds.map((b) => parseTransaction(b).txid);
   return {
     bonds,
     ids,
-    blocks: [
-      { height: HEIGHT - 20, transactions: [bonds[0]] },
-      { height: HEIGHT - 10, transactions: [bonds[1], bonds[2]] },
-    ],
+    at: { [HEIGHT - 20]: [bonds[0]], [HEIGHT - 10]: [bonds[1], bonds[2]] },
     candidates: ids.map((txid, i) => ({
       txid, vout: 0, pubkey: b32(0x11 + i), bondSats: 60000n, roles: ['game'],
     })),
@@ -71,8 +82,8 @@ test('BOND_MARKER is unchosen, which is why the candidates come in', () => {
  * THE HEIGHT AND THE SPEND COME OFF THE BLOCKS. A caller can assert neither.
  */
 test('scan reads each outpoint\'s height out of the chain, not out of the entry', () => {
-  const { blocks, candidates } = chainOf();
-  const seen = scanCensus(blocks, { contract: round(), tipHeight: TIP, candidates });
+  const { at, candidates } = rig();
+  const seen = scanCensus(view(at), { contract: round(), candidates });
 
   assert.equal(seen.entries.length, 3);
   assert.equal(seen.entries[0].height, HEIGHT - 20);
@@ -82,15 +93,15 @@ test('scan reads each outpoint\'s height out of the chain, not out of the entry'
 
   // a caller asserting another height changes nothing: the chain is asked
   const lying = candidates.map((c) => ({ ...c, height: 1, spent: true }));
-  const again = scanCensus(blocks, { contract: round(), tipHeight: TIP, candidates: lying });
+  const again = scanCensus(view(at), { contract: round(), candidates: lying });
   assert.equal(again.entries[0].height, HEIGHT - 20, 'a claimed height was believed');
   assert.equal(again.entries[0].spent, false, 'a claimed spend was believed');
 });
 
 test('an outpoint the chain does not carry is named, not silently dropped', () => {
-  const { blocks, candidates } = chainOf();
+  const { at, candidates } = rig();
   const invented = [...candidates, { txid: b32(0x77), vout: 0, pubkey: b32(0x77), bondSats: 1n, roles: ['game'] }];
-  const seen = scanCensus(blocks, { contract: round(), tipHeight: TIP, candidates: invented });
+  const seen = scanCensus(view(at), { contract: round(), candidates: invented });
 
   assert.equal(seen.entries.length, 3);
   assert.equal(seen.excluded.length, 1);
@@ -104,11 +115,10 @@ test('an outpoint the chain does not carry is named, not silently dropped', () =
  * simply the block that carries it.
  */
 test('a bond spent at or before the census height is not in the census', () => {
-  const { ids, blocks, candidates } = chainOf();
-  const withSpend = [...blocks,
-    { height: HEIGHT - 5, transactions: [spendOf(ids[1], 0)] }];
+  const { ids, at, candidates } = rig();
+  const withSpend = { ...at, [HEIGHT - 5]: [spendOf(ids[1], 0)] };
 
-  const seen = scanCensus(withSpend, { contract: round(), tipHeight: TIP, candidates });
+  const seen = scanCensus(view(withSpend), { contract: round(), candidates });
   assert.equal(seen.entries.length, 2, 'the spent bond still counted');
   assert.equal(seen.entries.find((e) => toHex(e.txid) === toHex(ids[1])), undefined);
   const out = seen.excluded.find((e) => toHex(e.txid) === toHex(ids[1]));
@@ -116,9 +126,8 @@ test('a bond spent at or before the census height is not in the census', () => {
   assert.match(out.why, /already spent at the census height/);
 
   // and a spend AFTER the census height is not this census's business
-  const later = [...blocks,
-    { height: HEIGHT + 1, transactions: [spendOf(ids[1], 0)] }];
-  const after = scanCensus(later, { contract: round(), tipHeight: TIP, candidates });
+  const later = { ...at, [HEIGHT + 1]: [spendOf(ids[1], 0)] };
+  const after = scanCensus(view(later), { contract: round(), candidates });
   assert.equal(after.entries.length, 3,
     'a block later than the census is a block the census did not see');
 });
@@ -130,12 +139,12 @@ test('a bond spent at or before the census height is not in the census', () => {
  * every bond funded in its own block.
  */
 test('a bond funded in the census block itself is in the census', () => {
-  const { blocks, candidates } = chainOf();
+  const { at, candidates } = rig();
   const atHeight = bondOf(0x15);
   const atId = parseTransaction(atHeight).txid;
 
-  const seen = scanCensus([...blocks, { height: HEIGHT, transactions: [atHeight] }], {
-    contract: round({ censusConfirmations: 1 }), tipHeight: HEIGHT + 1,
+  const seen = scanCensus(view({ ...at, [HEIGHT]: [atHeight] }, HEIGHT + 1), {
+    contract: round({ censusConfirmations: 1 }),
     candidates: [...candidates, { txid: atId, vout: 0, pubkey: b32(0x15), bondSats: 60000n, roles: ['game'] }],
   });
   assert.equal(seen.excluded.length, 0, 'the census block itself was skipped');
@@ -148,27 +157,27 @@ test('a bond funded in the census block itself is in the census', () => {
  * correct - and a bond at vout 1 would have been read as the output beside it.
  */
 test('an outpoint is the txid AND the vout', () => {
-  const { blocks, ids, candidates } = chainOf();
+  const { at, ids, candidates } = rig();
 
   // a bond transaction has two outputs: the bond and the OP_RETURN commitment
-  const atOne = scanCensus(blocks, {
-    contract: round(), tipHeight: TIP,
+  const atOne = scanCensus(view(at), {
+    contract: round(),
     candidates: [{ txid: ids[0], vout: 1, pubkey: b32(0x11), bondSats: 60000n, roles: ['game'] }],
   });
   assert.equal(atOne.entries.length, 1);
   assert.equal(atOne.entries[0].vout, 1, 'vout 1 was read as some other output');
 
   // and a vout the transaction does not have is missing, not invented
-  const beyond = scanCensus(blocks, {
-    contract: round(), tipHeight: TIP,
+  const beyond = scanCensus(view(at), {
+    contract: round(),
     candidates: [{ txid: ids[0], vout: 9, pubkey: b32(0x11), bondSats: 60000n, roles: ['game'] }],
   });
   assert.equal(beyond.entries.length, 0);
   assert.equal(beyond.excluded.length, 1);
 
   // the two vouts of one transaction are two different entries
-  const both = scanCensus(blocks, {
-    contract: round(), tipHeight: TIP,
+  const both = scanCensus(view(at), {
+    contract: round(),
     candidates: [
       { txid: ids[0], vout: 0, pubkey: b32(0x11), bondSats: 60000n, roles: ['game'] },
       { txid: ids[0], vout: 1, pubkey: b32(0x11), bondSats: 60000n, roles: ['game'] },
@@ -178,13 +187,13 @@ test('an outpoint is the txid AND the vout', () => {
 });
 
 test('a bond created after the census height is not in it either', () => {
-  const { blocks, candidates } = chainOf();
+  const { at, candidates } = rig();
   const late = bondOf(0x14);
   const lateId = parseTransaction(late).txid;
-  const withLate = [...blocks, { height: HEIGHT + 2, transactions: [late] }];
+  const withLate = { ...at, [HEIGHT + 2]: [late] };
 
-  const seen = scanCensus(withLate, {
-    contract: round(), tipHeight: TIP,
+  const seen = scanCensus(view(withLate), {
+    contract: round(),
     candidates: [...candidates, { txid: lateId, vout: 0, pubkey: b32(0x14), bondSats: 60000n, roles: ['game'] }],
   });
   assert.equal(seen.entries.length, 3);
@@ -192,15 +201,23 @@ test('a bond created after the census height is not in it either', () => {
 });
 
 test('a bond too shallow at the tip is not in the census', () => {
-  const { blocks, candidates } = chainOf();
-  const shallow = scanCensus(blocks, {
-    contract: round({ censusConfirmations: 6 }), tipHeight: HEIGHT - 8, candidates,
+  const { at, candidates } = rig();
+
+  // A BOND FUNDED IN THE CENSUS BLOCK ITSELF, at a tip of the census height:
+  // one confirmation, where the round asks six. Depth is measured against the
+  // chain's own tip now, so a shallow bond is made by funding it late rather
+  // than by naming a tip below the census - which is refused, see below.
+  const fresh = bondOf(0x16);
+  const freshId = parseTransaction(fresh).txid;
+  const shallow = scanCensus(view({ ...at, [HEIGHT]: [fresh] }, HEIGHT), {
+    contract: round({ censusConfirmations: 6 }),
+    candidates: [...candidates,
+      { txid: freshId, vout: 0, pubkey: b32(0x16), bondSats: 60000n, roles: ['game'] }],
   });
-  // the block at HEIGHT-10 is 3 deep at a tip of HEIGHT-8, the one at -20 is 13
-  assert.equal(shallow.entries.length, 1, 'a shallow bond was counted');
-  assert.equal(shallow.entries[0].height, HEIGHT - 20);
-  assert.equal(shallow.excluded.length, 2);
-  assert.match(shallow.excluded[0].why, /3 confirmations deep where this round needs 6/,
+
+  assert.equal(shallow.entries.length, 3, 'a shallow bond was counted');
+  assert.equal(shallow.excluded.length, 1);
+  assert.match(shallow.excluded[0].why, /1 confirmations deep where this round needs 6/,
     'the rule that dropped it was not named');
 });
 
@@ -212,31 +229,58 @@ test('a bond too shallow at the tip is not in the census', () => {
  * depth" - and one confirmation short of it is out.
  */
 test('a bond exactly deep enough is in, and one short of it is out', () => {
-  const { blocks, candidates } = chainOf();
-
-  // the block at HEIGHT-10 is exactly 6 deep at a tip of HEIGHT-5
-  const exactly = scanCensus(blocks, {
-    contract: round({ censusConfirmations: 6 }), tipHeight: HEIGHT - 5, candidates,
+  const { at, candidates } = rig();
+  const six = bondOf(0x17);
+  const five = bondOf(0x18);
+  const also = (tx, n) => ({
+    txid: parseTransaction(tx).txid, vout: 0, pubkey: b32(n), bondSats: 60000n, roles: ['game'],
   });
-  assert.equal(exactly.entries.length, 3, 'a bond exactly at the floor was dropped');
-  assert.equal(exactly.excluded.length, 0);
 
-  // one block earlier and the same two bonds are 5 deep, which is not 6
-  const short = scanCensus(blocks, {
-    contract: round({ censusConfirmations: 6 }), tipHeight: HEIGHT - 6, candidates,
+  // at a tip of HEIGHT, a bond funded at HEIGHT-5 is exactly 6 deep and one
+  // funded at HEIGHT-4 is 5
+  const seen = scanCensus(view({ ...at, [HEIGHT - 5]: [six], [HEIGHT - 4]: [five] }, HEIGHT), {
+    contract: round({ censusConfirmations: 6 }),
+    candidates: [...candidates, also(six, 0x17), also(five, 0x18)],
   });
-  assert.equal(short.entries.length, 1, 'a bond one confirmation short was counted');
-  assert.equal(short.excluded.length, 2);
-  assert.match(short.excluded[0].why, /5 confirmations deep where this round needs 6/);
+
+  assert.equal(seen.entries.some((e) => e.pubkey[0] === 0x17), true,
+    'a bond exactly at the floor was dropped');
+  assert.equal(seen.entries.some((e) => e.pubkey[0] === 0x18), false,
+    'a bond one confirmation short was counted');
+  assert.equal(seen.excluded.length, 1);
+  assert.match(seen.excluded[0].why, /5 confirmations deep where this round needs 6/);
+});
+
+/**
+ * AND A CHAIN THAT ENDS BEFORE THE CENSUS HEIGHT IS NOT A SHALLOW CHAIN, IT IS
+ * THE WRONG QUESTION. It used to be accepted, and the arithmetic answered with
+ * "that output is -979 confirmations deep", which is not a depth.
+ */
+test('a chain that ends before the census height is refused, not counted backwards', () => {
+  const { at, candidates } = rig();
+  for (const tip of [HEIGHT - 1, HEIGHT - 8, HEIGHT - 20])
+    assert.throws(() => scanCensus(view(at, tip), { contract: round(), candidates }),
+      new RegExp(`ends at height ${tip}, before this round's census height ${HEIGHT}`),
+      `a tip of ${tip} was accepted`);
+
+  // and the census height itself is fine: the census is the chain UP TO it
+  assert.equal(scanCensus(view(at, HEIGHT), { contract: round(), candidates }).entries.length, 3);
 });
 
 test('scan refuses to work on nothing rather than inventing a census', () => {
-  const { blocks, candidates } = chainOf();
-  assert.throws(() => scanCensus(undefined, { contract: round(), tipHeight: TIP, candidates }),
-    /needs blocks/);
-  assert.throws(() => scanCensus(blocks, { contract: round(), tipHeight: TIP }),
+  const { at, candidates } = rig();
+  assert.throws(() => scanCensus(undefined, { contract: round(), candidates }),
+    /a chain view is at least one block/);
+  assert.throws(() => scanCensus(view(at), { contract: round() }),
     /needs the outpoints/);
-  assert.throws(() => scanCensus(blocks, { contract: {}, tipHeight: TIP, candidates }), /names no census height/);
-  assert.throws(() => scanCensus([{ transactions: [] }], { contract: round(), tipHeight: TIP, candidates }),
-    /a block names its height/);
+  assert.throws(() => scanCensus(view(at), { contract: {}, candidates }), /names no census height/);
+
+  // AND A BAG OF BLOCKS IS NOT A CHAIN. What used to be the input is now
+  // refused by name: no header means nothing was mined and nothing links.
+  assert.throws(() => scanCensus({ blocks: [{ transactions: [] }], firstHeight: HEIGHT - 20 },
+    { contract: round(), candidates }), /every block in a chain view carries its header/);
+  assert.throws(() => scanCensus({ blocks: [] , firstHeight: HEIGHT }, { contract: round(), candidates }),
+    /at least one block/);
+  assert.throws(() => scanCensus({ blocks: view(at).blocks }, { contract: round(), candidates }),
+    /says which height it starts at/);
 });

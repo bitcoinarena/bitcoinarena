@@ -30,6 +30,7 @@ import {
   recognizeBond, isTaprootOutput, BOND_UNCHECKED, deriveCensus,
 } from '../src/census.js';
 import { selectCommittee } from '../src/sortition.js';
+import { chainOf as minedChain } from '../tools/chainview.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const advertFor = (n, over = {}) => ({
@@ -43,6 +44,12 @@ const bondOf = (n, over = {}) =>
   bondTransaction(advertFor(n, over), { previousTxid: b32(0xa0 + n), previousVout: 0 });
 
 const HEIGHT = 900000;
+const TIP = 900010;
+const view = (at, tip = TIP, from = HEIGHT - 20) => {
+  const blocks = [];
+  for (let h = from; h <= tip; h++) blocks.push({ transactions: at[h] || [] });
+  return minedChain(blocks, from);
+};
 const contract = {
   censusHeight: HEIGHT, censusConfirmations: 6,
   bondMinSats: 1n, protocolVersion: PROTOCOL_VERSION,
@@ -243,15 +250,15 @@ test('a bond spent after the census height keeps its place, its amount and its s
   const round = {
     ...contract, bondMinSats: 50000n, committeeSeed: b32(1), gameVerifySlots: 1,
   };
-  const at = (blocks) => deriveCensus(blocks, {
-    contract: round, tipHeight: 900010,
+  const at = (place) => deriveCensus(view(place), {
+    contract: round,
     candidates: [{ txid: tx.txid, vout: 0, pubkey: b32(0xEE), bondSats: 60000n, roles: ['game'] }],
     resolve: () => ({ transaction: bond }),
   });
-  const funded = { height: HEIGHT - 20, transactions: [bond] };
+  const funded = { [HEIGHT - 20]: [bond] };
 
-  const untouched = at([funded]);
-  const later = at([funded, { height: HEIGHT + 5, transactions: [spend] }]);
+  const untouched = at(funded);
+  const later = at({ ...funded, [HEIGHT + 5]: [spend] });
 
   assert.equal(later.entries.length, 1, 'a spend after the census removed the bond');
   assert.equal(later.entries[0].bondSats, 60000n, 'the amount changed with a later spend');
@@ -259,7 +266,7 @@ test('a bond spent after the census height keeps its place, its amount and its s
   assert.equal(selectCommittee({ entries: later.entries, contract: round, role: 'game' }).length, 1);
 
   // and the boundary is "at or before": spent IN the census block is out
-  const atHeight = at([funded, { height: HEIGHT, transactions: [spend] }]);
+  const atHeight = at({ ...funded, [HEIGHT]: [spend] });
   assert.equal(atHeight.entries.length, 0);
   assert.match(atHeight.excluded[0].why, /already spent at the census height/);
 
@@ -268,7 +275,7 @@ test('a bond spent after the census height keeps its place, its amount and its s
   // so a rule keyed on "spent, unless it was funded here" was invisible. One
   // transaction creating an output and another spending it in the same block
   // is ordinary Bitcoin, and such a bond was never unspent at any height.
-  const sameBlock = at([{ height: HEIGHT, transactions: [bond, spend] }]);
+  const sameBlock = at({ [HEIGHT]: [bond, spend] });
   assert.equal(sameBlock.entries.length, 0, 'a bond created and spent in one block was counted');
   assert.match(sameBlock.excluded[0].why, /already spent at the census height/);
   assert.equal(sameBlock.excluded[0].height, HEIGHT);
@@ -285,9 +292,9 @@ test('a bond spent after the census height keeps its place, its amount and its s
 test('a census no longer counts the OP_RETURN as somebody\'s bond', () => {
   const bond = bondOf(0x16);
   const tx = parseTransaction(bond);
-  const blocks = [{ height: HEIGHT - 20, transactions: [bond] }];
-  const at = (vout) => deriveCensus(blocks, {
-    contract, tipHeight: 900010,
+  const chain = view({ [HEIGHT - 20]: [bond] });
+  const at = (vout) => deriveCensus(chain, {
+    contract,
     candidates: [{ txid: tx.txid, vout, pubkey: b32(0xEE), bondSats: 60000n, roles: ['game'] }],
     resolve: () => ({ transaction: bond }),
   });

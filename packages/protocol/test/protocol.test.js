@@ -7,6 +7,7 @@ import { Writer, Reader } from '../src/encode.js';
 import { taggedHash, toHex, fromHex } from '../src/hash.js';
 import { TAG, CUSTODY, SLASH_REMAINDERS } from '../src/constants.js';
 import { commitCensus, merkleRoot, compareEntries, leafHash } from '../src/census.js';
+import { chainOf as minedChain } from '../tools/chainview.js';
 import { selectCommittee, weightOf, ticketFor } from '../src/sortition.js';
 import { computePayoutTable, rankWeights, payingRanks, DELIVERED, FAILED, FORFEIT, VOID } from '../src/payout.js';
 import { encodeRoundContract, decodeRoundContract, roundId, contractWarnings } from '../src/contracts.js';
@@ -67,7 +68,10 @@ test('the census is immutable for a height', () => {
   const mk = (n) => ({ txid: b32(n), vout: 0, pubkey: pk(n), advertId: b32(n + 90),
                        bondSats: 100000n,
                        height: 800000 + n, roles: ['game'], spent: false });
-  const args = { contract: { censusHeight: 900000, censusConfirmations: 6 }, tipHeight: 900100 };
+  const args = {
+    contract: { censusHeight: 900000, censusConfirmations: 6 },
+    view: minedChain([{ transactions: [] }], 900100),
+  };
   const a = commitCensus([mk(3), mk(1), mk(2)], args);
   const b = commitCensus([mk(2), mk(3), mk(1)], args);
   assert.equal(toHex(a.root), toHex(b.root), 'input order changed the root');
@@ -79,7 +83,8 @@ test('immature and spent bonds are excluded', () => {
                                  height: h, roles: ['game'], spent });
   const c = commitCensus(
     [mk(1, 800000, false), mk(2, 900099, false), mk(3, 800000, true)],
-    { contract: { censusHeight: 900000, censusConfirmations: 6 }, tipHeight: 900100 });
+    { contract: { censusHeight: 900000, censusConfirmations: 6 },
+      view: minedChain([{ transactions: [] }], 900100) });
   assert.deepEqual(c.entries.map((e) => e.txid[0]), [1]);
 });
 

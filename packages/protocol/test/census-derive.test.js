@@ -19,6 +19,7 @@ import { toHex } from '../src/hash.js';
 import { PROTOCOL_VERSION } from '../src/constants.js';
 import { parseTransaction } from '../src/tx.js';
 import { advertId } from '../src/advert.js';
+import { chainOf as minedChain } from '../tools/chainview.js';
 import { bondTransaction } from '../tools/bond.js';
 import {
   deriveCensus, scanCensus, commitCensus, leafHash, censusRootMatchesRound, censusInputsId,
@@ -37,6 +38,12 @@ const bondOf = (n, over = {}) =>
 
 const HEIGHT = 900000;
 const TIP = 900010;
+/** A mined chain from HEIGHT-20 to `tip`, with `at` placing transactions. */
+const view = (at, tip = TIP, from = HEIGHT - 20) => {
+  const blocks = [];
+  for (let h = from; h <= tip; h++) blocks.push({ transactions: at[h] || [] });
+  return minedChain(blocks, from);
+};
 const contract = {
   bondMinSats: 50000n, protocolVersion: PROTOCOL_VERSION,
   censusHeight: HEIGHT, censusConfirmations: 6,
@@ -49,7 +56,7 @@ const contract = {
  * `claims` decides what the CANDIDATE says the node's key is. The default is a
  * transcription that is simply wrong for every entry: 0xEE, which is nobody.
  */
-function rig({ claims = () => b32(0xEE), extraBlocks = [], extraCandidates = [] } = {}) {
+function rig({ claims = () => b32(0xEE), extraBlocks = {}, extraCandidates = [] } = {}) {
   const ns = [0x11, 0x12, 0x13];
   const bonds = new Map(ns.map((n) => [n, bondOf(n)]));
   const ids = new Map(ns.map((n) => [n, parseTransaction(bonds.get(n)).txid]));
@@ -58,11 +65,11 @@ function rig({ claims = () => b32(0xEE), extraBlocks = [], extraCandidates = [] 
   return {
     ns,
     ids,
-    blocks: [
-      { height: HEIGHT - 20, transactions: [bonds.get(0x11)] },
-      { height: HEIGHT - 10, transactions: [bonds.get(0x12), bonds.get(0x13)] },
+    at: {
+      [HEIGHT - 20]: [bonds.get(0x11)],
+      [HEIGHT - 10]: [bonds.get(0x12), bonds.get(0x13)],
       ...extraBlocks,
-    ],
+    },
     candidates: [
       ...ns.map((n) => ({
         txid: ids.get(n), vout: 0, pubkey: claims(n), bondSats: 60000n, roles: ['settlement'],
@@ -76,8 +83,8 @@ function rig({ claims = () => b32(0xEE), extraBlocks = [], extraCandidates = [] 
   };
 }
 
-const derive = (r, over = {}) => deriveCensus(r.blocks, {
-  tipHeight: TIP, candidates: r.candidates, contract, resolve: r.resolve, ...over,
+const derive = (r, over = {}) => deriveCensus(view(r.at), {
+  candidates: r.candidates, contract, resolve: r.resolve, ...over,
 });
 
 /**
@@ -150,11 +157,11 @@ test('the roles in the census are the advertisement\'s too', () => {
  */
 test('a root cannot be taken over unresolved entries', () => {
   const r = rig();
-  const scanned = scanCensus(r.blocks, { contract, tipHeight: TIP, candidates: r.candidates });
+  const scanned = scanCensus(view(r.at), { contract, candidates: r.candidates });
 
   assert.equal(scanned.census, undefined, 'scan handed back a root again');
   assert.throws(
-    () => commitCensus(scanned.entries, { contract, tipHeight: TIP }),
+    () => commitCensus(scanned.entries, { contract, view: view(r.at) }),
     /has not been resolved/,
     'a census root was taken over nodes nobody had read the advertisement of',
   );
@@ -163,16 +170,16 @@ test('a root cannot be taken over unresolved entries', () => {
   const resolved = derive(r).entries;
   assert.throws(
     () => commitCensus([...resolved.slice(1), { ...resolved[0], advertId: undefined }],
-      { contract, tipHeight: TIP }),
+      { contract, view: view(r.at) }),
     /has not been resolved/);
-  assert.doesNotThrow(() => commitCensus(resolved, { contract, tipHeight: TIP }));
+  assert.doesNotThrow(() => commitCensus(resolved, { contract, view: view(r.at) }));
 
   // and the guard is a COMMITMENT, not a flag: the advertisement id is
   // thirty-two bytes because it is a hash, so sixteen is not a short id, it is
   // not an id. A mutant that only checked the field existed survived here.
   assert.throws(
     () => commitCensus([{ ...resolved[0], advertId: new Uint8Array(16) }],
-      { contract, tipHeight: TIP }),
+      { contract, view: view(r.at) }),
     /has not been resolved/);
 });
 
@@ -199,8 +206,8 @@ test('exclusions come back from both steps, each carrying its step', () => {
   // 0x77 is on no chain at all -> scan drops it
   // and 0x13 resolves to a body nobody can retrieve -> resolve drops it
   const gone = toHex(r.ids.get(0x13));
-  const out = deriveCensus(r.blocks, {
-    tipHeight: TIP, candidates: r.candidates, contract,
+  const out = deriveCensus(view(r.at), {
+    candidates: r.candidates, contract,
     resolve: (e) => (toHex(e.txid) === gone ? null : r.resolve(e)),
   });
 
@@ -215,7 +222,7 @@ test('exclusions come back from both steps, each carrying its step', () => {
 
   // and the root really is the root of what survived, not of what was asked for
   assert.equal(toHex(out.root),
-    toHex(commitCensus(out.entries, { contract, tipHeight: TIP }).root));
+    toHex(commitCensus(out.entries, { contract, view: view(r.at) }).root));
 });
 
 /**
@@ -228,19 +235,19 @@ test('a derived census satisfies the round that names its root', () => {
   const out = derive(r);
 
   const round = { censusHeight: HEIGHT, censusConfirmations: 6, censusRoot: out.root };
-  const boundTo = censusInputsId({ contract, tipHeight: TIP, entries: out.entries });
-  const yes = censusRootMatchesRound(round, { entries: out.entries, tipHeight: TIP, boundTo });
+  const boundTo = censusInputsId({ contract, view: view(r.at), entries: out.entries });
+  const yes = censusRootMatchesRound(round, { entries: out.entries, view: view(r.at), boundTo });
   assert.equal(yes.ok, true, yes.why);
 
   // spend one bond before the census height and the chain derives elsewhere
   const spend = bondTransaction(advertFor(0x50), { previousTxid: r.ids.get(0x12), previousVout: 0 });
-  const after = derive(rig({ extraBlocks: [{ height: HEIGHT - 5, transactions: [spend] }] }));
+  const after = derive(rig({ extraBlocks: { [HEIGHT - 5]: [spend] } }));
   assert.equal(after.entries.length, 2);
   assert.notEqual(toHex(after.root), toHex(out.root));
 
   const no = censusRootMatchesRound(round, {
-    entries: after.entries, tipHeight: TIP,
-    boundTo: censusInputsId({ contract, tipHeight: TIP, entries: after.entries }),
+    entries: after.entries, view: view(r.at),
+    boundTo: censusInputsId({ contract, view: view(r.at), entries: after.entries }),
   });
   assert.equal(no.ok, false, 'a round stood against a chain that no longer holds its census');
   assert.match(no.why, /censusRoot/);
@@ -279,8 +286,8 @@ test('a caller cannot choose the confirmation depth; the round does', () => {
   // a caller trying the old argument, and every spelling of it
   for (const extra of [{ minConfirmations: 1 }, { censusConfirmations: 1 },
                        { minConfirmations: 999 }, { censusHeight: 1 }]) {
-    const tried = deriveCensus(r.blocks, {
-      contract, tipHeight: TIP, candidates: r.candidates, resolve: r.resolve, ...extra,
+    const tried = deriveCensus(view(r.at), {
+      contract, candidates: r.candidates, resolve: r.resolve, ...extra,
     });
     assert.equal(tried.entries.length, honest.entries.length);
     assert.equal(toHex(tried.root), toHex(honest.root),
@@ -307,8 +314,8 @@ test('a derivation it cannot do is refused with its reason', () => {
   const r = rig();
 
   assert.equal(deriveCensus(undefined, {
-    tipHeight: TIP, candidates: r.candidates, contract, resolve: r.resolve,
-  }).why, 'that census cannot be scanned: scan needs blocks to read');
+    candidates: r.candidates, contract, resolve: r.resolve,
+  }).why, 'that census cannot be scanned: a chain view is at least one block');
 
   // a contract with nothing on it fails at the FIRST step that needs it, and
   // says which number it was missing rather than defaulting one

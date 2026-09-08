@@ -19,6 +19,7 @@ import { computePayoutTable, rankWeights, DELIVERED, FAILED } from '../src/payou
 import { encodeRoundContract, roundId, encodeEntryContract, entryId } from '../src/contracts.js';
 import { encodeCheckpoint, checkpointId, NO_PREVIOUS } from '../src/checkpoint.js';
 import { encodeCheckpointReceipt, receiptId } from '../src/receipt.js';
+import { chainOf as minedChain } from '../tools/chainview.js';
 
 const DIR = new URL('../../../test-vectors/protocol/', import.meta.url).pathname;
 const load = (n) => JSON.parse(readFileSync(DIR + n + '.json', 'utf8'));
@@ -45,7 +46,7 @@ test('the census root matches, and so does every leaf', () => {
   });
   const c = commitCensus(
     [mk(7, 100000, 800007), mk(3, 500000, 800003), mk(11, 100000, 800011), mk(5, 2000000, 800005)],
-    { contract: { censusHeight: 900000, censusConfirmations: 6 }, tipHeight: 900100 });
+    { contract: { censusHeight: 900000, censusConfirmations: 6 }, view: minedChain([{ transactions: [] }], 900100) });
 
   assert.equal(c.entries.length, v.entries.length);
   c.entries.forEach((e, i) => {

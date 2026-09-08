@@ -5,7 +5,10 @@
 import { Writer } from './encode.js';
 import { taggedHash, fromHex, toHex } from './hash.js';
 import { TAG, ROLES, PROTOCOL_VERSION, TYPE_CENSUS_LEAF } from './constants.js';
-import { parseTransaction, commitmentsOf, witnessItemsOf } from './tx.js';
+import { parseTransaction, commitmentsOf, witnessItemsOf, blockMerkleRoot } from './tx.js';
+import {
+  recognizeBond, isTaprootOutput, BOND_UNCHECKED, chainWork, mostWork, merkleRootOf,
+} from './chain.js';
 import { decodeAdvert, splitSignedAdvert, advertId } from './advert.js';
 
 /**
@@ -21,6 +24,12 @@ import { decodeAdvert, splitSignedAdvert, advertId } from './advert.js';
  * into the census, and the committee seed, the receipts and the payout all
  * read that key.
  */
+// Recognition lives in `chain.js` now: it answers about an OUTPUT, and both
+// this file and `acceptAdvert` need it, so it cannot sit in either one of
+// them and be imported by the other. Re-exported here because the census is
+// where most callers meet it.
+export { recognizeBond, isTaprootOutput, BOND_UNCHECKED };
+
 export function encodeEntry(e) {
   const w = new Writer();
   w.bytes32(e.txid);
@@ -82,17 +91,34 @@ export function merkleRoot(leaves) {
  * still an argument, so a caller could recompute an honest census at a depth
  * nobody signed up to - and a census is what picks the committee.
  *
- * `tipHeight` stays the caller's, and that is not the same thing: the tip is
- * OBSERVED chain state, not a rule. Two participants at different tips are two
- * participants at different moments; two participants at different depths are
- * two participants under different law.
+ * AND THE TIP IS THE CHAIN'S. It used to be a caller's integer, and the old
+ * comment here said that was fine because "the tip is OBSERVED chain state,
+ * not a rule". Observed from what? There was no chain in this file to observe
+ * it from, so it was asserted: a high tip matured a shallow bond and a low one
+ * emptied the census. It is now the last height of the view the census was
+ * read from, which is what makes that sentence true.
  */
-function depthRuleOf(contract) {
+function depthRuleOf(contract, view) {
   if (!contract || !Number.isInteger(contract.censusHeight))
     throw new Error('that round names no census height');
   if (!Number.isInteger(contract.censusConfirmations))
     throw new Error('that round names no confirmation depth');
-  return { censusHeight: contract.censusHeight, censusConfirmations: contract.censusConfirmations };
+
+  // A TIP BELOW THE CENSUS HEIGHT IS NOT A SHALLOW CHAIN, IT IS THE WRONG
+  // QUESTION. The census is the chain up to `census_height`, so a view that
+  // ends before it has not reached the census yet - and the arithmetic said so
+  // by printing "-979 confirmations deep", which is not a depth and not an
+  // answer.
+  if (view.tipHeight < contract.censusHeight)
+    throw new Error(
+      `that chain ends at height ${view.tipHeight}, before this round's census `
+      + `height ${contract.censusHeight}`);
+
+  return {
+    censusHeight: contract.censusHeight,
+    censusConfirmations: contract.censusConfirmations,
+    tipHeight: view.tipHeight,
+  };
 }
 
 /**
@@ -118,8 +144,8 @@ function depthRuleOf(contract) {
  * reaches this function by some other road cannot smuggle a late or spent
  * output into a root.
  */
-export function commitCensus(entries, { contract, tipHeight }) {
-  const { censusHeight, censusConfirmations } = depthRuleOf(contract);
+export function commitCensus(entries, { contract, view }) {
+  const { censusHeight, censusConfirmations, tipHeight } = depthRuleOf(contract, viewOrThrow(view));
 
   for (const e of entries)
     if (!(e.advertId instanceof Uint8Array) || e.advertId.length !== 32)
@@ -157,8 +183,8 @@ export function commitCensus(entries, { contract, tipHeight }) {
  * node can mine a pubkey to sit anywhere it likes" - and the census already
  * sorts by `(funding_txid, vout)`, which cannot be chosen after the fact.
  */
-export function censusInputsId({ contract, tipHeight, entries }) {
-  const { censusHeight, censusConfirmations } = depthRuleOf(contract);
+export function censusInputsId({ contract, view, entries }) {
+  const { censusHeight, censusConfirmations, tipHeight } = depthRuleOf(contract, viewOrThrow(view));
   const w = new Writer();
   w.u8(TYPE_CENSUS_LEAF);
   w.u16(PROTOCOL_VERSION);
@@ -192,7 +218,7 @@ export function censusInputsId({ contract, tipHeight, entries }) {
  * malformed census is a refusal with a reason, not an exception handed to
  * whoever asked whether a round may be played.
  */
-export function censusRootMatchesRound(contract, { entries, tipHeight, boundTo }) {
+export function censusRootMatchesRound(contract, { entries, view, boundTo }) {
   if (!contract || !(contract.censusRoot instanceof Uint8Array)
       || contract.censusRoot.length !== 32)
     return { ok: false, why: 'that round names no census root' };
@@ -213,7 +239,7 @@ export function censusRootMatchesRound(contract, { entries, tipHeight, boundTo }
     return { ok: false, why: 'no committed census inputs to check those entries against' };
 
   let bound;
-  try { bound = censusInputsId({ contract, tipHeight, entries }); }
+  try { bound = censusInputsId({ contract, view, entries }); }
   catch (e) { return { ok: false, why: `those census inputs cannot be committed to: ${e.message}` }; }
   if (!bound.every((b, i) => b === boundTo[i]))
     return {
@@ -224,7 +250,7 @@ export function censusRootMatchesRound(contract, { entries, tipHeight, boundTo }
 
   let census;
   try {
-    census = commitCensus(entries, { contract, tipHeight });
+    census = commitCensus(entries, { contract, view });
   } catch (e) {
     return { ok: false, why: `that census cannot be built: ${e.message}` };
   }
@@ -239,6 +265,135 @@ export function censusRootMatchesRound(contract, { entries, tipHeight, boundTo }
       why: 'the censusRoot this round names is not the one its entries derive '
         + `to at height ${contract.censusHeight}`,
     };
+}
+
+/**
+ * Only `chainViewOf` can stamp a view as checked, and the stamp PINS the
+ * numbers a caller could otherwise override. A symbol alone was not enough:
+ * `{ ...verified, tipHeight: 999999 }` copies symbol-keyed properties too, so
+ * a caller holding an honest view could have spread it and named any tip.
+ */
+const VERIFIED = Symbol('a chain view this module checked itself');
+const stampOf = (v) => `${v.firstHeight}:${v.blocks.length}:${v.tipHeight}`;
+
+/**
+ * THE CHAIN A CENSUS IS READ FROM, AND THE PROOF THAT IT IS ONE.
+ *
+ * 5A.2: "The eligible set is therefore a pure function of THE CHAIN up to
+ * `census_height`. Two parties with the same chain compute the same census."
+ * That sentence has a load-bearing word in it, and until this the census took
+ * a bag of `{height, transactions}` - no header, no work, no link - so two
+ * chains that disagreed about Bitcoin both derived cleanly, to different
+ * roots, and nothing in the package could say which was the chain.
+ *
+ * A VIEW IS `{ blocks, firstHeight }`, each block `{ header, transactions }`,
+ * and four things are checked, none of them optional:
+ *
+ *   mined      every header's hash meets the target it claims. `chainWork`
+ *              adds a header's work only after that, "because a header nobody
+ *              mined contributes whatever difficulty its author felt like
+ *              writing down".
+ *   linked     each header names the one before it. A list that does not link
+ *              is not a chain however long it is.
+ *   contained  each block's transactions hash to the merkle root ITS OWN
+ *              header commits to. Without this the headers are decoration: a
+ *              real mined header with a fabricated transaction list would
+ *              pass, which is precisely the forgery 25.1 says a provider must
+ *              not be able to commit ("a list provider can then OMIT but not
+ *              FORGE").
+ *   placed     heights are positional from `firstHeight`, so nobody asserts
+ *              one, and the TIP is the last block's height rather than a
+ *              number a caller chose.
+ *
+ * The work is returned so competing views can be compared, which is 25.1's
+ * rule: "block headers from several independent sources, MOST WORK WINS".
+ */
+export function chainViewOf(view) {
+  if (!view || !Array.isArray(view.blocks) || !view.blocks.length)
+    return { ok: false, why: 'a chain view is at least one block' };
+  if (!Number.isInteger(view.firstHeight))
+    return { ok: false, why: 'a chain view says which height it starts at' };
+
+  const headers = [];
+  for (const block of view.blocks) {
+    if (!block || !(block.header instanceof Uint8Array))
+      return { ok: false, why: 'every block in a chain view carries its header' };
+    if (!Array.isArray(block.transactions))
+      return { ok: false, why: 'every block in a chain view carries its transactions' };
+    headers.push(block.header);
+  }
+
+  const linked = chainWork(headers);
+  if (!linked.ok)
+    return { ok: false, why: `that is not a chain: ${linked.why}`, at: linked.at };
+
+  const blocks = [];
+  for (let i = 0; i < view.blocks.length; i++) {
+    const height = view.firstHeight + i;
+    let ids;
+    try { ids = view.blocks[i].transactions.map((raw) => parseTransaction(raw).txid); }
+    catch (e) { return { ok: false, why: `block ${height} carries something that is not a transaction: ${e.message}` }; }
+
+    if (ids.length) {
+      const root = blockMerkleRoot(ids);
+      const claimed = merkleRootOf(view.blocks[i].header);
+      if (!root.every((b, k) => b === claimed[k]))
+        return {
+          ok: false,
+          why: `block ${height} does not contain the transactions offered with it`,
+        };
+    }
+    blocks.push({ height, header: view.blocks[i].header, transactions: view.blocks[i].transactions });
+  }
+
+  const checked = {
+    ok: true,
+    blocks,
+    work: linked.work,
+    firstHeight: view.firstHeight,
+    tipHeight: view.firstHeight + view.blocks.length - 1,
+  };
+  checked[VERIFIED] = stampOf(checked);
+  return checked;
+}
+
+/**
+ * A view, verified, or the reason it is not one - as a throw, because the
+ * functions below it are the ones that already throw on a malformed round.
+ *
+ * THE `ok` FLAG IS NOT TAKEN ON TRUST. An earlier draft short-circuited on
+ * `view.ok === true`, and the vector generator promptly handed in
+ * `{ ok: true, blocks: [], tipHeight: 900100 }` - a "chain" with no blocks
+ * asserting any tip it liked, which is exactly the hole this letter closed
+ * wearing a different hat. The stamp below is a module-private symbol, so only
+ * `chainViewOf` can put it there.
+ */
+function viewOrThrow(view) {
+  if (view && view[VERIFIED] && view[VERIFIED] === stampOf(view)) return view;
+  const seen = chainViewOf(view);
+  if (!seen.ok) throw new Error(seen.why);
+  return seen;
+}
+
+/**
+ * MOST WORK WINS, and it is Bitcoin's rule rather than a vote.
+ *
+ * 25.1: "block headers from several independent sources, most work wins... A
+ * list provider can then OMIT but not FORGE, and omission is answered by
+ * asking a second one." A view that is not a chain is not in the running - it
+ * is not a competing answer, it is a bad source - and ties go to the first
+ * offered so the answer does not depend on arrival order.
+ */
+export function bestChainView(views) {
+  const offered = Array.isArray(views) ? views : [views];
+  const checked = offered.map(chainViewOf);
+  const running = checked.filter((v) => v.ok);
+  if (!running.length)
+    return { ok: false, why: checked.length ? checked[0].why : 'no chain to read the census from' };
+
+  let best = running[0];
+  for (const v of running) if (v.work > best.work) best = v;
+  return { ...best, refused: checked.filter((v) => !v.ok).map((v) => v.why) };
 }
 
 /**
@@ -271,17 +426,16 @@ export function censusRootMatchesRound(contract, { entries, tipHeight, boundTo }
  * here fetches: the caller brings the blocks, and two callers holding the same
  * blocks get the same census or neither does.
  */
-export function scanCensus(blocks, { contract, tipHeight, candidates }) {
-  if (!Array.isArray(blocks)) throw new Error('scan needs blocks to read');
+export function scanCensus(view, { contract, candidates }) {
+  const chain = viewOrThrow(view);
   if (!Array.isArray(candidates)) throw new Error('scan needs the outpoints to look for');
-  const { censusHeight, censusConfirmations } = depthRuleOf(contract);
+  const { censusHeight, censusConfirmations, tipHeight } = depthRuleOf(contract, chain);
+  const blocks = chain.blocks;
 
   const createdAt = new Map();
   const spentAt = new Map();
 
   for (const block of blocks) {
-    if (!Number.isInteger(block.height)) throw new Error('a block names its height');
-
     // AT OR BEFORE THE CENSUS HEIGHT, and nothing after it. A block later than
     // the census is a block the census did not see, and reading it would make
     // the answer depend on when a node happened to ask.
@@ -374,90 +528,6 @@ export function scanCensus(blocks, { contract, tipHeight, candidates }) {
  * nothing. A resolver that throws is a resolver that failed, and a body that
  * cannot be had is excluded rather than allowed to break the census.
  */
-/**
- * IS THIS OUTPUT A BOND? Answered from chain data, not from being told.
- *
- * The census used to take a caller's word for which output was the bond. It
- * checked the transaction and the commitment and never looked at the OUTPUT,
- * so an entry could point anywhere in a real bond transaction and be counted -
- * measured before this existed: a candidate at vout 1, the OP_RETURN, value
- * zero, was accepted as a bond by `deriveCensus`. A publisher could point an
- * entry at a change output instead and inflate its own weight.
- *
- * TWO OF THE FIVE RULES CAN BE READ, AND THREE CANNOT:
- *
- *   readable   the output is P2TR. 5A.3B: "A P2TR output with three spend
- *              paths". The paths are hidden; the class is not - witness v1,
- *              a 32-byte program, `OP_1 <32 bytes>`. An OP_RETURN or a P2PKH
- *              is not the thing 5A.3B describes, whatever else is true.
- *   readable   the advertisement names THIS outpoint. 5A.1 makes the bond
- *              outpoint mandatory, so a body that points somewhere else is
- *              not this output's body. The all-zero txid is read as "the
- *              transaction carrying me", the same reading `acceptAdvert`
- *              settled: 25.1 puts the body in the transaction it names, so
- *              the txid is not knowable when the body is signed.
- *
- *   BLOCKED    the dust output to BOND_MARKER (25.1). The marker is null by
- *              decision. NO BRANCH IS WRITTEN FOR IT: code that would check
- *              a value nobody has chosen cannot be tested, and shipping an
- *              untested path that looks ready is the same fault as writing a
- *              plausible address into `constants.js`.
- *   BLOCKED    the script tree is 5A.3B's template. Taproot reveals a branch
- *              only when it is spent, which is the point of using it.
- *   BLOCKED    the advertisement signature. No curve in this package.
- *
- * So this says "counts as a bond as far as the chain can show" and names what
- * it could not look at. It never says "is a bond" - nothing here can.
- */
-export function isTaprootOutput(script) {
-  // OP_1 (0x51) then a 32-byte push (0x20): a witness v1 program, BIP341.
-  return script instanceof Uint8Array && script.length === 34
-    && script[0] === 0x51 && script[1] === 0x20;
-}
-
-export const BOND_UNCHECKED = [
-  'the dust output to BOND_MARKER (25.1: the marker is null by decision)',
-  'the bond script template (5A.3B: a taproot output hides it until spent)',
-  'the advertisement signature (no curve in this package)',
-];
-
-export function recognizeBond(tx, vout, advert) {
-  if (!tx || !Array.isArray(tx.outputs))
-    return { ok: false, why: 'that is not a parsed transaction' };
-  if (!Number.isInteger(vout) || vout < 0 || vout >= tx.outputs.length)
-    return { ok: false, why: 'that transaction has no such output' };
-
-  if (!isTaprootOutput(tx.outputs[vout].script))
-    return {
-      ok: false,
-      why: 'that output is not a taproot output, so it is not the bond 5A.3B describes',
-    };
-
-  // AND AN OUTPUT HOLDING NOTHING IS NOT A BOND, whatever shape it is. 5A.3:
-  // "The bond is what makes identity expensive. Without it, a Sybil attacker
-  // creates arbitrarily many nodes for free and buys arbitrarily many
-  // selection chances - the flaw that made v4.4 unsafe." A zero-value output
-  // costs its fee and nothing else, so a census that counted them would be
-  // that flaw with extra steps. The ROUND's floor is a separate question and
-  // a round may set it low; nothing may set it to nothing.
-  if (tx.outputs[vout].value <= 0n)
-    return { ok: false, why: 'that output holds nothing, so there is no bond at stake' };
-
-  if (!advert || !Number.isInteger(advert.bondVout))
-    return { ok: false, why: 'that advertisement names no bond output' };
-  if (advert.bondVout !== vout)
-    return {
-      ok: false,
-      why: `that advertisement names output ${advert.bondVout} as its bond, not ${vout}`,
-    };
-
-  const carriesUs = advert.bondTxid.every((b) => b === 0);
-  if (!carriesUs && !advert.bondTxid.every((b, i) => b === tx.txid[i]))
-    return { ok: false, why: 'that advertisement names a different bond transaction' };
-
-  return { ok: true, valueSats: tx.outputs[vout].value, unchecked: BOND_UNCHECKED };
-}
-
 /**
  * The body an output commits to, or why there is none.
  *
@@ -639,10 +709,15 @@ export function resolveCensus(entries, { contract, resolve }) {
  * spent, and the advertisement signature needs a curve this package does not
  * carry. Neither is skipped quietly.
  */
-export function deriveCensus(blocks, { contract, tipHeight, candidates, resolve }) {
+export function deriveCensus(views, { contract, candidates, resolve }) {
+  // MOST WORK WINS, HERE, before anything is read. Two chains that disagree
+  // about Bitcoin are not two censuses: one of them is the chain.
+  const chain = bestChainView(views);
+  if (!chain.ok) return { ok: false, why: `that census cannot be scanned: ${chain.why}` };
+
   let scanned;
   try {
-    scanned = scanCensus(blocks, { contract, tipHeight, candidates });
+    scanned = scanCensus(chain, { contract, candidates });
   } catch (e) {
     return { ok: false, why: `that census cannot be scanned: ${e.message}` };
   }
@@ -652,7 +727,7 @@ export function deriveCensus(blocks, { contract, tipHeight, candidates, resolve 
 
   let census;
   try {
-    census = commitCensus(resolved.eligible, { contract, tipHeight });
+    census = commitCensus(resolved.eligible, { contract, view: chain });
   } catch (e) {
     return { ok: false, why: `that census cannot be committed: ${e.message}` };
   }
@@ -662,6 +737,9 @@ export function deriveCensus(blocks, { contract, tipHeight, candidates, resolve 
     entries: census.entries,
     leaves: census.leaves,
     root: census.root,
+    work: chain.work,
+    tipHeight: chain.tipHeight,
+    refusedChains: chain.refused || [],
     excluded: [
       ...scanned.excluded.map((e) => ({ ...e, step: 'scan' })),
       ...resolved.excluded.map((e) => ({ ...e, step: 'resolve' })),

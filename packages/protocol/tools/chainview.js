@@ -1,0 +1,54 @@
+// A CHAIN OF REAL, MINED HEADERS, FOR TESTS AND VECTORS.
+//
+// NOT part of the protocol: nothing in `src/` imports it, the same rule
+// `bond.js` beside it follows. A node does not mine.
+//
+// Not a fixture generator for convenience: the census now refuses a header
+// whose hash does not meet the target it claims, and refuses a block whose
+// transactions do not hash to the root its header commits to. A test that
+// wanted to hand it blocks therefore has to MINE them, at a target easy enough
+// to hit in a few tries - `0x207fffff`, which is regtest's, so almost any
+// nonce works and the arithmetic is still Bitcoin's.
+import { hash256, parseTransaction, blockMerkleRoot } from '../src/tx.js';
+import { blockHashOf, meetsTarget } from '../src/chain.js';
+
+const EASY = 0x207fffff;
+// Harder, and still findable in a test: about 2^16 tries rather than mainnet's
+// 2^32. Enough that one HARD header outweighs several EASY ones, which is what
+// a most-work comparison has to be shown on.
+const HARD = 0x1f00ffff;
+
+/** One mined header over these transactions, following `previous`. */
+function mine(transactions, previous, bits) {
+  const h = new Uint8Array(80);
+  const view = new DataView(h.buffer);
+  view.setUint32(0, 1, true);
+  if (previous) h.set(blockHashOf(previous), 4);
+  if (transactions.length)
+    h.set(blockMerkleRoot(transactions.map((raw) => parseTransaction(raw).txid)), 36);
+  view.setUint32(68, 1788700000, true);
+  view.setUint32(72, bits, true);
+  for (let nonce = 0; nonce < 1e8; nonce++) {
+    view.setUint32(76, nonce, true);
+    if (meetsTarget(h)) return h;
+  }
+  throw new Error('no nonce found, which should not happen at this target');
+}
+
+/**
+ * A chain view over `blocks`, each `{ transactions }`, starting at
+ * `firstHeight`. `bits` picks how much work every header carries, so two
+ * views can compete.
+ */
+export function chainOf(blocks, firstHeight, { bits = EASY } = {}) {
+  const out = [];
+  let previous = null;
+  for (const block of blocks) {
+    const header = mine(block.transactions || [], previous, bits);
+    out.push({ header, transactions: block.transactions || [] });
+    previous = header;
+  }
+  return { blocks: out, firstHeight };
+}
+
+export { EASY, HARD, mine, hash256 };

@@ -16,6 +16,7 @@ import { encodeRoundContract, roundId, encodeEntryContract, entryId } from '../s
 import { encodeCheckpoint, checkpointId, NO_PREVIOUS, CHECKPOINT_BYTES, SIGNED_CHECKPOINT_BYTES } from '../src/checkpoint.js';
 import { encodeCheckpointReceipt, receiptId, RECEIPT_BYTES, SIGNED_RECEIPT_BYTES } from '../src/receipt.js';
 import { encodeAdvert, advertId, ADVERT_SIGNATURE_BYTES } from '../src/advert.js';
+import { chainOf as minedChain } from './chainview.js';
 
 const DIR = new URL('../../../test-vectors/protocol/', import.meta.url).pathname;
 mkdirSync(DIR, { recursive: true });
@@ -58,7 +59,7 @@ out.tagged = {
   });
   const entries = [mk(7, 100000, 800007), mk(3, 500000, 800003),
                    mk(11, 100000, 800011), mk(5, 2000000, 800005)];
-  const c = commitCensus(entries, { contract: { censusHeight: 900000, censusConfirmations: 6 }, tipHeight: 900100 });
+  const c = commitCensus(entries, { contract: { censusHeight: 900000, censusConfirmations: 6 }, view: minedChain([{ transactions: [] }], 900100) });
   out.census = {
     what: 'Census canonicalisation: filter by height, maturity and spentness; sort by (txid, vout); Merkle-root the tagged leaves.',
     entries: c.entries.map((e) => ({

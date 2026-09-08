@@ -20,7 +20,6 @@
 // in this header's block, and which of these header chains carries the most
 // work. That is what discovery needs and it is deliberately not more.
 import { advertId, decodeAdvert, splitSignedAdvert } from './advert.js';
-import { recognizeBond } from './census.js';
 import {
   hash256, parseTransaction, commitmentsOf, witnessItemsOf,
 } from './tx.js';
@@ -230,6 +229,90 @@ export function provesTransaction(headerBytes, txid, branch, position) {
   const root = merkleRootOf(headerBytes);
   try { return sameBytes(merkleRootFromProof(txid, branch, position), root); }
   catch { return false; }
+}
+
+/**
+ * IS THIS OUTPUT A BOND? Answered from chain data, not from being told.
+ *
+ * The census used to take a caller's word for which output was the bond. It
+ * checked the transaction and the commitment and never looked at the OUTPUT,
+ * so an entry could point anywhere in a real bond transaction and be counted -
+ * measured before this existed: a candidate at vout 1, the OP_RETURN, value
+ * zero, was accepted as a bond by `deriveCensus`. A publisher could point an
+ * entry at a change output instead and inflate its own weight.
+ *
+ * TWO OF THE FIVE RULES CAN BE READ, AND THREE CANNOT:
+ *
+ *   readable   the output is P2TR. 5A.3B: "A P2TR output with three spend
+ *              paths". The paths are hidden; the class is not - witness v1,
+ *              a 32-byte program, `OP_1 <32 bytes>`. An OP_RETURN or a P2PKH
+ *              is not the thing 5A.3B describes, whatever else is true.
+ *   readable   the advertisement names THIS outpoint. 5A.1 makes the bond
+ *              outpoint mandatory, so a body that points somewhere else is
+ *              not this output's body. The all-zero txid is read as "the
+ *              transaction carrying me", the same reading `acceptAdvert`
+ *              settled: 25.1 puts the body in the transaction it names, so
+ *              the txid is not knowable when the body is signed.
+ *
+ *   BLOCKED    the dust output to BOND_MARKER (25.1). The marker is null by
+ *              decision. NO BRANCH IS WRITTEN FOR IT: code that would check
+ *              a value nobody has chosen cannot be tested, and shipping an
+ *              untested path that looks ready is the same fault as writing a
+ *              plausible address into `constants.js`.
+ *   BLOCKED    the script tree is 5A.3B's template. Taproot reveals a branch
+ *              only when it is spent, which is the point of using it.
+ *   BLOCKED    the advertisement signature. No curve in this package.
+ *
+ * So this says "counts as a bond as far as the chain can show" and names what
+ * it could not look at. It never says "is a bond" - nothing here can.
+ */
+export function isTaprootOutput(script) {
+  // OP_1 (0x51) then a 32-byte push (0x20): a witness v1 program, BIP341.
+  return script instanceof Uint8Array && script.length === 34
+    && script[0] === 0x51 && script[1] === 0x20;
+}
+
+export const BOND_UNCHECKED = [
+  'the dust output to BOND_MARKER (25.1: the marker is null by decision)',
+  'the bond script template (5A.3B: a taproot output hides it until spent)',
+  'the advertisement signature (no curve in this package)',
+];
+
+export function recognizeBond(tx, vout, advert) {
+  if (!tx || !Array.isArray(tx.outputs))
+    return { ok: false, why: 'that is not a parsed transaction' };
+  if (!Number.isInteger(vout) || vout < 0 || vout >= tx.outputs.length)
+    return { ok: false, why: 'that transaction has no such output' };
+
+  if (!isTaprootOutput(tx.outputs[vout].script))
+    return {
+      ok: false,
+      why: 'that output is not a taproot output, so it is not the bond 5A.3B describes',
+    };
+
+  // AND AN OUTPUT HOLDING NOTHING IS NOT A BOND, whatever shape it is. 5A.3:
+  // "The bond is what makes identity expensive. Without it, a Sybil attacker
+  // creates arbitrarily many nodes for free and buys arbitrarily many
+  // selection chances - the flaw that made v4.4 unsafe." A zero-value output
+  // costs its fee and nothing else, so a census that counted them would be
+  // that flaw with extra steps. The ROUND's floor is a separate question and
+  // a round may set it low; nothing may set it to nothing.
+  if (tx.outputs[vout].value <= 0n)
+    return { ok: false, why: 'that output holds nothing, so there is no bond at stake' };
+
+  if (!advert || !Number.isInteger(advert.bondVout))
+    return { ok: false, why: 'that advertisement names no bond output' };
+  if (advert.bondVout !== vout)
+    return {
+      ok: false,
+      why: `that advertisement names output ${advert.bondVout} as its bond, not ${vout}`,
+    };
+
+  const carriesUs = advert.bondTxid.every((b) => b === 0);
+  if (!carriesUs && !advert.bondTxid.every((b, i) => b === tx.txid[i]))
+    return { ok: false, why: 'that advertisement names a different bond transaction' };
+
+  return { ok: true, valueSats: tx.outputs[vout].value, unchecked: BOND_UNCHECKED };
 }
 
 /**
