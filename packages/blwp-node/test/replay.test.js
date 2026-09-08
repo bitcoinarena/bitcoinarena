@@ -13,7 +13,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { openStore } from '../src/store.js';
 import { Round } from '../src/round.js';
-import { replay, NO_SEED_RULE } from '../src/replay.js';
+import { replay, replayInWorker, agreeOnState, NO_SEED_RULE } from '../src/replay.js';
 import { init, step, submitLiquidation } from '../../core/src/sim.js';
 import { hash } from '../../core/src/state.js';
 import { encodeInputBatch, batchId } from '../../protocol/src/batch.js';
@@ -54,8 +54,8 @@ const LIQUIDATIONS = [[37, 3 * 65536], [311, 9 * 65536]];
  * THE PLAYER'S RUN, driven straight off the core the way the client drives the
  * bundle it is drawing from. These hashes are the thing the node has to reach.
  */
-function played(ticks, { from = 0 } = {}) {
-  const due = new Map(LIQUIDATIONS);
+function played(ticks, { from = 0, liquidations = LIQUIDATIONS } = {}) {
+  const due = new Map(liquidations);
   const st = init(SEED);
   const marks = [];
   for (let i = 0; i < ticks; i++) {
@@ -68,14 +68,14 @@ function played(ticks, { from = 0 } = {}) {
 }
 
 /** The same run, put through the daemon's door: batches in, transcript out. */
-function stored(ticks, { from = 0, chunk = 100 } = {}) {
+function stored(ticks, { from = 0, chunk = 100, liquidations = LIQUIDATIONS } = {}) {
   const r = new Round(openStore(), () => 1234);
   const c = contract();
   const rid = r.open(c);
   const entry = entryFor(rid, from);
   const eid = r.enter(entry);
 
-  const due = new Map(LIQUIDATIONS);
+  const due = new Map(liquidations);
   let previousHash = GENESIS;
   for (let i = 0; i < ticks; i += chunk) {
     const n = Math.min(chunk, ticks - i);
@@ -222,4 +222,118 @@ test('the replay refuses a seed it was not given, a wrong start, and a gap', () 
   // and a tick that is not five words
   const short = { ...transcript, ticks: transcript.ticks.map((t, i) => (i === 7 ? { tick: t.tick, words: [1, 2, 3] } : t)) };
   assert.match(replay(short, entry, { seedWord: SEED }).why, /tick 7 does not carry five words/);
+});
+
+/**
+ * THE SAME ANSWER, OFF THE DAEMON'S OWN THREAD.
+ *
+ * A replay is minutes of simulation; on the event loop the node would answer
+ * nothing at all while it ran. A thread does not make it a live second
+ * simulator - the run is already over and nothing here has a clock.
+ */
+test('the worker replays to the same hash at every mark', async () => {
+  const TICKS = 600;
+  const run = played(TICKS);
+  const { transcript, entry } = stored(TICKS);
+
+  const got = await replayInWorker(transcript, entry, { seedWord: SEED, marks: run.marks });
+  assert.equal(got.ok, true, got.why);
+  assert.equal(got.stateHash, run.stateHash, 'the worker reached a different state');
+  assert.equal(got.checked, 5);
+  assert.equal(got.divergedAt, null);
+  assert.equal(got.agrees, true);
+
+  // and it is the same answer the daemon's own thread gives, field for field
+  assert.deepEqual(got, replay(transcript, entry, { seedWord: SEED, marks: run.marks }));
+
+  // AND A LATE RUN CROSSES THE THREAD WITH ITS OWN START TICK. The entry goes
+  // through structured clone; a worker that rebuilt the run from zero would
+  // reach a different state and call the player a liar from another thread.
+  const FROM = 50;
+  const late = played(400, { from: FROM });
+  const lateStore = stored(400, { from: FROM });
+  const lateGot = await replayInWorker(lateStore.transcript, lateStore.entry,
+    { seedWord: SEED, marks: late.marks });
+  assert.equal(lateGot.ok, true, lateGot.why);
+  assert.equal(lateGot.stateHash, late.stateHash, 'the worker replayed a late run from the wrong tick');
+  assert.equal(lateGot.agrees, true);
+
+  // a refusal survives the thread boundary as a refusal, not as a crash
+  const noSeed = await replayInWorker(transcript, entry);
+  assert.equal(noSeed.ok, false);
+  assert.equal(noSeed.why, NO_SEED_RULE);
+});
+
+/**
+ * FIVE OF SEVEN, EACH FROM ITS OWN TABLES.
+ *
+ * Seven independent stores take the same batches through the protocol's
+ * encoder, and each replays what IT has. Until now a node could only count
+ * signatures over a number the player handed it; this is seven nodes each
+ * computing the answer, which is what makes "five agree" worth anything.
+ */
+test('seven nodes each replay their own tables and five of seven make it final', async () => {
+  const TICKS = 600;
+  const run = played(TICKS);
+  const SLOTS = 7;
+
+  // Six honest stores, and a seventh whose batches never carried the
+  // liquidations - a real difference in what it holds, not a doctored answer.
+  const nodes = [];
+  for (let i = 0; i < SLOTS; i++) {
+    const honest = i < 6;
+    const { transcript, entry } = stored(TICKS, honest ? {} : { liquidations: [] });
+    const got = await replayInWorker(transcript, entry, { seedWord: SEED, marks: run.marks });
+    nodes.push({ nodePubkey: b32(0xa0 + i), ...got });
+  }
+
+  const six = nodes.filter((n) => n.stateHash === run.stateHash).length;
+  assert.equal(six, 6, 'the honest stores did not all reach the played state');
+  assert.equal(nodes[6].stateHash !== run.stateHash, true, 'the odd store agreed anyway');
+  assert.equal(nodes[6].agrees, false, 'the odd store matched the player\'s marks');
+
+  const settled = agreeOnState(nodes, { slots: SLOTS });
+  assert.equal(settled.ok, true, settled.why);
+  assert.equal(settled.final, true, settled.why);
+  assert.equal(settled.stateHash, run.stateHash, 'the committee settled on a state nobody played');
+  assert.equal(settled.needed, 5, 'the threshold is not five of seven');
+  assert.equal(settled.agreed, 6);
+
+  // FIVE IS ENOUGH AND FOUR IS NOT, and neither number is written here: the
+  // threshold comes off the contract's slots through receiptsNeeded.
+  const five = agreeOnState(nodes.slice(0, 5), { slots: SLOTS });
+  assert.equal(five.final, true, five.why);
+  const four = agreeOnState(nodes.slice(0, 4), { slots: SLOTS });
+  assert.equal(four.final, false);
+  assert.equal(four.stateHash, null, 'a state was named without the threshold');
+  assert.match(four.why, /4 of 5 agree/);
+
+  // A NODE COUNTED TWICE IS NOT TWO NODES.
+  const doubled = [nodes[0], nodes[1], nodes[2], nodes[3], { ...nodes[0] }];
+  assert.equal(agreeOnState(doubled, { slots: SLOTS }).ok, false);
+  assert.match(agreeOnState(doubled, { slots: SLOTS }).why, /answered twice/);
+
+  // and a committee size nobody has a threshold for is refused, not guessed
+  assert.match(agreeOnState(nodes, { slots: 5 }).why, /no committee threshold for 5/);
+});
+
+/**
+ * A NODE THAT COULD NOT REPLAY DOES NOT COUNT AS AGREEING.
+ */
+test('a node that refused to replay is counted as refusing, not as agreeing', async () => {
+  const TICKS = 300;
+  const run = played(TICKS);
+  const { transcript, entry } = stored(TICKS);
+  const answer = await replayInWorker(transcript, entry, { seedWord: SEED });
+
+  const nodes = [0, 1, 2, 3, 4, 5, 6].map((i) => ({
+    nodePubkey: b32(0xb0 + i),
+    ...(i < 4 ? answer : replay(transcript, entry)),      // three have no seed
+  }));
+
+  assert.equal(nodes[0].stateHash, run.stateHash);
+  const settled = agreeOnState(nodes, { slots: 7 });
+  assert.equal(settled.final, false, 'refusals were counted towards the threshold');
+  assert.equal(settled.agreed, 4);
+  assert.equal(settled.refused, 3);
 });
