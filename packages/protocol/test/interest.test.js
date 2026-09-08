@@ -15,12 +15,47 @@ import assert from 'node:assert/strict';
 import {
   interestSet, fanOut, distanceSquared, GHOST_SUBSCRIPTIONS, LEADER_SHARE,
 } from '../src/interest.js';
+import { leaderboard } from '../src/leaderboard.js';
+import { resultId, RESULTS_FOR_FINAL } from '../src/result.js';
+import { DELIVERED, VOID } from '../src/payout.js';
+
+const b32 = (n) => new Uint8Array(32).fill(n);
+const COMMITTEE = [1, 2, 3, 4, 5, 6, 7].map((n) => b32(0xc0 + n));
+const contract = { nodes: COMMITTEE };
+
+/**
+ * A REAL BOARD, built by `leaderboard` from signed finals - not a hand-written
+ * table of ranks. Hand-writing them would test this file against itself: the
+ * whole point of the slice is that one ordering is computed the same way
+ * everywhere, so the fixture has to come from that ordering.
+ *
+ * `standings` is [playerKeyByte, score] pairs, best score first or not - the
+ * board decides.
+ */
+const boardOf = (standings, outcome = DELIVERED) => leaderboard(
+  standings.map(([p, score]) => {
+    const result = {
+      roundId: b32(1), playerPubkey: id(p), outcome, score,
+      transcriptHash: b32(3), simCoreHash: b32(4), nodePubkey: COMMITTEE[0],
+    };
+    const rid = resultId(result);
+    return {
+      result,
+      signedBy: COMMITTEE.slice(0, RESULTS_FOR_FINAL)
+        .map((nodePubkey) => ({ resultId: rid, nodePubkey })),
+    };
+  }),
+  { contract },
+);
 
 const id = (n) => { const b = new Uint8Array(32); b[30] = n >> 8; b[31] = n & 255; return b; };
 /** A grid of players, rank i, spaced forty metres apart in Q16.16. */
 const field = (n) => Array.from({ length: n }, (_, i) => ({
-  entryId: id(i), x: (i % 13) * 65536 * 40, z: Math.floor(i / 13) * 65536 * 40, rank: i,
+  entryId: id(i), playerPubkey: id(i),
+  x: (i % 13) * 65536 * 40, z: Math.floor(i / 13) * 65536 * 40,
 }));
+/** The board that ranks a whole field, best score to the lowest index. */
+const boardFor = (n) => boardOf(Array.from({ length: n }, (_, i) => [i, 100000 - i]));
 
 /**
  * N.K, NOT N^2. Measured, not asserted: below the budget everybody is within
@@ -69,19 +104,18 @@ test('the set does not depend on the order the players arrived in', () => {
   ];
   for (const order of orders) {
     const got = interestSet(players[0], order);
-    assert.deepEqual(got.map((o) => o.rank), want.map((o) => o.rank),
+    assert.deepEqual(got.map((o) => o.entryId[31]), want.map((o) => o.entryId[31]),
       'a different arrival order gave a different set, or a different order');
   }
 
-  // a tie in the score is broken by the entry id, not by position in the array
-  const tied = [
-    { entryId: id(9), x: 0, z: 0, rank: 5 },
-    { entryId: id(3), x: 0, z: 0, rank: 5 },
-    { entryId: id(7), x: 0, z: 0, rank: 5 },
-  ];
+  // three trucks in the same place: a tie is broken by the entry id, not by
+  // position in the array
+  const tied = [9, 3, 7].map((n) => ({ entryId: id(n), playerPubkey: id(n), x: 0, z: 0 }));
   const viewer = { entryId: id(0), x: 65536, z: 0 };
-  const one = interestSet(viewer, tied, { limit: 2 }).map((o) => o.entryId[31]);
-  const two = interestSet(viewer, [...tied].reverse(), { limit: 2 }).map((o) => o.entryId[31]);
+  const board = boardOf([[9, 100], [3, 100], [7, 100]]);
+  const one = interestSet(viewer, tied, { limit: 2, board }).map((o) => o.entryId[31]);
+  const two = interestSet(viewer, [...tied].reverse(), { limit: 2, board })
+    .map((o) => o.entryId[31]);
   assert.deepEqual(one, two, 'three players at the same place and rank were ordered by luck');
   assert.deepEqual(one, [3, 7], 'a tie was not broken by the entry id');
 });
@@ -94,24 +128,32 @@ test('the set does not depend on the order the players arrived in', () => {
 test('the budget goes to the leaders and to the nearest, and the viewer is not in it', () => {
   // the viewer sits far from the leaders, so the two halves cannot overlap
   const leaders = Array.from({ length: 10 }, (_, i) => ({
-    entryId: id(i), x: 0, z: 0, rank: i,
+    entryId: id(i), playerPubkey: id(i), x: 0, z: 0,
   }));
   const neighbours = Array.from({ length: 10 }, (_, i) => ({
-    entryId: id(100 + i), x: 900 * 65536 + i * 65536, z: 900 * 65536, rank: 500 + i,
+    entryId: id(100 + i), playerPubkey: id(100 + i),
+    x: 900 * 65536 + i * 65536, z: 900 * 65536,
   }));
   const viewer = { entryId: id(200), x: 900 * 65536, z: 900 * 65536 };
 
-  const set = interestSet(viewer, [...leaders, ...neighbours], { limit: 8 });
+  // the board ranks the far ten best and the near ten worst
+  const board = boardOf([
+    ...leaders.map((_, i) => [i, 100000 - i]),
+    ...neighbours.map((_, i) => [100 + i, 500 - i]),
+  ]);
+
+  const set = interestSet(viewer, [...leaders, ...neighbours], { limit: 8, board });
   assert.equal(set.length, 8);
-  const ranks = set.map((o) => o.rank);
-  assert.equal(ranks.filter((r) => r < 10).length, 8 / LEADER_SHARE, 'the leaders half moved');
-  assert.equal(ranks.filter((r) => r >= 500).length, 8 - 8 / LEADER_SHARE);
-  assert.deepEqual(ranks.filter((r) => r < 10).sort((a, b) => a - b), [0, 1, 2, 3],
+  const who = set.map((o) => o.entryId[31] | (o.entryId[30] << 8));
+  const taken = { leaders: who.filter((n) => n < 10), near: who.filter((n) => n >= 100) };
+
+  assert.equal(taken.leaders.length, 8 / LEADER_SHARE, 'the leaders half moved');
+  assert.equal(taken.near.length, 8 - 8 / LEADER_SHARE);
+  assert.deepEqual(taken.leaders.sort((a, b) => a - b), [0, 1, 2, 3],
     'the leaders taken were not the top of the board');
 
   // the nearest half really is the nearest, not any four
-  const near = ranks.filter((r) => r >= 500).sort((a, b) => a - b);
-  assert.deepEqual(near, [500, 501, 502, 503]);
+  assert.deepEqual(taken.near.sort((a, b) => a - b), [100, 101, 102, 103]);
 
   // A PLAYER IS NEVER IN THEIR OWN SET. They are driving that truck.
   const all = field(30);
@@ -131,8 +173,8 @@ test('distance stays exact where a double would stop being', () => {
   // same number: the squared x is 2^62 and the ULP up there is 1024, so a
   // difference of one is gone before the addition finishes.
   const viewer = { entryId: id(0), x: -0x40000000, z: 0 };
-  const a = { entryId: id(1), x: 0x40000000, z: 0, rank: 1 };
-  const b = { entryId: id(2), x: 0x40000000, z: 1, rank: 2 };
+  const a = { entryId: id(1), playerPubkey: id(1), x: 0x40000000, z: 0 };
+  const b = { entryId: id(2), playerPubkey: id(2), x: 0x40000000, z: 1 };
 
   const da = distanceSquared(viewer, a);
   const db = distanceSquared(viewer, b);
@@ -142,11 +184,11 @@ test('distance stays exact where a double would stop being', () => {
   assert.equal(Number(da) === Number(db), true,
     'as doubles these two are the same number, which is the point');
 
-  assert.deepEqual(interestSet(viewer, [a, b], { limit: 1 }).map((o) => o.rank), [1],
+  assert.deepEqual(interestSet(viewer, [a, b], { limit: 1 }).map((o) => o.entryId[31]), [1],
     'the nearer of two trucks a double cannot tell apart was not chosen');
 
   // and the order does not rescue it: offered the other way round, still a
-  assert.deepEqual(interestSet(viewer, [b, a], { limit: 1 }).map((o) => o.rank), [1]);
+  assert.deepEqual(interestSet(viewer, [b, a], { limit: 1 }).map((o) => o.entryId[31]), [1]);
 });
 
 /**
@@ -167,3 +209,147 @@ test('an empty round, a budget of nothing, and a budget bigger than the field', 
   assert.equal(fanOut(field(2)).frames, 2);
   assert.equal(fanOut(field(1)).frames, 0, 'a lone player was sent a ghost');
 });
+
+/**
+ * A CALLER CANNOT HAND IN WHO WON.
+ *
+ * `interestSet` used to read `rank` straight off the object it was given. That
+ * is the fault this repository has removed five times - from the census depth,
+ * the committee size, the seed, the bond floor and the protocol version. A
+ * rank a caller picks is a rank the OPERATOR picks: say the player about to
+ * overtake you is nineteenth and they fall out of the twenty you are shown,
+ * with nothing forged and nothing to notice.
+ *
+ * The board is the authority. A `rank` on the caller's object is IGNORED
+ * rather than refused, which is the same treatment RESOLVE gives a census
+ * entry's claimed roles and key: the object is somebody's summary, and the
+ * signed thing beside it is what counts.
+ */
+test('a rank the caller writes on the object is ignored; the board decides', () => {
+  const far = Array.from({ length: 4 }, (_, i) => ({
+    entryId: id(i), playerPubkey: id(i), x: 0, z: 0,
+  }));
+  const near = Array.from({ length: 4 }, (_, i) => ({
+    entryId: id(100 + i), playerPubkey: id(100 + i),
+    x: 900 * 65536 + i * 65536, z: 900 * 65536,
+  }));
+  const viewer = { entryId: id(200), x: 900 * 65536, z: 900 * 65536 };
+
+  // the board says 0..3 are the leaders
+  const board = boardOf([...far.map((_, i) => [i, 100000 - i]),
+                         ...near.map((_, i) => [100 + i, 10 - i])]);
+  const honest = interestSet(viewer, [...far, ...near], { limit: 4, board })
+    .map((o) => o.entryId[31] | (o.entryId[30] << 8));
+
+  // A LIE, WRITTEN ON THE OBJECTS: the real leaders are demoted and the
+  // stragglers promoted. Nothing may move.
+  const lied = [
+    ...far.map((o, i) => ({ ...o, rank: 900 + i })),
+    ...near.map((o, i) => ({ ...o, rank: i })),
+  ];
+  const lying = interestSet(viewer, lied, { limit: 4, board })
+    .map((o) => o.entryId[31] | (o.entryId[30] << 8));
+
+  assert.deepEqual(lying, honest,
+    'a rank written on the caller\'s object changed who the player sees');
+  assert.equal(lying.filter((n) => n < 10).length, 2, 'the leaders half is not the board\'s');
+
+  // and with NO board at all there are no leaders: the whole budget goes to
+  // the nearest, because nobody has a standing to be a leader by
+  const blind = interestSet(viewer, lied, { limit: 4 })
+    .map((o) => o.entryId[31] | (o.entryId[30] << 8));
+  assert.equal(blind.every((n) => n >= 100), true,
+    'somebody was made a leader without a board saying so');
+});
+
+/**
+ * SOMEBODY STILL DRIVING HAS NO STANDING, AND THAT IS NOT A GAP. A board is
+ * built from results the committee has made final, and mid-round most players
+ * have none. They are still watchable as neighbours; they join the leaders
+ * half when their result is final. Late join is why finals arrive during a
+ * round at all - each entrant gets T_run from their own start.
+ */
+test('a player with no final yet is a neighbour, never a leader', () => {
+  const finished = { entryId: id(1), playerPubkey: id(1), x: 0, z: 0 };
+  const driving = { entryId: id(2), playerPubkey: id(2), x: 65536, z: 0 };
+  const viewer = { entryId: id(3), x: 0, z: 0 };
+
+  const board = boardOf([[1, 900]]);
+  assert.equal(board.rows.length, 1, 'the board ranked somebody who has no final');
+
+  // one seat: the leaders half of one is zero, so the nearest wins it - and
+  // the nearest is the one standing on the viewer
+  const one = interestSet(viewer, [finished, driving], { limit: 1, board });
+  assert.equal(one[0].entryId[31], 1);
+
+  // two seats: one leader, one neighbour, and the unranked player is the
+  // neighbour rather than a second leader
+  const two = interestSet(viewer, [finished, driving], { limit: 2, board })
+    .map((o) => o.entryId[31]);
+  assert.deepEqual(two.sort(), [1, 2]);
+
+  // A REFUNDED RUN IS NOT A LEADER EITHER: the board shows it unranked, and
+  // unranked is not a place, so it cannot be at the top of anybody's twenty.
+  //
+  // The refunded pair are placed FAR AWAY and the unranked four CLOSE, so the
+  // two halves disagree about them: the nearest half would never reach the far
+  // pair, and a leaders half that mistook `rank: null` for a standing would
+  // take them first. Putting them near would have hidden the difference -
+  // which is how that mutant first survived.
+  const refundedFar = [0, 1].map((i) => ({
+    entryId: id(300 + i), playerPubkey: id(300 + i),
+    x: 500 * 65536, z: 500 * 65536 + i * 65536,
+  }));
+  const stillDriving = [0, 1, 2, 3].map((i) => ({
+    entryId: id(400 + i), playerPubkey: id(400 + i), x: (i + 1) * 65536, z: 0,
+  }));
+  const allRefunds = boardOf(refundedFar.map((_, i) => [300 + i, 900 - i]), VOID);
+  assert.deepEqual(allRefunds.rows.map((r) => r.rank), [null, null]);
+
+  const seats = interestSet({ entryId: id(800), x: 0, z: 0 },
+    [...refundedFar, ...stillDriving], { limit: 4, board: allRefunds })
+    .map((o) => (o.entryId[30] << 8) | o.entryId[31]);
+
+  assert.equal(seats.some((n) => n >= 300 && n < 302), false,
+    'a refunded run was given a place in the leaders half');
+  assert.deepEqual(seats.sort((a, b) => a - b), [400, 401, 402, 403],
+    'the seats did not all go to the nearest');
+});
+
+/**
+ * AND THE STANDING IS THE PLAYER'S, NOT THE ENTRY'S. A board keys by
+ * `playerPubkey` and a subscription keys by `entryId`; they are different
+ * bytes, and a lookup on the wrong one finds nobody - which looks exactly like
+ * a field of players who have not finished yet. Every fixture above used the
+ * same bytes for both, so a mutant keyed on the entry survived.
+ */
+test('a standing is looked up by the player key, not by the entry id', () => {
+  // The board's number one is placed FARTHEST away. A correct lookup gives it
+  // the leaders seat; a lookup on the entry id finds nobody, leaves the leaders
+  // half empty, and the seats go to the nearest - so the top of the board
+  // disappears. With everyone equidistant the two would agree and the test
+  // would measure nothing, which is how that mutant first survived.
+  const players = [
+    { entryId: id(700), playerPubkey: id(0), x: 900 * 65536, z: 0 },
+    { entryId: id(701), playerPubkey: id(1), x: 2 * 65536, z: 0 },
+    { entryId: id(702), playerPubkey: id(2), x: 3 * 65536, z: 0 },
+    { entryId: id(703), playerPubkey: id(3), x: 4 * 65536, z: 0 },
+  ];
+  const viewer = { entryId: id(800), x: 0, z: 0 };
+  const board = boardOf([[0, 900], [1, 800], [2, 700], [3, 600]]);
+
+  assert.notEqual(toHexish(players[0].entryId), toHexish(players[0].playerPubkey),
+    'the fixture uses the same bytes for both, so it measures nothing');
+  assert.equal(board.rows[0].rank, 1);
+  assert.equal(toHexish(board.rows[0].playerPubkey), toHexish(id(0)));
+
+  const set = interestSet(viewer, players, { limit: 2, board })
+    .map((o) => (o.entryId[30] << 8) | o.entryId[31]);
+
+  assert.equal(set.length, 2);
+  assert.equal(set.includes(700), true,
+    'the top of the board lost its seat, so the standing was looked up on the wrong key');
+  assert.equal(set.includes(701), true, 'the nearest did not get the other seat');
+});
+
+const toHexish = (b) => [...b].map((v) => v.toString(16)).join('');

@@ -74,23 +74,62 @@ const byThen = (score) => (a, b) => {
 };
 
 /**
+ * WHERE A STANDING COMES FROM, and it is not from whoever called this.
+ *
+ * `others` carry a `playerPubkey`; the standing is looked up on the BOARD, and
+ * a `rank` field on the caller's own object is ignored. It used to be taken
+ * straight from that field, which is the fault this repository has removed
+ * five times now - from the census depth, the committee size, the seed, the
+ * bond floor and the protocol version. A rank a caller picks is a rank the
+ * OPERATOR picks: hand in a table that says the player about to overtake you
+ * is nineteenth, and they drop out of the twenty you are shown.
+ *
+ * 0.11 makes the board "presentation, not authority", and this is the sense in
+ * which that is still true: the board decides nothing about money, and it is
+ * the only thing that decides an ORDER. One ordering, computed the same way by
+ * every node, used everywhere an order is needed.
+ *
+ * SOMEBODY WITH NO FINAL YET HAS NO STANDING, and that is not a gap. A board
+ * is built from results the committee has made final; mid-round most players
+ * have none, because they are still driving. They are still watchable - the
+ * nearest half does not need a rank - and they join the leaders half when
+ * their result is final. Late join is why finals arrive during a round at all:
+ * each entrant gets T_run from their own start, so they finish at different
+ * moments.
+ */
+function standings(board) {
+  const rank = new Map();
+  if (board && Array.isArray(board.rows)) {
+    for (const row of board.rows)
+      if (row.rank !== null && row.playerPubkey) rank.set(hex(row.playerPubkey), row.rank);
+  }
+  return rank;
+}
+
+/**
  * The others this viewer subscribes to: the leaders, then the nearest.
  *
- * `others` are `{ entryId, x, z, rank }` - rank 0 is the best standing, and it
- * is the LEADERBOARD's, which 0.11 makes presentation from signed results
- * rather than anything this function decides.
+ * `others` are `{ entryId, x, z, playerPubkey }`. The standing is the board's;
+ * a `rank` on the object is ignored.
  *
  * The viewer is never in their own set: a player does not need a picture of
  * the truck they are driving.
  */
-export function interestSet(viewer, others, { limit = GHOST_SUBSCRIPTIONS } = {}) {
+export function interestSet(viewer, others, { limit = GHOST_SUBSCRIPTIONS, board } = {}) {
   if (!Number.isInteger(limit) || limit < 0)
     throw new Error('a subscription budget is a whole number of others');
 
   const pool = others.filter((o) => compareBytes(o.entryId, viewer.entryId) !== 0);
   if (limit === 0 || pool.length === 0) return [];
 
-  const leaders = [...pool].sort(byThen((o) => o.rank));
+  // THE STANDING IS THE BOARD'S, and anybody it does not rank is not a leader.
+  // A player still driving has no final and therefore no place; they are
+  // watched as a neighbour or not at all, which is what "presentation" means
+  // when the presentation is of results that do not exist yet.
+  const rank = standings(board);
+  const placed = pool.filter((o) => rank.has(whose(o)));
+
+  const leaders = placed.sort(byThen((o) => rank.get(whose(o))));
   const near = [...pool].sort(byThen((o) => distanceSquared(viewer, o)));
 
   const room = Math.min(limit, pool.length);
@@ -100,18 +139,22 @@ export function interestSet(viewer, others, { limit = GHOST_SUBSCRIPTIONS } = {}
   const add = (o) => { if (!taken.has(key(o))) taken.set(key(o), o); };
   for (const o of leaders) { if (taken.size >= wantLeaders) break; add(o); }
   for (const o of near) { if (taken.size >= room) break; add(o); }
-  // a leaderboard shorter than its half leaves room the neighbours did not
-  // fill either; top up from the leaders rather than send fewer than asked
+  // a board shorter than its half leaves room the neighbours did not fill
+  // either; top up from the leaders rather than send fewer than asked
   for (const o of leaders) { if (taken.size >= room) break; add(o); }
 
   return [...taken.values()];
 }
 
-const key = (o) => {
+const hex = (b) => {
   let s = '';
-  for (const b of o.entryId) s += b.toString(16).padStart(2, '0');
+  for (const v of b) s += v.toString(16).padStart(2, '0');
   return s;
 };
+const key = (o) => hex(o.entryId);
+
+/** Whose standing this row is: the board keys by player, the set by entry. */
+const whose = (o) => hex(o.playerPubkey || o.entryId);
 
 /**
  * Every viewer's set, and what it costs to send.
