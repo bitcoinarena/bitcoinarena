@@ -18,6 +18,7 @@ import {
   decodeServiceRecord, serviceRecordId, feeInputsId, slashHoldsOnFeeClaim,
   slashCommitment, FEE_WITHOUT_SERVICE,
 } from '../src/slash.js';
+import { nodeFeeTable, feeTableId, feeOwed, GAME_VERIFY, SETTLEMENT } from '../src/fee.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const NODE = b32(0x11);
@@ -29,12 +30,33 @@ const MINIMUM = 20;
 // contract carried it, and a minimum a caller picks is one an operator picks -
 // the same fault the objection window was moved in here to fix, and worse,
 // because this number decides whether a bond is taken.
-const contract = { slashMinimumServed: MINIMUM, slashRemainder: 'BURN' };
+// A WHOLE CONTRACT, because the fee table hashes the round it belongs to.
+const contract = {
+  simCoreHash: b32(1), startTimeMs: 1000n, entryCloseMs: 2000n, objectionWindowMs: 600000n,
+  custody: 'FEDERATION', slashMinimumServed: MINIMUM, slashRemainder: 'BURN',
+  censusHeight: 900000, censusRoot: b32(2), committeeSeed: b32(3), stakeMsat: 100000n,
+  bondMinSats: 50000n, blockTicks: 600, exposureReference: 1000, corridorHalfWidth: 40,
+  spawnFreeRadius: 20, timeFloor: 30, timeCeil: 150, minScore: 1,
+  rankNumerator: 3, rankDenominator: 4, nodes: [NODE, b32(0x22)],
+};
+
+// 22A's table for this round: one activated stake of 400000 msat, so a fee of
+// 8000, 4000 to each pool, and NODE the only eligible verify seat - 4000 owed.
+const feeEntries = [{ pubkey: b32(0xa1), outcome: 'DELIVERED', score: 500, stakeMsat: 400000n }];
+const feeTable = nodeFeeTable({
+  contract, entries: feeEntries,
+  // NODE sits in both pools, which 22A allows explicitly - "an operator
+  // selected for both roles earns both shares" - so each role owes it 4000 and
+  // the two are separate money.
+  pools: { [GAME_VERIFY]: [NODE], [SETTLEMENT]: [NODE] },
+  eligible: new Set([toHex(NODE)]),
+});
+const OWED = feeOwed(feeTable, NODE, 'verify');
 const committee = [NODE, b32(0x22), b32(0x23), b32(0x24), b32(0x25), b32(0x26), b32(0x27)];
 const advert = { nodePubkey: NODE, operatorId: 'somebody', bondTxid: BOND, bondVout: 3 };
 
 const claimOf = (over = {}) =>
-  ({ roundId: ROUND, nodePubkey: NODE, role: 'verify', amountMsat: 142900n, ...over });
+  ({ roundId: ROUND, nodePubkey: NODE, role: 'verify', amountMsat: OWED, ...over });
 const recordOf = (over = {}) =>
   ({ roundId: ROUND, nodePubkey: NODE, role: 'verify', served: MINIMUM, ...over });
 
@@ -42,7 +64,7 @@ const proofFor = (claim, record, minimum = MINIMUM, over = {}) => ({
   roundId: ROUND, playerPubkey: b32(0), nodePubkey: NODE,
   transcriptHash: feeInputsId({
     roundId: ROUND, role: claim.role, minimumServed: minimum,
-    recordId: serviceRecordId(record),
+    recordId: serviceRecordId(record), feeTableId: feeTableId(feeTable),
   }),
   signedResultId: feeClaimId(claim),
   bondTxid: BOND, bondVout: 3, ...over,
@@ -50,7 +72,7 @@ const proofFor = (claim, record, minimum = MINIMUM, over = {}) => ({
 
 const ask = (claim, record, over = {}) => slashHoldsOnFeeClaim({
   proof: proofFor(claim, record), signedClaim: encodeFeeClaim(claim),
-  serviceRecord: encodeServiceRecord(record), contract, advert, committee, ...over,
+  serviceRecord: encodeServiceRecord(record), contract, feeTable, advert, committee, ...over,
 });
 
 /**
@@ -62,6 +84,7 @@ test('claiming a share without the service slashes the named bond', () => {
   assert.equal(before.slashed, false, 'a node was slashed for a share it earned');
   assert.equal(before.bond, undefined, 'and no bond may even be NAMED for one');
   assert.match(before.why, /served 20 of the 20 its role required/);
+  assert.match(before.why, /claimed the 4000 22A owes it/);
 
   const after = ask(claimOf(), recordOf({ served: 19 }));
   assert.equal(after.slashed, true, after.why);
@@ -70,10 +93,58 @@ test('claiming a share without the service slashes the named bond', () => {
   assert.equal(after.bond.vout, 3);
   assert.equal(after.served, 19);
   assert.equal(after.required, 20);
-  assert.equal(after.claimedMsat, 142900n);
+  assert.equal(after.claimedMsat, OWED);
   assert.equal(after.conflicted, false);
   assert.equal(toHex(after.commitment),
     toHex(slashCommitment(proofFor(claimOf(), recordOf({ served: 19 })))));
+});
+
+/**
+ * CLAIMING MORE THAN 22A OWES IS THE SAME OFFENCE AS CLAIMING WITHOUT SERVICE.
+ *
+ * Row 6 decided WHETHER a node qualifies. Until the fee table existed nothing
+ * said what the share IS, so a node that served in full could ask for any
+ * amount and no predicate contradicted it - measured before this: `grep` found
+ * no fee arithmetic anywhere in `packages/*` at all. Both faults take fee money
+ * the round did not earn for it, so both take the bond.
+ */
+test('claiming more than the table owes slashes, and claiming it exactly does not', () => {
+  assert.equal(OWED, 4000n, 'one activated stake of 400000 msat: 2% is 8000, half to each pool');
+
+  const exact = ask(claimOf(), recordOf());
+  assert.equal(exact.slashed, false, 'a node was slashed for asking what it is owed');
+  assert.match(exact.why, /claimed the 4000 22A owes it/);
+
+  const over = ask(claimOf({ amountMsat: OWED + 1n }), recordOf());
+  assert.equal(over.slashed, true, 'one millisatoshi over is still over');
+  assert.equal(over.offence, FEE_WITHOUT_SERVICE);
+  assert.equal(over.overClaimed, true);
+  assert.equal(over.owedMsat, OWED);
+  assert.equal(over.claimedMsat, OWED + 1n);
+  assert.equal(toHex(over.bond.txid), toHex(BOND));
+  assert.match(over.why, /claimed 4001 where 22A owes it 4000/);
+
+  // and under is not an offence: a node may ask for less than its due
+  const under = ask(claimOf({ amountMsat: 1n }), recordOf());
+  assert.equal(under.slashed, false, 'asking for less than the round owes took a bond');
+});
+
+test('a role 22A pays nothing for is owed nothing, and claiming for it slashes', () => {
+  // 22A names two committees; `relay` is neither, so its pool owes nobody.
+  const claim = claimOf({ role: 'relay', amountMsat: 1n });
+  const record = recordOf({ role: 'relay', served: MINIMUM });
+  const seen = ask(claim, record);
+  assert.equal(seen.slashed, true, 'a role no pool pays was paid');
+  assert.equal(seen.owedMsat, 0n);
+  assert.equal(seen.overClaimed, true);
+});
+
+test('there is no over-claim to measure without a table', () => {
+  for (const bad of [undefined, null, {}, { fee: 8000n }, { fee: 1, seats: new Map() }])
+    assert.equal(ask(claimOf(), recordOf(), { feeTable: bad }).slashed, false,
+      'a claim was judged against no table at all');
+  assert.match(ask(claimOf(), recordOf(), { feeTable: undefined }).why,
+    /no fee table to measure the claim against/);
 });
 
 test('serving more than the minimum is still the honest path', () => {
@@ -134,14 +205,15 @@ test('an accuser cannot raise the bar after the fact, or swap the record', () =>
   const raised = slashHoldsOnFeeClaim({
     proof: proofFor(claim, record), signedClaim: encodeFeeClaim(claim),
     serviceRecord: encodeServiceRecord(record),
-    contract: { ...contract, slashMinimumServed: 999 }, advert, committee,
+    contract: { ...contract, slashMinimumServed: 999 }, feeTable, advert, committee,
   });
   assert.equal(raised.slashed, false);
   assert.match(raised.why, /bound to a different record, round or minimum/);
 
   const swapped = slashHoldsOnFeeClaim({
     proof: proofFor(claim, record), signedClaim: encodeFeeClaim(claim),
-    serviceRecord: encodeServiceRecord(recordOf({ served: 0 })), contract, advert, committee,
+    serviceRecord: encodeServiceRecord(recordOf({ served: 0 })), contract, feeTable,
+    advert, committee,
   });
   assert.equal(swapped.slashed, false, 'the accuser handed in a record the proof did not name');
   assert.match(swapped.why, /bound to a different record, round or minimum/);
@@ -175,7 +247,7 @@ test('a share is earned in its own role, and 22A pays the pools separately', () 
   const record = recordOf({ role: 'verify', served: 0 });
   const no = slashHoldsOnFeeClaim({
     proof: proofFor(claim, record), signedClaim: encodeFeeClaim(claim),
-    serviceRecord: encodeServiceRecord(record), contract, advert, committee,
+    serviceRecord: encodeServiceRecord(record), contract, feeTable, advert, committee,
   });
   assert.equal(no.slashed, false);
   assert.match(no.why, /the claim is for settlement and the record is about verify/);
@@ -196,7 +268,7 @@ test('the claim and the record have to be this round\'s and this node\'s', () =>
     const no = slashHoldsOnFeeClaim({
       proof: proofFor(other, recordOf({ served: 19 }), MINIMUM, { signedResultId: feeClaimId(other) }),
       signedClaim: encodeFeeClaim(other), serviceRecord: encodeServiceRecord(recordOf({ served: 19 })),
-      contract, advert, committee,
+      contract, feeTable, advert, committee,
     });
     assert.equal(no.slashed, false);
     assert.match(no.why, why);
@@ -240,7 +312,7 @@ test('a stranger cannot be slashed for a round they were not serving', () => {
   const no = slashHoldsOnFeeClaim({
     proof: proofFor(claim, record, MINIMUM, { nodePubkey: b32(0x66) }),
     signedClaim: encodeFeeClaim(claim), serviceRecord: encodeServiceRecord(record),
-    contract, advert: { nodePubkey: b32(0x66), bondTxid: BOND, bondVout: 3 }, committee,
+    contract, feeTable, advert: { nodePubkey: b32(0x66), bondTxid: BOND, bondVout: 3 }, committee,
   });
   assert.equal(no.slashed, false);
   assert.match(no.why, /is not on this round's committee/);
@@ -285,25 +357,19 @@ test('both objects survive the round trip and every field is inside their ids', 
   }
 });
 
-test('the minimum and the record are both inside the hash a proof binds to', () => {
-  const was = toHex(feeInputsId({
+test('the minimum, the record and the table are all inside the hash a proof binds to', () => {
+  const base = {
     roundId: ROUND, role: 'verify', minimumServed: MINIMUM,
-    recordId: serviceRecordId(recordOf()),
-  }));
-  assert.notEqual(toHex(feeInputsId({
-    roundId: ROUND, role: 'verify', minimumServed: MINIMUM + 1,
-    recordId: serviceRecordId(recordOf()),
-  })), was, 'the minimum');
-  assert.notEqual(toHex(feeInputsId({
-    roundId: ROUND, role: 'game', minimumServed: MINIMUM,
-    recordId: serviceRecordId(recordOf()),
-  })), was, 'the role');
-  assert.notEqual(toHex(feeInputsId({
-    roundId: b32(9), role: 'verify', minimumServed: MINIMUM,
-    recordId: serviceRecordId(recordOf()),
-  })), was, 'the round');
-  assert.notEqual(toHex(feeInputsId({
-    roundId: ROUND, role: 'verify', minimumServed: MINIMUM,
-    recordId: serviceRecordId(recordOf({ served: 21 })),
-  })), was, 'the record');
+    recordId: serviceRecordId(recordOf()), feeTableId: feeTableId(feeTable),
+  };
+  const was = toHex(feeInputsId(base));
+
+  // the table is one of them: an accuser who could name another table could
+  // recompute what is owed from an eligibility set that suits them
+  assert.notEqual(toHex(feeInputsId({ ...base, feeTableId: b32(0x7e) })), was, 'the table');
+  assert.notEqual(toHex(feeInputsId({ ...base, minimumServed: MINIMUM + 1 })), was, 'the minimum');
+  assert.notEqual(toHex(feeInputsId({ ...base, role: 'game' })), was, 'the role');
+  assert.notEqual(toHex(feeInputsId({ ...base, roundId: b32(9) })), was, 'the round');
+  assert.notEqual(toHex(feeInputsId({ ...base, recordId: serviceRecordId(recordOf({ served: 21 })) })),
+    was, 'the record');
 });

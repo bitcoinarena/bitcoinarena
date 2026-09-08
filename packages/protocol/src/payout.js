@@ -64,7 +64,7 @@ export const payingRanks = (qualifiers) =>
  * Dropping the remainder instead would break the sum invariant below, and
  * giving it to the top rank would be a silent extra prize.
  */
-function remainderOrder(roundId, entries) {
+export function remainderOrder(roundId, entries) {
   return entries
     .map((e) => {
       const w = new Writer();

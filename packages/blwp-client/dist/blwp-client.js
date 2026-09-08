@@ -493,6 +493,9 @@ const TAG = {
   // The record and the minimum a claim is measured against, bound as one hash
   // so an accuser cannot choose either of them after the fact.
   feeInputs: 'BLWP/v1/FeeInputs',
+  // The whole 22A table a claim is measured against: the gross, the fee and
+  // every seat's share. A proof names which table, or the accuser picks one.
+  feeTable: 'BLWP/v1/FeeTable',
   vssShare: 'BLWP/v1/VssShare',
   remainder: 'BLWP/v1/Remainder',
 };

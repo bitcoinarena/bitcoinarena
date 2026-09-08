@@ -33,6 +33,7 @@ import {
   SLASH_REMAINDERS, SLASH_TO_PLAYERS_BPS, TAG,
 } from './constants.js';
 import { entryId } from './contracts.js';
+import { feeOwed, feeTableId } from './fee.js';
 import { decodePlayerResult, resultId, splitSignedResult } from './result.js';
 import {
   computePayoutTable, payoutTableId, decodePayoutTable,
@@ -927,7 +928,7 @@ export const serviceRecordId = (r) => taggedHash(TAG.serviceRecord, encodeServic
  * would make one minimum canonical for a whole network, and adding a field
  * moves every round id, which is the same blocker the slash distribution has.
  */
-export function feeInputsId({ roundId, role, minimumServed, recordId }) {
+export function feeInputsId({ roundId, role, minimumServed, recordId, feeTableId }) {
   const w = new Writer();
   w.u8(TYPE_SERVICE_RECORD);
   w.u16(PROTOCOL_VERSION);
@@ -935,6 +936,13 @@ export function feeInputsId({ roundId, role, minimumServed, recordId }) {
   w.u8(roleByte(role));
   w.u32(minimumServed);
   w.bytes32(recordId);
+
+  // AND WHICH TABLE THE CLAIM IS MEASURED AGAINST. An over-claim is a
+  // comparison with a number, and a number an accuser recomputes from an
+  // eligibility set of their choosing makes every honest claim an over-claim.
+  // The table has one hash and the proof names it, so a stranger re-deriving
+  // the accusation later gets the same answer or none.
+  w.bytes32(feeTableId);
   return taggedHash(TAG.feeInputs, w.finish());
 }
 
@@ -959,7 +967,7 @@ export function feeInputsId({ roundId, role, minimumServed, recordId }) {
  */
 export function slashHoldsOnFeeClaim({
   proof, signedClaim, serviceRecord, contract, advert, committee,
-  entry = null,
+  feeTable = null, entry = null,
 }) {
   // THE MINIMUM COMES OFF THE ROUND CONTRACT, not off the accuser.
   //
@@ -1016,9 +1024,15 @@ export function slashHoldsOnFeeClaim({
         + '22A pays the two pools separately and a share is earned in its own role',
     };
 
+  // THE TABLE 22A OWES FROM. Required, because the offence below is a
+  // comparison with what it says: without one there is no owed amount and an
+  // over-claim cannot be measured at all.
+  if (!feeTable || typeof feeTable.fee !== 'bigint' || !(feeTable.seats instanceof Map))
+    return { slashed: false, why: 'no fee table to measure the claim against' };
+
   const bound = feeInputsId({
     roundId: proof.roundId, role: claim.role, minimumServed,
-    recordId: serviceRecordId(record),
+    recordId: serviceRecordId(record), feeTableId: feeTableId(feeTable),
   });
   if (hex(proof.transcriptHash) !== hex(bound))
     return {
@@ -1035,11 +1049,19 @@ export function slashHoldsOnFeeClaim({
       && hex(entry.playerPubkey) === hex(operator))
     conflicted = true;
 
-  if (!conflicted && record.served >= minimumServed)
+  // AND WHAT 22A ACTUALLY OWES IT. Row 6 decided WHETHER a node qualifies;
+  // until the table existed nothing said what the share IS, so a qualifying
+  // node could claim any amount and no predicate contradicted it. Claiming
+  // more than the table owes is the same offence as claiming without service:
+  // both take fee money the round did not earn for it.
+  const owed = feeOwed(feeTable, proof.nodePubkey, claim.role);
+  const overClaimed = claim.amountMsat > owed;
+
+  if (!conflicted && !overClaimed && record.served >= minimumServed)
     return {
       slashed: false,
-      why: `it served ${record.served} of the ${minimumServed} its role required, `
-        + 'and 22A is what that fee is for',
+      why: `it served ${record.served} of the ${minimumServed} its role required `
+        + `and claimed the ${owed} 22A owes it`,
     };
 
   if (hex(advert.bondTxid) !== hex(proof.bondTxid) || advert.bondVout !== proof.bondVout)
@@ -1055,12 +1077,16 @@ export function slashHoldsOnFeeClaim({
     bond: { txid: proof.bondTxid, vout: proof.bondVout },
     commitment: slashCommitment(proof),
     claimedMsat: claim.amountMsat,
+    owedMsat: owed,
     served: record.served,
     required: minimumServed,
     conflicted,
+    overClaimed,
     why: conflicted
       ? 'a conflicted node never qualifies for a share, and it claimed one'
-      : `it claimed a ${claim.role} share having served ${record.served} of ${minimumServed}`,
+      : overClaimed
+        ? `it claimed ${claim.amountMsat} where 22A owes it ${owed}`
+        : `it claimed a ${claim.role} share having served ${record.served} of ${minimumServed}`,
   };
 }
 
