@@ -286,10 +286,10 @@ test('an advertisement pointing at some other bond, or at no output, is refused'
   // bond in it presented to a client as a bonded node. 25.1 step 2 is "which
   // nodes count? Bitcoin: bond outputs", and step 4 reads the endpoint from
   // that same transaction.
-  const atReturn = { ...advert(), bondTxid: new Uint8Array(32), bondVout: 1 };
+  const atReturn = { ...advert(), bondTxid: new Uint8Array(32), bondVout: 2 };
   const raw3 = bondTransaction(atReturn);
   const tx3 = parseTransaction(raw3);
-  assert.equal(tx3.outputs[1].value, 0n, 'vout 1 is not the OP_RETURN');
+  assert.equal(tx3.outputs[2].value, 0n, 'vout 2 is not the OP_RETURN');
   const at3 = blockAround(tx3.txid);
   const empty = acceptAdvert({
     transaction: raw3, header: at3.header, branch: at3.branch, position: at3.position,
@@ -315,8 +315,8 @@ test('an accepted advertisement carries the bond it was proven against', () => {
   assert.equal(ok.ok, true, ok.why);
   assert.equal(ok.bondVout, 0);
   assert.equal(ok.bondSats, tx.outputs[0].value);
-  assert.equal(ok.unchecked.length, 3);
-  assert.match(ok.unchecked[0], /BOND_MARKER/);
+  assert.equal(ok.unchecked.length, 2);
+  assert.match(ok.unchecked[0], /bond script template/);
 });
 
 /**

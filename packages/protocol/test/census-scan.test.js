@@ -72,9 +72,12 @@ function rig() {
   };
 }
 
-test('BOND_MARKER is unchosen, which is why the candidates come in', () => {
-  assert.equal(BOND_MARKER, null,
-    'a plausible address written here would settle a genesis parameter by accident');
+test('BOND_MARKER is set for regtest and testnet, not mainnet', () => {
+  assert.equal(BOND_MARKER, null, 'mainnet is still unchosen');
+  assert.equal(bondMarker('regtest').length, 32);
+  assert.equal(bondMarker('testnet').length, 32);
+  assert.notDeepEqual(bondMarker('regtest'), bondMarker('testnet'));
+  assert.throws(() => bondMarker('mainnet'), /has not been chosen/);
   assert.throws(() => bondMarker(), /has not been chosen/);
 });
 

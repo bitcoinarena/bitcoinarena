@@ -64,15 +64,16 @@ test('the taproot output is a bond and the OP_RETURN beside it is not', () => {
   const tx = parseTransaction(bondOf(0x11));
   const advert = advertFor(0x11);
 
-  assert.equal(tx.outputs.length, 2);
+  assert.equal(tx.outputs.length, 3);
   assert.equal(toHex(tx.outputs[0].script).slice(0, 4), '5120', 'vout 0 is not P2TR');
-  assert.equal(toHex(tx.outputs[1].script).slice(0, 2), '6a', 'vout 1 is not an OP_RETURN');
+  assert.equal(toHex(tx.outputs[1].script).slice(0, 4), '5120', 'vout 1 is not the marker');
+  assert.equal(toHex(tx.outputs[2].script).slice(0, 2), '6a', 'vout 2 is not an OP_RETURN');
 
   const yes = recognizeBond(tx, 0, advert);
   assert.equal(yes.ok, true, yes.why);
   assert.equal(yes.valueSats, 100000000n);
 
-  const no = recognizeBond(tx, 1, advert);
+  const no = recognizeBond(tx, 2, advert);
   assert.equal(no.ok, false, 'the OP_RETURN counted as a bond');
   assert.match(no.why, /not a taproot output/);
 });
@@ -94,7 +95,7 @@ test('an ordinary payment output is not a bond', () => {
     new Uint8Array([0x52, 0x20, ...new Uint8Array(32).fill(7)]),                   // OP_2
   ]) {
     assert.equal(isTaprootOutput(script), false, toHex(script).slice(0, 8));
-    const faked = { ...tx, outputs: [{ value: 100000000n, script }, tx.outputs[1]] };
+    const faked = { ...tx, outputs: [{ value: 100000000n, script }, tx.outputs[1], tx.outputs[2]] };
     assert.match(recognizeBond(faked, 0, advert).why, /not a taproot output/);
   }
 
@@ -196,7 +197,7 @@ test('a taproot output worth nothing is not a bond', () => {
 
 test('an output that is not there is not a bond', () => {
   const tx = parseTransaction(bondOf(0x14));
-  for (const vout of [2, 9, -1, 1.5, undefined])
+  for (const vout of [3, 9, -1, 1.5, undefined])
     assert.match(recognizeBond(tx, vout, advertFor(0x14)).why, /no such output/);
   assert.match(recognizeBond(undefined, 0, advertFor(0x14)).why, /not a parsed transaction/);
 });
@@ -207,20 +208,16 @@ test('an output that is not there is not a bond', () => {
  * different questions: "is this output a bond" is answered here, "find me
  * every bond" still is not, and that distinction is the whole letter.
  */
-test('the three rules it cannot read are named, and no branch pretends to read them', () => {
+test('the rules it cannot read are named, and the marker is checked on regtest', () => {
   const tx = parseTransaction(bondOf(0x15));
   const out = recognizeBond(tx, 0, advertFor(0x15));
 
+  assert.equal(out.ok, true);
   assert.deepEqual(out.unchecked, BOND_UNCHECKED);
-  assert.equal(out.unchecked.length, 3);
-  assert.match(out.unchecked[0], /BOND_MARKER/);
-  assert.match(out.unchecked[1], /bond script template/);
-  assert.match(out.unchecked[2], /no curve/);
-
-  // the marker is still unchosen, so there is nothing for a marker branch to
-  // compare against and none is written: untested code that looks ready is the
-  // same fault as a plausible address in `constants.js`
-  assert.equal(BOND_MARKER, null);
+  assert.equal(out.unchecked.length, 2);
+  assert.match(out.unchecked[0], /bond script template/);
+  assert.match(out.unchecked[1], /no curve/);
+  assert.equal(BOND_MARKER, null, 'mainnet marker stays unchosen');
 });
 
 /**
@@ -302,7 +299,7 @@ test('a census no longer counts the OP_RETURN as somebody\'s bond', () => {
   const real = at(0);
   assert.equal(real.entries.length, 1, real.excluded[0] && real.excluded[0].why);
 
-  const fake = at(1);
+  const fake = at(2);
   assert.equal(fake.entries.length, 0, 'the OP_RETURN was counted as a bond');
   assert.equal(fake.excluded.length, 1);
   assert.equal(fake.excluded[0].step, 'resolve');

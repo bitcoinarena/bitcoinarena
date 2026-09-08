@@ -6,6 +6,9 @@
 // bodies happen to encode identically. Adding a type means adding a tag, not
 // reusing a neighbour's.
 
+import { taggedHash } from './hash.js';
+import { utf8Encode } from './utf8.js';
+
 export const PROTOCOL_VERSION = 1;
 
 export const TYPE_ROUND_CONTRACT = 0x01;
@@ -190,26 +193,27 @@ export const roleByte = (role) => {
  * appears in the compact filters and any light client can find every bond that
  * has ever existed without asking anyone. It costs one dust output, once.
  *
- * IT IS NOT CHOSEN HERE, and that is deliberate rather than unfinished. The
- * marker is part of the network's identity in the same way `genesis_parameters`
- * is: introducing or changing it later makes every bond posted before it
- * unfindable, so it has to be settled once, before the first bond exists, and
- * never again. Writing a plausible address into this file would be settling it
- * by accident in a source tree, which is exactly how such a thing gets decided
- * without anyone deciding it.
- *
- * So it is null, and `bondMarker()` refuses rather than returning something
- * that would silently match nothing. A search for bonds that quietly found
- * none would look exactly like a network with no nodes in it.
+ * the owner 2026-09-08: set for regtest and testnet. Mainnet stays unchosen.
+ * Each program is taggedHash(BLWP/v1/BOND_MARKER, network-name) - 32 bytes,
+ * not a wallet key. Compact filters match the P2TR script. Changing a value
+ * makes every bond posted against the old one unfindable.
  */
-export const BOND_MARKER = null;
+const markerProgram = (network) => taggedHash('BLWP/v1/BOND_MARKER', utf8Encode(network));
 
-export function bondMarker() {
-  if (BOND_MARKER === null)
-    throw new Error(
-      'BOND_MARKER has not been chosen. It is fixed once, before the first bond '
-      + 'is posted, and every bond ever posted is unfindable without it');
-  return BOND_MARKER;
+export const BOND_MARKER_REGTEST = markerProgram('regtest');
+export const BOND_MARKER_TESTNET = markerProgram('testnet');
+export const BOND_MARKER_MAINNET = null;
+
+/** @deprecated use bondMarker(network). Mainnet is still null. */
+export const BOND_MARKER = BOND_MARKER_MAINNET;
+
+export function bondMarker(network) {
+  if (network === 'regtest') return BOND_MARKER_REGTEST;
+  if (network === 'testnet') return BOND_MARKER_TESTNET;
+  throw new Error(
+    'BOND_MARKER for ' + String(network || 'mainnet') + ' has not been chosen. '
+    + 'Regtest and testnet are set; mainnet is fixed once, before the first '
+    + 'mainnet bond, and every bond posted without it is unfindable');
 }
 
 /**

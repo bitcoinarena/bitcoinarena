@@ -24,6 +24,7 @@ import {
   hash256, parseTransaction, commitmentsOf, witnessItemsOf,
 } from './tx.js';
 import { fromHex } from './hash.js';
+import { bondMarker } from './constants.js';
 
 export { hash256 };
 
@@ -254,11 +255,9 @@ export function provesTransaction(headerBytes, txid, branch, position) {
  *              settled: 25.1 puts the body in the transaction it names, so
  *              the txid is not knowable when the body is signed.
  *
- *   BLOCKED    the dust output to BOND_MARKER (25.1). The marker is null by
- *              decision. NO BRANCH IS WRITTEN FOR IT: code that would check
- *              a value nobody has chosen cannot be tested, and shipping an
- *              untested path that looks ready is the same fault as writing a
- *              plausible address into `constants.js`.
+ *   readable   the dust output to BOND_MARKER (25.1) on regtest and testnet.
+ *              Mainnet still has no marker. A funding transaction without that
+ *              output cannot be found in compact filters and is not a bond.
  *   BLOCKED    the script tree is 5A.3B's template. Taproot reveals a branch
  *              only when it is spent, which is the point of using it.
  *   BLOCKED    the advertisement signature. No curve in this package.
@@ -273,12 +272,21 @@ export function isTaprootOutput(script) {
 }
 
 export const BOND_UNCHECKED = [
-  'the dust output to BOND_MARKER (25.1: the marker is null by decision)',
   'the bond script template (5A.3B: a taproot output hides it until spent)',
   'the advertisement signature (no curve in this package)',
 ];
 
-export function recognizeBond(tx, vout, advert) {
+const sameScript = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
+
+export function paysBondMarker(tx, network = 'regtest') {
+  const program = bondMarker(network);
+  return tx.outputs.some((o) =>
+    isTaprootOutput(o.script)
+    && sameScript(o.script.subarray(2, 34), program)
+    && o.value > 0n && o.value <= 546n);
+}
+
+export function recognizeBond(tx, vout, advert, { network = 'regtest' } = {}) {
   if (!tx || !Array.isArray(tx.outputs))
     return { ok: false, why: 'that is not a parsed transaction' };
   if (!Number.isInteger(vout) || vout < 0 || vout >= tx.outputs.length)
@@ -288,6 +296,12 @@ export function recognizeBond(tx, vout, advert) {
     return {
       ok: false,
       why: 'that output is not a taproot output, so it is not the bond 5A.3B describes',
+    };
+
+  if (!paysBondMarker(tx, network))
+    return {
+      ok: false,
+      why: 'that transaction has no dust output to BOND_MARKER',
     };
 
   // AND AN OUTPUT HOLDING NOTHING IS NOT A BOND, whatever shape it is. 5A.3:

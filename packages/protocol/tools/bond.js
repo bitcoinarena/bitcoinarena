@@ -8,12 +8,11 @@
 // readers then have to accept: the advertisement body in the witness, and an
 // `OP_RETURN` output committing to its id.
 //
-// The dust output to BOND_MARKER that 25.1 requires is NOT here, because
-// BOND_MARKER has no value yet and inventing one would settle a genesis
-// parameter by accident. What is built is therefore a bond transaction that a
-// light client could not FIND; everything about reading it once found holds.
+// The dust output to BOND_MARKER is here (regtest by default; testnet has its
+// own program). the owner 2026-09-08. Mainnet still has no marker.
 import { encodeAdvert, advertId, joinSignedAdvert } from '../src/advert.js';
 import { meetsTarget } from '../src/chain.js';
+import { bondMarker } from '../src/constants.js';
 
 const varint = (n) => {
   if (n < 0xfd) return [n];
@@ -44,10 +43,12 @@ export function bondTransaction(advert, {
   value = 100000000,
   previousTxid = new Uint8Array(32).fill(0xab),
   previousVout = 0,
+  network = 'regtest',
 } = {}) {
   // A P2TR output: OP_1 <32 bytes>. "A P2TR output is a 32-byte key and looks
   // like every other one" (25.1) - which is exactly why the marker is needed.
   const bondScript = [0x51, 0x20, ...new Uint8Array(32).fill(0x77)];
+  const markerScript = [0x51, 0x20, ...bondMarker(network)];
   const opReturn = [0x6a, ...push([...commitment])];
 
   const out = [
@@ -57,8 +58,9 @@ export function bondTransaction(advert, {
     ...previousTxid, ...u32(previousVout),
     ...varint(0),                                // no scriptSig; the witness carries it
     ...u32(0xffffffff),
-    ...varint(2),
+    ...varint(3),
     ...u64(value), ...push(bondScript),
+    ...u64(330), ...push(markerScript),
     ...u64(0), ...push(opReturn),
     ...varint(1), ...push([...body]),            // one witness item: the advertisement
     ...u32(0),                                   // locktime
