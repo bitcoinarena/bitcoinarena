@@ -20,7 +20,9 @@ import { genesisFor } from '../../protocol/src/genesis.js';
 import {
   bondOutputKey, bondInternalKey, recoveryLeaf, slashLeaf, tapLeafHash, controlBlockFor,
 } from '../../protocol/src/bond-script.js';
-import { tapSighash, scriptPathWitness, serializeSpend } from '../../protocol/src/bond-spend.js';
+import {
+  tapSighash, scriptPathWitness, serializeSpend, commitmentOutput, spendCommitsTo,
+} from '../../protocol/src/bond-spend.js';
 import { toHex, fromHex, taggedHash } from '../../protocol/src/hash.js';
 import { chainFactsAt } from '../../protocol/src/census.js';
 
@@ -39,6 +41,12 @@ const combine = (terms) => {
   }
   return schnorr.utils.pointToBytes(sum);
 };
+// THE WALLET AND THE COINS ARE THIS SCRIPT'S OWN. A regtest daemon starts with
+// no wallet loaded and no blocks, so a tool that assumed either would work once
+// and fail on the next fresh datadir - which is exactly what happened.
+try { cli('loadwallet', 'bondtest'); } catch { cli('createwallet', 'bondtest'); }
+if (Number(cli('getblockcount')) < 101) cli('generatetoaddress', '101', cli('getnewaddress'));
+
 const g = genesisFor('regtest');
 
 /** The arbitration secrets this test network derives, by public key. */
@@ -69,12 +77,16 @@ function fund(spk) {
 
 const payTo = fromHex(JSON.parse(cli('getaddressinfo', cli('getnewaddress'))).scriptPubKey);
 
-function spendOf({ utxo, spk, script, leaf, control, sign, locktime }) {
+function spendOf({ utxo, spk, script, leaf, control, sign, locktime, commits }) {
   const inputs = [{ txid: fromHex(utxo.txid).reverse(), vout: utxo.vout, sequence: 0xfffffffe }];
   const outputs = [{ value: utxo.value - 2000n, script: payTo }];
+  // 5A.3B step 4: a slash commits to the proof that justified it, so every
+  // slash is permanently auditable.
+  if (commits) outputs.push(commitmentOutput(commits));
   const spend = { version: 2, locktime, inputs, outputs };
   const sighash = tapSighash({ ...spend, prevouts: [{ value: utxo.value, script: spk }], inputIndex: 0, leafHash: leaf });
   return {
+    outputs,
     hex: toHex(serializeSpend({ ...spend, witnesses: [scriptPathWitness({ stack: sign(sighash), script, controlBlock: control })] })),
   };
 }
@@ -127,11 +139,24 @@ const signWith = (count) => (h) => {
   const items = sorted.map((k, i) => (i < count ? schnorr.sign(h, seats.get(toHex(k))) : new Uint8Array(0)));
   return items.reverse();          // bottom-first: the first key's signature ends on top
 };
+// A WELL-FORMED SLASH commits to the proof that justified it.
+const proofId = taggedHash('BLWP/v1/SlashProof', fromHex('ab'.repeat(32)));
 const slash5 = spendOf({
   utxo: utxoB, spk: bondB.spk, script: slashScript, leaf: tapLeafHash(slashScript),
   control: controlBlockFor('slash', bondB.built).controlBlock, sign: signWith(5), locktime: 0,
+  commits: proofId,
 });
-console.log('slash, five of seven    ', JSON.stringify(allowed(slash5.hex)));
+console.log('slash, five of seven    ', JSON.stringify(allowed(slash5.hex)),
+  '| commits to the proof', JSON.stringify(spendCommitsTo(slash5.outputs, proofId).ok));
+
+// AND ONE WITHOUT THE COMMITMENT. Consensus does not care - it is a valid
+// transaction and bitcoind takes it - which is exactly why the protocol must.
+const bare = spendOf({
+  utxo: utxoB, spk: bondB.spk, script: slashScript, leaf: tapLeafHash(slashScript),
+  control: controlBlockFor('slash', bondB.built).controlBlock, sign: signWith(5), locktime: 0,
+});
+console.log('slash, no commitment    ', JSON.stringify(allowed(bare.hex)),
+  '| protocol says', JSON.stringify(spendCommitsTo(bare.outputs, proofId)));
 const slash4 = spendOf({
   utxo: utxoB, spk: bondB.spk, script: slashScript, leaf: tapLeafHash(slashScript),
   control: controlBlockFor('slash', bondB.built).controlBlock, sign: signWith(4), locktime: 0,

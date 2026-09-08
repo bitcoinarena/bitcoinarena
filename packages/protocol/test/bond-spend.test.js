@@ -110,3 +110,74 @@ test('the serialized spend carries its witness and its locktime', () => {
   assert.deepEqual(compactSize(0xfd), Uint8Array.from([0xfd, 0xfd, 0x00]));
   assert.deepEqual(compactSize(0x10000), Uint8Array.from([0xfe, 0, 0, 1, 0]));
 });
+
+/**
+ * A SLASH COMMITS TO THE PROOF THAT JUSTIFIED IT.
+ *
+ * 5A.3B step 4: "OP_RETURN = H(fraud_proof) || retrieval hint", and slash.js
+ * fixes the hash as the proof's own id. "Because the slashing transaction
+ * commits to the proof, every slash is permanently auditable."
+ *
+ * CONSENSUS DOES NOT ENFORCE THIS, and that is the point of checking it here.
+ * Measured on a regtest node: a five-of-seven spend carrying no OP_RETURN is a
+ * perfectly valid Bitcoin transaction and bitcoind ACCEPTED it. A bond taken
+ * with no public record of why is the arbitration set's own offence, and the
+ * only thing that can refuse it is the protocol.
+ */
+test('a slash carries the proof it commits to, and one that does not is refused', async () => {
+  const { commitmentOutput, commitmentIn, spendCommitsTo } = await import('../src/bond-spend.js');
+  const proof = fromHex('ab'.repeat(32));
+
+  const out = commitmentOutput(proof);
+  assert.equal(out.value, 0n, 'an OP_RETURN is unspendable, so it holds nothing');
+  assert.equal(out.script[0], 0x6a, 'OP_RETURN');
+  assert.equal(out.script[1], 32, 'a direct push of the proof id');
+  assert.deepEqual(out.script.subarray(2), proof);
+
+  // read back out of a transaction's outputs
+  const outputs = [{ value: 1n, script: fromHex('0014' + '33'.repeat(20)) }, out];
+  assert.deepEqual(commitmentIn(outputs).commitment, proof);
+  assert.equal(spendCommitsTo(outputs, proof).ok, true);
+
+  // NO COMMITMENT AT ALL, and A COMMITMENT TO SOMETHING ELSE, are different
+  // failures - only one of them looks like a mistake.
+  const bare = [{ value: 1n, script: fromHex('0014' + '33'.repeat(20)) }];
+  assert.equal(spendCommitsTo(bare, proof).ok, false);
+  assert.match(spendCommitsTo(bare, proof).why, /carries no proof commitment/);
+  assert.match(spendCommitsTo([commitmentOutput(fromHex('cd'.repeat(32)))], proof).why,
+    /commits to a different proof/);
+  assert.equal(commitmentIn(bare), null);
+
+  // THE RETRIEVAL HINT RIDES AFTER THE HASH and its shape is not invented here:
+  // the spec fixes the hash and leaves the hint open, so whatever bytes a
+  // caller appends come back unchanged.
+  const hint = new TextEncoder().encode('ipfs://somewhere');
+  const withHint = commitmentOutput(proof, hint);
+  assert.deepEqual(commitmentIn([withHint]).commitment, proof);
+  assert.deepEqual(commitmentIn([withHint]).hint, hint);
+
+  // AN OP_RETURN THAT IS NOT A COMMITMENT IS NOT ONE. Transactions carry
+  // OP_RETURNs for all sorts of reasons; a short one is somebody else's data,
+  // and reading its first bytes as a proof id would let any transaction on
+  // chain look like a slash of something.
+  // Long enough to pass a length check and still not a commitment: two
+  // twenty-byte pushes. Reading from byte two would take thirty-two bytes
+  // spanning both, which is not an id anybody wrote.
+  const twoPushes = {
+    value: 0n,
+    script: Uint8Array.from([0x6a, 20, ...new Uint8Array(20).fill(1), 20, ...new Uint8Array(20).fill(2)]),
+  };
+  assert.equal(twoPushes.script.length > 34, true, 'this fixture must survive the length check');
+  assert.equal(commitmentIn([twoPushes]), null, "somebody else's data read as a proof id");
+  assert.equal(spendCommitsTo([twoPushes], proof).ok, false);
+
+  const shortData = {
+    value: 0n, script: Uint8Array.from([0x6a, 8, 1, 2, 3, 4, 5, 6, 7, 8]),
+  };
+  assert.equal(commitmentIn([shortData]), null, 'eight bytes of data read as a proof id');
+  assert.equal(spendCommitsTo([shortData], proof).ok, false);
+
+  // and the limits are Bitcoin's, not ours
+  assert.throws(() => commitmentOutput(new Uint8Array(31)), /32-byte proof id/);
+  assert.throws(() => commitmentOutput(proof, new Uint8Array(49)), /at most 80 bytes/);
+});

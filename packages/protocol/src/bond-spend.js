@@ -120,3 +120,57 @@ export function serializeSpend({ version = 2, locktime = 0, inputs, outputs, wit
   body.push(u32(locktime));
   return cat(...body);
 }
+
+/**
+ * THE OUTPUT A SLASH HAS TO CARRY, 5A.3B step 4.
+ *
+ * "OP_RETURN = H(fraud_proof) || retrieval hint", and `slash.js` fixes the
+ * hash: the same 32 bytes as the proof's id. The hint's shape the spec does
+ * not fix, so a caller may append bytes and this will carry them; inventing a
+ * format for it here would be inventing a second protocol.
+ *
+ * The value is zero because an OP_RETURN is provably unspendable, which is the
+ * point: the commitment costs a fee and nothing else.
+ */
+export function commitmentOutput(commitment, hint = new Uint8Array(0)) {
+  if (!(commitment instanceof Uint8Array) || commitment.length !== 32)
+    throw new TypeError('a slash commits to a 32-byte proof id');
+  const payload = cat(commitment, hint);
+  if (payload.length > 80) throw new RangeError('an OP_RETURN carries at most 80 bytes');
+  return { value: 0n, script: cat(Uint8Array.from([0x6a]), compactSize(payload.length), payload) };
+}
+
+/**
+ * AND THE READING OF IT: what proof does this spend commit to?
+ *
+ * CONSENSUS DOES NOT CARE. A five-of-seven spend with no OP_RETURN is a
+ * perfectly valid Bitcoin transaction and a node will accept it - which is
+ * exactly why the protocol has to check. "Because the slashing transaction
+ * commits to the proof, every slash is permanently auditable"; a slash that
+ * commits to nothing is a bond taken with no public record of why, and it is
+ * the arbitration set's own offence.
+ */
+export function commitmentIn(outputs) {
+  for (const o of outputs || []) {
+    const script = o.script;
+    if (!script || script.length < 34 || script[0] !== 0x6a) continue;
+    // OP_RETURN, then a direct push of at least the 32-byte id.
+    const len = script[1];
+    if (len < 32 || script.length < 2 + len) continue;
+    return { commitment: script.subarray(2, 34), hint: script.subarray(34, 2 + len) };
+  }
+  return null;
+}
+
+/**
+ * DOES THIS SPEND COMMIT TO THAT PROOF? Refused by name, because "no
+ * commitment at all" and "a commitment to some other proof" are different
+ * failures and only one of them looks like a mistake.
+ */
+export function spendCommitsTo(outputs, commitment) {
+  const found = commitmentIn(outputs);
+  if (!found) return { ok: false, why: 'that spend carries no proof commitment, so no slash it makes is auditable' };
+  if (!found.commitment.every((b, i) => b === commitment[i]))
+    return { ok: false, why: 'that spend commits to a different proof than the one offered' };
+  return { ok: true, hint: found.hint };
+}
