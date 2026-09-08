@@ -6,7 +6,7 @@ import { computePayoutTable, DELIVERED, FAILED } from '../src/payout.js';
 const say = (m) => { if (typeof print === 'function') print(m); else console.log(m); };
 const b32 = (n) => new Uint8Array(32).fill(n);
 const c = {
-  simCoreHash: b32(1), startTimeMs: 1788200000000n, entryCloseMs: 1788200060000n, objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'BURN', donationSetId: new Uint8Array(32).fill(0xd0),
+  networkId: b32(0x4e), configHash: b32(0x43), simCoreHash: b32(1), startTimeMs: 1788200000000n, entryCloseMs: 1788200060000n, objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'BURN', donationSetId: new Uint8Array(32).fill(0xd0),
   censusHeight: 964900, censusRoot: b32(2), committeeSeed: b32(3),
   stakeMsat: 100000n, bondMinSats: 100000n, blockTicks: 9000,
   exposureReference: 12451840, corridorHalfWidth: 3014656, spawnFreeRadius: 1441792,

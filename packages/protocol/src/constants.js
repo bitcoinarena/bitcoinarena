@@ -194,6 +194,58 @@ export function bondMarker() {
 }
 
 /**
+ * THE NETWORK THIS BUILD IS FOR, AND WHY IT IS ALSO NULL.
+ *
+ * 27A.4: `network_id = H(genesis_parameters || donation_authority_pubkey ||
+ * donation_recovery_pubkey || predecessor || fork_certificate_hash)`. "Round
+ * Contracts carry it, nodes and clients reject contracts that do not match the
+ * one they were built for."
+ *
+ * 27A.9 makes it the trust anchor: "The trust anchor is the client's own
+ * built-in `network_id`, NEVER A VALUE FROM THE CONTRACT." So it is a build
+ * constant, not a field a round can talk this software into.
+ *
+ * IT CANNOT BE COMPUTED HERE, and not for want of an implementation. Its
+ * preimage is `genesis_parameters` (27A.6), which names `bond_marker` - the
+ * value directly above, null by the same decision - and two keys nobody has
+ * generated. A deriver would therefore have to invent all three, which is
+ * settling the network's identity in a source tree.
+ *
+ * The refusal is the useful behaviour: a build that names no network accepts
+ * no contract. Wrong in the safe direction, and loud.
+ */
+export const NETWORK_ID = null;
+
+export function networkAnchor() {
+  if (NETWORK_ID === null)
+    throw new Error(
+      'NETWORK_ID has not been chosen. It is H(genesis_parameters || authority '
+      + '|| recovery || predecessor || fork certificate), and genesis_parameters '
+      + 'names a bond_marker that does not exist yet');
+  return NETWORK_ID;
+}
+
+/**
+ * THE CONFIG THIS NETWORK STARTED ON, null for the same reason.
+ *
+ * 27A.6: `genesis_config_hash` is inside `genesis_parameters`, so it is
+ * committed in `network_id` - "you cannot start 'the same network' with a 30%
+ * node fee, because a different opening config is a different `network_id`".
+ * 27A.7.1 makes the value `H(canonical(game_config))`, and there is no
+ * game_config here to canonicalise. A round names the config it runs under
+ * (27A.7.5) and this build compares; it does not compute one.
+ */
+export const GENESIS_CONFIG_HASH = null;
+
+export function genesisConfigHash() {
+  if (GENESIS_CONFIG_HASH === null)
+    throw new Error(
+      'GENESIS_CONFIG_HASH has not been chosen. It is H(canonical(game_config)) '
+      + 'of the opening config, and it is committed in NETWORK_ID');
+  return GENESIS_CONFIG_HASH;
+}
+
+/**
  * The objection window's reference length: ten minutes, in milliseconds.
  *
  * Section 13A gives "reference: 10 minutes, contract-defined". A REFERENCE is

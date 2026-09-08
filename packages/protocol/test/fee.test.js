@@ -27,7 +27,7 @@ const pools = { [GAME_VERIFY]: game, [SETTLEMENT]: settle };
 const all = new Set([...game, ...settle].map(toHex));
 
 const contract = {
-  simCoreHash: b32(1), startTimeMs: 1000n, entryCloseMs: 2000n, objectionWindowMs: 600000n,
+  networkId: b32(0x4e), configHash: b32(0x43), simCoreHash: b32(1), startTimeMs: 1000n, entryCloseMs: 2000n, objectionWindowMs: 600000n,
   custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'BURN', donationSetId: new Uint8Array(32).fill(0xd0), censusHeight: 900000,
   censusRoot: b32(2), committeeSeed: b32(3), stakeMsat: 100000n, bondMinSats: 50000n,
   blockTicks: 600, exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,

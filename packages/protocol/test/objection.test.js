@@ -27,7 +27,7 @@ const b32 = (n) => new Uint8Array(32).fill(n);
 const committee = [1, 2, 3, 4, 5, 6, 7].map(b32);
 
 const contract = (over = {}) => ({
-  simCoreHash: b32(1), startTimeMs: 1000n, entryCloseMs: 2000n,
+  networkId: b32(0x4e), configHash: b32(0x43), simCoreHash: b32(1), startTimeMs: 1000n, entryCloseMs: 2000n,
   objectionWindowMs: OBJECTION_WINDOW_REFERENCE_MS, custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'BURN', donationSetId: new Uint8Array(32).fill(0xd0),
   censusHeight: 900000, censusRoot: b32(2), committeeSeed: b32(3),
   stakeMsat: 100000n, bondMinSats: 50000n, blockTicks: 9000,

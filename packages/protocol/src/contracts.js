@@ -24,6 +24,30 @@ export function encodeRoundContract(c) {
   const w = new Writer();
   w.u8(TYPE_ROUND_CONTRACT);
   w.u16(PROTOCOL_VERSION);
+
+  // WHICH NETWORK THIS ROUND IS FOR, section 27A.4: "Round Contracts carry it,
+  // nodes and clients reject contracts that do not match the one they were
+  // built for, and censuses are per-network."
+  //
+  // AND WHICH RULES IT RUNS UNDER, 27A.7.5: "A round is bound to the config it
+  // was created under. The Round Contract carries `config_hash` alongside
+  // `network_id`. A round created before activation and still running after it
+  // keeps its own rules to the end."
+  //
+  // Both are here before anything uses them, which is the point: adding a
+  // field to something signed is a format break, and after the first bond
+  // exists a break costs every node its census entry. Neither VALUE can be
+  // computed in this package - `networkAnchor()` and `genesisConfigHash()`
+  // both refuse - but the fields are on version one, where they have to be.
+  //
+  // 27A.4 and 27A.7.5 both say the contract carries `network_id`; section 6's
+  // field list does not name it, and predates them. They pair the two, so the
+  // two sit together, ahead of the code hash: which network, then which rules,
+  // then which build - a decoder can refuse a foreign contract before parsing
+  // anything else about it.
+  w.bytes32(c.networkId);
+  w.bytes32(c.configHash);
+
   w.bytes32(c.simCoreHash);
   w.u64(c.startTimeMs);
   w.u64(c.entryCloseMs);
@@ -102,6 +126,12 @@ export function decodeRoundContract(bytes) {
     throw new Error('protocol version ' + version + ', this build speaks ' + PROTOCOL_VERSION);
 
   const c = {
+    // ON THE WIRE SINCE VERSION ONE AND DISCARDED BY THIS DECODER UNTIL NOW.
+    // 5d wants a node's selectability decided against the round's version, and
+    // the census could not read it off a contract that did not carry it back.
+    protocolVersion: version,
+    networkId: r.bytes32(),
+    configHash: r.bytes32(),
     simCoreHash: r.bytes32(),
     startTimeMs: r.u64(),
     entryCloseMs: r.u64(),
@@ -131,6 +161,52 @@ export function decodeRoundContract(bytes) {
 }
 
 export const roundId = (c) => taggedHash(TAG.roundContract, encodeRoundContract(c));
+
+/**
+ * IS THIS CONTRACT FOR THIS BUILD'S NETWORK, AND FOR RULES IT IS RUNNING?
+ *
+ * 27A.4: "nodes and clients reject contracts that do not match the one they
+ * were built for". 27A.9: "The trust anchor is the client's own built-in
+ * `network_id`, NEVER A VALUE FROM THE CONTRACT" - so the anchor is handed in
+ * and is not read off the thing being judged, the same discipline
+ * `censusRootMatchesRound` needed for its entries.
+ *
+ * AND 27A.7.5, the config half: "A node that has not upgraded simply stops
+ * being selectable for rounds naming the new hash... It is not ejected and it
+ * is not slashed; it serves nothing." That is why this answers rather than
+ * throwing, and why the refusal names which of the two failed: not serving a
+ * round is an ordinary outcome, not an error.
+ *
+ * Both anchors are null in this build (`networkAnchor()`, `genesisConfigHash()`
+ * refuse), so a caller has nothing honest to pass yet. That is the correct
+ * state: a build that names no network accepts no contract.
+ */
+export function contractIsForThisBuild(contract, { anchor, config } = {}) {
+  if (!contract || !is32(contract.networkId))
+    return { ok: false, why: 'that contract names no network' };
+  if (!is32(contract.configHash))
+    return { ok: false, why: 'that contract names no config' };
+  if (!is32(anchor))
+    return { ok: false, why: 'this build names no network to check it against' };
+  if (!is32(config))
+    return { ok: false, why: 'this build names no config to check it against' };
+
+  if (!contract.networkId.every((b, i) => b === anchor[i]))
+    return {
+      ok: false,
+      why: 'that contract is for another network: a fork that changes the '
+        + 'donation authority is a different network, not a theft',
+    };
+  if (!contract.configHash.every((b, i) => b === config[i]))
+    return {
+      ok: false,
+      why: 'that round runs a config this build is not running, so it is not '
+        + 'selectable for it - not ejected, not slashed, it serves nothing',
+    };
+  return { ok: true, why: 'that contract is for this network and this config' };
+}
+
+const is32 = (v) => v instanceof Uint8Array && v.length === 32;
 
 export function encodeEntryContract(e) {
   const w = new Writer();

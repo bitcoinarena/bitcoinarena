@@ -46,7 +46,7 @@ const advertFor = (n, over = {}) => ({
 const bondOf = (n, over = {}) =>
   bondTransaction(advertFor(n, over), { previousTxid: b32(0xa0 + n), previousVout: 0 });
 
-const contract = { bondMinSats: 50000n };
+const contract = { bondMinSats: 50000n, protocolVersion: PROTOCOL_VERSION };
 const entryFor = (n, over = {}) => ({
   txid: parseTransaction(bondOf(n, over.advert || {})).txid, vout: 0,
   pubkey: b32(n), bondSats: 60000n, height: 900000, roles: ['game'], spent: false,
@@ -126,7 +126,7 @@ test('a bond under this round\'s floor is out, and the same bond is in a smaller
   assert.match(strict.excluded[0].why, /that bond is 49999 where this round's floor is 50000/);
 
   const smaller = resolveCensus(entries, {
-    contract: { bondMinSats: 10000n }, resolve: resolverFor(map),
+    contract: { bondMinSats: 10000n, protocolVersion: PROTOCOL_VERSION }, resolve: resolverFor(map),
   });
   assert.equal(smaller.eligible.length, 3,
     'the network stratifies; it does not evict');
@@ -153,7 +153,7 @@ test('an advertisement that declares no role, or no version we speak, is out', (
     contract, resolve: () => oldVersion,
   });
   assert.equal(old.eligible.length, 0);
-  assert.match(old.excluded[0].why, /speaks 99 and this census supports 1/);
+  assert.match(old.excluded[0].why, /speaks 99 and this round runs 1/);
 
   // and one that speaks ours among others is in
   const both = { transaction: bondOf(0x23, { protocolVersions: [99, PROTOCOL_VERSION] }) };
@@ -161,6 +161,42 @@ test('an advertisement that declares no role, or no version we speak, is out', (
     contract, resolve: () => both,
   });
   assert.equal(ok.eligible.length, 1);
+});
+
+/**
+ * AND THE VERSION IS THE ROUND'S, NOT THE CALLER'S.
+ *
+ * It was an argument with a default - `supportedVersions = [PROTOCOL_VERSION]`
+ * - so whoever called this decided which nodes were selectable. A version the
+ * caller picks is a version the OPERATOR picks, the same fault that moved the
+ * objection window and the minimum service into the contract, and 27A.7.5 puts
+ * it on the round: a node "simply stops being selectable for rounds naming the
+ * new hash, exactly as with protocol versions".
+ *
+ * The measurement: ONE advertisement, unchanged, in or out depending only on
+ * which round is asking.
+ */
+test('which nodes are selectable is the round\'s decision, not the caller\'s', () => {
+  const advert = { protocolVersions: [99] };
+  const tx = { transaction: bondOf(0x24, advert) };
+  const entry = entryFor(0x24, { advert });
+
+  const ours = resolveCensus([entry], { contract, resolve: () => tx });
+  assert.equal(ours.eligible.length, 0, 'a round running 1 took a node that speaks only 99');
+
+  const theirs = resolveCensus([entry], {
+    contract: { ...contract, protocolVersion: 99 }, resolve: () => tx,
+  });
+  assert.equal(theirs.eligible.length, 1, 'a round running 99 refused a node that speaks 99');
+  assert.match(ours.excluded[0].why, /speaks 99 and this round runs 1/);
+
+  // and a round that names no version is answered, not guessed at: there is no
+  // default to fall back on any more, which is the point.
+  const none = resolveCensus([entry], {
+    contract: { bondMinSats: 50000n }, resolve: () => tx,
+  });
+  assert.equal(none.ok, false);
+  assert.match(none.why, /names no protocol version/);
 });
 
 /**

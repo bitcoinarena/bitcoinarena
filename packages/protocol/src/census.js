@@ -396,9 +396,18 @@ function resolveBody(seen, entry) {
   return { ok: true, advert: taken, advertId: advertId(taken) };
 }
 
-export function resolveCensus(entries, { contract, resolve, supportedVersions = [PROTOCOL_VERSION] }) {
+export function resolveCensus(entries, { contract, resolve }) {
   if (!contract || typeof contract.bondMinSats !== 'bigint')
     return { ok: false, why: 'that round names no bond floor to measure against' };
+
+  // THE VERSION IS THE ROUND'S. It used to be an argument with a default, so
+  // whoever called this decided which nodes were selectable - and a version
+  // the caller picks is a version the OPERATOR picks, the same fault that
+  // moved the objection window and the minimum service into the contract.
+  // 27A.7.5 puts it on the round: a node "simply stops being selectable for
+  // rounds naming the new hash, exactly as with protocol versions".
+  if (!Number.isInteger(contract.protocolVersion))
+    return { ok: false, why: 'that round names no protocol version' };
   if (typeof resolve !== 'function')
     return { ok: false, why: 'no way to retrieve an advertisement body' };
 
@@ -441,11 +450,11 @@ export function resolveCensus(entries, { contract, resolve, supportedVersions = 
     if (!roles.length) { excluded.push({ ...e, why: 'that advertisement declares no role' }); continue; }
 
     const versions = read.advert.protocolVersions || [];
-    if (!versions.some((v) => supportedVersions.includes(v))) {
+    if (!versions.includes(contract.protocolVersion)) {
       excluded.push({
         ...e,
         why: `that advertisement speaks ${versions.join(', ') || 'no version'} and this `
-          + `census supports ${supportedVersions.join(', ')}`,
+          + `round runs ${contract.protocolVersion}`,
       });
       continue;
     }
@@ -505,8 +514,7 @@ export function resolveCensus(entries, { contract, resolve, supportedVersions = 
  * carry. Neither is skipped quietly.
  */
 export function deriveCensus(blocks, {
-  censusHeight, minConfirmations, tipHeight, candidates,
-  contract, resolve, supportedVersions = [PROTOCOL_VERSION],
+  censusHeight, minConfirmations, tipHeight, candidates, contract, resolve,
 }) {
   let scanned;
   try {
@@ -515,7 +523,7 @@ export function deriveCensus(blocks, {
     return { ok: false, why: `that census cannot be scanned: ${e.message}` };
   }
 
-  const resolved = resolveCensus(scanned.entries, { contract, resolve, supportedVersions });
+  const resolved = resolveCensus(scanned.entries, { contract, resolve });
   if (!resolved.ok) return resolved;
 
   let census;

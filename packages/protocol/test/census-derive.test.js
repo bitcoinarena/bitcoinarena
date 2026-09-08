@@ -37,7 +37,7 @@ const bondOf = (n, over = {}) =>
 
 const HEIGHT = 900000;
 const depth = { minConfirmations: 6, tipHeight: 900010 };
-const contract = { bondMinSats: 50000n };
+const contract = { bondMinSats: 50000n, protocolVersion: PROTOCOL_VERSION };
 
 /**
  * Three bonds in two blocks, and a resolver that hands back the funding
