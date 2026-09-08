@@ -101,13 +101,31 @@ test('a batch for a round or an entry the node has not got is refused', () => {
     roundId: rid, entryId: b32(99), previousHash: GENESIS, firstTick: 0, ticks: [[0, 0, 0, 0, 0]], liquidations: [] })), /no such entry/);
 });
 
-test('the node does not step: nothing here imports the core', async () => {
+/**
+ * THE NODE REACHES FOR THE SIMULATOR THROUGH EXACTLY ONE DOOR.
+ *
+ * This test used to say "nothing here imports the core", and that was the
+ * right rule while the daemon only stored and served. Section 13 needs the
+ * other thing - seven nodes replay a finished run and five must agree - so
+ * `replay.js` imports it, and NOTHING ELSE MAY. The rule did not get weaker;
+ * it got a name. A second file stepping the core is the live parallel
+ * simulator the client's own header argues against, and it would arrive
+ * exactly like this: one more import, in one more place, for one good reason.
+ */
+test('the node reaches the simulator through replay.js and nowhere else', async () => {
   const { readFileSync, readdirSync } = await import('node:fs');
+  const reaches = [];
   for (const f of readdirSync(new URL('../src/', import.meta.url).pathname)) {
     const src = readFileSync(new URL('../src/' + f, import.meta.url).pathname, 'utf8');
-    assert.ok(!/packages\/core|@blwp\/core|\bstep\s*\(/.test(src),
-      `${f} reaches for the simulator; the node stores and serves, it does not judge`);
+    if (/packages\/core|@blwp\/core|core\/src|\bstep\s*\(/.test(src)) reaches.push(f);
   }
+  assert.deepEqual(reaches, ['replay.js'],
+    'the simulator is reached from somewhere other than the one door, or from none');
+
+  // and that door replays a finished transcript - it does not tick anything
+  const src = readFileSync(new URL('../src/replay.js', import.meta.url).pathname, 'utf8');
+  assert.ok(!/setInterval|setTimeout|requestAnimationFrame/.test(src),
+    'the replay door runs a clock, which is a live second simulator');
 });
 
 test('opening or joining twice is the same round and the same player', () => {
