@@ -15,7 +15,11 @@ const say = (m) => {
   else console.log(m);
 };
 
-// Ten minutes at 60 Hz, which is what the acceptance criterion asks for. The
+// Ten minutes, near enough: 36000 x 1092/65536 is 599.85 seconds, because the
+// tick is not a sixtieth of a second (`src/tick.js`). The corpus is a COUNT OF
+// TICKS and that count is what two runtimes have to agree on, so the number
+// stays where it is - the duration is a description of it, not its definition.
+// The acceptance criterion asks for ten minutes of run. The
 // first version ran 10,000 ticks - under three minutes - and a divergence that
 // takes four minutes of accumulated rounding to surface would have passed it.
 const TICKS = 36000;

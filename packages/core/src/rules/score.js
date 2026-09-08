@@ -25,7 +25,19 @@ import { ONE, add, sub, mulFast, mulRound, mulDivRound, toIntRound, div, divRoun
 // where the bravest line is rather than half way up. The edges, averaging
 // about 0.1, come out near 36: a ninth of the seam instead of the same score.
 export const EXPOSURE_REFERENCE = Math.imul(320, ONE);
-/** Par time in ticks, at 60 Hz. */
+/**
+ * PAR TIME, IN TICKS, AND THE TICKS ARE THE RULE.
+ *
+ * 3900 of them: 3900 x TICK_DT / ONE = 64.984 seconds, not the 65 that "at 60
+ * Hz" would give. The tick is 1092/65536 s and not a sixtieth (`tick.js`), so
+ * the two disagree by 16 ms over this constant.
+ *
+ * THE NUMBER DOES NOT MOVE. A tick count is what the simulation compares
+ * against, so this IS the par - every score, every signed result and every
+ * recorded vector is against 3900 ticks. Multiplying 65 by 60 to "fix" it
+ * would change every score ever produced. The label was the thing that was
+ * wrong.
+ */
 export const REFERENCE_TICKS = 3900;
 /** No danger is earned within this of the start. */
 export const APRON_RADIUS = Math.imul(22, ONE);
