@@ -17,7 +17,8 @@ import { genesisFor } from '../../protocol/src/genesis.js';
 import { taggedHash, toHex } from '../../protocol/src/hash.js';
 import { bondTransaction } from '../../protocol/tools/bond.js';
 import { parseTransaction } from '../../protocol/src/tx.js';
-import { recognizeBond } from '../../protocol/src/chain.js';
+import { recognizeBond, bondKeyMatches } from '../../protocol/src/chain.js';
+import { BOND_SCRIPT_TEMPLATE_VERSION } from '../../protocol/src/bond-script.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const big = (b) => BigInt('0x' + toHex(b));
@@ -98,7 +99,7 @@ test('the output key is the taproot tweak of the named keys and maturity', () =>
   // AND IT IS NOT THE INTERNAL KEY. A tweak of zero would leave the arbitration
   // tree out of the output entirely.
   assert.notDeepEqual(built.outputKey, INTERNAL);
-  assert.deepEqual(built.tweak, bondTapTree(inputs).tweak);
+  assert.deepEqual(built.tweak, bondTapTree(inputs, { combine }).tweak);
 });
 
 /**
@@ -321,4 +322,128 @@ test('a bond whose internal key is not that aggregate is refused', () => {
   const oneCurve = bondOutputKey(inputs, { tweakPoint });
   assert.equal(oneCurve.ok, false, 'a tweak curve alone still built a bond');
   assert.match(oneCurve.why, /no curve was given to aggregate the key path/);
+});
+
+/**
+ * A SECOND NODE REBUILDS THE BOND FROM THE PUBLISHED BODY AND GENESIS ALONE.
+ *
+ * This is the whole point of the letter. The first node picks a key and posts;
+ * the second holds no fixture, no shared object, nothing the first told it
+ * except the advertisement that travels in the funding transaction - and it
+ * must arrive at the same output key and the same two control blocks, or the
+ * census is trusting the poster.
+ */
+test('a second node rebuilds the same output key and both control blocks from genesis', () => {
+  const poster = schnorr.utils.randomSecretKey();
+  const nodeKey = schnorr.getPublicKey(poster);
+
+  // WHAT THE FIRST NODE BUILDS, from the network's own set and maturity.
+  const set = genesis.arbitrationKeys;
+  const mine = {
+    nodeKey, arbitrationKeys: set, arbitrationK: genesis.arbitrationK,
+    bondMaturity: genesis.bondMaturity,
+    internalKey: bondInternalKey({ nodeKey, arbitrationKeys: set }, { combine }).internalKey,
+  };
+  const built = bondOutputKey(mine, { tweakPoint, combine });
+  assert.equal(built.ok, true, built.why);
+
+  // WHAT THE SECOND NODE HAS: the body, and its own copy of genesis.
+  const body = {
+    nodePubkey: nodeKey, operatorId: 'somebody', protocolVersions: [1], roles: ['game'],
+    endpoint: 'ws://node', region: 'eu-west', capacityClass: 1, softwareHash: b32(2),
+    settlementCapabilities: 0, lightningCapabilities: 0, bondTxid: new Uint8Array(32),
+    bondVout: 0, bondScriptTemplateVersion: BOND_SCRIPT_TEMPLATE_VERSION,
+    payoutPubkey: b32(3), timestamp: 1788700000000n,
+  };
+  const theirs = genesisFor('regtest');
+  const rebuilt = bondOutputKey({
+    nodeKey: body.nodePubkey,
+    arbitrationKeys: theirs.arbitrationKeys,
+    arbitrationK: theirs.arbitrationK,
+    bondMaturity: theirs.bondMaturity,
+    internalKey: bondInternalKey(
+      { nodeKey: body.nodePubkey, arbitrationKeys: theirs.arbitrationKeys }, { combine }).internalKey,
+  }, { tweakPoint, combine });
+
+  assert.equal(rebuilt.ok, true, rebuilt.why);
+  assert.deepEqual(rebuilt.outputKey, built.outputKey, 'the second node rebuilt a different bond');
+  assert.equal(rebuilt.parity, built.parity);
+  for (const path of ['recovery', 'slash']) {
+    assert.deepEqual(controlBlockFor(path, rebuilt).controlBlock,
+      controlBlockFor(path, built).controlBlock,
+      `the two nodes disagree about the ${path} control block`);
+  }
+
+  // THE SET IS THE NETWORK'S, NOT THE POSTER'S. A bond built over any other
+  // seven keys is a different output, and the second node's rebuild says so.
+  const ownSet = [1, 2, 3, 4, 5, 6, 7].map(() => schnorr.getPublicKey(schnorr.utils.randomSecretKey()));
+  const captured = bondOutputKey({
+    ...mine, arbitrationKeys: ownSet,
+    internalKey: bondInternalKey({ nodeKey, arbitrationKeys: ownSet }, { combine }).internalKey,
+  }, { tweakPoint, combine });
+  assert.notDeepEqual(captured.outputKey, built.outputKey,
+    'a poster naming its own arbitration set produced the same bond');
+});
+
+/**
+ * AND THE CHAIN DOOR STOPS SAYING IT CANNOT CHECK.
+ */
+test('recognizeBond recomputes the output key and drops it from unchecked', () => {
+  const poster = schnorr.utils.randomSecretKey();
+  const nodeKey = schnorr.getPublicKey(poster);
+  const g = genesisFor('regtest');
+  const bond = {
+    arbitrationKeys: g.arbitrationKeys, arbitrationK: g.arbitrationK,
+    bondMaturity: g.bondMaturity, tweakPoint, combine,
+  };
+  const key = bondOutputKey({
+    nodeKey, arbitrationKeys: g.arbitrationKeys, arbitrationK: g.arbitrationK,
+    bondMaturity: g.bondMaturity,
+    internalKey: bondInternalKey({ nodeKey, arbitrationKeys: g.arbitrationKeys }, { combine }).internalKey,
+  }, { tweakPoint, combine });
+
+  const advert = {
+    nodePubkey: nodeKey, operatorId: 'operator', protocolVersions: [1], roles: ['game'],
+    endpoint: 'ws://node', region: 'eu-west', capacityClass: 1, softwareHash: b32(2),
+    settlementCapabilities: 0, lightningCapabilities: 0, bondTxid: new Uint8Array(32),
+    bondVout: 0, bondScriptTemplateVersion: BOND_SCRIPT_TEMPLATE_VERSION,
+    payoutPubkey: b32(3), timestamp: 1788700000000n,
+  };
+  const tx = parseTransaction(bondTransaction(advert, { outputKey: key.outputKey }));
+
+  const seen = recognizeBond(tx, 0, advert, { bond });
+  assert.equal(seen.ok, true, seen.why);
+  assert.deepEqual(seen.outputKey, key.outputKey);
+  assert.equal(seen.unchecked.some((u) => /script template/.test(u)), false,
+    'the door still says it cannot read the template after reading it');
+
+  // WITHOUT THE KEYS IT SAYS SO, exactly as before - nothing pretends.
+  const blind = recognizeBond(tx, 0, advert);
+  assert.equal(blind.ok, true, blind.why);
+  assert.equal(blind.unchecked.some((u) => /script template/.test(u)), true);
+
+  // A BOND OVER SOMEBODY ELSE'S KEY IS REFUSED BY NAME.
+  const other = schnorr.getPublicKey(schnorr.utils.randomSecretKey());
+  const stranger = parseTransaction(bondTransaction({ ...advert, nodePubkey: other },
+    { outputKey: key.outputKey }));
+  const wrong = recognizeBond(stranger, 0, { ...advert, nodePubkey: other }, { bond });
+  assert.equal(wrong.ok, false, "a bond built for one key was accepted for another's");
+  assert.match(wrong.why, /not the taproot tweak/);
+
+  // A MATURITY THE POSTER CHOSE IS NOT THE NETWORK'S. Already matured is a
+  // bond withdrawable the moment it is posted - at no risk, and counted.
+  const early = bondOutputKey({
+    nodeKey, arbitrationKeys: g.arbitrationKeys, arbitrationK: g.arbitrationK,
+    bondMaturity: 1,
+    internalKey: bondInternalKey({ nodeKey, arbitrationKeys: g.arbitrationKeys }, { combine }).internalKey,
+  }, { tweakPoint, combine });
+  const cheap = parseTransaction(bondTransaction(advert, { outputKey: early.outputKey }));
+  assert.equal(recognizeBond(cheap, 0, advert, { bond }).ok, false,
+    'a bond that had already matured was recognised');
+
+  // AND A BODY NAMING ANOTHER TEMPLATE IS NOT REBUILT AT ALL.
+  const v2 = { ...advert, bondScriptTemplateVersion: 2 };
+  const seen2 = bondKeyMatches(tx.outputs[0].script, v2, bond);
+  assert.equal(seen2.ok, false);
+  assert.match(seen2.why, /names bond script template 2, and this is template 1/);
 });

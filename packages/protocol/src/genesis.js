@@ -6,6 +6,7 @@
 import { Writer } from './encode.js';
 import { taggedHash } from './hash.js';
 import { bondMarker } from './constants.js';
+import { ARBITRATION_KEYS_REGTEST, ARBITRATION_KEYS_TESTNET4 } from './genesis-ids.js';
 import { NODE_FEE_BPS } from './fee.js';
 import {
   EXPOSURE_REFERENCE, APRON_RADIUS, FRONT_SCORE_SPAN, T_FLOOR, T_CEIL,
@@ -75,6 +76,16 @@ export function encodeGenesisParameters(p) {
   // in this protocol.
   w.u8(p.arbitrationK);
   w.u8(p.arbitrationM);
+
+  // AND WHICH KEYS THEY ARE. k and m alone say how many signatures a slash
+  // needs; they do not say whose. The slash leaf hashes the keys themselves,
+  // so a bond's output key is a function of this set - and a poster free to
+  // name their own would name themselves and hold a bond nobody could slash.
+  // Sorted, because a set is a set: two nodes listing them differently must
+  // not compute two different networks.
+  if (!Array.isArray(p.arbitrationKeys) || p.arbitrationKeys.length !== p.arbitrationM)
+    throw new Error(`genesis names ${p.arbitrationM} arbitration seats and lists a different number`);
+  w.vec([...p.arbitrationKeys].sort(compare32), (k, ww) => ww.bytes32(k), { sortedBy: compare32 });
   w.u32(p.noticePeriod);
   w.bytes32(p.bondMarker);
   w.str(p.randomnessSource);
@@ -89,7 +100,7 @@ export function encodeGenesisParameters(p) {
   return w.finish();
 }
 
-export function testnetShape(chain, marker) {
+export function testnetShape(chain, marker, arbitrationKeys) {
   return {
     chain,
     gameVerifySlots: 2,
@@ -101,12 +112,19 @@ export function testnetShape(chain, marker) {
     bondMaturity: 100,
     arbitrationK: 5,
     arbitrationM: 7,
+    arbitrationKeys,
     noticePeriod: 144,
     bondMarker: marker,
     randomnessSource: RANDOMNESS_SOURCE,
     genesisConfigHash: computeGenesisConfigHash(),
     brackets: [{ minSats: 1000n, maxSats: 10_000_000n }],
   };
+}
+
+/** Two 32-byte keys in byte order, so a set is a set and not an arrangement. */
+function compare32(a, b) {
+  for (let i = 0; i < 32; i++) if (a[i] !== b[i]) return a[i] - b[i];
+  return 0;
 }
 
 const concat = (...parts) => {
@@ -140,8 +158,8 @@ export function receiptsNeeded(slots) {
 
 export function genesisFor(network) {
   if (network === 'regtest')
-    return testnetShape('bitcoin-regtest', bondMarker('regtest'));
+    return testnetShape('bitcoin-regtest', bondMarker('regtest'), ARBITRATION_KEYS_REGTEST);
   if (network === 'testnet4' || network === 'testnet')
-    return testnetShape('bitcoin-testnet4', bondMarker('testnet'));
+    return testnetShape('bitcoin-testnet4', bondMarker('testnet'), ARBITRATION_KEYS_TESTNET4);
   throw new Error('no genesis for ' + network);
 }

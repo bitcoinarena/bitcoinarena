@@ -51,6 +51,22 @@ import { taggedHash } from './hash.js';
 /** BIP-341's leaf version for tapscript. */
 export const TAPLEAF_VERSION = 0xc0;
 
+/**
+ * WHICH TEMPLATE THESE BYTES ARE.
+ *
+ * 5A.1's advertisement carries `bond_script_template_version`, and until now
+ * it was written to the wire, read back, and compared with nothing - a number
+ * that meant whatever its reader assumed. Two nodes could read one version as
+ * two trees and disagree about a bond without either being wrong.
+ *
+ * Version one is THIS tree: a recovery leaf of `<maturity> CLTV DROP
+ * <node_key> CHECKSIG`, a slash leaf of BIP-342 CHECKSIGADD counting to k, and
+ * a taproot output over the MuSig2 aggregate of the node and arbitration keys.
+ * A body naming any other version is a body this code cannot rebuild, and it
+ * says so rather than guessing.
+ */
+export const BOND_SCRIPT_TEMPLATE_VERSION = 1;
+
 const OP_CHECKLOCKTIMEVERIFY = 0xb1;
 const OP_DROP = 0x75;
 const OP_CHECKSIG = 0xac;
@@ -64,7 +80,10 @@ const cat = (...parts) => {
   return out;
 };
 
-const is32 = (b) => b instanceof Uint8Array && b.length === 32;
+// Named for this file: the bundler flattens every module into one scope, so a
+// helper called is32 here and is32 in contracts.js would be two values under
+// one name for whoever reads it last.
+const isKey32 = (b) => b instanceof Uint8Array && b.length === 32;
 
 /** Bitcoin's minimal push of a number, as a script encodes a locktime. */
 function pushNumber(n) {
@@ -87,7 +106,7 @@ const smallNumber = (n) => {
 };
 
 const pushKey = (key) => {
-  if (!is32(key)) throw new TypeError('a taproot key is 32 bytes');
+  if (!isKey32(key)) throw new TypeError('a taproot key is 32 bytes');
   return cat(Uint8Array.from([0x20]), key);
 };
 
@@ -119,7 +138,7 @@ export function recoveryLeaf(nodeKey, bondMaturity) {
 export function slashLeaf(arbitrationKeys, k) {
   if (!Array.isArray(arbitrationKeys) || !arbitrationKeys.length)
     throw new TypeError('a slash leaf needs the arbitration keys');
-  for (const key of arbitrationKeys) if (!is32(key)) throw new TypeError('an arbitration key is 32 bytes');
+  for (const key of arbitrationKeys) if (!isKey32(key)) throw new TypeError('an arbitration key is 32 bytes');
   const sorted = [...arbitrationKeys].sort((a, b) => {
     for (let i = 0; i < 32; i++) if (a[i] !== b[i]) return a[i] - b[i];
     return 0;
@@ -186,7 +205,7 @@ export const tapTweak = (internalKey, merkleRoot) =>
  */
 export function keyAggCoefficients(keys) {
   if (!Array.isArray(keys) || !keys.length) throw new TypeError('an aggregate needs keys');
-  for (const key of keys) if (!is32(key)) throw new TypeError('an aggregated key is 32 bytes');
+  for (const key of keys) if (!isKey32(key)) throw new TypeError('an aggregated key is 32 bytes');
 
   const list = taggedHash('KeyAgg list', cat(...keys));
 
@@ -228,7 +247,7 @@ export function aggregateKeys(keys, { combine } = {}) {
   let key;
   try { key = combine(terms); }
   catch (e) { return { ok: false, why: `that curve refused the aggregate: ${e.message}` }; }
-  if (!is32(key)) return { ok: false, why: 'that curve did not return a 32-byte aggregate' };
+  if (!isKey32(key)) return { ok: false, why: 'that curve did not return a 32-byte aggregate' };
   return { ok: true, key, terms };
 }
 
@@ -243,7 +262,7 @@ export function aggregateKeys(keys, { combine } = {}) {
  * while the node's key is not.
  */
 export function bondInternalKey({ nodeKey, arbitrationKeys }, { combine } = {}) {
-  if (!is32(nodeKey)) return { ok: false, why: 'the node key is 32 bytes' };
+  if (!isKey32(nodeKey)) return { ok: false, why: 'the node key is 32 bytes' };
   const set = aggregateKeys(arbitrationKeys, { combine });
   if (!set.ok) return set;
   const both = aggregateKeys([nodeKey, set.key], { combine });
@@ -260,18 +279,19 @@ export function bondInternalKey({ nodeKey, arbitrationKeys }, { combine } = {}) 
 export function bondTapTree({
   nodeKey, arbitrationKeys, arbitrationK, bondMaturity, internalKey,
 }, { combine } = {}) {
-  if (!is32(internalKey)) throw new TypeError('the internal key is 32 bytes');
+  // NO TREE WITHOUT THE CURVE. This used to build one for a caller with no way
+  // to aggregate, on any thirty-two bytes it liked - and a tree is enough to
+  // produce a control block, so the guard on `bondOutputKey` had a door beside
+  // it. There is no honest reason to want a tree over a key path nobody can
+  // check.
+  if (typeof combine !== 'function')
+    throw new Error('no curve was given to aggregate the key path with');
 
-  // AND IT HAS TO BE THE ONE THE NAMED KEYS PRODUCE. A caller with a curve is
-  // held to it; one without gets the tree it asked for and no promise that the
-  // key path belongs to anybody in particular, which is what `bondOutputKey`
-  // says out loud when it refuses to build without a curve.
-  if (combine) {
-    const want = bondInternalKey({ nodeKey, arbitrationKeys }, { combine });
-    if (!want.ok) throw new Error(want.why);
-    if (!sameKey(want.internalKey, internalKey))
-      throw new Error('that internal key is not the MuSig2 aggregate of the node and arbitration keys');
-  }
+  const want = bondInternalKey({ nodeKey, arbitrationKeys }, { combine });
+  if (!want.ok) throw new Error(want.why);
+  if (!isKey32(internalKey)) throw new TypeError('the internal key is 32 bytes');
+  if (!sameKey(want.internalKey, internalKey))
+    throw new Error('that internal key is not the MuSig2 aggregate of the node and arbitration keys');
   const a = tapLeafHash(recoveryLeaf(nodeKey, bondMaturity));
   const b = tapLeafHash(slashLeaf(arbitrationKeys, arbitrationK));
   const merkleRoot = tapBranchHash(a, b);
@@ -324,7 +344,7 @@ export function bondOutputKey(inputs, { tweakPoint, combine } = {}) {
 
   const outputKey = answer && answer.outputKey;
   const parity = answer && answer.parity;
-  if (!is32(outputKey)) return { ok: false, why: 'that curve did not return a 32-byte key' };
+  if (!isKey32(outputKey)) return { ok: false, why: 'that curve did not return a 32-byte key' };
   if (parity !== 0 && parity !== 1)
     return { ok: false, why: 'that curve did not say whether the output key is even or odd' };
 
@@ -349,8 +369,8 @@ export function bondOutputKey(inputs, { tweakPoint, combine } = {}) {
 export function controlBlockFor(path, { recovery, slash, internalKey, parity }) {
   if (path !== 'recovery' && path !== 'slash')
     return { ok: false, why: `a bond has a recovery path and a slash path, not ${path}` };
-  if (!is32(internalKey)) return { ok: false, why: 'the internal key is 32 bytes' };
-  if (!is32(recovery) || !is32(slash)) return { ok: false, why: 'both leaf hashes are 32 bytes' };
+  if (!isKey32(internalKey)) return { ok: false, why: 'the internal key is 32 bytes' };
+  if (!isKey32(recovery) || !isKey32(slash)) return { ok: false, why: 'both leaf hashes are 32 bytes' };
   if (parity !== 0 && parity !== 1)
     return { ok: false, why: 'a control block carries the output key parity, and none was given' };
 
@@ -370,7 +390,7 @@ export function controlBlockFor(path, { recovery, slash, internalKey, parity }) 
  * and used from both sides rather than trusted in one direction.
  */
 export function rootFromControlBlock(leafHash, controlBlock) {
-  if (!is32(leafHash)) return { ok: false, why: 'a leaf hash is 32 bytes' };
+  if (!isKey32(leafHash)) return { ok: false, why: 'a leaf hash is 32 bytes' };
   if (!(controlBlock instanceof Uint8Array) || controlBlock.length < 33
     || (controlBlock.length - 33) % 32 !== 0)
     return { ok: false, why: 'a control block is 33 bytes plus one hash per level' };
@@ -396,7 +416,7 @@ export function rootFromControlBlock(leafHash, controlBlock) {
  * network's, and a tree that is not this template.
  */
 export function bondOutputKeyMatches(onChain, inputs, { tweakPoint, combine } = {}) {
-  if (!is32(onChain)) return { ok: false, why: 'that is not a 32-byte taproot output key' };
+  if (!isKey32(onChain)) return { ok: false, why: 'that is not a 32-byte taproot output key' };
   const built = bondOutputKey(inputs, { tweakPoint, combine });
   if (!built.ok) return built;
   if (!built.outputKey.every((b, i) => b === onChain[i])) {

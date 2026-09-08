@@ -133,14 +133,20 @@ test('the tree is BIP-341: tagged leaf, sorted branch, tweak over the root', () 
   // output keys for one bond.
   assert.deepEqual(tapBranchHash(a, b), tapBranchHash(b, a));
 
-  const tree = bondTapTree(inputs);
+  const tree = bondTapTree(inputs, { combine });
   assert.deepEqual(tree.recovery, a);
   assert.deepEqual(tree.slash, b);
   assert.deepEqual(tree.merkleRoot, tapBranchHash(a, b));
   assert.deepEqual(tree.tweak, tapTweak(INTERNAL, tree.merkleRoot));
 
-  // and the internal key is in the tweak: a different one is a different bond
-  assert.notDeepEqual(bondTapTree({ ...inputs, internalKey: b32(0x23) }).tweak, tree.tweak);
+  // AND A DIFFERENT INTERNAL KEY IS NOT A DIFFERENT BOND, IT IS NO BOND: the
+  // tree refuses one that is not the aggregate of the named keys, so there is
+  // nothing to compare tweaks against.
+  assert.throws(() => bondTapTree({ ...inputs, internalKey: b32(0x23) }, { combine }),
+    /not the MuSig2 aggregate/);
+
+  // and no tree at all without a curve to check the key path with
+  assert.throws(() => bondTapTree(inputs), /no curve was given to aggregate/);
 });
 
 /**

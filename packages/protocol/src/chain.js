@@ -21,6 +21,9 @@
 // work. That is what discovery needs and it is deliberately not more.
 import { advertId, decodeAdvert, splitSignedAdvert } from './advert.js';
 import {
+  bondInternalKey, bondOutputKeyMatches, BOND_SCRIPT_TEMPLATE_VERSION,
+} from './bond-script.js';
+import {
   hash256, parseTransaction, commitmentsOf, witnessItemsOf,
 } from './tx.js';
 import { fromHex } from './hash.js';
@@ -271,6 +274,45 @@ export function isTaprootOutput(script) {
     && script[0] === 0x51 && script[1] === 0x20;
 }
 
+/**
+ * WHAT A BOND OUTPUT KEY IS SUPPOSED TO BE, when a caller can work it out.
+ *
+ * The output is thirty-two bytes that look like every other taproot key (25.1),
+ * so "is this a bond" was only ever "is it taproot, does it pay the marker, is
+ * anything at stake". Given the network's arbitration set and maturity, and a
+ * curve, it is also answerable properly: rebuild the key from the node key the
+ * advertisement names and see whether it is the one on chain.
+ *
+ * AND THE MATURITY IS THE NETWORK'S. A poster free to choose it would choose
+ * one already passed - a bond withdrawable the moment it is posted, at no risk,
+ * counted by a census as though it were at stake, which is the Sybil door 5A.3
+ * exists to shut. It comes from genesis, never from the body.
+ */
+export function bondKeyMatches(script, advert, { arbitrationKeys, arbitrationK, bondMaturity,
+  tweakPoint, combine } = {}) {
+  if (!isTaprootOutput(script)) return { ok: false, why: 'that output is not taproot' };
+  if (!Array.isArray(arbitrationKeys) || !arbitrationKeys.length)
+    return { ok: false, why: 'no arbitration set was given to rebuild the bond with' };
+  if (!Number.isInteger(bondMaturity))
+    return { ok: false, why: 'no bond maturity was given to rebuild the bond with' };
+  if (advert.bondScriptTemplateVersion !== BOND_SCRIPT_TEMPLATE_VERSION) {
+    return {
+      ok: false,
+      why: `that advertisement names bond script template ${advert.bondScriptTemplateVersion}, `
+        + `and this is template ${BOND_SCRIPT_TEMPLATE_VERSION}`,
+    };
+  }
+
+  const derived = bondInternalKey(
+    { nodeKey: advert.nodePubkey, arbitrationKeys }, { combine });
+  if (!derived.ok) return derived;
+
+  return bondOutputKeyMatches(script.subarray(2, 34), {
+    nodeKey: advert.nodePubkey, arbitrationKeys, arbitrationK, bondMaturity,
+    internalKey: derived.internalKey,
+  }, { tweakPoint, combine });
+}
+
 export const BOND_UNCHECKED = [
   'the bond script template (5A.3B: a taproot output hides it until spent)',
   'the advertisement signature (no curve in this package)',
@@ -286,7 +328,7 @@ export function paysBondMarker(tx, network = 'regtest') {
     && o.value > 0n && o.value <= 546n);
 }
 
-export function recognizeBond(tx, vout, advert, { network = 'regtest' } = {}) {
+export function recognizeBond(tx, vout, advert, { network = 'regtest', bond } = {}) {
   if (!tx || !Array.isArray(tx.outputs))
     return { ok: false, why: 'that is not a parsed transaction' };
   if (!Number.isInteger(vout) || vout < 0 || vout >= tx.outputs.length)
@@ -325,6 +367,21 @@ export function recognizeBond(tx, vout, advert, { network = 'regtest' } = {}) {
   const carriesUs = advert.bondTxid.every((b) => b === 0);
   if (!carriesUs && !advert.bondTxid.every((b, i) => b === tx.txid[i]))
     return { ok: false, why: 'that advertisement names a different bond transaction' };
+
+  // AND THE KEY ITSELF, when the caller brought what it takes to rebuild one.
+  // Without it this still says what it always said: taproot, marked, funded,
+  // and named by a body - with the template listed as unchecked, because it
+  // is.
+  if (bond) {
+    const key = bondKeyMatches(tx.outputs[vout].script, advert, bond);
+    if (!key.ok) return { ok: false, why: key.why };
+    return {
+      ok: true,
+      valueSats: tx.outputs[vout].value,
+      outputKey: key.outputKey,
+      unchecked: BOND_UNCHECKED.filter((u) => !/script template/.test(u)),
+    };
+  }
 
   return { ok: true, valueSats: tx.outputs[vout].value, unchecked: BOND_UNCHECKED };
 }
