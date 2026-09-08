@@ -216,15 +216,17 @@ test('a truncated network or config is refused, not prefix-matched', () => {
  * settle the network's identity by accident - the same reason `bondMarker()`
  * throws, and the reason there is no `networkId()` deriver at all.
  */
-test('the network and the config this build is for are unchosen, and say so', () => {
-  assert.equal(NETWORK_ID, null);
-  assert.equal(GENESIS_CONFIG_HASH, null);
-  assert.throws(() => networkAnchor(), /NETWORK_ID has not been chosen/);
-  assert.throws(() => networkAnchor(), /bond_marker that does not exist/);
-  assert.throws(() => genesisConfigHash(), /GENESIS_CONFIG_HASH has not been chosen/);
+test('the network and the config this build is for are testnet4 and the live core', () => {
+  assert.equal(NETWORK_ID.length, 32);
+  assert.equal(GENESIS_CONFIG_HASH.length, 32);
+  assert.equal(toHex(networkAnchor()), toHex(NETWORK_ID));
+  assert.equal(toHex(networkAnchor('testnet4')), toHex(NETWORK_ID));
+  assert.equal(networkAnchor('regtest').length, 32);
+  assert.notEqual(toHex(networkAnchor('regtest')), toHex(NETWORK_ID));
+  assert.throws(() => networkAnchor('mainnet'), /has not been chosen/);
+  assert.equal(toHex(genesisConfigHash()), toHex(GENESIS_CONFIG_HASH));
 
-  // so nothing in this build can hand `contractIsForThisBuild` an honest
-  // anchor yet, and it refuses rather than passing anything through
+  // a sample contract is not this network, so the build still refuses it
   assert.equal(contractIsForThisBuild(sample(), { anchor: NETWORK_ID, config: GENESIS_CONFIG_HASH }).ok,
     false);
 });

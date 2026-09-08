@@ -8,6 +8,10 @@
 
 import { taggedHash } from './hash.js';
 import { utf8Encode } from './utf8.js';
+import {
+  GENESIS_CONFIG_HASH as GENESIS_CONFIG_HASH_ID,
+  NETWORK_ID_REGTEST, NETWORK_ID_TESTNET4,
+} from './genesis-ids.js';
 
 export const PROTOCOL_VERSION = 1;
 
@@ -228,43 +232,28 @@ export function bondMarker(network) {
  * built-in `network_id`, NEVER A VALUE FROM THE CONTRACT." So it is a build
  * constant, not a field a round can talk this software into.
  *
- * IT CANNOT BE COMPUTED HERE, and not for want of an implementation. Its
- * preimage is `genesis_parameters` (27A.6), which names `bond_marker` - the
- * value directly above, null by the same decision - and two keys nobody has
- * generated. A deriver would therefore have to invent all three, which is
- * settling the network's identity in a source tree.
- *
- * The refusal is the useful behaviour: a build that names no network accepts
- * no contract. Wrong in the safe direction, and loud.
+ * the owner 2026-09-08: regtest and testnet4 are set. Mainnet is not. This build's
+ * default anchor is testnet4 (the live LND chain). Recovery keys are test keys
+ * on disk, not cold-storage mainnet keys.
  */
-export const NETWORK_ID = null;
+export const NETWORK_ID = NETWORK_ID_TESTNET4;
 
-export function networkAnchor() {
-  if (NETWORK_ID === null)
-    throw new Error(
-      'NETWORK_ID has not been chosen. It is H(genesis_parameters || authority '
-      + '|| recovery || predecessor || fork certificate), and genesis_parameters '
-      + 'names a bond_marker that does not exist yet');
-  return NETWORK_ID;
+export function networkAnchor(network) {
+  if (!network) return NETWORK_ID;
+  if (network === 'regtest') return NETWORK_ID_REGTEST;
+  if (network === 'testnet4' || network === 'testnet') return NETWORK_ID_TESTNET4;
+  throw new Error('NETWORK_ID for ' + network + ' has not been chosen');
 }
 
 /**
  * THE CONFIG THIS NETWORK STARTED ON, null for the same reason.
  *
- * 27A.6: `genesis_config_hash` is inside `genesis_parameters`, so it is
- * committed in `network_id` - "you cannot start 'the same network' with a 30%
- * node fee, because a different opening config is a different `network_id`".
- * 27A.7.1 makes the value `H(canonical(game_config))`, and there is no
- * game_config here to canonicalise. A round names the config it runs under
- * (27A.7.5) and this build compares; it does not compute one.
+ * Live core numbers: exposure 320 m, mouth 34 m, apron 22 m, front span 40 m,
+ * T 0.25..1.5, rank 3/4, block 9000 ticks, node fee 2.00%, current heat.
  */
-export const GENESIS_CONFIG_HASH = null;
+export const GENESIS_CONFIG_HASH = GENESIS_CONFIG_HASH_ID;
 
 export function genesisConfigHash() {
-  if (GENESIS_CONFIG_HASH === null)
-    throw new Error(
-      'GENESIS_CONFIG_HASH has not been chosen. It is H(canonical(game_config)) '
-      + 'of the opening config, and it is committed in NETWORK_ID');
   return GENESIS_CONFIG_HASH;
 }
 

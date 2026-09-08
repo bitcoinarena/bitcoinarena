@@ -205,9 +205,8 @@ export const roundId = (c) => taggedHash(TAG.roundContract, encodeRoundContract(
  * throwing, and why the refusal names which of the two failed: not serving a
  * round is an ordinary outcome, not an error.
  *
- * Both anchors are null in this build (`networkAnchor()`, `genesisConfigHash()`
- * refuse), so a caller has nothing honest to pass yet. That is the correct
- * state: a build that names no network accepts no contract.
+ * This build's anchors are testnet4 + the live core config. A contract naming
+ * another network is not selectable, not slashed.
  */
 export function contractIsForThisBuild(contract, { anchor, config } = {}) {
   if (!contract || !is32(contract.networkId))
