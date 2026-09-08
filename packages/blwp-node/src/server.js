@@ -110,6 +110,15 @@ const text = (res, code, msg) => {
  */
 const hexOf = (b) => Buffer.from(b).toString('hex');
 
+/**
+ * HOW FAR BEHIND A SUBSCRIBER MAY BE BEFORE ITS PICTURES ARE DROPPED.
+ *
+ * A quarter of a megabyte, the same figure the client uses to decide it is too
+ * far behind to publish - so both ends of one socket call "behind" the same
+ * thing instead of each having a taste of its own.
+ */
+export const GHOST_BACKLOG_BYTES = 262144;
+
 export const NOTHING_IS_FUNDED = () => false;
 
 export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FUNDED,
@@ -337,6 +346,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // answered a number - so the node had no way to address anybody, which is
   // why no picture could be delivered however well it could be produced.
   const watching = new Map();
+  let shed = 0;
 
   /**
    * What one subscriber has not been shown yet, marked as shown.
@@ -344,23 +354,50 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
    * ALREADY SEEN AT THAT TICK IS NOT NEWS: a subscriber gets a picture when
    * there is a new one, not once per batch anybody publishes.
    */
-  const freshFor = (who) => {
+  const freshFor = (who, { mark = true } = {}) => {
     const out = [];
     for (const frame of ghosts.setFor(who.roundId, who.entryId)) {
       const at = `${hexOf(frame.entryId)}:${frame.tick}`;
       if (who.shown.get(hexOf(frame.entryId)) === at) continue;
-      who.shown.set(hexOf(frame.entryId), at);
+      // MARKING IS THE SENDER'S JOB, not the asking's. A subscriber too far
+      // behind to be sent anything must not have its pictures marked
+      // delivered - that is how a truck that then stops driving becomes
+      // invisible to it - so the drop counts them without claiming them.
+      if (mark) who.shown.set(hexOf(frame.entryId), at);
       out.push(frame);
     }
     return out;
   };
 
-  /** Push one round's interest set to every subscriber but the entry itself. */
+  /**
+   * Push one round's interest set to every subscriber but the entry itself.
+   *
+   * A SUBSCRIBER THAT IS NOT KEEPING UP IS SHOWN NOTHING, and that is the
+   * right answer for a picture rather than a compromise. Piece 2 of this
+   * letter already ruled it for the queue on the way in - "a full queue sheds
+   * pictures oldest first and never evidence" - and the same holds pushing
+   * out: a 5 Hz frame of a truck that has moved on is worth nothing by the
+   * time a stalled socket drains to it, while the node buffering it is
+   * unbounded memory held for one slow player. Nothing that DECIDES anything
+   * is ever shed here; a ghost decides nothing.
+   */
   const showRound = (roundIdBytes) => {
     let sent = 0;
     for (const [sock, who] of watching) {
       if (hexOf(who.roundId) !== hexOf(roundIdBytes)) continue;
       if (sock.readyState !== sock.OPEN) continue;
+      if (sock.bufferedAmount > GHOST_BACKLOG_BYTES) {
+        // COUNTED, AND NOT MARKED AS SHOWN. Nothing is queued here to go
+        // stale: `setFor` recomputes the latest picture of each truck every
+        // time, so a frame skipped now is simply sent when the socket has
+        // drained - and what goes out then is the newest picture that exists,
+        // not this one. Marking them shown instead LOST a truck: measured, a
+        // player who fell behind while somebody else was driving, and that
+        // somebody then stopped, never saw them at all until they moved
+        // again.
+        shed += freshFor(who, { mark: false }).length;
+        continue;
+      }
       for (const frame of freshFor(who)) { sock.send(frame.bytes); sent++; }
     }
     return sent;
@@ -496,6 +533,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     http.listen(port, host, () => resolve({
       http, wss, round, host, verifier, ghosts,
       watching: () => watching.size,
+      shed: () => shed,
       port: http.address().port,
       // Closed so it actually closes. `http.close` waits for open connections
       // to end, and a play socket does not end on its own - a harness that

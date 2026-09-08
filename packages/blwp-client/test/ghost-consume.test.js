@@ -285,3 +285,49 @@ test('bytes that claim to be a ghost and are not reach nobody', async () => {
     assert.equal(client.badGhosts, 1, 'and it was not counted as a bad one either');
   } finally { await node.close(); }
 });
+
+/**
+ * A SUBSCRIPTION HAS TO SURVIVE THE SOCKET.
+ *
+ * The node keys its subscribers BY CONNECTION, and a reconnect is a new
+ * connection - so a player who dropped for two seconds came back publishing
+ * ticks and blind to everybody else for the rest of the run. No error, no
+ * counter, nothing to notice: the pictures simply stopped.
+ *
+ * `reconnect` already re-does what a run needs - it connects and resumes - so
+ * this is the third thing it has to re-do, for the same reason the other two
+ * are there.
+ */
+test('a subscription comes back with the socket', async () => {
+  const { node, client, rid, eid, theirEid, drive } = await rig();
+  try {
+    const seen = [];
+    client.onGhost = (g) => seen.push(g);
+
+    drive(0, 120);
+    assert.match(await client.watch(rid, eid), /^watching 1$/);
+    await wait(40);
+    assert.equal(seen.length, 1);
+    assert.equal(node.watching(), 1);
+
+    // THE DROP: the node takes the connection away, which is what a restart
+    // or a bad link does.
+    for (const sock of node.wss.clients) sock.close();
+    await wait(60);
+    assert.equal(node.watching(), 0, 'the node kept a subscription for a socket that is gone');
+
+    const back = await client.reconnect({ roundId: rid, entryId: eid, blockTicks: 9000 });
+    assert.ok(back, 'the client did not come back');
+    await wait(60);
+
+    assert.equal(node.watching(), 1,
+      'the client came back publishing and never asked to be shown anybody again');
+
+    // AND PICTURES RESUME: the other truck moves and this player sees it.
+    for (let i = 0; i < 30; i++) client.record([45875, 0, 0, 0, 0]);
+    await client.drain();
+    await wait(60);
+    assert.equal(seen.length, 2, 'no picture arrived after the socket came back');
+    assert.deepEqual(toHex(seen[1].entryId), toHex(theirEid));
+  } finally { await node.close(); }
+});

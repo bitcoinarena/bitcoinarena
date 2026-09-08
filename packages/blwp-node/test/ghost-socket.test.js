@@ -12,7 +12,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { openStore } from '../src/store.js';
-import { serve } from '../src/server.js';
+import { serve, GHOST_BACKLOG_BYTES } from '../src/server.js';
 import { Ghosts } from '../src/ghosts.js';
 import { Round } from '../src/round.js';
 import { encodeRoundContract, encodeEntryContract, entryId as entryIdOf } from '../../protocol/src/contracts.js';
@@ -332,4 +332,65 @@ test('a subscriber of one round is not shown another round\'s trucks', () => {
   assert.deepEqual(shown.map((f) => toHex(f.entryId)), [toHex(neighbour)],
     'a round showed somebody else\'s round');
   assert.equal(shown.some((f) => toHex(f.entryId) === toHex(stranger)), false);
+});
+
+test('a subscriber that is not keeping up is shed, not buffered', async () => {
+  // A ghost decides nothing (piece 2), so a picture a stalled socket would
+  // read minutes late is worth less than the memory the node holds it in. The
+  // rule is the client's own: a quarter of a megabyte behind is behind.
+  const node = await serve(openStore(), { port: 0, ...FUNDED });
+  try {
+    const { rid, eidA, eidB, batchOf } = await twoIdentities(node);
+    const viewer = await talk(node.port);
+    const other = await talk(node.port);
+    assert.equal(await viewer.say(`watch ${toHex(rid)} ${toHex(eidA)}`), 'watching 0');
+
+    assert.equal(await other.say(batchOf(eidB, 9, 0, 40).bytes), '40');
+    await viewer.settle();
+    assert.equal(viewer.pushed.length, 1, 'a keeping-up subscriber was not shown anything');
+    assert.equal(node.shed(), 0);
+
+    // A THIRD TRUCK, so the count is a count. With one frame in flight a
+    // counter that adds one per SUBSCRIBER and one that adds one per PICTURE
+    // read the same, and a number nobody can tell apart from a wrong one is
+    // not a number worth printing in a status line.
+    const c = entryFor(rid, 13);
+    await post(node.port, '/entry', encodeEntryContract(c));
+    const eidC = entryIdOf(c);
+    const third = await talk(node.port);
+
+    // THE SUBSCRIBER FALLS BEHIND. The node reads `bufferedAmount` off its
+    // own end of the socket, so that is what is made to say "behind" - the
+    // value the rule is written against, not a flag invented for the test.
+    for (const sock of node.wss.clients)
+      Object.defineProperty(sock, 'bufferedAmount', { value: GHOST_BACKLOG_BYTES + 1, configurable: true });
+
+    assert.equal(await other.say(batchOf(eidB, 9, 40, 25, batchOf(eidB, 9, 0, 40).id).bytes), '25');
+    assert.equal(await third.say(batchOf(eidC, 13, 0, 40).bytes), '40');
+    await viewer.settle();
+    assert.equal(viewer.pushed.length, 1, 'a picture was pushed to a socket already a quarter of a megabyte behind');
+    // THREE, because the count is pictures dropped and not stalls: two
+    // batches landed while this subscriber was behind, and the first truck's
+    // picture was dropped on both of them while the second's was dropped on
+    // one. A counter that added one per STALL would say two here.
+    assert.equal(node.shed(), 3,
+      'that count is per stall, not per picture: it cannot show how much pressure a slow subscriber is under');
+
+    // AND SHED MEANS GONE, not queued. Found by a mutant: counting the drop
+    // without marking those frames as shown left them waiting, so the moment
+    // the socket drained the subscriber was handed a picture of where that
+    // truck HAD been - which is the one thing a late picture must not do.
+    const first = batchOf(eidB, 9, 0, 40).id;
+    for (const sock of node.wss.clients)
+      Object.defineProperty(sock, 'bufferedAmount', { value: 0, configurable: true });
+    const second = batchOf(eidB, 9, 40, 25, first);
+    assert.equal(await other.say(batchOf(eidB, 9, 65, 25, second.id).bytes), '25');
+    await viewer.settle();
+    // and what arrives is the NEWEST of each truck, never the shed one again
+    const ticks = viewer.pushed.slice(1).map((f) => decodeGhost(f).tick).sort((x, y) => x - y);
+    assert.deepEqual(ticks, [39, 89],
+      `after the stall the subscriber was handed ${ticks.join(', ')}`);
+
+    viewer.shut(); other.shut(); third.shut();
+  } finally { await node.close(); }
 });

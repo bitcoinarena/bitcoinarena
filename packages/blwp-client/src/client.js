@@ -263,6 +263,13 @@ export class Client {
     // same rule the node applies to what comes the other way.
     this.ghosts = 0;
     this.onGhost = null;
+    // WHAT THIS CLIENT ASKED TO BE SHOWN, remembered so a reconnect can ask
+    // again. The node keys subscribers BY CONNECTION and a reconnect is a new
+    // one, so without this a player who dropped for two seconds came back
+    // publishing and blind for the rest of the run - no error and no counter,
+    // the pictures just stopped.
+    this.watchingWhat = null;
+    this.rewatched = 0;
 
     // THE RECONNECT, which used to live in the jslib where nothing could
     // measure it. `reconnecting` is the one in flight; `drops`, `tries` and
@@ -422,6 +429,15 @@ export class Client {
         try {
           await this.connect();
           const r = await this.resume(where);
+          // AND ASK TO BE SHOWN THE OTHERS AGAIN. Third of the three things a
+          // reconnect owes a run: a socket, the tick to carry on from, and the
+          // subscription the old connection took with it.
+          if (this.watchingWhat) {
+            const said = await this.send(
+              `watch ${toHex(this.watchingWhat.round)} ${toHex(this.watchingWhat.entry)}`);
+            if (/^watching /.test(said)) this.rewatched++;
+            else this.error = `the subscription did not come back: ${said}`;
+          }
           this.resumedAt = r.nextTick;
           this.backoff = 0;
           this.state = 'ready';
@@ -465,6 +481,7 @@ export class Client {
    * why they cannot share the answer queue.
    */
   watch(round, entry) {
+    this.watchingWhat = { round, entry };
     return this.send(`watch ${toHex(round)} ${toHex(entry)}`);
   }
 
