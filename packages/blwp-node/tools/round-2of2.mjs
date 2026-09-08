@@ -110,9 +110,13 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
 
   // THE ROUND. Its times are real instants, because a node refuses an entry
   // before committee_time and refuses a round whose entry window is shorter
-  // than the protocol's own minimum. Thirty seconds of driving: `blockTicks`
-  // is how long the round IS, and a person looking at two tabs should not
-  // have to wait out a full one.
+  // than the protocol's own minimum.
+  //
+  // `blockTicks` is how long the round IS, and this one is sized for a PERSON
+  // rather than for a harness: 9000 ticks is two and a half minutes at the
+  // core's own tick, and both tabs have to load a nineteen-megabyte player
+  // before either of them can drive. The browser harness uses a thirty-second
+  // round because nothing there waits on a human.
   const committeeTimeMs = BigInt(Date.now());
   const contract = {
     networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations: 1,
@@ -122,7 +126,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     entryCloseMs: committeeTimeMs + MIN_ENTRY_WINDOW_MS + 120000n,
     objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20,
     slashRemainder: 'BURN', donationSetId: b32(0xd0), censusHeight: 900000,
-    censusRoot: b32(2), stakeMsat: 100000n, bondMinSats: 50000n, blockTicks: 1800,
+    censusRoot: b32(2), stakeMsat: 100000n, bondMinSats: 50000n, blockTicks: 9000,
     exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
     timeFloor: 30, timeCeil: 150, minScore: 1, rankNumerator: 3, rankDenominator: 4,
     nodes: [a.round.pubkey, b.round.pubkey],
