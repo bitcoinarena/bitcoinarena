@@ -15,26 +15,36 @@
 // afterwards.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { toHex } from '../src/hash.js';
-import { PROTOCOL_VERSION } from '../src/constants.js';
-import { parseTransaction } from '../src/tx.js';
-import { advertId } from '../src/advert.js';
-import { chainOf as minedChain } from '../tools/chainview.js';
-import { bondTransaction } from '../tools/bond.js';
+import { toHex } from '../../protocol/src/hash.js';
+import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
+import { BOND, keyFor, bondFor } from './curve.js';
+import { selectCommittee } from '../../protocol/src/sortition.js';
+import { recognizeBond } from '../../protocol/src/chain.js';
+import { PROTOCOL_VERSION } from '../../protocol/src/constants.js';
+import { parseTransaction } from '../../protocol/src/tx.js';
+import { advertId } from '../../protocol/src/advert.js';
+import { chainOf as minedChain } from '../../protocol/tools/chainview.js';
+import { bondTransaction } from '../../protocol/tools/bond.js';
 import {
   deriveCensus, scanCensus, commitCensus, leafHash, censusRootMatchesRound, censusInputsId,
-} from '../src/census.js';
+} from '../../protocol/src/census.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const advertFor = (n, over = {}) => ({
-  nodePubkey: b32(n), operatorId: 'operator', protocolVersions: [PROTOCOL_VERSION],
+  nodePubkey: keyFor(n), operatorId: 'operator', protocolVersions: [PROTOCOL_VERSION],
   roles: ['game'], endpoint: `ws://node${n}`, region: 'eu-west', capacityClass: 1,
   softwareHash: b32(2), settlementCapabilities: 0, lightningCapabilities: 0,
   bondTxid: new Uint8Array(32), bondVout: 0, bondScriptTemplateVersion: 1,
   payoutPubkey: b32(3), timestamp: 1788700000000n, ...over,
 });
+// THE OUTPUT IS THE ONE GENESIS SAYS IT MUST BE. The fixtures used to leave
+// the builder's filler key in place, which was invisible while nothing
+// recomputed it; the composed census recomputes it now, so a fixture with a
+// filler key is a fixture of a bond nobody posted.
 const bondOf = (n, over = {}) =>
-  bondTransaction(advertFor(n, over), { previousTxid: b32(0xa0 + n), previousVout: 0 });
+  bondTransaction(advertFor(n, over), {
+    previousTxid: b32(0xa0 + n), previousVout: 0, outputKey: bondFor(keyFor(n)),
+  });
 
 const HEIGHT = 900000;
 const TIP = 900010;
@@ -46,7 +56,7 @@ const view = (at, tip = TIP, from = HEIGHT - 20) => {
 };
 const contract = {
   bondMinSats: 50000n, protocolVersion: PROTOCOL_VERSION,
-  censusHeight: HEIGHT, censusConfirmations: 6,
+  censusHeight: HEIGHT, censusConfirmations: 6, networkId: NETWORK_ID_REGTEST,
 };
 
 /**
@@ -84,7 +94,7 @@ function rig({ claims = () => b32(0xEE), extraBlocks = {}, extraCandidates = [] 
 }
 
 const derive = (r, over = {}) => deriveCensus(view(r.at), {
-  candidates: r.candidates, contract, resolve: r.resolve, ...over,
+  candidates: r.candidates, contract, resolve: r.resolve, bond: BOND, ...over,
 });
 
 /**
@@ -119,14 +129,15 @@ test('one derivation scans, resolves, filters, sorts and commits', () => {
  */
 test('the leaf names the advertisement\'s key, not the candidate\'s', () => {
   const lying = rig({ claims: () => b32(0xEE) });
-  const honest = rig({ claims: (n) => b32(n) });
+  const honest = rig({ claims: (n) => keyFor(n) });
 
   const a = derive(lying);
   const b = derive(honest);
 
   // every entry carries the key its own advertisement declared
-  for (const e of a.entries) assert.equal(e.pubkey[0], e.advert.nodePubkey[0]);
-  assert.deepEqual(a.entries.map((e) => e.pubkey[0]).sort(), [0x11, 0x12, 0x13]);
+  for (const e of a.entries) assert.deepEqual(e.pubkey, e.advert.nodePubkey);
+  assert.deepEqual(a.entries.map((e) => toHex(e.pubkey)).sort(),
+    [0x11, 0x12, 0x13].map((n) => toHex(keyFor(n))).sort());
   assert.equal(a.entries.some((e) => e.pubkey[0] === 0xEE), false,
     'the transcribed key reached the census');
 
@@ -207,7 +218,7 @@ test('exclusions come back from both steps, each carrying its step', () => {
   // and 0x13 resolves to a body nobody can retrieve -> resolve drops it
   const gone = toHex(r.ids.get(0x13));
   const out = deriveCensus(view(r.at), {
-    candidates: r.candidates, contract,
+    candidates: r.candidates, contract, bond: BOND,
     resolve: (e) => (toHex(e.txid) === gone ? null : r.resolve(e)),
   });
 
@@ -287,7 +298,7 @@ test('a caller cannot choose the confirmation depth; the round does', () => {
   for (const extra of [{ minConfirmations: 1 }, { censusConfirmations: 1 },
                        { minConfirmations: 999 }, { censusHeight: 1 }]) {
     const tried = deriveCensus(view(r.at), {
-      contract, candidates: r.candidates, resolve: r.resolve, ...extra,
+      contract, candidates: r.candidates, resolve: r.resolve, bond: BOND, ...extra,
     });
     assert.equal(tried.entries.length, honest.entries.length);
     assert.equal(toHex(tried.root), toHex(honest.root),
@@ -319,11 +330,16 @@ test('a derivation it cannot do is refused with its reason', () => {
 
   // a contract with nothing on it fails at the FIRST step that needs it, and
   // says which number it was missing rather than defaulting one
+  const named = { networkId: NETWORK_ID_REGTEST };
   assert.match(derive(r, { contract: {} }).why, /cannot be scanned: that round names no census height/);
-  assert.match(derive(r, { contract: { censusHeight: HEIGHT } }).why,
+  assert.match(derive(r, { contract: { ...named, censusHeight: HEIGHT } }).why,
     /cannot be scanned: that round names no confirmation depth/);
-  assert.match(derive(r, { contract: { censusHeight: HEIGHT, censusConfirmations: 6 } }).why,
+  assert.match(derive(r, { contract: { ...named, censusHeight: HEIGHT, censusConfirmations: 6 } }).why,
     /names no bond floor/);
+  // AND A ROUND THAT NAMES NO NETWORK IS ONE OF THOSE MISSING NUMBERS. It used
+  // to be answered with the regtest marker on every chain.
+  assert.match(derive(r, { contract: { censusHeight: HEIGHT, censusConfirmations: 6 } }).why,
+    /cannot be scanned: that round names no network/);
   assert.match(derive(r, { resolve: undefined }).why, /no way to retrieve/);
 
   // a duplicate outpoint is the commit step's refusal, and it survives the trip
@@ -341,15 +357,23 @@ test('the derivation names what it does not check', () => {
   // cannot answer without a chain view - whether the output is unspent and
   // deep enough. Named rather than taken from the entry, because "the list
   // said so" is not a check.
-  // TWO, not three: the derivation holds the chain it just scanned and passes
-  // it down, so "unspent and deep enough" is a thing it CHECKED rather than a
-  // gap it has to name. The two that remain are the two the chain door cannot
-  // read without a curve and a set.
-  assert.equal(out.unchecked.length, 2);
+  // ONE, not two and not three. "Unspent and deep enough" left the list when
+  // the derivation began passing down the chain it had just scanned. The BOND
+  // SCRIPT TEMPLATE left it here: this caller injects the arbitration set and
+  // a curve, so the output key is rebuilt rather than named as a gap - and
+  // since a composed census now refuses a root without them, no derivation
+  // that returns one can have the template on this list at all.
+  //
+  // What remains is the advertisement signature, which needs the OTHER curve
+  // (ed25519, letter 23) and leaves the list the same way the moment a caller
+  // injects `verifyAdvert` - which `advert.test.js` does.
+  assert.equal(out.unchecked.length, 1,
+    `expected only the signature to be parked, got: ${out.unchecked.join(' | ')}`);
   assert.equal(out.unchecked.some((u) => /unspent and deep enough/.test(u)), false);
+  assert.equal(out.unchecked.some((u) => /bond script template/.test(u)), false,
+    'a root came back with the template unchecked');
   assert.equal(out.chainChecked, true, 'the derivation resolved without the chain it had');
-  assert.match(out.unchecked[0], /bond script template/);
-  assert.match(out.unchecked[1], /no curve in this package/);
+  assert.match(out.unchecked[0], /advertisement signature/);
 });
 
 /**
@@ -366,7 +390,7 @@ test('the root from a self-found scan is the root from the same outpoints handed
   const handed = derive(r);
   assert.equal(handed.ok, true, handed.why);
 
-  const found = deriveCensus(view(r.at), { contract, resolve: r.resolve });
+  const found = deriveCensus(view(r.at), { contract, resolve: r.resolve, bond: BOND });
   assert.equal(found.ok, true, found.why);
 
   assert.deepEqual(toHex(found.root), toHex(handed.root),
@@ -385,23 +409,130 @@ test('the root from a self-found scan is the root from the same outpoints handed
  * pointing at it must fail the round's floor, and a scan that quietly points
  * at output 0 instead hands RESOLVE a whole bitcoin and counts the node in.
  */
-test('a body naming the marker as its bond is scanned there and refused by the floor', () => {
+test('a body naming the marker as its bond is scanned there and refused by name', () => {
   const advert = advertFor(0x45, { bondVout: 1 });
   const wrong = bondTransaction(advert, { previousTxid: b32(0x82), previousVout: 0 });
   const r = rig({ extraBlocks: { [HEIGHT - 9]: [wrong] } });
 
   const found = deriveCensus(view(r.at), {
-    contract,
-    resolve: (e) => (toHex(e.pubkey) === toHex(b32(0x45))
+    contract, bond: BOND,
+    resolve: (e) => (toHex(e.pubkey) === toHex(keyFor(0x45))
       ? { transaction: wrong } : r.resolve(e)),
   });
   assert.equal(found.ok, true, found.why);
 
-  const refused = found.excluded.find((e) => toHex(e.pubkey) === toHex(b32(0x45)));
+  const refused = found.excluded.find((e) => toHex(e.pubkey) === toHex(keyFor(0x45)));
   assert.ok(refused, 'the body that pointed at the marker was counted in');
   assert.equal(refused.vout, 1, 'the scan moved the outpoint to the richer output');
-  assert.match(refused.why, /that bond is 330 where this round's floor is 50000/);
+  // WHICH RULE REFUSES IT depends on what this caller brought. The marker
+  // output IS a taproot output, so with the set and a curve the template check
+  // speaks first: that key is the marker's, not this node's bond. Without them
+  // it was the round's floor, since the marker holds 330 sats. Either way the
+  // outpoint judged is the one the body named - output 0 would have recomputed
+  // and been counted.
+  assert.match(refused.why, /not the taproot tweak of the keys and maturity it declares/);
 
   // and the honest three still make the same root
   assert.deepEqual(toHex(found.root), toHex(derive(r).root));
+});
+
+/**
+ * SPENDS, AND THE OP_RETURN THAT IS NOT A BOND - MOVED FROM
+ * `protocol/test/bond-recognition.test.js` BY LETTER 15 SLICE 2.
+ *
+ * Both go through the COMPOSED census, which refuses a root without the
+ * arbitration set and a curve now, and the protocol package has neither. What
+ * they measure is unchanged; only the caller is - recognition itself, which is
+ * what that file is about, stayed there and needs no curve.
+ */
+/**
+ * A BOND SPENT AFTER THE CENSUS HEIGHT IS STILL IN THAT CENSUS, at the amount
+ * the output held, and its seat stands.
+ *
+ * Measured rather than assumed, and it is the spec's own behaviour: 5A.4 step
+ * 1 is "unspent AT census_height", so a spend later is not this census's
+ * business - otherwise the census would change as the chain grows and two
+ * participants asking at different tips would get different committees.
+ *
+ * 5A.3 says the consequence out loud: "Proven misbehaviour removes a node the
+ * only objective way - by its bond being spent by a slashing transaction,
+ * which makes the output no longer unspent AT THE NEXT census_height." A node
+ * whose bond goes away mid-round is removed by the next census, not this one.
+ *
+ * Pinned here because nothing pinned the AMOUNT or the seat, only the count.
+ */
+test('a bond spent after the census height keeps its place, its amount and its seat', () => {
+  const bond = bondTransaction(advertFor(0x1a), {
+    previousTxid: b32(0xba), previousVout: 0, value: 60000,
+    outputKey: bondFor(keyFor(0x1a)),
+  });
+  const tx = parseTransaction(bond);
+  const spend = bondTransaction(advertFor(0x50), {
+    previousTxid: tx.txid, previousVout: 0,
+  });
+  const round = {
+    ...contract, bondMinSats: 50000n, committeeSeed: b32(1), gameVerifySlots: 1,
+  };
+  const at = (place) => deriveCensus(view(place), {
+    contract: round, bond: BOND,
+    candidates: [{ txid: tx.txid, vout: 0, pubkey: b32(0xEE), bondSats: 60000n, roles: ['game'] }],
+    resolve: () => ({ transaction: bond }),
+  });
+  const funded = { [HEIGHT - 20]: [bond] };
+
+  const untouched = at(funded);
+  const later = at({ ...funded, [HEIGHT + 5]: [spend] });
+
+  assert.equal(later.entries.length, 1, 'a spend after the census removed the bond');
+  assert.equal(later.entries[0].bondSats, 60000n, 'the amount changed with a later spend');
+  assert.equal(toHex(later.root), toHex(untouched.root), 'a later spend moved the census root');
+  assert.equal(selectCommittee({ entries: later.entries, contract: round, role: 'game' }).length, 1);
+
+  // and the boundary is "at or before": spent IN the census block is out
+  const atHeight = at({ ...funded, [HEIGHT]: [spend] });
+  assert.equal(atHeight.entries.length, 0);
+  assert.match(atHeight.excluded[0].why, /already spent at the census height/);
+
+  // INCLUDING A BOND FUNDED AND SPENT IN THE SAME BLOCK, which a mutant
+  // survived on: every fixture funded its bond well before the census height,
+  // so a rule keyed on "spent, unless it was funded here" was invisible. One
+  // transaction creating an output and another spending it in the same block
+  // is ordinary Bitcoin, and such a bond was never unspent at any height.
+  const sameBlock = at({ [HEIGHT]: [bond, spend] });
+  assert.equal(sameBlock.entries.length, 0, 'a bond created and spent in one block was counted');
+  assert.match(sameBlock.excluded[0].why, /already spent at the census height/);
+  assert.equal(sameBlock.excluded[0].height, HEIGHT);
+
+  // recognition itself never looks at spends, and should not: the output's
+  // shape and value are what it answers about, and SCAN owns the spend
+  assert.equal(recognizeBond(tx, 0, advertFor(0x1a)).ok, true);
+});
+
+/**
+ * AND THE CENSUS USES IT. The measurement that opened this letter, inverted:
+ * the OP_RETURN at vout 1 was accepted by `deriveCensus` and now is not.
+ */
+test('a census no longer counts the OP_RETURN as somebody\'s bond', () => {
+  const bond = bondOf(0x16);
+  const tx = parseTransaction(bond);
+  const chain = view({ [HEIGHT - 20]: [bond] });
+  const at = (vout) => deriveCensus(chain, {
+    contract, bond: BOND,
+    candidates: [{ txid: tx.txid, vout, pubkey: b32(0xEE), bondSats: 60000n, roles: ['game'] }],
+    resolve: () => ({ transaction: bond }),
+  });
+
+  const real = at(0);
+  assert.equal(real.entries.length, 1, real.excluded[0] && real.excluded[0].why);
+
+  const fake = at(2);
+  assert.equal(fake.entries.length, 0, 'the OP_RETURN was counted as a bond');
+  assert.equal(fake.excluded.length, 1);
+  assert.equal(fake.excluded[0].step, 'resolve');
+  assert.match(fake.excluded[0].why, /not a taproot output/);
+  assert.notEqual(toHex(fake.root), toHex(real.root));
+
+  // scan still finds it, and that is right: step 1 answers where an outpoint
+  // is and whether it is spent, not what it is for
+  assert.equal(fake.excluded[0].height, HEIGHT - 20);
 });

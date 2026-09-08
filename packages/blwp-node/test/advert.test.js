@@ -9,6 +9,7 @@
 // claim, and 5A.1 lists it.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { secp256k1 } from '@noble/curves/secp256k1.js';
 import { acceptSignedAdvert, advertIsSigned, STILL_UNCHECKED } from '../src/advert.js';
@@ -230,7 +231,7 @@ test('the census takes a body signed by the key it names, and refuses one that i
     txid: parseTransaction(transaction).txid, vout: 0, pubkey: NODE,
     bondSats: 60000n, height: 900000, roles: ['game'], spent: false,
   });
-  const contract = { bondMinSats: 50000n, protocolVersion: 1 };
+  const contract = { bondMinSats: 50000n, protocolVersion: 1, networkId: NETWORK_ID_REGTEST };
 
   const mine = bondFrom(secret);
   const ok = resolveCensus([entryOf(mine)], {

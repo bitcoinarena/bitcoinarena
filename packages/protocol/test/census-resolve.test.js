@@ -16,6 +16,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { PROTOCOL_VERSION } from '../src/constants.js';
+import { NETWORK_ID_REGTEST } from '../src/genesis-ids.js';
 import { parseTransaction } from '../src/tx.js';
 import { bondTransaction } from '../tools/bond.js';
 import { resolveCensus } from '../src/census.js';
@@ -60,7 +61,7 @@ const funded = (n, sats) => {
   };
 };
 
-const contract = { bondMinSats: 50000n, protocolVersion: PROTOCOL_VERSION };
+const contract = { bondMinSats: 50000n, protocolVersion: PROTOCOL_VERSION, networkId: NETWORK_ID_REGTEST };
 const entryFor = (n, over = {}) => ({
   txid: parseTransaction(bondOf(n, over.advert || {})).txid, vout: 0,
   pubkey: b32(n), bondSats: 60000n, height: 900000, roles: ['game'], spent: false,
@@ -141,7 +142,7 @@ test('a bond under this round\'s floor is out, and the same bond is in a smaller
   assert.match(strict.excluded[0].why, /that bond is 49999 where this round's floor is 50000/);
 
   const smaller = resolveCensus([small.entry], {
-    contract: { bondMinSats: 10000n, protocolVersion: PROTOCOL_VERSION },
+    contract: { ...contract, bondMinSats: 10000n },
     resolve: () => small.seen,
   });
   assert.equal(smaller.eligible.length, 1, 'the network stratifies; it does not evict');
@@ -167,7 +168,7 @@ test('the bond amount is the output\'s, not the number the entry claims', () => 
 
   for (const claim of [60000n, 1n, 100000000000n, undefined]) {
     const out = resolveCensus([{ ...real.entry, bondSats: claim }], {
-      contract: { bondMinSats: 50000n, protocolVersion: PROTOCOL_VERSION },
+      contract: { ...contract },
       resolve: () => real.seen,
     });
     assert.equal(out.eligible.length, 1, `a claim of ${claim} changed eligibility`);
@@ -239,7 +240,7 @@ test('which nodes are selectable is the round\'s decision, not the caller\'s', (
   // and a round that names no version is answered, not guessed at: there is no
   // default to fall back on any more, which is the point.
   const none = resolveCensus([entry], {
-    contract: { bondMinSats: 50000n }, resolve: () => tx,
+    contract: { bondMinSats: 50000n, networkId: NETWORK_ID_REGTEST }, resolve: () => tx,
   });
   assert.equal(none.ok, false);
   assert.match(none.why, /names no protocol version/);
@@ -438,7 +439,7 @@ test('RESOLVE reads spentness and depth off the chain rather than off the entry'
   const TIP = 900002;
   const round = (over = {}) => ({
     bondMinSats: 50000n, protocolVersion: PROTOCOL_VERSION,
-    censusHeight: HEIGHT, censusConfirmations: 6, ...over,
+    censusHeight: HEIGHT, censusConfirmations: 6, networkId: NETWORK_ID_REGTEST, ...over,
   });
 
   const live = bondOf(0x11);
@@ -529,7 +530,7 @@ test('RESOLVE reads spentness and depth off the chain rather than off the entry'
  * for the wrong dust output.
  */
 test('a census checks the marker of its own network, not the default', async () => {
-  const { NETWORK_ID_REGTEST, NETWORK_ID_TESTNET4 } = await import('../src/genesis-ids.js');
+  const { NETWORK_ID_TESTNET4 } = await import('../src/genesis-ids.js');
   const { bondMarker } = await import('../src/constants.js');
 
   // The two markers really are different addresses.
@@ -577,10 +578,15 @@ test('a census checks the marker of its own network, not the default', async () 
   assert.equal(nowhere.ok, false);
   assert.match(nowhere.why, /no genesis for/);
 
-  // and a contract with no networkId behaves as before, so nothing that used
-  // to work stopped working
-  assert.equal(resolveCensus([entryFor(onRegtest)], {
+  // AND A CONTRACT WITH NO NETWORK AT ALL IS REFUSED. This used to read "no
+  // networkId behaves as before, so nothing that used to work stopped
+  // working" - and what it did before was answer with the REGTEST marker on
+  // every chain, silently. A census that cannot say which marker to look for
+  // cannot say a bond is findable, so it says so instead of guessing.
+  const unsaid = resolveCensus([entryFor(onRegtest)], {
     contract: { bondMinSats: 50000n, protocolVersion: PROTOCOL_VERSION },
     resolve: () => ({ transaction: onRegtest }),
-  }).eligible.length, 1);
+  });
+  assert.equal(unsaid.ok, false, 'a round naming no network was still answered with regtest');
+  assert.match(unsaid.why, /names no network/);
 });

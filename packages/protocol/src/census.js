@@ -11,6 +11,7 @@ import {
   paysBondMarker,
 } from './chain.js';
 import { decodeAdvert, splitSignedAdvert, advertId } from './advert.js';
+import { genesisFor } from './genesis.js';
 
 /**
  * One census entry, encoded.
@@ -615,8 +616,17 @@ export function scanCensus(view, { contract, candidates }) {
   // GIVEN A LIST, THIS IS WHAT IT ALWAYS WAS. Absent one, the chain is asked -
   // which is what 5A.4 step 1 says a participant does, and what makes the
   // census a function of Bitcoin rather than of whoever answered first.
-  const network = contract && contract.networkId ? networkOf(contract.networkId) : undefined;
-  if (!Array.isArray(candidates) && contract && contract.networkId && network === null)
+  // A ROUND THAT NAMES NO NETWORK IS NOT A ROUND TO SCAN FOR. This used to
+  // fall back to regtest - `network || 'regtest'` - so a contract that simply
+  // had no `networkId` was answered with regtest's marker and told nothing.
+  // 5A.2 makes the marker the whole of findability, and which marker is the
+  // round's own network's, so a census that cannot say where to look cannot
+  // say a bond is findable. It is refused, on both paths: the marker decides
+  // eligibility whether the outpoints were scanned or handed in.
+  if (!contract || !contract.networkId)
+    throw new Error('that round names no network, so there is nowhere to look for its bonds');
+  const network = networkOf(contract.networkId);
+  if (network === null)
     throw new Error('that round names a network this build has no genesis for');
   // A LIST THAT IS NOT A LIST IS STILL A MISTAKE. Omitting it means "ask the
   // chain"; handing something that is not an array means a caller built one
@@ -624,7 +634,7 @@ export function scanCensus(view, { contract, candidates }) {
   if (candidates !== undefined && !Array.isArray(candidates))
     throw new Error('scan takes the outpoints as a list, or none at all and reads the chain');
   const looking = candidates === undefined
-    ? candidatesIn(blocks, censusHeight, network || 'regtest')
+    ? candidatesIn(blocks, censusHeight, network)
     : candidates;
 
   const found = [];
@@ -824,9 +834,41 @@ export function resolveCensus(entries, { contract, resolve, verifyAdvert, bond, 
   // network this build has no genesis for is refused rather than checked
   // against a guess: `networkOf` answers null, and a census that cannot say
   // where to look for a bond cannot say a bond is findable.
-  const network = contract && contract.networkId ? networkOf(contract.networkId) : undefined;
-  if (contract && contract.networkId && network === null)
+  // AND THE SAME REFUSAL HERE, for the same reason: `recognizeBond` defaults
+  // to regtest, so a round with no `networkId` was checked against regtest's
+  // marker on every chain rather than being refused.
+  if (!contract.networkId)
+    return { ok: false, why: 'that round names no network, so its bond marker cannot be checked' };
+  const network = networkOf(contract.networkId);
+  if (network === null)
     return { ok: false, why: 'that round names a network this build has no genesis for' };
+
+  // AND A SET IS THIS NETWORK'S SET, OR IT IS NOT A SET. The template check
+  // rebuilds the output key from the arbitration keys, the threshold and the
+  // maturity, so a caller passing its own - an empty list, a shorter one, its
+  // own maturity - would not be checking the 5A.3B template at all: every
+  // honest bond would fail the recompute and be excluded by name, which reads
+  // like a chain full of liars rather than like a caller holding the wrong
+  // set. These are genesis facts (letter 24's ruling), so they are compared
+  // against genesis and a mismatch is refused before any entry is judged.
+  if (bond) {
+    const g = genesisFor(network);
+    const same = (a, b) => a instanceof Uint8Array && b instanceof Uint8Array
+      && a.length === b.length && a.every((x, i) => x === b[i]);
+    const keys = bond.arbitrationKeys;
+    if (!Array.isArray(keys) || keys.length !== g.arbitrationKeys.length
+        || !keys.every((k, i) => same(k, g.arbitrationKeys[i])))
+      return { ok: false, why: `that is not the arbitration set ${network} was born with` };
+    if (bond.arbitrationK !== g.arbitrationK || bond.bondMaturity !== g.bondMaturity)
+      return {
+        ok: false,
+        why: `that names ${bond.arbitrationK}-of-${keys.length} at maturity `
+          + `${bond.bondMaturity} where ${network} was born `
+          + `${g.arbitrationK}-of-${g.arbitrationKeys.length} at ${g.bondMaturity}`,
+      };
+    if (typeof bond.tweakPoint !== 'function' || typeof bond.combine !== 'function')
+      return { ok: false, why: 'a template check needs both curve operations, and one is missing' };
+  }
 
   let facts = null;
   let depth = null;
@@ -1034,6 +1076,37 @@ export function deriveCensus(views, { contract, candidates, resolve, verifyAdver
   // about Bitcoin are not two censuses: one of them is the chain.
   const chain = bestChainView(views);
   if (!chain.ok) return { ok: false, why: `that census cannot be scanned: ${chain.why}` };
+
+  // A ROOT IS NOT PUBLISHED WITH THE TEMPLATE UNCHECKED.
+  //
+  // 5A.3's criterion is that the output is "a bond output built to the 5A.3B
+  // template", and rebuilding that key is a point addition this package
+  // cannot do: it carries no curve on purpose, because every other package
+  // reads it. So `resolveCensus` has always been able to run without one and
+  // say so - the template sits in `unchecked` and the entry is counted.
+  //
+  // That is honest for a STEP and wrong for a CENSUS. This is the composed
+  // five steps, the thing a node publishes a root from, and a root computed
+  // without the template check is a census over outputs nobody proved were
+  // bonds - a stranger's taproot key among them is indistinguishable, and 5A.3
+  // says exactly why that matters: "the bond is what makes identity
+  // expensive". A door nobody walks through is not a door. So the composed
+  // census refuses, by name, and the caller brings a curve.
+  //
+  // `commitCensus` is deliberately NOT given this rule. It takes entries a
+  // caller assembled and already believes about `advertId`; a stamp checked
+  // there would be a check on the caller's own word rather than on the chain.
+  // The guarantee lives on the only path that runs all five steps.
+  const network = contract && contract.networkId ? networkOf(contract.networkId) : null;
+  if (network !== null) {
+    const set = genesisFor(network).arbitrationKeys;
+    if (set && set.length && !bond)
+      return {
+        ok: false,
+        why: `that census would be a root with the bond script template unchecked: `
+          + `${network} names an arbitration set and no curve was injected`,
+      };
+  }
 
   let scanned;
   try {

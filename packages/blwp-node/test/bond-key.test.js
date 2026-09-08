@@ -499,7 +499,7 @@ test('the census counts the honest bond and excludes the stranger by name', () =
   });
   const byKey = new Map([[toHex(honest), good], [toHex(liar), bad]]);
   const resolve = (e) => ({ transaction: byKey.get(toHex(e.pubkey)) });
-  const contract = { bondMinSats: 50000n, protocolVersion: 1 };
+  const contract = { bondMinSats: 50000n, protocolVersion: 1, networkId: NETWORK_ID_REGTEST };
   const entries = [entryOf(good, honest), entryOf(bad, liar)];
 
   const seen = resolveCensus(entries, { contract, resolve, bond: BOND });
@@ -524,7 +524,7 @@ test('a bond already mature at posting is excluded by the census, not only by th
     txid: parseTransaction(cheap).txid, vout: 0, pubkey: node,
     bondSats: 60000n, height: 900000, roles: ['game'], spent: false,
   };
-  const contract = { bondMinSats: 50000n, protocolVersion: 1 };
+  const contract = { bondMinSats: 50000n, protocolVersion: 1, networkId: NETWORK_ID_REGTEST };
 
   const seen = resolveCensus([entry], { contract, resolve: () => ({ transaction: cheap }), bond: BOND });
   assert.equal(seen.eligible.length, 0,

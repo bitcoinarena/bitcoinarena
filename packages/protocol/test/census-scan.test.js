@@ -24,7 +24,7 @@ import assert from 'node:assert/strict';
 import { toHex } from '../src/hash.js';
 import { parseTransaction } from '../src/tx.js';
 import { BOND_MARKER, bondMarker } from '../src/constants.js';
-import { NETWORK_ID_TESTNET4 } from '../src/genesis-ids.js';
+import { NETWORK_ID_REGTEST, NETWORK_ID_TESTNET4 } from '../src/genesis-ids.js';
 import { bondTransaction } from '../tools/bond.js';
 import { scanCensus } from '../src/census.js';
 import { chainOf as minedChain } from '../tools/chainview.js';
@@ -46,7 +46,12 @@ const spendOf = (txid, vout) => bondTransaction(advertFor(0x50), {
 
 const HEIGHT = 900000;
 const TIP = 900010;
-const round = (over = {}) => ({ censusHeight: HEIGHT, censusConfirmations: 6, ...over });
+// EVERY ROUND NAMES ITS NETWORK. A contract without one used to be answered
+// with regtest's marker; it is refused now, so the fixtures say which chain
+// they are on like a real contract does.
+const round = (over = {}) => ({
+  censusHeight: HEIGHT, censusConfirmations: 6, networkId: NETWORK_ID_REGTEST, ...over,
+});
 
 /**
  * A REAL CHAIN, MINED. The census refuses a header whose hash misses its

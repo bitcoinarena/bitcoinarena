@@ -15,20 +15,25 @@
 // is not a depth.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { toHex, fromHex } from '../src/hash.js';
-import { PROTOCOL_VERSION } from '../src/constants.js';
-import { parseTransaction } from '../src/tx.js';
-import { workOf, blockHashOf } from '../src/chain.js';
-import { bondTransaction } from '../tools/bond.js';
-import { chainOf as minedChain, HARD } from '../tools/chainview.js';
+import { toHex, fromHex } from '../../protocol/src/hash.js';
+import { PROTOCOL_VERSION } from '../../protocol/src/constants.js';
+import { parseTransaction } from '../../protocol/src/tx.js';
+import { workOf, blockHashOf } from '../../protocol/src/chain.js';
+import { bondTransaction } from '../../protocol/tools/bond.js';
+import { chainOf as minedChain, HARD } from '../../protocol/tools/chainview.js';
 import {
   deriveCensus, chainViewOf, bestChainView, scanCensus, commitCensus, censusInputsId,
   censusRootMatchesRound,
-} from '../src/census.js';
+} from '../../protocol/src/census.js';
+
+import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
+// `BOND` is this file's funding transaction, so the arbitration set comes in
+// under its own name.
+import { BOND as SET, keyFor, bondFor } from './curve.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const advertFor = (n) => ({
-  nodePubkey: b32(n), operatorId: 'operator', protocolVersions: [PROTOCOL_VERSION],
+  nodePubkey: keyFor(n), operatorId: 'operator', protocolVersions: [PROTOCOL_VERSION],
   roles: ['game'], endpoint: `ws://node${n}`, region: 'eu-west', capacityClass: 1,
   softwareHash: b32(2), settlementCapabilities: 0, lightningCapabilities: 0,
   bondTxid: new Uint8Array(32), bondVout: 0, bondScriptTemplateVersion: 1,
@@ -36,6 +41,7 @@ const advertFor = (n) => ({
 });
 const BOND = bondTransaction(advertFor(0x11), {
   previousTxid: b32(0xa1), previousVout: 0, value: 60000,
+  outputKey: bondFor(keyFor(0x11)),
 });
 const BOND_ID = parseTransaction(BOND).txid;
 
@@ -44,7 +50,7 @@ const TIP = HEIGHT + 4;
 const FROM = HEIGHT - 20;
 const contract = {
   censusHeight: HEIGHT, censusConfirmations: 6,
-  bondMinSats: 50000n, protocolVersion: PROTOCOL_VERSION,
+  bondMinSats: 50000n, protocolVersion: PROTOCOL_VERSION, networkId: NETWORK_ID_REGTEST,
 };
 const candidates = [{ txid: BOND_ID, vout: 0, pubkey: b32(0xEE), bondSats: 60000n, roles: ['game'] }];
 
@@ -53,7 +59,9 @@ const view = (at, { tip = TIP, bits } = {}) => {
   for (let h = FROM; h <= tip; h++) blocks.push({ transactions: at[h] || [] });
   return minedChain(blocks, FROM, bits === undefined ? {} : { bits });
 };
-const derive = (views) => deriveCensus(views, { contract, candidates, resolve: () => ({ transaction: BOND }) });
+const derive = (views) => deriveCensus(views, {
+  contract, candidates, resolve: () => ({ transaction: BOND }), bond: SET,
+});
 
 const WITH_BOND = { [HEIGHT - 20]: [BOND] };
 const WITHOUT = {};
@@ -202,7 +210,7 @@ test('nobody can assert a tip, and nobody can assert a chain', () => {
 
   for (const extra of [{ tipHeight: 999999 }, { tipHeight: 0 }]) {
     const tried = deriveCensus(view(WITH_BOND), {
-      contract, candidates, resolve: () => ({ transaction: BOND }), ...extra,
+      contract, candidates, resolve: () => ({ transaction: BOND }), bond: SET, ...extra,
     });
     assert.equal(tried.tipHeight, TIP, 'a caller named the tip');
     assert.equal(toHex(tried.root), toHex(honest.root));
