@@ -29,6 +29,7 @@ import { bondTransaction } from '../tools/bond.js';
 import {
   recognizeBond, isTaprootOutput, BOND_UNCHECKED, deriveCensus,
 } from '../src/census.js';
+import { selectCommittee } from '../src/sortition.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const advertFor = (n, over = {}) => ({
@@ -213,6 +214,68 @@ test('the three rules it cannot read are named, and no branch pretends to read t
   // compare against and none is written: untested code that looks ready is the
   // same fault as a plausible address in `constants.js`
   assert.equal(BOND_MARKER, null);
+});
+
+/**
+ * A BOND SPENT AFTER THE CENSUS HEIGHT IS STILL IN THAT CENSUS, at the amount
+ * the output held, and its seat stands.
+ *
+ * Measured rather than assumed, and it is the spec's own behaviour: 5A.4 step
+ * 1 is "unspent AT census_height", so a spend later is not this census's
+ * business - otherwise the census would change as the chain grows and two
+ * participants asking at different tips would get different committees.
+ *
+ * 5A.3 says the consequence out loud: "Proven misbehaviour removes a node the
+ * only objective way - by its bond being spent by a slashing transaction,
+ * which makes the output no longer unspent AT THE NEXT census_height." A node
+ * whose bond goes away mid-round is removed by the next census, not this one.
+ *
+ * Pinned here because nothing pinned the AMOUNT or the seat, only the count.
+ */
+test('a bond spent after the census height keeps its place, its amount and its seat', () => {
+  const bond = bondTransaction(advertFor(0x1a), {
+    previousTxid: b32(0xba), previousVout: 0, value: 60000,
+  });
+  const tx = parseTransaction(bond);
+  const spend = bondTransaction(advertFor(0x50), {
+    previousTxid: tx.txid, previousVout: 0,
+  });
+  const round = {
+    ...contract, bondMinSats: 50000n, committeeSeed: b32(1), gameVerifySlots: 1,
+  };
+  const at = (blocks) => deriveCensus(blocks, {
+    contract: round, tipHeight: 900010,
+    candidates: [{ txid: tx.txid, vout: 0, pubkey: b32(0xEE), bondSats: 60000n, roles: ['game'] }],
+    resolve: () => ({ transaction: bond }),
+  });
+  const funded = { height: HEIGHT - 20, transactions: [bond] };
+
+  const untouched = at([funded]);
+  const later = at([funded, { height: HEIGHT + 5, transactions: [spend] }]);
+
+  assert.equal(later.entries.length, 1, 'a spend after the census removed the bond');
+  assert.equal(later.entries[0].bondSats, 60000n, 'the amount changed with a later spend');
+  assert.equal(toHex(later.root), toHex(untouched.root), 'a later spend moved the census root');
+  assert.equal(selectCommittee({ entries: later.entries, contract: round, role: 'game' }).length, 1);
+
+  // and the boundary is "at or before": spent IN the census block is out
+  const atHeight = at([funded, { height: HEIGHT, transactions: [spend] }]);
+  assert.equal(atHeight.entries.length, 0);
+  assert.match(atHeight.excluded[0].why, /already spent at the census height/);
+
+  // INCLUDING A BOND FUNDED AND SPENT IN THE SAME BLOCK, which a mutant
+  // survived on: every fixture funded its bond well before the census height,
+  // so a rule keyed on "spent, unless it was funded here" was invisible. One
+  // transaction creating an output and another spending it in the same block
+  // is ordinary Bitcoin, and such a bond was never unspent at any height.
+  const sameBlock = at([{ height: HEIGHT, transactions: [bond, spend] }]);
+  assert.equal(sameBlock.entries.length, 0, 'a bond created and spent in one block was counted');
+  assert.match(sameBlock.excluded[0].why, /already spent at the census height/);
+  assert.equal(sameBlock.excluded[0].height, HEIGHT);
+
+  // recognition itself never looks at spends, and should not: the output's
+  // shape and value are what it answers about, and SCAN owns the spend
+  assert.equal(recognizeBond(tx, 0, advertFor(0x1a)).ok, true);
 });
 
 /**
