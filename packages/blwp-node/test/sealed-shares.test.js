@@ -60,11 +60,10 @@ async function deal(preimage, keys, roundId = b32(1)) {
 }
 
 test('the shared secret is the same from either end, and different for every seat', () => {
-  // The even-y normalisation is the whole subtlety: an x-only key names the
-  // point with even y, so a secret whose own point has odd y must be negated
-  // before it is multiplied. Skip it on one side and the two derive different
-  // keys - which GCM turns into a refusal rather than a wrong scalar, but the
-  // share is just as lost.
+  // NO NEGATION IS NEEDED AND THAT IS MEASURED, not assumed: x(kP) equals
+  // x(-kP), which is why an x-only agreement works at all. The first version
+  // normalised the secret to an even-y point the way BIP-340 signing does, a
+  // mutant deleting it survived every test, and it turned out to be ceremony.
   let agreed = 0;
   const seen = new Set();
   for (let i = 0; i < 32; i++) {
@@ -218,4 +217,29 @@ test('a node that was dealt nothing keeps nothing', async () => {
   });
   assert.equal(seen.ok, false);
   assert.match(seen.why, /not one of the seats that handout was dealt to/);
+});
+
+test('two seats never share a key, even holding one secret between them', async () => {
+  // THE SEAT IS IN THE KEY DERIVATION, and this is what that buys. Without it
+  // the key would be the ECDH secret alone - unique per seat today only
+  // because `acceptHandout` refuses a handout that addresses one key twice.
+  // Domain separation should not depend on a rule three files away.
+  const s = secret();
+  const seatPubkey = schnorr.getPublicKey(s);
+  const e = secret();
+  const value = 12345678901234567890n;
+  const one = await sealShare({ value, seat: 1, seatPubkey, ephemeralSecret: e, curve: feldmanGroup });
+  const two = await sealShare({ value, seat: 2, seatPubkey, ephemeralSecret: e, curve: feldmanGroup });
+  assert.notEqual(toHex(one), toHex(two),
+    'one share sealed under two seat numbers produced one ciphertext');
+
+  // And each opens only under its own number.
+  const right = await openShare({ sealed: one, seat: 1, secret: s,
+    ephemeralPubkey: schnorr.getPublicKey(e), curve: feldmanGroup });
+  assert.equal(right.ok, true, right.why);
+  assert.equal(right.share.value, value);
+  const wrong = await openShare({ sealed: one, seat: 2, secret: s,
+    ephemeralPubkey: schnorr.getPublicKey(e), curve: feldmanGroup });
+  assert.equal(wrong.ok, false);
+  assert.match(wrong.why, /sealed to somebody else/);
 });

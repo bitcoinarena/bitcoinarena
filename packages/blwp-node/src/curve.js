@@ -94,25 +94,24 @@ export const combinePoints = (terms) => {
  * members are already named by their BIP-340 x-only keys - so the agreement is
  * between those keys and no second identity has to exist.
  *
- * THE EVEN-Y NORMALISATION IS THE WHOLE SUBTLETY. An x-only key names the
- * point with even y, so a secret whose own point has odd y must be negated
- * before it is multiplied - exactly as BIP-340 signing does. Both sides then
- * compute d'e'G and read the same x. Skip it on one side and the two derive
- * different keys, which GCM turns into a refusal rather than a wrong scalar.
+ * NO EVEN-Y NORMALISATION, AND THAT WAS MEASURED RATHER THAN ASSUMED. The
+ * first version negated a secret whose own point has odd y, the way BIP-340
+ * signing does, on the argument that x-only keys name the even-y point. A
+ * mutant that deleted the negation survived every test - because x(kP) equals
+ * x(-kP) on 20 of 20 random pairs, which is the whole reason an x-only
+ * agreement works at all. Both ends read the same x whether or not either
+ * scalar was flipped, so the normalisation was ceremony, and ceremony in the
+ * middle of a key agreement is a thing a reader has to disprove.
  */
-const evenScalar = (secret) => {
-  const n = secp256k1.Point.Fn.ORDER;
-  const d = (typeof secret === 'bigint' ? secret : big(secret)) % n;
-  if (d === 0n) throw new Error('zero is not a secret key');
-  return (secp256k1.Point.BASE.multiply(d).toAffine().y & 1n) === 0n ? d : n - d;
-};
-
 /** The x-only public key of a secret, which is what a seat is named by. */
 export const pointX = (secret) => schnorr.getPublicKey(secret);
 
 export const ecdhShared = (secret, theirXOnly) => {
-  const point = schnorr.utils.lift_x(big(theirXOnly)).multiply(evenScalar(secret));
-  const x = point.toAffine().x.toString(16).padStart(64, '0');
+  const n = secp256k1.Point.Fn.ORDER;
+  const d = (typeof secret === 'bigint' ? secret : big(secret)) % n;
+  if (d === 0n) throw new Error('zero is not a secret key');
+  const x = schnorr.utils.lift_x(big(theirXOnly)).multiply(d).toAffine().x
+    .toString(16).padStart(64, '0');
   return Uint8Array.from(x.match(/../g).map((h) => parseInt(h, 16)));
 };
 

@@ -463,3 +463,75 @@ test('with four seats reachable the loser\'s stake stays in flight', async () =>
       /no preimage for that stake/);
   } finally { for (const n of nodes) await n.close(); }
 });
+
+test('a player who committed to one secret and dealt another opens nothing', async () => {
+  // DECISION B, MEASURED. Feldman proves the dealer cut ONE polynomial; it
+  // cannot prove that the polynomial's constant term is the preimage of the
+  // hash the entry publishes, because the commitment is a group element and
+  // the hash is not. So the lie is caught HERE, at reconstruction: five seats
+  // open it, sha256 is not the entry's stakeCommitment, nothing settles, the
+  // hold expires and the player is refunded. The cheat gains nothing, and it
+  // needs no proof system.
+  const nodes = await committee(7);
+  try {
+    const c = contractFor(nodes.map((n) => n.round.pubkey));
+    const rid = roundId(c);
+
+    // One honest polynomial over P, and an entry that publishes sha256(Q).
+    const stake = await dealTo(nodes, rid);
+    const lying = { ...stake, stakeCommitment: sha256(rand(32)) };
+    const { eid } = await everyoneReplays(nodes, lying);
+
+    const asker = nodes[0];
+    const opened = await new Preimages(asker.round, {
+      curve: feldmanGroup,
+      peers: nodes.slice(1).map((x) => `http://127.0.0.1:${x.port}`),
+      fetcher: (u) => fetch(u), random: rand,
+    }).open({ roundId: rid, entryId: eid });
+
+    assert.equal(opened.ok, false, 'a stake opened to something the entry does not name');
+    assert.equal(opened.held, 5, 'the seats did answer; the shares are consistent');
+    assert.match(opened.why, /those shares do not open that stake/);
+    assert.match(opened.why, /not the committed preimage/);
+  } finally { for (const n of nodes) await n.close(); }
+});
+
+test('a seat that never replayed the run hands over nothing', async () => {
+  // A node releases its share for a run IT signed a result for. A peer's
+  // record is a peer's claim, and acting on somebody else's word about what a
+  // run came to is how a committee becomes one node with six echoes.
+  const nodes = await committee(7);
+  try {
+    const stake = await dealTo(nodes, roundId(contractFor(nodes.map((n) => n.round.pubkey))));
+    const { rid, eid } = await everyoneReplays(nodes, stake);
+
+    const quiet = nodes[6];
+    const c = { ...contractFor(nodes.map((n) => n.round.pubkey)), configHash: b32(0x45) };
+    const orid = quiet.round.open(c);
+    assumeSeated(quiet.round, orid, c.nodes);
+    const entry = {
+      roundId: orid, playerPubkey: b32(8), sessionPubkey: ed25519.getPublicKey(session),
+      stakeCommitment: sha256(b32(0x7a)), stakeMsat: 100000n, feeMsat: 1000n,
+      donationMsat: 0n, joinTick: 0, worldSecret: b32(0x5e), vssSharesRef: new Uint8Array(32),
+    };
+    const wid = entryId(entry);
+    quiet.round.enter(entry);
+
+    // EVERY OTHER SEAT SIGNED, and this one did not.
+    const shape = decodePlayerResult(splitSignedResult(
+      nodes[0].round.results(rid, eid)[0].bytes).body);
+    for (const who of nodes.slice(0, 6)) {
+      const failed = {
+        ...shape, roundId: orid, outcome: 'FAILED', playerPubkey: entry.playerPubkey,
+        nodePubkey: who.round.pubkey,
+      };
+      const id = resultId(failed);
+      quiet.round.putResult(orid, wid, who.round.pubkey, id,
+        joinSignedResult(encodePlayerResult(failed), schnorr.sign(id, who.round.identity.secret)));
+    }
+
+    const may = quiet.preimages.mayRelease(orid, wid);
+    assert.equal(may.ok, false);
+    assert.match(may.why, /this node signed no result for that run, so it releases nothing/);
+  } finally { for (const n of nodes) await n.close(); }
+});
