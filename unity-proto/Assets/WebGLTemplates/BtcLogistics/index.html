@@ -370,9 +370,14 @@
           dealt: true, seats: seats.seats.length, agreed: seats.agreed,
           accepted: took, refused: would, paid: false,
         };
+        // WHETHER IT IS PAID IS NOT SAID HERE. The node answers `x-hold` when it
+        // takes the entry and `Client.join` keeps it; the chip prints that
+        // rather than this page's assumption. Dealing is not funding, and a
+        // page that printed "not paid" as a constant would be reporting its
+        // own guess as the player's balance.
         console.log('[blwp] stake dealt to ' + seats.seats.length + ' settlement seat(s), '
-          + took + ' accepted the handout. THE STAKE IS NOT PAID: this page has no wallet '
-          + 'yet (M3.2), so this is a free seat at a paying round.');
+          + took + ' accepted the handout. Paying it is M3.2; the chip says what '
+          + 'the node holds.');
       } else {
         window.BLWP_STAKE = { dealt: false, paid: false, free: true };
         console.log('[blwp] this round asks no stake, so none is dealt');
@@ -434,8 +439,16 @@
       // loses only every watcher's picture of it - frozen at the last tick that
       // landed. It is the one fault none of the numbers above can show.
       const refused = (net && net.client && net.client.refusedWhy) || null;
+      // WHY THERE IS NO SEAT, AND WHAT THE SEAT COST. Both went to the console
+      // only, so a refused seat read exactly like a round nobody was sent to
+      // and a free seat read exactly like a funded one. The hold state is the
+      // NODE's word, kept by `Client.join` from the answer it already gives.
+      const seatRefused = window.BLWP_SEAT_REFUSED || null;
+      const stake = window.BLWP_STAKE
+        ? Object.assign({}, window.BLWP_STAKE, { hold: (net && net.client && net.client.seatHold) || null })
+        : null;
       const who = (typeof BLWPCLIENT !== 'undefined' && BLWPCLIENT.playersLine)
-        ? BLWPCLIENT.playersLine({ seated, others, stalled, at, refused })
+        ? BLWPCLIENT.playersLine({ seated, others, stalled, at, refused, seatRefused, stake })
         : (seated ? (others ? (1 + others) + ' players in this round' : '1 player · waiting') : 'round named · not seated');
       el.textContent = ab + '\n' + playLine(net) + '\n' + who;
     }

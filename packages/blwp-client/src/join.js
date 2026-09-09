@@ -25,6 +25,7 @@ import { httpProvider } from './headers.js';
 import { NO_SHARES, dealHandout, encodeHandout } from '../../protocol/src/handout.js';
 import { FIELD, scalarFrom32, SHARES_NEEDED } from '../../protocol/src/shares.js';
 import { seedWordForEntry } from '../../protocol/src/seed.js';
+import { entryFeeMsat } from '../../protocol/src/fee.js';
 
 /** How the query names each thing. One key, one meaning, all optional but `round`. */
 export const JOIN_KEYS = ['round', 'node', 'headers', 'bond', 'advert'];
@@ -414,7 +415,18 @@ export function entryFor(round, { playerPubkey, random, joinTick = 0, stake } = 
     // has none can never be the same entry id.
     vssSharesRef: stake ? stake.vssSharesRef : NO_SHARES,
     stakeMsat: round.stakeMsat,
-    feeMsat: 0n,
+    // THE NODE FEE, AND IT IS 2% OF THIS ENTRY'S OWN STAKE.
+    //
+    // This was `0n` on every entry the page ever built, and `feeMatchesEntry`
+    // - the rule that says an entry's fee must be exactly `entryFeeMsat` of
+    // its stake - had ZERO CALLERS outside its own tests, so nothing refused
+    // one. Measured on the fixture stake: 2% of 100000 msat is 2000, and the
+    // page wrote 0, so every paying entry it made DID NOT STAND. Too little
+    // and the round collected less than the fee table will owe its nodes.
+    //
+    // A free round is 2% of nothing, which is nothing, so the same line is
+    // right for both and there is no branch to get wrong.
+    feeMsat: entryFeeMsat(BigInt(round.stakeMsat || 0n)),
     donationMsat: 0n,
     joinTick,
   };

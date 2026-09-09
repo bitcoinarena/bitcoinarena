@@ -21,7 +21,11 @@
 // percentages are basis points and integer division; nothing is a float, and
 // the remainder a floor leaves behind is handed out rather than kept.
 import { Writer } from './encode.js';
-import { taggedHash } from './hash.js';
+// `fromHex` from hash.js and not a private copy. There was one here - the
+// same loop without the odd-length check - and two of one decoder is two
+// places for it to differ. It also made this file unbundleable beside
+// hash.js, which is how it was found.
+import { taggedHash, fromHex } from './hash.js';
 import { PROTOCOL_VERSION, TYPE_FEE_CLAIM, TAG } from './constants.js';
 import { roundId } from './contracts.js';
 import { DELIVERED, FAILED, FORFEIT, isRefund, remainderOrder } from './payout.js';
@@ -179,12 +183,6 @@ export function feeTableId(table) {
   });
   return taggedHash(TAG.feeTable, w.finish());
 }
-
-const fromHex = (s) => {
-  const out = new Uint8Array(s.length / 2);
-  for (let i = 0; i < out.length; i++) out[i] = parseInt(s.slice(i * 2, i * 2 + 2), 16);
-  return out;
-};
 
 /**
  * WHAT ONE ENTRY OWES IN FEE, 18's way: ON TOP of the stake.

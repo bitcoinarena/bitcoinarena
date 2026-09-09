@@ -148,15 +148,60 @@ export function newestPose(field) {
  * last tick that landed. That is what the 16:08 two-Chrome close-out saw from
  * the other side, and neither tab had a number that said so.
  */
-export function playersLine({ seated, others, stalled = false, at = null, refused = null } = {}) {
+export function playersLine({ seated, others, stalled = false, at = null, refused = null,
+  seatRefused = null, stake = null } = {}) {
+  // WHY THERE IS NO SEAT, AND NOT MERELY THAT THERE IS NONE.
+  //
+  // Letter 15 made the page refuse a paying round whose settlement committee
+  // it cannot learn - and the refusal went to `console.error`, so the chip
+  // read "round named · not seated" exactly as it does for a round nobody was
+  // sent to. Worse, the bridge then threw "the page did not say which round to
+  // play", which names the wrong cause entirely. A refusal nobody can see is
+  // the silent seat again, wearing the other hat.
+  if (seatRefused) return `not seated · ${seatRefused}`;
   if (!seated) return 'round named · not seated';
   if (refused) return `not publishing · ${refused}`;
+
+  // AND WHETHER THIS SEAT IS PAID FOR.
+  //
+  // A dealt stake is not a funded one: the page deals the preimage and the
+  // shares, and paying the hold invoice is a wallet it has not got yet (M3.2).
+  // Without this line a free seat and a funded seat read identically, which is
+  // the thing letter 15 exists to stop.
+  //
+  // THE WORD IS THE NODE'S. `Client.join` keeps the `x-hold` the node answered
+  // when it took the entry; a page that printed "not paid" as a constant would
+  // be reporting its own assumption as the player's balance.
+  const funding = stakeLine(stake);
   const n = 1 + (others | 0);
-  if (n <= 1) return '1 player · waiting';
+  // THE FUNDING WORD IS ON EVERY BRANCH, and it was not: this returned early
+  // for a lone player, so the one line a player sits looking at while they
+  // wait for somebody else - the longest-lived line on the chip - was the one
+  // that did not say the seat was unpaid. Its own test caught it.
+  if (n <= 1) return '1 player · waiting' + funding;
   // A PAGE THAT IS BEING SENT TRUCKS AND DRAWING NONE SAYS SO. Without this
   // the line reads the same as a page that is drawing them, which is what
   // made the 11:51 retest a guess: five players on the chip, one truck on the
   // screen, and no number between them.
   const where = at ? ` · other at ${Math.round(at.x)},${Math.round(at.z)} m` : '';
-  return n + ' players in this round' + (stalled ? ' · none drawn' : '') + where;
+  return n + ' players in this round' + (stalled ? ' · none drawn' : '') + where + funding;
+}
+
+/**
+ * WHAT THE SEAT COST, IN THE WORDS THE NODE USED.
+ *
+ * `free seat` is a round that asks no stake - there is nothing to pay and
+ * nothing was dealt. `stake dealt, unpaid` is a paying round the page has
+ * dealt a preimage and shares for and cannot fund, which is every paying round
+ * until M3.2 puts a wallet in the page. Anything else is the node's own hold
+ * state, printed rather than interpreted.
+ */
+export function stakeLine(stake) {
+  if (!stake) return '';
+  if (stake.free) return ' · free seat';
+  if (!stake.dealt) return '';
+  const held = stake.hold && stake.hold.state;
+  if (held && held !== 'none') return ` · stake ${String(held).toLowerCase()}`;
+  const why = stake.hold && stake.hold.why;
+  return ' · stake dealt, unpaid' + (why ? ` (${why})` : '');
 }

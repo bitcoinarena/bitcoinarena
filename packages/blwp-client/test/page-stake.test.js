@@ -24,12 +24,16 @@ import { openStore } from '../../blwp-node/src/store.js';
 import { serve } from '../../blwp-node/src/server.js';
 import { feldmanGroup } from '../../blwp-node/src/curve.js';
 import { stakeFor, entryFor, fetchSettlementSeats, roundPays } from '../src/join.js';
+import { playersLine, stakeLine } from '../src/ghost-field.js';
+import { Client } from '../src/client.js';
+import { readFileSync } from 'node:fs';
 import { encodeRoundContract, encodeEntryContract, roundId, entryId } from '../../protocol/src/contracts.js';
 import { handoutId, decodeHandout, openMyShare, NO_SHARES } from '../../protocol/src/handout.js';
 import { sha256, toHex } from '../../protocol/src/hash.js';
 import { MIN_ENTRY_WINDOW_MS } from '../../protocol/src/constants.js';
 import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
 import { SHARES_TOTAL, SHARES_NEEDED } from '../../protocol/src/shares.js';
+import { entryFeeMsat, feeMatchesEntry } from '../../protocol/src/fee.js';
 
 const rand = (n) => new Uint8Array(randomBytes(n));
 const b32 = (n) => new Uint8Array(32).fill(n);
@@ -189,5 +193,128 @@ test('a round that asks no stake deals none, and says so', async () => {
     const answer = await post(world.nodes[0].port, '/entry', encodeEntryContract(joined.entry));
     assert.equal(answer.status, 201, answer.text);
     console.log('  a free round: no stake dealt, 32 zero share bytes, and the daemon takes it');
+  } finally { await world.close(); }
+});
+
+/**
+ * AND THE PLAYER CAN SEE ALL OF IT, which is where the first close of this
+ * letter stopped short.
+ *
+ * The refusal and the stake went to `console.error` and `console.log`. The chip
+ * reads `playersLine`, so a refused seat printed "round named · not seated" -
+ * word for word what a page nobody sent a round to prints - and a free seat
+ * printed "1 player · waiting", word for word what a funded one prints. A
+ * silent refusal and a silent free seat are the same fault this letter opened
+ * on, on the other side of the glass.
+ */
+test('the chip says why there is no seat, and what the seat cost', () => {
+  // A REFUSAL NAMES ITSELF, and it beats the bridge's own message: with no
+  // entry the jslib throws "the page did not say which round to play", which
+  // is a true sentence about the wrong cause.
+  assert.equal(
+    playersLine({ seated: false, seatRefused: 'its settlement committee could not be learned' }),
+    'not seated · its settlement committee could not be learned');
+
+  // A round nobody was sent to still reads the way it always did.
+  assert.equal(playersLine({ seated: false }), 'round named · not seated');
+
+  // A FREE ROUND SAYS SO.
+  assert.equal(playersLine({ seated: true, others: 1, stake: { free: true, dealt: false } }),
+    '2 players in this round · free seat');
+
+  // A DEALT BUT UNFUNDED SEAT SAYS SO, and it must not read like a funded one.
+  const dealtOnly = playersLine({
+    seated: true, others: 0, stake: { dealt: true, hold: { state: 'none', why: null } },
+  });
+  assert.equal(dealtOnly, '1 player · waiting · stake dealt, unpaid');
+  assert.notEqual(dealtOnly, playersLine({ seated: true, others: 0 }),
+    'a free seat reads exactly like a funded one');
+
+  // AND THE WORD IS THE NODE'S, not this page's. A hold the node reports is
+  // printed; the reason there is none is printed beside it.
+  assert.equal(stakeLine({ dealt: true, hold: { state: 'HELD' } }), ' · stake held');
+  assert.equal(stakeLine({ dealt: true, hold: { state: 'none', why: 'no lightning port' } }),
+    ' · stake dealt, unpaid (no lightning port)');
+  assert.equal(stakeLine(null), '');
+
+  // AND THE PAGE HANDS THEM OVER. The chip is in the one file node --test
+  // cannot load, so what is pinned is that it calls the rule with the two
+  // things it learned.
+  const page = readFileSync(new URL('../../../unity-proto/Assets/WebGLTemplates/BtcLogistics/index.html', import.meta.url), 'utf8');
+  assert.match(page, /seatRefused,\s*stake/, 'the chip is not told why there is no seat');
+  assert.match(page, /net\.client\.seatHold/, 'the chip invents the funding word instead of reading the node\'s');
+  assert.ok(!page.includes('THE STAKE IS NOT PAID'),
+    'the page still asserts a funding state it did not measure');
+});
+
+/**
+ * THE NODE ALREADY ANSWERS WHETHER THERE IS A HOLD, and nothing read it.
+ *
+ * 23.1 issues the hold AT THE SEAT: `POST /entry` calls `custody.hold` and
+ * answers `x-hold` with the state or `x-hold-why` with the reason there is
+ * none. Both headers were dropped on the floor, so a page wanting to tell a
+ * player whether their stake was funded had to guess - and the first close of
+ * this letter guessed, printing "the stake is not paid" as a constant.
+ */
+test('joining keeps the hold the node reported', async () => {
+  const world = await daemons(SHARES_NEEDED);
+  try {
+    const settlement = world.nodes.map((n) => n.round.pubkey);
+    const joined = await pageJoins(world, settlement);
+    const client = new Client({
+      base: `http://127.0.0.1:${world.nodes[0].port}`,
+      core: {}, sign: async () => new Uint8Array(64), verify: () => true,
+    });
+    assert.equal(client.seatHold, null, 'a client that has joined nothing claims a hold');
+    assert.deepEqual(client.hold, [], 'the seat hold was written over the tick buffer');
+    await client.join(joined.entry);
+    assert.ok(client.seatHold, 'the hold the node reported was thrown away');
+    // AND THE TICK BUFFER IS STILL A BUFFER. Written as `this.hold` first,
+    // which is the array `record` pushes into: every suite stayed green
+    // because the jslib happens to call `setRound` after `join` and `setRound`
+    // puts the array back.
+    assert.deepEqual(client.hold, [], 'joining replaced the tick buffer with the seat hold');
+    // This daemon has no Lightning, so there is no hold and it says why - which
+    // is exactly the state every page is in until M3.2.
+    assert.equal(client.seatHold.state, 'none');
+    assert.ok(client.seatHold.why && client.seatHold.why.length, 'the node gave no reason there is no hold');
+    console.log(`  the node answered x-hold: ${client.seatHold.state} (${client.seatHold.why})`);
+    assert.equal(stakeLine({ dealt: true, hold: client.seatHold }),
+      ` · stake dealt, unpaid (${client.seatHold.why})`);
+  } finally { await world.close(); }
+});
+
+/**
+ * AND THE ENTRY'S FEE STANDS, which every entry the page ever built did not.
+ *
+ * `feeMatchesEntry` says an entry's `feeMsat` must be exactly 2% of its own
+ * `stakeMsat` - too little and the round collected less than the fee table will
+ * owe its nodes, too much and the excess is income no table allocates. It had
+ * ZERO CALLERS outside its own tests, and `entryFor` wrote `feeMsat: 0n`, so on
+ * the fixture stake every paying entry was charged 0 where 2000 is owed.
+ */
+test('a paying entry from the page is charged the fee the round asks', async () => {
+  const world = await daemons(SHARES_NEEDED);
+  try {
+    const joined = await pageJoins(world, world.nodes.map((n) => n.round.pubkey));
+    const stands = feeMatchesEntry(joined.entry);
+    assert.equal(stands.ok, true, stands.why);
+    assert.equal(joined.entry.feeMsat, entryFeeMsat(world.contract.stakeMsat));
+    assert.equal(joined.entry.feeMsat, 2000n, 'the fixture stake is not the one this was measured on');
+    console.log(`  stake ${world.contract.stakeMsat} msat, fee ${joined.entry.feeMsat} msat - 2%, and it stands`);
+
+    // AND A DAEMON TAKES IT, so the fee is not a number that only satisfies a
+    // rule nothing runs.
+    const answer = await post(world.nodes[0].port, '/entry', encodeEntryContract(joined.entry));
+    assert.equal(answer.status, 201, answer.text);
+  } finally { await world.close(); }
+});
+
+test('a free round is charged 2% of nothing, and that stands too', async () => {
+  const world = await daemons(2, { stakeMsat: 0n });
+  try {
+    const joined = await pageJoins(world, []);
+    assert.equal(joined.entry.feeMsat, 0n);
+    assert.equal(feeMatchesEntry(joined.entry).ok, true);
   } finally { await world.close(); }
 });

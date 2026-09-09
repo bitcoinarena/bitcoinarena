@@ -4635,6 +4635,9 @@ class Client {
     this.resynced = false;
     this.recovering = null;
     this.nextTick = 0;            // the tick the node is owed next
+    // What the node said about this seat's hold when it took the entry. NOT
+    // `hold`, which is the tick buffer below.
+    this.seatHold = null;
     this.loads = [];              // [tick, feeSats, btcHundredths], not yet published
     this.nodes = [];              // the committee, off the round's own contract
     this.gameVerifySlots = 7;
@@ -4729,6 +4732,28 @@ class Client {
       method: 'POST', body: encodeEntryContract(entry),
     });
     if (r.status !== 201) throw new Error(`the node refused the entry: ${(await r.text()).trim()}`);
+
+    // AND WHETHER THERE IS A HOLD ON THIS SEAT, WHICH THE NODE ALREADY SAID.
+    //
+    // 23.1 issues the hold invoice AT THE SEAT - `POST /entry` calls
+    // `custody.hold` and answers `x-hold` with the state, or `x-hold-why` with
+    // the reason there is none. Both headers were read by nothing, so a page
+    // that wanted to tell a player whether their stake was funded had to
+    // ASSUME, and letter 15's first wiring assumed: it printed "the stake is
+    // not paid" as a constant while the node was answering the question.
+    //
+    // Kept rather than returned, because every caller of `join` wants the
+    // entry id and none of them expected a second value.
+    //
+    // `seatHold` AND NOT `hold`, which is already the ticks waiting to go out.
+    // Written as `this.hold` first and every suite stayed green by luck of
+    // ordering: the jslib calls `setRound` after `join`, and `setRound` puts
+    // the array back. A page that joined and published without one in between
+    // would have called `.push` on an object and lost the run.
+    this.seatHold = {
+      state: r.headers.get('x-hold') || 'none',
+      why: r.headers.get('x-hold-why') || null,
+    };
     return agrees(mine, new Uint8Array(await r.arrayBuffer()), 'entry');
   }
 
@@ -5683,17 +5708,62 @@ function newestPose(field) {
  * last tick that landed. That is what the 16:08 two-Chrome close-out saw from
  * the other side, and neither tab had a number that said so.
  */
-function playersLine({ seated, others, stalled = false, at = null, refused = null } = {}) {
+function playersLine({ seated, others, stalled = false, at = null, refused = null,
+  seatRefused = null, stake = null } = {}) {
+  // WHY THERE IS NO SEAT, AND NOT MERELY THAT THERE IS NONE.
+  //
+  // Letter 15 made the page refuse a paying round whose settlement committee
+  // it cannot learn - and the refusal went to `console.error`, so the chip
+  // read "round named · not seated" exactly as it does for a round nobody was
+  // sent to. Worse, the bridge then threw "the page did not say which round to
+  // play", which names the wrong cause entirely. A refusal nobody can see is
+  // the silent seat again, wearing the other hat.
+  if (seatRefused) return `not seated · ${seatRefused}`;
   if (!seated) return 'round named · not seated';
   if (refused) return `not publishing · ${refused}`;
+
+  // AND WHETHER THIS SEAT IS PAID FOR.
+  //
+  // A dealt stake is not a funded one: the page deals the preimage and the
+  // shares, and paying the hold invoice is a wallet it has not got yet (M3.2).
+  // Without this line a free seat and a funded seat read identically, which is
+  // the thing letter 15 exists to stop.
+  //
+  // THE WORD IS THE NODE'S. `Client.join` keeps the `x-hold` the node answered
+  // when it took the entry; a page that printed "not paid" as a constant would
+  // be reporting its own assumption as the player's balance.
+  const funding = stakeLine(stake);
   const n = 1 + (others | 0);
-  if (n <= 1) return '1 player · waiting';
+  // THE FUNDING WORD IS ON EVERY BRANCH, and it was not: this returned early
+  // for a lone player, so the one line a player sits looking at while they
+  // wait for somebody else - the longest-lived line on the chip - was the one
+  // that did not say the seat was unpaid. Its own test caught it.
+  if (n <= 1) return '1 player · waiting' + funding;
   // A PAGE THAT IS BEING SENT TRUCKS AND DRAWING NONE SAYS SO. Without this
   // the line reads the same as a page that is drawing them, which is what
   // made the 11:51 retest a guess: five players on the chip, one truck on the
   // screen, and no number between them.
   const where = at ? ` · other at ${Math.round(at.x)},${Math.round(at.z)} m` : '';
-  return n + ' players in this round' + (stalled ? ' · none drawn' : '') + where;
+  return n + ' players in this round' + (stalled ? ' · none drawn' : '') + where + funding;
+}
+
+/**
+ * WHAT THE SEAT COST, IN THE WORDS THE NODE USED.
+ *
+ * `free seat` is a round that asks no stake - there is nothing to pay and
+ * nothing was dealt. `stake dealt, unpaid` is a paying round the page has
+ * dealt a preimage and shares for and cannot fund, which is every paying round
+ * until M3.2 puts a wallet in the page. Anything else is the node's own hold
+ * state, printed rather than interpreted.
+ */
+function stakeLine(stake) {
+  if (!stake) return '';
+  if (stake.free) return ' · free seat';
+  if (!stake.dealt) return '';
+  const held = stake.hold && stake.hold.state;
+  if (held && held !== 'none') return ` · stake ${String(held).toLowerCase()}`;
+  const why = stake.hold && stake.hold.why;
+  return ' · stake dealt, unpaid' + (why ? ` (${why})` : '');
 }
 
 // ---- protocol/src/shares.js
@@ -6432,6 +6502,807 @@ function seedWordForEntry(entry, roundRandomness) {
   }));
 }
 
+// ---- protocol/src/payout.js
+// The payout table. Pure, and identical in node, client and replayer.
+//
+// Millisatoshi BigInt throughout. No float goes anywhere near money - not for
+// a share, not for a rank weight, not for a percentage. Every division here is
+// integer division with an explicit remainder, and the remainder is then
+// distributed by a rule rather than dropped.
+
+
+
+
+const DELIVERED = 'DELIVERED';
+const FAILED = 'FAILED';
+const FORFEIT = 'FORFEIT';
+const VOID = 'VOID';
+
+/**
+ * An entry that never left the door.
+ *
+ * Section 14's ladder names both - "VOID / ENTRY_VOID (refund; reachable only
+ * from PROVISIONAL)" - and section 18 gives them one pool rule: "VOID and
+ * ENTRY_VOID entries neither contribute to nor draw from the pool." 23.2 gives
+ * them one hold: do nothing, it expires, the wallet is refunded.
+ *
+ * So they behave alike everywhere money is counted, and they are still two
+ * words, because they say different things about what happened. VOID is a
+ * round that was played and could not be settled; ENTRY_VOID is an entry that
+ * never activated - section 16: "before stake commitment: no financial entry
+ * exists; no loss". Writing the second as the first would record a round
+ * nobody played.
+ */
+const ENTRY_VOID = 'ENTRY_VOID';
+
+/** The two words that mean the stake goes home and the pool never sees it. */
+const REFUNDS = [VOID, ENTRY_VOID];
+const isRefund = (outcome) => REFUNDS.includes(outcome);
+
+/**
+ * Rank weights as EXACT INTEGERS.
+ *
+ * The curve is geometric with r = 3/4 (spec 18A.4). Written as a float it
+ * would be 0.75^(i-1), which is unrepresentable and would put rounding
+ * between two nodes' payout tables. Multiplied through by 4^(K-1) it becomes
+ *
+ *     w_i = 3^(i-1) * 4^(K-i)
+ *
+ * which is an integer, sums exactly, and gives identical shares everywhere.
+ */
+function rankWeights(k) {
+  if (k <= 0) return [];
+  const w = [];
+  for (let i = 1; i <= k; i++) w.push(3n ** BigInt(i - 1) * 4n ** BigInt(k - i));
+  return w;
+}
+
+/** K = ceil(qualifiers / 4), at least one. Spec 18A.4. */
+const payingRanks = (qualifiers) =>
+  qualifiers <= 0 ? 0 : Math.max(1, Math.ceil(qualifiers / 4));
+
+/**
+ * The order leftover millisatoshi are handed out in.
+ *
+ * Deterministic and unguessable in advance: ascending H(round_id || pubkey).
+ * Dropping the remainder instead would break the sum invariant below, and
+ * giving it to the top rank would be a silent extra prize.
+ */
+function remainderOrder(roundId, entries) {
+  return entries
+    .map((e) => {
+      const w = new Writer();
+      w.bytes32(roundId);
+      w.bytes32(e.pubkey);
+      return { e, key: bytesToBigInt(taggedHash(TAG.remainder, w.finish())) };
+    })
+    .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
+    .map((x) => x.e);
+}
+
+/**
+ * computePayoutTable
+ *
+ * `entries` carry: pubkey (32 bytes), stakeMsat (BigInt), outcome, score.
+ * Returns a payout per entry plus the pool that produced it.
+ *
+ * The invariant at the end is the whole point of the function. If it does not
+ * hold the node REFUSES TO SIGN rather than signing something inconsistent -
+ * one assertion that catches a whole class of mistakes for free.
+ */
+function computePayoutTable({ roundId, entries, minScore = 0 }) {
+  for (const e of entries)
+    if (typeof e.stakeMsat !== 'bigint')
+      throw new Error('stakes must be BigInt millisatoshi');
+
+  const activated = entries.filter((e) => !isRefund(e.outcome));
+  const pool = activated
+    .filter((e) => e.outcome === FAILED || e.outcome === FORFEIT)
+    .reduce((s, e) => s + e.stakeMsat, 0n);
+
+  // Qualification is generous on purpose: a cautious player keeps their stake
+  // and simply does not place. Disqualifying them would move their stake into
+  // the pool, which is a levy on a legal strategy rather than balance.
+  const qualifiers = activated
+    .filter((e) => e.outcome === DELIVERED && e.score >= minScore)
+    .sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      // ties decided by the same rule the remainder uses, so the order is not
+      // the order the entries happened to arrive in
+      return compareBytes(a.pubkey, b.pubkey);
+    });
+
+  // WHOSE STAKE ACTUALLY ENTERS THE POT.
+  //
+  // Not every activated entry. A delivered player below the score "keeps their
+  // stake and simply does not place" - the comment above has always said so -
+  // and the table paid them ZERO, which with a settled hold is the operator
+  // keeping it. With no loser in the round the pool is empty, the check below
+  // was skipped, and nothing noticed. They are excluded from the pot instead:
+  // their hold is cancelled and the money never leaves them.
+  //
+  // This set is returned, so `holdSettlement` cannot decide it differently.
+  // Two places deciding which stakes move is two places to get it wrong.
+  const keepsTheirStake = (e) => e.outcome === DELIVERED && e.score < minScore;
+  const settling = activated.filter((e) => !keepsTheirStake(e));
+
+  const payouts = new Map();
+  for (const e of activated) payouts.set(e, 0n);
+  for (const e of qualifiers) payouts.set(e, e.stakeMsat);      // stake back
+
+  const k = Math.min(payingRanks(qualifiers.length), qualifiers.length);
+  const weights = rankWeights(k);
+  const total = weights.reduce((s, w) => s + w, 0n);
+
+  let handed = 0n;
+  if (total > 0n && pool > 0n) {
+    for (let i = 0; i < k; i++) {
+      const share = (pool * weights[i]) / total;              // floor
+      payouts.set(qualifiers[i], payouts.get(qualifiers[i]) + share);
+      handed += share;
+    }
+    // whatever the floors left behind, one millisatoshi at a time
+    let left = pool - handed;
+    if (left > 0n) {
+      const order = remainderOrder(roundId, qualifiers.slice(0, k));
+      for (let i = 0; left > 0n; i = (i + 1) % order.length) {
+        payouts.set(order[i], payouts.get(order[i]) + 1n);
+        left -= 1n;
+      }
+      handed = pool;
+    }
+  }
+
+  const paid = [...payouts.values()].reduce((s, v) => s + v, 0n);
+  const staked = settling.reduce((s, e) => s + e.stakeMsat, 0n);
+
+  // Fees and donations are charged ON TOP of the stake at entry (spec 18), so
+  // they never appear here - which is exactly why this equality is clean. It
+  // no longer waits for a non-empty pool: an empty one was where the cautious
+  // player's stake went missing.
+  if (qualifiers.length > 0 && paid !== staked)
+    throw new Error(`payout invariant broken: paid ${paid} against staked ${staked}`);
+
+  return {
+    pool,
+    qualifiers: qualifiers.length,
+    payingRanks: k,
+    settling,
+    activated,
+    table: activated.map((e) => ({ pubkey: e.pubkey, amountMsat: payouts.get(e) })),
+  };
+}
+
+/**
+ * THE TABLE AS BYTES, so a node can sign one thing and a stranger can check
+ * the same thing years later.
+ *
+ * §20 fixes `F` and says "nodes sign the payout-table hash" - it does not fix
+ * the bytes that hash is taken over. `TYPE_PAYOUT_TABLE` was reserved for this
+ * object before anything used it, so filling that slot is the same move the
+ * objection made when the spec gave a field list and no encoding: the layout
+ * is written down here rather than left for two implementations to guess at
+ * differently.
+ *
+ * THE ROUND IS IN IT. Without it a table is a list of amounts that could
+ * belong to any round with the same players, and a signature over it would
+ * carry across rounds - which is exactly the replay a tagged hash exists to
+ * stop one level down.
+ *
+ * THE ORDER IS THE TABLE'S OWN. `computePayoutTable` returns rows in
+ * `activated` order, which is the caller's entry order, so it is sorted here
+ * by pubkey: two honest nodes handed the same entries in a different order
+ * must sign the same bytes, or `F` being deterministic buys nothing.
+ */
+function encodePayoutTable({ roundId, table }) {
+  const w = new Writer();
+  w.u8(TYPE_PAYOUT_TABLE);
+  w.u16(PROTOCOL_VERSION);
+  w.bytes32(roundId);
+  const rows = [...table].sort((a, b) => compareBytes(a.pubkey, b.pubkey));
+  w.vec(rows, (row, ww) => {
+    ww.bytes32(row.pubkey);
+    ww.u64(row.amountMsat);
+  });
+  return w.finish();
+}
+
+function decodePayoutTable(bytes) {
+  const r = new Reader(bytes);
+  if (r.u8() !== TYPE_PAYOUT_TABLE) throw new Error('not a payout table');
+  if (r.u16() !== PROTOCOL_VERSION) throw new Error('unknown protocol version');
+  const roundId = r.bytes32();
+  const table = r.vec((rr) => ({ pubkey: rr.bytes32(), amountMsat: rr.u64() }));
+  if (r.at !== bytes.length) throw new Error('trailing bytes after the payout table');
+  return { roundId, table };
+}
+
+/** What §20's "nodes sign the payout-table hash" means, in bytes. */
+const payoutTableId = (t) => taggedHash(TAG.payoutTable, encodePayoutTable(t));
+
+// Exported because `interest.js` needs the same total order over ids, and a
+// second copy of a comparator is a second place for it to drift - the reason
+// `slotsForRole` imports 22A's pool mapping rather than restating it.
+function compareBytes(a, b) {
+  for (let i = 0; i < a.length && i < b.length; i++)
+    if (a[i] !== b[i]) return a[i] - b[i];
+  return a.length - b.length;
+}
+
+/**
+ * WHAT AN ENTRY BECOMES WHEN THE COMMITTEE COULD NOT AGREE.
+ *
+ * Section 13C's no-quorum rule, and its asymmetry is the whole of it: "a
+ * player cannot manufacture a refund by causing disagreement, because the only
+ * way a player can cause it is equivocation, and equivocation forfeits.
+ * Everything else that goes wrong is the infrastructure's fault and refunds."
+ *
+ *   a result with 5-of-7            the committee agreed; this rule does not
+ *                                   apply and says so rather than guessing
+ *   a proven fork, no quorum        FORFEIT. The stake joins the loser pool.
+ *   no proof, no quorum             VOID. The entry is excluded from the pool
+ *                                   and from the payout table, and the stake
+ *                                   goes back.
+ *
+ * THE PROOF IS TAKEN AS ALREADY CHECKED, and that is deliberate rather than
+ * lax: `provesEquivocation` verifies signatures and needs a curve, this
+ * package carries none, and a decision that re-verified would need one here.
+ * The caller passes what it has verified - a node that publishes a proof has
+ * verified it, and a caller that passes `true` on an unchecked object has
+ * forfeited somebody's stake on its own say-so.
+ *
+ * PLAYER_LOST IS NOT A WORD HERE. FORFEIT already names the case where the
+ * player's own conduct costs the stake, and a synonym would be a second word
+ * for one outcome and a second place to get it wrong.
+ */
+function noQuorumOutcome({ signatures, needed, equivocationProven, state }) {
+  if (!Number.isInteger(signatures) || signatures < 0)
+    throw new Error('signatures is a count of committee members, and cannot be negative');
+  if (!Number.isInteger(needed) || needed <= 0)
+    throw new Error('the threshold is a positive count of committee members');
+
+  // A FINAL RESULT CANNOT BE VOIDED, AND THIS IS WHERE THAT IS SAID.
+  //
+  // Section 14's ladder: "PROVISIONAL -> VOID / ENTRY_VOID (refund; REACHABLE
+  // ONLY FROM PROVISIONAL)", and its opening line: "once a player's result is
+  // FINAL, later infrastructure failure does not erase it."
+  //
+  // Measured before this refusal existed: a result that five committee members
+  // had signed, whose objection window had closed, answered FINAL - and this
+  // function, asked afterwards with a low count, answered VOID. Both were
+  // right on their own and nothing crossed them, so a settled round could be
+  // refunded after the fact. That is the escape hatch section 14 exists to
+  // shut, and it is the operator's as much as the player's: a node that went
+  // quiet after finality could unmake a loss.
+  if (state === 'FINAL')
+    return {
+      outcome: null,
+      why: 'that result is already FINAL, and a later failure does not erase it: '
+        + 'VOID is reachable only from PROVISIONAL',
+    };
+
+  if (signatures >= needed)
+    return { outcome: null, why: `the committee agreed: ${signatures} of ${needed}` };
+
+  if (equivocationProven === true)
+    return {
+      outcome: FORFEIT,
+      why: `no quorum at ${signatures} of ${needed}, and the player signed two `
+        + 'chains: 13B forfeits the entry',
+    };
+
+  return {
+    outcome: VOID,
+    why: `no quorum at ${signatures} of ${needed}, and nothing shows the player `
+      + 'caused it: the fault is the operator side and the stake goes back',
+  };
+}
+
+/** What must happen to a hold invoice, section 23.2. */
+const SETTLE = 'SETTLE';       // release the preimage; the stake enters the pool
+const CANCEL = 'CANCEL';       // hand it back; can only return money to its owner
+const NOTHING = 'NOTHING';     // let it expire; the wallet is refunded automatically
+
+/** 5-of-7, the threshold on both preimage shares and settlement signatures. */
+const SETTLEMENT_THRESHOLD = 5;
+
+/**
+ * The three actions on the wire. Order is protocol: it indexes `actionByte`,
+ * and a record that encoded them by name would let two implementations spell
+ * one action two ways.
+ */
+const ACTIONS = [SETTLE, CANCEL, NOTHING];
+const actionByte = (action) => {
+  const i = ACTIONS.indexOf(action);
+  if (i < 0) throw new Error('unknown settlement action: ' + action);
+  return i;
+};
+const actionOf = (byte) => {
+  if (!ACTIONS[byte]) throw new Error('unknown settlement action byte: ' + byte);
+  return ACTIONS[byte];
+};
+
+/**
+ * WHAT EACH OUTCOME DOES TO ITS HOLD INVOICE, AND WHAT IT TAKES TO DO IT.
+ *
+ * Section 23.2, and the shape of the table is the safety property:
+ *
+ *   DELIVERED (qualifying)  Cancel the HTLC -> the stake returns to the player
+ *                           Requires 5-of-7 settlement signatures; "cancelling
+ *                           can only return money to its owner"
+ *   FAILED / FORFEIT        Settle the HTLC -> the stake enters the pool wallet
+ *                           Requires a FINAL result, an elapsed window, no
+ *                           valid objection, at least 5 preimage shares, and
+ *                           5-of-7 settlement signatures
+ *   VOID                    DO NOTHING. "The HTLC expires and the wallet is
+ *                           refunded automatically."
+ *
+ * "The default path - nobody acting - is always the refund. That is what makes
+ * infrastructure failure safe." So VOID is not a cancel: a cancel needs five
+ * of seven signatures, and a refund that needed somebody to act would be a
+ * refund an operator could withhold by doing nothing. Inaction has to be the
+ * safe direction, and only SETTLE moves money away from the player.
+ *
+ * The conditions come in as facts already established elsewhere - `finality`
+ * answers the first three, and the share and signature counts belong to the
+ * settlement committee. Nothing is assumed true: a missing one is named.
+ */
+function settlementAction({
+  outcome, qualifies = false, state, shares = 0, signatures = 0,
+  needed = SETTLEMENT_THRESHOLD,
+}) {
+  if (isRefund(outcome))
+    return {
+      action: NOTHING,
+      authorised: true,
+      missing: [],
+      why: 'the HTLC expires and the wallet is refunded automatically; nobody has to act',
+    };
+
+  if (outcome === DELIVERED) {
+    const missing = signatures >= needed
+      ? [] : [`${signatures} of ${needed} settlement signatures`];
+    return {
+      action: CANCEL,
+      authorised: !missing.length,
+      missing,
+      why: qualifies
+        ? 'the stake returns to the player, and cancelling can only return money to its owner'
+        : 'below the score, the stake was never at risk and returns to its owner',
+    };
+  }
+
+  // FAILED and FORFEIT: the only direction that takes money from a player, and
+  // the only one with five conditions on it.
+  const missing = [];
+  if (state !== 'FINAL') missing.push(`the result is ${state || 'not final'}`);
+  if (shares < needed) missing.push(`${shares} of ${needed} preimage shares`);
+  if (signatures < needed) missing.push(`${signatures} of ${needed} settlement signatures`);
+  return {
+    action: SETTLE,
+    authorised: !missing.length,
+    missing,
+    why: missing.length
+      ? 'the stake stays where it is until every condition is met'
+      : 'the stake enters the pool wallet',
+  };
+}
+
+/**
+ * WHAT HAPPENS TO EACH PLAYER'S HELD STAKE, AND WHAT THE POOL IS MADE OF.
+ *
+ * Section 13C sends a VOID stake back "by letting the HTLC expire"; 23.2 says
+ * which of the three things each outcome does. Only losers' stakes move: the
+ * pool wallet is exactly the settled ones, and a qualifier's own stake never
+ * leaves them - it comes back by cancelling their own invoice, and what they
+ * are PAID from the pool is their winnings on top.
+ *
+ * That is why the equality below is over SHARES and not over amounts. The
+ * table hands a qualifier `stake + share`; the stake half is their own money
+ * returning, and only the share half comes out of the pool.
+ */
+function holdSettlement({ roundId, entries, minScore = 0 }) {
+  const table = computePayoutTable({ roundId, entries, minScore });
+  const settles = new Set(table.settling);
+  const paidTo = new Map(table.table.map((r, i) => [i, r.amountMsat]));
+
+  const actions = entries.map((e) => {
+    const said = settlementAction({
+      outcome: e.outcome,
+      qualifies: e.outcome === DELIVERED && e.score >= minScore,
+      // the conditions themselves are the caller's to establish; this says
+      // which action each entry is FOR, which is what the pool depends on
+      state: 'FINAL', shares: SETTLEMENT_THRESHOLD, signatures: SETTLEMENT_THRESHOLD,
+    });
+    // A delivered player never has their stake settled, whatever the table's
+    // pot arithmetic says: 23.2 cancels it back to them.
+    const action = settles.has(e) && e.outcome !== DELIVERED ? SETTLE : said.action;
+    return { entry: e, action, why: said.why };
+  });
+
+  const poolMsat = actions
+    .filter((a) => a.action === SETTLE)
+    .reduce((s, a) => s + a.entry.stakeMsat, 0n);
+  const refundedMsat = actions
+    .filter((a) => a.action !== SETTLE)
+    .reduce((s, a) => s + a.entry.stakeMsat, 0n);
+
+  // What the pool actually hands out: each row's amount less the entry's own
+  // stake, since that half never entered the pool.
+  //
+  // THE ROWS COME FROM THE TABLE, not from a second filter over the entries.
+  // They are matched to amounts BY INDEX, so a filter here that disagreed with
+  // the one there would line the wrong amount up against the wrong entry - and
+  // a mutant that changed only this one proved the two could drift without any
+  // test noticing.
+  const rows = table.activated;
+  let sharesMsat = 0n;
+  rows.forEach((e, i) => {
+    const amount = paidTo.get(i) || 0n;
+    sharesMsat += amount > e.stakeMsat ? amount - e.stakeMsat : 0n;
+  });
+
+  if (rows.length && poolMsat !== sharesMsat)
+    throw new Error(
+      `the operator would keep ${poolMsat - sharesMsat} msat: a pool of ${poolMsat} `
+      + `against ${sharesMsat} handed out`);
+
+  return {
+    actions, poolMsat, refundedMsat, sharesMsat, table,
+    settledMsat: poolMsat, paidMsat: sharesMsat,
+  };
+}
+
+/** Where a hold invoice can end up. */
+const HELD = 'HELD';           // in flight: accepted, in nobody's balance
+const SETTLED = 'SETTLED';     // the preimage was released; the pool has it
+const CANCELLED = 'CANCELLED'; // handed back on purpose; the payer has it
+const EXPIRED = 'EXPIRED';     // nobody acted; the payer has it
+
+/**
+ * WHERE A HOLD ENDS UP, AS STATE RATHER THAN AS A WORD.
+ *
+ * 23.1: the HTLC is "in flight - accepted but not settled. It is in nobody's
+ * balance." 23.2 gives each outcome one of three things to do to it, and 23.2
+ * ends: "The default path - nobody acting - is always the refund. That is what
+ * makes infrastructure failure safe."
+ *
+ * So the state machine has exactly one shape and it leans one way:
+ *
+ *   nobody acts            EXPIRED, whatever the outcome was. This is the
+ *                          default and it returns the money.
+ *   NOTHING (a VOID)       EXPIRED. Not CANCELLED - a cancel is an ACT, and it
+ *                          needs five of seven; a refund that needed an act is
+ *                          one an operator could withhold.
+ *   SETTLE, authorised     SETTLED, and the pool has it
+ *   CANCEL, authorised     CANCELLED, and the payer has it
+ *   anything unauthorised  HELD - and a hold nobody may act on expires, which
+ *                          is the same refund by another road
+ *
+ * NO INVOICE IS ISSUED HERE and none is settled: this says which end a hold
+ * must reach. Reaching it is a Lightning endpoint, and everything about
+ * `invoice` and `htlc` in this package was a comment until now.
+ */
+function holdAfter({ action, authorised = false, nobodyActs = false }) {
+  if (![SETTLE, CANCEL, NOTHING].includes(action))
+    throw new Error(`${action} is not something that can be done to a hold`);
+
+  if (action === NOTHING || nobodyActs)
+    return {
+      state: EXPIRED,
+      hasIt: 'the payer',
+      why: action === NOTHING
+        ? 'the HTLC expires and the wallet is refunded: nobody has to act'
+        : 'nobody acted, and the default path is always the refund',
+    };
+
+  if (!authorised)
+    return {
+      state: HELD,
+      hasIt: 'nobody',
+      why: 'in flight, in nobody\'s balance, until every condition is met - and '
+        + 'if they never are, it expires back to the payer',
+    };
+
+  return action === SETTLE
+    ? { state: SETTLED, hasIt: 'the pool', why: 'the preimage was released' }
+    : { state: CANCELLED, hasIt: 'the payer', why: 'handed back to its owner' };
+}
+
+/**
+ * SHOULD A PLAYER PAY THIS INVOICE?
+ *
+ * The last thing a player does before their money is in flight, and until now
+ * nothing checked it. 23.1: the endpoint "issues a hold invoice for
+ * `payment_hash`", the player's wallet pays it, and from that moment the stake
+ * is committed - so an invoice for the wrong hash or the wrong amount is a
+ * mistake that cannot be taken back.
+ *
+ *   the payment hash   must be the `stakeCommitment` the entry contract
+ *                      already carries. An invoice for any other hash commits
+ *                      the money to a preimage the committee's shares do not
+ *                      reconstruct, so nobody can ever settle it and nobody
+ *                      can prove why.
+ *   the amount         must be `stakeMsat` exactly. Over, and the player has
+ *                      staked more than the round they signed; under, and the
+ *                      pool the winner is paid from is short.
+ *
+ * BOTH COME OFF THE SIGNED ENTRY CONTRACT, so this needs nothing from a node
+ * and takes nobody's word: the player is checking an invoice against the thing
+ * they themselves signed. Fees and the donation are charged ON TOP at entry
+ * (18) and are not part of the held stake, which is why the comparison is
+ * exact rather than a floor.
+ *
+ * IT DOES NOT ISSUE, SETTLE OR CANCEL ANYTHING. There is no Lightning here.
+ */
+function invoiceMatchesEntry({ paymentHash, amountMsat, entry }) {
+  if (!entry || !(entry.stakeCommitment instanceof Uint8Array))
+    return { ok: false, why: 'no entry contract to check the invoice against' };
+  if (!(paymentHash instanceof Uint8Array) || paymentHash.length !== 32)
+    return { ok: false, why: 'a payment hash is 32 bytes' };
+  if (typeof amountMsat !== 'bigint')
+    return { ok: false, why: 'an amount is BigInt millisatoshi' };
+
+  const hex = (u8) => [...u8].map((b) => b.toString(16).padStart(2, '0')).join('');
+  if (hex(paymentHash) !== hex(entry.stakeCommitment))
+    return {
+      ok: false,
+      why: `that invoice is for ${hex(paymentHash)}, and this entry commits to `
+        + `${hex(entry.stakeCommitment)}: nobody could ever settle it`,
+    };
+  if (amountMsat !== entry.stakeMsat)
+    return {
+      ok: false,
+      why: `that invoice asks ${amountMsat} msat and the entry staked ${entry.stakeMsat}`,
+    };
+  return { ok: true, why: 'the hash and the amount are the ones this entry signed' };
+}
+
+// ---- protocol/src/fee.js
+// 22A: WHAT EACH NODE IS OWED, AND THE FACT THAT SOMEBODY COMPUTES IT.
+//
+// The fee was the one number in this protocol nobody recomputed. 5A.3 row 6
+// decides WHETHER a node qualifies for a share; until this file, nothing said
+// what the share IS - so a qualifying node could claim any amount and no
+// predicate contradicted it. That is the shape row 3 had before
+// `computePayoutTable` was wired into it.
+//
+// 22A gives the whole of it and leaves nothing to taste:
+//
+//   gross_round_volume = sum of stake of every financially activated entry
+//   node_fee = 2.00% of gross_round_volume
+//   1.00% -> GAME/VERIFY pool (7 slots)
+//   1.00% -> SETTLEMENT pool (7 slots)
+//   ...unearned shares are redistributed pro rata among the other eligible
+//   nodes in the same role pool, keeping the total at 2%.
+//   Remainders. Calculate in millisatoshis, floor each base share, and
+//   distribute the remaining msat in ascending H(round_id || node_pubkey).
+//
+// MILLISATOSHI BIGINT THROUGHOUT, like every other money path here. The
+// percentages are basis points and integer division; nothing is a float, and
+// the remainder a floor leaves behind is handed out rather than kept.
+
+// `fromHex` from hash.js and not a private copy. There was one here - the
+// same loop without the odd-length check - and two of one decoder is two
+// places for it to differ. It also made this file unbundleable beside
+// hash.js, which is how it was found.
+
+
+
+
+/** 2.00%, and the 1.00% each pool takes of it. 22A fixes both. */
+const NODE_FEE_BPS = 200;
+const POOL_BPS = 100;
+
+/** The two pools 22A pays, and the roles that sit in each. */
+const GAME_VERIFY = 'gameVerify';
+const SETTLEMENT = 'settlement';
+const POOLS = [GAME_VERIFY, SETTLEMENT];
+
+/**
+ * WHICH POOL A ROLE IS PAID FROM, and it is not a formality.
+ *
+ * 22A: "An operator selected for BOTH roles earns BOTH shares, because it
+ * performs both services." So the two shares are separate money and a seat
+ * held in each is owed each - a table keyed by pubkey alone merges them, and a
+ * claim in one role is then measured against the sum of both, which is an
+ * over-claim nobody can see. Measured while writing this: a settlement claim
+ * from a node that sat on game/verify was judged against the game/verify
+ * share and passed.
+ *
+ * `relay` is not paid by 22A: the fee is named for the two committees.
+ */
+const POOL_OF_ROLE = { game: GAME_VERIFY, verify: GAME_VERIFY, settlement: SETTLEMENT };
+const poolOfRole = (role) => POOL_OF_ROLE[role] || null;
+
+/** Seats are keyed by pool AND key, because the two shares are separate money. */
+const seatKey = (pool, pubkey) => `${pool}:${hex(pubkey)}`;
+
+/**
+ * THE FEE BASE, 22A: "gross_round_volume = sum of stake of every financially
+ * activated entry", and "ENTRY_VOID and VOID entries are excluded".
+ *
+ * The same set `computePayoutTable` calls `activated`, and deliberately the
+ * same predicate rather than a second one: a refunded entry is money that
+ * never moved, and charging a fee on it would be charging for a round the
+ * player was refunded out of.
+ */
+function grossVolumeMsat(entries) {
+  for (const e of entries)
+    if (typeof e.stakeMsat !== 'bigint')
+      throw new Error('stakes must be BigInt millisatoshi');
+  return entries
+    .filter((e) => !isRefund(e.outcome))
+    .reduce((sum, e) => sum + e.stakeMsat, 0n);
+}
+
+/**
+ * WHAT EVERY SEAT IS OWED, AND WHAT NOBODY IS.
+ *
+ * `pools` names the seats of each pool - the committee, as selected - and
+ * `eligible` is who among them qualified under 22A's availability rule, which
+ * is 5A.3 row 6's question and is answered elsewhere.
+ *
+ * THE TWO POOLS SUM TO EXACTLY THE FEE. The second is the remainder of the
+ * first rather than a second division, so a gross that does not divide by
+ * 10000 cannot lose a millisatoshi between them.
+ *
+ * AN EMPTY POOL IS UNALLOCATED, NOT THE OPERATOR'S. 22A keeps the total at 2%
+ * by redistributing inside a role pool, and with nobody eligible in one there
+ * is no inside to redistribute to. The spec does not hand it anywhere, and the
+ * one direction that cannot quietly become the operator's income is nowhere -
+ * so it is returned named, and the caller may not mistake it for a share.
+ *
+ * `roundId` comes off the CONTRACT rather than being passed, so the order the
+ * remainders go out in belongs to the round and not to whoever asks.
+ */
+function nodeFeeTable({ contract, entries, pools, eligible }) {
+  const gross = grossVolumeMsat(entries);
+  const fee = (gross * BigInt(NODE_FEE_BPS)) / 10000n;
+  const first = (gross * BigInt(POOL_BPS)) / 10000n;
+
+  // The second pool is what is left of the fee, not a second division: two
+  // floors of the same ragged number can lose a millisatoshi between them.
+  const shareOf = { [GAME_VERIFY]: first, [SETTLEMENT]: fee - first };
+
+  const id = roundId(contract);
+  const seats = new Map();
+  let unallocated = 0n;
+
+  for (const pool of POOLS) {
+    const amount = shareOf[pool];
+    const inPool = (pools && pools[pool]) || [];
+    const earning = inPool.filter((k) => eligible.has(hex(k)));
+
+    if (!earning.length) { unallocated += amount; continue; }
+
+    // Floor the base share, then hand the leftover out one millisatoshi at a
+    // time in the round's own order - 22A's rule, and the one `payout.js`
+    // already uses for the pool so there is one implementation of it.
+    const each = amount / BigInt(earning.length);
+    let left = amount - each * BigInt(earning.length);
+    for (const k of earning) seats.set(seatKey(pool, k), (seats.get(seatKey(pool, k)) || 0n) + each);
+    for (const e of remainderOrder(id, earning.map((pubkey) => ({ pubkey })))) {
+      if (left <= 0n) break;
+      seats.set(seatKey(pool, e.pubkey), seats.get(seatKey(pool, e.pubkey)) + 1n);
+      left -= 1n;
+    }
+  }
+
+  const paid = [...seats.values()].reduce((a, b) => a + b, 0n);
+  if (paid + unallocated !== fee)
+    throw new Error(`fee table broken: ${paid} paid and ${unallocated} unallocated of ${fee}`);
+
+  return { gross, fee, pools: shareOf, seats, unallocated };
+}
+
+/**
+ * What one seat is owed FOR ONE ROLE, or nothing at all.
+ *
+ * The role is required: 22A pays the two pools separately and a seat held in
+ * both earns both, so "what is this node owed" has no single answer.
+ */
+const feeOwed = (table, nodePubkey, role) => {
+  const pool = poolOfRole(role);
+  return pool ? (table.seats.get(seatKey(pool, nodePubkey)) || 0n) : 0n;
+};
+
+const hex = (bytes) => {
+  let out = '';
+  for (const b of bytes) out += b.toString(16).padStart(2, '0');
+  return out;
+};
+
+/**
+ * THE TABLE AS ONE HASH, so a proof can be bound to it.
+ *
+ * 5A.3B step 4 rests on a stranger being able to re-derive a proof later and
+ * check it. An over-claim is measured against a table, so the proof has to
+ * name WHICH table - otherwise the accuser recomputes from an eligibility set
+ * that suits them and every honest claim is an over-claim.
+ *
+ * The gross and the fee are in it as well as the rows: a table that agreed on
+ * every seat while disagreeing about what the round was worth would be a
+ * different table with the same fingerprint.
+ */
+function feeTableId(table) {
+  const w = new Writer();
+  w.u8(TYPE_FEE_CLAIM);
+  w.u16(PROTOCOL_VERSION);
+  w.u64(table.gross);
+  w.u64(table.fee);
+  w.u64(table.unallocated);
+  const rows = [...table.seats.entries()].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+  w.vec(rows, (row, ww) => {
+    // `pool:key`, so the same node's two shares are two rows and a table that
+    // moved money between the pools is a different table.
+    const [pool, key] = row[0].split(':');
+    ww.u8(POOLS.indexOf(pool));
+    ww.bytes32(fromHex(key));
+    ww.u64(row[1]);
+  });
+  return taggedHash(TAG.feeTable, w.finish());
+}
+
+/**
+ * WHAT ONE ENTRY OWES IN FEE, 18's way: ON TOP of the stake.
+ *
+ * "Node fees and the player-selected donation are charged on top of the stake
+ * at entry and therefore do not reduce the pool." So `stakeMsat` is the gross
+ * stake, the fee rides beside it, and 2% of it is what the player was charged.
+ *
+ * THE RATE IS A CONSTANT AND NOT A CONTRACT FIELD. 22A calls it "2%,
+ * identical for everyone", so one rate covers every entry of every round; a
+ * field would let an operator price its own round's fee, which is the fault
+ * contract fields exist to prevent rather than one to import.
+ *
+ * 22A's Collection section describes the opposite - a 100 sat commitment
+ * yielding a 96 sat net stake - and it contradicts 18 AND 22A's own worked
+ * example, where 61 x 100 sat gross gives a 122 sat fee, exactly what 61
+ * players paying 2 sat each hand over. The net reading gives 117.12 sat, which
+ * is not a whole satoshi. Collection's 96 is the error and is not implemented.
+ *
+ * The same integer floor the table uses, so one rate is applied one way.
+ */
+const entryFeeMsat = (stakeMsat) => {
+  if (typeof stakeMsat !== 'bigint') throw new Error('a stake is BigInt millisatoshi');
+  if (stakeMsat < 0n) throw new Error('a stake cannot be negative');
+  return (stakeMsat * BigInt(NODE_FEE_BPS)) / 10000n;
+};
+
+/**
+ * DOES THIS ENTRY'S FEE STAND?
+ *
+ * An entry whose `feeMsat` is not 2% of its own `stakeMsat` does not, and it
+ * matters in both directions. Too little and the round collected less than the
+ * table will owe its nodes. TOO MUCH AND THE EXCESS IS INCOME: the fee table
+ * computes from the stakes, so a millisatoshi over is a millisatoshi the table
+ * never allocates to anybody and that stays with whoever collected it.
+ *
+ * Answered rather than thrown for a malformed entry, like every other decision
+ * in this package: a caller that asked whether an entry stands should be told,
+ * not made to catch.
+ */
+function feeMatchesEntry(entry) {
+  if (!entry || typeof entry.stakeMsat !== 'bigint' || typeof entry.feeMsat !== 'bigint')
+    return { ok: false, why: 'an entry carries a BigInt millisatoshi stake and fee' };
+  if (entry.stakeMsat < 0n || entry.feeMsat < 0n)
+    return { ok: false, why: 'a stake and a fee cannot be negative' };
+
+  const owed = entryFeeMsat(entry.stakeMsat);
+  if (entry.feeMsat === owed)
+    return { ok: true, owed, why: `${owed} is 2% of ${entry.stakeMsat}` };
+
+  return {
+    ok: false,
+    owed,
+    why: entry.feeMsat > owed
+      ? `that entry was charged ${entry.feeMsat} where 2% of ${entry.stakeMsat} is ${owed}: `
+        + `the ${entry.feeMsat - owed} over is money no fee table allocates`
+      : `that entry was charged ${entry.feeMsat} where 2% of ${entry.stakeMsat} is ${owed}`,
+  };
+}
+
 // ---- blwp-client/src/join.js
 // THE ROUND A PAGE WAS SENT TO, NAMED IN ITS OWN URL.
 //
@@ -6454,6 +7325,7 @@ function seedWordForEntry(entry, roundRandomness) {
 // first server felt like returning - a different stake, a different committee,
 // a different core hash - which is precisely the substitution the round id
 // exists to prevent. Same rule as the entry a resuming client re-hashes.
+
 
 
 
@@ -6848,7 +7720,18 @@ function entryFor(round, { playerPubkey, random, joinTick = 0, stake } = {}) {
     // has none can never be the same entry id.
     vssSharesRef: stake ? stake.vssSharesRef : NO_SHARES,
     stakeMsat: round.stakeMsat,
-    feeMsat: 0n,
+    // THE NODE FEE, AND IT IS 2% OF THIS ENTRY'S OWN STAKE.
+    //
+    // This was `0n` on every entry the page ever built, and `feeMatchesEntry`
+    // - the rule that says an entry's fee must be exactly `entryFeeMsat` of
+    // its stake - had ZERO CALLERS outside its own tests, so nothing refused
+    // one. Measured on the fixture stake: 2% of 100000 msat is 2000, and the
+    // page wrote 0, so every paying entry it made DID NOT STAND. Too little
+    // and the round collected less than the fee table will owe its nodes.
+    //
+    // A free round is 2% of nothing, which is nothing, so the same line is
+    // right for both and there is no branch to get wrong.
+    feeMsat: entryFeeMsat(BigInt(round.stakeMsat || 0n)),
     donationMsat: 0n,
     joinTick,
   };
@@ -6924,6 +7807,7 @@ return { Client: Client, markState: markState,
          encodeEntryContract: encodeEntryContract, entryId: entryId,
          watchGhosts: watchGhosts, GHOST_BACKLOG: GHOST_BACKLOG,
          playersLine: playersLine, newestPose: newestPose,
+         stakeLine: stakeLine,
          joinQuery: joinQuery, joinFromQuery: joinFromQuery,
          fetchRound: fetchRound, bondProvider: bondProvider,
          fetchRandomness: fetchRandomness, worldSeedFor: worldSeedFor,

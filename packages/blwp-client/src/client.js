@@ -247,6 +247,9 @@ export class Client {
     this.resynced = false;
     this.recovering = null;
     this.nextTick = 0;            // the tick the node is owed next
+    // What the node said about this seat's hold when it took the entry. NOT
+    // `hold`, which is the tick buffer below.
+    this.seatHold = null;
     this.loads = [];              // [tick, feeSats, btcHundredths], not yet published
     this.nodes = [];              // the committee, off the round's own contract
     this.gameVerifySlots = 7;
@@ -341,6 +344,28 @@ export class Client {
       method: 'POST', body: encodeEntryContract(entry),
     });
     if (r.status !== 201) throw new Error(`the node refused the entry: ${(await r.text()).trim()}`);
+
+    // AND WHETHER THERE IS A HOLD ON THIS SEAT, WHICH THE NODE ALREADY SAID.
+    //
+    // 23.1 issues the hold invoice AT THE SEAT - `POST /entry` calls
+    // `custody.hold` and answers `x-hold` with the state, or `x-hold-why` with
+    // the reason there is none. Both headers were read by nothing, so a page
+    // that wanted to tell a player whether their stake was funded had to
+    // ASSUME, and letter 15's first wiring assumed: it printed "the stake is
+    // not paid" as a constant while the node was answering the question.
+    //
+    // Kept rather than returned, because every caller of `join` wants the
+    // entry id and none of them expected a second value.
+    //
+    // `seatHold` AND NOT `hold`, which is already the ticks waiting to go out.
+    // Written as `this.hold` first and every suite stayed green by luck of
+    // ordering: the jslib calls `setRound` after `join`, and `setRound` puts
+    // the array back. A page that joined and published without one in between
+    // would have called `.push` on an object and lost the run.
+    this.seatHold = {
+      state: r.headers.get('x-hold') || 'none',
+      why: r.headers.get('x-hold-why') || null,
+    };
     return agrees(mine, new Uint8Array(await r.arrayBuffer()), 'entry');
   }
 

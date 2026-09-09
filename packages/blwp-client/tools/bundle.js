@@ -97,6 +97,7 @@ out += '         encodeRoundContract: encodeRoundContract, roundId: roundId,\n';
 out += '         encodeEntryContract: encodeEntryContract, entryId: entryId,\n';
 out += '         watchGhosts: watchGhosts, GHOST_BACKLOG: GHOST_BACKLOG,\n';
 out += '         playersLine: playersLine, newestPose: newestPose,\n';
+out += '         stakeLine: stakeLine,\n';
 out += '         joinQuery: joinQuery, joinFromQuery: joinFromQuery,\n';
 out += '         fetchRound: fetchRound, bondProvider: bondProvider,\n';
 // THE SEED THE COMMITTEE WILL REPLAY THIS PLAYER WITH. Without it the page

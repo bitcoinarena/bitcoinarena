@@ -16,6 +16,7 @@ import { openStore } from '../../blwp-node/src/store.js';
 import { serve } from '../../blwp-node/src/server.js';
 import { Client } from '../src/client.js';
 import { joinQuery, joinFromQuery, fetchRound, tabIdentity, entryFor, stakeFor, fetchSettlementSeats, roundPays } from '../src/join.js';
+import { entryFeeMsat, feeMatchesEntry } from '../../protocol/src/fee.js';
 import { NO_SHARES } from '../../protocol/src/handout.js';
 import { feldmanGroup } from '../../blwp-node/src/curve.js';
 import { encodeRoundContract, roundId } from '../../protocol/src/contracts.js';
@@ -175,7 +176,24 @@ test('the seat a page takes carries the round\'s own amounts', () => {
   const seat = entryFor(round, { playerPubkey: b32(5), random });
 
   assert.equal(seat.stakeMsat, 100000n, 'the page asked for a stake the round does not name');
-  assert.equal(seat.feeMsat, 0n, 'M2 asks for no money');
+
+  // THE FEE IS 2% OF THE ROUND'S OWN STAKE, and this line used to read
+  // `feeMsat === 0n` with "M2 asks for no money" beside it. That was true of
+  // M2 and the fixture below is a round that DOES ask for money, so the
+  // assertion and its own setup disagreed. `feeMatchesEntry` is the rule -
+  // too little and the round collects less than the fee table will owe its
+  // nodes - and it had zero callers, so nothing noticed.
+  //
+  // M2's rounds are unchanged, and that is asserted rather than argued: 2% of
+  // nothing is nothing, so a round that asks no stake still carries no fee and
+  // there is no branch here to get wrong.
+  assert.equal(seat.feeMsat, entryFeeMsat(100000n));
+  assert.equal(seat.feeMsat, 2000n, 'a paying round is charged 2% of its stake');
+  assert.equal(feeMatchesEntry(seat).ok, true);
+  const free = entryFor({ stakeMsat: 0n, blockTicks: 9000 }, { playerPubkey: b32(5), random });
+  assert.equal(free.feeMsat, 0n, 'a round that asks no money is charged some');
+  assert.equal(feeMatchesEntry(free).ok, true);
+
   assert.equal(seat.donationMsat, 0n);
   assert.equal(seat.joinTick, 0);
   assert.equal(seat.stakeCommitment.length, 32);
@@ -248,8 +266,19 @@ test('the page joins a named round and still invents none', () => {
     'the page deals a handout and never posts it, so no seat can accept it');
   assert.ok(page.includes('BLWP_SEAT_REFUSED'),
     'a paying round whose committee cannot be learned is still seated silently');
-  assert.ok(page.includes('THE STAKE IS NOT PAID'),
-    'the page does not say that the seat it took is a free one');
+  // THE SEAT'S FUNDING REACHES THE SCREEN, and this pin was weaker when it was
+  // written: it asserted the page contained the words "THE STAKE IS NOT PAID",
+  // which is a CONSTANT - the page asserting a funding state it never measured.
+  // The node answers `x-hold` when it takes the entry, so what is pinned now is
+  // that the page hands the chip the node's word and the refusal, and that
+  // `playersLine` is what turns them into a line. Stronger, not looser:
+  // `page-stake.test.js` drives the wording itself.
+  assert.match(page, /seatRefused,\s*stake/,
+    'the chip is never told why there is no seat or what it cost');
+  assert.match(page, /net\.client\.seatHold/,
+    'the page invents the funding word instead of reading the node\'s');
+  assert.ok(!page.includes('THE STAKE IS NOT PAID'),
+    'the page asserts a funding state it did not measure');
 
   // AND IT STILL NAMES NO CONTRACT FIELD. Knowing whether a round asks for
   // money is a rule, so it lives in the client where a test can drive it - the
