@@ -396,3 +396,132 @@ test('a payout with no chain moves nothing and says so', async () => {
   assert.match(seen.why, /no queued payout/);
   assert.equal((await payouts.reconcile()).ok, false);
 });
+
+test('a table naming a key the round never seated pays nobody', () => {
+  // The table comes from this node's own computation, but it arrives at
+  // `winnings` as an argument, and an argument is where a wrong row gets in.
+  const stake = 1000000n;
+  const winner = player(1); const loser = player(2); const stranger = player(9);
+  const entries = entriesOf(stake, [winner, DELIVERED, 9], [loser, FORFEIT, 0]);
+  const built = tableFor({ roundId: b32(1), entries, minScore: 1 });
+
+  const smuggled = [...built.table, { pubkey: stranger.pubkey, amountMsat: stake }];
+  const owed = winnings({ table: smuggled, stakes: entries });
+  assert.equal(owed.ok, false);
+  assert.match(owed.why, /pays a key this round never seated/);
+});
+
+test('a payout cannot spend more than the pool holds', () => {
+  const stake = 1000000n;
+  const winner = player(1); const loser = player(2);
+  const entries = entriesOf(stake, [winner, DELIVERED, 9], [loser, FORFEIT, 0]);
+  const built = tableFor({ roundId: b32(1), entries, minScore: 1 });
+  const owed = winnings({ table: built.table, stakes: entries });
+
+  const short = payoutOutputs({ rows: owed.rows, poolSats: 400n });
+  assert.equal(short.ok, false);
+  assert.match(short.why, /the table owes 1000 sats and the pool holds 400/);
+
+  // And a fee it cannot cover is a refusal too, rather than a smaller payout.
+  const tight = payoutOutputs({ rows: owed.rows, poolSats: 1000n, feeSats: 200n });
+  assert.equal(tight.ok, false);
+  assert.match(tight.why, /0 sats are left for a fee of 200/);
+});
+
+test('a seat\'s signature is verified, not counted', () => {
+  const { rid, contract } = node(1000000n);
+  const winner = player(1); const loser = player(2);
+  const entries = entriesOf(1000000n, [winner, DELIVERED, 9], [loser, FORFEIT, 0]);
+  const built = tableFor({ roundId: rid, entries, minScore: 1 });
+
+  const honest = [1, 2, 3, 4].map((i) =>
+    signPayoutTable({ tableId: built.tableId, secret: seatSecrets[i], pubkey: seatKeys[i] }));
+  // A seated key, the right table id, and 64 bytes that are not a signature.
+  const forged = signPayoutTable({ tableId: built.tableId, secret: seatSecrets[5], pubkey: seatKeys[5] });
+  forged[64] ^= 0xff;
+
+  const seen = verifiedTable([...honest, forged], {
+    contract, seats: seatKeys, tableId: built.tableId,
+  });
+  assert.equal(seen.agreed, 4, 'a forged signature was counted as agreement');
+  assert.equal(seen.forged, 1);
+  assert.equal(seen.final, false);
+});
+
+test('a restart asks the chain, and a transaction it never saw stays queued', async () => {
+  const { round, rid, contract } = node(1000000n);
+  const winner = player(1); const loser = player(2);
+  const entries = entriesOf(1000000n, [winner, DELIVERED, 9], [loser, FORFEIT, 0]);
+  const dealt = poolFor();
+  const chain = fakeChain();
+  const payouts = new Payouts(round, { curve, random: rand, chain, pool: dealt });
+
+  const built = tableFor({ roundId: rid, entries, minScore: 1 });
+  for (let i = 1; i < 5; i++)
+    round.putPayoutSignature(rid, seatKeys[i],
+      signPayoutTable({ tableId: built.tableId, secret: seatSecrets[i], pubkey: seatKeys[i] }));
+  const queued = payouts.queue({ roundId: rid, entries, minScore: 1, contract });
+
+  // The send never left, so the chain has never heard of it.
+  const utxo = { txid: rand(32), vout: 0, value: 1000n };
+  chain.send = async () => { throw new Error('the node stopped before the call left'); };
+  await assert.rejects(() => payouts.pay({ roundId: rid, rows: queued.rows, utxo, signers: dealt.shares.slice(0, 5) }));
+
+  const asked = await payouts.reconcile();
+  assert.equal(asked.ok, true, asked.why);
+  assert.deepEqual(asked.asked.map((a) => a.state), [PAYOUT_QUEUED],
+    'a transaction nobody has seen was written down as paid');
+  assert.equal(round.payout(rid).state, PAYOUT_QUEUED);
+
+  // AND WHEN IT DOES LAND, the same restart finds it.
+  chain.send = async (raw) => {
+    const txid = parseTransaction(raw).txid;
+    chain.sent.set(toHex(txid), raw);
+    return { ok: true, txid };
+  };
+  const paid = await payouts.pay({ roundId: rid, rows: queued.rows, utxo, signers: dealt.shares.slice(0, 5) });
+  assert.equal(paid.state, PAID);
+});
+
+test('the score the round set is the score the table is computed at', () => {
+  // §20 makes a node that signs a table which is not F(its inputs) slashable,
+  // so the floor has to reach the computation. A node that dropped it would
+  // sign a different table from every honest seat and never reach five.
+  const stake = 1000000n;
+  const placed = player(1); const cautious = player(2); const loser = player(3);
+  const entries = entriesOf(stake,
+    [placed, DELIVERED, 9], [cautious, DELIVERED, 0], [loser, FORFEIT, 0]);
+
+  const strict = tableFor({ roundId: b32(1), entries, minScore: 1 });
+  const open = tableFor({ roundId: b32(1), entries, minScore: 0 });
+  assert.notEqual(toHex(strict.tableId), toHex(open.tableId),
+    'the minimum score does not reach the table this node signs');
+
+  // WHAT THE FLOOR ACTUALLY CHANGES, since both floors happen to pay the same
+  // winner here: below the score a delivered player keeps their stake and
+  // places nowhere, so their ROW is their stake back rather than nothing.
+  const rowFor = (t, who) => t.find((r) => toHex(r.pubkey) === toHex(who.pubkey)).amountMsat;
+  assert.equal(rowFor(strict.table, cautious), 0n, 'a player below the score placed anyway');
+  assert.equal(rowFor(open.table, cautious), stake, 'with no floor they qualify and keep their stake');
+});
+
+test('a node signing at another floor never reaches five', () => {
+  // The consequence of the test above, and the reason §20 makes it slashable:
+  // a seat that computes the table at a different floor signs a different id,
+  // so it is not disagreement that gets averaged out - it simply never agrees.
+  const { round, rid, contract } = node(1000000n);
+  const placed = player(1); const cautious = player(2); const loser = player(3);
+  const entries = entriesOf(1000000n,
+    [placed, DELIVERED, 9], [cautious, DELIVERED, 0], [loser, FORFEIT, 0]);
+  const payouts = new Payouts(round, { curve, random: rand });
+
+  const wrong = tableFor({ roundId: rid, entries, minScore: 0 });
+  for (let i = 1; i < 6; i++)
+    round.putPayoutSignature(rid, seatKeys[i],
+      signPayoutTable({ tableId: wrong.tableId, secret: seatSecrets[i], pubkey: seatKeys[i] }));
+
+  const seen = payouts.queue({ roundId: rid, entries, minScore: 1, contract });
+  assert.equal(seen.ok, false);
+  assert.match(seen.why, /1 of 5 seats signed this table/);
+  assert.equal(round.payout(rid), null);
+});
