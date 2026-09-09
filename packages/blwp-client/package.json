@@ -7,7 +7,7 @@
   "scripts": {
     "bundle": "node tools/bundle.js",
     "bundle-curve": "node tools/bundle-curve.js",
-    "test": "node tools/bundle.js && node tools/bundle-curve.js && node --test test/*.test.js"
+    "test": "node tools/bundle.js && node tools/bundle-curve.js && node --test --test-timeout=120000 test/*.test.js"
   },
   "devDependencies": {
     "@noble/curves": "^2.4.0",
