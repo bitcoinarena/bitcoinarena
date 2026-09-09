@@ -18,7 +18,7 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 import { openStore } from '../../blwp-node/src/store.js';
 import { serve } from '../../blwp-node/src/server.js';
 import { Client } from '../src/client.js';
-import { watchGhosts, GHOST_BACKLOG, playersLine } from '../src/ghost-field.js';
+import { watchGhosts, GHOST_BACKLOG, playersLine, newestPose } from '../src/ghost-field.js';
 import { encodeInputBatch } from '../../protocol/src/batch.js';
 import { GENESIS } from '../../protocol/src/transcript.js';
 import { encodeEntryContract, entryId as entryIdOf } from '../../protocol/src/contracts.js';
@@ -283,4 +283,30 @@ test('the players line says when trucks are arriving and none are drawn', () => 
   // is nothing to draw.
   assert.equal(playersLine({ seated: true, others: 0, stalled: true }), '1 player · waiting');
   assert.equal(playersLine({ seated: false, others: 4, stalled: true }), 'round named · not seated');
+
+  // AND WHERE THE NEWEST OTHER TRUCK IS, because `none drawn` only separates
+  // a renderer that never ran from one that ran. A truck drawn 100 m down the
+  // frontage - which is what a different loading bay is - looks through a
+  // windscreen exactly like a truck that was never drawn.
+  // NEWEST FIRST AND LAST IS OLDEST, so "the last one in the list" and "the
+  // newest one" are different answers and only one of them passes.
+  const seen = [
+    { entryId: b32(2), x: -5963776, z: -4653056, heading: 0, tick: 40 },
+    { entryId: b32(3), x: 0, z: 0, heading: 0, tick: 40 - 1 },
+    { entryId: b32(1), x: -6579814, z: 668467, heading: 16384, tick: 10 },
+  ];
+  const held = { latest: () => seen };
+  assert.deepEqual(newestPose(held), { x: -91, z: -71, tick: 40 },
+    'the page named a pose that is not the newest one it holds');
+  // A TIE IS FREE. Two trucks whose newest picture is the same tick are two
+  // right answers, and which one the line names is not a fact anybody reads -
+  // so what is pinned is the TICK, not the truck.
+  const tied = { latest: () => [seen[0], { ...seen[1], tick: seen[0].tick }] };
+  assert.equal(newestPose(tied).tick, seen[0].tick, 'the named pose is not at the newest tick');
+  assert.equal(newestPose({ latest: () => [] }), null, 'an empty field named a place');
+  assert.equal(newestPose(null), null, 'a page with no field named a place');
+  assert.equal(playersLine({ seated: true, others: 1, at: newestPose(held) }),
+    '2 players in this round · other at -91,-71 m');
+  assert.equal(playersLine({ seated: true, others: 1, stalled: true, at: newestPose(held) }),
+    '2 players in this round · none drawn · other at -91,-71 m');
 });

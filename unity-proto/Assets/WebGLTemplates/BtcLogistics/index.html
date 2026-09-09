@@ -349,9 +349,16 @@
       // WHETHER ANYBODY IS DRAWING THEM. A field filling with pictures nobody
       // takes reads the same as an empty round unless the line says so.
       const stalled = !!(net && net.ghosts && net.ghosts.stalled);
+      // AND WHERE THE NEWEST OF THEM IS. Each player parks at their own bay -
+      // 24 doors, 6.8 m apart - so two tabs start up to 156 m apart on one
+      // apron, and a truck drawn correctly at the far end is off screen. Read
+      // this against the other tab's own position readout: the same numbers
+      // mean the picture is right and the camera is pointed elsewhere.
+      const at = (typeof BLWPCLIENT !== 'undefined' && BLWPCLIENT.newestPose && net)
+        ? BLWPCLIENT.newestPose(net.ghosts) : null;
       const ab = ['A', 'B'].map((n) => n + ' ' + (nodeHealth[n] || '…')).join(' · ');
       const who = (typeof BLWPCLIENT !== 'undefined' && BLWPCLIENT.playersLine)
-        ? BLWPCLIENT.playersLine({ seated, others, stalled })
+        ? BLWPCLIENT.playersLine({ seated, others, stalled, at })
         : (seated ? (others ? (1 + others) + ' players in this round' : '1 player · waiting') : 'round named · not seated');
       el.textContent = ab + '\n' + playLine(net) + '\n' + who;
     }

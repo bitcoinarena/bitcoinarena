@@ -5520,8 +5520,31 @@ function watchGhosts(client, where, { limit = GHOST_BACKLOG } = {}) {
   return field;
 }
 
+/** Q16.16: the words a picture carries, per metre. `GhostTruck.ONE` is the same number. */
+const ONE_METRE = 65536;
+
+/**
+ * WHERE THE NEWEST OTHER TRUCK IS, in metres, or null for nobody.
+ *
+ * A truck that is drawn 100 m down the frontage and a truck that is not drawn
+ * at all look identical through a windscreen, and `stalled` only separates
+ * them when NOTHING was ever drawn. Each player parks at their own loading
+ * bay - 24 doors at 6.8 m - so two tabs on one round start up to 156 m apart
+ * along the same apron, which is exactly far enough to be off screen.
+ *
+ * So the page says the place. The operator reads it against the position the
+ * other tab's own HUD shows: the same two numbers means the picture is right
+ * and the camera is pointed elsewhere, different numbers means it is not.
+ */
+function newestPose(field) {
+  if (!field || typeof field.latest !== 'function') return null;
+  let best = null;
+  for (const g of field.latest()) if (best === null || g.tick > best.tick) best = g;
+  return best === null ? null : { x: best.x / ONE_METRE, z: best.z / ONE_METRE, tick: best.tick };
+}
+
 /** One line the page can put on screen. Count is 1 (this tab) plus others. */
-function playersLine({ seated, others, stalled = false } = {}) {
+function playersLine({ seated, others, stalled = false, at = null } = {}) {
   if (!seated) return 'round named · not seated';
   const n = 1 + (others | 0);
   if (n <= 1) return '1 player · waiting';
@@ -5529,7 +5552,8 @@ function playersLine({ seated, others, stalled = false } = {}) {
   // the line reads the same as a page that is drawing them, which is what
   // made the 11:51 retest a guess: five players on the chip, one truck on the
   // screen, and no number between them.
-  return n + ' players in this round' + (stalled ? ' · none drawn' : '');
+  const where = at ? ` · other at ${Math.round(at.x)},${Math.round(at.z)} m` : '';
+  return n + ' players in this round' + (stalled ? ' · none drawn' : '') + where;
 }
 
 // ---- protocol/src/shares.js
@@ -6566,7 +6590,7 @@ return { Client: Client, markState: markState,
          encodeRoundContract: encodeRoundContract, roundId: roundId,
          encodeEntryContract: encodeEntryContract, entryId: entryId,
          watchGhosts: watchGhosts, GHOST_BACKLOG: GHOST_BACKLOG,
-         playersLine: playersLine,
+         playersLine: playersLine, newestPose: newestPose,
          joinQuery: joinQuery, joinFromQuery: joinFromQuery,
          fetchRound: fetchRound, bondProvider: bondProvider,
          tabIdentity: tabIdentity, entryFor: entryFor,
