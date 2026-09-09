@@ -168,6 +168,79 @@ export async function fetchRandomness(id, nodes, { fetcher = fetch } = {}) {
 }
 
 /**
+ * DOES THIS ROUND ASK FOR MONEY?
+ *
+ * One line, and it lives HERE rather than in the page for the reason the hold
+ * and the drain moved: `index.html` is the one file `node --test` cannot load,
+ * and a rule written there is a rule with no test. It is also the reason the
+ * page is forbidden to name a contract field at all - a page that carried its
+ * own `stakeMsat` could carry its own committee next - so the page asks this
+ * and reads nothing off the round itself.
+ */
+export const roundPays = (round) => !!round && BigInt(round.stakeMsat || 0n) > 0n;
+
+/**
+ * WHO THE SETTLEMENT COMMITTEE IS, ASKED OF EVERY NODE THE ROUND NAMED.
+ *
+ * A STAKE IS DEALT TO THE SETTLEMENT SEATS AND TO NOBODY ELSE, and the list
+ * the page already holds is the wrong one. Measured on nine bonded nodes with
+ * seven game/verify slots and seven settlement slots:
+ *
+ *   /committee?role=game          7 seats
+ *   /committee?role=settlement    7 seats
+ *   contract.nodes (the union)    9      <- what `joinFromQuery` hands over
+ *   in both committees            5
+ *   settlement-only               2
+ *
+ * `Roster.seatsFor` says so in its own words - "a contract carries one flat
+ * `nodes` list, so the seated set is the union of the role committees" - so
+ * dealing to it would seal nine shares for a seven-of-which-five scheme, two
+ * of them to seats that can never open one. A stake nobody can open at payout
+ * is a stake that is lost, which is worse than one never dealt.
+ *
+ * ASKED OF EVERY NODE AND REFUSED ON DISAGREEMENT, exactly as the randomness
+ * is: one node's answer about who may open a player's stake is one node
+ * choosing who may open it.
+ */
+export async function fetchSettlementSeats(id, nodes, { fetcher = fetch } = {}) {
+  if (!Array.isArray(nodes) || !nodes.length)
+    throw new Error('no node to ask which seats settle this round');
+  const said = [];
+  const refused = [];
+  for (const node of nodes) {
+    const at = node.replace(/\/+$/, '') + '/committee?role=settlement&round=' + id;
+    try {
+      const r = await fetcher(at);
+      if (!r.ok) { refused.push(`${node}: answered ${r.status} ${(await r.text()).trim()}`); continue; }
+      const bytes = new Uint8Array(await r.arrayBuffer());
+      if (!bytes.length || bytes.length % 32 !== 0) {
+        refused.push(`${node}: answered ${bytes.length} bytes, which is not whole keys`);
+        continue;
+      }
+      const seats = [];
+      for (let at2 = 0; at2 < bytes.length; at2 += 32) seats.push(bytes.subarray(at2, at2 + 32));
+      said.push({ node, seats });
+    } catch (e) {
+      refused.push(`${node}: ${e.message}`);
+    }
+  }
+  if (!said.length)
+    throw new Error('no node named this round\'s settlement committee: ' + refused.join('; '));
+
+  // SORTED BEFORE THEY ARE COMPARED, because two nodes may list one committee
+  // in two orders and that is the same committee. What must not differ is the
+  // SET.
+  const key = (list) => list.map(toHex).sort().join(',');
+  const first = key(said[0].seats);
+  for (const s of said.slice(1)) {
+    if (key(s.seats) !== first)
+      throw new Error(`${said[0].node} and ${s.node} name two different settlement `
+        + 'committees, so a stake dealt here could be opened by neither');
+  }
+  return { seats: said[0].seats, agreed: said.length, refused };
+}
+
+/**
  * THE ONE NUMBER A PAGE NEEDS BEFORE IT MAY STEP ITS CORE.
  *
  * `init(seedWord)` decides which of the 24 loading bays this player parks at

@@ -292,18 +292,13 @@
       // page that asked one node would let that node put this player alone in
       // a world nobody replays.
       window.BLWP_NODES = named.nodes;
-      // THE PLAYER'S KEY IS A KEY NOW, and this page cannot make one.
+      // THE PLAYER'S KEY IS A KEY, and this page makes one.
       //
       // `player_pubkey` used to be 32 random bytes. It is where a winner's
       // payout is sent, so it has to be a secp256k1 x-only key - and the
-      // browser's own crypto has no secp256k1, only Ed25519 and P-256. This
-      // page does not vendor a curve for the same reason the session key uses
-      // `crypto.subtle`: the key that holds a player's money should not be
-      // handled by an implementation nobody audits.
-      //
-      // So a page that was given no curve REFUSES THE SEAT and stays the
-      // single-player daily. Seating somebody at a paying round under a key
-      // nobody can spend from is worse than not seating them.
+      // browser's own crypto has no secp256k1, only Ed25519 and P-256. The
+      // curve is loaded beside this script (`blwp-curve.js`), which is why the
+      // guard below is a guard and not the normal path.
       const random = (n) => crypto.getRandomValues(new Uint8Array(n));
       if (!window.BLWP_CURVE || typeof window.BLWP_CURVE.pointX !== 'function') {
         throw new Error('this page has no curve to make a player key with');
@@ -311,8 +306,80 @@
       const player = BLWPCLIENT.tabIdentity({
         storage: window.sessionStorage, random, curve: window.BLWP_CURVE,
       });
+
+      // AND THE PAGE DEALS ITS OWN STAKE (23.1 steps 1 and 2).
+      //
+      // WHAT THIS FIXES IS A SILENT SEAT. `entryFor` was called with no stake,
+      // so every seat this page ever took carried `random(32)` where
+      // `sha256(P)` belongs and 32 zero bytes where the shares belong -
+      // `stakeFor` was compiled into the bundle and had ZERO CALLERS. The
+      // daemon accepts those zeros on purpose for M2, so nothing refused and
+      // nothing said anything: a free seat at a paying round that the player
+      // was never told about.
+      //
+      // DEALT TO THE SETTLEMENT SEATS AND TO NOBODY ELSE. `named.nodes` is the
+      // contract's flat list, which `Roster.seatsFor` builds as the UNION of
+      // the role committees - measured at nine keys for a seven-seat
+      // settlement committee, two of them seats that could never open a share.
+      // `fetchSettlementSeats` asks every node and refuses disagreement, the
+      // same rule the randomness follows.
+      //
+      // THE HOLD INVOICE IS NOT THIS PAGE'S JOB YET. Dealing the stake is what
+      // makes an entry settleable; paying it is bolt11 and a wallet, which is
+      // M3.2. So the seat is dealt and the player is TOLD it is unpaid.
+      // WHETHER THIS ROUND ASKS FOR MONEY, asked of the client rather than
+      // read off the contract. The page names no contract field - a page that
+      // carried its own could carry its own committee next - and the rule sits
+      // where `node --test` can drive it.
+      const pays = BLWPCLIENT.roundPays(named.round);
+      let stake = null;
+      if (pays) {
+        let seats = null;
+        try {
+          seats = await BLWPCLIENT.fetchSettlementSeats(named.roundIdHex, named.nodes);
+        } catch (e) {
+          // REFUSED BY NAME rather than seated silently. A paying round whose
+          // settlement committee this page cannot learn is a round whose stake
+          // it cannot deal to anybody, and taking the seat anyway is the bug
+          // this letter closed.
+          window.BLWP_SEAT_REFUSED = 'this round pays and its settlement committee '
+            + 'could not be learned, so no stake could be dealt: ' + e.message;
+          console.error('[blwp] seat refused: ' + window.BLWP_SEAT_REFUSED);
+          return;
+        }
+        // `round.id` IS BYTES, and the page holds the hex it was sent. The
+        // contract decodes without an id - it is the hash OF the contract -
+        // so it is put back on here rather than left for `stakeFor` to guess.
+        stake = await BLWPCLIENT.stakeFor(
+          Object.assign({}, named.round, { id: BLWPCLIENT.fromHex(named.roundIdHex) }), {
+            seats: seats.seats, curve: window.BLWP_CURVE, random, playerPubkey: player.pubkey,
+          });
+        // A HANDOUT NO SEAT ACCEPTED IS A REFERENCE THE ENTRY CANNOT NAME, so
+        // it is posted before the entry is built, and a seat that refuses it
+        // is counted rather than ignored.
+        let took = 0;
+        const would = [];
+        for (const node of named.nodes) {
+          try {
+            const r = await fetch(node.replace(/\/+$/, '') + '/handout',
+              { method: 'POST', body: stake.body });
+            if (r.ok) took++; else would.push(node + ': ' + (await r.text()).trim());
+          } catch (e) { would.push(node + ': ' + e.message); }
+        }
+        window.BLWP_STAKE = {
+          dealt: true, seats: seats.seats.length, agreed: seats.agreed,
+          accepted: took, refused: would, paid: false,
+        };
+        console.log('[blwp] stake dealt to ' + seats.seats.length + ' settlement seat(s), '
+          + took + ' accepted the handout. THE STAKE IS NOT PAID: this page has no wallet '
+          + 'yet (M3.2), so this is a free seat at a paying round.');
+      } else {
+        window.BLWP_STAKE = { dealt: false, paid: false, free: true };
+        console.log('[blwp] this round asks no stake, so none is dealt');
+      }
+
       window.BLWP_ENTRY = BLWPCLIENT.entryFor(named.round, {
-        playerPubkey: player.pubkey, random,
+        playerPubkey: player.pubkey, random, ...(stake ? { stake } : {}),
       });
       console.log('[blwp] joining round ' + named.roundIdHex + ' from ' + named.from);
     }

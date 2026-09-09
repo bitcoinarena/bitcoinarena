@@ -105,6 +105,14 @@ out += '         fetchRound: fetchRound, bondProvider: bondProvider,\n';
 out += '         fetchRandomness: fetchRandomness, worldSeedFor: worldSeedFor,\n';
 out += '         seedWordForEntry: seedWordForEntry,\n';
 out += '         tabIdentity: tabIdentity, entryFor: entryFor,\n';
+// THE STAKE THE PAGE DEALS, and the seats it is dealt to. `stakeFor` was in
+// this bundle already and had ZERO CALLERS - the page took a seat with 32
+// random bytes where `sha256(P)` belongs and 32 zero bytes where the shares
+// belong. `fetchSettlementSeats` is what stops it being dealt to the wrong
+// committee: `contract.nodes` is the UNION of the role committees, and shares
+// sealed to a game-verify seat are a stake nobody can open at payout.
+out += '         stakeFor: stakeFor, fetchSettlementSeats: fetchSettlementSeats,\n';
+out += '         roundPays: roundPays,\n';
 out += '         decodeRoundContract: decodeRoundContract,\n';
 out += '         toHex: toHex, fromHex: fromHex };\n})();\n';
 out += 'if (typeof module !== "undefined") module.exports = BLWPCLIENT;\n';

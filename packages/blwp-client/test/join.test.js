@@ -15,7 +15,7 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 import { openStore } from '../../blwp-node/src/store.js';
 import { serve } from '../../blwp-node/src/server.js';
 import { Client } from '../src/client.js';
-import { joinQuery, joinFromQuery, fetchRound, tabIdentity, entryFor, stakeFor } from '../src/join.js';
+import { joinQuery, joinFromQuery, fetchRound, tabIdentity, entryFor, stakeFor, fetchSettlementSeats, roundPays } from '../src/join.js';
 import { NO_SHARES } from '../../protocol/src/handout.js';
 import { feldmanGroup } from '../../blwp-node/src/curve.js';
 import { encodeRoundContract, roundId } from '../../protocol/src/contracts.js';
@@ -230,6 +230,88 @@ test('the page joins a named round and still invents none', () => {
     'the page never says whether the play socket is up');
   assert.ok(page.includes('BLWP_CURVE.verify'),
     'the page still verifies node adverts with Ed25519');
+
+  // AND THE PAGE DEALS ITS OWN STAKE (letter 15).
+  //
+  // Measured before this: `entryFor` was called with NO stake, so every seat
+  // the shipped page took carried `random(32)` where `sha256(P)` belongs and
+  // 32 zero bytes where the shares belong - and `stakeFor` was compiled into
+  // the bundle with ZERO CALLERS. The daemon accepts those zeros on purpose
+  // for M2, so nothing refused and nothing said anything.
+  assert.ok(page.includes('BLWPCLIENT.stakeFor('),
+    'the page takes a seat without dealing a stake');
+  assert.ok(page.includes('fetchSettlementSeats'),
+    'the page deals a stake without asking who settles the round');
+  assert.ok(!/stakeFor\(\s*named\.round\b/.test(page),
+    'the page deals to the contract\'s flat node list, which is the union of the committees');
+  assert.ok(page.includes("'/handout'"),
+    'the page deals a handout and never posts it, so no seat can accept it');
+  assert.ok(page.includes('BLWP_SEAT_REFUSED'),
+    'a paying round whose committee cannot be learned is still seated silently');
+  assert.ok(page.includes('THE STAKE IS NOT PAID'),
+    'the page does not say that the seat it took is a free one');
+
+  // AND IT STILL NAMES NO CONTRACT FIELD. Knowing whether a round asks for
+  // money is a rule, so it lives in the client where a test can drive it - the
+  // page asks `roundPays` rather than reading `stakeMsat` off the contract,
+  // which is the same discipline the loop above enforces.
+  assert.ok(page.includes('BLWPCLIENT.roundPays('),
+    'the page decides for itself whether a round pays');
+});
+
+test('whether a round pays is one rule, and it is not in the page', () => {
+  assert.equal(roundPays({ stakeMsat: 100000n }), true);
+  assert.equal(roundPays({ stakeMsat: 0n }), false);
+  assert.equal(roundPays({}), false, 'a round with no stake field is not a paying round');
+  assert.equal(roundPays(null), false);
+});
+
+/**
+ * WHO A STAKE IS DEALT TO, AND WHY IT IS NOT THE LIST THE PAGE ALREADY HOLDS.
+ *
+ * MEASURED on nine bonded nodes with seven game/verify slots and seven
+ * settlement slots: the game committee is 7, the settlement committee is 7,
+ * and `contract.nodes` - what `joinFromQuery` hands the page - is the UNION at
+ * 9, with 5 in both and 2 settlement-only. `Roster.seatsFor` says so itself.
+ * Dealing to the flat list would seal nine shares for a five-of-seven scheme,
+ * two of them to seats that could never open one, and a stake nobody can open
+ * at payout is worse than one never dealt.
+ */
+test('the settlement seats are asked of every node, and a disagreement is refused', async () => {
+  const b32 = (n) => new Uint8Array(32).fill(n);
+  const committee = (keys) => ({
+    ok: true, status: 200,
+    arrayBuffer: async () => {
+      const out = new Uint8Array(keys.length * 32);
+      keys.forEach((k, i) => out.set(k, i * 32));
+      return out.buffer;
+    },
+    text: async () => '',
+  });
+  const seats = [b32(1), b32(2), b32(3), b32(4), b32(5), b32(6), b32(7)];
+
+  // EVERY NODE IS ASKED, and the ORDER they list them in is not a difference:
+  // one committee written two ways is one committee.
+  const asked = [];
+  const got = await fetchSettlementSeats('ab'.repeat(32), ['http://a', 'http://b/'], {
+    fetcher: async (u) => { asked.push(u); return committee(u.startsWith('http://a') ? seats : [...seats].reverse()); },
+  });
+  assert.equal(got.seats.length, 7);
+  assert.equal(got.agreed, 2);
+  assert.equal(asked.length, 2, 'the page asked one node and took its word');
+  for (const u of asked) assert.match(u, /\/committee\?role=settlement&round=/);
+
+  // A DISAGREEMENT IS A REFUSAL. One node's answer about who may open a
+  // player's stake is one node choosing who may open it.
+  await assert.rejects(() => fetchSettlementSeats('ab'.repeat(32), ['http://a', 'http://b'], {
+    fetcher: async (u) => committee(u.startsWith('http://a') ? seats : [...seats.slice(0, 6), b32(9)]),
+  }), /two different settlement committees/);
+
+  // And a round nobody will answer for is a refusal too, with the reasons.
+  await assert.rejects(() => fetchSettlementSeats('ab'.repeat(32), ['http://a'], {
+    fetcher: async () => ({ ok: false, status: 409, text: async () => 'that round is not seated' }),
+  }), /named no round's settlement committee|no node named this round/);
+  await assert.rejects(() => fetchSettlementSeats('ab'.repeat(32), []), /no node to ask/);
 });
 
 /**
