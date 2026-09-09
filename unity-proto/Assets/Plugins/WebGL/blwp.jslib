@@ -18,7 +18,7 @@ mergeInto(LibraryManager.library, {
       console.error('[blwp] core bundle not loaded - check the WebGL template');
       return 0;
     }
-    Module.blwp = { st: BLWP.init(seed | 0), core: BLWP };
+    Module.blwp = { st: BLWP.init(blwpWorldSeed(seed)), core: BLWP };
     return 1;
   },
 
@@ -148,10 +148,31 @@ mergeInto(LibraryManager.library, {
   // truck without touching a single score word - so round two used to be
   // round one's leftovers. The core carries the uploaded relief and solids
   // across itself; nothing here decides what a reset means.
+  // WHICH WORLD THE CORE IS PUT IN, DECIDED IN ONE PLACE.
+  //
+  // Two callers seed it and NOTHING ORDERS THEM: `CoreDrivenTruck.Start` calls
+  // `BlwpCore.Init(seed)` with its own constant, and this bridge calls
+  // `core.init(seedWord)` when the join resolves. Whichever ran last won, and
+  // both outcomes were photographed in one two-Chrome look - one tab drove the
+  // round's world (bay 14, z 17.000 m) and the other drove the harness world
+  // (bay 13, z 10.200 m) while every other page was shown it at bay 14. A
+  // constant 6.800 m apart, one door's pitch, and it never closed because it
+  // was not lag: it was two different worlds again.
+  //
+  // So the argument is a DEFAULT and the round is an answer. Once the bridge
+  // knows the round's seed, that is the world, whoever asks and whenever.
+  $blwpWorldSeed: function (seed) {
+    var n = Module.blwpNet;
+    return (n && typeof n.seedWord === 'number') ? (n.seedWord | 0) : (seed | 0);
+  },
+
+  BlwpInit__deps: ['$blwpWorldSeed'],
+  BlwpRestart__deps: ['$blwpWorldSeed'],
+
   BlwpRestart: function (seed) {
     var b = Module.blwp;
     if (!b) return 0;
-    b.st = b.core.restart(b.st, seed | 0);
+    b.st = b.core.restart(b.st, blwpWorldSeed(seed));
     return 1;
   },
 

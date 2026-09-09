@@ -54,14 +54,23 @@ function shippedBridge(globals) {
   const src = readFileSync(
     new URL('../../../unity-proto/Assets/Plugins/WebGL/blwp.jslib', import.meta.url), 'utf8');
   const names = Object.keys(globals);
-  const load = (discovery) => {
+  // EVERY `$`-PREFIXED MEMBER, not just the one this file happened to need.
+  // Emscripten turns each into a top-level function that the exported ones
+  // call by its bare name, so a helper added to the bridge would otherwise be
+  // a ReferenceError here and nowhere else - which is a test that stops
+  // testing the shipped file the moment somebody adds one.
+  const load = (helpers) => {
     let lib = null;
-    new Function('mergeInto', 'LibraryManager', 'blwpDiscovery', ...names, src)(
-      (_t, obj) => { lib = obj; }, { library: {} }, discovery, ...names.map((n) => globals[n]));
+    const hn = Object.keys(helpers);
+    new Function('mergeInto', 'LibraryManager', ...hn, ...names, src)(
+      (_t, obj) => { lib = obj; }, { library: {} },
+      ...hn.map((n) => helpers[n]), ...names.map((n) => globals[n]));
     return lib;
   };
-  const first = load(null);
-  return load(first.$blwpDiscovery);
+  const first = load({});
+  const helpers = {};
+  for (const k of Object.keys(first)) if (k.startsWith('$')) helpers[k.slice(1)] = first[k];
+  return load(helpers);
 }
 
 test('nothing on a live round reads the constant seed, and the core is in the round\'s world before a tick is recorded', async () => {
@@ -179,6 +188,76 @@ test('nothing on a live round reads the constant seed, and the core is in the ro
       try { Module.blwpNet && Module.blwpNet.client && Module.blwpNet.client.close(); } catch { /* gone */ }
     }
   } finally { await round.close(); }
+});
+
+/**
+ * AND C# CANNOT TAKE THE WORLD BACK, WHENEVER IT ASKS.
+ *
+ * Two callers seed the core and nothing orders them: `CoreDrivenTruck.Start`
+ * calls `BlwpCore.Init` with its own constant, and this bridge calls
+ * `core.init` when the join resolves. Whichever ran last won - and both
+ * outcomes were photographed in ONE two-Chrome look, one tab driving the
+ * round's world at bay 14 (z 17.000 m) while every other page was shown it
+ * there, and the other tab driving the harness world at bay 13 (z 10.200 m).
+ * A constant 6.800 m apart, one door's pitch, which never closed because it
+ * was not lag.
+ *
+ * So the argument is a default and the round is an answer: once the bridge
+ * knows the seed, that is the world however late somebody else asks.
+ */
+test('once a round is joined, a later Init from C# cannot put the core back in the harness world', async () => {
+  const round = await standUpRound({ host: '127.0.0.1', portA: 18230, portB: 18231 });
+  const tabs = [];
+  try {
+    const named = await joinFromQuery(new URL(round.url).search);
+    const rid = roundId(named.round);
+    const beacon = await fetchRandomness(toHex(rid), named.nodes);
+
+    let player, seat, entry, want;
+    for (let tries = 0; ; tries++) {
+      player = tabIdentity({ storage: storage(), random, curve: feldmanGroup });
+      seat = entryFor(named.round, { playerPubkey: player.pubkey, random });
+      entry = { ...seat, roundId: rid };
+      want = seedWordForEntry({ ...entry, sessionPubkey: new Uint8Array(32) }, beacon.randomness);
+      if (spawnBay(want) !== spawnBay(SOLO_SEED)) break;
+      assert.ok(tries < 200, '200 identities all parked on the harness bay, which is not chance');
+    }
+
+    const heap = new Int32Array(64);
+    const Module = { HEAPU8: new Uint8Array(heap.buffer), blwpNet: null };
+    const library = shippedBridge({
+      Module, HEAP32: heap, UTF8ToString: () => named.nodes[0],
+      window: { location: { search: new URL(round.url).search } },
+      console, crypto, BLWP: core, BLWPCLIENT: CLIENT, BLWP_CURVE: pageCurve,
+      BLWP_ROUND: named.round, BLWP_ENTRY: seat, BLWP_NODES: named.nodes,
+      BLWP_CHAIN: named.chain, BLWP_ADVERT: named.advert,
+    });
+
+    assert.equal(library.BlwpInit(SOLO_SEED), 1);
+    assert.equal(library.BlwpNetStart(0, 6, 60), 1);
+    for (let i = 0; i < 200 && !Module.blwpNet.client; i++) await wait(50);
+    assert.ok(Module.blwpNet.client, `the session never opened: ${Module.blwpNet.error}`);
+
+    const roundZ = Module.blwp.st.i32[O_TRUCK + T_Z];
+    assert.equal(roundZ, bayZ(spawnBay(want)), 'the join did not put the core in the round\'s world');
+
+    // NOW C# ASKS AGAIN, LATE, with its own constant - which is exactly the
+    // race the look caught. The round's world has to survive it.
+    assert.equal(library.BlwpInit(SOLO_SEED), 1);
+    assert.equal(Module.blwp.st.i32[O_TRUCK + T_Z], roundZ,
+      'a late Init from C# put the player back in the harness world');
+    assert.notEqual(Module.blwp.st.i32[O_TRUCK + T_Z], bayZ(spawnBay(SOLO_SEED)));
+
+    // AND SO DOES A RESTART, which is what a roll-out would do on the daily.
+    library.BlwpRestart(SOLO_SEED);
+    assert.equal(Module.blwp.st.i32[O_TRUCK + T_Z], roundZ,
+      'a restart put the player back in the harness world');
+    console.log(`  the round parks this player at z ${(roundZ / 65536).toFixed(3)} m and `
+      + `two late calls with 0x${(SOLO_SEED >>> 0).toString(16)} left it there`);
+  } finally {
+    try { Module?.blwpNet?.client?.close(); } catch { /* gone */ }
+    await round.close();
+  }
 });
 
 /**
