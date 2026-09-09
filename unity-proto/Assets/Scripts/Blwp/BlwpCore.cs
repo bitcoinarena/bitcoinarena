@@ -30,7 +30,6 @@ namespace Blwp
         [DllImport("__Internal")] private static extern int BlwpRunScore();
         [DllImport("__Internal")] private static extern int BlwpStateWords();
         [DllImport("__Internal")] private static extern int BlwpQueryParam(IntPtr name, IntPtr outp, int cap);
-        [DllImport("__Internal")] private static extern int BlwpSetSolids(IntPtr b, int count);
         [DllImport("__Internal")] private static extern int BlwpRestart(int seed);
         [DllImport("__Internal")] private static extern int BlwpTeleport(int x, int z, int heading);
         [DllImport("__Internal")] private static extern int BlwpTakeImpact();
@@ -47,7 +46,6 @@ namespace Blwp
         private static int BlwpRunScore() => 0;
         private static int BlwpStateWords() => 0;
         private static int BlwpQueryParam(IntPtr n, IntPtr o, int cap) => 0;
-        private static int BlwpSetSolids(IntPtr b, int n) => 0;
         private static int BlwpRestart(int seed) => 0;
         private static int BlwpTeleport(int x, int z, int h) => 0;
         private static int BlwpTakeImpact() => 0;
@@ -240,20 +238,11 @@ namespace Blwp
             Metres(_state[Layout.O_TRUCK + Layout.T_VX]), 0f,
             Metres(_state[Layout.O_TRUCK + Layout.T_VZ]));
 
-        /// <summary>
-        /// Hands the core the boxes the truck must not drive through.
-        ///
-        /// Six words each: centre x and z, half extents x and z, and the
-        /// vertical span - the last so a doorway lintel is something to drive
-        /// under rather than a wall across the door.
-        /// </summary>
-        public static bool SetSolids(int[] boxes, int count)
-        {
-            if (!Available || boxes == null || boxes.Length < count * 6) return false;
-            var pin = GCHandle.Alloc(boxes, GCHandleType.Pinned);
-            try { return BlwpSetSolids(pin.AddrOfPinnedObject(), count) != 0; }
-            finally { pin.Free(); }
-        }
+        // SetSolids IS GONE. The map's collision boxes are the core's, made
+        // from the map's own geometry and the relief it generated, so a host
+        // that could replace them would put its player among walls no
+        // committee has.
+
 
         /// <summary>
         /// A query parameter from the page URL, or null outside a browser.

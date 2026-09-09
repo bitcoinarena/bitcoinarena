@@ -68,9 +68,6 @@ namespace Blwp
         // mounting points for free.
         int _groundRevision = -1;
 
-        int _solidCount = -1;
-        float _solidsChecked;
-
         // The tick just gone, so a frame landing between two ticks can be
         // drawn between them instead of snapping to the later one.
         float _prevX, _prevZ, _prevHeading;
@@ -124,7 +121,6 @@ namespace Blwp
             if (_rb != null) { _wasKinematic = _rb.isKinematic; _rb.isKinematic = true; }
             if (_truck != null) _truck.externallyDriven = true;
             CollectWheels();
-            UploadSolids();
             Debug.Log("[blwp] core is driving");
         }
 
@@ -586,27 +582,16 @@ namespace Blwp
         // committee replaying the drive stepped a flat table. The relief is the
         // round's now, made by the core from its seed, and this side draws it.
 
-        void UploadSolids()
-        {
-            if (Time.unscaledTime - _solidsChecked < 1f && _solidCount >= 0) return;
-            _solidsChecked = Time.unscaledTime;
+        // UploadSolids IS GONE. It gathered every BoxCollider in the scene
+        // once a second and sent the lot, so the world the core resolved
+        // against changed as models streamed in and no replay had any of it.
 
-            var boxes = WorldSolids.Gather(transform, out int n);
-            if (n == _solidCount) return;
-            _solidCount = n;
-
-            if (BlwpCore.SetSolids(boxes, n))
-                Debug.Log($"[blwp] {n} solid boxes uploaded");
-            else
-                Debug.LogWarning("[blwp] the core refused the collision world");
-        }
 
 
         void Update()
         {
             if (ShouldStop(Driving, BlwpNet.Ended)) { StopDriving(BlwpNet.Ending()); return; }
             if (!Driving) return;
-            UploadSolids();
 
             // A fixed step, caught up in whole ticks. Rendering interpolates
             // between them; the simulation never sees a partial one.

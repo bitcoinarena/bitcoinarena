@@ -36,6 +36,7 @@ import {
 import { vehicleStep } from './rules/vehicle.js';
 import { flatGround, groundFromSeed, gradeAlong, heightAtWorld, DEFAULT_COLS, DEFAULT_ROWS } from './rules/ground.js';
 import { noSolids, resolveSolids, resolveArmour, BOX_WORDS } from './rules/solids.js';
+import { mapSolids } from './rules/map.js';
 import { stepUnit, separatePair, clearOfTruck, runOver, truckSpeed, threatAt, pickTarget, pickRifleTarget, riflePost, RELOAD_MIN, RELOAD_SPAN, DAMAGE_MIN, DAMAGE_SPAN, BACKOFF_RANGE, HIT_PER_MIL, ARMOUR_RANGE, RIFLE_RANGE, RIFLE_HIT_PER_MIL, RIFLE_RELOAD_TICKS, RIFLE_RELOAD_TICKS_SPAN, RIFLE_LOOK_TICKS, RIFLE_LOOK_TICKS_SPAN, RIFLE_HP, RIFLE_DAMAGE, COURIER_RANGE, COURIER_DAMAGE_MIN, COURIER_DAMAGE_SPAN, COURIER_RIFLE_MIN, COURIER_RIFLE_SPAN, courierReach, outranksTheFoe, shellForHeat } from './rules/army.js';
 import { accrue, earning, scoreOf, frontWeight } from './rules/score.js';
 import { outcome, RUN_LIVE, RUN_DELIVERED, RUN_WRECKED, RUN_MISSED } from './rules/gate.js';
@@ -216,12 +217,25 @@ export function teleport(st, x, z, heading) {
  * runs, so it can stay outside the hashed state and still be something every
  * player has agreed on.
  */
+/**
+ * A COLLISION WORLD FROM OUTSIDE, AND NO PLAYER MAY REACH THIS ANY MORE.
+ *
+ * This was the host's door and `UploadSolids` pushed through it every time
+ * Unity's collider count changed. `init` makes the map's own boxes now, so a
+ * page that could replace them would put the player among walls nobody else
+ * has. `BlwpSetSolids` is gone from the jslib and `SetSolids` from `BlwpCore`.
+ *
+ * It stays for the callers that are not hosts - the tests that measure what a
+ * box on the path costs - and a set put here is marked, because a restart must
+ * keep an uploaded world and must not keep a generated one.
+ */
 export function setSolids(st, count, boxes) {
   const n = Math.imul(count, BOX_WORDS);
   if (count < 0 || boxes.length < n) return false;
   const box = new Int32Array(n);
   box.set(boxes.subarray(0, n));
   st.solids = { n: count, box };
+  st.uploadedSolids = true;
   return true;
 }
 
@@ -429,7 +443,10 @@ export function restart(st, seedWord) {
   // would keep a host-uploaded field alive across a round and put the two
   // sides back in different worlds.
   if (st.uploadedGround) fresh.ground = st.ground;
-  fresh.solids = st.solids;
+  // NOT THE OLD SOLIDS EITHER, for the ground's reason: `init` makes the map's
+  // own, and carrying a host-uploaded set across a round would keep one alive
+  // that no replay has.
+  if (st.uploadedSolids) fresh.solids = st.solids;
   // The craters cross the round with the ground, one round older. This is why
   // the lifetime is counted in ROUNDS and lives here: a round is a thing that
   // ends, and a tick is not.
@@ -525,9 +542,19 @@ export function init(seedWord) {
   // draws what this says now; it does not say what this should be.
   st.ground = groundFromSeed(seedWord, DEFAULT_COLS, DEFAULT_ROWS, HALF_X, HALF_Z);
 
-  // An empty world until the host says otherwise. Empty is honest: a core
-  // inventing walls the player cannot see is worse than one with none.
-  st.solids = noSolids();
+  // THE MAP'S OWN WALLS, AND THEY ARE THE CORE'S TOO.
+  //
+  // This was empty until a host uploaded a collision world, and the host was
+  // the only party that ever did: `WorldSolids.Gather` collected whatever
+  // BoxColliders Unity had built at RUNTIME, `UploadSolids` sent them and
+  // re-sent them whenever the count changed, and no replay set any - so a
+  // committee resolved every drive against nothing while the player drove into
+  // walls. One box on the path is worth 40.233 m over six hundred ticks.
+  //
+  // The map's boxes are made here now, from the map's own geometry and the
+  // relief this core generated, so the player and every replay walk the same
+  // walls by construction. Unity draws them; it does not send them.
+  st.solids = mapSolids(st.ground, HALF_X, HALF_Z);
 
   // The tanks the player can see are the host's, and it sends them every
   // tick. Empty until it does.

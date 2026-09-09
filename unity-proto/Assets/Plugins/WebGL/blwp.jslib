@@ -134,13 +134,16 @@ mergeInto(LibraryManager.library, {
   // round's seed now (letter 36), so there is nothing for a page to send and
   // no way for one to put its player in a world nobody else can reproduce.
 
-  BlwpSetSolids: function (ptr, count) {
-    var b = Module.blwp;
-    if (!b) return 0;
-    var n = (count | 0) * 6;
-    var src = new Int32Array(Module.HEAP32.buffer, ptr, n);
-    return b.core.setSolids(b.st, count | 0, src.slice()) ? 1 : 0;
-  },
+  // BlwpSetSolids IS GONE, for the reason BlwpSetGround went.
+  //
+  // Unity gathered every BoxCollider it had built at runtime and pushed them
+  // in, re-pushing whenever the count changed - so the collision world the
+  // core resolved against moved mid-run as models streamed - and no replay set
+  // any, so a committee resolved every drive against nothing. One box on the
+  // path is worth 40.233 m over six hundred ticks. The map's boxes come from
+  // the core now (letter 39), which draws them from the map's own geometry and
+  // the relief it generated.
+
 
 
   // Start a new round. A host command, and the ONLY way back to RUN_LIVE:
