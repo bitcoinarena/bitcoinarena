@@ -225,3 +225,37 @@ test('a late block that is not the first one is refused, not accepted for being 
     /median time past is/);
   assert.match(beaconIsTheChains(contract(), null, view).why, /no beacon was offered/);
 });
+
+/**
+ * A VIEW THAT STARTS TOO LATE CANNOT SAY WHICH BLOCK IS FIRST.
+ *
+ * Found on a real regtest and not by reading the code: the answer was
+ * window-dependent. A node reading 64 headers to the tip named block 69; a node
+ * whose view began at 103 named block 112 - same chain, same round. Two honest
+ * nodes would have seated different committees, which is exactly what this rule
+ * exists to prevent.
+ */
+test('a view that begins after committee_time says so instead of answering', () => {
+  const whole = chainOf(30);        // long enough that the late window is still
+                                    // longer than the median span, so what is
+                                    // measured is where it STARTS
+  const named = beaconFromChain(contract(), whole);
+  assert.equal(named.ok, true, named.why);
+  assert.equal(named.height, 112);
+
+  // THE SAME CHAIN, SEEN FROM LATER. Every block in this window is after
+  // committee_time, so its "first" is only the first it holds.
+  const late = { headers: whole.headers.slice(13), firstHeight: FIRST + 13 };
+  const seen = beaconFromChain(contract(), late);
+  assert.equal(seen.ok, false, 'a window starting after committee_time answered anyway');
+  assert.match(seen.why, /begins at height 113/);
+  assert.match(seen.why, /it cannot say which block is the FIRST one/);
+
+  // A window that reaches back before the instant answers, and answers the
+  // same as the whole chain - which is the property.
+  const enough = { headers: whole.headers.slice(1), firstHeight: FIRST + 1 };
+  const also = beaconFromChain(contract(), enough);
+  assert.equal(also.ok, true, also.why);
+  assert.equal(also.height, named.height);
+  assert.deepEqual(also.hash, named.hash);
+});

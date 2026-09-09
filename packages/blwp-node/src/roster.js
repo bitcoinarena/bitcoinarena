@@ -20,7 +20,7 @@ import { decodeRoundContract } from '../../protocol/src/contracts.js';
 import { parseTransaction } from '../../protocol/src/tx.js';
 import { networkOf } from '../../protocol/src/constants.js';
 import { toHex } from '../../protocol/src/hash.js';
-import { committeeSeedFromBeacon } from '../../protocol/src/beacon.js';
+import { committeeSeedFromBeacon, beaconFromChain, beaconIsTheChains } from '../../protocol/src/beacon.js';
 import { bondSetFor } from './curve.js';
 
 /**
@@ -69,13 +69,45 @@ export class Roster {
         ok: false,
         why: 'this node has no beacon for that round, so it cannot say who the census seats',
       };
-    // THE BLOCK'S OWN TIME, because 5A.5 ties the randomness to
-    // `committee_time` and a height cannot answer that: the rule is "the first
-    // Bitcoin block after committee_time", so what matters is when the block
-    // was, not how deep it is.
-    return committeeSeedFromBeacon(contract, {
+    // 27'S RULE FIRST, because it needs no chain. "Did this come after
+    // committee_time" is the question every node can ask, and a beacon the
+    // creator could have held is refused for that before anything else is
+    // considered - a node with no chain view still refuses it.
+    const seeded = committeeSeedFromBeacon(contract, {
       roundId: roundIdBytes, randomness, height: given && given.height, timeMs: given && given.timeMs,
     });
+    if (!seeded.ok) return seeded;
+
+    // AND THEN: IS IT THE BLOCK THIS NODE'S OWN CHAIN NAMES?
+    //
+    // `committeeSeedFromBeacon` can only ask whether the beacon came AFTER
+    // committee_time - it is handed a height and a time and no chain. This
+    // node HAS a chain, so it asks the other half: 5A.5 wants the FIRST block
+    // after committee_time, and a later one is a block somebody chose. Without
+    // this an operator hands their own node any late block and picks the
+    // committee, which is the grinding attack with one extra step.
+    //
+    // WHEN THE VIEW CANNOT ANSWER, THE CHECK DOES NOT RUN AND SAYS SO. A census
+    // view is a window chosen for the census height, not for the beacon: it may
+    // begin after the block in question or be shorter than the eleven blocks a
+    // median is taken over. Refusing a round because a window has the wrong
+    // shape would refuse for something that is not about the beacon at all. So
+    // the answer carries `checkedAgainstChain`, and a caller that needs the
+    // check can see whether it happened rather than assume it did.
+    const view = this.chainFor({ contract, roundIdBytes });
+    let checkedAgainstChain = false;
+    if (view && Array.isArray(view.blocks) && view.blocks.length) {
+      const headers = { headers: view.blocks.map((b) => b.header), firstHeight: view.firstHeight };
+      if (beaconFromChain(contract, headers).ok) {
+        const agrees = beaconIsTheChains(contract, {
+          hash: randomness, height: given && given.height, timeMs: given && given.timeMs,
+        }, headers);
+        if (!agrees.ok) return agrees;
+        checkedAgainstChain = true;
+      }
+    }
+
+    return { ...seeded, checkedAgainstChain };
   }
 
   /**

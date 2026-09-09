@@ -16,7 +16,7 @@ import { openStore } from '../src/store.js';
 import { Round } from '../src/round.js';
 import { Roster } from '../src/roster.js';
 import { serve } from '../src/server.js';
-import { chainOf } from '../../protocol/tools/chainview.js';
+import { chainOf, FIRST_TIME, SPACING } from '../../protocol/tools/chainview.js';
 import { bondTransaction } from '../../protocol/tools/bond.js';
 import { encodeRoundContract, decodeRoundContract, roundId } from '../../protocol/src/contracts.js';
 import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
@@ -25,13 +25,31 @@ import { parseTransaction } from '../../protocol/src/tx.js';
 import { bondSetFor } from '../src/curve.js';
 import { bondFor } from './curve.js';
 import { toHex } from '../../protocol/src/hash.js';
+import { beaconFromChain } from '../../protocol/src/beacon.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
+// A CLOCK AFTER THE COMMITTEE FORMS. It was 1234 - a millisecond in 1970 -
+// which is now before the round's own committee_time, and a node refuses an
+// entry before that instant (27). The fixture's clock has to be a moment the
+// round is actually open in.
+const AFTER_COMMITTEE = Number(BigInt(FIRST_TIME + 20 * SPACING) * 1000n);
 const HEIGHT = 900000;
 // THE BEACON these rounds are seeded from, owned by the fixture the way the
 // census root is: a value published ABOVE the census height, which is what
 // `beaconIsAfterRound` can prove until `committee_time` exists.
-const BEACON = { hash: new Uint8Array(32).fill(0xbe), height: 900005, timeMs: 900n };
+// THE BEACON IS THE FIXTURE CHAIN'S OWN, not a number beside it. It used to be
+// `{ hash: 0xbe repeated, height: 900005, timeMs: 900n }` - a block this
+// fixture's chain does not have, at a height it never reaches - and the roster
+// now asks whether the beacon is the block ITS chain names. It was not. The
+// answer is derived from the same blocks the census is, which is the thing the
+// rule is for: one chain, one committee.
+const beaconOf = (bonds, contract) => {
+  const view = chainWith(bonds);
+  const named = beaconFromChain(contract,
+    { headers: view.blocks.map((b) => b.header), firstHeight: view.firstHeight });
+  if (!named.ok) throw new Error('this fixture chain names no beacon: ' + named.why);
+  return { hash: named.hash, height: named.height, timeMs: named.timeMs };
+};
 const TIP = HEIGHT + 10;
 const FROM = HEIGHT - 20;
 
@@ -53,10 +71,12 @@ const chainWith = (bonds) => {
 };
 const contractWith = (nodes, censusRoot) => ({
   networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations: 6,
-  gameVerifySlots: 2, settlementSlots: 2, simCoreHash: b32(1), startTimeMs: 60500n,
-  entryCloseMs: 2000n, objectionWindowMs: 600000n, custody: 'FEDERATION',
+  gameVerifySlots: 2, settlementSlots: 2, simCoreHash: b32(1),
+  startTimeMs: BigInt(FIRST_TIME + 15 * SPACING) * 1000n + 60500n,
+  entryCloseMs: BigInt(FIRST_TIME + 15 * SPACING) * 1000n + 200000n,
+  objectionWindowMs: 600000n, custody: 'FEDERATION',
   slashMinimumServed: 20, slashRemainder: 'BURN', donationSetId: b32(0xd0),
-  censusHeight: HEIGHT, censusRoot, committeeTimeMs: 500n, randomnessRule: 'bitcoin-block-hash', stakeMsat: 100000n,
+  censusHeight: HEIGHT, censusRoot, committeeTimeMs: BigInt(FIRST_TIME + 15 * SPACING) * 1000n, randomnessRule: 'bitcoin-block-hash', stakeMsat: 100000n,
   bondMinSats: 50000n, blockTicks: 9000, exposureReference: 1000, corridorHalfWidth: 40,
   spawnFreeRadius: 20, timeFloor: 30, timeCeil: 150, minScore: 1,
   rankNumerator: 3, rankDenominator: 4, nodes,
@@ -88,7 +108,7 @@ test('two daemons bond their own identities and are seated from the chain', asyn
     const root = rootFor(bonds, keys);
 
     for (const node of [a, b]) {
-      const roster = new Roster(node.round, { chainFor: () => chainWith(bonds), randomnessFor: () => BEACON });
+      const roster = new Roster(node.round, { chainFor: () => chainWith(bonds), randomnessFor: ({ contract }) => beaconOf(bonds, contract) });
       const c = contractWith(keys, root);
       const rid = node.round.open(c);
       const seated = roster.seatRound(rid);
@@ -107,11 +127,11 @@ test('a contract that names a stranger, or misses a seated node, is refused by n
   const node = await serve(openStore(':memory:'), { port: 0, funded: () => true });
   try {
     const mine = node.round.pubkey;
-    const other = new Round(openStore(':memory:'), () => 1234).pubkey;
+    const other = new Round(openStore(':memory:'), () => AFTER_COMMITTEE).pubkey;
     const keys = [mine, other];
     const bonds = [bondOfKey(mine, 1), bondOfKey(other, 2)];
     const root = rootFor(bonds, keys);
-    const roster = new Roster(node.round, { chainFor: () => chainWith(bonds), randomnessFor: () => BEACON });
+    const roster = new Roster(node.round, { chainFor: () => chainWith(bonds), randomnessFor: ({ contract }) => beaconOf(bonds, contract) });
 
     const seat = (nodes) => {
       const c = contractWith(nodes, root);
@@ -150,14 +170,14 @@ test('a contract that names a stranger, or misses a seated node, is refused by n
 
 test('the round door refuses a chain-unsupported committee, and seats a supported one', async () => {
   const keys = [];
-  const first = new Round(openStore(':memory:'), () => 1234);
-  const second = new Round(openStore(':memory:'), () => 1234);
+  const first = new Round(openStore(':memory:'), () => AFTER_COMMITTEE);
+  const second = new Round(openStore(':memory:'), () => AFTER_COMMITTEE);
   keys.push(first.pubkey, second.pubkey);
   const bonds = [bondOfKey(keys[0], 1), bondOfKey(keys[1], 2)];
   const root = rootFor(bonds, keys);
 
   const node = await serve(openStore(':memory:'), {
-    port: 0, funded: () => true, chainFor: () => chainWith(bonds), randomnessFor: () => BEACON,
+    port: 0, funded: () => true, chainFor: () => chainWith(bonds), randomnessFor: ({ contract }) => beaconOf(bonds, contract),
   });
   try {
     const good = contractWith(keys, root);
@@ -185,11 +205,11 @@ test('a seated key with a bad signature and a well-signed stranger fail differen
   const { encodeCheckpointReceipt, joinSignedReceipt, receiptId } =
     await import('../../protocol/src/receipt.js');
 
-  const round = new Round(openStore(':memory:'), () => 1234);
-  const peer = new Round(openStore(':memory:'), () => 1234);
+  const round = new Round(openStore(':memory:'), () => AFTER_COMMITTEE);
+  const peer = new Round(openStore(':memory:'), () => AFTER_COMMITTEE);
   const keys = [round.pubkey, peer.pubkey];
   const bonds = [bondOfKey(keys[0], 1), bondOfKey(keys[1], 2)];
-  const roster = new Roster(round, { chainFor: () => chainWith(bonds), randomnessFor: () => BEACON });
+  const roster = new Roster(round, { chainFor: () => chainWith(bonds), randomnessFor: ({ contract }) => beaconOf(bonds, contract) });
   const rid = round.open(contractWith(keys, rootFor(bonds, keys)));
   assert.equal(roster.seatRound(rid).ok, true);
 
@@ -221,7 +241,7 @@ test('a seated key with a bad signature and a well-signed stranger fail differen
   assert.throws(() => round.takeReceipt(forged), /does not verify/);
 
   // NOT SEATED, WELL SIGNED: refused for membership.
-  const outsider = new Round(openStore(':memory:'), () => 1234);
+  const outsider = new Round(openStore(':memory:'), () => AFTER_COMMITTEE);
   const away = receiptFrom(outsider.pubkey, outsider.identity.secret);
   assert.throws(() => round.takeReceipt(away.good), /is not on this round's committee/);
 
@@ -242,8 +262,8 @@ test('a round nobody seated trusts nobody', async () => {
     await import('../../protocol/src/checkpoint.js');
   const { GENESIS } = await import('../../protocol/src/transcript.js');
 
-  const round = new Round(openStore(':memory:'), () => 1234);
-  const peer = new Round(openStore(':memory:'), () => 1234);
+  const round = new Round(openStore(':memory:'), () => AFTER_COMMITTEE);
+  const peer = new Round(openStore(':memory:'), () => AFTER_COMMITTEE);
   const keys = [round.pubkey, peer.pubkey];
   // The contract NAMES both, and this node never seated it.
   const rid = round.open(contractWith(keys, b32(2)));

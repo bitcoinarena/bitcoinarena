@@ -264,6 +264,29 @@ export function beaconFromChain(contract, view) {
     };
   }
 
+  // AND THE VIEW HAS TO REACH BACK FAR ENOUGH TO KNOW IT IS THE FIRST.
+  //
+  // Found by running this on a real regtest, not by reading it: the answer was
+  // window-dependent. A node reading 64 headers to the tip named block 69; a
+  // node whose view began at 103 named block 112 - of the same chain, for the
+  // same round. "The first block in THIS VIEW after committee_time" is not
+  // "the first block after committee_time" unless the view starts before that
+  // instant, and two honest nodes with different windows would have seated
+  // different committees, which is the whole property this rule exists for.
+  //
+  // So: if the EARLIEST median this view can compute is already after
+  // committee_time, the view may be starting too late to see the real first
+  // block, and it says so instead of answering. A view that reaches back
+  // before the instant can answer, and every such view answers the same.
+  const earliest = medianTimePast(headers, firstHeight, firstHeight + MEDIAN_TIME_SPAN - 1);
+  if (earliest !== null && BigInt(earliest) * 1000n > after)
+    return {
+      ok: false,
+      why: `this view begins at height ${firstHeight} and its earliest median time is `
+        + `${BigInt(earliest) * 1000n}, already after this round's committee time ${after}: `
+        + 'it cannot say which block is the FIRST one, only which is the first it holds',
+    };
+
   const depth = tipHeight - chosen.height + 1;
   if (depth < contract.censusConfirmations)
     return {

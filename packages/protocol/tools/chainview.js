@@ -18,15 +18,27 @@ const EASY = 0x207fffff;
 // a most-work comparison has to be shown on.
 const HARD = 0x1f00ffff;
 
+/**
+ * The first fixture block's time, and ten minutes a block after it.
+ *
+ * Every header used to carry ONE timestamp, which was fine while nothing read
+ * it and wrong the moment something did: letter 32 picks the block whose
+ * MEDIAN TIME PAST is first after `committee_time`, and on a chain where every
+ * block claims the same second there is no such block and no order to find it
+ * in. Ten minutes apart is Bitcoin's own average and makes the median move.
+ */
+const FIRST_TIME = 1788700000;
+const SPACING = 600;
+
 /** One mined header over these transactions, following `previous`. */
-function mine(transactions, previous, bits) {
+function mine(transactions, previous, bits, at = 0) {
   const h = new Uint8Array(80);
   const view = new DataView(h.buffer);
   view.setUint32(0, 1, true);
   if (previous) h.set(blockHashOf(previous), 4);
   if (transactions.length)
     h.set(blockMerkleRoot(transactions.map((raw) => parseTransaction(raw).txid)), 36);
-  view.setUint32(68, 1788700000, true);
+  view.setUint32(68, FIRST_TIME + at * SPACING, true);
   view.setUint32(72, bits, true);
   for (let nonce = 0; nonce < 1e8; nonce++) {
     view.setUint32(76, nonce, true);
@@ -43,12 +55,12 @@ function mine(transactions, previous, bits) {
 export function chainOf(blocks, firstHeight, { bits = EASY } = {}) {
   const out = [];
   let previous = null;
-  for (const block of blocks) {
-    const header = mine(block.transactions || [], previous, bits);
+  for (const [at, block] of blocks.entries()) {
+    const header = mine(block.transactions || [], previous, bits, at);
     out.push({ header, transactions: block.transactions || [] });
     previous = header;
   }
   return { blocks: out, firstHeight };
 }
 
-export { EASY, HARD, mine, hash256 };
+export { EASY, HARD, mine, hash256, FIRST_TIME, SPACING };

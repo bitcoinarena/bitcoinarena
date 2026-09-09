@@ -27,6 +27,7 @@
  * Bitcoin. A round played on it is a local test round. Reading a real chain is
  * the operator's own bitcoind, and no live node is touched from here.
  */
+import { execFileSync } from 'node:child_process';
 import { schnorr } from '@noble/curves/secp256k1.js';
 
 import { createServer } from 'node:http';
@@ -35,6 +36,8 @@ import { extname, join, normalize } from 'node:path';
 
 import { openStore, nodeIdentity } from '../src/store.js';
 import { chainBeacon } from '../src/beacon-source.js';
+import { beaconFromChain, medianTimePast } from '../../protocol/src/beacon.js';
+import { regtest } from './regtest-bond.mjs';
 import { bitcoindRpc } from '../src/chain-rpc.js';
 import { serve } from '../src/server.js';
 import { toHex } from '../../protocol/src/hash.js';
@@ -58,7 +61,7 @@ const b32 = (n) => new Uint8Array(32).fill(n);
  * second arrangement that looks like it.
  */
 export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8081,
-                                     store = ':memory:', rpc = null,
+                                     store = ':memory:', rpc = null, cli = null,
                                      page = 'https://btc-logistics-core.pages.dev' } = {}) {
   const funded = () => true;
 
@@ -75,7 +78,13 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   // beacon for that round, so it cannot say who the census seats". A round
   // still opens and a player still plays; nobody is seated on an invented
   // number.
-  const beacon = rpc ? chainBeacon({ call: rpc }) : null;
+  // THE WINDOW REACHES BACK BEFORE committee_time OR THE RULE REFUSES IT, and
+  // that refusal was earned: measured on a real regtest, a 64-header window to
+  // the tip named block 69 where a view beginning at 103 named 112, of the same
+  // chain, for the same round. The window is the operator's business and the
+  // rule's job is to refuse one that cannot know - so this asks for enough of
+  // the chain that the answer is the chain's and not the window's.
+  const beacon = rpc ? chainBeacon({ call: rpc, window: 400 }) : null;
   const randomnessFor = beacon ? beacon.for : undefined;
 
   // THE KEY BEFORE THE DAEMON. The advertisement names the key that signs it,
@@ -160,15 +169,51 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   const headerBytes = new Uint8Array(chain.length * 80);
   chain.forEach((h, i) => headerBytes.set(h, i * 80));
 
-  // THE VIEW THE CENSUS IS DERIVED FROM. Heights 1 and 2 - genesis carries no
-  // transactions this tool has, and a census does not need it. `transactions`
-  // must hash to the header's own root, so the sibling leaf is carried as the
-  // raw 32 bytes it was mined as.
-  const censusBlocks = built.map((b, i) => ({
-    header: b.header,
-    transactions: [bonded[i].transaction],
-  }));
-  const censusView = { blocks: censusBlocks, firstHeight: 1 };
+  // THE VIEW THE CENSUS IS DERIVED FROM.
+  //
+  // ONE CHAIN FOR THE CENSUS AND THE BEACON when there is a bitcoind: the bonds
+  // are posted to it, the blocks are read back from it, and the beacon comes
+  // off the same chain - which is what lets the roster ask "is this beacon the
+  // block my chain names" and get an answer. With a fixture census beside a
+  // bitcoind beacon that question could never pass, because the fixture has no
+  // such block.
+  //
+  // WITHOUT a bitcoind, the two-block fixture stays. It seats nobody - there
+  // is no beacon either - so nothing is being pretended: `POST /round` refuses
+  // by name and the tool says so.
+  let censusView;
+  let censusHeight = 2;
+  let censusConfirmations = 1;
+  let onChain = null;
+  let bondHeight = 0;
+  if (cli) {
+    const rt = regtest(cli);
+    onChain = rt;
+    const posted = bonded.map((one, i) =>
+      rt.postBond(i === 0 ? idA.secret : idB.secret, { endpoint: `ws://${host}:${i === 0 ? portA : portB}` }));
+    rt.include(posted.map((p) => p.hex));
+    // THE CENSUS HEIGHT IS ABOVE THE BONDS, NOT AT THEM. Depth is measured at
+    // `census_height` - "spentness, height and depth off REAL BLOCKS with depth
+    // at census_height" (15) - so a bond in the census height's own block is
+    // one confirmation deep and a round asking for six excludes it. Measured:
+    // "that census carries 0 game nodes where regtest was born needing 2".
+    bondHeight = rt.height();
+    rt.mine(6);
+    censusHeight = rt.height();
+    if (censusHeight - bondHeight + 1 < 7)
+      throw new Error('the bonds are not deep enough at the census height');
+    for (const [i, p] of posted.entries()) bonded[i].onChainTxid = p.txid;
+    censusConfirmations = 6;
+    censusView = null;                  // read after committee_time, below
+  } else {
+    // Heights 1 and 2 - genesis carries no transactions this tool has, and a
+    // census does not need it. `transactions` must hash to the header's own
+    // root, so every leaf is a real transaction.
+    censusView = {
+      blocks: built.map((b, i) => ({ header: b.header, transactions: [bonded[i].transaction] })),
+      firstHeight: 1,
+    };
+  }
 
   // THE TWO DOORS THE JOIN URL NEEDS, on the daemons themselves.
   //
@@ -198,15 +243,52 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   // core's own tick, and both tabs have to load a nineteen-megabyte player
   // before either of them can drive. The browser harness uses a thirty-second
   // round because nothing there waits on a human.
-  const committeeTimeMs = BigInt(Date.now());
+  // COMMITTEE_TIME IS SET ON THE CHAIN'S OWN CLOCK, not on this machine's.
+  //
+  // Measured, and it is why the first attempt found no beacon: a median lags.
+  // The tip's median time past was sixteen seconds BEHIND `Date.now()` on a
+  // freshly mined regtest, so a committee_time taken from the wall clock is an
+  // instant the chain has not reached and no block can be after it yet. The
+  // median at the tip is a time this chain has passed, by construction.
+  //
+  // On a live network committee_time is a protocol instant and the chain
+  // reaches it by itself; here nothing waits ten minutes a block, so the tool
+  // names an instant the chain is at and then mines past it.
+  let committeeTimeMs = BigInt(Date.now());
+  if (onChain) {
+    const clock = onChain.blocksFrom(Math.max(0, onChain.height() - 20), onChain.height());
+    const tipMedian = medianTimePast(clock.blocks.map((b) => b.header),
+      clock.firstHeight, onChain.height());
+    committeeTimeMs = BigInt(tipMedian) * 1000n;
+
+    // AND THE CHAIN MOVES PAST IT. Mined in batches until the rule can name a
+    // block, rather than a fixed number nobody measured - and bounded, so a
+    // chain that will never name one says so instead of mining for ever.
+    const at = { networkId: NETWORK_ID_REGTEST, committeeTimeMs,
+      censusConfirmations, censusRoot: new Uint8Array(32), randomnessRule: 'bitcoin-block-hash' };
+    let tries = 0;
+    for (;;) {
+      // FROM WELL BEFORE THE BONDS, because the view has to reach back past
+      // committee_time or the rule refuses it - "it cannot say which block is
+      // the FIRST one, only which is the first it holds". Measured: a view
+      // beginning at 150 had an earliest median one second after a
+      // committee_time of 1788912428000 and was refused, correctly.
+      censusView = onChain.blocksFrom(Math.max(0, bondHeight - 20), onChain.height());
+      const named = beaconFromChain(at,
+        { headers: censusView.blocks.map((b) => b.header), firstHeight: censusView.firstHeight });
+      if (named.ok) break;
+      if (++tries > 8) throw new Error('this chain names no beacon after 8 batches: ' + named.why);
+      onChain.mine(6);
+    }
+  }
   const contract = {
-    networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations: 1,
+    networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations,
     gameVerifySlots: 2, settlementSlots: 2, simCoreHash: b32(1),
     committeeTimeMs, randomnessRule: 'bitcoin-block-hash',
     startTimeMs: committeeTimeMs + MIN_ENTRY_WINDOW_MS,
     entryCloseMs: committeeTimeMs + MIN_ENTRY_WINDOW_MS + 120000n,
     objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20,
-    slashRemainder: 'BURN', donationSetId: b32(0xd0), censusHeight: 2,
+    slashRemainder: 'BURN', donationSetId: b32(0xd0), censusHeight,
     censusRoot: new Uint8Array(32), stakeMsat: 100000n, bondMinSats: 50000n, blockTicks: 9000,
     exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
     timeFloor: 30, timeCeil: 150, minScore: 1, rankNumerator: 3, rankDenominator: 4,
@@ -225,13 +307,24 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   // rather than typed into a literal, and the census refuses a round that
   // names none - so deriving from the object in hand would ask a different
   // question from the one the node asks.
+  const byTxid = new Map();
+  for (const block of censusView.blocks)
+    for (const raw of block.transactions || []) {
+      try { byTxid.set(toHex(parseTransaction(raw).txid), raw); } catch { /* not one */ }
+    }
+
   const asSeen = decodeRoundContract(encodeRoundContract(contract));
   const census = deriveCensus(censusView, {
     contract: asSeen,
     bond: bondSetFor('regtest'),
+    // RESOLVED FROM THE VIEW ITSELF, the way `roster.censusFor` does it: 5A.2
+    // puts the advertisement body in the witness of the funding transaction,
+    // so a holder of the blocks needs nobody to serve it one. Doing it the same
+    // way here is what makes the root this tool computes the root the daemons
+    // compute.
     resolve: (e) => {
-      const one = bonded.find((b) => toHex(b.txid) === toHex(e.txid));
-      return one ? { transaction: one.transaction } : null;
+      const raw = byTxid.get(toHex(e.txid));
+      return raw ? { transaction: raw } : null;
     },
   });
   if (!census.ok) throw new Error('this tool could not derive its own census: ' + census.why);
@@ -369,11 +462,15 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   // Its own datadir and its own port: this is not the node anybody's money is
   // on, and it is not the 2-of-2's own store.
   const rt = process.env.RT;
+  const rpcport = process.env.RPCPORT || '29643';
   const rpc = rt
-    ? bitcoindRpc({
-        url: `http://127.0.0.1:${process.env.RPCPORT || '29643'}/`,
-        cookiePath: `${rt}/regtest/.cookie`,
-      })
+    ? bitcoindRpc({ url: `http://127.0.0.1:${rpcport}/`, cookiePath: `${rt}/regtest/.cookie` })
+    : null;
+  // The same daemon, over its own cli - the bonds are posted with it, and the
+  // census is read back from the chain the beacon comes off.
+  const cli = rt
+    ? (...a) => execFileSync(process.env.BITCOIN_CLI || '/mnt/bitcoin/bitcoin-31.1/bin/bitcoin-cli',
+        ['-regtest', `-datadir=${rt}`, `-rpcport=${rpcport}`, ...a], { encoding: 'utf8' }).trim()
     : null;
 
   const round = await standUpRound({
@@ -381,6 +478,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     portA: Number(process.env.BLWP_PORT_A || 8080),
     portB: Number(process.env.BLWP_PORT_B || 8081),
     rpc,
+    cli,
     page,
   });
   console.log('round     ' + round.id);
