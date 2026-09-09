@@ -252,31 +252,61 @@ test('the client asks the node what it owes and the honest quote stands', async 
 /**
  * AND A NODE THAT QUOTES SOMETHING ELSE IS REFUSED, BY THE PLAYER.
  *
- * The two ways a quote can be wrong are the two the rule names, and both are
- * checked against the entry the CLIENT holds - not against anything the node
- * also supplied, which it could have made consistent.
+ * A LYING NODE, NOT A MUTATED ENTRY. These were written by changing the
+ * client's own entry - `{ ...entry, stakeMsat: STAKE - 1n }` - which is not the
+ * threat and is now caught earlier anyway, because changing an entry changes
+ * its id. The threat is a node that answers the RIGHT entry id with the WRONG
+ * numbers, so that is what this stands up.
  */
-test('a wrong amount and a wrong hash are both refused against our own entry', async () => {
-  const c = await seated();
-  try {
-    // A node asking for more than the entry staked.
-    const greedy = { ...c.entry, stakeMsat: STAKE - 1n };
-    const overcharged = await c.client.invoice(greedy, { entryId: c.eid });
-    assert.equal(overcharged.ok, false);
-    assert.match(overcharged.why, /asks 100000 msat and the entry staked 99999/);
-    console.log(`  wrong amount: ${overcharged.why}`);
+async function liar(quote) {
+  const http = await import('node:http');
+  const server = http.createServer((req, res) => {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify(quote) + '\n');
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  return { port: server.address().port, close: () => new Promise((r) => server.close(r)) };
+}
 
-    // A quote for a hash this entry never committed to - nobody could ever
-    // settle it, so paying it would be money gone with no round attached.
-    const elsewhere = { ...c.entry, stakeCommitment: b32(0xee) };
-    const stranger = await c.client.invoice(elsewhere, { entryId: c.eid });
-    assert.equal(stranger.ok, false);
+test('a node that quotes a wrong amount or a wrong hash is refused by the player', async () => {
+  const c = await seated();
+  const honest = {
+    entry: toHex(c.eid), paymentHash: toHex(c.entry.stakeCommitment),
+    amountMsat: String(STAKE), state: HELD, request: 'lnbcrt-liar',
+  };
+  try {
+    // ASKS FOR MORE THAN THE ENTRY STAKED.
+    const greedy = await liar({ ...honest, amountMsat: String(STAKE * 2n) });
+    c.client.base = `http://127.0.0.1:${greedy.port}`;
+    const over = await c.client.invoice(c.entry, { entryId: c.eid });
+    assert.equal(over.ok, false, 'the client took a quote for twice what its entry staked');
+    assert.match(over.why, /asks 200000 msat and the entry staked 100000/);
+    console.log(`  wrong amount: ${over.why}`);
+    await greedy.close();
+
+    // QUOTES A HASH THIS ENTRY NEVER COMMITTED TO - nobody could ever settle
+    // it, so paying would be money gone with no round attached to it.
+    const elsewhere = await liar({ ...honest, paymentHash: toHex(b32(0xee)) });
+    c.client.base = `http://127.0.0.1:${elsewhere.port}`;
+    const stranger = await c.client.invoice(c.entry, { entryId: c.eid });
+    assert.equal(stranger.ok, false, 'the client accepted a hash its entry never signed');
     assert.match(stranger.why, /nobody could ever settle it/);
-    console.log(`  wrong hash: ${stranger.why.slice(0, 72)}…`);
+    console.log(`  wrong hash: ${stranger.why.slice(0, 78)}…`);
 
     // AND A REFUSAL HANDS BACK WHAT WAS QUOTED, so a player can see what they
     // were asked for rather than only that it was wrong.
     assert.ok(stranger.quoted && stranger.quoted.request, 'the refusal hid the quote');
+    await elsewhere.close();
+
+    // AND RUBBISH IS NOT A QUOTE. A node answering 200 with nothing useful
+    // must not read as an invoice with undefined fields.
+    const junk = await liar({ hello: 'there' });
+    c.client.base = `http://127.0.0.1:${junk.port}`;
+    const bad = await c.client.invoice(c.entry, { entryId: c.eid });
+    assert.equal(bad.ok, false);
+    assert.match(bad.why, /not an invoice quote|carries no payment request/);
+    console.log(`  rubbish: ${bad.why}`);
+    await junk.close();
   } finally { await c.close(); }
 });
 
@@ -286,12 +316,16 @@ test('a wrong amount and a wrong hash are both refused against our own entry', a
 test('a node that seated nobody, and one with no Lightning, are refused by name', async () => {
   const c = await seated();
   try {
-    // An entry this node never took.
-    const stranger = await c.client.invoice(c.entry, { entryId: b32(0x77) });
+    // AN ENTRY THIS NODE NEVER TOOK - and it has to be a REAL entry asking
+    // about its OWN id, or the client refuses it before the door is reached.
+    // Written first as `invoice(c.entry, { entryId: b32(0x77) })`, which is a
+    // crossed pair and is now caught here rather than there.
+    const never = { ...c.entry, worldSecret: rand(32), stakeCommitment: sha256(rand(32)) };
+    const stranger = await c.client.invoice(never, { entryId: entryId(never) });
     assert.equal(stranger.ok, false);
     assert.equal(stranger.status, 404);
     assert.match(stranger.why, /seated no such entry/);
-    console.log(`  a stranger's entry: ${stranger.status} ${stranger.why}`);
+    console.log(`  an entry the node never took: ${stranger.status} ${stranger.why}`);
   } finally { await c.close(); }
 
   // A daemon with no Lightning port at all quotes nothing, and says why.
@@ -309,5 +343,39 @@ test('an invoice cannot be asked for without an entry or an entry id', async () 
   try {
     assert.match((await c.client.invoice(null, { entryId: c.eid })).why, /no entry to check/);
     assert.match((await c.client.invoice(c.entry)).why, /no entry id to ask about/);
+  } finally { await c.close(); }
+});
+
+/**
+ * AND A CROSSED OR STALE PAIR IS REFUSED AS TWO SEATS, not as two hashes.
+ *
+ * Measured before this check existed: asking about one seat's id while holding
+ * another's contract WAS refused - by the payment hash differing. That is the
+ * right answer for the wrong reason, and it stops being the right answer when
+ * the two entries share a commitment: a player re-entering one round keeps
+ * their preimage and changes their world secret, so two ids, one hash, one
+ * amount, and the other seat's quote would be accepted as this one's.
+ */
+test('an entry that is not the one being asked about is refused as two seats', async () => {
+  const c = await seated();
+  try {
+    // The same player, the same preimage, a second seat: two ids, one hash.
+    const again = { ...c.entry, worldSecret: rand(32) };
+    const took = await fetch(`http://127.0.0.1:${c.node.port}/entry`,
+      { method: 'POST', body: encodeEntryContract(again) });
+    assert.equal(took.status, 201, await took.text());
+    assert.deepEqual(again.stakeCommitment, c.entry.stakeCommitment, 'the fixture changed the hash');
+    assert.notDeepEqual(entryId(again), c.eid, 'the fixture made one entry, not two');
+
+    // Its own id: accepted.
+    const own = await c.client.invoice(again, { entryId: entryId(again) });
+    assert.equal(own.ok, true, own.why);
+
+    // The OTHER seat's id, with an identical hash and amount - the case the
+    // hash check cannot catch.
+    const crossed = await c.client.invoice(again, { entryId: c.eid });
+    assert.equal(crossed.ok, false, 'a quote for another seat was accepted as this one\'s');
+    assert.match(crossed.why, /they are two seats/);
+    console.log(`  same hash, same amount, different seat: ${crossed.why}`);
   } finally { await c.close(); }
 });

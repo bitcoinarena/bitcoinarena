@@ -5698,6 +5698,23 @@ class Client {
     if (!(eid instanceof Uint8Array) || eid.length !== 32)
       return { ok: false, why: 'no entry id to ask about: setRound was never called and none was given' };
 
+    // AND THE CONTRACT IS THE ONE BEING ASKED ABOUT.
+    //
+    // A crossed pair - one seat's contract, another seat's id - is refused
+    // below anyway, because the hashes differ. That is a correct refusal for
+    // the wrong reason, and it stops being correct the moment the two entries
+    // share a commitment: one player re-entering a round keeps their preimage
+    // and changes their world secret, so two ids, one hash, one amount, and
+    // the quote for the other seat would be accepted as this one's. Checked
+    // here, where the answer is "these are two entries" and not "these are two
+    // hashes".
+    if (toHex(entryId(entry)) !== toHex(eid))
+      return {
+        ok: false,
+        why: `that entry is ${toHex(entryId(entry)).slice(0, 16)} and the invoice was asked `
+          + `for ${toHex(eid).slice(0, 16)}: they are two seats`,
+      };
+
     let said;
     try {
       const r = await fetch(`${this.base}/invoice?entry=${toHex(eid)}`);
