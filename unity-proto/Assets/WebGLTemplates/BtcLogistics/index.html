@@ -354,21 +354,23 @@
           Object.assign({}, named.round, { id: BLWPCLIENT.fromHex(named.roundIdHex) }), {
             seats: seats.seats, curve: window.BLWP_CURVE, random, playerPubkey: player.pubkey,
           });
-        // A HANDOUT NO SEAT ACCEPTED IS A REFERENCE THE ENTRY CANNOT NAME, so
-        // it is posted before the entry is built, and a seat that refuses it
-        // is counted rather than ignored.
-        let took = 0;
-        const would = [];
-        for (const node of named.nodes) {
-          try {
-            const r = await fetch(node.replace(/\/+$/, '') + '/handout',
-              { method: 'POST', body: stake.body });
-            if (r.ok) took++; else would.push(node + ': ' + (await r.text()).trim());
-          } catch (e) { would.push(node + ': ' + e.message); }
+        // A HANDOUT TOO FEW SEATS HOLD IS A STAKE NOBODY CAN OPEN, and the
+        // count is a DECISION rather than a number in a log. Reconstruction
+        // takes five of seven; measured with three reachable, the node this
+        // page joined seated the player 201 while every other node refused the
+        // entry 400, and the stake could never have been settled.
+        //
+        // The posting and the threshold are in `@blwp/client` for the reason
+        // `roundPays` is: this file is the one `node --test` cannot load.
+        const put = await BLWPCLIENT.postHandout(stake, named.nodes);
+        if (!put.ok) {
+          window.BLWP_SEAT_REFUSED = put.why;
+          console.error('[blwp] seat refused: ' + put.why + ' — ' + put.refused.join('; '));
+          return;
         }
         window.BLWP_STAKE = {
           dealt: true, seats: seats.seats.length, agreed: seats.agreed,
-          accepted: took, refused: would, paid: false,
+          accepted: put.accepted, refused: put.refused, paid: false,
         };
         // WHETHER IT IS PAID IS NOT SAID HERE. The node answers `x-hold` when it
         // takes the entry and `Client.join` keeps it; the chip prints that
@@ -376,8 +378,8 @@
         // page that printed "not paid" as a constant would be reporting its
         // own guess as the player's balance.
         console.log('[blwp] stake dealt to ' + seats.seats.length + ' settlement seat(s), '
-          + took + ' accepted the handout. Paying it is M3.2; the chip says what '
-          + 'the node holds.');
+          + put.accepted + ' accepted the handout. Paying it is M3.2; the chip says '
+          + 'what the node holds.');
       } else {
         window.BLWP_STAKE = { dealt: false, paid: false, free: true };
         console.log('[blwp] this round asks no stake, so none is dealt');

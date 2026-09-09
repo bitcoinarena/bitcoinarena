@@ -262,8 +262,15 @@ test('the page joins a named round and still invents none', () => {
     'the page deals a stake without asking who settles the round');
   assert.ok(!/stakeFor\(\s*named\.round\b/.test(page),
     'the page deals to the contract\'s flat node list, which is the union of the committees');
-  assert.ok(page.includes("'/handout'"),
+  // THE HANDOUT IS PUBLISHED, AND THE COUNT IS ACTED ON. This pinned the
+  // string "/handout" in the page, which only proved a URL was written down.
+  // The posting and the five-seat threshold are `postHandout` now - a handout
+  // three of seven seats hold is a stake nobody can open - so what is pinned
+  // is the call and the branch that refuses on it.
+  assert.match(page, /BLWPCLIENT\.postHandout\(/,
     'the page deals a handout and never posts it, so no seat can accept it');
+  assert.match(page, /if \(!put\.ok\)/,
+    'the page publishes the handout and ignores how many seats took it');
   assert.ok(page.includes('BLWP_SEAT_REFUSED'),
     'a paying round whose committee cannot be learned is still seated silently');
   // THE SEAT'S FUNDING REACHES THE SCREEN, and this pin was weaker when it was

@@ -113,7 +113,7 @@ out += '         tabIdentity: tabIdentity, entryFor: entryFor,\n';
 // committee: `contract.nodes` is the UNION of the role committees, and shares
 // sealed to a game-verify seat are a stake nobody can open at payout.
 out += '         stakeFor: stakeFor, fetchSettlementSeats: fetchSettlementSeats,\n';
-out += '         roundPays: roundPays,\n';
+out += '         roundPays: roundPays, postHandout: postHandout,\n';
 out += '         decodeRoundContract: decodeRoundContract,\n';
 out += '         toHex: toHex, fromHex: fromHex };\n})();\n';
 out += 'if (typeof module !== "undefined") module.exports = BLWPCLIENT;\n';

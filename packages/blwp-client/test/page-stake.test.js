@@ -23,7 +23,7 @@ import { ed25519 } from '@noble/curves/ed25519.js';
 import { openStore } from '../../blwp-node/src/store.js';
 import { serve } from '../../blwp-node/src/server.js';
 import { feldmanGroup } from '../../blwp-node/src/curve.js';
-import { stakeFor, entryFor, fetchSettlementSeats, roundPays } from '../src/join.js';
+import { stakeFor, entryFor, fetchSettlementSeats, roundPays, postHandout } from '../src/join.js';
 import { playersLine, stakeLine } from '../src/ghost-field.js';
 import { Client } from '../src/client.js';
 import { readFileSync } from 'node:fs';
@@ -82,7 +82,7 @@ async function daemons(n = SHARES_TOTAL, { stakeMsat = 100000n } = {}) {
 }
 
 /** The page's own sequence, in the order `index.html` runs it. */
-async function pageJoins(world, settlementSeats) {
+async function pageJoins(world, settlementSeats, { reachable = world.nodes, needed = SHARES_NEEDED } = {}) {
   const player = { secret: rand(32) };
   player.pubkey = schnorr.getPublicKey(player.secret);
 
@@ -90,14 +90,16 @@ async function pageJoins(world, settlementSeats) {
   let stake = null;
   const accepted = [];
   const refused = [];
+  let put = null;
   if (pays) {
     stake = await stakeFor({ ...world.contract, id: world.rid }, {
       seats: settlementSeats, curve: feldmanGroup, random: rand, playerPubkey: player.pubkey,
     });
-    for (const node of world.nodes) {
-      const r = await post(node.port, '/handout', stake.body);
-      if (r.status === 201) accepted.push(node); else refused.push(`${node.port}: ${r.text}`);
-    }
+    put = await postHandout(stake, reachable.map((n) => `http://127.0.0.1:${n.port}`),
+      { needed });
+    for (const u of put.refused) refused.push(u);
+    for (let i = 0; i < put.accepted; i++) accepted.push(i);
+    if (!put.ok) return { player, stake, entry: null, accepted, refused, pays, put };
   }
   const entry = {
     roundId: world.rid, sessionPubkey: ed25519.getPublicKey(ed25519.utils.randomSecretKey()),
@@ -105,7 +107,7 @@ async function pageJoins(world, settlementSeats) {
       playerPubkey: player.pubkey, random: rand, ...(stake ? { stake } : {}),
     }),
   };
-  return { player, stake, entry, accepted, refused, pays };
+  return { player, stake, entry, accepted, refused, pays, put };
 }
 
 /**
@@ -317,4 +319,48 @@ test('a free round is charged 2% of nothing, and that stands too', async () => {
     assert.equal(joined.entry.feeMsat, 0n);
     assert.equal(feeMatchesEntry(joined.entry).ok, true);
   } finally { await world.close(); }
+});
+
+/**
+ * A HANDOUT TOO FEW SEATS HOLD IS A STAKE NOBODY CAN OPEN, AND THE SEAT IS
+ * REFUSED RATHER THAN TAKEN.
+ *
+ * The first close of this letter posted the handout, counted the acceptances
+ * and acted on NONE of them - its own comment said "a seat that refuses it is
+ * counted rather than ignored", which overstated what the code did. Measured
+ * with three of seven reachable: the stake needs five to open, the node the
+ * page joined seated the player 201, and every other node refused the entry
+ * 400 "that entry names shares this node has not accepted". Seated at a paying
+ * round with a stake that can never be settled, and told nothing.
+ */
+test('a handout too few seats hold refuses the seat instead of taking it', async () => {
+  const world = await daemons();
+  try {
+    const settlement = world.nodes.map((n) => n.round.pubkey);
+    const only3 = world.nodes.slice(0, 3);
+    const joined = await pageJoins(world, settlement, { reachable: only3 });
+
+    assert.equal(joined.put.ok, false, 'three of five needed was treated as enough');
+    assert.equal(joined.put.accepted, 3);
+    assert.equal(joined.put.needed, SHARES_NEEDED);
+    assert.match(joined.put.why, /could never be settled/);
+    assert.equal(joined.entry, null, 'the page built an entry for a stake nobody can open');
+    console.log(`  ${joined.put.accepted} of ${joined.put.needed} needed: ${joined.put.why}`);
+
+    // AND FIVE IS ENOUGH, so this measures the threshold and not the network.
+    const five = await pageJoins(world, settlement, { reachable: world.nodes.slice(0, 5) });
+    assert.equal(five.put.ok, true, five.put.why);
+    assert.equal(five.put.accepted, SHARES_NEEDED);
+    assert.ok(five.entry, 'five seats held the handout and the page still refused');
+    const answer = await post(world.nodes[0].port, '/entry', encodeEntryContract(five.entry));
+    assert.equal(answer.status, 201, answer.text);
+    console.log(`  ${five.put.accepted} of ${five.put.needed}: seated, and a daemon took the entry`);
+  } finally { await world.close(); }
+});
+
+test('the page acts on the count rather than logging it', () => {
+  const page = readFileSync(new URL('../../../unity-proto/Assets/WebGLTemplates/BtcLogistics/index.html', import.meta.url), 'utf8');
+  assert.match(page, /BLWPCLIENT\.postHandout\(/,
+    'the page posts the handout itself, so the threshold lives where no test can reach it');
+  assert.match(page, /if \(!put\.ok\)/, 'the page does not act on how many seats took the handout');
 });

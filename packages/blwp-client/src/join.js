@@ -169,6 +169,57 @@ export async function fetchRandomness(id, nodes, { fetcher = fetch } = {}) {
 }
 
 /**
+ * PUBLISH THE HANDOUT, AND COUNT WHAT IT IS WORTH.
+ *
+ * A HANDOUT FEWER THAN `needed` SEATS HOLD IS A STAKE NOBODY CAN OPEN.
+ * Reconstruction takes five of seven; a page that dealt to seven, reached
+ * three and seated anyway would put a player at a paying round whose stake can
+ * never be settled - and every seat that did not store it REFUSES the entry,
+ * so most of the committee has no record of that player at all.
+ *
+ * Measured before this existed, with three of seven reachable:
+ *
+ *   settlement seats holding the handout   3 of 7
+ *   the threshold to open it               5
+ *   reconstructable                        false
+ *   the node the page joined               201, seated
+ *   every other node                       400, "that entry names shares this
+ *                                          node has not accepted"
+ *
+ * and the page counted the three and acted on none of it. So the count is a
+ * DECISION now, and it is made here rather than in the page for the reason
+ * `roundPays` is: `index.html` is the one file `node --test` cannot load.
+ *
+ * Posted to every node the round named, because the page holds URLs and the
+ * committee is keys - there is no map between them. A node with no share in
+ * the handout refuses, which is the right answer and is counted as one.
+ */
+export async function postHandout(stake, nodes, { fetcher = fetch, needed = SHARES_NEEDED } = {}) {
+  if (!stake || !stake.body) throw new Error('there is no dealt stake to publish');
+  if (!Array.isArray(nodes) || !nodes.length)
+    throw new Error('no node to publish this handout to');
+  const accepted = [];
+  const refused = [];
+  for (const node of nodes) {
+    const at = node.replace(/\/+$/, '') + '/handout';
+    try {
+      const r = await fetcher(at, { method: 'POST', body: stake.body });
+      if (r.ok) accepted.push(node);
+      else refused.push(`${node}: ${(await r.text()).trim()}`);
+    } catch (e) {
+      refused.push(`${node}: ${e.message}`);
+    }
+  }
+  if (accepted.length < needed)
+    return {
+      ok: false, accepted: accepted.length, needed, refused,
+      why: `${accepted.length} of the ${needed} seats needed to open this stake took the `
+        + 'handout, so it could never be settled',
+    };
+  return { ok: true, accepted: accepted.length, needed, refused };
+}
+
+/**
  * DOES THIS ROUND ASK FOR MONEY?
  *
  * One line, and it lives HERE rather than in the page for the reason the hold
