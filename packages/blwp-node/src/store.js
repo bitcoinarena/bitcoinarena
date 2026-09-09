@@ -210,6 +210,25 @@ export function openStore(path = ':memory:') {
       accepted_ms INTEGER NOT NULL
     );
 
+    -- THE STAKE OF ONE ENTRY, WHILE IT IS IN FLIGHT. 23.1: the endpoint issues
+    -- a hold invoice for the entry's payment hash, the player's wallet pays it,
+    -- and from that moment the money is "accepted but not settled ... in
+    -- nobody's balance". This is what this node knows about that hold.
+    --
+    -- The STATE is the whole point: HELD until a final result says otherwise,
+    -- then SETTLED or CANCELLED by an act, or EXPIRED because nobody acted -
+    -- and 23.2 makes that last one the default, which is why a VOID has no row
+    -- to write rather than a cancel to issue.
+    CREATE TABLE IF NOT EXISTS holds (
+      entry_id     BLOB PRIMARY KEY REFERENCES entries(entry_id),
+      round_id     BLOB NOT NULL,
+      payment_hash BLOB NOT NULL,
+      amount_msat  INTEGER NOT NULL,
+      state        TEXT NOT NULL,
+      why          TEXT NOT NULL,
+      updated_ms   INTEGER NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS identity (
       one    INTEGER PRIMARY KEY CHECK (one = 0),
       secret BLOB NOT NULL,

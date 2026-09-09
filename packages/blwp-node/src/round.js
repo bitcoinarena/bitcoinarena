@@ -996,6 +996,46 @@ export class Round {
       .get(roundIdBytes, entryIdBytes, nodePubkey);
   }
 
+  /**
+   * WHAT THIS NODE KNOWS ABOUT ONE ENTRY'S STAKE, and how it changed.
+   *
+   * A row appears when the hold is created and its STATE moves once: 23.1's
+   * "in flight, in nobody's balance" until a final result authorises an act.
+   * The reason is kept beside it because a stake that moved and cannot say why
+   * is the thing 23 exists to prevent.
+   */
+  putHold({ entryId, roundId, paymentHash, amountMsat, state, why }) {
+    this.db.prepare(
+      'INSERT OR REPLACE INTO holds (entry_id, round_id, payment_hash, amount_msat, '
+      + 'state, why, updated_ms) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .run(Buffer.from(entryId), Buffer.from(roundId), Buffer.from(paymentHash),
+        String(amountMsat), state, why, this.now());
+    return state;
+  }
+
+  /** The hold for one entry, or nothing. */
+  hold(entryIdBytes) {
+    const row = this.db.prepare(
+      'SELECT round_id, payment_hash, amount_msat, state, why, updated_ms FROM holds '
+      + 'WHERE entry_id = ?').get(Buffer.from(entryIdBytes));
+    if (!row) return null;
+    return {
+      roundId: new Uint8Array(row.round_id),
+      paymentHash: new Uint8Array(row.payment_hash),
+      amountMsat: BigInt(row.amount_msat),
+      state: row.state,
+      why: row.why,
+      updatedMs: row.updated_ms,
+    };
+  }
+
+  /** Every hold of a round, so a close can act on all of them. */
+  holdsOf(roundIdBytes) {
+    return this.db.prepare('SELECT entry_id FROM holds WHERE round_id = ? ORDER BY entry_id')
+      .all(Buffer.from(roundIdBytes))
+      .map((r) => ({ entryId: new Uint8Array(r.entry_id), ...this.hold(new Uint8Array(r.entry_id)) }));
+  }
+
   /** Every signed result this node holds for a run, its own included. */
   results(roundIdBytes, entryIdBytes) {
     return this.db.prepare(
