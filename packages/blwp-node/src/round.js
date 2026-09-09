@@ -952,6 +952,46 @@ export class Round {
   }
 
   /**
+   * THE BATCHES AFTER ONE THIS NODE HAS ALREADY SEEN, by sequence.
+   *
+   * `handOver` reads and re-checks the WHOLE chain, which is right for a
+   * client resuming and wrong for a picture of the newest six ticks: measured
+   * at the end of a full 9000-tick round it walked 1500 batches per frame,
+   * ten times a second, per watcher. The chain is append-only and every batch
+   * was checked against the stored head on the way in, so a live watcher can
+   * check the new ones and no others - once each, still all of them.
+   */
+  batchesFrom(roundIdBytes, entryIdBytes, afterSeq = -1) {
+    return this.db.prepare(
+      'SELECT seq, bytes FROM batches WHERE round_id = ? AND entry_id = ? AND seq > ? ORDER BY seq')
+      .all(roundIdBytes, entryIdBytes, afterSeq)
+      .map((r) => ({ seq: r.seq, batch: decodeInputBatch(new Uint8Array(r.bytes)) }));
+  }
+
+  /**
+   * THE TICKS FROM ONE POINT ON, for a run somebody is watching live.
+   *
+   * `transcript` reads the whole run, which is right for a replay that starts
+   * at zero and wrong for a picture of the last six ticks: measured at tick
+   * 3599 it cost 8.5 ms of the ~30 ms a live frame was spending on tables
+   * rather than on simulation. The liquidations come whole because there are
+   * a handful of them in a run, not thousands.
+   */
+  ticksFrom(roundIdBytes, entryIdBytes, from) {
+    const ticks = this.db.prepare(
+      'SELECT tick, words FROM ticks WHERE round_id = ? AND entry_id = ? AND tick >= ? ORDER BY tick')
+      .all(roundIdBytes, entryIdBytes, from);
+    const liq = this.db.prepare(
+      'SELECT tick, size FROM liquidations WHERE round_id = ? AND entry_id = ? AND tick >= ? ORDER BY tick')
+      .all(roundIdBytes, entryIdBytes, from);
+    return {
+      from,
+      ticks: ticks.map((r) => ({ tick: r.tick, words: [...new Int32Array(new Uint8Array(r.words).buffer)] })),
+      liquidations: liq.map((r) => [r.tick, r.size]),
+    };
+  }
+
+  /**
    * EVERY ENTRY OF A ROUND, so a daemon that has just closed one can find the
    * runs it must replay without being told what they are.
    */

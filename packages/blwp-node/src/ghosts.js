@@ -19,11 +19,11 @@
 // simulator still counts one.
 import { encodeGhost, ghostBinds } from '../../protocol/src/ghost.js';
 import { interestSet, GHOST_SUBSCRIPTIONS } from '../../protocol/src/interest.js';
-import { decodeRoundContract, decodeEntryContract } from '../../protocol/src/contracts.js';
+import { decodeRoundContract, decodeEntryContract, entryId } from '../../protocol/src/contracts.js';
 import { toHex as hex } from '../../protocol/src/hash.js';
 import { batchId, batchTicks } from '../../protocol/src/batch.js';
 import { GENESIS, decodeTranscript } from '../../protocol/src/transcript.js';
-import { replay } from './replay.js';
+import { replay, RunInProgress } from './replay.js';
 
 const same = (a, b) => a instanceof Uint8Array && b instanceof Uint8Array
   && a.length === b.length && a.every((v, i) => v === b[i]);
@@ -148,6 +148,69 @@ export class Ghosts {
     this.frames = new Map();
     this.made = 0;
     this.served = 0;
+    // ONE WARM RUN PER ENTRY, so a live picture costs the ticks since the last
+    // one instead of the whole run. Measured before this existed: a frame at
+    // tick 3599 took 568.9 ms and a driver publishes every 100 ms, so the
+    // picture fell behind for good about eighteen seconds in.
+    this.runs = new Map();
+    this.walked = 0;
+    // HOW FAR EACH RUN'S INPUT CHAIN HAS BEEN CHECKED, so the check is done
+    // once per batch instead of once per batch per frame.
+    this.chains = new Map();
+  }
+
+  /**
+   * THE CHAIN, CHECKED THE WAY A STRANGER WOULD CHECK IT, INCREMENTALLY.
+   *
+   * `ghostBinds` walks from GENESIS every time, which is the right shape for
+   * somebody handed a transcript and no history - and the wrong one for a node
+   * that has been watching this chain link by link. Every batch is still
+   * checked against the one before it and the head is still the one whose
+   * ticks cover the picture; what is dropped is re-checking links this node
+   * already checked. Measured: 1500 batches per frame at the end of a round.
+   */
+  #chainThrough(roundIdBytes, entryIdBytes, tick) {
+    const key = `${hex(roundIdBytes)}:${hex(entryIdBytes)}`;
+    const held = this.chains.get(key)
+      || { seq: -1, previous: GENESIS, head: GENESIS, firstTick: null, from: null, to: null };
+    for (const { seq, batch } of this.round.batchesFrom(roundIdBytes, entryIdBytes, held.seq)) {
+      if (!same(batch.previousHash, held.previous))
+        return { ok: false, why: 'that transcript\'s input chain is broken' };
+      const at = batchTicks(batch);
+      if (held.firstTick === null && at.length) held.firstTick = at[0];
+      held.previous = batchId(batch);
+      held.head = held.previous;
+      held.seq = seq;
+      if (at.length) { held.from = held.firstTick; held.to = at[at.length - 1]; }
+    }
+    this.chains.set(key, held);
+    if (same(held.head, GENESIS))
+      return { ok: false, why: 'that head is before any input went out' };
+    if (held.to === null)
+      return { ok: false, why: 'that head carries no ticks to be a picture of' };
+    if (tick < held.from || tick > held.to)
+      return {
+        ok: false,
+        why: `that ghost is at tick ${tick}, and the inputs it names cover ${held.from} to ${held.to}`,
+      };
+    return { ok: true, head: held.head, throughTick: held.to };
+  }
+
+  /** The kept run for an entry, made on the first picture asked of it. */
+  #runFor(roundIdBytes, entryIdBytes, entry) {
+    const key = `${hex(roundIdBytes)}:${hex(entryIdBytes)}`;
+    const had = this.runs.get(key);
+    if (had) return had;
+    const made = new RunInProgress(entry, {
+      roundRandomness: this.#randomnessOf(roundIdBytes, entry, entryIdBytes),
+    });
+    this.runs.set(key, made);
+    return made;
+  }
+
+  /** A run this node will not picture again - a round that closed, say. */
+  forget(roundIdBytes, entryIdBytes) {
+    return this.runs.delete(`${hex(roundIdBytes)}:${hex(entryIdBytes)}`);
   }
 
   #randomnessOf(roundIdBytes, entry, entryId) {
@@ -209,12 +272,76 @@ export class Ghosts {
     return made;
   }
 
-  /** The latest frame an entry can prove, or the reason there is none. */
+  /**
+   * THE LATEST FRAME AN ENTRY CAN PROVE, off a run kept warm since the last one.
+   *
+   * This is the live path, and the only one a driving truck goes through.
+   * `frameFor` still exists for an arbitrary older tick and still replays from
+   * the start, which is right for a question nobody asks at 10 Hz.
+   *
+   * The picture is built and CHECKED exactly as `ghostForChecked` builds and
+   * checks one - same head from the same batches, same `ghostBinds` - because
+   * a producer its own consumer cannot check is a producer nobody should
+   * trust, and that does not stop being true when it is fast.
+   */
   latest(roundIdBytes, entryIdBytes) {
     const at = this.playedThrough(roundIdBytes, entryIdBytes);
     if (at === null)
       return { ok: false, why: 'that entry has published no inputs, so there is nothing to be a picture of' };
-    return this.frameFor(roundIdBytes, entryIdBytes, at);
+
+    const key = `${hex(roundIdBytes)}:${hex(entryIdBytes)}:${at}`;
+    const had = this.frames.get(key);
+    if (had) { this.served++; return had; }
+
+    const stored = this.round.entry(entryIdBytes);
+    if (!stored) return { ok: false, why: 'no such entry on this node' };
+    const entry = decodeEntryContract(stored);
+
+    // THE SAME REFUSAL THE SLOW PATH GIVES, in the same words. A node that
+    // made up a world seed would be seeding a world its peers cannot
+    // reproduce, and the door's own test speaks this sentence.
+    if (!this.#randomnessOf(roundIdBytes, entry, entryIdBytes))
+      return { ok: false, why: 'that round has no randomness yet, so there is no world to picture' };
+
+    const run = this.#runFor(roundIdBytes, entryIdBytes, entry);
+    if (!run.ok) return { ok: false, why: run.why };
+
+    const before = run.stepped;
+    const walked = run.stepTo(this.round.ticksFrom(roundIdBytes, entryIdBytes, run.at + 1), at);
+    if (!walked.ok) return { ok: false, why: walked.why };
+    this.walked += run.stepped - before;
+
+    const chain = this.#chainThrough(roundIdBytes, entryIdBytes, at);
+    if (!chain.ok) return chain;
+    const head = chain.head;
+
+    const ghost = {
+      roundId: new Uint8Array(roundIdBytes), entryId: new Uint8Array(entryIdBytes),
+      playerPubkey: entry.playerPubkey,
+      tick: at, inputChainHash: chain.head,
+      x: walked.x, z: walked.z, heading: walked.heading,
+    };
+    // AND THE KEY IS STILL THE ENTRY'S, which is the half of `ghostBinds`
+    // that is not about the chain. The chain half was done above, once per
+    // batch rather than once per frame.
+    if (hex(entryId(entry)) !== hex(ghost.entryId))
+      return { ok: false, why: 'that is a different entry than the ghost names' };
+    if (hex(entry.playerPubkey) !== hex(ghost.playerPubkey))
+      return { ok: false, why: 'that ghost names a key that entry was not signed for' };
+    const made = { ok: true, ghost, bytes: encodeGhost(ghost), throughTick: chain.throughTick,
+      unchecked: [] };
+
+    // ONLY THE LIVE TICK IS KEPT. The old cache held one entry per tick of
+    // every run forever - 600 of them in a minute, none ever served twice,
+    // because a live watcher never asks for yesterday's tick.
+    this.frames.set(key, made);
+    if (this.frames.size > 1) {
+      for (const k of this.frames.keys()) {
+        if (k !== key && k.startsWith(`${hex(roundIdBytes)}:${hex(entryIdBytes)}:`)) this.frames.delete(k);
+      }
+    }
+    if (made.ok) this.made++;
+    return made;
   }
 
   /**

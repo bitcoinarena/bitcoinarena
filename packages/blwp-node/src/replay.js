@@ -252,3 +252,133 @@ if (!isMainThread && workerData && workerData.blwpReplay) {
   parentPort.postMessage(replay(transcript, entry, options));
   parentPort.close();
 }
+
+/**
+ * THE SAME RUN, KEPT WARM, SO THE PICTURE CAN KEEP UP WITH THE TRUCK.
+ *
+ * `replay` starts at `init(seed)` every time it is called, which is right for
+ * the thing it is for: a run that is over, replayed once, signed once. It is
+ * the wrong shape for a LIVE ghost, and the difference was measured rather
+ * than argued. A driver publishes a batch every 100 ms (`BatchEvery` is 6
+ * ticks at 60 Hz), so a watcher's frame has to cost well under that:
+ *
+ *     tick     5     one frame  11.8 ms
+ *     tick  1085     one frame  94.6 ms      already the whole budget
+ *     tick  2165     one frame 175.9 ms
+ *     tick  3599     one frame 568.9 ms      five batches behind, per watcher
+ *
+ *     600 frames of a 60-second run cost 110 SECONDS of simulation, and the
+ *     frame cache served 0 of them - every frame replayed the run from zero.
+ *
+ * That is the whole of "the other truck is seen at spawn and then does not
+ * follow": it keeps up for about eighteen seconds and then falls behind for
+ * good, and a frame that does land is minutes old by the time it is drawn.
+ *
+ * SO THE STATE IS KEPT AND STEPPED FORWARD. Nothing about the simulation
+ * changes: same seed, same words, same order, and a liquidation still lands
+ * BEFORE its own tick and exactly once. What changes is that the ticks already
+ * stepped are not stepped again. `ghost-live.test.js` measures that the pose
+ * this produces is byte-identical to a full replay's at every tick, because
+ * "it should be the same" is not a thing to take on trust when it is the
+ * position other players are shown.
+ *
+ * A GHOST IS STILL A PICTURE (0.10). This runs on the NODE, off the transcript
+ * the node stored, and produces three words. Nothing here is an input to
+ * anybody's simulation and no browser computes any of it.
+ */
+export class RunInProgress {
+  constructor(entry, { seedWord, roundRandomness } = {}) {
+    this.ok = true;
+    if (!Number.isInteger(seedWord)) {
+      if (!(entry?.worldSecret instanceof Uint8Array) || entry.worldSecret.length !== 32)
+        return Object.assign(this, { ok: false, why: NO_SEED_RULE });
+      if (!(roundRandomness instanceof Uint8Array) || roundRandomness.length !== 32)
+        return Object.assign(this, { ok: false, why: 'that round names no randomness to mix the player seed' });
+      try { seedWord = seedWordForEntry(entry, roundRandomness); }
+      catch (e) { return Object.assign(this, { ok: false, why: String(e.message || e) }); }
+    }
+    if (!entry || !Number.isInteger(entry.joinTick))
+      return Object.assign(this, { ok: false, why: 'that entry names no join tick to start from' });
+
+    this.seedWord = seedWord;
+    this.joinTick = entry.joinTick;
+    this.endsAt = lastTickOfRun(entry.joinTick);
+    this.st = init(seedWord);
+    // The last tick STEPPED. Nothing yet, so one before the join.
+    this.at = entry.joinTick - 1;
+    // Liquidations land BEFORE their own tick and exactly once, whether the
+    // caller hands the whole run or one slice at a time.
+    this.due = new Map();
+    this.seen = new Set();
+    this.stepped = 0;
+  }
+
+  /** x, z and heading as of the last tick stepped. Three words, like `replay`. */
+  pose() {
+    return {
+      tick: this.at,
+      x: this.st.i32[O_TRUCK + T_X],
+      z: this.st.i32[O_TRUCK + T_Z],
+      heading: this.st.i32[O_TRUCK + T_HEADING],
+    };
+  }
+
+  /**
+   * STEP FORWARD TO `tick`, and refuse for the same reasons `replay` refuses.
+   *
+   * The transcript is the node's own and grows only at the end, so the ticks
+   * already stepped are checked by position rather than re-walked: a
+   * transcript whose earlier ticks changed under a warm state is not a longer
+   * run, it is a different one, and it is refused rather than continued.
+   */
+  stepTo(transcript, tick) {
+    if (!this.ok) return { ok: false, why: this.why };
+    if (!transcript || !Array.isArray(transcript.ticks))
+      return { ok: false, why: 'that is not a transcript this node stored' };
+    const { ticks } = transcript;
+    if (!ticks.length) return { ok: false, why: 'that transcript carries no ticks' };
+    // THE SLICE MAY START WHERE THIS RUN IS, not only at the join. A live
+    // watcher reads the ticks it has not stepped; a caller handing the whole
+    // run still works, because `from` is then the join tick.
+    const from = Number.isInteger(transcript.from) ? transcript.from : this.joinTick;
+    if (from > this.at + 1)
+      return { ok: false, why: `this run is at tick ${this.at} and that slice starts at ${from}` };
+    if (ticks[0].tick !== from)
+      return { ok: false, why: `that transcript starts at tick ${ticks[0].tick} and was said to start at ${from}` };
+    if (from === this.joinTick && ticks[0].tick !== this.joinTick)
+      return { ok: false, why: `that transcript starts at tick ${ticks[0].tick} and the entry joins at ${this.joinTick}` };
+    if (!Number.isInteger(tick) || tick < this.joinTick)
+      return { ok: false, why: 'a ghost is at a whole tick of this run' };
+    if (tick > this.endsAt)
+      return {
+        ok: false,
+        why: `that run ends at tick ${this.endsAt} - ${BLOCK_TICKS} ticks from its join at `
+          + `${this.joinTick} - and that picture asks for ${tick}`,
+      };
+
+    // A GAP IS NOT A SHORTER RUN, and neither is a transcript that lost its
+    // beginning: ticks are absolute, so both show as a mismatch here.
+    const want = tick - from;
+    if (want >= ticks.length)
+      return { ok: false, why: `tick ${tick} is not one the published inputs cover` };
+    for (let i = 0; i <= want; i++)
+      if (ticks[i].tick !== from + i)
+        return { ok: false, why: `that transcript has a gap at tick ${from + i}` };
+
+    // THE LIQUIDATIONS, ONCE EACH. Built on the first step so a transcript
+    // that gains one later is not applied twice, and consumed as they land.
+    for (const [at, size] of transcript.liquidations || [])
+      if (at > this.at && !this.seen.has(at)) { this.due.set(at, size); this.seen.add(at); }
+
+    for (let at = this.at + 1; at <= tick; at++) {
+      const t = ticks[at - from];
+      if (!Array.isArray(t.words) || t.words.length !== INPUT_WORDS)
+        return { ok: false, why: `tick ${t.tick} does not carry five words` };
+      if (this.due.has(at)) { submitLiquidation(this.st, this.due.get(at)); this.due.delete(at); }
+      step(this.st, t.words[0], t.words[1], t.words[2], t.words[3], t.words[4]);
+      this.at = at;
+      this.stepped++;
+    }
+    return { ok: true, ...this.pose() };
+  }
+}
