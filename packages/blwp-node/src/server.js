@@ -64,6 +64,7 @@ import { Preimages, encodeShareAnswer, SEALED_ANSWER_BYTES } from './preimage.js
 import { Payouts, PAYOUT_QUEUED, PAID, NOTHING_OWED } from './payout.js';
 import { PoolSigning } from './pool-signing.js';
 import { PoolWatch } from './pool-watch.js';
+import { Dkg } from './dkg.js';
 import { decodeUtxo, decodeCommitments, encodeCommitments, encodeShare, UTXO_BYTES } from './pool-wire.js';
 import { SIGNED_TABLE_BYTES } from './payout-table.js';
 
@@ -215,6 +216,18 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // share behind it, and it rebuilds the transaction itself before it does.
   const signing = new PoolSigning(round, {
     curve: poolCurve, seat: poolSeat, pool: poolKey,
+  });
+
+  // AND THIS NODE'S HALF OF MAKING THE COMMITTEE'S KEY.
+  //
+  // `poolSeat` above is a share this daemon was HANDED, which means somebody
+  // dealt it and therefore held every one. A committee that runs this makes
+  // its own: one contribution each, one share kept, and a group key every seat
+  // computes from public data. The share it ends with has the same shape
+  // `PoolSigning` already takes, so nothing about the signing changes.
+  const dkg = new Dkg(round, {
+    curve: poolCurve, random: (n) => new Uint8Array(randomBytes(n)),
+    peers, fetcher: (u, o) => fetch(u, o),
   });
 
   // AND WHICH OUTPUT THE POOL IS IN, asked of the chain rather than
@@ -869,6 +882,35 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         return res.end(Buffer.from(hash));
       }
 
+      /**
+       * ONE SEAT'S CONTRIBUTION TO THE COMMITTEE'S KEY (M3.3 item 14).
+       *
+       * POST hands one over; GET serves this node's own, so a seat that was
+       * down when the others dealt can fetch what it missed rather than
+       * asking anybody to deal again.
+       *
+       * NOTHING SECRET CROSSES EITHER WAY. A contribution is a polynomial's
+       * commitments and one SEALED envelope per seat, and only the seat a
+       * given envelope is addressed to can open it - so this door carries the
+       * same object to everybody and tells nobody anything.
+       */
+      if (req.method === 'POST' && url.pathname === '/dkg') {
+        const took = await dkg.accept(await read(req));
+        if (!took.ok) return text(res, 409, took.why);
+        res.writeHead(took.fresh ? 201 : 200, { 'content-type': 'text/plain', ...CORS });
+        return res.end(took.fresh ? 'taken' : 'already');
+      }
+
+      if (req.method === 'GET' && url.pathname === '/dkg') {
+        const id = Buffer.from(url.searchParams.get('epoch') || '', 'hex');
+        if (id.length !== 32) return text(res, 400, 'that is not an epoch id');
+        const held = round.epoch(new Uint8Array(id));
+        if (!held || !held.mine)
+          return text(res, 404, 'this node has dealt nothing for that committee');
+        res.writeHead(200, { 'content-type': 'application/octet-stream', ...CORS });
+        return res.end(Buffer.from(held.mine));
+      }
+
       if (req.method === 'GET' && url.pathname === '/committee') {
         const id = Buffer.from(url.searchParams.get('round') || '', 'hex');
         const role = url.searchParams.get('role') || 'game';
@@ -1102,7 +1144,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   return new Promise((resolve) => {
     http.listen(port, host, () => resolve({
       http, wss, round, host, verifier, ghosts, roster, custody, reconciling, preimages,
-      payouts, reconcilingPayouts, signing, poolWatch,
+      payouts, reconcilingPayouts, signing, poolWatch, dkg,
       // What the last close did with the money, and the same door an operator
       // uses to run a settlement again by hand.
       stakes: () => stakes,

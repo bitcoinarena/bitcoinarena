@@ -1,20 +1,25 @@
 // HOW MANY SHARES OF THE POOL KEY ONE PROCESS HOLDS, COUNTED.
 //
-// M3.3 item 14. Item 10 closed FROST against RFC 9591's own vectors and said
-// what it had not done: "the group secret comes from a trusted dealer rather
-// than a DKG". Item 17 put the SIGNING on sockets - five daemons, one share
-// each, and no secret on the wire - and that is the distribution of the
-// signing, not of the key.
+// M3.3 item 14, and this file is the before and the after. Written first as
+// the measurement the letter had to move:
 //
-// THE KEY IS STILL DEALT, and by something outside this repository. There is no
-// caller of `trustedDealerSplit` in any `src/`: a daemon takes `poolSeat` as an
-// argument to `serve`, so whoever STARTS the seven daemons is the dealer, holds
-// all seven shares, and therefore knows the group secret. "No one of them can
-// steal" holds among the signers and not against that process.
+//   shares reachable from the dealing process   7 of 7
+//   shares needed to sign alone                 5
+//   the dealer can sign without asking          TRUE
 //
-// This file is the measurement before any of that is written, and its numbers
-// are the ones letter 14 has to move. It is a pin and not a proof of anything
-// good: when the DKG lands, the counts below change and this file says so.
+// and five of those seven, interpolated in that one process, rebuilt the group
+// public key - so the dealer did not merely hold enough to sign, it held the
+// secret. `trustedDealerSplit` had zero callers under any `src/`: the dealer
+// was not code in this repository at all, it was whatever process started the
+// seven daemons, and four start paths did exactly that.
+//
+// THE DAEMONS MAKE THEIR OWN KEY NOW. Every one deals a contribution, keeps
+// the single envelope addressed to it, and combines; no process holds a
+// threshold at any point. What is pinned below is that the dealer is gone from
+// everything that stands a committee UP, and that the two harnesses which
+// still hold shares in one process are the two that are ABOUT a transaction
+// rather than about custody - they say so in their own headers, and they are
+// named here so a third cannot appear quietly.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
@@ -37,18 +42,16 @@ const srcOf = (pkg) => {
  * threshold and then some. Five of seven is what opens the key, so anything at
  * or above five in one place is a single party that can sign alone.
  */
-test('one process holds every share of the pool key, which is the fault', () => {
+test('a dealer still holds everything, which is why nothing that ships uses one', () => {
   const dealt = dealThePool();
 
   assert.equal(dealt.shares.length, SHARES_TOTAL);
   const inOneProcess = dealt.shares.length;
-  console.log(`  shares reachable from the dealing process: ${inOneProcess} of ${SHARES_TOTAL}`);
-  console.log(`  shares needed to sign alone:               ${SHARES_NEEDED}`);
-  console.log(`  so the dealer can sign without asking:     ${inOneProcess >= SHARES_NEEDED}`);
-  assert.equal(inOneProcess, SHARES_TOTAL,
-    'the dealer no longer returns every share - letter 14 has moved, update this pin');
-  assert.ok(inOneProcess >= SHARES_NEEDED,
-    'the dealing process no longer holds a threshold - letter 14 has moved, update this pin');
+  console.log(`  a DEALT key: shares in the dealing process: ${inOneProcess} of ${SHARES_TOTAL}`);
+  console.log(`  shares needed to sign alone:                ${SHARES_NEEDED}`);
+  console.log(`  so that process can sign without asking:    ${inOneProcess >= SHARES_NEEDED}`);
+  assert.equal(inOneProcess, SHARES_TOTAL);
+  assert.ok(inOneProcess >= SHARES_NEEDED);
 
   // AND IT IS NOT A COUNT ONLY: the shares in that one place OPEN the key.
   // Five of the seven, interpolated, are the group secret itself.
@@ -71,7 +74,7 @@ test('one process holds every share of the pool key, which is the fault', () => 
  * file learning to make key material is a second place for "no one of them can
  * steal" to be got wrong.
  */
-test('no source file deals the pool key, and the daemon is handed its share', () => {
+test('nothing that ships deals the pool key, and no launch path holds a share', () => {
   const src = [...srcOf('protocol'), ...srcOf('blwp-node'), ...srcOf('blwp-client')];
 
   // The dealer is DEFINED in the protocol and CALLED by nothing that ships.
@@ -83,24 +86,32 @@ test('no source file deals the pool key, and the daemon is handed its share', ()
     'something that ships now deals the pool key - letter 14 has moved, update this pin');
   console.log('  files under src/ that call the trusted dealer: 0');
 
-  // So the share ARRIVES. `serve` takes it as an argument, which means the
-  // caller of `serve` is the party that knows every share.
+  // AND THE DAEMON MAKES ONE. `poolSeat` is still accepted - a fixture may
+  // hand a share in, the way `seedWord` may be handed to a replay - but the
+  // daemon has its own now, and a call site rather than a mention is what is
+  // checked. Written as a bare /dkg|dealerless/i first and it matched the
+  // COMMENT saying a dealerless DKG is its own letter: a sentence caught by
+  // its own regex.
   const server = src.find((s) => s.pkg === 'blwp-node' && s.f === 'server.js').text;
-  assert.match(server, /poolSeat\s*=\s*null/,
-    'the daemon no longer takes its share as an argument - letter 14 has moved');
-  // A CALL SITE, NOT A MENTION - the same distinction the pool watcher's pin
-  // makes. Written as a bare /dkg|dealerless/i first and it matched the COMMENT
-  // that says a dealerless DKG is its own letter, which is this sentence being
-  // caught by its own regex.
-  assert.equal(/new\s+\w*Dkg|\bdkg\.|runDkg\s*\(|new\s+DistributedKey/.test(server), false,
-    'the daemon runs a DKG now - letter 14 has moved, update this pin');
-  console.log('  the daemon is handed `poolSeat` by whoever starts it: 1 argument, 0 rounds run');
+  assert.match(server, /new Dkg\(/, 'the daemon no longer makes key material of its own');
+  console.log('  the daemon runs its own DKG: 1 round, and it keeps 1 share');
 
-  // AND THE START PATHS THAT EXIST TODAY hold all seven at once, by name, so
-  // the claim above is about this repository and not about a hypothesis.
+  // AND NO LAUNCH PATH DEALS ONE. The two that stand a committee UP were the
+  // dealer; the two that still split in one process are ABOUT a transaction -
+  // `payout-regtest` proves a payout's bytes and `pool-regtest` proves the
+  // sighash - and both say so in their own headers. Named rather than counted,
+  // so a third cannot appear quietly.
   const tools = readdirSync(new URL('../tools/', import.meta.url))
     .filter((f) => f.endsWith('.mjs'))
-    .filter((f) => /trustedDealerSplit/.test(readFileSync(new URL(`../tools/${f}`, import.meta.url), 'utf8')));
-  assert.ok(tools.length >= 2, 'the regtest harnesses no longer deal the pool');
-  console.log(`  start paths that deal all ${SHARES_TOTAL} shares in one process: ${tools.length} (${tools.join(', ')})`);
+    .filter((f) => /trustedDealerSplit\s*\(/.test(readFileSync(new URL(`../tools/${f}`, import.meta.url), 'utf8')));
+  assert.deepEqual(tools.sort(), ['payout-regtest.mjs', 'pool-regtest.mjs'],
+    'a launch path deals the pool key again, or one that measures a transaction stopped');
+  for (const f of ['payout-committee-regtest.mjs', 'settle-regtest.mjs']) {
+    const text = readFileSync(new URL(`../tools/${f}`, import.meta.url), 'utf8');
+    assert.match(text, /dkg\.run\(/, `${f} stands a committee up without making a key`);
+    assert.equal(/trustedDealerSplit\s*\(/.test(text), false, `${f} deals the pool key again`);
+  }
+  console.log(`  launch paths that deal all ${SHARES_TOTAL} shares: 0`);
+  console.log(`  harnesses that still split in one process, and are about a transaction: `
+    + `${tools.length} (${tools.join(', ')})`);
 });

@@ -1201,6 +1201,76 @@ export class Round {
     };
   }
 
+  /**
+   * THE COMMITTEE'S OWN KEY, PER EPOCH (M3.3 item 14).
+   *
+   * `putEpoch` is a merge: the row is written when this seat deals, again as
+   * contributions arrive, and once more when the key is finished, and none of
+   * those may wipe what the others put there. The share in particular is
+   * written once and must survive every later touch.
+   */
+  putEpoch({ epochId, seats, mine = null, share = null, seatNo = null,
+    groupPubkey = null, negated = null }) {
+    const had = this.db.prepare(
+      'SELECT mine, share, seat_no, group_pubkey, negated FROM dkg_epochs WHERE epoch_id = ?')
+      .get(Buffer.from(epochId));
+    const flat = new Uint8Array(seats.length * 32);
+    seats.forEach((k, i) => flat.set(k, i * 32));
+    this.db.prepare(
+      'INSERT OR REPLACE INTO dkg_epochs (epoch_id, seats, mine, share, seat_no, '
+      + 'group_pubkey, negated, updated_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(Buffer.from(epochId), Buffer.from(flat),
+        mine ? Buffer.from(mine) : (had && had.mine) || null,
+        share ? Buffer.from(share) : (had && had.share) || null,
+        seatNo === null ? (had ? had.seat_no : null) : seatNo,
+        groupPubkey ? Buffer.from(groupPubkey) : (had && had.group_pubkey) || null,
+        negated === null ? (had ? had.negated : 0) : (negated ? 1 : 0),
+        this.now());
+    return true;
+  }
+
+  /** What this node holds for an epoch, or null if it has never seen one. */
+  epoch(epochIdBytes) {
+    const row = this.db.prepare(
+      'SELECT seats, mine, share, seat_no, group_pubkey, negated FROM dkg_epochs WHERE epoch_id = ?')
+      .get(Buffer.from(epochIdBytes));
+    if (!row) return null;
+    const flat = new Uint8Array(row.seats);
+    const seats = [];
+    for (let at = 0; at < flat.length; at += 32) seats.push(flat.subarray(at, at + 32));
+    return {
+      seats,
+      mine: row.mine ? new Uint8Array(row.mine) : null,
+      share: row.share ? new Uint8Array(row.share) : null,
+      seatNo: row.seat_no === null ? null : row.seat_no,
+      groupPubkey: row.group_pubkey ? new Uint8Array(row.group_pubkey) : null,
+      negated: !!row.negated,
+    };
+  }
+
+  /**
+   * ONE CONTRIBUTION PER DEALER PER EPOCH, and the primary key is the rule.
+   *
+   * A seat that deals twice - after seeing everybody else's commitments - is
+   * how the group key would be steered. `INSERT OR IGNORE` means the FIRST
+   * deal stands and the second writes nothing, which is the same shape the
+   * ticks already use for a repeat.
+   */
+  rememberContribution({ epochId, dealer, bytes }) {
+    return this.db.prepare(
+      'INSERT OR IGNORE INTO dkg_contributions (epoch_id, dealer, bytes, accepted_ms) '
+      + 'VALUES (?, ?, ?, ?)')
+      .run(Buffer.from(epochId), Buffer.from(dealer), Buffer.from(bytes), this.now()).changes > 0;
+  }
+
+  /** Every contribution this node accepted for an epoch, in dealer order. */
+  contributionsOf(epochIdBytes) {
+    return this.db.prepare(
+      'SELECT dealer, bytes FROM dkg_contributions WHERE epoch_id = ? ORDER BY dealer')
+      .all(Buffer.from(epochIdBytes))
+      .map((r) => ({ dealer: new Uint8Array(r.dealer), bytes: new Uint8Array(r.bytes) }));
+  }
+
   /** Every payout this node was in the middle of, across every round. */
   payoutsInState(state) {
     return this.db.prepare('SELECT round_id FROM payouts WHERE state = ? ORDER BY round_id')

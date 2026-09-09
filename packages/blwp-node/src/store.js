@@ -306,6 +306,48 @@ export function openStore(path = ':memory:') {
       pubkey BLOB NOT NULL
     );
 
+    -- THE COMMITTEE'S OWN KEY, MADE WITHOUT A DEALER (M3.3 item 14).
+    --
+    -- One row per EPOCH, and an epoch is the set of seats: the owner's rule is
+    -- that a DKG runs once per committee and not once per round, because the
+    -- pool is one P2TR output across rounds and a per-round key would mint a
+    -- new address every round. The same seats keep the same key until the
+    -- committee changes, and a changed committee is a different epoch_id.
+    --
+    -- WHAT IS KEPT AND WHY. mine is this seat's own contribution, bytes and
+    -- all: a restart must serve the SAME deal to a peer that has already seen
+    -- it, because re-dealing would publish a second polynomial under a second
+    -- id and the seats that combined the first would be holding shares of a
+    -- key nobody else has. share is this seat's share of the group secret -
+    -- the sum of what it was dealt, normalised - and it is the one secret in
+    -- this table; it is written only when every seat has contributed.
+    -- group_pubkey is public and is stored beside it so a seat can answer
+    -- what the committee's key is without redoing the sum.
+    CREATE TABLE IF NOT EXISTS dkg_epochs (
+      epoch_id     BLOB PRIMARY KEY,
+      seats        BLOB NOT NULL,      -- the committee, 32 bytes each, sorted
+      mine         BLOB,               -- this seat's own encoded contribution
+      share        BLOB,               -- 32 bytes, this seat's share of the secret
+      seat_no      INTEGER,            -- its x on the polynomial, 1..n
+      group_pubkey BLOB,               -- 33 bytes, compressed and even-y
+      negated      INTEGER NOT NULL DEFAULT 0,
+      updated_ms   INTEGER NOT NULL
+    );
+
+    -- The contributions this node has ACCEPTED, one per dealer per epoch.
+    --
+    -- Keyed by (epoch, dealer) so a seat that deals twice is one row and not
+    -- two: dealing again after seeing everybody else's commitments is how a
+    -- seat would steer the group key, and the primary key is the whole of the
+    -- mechanism that stops it.
+    CREATE TABLE IF NOT EXISTS dkg_contributions (
+      epoch_id   BLOB NOT NULL,
+      dealer     BLOB NOT NULL,
+      bytes      BLOB NOT NULL,
+      accepted_ms INTEGER NOT NULL,
+      PRIMARY KEY (epoch_id, dealer)
+    );
+
     -- Sparse, because a liquidation is rare, and keyed the same way so a
     -- repeat cannot double a strike.
     CREATE TABLE IF NOT EXISTS liquidations (

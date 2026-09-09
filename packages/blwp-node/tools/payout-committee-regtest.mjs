@@ -31,8 +31,6 @@ import { serve } from '../src/server.js';
 import { PAYOUT_QUEUED, PAID } from '../src/payout.js';
 import { PoolSigning } from '../src/pool-signing.js';
 import { encodeUtxo } from '../src/pool-wire.js';
-import { trustedDealerSplit } from '../../protocol/src/frost.js';
-import { evenGroupSecret } from '../../protocol/src/frost-bip340.js';
 import { poolOutput } from '../../protocol/src/pool.js';
 import { encodeRoundContract, encodeEntryContract, roundId, entryId } from '../../protocol/src/contracts.js';
 import { encodePlayerResult, resultId, joinSignedResult } from '../../protocol/src/result.js';
@@ -91,16 +89,11 @@ async function main() {
     if (Number(cli('getblockcount')) < 200) mine(200 - Number(cli('getblockcount')));
     say(`bitcoind at height ${cli('getblockcount')}, rpc ${P.rpc}, cookie auth`);
 
-    // ---- ONE POOL KEY, SEVEN SHARES, ONE EACH. ----
-    let secret;
-    do { secret = scalarFrom32(rand(32)); } while (secret === 0n || secret >= FIELD);
-    const even = evenGroupSecret(secret, curve);
-    const dealt = trustedDealerSplit({
-      secret: even.secret, max: SHARES_TOTAL, min: SHARES_NEEDED,
-      coefficients: Array.from({ length: SHARES_NEEDED - 1 }, () => scalarFrom32(rand(32)) % FIELD),
-      curve,
-    });
-    const pool = { groupPublicKey: dealt.groupPublicKey };
+    // ---- NO DEALER. The committee makes its own key, below. ----
+    //
+    // This opened with `trustedDealerSplit` and handed each daemon a share,
+    // which measured the mechanism and not the custody: THIS process held all
+    // seven and therefore the group secret. Letter 14 took it out.
 
     const chain = {
       async send(raw) {
@@ -121,11 +114,29 @@ async function main() {
     for (let i = 0; i < SHARES_TOTAL; i++) {
       nodes.push(await serve(openStore(join(dir, `node-${i}.db`)), {
         port: 0, funded: () => true, now: () => NOW,
-        poolKey: pool, poolCurve: curve, poolSeat: dealt.shares[i], chainSpend: chain,
+        poolCurve: curve, chainSpend: chain,
       }));
     }
     say(`\nseven daemons on ports ${nodes.map((n) => n.port).join(', ')}`);
-    say(`each holds share ${nodes.map((n, i) => dealt.shares[i].id).join(', ')} and no other`);
+
+    // ---- AND THEY MAKE THEIR OWN KEY (M3.3 item 14). ----
+    const committee = nodes.map((n) => n.round.pubkey);
+    for (const n of nodes) n.dkg.peers = nodes.filter((o) => o !== n).map((o) => `http://127.0.0.1:${o.port}`);
+    for (const n of nodes) await n.dkg.run(committee);
+    for (const n of nodes) await n.dkg.run(committee);
+    const seatsHeld = nodes.map((n) => n.dkg.seatFor(committee));
+    for (const [i, h] of seatsHeld.entries())
+      if (!h.ok) problems.push(`daemon ${i} ended with no share: ${h.why}`);
+    const keys = new Set(seatsHeld.filter((h) => h.ok).map((h) => toHex(h.pool.groupPublicKey)));
+    if (keys.size !== 1) problems.push(`the daemons named ${keys.size} different keys`);
+    const pool = { groupPublicKey: seatsHeld[0].pool.groupPublicKey };
+    say(`each made its own share; one key across all ${SHARES_TOTAL}, and this process holds none`);
+    say(`  the committee's key: ${toHex(pool.groupPublicKey).slice(0, 32)}…`);
+    for (const [i, n] of nodes.entries()) {
+      n.signing.seat = seatsHeld[i].seat;
+      n.signing.pool = pool;
+      n.payouts.pool = pool;
+    }
 
     const contract = {
       networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations: 1,
@@ -191,7 +202,7 @@ async function main() {
     say(`\nall seven queued the payout; it owes the winner ${STAKE_MSAT / 1000n} sats`);
 
     // ---- THE POOL, FUNDED ON THE CHAIN. ----
-    const out = poolOutput({ groupPublicKey: dealt.groupPublicKey, curve });
+    const out = poolOutput({ groupPublicKey: pool.groupPublicKey, curve });
     const poolAddress = JSON.parse(cli('decodescript', toHex(out.script))).address;
     const funding = cli('sendtoaddress', poolAddress, '0.00001200');
     mine(1);
