@@ -80,7 +80,17 @@ namespace Blwp
         /// Left null, a ghost keeps the y it had, which is what every ghost did
         /// before this existed - y = 0, metres under the road.
         /// </summary>
-        public Func<float, float, float> Seat;
+        /// <summary>
+        /// How high a truck of this shape sits at a pose - x, z, heading in
+        /// degrees. A picture carries no height and cannot: the map is the fee
+        /// histogram and it moves under every player, so where the road is at
+        /// that x and z is a fact of THIS page's world. The HEADING is here
+        /// because a truck stands on four wheels, and a body fitted across
+        /// them is not a single sample under its middle: measured 0.58 m
+        /// apart on this map at one pose, which is a ghost floating over the
+        /// truck it is a picture of.
+        /// </summary>
+        public Func<float, float, float, float> Seat;
 
         public int Shown { get; private set; }
         public int Trucks => trucks.Count;
@@ -152,7 +162,8 @@ namespace Blwp
             }
 
             var seat = Seat != null
-                ? Seat(picture.X / GhostTruck.ONE, picture.Z / GhostTruck.ONE)
+                ? Seat(picture.X / GhostTruck.ONE, picture.Z / GhostTruck.ONE,
+                       BlwpCore.Degrees(picture.Heading))
                 : (float?)null;
             ghost.Show(picture.X, picture.Z, picture.Heading, seat);
             Shown++;

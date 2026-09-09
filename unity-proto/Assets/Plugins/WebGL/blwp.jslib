@@ -285,6 +285,31 @@ mergeInto(LibraryManager.library, {
         return Promise.resolve(BLWP_CURVE.verify(sig, msg, key));
       };
 
+      // THE WORLD THIS RUN IS JUDGED IN, BEFORE ONE TICK IS RECORDED.
+      //
+      // `init(seedWord)` decides which of the 24 loading bays this player
+      // parks at and the whole rng stream after it, and the committee replays
+      // this entry with `seedWordForEntry(entry, randomness)`. Nothing set
+      // that: `CoreDrivenTruck.seed` is the constant 0x5eed1234 and always
+      // was, so every player of every round drove the harness world while
+      // their transcript was replayed somewhere else. Measured on a real
+      // 2-of-2 round - the page's truck at z 10.20 m, the committee's copy of
+      // the same truck at 57.80 m and 44.20 m, before either of them moved -
+      // and photographed at 17:05 as a ghost on the grass while the truck it
+      // pictured stood on its bay.
+      //
+      // HERE, AND NOT AT ROLL-OUT. Every `BlwpStep` is published from the
+      // moment there is a client, loading in the bay included, so a core put
+      // in the right world at roll-out would already have published thousands
+      // of ticks of the wrong one. `net.client` does not exist until the
+      // promise below resolves, so nothing has been recorded yet.
+      //
+      // A ROUND WHOSE NODES NAME TWO WORLDS IS NOT ONE ROUND, and
+      // `worldSeedFor` refuses it rather than picking one.
+      var nodes = (typeof BLWP_NODES !== 'undefined') ? BLWP_NODES : null;
+      if (!nodes || !nodes.length)
+        throw new Error('the page did not say which nodes hold this round');
+
       // THE DOOR. `base` above is only what the gate answered so that C# would
       // ask for a session at all; the address the client actually talks to is
       // resolved again HERE, against this round's own committee and with the
@@ -293,9 +318,20 @@ mergeInto(LibraryManager.library, {
       // reach those nodes: a bonded stranger with a real proof would otherwise
       // be handed the entry and the whole section 11 transcript, and the first
       // receipt refusing it is a round trip too late to take any of it back.
-      return C.Client.at(blwpDiscovery(), {
-        core: { hash: function (st) { return b.core.hash(st); } },
-        sign: signer, verify: verify, contract: contract, roundIdGiven: given,
+      return C.worldSeedFor({
+        entry: entry, round: net.where.roundId, nodes: nodes,
+      }).then(function (world) {
+        net.seedWord = world.seedWord | 0;
+        net.randomness = world.randomness;
+        // THE CORE IS RESTARTED INTO IT. `init` is the same door C# reaches
+        // through `BlwpCore.Init`; nothing here writes a state word.
+        b.st = b.core.init(net.seedWord);
+        console.log('[blwp] world seed 0x' + (net.seedWord >>> 0).toString(16)
+          + ' from ' + world.agreed + ' node(s) agreeing on the round randomness');
+        return C.Client.at(blwpDiscovery(), {
+          core: { hash: function (st) { return b.core.hash(st); } },
+          sign: signer, verify: verify, contract: contract, roundIdGiven: given,
+        });
       }).then(function (client) {
         net.client = client;
         return net.opened(contract, entry);
@@ -543,6 +579,18 @@ mergeInto(LibraryManager.library, {
     for (var i = 0; i < k; i++) Module.HEAPU8[ptr + i] = line.charCodeAt(i) & 255;
     Module.HEAPU8[ptr + k] = 0;
     return k;
+  },
+
+  // THE ROUND'S OWN SEED, OR 0 WHEN THERE IS NO ROUND.
+  //
+  // C# restarts the core at roll-out - `CoreDrivenTruck.StartRound` - and it
+  // restarted with its inspector constant, which would have thrown away the
+  // world this player was seated in and put them back in the harness one. The
+  // daily has no round and keeps the constant, which is what holds the solo
+  // apron on bay 13.
+  BlwpRoundSeed: function () {
+    var n = Module.blwpNet;
+    return (n && typeof n.seedWord === 'number') ? (n.seedWord | 0) : 0;
   },
 
   BlwpNetMarks: function () {

@@ -288,7 +288,11 @@ public class Bootstrap : MonoBehaviour
         _ghosts.transform.SetParent(transform, false);
         var ghosts = _ghosts.AddComponent<Blwp.GhostField>();
         ghosts.Model = BuildGhostBody();
-        ghosts.Seat = (x, z) => driver.Ground(x, z) + driver.BodyAboveGround;
+        // THE SAME SEATING RULE THE LOCAL TRUCK USES, not a second one. It was
+        // `driver.Ground(x, z) + driver.BodyAboveGround` - one sample under the
+        // middle - while the truck itself is fitted across its four contact
+        // points, and the two differ by 0.58 m at one measured pose on this map.
+        ghosts.Seat = (x, z, headingDegrees) => driver.RideAt(x, z, headingDegrees);
 
         // What a liquidation looks like: an aircraft, a bomb, and the ground it
         // leaves behind. Theatre - the core has no aircraft, and the hole is

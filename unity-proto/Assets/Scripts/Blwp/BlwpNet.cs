@@ -34,6 +34,7 @@ namespace Blwp
         [DllImport("__Internal")] private static extern int BlwpNetEnded();
         [DllImport("__Internal")] private static extern int BlwpNetEnding(IntPtr ptr, int cap);
         [DllImport("__Internal")] private static extern int BlwpNetMarks();
+        [DllImport("__Internal")] private static extern int BlwpRoundSeed();
         [DllImport("__Internal")] private static extern int BlwpNetNodeUrl(IntPtr ptr, int cap);
         public const bool Compiled = true;
 #else
@@ -42,6 +43,7 @@ namespace Blwp
         private static int BlwpNetEnded() => 0;
         private static int BlwpNetEnding(IntPtr ptr, int cap) => 0;
         private static int BlwpNetMarks() => 0;
+        private static int BlwpRoundSeed() => 0;
         private static int BlwpNetNodeUrl(IntPtr ptr, int cap) => 0;
         public const bool Compiled = false;
 #endif
@@ -169,5 +171,17 @@ namespace Blwp
         /// promised to hold.
         /// </summary>
         public static int Marks => BlwpNetMarks();
+
+        /// <summary>
+        /// The seed the ROUND puts this player's world at, or 0 for no round.
+        ///
+        /// `init(seedWord)` decides which of the 24 loading bays this player
+        /// parks at and the rng stream after it, and the committee replays this
+        /// entry with the same word - `seedWordForEntry(entry, randomness)`. The
+        /// page derives it once, when it joins, from the randomness every node
+        /// it was given agrees on. Zero is the daily: no round, no entry, and
+        /// the harness constant that holds the solo apron on bay 13.
+        /// </summary>
+        public static int RoundSeed => BlwpRoundSeed();
     }
 }

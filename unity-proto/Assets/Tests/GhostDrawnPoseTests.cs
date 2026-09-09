@@ -123,7 +123,7 @@ public class GhostDrawnPoseTests
             var facing = ghost.transform.rotation.eulerAngles.y;
             var wantX = want.X / ONE;
             var wantZ = want.Z / ONE;
-            var wantY = driver.Ground(wantX, wantZ) + driver.BodyAboveGround;
+            var wantY = driver.RideAt(wantX, wantZ, BlwpCore.Degrees(want.Heading));
             var wantFacing = BlwpCore.Degrees(want.Heading);
             TestContext.WriteLine(
                 $"tick {want.Tick,4}  ints x {want.X,9} z {want.Z,9} h {want.Heading,6}"
@@ -163,6 +163,89 @@ public class GhostDrawnPoseTests
             "the body that is drawn is not at the transform the ints moved");
         Assert.AreEqual(ghost.transform.position.z, body.z, 4.0f,
             "the body that is drawn is not at the transform the ints moved");
+    }
+
+    /// <summary>
+    /// ONE FRAME FOR BOTH TRUCKS, WHICH IS WHAT 17:05 WAS ABOUT.
+    ///
+    /// The test above proves a ghost is drawn at the numbers it was given. It
+    /// cannot prove those numbers mean the same thing as the local truck's,
+    /// and that is exactly the gap the 17:05 photograph fell through: one tab
+    /// drew the other truck on the grass at -69,-57 m while that truck stood
+    /// on its yellow bay. The cause was upstream - the page seeded its core
+    /// with a constant while the committee replayed the entry with the round's
+    /// own seed, so the two trucks were in different WORLDS - and the C# side
+    /// still owes a guarantee it never gave: a pose is a pose.
+    ///
+    /// So this takes the LOCAL truck's own core pose, hands it to the field as
+    /// somebody else's picture, and requires the ghost to be drawn where the
+    /// local truck is drawn. A viewer-bay origin, a publisher-bay origin, a
+    /// PhysX position read instead of a core one, a metre that is not 1/65536:
+    /// every one of those puts the two apart, and none of them can hide here.
+    /// </summary>
+    [UnityTest]
+    public IEnumerator AGhostAtTheLocalTrucksOwnPoseIsDrawnWhereTheLocalTruckIs()
+    {
+        new GameObject("Bootstrap").AddComponent<Bootstrap>();
+        yield return null;
+        yield return null;
+
+        var field = Object.FindFirstObjectByType<GhostField>();
+        var driver = Object.FindFirstObjectByType<CoreDrivenTruck>();
+        Assert.IsNotNull(field, "the player builds no ghost field");
+        Assert.IsNotNull(driver, "the world has no local truck to compare against");
+
+        // LET THE GROUND ARRIVE FIRST. The terrain is streamed and the local
+        // truck settles onto it over the first frames - measured in the
+        // capture test above, its height moves 3.4 m between picture one and
+        // picture two. Comparing before that is comparing two different
+        // grounds, which is a fact about the harness and not about the frame
+        // both trucks are drawn in.
+        for (var settle = 0; settle < 30; settle++) yield return null;
+
+        // THE LOCAL TRUCK'S OWN PLACE, in the words a picture carries. Read off
+        // the transform it is actually drawn at, so nothing here assumes which
+        // number the renderer used.
+        var me = driver.transform.position;
+        var mine = new GhostPicture(
+            new string('a', 64),
+            Mathf.RoundToInt(me.x * ONE), Mathf.RoundToInt(me.z * ONE),
+            Mathf.RoundToInt(driver.transform.rotation.eulerAngles.y / 360f * ONE), 7);
+
+        field.Source = () => (GhostPicture?)null;
+        field.Show(mine);
+        yield return null;
+        // AND READ THE LOCAL TRUCK AGAIN ON THE SAME FRAME the ghost was drawn
+        // on. One frame of settling in between would be a difference nobody
+        // could act on.
+        me = driver.transform.position;
+
+        var ghost = field.GetComponentInChildren<GhostTruck>(true);
+        Assert.IsNotNull(ghost, "no truck was drawn for the other identity");
+        var them = ghost.transform.position;
+        TestContext.WriteLine(
+            $"local truck drawn at ({me.x:F3}, {me.y:F3}, {me.z:F3}); a ghost at the same core "
+            + $"pose drawn at ({them.x:F3}, {them.y:F3}, {them.z:F3})");
+
+        Assert.AreEqual(me.x, them.x, 0.001f,
+            "a ghost at the local truck's own x is not drawn at the local truck's x");
+        Assert.AreEqual(me.z, them.z, 0.001f,
+            "a ghost at the local truck's own z is not drawn at the local truck's z");
+
+        // AND THE HEIGHT IS THE PAGE'S OWN SEATING RULE AT THAT POSE, which is
+        // not the same claim as "the same y as the local truck" - and the
+        // difference is the Editor, not the code. There is no core here, so
+        // `Driving` is false and PhysX places the local truck; its y is a
+        // physics result and owes the core's rule nothing. What CAN be checked,
+        // and is what a ghost gets wrong when it gets it wrong, is that the
+        // picture is seated by the same function the core-driven truck is
+        // seated by: a y of zero, a single sample under the middle, or a body
+        // offset dropped all fail here.
+        Assert.IsFalse(driver.Driving,
+            "the core is driving in the Editor, so this test is comparing something else");
+        var want = driver.RideAt(me.x, me.z, driver.transform.rotation.eulerAngles.y);
+        Assert.AreEqual(want, them.y, 0.001f,
+            "a ghost is not seated by the rule this page seats a truck with");
     }
 
     /// <summary>

@@ -287,6 +287,11 @@
       window.BLWP_ROUND = named.round;
       window.BLWP_CHAIN = named.chain;
       window.BLWP_ADVERT = named.advert;
+      // THE NODES THIS ROUND NAMED, so the bridge can ask all of them what the
+      // round's randomness is. The player's own world is seeded from it, and a
+      // page that asked one node would let that node put this player alone in
+      // a world nobody replays.
+      window.BLWP_NODES = named.nodes;
       // THE PLAYER'S KEY IS A KEY NOW, and this page cannot make one.
       //
       // `player_pubkey` used to be 32 random bytes. It is where a winner's

@@ -145,7 +145,17 @@ namespace Blwp
         public void StartRound()
         {
             if (!Driving) return;
-            if (!BlwpCore.Restart(seed)) return;
+            // THE ROUND'S OWN WORLD, NOT THIS COMPONENT'S CONSTANT.
+            //
+            // `seed` is 0x5eed1234 and nothing ever set it from a round, so a
+            // restart here used to put the player back in the harness world -
+            // bay 13 - while the committee replayed their entry somewhere else
+            // entirely. The bridge derives the round's seed when it joins;
+            // zero means there is no round and the daily keeps the constant,
+            // which is what holds the solo apron on bay 13.
+            int world = BlwpNet.RoundSeed;
+            if (world == 0) world = seed;
+            if (!BlwpCore.Restart(world)) return;
             _prevHeading = BlwpCore.TruckHeading;
             Debug.Log("[blwp] round restarted in the core");
         }
@@ -675,6 +685,46 @@ namespace Blwp
         /// Unity's terrain remains the fallback for the Editor, where there is
         /// no core at all, and for the frames before the relief is uploaded.
         /// </summary>
+        /// <summary>The axles, from Bootstrap. One copy, because two drift.</summary>
+        public const float HalfWheelbase = 2.0f;
+        public const float HalfTrack = 1.15f;
+
+        /// <summary>
+        /// The four points a truck of this shape stands on at a pose.
+        /// </summary>
+        public void Contacts(float x, float z, float headingDegrees,
+                             out float fl, out float fr, out float rl, out float rr)
+        {
+            var rot = Quaternion.Euler(0f, headingDegrees, 0f);
+            Vector3 fwd = rot * Vector3.forward, right = rot * Vector3.right;
+            fl = Ground(x + fwd.x * HalfWheelbase - right.x * HalfTrack,
+                        z + fwd.z * HalfWheelbase - right.z * HalfTrack);
+            fr = Ground(x + fwd.x * HalfWheelbase + right.x * HalfTrack,
+                        z + fwd.z * HalfWheelbase + right.z * HalfTrack);
+            rl = Ground(x - fwd.x * HalfWheelbase - right.x * HalfTrack,
+                        z - fwd.z * HalfWheelbase - right.z * HalfTrack);
+            rr = Ground(x - fwd.x * HalfWheelbase + right.x * HalfTrack,
+                        z - fwd.z * HalfWheelbase + right.z * HalfTrack);
+        }
+
+        /// <summary>
+        /// HOW HIGH A TRUCK OF THIS SHAPE SITS AT A POSE, AND THERE IS ONE RULE.
+        ///
+        /// `Apply` fits the body across its four contact points; the ghosts were
+        /// seated on a SINGLE sample under their centre, which is the same
+        /// number only on flat ground. Measured in PlayMode at one pose on this
+        /// map: the local truck stood at y 6.840 and a ghost handed the local
+        /// truck's own x, z and heading stood at 7.422 - 0.58 m apart, drawn
+        /// from the same ground in the same frame. A picture of a truck that
+        /// floats above the truck it pictures is a second seating rule, and two
+        /// rules for one thing is how they drift.
+        /// </summary>
+        public float RideAt(float x, float z, float headingDegrees)
+        {
+            Contacts(x, z, headingDegrees, out float fl, out float fr, out float rl, out float rr);
+            return (fl + fr + rl + rr) * 0.25f + _bodyAboveGround;
+        }
+
         public float Ground(float x, float z)
         {
             if (roads != null) return roads.SurfaceHeight(x, z);
@@ -704,16 +754,8 @@ namespace Blwp
             // WheelColliders did for free and what was lost when the core took
             // over: the body was pinned dead level, so a descent looked exactly
             // like flat ground however steep it was.
-            var rot = Quaternion.Euler(0f, heading, 0f);
-            Vector3 fwd = rot * Vector3.forward, right = rot * Vector3.right;
-
-            float half = 2.0f, track = 1.15f;      // the axles, from Bootstrap
-            float fl = Ground(x + fwd.x * half - right.x * track, z + fwd.z * half - right.z * track);
-            float fr = Ground(x + fwd.x * half + right.x * track, z + fwd.z * half + right.z * track);
-            float rl = Ground(x - fwd.x * half - right.x * track, z - fwd.z * half - right.z * track);
-            float rr = Ground(x - fwd.x * half + right.x * track, z - fwd.z * half + right.z * track);
-
-            var lie = Lie(heading, fl, fr, rl, rr, half, track);
+            Contacts(x, z, heading, out float fl, out float fr, out float rl, out float rr);
+            var lie = Lie(heading, fl, fr, rl, rr, HalfWheelbase, HalfTrack);
 
             // Eased, because the relief is sampled per frame and a truck on
             // springs does not snap to every pebble.
@@ -721,7 +763,7 @@ namespace Blwp
 
             float ride = (fl + fr + rl + rr) * 0.25f + _bodyAboveGround;
             LastSurface = (fl + fr + rl + rr) * 0.25f;
-            LastGrade = ((fl + fr) - (rl + rr)) / (4f * half);
+            LastGrade = ((fl + fr) - (rl + rr)) / (4f * HalfWheelbase);
             transform.SetPositionAndRotation(new Vector3(x, ride, z), _lie);
 
             // THE TRUCK'S OWN LOWEST POINT against the ground it stands on,

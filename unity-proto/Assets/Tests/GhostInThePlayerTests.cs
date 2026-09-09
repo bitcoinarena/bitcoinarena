@@ -120,7 +120,7 @@ public class GhostInThePlayerTests
         model.SetActive(false);
         var field = new GameObject("ghosts").AddComponent<GhostField>();
         field.Model = model;
-        field.Seat = (x, z) => 7.5f;            // a ground with a value nobody defaults to
+        field.Seat = (x, z, heading) => 7.5f;   // a ground with a value nobody defaults to
 
         field.Show(first);
         var ghost = field.GetComponentInChildren<GhostTruck>(true);
