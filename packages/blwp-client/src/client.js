@@ -814,7 +814,7 @@ export class Client {
    * stored: a hold invoice's preimage is the wallet's proof it paid, and this
    * client keeps no money state between rounds (§24A.3).
    */
-  async payStake(entry, { connection, curve, entryId: id, ...options } = {}) {
+  async payStake(entry, { connection, curve, entryId: id, log, ...options } = {}) {
     const where = typeof connection === 'string' ? parseConnection(connection) : connection;
     if (!where || !where.ok)
       return { ok: false, why: (where && where.why) || 'there is no wallet connection to pay with' };
@@ -836,6 +836,21 @@ export class Client {
       ...options,
     });
     if (!paid.ok) return { ...paid, paid: false, asked: true, quoted: quote };
+
+    // WHAT WAS SPENT, WRITTEN DOWN WHERE THE SPENDING HAPPENS.
+    //
+    // §24A.1 is a requirement: "a client MUST show the running total and what
+    // it was spent on". The log is handed in rather than owned here, because a
+    // page runs one across many rounds and a Client is per round - but it is
+    // recorded HERE, next to the payment, so a page cannot show a total of its
+    // own arithmetic.
+    if (log && typeof log.record === 'function') {
+      log.record({
+        amountMsat: quote.amountMsat,
+        paymentHash: quote.paymentHash,
+        roundId: this.where && this.where.roundId,
+      });
+    }
 
     return {
       ok: true, paid: true, asked: true,

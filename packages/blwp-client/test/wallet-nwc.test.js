@@ -22,7 +22,7 @@ import { Client } from '../src/client.js';
 import { pageCurve } from '../src/page-curve.js';
 import {
   parseConnection, nip04Encrypt, nip04Decrypt, signEvent, payInvoice,
-  NWC_REQUEST, NWC_RESPONSE,
+  tabWallet, spendLog, spentLine, NWC_REQUEST, NWC_RESPONSE,
 } from '../src/nwc.js';
 import { encodeRoundContract, encodeEntryContract, roundId, entryId } from '../../protocol/src/contracts.js';
 import { entryFeeMsat } from '../../protocol/src/fee.js';
@@ -383,4 +383,116 @@ test('a relay that never answers times out rather than hanging', async () => {
     assert.match(said.why, /did not answer in 300 ms/);
     console.log(`  ${said.why}`);
   } finally { await new Promise((r) => wss.close(r)); await c.close(); }
+});
+
+/** A per-tab storage, the same fixture `tabIdentity`'s own tests use. */
+const tab = () => {
+  const m = new Map();
+  return {
+    getItem: (k) => (m.has(k) ? m.get(k) : null),
+    setItem: (k, v) => m.set(k, String(v)),
+    removeItem: (k) => m.delete(k),
+    size: () => m.size,
+  };
+};
+
+test('a tab holds one wallet connection, and a second tab holds none of it', async () => {
+  const w = await walletOnARelay();
+  try {
+    const one = tab();
+    const mine = tabWallet({ storage: one });
+    assert.equal(mine.connected, false);
+    assert.match(mine.current().why, /no wallet connected/);
+
+    const took = mine.connect(w.uri);
+    assert.equal(took.ok, true, took.why);
+    assert.equal(mine.connected, true);
+    assert.deepEqual(mine.current().walletPubkey, w.walletPubkey);
+
+    // A SECOND TAB IS A SECOND STORAGE. `sessionStorage` is per tab, which is
+    // why two tabs are two players and neither spends from the other's wallet.
+    const theirs = tabWallet({ storage: tab() });
+    assert.equal(theirs.connected, false, 'a second tab inherited the first tab\'s wallet');
+
+    // RUBBISH IS NOT REMEMBERED, or the page would offer to pay with it after
+    // every reload.
+    const bad = tabWallet({ storage: tab() });
+    assert.equal(bad.connect('lnbc1-not-a-connection').ok, false);
+    assert.equal(bad.connected, false);
+
+    // And a player closing a wallet does not have to close the tab.
+    mine.forget();
+    assert.equal(mine.connected, false);
+    assert.equal(one.size(), 0, 'forgetting left the credential behind');
+    console.log('  one tab connects, a second inherits nothing, rubbish is not kept, forget clears it');
+  } finally { await w.close(); }
+});
+
+/**
+ * THE RUNNING TOTAL §24A.1 REQUIRES, AND WHAT IT WAS SPENT ON.
+ *
+ * Asserted as ENTRIES and not as a number: "what it was spent on" means a round
+ * and a payment hash, and a total nobody can break down is a total a page could
+ * have invented.
+ */
+test('every payment is written down with its hash and its round', async () => {
+  const c = await seated();
+  const w = await walletOnARelay();
+  const log = spendLog();
+  try {
+    assert.equal(log.count, 0);
+    assert.equal(log.totalMsat, 0n);
+    assert.equal(spentLine(log), 'nothing paid this session');
+
+    c.client.setRound({ roundId: c.entry.roundId, entryId: c.eid, blockTicks: 9000 });
+    const paid = await c.client.payStake(c.entry, {
+      connection: w.uri, entryId: c.eid, log, ...pays,
+    });
+    assert.equal(paid.ok, true, paid.why);
+
+    assert.equal(log.count, 1);
+    assert.equal(log.totalMsat, STAKE);
+    const [one] = log.entries();
+    assert.equal(one.amountMsat, STAKE);
+    assert.deepEqual(one.paymentHash, c.entry.stakeCommitment,
+      'the log recorded a hash that is not the one this seat paid against');
+    assert.deepEqual(one.roundId, c.entry.roundId);
+    console.log(`  1 payment logged: ${one.amountMsat} msat against `
+      + `${toHex(one.paymentHash).slice(0, 16)}… in round ${toHex(one.roundId).slice(0, 16)}…`);
+    console.log(`  and the line the page renders: "${spentLine(log)}"`);
+
+    // A REFUSED PAYMENT WRITES NOTHING. A total that counted attempts would be
+    // a total that says a player spent money they still have.
+    const other = { ...c.entry, worldSecret: rand(32) };
+    await fetch(`http://127.0.0.1:${c.node.port}/entry`,
+      { method: 'POST', body: encodeEntryContract(other) });
+    const refused = await c.client.payStake(other, {
+      connection: w.uri, entryId: c.eid, log, ...pays,
+    });
+    assert.equal(refused.ok, false);
+    assert.equal(log.count, 1, 'a refused payment was counted as spent');
+    assert.equal(log.totalMsat, STAKE);
+    console.log(`  a refused payment: still ${log.count} entry, still ${log.totalMsat} msat`);
+  } finally { await w.close(); await c.close(); }
+});
+
+test('the line a page renders counts sats, stakes and rounds', () => {
+  const log = spendLog();
+  assert.equal(spentLine(log), 'nothing paid this session');
+  assert.equal(spentLine(null), 'nothing paid this session');
+
+  log.record({ amountMsat: 100000n, paymentHash: b32(1), roundId: b32(9) });
+  assert.equal(spentLine(log), '100 sat over 1 stake in 1 round');
+
+  log.record({ amountMsat: 100000n, paymentHash: b32(2), roundId: b32(9) });
+  assert.equal(spentLine(log), '200 sat over 2 stakes in 1 round');
+
+  log.record({ amountMsat: 50000n, paymentHash: b32(3), roundId: b32(8) });
+  assert.equal(spentLine(log), '250 sat over 3 stakes in 2 rounds');
+
+  // SATS, NOT MILLISATS. 1000 of them are one satoshi and the conversion is
+  // exactly what a screen gets wrong quietly - which is why it is here and not
+  // in a template on the page.
+  assert.equal(log.totalMsat, 250000n);
+  console.log('  "250 sat over 3 stakes in 2 rounds" from 250000 msat');
 });

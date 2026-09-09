@@ -104,6 +104,96 @@ export function parseConnection(uri) {
 }
 
 /**
+ * THE CONNECTION THIS TAB IS USING, HELD WHERE THE PLAYER KEY IS HELD.
+ *
+ * `sessionStorage`, for the reason `tabIdentity` uses it and one more. Per tab,
+ * so two tabs are two players and neither borrows the other's wallet; gone when
+ * the tab closes; and NOT `localStorage`, which every tab of a browser shares -
+ * that would make one paste spend from every round open in the browser.
+ *
+ * IT IS A SPENDING CREDENTIAL AND NOT AN IDENTITY. The player key already in
+ * this storage cannot move a satoshi; this can, up to whatever budget the
+ * wallet attached. It survives a reload on purpose: §24A.1 exists to remove
+ * approval friction, and a budget the player must re-authorise every refresh is
+ * a budget that buys nothing. The trust boundary is where §24 puts it - the
+ * budget ceiling and the wallet's own confirmation screen - not this storage.
+ *
+ * STORED ONLY IF IT PARSES. A string that is not a connection is not kept: a
+ * page that remembered rubbish would offer to pay with it on every reload.
+ */
+export function tabWallet({ storage, key = 'blwp.wallet' } = {}) {
+  const read = () => {
+    const held = storage && storage.getItem(key);
+    if (!held) return { ok: false, why: 'this tab has no wallet connected' };
+    const parsed = parseConnection(held);
+    if (!parsed.ok) return parsed;
+    return parsed;
+  };
+  return {
+    /** The connection this tab holds, or why it holds none. */
+    current: read,
+    get connected() { return read().ok; },
+    /** Keep a pasted connection, if it is one. */
+    connect(uri) {
+      const parsed = parseConnection(uri);
+      if (!parsed.ok) return parsed;
+      if (storage) storage.setItem(key, String(uri).trim());
+      return parsed;
+    },
+    /** Forget it. A player closing a wallet should not have to close the tab. */
+    forget() { if (storage) storage.removeItem(key); return { ok: true }; },
+  };
+}
+
+/**
+ * WHAT THIS TAB HAS SPENT, AND ON WHAT.
+ *
+ * §24A.1 is a requirement and not advice: "a client MUST show the running total
+ * and what it was spent on". So the total is kept HERE, next to the thing that
+ * spends, and the page renders it - a page that added up its own numbers would
+ * be showing the player a figure nobody checked.
+ *
+ * ONE ENTRY PER PAYMENT, and the payment hash is in it: "what it was spent on"
+ * means a round and a seat, not a running number. Kept in memory for the life
+ * of the page, because a spend log is a display and the authority for what was
+ * paid is the chain of hold invoices, not this.
+ */
+export function spendLog() {
+  const paid = [];
+  return {
+    /** Every payment this page has made, oldest first. */
+    entries: () => paid.slice(),
+    get count() { return paid.length; },
+    /** Millisatoshi, summed. */
+    get totalMsat() { return paid.reduce((t, p) => t + p.amountMsat, 0n); },
+    record({ amountMsat, paymentHash, roundId, at }) {
+      paid.push({
+        amountMsat: BigInt(amountMsat), paymentHash, roundId,
+        at: at === undefined ? Date.now() : at,
+      });
+      return paid.length;
+    },
+  };
+}
+
+/**
+ * THE RUNNING TOTAL AS ONE LINE, so the page renders and does not compute.
+ *
+ * Sats rather than millisats, because that is what a player was quoted and what
+ * their wallet showed them. Millisatoshi are the protocol's unit and the whole
+ * of the reason this is one function rather than a template in the page: 1000
+ * of them are one satoshi and the conversion is exactly the kind of thing a
+ * screen gets wrong quietly.
+ */
+export function spentLine(log) {
+  if (!log || !log.count) return 'nothing paid this session';
+  const sats = log.totalMsat / 1000n;
+  const rounds = new Set(log.entries().map((p) => toHex(p.roundId || new Uint8Array(0)))).size;
+  return `${sats} sat over ${log.count} stake${log.count === 1 ? '' : 's'}`
+    + ` in ${rounds} round${rounds === 1 ? '' : 's'}`;
+}
+
+/**
  * NIP-04: AES-256-CBC over the ECDH x-coordinate, base64, `?iv=` base64.
  *
  * The shared secret is the x of `theirs * mine`, which is exactly what

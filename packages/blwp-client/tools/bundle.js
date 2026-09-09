@@ -114,6 +114,11 @@ out += '         tabIdentity: tabIdentity, entryFor: entryFor,\n';
 // sealed to a game-verify seat are a stake nobody can open at payout.
 out += '         stakeFor: stakeFor, fetchSettlementSeats: fetchSettlementSeats,\n';
 out += '         roundPays: roundPays, postHandout: postHandout,\n';
+// THE WALLET THE PAGE RENDERS. `tabWallet` holds the connection per tab,
+// `spendLog` is what §24A.1 requires a client to show, and `spentLine` turns it
+// into one sentence - so the page renders a total it did not add up.
+out += '         tabWallet: tabWallet, spendLog: spendLog, spentLine: spentLine,\n';
+out += '         parseConnection: parseConnection,\n';
 out += '         decodeRoundContract: decodeRoundContract,\n';
 out += '         toHex: toHex, fromHex: fromHex };\n})();\n';
 out += 'if (typeof module !== "undefined") module.exports = BLWPCLIENT;\n';
