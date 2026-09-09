@@ -123,6 +123,25 @@ export class PoolWatch {
     };
   }
 
+  /**
+   * HOW FAR THE CHAIN HAS GOT, which is the only clock item 19 waits on.
+   *
+   * `getblockcount` and nothing else. The takeover order is measured in blocks
+   * past the round's beacon precisely so that every seat reads one number off
+   * one chain and agrees without talking; a wall clock would put two seats a
+   * minute apart and let both of them take over.
+   */
+  async tip() {
+    if (!this.call) return { ok: false, why: 'this node reaches no chain, so it has no tip' };
+    let got;
+    try { got = await this.call('getblockcount', []); }
+    catch (e) { return { ok: false, why: `the chain would not answer getblockcount: ${e.message}` }; }
+    const height = Number(got);
+    if (!Number.isInteger(height) || height < 0)
+      return { ok: false, why: `the chain answered ${got} for its own height` };
+    return { ok: true, height };
+  }
+
   /** Every unspent output paying this pool, as the chain has them. */
   async unspent() {
     const mine = this.scriptOf();

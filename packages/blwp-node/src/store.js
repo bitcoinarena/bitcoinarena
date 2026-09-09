@@ -260,6 +260,36 @@ export function openStore(path = ':memory:') {
       owed_count INTEGER NOT NULL DEFAULT 0
     );
 
+    -- THIS SEAT'S NONCE PAIR FOR A ROUND'S SPEND, AND IT OUTLIVES THE PROCESS.
+    --
+    -- It lived in a Map on PoolSigning and died with the daemon, and letter
+    -- 19 measured what that costs: a second asker after a restart got FRESH
+    -- nonces from all five seats, a new signature, and a different txid over
+    -- the same input - a conflicting spend of the pool. Before the restart the
+    -- same asker got the same commitments back and rebuilt the IDENTICAL
+    -- transaction, which is harmless. The difference was only the memory.
+    --
+    -- So it is on disk, one row per round, keyed by the round: this node holds
+    -- one seat, and a seat is one signature. seat_id is stored beside it so
+    -- a store that somehow met a different share refuses rather than signing
+    -- with a pair that is not its own.
+    --
+    -- hiding and binding are the SECRET scalars and are cleared the moment
+    -- the pair is used - spent_share is what a retry gets after that, which
+    -- is enough to answer twice and not enough to sign twice.
+    CREATE TABLE IF NOT EXISTS pool_nonces (
+      round_id       BLOB PRIMARY KEY,
+      seat_id        TEXT NOT NULL,
+      sighash        BLOB NOT NULL,
+      hiding         BLOB,
+      binding        BLOB,
+      commit_hiding  BLOB NOT NULL,
+      commit_binding BLOB NOT NULL,
+      spent_list     BLOB,
+      spent_share    BLOB,
+      updated_ms     INTEGER NOT NULL
+    );
+
     -- The seats' signatures over that table id. Keyed by signer, so one seat
     -- signing twice is one vote, the way results already are.
     CREATE TABLE IF NOT EXISTS payout_signatures (

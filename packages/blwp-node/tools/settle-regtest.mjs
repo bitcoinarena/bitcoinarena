@@ -35,7 +35,7 @@ import { ed25519 } from '@noble/curves/ed25519.js';
 import { openStore } from '../src/store.js';
 import { bitcoindRpc } from '../src/chain-rpc.js';
 import { serve } from '../src/server.js';
-import { askerFor, PAYOUT_QUEUED, PAID } from '../src/payout.js';
+import { askerFor, askerOrder, TAKEOVER_BLOCKS, PAYOUT_QUEUED, PAID } from '../src/payout.js';
 import { PoolSigning } from '../src/pool-signing.js';
 import { trustedDealerSplit } from '../../protocol/src/frost.js';
 import { evenGroupSecret } from '../../protocol/src/frost-bip340.js';
@@ -123,11 +123,24 @@ async function main() {
       },
     };
 
+    // ---- THE ROUND'S BEACON, TAKEN OFF THIS CHAIN. ----
+    const beacon = {
+      hash: fromHex(cli('getblockhash', cli('getblockcount'))),
+      height: Number(cli('getblockcount')),
+      timeMs: BigInt(NOW),
+    };
+    say(`the round's beacon is block ${beacon.height}`);
+
     // ---- SEVEN DAEMONS, EACH WITH ITS OWN STORE AND ITS OWN SHARE. ----
     for (let i = 0; i < SHARES_TOTAL; i++) {
       nodes.push(await serve(openStore(join(dir, `node-${i}.db`)), {
         port: 0, funded: () => true, now: () => NOW,
         poolKey: pool, poolCurve: curve, poolSeat: dealt.shares[i], chainSpend: chain,
+        // THE ROUND'S OWN CHAIN ANCHOR. Item 19's takeover order is measured
+        // in BLOCKS past this height, and it is a real height off this chain -
+        // the harness reads it rather than naming one, so the waits below are
+        // waits the chain actually served.
+        randomnessFor: () => beacon,
       }));
     }
     say(`\nseven daemons on ports ${nodes.map((n) => n.port).join(', ')}`);
@@ -199,32 +212,39 @@ async function main() {
     // ---- THE CHAIN THIS DAEMON ASKS ABOUT ITS OWN POOL. ----
     //
     // `bitcoindRpc` over the same cookie the CLI uses. Every node gets it, so
-    // the six that are not the asker are refused by the RULE and not by having
-    // no chain to ask.
+    // the seats that are not the asker are refused by the RULE and not by
+    // having no chain to ask.
     const call = bitcoindRpc({ url: `http://127.0.0.1:${P.rpc}/`, cookiePath: cookie });
     for (const n of nodes) n.poolWatch.call = call;
 
     const out = poolOutput({ groupPublicKey: dealt.groupPublicKey, curve });
     const poolAddress = JSON.parse(cli('decodescript', toHex(out.script))).address;
 
-    // WHICH SEAT ASKS, and every one of the seven works it out for itself.
-    const who = askerFor(rid, nodes[0].round.seats(rid));
-    const asker = nodes.find((n) => toHex(n.round.pubkey) === toHex(who.asker));
-    if (!asker) problems.push('the round named a seat that is not on this committee');
+    // ---- WHO ASKS, AND IN WHAT ORDER AFTER THAT. ----
+    const ring = askerOrder(rid, nodes[0].round.seats(rid));
+    const nodeAt = (k) => nodes.find((n) => toHex(n.round.pubkey) === toHex(ring.order[k]));
     const agree = nodes.filter((n) =>
-      toHex(askerFor(rid, n.round.seats(rid)).asker) === toHex(who.asker)).length;
-    say(`\nthe round names seat ${who.at + 1} of ${who.of}, and ${agree} of ${SHARES_TOTAL} seats agree`);
+      toHex(askerOrder(rid, n.round.seats(rid)).order[0]) === toHex(ring.order[0])).length;
+    say(`\nthe round names seat ${ring.at + 1} of ${ring.of}, and ${agree} of ${SHARES_TOTAL} seats agree`);
     if (agree !== SHARES_TOTAL) problems.push('the seats disagree about who asks');
 
-    const settle = (n) => n.payouts.settleQueued({
-      roundId: rid, contract, signing: n.signing, watch: n.poolWatch,
+    // AND NO NODE CAN MOVE ITS OWN PLACE. The store sorts the seats by pubkey,
+    // so a node handed the same seven in another order computes the same ring.
+    const shuffled = [...nodes[0].round.seats(rid)].reverse()
+      .sort((a, b) => (toHex(a) < toHex(b) ? -1 : 1));
+    const same = askerOrder(rid, shuffled).order.every((k, i) => toHex(k) === toHex(ring.order[i]));
+    say(`  the order survives being handed round the other way: ${same}`);
+    if (!same) problems.push('the takeover order depends on how the seats arrive');
+
+    const settle = (n, extra = {}) => n.payouts.settleQueued({
+      roundId: rid, contract, signing: n.signing, watch: n.poolWatch, ...extra,
     });
 
     // ---- THE POOL, UNFUNDED. ----
-    const dry = await settle(asker);
+    const dry = await settle(nodeAt(0));
     say(`\nan unfunded pool: ${dry.ok ? 'PAID' : 'refused: ' + dry.why}`);
     if (dry.ok) problems.push('an unfunded pool paid a winner');
-    if (asker.round.payout(rid).state !== PAYOUT_QUEUED)
+    if (nodeAt(0).round.payout(rid).state !== PAYOUT_QUEUED)
       problems.push('a refusal moved the payout row');
 
     // ---- FUNDED, AND STILL IN A MEMPOOL. ----
@@ -232,62 +252,81 @@ async function main() {
     // THE ANSWER IS "NOTHING THERE", AND IT IS THE RIGHT ONE. This harness was
     // written expecting "too shallow", and a real bitcoind said otherwise:
     // `scantxoutset` scans the UTXO SET, so a transaction still in the mempool
-    // is not in the answer at all. The code and both unit tests said the wrong
-    // thing until this run; they say this now.
+    // is not in the answer at all.
     const funding = cli('sendtoaddress', poolAddress, '0.00001200');
-    const mempool = await settle(asker);
+    const mempool = await settle(nodeAt(0));
     say(`funded but unconfirmed: ${mempool.ok ? 'PAID' : 'refused: ' + mempool.why}`);
     if (mempool.ok) problems.push('a committee signed against an output still in a mempool');
     if (!/0 confirmed output/.test(mempool.why || ''))
       problems.push(`an unconfirmed pool read as something else: ${mempool.why}`);
 
     mine(1);
-
-    // ---- IN THE SET, AND NOT DEEP ENOUGH FOR THE CALLER. ----
-    //
-    // One block in, six asked for. This is what the shallow branch is actually
-    // for, and it is the only way to reach it on a real chain.
-    const shallow = await asker.payouts.settleQueued({
-      roundId: rid, contract, signing: asker.signing, watch: asker.poolWatch,
-      minConfirmations: 6,
-    });
-    say(`one confirmation against a demand for six: ${shallow.ok ? 'PAID' : 'refused: ' + shallow.why}`);
-    if (shallow.ok) problems.push('a six-deep demand was met by a one-deep output');
-    if (!/fewer than 6 confirmation/.test(shallow.why || ''))
-      problems.push(`a shallow pool read as something else: ${shallow.why}`);
-
     const funded = JSON.parse(cli('scantxoutset', 'start',
       JSON.stringify([`raw(${toHex(out.script)})`])));
     say(`\nthe pool holds ${Math.round((funded.total_amount || 0) * 1e8)} sats at ${poolAddress}`);
     say(`  funding txid ${funding}`);
 
-    // ---- THE SIX WHO DO NOT ASK. ----
-    let waited = 0;
-    for (const n of nodes) {
-      if (n === asker) continue;
-      const got = await settle(n);
-      if (got.ok) problems.push('a seat that is not the asker sent a transaction');
-      else if (got.waiting) waited++;
-      else problems.push(`a waiting seat refused for the wrong reason: ${got.why}`);
-    }
-    say(`\n${waited} of ${SHARES_TOTAL - 1} other seats waited rather than asking`);
-    if (waited !== SHARES_TOTAL - 1) problems.push('a seat refused to ask for the wrong reason');
+    // ---- IN THE SET, AND NOT DEEP ENOUGH FOR THE CALLER. ----
+    const shallow = await settle(nodeAt(0), { minConfirmations: 6 });
+    say(`one confirmation against a demand for six: ${shallow.ok ? 'PAID' : 'refused: ' + shallow.why}`);
+    if (shallow.ok) problems.push('a six-deep demand was met by a one-deep output');
+    if (!/fewer than 6 confirmation/.test(shallow.why || ''))
+      problems.push(`a shallow pool read as something else: ${shallow.why}`);
 
-    // ---- AND THE ASKER PAYS, IN FRONT OF CONSENSUS. ----
-    const paid = await settle(asker);
-    say('\nthe round\'s own asker, naming no outpoint:');
-    if (!paid.ok) {
-      say(`  REJECTED: ${paid.why}`);
-      problems.push(`the asker was refused: ${paid.why}`);
+    // ================= ITEM 19 =================
+    //
+    // THE ASKER IS DOWN. It never runs. Everything below is the seats behind
+    // it, and the only clock any of them reads is the height of this chain.
+    say(`\n---- the round's own asker is down; nobody runs it ----`);
+    say(`the chain is at ${cli('getblockcount')}, the beacon was ${beacon.height}`);
+
+    let waited = 0;
+    for (let k = 1; k < SHARES_TOTAL; k++) {
+      const got = await settle(nodeAt(k));
+      if (got.ok) problems.push(`seat ${k + 1} paid before its turn`);
+      else if (got.waiting) waited++;
+      else problems.push(`seat ${k + 1} refused for the wrong reason: ${got.why}`);
+      if (k === 1) say(`  the next seat: ${got.why}`);
+    }
+    say(`  ${waited} of ${SHARES_TOTAL - 1} seats waited; nothing was broadcast`);
+    if (waited !== SHARES_TOTAL - 1) problems.push('a seat took over before its turn');
+    if (nodeAt(0).round.payout(rid).state !== PAYOUT_QUEUED)
+      problems.push('the winner was paid while every seat was still waiting');
+
+    // ---- THE CHAIN ADVANCES, AND THE NEXT SEAT PAYS. ----
+    const need = beacon.height + TAKEOVER_BLOCKS - Number(cli('getblockcount'));
+    if (need > 0) mine(need);
+    say(`\n---- ${TAKEOVER_BLOCKS} block(s) past the beacon: the chain is at ${cli('getblockcount')} ----`);
+
+    const took = await settle(nodeAt(1));
+    if (!took.ok) {
+      say(`  REFUSED: ${took.why}`);
+      problems.push(`the takeover was refused: ${took.why}`);
     } else {
-      say(`  sendrawtransaction -> ${toHex(new Uint8Array(paid.txid).reverse())}`);
-      say(`  signed by ${paid.signed} of ${SHARES_NEEDED} seats`);
+      const txid = toHex(new Uint8Array(took.txid).reverse());
+      say(`  seat ${(ring.at + 1) % SHARES_TOTAL + 1} took over: sendrawtransaction -> ${txid}`);
+      say(`  signed by ${took.signed} of ${SHARES_NEEDED} seats`);
+
+      // ---- AND THE SEAT BEHIND, WHILE THAT SPEND IS STILL IN THE MEMPOOL. ----
+      //
+      // THE WINDOW `gettxout` EXISTS FOR, and it is only open right here:
+      // nothing has been mined, so the output is still in the UTXO SET and
+      // `scantxoutset` would hand it over as spendable. `takeoverBlocks: 1`
+      // brings this seat's turn forward rather than waiting for a block,
+      // because a block would confirm the spend and close the window.
+      const inFlight = await settle(nodeAt(2), { takeoverBlocks: 1 });
+      say(`  the seat behind, spend still in the mempool: `
+        + `${inFlight.ok ? 'PAID AGAIN' : 'refused: ' + inFlight.why}`);
+      if (inFlight.ok) problems.push('a seat signed a second spend of an output already in a mempool');
+      if (inFlight.waiting) problems.push('the mempool window was not measured: the clock stopped it');
+      if (!inFlight.spending)
+        problems.push(`the mempool spend was not what stopped it: ${inFlight.why}`);
+
       mine(1);
       const height = Number(cli('getblockcount'));
-      const seen = JSON.parse(cli('getrawtransaction',
-        toHex(new Uint8Array(paid.txid).reverse()), 'true'));
+      const seen = JSON.parse(cli('getrawtransaction', txid, 'true'));
       say(`  block ${height} carries it (${seen.blockhash ? 'confirmed' : 'NOT in a block'})`);
-      if (!seen.blockhash) problems.push('the payout never reached a block');
+      if (!seen.blockhash) problems.push('the takeover never reached a block');
 
       const winnerAddress = JSON.parse(cli('decodescript',
         '5120' + toHex(schnorr.getPublicKey(winnerSecret)))).address;
@@ -297,14 +336,57 @@ async function main() {
       say(`  the winner's own key holds ${sats} sats at ${winnerAddress}`);
       if (BigInt(sats) !== STAKE_MSAT / 1000n)
         problems.push(`the winner holds ${sats} sats, not ${STAKE_MSAT / 1000n}`);
-      if (asker.round.payout(rid).state !== PAID) problems.push('the row was not marked PAID');
-      say(`  the asker's own store says ${asker.round.payout(rid).state}`);
+      if (nodeAt(1).round.payout(rid).state !== PAID) problems.push('the takeover did not mark the row PAID');
     }
 
-    // ---- AND A SECOND ASK SENDS NOTHING. ----
-    const again = await settle(asker);
-    say(`\nasking again: ${again.already ? 'already ' + again.state : (again.ok ? 'PAID AGAIN' : again.why)}`);
-    if (again.ok && !again.already) problems.push('a second ask built a second spend of one output');
+    // ---- A SPEND ALREADY GONE STOPS THE SEAT BEHIND. ----
+    //
+    // ITS TURN HAS TO HAVE COME FIRST, or this measures the clock and not the
+    // output. Written the other way first and it read as a refusal - "may ask
+    // at height 204" - which is a true sentence about the wrong thing. Mined
+    // up to seat three's own turn, so the only thing left to stop it is that
+    // the pool output is not there any more.
+    const thirdAt = beacon.height + TAKEOVER_BLOCKS * 2;
+    const toThird = thirdAt - Number(cli('getblockcount'));
+    if (toThird > 0) mine(toThird);
+    const behind = await settle(nodeAt(2));
+    say(`\nthe seat behind, at its own turn (height ${cli('getblockcount')}, due ${thirdAt}): `
+      + `${behind.ok ? 'PAID AGAIN' : 'refused: ' + behind.why}`);
+    if (behind.ok) problems.push('a seat behind the takeover spent the pool a second time');
+    if (behind.waiting) problems.push('the seat behind was stopped by the clock, so the output was not measured');
+
+    // ---- AND THE ASKER COMES BACK, AFTER A RESTART. ----
+    //
+    // Fresh `PoolSigning` objects over the same stores, which is what a
+    // process restart leaves behind. Before letter 19 put the nonce pair on
+    // disk, a restarted committee signed the same input with DIFFERENT bytes -
+    // the unit suite measures that byte for byte. What is measured HERE is the
+    // outcome that matters on a chain: the seat that was down comes back, its
+    // own row still says queued, and it spends nothing, because the pool
+    // output it would have spent is gone.
+    for (const n of nodes)
+      n.signing = new PoolSigning(n.round, {
+        curve, seat: dealt.shares[nodes.indexOf(n)], pool,
+      });
+    const back = await settle(nodeAt(0));
+    say(`the asker came back after a restart: ${back.ok ? 'PAID AGAIN' : 'refused: ' + back.why}`);
+    if (back.ok) problems.push('the returning asker spent the pool a second time');
+    if (back.waiting) problems.push('the returning asker was stopped by the clock rather than by the chain');
+
+    // ---- ONE SPEND OF THAT OUTPUT, COUNTED ON THE CHAIN ITSELF. ----
+    const spends = JSON.parse(cli('getrawtransaction', funding, 'true'));
+    void spends;
+    const poolNow = JSON.parse(cli('scantxoutset', 'start',
+      JSON.stringify([`raw(${toHex(out.script)})`])));
+    const left = Math.round((poolNow.total_amount || 0) * 1e8);
+    say(`\nthe pool now holds ${left} sats, and the winner holds ${STAKE_MSAT / 1000n}`);
+    const winnerAddress = JSON.parse(cli('decodescript',
+      '5120' + toHex(schnorr.getPublicKey(winnerSecret)))).address;
+    const paidOut = JSON.parse(cli('scantxoutset', 'start', JSON.stringify([`addr(${winnerAddress})`])));
+    const paidSats = Math.round((paidOut.total_amount || 0) * 1e8);
+    say(`  the winner's key holds ${paidSats} sats - ONE payment, not two`);
+    if (BigInt(paidSats) !== STAKE_MSAT / 1000n)
+      problems.push(`the winner ended up with ${paidSats} sats, not ${STAKE_MSAT / 1000n}`);
 
   } finally {
     for (const n of nodes) { try { await n.close(); } catch { /* going down anyway */ } }

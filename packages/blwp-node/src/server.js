@@ -204,6 +204,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     curve: poolCurve, chain: chainSpend, pool: poolKey,
     random: (n) => new Uint8Array(randomBytes(n)),
     peers, fetcher: (u, o) => fetch(u, o),
+    // THE ROUND'S BEACON, and it is the same door the roster and the verifier
+    // read. Item 19's takeover waits a number of BLOCKS past this height, so a
+    // node that seeds on one beacon cannot wait on another.
+    ...(randomnessFor ? { randomnessFor } : {}),
   });
 
   // AND THIS NODE'S HALF OF A SIGNING ROUND. `Payouts` decides which

@@ -80,6 +80,93 @@ export function askerFor(roundId, seats) {
 }
 
 /**
+ * HOW LONG A SEAT GETS BEFORE THE NEXT ONE MAY TRY, IN BITCOIN BLOCKS.
+ *
+ * Small on purpose. A spend broadcast at the front of its window is normally
+ * in the next block, and the seat behind re-reads the output through
+ * `gettxout` - which sees a mempool - before it asks at all, so the wait is
+ * not there to let a transaction confirm. It is there so two seats do not
+ * start the same signing round in the same instant on the ordinary path.
+ *
+ * Blocks and not milliseconds: every seat reads one chain and agrees without
+ * talking, where two wall clocks a minute apart both take over.
+ */
+export const TAKEOVER_BLOCKS = 2;
+
+/**
+ * THE ORDER SEATS TAKE OVER IN, AND NO SEAT CHOOSES ITS OWN PLACE.
+ *
+ * `askerFor` names the first. The rest follow it around the ring, so the order
+ * is a rotation of the seats the store already keeps sorted BY PUBKEY - which
+ * no seat picks - starting at an index taken from the round id, which is a
+ * hash of a contract signed before the round ran. There is nothing here a node
+ * can grind: to move up the order it would have to change the round id, and
+ * that is a different round.
+ */
+export function askerOrder(roundId, seats) {
+  const first = askerFor(roundId, seats);
+  if (!first.ok) return first;
+  const order = seats.map((_, i) => seats[(first.at + i) % seats.length]);
+  return { ok: true, order, at: first.at, of: seats.length };
+}
+
+/**
+ * WHICH SEATS MAY ASK AT THIS BLOCK HEIGHT, AND WHEN THE NEXT ONE MAY.
+ *
+ * ITEM 19. The asker is picked from the round id, so a seat that is offline
+ * when its round closes leaves the payout at PAYOUT_QUEUED with the other six
+ * correctly waiting - and a seat that never comes back strands the round for
+ * ever. Somebody has to be allowed to take over, and the question that decides
+ * the shape is what they take over WITH.
+ *
+ * THE CLOCK IS THE ROUND'S OWN BEACON HEIGHT, which is not a new time source:
+ * a round that has no randomness beacon cannot be seeded and cannot be played,
+ * so every seat already holds this number and holds the same one. Wall clocks
+ * are per-node - two seats a minute apart would both take over - and the
+ * pool output's own confirmations are the wrong anchor, because a pool funded
+ * long before the round closes is already deep and every seat would be
+ * eligible at once.
+ *
+ * Seat k in the order above may ask once the chain has advanced
+ * `k * TAKEOVER_BLOCKS` past the beacon. The round's own asker is k = 0 and is
+ * therefore uniquely eligible the moment the round closes.
+ *
+ * SEVERAL SEATS ELIGIBLE AT ONCE IS NORMAL AND HARMLESS, and it is worth
+ * saying because it looks like the fault. After a long outage the chain is far
+ * past the beacon and most of the ring may ask. They do not compete: every
+ * seat's nonce pair is on disk, so a second asker collects the SAME
+ * commitments and rebuilds the transaction byte for byte. Measured - before
+ * the pair was durable, a restarted committee signed the same spend with
+ * different signature bytes; now it is identical.
+ */
+export function eligibleAsker({ roundId, seats, beaconHeight, tipHeight,
+  takeoverBlocks = TAKEOVER_BLOCKS }) {
+  const ring = askerOrder(roundId, seats);
+  if (!ring.ok) return ring;
+  if (!Number.isInteger(beaconHeight) || beaconHeight < 0)
+    return { ok: false, why: 'that round names no beacon height to wait from' };
+  if (!Number.isInteger(tipHeight) || tipHeight < 0)
+    return { ok: false, why: 'this node has no chain tip to measure the wait against' };
+  if (!Number.isInteger(takeoverBlocks) || takeoverBlocks <= 0)
+    return { ok: false, why: 'a takeover wait is a positive number of blocks' };
+
+  const advanced = tipHeight - beaconHeight;
+  const openFor = (k) => advanced >= Math.imul(k, takeoverBlocks);
+  const allowed = ring.order.filter((_, k) => openFor(k));
+  const next = ring.order.length > allowed.length ? allowed.length : null;
+  return {
+    ok: true,
+    order: ring.order,
+    allowed,
+    advanced,
+    // The height at which the next seat in the ring joins in, so a refusal can
+    // say when rather than only no.
+    nextAt: next === null ? null : beaconHeight + Math.imul(next, takeoverBlocks),
+    placeOf: (key) => ring.order.findIndex((k) => toHex(k) === toHex(key)),
+  };
+}
+
+/**
  * The round's own payout, from a FINAL result to sats on a chain.
  *
  * `pool` is the committee's key material and the output it holds; `chain`
@@ -88,8 +175,12 @@ export function askerFor(roundId, seats) {
  * not how to reach a node.
  */
 export class Payouts {
-  constructor(round, { curve, chain = null, pool = null, random, peers = [], fetcher = null } = {}) {
+  constructor(round, { curve, chain = null, pool = null, random, peers = [], fetcher = null,
+    randomnessFor = null } = {}) {
     this.round = round;
+    // THE ROUND'S CHAIN CLOCK, injected the way the roster's and the
+    // verifier's are. Item 19 waits on it; a node given none never takes over.
+    this.randomnessFor = randomnessFor;
     this.fetcher = fetcher;
     this.curve = curve;
     this.chain = chain;
@@ -203,7 +294,8 @@ export class Payouts {
    * bookkeeping - so the output this asks for is sized by the same rule that
    * decides the outputs it will later sign.
    */
-  async settleQueued({ roundId, contract, signing, watch, minConfirmations = 1 }) {
+  async settleQueued({ roundId, contract, signing, watch, minConfirmations = 1,
+    takeoverBlocks = TAKEOVER_BLOCKS }) {
     const row = this.round.payout(roundId);
     if (!row) return { ok: false, why: 'that round has no queued payout' };
     if (row.state === PAID || row.state === PAID_IN_PART)
@@ -216,14 +308,34 @@ export class Payouts {
     if (!signing || typeof signing.owes !== 'function')
       return { ok: false, why: 'this node holds no seat, so it asks for nothing' };
 
+    // WHOSE TURN IT IS, AT THIS BLOCK HEIGHT.
+    //
+    // The round's own asker is first and alone; every other seat waits
+    // `TAKEOVER_BLOCKS` more blocks past the round's beacon than the one in
+    // front of it. That is letter 19: without it a seat that never comes back
+    // strands the payout at PAYOUT_QUEUED for ever.
     const seats = this.round.seats(roundId);
-    const who = askerFor(roundId, seats);
-    if (!who.ok) return who;
     const me = this.round.pubkey;
-    if (toHex(who.asker) !== toHex(me))
+    const beaconHeight = await this.beaconHeightFor(roundId, contract);
+    if (!beaconHeight.ok) return beaconHeight;
+    const tip = await watch.tip();
+    if (!tip.ok) return tip;
+
+    const turn = eligibleAsker({
+      roundId, seats, beaconHeight: beaconHeight.height, tipHeight: tip.height, takeoverBlocks,
+    });
+    if (!turn.ok) return turn;
+    const place = turn.placeOf(me);
+    if (place < 0)
+      return { ok: false, why: 'this node is not seated on that round, so it does not ask for it' };
+    if (place >= turn.allowed.length)
       return {
-        ok: false, waiting: true, asker: who.asker,
-        why: `seat ${toHex(who.asker).slice(0, 16)} (${who.at + 1} of ${who.of}) asks for this round`,
+        ok: false, waiting: true, place, advanced: turn.advanced, nextAt: turn.nextAt,
+        why: place === 0
+          ? 'this node is the round\'s asker and the chain has not reached the beacon yet'
+          : `this node is ${place} of ${turn.order.length} in the takeover order and may ask at `
+            + `height ${beaconHeight.height + Math.imul(place, takeoverBlocks)}; the chain is at `
+            + `${tip.height}, ${turn.advanced} block(s) past the beacon`,
       };
 
     const owed = signing.owes({ roundId, contract });
@@ -232,9 +344,39 @@ export class Payouts {
     const found = await watch.forRound({ owedSats: owed.wantsSats, minConfirmations });
     if (!found.ok) return found;
 
+    // AND IS IT STILL THERE. `forRound` reads `scantxoutset`, which scans the
+    // UTXO SET and does not see a mempool - so a seat taking over would not
+    // notice the spend the seat in front of it broadcast a minute ago, and
+    // would start a second signing round over an output that is already going.
+    // `outpoint` asks `gettxout`, which does see one. A takeover that finds
+    // the output gone stops rather than asking.
+    const still = await watch.outpoint({ txid: found.utxo.txid, vout: found.utxo.vout });
+    if (!still.ok)
+      return { ok: false, spending: true, why: `that output is already going: ${still.why}` };
+
     return this.payWithCommittee({
       roundId, utxo: found.utxo, contract, signing, seats: this.peers,
     });
+  }
+
+  /**
+   * THE ROUND'S OWN BEACON HEIGHT, and it is asked for rather than invented.
+   *
+   * `randomnessFor` is the same door the roster seats a committee through and
+   * the verifier closes a round through - one source, so a node cannot wait on
+   * one beacon and seed on another. A node given none does not take over: it
+   * says so, which leaves the payout queued rather than letting a node with no
+   * chain view decide it is somebody's turn.
+   */
+  async beaconHeightFor(roundId, contract) {
+    if (typeof this.randomnessFor !== 'function')
+      return { ok: false, why: 'this node reads no randomness beacon, so it cannot say whose turn it is' };
+    let given;
+    try { given = await this.randomnessFor({ contract, roundIdBytes: roundId }); }
+    catch (err) { return { ok: false, why: `the beacon would not answer: ${err.message}` }; }
+    if (!given || !Number.isInteger(given.height))
+      return { ok: false, why: 'that round names no beacon height to wait from' };
+    return { ok: true, height: given.height };
   }
 
   /**
@@ -246,7 +388,8 @@ export class Payouts {
    * closed, or whose pool had no confirmed output yet, would sit at
    * PAYOUT_QUEUED for ever with nobody to notice.
    */
-  async settleAllQueued({ contractFor, signing, watch, minConfirmations = 1 }) {
+  async settleAllQueued({ contractFor, signing, watch, minConfirmations = 1,
+    takeoverBlocks = TAKEOVER_BLOCKS }) {
     if (!this.canSpend || !watch || !watch.reaches)
       return { ok: false, why: 'this node reaches no chain, so it asks it nothing', settled: [] };
     const settled = [];
@@ -254,7 +397,7 @@ export class Payouts {
       const contract = contractFor(row.roundId);
       if (!contract) { settled.push({ roundId: row.roundId, why: 'this node holds no contract for that round' }); continue; }
       let got;
-      try { got = await this.settleQueued({ roundId: row.roundId, contract, signing, watch, minConfirmations }); }
+      try { got = await this.settleQueued({ roundId: row.roundId, contract, signing, watch, minConfirmations, takeoverBlocks }); }
       catch (err) { got = { ok: false, why: err.message }; }
       settled.push({ roundId: row.roundId, ...got });
     }
@@ -298,8 +441,22 @@ export class Payouts {
     const own = signing.commit({ roundId, utxo, contract, random: this.random });
     if (own.ok) asked.push({ where: 'this seat', commitment: own.commitment });
     const refused = [];
+    // EVERY SEAT IS ASKED, AND THE FIVE ARE CHOSEN BY SEAT ID.
+    //
+    // This used to stop at the first `needed` that answered, so the five in
+    // the list were whichever five were quickest - and letter 19 measured what
+    // that costs. THE COMMITMENT LIST IS PART OF WHAT IS SIGNED: it goes into
+    // the binding factors and therefore into the challenge, so a seat that has
+    // signed under one list refuses to sign under another, by name. Two
+    // askers - the round's own and a seat taking over after it went down -
+    // assembled different lists and the takeover was refused by every seat
+    // that had already signed.
+    //
+    // Sorted by id, the healthy committee's five are the same five whoever
+    // asks, the list is identical, and the spent shares are handed straight
+    // back: the takeover rebuilds the transaction byte for byte instead of
+    // competing with it. It costs two more requests than stopping early.
     for (const peer of seats) {
-      if (asked.length >= needed) break;
       const got = await this.askSeat(`${peer}/pool/commit?round=${toHex(roundId)}`, body);
       if (!got.ok) { refused.push(`${peer}: ${got.why}`); continue; }
       let one;
@@ -312,15 +469,24 @@ export class Payouts {
       return { ok: false, committed: asked.length, needed,
         why: `${asked.length} of ${needed} seats committed to this spend`, refused };
 
+    asked.sort((a, b) => (String(a.commitment.id) < String(b.commitment.id) ? -1
+      : String(a.commitment.id) > String(b.commitment.id) ? 1 : 0));
+    asked.length = needed;
     const commitments = asked.map((a) => a.commitment);
     const shares = [];
-    if (own.ok) {
-      const got = signing.signatureShare({ roundId, utxo, contract, commitments });
-      if (!got.ok) return { ok: false, why: `this seat withdrew: ${got.why}` };
-      shares.push(got.share);
-    }
+    // THE SHARES COME FROM THE SEATS IN THE LIST, and this seat is asked only
+    // if it is one of them. It used to be asked unconditionally, which was
+    // harmless while the five were the first five to answer and wrong the
+    // moment they became the five lowest ids: an asker whose own id is the
+    // sixth is not in the list it built, and asking it for a share got "this
+    // seat is not in the commitment list" reported as a withdrawal.
     for (const a of asked) {
-      if (a.where === 'this seat') continue;
+      if (a.where === 'this seat') {
+        const got = signing.signatureShare({ roundId, utxo, contract, commitments });
+        if (!got.ok) return { ok: false, why: `this seat withdrew: ${got.why}` };
+        shares.push(got.share);
+        continue;
+      }
       const got = await this.askSeat(`${a.where}/pool/share?round=${toHex(roundId)}`,
         encodeShareRequest(utxo, commitments));
       if (!got.ok)

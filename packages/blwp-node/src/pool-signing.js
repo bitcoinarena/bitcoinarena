@@ -41,8 +41,9 @@ import { signShare340 } from '../../protocol/src/frost-bip340.js';
 import { nonceGenerate, encodeCommitmentList } from '../../protocol/src/frost.js';
 import { decodePlayerResult, splitSignedResult } from '../../protocol/src/result.js';
 import { toHex } from '../../protocol/src/hash.js';
+import { scalarFrom32, scalarTo32 } from '../../protocol/src/shares.js';
 import { tableFor, verifiedTable } from './payout-table.js';
-import { PAYOUT_QUEUED } from './payout.js';
+import { PAYOUT_QUEUED, PAID, PAID_IN_PART } from './payout.js';
 
 const same = (a, b) => a && b && a.length === b.length && a.every((v, i) => v === b[i]);
 
@@ -60,8 +61,48 @@ export class PoolSigning {
     this.seat = seat;
     this.pool = pool;
     this.dustSats = dustSats;
-    /** roundId hex -> { sighash, hiding, binding, commitment, spent } */
-    this.live = new Map();
+  }
+
+  /**
+   * WHAT THIS SEAT IS COMMITTED TO FOR A ROUND, OFF DISK.
+   *
+   * This was a `Map` on the object and letter 19 measured what that cost: a
+   * committee that restarted between two asks minted FRESH nonces for a spend
+   * it had already signed - a second signature over the same input, a second
+   * txid, a conflicting spend of the pool. Before the restart the same ask
+   * returned the same commitments and rebuilt the IDENTICAL transaction, which
+   * is harmless. The whole difference was the memory, so the memory is a row.
+   *
+   * A row written by a DIFFERENT seat is refused rather than used: a store
+   * that somehow met another share must not sign with a pair that is not its
+   * own.
+   */
+  held(roundId) {
+    const row = this.round.poolNonce(roundId);
+    if (!row) return null;
+    if (String(row.seatId) !== String(this.seat.id))
+      return { wrongSeat: row.seatId };
+    return {
+      sighash: row.sighash,
+      hiding: row.hiding === null ? null : scalarFrom32(row.hiding),
+      binding: row.binding === null ? null : scalarFrom32(row.binding),
+      commitment: { id: this.seat.id, hiding: row.commitHiding, binding: row.commitBinding },
+      spent: row.spentShare === null
+        ? false
+        : { list: row.spentList, share: scalarFrom32(row.spentShare) },
+    };
+  }
+
+  /** The same row, written. `hiding`/`binding` null once the pair is used. */
+  keep(roundId, { sighash, hiding, binding, commitment, spent }) {
+    return this.round.putPoolNonce({
+      roundId, seatId: this.seat.id, sighash,
+      hiding: hiding === null ? null : scalarTo32(hiding),
+      binding: binding === null ? null : scalarTo32(binding),
+      commitHiding: commitment.hiding, commitBinding: commitment.binding,
+      spentList: spent ? spent.list : null,
+      spentShare: spent ? scalarTo32(spent.share) : null,
+    });
   }
 
   get holdsAShare() { return !!(this.seat && this.pool && this.curve); }
@@ -119,7 +160,7 @@ export class PoolSigning {
    * slashable, and the same reasoning applies with more force to the spend:
    * the table only says who is owed, the spend is where the money goes.
    */
-  spendFor({ roundId, utxo, contract }) {
+  spendFor({ roundId, utxo, contract, settled = false }) {
     if (!this.holdsAShare) return { ok: false, why: 'this node holds no share of the pool' };
     if (!utxo || !(utxo.txid instanceof Uint8Array) || utxo.txid.length !== 32)
       return { ok: false, why: 'that names no output to spend' };
@@ -130,7 +171,22 @@ export class PoolSigning {
 
     const row = this.round.payout(roundId);
     if (!row) return { ok: false, why: 'this node has queued no payout for that round' };
-    if (row.state !== PAYOUT_QUEUED)
+    // A SEAT THAT HAS ALREADY SIGNED THIS ROUND STILL ANSWERS ABOUT IT.
+    //
+    // `settled` is passed only by `commit` and `signatureShare`, and only when
+    // this seat is already holding a pair for the round - so it relaxes
+    // nothing about starting a spend, and everything it lets through is
+    // checked again against the sighash the pair was made for.
+    //
+    // Letter 19 measured why. The seat that broadcasts marks its own row PAID,
+    // and that row is bookkeeping about ITS broadcast: with the state check
+    // absolute, that seat then refused to commit at all, the takeover
+    // assembled a different five, and every seat that had already signed
+    // refused the new list by name. A transaction can be dropped from a
+    // mempool - a low fee, an eviction, a restart - and the round still has to
+    // be payable when it is.
+    const paid = row.state === PAID || row.state === PAID_IN_PART;
+    if (row.state !== PAYOUT_QUEUED && !(settled && paid))
       return { ok: false, why: `this node's payout for that round is ${row.state}, not queued` };
 
     // THE TABLE, RECOMPUTED. Not the id off the row: a row is what this node
@@ -187,17 +243,30 @@ export class PoolSigning {
    * walk into signing twice.
    */
   commit({ roundId, utxo, contract, random }) {
-    const spend = this.spendFor({ roundId, utxo, contract });
+    // THE STORED PAIR IS READ FIRST, because whether this seat already holds
+    // one decides whether it may answer about a round its own row calls PAID.
+    const held = this.held(roundId);
+    const spend = this.spendFor({
+      roundId, utxo, contract, settled: !!(held && !held.wrongSeat),
+    });
     if (!spend.ok) return spend;
 
-    const key = toHex(roundId);
-    const held = this.live.get(key);
-    if (held && held.spent)
-      return { ok: false, why: 'this seat has already signed this round and keeps no second pair' };
+    if (held && held.wrongSeat)
+      return { ok: false, why: `that round's pair was made by seat ${held.wrongSeat}, not this one` };
+    if (held && held.spent) {
+      // A SPENT PAIR STILL ANSWERS, and that is the whole of the takeover.
+      // A second asker - the round's own, later, or a seat taking over after
+      // the wait - gets the SAME commitment back and rebuilds the same
+      // transaction, byte for byte. It is not a competing spend; it is the
+      // one that already exists, sent again, which a chain treats as a no-op.
+      if (!same(held.sighash, spend.sighash))
+        return { ok: false, why: 'this seat has signed a different spend of this round and keeps no second pair' };
+      return { ok: true, commitment: held.commitment, id: this.seat.id, again: true };
+    }
     if (held) {
       if (!same(held.sighash, spend.sighash))
         return { ok: false, why: 'this seat is already committed to a different spend of this round' };
-      return { ok: true, commitment: held.commitment, id: this.seat.id };
+      return { ok: true, commitment: held.commitment, id: this.seat.id, again: true };
     }
 
     const hiding = nonceGenerate(random(32), spend.share);
@@ -207,7 +276,7 @@ export class PoolSigning {
       hiding: this.curve.pointFromScalar(hiding),
       binding: this.curve.pointFromScalar(binding),
     };
-    this.live.set(key, { sighash: spend.sighash, hiding, binding, commitment, spent: false });
+    this.keep(roundId, { sighash: spend.sighash, hiding, binding, commitment, spent: false });
     return { ok: true, commitment, id: this.seat.id };
   }
 
@@ -225,11 +294,12 @@ export class PoolSigning {
    * and hands the same bytes back for the same list; anything else is refused.
    */
   signatureShare({ roundId, utxo, contract, commitments }) {
-    const key = toHex(roundId);
-    const held = this.live.get(key);
+    const held = this.held(roundId);
     if (!held) return { ok: false, why: 'this seat committed to nothing for that round' };
+    if (held.wrongSeat)
+      return { ok: false, why: `that round's pair was made by seat ${held.wrongSeat}, not this one` };
 
-    const spend = this.spendFor({ roundId, utxo, contract });
+    const spend = this.spendFor({ roundId, utxo, contract, settled: true });
     if (!spend.ok) return spend;
     if (!same(held.sighash, spend.sighash))
       return { ok: false, why: 'this seat committed to a different spend of this round' };
@@ -256,8 +326,10 @@ export class PoolSigning {
       message: spend.sighash, commitments, curve: this.curve,
     });
     // THE PAIR IS GONE THE MOMENT IT IS USED. Kept only as "spent, under this
-    // list, for this share" - enough to answer a retry, not enough to sign.
-    this.live.set(key, {
+    // list, for this share" - enough to answer a retry, not enough to sign -
+    // and kept ON DISK, so a restart cannot turn a retry into a second
+    // signature over the same input.
+    this.keep(roundId, {
       sighash: held.sighash, commitment: held.commitment,
       hiding: null, binding: null, spent: { list, share },
     });

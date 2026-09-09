@@ -1154,6 +1154,53 @@ export class Round {
     };
   }
 
+  /**
+   * THIS SEAT'S NONCE PAIR FOR A ROUND'S SPEND, KEPT WHERE A RESTART CANNOT
+   * REACH IT.
+   *
+   * `PoolSigning` used a Map and letter 19 measured the cost: after a restart
+   * five seats minted fresh nonces for a spend they had already signed, which
+   * is a second signature over the same input and a second txid. The row is
+   * the memory now.
+   *
+   * Scalars in, scalars out - 32 big-endian bytes each, the ciphersuite's own
+   * serialisation - so nothing here decides how a secret is written down.
+   */
+  putPoolNonce({ roundId, seatId, sighash, hiding, binding, commitHiding, commitBinding,
+    spentList = null, spentShare = null }) {
+    this.db.prepare(
+      'INSERT OR REPLACE INTO pool_nonces (round_id, seat_id, sighash, hiding, binding, '
+      + 'commit_hiding, commit_binding, spent_list, spent_share, updated_ms) '
+      + 'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(Buffer.from(roundId), String(seatId), Buffer.from(sighash),
+        hiding === null ? null : Buffer.from(hiding),
+        binding === null ? null : Buffer.from(binding),
+        Buffer.from(commitHiding), Buffer.from(commitBinding),
+        spentList === null ? null : Buffer.from(spentList),
+        spentShare === null ? null : Buffer.from(spentShare),
+        this.now());
+    return true;
+  }
+
+  /** What this seat committed to for that round, or null if it committed to nothing. */
+  poolNonce(roundIdBytes) {
+    const row = this.db.prepare(
+      'SELECT seat_id, sighash, hiding, binding, commit_hiding, commit_binding, '
+      + 'spent_list, spent_share FROM pool_nonces WHERE round_id = ?')
+      .get(Buffer.from(roundIdBytes));
+    if (!row) return null;
+    return {
+      seatId: row.seat_id,
+      sighash: new Uint8Array(row.sighash),
+      hiding: row.hiding ? new Uint8Array(row.hiding) : null,
+      binding: row.binding ? new Uint8Array(row.binding) : null,
+      commitHiding: new Uint8Array(row.commit_hiding),
+      commitBinding: new Uint8Array(row.commit_binding),
+      spentList: row.spent_list ? new Uint8Array(row.spent_list) : null,
+      spentShare: row.spent_share ? new Uint8Array(row.spent_share) : null,
+    };
+  }
+
   /** Every payout this node was in the middle of, across every round. */
   payoutsInState(state) {
     return this.db.prepare('SELECT round_id FROM payouts WHERE state = ? ORDER BY round_id')

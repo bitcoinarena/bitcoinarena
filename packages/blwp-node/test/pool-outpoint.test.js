@@ -48,7 +48,13 @@ test('one file asks the chain about outputs, and one calls the payer', () => {
   // one that changed it. Pinned as a LIST rather than a count: a second file
   // learning to ask the chain about outputs is a second place for the rule
   // "the value is the chain's" to be got wrong, and it should turn this red.
-  const finders = src.filter((s) => /scantxoutset|listunspent|gettxout\b|getrawtransaction/.test(s.text));
+  //
+  // A CALL SITE, NOT A MENTION, the same distinction the payer's pin below
+  // makes. `payout.js` explains in prose why a takeover re-reads its output
+  // through `gettxout`, and it does that by calling `watch.outpoint` - naming
+  // the method in a comment is not asking the chain anything.
+  const finders = src.filter((s) =>
+    /\bcall\(\s*'(scantxoutset|listunspent|gettxout|getrawtransaction)'/.test(s.text));
   assert.deepEqual(finders.map((s) => s.f), ['pool-watch.js'],
     'a second file in src/ now asks the chain about outputs - one of them is the wrong one');
 
