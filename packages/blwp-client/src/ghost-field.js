@@ -57,11 +57,23 @@ export function watchGhosts(client, where, { limit = GHOST_BACKLOG } = {}) {
       return queue.splice(0, Math.max(0, max | 0));
     },
 
-    /** The newest picture of each truck, which is what a renderer wants. */
+    /**
+     * The newest picture of each truck, which is what a renderer wants.
+     *
+     * OFF `present`, NOT OFF THE QUEUE. It used to read the queue, and the
+     * queue is what `drain` empties - so a renderer that drew its frame and
+     * then asked what it was holding was told NOTHING, while the trucks were
+     * still in the round. Measured: two frames in, `latest()` said one
+     * picture; after one `drain(24)` - which is exactly what
+     * `GhostField.Draw(PerFrame)` does every frame - it said zero.
+     *
+     * `present` exists for this and says so three lines up: "A picture Unity
+     * has already drawn is gone from the queue; it is still a player in the
+     * round." Reading the queue made that comment false for every caller but
+     * the first.
+     */
     latest() {
-      const byEntry = new Map();
-      for (const g of queue) byEntry.set(toHex(g.entryId), g);
-      return [...byEntry.values()];
+      return [...present.values()];
     },
   };
 

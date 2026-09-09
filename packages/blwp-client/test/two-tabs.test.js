@@ -257,6 +257,80 @@ test('a tab that has not driven is still shown the truck that is driving', async
   }
 });
 
+/**
+ * WHAT THE RENDERER ACTUALLY DOES, which is drain and not look.
+ *
+ * `BlwpNextGhost` takes ONE picture per call and `GhostField.Draw(PerFrame)`
+ * calls it up to 24 times a frame, so in a real page the queue is empty
+ * almost always. The test above asked `latest()` without ever draining, which
+ * is not what the page does - and `latest()` used to read the queue, so a
+ * consumer that drew its frame and then asked what it was holding was told
+ * nothing while the trucks were still in the round.
+ *
+ * This drives the field the way the bridge drives it: drain one at a time,
+ * every "frame", and watch the pose advance.
+ */
+test('a renderer that drains one picture a frame keeps getting the driver\'s new pose', async () => {
+  const round = await standUpRound({ host: '127.0.0.1', portA: 18086, portB: 18087 });
+  const tabs = [];
+  try {
+    const named = await joinFromQuery(new URL(round.url).search);
+    for (const which of ['driver', 'watcher']) {
+      const secret = ed25519.utils.randomSecretKey();
+      const sessionPubkey = ed25519.getPublicKey(secret);
+      const player = tabIdentity({ storage: storage(), random, curve: feldmanGroup });
+      const seat = entryFor(named.round, { playerPubkey: player.pubkey, random });
+      const client = await Client.at({
+        headers: named.chain.headers, bonds: named.chain.bonds,
+        signedAdvert: fromHexHere(named.advert.signedAdvert),
+        committee: named.round.nodes,
+      }, {
+        core: { hash: (st) => core.hash(st) },
+        sign: (id) => ed25519.sign(id, secret),
+        verify, contract: named.round, roundIdGiven: fromHexHere(round.id),
+      });
+      const rid = await client.openRound(named.round);
+      const entry = { ...seat, roundId: rid, sessionPubkey };
+      const eid = await client.join(entry);
+      await client.connect();
+      client.setRound({ roundId: rid, entryId: eid, blockTicks: named.round.blockTicks | 0 });
+      tabs.push({ which, client, eid, entry });
+    }
+    const [driver, watcher] = tabs;
+    const field = watchGhosts(watcher.client, {
+      roundId: watcher.entry.roundId, entryId: watcher.eid,
+    });
+    await field.watching;
+
+    const drawn = [];
+    for (let batch = 0; batch < 8; batch++) {
+      for (let t = 0; t < 6; t++) driver.client.record([45875, 0, 0, 0, 0]);
+      await driver.client.drain();
+      await wait(120);
+      // THE FRAME: take what can be drawn, exactly as `Draw(PerFrame)` does.
+      for (const g of field.drain(24))
+        if (toHex(g.entryId) === toHex(driver.eid)) drawn.push({ tick: g.tick, x: g.x, z: g.z });
+    }
+
+    console.log(`  the renderer drew ${drawn.length} picture(s) of the driver over 8 batches`);
+    assert.ok(drawn.length >= 8, `the renderer was handed ${drawn.length} pictures, not one per batch`);
+    assert.ok(drawn[drawn.length - 1].tick > drawn[0].tick, 'the pose stopped advancing');
+    assert.ok(new Set(drawn.map((d) => `${d.x}:${d.z}`)).size > 1, 'every picture was the same pose');
+
+    // AND AFTER THE FRAME IS DRAWN the field still knows who is in the round -
+    // the queue is empty and the truck is not gone.
+    assert.equal(field.size, 0, 'the renderer left pictures undrawn');
+    assert.equal(field.others, 1, 'a truck that was drawn stopped being in the round');
+    const still = field.latest();
+    assert.equal(still.length, 1, 'a drawn truck vanished from latest(), which is the 11:51 symptom');
+    assert.equal(still[0].tick, drawn[drawn.length - 1].tick,
+      'latest() is not the newest picture the renderer was given');
+  } finally {
+    for (const t of tabs) { try { t.client.close(); } catch { /* gone */ } }
+    await round.close();
+  }
+});
+
 test('two daemons whose chains disagree stop the join by name', async () => {
   const round = await standUpRound({ host: '127.0.0.1', portA: 18082, portB: 18083 });
   try {
