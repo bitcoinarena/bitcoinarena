@@ -29,6 +29,9 @@ import { O_TRUCK, T_X, T_Z, T_HEADING, hash as stateHash } from '../../core/src/
 import { toHex } from '../../protocol/src/hash.js';
 import { TYPE_GHOST } from '../../protocol/src/constants.js';
 
+// The node fee is 27A.7's 2% of the stake, and the door checks it now
+// (M3.3 item 20) - so a fixture carries the RULE rather than a number.
+import { entryFeeMsat } from '../../protocol/src/fee.js';
 const require = createRequire(import.meta.url);
 const core = require('../../core/dist/blwp-core.js');
 
@@ -61,7 +64,7 @@ async function rig() {
   const rid = await client.openRound(c);
   const mine = {
     roundId: rid, playerPubkey: b32(5), sessionPubkey: ed25519.getPublicKey(session),
-    stakeCommitment: b32(7), stakeMsat: 100000n, feeMsat: 1000n, donationMsat: 0n,
+    stakeCommitment: b32(7), stakeMsat: 100000n, feeMsat: entryFeeMsat(100000n), donationMsat: 0n,
     joinTick: 0, worldSecret: b32(0x5e), vssSharesRef: new Uint8Array(32),
   };
   const eid = await client.join(mine);
@@ -73,7 +76,7 @@ async function rig() {
   // with what arrives, so the other player needs no client of its own.
   const theirs = {
     roundId: rid, playerPubkey: b32(9), sessionPubkey: b32(10), stakeCommitment: b32(7),
-    stakeMsat: 100000n, feeMsat: 1000n, donationMsat: 0n, joinTick: 0, worldSecret: b32(0x59), vssSharesRef: new Uint8Array(32),
+    stakeMsat: 100000n, feeMsat: entryFeeMsat(100000n), donationMsat: 0n, joinTick: 0, worldSecret: b32(0x59), vssSharesRef: new Uint8Array(32),
   };
   await fetch(`http://127.0.0.1:${node.port}/entry`, { method: 'POST', body: encodeEntryContract(theirs) });
   const theirEid = entryIdOf(theirs);

@@ -24,6 +24,9 @@ import {
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { toHex } from '../../protocol/src/hash.js';
+// 27A.7's node fee. The rate lives in one place and `genesis.js` writes it into
+// the genesis parameters, so a round naming a config has committed to it.
+import { feeMatchesEntry } from '../../protocol/src/fee.js';
 import { OPEN, CLOSED, nodeIdentity } from './store.js';
 import { receiptsNeeded } from '../../protocol/src/genesis.js';
 
@@ -293,11 +296,39 @@ export class Round {
     // would be encrypted to nobody. The lobby shows "committee: pending" until
     // then and offers no entry button; this is the same rule at the door,
     // where it cannot be skipped by a client that does not draw a lobby.
-    const opensAt = decodeRoundContract(new Uint8Array(round.contract)).committeeTimeMs;
+    const asks = decodeRoundContract(new Uint8Array(round.contract));
+    const opensAt = asks.committeeTimeMs;
     const now = BigInt(this.now());
     if (now < opensAt)
       throw new Error(
         `that round's committee forms at ${opensAt} and it is ${now}: entry opens then`);
+
+    // AND IT PAYS WHAT THIS ROUND ASKS - THE STAKE, AND THEN THE FEE ON IT.
+    //
+    // Both against the CONTRACT and never against the entry's own story, which
+    // is the whole of why this is two checks and not one. `feeMatchesEntry` is
+    // self-referential: it compares the fee to the entry's OWN stake, and the
+    // entry names both - so an entry claiming `stakeMsat: 0, feeMsat: 0`
+    // satisfies it perfectly. Measured at the door before this existed: six of
+    // six wrong fees taken, and four of four self-named stakes taken, every one
+    // of the four "standing" under the rule.
+    //
+    // A ZERO STAKE IS NOT A SMALL ENTRY, IT IS A FREE SEAT PAID FROM OTHER
+    // PLAYERS' MONEY. `custody.hold` issues the hold invoice for
+    // `entry.stakeMsat`, so that player pays nothing; `winnings` pays
+    // `amountMsat - stake`, so their whole table row comes out of the pool.
+    // A door that checked only the fee would look checked and still pass it.
+    //
+    // THE RATE IS NOT A NUMBER THIS FILE KNOWS. `entryFeeMsat` is 27A.7's
+    // `node_fee_bps`, and `genesis.js` writes that into the genesis parameters
+    // - so a round naming a config has already committed to the rate, and a
+    // second copy here would be a second place for it to drift.
+    if (contract.stakeMsat !== asks.stakeMsat)
+      throw new Error(
+        `that round asks a stake of ${asks.stakeMsat} msat and that entry names `
+        + `${contract.stakeMsat}`);
+    const fee = feeMatchesEntry({ stakeMsat: asks.stakeMsat, feeMsat: contract.feeMsat });
+    if (!fee.ok) throw new Error(fee.why);
     // AND THE SHARES IT NAMES MUST BE SHARES THIS NODE CHECKED.
     //
     // 23.1: `vss_shares_ref` points at the published shares. An entry that

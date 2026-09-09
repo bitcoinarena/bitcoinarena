@@ -38,6 +38,9 @@ import { hash as stateHash } from '../../core/src/state.js';
 import { seedWordForEntry } from '../../protocol/src/seed.js';
 import { toHex, sha256 } from '../../protocol/src/hash.js';
 
+// The node fee is 27A.7's 2% of the stake, and the door checks it now
+// (M3.3 item 20) - so a fixture carries the RULE rather than a number.
+import { entryFeeMsat } from '../../protocol/src/fee.js';
 const b32 = (n) => new Uint8Array(32).fill(n);
 const FUNDED = { funded: () => true };
 const RANDOMNESS = b32(0x9b);
@@ -72,7 +75,7 @@ const contractFor = (nodePubkey) => ({
 });
 const entryFor = (rid, n = 5) => ({
   roundId: rid, playerPubkey: b32(n), sessionPubkey: ed25519.getPublicKey(session),
-  stakeCommitment: sha256(preimageOf(n)), stakeMsat: 100000n, feeMsat: 1000n,
+  stakeCommitment: sha256(preimageOf(n)), stakeMsat: 100000n, feeMsat: entryFeeMsat(100000n),
   donationMsat: 0n, joinTick: 0, worldSecret: b32(0x16), vssSharesRef: new Uint8Array(32),
 });
 

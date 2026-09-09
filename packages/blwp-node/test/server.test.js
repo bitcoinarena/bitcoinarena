@@ -14,6 +14,9 @@ import { ed25519 } from '@noble/curves/ed25519.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { GENESIS, decodeTranscript, checkTranscript, transcriptHash } from '../../protocol/src/transcript.js';
 import { toHex } from '../../protocol/src/hash.js';
+// The node fee is 27A.7's 2% of the stake, and the door checks it now
+// (M3.3 item 20) - so a fixture carries the RULE rather than a number.
+import { entryFeeMsat } from '../../protocol/src/fee.js';
 import {
   decodeCheckpointReceipt, receiptId, splitSignedReceipt, SIGNED_RECEIPT_BYTES,
 } from '../../protocol/src/receipt.js';
@@ -37,7 +40,7 @@ const session = ed25519.utils.randomSecretKey();
 const sessionPubkey = ed25519.getPublicKey(session);
 const entryFor = (rid) => ({
   roundId: rid, playerPubkey: b32(5), sessionPubkey,
-  stakeCommitment: b32(7), stakeMsat: 100000n, feeMsat: 1000n, donationMsat: 0n, joinTick: 0, worldSecret: b32(0x5e), vssSharesRef: new Uint8Array(32),
+  stakeCommitment: b32(7), stakeMsat: 100000n, feeMsat: entryFeeMsat(100000n), donationMsat: 0n, joinTick: 0, worldSecret: b32(0x5e), vssSharesRef: new Uint8Array(32),
 });
 
 /** What a client puts on the wire: the encoding, then the signature over its id. */

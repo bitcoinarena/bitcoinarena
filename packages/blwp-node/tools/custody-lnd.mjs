@@ -44,6 +44,9 @@ import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
 import { BLOCK_TICKS } from '../../core/src/rules/gate.js';
 import { toHex, sha256 } from '../../protocol/src/hash.js';
 
+// The node fee is 27A.7's 2% of the stake, and the door checks it now
+// (M3.3 item 20) - so a fixture carries the RULE rather than a number.
+import { entryFeeMsat } from '../../protocol/src/fee.js';
 const BITCOIN = process.env.BITCOIN_BIN || '/mnt/bitcoin/bitcoin-31.1/bin';
 const LND = process.env.LND_BIN || '/mnt/bitcoin/lnd-linux-amd64-v0.21.3-beta';
 const KEEP = process.argv.includes('--keep');
@@ -170,7 +173,7 @@ async function main() {
       p.entry = {
         roundId: rid, playerPubkey: b32(p.n), sessionPubkey: b32(p.n + 40),
         stakeCommitment: sha256(preimageOf(p.n)),
-        stakeMsat: STAKE_MSAT, feeMsat: 1000n, donationMsat: 0n, joinTick: 0,
+        stakeMsat: STAKE_MSAT, feeMsat: entryFeeMsat(STAKE_MSAT), donationMsat: 0n, joinTick: 0,
         worldSecret: b32(0x5e), vssSharesRef: new Uint8Array(32),
       };
       round.enter(p.entry);

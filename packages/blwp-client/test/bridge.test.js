@@ -23,6 +23,9 @@ import { openStore } from '../../blwp-node/src/store.js';
 import { serve } from '../../blwp-node/src/server.js';
 import { Client } from '../src/client.js';
 
+// The node fee is 27A.7's 2% of the stake, and the door checks it now
+// (M3.3 item 20) - so a fixture carries the RULE rather than a number.
+import { entryFeeMsat } from '../../protocol/src/fee.js';
 const require = createRequire(import.meta.url);
 const core = require('../../core/dist/blwp-core.js');
 const JSLIB = new URL('../../../unity-proto/Assets/Plugins/WebGL/blwp.jslib', import.meta.url);
@@ -61,7 +64,7 @@ async function playing() {
   });
   const eid = await client.join({
     roundId: rid, playerPubkey: b32(5), sessionPubkey: ed25519.getPublicKey(session),
-    stakeCommitment: b32(7), stakeMsat: 100000n, feeMsat: 1000n, donationMsat: 0n, joinTick: 0, worldSecret: b32(0x5e), vssSharesRef: new Uint8Array(32),
+    stakeCommitment: b32(7), stakeMsat: 100000n, feeMsat: entryFeeMsat(100000n), donationMsat: 0n, joinTick: 0, worldSecret: b32(0x5e), vssSharesRef: new Uint8Array(32),
   });
   await client.connect();
   client.setRound({ roundId: rid, entryId: eid, blockTicks: BLOCK_TICKS });

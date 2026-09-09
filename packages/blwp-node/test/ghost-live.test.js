@@ -27,6 +27,9 @@ import { GENESIS, decodeTranscript } from '../../protocol/src/transcript.js';
 import { decodeGhost } from '../../protocol/src/ghost.js';
 import { toHex } from '../../protocol/src/hash.js';
 
+// The node fee is 27A.7's 2% of the stake, and the door checks it now
+// (M3.3 item 20) - so a fixture carries the RULE rather than a number.
+import { entryFeeMsat } from '../../protocol/src/fee.js';
 const b32 = (n) => new Uint8Array(32).fill(n);
 const BEACON = { hash: b32(0x9b), height: 900001, timeMs: 900n };
 const contract = () => ({
@@ -41,7 +44,7 @@ const contract = () => ({
 });
 const entryFor = (rid, joinTick = 0) => ({
   roundId: rid, playerPubkey: b32(5), sessionPubkey: b32(6), stakeCommitment: b32(7),
-  stakeMsat: 100000n, feeMsat: 1000n, donationMsat: 0n, joinTick,
+  stakeMsat: 100000n, feeMsat: entryFeeMsat(100000n), donationMsat: 0n, joinTick,
   worldSecret: b32(0x5e), vssSharesRef: new Uint8Array(32),
 });
 const wordsAt = (t) => [45875, ((t * 977) % 30000) - 15000, (t % 700) < 40 ? 65536 : 0, 0, 0];

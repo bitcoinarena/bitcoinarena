@@ -17,6 +17,9 @@ import { toHex } from '../src/hash.js';
 import { entryId } from '../src/contracts.js';
 import { encodePlayerResult, resultId, joinSignedResult } from '../src/result.js';
 import { encodePayoutTable, payoutTableId } from '../src/payout.js';
+// The node fee is 27A.7's 2% of the stake, and the door checks it now
+// (M3.3 item 20) - so a fixture carries the RULE rather than a number.
+import { entryFeeMsat } from '../src/fee.js';
 import {
   encodeSettlementRecord, settlementRecordId, slashHoldsOnConflict, operatorKeyOf,
   slashCommitment, OPERATOR_PLAYED,
@@ -32,7 +35,7 @@ const committee = [NODE, b32(0x22), b32(0x23), b32(0x24), b32(0x25), b32(0x26), 
 const advert = { nodePubkey: NODE, operatorId: toHex(OPERATOR), bondTxid: BOND, bondVout: 3 };
 const entry = {
   roundId: ROUND, playerPubkey: OPERATOR, sessionPubkey: b32(0x0b),
-  stakeCommitment: b32(0x0c), stakeMsat: 100000n, feeMsat: 1000n,
+  stakeCommitment: b32(0x0c), stakeMsat: 100000n, feeMsat: entryFeeMsat(100000n),
   donationMsat: 0n, joinTick: 0, worldSecret: b32(0x5e), vssSharesRef: new Uint8Array(32),
 };
 

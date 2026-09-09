@@ -47,6 +47,9 @@ import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
 import { GENESIS } from '../../protocol/src/transcript.js';
 import { toHex, sha256 } from '../../protocol/src/hash.js';
 
+// The node fee is 27A.7's 2% of the stake, and the door checks it now
+// (M3.3 item 20) - so a fixture carries the RULE rather than a number.
+import { entryFeeMsat } from '../../protocol/src/fee.js';
 const b32 = (n) => new Uint8Array(32).fill(n);
 const rand = (n) => new Uint8Array(randomBytes(n));
 
@@ -114,7 +117,7 @@ async function playedRound(node, c, stake, seats) {
 
   const entry = {
     roundId: rid, playerPubkey: b32(5), sessionPubkey: ed25519.getPublicKey(session),
-    stakeCommitment: stake.stakeCommitment, stakeMsat: 100000n, feeMsat: 1000n,
+    stakeCommitment: stake.stakeCommitment, stakeMsat: 100000n, feeMsat: entryFeeMsat(100000n),
     donationMsat: 0n, joinTick: 0, worldSecret: b32(0x16), vssSharesRef: stake.ref,
   };
   const eid = entryId(entry);
@@ -329,7 +332,7 @@ test('a delivered run never gives up its preimage, and neither does one that is 
 
     const winner = {
       roundId: orid, playerPubkey: b32(6), sessionPubkey: ed25519.getPublicKey(session),
-      stakeCommitment: sha256(b32(0x77)), stakeMsat: 100000n, feeMsat: 1000n,
+      stakeCommitment: sha256(b32(0x77)), stakeMsat: 100000n, feeMsat: entryFeeMsat(100000n),
       donationMsat: 0n, joinTick: 0, worldSecret: b32(0x16),
       vssSharesRef: new Uint8Array(32),
     };
@@ -518,7 +521,7 @@ test('a seat that never replayed the run hands over nothing', async () => {
     assumeSeated(quiet.round, orid, c.nodes);
     const entry = {
       roundId: orid, playerPubkey: b32(8), sessionPubkey: ed25519.getPublicKey(session),
-      stakeCommitment: sha256(b32(0x7a)), stakeMsat: 100000n, feeMsat: 1000n,
+      stakeCommitment: sha256(b32(0x7a)), stakeMsat: 100000n, feeMsat: entryFeeMsat(100000n),
       donationMsat: 0n, joinTick: 0, worldSecret: b32(0x16), vssSharesRef: new Uint8Array(32),
     };
     const wid = entryId(entry);

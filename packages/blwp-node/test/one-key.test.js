@@ -29,6 +29,9 @@ import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
 import { bondFor } from './curve.js';
 import { toHex } from '../../protocol/src/hash.js';
 
+// The node fee is 27A.7's 2% of the stake, and the door checks it now
+// (M3.3 item 20) - so a fixture carries the RULE rather than a number.
+import { entryFeeMsat } from '../../protocol/src/fee.js';
 const b32 = (n) => new Uint8Array(32).fill(n);
 
 test('every fresh identity is a key this node can sign a bond and a receipt under', () => {
@@ -113,7 +116,7 @@ test('a receipt is BIP-340 under the node key, and an ed25519 one is refused', (
   const session = ed25519.utils.randomSecretKey();
   const entry = {
     roundId: rid, playerPubkey: b32(5), sessionPubkey: ed25519.getPublicKey(session),
-    stakeCommitment: b32(7), stakeMsat: 100000n, feeMsat: 1000n, donationMsat: 0n,
+    stakeCommitment: b32(7), stakeMsat: 100000n, feeMsat: entryFeeMsat(100000n), donationMsat: 0n,
     joinTick: 0, worldSecret: b32(0x5e), vssSharesRef: new Uint8Array(32),
   };
   const eid = round.enter(entry);

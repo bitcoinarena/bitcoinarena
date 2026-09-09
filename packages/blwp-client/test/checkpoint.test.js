@@ -40,6 +40,9 @@ import {
 } from '../../protocol/src/receipt.js';
 import { createServer } from 'node:http';
 
+// The node fee is 27A.7's 2% of the stake, and the door checks it now
+// (M3.3 item 20) - so a fixture carries the RULE rather than a number.
+import { entryFeeMsat } from '../../protocol/src/fee.js';
 // FUNDED, because these are rounds somebody paid for. A node started without
 // being told who pays refuses everything now - disk is spent only on stakes
 // that exist - so a test that means to play a round has to say so.
@@ -64,7 +67,7 @@ const contract = () => ({
 });
 const entryFor = (rid) => ({
   roundId: rid, playerPubkey: b32(5), sessionPubkey,
-  stakeCommitment: b32(7), stakeMsat: 100000n, feeMsat: 1000n, donationMsat: 0n, joinTick: 0, worldSecret: b32(0x5e), vssSharesRef: new Uint8Array(32),
+  stakeCommitment: b32(7), stakeMsat: 100000n, feeMsat: entryFeeMsat(100000n), donationMsat: 0n, joinTick: 0, worldSecret: b32(0x5e), vssSharesRef: new Uint8Array(32),
 });
 
 /** A core that has actually been driven, so its hash is a state and not a seed. */

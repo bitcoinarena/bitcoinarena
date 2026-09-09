@@ -25,6 +25,9 @@ import { bondTransaction, blockOf } from '../../protocol/tools/bond.js';
 import { reach as moduleReach } from '../src/directory.js';
 import { advertId, encodeAdvert, joinSignedAdvert } from '../../protocol/src/advert.js';
 
+// The node fee is 27A.7's 2% of the stake, and the door checks it now
+// (M3.3 item 20) - so a fixture carries the RULE rather than a number.
+import { entryFeeMsat } from '../../protocol/src/fee.js';
 const require = createRequire(import.meta.url);
 const bundled = require('../dist/blwp-client.js');
 const core = require('../../core/dist/blwp-core.js');
@@ -57,7 +60,7 @@ test('the bundle and the modules name a round and an entry identically', () => {
 
   const e = {
     roundId: roundId(c), playerPubkey: b32(5), sessionPubkey: schnorr.getPublicKey(key),
-    stakeCommitment: b32(7), stakeMsat: 100000n, feeMsat: 1000n, donationMsat: 0n, joinTick: 0, worldSecret: b32(0x5e), vssSharesRef: new Uint8Array(32),
+    stakeCommitment: b32(7), stakeMsat: 100000n, feeMsat: entryFeeMsat(100000n), donationMsat: 0n, joinTick: 0, worldSecret: b32(0x5e), vssSharesRef: new Uint8Array(32),
   };
   assert.equal(toHex(bundled.entryId(e)), toHex(entryId(e)));
 });

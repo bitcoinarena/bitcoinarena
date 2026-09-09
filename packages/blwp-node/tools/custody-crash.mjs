@@ -37,6 +37,9 @@ import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
 import { BLOCK_TICKS } from '../../core/src/rules/gate.js';
 import { toHex, sha256 } from '../../protocol/src/hash.js';
 
+// The node fee is 27A.7's 2% of the stake, and the door checks it now
+// (M3.3 item 20) - so a fixture carries the RULE rather than a number.
+import { entryFeeMsat } from '../../protocol/src/fee.js';
 const b32 = (n) => new Uint8Array(32).fill(n);
 // The player's own secret and the commitment their contract carries. A settle
 // releases the first, so a node that has not got it settles nothing.
@@ -59,7 +62,7 @@ const CONTRACT = {
 const entryFor = (rid, n) => ({
   roundId: rid, playerPubkey: b32(n), sessionPubkey: b32(n + 40),
   stakeCommitment: sha256(preimageOf(n)),
-  stakeMsat: 100000n, feeMsat: 1000n, donationMsat: 0n, joinTick: 0,
+  stakeMsat: 100000n, feeMsat: entryFeeMsat(100000n), donationMsat: 0n, joinTick: 0,
   worldSecret: b32(0x5e), vssSharesRef: new Uint8Array(32),
 });
 const PLAYERS = [1, 2, 3];

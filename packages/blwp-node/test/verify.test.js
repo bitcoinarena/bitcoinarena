@@ -33,6 +33,9 @@ import { seedWordForEntry } from '../../protocol/src/seed.js';
 import { committeeSeedFromBeacon } from '../../protocol/src/beacon.js';
 import { selectCommittee } from '../../protocol/src/sortition.js';
 
+// The node fee is 27A.7's 2% of the stake, and the door checks it now
+// (M3.3 item 20) - so a fixture carries the RULE rather than a number.
+import { entryFeeMsat } from '../../protocol/src/fee.js';
 const b32 = (n) => new Uint8Array(32).fill(n);
 const FUNDED = { funded: () => true };
 // The round's randomness is a future Bitcoin block hash (5A) that this daemon
@@ -125,7 +128,7 @@ async function roundThrough(node, {
 
   const entry = {
     roundId: rid, playerPubkey: b32(5), sessionPubkey: ed25519.getPublicKey(session),
-    stakeCommitment: b32(7), stakeMsat: 100000n, feeMsat: 1000n, donationMsat: 0n, joinTick: 0, worldSecret: b32(0x16), vssSharesRef: new Uint8Array(32),
+    stakeCommitment: b32(7), stakeMsat: 100000n, feeMsat: entryFeeMsat(100000n), donationMsat: 0n, joinTick: 0, worldSecret: b32(0x16), vssSharesRef: new Uint8Array(32),
   };
   const eid = entryId(entry);
   assert.equal((await post(node.port, '/entry', encodeEntryContract(entry))).status, 201);

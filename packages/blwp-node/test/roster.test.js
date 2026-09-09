@@ -26,6 +26,9 @@ import { deriveCensus } from '../../protocol/src/census.js';
 import { parseTransaction } from '../../protocol/src/tx.js';
 import { bondSetFor } from '../src/curve.js';
 
+// The node fee is 27A.7's 2% of the stake, and the door checks it now
+// (M3.3 item 20) - so a fixture carries the RULE rather than a number.
+import { entryFeeMsat } from '../../protocol/src/fee.js';
 const b32 = (n) => new Uint8Array(32).fill(n);
 // A CLOCK AFTER THE COMMITTEE FORMS. It was 1234 - a millisecond in 1970 -
 // which is now before the round's own committee_time, and a node refuses an
@@ -500,7 +503,7 @@ test('a node closing a round refuses a beacon its own chain does not name', asyn
   // one entry, so there is something to close over
   const entry = {
     roundId: rid, playerPubkey: b32(5), sessionPubkey: b32(6), stakeCommitment: b32(7),
-    stakeMsat: 100000n, feeMsat: 1000n, donationMsat: 0n, joinTick: 0,
+    stakeMsat: 100000n, feeMsat: entryFeeMsat(100000n), donationMsat: 0n, joinTick: 0,
     worldSecret: b32(0x5e), vssSharesRef: new Uint8Array(32),
   };
   round.enter(entry);

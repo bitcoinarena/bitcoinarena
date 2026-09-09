@@ -25,6 +25,9 @@ import { advertId } from '../../protocol/src/advert.js';
 import { bondTransaction, blockOf } from '../../protocol/tools/bond.js';
 import { roundId } from '../../protocol/src/contracts.js';
 
+// The node fee is 27A.7's 2% of the stake, and the door checks it now
+// (M3.3 item 20) - so a fixture carries the RULE rather than a number.
+import { entryFeeMsat } from '../../protocol/src/fee.js';
 const OUT = '/tmp/claude-1000/-tmp-btc-phase0/50a57200-8210-47c2-a393-919f0e1ea289/scratchpad/shot';
 const BUILD = '/tmp/btc-phase0/unity-proto/build/webgl';
 const CHROME = '/home/arena/.cache/ms-playwright/chromium-1234/chrome-linux64/chrome';
@@ -147,7 +150,7 @@ const INJECT = `
   window.BLWP_ENTRY = {
     playerPubkey: BLWPCLIENT.fromHex('${hex(b32(5))}'),
     stakeCommitment: BLWPCLIENT.fromHex('${hex(b32(7))}'),
-    stakeMsat: 100000n, feeMsat: 1000n, donationMsat: 0n, joinTick: 0,
+    stakeMsat: 100000n, feeMsat: entryFeeMsat(100000n), donationMsat: 0n, joinTick: 0,
   };
 </script>
 `;

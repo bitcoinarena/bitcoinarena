@@ -35,6 +35,9 @@ import { assumeSeated } from './seating.js';
 import { toHex } from '../../protocol/src/hash.js';
 import { ed25519 } from '@noble/curves/ed25519.js';
 
+// The node fee is 27A.7's 2% of the stake, and the door checks it now
+// (M3.3 item 20) - so a fixture carries the RULE rather than a number.
+import { entryFeeMsat } from '../../protocol/src/fee.js';
 export const rand = (n) => new Uint8Array(randomBytes(n));
 export const b32 = (n) => new Uint8Array(32).fill(n);
 export const curve = { ...feldmanGroup, tweakPoint };
@@ -94,7 +97,7 @@ export function committee({ minScore = 1, dealt = dealThePool() } = {}) {
   const entries = [[winner, DELIVERED, 9], [loser, FORFEIT, 0]].map(([p, outcome, score]) => ({
     contract: {
       roundId: rid, playerPubkey: p.pubkey, sessionPubkey: ed25519.getPublicKey(session),
-      stakeCommitment: b32(7), stakeMsat: contract.stakeMsat, feeMsat: 1000n,
+      stakeCommitment: b32(7), stakeMsat: contract.stakeMsat, feeMsat: entryFeeMsat(contract.stakeMsat),
       donationMsat: 0n, joinTick: 0, worldSecret: b32(0x5e), vssSharesRef: new Uint8Array(32),
     },
     player: p, outcome, score,

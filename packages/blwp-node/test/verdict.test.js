@@ -26,6 +26,9 @@ import { hash } from '../../core/src/state.js';
 import { seedWordForEntry } from '../../protocol/src/seed.js';
 import { toHex } from '../../protocol/src/hash.js';
 
+// The node fee is 27A.7's 2% of the stake, and the door checks it now
+// (M3.3 item 20) - so a fixture carries the RULE rather than a number.
+import { entryFeeMsat } from '../../protocol/src/fee.js';
 const b32 = (n) => new Uint8Array(32).fill(n);
 // The round's randomness beacon is a future Bitcoin block hash (5A) that this
 // daemon does not read yet, so the fixture owns these 32 bytes. The seed is no
@@ -74,7 +77,7 @@ function stored(ticks, { player = 5 } = {}) {
   assumeSeated(r, rid, c.nodes);
   const entry = {
     roundId: rid, playerPubkey: b32(player), sessionPubkey: ed25519.getPublicKey(session),
-    stakeCommitment: b32(7), stakeMsat: 100000n, feeMsat: 1000n, donationMsat: 0n,
+    stakeCommitment: b32(7), stakeMsat: 100000n, feeMsat: entryFeeMsat(100000n), donationMsat: 0n,
     joinTick: 0, worldSecret: b32(0x16), vssSharesRef: new Uint8Array(32),
   };
   const eid = r.enter(entry);

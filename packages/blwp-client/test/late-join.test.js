@@ -31,6 +31,9 @@ import { encodeEntryContract } from '../../protocol/src/contracts.js';
 import { encodeTranscript, GENESIS } from '../../protocol/src/transcript.js';
 import { batchId } from '../../protocol/src/batch.js';
 
+// The node fee is 27A.7's 2% of the stake, and the door checks it now
+// (M3.3 item 20) - so a fixture carries the RULE rather than a number.
+import { entryFeeMsat } from '../../protocol/src/fee.js';
 const b32 = (n) => new Uint8Array(32).fill(n);
 const secret = b32(0x11);
 const sessionPubkey = schnorr.getPublicKey(secret);
@@ -51,7 +54,7 @@ const contract = () => ({
 });
 const entryFor = (rid, joinTick) => ({
   roundId: rid, playerPubkey: b32(5), sessionPubkey,
-  stakeCommitment: b32(7), stakeMsat: 100000n, feeMsat: 1000n, donationMsat: 0n, joinTick,
+  stakeCommitment: b32(7), stakeMsat: 100000n, feeMsat: entryFeeMsat(100000n), donationMsat: 0n, joinTick,
   // The world secret the entry carries so a node can derive the world it
   // replays (the owner, e942580). Nothing in this file uses it - a late join is
   // about which TICK a run starts at - but an entry without one no longer

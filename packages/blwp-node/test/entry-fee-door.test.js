@@ -15,9 +15,10 @@
 // row out of other players' money. A door enforcing only the fee would look
 // checked and still pass a free seat.
 //
-// This file is the measurement BEFORE the door is tightened. Every case below
-// is accepted today; when item 20 lands, only the matching pair stands and the
-// rest of this file says so.
+// This file was the measurement before the door was tightened - six of six
+// wrong fees taken, four of four self-named stakes taken - and it is the pin
+// after it. Both checks are against the ROUND CONTRACT and never against the
+// entry's own story, which is what makes them checks at all.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
@@ -83,9 +84,13 @@ test('the fee is 2% and it comes from one place', () => {
 });
 
 /**
- * MATRIX ONE: THE FEE. Six knocks, and the door takes all six today.
+ * MATRIX ONE: THE FEE. Six knocks, and exactly one is the round's own.
+ *
+ * BEFORE: all six taken. The five wrong ones are refused now, by name, and the
+ * refusal says both numbers so an operator reading a log knows which way it
+ * was wrong.
  */
-test('the door takes any fee at all', async () => {
+test('the door takes the round\'s own fee and refuses every other', async () => {
   const d = await door();
   try {
     const cases = [
@@ -102,11 +107,16 @@ test('the door takes any fee at all', async () => {
       const rule = feeMatchesEntry({ stakeMsat: STAKE, feeMsat: fee });
       console.log(`  ${what.padEnd(22)} fee ${String(fee).padStart(7)}  door ${said.status}  `
         + `rule ${rule.ok ? 'stands' : 'no'}`);
+      // THE DOOR AND THE RULE AGREE ON EVERY ONE, which is the property: a
+      // door that refused something the rule allows would be a second opinion.
+      assert.equal(said.status === 201, rule.ok,
+        `the door and the 2% rule disagree about a fee of ${fee}`);
       if (said.status === 201) took++;
+      else assert.match(said.why, new RegExp(`${OWED}`),
+        'the refusal does not say what the round asks');
     }
-    assert.equal(took, cases.length,
-      'the door refuses a fee now - item 20 has moved, update this pin');
-    console.log(`  the door took ${took} of ${cases.length}, and the rule stands for 1 of them`);
+    assert.equal(took, 1, `the door took ${took} of ${cases.length} fees`);
+    console.log(`  the door took ${took} of ${cases.length}, and it is the round's own 2%`);
   } finally { await d.close(); }
 });
 
@@ -114,10 +124,12 @@ test('the door takes any fee at all', async () => {
  * MATRIX TWO: THE STAKE, AND IT IS WHY THE FEE RULE ALONE IS NOT ENOUGH.
  *
  * Every one of these satisfies `feeMatchesEntry` - the entry names its own
- * stake and pays 2% of THAT. A free seat is the one that matters: the hold is
- * for `entry.stakeMsat` and the payout is `amountMsat - stake`.
+ * stake and pays 2% of THAT - so a door checking only the fee takes all four.
+ * BEFORE: it did. The free seat is the one that matters: the hold is for
+ * `entry.stakeMsat` and the payout is `amountMsat - stake`, so it would be paid
+ * its whole row out of other players' money.
  */
-test('the door takes any stake the entry names, including none', async () => {
+test('a stake the round did not ask for is refused, even paying 2% of it', async () => {
   const d = await door();
   try {
     const cases = [
@@ -134,10 +146,62 @@ test('the door takes any stake the entry names, including none', async () => {
       console.log(`  ${what.padEnd(28)} stake ${String(stake).padStart(9)} fee ${String(fee).padStart(7)}  `
         + `door ${said.status}  rule stands`);
       if (said.status === 201) took++;
+      else assert.match(said.why, /asks a stake of/,
+        'a wrong stake was refused for some other reason');
     }
-    assert.equal(took, cases.length,
-      'the door refuses a stake now - item 20 has moved, update this pin');
-    console.log(`  the door took ${took} of ${cases.length}, and every one satisfies the 2% rule`);
-    console.log('  so a free seat passes the fee check - which is why the stake is on this letter');
+    assert.equal(took, 1, `the door took ${took} of ${cases.length} self-named stakes`);
+    console.log(`  the door took ${took} of ${cases.length} - and every one satisfies the 2% rule,`);
+    console.log('  which is why the stake is checked against the round and not against the entry');
   } finally { await d.close(); }
+});
+
+/**
+ * A ROUND THAT ASKS NO MONEY STILL HAS A RULE, and it is the same one.
+ *
+ * 2% of nothing is nothing, so an M2 round is unchanged - which is asserted
+ * rather than argued, because "the free case is fine" is exactly the kind of
+ * thing that is true until a branch is added.
+ */
+test('a round that asks no stake takes a free entry and refuses a paid one', async () => {
+  const d = await door(0n);
+  try {
+    const free = await d.knock(0n, 0n);
+    assert.equal(free.status, 201, free.why);
+
+    // A player cannot pay INTO a round that asks nothing either: the fee table
+    // would owe nodes a share of money the round never collected.
+    const paid = await d.knock(0n, 1n);
+    assert.equal(paid.status, 400);
+    const staked = await d.knock(100000n, 2000n);
+    assert.equal(staked.status, 400);
+    assert.match(staked.why, /asks a stake of 0/);
+    console.log(`  a free round: 0/0 taken, 0/1 refused, 100000/2000 refused - ${staked.why}`);
+  } finally { await d.close(); }
+});
+
+/**
+ * AND IT IS THE STORE'S DOOR, NOT THE SOCKET'S.
+ *
+ * `round.enter` is where `committeeTimeMs` and `vssSharesRef` are already
+ * checked, and its own comment says why: "the same rule at the door, where it
+ * cannot be skipped by a client that does not draw a lobby". A check that lived
+ * only in the HTTP handler would be skipped by everything that seats an entry
+ * another way.
+ */
+test('the check is in enter, so nothing that seats an entry can skip it', async () => {
+  const { Round } = await import('../src/round.js');
+  const r = new Round(openStore(':memory:'), () => NOW);
+  const contract = contractFor([r.pubkey]);
+  const rid = r.open(contract);
+  const entry = (stakeMsat, feeMsat) => ({
+    roundId: rid, playerPubkey: schnorr.getPublicKey(rand(32)),
+    sessionPubkey: ed25519.getPublicKey(ed25519.utils.randomSecretKey()),
+    stakeCommitment: rand(32), stakeMsat, feeMsat, donationMsat: 0n,
+    joinTick: 0, worldSecret: rand(32), vssSharesRef: new Uint8Array(32),
+  });
+
+  assert.ok(r.enter(entry(STAKE, OWED)), 'the right pair was refused');
+  assert.throws(() => r.enter(entry(STAKE, 0n)), /was charged 0 where 2% of 100000 is 2000/);
+  assert.throws(() => r.enter(entry(0n, 0n)), /asks a stake of 100000 msat and that entry names 0/);
+  console.log('  enter() refuses both directly, with no socket in the way');
 });

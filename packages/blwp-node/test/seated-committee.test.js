@@ -27,6 +27,9 @@ import { bondFor } from './curve.js';
 import { toHex } from '../../protocol/src/hash.js';
 import { beaconFromChain } from '../../protocol/src/beacon.js';
 
+// The node fee is 27A.7's 2% of the stake, and the door checks it now
+// (M3.3 item 20) - so a fixture carries the RULE rather than a number.
+import { entryFeeMsat } from '../../protocol/src/fee.js';
 const b32 = (n) => new Uint8Array(32).fill(n);
 // A CLOCK AFTER THE COMMITTEE FORMS. It was 1234 - a millisecond in 1970 -
 // which is now before the round's own committee_time, and a node refuses an
@@ -220,7 +223,7 @@ test('a seated key with a bad signature and a well-signed stranger fail differen
   const session = ed25519.utils.randomSecretKey();
   const eid = round.enter({
     roundId: rid, playerPubkey: b32(5), sessionPubkey: ed25519.getPublicKey(session),
-    stakeCommitment: b32(7), stakeMsat: 100000n, feeMsat: 1000n, donationMsat: 0n,
+    stakeCommitment: b32(7), stakeMsat: 100000n, feeMsat: entryFeeMsat(100000n), donationMsat: 0n,
     joinTick: 0, worldSecret: b32(0x5e), vssSharesRef: new Uint8Array(32),
   });
   const mark = {
@@ -272,7 +275,7 @@ test('a round nobody seated trusts nobody', async () => {
   const session = ed25519.utils.randomSecretKey();
   const eid = round.enter({
     roundId: rid, playerPubkey: b32(5), sessionPubkey: ed25519.getPublicKey(session),
-    stakeCommitment: b32(7), stakeMsat: 100000n, feeMsat: 1000n, donationMsat: 0n,
+    stakeCommitment: b32(7), stakeMsat: 100000n, feeMsat: entryFeeMsat(100000n), donationMsat: 0n,
     joinTick: 0, worldSecret: b32(0x5e), vssSharesRef: new Uint8Array(32),
   });
   const mark = {

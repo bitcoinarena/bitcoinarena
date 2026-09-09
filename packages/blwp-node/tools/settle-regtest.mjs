@@ -49,6 +49,9 @@ import { assumeSeated } from '../test/seating.js';
 import { parseTransaction } from '../../protocol/src/tx.js';
 import { toHex, fromHex } from '../../protocol/src/hash.js';
 
+// The node fee is 27A.7's 2% of the stake, and the door checks it now
+// (M3.3 item 20) - so a fixture carries the RULE rather than a number.
+import { entryFeeMsat } from '../../protocol/src/fee.js';
 const BITCOIN = process.env.BITCOIN_BIN || '/mnt/bitcoin/bitcoin-31.1/bin';
 const KEEP = process.argv.includes('--keep');
 const P = { rpc: 29687, p2p: 29688 };
@@ -198,7 +201,7 @@ async function main() {
       ...p,
       contract: {
         roundId: rid, playerPubkey: p.pubkey, sessionPubkey: ed25519.getPublicKey(session),
-        stakeCommitment: b32(7), stakeMsat: STAKE_MSAT, feeMsat: 1000n, donationMsat: 0n,
+        stakeCommitment: b32(7), stakeMsat: STAKE_MSAT, feeMsat: entryFeeMsat(STAKE_MSAT), donationMsat: 0n,
         joinTick: 0, worldSecret: b32(0x5e), vssSharesRef: new Uint8Array(32),
       },
     }));
