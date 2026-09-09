@@ -61,6 +61,8 @@ import { Ghosts } from './ghosts.js';
 import { Roster } from './roster.js';
 import { Custody, NO_LIGHTNING } from './custody.js';
 import { Preimages, encodeShareAnswer, SEALED_ANSWER_BYTES } from './preimage.js';
+import { Payouts, PAYOUT_QUEUED, PAID, NOTHING_OWED } from './payout.js';
+import { SIGNED_TABLE_BYTES } from './payout-table.js';
 
 const read = (req) => new Promise((resolve, reject) => {
   const parts = [];
@@ -135,7 +137,10 @@ export const NOTHING_IS_FUNDED = () => false;
 
 export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FUNDED,
   randomnessFor, chainFor, peers = [], headerBytes, bondProof,
-  lightning = NO_LIGHTNING, preimageFor = null } = {}) {
+  lightning = NO_LIGHTNING, preimageFor = null,
+  // The pool's key material and something that can broadcast. A daemon given
+  // neither still agrees on what the round owes; it just does not spend.
+  poolKey = null, chainSpend = null, poolCurve = feldmanGroup } = {}) {
   const round = new Round(db);
 
   // WHAT HOLDS THE PLAYERS' MONEY. 23.1's hold invoice and 23.2's table, and
@@ -171,6 +176,20 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
 
   const custody = new Custody(round, {
     port: lightning, preimageFor: preimageFor || fromTheCommittee,
+  });
+
+  /**
+   * WHAT THE ROUND OWES, AND WHETHER IT HAS BEEN PAID.
+   *
+   * 20's threshold and 9.4's qualifying tail. `chain` and `pool` are injected
+   * the way the Lightning port is: a daemon given neither still signs the
+   * table and serves its signature, because agreeing on what is owed is
+   * something every seat does whether or not it is the one that broadcasts.
+   */
+  const payouts = new Payouts(round, {
+    curve: poolCurve, chain: chainSpend, pool: poolKey,
+    random: (n) => new Uint8Array(randomBytes(n)),
+    peers, fetcher: (u) => fetch(u),
   });
 
   // WHO MAY HOLD A ROUND, from the chain. The census stopped being library
@@ -249,6 +268,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     });
     for (const a of done.actions || [])
       console.log(`[custody] ${toHex(a.entryId).slice(0, 16)} ${a.action} -> ${a.state}: ${a.why}`);
+
+    // ...AND WHAT THE ROUND OWES. The stakes moving is 23.2; who is owed what
+    // out of the pool is §20, and it needs its own five of seven. This node
+    // signs the table it computed and asks the other seats for theirs.
+    await payouts.gather({ roundId: roundIdBytes }).catch((e) => console.error(`[payout] ${e.message}`));
+    const owed = payouts.queue({
+      roundId: roundIdBytes, entries, minScore: contract.minScore, contract,
+    });
+    console.log(`[payout] ${owed.ok ? owed.state : owed.why}`);
     // WHAT THIS CLOSE BELIEVED, whatever it did. A settlement that moves
     // nothing still has to be able to say which runs the committee agreed on -
     // otherwise "nothing moved" and "nothing was agreed" are the same sentence
@@ -270,6 +298,22 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
    * promise for the same reason the verifier's is: a caller that cannot await
    * it cannot tell "not asked yet" from "not asked".
    */
+  /**
+   * AND ANY PAYOUT THIS NODE DIED IN THE MIDDLE OF SENDING. Same reason as the
+   * hold's: the only party that knows whether a transaction went out is the
+   * network, and a node that assumed it did not would build a second spend of
+   * one pool output.
+   */
+  const reconcilingPayouts = payouts.canSpend
+    ? payouts.reconcile()
+      .then((asked) => {
+        const n = (asked && asked.asked) ? asked.asked.filter((a) => a.state === PAID).length : 0;
+        if (n) console.log(`[payout] the chain already had ${n} payout(s) this node died sending`);
+        return asked;
+      })
+      .catch((e) => { console.error(`[payout] ${e.message}`); return { ok: false, why: e.message }; })
+    : Promise.resolve({ ok: false, why: 'this node reaches no chain, so it asks it nothing' });
+
   const reconciling = custody.reaches
     ? custody.reconcile()
       .then((asked) => {
@@ -585,6 +629,28 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         return res.end(Buffer.from(encodeShareAnswer(said.answer)));
       }
 
+      /**
+       * WHAT THIS NODE SIGNED ABOUT A ROUND'S PAYOUT. §20's five of seven are
+       * only countable on a node holding more than its own signature, so this
+       * is the door `gather` reads - the same shape as `/results`, and public
+       * for the same reason: a signature over a table id proves nothing about
+       * anything except that table.
+       */
+      if (req.method === 'GET' && url.pathname === '/payout') {
+        const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
+        if (rid.length !== 32) return text(res, 400, 'that is not a round id');
+        const held = payouts.records(new Uint8Array(rid));
+        const out = new Uint8Array(held.length * SIGNED_TABLE_BYTES);
+        held.forEach((b, i) => out.set(b, i * SIGNED_TABLE_BYTES));
+        res.writeHead(200, {
+          'content-type': 'application/octet-stream',
+          'x-payout-signatures': String(held.length),
+          'x-payout-state': (payouts.stateOf(new Uint8Array(rid)) || {}).state || 'none',
+          ...CORS,
+        });
+        return res.end(Buffer.from(out));
+      }
+
       if (req.method === 'GET' && url.pathname === '/results') {
         const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
         const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
@@ -877,6 +943,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   return new Promise((resolve) => {
     http.listen(port, host, () => resolve({
       http, wss, round, host, verifier, ghosts, roster, custody, reconciling, preimages,
+      payouts, reconcilingPayouts,
       // What the last close did with the money, and the same door an operator
       // uses to run a settlement again by hand.
       stakes: () => stakes,

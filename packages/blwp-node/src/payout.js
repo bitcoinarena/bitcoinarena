@@ -45,8 +45,9 @@ export const NOTHING_OWED = 'NOTHING_OWED';
  * not how to reach a node.
  */
 export class Payouts {
-  constructor(round, { curve, chain = null, pool = null, random, peers = [] } = {}) {
+  constructor(round, { curve, chain = null, pool = null, random, peers = [], fetcher = null } = {}) {
     this.round = round;
+    this.fetcher = fetcher;
     this.curve = curve;
     this.chain = chain;
     this.pool = pool;
@@ -99,6 +100,9 @@ export class Payouts {
 
   /** Injected so a test can answer without a network. */
   chainFetch(url) { return (this.fetcher || fetch)(url); }
+
+  /** Everything this node holds for a round, for the seat that asks. */
+  records(roundIdBytes) { return this.round.payoutSignatures(roundIdBytes).map((r) => r.bytes); }
 
   /**
    * QUEUE THE PAYOUT IF THE COMMITTEE AGREES, and write that down first.

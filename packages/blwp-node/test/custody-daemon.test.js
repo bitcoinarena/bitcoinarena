@@ -330,3 +330,52 @@ test('a daemon with no Lightning asks it nothing and says so', async () => {
     assert.match(asked.why, /reaches no Lightning/);
   } finally { await node.close(); }
 });
+
+test('closing a round makes the daemon sign what it owes, and serve that signature', async () => {
+  // MEASURED AFTER 8b WAS FIRST CALLED DONE: `new Payouts` appeared in tests
+  // and one tool and in NO src file, server.js had zero references to a
+  // payout, and `gather` fetched a `/payout` door that did not exist. The
+  // rules were right and the daemon ran none of them - the same shape as the
+  // stake table before M3.1 and the VSS rules before item 9.
+  const port = fakePort();
+  const node = await serve(openStore(':memory:'), {
+    port: 0, ...FUNDED, randomnessFor: () => BEACON, lightning: port, preimageFor,
+  });
+  try {
+    const { rid, eid } = await roundThrough(node);
+    for (const p of node.verifier.done) await p;
+    await node.verifier.settling;
+    await node.stakes();
+
+    // THE NODE SIGNED THE TABLE IT COMPUTED, on the close, without being asked.
+    const held = node.round.payoutSignatures(rid);
+    assert.equal(held.length, 1, 'the close did not reach the payout at all');
+    assert.deepEqual(held[0].nodePubkey, node.round.pubkey);
+
+    // AND IT SERVES IT, which is the door `gather` reads on every other seat.
+    const got = await fetch(`http://127.0.0.1:${node.port}/payout?round=${toHex(rid)}`);
+    const bytes = new Uint8Array(await got.arrayBuffer());
+    assert.equal(got.status, 200);
+    assert.equal(got.headers.get('x-payout-signatures'), '1');
+    assert.equal(bytes.length, 128, 'a signed payout table is 128 bytes');
+    assert.deepEqual(bytes, held[0].bytes);
+
+    // ONE OF SEVEN IS NOT FIVE, so nothing is queued and no row exists.
+    assert.equal(node.round.payout(rid), null, 'a payout was queued on one signature');
+    assert.equal(got.headers.get('x-payout-state'), 'none');
+
+    const nonsense = await fetch(`http://127.0.0.1:${node.port}/payout?round=beef`);
+    assert.equal(nonsense.status, 400);
+    void eid;
+  } finally { await node.close(); }
+});
+
+test('a daemon with no chain asks it nothing about a payout', async () => {
+  const node = await serve(openStore(':memory:'), { port: 0, ...FUNDED });
+  try {
+    const asked = await node.reconcilingPayouts;
+    assert.equal(asked.ok, false);
+    assert.match(asked.why, /reaches no chain/);
+    assert.equal(node.payouts.canSpend, false);
+  } finally { await node.close(); }
+});
