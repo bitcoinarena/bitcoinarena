@@ -29,9 +29,10 @@ import { parseTransaction } from '../../protocol/src/tx.js';
 import { scalarFrom32, FIELD, SHARES_NEEDED, SHARES_TOTAL } from '../../protocol/src/shares.js';
 import { feldmanGroup } from '../src/curve.js';
 import { tweakPoint } from '../src/curve.js';
-import { toHex } from '../../protocol/src/hash.js';
+import { toHex, fromHex } from '../../protocol/src/hash.js';
 
 const rand = (n) => new Uint8Array(randomBytes(n));
+const FIXED_TXID = new Uint8Array(32).fill(0xab);
 const curve = { ...feldmanGroup, tweakPoint };
 
 /** A 5-of-7 committee and the pool output it owns. */
@@ -48,8 +49,13 @@ function pool() {
 }
 
 /** A spend of one pool output to one address, and the sighash it signs. */
-function spendOf({ out, value = 100000n, to = new Uint8Array(P2TR_SCRIPT_BYTES).fill(0x51) }) {
-  const inputs = [{ txid: rand(32), vout: 0, sequence: 0xffffffff }];
+function spendOf({ out, value = 100000n, to = new Uint8Array(P2TR_SCRIPT_BYTES).fill(0x51),
+  // THE INPUT IS FIXED BY DEFAULT. A fresh random txid per call would change
+  // the sighash on its own, and a test comparing two spends would then pass
+  // whatever the sighash did with the outputs - measured: a mutant that
+  // dropped the outputs from the message survived exactly that way.
+  txid = FIXED_TXID }) {
+  const inputs = [{ txid, vout: 0, sequence: 0xffffffff }];
   const prevouts = [{ value, script: out.script }];
   const outputs = [{ value: value - 300n, script: to }];
   const sighash = tapSighash({ inputs, prevouts, outputs, inputIndex: 0 });
@@ -206,4 +212,101 @@ test('the spend serialises to a transaction a parser reads back', () => {
   assert.equal(tx.outputs.length, 1);
   assert.equal(tx.txid.length, 32);
   assert.equal(toHex(tx.outputs[0].script), toHex(spend.outputs[0].script));
+});
+
+test('the sighash is over every part of the spend, and a key path is not a script path', () => {
+  const { out } = pool();
+  const one = spendOf({ out });
+
+  // THE OUTPUTS ARE IN IT. Same input, different destination.
+  const elsewhere = spendOf({ out, to: new Uint8Array(P2TR_SCRIPT_BYTES).fill(0x52) });
+  assert.notEqual(toHex(one.sighash), toHex(elsewhere.sighash),
+    'the destination is not in the message this committee signs');
+
+  // THE AMOUNT IS IN IT.
+  const cheaper = spendOf({ out, value: 90000n });
+  assert.notEqual(toHex(one.sighash), toHex(cheaper.sighash));
+
+  // WHICH INPUT IS IN IT. Two inputs, one message each.
+  const two = {
+    inputs: [{ txid: FIXED_TXID, vout: 0, sequence: 0xffffffff },
+      { txid: FIXED_TXID, vout: 1, sequence: 0xffffffff }],
+    prevouts: [{ value: 100000n, script: out.script }, { value: 100000n, script: out.script }],
+    outputs: one.outputs,
+  };
+  assert.notEqual(toHex(tapSighash({ ...two, inputIndex: 0 })),
+    toHex(tapSighash({ ...two, inputIndex: 1 })),
+    'two inputs of one transaction sign the same message');
+
+  // AND A KEY PATH IS NOT A SCRIPT PATH. BIP-341 puts a different spend_type
+  // byte and three extra fields in the script-path message; signing one as the
+  // other produces a perfectly valid signature over the wrong thing, which a
+  // node rejects with nothing to say about why.
+  const asScript = tapSighash({
+    inputs: one.inputs, prevouts: one.prevouts, outputs: one.outputs, inputIndex: 0,
+    leafHash: new Uint8Array(32).fill(7),
+  });
+  assert.notEqual(toHex(one.sighash), toHex(asScript),
+    'a key-path spend and a script-path spend sign the same message');
+});
+
+test('the tweak is the committee\'s own key, and a different committee is a different output', () => {
+  const a = pool();
+  const b = pool();
+  assert.notEqual(toHex(a.out.internalKey), toHex(b.out.internalKey));
+  assert.notEqual(toHex(a.out.tweak), toHex(b.out.tweak),
+    'two committees share a tweak, so it commits to no key');
+  assert.notEqual(toHex(a.out.outputKey), toHex(b.out.outputKey));
+  assert.deepEqual(a.out.tweak, poolTweak(a.out.internalKey));
+});
+
+test('a group key with odd y is refused rather than turned into an output', () => {
+  const { dealt } = pool();
+  const odd = new Uint8Array(dealt.groupPublicKey);
+  odd[0] = 0x03;
+  const seen = poolOutput({ groupPublicKey: odd, curve });
+  assert.equal(seen.ok, false);
+  assert.match(seen.why, /odd y: normalise it when it is dealt/);
+  assert.equal(poolOutput({ groupPublicKey: new Uint8Array(32), curve }).ok, false);
+  assert.equal(poolOutput({ groupPublicKey: dealt.groupPublicKey, curve: {} }).ok, false);
+});
+
+test('a key-path witness is one 64-byte signature and nothing else', () => {
+  const sig = new Uint8Array(64).fill(9);
+  assert.deepEqual(poolWitness(sig), [sig]);
+  for (const bad of [new Uint8Array(65), new Uint8Array(32), null, 'signature'])
+    assert.throws(() => poolWitness(bad), /64 bytes, and a key-path witness is only that/);
+});
+
+/**
+ * THE SCRIPT-PATH MESSAGE, PINNED, AND ITS AUTHORITY IS NOT THIS FILE.
+ *
+ * Adding the key-path case to `tapSighash` put a branch in the middle of the
+ * one thing every taproot spend in this project signs. A mutant that wrote
+ * spend_type 0 for BOTH paths survived every test here: the two messages still
+ * differed, because the script path also appends a leaf hash, so nothing could
+ * tell.
+ *
+ * What can tell is a real node. `tools/bond-regtest.mjs` builds this exact
+ * spend, broadcasts it to a bitcoind, and prints the sighash it signed;
+ * "recovery, honest {ok:true}" is that transaction being accepted. The value
+ * below is that run's, so this assertion's authority is a consensus engine
+ * taking the spend, not this suite agreeing with itself.
+ */
+test('the script-path sighash is the one a real node accepted', () => {
+  const sighash = tapSighash({
+    version: 2, locktime: 100,
+    inputs: [{ txid: new Uint8Array(32).fill(0x22), vout: 1, sequence: 0xfffffffe }],
+    prevouts: [{
+      value: 100000000n,
+      script: new Uint8Array([0x51, 0x20,
+        ...fromHex('fb0a797f025871162be6a1324da67c64234c10aacb309af30b7e7ab5450da51e')]),
+    }],
+    outputs: [{ value: 99998000n, script: fromHex('0014' + '33'.repeat(20)) }],
+    inputIndex: 0,
+    leafHash: fromHex('29b15fdfb9cdfd0e23b8ccba647dee6c2e6ab711a2e6b2e24f404626b0df7e64'),
+  });
+  assert.equal(toHex(sighash),
+    'a5510d85b9795b6af07a3f875fc2f267cb0d2df72350ef60b8e0f1ac50fcd97e',
+    'the script-path message changed, so every bond spend this project makes is now invalid');
 });
