@@ -16,7 +16,7 @@ import {
   joinSignedResult, splitSignedResult, decodePlayerResult, resultId, SIGNED_RESULT_BYTES,
 } from '../../protocol/src/result.js';
 import { decodeRoundContract } from '../../protocol/src/contracts.js';
-import { committeeSeedFromBeacon } from '../../protocol/src/beacon.js';
+import { committeeSeedFromBeacon, beaconFromChain, beaconIsTheChains } from '../../protocol/src/beacon.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
 
 /**
@@ -38,16 +38,38 @@ import { schnorr } from '@noble/curves/secp256k1.js';
  * here - before a run is replayed rather than after - because a round whose
  * committee could have been ground is not a round to sign a result for.
  */
-function beaconFor(randomnessFor, contract, roundIdBytes, entry, entryId) {
+function beaconFor(randomnessFor, contract, roundIdBytes, entry, entryId, chainFor) {
   const given = randomnessFor({ contract, roundIdBytes, entry, entryId });
   const hash = given && (given.hash || (given instanceof Uint8Array ? given : undefined));
   const height = given && given.height;
   const seeded = committeeSeedFromBeacon(contract, {
     roundId: roundIdBytes, randomness: hash, height, timeMs: given && given.timeMs,
   });
-  return seeded.ok
-    ? { ok: true, hash, height, committeeSeed: seeded.seed, rootsAreOne: seeded.rootsAreOne }
-    : seeded;
+  if (!seeded.ok) return seeded;
+
+  // AND AGAINST THIS NODE'S OWN CHAIN, exactly as the roster asks at seating.
+  //
+  // 27's rule is all `committeeSeedFromBeacon` can ask - it has no chain - and
+  // "after committee_time" is not "the block the chain names". The beacon here
+  // is not idle: `replay` derives every player's world from it, so a node
+  // closing on a late-but-wrong block computes a different world, a different
+  // state hash and a result no honest node will agree with. The same door the
+  // seat goes through, for the same reason.
+  //
+  // A node with no view is left as it was: it has no chain to ask, 27's rule
+  // has already run, and refusing here would refuse every node that closes
+  // without one.
+  const view = chainFor ? chainFor({ contract, roundIdBytes }) : null;
+  if (view && Array.isArray(view.blocks) && view.blocks.length) {
+    const headers = { headers: view.blocks.map((b) => b.header), firstHeight: view.firstHeight };
+    const named = beaconFromChain(contract, headers);
+    if (!named.ok) return named;
+    const agrees = beaconIsTheChains(contract, { hash, height, timeMs: given && given.timeMs },
+      headers);
+    if (!agrees.ok) return agrees;
+  }
+
+  return { ok: true, hash, height, committeeSeed: seeded.seed, rootsAreOne: seeded.rootsAreOne };
 }
 
 /**
@@ -68,10 +90,12 @@ export const NO_RANDOMNESS_SOURCE = () => undefined;
 
 export class Verifier {
   constructor(round, {
-    randomnessFor = NO_RANDOMNESS_SOURCE, pool = new ReplayPool(), peers = [],
+    randomnessFor = NO_RANDOMNESS_SOURCE, chainFor = null, pool = new ReplayPool(), peers = [],
   } = {}) {
     this.round = round;
     this.randomnessFor = randomnessFor;
+    /** The chain this node has, so the beacon it closes on can be checked. */
+    this.chainFor = chainFor;
     /**
      * THE OTHER SEATS, as base URLs. A node's committee is named in the round
      * contract by KEY, and a key is not an address: 25.1 makes finding an
@@ -113,7 +137,8 @@ export class Verifier {
       // THE BEACON BEFORE THE REPLAY. A round whose committee could have been
       // ground is not a round to spend a worker on, and it is certainly not
       // one to sign a result for.
-      const beacon = beaconFor(this.randomnessFor, contract, roundIdBytes, entry, entryId);
+      const beacon = beaconFor(this.randomnessFor, contract, roundIdBytes, entry, entryId,
+        this.chainFor);
       if (!beacon.ok) {
         this.queued.push({ entryId, objected: false, refused: beacon.why });
         return Promise.resolve({ entryId, stored: false, why: beacon.why });
@@ -284,7 +309,8 @@ export class Verifier {
       .find((e) => hex(e.entryId) === hex(entryIdBytes));
     if (!found) return null;
 
-    const beacon = beaconFor(this.randomnessFor, contract, roundIdBytes, found.entry, entryIdBytes);
+    const beacon = beaconFor(this.randomnessFor, contract, roundIdBytes, found.entry,
+      entryIdBytes, this.chainFor);
     if (!beacon.ok) return null;
     this.seeds.set(hex(roundIdBytes), beacon.committeeSeed);
 

@@ -473,3 +473,60 @@ test('a node with no chain view still refuses on 27 alone, and says the check di
   });
   assert.match(early.seedFor(rid, contract).why, /at or before this round's committee time/);
 });
+
+/**
+ * AND THE CLOSING DOOR ASKS THE SAME QUESTION.
+ *
+ * The seat is not the only place a beacon decides something: `replay` derives
+ * every player's WORLD from it, so a node closing on a late-but-wrong block
+ * computes a different world, a different state hash, and a result no honest
+ * node will agree with. Before this the verifier asked only 27's rule - "was
+ * it after committee_time" - and that is not "is it the block the chain
+ * names".
+ */
+test('a node closing a round refuses a beacon its own chain does not name', async () => {
+  const { Verifier } = await import('../src/verify.js');
+  const { beaconFromChain, medianTimePast } = await import('../../protocol/src/beacon.js');
+  const { blockHashOf } = await import('../../protocol/src/chain.js');
+  const { encodeEntryContract, entryId: entryIdOf } = await import('../../protocol/src/contracts.js');
+
+  const bonds = [bondOf(0x11), bondOf(0x12)];
+  const view = chainWith(bonds);
+  const headers = { headers: view.blocks.map((b) => b.header), firstHeight: view.firstHeight };
+  const round = new Round(openStore(), () => AFTER_COMMITTEE);
+  const contract = contractFor({ censusRoot: rootFor(bonds, {}) });
+  const rid = round.open(contract);
+
+  // one entry, so there is something to close over
+  const entry = {
+    roundId: rid, playerPubkey: b32(5), sessionPubkey: b32(6), stakeCommitment: b32(7),
+    stakeMsat: 100000n, feeMsat: 1000n, donationMsat: 0n, joinTick: 0,
+    worldSecret: b32(0x5e), vssSharesRef: new Uint8Array(32),
+  };
+  round.enter(entry);
+  assert.equal(round.entriesOf(rid).length, 1);
+
+  const named = beaconFromChain(contract, headers);
+  const later = named.height + 1;
+  const wrong = {
+    hash: blockHashOf(headers.headers[later - headers.firstHeight]),
+    height: later,
+    timeMs: BigInt(medianTimePast(headers.headers, headers.firstHeight, later)) * 1000n,
+  };
+
+  // WITH A CHAIN: refused, and the reason names both blocks.
+  const seeing = new Verifier(round, { randomnessFor: () => wrong, chainFor: () => view });
+  seeing.onRoundClosed(rid);
+  assert.equal(seeing.queued.length, 1);
+  assert.match(seeing.queued[0].refused,
+    new RegExp(`is block ${later} where this chain names ${named.height}`));
+
+  // THE HONEST BEACON GOES THROUGH the same door.
+  const good = new Verifier(round, {
+    randomnessFor: ({ contract: c }) => beaconOf(view, c), chainFor: () => view,
+  });
+  good.onRoundClosed(rid);
+  assert.equal(good.queued.length, 1);
+  assert.equal(good.queued[0].refused, undefined, good.queued[0].refused);
+  console.log(`  closing: chain names ${named.height}; block ${later} offered -> refused`);
+});

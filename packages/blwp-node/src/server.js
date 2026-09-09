@@ -156,6 +156,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
 
   const verifier = new Verifier(round, {
     ...(randomnessFor ? { randomnessFor } : {}),
+    // THE SAME CHAIN THE SEAT WAS CHECKED AGAINST. A node that closes a round
+    // on a beacon its own chain does not name computes a different world for
+    // every player in it, so the check belongs on both doors.
+    ...(chainFor ? { chainFor } : {}),
     // WHERE THE OTHER SEATS ANSWER. A contract names a committee by KEY, and a
     // key is not an address - finding one is discovery's job (25.1), not this
     // letter's - so the operator says where they are and the contract still
