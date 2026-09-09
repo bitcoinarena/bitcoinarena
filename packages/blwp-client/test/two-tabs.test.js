@@ -180,6 +180,83 @@ test('a person opens the printed URL twice and the two tabs are on one round', a
   }
 });
 
+/**
+ * THE CASE THE 11:51 RETEST FAILED ON: a tab that has NOT driven.
+ *
+ * the owner, two Chrome windows: P1 loaded, rolled out and drove in the field;
+ * P2 stayed in the cargo loadout on the dirt and saw only its own truck. The
+ * chip read `A ok · B ok · play · A up · 5 players` - the socket did NOT drop
+ * this time - so the question is no longer whether frames can be delivered but
+ * whether a watcher who has published nothing is sent any.
+ *
+ * The test above has tab two drive thirty ticks before it looks. This one
+ * never drives it, which is what a person sitting in the loadout is.
+ */
+test('a tab that has not driven is still shown the truck that is driving', async () => {
+  const round = await standUpRound({ host: '127.0.0.1', portA: 18084, portB: 18085 });
+  const tabs = [];
+  try {
+    const named = await joinFromQuery(new URL(round.url).search);
+    for (const which of ['driver', 'watcher']) {
+      const secret = ed25519.utils.randomSecretKey();
+      const sessionPubkey = ed25519.getPublicKey(secret);
+      const player = tabIdentity({ storage: storage(), random, curve: feldmanGroup });
+      const seat = entryFor(named.round, { playerPubkey: player.pubkey, random });
+      const client = await Client.at({
+        headers: named.chain.headers, bonds: named.chain.bonds,
+        signedAdvert: fromHexHere(named.advert.signedAdvert),
+        committee: named.round.nodes,
+      }, {
+        core: { hash: (st) => core.hash(st) },
+        sign: (id) => ed25519.sign(id, secret),
+        verify, contract: named.round, roundIdGiven: fromHexHere(round.id),
+      });
+      const rid = await client.openRound(named.round);
+      const entry = { ...seat, roundId: rid, sessionPubkey };
+      const eid = await client.join(entry);
+      await client.connect();
+      client.setRound({ roundId: rid, entryId: eid, blockTicks: named.round.blockTicks | 0 });
+      tabs.push({ which, client, eid, entry });
+    }
+    const [driver, watcher] = tabs;
+
+    // THE WATCHER SUBSCRIBES THE MOMENT IT HAS A ROUND AND AN ENTRY, which is
+    // what `blwp.jslib` does - before anybody has driven anything.
+    const field = watchGhosts(watcher.client, {
+      roundId: watcher.entry.roundId, entryId: watcher.eid,
+    });
+    assert.match(await field.watching, /^watching /);
+
+    // AND NEVER DRIVES. Only the driver moves.
+    const poses = [];
+    for (let batch = 0; batch < 8; batch++) {
+      for (let t = 0; t < 6; t++) driver.client.record([45875, 0, 0, 0, 0]);
+      await driver.client.drain();
+      await wait(120);
+      const seen = field.latest().filter((g) => toHex(g.entryId) === toHex(driver.eid));
+      if (seen.length) poses.push({ tick: seen[0].tick, x: seen[0].x, z: seen[0].z });
+    }
+
+    console.log(`  the watcher never drove and was shown ${poses.length} pictures of the driver`);
+    if (poses.length) {
+      console.log(`  first tick ${poses[0].tick} at x ${poses[0].x} z ${poses[0].z}`);
+      console.log(`  last  tick ${poses[poses.length - 1].tick} at x ${poses[poses.length - 1].x} `
+        + `z ${poses[poses.length - 1].z}`);
+    }
+
+    assert.ok(poses.length > 0,
+      'a tab that has not driven is shown nothing, which is the loadout tab in the retest');
+    const distinct = new Set(poses.map((p) => `${p.x}:${p.z}`)).size;
+    assert.ok(distinct > 1,
+      `the picture never moved: ${distinct} distinct pose(s) over ${poses.length} frames`);
+    assert.ok(poses[poses.length - 1].tick > poses[0].tick,
+      'the picture stopped advancing while the driver kept driving');
+  } finally {
+    for (const t of tabs) { try { t.client.close(); } catch { /* gone */ } }
+    await round.close();
+  }
+});
+
 test('two daemons whose chains disagree stop the join by name', async () => {
   const round = await standUpRound({ host: '127.0.0.1', portA: 18082, portB: 18083 });
   try {
