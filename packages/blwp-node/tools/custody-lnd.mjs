@@ -196,7 +196,7 @@ async function main() {
         + `, this node says ${custody.stateOf(p.id).state}`);
 
     // ---- 6. THE CORE'S OUTCOME WORD, AND WHAT BOB DOES ABOUT IT. ----
-    const out = await custody.settleRound({
+    const out = await custody.settleHeldInvoices({
       roundId: rid, minScore: 1, finalFor: () => true,
       entries: players.map((p) => ({ entryId: p.id, pubkey: p.entry.playerPubkey,
         outcome: p.outcome, score: p.score, stakeMsat: STAKE_MSAT })),

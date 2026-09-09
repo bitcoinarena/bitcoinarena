@@ -58,6 +58,7 @@ import { Round } from './round.js';
 import { Verifier } from './verify.js';
 import { Ghosts } from './ghosts.js';
 import { Roster } from './roster.js';
+import { Custody, NO_LIGHTNING } from './custody.js';
 
 const read = (req) => new Promise((resolve, reject) => {
   const parts = [];
@@ -105,16 +106,17 @@ const text = (res, code, msg) => {
  * 200 rows, then took an entry in one of them for nothing as well.
  *
  * The node cannot decide funding by itself. A stake is a hold invoice on
- * Lightning and there is no payment layer here yet, so what this daemon does
- * is REFUSE until something it trusts says otherwise - the operator supplies
- * that, and the default is no. A daemon that assumed funding would be the
- * flood lever rather than the guard against it, and a default of yes is the
- * kind of thing nobody notices until the disk is full.
+ * Lightning, so what this daemon does is REFUSE until something it trusts
+ * says otherwise - the operator supplies that, and the default is no. A daemon
+ * that assumed funding would be the flood lever rather than the guard against
+ * it, and a default of yes is the kind of thing nobody notices until the disk
+ * is full.
  *
- * It is deliberately not a message on the wire: inventing a funding message
- * would be inventing the payment protocol, and that is not this step's to
- * write. What is this step's is that nothing is written until the answer is
- * yes.
+ * THE PAYMENT LAYER IS HERE NOW, and it did not replace this. `lightning` is
+ * the port that issues the hold; `funded` is still the operator's answer to
+ * "may this entry cost me disk". They are different questions - an invoice
+ * issued is not an invoice paid - and collapsing them would make the flood
+ * lever depend on a Lightning node being up.
  */
 const hexOf = (b) => Buffer.from(b).toString('hex');
 
@@ -130,8 +132,16 @@ export const GHOST_BACKLOG_BYTES = 262144;
 export const NOTHING_IS_FUNDED = () => false;
 
 export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FUNDED,
-  randomnessFor, chainFor, peers = [], headerBytes, bondProof } = {}) {
+  randomnessFor, chainFor, peers = [], headerBytes, bondProof,
+  lightning = NO_LIGHTNING, preimageFor = null } = {}) {
   const round = new Round(db);
+
+  // WHAT HOLDS THE PLAYERS' MONEY. 23.1's hold invoice and 23.2's table, and
+  // the port is injected for the same reason the chain and the randomness are:
+  // a daemon given none holds no stakes and says so rather than pretending.
+  // Nothing about a stake is decided here - `custody.js` decides, off the
+  // outcome word the core produced - and this file only says WHEN it is asked.
+  const custody = new Custody(round, { port: lightning, preimageFor });
 
   // WHO MAY HOLD A ROUND, from the chain. The census stopped being library
   // code here: this is the daemon's only caller of it, and `chainFor` is the
@@ -166,6 +176,79 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // says whose signatures count.
     peers,
   });
+
+  /**
+   * WHAT A CLOSED ROUND MEANS FOR THE MONEY.
+   *
+   * The outcome word is the CORE'S - it came out of `replay.js`, which is this
+   * node's one door to the simulator - and finality is the committee's, out of
+   * the gather the same close set off. Neither is decided here.
+   *
+   * AN ENTRY NOBODY AGREED ON IS SIMPLY NOT FINAL. It is not a refusal and not
+   * an error: its hold stays HELD and expires back to its player, which is
+   * 23.2's default and the same answer a crash gives.
+   */
+  let stakes = Promise.resolve({ ok: true, actions: [], why: 'no round has closed yet' });
+
+  async function settleTheStakes(roundIdBytes, closed) {
+    if (!custody.reaches) return { ok: false, why: 'this node reaches no Lightning, so it settles nothing' };
+    const row = round.get(roundIdBytes);
+    if (!row) return { ok: false, why: 'no such round' };
+    const contract = decodeRoundContract(new Uint8Array(row.contract));
+
+    const agreed = new Set((closed.gathered || [])
+      .filter((g) => g && g.ok && g.final)
+      .map((g) => toHex(g.entryId)));
+
+    const entries = (closed.replayed || [])
+      .filter((r) => r && r.stored && r.outcome)
+      .map((r) => ({
+        entryId: r.entryId, pubkey: r.playerPubkey, outcome: r.outcome,
+        score: r.score, stakeMsat: r.stakeMsat,
+      }));
+    if (!entries.length) return { ok: true, actions: [], why: 'that round produced no result to pay on' };
+
+    // ONE PLACE DECIDES WHETHER A RUN IS FINAL, and the same answer is both
+    // handed down and reported. Two - a predicate for the money and a list for
+    // the operator - is two places to get it wrong, and a mutation that made
+    // the predicate say yes to everything survived every test while the list
+    // still said the truth.
+    const isFinal = (entryId) => agreed.has(toHex(entryId));
+    const done = await custody.settleHeldInvoices({
+      roundId: roundIdBytes, entries, minScore: contract.minScore, finalFor: isFinal,
+    });
+    for (const a of done.actions || [])
+      console.log(`[custody] ${toHex(a.entryId).slice(0, 16)} ${a.action} -> ${a.state}: ${a.why}`);
+    // WHAT THIS CLOSE BELIEVED, whatever it did. A settlement that moves
+    // nothing still has to be able to say which runs the committee agreed on -
+    // otherwise "nothing moved" and "nothing was agreed" are the same sentence
+    // to an operator, and they are very different problems.
+    return {
+      ...done,
+      agreed: entries.filter((e) => isFinal(e.entryId)).map((e) => toHex(e.entryId)),
+      considered: entries.length,
+    };
+  }
+
+  /**
+   * ASK LIGHTNING ABOUT ANYTHING THIS NODE DIED IN THE MIDDLE OF.
+   *
+   * A daemon that starts is usually a daemon that stopped, and the one window
+   * where its store and Lightning can disagree is between telling and writing
+   * down. `reconcile` closes it - and it has to run HERE, on start, because a
+   * tool an operator remembers to run is not a guarantee. It is kept as a
+   * promise for the same reason the verifier's is: a caller that cannot await
+   * it cannot tell "not asked yet" from "not asked".
+   */
+  const reconciling = custody.reaches
+    ? custody.reconcile()
+      .then((asked) => {
+        const n = (asked && asked.asked) ? asked.asked.length : 0;
+        if (n) console.log(`[custody] asked Lightning about ${n} stake(s) this node died in the middle of`);
+        return asked;
+      })
+      .catch((e) => { console.error(`[custody] ${e.message}`); return { ok: false, why: e.message }; })
+    : Promise.resolve({ ok: false, why: 'this node reaches no Lightning, so it asks it nothing' });
 
   const http = createServer(async (req, res) => {
     try {
@@ -272,7 +355,70 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const contract = decodeEntryContract(await read(req));
         if (!funded({ kind: 'entry', contract }))
           return text(res, 402, 'this node stores nothing for an entry nobody has funded');
-        return bytes(res, 201, round.enter(contract));
+        const seated = round.enter(contract);
+
+        // THE SEAT IS WHERE THE HOLD IS ISSUED. 23.1: the endpoint issues a
+        // hold invoice for the payment hash the entry already carries, so the
+        // moment there is an entry there is something to pay.
+        //
+        // A FAILURE HERE DOES NOT UNSEAT ANYBODY. The entry is stored and
+        // signed; a Lightning node that is down is this operator's problem,
+        // not a reason to throw away a player's contract. The reason travels
+        // in a header and `/invoice` will make the same idempotent attempt
+        // again, so a player whose first try found no node can simply ask.
+        let held = { ok: false, why: 'not attempted' };
+        try { held = await custody.hold(contract); }
+        catch (e) { held = { ok: false, why: e.message }; }
+        res.writeHead(201, {
+          'content-type': 'application/octet-stream',
+          'x-hold': held.ok ? held.state : 'none',
+          ...(held.ok ? {} : { 'x-hold-why': held.why.replace(/[^\x20-\x7e]/g, ' ') }),
+          ...CORS,
+        });
+        return res.end(Buffer.from(seated));
+      }
+
+      /**
+       * WHAT A SEATED PLAYER PAYS. 23.1's endpoint, and the last thing that
+       * happens before their money is in flight.
+       *
+       * IT IS AN INPUT DEVICE AND NOTHING ELSE. The answer is a payment
+       * request and the amount this node holds for that entry - no outcome, no
+       * arrival, nothing a browser could report about a run. The player's
+       * wallet checks the invoice against their own contract before paying;
+       * `invoiceMatchesEntry` is that rule and it lives on their side too.
+       *
+       * ASKED TWICE, ANSWERED THE SAME. The request is kept beside the hold,
+       * so a reloaded page gets the invoice that exists rather than a second
+       * claim on one stake.
+       *
+       * A STRANGER'S ENTRY IS REFUSED - which here means an entry this node
+       * does not hold. It cannot mean "not the player's own": a hold invoice
+       * is a bearer instruction to PAY, so somebody else holding it can only
+       * fund that player's stake, never take it. What would be wrong is this
+       * node inventing an invoice for an entry it never seated.
+       */
+      if (req.method === 'GET' && url.pathname === '/invoice') {
+        const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
+        if (eid.length !== 32) return text(res, 400, 'an invoice is asked for by entry id');
+        const stored = round.entry(eid);
+        if (!stored) return text(res, 404, 'this node seated no such entry, and it does not invent invoices for strangers');
+        let quoted;
+        try { quoted = await custody.hold(decodeEntryContract(stored)); }
+        catch (e) { quoted = { ok: false, why: e.message }; }
+        if (!quoted.ok) return text(res, 503, quoted.why);
+        if (!quoted.invoice) return text(res, 409, `that stake is ${quoted.state}, and this node kept no request for it`);
+        res.writeHead(200, {
+          'content-type': 'application/json',
+          ...CORS,
+        });
+        return res.end(JSON.stringify({
+          entry: eid.toString('hex'),
+          paymentHash: toHex(quoted.paymentHash),
+          amountMsat: String(custody.stateOf(new Uint8Array(eid)).amountMsat),
+          state: quoted.state,
+          request: quoted.invoice,
+        }) + '\n');
       }
 
       // THE ENTRY CONTRACT, so 13B's proof is portable to somebody who was not
@@ -586,7 +732,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             // result nobody fetches is a committee of one: the count section
             // 13 asks for only exists on a node holding more than its own
             // signature.
-            if (shut) verifier.settleRound(id).catch((e) => console.error(`[verify] ${e.message}`));
+            // ...and THEN what that means for the money. Two different words
+            // on purpose: `Verifier.settleRound` replays and gathers and moves
+            // nothing, and `Custody.settleHeldInvoices` is the only thing in
+            // this daemon that can settle a stake.
+            if (shut) {
+              stakes = verifier.settleRound(id)
+                .then((closed) => settleTheStakes(id, closed))
+                .catch((e) => { console.error(`[verify] ${e.message}`); return { ok: false, why: e.message }; });
+            }
             return sock.send(shut ? 'closed' : 'already closed');
           }
           return sock.send('error unknown text message');
@@ -648,7 +802,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
 
   return new Promise((resolve) => {
     http.listen(port, host, () => resolve({
-      http, wss, round, host, verifier, ghosts, roster,
+      http, wss, round, host, verifier, ghosts, roster, custody, reconciling,
+      // What the last close did with the money, and the same door an operator
+      // uses to run a settlement again by hand.
+      stakes: () => stakes,
+      settleTheStakes,
       watching: () => watching.size,
       shed: () => shed,
       port: http.address().port,

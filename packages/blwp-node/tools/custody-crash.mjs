@@ -127,7 +127,7 @@ async function custodianMidSettle(dbPath, logPath) {
     },
   });
   const outcomes = [FORFEIT, FORFEIT, DELIVERED];
-  await suicidal.settleRound({
+  await suicidal.settleHeldInvoices({
     roundId: rid, minScore: 1, finalFor: () => true,
     entries: entries.map((e, i) => ({
       entryId: entryIdOf(e), pubkey: e.playerPubkey, outcome: outcomes[i],
@@ -217,7 +217,7 @@ async function main() {
   // committee's agreement is not in its own store.
   const back = new Custody(round, { port: loggingPort(logPath), preimageFor });
   const outcomes = [DELIVERED, FORFEIT, VOID];
-  const out = await back.settleRound({
+  const out = await back.settleHeldInvoices({
     roundId: new Uint8Array(rid), minScore: 1,
     entries: PLAYERS.map((n, i) => {
       const e = entryFor(new Uint8Array(rid), n);
@@ -266,7 +266,7 @@ async function main() {
   if (acting.length !== settled.length)
     problems.push(`${acting.length} stakes recorded as in-flight acts, but ${settled.length} settle calls were made`);
   const outs = [FORFEIT, FORFEIT, DELIVERED];
-  await c2.settleRound({
+  await c2.settleHeldInvoices({
     roundId: new Uint8Array(rid2), minScore: 1, finalFor: () => true,
     entries: PLAYERS.map((n, i) => {
       const e = entryFor(new Uint8Array(rid2), n);

@@ -85,7 +85,7 @@ test('a daemon with no Lightning holds no stakes and says so', async () => {
   assert.equal(held.ok, false);
   assert.match(held.why, /reaches no Lightning, so it holds no stakes/);
 
-  const settled = await custody.settleRound({ roundId: rid, entries: [] });
+  const settled = await custody.settleHeldInvoices({ roundId: rid, entries: [] });
   assert.equal(settled.ok, false);
   assert.match(settled.why, /settles nothing/);
 });
@@ -141,7 +141,7 @@ test('DELIVERED cancels, FORFEIT settles, and a VOID is never touched', async ()
   const summary = (e, outcome, score = 0) =>
     ({ entryId: entryIdOf(e), pubkey: e.playerPubkey, outcome, score, stakeMsat: e.stakeMsat });
 
-  const out = await custody.settleRound({
+  const out = await custody.settleHeldInvoices({
     roundId: rid, minScore: 1,
     entries: [summary(winner, DELIVERED, 100), summary(loser, FORFEIT), summary(voided, VOID)],
     finalFor: () => true,
@@ -149,6 +149,11 @@ test('DELIVERED cancels, FORFEIT settles, and a VOID is never touched', async ()
   assert.equal(out.ok, true, out.why);
 
   const state = (e) => custody.stateOf(entryIdOf(e)).state;
+  // AND THE INVOICE IS STILL THERE AFTERWARDS. A stake that moved and cannot
+  // say which invoice it was is the thing 23 exists to prevent, and a state
+  // change writes a row that knows nothing about the request.
+  assert.match(custody.stateOf(entryIdOf(loser)).request, /^lnbcrt-/,
+    'settling a stake erased the invoice it settled');
   assert.equal(state(winner), CANCELLED, 'a delivered player did not get their stake back');
   assert.equal(state(loser), SETTLED, 'a forfeited stake did not enter the pool');
   assert.equal(state(voided), EXPIRED, 'a VOID was acted on');
@@ -176,7 +181,7 @@ test('no stake moves without a final result, and nothing is paid to anybody', as
 
   // THE COMMITTEE HAS NOT AGREED. Not a refusal: the stakes simply stay in
   // flight, and a hold nobody may act on expires back to its payer.
-  const out = await custody.settleRound({
+  const out = await custody.settleHeldInvoices({
     roundId: rid, minScore: 1,
     entries: [summary(winner, DELIVERED, 100), summary(loser, FORFEIT)],
     finalFor: () => false,
@@ -204,13 +209,13 @@ test('a stake that has already moved is not moved twice', async () => {
     ],
   };
 
-  await custody.settleRound(once);
+  await custody.settleHeldInvoices(once);
   assert.equal(custody.stateOf(entryIdOf(loser)).state, SETTLED);
 
   // AND AGAIN. A settlement replayed - a restarted daemon, a committee message
   // arriving twice - must not release a second preimage or hand a stake back
   // twice: they moved once, and there is nothing left to move.
-  const twice = await custody.settleRound(once);
+  const twice = await custody.settleHeldInvoices(once);
   assert.equal(twice.ok, true, twice.why);
   for (const a of twice.actions) assert.match(a.why, /already moved/);
   assert.equal(port.calls.filter((c) => c[0] === 'settle').length, 1);
@@ -229,7 +234,7 @@ test('the score the round asked for is the score the pool pays by', async () => 
   const loser = entryFor(rid, 3);
   for (const e of [placed, cautious, loser]) { round.enter(e); await custody.hold(e); }
 
-  const out = await custody.settleRound({
+  const out = await custody.settleHeldInvoices({
     roundId: rid, minScore: 3, finalFor: () => true,
     entries: [
       { entryId: entryIdOf(placed), pubkey: placed.playerPubkey, outcome: DELIVERED, score: 5, stakeMsat: placed.stakeMsat },
@@ -281,14 +286,14 @@ test('a node that died mid-act asks Lightning rather than acting again', async (
     port.calls.push(['settle', toHex(paymentHash)]);
     throw new Error('the node stopped here');
   };
-  await assert.rejects(() => custody.settleRound(close));
+  await assert.rejects(() => custody.settleHeldInvoices(close));
   assert.equal(custody.stateOf(id).state, ACTING,
     'the intent was not on disk before the call, so a restart cannot know it was made');
   assert.match(custody.stateOf(id).why, /ask Lightning/);
 
   // A CLOSE THAT RUNS AGAIN WILL NOT ACT ON IT. Not until somebody has asked.
   port.settle = async ({ paymentHash }) => { port.calls.push(['settle', toHex(paymentHash)]); };
-  const blocked = await custody.settleRound(close);
+  const blocked = await custody.settleHeldInvoices(close);
   assert.match(blocked.actions[0].why, /reconcile it against Lightning first/);
   assert.equal(port.calls.filter((c) => c[0] === 'settle').length, 1);
 
@@ -307,7 +312,7 @@ test('an act that never reached Lightning is made again, once', async () => {
   const { custody, id, close } = await midAct(port);
 
   port.settle = async () => { throw new Error('the node stopped before the call left'); };
-  await assert.rejects(() => custody.settleRound(close));
+  await assert.rejects(() => custody.settleHeldInvoices(close));
 
   // LIGHTNING STILL HOLDS IT, so the act never landed and the stake is HELD
   // again - not stuck, and not settled on a guess.
@@ -316,7 +321,7 @@ test('an act that never reached Lightning is made again, once', async () => {
   await custody.reconcile({ roundId: close.roundId });
   assert.equal(custody.stateOf(id).state, HELD);
 
-  await custody.settleRound(close);
+  await custody.settleHeldInvoices(close);
   assert.equal(custody.stateOf(id).state, SETTLED);
   assert.equal(port.calls.filter((c) => c[0] === 'settle').length, 1);
 });
@@ -326,7 +331,7 @@ test('a port that cannot be asked what it did leaves an interrupted act alone', 
   const { custody, id, close } = await midAct(port);
 
   port.settle = async () => { throw new Error('stopped'); };
-  await assert.rejects(() => custody.settleRound(close));
+  await assert.rejects(() => custody.settleHeldInvoices(close));
 
   const asked = await custody.reconcile({ roundId: close.roundId });
   assert.equal(asked.ok, false);
@@ -339,7 +344,7 @@ test('reconcile refuses an answer that is not a state a hold can be in', async (
   const { custody, id, close } = await midAct(port);
 
   port.settle = async () => { throw new Error('stopped'); };
-  await assert.rejects(() => custody.settleRound(close));
+  await assert.rejects(() => custody.settleHeldInvoices(close));
 
   port.look = async () => ({ state: 'PROBABLY FINE' });
   const asked = await custody.reconcile({ roundId: close.roundId });
@@ -358,7 +363,7 @@ test('a node with no preimage cannot settle, and the stake expires to its player
   const loser = entryFor(rid, 2);
   for (const e of [winner, loser]) { round.enter(e); await custody.hold(e); }
 
-  const out = await custody.settleRound({
+  const out = await custody.settleHeldInvoices({
     roundId: rid, minScore: 1, finalFor: () => true,
     entries: [
       { entryId: entryIdOf(loser), pubkey: loser.playerPubkey, outcome: FORFEIT, score: 0, stakeMsat: loser.stakeMsat },
@@ -382,7 +387,7 @@ test('a preimage that is not the one the hold was made for is refused', async ()
   const loser = entryFor(rid, 2);
   for (const e of [winner, loser]) { round.enter(e); await custody.hold(e); }
 
-  const out = await custody.settleRound({
+  const out = await custody.settleHeldInvoices({
     roundId: rid, minScore: 1, finalFor: () => true,
     entries: [
       { entryId: entryIdOf(loser), pubkey: loser.playerPubkey, outcome: FORFEIT, score: 0, stakeMsat: loser.stakeMsat },
@@ -406,7 +411,7 @@ test('the preimage reaches the port, because releasing it is the settlement', as
   const loser = entryFor(rid, 2);
   for (const e of [winner, loser]) { round.enter(e); await custody.hold(e); }
 
-  await custody.settleRound({
+  await custody.settleHeldInvoices({
     roundId: rid, minScore: 1, finalFor: () => true,
     entries: [
       { entryId: entryIdOf(loser), pubkey: loser.playerPubkey, outcome: FORFEIT, score: 0, stakeMsat: loser.stakeMsat },
@@ -415,4 +420,28 @@ test('the preimage reaches the port, because releasing it is the settlement', as
   });
   assert.equal(seen.length, 1);
   assert.deepEqual(toHex(sha256(seen[0])), toHex(loser.stakeCommitment));
+});
+
+test('a round nobody finished moves no stake and keeps nothing for this node', async () => {
+  // `payout.js` refuses to hand a pool to nobody rather than deciding it in
+  // the operator's favour, and that refusal has to reach the wire as INACTION,
+  // not as an exception somebody logs and steps past. Measured through the
+  // daemon: until a player delivers, every round is one of these.
+  const port = fakePort();
+  const { round, rid, custody } = seated(port);
+  const a = entryFor(rid, 1);
+  const b = entryFor(rid, 2);
+  for (const e of [a, b]) { round.enter(e); await custody.hold(e); }
+
+  const out = await custody.settleHeldInvoices({
+    roundId: rid, minScore: 1, finalFor: () => true,
+    entries: [a, b].map((e) => ({ entryId: entryIdOf(e), pubkey: e.playerPubkey,
+      outcome: FORFEIT, score: 0, stakeMsat: e.stakeMsat })),
+  });
+  assert.equal(out.ok, false);
+  assert.match(out.why, /no stake moves/);
+  assert.match(out.why, /expires to its player/);
+  for (const e of [a, b]) assert.equal(custody.stateOf(entryIdOf(e)).state, HELD);
+  assert.equal(port.calls.filter((c) => c[0] !== 'createHeld').length, 0,
+    'a stake moved in a round that had nobody to pay');
 });

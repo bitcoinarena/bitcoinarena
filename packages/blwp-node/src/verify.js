@@ -188,7 +188,14 @@ export class Verifier {
     const signed = signResult(built.result, this.round.identity.secret);
     const bytes = joinSignedResult(built.encoded, signed.signature);
     this.round.putResult(roundIdBytes, entryId, this.round.pubkey, signed.resultId, bytes);
-    return { entryId, stored: true, resultId: signed.resultId, outcome: built.result.outcome };
+    // THE SCORE AND THE PLAYER TRAVEL WITH THE OUTCOME. Both are already in
+    // the object this node signed, and 23.2's table needs all three: the word
+    // says which act, the score says whether the player placed, and the pool
+    // is ordered by key. A caller that had to go and decode the signed result
+    // again to learn them would be reading back what it just wrote.
+    return { entryId, stored: true, resultId: signed.resultId,
+      outcome: built.result.outcome, score: built.result.score,
+      playerPubkey: entry.playerPubkey, stakeMsat: entry.stakeMsat };
   }
 
   /**
@@ -201,10 +208,18 @@ export class Verifier {
    * cannot tell "not fetched yet" from "not fetched".
    */
   settleRound(roundIdBytes) {
+    // WHAT IT RESOLVES WITH IS BOTH HALVES. The replays carry the core's own
+    // outcome word for every entry and the gathers carry whether the committee
+    // agreed on it - and a caller deciding what happens to a stake needs one
+    // of each. Nothing here moves money: this is section 13, and the money
+    // word is `Custody.settleHeldInvoices`.
     this.settling = Promise.all(this.onRoundClosed(roundIdBytes))
-      .then((done) => Promise.all(done
-        .filter((d) => d && d.stored)
-        .map((d) => this.gather(roundIdBytes, d.entryId))));
+      .then(async (replayed) => ({
+        replayed,
+        gathered: await Promise.all(replayed
+          .filter((d) => d && d.stored)
+          .map((d) => this.gather(roundIdBytes, d.entryId))),
+      }));
     return this.settling;
   }
 
@@ -254,7 +269,9 @@ export class Verifier {
     const seen = verifiedFinal(held.map((r) => r.bytes), {
       contract, seats: this.round.seats(roundIdBytes),
     });
-    return { ok: true, fetched, kept, refused, held: held.length, ...seen };
+    // The entry is in the answer because a caller with a round's worth of
+    // them cannot otherwise say which run each one is about.
+    return { ok: true, entryId: entryIdBytes, fetched, kept, refused, held: held.length, ...seen };
   }
 
   /** One record from a peer, believed only as far as it can be checked. */

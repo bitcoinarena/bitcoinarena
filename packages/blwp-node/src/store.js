@@ -226,7 +226,12 @@ export function openStore(path = ':memory:') {
       amount_msat  INTEGER NOT NULL,
       state        TEXT NOT NULL,
       why          TEXT NOT NULL,
-      updated_ms   INTEGER NOT NULL
+      updated_ms   INTEGER NOT NULL,
+      -- The payment request itself, because a player asks for their invoice
+      -- more than once: a page reloaded, a wallet reopened, a second device.
+      -- Making a second invoice for one stake would be a second claim on it,
+      -- so the one that exists is kept and handed back.
+      request      TEXT
     );
 
     CREATE TABLE IF NOT EXISTS identity (

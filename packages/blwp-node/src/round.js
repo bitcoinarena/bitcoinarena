@@ -1004,19 +1004,26 @@ export class Round {
    * The reason is kept beside it because a stake that moved and cannot say why
    * is the thing 23 exists to prevent.
    */
-  putHold({ entryId, roundId, paymentHash, amountMsat, state, why }) {
+  putHold({ entryId, roundId, paymentHash, amountMsat, state, why, request = null }) {
+    // THE REQUEST IS NOT OVERWRITTEN WITH NOTHING. Every later write is a
+    // state change - held, acting, settled - and none of them knows the
+    // invoice string, so a plain REPLACE would erase the one thing a player
+    // comes back for.
+    const had = this.db.prepare('SELECT request FROM holds WHERE entry_id = ?')
+      .get(Buffer.from(entryId));
     this.db.prepare(
       'INSERT OR REPLACE INTO holds (entry_id, round_id, payment_hash, amount_msat, '
-      + 'state, why, updated_ms) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      + 'state, why, updated_ms, request) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
       .run(Buffer.from(entryId), Buffer.from(roundId), Buffer.from(paymentHash),
-        String(amountMsat), state, why, this.now());
+        String(amountMsat), state, why, this.now(),
+        request || (had && had.request) || null);
     return state;
   }
 
   /** The hold for one entry, or nothing. */
   hold(entryIdBytes) {
     const row = this.db.prepare(
-      'SELECT round_id, payment_hash, amount_msat, state, why, updated_ms FROM holds '
+      'SELECT round_id, payment_hash, amount_msat, state, why, updated_ms, request FROM holds '
       + 'WHERE entry_id = ?').get(Buffer.from(entryIdBytes));
     if (!row) return null;
     return {
@@ -1026,6 +1033,7 @@ export class Round {
       state: row.state,
       why: row.why,
       updatedMs: row.updated_ms,
+      request: row.request,
     };
   }
 
@@ -1033,6 +1041,19 @@ export class Round {
   holdsOf(roundIdBytes) {
     return this.db.prepare('SELECT entry_id FROM holds WHERE round_id = ? ORDER BY entry_id')
       .all(Buffer.from(roundIdBytes))
+      .map((r) => ({ entryId: new Uint8Array(r.entry_id), ...this.hold(new Uint8Array(r.entry_id)) }));
+  }
+
+  /**
+   * EVERY HOLD IN ONE STATE, ACROSS EVERY ROUND.
+   *
+   * A daemon that has just started does not know which round it died in the
+   * middle of - that is what dying means - so the question it can actually ask
+   * is "what was I doing", not "what was I doing in round X".
+   */
+  holdsInState(state) {
+    return this.db.prepare('SELECT entry_id FROM holds WHERE state = ? ORDER BY entry_id')
+      .all(state)
       .map((r) => ({ entryId: new Uint8Array(r.entry_id), ...this.hold(new Uint8Array(r.entry_id)) }));
   }
 

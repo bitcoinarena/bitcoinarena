@@ -91,7 +91,8 @@ export class Custody {
 
     const entryId = entryIdOf(entry);
     const held = this.round.hold(entryId);
-    if (held) return { ok: true, state: held.state, why: 'this entry already has a hold', already: true };
+    if (held) return { ok: true, state: held.state, paymentHash: held.paymentHash,
+      invoice: held.request, why: 'this entry already has a hold', already: true };
 
     const invoice = await this.port.createHeld({
       paymentHash: entry.stakeCommitment,
@@ -113,7 +114,7 @@ export class Custody {
     this.round.putHold({
       entryId, roundId: entry.roundId,
       paymentHash: invoice.paymentHash, amountMsat: invoice.amountMsat,
-      state: HELD,
+      state: HELD, request: invoice.request,
       why: 'in flight, in nobody\'s balance, until a final result says otherwise',
     });
     return { ok: true, state: HELD, paymentHash: invoice.paymentHash, invoice: invoice.request };
@@ -123,6 +124,10 @@ export class Custody {
    * WHAT 23.2 SAYS TO DO WITH EVERY STAKE OF A ROUND THAT HAS CLOSED - and
    * whether this node may do it yet.
    *
+   * NOT `settleRound`. `Verifier.settleRound` is section 13's replay-and-gather
+   * and moves no money at all; a close that called one while reading like the
+   * other is a mistake nobody would see in a diff. This one says invoices.
+   *
    * `entries` carry the core's own outcome word and score. `holdSettlement` is
    * 23.2's table and decides the action; `holdAfter` says what state the hold
    * ends in. NOTHING IS SETTLED WITHOUT A FINAL RESULT: `finalFor` answers
@@ -130,11 +135,26 @@ export class Custody {
    * answer for is left HELD - which expires, which refunds the player. Not
    * acting is always safe; acting early is not.
    */
-  async settleRound({ roundId, entries, minScore = 0, finalFor = () => false }) {
+  async settleHeldInvoices({ roundId, entries, minScore = 0, finalFor = () => false }) {
     if (!this.reaches)
       return { ok: false, why: 'this node reaches no Lightning, so it settles nothing' };
 
-    const decided = holdSettlement({ roundId, entries, minScore });
+    // A ROUND NOBODY FINISHED HAS A POOL AND NOBODY TO HAND IT TO, and
+    // `payout.js` REFUSES rather than deciding that in the operator's favour.
+    // Measured through the daemon: every round a wrecked transcript can
+    // produce is one of these, so this is not a corner - it is the common
+    // case until somebody delivers.
+    //
+    // The refusal is not an error to log and step past. It means no stake may
+    // move, so none does: every hold stays HELD and expires back to its own
+    // player, which is 23.2's default and the only answer that keeps nothing
+    // for this node.
+    let decided;
+    try { decided = holdSettlement({ roundId, entries, minScore }); }
+    catch (err) {
+      return { ok: false, actions: [], moved: 0,
+        why: `no stake moves: ${err.message}. every hold stays in flight and expires to its player` };
+    }
     const done = [];
 
     for (const { entry, action, why } of decided.actions) {
@@ -222,14 +242,18 @@ export class Custody {
    * never landed and the next close will make it again; one already settled or
    * cancelled means it did, and it will not be made twice.
    */
-  async reconcile({ roundId }) {
+  async reconcile({ roundId = null } = {}) {
     if (!this.reaches)
       return { ok: false, why: 'this node reaches no Lightning, so it cannot ask what happened' };
     if (typeof this.port.look !== 'function')
       return { ok: false, why: 'this port cannot be asked what it did, so an interrupted act cannot be resolved' };
 
+    // NO ROUND NAMED MEANS EVERY ROUND. A node that has just started does not
+    // know which round it died in the middle of, which is the whole reason the
+    // question is asked on start.
+    const rows = roundId ? this.round.holdsOf(roundId) : this.round.holdsInState(ACTING);
     const asked = [];
-    for (const row of this.round.holdsOf(roundId)) {
+    for (const row of rows) {
       if (row.state !== ACTING) continue;
       const seen = await this.port.look({ paymentHash: row.paymentHash, entryId: row.entryId });
       const state = seen && seen.state;
