@@ -13,7 +13,7 @@
 // everything up to the renderer.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
@@ -465,7 +465,9 @@ test('the shipped bridge writes the driver\'s entry and pose in the twelve ints 
 
     const drawn = [];
     for (let batch = 0; batch < 8; batch++) {
-      for (let t = 0; t < 6; t++) driver.client.record([45875, 0, 0, 0, 0]);
+      // Throttle AND steer, so the heading word moves too: a bridge that drops
+      // the heading and a truck driving in a straight line look the same.
+      for (let t = 0; t < 6; t++) driver.client.record([45875, 22000, 0, 0, 0]);
       await driver.client.drain();
       await wait(120);
       // THE FRAME, as `Update` runs it: `Draw(PerFrame)` calls the bridge up
@@ -498,6 +500,28 @@ test('the shipped bridge writes the driver\'s entry and pose in the twelve ints 
     // AND IT IS A PLACE, not a word that survived the trip in the wrong units:
     // 45875 is full throttle, so a truck that drove for 48 ticks has moved,
     // and `GhostTruck.Show` divides these by 65536 to get metres.
+    // AND THE RENDERER'S OWN TEST DRAWS THESE, not numbers invented in C#.
+    // `DUMP_GHOSTS_DRIVE=<path>` writes exactly what the shipped bridge wrote,
+    // twelve ints a line, for the PlayMode test to put on screen.
+    if (process.env.DUMP_GHOSTS_DRIVE) {
+      const lines = [
+        '# What the SHIPPED BlwpNextGhost wrote, driving, over a real 2-of-2 round.',
+        '# Twelve ints a line - the entry id as eight words, then x, z, heading, tick.',
+        `# entry ${mine}`,
+        `# ${his.length} pictures, ticks ${his[0].tick}..${his[his.length - 1].tick}`,
+      ];
+      // THE ENTRY ID AS C# READS IT: eight big-endian words, the same eight
+      // `FromBridge` reassembles into a hex string. Written once - it is the
+      // same driver on every line.
+      const words = [];
+      for (let i = 0; i < 8; i++) {
+        const b = i * 4, e = driver.eid;
+        words.push(((e[b] << 24) | (e[b + 1] << 16) | (e[b + 2] << 8) | e[b + 3]) | 0);
+      }
+      for (const d of his) lines.push([...words, d.x, d.z, d.heading, d.tick].join(' '));
+      writeFileSync(process.env.DUMP_GHOSTS_DRIVE, lines.join('\n') + '\n');
+    }
+
     const far = Math.max(...his.map((d) => Math.abs(d.x / 65536) + Math.abs(d.z / 65536)));
     console.log(`  the farthest decoded pose is ${far.toFixed(1)} m from the origin`);
     assert.ok(far > 0.5, `the driver was decoded standing at ${far} m from the origin`);
