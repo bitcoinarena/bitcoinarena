@@ -248,7 +248,16 @@ export function openStore(path = ':memory:') {
       why        TEXT NOT NULL,
       txid       BLOB,
       raw        BLOB,
-      updated_ms INTEGER NOT NULL
+      updated_ms INTEGER NOT NULL,
+      -- WHAT THE ROUND STILL OWES BECAUSE IT IS TOO SMALL TO SEND.
+      --
+      -- A payout row under the relay floor is not an output and is not a loss:
+      -- the sats stay in the pool and the debt is written here, so a round is
+      -- never quietly finished while somebody is short. Round-scoped on
+      -- purpose - a balance that accumulates ACROSS rounds is a policy this
+      -- schema does not invent.
+      owed_sats  INTEGER NOT NULL DEFAULT 0,
+      owed_count INTEGER NOT NULL DEFAULT 0
     );
 
     -- The seats' signatures over that table id. Keyed by signer, so one seat

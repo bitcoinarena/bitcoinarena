@@ -26,12 +26,18 @@ import { FIELD } from './shares.js';
 export const P2TR_BYTES = 34;
 
 /**
- * THE RELAY FLOOR, MEASURED RATHER THAN LOOKED UP.
+ * THE RELAY FLOOR, MEASURED RATHER THAN DERIVED.
  *
- * A default bitcoind refuses a P2TR output below this: 100 and 200 sats came
- * back "Transaction amount too small" and 330 was accepted. It is policy and
- * not consensus, which is exactly why it is named here as a number a caller
- * can pass rather than a constant this file believes in.
+ * A default bitcoind refuses a P2TR output below this and takes it at this:
+ * 329 came back "Transaction amount too small" and 330 was accepted, on a
+ * node whose `minrelaytxfee` is 0.00000100 BTC/kvB. An arithmetic derivation
+ * from the dust-relay formula gave 796 and was WRONG - the node's own boundary
+ * is the number, which is why this is a default a caller overrides with what
+ * their chain said rather than a constant this file believes in.
+ *
+ * It is policy, not consensus: a miner may include a smaller output and a
+ * different node may relay one. That is exactly why a row below it is not
+ * discarded here - see `payoutOutputs`.
  */
 export const DUST_SATS = 330n;
 
@@ -65,15 +71,27 @@ export function winnings({ table, stakes }) {
 }
 
 /**
- * THE OUTPUTS OF ONE PAYOUT, or a refusal that says which player cannot be
- * paid and why.
+ * THE OUTPUTS OF ONE PAYOUT, AND THE ROWS THAT COULD NOT BE ONE.
  *
- * A ROW BELOW THE RELAY FLOOR IS A REFUSAL AND NOT A ROUNDING. At the fixture
- * stake of 100000 msat - 100 sats - a whole round's pool is 200 or 300 sats
- * and no output clears 330, so a per-round on-chain payout is not something
- * this code declines to do, it is something a Bitcoin node will not relay.
- * Silently dropping such a row would keep the money in the pool, which is the
- * operator profiting from a limit the player had no part in.
+ * A ROW BELOW THE RELAY FLOOR IS NOT AN OUTPUT AND NOT A LOSS. It used to
+ * refuse the whole payout, which was right about the row and wrong about the
+ * round: measured, one player owed 100 sats stopped a player owed 5000 from
+ * being paid at all. A single small winner should not hold everybody else's
+ * money in the pool.
+ *
+ * So the floor is PER ROW. Rows at or above it are paid; rows below it are
+ * left OWED, named and returned, and the caller writes that debt down. Three
+ * things are deliberately not done with those sats:
+ *
+ *   not bumped to the floor   that would pay a player out of other players'
+ *                             winnings, which the table did not say
+ *   not folded into the fee   the miner is not who the round owes
+ *   not dropped               dropping is the operator keeping money a player
+ *                             had no part in losing
+ *
+ * They stay in the pool with the debt recorded, and the round is not finished
+ * while they are there. Whether the answer is a balance that accumulates
+ * across rounds or a Lightning payout is a policy this file does not invent.
  */
 export function payoutOutputs({ rows, poolSats, dustSats = DUST_SATS, feeSats }) {
   if (!Array.isArray(rows) || !rows.length)
@@ -82,18 +100,28 @@ export function payoutOutputs({ rows, poolSats, dustSats = DUST_SATS, feeSats })
     return { ok: false, why: 'a payout spends a pool output, and that is not one' };
 
   const outputs = [];
+  const owed = [];
   let paid = 0n;
+  let owedSats = 0n;
   for (const row of rows) {
     const sats = row.msat / 1000n;
-    if (sats < dustSats)
-      return {
-        ok: false,
-        why: `${hex(row.pubkey).slice(0, 16)} is owed ${sats} sats and a node will not relay `
-          + `an output below ${dustSats}: this round cannot be paid on chain`,
-      };
+    if (sats < dustSats) {
+      owed.push({ pubkey: row.pubkey, msat: row.msat, sats });
+      owedSats += sats;
+      continue;
+    }
     outputs.push({ value: sats, script: payToKey(row.pubkey) });
     paid += sats;
   }
+
+  // A ROUND WHERE NOBODY CLEARS THE FLOOR SPENDS NOTHING. There is no
+  // transaction to make, and the debt is the whole of what happened.
+  if (!outputs.length)
+    return {
+      ok: false, owed, owedSats,
+      why: `every one of the ${owed.length} player(s) this round owes is under ${dustSats} sats, `
+        + 'so there is no output to make: the sats stay in the pool and the debt stands',
+    };
 
   const left = poolSats - paid;
   if (left < 0n)
@@ -104,7 +132,10 @@ export function payoutOutputs({ rows, poolSats, dustSats = DUST_SATS, feeSats })
   // NO CHANGE OUTPUT, ON PURPOSE. Whatever the flooring and the pool's own
   // rounding leave over goes to the miner, because the alternative is an
   // output an operator chooses the destination of.
-  return { ok: true, outputs, paidSats: paid, feeSats: left };
+  //
+  // THE OWED ROWS ARE PART OF THE ANSWER, not a footnote: a caller that
+  // ignored them would mark a round paid while somebody is still owed.
+  return { ok: true, outputs, paidSats: paid, feeSats: left, owed, owedSats };
 }
 
 const hex = (b) => [...b].map((x) => x.toString(16).padStart(2, '0')).join('');

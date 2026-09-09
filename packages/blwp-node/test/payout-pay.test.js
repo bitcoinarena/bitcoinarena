@@ -15,7 +15,7 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 
 import { openStore } from '../src/store.js';
 import { Round } from '../src/round.js';
-import { Payouts, PAYOUT_QUEUED, PAID, NOTHING_OWED } from '../src/payout.js';
+import { Payouts, PAYOUT_QUEUED, PAID, PAID_IN_PART, NOTHING_OWED } from '../src/payout.js';
 import { tableFor, signPayoutTable, verifiedTable, SIGNED_TABLE_BYTES } from '../src/payout-table.js';
 import { winnings, payoutOutputs, payToKey, DUST_SATS } from '../../protocol/src/payout-spend.js';
 import { trustedDealerSplit } from '../../protocol/src/frost.js';
@@ -168,10 +168,11 @@ test('a below-score winner and a VOID entry draw nothing from the pool', () => {
       'somebody who never qualified is being paid from the pool');
 });
 
-test('a round at the fixture stake cannot be paid on chain, and says so by name', () => {
-  // MEASURED, not assumed: a default bitcoind refuses a P2TR output below 330
-  // sats. At 100000 msat a whole round's pool is 100 or 200 sats, so this is
-  // not a corner - it is every round the daily could run today.
+test('a round at the fixture stake pays nobody, and the debt is named rather than dropped', () => {
+  // MEASURED, not assumed: a default bitcoind refuses a P2TR output at 329
+  // sats and takes it at 330. At 100000 msat a whole round's pool is 100 or
+  // 200 sats, so this is not a corner - it is every round the daily could run
+  // today.
   const stake = 100000n;
   const winner = player(1); const loser = player(2);
   const entries = entriesOf(stake, [winner, DELIVERED, 9], [loser, FORFEIT, 0]);
@@ -180,12 +181,38 @@ test('a round at the fixture stake cannot be paid on chain, and says so by name'
 
   const out = payoutOutputs({ rows: owed.rows, poolSats: 100n });
   assert.equal(out.ok, false);
-  assert.match(out.why, /is owed 100 sats and a node will not relay an output below 330/);
-  assert.match(out.why, /this round cannot be paid on chain/);
+  assert.match(out.why, /every one of the 1 player\(s\) this round owes is under 330 sats/);
+  assert.match(out.why, /the sats stay in the pool and the debt stands/);
 
-  // DROPPING THE ROW WOULD BE THE OPERATOR KEEPING IT. The refusal is the
-  // point: the money stays in the pool and everybody can see why.
+  // THE DEBT IS RETURNED, NOT LOST. Dropping the row would be the operator
+  // keeping money the player had no part in losing.
+  assert.equal(out.owed.length, 1);
+  assert.equal(out.owedSats, 100n);
+  assert.equal(toHex(out.owed[0].pubkey), toHex(winner.pubkey));
   assert.equal(DUST_SATS, 330n);
+});
+
+test('one player under the floor no longer blocks the players over it', () => {
+  // THE FAULT THIS LETTER IS ABOUT. Before, a single 100-sat winner refused
+  // the whole payout, so a player owed thousands got nothing either.
+  const rows = [
+    { pubkey: player(1).pubkey, msat: 5000n * 1000n },
+    { pubkey: player(2).pubkey, msat: 100n * 1000n },
+    { pubkey: player(3).pubkey, msat: 700n * 1000n },
+  ];
+  const out = payoutOutputs({ rows, poolSats: 6000n });
+  assert.equal(out.ok, true, out.why);
+  assert.equal(out.outputs.length, 2, 'the two payable winners were not both paid');
+  assert.equal(out.paidSats, 5700n);
+  assert.equal(out.owed.length, 1);
+  assert.equal(out.owedSats, 100n);
+  assert.equal(toHex(out.owed[0].pubkey), toHex(rows[1].pubkey));
+
+  // AND THE SATS ARE NOT BUMPED, NOT DONATED TO THE FEE, NOT DROPPED: what is
+  // left over is only the pool's own rounding, and the debt stands beside it.
+  assert.equal(out.paidSats + out.feeSats, 6000n);
+  for (const o of out.outputs)
+    assert.notEqual(o.value, 330n, 'a sub-dust row was bumped to the floor');
 });
 
 test('above the floor the outputs pay every winner and nobody keeps the change', () => {
@@ -524,4 +551,130 @@ test('a node signing at another floor never reaches five', () => {
   assert.equal(seen.ok, false);
   assert.match(seen.why, /1 of 5 seats signed this table/);
   assert.equal(round.payout(rid), null);
+});
+
+test('a round that still owes somebody is PAID_IN_PART, never PAID', async () => {
+  // The whole point of writing the debt down: a round is not finished while
+  // sats a player earned are sitting in the pool because they were too small
+  // to send. Calling it PAID would be the operator deciding a small debt does
+  // not exist.
+  // FIVE QUALIFIERS PAY TWO RANKS (`payingRanks` is ceil(q/4)), which is the
+  // smallest round where one winner can clear the floor and another cannot.
+  const { round, rid, contract } = node(1000000n);
+  const winners = [1, 2, 3, 4, 5].map(player);
+  const losers = [6, 7].map(player);
+  const entries = [
+    ...winners.map((p, i) => ({ entryId: b32(i + 1), pubkey: p.pubkey,
+      outcome: DELIVERED, score: 90 - i * 10, stakeMsat: 1000000n })),
+    ...losers.map((p, i) => ({ entryId: b32(i + 6), pubkey: p.pubkey,
+      outcome: FORFEIT, score: 0, stakeMsat: 1000000n })),
+  ];
+  const dealt = poolFor();
+  const chain = fakeChain();
+  const payouts = new Payouts(round, { curve, random: rand, chain, pool: dealt });
+
+  const built = tableFor({ roundId: rid, entries, minScore: 1 });
+  for (let i = 1; i < 5; i++)
+    round.putPayoutSignature(rid, seatKeys[i],
+      signPayoutTable({ tableId: built.tableId, secret: seatSecrets[i], pubkey: seatKeys[i] }));
+  const queued = payouts.queue({ roundId: rid, entries, minScore: 1, contract });
+  assert.equal(queued.state, PAYOUT_QUEUED);
+
+  assert.equal(queued.rows.length, 2, 'five qualifiers should place two');
+  // A floor between the two, so the bigger winner is paid and the smaller is
+  // owed - which is exactly the case that used to refuse the whole round.
+  const owedSorted = [...queued.rows].sort((a, b) => (a.msat < b.msat ? -1 : 1));
+  const floor = owedSorted[1].msat / 1000n;
+  const utxo = { txid: rand(32), vout: 0, value: 2000n };
+  const paid = await payouts.pay({
+    roundId: rid, rows: queued.rows, utxo, signers: dealt.shares.slice(0, 5), dustSats: floor,
+  });
+
+  assert.equal(paid.ok, true, paid.why);
+  assert.equal(paid.state, PAID_IN_PART, 'a round that still owes somebody was called PAID');
+  assert.ok(paid.owedSats > 0n);
+  const row = round.payout(rid);
+  assert.equal(row.state, PAID_IN_PART);
+  assert.equal(row.owedSats, paid.owedSats, 'the debt is not on the round');
+  assert.equal(row.owedCount, paid.owed.length);
+  assert.match(row.why, /still owed .* sats, under the relay floor/);
+});
+
+test('a round where nobody clears the floor sends nothing and records the debt', async () => {
+  const { round, rid, contract } = node(1000000n);
+  const winner = player(1); const loser = player(2);
+  const entries = entriesOf(1000000n, [winner, DELIVERED, 9], [loser, FORFEIT, 0]);
+  const dealt = poolFor();
+  const chain = fakeChain();
+  const payouts = new Payouts(round, { curve, random: rand, chain, pool: dealt });
+
+  const built = tableFor({ roundId: rid, entries, minScore: 1 });
+  for (let i = 1; i < 5; i++)
+    round.putPayoutSignature(rid, seatKeys[i],
+      signPayoutTable({ tableId: built.tableId, secret: seatSecrets[i], pubkey: seatKeys[i] }));
+  const queued = payouts.queue({ roundId: rid, entries, minScore: 1, contract });
+
+  const utxo = { txid: rand(32), vout: 0, value: 2000n };
+  const none = await payouts.pay({
+    roundId: rid, rows: queued.rows, utxo, signers: dealt.shares.slice(0, 5),
+    dustSats: 5000n,                                   // above what anybody is owed
+  });
+  assert.equal(none.ok, false);
+  assert.match(none.why, /there is no output to make/);
+  assert.equal(none.owed.length, 1);
+  assert.equal(chain.sent.size, 0, 'a transaction was broadcast with no payable output');
+
+  const row = round.payout(rid);
+  assert.equal(row.state, PAYOUT_QUEUED, 'a round that paid nobody was moved off the queue');
+  assert.equal(row.owedSats, none.owedSats);
+  assert.equal(row.owedCount, 1);
+});
+
+test('five of seven is still required, and a node with no chain still refuses', async () => {
+  // The floor is a new rule beside the old ones, not instead of them.
+  const { round, rid, contract } = node(1000000n);
+  const winner = player(1); const loser = player(2);
+  const entries = entriesOf(1000000n, [winner, DELIVERED, 9], [loser, FORFEIT, 0]);
+  const dealt = poolFor();
+  const chain = fakeChain();
+  const payouts = new Payouts(round, { curve, random: rand, chain, pool: dealt });
+
+  const built = tableFor({ roundId: rid, entries, minScore: 1 });
+  for (let i = 1; i < 5; i++)
+    round.putPayoutSignature(rid, seatKeys[i],
+      signPayoutTable({ tableId: built.tableId, secret: seatSecrets[i], pubkey: seatKeys[i] }));
+  const queued = payouts.queue({ roundId: rid, entries, minScore: 1, contract });
+  const utxo = { txid: rand(32), vout: 0, value: 2000n };
+
+  const four = await payouts.pay({
+    roundId: rid, rows: queued.rows, utxo, signers: dealt.shares.slice(0, 4),
+  });
+  assert.equal(four.ok, false);
+  assert.match(four.why, /4 of 5 signers/);
+  assert.equal(chain.sent.size, 0);
+
+  const blind = new Payouts(round, { curve, random: rand });
+  const nowhere = await blind.pay({ roundId: rid, rows: queued.rows, utxo, signers: dealt.shares.slice(0, 5) });
+  assert.equal(nowhere.ok, false);
+  assert.match(nowhere.why, /reaches no chain/);
+});
+
+test('a debt survives the state changes that come after it', () => {
+  // `putPayout` is called again for every transition, and none of those
+  // callers knows the debt. A write that reset it would quietly clear what a
+  // round still owes on its way to being marked paid.
+  const { round, rid } = node(1000000n);
+  round.putPayout({ roundId: rid, tableId: b32(9), state: PAYOUT_QUEUED,
+    why: 'queued', owedSats: 329n, owedCount: 1 });
+  assert.equal(round.payout(rid).owedSats, 329n);
+
+  round.putPayout({ roundId: rid, tableId: b32(9), state: PAID_IN_PART, why: 'sent' });
+  const after = round.payout(rid);
+  assert.equal(after.owedSats, 329n, 'a later write cleared what the round still owes');
+  assert.equal(after.owedCount, 1);
+
+  // And it can be set to nothing on purpose, which is a different thing.
+  round.putPayout({ roundId: rid, tableId: b32(9), state: PAID, why: 'settled',
+    owedSats: 0n, owedCount: 0 });
+  assert.equal(round.payout(rid).owedSats, 0n);
 });

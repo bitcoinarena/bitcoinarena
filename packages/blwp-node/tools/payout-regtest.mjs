@@ -41,6 +41,7 @@ import { MIN_ENTRY_WINDOW_MS } from '../../protocol/src/constants.js';
 import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
 import { feldmanGroup, tweakPoint } from '../src/curve.js';
 import { assumeSeated } from '../test/seating.js';
+import { PAID_IN_PART } from '../src/payout.js';
 import { parseTransaction } from '../../protocol/src/tx.js';
 import { toHex, fromHex } from '../../protocol/src/hash.js';
 
@@ -163,6 +164,23 @@ async function main() {
     if (!queued.ok || queued.state !== PAYOUT_QUEUED) problems.push('the table was not queued');
     else say(`  ${queued.agreed} of 5 seats signed it, and it owes ${queued.owedMsat} msat`);
 
+    // ---- AND THE FLOOR, ON THIS NODE'S OWN NUMBER. ----
+    //
+    // Not a remembered 330: the boundary is asked of the chain that is about
+    // to relay the transaction, by offering it one sat less and then the floor.
+    const floorOf = () => {
+      const to = cli('getnewaddress', '', 'bech32m');
+      for (let sats = 300; sats <= 1000; sats++) {
+        try { cli('sendtoaddress', to, (sats / 1e8).toFixed(8)); return BigInt(sats); }
+        catch { /* still too small */ }
+      }
+      return null;
+    };
+    const floor = floorOf();
+    say(`\nthe relay floor this node enforces: ${floor} sats`);
+    if (floor === null) problems.push('the node never accepted an output up to 1000 sats');
+
+
     // ---- FOUR OF SEVEN, TWICE. ----
     //
     // The daemon refuses them before it builds anything, which is a courtesy.
@@ -212,6 +230,7 @@ async function main() {
     // ---- FIVE OF SEVEN. ----
     const paid = await payouts.pay({
       roundId: rid, rows: queued.rows, utxo, signers: dealt.shares.slice(0, 5),
+      dustSats: floor === null ? undefined : floor,
     });
     say('five of seven:');
     if (!paid.ok) { say(`  REJECTED: ${paid.why}`); problems.push(`five of seven were rejected: ${paid.why}`); }
@@ -234,8 +253,40 @@ async function main() {
       if (!paysWinner) problems.push('the payout pays a key that is not the winner\'s');
       if (Math.round(won.value * 1e8) !== Number(STAKE_MSAT / 1000n))
         problems.push(`the winner got ${Math.round(won.value * 1e8)} sats, not ${STAKE_MSAT / 1000n}`);
-      if (round.payout(rid).state !== PAID) problems.push('the round was not written down as PAID');
-      say(`  this node's row says ${round.payout(rid).state}, paid ${paid.paidSats} sats, ${paid.feeSats} to the miner`);
+      const row = round.payout(rid);
+      if (row.state !== PAID) problems.push(`the round was written down as ${row.state}, not PAID`);
+      if (row.owedSats !== 0n) problems.push(`the round records ${row.owedSats} sats still owed`);
+      say(`  this node's row says ${row.state}, paid ${paid.paidSats} sats, ${paid.feeSats} to the miner`);
+      say(`  and it owes ${row.owedSats} sats to ${row.owedCount} player(s)`);
+
+      // ---- AND A WINNER UNDER THAT FLOOR, ON THE SAME CHAIN. ----
+      //
+      // The pool is spent, so this is a second round on a second output: what
+      // is measured is that no transaction is made at all and the debt is
+      // written down rather than the sats being quietly kept.
+      const small = cli('sendtoaddress', poolAddress, '0.00002000');
+      mine(1);
+      const smallTx = parseTransaction(fromHex(cli('getrawtransaction', small)));
+      const smallVout = smallTx.outputs.findIndex((o) => toHex(o.script) === toHex(out.script));
+      const rid2 = round.open({ ...contract, configHash: b32(0x44) });
+      assumeSeated(round, rid2, [round.pubkey, ...seatKeys.slice(1)]);
+      const tiny = [{ pubkey: winner, msat: (floor - 1n) * 1000n }];
+      const built2 = tableFor({ roundId: rid2, entries, minScore: contract.minScore });
+      for (let i = 1; i < 5; i++)
+        round.putPayoutSignature(rid2, seatKeys[i],
+          signPayoutTable({ tableId: built2.tableId, secret: seatSecrets[i], pubkey: seatKeys[i] }));
+      round.putPayout({ roundId: rid2, tableId: built2.tableId, state: 'PAYOUT_QUEUED',
+        why: 'a round whose only winner is under the floor' });
+      const under = await payouts.pay({
+        roundId: rid2, rows: tiny, signers: dealt.shares.slice(0, 5), dustSats: floor,
+        utxo: { txid: fromHex(small).reverse(), vout: smallVout, value: smallTx.outputs[smallVout].value },
+      });
+      say(`\na winner owed ${floor - 1n} sats, one under the floor:`);
+      say(`  ${under.ok ? 'PAID - which it must not be' : 'not sent: ' + under.why.slice(0, 96)}`);
+      if (under.ok) problems.push('a sub-floor payout was broadcast');
+      const row2 = round.payout(rid2);
+      say(`  the round records ${row2.owedSats} sats owed to ${row2.owedCount} player(s), state ${row2.state}`);
+      if (row2.owedSats !== floor - 1n) problems.push('the debt was not written down');
     }
 
     say('');

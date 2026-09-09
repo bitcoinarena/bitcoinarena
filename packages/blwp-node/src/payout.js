@@ -35,6 +35,15 @@ import { toHex } from '../../protocol/src/hash.js';
 export const PAYOUT_QUEUED = 'PAYOUT_QUEUED';
 export const PAID = 'PAID';
 export const NOTHING_OWED = 'NOTHING_OWED';
+/**
+ * PAID WHAT COULD BE PAID, AND STILL SHORT.
+ *
+ * A round with a winner under the relay floor is not PAID: the outputs that
+ * could be made were made and the rest is written down as owed. Calling it
+ * PAID would be the operator deciding a debt does not exist because it is
+ * small, which is the one thing 23.2 refuses to let inaction do.
+ */
+export const PAID_IN_PART = 'PAID_IN_PART';
 
 /**
  * The round's own payout, from a FINAL result to sats on a chain.
@@ -151,7 +160,9 @@ export class Payouts {
   async pay({ roundId, rows, utxo, signers, dustSats = DUST_SATS }) {
     const row = this.round.payout(roundId);
     if (!row) return { ok: false, why: 'that round has no queued payout' };
-    if (row.state === PAID) return { ok: true, state: PAID, txid: row.txid, already: true };
+    if (row.state === PAID || row.state === PAID_IN_PART)
+      return { ok: true, state: row.state, txid: row.txid, already: true,
+        owedSats: row.owedSats, owedCount: row.owedCount };
     if (row.state !== PAYOUT_QUEUED)
       return { ok: false, why: `that payout is ${row.state}, so there is nothing to send` };
     if (!this.canSpend) return { ok: false, why: 'this node reaches no chain, so it spends nothing' };
@@ -165,7 +176,16 @@ export class Payouts {
     if (!out.ok) return { ok: false, why: out.why };
 
     const built = payoutOutputs({ rows, poolSats: utxo.value, dustSats });
-    if (!built.ok) return { ok: false, why: built.why };
+    if (!built.ok) {
+      // NOBODY CLEARS THE FLOOR. There is no transaction to make, and the
+      // debt is the whole of what happened - written down rather than lost.
+      if (built.owed && built.owed.length)
+        this.round.putPayout({
+          roundId, tableId: row.tableId, state: PAYOUT_QUEUED,
+          owedSats: built.owedSats, owedCount: built.owed.length, why: built.why,
+        });
+      return { ok: false, why: built.why, owed: built.owed, owedSats: built.owedSats };
+    }
 
     const inputs = [{ txid: utxo.txid, vout: utxo.vout, sequence: 0xfffffffd }];
     const prevouts = [{ value: utxo.value, script: out.script }];
@@ -201,12 +221,24 @@ export class Payouts {
     const sent = await this.chain.send(raw);
     if (!sent.ok) return { ok: false, why: sent.why, raw };
 
+    // A ROUND THAT STILL OWES SOMEBODY IS NOT PAID. The sats stayed in the
+    // pool because no node would relay an output that small; the debt is on
+    // the row so nobody has to remember it.
+    const short = built.owed.length > 0;
     this.round.putPayout({
-      roundId, tableId: row.tableId, state: PAID, raw,
+      roundId, tableId: row.tableId, state: short ? PAID_IN_PART : PAID, raw,
       txid: parseTransaction(raw).txid,
-      why: `paid ${built.paidSats} sats to ${built.outputs.length} player(s)`,
+      owedSats: built.owedSats, owedCount: built.owed.length,
+      why: short
+        ? `paid ${built.paidSats} sats to ${built.outputs.length} player(s); `
+          + `${built.owed.length} still owed ${built.owedSats} sats, under the relay floor`
+        : `paid ${built.paidSats} sats to ${built.outputs.length} player(s)`,
     });
-    return { ok: true, state: PAID, txid: sent.txid, paidSats: built.paidSats, feeSats: built.feeSats };
+    return {
+      ok: true, state: short ? PAID_IN_PART : PAID, txid: sent.txid,
+      paidSats: built.paidSats, feeSats: built.feeSats,
+      owed: built.owed, owedSats: built.owedSats,
+    };
   }
 
   /**

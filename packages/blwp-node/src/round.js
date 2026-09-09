@@ -1103,22 +1103,27 @@ export class Round {
    * One row per round, written before the spend leaves, the way a hold's
    * ACTING is. `txid` is null until a chain took it.
    */
-  putPayout({ roundId, tableId, state, why, txid = null, raw = null }) {
-    const had = this.db.prepare('SELECT txid, raw FROM payouts WHERE round_id = ?')
+  putPayout({ roundId, tableId, state, why, txid = null, raw = null,
+    owedSats = null, owedCount = null }) {
+    const had = this.db.prepare(
+      'SELECT txid, raw, owed_sats, owed_count FROM payouts WHERE round_id = ?')
       .get(Buffer.from(roundId));
     this.db.prepare(
-      'INSERT OR REPLACE INTO payouts (round_id, table_id, state, why, txid, raw, updated_ms) '
-      + 'VALUES (?, ?, ?, ?, ?, ?, ?)')
+      'INSERT OR REPLACE INTO payouts (round_id, table_id, state, why, txid, raw, updated_ms, '
+      + 'owed_sats, owed_count) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
       .run(Buffer.from(roundId), Buffer.from(tableId), state, why,
         txid ? Buffer.from(txid) : (had && had.txid) || null,
         raw ? Buffer.from(raw) : (had && had.raw) || null,
-        this.now());
+        this.now(),
+        owedSats === null ? (had ? had.owed_sats : 0) : Number(owedSats),
+        owedCount === null ? (had ? had.owed_count : 0) : Number(owedCount));
     return state;
   }
 
   payout(roundIdBytes) {
     const row = this.db.prepare(
-      'SELECT table_id, state, why, txid, raw, updated_ms FROM payouts WHERE round_id = ?')
+      'SELECT table_id, state, why, txid, raw, updated_ms, owed_sats, owed_count '
+      + 'FROM payouts WHERE round_id = ?')
       .get(Buffer.from(roundIdBytes));
     if (!row) return null;
     return {
@@ -1128,6 +1133,8 @@ export class Round {
       txid: row.txid ? new Uint8Array(row.txid) : null,
       raw: row.raw ? new Uint8Array(row.raw) : null,
       updatedMs: row.updated_ms,
+      owedSats: BigInt(row.owed_sats || 0),
+      owedCount: row.owed_count || 0,
     };
   }
 
