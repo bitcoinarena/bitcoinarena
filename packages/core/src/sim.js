@@ -37,6 +37,7 @@ import { vehicleStep } from './rules/vehicle.js';
 import { flatGround, groundFromSeed, gradeAlong, heightAtWorld, DEFAULT_COLS, DEFAULT_ROWS } from './rules/ground.js';
 import { noSolids, resolveSolids, resolveArmour, BOX_WORDS } from './rules/solids.js';
 import { mapSolids } from './rules/map.js';
+import { heat as heatForLoad } from './rules/cargo.js';
 import { stepUnit, separatePair, clearOfTruck, runOver, truckSpeed, threatAt, pickTarget, pickRifleTarget, riflePost, RELOAD_MIN, RELOAD_SPAN, DAMAGE_MIN, DAMAGE_SPAN, BACKOFF_RANGE, HIT_PER_MIL, ARMOUR_RANGE, RIFLE_RANGE, RIFLE_HIT_PER_MIL, RIFLE_RELOAD_TICKS, RIFLE_RELOAD_TICKS_SPAN, RIFLE_LOOK_TICKS, RIFLE_LOOK_TICKS_SPAN, RIFLE_HP, RIFLE_DAMAGE, COURIER_RANGE, COURIER_DAMAGE_MIN, COURIER_DAMAGE_SPAN, COURIER_RIFLE_MIN, COURIER_RIFLE_SPAN, courierReach, outranksTheFoe, shellForHeat } from './rules/army.js';
 import { accrue, earning, scoreOf, frontWeight } from './rules/score.js';
 import { outcome, RUN_LIVE, RUN_DELIVERED, RUN_WRECKED, RUN_MISSED } from './rules/gate.js';
@@ -1518,18 +1519,33 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
 export const frontAt = (st, x) => frontlineZ(st.tape, x | 0, HALF_X, HALF_Z);
 
 /**
- * HOW HARD THE WAR HUNTS THIS LOAD, handed over as round setup.
+ * WHAT WENT ON THE BED. AN INPUT, AND THE ONLY WAY HEAT IS EVER SET.
  *
- * The host knows what went on the bed; the core decides what that costs. It
- * is one word in the hashed state, so a transcript carries it and a verifier
- * replaying the round sees the same fire the player did - which it would not
- * if the widening lived in Unity.
+ * `setHeat` used to live here and it took the ANSWER: Unity worked the wanted
+ * level out in floats, in `CargoBay.Heat`, and pushed the number through
+ * `BlwpSetHeat`. Two faults in one door, and the second is letter 40.
  *
- * Clamped here rather than trusted: a host that sends 4.0 gets 1.0, and the
- * state stays inside the range every rule below reads it in.
+ * The first is that the rule was in two places. `rules/cargo.js` has carried
+ * `heat(feeSats, btcHundredths)` - the same rule in integers - since the port,
+ * with ZERO CALLERS, while the float copy decided the game. It has a caller
+ * now and the float copy is gone.
+ *
+ * The second is that a host write is in no batch, mark or transcript. The
+ * page's core carried 57229 and any replay of the same transcript carried 0,
+ * so every committee, and every GHOST a committee draws, walked a run the war
+ * was hunting less hard than it hunted the player. Measured on one drive: the
+ * two agree to tick 400 and are 7.217 m apart by tick 900, growing, because
+ * heat is what decides the range a tank notices the truck at.
+ *
+ * So the LOAD crosses, not the heat: two integers a host honestly knows, in a
+ * batch, at the tick they were declared - the same shape as a liquidation,
+ * which is the other thing `step`'s five words do not carry. A replay applies
+ * them at that tick and reaches the same heat by construction.
+ *
+ * Sats and hundredths of a BTC, both clamped by the rule itself.
  */
-export function setHeat(st, q16) {
-  st.i32[O_SCORE + S_HEAT] = clamp(q16 | 0, 0, ONE);
+export function submitLoad(st, feeSats, btcHundredths) {
+  st.i32[O_SCORE + S_HEAT] = heatForLoad(feeSats | 0, btcHundredths | 0);
   return true;
 }
 

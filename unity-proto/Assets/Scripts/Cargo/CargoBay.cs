@@ -63,7 +63,26 @@ public class CargoBay : MonoBehaviour
     public float heatAtSats = 20000f;
 
     /// <summary>
-    /// How badly the war wants this load, 0..1.
+    /// The BTC aboard in hundredths, which is what crosses to the core.
+    ///
+    /// A whole number on purpose: the core is integer arithmetic and the
+    /// boundary is where a rounding rule would differ between two machines.
+    /// </summary>
+    public int BtcHundredths => (int)System.Math.Round(BtcCarried * 100.0);
+
+    /// <summary>
+    /// How badly the war wants this load, 0..1 - THE YARD'S PREVIEW OF IT.
+    ///
+    /// This number no longer reaches the simulation. `LoadoutPanel` hands the
+    /// core the LOAD at roll-out - fee sats and hundredths of a BTC - and the
+    /// core's own `rules/cargo.js` decides what it costs; from the first tick
+    /// on, every gauge reads `BlwpCore.Heat`, which is the word the shooting
+    /// reads. What is left here is the gauge the player watches WHILE they
+    /// choose, before there is a round to ask.
+    ///
+    /// Its three constants are pinned against the core's by
+    /// `blwp-node/test/replay-heat.test.js`, so the preview and the rule
+    /// cannot drift apart without a red test.
     ///
     /// Driven by the FEES aboard - what the run pays out - not by the value
     /// being moved. Against value, a 25,000 sat load came out at 1% risk,

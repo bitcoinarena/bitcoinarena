@@ -88,7 +88,7 @@ public class LoadoutPanel : MonoBehaviour
             if (core != null) core.StartRound();
         }
 
-        // AND WHAT THE LOAD COSTS, after the round has started because
+        // AND WHAT WENT ON THE BED, after the round has started because
         // starting it clears the state this writes into.
         //
         // The war hunts a fat load harder: the reach a tank notices the truck
@@ -98,8 +98,13 @@ public class LoadoutPanel : MonoBehaviour
         // measured in the core, a full load is written off in 8.1 s against an
         // empty one's 85.3 s at fifty metres behind the line.
         //
-        // The number only; every consequence of it is the core's.
-        if (bay != null) Blwp.BlwpCore.SetHeat(bay.Heat);
+        // THE LOAD, NOT THE WANTED LEVEL. This used to send `bay.Heat` - a
+        // float this side worked out - and a host write is in no batch, no
+        // mark and no transcript: the page's core carried 57229 and every
+        // replay of the same transcript carried 0, so a committee and every
+        // ghost it drew hunted a run the player was not driving. Two integers
+        // cross now, the bridge publishes them, and the core decides the cost.
+        if (bay != null) Blwp.BlwpCore.SubmitLoad(bay.FeeCarried, bay.BtcHundredths);
     }
 
     [Tooltip("How full AUTO will load the bed. Deliberately short of full: " +

@@ -33,7 +33,7 @@ namespace Blwp
         [DllImport("__Internal")] private static extern int BlwpRestart(int seed);
         [DllImport("__Internal")] private static extern int BlwpTeleport(int x, int z, int heading);
         [DllImport("__Internal")] private static extern int BlwpTakeImpact();
-        [DllImport("__Internal")] private static extern int BlwpSetHeat(int q);
+        [DllImport("__Internal")] private static extern int BlwpSubmitLoad(int feeSats, int btcHundredths);
         public const bool Compiled = true;
 #else
         private static int BlwpInit(int seed) => 0;
@@ -49,7 +49,7 @@ namespace Blwp
         private static int BlwpRestart(int seed) => 0;
         private static int BlwpTeleport(int x, int z, int h) => 0;
         private static int BlwpTakeImpact() => 0;
-        private static int BlwpSetHeat(int q) => 0;
+        private static int BlwpSubmitLoad(int f, int b) => 0;
         public const bool Compiled = false;
 #endif
 
@@ -206,30 +206,42 @@ namespace Blwp
         public static float TakeImpact() => Available ? BlwpTakeImpact() / (float)ONE : 0f;
 
         /// <summary>
-        /// HOW HARD THE WAR HUNTS THIS LOAD, handed to the core at roll-out.
+        /// WHAT WENT ON THE BED, handed to the core at roll-out.
         ///
-        /// The number is chosen in the yard - it is what the player put on the
-        /// bed - so it is an INPUT, like the throttle. What it costs is not:
-        /// the reach a tank notices the truck at, whether the truck outranks
-        /// the tank in front of it, and what a shell does are all decided in
-        /// the core, and the word lives in the hashed state so a transcript
-        /// carries the fire the player actually took.
+        /// This was `SetHeat(float)` and it sent the ANSWER: `CargoBay.Heat`
+        /// worked the wanted level out in floats on this side and wrote it in.
+        /// Two faults in one call. The rule was in two places - the core has
+        /// carried the same rule in integers since the port, with no caller -
+        /// and a host write is in no batch, no mark and no transcript, so the
+        /// page's core carried 57229 while every replay of the same transcript
+        /// carried 0.
         ///
-        /// The retired C# had the same field on its own army, documented and
-        /// never assigned by anything that shipped.
+        /// The LOAD crosses now: the sats aboard and hundredths of a BTC, two
+        /// integers this side honestly knows. The core decides what they cost
+        /// and the bridge publishes them, so a committee replaying the run -
+        /// and every ghost drawn off one - is hunted exactly as the player was.
         /// </summary>
-        public static bool SetHeat(float heat01) =>
-            Available && BlwpSetHeat(Mathf.RoundToInt(Mathf.Clamp01(heat01) * ONE)) == 1;
+        public static bool SubmitLoad(long feeSats, int btcHundredths)
+        {
+            if (!Available) return false;
+            // Clamped in whole integers, not through a float: a bed cannot
+            // carry a negative fee, and int.MaxValue does not survive a round
+            // trip through `float`. The core caps it at 20,000 sats anyway -
+            // this only keeps the word from wrapping on the way there.
+            long fee = feeSats < 0L ? 0L
+                     : (feeSats > int.MaxValue ? int.MaxValue : feeSats);
+            return BlwpSubmitLoad((int)fee, btcHundredths < 0 ? 0 : btcHundredths) == 1;
+        }
 
         /// <summary>
         /// How hard the war is hunting this load, 0..1, READ BACK from the
         /// core rather than remembered on this side.
         ///
-        /// The stars are drawn from this. Unity chooses the number in the yard
-        /// and hands it over at roll-out, but from then on the picture reads
-        /// the same word the shooting reads - otherwise the overlay is a
-        /// second opinion about the thing it is reporting, and the two drift
-        /// the first time one of the rules changes.
+        /// The stars are drawn from this. Unity hands over the LOAD at roll-out
+        /// and never the wanted level, so the picture reads the same word the
+        /// shooting reads - otherwise the overlay is a second opinion about the
+        /// thing it is reporting, and the two drift the first time one of the
+        /// rules changes.
         /// </summary>
         public static float Heat => Metres(_state[Layout.O_SCORE + Layout.S_HEAT]);
 

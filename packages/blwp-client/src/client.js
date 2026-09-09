@@ -247,6 +247,7 @@ export class Client {
     this.resynced = false;
     this.recovering = null;
     this.nextTick = 0;            // the tick the node is owed next
+    this.loads = [];              // [tick, feeSats, btcHundredths], not yet published
     this.nodes = [];              // the committee, off the round's own contract
     this.gameVerifySlots = 7;
     this.hold = [];               // ticks waiting to go out
@@ -658,13 +659,14 @@ export class Client {
    * `ticks` is five Q16.16 words each, exactly what the core's `step` takes.
    * Nothing is computed from them here; they are carried.
    */
-  async batch(ticks, { roundId, entryId, liquidations = [] }) {
+  async batch(ticks, { roundId, entryId, liquidations = [], loads = [] }) {
     const b = {
       roundId, entryId,
       previousHash: this.batchHead,
       firstTick: this.nextTick,
       ticks,
       liquidations,
+      loads,
     };
     const answer = await this.send(encodeInputBatch(b));
 
@@ -839,6 +841,7 @@ export class Client {
     this.chunk = Math.min(600, this.maxHold || 600);
     this.hold = [];
     this.held = 0;
+    this.loads = [];
     this.dropped = 0;
     this.batchesSent = 0;
     this.marksSent = 0;
@@ -890,6 +893,27 @@ export class Client {
    * hold longer than the round is inputs for a round that has ended - and a
    * count is what makes a stall visible instead of silent.
    */
+  /**
+   * WHAT WENT ON THE BED, AT THE TICK IT WAS DECLARED.
+   *
+   * Heat used to be a host write straight into the core - `BlwpSetHeat` - in
+   * no batch, no mark and no transcript, so a committee replaying the run and
+   * every ghost it drew walked a world the war was hunting less hard than it
+   * hunted the player. The LOAD travels instead of the answer: two integers a
+   * host honestly knows, and the core's own rule decides what they cost.
+   *
+   * Held against the tick the run has reached, and published with the batch
+   * that covers that tick - a load that went out ahead of its own ticks would
+   * name a tick the node has not been given yet.
+   *
+   * Refused once the run has ended, like every other outbound thing here.
+   */
+  submitLoad(feeSats, btcHundredths) {
+    if (this.ended || !this.where) return false;
+    this.loads.push([this.offered, feeSats | 0, btcHundredths | 0]);
+    return true;
+  }
+
   record(words) {
     if (this.ended) return false;
 
@@ -976,7 +1000,16 @@ export class Client {
     this.hold = this.hold.slice(words.length);
     this.held = this.hold.length;
 
-    this.publishing = this.batch(words, this.where).then((r) => {
+    // THE LOADS THIS BATCH COVERS, and no others. A load names an absolute
+    // tick and the node checks it against the ticks the batch carries, so one
+    // declared while these words were still held goes out with them and one
+    // declared after waits for the batch that reaches it.
+    const through = this.nextTick + words.length;
+    const loads = this.loads.filter(([at]) => at < through);
+    const later = this.loads.filter(([at]) => at >= through);
+    this.loads = later;
+
+    this.publishing = this.batch(words, { ...this.where, loads }).then((r) => {
       if (r.accepted) {
         this.batchesSent++;
         // PUBLISHING AGAIN IS NEWS TOO. A run that recovered must stop
@@ -987,8 +1020,11 @@ export class Client {
       } else {
         // A refused batch is not a published one, and dropping it would leave
         // a hole the node will not accept across - the run would end at the
-        // gap.
+        // gap. The loads go back with the ticks they were sliced out beside:
+        // a load left behind here would be a run whose replay is hunted at
+        // zero from the tick the refusal happened at.
         this.hold = words.concat(this.hold); this.held = this.hold.length;
+        this.loads = loads.concat(this.loads);
         this.refusals++;
         this.refusedWhy = typeof r.answer === 'string' ? r.answer : 'the node did not say';
         this.refusedAt = this.nextTick;
@@ -999,6 +1035,7 @@ export class Client {
     }).catch((e) => {
       this.hold = words.concat(this.hold);
       this.held = this.hold.length;
+      this.loads = loads.concat(this.loads);
       this.publishing = null;
       throw e;
     });

@@ -1975,6 +1975,54 @@ function mapSolids(ground, halfX, halfZ) {
 }
 
 
+// ---- rules/cargo.js
+// The load, ported from CargoBay.
+//
+// The sats aboard are the transaction's fee and go to the miner - they are not
+// the player's pay, and the UI was wrong about that for a while. What a load
+// buys the player is the cargo factor in the score, and the heat it attracts.
+
+
+const BED_LENGTH = 196608;      // 3.0 m
+const COLUMNS = 2;
+const BED_ROOM = Math.imul(BED_LENGTH, COLUMNS) >> 16;   // in Q16.16 units
+
+const HEAT_AT_SATS = 20000;
+const BTC_AT_FULL = 2500;       // 25.00 BTC, in hundredths - where the whale term caps
+
+/** Room one transaction takes, by vsize. Four sizes, as in the C#. */
+function roomFor(vsize) {
+  if (vsize < 250) return 36044;      // 0.55
+  if (vsize < 600) return 51118;      // 0.78
+  if (vsize < 1500) return 68812;     // 1.05
+  return 88474;                        // 1.35
+}
+
+/** Bed fill, 0..ONE. */
+const fill = (used) => clamp(div(used, Math.imul(BED_LENGTH, COLUMNS)), 0, ONE);
+
+/**
+ * Heat: how hard the load is hunted.
+ *
+ * Fees drive it, with a second term for the raw value moved, because a whale
+ * with a modest fee is still worth stopping.
+ */
+function heat(feeSats, btcHundredths) {
+  // CAPPED BEFORE THEY ARE SCALED, and that is not tidiness.
+  //
+  // `Math.imul(feeSats, ONE)` wraps at 32,768 sats. This rule had no caller
+  // for the whole of its life, so nothing ever found it: a 40,000-sat load -
+  // an ordinary one, twice what the rule calls full - scaled to -2,147,483,648
+  // and clamped to ZERO, and the fattest loads in the game would have been the
+  // ones the war ignored. Both terms are ratios that cap at one, so capping
+  // the numerator first changes no answer that was ever right.
+  const fee = clamp(feeSats | 0, 0, HEAT_AT_SATS);
+  const btc = clamp(btcHundredths | 0, 0, BTC_AT_FULL);
+  const byFee = div(Math.imul(fee, ONE), Math.imul(HEAT_AT_SATS, ONE));
+  const byValue = mulFast(div(Math.imul(btc, ONE), Math.imul(BTC_AT_FULL, ONE)), 29491);
+  return clamp(add(byFee, byValue), 0, ONE);
+}
+
 // ---- rules/army.js
 // The two armies, ported from Army.cs.
 //
@@ -3528,6 +3576,7 @@ const sortieWait = (rng) => mulFast(SORTIE_SECONDS, between(rng, JITTER_MIN, JIT
 
 
 
+
 // UNITS and ARMOUR_MASK live in state.js so the generated C# mirror carries
 // them; re-exported here because every tool and rule already reads them from
 // this module.
@@ -5000,18 +5049,33 @@ function step(st, throttle, steer, brake, handbrake, practice) {
 const frontAt = (st, x) => frontlineZ(st.tape, x | 0, HALF_X, HALF_Z);
 
 /**
- * HOW HARD THE WAR HUNTS THIS LOAD, handed over as round setup.
+ * WHAT WENT ON THE BED. AN INPUT, AND THE ONLY WAY HEAT IS EVER SET.
  *
- * The host knows what went on the bed; the core decides what that costs. It
- * is one word in the hashed state, so a transcript carries it and a verifier
- * replaying the round sees the same fire the player did - which it would not
- * if the widening lived in Unity.
+ * `setHeat` used to live here and it took the ANSWER: Unity worked the wanted
+ * level out in floats, in `CargoBay.Heat`, and pushed the number through
+ * `BlwpSetHeat`. Two faults in one door, and the second is letter 40.
  *
- * Clamped here rather than trusted: a host that sends 4.0 gets 1.0, and the
- * state stays inside the range every rule below reads it in.
+ * The first is that the rule was in two places. `rules/cargo.js` has carried
+ * `heat(feeSats, btcHundredths)` - the same rule in integers - since the port,
+ * with ZERO CALLERS, while the float copy decided the game. It has a caller
+ * now and the float copy is gone.
+ *
+ * The second is that a host write is in no batch, mark or transcript. The
+ * page's core carried 57229 and any replay of the same transcript carried 0,
+ * so every committee, and every GHOST a committee draws, walked a run the war
+ * was hunting less hard than it hunted the player. Measured on one drive: the
+ * two agree to tick 400 and are 7.217 m apart by tick 900, growing, because
+ * heat is what decides the range a tank notices the truck at.
+ *
+ * So the LOAD crosses, not the heat: two integers a host honestly knows, in a
+ * batch, at the tick they were declared - the same shape as a liquidation,
+ * which is the other thing `step`'s five words do not carry. A replay applies
+ * them at that tick and reaches the same heat by construction.
+ *
+ * Sats and hundredths of a BTC, both clamped by the rule itself.
  */
-function setHeat(st, q16) {
-  st.i32[O_SCORE + S_HEAT] = clamp(q16 | 0, 0, ONE);
+function submitLoad(st, feeSats, btcHundredths) {
+  st.i32[O_SCORE + S_HEAT] = heatForLoad(feeSats | 0, btcHundredths | 0);
   return true;
 }
 
@@ -5024,9 +5088,9 @@ const runScore = (st) =>
                 st.i32[O_SCORE + S_CARGO]);
 
 return { init: init, step: step, hash: hash, runScore: runScore,
-         setGround: setGround, groundAt: groundAt, setSolids: setSolids, teleport: teleport,
+         groundAt: groundAt, teleport: teleport,
          restart: restart, frontAt: frontAt, submitLiquidation: submitLiquidation,
-         setHeat: setHeat, heatOf: heatOf,
+         submitLoad: submitLoad, heatOf: heatOf,
          create: create, WORDS: WORDS };
 })();
 if (typeof module !== "undefined") module.exports = BLWP;

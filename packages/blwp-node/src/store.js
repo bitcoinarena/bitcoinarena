@@ -286,6 +286,23 @@ export function openStore(path = ':memory:') {
       PRIMARY KEY (round_id, entry_id, tick)
     );
 
+    -- WHAT WENT ON THE BED, and it is an input like the strikes above.
+    --
+    -- How hard the war hunts a truck is decided by its load, and until letter
+    -- 40 that number was written straight into the page's own core and stored
+    -- NOWHERE - so this node replayed every run at heat zero and drew every
+    -- ghost from it. Sparse for the same reason and keyed the same way: a
+    -- load is declared at roll-out and rarely again, and a repeat must not
+    -- become a second declaration.
+    CREATE TABLE IF NOT EXISTS loads (
+      round_id  BLOB NOT NULL,
+      entry_id  BLOB NOT NULL REFERENCES entries(entry_id),
+      tick      INTEGER NOT NULL,
+      fee_sats  INTEGER NOT NULL,
+      btc_hund  INTEGER NOT NULL,
+      PRIMARY KEY (round_id, entry_id, tick)
+    );
+
     -- WHAT THIS NODE REPLAYED AND SIGNED, section 13's PlayerResult.
     --
     -- A node that signs a result and keeps it nowhere has told nobody: five

@@ -22,9 +22,9 @@
 // that it runs in a worker and the transcript comes off the wire rather than
 // off disk." Same loop, same order, no second reading of the rules.
 import { isMainThread, parentPort, workerData, Worker } from 'node:worker_threads';
-import { init, step, submitLiquidation, runScore } from '../../core/src/sim.js';
+import { init, step, submitLiquidation, submitLoad, runScore } from '../../core/src/sim.js';
 import {
-  hash, O_SCORE, S_STATE, O_TRUCK, T_X, T_Z, T_HEADING,
+  hash, O_SCORE, S_STATE, S_HEAT, O_TRUCK, T_X, T_Z, T_HEADING,
 } from '../../core/src/state.js';
 import { RUN_LIVE, RUN_DELIVERED, BLOCK_TICKS } from '../../core/src/rules/gate.js';
 import { lastTickOfRun } from '../../protocol/src/contracts.js';
@@ -133,6 +133,19 @@ export function replay(transcript, entry, { seedWord, roundRandomness, marks = [
   // game - the strike would land a tick late, every tick, and only in the
   // replay.
   const due = new Map((transcript.liquidations || []).map(([at, size]) => [at, size]));
+
+  // AND THE LOAD, WHICH DECIDES HOW HARD THE WAR HUNTS THIS RUN.
+  //
+  // Before letter 40 there was nothing here at all: heat was written into the
+  // page's own core by `BlwpSetHeat` and stored nowhere, so every replay - and
+  // every ghost drawn off one - stepped a run at heat zero while the player
+  // drove at 57229. The two agree until the first tank is in reach and then
+  // part for good: 0.000 m at tick 400, 7.217 m by tick 900, growing.
+  //
+  // Before the tick, like a liquidation, and for the same reason: it is round
+  // setup for the tick it names, not a consequence of it. More than one at a
+  // tick cannot happen - the node keys them by tick - so a Map is the shape.
+  const loaded = new Map((transcript.loads || []).map(([at, fee, btc]) => [at, [fee, btc]]));
   const want = new Map(marks.map((m) => [m.tick, hex(m.stateHash)]));
   const wanted = new Set(pictures);
   const taken = new Map();
@@ -141,6 +154,12 @@ export function replay(transcript, entry, { seedWord, roundRandomness, marks = [
   let checked = 0;
   let divergedAt = null;
 
+  // A LOAD AT THE JOIN TICK NEEDS NO SPECIAL CASE, and a mark does. Roll-out
+  // declares the load before the first step, and the loop below applies a load
+  // BEFORE stepping the tick it names - so the join tick's load lands there.
+  // A mark names the state a tick REACHED, which is why one at the join tick
+  // is checked here and nowhere else.
+
   // A mark AT the join tick is the state before any input, which a player can
   // legitimately publish; the loop below only sees ticks it steps, so it is
   // checked here.
@@ -148,6 +167,7 @@ export function replay(transcript, entry, { seedWord, roundRandomness, marks = [
   if (atStart !== undefined) { checked++; if (hash(st) !== atStart) divergedAt = start; }
 
   for (const t of ticks) {
+    if (loaded.has(t.tick)) submitLoad(st, ...loaded.get(t.tick));
     if (due.has(t.tick)) submitLiquidation(st, due.get(t.tick));
     step(st, t.words[0], t.words[1], t.words[2], t.words[3], t.words[4]);
 
@@ -202,6 +222,8 @@ export function replay(transcript, entry, { seedWord, roundRandomness, marks = [
     score: runScore(st),
     ticks: ticks.length,
     liquidations: due.size,
+    loads: loaded.size,
+    heat: st.i32[O_SCORE + S_HEAT],
     stateHash: hash(st),
     checked,
     unchecked: marks.length - checked,
@@ -310,6 +332,13 @@ export class RunInProgress {
     // caller hands the whole run or one slice at a time.
     this.due = new Map();
     this.seen = new Set();
+    // AND THE LOAD, by the same rule and for the reason letter 40 exists: this
+    // is the path a LIVE ghost is drawn on, so a warm run that ignored the
+    // load would draw every other player's truck as though its bed were empty
+    // while its driver was being hunted for a full one - which is the wrong
+    // pose the letter was reopened on.
+    this.loadDue = new Map();
+    this.loadSeen = new Set();
     this.stepped = 0;
   }
 
@@ -370,10 +399,20 @@ export class RunInProgress {
     for (const [at, size] of transcript.liquidations || [])
       if (at > this.at && !this.seen.has(at)) { this.due.set(at, size); this.seen.add(at); }
 
+    // THE LOADS, ONCE EACH, the same way. A live watcher asks for the newest
+    // ticks and the node serves the loads WHOLE beside them, so the one
+    // declared at roll-out is in every slice - and this is what stops it being
+    // applied again on each.
+    for (const [at, fee, btc] of transcript.loads || [])
+      if (at > this.at && !this.loadSeen.has(at)) {
+        this.loadDue.set(at, [fee, btc]); this.loadSeen.add(at);
+      }
+
     for (let at = this.at + 1; at <= tick; at++) {
       const t = ticks[at - from];
       if (!Array.isArray(t.words) || t.words.length !== INPUT_WORDS)
         return { ok: false, why: `tick ${t.tick} does not carry five words` };
+      if (this.loadDue.has(at)) { submitLoad(this.st, ...this.loadDue.get(at)); this.loadDue.delete(at); }
       if (this.due.has(at)) { submitLiquidation(this.st, this.due.get(at)); this.due.delete(at); }
       step(this.st, t.words[0], t.words[1], t.words[2], t.words[3], t.words[4]);
       this.at = at;

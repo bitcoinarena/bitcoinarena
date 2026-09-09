@@ -1738,6 +1738,16 @@ function contractWarnings(c) {
 // played. They are sparse because they are rare: `[tick, size]`, the same
 // shape `test-vectors/*.json` uses.
 //
+// AND THE LOAD, which the five do not carry either. What went on the bed
+// decides how hard the war hunts the truck, and it used to be a HOST WRITE:
+// Unity worked the wanted level out in floats and pushed the answer through
+// `BlwpSetHeat`, which is in no batch, no mark and no transcript. The page's
+// core carried 57229 and every replay of the same transcript carried 0, so a
+// committee - and every ghost a committee draws - walked a run the war was
+// hunting less hard than it hunted the player. `[tick, feeSats,
+// btcHundredths]`, sparse like the liquidations, because a load is declared
+// at roll-out and rarely again; the core decides what it costs.
+//
 // AND THEY ARE CHAINED. `previous_hash` is the spec's own field (section 11):
 // each batch names the one before it, so a transcript is an ordered object
 // rather than a bag of rows that happen to sit in a table. Without it, "hand
@@ -1776,6 +1786,11 @@ function encodeInputBatch(b) {
   // them in a different order still encode the same bytes.
   const liq = [...(b.liquidations || [])].sort((x, y) => x[0] - y[0] || x[1] - y[1]);
   w.vec(liq, (l, ww) => { ww.u32(l[0]); ww.i32(l[1]); });
+
+  // `[tick, feeSats, btcHundredths]`, sorted the same way and for the same
+  // reason. Twelve bytes each and there is one of them in an ordinary run.
+  const loads = [...(b.loads || [])].sort((x, y) => x[0] - y[0] || x[1] - y[1] || x[2] - y[2]);
+  w.vec(loads, (l, ww) => { ww.u32(l[0]); ww.i32(l[1]); ww.i32(l[2]); });
   return w.finish();
 }
 
@@ -1797,6 +1812,7 @@ function decodeInputBatch(bytes) {
     return t;
   });
   b.liquidations = r.vec((rr) => [rr.u32(), rr.i32()]);
+  b.loads = r.vec((rr) => [rr.u32(), rr.i32(), rr.i32()]);
   if (r.at !== bytes.length) throw new Error('trailing bytes after the batch');
   return b;
 }
@@ -1811,19 +1827,24 @@ const batchId = (b) => taggedHash(TAG.inputBatch, encodeInputBatch(b));
  */
 const MAX_BATCH_TICKS = 0xffff;
 
-/** Header, then five signed words a tick and eight bytes a liquidation. */
+/**
+ * Header, then five signed words a tick, eight bytes a liquidation and twelve
+ * a load.
+ */
 const BATCH_HEADER_BYTES = 1 + 2 + 32 + 32 + 32 + 4;
 
 /**
  * The largest batch that can decode at all: header, the tick vector at its
- * ceiling, the liquidation vector at its ceiling. Measured against the
- * encoder rather than reasoned about - a test builds one and compares.
+ * ceiling, the liquidation vector at its ceiling, the load vector at its
+ * ceiling. Measured against the encoder rather than reasoned about - a test
+ * builds one and compares.
  *
  * This is what a transport can refuse without inspecting: anything longer is
  * not a short protocol message, it is not a protocol message.
  */
 const MAX_INPUT_BATCH_BYTES =
-  BATCH_HEADER_BYTES + 2 + MAX_BATCH_TICKS * 20 + 2 + MAX_BATCH_TICKS * 8;
+  BATCH_HEADER_BYTES + 2 + MAX_BATCH_TICKS * 20 + 2 + MAX_BATCH_TICKS * 8
+  + 2 + MAX_BATCH_TICKS * 12;
 
 /** The absolute tick numbers a batch covers, in order. */
 const batchTicks = (b) =>
@@ -2016,14 +2037,15 @@ function checkTranscript(t) {
 
 /**
  * The inputs a replay needs, flattened: one row of five words per tick in
- * tick order, and the liquidations gathered from every batch.
+ * tick order, and the liquidations and loads gathered from every batch.
  *
  * Not a convenience - it is the boundary. A verifier gets exactly what the
  * core's `step` and `submitLiquidation` take and nothing else, so there is no
  * second interpretation of a transcript anywhere.
  *
- * THE LIQUIDATION TICKS ARE REBASED to an index into `ticks`, and that is the
- * whole reason this function exists rather than a caller reading the batches.
+ * THE LIQUIDATION AND LOAD TICKS ARE REBASED to an index into `ticks`, and
+ * that is the whole reason this function exists rather than a caller reading
+ * the batches.
  * On the wire they are absolute, because absolute is what makes a repeat
  * harmless; a replay walks the array from zero. A transcript that begins at
  * tick 50 would otherwise put a strike at index 51 of a two-element array -
@@ -2034,16 +2056,20 @@ function checkTranscript(t) {
 function flatten(t) {
   const ticks = [];
   const liquidations = [];
+  const loads = [];
   for (const b of t.batches) {
     for (const row of b.ticks) ticks.push(row);
     for (const l of b.liquidations) liquidations.push(l);
+    for (const l of (b.loads || [])) loads.push(l);
   }
   const firstTick = t.batches.length ? t.batches[0].firstTick : 0;
   liquidations.sort((a, c) => a[0] - c[0] || a[1] - c[1]);
+  loads.sort((a, c) => a[0] - c[0] || a[1] - c[1] || a[2] - c[2]);
   return {
     firstTick,
     ticks,
     liquidations: liquidations.map(([at, size]) => [at - firstTick, size]),
+    loads: loads.map(([at, fee, btc]) => [at - firstTick, fee, btc]),
   };
 }
 
@@ -4609,6 +4635,7 @@ class Client {
     this.resynced = false;
     this.recovering = null;
     this.nextTick = 0;            // the tick the node is owed next
+    this.loads = [];              // [tick, feeSats, btcHundredths], not yet published
     this.nodes = [];              // the committee, off the round's own contract
     this.gameVerifySlots = 7;
     this.hold = [];               // ticks waiting to go out
@@ -5020,13 +5047,14 @@ class Client {
    * `ticks` is five Q16.16 words each, exactly what the core's `step` takes.
    * Nothing is computed from them here; they are carried.
    */
-  async batch(ticks, { roundId, entryId, liquidations = [] }) {
+  async batch(ticks, { roundId, entryId, liquidations = [], loads = [] }) {
     const b = {
       roundId, entryId,
       previousHash: this.batchHead,
       firstTick: this.nextTick,
       ticks,
       liquidations,
+      loads,
     };
     const answer = await this.send(encodeInputBatch(b));
 
@@ -5201,6 +5229,7 @@ class Client {
     this.chunk = Math.min(600, this.maxHold || 600);
     this.hold = [];
     this.held = 0;
+    this.loads = [];
     this.dropped = 0;
     this.batchesSent = 0;
     this.marksSent = 0;
@@ -5252,6 +5281,27 @@ class Client {
    * hold longer than the round is inputs for a round that has ended - and a
    * count is what makes a stall visible instead of silent.
    */
+  /**
+   * WHAT WENT ON THE BED, AT THE TICK IT WAS DECLARED.
+   *
+   * Heat used to be a host write straight into the core - `BlwpSetHeat` - in
+   * no batch, no mark and no transcript, so a committee replaying the run and
+   * every ghost it drew walked a world the war was hunting less hard than it
+   * hunted the player. The LOAD travels instead of the answer: two integers a
+   * host honestly knows, and the core's own rule decides what they cost.
+   *
+   * Held against the tick the run has reached, and published with the batch
+   * that covers that tick - a load that went out ahead of its own ticks would
+   * name a tick the node has not been given yet.
+   *
+   * Refused once the run has ended, like every other outbound thing here.
+   */
+  submitLoad(feeSats, btcHundredths) {
+    if (this.ended || !this.where) return false;
+    this.loads.push([this.offered, feeSats | 0, btcHundredths | 0]);
+    return true;
+  }
+
   record(words) {
     if (this.ended) return false;
 
@@ -5338,7 +5388,16 @@ class Client {
     this.hold = this.hold.slice(words.length);
     this.held = this.hold.length;
 
-    this.publishing = this.batch(words, this.where).then((r) => {
+    // THE LOADS THIS BATCH COVERS, and no others. A load names an absolute
+    // tick and the node checks it against the ticks the batch carries, so one
+    // declared while these words were still held goes out with them and one
+    // declared after waits for the batch that reaches it.
+    const through = this.nextTick + words.length;
+    const loads = this.loads.filter(([at]) => at < through);
+    const later = this.loads.filter(([at]) => at >= through);
+    this.loads = later;
+
+    this.publishing = this.batch(words, { ...this.where, loads }).then((r) => {
       if (r.accepted) {
         this.batchesSent++;
         // PUBLISHING AGAIN IS NEWS TOO. A run that recovered must stop
@@ -5349,8 +5408,11 @@ class Client {
       } else {
         // A refused batch is not a published one, and dropping it would leave
         // a hole the node will not accept across - the run would end at the
-        // gap.
+        // gap. The loads go back with the ticks they were sliced out beside:
+        // a load left behind here would be a run whose replay is hunted at
+        // zero from the tick the refusal happened at.
         this.hold = words.concat(this.hold); this.held = this.hold.length;
+        this.loads = loads.concat(this.loads);
         this.refusals++;
         this.refusedWhy = typeof r.answer === 'string' ? r.answer : 'the node did not say';
         this.refusedAt = this.nextTick;
@@ -5361,6 +5423,7 @@ class Client {
     }).catch((e) => {
       this.hold = words.concat(this.hold);
       this.held = this.hold.length;
+      this.loads = loads.concat(this.loads);
       this.publishing = null;
       throw e;
     });

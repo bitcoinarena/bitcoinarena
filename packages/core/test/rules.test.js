@@ -7,7 +7,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { init, step, restart, runScore, setGround, setSolids, groundAt, setHeat, heatOf, HALF_X } from '../src/sim.js';
+import { init, step, restart, runScore, setGround, setSolids, groundAt, submitLoad, heatOf, HALF_X } from '../src/sim.js';
 // Offsets are IMPORTED, never typed. They were typed in nine places in this
 // file, and when the truck block grew its thirteenth word every one of them
 // had to be found - which is the same drift that let `T_IMPACT` and
@@ -1346,11 +1346,19 @@ test('practice shields the truck in the core, not in the client', () => {
 // what is on the bed.
 // ---------------------------------------------------------------------------
 
-/** Seconds a parked truck lasts at a given heat, and what hit it. */
-function survives(heatQ, z) {
+/**
+ * Seconds a parked truck lasts under a given LOAD, and what hit it.
+ *
+ * The load is what crosses now, not the wanted level: `setHeat` was the host
+ * door and letter 40 replaced it with `submitLoad`, which runs the core's own
+ * `rules/cargo.js`. A bed carrying `feeSats` and nothing else, so the fee term
+ * is the whole of the heat and the numbers below still say what they said -
+ * 20,000 sats is where the rule calls a load full.
+ */
+function survives(feeSats, z) {
   const st = init(0x5eed1234);
   const s = st.i32;
-  setHeat(st, heatQ);
+  submitLoad(st, feeSats, 0);
   let ticks = 0;
   for (let t = 0; t < 90 * 60; t++) {
     if (s[O_SCORE + S_STATE] !== 0) break;
@@ -1366,7 +1374,7 @@ function survives(heatQ, z) {
 
 test('a hunted load is written off sooner than an empty one', () => {
   const cold = survives(0, -25);
-  const hot = survives(65536, -25);
+  const hot = survives(20000, -25);
   assert.ok(hot < cold,
     `heat has to cost something: empty lasted ${cold.toFixed(2)} s and a full `
     + `load ${hot.toFixed(2)} s`);
@@ -1375,8 +1383,8 @@ test('a hunted load is written off sooner than an empty one', () => {
 test('and it tells further and further behind the line', () => {
   // The reach is where heat does most of its work, so the gap has to WIDEN
   // with distance: at the seam a tank is already in range of everything.
-  const near = survives(0, -25) / survives(65536, -25);
-  const far = survives(0, -50) / survives(65536, -50);
+  const near = survives(0, -25) / survives(20000, -25);
+  const far = survives(0, -50) / survives(20000, -50);
   assert.ok(far > near,
     `heat should matter more at fifty metres than at twenty-five: `
     + `${far.toFixed(2)}x against ${near.toFixed(2)}x`);
@@ -1384,20 +1392,36 @@ test('and it tells further and further behind the line', () => {
 
 test('an untold core hunts exactly as the recordings do', () => {
   // Zero is the default and the recordings were taken at it, so a core nobody
-  // has spoken to must be bit-identical to one told zero.
+  // has spoken to must be bit-identical to one told an empty bed.
   const quiet = init(0x5eed1234);
   const told = init(0x5eed1234);
-  setHeat(told, 0);
+  submitLoad(told, 0, 0);
   for (let t = 0; t < 600; t++) { step(quiet, 40000, 0, 0, 0, 0); step(told, 40000, 0, 0, 0, 0); }
   assert.equal(hash(quiet), hash(told));
 });
 
-test('the core clamps a heat it is handed rather than trusting it', () => {
+test('the core caps a load it is handed rather than trusting it', () => {
+  // THE OVERFLOW THIS RULE CARRIED FOR THE WHOLE OF ITS LIFE. It had no caller
+  // until letter 40, so nothing ever ran it on a real load: `feeSats * ONE`
+  // wraps at 32,768 sats, and a 40,000-sat bed - twice what the rule calls
+  // full - scaled to -2,147,483,648 and clamped to ZERO. The fattest loads in
+  // the game would have been the ones the war ignored.
   const st = init(1);
-  setHeat(st, 4 * 65536);
-  assert.equal(heatOf(st), 65536);
-  setHeat(st, -9);
-  assert.equal(heatOf(st), 0);
+  submitLoad(st, 20000, 0);
+  assert.equal(heatOf(st), 65536, 'a full fee is full heat');
+  submitLoad(st, 40000, 0);
+  assert.equal(heatOf(st), 65536, 'a fee past full wrapped instead of capping');
+  submitLoad(st, 2000000000, 0);
+  assert.equal(heatOf(st), 65536, 'a fee that fills an int wrapped instead of capping');
+  submitLoad(st, -9, -9);
+  assert.equal(heatOf(st), 0, 'a negative bed is an empty one');
+
+  // AND THE WHALE TERM, which caps at 25 BTC and adds 0.45 on top of the fee.
+  const whale = init(1);
+  submitLoad(whale, 0, 2500);
+  assert.equal(heatOf(whale), 29491);
+  submitLoad(whale, 0, 100000);
+  assert.equal(heatOf(whale), 29491, 'a bed past 25 BTC wrapped instead of capping');
 });
 
 test('heat widens the reach the truck is noticed at, by arm', () => {

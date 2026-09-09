@@ -49,7 +49,7 @@ const wordsAt = (t) => [45875, ((t * 977) % 30000) - 15000, (t % 700) < 40 ? 655
 const CHUNK = 6;
 
 /** A round with one driver, publishing as the page does. */
-function driving(ticks, { liquidations = [], joinTick = 0 } = {}) {
+function driving(ticks, { liquidations = [], loads = [], joinTick = 0 } = {}) {
   const round = new Round(openStore(':memory:'));
   const rid = round.open(contract());
   const entry = entryFor(rid, joinTick);
@@ -60,7 +60,11 @@ function driving(ticks, { liquidations = [], joinTick = 0 } = {}) {
     const rows = [];
     for (let t = from; t < from + n; t++) rows.push(wordsAt(t));
     const due = liquidations.filter(([at]) => at >= from && at < from + n);
-    const batch = { roundId: rid, entryId: eid, previousHash, firstTick: from, ticks: rows, liquidations: due };
+    const bed = loads.filter(([at]) => at >= from && at < from + n);
+    const batch = {
+      roundId: rid, entryId: eid, previousHash, firstTick: from, ticks: rows,
+      liquidations: due, loads: bed,
+    };
     round.batch(encodeInputBatch(batch));
     previousHash = batchId(batch);
   };
@@ -74,8 +78,8 @@ function driving(ticks, { liquidations = [], joinTick = 0 } = {}) {
  * run first and then asking is a different question - it has one answer and
  * the cache serves it.
  */
-function watchedWhileDriving(ticks, { joinTick = 0, liquidations = [] } = {}) {
-  const world = driving(0, { joinTick, liquidations });
+function watchedWhileDriving(ticks, { joinTick = 0, liquidations = [], loads = [] } = {}) {
+  const world = driving(0, { joinTick, liquidations, loads });
   const seen = [];
   for (let at = joinTick; at < joinTick + ticks; at += CHUNK) {
     world.publish(at, CHUNK);
@@ -197,4 +201,85 @@ test('a round with no randomness shows nobody anything, in the same words as bef
   const seen = blind.latest(rid, eid);
   assert.equal(seen.ok, false);
   assert.match(seen.why, /no randomness yet/);
+});
+
+/**
+ * AND THE LOAD, WHICH IS WHAT LETTER 40 REOPENED 36 FOR.
+ *
+ * This is the LIVE path - the one every watcher's picture comes off - and it
+ * kept its own warm state. Until letter 40 nothing on it applied a load,
+ * because nothing anywhere carried one: the page wrote the heat into its own
+ * core through `BlwpSetHeat` and no batch, mark or transcript held it. So a
+ * watcher was shown a truck driven with an empty bed while its driver was
+ * being hunted for a full one, and the two part further with every tick.
+ */
+const BED = [[0, 17314, 42]];      // an AUTO load; reads 57229 in the core
+
+test('a live picture of a loaded run is the pose a full replay produces', () => {
+  const world = driving(600, { loads: BED });
+  const transcript = world.round.transcript(world.rid, world.eid);
+  const batches = decodeTranscript(world.round.handOver(world.rid, world.eid).bytes).batches;
+  assert.deepEqual(transcript.loads, BED, 'the node did not store the load');
+
+  const cold = new Ghosts(world.round, { randomnessFor: () => BEACON });
+  let compared = 0;
+  for (let at = CHUNK - 1; at < 600; at += CHUNK) {
+    const slow = ghostForChecked({
+      transcript, entry: world.entry, batches,
+      roundId: world.rid, entryId: world.eid, tick: at, roundRandomness: BEACON.hash,
+    });
+    assert.equal(slow.ok, true, slow.why);
+    const fast = cold.frameFor(world.rid, world.eid, at);
+    assert.equal(fast.ok, true, fast.why);
+    assert.equal(toHex(fast.bytes), toHex(slow.bytes), `tick ${at} differs from a full replay`);
+    compared++;
+  }
+  assert.equal(compared, 100);
+
+});
+
+/**
+ * AND THE LOAD IS WHAT MAKES THE PICTURE DIFFERENT, or the agreement above is
+ * two runs of the same thing.
+ *
+ * Nine hundred ticks, because that is how long this drive takes to reach the
+ * army: heat widens the range a tank notices the truck at, so an empty bed and
+ * a full one are the same drive until the first gun is in reach and part for
+ * good after it.
+ */
+test('the load is what moves the picture, and by how much', () => {
+  const loaded = driving(900, { loads: BED });
+  const empty = driving(900);
+  const a = new Ghosts(loaded.round, { randomnessFor: () => BEACON })
+    .frameFor(loaded.rid, loaded.eid, 899);
+  const b = new Ghosts(empty.round, { randomnessFor: () => BEACON })
+    .frameFor(empty.rid, empty.eid, 899);
+  assert.equal(a.ok, true, a.why);
+  assert.equal(b.ok, true, b.why);
+  const apart = Math.hypot((a.ghost.x - b.ghost.x) / 65536, (a.ghost.z - b.ghost.z) / 65536);
+  console.log(`  at tick 899 the loaded run is drawn ${apart.toFixed(3)} m from the same inputs unloaded`);
+  assert.ok(apart > 1,
+    `a load moved this drive ${apart.toFixed(3)} m, which is not enough to be the fault`);
+});
+
+test('a load is applied once however many slices a watcher asks for', () => {
+  // The node serves the loads WHOLE beside a slice - a load declared at
+  // roll-out is in every slice a live watcher reads - so applying one per
+  // slice would compound it. The warm run's answer must be the cold one's.
+  const live = watchedWhileDriving(600, { loads: BED });
+  assert.equal(live.seen.length, 100);
+  const last = live.seen[live.seen.length - 1];
+  assert.equal(last.ok, true, last.why);
+
+  const transcript = live.round.transcript(live.rid, live.eid);
+  const batches = decodeTranscript(live.round.handOver(live.rid, live.eid).bytes).batches;
+  const slow = ghostForChecked({
+    transcript, entry: live.entry, batches,
+    roundId: live.rid, entryId: live.eid, tick: last.ghost.tick, roundRandomness: BEACON.hash,
+  });
+  assert.equal(slow.ok, true, slow.why);
+  assert.equal(toHex(last.bytes), toHex(slow.bytes),
+    'a hundred slices produced a different pose from one replay');
+  console.log(`  100 slices, load in every one of them, and tick ${last.ghost.tick} `
+    + `is byte-identical to a cold replay`);
 });

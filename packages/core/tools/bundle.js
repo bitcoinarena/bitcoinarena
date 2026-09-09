@@ -78,10 +78,19 @@ for (const file of order) {
     .replace(/^export\s+(const|function|class|let|var)\s/gm, '$1 ');
   out += '\n// ---- ' + relative(SRC, file) + '\n' + body;
 }
+// WHAT THE BROWSER BUNDLE OFFERS, AND WHAT IT DELIBERATELY DOES NOT.
+//
+// `setGround`, `setSolids` and `setHeat` were on this list. All three were
+// host doors into the simulated world, and letters 36, 39 and 40 closed them
+// in turn: the relief comes from the round's seed, the collision boxes are the
+// map's own, and heat is what the core makes of a load that travels in the
+// transcript. They still exist in `src/` for the tests that MEASURE what a
+// host world was worth - a test is not a page - but a bundle that carried them
+// would leave the page able to do what the bridge no longer asks for.
 out += '\nreturn { init: init, step: step, hash: hash, runScore: runScore,\n';
-out += '         setGround: setGround, groundAt: groundAt, setSolids: setSolids, teleport: teleport,\n';
+out += '         groundAt: groundAt, teleport: teleport,\n';
 out += '         restart: restart, frontAt: frontAt, submitLiquidation: submitLiquidation,\n';
-out += '         setHeat: setHeat, heatOf: heatOf,\n';
+out += '         submitLoad: submitLoad, heatOf: heatOf,\n';
 out += '         create: create, WORDS: WORDS };\n})();\n';
 out += 'if (typeof module !== "undefined") module.exports = BLWP;\n';
 

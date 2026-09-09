@@ -28,18 +28,22 @@ if (raw[0] === 0x09) {
   const chain = checkTranscript(t);
   if (!chain.ok) { console.error(`the chain is broken at ${chain.in} ${chain.at}: ${chain.why}`); process.exit(1); }
 
-  const { firstTick, ticks, liquidations } = flatten(t);
+  const { firstTick, ticks, liquidations, loads } = flatten(t);
   if (firstTick !== 0) { console.error(`this transcript starts at tick ${firstTick}, not 0`); process.exit(1); }
 
   const seed = Number(process.argv[3] || 1);
-  const { submitLiquidation } = await import('../src/sim.js');
+  const { submitLiquidation, submitLoad } = await import('../src/sim.js');
   const st = init(seed);
   const due = new Map(liquidations.map(([at, size]) => [at, size]));
+  // The load lands before its own tick, like a strike. A replay that skipped
+  // it would be hunted at zero while the player was hunted for a full bed.
+  const bed = new Map(loads.map(([at, fee, btc]) => [at, [fee, btc]]));
   for (let i = 0; i < ticks.length; i++) {
+    if (bed.has(i)) submitLoad(st, ...bed.get(i));
     if (due.has(i)) submitLiquidation(st, due.get(i));
     step(st, ticks[i][0], ticks[i][1], ticks[i][2], ticks[i][3], ticks[i][4]);
   }
-  console.log(`${ticks.length} ticks, ${liquidations.length} liquidation(s)`);
+  console.log(`${ticks.length} ticks, ${liquidations.length} liquidation(s), ${loads.length} load(s)`);
   console.log(hash(st));
   process.exit(0);
 }

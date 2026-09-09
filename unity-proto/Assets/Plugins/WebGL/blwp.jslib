@@ -38,12 +38,26 @@ mergeInto(LibraryManager.library, {
     return b.core.submitLiquidation(b.st, size | 0) ? 1 : 0;
   },
 
-  // How hard the war hunts what is on the bed, Q16.16, handed over at
-  // roll-out. The core clamps it; this only carries it.
-  BlwpSetHeat: function (q) {
+  // WHAT WENT ON THE BED, handed over at roll-out - and it goes to the network
+  // in the same breath, from here, for the reason `BlwpStep` publishes from
+  // here.
+  //
+  // This was `BlwpSetHeat` and it carried the ANSWER: Unity worked the wanted
+  // level out in floats and wrote it into the core, a host write in no batch,
+  // no mark and no transcript. The page's core carried 57229 and every replay
+  // of the same transcript carried 0 - so a committee, and every ghost a
+  // committee draws, walked a run the war was hunting less hard than it hunted
+  // the player. Measured on one drive: the two agree to tick 400 and are
+  // 7.217 m apart by tick 900, growing.
+  //
+  // Sats aboard and hundredths of a BTC. The core decides what that costs;
+  // nothing here does arithmetic on it, and there is no second copy to drift.
+  BlwpSubmitLoad: function (feeSats, btcHundredths) {
     var b = Module.blwp;
-    if (!b || !b.core.setHeat) return 0;
-    return b.core.setHeat(b.st, q | 0) ? 1 : 0;
+    if (!b || !b.core.submitLoad) return 0;
+    var ok = b.core.submitLoad(b.st, feeSats | 0, btcHundredths | 0) ? 1 : 0;
+    if (ok && Module.blwpNet) Module.blwpNet.load(feeSats | 0, btcHundredths | 0);
+    return ok;
   },
 
   BlwpFrontlineZ: function (x) {
@@ -426,6 +440,14 @@ mergeInto(LibraryManager.library, {
             net.ghosts = null;
           }
         });
+    };
+
+    // THE LOAD, ON ITS WAY TO THE TRANSCRIPT. The client holds it against the
+    // tick the run has reached and publishes it with the batch that covers
+    // that tick; nothing is decided here.
+    net.load = function (feeSats, btcHundredths) {
+      if (!net.client) return;
+      net.client.submitLoad(feeSats, btcHundredths);
     };
 
     net.tick = function (words) {

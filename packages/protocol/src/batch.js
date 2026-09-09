@@ -14,6 +14,16 @@
 // played. They are sparse because they are rare: `[tick, size]`, the same
 // shape `test-vectors/*.json` uses.
 //
+// AND THE LOAD, which the five do not carry either. What went on the bed
+// decides how hard the war hunts the truck, and it used to be a HOST WRITE:
+// Unity worked the wanted level out in floats and pushed the answer through
+// `BlwpSetHeat`, which is in no batch, no mark and no transcript. The page's
+// core carried 57229 and every replay of the same transcript carried 0, so a
+// committee - and every ghost a committee draws - walked a run the war was
+// hunting less hard than it hunted the player. `[tick, feeSats,
+// btcHundredths]`, sparse like the liquidations, because a load is declared
+// at roll-out and rarely again; the core decides what it costs.
+//
 // AND THEY ARE CHAINED. `previous_hash` is the spec's own field (section 11):
 // each batch names the one before it, so a transcript is an ordered object
 // rather than a bag of rows that happen to sit in a table. Without it, "hand
@@ -53,6 +63,11 @@ export function encodeInputBatch(b) {
   // them in a different order still encode the same bytes.
   const liq = [...(b.liquidations || [])].sort((x, y) => x[0] - y[0] || x[1] - y[1]);
   w.vec(liq, (l, ww) => { ww.u32(l[0]); ww.i32(l[1]); });
+
+  // `[tick, feeSats, btcHundredths]`, sorted the same way and for the same
+  // reason. Twelve bytes each and there is one of them in an ordinary run.
+  const loads = [...(b.loads || [])].sort((x, y) => x[0] - y[0] || x[1] - y[1] || x[2] - y[2]);
+  w.vec(loads, (l, ww) => { ww.u32(l[0]); ww.i32(l[1]); ww.i32(l[2]); });
   return w.finish();
 }
 
@@ -74,6 +89,7 @@ export function decodeInputBatch(bytes) {
     return t;
   });
   b.liquidations = r.vec((rr) => [rr.u32(), rr.i32()]);
+  b.loads = r.vec((rr) => [rr.u32(), rr.i32(), rr.i32()]);
   if (r.at !== bytes.length) throw new Error('trailing bytes after the batch');
   return b;
 }
@@ -88,19 +104,24 @@ export const batchId = (b) => taggedHash(TAG.inputBatch, encodeInputBatch(b));
  */
 export const MAX_BATCH_TICKS = 0xffff;
 
-/** Header, then five signed words a tick and eight bytes a liquidation. */
+/**
+ * Header, then five signed words a tick, eight bytes a liquidation and twelve
+ * a load.
+ */
 const BATCH_HEADER_BYTES = 1 + 2 + 32 + 32 + 32 + 4;
 
 /**
  * The largest batch that can decode at all: header, the tick vector at its
- * ceiling, the liquidation vector at its ceiling. Measured against the
- * encoder rather than reasoned about - a test builds one and compares.
+ * ceiling, the liquidation vector at its ceiling, the load vector at its
+ * ceiling. Measured against the encoder rather than reasoned about - a test
+ * builds one and compares.
  *
  * This is what a transport can refuse without inspecting: anything longer is
  * not a short protocol message, it is not a protocol message.
  */
 export const MAX_INPUT_BATCH_BYTES =
-  BATCH_HEADER_BYTES + 2 + MAX_BATCH_TICKS * 20 + 2 + MAX_BATCH_TICKS * 8;
+  BATCH_HEADER_BYTES + 2 + MAX_BATCH_TICKS * 20 + 2 + MAX_BATCH_TICKS * 8
+  + 2 + MAX_BATCH_TICKS * 12;
 
 /** The absolute tick numbers a batch covers, in order. */
 export const batchTicks = (b) =>
