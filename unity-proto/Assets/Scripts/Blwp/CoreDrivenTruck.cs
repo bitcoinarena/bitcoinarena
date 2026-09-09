@@ -145,19 +145,45 @@ namespace Blwp
         public void StartRound()
         {
             if (!Driving) return;
-            // THE ROUND'S OWN WORLD, NOT THIS COMPONENT'S CONSTANT.
-            //
-            // `seed` is 0x5eed1234 and nothing ever set it from a round, so a
-            // restart here used to put the player back in the harness world -
-            // bay 13 - while the committee replayed their entry somewhere else
-            // entirely. The bridge derives the round's seed when it joins;
-            // zero means there is no round and the daily keeps the constant,
-            // which is what holds the solo apron on bay 13.
-            int world = BlwpNet.RoundSeed;
-            if (world == 0) world = seed;
+            if (!RollOutRestarts(BlwpNet.RoundSeed, seed, out int world))
+            {
+                // A LIVE ROUND IS ALREADY RUNNING and roll-out is inside it.
+                Debug.Log("[blwp] roll-out inside a live round: the core keeps its run");
+                return;
+            }
             if (!BlwpCore.Restart(world)) return;
             _prevHeading = BlwpCore.TruckHeading;
             Debug.Log("[blwp] round restarted in the core");
+        }
+
+        /// <summary>
+        /// WHETHER A ROLL-OUT MAY RESTART THE CORE, AND IN WHICH WORLD.
+        ///
+        /// On the daily it must: one core plays many rounds, `outcome` latches,
+        /// and a second round on a state that still holds the first is the
+        /// unplayable round this reset was written for. The world is this
+        /// component's constant, which is what holds the solo apron on bay 13.
+        ///
+        /// ON A LIVE ROUND IT MUST NOT, and that is not a preference. The run
+        /// began when the page seeded the core, and the client has been
+        /// recording every tick since the join - the 16:08 report saw tick 4241
+        /// while the truck was still in the bay. A restart in the middle puts
+        /// the player's core back at tick zero while the transcript they are
+        /// publishing runs straight through, so the committee replaying those
+        /// very ticks reaches a different state. MEASURED, 120 ticks with a
+        /// roll-out at 60: the page holds afa591f2… and the replay holds
+        /// 686abbf1…, and the two trucks are 0.28 m apart already. Every mark
+        /// the player signs after it commits to a state nobody else computes,
+        /// and every watcher's picture is of the replay rather than of the
+        /// truck being driven.
+        ///
+        /// A pure rule with no core in it, so it can be measured without one.
+        /// `roundSeed` is `BlwpNet.RoundSeed`: zero means no round.
+        /// </summary>
+        public static bool RollOutRestarts(int roundSeed, int dailySeed, out int world)
+        {
+            world = roundSeed == 0 ? dailySeed : roundSeed;
+            return roundSeed == 0;
         }
 
         /// <summary>
