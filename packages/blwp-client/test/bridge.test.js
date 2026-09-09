@@ -13,6 +13,7 @@
 // client is a real one against a real node, and what is stubbed is Emscripten.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { BLOCK_TICKS } from '../../core/src/rules/gate.js';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { ed25519 } from '@noble/curves/ed25519.js';
@@ -54,7 +55,7 @@ async function playing() {
   const rid = await client.openRound({
     networkId: b32(0x4e), configHash: b32(0x43), censusConfirmations: 6, gameVerifySlots: 7, settlementSlots: 7, simCoreHash: b32(1), startTimeMs: 60500n, entryCloseMs: 2000n, objectionWindowMs: 600000n,
     custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'BURN', donationSetId: new Uint8Array(32).fill(0xd0), censusHeight: 900000, censusRoot: b32(2), committeeTimeMs: 500n, randomnessRule: 'bitcoin-block-hash',
-    stakeMsat: 100000n, bondMinSats: 50000n, blockTicks: 600, exposureReference: 1000,
+    stakeMsat: 100000n, bondMinSats: 50000n, blockTicks: BLOCK_TICKS, exposureReference: 1000,
     corridorHalfWidth: 40, spawnFreeRadius: 20, timeFloor: 30, timeCeil: 150,
     minScore: 1, rankNumerator: 3, rankDenominator: 4, nodes: [node.round.pubkey],
   });
@@ -63,7 +64,7 @@ async function playing() {
     stakeCommitment: b32(7), stakeMsat: 100000n, feeMsat: 1000n, donationMsat: 0n, joinTick: 0, worldSecret: b32(0x5e), vssSharesRef: new Uint8Array(32),
   });
   await client.connect();
-  client.setRound({ roundId: rid, entryId: eid, blockTicks: 600 });
+  client.setRound({ roundId: rid, entryId: eid, blockTicks: BLOCK_TICKS });
   return { node, client };
 }
 
@@ -100,8 +101,12 @@ test('a socket-up VOID reaches the bytes C# reads', async () => {
   const { node, client } = await playing();
   const { Module, library, read } = bridge();
   try {
-    Module.blwpNet = { seen: 601, client, error: '' };
-    for (let i = 0; i < 1200; i++) client.record([45875, 0, 0, 0, 0]);
+    Module.blwpNet = { seen: BLOCK_TICKS + 1, client, error: '' };
+    // TWICE THE ROUND, so the hold fills whatever the round's length is. It
+    // was 1200 against a 600-tick round; a round is the core's 9000 now,
+    // because a node refuses any other, and a fixed 1200 would no longer fill
+    // anything - the test would assert the run had ended when it had not.
+    for (let i = 0; i < 2 * BLOCK_TICKS; i++) client.record([45875, 0, 0, 0, 0]);
     assert.equal(client.ended, true, 'the hold should have filled');
 
     assert.equal(library.BlwpNetEnded(), 1, 'the game was never told the run had ended');

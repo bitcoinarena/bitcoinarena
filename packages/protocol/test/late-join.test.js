@@ -19,6 +19,7 @@
 // `checkTranscript` is handed a transcript and never the entry it is for.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { BLOCK_TICKS } from '../../core/src/rules/gate.js';
 import { toHex } from '../src/hash.js';
 import { batchId } from '../src/batch.js';
 import { entryId } from '../src/contracts.js';
@@ -164,20 +165,35 @@ test('a late run refuses a mark on inputs it never published', () => {
 });
 
 /**
- * WHAT THIS LETTER CANNOT SAY, said out loud. 0.8's "same contract-defined
- * mission duration T_run" needs `player_run_duration`, which section 6 names
- * and this Round Contract does not carry.
+ * AND IT ENDS WHERE THE RUN ENDS.
+ *
+ * This used to assert the opposite - that the run length was REPORTED AS
+ * UNCHECKED - on the ground that 0.8's "same contract-defined mission duration
+ * T_run" needed a `player_run_duration` field the Round Contract does not
+ * carry. It never needed one: the core carries it as `BLOCK_TICKS` and
+ * `genesis.js` writes that number into the config hash a round's network
+ * commits to. So the assertion is not loosened, it is turned the right way up.
  */
-test('the run length is reported as unchecked rather than assumed', () => {
+test('a transcript that runs past its own end is refused, and a full one is not', () => {
   const entry = entryAt(50);
   const seen = transcriptBelongsToEntry(runFrom(50, entryId(entry)), entry);
 
-  assert.equal(seen.unchecked.length, 1);
-  assert.match(seen.unchecked[0], /player_run_duration/);
+  assert.equal(seen.ok, true, seen.why);
+  assert.equal(seen.unchecked, undefined, 'the run length is still reported as unchecked');
+  assert.equal(seen.endsAt, 50 + BLOCK_TICKS - 1,
+    'the run ends BLOCK_TICKS from this entry\'s own join tick, not from tick zero');
 
-  // a run of three batches and a run of ten both belong to the entry: how long
-  // is allowed is not a question this can answer
-  const long = transcriptBelongsToEntry(runFrom(50, entryId(entry), 10), entry);
-  assert.equal(long.ok, true, long.why);
+  // A RUN OF EXACTLY THE LENGTH IS LEGAL, and one batch more is not. The
+  // helper carries THREE ticks a batch, so a whole run is BLOCK_TICKS / 3 of
+  // them and its last tick is the run's own last tick - counted rather than
+  // guessed, because a count that lands near the end measures nothing.
+  const whole = BLOCK_TICKS / 3;
+  const full = transcriptBelongsToEntry(runFrom(50, entryId(entry), whole), entry);
+  assert.equal(full.ok, true, full.why);
+
+  const over = transcriptBelongsToEntry(runFrom(50, entryId(entry), whole + 1), entry);
+  assert.equal(over.ok, false, 'a run past its own end was accepted');
+  assert.match(over.why, new RegExp(`that run ends at tick ${50 + BLOCK_TICKS - 1}`));
+  assert.match(over.why, /and that transcript reaches/);
   assert.equal(toHex(entryId(entry)).length, 64);
 });

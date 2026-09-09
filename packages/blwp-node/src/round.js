@@ -10,7 +10,7 @@
 // something is the checkpoints in step 3.
 import {
   encodeRoundContract, roundId, encodeEntryContract, entryId, decodeEntryContract,
-  decodeRoundContract, roundWindowsAreValid,
+  decodeRoundContract, roundWindowsAreValid, runLengthIsTheCores, lastTickOfRun,
 } from '../../protocol/src/contracts.js';
 import { decodeInputBatch, batchTicks, batchId } from '../../protocol/src/batch.js';
 import { encodeTranscript, transcriptHash, checkTranscript, GENESIS } from '../../protocol/src/transcript.js';
@@ -260,6 +260,15 @@ export class Round {
     const windows = roundWindowsAreValid(contract);
     if (!windows.ok) throw new Error(windows.why);
 
+    // AND A ROUND THAT SAYS A RUN IS SOME OTHER LENGTH IS NOT A SHORTER ROUND.
+    // The simulator ends every run at its own BLOCK_TICKS whatever a contract
+    // claims, so a contract naming a different number is a second clock: this
+    // node would bound batches with one number while the run really ended at
+    // another. Measured before this existed: 9000, 4500 and 1 were all
+    // accepted here.
+    const runLength = runLengthIsTheCores(contract);
+    if (!runLength.ok) throw new Error(runLength.why);
+
     const bytes = encodeRoundContract(contract);
     const id = roundId(contract);
     this.db.prepare('INSERT OR IGNORE INTO rounds (round_id, contract, state, opened_ms) VALUES (?, ?, ?, ?)')
@@ -386,6 +395,28 @@ export class Round {
     if (b.ticks.length > blockTicks)
       throw new Error(
         `a batch carries at most the round's ${blockTicks} ticks, got ${b.ticks.length}`);
+
+    // AND THE RUN ITSELF ENDS. Bounding one batch bounded nothing: measured,
+    // a player published 9600 ticks of a 9000-tick run in sixteen batches and
+    // this node stored every one of them, then replayed all 9600. The core
+    // ends a run at BLOCK_TICKS elapsed - 0.8's mission duration, counted from
+    // that player's own first tick so a late joiner gets a whole run - so a
+    // tick at or past `joinTick + BLOCK_TICKS` is an input for a run that is
+    // over, whatever it ended as.
+    //
+    // Refused at intake, where the one party who can still fix it is listening,
+    // rather than at hand-over with nobody left to ask.
+    const joined = this.entry(b.entryId);
+    if (joined) {
+      const joinTick = decodeEntryContract(joined).joinTick;
+      const last = lastTickOfRun(joinTick);
+      const reaches = b.firstTick + b.ticks.length - 1;
+      if (reaches > last)
+        throw new Error(
+          `that run ends at tick ${last} - ${blockTicks} ticks from its join at ${joinTick} - `
+          + `and this batch reaches ${reaches}: inputs past the end are inputs for a run `
+          + 'that is over');
+    }
 
     // AND IT MUST NOT LEAVE A HOLE. The chain fixes the order of the batches;
     // this fixes the order of the ticks inside them, and it belongs HERE

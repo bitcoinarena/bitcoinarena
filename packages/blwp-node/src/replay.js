@@ -26,7 +26,8 @@ import { init, step, submitLiquidation, runScore } from '../../core/src/sim.js';
 import {
   hash, O_SCORE, S_STATE, O_TRUCK, T_X, T_Z, T_HEADING,
 } from '../../core/src/state.js';
-import { RUN_LIVE, RUN_DELIVERED } from '../../core/src/rules/gate.js';
+import { RUN_LIVE, RUN_DELIVERED, BLOCK_TICKS } from '../../core/src/rules/gate.js';
+import { lastTickOfRun } from '../../protocol/src/contracts.js';
 import { INPUT_WORDS } from '../../protocol/src/batch.js';
 import { seedWordForEntry } from '../../protocol/src/seed.js';
 
@@ -99,6 +100,22 @@ export function replay(transcript, entry, { seedWord, roundRandomness, marks = [
   if (ticks.length === 0) return { ok: false, why: 'that transcript carries no ticks' };
   if (ticks[0].tick !== start)
     return { ok: false, why: `that transcript starts at tick ${ticks[0].tick} and the entry joins at ${start}` };
+
+  // AND A RUN THAT NEVER ENDS IS NOT A LONGER RUN. The core stops every run at
+  // BLOCK_TICKS elapsed - 0.8's mission duration, counted from this player's
+  // own first tick so a late joiner gets a whole one - so a transcript
+  // reaching past `joinTick + BLOCK_TICKS` is inputs for a run that is over,
+  // and replaying them spends a worker on ticks no honest node will replay.
+  // Measured before this existed: 9600 ticks of a 9000-tick run replayed
+  // clean, all 9600 of them.
+  const ends = lastTickOfRun(start);
+  const reaches = ticks[ticks.length - 1].tick;
+  if (reaches > ends)
+    return {
+      ok: false,
+      why: `that run ends at tick ${ends} - ${BLOCK_TICKS} ticks from its join at ${start} - `
+        + `and that transcript reaches ${reaches}`,
+    };
 
   // A GAP IS NOT A SHORTER RUN. Ticks are absolute precisely so a hole shows
   // as a hole; replaying across one would produce a state nobody played and a

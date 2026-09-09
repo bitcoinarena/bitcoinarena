@@ -37,7 +37,9 @@ import { Writer, Reader } from './encode.js';
 import { taggedHash, toHex } from './hash.js';
 import { PROTOCOL_VERSION, TYPE_TRANSCRIPT, TAG } from './constants.js';
 import { encodeInputBatch, decodeInputBatch, batchId, batchTicks } from './batch.js';
-import { entryId } from './contracts.js';
+import { entryId, lastTickOfRun } from './contracts.js';
+// The run length is the core's; this reads it rather than restating it.
+import { BLOCK_TICKS } from '../../core/src/rules/gate.js';
 import {
   decodeCheckpoint, checkpointId, splitSigned, NO_PREVIOUS, SIGNED_CHECKPOINT_BYTES,
 } from './checkpoint.js';
@@ -275,10 +277,28 @@ export function transcriptBelongsToEntry(transcript, entry) {
         + `${entry.joinTick}`,
     };
 
-  return {
-    ok: true,
-    joinTick: entry.joinTick,
-    unchecked: ['the run length (section 6 names player_run_duration and this '
-      + 'contract does not carry it)'],
-  };
+  // AND IT ENDS WHERE THE RUN ENDS.
+  //
+  // This used to report the run length as UNCHECKED, on the ground that
+  // section 6's `player_run_duration` was a contract field nobody carried. It
+  // is carried - by the core, as `BLOCK_TICKS`, which `genesis.js` writes into
+  // the config hash a round's network commits to - so there was a number to
+  // check against all along and no second one needed adding.
+  //
+  // The core measures a run in ELAPSED ticks while it is LIVE, which is what
+  // gives a late joiner a whole run (0.8) rather than the stub left of the
+  // round. Elapsed can never exceed the span of absolute ticks, so a
+  // transcript reaching `joinTick + BLOCK_TICKS` carries inputs for a run that
+  // is over however it ended - delivered, wrecked or missed.
+  const last = batchTicks(transcript.batches[transcript.batches.length - 1]);
+  const reaches = last.length ? last[last.length - 1] : first[0];
+  const ends = lastTickOfRun(entry.joinTick);
+  if (reaches > ends)
+    return {
+      ok: false,
+      why: `that run ends at tick ${ends} - ${BLOCK_TICKS} ticks from its join at `
+        + `${entry.joinTick} - and that transcript reaches ${reaches}`,
+    };
+
+  return { ok: true, joinTick: entry.joinTick, endsAt: ends, reaches };
 }

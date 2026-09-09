@@ -10,6 +10,7 @@
 // loaded daemon or a bad link looks like from here.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { BLOCK_TICKS } from '../../core/src/rules/gate.js';
 import { createRequire } from 'node:module';
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
@@ -55,7 +56,12 @@ function slowLink(client, ms, watch) {
   };
 }
 
-async function rig(ms, blockTicks = 600) {
+// THE ROUND IS THE CORE'S LENGTH, because a node refuses any other. These
+// tests used 600 to fill a hold quickly; a round naming 600 is now invalid -
+// the simulator ends every run at BLOCK_TICKS, and a contract saying otherwise
+// is the second clock letter 21 forbade. The bound under test is unchanged;
+// only the number it is measured at moved.
+async function rig(ms, blockTicks = BLOCK_TICKS) {
   const node = await serve(openStore(), { port: 0, ...FUNDED });
   const watch = { inFlight: 0, worst: 0 };
   const client = new Client({ base: `http://127.0.0.1:${node.port}`, core, sign, verify });
@@ -95,9 +101,9 @@ test('the hold cannot grow past the round it belongs to', async () => {
   const { node, client } = await rig(0);
   try {
     // three times the round, offered a tick at a time
-    for (let i = 0; i < 1800; i++) client.record([45875, 0, 0, 0, 0]);
+    for (let i = 0; i < 3 * BLOCK_TICKS; i++) client.record([45875, 0, 0, 0, 0]);
 
-    assert.equal(client.held, 600, 'the hold grew past the round');
+    assert.equal(client.held, BLOCK_TICKS, 'the hold grew past the round');
     // ONE drop, not 1200: the run ends on the first tick that will not fit,
     // rather than counting the other 1199 while publishing a chain that no
     // longer says which tick carried which input.
@@ -118,7 +124,7 @@ test('the hold cannot grow past the round it belongs to', async () => {
 test('a slow node cannot make the client run two publishes at once', async () => {
   const { node, client, watch } = await rig(40);
   try {
-    for (let i = 0; i < 600; i++) {
+    for (let i = 0; i < BLOCK_TICKS; i++) {
       client.record([45875, 0, 0, 0, 0]);
       if (i % 6 === 5) client.drain();          // what the game asks for
     }
@@ -173,9 +179,13 @@ test('marks are skipped rather than queued when one is already going', async () 
 test('the first dropped tick ends the run, and nothing more is published', async () => {
   const { node, client, rid, eid } = await rig(0);
   try {
-    // fill the round exactly, publish it, then offer one tick too many
-    for (let i = 0; i < 600; i++) client.record([45875, 0, 0, 0, 0]);
-    await client.drain();
+    // FILL THE ROUND EXACTLY AND PUBLISH ALL OF IT, then offer one tick too
+    // many. A drain publishes one CHUNK of 600, which was the whole round when
+    // a round was 600 ticks and is a fifteenth of it now - so draining once
+    // would leave the hold nearly full and measure the chunk instead of the
+    // run.
+    for (let i = 0; i < BLOCK_TICKS; i++) client.record([45875, 0, 0, 0, 0]);
+    while (client.held > 0) { const held = client.held; await client.drain(); if (client.held === held) break; }
     await client.settle();
 
     const publishedBefore = client.batchesSent;
@@ -184,14 +194,14 @@ test('the first dropped tick ends the run, and nothing more is published', async
     assert.equal(client.ended, false);
 
     // the hold fills again while nothing is draining, and then overflows
-    for (let i = 0; i < 601; i++) client.record([45875, 0, 0, 0, 0]);
+    for (let i = 0; i < BLOCK_TICKS + 1; i++) client.record([45875, 0, 0, 0, 0]);
 
     assert.equal(client.dropped, 1, 'exactly the tick that would not fit');
     assert.equal(client.ended, true, 'the run must end on the first dropped tick');
     assert.equal(client.ending, 'VOID');
     assert.notEqual(client.ending, 'PLAYER_LOST');
     assert.notEqual(client.ending, 'DELIVERED');
-    assert.match(client.endingReason, /the hold was full at 600/);
+    assert.match(client.endingReason, new RegExp(`the hold was full at ${BLOCK_TICKS}`));
 
     // and nothing leaves after it, however hard it is asked
     assert.equal(client.drain(), null, 'a batch left the client after the run ended');
@@ -203,7 +213,7 @@ test('the first dropped tick ends the run, and nothing more is published', async
     // the node holds the honest part and nothing beyond it
     const r = await fetch(`http://127.0.0.1:${node.port}/transcript`
       + `?round=${Buffer.from(rid).toString('hex')}&entry=${Buffer.from(eid).toString('hex')}`);
-    assert.equal(Number(r.headers.get('x-ticks')), 600,
+    assert.equal(Number(r.headers.get('x-ticks')), BLOCK_TICKS,
       'the node holds exactly the ticks that were honestly published');
   } finally { client.close(); await node.close(); }
 });
@@ -389,7 +399,7 @@ test('after a hold-full VOID, resume refuses by name and returns no numbers', as
     for (let i = 0; i < 6; i++) client.record([45875, 0, 0, 0, 0]);
     await client.drain();
     await client.settle();
-    for (let i = 0; i < 2000; i++) client.record([45875, 0, 0, 0, 0]);
+    for (let i = 0; i < BLOCK_TICKS + 600; i++) client.record([45875, 0, 0, 0, 0]);
     assert.equal(client.ended, true);
     assert.equal(client.ending, 'VOID');
 
@@ -510,12 +520,12 @@ test('the hold still caps at blockTicks while the socket is down, and overflow i
   try {
     client.close();
     await wait(50);
-    for (let i = 0; i < 1200; i++) {
+    for (let i = 0; i < BLOCK_TICKS + 600; i++) {
       client.record([45875, 0, 0, 0, 0]);
       if ((i + 1) % 6 === 0) client.drain();
     }
-    assert.equal(client.maxHold, 600, 'the bound is the round, off the contract');
-    assert.equal(client.held, 600);
+    assert.equal(client.maxHold, BLOCK_TICKS, 'the bound is the round, off the contract');
+    assert.equal(client.held, BLOCK_TICKS);
     assert.equal(client.dropped, 1, 'the run must end on the first dropped tick');
     assert.equal(client.ended, true);
     assert.equal(client.ending, 'VOID');
@@ -545,7 +555,7 @@ test('a VOID with the socket still up says ended, not ready', async () => {
     // ends the run. The socket never dropped.
     let told = null;
     client.onEnd = (word, why) => { told = `${word} ${why}`; };
-    for (let i = 0; i < 2000; i++) client.record([45875, 0, 0, 0, 0]);
+    for (let i = 0; i < BLOCK_TICKS + 600; i++) client.record([45875, 0, 0, 0, 0]);
 
     assert.equal(client.ended, true);
     assert.equal(client.state, 'ended', 'the word was still ready on a run that had ended');
@@ -671,7 +681,7 @@ test('ticks offered before the round is known do not end the run', async () => {
     const early = new Client({ base: client.base, core, sign, verify });
     assert.equal(early.maxHold, 0, 'the constructor has no round to bound a hold by');
 
-    for (let i = 0; i < 600; i++)
+    for (let i = 0; i < BLOCK_TICKS; i++)
       assert.equal(early.record([45875, 0, 0, 0, 0]), false, 'a tick was taken with no round');
 
     // `ended` is UNDEFINED on a fresh client, not false: `setRound` is what
@@ -686,7 +696,7 @@ test('ticks offered before the round is known do not end the run', async () => {
     assert.ok(!early.dropped, 'a tick was counted as dropped before there was a round');
 
     // and once it knows the round, it takes them
-    early.setRound({ roundId: b32(1), entryId: b32(2), blockTicks: 600 });
+    early.setRound({ roundId: b32(1), entryId: b32(2), blockTicks: BLOCK_TICKS });
     assert.equal(early.record([45875, 0, 0, 0, 0]), true);
     assert.equal(early.held, 1);
   } finally { client.close(); await node.close(); }

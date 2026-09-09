@@ -10,6 +10,10 @@
 
 import { Writer, Reader } from './encode.js';
 import { taggedHash } from './hash.js';
+// THE RUN LENGTH IS THE CORE'S. `genesis.js` already reads it from the same
+// place and writes it into the config hash a contract's network_id commits to;
+// restating the number here would be the second clock letter 21 forbade.
+import { BLOCK_TICKS } from '../../core/src/rules/gate.js';
 import {
   TAG, PROTOCOL_VERSION, TYPE_ROUND_CONTRACT, TYPE_ENTRY_CONTRACT, ROLES,
   CUSTODY, custodyByte, slashRemainderByte, slashRemainderOf, MIN_ENTRY_WINDOW_MS,
@@ -298,6 +302,50 @@ export function decodeEntryContract(bytes) {
 }
 
 export const entryId = (e) => taggedHash(TAG.entryContract, encodeEntryContract(e));
+
+/**
+ * IS THIS ROUND'S RUN LENGTH THE ONE THE SIMULATOR ACTUALLY USES?
+ *
+ * `blockTicks` is section 6's `player_run_duration` in the unit the core
+ * counts in, and the core is where it lives: `rules/gate.js` ends a run
+ * `RUN_MISSED` at `BLOCK_TICKS` elapsed ticks, and `genesis.js` writes that
+ * same number into the config hash a contract's `network_id` commits to.
+ *
+ * So the field on the contract is section 6's own words - "echoed for
+ * readability; MUST equal genesis_parameters, which network_id commits to. A
+ * contract disagreeing with the network it names is invalid" - and this is
+ * that check, the same one letter 16 wrote for the committee slot counts.
+ *
+ * MEASURED BEFORE IT EXISTED: a round naming 9000, one naming 4500 and one
+ * naming 1 were all accepted, while the core stopped every run at 9000
+ * regardless. The number on the wire meant nothing, and a node bounded batches
+ * with it - a second clock disagreeing with the first, which is exactly what
+ * letter 21 put the tick in the core to prevent.
+ */
+export function runLengthIsTheCores(contract) {
+  if (!contract || !Number.isInteger(contract.blockTicks))
+    return { ok: false, why: 'that round names no run length' };
+  if (contract.blockTicks !== BLOCK_TICKS)
+    return {
+      ok: false,
+      why: `that round says a run is ${contract.blockTicks} ticks and this core ends one at `
+        + `${BLOCK_TICKS}: a contract disagreeing with the network it names is invalid, and a `
+        + 'second clock is not a shorter round',
+    };
+  return { ok: true, blockTicks: BLOCK_TICKS };
+}
+
+/**
+ * THE LAST TICK A RUN MAY CARRY, for an entry that joined at `joinTick`.
+ *
+ * The core measures a run in ELAPSED ticks while it is LIVE, which is what
+ * gives a late joiner a whole run rather than the stub left of the round
+ * (0.8). Elapsed can never exceed the span of absolute ticks, so a transcript
+ * whose ticks reach `joinTick + BLOCK_TICKS` carries inputs for a run that is
+ * over however it ended.
+ */
+export const lastTickOfRun = (joinTick) => joinTick + BLOCK_TICKS - 1;
+
 
 function compare32(a, b) {
   for (let i = 0; i < 32; i++) if (a[i] !== b[i]) return a[i] - b[i];
