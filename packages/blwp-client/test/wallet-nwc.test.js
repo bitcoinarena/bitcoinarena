@@ -12,6 +12,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { WebSocketServer } from 'ws';
+import { readFileSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { ed25519 } from '@noble/curves/ed25519.js';
@@ -495,4 +496,92 @@ test('the line a page renders counts sats, stakes and rounds', () => {
   // in a template on the page.
   assert.equal(log.totalMsat, 250000n);
   console.log('  "250 sat over 3 stakes in 2 rounds" from 250000 msat');
+});
+
+const PAGE = new URL('../../../unity-proto/Assets/WebGLTemplates/BtcLogistics/index.html', import.meta.url);
+
+/**
+ * THE SHIPPING PAGE, READ AS A FILE.
+ *
+ * Every rule above is measured against a real relay and a real daemon, and none
+ * of it does anything unless the page calls it. That has been the shape of the
+ * last fault in three of these letters running: a method nothing constructed,
+ * green tests all the way down.
+ */
+test('the page pastes a connection, shows the amount and the total, and calls payStake', () => {
+  const page = readFileSync(PAGE, 'utf8');
+
+  // THE FOUR PLAYER-FACING THINGS.
+  assert.match(page, /id="blwp-nwc"/, 'there is nowhere to paste a connection');
+  assert.match(page, /id="blwp-owed"/, 'the page never shows what this seat owes');
+  assert.match(page, /id="blwp-spent"/, 'the page never shows the running total');
+  assert.match(page, /BLWPCLIENT\.tabWallet\(/, 'the page does not hold a connection per tab');
+  assert.match(page, /window\.sessionStorage/, 'the connection is not held per tab');
+  assert.match(page, /client\.payStake\(window\.BLWP_ENTRY/,
+    'the page does not pay this seat\'s stake with its own entry');
+  assert.match(page, /BLWPCLIENT\.spentLine\(/, 'the page adds up its own total');
+
+  // AND NO SECOND WAY TO PAY. The whole safety property of `payStake` is its
+  // signature: it takes an entry. A page carrying a bolt11, or reaching for
+  // `payInvoice`, would be a second money path around the check.
+  const code = page.split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n');
+  for (const bad of [/lnbc/i, /bolt11/i, /payInvoice/, /nwcCall/, /pay_invoice/])
+    assert.equal(bad.test(code), false, `the page names ${bad} - that is a second payment path`);
+
+  // AND IT STILL NAMES NO CONTRACT FIELD. `roundPays` exists so the page never
+  // reads `stakeMsat`; the wallet must not reintroduce it.
+  for (const field of ['censusRoot', 'simCoreHash', 'gameVerifySlots', 'stakeMsat',
+                       'committeeTimeMs', 'blockTicks'])
+    assert.equal(code.includes(field), false,
+      `the page writes ${field}, so it is inventing a round rather than joining one`);
+
+  // AND localStorage IS STILL NOT USED. Two tabs are two players, and a
+  // spending credential every tab shares is one paste spending from all of
+  // them.
+  assert.equal(/localStorage/.test(code), false, 'the page keeps the wallet where every tab shares it');
+  console.log('  the page: 1 paste field, 1 amount, 1 total, 1 call to payStake, 0 bolt11');
+});
+
+/**
+ * AND THE ONE THING THE PAGE DECIDES IS DRIVEN, not grepped.
+ *
+ * `paintWallet` is the page's own function and it decides one thing: whether a
+ * round that asks no money gets a payment box. `world-seed-bridge.test.js`
+ * drives the shipped jslib through `new Function`; this drives the shipped page
+ * function the same way, with a DOM stubbed down to what it touches.
+ */
+test('a round that asks no money gets no payment box, driven off the shipped page', () => {
+  const page = readFileSync(PAGE, 'utf8');
+  const body = page.slice(page.indexOf('function paintWallet()'));
+  const src = body.slice(0, body.indexOf('\n    }') + 6);
+  assert.ok(src.includes('roundPays'), 'paintWallet was not extracted whole');
+
+  const made = {};
+  const el = (id) => (made[id] = made[id] || { style: {}, textContent: '', placeholder: '', disabled: false });
+  const run = (round, walletState, owedState) => new Function(
+    'document', 'window', 'BLWPCLIENT', 'wallet', 'spent', 'owed', 'paying', 'walletWhy',
+    `${src}\n return paintWallet();`,
+  )(
+    { getElementById: el }, { BLWP_ROUND: round, BLWP_CURVE: {} },
+    { roundPays: (r) => !!r && BigInt(r.stakeMsat || 0n) > 0n, spentLine: () => 'nothing paid this session' },
+    walletState, null, owedState, false, '',
+  );
+
+  // A FREE ROUND: the box is hidden and nothing asks the player for money.
+  run({ stakeMsat: 0n }, { connected: false }, null);
+  assert.equal(made['blwp-wallet'].style.display, 'none', 'a free round showed a payment box');
+
+  // A PAYING ROUND WITH NO QUOTE YET: shown, and the button cannot be pressed.
+  run({ stakeMsat: 100000n }, { connected: false }, null);
+  assert.equal(made['blwp-wallet'].style.display, 'block');
+  assert.match(made['blwp-owed'].textContent, /owes —/);
+  assert.equal(made['blwp-pay'].disabled, true, 'a player could pay before there was a quote');
+
+  // AND WITH ONE: the amount is in sats, off the client's own quote.
+  run({ stakeMsat: 100000n }, { connected: true }, { amountMsat: 100000n, state: 'HELD' });
+  assert.match(made['blwp-owed'].textContent, /owes 100 sat · HELD/);
+  assert.equal(made['blwp-pay'].disabled, false);
+  assert.match(made['blwp-nwc'].placeholder, /wallet connected/);
+  console.log(`  free round: hidden · paying, no quote: "${made['blwp-owed'].textContent}" `
+    + `is what a quote turns into`);
 });

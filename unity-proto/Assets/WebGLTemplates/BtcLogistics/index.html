@@ -48,11 +48,43 @@
       letter-spacing: 0.01em;
       white-space: pre; text-align: left;
     }
+
+    /* THE WALLET, and it takes pointer events because it is the one thing on
+       this page a player types into. Hidden until a round that asks for money
+       is named - a free round has nothing to pay and no reason to ask. */
+    #blwp-wallet {
+      position: absolute; top: 14px; right: 14px; z-index: 21; display: none;
+      font: 600 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      color: #e8eaed; background: rgba(13, 16, 20, 0.86);
+      border-left: 3px solid #f7931a; padding: 10px 12px; border-radius: 4px;
+      max-width: 320px; text-align: left;
+    }
+    #blwp-wallet .owed { font-size: 15px; }
+    #blwp-wallet .spent { opacity: 0.75; font-weight: 400; margin-top: 4px; }
+    #blwp-wallet .why { opacity: 0.9; font-weight: 400; margin-top: 6px; white-space: pre-wrap; }
+    #blwp-wallet input {
+      width: 100%; margin-top: 8px; padding: 6px 8px; border-radius: 3px;
+      border: 1px solid #3a3f45; background: #0d1014; color: #e8eaed;
+      font: 400 12px/1.3 ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+    #blwp-wallet button {
+      margin-top: 8px; padding: 6px 12px; border-radius: 3px; border: 0;
+      background: #f7931a; color: #14171a; font: 600 13px/1 inherit; cursor: pointer;
+    }
+    #blwp-wallet button[disabled] { opacity: 0.5; cursor: default; }
   </style>
 </head>
 <body>
   <canvas id="canvas" tabindex="-1"></canvas>
   <div id="blwp-players"></div>
+  <div id="blwp-wallet">
+    <div class="owed" id="blwp-owed"></div>
+    <div class="spent" id="blwp-spent"></div>
+    <input id="blwp-nwc" type="password" autocomplete="off" spellcheck="false"
+           placeholder="nostr+walletconnect://…">
+    <button id="blwp-pay" type="button">Pay the stake</button>
+    <div class="why" id="blwp-why"></div>
+  </div>
 
   <script>
   // GETTING SOUND OUT OF AN iPHONE.
@@ -391,6 +423,100 @@
       console.log('[blwp] joining round ' + named.roundIdHex + ' from ' + named.from);
     }
 
+    // ------------------------------------------------------------ the wallet
+    //
+    // M3.2 item 6, the player's half. FOUR THINGS AND NOT ONE RULE: paste a
+    // connection, show what this seat owes, show the running total, and call
+    // `payStake`. Everything that DECIDES is in `@blwp/client` where
+    // `node --test` drives it - `tabWallet` holds the connection, `spendLog`
+    // is what §24A.1 requires a client to show, `spentLine` turns it into a
+    // sentence, and `payStake` refuses a quote this entry did not sign. This
+    // page renders and calls; it computes nothing.
+    //
+    // THERE IS NO BOLT11 ON THIS PAGE. `payStake` takes an ENTRY, so there is
+    // no argument here that could carry an invoice and no second way to pay.
+    const wallet = (typeof BLWPCLIENT !== 'undefined' && BLWPCLIENT.tabWallet)
+      ? BLWPCLIENT.tabWallet({ storage: window.sessionStorage }) : null;
+    const spent = (typeof BLWPCLIENT !== 'undefined' && BLWPCLIENT.spendLog)
+      ? BLWPCLIENT.spendLog() : null;
+    let owed = null;          // the last quote, as the client checked it
+    let paying = false;
+    let walletWhy = '';
+
+    function theClient() {
+      const inst = window.unityInstance;
+      const mod = (inst && inst.Module) || (typeof Module !== 'undefined' ? Module : window.Module);
+      return (mod && mod.blwpNet && mod.blwpNet.client) || null;
+    }
+
+    /**
+     * WHAT THIS SEAT OWES, asked of the client and never worked out here.
+     *
+     * `invoice()` refuses an amount, a hash or a seat this entry did not sign,
+     * so a quote that reaches this page is one the player's own contract
+     * stands behind.
+     */
+    async function askWhatIsOwed() {
+      const client = theClient();
+      if (!client || !window.BLWP_ENTRY || owed) return;
+      const said = await client.invoice(window.BLWP_ENTRY);
+      if (said.ok) owed = said;
+      else if (said.status !== 404) walletWhy = said.why;
+      paintWallet();
+    }
+
+    async function payTheStake() {
+      const client = theClient();
+      if (paying || !client || !window.BLWP_ENTRY) return;
+      const pasted = document.getElementById('blwp-nwc').value.trim();
+      if (pasted) {
+        const took = wallet.connect(pasted);
+        if (!took.ok) { walletWhy = took.why; return paintWallet(); }
+        document.getElementById('blwp-nwc').value = '';
+      }
+      const held = wallet.current();
+      if (!held.ok) { walletWhy = held.why; return paintWallet(); }
+
+      paying = true;
+      walletWhy = 'asking the wallet…';
+      paintWallet();
+      const said = await client.payStake(window.BLWP_ENTRY, {
+        connection: held, curve: window.BLWP_CURVE, log: spent,
+        random: (n) => crypto.getRandomValues(new Uint8Array(n)),
+      });
+      paying = false;
+      walletWhy = said.ok
+        ? 'paid — the stake is held for this round'
+        : said.why;
+      // The quote is asked again so the state a player is shown is the node's
+      // and not this page's memory of it.
+      owed = null;
+      await askWhatIsOwed();
+      return paintWallet();
+    }
+
+    function paintWallet() {
+      const el = document.getElementById('blwp-wallet');
+      if (!el || !wallet || typeof BLWPCLIENT === 'undefined') return;
+      // A ROUND THAT ASKS NO MONEY GETS NO WALLET. Nothing to pay, nothing to
+      // show, and a payment box on a free round is a question with no answer.
+      const pays = window.BLWP_ROUND && BLWPCLIENT.roundPays(window.BLWP_ROUND);
+      if (!pays) { el.style.display = 'none'; return; }
+      el.style.display = 'block';
+
+      document.getElementById('blwp-owed').textContent = owed
+        ? `this seat owes ${owed.amountMsat / 1000n} sat · ${owed.state}`
+        : 'this seat owes —';
+      // THE TOTAL IS THE CLIENT'S. A page that added up its own payments would
+      // be showing a figure nobody checked.
+      document.getElementById('blwp-spent').textContent = BLWPCLIENT.spentLine(spent);
+      document.getElementById('blwp-nwc').placeholder = wallet.connected
+        ? 'wallet connected · paste another to replace it'
+        : 'nostr+walletconnect://…';
+      document.getElementById('blwp-pay').disabled = paying || !owed;
+      document.getElementById('blwp-why').textContent = walletWhy;
+    }
+
     const nodeHealth = {};
     async function probeNodes() {
       const nodes = (new URLSearchParams(location.search).get('node') || '')
@@ -455,6 +581,9 @@
       el.textContent = ab + '\n' + playLine(net) + '\n' + who;
     }
     setInterval(paintPlayers, 500);
+    const payButton = document.getElementById('blwp-pay');
+    if (payButton) payButton.addEventListener('click', payTheStake);
+    setInterval(() => { askWhatIsOwed(); paintWallet(); }, 1000);
     probeNodes();
     setInterval(probeNodes, 2000);
     paintPlayers();
