@@ -277,9 +277,12 @@ mergeInto(LibraryManager.library, {
       });
       net.where = { roundId: C.roundId(contract), entryId: C.entryId(entry) };
       var verify = function (sig, msg, key) {
-        // Verifying a receipt is the page's job too, and the same curve.
-        return crypto.subtle.importKey('raw', key, { name: 'Ed25519' }, false, ['verify'])
-          .then(function (k) { return crypto.subtle.verify({ name: 'Ed25519' }, k, sig, msg); });
+        // NODE SIGNATURES ARE SCHNORR under the bond key (letter 26). The
+        // session key below is still Ed25519. Mixing them was the 09:33 fault:
+        // A/B http ok, play refused the advert as unsigned.
+        if (typeof BLWP_CURVE === 'undefined' || typeof BLWP_CURVE.verify !== 'function')
+          return Promise.resolve(false);
+        return Promise.resolve(BLWP_CURVE.verify(sig, msg, key));
       };
 
       // THE DOOR. `base` above is only what the gate answered so that C# would

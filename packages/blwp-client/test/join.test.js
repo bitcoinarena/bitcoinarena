@@ -228,6 +228,8 @@ test('the page joins a named round and still invents none', () => {
     'the page never checks whether both nodes answer');
   assert.ok(page.includes('playLine'),
     'the page never says whether the play socket is up');
+  assert.ok(page.includes('BLWP_CURVE.verify'),
+    'the page still verifies node adverts with Ed25519');
 });
 
 /**

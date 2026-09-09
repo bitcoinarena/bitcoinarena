@@ -17,17 +17,18 @@ var BLWP_CURVE_EXPORTS = (() => {
   };
   var __toCommonJS = (mod2) => __copyProps(__defProp({}, "__esModule", { value: true }), mod2);
 
-  // src/page-curve.js
+  // packages/blwp-client/src/page-curve.js
   var page_curve_exports = {};
   __export(page_curve_exports, {
     combinePoints: () => combinePoints,
     ecdhShared: () => ecdhShared,
     pageCurve: () => pageCurve,
     pointFromScalar: () => pointFromScalar,
-    pointX: () => pointX
+    pointX: () => pointX,
+    verify: () => verify
   });
 
-  // node_modules/@noble/hashes/_u64.js
+  // packages/blwp-client/node_modules/@noble/hashes/_u64.js
   var fromNumH = (n) => n / 2 ** 32 | 0;
   var fromNumL = (n) => n >>> 0;
   function setU64FromNum(view, byteOffset, n, isLE) {
@@ -37,7 +38,7 @@ var BLWP_CURVE_EXPORTS = (() => {
     view.setUint32(byteOffset + 4, isLE ? h : l, isLE);
   }
 
-  // node_modules/@noble/hashes/utils.js
+  // packages/blwp-client/node_modules/@noble/hashes/utils.js
   function isBytes(a) {
     return a instanceof Uint8Array || ArrayBuffer.isView(a) && a.constructor.name === "Uint8Array" && "BYTES_PER_ELEMENT" in a && a.BYTES_PER_ELEMENT === 1;
   }
@@ -202,7 +203,7 @@ var BLWP_CURVE_EXPORTS = (() => {
     oid: Uint8Array.from([6, 9, 96, 134, 72, 1, 101, 3, 4, 2, suffix])
   });
 
-  // node_modules/@noble/hashes/_md.js
+  // packages/blwp-client/node_modules/@noble/hashes/_md.js
   function Chi(a, b, c) {
     return a & b ^ ~a & c;
   }
@@ -315,7 +316,7 @@ var BLWP_CURVE_EXPORTS = (() => {
     1541459225
   ]);
 
-  // node_modules/@noble/hashes/sha2.js
+  // packages/blwp-client/node_modules/@noble/hashes/sha2.js
   var SHA256_K = /* @__PURE__ */ Uint32Array.from([
     1116352408,
     1899447441,
@@ -480,7 +481,7 @@ var BLWP_CURVE_EXPORTS = (() => {
     /* @__PURE__ */ oidNist(1)
   );
 
-  // node_modules/@noble/curves/utils.js
+  // packages/blwp-client/node_modules/@noble/curves/utils.js
   function aarray(item, title, inner = () => {
   }) {
     if (!Array.isArray(item))
@@ -673,7 +674,7 @@ var BLWP_CURVE_EXPORTS = (() => {
     iter(optFields, true);
   }
 
-  // node_modules/@noble/curves/abstract/modular.js
+  // packages/blwp-client/node_modules/@noble/curves/abstract/modular.js
   var _0n2 = /* @__PURE__ */ BigInt(0);
   var _1n2 = /* @__PURE__ */ BigInt(1);
   var _2n = /* @__PURE__ */ BigInt(2);
@@ -1135,7 +1136,7 @@ var BLWP_CURVE_EXPORTS = (() => {
     return isLE ? numberToBytesLE(reduced, fieldLen) : numberToBytesBE(reduced, fieldLen);
   }
 
-  // node_modules/@noble/curves/abstract/curve.js
+  // packages/blwp-client/node_modules/@noble/curves/abstract/curve.js
   var _0n3 = /* @__PURE__ */ BigInt(0);
   var _1n3 = /* @__PURE__ */ BigInt(1);
   var _4n2 = /* @__PURE__ */ BigInt(4);
@@ -1522,7 +1523,7 @@ var BLWP_CURVE_EXPORTS = (() => {
     };
   }
 
-  // node_modules/@noble/hashes/hmac.js
+  // packages/blwp-client/node_modules/@noble/hashes/hmac.js
   var _HMAC = class {
     oHash;
     iHash;
@@ -1599,7 +1600,7 @@ var BLWP_CURVE_EXPORTS = (() => {
     return hmac_;
   })();
 
-  // node_modules/@noble/curves/abstract/der.js
+  // packages/blwp-client/node_modules/@noble/curves/abstract/der.js
   var _0n4 = /* @__PURE__ */ BigInt(0);
   var DERErr = class extends Error {
     constructor(m = "") {
@@ -1726,7 +1727,7 @@ var BLWP_CURVE_EXPORTS = (() => {
     return Object.freeze(_DER);
   })();
 
-  // node_modules/@noble/curves/abstract/weierstrass.js
+  // packages/blwp-client/node_modules/@noble/curves/abstract/weierstrass.js
   var divNearest = (num2, den) => (num2 + (num2 >= 0 ? den : -den) / _2n2) / den;
   function _splitEndoScalar(k, basis, n) {
     aInRange("scalar", k, _0n5, n);
@@ -2503,7 +2504,7 @@ var BLWP_CURVE_EXPORTS = (() => {
       const sig = drbg(seed, k2sig);
       return sig.toBytes(opts2.format);
     }
-    function verify(signature, message, publicKey, opts2 = {}) {
+    function verify2(signature, message, publicKey, opts2 = {}) {
       const { lowS, prehash, format } = validateSigOpts(opts2, defaultSigOpts);
       publicKey = abytes2(publicKey, void 0, "publicKey");
       message = validateMsgAndHash(message, prehash);
@@ -2551,14 +2552,14 @@ var BLWP_CURVE_EXPORTS = (() => {
       lengths,
       Point,
       sign,
-      verify,
+      verify: verify2,
       recoverPublicKey,
       Signature,
       hash: hash_
     });
   }
 
-  // node_modules/@noble/curves/secp256k1.js
+  // packages/blwp-client/node_modules/@noble/curves/secp256k1.js
   var secp256k1_CURVE = {
     p: BigInt("0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffefffffc2f"),
     n: BigInt("0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141"),
@@ -2721,7 +2722,7 @@ var BLWP_CURVE_EXPORTS = (() => {
     });
   })();
 
-  // src/page-curve.js
+  // packages/blwp-client/src/page-curve.js
   var hex = (b) => {
     let s = "";
     for (let i = 0; i < b.length; i++) s += b[i].toString(16).padStart(2, "0");
@@ -2745,6 +2746,13 @@ var BLWP_CURVE_EXPORTS = (() => {
     }
     return sum === null ? new Uint8Array(33) : sum.toBytes(true);
   };
+  var verify = (sig, msg, key) => {
+    try {
+      return schnorr.verify(sig, msg, key);
+    } catch {
+      return false;
+    }
+  };
   var ecdhShared = (secret, theirXOnly) => {
     const n = secp256k1.Point.Fn.ORDER;
     const d = (typeof secret === "bigint" ? secret : big(secret)) % n;
@@ -2752,7 +2760,7 @@ var BLWP_CURVE_EXPORTS = (() => {
     const x = schnorr.utils.lift_x(big(theirXOnly)).multiply(d).toAffine().x.toString(16).padStart(64, "0");
     return Uint8Array.from(x.match(/../g).map((h) => parseInt(h, 16)));
   };
-  var pageCurve = { pointX, ecdhShared, pointFromScalar, combinePoints };
+  var pageCurve = { pointX, ecdhShared, pointFromScalar, combinePoints, verify };
   return __toCommonJS(page_curve_exports);
 })();
 /*! Bundled license information:

@@ -3,6 +3,17 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { pageCurve } from '../src/page-curve.js';
 import { feldmanGroup } from '../../blwp-node/src/curve.js';
+import { schnorr } from '@noble/curves/secp256k1.js';
+
+test('the page verifies a node advert the way the daemon signed it', () => {
+  const secret = new Uint8Array(32).fill(7);
+  secret[31] = 9;
+  const pub = schnorr.getPublicKey(secret);
+  const msg = new Uint8Array(32).fill(1);
+  const sig = schnorr.sign(msg, secret);
+  assert.equal(pageCurve.verify(sig, msg, pub), true);
+  assert.equal(pageCurve.verify(sig, new Uint8Array(32).fill(2), pub), false);
+});
 
 test('the page curve is the daemon curve', () => {
   const secret = new Uint8Array(32).fill(7);

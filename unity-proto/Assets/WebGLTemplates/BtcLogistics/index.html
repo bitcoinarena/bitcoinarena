@@ -248,6 +248,19 @@
     resize();
     window.addEventListener('resize', resize);
 
+    // NODE SIGNATURES ARE SCHNORR. Letter 26: a node's identity is its bond
+    // key. crypto.subtle here is Ed25519, which is the session key, not the
+    // advert. The jslib still hands Ed25519 to Client.at; this replaces it
+    // with the curve the daemons signed under. Photographed 2026-09-09 09:33.
+    if (typeof BLWPCLIENT !== 'undefined' && BLWPCLIENT.Client) {
+      const at = BLWPCLIENT.Client.at.bind(BLWPCLIENT.Client);
+      BLWPCLIENT.Client.at = function (discovery, opts) {
+        const verify = (sig, msg, key) => !!(window.BLWP_CURVE && window.BLWP_CURVE.verify
+          && window.BLWP_CURVE.verify(sig, msg, key));
+        return at(discovery, Object.assign({}, opts, { verify: verify }));
+      };
+    }
+
     // THE ROUND THIS PAGE WAS SENT TO, if it was sent to one.
     //
     // The page still refuses to INVENT a round - there is no contract written

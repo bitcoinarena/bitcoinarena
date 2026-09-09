@@ -36,6 +36,12 @@ export const combinePoints = (terms) => {
   return sum === null ? new Uint8Array(33) : sum.toBytes(true);
 };
 
+/** BIP-340. Node adverts and receipts are schnorr under the bond key. */
+export const verify = (sig, msg, key) => {
+  try { return schnorr.verify(sig, msg, key); }
+  catch { return false; }
+};
+
 export const ecdhShared = (secret, theirXOnly) => {
   const n = secp256k1.Point.Fn.ORDER;
   const d = (typeof secret === 'bigint' ? secret : big(secret)) % n;
@@ -45,4 +51,4 @@ export const ecdhShared = (secret, theirXOnly) => {
   return Uint8Array.from(x.match(/../g).map((h) => parseInt(h, 16)));
 };
 
-export const pageCurve = { pointX, ecdhShared, pointFromScalar, combinePoints };
+export const pageCurve = { pointX, ecdhShared, pointFromScalar, combinePoints, verify };
