@@ -30,6 +30,7 @@ import { nonceGenerate } from '../../protocol/src/frost.js';
 import { SHARES_NEEDED } from '../../protocol/src/shares.js';
 import { tableFor, signPayoutTable, verifiedTable, splitSignedTable } from './payout-table.js';
 import { toHex } from '../../protocol/src/hash.js';
+import { encodeUtxo, decodeCommitments, decodeShare, encodeShareRequest } from './pool-wire.js';
 
 /** 9.4's two words for the qualifying tail, and they are states now. */
 export const PAYOUT_QUEUED = 'PAYOUT_QUEUED';
@@ -108,7 +109,7 @@ export class Payouts {
   }
 
   /** Injected so a test can answer without a network. */
-  chainFetch(url) { return (this.fetcher || fetch)(url); }
+  chainFetch(url, options) { return (this.fetcher || fetch)(url, options); }
 
   /** Everything this node holds for a round, for the seat that asks. */
   records(roundIdBytes) { return this.round.payoutSignatures(roundIdBytes).map((r) => r.bytes); }
@@ -148,6 +149,110 @@ export class Payouts {
     });
     return { ok: true, state: PAYOUT_QUEUED, tableId: built.tableId,
       table: built.table, rows: owed.rows, owedMsat: owed.owedMsat, agreed: seen.agreed };
+  }
+
+  /**
+   * THE SAME SPEND, SIGNED BY A COMMITTEE INSTEAD OF BY A PROCESS.
+   *
+   * `pay` below takes `signers` - five SECRET scalars - and makes every nonce
+   * and every share itself. That is the arithmetic of a threshold without the
+   * threshold: whoever runs it can sign anything. This asks instead, and what
+   * it asks for is the only two things a seat will put on a wire.
+   *
+   * IT IS AN ASKER, NOT AN AUTHORITY. Every seat rebuilds the transaction from
+   * its own store before it commits to anything, so this node cannot talk the
+   * committee into a spend of its own devising - the most it can do is name an
+   * output and be told no. It does not even build the bytes it broadcasts from
+   * its own opinion: `signing.spendFor` is this node's seat answering the same
+   * question the others answered, and a node that disagreed with the committee
+   * would produce a signature that does not verify rather than a transaction
+   * nobody agreed to.
+   *
+   * `signing` is handed in rather than imported so this file keeps knowing
+   * nothing about how a seat holds a share.
+   */
+  async payWithCommittee({ roundId, utxo, contract, signing, seats = [], needed = SHARES_NEEDED }) {
+    const row = this.round.payout(roundId);
+    if (!row) return { ok: false, why: 'that round has no queued payout' };
+    if (row.state === PAID || row.state === PAID_IN_PART)
+      return { ok: true, state: row.state, txid: row.txid, already: true };
+    if (row.state !== PAYOUT_QUEUED)
+      return { ok: false, why: `that payout is ${row.state}, so there is nothing to send` };
+    if (!this.chain) return { ok: false, why: 'this node reaches no chain, so it spends nothing' };
+
+    const mine = signing.spendFor({ roundId, utxo, contract });
+    if (!mine.ok) return { ok: false, why: `this seat will not sign it either: ${mine.why}` };
+
+    const body = encodeUtxo(utxo);
+    const asked = [];
+    const own = signing.commit({ roundId, utxo, contract, random: this.random });
+    if (own.ok) asked.push({ where: 'this seat', commitment: own.commitment });
+    const refused = [];
+    for (const peer of seats) {
+      if (asked.length >= needed) break;
+      const got = await this.askSeat(`${peer}/pool/commit?round=${toHex(roundId)}`, body);
+      if (!got.ok) { refused.push(`${peer}: ${got.why}`); continue; }
+      let one;
+      try { one = decodeCommitments(got.bytes); }
+      catch (err) { refused.push(`${peer}: ${err.message}`); continue; }
+      if (one.length !== 1) { refused.push(`${peer}: answered with ${one.length} commitments`); continue; }
+      asked.push({ where: peer, commitment: one[0] });
+    }
+    if (asked.length < needed)
+      return { ok: false, committed: asked.length, needed,
+        why: `${asked.length} of ${needed} seats committed to this spend`, refused };
+
+    const commitments = asked.map((a) => a.commitment);
+    const shares = [];
+    if (own.ok) {
+      const got = signing.signatureShare({ roundId, utxo, contract, commitments });
+      if (!got.ok) return { ok: false, why: `this seat withdrew: ${got.why}` };
+      shares.push(got.share);
+    }
+    for (const a of asked) {
+      if (a.where === 'this seat') continue;
+      const got = await this.askSeat(`${a.where}/pool/share?round=${toHex(roundId)}`,
+        encodeShareRequest(utxo, commitments));
+      if (!got.ok)
+        return { ok: false, why: `${a.where} committed and then would not sign: ${got.why}` };
+      try { shares.push(decodeShare(got.bytes)); }
+      catch (err) { return { ok: false, why: `${a.where}: ${err.message}` }; }
+    }
+
+    const sig = aggregate340({
+      commitments, message: mine.sighash, groupPublicKey: mine.groupPublicKey, shares, curve: this.curve,
+    });
+    const raw = serializeSpend({
+      inputs: mine.inputs, outputs: mine.outputs, witnesses: [poolWitness(sig.signature)],
+    });
+
+    // ON DISK BEFORE THE WIRE, the same rule `pay` keeps.
+    this.round.putPayout({
+      roundId, tableId: row.tableId, state: PAYOUT_QUEUED, raw,
+      why: `${shares.length} of ${needed} seats signed this spend; about to send`,
+    });
+    const sent = await this.chain.send(raw);
+    if (!sent.ok) return { ok: false, why: sent.why, raw, signed: shares.length };
+
+    this.round.putPayout({
+      roundId, tableId: row.tableId, state: PAID, txid: sent.txid, raw,
+      why: `paid by ${shares.length} of ${needed} seats`,
+    });
+    return { ok: true, state: PAID, txid: sent.txid, raw, signed: shares.length,
+      seats: asked.map((a) => a.where) };
+  }
+
+  /** One ask of one seat, and a refusal is an answer rather than a throw. */
+  async askSeat(url, body) {
+    let got;
+    try { got = await this.chainFetch(url, { method: 'POST', body }); }
+    catch (err) { return { ok: false, why: err.message }; }
+    if (!got.ok) {
+      let why = `HTTP ${got.status}`;
+      try { why = (await got.text()).trim() || why; } catch { /* the status is the answer */ }
+      return { ok: false, why };
+    }
+    return { ok: true, bytes: new Uint8Array(await got.arrayBuffer()) };
   }
 
   /**

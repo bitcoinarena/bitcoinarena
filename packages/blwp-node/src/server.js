@@ -62,6 +62,8 @@ import { Roster } from './roster.js';
 import { Custody, NO_LIGHTNING } from './custody.js';
 import { Preimages, encodeShareAnswer, SEALED_ANSWER_BYTES } from './preimage.js';
 import { Payouts, PAYOUT_QUEUED, PAID, NOTHING_OWED } from './payout.js';
+import { PoolSigning } from './pool-signing.js';
+import { decodeUtxo, decodeCommitments, encodeCommitments, encodeShare, UTXO_BYTES } from './pool-wire.js';
 import { SIGNED_TABLE_BYTES } from './payout-table.js';
 
 const read = (req) => new Promise((resolve, reject) => {
@@ -140,7 +142,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   lightning = NO_LIGHTNING, preimageFor = null,
   // The pool's key material and something that can broadcast. A daemon given
   // neither still agrees on what the round owes; it just does not spend.
-  poolKey = null, chainSpend = null, poolCurve = feldmanGroup } = {}) {
+  poolKey = null, chainSpend = null, poolCurve = feldmanGroup,
+  // THIS NODE'S OWN SHARE OF THE POOL, and nobody else's. `{ id, share }`,
+  // dealt today because a dealerless DKG is its own letter. Absent, the
+  // daemon runs exactly as it did and answers the two signing doors with a
+  // refusal rather than a signature.
+  poolSeat = null } = {}) {
   const round = new Round(db);
 
   // WHAT HOLDS THE PLAYERS' MONEY. 23.1's hold invoice and 23.2's table, and
@@ -152,7 +159,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // The peers are the same list the verifier gathers results from, because a
   // seat that answers about a run is a seat that can be asked about its share.
   const preimages = new Preimages(round, {
-    curve: feldmanGroup, peers, fetcher: (u) => fetch(u), random: (n) => new Uint8Array(randomBytes(n)),
+    curve: feldmanGroup, peers, fetcher: (u, o) => fetch(u, o), random: (n) => new Uint8Array(randomBytes(n)),
   });
 
   /**
@@ -189,7 +196,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const payouts = new Payouts(round, {
     curve: poolCurve, chain: chainSpend, pool: poolKey,
     random: (n) => new Uint8Array(randomBytes(n)),
-    peers, fetcher: (u) => fetch(u),
+    peers, fetcher: (u, o) => fetch(u, o),
+  });
+
+  // AND THIS NODE'S HALF OF A SIGNING ROUND. `Payouts` decides which
+  // transaction is right; this decides whether THIS seat will put its own
+  // share behind it, and it rebuilds the transaction itself before it does.
+  const signing = new PoolSigning(round, {
+    curve: poolCurve, seat: poolSeat, pool: poolKey,
   });
 
   // WHO MAY HOLD A ROUND, from the chain. The census stopped being library
@@ -651,6 +665,56 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         return res.end(Buffer.from(out));
       }
 
+      // ROUND ONE OF A SIGNING ROUND: this seat's nonce commitment.
+      //
+      // The body is the OUTPUT the asker wants spent and nothing else. There is
+      // no sighash on this door and there must not be: a seat that signed what
+      // it was handed would make five of seven decorative, because five
+      // signatures over an attacker's bytes spend the pool just as well.
+      if (req.method === 'POST' && url.pathname === '/pool/commit') {
+        const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
+        const held = round.get(rid);
+        if (!held) return text(res, 404, 'this node holds no such round');
+        let utxo;
+        try { utxo = decodeUtxo(await read(req)); }
+        catch (e) { return text(res, 400, 'that is not an output: ' + e.message); }
+
+        const got = signing.commit({
+          roundId: new Uint8Array(rid), utxo,
+          contract: decodeRoundContract(new Uint8Array(held.contract)),
+          random: (n) => new Uint8Array(randomBytes(n)),
+        });
+        if (!got.ok) return text(res, 409, got.why);
+        res.writeHead(200, { 'content-type': 'application/octet-stream', ...CORS });
+        return res.end(Buffer.from(encodeCommitments([got.commitment])));
+      }
+
+      // ROUND TWO: this seat's signature share, over the spend it built itself.
+      //
+      // The commitment list is what changes between the rounds, and it is part
+      // of the message - it is hashed into the binding factors. A seat that
+      // already signed under one list hands the same bytes back and refuses a
+      // second, because two challenges under one nonce pair publish the share.
+      if (req.method === 'POST' && url.pathname === '/pool/share') {
+        const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
+        const held = round.get(rid);
+        if (!held) return text(res, 404, 'this node holds no such round');
+        const body = await read(req);
+        let utxo, commitments;
+        try {
+          utxo = decodeUtxo(body.subarray(0, UTXO_BYTES));
+          commitments = decodeCommitments(body.subarray(UTXO_BYTES));
+        } catch (e) { return text(res, 400, 'that is not an output and a commitment list: ' + e.message); }
+
+        const got = signing.signatureShare({
+          roundId: new Uint8Array(rid), utxo, commitments,
+          contract: decodeRoundContract(new Uint8Array(held.contract)),
+        });
+        if (!got.ok) return text(res, 409, got.why);
+        res.writeHead(200, { 'content-type': 'application/octet-stream', ...CORS });
+        return res.end(Buffer.from(encodeShare(got.share)));
+      }
+
       if (req.method === 'GET' && url.pathname === '/results') {
         const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
         const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
@@ -943,7 +1007,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   return new Promise((resolve) => {
     http.listen(port, host, () => resolve({
       http, wss, round, host, verifier, ghosts, roster, custody, reconciling, preimages,
-      payouts, reconcilingPayouts,
+      payouts, reconcilingPayouts, signing,
       // What the last close did with the money, and the same door an operator
       // uses to run a settlement again by hand.
       stakes: () => stakes,
