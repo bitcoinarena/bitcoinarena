@@ -42,7 +42,11 @@ const b32 = (n) => new Uint8Array(32).fill(n);
 const FUNDED = { funded: () => true };
 const RANDOMNESS = b32(0x9b);
 const BEACON = { hash: RANDOMNESS, height: 900001, timeMs: 900n };
-const TICKS = 600;
+// 800, not 600: since 20c3950 this player parks at the door their own seed
+// names, and from there this drive wrecks at tick 753 rather than 592. A
+// transcript that stops at 600 stops while the run is still LIVE, and a LIVE
+// run has no outcome to sign. verify.test.js carries the long version.
+const TICKS = 800;
 const wordsAt = (t) => [45875, ((t * 977) % 30000) - 15000, (t % 700) < 40 ? 65536 : 0, 0, 0];
 
 // The player's own secret and the commitment their contract carries.

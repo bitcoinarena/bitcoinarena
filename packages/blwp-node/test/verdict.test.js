@@ -34,6 +34,12 @@ const b32 = (n) => new Uint8Array(32).fill(n);
 const RANDOMNESS = b32(0x9b);
 const session = ed25519.utils.randomSecretKey();
 const wordsAt = (t) => [45875, ((t * 977) % 30000) - 15000, (t % 700) < 40 ? 65536 : 0, 0, 0];
+// 800, not 600: since 20c3950 a player parks at the door their own seed names,
+// and from there this drive wrecks at tick 753 (player 5) and 395 (player 6)
+// rather than 592. A transcript that stops at 600 stops while the run is still
+// LIVE, and a LIVE run has no outcome to sign - which is the case the last
+// test in this file is FOR, and it asks for 120 by hand.
+const TICKS = 800;
 
 const secrets = [0, 1, 2, 3, 4, 5, 6].map(() => ed25519.utils.randomSecretKey());
 const COMMITTEE = secrets.map((s) => schnorr.getPublicKey(s));
@@ -111,7 +117,7 @@ function stored(ticks, { player = 5 } = {}) {
  * the same id - which is what makes "five IDENTICAL results" checkable.
  */
 test('nodes that replayed the same run sign the same result, and five of seven verify', async () => {
-  const s = stored(600);
+  const s = stored(TICKS);
   const answer = await replayInWorker(s.transcript, s.entry, { roundRandomness: RANDOMNESS });
   assert.equal(answer.ok, true, answer.why);
 
@@ -123,14 +129,17 @@ test('nodes that replayed the same run sign the same result, and five of seven v
   });
 
   // THE SCORE AND THE OUTCOME ARE READ OFF THE REPLAYED STATE, not defaulted.
-  // 257 is what this run earns and FAILED is what it came to - a fixture that
+  // 79 is what this run earns and FAILED is what it came to - a fixture that
   // only checked the two agreed with each other could not tell a real score
   // from a zero every node produced alike.
   //
-  // It was 230 while the fixture chose the seed itself. The world is now the
-  // one the entry's own secret and the round's randomness produce, so it is a
-  // different world and a different score - measured, not adjusted to pass.
-  assert.equal(answer.score, 257, 'the run no longer scores what this fixture was measured against');
+  // It was 230 while the fixture chose the seed itself, then 257 when the world
+  // became the one the entry's own secret and the round's randomness produce.
+  // It is 79 now because the player no longer starts on the solo bay: 20c3950
+  // parks them at the door their seed names, and a drive that begins 27 m up
+  // the apron earns a different number before it wrecks. Measured each time,
+  // not adjusted to pass.
+  assert.equal(answer.score, 79, 'the run no longer scores what this fixture was measured against');
   assert.equal(answer.outcome, 'FAILED');
   for (const x of signed) {
     assert.equal(x.built.score, answer.score, 'the signed score is not the replayed one');
@@ -241,7 +250,7 @@ test('a run that has not ended is not signed as a failure', async () => {
  * AND THE THRESHOLD IS STILL NOT A NUMBER IN THIS FILE.
  */
 test('the committee size decides the threshold, and an unknown size is refused', async () => {
-  const s = stored(600);
+  const s = stored(TICKS);
   const answer = await replayInWorker(s.transcript, s.entry, { roundRandomness: RANDOMNESS });
   const recordFor = (i) => {
     const built = resultFrom({ answer, contract: s.contract, entry: s.entry,
@@ -273,8 +282,8 @@ test('the committee size decides the threshold, and an unknown size is refused',
  * this object.
  */
 test('a result cannot be signed over another player\'s transcript', async () => {
-  const mine = stored(600);
-  const theirs = stored(600, { player: 6 });
+  const mine = stored(TICKS);
+  const theirs = stored(TICKS, { player: 6 });
   const answer = await replayInWorker(mine.transcript, mine.entry, { roundRandomness: RANDOMNESS });
   assert.equal(answer.ok, true, answer.why);
 

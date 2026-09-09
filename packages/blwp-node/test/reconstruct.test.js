@@ -66,7 +66,11 @@ function fakePort() {
 }
 const RANDOMNESS = b32(0x9b);
 const BEACON = { hash: RANDOMNESS, height: 900001, timeMs: 900n };
-const TICKS = 600;
+// 800, not 600: since 20c3950 this player parks at the door their own seed
+// names, and from there this drive wrecks at tick 753 rather than 592. A
+// transcript that stops at 600 stops while the run is still LIVE, and a LIVE
+// run has no outcome to sign. verify.test.js carries the long version.
+const TICKS = 800;
 const wordsAt = (t) => [45875, ((t * 977) % 30000) - 15000, (t % 700) < 40 ? 65536 : 0, 0, 0];
 const coefficients = [1n, 2n, 3n, 4n].map((n) => n * 0x1234567890abcdefn + 7n);
 const session = ed25519.utils.randomSecretKey();

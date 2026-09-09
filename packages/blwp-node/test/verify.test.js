@@ -46,7 +46,20 @@ const RANDOMNESS = b32(0x9b);
 // contract can prove.
 const HEIGHT = 900001;
 const BEACON = { hash: RANDOMNESS, height: HEIGHT, timeMs: 900n };
-const TICKS = 600;
+// HOW LONG THE FIXTURE DRIVES, AND WHY IT IS NOT 600 ANY MORE.
+//
+// 600 was measured when every run started on the solo bay: this drive - full
+// throttle, the steering swept across the apron, the handbrake on for the
+// first forty ticks - wrecked b32(5)'s truck at tick 592. Since 20c3950 a
+// player parks at the door their own seed names (`spawnBay`), no entry-derived
+// seed lands on the solo bay, and from bay 9 the same drive takes 753 ticks to
+// wreck. A transcript that stops at 600 stops while the run is still LIVE, and
+// a LIVE run has no outcome to sign - which is what `resultFrom` says in those
+// words, and what made this file red rather than any daemon fault.
+//
+// 800 is past the end with room to spare, and the run's state latches when it
+// leaves LIVE, so the extra ticks change no number here.
+const TICKS = 800;
 const wordsAt = (t) => [45875, ((t * 977) % 30000) - 15000, (t % 700) < 40 ? 65536 : 0, 0, 0];
 
 const session = ed25519.utils.randomSecretKey();
@@ -195,7 +208,7 @@ test('a round closed on a running daemon leaves a signed result nobody asked it 
     assert.deepEqual(result.nodePubkey, node.round.pubkey, 'the node signed under somebody else');
     assert.deepEqual(result.simCoreHash, contract.simCoreHash);
     assert.equal(result.outcome, 'FAILED');
-    assert.equal(result.score, 257, 'the stored score is not the one the replay found');
+    assert.equal(result.score, 79, 'the stored score is not the one the replay found');
 
     // THE HASH IS THE CANONICAL TRANSCRIPT'S, 13C's own object - the prefix of
     // marks the committee receipted. A node that signed over the rows it
@@ -412,7 +425,7 @@ test('a receipt arriving after the close produces the result the replay could no
     assert.equal(now.count, 1, 'the late receipt did not produce a result');
     const result = decodePlayerResult(splitSignedResult(now.bytes).body);
     assert.deepEqual(result.transcriptHash, node.round.canonicalTranscript(rid, eid).hash);
-    assert.equal(result.score, 257);
+    assert.equal(result.score, 79);
 
     // AND THE SEAT DOES NOT REPLAY AGAIN FOR A RUN IT HAS SIGNED. Asked
     // directly, the retry declines rather than queueing work whose answer the
@@ -580,10 +593,26 @@ test('two daemons given the same published hash and height derive the same seed 
     assert.deepEqual(seatsOf(seedA), seatsOf(seedB));
     assert.equal(seatsOf(seedA).length, c.gameVerifySlots);
 
-    // a different published hash would have picked different seats, which is
-    // what makes grinding the round id worthless
-    const other = committeeSeedFromBeacon(c,
-      { roundId: rid, randomness: b32(0x9c), height: HEIGHT, timeMs: BEACON.timeMs }).seed;
-    assert.notDeepEqual(seatsOf(seedA), seatsOf(other));
+    // A DIFFERENT PUBLISHED HASH PICKS DIFFERENT SEATS, which is what makes
+    // grinding the round id worthless.
+    //
+    // ASKED OF A SPREAD OF HASHES, NOT OF ONE. Two slots drawn from ten equal
+    // bonds is ninety ordered pairs, so one other hash agrees with this one
+    // about a percent of the time - and this file went red on exactly that,
+    // with nothing wrong. What the claim needs is that the seats MOVE with the
+    // hash, so it is asked of sixteen of them: a selection that ignored the
+    // beacon would return one set for all sixteen, and any real one returns
+    // several. A single coincidence proves nothing either way and no longer
+    // decides the test.
+    const spread = new Set();
+    for (let h = 0x9c; h < 0xac; h++) {
+      const other = committeeSeedFromBeacon(c,
+        { roundId: rid, randomness: b32(h), height: HEIGHT, timeMs: BEACON.timeMs }).seed;
+      spread.add(seatsOf(other).join(','));
+    }
+    assert.ok(spread.size > 1,
+      `sixteen published hashes picked the one committee ${[...spread][0]}, so the beacon does not reach the draw`);
+    assert.ok([...spread].some((x) => x !== seatsOf(seedA).join(',')),
+      'sixteen other hashes all picked this round\'s own committee');
   } finally { await a.close(); await b.close(); }
 });
