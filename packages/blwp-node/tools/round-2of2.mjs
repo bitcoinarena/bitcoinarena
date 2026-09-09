@@ -410,19 +410,46 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   if (opened.some((o) => o !== id))
     throw new Error('the two daemons named the round differently: ' + opened.join(' '));
 
+  // WHERE A BROWSER CAN ACTUALLY REACH THESE DAEMONS.
+  //
+  // An https page cannot fetch `http://100.x.y.z:8090` - the browser blocks it
+  // as mixed content, and what the player sees is a round that never loads and
+  // a play socket that never comes up. Photographed 07:40 and again at 09:44
+  // as "play - A dropped".
+  //
+  // `BLWP_WSS_<port>` already names where that daemon is reachable from
+  // outside, because the socket endpoint had the same problem first. The same
+  // origin serves its http doors, so the URL is built from it rather than from
+  // the address this process happens to be bound to. Two daemons behind one
+  // reverse proxy differ by their first path segment, which is exactly what
+  // the client's own two-source rule was taught to count.
+  const publicFor = (port, fallback) => {
+    const wss = process.env[`BLWP_WSS_${port}`];
+    if (!wss) return fallback;
+    try {
+      const u = new URL(wss);
+      if (u.protocol !== 'wss:' && u.protocol !== 'ws:') return fallback;
+      return `${u.protocol === 'wss:' ? 'https' : 'http'}://${u.host}${u.pathname.replace(/\/+$/, '')}`;
+    } catch { return fallback; }
+  };
+  const reach = [
+    publicFor(a.port, `http://${host}:${a.port}`),
+    publicFor(b.port, `http://${host}:${b.port}`),
+  ];
+
   // `headers=` is not named: the client already forms `<node>/headers` from
   // the nodes, and a URL that repeats what the default already says is a
   // second place to get it wrong.
   const url = `${page}/?round=${id}`
-    + `&node=http://${host}:${a.port},http://${host}:${b.port}`
-    + `&bond=http://${host}:${a.port}/bond`
+    + `&node=${reach[0]},${reach[1]}`
+    + `&bond=${reach[0]}/bond`
     + `&advert=${toHex(bonded[0].signature)}`;
 
   return {
     id, url, contract, a, b, beacon: beaconSeen,
-    nodes: [`http://${host}:${a.port}`, `http://${host}:${b.port}`],
-    headers: [`http://${host}:${a.port}/headers`, `http://${host}:${b.port}/headers`],
-    bond: `http://${host}:${a.port}/bond`,
+    nodes: reach,
+    headers: [`${reach[0]}/headers`, `${reach[1]}/headers`],
+    bond: `${reach[0]}/bond`,
     advert: toHex(bonded[0].signature),
     async close() { await a.close(); await b.close(); },
   };
