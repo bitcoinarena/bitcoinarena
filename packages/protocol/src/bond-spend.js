@@ -55,7 +55,7 @@ const outputBytes = (o) => cat(u64(o.value), scriptWithLength(o.script));
  * rather than folded into one loop.
  */
 export function tapSighash({
-  version = 2, locktime = 0, inputs, prevouts, outputs, inputIndex, leafHash,
+  version = 2, locktime = 0, inputs, prevouts, outputs, inputIndex, leafHash = null,
 }) {
   if (!Array.isArray(inputs) || !inputs.length) throw new Error('a spend has inputs');
   if (!Array.isArray(prevouts) || prevouts.length !== inputs.length)
@@ -69,9 +69,13 @@ export function tapSighash({
   const shaSequences = sha256bytes(cat(...inputs.map((i) => u32(i.sequence))));
   const shaOutputs = sha256bytes(cat(...outputs.map(outputBytes)));
 
-  // spend_type = ext_flag * 2 + annex_present. A script path is ext_flag 1 and
-  // this builder writes no annex, so it is 2 and never anything else.
-  const spendType = Uint8Array.from([2]);
+  // spend_type = ext_flag * 2 + annex_present. This builder writes no annex, so
+  // a script path is 2 and a KEY PATH is 0 - and the key path also drops the
+  // three extension fields entirely. Getting that wrong does not produce an
+  // invalid signature, it produces a valid signature over a different message,
+  // which a node rejects with nothing to say about why.
+  const keyPath = leafHash === null || leafHash === undefined;
+  const spendType = Uint8Array.from([keyPath ? 0 : 2]);
 
   const message = cat(
     Uint8Array.from([0x00]),                 // hash_type: DEFAULT
@@ -79,9 +83,11 @@ export function tapSighash({
     shaPrevouts, shaAmounts, shaScripts, shaSequences,
     shaOutputs,
     spendType, u32(inputIndex),
-    leafHash,
-    Uint8Array.from([0x00]),                 // key_version
-    u32(0xffffffff),                         // no CODESEPARATOR
+    ...(keyPath ? [] : [
+      leafHash,
+      Uint8Array.from([0x00]),               // key_version
+      u32(0xffffffff),                       // no CODESEPARATOR
+    ]),
   );
 
   // The epoch byte is inside the tagged hash and outside the message, which is

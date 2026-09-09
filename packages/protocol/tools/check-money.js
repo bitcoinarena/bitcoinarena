@@ -26,7 +26,11 @@ const MONEY = ['payout.js', 'sortition.js', 'census.js', 'contracts.js', 'encode
                // an output may be spent away from the pool. A float in a
                // scalar there is a signature that does not verify at best and
                // a leaked share at worst.
-               'frost.js', 'frost-bip340.js'];
+               'frost.js', 'frost-bip340.js',
+               // `pool.js` decides which output the committee's key pays to
+               // and which scalar signs for it. A float there is a wallet
+               // nobody can spend, holding every settled stake.
+               'pool.js'];
 const ROOT = new URL('../src/', import.meta.url).pathname;
 const problems = [];
 
