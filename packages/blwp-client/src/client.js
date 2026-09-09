@@ -44,6 +44,13 @@ import { fromHex, toHex } from '../../protocol/src/hash.js';
 import {
   decodeCheckpointReceipt, receiptId, splitSignedReceipt, SIGNED_RECEIPT_BYTES,
 } from '../../protocol/src/receipt.js';
+// THE RULE A PLAYER CHECKS AN INVOICE WITH, IMPORTED AND NOT REWRITTEN.
+//
+// `server.js` says at its own /invoice door that this rule "lives on their
+// side too", and until M3.2 item 5 it did not: zero callers here. A second
+// formula in the client would be a second opinion about what the player owes,
+// which is the one number they are about to part with money over.
+import { invoiceMatchesEntry } from '../../protocol/src/payout.js';
 import { decodeGhost } from '../../protocol/src/ghost.js';
 import { TYPE_GHOST } from '../../protocol/src/constants.js';
 import { discover } from './directory.js';
@@ -704,6 +711,70 @@ export class Client {
   }
 
   /**
+   * WHAT THIS SEAT OWES, ASKED OF THE NODE AND CHECKED AGAINST OUR OWN ENTRY.
+   *
+   * M3.2 item 5's PAY step, and it stops exactly where a satoshi would move.
+   * This asks and verifies; nothing here pays, and the client has no method
+   * that does - the wallet is item 6, and it is item 6 precisely because the
+   * client is what defines the question it will be asked.
+   *
+   * THE CHECK IS THE PROTOCOL'S OWN AND IT IS NOT OPTIONAL. A hold invoice
+   * names a payment hash and an amount; the entry the player SIGNED already
+   * names both - `stakeCommitment` is the hash, `stakeMsat` is the amount - so
+   * a node quoting anything else is quoting somebody else's invoice, or one
+   * nobody could ever settle. `invoiceMatchesEntry` is that rule and it is
+   * imported rather than restated.
+   *
+   * THE ENTRY IS THE CALLER'S, NOT THE NODE'S. Asking the node for the entry
+   * and then checking the invoice against it would be asking one party both
+   * questions - it could answer them consistently and still be wrong. The
+   * client checks against the contract it built and signed.
+   */
+  async invoice(entry, { entryId: id } = {}) {
+    if (!entry || !(entry.stakeCommitment instanceof Uint8Array))
+      return { ok: false, why: 'there is no entry to check an invoice against' };
+    const eid = id || (this.where && this.where.entryId);
+    if (!(eid instanceof Uint8Array) || eid.length !== 32)
+      return { ok: false, why: 'no entry id to ask about: setRound was never called and none was given' };
+
+    let said;
+    try {
+      const r = await fetch(`${this.base}/invoice?entry=${toHex(eid)}`);
+      const body = await r.text();
+      if (!r.ok) return { ok: false, status: r.status, why: body.trim() };
+      said = JSON.parse(body);
+    } catch (e) {
+      return { ok: false, why: `the node would not quote this seat: ${e.message}` };
+    }
+
+    // WHAT CAME BACK HAS TO BE THE SHAPE BEFORE IT CAN BE THE RIGHT VALUE. A
+    // missing field read as `undefined` would reach the rule as "not 32 bytes"
+    // and be refused for the wrong reason.
+    let paymentHash;
+    let amountMsat;
+    try {
+      paymentHash = fromHex(String(said.paymentHash || ''));
+      amountMsat = BigInt(said.amountMsat);
+    } catch {
+      return { ok: false, why: 'that node answered something that is not an invoice quote' };
+    }
+    if (typeof said.request !== 'string' || !said.request.length)
+      return { ok: false, why: 'that quote carries no payment request to pay' };
+
+    const stands = invoiceMatchesEntry({ paymentHash, amountMsat, entry });
+    if (!stands.ok) return { ok: false, why: stands.why, quoted: said };
+
+    return {
+      ok: true,
+      request: said.request,
+      paymentHash,
+      amountMsat,
+      state: said.state,
+      why: stands.why,
+    };
+  }
+
+  /**
    * WHERE THE NODE GOT TO, after a socket dropped.
    *
    * The daemon never asks for a retransmission - publishing is the client's
@@ -1160,8 +1231,17 @@ export class Client {
       + (this.ended ? ` ${this.ending} ${this.endingReason}` : '');
   }
 
-  /** Waits for whatever is on the wire, so a test can measure a settled state. */
-  async settle() {
+  /**
+   * WAITS FOR WHATEVER IS ON THE WIRE - the batch and the mark in flight.
+   *
+   * IT WAS CALLED `settle` AND IT SETTLES NOTHING. 9.4's settle is a stake
+   * moving on Lightning after a round is final, decided by the committee from
+   * the core's own outcome word; this awaits two promises so a caller can read
+   * `status()` without racing it. Two things with one name, and the name
+   * belonged to the other one - it is the fourth word of M3.2 item 5, and a
+   * reader coming to the session flow would find this.
+   */
+  async awaitPublishes() {
     while (this.publishing || this.marking) {
       try { await Promise.all([this.publishing, this.marking]); } catch { /* named elsewhere */ }
     }

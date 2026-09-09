@@ -131,7 +131,7 @@ test('a slow node cannot make the client run two publishes at once', async () =>
       client.record([45875, 0, 0, 0, 0]);
       if (i % 6 === 5) client.drain();          // what the game asks for
     }
-    await client.settle();
+    await client.awaitPublishes();
 
     assert.equal(watch.worst, 1,
       'two batches were on the wire at once, which is a queue nobody bounds');
@@ -153,7 +153,7 @@ test('marks are skipped rather than queued when one is already going', async () 
   const { node, client } = await rig(60);
   try {
     for (let i = 1; i <= 6; i++) client.markNow('ab'.repeat(32), i * 60);
-    await client.settle();
+    await client.awaitPublishes();
 
     assert.equal(client.marksSent, 1, 'more than one mark was on the wire');
     assert.equal(client.marksSkipped, 5,
@@ -189,7 +189,7 @@ test('the first dropped tick ends the run, and nothing more is published', async
     // run.
     for (let i = 0; i < BLOCK_TICKS; i++) client.record([45875, 0, 0, 0, 0]);
     while (client.held > 0) { const held = client.held; await client.drain(); if (client.held === held) break; }
-    await client.settle();
+    await client.awaitPublishes();
 
     const publishedBefore = client.batchesSent;
     const firstTickBefore = client.nextTick;
@@ -209,7 +209,7 @@ test('the first dropped tick ends the run, and nothing more is published', async
     // and nothing leaves after it, however hard it is asked
     assert.equal(client.drain(), null, 'a batch left the client after the run ended');
     assert.equal(client.markNow('ab'.repeat(32), 1800), null, 'a mark left after the run ended');
-    await client.settle();
+    await client.awaitPublishes();
     assert.equal(client.batchesSent, publishedBefore, 'the publish count moved after the end');
     assert.equal(client.nextTick, firstTickBefore, 'the tick numbering moved after the end');
 
@@ -254,7 +254,7 @@ test('a session that dropped nothing still reconnects and carries on', async () 
   try {
     for (let i = 0; i < 300; i++) client.record([45875, 0, 0, 0, 0]);
     await client.drain();
-    await client.settle();
+    await client.awaitPublishes();
     assert.equal(client.dropped, 0);
 
     client.close();
@@ -270,7 +270,7 @@ test('a session that dropped nothing still reconnects and carries on', async () 
     const before = client.batchesSent;
     for (let i = 0; i < 60; i++) client.record([45875, 0, 0, 0, 0]);
     await client.drain();
-    await client.settle();
+    await client.awaitPublishes();
     assert.equal(client.batchesSent, before + 1, 'it could not publish after the reconnect');
     assert.equal(client.ended, false, 'carrying on after a reconnect must not end the run');
     assert.equal(client.nextTick, 360, 'and it carries on at the tick it left, not from zero');
@@ -296,7 +296,7 @@ test('once the run has ended, nothing leaves even though the numbers agree', asy
     assert.equal(client.ending, 'VOID');
 
     assert.equal(client.drain(), null, 'a batch left a session that had ended');
-    await client.settle();
+    await client.awaitPublishes();
     assert.equal(client.batchesSent, 0, 'the publish count moved after the end');
     assert.equal(client.held, 10, 'and what was held stayed held');
   } finally { client.close(); await node.close(); }
@@ -327,7 +327,7 @@ test('a reconnect keeps trying with a backoff, so a restart does not end a run',
   try {
     for (let i = 0; i < 60; i++) client.record([45875, 0, 0, 0, 0]);
     await client.drain();
-    await client.settle();
+    await client.awaitPublishes();
 
     // The node goes away and comes back, the way a restart looks from here.
     const port = node.port;
@@ -401,7 +401,7 @@ test('after a hold-full VOID, resume refuses by name and returns no numbers', as
   try {
     for (let i = 0; i < 6; i++) client.record([45875, 0, 0, 0, 0]);
     await client.drain();
-    await client.settle();
+    await client.awaitPublishes();
     for (let i = 0; i < BLOCK_TICKS + 600; i++) client.record([45875, 0, 0, 0, 0]);
     assert.equal(client.ended, true);
     assert.equal(client.ending, 'VOID');
@@ -503,7 +503,7 @@ test('nothing is offered to a wire that is not there', async () => {
       if ((i + 1) % 6 === 0) client.drain();
       if ((i + 1) % 60 === 0) client.markNow('ab'.repeat(32), i + 1);
     }
-    await client.settle();
+    await client.awaitPublishes();
 
     assert.equal(sends.length, 0, `${sends.length} messages were sent with no socket`);
     assert.equal(client.held, 3006, 'the hold under-reported what it is holding');
@@ -551,7 +551,7 @@ test('a VOID with the socket still up says ended, not ready', async () => {
   try {
     for (let i = 0; i < 6; i++) client.record([45875, 0, 0, 0, 0]);
     await client.drain();
-    await client.settle();
+    await client.awaitPublishes();
     assert.equal(client.state, 'ready', 'the socket is up and the run is alive');
 
     // The slow-node case: the hold fills and the first tick that will not fit
@@ -577,7 +577,7 @@ test('the word follows the socket: ready, dropped, ready again', async () => {
   try {
     for (let i = 0; i < 60; i++) client.record([45875, 0, 0, 0, 0]);
     await client.drain();
-    await client.settle();
+    await client.awaitPublishes();
     assert.equal(client.state, 'ready');
 
     client.close();

@@ -1,8 +1,13 @@
-// ENTER, PAY, PLAY, SETTLE - AND THE CLIENT CANNOT PAY.
+// ENTER, ASK WHAT IS OWED, CHECK IT, PLAY.
 //
 // M3.2 item 5 is "`@blwp/client`: the session flow: enter, pay, play, settle".
-// Three of those four are in and measured elsewhere. This file is the fourth,
-// and it starts as the measurement of its absence.
+// This file was written as the measurement of the missing fourth - 0 methods
+// that could ask what a seat owes - and it is the pin after it.
+//
+// THE CLIENT ASKS AND CHECKS. IT STILL DOES NOT PAY, and that is the split:
+// the wallet is item 6, and it is item 6 because the client is what defines
+// the question it will be asked. `invoice()` fetches the quote and runs the
+// protocol's own rule over it; there is no method here that sends a satoshi.
 //
 // WHAT THE CLIENT CAN DO TODAY, by method: `openRound`, `join` and `entryFor`
 // are ENTER; `connect`, `record`, `drain`, `markNow`, `resume` and `reconnect`
@@ -103,7 +108,7 @@ async function seated({ port = fakePort() } = {}) {
 /**
  * THE FOUR WORDS OF ITEM 5, COUNTED AGAINST THE CLIENT'S OWN SURFACE.
  */
-test('the client can enter and play, and has no way to pay', async () => {
+test('the client can enter, ask what it owes, and play - and cannot send a satoshi', async () => {
   const c = await seated();
   try {
     for (const m of ['openRound', 'join', 'entryFor'])
@@ -111,23 +116,43 @@ test('the client can enter and play, and has no way to pay', async () => {
     for (const m of ['connect', 'record', 'drain', 'markNow', 'resume', 'reconnect'])
       assert.equal(typeof c.client[m], 'function', `PLAY is missing ${m}`);
 
-    // PAY: there is no method at all.
-    const pays = ['invoice', 'quote', 'owed', 'pay', 'amountOwed']
-      .filter((m) => typeof c.client[m] === 'function');
-    assert.deepEqual(pays, [],
-      `the client can pay now (${pays.join(', ')}) - item 5 has moved, update this pin`);
-    console.log('  enter: 3 methods · play: 6 methods · pay: 0 methods');
+    // ASK: one method, and it is the whole pay surface of this letter.
+    assert.equal(typeof c.client.invoice, 'function', 'the client cannot ask what it owes');
 
-    // AND THE WORD APPEARS IN THE SOURCE ONLY IN COMMENTS.
+    // AND NOTHING THAT SENDS MONEY. The wallet is item 6; a method here that
+    // moved a satoshi would empty it.
+    //
+    // `send` IS NOT ON THIS LIST and was, wrongly: `Client.send` puts a
+    // protocol message on the play socket and has since the first batch went
+    // out. A probe that cannot tell a websocket write from a payment would
+    // fail on every future letter for the wrong reason.
+    const sends = ['pay', 'payInvoice', 'sendPayment', 'nwc', 'wallet', 'payStake']
+      .filter((m) => typeof c.client[m] === 'function');
+    assert.deepEqual(sends, [],
+      `the client can send sats now (${sends.join(', ')}) - that is item 6, not this letter`);
+    console.log('  enter: 3 methods · ask: 1 method · play: 6 methods · pay-as-wallet: 0 methods');
+
+    // AND THE FOURTH WORD IS NOT A NAME COLLISION ANY MORE. `settle()` waited
+    // for two promises and settled nothing; 9.4's settle is a stake moving
+    // after a round is final.
+    assert.equal(typeof c.client.settle, 'undefined',
+      'settle() is back, and it does not settle anything');
+    assert.equal(typeof c.client.awaitPublishes, 'function');
+
+    // AND THE WORD IS IN THE CODE NOW, IN ONE FILE. Before this letter
+    // `invoice`, `bolt11` and `paymentHash` appeared in `blwp-client/src` only
+    // inside comments explaining that a wallet was M3.2 - 0 files named one in
+    // code. One does: the file that asks and checks.
     const dir = new URL('../src/', import.meta.url);
     const code = readdirSync(dir).filter((f) => f.endsWith('.js'))
       .map((f) => ({ f, text: readFileSync(new URL(f, dir), 'utf8') }));
     const speaks = code.filter((s) => s.text.split('\n')
       .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l))
       .some((l) => /invoice|bolt11|payment_request|paymentHash/i.test(l)));
-    assert.deepEqual(speaks.map((s) => s.f), [],
-      'a source file says invoice outside a comment - item 5 has moved, update this pin');
-    console.log('  files in blwp-client/src that name an invoice outside a comment: 0');
+    assert.deepEqual(speaks.map((s) => s.f), ['client.js'],
+      'the ask moved out of client.js, or a second file learned to quote a player');
+    console.log(`  files in blwp-client/src that name an invoice in code: `
+      + `${speaks.length} (${speaks.map((s) => s.f).join(', ')})`);
   } finally { await c.close(); }
 });
 
@@ -137,12 +162,18 @@ test('the client can enter and play, and has no way to pay', async () => {
  * `server.js` says at its own `/invoice` door that `invoiceMatchesEntry` "lives
  * on their side too". It does not: the only callers are the daemon's.
  */
-test('the rule a player checks an invoice with has no caller on the player\'s side', () => {
+test('the client checks an invoice with the protocol\'s own rule, not a second formula', () => {
   const dir = new URL('../src/', import.meta.url);
   const callers = readdirSync(dir).filter((f) => f.endsWith('.js'))
     .filter((f) => /invoiceMatchesEntry\s*\(/.test(readFileSync(new URL(f, dir), 'utf8')));
-  assert.deepEqual(callers, [],
-    'the client checks its own invoice now - item 5 has moved, update this pin');
+  assert.deepEqual(callers, ['client.js'],
+    'the client no longer runs the rule, or a second file does');
+
+  // AND IT IS IMPORTED. A copy of the comparison here would be a second
+  // opinion about the one number a player is about to part with money over.
+  const code = readFileSync(new URL('client.js', dir), 'utf8');
+  assert.match(code, /import \{ invoiceMatchesEntry \} from '\.\.\/\.\.\/protocol\/src\/payout\.js'/,
+    'the client restates the rule instead of importing it');
 
   // The rule itself works, and it is the daemon that has been running it.
   const entry = { stakeMsat: STAKE, stakeCommitment: b32(9) };
@@ -152,7 +183,7 @@ test('the rule a player checks an invoice with has no caller on the player\'s si
   assert.equal(wrongAmount.ok, false);
   const wrongHash = invoiceMatchesEntry({ paymentHash: b32(8), amountMsat: STAKE, entry });
   assert.equal(wrongHash.ok, false);
-  console.log('  invoiceMatchesEntry callers in blwp-client/src: 0');
+  console.log(`  invoiceMatchesEntry callers in blwp-client/src: ${callers.length} (${callers.join(', ')}), imported`);
   console.log(`  and the rule holds: right pair stands, wrong amount "${wrongAmount.why}"`);
 });
 
@@ -189,6 +220,94 @@ test('the door already quotes what this seat owes', async () => {
       entry: c.entry,
     });
     assert.equal(checked.ok, true, checked.why);
-    console.log('  and invoiceMatchesEntry accepts it - the client just cannot ask');
+    console.log('  and invoiceMatchesEntry accepts it - which is what the client now runs');
+  } finally { await c.close(); }
+});
+
+/**
+ * THE ASK, AGAINST A REAL DAEMON - the honest pair accepted.
+ */
+test('the client asks the node what it owes and the honest quote stands', async () => {
+  const c = await seated();
+  try {
+    const got = await c.client.invoice(c.entry, { entryId: c.eid });
+    assert.equal(got.ok, true, got.why);
+    assert.equal(got.amountMsat, STAKE);
+    assert.deepEqual(got.paymentHash, c.entry.stakeCommitment,
+      'the hash the client accepted is not the one its own entry commits to');
+    assert.ok(got.request.startsWith('lnbcrt-'), 'no payment request came back');
+    assert.equal(got.state, HELD);
+    console.log(`  ${got.amountMsat} msat against this entry's own hash, `
+      + `state ${got.state}: "${got.why}"`);
+
+    // AND ASKING DOES NOT PAY. The fake port was asked to CREATE a hold and
+    // nothing else - no settle, no cancel.
+    const acts = c.port.calls.map((x) => x[0]);
+    assert.equal(acts.includes('settle'), false, 'asking for an invoice settled a stake');
+    assert.equal(acts.includes('cancel'), false, 'asking for an invoice cancelled a stake');
+    console.log(`  the Lightning port saw: ${[...new Set(acts)].join(', ')} - nothing that moves money`);
+  } finally { await c.close(); }
+});
+
+/**
+ * AND A NODE THAT QUOTES SOMETHING ELSE IS REFUSED, BY THE PLAYER.
+ *
+ * The two ways a quote can be wrong are the two the rule names, and both are
+ * checked against the entry the CLIENT holds - not against anything the node
+ * also supplied, which it could have made consistent.
+ */
+test('a wrong amount and a wrong hash are both refused against our own entry', async () => {
+  const c = await seated();
+  try {
+    // A node asking for more than the entry staked.
+    const greedy = { ...c.entry, stakeMsat: STAKE - 1n };
+    const overcharged = await c.client.invoice(greedy, { entryId: c.eid });
+    assert.equal(overcharged.ok, false);
+    assert.match(overcharged.why, /asks 100000 msat and the entry staked 99999/);
+    console.log(`  wrong amount: ${overcharged.why}`);
+
+    // A quote for a hash this entry never committed to - nobody could ever
+    // settle it, so paying it would be money gone with no round attached.
+    const elsewhere = { ...c.entry, stakeCommitment: b32(0xee) };
+    const stranger = await c.client.invoice(elsewhere, { entryId: c.eid });
+    assert.equal(stranger.ok, false);
+    assert.match(stranger.why, /nobody could ever settle it/);
+    console.log(`  wrong hash: ${stranger.why.slice(0, 72)}…`);
+
+    // AND A REFUSAL HANDS BACK WHAT WAS QUOTED, so a player can see what they
+    // were asked for rather than only that it was wrong.
+    assert.ok(stranger.quoted && stranger.quoted.request, 'the refusal hid the quote');
+  } finally { await c.close(); }
+});
+
+/**
+ * AND THE DOOR'S OWN REFUSALS REACH THE PLAYER AS WORDS.
+ */
+test('a node that seated nobody, and one with no Lightning, are refused by name', async () => {
+  const c = await seated();
+  try {
+    // An entry this node never took.
+    const stranger = await c.client.invoice(c.entry, { entryId: b32(0x77) });
+    assert.equal(stranger.ok, false);
+    assert.equal(stranger.status, 404);
+    assert.match(stranger.why, /seated no such entry/);
+    console.log(`  a stranger's entry: ${stranger.status} ${stranger.why}`);
+  } finally { await c.close(); }
+
+  // A daemon with no Lightning port at all quotes nothing, and says why.
+  const dark = await seated({ port: null });
+  try {
+    const none = await dark.client.invoice(dark.entry, { entryId: dark.eid });
+    assert.equal(none.ok, false);
+    assert.equal(none.status, 503);
+    console.log(`  a node with no Lightning: ${none.status} ${none.why}`);
+  } finally { await dark.close(); }
+});
+
+test('an invoice cannot be asked for without an entry or an entry id', async () => {
+  const c = await seated();
+  try {
+    assert.match((await c.client.invoice(null, { entryId: c.eid })).why, /no entry to check/);
+    assert.match((await c.client.invoice(c.entry)).why, /no entry id to ask about/);
   } finally { await c.close(); }
 });
