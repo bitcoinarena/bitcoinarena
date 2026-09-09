@@ -37,11 +37,17 @@ export function watchGhosts(client, where, { limit = GHOST_BACKLOG } = {}) {
 
   const mine = toHex(where.entryId);
   const queue = [];
+  // WHO IS HERE, independent of the drain the renderer takes. A picture
+  // Unity has already drawn is gone from the queue; it is still a player
+  // in the round, and the page's count has to say so.
+  const present = new Map();
   const field = {
     seen: 0,
     self: 0,
     shed: 0,
+    present,
     get size() { return queue.length; },
+    get others() { return present.size; },
 
     /**
      * The oldest pictures first, up to `max`. A renderer drains what it can
@@ -64,6 +70,7 @@ export function watchGhosts(client, where, { limit = GHOST_BACKLOG } = {}) {
     // NEVER YOURSELF.
     if (toHex(ghost.entryId) === mine) { field.self++; return; }
 
+    present.set(toHex(ghost.entryId), ghost);
     queue.push(ghost);
     // A FULL QUEUE SHEDS PICTURES OLDEST FIRST, which is piece 2 of letter 18
     // stated for the page: a picture of where a truck WAS is worth less than
@@ -73,4 +80,12 @@ export function watchGhosts(client, where, { limit = GHOST_BACKLOG } = {}) {
 
   field.watching = client.watch(where.roundId, where.entryId);
   return field;
+}
+
+/** One line the page can put on screen. Count is 1 (this tab) plus others. */
+export function playersLine({ seated, others } = {}) {
+  if (!seated) return 'round named · not seated';
+  const n = 1 + (others | 0);
+  if (n <= 1) return '1 player · waiting';
+  return n + ' players in this round';
 }

@@ -5442,11 +5442,17 @@ function watchGhosts(client, where, { limit = GHOST_BACKLOG } = {}) {
 
   const mine = toHex(where.entryId);
   const queue = [];
+  // WHO IS HERE, independent of the drain the renderer takes. A picture
+  // Unity has already drawn is gone from the queue; it is still a player
+  // in the round, and the page's count has to say so.
+  const present = new Map();
   const field = {
     seen: 0,
     self: 0,
     shed: 0,
+    present,
     get size() { return queue.length; },
+    get others() { return present.size; },
 
     /**
      * The oldest pictures first, up to `max`. A renderer drains what it can
@@ -5469,6 +5475,7 @@ function watchGhosts(client, where, { limit = GHOST_BACKLOG } = {}) {
     // NEVER YOURSELF.
     if (toHex(ghost.entryId) === mine) { field.self++; return; }
 
+    present.set(toHex(ghost.entryId), ghost);
     queue.push(ghost);
     // A FULL QUEUE SHEDS PICTURES OLDEST FIRST, which is piece 2 of letter 18
     // stated for the page: a picture of where a truck WAS is worth less than
@@ -5478,6 +5485,14 @@ function watchGhosts(client, where, { limit = GHOST_BACKLOG } = {}) {
 
   field.watching = client.watch(where.roundId, where.entryId);
   return field;
+}
+
+/** One line the page can put on screen. Count is 1 (this tab) plus others. */
+function playersLine({ seated, others } = {}) {
+  if (!seated) return 'round named · not seated';
+  const n = 1 + (others | 0);
+  if (n <= 1) return '1 player · waiting';
+  return n + ' players in this round';
 }
 
 // ---- protocol/src/shares.js
@@ -6209,6 +6224,16 @@ const JOIN_KEYS = ['round', 'node', 'headers', 'bond', 'advert'];
 
 const list = (v) => (v || '').split(',').map((s) => s.trim()).filter(Boolean);
 const origin = (u) => { try { return new URL(u).origin; } catch { return null; } };
+// Two daemons behind one HTTPS reverse proxy differ by first path segment
+// (/blwp-a vs /blwp-b). Origin alone would count them as one source and an
+// https page could not fetch http:// Tailscale nodes (Safari mixed content).
+const sourceKey = (u) => {
+  try {
+    const x = new URL(u);
+    const head = x.pathname.split('/').filter(Boolean)[0] || '';
+    return head ? `${x.origin}/${head}` : x.origin;
+  } catch { return null; }
+};
 
 /**
  * What the URL names, or null when it names no round.
@@ -6238,9 +6263,9 @@ function joinQuery(search) {
   // is - it is not quietly downgraded to trusting one.
   const headers = list(q.get('headers'));
   const chainFrom = headers.length ? headers : nodes;
-  if (new Set(chainFrom.map(origin)).size < 2)
+  if (new Set(chainFrom.map(sourceKey)).size < 2)
     throw new Error('a chain is read from two independent sources and this URL names '
-      + new Set(chainFrom.map(origin)).size + ' - add a second node= or headers=');
+      + new Set(chainFrom.map(sourceKey)).size + ' - add a second node= or headers=');
 
   const bond = (q.get('bond') || '').trim();
   if (!bond) throw new Error('the URL names nowhere to ask for the bond - add bond=<url>');
@@ -6338,7 +6363,7 @@ async function joinFromQuery(search, { fetcher = fetch } = {}) {
     from,
     refused,
     chain: {
-      headers: named.chainFrom.map((u) => httpProvider(u.replace(/\/+$/, '') + '/headers')),
+      headers: named.chainFrom.map((u) => httpProvider(u.replace(/\/+$/, '') + '/headers', { tag: sourceKey(u) })),
       bonds: [bondProvider(named.bond, { fetcher })],
     },
     advert: { signedAdvert: advert },
@@ -6504,6 +6529,7 @@ return { Client: Client, markState: markState,
          encodeRoundContract: encodeRoundContract, roundId: roundId,
          encodeEntryContract: encodeEntryContract, entryId: entryId,
          watchGhosts: watchGhosts, GHOST_BACKLOG: GHOST_BACKLOG,
+         playersLine: playersLine,
          joinQuery: joinQuery, joinFromQuery: joinFromQuery,
          fetchRound: fetchRound, bondProvider: bondProvider,
          tabIdentity: tabIdentity, entryFor: entryFor,

@@ -61,6 +61,11 @@ public static class SyncCore
             File.Copy(cFrom, cTo, true);
             UnityEngine.Debug.Log(
                 $"[SyncCore] copied client ({new FileInfo(cTo).Length / 1024} KB) into the template");
+            if (!Node(clientRoot, "tools/bundle-curve.js", out string curveOut)) return;
+            UnityEngine.Debug.Log("[SyncCore] " + curveOut.Trim());
+            File.Copy(Path.Combine(clientRoot, "dist/blwp-curve.js"),
+                      Path.Combine(Application.dataPath,
+                                   "WebGLTemplates/BtcLogistics/blwp-curve.js"), true);
         }
 
         AssetDatabase.Refresh();

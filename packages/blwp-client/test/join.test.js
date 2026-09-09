@@ -222,6 +222,8 @@ test('the page joins a named round and still invents none', () => {
   assert.ok(page.includes('sessionStorage'), 'the page has no per-tab identity');
   assert.ok(!page.includes('localStorage'),
     'the page keeps the player in storage every tab shares');
+  assert.ok(page.includes('id="blwp-players"'),
+    'the page has no on-screen count of who is in the round');
 });
 
 /**

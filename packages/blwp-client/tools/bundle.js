@@ -96,6 +96,7 @@ out += '         GENESIS: GENESIS, NO_PREVIOUS: NO_PREVIOUS,\n';
 out += '         encodeRoundContract: encodeRoundContract, roundId: roundId,\n';
 out += '         encodeEntryContract: encodeEntryContract, entryId: entryId,\n';
 out += '         watchGhosts: watchGhosts, GHOST_BACKLOG: GHOST_BACKLOG,\n';
+out += '         playersLine: playersLine,\n';
 out += '         joinQuery: joinQuery, joinFromQuery: joinFromQuery,\n';
 out += '         fetchRound: fetchRound, bondProvider: bondProvider,\n';
 out += '         tabIdentity: tabIdentity, entryFor: entryFor,\n';

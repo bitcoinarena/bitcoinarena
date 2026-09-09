@@ -158,7 +158,8 @@ test('a person opens the printed URL twice and the two tabs are on one round', a
     // trust: the same core, the same inputs, the same seed - which comes from
     // that player's entry and the round's beacon, so nobody else can compute
     // it for them.
-    const st = coreInit(seedWordForEntry(tabs[0].entry, BEACON));
+    const randomness = (round.beacon && round.beacon.hash) ? round.beacon.hash : BEACON;
+    const st = coreInit(seedWordForEntry(tabs[0].entry, randomness));
     for (let t = 0; t <= seen[0].tick; t++) coreStep(st, 45875, 0, 0, 0, 0);
     const was = {
       x: st.i32[O_TRUCK + T_X], z: st.i32[O_TRUCK + T_Z],

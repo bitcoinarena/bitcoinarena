@@ -36,10 +36,22 @@
 
     #err { display: none; color: #ff6b6b; max-width: 560px; text-align: center; font-size: 14px; }
     #err.show { display: block; }
+
+    /* Who is in this round. Hidden until a round is named. Pointer-events none
+       so it cannot steal the canvas. */
+    #blwp-players {
+      position: absolute; top: 14px; left: 50%; transform: translateX(-50%);
+      z-index: 20; pointer-events: none; display: none;
+      font: 600 14px/1.3 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      color: #e8eaed; background: rgba(13, 16, 20, 0.78);
+      border-left: 3px solid #f7931a; padding: 8px 14px; border-radius: 4px;
+      letter-spacing: 0.01em;
+    }
   </style>
 </head>
 <body>
   <canvas id="canvas" tabindex="-1"></canvas>
+  <div id="blwp-players"></div>
 
   <script>
   // GETTING SOUND OUT OF AN iPHONE.
@@ -168,6 +180,8 @@
        plausible: a round contract is agreed before anyone moves, and inventing
        one in the page would be inventing a lobby. -->
   <script src="blwp-client.js"></script>
+  <!-- Same secp256k1 the daemons use. Without it a named round never takes a seat. -->
+  <script src="blwp-curve.js"></script>
 
   <script>
     const boot = document.getElementById('boot');
@@ -273,9 +287,7 @@
       // nobody can spend from is worse than not seating them.
       const random = (n) => crypto.getRandomValues(new Uint8Array(n));
       if (!window.BLWP_CURVE || typeof window.BLWP_CURVE.pointX !== 'function') {
-        console.log('[blwp] round ' + named.roundIdHex + ' named, and this page has no curve '
-          + 'to make a payable player key with, so it is not taking a seat');
-        return;
+        throw new Error('this page has no curve to make a player key with');
       }
       const player = BLWPCLIENT.tabIdentity({
         storage: window.sessionStorage, random, curve: window.BLWP_CURVE,
@@ -285,6 +297,22 @@
       });
       console.log('[blwp] joining round ' + named.roundIdHex + ' from ' + named.from);
     }
+
+    function paintPlayers() {
+      const el = document.getElementById('blwp-players');
+      if (!el) return;
+      if (!window.BLWP_ROUND) { el.style.display = 'none'; return; }
+      el.style.display = 'block';
+      const seated = !!(window.BLWP_ENTRY);
+      const net = (typeof Module !== 'undefined' && Module.blwpNet) ? Module.blwpNet : null;
+      const others = (net && net.ghosts && typeof net.ghosts.others === 'number') ? net.ghosts.others : 0;
+      el.textContent = (typeof BLWPCLIENT !== 'undefined' && BLWPCLIENT.playersLine)
+        ? BLWPCLIENT.playersLine({ seated, others })
+        : (seated ? (others ? (1 + others) + ' players in this round' : '1 player · waiting')
+                  : 'round named · not seated');
+    }
+    setInterval(paintPlayers, 500);
+    paintPlayers();
 
     const script = document.createElement('script');
     script.src = 'Build/{{{ LOADER_FILENAME }}}';

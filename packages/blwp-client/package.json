@@ -6,10 +6,12 @@
   "description": "The player's half of the protocol: it opens a round, joins, and commits to the core's state at agreed ticks.",
   "scripts": {
     "bundle": "node tools/bundle.js",
-    "test": "node tools/bundle.js && node --test test/*.test.js"
+    "bundle-curve": "node tools/bundle-curve.js",
+    "test": "node tools/bundle.js && node tools/bundle-curve.js && node --test test/*.test.js"
   },
   "devDependencies": {
     "@noble/curves": "^2.4.0",
+    "esbuild": "^0.25.12",
     "ws": "^8.21.3"
   }
 }

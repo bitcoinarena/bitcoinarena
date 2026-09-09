@@ -18,7 +18,7 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 import { openStore } from '../../blwp-node/src/store.js';
 import { serve } from '../../blwp-node/src/server.js';
 import { Client } from '../src/client.js';
-import { watchGhosts, GHOST_BACKLOG } from '../src/ghost-field.js';
+import { watchGhosts, GHOST_BACKLOG, playersLine } from '../src/ghost-field.js';
 import { encodeInputBatch } from '../../protocol/src/batch.js';
 import { GENESIS } from '../../protocol/src/transcript.js';
 import { encodeEntryContract, entryId as entryIdOf } from '../../protocol/src/contracts.js';
@@ -154,7 +154,11 @@ test('a page that cannot keep up sheds the oldest pictures, not the newest', asy
     assert.equal(field.shed, 3);
     assert.deepEqual(field.drain().map((g) => g.tick), [4, 5, 6],
       'the page kept the oldest pictures and dropped the newest');
+    assert.equal(field.others, 1, 'draining the renderer queue forgot who is in the round');
     assert.equal(GHOST_BACKLOG > 3, true, 'the default backlog is not a real budget');
+    assert.equal(playersLine({ seated: false }), 'round named · not seated');
+    assert.equal(playersLine({ seated: true, others: 0 }), '1 player · waiting');
+    assert.equal(playersLine({ seated: true, others: 1 }), '2 players in this round');
   } finally { await node.close(); }
 });
 
