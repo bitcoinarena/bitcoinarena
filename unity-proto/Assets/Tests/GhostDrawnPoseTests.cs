@@ -47,6 +47,14 @@ public class GhostDrawnPoseTests
         return frames;
     }
 
+    /// <summary>Every drawn ghost has arrived on the picture it was last given.</summary>
+    static bool Settled(GhostField field)
+    {
+        foreach (var g in field.GetComponentsInChildren<GhostTruck>(true))
+            if (!g.Settled) return false;
+        return true;
+    }
+
     static GhostPicture Picture(int[] w)
     {
         var entry = new System.Text.StringBuilder(64);
@@ -73,6 +81,13 @@ public class GhostDrawnPoseTests
         Assert.IsNotNull(field, "the player builds no ghost field, so no other truck is ever drawn");
         Assert.IsTrue(field.isActiveAndEnabled, "the field is off, so its Update never runs");
         Assert.IsNotNull(field.Model, "the field has no body to draw a ghost with");
+
+        // LET THE GROUND ARRIVE BEFORE ANY PICTURE IS DRAWN. The terrain is
+        // streamed and the seat a ghost is given is sampled from it at the
+        // moment it is shown - so a picture drawn while the relief is still
+        // loading is held against a ground that has since moved. Measured: the
+        // first frames put the local truck 3.4 m below where it settles.
+        for (var settle = 0; settle < 60; settle++) yield return null;
 
         var frames = Frames();
         // ONE PICTURE PER FRAME, WHICH IS WHAT A PAGE HOLDS.
@@ -109,6 +124,15 @@ public class GhostDrawnPoseTests
             seen++;
             Assert.AreEqual(seen, next, $"frame {seen} did not take exactly one picture");
 
+            // AND THEN THE FRAMES BETWEEN PICTURES. `BlwpNet.BatchEvery` is a
+            // tenth of a second and a page draws sixty times a second, so a
+            // ghost that only moved when a picture landed would stand still
+            // for six frames and jump. It eases onto the newest picture and
+            // stops there, so what is asserted below is the SETTLED pose - the
+            // same millimetre as before, read when the truck has arrived
+            // rather than while it is still on its way.
+            for (var f = 0; f < 600 && !Settled(field); f++) yield return null;
+
             ghost = field.GetComponentInChildren<GhostTruck>(true);
             Assert.IsNotNull(ghost, $"nothing was drawn for picture {seen}");
             Assert.AreEqual(1, field.Trucks, "one entry was drawn as more than one truck");
@@ -139,6 +163,34 @@ public class GhostDrawnPoseTests
         }
 
         Assert.AreEqual(frames.Length, seen, "not every picture was drawn");
+
+        // AND IT IS AN EASE, NOT A SNAP. One more picture, read one frame in:
+        // a ghost that jumped would already be on it, and a ghost that never
+        // moved would still be behind it. Neither is what a live truck looks
+        // like.
+        var moving = field.GetComponentInChildren<GhostTruck>(true);
+        var wasAt = moving.transform.position;
+        var jump = frames[frames.Length - 1].ToArray();
+        jump[8] += Mathf.RoundToInt(6f * ONE);          // six metres down the map
+        next = frames.Length;                            // the source is spent
+        field.Show(Picture(jump));
+        yield return null;
+        var oneFrameIn = moving.transform.position;
+        var target = new Vector3(jump[8] / ONE, moving.Wanted.y, jump[9] / ONE);
+        TestContext.WriteLine($"one frame after a 6 m picture the ghost has moved "
+                              + $"{Vector3.Distance(wasAt, oneFrameIn):F3} m of "
+                              + $"{Vector3.Distance(wasAt, target):F3} m");
+        Assert.Greater(Vector3.Distance(wasAt, oneFrameIn), 0.001f,
+            "the ghost did not move at all on the frame after a new picture");
+        Assert.Less(Vector3.Distance(oneFrameIn, target), Vector3.Distance(wasAt, target),
+            "the ghost moved away from the picture it was given");
+        Assert.Greater(Vector3.Distance(oneFrameIn, target), 0.001f,
+            "the ghost snapped to the picture, which is the stutter this eases away");
+        for (var f = 0; f < 600 && !Settled(field); f++) yield return null;
+        Assert.Less(Vector3.Distance(moving.transform.position, target), 0.001f,
+            "the ghost never arrived on the picture it was given");
+        ghost = moving;
+
         // ACROSS THE GROUND, not through the air: the first frame is drawn
         // before the terrain has settled under it, so a truck that never left
         // its door still gains three metres of height between picture one and

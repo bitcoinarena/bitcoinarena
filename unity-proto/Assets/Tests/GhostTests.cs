@@ -226,8 +226,11 @@ public class GhostTests
     /// Q16.16 integers; the division happens here, at the edge, where a float
     /// is a picture rather than a result.
     /// </summary>
-    [Test]
-    public void AGhostStandsWhereTheFrameSays()
+    /// A ghost walks from its last picture onto its newest over one picture
+    /// interval - 10 Hz pictures on a 60 Hz screen - so each pose is read once
+    /// it has ARRIVED, to the same ten-thousandth of a metre.
+    [UnityTest]
+    public IEnumerator AGhostStandsWhereTheFrameSays()
     {
         var go = SpawnGhost("ghost", Vector3.zero);
         var ghost = go.GetComponent<GhostTruck>();
@@ -240,6 +243,7 @@ public class GhostTests
         // core does not use; the ghost's own conversion was written to match
         // it, so a truck driving east was drawn pointing north.
         ghost.Show(3 * 65536, -4 * 65536, 16384);
+        for (var f = 0; f < 600 && !ghost.Settled; f++) yield return null;
 
         Assert.AreEqual(3f, go.transform.position.x, 0.0001f);
         Assert.AreEqual(-4f, go.transform.position.z, 0.0001f);
@@ -250,6 +254,7 @@ public class GhostTests
         // negative and fractional words survive: a truck west of the origin at
         // half a metre is ordinary
         ghost.Show(-65536 / 2, -65536 / 2, 0);
+        for (var f = 0; f < 600 && !ghost.Settled; f++) yield return null;
         Assert.AreEqual(-0.5f, go.transform.position.x, 0.0001f);
         Assert.AreEqual(-0.5f, go.transform.position.z, 0.0001f);
 

@@ -74,8 +74,10 @@ public class GhostInThePlayerTests
     /// 65536 gives 0.25, so a truck driving east was drawn pointing north -
     /// 360 times too small, on the same word the local truck reads correctly.
     /// </summary>
-    [Test]
-    public void TheOtherTruckFacesWhereItsTranscriptSaysItDoes()
+    /// A ghost eases onto its newest picture over the frames after it, so the
+    /// heading is read once it has ARRIVED - the same hundredth of a degree.
+    [UnityTest]
+    public IEnumerator TheOtherTruckFacesWhereItsTranscriptSaysItDoes()
     {
         var frames = Frames();
         var first = Picture(frames[0]);
@@ -88,6 +90,7 @@ public class GhostInThePlayerTests
 
         field.Show(first);
         var ghost = field.GetComponentInChildren<GhostTruck>(true);
+        for (var f = 0; f < 600 && !ghost.Settled; f++) yield return null;
         float drawn = ghost.transform.rotation.eulerAngles.y;
         float wanted = BlwpCore.Degrees(first.Heading);
         TestContext.WriteLine($"heading word {first.Heading}: drawn {drawn:F3} deg, "
@@ -96,6 +99,7 @@ public class GhostInThePlayerTests
             "the other truck is drawn facing somewhere its transcript never pointed");
 
         field.Show(later);
+        for (var f = 0; f < 600 && !ghost.Settled; f++) yield return null;
         Assert.AreEqual(0f, Mathf.DeltaAngle(BlwpCore.Degrees(later.Heading),
                                              ghost.transform.rotation.eulerAngles.y), 0.01f,
             "the truck did not turn with its own transcript");
@@ -195,6 +199,10 @@ public class GhostInThePlayerTests
         Assert.AreEqual(1, field.Draw(1), "the player drew none of the pictures it was given");
         var ghost = field.GetComponentInChildren<GhostTruck>(true);
         Assert.IsNotNull(ghost, "no truck was drawn for the other identity");
+        // The field stops drawing while the truck arrives, or waiting would
+        // hand it the next picture instead of letting it reach this one.
+        field.enabled = false;
+        for (var f = 0; f < 600 && !ghost.Settled; f++) yield return null;
 
         var first = Picture(frames[0]);
         var at = ghost.transform.position;
@@ -212,8 +220,13 @@ public class GhostInThePlayerTests
 
         // AND IT MOVES with the second picture, sixty ticks later.
         var later = Picture(frames[1]);
+        field.enabled = true;
         Assert.AreEqual(1, field.Draw(1), "the second picture was not drawn");
         Assert.AreEqual(1, field.Trucks, "the second picture made a second truck");
+        // The field stops again while the truck walks onto this picture, or
+        // waiting would hand it the one after and assert about neither.
+        field.enabled = false;
+        for (var f = 0; f < 600 && !ghost.Settled; f++) yield return null;
         var moved = ghost.transform.position;
         float dx2 = moved.x - later.X / ONE, dz2 = moved.z - later.Z / ONE;
         TestContext.WriteLine($"tick {later.Tick}: drawn ({moved.x:F4}, {moved.z:F4}) "

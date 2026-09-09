@@ -1,8 +1,10 @@
 using System;
+using System.Collections;
 using System.IO;
 using System.Linq;
 using NUnit.Framework;
 using UnityEngine;
+using UnityEngine.TestTools;
 using Blwp;
 
 /// <summary>
@@ -47,8 +49,11 @@ public class GhostOnScreenTests
     /// <summary>
     /// THE OTHER TRUCK IS DRAWN, WHERE ITS OWN TRANSCRIPT PUT IT, AND MOVES.
     /// </summary>
-    [Test]
-    public void TheOtherTruckIsOnScreenAndMovesWithItsTranscript()
+    /// A ghost eases onto its newest picture over the frames after it - 10 Hz
+    /// pictures on a 60 Hz screen - so each pose is read once it has ARRIVED,
+    /// to the same millimetre it always was.
+    [UnityTest]
+    public IEnumerator TheOtherTruckIsOnScreenAndMovesWithItsTranscript()
     {
         var frames = Frames();
         Assert.AreEqual(2, frames.Length, "the fixture no longer carries two pictures");
@@ -67,6 +72,7 @@ public class GhostOnScreenTests
         var ghost = field.GetComponentInChildren<GhostTruck>(true);
         Assert.IsNotNull(ghost, "no truck was drawn for the other identity");
         ghost.gameObject.SetActive(true);
+        for (var f = 0; f < 600 && !ghost.Settled; f++) yield return null;
 
         // WHERE THE TRANSCRIPT PUT IT, to the metre the words name.
         Assert.AreEqual(first.X / ONE, ghost.transform.position.x, 0.001f,
@@ -90,6 +96,7 @@ public class GhostOnScreenTests
         // AND IT MOVES AS THE TRANSCRIPT SAYS - the second picture, sixty ticks
         // later, is a different place and the same truck.
         field.Show(later);
+        for (var f = 0; f < 600 && !ghost.Settled; f++) yield return null;
         Assert.AreEqual(1, field.Trucks, "the second picture made a second truck");
         Assert.AreEqual(later.X / ONE, ghost.transform.position.x, 0.001f,
             "the truck did not move to where its later picture says");

@@ -1,7 +1,9 @@
+using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using NUnit.Framework;
 using UnityEngine;
+using UnityEngine.TestTools;
 using Blwp;
 
 /// <summary>
@@ -35,8 +37,11 @@ public class GhostFieldTests
     /// <summary>
     /// THREE PICTURES, TWO TRUCKS, EACH WHERE ITS OWN FRAME SAYS.
     /// </summary>
-    [Test]
-    public void PicturesBecomeTrucksWhereTheirFramesSay()
+    /// A ghost eases onto its newest picture over the frames after it - 10 Hz
+    /// pictures on a 60 Hz screen - so the pose is read once it has ARRIVED.
+    /// The metre it is asserted to is the same metre it always was.
+    [UnityTest]
+    public IEnumerator PicturesBecomeTrucksWhereTheirFramesSay()
     {
         var field = Field(
             new GhostPicture("aaaaaaaa", 3 * ONE, 4 * ONE, 90 * ONE, 100),
@@ -49,6 +54,12 @@ public class GhostFieldTests
 
         var trucks = field.GetComponentsInChildren<GhostTruck>(true);
         Assert.AreEqual(2, trucks.Length);
+        // THE FIELD STOPS DRAWING WHILE THE TRUCKS ARRIVE. `Update` calls
+        // `Draw(PerFrame)` every frame, so waiting for a ghost to reach its
+        // picture would hand it the NEXT ones - which is drawing, not
+        // arriving, and would assert about a picture this test never named.
+        field.enabled = false;
+        for (var f = 0; f < 600 && trucks.Any(t => !t.Settled); f++) yield return null;
 
         // THE POSE IS THE LAST FRAME'S, not an average and not a guess: the
         // first entry moved from x=3 to x=5 and the field shows where the
@@ -126,8 +137,8 @@ public class GhostFieldTests
     /// The field takes what it is asked for and leaves the rest for the next
     /// frame, so a backlog cannot stall drawing.
     /// </summary>
-    [Test]
-    public void ADrainTakesWhatItWasAskedFor()
+    [UnityTest]
+    public IEnumerator ADrainTakesWhatItWasAskedFor()
     {
         var many = Enumerable.Range(0, 10)
             .Select(i => new GhostPicture("aaaaaaaa", i * ONE, 0, 0, i)).ToArray();
@@ -136,10 +147,14 @@ public class GhostFieldTests
         Assert.AreEqual(4, field.Draw(4));
         Assert.AreEqual(4, field.Shown);
         Assert.AreEqual(1, field.Trucks, "ten pictures of one entry made more than one truck");
-        Assert.AreEqual(3f, field.GetComponentInChildren<GhostTruck>().transform.position.x, 0.0001f);
+        var only = field.GetComponentInChildren<GhostTruck>();
+        field.enabled = false;                 // see above: arriving, not drawing
+        for (var f = 0; f < 600 && !only.Settled; f++) yield return null;
+        Assert.AreEqual(3f, only.transform.position.x, 0.0001f);
 
         Assert.AreEqual(6, field.Draw(100), "the rest was not there for the next frame");
-        Assert.AreEqual(9f, field.GetComponentInChildren<GhostTruck>().transform.position.x, 0.0001f);
+        for (var f = 0; f < 600 && !only.Settled; f++) yield return null;
+        Assert.AreEqual(9f, only.transform.position.x, 0.0001f);
         Assert.AreEqual(0, field.Draw(100), "an empty queue still drew something");
     }
 }
