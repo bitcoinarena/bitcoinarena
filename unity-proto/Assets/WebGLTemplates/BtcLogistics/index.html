@@ -346,9 +346,12 @@
       const net = mod && mod.blwpNet;
       const seated = !!(window.BLWP_ENTRY);
       const others = (net && net.ghosts && typeof net.ghosts.others === 'number') ? net.ghosts.others : 0;
+      // WHETHER ANYBODY IS DRAWING THEM. A field filling with pictures nobody
+      // takes reads the same as an empty round unless the line says so.
+      const stalled = !!(net && net.ghosts && net.ghosts.stalled);
       const ab = ['A', 'B'].map((n) => n + ' ' + (nodeHealth[n] || '…')).join(' · ');
       const who = (typeof BLWPCLIENT !== 'undefined' && BLWPCLIENT.playersLine)
-        ? BLWPCLIENT.playersLine({ seated, others })
+        ? BLWPCLIENT.playersLine({ seated, others, stalled })
         : (seated ? (others ? (1 + others) + ' players in this round' : '1 player · waiting') : 'round named · not seated');
       el.textContent = ab + '\n' + playLine(net) + '\n' + who;
     }

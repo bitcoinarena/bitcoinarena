@@ -45,6 +45,14 @@ export function watchGhosts(client, where, { limit = GHOST_BACKLOG } = {}) {
     seen: 0,
     self: 0,
     shed: 0,
+    // HOW MANY PICTURES SOMEBODY ACTUALLY TOOK TO DRAW.
+    //
+    // A field that is filling and never drained looks exactly like a field
+    // that is empty from the outside: `others` counts trucks in the round
+    // either way. That is the shape of the 11:51 failure - the chip said five
+    // players and the screen showed one truck - and the page had no number
+    // that could tell the two apart.
+    drawn: 0,
     present,
     get size() { return queue.length; },
     get others() { return present.size; },
@@ -54,8 +62,21 @@ export function watchGhosts(client, where, { limit = GHOST_BACKLOG } = {}) {
      * draw this frame and leaves the rest; nothing here waits on it.
      */
     drain(max = queue.length) {
-      return queue.splice(0, Math.max(0, max | 0));
+      const took = queue.splice(0, Math.max(0, max | 0));
+      field.drawn += took.length;
+      return took;
     },
+
+    /**
+     * PICTURES ARE ARRIVING AND NOBODY IS DRAWING THEM.
+     *
+     * True when the field has been sent pictures of somebody else and none of
+     * them has ever been taken. A renderer calls `drain` every frame, so one
+     * frame of a working page clears this; a page whose `GhostField` is not in
+     * the scene, or whose bridge is not wired, never does - and that is a
+     * different fault from an empty round, which is what it used to look like.
+     */
+    get stalled() { return field.seen > field.self && field.drawn === 0; },
 
     /**
      * The newest picture of each truck, which is what a renderer wants.
@@ -95,9 +116,13 @@ export function watchGhosts(client, where, { limit = GHOST_BACKLOG } = {}) {
 }
 
 /** One line the page can put on screen. Count is 1 (this tab) plus others. */
-export function playersLine({ seated, others } = {}) {
+export function playersLine({ seated, others, stalled = false } = {}) {
   if (!seated) return 'round named · not seated';
   const n = 1 + (others | 0);
   if (n <= 1) return '1 player · waiting';
-  return n + ' players in this round';
+  // A PAGE THAT IS BEING SENT TRUCKS AND DRAWING NONE SAYS SO. Without this
+  // the line reads the same as a page that is drawing them, which is what
+  // made the 11:51 retest a guess: five players on the chip, one truck on the
+  // screen, and no number between them.
+  return n + ' players in this round' + (stalled ? ' · none drawn' : '');
 }

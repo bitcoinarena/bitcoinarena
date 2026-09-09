@@ -228,3 +228,59 @@ test('the page ships the client it is written against, and one consumer of onGho
   assert.deepEqual(sets.sort(), ['client.js', 'ghost-field.js'],
     'onGhost is declared or set somewhere other than the client and the field');
 });
+
+/**
+ * A FIELD FILLING WITH PICTURES NOBODY DRAWS.
+ *
+ * The 11:51 two-Chrome retest: the chip said five players and the screen
+ * showed one truck. `others` counts trucks in the round whether or not
+ * anything is drawing them, so the page could not tell "nobody is here" from
+ * "nobody is drawing" - and those are different faults with different fixes.
+ * The renderer is `GhostField.Draw(PerFrame)` calling `BlwpNextGhost`, which
+ * is the one hop `node --test` cannot reach; this is the number that would
+ * have named it from the page.
+ */
+test('a field that is sent trucks and never drained says nobody is drawing', () => {
+  const mine = b32(9);
+  const client = { watch: () => Promise.resolve('watching 1') };
+  const field = watchGhosts(client, { roundId: b32(1), entryId: mine });
+  const ghost = (n, tick, x) => ({ entryId: b32(n), tick, x, z: 0, heading: 0 });
+
+  assert.equal(field.stalled, false, 'a field nobody has sent anything is not stalled');
+
+  client.onGhost(ghost(2, 5, 100));
+  client.onGhost(ghost(3, 5, 200));
+  assert.equal(field.others, 2, 'the round has two other trucks');
+  assert.equal(field.drawn, 0);
+  assert.equal(field.stalled, true, 'pictures arrived and nothing took them');
+
+  // ONE FRAME OF A WORKING PAGE CLEARS IT. `Draw(PerFrame)` runs every frame,
+  // so a renderer that is wired at all drains within a frame.
+  assert.equal(field.drain(24).length, 2);
+  assert.equal(field.drawn, 2);
+  assert.equal(field.stalled, false);
+  assert.equal(field.others, 2, 'drawing a truck does not take it out of the round');
+});
+
+test('a viewer\'s own pictures do not make the field look stalled', () => {
+  // The field drops the viewer's own truck before the queue, so a page that is
+  // shown only itself has taken nothing and has nothing to take. Counting that
+  // as stalled would put a fault on the chip of every solo round.
+  const mine = b32(9);
+  const client = { watch: () => Promise.resolve('watching 0') };
+  const field = watchGhosts(client, { roundId: b32(1), entryId: mine });
+  client.onGhost({ entryId: mine, tick: 5, x: 1, z: 2, heading: 3 });
+  assert.equal(field.self, 1);
+  assert.equal(field.others, 0);
+  assert.equal(field.stalled, false, 'a solo page was called stalled');
+});
+
+test('the players line says when trucks are arriving and none are drawn', () => {
+  assert.equal(playersLine({ seated: true, others: 4 }), '5 players in this round');
+  assert.equal(playersLine({ seated: true, others: 4, stalled: true }),
+    '5 players in this round · none drawn');
+  // A round with nobody else in it says nothing about drawing, because there
+  // is nothing to draw.
+  assert.equal(playersLine({ seated: true, others: 0, stalled: true }), '1 player · waiting');
+  assert.equal(playersLine({ seated: false, others: 4, stalled: true }), 'round named · not seated');
+});
