@@ -36,23 +36,29 @@ import {
  * find an output appearing in `src/` should turn this red and make somebody
  * update the letter rather than leave it stale.
  */
-test('nothing in the daemon can find an output, and nothing calls the payer', () => {
+test('one file asks the chain about outputs, and nothing calls the payer yet', () => {
   const src = readdirSync(new URL('../src/', import.meta.url))
     .filter((f) => f.endsWith('.js'))
     .map((f) => ({ f, text: readFileSync(new URL(`../src/${f}`, import.meta.url), 'utf8') }));
 
+  // THE COUNT WAS ZERO WHEN THIS FILE WAS WRITTEN and `pool-watch.js` is the
+  // one that changed it. Pinned as a LIST rather than a count: a second file
+  // learning to ask the chain about outputs is a second place for the rule
+  // "the value is the chain's" to be got wrong, and it should turn this red.
   const finders = src.filter((s) => /scantxoutset|listunspent|gettxout\b|getrawtransaction/.test(s.text));
-  assert.deepEqual(finders.map((s) => s.f), [],
-    'something in src/ can ask the chain about outputs now - update the letter');
+  assert.deepEqual(finders.map((s) => s.f), ['pool-watch.js'],
+    'a second file in src/ now asks the chain about outputs - one of them is the wrong one');
 
-  // `payWithCommittee` appears once: its own definition.
-  const mentions = src.flatMap((s) => (s.text.match(/payWithCommittee/g) || []).map(() => s.f));
-  assert.deepEqual(mentions, ['payout.js'],
-    'payWithCommittee is named somewhere new in src/ - it may have a caller now');
-  const defs = (src.find((s) => s.f === 'payout.js').text.match(/payWithCommittee/g) || []).length;
+  // A CALL SITE, NOT A MENTION. Grepping the name counts the comment in
+  // `pool-watch.js` that explains why this letter exists, which is a sentence
+  // and not a caller. A call is the name on an object.
+  const callers = src.filter((s) => /\.payWithCommittee\s*\(/.test(s.text));
+  assert.deepEqual(callers.map((s) => s.f), [],
+    'payWithCommittee has a caller in src/ now - update the letter');
+  const defs = (src.find((s) => s.f === 'payout.js').text.match(/\bpayWithCommittee\s*\(/g) || []).length;
   assert.equal(defs, 1, `payWithCommittee is written ${defs} times in payout.js, so one of them is a caller`);
   console.log('  callers of payWithCommittee in src/: 0');
-  console.log('  files in src/ that could find an output: 0');
+  console.log('  files in src/ that can find an output: 1 (pool-watch.js)');
 });
 
 /**
