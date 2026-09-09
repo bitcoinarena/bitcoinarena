@@ -51,6 +51,7 @@ import {
 // formula in the client would be a second opinion about what the player owes,
 // which is the one number they are about to part with money over.
 import { invoiceMatchesEntry } from '../../protocol/src/payout.js';
+import { parseConnection, payInvoice } from './nwc.js';
 import { decodeGhost } from '../../protocol/src/ghost.js';
 import { TYPE_GHOST } from '../../protocol/src/constants.js';
 import { discover } from './directory.js';
@@ -788,6 +789,61 @@ export class Client {
       amountMsat,
       state: said.state,
       why: stands.why,
+    };
+  }
+
+  /**
+   * PAY THE HOLD INVOICE THIS SEAT OWES, AND NOTHING ELSE EVER.
+   *
+   * M3.2 item 6, and the only method in this client that moves a satoshi.
+   *
+   * IT TAKES AN ENTRY, NOT AN INVOICE. That is the whole safety property and
+   * it is a signature, not a check: there is no argument here that could carry
+   * an arbitrary bolt11, so no caller - page, test or a script somebody pastes
+   * - can walk this into paying something. The invoice is fetched by
+   * `invoice()`, which refuses an amount, a hash or a seat the entry did not
+   * sign, and only what survives that is handed to the wallet.
+   *
+   * THE BUDGET PROVES NOTHING AND IS NOT ASKED TO. §24A.1: "an NWC budget is
+   * wallet-side policy and encodes nothing about the round... The binding is
+   * still `payment_hash` in the Entry Contract." A budget bounds the loss if
+   * this client is compromised; what binds the payment to the round is that
+   * the hash came off the contract the player signed.
+   *
+   * WHAT COMES BACK IS THE WALLET'S PREIMAGE, and it is handed up rather than
+   * stored: a hold invoice's preimage is the wallet's proof it paid, and this
+   * client keeps no money state between rounds (§24A.3).
+   */
+  async payStake(entry, { connection, curve, entryId: id, ...options } = {}) {
+    const where = typeof connection === 'string' ? parseConnection(connection) : connection;
+    if (!where || !where.ok)
+      return { ok: false, why: (where && where.why) || 'there is no wallet connection to pay with' };
+    // THE CURVE IS INJECTED, like `sign` and `verify` on this class and like
+    // the one `stakeFor` takes: this bundle carries no crypto, and the page
+    // loads `blwp-curve.js` beside it.
+    if (!curve || typeof curve.ecdhShared !== 'function' || typeof curve.signSchnorr !== 'function')
+      return { ok: false, why: 'talking to a wallet needs a curve, and none was injected' };
+
+    // THE QUOTE FIRST, AND ITS REFUSAL IS THIS METHOD'S REFUSAL. A quote the
+    // entry did not sign never reaches the wallet at all - not as a request it
+    // declines, but as a request that is never sent.
+    const quote = await this.invoice(entry, { entryId: id });
+    if (!quote.ok) return { ...quote, paid: false, asked: false };
+
+    const paid = await payInvoice(where, quote.request, {
+      curve,
+      random: options.random || ((n) => crypto.getRandomValues(new Uint8Array(n))),
+      ...options,
+    });
+    if (!paid.ok) return { ...paid, paid: false, asked: true, quoted: quote };
+
+    return {
+      ok: true, paid: true, asked: true,
+      preimage: paid.preimage,
+      amountMsat: quote.amountMsat,
+      paymentHash: quote.paymentHash,
+      request: quote.request,
+      feesPaidMsat: paid.feesPaidMsat,
     };
   }
 

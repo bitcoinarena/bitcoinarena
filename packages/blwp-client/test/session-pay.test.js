@@ -119,8 +119,8 @@ test('the client can enter, ask what it owes, and play - and cannot send a satos
     // ASK: one method, and it is the whole pay surface of this letter.
     assert.equal(typeof c.client.invoice, 'function', 'the client cannot ask what it owes');
 
-    // AND NOTHING THAT SENDS MONEY. The wallet is item 6; a method here that
-    // moved a satoshi would empty it.
+    // AND EXACTLY ONE THING THAT SENDS MONEY, which arrived with item 6.
+    // While item 5 stood alone this was 0, and the assertion said so.
     //
     // `send` IS NOT ON THIS LIST and was, wrongly: `Client.send` puts a
     // protocol message on the play socket and has since the first batch went
@@ -128,9 +128,9 @@ test('the client can enter, ask what it owes, and play - and cannot send a satos
     // fail on every future letter for the wrong reason.
     const sends = ['pay', 'payInvoice', 'sendPayment', 'nwc', 'wallet', 'payStake']
       .filter((m) => typeof c.client[m] === 'function');
-    assert.deepEqual(sends, [],
-      `the client can send sats now (${sends.join(', ')}) - that is item 6, not this letter`);
-    console.log('  enter: 3 methods · ask: 1 method · play: 6 methods · pay-as-wallet: 0 methods');
+    assert.deepEqual(sends, ['payStake'],
+      `methods that move a satoshi: ${sends.join(', ') || 'none'}`);
+    console.log('  enter: 3 methods · ask: 1 · play: 6 · moves a satoshi: 1 (payStake)');
 
     // AND THE FOURTH WORD IS NOT A NAME COLLISION ANY MORE. `settle()` waited
     // for two promises and settled nothing; 9.4's settle is a stake moving
@@ -149,7 +149,7 @@ test('the client can enter, ask what it owes, and play - and cannot send a satos
     const speaks = code.filter((s) => s.text.split('\n')
       .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l))
       .some((l) => /invoice|bolt11|payment_request|paymentHash/i.test(l)));
-    assert.deepEqual(speaks.map((s) => s.f), ['client.js'],
+    assert.deepEqual(speaks.map((s) => s.f).sort(), ['client.js', 'nwc.js'],
       'the ask moved out of client.js, or a second file learned to quote a player');
     console.log(`  files in blwp-client/src that name an invoice in code: `
       + `${speaks.length} (${speaks.map((s) => s.f).join(', ')})`);

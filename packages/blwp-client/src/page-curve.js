@@ -51,4 +51,18 @@ export const ecdhShared = (secret, theirXOnly) => {
   return Uint8Array.from(x.match(/../g).map((h) => parseInt(h, 16)));
 };
 
-export const pageCurve = { pointX, ecdhShared, pointFromScalar, combinePoints, verify };
+/**
+ * A BIP-340 SIGNATURE, which a Nostr event is (NIP-01).
+ *
+ * The page had no reason to SIGN on this curve until the wallet: its own
+ * session key is Ed25519 through `crypto.subtle`, and the player key was only
+ * ever a public point. NIP-47 puts a request on a relay as a signed event, so
+ * this is the one operation the connection secret performs - and it signs an
+ * event id, never a Bitcoin message: the two live on the same curve and mean
+ * entirely different things.
+ */
+export const signSchnorr = (message, secret) => schnorr.sign(message, secret);
+
+export const pageCurve = {
+  pointX, ecdhShared, pointFromScalar, combinePoints, verify, signSchnorr,
+};

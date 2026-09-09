@@ -25,6 +25,7 @@ var BLWP_CURVE_EXPORTS = (() => {
     pageCurve: () => pageCurve,
     pointFromScalar: () => pointFromScalar,
     pointX: () => pointX,
+    signSchnorr: () => signSchnorr,
     verify: () => verify
   });
 
@@ -2760,7 +2761,15 @@ var BLWP_CURVE_EXPORTS = (() => {
     const x = schnorr.utils.lift_x(big(theirXOnly)).multiply(d).toAffine().x.toString(16).padStart(64, "0");
     return Uint8Array.from(x.match(/../g).map((h) => parseInt(h, 16)));
   };
-  var pageCurve = { pointX, ecdhShared, pointFromScalar, combinePoints, verify };
+  var signSchnorr = (message, secret) => schnorr.sign(message, secret);
+  var pageCurve = {
+    pointX,
+    ecdhShared,
+    pointFromScalar,
+    combinePoints,
+    verify,
+    signSchnorr
+  };
   return __toCommonJS(page_curve_exports);
 })();
 /*! Bundled license information:
