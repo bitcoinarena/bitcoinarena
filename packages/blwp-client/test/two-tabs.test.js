@@ -20,6 +20,7 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 import { standUpRound } from '../../blwp-node/tools/round-2of2.mjs';
 import { Client } from '../src/client.js';
 import { joinFromQuery, tabIdentity, entryFor } from '../src/join.js';
+import { feldmanGroup } from '../../blwp-node/src/curve.js';
 import { watchGhosts } from '../src/ghost-field.js';
 import { roundId } from '../../protocol/src/contracts.js';
 import { seedWordForEntry } from '../../protocol/src/seed.js';
@@ -103,8 +104,8 @@ test('a person opens the printed URL twice and the two tabs are on one round', a
     for (const which of ['one', 'two']) {
       const secret = ed25519.utils.randomSecretKey();
       const sessionPubkey = ed25519.getPublicKey(secret);
-      const player = tabIdentity({ storage: storage(), random });
-      const seat = entryFor(named.round, { playerPubkey: player, random });
+      const player = tabIdentity({ storage: storage(), random, curve: feldmanGroup });
+      const seat = entryFor(named.round, { playerPubkey: player.pubkey, random });
 
       // EXACTLY WHAT THE JSLIB HANDS OVER, including the round id the player
       // was given - the door refuses a contract that does not hash to it.

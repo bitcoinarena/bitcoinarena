@@ -259,12 +259,29 @@
       window.BLWP_ROUND = named.round;
       window.BLWP_CHAIN = named.chain;
       window.BLWP_ADVERT = named.advert;
+      // THE PLAYER'S KEY IS A KEY NOW, and this page cannot make one.
+      //
+      // `player_pubkey` used to be 32 random bytes. It is where a winner's
+      // payout is sent, so it has to be a secp256k1 x-only key - and the
+      // browser's own crypto has no secp256k1, only Ed25519 and P-256. This
+      // page does not vendor a curve for the same reason the session key uses
+      // `crypto.subtle`: the key that holds a player's money should not be
+      // handled by an implementation nobody audits.
+      //
+      // So a page that was given no curve REFUSES THE SEAT and stays the
+      // single-player daily. Seating somebody at a paying round under a key
+      // nobody can spend from is worse than not seating them.
+      const random = (n) => crypto.getRandomValues(new Uint8Array(n));
+      if (!window.BLWP_CURVE || typeof window.BLWP_CURVE.pointX !== 'function') {
+        console.log('[blwp] round ' + named.roundIdHex + ' named, and this page has no curve '
+          + 'to make a payable player key with, so it is not taking a seat');
+        return;
+      }
+      const player = BLWPCLIENT.tabIdentity({
+        storage: window.sessionStorage, random, curve: window.BLWP_CURVE,
+      });
       window.BLWP_ENTRY = BLWPCLIENT.entryFor(named.round, {
-        playerPubkey: BLWPCLIENT.tabIdentity({
-          storage: window.sessionStorage,
-          random: (n) => crypto.getRandomValues(new Uint8Array(n)),
-        }),
-        random: (n) => crypto.getRandomValues(new Uint8Array(n)),
+        playerPubkey: player.pubkey, random,
       });
       console.log('[blwp] joining round ' + named.roundIdHex + ' from ' + named.from);
     }

@@ -175,18 +175,48 @@ export async function joinFromQuery(search, { fetcher = fetch } = {}) {
  * dropped. `sessionStorage` is per tab, which is exactly the lifetime a seat
  * at a round has.
  *
- * The bytes are the browser's own randomness. Nothing derives them from
- * anything the page was given, so no operator can predict or replay a player.
- * PRIORITIES has the long form of this - a key kept in the browser with backup
- * and import, never uploaded - and this is its first half.
+ * IT IS A REAL KEY NOW, AND IT WAS NOT. This function used to store 32 random
+ * bytes and hand the SAME bytes back as `player_pubkey` - an identifier that
+ * looked like a key and was on no curve at all. Nothing signed under it, so
+ * nothing caught it; what caught it was asking where a winner gets paid. A
+ * payout is an output, an output pays to a key, and random bytes are not one.
+ *
+ * SO WHAT IS STORED IS THE SECRET and what is returned is its x-only point.
+ * The player keeps the secret in their own tab and it is never sent anywhere -
+ * which is the whole reason the field can be a payout destination.
+ *
+ * THE CURVE IS INJECTED, like `sign` and like the dealer's. This bundle
+ * carries no crypto on purpose, and a page that cannot bring a curve gets a
+ * REFUSAL rather than random bytes: seating a player at a money round under a
+ * key nobody can spend from is worse than not seating them.
  */
-export function tabIdentity({ storage, random, key = 'blwp.player' } = {}) {
+export function tabIdentity({ storage, random, curve, key = 'blwp.player' } = {}) {
+  if (!curve || typeof curve.pointX !== 'function')
+    throw new Error('a player identity is a key on a curve, and none was injected');
+
   const held = storage && storage.getItem(key);
-  if (held && /^[0-9a-f]{64}$/i.test(held)) return fromHex(held.toLowerCase());
-  const made = random(32);
-  if (storage) storage.setItem(key, toHex(made));
-  return made;
+  let secret = held && /^[0-9a-f]{64}$/i.test(held) ? fromHex(held.toLowerCase()) : null;
+  // A STORED VALUE THAT IS NOT A SCALAR IS NOT A KEY. Anything written by the
+  // version that stored random bytes is read the same way - as a secret - and
+  // replaced if it does not name a point.
+  if (secret !== null && !isScalar(secret)) secret = null;
+
+  if (secret === null) {
+    for (let tries = 0; ; tries++) {
+      secret = random(32);
+      if (isScalar(secret)) break;
+      if (tries > 8) throw new Error('this randomness never produced a scalar of the group');
+    }
+    if (storage) storage.setItem(key, toHex(secret));
+  }
+  return { secret, pubkey: curve.pointX(secret) };
 }
+
+/** Non-zero and below the group order, which is what a secret key has to be. */
+const isScalar = (bytes) => {
+  const v = scalarFrom32(bytes);
+  return v > 0n && v < FIELD;
+};
 
 /**
  * The seat this page takes at a round it did not write.

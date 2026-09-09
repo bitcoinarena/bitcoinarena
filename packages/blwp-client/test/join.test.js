@@ -17,6 +17,7 @@ import { serve } from '../../blwp-node/src/server.js';
 import { Client } from '../src/client.js';
 import { joinQuery, joinFromQuery, fetchRound, tabIdentity, entryFor, stakeFor } from '../src/join.js';
 import { NO_SHARES } from '../../protocol/src/handout.js';
+import { feldmanGroup } from '../../blwp-node/src/curve.js';
 import { encodeRoundContract, roundId } from '../../protocol/src/contracts.js';
 import { MIN_ENTRY_WINDOW_MS } from '../../protocol/src/constants.js';
 import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
@@ -139,17 +140,29 @@ test('two tabs are two players, and one tab is one player twice', () => {
   const random = (len) => new Uint8Array(len).fill(++n);
 
   const one = tab(), two = tab();
-  const a = tabIdentity({ storage: one, random });
-  const again = tabIdentity({ storage: one, random });
-  const b = tabIdentity({ storage: two, random });
+  // THE CURVE IS INJECTED, because this bundle carries none - and an identity
+  // is a key now, not 32 bytes that looked like one.
+  const a = tabIdentity({ storage: one, random, curve: feldmanGroup });
+  const again = tabIdentity({ storage: one, random, curve: feldmanGroup });
+  const b = tabIdentity({ storage: two, random, curve: feldmanGroup });
 
-  assert.equal(toHex(a), toHex(again), 'a reload made the tab a different player');
-  assert.notEqual(toHex(a), toHex(b), 'two tabs are the same player, so each drops the other');
+  assert.equal(toHex(a.pubkey), toHex(again.pubkey), 'a reload made the tab a different player');
+  assert.equal(toHex(a.secret), toHex(again.secret), 'a reload drew a new secret');
+  assert.notEqual(toHex(a.pubkey), toHex(b.pubkey), 'two tabs are the same player, so each drops the other');
 
-  // AND A KEY THAT IS NOT 32 BYTES IS NOT A PLAYER. A tab carrying rubbish
-  // gets a new key rather than a session nobody can verify.
+  // AND IT IS A KEY ON THE CURVE, which is the whole point: a payout is an
+  // output and an output pays to a key.
+  assert.equal(a.pubkey.length, 32);
+  assert.deepEqual(a.pubkey, schnorr.getPublicKey(a.secret));
+  assert.notDeepEqual(a.pubkey, a.secret, 'the secret was handed out as the public key');
+
+  // A TAB CARRYING RUBBISH GETS A NEW KEY rather than a seat nobody can pay.
   const junk = tab(); junk.setItem('blwp.player', 'not-a-key');
-  assert.equal(tabIdentity({ storage: junk, random }).length, 32);
+  assert.equal(tabIdentity({ storage: junk, random, curve: feldmanGroup }).pubkey.length, 32);
+
+  // AND A PAGE WITH NO CURVE IS REFUSED, rather than handed random bytes.
+  assert.throws(() => tabIdentity({ storage: tab(), random }),
+    /a player identity is a key on a curve/);
 });
 
 test('the seat a page takes carries the round\'s own amounts', () => {
