@@ -20,7 +20,13 @@ import { parse } from 'acorn';
 // amount the player never signed.
 const MONEY = ['payout.js', 'sortition.js', 'census.js', 'contracts.js', 'encode.js',
                'batch.js', 'transcript.js', 'chain.js', 'tx.js', 'slash.js', 'fee.js',
-               'donation.js', '../../blwp-node/src/custody.js'];
+               'donation.js', '../../blwp-node/src/custody.js',
+               // `frost.js` and `frost-bip340.js` are on it for `slash.js`'s
+               // reason rather than for a stake's: what they decide is whether
+               // an output may be spent away from the pool. A float in a
+               // scalar there is a signature that does not verify at best and
+               // a leaked share at worst.
+               'frost.js', 'frost-bip340.js'];
 const ROOT = new URL('../src/', import.meta.url).pathname;
 const problems = [];
 
