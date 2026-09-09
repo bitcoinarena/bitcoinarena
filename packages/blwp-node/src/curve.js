@@ -88,5 +88,30 @@ export const combinePoints = (terms) => {
   return sum === null ? new Uint8Array(33) : sum.toBytes(true);
 };
 
+/**
+ * THE SHARED SECRET A SHARE IS SEALED UNDER, on the same curve as everything
+ * else. 23.1 wants one share encrypted to each committee member, and the
+ * members are already named by their BIP-340 x-only keys - so the agreement is
+ * between those keys and no second identity has to exist.
+ *
+ * THE EVEN-Y NORMALISATION IS THE WHOLE SUBTLETY. An x-only key names the
+ * point with even y, so a secret whose own point has odd y must be negated
+ * before it is multiplied - exactly as BIP-340 signing does. Both sides then
+ * compute d'e'G and read the same x. Skip it on one side and the two derive
+ * different keys, which GCM turns into a refusal rather than a wrong scalar.
+ */
+const evenScalar = (secret) => {
+  const n = secp256k1.Point.Fn.ORDER;
+  const d = (typeof secret === 'bigint' ? secret : big(secret)) % n;
+  if (d === 0n) throw new Error('zero is not a secret key');
+  return (secp256k1.Point.BASE.multiply(d).toAffine().y & 1n) === 0n ? d : n - d;
+};
+
+export const ecdhShared = (secret, theirXOnly) => {
+  const point = schnorr.utils.lift_x(big(theirXOnly)).multiply(evenScalar(secret));
+  const x = point.toAffine().x.toString(16).padStart(64, '0');
+  return Uint8Array.from(x.match(/../g).map((h) => parseInt(h, 16)));
+};
+
 /** What `splitSecret` and `shareOpensTo` are handed when a node checks a handout. */
-export const feldmanGroup = { pointFromScalar, combinePoints };
+export const feldmanGroup = { pointFromScalar, combinePoints, ecdhShared };

@@ -24,7 +24,7 @@ import { SIGNED_CHECKPOINT_BYTES } from '../../protocol/src/checkpoint.js';
 import { TYPE_CHECKPOINT_RECEIPT } from '../../protocol/src/constants.js';
 import { bearsAuthority } from '../../protocol/src/frames.js';
 import {
-  decodeHandout, encodeHandout, handoutId, acceptHandout,
+  decodeHandout, encodeHandout, handoutId, acceptHandout, openMyShare,
 } from '../../protocol/src/handout.js';
 // THE GROUP THE HANDOUT CHECK NEEDS. The protocol package carries no curve on
 // purpose, so the daemon brings one - the same secp256k1 it already brings to
@@ -323,25 +323,39 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       }
 
       // THE SHARES A PLAYER SPLIT THEIR STAKE PREIMAGE INTO, checked here and
-      // kept only if they are one polynomial.
+      // kept only if THIS NODE'S OWN share lies on the published polynomial.
       //
-      // This is the door letter 29 exists for. `acceptHandout` runs 23.1's own
-      // question - does each share lie on the published polynomial - and it
-      // needs a group, which this file has and the protocol package does not.
-      // A dealer who split with two polynomials is refused HERE, before any
-      // entry naming these shares can be accepted, instead of at settlement
-      // when no five seats can open the preimage and there is nothing to do.
+      // This is the door letter 29 exists for, and 23.1's secrecy half changed
+      // what a node can see through it: the shares are sealed one per seat
+      // now, so a node opens its own and checks that one. A dealer who split
+      // with two polynomials is refused by WHOEVER HE CHEATED - which is still
+      // before any entry naming these shares is accepted, and still with
+      // something to do about it.
+      //
+      // A NODE THAT WAS DEALT NOTHING KEEPS NOTHING. Storing an envelope
+      // addressed to somebody else and calling it custody would be the same
+      // mistake as holding a stake this node cannot settle.
+      //
+      // AND THE OPENED SHARE IS NEVER WRITTEN DOWN. Only the sealed handout
+      // goes to disk; the share is re-opened from it whenever it is needed, so
+      // a stolen database is a pile of envelopes.
       if (req.method === 'POST' && url.pathname === '/handout') {
         let handout;
         try { handout = decodeHandout(await read(req)); }
         catch (e) { return text(res, 400, 'that is not a handout: ' + e.message); }
 
-        const seen = acceptHandout(handout, { curve: feldmanGroup });
+        const seen = acceptHandout(handout);
         if (!seen.ok) return text(res, 409, seen.why);
+
+        const mine = await openMyShare(handout, {
+          pubkey: round.pubkey, secret: round.identity.secret, curve: feldmanGroup,
+        });
+        if (!mine.ok) return text(res, 409, mine.why);
 
         const id = handoutId(handout);
         round.rememberHandout({ id, roundId: handout.roundId, bytes: encodeHandout(handout) });
-        return bytes(res, 201, id);
+        res.writeHead(201, { 'content-type': 'application/octet-stream', 'x-seat': String(mine.seat), ...CORS });
+        return res.end(Buffer.from(id));
       }
 
       if (req.method === 'GET' && url.pathname === '/handout') {

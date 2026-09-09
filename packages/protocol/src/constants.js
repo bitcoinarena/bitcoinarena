@@ -131,6 +131,13 @@ export const TYPE_GHOST = 0x11;
  */
 export const TYPE_VSS_HANDOUT = 0x12;
 
+// A SEALED SHARE IS A FIXED SIZE, and it is not a choice: 32 bytes of scalar
+// under AES-GCM plus the 16-byte tag that makes a wrong key a REFUSAL rather
+// than a garbage scalar. The nonce is derived rather than carried, so it is
+// not on the wire.
+export const VSS_SEALED_BYTES = 48;
+export const VSS_NONCE_BYTES = 12;
+
 export const TAG = {
   roundContract: 'BLWP/v1/RoundContract',
   entryContract: 'BLWP/v1/EntryContract',
@@ -174,6 +181,12 @@ export const TAG = {
   // signature binds to the root, and the two must never be interchangeable.
   censusInputs: 'BLWP/v1/CensusInputs',
   vssShare: 'BLWP/v1/VssShare',
+  // The key one seat's share is sealed under, and the nonce it is sealed with.
+  // Two tags and not one: a key and a nonce derived from the same bytes under
+  // one tag would BE the same bytes, and a nonce that equals its own key is
+  // not a nonce.
+  vssShareKey: 'BLWP/v1/VssShareKey',
+  vssShareNonce: 'BLWP/v1/VssShareNonce',
   // The id of a whole handout - the polynomial's commitments - which is what
   // an Entry Contract's `vss_shares_ref` names. Its own tag, so a ref can
   // never be produced by hashing a single share.
