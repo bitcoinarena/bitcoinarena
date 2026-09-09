@@ -46,6 +46,7 @@
       color: #e8eaed; background: rgba(13, 16, 20, 0.78);
       border-left: 3px solid #f7931a; padding: 8px 14px; border-radius: 4px;
       letter-spacing: 0.01em;
+      white-space: pre; text-align: left;
     }
   </style>
 </head>
@@ -298,20 +299,49 @@
       console.log('[blwp] joining round ' + named.roundIdHex + ' from ' + named.from);
     }
 
+    const nodeHealth = {};
+    async function probeNodes() {
+      const nodes = (new URLSearchParams(location.search).get('node') || '')
+        .split(',').map((s) => s.trim()).filter(Boolean);
+      await Promise.all(nodes.map(async (u, i) => {
+        const name = /blwp-b|:8091/.test(u) ? 'B' : /blwp-a|:8090/.test(u) ? 'A' : String(i + 1);
+        try {
+          const r = await fetch(u.replace(/\/+$/, '') + '/identity');
+          nodeHealth[name] = r.ok ? 'ok' : 'http ' + r.status;
+        } catch (e) {
+          nodeHealth[name] = 'down';
+        }
+      }));
+    }
+    function playLine(net) {
+      if (!net) return 'play · not started';
+      if (net.error) return 'play · ' + net.error;
+      const c = net.client;
+      if (!c) return 'play · ' + (net.state || 'opening');
+      const where = c.base || '';
+      const which = /blwp-b|:8091/.test(where) ? 'B' : /blwp-a|:8090/.test(where) ? 'A' : where;
+      const sock = c.sock && c.sock.readyState === 1 ? 'up' : (c.state || 'no socket');
+      return 'play · ' + which + ' ' + sock;
+    }
     function paintPlayers() {
       const el = document.getElementById('blwp-players');
       if (!el) return;
       if (!window.BLWP_ROUND) { el.style.display = 'none'; return; }
       el.style.display = 'block';
+      const inst = window.unityInstance;
+      const mod = (inst && inst.Module) || (typeof Module !== 'undefined' ? Module : window.Module);
+      const net = mod && mod.blwpNet;
       const seated = !!(window.BLWP_ENTRY);
-      const net = (typeof Module !== 'undefined' && Module.blwpNet) ? Module.blwpNet : null;
       const others = (net && net.ghosts && typeof net.ghosts.others === 'number') ? net.ghosts.others : 0;
-      el.textContent = (typeof BLWPCLIENT !== 'undefined' && BLWPCLIENT.playersLine)
+      const ab = ['A', 'B'].map((n) => n + ' ' + (nodeHealth[n] || '…')).join(' · ');
+      const who = (typeof BLWPCLIENT !== 'undefined' && BLWPCLIENT.playersLine)
         ? BLWPCLIENT.playersLine({ seated, others })
-        : (seated ? (others ? (1 + others) + ' players in this round' : '1 player · waiting')
-                  : 'round named · not seated');
+        : (seated ? (others ? (1 + others) + ' players in this round' : '1 player · waiting') : 'round named · not seated');
+      el.textContent = ab + '\n' + playLine(net) + '\n' + who;
     }
     setInterval(paintPlayers, 500);
+    probeNodes();
+    setInterval(probeNodes, 2000);
     paintPlayers();
 
     const script = document.createElement('script');
@@ -319,7 +349,8 @@
     script.onerror = () => fail('The loader could not be loaded.');
     script.onload = () => {
       createUnityInstance(canvas, config, show)
-        .then(() => {
+        .then((instance) => {
+          window.unityInstance = instance;
           show(1);
           boot.classList.add('done');
           setTimeout(() => boot.remove(), 600);
