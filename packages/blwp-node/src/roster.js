@@ -98,13 +98,25 @@ export class Roster {
     let checkedAgainstChain = false;
     if (view && Array.isArray(view.blocks) && view.blocks.length) {
       const headers = { headers: view.blocks.map((b) => b.header), firstHeight: view.firstHeight };
-      if (beaconFromChain(contract, headers).ok) {
-        const agrees = beaconIsTheChains(contract, {
-          hash: randomness, height: given && given.height, timeMs: given && given.timeMs,
-        }, headers);
-        if (!agrees.ok) return agrees;
-        checkedAgainstChain = true;
-      }
+      const named = beaconFromChain(contract, headers);
+      // A VIEW THAT CANNOT NAME THE BLOCK IS NOT A PASS.
+      //
+      // This used to skip the check and say so on the answer, and that was a
+      // hole with a number: on the no-bitcoind path the census view was two
+      // blocks and `checkedAgainstChain` came back FALSE while the round seated
+      // anyway - so an operator handing a deliberately narrow view skipped the
+      // one check that says the beacon is the chain's. A node that has a chain
+      // and cannot answer with it refuses.
+      //
+      // A node with NO view at all is a different case and is left alone here:
+      // it cannot derive a census either, so `censusFor` refuses it first, and
+      // 27's rule above has already run without needing a chain.
+      if (!named.ok) return named;
+      const agrees = beaconIsTheChains(contract, {
+        hash: randomness, height: given && given.height, timeMs: given && given.timeMs,
+      }, headers);
+      if (!agrees.ok) return agrees;
+      checkedAgainstChain = true;
     }
 
     return { ...seeded, checkedAgainstChain };

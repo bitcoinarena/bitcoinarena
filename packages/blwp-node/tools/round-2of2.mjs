@@ -38,6 +38,7 @@ import { openStore, nodeIdentity } from '../src/store.js';
 import { chainBeacon } from '../src/beacon-source.js';
 import { beaconFromChain, medianTimePast } from '../../protocol/src/beacon.js';
 import { regtest } from './regtest-bond.mjs';
+import { chainOf } from '../../protocol/tools/chainview.js';
 import { bitcoindRpc } from '../src/chain-rpc.js';
 import { serve } from '../src/server.js';
 import { toHex } from '../../protocol/src/hash.js';
@@ -84,8 +85,6 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   // chain, for the same round. The window is the operator's business and the
   // rule's job is to refuse one that cannot know - so this asks for enough of
   // the chain that the answer is the chain's and not the window's.
-  const beacon = rpc ? chainBeacon({ call: rpc, window: 400 }) : null;
-  const randomnessFor = beacon ? beacon.for : undefined;
 
   // THE KEY BEFORE THE DAEMON. The advertisement names the key that signs it,
   // the bond commits to the advertisement, and the daemon serves the chain
@@ -186,6 +185,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   let censusConfirmations = 1;
   let onChain = null;
   let bondHeight = 0;
+  let localChain = null;
   if (cli) {
     const rt = regtest(cli);
     onChain = rt;
@@ -206,13 +206,29 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     censusConfirmations = 6;
     censusView = null;                  // read after committee_time, below
   } else {
-    // Heights 1 and 2 - genesis carries no transactions this tool has, and a
-    // census does not need it. `transactions` must hash to the header's own
-    // root, so every leaf is a real transaction.
-    censusView = {
-      blocks: built.map((b, i) => ({ header: b.header, transactions: [bonded[i].transaction] })),
-      firstHeight: 1,
-    };
+    // NO BITCOIND: ONE CHAIN ALL THE SAME, built here.
+    //
+    // The bonds used to sit in a two-block fixture while the beacon came from
+    // whatever header source a caller passed - two chains again, in miniature,
+    // and a roster cannot ask a two-block fixture which block is first after
+    // committee_time. So this builds ONE chain that carries the bonds and can
+    // name a beacon: forty blocks ten minutes apart, straddling now, with a
+    // bond in each of two of them.
+    //
+    // It is a fixture and says so. What it is not is two fixtures pretending
+    // to be one chain.
+    // Mined by the same helper the fixtures use, which gives every block its
+    // own time ten minutes after the one before - a chain where every header
+    // claims the same second has no first-after and no order to find it in.
+    const carried = [];
+    for (let i = 0; i < 40; i++)
+      carried.push({ transactions: i === 2 ? [bonded[0].transaction]
+        : i === 3 ? [bonded[1].transaction] : [] });
+    const mined = chainOf(carried, 0);
+    censusView = mined;
+    censusHeight = 9;                 // six clear of the deeper bond at height 3
+    censusConfirmations = 6;
+    localChain = mined.blocks.map((b) => b.header);
   }
 
   // THE TWO DOORS THE JOIN URL NEEDS, on the daemons themselves.
@@ -226,6 +242,24 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   // AND THE DAEMONS SEE THE CHAIN, which is what makes `POST /round` seat
   // anybody at all: `server.js` seats only when it has a view, and this tool
   // gave none, so the beacon was read and nobody was ever seated on it.
+  // THE BEACON READS THE SAME CHAIN THE CENSUS DOES, whichever chain that is.
+  // A caller may still hand an `rpc` - the regtest path does - but a header
+  // source that is not the chain the bonds are on is the two-chain fault this
+  // letter closed, so with no bitcoind the local chain answers both.
+  const localCall = localChain
+    ? async (method, params = []) => {
+        if (method === 'getblockcount') return localChain.length - 1;
+        if (method === 'getblockhash') return toHex(blockHashOf(localChain[params[0]]));
+        if (method === 'getblockheader')
+          return toHex(localChain[localChain.findIndex(
+            (h) => toHex(blockHashOf(h)) === params[0])]);
+        throw new Error('this chain was asked ' + method);
+      }
+    : null;
+  const source = rpc || localCall;
+  const beacon = source ? chainBeacon({ call: source, window: 400 }) : null;
+  const randomnessFor = beacon ? beacon.for : undefined;
+
   const chainFor = () => censusView;
   const a = await serve(dbA, { port: portA, host, funded, headerBytes, bondProof, chainFor,
     ...(randomnessFor ? { randomnessFor } : {}) });
@@ -255,6 +289,13 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   // reaches it by itself; here nothing waits ten minutes a block, so the tool
   // names an instant the chain is at and then mines past it.
   let committeeTimeMs = BigInt(Date.now());
+  if (localChain) {
+    // THE FIXTURE CHAIN'S OWN CLOCK, for the same reason the regtest path uses
+    // its median: a committee_time this chain has not reached is an instant no
+    // block of it can be after, and the round would name a beacon that does not
+    // exist. Twelve blocks back leaves the answer deep enough to use.
+    committeeTimeMs = BigInt(medianTimePast(localChain, 0, localChain.length - 12)) * 1000n;
+  }
   if (onChain) {
     const clock = onChain.blocksFrom(Math.max(0, onChain.height() - 20), onChain.height());
     const tipMedian = medianTimePast(clock.blocks.map((b) => b.header),

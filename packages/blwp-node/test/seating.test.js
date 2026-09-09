@@ -16,35 +16,24 @@ import { standUpRound } from '../tools/round-2of2.mjs';
 import { blockOf } from '../../protocol/tools/bond.js';
 import { hash256, blockHashOf } from '../../protocol/src/chain.js';
 import { toHex } from '../../protocol/src/hash.js';
+import { decodeRoundContract } from '../../protocol/src/contracts.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 
-/** A mined chain straddling now, and the node that serves it. */
-function chainNode({ blocks = 40, spacing = 600, broken = false } = {}) {
-  const now = Math.floor(Date.now() / 1000);
-  const headers = [];
-  let previous = new Uint8Array(32);
-  for (let i = 0; i < blocks; i++) {
-    const { header } = blockOf(hash256, [b32(i + 1)], { previous, time: now + (i - 20) * spacing });
-    headers.push(header);
-    previous = blockHashOf(header);
-  }
-  return async (method, params = []) => {
-    if (broken) throw new Error('connect ECONNREFUSED');
-    if (method === 'getblockcount') return headers.length - 1;
-    if (method === 'getblockhash') return toHex(blockHashOf(headers[params[0]]));
-    if (method === 'getblockheader')
-      return toHex(headers[headers.findIndex((h) => toHex(blockHashOf(h)) === params[0])]);
-    throw new Error('this node was asked ' + method);
-  };
-}
+/**
+ * A CHAIN THAT CANNOT BE READ. The only header source these tests still hand
+ * in: with no bitcoind the tool builds ONE chain that carries the bonds and
+ * names the beacon, so a separate header source is the two-chain fault this
+ * letter closed - a census on one chain and a seed on another. What is worth
+ *测 measuring is what happens when the source is broken.
+ */
+const brokenNode = () => async () => { throw new Error('connect ECONNREFUSED'); };
 
 const seatsOf = (node, id) =>
   node.round.seats(Buffer.from(id, 'hex')).map(toHex).sort();
 
 test('a round posted through the 2-of-2 path seats the committee its chain names', async () => {
-  const round = await standUpRound({ host: '127.0.0.1', portA: 18120, portB: 18121,
-    rpc: chainNode() });
+  const round = await standUpRound({ host: '127.0.0.1', portA: 18120, portB: 18121 });
   try {
     assert.equal(round.beacon.ok, true, round.beacon.why);
     assert.ok(round.beacon.height > 0, 'the beacon has no height');
@@ -70,35 +59,59 @@ test('a round posted through the 2-of-2 path seats the committee its chain names
   } finally { await round.close(); }
 });
 
-test('the same chain twice seats the same committee', async () => {
-  const call = chainNode();
-  const one = await standUpRound({ host: '127.0.0.1', portA: 18122, portB: 18123, rpc: call });
-  const seatsOne = seatsOf(one.a, one.id);
-  const beaconOne = one.beacon;
-  await one.close();
-
-  // FRESH PORTS, because a daemon that has just closed has not always let go
-  // of its socket and this test is about the chain, not about bind timing.
-  const two = await standUpRound({ host: '127.0.0.1', portA: 18132, portB: 18133, rpc: call });
+test('asked twice, one round names one block and one seed', async () => {
+  // WHAT THIS USED TO COMPARE NO LONGER EXISTS. It stood the tool up twice and
+  // asserted both runs named one block - true while a caller handed in the
+  // header chain, and meaningless now that each run builds its own chain
+  // carrying its own bonds. Two chains name two blocks, correctly.
+  //
+  // What is worth measuring is the property the letter is about: one chain,
+  // asked twice, gives one answer - and both daemons of that round agree.
+  const round = await standUpRound({ host: '127.0.0.1', portA: 18122, portB: 18123 });
   try {
-    assert.equal(two.beacon.height, beaconOne.height, 'one chain named two blocks');
-    assert.deepEqual(two.beacon.hash, beaconOne.hash);
-    assert.equal(seatsOf(two.a, two.id).length, 2);
-    // The keys differ because each run makes new daemons; what must not differ
-    // is the BLOCK, which is what the committee is drawn on.
-    assert.equal(seatsOne.length, 2);
-  } finally { await two.close(); }
+    const id = Buffer.from(round.id, 'hex');
+    const contract = decodeRoundContract(new Uint8Array(round.a.round.get(id).contract));
+
+    const one = round.a.roster.seedFor(id, contract);
+    const two = round.a.roster.seedFor(id, contract);
+    assert.equal(one.ok, true, one.why);
+    assert.equal(toHex(one.seed), toHex(two.seed), 'one chain gave two seeds');
+    assert.equal(one.checkedAgainstChain, true);
+
+    const alsoB = round.b.roster.seedFor(id, contract);
+    assert.equal(toHex(alsoB.seed), toHex(one.seed),
+      'the two daemons of one round seeded from different blocks');
+    assert.deepEqual(seatsOf(round.a, round.id), seatsOf(round.b, round.id));
+  } finally { await round.close(); }
 });
 
-test('with no chain to read, the round is refused by name rather than seated blind', async () => {
+test('a header source that is not the chain the bonds are on is refused', async () => {
+  // TWO CHAINS, WHICH IS THE FAULT THIS LETTER CLOSED. The bonds are on the
+  // tool's own chain; this hands the beacon reader a DIFFERENT one. The block
+  // it names is not a block the census chain has, so seating refuses rather
+  // than seeding a committee from a chain nobody's census came off.
+  const other = [];
+  let previous = new Uint8Array(32);
+  const now = Math.floor(Date.now() / 1000);
+  for (let i = 0; i < 40; i++) {
+    const { header } = blockOf(hash256, [b32(i + 1)], { previous, time: now + (i - 20) * 600 });
+    other.push(header); previous = blockHashOf(header);
+  }
+  const foreign = async (method, params = []) => {
+    if (method === 'getblockcount') return other.length - 1;
+    if (method === 'getblockhash') return toHex(blockHashOf(other[params[0]]));
+    if (method === 'getblockheader')
+      return toHex(other[other.findIndex((h) => toHex(blockHashOf(h)) === params[0])]);
+    throw new Error('asked ' + method);
+  };
   await assert.rejects(
-    standUpRound({ host: '127.0.0.1', portA: 18124, portB: 18125, rpc: null }),
-    /has no beacon for that round, so it cannot say who the census seats/,
-    'a node with no beacon seated somebody anyway');
+    standUpRound({ host: '127.0.0.1', portA: 18124, portB: 18125, rpc: foreign }),
+    /refused the round/,
+    'a beacon from another chain seated a committee');
 });
 
 test('a chain that cannot be read is not a beacon either', async () => {
   await assert.rejects(
-    standUpRound({ host: '127.0.0.1', portA: 18126, portB: 18127, rpc: chainNode({ broken: true }) }),
+    standUpRound({ host: '127.0.0.1', portA: 18126, portB: 18127, rpc: brokenNode() }),
     /has no beacon for that round/);
 });

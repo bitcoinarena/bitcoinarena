@@ -86,8 +86,10 @@ function chainNode({ blocks = 40, spacing = 600 } = {}) {
 }
 
 test('a person opens the printed URL twice and the two tabs are on one round', async () => {
-  const round = await standUpRound({ host: "127.0.0.1", portA: 18080, portB: 18081,
-    rpc: chainNode() });
+  // NO HEADER SOURCE HANDED IN. The tool builds one chain that carries the
+  // bonds and names the beacon; a separate header source would be a census on
+  // one chain and a seed on another, which is what letter 32 closed.
+  const round = await standUpRound({ host: "127.0.0.1", portA: 18080, portB: 18081 });
   const tabs = [];
   try {
     // WHAT THE PAGE DOES WITH ITS OWN ADDRESS BAR, on the URL the operator
@@ -177,8 +179,7 @@ test('a person opens the printed URL twice and the two tabs are on one round', a
 });
 
 test('two daemons whose chains disagree stop the join by name', async () => {
-  const round = await standUpRound({ host: '127.0.0.1', portA: 18082, portB: 18083,
-    rpc: chainNode() });
+  const round = await standUpRound({ host: '127.0.0.1', portA: 18082, portB: 18083 });
   try {
     const named = await joinFromQuery(new URL(round.url).search);
 
