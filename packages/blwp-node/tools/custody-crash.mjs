@@ -35,9 +35,13 @@ import { DELIVERED, FORFEIT, VOID } from '../../protocol/src/payout.js';
 import { MIN_ENTRY_WINDOW_MS } from '../../protocol/src/constants.js';
 import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
 import { BLOCK_TICKS } from '../../core/src/rules/gate.js';
-import { toHex } from '../../protocol/src/hash.js';
+import { toHex, sha256 } from '../../protocol/src/hash.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
+// The player's own secret and the commitment their contract carries. A settle
+// releases the first, so a node that has not got it settles nothing.
+const preimageOf = (n) => b32(n + 60);
+const preimageFor = (id, e) => preimageOf(e.pubkey[0]);
 const NOW = 1788700000000;
 const CONTRACT = {
   networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations: 6,
@@ -53,7 +57,8 @@ const CONTRACT = {
   nodes: [b32(8), b32(9)],
 };
 const entryFor = (rid, n) => ({
-  roundId: rid, playerPubkey: b32(n), sessionPubkey: b32(n + 40), stakeCommitment: b32(n + 60),
+  roundId: rid, playerPubkey: b32(n), sessionPubkey: b32(n + 40),
+  stakeCommitment: sha256(preimageOf(n)),
   stakeMsat: 100000n, feeMsat: 1000n, donationMsat: 0n, joinTick: 0,
   worldSecret: b32(0x5e), vssSharesRef: new Uint8Array(32),
 });
@@ -101,7 +106,7 @@ async function custodianMidSettle(dbPath, logPath) {
   const say = (line) => appendFileSync(logPath, line + '\n');
   const port = loggingPort(logPath);
   const entries = [];
-  const bare = new Custody(round, { port });
+  const bare = new Custody(round, { port, preimageFor });
   for (const n of PLAYERS) {
     const entry = entryFor(rid, n);
     round.enter(entry);
@@ -111,6 +116,7 @@ async function custodianMidSettle(dbPath, logPath) {
   console.log('HELD ' + toHex(rid));
 
   const suicidal = new Custody(round, {
+    preimageFor,
     port: {
       ...port,
       async settle(args) {
@@ -136,7 +142,7 @@ async function custodianMidSettle(dbPath, logPath) {
 async function custodian(dbPath, logPath) {
   const round = new Round(openStore(dbPath), () => NOW + 1000);
   const rid = round.open(CONTRACT);
-  const custody = new Custody(round, { port: loggingPort(logPath) });
+  const custody = new Custody(round, { port: loggingPort(logPath), preimageFor });
   for (const n of PLAYERS) {
     const entry = entryFor(rid, n);
     round.enter(entry);
@@ -209,7 +215,7 @@ async function main() {
   // 3. AND THE NODE THAT COMES BACK. It has three stakes, three outcomes and
   // no FINAL result, which is what a restarted node actually has: the
   // committee's agreement is not in its own store.
-  const back = new Custody(round, { port: loggingPort(logPath) });
+  const back = new Custody(round, { port: loggingPort(logPath), preimageFor });
   const outcomes = [DELIVERED, FORFEIT, VOID];
   const out = await back.settleRound({
     roundId: new Uint8Array(rid), minScore: 1,
@@ -253,7 +259,7 @@ async function main() {
   // THE RESTARTED NODE ASKS LIGHTNING FIRST, then runs the same close again,
   // which is what a daemon does when it comes back to a round whose result is
   // final.
-  const c2 = new Custody(r2, { port: loggingPort(log2) });
+  const c2 = new Custody(r2, { port: loggingPort(log2), preimageFor });
   const asked = await c2.reconcile({ roundId: new Uint8Array(rid2) });
   console.log(`  reconciled against Lightning: ${asked.asked.length}`);
   for (const a of asked.asked) console.log(`    ${toHex(a.entryId).slice(0, 16)}  ${a.state}`);

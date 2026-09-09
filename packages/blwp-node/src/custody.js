@@ -32,7 +32,7 @@ import {
   SETTLE, CANCEL, NOTHING, HELD, SETTLED, CANCELLED, EXPIRED,
 } from '../../protocol/src/payout.js';
 import { decodeEntryContract, entryId as entryIdOf } from '../../protocol/src/contracts.js';
-import { toHex } from '../../protocol/src/hash.js';
+import { toHex, sha256 } from '../../protocol/src/hash.js';
 
 export { HELD, SETTLED, CANCELLED, EXPIRED, SETTLE, CANCEL, NOTHING };
 
@@ -62,9 +62,15 @@ export const NO_LIGHTNING = null;
  * - it does not pretend to.
  */
 export class Custody {
-  constructor(round, { port = NO_LIGHTNING } = {}) {
+  constructor(round, { port = NO_LIGHTNING, preimageFor = null } = {}) {
     this.round = round;
     this.port = port;
+    // WHERE THE PREIMAGE COMES FROM IS NOT THIS FILE'S BUSINESS. 23.4 needs
+    // five of seven preimage shares before a stake can be settled, and letter
+    // 29's Feldman handouts are what those shares are; reconstructing them is
+    // its own letter. What settling needs is the 32 bytes, and a node that
+    // cannot produce them cannot settle - which is the safe direction anyway.
+    this.preimageFor = preimageFor;
   }
 
   get reaches() { return this.port !== null && this.port !== undefined; }
@@ -163,13 +169,32 @@ export class Custody {
       // between the two would leave Lightning holding a preimage this node has
       // no record of asking it to release, and the node that came back would
       // ask again. Measured, before this line existed, in `custody-crash.mjs`.
+      // A SETTLE NEEDS THE PREIMAGE, and a node without it does not settle.
+      // Discovered against the real binary: `lncli settleinvoice` takes the
+      // preimage, not the hash, because releasing it IS the settlement. A
+      // stake this node cannot settle stays HELD and expires back to its
+      // player, which is 23.2's default and not a loss.
+      let preimage = null;
+      if (ends.state === SETTLED) {
+        preimage = this.preimageFor ? await this.preimageFor(entryId, entry) : null;
+        const fits = preimage instanceof Uint8Array && preimage.length === 32
+          && toHex(sha256(preimage)) === toHex(row.paymentHash);
+        if (!fits) {
+          done.push({ entryId, action, state: HELD, final: isFinal,
+            why: preimage
+              ? 'that preimage is not the one this hold was made for, so releasing it would settle nothing'
+              : 'this node has no preimage for that stake, so it cannot settle it; the hold expires to its player' });
+          continue;
+        }
+      }
+
       if (ends.state === SETTLED || ends.state === CANCELLED) {
         this.round.putHold({
           entryId, roundId: row.roundId, paymentHash: row.paymentHash,
           amountMsat: row.amountMsat, state: ACTING,
           why: `about to ${ends.state === SETTLED ? 'settle' : 'cancel'}; if this node dies here, ask Lightning`,
         });
-        if (ends.state === SETTLED) await this.port.settle({ paymentHash: row.paymentHash, entryId });
+        if (ends.state === SETTLED) await this.port.settle({ paymentHash: row.paymentHash, preimage, entryId });
         else await this.port.cancel({ paymentHash: row.paymentHash, entryId });
       }
       // EXPIRED and HELD are not acts. Nothing is sent, and that is the point.

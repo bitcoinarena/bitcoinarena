@@ -20,7 +20,7 @@ import { entryId as entryIdOf } from '../../protocol/src/contracts.js';
 import { MIN_ENTRY_WINDOW_MS } from '../../protocol/src/constants.js';
 import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
 import { BLOCK_TICKS } from '../../core/src/rules/gate.js';
-import { toHex } from '../../protocol/src/hash.js';
+import { toHex, sha256 } from '../../protocol/src/hash.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const NOW = 1788700000000;
@@ -37,8 +37,13 @@ const contract = {
   timeFloor: 30, timeCeil: 150, minScore: 1, rankNumerator: 3, rankDenominator: 4,
   nodes: [b32(8), b32(9)],
 };
+// THE PLAYER'S PREIMAGE, AND THE HASH THEY PUT ON THEIR OWN CONTRACT. 23.1:
+// the stake commitment IS sha256 of a secret the player chose, which is why a
+// node cannot settle a stake it has no shares for.
+const preimageOf = (n) => b32(n + 60);
 const entryFor = (rid, n) => ({
-  roundId: rid, playerPubkey: b32(n), sessionPubkey: b32(n + 40), stakeCommitment: b32(n + 60),
+  roundId: rid, playerPubkey: b32(n), sessionPubkey: b32(n + 40),
+  stakeCommitment: sha256(preimageOf(n)),
   stakeMsat: 100000n, feeMsat: 1000n, donationMsat: 0n, joinTick: 0,
   worldSecret: b32(0x5e), vssSharesRef: new Uint8Array(32),
 });
@@ -61,12 +66,18 @@ function fakePort({ hash, amount } = {}) {
   };
 }
 
-function seated(port) {
+// The committee's five shares, already reconstructed - standing in for a letter
+// that has not been written, because what settling needs is the 32 bytes. Every
+// player in this file is `b32(n)`, so their own preimage is `preimageOf(n)`.
+const defaultPreimageFor = (entryId, entry) => preimageOf(entry.pubkey[0]);
+
+function seated(port, { preimageFor = defaultPreimageFor } = {}) {
   const round = new Round(openStore(':memory:'), () => NOW + 1000);
   const rid = round.open(contract);
-  const custody = new Custody(round, { port });
+  const custody = new Custody(round, { port, preimageFor });
   return { round, rid, custody };
 }
+
 
 test('a daemon with no Lightning holds no stakes and says so', async () => {
   const { custody, rid } = seated(undefined);
@@ -335,4 +346,73 @@ test('reconcile refuses an answer that is not a state a hold can be in', async (
   assert.equal(asked.ok, false);
   assert.match(asked.why, /not a state a hold can be in/);
   assert.equal(custody.stateOf(id).state, ACTING);
+});
+
+test('a node with no preimage cannot settle, and the stake expires to its player', async () => {
+  // 23.4 asks for five of seven preimage shares before a stake moves. A node
+  // that has none is not stuck: it settles nothing, the HTLC expires, and the
+  // player is refunded - which is the same direction a crash points in.
+  const port = fakePort();
+  const { round, rid, custody } = seated(port, { preimageFor: null });
+  const winner = entryFor(rid, 1);
+  const loser = entryFor(rid, 2);
+  for (const e of [winner, loser]) { round.enter(e); await custody.hold(e); }
+
+  const out = await custody.settleRound({
+    roundId: rid, minScore: 1, finalFor: () => true,
+    entries: [
+      { entryId: entryIdOf(loser), pubkey: loser.playerPubkey, outcome: FORFEIT, score: 0, stakeMsat: loser.stakeMsat },
+      { entryId: entryIdOf(winner), pubkey: winner.playerPubkey, outcome: DELIVERED, score: 9, stakeMsat: winner.stakeMsat },
+    ],
+  });
+  assert.equal(out.ok, true, out.why);
+  assert.match(out.actions[0].why, /no preimage for that stake/);
+  assert.equal(custody.stateOf(entryIdOf(loser)).state, HELD);
+  assert.equal(port.calls.filter((c) => c[0] === 'settle').length, 0);
+
+  // AND THE REFUND STILL HAPPENS. Not settling a loser is not a reason to keep
+  // a winner's money in flight.
+  assert.equal(custody.stateOf(entryIdOf(winner)).state, CANCELLED);
+});
+
+test('a preimage that is not the one the hold was made for is refused', async () => {
+  const port = fakePort();
+  const { round, rid, custody } = seated(port, { preimageFor: () => new Uint8Array(32).fill(0xab) });
+  const winner = entryFor(rid, 1);
+  const loser = entryFor(rid, 2);
+  for (const e of [winner, loser]) { round.enter(e); await custody.hold(e); }
+
+  const out = await custody.settleRound({
+    roundId: rid, minScore: 1, finalFor: () => true,
+    entries: [
+      { entryId: entryIdOf(loser), pubkey: loser.playerPubkey, outcome: FORFEIT, score: 0, stakeMsat: loser.stakeMsat },
+      { entryId: entryIdOf(winner), pubkey: winner.playerPubkey, outcome: DELIVERED, score: 9, stakeMsat: winner.stakeMsat },
+    ],
+  });
+  assert.match(out.actions[0].why, /not the one this hold was made for/);
+  assert.equal(custody.stateOf(entryIdOf(loser)).state, HELD);
+  assert.equal(port.calls.filter((c) => c[0] === 'settle').length, 0);
+});
+
+test('the preimage reaches the port, because releasing it is the settlement', async () => {
+  const port = fakePort();
+  const seen = [];
+  port.settle = async ({ paymentHash, preimage }) => {
+    port.calls.push(['settle', toHex(paymentHash)]);
+    seen.push(preimage);
+  };
+  const { round, rid, custody } = seated(port);
+  const winner = entryFor(rid, 1);
+  const loser = entryFor(rid, 2);
+  for (const e of [winner, loser]) { round.enter(e); await custody.hold(e); }
+
+  await custody.settleRound({
+    roundId: rid, minScore: 1, finalFor: () => true,
+    entries: [
+      { entryId: entryIdOf(loser), pubkey: loser.playerPubkey, outcome: FORFEIT, score: 0, stakeMsat: loser.stakeMsat },
+      { entryId: entryIdOf(winner), pubkey: winner.playerPubkey, outcome: DELIVERED, score: 9, stakeMsat: winner.stakeMsat },
+    ],
+  });
+  assert.equal(seen.length, 1);
+  assert.deepEqual(toHex(sha256(seen[0])), toHex(loser.stakeCommitment));
 });

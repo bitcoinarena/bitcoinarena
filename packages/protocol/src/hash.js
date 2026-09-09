@@ -28,6 +28,17 @@ function tagPrefix(tag) {
 }
 
 /** Tagged hash of some bytes. Returns 32 bytes. */
+/**
+ * PLAIN SHA-256, named here so that nothing outside this package has to reach
+ * into the core for it.
+ *
+ * `blwp-node` may touch the simulator through exactly one door - `replay.js` -
+ * and an `import` of `core/src/sha256.js` for a stake commitment is that rule
+ * being weakened for a good reason, which is how it would always go. The hash
+ * is not a simulation; it belongs to the protocol, and it lives here.
+ */
+export const sha256 = (bytes) => sha256bytes(bytes);
+
 export function taggedHash(tag, bytes) {
   const prefix = tagPrefix(tag);
   const buf = new Uint8Array(prefix.length + bytes.length);
