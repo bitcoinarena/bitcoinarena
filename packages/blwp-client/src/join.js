@@ -30,6 +30,16 @@ export const JOIN_KEYS = ['round', 'node', 'headers', 'bond', 'advert'];
 
 const list = (v) => (v || '').split(',').map((s) => s.trim()).filter(Boolean);
 const origin = (u) => { try { return new URL(u).origin; } catch { return null; } };
+// Two daemons behind one HTTPS reverse proxy differ by first path segment
+// (/blwp-a vs /blwp-b). Origin alone would count them as one source and an
+// https page could not fetch http:// Tailscale nodes (Safari mixed content).
+const sourceKey = (u) => {
+  try {
+    const x = new URL(u);
+    const head = x.pathname.split('/').filter(Boolean)[0] || '';
+    return head ? `${x.origin}/${head}` : x.origin;
+  } catch { return null; }
+};
 
 /**
  * What the URL names, or null when it names no round.
@@ -59,9 +69,9 @@ export function joinQuery(search) {
   // is - it is not quietly downgraded to trusting one.
   const headers = list(q.get('headers'));
   const chainFrom = headers.length ? headers : nodes;
-  if (new Set(chainFrom.map(origin)).size < 2)
+  if (new Set(chainFrom.map(sourceKey)).size < 2)
     throw new Error('a chain is read from two independent sources and this URL names '
-      + new Set(chainFrom.map(origin)).size + ' - add a second node= or headers=');
+      + new Set(chainFrom.map(sourceKey)).size + ' - add a second node= or headers=');
 
   const bond = (q.get('bond') || '').trim();
   if (!bond) throw new Error('the URL names nowhere to ask for the bond - add bond=<url>');
@@ -159,7 +169,7 @@ export async function joinFromQuery(search, { fetcher = fetch } = {}) {
     from,
     refused,
     chain: {
-      headers: named.chainFrom.map((u) => httpProvider(u.replace(/\/+$/, '') + '/headers')),
+      headers: named.chainFrom.map((u) => httpProvider(u.replace(/\/+$/, '') + '/headers', { tag: sourceKey(u) })),
       bonds: [bondProvider(named.bond, { fetcher })],
     },
     advert: { signedAdvert: advert },

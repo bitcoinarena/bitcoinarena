@@ -67,6 +67,9 @@ test('every way of naming a round badly is refused by name', () => {
     /no signed advertisement/);
   assert.match(why(`?round=${id}&node=http://a.test,http://b.test&bond=http://c.test&advert=xy`),
     /64 signed bytes or a place/);
+  const twoPaths = joinQuery(`?round=${id}&node=https://h.test/blwp-a,https://h.test/blwp-b`
+    + `&bond=https://h.test/blwp-a/bond&advert=${ADVERT}`);
+  assert.equal(twoPaths.nodes.length, 2);
 });
 
 test('two daemons hold the round, and the page joins the one the URL names', async () => {
