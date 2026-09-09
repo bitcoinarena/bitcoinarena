@@ -11,7 +11,7 @@
 
 import { TICK_DT } from './tick.js';
 import { ONE, HALF, add, sub, mulFast, div, idiv, clamp, min, max, abs, length2, cbrt } from './fixed.js';
-import { seed } from './rng.js';
+import { seed, spawnBay, SOLO_BAY, BAY_COUNT } from './rng.js';
 import { sin, cos } from './trig.js';
 import {
   create, unitBase, heliBase, bombBase, MAX_UNITS, O_UNITS, U_WORDS, UNITS, ARMOUR_MASK,
@@ -121,6 +121,15 @@ export { TICK_DT } from './tick.js';
 // numbers together so they cannot drift apart again in silence.
 export const START_X = -6579814;                   // -100.4 m, 14 m out on the apron
 export const START_Z = 668467;                     // 10.2 m, the solo bay (14 of 24)
+export { spawnBay, SOLO_BAY, BAY_COUNT };
+// 6.8 m door pitch, Q16.16. Bay 13 stays START_Z; other doors step from there.
+export const BAY_PITCH = 445645;
+export function bayZ(bay) {
+  let i = bay | 0;
+  if (i < 0) i = 0;
+  if (i > 23) i = 23;
+  return (START_Z + Math.imul(i - SOLO_BAY, BAY_PITCH)) | 0;
+}
 // Every fourth unit is armour. A mask rather than a modulo: '%' is banned
 // outside the arithmetic files, and a power of two makes the ban free.
 
@@ -469,7 +478,7 @@ export function init(seedWord) {
   seed(rng, seedWord);
 
   s[O_TRUCK + T_X] = START_X;
-  s[O_TRUCK + T_Z] = START_Z;
+  s[O_TRUCK + T_Z] = bayZ(spawnBay(seedWord));
   s[O_TRUCK + T_HEADING] = 16384;           // facing +x, down the map
   s[O_TRUCK + T_HP] = Math.imul(100, ONE);
   // Which way a hurt truck pulls. Derived from the seed rather than drawn,

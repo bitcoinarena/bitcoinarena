@@ -298,6 +298,24 @@ function between(s, lo, hi) {
   return (lo + Math.imul(unit(s), span >> 16) + ((unit(s) * (span & 65535)) >>> 16)) | 0;
 }
 
+/** How many loading-bay doors the post office has. */
+const BAY_COUNT = 24;
+/** Solo / golden-vector bay (Unity PostOffice.SoloBay). */
+const SOLO_BAY = 13;
+/** Harness seed that must keep parking in SOLO_BAY. */
+const SOLO_SEED = 0x5eed1234;
+
+/**
+ * Which bay a player parks in. Derived from their seed so two players in
+ * one round do not share a door. The mixer is chosen so SOLO_SEED still
+ * lands on SOLO_BAY and the golden vectors do not move for the harness.
+ */
+function spawnBay(seedWord) {
+  const mixed = Math.imul(seedWord | 0, 1597334677) >>> 0;
+  const solo = Math.imul(SOLO_SEED, 1597334677) >>> 0;
+  return ((mixed - solo + SOLO_BAY) >>> 0) % BAY_COUNT;
+}
+
 /** splitmix32: expands one 32-bit seed word into the generator's four. */
 function seed(s, word) {
   let z = word | 0;
@@ -3327,6 +3345,15 @@ const HALF_Z = Math.imul(85, ONE);
 // numbers together so they cannot drift apart again in silence.
 const START_X = -6579814;                   // -100.4 m, 14 m out on the apron
 const START_Z = 668467;                     // 10.2 m, the solo bay (14 of 24)
+
+// 6.8 m door pitch, Q16.16. Bay 13 stays START_Z; other doors step from there.
+const BAY_PITCH = 445645;
+function bayZ(bay) {
+  let i = bay | 0;
+  if (i < 0) i = 0;
+  if (i > 23) i = 23;
+  return (START_Z + Math.imul(i - SOLO_BAY, BAY_PITCH)) | 0;
+}
 // Every fourth unit is armour. A mask rather than a modulo: '%' is banned
 // outside the arithmetic files, and a power of two makes the ban free.
 
@@ -3675,7 +3702,7 @@ function init(seedWord) {
   seed(rng, seedWord);
 
   s[O_TRUCK + T_X] = START_X;
-  s[O_TRUCK + T_Z] = START_Z;
+  s[O_TRUCK + T_Z] = bayZ(spawnBay(seedWord));
   s[O_TRUCK + T_HEADING] = 16384;           // facing +x, down the map
   s[O_TRUCK + T_HP] = Math.imul(100, ONE);
   // Which way a hurt truck pulls. Derived from the seed rather than drawn,

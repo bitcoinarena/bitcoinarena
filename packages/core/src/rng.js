@@ -37,6 +37,24 @@ export function between(s, lo, hi) {
   return (lo + Math.imul(unit(s), span >> 16) + ((unit(s) * (span & 65535)) >>> 16)) | 0;
 }
 
+/** How many loading-bay doors the post office has. */
+export const BAY_COUNT = 24;
+/** Solo / golden-vector bay (Unity PostOffice.SoloBay). */
+export const SOLO_BAY = 13;
+/** Harness seed that must keep parking in SOLO_BAY. */
+export const SOLO_SEED = 0x5eed1234;
+
+/**
+ * Which bay a player parks in. Derived from their seed so two players in
+ * one round do not share a door. The mixer is chosen so SOLO_SEED still
+ * lands on SOLO_BAY and the golden vectors do not move for the harness.
+ */
+export function spawnBay(seedWord) {
+  const mixed = Math.imul(seedWord | 0, 1597334677) >>> 0;
+  const solo = Math.imul(SOLO_SEED, 1597334677) >>> 0;
+  return ((mixed - solo + SOLO_BAY) >>> 0) % BAY_COUNT;
+}
+
 /** splitmix32: expands one 32-bit seed word into the generator's four. */
 export function seed(s, word) {
   let z = word | 0;
