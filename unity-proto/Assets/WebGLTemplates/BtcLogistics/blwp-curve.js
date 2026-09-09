@@ -17,7 +17,7 @@ var BLWP_CURVE_EXPORTS = (() => {
   };
   var __toCommonJS = (mod2) => __copyProps(__defProp({}, "__esModule", { value: true }), mod2);
 
-  // packages/blwp-client/src/page-curve.js
+  // src/page-curve.js
   var page_curve_exports = {};
   __export(page_curve_exports, {
     combinePoints: () => combinePoints,
@@ -28,7 +28,7 @@ var BLWP_CURVE_EXPORTS = (() => {
     verify: () => verify
   });
 
-  // packages/blwp-client/node_modules/@noble/hashes/_u64.js
+  // node_modules/@noble/hashes/_u64.js
   var fromNumH = (n) => n / 2 ** 32 | 0;
   var fromNumL = (n) => n >>> 0;
   function setU64FromNum(view, byteOffset, n, isLE) {
@@ -38,7 +38,7 @@ var BLWP_CURVE_EXPORTS = (() => {
     view.setUint32(byteOffset + 4, isLE ? h : l, isLE);
   }
 
-  // packages/blwp-client/node_modules/@noble/hashes/utils.js
+  // node_modules/@noble/hashes/utils.js
   function isBytes(a) {
     return a instanceof Uint8Array || ArrayBuffer.isView(a) && a.constructor.name === "Uint8Array" && "BYTES_PER_ELEMENT" in a && a.BYTES_PER_ELEMENT === 1;
   }
@@ -203,7 +203,7 @@ var BLWP_CURVE_EXPORTS = (() => {
     oid: Uint8Array.from([6, 9, 96, 134, 72, 1, 101, 3, 4, 2, suffix])
   });
 
-  // packages/blwp-client/node_modules/@noble/hashes/_md.js
+  // node_modules/@noble/hashes/_md.js
   function Chi(a, b, c) {
     return a & b ^ ~a & c;
   }
@@ -316,7 +316,7 @@ var BLWP_CURVE_EXPORTS = (() => {
     1541459225
   ]);
 
-  // packages/blwp-client/node_modules/@noble/hashes/sha2.js
+  // node_modules/@noble/hashes/sha2.js
   var SHA256_K = /* @__PURE__ */ Uint32Array.from([
     1116352408,
     1899447441,
@@ -481,7 +481,7 @@ var BLWP_CURVE_EXPORTS = (() => {
     /* @__PURE__ */ oidNist(1)
   );
 
-  // packages/blwp-client/node_modules/@noble/curves/utils.js
+  // node_modules/@noble/curves/utils.js
   function aarray(item, title, inner = () => {
   }) {
     if (!Array.isArray(item))
@@ -674,7 +674,7 @@ var BLWP_CURVE_EXPORTS = (() => {
     iter(optFields, true);
   }
 
-  // packages/blwp-client/node_modules/@noble/curves/abstract/modular.js
+  // node_modules/@noble/curves/abstract/modular.js
   var _0n2 = /* @__PURE__ */ BigInt(0);
   var _1n2 = /* @__PURE__ */ BigInt(1);
   var _2n = /* @__PURE__ */ BigInt(2);
@@ -1136,7 +1136,7 @@ var BLWP_CURVE_EXPORTS = (() => {
     return isLE ? numberToBytesLE(reduced, fieldLen) : numberToBytesBE(reduced, fieldLen);
   }
 
-  // packages/blwp-client/node_modules/@noble/curves/abstract/curve.js
+  // node_modules/@noble/curves/abstract/curve.js
   var _0n3 = /* @__PURE__ */ BigInt(0);
   var _1n3 = /* @__PURE__ */ BigInt(1);
   var _4n2 = /* @__PURE__ */ BigInt(4);
@@ -1523,7 +1523,7 @@ var BLWP_CURVE_EXPORTS = (() => {
     };
   }
 
-  // packages/blwp-client/node_modules/@noble/hashes/hmac.js
+  // node_modules/@noble/hashes/hmac.js
   var _HMAC = class {
     oHash;
     iHash;
@@ -1600,7 +1600,7 @@ var BLWP_CURVE_EXPORTS = (() => {
     return hmac_;
   })();
 
-  // packages/blwp-client/node_modules/@noble/curves/abstract/der.js
+  // node_modules/@noble/curves/abstract/der.js
   var _0n4 = /* @__PURE__ */ BigInt(0);
   var DERErr = class extends Error {
     constructor(m = "") {
@@ -1727,7 +1727,7 @@ var BLWP_CURVE_EXPORTS = (() => {
     return Object.freeze(_DER);
   })();
 
-  // packages/blwp-client/node_modules/@noble/curves/abstract/weierstrass.js
+  // node_modules/@noble/curves/abstract/weierstrass.js
   var divNearest = (num2, den) => (num2 + (num2 >= 0 ? den : -den) / _2n2) / den;
   function _splitEndoScalar(k, basis, n) {
     aInRange("scalar", k, _0n5, n);
@@ -2559,7 +2559,7 @@ var BLWP_CURVE_EXPORTS = (() => {
     });
   }
 
-  // packages/blwp-client/node_modules/@noble/curves/secp256k1.js
+  // node_modules/@noble/curves/secp256k1.js
   var secp256k1_CURVE = {
     p: BigInt("0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffefffffc2f"),
     n: BigInt("0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141"),
@@ -2722,7 +2722,7 @@ var BLWP_CURVE_EXPORTS = (() => {
     });
   })();
 
-  // packages/blwp-client/src/page-curve.js
+  // src/page-curve.js
   var hex = (b) => {
     let s = "";
     for (let i = 0; i < b.length; i++) s += b[i].toString(16).padStart(2, "0");

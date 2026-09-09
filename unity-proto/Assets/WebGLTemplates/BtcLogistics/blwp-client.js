@@ -6615,6 +6615,11 @@ async function joinFromQuery(search, { fetcher = fetch } = {}) {
     roundIdHex: named.round,
     from,
     refused,
+    // THE NODES THE URL NAMED, handed on rather than re-parsed. The page has to
+    // ask all of them for the round's randomness - one answer is one party
+    // naming the world this player drives - and a second parse of the query is
+    // a second place for the list to be wrong.
+    nodes: named.nodes,
     chain: {
       headers: named.chainFrom.map((u) => httpProvider(u.replace(/\/+$/, '') + '/headers', { tag: sourceKey(u) })),
       bonds: [bondProvider(named.bond, { fetcher })],
