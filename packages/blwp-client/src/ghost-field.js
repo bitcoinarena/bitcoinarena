@@ -138,9 +138,19 @@ export function newestPose(field) {
   return best === null ? null : { x: best.x / ONE_METRE, z: best.z / ONE_METRE, tick: best.tick };
 }
 
-/** One line the page can put on screen. Count is 1 (this tab) plus others. */
-export function playersLine({ seated, others, stalled = false, at = null } = {}) {
+/**
+ * One line the page can put on screen. Count is 1 (this tab) plus others.
+ *
+ * `refused` is THIS TAB'S OWN transcript being turned away by the node, and it
+ * comes first because it is the one fault the other numbers cannot show. A tab
+ * whose batches stopped landing keeps its socket, keeps its player count and
+ * keeps driving; what it loses is every watcher's picture of it, frozen at the
+ * last tick that landed. That is what the 16:08 two-Chrome close-out saw from
+ * the other side, and neither tab had a number that said so.
+ */
+export function playersLine({ seated, others, stalled = false, at = null, refused = null } = {}) {
   if (!seated) return 'round named · not seated';
+  if (refused) return `not publishing · ${refused}`;
   const n = 1 + (others | 0);
   if (n <= 1) return '1 player · waiting';
   // A PAGE THAT IS BEING SENT TRUCKS AND DRAWING NONE SAYS SO. Without this

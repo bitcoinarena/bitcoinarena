@@ -4599,6 +4599,15 @@ class Client {
     // saying the same thing five times, and 13C counts NODES.
     this.witnesses = new Map();
     this.batchHead = GENESIS;     // and the input chain's, which is a separate chain
+    // WHETHER THIS CLIENT'S OWN INPUTS ARE LANDING. A run whose batches are
+    // refused looks exactly like a healthy one from outside - the socket is
+    // up and the player is driving - so the fact is counted and the node's
+    // own sentence is kept for whoever draws the page.
+    this.refusals = 0;
+    this.refusedWhy = null;
+    this.refusedAt = null;
+    this.resynced = false;
+    this.recovering = null;
     this.nextTick = 0;            // the tick the node is owed next
     this.nodes = [];              // the committee, off the round's own contract
     this.gameVerifySlots = 7;
@@ -5297,6 +5306,10 @@ class Client {
    */
   drain() {
     if (this.ended || this.publishing || !this.hold.length || !this.where) return this.publishing;
+    // NOTHING GOES OUT WHILE THE TWO NUMBERS ARE BEING RE-READ. A batch built
+    // from the old `nextTick` while `resume` is replacing it is the refusal
+    // again, one tick later.
+    if (this.recovering) return this.recovering;
 
     // AND NOTHING GOES OUT WHILE THERE IS NO SOCKET. Without this the words
     // were sliced out of the hold, handed to a `send` that answered `error
@@ -5326,10 +5339,23 @@ class Client {
     this.held = this.hold.length;
 
     this.publishing = this.batch(words, this.where).then((r) => {
-      if (r.accepted) this.batchesSent++;
-      // A refused batch is not a published one, and dropping it would leave a
-      // hole the node will not accept across - the run would end at the gap.
-      else { this.hold = words.concat(this.hold); this.held = this.hold.length; }
+      if (r.accepted) {
+        this.batchesSent++;
+        // PUBLISHING AGAIN IS NEWS TOO. A run that recovered must stop
+        // reporting a refusal, or the page shows a fault that has been over
+        // for minutes.
+        this.refusedWhy = null;
+        this.resynced = false;
+      } else {
+        // A refused batch is not a published one, and dropping it would leave
+        // a hole the node will not accept across - the run would end at the
+        // gap.
+        this.hold = words.concat(this.hold); this.held = this.hold.length;
+        this.refusals++;
+        this.refusedWhy = typeof r.answer === 'string' ? r.answer : 'the node did not say';
+        this.refusedAt = this.nextTick;
+        this.#afterRefusal(r);
+      }
       this.publishing = null;
       return r;
     }).catch((e) => {
@@ -5339,6 +5365,47 @@ class Client {
       throw e;
     });
     return this.publishing;
+  }
+
+  /**
+   * A BATCH THE NODE WOULD NOT TAKE IS RESYNCED ONCE, AND THEN IT ENDS THE RUN.
+   *
+   * Measured before this existed: a refusal put the words back at the head of
+   * the hold and changed nothing else, so the very next `drain` sent the SAME
+   * batch, and a node refusing for a reason that does not go away - "expected
+   * tick 4242, got 4300", "the batch does not follow the chain head" - was
+   * asked the same question for the rest of the round. The socket stayed up,
+   * the player kept driving, `nextTick` never moved again, and every watcher's
+   * picture of that truck froze at the last tick that landed. That is the 16:08
+   * two-Chrome report: P1 in the field, P2's ghost still at P1's bay, tick
+   * stuck at 4241, chip saying play and two players the whole time.
+   *
+   * So a refusal is treated as what it is - a disagreement about where this
+   * run is - and the two numbers that could be wrong are re-read from the node
+   * ONCE. `resume` is the same door a reconnect uses and it checks what it is
+   * given rather than adopting it. If the next batch is refused after that,
+   * the disagreement is not about the numbers and the run ends with the node's
+   * own words: a player whose inputs nobody stores is not driving a round, and
+   * saying so is the difference between a lost run and a lost run nobody knew
+   * about.
+   */
+  #afterRefusal(r) {
+    if (this.ended || !this.where) return;
+    if (this.resynced) {
+      this.endRun(`the node refuses this run's inputs at tick ${this.nextTick}: `
+        + `${this.refusedWhy} - and it still refused after resyncing, so this `
+        + 'client cannot publish and nothing from here can be replayed');
+      return;
+    }
+    this.resynced = true;
+    this.recovering = this.resume({ roundId: this.where.roundId, entryId: this.where.entryId })
+      .then(() => { this.recovering = null; })
+      .catch((e) => {
+        this.recovering = null;
+        this.endRun(`the node refuses this run's inputs at tick ${this.nextTick}: `
+          + `${this.refusedWhy} - and it would not say where the run is: ${e.message}`);
+      });
+    void r;
   }
 
   /**
@@ -5543,9 +5610,19 @@ function newestPose(field) {
   return best === null ? null : { x: best.x / ONE_METRE, z: best.z / ONE_METRE, tick: best.tick };
 }
 
-/** One line the page can put on screen. Count is 1 (this tab) plus others. */
-function playersLine({ seated, others, stalled = false, at = null } = {}) {
+/**
+ * One line the page can put on screen. Count is 1 (this tab) plus others.
+ *
+ * `refused` is THIS TAB'S OWN transcript being turned away by the node, and it
+ * comes first because it is the one fault the other numbers cannot show. A tab
+ * whose batches stopped landing keeps its socket, keeps its player count and
+ * keeps driving; what it loses is every watcher's picture of it, frozen at the
+ * last tick that landed. That is what the 16:08 two-Chrome close-out saw from
+ * the other side, and neither tab had a number that said so.
+ */
+function playersLine({ seated, others, stalled = false, at = null, refused = null } = {}) {
   if (!seated) return 'round named · not seated';
+  if (refused) return `not publishing · ${refused}`;
   const n = 1 + (others | 0);
   if (n <= 1) return '1 player · waiting';
   // A PAGE THAT IS BEING SENT TRUCKS AND DRAWING NONE SAYS SO. Without this

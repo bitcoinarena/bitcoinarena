@@ -357,8 +357,13 @@
       const at = (typeof BLWPCLIENT !== 'undefined' && BLWPCLIENT.newestPose && net)
         ? BLWPCLIENT.newestPose(net.ghosts) : null;
       const ab = ['A', 'B'].map((n) => n + ' ' + (nodeHealth[n] || '…')).join(' · ');
+      // AND WHETHER THIS TAB'S OWN INPUTS ARE LANDING. A tab whose batches the
+      // node refuses keeps its socket, its player count and its driving, and
+      // loses only every watcher's picture of it - frozen at the last tick that
+      // landed. It is the one fault none of the numbers above can show.
+      const refused = (net && net.client && net.client.refusedWhy) || null;
       const who = (typeof BLWPCLIENT !== 'undefined' && BLWPCLIENT.playersLine)
-        ? BLWPCLIENT.playersLine({ seated, others, stalled, at })
+        ? BLWPCLIENT.playersLine({ seated, others, stalled, at, refused })
         : (seated ? (others ? (1 + others) + ' players in this round' : '1 player · waiting') : 'round named · not seated');
       el.textContent = ab + '\n' + playLine(net) + '\n' + who;
     }
