@@ -15,6 +15,7 @@
 // and no committee; those are M2.1 steps 4 and later, and each is refused
 // rather than half-built.
 import { createServer } from 'node:http';
+import { randomBytes } from 'node:crypto';
 import { WebSocketServer } from 'ws';
 import { decodeRoundContract, decodeEntryContract } from '../../protocol/src/contracts.js';
 import { toHex } from '../../protocol/src/hash.js';
@@ -59,6 +60,7 @@ import { Verifier } from './verify.js';
 import { Ghosts } from './ghosts.js';
 import { Roster } from './roster.js';
 import { Custody, NO_LIGHTNING } from './custody.js';
+import { Preimages, encodeShareAnswer, SEALED_ANSWER_BYTES } from './preimage.js';
 
 const read = (req) => new Promise((resolve, reject) => {
   const parts = [];
@@ -141,7 +143,35 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // a daemon given none holds no stakes and says so rather than pretending.
   // Nothing about a stake is decided here - `custody.js` decides, off the
   // outcome word the core produced - and this file only says WHEN it is asked.
-  const custody = new Custody(round, { port: lightning, preimageFor });
+  // WHO CAN OPEN A STAKE. One share each, sealed, and five of them or nothing.
+  // The peers are the same list the verifier gathers results from, because a
+  // seat that answers about a run is a seat that can be asked about its share.
+  const preimages = new Preimages(round, {
+    curve: feldmanGroup, peers, fetcher: (u) => fetch(u), random: (n) => new Uint8Array(randomBytes(n)),
+  });
+
+  /**
+   * WHERE A SETTLE'S 32 BYTES COME FROM, and it is not a file.
+   *
+   * 23.4 wants five of seven preimage shares before a stake moves, and that is
+   * now literally what happens: this node opens its own share and asks the
+   * other seats for theirs, each answer sealed to this node's key. Fewer than
+   * five and there is no preimage, so `custody.js` leaves the hold in flight
+   * and it expires back to its player.
+   *
+   * An operator may still inject one - the regtest tool does - but the DEFAULT
+   * is the committee, because a default that settles alone is the custody this
+   * letter exists to end.
+   */
+  const fromTheCommittee = async (entryId, entry, roundIdBytes) => {
+    const opened = await preimages.open({ roundId: roundIdBytes, entryId });
+    if (!opened.ok) { console.log(`[custody] ${opened.why}`); return null; }
+    return opened.preimage;
+  };
+
+  const custody = new Custody(round, {
+    port: lightning, preimageFor: preimageFor || fromTheCommittee,
+  });
 
   // WHO MAY HOLD A ROUND, from the chain. The census stopped being library
   // code here: this is the daemon's only caller of it, and `chainFor` is the
@@ -525,6 +555,36 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // WHAT THIS NODE REPLAYED AND SIGNED, so another node can have it
       // without replaying. Section 13's own record, body then signature, as
       // many as this node holds for that run.
+      /**
+       * ONE SEAT'S SHARE OF ONE STAKE, FOR ANOTHER SEAT. 23.4's five.
+       *
+       * Refused unless the asker is a seat of this round AND the run is final
+       * with an outcome 23.2 settles - a DELIVERED run's preimage must never
+       * leave, because releasing it lets anyone settle an invoice that has to
+       * go back to its player.
+       *
+       * The answer is SEALED TO THE ASKER. Those two together are what make
+       * this sound with no signature on the request: claiming a seat's key
+       * gets an envelope only that seat can open, and not claiming one gets a
+       * refusal.
+       */
+      if (req.method === 'GET' && url.pathname === '/share') {
+        const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
+        const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
+        const asker = Buffer.from(url.searchParams.get('seat') || '', 'hex');
+        if (rid.length !== 32 || eid.length !== 32)
+          return text(res, 400, 'a share is asked for by round and entry');
+        const said = await preimages.answer({
+          roundId: new Uint8Array(rid), entryId: new Uint8Array(eid), asker: new Uint8Array(asker),
+        });
+        if (!said.ok) return text(res, 409, said.why);
+        res.writeHead(200, {
+          'content-type': 'application/octet-stream',
+          'x-seat': String(said.answer.seat), ...CORS,
+        });
+        return res.end(Buffer.from(encodeShareAnswer(said.answer)));
+      }
+
       if (req.method === 'GET' && url.pathname === '/results') {
         const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
         const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
@@ -816,7 +876,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
 
   return new Promise((resolve) => {
     http.listen(port, host, () => resolve({
-      http, wss, round, host, verifier, ghosts, roster, custody, reconciling,
+      http, wss, round, host, verifier, ghosts, roster, custody, reconciling, preimages,
       // What the last close did with the money, and the same door an operator
       // uses to run a settlement again by hand.
       stakes: () => stakes,

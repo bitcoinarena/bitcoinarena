@@ -196,7 +196,7 @@ export class Custody {
       // player, which is 23.2's default and not a loss.
       let preimage = null;
       if (ends.state === SETTLED) {
-        preimage = this.preimageFor ? await this.preimageFor(entryId, entry) : null;
+        preimage = this.preimageFor ? await this.preimageFor(entryId, entry, roundId) : null;
         const fits = preimage instanceof Uint8Array && preimage.length === 32
           && toHex(sha256(preimage)) === toHex(row.paymentHash);
         if (!fits) {

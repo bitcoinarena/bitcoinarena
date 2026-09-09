@@ -1,0 +1,217 @@
+// FIVE SEATS, AND ONLY FIVE SEATS, CAN OPEN A STAKE.
+//
+// 23.4: "Settling a loser's HTLC requires reconstructing the preimage from at
+// least 5 preimage shares." Everything that sentence needs existed before this
+// file and none of it ran: `reconstruct` and `openStake` had zero callers, and
+// the one thing that ever produced 32 bytes for a settle handed them over
+// directly. This is what asks.
+//
+// WHY IT IS A DOOR AND NOT A TABLE LOOKUP. Each seat holds ONE share, sealed
+// to its own key, and never writes the opened value down. So reconstruction is
+// a conversation: a seat opens its own, asks the others, and stops the moment
+// it has five. A node that could do it alone would be the custody this letter
+// exists to end.
+//
+// TWO CONDITIONS ON ANSWERING, AND THEY ARE THE WHOLE SAFETY OF IT:
+//
+//   the asker is a seat   `round.seats` is the census's list, not the
+//                         contract's, so a stranger cannot make itself one by
+//                         asking
+//   the run settles       FINAL, and an outcome 23.2 settles. A DELIVERED run
+//                         is CANCELLED - its preimage must never be released,
+//                         because releasing it lets anyone settle the invoice
+//                         and take the player's stake
+//
+// AND THE ANSWER IS SEALED TO THE ASKER, with a fresh one-time key, exactly as
+// the handout was. The two checks together are what makes this sound without a
+// signature: claiming another seat's key gets you an envelope only that seat
+// can open, and not claiming one gets you refused.
+import { reconstruct, SHARES_NEEDED } from '../../protocol/src/shares.js';
+import { openMyShare, decodeHandout } from '../../protocol/src/handout.js';
+import { sealShare, openShare } from '../../protocol/src/seal.js';
+
+import { decodePlayerResult, splitSignedResult } from '../../protocol/src/result.js';
+import { settlementAction, SETTLE } from '../../protocol/src/payout.js';
+import { verifiedFinal } from './verdict.js';
+import { decodeRoundContract, decodeEntryContract } from '../../protocol/src/contracts.js';
+import { toHex } from '../../protocol/src/hash.js';
+
+/** seat u16, the answering node's one-time key, and the share sealed to the asker. */
+export const SEALED_ANSWER_BYTES = 2 + 32 + 48;
+
+export const encodeShareAnswer = ({ seat, ephemeralPubkey, sealed }) => {
+  const out = new Uint8Array(SEALED_ANSWER_BYTES);
+  out[0] = (seat >> 8) & 0xff;
+  out[1] = seat & 0xff;
+  out.set(ephemeralPubkey, 2);
+  out.set(sealed, 34);
+  return out;
+};
+
+export function decodeShareAnswer(bytes) {
+  if (!(bytes instanceof Uint8Array) || bytes.length !== SEALED_ANSWER_BYTES)
+    throw new Error(`a sealed share answer is ${SEALED_ANSWER_BYTES} bytes`);
+  return {
+    seat: (bytes[0] << 8) | bytes[1],
+    ephemeralPubkey: bytes.subarray(2, 34),
+    sealed: bytes.subarray(34),
+  };
+}
+
+export class Preimages {
+  constructor(round, { curve, peers = [], fetcher = fetch, random } = {}) {
+    this.round = round;
+    this.curve = curve;
+    this.peers = peers;
+    this.fetch = fetcher;
+    this.random = random;
+  }
+
+  /** The handout an entry names, decoded, or a refusal that says which is missing. */
+  handoutOf(entryIdBytes) {
+    const stored = this.round.entry(entryIdBytes);
+    if (!stored) return { ok: false, why: 'this node seated no such entry' };
+    const entry = decodeEntryContract(stored);
+    if (!entry.vssSharesRef || entry.vssSharesRef.every((b) => b === 0))
+      return { ok: false, why: 'that entry published no shares, so there is nothing to reconstruct' };
+    const held = this.round.handout(entry.vssSharesRef);
+    if (!held) return { ok: false, why: 'this node accepted no handout for that entry' };
+    return { ok: true, entry, handout: decodeHandout(held.bytes) };
+  }
+
+  /**
+   * THIS NODE'S OWN SHARE, re-opened from the sealed handout every time.
+   *
+   * It is never stored opened, so a stolen database is a pile of envelopes -
+   * and there is no cache to go stale, because the envelope is the truth.
+   */
+  async mine(entryIdBytes) {
+    const found = this.handoutOf(entryIdBytes);
+    if (!found.ok) return found;
+    return openMyShare(found.handout, {
+      pubkey: this.round.pubkey, secret: this.round.identity.secret, curve: this.curve,
+    });
+  }
+
+  /**
+   * MAY THIS NODE HAND ITS SHARE TO A SEAT? 23.4's conditions, and no others.
+   *
+   * The outcome is the CORE'S, read off the result this node signed, and what
+   * it means is `payout.js`'s table rather than a comparison written here.
+   */
+  mayRelease(roundIdBytes, entryIdBytes) {
+    const row = this.round.get(roundIdBytes);
+    if (!row) return { ok: false, why: 'no such round' };
+    const contract = decodeRoundContract(new Uint8Array(row.contract));
+    const held = this.round.results(roundIdBytes, entryIdBytes);
+    if (!held.length) return { ok: false, why: 'this node has replayed nothing for that run' };
+
+    const seen = verifiedFinal(held.map((r) => r.bytes), {
+      contract, seats: this.round.seats(roundIdBytes),
+    });
+    if (!seen.ok || !seen.final)
+      return { ok: false, why: `no share is handed out before the result is final: ${seen.why || 'not final'}` };
+
+    // THIS NODE'S OWN RESULT, not whichever arrived first. A peer's record is
+    // a peer's claim; what this node is willing to act on is what it replayed.
+    const mine = held.find((r) => toHex(r.nodePubkey) === toHex(this.round.pubkey));
+    if (!mine) return { ok: false, why: 'this node signed no result for that run, so it releases nothing' };
+    const result = decodePlayerResult(splitSignedResult(mine.bytes).body);
+    const said = settlementAction({
+      outcome: result.outcome, qualifies: result.outcome === 'DELIVERED',
+      state: 'FINAL', shares: SHARES_NEEDED, signatures: SHARES_NEEDED,
+    });
+    if (said.action !== SETTLE)
+      return {
+        ok: false,
+        why: `that run is ${result.outcome}, which ${said.action}s the hold: releasing its preimage `
+          + 'would let anyone settle an invoice that has to go back to its player',
+      };
+    return { ok: true, outcome: result.outcome };
+  }
+
+  /**
+   * ANSWER ONE SEAT, sealed to that seat.
+   *
+   * A fresh one-time key per answer, so two askers never share a secret and
+   * the same share handed to two seats is two different envelopes.
+   */
+  async answer({ roundId, entryId, asker }) {
+    if (!(asker instanceof Uint8Array) || asker.length !== 32)
+      return { ok: false, why: 'a share is asked for by a seat, and that is not a key' };
+    const seats = this.round.seats(roundId).map(toHex);
+    if (!seats.includes(toHex(asker)))
+      return { ok: false, why: 'that key is not a seat of this round, and a share is not a public thing' };
+
+    const may = this.mayRelease(roundId, entryId);
+    if (!may.ok) return may;
+
+    const mine = await this.mine(entryId);
+    if (!mine.ok) return mine;
+
+    const ephemeralSecret = this.random(32);
+    const sealed = await sealShare({
+      value: mine.share.value, seat: mine.share.seat, seatPubkey: asker,
+      ephemeralSecret, curve: this.curve,
+    });
+    return {
+      ok: true,
+      answer: { seat: mine.share.seat, ephemeralPubkey: this.curve.pointX(ephemeralSecret), sealed },
+    };
+  }
+
+  /**
+   * THE 32 BYTES, OR A REFUSAL THAT SAYS HOW MANY SHORT IT WAS.
+   *
+   * Own share first, then the peers, and it STOPS at the threshold: asking a
+   * sixth seat for a secret five already reconstructed is spreading it for
+   * nothing.
+   */
+  async open({ roundId, entryId, needed = SHARES_NEEDED }) {
+    const found = this.handoutOf(entryId);
+    if (!found.ok) return found;
+
+    const bySeat = new Map();
+    const mine = await this.mine(entryId);
+    if (mine.ok) bySeat.set(mine.share.seat, mine.share);
+
+    let refused = 0;
+    const why = [];
+    for (const peer of this.peers) {
+      if (bySeat.size >= needed) break;
+      try {
+        const url = `${peer}/share?round=${toHex(roundId)}&entry=${toHex(entryId)}`
+          + `&seat=${toHex(this.round.pubkey)}`;
+        const got = await this.fetch(url);
+        if (!got.ok) { refused++; why.push(`${peer}: ${await got.text()}`); continue; }
+        const back = decodeShareAnswer(new Uint8Array(await got.arrayBuffer()));
+        const opened = await openShare({
+          sealed: back.sealed, seat: back.seat, secret: this.round.identity.secret,
+          ephemeralPubkey: back.ephemeralPubkey, curve: this.curve,
+        });
+        if (!opened.ok) { refused++; why.push(`${peer}: ${opened.why}`); continue; }
+        bySeat.set(back.seat, { seat: back.seat, value: opened.share.value });
+      } catch (e) { refused++; why.push(`${peer}: ${e.message}`); }
+    }
+
+    if (bySeat.size < needed)
+      return {
+        ok: false, held: bySeat.size, refused,
+        why: `${bySeat.size} of ${needed} shares: a stake nobody can open stays in flight`
+          + (why.length ? ` (${why.join('; ')})` : ''),
+      };
+
+    // AND IT HAS TO BE THE PREIMAGE THE ENTRY NAMES. A dealer who committed to
+    // one secret and hashed another is caught HERE - five seats open it, the
+    // hash does not match, and nothing settles. The hold expires and the
+    // player is refunded, so the cheat gains nothing and needs no proof system.
+    let preimage;
+    try {
+      preimage = reconstruct([...bySeat.values()].slice(0, needed),
+        { needed, stakeCommitment: found.entry.stakeCommitment });
+    } catch (e) {
+      return { ok: false, held: bySeat.size, why: `those shares do not open that stake: ${e.message}` };
+    }
+    return { ok: true, preimage, held: bySeat.size, seats: [...bySeat.keys()] };
+  }
+}
