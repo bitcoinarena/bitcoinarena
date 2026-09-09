@@ -1057,6 +1057,62 @@ export class Round {
       .map((r) => ({ entryId: new Uint8Array(r.entry_id), ...this.hold(new Uint8Array(r.entry_id)) }));
   }
 
+  /**
+   * WHAT THIS NODE BELIEVES ABOUT A ROUND'S PAYOUT, and how it changed.
+   *
+   * One row per round, written before the spend leaves, the way a hold's
+   * ACTING is. `txid` is null until a chain took it.
+   */
+  putPayout({ roundId, tableId, state, why, txid = null, raw = null }) {
+    const had = this.db.prepare('SELECT txid, raw FROM payouts WHERE round_id = ?')
+      .get(Buffer.from(roundId));
+    this.db.prepare(
+      'INSERT OR REPLACE INTO payouts (round_id, table_id, state, why, txid, raw, updated_ms) '
+      + 'VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .run(Buffer.from(roundId), Buffer.from(tableId), state, why,
+        txid ? Buffer.from(txid) : (had && had.txid) || null,
+        raw ? Buffer.from(raw) : (had && had.raw) || null,
+        this.now());
+    return state;
+  }
+
+  payout(roundIdBytes) {
+    const row = this.db.prepare(
+      'SELECT table_id, state, why, txid, raw, updated_ms FROM payouts WHERE round_id = ?')
+      .get(Buffer.from(roundIdBytes));
+    if (!row) return null;
+    return {
+      tableId: new Uint8Array(row.table_id),
+      state: row.state,
+      why: row.why,
+      txid: row.txid ? new Uint8Array(row.txid) : null,
+      raw: row.raw ? new Uint8Array(row.raw) : null,
+      updatedMs: row.updated_ms,
+    };
+  }
+
+  /** Every payout this node was in the middle of, across every round. */
+  payoutsInState(state) {
+    return this.db.prepare('SELECT round_id FROM payouts WHERE state = ? ORDER BY round_id')
+      .all(state)
+      .map((r) => ({ roundId: new Uint8Array(r.round_id), ...this.payout(new Uint8Array(r.round_id)) }));
+  }
+
+  /** One seat's signature over a round's payout table. */
+  putPayoutSignature(roundIdBytes, nodePubkey, bytes) {
+    this.db.prepare(
+      'INSERT OR IGNORE INTO payout_signatures (round_id, node_pubkey, bytes, seen_ms) '
+      + 'VALUES (?, ?, ?, ?)')
+      .run(Buffer.from(roundIdBytes), Buffer.from(nodePubkey), Buffer.from(bytes), this.now());
+  }
+
+  payoutSignatures(roundIdBytes) {
+    return this.db.prepare(
+      'SELECT node_pubkey, bytes FROM payout_signatures WHERE round_id = ? ORDER BY node_pubkey')
+      .all(Buffer.from(roundIdBytes))
+      .map((r) => ({ nodePubkey: new Uint8Array(r.node_pubkey), bytes: new Uint8Array(r.bytes) }));
+  }
+
   /** Every signed result this node holds for a run, its own included. */
   results(roundIdBytes, entryIdBytes) {
     return this.db.prepare(

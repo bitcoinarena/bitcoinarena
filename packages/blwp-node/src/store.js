@@ -234,6 +234,33 @@ export function openStore(path = ':memory:') {
       request      TEXT
     );
 
+    -- WHAT A ROUND OWES AND WHETHER IT HAS BEEN PAID (9.4's qualifying tail).
+    --
+    -- One row per round, not per entry: the payout is ONE transaction spending
+    -- ONE pool output, so PAYOUT_QUEUED and PAID are facts about the round.
+    -- The state is written BEFORE the spend goes out, for the same reason
+    -- ACTING is written before a settle - a node that died in between must find
+    -- out what happened rather than assume nothing did.
+    CREATE TABLE IF NOT EXISTS payouts (
+      round_id   BLOB PRIMARY KEY,
+      table_id   BLOB NOT NULL,
+      state      TEXT NOT NULL,
+      why        TEXT NOT NULL,
+      txid       BLOB,
+      raw        BLOB,
+      updated_ms INTEGER NOT NULL
+    );
+
+    -- The seats' signatures over that table id. Keyed by signer, so one seat
+    -- signing twice is one vote, the way results already are.
+    CREATE TABLE IF NOT EXISTS payout_signatures (
+      round_id    BLOB NOT NULL,
+      node_pubkey BLOB NOT NULL,
+      bytes       BLOB NOT NULL,
+      seen_ms     INTEGER NOT NULL,
+      PRIMARY KEY (round_id, node_pubkey)
+    );
+
     CREATE TABLE IF NOT EXISTS identity (
       one    INTEGER PRIMARY KEY CHECK (one = 0),
       secret BLOB NOT NULL,

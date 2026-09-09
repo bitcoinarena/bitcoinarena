@@ -30,7 +30,11 @@ const MONEY = ['payout.js', 'sortition.js', 'census.js', 'contracts.js', 'encode
                // `pool.js` decides which output the committee's key pays to
                // and which scalar signs for it. A float there is a wallet
                // nobody can spend, holding every settled stake.
-               'pool.js'];
+               'pool.js',
+               // `payout-spend.js` turns a msat row into a satoshi output.
+               // A float between those two is a payout somebody is short.
+               'payout-spend.js', '../../blwp-node/src/payout.js',
+               '../../blwp-node/src/payout-table.js'];
 const ROOT = new URL('../src/', import.meta.url).pathname;
 const problems = [];
 
