@@ -20,9 +20,10 @@
 // a different core hash - which is precisely the substitution the round id
 // exists to prevent. Same rule as the entry a resuming client re-hashes.
 import { decodeRoundContract, roundId } from '../../protocol/src/contracts.js';
-import { toHex, fromHex } from '../../protocol/src/hash.js';
+import { toHex, fromHex, sha256 } from '../../protocol/src/hash.js';
 import { httpProvider } from './headers.js';
-import { NO_SHARES } from '../../protocol/src/handout.js';
+import { NO_SHARES, dealHandout, encodeHandout } from '../../protocol/src/handout.js';
+import { FIELD, scalarFrom32, SHARES_NEEDED } from '../../protocol/src/shares.js';
 
 /** How the query names each thing. One key, one meaning, all optional but `round`. */
 export const JOIN_KEYS = ['round', 'node', 'headers', 'bond', 'advert'];
@@ -194,32 +195,93 @@ export function tabIdentity({ storage, random, key = 'blwp.player' } = {}) {
  * stake the node would refuse, and copying the number out of the contract is
  * the only way a page can be sure it is asking for the seat that exists.
  *
- * M2 ASKS FOR NO MONEY AND DISTRIBUTES NONE, so `stakeCommitment` commits to
- * nothing: in M3 it is the hash of a hold invoice's preimage, and until that
- * invoice exists there is no preimage to hash. It is random rather than a
- * constant so two players never file the same one, and it is named here rather
- * than quietly zeroed, because a zeroed commitment looks like a computed one.
+ * THE STAKE IS DEALT BY `stakeFor` NOW, and handed in. Without one this still
+ * commits to nothing - `random(32)` and `NO_SHARES` - which is the M2 seat and
+ * is still the honest thing for a round with no money behind it. What it must
+ * never do is look computed when it is not, which is why it is named here.
  *
  * The world secret IS load-bearing already: it is the player's own, it seeds
  * their world, and a node that had it could predict the round they are about
  * to drive.
  */
-export function entryFor(round, { playerPubkey, random, joinTick = 0 } = {}) {
+export function entryFor(round, { playerPubkey, random, joinTick = 0, stake } = {}) {
   if (!round) throw new Error('there is no round to take a seat at');
   if (!playerPubkey || playerPubkey.length !== 32)
     throw new Error('a player is 32 bytes of key');
+  if (stake && (!stake.stakeCommitment || !stake.vssSharesRef))
+    throw new Error('that is not a dealt stake: it names no commitment or no shares');
   return {
     playerPubkey,
-    stakeCommitment: random(32),
+    stakeCommitment: stake ? stake.stakeCommitment : random(32),
     worldSecret: random(32),
-    // 23.1's `vss_shares_ref`, and this entry publishes no shares: there is no
-    // stake behind the preimage in M2, so there is nothing yet to split. The
-    // field is in the signed bytes either way, so an entry that has shares and
-    // one that has none can never be the same entry id.
-    vssSharesRef: NO_SHARES,
+    // 23.1's `vss_shares_ref`. With a dealt stake it names the handout the
+    // committee accepted; without one it is 32 zero bytes, and the field is in
+    // the signed bytes either way - so an entry that has shares and one that
+    // has none can never be the same entry id.
+    vssSharesRef: stake ? stake.vssSharesRef : NO_SHARES,
     stakeMsat: round.stakeMsat,
     feeMsat: 0n,
     donationMsat: 0n,
     joinTick,
+  };
+}
+
+/**
+ * THE PAGE AS DEALER. 23.1 step 1 and 2, and the half letter 29 left named.
+ *
+ * The player chooses P, publishes `sha256(P)` as the stake commitment their
+ * hold invoice is issued against, splits P 5-of-7 over the settlement
+ * committee and seals one share to each seat. Nobody else ever sees P: the
+ * page is where it is generated and the page is where it is forgotten.
+ *
+ * WHY THIS IS AN INPUT DEVICE AND NOT A SIMULATOR. Nothing here computes an
+ * outcome, reads a truck, or decides what a run came to. It generates key
+ * material and encodes it. The core stays where it is.
+ *
+ * THE CURVE IS INJECTED, exactly like `sign` and `verify`: this bundle carries
+ * no crypto on purpose, because a vendored curve sitting in the page is an
+ * implementation of the thing that pins money that nobody audits. The caller
+ * hands in `pointFromScalar`, `combinePoints` and `ecdhShared`.
+ *
+ * P IS NOT REDUCED. About one preimage in 2^128 is not below the group order,
+ * and the answer is another preimage rather than this one taken modulo n -
+ * reducing would change the number the payment hash already commits to, and
+ * the shares would then open something the Entry Contract does not name.
+ */
+export async function stakeFor(round, { seats, curve, random, playerPubkey, needed = SHARES_NEEDED } = {}) {
+  if (!round || !round.id) throw new Error('a stake is dealt for a round, and that is not one');
+  if (!Array.isArray(seats) || seats.length < needed)
+    throw new Error(`a threshold of ${needed} cannot be dealt to ${seats ? seats.length : 0} seats`);
+  if (!curve || typeof curve.ecdhShared !== 'function' || typeof curve.pointX !== 'function')
+    throw new Error('dealing a stake needs a curve, and none was injected');
+  if (!playerPubkey || playerPubkey.length !== 32)
+    throw new Error('a stake is dealt by a player, and that is 32 bytes of key');
+
+  let preimage = random(32);
+  for (let tries = 0; scalarFrom32(preimage) >= FIELD; tries++) {
+    if (tries > 8) throw new Error('this randomness never produced a scalar of the group');
+    preimage = random(32);
+  }
+
+  const ephemeralSecret = random(32);
+  const dealt = await dealHandout({
+    preimage, seats, roundId: round.id, playerPubkey,
+    ephemeralSecret, ephemeralPubkey: curve.pointX(ephemeralSecret),
+    coefficients: Array.from({ length: needed - 1 }, () => scalarFrom32(random(32)) % FIELD),
+    needed, curve,
+  });
+  if (!dealt.ok) throw new Error(dealt.why);
+
+  return {
+    // WHAT THE PLAYER KEEPS. It never leaves this object, and the caller is
+    // the page: a node that had it could settle alone, which is the whole
+    // reason the shares exist.
+    preimage,
+    stakeCommitment: sha256(preimage),
+    vssSharesRef: dealt.id,
+    handout: dealt.handout,
+    // Ready to POST to every seat, because a handout no seat accepted is a
+    // reference the entry cannot name.
+    body: encodeHandout(dealt.handout),
   };
 }

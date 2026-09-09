@@ -107,6 +107,9 @@ const evenScalar = (secret) => {
   return (secp256k1.Point.BASE.multiply(d).toAffine().y & 1n) === 0n ? d : n - d;
 };
 
+/** The x-only public key of a secret, which is what a seat is named by. */
+export const pointX = (secret) => schnorr.getPublicKey(secret);
+
 export const ecdhShared = (secret, theirXOnly) => {
   const point = schnorr.utils.lift_x(big(theirXOnly)).multiply(evenScalar(secret));
   const x = point.toAffine().x.toString(16).padStart(64, '0');
@@ -114,4 +117,4 @@ export const ecdhShared = (secret, theirXOnly) => {
 };
 
 /** What `splitSecret` and `shareOpensTo` are handed when a node checks a handout. */
-export const feldmanGroup = { pointFromScalar, combinePoints, ecdhShared };
+export const feldmanGroup = { pointFromScalar, combinePoints, ecdhShared, pointX };

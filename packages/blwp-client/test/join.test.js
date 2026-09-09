@@ -15,7 +15,8 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 import { openStore } from '../../blwp-node/src/store.js';
 import { serve } from '../../blwp-node/src/server.js';
 import { Client } from '../src/client.js';
-import { joinQuery, joinFromQuery, fetchRound, tabIdentity, entryFor } from '../src/join.js';
+import { joinQuery, joinFromQuery, fetchRound, tabIdentity, entryFor, stakeFor } from '../src/join.js';
+import { NO_SHARES } from '../../protocol/src/handout.js';
 import { encodeRoundContract, roundId } from '../../protocol/src/contracts.js';
 import { MIN_ENTRY_WINDOW_MS } from '../../protocol/src/constants.js';
 import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
@@ -205,4 +206,78 @@ test('the page joins a named round and still invents none', () => {
   assert.ok(page.includes('sessionStorage'), 'the page has no per-tab identity');
   assert.ok(!page.includes('localStorage'),
     'the page keeps the player in storage every tab shares');
+});
+
+/**
+ * THE PAGE AS DEALER (23.1 steps 1 and 2).
+ *
+ * Measured before this existed: `entryFor` set `stakeCommitment: random(32)` -
+ * a commitment to nothing - and `vssSharesRef: NO_SHARES`, so there was no
+ * preimage in the system at all and nothing for a committee to reconstruct.
+ *
+ * The curve is injected here the same way `sign` is, because this bundle
+ * carries no crypto: a vendored curve in the page is an implementation of the
+ * thing that pins money that nobody audits.
+ */
+test('a page deals its own stake: the commitment is a hash and the ref is a handout', async () => {
+  const { feldmanGroup } = await import('../../blwp-node/src/curve.js');
+  const { schnorr } = await import('@noble/curves/secp256k1.js');
+  const { sha256 } = await import('../../protocol/src/hash.js');
+  const { handoutId, decodeHandout, openMyShare } = await import('../../protocol/src/handout.js');
+  const { randomBytes } = await import('node:crypto');
+  const rand = (n) => new Uint8Array(randomBytes(n));
+
+  const secrets = Array.from({ length: 7 }, () => rand(32));
+  const seats = secrets.map((s) => schnorr.getPublicKey(s));
+  const round = { id: b32(0x11), stakeMsat: 100000n };
+
+  const stake = await stakeFor(round, {
+    seats, curve: feldmanGroup, random: rand, playerPubkey: b32(5),
+  });
+
+  // THE COMMITMENT IS A HASH OF SOMETHING, which is what a hold invoice needs
+  // and what `random(32)` never was.
+  assert.deepEqual(stake.stakeCommitment, sha256(stake.preimage));
+  assert.equal(stake.preimage.length, 32);
+  assert.deepEqual(stake.vssSharesRef, handoutId(stake.handout));
+  assert.notDeepEqual(stake.vssSharesRef, NO_SHARES);
+
+  // AND EVERY SEAT CAN OPEN ITS OWN, which is what makes the reference worth
+  // naming. A handout no seat accepts is a reference an entry cannot use.
+  const back = decodeHandout(stake.body);
+  assert.equal(back.shares.length, 7);
+  let opened = 0;
+  for (let i = 0; i < seats.length; i++) {
+    const mine = await openMyShare(back, {
+      pubkey: seats[i], secret: secrets[i], curve: feldmanGroup,
+    });
+    if (mine.ok) opened++;
+  }
+  assert.equal(opened, 7, 'the page dealt shares its own committee cannot open');
+
+  // AND THE ENTRY CARRIES IT. Without a dealt stake the seat is still the M2
+  // one: a commitment to nothing, and no shares.
+  const seat = entryFor(round, { playerPubkey: b32(5), random: rand, stake });
+  assert.deepEqual(seat.stakeCommitment, stake.stakeCommitment);
+  assert.deepEqual(seat.vssSharesRef, stake.vssSharesRef);
+  const plain = entryFor(round, { playerPubkey: b32(5), random: rand });
+  assert.deepEqual(plain.vssSharesRef, NO_SHARES);
+});
+
+test('a page refuses to deal without a curve, a committee, or a player', async () => {
+  const { feldmanGroup } = await import('../../blwp-node/src/curve.js');
+  const { randomBytes } = await import('node:crypto');
+  const rand = (n) => new Uint8Array(randomBytes(n));
+  const { schnorr } = await import('@noble/curves/secp256k1.js');
+  const seats = Array.from({ length: 7 }, () => schnorr.getPublicKey(rand(32)));
+  const round = { id: b32(0x11), stakeMsat: 100000n };
+
+  await assert.rejects(() => stakeFor(round, { seats, random: rand, playerPubkey: b32(5) }),
+    /needs a curve, and none was injected/);
+  await assert.rejects(() => stakeFor(round, { seats: seats.slice(0, 3), curve: feldmanGroup, random: rand, playerPubkey: b32(5) }),
+    /cannot be dealt to 3 seats/);
+  await assert.rejects(() => stakeFor(round, { seats, curve: feldmanGroup, random: rand }),
+    /that is 32 bytes of key/);
+  await assert.rejects(() => stakeFor(null, { seats, curve: feldmanGroup, random: rand, playerPubkey: b32(5) }),
+    /that is not one/);
 });

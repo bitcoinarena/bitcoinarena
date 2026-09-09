@@ -373,6 +373,17 @@ function tagPrefix(tag) {
 }
 
 /** Tagged hash of some bytes. Returns 32 bytes. */
+/**
+ * PLAIN SHA-256, named here so that nothing outside this package has to reach
+ * into the core for it.
+ *
+ * `blwp-node` may touch the simulator through exactly one door - `replay.js` -
+ * and an `import` of `core/src/sha256.js` for a stake commitment is that rule
+ * being weakened for a good reason, which is how it would always go. The hash
+ * is not a simulation; it belongs to the protocol, and it lives here.
+ */
+const sha256 = (bytes) => sha256bytes(bytes);
+
 function taggedHash(tag, bytes) {
   const prefix = tagPrefix(tag);
   const buf = new Uint8Array(prefix.length + bytes.length);
@@ -592,6 +603,13 @@ const TYPE_GHOST = 0x11;
  */
 const TYPE_VSS_HANDOUT = 0x12;
 
+// A SEALED SHARE IS A FIXED SIZE, and it is not a choice: 32 bytes of scalar
+// under AES-GCM plus the 16-byte tag that makes a wrong key a REFUSAL rather
+// than a garbage scalar. The nonce is derived rather than carried, so it is
+// not on the wire.
+const VSS_SEALED_BYTES = 48;
+const VSS_NONCE_BYTES = 12;
+
 const TAG = {
   roundContract: 'BLWP/v1/RoundContract',
   entryContract: 'BLWP/v1/EntryContract',
@@ -635,6 +653,12 @@ const TAG = {
   // signature binds to the root, and the two must never be interchangeable.
   censusInputs: 'BLWP/v1/CensusInputs',
   vssShare: 'BLWP/v1/VssShare',
+  // The key one seat's share is sealed under, and the nonce it is sealed with.
+  // Two tags and not one: a key and a nonce derived from the same bytes under
+  // one tag would BE the same bytes, and a nonce that equals its own key is
+  // not a nonce.
+  vssShareKey: 'BLWP/v1/VssShareKey',
+  vssShareNonce: 'BLWP/v1/VssShareNonce',
   // The id of a whole handout - the polynomial's commitments - which is what
   // an Entry Contract's `vss_shares_ref` names. Its own tag, so a ref can
   // never be produced by hashing a single share.
@@ -1041,6 +1065,242 @@ async function provesEquivocation(a, b, sessionPubkey, verify) {
   };
 }
 
+// ---- core/src/fixed.js
+// Q16.16 fixed point. THE ONLY FILE that may use * and / directly, and the
+// determinism guard enforces that (tools/check-determinism.js).
+//
+// One unit is 1/65536. The range is +/-32768, which covers a 260 x 170 m map,
+// velocities, angles and health with room to spare.
+//
+// Every operation here produces an exact integer result, so it is identical in
+// every conforming engine: ECMAScript specifies integer arithmetic on Numbers
+// exactly as long as operands and results are integers below 2^53, and
+// specifies the bitwise operators as 32-bit with defined wrapping.
+
+const SHIFT = 16;
+const ONE = 65536;
+const HALF = 32768;
+
+const fromInt = (n) => (n << SHIFT) | 0;
+const toInt = (x) => x >> SHIFT;            // arithmetic shift = floor
+
+/** Only for constants in source. Never call this on runtime data. */
+const fromFloat = (f) => Math.round(f * ONE) | 0;
+
+const add = (a, b) => (a + b) | 0;
+const sub = (a, b) => (a - b) | 0;
+const neg = (a) => (-a) | 0;
+const abs = (a) => (a < 0 ? (-a) | 0 : a);
+
+/**
+ * Fast multiply. Exact while |a*b| < 2^53, which holds for any pair of Q16.16
+ * values whose product stays inside the representable range - the intermediate
+ * is at most 2^31 * 2^31 = 2^62, so this is NOT universally safe and the caller
+ * must know its magnitudes. Used on the simulation's hot paths.
+ */
+const mulFast = (a, b) => ((a * b) / ONE) | 0;
+
+/**
+ * Rounding multiply, and rounding conversion back to a whole number. `mulFast`
+ * and `toInt` both throw the fraction away, which is right for the simulation -
+ * a truncation there is a rule, applied identically on every engine - but wrong
+ * where the value being produced is a *reported* number that some other
+ * implementation rounds. The score is the one such number: the old game ends on
+ * `Mathf.RoundToInt`, so the core has to round too or it sits a point low on
+ * roughly half of all runs. Same magnitude rules as `mulFast`: the caller must
+ * know |a*b| stays under 2^53.
+ */
+const mulRound = (a, b) => (((a * b) + (ONE >> 1)) / ONE) | 0;
+const toIntRound = (x) => (x + (ONE >> 1)) >> SHIFT;
+
+/**
+ * Exact multiply for anything that could overflow the double's integer range.
+ * BigInt is exact at any width; it allocates, so it stays off per-unit inner
+ * loops by convention rather than by enforcement.
+ */
+const mulWide = (a, b) =>
+  Number((BigInt(a) * BigInt(b)) >> BigInt(SHIFT)) | 0;
+
+/** Truncating divide. Returns 0 for a zero divisor rather than NaN or Infinity. */
+const div = (a, b) => (b === 0 ? 0 : ((a * ONE) / b) | 0);
+
+/**
+ * Rounding divide, the counterpart of `mulRound` and for the same reason: a
+ * quotient that feeds a *reported* number must not lose its fraction, or the
+ * loss compounds through the multiplies that follow it. Every truncation leans
+ * the same way, so they add rather than cancel. Only for those; `div` stays
+ * the simulation's divide.
+ */
+const divRound = (a, b) =>
+  b === 0 ? 0 : (((a * ONE) + ((b / 2) | 0)) / b) | 0;
+
+/**
+ * Rounded `a * b / c` without ever landing on the intermediate. A ratio taken
+ * on its own has to be stored as a Q16.16 fraction of at most 1.0, which
+ * quantises it to 1.5e-5 - and once that ratio is scaled up by a thousand the
+ * error is scaled with it. Kept as one expression the quotient is only ever
+ * rounded at the end, at the precision of the answer rather than the ratio.
+ * The caller must know |a*b| stays under 2^53.
+ */
+const mulDivRound = (a, b, c) =>
+  c === 0 ? 0 : (((a * b) + ((c / 2) | 0)) / c) | 0;
+
+/**
+ * Truncating divide of two PLAIN INTEGERS - not Q16.16 values.
+ *
+ * `div` scales its numerator by ONE first, which is right for fixed-point and
+ * wrong for a count. Splitting a hundred parts of something, or a byte into
+ * buckets, was being written as `x / n | 0` at the call site, which is exactly
+ * the arithmetic the guard exists to keep in one auditable file.
+ *
+ * Truncates towards zero, as `| 0` does, so it is the same value the inline
+ * form produced. Both arguments must already be int32.
+ */
+const idiv = (a, b) => (b === 0 ? 0 : (a / b) | 0);
+
+const min = (a, b) => (a < b ? a : b);
+const max = (a, b) => (a > b ? a : b);
+const clamp = (x, lo, hi) => (x < lo ? lo : x > hi ? hi : x);
+const sign = (a) => (a > 0 ? 1 : a < 0 ? -1 : 0);
+
+/**
+ * Integer square root of a Q16.16 value, by Newton-Raphson on integers.
+ *
+ * Math.sqrt is correctly rounded and would in fact be deterministic, but it is
+ * banned wholesale rather than by exception: a whitelist with one hole in it is
+ * a whitelist somebody widens later.
+ */
+function sqrt(x) {
+  if (x <= 0) return 0;
+  // sqrt(x/ONE)*ONE = sqrt(x*ONE); the product needs 48 bits, so it stays exact
+  let n = x * ONE;
+  let r = 1 << 15;
+  for (let i = 0; i < 24; i++) {
+    const next = ((r + (n / r)) / 2) | 0;
+    if (next === r) break;
+    r = next;
+  }
+  return r | 0;
+}
+
+/**
+ * Length of a 2D vector, both components Q16.16.
+ *
+ * The first version scaled the components down by 256 before squaring, out of
+ * caution about overflow, and then applied the FIXED-POINT square root to the
+ * result - counting the scale twice. It returned roughly 256x too much, the
+ * speed cap fired on the first tick, and the vehicle covered five metres in
+ * fifty seconds. No overflow guard was needed: at the map's maximum speed the
+ * intermediate is 3.4e12, comfortably inside the exact integer range.
+ */
+/**
+ * Cube root, Q16.16 in and out.
+ *
+ * `Math.cbrt` is out for the same reason `Math.sqrt` is: it is a host
+ * function, and the poison test refuses every one of them. Newton on
+ * `y = (2y + x/y^2) / 3`, which is the cube-root iteration written in this
+ * file's own operations - `mulFast` for `y^2`, `div` for `x/y^2`, `idiv` for
+ * the third - so there is no arithmetic here that is not already tested.
+ *
+ * Twenty iterations from a power-of-two start. The iteration thirds its error
+ * when it is far out, so the largest input this core has - a liquidation
+ * capped at 32767 millions, whose root is 32 - is reached in a handful;
+ * twenty is the same work for every input, which keeps the cost off the
+ * input value.
+ *
+ * The last three lines are the correction. Newton lands within a unit but not
+ * always ON the floor, and a root that is one Q16.16 unit high would make a
+ * crater one fifteen-thousandth of a metre wider on one machine and not on
+ * another if any step ever rounded differently. So it is walked to the exact
+ * floor: the largest y whose cube does not exceed x.
+ *
+ * Bounds. The caller's x reaches 32767 * ONE = 2.147e9 and the root 32 * ONE.
+ * `mulFast(y, y)` peaks at 4.4e12 before its divide and `div(x, t)` at 1.4e14,
+ * both exact in a double long before 2^53. Above that the input would have to
+ * be a liquidation of thirty-two billion dollars, which `LIQ_MAX` refuses.
+ */
+function cbrt(x) {
+  if (x <= 0) return 0;
+
+  // THE START MATTERS, and starting at 1.0 does not work. Newton's first step
+  // from there is `(2 + x) / 3`, which for x = 1000 lands on 334 - and 334
+  // squared in Q16.16 is 7.3e9, past a signed word, so `mulFast` wraps
+  // negative and the iteration is destroyed before it has begun. Measured:
+  // 1000 came out as 334.15 and 8000 as 2667.
+  //
+  // So the start is a power of two at the right size. `x` is ONE * v, so
+  // log2(x) = 16 + log2(v) and the root is ONE * v^(1/3) = 2^(16 + log2(v)/3).
+  // From there the iteration never overshoots and every intermediate stays
+  // inside the range the bounds note below promises.
+  let bits = -1;
+  for (let t = x; t > 0; t >>>= 1) bits++;
+  let shift = 16 + (((bits - 16) / 3) | 0);
+  if (shift < 0) shift = 0;
+  if (shift > 30) shift = 30;
+  let y = (1 << shift) | 0;
+  if (y < 1) y = 1;
+
+  for (let i = 0; i < 20; i++) {
+    const sq = mulFast(y, y);
+    if (sq <= 0) break;
+    y = idiv(add(add(y, y), div(x, sq)), 3);
+    if (y <= 0) { y = 1; break; }
+  }
+
+  // The cube is compared, never stored, so it is worked out in the double
+  // domain: `mulFast` would wrap at y = 32.0 exactly, where the true cube is
+  // 2^31, and a wrap in the CORRECTION would turn "too big" into "far too
+  // small" and walk the answer the wrong way. Exact to 2^53, which the bounds
+  // note below is well inside.
+  const cube = (v) => ((v * v) / ONE) * v / ONE;
+  while (y > 1 && cube(y) > x) y = (y - 1) | 0;
+  while (cube((y + 1) | 0) <= x) y = (y + 1) | 0;
+  return y;
+}
+
+const length2 = (x, y) => {
+  if (x === 0 && y === 0) return 0;
+  return sqrt((mulFast(x, x) + mulFast(y, y)) | 0);
+};
+
+// ---- core/src/rules/gate.js
+// The far end of the run, and the clock that ends it.
+//
+// The block IS the round. A run still on the road when the block closes has
+// missed it: the freight is lost and the score is zero. Without that the clock
+// counted down and did nothing, which taught the player that time is free -
+// and time is the only cost left on dawdling once exposure stopped paying for
+// it.
+
+
+const GATE_X = Math.imul(114, ONE);
+const HALF_MOUTH = Math.imul(34, ONE);
+/** A compressed block: 150 s at 60 Hz. Bitcoin's ten minutes is far too long
+ *  to wait for a score. */
+const BLOCK_TICKS = 9000;
+
+const RUN_LIVE = 0;
+const RUN_DELIVERED = 1;
+const RUN_WRECKED = 2;
+const RUN_MISSED = 3;
+
+/** Has the courier crossed the line, inside the mouth? */
+const arrived = (x, z) => x >= GATE_X && abs(z) <= HALF_MOUTH;
+
+/**
+ * Advances the run's outcome. Returns the new state word.
+ *
+ * Order matters: a wreck beats an arrival in the same tick, and a missed block
+ * beats both - a truck that is destroyed as the block closes did not deliver.
+ */
+function outcome(state, x, z, hp, tickInBlock) {
+  if (state !== RUN_LIVE) return state;
+  if (tickInBlock >= BLOCK_TICKS) return RUN_MISSED;
+  if (hp <= 0) return RUN_WRECKED;
+  if (arrived(x, z)) return RUN_DELIVERED;
+  return RUN_LIVE;
+}
+
 // ---- protocol/src/contracts.js
 // The two artifacts everything else hangs off.
 //
@@ -1053,6 +1313,10 @@ async function provesEquivocation(a, b, sessionPubkey, verify) {
 // mis-parse, which is why the version comes second, right after the type.
 
 
+
+// THE RUN LENGTH IS THE CORE'S. `genesis.js` already reads it from the same
+// place and writes it into the config hash a contract's network_id commits to;
+// restating the number here would be the second clock letter 21 forbade.
 
 
 /**
@@ -1339,6 +1603,50 @@ function decodeEntryContract(bytes) {
 
 const entryId = (e) => taggedHash(TAG.entryContract, encodeEntryContract(e));
 
+/**
+ * IS THIS ROUND'S RUN LENGTH THE ONE THE SIMULATOR ACTUALLY USES?
+ *
+ * `blockTicks` is section 6's `player_run_duration` in the unit the core
+ * counts in, and the core is where it lives: `rules/gate.js` ends a run
+ * `RUN_MISSED` at `BLOCK_TICKS` elapsed ticks, and `genesis.js` writes that
+ * same number into the config hash a contract's `network_id` commits to.
+ *
+ * So the field on the contract is section 6's own words - "echoed for
+ * readability; MUST equal genesis_parameters, which network_id commits to. A
+ * contract disagreeing with the network it names is invalid" - and this is
+ * that check, the same one letter 16 wrote for the committee slot counts.
+ *
+ * MEASURED BEFORE IT EXISTED: a round naming 9000, one naming 4500 and one
+ * naming 1 were all accepted, while the core stopped every run at 9000
+ * regardless. The number on the wire meant nothing, and a node bounded batches
+ * with it - a second clock disagreeing with the first, which is exactly what
+ * letter 21 put the tick in the core to prevent.
+ */
+function runLengthIsTheCores(contract) {
+  if (!contract || !Number.isInteger(contract.blockTicks))
+    return { ok: false, why: 'that round names no run length' };
+  if (contract.blockTicks !== BLOCK_TICKS)
+    return {
+      ok: false,
+      why: `that round says a run is ${contract.blockTicks} ticks and this core ends one at `
+        + `${BLOCK_TICKS}: a contract disagreeing with the network it names is invalid, and a `
+        + 'second clock is not a shorter round',
+    };
+  return { ok: true, blockTicks: BLOCK_TICKS };
+}
+
+/**
+ * THE LAST TICK A RUN MAY CARRY, for an entry that joined at `joinTick`.
+ *
+ * The core measures a run in ELAPSED ticks while it is LIVE, which is what
+ * gives a late joiner a whole run rather than the stub left of the round
+ * (0.8). Elapsed can never exceed the span of absolute ticks, so a transcript
+ * whose ticks reach `joinTick + BLOCK_TICKS` carries inputs for a run that is
+ * over however it ended.
+ */
+const lastTickOfRun = (joinTick) => joinTick + BLOCK_TICKS - 1;
+
+
 function compare32(a, b) {
   for (let i = 0; i < 32; i++) if (a[i] !== b[i]) return a[i] - b[i];
   return 0;
@@ -1561,6 +1869,8 @@ const batchTicks = (b) =>
 
 
 
+
+// The run length is the core's; this reads it rather than restating it.
 
 
 const GENESIS = new Uint8Array(32);
@@ -1796,12 +2106,30 @@ function transcriptBelongsToEntry(transcript, entry) {
         + `${entry.joinTick}`,
     };
 
-  return {
-    ok: true,
-    joinTick: entry.joinTick,
-    unchecked: ['the run length (section 6 names player_run_duration and this '
-      + 'contract does not carry it)'],
-  };
+  // AND IT ENDS WHERE THE RUN ENDS.
+  //
+  // This used to report the run length as UNCHECKED, on the ground that
+  // section 6's `player_run_duration` was a contract field nobody carried. It
+  // is carried - by the core, as `BLOCK_TICKS`, which `genesis.js` writes into
+  // the config hash a round's network commits to - so there was a number to
+  // check against all along and no second one needed adding.
+  //
+  // The core measures a run in ELAPSED ticks while it is LIVE, which is what
+  // gives a late joiner a whole run (0.8) rather than the stub left of the
+  // round. Elapsed can never exceed the span of absolute ticks, so a
+  // transcript reaching `joinTick + BLOCK_TICKS` carries inputs for a run that
+  // is over however it ended - delivered, wrecked or missed.
+  const last = batchTicks(transcript.batches[transcript.batches.length - 1]);
+  const reaches = last.length ? last[last.length - 1] : first[0];
+  const ends = lastTickOfRun(entry.joinTick);
+  if (reaches > ends)
+    return {
+      ok: false,
+      why: `that run ends at tick ${ends} - ${BLOCK_TICKS} ticks from its join at `
+        + `${entry.joinTick} - and that transcript reaches ${reaches}`,
+    };
+
+  return { ok: true, joinTick: entry.joinTick, endsAt: ends, reaches };
 }
 
 // ---- protocol/src/receipt.js
@@ -2959,6 +3287,19 @@ const merkleRootOf = (h) => header(h).slice(36, 68);
 
 /** A block's own id: the double hash of its 80 bytes. */
 const blockHashOf = (h) => hash256(header(h));
+
+/**
+ * The time a header claims, from bytes 68..72, LITTLE-ENDIAN and in SECONDS.
+ *
+ * It is a claim and not a clock: a miner may write a timestamp up to two hours
+ * ahead of its own, and a header's time need not exceed the one before it.
+ * Nothing may compare this to a protocol instant on its own - that is what the
+ * median time past is for.
+ */
+const blockTimeOf = (h) => {
+  const b = header(h);
+  return ((b[71] << 24) | (b[70] << 16) | (b[69] << 8) | b[68]) >>> 0;
+};
 
 /**
  * The target a header CLAIMS, from its compact form at bytes 72..76.
@@ -5514,6 +5855,111 @@ function handoutOutcome(opened) {
   };
 }
 
+// ---- protocol/src/seal.js
+// ONE SHARE, SEALED TO ONE SEAT.
+//
+// 23.1 step 2 in full: the player "splits P with verifiable secret sharing
+// (Shamir, threshold 5-of-7) and ENCRYPTS ONE SHARE TO EACH
+// SETTLEMENT-COMMITTEE MEMBER". `handout.js` did the first half and said so
+// about the second: "anybody who reads a handout reads five shares and rebuilds
+// P... A build that pays sats must not use this file as it stands." Measured
+// before this file existed, against a running daemon: a stranger holding only
+// the public `vss_shares_ref` read all seven shares and reconstructed the
+// preimage. This is the missing half.
+//
+// WHY IT IS THE WHOLE OF THE 5-OF-7 PROPERTY. A settle IS the release of the
+// preimage. If every seat - or every passer-by - can read five shares, then
+// counting to five before reconstructing is a formality nobody is bound by.
+// Secrecy is not a hardening pass on top of the threshold; it is what makes
+// the threshold mean anything.
+//
+// THE CURVE IS INJECTED, like every other curve operation this package needs:
+// `packages/protocol` carries none, so the caller brings `ecdhShared`. The
+// cipher is AES-GCM through WebCrypto, which Node and every browser already
+// have - the dealer is a page and the openers are daemons, and a construction
+// only one of them can run is not a construction.
+//
+// THE NONCE IS DERIVED, NOT DRAWN. A random nonce would have to travel on the
+// wire and would make the handout - and therefore its id, and therefore the
+// `vss_shares_ref` inside a signed entry - different on every re-encode of the
+// same deal. It is a tagged hash of the shared secret and the seat, so it is
+// unique per (ephemeral key, seat) exactly as a nonce must be, and the seal is
+// a function of its inputs.
+
+
+
+
+const subtle = () => {
+  const c = globalThis.crypto;
+  if (!c || !c.subtle)
+    throw new Error('this runtime has no WebCrypto, so it can neither seal a share nor open one');
+  return c.subtle;
+};
+
+/**
+ * The key and the nonce one seat's share is sealed under.
+ *
+ * The seat number is in both, so two seats that somehow shared an ECDH secret
+ * would still not share a key - and a share cannot be lifted from one seat's
+ * envelope into another's, because the envelope only opens under its own seat.
+ */
+function keyAndNonce(shared, seat) {
+  const context = new Uint8Array([...shared, (seat >> 8) & 0xff, seat & 0xff]);
+  return {
+    key: taggedHash(TAG.vssShareKey, context),
+    nonce: taggedHash(TAG.vssShareNonce, context).subarray(0, VSS_NONCE_BYTES),
+  };
+}
+
+const aes = async (raw, use) =>
+  subtle().importKey('raw', raw, { name: 'AES-GCM' }, false, [use]);
+
+/**
+ * SEAL ONE SHARE FOR ONE SEAT.
+ *
+ * `ephemeralSecret` is the dealer's, one per handout: the seats each learn a
+ * different shared secret from it and none of them learns another's.
+ */
+async function sealShare({ value, seat, seatPubkey, ephemeralSecret, curve }) {
+  if (typeof value !== 'bigint' || value < 0n || value >= FIELD)
+    throw new Error('that share is not a scalar of the group');
+  if (!(seatPubkey instanceof Uint8Array) || seatPubkey.length !== 32)
+    throw new Error('a share is sealed to a seat\'s 32-byte key, and that is not one');
+  const shared = curve.ecdhShared(ephemeralSecret, seatPubkey);
+  const { key, nonce } = keyAndNonce(shared, seat);
+  const sealed = await subtle().encrypt({ name: 'AES-GCM', iv: nonce },
+    await aes(key, 'encrypt'), scalarTo32(value));
+  return new Uint8Array(sealed);
+}
+
+/**
+ * OPEN THE ONE SHARE ADDRESSED TO THIS SEAT.
+ *
+ * A wrong key does not decrypt to nonsense - it does not decrypt at all,
+ * because GCM authenticates. That is why the refusal here can be by name: a
+ * seat that cannot open its envelope knows it, rather than checking a garbage
+ * scalar against the commitments and calling the dealer crooked.
+ */
+async function openShare({ sealed, seat, secret, ephemeralPubkey, curve }) {
+  if (!(sealed instanceof Uint8Array) || sealed.length !== VSS_SEALED_BYTES)
+    return { ok: false, why: `a sealed share is ${VSS_SEALED_BYTES} bytes and that is ${sealed ? sealed.length : 'nothing'}` };
+  const shared = curve.ecdhShared(secret, ephemeralPubkey);
+  const { key, nonce } = keyAndNonce(shared, seat);
+  let plain;
+  try {
+    plain = new Uint8Array(await subtle().decrypt({ name: 'AES-GCM', iv: nonce },
+      await aes(key, 'decrypt'), sealed));
+  } catch {
+    return { ok: false, why: `seat ${seat}'s share does not open under this key: it was sealed to somebody else` };
+  }
+  if (plain.length !== 32)
+    return { ok: false, why: 'that envelope held something other than a share' };
+  return { ok: true, share: { seat, value: scalarFrom32(plain) } };
+}
+
+/** For a refusal that wants to name what it could not open. */
+const sealedName = (sealed) => toHex(sealed).slice(0, 16);
+
 // ---- protocol/src/handout.js
 // THE SHARES A PLAYER PUBLISHED, AND THE POLYNOMIAL THEY WERE CUT FROM.
 //
@@ -5528,17 +5974,22 @@ function handoutOutcome(opened) {
 // accepts an entry. They are separate files because the maths has no business
 // knowing a byte order and the wire has no business knowing a field.
 //
-// THE SHARES ARE IN THE CLEAR HERE AND THAT IS NOT SAFE FOR MONEY. 23.1 says
-// "encrypts one share to each settlement-committee member", and this does not:
-// anybody who reads a handout reads five shares and rebuilds P. In M2 that
-// takes nothing, because M2 asks for no money and distributes none - there is
-// no stake behind the preimage to steal. It becomes REQUIRED at the same
-// moment the hold invoice does, it needs a key agreement nobody has chosen,
-// and it is M3. A build that pays sats must not use this file as it stands.
+// THE SHARES USED TO BE IN THE CLEAR, and this file said so about itself: "a
+// build that pays sats must not use this file as it stands". The hold invoice
+// went live and that became true, so it was measured - a stranger holding only
+// the public `vss_shares_ref` read all seven shares and rebuilt P - and then
+// closed. Every share now travels sealed to ONE seat's key: `seal.js` does the
+// agreement and the cipher, this file carries the envelopes.
 //
-// WHAT IT DOES BUY NOW: a dealer cannot hand out shares that no five seats can
-// open. That property does not depend on the shares being secret, which is why
-// it can be had first.
+// WHAT A SEAT CAN STILL CHECK, AND WHAT IT CANNOT. It opens its own envelope
+// and checks that one share against the published commitments, which is
+// exactly what Feldman is for - "confirm its share is consistent without
+// reconstructing P". What it can no longer do is check everybody else's, so a
+// crooked dealer is caught by WHOEVER HE CHEATED rather than by the first seat
+// to look. That is not weaker: a dealer who cheats seat 6 is refused by seat 6,
+// and a handout five seats accepted is a handout five seats can open.
+
+
 
 
 
@@ -5552,6 +6003,10 @@ function encodeHandout(h) {
   w.u16(PROTOCOL_VERSION);
   w.bytes32(h.roundId);
   w.bytes32(h.playerPubkey);
+  // THE DEALER'S ONE-TIME KEY. Every seat derives a different secret from it
+  // and none of them derives another seat's, so one key on the wire buys
+  // seven envelopes that do not open each other.
+  w.bytes32(h.ephemeralPubkey);
   // THE THRESHOLD IS ON THE OBJECT because a seat has to know how many
   // coefficients the commitments SHOULD be before it counts them: a dealer who
   // published four commitments for a threshold of five has published a
@@ -5561,8 +6016,15 @@ function encodeHandout(h) {
   // SORTED BY SEAT, asserted rather than sorted: the order is inside the id
   // the entry names, so a caller that shuffles must be refused and not
   // quietly corrected.
-  w.vec(h.shares, (s, ww) => { ww.u16(s.seat); ww.bytes32(scalarTo32(s.value)); },
-    { sortedBy: (a, b) => a.seat - b.seat });
+  // WHO EACH ENVELOPE IS FOR IS ON THE WIRE. A seat must be able to find its
+  // own without trying every one, and - more to the point - a handout that
+  // named no recipients could be re-dealt to a different committee under the
+  // same id, which is the id an entry has already signed.
+  w.vec(h.shares, (s, ww) => {
+    ww.u16(s.seat);
+    ww.bytes32(s.seatPubkey);
+    ww.bytes(s.sealed, VSS_SEALED_BYTES);
+  }, { sortedBy: (a, b) => a.seat - b.seat });
   return w.finish();
 }
 
@@ -5574,9 +6036,14 @@ function decodeHandout(bytes) {
   const h = {
     roundId: r.bytes32(),
     playerPubkey: r.bytes32(),
+    ephemeralPubkey: r.bytes32(),
     needed: r.u16(),
     commitments: r.vec((rr) => rr.bytes(COMMITMENT_BYTES)),
-    shares: r.vec((rr) => ({ seat: rr.u16(), value: scalarFrom32(rr.bytes32()) })),
+    shares: r.vec((rr) => ({
+      seat: rr.u16(),
+      seatPubkey: rr.bytes32(),
+      sealed: rr.bytes(VSS_SEALED_BYTES),
+    })),
   };
   r.end();
   return h;
@@ -5603,7 +6070,7 @@ const NO_SHARES = new Uint8Array(32);
  * per-share check and still be unopenable, which is the whole family this
  * letter exists to close.
  */
-function acceptHandout(handout, { curve } = {}) {
+function acceptHandout(handout) {
   if (!handout || !Array.isArray(handout.shares) || handout.shares.length === 0)
     return { ok: false, why: 'a handout of no shares is not a handout' };
   if (!Array.isArray(handout.commitments) || handout.commitments.length === 0)
@@ -5621,23 +6088,93 @@ function acceptHandout(handout, { curve } = {}) {
     };
 
   const seats = new Set();
+  const keys = new Set();
   for (const s of handout.shares) {
     if (!Number.isInteger(s.seat) || s.seat < 1)
       return { ok: false, why: 'a share of seat zero is a share of the secret itself' };
     if (seats.has(s.seat))
       return { ok: false, why: `two shares for seat ${s.seat} are one share` };
     seats.add(s.seat);
-    if (typeof s.value !== 'bigint' || s.value < 0n || s.value >= FIELD)
-      return { ok: false, why: `seat ${s.seat} holds a value that is not a scalar of the group` };
+    if (!(s.seatPubkey instanceof Uint8Array) || s.seatPubkey.length !== 32)
+      return { ok: false, why: `seat ${s.seat} is not addressed to a key` };
+    if (!(s.sealed instanceof Uint8Array) || s.sealed.length !== VSS_SEALED_BYTES)
+      return { ok: false, why: `seat ${s.seat}'s envelope is not a sealed share` };
+    if (keys.has(toHex(s.seatPubkey)))
+      return { ok: false, why: 'two seats of that handout are one key, so one of them cannot open its share' };
+    keys.add(toHex(s.seatPubkey));
   }
 
-  const seen = checkHandout({
-    shares: handout.shares.map((s) => ({ ...s, commitment: undefined })),
-    published: handout.shares.map(() => undefined),
-    commitments: handout.commitments,
-    curve,
+  return { ok: true, why: `${handout.shares.length} sealed shares, threshold ${handout.needed}` };
+}
+
+/**
+ * OPEN THE ONE ENVELOPE THIS SEAT WAS DEALT, AND CHECK THAT ONE SHARE.
+ *
+ * 23.1: "each node can confirm its share is consistent without reconstructing
+ * P." That is now literal - a node HAS only its own share, so consistency is
+ * the only thing it can confirm and the only thing it needs to.
+ *
+ * A NODE THAT WAS DEALT NOTHING KEEPS NOTHING. Storing a handout it can never
+ * open would be storing an envelope addressed to somebody else and calling it
+ * custody.
+ */
+async function openMyShare(handout, { pubkey, secret, curve } = {}) {
+  if (!(pubkey instanceof Uint8Array) || pubkey.length !== 32)
+    return { ok: false, why: 'a seat opens a share with its own 32-byte key, and that is not one' };
+  const mine = handout.shares.find((s) => toHex(s.seatPubkey) === toHex(pubkey));
+  if (!mine)
+    return { ok: false, why: 'this node is not one of the seats that handout was dealt to' };
+
+  const opened = await openShare({
+    sealed: mine.sealed, seat: mine.seat, secret,
+    ephemeralPubkey: handout.ephemeralPubkey, curve,
   });
-  return seen.ok ? { ok: true, why: seen.why } : { ok: false, why: seen.why };
+  if (!opened.ok) return opened;
+
+  // AND THE SHARE HAS TO LIE ON THE PUBLISHED POLYNOMIAL. Opening proves the
+  // dealer knew this seat's key; only Feldman proves he cut one polynomial.
+  const consistent = shareOpensTo(opened.share, { commitments: handout.commitments, curve });
+  if (!consistent.ok) return { ok: false, why: consistent.why };
+  return { ok: true, share: opened.share, seat: mine.seat };
+}
+
+/**
+ * DEAL ONE STAKE PREIMAGE TO A COMMITTEE.
+ *
+ * The page does this and so does every test, which is the point of it being
+ * here: a dealer that two callers build differently is two dealers, and the
+ * entry's `vss_shares_ref` names one handout.
+ *
+ * SEAT NUMBERS ARE 1..n IN THE ORDER THE COMMITTEE WAS GIVEN. They are the x
+ * of the polynomial, so they must never be zero - `acceptHandout` refuses that
+ * because P(0) IS the secret - and they must be the same numbers the opener
+ * uses, which is why they are derived from the list rather than chosen.
+ */
+async function dealHandout({ preimage, seats, roundId, playerPubkey,
+  ephemeralSecret, ephemeralPubkey, coefficients, needed, curve }) {
+  if (!Array.isArray(seats) || !seats.length)
+    return { ok: false, why: 'a handout is dealt to a committee, and that is an empty one' };
+  const split = splitSecret(preimage, {
+    seats: seats.length, needed: needed || undefined, coefficients, curve,
+  });
+  const shares = [];
+  for (const share of split.shares) {
+    const seatPubkey = seats[share.seat - 1];
+    shares.push({
+      seat: share.seat,
+      seatPubkey,
+      sealed: await sealShare({
+        value: share.value, seat: share.seat, seatPubkey, ephemeralSecret, curve,
+      }),
+    });
+  }
+  const handout = {
+    roundId, playerPubkey, ephemeralPubkey,
+    needed: split.commitments.length,
+    commitments: split.commitments,
+    shares,
+  };
+  return { ok: true, handout, id: handoutId(handout) };
 }
 
 // ---- blwp-client/src/join.js
@@ -5662,6 +6199,7 @@ function acceptHandout(handout, { curve } = {}) {
 // first server felt like returning - a different stake, a different committee,
 // a different core hash - which is precisely the substitution the round id
 // exists to prevent. Same rule as the entry a resuming client re-hashes.
+
 
 
 
@@ -5836,33 +6374,94 @@ function tabIdentity({ storage, random, key = 'blwp.player' } = {}) {
  * stake the node would refuse, and copying the number out of the contract is
  * the only way a page can be sure it is asking for the seat that exists.
  *
- * M2 ASKS FOR NO MONEY AND DISTRIBUTES NONE, so `stakeCommitment` commits to
- * nothing: in M3 it is the hash of a hold invoice's preimage, and until that
- * invoice exists there is no preimage to hash. It is random rather than a
- * constant so two players never file the same one, and it is named here rather
- * than quietly zeroed, because a zeroed commitment looks like a computed one.
+ * THE STAKE IS DEALT BY `stakeFor` NOW, and handed in. Without one this still
+ * commits to nothing - `random(32)` and `NO_SHARES` - which is the M2 seat and
+ * is still the honest thing for a round with no money behind it. What it must
+ * never do is look computed when it is not, which is why it is named here.
  *
  * The world secret IS load-bearing already: it is the player's own, it seeds
  * their world, and a node that had it could predict the round they are about
  * to drive.
  */
-function entryFor(round, { playerPubkey, random, joinTick = 0 } = {}) {
+function entryFor(round, { playerPubkey, random, joinTick = 0, stake } = {}) {
   if (!round) throw new Error('there is no round to take a seat at');
   if (!playerPubkey || playerPubkey.length !== 32)
     throw new Error('a player is 32 bytes of key');
+  if (stake && (!stake.stakeCommitment || !stake.vssSharesRef))
+    throw new Error('that is not a dealt stake: it names no commitment or no shares');
   return {
     playerPubkey,
-    stakeCommitment: random(32),
+    stakeCommitment: stake ? stake.stakeCommitment : random(32),
     worldSecret: random(32),
-    // 23.1's `vss_shares_ref`, and this entry publishes no shares: there is no
-    // stake behind the preimage in M2, so there is nothing yet to split. The
-    // field is in the signed bytes either way, so an entry that has shares and
-    // one that has none can never be the same entry id.
-    vssSharesRef: NO_SHARES,
+    // 23.1's `vss_shares_ref`. With a dealt stake it names the handout the
+    // committee accepted; without one it is 32 zero bytes, and the field is in
+    // the signed bytes either way - so an entry that has shares and one that
+    // has none can never be the same entry id.
+    vssSharesRef: stake ? stake.vssSharesRef : NO_SHARES,
     stakeMsat: round.stakeMsat,
     feeMsat: 0n,
     donationMsat: 0n,
     joinTick,
+  };
+}
+
+/**
+ * THE PAGE AS DEALER. 23.1 step 1 and 2, and the half letter 29 left named.
+ *
+ * The player chooses P, publishes `sha256(P)` as the stake commitment their
+ * hold invoice is issued against, splits P 5-of-7 over the settlement
+ * committee and seals one share to each seat. Nobody else ever sees P: the
+ * page is where it is generated and the page is where it is forgotten.
+ *
+ * WHY THIS IS AN INPUT DEVICE AND NOT A SIMULATOR. Nothing here computes an
+ * outcome, reads a truck, or decides what a run came to. It generates key
+ * material and encodes it. The core stays where it is.
+ *
+ * THE CURVE IS INJECTED, exactly like `sign` and `verify`: this bundle carries
+ * no crypto on purpose, because a vendored curve sitting in the page is an
+ * implementation of the thing that pins money that nobody audits. The caller
+ * hands in `pointFromScalar`, `combinePoints` and `ecdhShared`.
+ *
+ * P IS NOT REDUCED. About one preimage in 2^128 is not below the group order,
+ * and the answer is another preimage rather than this one taken modulo n -
+ * reducing would change the number the payment hash already commits to, and
+ * the shares would then open something the Entry Contract does not name.
+ */
+async function stakeFor(round, { seats, curve, random, playerPubkey, needed = SHARES_NEEDED } = {}) {
+  if (!round || !round.id) throw new Error('a stake is dealt for a round, and that is not one');
+  if (!Array.isArray(seats) || seats.length < needed)
+    throw new Error(`a threshold of ${needed} cannot be dealt to ${seats ? seats.length : 0} seats`);
+  if (!curve || typeof curve.ecdhShared !== 'function' || typeof curve.pointX !== 'function')
+    throw new Error('dealing a stake needs a curve, and none was injected');
+  if (!playerPubkey || playerPubkey.length !== 32)
+    throw new Error('a stake is dealt by a player, and that is 32 bytes of key');
+
+  let preimage = random(32);
+  for (let tries = 0; scalarFrom32(preimage) >= FIELD; tries++) {
+    if (tries > 8) throw new Error('this randomness never produced a scalar of the group');
+    preimage = random(32);
+  }
+
+  const ephemeralSecret = random(32);
+  const dealt = await dealHandout({
+    preimage, seats, roundId: round.id, playerPubkey,
+    ephemeralSecret, ephemeralPubkey: curve.pointX(ephemeralSecret),
+    coefficients: Array.from({ length: needed - 1 }, () => scalarFrom32(random(32)) % FIELD),
+    needed, curve,
+  });
+  if (!dealt.ok) throw new Error(dealt.why);
+
+  return {
+    // WHAT THE PLAYER KEEPS. It never leaves this object, and the caller is
+    // the page: a node that had it could settle alone, which is the whole
+    // reason the shares exist.
+    preimage,
+    stakeCommitment: sha256(preimage),
+    vssSharesRef: dealt.id,
+    handout: dealt.handout,
+    // Ready to POST to every seat, because a handout no seat accepted is a
+    // reference the entry cannot name.
+    body: encodeHandout(dealt.handout),
   };
 }
 
