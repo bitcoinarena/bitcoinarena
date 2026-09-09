@@ -99,6 +99,11 @@ out += '         watchGhosts: watchGhosts, GHOST_BACKLOG: GHOST_BACKLOG,\n';
 out += '         playersLine: playersLine, newestPose: newestPose,\n';
 out += '         joinQuery: joinQuery, joinFromQuery: joinFromQuery,\n';
 out += '         fetchRound: fetchRound, bondProvider: bondProvider,\n';
+// THE SEED THE COMMITTEE WILL REPLAY THIS PLAYER WITH. Without it the page
+// cannot put its own core in the world its transcript is judged in, which is
+// exactly what it could not do before letter 36.
+out += '         fetchRandomness: fetchRandomness, worldSeedFor: worldSeedFor,\n';
+out += '         seedWordForEntry: seedWordForEntry,\n';
 out += '         tabIdentity: tabIdentity, entryFor: entryFor,\n';
 out += '         decodeRoundContract: decodeRoundContract,\n';
 out += '         toHex: toHex, fromHex: fromHex };\n})();\n';

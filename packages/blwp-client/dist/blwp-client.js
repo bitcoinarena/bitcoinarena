@@ -6330,6 +6330,45 @@ async function dealHandout({ preimage, seats, roundId, playerPubkey,
   return { ok: true, handout, id: handoutId(handout) };
 }
 
+// ---- protocol/src/seed.js
+// Player sub-seed, the owner 2026-09-08: secret lives on the Entry Contract so
+// a node can replay. IMPLEMENTATION.md: H(round_randomness || pubkey || secret || join_tick).
+
+
+
+function playerSubSeed({ roundRandomness, playerPubkey, worldSecret, joinTick }) {
+  if (!(roundRandomness instanceof Uint8Array) || roundRandomness.length !== 32)
+    throw new Error('round_randomness is 32 bytes');
+  if (!(playerPubkey instanceof Uint8Array) || playerPubkey.length !== 32)
+    throw new Error('player pubkey is 32 bytes');
+  if (!(worldSecret instanceof Uint8Array) || worldSecret.length !== 32)
+    throw new Error('world secret is 32 bytes');
+  if (!Number.isInteger(joinTick) || joinTick < 0)
+    throw new Error('join tick is a non-negative integer');
+  const w = new Writer();
+  w.bytes32(roundRandomness);
+  w.bytes32(playerPubkey);
+  w.bytes32(worldSecret);
+  w.u32(joinTick);
+  return taggedHash(TAG.playerSubSeed, w.finish());
+}
+
+/** The core's init() takes one uint32; first four bytes of the sub-seed, big-endian. */
+function seedWordFromSubSeed(sub) {
+  if (!(sub instanceof Uint8Array) || sub.length !== 32)
+    throw new Error('a sub-seed is 32 bytes');
+  return ((sub[0] << 24) | (sub[1] << 16) | (sub[2] << 8) | sub[3]) >>> 0;
+}
+
+function seedWordForEntry(entry, roundRandomness) {
+  return seedWordFromSubSeed(playerSubSeed({
+    roundRandomness,
+    playerPubkey: entry.playerPubkey,
+    worldSecret: entry.worldSecret,
+    joinTick: entry.joinTick,
+  }));
+}
+
 // ---- blwp-client/src/join.js
 // THE ROUND A PAGE WAS SENT TO, NAMED IN ITS OWN URL.
 //
@@ -6352,6 +6391,7 @@ async function dealHandout({ preimage, seats, roundId, playerPubkey,
 // first server felt like returning - a different stake, a different committee,
 // a different core hash - which is precisely the substitution the round id
 // exists to prevent. Same rule as the entry a resuming client re-hashes.
+
 
 
 
@@ -6446,6 +6486,81 @@ async function fetchRound(id, nodes, { fetcher = fetch } = {}) {
     }
   }
   throw new Error('no node holds the round this URL names: ' + refused.join('; '));
+}
+
+/**
+ * THE ROUND'S RANDOMNESS, AGREED BY EVERY NODE THE URL NAMED.
+ *
+ * The player's own world is seeded H(randomness || pubkey || world secret ||
+ * join tick), so a page that does not know the randomness cannot put its core
+ * in the world the committee will replay it in. It did not know it: the page
+ * seeded its core with a CONSTANT, and on a real 2-of-2 round the truck the
+ * player drove stood at z 10.20 m while the committee's copy of the same truck
+ * stood at 57.80 m - a different bay, in a different world, before either of
+ * them moved. Every other player saw that second truck.
+ *
+ * ASKED OF ALL OF THEM, NOT THE FIRST. A beacon is a published block hash and
+ * a node that named a different one would put this player alone in a world
+ * nobody replays - which is the fault this function exists to end, arriving by
+ * another road. So this is the chain rule again, in the small: every node the
+ * URL named is asked, and a disagreement is a refusal by name rather than a
+ * majority or a first answer.
+ *
+ * WHAT THIS IS NOT is proof that the hash is the block 5A.5 names. Deriving
+ * the height from the chain is letter 32's work and the page does not do it;
+ * what the page can do is refuse to be told two different things, and say so.
+ */
+async function fetchRandomness(id, nodes, { fetcher = fetch } = {}) {
+  if (!Array.isArray(nodes) || !nodes.length)
+    throw new Error('no node to ask for this round\'s randomness');
+  const said = [];
+  const refused = [];
+  for (const node of nodes) {
+    const at = node.replace(/\/+$/, '') + '/randomness?round=' + id;
+    try {
+      const r = await fetcher(at);
+      if (!r.ok) { refused.push(`${node}: answered ${r.status} ${(await r.text()).trim()}`); continue; }
+      const bytes = new Uint8Array(await r.arrayBuffer());
+      if (bytes.length !== 32) { refused.push(`${node}: answered ${bytes.length} bytes`); continue; }
+      said.push({ node, hash: bytes, height: Number(r.headers.get('x-height') || 0) });
+    } catch (e) {
+      refused.push(`${node}: ${e.message}`);
+    }
+  }
+  if (!said.length)
+    throw new Error('no node named this round\'s randomness: ' + refused.join('; '));
+  const first = toHex(said[0].hash);
+  for (const s of said.slice(1)) {
+    if (toHex(s.hash) !== first)
+      throw new Error(`${said[0].node} says this round's randomness is ${first} and `
+        + `${s.node} says ${toHex(s.hash)}: a round whose nodes name two worlds is not one round`);
+  }
+  return { randomness: said[0].hash, height: said[0].height, agreed: said.length, refused };
+}
+
+/**
+ * THE ONE NUMBER A PAGE NEEDS BEFORE IT MAY STEP ITS CORE.
+ *
+ * `init(seedWord)` decides which of the 24 loading bays this player parks at
+ * and the whole of the world after it, and the committee derives that word
+ * from the entry and the round's randomness. A page that stepped its core with
+ * any other word drove a different world from the one its own transcript is
+ * replayed in - and published the inputs of one truck as the inputs of
+ * another.
+ *
+ * So this is fetched and derived in one place, and the page has no second way
+ * to get a seed.
+ */
+async function worldSeedFor({ entry, round, nodes, fetcher = fetch } = {}) {
+  if (!entry) throw new Error('there is no entry to seed a world for');
+  const id = typeof round === 'string' ? round : toHex(round);
+  const beacon = await fetchRandomness(id, nodes, { fetcher });
+  return {
+    seedWord: seedWordForEntry(entry, beacon.randomness),
+    randomness: beacon.randomness,
+    height: beacon.height,
+    agreed: beacon.agreed,
+  };
 }
 
 /**
@@ -6670,6 +6785,8 @@ return { Client: Client, markState: markState,
          playersLine: playersLine, newestPose: newestPose,
          joinQuery: joinQuery, joinFromQuery: joinFromQuery,
          fetchRound: fetchRound, bondProvider: bondProvider,
+         fetchRandomness: fetchRandomness, worldSeedFor: worldSeedFor,
+         seedWordForEntry: seedWordForEntry,
          tabIdentity: tabIdentity, entryFor: entryFor,
          decodeRoundContract: decodeRoundContract,
          toHex: toHex, fromHex: fromHex };

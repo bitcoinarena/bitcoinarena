@@ -24,6 +24,7 @@ import { toHex, fromHex, sha256 } from '../../protocol/src/hash.js';
 import { httpProvider } from './headers.js';
 import { NO_SHARES, dealHandout, encodeHandout } from '../../protocol/src/handout.js';
 import { FIELD, scalarFrom32, SHARES_NEEDED } from '../../protocol/src/shares.js';
+import { seedWordForEntry } from '../../protocol/src/seed.js';
 
 /** How the query names each thing. One key, one meaning, all optional but `round`. */
 export const JOIN_KEYS = ['round', 'node', 'headers', 'bond', 'advert'];
@@ -117,6 +118,81 @@ export async function fetchRound(id, nodes, { fetcher = fetch } = {}) {
 }
 
 /**
+ * THE ROUND'S RANDOMNESS, AGREED BY EVERY NODE THE URL NAMED.
+ *
+ * The player's own world is seeded H(randomness || pubkey || world secret ||
+ * join tick), so a page that does not know the randomness cannot put its core
+ * in the world the committee will replay it in. It did not know it: the page
+ * seeded its core with a CONSTANT, and on a real 2-of-2 round the truck the
+ * player drove stood at z 10.20 m while the committee's copy of the same truck
+ * stood at 57.80 m - a different bay, in a different world, before either of
+ * them moved. Every other player saw that second truck.
+ *
+ * ASKED OF ALL OF THEM, NOT THE FIRST. A beacon is a published block hash and
+ * a node that named a different one would put this player alone in a world
+ * nobody replays - which is the fault this function exists to end, arriving by
+ * another road. So this is the chain rule again, in the small: every node the
+ * URL named is asked, and a disagreement is a refusal by name rather than a
+ * majority or a first answer.
+ *
+ * WHAT THIS IS NOT is proof that the hash is the block 5A.5 names. Deriving
+ * the height from the chain is letter 32's work and the page does not do it;
+ * what the page can do is refuse to be told two different things, and say so.
+ */
+export async function fetchRandomness(id, nodes, { fetcher = fetch } = {}) {
+  if (!Array.isArray(nodes) || !nodes.length)
+    throw new Error('no node to ask for this round\'s randomness');
+  const said = [];
+  const refused = [];
+  for (const node of nodes) {
+    const at = node.replace(/\/+$/, '') + '/randomness?round=' + id;
+    try {
+      const r = await fetcher(at);
+      if (!r.ok) { refused.push(`${node}: answered ${r.status} ${(await r.text()).trim()}`); continue; }
+      const bytes = new Uint8Array(await r.arrayBuffer());
+      if (bytes.length !== 32) { refused.push(`${node}: answered ${bytes.length} bytes`); continue; }
+      said.push({ node, hash: bytes, height: Number(r.headers.get('x-height') || 0) });
+    } catch (e) {
+      refused.push(`${node}: ${e.message}`);
+    }
+  }
+  if (!said.length)
+    throw new Error('no node named this round\'s randomness: ' + refused.join('; '));
+  const first = toHex(said[0].hash);
+  for (const s of said.slice(1)) {
+    if (toHex(s.hash) !== first)
+      throw new Error(`${said[0].node} says this round's randomness is ${first} and `
+        + `${s.node} says ${toHex(s.hash)}: a round whose nodes name two worlds is not one round`);
+  }
+  return { randomness: said[0].hash, height: said[0].height, agreed: said.length, refused };
+}
+
+/**
+ * THE ONE NUMBER A PAGE NEEDS BEFORE IT MAY STEP ITS CORE.
+ *
+ * `init(seedWord)` decides which of the 24 loading bays this player parks at
+ * and the whole of the world after it, and the committee derives that word
+ * from the entry and the round's randomness. A page that stepped its core with
+ * any other word drove a different world from the one its own transcript is
+ * replayed in - and published the inputs of one truck as the inputs of
+ * another.
+ *
+ * So this is fetched and derived in one place, and the page has no second way
+ * to get a seed.
+ */
+export async function worldSeedFor({ entry, round, nodes, fetcher = fetch } = {}) {
+  if (!entry) throw new Error('there is no entry to seed a world for');
+  const id = typeof round === 'string' ? round : toHex(round);
+  const beacon = await fetchRandomness(id, nodes, { fetcher });
+  return {
+    seedWord: seedWordForEntry(entry, beacon.randomness),
+    randomness: beacon.randomness,
+    height: beacon.height,
+    agreed: beacon.agreed,
+  };
+}
+
+/**
  * A bond provider over the little JSON an operator publishes beside a round.
  *
  * The shape is the one the browser harness already used - hex transaction, hex
@@ -168,6 +244,11 @@ export async function joinFromQuery(search, { fetcher = fetch } = {}) {
     roundIdHex: named.round,
     from,
     refused,
+    // THE NODES THE URL NAMED, handed on rather than re-parsed. The page has to
+    // ask all of them for the round's randomness - one answer is one party
+    // naming the world this player drives - and a second parse of the query is
+    // a second place for the list to be wrong.
+    nodes: named.nodes,
     chain: {
       headers: named.chainFrom.map((u) => httpProvider(u.replace(/\/+$/, '') + '/headers', { tag: sourceKey(u) })),
       bonds: [bondProvider(named.bond, { fetcher })],

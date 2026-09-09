@@ -774,6 +774,46 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // census at `census_height`, then the round's own lottery over it. A
       // round whose census is too small to hold one is refused BY NAME here,
       // not quietly served with a shorter committee.
+      // THE ROUND'S RANDOMNESS, SO A PLAYER CAN DRIVE THE WORLD THEY WILL BE
+      // REPLAYED IN.
+      //
+      // 5A's beacon is a published Bitcoin block hash: it is not a secret and
+      // there is nothing to withhold. What made it worth a door is that the
+      // player's own seed is H(randomness || pubkey || world secret || join
+      // tick), and without the first of those the page cannot compute it - so
+      // the page seeded its core with a CONSTANT while the committee replayed
+      // every entry with the real thing. Measured on a real 2-of-2 round: the
+      // page's truck stood at z 10.20 m and the committee's copy of the same
+      // truck stood at 57.80 m and 44.20 m, before either of them moved.
+      //
+      // A NODE COULD LIE HERE, and the page holds it to account the way it
+      // holds a chain provider: it asks both daemons it was given and refuses
+      // a round where they disagree. That is not proof the hash is the right
+      // block - deriving the height is letter 32's work and the page does not
+      // do it - and it is named rather than implied.
+      if (req.method === 'GET' && url.pathname === '/randomness') {
+        const id = Buffer.from(url.searchParams.get('round') || '', 'hex');
+        if (id.length !== 32) return text(res, 400, 'that is not a round id');
+        const row = round.get(id);
+        if (!row) return text(res, 404, 'this node holds no such round');
+        if (!randomnessFor)
+          return text(res, 409, 'this node reads no beacon, so it names no randomness');
+        const contract = decodeRoundContract(new Uint8Array(row.contract));
+        let given;
+        try { given = randomnessFor({ contract, roundIdBytes: new Uint8Array(id) }); }
+        catch (e) { return text(res, 409, `this node cannot name the randomness: ${e.message}`); }
+        const hash = given instanceof Uint8Array ? given : (given && given.hash);
+        if (!(hash instanceof Uint8Array) || hash.length !== 32)
+          return text(res, 409, 'that round has no randomness yet, so there is no world to drive');
+        const height = given && Number.isInteger(given.height) ? given.height : 0;
+        res.writeHead(200, {
+          'content-type': 'application/octet-stream',
+          'x-height': String(height),
+          ...CORS,
+        });
+        return res.end(Buffer.from(hash));
+      }
+
       if (req.method === 'GET' && url.pathname === '/committee') {
         const id = Buffer.from(url.searchParams.get('round') || '', 'hex');
         const role = url.searchParams.get('role') || 'game';
