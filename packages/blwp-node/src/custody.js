@@ -36,6 +36,20 @@ import { toHex } from '../../protocol/src/hash.js';
 
 export { HELD, SETTLED, CANCELLED, EXPIRED, SETTLE, CANCEL, NOTHING };
 
+/**
+ * THE ONLY STATE IN THIS FILE THAT IS NOT 23.2'S.
+ *
+ * Between telling Lightning to settle and writing down that it was told, there
+ * is a window one SIGKILL wide, and a crash inside it was measured: the log
+ * said the preimage was released and this node's store still said HELD, so the
+ * node that came back settled the same stake a second time. `ACTING` is
+ * written BEFORE the call, so what a restarted node finds is not "nothing
+ * happened" but "something may have". It is a node's own bookkeeping, not a
+ * state a stake can be in as far as the spec is concerned - a stake in it is
+ * either still held or already moved, and only Lightning knows which.
+ */
+export const ACTING = 'ACTING';
+
 /** A port that reaches no Lightning at all, which is the shipping default. */
 export const NO_LIGHTNING = null;
 
@@ -127,6 +141,10 @@ export class Custody {
         return { ok: false, why: 'every entry handed to a settlement carries the id this node stored it under' };
       const row = this.round.hold(entryId);
       if (!row) { done.push({ entryId, action, state: null, why: 'this node holds no stake for that entry' }); continue; }
+      if (row.state === ACTING) {
+        done.push({ entryId, action, state: ACTING, why: 'this node died in the middle of that act; reconcile it against Lightning first' });
+        continue;
+      }
       if (row.state !== HELD) { done.push({ entryId, action, state: row.state, why: 'that hold has already moved' }); continue; }
 
       // A CANCEL AND A SETTLE ARE BOTH ACTS, and an act needs the committee to
@@ -141,20 +159,67 @@ export class Custody {
       // survived every test because the other still held.
       const ends = holdAfter({ action, authorised: isFinal });
 
-      if (ends.state === SETTLED) await this.port.settle({ paymentHash: row.paymentHash, entryId });
-      else if (ends.state === CANCELLED) await this.port.cancel({ paymentHash: row.paymentHash, entryId });
+      // THE INTENT IS ON DISK BEFORE THE CALL IS MADE. Not after: a crash
+      // between the two would leave Lightning holding a preimage this node has
+      // no record of asking it to release, and the node that came back would
+      // ask again. Measured, before this line existed, in `custody-crash.mjs`.
+      if (ends.state === SETTLED || ends.state === CANCELLED) {
+        this.round.putHold({
+          entryId, roundId: row.roundId, paymentHash: row.paymentHash,
+          amountMsat: row.amountMsat, state: ACTING,
+          why: `about to ${ends.state === SETTLED ? 'settle' : 'cancel'}; if this node dies here, ask Lightning`,
+        });
+        if (ends.state === SETTLED) await this.port.settle({ paymentHash: row.paymentHash, entryId });
+        else await this.port.cancel({ paymentHash: row.paymentHash, entryId });
+      }
       // EXPIRED and HELD are not acts. Nothing is sent, and that is the point.
 
-      const state = ends.state === HELD ? HELD : ends.state;
       this.round.putHold({
         entryId, roundId: row.roundId, paymentHash: row.paymentHash,
-        amountMsat: row.amountMsat, state,
+        amountMsat: row.amountMsat, state: ends.state,
         why: `${why}; ${ends.why}`,
       });
+      const state = ends.state;
       done.push({ entryId, action, state, why: ends.why, final: isFinal });
     }
 
     return { ok: true, actions: done, table: decided.table };
+  }
+
+  /**
+   * ASK LIGHTNING WHAT ACTUALLY HAPPENED to every stake this node was in the
+   * middle of acting on when it stopped.
+   *
+   * This is what the port's fourth operation is for. An `ACTING` row means the
+   * call was made and the answer never came back, and the only party that
+   * knows whether the preimage went out is the node that holds it - so it is
+   * asked, and its answer is written down. An invoice still held means the act
+   * never landed and the next close will make it again; one already settled or
+   * cancelled means it did, and it will not be made twice.
+   */
+  async reconcile({ roundId }) {
+    if (!this.reaches)
+      return { ok: false, why: 'this node reaches no Lightning, so it cannot ask what happened' };
+    if (typeof this.port.look !== 'function')
+      return { ok: false, why: 'this port cannot be asked what it did, so an interrupted act cannot be resolved' };
+
+    const asked = [];
+    for (const row of this.round.holdsOf(roundId)) {
+      if (row.state !== ACTING) continue;
+      const seen = await this.port.look({ paymentHash: row.paymentHash, entryId: row.entryId });
+      const state = seen && seen.state;
+      if (![HELD, SETTLED, CANCELLED, EXPIRED].includes(state))
+        return { ok: false, why: `Lightning answered ${state} for a stake this node was acting on, which is not a state a hold can be in` };
+      this.round.putHold({
+        entryId: row.entryId, roundId: row.roundId, paymentHash: row.paymentHash,
+        amountMsat: row.amountMsat, state,
+        why: state === HELD
+          ? 'this node died before the act reached Lightning, which still holds it'
+          : `this node died mid-act; Lightning says it is ${state}`,
+      });
+      asked.push({ entryId: row.entryId, state });
+    }
+    return { ok: true, asked };
   }
 
   /** What this node believes about one stake, for an operator who asks. */

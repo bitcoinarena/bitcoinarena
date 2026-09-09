@@ -14,7 +14,7 @@ import assert from 'node:assert/strict';
 
 import { openStore } from '../src/store.js';
 import { Round } from '../src/round.js';
-import { Custody, HELD, SETTLED, CANCELLED, EXPIRED } from '../src/custody.js';
+import { Custody, HELD, SETTLED, CANCELLED, EXPIRED, ACTING } from '../src/custody.js';
 import { DELIVERED, FORFEIT, VOID } from '../../protocol/src/payout.js';
 import { entryId as entryIdOf } from '../../protocol/src/contracts.js';
 import { MIN_ENTRY_WINDOW_MS } from '../../protocol/src/constants.js';
@@ -237,4 +237,102 @@ test('the score the round asked for is the score the pool pays by', async () => 
   assert.equal(custody.stateOf(entryIdOf(placed)).state, CANCELLED);
   assert.equal(custody.stateOf(entryIdOf(cautious)).state, CANCELLED);
   assert.equal(custody.stateOf(entryIdOf(loser)).state, SETTLED);
+});
+
+// A round with a forfeited stake and nobody to hand it to is one `payout.js`
+// refuses outright, so every interrupted-act test below closes a real round:
+// the loser first, so the settle is the act that gets interrupted, and a
+// winner behind it whose cancel never happens.
+async function midAct(port) {
+  const { round, rid, custody } = seated(port);
+  const loser = entryFor(rid, 2);
+  const winner = entryFor(rid, 1);
+  for (const e of [loser, winner]) { round.enter(e); await custody.hold(e); }
+  const close = {
+    roundId: rid, minScore: 1, finalFor: () => true,
+    entries: [
+      { entryId: entryIdOf(loser), pubkey: loser.playerPubkey, outcome: FORFEIT, score: 0, stakeMsat: loser.stakeMsat },
+      { entryId: entryIdOf(winner), pubkey: winner.playerPubkey, outcome: DELIVERED, score: 9, stakeMsat: winner.stakeMsat },
+    ],
+  };
+  return { round, rid, custody, loser, winner, id: entryIdOf(loser), close };
+}
+
+test('a node that died mid-act asks Lightning rather than acting again', async () => {
+  // The window is one SIGKILL wide: Lightning has been told and this node has
+  // not written it down. `custody-crash.mjs` kills a real process inside it;
+  // what is measured here is what the two sides say afterwards.
+  const port = fakePort();
+  const { custody, id, close } = await midAct(port);
+
+  // The settle reached Lightning and the answer never came back.
+  port.settle = async ({ paymentHash }) => {
+    port.calls.push(['settle', toHex(paymentHash)]);
+    throw new Error('the node stopped here');
+  };
+  await assert.rejects(() => custody.settleRound(close));
+  assert.equal(custody.stateOf(id).state, ACTING,
+    'the intent was not on disk before the call, so a restart cannot know it was made');
+  assert.match(custody.stateOf(id).why, /ask Lightning/);
+
+  // A CLOSE THAT RUNS AGAIN WILL NOT ACT ON IT. Not until somebody has asked.
+  port.settle = async ({ paymentHash }) => { port.calls.push(['settle', toHex(paymentHash)]); };
+  const blocked = await custody.settleRound(close);
+  assert.match(blocked.actions[0].why, /reconcile it against Lightning first/);
+  assert.equal(port.calls.filter((c) => c[0] === 'settle').length, 1);
+
+  // ASKED, AND ANSWERED. Lightning holds the preimage, so the stake moved.
+  port.look = async ({ paymentHash }) => { port.calls.push(['look', toHex(paymentHash)]); return { state: SETTLED }; };
+  const asked = await custody.reconcile({ roundId: close.roundId });
+  assert.equal(asked.ok, true, asked.why);
+  assert.deepEqual(asked.asked.map((a) => a.state), [SETTLED]);
+  assert.equal(custody.stateOf(id).state, SETTLED);
+  assert.equal(port.calls.filter((c) => c[0] === 'settle').length, 1,
+    'the stake was settled a second time');
+});
+
+test('an act that never reached Lightning is made again, once', async () => {
+  const port = fakePort();
+  const { custody, id, close } = await midAct(port);
+
+  port.settle = async () => { throw new Error('the node stopped before the call left'); };
+  await assert.rejects(() => custody.settleRound(close));
+
+  // LIGHTNING STILL HOLDS IT, so the act never landed and the stake is HELD
+  // again - not stuck, and not settled on a guess.
+  port.look = async () => ({ state: HELD });
+  port.settle = async ({ paymentHash }) => { port.calls.push(['settle', toHex(paymentHash)]); };
+  await custody.reconcile({ roundId: close.roundId });
+  assert.equal(custody.stateOf(id).state, HELD);
+
+  await custody.settleRound(close);
+  assert.equal(custody.stateOf(id).state, SETTLED);
+  assert.equal(port.calls.filter((c) => c[0] === 'settle').length, 1);
+});
+
+test('a port that cannot be asked what it did leaves an interrupted act alone', async () => {
+  const port = fakePort();
+  const { custody, id, close } = await midAct(port);
+
+  port.settle = async () => { throw new Error('stopped'); };
+  await assert.rejects(() => custody.settleRound(close));
+
+  const asked = await custody.reconcile({ roundId: close.roundId });
+  assert.equal(asked.ok, false);
+  assert.match(asked.why, /cannot be asked what it did/);
+  assert.equal(custody.stateOf(id).state, ACTING, 'a guess was written down instead of an answer');
+});
+
+test('reconcile refuses an answer that is not a state a hold can be in', async () => {
+  const port = fakePort();
+  const { custody, id, close } = await midAct(port);
+
+  port.settle = async () => { throw new Error('stopped'); };
+  await assert.rejects(() => custody.settleRound(close));
+
+  port.look = async () => ({ state: 'PROBABLY FINE' });
+  const asked = await custody.reconcile({ roundId: close.roundId });
+  assert.equal(asked.ok, false);
+  assert.match(asked.why, /not a state a hold can be in/);
+  assert.equal(custody.stateOf(id).state, ACTING);
 });
