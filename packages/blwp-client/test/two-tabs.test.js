@@ -13,6 +13,7 @@
 // everything up to the renderer.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
@@ -364,4 +365,174 @@ test('two daemons whose chains disagree stop the join by name', async () => {
       return true;
     });
   } finally { await round.close(); }
+});
+
+/**
+ * THE TWELVE INTS C# ACTUALLY READS, off the real jslib, off a real driver.
+ *
+ * Everything above stops at `field.drain(24)`, and the renderer does not call
+ * that: it calls `BlwpNextGhost`, which lives in `blwp.jslib` - the one file
+ * these suites were said not to be able to load. So the 11:51 failure had a
+ * whole hop with no measurement in it, between a queue this file proved full
+ * and a `GhostField` the built player proved it constructs.
+ *
+ * `bridge.test.js` already evaluates that file - the whole thing is one
+ * `mergeInto(LibraryManager.library, {...})` call, so an object literal is
+ * what it is - and it never touched the ghost export, because the ghost export
+ * is the only one that writes through the bare `HEAP32` its harness has no
+ * name for. So this hands it one.
+ *
+ * DECODED THE WAY THE GAME DECODES IT. `GhostField.FromBridge` refuses
+ * anything but exactly `Words` back, reads eight words as `ToString("x8")` and
+ * takes x, z, heading and tick from the four after them. That is transcribed
+ * here from the C# rather than from the jslib, so an encoder and a decoder
+ * that agree with each other but not with the game do not both pass.
+ */
+test('the shipped bridge writes the driver\'s entry and pose in the twelve ints C# reads', async () => {
+  const cs = readFileSync(new URL('../../../unity-proto/Assets/Scripts/Blwp/GhostField.cs', import.meta.url), 'utf8');
+  const WORDS = Number(/public const int Words = (\d+)/.exec(cs)[1]);
+  const PER_FRAME = Number(/public const int PerFrame = (\d+)/.exec(cs)[1]);
+  assert.equal(WORDS, 12, 'the game reads a different picture size than the bridge writes');
+
+  // The jslib, evaluated: `mergeInto` keeps what it is handed, and the bare
+  // `HEAP32` the ghost export writes through is a real Int32Array here.
+  const jslib = readFileSync(new URL('../../../unity-proto/Assets/Plugins/WebGL/blwp.jslib', import.meta.url), 'utf8');
+  const heap = new Int32Array(64);
+  const Module = { HEAPU8: new Uint8Array(heap.buffer), blwpNet: null };
+  let library = null;
+  new Function('mergeInto', 'LibraryManager', 'Module', 'UTF8ToString', 'window', 'HEAP32', jslib)(
+    (_t, obj) => { library = obj; }, { library: {} }, Module, () => '',
+    { location: { search: '' } }, heap);
+
+  /** `GhostField.FromBridge`, in the words the C# uses. */
+  const fromBridge = () => {
+    if (library.BlwpNextGhost(0, WORDS) !== WORDS) return null;
+    let entry = '';
+    for (let i = 0; i < 8; i++) entry += (heap[i] >>> 0).toString(16).padStart(8, '0');
+    return { entry, x: heap[8], z: heap[9], heading: heap[10], tick: heap[11] };
+  };
+
+  const round = await standUpRound({ host: '127.0.0.1', portA: 18088, portB: 18089 });
+  const tabs = [];
+  try {
+    const named = await joinFromQuery(new URL(round.url).search);
+    for (const which of ['driver', 'watcher']) {
+      const secret = ed25519.utils.randomSecretKey();
+      const sessionPubkey = ed25519.getPublicKey(secret);
+      const player = tabIdentity({ storage: storage(), random, curve: feldmanGroup });
+      const seat = entryFor(named.round, { playerPubkey: player.pubkey, random });
+      const client = await Client.at({
+        headers: named.chain.headers, bonds: named.chain.bonds,
+        signedAdvert: fromHexHere(named.advert.signedAdvert),
+        committee: named.round.nodes,
+      }, {
+        core: { hash: (st) => core.hash(st) },
+        sign: (id) => ed25519.sign(id, secret),
+        verify, contract: named.round, roundIdGiven: fromHexHere(round.id),
+      });
+      const rid = await client.openRound(named.round);
+      const entry = { ...seat, roundId: rid, sessionPubkey };
+      const eid = await client.join(entry);
+      await client.connect();
+      client.setRound({ roundId: rid, entryId: eid, blockTicks: named.round.blockTicks | 0 });
+      tabs.push({ which, client, eid, entry });
+    }
+    const [driver, watcher] = tabs;
+
+    // The page's own hop: the jslib asks `@blwp/client` for the field and
+    // holds it on `Module.blwpNet`, which is where the ghost export looks.
+    Module.blwpNet = {
+      ghosts: watchGhosts(watcher.client, {
+        roundId: watcher.entry.roundId, entryId: watcher.eid,
+      }),
+    };
+    await Module.blwpNet.ghosts.watching;
+
+    // WHAT THE PAGE HELD, next to what C# was given. A bridge that agrees with
+    // itself proves nothing: the picture that comes out has to be the picture
+    // that went in, field for field, or a truck is drawn somewhere its
+    // transcript never said it was.
+    const handed = [];
+    const drainAsPage = Module.blwpNet.ghosts.drain;
+    Module.blwpNet.ghosts.drain = (max) => {
+      const took = drainAsPage(max);
+      for (const g of took) handed.push(g);
+      return took;
+    };
+
+    // BEFORE ANYTHING ARRIVES.
+    assert.equal(library.BlwpNextGhost(0, WORDS), 0, 'an empty field handed out a picture');
+
+    const drawn = [];
+    for (let batch = 0; batch < 8; batch++) {
+      for (let t = 0; t < 6; t++) driver.client.record([45875, 0, 0, 0, 0]);
+      await driver.client.drain();
+      await wait(120);
+      // THE FRAME, as `Update` runs it: `Draw(PerFrame)` calls the bridge up
+      // to PerFrame times and stops at the first empty answer.
+      for (let i = 0; i < PER_FRAME; i++) {
+        const picture = fromBridge();
+        if (picture == null) break;
+        drawn.push(picture);
+      }
+    }
+
+    const mine = toHex(driver.eid);
+    const his = drawn.filter((d) => d.entry === mine);
+    assert.equal(drawn.length, handed.length, 'a picture the page handed over was not decoded');
+    for (let i = 0; i < drawn.length; i++) {
+      const was = handed[i], now = drawn[i];
+      assert.equal(now.entry, toHex(was.entryId), 'the entry id changed across the bridge');
+      assert.equal(now.x, was.x | 0, 'x changed across the bridge');
+      assert.equal(now.z, was.z | 0, 'z changed across the bridge');
+      assert.equal(now.heading, was.heading | 0, 'the heading changed across the bridge');
+      assert.equal(now.tick, was.tick | 0, 'the tick changed across the bridge');
+    }
+    console.log(`  C# would have decoded ${drawn.length} picture(s), ${his.length} of the driver`);
+    assert.ok(his.length >= 8,
+      `the bridge handed C# ${his.length} pictures of the driver, not one per batch`);
+    assert.equal(drawn.length, his.length, 'the bridge handed C# a picture of somebody nobody joined as');
+    assert.ok(his[his.length - 1].tick > his[0].tick, 'the decoded pose stopped advancing');
+    assert.ok(new Set(his.map((d) => `${d.x}:${d.z}`)).size > 1,
+      'every decoded picture was the same pose');
+    // AND IT IS A PLACE, not a word that survived the trip in the wrong units:
+    // 45875 is full throttle, so a truck that drove for 48 ticks has moved,
+    // and `GhostTruck.Show` divides these by 65536 to get metres.
+    const far = Math.max(...his.map((d) => Math.abs(d.x / 65536) + Math.abs(d.z / 65536)));
+    console.log(`  the farthest decoded pose is ${far.toFixed(1)} m from the origin`);
+    assert.ok(far > 0.5, `the driver was decoded standing at ${far} m from the origin`);
+
+    // AND A BACKLOG IS HANDED OVER ONE AT A TIME, WHOLE.
+    //
+    // A page that is drawing every frame almost never holds two pictures at
+    // once, so the traffic above cannot tell a bridge that takes one from a
+    // bridge that takes two and drops one - and a dropped picture is a truck
+    // that jumps. This lets the queue fill first, which is what a page does
+    // whenever a frame is late.
+    for (let batch = 0; batch < 3; batch++) {
+      for (let t = 0; t < 6; t++) driver.client.record([45875, 0, 0, 0, 0]);
+      await driver.client.drain();
+      await wait(120);
+    }
+    const backlog = Module.blwpNet.ghosts.size;
+    assert.ok(backlog >= 3, `the field held ${backlog} pictures, so a backlog was never made`);
+
+    // A PICTURE TOO SMALL TO HOLD ONE takes nothing and writes nothing, with
+    // the queue full - the answer an empty field gives is the same either way.
+    assert.equal(library.BlwpNextGhost(0, WORDS - 1), 0, 'the bridge wrote past what it was given');
+    assert.equal(Module.blwpNet.ghosts.size, backlog,
+      'the bridge ate a picture it could not hand over');
+
+    const after = [];
+    for (let i = 0; i < PER_FRAME; i++) {
+      const picture = fromBridge();
+      if (picture == null) break;
+      after.push(picture);
+    }
+    assert.equal(after.length, backlog,
+      `the frame drew ${after.length} of the ${backlog} pictures the page was holding`);
+  } finally {
+    for (const t of tabs) { try { t.client.close(); } catch { /* gone */ } }
+    await round.close();
+  }
 });
