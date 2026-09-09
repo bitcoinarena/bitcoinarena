@@ -603,6 +603,17 @@ const TYPE_GHOST = 0x11;
  */
 const TYPE_VSS_HANDOUT = 0x12;
 
+/**
+ * ONE SEAT'S CONTRIBUTION TO THE COMMITTEE'S OWN KEY (M3.3 item 14).
+ *
+ * Its own type byte and its own tag, and NOT a VssHandout with the fields read
+ * differently. A handout is a PLAYER splitting their stake preimage to the
+ * committee; this is a SEAT splitting a secret nobody is meant to know to its
+ * peers, and the two are only shaped alike. Sharing an encoding would let one
+ * be presented as the other under an id somebody had already signed.
+ */
+const TYPE_DKG_CONTRIBUTION = 0x13;
+
 // A SEALED SHARE IS A FIXED SIZE, and it is not a choice: 32 bytes of scalar
 // under AES-GCM plus the 16-byte tag that makes a wrong key a REFUSAL rather
 // than a garbage scalar. The nonce is derived rather than carried, so it is
@@ -634,6 +645,12 @@ const TAG = {
   // signature binds to the table, and the two must never be interchangeable.
   payoutInputs: 'BLWP/v1/PayoutInputs',
   settlementRecord: 'BLWP/v1/SettlementRecord',
+  // One seat's deal in a committee's key generation, and the id of the epoch
+  // those deals belong to. Separate tags: a contribution binds to one epoch,
+  // and an epoch is a set of seats - neither may be produced by hashing the
+  // other.
+  dkgContribution: 'BLWP/v1/DkgContribution',
+  dkgEpoch: 'BLWP/v1/DkgEpoch',
   feeClaim: 'BLWP/v1/FeeClaim',
   serviceRecord: 'BLWP/v1/ServiceRecord',
   // The record and the minimum a claim is measured against, bound as one hash

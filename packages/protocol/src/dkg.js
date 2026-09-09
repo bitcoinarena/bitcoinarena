@@ -1,0 +1,343 @@
+// THE COMMITTEE MAKES ITS OWN KEY, AND NOBODY EVER HOLDS IT.
+//
+// M3.3 item 14. Item 10 closed FROST against RFC 9591's own vectors and said
+// what it had not done: the group secret came from a TRUSTED DEALER. Item 17
+// put the signing on sockets - five daemons, one share each, no secret on the
+// wire - which distributes the SIGNING and not the KEY. Measured before any of
+// this was written (`dkg-dealer.test.js`): the dealing process held 7 of 7
+// shares, five of them interpolate to the group secret, and `trustedDealerSplit`
+// had zero callers under any `src/` - so the dealer was not code in this
+// repository at all, it was whatever process started the seven daemons.
+//
+// PEDERSEN, AND IT IS n PARALLEL FELDMAN DEALS. Every seat picks a secret,
+// splits it to all seats with `splitSecret`, publishes the polynomial's
+// commitments and seals one share to each seat's key. Every seat then adds up
+// the shares it was dealt: that sum is its share of a group secret equal to the
+// sum of everybody's, which no seat and no observer ever computes. The group
+// key is the sum of the constant-term commitments, and every seat works it out
+// from public data alone.
+//
+// WHAT IS REUSED AND WHY. `splitSecret` already cuts a polynomial and publishes
+// Feldman commitments; `sealShare`/`openShare` already put one share in an
+// envelope only one seat's key opens; `shareOpensTo` is already the check that
+// a share lies on the published polynomial - the whole of letter 29. None of
+// that is rewritten here. What is new is the ROUND: who deals to whom, what a
+// seat must have before it may combine, and the refusals.
+//
+// THE CURVE IS INJECTED, like everywhere else in this package: nothing here
+// vendors an implementation of the thing that pins money.
+import { Writer, Reader } from './encode.js';
+import { TAG, TYPE_DKG_CONTRIBUTION, PROTOCOL_VERSION } from './constants.js';
+import { taggedHash, toHex } from './hash.js';
+import { shareOpensTo, splitSecret, FIELD, SHARES_NEEDED } from './shares.js';
+import { openShare, sealShare, VSS_SEALED_BYTES } from './seal.js';
+import { COMMITMENT_BYTES } from './handout.js';
+
+const mod = (v) => ((v % FIELD) + FIELD) % FIELD;
+const same = (a, b) => a instanceof Uint8Array && b instanceof Uint8Array
+  && a.length === b.length && a.every((v, i) => v === b[i]);
+
+/**
+ * WHICH COMMITTEE THIS KEY BELONGS TO, AND IT IS THE SEATS THEMSELVES.
+ *
+ * the owner's rule for the lifetime: a DKG runs once per committee EPOCH, not per
+ * round. The pool is one P2TR output across rounds (item 13), so a per-round
+ * key would mint a new pool address every round and force the funds to move.
+ * When sortition seats a different committee, that epoch runs a new DKG; the
+ * same seats keep the same group key and the same address.
+ *
+ * So the epoch is named by the SET OF SEATS and by nothing else. Sorted, so
+ * two nodes holding one committee in two orders compute one id; hashed with
+ * its own tag, so an epoch id can never be produced by hashing something else.
+ * Nothing is added to any contract: every seat already knows who is seated.
+ */
+export function epochId(seats) {
+  if (!Array.isArray(seats) || !seats.length)
+    throw new Error('an epoch is a committee, and that is nobody');
+  const keys = seats.map((k) => {
+    if (!(k instanceof Uint8Array) || k.length !== 32)
+      throw new Error('a seat is a 32-byte key');
+    return k;
+  }).sort((a, b) => (toHex(a) < toHex(b) ? -1 : toHex(a) > toHex(b) ? 1 : 0));
+  for (let i = 1; i < keys.length; i++)
+    if (same(keys[i], keys[i - 1]))
+      throw new Error('two seats of that committee are one key');
+
+  const w = new Writer();
+  w.u16(keys.length);
+  for (const k of keys) w.bytes32(k);
+  return taggedHash(TAG.dkgEpoch, w.finish());
+}
+
+export function encodeContribution(c) {
+  const w = new Writer();
+  w.u8(TYPE_DKG_CONTRIBUTION);
+  w.u16(PROTOCOL_VERSION);
+  // WHICH COMMITTEE, so a contribution dealt to one set of seats cannot be
+  // replayed into another - the seats are what the epoch id is made of, so a
+  // contribution naming an epoch is a contribution naming its recipients.
+  w.bytes32(c.epochId);
+  // WHO DEALT IT. Not decoration: every seat must contribute exactly once, and
+  // a combine that counted one seat twice would let that seat choose the group
+  // key by dealing again after seeing everybody else's commitments.
+  w.bytes32(c.from);
+  w.bytes32(c.ephemeralPubkey);
+  w.u16(c.needed);
+  w.vec(c.commitments, (p, ww) => ww.bytes(p, COMMITMENT_BYTES));
+  w.vec(c.shares, (s, ww) => {
+    ww.u16(s.seat);
+    ww.bytes32(s.seatPubkey);
+    ww.bytes(s.sealed, VSS_SEALED_BYTES);
+  }, { sortedBy: (a, b) => a.seat - b.seat });
+  return w.finish();
+}
+
+export function decodeContribution(bytes) {
+  const r = new Reader(bytes);
+  if (r.u8() !== TYPE_DKG_CONTRIBUTION) throw new Error('not a DkgContribution');
+  const version = r.u16();
+  if (version !== PROTOCOL_VERSION) throw new Error('protocol version ' + version);
+  const c = {
+    epochId: r.bytes32(),
+    from: r.bytes32(),
+    ephemeralPubkey: r.bytes32(),
+    needed: r.u16(),
+    commitments: r.vec((rr) => rr.bytes(COMMITMENT_BYTES)),
+    shares: r.vec((rr) => ({
+      seat: rr.u16(),
+      seatPubkey: rr.bytes32(),
+      sealed: rr.bytes(VSS_SEALED_BYTES),
+    })),
+  };
+  r.end();
+  return c;
+}
+
+export const contributionId = (c) => taggedHash(TAG.dkgContribution, encodeContribution(c));
+
+/**
+ * ONE SEAT'S DEAL: a secret nobody is meant to know, split to the committee.
+ *
+ * The secret is this seat's own contribution to the group secret and is
+ * forgotten the moment the shares are sealed - it is never stored, never sent,
+ * and never needed again. What survives is one share per seat and the
+ * polynomial's commitments.
+ *
+ * SEAT NUMBERS ARE 1..n IN THE ORDER THE COMMITTEE WAS GIVEN, the same rule
+ * `dealHandout` follows and for the same reason: they are the x of the
+ * polynomial, so zero is the secret itself, and the opener must use the numbers
+ * the dealer used.
+ */
+export async function dealContribution({ secret, seats, epochId: id, from,
+  ephemeralSecret, ephemeralPubkey, coefficients, needed = SHARES_NEEDED, curve } = {}) {
+  if (!Array.isArray(seats) || seats.length < needed)
+    return { ok: false, why: `a threshold of ${needed} cannot be dealt to ${seats ? seats.length : 0} seats` };
+  if (!curve || typeof curve.pointFromScalar !== 'function')
+    return { ok: false, why: 'dealing needs a curve, and none was injected' };
+  if (!(id instanceof Uint8Array) || id.length !== 32)
+    return { ok: false, why: 'a contribution names the epoch it belongs to' };
+  if (!(from instanceof Uint8Array) || from.length !== 32)
+    return { ok: false, why: 'a contribution names the seat that dealt it' };
+  if (!seats.some((k) => same(k, from)))
+    return { ok: false, why: 'that seat is not on the committee it is dealing to' };
+
+  let split;
+  try { split = splitSecret(secret, { seats: seats.length, needed, coefficients, curve }); }
+  catch (e) { return { ok: false, why: e.message }; }
+
+  const shares = [];
+  for (const share of split.shares) {
+    const seatPubkey = seats[share.seat - 1];
+    shares.push({
+      seat: share.seat,
+      seatPubkey,
+      sealed: await sealShare({
+        value: share.value, seat: share.seat, seatPubkey, ephemeralSecret, curve,
+      }),
+    });
+  }
+  return {
+    ok: true,
+    contribution: { epochId: id, from, ephemeralPubkey, needed, commitments: split.commitments, shares },
+  };
+}
+
+/**
+ * IS THIS CONTRIBUTION ONE A SEAT CAN ACT ON?
+ *
+ * The same family of shape checks `acceptHandout` makes, and they are not
+ * ceremony: a threshold that disagrees with the number of commitments, two
+ * shares for one seat, or a seat numbered zero each describe a deal that would
+ * pass a per-share check and still be unusable.
+ */
+export function acceptContribution(c) {
+  if (!c || !Array.isArray(c.shares) || c.shares.length === 0)
+    return { ok: false, why: 'a contribution of no shares is not a contribution' };
+  if (!Array.isArray(c.commitments) || c.commitments.length === 0)
+    return { ok: false, why: 'a contribution that publishes no polynomial cannot be checked' };
+  if (c.commitments.length !== c.needed)
+    return {
+      ok: false,
+      why: `a threshold of ${c.needed} is a polynomial of ${c.needed} coefficients, `
+        + `and this contribution publishes ${c.commitments.length}`,
+    };
+  if (c.shares.length < c.needed)
+    return { ok: false, why: `${c.shares.length} shares cannot carry a threshold of ${c.needed}` };
+
+  const seats = new Set();
+  const keys = new Set();
+  for (const s of c.shares) {
+    if (!Number.isInteger(s.seat) || s.seat < 1)
+      return { ok: false, why: 'a share of seat zero is a share of the secret itself' };
+    if (seats.has(s.seat)) return { ok: false, why: `two shares for seat ${s.seat} are one share` };
+    seats.add(s.seat);
+    if (!(s.seatPubkey instanceof Uint8Array) || s.seatPubkey.length !== 32)
+      return { ok: false, why: `seat ${s.seat} is not addressed to a key` };
+    if (!(s.sealed instanceof Uint8Array) || s.sealed.length !== VSS_SEALED_BYTES)
+      return { ok: false, why: `seat ${s.seat}'s envelope is not a sealed share` };
+    if (keys.has(toHex(s.seatPubkey)))
+      return { ok: false, why: 'two seats of that contribution are one key' };
+    keys.add(toHex(s.seatPubkey));
+  }
+  // AND THE DEALER IS ONE OF THE RECIPIENTS. A seat that dealt to everybody
+  // but itself would hold no share of its own contribution and could never
+  // sign with the key it helped make.
+  if (!keys.has(toHex(c.from)))
+    return { ok: false, why: 'that seat dealt to a committee it is not on' };
+
+  return { ok: true, why: `${c.shares.length} sealed shares, threshold ${c.needed}` };
+}
+
+/**
+ * OPEN THE ONE ENVELOPE THIS SEAT WAS DEALT, AND CHECK IT AGAINST THE
+ * POLYNOMIAL THE DEALER PUBLISHED.
+ *
+ * A CROOKED DEALER IS CAUGHT AT THE DEAL, which is the whole point of Feldman
+ * being here rather than a plain Shamir split: a seat that cuts two
+ * polynomials hands somebody a share that does not lie on the commitments it
+ * published, and THAT seat refuses it now - not at reconstruction months
+ * later, when there is nothing left to do about it.
+ */
+export async function openMyContribution(c, { pubkey, secret, curve } = {}) {
+  if (!(pubkey instanceof Uint8Array) || pubkey.length !== 32)
+    return { ok: false, why: 'a seat opens a share with its own 32-byte key, and that is not one' };
+  const mine = c.shares.find((s) => toHex(s.seatPubkey) === toHex(pubkey));
+  if (!mine) return { ok: false, why: 'this node is not one of the seats that contribution was dealt to' };
+
+  const opened = await openShare({
+    sealed: mine.sealed, seat: mine.seat, secret, ephemeralPubkey: c.ephemeralPubkey, curve,
+  });
+  if (!opened.ok) return opened;
+
+  const consistent = shareOpensTo(opened.share, { commitments: c.commitments, curve });
+  if (!consistent.ok)
+    return { ok: false, why: `${consistent.why} - that seat dealt a crooked polynomial` };
+  return { ok: true, share: opened.share, seat: mine.seat };
+}
+
+/**
+ * THE GROUP KEY, FROM PUBLIC DATA ALONE.
+ *
+ * The sum of every contribution's constant-term commitment. Every seat
+ * computes it from the commitments it was shown, so all of them arrive at the
+ * same 33 bytes without anybody being told what it is - and nobody, at any
+ * point, holds the secret behind it.
+ */
+export function groupKeyOf(contributions, curve) {
+  if (!Array.isArray(contributions) || !contributions.length)
+    return { ok: false, why: 'no contributions, so there is no key to compute' };
+  if (!curve || typeof curve.combinePoints !== 'function')
+    return { ok: false, why: 'summing commitments needs a curve, and none was injected' };
+  const terms = contributions.map((c) => ({ point: c.commitments[0], coefficient: 1n }));
+  const summed = curve.combinePoints(terms);
+
+  // AND ITS PARITY, WHICH IS WHERE A DEALERLESS KEY DIFFERS FROM A DEALT ONE.
+  //
+  // `signShare340` refuses an odd-y group key by name - "normalise the secret
+  // when it is dealt, not here" - and with a dealer that is what happened:
+  // `evenGroupSecret` negated the SECRET before splitting it. Nobody holds the
+  // secret here, so nobody can negate it.
+  //
+  // What every seat CAN do is negate its own share. The sum of -x_i is
+  // -(sum x_i), so negated shares are shares of FIELD - s, whose point is the
+  // even-y one - and each seat decides it alone, from the parity of a key it
+  // computed from public data. It is the same move `poolShare` already makes
+  // for the taproot tweak, and it needs no round and no message.
+  const even = summed[0] === 0x02;
+  const groupPublicKey = even
+    ? summed
+    : Uint8Array.from([0x02, ...summed.subarray(1)]);
+  return { ok: true, groupPublicKey, negated: !even, summed };
+}
+
+/**
+ * THIS SEAT'S SHARE OF THE GROUP SECRET: the sum of what it was dealt.
+ *
+ * EVERY SEAT MUST HAVE CONTRIBUTED, and it is checked rather than assumed. A
+ * combine over a subset is a key a subset chose: whoever was left out is a
+ * party whose randomness is not in the secret, and - worse - a seat that could
+ * see everybody else's commitments before dealing its own could steer the
+ * group key. So the set of contributions must be exactly the committee, once
+ * each, or this refuses by name.
+ *
+ * The seat number must also agree across the whole set: seat 3 in one deal and
+ * seat 5 in another are two different x, and the sum would lie on no
+ * polynomial at all.
+ */
+export function combineShares({ opened, seats, contributions, curve }) {
+  if (!Array.isArray(opened) || !opened.length)
+    return { ok: false, why: 'this seat opened nothing, so it has no share' };
+  if (!Array.isArray(seats) || !seats.length)
+    return { ok: false, why: 'a combine needs the committee it is over' };
+  if (!Array.isArray(contributions) || contributions.length !== seats.length)
+    return {
+      ok: false,
+      why: `${contributions ? contributions.length : 0} of the committee's ${seats.length} `
+        + 'seats contributed, and a key a subset chose is a key that subset can steer',
+    };
+
+  const dealers = new Set(contributions.map((c) => toHex(c.from)));
+  if (dealers.size !== contributions.length)
+    return { ok: false, why: 'one seat contributed twice, so it dealt after seeing the others' };
+  for (const k of seats)
+    if (!dealers.has(toHex(k)))
+      return { ok: false, why: `seat ${toHex(k).slice(0, 16)} contributed nothing` };
+
+  if (opened.length !== contributions.length)
+    return {
+      ok: false,
+      why: `this seat opened ${opened.length} of ${contributions.length} contributions, `
+        + 'so its share would be a sum of some of them',
+    };
+  const at = new Set(opened.map((o) => o.seat));
+  if (at.size !== 1)
+    return { ok: false, why: 'this seat was dealt different seat numbers by different dealers' };
+
+  // `openShare` hands back `{ seat, value }` and the value is the scalar, so
+  // the sum is over `share.value` and not over the object.
+  let sum = 0n;
+  for (const o of opened) {
+    const v = o.share && o.share.value;
+    if (typeof v !== 'bigint')
+      return { ok: false, why: 'one of those is not an opened share' };
+    sum = mod(sum + v);
+  }
+  if (sum === 0n)
+    return { ok: false, why: 'this seat\'s share summed to zero, which is no share at all' };
+
+  // NORMALISED HERE, so a seat never holds a share that cannot sign. A curve
+  // is optional only because the epoch and the wire are measured without one;
+  // a caller that means to sign passes it, and `groupKeyOf` says which way.
+  if (curve) {
+    const key = groupKeyOf(contributions, curve);
+    if (!key.ok) return key;
+    return {
+      ok: true,
+      share: key.negated ? mod(FIELD - sum) : sum,
+      seat: [...at][0],
+      groupPublicKey: key.groupPublicKey,
+      negated: key.negated,
+    };
+  }
+  return { ok: true, share: sum, seat: [...at][0] };
+}
