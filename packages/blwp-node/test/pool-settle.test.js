@@ -1,0 +1,396 @@
+// A CLOSED ROUND PAYS ITS WINNER WITHOUT AN OPERATOR IN THE MIDDLE.
+//
+// M3.3 item 18. `pool-committee.test.js` proved that five daemons on five
+// sockets can sign one spend of the pool - and NOTHING IN THE DAEMON EVER
+// ASKED THEM TO. `payWithCommittee` took the output to spend as an argument
+// and had zero callers in `src/`: a close signed the table, agreed what was
+// owed, wrote PAYOUT_QUEUED and stopped, because no code in the daemon could
+// say which of the pool's outputs to spend. The winner was paid by a test
+// handing the daemon an outpoint.
+//
+// Two halves closed it. `pool-watch.js` asks the chain (that was 80cc813), and
+// `Payouts.settleQueued` is the caller: it checks this node is the round's
+// asker, asks its own seat what the round owes, asks the watch for the one
+// confirmed output that covers it, and runs the signing round.
+//
+// AND EXACTLY ONE SEAT ASKS. Every seat closes the round, so seven askers
+// would run seven signing rounds over one output - seven DIFFERENT
+// transactions, because FROST aggregates over the nonces that were committed,
+// and each seat holds one live nonce pair per round. `askerFor` picks one out
+// of the round id over the seated keys: no message, no election, no clock.
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { randomBytes } from 'node:crypto';
+import { schnorr } from '@noble/curves/secp256k1.js';
+import { ed25519 } from '@noble/curves/ed25519.js';
+
+import { openStore } from '../src/store.js';
+import { serve } from '../src/server.js';
+import { askerFor, PAYOUT_QUEUED, PAID } from '../src/payout.js';
+import { PoolSigning } from '../src/pool-signing.js';
+import { txidToRpc } from '../src/pool-watch.js';
+import { trustedDealerSplit } from '../../protocol/src/frost.js';
+import { evenGroupSecret } from '../../protocol/src/frost-bip340.js';
+import { poolOutput } from '../../protocol/src/pool.js';
+import { payToKey } from '../../protocol/src/payout-spend.js';
+import { encodeRoundContract, encodeEntryContract, roundId, entryId as entryIdOf } from '../../protocol/src/contracts.js';
+import { encodePlayerResult, resultId, joinSignedResult } from '../../protocol/src/result.js';
+import { DELIVERED, FORFEIT } from '../../protocol/src/payout.js';
+import { scalarFrom32, FIELD, SHARES_NEEDED, SHARES_TOTAL } from '../../protocol/src/shares.js';
+import { MIN_ENTRY_WINDOW_MS } from '../../protocol/src/constants.js';
+import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
+import { feldmanGroup, tweakPoint } from '../src/curve.js';
+import { assumeSeated } from './seating.js';
+import { toHex } from '../../protocol/src/hash.js';
+import { parseTransaction } from '../../protocol/src/tx.js';
+
+const rand = (n) => new Uint8Array(randomBytes(n));
+const b32 = (n) => new Uint8Array(32).fill(n);
+const curve = { ...feldmanGroup, tweakPoint };
+const NOW = 1788700000000;
+const POOL_SATS = 200000n;
+const FUNDED = { funded: () => true };
+const post = (port, path, body) => fetch(`http://127.0.0.1:${port}${path}`, { method: 'POST', body });
+
+const contractFor = (nodes) => ({
+  networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations: 1,
+  gameVerifySlots: SHARES_TOTAL, settlementSlots: SHARES_TOTAL, simCoreHash: b32(1),
+  committeeTimeMs: BigInt(NOW), randomnessRule: 'bitcoin-block-hash',
+  startTimeMs: BigInt(NOW) + MIN_ENTRY_WINDOW_MS,
+  entryCloseMs: BigInt(NOW) + MIN_ENTRY_WINDOW_MS + 200000n,
+  objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20,
+  slashRemainder: 'BURN', donationSetId: b32(0xd0), censusHeight: 900000,
+  censusRoot: b32(2), stakeMsat: 1000000n, bondMinSats: 50000n, blockTicks: 9000,
+  exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
+  timeFloor: 30, timeCeil: 150, minScore: 1, rankNumerator: 3, rankDenominator: 4,
+  nodes,
+});
+
+const player = () => { const s = rand(32); return { secret: s, pubkey: schnorr.getPublicKey(s) }; };
+
+function dealThePool() {
+  let secret;
+  do { secret = scalarFrom32(rand(32)); } while (secret === 0n || secret >= FIELD);
+  const even = evenGroupSecret(secret, curve);
+  return trustedDealerSplit({
+    secret: even.secret, max: SHARES_TOTAL, min: SHARES_NEEDED,
+    coefficients: Array.from({ length: SHARES_NEEDED - 1 }, () => scalarFrom32(rand(32))),
+    curve,
+  });
+}
+
+/**
+ * A BITCOIND THAT HOLDS WHAT IT IS TOLD TO HOLD.
+ *
+ * `scantxoutset` and `gettxout` in bitcoind's own shapes, taken from
+ * `pool-watch.js`'s recorded ones. `held` is a list of `{ txid, vout, sats,
+ * confirmations }`; the script is always the pool's, because an output paying
+ * anything else is `pool-watch.js`'s own test and not this file's.
+ */
+function chainHolding(held, script) {
+  const calls = [];
+  return {
+    calls,
+    call: async (method, params) => {
+      calls.push(method);
+      if (method === 'scantxoutset') return {
+        success: true, height: 200,
+        unspents: held.map((u) => ({
+          txid: txidToRpc(u.txid), vout: u.vout,
+          amount: Number(u.sats) / 1e8,
+          confirmations: u.confirmations === undefined ? 6 : u.confirmations,
+          scriptPubKey: toHex(script),
+        })),
+      };
+      if (method === 'gettxout') {
+        const want = held.find((u) => txidToRpc(u.txid) === params[0] && u.vout === params[1]);
+        if (!want) return null;
+        return {
+          confirmations: want.confirmations === undefined ? 6 : want.confirmations,
+          value: Number(want.sats) / 1e8, scriptPubKey: { hex: toHex(script) },
+        };
+      }
+      throw new Error(`no fixture for ${method}`);
+    },
+  };
+}
+
+/**
+ * Seven daemons, one round, one queued payout each, one share each - and a
+ * chain each of them can ask about the pool.
+ */
+async function committee({ held = null, chain = null } = {}) {
+  const dealt = dealThePool();
+  const pool = { groupPublicKey: dealt.groupPublicKey };
+  const out = poolOutput({ groupPublicKey: dealt.groupPublicKey, curve });
+  assert.equal(out.ok, true, out.why);
+
+  const holding = chainHolding(
+    held === null ? [{ txid: b32(0xab), vout: 0, sats: POOL_SATS }] : held, out.script);
+
+  const nodes = [];
+  for (let i = 0; i < SHARES_TOTAL; i++) {
+    nodes.push(await serve(openStore(':memory:'), {
+      port: 0, ...FUNDED, now: () => NOW,
+      poolKey: pool, poolCurve: curve, poolSeat: dealt.shares[i],
+      poolCall: holding.call,
+      ...(chain ? { chainSpend: chain } : {}),
+    }));
+  }
+  const contract = contractFor(nodes.map((n) => n.round.pubkey));
+  const rid = roundId(contract);
+
+  const winner = player();
+  const loser = player();
+  const session = ed25519.utils.randomSecretKey();
+  const entries = [[winner, DELIVERED, 9], [loser, FORFEIT, 0]].map(([p, outcome, score]) => ({
+    contract: {
+      roundId: rid, playerPubkey: p.pubkey, sessionPubkey: ed25519.getPublicKey(session),
+      stakeCommitment: b32(7), stakeMsat: contract.stakeMsat, feeMsat: 1000n,
+      donationMsat: 0n, joinTick: 0, worldSecret: b32(0x5e), vssSharesRef: new Uint8Array(32),
+    },
+    outcome, score, player: p,
+  }));
+
+  for (const n of nodes) {
+    assert.equal((await post(n.port, '/round', encodeRoundContract(contract))).status, 201);
+    assumeSeated(n.round, rid, contract.nodes);
+    for (const e of entries) {
+      assert.equal((await post(n.port, '/entry', encodeEntryContract(e.contract))).status, 201);
+      const eid = entryIdOf(e.contract);
+      const result = {
+        roundId: rid, playerPubkey: e.player.pubkey, outcome: e.outcome, score: e.score,
+        transcriptHash: b32(0x11), simCoreHash: contract.simCoreHash, nodePubkey: n.round.pubkey,
+      };
+      const id = resultId(result);
+      n.round.putResult(rid, eid, n.round.pubkey, id,
+        joinSignedResult(encodePlayerResult(result), schnorr.sign(id, n.round.identity.secret)));
+    }
+  }
+
+  const entriesOf = (n) => new PoolSigning(n.round, {}).entriesFor(rid).entries;
+  for (const n of nodes)
+    n.payouts.sign({ roundId: rid, entries: entriesOf(n), minScore: contract.minScore });
+  for (const n of nodes) {
+    n.payouts.peers = nodes.filter((o) => o !== n).map((o) => `http://127.0.0.1:${o.port}`);
+    await n.payouts.gather({ roundId: rid });
+    const queued = n.payouts.queue({
+      roundId: rid, entries: entriesOf(n), minScore: contract.minScore, contract,
+    });
+    assert.equal(queued.ok, true, queued.why);
+    assert.equal(queued.state, PAYOUT_QUEUED);
+  }
+
+  return { nodes, dealt, pool, contract, rid, out, winner, loser, holding,
+    close: () => Promise.all(nodes.map((n) => n.close())) };
+}
+
+/**
+ * THE RULE FIRST, on its own, because it decides whether the rest of this file
+ * is describing one spend or seven.
+ */
+test('every seat works out the same asker, and only that one asks', () => {
+  const seats = Array.from({ length: SHARES_TOTAL }, (_, i) => b32(i + 1));
+
+  // The same round always names the same seat, however many times it is asked.
+  const rid = new Uint8Array([0, 0, 0, 9, ...new Uint8Array(28)]);
+  const first = askerFor(rid, seats);
+  assert.equal(first.ok, true, first.why);
+  assert.equal(first.of, SHARES_TOTAL);
+  assert.deepEqual(askerFor(rid, seats).asker, first.asker);
+  assert.equal(first.at, 9 % SHARES_TOTAL);
+
+  // AND IT MOVES WITH THE ROUND. A committee that always asked through its
+  // first seat would be one node's committee: the load and the exposure both
+  // belong to whoever the round names.
+  const asked = new Set();
+  for (let i = 0; i < 200; i++) {
+    const r = new Uint8Array(32);
+    r.set([(i >> 24) & 255, (i >> 16) & 255, (i >> 8) & 255, i & 255]);
+    asked.add(askerFor(r, seats).at);
+  }
+  assert.equal(asked.size, SHARES_TOTAL, `200 rounds only ever asked ${asked.size} of the seats`);
+  console.log(`  200 rounds asked all ${asked.size} seats; one round always names the same one`);
+
+  // A TOP BIT SET IS NOT A NEGATIVE INDEX. `<<` in JavaScript makes a signed
+  // 32-bit number, so a round id starting 0xff would have picked seats[-x] and
+  // handed every such round to nobody at all.
+  const high = new Uint8Array(32); high.set([0xff, 0xff, 0xff, 0xfe]);
+  const it = askerFor(high, seats);
+  assert.equal(it.ok, true, it.why);
+  assert.ok(it.at >= 0 && it.at < SHARES_TOTAL, `a round id of 0xfffffffe picked seat ${it.at}`);
+
+  assert.equal(askerFor(b32(1), []).ok, false);
+  assert.equal(askerFor(new Uint8Array(4), seats).ok, false);
+});
+
+/**
+ * THE NUMBER THAT CLOSES ITEM 18: a queued payout becomes a transaction with
+ * nobody naming an outpoint.
+ */
+test('the round\'s own asker finds the pool and pays the winner', async () => {
+  const sent = [];
+  const chain = { send: async (raw) => { sent.push(raw); return { ok: true, txid: b32(0xcd) }; } };
+  const c = await committee({ chain });
+  try {
+    const seats = c.nodes[0].round.seats(c.rid);
+    const who = askerFor(c.rid, seats);
+    const asker = c.nodes.find((n) => toHex(n.round.pubkey) === toHex(who.asker));
+    assert.ok(asker, 'the round named a seat that is not on this committee');
+    console.log(`  the round names seat ${who.at + 1} of ${who.of}`);
+
+    // NOBODY NAMES AN OUTPOINT. That is the whole of the letter: the only
+    // arguments are the round and the things this node already holds.
+    const paid = await asker.payouts.settleQueued({
+      roundId: c.rid, contract: c.contract, signing: asker.signing, watch: asker.poolWatch,
+    });
+    assert.equal(paid.ok, true, `${paid.why} ${JSON.stringify(paid.refused || '')}`);
+    assert.equal(paid.state, PAID);
+    assert.equal(paid.signed, SHARES_NEEDED);
+    assert.equal(sent.length, 1, `the committee sent ${sent.length} transactions`);
+    assert.ok(c.holding.calls.includes('scantxoutset'), 'the asker never asked the chain');
+
+    // AND IT PAYS THE WINNER, checked against the key rather than against the
+    // table this node wrote.
+    const tx = parseTransaction(sent[0]);
+    const toWinner = tx.outputs.filter((o) => toHex(o.script) === toHex(payToKey(c.winner.pubkey)));
+    assert.equal(toWinner.length, 1, 'the winner has no output in the transaction');
+    assert.ok(toWinner[0].value > 0n);
+    const toLoser = tx.outputs.filter((o) => toHex(o.script) === toHex(payToKey(c.loser.pubkey)));
+    assert.equal(toLoser.length, 0, 'a forfeited run was paid');
+    console.log(`  ${toWinner[0].value} sats to the winner, out of a ${POOL_SATS} sat pool`);
+
+    assert.equal(asker.round.payout(c.rid).state, PAID);
+  } finally { await c.close(); }
+});
+
+/**
+ * AND THE SIX OTHERS DO NOT. Six askers over one output is six transactions
+ * spending one input, and five of them are double-spends.
+ */
+test('the other six seats refuse to ask, by name', async () => {
+  const sent = [];
+  const chain = { send: async (raw) => { sent.push(raw); return { ok: true, txid: b32(0xcd) }; } };
+  const c = await committee({ chain });
+  try {
+    const who = askerFor(c.rid, c.nodes[0].round.seats(c.rid));
+    let waiting = 0;
+    for (const n of c.nodes) {
+      if (toHex(n.round.pubkey) === toHex(who.asker)) continue;
+      const got = await n.payouts.settleQueued({
+        roundId: c.rid, contract: c.contract, signing: n.signing, watch: n.poolWatch,
+      });
+      assert.equal(got.ok, false);
+      assert.equal(got.waiting, true);
+      assert.match(got.why, /asks for this round/);
+      assert.equal(n.round.payout(c.rid).state, PAYOUT_QUEUED, 'a waiting seat moved its row');
+      waiting++;
+    }
+    assert.equal(waiting, SHARES_TOTAL - 1);
+    assert.equal(sent.length, 0, 'a seat that is not the asker reached the chain');
+    console.log(`  ${waiting} seats waited, 0 transactions sent`);
+  } finally { await c.close(); }
+});
+
+/**
+ * WHAT THE POOL HAS TO LOOK LIKE, and both refusals are `pool-watch.js`'s own
+ * rule reaching the daemon: zero outputs is a refusal by name and several is a
+ * refusal by name, because choosing between them is an operator's decision
+ * wearing arithmetic.
+ */
+test('an empty pool and a pool with a choice both refuse, and the row stays queued', async () => {
+  const chain = { send: async () => { throw new Error('it should not have got this far'); } };
+
+  const empty = await committee({ chain, held: [] });
+  try {
+    const who = askerFor(empty.rid, empty.nodes[0].round.seats(empty.rid));
+    const asker = empty.nodes.find((n) => toHex(n.round.pubkey) === toHex(who.asker));
+    const got = await asker.payouts.settleQueued({
+      roundId: empty.rid, contract: empty.contract, signing: asker.signing, watch: asker.poolWatch,
+    });
+    assert.equal(got.ok, false);
+    assert.match(got.why, /none of them covers/);
+    assert.equal(asker.round.payout(empty.rid).state, PAYOUT_QUEUED);
+    console.log(`  empty pool: ${got.why}`);
+  } finally { await empty.close(); }
+
+  const two = await committee({ chain, held: [
+    { txid: b32(0xab), vout: 0, sats: POOL_SATS },
+    { txid: b32(0xac), vout: 1, sats: POOL_SATS },
+  ] });
+  try {
+    const who = askerFor(two.rid, two.nodes[0].round.seats(two.rid));
+    const asker = two.nodes.find((n) => toHex(n.round.pubkey) === toHex(who.asker));
+    const got = await asker.payouts.settleQueued({
+      roundId: two.rid, contract: two.contract, signing: asker.signing, watch: asker.poolWatch,
+    });
+    assert.equal(got.ok, false);
+    assert.match(got.why, /name the one to spend/);
+    assert.equal(asker.round.payout(two.rid).state, PAYOUT_QUEUED);
+    console.log(`  two covering outputs: ${got.why}`);
+  } finally { await two.close(); }
+});
+
+/**
+ * A POOL OUTPUT TOO SHALLOW TO SPEND, and the sentence is not the empty pool's.
+ *
+ * WHAT THIS IS NOT is a funding transaction still in a mempool, which is what
+ * this test claimed until a real regtest disproved it: `scantxoutset` scans the
+ * UTXO SET, so an unconfirmed pool is not in the answer at all and correctly
+ * reads as a pool holding nothing. This is an output that IS in the set and
+ * has fewer confirmations than the caller asked for.
+ */
+test('an output too shallow for the depth asked for is refused by its own name', async () => {
+  const chain = { send: async () => { throw new Error('it should not have got this far'); } };
+  const c = await committee({ chain, held: [
+    { txid: b32(0xab), vout: 0, sats: POOL_SATS, confirmations: 3 },
+  ] });
+  try {
+    const who = askerFor(c.rid, c.nodes[0].round.seats(c.rid));
+    const asker = c.nodes.find((n) => toHex(n.round.pubkey) === toHex(who.asker));
+    const got = await asker.payouts.settleQueued({
+      roundId: c.rid, contract: c.contract, signing: asker.signing, watch: asker.poolWatch,
+      minConfirmations: 6,
+    });
+    assert.equal(got.ok, false);
+    assert.match(got.why, /fewer than 6 confirmation\(s\)/);
+    assert.equal(got.shallow, 1);
+    assert.equal(got.confirmed, 0);
+    assert.equal(asker.round.payout(c.rid).state, PAYOUT_QUEUED);
+    console.log(`  three deep against six: ${got.why}`);
+  } finally { await c.close(); }
+});
+
+/**
+ * AND A NODE THAT WAS DOWN WHEN ITS ROUND CLOSED STILL PAYS.
+ *
+ * `reconcile` asks whether a transaction this node had already built went out,
+ * which leaves a round that never got that far exactly where it was. Without
+ * this sweep a queued payout waits for a close that has already happened.
+ */
+test('a queued payout is swept on start, and a paid one is left alone', async () => {
+  const sent = [];
+  const chain = { send: async (raw) => { sent.push(raw); return { ok: true, txid: b32(0xcd) }; } };
+  const c = await committee({ chain });
+  try {
+    const who = askerFor(c.rid, c.nodes[0].round.seats(c.rid));
+    const asker = c.nodes.find((n) => toHex(n.round.pubkey) === toHex(who.asker));
+
+    const swept = await asker.payouts.settleAllQueued({
+      contractFor: () => c.contract, signing: asker.signing, watch: asker.poolWatch,
+    });
+    assert.equal(swept.ok, true, swept.why);
+    assert.equal(swept.settled.length, 1);
+    assert.equal(swept.settled[0].state, PAID, swept.settled[0].why);
+    assert.equal(sent.length, 1);
+
+    // AND A SECOND SWEEP SENDS NOTHING. A node that restarts twice must not
+    // build a second spend of one output.
+    const again = await asker.payouts.settleAllQueued({
+      contractFor: () => c.contract, signing: asker.signing, watch: asker.poolWatch,
+    });
+    assert.equal(again.settled.length, 0, 'a PAID round is still queued');
+    assert.equal(sent.length, 1, `a second sweep sent ${sent.length - 1} more transactions`);
+    console.log('  one sweep pays, a second sends nothing');
+  } finally { await c.close(); }
+});

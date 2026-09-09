@@ -2,16 +2,19 @@
 //
 // Item 17 put the signing on a wire: the asker names a round and an OUTPUT, and
 // every seat rebuilds the transaction from its own store before it signs. What
-// it did not ask is where that output comes from. `payWithCommittee` takes a
+// it did not ask is where that output comes from. `payWithCommittee` took a
 // `utxo` - txid, vout, value and script - as an argument, and nothing in the
-// daemon can produce one: no `scantxoutset`, no `gettxout`, no `listunspent`
-// anywhere in `src/`, and `chainSpend` can only `send` bytes and `look` up a
-// txid it already has. So a closed round stops at PAYOUT_QUEUED and the winner
-// is paid by a test handing the daemon an outpoint.
+// daemon could produce one: no `scantxoutset`, no `gettxout`, no `listunspent`
+// anywhere in `src/`, and `chainSpend` could only `send` bytes and `look` up a
+// txid it already had. So a closed round stopped at PAYOUT_QUEUED and the
+// winner was paid by a test handing the daemon an outpoint.
 //
-// This file is the measurement before that is fixed. It writes down what the
-// asker can and cannot do with the four fields it names today, and the answer
-// is not the one this letter was opened on.
+// ITEM 18 CLOSED THAT IN TWO HALVES. `pool-watch.js` asks the chain, and
+// `Payouts.settleQueued` is the caller: it checks this node is the round's
+// asker, asks its own seat what the round owes, asks the watch for an output
+// that covers it, and runs the signing round. The counts below are the
+// measurement, kept as a pin - a second file learning to ask the chain, or a
+// second caller of the payer, should turn this red.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
@@ -36,7 +39,7 @@ import {
  * find an output appearing in `src/` should turn this red and make somebody
  * update the letter rather than leave it stale.
  */
-test('one file asks the chain about outputs, and nothing calls the payer yet', () => {
+test('one file asks the chain about outputs, and one calls the payer', () => {
   const src = readdirSync(new URL('../src/', import.meta.url))
     .filter((f) => f.endsWith('.js'))
     .map((f) => ({ f, text: readFileSync(new URL(`../src/${f}`, import.meta.url), 'utf8') }));
@@ -52,13 +55,27 @@ test('one file asks the chain about outputs, and nothing calls the payer yet', (
   // A CALL SITE, NOT A MENTION. Grepping the name counts the comment in
   // `pool-watch.js` that explains why this letter exists, which is a sentence
   // and not a caller. A call is the name on an object.
+  //
+  // ONE, and it is `settleQueued` in the same file. A second caller elsewhere
+  // would be a second place that decides which output a round spends, which is
+  // the decision this whole letter is about.
   const callers = src.filter((s) => /\.payWithCommittee\s*\(/.test(s.text));
-  assert.deepEqual(callers.map((s) => s.f), [],
-    'payWithCommittee has a caller in src/ now - update the letter');
-  const defs = (src.find((s) => s.f === 'payout.js').text.match(/\bpayWithCommittee\s*\(/g) || []).length;
-  assert.equal(defs, 1, `payWithCommittee is written ${defs} times in payout.js, so one of them is a caller`);
-  console.log('  callers of payWithCommittee in src/: 0');
+  assert.deepEqual(callers.map((s) => s.f), ['payout.js'],
+    'payWithCommittee has a different set of callers now - update the letter');
+  const calls = (src.find((s) => s.f === 'payout.js').text.match(/\.payWithCommittee\s*\(/g) || []).length;
+  assert.equal(calls, 1, `payWithCommittee is called ${calls} times in payout.js`);
+
+  // AND THE DAEMON CALLS IT. `settleQueued` with no caller would be the same
+  // fault one layer up, so the close path and the start-up sweep are pinned by
+  // name: a round that closes asks, and a node that was down when its round
+  // closed asks on start.
+  const server = src.find((s) => s.f === 'server.js').text;
+  assert.match(server, /payouts\.settleQueued\(/, 'a closing round no longer asks for its spend');
+  assert.match(server, /payouts\.settleAllQueued\(/, 'a node that starts no longer sweeps its queued payouts');
+  assert.match(server, /new PoolWatch\(/, 'the daemon watches no pool, so it can name no output');
+  console.log('  callers of payWithCommittee in src/: 1 (payout.js settleQueued)');
   console.log('  files in src/ that can find an output: 1 (pool-watch.js)');
+  console.log('  daemon call sites: closeRound and the start-up sweep');
 });
 
 /**

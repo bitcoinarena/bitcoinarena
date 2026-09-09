@@ -47,6 +47,39 @@ export const NOTHING_OWED = 'NOTHING_OWED';
 export const PAID_IN_PART = 'PAID_IN_PART';
 
 /**
+ * WHICH SEAT ASKS FOR A ROUND'S PAYOUT, AND IT IS EXACTLY ONE.
+ *
+ * `payWithCommittee` is an asker: it names an output, collects five nonce
+ * commitments and five shares, aggregates them and broadcasts. Every seat on
+ * the committee closes the round, so if every seat asked, five of them would
+ * run five signing rounds over ONE output. FROST aggregates over the nonces
+ * that were committed, so those five are five DIFFERENT transactions spending
+ * the same input: one confirms and four are double-spends the chain refuses -
+ * and every seat can only hold one live nonce pair per round, so in practice
+ * the five askers deadlock each other instead.
+ *
+ * So the asker is chosen from the round itself, the way everything else here
+ * is: the seats in the order the store keeps them - by pubkey, which no seat
+ * chooses - indexed by the round id. No message, no election, no clock, and
+ * every seat computes the same answer from facts it already holds.
+ *
+ * WHAT THIS DOES NOT DO is hand the round to somebody else when the asker is
+ * down. That needs a clock and a rule for how long to wait, and inventing one
+ * here would be inventing the protocol. The round stays PAYOUT_QUEUED, which
+ * is a state an operator can see, and it is its own line on the list.
+ */
+export function askerFor(roundId, seats) {
+  if (!(roundId instanceof Uint8Array) || roundId.length !== 32)
+    return { ok: false, why: 'that is not a round id' };
+  if (!Array.isArray(seats) || !seats.length)
+    return { ok: false, why: 'that round seated nobody, so nobody asks for it' };
+  // Four bytes of the round id, big-endian and unsigned. `>>> 0` because a
+  // top bit set would otherwise make this negative and the modulo with it.
+  const n = ((roundId[0] << 24 | roundId[1] << 16 | roundId[2] << 8 | roundId[3]) >>> 0) % seats.length;
+  return { ok: true, asker: seats[n], at: n, of: seats.length };
+}
+
+/**
  * The round's own payout, from a FINAL result to sats on a chain.
  *
  * `pool` is the committee's key material and the output it holds; `chain`
@@ -149,6 +182,83 @@ export class Payouts {
     });
     return { ok: true, state: PAYOUT_QUEUED, tableId: built.tableId,
       table: built.table, rows: owed.rows, owedMsat: owed.owedMsat, agreed: seen.agreed };
+  }
+
+  /**
+   * A QUEUED PAYOUT, THROUGH TO THE CHAIN, WITH NO OPERATOR IN THE MIDDLE.
+   *
+   * ITEM 18, AND THE MEASUREMENT IT WAS OPENED ON: `payWithCommittee` had zero
+   * callers in `src/`. A close signed the table, agreed what was owed, wrote
+   * PAYOUT_QUEUED and stopped, because nothing in the daemon could say WHICH
+   * of the pool's outputs to spend - the winner was paid by a test handing the
+   * daemon an outpoint. `pool-watch.js` closed the first half of that (the
+   * daemon can ask the chain); this is the caller.
+   *
+   * Three things have to be true and each refuses by name rather than by
+   * silence: this node reaches a chain, this node is the round's asker, and
+   * the pool holds exactly one confirmed output that covers what is owed.
+   *
+   * THE FIGURE IS THE SEAT'S OWN. `signing.owes` rebuilds it from this node's
+   * results and the committee's signatures - not from the row, which is
+   * bookkeeping - so the output this asks for is sized by the same rule that
+   * decides the outputs it will later sign.
+   */
+  async settleQueued({ roundId, contract, signing, watch, minConfirmations = 1 }) {
+    const row = this.round.payout(roundId);
+    if (!row) return { ok: false, why: 'that round has no queued payout' };
+    if (row.state === PAID || row.state === PAID_IN_PART)
+      return { ok: true, state: row.state, txid: row.txid, already: true };
+    if (row.state !== PAYOUT_QUEUED)
+      return { ok: false, why: `that payout is ${row.state}, so there is nothing to send` };
+    if (!this.chain) return { ok: false, why: 'this node reaches no chain, so it spends nothing' };
+    if (!watch || !watch.reaches)
+      return { ok: false, why: 'this node watches no pool, so it can name no output to spend' };
+    if (!signing || typeof signing.owes !== 'function')
+      return { ok: false, why: 'this node holds no seat, so it asks for nothing' };
+
+    const seats = this.round.seats(roundId);
+    const who = askerFor(roundId, seats);
+    if (!who.ok) return who;
+    const me = this.round.pubkey;
+    if (toHex(who.asker) !== toHex(me))
+      return {
+        ok: false, waiting: true, asker: who.asker,
+        why: `seat ${toHex(who.asker).slice(0, 16)} (${who.at + 1} of ${who.of}) asks for this round`,
+      };
+
+    const owed = signing.owes({ roundId, contract });
+    if (!owed.ok) return owed;
+
+    const found = await watch.forRound({ owedSats: owed.wantsSats, minConfirmations });
+    if (!found.ok) return found;
+
+    return this.payWithCommittee({
+      roundId, utxo: found.utxo, contract, signing, seats: this.peers,
+    });
+  }
+
+  /**
+   * EVERY ROUND THIS NODE STILL OWES A SPEND ON, asked about on start.
+   *
+   * `reconcile` above answers a different question - did a transaction this
+   * node had already built go out - and leaves a round that never got as far
+   * as building one exactly where it was. A node that was down when its round
+   * closed, or whose pool had no confirmed output yet, would sit at
+   * PAYOUT_QUEUED for ever with nobody to notice.
+   */
+  async settleAllQueued({ contractFor, signing, watch, minConfirmations = 1 }) {
+    if (!this.canSpend || !watch || !watch.reaches)
+      return { ok: false, why: 'this node reaches no chain, so it asks it nothing', settled: [] };
+    const settled = [];
+    for (const row of this.round.payoutsInState(PAYOUT_QUEUED)) {
+      const contract = contractFor(row.roundId);
+      if (!contract) { settled.push({ roundId: row.roundId, why: 'this node holds no contract for that round' }); continue; }
+      let got;
+      try { got = await this.settleQueued({ roundId: row.roundId, contract, signing, watch, minConfirmations }); }
+      catch (err) { got = { ok: false, why: err.message }; }
+      settled.push({ roundId: row.roundId, ...got });
+    }
+    return { ok: true, settled };
   }
 
   /**

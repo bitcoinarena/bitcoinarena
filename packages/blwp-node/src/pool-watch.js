@@ -164,12 +164,27 @@ export class PoolWatch {
 
     const deep = seen.outputs.filter((o) => o.confirmations >= minConfirmations);
     const covering = deep.filter((o) => o.value >= owedSats);
-    if (!covering.length)
+    if (!covering.length) {
+      // TOO SHALLOW AND NOT THERE ARE DIFFERENT PROBLEMS AND MUST NOT READ THE
+      // SAME. An operator told "0 confirmed outputs" goes looking for a
+      // missing coin; one told "not deep enough yet" waits.
+      //
+      // AND IT IS NOT THE MEMPOOL CASE, which is what this comment claimed
+      // first and a real bitcoind disproved: `scantxoutset` scans the UTXO SET,
+      // so a funding transaction still unconfirmed is not in the answer at all
+      // and reads - correctly - as a pool holding nothing. This branch is for
+      // an output that IS in the set and has fewer confirmations than the
+      // caller asked for, which needs `minConfirmations` above one.
+      const shallow = seen.outputs.length - deep.length;
       return {
-        ok: false, held: seen.outputs.length,
-        why: `the pool holds ${deep.length} confirmed output(s) and none of them covers the `
-          + `${owedSats} sats this round owes`,
+        ok: false, held: seen.outputs.length, confirmed: deep.length, shallow,
+        why: shallow && !deep.length
+          ? `the pool holds ${shallow} output(s) with fewer than ${minConfirmations} `
+            + 'confirmation(s) and no confirmed one, so there is nothing to spend yet'
+          : `the pool holds ${deep.length} confirmed output(s) and none of them covers the `
+            + `${owedSats} sats this round owes`,
       };
+    }
     if (covering.length > 1)
       return {
         ok: false, held: seen.outputs.length, covering: covering.length,

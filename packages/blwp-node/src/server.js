@@ -63,6 +63,7 @@ import { Custody, NO_LIGHTNING } from './custody.js';
 import { Preimages, encodeShareAnswer, SEALED_ANSWER_BYTES } from './preimage.js';
 import { Payouts, PAYOUT_QUEUED, PAID, NOTHING_OWED } from './payout.js';
 import { PoolSigning } from './pool-signing.js';
+import { PoolWatch } from './pool-watch.js';
 import { decodeUtxo, decodeCommitments, encodeCommitments, encodeShare, UTXO_BYTES } from './pool-wire.js';
 import { SIGNED_TABLE_BYTES } from './payout-table.js';
 
@@ -147,7 +148,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // dealt today because a dealerless DKG is its own letter. Absent, the
   // daemon runs exactly as it did and answers the two signing doors with a
   // refusal rather than a signature.
-  poolSeat = null } = {}) {
+  poolSeat = null,
+  // AND SOMETHING THAT CAN ASK THE CHAIN WHICH OUTPUT HOLDS THE POOL.
+  // `bitcoindRpc`'s `call`, injected the way everything else that reaches the
+  // network is. Without it a close still queues the payout and stops - which
+  // is exactly where item 18 found it - and says so rather than guessing at an
+  // outpoint.
+  poolCall = null } = {}) {
   const round = new Round(db);
 
   // WHAT HOLDS THE PLAYERS' MONEY. 23.1's hold invoice and 23.2's table, and
@@ -205,6 +212,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const signing = new PoolSigning(round, {
     curve: poolCurve, seat: poolSeat, pool: poolKey,
   });
+
+  // AND WHICH OUTPUT THE POOL IS IN, asked of the chain rather than
+  // remembered. This is what a close was missing: `payWithCommittee` names an
+  // output, and until this the daemon had no way to produce one, so every
+  // closed round stopped at PAYOUT_QUEUED with the winner unpaid.
+  const poolWatch = new PoolWatch({ call: poolCall, pool: poolKey, curve: poolCurve });
 
   // WHO MAY HOLD A ROUND, from the chain. The census stopped being library
   // code here: this is the daemon's only caller of it, and `chainFor` is the
@@ -291,6 +304,21 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       roundId: roundIdBytes, entries, minScore: contract.minScore, contract,
     });
     console.log(`[payout] ${owed.ok ? owed.state : owed.why}`);
+
+    // ...AND THE SPEND ITSELF, if this node is the seat that asks for it.
+    //
+    // Every seat closes the round, so exactly one of them asks: `askerFor`
+    // picks it out of the round id over the seated keys, with no message and
+    // no election. The rest log why they are not asking, because "nothing
+    // happened" and "somebody else is doing it" must not look the same to an
+    // operator reading a log.
+    let paid = null;
+    if (owed.ok && owed.state === PAYOUT_QUEUED) {
+      paid = await payouts.settleQueued({
+        roundId: roundIdBytes, contract, signing, watch: poolWatch,
+      }).catch((e) => ({ ok: false, why: e.message }));
+      console.log(`[payout] ${paid.ok ? `${paid.state} ${paid.txid ? toHex(paid.txid) : ''}` : paid.why}`);
+    }
     // WHAT THIS CLOSE BELIEVED, whatever it did. A settlement that moves
     // nothing still has to be able to say which runs the committee agreed on -
     // otherwise "nothing moved" and "nothing was agreed" are the same sentence
@@ -299,6 +327,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       ...done,
       agreed: entries.filter((e) => isFinal(e.entryId)).map((e) => toHex(e.entryId)),
       considered: entries.length,
+      owed,
+      paid,
     };
   }
 
@@ -324,6 +354,27 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const n = (asked && asked.asked) ? asked.asked.filter((a) => a.state === PAID).length : 0;
         if (n) console.log(`[payout] the chain already had ${n} payout(s) this node died sending`);
         return asked;
+      })
+      // AND THE ROUNDS THAT NEVER GOT A TRANSACTION BUILT AT ALL.
+      //
+      // `reconcile` answers "did a spend this node had already built go out",
+      // which leaves a round that never got that far exactly where it was. A
+      // node down when its round closed - or one whose pool had no confirmed
+      // output yet - would sit at PAYOUT_QUEUED for ever with nobody to
+      // notice. Run AFTER the reconcile, so a round the chain already paid is
+      // PAID before this looks at it and is not asked for a second spend.
+      .then(async (asked) => {
+        const swept = await payouts.settleAllQueued({
+          contractFor: (rid) => {
+            const row = round.get(rid);
+            return row ? decodeRoundContract(new Uint8Array(row.contract)) : null;
+          },
+          signing, watch: poolWatch,
+        }).catch((e) => ({ ok: false, why: e.message, settled: [] }));
+        for (const one of swept.settled || [])
+          console.log(`[payout] ${toHex(one.roundId).slice(0, 16)} `
+            + `${one.ok ? one.state : one.why}`);
+        return { ...asked, swept };
       })
       .catch((e) => { console.error(`[payout] ${e.message}`); return { ok: false, why: e.message }; })
     : Promise.resolve({ ok: false, why: 'this node reaches no chain, so it asks it nothing' });
@@ -1047,7 +1098,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   return new Promise((resolve) => {
     http.listen(port, host, () => resolve({
       http, wss, round, host, verifier, ghosts, roster, custody, reconciling, preimages,
-      payouts, reconcilingPayouts, signing,
+      payouts, reconcilingPayouts, signing, poolWatch,
       // What the last close did with the money, and the same door an operator
       // uses to run a settlement again by hand.
       stakes: () => stakes,

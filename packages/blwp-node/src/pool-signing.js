@@ -67,6 +67,51 @@ export class PoolSigning {
   get holdsAShare() { return !!(this.seat && this.pool && this.curve); }
 
   /**
+   * WHAT THE ROUND OWES AND TO WHOM, WITHOUT AN OUTPUT TO SPEND IT FROM.
+   *
+   * The first half of `spendFor`, split out because the ASKER needs it before
+   * it has a utxo: item 18's whole gap was that a close queued a payout and
+   * stopped, because nothing could work out which of the pool's outputs was
+   * big enough to pay the round. Choosing one needs the figure; building the
+   * transaction needs the output. So the figure comes first and one copy of
+   * the rule serves both - `spendFor` calls this rather than repeating it.
+   *
+   * Rebuilt from this node's own store every time and never read back off the
+   * row it wrote: §20 makes a node that signs a table which is not F(its
+   * inputs) slashable, and a stored number is not an input.
+   */
+  owes({ roundId, contract }) {
+    const entries = this.entriesFor(roundId);
+    if (!entries.ok) return entries;
+    const built = tableFor({ roundId, entries: entries.entries, minScore: contract.minScore });
+
+    const seen = verifiedTable(this.round.payoutSignatures(roundId), {
+      contract, seats: this.round.seats(roundId), tableId: built.tableId,
+    });
+    if (!seen.ok) return { ok: false, why: seen.why };
+    if (!seen.final)
+      return { ok: false, why: `${seen.agreed} of ${seen.needed} seats signed this table` };
+
+    const owed = winnings({
+      table: built.table,
+      stakes: entries.entries.map((e) => ({ pubkey: e.pubkey, stakeMsat: e.stakeMsat })),
+    });
+    if (!owed.ok) return { ok: false, why: owed.why };
+    if (!owed.rows.length) return { ok: false, why: 'that round owes nobody anything' };
+
+    // WHAT AN OUTPUT MUST COVER, in satoshis and rounded UP.
+    //
+    // `payoutOutputs` floors each row to whole satoshis and drops any row
+    // under the relay floor, so the transaction always pays at most this - it
+    // is an upper bound rather than the exact figure, and it is chosen that
+    // way on purpose. A bound that could be a satoshi short would pick an
+    // output the committee then refuses to sign against, which costs a whole
+    // signing round to discover.
+    const wantsSats = (owed.owedMsat + 999n) / 1000n;
+    return { ok: true, rows: owed.rows, owedMsat: owed.owedMsat, wantsSats, tableId: built.tableId };
+  }
+
+  /**
    * WHAT THIS SEAT SAYS THE ROUND OWES, rebuilt from its own store every time.
    *
    * Never read back from the transaction it wrote and never taken from the
@@ -102,23 +147,9 @@ export class PoolSigning {
     // one, and refusing there would be refusing a spend the committee agrees
     // on because a bookkeeping row is stale. A check no test can distinguish
     // and no reachable state needs is not a rule; it is a comment that throws.
-    const entries = this.entriesFor(roundId);
-    if (!entries.ok) return entries;
-    const built = tableFor({ roundId, entries: entries.entries, minScore: contract.minScore });
-
-    const seen = verifiedTable(this.round.payoutSignatures(roundId), {
-      contract, seats: this.round.seats(roundId), tableId: built.tableId,
-    });
-    if (!seen.ok) return { ok: false, why: seen.why };
-    if (!seen.final)
-      return { ok: false, why: `${seen.agreed} of ${seen.needed} seats signed this table` };
-
-    const owed = winnings({
-      table: built.table,
-      stakes: entries.entries.map((e) => ({ pubkey: e.pubkey, stakeMsat: e.stakeMsat })),
-    });
-    if (!owed.ok) return { ok: false, why: owed.why };
-    if (!owed.rows.length) return { ok: false, why: 'that round owes nobody anything' };
+    const owed = this.owes({ roundId, contract });
+    if (!owed.ok) return owed;
+    const built = { tableId: owed.tableId };
 
     // AND IT IS THE POOL'S OWN OUTPUT. An asker who could name any output
     // could have the committee sign a spend of somebody else's coin - or of

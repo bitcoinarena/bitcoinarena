@@ -146,11 +146,33 @@ test('one covering output is a choice; none and several are refusals by name', a
   assert.equal(several.utxo, undefined);
 });
 
-test('an output too shallow to spend does not count as covering', async () => {
+test('an output too shallow to spend does not count as covering, and says which', async () => {
+  // THREE CONFIRMATIONS AGAINST A REQUIREMENT OF SIX, which is the shape this
+  // branch is actually for. It was written against a 0-confirmation unspent
+  // and the regtest disproved that reading: `scantxoutset` scans the UTXO SET,
+  // so a funding transaction still in a mempool is not in the answer at all
+  // and correctly reads as a pool holding nothing.
   const w = new PoolWatch({
-    call: chain({ scan: () => scanning([unspent(txidToRpc(TXID), 0, 0.00002000, 0)]) }).call, pool, curve,
+    call: chain({ scan: () => scanning([unspent(txidToRpc(TXID), 0, 0.00002000, 3)]) }).call, pool, curve,
   });
-  const got = await w.forRound({ owedSats: 1000n });
+  const got = await w.forRound({ owedSats: 1000n, minConfirmations: 6 });
   assert.equal(got.ok, false);
-  assert.match(got.why, /0 confirmed output\(s\)/);
+
+  // TOO SHALLOW AND NOT THERE ARE DIFFERENT PROBLEMS. Both used to print
+  // "0 confirmed output(s)", which sends an operator looking for a missing
+  // coin while the pool's own output is sitting one block short.
+  assert.match(got.why, /fewer than 6 confirmation\(s\)/);
+  assert.equal(got.held, 1);
+  assert.equal(got.confirmed, 0);
+  assert.equal(got.shallow, 1);
+
+  // And the same output IS the choice once the caller asks for what it has.
+  const deep = await w.forRound({ owedSats: 1000n, minConfirmations: 3 });
+  assert.equal(deep.ok, true, deep.why);
+
+  // And an empty pool still says what it means.
+  const none = new PoolWatch({ call: chain({ scan: () => scanning([]) }).call, pool, curve });
+  const nothing = await none.forRound({ owedSats: 1000n });
+  assert.equal(nothing.ok, false);
+  assert.match(nothing.why, /0 confirmed output\(s\) and none of them covers/);
 });
