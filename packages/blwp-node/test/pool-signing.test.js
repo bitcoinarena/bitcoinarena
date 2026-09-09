@@ -151,7 +151,7 @@ function committee({ minScore = 1 } = {}) {
   const seats = rounds.map((r, i) => new PoolSigning(r, {
     curve, seat: dealt.shares[i], pool: { groupPublicKey: dealt.groupPublicKey },
   }));
-  return { rounds, seats, rid, contract, utxo, out, dealt, winner, loser, minScore };
+  return { rounds, seats, rid, contract, utxo, out, dealt, winner, loser, minScore, entries };
 }
 
 /** What a seat's own store says the round's entries came to. */
@@ -312,4 +312,57 @@ test('a node that holds no share of the pool says so instead of signing', () => 
   const got = shareless.commit({ roundId: c.rid, utxo: c.utxo, contract: c.contract, random: rand });
   assert.equal(got.ok, false);
   assert.match(got.why, /holds no share of the pool/);
+});
+
+test('a row that says queued is not evidence: without five signatures the seat will not sign', () => {
+  const c = committee();
+  // A NODE WHOSE STORE SAYS PAYOUT_QUEUED AND WHOSE COMMITTEE AGREED NOTHING.
+  // A row is what a node WROTE DOWN; what authorises a signature is what the
+  // SEATED committee has signed, and this one holds none of that - its own
+  // signature is not even a seat's, because the census seated seven other
+  // keys. So the count is zero and the seat builds nothing, which is the check
+  // that stops a queued row standing in for five of seven.
+  const alone = new Round(openStore(':memory:'), () => NOW);
+  assert.deepEqual(alone.open(c.contract), c.rid);
+  assumeSeated(alone, c.rid, c.contract.nodes);
+  for (const e of c.entries) {
+    const { player, outcome, score } = e;
+    const eid = alone.enter(e.contract);
+    const result = {
+      roundId: c.rid, playerPubkey: player.pubkey, outcome, score,
+      transcriptHash: b32(0x11), simCoreHash: c.contract.simCoreHash, nodePubkey: alone.pubkey,
+    };
+    const id = resultId(result);
+    alone.putResult(c.rid, eid, alone.pubkey, id,
+      joinSignedResult(encodePlayerResult(result), schnorr.sign(id, alone.identity.secret)));
+  }
+  const built = new Payouts(alone, { curve, random: rand })
+    .sign({ roundId: c.rid, entries: signingEntries(alone, c.rid), minScore: c.minScore });
+  alone.putPayout({
+    roundId: c.rid, tableId: built.tableId, state: PAYOUT_QUEUED,
+    why: 'written by a node that agreed with nobody',
+  });
+
+  const seat = new PoolSigning(alone, {
+    curve, seat: c.dealt.shares[0], pool: { groupPublicKey: c.dealt.groupPublicKey },
+  });
+  const got = seat.commit({ roundId: c.rid, utxo: c.utxo, contract: c.contract, random: rand });
+  assert.equal(got.ok, false);
+  assert.match(got.why, /0 of 5 seats signed this table/);
+});
+
+test('a seat asked in round two about a different output signs nothing', () => {
+  const c = committee();
+  const first = c.seats[0].commit({ roundId: c.rid, utxo: c.utxo, contract: c.contract, random: rand });
+  assert.equal(first.ok, true, first.why);
+
+  // The SAME pool, a different output of it: a legitimate spend this seat
+  // never committed to. Its nonces belong to the first one.
+  const elsewhere = { ...c.utxo, vout: 3 };
+  const got = c.seats[0].signatureShare({
+    roundId: c.rid, utxo: elsewhere, contract: c.contract,
+    commitments: [first.commitment],
+  });
+  assert.equal(got.ok, false);
+  assert.match(got.why, /committed to a different spend/);
 });

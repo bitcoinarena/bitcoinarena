@@ -90,12 +90,21 @@ export class PoolSigning {
 
     // THE TABLE, RECOMPUTED. Not the id off the row: a row is what this node
     // wrote down, and what it must sign against is what its own results say
-    // now. The two agreeing is the check; the row alone is not evidence.
+    // now. The row is bookkeeping; the signatures below are the authority.
+    //
+    // RETRACTED, and the mutation is why: this also compared the recomputed id
+    // with `row.tableId` and refused if they differed. No test could tell the
+    // check on from the check off, and looking at why explains it - the
+    // verification below asks the seats about the RECOMPUTED id, so a node
+    // whose results moved on its own already fails there with "0 of 5". The
+    // only state the extra comparison caught was a committee that had all
+    // moved to the same new table while this node's row still named the old
+    // one, and refusing there would be refusing a spend the committee agrees
+    // on because a bookkeeping row is stale. A check no test can distinguish
+    // and no reachable state needs is not a rule; it is a comment that throws.
     const entries = this.entriesFor(roundId);
     if (!entries.ok) return entries;
     const built = tableFor({ roundId, entries: entries.entries, minScore: contract.minScore });
-    if (!same(built.tableId, row.tableId))
-      return { ok: false, why: 'this node no longer computes the table it queued this payout for' };
 
     const seen = verifiedTable(this.round.payoutSignatures(roundId), {
       contract, seats: this.round.seats(roundId), tableId: built.tableId,
