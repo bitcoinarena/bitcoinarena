@@ -233,6 +233,13 @@ test('the core drives like the PhysX truck it replaces', async () => {
 
   {
     const s = init(1);
+    // ON THE GROUND THE REFERENCE WAS RECORDED ON, which is flat. Letter 36
+    // made `init` generate the round's relief from its seed, so a core left
+    // alone is now climbing - at 5 s it does 12.95 m/s against the recording's
+    // 15.634, and that difference is a hill and not the vehicle. This fixture
+    // is the VEHICLE against a PhysX recording, so it is given the recording's
+    // own world; `setGround` is the reference door and no browser can reach it.
+    assert.ok(setGround(s, 33, 33, new Int32Array(33 * 33)), 'the flat reference world was refused');
     for (let t = 1; t <= 13; t++) {
       drive(s, HZ, 1, 0);
       const want = ref.accel[String(t)];
@@ -1483,7 +1490,12 @@ test('nothing accrues while the truck is still on the apron', () => {
 });
 
 test('a wreck banks nothing, however much the run had earned', () => {
-  const st = driven(1200);
+  // 800, NOT 1200. The claim is about a run that is written off while it is
+  // still going, and since letter 36 gave the round its own relief this drive
+  // ARRIVES at tick 883 - measured - so a fixture of 1200 ticks is a delivered
+  // run and banks 288 before the write-off is even reached. At 800 it has
+  // earned 288 and is still LIVE, which is the state this test is about.
+  const st = driven(800);
   const s = st.i32;
   const standing = runScore(st);
   assert.ok(standing > 0, 'the drive earned nothing to lose');

@@ -34,7 +34,7 @@ import {
 // `x.thing` points at nothing - and a real bundler in the trust path is
 // exactly what section 3.6 argues against for anything that pins money.
 import { vehicleStep } from './rules/vehicle.js';
-import { flatGround, gradeAlong, heightAtWorld, DEFAULT_COLS, DEFAULT_ROWS } from './rules/ground.js';
+import { flatGround, groundFromSeed, gradeAlong, heightAtWorld, DEFAULT_COLS, DEFAULT_ROWS } from './rules/ground.js';
 import { noSolids, resolveSolids, resolveArmour, BOX_WORDS } from './rules/solids.js';
 import { stepUnit, separatePair, clearOfTruck, runOver, truckSpeed, threatAt, pickTarget, pickRifleTarget, riflePost, RELOAD_MIN, RELOAD_SPAN, DAMAGE_MIN, DAMAGE_SPAN, BACKOFF_RANGE, HIT_PER_MIL, ARMOUR_RANGE, RIFLE_RANGE, RIFLE_HIT_PER_MIL, RIFLE_RELOAD_TICKS, RIFLE_RELOAD_TICKS_SPAN, RIFLE_LOOK_TICKS, RIFLE_LOOK_TICKS_SPAN, RIFLE_HP, RIFLE_DAMAGE, COURIER_RANGE, COURIER_DAMAGE_MIN, COURIER_DAMAGE_SPAN, COURIER_RIFLE_MIN, COURIER_RIFLE_SPAN, courierReach, outranksTheFoe, shellForHeat } from './rules/army.js';
 import { accrue, earning, scoreOf, frontWeight } from './rules/score.js';
@@ -159,11 +159,26 @@ function tape(rngWords) {
  *
  * `heights` is row-major, Q16.16 metres, cols*rows long.
  */
+/**
+ * A HEIGHT FIELD FROM OUTSIDE, AND NO PLAYER MAY REACH THIS ANY MORE.
+ *
+ * This was the host's door: Unity uploaded the relief it was drawing and the
+ * core felt it. Letter 36 took it away - `init` generates the relief from the
+ * round's seed, and a page that could overwrite it would put the player back
+ * in a world nobody else can replay. `BlwpSetGround` is gone from the jslib
+ * and `SetGround` from `BlwpCore`, so nothing in a browser can call this.
+ *
+ * It stays for the one caller that is not a host: the reference tests, which
+ * reproduce a published dataset and need the exact field it was measured on.
+ * A ground put here is marked as such, because a restart must keep an uploaded
+ * one and must NOT keep a generated one - the seed makes that again.
+ */
 export function setGround(st, cols, rows, heights) {
   if (cols < 2 || rows < 2 || heights.length < Math.imul(cols, rows)) return false;
   const g = flatGround(cols, rows);
   g.h.set(heights.subarray(0, Math.imul(cols, rows)));
   st.ground = g;
+  st.uploadedGround = true;
   return true;
 }
 
@@ -409,7 +424,11 @@ export function submitLiquidation(st, size) {
 
 export function restart(st, seedWord) {
   const fresh = init(seedWord);
-  fresh.ground = st.ground;
+  // NOT THE OLD GROUND. `init` makes the relief the seed names, and a restart
+  // into the same seed makes the same relief; carrying the previous one over
+  // would keep a host-uploaded field alive across a round and put the two
+  // sides back in different worlds.
+  if (st.uploadedGround) fresh.ground = st.ground;
   fresh.solids = st.solids;
   // The craters cross the round with the ground, one round older. This is why
   // the lifetime is counted in ROUNDS and lives here: a round is a thing that
@@ -492,10 +511,19 @@ export function init(seedWord) {
 
   st.tape = tape(rng);
 
-  // Flat until the host uploads the relief it is drawing. Flat is the honest
-  // default: a core that invents hills the player cannot see is worse than one
-  // that drives over a table.
-  st.ground = flatGround(DEFAULT_COLS, DEFAULT_ROWS);
+  // THE RELIEF IS THE ROUND'S, AND IT IS MADE HERE.
+  //
+  // It was flat until a host uploaded one, and the host was the only party that
+  // ever did: the page uploaded `MempoolTerrain.HeightGrid` into its own core
+  // and every committee replayed the same drive on a table. 0.000 m apart on
+  // the level apron, 33.500 m apart six hundred ticks later - so a run that
+  // left flat ground was judged in a world nobody drove, and the picture every
+  // other player was shown was that flat run.
+  //
+  // Generated from the seed, so the player and every node that replays them
+  // arrive at the same hills by construction rather than by agreement. Unity
+  // draws what this says now; it does not say what this should be.
+  st.ground = groundFromSeed(seedWord, DEFAULT_COLS, DEFAULT_ROWS, HALF_X, HALF_Z);
 
   // An empty world until the host says otherwise. Empty is honest: a core
   // inventing walls the player cannot see is worse than one with none.

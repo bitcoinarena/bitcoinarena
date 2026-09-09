@@ -34,12 +34,14 @@ const b32 = (n) => new Uint8Array(32).fill(n);
 const RANDOMNESS = b32(0x9b);
 const session = ed25519.utils.randomSecretKey();
 const wordsAt = (t) => [45875, ((t * 977) % 30000) - 15000, (t % 700) < 40 ? 65536 : 0, 0, 0];
-// 800, not 600: since 20c3950 a player parks at the door their own seed names,
-// and from there this drive wrecks at tick 753 (player 5) and 395 (player 6)
-// rather than 592. A transcript that stops at 600 stops while the run is still
-// LIVE, and a LIVE run has no outcome to sign - which is the case the last
-// test in this file is FOR, and it asks for 120 by hand.
-const TICKS = 800;
+// THE FIXTURE'S OWN WORLD, RE-MEASURED. Letter 36 gave the round its relief
+// from its own seed, so this drive is on hills now and it DELIVERED where it
+// used to wreck - and these tests are about a run that came to nothing. The
+// world secret is the fixture's to choose and it chooses one where the drive
+// still loses: b32(0x16) wrecks player 5 at tick 547 with a score of 128 and
+// player 6 at 947. 1000 ticks is past both, and a run's state latches when it
+// leaves LIVE.
+const TICKS = 1000;
 
 const secrets = [0, 1, 2, 3, 4, 5, 6].map(() => ed25519.utils.randomSecretKey());
 const COMMITTEE = secrets.map((s) => schnorr.getPublicKey(s));
@@ -73,7 +75,7 @@ function stored(ticks, { player = 5 } = {}) {
   const entry = {
     roundId: rid, playerPubkey: b32(player), sessionPubkey: ed25519.getPublicKey(session),
     stakeCommitment: b32(7), stakeMsat: 100000n, feeMsat: 1000n, donationMsat: 0n,
-    joinTick: 0, worldSecret: b32(0x5e), vssSharesRef: new Uint8Array(32),
+    joinTick: 0, worldSecret: b32(0x16), vssSharesRef: new Uint8Array(32),
   };
   const eid = r.enter(entry);
   const rows = [];
@@ -129,17 +131,18 @@ test('nodes that replayed the same run sign the same result, and five of seven v
   });
 
   // THE SCORE AND THE OUTCOME ARE READ OFF THE REPLAYED STATE, not defaulted.
-  // 79 is what this run earns and FAILED is what it came to - a fixture that
+  // 128 is what this run earns and FAILED is what it came to - a fixture that
   // only checked the two agreed with each other could not tell a real score
   // from a zero every node produced alike.
   //
-  // It was 230 while the fixture chose the seed itself, then 257 when the world
-  // became the one the entry's own secret and the round's randomness produce.
-  // It is 79 now because the player no longer starts on the solo bay: 20c3950
-  // parks them at the door their seed names, and a drive that begins 27 m up
-  // the apron earns a different number before it wrecks. Measured each time,
-  // not adjusted to pass.
-  assert.equal(answer.score, 79, 'the run no longer scores what this fixture was measured against');
+  // It was 230 while the fixture chose the seed itself, 257 when the world
+  // became the one the entry's own secret and the round's randomness produce,
+  // and 79 once 20c3950 parked the player at the door their seed names. It is
+  // 128 now because letter 36 gave the round its own RELIEF: the same drive is
+  // over hills, it delivered where it used to wreck, and the fixture moved its
+  // world secret to one where it still loses. Measured each time, not adjusted
+  // to pass.
+  assert.equal(answer.score, 128, 'the run no longer scores what this fixture was measured against');
   assert.equal(answer.outcome, 'FAILED');
   for (const x of signed) {
     assert.equal(x.built.score, answer.score, 'the signed score is not the replayed one');

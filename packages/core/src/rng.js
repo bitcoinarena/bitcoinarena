@@ -37,6 +37,27 @@ export function between(s, lo, hi) {
   return (lo + Math.imul(unit(s), span >> 16) + ((unit(s) * (span & 65535)) >>> 16)) | 0;
 }
 
+/**
+ * ONE VALUE FROM A SEED AND A LATTICE CORNER, and the same one everywhere.
+ *
+ * The relief is generated rather than uploaded (letter 36), so every party
+ * that replays a run has to arrive at the same hills as the player who drove
+ * them. A stream would not do: a stream depends on how many times it has been
+ * drawn from, and the ground is asked about corners in whatever order a caller
+ * happens to walk them. This is a function of its arguments and nothing else -
+ * splitmix32's finaliser over the three, which is the mixing this file already
+ * trusts for seeding.
+ *
+ * It lives here because it multiplies, and multiplying lives in the arithmetic
+ * files.
+ */
+export function hash2(seedWord, i, j) {
+  let z = (seedWord ^ Math.imul(i | 0, 0x9e3779b1) ^ Math.imul(j | 0, 0x85ebca6b)) | 0;
+  z = Math.imul(z ^ (z >>> 16), 0x21f0aaad);
+  z = Math.imul(z ^ (z >>> 15), 0x735a2d97);
+  return (z ^ (z >>> 15)) >>> 0;
+}
+
 /** How many loading-bay doors the post office has. */
 export const BAY_COUNT = 24;
 /** Solo / golden-vector bay (Unity PostOffice.SoloBay). */

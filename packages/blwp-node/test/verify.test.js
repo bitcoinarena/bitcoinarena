@@ -46,20 +46,14 @@ const RANDOMNESS = b32(0x9b);
 // contract can prove.
 const HEIGHT = 900001;
 const BEACON = { hash: RANDOMNESS, height: HEIGHT, timeMs: 900n };
-// HOW LONG THE FIXTURE DRIVES, AND WHY IT IS NOT 600 ANY MORE.
-//
-// 600 was measured when every run started on the solo bay: this drive - full
-// throttle, the steering swept across the apron, the handbrake on for the
-// first forty ticks - wrecked b32(5)'s truck at tick 592. Since 20c3950 a
-// player parks at the door their own seed names (`spawnBay`), no entry-derived
-// seed lands on the solo bay, and from bay 9 the same drive takes 753 ticks to
-// wreck. A transcript that stops at 600 stops while the run is still LIVE, and
-// a LIVE run has no outcome to sign - which is what `resultFrom` says in those
-// words, and what made this file red rather than any daemon fault.
-//
-// 800 is past the end with room to spare, and the run's state latches when it
-// leaves LIVE, so the extra ticks change no number here.
-const TICKS = 800;
+// THE FIXTURE'S OWN WORLD, RE-MEASURED. Letter 36 gave the round its relief
+// from its own seed, so this drive is on hills now and it DELIVERED where it
+// used to wreck - and these tests are about a run that came to nothing. The
+// world secret is the fixture's to choose and it chooses one where the drive
+// still loses: b32(0x16) wrecks player 5 at tick 547 with a score of 128 and
+// player 6 at 947. 1000 ticks is past both, and a run's state latches when it
+// leaves LIVE.
+const TICKS = 1000;
 const wordsAt = (t) => [45875, ((t * 977) % 30000) - 15000, (t % 700) < 40 ? 65536 : 0, 0, 0];
 
 const session = ed25519.utils.randomSecretKey();
@@ -131,7 +125,7 @@ async function roundThrough(node, {
 
   const entry = {
     roundId: rid, playerPubkey: b32(5), sessionPubkey: ed25519.getPublicKey(session),
-    stakeCommitment: b32(7), stakeMsat: 100000n, feeMsat: 1000n, donationMsat: 0n, joinTick: 0, worldSecret: b32(0x5e), vssSharesRef: new Uint8Array(32),
+    stakeCommitment: b32(7), stakeMsat: 100000n, feeMsat: 1000n, donationMsat: 0n, joinTick: 0, worldSecret: b32(0x16), vssSharesRef: new Uint8Array(32),
   };
   const eid = entryId(entry);
   assert.equal((await post(node.port, '/entry', encodeEntryContract(entry))).status, 201);
@@ -208,7 +202,7 @@ test('a round closed on a running daemon leaves a signed result nobody asked it 
     assert.deepEqual(result.nodePubkey, node.round.pubkey, 'the node signed under somebody else');
     assert.deepEqual(result.simCoreHash, contract.simCoreHash);
     assert.equal(result.outcome, 'FAILED');
-    assert.equal(result.score, 79, 'the stored score is not the one the replay found');
+    assert.equal(result.score, 128, 'the stored score is not the one the replay found');
 
     // THE HASH IS THE CANONICAL TRANSCRIPT'S, 13C's own object - the prefix of
     // marks the committee receipted. A node that signed over the rows it
@@ -425,7 +419,7 @@ test('a receipt arriving after the close produces the result the replay could no
     assert.equal(now.count, 1, 'the late receipt did not produce a result');
     const result = decodePlayerResult(splitSignedResult(now.bytes).body);
     assert.deepEqual(result.transcriptHash, node.round.canonicalTranscript(rid, eid).hash);
-    assert.equal(result.score, 79);
+    assert.equal(result.score, 128);
 
     // AND THE SEAT DOES NOT REPLAY AGAIN FOR A RUN IT HAS SIGNED. Asked
     // directly, the retry declines rather than queueing work whose answer the

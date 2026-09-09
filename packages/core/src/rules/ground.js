@@ -4,19 +4,118 @@
 // nothing and a descent gave nothing back - the truck drove over the map as
 // though it were a table.
 //
-// The heights are NOT recomputed here from the fee profile. Unity's relief
-// uses Mathf.PerlinNoise, which has no seed and no specification, and the
-// core's own noise field is a different shape - up to five and a half metres
-// different. A core that felt a hill where the player sees flat ground is
-// worse than one that feels no hills at all. So the host uploads the height
-// field it is actually drawing, once, as round setup data: the same status as
-// the fee profile it came from, agreed before the round and hashed with it,
-// never touched again while the round runs.
+// THE HOST USED TO UPLOAD THIS AND NO LONGER MAY, and the reversal is the
+// whole of letter 36. The old rule was that Unity sent the height field it was
+// drawing, "agreed before the round and hashed with it" - except nothing ever
+// hashed it and nothing ever sent it to anybody else. Measured: the page
+// uploaded `MempoolTerrain.HeightGrid` into its own core and the committee
+// replayed the same drive on `flatGround`, which is 0.000 m apart on the level
+// apron and 33.500 m apart six hundred ticks later. A run that leaves flat
+// ground was judged in a world nobody drove.
+//
+// It could not be fixed by sending the grid either way round: `HeightAt` is
+// `Mathf.Log10` of a LIVE mempool profile plus `Mathf.PerlinNoise`, a host's
+// live data through Unity's own float maths - the thing this package exists to
+// avoid - and a player who published their own heights would be choosing the
+// world they are scored in.
+//
+// So the ground is GENERATED HERE, from the round's own seed, in the same
+// integers as everything else. Every party that can replay a drive arrives at
+// the same hills by construction rather than by agreement, and Unity draws
+// what the core says instead of telling it.
 
 import { ONE, add, sub, mulFast, div, clamp, length2 } from '../fixed.js';
+import { hash2 } from '../rng.js';
 
 export const DEFAULT_COLS = 160;
 export const DEFAULT_ROWS = 96;
+
+/**
+ * THE RELIEF, AND EVERY NUMBER IN IT IS A CONSTANT OF THE GAME.
+ *
+ * A lattice of corner heights drawn from the seed, interpolated across it, in
+ * two octaves so the ground rolls rather than stepping. `hash2` is a function
+ * of the seed and the corner and of nothing else, so the field can be built in
+ * any order and comes out the same - which a stream could not promise.
+ */
+export const RELIEF_LATTICE_X = 12;
+export const RELIEF_LATTICE_Z = 8;
+/** How high the tallest hill may stand, Q16.16. Unity's own baseRelief was 5.5 m. */
+export const RELIEF_PEAK = Math.imul(6, ONE);
+
+/**
+ * BOTH ENDS ARE LEVELLED INTO AN APRON, which is not decoration.
+ *
+ * `MempoolTerrain` already did this and said why: an apron slab is one plane
+ * laid at a single height, so a metre of relief under it is a metre of
+ * daylight under one end, and the truck spawned beneath its own loading dock.
+ * The bays are here too - 24 doors across 156 m - and a door on a slope is a
+ * truck that rolls out of it sideways.
+ *
+ * Level out to LEVEL_X, easing to full relief by RELIEF_X.
+ */
+export const LEVEL_X = Math.imul(86, ONE);
+export const RELIEF_X = Math.imul(66, ONE);
+
+/** 1 where the ground may roll, 0 on the aprons, eased between. Q16.16. */
+export function reliefFactor(x, halfX) {
+  const away = x < 0 ? (-x) | 0 : x;
+  if (away >= LEVEL_X) return 0;
+  if (away <= RELIEF_X) return ONE;
+  // Linear between the two, and then smoothed so the join has no crease.
+  const t = div(sub(LEVEL_X, away), sub(LEVEL_X, RELIEF_X));
+  // 3t^2 - 2t^3, the same ease the rest of the game uses for a blend.
+  const tt = mulFast(t, t);
+  return clamp(sub(mulFast(Math.imul(3, ONE), tt), mulFast(Math.imul(2, ONE), mulFast(tt, t))), 0, ONE);
+}
+
+/** One lattice corner's height, Q16.16, from the seed alone. */
+function corner(seedWord, i, j) {
+  return mulFast(RELIEF_PEAK, hash2(seedWord, i, j) >>> 16);
+}
+
+/**
+ * The relief a round is played on, as a height field of `cols` x `rows`.
+ *
+ * Bilinear across the lattice, plus a second octave at half the scale and a
+ * quarter of the height, then levelled into the aprons. Nothing here draws
+ * from a stream and nothing here is a float.
+ */
+export function groundFromSeed(seedWord, cols, rows, halfX, halfZ) {
+  const g = flatGround(cols, rows);
+  const lastCol = (cols - 1) | 0;
+  const lastRow = (rows - 1) | 0;
+  for (let r = 0; r < rows; r++) {
+    const v = lastRow > 0 ? div(Math.imul(r, ONE), Math.imul(lastRow, ONE)) : 0;
+    for (let c = 0; c < cols; c++) {
+      const u = lastCol > 0 ? div(Math.imul(c, ONE), Math.imul(lastCol, ONE)) : 0;
+      const coarse = octave(seedWord, u, v, RELIEF_LATTICE_X, RELIEF_LATTICE_Z, 0);
+      const fine = octave(seedWord, u, v, Math.imul(RELIEF_LATTICE_X, 2), Math.imul(RELIEF_LATTICE_Z, 2), 1);
+      const h = add(coarse, fine >> 2);
+      // The world x this column stands at, so the aprons can be levelled.
+      const x = sub(mulFast(u, Math.imul(halfX, 2)), halfX);
+      g.h[Math.imul(r, cols) + c] = mulFast(h, reliefFactor(x, halfX));
+    }
+  }
+  return g;
+}
+
+/** One octave: the lattice cell (u, v) falls in, interpolated bilinearly. */
+function octave(seedWord, u, v, lx, lz, salt) {
+  const fu = mulFast(u, Math.imul(lx, ONE));
+  const fv = mulFast(v, Math.imul(lz, ONE));
+  const i = fu >> 16;
+  const j = fv >> 16;
+  const tu = fu & 65535;
+  const tv = fv & 65535;
+  const a = corner(seedWord, i + Math.imul(salt, 977), j);
+  const b = corner(seedWord, i + 1 + Math.imul(salt, 977), j);
+  const c = corner(seedWord, i + Math.imul(salt, 977), j + 1);
+  const d = corner(seedWord, i + 1 + Math.imul(salt, 977), j + 1);
+  const top = add(a, mulFast(sub(b, a), tu));
+  const bottom = add(c, mulFast(sub(d, c), tu));
+  return add(top, mulFast(sub(bottom, top), tv));
+}
 
 /** A field of one height, which is what a flat world is. */
 export function flatGround(cols, rows) {

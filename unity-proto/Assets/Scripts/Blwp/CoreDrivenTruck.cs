@@ -124,7 +124,6 @@ namespace Blwp
             if (_rb != null) { _wasKinematic = _rb.isKinematic; _rb.isKinematic = true; }
             if (_truck != null) _truck.externallyDriven = true;
             CollectWheels();
-            UploadGround();
             UploadSolids();
             Debug.Log("[blwp] core is driving");
         }
@@ -582,26 +581,11 @@ namespace Blwp
         /// placeholder from before the first fetch would drive a hillside as
         /// though it were a table, which is exactly the bug this exists to fix.
         /// </summary>
-        void UploadGround()
-        {
-            if (terrain == null || _groundRevision == terrain.Revision) return;
-            _groundRevision = terrain.Revision;
+        // UploadGround IS GONE. It sent `MempoolTerrain.HeightGrid` into the
+        // core every second, and the core felt those hills while every
+        // committee replaying the drive stepped a flat table. The relief is the
+        // round's now, made by the core from its seed, and this side draws it.
 
-            const int cols = 160, rows = 96;      // the terrain's own grid
-            if (BlwpCore.SetGround(terrain.HeightGrid(cols, rows), cols, rows))
-                Debug.Log($"[blwp] relief uploaded, revision {_groundRevision}");
-            else
-                Debug.LogWarning("[blwp] the core refused the relief - it stays flat");
-        }
-
-        /// <summary>
-        /// Gives the core the solid world.
-        ///
-        /// Re-checked now and then rather than once: the post office and the
-        /// miner arrive from the streamer seconds after the round starts, and
-        /// a core that harvested before they landed knows about an empty map.
-        /// Cheap, because it only re-uploads when the count actually moves.
-        /// </summary>
         void UploadSolids()
         {
             if (Time.unscaledTime - _solidsChecked < 1f && _solidCount >= 0) return;
@@ -622,7 +606,6 @@ namespace Blwp
         {
             if (ShouldStop(Driving, BlwpNet.Ended)) { StopDriving(BlwpNet.Ending()); return; }
             if (!Driving) return;
-            UploadGround();
             UploadSolids();
 
             // A fixed step, caught up in whole ticks. Rendering interpolates

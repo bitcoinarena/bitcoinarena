@@ -126,15 +126,14 @@ mergeInto(LibraryManager.library, {
   // Not recomputed inside the core: Unity's ground uses Mathf.PerlinNoise,
   // which has no seed and no specification, so a core generating its own would
   // feel hills the player cannot see.
-  BlwpSetGround: function (ptr, cols, rows) {
-    var b = Module.blwp;
-    if (!b) return 0;
-    var n = (cols | 0) * (rows | 0);
-    var src = new Int32Array(Module.HEAP32.buffer, ptr, n);
-    return b.core.setGround(b.st, cols | 0, rows | 0, src.slice()) ? 1 : 0;
-  },
+  // BlwpSetGround IS GONE, and its absence is the rule.
+  //
+  // Unity used to upload `MempoolTerrain.HeightGrid` into the core and the core
+  // felt those hills; every committee replaying the same drive stepped a flat
+  // table, 33.500 m away after six hundred ticks. The relief comes from the
+  // round's seed now (letter 36), so there is nothing for a page to send and
+  // no way for one to put its player in a world nobody else can reproduce.
 
-  // The solid world, handed over as round setup with the relief.
   BlwpSetSolids: function (ptr, count) {
     var b = Module.blwp;
     if (!b) return 0;

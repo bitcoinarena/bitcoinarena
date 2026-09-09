@@ -42,11 +42,14 @@ const b32 = (n) => new Uint8Array(32).fill(n);
 const FUNDED = { funded: () => true };
 const RANDOMNESS = b32(0x9b);
 const BEACON = { hash: RANDOMNESS, height: 900001, timeMs: 900n };
-// 800, not 600: since 20c3950 this player parks at the door their own seed
-// names, and from there this drive wrecks at tick 753 rather than 592. A
-// transcript that stops at 600 stops while the run is still LIVE, and a LIVE
-// run has no outcome to sign. verify.test.js carries the long version.
-const TICKS = 800;
+// THE FIXTURE'S OWN WORLD, RE-MEASURED. Letter 36 gave the round its relief
+// from its own seed, so this drive is on hills now and it DELIVERED where it
+// used to wreck - and these tests are about a run that came to nothing. The
+// world secret is the fixture's to choose and it chooses one where the drive
+// still loses: b32(0x16) wrecks player 5 at tick 547 with a score of 128 and
+// player 6 at 947. 1000 ticks is past both, and a run's state latches when it
+// leaves LIVE.
+const TICKS = 1000;
 const wordsAt = (t) => [45875, ((t * 977) % 30000) - 15000, (t % 700) < 40 ? 65536 : 0, 0, 0];
 
 // The player's own secret and the commitment their contract carries.
@@ -70,7 +73,7 @@ const contractFor = (nodePubkey) => ({
 const entryFor = (rid, n = 5) => ({
   roundId: rid, playerPubkey: b32(n), sessionPubkey: ed25519.getPublicKey(session),
   stakeCommitment: sha256(preimageOf(n)), stakeMsat: 100000n, feeMsat: 1000n,
-  donationMsat: 0n, joinTick: 0, worldSecret: b32(0x5e), vssSharesRef: new Uint8Array(32),
+  donationMsat: 0n, joinTick: 0, worldSecret: b32(0x16), vssSharesRef: new Uint8Array(32),
 });
 
 /** A Lightning node that keeps a call log and no money. */

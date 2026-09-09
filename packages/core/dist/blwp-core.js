@@ -298,6 +298,27 @@ function between(s, lo, hi) {
   return (lo + Math.imul(unit(s), span >> 16) + ((unit(s) * (span & 65535)) >>> 16)) | 0;
 }
 
+/**
+ * ONE VALUE FROM A SEED AND A LATTICE CORNER, and the same one everywhere.
+ *
+ * The relief is generated rather than uploaded (letter 36), so every party
+ * that replays a run has to arrive at the same hills as the player who drove
+ * them. A stream would not do: a stream depends on how many times it has been
+ * drawn from, and the ground is asked about corners in whatever order a caller
+ * happens to walk them. This is a function of its arguments and nothing else -
+ * splitmix32's finaliser over the three, which is the mixing this file already
+ * trusts for seeding.
+ *
+ * It lives here because it multiplies, and multiplying lives in the arithmetic
+ * files.
+ */
+function hash2(seedWord, i, j) {
+  let z = (seedWord ^ Math.imul(i | 0, 0x9e3779b1) ^ Math.imul(j | 0, 0x85ebca6b)) | 0;
+  z = Math.imul(z ^ (z >>> 16), 0x21f0aaad);
+  z = Math.imul(z ^ (z >>> 15), 0x735a2d97);
+  return (z ^ (z >>> 15)) >>> 0;
+}
+
 /** How many loading-bay doors the post office has. */
 const BAY_COUNT = 24;
 /** Solo / golden-vector bay (Unity PostOffice.SoloBay). */
@@ -1178,18 +1199,117 @@ const CANONICAL_LITTLE_ENDIAN = true;
 // nothing and a descent gave nothing back - the truck drove over the map as
 // though it were a table.
 //
-// The heights are NOT recomputed here from the fee profile. Unity's relief
-// uses Mathf.PerlinNoise, which has no seed and no specification, and the
-// core's own noise field is a different shape - up to five and a half metres
-// different. A core that felt a hill where the player sees flat ground is
-// worse than one that feels no hills at all. So the host uploads the height
-// field it is actually drawing, once, as round setup data: the same status as
-// the fee profile it came from, agreed before the round and hashed with it,
-// never touched again while the round runs.
+// THE HOST USED TO UPLOAD THIS AND NO LONGER MAY, and the reversal is the
+// whole of letter 36. The old rule was that Unity sent the height field it was
+// drawing, "agreed before the round and hashed with it" - except nothing ever
+// hashed it and nothing ever sent it to anybody else. Measured: the page
+// uploaded `MempoolTerrain.HeightGrid` into its own core and the committee
+// replayed the same drive on `flatGround`, which is 0.000 m apart on the level
+// apron and 33.500 m apart six hundred ticks later. A run that leaves flat
+// ground was judged in a world nobody drove.
+//
+// It could not be fixed by sending the grid either way round: `HeightAt` is
+// `Mathf.Log10` of a LIVE mempool profile plus `Mathf.PerlinNoise`, a host's
+// live data through Unity's own float maths - the thing this package exists to
+// avoid - and a player who published their own heights would be choosing the
+// world they are scored in.
+//
+// So the ground is GENERATED HERE, from the round's own seed, in the same
+// integers as everything else. Every party that can replay a drive arrives at
+// the same hills by construction rather than by agreement, and Unity draws
+// what the core says instead of telling it.
+
 
 
 const DEFAULT_COLS = 160;
 const DEFAULT_ROWS = 96;
+
+/**
+ * THE RELIEF, AND EVERY NUMBER IN IT IS A CONSTANT OF THE GAME.
+ *
+ * A lattice of corner heights drawn from the seed, interpolated across it, in
+ * two octaves so the ground rolls rather than stepping. `hash2` is a function
+ * of the seed and the corner and of nothing else, so the field can be built in
+ * any order and comes out the same - which a stream could not promise.
+ */
+const RELIEF_LATTICE_X = 12;
+const RELIEF_LATTICE_Z = 8;
+/** How high the tallest hill may stand, Q16.16. Unity's own baseRelief was 5.5 m. */
+const RELIEF_PEAK = Math.imul(6, ONE);
+
+/**
+ * BOTH ENDS ARE LEVELLED INTO AN APRON, which is not decoration.
+ *
+ * `MempoolTerrain` already did this and said why: an apron slab is one plane
+ * laid at a single height, so a metre of relief under it is a metre of
+ * daylight under one end, and the truck spawned beneath its own loading dock.
+ * The bays are here too - 24 doors across 156 m - and a door on a slope is a
+ * truck that rolls out of it sideways.
+ *
+ * Level out to LEVEL_X, easing to full relief by RELIEF_X.
+ */
+const LEVEL_X = Math.imul(86, ONE);
+const RELIEF_X = Math.imul(66, ONE);
+
+/** 1 where the ground may roll, 0 on the aprons, eased between. Q16.16. */
+function reliefFactor(x, halfX) {
+  const away = x < 0 ? (-x) | 0 : x;
+  if (away >= LEVEL_X) return 0;
+  if (away <= RELIEF_X) return ONE;
+  // Linear between the two, and then smoothed so the join has no crease.
+  const t = div(sub(LEVEL_X, away), sub(LEVEL_X, RELIEF_X));
+  // 3t^2 - 2t^3, the same ease the rest of the game uses for a blend.
+  const tt = mulFast(t, t);
+  return clamp(sub(mulFast(Math.imul(3, ONE), tt), mulFast(Math.imul(2, ONE), mulFast(tt, t))), 0, ONE);
+}
+
+/** One lattice corner's height, Q16.16, from the seed alone. */
+function corner(seedWord, i, j) {
+  return mulFast(RELIEF_PEAK, hash2(seedWord, i, j) >>> 16);
+}
+
+/**
+ * The relief a round is played on, as a height field of `cols` x `rows`.
+ *
+ * Bilinear across the lattice, plus a second octave at half the scale and a
+ * quarter of the height, then levelled into the aprons. Nothing here draws
+ * from a stream and nothing here is a float.
+ */
+function groundFromSeed(seedWord, cols, rows, halfX, halfZ) {
+  const g = flatGround(cols, rows);
+  const lastCol = (cols - 1) | 0;
+  const lastRow = (rows - 1) | 0;
+  for (let r = 0; r < rows; r++) {
+    const v = lastRow > 0 ? div(Math.imul(r, ONE), Math.imul(lastRow, ONE)) : 0;
+    for (let c = 0; c < cols; c++) {
+      const u = lastCol > 0 ? div(Math.imul(c, ONE), Math.imul(lastCol, ONE)) : 0;
+      const coarse = octave(seedWord, u, v, RELIEF_LATTICE_X, RELIEF_LATTICE_Z, 0);
+      const fine = octave(seedWord, u, v, Math.imul(RELIEF_LATTICE_X, 2), Math.imul(RELIEF_LATTICE_Z, 2), 1);
+      const h = add(coarse, fine >> 2);
+      // The world x this column stands at, so the aprons can be levelled.
+      const x = sub(mulFast(u, Math.imul(halfX, 2)), halfX);
+      g.h[Math.imul(r, cols) + c] = mulFast(h, reliefFactor(x, halfX));
+    }
+  }
+  return g;
+}
+
+/** One octave: the lattice cell (u, v) falls in, interpolated bilinearly. */
+function octave(seedWord, u, v, lx, lz, salt) {
+  const fu = mulFast(u, Math.imul(lx, ONE));
+  const fv = mulFast(v, Math.imul(lz, ONE));
+  const i = fu >> 16;
+  const j = fv >> 16;
+  const tu = fu & 65535;
+  const tv = fv & 65535;
+  const a = corner(seedWord, i + Math.imul(salt, 977), j);
+  const b = corner(seedWord, i + 1 + Math.imul(salt, 977), j);
+  const c = corner(seedWord, i + Math.imul(salt, 977), j + 1);
+  const d = corner(seedWord, i + 1 + Math.imul(salt, 977), j + 1);
+  const top = add(a, mulFast(sub(b, a), tu));
+  const bottom = add(c, mulFast(sub(d, c), tu));
+  return add(top, mulFast(sub(bottom, top), tv));
+}
 
 /** A field of one height, which is what a flat world is. */
 function flatGround(cols, rows) {
@@ -3383,11 +3503,26 @@ function tape(rngWords) {
  *
  * `heights` is row-major, Q16.16 metres, cols*rows long.
  */
+/**
+ * A HEIGHT FIELD FROM OUTSIDE, AND NO PLAYER MAY REACH THIS ANY MORE.
+ *
+ * This was the host's door: Unity uploaded the relief it was drawing and the
+ * core felt it. Letter 36 took it away - `init` generates the relief from the
+ * round's seed, and a page that could overwrite it would put the player back
+ * in a world nobody else can replay. `BlwpSetGround` is gone from the jslib
+ * and `SetGround` from `BlwpCore`, so nothing in a browser can call this.
+ *
+ * It stays for the one caller that is not a host: the reference tests, which
+ * reproduce a published dataset and need the exact field it was measured on.
+ * A ground put here is marked as such, because a restart must keep an uploaded
+ * one and must NOT keep a generated one - the seed makes that again.
+ */
 function setGround(st, cols, rows, heights) {
   if (cols < 2 || rows < 2 || heights.length < Math.imul(cols, rows)) return false;
   const g = flatGround(cols, rows);
   g.h.set(heights.subarray(0, Math.imul(cols, rows)));
   st.ground = g;
+  st.uploadedGround = true;
   return true;
 }
 
@@ -3633,7 +3768,11 @@ function submitLiquidation(st, size) {
 
 function restart(st, seedWord) {
   const fresh = init(seedWord);
-  fresh.ground = st.ground;
+  // NOT THE OLD GROUND. `init` makes the relief the seed names, and a restart
+  // into the same seed makes the same relief; carrying the previous one over
+  // would keep a host-uploaded field alive across a round and put the two
+  // sides back in different worlds.
+  if (st.uploadedGround) fresh.ground = st.ground;
   fresh.solids = st.solids;
   // The craters cross the round with the ground, one round older. This is why
   // the lifetime is counted in ROUNDS and lives here: a round is a thing that
@@ -3716,10 +3855,19 @@ function init(seedWord) {
 
   st.tape = tape(rng);
 
-  // Flat until the host uploads the relief it is drawing. Flat is the honest
-  // default: a core that invents hills the player cannot see is worse than one
-  // that drives over a table.
-  st.ground = flatGround(DEFAULT_COLS, DEFAULT_ROWS);
+  // THE RELIEF IS THE ROUND'S, AND IT IS MADE HERE.
+  //
+  // It was flat until a host uploaded one, and the host was the only party that
+  // ever did: the page uploaded `MempoolTerrain.HeightGrid` into its own core
+  // and every committee replayed the same drive on a table. 0.000 m apart on
+  // the level apron, 33.500 m apart six hundred ticks later - so a run that
+  // left flat ground was judged in a world nobody drove, and the picture every
+  // other player was shown was that flat run.
+  //
+  // Generated from the seed, so the player and every node that replays them
+  // arrive at the same hills by construction rather than by agreement. Unity
+  // draws what this says now; it does not say what this should be.
+  st.ground = groundFromSeed(seedWord, DEFAULT_COLS, DEFAULT_ROWS, HALF_X, HALF_Z);
 
   // An empty world until the host says otherwise. Empty is honest: a core
   // inventing walls the player cannot see is worse than one with none.
