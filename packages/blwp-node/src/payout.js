@@ -640,8 +640,24 @@ export class Payouts {
           why: 'this node died mid-send; the chain already has that transaction',
         });
         asked.push({ roundId: row.roundId, state: PAID });
+        continue;
+      }
+      // THIS SEAT'S OWN FULLY SIGNED SPEND, WHICH THE CHAIN HAS NOT HEARD OF: the
+      // raw is written only once five of seven have signed it, so these are
+      // the exact bytes it was about to send - sent now, and nothing is built
+      // or signed again. If the chain will not take them, the row stays
+      // queued with the chain's own reason.
+      let sent;
+      try { sent = await this.chain.send(row.raw); }
+      catch (err) { sent = { ok: false, why: err.message }; }
+      if (sent && sent.ok) {
+        this.round.putPayout({
+          roundId: row.roundId, tableId: row.tableId, state: PAID, txid, raw: row.raw,
+          why: 'this node died before sending; the bytes it had written were sent on restart',
+        });
+        asked.push({ roundId: row.roundId, state: PAID, sent: true });
       } else {
-        asked.push({ roundId: row.roundId, state: PAYOUT_QUEUED });
+        asked.push({ roundId: row.roundId, state: PAYOUT_QUEUED, why: sent && sent.why });
       }
     }
     return { ok: true, asked };

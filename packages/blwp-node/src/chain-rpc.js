@@ -20,6 +20,7 @@
 import { readFileSync } from 'node:fs';
 import { fromHex } from '../../protocol/src/hash.js';
 import { HEADER_BYTES } from '../../protocol/src/chain.js';
+import { splitBlock } from '../../protocol/src/block.js';
 
 /** The most headers one call will ask for. A view is a window, not the chain. */
 export const MAX_HEADERS = 2016;
@@ -59,6 +60,24 @@ export function bitcoindRpc({ url, cookiePath, fetcher = fetch, readCookie } = {
     if (body.error) throw new Error(`bitcoind refused ${method}: ${body.error.message || body.error}`);
     return body.result;
   };
+}
+
+/**
+ * BLOCKS `from`..`to` AS THE CENSUS READS THEM: header plus transactions.
+ *
+ * The same shape `regtest-bond.mjs` hands a tool, asked of a node over RPC, so
+ * a daemon started with nothing but the chain can derive a round's census -
+ * and read each seat's address out of the advertisement in its bond - the way
+ * a first seating does. The census checks the header links and merkle roots
+ * itself; this only divides the bytes.
+ */
+export async function blocksOver(call, from, to) {
+  const blocks = [];
+  for (let h = from; h <= to; h++) {
+    const hash = await call('getblockhash', [h]);
+    blocks.push(splitBlock(fromHex(await call('getblock', [hash, 0]))));
+  }
+  return { blocks, firstHeight: from };
 }
 
 /**

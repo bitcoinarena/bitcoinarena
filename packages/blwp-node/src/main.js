@@ -11,13 +11,20 @@
 //     BLWP_BITCOIND_COOKIE   the path of its .cookie file
 //
 // Both or neither. With them the daemon can find the pool's output, send and
-// look up a payout, and read each round's beacon - so a daemon that died in
-// the middle of settling, started again on its store, finishes what it owed.
-// Measured without them: it recovered nothing at any kill point.
+// look up a payout, read each round's beacon, and derive each round's census -
+// which is where it learns the other seats' addresses, from the advertisements
+// in their bonds. So a daemon that died in the middle of settling, started
+// again on its store, finishes what it owed. Measured without them: it
+// recovered nothing at any kill point.
+//
+// HOW FAR BACK A CENSUS IS READ: CENSUS_LOOKBACK blocks before a round's
+// census height. A bond funded earlier than that is not seen by a restarted
+// daemon, and a round whose committee holds one is refused by name.
+const CENSUS_LOOKBACK = 2016;
 import { openStore } from './store.js';
 import { serve } from './server.js';
 import { Round } from './round.js';
-import { bitcoindRpc } from './chain-rpc.js';
+import { bitcoindRpc, blocksOver } from './chain-rpc.js';
 import { chainSpendOver } from './pool-watch.js';
 import { chainBeacon } from './beacon-source.js';
 import { PAYOUT_QUEUED } from './payout.js';
@@ -43,15 +50,40 @@ if (url) {
   // THE BEACON OF EVERY ROUND THIS STORE STILL OWES A PAYOUT ON, read before
   // the daemon starts: the start-up sweep asks it whose turn it is, and the
   // other readers of a beacon ask synchronously.
+  // AND ITS CENSUS BLOCKS, for the same reason: the roster reads a view
+  // synchronously, and the seats' addresses are in it.
+  const views = new Map();
+  // UP TO THE BEACON, AND AS DEEP PAST IT AS THE ROUND ASKS. The beacon comes
+  // after the census height in the normal order, and the roster checks the
+  // seed block against this same view - at the round's own confirmation depth.
+  // Measured: stopping at the census height, "no block in this view is after
+  // this round's committee time"; stopping at the beacon, "the block that
+  // seeds this round is 1 deep and this round asks for 6". Never past the tip.
+  const viewOf = async (contract) => {
+    const seen = await beacon.refresh(contract);
+    const tip = Number(await call('getblockcount'));
+    const deep = seen.ok ? seen.height + contract.censusConfirmations - 1 : 0;
+    const to = Math.min(tip, Math.max(contract.censusHeight, deep));
+    return blocksOver(call, Math.max(0, contract.censusHeight - CENSUS_LOOKBACK), to);
+  };
   const round = new Round(db);
   for (const row of round.payoutsInState(PAYOUT_QUEUED)) {
     const r = round.get(row.roundId);
     if (!r) continue;
-    const seen = await beacon.refresh(decodeRoundContract(new Uint8Array(r.contract)));
+    const contract = decodeRoundContract(new Uint8Array(r.contract));
+    const seen = await beacon.refresh(contract);
     if (!seen.ok) console.error(`[beacon] ${seen.why}`);
+    try { views.set(Buffer.from(row.roundId).toString('hex'), await viewOf(contract)); }
+    catch (e) { console.error(`[census] ${e.message}`); }
   }
   Object.assign(options, {
     poolCall: call,
+    chainFor: ({ contract, roundIdBytes } = {}) => {
+      const key = roundIdBytes ? Buffer.from(roundIdBytes).toString('hex') : null;
+      if (key && views.has(key)) return views.get(key);
+      if (key && contract) viewOf(contract).then((v) => views.set(key, v)).catch(() => {});
+      return undefined;
+    },
     chainSpend: chainSpendOver(call),
     // A round seen for the first time is read now and answered from then on.
     randomnessFor: (q) => {

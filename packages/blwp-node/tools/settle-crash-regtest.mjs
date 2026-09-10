@@ -56,7 +56,10 @@ import { SHARES_TOTAL } from '../../protocol/src/shares.js';
 import { MIN_ENTRY_WINDOW_MS } from '../../protocol/src/constants.js';
 import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
 import { feldmanGroup, tweakPoint } from '../src/curve.js';
-import { assumeSeated } from '../test/seating.js';
+import { regtest } from './regtest-bond.mjs';
+import { deriveCensus } from '../../protocol/src/census.js';
+import { bondSetFor } from '../src/curve.js';
+import { parseTransaction } from '../../protocol/src/tx.js';
 import { toHex, fromHex } from '../../protocol/src/hash.js';
 import { entryFeeMsat } from '../../protocol/src/fee.js';
 
@@ -257,16 +260,15 @@ async function main() {
     // block past it - read off the chain by every daemon, as a real one reads
     // it, rather than handed in. (A fixed date before this chain existed made a
     // real launcher refuse: "already after this round's committee time".)
-    NOW = Date.now() + 2000;
-    await new Promise((r) => setTimeout(r, 3000));
-    mine(20);
     let beacon = null;
-    say(`bitcoind at height ${cli('getblockcount')}, rpc ${P.rpc}; the round's committee time is ${NOW}`);
+    let censusView = null;
+    say(`bitcoind at height ${cli('getblockcount')}, rpc ${P.rpc}`);
 
     for (let i = 0; i < SHARES_TOTAL; i++) {
       nodes.push(await serve(openStore(join(dir, `node-${i}.db`)), {
         port: PORT0 + i, host: '127.0.0.1', funded: () => true, now: () => NOW,
         poolCurve: curve, chainSpend: chain, randomnessFor: () => beacon,
+        chainFor: () => censusView,
       }));
     }
     const committee = nodes.map((n) => n.round.pubkey);
@@ -282,25 +284,75 @@ async function main() {
     }
     say(`seven daemons on ports ${PORT0}..${PORT0 + SHARES_TOTAL - 1}, one share each`);
 
+    // EVERY SEAT BONDED ON THIS CHAIN, its signed advertisement - and so its
+    // address - in the bond's witness: the spec's record of where a node
+    // lives, which a restarted daemon reads back the way a first seating does.
+    const rt = regtest(cli, { wallet: 'committee' });
+    const posted = nodes.map((n, i) => rt.postBond(n.round.identity.secret,
+      { endpoint: `ws://127.0.0.1:${PORT0 + i}` }));
+    rt.include(posted.map((b) => b.hex));
+    const bondHeight = rt.height();
+    mine(6);
+    const censusHeight = rt.height();
+    say(`seven bonds in block ${bondHeight}, census height ${censusHeight}`);
+    // THE ROUND'S COMMITTEE TIME IS A REAL INSTANT ON THIS CHAIN'S CLOCK: blocks
+    // before it, then blocks after it, so the beacon rule can name the first
+    // block past it - read off the chain by every daemon, as a real one reads
+    // it, rather than handed in. (A fixed 2026-09-06 date before this chain
+    // existed made a real launcher refuse: "already after this round's
+    // committee time".)
+    //
+    // TAKEN FROM THE CHAIN'S OWN MEDIAN TIME at the census height, as
+    // `round-2of2.mjs` takes it - not the wall clock: fast regtest mining runs
+    // block times ahead of the clock, and a wall-clock committee time put the
+    // beacon at block 151, below census height 214, so the normal order (beacon
+    // after the census) was never measured.
+    const censusMtp = Number(JSON.parse(cli('getblockheader', cli('getblockhash', String(censusHeight)))).mediantime);
+    NOW = censusMtp * 1000 + 1000;
+    mine(20);
+    censusView = rt.blocksFrom(0, rt.height());
+
     const contract = {
-      networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations: 1,
+      networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations: 6,
       gameVerifySlots: SHARES_TOTAL, settlementSlots: SHARES_TOTAL, simCoreHash: b32(1),
       committeeTimeMs: BigInt(NOW), randomnessRule: 'bitcoin-block-hash',
       startTimeMs: BigInt(NOW) + MIN_ENTRY_WINDOW_MS,
       entryCloseMs: BigInt(NOW) + MIN_ENTRY_WINDOW_MS + 200000n,
       objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20,
-      slashRemainder: 'BURN', donationSetId: b32(0xd0), censusHeight: 900000,
-      censusRoot: b32(2), stakeMsat: STAKE_MSAT, bondMinSats: 50000n, blockTicks: 9000,
+      slashRemainder: 'BURN', donationSetId: b32(0xd0), censusHeight,
+      censusRoot: new Uint8Array(32), stakeMsat: STAKE_MSAT, bondMinSats: 50000n, blockTicks: 9000,
       exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
       timeFloor: 30, timeCeil: 150, minScore: 1, rankNumerator: 3, rankDenominator: 4,
       nodes: committee,
     };
+    // THE CENSUS ROOT IS THE CHAIN'S, derived from these blocks the way every
+    // seat will derive it when the round is opened on it.
+    const byTxid = new Map();
+    for (const block of censusView.blocks)
+      for (const raw of block.transactions || []) {
+        try { byTxid.set(toHex(parseTransaction(raw).txid), raw); } catch { /* not one */ }
+      }
+    const census = deriveCensus(censusView, {
+      contract: decodeRoundContract(encodeRoundContract(contract)), bond: bondSetFor('regtest'),
+      resolve: (e) => { const raw = byTxid.get(toHex(e.txid)); return raw ? { transaction: raw } : null; },
+    });
+    if (!census.ok) throw new Error(`the harness could not derive its own census: ${census.why}`);
+    contract.censusRoot = census.root;
+    say(`the census seats ${census.entries.length}; root ${toHex(census.root).slice(0, 16)}…`);
     const rid = roundId(contract);
     const beaconSrc = chainBeacon({ call: rpcFor(dir), window: 400 });
     const seenBeacon = await beaconSrc.refresh(contract);
     if (!seenBeacon.ok) throw new Error(`the chain names no beacon for this round: ${seenBeacon.why}`);
     beacon = beaconSrc.for({ contract });
-    say(`the round's beacon, read off the chain: block ${beacon.height}`);
+    say(`the round's beacon, read off the chain: block ${beacon.height} (census height ${censusHeight})`);
+    // THE ENTRY DOOR READS THE WALL CLOCK, and fast regtest mining runs the
+    // chain's clock ahead of it - measured: "that round's committee forms at
+    // 1789059126000 and it is 1789059118169: entry opens then". So the round
+    // is opened once the wall clock has passed the committee time.
+    const early = NOW - Date.now();
+    if (early > 120000) throw new Error(`the chain's clock is ${early} ms ahead of the wall clock`);
+    if (early > 0) { say(`waiting ${early + 500} ms for the wall clock to reach the committee time`); await new Promise((r) => setTimeout(r, early + 500)); }
+    if (beacon.height <= censusHeight) problems.push(`the beacon (block ${beacon.height}) is not after the census height ${censusHeight}`);
     const winnerSecret = rand(32);
     const session = ed25519.utils.randomSecretKey();
     const players = [
@@ -312,12 +364,13 @@ async function main() {
       joinTick: 0, worldSecret: b32(0x5e), vssSharesRef: new Uint8Array(32),
     } }));
     for (const n of nodes) {
-      if ((await post(n.port, '/round', encodeRoundContract(contract))).status !== 201)
-        problems.push('a node refused the round');
-      assumeSeated(n.round, rid, contract.nodes);
+      const opened = await post(n.port, '/round', encodeRoundContract(contract));
+      if (opened.status !== 201) throw new Error(`a node refused the round: ${opened.status} ${await opened.text()}`);
+      if (n.round.seats(rid).length !== SHARES_TOTAL) problems.push('a node did not seat all seven off the chain');
       for (const p of players) {
-        if ((await post(n.port, '/entry', encodeEntryContract(p.contract))).status !== 201)
-          problems.push('a node refused an entry');
+        const joined = await post(n.port, '/entry', encodeEntryContract(p.contract));
+        if (joined.status !== 201)
+          throw new Error(`a node refused an entry: ${joined.status} ${(await joined.text()).trim()}`);
         const result = {
           roundId: rid, playerPubkey: p.pubkey, outcome: p.outcome, score: p.score,
           transcriptHash: b32(0x11), simCoreHash: contract.simCoreHash, nodePubkey: n.round.pubkey,

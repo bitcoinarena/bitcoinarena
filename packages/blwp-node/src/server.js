@@ -393,6 +393,34 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
    * promise for the same reason the verifier's is: a caller that cannot await
    * it cannot tell "not asked yet" from "not asked".
    */
+  // THE OTHER SEATS' ADDRESSES, READ OFF THE CHAIN.
+  //
+  // Measured 2026-09-10 on an isolated regtest: a seat restarted as
+  // `src/main.js` with only its two chain settings reached the committee step
+  // of a payout that still needed signatures and stopped - "1 of 5 seats
+  // committed to this spend" - because it knew no other seat's address. The
+  // spec's record of where a node lives is the signed advertisement in its
+  // bond, and seat selection already reads those out of the same blocks. So a
+  // node handed no peers takes the settlement committee's endpoints from the
+  // census of every round it still owes a payout on, the same way it seated
+  // them. A peers list the caller passed in is never replaced.
+  if (chainFor && (!payouts.peers || !payouts.peers.length)) {
+    const self = toHex(round.pubkey);
+    const found = new Set();
+    for (const row of round.payoutsInState(PAYOUT_QUEUED)) {
+      const picked = roster.committeeFor(row.roundId, 'settlement');
+      if (!picked.ok) {
+        console.error(`[payout] ${toHex(row.roundId).slice(0, 16)} reads no seat addresses: ${picked.why}`);
+        continue;
+      }
+      for (const e of picked.committee) {
+        if (toHex(e.pubkey) === self || !e.advert || !e.advert.endpoint) continue;
+        found.add(String(e.advert.endpoint).replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, ''));
+      }
+    }
+    if (found.size) payouts.peers = [...found];
+  }
+
   /**
    * AND ANY PAYOUT THIS NODE DIED IN THE MIDDLE OF SENDING. Same reason as the
    * hold's: the only party that knows whether a transaction went out is the
@@ -402,8 +430,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const reconcilingPayouts = payouts.canSpend
     ? payouts.reconcile()
       .then((asked) => {
-        const n = (asked && asked.asked) ? asked.asked.filter((a) => a.state === PAID).length : 0;
-        if (n) console.log(`[payout] the chain already had ${n} payout(s) this node died sending`);
+        const list = (asked && asked.asked) || [];
+        const had = list.filter((a) => a.state === PAID && !a.sent).length;
+        const sent = list.filter((a) => a.state === PAID && a.sent).length;
+        if (had) console.log(`[payout] the chain already had ${had} payout(s) this node died sending`);
+        if (sent) console.log(`[payout] sent ${sent} payout(s) this node had signed and written but not sent`);
         return asked;
       })
       // AND THE ROUNDS THAT NEVER GOT A TRANSACTION BUILT AT ALL.
