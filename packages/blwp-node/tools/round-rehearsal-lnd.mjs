@@ -335,6 +335,12 @@ async function main() {
         say(`    ${name} replay ${who(r.entryId)}: stored ${r.stored}${r.outcome ? `, ${r.outcome} score ${r.score}` : ''}${r.why ? ` - ${r.why}` : ''}`);
       for (const g of (closed && closed.gathered) || [])
         say(`    ${name} gather ${g && g.entryId ? who(g.entryId) : '?'}: ok ${g && g.ok}, final ${g && g.final}${g && g.why ? ` - ${g.why}` : ''}`);
+      // WHAT THIS CLOSE CARRIED FROM ITS PEERS (M3.3-22).
+      for (const p of players) {
+        const c = p.eid && d.verifier.carried && d.verifier.carried.get(`${round.id}:${toHex(p.eid)}`);
+        if (c) say(`    ${name} carried ${p.name}: took ${c.taken}, refused ${c.refused.length}, down ${c.down.length}`
+          + `${c.down.length ? ` (${c.down.join('; ')})` : ''}${c.refused.length ? ` [${c.refused[0]}]` : ''}`);
+      }
       const money = await d.stakes();
       d.money = money;
       say(`  daemon ${name}: ${money.ok === false ? `NOT OK: ${money.why}` : 'ok'}; considered ${money.considered}; `
@@ -343,6 +349,27 @@ async function main() {
       if (money.owed) say(`    payout: ${money.owed.ok ? money.owed.state : money.owed.why}`);
       if (money.paid) say(`    pool spend: ${money.paid.ok ? money.paid.state : money.paid.why}`);
     }
+
+    // ---- AND HOW RECEIPTS SIT AFTER IT: the done criterion, counted ----
+    for (const p of players) {
+      if (!p.ticks) continue;
+      for (const [i, base] of named.nodes.entries()) {
+        const q = `round=${round.id}&entry=${toHex(p.eid)}`;
+        const cp = await fetch(`${base}/checkpoints?${q}`); await cp.arrayBuffer();
+        const rc = await fetch(`${base}/receipts?${q}`);
+        const bytes = new Uint8Array(await rc.arrayBuffer());
+        const by = [0, 0];
+        for (let at = 0; at + SIGNED_RECEIPT_BYTES <= bytes.length; at += SIGNED_RECEIPT_BYTES) {
+          const r = decodeCheckpointReceipt(splitSignedReceipt(bytes.subarray(at, at + SIGNED_RECEIPT_BYTES)).body);
+          const k = daemonKeys.indexOf(toHex(r.nodePubkey));
+          if (k >= 0) by[k]++;
+        }
+        say(`    after the close, ${p.name} on ${'AB'[i]}: ${cp.headers.get('x-checkpoints')} checkpoint(s), `
+          + `${rc.headers.get('x-receipts')} receipt(s) - ${by[i]} its own, ${by[1 - i]} from ${'AB'[1 - i]}`);
+      }
+    }
+    say(`    verifier peers per round: A ${JSON.stringify(round.a.verifier.peersOf(fromHex(round.id)))}, `
+      + `B ${JSON.stringify(round.b.verifier.peersOf(fromHex(round.id)))}`);
 
     // ---- WHERE EVERY MSAT IS ----
     const lookup = (hash) => { try { return lnj('bob', 'lookupinvoice', hash); } catch (e) { return { state: `lookup failed: ${e.message}` }; } };
@@ -384,11 +411,20 @@ async function main() {
     const p2 = players.find((p) => p.name === 'P2');
     if (p2 && p2.lnd === 'SETTLED')
       hole('ruling', `P2's lost stake settled into the operator's lnd (bob +${end.bob - before.bob} msat), not the pool - how a settled stake reaches the pool`);
-    if (p2 && p2.lnd !== 'SETTLED') hole('code', `P2 (FAILED) was not settled: lnd ${p2.lnd}`);
-    if (p1 && p1.lnd !== 'CANCELED') hole('code', `P1 (DELIVERED) was not cancelled back: lnd ${p1.lnd}`);
+    // IN EACH DAEMON'S OWN WORDS, not a label guessed from the end state.
+    const actOn = (p) => daemons.map(([name, d]) => {
+      const a = ((d.money && d.money.actions) || []).find((x) => p && p.eid && toHex(x.entryId) === toHex(p.eid));
+      return `${name}: ${a ? `${a.action} -> ${a.state} (${a.why})` : 'no act'}`;
+    }).join('; ');
+    if (p2 && p2.lnd !== 'SETTLED') hole('code', `P2 (FAILED) was not settled (lnd ${p2.lnd}) - ${actOn(p2)}`);
+    if (p1 && p1.lnd !== 'CANCELED') hole('code', `P1 (DELIVERED) was not cancelled back (lnd ${p1.lnd}) - ${actOn(p1)}`);
+    const owed = daemons.map(([name, d]) => `${name}: ${d.money && d.money.owed ? (d.money.owed.ok ? d.money.owed.state : d.money.owed.why) : 'nothing owed'}`);
     const paid = daemons.map(([, d]) => d.money && d.money.paid).filter(Boolean);
-    if (!paid.some((x) => x.ok))
-      hole('ruling', `the winner's payout was not paid: ${paid.map((x) => x.why).join(' | ') || 'no seat asked for the spend'}`);
+    if (!paid.some((x) => x.ok)) {
+      const short = owed.some((o) => /seats signed this table/.test(o));
+      hole(short ? 'code' : 'ruling', `the winner's payout was not paid - ${owed.join('; ')}`
+        + `${paid.length ? `; spend: ${paid.map((x) => x.why).join(' | ')}` : ''}`);
+    }
     hole('inbound', 'the same round on testnet4 needs 196000 msat of inbound on the operator\'s node, which has 0');
   } catch (e) {
     say(`\nTHE REHEARSAL STOPPED: ${e.stack || e.message}`);
