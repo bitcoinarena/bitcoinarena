@@ -5889,6 +5889,8 @@ class Client {
     // them in order from where it last answered.
     this.published = [];          // { bytes, through } per accepted batch
     this.peerFeeds = new Map();   // base -> { next, ticks, refused, why, running }
+    this.batchesInterrupted = 0;  // own socket closed with a batch in flight (not a refusal)
+    this.batchesLandedUnheard = 0; // batches the node took whose answer was lost
     this.peerBatchesRefused = 0;  // a peer node SAID NO to a batch
     this.peerInputsClosed = 0;    // a batch could not reach a peer at all
     this.peerDowns = 0;           // times a peer went from answering to unreachable
@@ -6249,7 +6251,9 @@ class Client {
         this.sock = null;
         const waiting = this.said;
         this.said = [];
-        for (const w of waiting) w('error the socket closed');
+        // NOT A REFUSAL: the node said nothing. Answered with the CLOSED word,
+        // so the batch and the mark that were waiting know it was the link.
+        for (const w of waiting) w(`${CLOSED}the socket closed`);
         this.drops++;
         this.state = 'dropped';
         if (this.onDrop) this.onDrop();
@@ -6390,7 +6394,8 @@ class Client {
       try { this.readReceipt(a, built.id); } catch (e) { refused.push(`${base}: ${e.message}`); }
     });
     let receipt = null;
-    if (typeof answer === 'string') refused.unshift(`${this.base}: ${answer}`);
+    if (typeof answer === 'string')
+      (answer.startsWith(CLOSED) ? unreached : refused).unshift(`${this.base}: ${answer}`);
     else receipt = this.readReceipt(answer, built.id);
     const live = this.live(built.id);
 
@@ -6823,9 +6828,30 @@ class Client {
     if (!belongs.ok && t.batches.length)
       throw new Error(`the transcript is not this entry's run: ${belongs.why}`);
 
+    const before = this.nextTick;
     const last = t.batches[t.batches.length - 1];
     this.batchHead = last ? batchId(last) : GENESIS;
     this.nextTick = last ? batchTicks(last).at(-1) + 1 : entry.joinTick;
+
+    // THE NODE MAY ALREADY HOLD WHAT THIS CLIENT STILL HOLDS: a batch it took
+    // whose answer never arrived. Those words are published, so they leave the
+    // hold here - or the next batch would carry them again at the node's next
+    // tick. Measured before this: the node took ticks 60..89, the answer was
+    // lost, and after the resume tick 90 held the input recorded for 60 - the
+    // node ended up with 150 ticks for 120 recorded. Its loads leave with them.
+    const landed = this.nextTick - before;
+    if (landed > 0 && landed <= this.hold.length) {
+      this.hold = this.hold.slice(landed);
+      this.held = this.hold.length;
+      this.loads = this.loads.filter(([at]) => at >= this.nextTick);
+      this.batchesLandedUnheard++;
+    }
+    // AND THE PEERS ARE FED WHAT THIS NODE TOOK, including a batch whose answer
+    // was lost, in the node's own order - a peer missing one refuses the rest.
+    for (let i = this.published.length; i < t.batches.length; i++) {
+      const b = t.batches[i];
+      this.published.push({ bytes: encodeInputBatch(b), through: batchTicks(b).at(-1) + 1 });
+    }
 
     // AND THE COUNT OF WHAT THIS CLIENT HAS ACCEPTED IS RECONCILED WITH IT.
     //
@@ -6899,6 +6925,8 @@ class Client {
     this.marksRefusedWhy = null;
     this.published = [];
     this.peerFeeds = new Map();
+    this.batchesInterrupted = 0;
+    this.batchesLandedUnheard = 0;
     this.peerBatchesRefused = 0;
     this.peerInputsClosed = 0;
     this.peerDowns = 0;
@@ -7091,10 +7119,21 @@ class Client {
         // zero from the tick the refusal happened at.
         this.hold = words.concat(this.hold); this.held = this.hold.length;
         this.loads = loads.concat(this.loads);
-        this.refusals++;
-        this.refusedWhy = typeof r.answer === 'string' ? r.answer : 'the node did not say';
-        this.refusedAt = this.nextTick;
-        this.#afterRefusal(r);
+        if (typeof r.answer === 'string' && r.answer.startsWith(CLOSED)) {
+          // THE LINK WENT WITH THE BATCH IN FLIGHT. The node refused nothing,
+          // so this is not a refusal and does not resync towards VOID -
+          // measured before this: two such drops, and an honest run ended
+          // "VOID: the node refuses this run's inputs ... error the socket
+          // closed". The words are held; the reconnect reads where the node
+          // is (`resume`, which drops any the node did take) and the next
+          // drain sends the rest.
+          this.batchesInterrupted++;
+        } else {
+          this.refusals++;
+          this.refusedWhy = typeof r.answer === 'string' ? r.answer : 'the node did not say';
+          this.refusedAt = this.nextTick;
+          this.#afterRefusal(r);
+        }
       }
       this.publishing = null;
       // A MARK IS WAITING ON TICKS STILL HELD: carry on draining now rather
@@ -7285,6 +7324,7 @@ class Client {
       + (this.pendingLink ? ` pending link ${this.pendingLink.tick}` : '')
       + (this.marksRelinked ? ` relinked ${this.marksRelinked}` : '')
       + (this.drops ? ` drops ${this.drops} tries ${this.tries} resumed ${this.resumedAt}` : '')
+      + (this.batchesInterrupted ? ` interrupted ${this.batchesInterrupted}` : '')
       + (this.ended ? ` ${this.ending} ${this.endingReason}` : '');
   }
 
