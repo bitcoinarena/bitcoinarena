@@ -264,7 +264,12 @@ export function stakeLine(stake) {
   if (stake.free) return ' · free seat';
   if (!stake.dealt) return '';
   const s = stake.seen;
-  if (s && typeof s.seen === 'number') {
+  // A SEAT THE NODE ISSUED NO HOLD FOR, THAT NOBODY HAS SEEN, KEEPS THE NODE'S
+  // REASON. "0 of 2" there would hide why the stake can never be held - the
+  // thing letter 15 put on the chip. Once any seat has seen it (a hold issued
+  // later and paid), the count is the truth.
+  const noHold = stake.hold && stake.hold.state === 'none';
+  if (s && typeof s.seen === 'number' && !(noHold && s.seen === 0)) {
     return ` · stake seen by ${s.seen} of ${s.of} nodes (${s.needed} needed)`
       + (s.unanswered ? `, ${s.unanswered} did not answer` : '')
       + (s.committed ? ' · committed' : '');

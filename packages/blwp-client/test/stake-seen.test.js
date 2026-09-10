@@ -166,6 +166,24 @@ test('counted from the seat: a watch started before anybody paid reaches committ
   } finally { client.close(); await c.close(); }
 });
 
+test('a seat the node issued no hold for keeps the node\'s reason while nobody has seen it', () => {
+  // The count starts from the seat whatever the node answered. A node with no
+  // Lightning answers `x-hold: none` and says why - letter 15 put that reason on
+  // the chip so a stake that can never be held does not read like one waiting.
+  // A count of "0 of 2" in its place would hide it.
+  const none = { state: 'none', why: 'this node reaches no Lightning, so it holds no stakes' };
+  const zero = { seen: 0, of: 2, needed: 2, unanswered: 0, committed: false };
+  assert.equal(stakeLine({ dealt: true, hold: none, seen: zero }),
+    ' · stake dealt, unpaid (this node reaches no Lightning, so it holds no stakes)',
+    'the node\'s reason there is no hold was replaced by a count of nothing');
+  // ONCE A SEAT HAS SEEN IT, the count is the truth (a hold issued later).
+  assert.equal(stakeLine({ dealt: true, hold: none, seen: { ...zero, seen: 1 } }),
+    ' · stake seen by 1 of 2 nodes (2 needed)');
+  // AND A HELD SEAT'S ZERO IS A COUNT, not a reason.
+  assert.equal(stakeLine({ dealt: true, hold: { state: HELD }, seen: zero }),
+    ' · stake seen by 0 of 2 nodes (2 needed)');
+});
+
 test('a count that is over is not started again: committed, ended or closed, watchStake asks nobody', async () => {
   // The chip paints every 500 ms and starts the count from the seat. What
   // stops it restarting a finished count is a rule, and a rule in index.html is
