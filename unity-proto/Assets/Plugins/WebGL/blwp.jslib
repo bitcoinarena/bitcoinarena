@@ -335,11 +335,12 @@ mergeInto(LibraryManager.library, {
       // and photographed at 17:05 as a ghost on the grass while the truck it
       // pictured stood on its bay.
       //
-      // HERE, AND NOT AT ROLL-OUT. Every `BlwpStep` is published from the
-      // moment there is a client, loading in the bay included, so a core put
-      // in the right world at roll-out would already have published thousands
-      // of ticks of the wrong one. `net.client` does not exist until the
-      // promise below resolves, so nothing has been recorded yet.
+      // AT THE START OF RECORDING, AND NOT AT ROLL-OUT. Every `BlwpStep` is
+      // published from the moment `setRound` names the run, loading in the bay
+      // included, so a core put in the right world at roll-out would already
+      // have published thousands of ticks of the wrong one. The seed is only
+      // LEARNED here; the core enters its world in `net.opened`, in the same
+      // step as `setRound`, so no step falls between the two.
       //
       // A ROUND WHOSE NODES NAME TWO WORLDS IS NOT ONE ROUND, and
       // `worldSeedFor` refuses it rather than picking one.
@@ -360,9 +361,12 @@ mergeInto(LibraryManager.library, {
       }).then(function (world) {
         net.seedWord = world.seedWord | 0;
         net.randomness = world.randomness;
-        // THE CORE IS RESTARTED INTO IT. `init` is the same door C# reaches
-        // through `BlwpCore.Init`; nothing here writes a state word.
-        b.st = b.core.init(net.seedWord);
+        // THE CORE IS NOT RESTARTED HERE ANY MORE - it enters this world in
+        // the same step that starts recording, in `net.opened`. Restarted
+        // here, every tick Unity stepped during the four round trips below
+        // (Client.at, openRound, join, connect) was simulated and never
+        // published: 16, 16, 16 and 24 of them on a tab with 400 ms of
+        // latency, measured in two real Chromes on 2026-09-10.
         console.log('[blwp] world seed 0x' + (net.seedWord >>> 0).toString(16)
           + ' from ' + world.agreed + ' node(s) agreeing on the round randomness');
         return C.Client.at(blwpDiscovery(), {
@@ -416,6 +420,15 @@ mergeInto(LibraryManager.library, {
           // Moved into `@blwp/client` they are measured against a real node by
           // `backpressure.test.js`, and the page and the tests run one set of
           // rules instead of two that look alike.
+          //
+          // THE CORE ENTERS THE ROUND'S WORLD IN THE SAME STEP THAT STARTS
+          // RECORDING, so its tick 0 is the transcript's tick 0 however long
+          // the join took. Three statements with no await between them: no
+          // `BlwpStep` can land between the reset and `setRound`. `net.seen`
+          // counts from here too, because a checkpoint is labelled with it and
+          // hashes the core as it stands.
+          b.st = b.core.init(net.seedWord);
+          net.seen = 0;
           net.client.setRound({
             roundId: net.where.roundId, entryId: net.where.entryId,
             blockTicks: contract.blockTicks | 0,

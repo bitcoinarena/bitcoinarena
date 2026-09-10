@@ -145,7 +145,10 @@ test('nothing on a live round reads the constant seed, and the core is in the ro
 
       // ---- AND THEN THE PAGE JOINS. ----
       assert.equal(library.BlwpNetStart(0, 6, 60), 1, 'the bridge would not start');
-      for (let i = 0; i < 200 && !Module.blwpNet.client; i++) await wait(50);
+      // UNTIL RECORDING BEGINS, not until the client exists: the round's world
+      // is entered in the same step that starts recording (the 16/24-tick
+      // gap, 2026-09-10), so a client that exists has not yet been put there.
+      for (let i = 0; i < 200 && !(Module.blwpNet.client && Module.blwpNet.client.where); i++) await wait(50);
       assert.ok(Module.blwpNet.client, `the session never opened: ${Module.blwpNet.error}`);
 
       // ---- WHAT WAS READ, PRINTED. ----
@@ -185,7 +188,10 @@ test('nothing on a live round reads the constant seed, and the core is in the ro
       assert.notEqual(library.BlwpRoundSeed(), 0);
     } finally {
       CLIENT.Client.prototype.record = realRecord;
-      try { Module.blwpNet && Module.blwpNet.client && Module.blwpNet.client.close(); } catch { /* gone */ }
+      try {
+      const cl = Module.blwpNet && Module.blwpNet.client;
+      if (cl) { cl.ended = true; cl.close(); }  // ended, then closed: a plain close reads as a drop and reconnects for ever
+      } catch { /* gone */ }
     }
   } finally { await round.close(); }
 });
@@ -208,6 +214,11 @@ test('nothing on a live round reads the constant seed, and the core is in the ro
 test('once a round is joined, a later Init from C# cannot put the core back in the harness world', async () => {
   const round = await standUpRound({ host: '127.0.0.1', portA: 18230, portB: 18231 });
   const tabs = [];
+  // DECLARED OUT HERE so the teardown can reach it. It was `const` inside the
+  // try, so `finally` threw a ReferenceError its own catch swallowed and this
+  // client was never closed - harmless while the test ended before the client
+  // connected, and a reconnect loop for ever once it waits for recording.
+  let Module = null;
   try {
     const named = await joinFromQuery(new URL(round.url).search);
     const rid = roundId(named.round);
@@ -224,7 +235,7 @@ test('once a round is joined, a later Init from C# cannot put the core back in t
     }
 
     const heap = new Int32Array(64);
-    const Module = { HEAPU8: new Uint8Array(heap.buffer), blwpNet: null };
+    Module = { HEAPU8: new Uint8Array(heap.buffer), blwpNet: null };
     const library = shippedBridge({
       Module, HEAP32: heap, UTF8ToString: () => named.nodes[0],
       window: { location: { search: new URL(round.url).search } },
@@ -235,7 +246,8 @@ test('once a round is joined, a later Init from C# cannot put the core back in t
 
     assert.equal(library.BlwpInit(SOLO_SEED), 1);
     assert.equal(library.BlwpNetStart(0, 6, 60), 1);
-    for (let i = 0; i < 200 && !Module.blwpNet.client; i++) await wait(50);
+    // until recording begins - where the round's world is entered
+    for (let i = 0; i < 200 && !(Module.blwpNet.client && Module.blwpNet.client.where); i++) await wait(50);
     assert.ok(Module.blwpNet.client, `the session never opened: ${Module.blwpNet.error}`);
 
     const roundZ = Module.blwp.st.i32[O_TRUCK + T_Z];
@@ -255,7 +267,10 @@ test('once a round is joined, a later Init from C# cannot put the core back in t
     console.log(`  the round parks this player at z ${(roundZ / 65536).toFixed(3)} m and `
       + `two late calls with 0x${(SOLO_SEED >>> 0).toString(16)} left it there`);
   } finally {
-    try { Module?.blwpNet?.client?.close(); } catch { /* gone */ }
+    try {
+        const cl = Module?.blwpNet?.client;
+        if (cl) { cl.ended = true; cl.close(); }  // ended, then closed: a plain close reads as a drop and reconnects for ever
+    } catch { /* gone */ }
     await round.close();
   }
 });
@@ -317,4 +332,117 @@ test('a restart in the middle of a live run is not the run the committee replays
     + `committee ${(replay.i32[O_TRUCK + T_Z] / 65536).toFixed(3)} m`);
   assert.notEqual(mine, theirs,
     'a restart in the middle cost nothing, so this hazard is not one');
+});
+
+/**
+ * THE TICK A TAB PUBLISHES IS THE TICK ITS CORE IS ON, HOWEVER SLOW THE JOIN.
+ *
+ * Measured 2026-09-10 in two real Chromes, hooks installed before load: with
+ * 400 ms of latency on one tab, 16, 16, 16 and 24 ticks were stepped between
+ * the bridge's seed reset and `setRound` and never recorded; at normal speed,
+ * 0 and 0. That tab published 16-24 ticks behind its own core for the rest of
+ * the run, and the other tab's ghost of it was that many ticks late by label -
+ * 283 and 623 mm while driving. No C# reset fired after recording began.
+ *
+ * So the join is held open here at its first round trip after the seed -
+ * `openRound`, with `join`, `connect` and `setRound` chained behind it,
+ * waits on a latch - while the shipped bridge steps the game 24 times. It was
+ * held at the global `fetch` first, and that also held the two daemons' own
+ * peer requests in this one process: the file never exited.
+ */
+test('a join held open while the game steps publishes from the tick the core is on, and marks name it', async () => {
+  const round = await standUpRound({ host: '127.0.0.1', portA: 18240, portB: 18241 });
+  const realOpen = CLIENT.Client.prototype.openRound;
+  const realRecord = CLIENT.Client.prototype.record;
+  const realMark = CLIENT.Client.prototype.markNow;
+  let gated = 0;
+  let release;
+  const latch = new Promise((r) => { release = r; });
+  CLIENT.Client.prototype.openRound = async function (...args) {
+    gated++;
+    await latch;
+    return realOpen.apply(this, args);
+  };
+  let Module = null;
+  try {
+    const named = await joinFromQuery(new URL(round.url).search);
+    const player = tabIdentity({ storage: storage(), random, curve: feldmanGroup });
+    const seat = entryFor(named.round, { playerPubkey: player.pubkey, random });
+
+    const heap = new Int32Array(64);
+    Module = { HEAPU8: new Uint8Array(heap.buffer), blwpNet: null };
+    let first = null;
+    const marks = [];
+    CLIENT.Client.prototype.record = function (words) {
+      const ok = realRecord.call(this, words);
+      if (ok !== false && !first) first = { core: Module.blwp.st.i32[0], published: this.nextTick + this.held };
+      return ok;
+    };
+    // THE LABEL THE BRIDGE HANDS A CHECKPOINT IS WHAT IS PINNED, not the
+    // node's check of it (other suites carry that). Recorded and not sent: a
+    // checkpoint sent to these daemons starts a replay worker that outlives
+    // `round.close()` - measured, two pipes left open and the file never exits.
+    CLIENT.Client.prototype.markNow = function (hash, tick) {
+      marks.push({ tick, core: Module.blwp.st.i32[0] });
+      return null;
+    };
+    const library = shippedBridge({
+      Module, HEAP32: heap, UTF8ToString: () => named.nodes[0],
+      window: { location: { search: new URL(round.url).search } },
+      console, crypto, BLWP: core, BLWPCLIENT: CLIENT, BLWP_CURVE: pageCurve,
+      BLWP_ROUND: named.round, BLWP_ENTRY: seat, BLWP_NODES: named.nodes,
+      BLWP_CHAIN: named.chain, BLWP_ADVERT: named.advert,
+    });
+
+    assert.equal(library.BlwpInit(SOLO_SEED), 1);
+    assert.equal(library.BlwpNetStart(0, 6, 60), 1);
+    for (let i = 0; i < 200 && gated === 0; i++) await wait(50);
+    assert.ok(gated > 0, `the join never reached the round trips this holds open: ${Module.blwpNet.error}`);
+
+    // THE GAME STEPS WHILE THE JOIN IS HELD - the slow tab, on purpose.
+    const HELD_STEPS = 24;
+    for (let t = 0; t < HELD_STEPS; t++) library.BlwpStep(45875, 0, 0, 0, 0);
+    release();
+    for (let i = 0; i < 200 && !(Module.blwpNet.client && Module.blwpNet.client.where); i++) await wait(50);
+    const c = Module.blwpNet.client;
+    assert.ok(c && c.where, `recording never began: ${Module.blwpNet.error}`);
+
+    for (let t = 0; t < 90; t++) library.BlwpStep(45875, 0, 0, 0, 0);
+    const coreNow = Module.blwp.st.i32[0];
+    // A BATCH IN FLIGHT IS IN NEITHER NUMBER: `drain` slices it out of the
+    // hold and `nextTick` moves only on the node's answer, so next-plus-held
+    // is short by exactly the batch mid-air (6 here, measured). `offered` is
+    // every tick the client accepted; the client itself asserts next + held
+    // === offered before each batch. So the two are read with nothing mid-air.
+    for (let i = 0; i < 100 && c.publishing; i++) await wait(50);
+    console.log(`  ${HELD_STEPS} steps with the join held: first recorded tick published as `
+      + `${first && first.published} with the core at ${first && first.core}; after 90 more, `
+      + `offered ${c.offered}, published ${c.nextTick}+${c.held} = ${c.nextTick + c.held}, core ${coreNow}; `
+      + `marks at ${marks.map((m) => `${m.tick}/${m.core}`).join(' ') || 'none'}`);
+
+    assert.ok(first, 'nothing was recorded after the join');
+    assert.equal(first.published, first.core,
+      `the first recorded tick was published as ${first.published} with the core at ${first.core}`);
+    assert.equal(c.publishing, null, 'a batch was still in flight after five seconds');
+    assert.equal(c.offered, coreNow, `the tab accepted ${c.offered} ticks while its core is on ${coreNow}`);
+    assert.equal(c.nextTick + c.held, coreNow,
+      `the tab publishes tick ${c.nextTick + c.held} while its core is on ${coreNow}`);
+    assert.ok(marks.length >= 1, 'no checkpoint was taken in 90 ticks at markEvery 60');
+    for (const m of marks)
+      assert.equal(m.tick, m.core, `a checkpoint named tick ${m.tick} with the core on ${m.core}`);
+  } finally {
+    CLIENT.Client.prototype.openRound = realOpen;
+    CLIENT.Client.prototype.record = realRecord;
+    CLIENT.Client.prototype.markNow = realMark;
+    // ENDED, THEN CLOSED. `close()` only closes the socket, and the socket's
+    // close handler reads any close on a run that is not ended as a DROP and
+    // starts the reconnect loop - by design, so a node restart does not end a
+    // player's session. Traced here: that loop's backoff timer was the one
+    // thing left alive, and this file never exited.
+    try {
+      const cl = Module?.blwpNet?.client;
+      if (cl) { cl.ended = true; cl.close(); }
+    } catch { /* gone */ }
+    await round.close();
+  }
 });
