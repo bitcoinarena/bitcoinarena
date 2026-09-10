@@ -129,6 +129,18 @@ async function gossipCarry(client, mark, howMany = 4) {
   }
 }
 
+/**
+ * THE INPUTS FIRST, as a client sends them. A node refuses a checkpoint at a
+ * tick whose inputs it does not hold, and every mark these tests send is at
+ * 400 or less - so 600 ticks go out, through the client's own batch path so
+ * its chain head and next tick agree with the node's.
+ */
+async function inputs(client, rid, eid, ticks = 600) {
+  const r = await client.batch(Array.from({ length: ticks }, () => [45875, 0, 0, 0, 0]),
+    { roundId: rid, entryId: eid });
+  assert.equal(r.accepted, ticks, `the node did not take the inputs: ${r.answer}`);
+}
+
 async function rig() {
   const node = await serve(openStore(), { port: 0, ...FUNDED });
   // The committee is this node plus six more keys, because 13C counts five of
@@ -152,6 +164,7 @@ async function rig() {
 test('the client sends a state hash and the node stores it at that tick', async () => {
   const { node, client, rid, eid } = await rig();
   try {
+    await inputs(client, rid, eid);
     const st = driven(120);
     const own = core.hash(st);
     assert.equal(own.length, 64, 'a state hash is 32 bytes of hex');
@@ -176,7 +189,7 @@ test('the client sends a state hash and the node stores it at that tick', async 
     assert.deepEqual(checkpointId(stored), sent.id, 'the stored id is not the one the client signed');
     assert.equal(stored.tick, 120);
     assert.deepEqual(stored.previousHash, NO_PREVIOUS, 'the first mark of a round chains to nothing');
-    assert.deepEqual(stored.inputChainHash, GENESIS, 'no batch was sent, so it names the genesis');
+    assert.deepEqual(stored.inputChainHash, GENESIS, 'the mark names no batch, so it names the genesis');
     assert.equal(toHex(stored.stateHash), own,
       'the hash on the wire is not the hash the core produced');
     assert.ok(ed25519.verify(signature, sent.id, sessionPubkey),
@@ -187,6 +200,7 @@ test('the client sends a state hash and the node stores it at that tick', async 
 test('a second, different hash at the same tick is refused as equivocation', async () => {
   const { node, client, rid, eid } = await rig();
   try {
+    await inputs(client, rid, eid);
     const first = await client.checkpoint(driven(60), { roundId: rid, entryId: eid, tick: 60 });
     assert.equal(first.answer, 'receipted');
 
@@ -211,6 +225,7 @@ test('a second, different hash at the same tick is refused as equivocation', asy
 test('a mark naming a parent that is not the head is refused', async () => {
   const { node, client, rid, eid } = await rig();
   try {
+    await inputs(client, rid, eid);
     assert.equal((await client.checkpoint(driven(60), { roundId: rid, entryId: eid, tick: 60 })).answer,
                  'receipted');
 
@@ -242,6 +257,7 @@ test('a mark naming a parent that is not the head is refused', async () => {
 test('a refusal does not move the client\'s chain head', async () => {
   const { node, client, rid, eid } = await rig();
   try {
+    await inputs(client, rid, eid);
     const stored = await client.checkpoint(driven(60), { roundId: rid, entryId: eid, tick: 60 });
     assert.equal(stored.answer, 'receipted');
     assert.equal(carry(client, stored), 5, 'the mark has to be live before the head moves');
@@ -322,6 +338,7 @@ test('a node that names a different round is a disagreement, not an id', async (
 test('a receipt for another mark, a stranger, or a bad signature are three different refusals', async () => {
   const { node, client, rid, eid } = await rig();
   try {
+    await inputs(client, rid, eid);
     const sent = await client.checkpoint(driven(60), { roundId: rid, entryId: eid, tick: 60 });
     assert.equal(sent.answer, 'receipted');
 
@@ -374,6 +391,7 @@ test('a receipt for another mark, a stranger, or a bad signature are three diffe
 test('re-sending a mark returns the receipt already issued, not a second one', async () => {
   const { node, client, rid, eid } = await rig();
   try {
+    await inputs(client, rid, eid);
     const st = driven(90);
     const first = await client.checkpoint(st, { roundId: rid, entryId: eid, tick: 90 });
     assert.equal(first.answer, 'receipted');
@@ -403,6 +421,7 @@ test('re-sending a mark returns the receipt already issued, not a second one', a
 test('a reconnecting client recovers the same receipts, byte for byte', async () => {
   const { node, client, rid, eid } = await rig();
   try {
+    await inputs(client, rid, eid);
     const first = await client.checkpoint(driven(60), { roundId: rid, entryId: eid, tick: 60 });
     carry(client, first);
     const second = await client.checkpoint(driven(120), { roundId: rid, entryId: eid, tick: 120 });
@@ -459,6 +478,7 @@ test('a receipt gossiped to a second node is recoverable from that node too', as
     const client = new Client({ base: `http://127.0.0.1:${one.port}`, core, sign, verify });
     client.nodes = committee;
     await client.connect();
+    await inputs(client, roundId(c), entryId(e));
     const sent = await client.checkpoint(driven(60),
       { roundId: roundId(c), entryId: entryId(e), tick: 60 });
     assert.equal(sent.answer, 'receipted');
@@ -469,6 +489,7 @@ test('a receipt gossiped to a second node is recoverable from that node too', as
     const gossip = new Client({ base: `http://127.0.0.1:${two.port}`, core, sign, verify });
     gossip.nodes = committee;
     await gossip.connect();
+    await inputs(gossip, roundId(c), entryId(e));
     const mine = await gossip.checkpoint(driven(60),
       { roundId: roundId(c), entryId: entryId(e), tick: 60 });
     assert.deepEqual(mine.id, sent.id, 'the same mark must have the same id on both nodes');
@@ -751,6 +772,7 @@ test('a client that reconnects on the same round carries on', async () => {
 test('a mark is live at five distinct committee receipts, and pending below', async () => {
   const { node, client, rid, eid } = await rig();
   try {
+    await inputs(client, rid, eid);
     assert.equal(RECEIPTS_FOR_LIVE, 5);
 
     // 0: nothing has been sent, so nothing is witnessed and the head is where
@@ -798,6 +820,7 @@ test('a mark is live at five distinct committee receipts, and pending below', as
 test('the same signer five times is one, and an unverifiable receipt is none', async () => {
   const { node, client, rid, eid } = await rig();
   try {
+    await inputs(client, rid, eid);
     const mark = await client.checkpoint(driven(60), { roundId: rid, entryId: eid, tick: 60 });
     assert.equal(client.witnessed(mark.id), 1);
 
@@ -884,6 +907,7 @@ test('a reconnect adopts a head only at five, and never the node s last mark', a
 test('a reconnect walks back to the newest mark five members carried', async () => {
   const { node, client, rid, eid } = await rig();
   try {
+    await inputs(client, rid, eid);
     const first = await client.checkpoint(driven(60), { roundId: rid, entryId: eid, tick: 60 });
     await gossipCarry(client, first);           // five: this one is carried
     carry(client, first);                       // and the client knows it, so it can chain on
@@ -912,6 +936,7 @@ test('a reconnect walks back to the newest mark five members carried', async () 
 test('a reconnect adopts the NEWEST live mark, not the oldest', async () => {
   const { node, client, rid, eid } = await rig();
   try {
+    await inputs(client, rid, eid);
     const first = await client.checkpoint(driven(60), { roundId: rid, entryId: eid, tick: 60 });
     await gossipCarry(client, first);
     carry(client, first);

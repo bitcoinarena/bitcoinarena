@@ -1,12 +1,14 @@
-// A RUN'S CHECKPOINT CHAIN GROWS ON EVERY NODE OF THE COMMITTEE.
+// A RUN'S CHECKPOINT CHAIN GROWS ON EVERY NODE OF THE COMMITTEE - AND ONLY
+// OVER INPUTS EACH OF THEM HOLDS.
 //
 // Measured 2026-09-10 on the Daily's 2-of-2, two real Chromes: every run
 // stored ONE checkpoint on daemon A and NONE on daemon B, and every later one
 // was refused as "not following the chain head". The client sent each
 // checkpoint to the one node it had proven, B never held the entry, and the
-// head only moves when a mark is LIVE - two receipts on a committee of two -
-// so the first link never went live and the chain never grew. The page's
-// counters said "marks 1" and nothing about the three refused.
+// head only moves when a mark is LIVE - two receipts on a committee of two.
+// Once checkpoints reached both, B held 0 ticks of the runs it receipted: a
+// client that sent no batch at all still got all four checkpoints receipted by
+// both daemons. A receipt over inputs the node never saw is a claim.
 //
 // Section 10: "a checkpoint is accepted when enough nodes receive it". Section
 // 11: "the client periodically sends batches and checkpoints". Section 13C: a
@@ -14,7 +16,7 @@
 //
 // These run against two real daemons, stood up by the same tool the Daily
 // runs, and the page's own path: the URL the operator printed, the node list
-// `index.html` puts on `window.BLWP_NODES`, `Client.at`, `join`, `markNow`.
+// `index.html` hands `Client.at`, `join`, `record`, `markNow`.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
@@ -75,6 +77,23 @@ async function stored(base, rid, eid) {
   return Number(r.headers.get('x-checkpoints'));
 }
 
+/** How many ticks of this run a daemon HOLDS, and their hash, on its own public door. */
+async function transcriptOn(base, rid, eid) {
+  const r = await fetch(`${base}/transcript?round=${toHex(rid)}&entry=${toHex(eid)}`);
+  await r.arrayBuffer();
+  return { ticks: Number(r.headers.get('x-ticks')), hash: r.headers.get('x-transcript-hash') };
+}
+const heldTicks = async (base, rid, eid) => (await transcriptOn(base, rid, eid)).ticks;
+
+/** Everything recorded published to this client's node, and every peer fed. */
+async function publishAll(client) {
+  for (let i = 0; i < 500 && (client.hold.length || client.publishing); i++) {
+    await (client.drain() || client.publishing);
+    await client.awaitPublishes();
+  }
+  await client.awaitPeers();
+}
+
 /** A core driven to `tick`, hashed the way the bridge hashes it. */
 function driven(seed, tick) {
   const st = coreInit(seed);
@@ -82,7 +101,13 @@ function driven(seed, tick) {
   return core.hash(st);
 }
 
-test('each checkpoint is receipted by both daemons and the chain grows on A and on B', async () => {
+const drive = (client, n) => { for (let i = 0; i < n; i++) client.record([45875, 0, 0, 0, 0]); };
+
+test('a checkpoint over inputs no node holds is refused by both daemons, and nothing is stored', async () => {
+  // BEFORE THIS CUT: four checkpoints, no batch, and both daemons receipted
+  // all four - 4 stored on A and 4 on B over 0 ticks of inputs. Sent here the
+  // low way, `mark`, which does not wait for inputs, so the node's own rule is
+  // what is measured.
   const round = await standUpRound({ host: '127.0.0.1', portA: 18250, portB: 18251 });
   let t;
   try {
@@ -92,40 +117,23 @@ test('each checkpoint is receipted by both daemons and the chain grows on A and 
     const [A, B] = [client.base, ...client.peers];
     assert.equal(client.peers.length, 1, 'the page named two nodes and the client knows one peer');
     assert.equal(receiptsForLive(named.round), 2, 'a 2-of-2 needs both receipts to go live');
-
-    // THE ENTRY IS SEATED ON BOTH, or B refuses every checkpoint as "no such entry".
     assert.deepEqual(client.peerSeats.map((s) => s.ok), [true],
       `B did not seat the entry: ${JSON.stringify(client.peerSeats)}`);
 
-    const links = [];
     for (const tick of [60, 120, 180, 240]) {
-      const r = await client.markNow(driven(7, tick), tick);
-      links.push(r);
-      const at = [await stored(A, rid, eid), await stored(B, rid, eid)];
-      console.log(`  tick ${tick}: ${r.answer}, live ${r.live}, witnessed ${client.witnessed(r.id)}, `
-        + `refused ${r.refused.length}, stored A ${at[0]} B ${at[1]}`);
-      assert.equal(r.answer, 'receipted', `A refused the checkpoint at ${tick}: ${r.answer}`);
-      assert.deepEqual(r.refused, [], `a node refused the checkpoint at ${tick}`);
-      assert.equal(r.live, true, `the checkpoint at ${tick} did not go live`);
-      assert.equal(client.witnessed(r.id), 2, 'both daemons receipted it, so both count');
-      assert.deepEqual(at, [links.length, links.length],
-        `after ${links.length} checkpoints A and B store ${at}`);
+      const r = await client.mark(driven(7, tick), { roundId: rid, entryId: eid, tick });
+      console.log(`  no inputs, tick ${tick}: ${r.answer} | refused by ${r.refused.length} | `
+        + `witnessed ${client.witnessed(r.id)}`);
+      assert.match(r.answer, /holds this run's inputs only before tick 0/,
+        `A signed a checkpoint at ${tick} over no inputs: ${r.answer}`);
+      assert.equal(r.refused.length, 2, `both daemons must refuse the checkpoint at ${tick}`);
+      assert.match(r.refused[1], /holds this run's inputs only before tick 0/);
+      assert.equal(client.witnessed(r.id), 0, 'a receipt came back over no inputs');
+      assert.equal(r.live, false);
     }
-
-    // AND EACH LINK NAMES THE ONE BEFORE IT - the head moved, on both receipts.
-    assert.equal(toHex(links[0].checkpoint.previousHash), toHex(NO_PREVIOUS));
-    for (let i = 1; i < links.length; i++)
-      assert.equal(toHex(links[i].checkpoint.previousHash), toHex(links[i - 1].id),
-        `link ${i} does not name the head before it`);
-
-    // THE COUNTERS SAY WHAT HAPPENED.
-    assert.equal(client.marksSent, 4);
-    assert.equal(client.marksAccepted, 4);
-    assert.equal(client.marksRefused, 0);
-    const line = client.status(240);
-    assert.match(line, / marks 4 /);
-    assert.match(line, / accepted 4\b/);
-    assert.equal(/refused/.test(line), false, `a refusal was printed where there was none: ${line}`);
+    assert.deepEqual([await stored(A, rid, eid), await stored(B, rid, eid)], [0, 0],
+      'a checkpoint over no inputs was stored');
+    assert.deepEqual([await heldTicks(A, rid, eid), await heldTicks(B, rid, eid)], [0, 0]);
   } finally {
     if (t) { t.client.ended = true; t.client.close(); }
     await round.close();
@@ -133,7 +141,7 @@ test('each checkpoint is receipted by both daemons and the chain grows on A and 
 });
 
 test('a client that reaches one daemon of two is refused past its first link, and says so', async () => {
-  // THE DAILY BEFORE THIS FIX, reproduced: no page node list, so no peers.
+  // THE DAILY BEFORE THE FAN-OUT, reproduced: no page node list, so no peers.
   const round = await standUpRound({ host: '127.0.0.1', portA: 18252, portB: 18253 });
   let t;
   try {
@@ -144,15 +152,20 @@ test('a client that reaches one daemon of two is refused past its first link, an
     const other = named.nodes.map((n) => String(n).replace(/\/+$/, ''))
       .find((n) => n !== client.base);
 
+    drive(client, 60);
     const first = await client.markNow(driven(7, 60), 60);
     assert.equal(first.answer, 'receipted');
     assert.equal(first.live, false, 'one receipt of two went live');
+    drive(client, 60);
     const second = await client.markNow(driven(7, 120), 120);
     assert.match(second.answer, /chain head/, `the second link was not refused for the head: ${second.answer}`);
 
     const at = [await stored(client.base, rid, eid), await stored(other, rid, eid)];
-    console.log(`  one daemon: stored A ${at[0]} B ${at[1]}; refused: ${client.marksRefusedWhy}`);
+    const held = [await heldTicks(client.base, rid, eid), await heldTicks(other, rid, eid)];
+    console.log(`  one daemon: checkpoints A ${at[0]} B ${at[1]}, inputs A ${held[0]} B ${held[1]}; `
+      + `refused: ${client.marksRefusedWhy}`);
     assert.deepEqual(at, [1, 0]);
+    assert.deepEqual(held, [120, 0]);
 
     // AND THE PAGE'S LINE NO LONGER HIDES IT.
     assert.equal(client.marksSent, 1);
@@ -166,29 +179,10 @@ test('a client that reaches one daemon of two is refused past its first link, an
   }
 });
 
-// THE INPUTS, NOT ONLY THE CHECKPOINTS.
-//
-// Measured 2026-09-10 on the Daily, after checkpoints reached both daemons: B
-// held 0 ticks of either run (A: 588 and 630). A node that receipts a run's
-// checkpoints without its inputs signs a claim it cannot replay.
-
-/** How many ticks of this run a daemon HOLDS, on its own public door. */
-async function heldTicks(base, rid, eid) {
-  const r = await fetch(`${base}/transcript?round=${toHex(rid)}&entry=${toHex(eid)}`);
-  await r.arrayBuffer();
-  return Number(r.headers.get('x-ticks'));
-}
-
-/** Everything recorded published to this client's node, and every peer fed. */
-async function publishAll(client) {
-  for (let i = 0; i < 500 && (client.hold.length || client.publishing); i++) {
-    await (client.drain() || client.publishing);
-    await client.awaitPublishes();
-  }
-  await client.awaitPeers();
-}
-
-test('every batch reaches both daemons, tick for tick, and the checkpoint chain still grows on both', async () => {
+test('the page\'s own order - record, then mark at once - waits for both daemons to hold the inputs, and the chain grows on both', async () => {
+  // THE MARK IS TAKEN WHILE ITS LAST TICKS ARE STILL IN THE HOLD, which is
+  // exactly when the bridge takes it. It must not race them: it waits until A
+  // took them and B answered that it holds them, then goes to both.
   const round = await standUpRound({ host: '127.0.0.1', portA: 18254, portB: 18255 });
   let t;
   try {
@@ -197,35 +191,51 @@ test('every batch reaches both daemons, tick for tick, and the checkpoint chain 
     const { client, rid, eid } = t;
     const [A, B] = [client.base, ...client.peers];
 
+    const links = [];
     for (const tick of [60, 120, 180, 240]) {
-      for (let i = 0; i < 60; i++) client.record([45875, 0, 0, 0, 0]);
-      await publishAll(client);
+      drive(client, 60);
+      assert.ok(client.hold.length > 0, 'the last ticks must still be held when the mark is taken');
       const r = await client.markNow(driven(7, tick), tick);
+      links.push(r);
       await client.awaitPeers();
-      const ticks = [await heldTicks(A, rid, eid), await heldTicks(B, rid, eid)];
+      const a = await transcriptOn(A, rid, eid);
+      const b = await transcriptOn(B, rid, eid);
       const marks = [await stored(A, rid, eid), await stored(B, rid, eid)];
-      console.log(`  tick ${tick}: held A ${ticks[0]} B ${ticks[1]} | checkpoints A ${marks[0]} B ${marks[1]}, live ${r.live}`);
-      assert.deepEqual(ticks, [tick, tick], `at ${tick} A and B hold ${ticks} ticks of the run`);
+      console.log(`  tick ${tick}: inputs A ${a.ticks} B ${b.ticks} same hash ${a.hash === b.hash} | `
+        + `checkpoints A ${marks[0]} B ${marks[1]}, live ${r.live}, refused ${r.refused.length}`);
+      assert.equal(r.answer, 'receipted', `A refused the checkpoint at ${tick}: ${r.answer}`);
+      assert.deepEqual(r.refused, [], `a node refused the checkpoint at ${tick}: ${r.refused}`);
       assert.equal(r.live, true, `the checkpoint at ${tick} did not go live`);
-      assert.deepEqual(r.refused, []);
-      assert.deepEqual(marks, [tick / 60, tick / 60]);
+      assert.equal(client.witnessed(r.id), 2, 'both daemons receipted it, so both count');
+      assert.deepEqual([a.ticks, b.ticks], [tick, tick], `at ${tick} A and B hold ${a.ticks} and ${b.ticks}`);
+      assert.equal(b.hash, a.hash, 'B holds different inputs from A');
+      assert.deepEqual(marks, [links.length, links.length]);
     }
+    assert.equal(client.marksWaited, 4, 'every mark was taken with its last ticks still held, so each waited');
 
-    // B HOLDS THE SAME TRANSCRIPT, not only as many ticks.
-    const hashOf = async (base) => (await fetch(
-      `${base}/transcript?round=${toHex(rid)}&entry=${toHex(eid)}`)).headers.get('x-transcript-hash');
-    assert.equal(await hashOf(B), await hashOf(A), 'B holds different inputs from A');
+    // AND EACH LINK NAMES THE ONE BEFORE IT - the head moved, on both receipts.
+    assert.equal(toHex(links[0].checkpoint.previousHash), toHex(NO_PREVIOUS));
+    for (let i = 1; i < links.length; i++)
+      assert.equal(toHex(links[i].checkpoint.previousHash), toHex(links[i - 1].id),
+        `link ${i} does not name the head before it`);
 
+    // THE COUNTERS SAY WHAT HAPPENED.
+    assert.equal(client.marksSent, 4);
+    assert.equal(client.marksAccepted, 4);
+    assert.equal(client.marksRefused, 0);
     assert.deepEqual(client.peerBatches().map(({ ticks, lag, refused }) => ({ ticks, lag, refused })),
       [{ ticks: 240, lag: 0, refused: 0 }]);
-    assert.equal(/inputs refused/.test(client.status(240)), false);
+    const line = client.status(240);
+    assert.match(line, / marks 4 /);
+    assert.match(line, / accepted 4\b/);
+    assert.equal(/refused/.test(line), false, `a refusal was printed where there was none: ${line}`);
   } finally {
     if (t) { t.client.ended = true; t.client.close(); }
     await round.close();
   }
 });
 
-test('a peer that never had the seat is seated when it refuses, and caught up from the first batch', async () => {
+test('a daemon that has not caught up refuses rather than signs, then signs once it holds the inputs', async () => {
   const round = await standUpRound({ host: '127.0.0.1', portA: 18256, portB: 18257 });
   let t;
   try {
@@ -234,27 +244,57 @@ test('a peer that never had the seat is seated when it refuses, and caught up fr
     t = await tab(round, named, { pageNodes: false });
     const { client, rid, eid } = t;
     const B = named.nodes.map((n) => String(n).replace(/\/+$/, '')).find((n) => n !== client.base);
-    for (let i = 0; i < 60; i++) client.record([45875, 0, 0, 0, 0]);
+    drive(client, 60);
     await publishAll(client);
     const before = [await heldTicks(client.base, rid, eid), await heldTicks(B, rid, eid)];
     assert.deepEqual(before, [60, 0], `without the node list A and B hold ${before}`);
 
-    // NOW THE NODE LIST ARRIVES, with B never having seen the entry.
+    // NOW THE NODE LIST ARRIVES, with B never having seen the entry. Its first
+    // batch is refused for the seat, the seat is given, and its feed stops
+    // there until the next try.
     client.deliverTo(named.nodes);
-    for (let i = 0; i < 60; i++) client.record([45875, 0, 0, 0, 0]);
+    drive(client, 60);
     await publishAll(client);
     assert.equal(client.peerBatchesRefused, 1, 'B was expected to refuse once, for the missing seat');
     assert.match(client.peerBatches()[0].why, /no such entry/);
     assert.match(client.status(120), / inputs refused 1\b/, 'a refused input was not on the line');
+    assert.equal(await heldTicks(B, rid, eid), 0, 'B is seated and holds nothing yet');
 
-    // THE NEXT TRY CARRIES B FROM THE FIRST BATCH THIS CLIENT KEPT.
+    // B IS ASKED TO SIGN BEFORE IT HOLDS THE INPUTS, and does not. Sent the low
+    // way, `mark`, which does not wait - the way a client that raced its
+    // batches would.
+    const early = await client.mark(driven(7, 60), { roundId: rid, entryId: eid, tick: 60 });
+    console.log(`  B behind: A ${early.answer}, B ${early.refused.join('; ')}`);
+    assert.equal(early.answer, 'receipted', 'A holds 120 ticks and should sign the mark at 60');
+    assert.equal(early.refused.length, 1);
+    assert.match(early.refused[0], /holds this run's inputs only before tick 0/);
+    assert.equal(early.live, false, 'one receipt of two went live');
+    assert.deepEqual([await stored(client.base, rid, eid), await stored(B, rid, eid)], [1, 0]);
+
+    // B IS CAUGHT UP FROM THE FIRST BATCH THIS CLIENT KEPT, and then the same
+    // checkpoint - the same bytes - is signed by B too and goes live.
     client.pumpPeers();
     await client.awaitPeers();
-    const after = [await heldTicks(client.base, rid, eid), await heldTicks(B, rid, eid)];
-    console.log(`  late peer: before A ${before[0]} B ${before[1]}, after A ${after[0]} B ${after[1]}`);
-    assert.deepEqual(after, [120, 120],
+    const caught = [await transcriptOn(client.base, rid, eid), await transcriptOn(B, rid, eid)];
+    assert.deepEqual(caught.map((c) => c.ticks), [120, 120],
       'B was not caught up across the ticks published before the node list arrived');
-    assert.equal(client.peerBatches()[0].lag, 0);
+    assert.equal(caught[1].hash, caught[0].hash);
+    const again = await client.mark(driven(7, 60), { roundId: rid, entryId: eid, tick: 60 });
+    assert.equal(toHex(again.id), toHex(early.id), 'the second send is not the same checkpoint');
+    assert.deepEqual(again.refused, [], `refused after catching up: ${again.refused}`);
+    assert.equal(again.live, true, 'both daemons hold the inputs and both signed, so it is live');
+
+    // AND FROM HERE THE PAGE'S OWN PATH carries on, on both.
+    drive(client, 60);
+    const next = await client.markNow(driven(7, 180), 180);
+    assert.equal(next.live, true);
+    assert.deepEqual(next.refused, []);
+    const after = [await stored(client.base, rid, eid), await stored(B, rid, eid)];
+    const held = [await heldTicks(client.base, rid, eid), await heldTicks(B, rid, eid)];
+    console.log(`  late peer: inputs before A ${before[0]} B ${before[1]}, after A ${held[0]} B ${held[1]}; `
+      + `checkpoints A ${after[0]} B ${after[1]}`);
+    assert.deepEqual(held, [180, 180]);
+    assert.deepEqual(after, [2, 2]);
   } finally {
     if (t) { t.client.ended = true; t.client.close(); }
     await round.close();

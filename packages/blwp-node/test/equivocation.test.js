@@ -24,6 +24,7 @@ import {
   splitSigned, provesEquivocation, SIGNED_CHECKPOINT_BYTES,
 } from '../../protocol/src/checkpoint.js';
 import { GENESIS } from '../../protocol/src/transcript.js';
+import { encodeInputBatch } from '../../protocol/src/batch.js';
 import {
   encodeCheckpointReceipt, decodeCheckpointReceipt, receiptId, joinSignedReceipt,
   splitSignedReceipt,
@@ -60,6 +61,12 @@ function played() {
   const c = contract([b32(4)]);
   const rid = round.open(c);
   const eid = round.enter(entryFor(rid));
+  // THE INPUTS FIRST, as a client sends them: a node refuses a checkpoint at a
+  // tick whose inputs it does not hold, and every mark here is at 240 or less.
+  round.batch(encodeInputBatch({
+    roundId: rid, entryId: eid, previousHash: GENESIS, firstTick: 0,
+    ticks: Array.from({ length: 400 }, (_, i) => [65536, i, 0, 0, 0]), liquidations: [],
+  }));
   const mark = {
     roundId: rid, entryId: eid, tick: 60, stateHash: b32(0x11),
     inputChainHash: GENESIS, previousHash: NO_PREVIOUS,

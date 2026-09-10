@@ -39,6 +39,7 @@ import {
 } from '../../protocol/src/checkpoint.js';
 import { decodeEntryContract } from '../../protocol/src/contracts.js';
 import { GENESIS } from '../../protocol/src/transcript.js';
+import { encodeInputBatch } from '../../protocol/src/batch.js';
 import { toHex } from '../../protocol/src/hash.js';
 
 // The node fee is 27A.7's 2% of the stake, and the door checks it now
@@ -65,6 +66,12 @@ function player(round, rid, seed, { forks = false } = {}) {
     stakeCommitment: b32(7), stakeMsat: 100000n, feeMsat: entryFeeMsat(100000n), donationMsat: 0n, joinTick: 0, worldSecret: b32(0x5e), vssSharesRef: new Uint8Array(32),
   });
   const sign = (m) => joinSigned(encodeCheckpoint(m), ed25519.sign(checkpointId(m), session));
+  // THE INPUTS FIRST, as a client sends them: a node refuses a checkpoint at a
+  // tick whose inputs it does not hold, and every mark here is at 180 or less.
+  round.batch(encodeInputBatch({
+    roundId: rid, entryId: eid, previousHash: GENESIS, firstTick: 0,
+    ticks: Array.from({ length: 400 }, (_, i) => [65536, i, 0, 0, 0]), liquidations: [],
+  }));
   const first = {
     roundId: rid, entryId: eid, tick: 60, stateHash: b32(seed),
     inputChainHash: GENESIS, previousHash: NO_PREVIOUS,

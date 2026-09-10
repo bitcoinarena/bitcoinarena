@@ -152,6 +152,10 @@ test('a slow node cannot make the client run two publishes at once', async () =>
 test('marks are skipped rather than queued when one is already going', async () => {
   const { node, client } = await rig(60);
   try {
+    // THE TICKS FIRST, as the page records them: a mark at a tick waits until
+    // the node holds that tick's inputs, and a mark over inputs nobody ever
+    // recorded would wait for ever rather than being skipped or sent.
+    for (let i = 0; i < 360; i++) client.record([45875, 0, 0, 0, 0]);
     for (let i = 1; i <= 6; i++) client.markNow('ab'.repeat(32), i * 60);
     await client.awaitPublishes();
 

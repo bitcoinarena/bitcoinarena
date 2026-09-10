@@ -661,17 +661,36 @@ export class Round {
     // imports the core. The node checks it KNOWS the inputs named; proving
     // they lead there is verification, and it has its own stage.
     //
-    // The head at the moment of arrival is not demanded. A client may take a
-    // mark at tick 60 and send the batch covering 0..119 afterwards, which is
-    // a legitimate order over one socket, so what is required is that the
-    // named batch is one the node holds for this entry - or the genesis, for
-    // a mark taken before any batch was sent.
+    // The batch head at the moment of arrival is not demanded - a batch
+    // reaching past the mark may already be here - so what is required of the
+    // NAME is that it is a batch the node holds for this entry, or the genesis.
     if (!same(c.inputChainHash, GENESIS)) {
       const known = this.db.prepare(
         'SELECT 1 k FROM batches WHERE round_id = ? AND entry_id = ? AND batch_id = ?')
         .get(c.roundId, c.entryId, c.inputChainHash);
       if (!known) throw new Error('the checkpoint names inputs this node has not seen');
     }
+
+    // AND THE NODE HOLDS EVERY INPUT THAT STATE CAME FROM.
+    //
+    // A checkpoint at tick T is the core after T steps: it was produced by the
+    // inputs of every tick before T. Measured 2026-09-10 on two real daemons:
+    // a client that sent no batch at all got all four of its checkpoints
+    // receipted by both - and on the Daily, daemon B held 0 ticks of runs it
+    // had receipted. A receipt over a state whose inputs this node has never
+    // seen is a signature on a claim. So the ticks before T must all be here
+    // first (intake already refuses a hole, so "the next tick owed is at least
+    // T" is the whole check). A mark sent ahead of its batch is refused, not
+    // parked: the client sends it again once its inputs have landed.
+    //
+    // HOLDING IS NOT REPLAYING. This still does not show those inputs produce
+    // that state - nothing in this package imports the core. That is the
+    // next cut, and it is verification's.
+    const owed = this.nextTick(c.roundId, c.entryId);
+    if (c.tick > owed)
+      throw new Error(
+        `the checkpoint is at tick ${c.tick} and this node holds this run's inputs only `
+        + `before tick ${owed}: send the batches first`);
 
     this.db.prepare(
       'INSERT INTO checkpoints (round_id, entry_id, tick, checkpoint_id, bytes, received_ms) '

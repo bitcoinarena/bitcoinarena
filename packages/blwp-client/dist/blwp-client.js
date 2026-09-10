@@ -5869,6 +5869,8 @@ class Client {
     this.published = [];          // { bytes, through } per accepted batch
     this.peerFeeds = new Map();   // base -> { next, ticks, refused, why, running }
     this.peerBatchesRefused = 0;
+    this.inputWaiters = [];       // marks waiting for every node to hold their inputs
+    this.marksWaited = 0;
     this.publishing = null;
     this.marking = null;
     this.said = [];
@@ -6079,6 +6081,7 @@ class Client {
           }
           f.next++;
           f.ticks = one.through;
+          this.#wakeMarks();
         }
       } while (f.again);
     })().finally(() => { f.running = null; });
@@ -6098,6 +6101,23 @@ class Client {
   peerBatches() {
     return [...this.peerFeeds.values()].map(({ base, ticks, refused, why }) =>
       ({ base, ticks, lag: this.nextTick - ticks, refused, why }));
+  }
+
+  /** Has every committee node answered that it holds this run's inputs before `tick`? */
+  #holdsThrough(tick) {
+    if (this.nextTick < tick) return false;
+    for (const base of this.peers) if (this.peerFeed(base).ticks < tick) return false;
+    return true;
+  }
+
+  /** Sends every waiting mark whose inputs every node now holds. */
+  #wakeMarks() {
+    if (!this.inputWaiters.length) return;
+    const still = [];
+    for (const w of this.inputWaiters) {
+      if (this.#holdsThrough(w.tick)) w.resolve(); else still.push(w);
+    }
+    this.inputWaiters = still;
   }
 
   /**
@@ -6454,6 +6474,7 @@ class Client {
     // run is at most blockTicks x 20 bytes of words.
     this.published.push({ bytes, through: this.nextTick });
     if (this.peers.length) this.pumpPeers();
+    this.#wakeMarks();
     return { batch: b, answer, accepted: Number(answer) };
   }
 
@@ -6783,6 +6804,8 @@ class Client {
     this.published = [];
     this.peerFeeds = new Map();
     this.peerBatchesRefused = 0;
+    this.inputWaiters = [];
+    this.marksWaited = 0;
     this.publishing = null;
     this.marking = null;
     this.offered = 0;
@@ -6968,6 +6991,12 @@ class Client {
         this.#afterRefusal(r);
       }
       this.publishing = null;
+      // A MARK IS WAITING ON TICKS STILL HELD: carry on draining now rather
+      // than on the page's next call, so the mark goes as soon as it can.
+      if (this.inputWaiters.length && this.hold.length) {
+        const d = this.drain();
+        if (d && d.catch) d.catch(() => {});
+      }
       return r;
     }).catch((e) => {
       this.hold = words.concat(this.hold);
@@ -7045,9 +7074,25 @@ class Client {
       this.marksSkipped++;
       return null;
     }
-    this.marking = this.mark(stateHash, {
-      roundId: this.where.roundId, entryId: this.where.entryId, tick, inputChainHash,
-    }).then((r) => {
+    // NOT BEFORE EVERY NODE HOLDS THE INPUTS IT COMES FROM. A node refuses a
+    // checkpoint at tick T until it holds every input before T, and when the
+    // mark is taken the last of those are still in the hold. So the mark waits
+    // - the hold is pushed out now, not on the page's next drain - until this
+    // client's node has taken them AND every other committee node has
+    // answered that it holds them; then it goes. A mark cannot race its
+    // batches and be refused for it, and a node that is behind is caught up
+    // from the first batch before it is asked to sign anything.
+    const where = this.where;
+    const ready = this.#holdsThrough(tick) ? null
+      : new Promise((resolve) => { this.inputWaiters.push({ tick, resolve }); });
+    if (ready) {
+      this.marksWaited++;
+      const d = this.drain();
+      if (d && d.catch) d.catch(() => {});
+    }
+    this.marking = Promise.resolve(ready).then(() => this.mark(stateHash, {
+      roundId: where.roundId, entryId: where.entryId, tick, inputChainHash,
+    })).then((r) => {
       if (r.answer === 'receipted') this.marksSent++;
       if (r.live) this.marksAccepted++;
       if (r.refused && r.refused.length) { this.marksRefused++; this.marksRefusedWhy = r.refused.join('; '); }
