@@ -264,8 +264,9 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   const chainFor = () => censusView;
   const a = await serve(dbA, { port: portA, host, funded, headerBytes, bondProof, chainFor,
     ...(randomnessFor ? { randomnessFor } : {}) });
-  const b = await serve(dbB, { port: portB, host, funded, headerBytes, bondProof, chainFor,
-    ...(randomnessFor ? { randomnessFor } : {}) });
+  const optsB = { port: portB, host, funded, headerBytes, bondProof, chainFor,
+    ...(randomnessFor ? { randomnessFor } : {}) };
+  let b = await serve(dbB, optsB);
   if (a.port !== portA)
     throw new Error(`node A came up on ${a.port} and the bond names ${portA}`);
 
@@ -446,7 +447,11 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     + `&advert=${toHex(bonded[0].signature)}`;
 
   return {
-    id, url, contract, a, b, beacon: beaconSeen,
+    id, url, contract, a, get b() { return b; }, beacon: beaconSeen,
+    // DAEMON B RESTARTS: the same store, identity, options and port, served
+    // again - what an operator's restart is, for measuring what a client does
+    // across one. Nothing it held is lost, because the store is the same.
+    async restartB() { await b.close(); b = await serve(dbB, optsB); return b; },
     nodes: reach,
     headers: [`${reach[0]}/headers`, `${reach[1]}/headers`],
     bond: `${reach[0]}/bond`,
