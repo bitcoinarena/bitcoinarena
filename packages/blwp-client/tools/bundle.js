@@ -119,6 +119,10 @@ out += '         roundPays: roundPays, postHandout: postHandout,\n';
 // into one sentence - so the page renders a total it did not add up.
 out += '         tabWallet: tabWallet, spendLog: spendLog, spentLine: spentLine,\n';
 out += '         parseConnection: parseConnection,\n';
+// WHAT THE WALLET WILL STILL LET THIS CONNECTION SPEND. Asked for, never read
+// off the connection string - NIP-47's URI carries no budget, and the field
+// that pretended it did is gone.
+out += '         walletBudget: walletBudget, budgetLine: budgetLine,\n';
 out += '         decodeRoundContract: decodeRoundContract,\n';
 out += '         toHex: toHex, fromHex: fromHex };\n})();\n';
 out += 'if (typeof module !== "undefined") module.exports = BLWPCLIENT;\n';

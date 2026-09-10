@@ -2939,9 +2939,13 @@ function parseConnection(uri) {
     walletPubkey: fromHex(walletHex),
     relay: relayUrl.toString(),
     secret: fromHex(secretHex),
-    // The budget a wallet may have attached, carried for DISPLAY only. §24A.1:
-    // it is wallet-side policy and encodes nothing about the round.
-    budget: url.searchParams.get('budget') || null,
+    // THERE IS NO BUDGET FIELD HERE, and there was: `budget:
+    // url.searchParams.get('budget')`, carried "for display only" and read by
+    // nothing. NIP-47's URI carries `relay`, `secret` and optionally `lud16` -
+    // no wallet attaches a budget to it, so that field was blank for every
+    // wallet in the world and would have rendered a working-looking screen
+    // showing nothing. The budget is wallet-side policy, exactly as §24A.1
+    // says, and the only honest way to it is to ASK: `walletBudget` below.
   };
 }
 
@@ -3173,6 +3177,89 @@ function nwcCall(where, request, { curve, random, now, timeoutMs = 30000,
       return finish({ ok: true, result: said.result, resultType: said.result_type });
     });
   });
+}
+
+/**
+ * WHAT THIS WALLET WILL STILL LET THIS CONNECTION SPEND.
+ *
+ * §24A.1 asks a client to show the running total "and what it was spent on";
+ * the other half of that screen is what is LEFT, and it does not live in this
+ * client. §24 says why: "an NWC budget is wallet-side policy". So it is asked
+ * for, over the same relay and the same encryption a payment uses.
+ *
+ * THREE CALLS, ALL READ-ONLY, AND NONE OF THEM CAN MOVE A SATOSHI. `get_info`
+ * first, because its `methods` list is the wallet saying what it implements -
+ * `get_budget` is a later addition to NIP-47 and plenty of wallets do not have
+ * it, and asking blind would turn "not implemented" into an error a player
+ * reads as a fault.
+ *
+ * A BALANCE IS NOT A BUDGET, which is why this prefers `get_budget` and says
+ * which it got. A balance is what the wallet holds; a budget is what THIS
+ * connection may spend before the player is asked again. Showing one where the
+ * other is meant, on a screen somebody is about to spend from, is the wrong
+ * number in the worst place - so the two are never merged.
+ *
+ * AND A WALLET THAT REPORTS NEITHER SAYS SO IN WORDS. An empty number on a
+ * payment screen reads as zero, and zero is a thing a player would act on.
+ */
+async function walletBudget(where, options = {}) {
+  const info = await nwcCall(where, { method: 'get_info', params: {} }, options);
+  if (!info.ok) return { ok: false, why: info.why };
+  const methods = (info.result && Array.isArray(info.result.methods)) ? info.result.methods : [];
+
+  if (methods.includes('get_budget')) {
+    const said = await nwcCall(where, { method: 'get_budget', params: {} }, options);
+    if (!said.ok) return { ok: false, why: said.why };
+    const r = said.result || {};
+    // A wallet may answer `get_budget` with an empty object, which NIP-47
+    // allows and which means "no budget is set on this connection".
+    if (r.total_budget === undefined && r.used_budget === undefined)
+      return { ok: true, kind: 'none', why: 'this connection has no budget set' };
+    const total = BigInt(r.total_budget || 0);
+    const used = BigInt(r.used_budget || 0);
+    return {
+      ok: true, kind: 'budget',
+      totalMsat: total, usedMsat: used,
+      leftMsat: total > used ? total - used : 0n,
+      renewsAt: r.renews_at || null, renewalPeriod: r.renewal_period || null,
+    };
+  }
+
+  if (methods.includes('get_balance')) {
+    const said = await nwcCall(where, { method: 'get_balance', params: {} }, options);
+    if (!said.ok) return { ok: false, why: said.why };
+    const balance = said.result && said.result.balance;
+    if (balance === undefined)
+      return { ok: false, why: 'the wallet answered a balance with no balance in it' };
+    return { ok: true, kind: 'balance', balanceMsat: BigInt(balance) };
+  }
+
+  return {
+    ok: true, kind: 'none',
+    why: 'this wallet does not report a budget',
+    methods,
+  };
+}
+
+/**
+ * THE BUDGET AS ONE LINE, so the page renders and does not compute.
+ *
+ * Sats rather than millisats, for `spentLine`'s reason: 1000 of them are one
+ * satoshi and that conversion is what a screen gets wrong quietly. And the
+ * WORD says which number it is - "budget" or "balance" - because a player
+ * reading "1000 sat left" has to know whether that is this connection's
+ * allowance or everything they own.
+ */
+function budgetLine(budget) {
+  if (!budget) return 'budget not asked for yet';
+  if (!budget.ok) return `budget unknown: ${budget.why}`;
+  if (budget.kind === 'budget') {
+    const left = budget.leftMsat / 1000n;
+    const total = budget.totalMsat / 1000n;
+    return `${left} of ${total} sat budget left`;
+  }
+  if (budget.kind === 'balance') return `wallet balance ${budget.balanceMsat / 1000n} sat`;
+  return budget.why || 'this wallet does not report a budget';
 }
 
 /**
@@ -8410,6 +8497,7 @@ return { Client: Client, markState: markState,
          roundPays: roundPays, postHandout: postHandout,
          tabWallet: tabWallet, spendLog: spendLog, spentLine: spentLine,
          parseConnection: parseConnection,
+         walletBudget: walletBudget, budgetLine: budgetLine,
          decodeRoundContract: decodeRoundContract,
          toHex: toHex, fromHex: fromHex };
 })();

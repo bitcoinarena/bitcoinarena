@@ -23,7 +23,8 @@ import { Client } from '../src/client.js';
 import { pageCurve } from '../src/page-curve.js';
 import {
   parseConnection, nip04Encrypt, nip04Decrypt, signEvent, payInvoice,
-  tabWallet, spendLog, spentLine, NWC_REQUEST, NWC_RESPONSE,
+  tabWallet, spendLog, spentLine, walletBudget, budgetLine,
+  NWC_REQUEST, NWC_RESPONSE,
 } from '../src/nwc.js';
 import { encodeRoundContract, encodeEntryContract, roundId, entryId } from '../../protocol/src/contracts.js';
 import { entryFeeMsat } from '../../protocol/src/fee.js';
@@ -73,10 +74,12 @@ async function walletOnARelay({ answer = null, secret = rand(32) } = {}) {
       if (!opened.ok) return;
       const said = JSON.parse(opened.plaintext);
       if (said.method === 'pay_invoice') asked.push(said.params.invoice);
+      asked.methods = (asked.methods || []).concat(said.method);
 
       const body = answer
         ? answer(said)
         : { result_type: 'pay_invoice', result: { preimage: PREIMAGE, fees_paid: 0 } };
+      if (!body) return;
       const content = await nip04Encrypt(JSON.stringify(body), {
         secret: walletSecret,
         theirPubkey: Uint8Array.from(Buffer.from(event.pubkey, 'hex')),
@@ -558,13 +561,17 @@ test('a round that asks no money gets no payment box, driven off the shipped pag
 
   const made = {};
   const el = (id) => (made[id] = made[id] || { style: {}, textContent: '', placeholder: '', disabled: false });
-  const run = (round, walletState, owedState) => new Function(
-    'document', 'window', 'BLWPCLIENT', 'wallet', 'spent', 'owed', 'paying', 'walletWhy',
+  const run = (round, walletState, owedState, budgetState = null) => new Function(
+    'document', 'window', 'BLWPCLIENT', 'wallet', 'spent', 'owed', 'paying', 'walletWhy', 'budget',
     `${src}\n return paintWallet();`,
   )(
     { getElementById: el }, { BLWP_ROUND: round, BLWP_CURVE: {} },
-    { roundPays: (r) => !!r && BigInt(r.stakeMsat || 0n) > 0n, spentLine: () => 'nothing paid this session' },
-    walletState, null, owedState, false, '',
+    {
+      roundPays: (r) => !!r && BigInt(r.stakeMsat || 0n) > 0n,
+      spentLine: () => 'nothing paid this session',
+      budgetLine,
+    },
+    walletState, null, owedState, false, '', budgetState,
   );
 
   // A FREE ROUND: the box is hidden and nothing asks the player for money.
@@ -578,10 +585,139 @@ test('a round that asks no money gets no payment box, driven off the shipped pag
   assert.equal(made['blwp-pay'].disabled, true, 'a player could pay before there was a quote');
 
   // AND WITH ONE: the amount is in sats, off the client's own quote.
-  run({ stakeMsat: 100000n }, { connected: true }, { amountMsat: 100000n, state: 'HELD' });
+  run({ stakeMsat: 100000n }, { connected: true }, { amountMsat: 100000n, state: 'HELD' },
+    { ok: true, kind: 'budget', totalMsat: 1000000n, usedMsat: 250000n, leftMsat: 750000n });
   assert.match(made['blwp-owed'].textContent, /owes 100 sat · HELD/);
   assert.equal(made['blwp-pay'].disabled, false);
   assert.match(made['blwp-nwc'].placeholder, /wallet connected/);
+
+  // AND THE BUDGET IS RENDERED FROM THE CLIENT'S OWN LINE, not assembled here.
+  assert.equal(made['blwp-budget'].textContent, '750 of 1000 sat budget left');
+
+  // A DISCONNECTED WALLET SHOWS NO BUDGET LINE AT ALL - "budget not asked for
+  // yet" beside a box with nothing connected would be noise.
+  run({ stakeMsat: 100000n }, { connected: false }, { amountMsat: 100000n, state: 'HELD' }, null);
+  assert.equal(made['blwp-budget'].textContent, '');
+
+  // AND A WALLET THAT CANNOT SAY SHOWS THE WORDS, never a blank.
+  run({ stakeMsat: 100000n }, { connected: true }, { amountMsat: 100000n, state: 'HELD' },
+    { ok: true, kind: 'none' });
+  assert.equal(made['blwp-budget'].textContent, 'this wallet does not report a budget');
   console.log(`  free round: hidden · paying, no quote: "${made['blwp-owed'].textContent}" `
     + `is what a quote turns into`);
+});
+
+/**
+ * WHAT THE WALLET WILL STILL LET THIS CONNECTION SPEND - ASKED, NOT PARSED.
+ *
+ * The field this used to be read off is gone. NIP-47's URI carries `relay`,
+ * `secret` and optionally `lud16`; no wallet attaches a budget to it, so the
+ * `budget:` line that was in `parseConnection` was blank for every wallet in
+ * the world and would have rendered a working-looking screen showing nothing.
+ */
+test('the connection string carries no budget, because NIP-47 has none', () => {
+  const c = parseConnection(
+    `nostr+walletconnect://${toHex(rand(32))}?relay=wss://r&secret=${toHex(rand(32))}`
+    + '&budget=1000');
+  assert.equal(c.ok, true, c.why);
+  assert.equal('budget' in c, false,
+    'parseConnection carries a budget field again - no wallet puts one there');
+  console.log('  parseConnection fields: ' + Object.keys(c).filter((k) => k !== 'ok').join(', '));
+});
+
+const wallets = (methods, extra = {}) => ({
+  answer: (said) => {
+    if (said.method === 'get_info') return { result_type: 'get_info', result: { methods } };
+    if (said.method === 'get_budget') return { result_type: 'get_budget', result: extra.budget || {} };
+    if (said.method === 'get_balance') return { result_type: 'get_balance', result: extra.balance || {} };
+    return { result_type: 'pay_invoice', result: { preimage: PREIMAGE } };
+  },
+});
+
+test('a wallet that reports a budget is asked for it, and the balance is not asked for', async () => {
+  const w = await walletOnARelay(wallets(['pay_invoice', 'get_info', 'get_budget', 'get_balance'],
+    { budget: { total_budget: 1000000, used_budget: 250000, renewal_period: 'monthly' } }));
+  try {
+    const said = await walletBudget(parseConnection(w.uri), pays);
+    assert.equal(said.ok, true, said.why);
+    assert.equal(said.kind, 'budget');
+    assert.equal(said.totalMsat, 1000000n);
+    assert.equal(said.usedMsat, 250000n);
+    assert.equal(said.leftMsat, 750000n);
+    assert.equal(budgetLine(said), '750 of 1000 sat budget left');
+
+    // get_info FIRST, then get_budget, and NO get_balance - a wallet that
+    // reports a budget is not asked what it holds.
+    assert.deepEqual(w.asked.methods, ['get_info', 'get_budget']);
+    assert.equal(w.asked.length, 0, 'asking for a budget paid something');
+    console.log(`  ${w.asked.methods.join(' then ')} -> "${budgetLine(said)}"`);
+  } finally { await w.close(); }
+});
+
+test('a wallet with no get_budget falls back to its balance, and says which it is', async () => {
+  const w = await walletOnARelay(wallets(['pay_invoice', 'get_info', 'get_balance'],
+    { balance: { balance: 4200000 } }));
+  try {
+    const said = await walletBudget(parseConnection(w.uri), pays);
+    assert.equal(said.ok, true, said.why);
+    assert.equal(said.kind, 'balance');
+    assert.equal(said.balanceMsat, 4200000n);
+
+    // A BALANCE IS NOT A BUDGET AND THE LINE SAYS SO. A player reading "4200
+    // sat left" has to know whether that is this connection's allowance or
+    // everything they own.
+    assert.equal(budgetLine(said), 'wallet balance 4200 sat');
+    assert.equal(budgetLine(said).includes('budget'), false,
+      'a balance was rendered as a budget');
+    assert.deepEqual(w.asked.methods, ['get_info', 'get_balance']);
+    console.log(`  ${w.asked.methods.join(' then ')} -> "${budgetLine(said)}"`);
+  } finally { await w.close(); }
+});
+
+test('a wallet that reports neither says so in words, never an empty number', async () => {
+  const w = await walletOnARelay(wallets(['pay_invoice', 'get_info']));
+  try {
+    const said = await walletBudget(parseConnection(w.uri), pays);
+    assert.equal(said.ok, true, said.why);
+    assert.equal(said.kind, 'none');
+    assert.equal(budgetLine(said), 'this wallet does not report a budget');
+    assert.deepEqual(w.asked.methods, ['get_info'],
+      'a method the wallet does not offer was asked for anyway');
+    console.log(`  "${budgetLine(said)}" - and ${w.asked.methods.length} call, not a guess`);
+  } finally { await w.close(); }
+});
+
+test('a connection with no budget set is not the same as a wallet that cannot say', async () => {
+  const w = await walletOnARelay(wallets(['get_info', 'get_budget'], { budget: {} }));
+  try {
+    const said = await walletBudget(parseConnection(w.uri), pays);
+    assert.equal(said.ok, true, said.why);
+    assert.equal(said.kind, 'none');
+    assert.equal(budgetLine(said), 'this connection has no budget set');
+  } finally { await w.close(); }
+});
+
+test('the budget line never shows an empty number', () => {
+  assert.equal(budgetLine(null), 'budget not asked for yet');
+  assert.equal(budgetLine({ ok: false, why: 'the wallet did not answer in 300 ms' }),
+    'budget unknown: the wallet did not answer in 300 ms');
+  assert.equal(budgetLine({ ok: true, kind: 'none' }), 'this wallet does not report a budget');
+  // 999 millisats is not 0 sat on a screen somebody spends from... it is, and
+  // that is the point of saying which unit: the line is in sats because that
+  // is what the player was quoted, and it never renders a bare blank.
+  assert.equal(budgetLine({ ok: true, kind: 'balance', balanceMsat: 999n }), 'wallet balance 0 sat');
+  for (const line of [budgetLine(null), budgetLine({ ok: true, kind: 'none' })])
+    assert.ok(line.length > 0 && /[a-z]/.test(line), 'a budget line came out as a bare number');
+  console.log('  every branch is words: not asked, unknown, none, balance, budget');
+});
+
+test('asking for a budget cannot move a satoshi', async () => {
+  const w = await walletOnARelay(wallets(['pay_invoice', 'get_info', 'get_budget'],
+    { budget: { total_budget: 1000000, used_budget: 0 } }));
+  try {
+    await walletBudget(parseConnection(w.uri), pays);
+    assert.equal(w.asked.length, 0, 'a read-only call paid an invoice');
+    assert.equal(w.asked.methods.includes('pay_invoice'), false);
+    console.log(`  ${w.asked.methods.join(', ')}: 0 invoices paid`);
+  } finally { await w.close(); }
 });

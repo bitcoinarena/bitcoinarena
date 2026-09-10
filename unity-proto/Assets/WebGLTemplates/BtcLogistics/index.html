@@ -80,6 +80,7 @@
   <div id="blwp-wallet">
     <div class="owed" id="blwp-owed"></div>
     <div class="spent" id="blwp-spent"></div>
+    <div class="spent" id="blwp-budget"></div>
     <input id="blwp-nwc" type="password" autocomplete="off" spellcheck="false"
            placeholder="nostr+walletconnect://…">
     <button id="blwp-pay" type="button">Pay the stake</button>
@@ -440,6 +441,7 @@
     const spent = (typeof BLWPCLIENT !== 'undefined' && BLWPCLIENT.spendLog)
       ? BLWPCLIENT.spendLog() : null;
     let owed = null;          // the last quote, as the client checked it
+    let budget = null;        // what the WALLET said it will still let us spend
     let paying = false;
     let walletWhy = '';
 
@@ -465,6 +467,25 @@
       paintWallet();
     }
 
+    /**
+     * WHAT THE WALLET WILL STILL LET THIS CONNECTION SPEND.
+     *
+     * ASKED, NEVER READ OFF THE CONNECTION STRING. NIP-47's URI carries no
+     * budget - the field that pretended it did is gone - so this is three
+     * read-only calls to the wallet, and a wallet that reports neither a budget
+     * nor a balance says so in words rather than showing an empty number.
+     */
+    async function askTheBudget() {
+      if (!wallet || !wallet.connected || budget) return;
+      const held = wallet.current();
+      if (!held.ok) return;
+      budget = await BLWPCLIENT.walletBudget(held, {
+        curve: window.BLWP_CURVE,
+        random: (n) => crypto.getRandomValues(new Uint8Array(n)),
+      });
+      paintWallet();
+    }
+
     async function payTheStake() {
       const client = theClient();
       if (paying || !client || !window.BLWP_ENTRY) return;
@@ -473,6 +494,7 @@
         const took = wallet.connect(pasted);
         if (!took.ok) { walletWhy = took.why; return paintWallet(); }
         document.getElementById('blwp-nwc').value = '';
+        budget = null;                 // a different wallet has a different one
       }
       const held = wallet.current();
       if (!held.ok) { walletWhy = held.why; return paintWallet(); }
@@ -489,9 +511,12 @@
         ? 'paid — the stake is held for this round'
         : said.why;
       // The quote is asked again so the state a player is shown is the node's
-      // and not this page's memory of it.
+      // and not this page's memory of it - and so is the budget, which has
+      // just moved by exactly the amount that was paid.
       owed = null;
+      budget = null;
       await askWhatIsOwed();
+      await askTheBudget();
       return paintWallet();
     }
 
@@ -510,6 +535,12 @@
       // THE TOTAL IS THE CLIENT'S. A page that added up its own payments would
       // be showing a figure nobody checked.
       document.getElementById('blwp-spent').textContent = BLWPCLIENT.spentLine(spent);
+      // AND WHAT IS LEFT, in the wallet's own words. `budgetLine` says WHICH
+      // number it is - a budget is this connection's allowance and a balance is
+      // everything the player owns, and on a payment screen the two must never
+      // read alike.
+      document.getElementById('blwp-budget').textContent =
+        wallet.connected ? BLWPCLIENT.budgetLine(budget) : '';
       document.getElementById('blwp-nwc').placeholder = wallet.connected
         ? 'wallet connected · paste another to replace it'
         : 'nostr+walletconnect://…';
@@ -583,7 +614,7 @@
     setInterval(paintPlayers, 500);
     const payButton = document.getElementById('blwp-pay');
     if (payButton) payButton.addEventListener('click', payTheStake);
-    setInterval(() => { askWhatIsOwed(); paintWallet(); }, 1000);
+    setInterval(() => { askWhatIsOwed(); askTheBudget(); paintWallet(); }, 1000);
     probeNodes();
     setInterval(probeNodes, 2000);
     paintPlayers();
