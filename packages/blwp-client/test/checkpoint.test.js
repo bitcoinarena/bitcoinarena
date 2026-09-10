@@ -23,7 +23,7 @@ import { ed25519 } from '@noble/curves/ed25519.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
 
 import { openStore } from '../../blwp-node/src/store.js';
-import { assumeSeated } from '../../blwp-node/test/seating.js';
+import { assumeSeated, assumeStakeSeen } from '../../blwp-node/test/seating.js';
 import { encodeRoundContract, encodeEntryContract } from '../../protocol/src/contracts.js';
 import { serve } from '../../blwp-node/src/server.js';
 import { roundId, entryId } from '../../protocol/src/contracts.js';
@@ -157,6 +157,9 @@ async function rig() {
   const e = entryFor(rid);
   const eid = await client.join(e);
   assert.deepEqual(eid, entryId(e), 'the node named a different entry than the contract hashes to');
+  // AND WHOSE STAKE IT SAW PAID: 23.1 step 5, measured in blwp-node's
+  // `stake-committed.test.js`. This file is about marks, not payment.
+  assumeStakeSeen(node.round, e);
   await client.connect();
   return { node, client, rid, eid };
 }
@@ -473,6 +476,7 @@ test('a receipt gossiped to a second node is recoverable from that node too', as
       await fetch(`${base}/round`, { method: 'POST', body: encodeRoundContract(c) });
       await fetch(`${base}/entry`, { method: 'POST', body: encodeEntryContract(e) });
       assumeSeated(n.round, roundId(c), committee);
+      assumeStakeSeen(n.round, e);
     }
 
     const client = new Client({ base: `http://127.0.0.1:${one.port}`, core, sign, verify });

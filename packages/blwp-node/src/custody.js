@@ -79,6 +79,39 @@ export class Custody {
   get reaches() { return this.port !== null && this.port !== undefined; }
 
   /**
+   * HAS THIS NODE SEEN THE STAKE HELD? 23.1 step 5: "STAKE_COMMITTED is
+   * recorded once >=5 settlement nodes have seen the held HTLC. Play begins
+   * only after this." This is one node's half of that: a node that has not
+   * seen it signs nothing for the entry's play, so the >=5 is the receipt
+   * threshold the client already needs.
+   *
+   * Measured before: nothing asked. An unpaid OPEN invoice reads HELD - money
+   * nobody sent is not money in flight - and `paidMsat` had no caller, so a
+   * seated entry played on a stake that never arrived.
+   *
+   * Seen once, remembered: the answer is written the first time Lightning shows
+   * the full amount held, and later play is answered from the row.
+   */
+  async seenPaid(entryId) {
+    const stored = this.round.entry(entryId);
+    if (!stored) return { ok: false, why: 'this node seated no such entry' };
+    const entry = decodeEntryContract(stored);
+    if (entry.stakeMsat === 0n) return { ok: true, state: FREE };
+    const seen = this.round.stakeSeen(entryId);
+    if (seen) return { ok: true, state: HELD, paidMsat: seen.paidMsat, already: true };
+    if (!this.reaches)
+      return { ok: false, why: 'this node reaches no Lightning, so it cannot see this stake held, and play waits for that (23.1)' };
+    const row = this.round.hold(entryId);
+    if (!row) return { ok: false, why: 'this node issued no hold for that entry, so there is nothing to see paid' };
+    const got = await this.port.look({ paymentHash: row.paymentHash, entryId });
+    const paid = got && typeof got.paidMsat === 'bigint' ? got.paidMsat : 0n;
+    if (!got || got.state !== HELD || paid === 0n || paid < row.amountMsat)
+      return { ok: false, why: `the stake is not paid and held: ${paid} of ${row.amountMsat} msat, Lightning says ${got && got.state}` };
+    this.round.putStakeSeen({ entryId, paidMsat: paid });
+    return { ok: true, state: HELD, paidMsat: paid };
+  }
+
+  /**
    * ISSUE THE HOLD FOR AN ENTRY, against the entry's own signed numbers.
    *
    * The payment hash and the amount are NOT arguments: 23.1 puts both on the

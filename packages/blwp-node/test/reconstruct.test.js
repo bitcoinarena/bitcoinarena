@@ -21,7 +21,7 @@ import { Custody, HELD, SETTLED } from '../src/custody.js';
 import { FORFEIT, DELIVERED } from '../../protocol/src/payout.js';
 import { serve } from '../src/server.js';
 import { feldmanGroup } from '../src/curve.js';
-import { assumeSeated } from './seating.js';
+import { assumeSeated, assumeStakeSeen } from './seating.js';
 import { Preimages, decodeShareAnswer, SEALED_ANSWER_BYTES } from '../src/preimage.js';
 import { dealHandout, encodeHandout } from '../../protocol/src/handout.js';
 import { openShare } from '../../protocol/src/seal.js';
@@ -124,6 +124,7 @@ async function playedRound(node, c, stake, seats) {
   const joined = await fetch(`http://127.0.0.1:${node.port}/entry`,
     { method: 'POST', body: encodeEntryContract(entry) });
   assert.equal(joined.status, 201, await joined.text());
+  assumeStakeSeen(node.round, entry);
 
   const { WebSocket } = await import('ws');
   const ws = new WebSocket(`ws://127.0.0.1:${node.port}/play`);

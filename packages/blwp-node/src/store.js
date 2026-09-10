@@ -234,6 +234,16 @@ export function openStore(path = ':memory:') {
       request      TEXT
     );
 
+    -- 23.1 STEP 5, THIS NODE'S HALF: the stake was seen PAID and held. HELD in
+    -- the holds table also covers an invoice nobody has paid yet, so play is gated on
+    -- this row, written once when Lightning first showed the full amount. A
+    -- table of its own so a store written before it existed gains it.
+    CREATE TABLE IF NOT EXISTS stake_seen (
+      entry_id   BLOB PRIMARY KEY REFERENCES entries(entry_id),
+      paid_msat  INTEGER NOT NULL,
+      seen_ms    INTEGER NOT NULL
+    );
+
     -- WHAT A ROUND OWES AND WHETHER IT HAS BEEN PAID (9.4's qualifying tail).
     --
     -- One row per round, not per entry: the payout is ONE transaction spending

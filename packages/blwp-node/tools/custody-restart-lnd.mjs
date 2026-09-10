@@ -225,6 +225,10 @@ async function main() {
         + `${heldB.ok ? `${heldB.state}, ${heldB.invoice === held.invoice ? 'the same invoice' : 'A DIFFERENT INVOICE'}` : heldB.why}`);
       if (!heldB.ok) problems.push(`a second daemon on the committee's one endpoint could not hold the stake: ${heldB.why}`);
       else if (heldB.invoice !== held.invoice) problems.push('the second daemon holds a different invoice for the same hash');
+      // NOT YET PAID, so not yet seen held (23.1 step 5): play would be refused.
+      const early = await custody.seenPaid(p.id);
+      say(`  before alice pays, seen held: ${early.ok ? `YES (${early.paidMsat} msat)` : early.why}`);
+      if (early.ok) problems.push('a stake nobody has paid was seen held');
       p.pay = new Promise((resolve) => execFile(LNCLI,
         [...lncliFor(dir, 'alice'), 'payinvoice', '--force', '--timeout', '600s', held.invoice],
         { maxBuffer: 8 << 20 }, (err, o) => resolve((o || '') + (err ? err.message : ''))));
@@ -238,6 +242,11 @@ async function main() {
         // WHAT ALICE'S WALLET SAID, not only that the money never came.
         throw new Error(`${err.message}; payinvoice: ${(p.payText || 'still running').trim().slice(-300)}`);
       });
+    for (const p of players) {
+      const seen = await custody.seenPaid(p.id);
+      say(`  after alice paid, seen held: ${seen.ok ? `${seen.state}, ${seen.paidMsat} msat` : seen.why}`);
+      if (!seen.ok) problems.push(`a paid, held stake was not seen: ${seen.why}`);
+    }
     const bobBefore = bobMsat();
     try { db.close(); } catch { /* node:sqlite */ }
     const forfeit = players[1];

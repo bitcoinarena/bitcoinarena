@@ -24,6 +24,7 @@ import { BLOCK_TICKS } from '../../core/src/rules/gate.js';
 // The node fee is 27A.7's 2% of the stake, and the door checks it now
 // (M3.3 item 20) - so a fixture carries the RULE rather than a number.
 import { entryFeeMsat } from '../../protocol/src/fee.js';
+import { assumeStakeSeen } from '../../blwp-node/test/seating.js';
 const require = createRequire(import.meta.url);
 const core = require('../../core/dist/blwp-core.js');
 const FUNDED = { funded: () => true };
@@ -56,6 +57,7 @@ async function rig() {
     joinTick: 0, worldSecret: b32(0x5e), vssSharesRef: new Uint8Array(32),
   };
   const eid = await client.join(entry);
+  assumeStakeSeen(node.round, entry);
   await client.connect();
   client.setRound({ roundId: rid, entryId: eid, blockTicks: c.blockTicks });
   return { node, client, rid, eid };

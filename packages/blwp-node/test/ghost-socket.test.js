@@ -27,6 +27,7 @@ import { O_TRUCK, T_X, T_Z, T_HEADING } from '../../core/src/state.js';
 // The node fee is 27A.7's 2% of the stake, and the door checks it now
 // (M3.3 item 20) - so a fixture carries the RULE rather than a number.
 import { entryFeeMsat } from '../../protocol/src/fee.js';
+import { assumeStakeSeen } from './seating.js';
 const b32 = (n) => new Uint8Array(32).fill(n);
 const contract = (stakeMsat = 100000n) => ({
   networkId: b32(0x4e), configHash: b32(0x43), censusConfirmations: 6, gameVerifySlots: 7,
@@ -103,6 +104,8 @@ async function twoIdentities(node, stakeMsat = 100000n) {
   const b = entryFor(rid, 9, stakeMsat);
   const seatA = await post(node.port, '/entry', encodeEntryContract(a));
   const seatB = await post(node.port, '/entry', encodeEntryContract(b));
+  assumeStakeSeen(node.round, a);
+  assumeStakeSeen(node.round, b);
   const eidA = seatA.bytes;
   const eidB = seatB.bytes;
   const batchOf = (eid, n, first, count, previousHash = GENESIS) => {
@@ -397,6 +400,7 @@ test('a subscriber that is not keeping up is shed, not buffered', async () => {
     // not a number worth printing in a status line.
     const c = entryFor(rid, 13);
     await post(node.port, '/entry', encodeEntryContract(c));
+    assumeStakeSeen(node.round, c);
     const eidC = entryIdOf(c);
     const third = await talk(node.port);
 

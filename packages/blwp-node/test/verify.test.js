@@ -8,7 +8,7 @@
 // this test handed it.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { assumeSeated } from './seating.js';
+import { assumeSeated, assumeStakeSeen } from './seating.js';
 import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
@@ -132,6 +132,7 @@ async function roundThrough(node, {
   };
   const eid = entryId(entry);
   assert.equal((await post(node.port, '/entry', encodeEntryContract(entry))).status, 201);
+  assumeStakeSeen(node.round, entry);
 
   const s = socket(node.port);
   await s.open;

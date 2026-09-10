@@ -80,17 +80,27 @@ const entryFor = (rid, n = 5) => ({
   donationMsat: 0n, joinTick: 0, worldSecret: b32(0x16), vssSharesRef: new Uint8Array(32),
 });
 
-/** A Lightning node that keeps a call log and no money. */
+/**
+ * A Lightning node that keeps a call log and no money - and whose players have
+ * paid: every hold it issued reads as held in full, which is what these tests
+ * assume before they play (23.1 step 5; stake-committed.test.js covers unpaid).
+ */
 function fakePort() {
   const calls = [];
+  const amounts = new Map();
   return {
     calls,
     acts: () => calls.filter((c) => c[0] === 'settle' || c[0] === 'cancel'),
     async createHeld({ paymentHash, amountMsat, entryId: id }) {
       calls.push(['createHeld', toHex(paymentHash)]);
+      amounts.set(toHex(paymentHash), amountMsat);
       return { paymentHash, amountMsat, request: 'lnbcrt-' + toHex(id).slice(0, 12) };
     },
-    async look({ paymentHash }) { calls.push(['look', toHex(paymentHash)]); return { state: HELD }; },
+    async look({ paymentHash }) {
+      calls.push(['look', toHex(paymentHash)]);
+      const amountMsat = amounts.get(toHex(paymentHash)) || 0n;
+      return { state: HELD, amountMsat, paidMsat: amountMsat };
+    },
     async settle({ paymentHash }) { calls.push(['settle', toHex(paymentHash)]); },
     async cancel({ paymentHash }) { calls.push(['cancel', toHex(paymentHash)]); },
   };

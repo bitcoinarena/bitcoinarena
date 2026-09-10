@@ -19,7 +19,8 @@ import { randomBytes } from 'node:crypto';
 import { WebSocketServer } from 'ws';
 import { decodeRoundContract, decodeEntryContract } from '../../protocol/src/contracts.js';
 import { toHex } from '../../protocol/src/hash.js';
-import { TYPE_CHECKPOINT } from '../../protocol/src/constants.js';
+import { TYPE_CHECKPOINT, TYPE_INPUT_BATCH } from '../../protocol/src/constants.js';
+import { splitSigned, decodeCheckpoint } from '../../protocol/src/checkpoint.js';
 import { MAX_INPUT_BATCH_BYTES, decodeInputBatch } from '../../protocol/src/batch.js';
 import { SIGNED_CHECKPOINT_BYTES } from '../../protocol/src/checkpoint.js';
 import { TYPE_CHECKPOINT_RECEIPT } from '../../protocol/src/constants.js';
@@ -1106,7 +1107,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (sock.readyState === sock.OPEN) sock.close(1009, 'frame too large');
     });
 
-    sock.on('message', (data, isBinary) => {
+    const handle = (data, isBinary) => {
       try {
         if (!isBinary) {
           const t = data.toString();
@@ -1224,6 +1225,37 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       } catch (e) {
         sock.send('error ' + e.message);
       }
+    };
+
+    // NO PLAY ON A STAKE THIS NODE HAS NOT SEEN HELD. 23.1 step 5 and 9 step 7:
+    // play begins once the held HTLC has been seen, and a node that has not
+    // seen it signs nothing for that entry. Measured before: a seated entry's
+    // input batch was taken with nothing paid, on a node with Lightning and on
+    // one with none. A free round (stake 0) passes without asking anybody.
+    //
+    // THE ASK IS ASYNC AND THE FRAMES ARE ORDERED, so every frame on a socket
+    // waits for the one before it: a batch must never overtake the batch it
+    // chains to because Lightning answered one of them faster.
+    const playOf = (data, isBinary) => {
+      if (!isBinary) return null;
+      const bytes = new Uint8Array(data);
+      try {
+        if (bytes[0] === TYPE_CHECKPOINT) return decodeCheckpoint(splitSigned(bytes).body).entryId;
+        if (bytes[0] === TYPE_INPUT_BATCH) return decodeInputBatch(bytes).entryId;
+      } catch { /* the handler names what is wrong with it */ }
+      return null;
+    };
+    let queue = Promise.resolve();
+    sock.on('message', (data, isBinary) => {
+      queue = queue.then(async () => {
+        const eid = playOf(data, isBinary);
+        if (eid && round.entry(eid)) {
+          let seen;
+          try { seen = await custody.seenPaid(eid); } catch (e) { seen = { ok: false, why: e.message }; }
+          if (!seen.ok) return sock.send('error ' + seen.why);
+        }
+        return handle(data, isBinary);
+      }).catch((e) => console.error(`[play] ${e.message}`));
     });
   });
 

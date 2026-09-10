@@ -33,6 +33,7 @@ import { O_TRUCK, T_X, T_Z, T_HEADING } from '../../core/src/state.js';
 // The node fee is 27A.7's 2% of the stake, and the door checks it now
 // (M3.3 item 20) - so a fixture carries the RULE rather than a number.
 import { entryFeeMsat } from '../../protocol/src/fee.js';
+import { assumeStakeSeen } from '../../blwp-node/test/seating.js';
 const require = createRequire(import.meta.url);
 const core = require('../../core/dist/blwp-core.js');
 
@@ -77,6 +78,9 @@ test('two daemons, one page: the other truck arrives where its own transcript pu
       joinTick: 0, worldSecret: b32(0x5e), vssSharesRef: new Uint8Array(32),
     };
     const eid = await client.join(mine);
+    // Both daemons gate play on having seen the stake (23.1 step 5); each one
+    // that seated this entry is told it did.
+    for (const n of [a, b]) if (n.round.entry(entryIdOf(mine))) assumeStakeSeen(n.round, mine);
     await client.connect();
     client.setRound({ roundId: rid, entryId: eid, blockTicks: contract.blockTicks });
 
@@ -84,6 +88,7 @@ test('two daemons, one page: the other truck arrives where its own transcript pu
     // holds: 60 ticks published before this page ever subscribes.
     const theirs = { ...mine, playerPubkey: b32(9), sessionPubkey: b32(10), worldSecret: b32(0x59), vssSharesRef: new Uint8Array(32) };
     await fetch(`http://127.0.0.1:${a.port}/entry`, { method: 'POST', body: encodeEntryContract(theirs) });
+    assumeStakeSeen(a.round, theirs);
     const theirEid = entryIdOf(theirs);
     const publish = (first, count) => {
       a.round.batch(encodeInputBatch({

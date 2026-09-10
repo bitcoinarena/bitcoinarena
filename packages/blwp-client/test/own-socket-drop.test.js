@@ -25,6 +25,7 @@ import { Client } from '../src/client.js';
 import { entryFeeMsat } from '../../protocol/src/fee.js';
 import { decodeTranscript } from '../../protocol/src/transcript.js';
 import { toHex } from '../../protocol/src/hash.js';
+import { assumeStakeSeen } from '../../blwp-node/test/seating.js';
 
 const require = createRequire(import.meta.url);
 const core = require('../../core/dist/blwp-core.js');
@@ -46,10 +47,12 @@ async function rig() {
     timeFloor: 30, timeCeil: 150, minScore: 1, rankNumerator: 3, rankDenominator: 4, nodes: [node.round.pubkey],
   };
   const rid = await client.openRound(c);
-  const eid = await client.join({
+  const mine = {
     roundId: rid, playerPubkey: b32(5), sessionPubkey: ed25519.getPublicKey(session),
     stakeCommitment: b32(7), stakeMsat: 100000n, feeMsat: entryFeeMsat(100000n), donationMsat: 0n, joinTick: 0, worldSecret: b32(0x5e), vssSharesRef: new Uint8Array(32),
-  });
+  };
+  const eid = await client.join(mine);
+  assumeStakeSeen(node.round, mine);
   await client.connect();
   client.setRound({ roundId: rid, entryId: eid, blockTicks: 9000 });
   client.onDrop = () => { client.reconnect(client.where); };

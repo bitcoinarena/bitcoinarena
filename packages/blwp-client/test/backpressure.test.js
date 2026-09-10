@@ -23,6 +23,7 @@ import { Client } from '../src/client.js';
 // The node fee is 27A.7's 2% of the stake, and the door checks it now
 // (M3.3 item 20) - so a fixture carries the RULE rather than a number.
 import { entryFeeMsat } from '../../protocol/src/fee.js';
+import { assumeStakeSeen } from '../../blwp-node/test/seating.js';
 // FUNDED, because these are rounds somebody paid for. A node started without
 // being told who pays refuses everything now - disk is spent only on stakes
 // that exist - so a test that means to play a round has to say so.
@@ -85,6 +86,7 @@ async function rig(ms, blockTicks = BLOCK_TICKS) {
   let eid;
   try {
     eid = await client.join(e);
+    assumeStakeSeen(node.round, e);
     await client.connect();
   } catch (err) { await node.close(); throw err; }
   if (ms) slowLink(client, ms, watch);

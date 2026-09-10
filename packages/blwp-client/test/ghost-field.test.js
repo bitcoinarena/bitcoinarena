@@ -66,6 +66,7 @@ async function rig() {
     joinTick: 0, worldSecret: b32(0x5e), vssSharesRef: new Uint8Array(32),
   };
   const eid = await client.join(mine);
+  assumeStakeSeen(node.round, mine);
   await client.connect();
   client.setRound({ roundId: rid, entryId: eid, blockTicks: c.blockTicks });
 
@@ -75,6 +76,7 @@ async function rig() {
     ...mine, playerPubkey: b32(9), sessionPubkey: b32(10), worldSecret: b32(0x59), vssSharesRef: new Uint8Array(32),
   };
   await fetch(`http://127.0.0.1:${node.port}/entry`, { method: 'POST', body: encodeEntryContract(theirs) });
+  assumeStakeSeen(node.round, theirs);
   const theirEid = entryIdOf(theirs);
   let head = GENESIS;
   const drive = (first, count, n = 9, entry = theirEid) => {
@@ -384,6 +386,7 @@ test('through the real client and daemon, this player\'s pre-reload seat is itse
       joinTick: 0, worldSecret: b32(0x5d), vssSharesRef: new Uint8Array(32),
     };
     await fetch(`http://127.0.0.1:${node.port}/entry`, { method: 'POST', body: encodeEntryContract(before) });
+    assumeStakeSeen(node.round, before);
     const oldSeat = entryIdOf(before);
     drive(0, 60);                          // the other player
     const head0 = node.round.head(rid, oldSeat);
@@ -407,6 +410,7 @@ test('through the real client and daemon, this player\'s pre-reload seat is itse
 /* ------------------------------------------------ what Unity is left holding */
 
 import { RETIRE_TICK } from '../src/ghost-field.js';
+import { assumeStakeSeen } from '../../blwp-node/test/seating.js';
 
 /**
  * WHAT `GhostField.Show` DOES WITH EACH DRAINED ITEM: make or move one truck per
@@ -514,6 +518,7 @@ test('through a real daemon\'s subscribe burst, the other player\'s abandoned se
     }));
     for (const seat of abandoned) {
       await fetch(`http://127.0.0.1:${node.port}/entry`, { method: 'POST', body: encodeEntryContract(seat) });
+      assumeStakeSeen(node.round, seat);
       node.round.batch(encodeInputBatch({
         roundId: rid, entryId: entryIdOf(seat), previousHash: GENESIS, firstTick: 0,
         ticks: Array.from({ length: 40 }, (_, i) => words(9)(i)), liquidations: [],

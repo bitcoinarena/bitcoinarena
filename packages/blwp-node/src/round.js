@@ -1173,6 +1173,21 @@ export class Round {
   }
 
   /**
+   * 23.1 STEP 5, THIS NODE'S HALF: the stake was seen paid and held. Written
+   * once, the first time Lightning showed it, so later play does not ask again.
+   */
+  putStakeSeen({ entryId, paidMsat }) {
+    this.db.prepare('INSERT OR IGNORE INTO stake_seen (entry_id, paid_msat, seen_ms) VALUES (?, ?, ?)')
+      .run(Buffer.from(entryId), String(paidMsat), this.now());
+  }
+
+  stakeSeen(entryIdBytes) {
+    const row = this.db.prepare('SELECT paid_msat, seen_ms FROM stake_seen WHERE entry_id = ?')
+      .get(Buffer.from(entryIdBytes));
+    return row ? { paidMsat: BigInt(row.paid_msat), seenMs: row.seen_ms } : null;
+  }
+
+  /**
    * WHAT THIS NODE BELIEVES ABOUT A ROUND'S PAYOUT, and how it changed.
    *
    * One row per round, written before the spend leaves, the way a hold's
