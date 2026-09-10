@@ -114,6 +114,9 @@ out += '         tabIdentity: tabIdentity, entryFor: entryFor,\n';
 // sealed to a game-verify seat are a stake nobody can open at payout.
 out += '         stakeFor: stakeFor, fetchSettlementSeats: fetchSettlementSeats,\n';
 out += '         roundPays: roundPays, postHandout: postHandout,\n';
+// THE THRESHOLD THE STAKE IS DEALT AT - the round's (2 of 2, 5 of 7), the
+// same rule the node's door and settle read, never the slot count (M3.3-26).
+out += '         sharesNeededFor: sharesNeededFor,\n';
 // THE WALLET THE PAGE RENDERS. `tabWallet` holds the connection per tab,
 // `spendLog` is what §24A.1 requires a client to show, and `spentLine` turns it
 // into one sentence - so the page renders a total it did not add up.

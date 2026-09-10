@@ -41,7 +41,9 @@ const FUNDED = { funded: () => true,
 
 const contractFor = (node) => ({
   networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations: 6,
-  gameVerifySlots: 2, settlementSlots: 2, simCoreHash: b32(1),
+  // SEVEN SETTLEMENT SEATS, because the handouts below are dealt 5-of-7 to
+  // seven: the door now asks the round what its stakes open at (M3.3-26).
+  gameVerifySlots: 2, settlementSlots: 7, simCoreHash: b32(1),
   committeeTimeMs: 500n, randomnessRule: 'bitcoin-block-hash',
   startTimeMs: 500n + MIN_ENTRY_WINDOW_MS, entryCloseMs: 200000n,
   objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20,

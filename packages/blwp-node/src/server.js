@@ -60,6 +60,7 @@ import { Round } from './round.js';
 import { Verifier } from './verify.js';
 import { Ghosts } from './ghosts.js';
 import { Roster, endpointsOf } from './roster.js';
+import { receiptsNeeded as roundThreshold } from '../../protocol/src/genesis.js';
 import { Custody, NO_LIGHTNING } from './custody.js';
 import { Preimages, encodeShareAnswer, SEALED_ANSWER_BYTES } from './preimage.js';
 import { Payouts, PAYOUT_QUEUED, PAID, PAID_IN_PART, NOTHING_OWED } from './payout.js';
@@ -199,7 +200,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
    * letter exists to end.
    */
   const fromTheCommittee = async (entryId, entry, roundIdBytes) => {
-    const opened = await preimages.open({ roundId: roundIdBytes, entryId });
+    // AT THE ROUND'S THRESHOLD (M3.3-26), never the handout's own number - the
+    // door already refused any other. Measured before: the open asked for 5
+    // (SHARES_NEEDED) of a stake dealt 2-of-2 and stopped at "2 of 5".
+    const held = round.get(roundIdBytes);
+    let needed;
+    try { needed = roundThreshold(decodeRoundContract(new Uint8Array(held.contract)).settlementSlots); }
+    catch (e) { console.log(`[custody] ${e.message}`); return null; }
+    const opened = await preimages.open({ roundId: roundIdBytes, entryId, needed });
     if (!opened.ok) { console.log(`[custody] ${opened.why}`); return null; }
     return opened.preimage;
   };
@@ -683,6 +691,23 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         let handout;
         try { handout = decodeHandout(await read(req)); }
         catch (e) { return text(res, 400, 'that is not a handout: ' + e.message); }
+
+        // THE ROUND'S THRESHOLD, NOT THE PLAYER'S (M3.3-26). `acceptHandout`
+        // checks a handout only against itself, and measured: a crafted 1-of-2
+        // (one seat opens it alone) and a 7-of-7 on seven seats (every seat must
+        // open it) were both taken 201. A loser who could deal his own
+        // threshold could deal an unopenable stake and be refunded on the
+        // timelock every time. So a stake is dealt at the round's number or not
+        // at all - the same number the settle opens at and the page deals.
+        const forRound = round.get(handout.roundId);
+        if (!forRound) return text(res, 404, 'this node holds no such round, so it cannot say what its stakes open at');
+        const roundContract = decodeRoundContract(new Uint8Array(forRound.contract));
+        let threshold;
+        try { threshold = roundThreshold(roundContract.settlementSlots); }
+        catch (e) { return text(res, 409, e.message); }
+        if (handout.needed !== threshold)
+          return text(res, 409, `that handout is dealt ${handout.needed} of ${handout.shares.length}, and `
+            + `this round's stakes open at ${threshold} of ${roundContract.settlementSlots}`);
 
         const seen = acceptHandout(handout);
         if (!seen.ok) return text(res, 409, seen.why);

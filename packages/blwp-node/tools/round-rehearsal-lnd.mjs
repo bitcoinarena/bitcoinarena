@@ -37,7 +37,7 @@ import { feldmanGroup } from '../src/curve.js';
 import { Client } from '../../blwp-client/src/client.js';
 import {
   joinFromQuery, tabIdentity, entryFor, fetchSettlementSeats, stakeFor, postHandout,
-  worldSeedFor, stakeSeenBy,
+  worldSeedFor, stakeSeenBy, sharesNeededFor,
 } from '../../blwp-client/src/join.js';
 import { toHex, fromHex } from '../../protocol/src/hash.js';
 import { entryId as entryIdOf } from '../../protocol/src/contracts.js';
@@ -190,9 +190,9 @@ async function main() {
       const player = tabIdentity({ storage: storage(), random, curve: feldmanGroup });
       const stake = await stakeFor({ ...named.round, id: fromHex(round.id) }, {
         seats: seats.seats, curve: feldmanGroup, random, playerPubkey: player.pubkey,
-        needed: named.round.settlementSlots,
+        needed: sharesNeededFor(named.round),
       });
-      const put = await postHandout(stake, named.nodes, { needed: named.round.settlementSlots });
+      const put = await postHandout(stake, named.nodes, { needed: sharesNeededFor(named.round) });
       if (!put.ok) { hole('code', `${name}'s handout: ${put.why}`); continue; }
       const base = {
         roundId: fromHex(round.id), sessionPubkey: ed25519.getPublicKey(session),
@@ -361,7 +361,11 @@ async function main() {
     for (const [name, d] of daemons) {
       const stop = Date.now() + 30000;
       let money = await d.stakes();
-      while (Date.now() < stop && !played.every((e) => (money.agreed || []).includes(e))) {
+      // THE RUNS FINAL AND THE TABLE WRITTEN: the table can lag the runs by a
+      // re-gather, and reading it early printed "table none" on a seat that
+      // was about to have one.
+      while (Date.now() < stop && (!played.every((e) => (money.agreed || []).includes(e))
+        || !d.round.payout(fromHex(round.id)))) {
         await wait(250);
         money = await d.stakes();
       }
@@ -402,9 +406,19 @@ async function main() {
     // its close calls, run once so both directions are counted.
     const lost = players.find((p) => p.want === 'FAILED' && p.eid);
     if (lost) {
+      // M3.3-26, MEASURED: what the stake was dealt with, and what each seat holds.
+      for (const [name, d] of daemons) {
+        const h = d.preimages.handoutOf(lost.eid);
+        const mine = await d.preimages.mine(lost.eid);
+        say(`    ${name} holds ${lost.name}'s handout: ${h.ok ? `dealt ${h.handout.needed}-of-${h.handout.shares.length}` : h.why}; `
+          + `its own share: ${mine.ok ? `seat ${mine.share.seat}` : mine.why}`);
+      }
       for (const [name, d] of daemons) {
         const peers = d.preimages.peersOf(fromHex(round.id));
-        const o = await d.preimages.open({ roundId: fromHex(round.id), entryId: lost.eid });
+        // at the ROUND'S threshold, the one the settle asks for (M3.3-26) - the
+        // probe without it asked `open`'s default 5 and printed "2 of 5"
+        const o = await d.preimages.open({ roundId: fromHex(round.id), entryId: lost.eid,
+          needed: sharesNeededFor(named.round) });
         say(`    PROBE ${name} opens ${lost.name}'s preimage: asks ${JSON.stringify(peers)} -> `
           + `${o.ok ? `OPENED with ${o.held} shares` : `${o.held ?? '?'} held - ${o.why}`}`);
       }

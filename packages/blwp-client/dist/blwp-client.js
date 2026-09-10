@@ -5962,6 +5962,20 @@ function feeMatchesEntry(entry) {
   return { ok: true, owed, net, why: `${owed} is 2% of ${entry.stakeMsat}, and ${net} of it is staked` };
 }
 
+// ---- protocol/src/threshold.js
+/**
+ * THE COMMITTEE THRESHOLD, the one rule the door, the settle, the verdict and
+ * the page all read: 2 slots -> 2-of-2 (this build), 7 slots -> 5-of-7.
+ *
+ * Its own module so the client bundle can carry it without genesis.js, which
+ * reaches into the engine. `genesis.js` re-exports it for the node.
+ */
+function receiptsNeeded(slots) {
+  if (slots === 2) return 2;
+  if (slots === 7) return 5;
+  throw new Error(`no committee threshold for ${slots} slots`);
+}
+
 // ---- blwp-client/src/join.js
 // THE ROUND A PAGE WAS SENT TO, NAMED IN ITS OWN URL.
 //
@@ -5990,6 +6004,16 @@ function feeMatchesEntry(entry) {
 
 
 
+
+
+/**
+ * HOW MANY SHARES OPEN THIS ROUND'S STAKES - the round's number, not the
+ * player's: 2 of 2, 5 of 7 (`receiptsNeeded` over the settlement slots). The
+ * page deals at it, the node's door refuses any other, and the settle opens at
+ * it (M3.3-26). The page used to deal `needed: settlementSlots` - 7 of 7 on
+ * seven seats, which the door now refuses - and to post at 5 on a 2-of-2.
+ */
+const sharesNeededFor = (round) => receiptsNeeded(round.settlementSlots);
 
 /** How the query names each thing. One key, one meaning, all optional but `round`. */
 const JOIN_KEYS = ['round', 'node', 'headers', 'bond', 'advert'];
@@ -9391,6 +9415,7 @@ return { Client: Client, markState: markState,
          tabIdentity: tabIdentity, entryFor: entryFor,
          stakeFor: stakeFor, fetchSettlementSeats: fetchSettlementSeats,
          roundPays: roundPays, postHandout: postHandout,
+         sharesNeededFor: sharesNeededFor,
          tabWallet: tabWallet, spendLog: spendLog, spentLine: spentLine,
          owedLine: owedLine,
          parseConnection: parseConnection,

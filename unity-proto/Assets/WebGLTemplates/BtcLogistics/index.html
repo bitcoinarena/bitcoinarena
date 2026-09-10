@@ -392,7 +392,7 @@
         stake = await BLWPCLIENT.stakeFor(
           Object.assign({}, named.round, { id: BLWPCLIENT.fromHex(named.roundIdHex) }), {
             seats: seats.seats, curve: window.BLWP_CURVE, random, playerPubkey: player.pubkey,
-            needed: named.round.settlementSlots,
+            needed: BLWPCLIENT.sharesNeededFor(named.round),
           });
         // A HANDOUT TOO FEW SEATS HOLD IS A STAKE NOBODY CAN OPEN, and the
         // count is a DECISION rather than a number in a log. Reconstruction
@@ -402,7 +402,7 @@
         //
         // The posting and the threshold are in `@blwp/client` for the reason
         // `roundPays` is: this file is the one `node --test` cannot load.
-        const put = await BLWPCLIENT.postHandout(stake, named.nodes);
+        const put = await BLWPCLIENT.postHandout(stake, named.nodes, { needed: BLWPCLIENT.sharesNeededFor(named.round) });
         if (!put.ok) {
           window.BLWP_SEAT_REFUSED = put.why;
           console.error('[blwp] seat refused: ' + put.why + ' — ' + put.refused.join('; '));

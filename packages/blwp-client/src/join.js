@@ -26,6 +26,16 @@ import { NO_SHARES, dealHandout, encodeHandout } from '../../protocol/src/handou
 import { FIELD, scalarFrom32, SHARES_NEEDED } from '../../protocol/src/shares.js';
 import { seedWordForEntry } from '../../protocol/src/seed.js';
 import { entryFeeMsat } from '../../protocol/src/fee.js';
+import { receiptsNeeded } from '../../protocol/src/threshold.js';
+
+/**
+ * HOW MANY SHARES OPEN THIS ROUND'S STAKES - the round's number, not the
+ * player's: 2 of 2, 5 of 7 (`receiptsNeeded` over the settlement slots). The
+ * page deals at it, the node's door refuses any other, and the settle opens at
+ * it (M3.3-26). The page used to deal `needed: settlementSlots` - 7 of 7 on
+ * seven seats, which the door now refuses - and to post at 5 on a 2-of-2.
+ */
+export const sharesNeededFor = (round) => receiptsNeeded(round.settlementSlots);
 
 /** How the query names each thing. One key, one meaning, all optional but `round`. */
 export const JOIN_KEYS = ['round', 'node', 'headers', 'bond', 'advert'];
