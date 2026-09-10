@@ -7256,6 +7256,19 @@ class Client {
     this.marking = Promise.resolve(ready).then(async (held) => {
       this.markWaiting = null;
       if (held) {
+        // THE PLAYER'S OWN LINK MAY HAVE GONE WHILE THE MARK WAITED - the peers
+        // are fed without it, so they can catch up and wake the mark with no
+        // socket to this client's own node. Measured before this: the send
+        // answered "error there is no socket", it was counted as a REFUSAL,
+        // and the mark went to B alone and sat there pending. A mark that
+        // cannot reach its own node is skipped and counted, the same rule as
+        // when it is taken; nothing is sent to anybody.
+        if (!this.sock || this.sock.readyState !== 1) {
+          return {
+            answer: `${CLOSED}the link to this client's own node went while the mark at tick ${tick} waited`,
+            skippedNoSocket: true, refused: [], unreached: [], live: false, receipt: null,
+          };
+        }
         // AND NEVER A SECOND CHILD OF ONE PARENT. If a mark some node stored
         // was not carried, it goes again first; a new mark chains onto it once
         // it is live. If it still is not, the new mark is NOT sent - it would
@@ -7284,7 +7297,7 @@ class Client {
         this.marksTimedOut++;
         this.marksTimedOutWhy = `tick ${tick}: ${r.behind.join('; ')}`;
       }
-      if (r.skippedForLink) this.marksSkipped++;
+      if (r.skippedForLink || r.skippedNoSocket) this.marksSkipped++;
       if (r.answer === 'receipted') this.marksSent++;
       if (r.live) this.marksAccepted++;
       if (r.refused && r.refused.length) { this.marksRefused++; this.marksRefusedWhy = r.refused.join('; '); }

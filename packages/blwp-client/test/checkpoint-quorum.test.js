@@ -546,3 +546,63 @@ test('a peer that is down is counted as down, not as refusing, and the re-sent c
     await round.close();
   }
 });
+
+// THE PLAYER'S OWN LINK GOES WHILE A CHECKPOINT WAITS.
+//
+// Measured 2026-09-10 at 71271bf: a mark waited for B, the player's own socket
+// dropped, B came back and caught up without it, and the mark woke with no
+// socket to its own node: "error there is no socket" was counted as a refusal
+// ("refused 1"), and the mark went to B alone - stored on B, left pending.
+test('a checkpoint that wakes after the player\'s own link went is skipped, not refused and not half-sent, and the run carries on after the reconnect', async () => {
+  const round = await standUpRound({ host: '127.0.0.1', portA: 18270, portB: 18271 });
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  let t;
+  try {
+    const named = await joinFromQuery(new URL(round.url).search);
+    t = await tab(round, named, { pageNodes: true });
+    const { client, rid, eid } = t;
+    const [A, B] = [client.base, ...client.peers];
+
+    drive(client, 60);
+    await round.b.close();
+    await wait(100);
+    const pending = client.markNow(driven(7, 60), 60);      // waits: B cannot confirm the inputs
+    for (let i = 0; i < 40 && client.nextTick < 60; i++) await wait(50);
+    assert.equal(client.nextTick, 60, 'A never took the inputs');
+
+    // THE PLAYER'S OWN LINK GOES; B comes back and is fed without it.
+    client.sock.close();
+    await wait(200);
+    assert.equal(client.sock, null, 'the player\'s own socket did not go');
+    await round.restartB();
+    client.pumpPeers();
+    const r = await pending;
+    const line = client.status(60);
+    console.log(`  own link gone at wake: "${r.answer}"; refused ${client.marksRefused}, skipped `
+      + `${client.marksSkipped}, pending link ${client.pendingLink ? client.pendingLink.tick : 'none'}; `
+      + `checkpoints A ${await stored(A, rid, eid)} B ${await stored(B, rid, eid)}; ${line}`);
+    assert.equal(r.skippedNoSocket, true, `the mark went out with no socket to its own node: ${r.answer}`);
+    assert.equal(client.marksRefused, 0, 'the player\'s own drop was counted as a node refusing');
+    assert.equal(client.marksSkipped, 1);
+    assert.equal(client.pendingLink, null, 'the mark was half-sent to B');
+    assert.deepEqual([await stored(A, rid, eid), await stored(B, rid, eid)], [0, 0]);
+    assert.equal(/refused/.test(line), false, `the line says refused for the player's own drop: ${line}`);
+    assert.match(line, / skipped 1\b/);
+
+    // THE RECONNECT, and the run carries on on both daemons, with one chain.
+    await client.reconnect(client.where);
+    drive(client, 60);
+    const next = await client.markNow(driven(7, 120), 120);
+    const marks = [await stored(A, rid, eid), await stored(B, rid, eid)];
+    const proofs = [await equivocation(A, rid, eid), await equivocation(B, rid, eid)];
+    console.log(`  after the reconnect: mark 120 ${next.answer}, live ${next.live}; checkpoints A ${marks[0]} `
+      + `B ${marks[1]}; /equivocation A ${proofs[0]} B ${proofs[1]}; ${client.status(120)}`);
+    assert.equal(next.live, true, `the run did not carry on: ${next.answer}`);
+    assert.deepEqual(marks, [1, 1]);
+    assert.deepEqual(proofs, [204, 204]);
+    assert.equal(await chainOn(B, rid, eid), await chainOn(A, rid, eid));
+  } finally {
+    if (t) { t.client.ended = true; t.client.close(); }
+    await round.close();
+  }
+});
