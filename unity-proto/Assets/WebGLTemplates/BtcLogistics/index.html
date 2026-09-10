@@ -386,6 +386,7 @@
         stake = await BLWPCLIENT.stakeFor(
           Object.assign({}, named.round, { id: BLWPCLIENT.fromHex(named.roundIdHex) }), {
             seats: seats.seats, curve: window.BLWP_CURVE, random, playerPubkey: player.pubkey,
+            needed: named.round.settlementSlots,
           });
         // A HANDOUT TOO FEW SEATS HOLD IS A STAKE NOBODY CAN OPEN, and the
         // count is a DECISION rather than a number in a log. Reconstruction
