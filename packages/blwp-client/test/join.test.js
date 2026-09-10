@@ -371,7 +371,7 @@ test('a page deals its own stake: the commitment is a hash and the ref is a hand
 
   const secrets = Array.from({ length: 7 }, () => rand(32));
   const seats = secrets.map((s) => schnorr.getPublicKey(s));
-  const round = { id: b32(0x11), stakeMsat: 100000n };
+  const round = { id: b32(0x11), stakeMsat: 100000n, settlementSlots: 7 };
 
   const stake = await stakeFor(round, {
     seats, curve: feldmanGroup, random: rand, playerPubkey: b32(5),
@@ -412,7 +412,7 @@ test('a page refuses to deal without a curve, a committee, or a player', async (
   const rand = (n) => new Uint8Array(randomBytes(n));
   const { schnorr } = await import('@noble/curves/secp256k1.js');
   const seats = Array.from({ length: 7 }, () => schnorr.getPublicKey(rand(32)));
-  const round = { id: b32(0x11), stakeMsat: 100000n };
+  const round = { id: b32(0x11), stakeMsat: 100000n, settlementSlots: 7 };
 
   await assert.rejects(() => stakeFor(round, { seats, random: rand, playerPubkey: b32(5) }),
     /needs a curve, and none was injected/);

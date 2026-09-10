@@ -7,7 +7,45 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { sharesNeededFor } from '../src/join.js';
+import { randomBytes } from 'node:crypto';
+import { schnorr } from '@noble/curves/secp256k1.js';
+import { sharesNeededFor, stakeFor, postHandout, stakeSeenNeeded } from '../src/join.js';
+import { feldmanGroup } from '../../blwp-node/src/curve.js';
+
+const b32 = (n) => new Uint8Array(32).fill(n);
+const rand = (n) => new Uint8Array(randomBytes(n));
+const seatsOf = (n) => Array.from({ length: n }, () => schnorr.getPublicKey(rand(32)));
+const deal = (round, seats, extra = {}) =>
+  stakeFor(round, { seats, curve: feldmanGroup, random: rand, playerPubkey: b32(5), ...extra });
+
+test('stakeFor deals at the round\'s threshold unless told otherwise, and refuses any other', async () => {
+  // ITS DEFAULT WAS A FLAT 5, whatever the round. The page and the harness now
+  // pass the round's number, but a default that contradicts a 2-of-2 is the
+  // same player-chosen threshold the node's door refuses, one caller away.
+  const two = { id: b32(0x11), stakeMsat: 100000n, settlementSlots: 2 };
+  const seven = { id: b32(0x12), stakeMsat: 100000n, settlementSlots: 7 };
+  assert.equal((await deal(two, seatsOf(2))).handout.needed, 2);
+  assert.equal((await deal(seven, seatsOf(7))).handout.needed, 5);
+  await assert.rejects(() => deal(two, seatsOf(2), { needed: 5 }), /this round's stakes open at 2 of 2/);
+  await assert.rejects(() => deal(seven, seatsOf(7), { needed: 7 }), /this round's stakes open at 5 of 7/);
+  await assert.rejects(() => deal({ id: b32(0x13), stakeMsat: 100000n }, seatsOf(7)),
+    /names no settlement slots/);
+});
+
+test('postHandout counts against the threshold the stake was dealt at, not a flat 5', async () => {
+  const two = { id: b32(0x11), stakeMsat: 100000n, settlementSlots: 2 };
+  const stake = await deal(two, seatsOf(2), { needed: 2 });
+  const took = async () => ({ ok: true, text: async () => '' });
+  const put = await postHandout(stake, ['http://a', 'http://b'], { fetcher: took });
+  assert.equal(put.needed, 2);
+  assert.equal(put.ok, true, `both seats of a 2-of-2 took the handout and it still says: ${put.why}`);
+});
+
+test('"committed" counts against the same rule: stakeSeenNeeded is sharesNeededFor', () => {
+  for (const slots of [2, 7]) assert.equal(stakeSeenNeeded({ settlementSlots: slots }), sharesNeededFor({ settlementSlots: slots }));
+  assert.throws(() => stakeSeenNeeded({ settlementSlots: 3 }), /no committee threshold for 3 slots/,
+    'the client counts a stake committed on a committee the node has no threshold for');
+});
 
 test('the round\'s stakes open at 2 of 2 and 5 of 7, and nothing else is a threshold', () => {
   assert.equal(sharesNeededFor({ settlementSlots: 2 }), 2);

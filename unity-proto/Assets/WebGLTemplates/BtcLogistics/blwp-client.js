@@ -6182,8 +6182,13 @@ async function fetchRandomness(id, nodes, { fetcher = fetch } = {}) {
  * committee is keys - there is no map between them. A node with no share in
  * the handout refuses, which is the right answer and is counted as one.
  */
-async function postHandout(stake, nodes, { fetcher = fetch, needed = SHARES_NEEDED } = {}) {
+async function postHandout(stake, nodes, { fetcher = fetch, needed: asked } = {}) {
   if (!stake || !stake.body) throw new Error('there is no dealt stake to publish');
+  // THE SEATS THAT MUST HOLD IT are the threshold it was dealt at - which
+  // `stakeFor` makes the round's. The default was a flat 5 (M3.3-26).
+  const needed = asked ?? stake.handout?.needed;
+  if (!Number.isInteger(needed) || needed < 1)
+    throw new Error('this stake does not say how many seats open it');
   if (!Array.isArray(nodes) || !nodes.length)
     throw new Error('no node to publish this handout to');
   const accepted = [];
@@ -6220,15 +6225,13 @@ async function postHandout(stake, nodes, { fetcher = fetch, needed = SHARES_NEED
 const roundPays = (round) => !!round && BigInt(round.stakeMsat || 0n) > 0n;
 
 /**
- * HOW MANY SETTLEMENT NODES MUST HAVE SEEN A STAKE HELD (23.1 step 5): 2 on a
- * two-slot round, 5 otherwise - the shape `receiptsForLive` already has, read
- * off the round's own settlement slots. A flat 5 would freeze a 2-of-2 at
- * "2 of 2 (5 needed)".
+ * HOW MANY SETTLEMENT NODES MUST HAVE SEEN A STAKE HELD (23.1 step 5): the
+ * round's threshold, the one rule the door, the settle and the dealing read
+ * (2 of 2, 5 of 7). It was its own copy - "2 on two slots, 5 otherwise" - and
+ * counted a stake committed on committees the node has no threshold for.
  */
 function stakeSeenNeeded(contract) {
-  const slots = contract?.settlementSlots ?? contract?.nodes?.length;
-  if (slots === 2) return 2;
-  return SHARES_NEEDED;
+  return receiptsNeeded(contract?.settlementSlots ?? contract?.nodes?.length);
 }
 
 /**
@@ -6549,8 +6552,17 @@ function entryFor(round, { playerPubkey, random, joinTick = 0, stake } = {}) {
  * reducing would change the number the payment hash already commits to, and
  * the shares would then open something the Entry Contract does not name.
  */
-async function stakeFor(round, { seats, curve, random, playerPubkey, needed = SHARES_NEEDED } = {}) {
+async function stakeFor(round, { seats, curve, random, playerPubkey, needed: asked } = {}) {
   if (!round || !round.id) throw new Error('a stake is dealt for a round, and that is not one');
+  // AT THE ROUND'S THRESHOLD, the one the node's door takes and its settle
+  // opens at (M3.3-26). The default was a flat 5 whatever the round, and any
+  // other number is a stake the door refuses - so it is refused here first.
+  if (round.settlementSlots === undefined)
+    throw new Error('this round names no settlement slots, so no threshold to deal its stake at');
+  const needed = sharesNeededFor(round);
+  if (asked !== undefined && asked !== needed)
+    throw new Error(`a stake dealt ${asked} of ${seats ? seats.length : 0} is refused: `
+      + `this round's stakes open at ${needed} of ${round.settlementSlots}`);
   if (!Array.isArray(seats) || seats.length < needed)
     throw new Error(`a threshold of ${needed} cannot be dealt to ${seats ? seats.length : 0} seats`);
   if (!curve || typeof curve.ecdhShared !== 'function' || typeof curve.pointX !== 'function')
