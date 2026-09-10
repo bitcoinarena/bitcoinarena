@@ -350,6 +350,22 @@ async function main() {
       if (money.paid) say(`    pool spend: ${money.paid.ok ? money.paid.state : money.paid.why}`);
     }
 
+    // ---- M3.3-24: WHO THE PREIMAGE ASK REACHES, a probe after both closes ----
+    // Only a seat where the run is final asks during its close, so A (P2 not
+    // final there) never asks. The probe is each daemon's own `open`, the one
+    // its close calls, run once so both directions are counted.
+    const lost = players.find((p) => p.want === 'FAILED' && p.eid);
+    if (lost) {
+      for (const [name, d] of daemons) {
+        const peers = d.preimages.peersOf(fromHex(round.id));
+        const o = await d.preimages.open({ roundId: fromHex(round.id), entryId: lost.eid });
+        say(`    PROBE ${name} opens ${lost.name}'s preimage: asks ${JSON.stringify(peers)} -> `
+          + `${o.ok ? `OPENED with ${o.held} shares` : `${o.held ?? '?'} held - ${o.why}`}`);
+      }
+      say(`    payout peers per round: A ${JSON.stringify(round.a.payouts.peersOf(fromHex(round.id)))}, `
+        + `B ${JSON.stringify(round.b.payouts.peersOf(fromHex(round.id)))}`);
+    }
+
     // ---- AND HOW RECEIPTS SIT AFTER IT: the done criterion, counted ----
     for (const p of players) {
       if (!p.ticks) continue;
