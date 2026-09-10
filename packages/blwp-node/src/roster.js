@@ -45,6 +45,27 @@ export const NO_CHAIN_VIEW = () => undefined;
  */
 export const NO_BEACON = () => undefined;
 
+/**
+ * WHERE THE OTHER SEATS OF A COMMITTEE ANSWER, off their own advertisements.
+ *
+ * A committee is keys; a key is not an address. The census entry of each seat
+ * carries the signed advertisement from its bond, and its `endpoint` is where
+ * that seat says it answers - the socket form (`ws://`), turned into the HTTP
+ * base the doors are on. This node is never its own peer, and a seat that
+ * advertised nowhere is left out rather than guessed at. One rule, used by
+ * the payout path and the close alike.
+ */
+export function endpointsOf(committee, selfPubkey) {
+  const self = selfPubkey ? toHex(selfPubkey) : null;
+  const found = new Set();
+  for (const e of committee || []) {
+    if (!e || !e.advert || !e.advert.endpoint) continue;
+    if (self && toHex(e.pubkey) === self) continue;
+    found.add(String(e.advert.endpoint).replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, ''));
+  }
+  return [...found];
+}
+
 export class Roster {
   constructor(round, { chainFor = NO_CHAIN_VIEW, randomnessFor = NO_BEACON } = {}) {
     this.round = round;

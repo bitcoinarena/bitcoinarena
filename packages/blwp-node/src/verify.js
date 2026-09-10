@@ -11,6 +11,7 @@
 // here reaches the core: `replay.js` remains the only file in this daemon that
 // does, and this file only decides which runs are handed to it.
 import { ReplayPool } from './pool.js';
+import { SIGNED_RECEIPT_BYTES } from '../../protocol/src/receipt.js';
 import { resultFrom, signResult, verifiedFinal } from './verdict.js';
 import {
   joinSignedResult, splitSignedResult, decodePlayerResult, resultId, SIGNED_RESULT_BYTES,
@@ -91,7 +92,19 @@ export const NO_RANDOMNESS_SOURCE = () => undefined;
 export class Verifier {
   constructor(round, {
     randomnessFor = NO_RANDOMNESS_SOURCE, chainFor = null, pool = new ReplayPool(), peers = [],
+    peersFor = null,
   } = {}) {
+    /**
+     * THE OTHER SEATS OF ONE ROUND, when the operator named none: a function
+     * of the round, because a committee is a round's. The daemon passes the
+     * census's own addresses - the signed advertisement in each seat's bond -
+     * which is the record seat selection already reads. Measured on the regtest
+     * rehearsal before it: both daemons' `peers` were [], so a close could ask
+     * nobody for anything.
+     */
+    this.peersFor = peersFor;
+    /** What each close carried from its peers, by `round:entry`. */
+    this.carried = new Map();
     this.round = round;
     this.randomnessFor = randomnessFor;
     /** The chain this node has, so the beacon it closes on can be checked. */
@@ -148,18 +161,62 @@ export class Verifier {
       const transcript = this.round.transcript(roundIdBytes, entryId);
       const objected = this.round.objected(roundIdBytes, entryId);
       this.queued.push({ entryId, objected });
-      return this.pool.submit({
+      // THE PEERS' RECEIPTS BEFORE THE CANONICAL CHAIN IS TAKEN (13C). Each
+      // seat receipts a mark itself and keeps only its own half, so a node
+      // that asked nobody could never hold T of them. Pulled here, by the
+      // node, and not trusted to the client: a losing player who withheld
+      // receipts would reach no-quorum and a VOID refund.
+      return this.carryReceipts(roundIdBytes, entryId).then(() => this.pool.submit({
         key: `${hex(roundIdBytes)}:${hex(entryId)}`,
         objected,
         transcript,
         entry,
         // The WORLD seed's half of the same published value.
         options: { roundRandomness: beacon.hash },
-      }).then((answer) => this.#keep({ roundIdBytes, entryId, entry, contract, answer }));
+      })).then((answer) => this.#keep({ roundIdBytes, entryId, entry, contract, answer }));
     });
 
     this.done = work;
     return work;
+  }
+
+  /**
+   * WHO TO ASK ABOUT ONE ROUND. A list the operator gave wins; otherwise the
+   * round's own committee, from the census (`peersFor`); otherwise nobody.
+   */
+  peersOf(roundIdBytes) {
+    if (this.peers && this.peers.length) return this.peers;
+    if (typeof this.peersFor !== 'function') return [];
+    try { return this.peersFor(roundIdBytes) || []; } catch { return []; }
+  }
+
+  /**
+   * TAKE EVERY PEER'S RECEIPTS FOR ONE RUN, EACH THROUGH `takeReceipt`.
+   *
+   * Nothing is believed on arrival: `takeReceipt` stores a record only if the
+   * mark is one this node holds, the signer is seated on this round, and the
+   * signature verifies - the same three checks as ever. A peer that is down is
+   * named and skipped, never fatal: the next peer may carry what this one
+   * could not. Kept in `carried` so a close can say what it was offered.
+   */
+  async carryReceipts(roundIdBytes, entryIdBytes) {
+    const report = { taken: 0, refused: [], down: [] };
+    for (const peer of this.peersOf(roundIdBytes)) {
+      let body;
+      try {
+        const answer = await fetch(`${peer}/receipts?round=${hex(roundIdBytes)}&entry=${hex(entryIdBytes)}`);
+        if (!answer.ok) { report.down.push(`${peer}: answered ${answer.status}`); continue; }
+        body = new Uint8Array(await answer.arrayBuffer());
+      } catch (e) { report.down.push(`${peer}: ${e.message}`); continue; }
+      for (let at = 0; at + SIGNED_RECEIPT_BYTES <= body.length; at += SIGNED_RECEIPT_BYTES) {
+        try {
+          this.round.takeReceipt(body.slice(at, at + SIGNED_RECEIPT_BYTES));
+          report.taken++;
+        } catch (e) { report.refused.push(`${peer}: ${e.message}`); }
+      }
+    }
+    this.carried.set(`${hex(roundIdBytes)}:${hex(entryIdBytes)}`, report);
+    return report;
   }
 
   /**
@@ -251,7 +308,7 @@ export class Verifier {
     const playerPubkey = mine.entry.playerPubkey;
 
     let fetched = 0, kept = 0, refused = 0;
-    for (const peer of this.peers) {
+    for (const peer of this.peersOf(roundIdBytes)) {
       let body;
       try {
         const url = `${peer}/results?round=${hex(roundIdBytes)}&entry=${hex(entryIdBytes)}`;

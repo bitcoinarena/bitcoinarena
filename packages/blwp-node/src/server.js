@@ -59,7 +59,7 @@ import { CLOSED } from './store.js';
 import { Round } from './round.js';
 import { Verifier } from './verify.js';
 import { Ghosts } from './ghosts.js';
-import { Roster } from './roster.js';
+import { Roster, endpointsOf } from './roster.js';
 import { Custody, NO_LIGHTNING } from './custody.js';
 import { Preimages, encodeShareAnswer, SEALED_ANSWER_BYTES } from './preimage.js';
 import { Payouts, PAYOUT_QUEUED, PAID, PAID_IN_PART, NOTHING_OWED } from './payout.js';
@@ -303,6 +303,19 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // letter's - so the operator says where they are and the contract still
     // says whose signatures count.
     peers,
+    // AND WHEN THE OPERATOR SAID NOTHING, THE CENSUS SAYS: the round's game
+    // committee, each seat's endpoint off the signed advertisement in its bond
+    // - the same record seating reads, and the rule the payout path uses below.
+    // Measured before this: both daemons of the regtest rehearsal closed with
+    // peers [], so no receipt and no result could ever be fetched.
+    peersFor: (roundIdBytes) => {
+      const picked = roster.committeeFor(roundIdBytes, 'game');
+      if (!picked.ok) {
+        console.error(`[verify] ${toHex(roundIdBytes).slice(0, 16)} reads no seat addresses: ${picked.why}`);
+        return [];
+      }
+      return endpointsOf(picked.committee, round.pubkey);
+    },
   });
 
   /**
@@ -406,7 +419,6 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // census of every round it still owes a payout on, the same way it seated
   // them. A peers list the caller passed in is never replaced.
   if (chainFor && (!payouts.peers || !payouts.peers.length)) {
-    const self = toHex(round.pubkey);
     const found = new Set();
     for (const row of round.payoutsInState(PAYOUT_QUEUED)) {
       const picked = roster.committeeFor(row.roundId, 'settlement');
@@ -414,10 +426,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         console.error(`[payout] ${toHex(row.roundId).slice(0, 16)} reads no seat addresses: ${picked.why}`);
         continue;
       }
-      for (const e of picked.committee) {
-        if (toHex(e.pubkey) === self || !e.advert || !e.advert.endpoint) continue;
-        found.add(String(e.advert.endpoint).replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, ''));
-      }
+      for (const u of endpointsOf(picked.committee, round.pubkey)) found.add(u);
     }
     if (found.size) payouts.peers = [...found];
   }
