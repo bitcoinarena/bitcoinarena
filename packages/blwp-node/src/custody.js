@@ -28,7 +28,7 @@
 // signature; that is FROST's letter, not this one. Nothing here should be read
 // as a threshold.
 import {
-  holdSettlement, holdAfter, invoiceMatchesEntry,
+  holdSettlement, holdAfter, invoiceMatchesEntry, netStakeMsat,
   SETTLE, CANCEL, NOTHING, HELD, SETTLED, CANCELLED, EXPIRED,
 } from '../../protocol/src/payout.js';
 import { decodeEntryContract, entryId as entryIdOf } from '../../protocol/src/contracts.js';
@@ -90,13 +90,22 @@ export class Custody {
       return { ok: false, why: 'this node reaches no Lightning, so it holds no stakes' };
 
     const entryId = entryIdOf(entry);
+    let net;
+    try { net = netStakeMsat(entry); }
+    catch (e) { return { ok: false, why: e.message }; }
+    if (net === 0n)
+      return { ok: true, state: 'none', why: 'free seat, no lightning', already: true };
     const held = this.round.hold(entryId);
     if (held) return { ok: true, state: held.state, paymentHash: held.paymentHash,
       invoice: held.request, why: 'this entry already has a hold', already: true };
 
+    // THE HOLD IS FOR THE NET STAKE. The fee and the donation come out of the
+    // commitment (22A) and are paid from their own entry-time commitment, not
+    // the pool (23.5) - and a DELIVERED hold is cancelled back whole, so a hold
+    // for the commitment would return every winner their own fee.
     const invoice = await this.port.createHeld({
       paymentHash: entry.stakeCommitment,
-      amountMsat: entry.stakeMsat,
+      amountMsat: netStakeMsat(entry),
       entryId,
     });
 

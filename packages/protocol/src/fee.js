@@ -28,7 +28,7 @@ import { Writer } from './encode.js';
 import { taggedHash, fromHex } from './hash.js';
 import { PROTOCOL_VERSION, TYPE_FEE_CLAIM, TAG } from './constants.js';
 import { roundId } from './contracts.js';
-import { DELIVERED, FAILED, FORFEIT, isRefund, remainderOrder } from './payout.js';
+import { DELIVERED, FAILED, FORFEIT, isRefund, remainderOrder, netStakeMsat } from './payout.js';
 
 /** 2.00%, and the 1.00% each pool takes of it. 22A fixes both. */
 export const NODE_FEE_BPS = 200;
@@ -185,22 +185,26 @@ export function feeTableId(table) {
 }
 
 /**
- * WHAT ONE ENTRY OWES IN FEE, 18's way: ON TOP of the stake.
+ * WHAT ONE ENTRY OWES IN FEE: 2% OF THE WALLET COMMITMENT, TAKEN OUT OF IT.
  *
- * "Node fees and the player-selected donation are charged on top of the stake
- * at entry and therefore do not reduce the pool." So `stakeMsat` is the gross
- * stake, the fee rides beside it, and 2% of it is what the player was charged.
+ * 22A, "Collection: inclusive in the stake (changed)": "'Play for 100' now
+ * means 100 leaves the wallet, and the wallet dialog agrees with the button
+ * that was pressed." `stakeMsat` is that commitment, the fee is 2% of it, and
+ * `netStakeMsat` is what is left for the pool once the fee and the donation
+ * have come out.
+ *
+ * RETRACTED (6e). This comment used to call Collection "the error" and charge
+ * 18's older "on top of the stake", on the ground that the net reading turns
+ * 22A's 61 x 100 example into 117.12 sat. It does not. 22A's fee base is
+ * `gross_round_volume`, "(61 x 100, the wallet commitments)", so the fee is 2%
+ * of 6,100 = 122 sat and it is the POOL that is net: 6,100 - 122 - 122 =
+ * 5,856. 117.12 was 2% of the net stake, a base 22A never uses. Measured in
+ * `inclusive.test.js`.
  *
  * THE RATE IS A CONSTANT AND NOT A CONTRACT FIELD. 22A calls it "2%,
  * identical for everyone", so one rate covers every entry of every round; a
  * field would let an operator price its own round's fee, which is the fault
  * contract fields exist to prevent rather than one to import.
- *
- * 22A's Collection section describes the opposite - a 100 sat commitment
- * yielding a 96 sat net stake - and it contradicts 18 AND 22A's own worked
- * example, where 61 x 100 sat gross gives a 122 sat fee, exactly what 61
- * players paying 2 sat each hand over. The net reading gives 117.12 sat, which
- * is not a whole satoshi. Collection's 96 is the error and is not implemented.
  *
  * The same integer floor the table uses, so one rate is applied one way.
  */
@@ -224,21 +228,38 @@ export const entryFeeMsat = (stakeMsat) => {
  * not made to catch.
  */
 export function feeMatchesEntry(entry) {
-  if (!entry || typeof entry.stakeMsat !== 'bigint' || typeof entry.feeMsat !== 'bigint')
+  if (!entry)
     return { ok: false, why: 'an entry carries a BigInt millisatoshi stake and fee' };
+  try {
+    entry = {
+      ...entry,
+      stakeMsat: typeof entry.stakeMsat === 'bigint' ? entry.stakeMsat : BigInt(entry.stakeMsat || 0),
+      feeMsat: typeof entry.feeMsat === 'bigint' ? entry.feeMsat : BigInt(entry.feeMsat || 0),
+      donationMsat: typeof entry.donationMsat === 'bigint' ? entry.donationMsat : BigInt(entry.donationMsat || 0),
+    };
+  } catch {
+    return { ok: false, why: 'an entry carries a BigInt millisatoshi stake and fee' };
+  }
   if (entry.stakeMsat < 0n || entry.feeMsat < 0n)
     return { ok: false, why: 'a stake and a fee cannot be negative' };
 
   const owed = entryFeeMsat(entry.stakeMsat);
-  if (entry.feeMsat === owed)
-    return { ok: true, owed, why: `${owed} is 2% of ${entry.stakeMsat}` };
+  if (entry.feeMsat !== owed)
+    return {
+      ok: false,
+      owed,
+      why: entry.feeMsat > owed
+        ? `that entry was charged ${entry.feeMsat} where 2% of ${entry.stakeMsat} is ${owed}: `
+          + `the ${entry.feeMsat - owed} over is money no fee table allocates`
+        : `that entry was charged ${entry.feeMsat} where 2% of ${entry.stakeMsat} is ${owed}`,
+    };
 
-  return {
-    ok: false,
-    owed,
-    why: entry.feeMsat > owed
-      ? `that entry was charged ${entry.feeMsat} where 2% of ${entry.stakeMsat} is ${owed}: `
-        + `the ${entry.feeMsat - owed} over is money no fee table allocates`
-      : `that entry was charged ${entry.feeMsat} where 2% of ${entry.stakeMsat} is ${owed}`,
-  };
+  // AND THE DONATION COMES OUT OF THE SAME COMMITMENT, so together they cannot
+  // come to more than it. Measured before 6e: a donation of 200000 msat on a
+  // 100000 stake stood here, because nothing looked at the donation at all -
+  // an entry promising the donation set twice what the player put up.
+  let net;
+  try { net = netStakeMsat(entry); }
+  catch (e) { return { ok: false, owed, why: e.message }; }
+  return { ok: true, owed, net, why: `${owed} is 2% of ${entry.stakeMsat}, and ${net} of it is staked` };
 }

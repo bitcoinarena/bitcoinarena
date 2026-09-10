@@ -465,8 +465,10 @@ export function entryFor(round, { playerPubkey, random, joinTick = 0, stake } = 
     // the signed bytes either way - so an entry that has shares and one that
     // has none can never be the same entry id.
     vssSharesRef: stake ? stake.vssSharesRef : NO_SHARES,
-    stakeMsat: round.stakeMsat,
-    // THE NODE FEE, AND IT IS 2% OF THIS ENTRY'S OWN STAKE.
+    stakeMsat: BigInt(round.stakeMsat || 0n),
+    // THE NODE FEE, AND IT IS 2% OF THIS ENTRY'S OWN STAKE - taken OUT of it,
+    // never on top (22A). The stake is the one number the wallet commits; the
+    // hold is for what is left once the fee and the donation are out.
     //
     // This was `0n` on every entry the page ever built, and `feeMatchesEntry`
     // - the rule that says an entry's fee must be exactly `entryFeeMsat` of
