@@ -145,6 +145,34 @@ test('two settlement seats: T is 2, not a hard 5 - 1 of 2 is not committed, 2 of
   } finally { await c.close(); }
 });
 
+test('counted from the seat: a watch started before anybody paid reaches committed when the stake lands, and a second start is the same watch', async () => {
+  // A WALLET CAN ANSWER AFTER payStake HAS GIVEN UP (wallet-nwc.test.js: "did
+  // not answer in 400 ms") and still pay. A count started only on payStake's ok
+  // would never start, and the line would say "not yet counted" while the
+  // committee held the stake. So the count runs from the seat.
+  const c = await committee(2);
+  const client = new Client({ base: c.bases[0], core, sign, verify });
+  try {
+    await client.join(c.entry);
+    const args = { seats: c.keys, nodes: c.bases, contract: c.contract, everyMs: 50 };
+    const first = client.watchStake(args);
+    const again = client.watchStake(args);
+    assert.equal(again, first, 'a second start is a second watch, polling twice');
+    await wait(150);
+    assert.deepEqual([client.stakeCount.seen, client.stakeCommitted], [0, false]);
+    c.pay(2);                                   // the wallet answered late
+    const done = await first;
+    assert.deepEqual([done.seen, done.of, done.committed], [2, 2, true]);
+  } finally { client.close(); await c.close(); }
+});
+
+test('the page counts from the seat, whatever payStake answered, and hands the count to the chip', async () => {
+  const { readFileSync } = await import('node:fs');
+  const page = readFileSync(new URL('../../../unity-proto/Assets/WebGLTemplates/BtcLogistics/index.html', import.meta.url), 'utf8');
+  assert.ok(!/said\.ok && client\.watchStake/.test(page), 'the count still starts only when payStake said ok');
+  assert.match(page, /net\.client\.watchStake\(\{/, 'the chip never starts the count from the seat');
+});
+
 test('the page counts after paying and hands the count to the chip', async () => {
   // `index.html` is the one file node --test cannot load, so what is pinned is
   // that it calls the counted rule rather than printing a word of its own.

@@ -311,6 +311,7 @@ export class Client {
     this.stakeCommitted = false;
     this.stakePolls = 0;
     this.stakeWatchStopped = false;
+    this.stakeWatch = null;         // the running count, so a second start joins it
     this.refusedWhy = null;
     this.refusedAt = null;
     this.resynced = false;
@@ -1242,19 +1243,27 @@ export class Client {
    * has seen the hold. `stakeCommitted` says what the committee has seen; it
    * does not decide what the player may do.
    */
-  async watchStake({ seats, nodes, contract, everyMs = 2000, fetcher } = {}) {
+  //
+  // ONE WATCH AT A TIME. The page starts it from the seat and again after a
+  // payment; a second start returns the watch already running rather than
+  // polling every seat twice.
+  watchStake({ seats, nodes, contract, everyMs = 2000, fetcher } = {}) {
+    if (this.stakeWatch) return this.stakeWatch;
     const eid = (this.where && this.where.entryId) || (this.seatEntry && entryId(this.seatEntry));
-    if (!eid) throw new Error('there is no seat to count: join first');
+    if (!eid) return Promise.reject(new Error('there is no seat to count: join first'));
     this.stakeWatchStopped = false;
-    for (;;) {
-      const s = await stakeSeenBy({ entryId: eid, seats, nodes, contract, ...(fetcher ? { fetcher } : {}) });
-      this.stakePolls++;
-      this.stakeCount = s;
-      this.stakeCommitted = s.committed;
-      if (s.committed || this.ended || this.stakeWatchStopped) return s;
-      await new Promise((r) => setTimeout(r, everyMs));
-      if (this.ended || this.stakeWatchStopped) return this.stakeCount;
-    }
+    this.stakeWatch = (async () => {
+      for (;;) {
+        const s = await stakeSeenBy({ entryId: eid, seats, nodes, contract, ...(fetcher ? { fetcher } : {}) });
+        this.stakePolls++;
+        this.stakeCount = s;
+        this.stakeCommitted = s.committed;
+        if (s.committed || this.ended || this.stakeWatchStopped) return s;
+        await new Promise((r) => setTimeout(r, everyMs));
+        if (this.ended || this.stakeWatchStopped) return this.stakeCount;
+      }
+    })().finally(() => { this.stakeWatch = null; });
+    return this.stakeWatch;
   }
 
   /**

@@ -519,8 +519,10 @@
       paying = false;
       // AND COUNT WHO HAS SEEN IT (23.1 step 5): every settlement seat is asked,
       // lightly, until enough have; the chip prints "seen by N of M". Nothing
-      // waits on it - the player is already driving.
-      if (said.ok && client.watchStake && window.BLWP_STAKE && window.BLWP_STAKE.seatKeys) {
+      // waits on it - the player is already driving. WHATEVER payStake SAID: a
+      // wallet can answer after it gave up and still have paid. The chip also
+      // starts it from the seat; a second start joins the running count.
+      if (client.watchStake && window.BLWP_STAKE && window.BLWP_STAKE.seatKeys) {
         client.watchStake({
           seats: window.BLWP_STAKE.seatKeys, nodes: window.BLWP_STAKE.nodes, contract: window.BLWP_ROUND,
         }).catch((e) => console.error('[blwp] stake count: ' + e.message));
@@ -623,6 +625,16 @@
       // and a free seat read exactly like a funded one. The hold state is the
       // NODE's word, kept by `Client.join` from the answer it already gives.
       const seatRefused = window.BLWP_SEAT_REFUSED || null;
+      // THE COUNT RUNS FROM THE SEAT, not only from this page's own payment: a
+      // payment that lands after payStake gave up would otherwise never be
+      // counted. Started once; stopped at N >= T, at the run's end, or on close.
+      const c = net && net.client;
+      if (c && c.watchStake && c.seatEntry && window.BLWP_STAKE && window.BLWP_STAKE.seatKeys
+          && !c.stakeWatch && !c.stakeCommitted && !c.ended && !c.stakeWatchStopped) {
+        net.client.watchStake({
+          seats: window.BLWP_STAKE.seatKeys, nodes: window.BLWP_STAKE.nodes, contract: window.BLWP_ROUND,
+        }).catch((e) => console.error('[blwp] stake count: ' + e.message));
+      }
       const stake = window.BLWP_STAKE
         ? Object.assign({}, window.BLWP_STAKE, {
           hold: (net && net.client && net.client.seatHold) || null,
