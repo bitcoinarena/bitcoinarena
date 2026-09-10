@@ -313,3 +313,93 @@ test('the players line says when trucks are arriving and none are drawn', () => 
   assert.equal(playersLine({ seated: true, others: 1, stalled: true, at: newestPose(held) }),
     '2 players in this round · none drawn · other at -91,-71 m');
 });
+
+/**
+ * AFTER A RELOAD THE CHIP NAMES THE LIVE OTHER, NOT A DEAD SEAT.
+ *
+ * Measured 2026-09-10 in two real Chromes on the Daily. A reload keeps the
+ * player's key and draws a new entry, so each tab held THREE pictures: its own
+ * pre-reload seat (tick 4229, -96.703,-10.200), the other player's pre-reload
+ * seat (4227, -100.400,57.800) and the other player live (3041, -100.400,
+ * 23.800, +30 ticks in 3 s). `newestPose` took the highest tick, and the chip
+ * read "4 players in this round · other at -97,-10 m" - a frozen truck, and
+ * this tab's own.
+ */
+const Q = 65536;
+const seatPic = (entry, player, tick, x, z) => ({
+  entryId: b32(entry), playerPubkey: player, tick, x: Math.round(x * Q), z: Math.round(z * Q), heading: 0,
+});
+
+test('after a reload the chip names the live other player, not the abandoned seat with more ticks', () => {
+  const me = b32(0xa1);
+  const them = b32(0xb2);
+  const client = { watch: () => Promise.resolve('watching 3'), playerPubkey: me };
+  const field = watchGhosts(client, { roundId: b32(1), entryId: b32(0xc0) });
+
+  // the subscribing burst, in the order it was measured
+  client.onGhost(seatPic(0x20, me, 4229, -96.703, -10.2));     // this tab, before its reload
+  client.onGhost(seatPic(0xc5, them, 4227, -100.4, 57.8));     // the other tab, before its reload
+  client.onGhost(seatPic(0x7f, them, 3041, -100.4, 23.8));     // the other tab, live
+  assert.equal(field.self, 1, 'this tab\'s own pre-reload seat was kept as somebody else');
+  assert.equal(field.others, 1, `a round of two players counted ${1 + field.others}`);
+
+  client.onGhost(seatPic(0x7f, them, 3071, -100.4, 23.8));     // and the live one moves on
+  const at = newestPose(field);
+  assert.equal(at.tick, 3071, `the chip named tick ${at.tick}, not the live other`);
+  assert.equal(Math.round(at.x * 1000), -100400);
+  assert.equal(Math.round(at.z * 1000), 23800);
+  assert.equal(playersLine({ seated: true, others: field.others, at }), '2 players in this round · other at -100,24 m');
+  assert.equal(field.latest().some((g) => g.tick === 4229 || g.tick === 4227), false, 'a dead seat is still held');
+});
+
+test('a dead seat that arrives after the live one is replaced by the live one\'s next picture', () => {
+  const them = b32(0xb2);
+  const client = { watch: () => Promise.resolve('watching 2'), playerPubkey: b32(0xa1) };
+  const field = watchGhosts(client, { roundId: b32(1), entryId: b32(0xc0) });
+  client.onGhost(seatPic(0x7f, them, 3041, -100.4, 23.8));
+  client.onGhost(seatPic(0xc5, them, 4227, -100.4, 57.8));     // the burst's order is the node's
+  client.onGhost(seatPic(0x7f, them, 3071, -100.4, 23.8));
+  assert.equal(field.others, 1);
+  assert.equal(newestPose(field).tick, 3071, 'the dead seat outlived the live one\'s next picture');
+});
+
+test('two different players are still two trucks, and the newest of them is named', () => {
+  const client = { watch: () => Promise.resolve('watching 2'), playerPubkey: b32(0xa1) };
+  const field = watchGhosts(client, { roundId: b32(1), entryId: b32(0xc0) });
+  client.onGhost(seatPic(0x11, b32(0xb2), 500, 1, 2));
+  client.onGhost(seatPic(0x12, b32(0xb3), 700, 3, 4));
+  assert.equal(field.others, 2, 'two players were counted as one');
+  assert.equal(newestPose(field).tick, 700);
+});
+
+test('through the real client and daemon, this player\'s pre-reload seat is itself, and the other is named', async () => {
+  const { node, client, rid, drive, where } = await rig();
+  try {
+    assert.deepEqual(client.playerPubkey, b32(5), 'join did not keep the key it seated with');
+    // THIS PLAYER'S SEAT BEFORE A RELOAD: same key, another world secret, so
+    // another entry - the daemon's own-entry filter does not know it is us.
+    const before = {
+      roundId: rid, playerPubkey: b32(5), sessionPubkey: b32(0x55), stakeCommitment: b32(7),
+      stakeMsat: 100000n, feeMsat: entryFeeMsat(100000n), donationMsat: 0n,
+      joinTick: 0, worldSecret: b32(0x5d), vssSharesRef: new Uint8Array(32),
+    };
+    await fetch(`http://127.0.0.1:${node.port}/entry`, { method: 'POST', body: encodeEntryContract(before) });
+    const oldSeat = entryIdOf(before);
+    drive(0, 60);                          // the other player
+    const head0 = node.round.head(rid, oldSeat);
+    node.round.batch(encodeInputBatch({
+      roundId: rid, entryId: oldSeat, previousHash: head0 || GENESIS, firstTick: 0,
+      ticks: Array.from({ length: 200 }, () => [45875, 0, 0, 0, 0]), liquidations: [],
+    }));                                   // the old seat ran FURTHER, as measured
+
+    const field = watchGhosts(client, where);
+    await field.watching;
+    await wait(80);
+    assert.ok(field.self >= 1, `the daemon pushed ${field.seen} pictures and none was this player's old seat`);
+    assert.equal(field.others, 1, `a round of two players counted ${1 + field.others}`);
+    const at = newestPose(field);
+    assert.equal(at.tick, 59, `the chip named tick ${at.tick} - the old seat ran to 199`);
+    console.log(`  real daemon: ${field.seen} pictures, ${field.self} of this player's own old seat refused, `
+      + `the other named at tick ${at.tick}`);
+  } finally { await node.close(); }
+});

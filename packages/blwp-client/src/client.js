@@ -353,6 +353,14 @@ export class Client {
     });
     if (r.status !== 201) throw new Error(`the node refused the entry: ${(await r.text()).trim()}`);
 
+    // WHO THIS CLIENT SEATED, kept for the ghost field. A reload keeps the
+    // player's key (sessionStorage) and draws a NEW entry, so the seat this tab
+    // held before the reload is still in the round, frozen - and it is this
+    // player. A field that knew only its entry id kept it as somebody else:
+    // measured 2026-09-10, each tab held its own pre-reload seat as an "other",
+    // and the chip named it because its frozen run had gone furthest.
+    this.playerPubkey = entry.playerPubkey;
+
     // AND WHETHER THERE IS A HOLD ON THIS SEAT, WHICH THE NODE ALREADY SAID.
     //
     // 23.1 issues the hold invoice AT THE SEAT - `POST /entry` calls

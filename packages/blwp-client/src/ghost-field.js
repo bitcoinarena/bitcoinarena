@@ -36,6 +36,19 @@ export function watchGhosts(client, where, { limit = GHOST_BACKLOG } = {}) {
     throw new Error('a watch names the round and the entry it is watching from');
 
   const mine = toHex(where.entryId);
+  // WHO THIS TAB IS, not only which seat it holds. A reload keeps the player's
+  // key and draws a new entry, so this tab's pre-reload seat is still in the
+  // round and is still this player (`Client.join` keeps the key it seated).
+  const me = where.playerPubkey || client.playerPubkey || null;
+  const myKey = me ? toHex(me) : null;
+  // ONE TRUCK PER PLAYER, and the picture that arrived LAST is that player's.
+  // A reload leaves the player's old seat in the round with a frozen run that
+  // may have gone further than the live one - measured 2026-09-10: dead seats
+  // at ticks 4229 and 4227, the live other at 3041, and the chip named the
+  // dead one at -97,-10 because `newestPose` takes the highest tick. A dead
+  // seat never sends again, so the live seat's next picture replaces it. A
+  // picture that names no player is keyed by its entry, as before.
+  const whoOf = (g) => (g.playerPubkey ? 'p:' + toHex(g.playerPubkey) : 'e:' + toHex(g.entryId));
   const queue = [];
   // WHO IS HERE, independent of the drain the renderer takes. A picture
   // Unity has already drawn is gone from the queue; it is still a player
@@ -100,10 +113,11 @@ export function watchGhosts(client, where, { limit = GHOST_BACKLOG } = {}) {
 
   client.onGhost = (ghost) => {
     field.seen++;
-    // NEVER YOURSELF.
-    if (toHex(ghost.entryId) === mine) { field.self++; return; }
+    // NEVER YOURSELF - this seat, or any earlier seat of this same player.
+    if (toHex(ghost.entryId) === mine
+        || (myKey && ghost.playerPubkey && toHex(ghost.playerPubkey) === myKey)) { field.self++; return; }
 
-    present.set(toHex(ghost.entryId), ghost);
+    present.set(whoOf(ghost), ghost);
     queue.push(ghost);
     // A FULL QUEUE SHEDS PICTURES OLDEST FIRST, which is piece 2 of letter 18
     // stated for the page: a picture of where a truck WAS is worth less than
