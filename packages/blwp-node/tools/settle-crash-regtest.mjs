@@ -1,29 +1,35 @@
-// KILL THE ASKER MID-SETTLEMENT, RESTART IT ON THE SAME STORE, AND COUNT THE SPENDS.
+// KILL A SEAT MID-SETTLEMENT, RESTART IT ON THE SAME STORE, AND COUNT THE SPENDS.
 //
 // "M3 is done when ... a node killed mid-settlement recovers to the right state
 // on restart." Every restart measured before this was a fresh object over the
 // same store inside one process (`settle-regtest.mjs`, `pool-settle.test.js`,
-// `payout-pay.test.js`). This one is a real process: the round's asker runs as a
-// child on its own store file and its own port, is SIGKILLed at a named point,
-// and is started again on that file and that port.
+// `payout-pay.test.js`). This one is a real process: the seat that settles runs
+// as a child on its own store file and its own port, is SIGKILLed at a named
+// point, and is started again on that file and that port.
 //
-// KILL POINT 2: the spend is signed by five of seven and written to the asker's
-// store as PAYOUT_QUEUED with its raw bytes, and the process dies before it is
-// handed to bitcoind. Then two restarts, each on the same store and port:
+//   --point=1  after the table is signed and queued, before it settles
+//   --point=2  after the spend is signed and written to disk, before it is sent
+//   --point=3  after the spend is handed to bitcoind, before PAID is written
+//   --point=4  a takeover: the round's asker is down, the next seat settles at
+//              its turn and is killed with its spend on disk; afterwards the
+//              original asker comes back too
+//
+// After each kill, two restarts of the killed seat on the same store and port:
 //
 //   (a) as a real daemon starts: `serve(openStore(path), { port, host })`,
 //       exactly what `src/main.js` passes
 //   (b) with the chain it spends on, the RPC its pool watch reads, and the
 //       seat and pool key read back from its OWN store (`Dkg.seatFor`)
 //
-// After each: spends of the pool output counted block by block and in the
-// mempool, the winner's key balance, every daemon's payout row, and whether
-// the spend that lands is byte-for-byte the one on disk (no rival).
+// Measured after each: spends of the pool output counted block by block and in
+// the mempool, the winner's key balance against the table's own amount, every
+// seat's payout row against the chain, and whether the spend that lands is the
+// one written before the kill, byte for byte (no rival).
 //
 // Own datadir, non-default ports, cookie auth; touches no mainnet and no
 // testnet4 datadir. The coins are worthless.
 //
-//   node packages/blwp-node/tools/settle-crash-regtest.mjs [--keep]
+//   node packages/blwp-node/tools/settle-crash-regtest.mjs --point=2 [--keep]
 import { execFileSync, spawn } from 'node:child_process';
 import { mkdtempSync, mkdirSync, existsSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -37,7 +43,7 @@ import { Round } from '../src/round.js';
 import { Dkg } from '../src/dkg.js';
 import { bitcoindRpc } from '../src/chain-rpc.js';
 import { serve } from '../src/server.js';
-import { askerOrder, PAYOUT_QUEUED } from '../src/payout.js';
+import { askerOrder, PAYOUT_QUEUED, TAKEOVER_BLOCKS } from '../src/payout.js';
 import { PoolSigning } from '../src/pool-signing.js';
 import { poolOutput } from '../../protocol/src/pool.js';
 import {
@@ -55,10 +61,13 @@ import { entryFeeMsat } from '../../protocol/src/fee.js';
 
 const BITCOIN = process.env.BITCOIN_BIN || '/mnt/bitcoin/bitcoin-31.1/bin';
 const KEEP = process.argv.includes('--keep');
-const P = { rpc: 29697, p2p: 29698 };
-const PORT0 = 18300;                               // daemon i listens on PORT0 + i
+const POINT = Number(process.env.KILL_POINT
+  || (process.argv.find((a) => a.startsWith('--point=')) || '--point=2').split('=')[1]);
+// Each point on its own ports, so the four can run side by side.
+const P = { rpc: 29697 + 10 * (POINT - 1), p2p: 29698 + 10 * (POINT - 1) };
+const PORT0 = 18300 + 10 * (POINT - 1);            // daemon i listens on PORT0 + i
 const NOW = 1788700000000;
-const STAKE_MSAT = 1000000n;                       // 1000 sats owed to the winner
+const STAKE_MSAT = 1000000n;                       // a 1000-sat stake
 const curve = { ...feldmanGroup, tweakPoint };
 const rand = (n) => new Uint8Array(randomBytes(n));
 const b32 = (n) => new Uint8Array(32).fill(n);
@@ -92,21 +101,24 @@ const rpcFor = (dir) => bitcoindRpc({
 
 // ---------------------------------------------------------------- the child: one daemon process
 //
-// env: DIR, STORE, PORT, RID, PEERS (comma-separated), BEACON_HEIGHT, BEACON_HASH
+// env: DIR, STORE, PORT, RID, PEERS (comma-separated), BEACON_HEIGHT, BEACON_HASH, TAG
 async function child(mode) {
-  const { DIR, STORE, PORT, RID, PEERS, BEACON_HEIGHT, BEACON_HASH } = process.env;
+  const { DIR, STORE, PORT, RID, PEERS, BEACON_HEIGHT, BEACON_HASH, TAG } = process.env;
   const rid = fromHex(RID);
   const port = Number(PORT);
   const beacon = { hash: fromHex(BEACON_HASH), height: Number(BEACON_HEIGHT), timeMs: BigInt(NOW) };
   const peers = PEERS ? PEERS.split(',') : [];
-  const out = (o) => writeFileSync(join(DIR, `${mode}.json`), JSON.stringify(o, null, 1));
+  const out = (o) => writeFileSync(join(DIR, `${TAG}-${mode}.json`), JSON.stringify(o, null, 1));
+  const killedAt = (o) => writeFileSync(join(DIR, `${TAG}-killed.json`), JSON.stringify(o));
+  const die = async () => { process.kill(process.pid, 'SIGKILL'); await new Promise(() => {}); };
 
   if (mode === 'launcher') {
     // EXACTLY WHAT src/main.js PASSES.
     const node = await serve(openStore(STORE), { port, host: '127.0.0.1' });
     const r = await node.reconcilingPayouts;
-    out({ reconcile: r, row: node.round.payout(rid) ? { state: node.round.payout(rid).state,
-      raw: !!node.round.payout(rid).raw } : null, canSpend: node.payouts.canSpend });
+    const row = node.round.payout(rid);
+    out({ reconcile: r, canSpend: node.payouts.canSpend,
+      row: row ? { state: row.state, raw: row.raw ? toHex(row.raw) : null } : null });
     await node.close();
     process.exit(0);
   }
@@ -119,31 +131,6 @@ async function child(mode) {
   if (!held.ok) { out({ ok: false, why: `no seat in its own store: ${held.why}` }); process.exit(3); }
   const cli = cliFor(DIR);
   const chain = chainFor(cli);
-
-  if (mode === 'kill-before-send') {
-    // The process that settles: started as settle-regtest starts one, then it
-    // settles the round it owes, and dies at the moment it would hand the
-    // signed spend to bitcoind - the row with the raw bytes already written.
-    const node = await serve(db, {
-      port, host: '127.0.0.1', funded: () => true, now: () => NOW,
-      poolCurve: curve, chainSpend: chain, randomnessFor: () => beacon,
-    });
-    node.signing.seat = held.seat; node.signing.pool = held.pool;
-    node.payouts.pool = held.pool; node.poolWatch.pool = held.pool;
-    node.poolWatch.call = rpcFor(DIR);
-    node.payouts.peers = peers;
-    chain.send = async (raw) => {
-      const row = node.round.payout(rid);
-      writeFileSync(join(DIR, 'killed.json'), JSON.stringify({
-        raw: toHex(raw), rowState: row.state, rowRawMatches: !!row.raw && toHex(row.raw) === toHex(raw),
-      }));
-      process.kill(process.pid, 'SIGKILL');
-      await new Promise(() => {});
-    };
-    await node.payouts.settleQueued({ roundId: rid, contract, signing: node.signing, watch: node.poolWatch });
-    out({ ok: false, why: 'settleQueued returned without reaching the send' });
-    process.exit(4);
-  }
 
   if (mode === 'restore') {
     const node = await serve(db, {
@@ -158,7 +145,40 @@ async function child(mode) {
     await node.close();
     process.exit(0);
   }
-  throw new Error(`no such mode ${mode}`);
+
+  // A SEAT THAT SETTLES, started as settle-regtest starts one: the seat, the
+  // key, the pool RPC and the peers handed over after start. It dies at its
+  // point.
+  const node = await serve(db, {
+    port, host: '127.0.0.1', funded: () => true, now: () => NOW,
+    poolCurve: curve, chainSpend: chain, randomnessFor: () => beacon,
+  });
+  node.signing.seat = held.seat; node.signing.pool = held.pool;
+  node.payouts.pool = held.pool; node.poolWatch.pool = held.pool;
+  node.poolWatch.call = rpcFor(DIR);
+  node.payouts.peers = peers;
+  const rowNow = () => { const r = node.round.payout(rid); return r ? { state: r.state, raw: r.raw ? toHex(r.raw) : null } : null; };
+
+  if (mode === 'kill-after-table') {
+    const entries = new PoolSigning(node.round, {}).entriesFor(rid).entries;
+    const q = node.payouts.queue({ roundId: rid, entries, minScore: contract.minScore, contract });
+    killedAt({ queued: q.ok ? q.state : q.why, row: rowNow() });
+    await die();
+  }
+  if (mode === 'kill-before-send') {
+    chain.send = async (raw) => { killedAt({ raw: toHex(raw), row: rowNow() }); await die(); };
+  }
+  if (mode === 'kill-after-send') {
+    const real = chain.send.bind(chain);
+    chain.send = async (raw) => {
+      const sent = await real(raw);
+      killedAt({ raw: toHex(raw), sent: sent.ok ? 'accepted by bitcoind' : sent.why, row: rowNow() });
+      await die();
+    };
+  }
+  const r = await node.payouts.settleQueued({ roundId: rid, contract, signing: node.signing, watch: node.poolWatch });
+  out({ ok: false, why: `settleQueued returned without reaching the kill: ${r.why || r.state}` });
+  process.exit(4);
 }
 
 function run(mode, env) {
@@ -185,14 +205,15 @@ async function until(what, check, ms = 60000) {
 const post = (port, path, body) => fetch(`http://127.0.0.1:${port}${path}`, { method: 'POST', body });
 
 async function main() {
-  const dir = process.env.SETTLECRASHRT || mkdtempSync(join(tmpdir(), 'settle-crash-'));
+  if (![1, 2, 3, 4].includes(POINT)) throw new Error(`no kill point ${POINT}`);
+  const dir = process.env.SETTLECRASHRT || mkdtempSync(join(tmpdir(), `settle-crash-${POINT}-`));
   mkdirSync(join(dir, 'btc'), { recursive: true });
-  say(`an isolated regtest of its own: ${dir}`);
+  say(`KILL POINT ${POINT}, an isolated regtest of its own: ${dir}`);
   const cli = cliFor(dir);
   const cookie = join(dir, 'btc', 'regtest', '.cookie');
   const problems = [];
   const nodes = [];
-  let closed = null;
+  const closed = new Set();
   try {
     spawn(join(BITCOIN, 'bitcoind'), [...btcArgsFor(dir), `-port=${P.p2p}`, '-listenonion=0',
       '-fallbackfee=0.0001', '-txindex', '-daemon'], { stdio: 'ignore' });
@@ -266,12 +287,21 @@ async function main() {
           joinSignedResult(encodePlayerResult(result), schnorr.sign(id, n.round.identity.secret)));
       }
     }
+
+    // WHO SETTLES: the round's asker, or - at point 4 - the seat after it.
+    const ring = askerOrder(rid, nodes[0].round.seats(rid));
+    const indexOf = (k) => nodes.findIndex((n) => toHex(n.round.pubkey) === toHex(ring.order[k]));
+    const askerIdx = indexOf(0);
+    const victimIdx = POINT === 4 ? indexOf(1) : askerIdx;
+
     const entriesOf = (n) => new PoolSigning(n.round, {}).entriesFor(rid).entries;
     for (const n of nodes) n.payouts.sign({ roundId: rid, entries: entriesOf(n), minScore: contract.minScore });
     let owedMsat = null;
-    for (const n of nodes) {
+    for (const [i, n] of nodes.entries()) {
       n.payouts.peers = nodes.filter((o) => o !== n).map((o) => `http://127.0.0.1:${o.port}`);
       await n.payouts.gather({ roundId: rid });
+      // At point 1 the seat that settles queues the table ITSELF, and dies right after.
+      if (POINT === 1 && i === victimIdx) continue;
       const q = n.payouts.queue({ roundId: rid, entries: entriesOf(n), minScore: contract.minScore, contract });
       if (!q.ok || q.state !== PAYOUT_QUEUED) problems.push(`a seat did not queue: ${q.why}`);
       if (owedMsat === null) owedMsat = q.owedMsat;
@@ -291,8 +321,7 @@ async function main() {
     const fundVout = fundTx.vout.find((o) => o.scriptPubKey.hex === toHex(out.script)).n;
     const fundHeight = Number(cli('getblockcount'));
     const winnerAddress = JSON.parse(cli('decodescript', '5120' + toHex(schnorr.getPublicKey(winnerSecret)))).address;
-    say(`all seven queued the payout: the table owes the winner ${owedSats} sats (stake ${STAKE_MSAT / 1000n}); `
-      + `the pool holds 1200 sats, ${fundTxid.slice(0, 16)}…:${fundVout}`);
+    say(`the table owes the winner ${owedSats} sats (stake ${STAKE_MSAT / 1000n}); the pool holds 1200 sats`);
 
     // WHAT THE CHAIN SAYS, counted rather than inferred.
     const onChain = () => {
@@ -300,89 +329,109 @@ async function main() {
       for (let h = fundHeight; h <= Number(cli('getblockcount')); h++) {
         const block = JSON.parse(cli('getblock', cli('getblockhash', String(h)), '2'));
         for (const tx of block.tx)
-          if (tx.vin.some((v) => v.txid === fundTxid && v.vout === fundVout)) inBlocks.push({ height: h, hex: tx.hex, txid: tx.txid });
+          if (tx.vin.some((v) => v.txid === fundTxid && v.vout === fundVout)) inBlocks.push({ height: h, hex: tx.hex });
       }
       const inMempool = [];
       for (const t of JSON.parse(cli('getrawmempool'))) {
         const tx = JSON.parse(cli('getrawtransaction', t, 'true'));
-        if (tx.vin.some((v) => v.txid === fundTxid && v.vout === fundVout)) inMempool.push({ hex: tx.hex, txid: tx.txid });
+        if (tx.vin.some((v) => v.txid === fundTxid && v.vout === fundVout)) inMempool.push({ hex: tx.hex });
       }
       const w = JSON.parse(cli('scantxoutset', 'start', JSON.stringify([`addr(${winnerAddress})`])));
       return { inBlocks, inMempool, winnerSats: Math.round((w.total_amount || 0) * 1e8) };
     };
-    const rows = () => nodes.map((n, i) => (n === closed ? null : n.round.payout(rid).state));
-    const rowOnDisk = (store) => {
-      const db = openStore(store);
+    const line = (c) => `${c.inBlocks.length} spend(s) in blocks, ${c.inMempool.length} in the mempool; winner ${c.winnerSats} sats`;
+    const rowOnDisk = (i) => {
+      if (!closed.has(i)) { const r = nodes[i].round.payout(rid); return r ? r.state : 'none'; }
+      const db = openStore(join(dir, `node-${i}.db`));
       const r = new Round(db, () => NOW).payout(rid);
-      const row = r ? { state: r.state, raw: r.raw ? toHex(r.raw) : null } : null;
       try { db.close(); } catch { /* node:sqlite */ }
-      return row;
+      return r ? r.state : 'none';
     };
-
-    // THE ASKER, as a real process.
-    const ring = askerOrder(rid, nodes[0].round.seats(rid));
-    const askerIdx = nodes.findIndex((n) => toHex(n.round.pubkey) === toHex(ring.order[0]));
-    const asker = nodes[askerIdx];
-    const store = join(dir, `node-${askerIdx}.db`);
-    const env = {
-      DIR: dir, STORE: store, PORT: String(PORT0 + askerIdx), RID: toHex(rid),
-      PEERS: nodes.filter((n) => n !== asker).map((n) => `http://127.0.0.1:${n.port}`).join(','),
+    // KILL_POINT goes with the child, or it computes point 2's bitcoind port.
+    const envFor = (i, tag) => ({
+      KILL_POINT: String(POINT),
+      DIR: dir, STORE: join(dir, `node-${i}.db`), PORT: String(PORT0 + i), RID: toHex(rid), TAG: tag,
+      PEERS: nodes.filter((_, j) => j !== i).map((n) => `http://127.0.0.1:${n.port}`).join(','),
       BEACON_HEIGHT: String(beacon.height), BEACON_HASH: toHex(beacon.hash),
-    };
-    await asker.close();
-    closed = asker;
-    say(`\nthe round's asker is daemon ${askerIdx} (port ${PORT0 + askerIdx}); it now runs as its own process`);
+    });
+    const read = (name) => (existsSync(join(dir, name)) ? JSON.parse(readFileSync(join(dir, name), 'utf8')) : null);
 
-    // ---- KILL POINT 2: signed, written down, not sent. ----
-    const k = await run('kill-before-send', env);
-    const killed = existsSync(join(dir, 'killed.json')) ? JSON.parse(readFileSync(join(dir, 'killed.json'), 'utf8')) : null;
+    // ---- THE KILL ----
+    const killMode = { 1: 'kill-after-table', 2: 'kill-before-send', 3: 'kill-after-send', 4: 'kill-before-send' }[POINT];
+    const what = {
+      1: 'after the table is signed and queued, before it settles',
+      2: 'after the spend is written to disk, before it is sent',
+      3: 'after the spend is handed to bitcoind, before PAID is written',
+      4: 'a takeover: the asker is down, the next seat is killed with its spend on disk',
+    }[POINT];
+    await nodes[askerIdx].close(); closed.add(askerIdx);
+    if (victimIdx !== askerIdx) { await nodes[victimIdx].close(); closed.add(victimIdx); }
+    if (POINT === 4) {
+      const need = beacon.height + TAKEOVER_BLOCKS - Number(cli('getblockcount'));
+      if (need > 0) mine(need);
+      say(`the round's asker (daemon ${askerIdx}) is down; the chain is at ${cli('getblockcount')}, `
+        + `the next seat's turn (beacon + ${TAKEOVER_BLOCKS})`);
+    }
+    say(`\nKILL POINT ${POINT} - ${what}; the seat is daemon ${victimIdx} (port ${PORT0 + victimIdx}), its own process`);
+    const k = await run(killMode, envFor(victimIdx, 'victim'));
+    const killed = read('victim-killed.json');
     const afterKill = onChain();
-    const diskAfterKill = rowOnDisk(store);
-    say(`\nKILL POINT 2 - after the spend is written to disk, before it is sent`);
-    say(`  the process: ${k.signal || 'exit ' + k.code}; at the kill the row was ${killed ? killed.rowState : '?'} with `
-      + `the same raw bytes: ${killed ? killed.rowRawMatches : '?'}`);
-    say(`  on disk after: ${diskAfterKill.state}, raw ${diskAfterKill.raw ? 'kept' : 'MISSING'}`);
-    say(`  chain: ${afterKill.inBlocks.length} spend(s) in blocks, ${afterKill.inMempool.length} in the mempool; winner ${afterKill.winnerSats} sats`);
-    if (k.signal !== 'SIGKILL') problems.push(`the child was not killed at the send: ${k.signal || k.code}`);
+    say(`  the process: ${k.signal || 'exit ' + k.code}; at the kill: ${killed ? JSON.stringify({ ...killed, raw: killed.raw ? `${killed.raw.length / 2} bytes` : undefined, row: killed.row && { state: killed.row.state, raw: !!killed.row.raw, rawIsSent: !!(killed.raw && killed.row.raw === killed.raw) } }) : 'nothing recorded'}`);
+    say(`  chain after the kill: ${line(afterKill)}`);
+    if (k.signal !== 'SIGKILL') {
+      problems.push(`the seat was not killed at its point: ${k.signal || k.code} ${JSON.stringify(read('victim-' + killMode + '.json'))}`);
+    }
 
     // ---- RESTART (a): as src/main.js starts a daemon. ----
-    const a = await run('launcher', env);
-    const la = JSON.parse(readFileSync(join(dir, 'launcher.json'), 'utf8'));
+    const a = await run('launcher', envFor(victimIdx, 'victim'));
+    const la = read('victim-launcher.json');
     mine(1);
     const afterA = onChain();
-    say(`\n  RESTART (a), as src/main.js starts it (same store, port ${PORT0 + askerIdx}): ${a.code === 0 ? 'up and down' : 'exit ' + a.code}`);
-    say(`    canSpend ${la.canSpend}; start-up recovery said: ${la.reconcile.ok === false ? la.reconcile.why : JSON.stringify(la.reconcile)}`);
-    say(`    row ${la.row ? la.row.state : 'none'}; chain: ${afterA.inBlocks.length} spend(s) in blocks, `
-      + `${afterA.inMempool.length} in the mempool; winner ${afterA.winnerSats} sats`);
+    say(`\n  RESTART (a), as src/main.js starts it: ${a.code === 0 ? 'up and down' : 'exit ' + a.code}`);
+    say(`    canSpend ${la && la.canSpend}; start-up recovery: ${la && (la.reconcile.ok === false ? la.reconcile.why : JSON.stringify(la.reconcile))}`);
+    say(`    its row ${la && la.row ? la.row.state : 'none'}; chain (a block mined after): ${line(afterA)}`);
 
     // ---- RESTART (b): chain access, and the seat and key from its own store. ----
-    const b = await run('restore', env);
-    const lb = JSON.parse(readFileSync(join(dir, 'restore.json'), 'utf8'));
+    const b = await run('restore', envFor(victimIdx, 'victim'));
+    const lb = read('victim-restore.json');
     mine(1);
     const afterB = onChain();
-    const landed = afterB.inBlocks[0];
     say(`\n  RESTART (b), chain + RPC + seat and key from its own store: ${b.code === 0 ? 'up and down' : 'exit ' + b.code}`);
-    say(`    canSpend ${lb.canSpend}; start-up reconcile asked ${JSON.stringify((lb.reconcile.asked || []).map((x) => x.state))}, `
-      + `swept ${JSON.stringify(((lb.reconcile.swept || {}).settled || []).map((x) => (x.ok ? x.state : x.why)))}`);
-    say(`    row ${lb.row ? lb.row.state : 'none'}; chain: ${afterB.inBlocks.length} spend(s) in blocks, `
-      + `${afterB.inMempool.length} in the mempool; winner ${afterB.winnerSats} sats`);
-    if (landed && killed)
-      say(`    the spend that landed is the one written before the kill, byte for byte: ${landed.hex === killed.raw}`);
-    say(`    every daemon's row: ${JSON.stringify(rows().map((s, i) => (i === askerIdx ? `asker:${lb.row && lb.row.state}` : s)))}`);
+    say(`    canSpend ${lb && lb.canSpend}; reconcile asked ${JSON.stringify(((lb && lb.reconcile.asked) || []).map((x) => x.state))}, `
+      + `swept ${JSON.stringify((((lb && lb.reconcile.swept) || {}).settled || []).map((x) => (x.ok ? x.state : x.why)))}`);
+    say(`    its row ${lb && lb.row ? lb.row.state : 'none'}; chain (a block mined after): ${line(afterB)}`);
+    let final = afterB;
 
-    const total = afterB.inBlocks.length + afterB.inMempool.length;
+    // ---- POINT 4: AND THE ORIGINAL ASKER COMES BACK. ----
+    if (POINT === 4) {
+      const c = await run('restore', envFor(askerIdx, 'asker'));
+      const lc = read('asker-restore.json');
+      mine(1);
+      final = onChain();
+      say(`\n  THE ORIGINAL ASKER COMES BACK (daemon ${askerIdx}, restored as (b)): ${c.code === 0 ? 'up and down' : 'exit ' + c.code}`);
+      say(`    swept ${JSON.stringify((((lc && lc.reconcile.swept) || {}).settled || []).map((x) => (x.ok ? x.state : x.why)))}; `
+        + `its row ${lc && lc.row ? lc.row.state : 'none'}; chain: ${line(final)}`);
+    }
+
+    const landed = final.inBlocks[0];
+    if (landed && killed && killed.raw)
+      say(`\n  the spend that landed is the one written before the kill, byte for byte: ${landed.hex === killed.raw}`);
+    const states = nodes.map((_, i) => rowOnDisk(i));
+    say(`  every seat's row: ${JSON.stringify(states.map((s, i) => (i === victimIdx ? `killed:${s}` : i === askerIdx ? `asker:${s}` : s)))}`);
+
+    const total = final.inBlocks.length + final.inMempool.length;
     if (total !== 1) problems.push(`${total} spends of the pool output, not 1`);
-    if (afterB.winnerSats !== owedSats) problems.push(`the winner holds ${afterB.winnerSats} sats, not the table's ${owedSats}`);
-    // EVERY SEAT'S ROW AGAINST THE CHAIN: the payment is in a block, so a row
-    // that still says PAYOUT_QUEUED disagrees with it.
-    const stale = rows().filter((st, i) => i !== askerIdx && st !== 'PAID' && st !== 'PAID_IN_PART').length;
-    if (total === 1 && stale)
-      problems.push(`${stale} of ${SHARES_TOTAL - 1} other seats still say PAYOUT_QUEUED while the chain carries the payment`);
-    if (la.canSpend === false && afterA.inBlocks.length + afterA.inMempool.length === 0)
-      problems.push('restarted as src/main.js starts a daemon, the asker recovers nothing: no chain, no seat, no sweep');
-    if (landed && killed && landed.hex !== killed.raw) problems.push('the spend that landed is not the one written before the kill');
+    if (final.winnerSats !== owedSats) problems.push(`the winner holds ${final.winnerSats} sats, not the table's ${owedSats}`);
+    if (landed && killed && killed.raw && landed.hex !== killed.raw)
+      problems.push('the spend that landed is not the one written before the kill');
+    const stale = states.filter((s, i) => i !== victimIdx && s !== 'PAID' && s !== 'PAID_IN_PART').length;
+    const victimStale = states[victimIdx] !== 'PAID' && states[victimIdx] !== 'PAID_IN_PART';
+    if (total === 1 && victimStale) problems.push(`the killed seat's row says ${states[victimIdx]} while the chain carries the payment`);
+    if (total === 1 && stale) problems.push(`${stale} of ${SHARES_TOTAL - 1} other seats still say PAYOUT_QUEUED while the chain carries the payment`);
+    if (la && la.canSpend === false)
+      problems.push('restarted as src/main.js starts a daemon, the killed seat recovers nothing: no chain, no seat, no sweep');
   } finally {
-    for (const n of nodes) if (n !== closed) { try { await n.close(); } catch { /* going down */ } }
+    for (const [i, n] of nodes.entries()) if (!closed.has(i)) { try { await n.close(); } catch { /* going down */ } }
     try { sh(join(BITCOIN, 'bitcoin-cli'), [...btcArgsFor(dir), 'stop']); } catch { /* gone */ }
     await new Promise((r) => setTimeout(r, 1500));
     if (!KEEP) rmSync(dir, { recursive: true, force: true });
