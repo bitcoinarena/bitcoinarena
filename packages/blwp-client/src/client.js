@@ -52,6 +52,7 @@ import {
 // which is the one number they are about to part with money over.
 import { invoiceMatchesEntry } from '../../protocol/src/payout.js';
 import { parseConnection, payInvoice } from './nwc.js';
+import { STAKE_NOT_SEEN } from '../../protocol/src/constants.js';
 import { decodeGhost } from '../../protocol/src/ghost.js';
 import { TYPE_GHOST } from '../../protocol/src/constants.js';
 import { discover } from './directory.js';
@@ -298,6 +299,9 @@ export class Client {
     // up and the player is driving - so the fact is counted and the node's
     // own sentence is kept for whoever draws the page.
     this.refusals = 0;
+    // Batches answered "stake not seen" - a wallet still paying, not a refusal.
+    this.stakeWaits = 0;
+    this.stakeWhy = null;
     this.refusedWhy = null;
     this.refusedAt = null;
     this.resynced = false;
@@ -559,6 +563,12 @@ export class Client {
             f.closed++;
             this.peerInputsClosed++;
             if (!f.down) { f.down = true; f.downs++; this.peerDowns++; }
+            f.why = a;
+            return;
+          }
+          // A PEER THAT HAS NOT SEEN THE STAKE YET is waiting too: the feed
+          // stops uncounted and the next batch or mark asks it again.
+          if (typeof a === 'string' && a.startsWith(`error ${STAKE_NOT_SEEN}`)) {
             f.why = a;
             return;
           }
@@ -1575,6 +1585,14 @@ export class Client {
           // is (`resume`, which drops any the node did take) and the next
           // drain sends the rest.
           this.batchesInterrupted++;
+        } else if (typeof r.answer === 'string' && r.answer.startsWith(`error ${STAKE_NOT_SEEN}`)) {
+          // THE STAKE IS STILL ON ITS WAY (23.1 step 5). Measured before this:
+          // a player paying at wallet speed had the first batch answered "not
+          // paid", resynced, got the same again, and the run ended VOID. The
+          // words are held and the next drain asks again; a stake never paid
+          // ends the run when the hold is full, which is that rule's job.
+          this.stakeWaits++;
+          this.stakeWhy = r.answer;
         } else {
           this.refusals++;
           this.refusedWhy = typeof r.answer === 'string' ? r.answer : 'the node did not say';

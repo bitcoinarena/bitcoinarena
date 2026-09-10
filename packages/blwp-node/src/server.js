@@ -19,7 +19,7 @@ import { randomBytes } from 'node:crypto';
 import { WebSocketServer } from 'ws';
 import { decodeRoundContract, decodeEntryContract } from '../../protocol/src/contracts.js';
 import { toHex } from '../../protocol/src/hash.js';
-import { TYPE_CHECKPOINT, TYPE_INPUT_BATCH } from '../../protocol/src/constants.js';
+import { TYPE_CHECKPOINT, TYPE_INPUT_BATCH, STAKE_NOT_SEEN } from '../../protocol/src/constants.js';
 import { splitSigned, decodeCheckpoint } from '../../protocol/src/checkpoint.js';
 import { MAX_INPUT_BATCH_BYTES, decodeInputBatch } from '../../protocol/src/batch.js';
 import { SIGNED_CHECKPOINT_BYTES } from '../../protocol/src/checkpoint.js';
@@ -1252,7 +1252,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (eid && round.entry(eid)) {
           let seen;
           try { seen = await custody.seenPaid(eid); } catch (e) { seen = { ok: false, why: e.message }; }
-          if (!seen.ok) return sock.send('error ' + seen.why);
+          // A WAIT, SAID AS ONE: the client holds the ticks and asks again.
+          if (!seen.ok) return sock.send('error ' + STAKE_NOT_SEEN + seen.why);
         }
         return handle(data, isBinary);
       }).catch((e) => console.error(`[play] ${e.message}`));

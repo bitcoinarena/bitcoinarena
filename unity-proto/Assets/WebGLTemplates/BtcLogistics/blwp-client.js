@@ -512,6 +512,17 @@ const TYPE_RESULT = 0x06;
 const TYPE_PAYOUT_TABLE = 0x07;
 
 /**
+ * THE WORD A NODE PUTS ON "I HAVE NOT SEEN THIS STAKE HELD YET" (23.1 step 5).
+ *
+ * A node takes no play for a paying round's entry until its own Lightning shows
+ * the stake held, and a wallet takes seconds to pay. That answer is a WAIT, not a
+ * disagreement: the client holds the ticks and asks again, where a refusal would
+ * resync and end the run. One word, here, so neither side matches on the other's
+ * prose.
+ */
+const STAKE_NOT_SEEN = 'stake not seen: ';
+
+/**
  * What a player sends while a round is running.
  *
  * The only message a node takes in M2.1 that was not already here, and the
@@ -5609,6 +5620,7 @@ async function discover({
 
 
 
+
 /**
  * Five, out of the seven a committee has.
  *
@@ -5851,6 +5863,9 @@ class Client {
     // up and the player is driving - so the fact is counted and the node's
     // own sentence is kept for whoever draws the page.
     this.refusals = 0;
+    // Batches answered "stake not seen" - a wallet still paying, not a refusal.
+    this.stakeWaits = 0;
+    this.stakeWhy = null;
     this.refusedWhy = null;
     this.refusedAt = null;
     this.resynced = false;
@@ -6112,6 +6127,12 @@ class Client {
             f.closed++;
             this.peerInputsClosed++;
             if (!f.down) { f.down = true; f.downs++; this.peerDowns++; }
+            f.why = a;
+            return;
+          }
+          // A PEER THAT HAS NOT SEEN THE STAKE YET is waiting too: the feed
+          // stops uncounted and the next batch or mark asks it again.
+          if (typeof a === 'string' && a.startsWith(`error ${STAKE_NOT_SEEN}`)) {
             f.why = a;
             return;
           }
@@ -7128,6 +7149,14 @@ class Client {
           // is (`resume`, which drops any the node did take) and the next
           // drain sends the rest.
           this.batchesInterrupted++;
+        } else if (typeof r.answer === 'string' && r.answer.startsWith(`error ${STAKE_NOT_SEEN}`)) {
+          // THE STAKE IS STILL ON ITS WAY (23.1 step 5). Measured before this:
+          // a player paying at wallet speed had the first batch answered "not
+          // paid", resynced, got the same again, and the run ended VOID. The
+          // words are held and the next drain asks again; a stake never paid
+          // ends the run when the hold is full, which is that rule's job.
+          this.stakeWaits++;
+          this.stakeWhy = r.answer;
         } else {
           this.refusals++;
           this.refusedWhy = typeof r.answer === 'string' ? r.answer : 'the node did not say';

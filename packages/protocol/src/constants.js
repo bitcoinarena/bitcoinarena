@@ -40,6 +40,17 @@ export const TYPE_RESULT = 0x06;
 export const TYPE_PAYOUT_TABLE = 0x07;
 
 /**
+ * THE WORD A NODE PUTS ON "I HAVE NOT SEEN THIS STAKE HELD YET" (23.1 step 5).
+ *
+ * A node takes no play for a paying round's entry until its own Lightning shows
+ * the stake held, and a wallet takes seconds to pay. That answer is a WAIT, not a
+ * disagreement: the client holds the ticks and asks again, where a refusal would
+ * resync and end the run. One word, here, so neither side matches on the other's
+ * prose.
+ */
+export const STAKE_NOT_SEEN = 'stake not seen: ';
+
+/**
  * What a player sends while a round is running.
  *
  * The only message a node takes in M2.1 that was not already here, and the
