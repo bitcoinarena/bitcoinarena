@@ -42,6 +42,7 @@ import {
 import { toHex, fromHex } from '../../protocol/src/hash.js';
 import { entryId as entryIdOf } from '../../protocol/src/contracts.js';
 import { init as coreInit, step as coreStep } from '../../core/src/sim.js';
+import { splitSignedReceipt, decodeCheckpointReceipt, SIGNED_RECEIPT_BYTES } from '../../protocol/src/receipt.js';
 
 const require = createRequire(import.meta.url);
 const core = require('../../core/dist/blwp-core.js');
@@ -204,14 +205,40 @@ async function main() {
       say(`  ${p.name}: world secret #${found.tried} ends ${p.want} by tick ${found.ticks} (score ${found.score})`);
     }
 
+    // THE ENTRY DOOR READS THE WALL CLOCK, and committee_time is the chain's
+    // median time, which a burst of regtest blocks can carry past now.
+    // Measured: "that round's committee forms at 1789077484000 and it is
+    // 1789077472424" when the world search happened to be quick. So the
+    // harness waits for the round's own committee time before anyone sits.
+    const opensAt = Number(named.round.committeeTimeMs) + 1000;
+    if (Date.now() < opensAt) {
+      say(`  waiting ${opensAt - Date.now()} ms for the round's committee time`);
+      await until('the round\'s committee time', () => Date.now() >= opensAt, 180000, 500);
+    }
     for (const p of players) {
-      p.client = await Client.at({
-        headers: named.chain.headers, bonds: named.chain.bonds,
-        signedAdvert: fromHex(named.advert.signedAdvert), committee: named.round.nodes, nodes: named.nodes,
-      }, {
-        core: { hash: (st) => core.hash(st) }, sign: (id) => ed25519.sign(id, p.session),
-        verify, contract: named.round, roundIdGiven: fromHex(round.id),
-      });
+      const started = Date.now();
+      try {
+        p.client = await Client.at({
+          headers: named.chain.headers, bonds: named.chain.bonds,
+          signedAdvert: fromHex(named.advert.signedAdvert), committee: named.round.nodes, nodes: named.nodes,
+        }, {
+          core: { hash: (st) => core.hash(st) }, sign: (id) => ed25519.sign(id, p.session),
+          verify, contract: named.round, roundIdGiven: fromHex(round.id),
+        });
+      } catch (e) {
+        // WHICH PROVIDER DID NOT GIVE A CHAIN, AND HOW LONG IT TOOK - asked
+        // of each daemon's own door, not guessed.
+        say(`  ${p.name}: Client.at refused after ${Date.now() - started} ms: ${e.message}`);
+        for (const base of named.nodes) {
+          const t0 = Date.now();
+          try {
+            const r = await fetch(`${base}/headers`);
+            const b = new Uint8Array(await r.arrayBuffer());
+            say(`    ${base}/headers -> ${r.status}, ${b.length} bytes (${b.length / 80} headers) in ${Date.now() - t0} ms`);
+          } catch (f) { say(`    ${base}/headers -> ${f.message} after ${Date.now() - t0} ms`); }
+        }
+        throw e;
+      }
       clients.push(p.client);
       const rid = await p.client.openRound(named.round);
       p.eid = await p.client.join(p.entry);
@@ -263,6 +290,30 @@ async function main() {
       await p.client.awaitPeers();
       say(`  ${p.name} published ${p.client.nextTick} of ${p.ticks} ticks, ${p.client.refusals} refused`);
     }
+
+    // ---- HOW RECEIPTS SIT BEFORE THE CLOSE (M3.3-22), measured, not read ----
+    // Per played run and per daemon: the checkpoints it stores, and the
+    // receipts it serves on GET /receipts, split by who signed them.
+    const daemonKeys = [round.a.round.pubkey, round.b.round.pubkey].map(toHex);
+    for (const p of players) {
+      if (!p.ticks) continue;
+      for (const [i, base] of named.nodes.entries()) {
+        const q = `round=${round.id}&entry=${toHex(p.eid)}`;
+        const cp = await fetch(`${base}/checkpoints?${q}`); await cp.arrayBuffer();
+        const rc = await fetch(`${base}/receipts?${q}`);
+        const bytes = new Uint8Array(await rc.arrayBuffer());
+        const by = [0, 0];
+        for (let at = 0; at + SIGNED_RECEIPT_BYTES <= bytes.length; at += SIGNED_RECEIPT_BYTES) {
+          const r = decodeCheckpointReceipt(splitSignedReceipt(bytes.subarray(at, at + SIGNED_RECEIPT_BYTES)).body);
+          const k = daemonKeys.indexOf(toHex(r.nodePubkey));
+          if (k >= 0) by[k]++;
+        }
+        const own = by[i]; const other = by[1 - i];
+        say(`    ${p.name} on ${'AB'[i]}: ${cp.headers.get('x-checkpoints')} checkpoint(s), `
+          + `${rc.headers.get('x-receipts')} receipt(s) - ${own} its own, ${other} from ${'AB'[1 - i]}`);
+      }
+    }
+    say(`    verifier peers: A ${JSON.stringify(round.a.verifier.peers)}, B ${JSON.stringify(round.b.verifier.peers)}`);
 
     // ---- THE CLOSE, ON BOTH DAEMONS ----
     const closeOn = (base) => new Promise((resolve) => {
