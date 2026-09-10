@@ -81,7 +81,7 @@ function fakePort() {
 /** A daemon with a Lightning port, one round open, and one seat taken. */
 async function seated({ port = fakePort() } = {}) {
   const node = await serve(openStore(':memory:'), {
-    port: 0, funded: () => true, now: () => NOW, lightning: port,
+    port: 0, funded: () => true, now: () => NOW, preflight: async () => ({ ready: true, why: "test port" }), lightning: port,
   });
   const contract = contractFor([node.round.pubkey]);
   const rid = roundId(contract);

@@ -12,10 +12,55 @@
 // PURE. The node's own JSON comes in - `getinfo`, `listchannels` - and a
 // verdict goes out, each shortfall named with both of its numbers. Asking the
 // node is `tools/testnet4-preflight.mjs`'s job, with a read-only macaroon.
+import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { netStakeMsat } from '../../protocol/src/payout.js';
+import { entryFeeMsat } from '../../protocol/src/fee.js';
 
 /** The networks a round may hold stakes on. M3 is testnet sats; M4 is mainnet. */
 export const PLAYABLE = ['testnet4', 'regtest'];
+
+/**
+ * THE FEWEST SEATS A ROUND IS OPENED FOR. 27A.7.1's game_config names
+ * `min_players_per_round 2`; nothing in this package named it until a round
+ * had to be sized against a node's inbound before anybody had entered.
+ */
+export const MIN_PLAYERS_PER_ROUND = 2;
+
+/**
+ * WHAT A TESTNET4 LND SAYS ABOUT ITSELF, ASKED WITH A KEY THAT CANNOT SPEND.
+ *
+ * Every call carries the node's `readonly.macaroon`: it cannot create an
+ * invoice, open a channel or send a satoshi, so nothing here can move money
+ * however it is called. And an lnddir whose own lnd.conf does not say
+ * `bitcoin.testnet4=true` is refused before any call - the mainnet lnd on the
+ * operator's machine sits one directory over.
+ */
+export function askLnd({ lncli, lnddir, run = execFileSync, read = readFileSync }) {
+  const conf = read(`${lnddir}/lnd.conf`, 'utf8');
+  if (/mainnet/i.test(lnddir) || !/^bitcoin\.testnet4\s*=\s*(true|1)\s*$/m.test(conf))
+    throw new Error(`${lnddir} is not a testnet4 lnd by its own lnd.conf`);
+  const rpc = (conf.match(/^rpclisten\s*=\s*(\S+)/m) || [])[1] || '127.0.0.1:10009';
+  const args = [`--lnddir=${lnddir}`, '--network=testnet4', `--rpcserver=${rpc}`,
+    `--macaroonpath=${lnddir}/data/chain/bitcoin/testnet4/readonly.macaroon`];
+  const ask = (...argv) => JSON.parse(run(lncli, [...args, ...argv], { encoding: 'utf8', timeout: 30000 }));
+  let holdInvoices = false;
+  try { run(lncli, ['addholdinvoice', '--help'], { stdio: 'ignore' }); holdInvoices = true; } catch { /* absent */ }
+  return { info: ask('getinfo'), channels: ask('listchannels').channels || [], holdInvoices };
+}
+
+/**
+ * THE PREFLIGHT A DAEMON IS GIVEN, for the round it is asked to open: the
+ * fewest seats a round opens for, each at the round's stake with the fee out
+ * of it and no donation - the largest hold a seat can ask for.
+ */
+export const lndPreflight = ({ lncli, lnddir }) => async ({ contract }) => {
+  const stakeMsat = contract.stakeMsat;
+  return lightningPreflight({
+    ...askLnd({ lncli, lnddir }), players: MIN_PLAYERS_PER_ROUND,
+    entry: { stakeMsat, feeMsat: entryFeeMsat(stakeMsat), donationMsat: 0n },
+  });
+};
 
 /**
  * @param {object} o

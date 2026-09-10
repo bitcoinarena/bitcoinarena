@@ -142,6 +142,10 @@ export const NOTHING_IS_FUNDED = () => false;
 export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FUNDED,
   randomnessFor, chainFor, peers = [], headerBytes, bondProof,
   lightning = NO_LIGHTNING, preimageFor = null,
+  // CAN THAT LIGHTNING NODE HOLD A ROUND'S STAKES? `lndPreflight` asks it with
+  // a read-only key. A node given a port and no preflight opens no paying
+  // round: the gate fails closed.
+  preflight = null,
   // The pool's key material and something that can broadcast. A daemon given
   // neither still agrees on what the round owes; it just does not spend.
   poolKey = null, chainSpend = null, poolCurve = feldmanGroup,
@@ -453,6 +457,24 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // costs a parse and nothing else.
         if (!funded({ kind: 'round', contract }))
           return text(res, 402, 'this node stores nothing for a round nobody has funded');
+
+        // A ROUND THAT ASKS A STAKE, ON A NODE THAT HOLDS STAKES, IS OPENED ONLY
+        // WHEN THAT NODE CAN HOLD THEM. A hold invoice is RECEIVED money; the
+        // operator's testnet4 lnd had 0 msat of inbound where two 100-sat seats
+        // need 196000, and a player's payment would simply have failed after
+        // they had sat down. So the round is refused here, with both numbers.
+        // A round that asks nothing never asks (M3.3-19), and a node with no
+        // Lightning holds nothing and opens as it always did.
+        if (contract.stakeMsat > 0n && custody.reaches) {
+          if (!preflight)
+            return text(res, 503, 'this node holds stakes and has no preflight: it opens a paying '
+              + 'round only once its Lightning node is shown able to hold one');
+          let said;
+          try { said = await preflight({ contract }); }
+          catch (e) { said = { ready: false, why: e.message }; }
+          if (!said || !said.ready)
+            return text(res, 503, `this node's Lightning cannot hold this round's stakes: ${said ? said.why : 'no answer'}`);
+        }
         const id = round.open(contract);
 
         // AND SEAT IT FROM THE CHAIN, when this node can see one. The seated

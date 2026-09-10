@@ -106,7 +106,7 @@ const getJson = async (port, path) => {
 
 test('a seated player is quoted the hold invoice their own entry names', async () => {
   const port = fakePort();
-  const node = await serve(openStore(':memory:'), { port: 0, ...FUNDED, lightning: port });
+  const node = await serve(openStore(':memory:'), { port: 0, ...FUNDED, preflight: async () => ({ ready: true, why: "test port" }), lightning: port });
   try {
     const c = contractFor(node.round.pubkey);
     const rid = roundId(c);
@@ -138,7 +138,7 @@ test('a seated player is quoted the hold invoice their own entry names', async (
 
 test('an entry this node never seated gets no invoice', async () => {
   const port = fakePort();
-  const node = await serve(openStore(':memory:'), { port: 0, ...FUNDED, lightning: port });
+  const node = await serve(openStore(':memory:'), { port: 0, ...FUNDED, preflight: async () => ({ ready: true, why: "test port" }), lightning: port });
   try {
     const stranger = await getJson(node.port, `/invoice?entry=${toHex(b32(0xee))}`);
     assert.equal(stranger.status, 404);
@@ -233,7 +233,7 @@ test('closing a round on the daemon reaches the money path, and moves no stake',
   // player's own stake.
   const port = fakePort();
   const node = await serve(openStore(':memory:'), {
-    port: 0, ...FUNDED, randomnessFor: () => BEACON, lightning: port, preimageFor,
+    port: 0, ...FUNDED, randomnessFor: () => BEACON, preflight: async () => ({ ready: true, why: "test port" }), lightning: port, preimageFor,
   });
   try {
     const { eid } = await roundThrough(node);
@@ -263,7 +263,7 @@ test('the committee agreeing on a round nobody finished still moves no stake', a
   // in flight and goes home on its own timelock.
   const port = fakePort();
   const node = await serve(openStore(':memory:'), {
-    port: 0, ...FUNDED, randomnessFor: () => BEACON, lightning: port, preimageFor,
+    port: 0, ...FUNDED, randomnessFor: () => BEACON, preflight: async () => ({ ready: true, why: "test port" }), lightning: port, preimageFor,
   });
   try {
     const { rid, eid } = await roundThrough(node);
@@ -322,7 +322,7 @@ test('a daemon asks Lightning about an act it died in the middle of, on start', 
 
   const port = fakePort();
   port.look = async ({ paymentHash }) => { port.calls.push(['look', toHex(paymentHash)]); return { state: SETTLED }; };
-  const node = await serve(db, { port: 0, ...FUNDED, lightning: port });
+  const node = await serve(db, { port: 0, ...FUNDED, preflight: async () => ({ ready: true, why: "test port" }), lightning: port });
   try {
     const asked = await node.reconciling;
     assert.equal(asked.ok, true, asked.why);
@@ -350,7 +350,7 @@ test('closing a round makes the daemon sign what it owes, and serve that signatu
   // stake table before M3.1 and the VSS rules before item 9.
   const port = fakePort();
   const node = await serve(openStore(':memory:'), {
-    port: 0, ...FUNDED, randomnessFor: () => BEACON, lightning: port, preimageFor,
+    port: 0, ...FUNDED, randomnessFor: () => BEACON, preflight: async () => ({ ready: true, why: "test port" }), lightning: port, preimageFor,
   });
   try {
     const { rid, eid } = await roundThrough(node);
