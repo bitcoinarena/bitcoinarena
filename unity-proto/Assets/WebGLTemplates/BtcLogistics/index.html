@@ -290,7 +290,13 @@
       BLWPCLIENT.Client.at = function (discovery, opts) {
         const verify = (sig, msg, key) => !!(window.BLWP_CURVE && window.BLWP_CURVE.verify
           && window.BLWP_CURVE.verify(sig, msg, key));
-        return at(discovery, Object.assign({}, opts, { verify: verify }));
+        // AND EVERY NODE THE ROUND NAMED, so each checkpoint reaches the whole
+        // committee. Measured 2026-09-10: sent to one daemon of the 2-of-2, a
+        // run stored 1 checkpoint on A and 0 on B, and every later one was
+        // refused. The client proves one node; these are where else to deliver.
+        const nodes = discovery.nodes || window.BLWP_NODES;
+        return at(Object.assign({}, discovery, { nodes: nodes }),
+          Object.assign({}, opts, { verify: verify }));
       };
     }
 

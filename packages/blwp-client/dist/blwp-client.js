@@ -5779,9 +5779,36 @@ class Client {
       throw new Error(`the advertisement for ${toHex(seen.nodePubkey)} `
         + 'is not signed by the node it names');
 
-    return new Client({
+    const client = new Client({
       base: seen.endpoint.replace(/^ws/, 'http'), core, sign, verify,
     });
+    // AND EVERY OTHER COMMITTEE NODE, for the checkpoints. Section 10: "a
+    // checkpoint is accepted when enough nodes receive it"; section 11: "the
+    // client periodically sends batches and checkpoints". The proven endpoint is
+    // one node, and the rest arrive as `discovery.nodes` - handed in by the
+    // page's own wrapper of this call, from the same list the bridge already
+    // asks for the round's randomness; nothing in here reads the page. They
+    // need no proof of their own because they are DELIVERY addresses, not
+    // trust: an entry and a checkpoint are public, and a receipt only counts
+    // once it verifies under a key the round's own contract names. A page that
+    // lies here can make a checkpoint fail to go live, never make one live.
+    client.deliverTo(discovery.nodes || []);
+    return client;
+  }
+
+  /**
+   * WHERE ELSE A CHECKPOINT GOES: every committee node's base, less this one.
+   *
+   * Measured 2026-09-10 on the Daily's 2-of-2: every checkpoint reached daemon A
+   * alone, B held not even the entry, `receiptsForLive` is 2 there - so the
+   * first checkpoint never went live, the head never moved, and every later one
+   * was refused as "not following the chain head". 1 stored on A, 0 on B.
+   */
+  deliverTo(bases) {
+    const norm = (u) => String(u).replace(/^ws/, 'http').replace(/\/+$/, '');
+    const mine = norm(this.base);
+    this.peers = [...new Set((bases || []).map(norm))].filter((b) => b && b !== mine);
+    return this.peers;
   }
 
   constructor({ base, core, sign, verify }) {
@@ -5822,6 +5849,18 @@ class Client {
     this.batchesSent = 0;
     this.marksSent = 0;
     this.marksSkipped = 0;
+    // WHAT BECAME OF EACH CHECKPOINT ON THE COMMITTEE. `marksSent` counts a
+    // receipt from this client's own node, as it always has; `marksAccepted`
+    // counts checkpoints that went LIVE (enough committee nodes receipted
+    // them, so the head moved on); `marksRefused` counts checkpoints any node
+    // refused, and the node's own words are kept. A refusal was counted as
+    // nothing at all, which is how "sent 1, skipped 0" hid three refused.
+    this.marksAccepted = 0;
+    this.marksRefused = 0;
+    this.marksRefusedWhy = null;
+    this.peers = [];              // the other committee nodes' bases
+    this.peerLinks = new Map();   // base -> { sock, said, opening }
+    this.peerSeats = [];
     this.publishing = null;
     this.marking = null;
     this.said = [];
@@ -5935,7 +5974,52 @@ class Client {
       state: r.headers.get('x-hold') || 'none',
       why: r.headers.get('x-hold-why') || null,
     };
-    return agrees(mine, new Uint8Array(await r.arrayBuffer()), 'entry');
+    const seated = agrees(mine, new Uint8Array(await r.arrayBuffer()), 'entry');
+
+    // AND ON EVERY OTHER COMMITTEE NODE, or it refuses this seat's checkpoints
+    // as "no such entry" - measured: daemon B answered 404 for every Daily seat.
+    // A node that will not seat it is written down, not thrown: this node took
+    // the entry, and the run can still be played.
+    this.seatEntry = entry;
+    this.peerSeats = await Promise.all(this.peers.map(async (base) => {
+      try {
+        const p = await fetch(`${base}/entry`, { method: 'POST', body: encodeEntryContract(entry) });
+        return { base, ok: p.status === 201, why: p.status === 201 ? null : (await p.text()).trim() };
+      } catch (e) { return { base, ok: false, why: e.message }; }
+    }));
+    return seated;
+  }
+
+  /** A socket to another committee node, for checkpoints only. */
+  peerLink(base) {
+    const had = this.peerLinks.get(base);
+    if (had && had.sock && had.sock.readyState === 1) return Promise.resolve(had);
+    if (had && had.opening) return had.opening;
+    const link = { sock: null, said: [], opening: null };
+    link.opening = new Promise((resolve) => {
+      const sock = new WebSocket(`${base.replace(/^http/, 'ws')}/play`);
+      sock.binaryType = 'arraybuffer';
+      sock.addEventListener('message', (e) => {
+        const waiting = link.said.shift();
+        if (waiting) waiting(typeof e.data === 'string' ? e.data : new Uint8Array(e.data));
+      });
+      sock.addEventListener('open', () => { link.sock = sock; link.opening = null; resolve(link); });
+      sock.addEventListener('error', () => { link.opening = null; resolve(link); });
+      sock.addEventListener('close', () => {
+        const waiting = link.said; link.said = [];
+        for (const w of waiting) w('error the socket closed');
+        if (link.sock === sock) link.sock = null;
+      });
+    });
+    this.peerLinks.set(base, link);
+    return link.opening;
+  }
+
+  /** One message to another committee node, answered the way `send` answers. */
+  async sendPeer(base, message) {
+    const link = await this.peerLink(base);
+    if (!link.sock || link.sock.readyState !== 1) return `error no socket to ${base}`;
+    return new Promise((r) => { link.said.push(r); link.sock.send(message); });
   }
 
   /**
@@ -6111,9 +6195,24 @@ class Client {
     const built = await markHashed(hex, {
       roundId, entryId, tick, previousHash: this.head, inputChainHash,
     }, this.sign);
-    const answer = await this.send(built.bytes);
-    if (typeof answer === 'string') return { ...built, answer, receipt: null };
-    return { ...built, answer: 'receipted', receipt: this.readReceipt(answer, built.id) };
+    // TO EVERY COMMITTEE NODE AT ONCE, and each receipt checked on its own.
+    // `readReceipt` counts the signer and moves the head only when the mark is
+    // LIVE, so the next checkpoint names this one exactly when enough of the
+    // committee holds it - on the Daily's 2-of-2, both.
+    const [answer, ...theirs] = await Promise.all([
+      this.send(built.bytes), ...this.peers.map((b) => this.sendPeer(b, built.bytes))]);
+    const refused = [];
+    this.peers.forEach((base, i) => {
+      const a = theirs[i];
+      if (typeof a === 'string') { refused.push(`${base}: ${a}`); return; }
+      try { this.readReceipt(a, built.id); } catch (e) { refused.push(`${base}: ${e.message}`); }
+    });
+    if (typeof answer === 'string') {
+      refused.unshift(`${this.base}: ${answer}`);
+      return { ...built, answer, receipt: null, refused, live: this.live(built.id) };
+    }
+    const receipt = this.readReceipt(answer, built.id);
+    return { ...built, answer: 'receipted', receipt, refused, live: this.live(built.id) };
   }
 
   async checkpoint(st, { roundId, entryId, tick, inputChainHash = GENESIS }) {
@@ -6592,6 +6691,9 @@ class Client {
     this.batchesSent = 0;
     this.marksSent = 0;
     this.marksSkipped = 0;
+    this.marksAccepted = 0;
+    this.marksRefused = 0;
+    this.marksRefusedWhy = null;
     this.publishing = null;
     this.marking = null;
     this.offered = 0;
@@ -6855,6 +6957,8 @@ class Client {
       roundId: this.where.roundId, entryId: this.where.entryId, tick, inputChainHash,
     }).then((r) => {
       if (r.answer === 'receipted') this.marksSent++;
+      if (r.live) this.marksAccepted++;
+      if (r.refused && r.refused.length) { this.marksRefused++; this.marksRefusedWhy = r.refused.join('; '); }
       this.marking = null;
       return r;
     }).catch((e) => { this.marking = null; throw e; });
@@ -6877,6 +6981,8 @@ class Client {
       + ` tick ${seen} held ${this.held}`
       + (this.dropped ? ` dropped ${this.dropped}` : '')
       + (this.marksSkipped ? ` skipped ${this.marksSkipped}` : '')
+      + (this.peers.length ? ` accepted ${this.marksAccepted}` : '')
+      + (this.marksRefused ? ` refused ${this.marksRefused}` : '')
       + (this.drops ? ` drops ${this.drops} tries ${this.tries} resumed ${this.resumedAt}` : '')
       + (this.ended ? ` ${this.ending} ${this.endingReason}` : '');
   }
@@ -6897,7 +7003,10 @@ class Client {
     }
   }
 
-  close() { if (this.sock) this.sock.close(); }
+  close() {
+    if (this.sock) this.sock.close();
+    for (const link of this.peerLinks.values()) if (link.sock) link.sock.close();
+  }
 }
 
 // ---- blwp-client/src/ghost-field.js
