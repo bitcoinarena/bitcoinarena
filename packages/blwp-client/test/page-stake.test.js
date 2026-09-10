@@ -232,9 +232,10 @@ test('the chip says why there is no seat, and what the seat cost', () => {
   assert.notEqual(dealtOnly, playersLine({ seated: true, others: 0 }),
     'a free seat reads exactly like a funded one');
 
-  // AND THE WORD IS THE NODE'S, not this page's. A hold the node reports is
-  // printed; the reason there is none is printed beside it.
-  assert.equal(stakeLine({ dealt: true, hold: { state: 'HELD' } }), ' · stake held');
+  // AND A HOLD IS COUNTED, NOT NAMED: the node's seat-time HELD also covers an
+  // invoice nobody has paid (M3.3-21, stake-seen.test.js). The reason there is
+  // no hold is still the node's own word, printed beside it.
+  assert.equal(stakeLine({ dealt: true, hold: { state: 'HELD' } }), ' · stake dealt, not yet counted');
   assert.equal(stakeLine({ dealt: true, hold: { state: 'none', why: 'no lightning port' } }),
     ' · stake dealt, unpaid (no lightning port)');
   assert.equal(stakeLine(null), '');

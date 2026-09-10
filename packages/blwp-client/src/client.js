@@ -53,6 +53,7 @@ import {
 import { invoiceMatchesEntry } from '../../protocol/src/payout.js';
 import { parseConnection, payInvoice } from './nwc.js';
 import { STAKE_NOT_SEEN } from '../../protocol/src/constants.js';
+import { stakeSeenBy } from './join.js';
 import { decodeGhost } from '../../protocol/src/ghost.js';
 import { TYPE_GHOST } from '../../protocol/src/constants.js';
 import { discover } from './directory.js';
@@ -302,6 +303,14 @@ export class Client {
     // Batches answered "stake not seen" - a wallet still paying, not a refusal.
     this.stakeWaits = 0;
     this.stakeWhy = null;
+    // How many settlement seats have seen this seat's stake held (23.1 step 5).
+    // `stakeCommitted` is a label: it gates nothing. NOT `stakeSeen`, which is
+    // the method `payStake` asks one node with - a field of that name hid it
+    // and every payment threw "this.stakeSeen is not a function".
+    this.stakeCount = null;
+    this.stakeCommitted = false;
+    this.stakePolls = 0;
+    this.stakeWatchStopped = false;
     this.refusedWhy = null;
     this.refusedAt = null;
     this.resynced = false;
@@ -1223,6 +1232,32 @@ export class Client {
   }
 
   /**
+   * COUNT THE SETTLEMENT SEATS THAT HAVE SEEN THIS STAKE HELD, until enough
+   * have (23.1 step 5). Asked lightly - once every `everyMs` - and stopped the
+   * moment N >= T, or when the run ends or this client closes.
+   *
+   * THE COUNT IS A LABEL AND NOTHING WAITS ON IT. The player drives the whole
+   * time: ticks a node has not seen the stake for are held and sent once it
+   * has (the late-payer path), and every node refuses its own receipt until it
+   * has seen the hold. `stakeCommitted` says what the committee has seen; it
+   * does not decide what the player may do.
+   */
+  async watchStake({ seats, nodes, contract, everyMs = 2000, fetcher } = {}) {
+    const eid = (this.where && this.where.entryId) || (this.seatEntry && entryId(this.seatEntry));
+    if (!eid) throw new Error('there is no seat to count: join first');
+    this.stakeWatchStopped = false;
+    for (;;) {
+      const s = await stakeSeenBy({ entryId: eid, seats, nodes, contract, ...(fetcher ? { fetcher } : {}) });
+      this.stakePolls++;
+      this.stakeCount = s;
+      this.stakeCommitted = s.committed;
+      if (s.committed || this.ended || this.stakeWatchStopped) return s;
+      await new Promise((r) => setTimeout(r, everyMs));
+      if (this.ended || this.stakeWatchStopped) return this.stakeCount;
+    }
+  }
+
+  /**
    * HAS THE NODE SEEN THIS SEAT'S STAKE HELD? `GET /stake` (23.1 step 5).
    * An answer, never a throw: `{ ok, state, paidMsat }` or `{ ok: false, why }`.
    */
@@ -1873,6 +1908,7 @@ export class Client {
   }
 
   close() {
+    this.stakeWatchStopped = true;
     if (this.sock) this.sock.close();
     for (const link of this.peerLinks.values()) if (link.sock) link.sock.close();
   }

@@ -232,6 +232,60 @@ export async function postHandout(stake, nodes, { fetcher = fetch, needed = SHAR
 export const roundPays = (round) => !!round && BigInt(round.stakeMsat || 0n) > 0n;
 
 /**
+ * HOW MANY SETTLEMENT NODES MUST HAVE SEEN A STAKE HELD (23.1 step 5): 2 on a
+ * two-slot round, 5 otherwise - the shape `receiptsForLive` already has, read
+ * off the round's own settlement slots. A flat 5 would freeze a 2-of-2 at
+ * "2 of 2 (5 needed)".
+ */
+export function stakeSeenNeeded(contract) {
+  const slots = contract?.settlementSlots ?? contract?.nodes?.length;
+  if (slots === 2) return 2;
+  return SHARES_NEEDED;
+}
+
+/**
+ * HOW MANY OF THE ROUND'S SETTLEMENT SEATS HAVE SEEN THIS STAKE HELD.
+ *
+ * 23.1 step 5: "STAKE_COMMITTED is recorded once >=5 settlement nodes have seen
+ * the held HTLC." Each node answers for itself (`GET /stake`, its own
+ * Lightning). The seats are KEYS (`fetchSettlementSeats`) and the page holds
+ * URLS, so each URL is asked who it is (`GET /identity`) and only a settlement
+ * seat's answer is counted, once per key. A seat no URL answers for - down, or
+ * never listed - is counted as NOT seen and named in `unanswered`.
+ *
+ *   { seen, of, needed, unanswered, committed, per }
+ *
+ * `committed` is a label for the page: it gates nothing. Each node still
+ * refuses its own receipt until it has seen the stake.
+ */
+export async function stakeSeenBy({ entryId, seats, nodes, contract, fetcher = fetch } = {}) {
+  const want = new Set((seats || []).map((k) => toHex(k)));
+  const eid = typeof entryId === 'string' ? entryId : toHex(entryId);
+  const answered = new Set();
+  const per = [];
+  let seen = 0;
+  for (const node of nodes || []) {
+    const base = String(node).replace(/\/+$/, '');
+    let key;
+    try {
+      const r = await fetcher(base + '/identity');
+      if (!r.ok) { per.push({ node, why: `identity answered ${r.status}` }); continue; }
+      key = toHex(new Uint8Array(await r.arrayBuffer()));
+    } catch (e) { per.push({ node, why: e.message }); continue; }
+    if (!want.has(key) || answered.has(key)) continue;
+    try {
+      const r = await fetcher(`${base}/stake?entry=${eid}`);
+      answered.add(key);
+      if (r.ok) { seen++; per.push({ node, key, seen: true }); }
+      else per.push({ node, key, seen: false, why: (await r.text()).trim() });
+    } catch (e) { per.push({ node, key, why: e.message }); }
+  }
+  const of = want.size;
+  const needed = stakeSeenNeeded(contract);
+  return { seen, of, needed, unanswered: of - answered.size, committed: seen >= needed, per };
+}
+
+/**
  * WHO THE SETTLEMENT COMMITTEE IS, ASKED OF EVERY NODE THE ROUND NAMED.
  *
  * A STAKE IS DEALT TO THE SETTLEMENT SEATS AND TO NOBODY ELSE, and the list

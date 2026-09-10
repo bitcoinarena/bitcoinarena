@@ -250,16 +250,27 @@ export function playersLine({ seated, others, stalled = false, at = null, refuse
  *
  * `free seat` is a round that asks no stake - there is nothing to pay and
  * nothing was dealt. `stake dealt, unpaid` is a paying round the page has
- * dealt a preimage and shares for and cannot fund, which is every paying round
- * until M3.2 puts a wallet in the page. Anything else is the node's own hold
- * state, printed rather than interpreted.
+ * dealt a preimage and shares for and has no hold for, with the node's reason.
+ *
+ * A HOLD IS COUNTED, NOT NAMED (23.1 step 5). The node's seat-time `x-hold`
+ * word used to be printed here, and it said "held" for an invoice nobody had
+ * paid - lnd's OPEN and ACCEPTED both read as held. Now a hold reads "not yet
+ * counted" until `stakeSeenBy` has asked the settlement seats, and then
+ * "stake seen by N of M nodes (T needed)", with the seats that did not answer
+ * named and "committed" only at N >= T.
  */
 export function stakeLine(stake) {
   if (!stake) return '';
   if (stake.free) return ' · free seat';
   if (!stake.dealt) return '';
+  const s = stake.seen;
+  if (s && typeof s.seen === 'number') {
+    return ` · stake seen by ${s.seen} of ${s.of} nodes (${s.needed} needed)`
+      + (s.unanswered ? `, ${s.unanswered} did not answer` : '')
+      + (s.committed ? ' · committed' : '');
+  }
   const held = stake.hold && stake.hold.state;
-  if (held && held !== 'none') return ` · stake ${String(held).toLowerCase()}`;
+  if (held && held !== 'none') return ' · stake dealt, not yet counted';
   const why = stake.hold && stake.hold.why;
   return ' · stake dealt, unpaid' + (why ? ` (${why})` : '');
 }
