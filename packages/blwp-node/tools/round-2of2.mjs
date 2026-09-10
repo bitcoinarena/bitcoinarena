@@ -41,6 +41,7 @@ import { regtest } from './regtest-bond.mjs';
 import { chainOf } from '../../protocol/tools/chainview.js';
 import { bitcoindRpc } from '../src/chain-rpc.js';
 import { serve } from '../src/server.js';
+import { lightningFromEnv } from '../src/lnd-settings.js';
 import { toHex } from '../../protocol/src/hash.js';
 import { BITCOIN_MAINNET_GENESIS_HEADER, blockHashOf } from '../../protocol/src/chain.js';
 import { hash256, parseTransaction } from '../../protocol/src/tx.js';
@@ -262,10 +263,18 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   const randomnessFor = beacon ? beacon.for : undefined;
 
   const chainFor = () => censusView;
+  // THE COMMITTEE'S ONE LIGHTNING ENDPOINT, OPT-IN (§23.1): the four BLWP_LND*
+  // settings, the same parse src/main.js uses, and the same port for both
+  // daemons - the second takes up the hold the first issued. Unset, both hold
+  // no stakes, exactly as before.
+  const ln = lightningFromEnv(process.env);
+  if (!ln.ok) throw new Error(ln.why);
+  const lightning = ln.given
+    ? { lightning: ln.lightning, ...(ln.preflight ? { preflight: ln.preflight } : {}) } : {};
   const a = await serve(dbA, { port: portA, host, funded, headerBytes, bondProof, chainFor,
-    ...(randomnessFor ? { randomnessFor } : {}) });
+    ...(randomnessFor ? { randomnessFor } : {}), ...lightning });
   const optsB = { port: portB, host, funded, headerBytes, bondProof, chainFor,
-    ...(randomnessFor ? { randomnessFor } : {}) };
+    ...(randomnessFor ? { randomnessFor } : {}), ...lightning };
   let b = await serve(dbB, optsB);
   if (a.port !== portA)
     throw new Error(`node A came up on ${a.port} and the bond names ${portA}`);
