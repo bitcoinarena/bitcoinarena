@@ -331,6 +331,8 @@ export class Client {
     this.markWaiting = null;      // the tick of the mark now waiting for its inputs
     this.marksTimedOut = 0;       // marks never sent: a node did not hold their inputs in time
     this.marksTimedOutWhy = null;
+    this.pendingLink = null;      // { id, bytes, tick }: stored by some node, not carried by the committee
+    this.marksRelinked = 0;       // pending links re-sent until the committee carried them
     this.publishing = null;
     this.marking = null;
     this.said = [];
@@ -582,6 +584,29 @@ export class Client {
     return out;
   }
 
+  /**
+   * THE PENDING LINK AGAIN, THE SAME BYTES, TO EVERY NODE.
+   *
+   * A node that already stored it answers with the receipt it issued (a repeat
+   * writes nothing and is not an error); a node that missed it stores it now.
+   * Each receipt is checked the way every receipt is, and when the committee
+   * carries it `readReceipt` moves the head onto it.
+   */
+  async #relink() {
+    const link = this.pendingLink;
+    const bases = [this.base, ...this.peers];
+    const answers = await Promise.all([
+      this.send(link.bytes), ...this.peers.map((b) => this.sendPeer(b, link.bytes))]);
+    const refused = [];
+    answers.forEach((a, i) => {
+      if (typeof a === 'string') { refused.push(`${bases[i]}: ${a}`); return; }
+      try { this.readReceipt(a, link.id); } catch (e) { refused.push(`${bases[i]}: ${e.message}`); }
+    });
+    const live = this.live(link.id);
+    if (live) { this.pendingLink = null; this.marksRelinked++; }
+    return { live, refused, tick: link.tick };
+  }
+
   /** Sends every waiting mark whose inputs every node now holds. */
   #wakeMarks() {
     if (!this.inputWaiters.length) return;
@@ -777,12 +802,24 @@ export class Client {
       if (typeof a === 'string') { refused.push(`${base}: ${a}`); return; }
       try { this.readReceipt(a, built.id); } catch (e) { refused.push(`${base}: ${e.message}`); }
     });
-    if (typeof answer === 'string') {
-      refused.unshift(`${this.base}: ${answer}`);
-      return { ...built, answer, receipt: null, refused, live: this.live(built.id) };
-    }
-    const receipt = this.readReceipt(answer, built.id);
-    return { ...built, answer: 'receipted', receipt, refused, live: this.live(built.id) };
+    let receipt = null;
+    if (typeof answer === 'string') refused.unshift(`${this.base}: ${answer}`);
+    else receipt = this.readReceipt(answer, built.id);
+    const live = this.live(built.id);
+
+    // A MARK SOME NODE STORED AND THE COMMITTEE DID NOT CARRY IS KEPT.
+    //
+    // Measured 2026-09-10 on two real daemons: B went down after it held the
+    // inputs for tick 60, mark 60 reached A alone and never went live, and the
+    // head stayed put - so the next mark named the old head. A refused it and
+    // KEPT it: the second child of one parent, 13B's fork proof, published
+    // against an honest player (/equivocation 200). B, which never had mark
+    // 60, stored the new one, and the two daemons held two chains. So a mark
+    // any node holds is remembered until the committee carries it, and no new
+    // mark goes out before then - see `markNow`.
+    if (live) this.pendingLink = null;
+    else if (this.witnessed(built.id) > 0) this.pendingLink = { id: built.id, bytes: built.bytes, tick };
+    return { ...built, answer: receipt ? 'receipted' : answer, receipt, refused, live };
   }
 
   async checkpoint(st, { roundId, entryId, tick, inputChainHash = GENESIS }) {
@@ -1282,6 +1319,8 @@ export class Client {
     this.markWaiting = null;
     this.marksTimedOut = 0;
     this.marksTimedOutWhy = null;
+    this.pendingLink = null;
+    this.marksRelinked = 0;
     this.publishing = null;
     this.marking = null;
     this.offered = 0;
@@ -1584,9 +1623,24 @@ export class Client {
       const d = this.drain();
       if (d && d.catch) d.catch(() => {});
     }
-    this.marking = Promise.resolve(ready).then((held) => {
+    this.marking = Promise.resolve(ready).then(async (held) => {
       this.markWaiting = null;
       if (held) {
+        // AND NEVER A SECOND CHILD OF ONE PARENT. If a mark some node stored
+        // was not carried, it goes again first; a new mark chains onto it once
+        // it is live. If it still is not, the new mark is NOT sent - it would
+        // name the head before the pending link, which the node holding that
+        // link reads as a fork - and it is counted as skipped.
+        if (this.pendingLink) {
+          const again = await this.#relink();
+          if (!again.live) {
+            return {
+              answer: `skipped: the checkpoint at tick ${again.tick} is stored but not carried, `
+                + 'and a new one would name the head before it',
+              skippedForLink: true, relinkRefused: again.refused, refused: [], live: false, receipt: null,
+            };
+          }
+        }
         return this.mark(stateHash, {
           roundId: where.roundId, entryId: where.entryId, tick, inputChainHash,
         });
@@ -1600,6 +1654,7 @@ export class Client {
         this.marksTimedOut++;
         this.marksTimedOutWhy = `tick ${tick}: ${r.behind.join('; ')}`;
       }
+      if (r.skippedForLink) this.marksSkipped++;
       if (r.answer === 'receipted') this.marksSent++;
       if (r.live) this.marksAccepted++;
       if (r.refused && r.refused.length) { this.marksRefused++; this.marksRefusedWhy = r.refused.join('; '); }
@@ -1630,6 +1685,8 @@ export class Client {
       + (this.peerBatchesRefused ? ` inputs refused ${this.peerBatchesRefused}` : '')
       + (this.markWaiting !== null ? ` waiting ${this.markWaiting}` : '')
       + (this.marksTimedOut ? ` timed out ${this.marksTimedOut}` : '')
+      + (this.pendingLink ? ` pending link ${this.pendingLink.tick}` : '')
+      + (this.marksRelinked ? ` relinked ${this.marksRelinked}` : '')
       + (this.drops ? ` drops ${this.drops} tries ${this.tries} resumed ${this.resumedAt}` : '')
       + (this.ended ? ` ${this.ending} ${this.endingReason}` : '');
   }

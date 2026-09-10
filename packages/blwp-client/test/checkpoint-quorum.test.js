@@ -85,6 +85,19 @@ async function transcriptOn(base, rid, eid) {
 }
 const heldTicks = async (base, rid, eid) => (await transcriptOn(base, rid, eid)).ticks;
 
+/** 204 when a daemon holds no fork proof against this entry, 200 when it does. */
+async function equivocation(base, rid, eid) {
+  const r = await fetch(`${base}/equivocation?round=${toHex(rid)}&entry=${toHex(eid)}`);
+  await r.arrayBuffer();
+  return r.status;
+}
+
+/** The checkpoint chain a daemon stores for this run, as the bytes it serves. */
+async function chainOn(base, rid, eid) {
+  const r = await fetch(`${base}/checkpoints?round=${toHex(rid)}&entry=${toHex(eid)}`);
+  return toHex(new Uint8Array(await r.arrayBuffer()));
+}
+
 /** Everything recorded published to this client's node, and every peer fed. */
 async function publishAll(client) {
   for (let i = 0; i < 500 && (client.hold.length || client.publishing); i++) {
@@ -140,8 +153,11 @@ test('a checkpoint over inputs no node holds is refused by both daemons, and not
   }
 });
 
-test('a client that reaches one daemon of two is refused past its first link, and says so', async () => {
+test('a client that reaches one daemon of two cannot grow its chain past its first link, sends no second child, and says so', async () => {
   // THE DAILY BEFORE THE FAN-OUT, reproduced: no page node list, so no peers.
+  // Until 2026-09-10 the second link WENT OUT here, naming the zero head, and
+  // A refused it for the chain head AND KEPT it - the second child of one
+  // parent, a fork proof against an honest player. It is not sent now.
   const round = await standUpRound({ host: '127.0.0.1', portA: 18252, portB: 18253 });
   let t;
   try {
@@ -158,21 +174,25 @@ test('a client that reaches one daemon of two is refused past its first link, an
     assert.equal(first.live, false, 'one receipt of two went live');
     drive(client, 60);
     const second = await client.markNow(driven(7, 120), 120);
-    assert.match(second.answer, /chain head/, `the second link was not refused for the head: ${second.answer}`);
+    assert.equal(second.skippedForLink, true, `the second link went out: ${second.answer}`);
+    assert.match(second.answer, /stored but not carried/);
 
     const at = [await stored(client.base, rid, eid), await stored(other, rid, eid)];
     const held = [await heldTicks(client.base, rid, eid), await heldTicks(other, rid, eid)];
+    const proof = await equivocation(client.base, rid, eid);
     console.log(`  one daemon: checkpoints A ${at[0]} B ${at[1]}, inputs A ${held[0]} B ${held[1]}; `
-      + `refused: ${client.marksRefusedWhy}`);
+      + `A /equivocation ${proof}; ${client.status(120)}`);
     assert.deepEqual(at, [1, 0]);
     assert.deepEqual(held, [120, 0]);
+    assert.equal(proof, 204, 'the honest client handed A a fork proof against itself');
 
-    // AND THE PAGE'S LINE NO LONGER HIDES IT.
+    // AND THE PAGE'S LINE SAYS WHY THE CHAIN STOPPED.
     assert.equal(client.marksSent, 1);
     assert.equal(client.marksAccepted, 0);
-    assert.equal(client.marksRefused, 1);
-    assert.match(client.status(120), / refused 1\b/);
-    assert.match(client.marksRefusedWhy, /chain head/);
+    assert.equal(client.marksRefused, 0);
+    assert.equal(client.marksSkipped, 1);
+    assert.match(client.status(120), / skipped 1\b/);
+    assert.match(client.status(120), / pending link 60\b/);
   } finally {
     if (t) { t.client.ended = true; t.client.close(); }
     await round.close();
@@ -371,5 +391,74 @@ test('a stopped daemon holds a checkpoint for a bounded time: it is sent to nobo
   } finally {
     if (t) { t.client.ended = true; t.client.close(); }
     try { await round.close(); } catch { /* B was already stopped */ }
+  }
+});
+
+// A CHECKPOINT HALF-PUBLISHED WHILE A PEER WAS DOWN.
+//
+// Measured 2026-09-10 before the fix: B went down after it held the inputs for
+// tick 60, so mark 60 went out at once and reached A alone. When B came back,
+// mark 120 named the zero head; A refused it and KEPT it - /equivocation 200,
+// a fork proof against an honest player - and B stored it. A held [60], B held
+// [120], and every later mark was refused by both.
+test('an honest next checkpoint is not a fork proof because a peer was down: the half-published one is re-sent, carried by both, and the next chains onto it', async () => {
+  const round = await standUpRound({ host: '127.0.0.1', portA: 18264, portB: 18265 });
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  let t;
+  try {
+    const named = await joinFromQuery(new URL(round.url).search);
+    t = await tab(round, named, { pageNodes: true });
+    const { client, rid, eid } = t;
+    const [A, B] = [client.base, ...client.peers];
+
+    drive(client, 60);
+    await publishAll(client);
+    assert.deepEqual([await heldTicks(A, rid, eid), await heldTicks(B, rid, eid)], [60, 60],
+      'both daemons must hold mark 60\'s inputs before B goes');
+
+    // B GOES DOWN, and mark 60 is not held back: every node held its inputs.
+    await round.b.close();
+    await wait(100);
+    const half = await client.markNow(driven(7, 60), 60);
+    assert.equal(half.answer, 'receipted', 'A holds the inputs and signs');
+    assert.equal(half.live, false, 'one receipt of two went live');
+    assert.equal(half.refused.length, 1, 'B was down and should be named');
+    assert.equal(await stored(A, rid, eid), 1, 'A stored the half-published link');
+    assert.match(client.status(60), / pending link 60\b/, `the line does not name the pending link: ${client.status(60)}`);
+
+    // B COMES BACK - the same store, identity and port.
+    await round.restartB();
+    drive(client, 60);
+    const next = await client.markNow(driven(7, 120), 120);
+    const proofs = [await equivocation(A, rid, eid), await equivocation(B, rid, eid)];
+    const marks = [await stored(A, rid, eid), await stored(B, rid, eid)];
+    console.log(`  B back: mark 60 re-sent, witnessed ${client.witnessed(half.id)}; mark 120 ${next.answer}, `
+      + `live ${next.live}, names mark 60 ${toHex(next.checkpoint.previousHash) === toHex(half.id)}; `
+      + `checkpoints A ${marks[0]} B ${marks[1]}; /equivocation A ${proofs[0]} B ${proofs[1]}`);
+    assert.equal(client.witnessed(half.id), 2, 'the re-sent link is not carried by both');
+    assert.equal(client.marksRelinked, 1);
+    assert.equal(next.live, true, `the next checkpoint did not go live: ${next.answer}`);
+    assert.deepEqual(next.refused, []);
+    assert.equal(toHex(next.checkpoint.previousHash), toHex(half.id),
+      'the next checkpoint does not chain onto the re-sent one');
+    assert.deepEqual(marks, [2, 2]);
+    assert.deepEqual(proofs, [204, 204], 'a daemon holds a fork proof against an honest player');
+    assert.equal(await chainOn(B, rid, eid), await chainOn(A, rid, eid), 'A and B hold different chains');
+
+    // AND FROM HERE THE CHAIN GROWS ON BOTH, the same on each.
+    drive(client, 60);
+    const after = await client.markNow(driven(7, 180), 180);
+    assert.equal(after.live, true);
+    assert.equal(toHex(after.checkpoint.previousHash), toHex(next.id));
+    assert.deepEqual([await stored(A, rid, eid), await stored(B, rid, eid)], [3, 3]);
+    assert.deepEqual([await equivocation(A, rid, eid), await equivocation(B, rid, eid)], [204, 204]);
+    assert.equal(await chainOn(B, rid, eid), await chainOn(A, rid, eid));
+    const line = client.status(180);
+    console.log(`  after: checkpoints 3/3, same chain, no fork proof; ${line}`);
+    assert.equal(/pending link/.test(line), false, `the line still names a pending link: ${line}`);
+    assert.match(line, / relinked 1\b/);
+  } finally {
+    if (t) { t.client.ended = true; t.client.close(); }
+    await round.close();
   }
 });
