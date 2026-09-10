@@ -175,6 +175,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // seat that answers about a run is a seat that can be asked about its share.
   const preimages = new Preimages(round, {
     curve: feldmanGroup, peers, fetcher: (u, o) => fetch(u, o), random: (n) => new Uint8Array(randomBytes(n)),
+    // AND WHEN THE OPERATOR SAID NOTHING, the round's SETTLEMENT seats off the
+    // census - they hold the shares. Read when a stake is opened, long after
+    // `roster` below exists.
+    peersFor: (roundIdBytes) => settlementPeers(roundIdBytes),
   });
 
   /**
@@ -216,6 +220,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // read. Item 19's takeover waits a number of BLOCKS past this height, so a
     // node that seeds on one beacon cannot wait on another.
     ...(randomnessFor ? { randomnessFor } : {}),
+    // AND THE OTHER SETTLEMENT SEATS AT A LIVE CLOSE: the table's signatures are
+    // theirs. Measured before: "1 of 2 seats signed this table" on both daemons,
+    // because the census peers were read only at start, for rounds already owing.
+    peersFor: (roundIdBytes) => settlementPeers(roundIdBytes),
   });
 
   // AND THIS NODE'S HALF OF A SIGNING ROUND. `Payouts` decides which
@@ -291,6 +299,18 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // never an input to anybody's simulation, and the frames it hands out came
   // out of `replay.js` like everything else that touches the core.
   const ghosts = new Ghosts(round, { ...(randomnessFor ? { randomnessFor } : {}) });
+
+  // THE ROUND'S SETTLEMENT SEATS, OFF THE CENSUS: who holds a stake's shares
+  // and who signs its payout table. The same rule the receipt pull uses, for
+  // the other committee. Called at a close, when `roster` exists.
+  function settlementPeers(roundIdBytes) {
+    const picked = roster.committeeFor(roundIdBytes, 'settlement');
+    if (!picked.ok) {
+      console.error(`[custody] ${toHex(roundIdBytes).slice(0, 16)} reads no settlement seat addresses: ${picked.why}`);
+      return [];
+    }
+    return endpointsOf(picked.committee, round.pubkey);
+  }
 
   const verifier = new Verifier(round, {
     ...(randomnessFor ? { randomnessFor } : {}),

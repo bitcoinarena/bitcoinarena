@@ -176,7 +176,7 @@ export function eligibleAsker({ roundId, seats, beaconHeight, tipHeight,
  */
 export class Payouts {
   constructor(round, { curve, chain = null, pool = null, random, peers = [], fetcher = null,
-    randomnessFor = null } = {}) {
+    randomnessFor = null, peersFor = null } = {}) {
     this.round = round;
     // THE ROUND'S CHAIN CLOCK, injected the way the roster's and the
     // verifier's are. Item 19 waits on it; a node given none never takes over.
@@ -187,6 +187,16 @@ export class Payouts {
     this.pool = pool;
     this.random = random;
     this.peers = peers;
+    // THE ROUND'S OWN SETTLEMENT SEATS at a live close, when no list was given:
+    // measured before, "1 of 2 seats signed this table" on both daemons.
+    this.peersFor = peersFor;
+  }
+
+  /** Who to ask for a round's table signatures: a given list, else the census's. */
+  peersOf(roundIdBytes) {
+    if (this.peers && this.peers.length) return this.peers;
+    if (typeof this.peersFor !== 'function') return [];
+    try { return this.peersFor(roundIdBytes) || []; } catch { return []; }
   }
 
   get canSpend() { return !!(this.chain && this.pool); }
@@ -213,7 +223,7 @@ export class Payouts {
   /** Ask the other seats what they signed, and keep only what verifies. */
   async gather({ roundId }) {
     let fetched = 0, kept = 0, refused = 0;
-    for (const peer of this.peers) {
+    for (const peer of this.peersOf(roundId)) {
       let body;
       try {
         const got = await this.chainFetch(`${peer}/payout?round=${toHex(roundId)}`);

@@ -59,12 +59,24 @@ export function decodeShareAnswer(bytes) {
 }
 
 export class Preimages {
-  constructor(round, { curve, peers = [], fetcher = fetch, random } = {}) {
+  constructor(round, { curve, peers = [], fetcher = fetch, random, peersFor = null } = {}) {
     this.round = round;
     this.curve = curve;
     this.peers = peers;
+    // THE ROUND'S OWN SETTLEMENT SEATS, when the operator named none - the
+    // census's addresses, as the receipt pull reads them. Measured before: the
+    // loser's settle said "1 of 5 shares" with no peer in the reason, because
+    // the real launchers pass no `peers` and this asked nobody.
+    this.peersFor = peersFor;
     this.fetch = fetcher;
     this.random = random;
+  }
+
+  /** Who to ask for a share of one round's stake: a given list, else the census's. */
+  peersOf(roundIdBytes) {
+    if (this.peers && this.peers.length) return this.peers;
+    if (typeof this.peersFor !== 'function') return [];
+    try { return this.peersFor(roundIdBytes) || []; } catch { return []; }
   }
 
   /** The handout an entry names, decoded, or a refusal that says which is missing. */
@@ -177,7 +189,7 @@ export class Preimages {
 
     let refused = 0;
     const why = [];
-    for (const peer of this.peers) {
+    for (const peer of this.peersOf(roundId)) {
       if (bySeat.size >= needed) break;
       try {
         const url = `${peer}/share?round=${toHex(roundId)}&entry=${toHex(entryId)}`
