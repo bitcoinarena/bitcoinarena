@@ -717,3 +717,37 @@ test('a debt survives the state changes that come after it', () => {
     owedSats: 0n, owedCount: 0 });
   assert.equal(round.payout(rid).owedSats, 0n);
 });
+
+test('a payout row that has moved on is not rewritten when the close runs again - PAID stays PAID', async () => {
+  // M3.3-25 runs a round's close logic again when a run turns final after the
+  // first close. `queue` wrote its row with INSERT OR REPLACE, so a rerun on a
+  // round already queued or paid would put it back to PAYOUT_QUEUED.
+  const { round, rid, contract } = node(1000000n);
+  const winner = player(1); const loser = player(2);
+  const entries = entriesOf(1000000n, [winner, DELIVERED, 9], [loser, FORFEIT, 0]);
+  const dealt = poolFor();
+  const chain = fakeChain();
+  const payouts = new Payouts(round, { curve, random: rand, chain, pool: dealt });
+  const built = tableFor({ roundId: rid, entries, minScore: 1 });
+  for (let i = 1; i < 5; i++)
+    round.putPayoutSignature(rid, seatKeys[i],
+      signPayoutTable({ tableId: built.tableId, secret: seatSecrets[i], pubkey: seatKeys[i] }));
+  const queued = payouts.queue({ roundId: rid, entries, minScore: 1, contract });
+  assert.equal(queued.state, PAYOUT_QUEUED);
+
+  // QUEUED, AND QUEUED AGAIN: the row it wrote is the row it keeps.
+  const why = round.payout(rid).why;
+  const twice = payouts.queue({ roundId: rid, entries, minScore: 1, contract });
+  assert.equal(twice.state, PAYOUT_QUEUED);
+  assert.equal(round.payout(rid).why, why, 'a second queue rewrote the queued row');
+
+  const utxo = { txid: rand(32), vout: 0, value: 1000n };
+  const paid = await payouts.pay({ roundId: rid, rows: queued.rows, utxo, signers: dealt.shares.slice(0, 5) });
+  assert.equal(paid.state, PAID);
+
+  // AND PAID, THEN THE CLOSE AGAIN: still PAID, with its txid.
+  const again = payouts.queue({ roundId: rid, entries, minScore: 1, contract });
+  assert.equal(round.payout(rid).state, PAID, 'a rerun of the close put a PAID round back to PAYOUT_QUEUED');
+  assert.equal(again.state, PAID);
+  assert.ok(round.payout(rid).txid, 'the paid row lost its txid');
+});

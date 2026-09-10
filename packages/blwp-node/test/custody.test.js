@@ -366,6 +366,22 @@ test('a store written under the old ACTING label is still asked about, and resol
   assert.equal(round.hold(eid).state, SETTLED);
 });
 
+test('the same close run twice moves every hold once - a rerun leaves a moved hold where it is', async () => {
+  // M3.3-25 runs a round's close logic again when a run turns final after the
+  // first close. That is only safe if a hold that already moved is left alone.
+  const port = fakePort();
+  const { custody, close } = await midAct(port);
+  const first = await custody.settleHeldInvoices(close);
+  assert.equal(first.ok, true, first.why);
+  const acted = port.calls.filter((c) => c[0] === 'settle' || c[0] === 'cancel').length;
+  assert.equal(acted, 2, 'the first close did not act on both holds');
+  const again = await custody.settleHeldInvoices(close);
+  assert.equal(again.ok, true, again.why);
+  assert.equal(port.calls.filter((c) => c[0] === 'settle' || c[0] === 'cancel').length, acted,
+    'a rerun of the close moved a hold a second time');
+  assert.ok(again.actions.every((a) => /already moved/.test(a.why)), JSON.stringify(again.actions.map((a) => a.why)));
+});
+
 test('a node that died mid-act asks Lightning rather than acting again', async () => {
   // The window is one SIGKILL wide: Lightning has been told and this node has
   // not written it down. `custody-crash.mjs` kills a real process inside it;

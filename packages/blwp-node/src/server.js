@@ -162,7 +162,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // network is. Without it a close still queues the payout and stops - which
   // is exactly where item 18 found it - and says so rather than guessing at an
   // outpoint.
-  poolCall = null } = {}) {
+  poolCall = null,
+  // HOW LONG A CLOSED ROUND KEEPS ASKING ITS PEERS FOR THE RESULTS IT IS SHORT
+  // OF (M3.3-25): every `everyMs`, until final or `windowMs` has passed -
+  // the round's own objection window unless a test names a shorter one.
+  finality = {} } = {}) {
   const round = new Round(db);
 
   // WHAT HOLDS THE PLAYERS' MONEY. 23.1's hold invoice and 23.2's table, and
@@ -350,6 +354,70 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
    * 23.2's default and the same answer a crash gives.
    */
   let stakes = Promise.resolve({ ok: true, actions: [], why: 'no round has closed yet' });
+
+  /**
+   * FINALITY THAT DOES NOT DEPEND ON WHO CLOSES FIRST (M3.3-25).
+   *
+   * A close gathers each run's results once. Measured on the regtest rehearsal
+   * in both orders: the first daemon to close answered 126-171 ms before the
+   * other seat had stored that run's result, so it was left at "1 of 2 agree"
+   * and its payout table at "1 of 2 seats signed", and nothing asked again.
+   *
+   * So after a close, every stored run that is not final is gathered again from
+   * the round's peers every `everyMs` - results, the same pull as the close's -
+   * and while the payout table is short the round's close logic runs again
+   * too. When a run turns final, THIS ROUND'S OWN CLOSE LOGIC runs again:
+   * settle and cancel (a hold that moved is left alone), then the table's
+   * gather and queue (a row that moved on is kept). It stops when nothing is
+   * short, or when the round's objection window has passed, and says which.
+   */
+  const finalityTimers = new Set();
+  let shuttingDown = false;
+  function watchFinality(roundIdBytes, closed, money) {
+    const row = round.get(roundIdBytes);
+    if (!row) return;
+    const contract = decodeRoundContract(new Uint8Array(row.contract));
+    const everyMs = finality.everyMs ?? 2000;
+    const windowMs = finality.windowMs ?? Number(contract.objectionWindowMs);
+    const until = Date.now() + windowMs;
+    const gathered = [...((closed && closed.gathered) || [])];
+    const stored = ((closed && closed.replayed) || []).filter((r) => r && r.stored);
+    let latest = money;
+    const isFinal = (eid) => gathered.some((g) => g && g.ok && g.final && toHex(g.entryId) === toHex(eid));
+    const tableShort = () => !!(latest && latest.owed && latest.owed.ok === false
+      && typeof latest.owed.agreed === 'number');
+    let timer = null;
+    const tick = async () => {
+      finalityTimers.delete(timer);
+      if (shuttingDown) return;
+      const short = stored.filter((r) => !isFinal(r.entryId));
+      if (!short.length && !tableShort()) return;
+      if (Date.now() >= until) {
+        console.log(`[verify] ${toHex(roundIdBytes).slice(0, 16)} the objection window passed with `
+          + `${short.length} run(s) short of final${tableShort() ? ' and the table short' : ''}`);
+        return;
+      }
+      let turned = false;
+      for (const r of short) {
+        let g;
+        try { g = await verifier.gather(roundIdBytes, r.entryId); } catch { continue; }
+        const at = gathered.findIndex((x) => x && toHex(x.entryId) === toHex(r.entryId));
+        if (at >= 0) gathered[at] = g; else gathered.push(g);
+        if (g && g.ok && g.final) turned = true;
+      }
+      if (shuttingDown) return;
+      if (turned || tableShort()) {
+        stakes = settleTheStakes(roundIdBytes, { replayed: closed.replayed, gathered })
+          .catch((e) => { console.error(`[verify] ${e.message}`); return { ok: false, why: e.message }; });
+        latest = await stakes;
+      }
+      if (shuttingDown) return;
+      timer = setTimeout(tick, everyMs);
+      finalityTimers.add(timer);
+    };
+    timer = setTimeout(tick, everyMs);
+    finalityTimers.add(timer);
+  }
 
   async function settleTheStakes(roundIdBytes, closed) {
     if (!custody.reaches) return { ok: false, why: 'this node reaches no Lightning, so it settles nothing' };
@@ -1217,7 +1285,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             // this daemon that can settle a stake.
             if (shut) {
               stakes = verifier.settleRound(id)
-                .then((closed) => settleTheStakes(id, closed))
+                .then(async (closed) => {
+                  const money = await settleTheStakes(id, closed);
+                  watchFinality(id, closed, money);
+                  return money;
+                })
                 .catch((e) => { console.error(`[verify] ${e.message}`); return { ok: false, why: e.message }; });
             }
             return sock.send(shut ? 'closed' : 'already closed');
@@ -1327,6 +1399,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // took the node away hung instead, and the page kept publishing to a
       // server that was supposed to be gone.
       close: () => new Promise((r) => {
+        // NO RE-GATHER OUTLIVES THE DAEMON.
+        shuttingDown = true;
+        for (const t of finalityTimers) clearTimeout(t);
+        finalityTimers.clear();
         for (const sock of wss.clients) sock.terminate();
         wss.close();
         http.closeAllConnections();

@@ -264,6 +264,16 @@ export class Payouts {
     if (!seen.final)
       return { ok: false, agreed: seen.agreed, needed: seen.needed, why: seen.why };
 
+    // A ROW THAT HAS MOVED ON STAYS WHERE IT IS. A round's close logic runs
+    // again when a run turns final after the first close (M3.3-25), and this
+    // wrote its row with INSERT OR REPLACE - measured: a PAID round put back to
+    // PAYOUT_QUEUED. What was queued, paid or found owing nothing is answered
+    // as it stands.
+    const had = this.round.payout(roundId);
+    if (had && [PAYOUT_QUEUED, PAID, PAID_IN_PART, NOTHING_OWED].includes(had.state))
+      return { ok: true, state: had.state, already: true, tableId: had.tableId,
+        agreed: seen.agreed, needed: seen.needed };
+
     const owed = winnings({ table: built.table, stakes: entries });
     if (!owed.ok) return { ok: false, why: owed.why };
     if (!owed.rows.length) {
