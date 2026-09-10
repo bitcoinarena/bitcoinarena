@@ -303,7 +303,8 @@ export class Round {
       throw new Error(
         `that round's committee forms at ${opensAt} and it is ${now}: entry opens then`);
 
-    // AND IT PAYS WHAT THIS ROUND ASKS - THE STAKE, AND THEN THE FEE ON IT.
+    // AND IT PAYS WHAT THIS ROUND ASKS - THE STAKE, AND THE FEE AND THE
+    // DONATION OUT OF IT (22A: inclusive, never on top).
     //
     // Both against the CONTRACT and never against the entry's own story, which
     // is the whole of why this is two checks and not one. `feeMatchesEntry` is
@@ -314,9 +315,15 @@ export class Round {
     // of the four "standing" under the rule.
     //
     // A ZERO STAKE IS NOT A SMALL ENTRY, IT IS A FREE SEAT PAID FROM OTHER
-    // PLAYERS' MONEY. `custody.hold` issues the hold invoice for
-    // `entry.stakeMsat`, so that player pays nothing; `winnings` pays
-    // `amountMsat - stake`, so their whole table row comes out of the pool.
+    // PLAYERS' MONEY. `custody.hold` issues the hold invoice for the entry's
+    // net stake, so that player pays nothing; `winnings` pays `amountMsat -
+    // net`, so their whole table row comes out of the pool.
+    //
+    // THE DONATION IS CHECKED HERE TOO. The player chooses it and nobody may
+    // rewrite it (22A), but it comes out of the same commitment as the fee, so
+    // an entry whose fee and donation come to more than the stake does not
+    // stand. Measured before 6e: a 200000 msat donation on a 100000 stake was
+    // taken, because nothing at the door looked at the donation.
     // A door that checked only the fee would look checked and still pass it.
     //
     // THE RATE IS NOT A NUMBER THIS FILE KNOWS. `entryFeeMsat` is 27A.7's
@@ -327,7 +334,9 @@ export class Round {
       throw new Error(
         `that round asks a stake of ${asks.stakeMsat} msat and that entry names `
         + `${contract.stakeMsat}`);
-    const fee = feeMatchesEntry({ stakeMsat: asks.stakeMsat, feeMsat: contract.feeMsat });
+    const fee = feeMatchesEntry({
+      stakeMsat: asks.stakeMsat, feeMsat: contract.feeMsat, donationMsat: contract.donationMsat,
+    });
     if (!fee.ok) throw new Error(fee.why);
     // AND THE SHARES IT NAMES MUST BE SHARES THIS NODE CHECKED.
     //

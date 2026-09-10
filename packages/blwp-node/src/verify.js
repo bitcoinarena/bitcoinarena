@@ -195,7 +195,9 @@ export class Verifier {
     // again to learn them would be reading back what it just wrote.
     return { entryId, stored: true, resultId: signed.resultId,
       outcome: built.result.outcome, score: built.result.score,
-      playerPubkey: entry.playerPubkey, stakeMsat: entry.stakeMsat };
+      playerPubkey: entry.playerPubkey, stakeMsat: entry.stakeMsat,
+      // the fee and the donation too: 23.2's table is over NET stakes (22A)
+      feeMsat: entry.feeMsat, donationMsat: entry.donationMsat };
   }
 
   /**

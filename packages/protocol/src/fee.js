@@ -228,18 +228,13 @@ export const entryFeeMsat = (stakeMsat) => {
  * not made to catch.
  */
 export function feeMatchesEntry(entry) {
-  if (!entry)
+  // STRICT, AND ON PURPOSE. Every entry the door judges is decoded from signed
+  // bytes, so its amounts are BigInt - a free seat is three zeros, not three
+  // missing fields. Coercing a Number or a missing amount here would have
+  // hidden the wiring fault that refused the Daily's free seat at 11:15 (the
+  // door not yet passing the donation) instead of naming it.
+  if (!entry || typeof entry.stakeMsat !== 'bigint' || typeof entry.feeMsat !== 'bigint')
     return { ok: false, why: 'an entry carries a BigInt millisatoshi stake and fee' };
-  try {
-    entry = {
-      ...entry,
-      stakeMsat: typeof entry.stakeMsat === 'bigint' ? entry.stakeMsat : BigInt(entry.stakeMsat || 0),
-      feeMsat: typeof entry.feeMsat === 'bigint' ? entry.feeMsat : BigInt(entry.feeMsat || 0),
-      donationMsat: typeof entry.donationMsat === 'bigint' ? entry.donationMsat : BigInt(entry.donationMsat || 0),
-    };
-  } catch {
-    return { ok: false, why: 'an entry carries a BigInt millisatoshi stake and fee' };
-  }
   if (entry.stakeMsat < 0n || entry.feeMsat < 0n)
     return { ok: false, why: 'a stake and a fee cannot be negative' };
 

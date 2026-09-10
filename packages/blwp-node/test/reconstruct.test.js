@@ -404,7 +404,7 @@ test('a hold settles on a preimage five seats opened, and on nothing less', asyn
     assert.equal(held.ok, true, held.why);
 
     const summary = (outcome, score) => ({
-      entryId: eid, pubkey: entry.playerPubkey, outcome, score, stakeMsat: entry.stakeMsat,
+      entryId: eid, pubkey: entry.playerPubkey, outcome, score, stakeMsat: entry.stakeMsat, feeMsat: entry.feeMsat, donationMsat: entry.donationMsat,
     });
 
     // A LOSER SETTLES, and the preimage that went to Lightning is the one the
@@ -423,7 +423,7 @@ test('a hold settles on a preimage five seats opened, and on nothing less', asyn
     const paid = await custody.settleHeldInvoices({
       roundId: rid, minScore: 1, finalFor: () => true,
       entries: [summary(FORFEIT, 0), { entryId: sid, pubkey: second.playerPubkey,
-        outcome: DELIVERED, score: 9, stakeMsat: second.stakeMsat }],
+        outcome: DELIVERED, score: 9, stakeMsat: second.stakeMsat, feeMsat: second.feeMsat, donationMsat: second.donationMsat }],
     });
     assert.equal(paid.ok, true, paid.why);
     assert.equal(custody.stateOf(eid).state, SETTLED, 'the loser did not settle');
@@ -462,8 +462,8 @@ test('with four seats reachable the loser\'s stake stays in flight', async () =>
     const paid = await custody.settleHeldInvoices({
       roundId: rid, minScore: 1, finalFor: () => true,
       entries: [
-        { entryId: eid, pubkey: entry.playerPubkey, outcome: FORFEIT, score: 0, stakeMsat: entry.stakeMsat },
-        { entryId: entryId(second), pubkey: second.playerPubkey, outcome: DELIVERED, score: 9, stakeMsat: entry.stakeMsat },
+        { entryId: eid, pubkey: entry.playerPubkey, outcome: FORFEIT, score: 0, stakeMsat: entry.stakeMsat, feeMsat: entry.feeMsat, donationMsat: entry.donationMsat },
+        { entryId: entryId(second), pubkey: second.playerPubkey, outcome: DELIVERED, score: 9, stakeMsat: entry.stakeMsat, feeMsat: entry.feeMsat, donationMsat: entry.donationMsat },
       ],
     });
     assert.equal(paid.ok, true, paid.why);

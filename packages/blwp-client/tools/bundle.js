@@ -118,6 +118,10 @@ out += '         roundPays: roundPays, postHandout: postHandout,\n';
 // `spendLog` is what §24A.1 requires a client to show, and `spentLine` turns it
 // into one sentence - so the page renders a total it did not add up.
 out += '         tabWallet: tabWallet, spendLog: spendLog, spentLine: spentLine,\n';
+// WHAT THE SEAT COSTS, AS 22A's TRANSPARENCY LIST: the commitment, the fee and
+// the donation out of it, the net stake, and what the wallet is asked. The
+// page renders it; the subtraction is `netStakeMsat`'s.
+out += '         owedLine: owedLine,\n';
 out += '         parseConnection: parseConnection,\n';
 // WHAT THE WALLET WILL STILL LET THIS CONNECTION SPEND. Asked for, never read
 // off the connection string - NIP-47's URI carries no budget, and the field

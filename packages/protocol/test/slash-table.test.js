@@ -28,10 +28,10 @@ const committee = [NODE, b32(0x22), b32(0x23), b32(0x24), b32(0x25), b32(0x26), 
 // Two winners, two losers: a pool that actually divides and rows that are not
 // all zero, so a tampered amount has something to be wrong against.
 const entries = [
-  { pubkey: b32(0xa1), outcome: 'DELIVERED', score: 900, stakeMsat: 100000n },
-  { pubkey: b32(0xa2), outcome: 'DELIVERED', score: 500, stakeMsat: 100000n },
-  { pubkey: b32(0xa3), outcome: 'FAILED', score: 0, stakeMsat: 100000n },
-  { pubkey: b32(0xa4), outcome: 'FORFEIT', score: 0, stakeMsat: 100000n },
+  { pubkey: b32(0xa1), outcome: 'DELIVERED', score: 900, stakeMsat: 100000n, feeMsat: 0n, donationMsat: 0n },
+  { pubkey: b32(0xa2), outcome: 'DELIVERED', score: 500, stakeMsat: 100000n, feeMsat: 0n, donationMsat: 0n },
+  { pubkey: b32(0xa3), outcome: 'FAILED', score: 0, stakeMsat: 100000n, feeMsat: 0n, donationMsat: 0n },
+  { pubkey: b32(0xa4), outcome: 'FORFEIT', score: 0, stakeMsat: 100000n, feeMsat: 0n, donationMsat: 0n },
 ];
 // THE FLOOR IS THE ROUND'S, not this test's. It was an argument until the
 // contract was read here, and whoever writes a proof would otherwise pick the
@@ -124,7 +124,7 @@ test('the round is inside the table, so a signature cannot cross rounds', () => 
 test('an accuser cannot swap the inputs F is recomputed from', () => {
   const right = tableOf(honest().table);
   const theirs = [...entries.slice(0, 3),
-                  { pubkey: b32(0xa4), outcome: 'DELIVERED', score: 900, stakeMsat: 100000n }];
+                  { pubkey: b32(0xa4), outcome: 'DELIVERED', score: 900, stakeMsat: 100000n, feeMsat: 0n, donationMsat: 0n }];
 
   const swapped = slashHoldsOnTable({
     proof: proofFor(right), signedTable: right, advert, committee,

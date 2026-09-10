@@ -36,6 +36,9 @@ import { toHex, sha256 } from '../../protocol/src/hash.js';
 
 export { HELD, SETTLED, CANCELLED, EXPIRED, SETTLE, CANCEL, NOTHING };
 
+/** A seat in a round that asks no stake: there is no hold, by design. */
+export const FREE = 'FREE';
+
 /**
  * THE ONLY STATE IN THIS FILE THAT IS NOT 23.2'S.
  *
@@ -86,15 +89,20 @@ export class Custody {
    * and the same rule is run on the answer before a row is written.
    */
   async hold(entry) {
+    // A ROUND THAT ASKS NO STAKE HOLDS NOTHING, AND NEEDS NO LIGHTNING TO SAY
+    // SO. Satoshis are optional (the owner 2026-09-10 11:15): a free round is how
+    // ghosts are tested with no wallet, and its seat must not depend on a node
+    // this operator may never run. Asked BEFORE the Lightning question, so a
+    // free seat on a node with none reads as free rather than as a fault. It
+    // keys on the round asking nothing - not on a net of zero, which a paid
+    // entry whose donation took the rest would also reach.
+    if (entry && entry.stakeMsat === 0n)
+      return { ok: true, state: FREE, why: 'this round asks no stake: nothing is held and no Lightning is needed' };
+
     if (!this.reaches)
       return { ok: false, why: 'this node reaches no Lightning, so it holds no stakes' };
 
     const entryId = entryIdOf(entry);
-    let net;
-    try { net = netStakeMsat(entry); }
-    catch (e) { return { ok: false, why: e.message }; }
-    if (net === 0n)
-      return { ok: true, state: 'none', why: 'free seat, no lightning', already: true };
     const held = this.round.hold(entryId);
     if (held) return { ok: true, state: held.state, paymentHash: held.paymentHash,
       invoice: held.request, why: 'this entry already has a hold', already: true };

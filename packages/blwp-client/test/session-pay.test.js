@@ -45,6 +45,8 @@ const b32 = (n) => new Uint8Array(32).fill(n);
 const rand = (n) => new Uint8Array(randomBytes(n));
 const NOW = 1788700000000;
 const STAKE = 100000n;
+// 6e: the hold is the NET stake - 100000 committed, the 2% fee out of it (22A).
+const NET = STAKE - entryFeeMsat(STAKE);
 const session = ed25519.utils.randomSecretKey();
 
 const contractFor = (nodes) => ({
@@ -176,12 +178,12 @@ test('the client checks an invoice with the protocol\'s own rule, not a second f
     'the client restates the rule instead of importing it');
 
   // The rule itself works, and it is the daemon that has been running it.
-  const entry = { stakeMsat: STAKE, stakeCommitment: b32(9) };
-  const right = invoiceMatchesEntry({ paymentHash: b32(9), amountMsat: STAKE, entry });
+  const entry = { stakeMsat: STAKE, feeMsat: entryFeeMsat(STAKE), donationMsat: 0n, stakeCommitment: b32(9) };
+  const right = invoiceMatchesEntry({ paymentHash: b32(9), amountMsat: NET, entry });
   assert.equal(right.ok, true, right.why);
-  const wrongAmount = invoiceMatchesEntry({ paymentHash: b32(9), amountMsat: STAKE + 1n, entry });
+  const wrongAmount = invoiceMatchesEntry({ paymentHash: b32(9), amountMsat: NET + 1n, entry });
   assert.equal(wrongAmount.ok, false);
-  const wrongHash = invoiceMatchesEntry({ paymentHash: b32(8), amountMsat: STAKE, entry });
+  const wrongHash = invoiceMatchesEntry({ paymentHash: b32(8), amountMsat: NET, entry });
   assert.equal(wrongHash.ok, false);
   console.log(`  invoiceMatchesEntry callers in blwp-client/src: ${callers.length} (${callers.join(', ')}), imported`);
   console.log(`  and the rule holds: right pair stands, wrong amount "${wrongAmount.why}"`);
@@ -208,7 +210,7 @@ test('the door already quotes what this seat owes', async () => {
 
     assert.equal(quoted.paymentHash, toHex(c.entry.stakeCommitment),
       'the node quoted a hash that is not the entry\'s own commitment');
-    assert.equal(quoted.amountMsat, String(STAKE));
+    assert.equal(quoted.amountMsat, String(NET), 'the door quoted something other than the net stake (22A)');
     assert.ok(quoted.request.startsWith('lnbcrt-'), 'no payment request came back');
     console.log(`  /invoice: ${quoted.amountMsat} msat against hash `
       + `${quoted.paymentHash.slice(0, 16)}…, state ${quoted.state}`);
@@ -232,7 +234,7 @@ test('the client asks the node what it owes and the honest quote stands', async 
   try {
     const got = await c.client.invoice(c.entry, { entryId: c.eid });
     assert.equal(got.ok, true, got.why);
-    assert.equal(got.amountMsat, STAKE);
+    assert.equal(got.amountMsat, NET);
     assert.deepEqual(got.paymentHash, c.entry.stakeCommitment,
       'the hash the client accepted is not the one its own entry commits to');
     assert.ok(got.request.startsWith('lnbcrt-'), 'no payment request came back');
@@ -272,7 +274,7 @@ test('a node that quotes a wrong amount or a wrong hash is refused by the player
   const c = await seated();
   const honest = {
     entry: toHex(c.eid), paymentHash: toHex(c.entry.stakeCommitment),
-    amountMsat: String(STAKE), state: HELD, request: 'lnbcrt-liar',
+    amountMsat: String(NET), state: HELD, request: 'lnbcrt-liar',
   };
   try {
     // ASKS FOR MORE THAN THE ENTRY STAKED.
@@ -280,7 +282,7 @@ test('a node that quotes a wrong amount or a wrong hash is refused by the player
     c.client.base = `http://127.0.0.1:${greedy.port}`;
     const over = await c.client.invoice(c.entry, { entryId: c.eid });
     assert.equal(over.ok, false, 'the client took a quote for twice what its entry staked');
-    assert.match(over.why, /asks 200000 msat and the entry staked 100000/);
+    assert.match(over.why, /asks 200000 msat and this entry holds 98000/);
     console.log(`  wrong amount: ${over.why}`);
     await greedy.close();
 

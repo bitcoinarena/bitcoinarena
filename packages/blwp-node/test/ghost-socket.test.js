@@ -28,19 +28,19 @@ import { O_TRUCK, T_X, T_Z, T_HEADING } from '../../core/src/state.js';
 // (M3.3 item 20) - so a fixture carries the RULE rather than a number.
 import { entryFeeMsat } from '../../protocol/src/fee.js';
 const b32 = (n) => new Uint8Array(32).fill(n);
-const contract = () => ({
+const contract = (stakeMsat = 100000n) => ({
   networkId: b32(0x4e), configHash: b32(0x43), censusConfirmations: 6, gameVerifySlots: 7,
   settlementSlots: 7, simCoreHash: b32(1), startTimeMs: 60500n, entryCloseMs: 2000n,
   objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20,
   slashRemainder: 'BURN', donationSetId: b32(0xd0), censusHeight: 900000, censusRoot: b32(2),
-  committeeTimeMs: 500n, randomnessRule: 'bitcoin-block-hash', stakeMsat: 100000n, bondMinSats: 50000n, blockTicks: 9000,
+  committeeTimeMs: 500n, randomnessRule: 'bitcoin-block-hash', stakeMsat, bondMinSats: 50000n, blockTicks: 9000,
   exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
   timeFloor: 30, timeCeil: 150, minScore: 1, rankNumerator: 3, rankDenominator: 4,
   nodes: [b32(4)],
 });
-const entryFor = (rid, n) => ({
+const entryFor = (rid, n, stakeMsat = 100000n) => ({
   roundId: rid, playerPubkey: b32(n), sessionPubkey: b32(n + 1), stakeCommitment: b32(7),
-  stakeMsat: 100000n, feeMsat: entryFeeMsat(100000n), donationMsat: 0n, joinTick: 0, worldSecret: b32(0x50 + n), vssSharesRef: new Uint8Array(32),
+  stakeMsat, feeMsat: entryFeeMsat(stakeMsat), donationMsat: 0n, joinTick: 0, worldSecret: b32(0x50 + n), vssSharesRef: new Uint8Array(32),
 });
 
 // THE ROUND'S RANDOMNESS IS THE FIXTURE'S OWN 32 BYTES, exactly as
@@ -53,7 +53,7 @@ const wordsAt = (n) => (t) => [45875, ((t * (977 + n)) % 30000) - 15000, (t % 70
 
 const post = async (port, path, body) => {
   const r = await fetch(`http://127.0.0.1:${port}${path}`, { method: 'POST', body });
-  return { status: r.status, bytes: new Uint8Array(await r.arrayBuffer()) };
+  return { status: r.status, hold: r.headers.get('x-hold'), bytes: new Uint8Array(await r.arrayBuffer()) };
 };
 
 /** A socket that KEEPS what it was sent, because pushes are the measurement. */
@@ -96,13 +96,15 @@ function drove(entry, ticks, n) {
   return at;
 }
 
-async function twoIdentities(node) {
-  const c = contract();
+async function twoIdentities(node, stakeMsat = 100000n) {
+  const c = contract(stakeMsat);
   const rid = (await post(node.port, '/round', encodeRoundContract(c))).bytes;
-  const a = entryFor(rid, 5);
-  const b = entryFor(rid, 9);
-  const eidA = (await post(node.port, '/entry', encodeEntryContract(a))).bytes;
-  const eidB = (await post(node.port, '/entry', encodeEntryContract(b))).bytes;
+  const a = entryFor(rid, 5, stakeMsat);
+  const b = entryFor(rid, 9, stakeMsat);
+  const seatA = await post(node.port, '/entry', encodeEntryContract(a));
+  const seatB = await post(node.port, '/entry', encodeEntryContract(b));
+  const eidA = seatA.bytes;
+  const eidB = seatB.bytes;
   const batchOf = (eid, n, first, count, previousHash = GENESIS) => {
     const words = wordsAt(n);
     const batch = {
@@ -111,7 +113,7 @@ async function twoIdentities(node) {
     };
     return { bytes: encodeInputBatch(batch), id: batchId(batch) };
   };
-  return { rid, a, b, eidA, eidB, batchOf };
+  return { rid, a, b, eidA, eidB, batchOf, seats: [seatA, seatB] };
 }
 
 test('a second identity\'s ghost arrives on the socket, carrying the truck the core reached', async () => {
@@ -153,6 +155,42 @@ test('a second identity\'s ghost arrives on the socket, carrying the truck the c
     const bound = ghostBinds(g, decodeTranscript(node.round.handOver(rid, eidB).bytes), b);
     assert.equal(bound.ok, true, bound.why);
 
+    viewer.shut(); other.shut();
+  } finally { await node.close(); }
+});
+
+/**
+ * A GHOST NEEDS NO MONEY. M3.3-19, the owner 2026-09-10 11:15: "satoshis are
+ * optional; a stake-0 round must seat without Lightning so ghosts can be
+ * tested with no wallet". The Daily refused exactly this seat.
+ *
+ * The same drive as above on a round that asks nothing, on a daemon given no
+ * Lightning port: both identities are seated as FREE, and the watcher is shown
+ * the other truck at the pose the core reached - the picture does not depend
+ * on a stake existing.
+ */
+test('a round that asks no stake seats two players with no Lightning, and the ghost follows', async () => {
+  const node = await serve(openStore(), { port: 0, ...FUNDED });
+  try {
+    const { rid, b, eidA, eidB, batchOf, seats } = await twoIdentities(node, 0n);
+    assert.deepEqual(seats.map((s) => s.status), [201, 201], 'a free seat was refused');
+    assert.deepEqual(seats.map((s) => s.hold), ['FREE', 'FREE'],
+      'a free seat was reported as something other than free');
+
+    const viewer = await talk(node.port);
+    const other = await talk(node.port);
+    assert.equal(await other.say(batchOf(eidB, 9, 0, 120).bytes), '120');
+    assert.equal(await viewer.say(`watch ${toHex(rid)} ${toHex(eidA)}`), 'watching 1');
+
+    const g = decodeGhost(viewer.pushed[0]);
+    const truck = drove(b, 120, 9);
+    assert.equal(toHex(g.entryId), toHex(eidB));
+    assert.equal(g.tick, 119);
+    assert.deepEqual([g.x, g.z, g.heading],
+      [truck.get(119).x, truck.get(119).z, truck.get(119).heading],
+      'the free round\'s ghost is not the core\'s truck');
+    console.log(`  free round, no Lightning: 2 seats FREE, ghost of ${toHex(eidB).slice(0, 8)} `
+      + `at tick ${g.tick}, (${g.x}, ${g.z}) - the core's own`);
     viewer.shut(); other.shut();
   } finally { await node.close(); }
 });

@@ -102,7 +102,7 @@ test('a false value moves no output and burns nothing, because the amount is in 
 
   const entries = signingEntries(c.rounds[0], c.rid);
   const table = tableFor({ roundId: c.rid, entries, minScore: c.minScore }).table;
-  const owed = winnings({ table, stakes: entries.map((e) => ({ pubkey: e.pubkey, stakeMsat: e.stakeMsat })) });
+  const owed = winnings({ table, stakes: entries });
 
   const honest = payoutOutputs({ rows: owed.rows, poolSats: POOL_SATS });
   const understated = payoutOutputs({ rows: owed.rows, poolSats: POOL_SATS / 4n });

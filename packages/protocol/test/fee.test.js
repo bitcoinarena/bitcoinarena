@@ -239,19 +239,19 @@ test('a fee is two percent of that entry\'s own stake, on top of it', () => {
 });
 
 test('an honest two percent stands and anything else does not', () => {
-  const ok = feeMatchesEntry({ stakeMsat: 100000n, feeMsat: 2000n });
+  const ok = feeMatchesEntry({ stakeMsat: 100000n, feeMsat: 2000n, donationMsat: 0n });
   assert.equal(ok.ok, true, ok.why);
   assert.equal(ok.owed, 2000n);
 
-  const over = feeMatchesEntry({ stakeMsat: 100000n, feeMsat: 2001n });
+  const over = feeMatchesEntry({ stakeMsat: 100000n, feeMsat: 2001n, donationMsat: 0n });
   assert.equal(over.ok, false, 'one millisatoshi over stood');
   assert.equal(over.owed, 2000n);
   assert.match(over.why, /the 1 over is money no fee table allocates/);
 
-  const under = feeMatchesEntry({ stakeMsat: 100000n, feeMsat: 1999n });
+  const under = feeMatchesEntry({ stakeMsat: 100000n, feeMsat: 1999n, donationMsat: 0n });
   assert.equal(under.ok, false, 'one millisatoshi under stood');
 
-  const none = feeMatchesEntry({ stakeMsat: 100000n, feeMsat: 0n });
+  const none = feeMatchesEntry({ stakeMsat: 100000n, feeMsat: 0n, donationMsat: 0n });
   assert.equal(none.ok, false, 'a positive stake with no fee stood');
   assert.equal(none.owed, 2000n);
 });

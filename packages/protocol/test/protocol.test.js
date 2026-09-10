@@ -247,9 +247,9 @@ test('rank weights are exact integers, not a float curve', () => {
 
 test("the worked example from 18A.6 comes out at the spec's numbers", () => {
   const entries = [];
-  for (let i = 0; i < 50; i++) entries.push({ pubkey: pk(i), stakeMsat: 100000n, outcome: DELIVERED, score: 50 });
-  for (let i = 0; i < 25; i++) entries.push({ pubkey: pk(100 + i), stakeMsat: 100000n, outcome: DELIVERED, score: 900 });
-  for (let i = 0; i < 25; i++) entries.push({ pubkey: pk(200 + i), stakeMsat: 100000n, outcome: FAILED, score: 0 });
+  for (let i = 0; i < 50; i++) entries.push({ pubkey: pk(i), stakeMsat: 100000n, feeMsat: 0n, donationMsat: 0n, outcome: DELIVERED, score: 50 });
+  for (let i = 0; i < 25; i++) entries.push({ pubkey: pk(100 + i), stakeMsat: 100000n, feeMsat: 0n, donationMsat: 0n, outcome: DELIVERED, score: 900 });
+  for (let i = 0; i < 25; i++) entries.push({ pubkey: pk(200 + i), stakeMsat: 100000n, feeMsat: 0n, donationMsat: 0n, outcome: FAILED, score: 0 });
 
   const r = computePayoutTable({ roundId: b32(9), entries, minScore: 1 });
   assert.equal(r.pool, 2500000n);
@@ -264,8 +264,8 @@ test('nothing is created or destroyed, remainders included', () => {
   // A pool that does not divide evenly by the weights is the case where a
   // careless implementation drops millisatoshi on the floor.
   const entries = [];
-  for (let i = 0; i < 7; i++) entries.push({ pubkey: pk(i), stakeMsat: 33333n, outcome: DELIVERED, score: 100 + i });
-  for (let i = 0; i < 3; i++) entries.push({ pubkey: pk(50 + i), stakeMsat: 33333n, outcome: FAILED, score: 0 });
+  for (let i = 0; i < 7; i++) entries.push({ pubkey: pk(i), stakeMsat: 33333n, feeMsat: 0n, donationMsat: 0n, outcome: DELIVERED, score: 100 + i });
+  for (let i = 0; i < 3; i++) entries.push({ pubkey: pk(50 + i), stakeMsat: 33333n, feeMsat: 0n, donationMsat: 0n, outcome: FAILED, score: 0 });
 
   const r = computePayoutTable({ roundId: b32(4), entries, minScore: 1 });
   const paid = r.table.reduce((s, t) => s + t.amountMsat, 0n);
@@ -274,9 +274,9 @@ test('nothing is created or destroyed, remainders included', () => {
 
 test('VOID entries neither contribute nor draw', () => {
   const entries = [
-    { pubkey: pk(1), stakeMsat: 100000n, outcome: DELIVERED, score: 500 },
-    { pubkey: pk(2), stakeMsat: 100000n, outcome: FAILED, score: 0 },
-    { pubkey: pk(3), stakeMsat: 100000n, outcome: VOID, score: 0 },
+    { pubkey: pk(1), stakeMsat: 100000n, feeMsat: 0n, donationMsat: 0n, outcome: DELIVERED, score: 500 },
+    { pubkey: pk(2), stakeMsat: 100000n, feeMsat: 0n, donationMsat: 0n, outcome: FAILED, score: 0 },
+    { pubkey: pk(3), stakeMsat: 100000n, feeMsat: 0n, donationMsat: 0n, outcome: VOID, score: 0 },
   ];
   const r = computePayoutTable({ roundId: b32(1), entries, minScore: 1 });
   assert.equal(r.table.length, 2, 'a VOID entry appeared in the table');
@@ -285,8 +285,8 @@ test('VOID entries neither contribute nor draw', () => {
 
 test('with no qualifiers everyone keeps nothing and the pool is untouched', () => {
   const entries = [
-    { pubkey: pk(1), stakeMsat: 100000n, outcome: FAILED, score: 0 },
-    { pubkey: pk(2), stakeMsat: 100000n, outcome: FORFEIT, score: 0 },
+    { pubkey: pk(1), stakeMsat: 100000n, feeMsat: 0n, donationMsat: 0n, outcome: FAILED, score: 0 },
+    { pubkey: pk(2), stakeMsat: 100000n, feeMsat: 0n, donationMsat: 0n, outcome: FORFEIT, score: 0 },
   ];
   const r = computePayoutTable({ roundId: b32(1), entries, minScore: 1 });
   assert.equal(r.qualifiers, 0);

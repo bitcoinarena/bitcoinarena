@@ -41,6 +41,7 @@ import { toHex, sha256 } from '../../protocol/src/hash.js';
 // The node fee is 27A.7's 2% of the stake, and the door checks it now
 // (M3.3 item 20) - so a fixture carries the RULE rather than a number.
 import { entryFeeMsat } from '../../protocol/src/fee.js';
+import { netStakeMsat } from "../../protocol/src/payout.js";
 const b32 = (n) => new Uint8Array(32).fill(n);
 const FUNDED = { funded: () => true };
 const RANDOMNESS = b32(0x9b);
@@ -123,7 +124,7 @@ test('a seated player is quoted the hold invoice their own entry names', async (
     assert.equal(quote.body.entry, eid);
     assert.equal(quote.body.paymentHash, toHex(entry.stakeCommitment),
       'the invoice is for a hash the player never signed');
-    assert.equal(quote.body.amountMsat, String(entry.stakeMsat));
+    assert.equal(quote.body.amountMsat, String(netStakeMsat(entry)), "the quote is not the net stake (22A)");
     assert.equal(quote.body.state, HELD);
     assert.match(quote.body.request, /^lnbcrt-/);
 
@@ -245,7 +246,7 @@ test('closing a round on the daemon reaches the money path, and moves no stake',
     assert.equal(money.considered, 1);
     assert.deepEqual(money.agreed, [], 'one seat of two was counted as an agreement');
     assert.equal(money.ok, false);
-    assert.match(money.why, /a pool of 100000 against 0 handed out/,
+    assert.match(money.why, new RegExp(`a pool of ${netStakeMsat(entryFor(new Uint8Array(32)))} against 0 handed out`),
       'the close never reached the stake table with this round\'s own entries');
     assert.match(money.why, /expires to its player/);
     assert.equal(node.round.hold(eid).state, HELD);
@@ -295,7 +296,7 @@ test('the committee agreeing on a round nobody finished still moves no stake', a
     assert.deepEqual(money.agreed, [toHex(eid)],
       'the close did not take its finality from the gather it just ran');
     assert.equal(money.ok, false);
-    assert.match(money.why, /a pool of 100000 against 0 handed out/);
+    assert.match(money.why, new RegExp(`a pool of ${netStakeMsat(entryFor(new Uint8Array(32)))} against 0 handed out`));
     assert.match(money.why, /expires to its player/);
     assert.equal(node.round.hold(eid).state, HELD);
     assert.deepEqual(port.acts(), [],

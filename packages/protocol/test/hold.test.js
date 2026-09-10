@@ -30,8 +30,11 @@ import {
 } from '../src/payout.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
+// No fee and no donation, so every hold here holds the whole stake and the
+// arithmetic below is 23.2's alone. What the fee and the donation do to a
+// hold is `inclusive.test.js`.
 const entry = (n, outcome, score = 0, stakeMsat = 100000n) =>
-  ({ entryId: b32(n), pubkey: b32(n), outcome, score, stakeMsat });
+  ({ entryId: b32(n), pubkey: b32(n), outcome, score, stakeMsat, feeMsat: 0n, donationMsat: 0n });
 const ready = { state: 'FINAL', shares: 5, signatures: 5 };
 
 test('a VOID stake needs nobody to act: the HTLC expires and the wallet is refunded', () => {
@@ -282,15 +285,16 @@ test('a hold nobody acts on expires, whatever was supposed to happen to it', () 
  */
 test('a player pays an invoice only for the hash and amount their entry signed', () => {
   const stakeCommitment = new Uint8Array(32).fill(0xa7);
-  const entry = { stakeCommitment, stakeMsat: 100000n };
+  // 6e: the hold is for the NET stake - 100000 committed, 2000 of it the fee.
+  const entry = { stakeCommitment, stakeMsat: 100000n, feeMsat: 2000n, donationMsat: 0n };
 
-  const good = invoiceMatchesEntry({ paymentHash: stakeCommitment, amountMsat: 100000n, entry });
+  const good = invoiceMatchesEntry({ paymentHash: stakeCommitment, amountMsat: 98000n, entry });
   assert.equal(good.ok, true, good.why);
   assert.match(good.why, /the ones this entry signed/);
 
   // another hash: the shares would reconstruct a preimage for a different one
   const elsewhere = invoiceMatchesEntry({
-    paymentHash: new Uint8Array(32).fill(0xbb), amountMsat: 100000n, entry,
+    paymentHash: new Uint8Array(32).fill(0xbb), amountMsat: 98000n, entry,
   });
   assert.equal(elsewhere.ok, false);
   assert.match(elsewhere.why, /nobody could ever settle it/);
@@ -298,17 +302,26 @@ test('a player pays an invoice only for the hash and amount their entry signed',
   // one byte of the hash
   const nearly = new Uint8Array(stakeCommitment);
   nearly[31] ^= 1;
-  assert.equal(invoiceMatchesEntry({ paymentHash: nearly, amountMsat: 100000n, entry }).ok, false);
+  assert.equal(invoiceMatchesEntry({ paymentHash: nearly, amountMsat: 98000n, entry }).ok, false);
 
-  // more than the round was signed for, and less than it
-  for (const amountMsat of [100001n, 99999n, 0n, 1000000n]) {
+  // more than the entry holds, and less - THE COMMITMENT ITSELF AMONG THEM:
+  // an invoice for the whole 100000 puts the fee in a hold that is cancelled
+  // back to a winner, which is the on-top reading 6e removed
+  for (const amountMsat of [100000n, 98001n, 97999n, 0n, 1000000n]) {
     const said = invoiceMatchesEntry({ paymentHash: stakeCommitment, amountMsat, entry });
     assert.equal(said.ok, false, String(amountMsat));
-    assert.match(said.why, new RegExp(`asks ${amountMsat} msat and the entry staked 100000`));
+    assert.match(said.why, new RegExp(`asks ${amountMsat} msat and this entry holds 98000: `
+      + 'a stake of 100000 less a fee of 2000 and a donation of 0'));
   }
 
   // and the shapes that are not an invoice at all
-  assert.equal(invoiceMatchesEntry({ paymentHash: stakeCommitment, amountMsat: 100000n }).ok, false);
-  assert.equal(invoiceMatchesEntry({ paymentHash: stakeCommitment, amountMsat: 100000, entry }).ok, false);
-  assert.equal(invoiceMatchesEntry({ paymentHash: new Uint8Array(31), amountMsat: 100000n, entry }).ok, false);
+  assert.equal(invoiceMatchesEntry({ paymentHash: stakeCommitment, amountMsat: 98000n }).ok, false);
+  assert.equal(invoiceMatchesEntry({ paymentHash: stakeCommitment, amountMsat: 98000, entry }).ok, false);
+  assert.equal(invoiceMatchesEntry({ paymentHash: new Uint8Array(31), amountMsat: 98000n, entry }).ok, false);
+  // an entry that names no fee is not read as a free one
+  const unnamed = invoiceMatchesEntry({
+    paymentHash: stakeCommitment, amountMsat: 100000n, entry: { stakeCommitment, stakeMsat: 100000n },
+  });
+  assert.equal(unnamed.ok, false, 'an entry with no fee named was held whole');
+  assert.match(unnamed.why, /names its stake, its fee and its donation/);
 });

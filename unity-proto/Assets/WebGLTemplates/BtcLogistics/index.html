@@ -530,9 +530,11 @@
       if (!pays) { el.style.display = 'none'; return; }
       el.style.display = 'block';
 
-      document.getElementById('blwp-owed').textContent = owed
-        ? `this seat owes ${owed.amountMsat / 1000n} sat · ${owed.state}`
-        : 'this seat owes —';
+      // THE BREAKDOWN IS THE CLIENT'S. 22A: the commitment, the fee and the
+      // donation coming OUT of it, the net stake, and what the wallet is asked
+      // - all off the entry this player signed, none of it subtracted here.
+      document.getElementById('blwp-owed').textContent =
+        BLWPCLIENT.owedLine(window.BLWP_ENTRY, owed);
       // THE TOTAL IS THE CLIENT'S. A page that added up its own payments would
       // be showing a figure nobody checked.
       document.getElementById('blwp-spent').textContent = BLWPCLIENT.spentLine(spent);

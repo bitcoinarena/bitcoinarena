@@ -2350,6 +2350,53 @@ const REFUNDS = [VOID, ENTRY_VOID];
 const isRefund = (outcome) => REFUNDS.includes(outcome);
 
 /**
+ * WHAT OF AN ENTRY'S STAKE IS GAME MONEY, AND THIS IS THE ONLY PLACE THAT SAYS.
+ *
+ * 22A, "Collection: inclusive in the stake (changed)": wallet commitment 100
+ * sat, node fee 2, donation 2, "net game stake 96 sat -> the pool". "'Play for
+ * 100' now means 100 leaves the wallet." So `stakeMsat` is the commitment -
+ * the one number the player approves - and the fee and the donation come OUT
+ * of it. What is left is what the hold invoice holds, what a loser's settle
+ * puts in the pool, what a qualifier's cancel hands back, and what a
+ * qualifier's share is weighted by.
+ *
+ * Until 6e this repo read 18's older sentence instead - fees "charged on top
+ * of the stake" - and the net stake did not exist: a loser who had donated 2%
+ * credited the pool with 100000 msat where 96000 was game money, and the hold
+ * invoice for the net was refused. The spec keeps the fee and the donation OUT
+ * of the pool wallet (23.5: "paid from separate entry-time commitments"), and
+ * a DELIVERED hold is cancelled back to its player (23.2), so a hold for the
+ * whole commitment would hand every winner their own fee back.
+ *
+ * ALL THREE NUMBERS ARE REQUIRED. An entry with no fee or no donation named is
+ * refused rather than read as zero, because zero is exactly the on-top reading
+ * coming back through a missing field.
+ */
+// A FREE SEAT IS THREE ZEROS, NOT THREE MISSING FIELDS. Every entry the door
+// takes is decoded from signed bytes, so its three amounts are BigInt whether
+// the round asks 0 or 100000; the free seat the owner photographed refused at
+// 11:15 was a daemon started between two edits, when the fee rule already
+// asked for the donation and the door did not yet pass it. Coercing a missing
+// or numeric amount to BigInt here would hide exactly that kind of wiring
+// fault - and a float stake is refused outright, as it always was.
+function netStakeMsat(e) {
+  if (!e || typeof e.stakeMsat !== 'bigint' || typeof e.feeMsat !== 'bigint'
+      || typeof e.donationMsat !== 'bigint')
+    throw new Error('stakes must be BigInt millisatoshi, and an entry names its stake, its fee '
+      + 'and its donation: the net stake is the first less the other two (22A)');
+  const stake = e.stakeMsat;
+  const fee = e.feeMsat;
+  const donation = e.donationMsat;
+  if (stake < 0n || fee < 0n || donation < 0n)
+    throw new Error('a stake, a fee and a donation cannot be negative');
+  const net = stake - fee - donation;
+  if (net < 0n)
+    throw new Error(`a fee of ${e.feeMsat} and a donation of ${e.donationMsat} come out of a `
+      + `stake of ${e.stakeMsat}, and cannot come to more than it`);
+  return net;
+}
+
+/**
  * Rank weights as EXACT INTEGERS.
  *
  * The curve is geometric with r = 3/4 (spec 18A.4). Written as a float it
@@ -2393,7 +2440,9 @@ function remainderOrder(roundId, entries) {
 /**
  * computePayoutTable
  *
- * `entries` carry: pubkey (32 bytes), stakeMsat (BigInt), outcome, score.
+ * `entries` carry: pubkey (32 bytes), the entry's own stakeMsat, feeMsat and
+ * donationMsat (BigInt), outcome, score. Every amount below is the NET stake
+ * (`netStakeMsat`); the commitment itself appears nowhere in the table.
  * Returns a payout per entry plus the pool that produced it.
  *
  * The invariant at the end is the whole point of the function. If it does not
@@ -2401,14 +2450,12 @@ function remainderOrder(roundId, entries) {
  * one assertion that catches a whole class of mistakes for free.
  */
 function computePayoutTable({ roundId, entries, minScore = 0 }) {
-  for (const e of entries)
-    if (typeof e.stakeMsat !== 'bigint')
-      throw new Error('stakes must be BigInt millisatoshi');
+  const net = new Map(entries.map((e) => [e, netStakeMsat(e)]));
 
   const activated = entries.filter((e) => !isRefund(e.outcome));
   const pool = activated
     .filter((e) => e.outcome === FAILED || e.outcome === FORFEIT)
-    .reduce((s, e) => s + e.stakeMsat, 0n);
+    .reduce((s, e) => s + net.get(e), 0n);
 
   // Qualification is generous on purpose: a cautious player keeps their stake
   // and simply does not place. Disqualifying them would move their stake into
@@ -2438,9 +2485,43 @@ function computePayoutTable({ roundId, entries, minScore = 0 }) {
 
   const payouts = new Map();
   for (const e of activated) payouts.set(e, 0n);
-  for (const e of qualifiers) payouts.set(e, e.stakeMsat);      // stake back
+  for (const e of qualifiers) payouts.set(e, net.get(e));       // net stake back
 
   const k = Math.min(payingRanks(qualifiers.length), qualifiers.length);
+
+  // QUALIFIERS WHO STAKED DIFFERENT NETS ARE NOT GUESSED AT.
+  //
+  // 22A: with an inclusive donation "players no longer contribute equally",
+  // and left there "donating would be rewarded twice", so "each rank's share
+  // is then scaled by that player's net stake against the mean net stake of
+  // the qualifiers." AS WRITTEN THAT DOES NOT SPEND THE POOL, and both ways of
+  // making it do so were measured:
+  //
+  //   literal, against the     one winner at 98 above three qualifiers at 93,
+  //   qualifiers' mean         K = 1: 98/94.25 of the pool - 104% of money
+  //                            that is not there, and 19 forbids it; the other
+  //                            way round it leaves part of the pool with
+  //                            nobody named to receive it
+  //   normalised over the      conserves exactly - and at K = 1, every round
+  //   paying ranks             of four qualifiers or fewer, the one paying
+  //                            rank takes the whole pool whatever it donated:
+  //                            the double reward 22A exists to remove
+  //
+  // Where the difference goes is a money rule the spec does not make, so this
+  // does not make one. Such a table is REFUSED, which is the inaction every
+  // refusal here means: no stake moves and every hold expires to its player.
+  // Nothing live reaches it - the door fixes the stake and the fee and the
+  // client writes no donation - and a player choosing one is 6b's, behind the
+  // ruling this names. With every net equal the curve is unscaled, which is
+  // what the weighting reduces to, so nothing is lost by waiting.
+  if (pool > 0n) {
+    const nets = new Set(qualifiers.map((e) => net.get(e)));
+    if (nets.size > 1)
+      throw new Error(`the qualifiers staked different nets (${[...nets].join(', ')} msat): 22A `
+        + 'weights a share by net stake and, as written, that does not spend the pool - no '
+        + 'table until it is ruled, so every hold expires to its player');
+  }
+
   const weights = rankWeights(k);
   const total = weights.reduce((s, w) => s + w, 0n);
 
@@ -2464,10 +2545,10 @@ function computePayoutTable({ roundId, entries, minScore = 0 }) {
   }
 
   const paid = [...payouts.values()].reduce((s, v) => s + v, 0n);
-  const staked = settling.reduce((s, e) => s + e.stakeMsat, 0n);
+  const staked = settling.reduce((s, e) => s + net.get(e), 0n);
 
-  // Fees and donations are charged ON TOP of the stake at entry (spec 18), so
-  // they never appear here - which is exactly why this equality is clean. It
+  // The fee and the donation come out of the commitment before anything here
+  // (22A), so the equality is over NET stakes and neither appears in it. It
   // no longer waits for a non-empty pool: an empty one was where the cautious
   // player's stake went missing.
   if (qualifiers.length > 0 && paid !== staked)
@@ -2730,15 +2811,18 @@ function holdSettlement({ roundId, entries, minScore = 0 }) {
     return { entry: e, action, why: said.why };
   });
 
+  // WHAT EACH HOLD HOLDS is the net stake, so that is what a settle moves and
+  // what a cancel or an expiry hands back. The fee and the donation were never
+  // in a hold (23.5).
   const poolMsat = actions
     .filter((a) => a.action === SETTLE)
-    .reduce((s, a) => s + a.entry.stakeMsat, 0n);
+    .reduce((s, a) => s + netStakeMsat(a.entry), 0n);
   const refundedMsat = actions
     .filter((a) => a.action !== SETTLE)
-    .reduce((s, a) => s + a.entry.stakeMsat, 0n);
+    .reduce((s, a) => s + netStakeMsat(a.entry), 0n);
 
   // What the pool actually hands out: each row's amount less the entry's own
-  // stake, since that half never entered the pool.
+  // net stake, since that half never entered the pool.
   //
   // THE ROWS COME FROM THE TABLE, not from a second filter over the entries.
   // They are matched to amounts BY INDEX, so a filter here that disagreed with
@@ -2749,7 +2833,8 @@ function holdSettlement({ roundId, entries, minScore = 0 }) {
   let sharesMsat = 0n;
   rows.forEach((e, i) => {
     const amount = paidTo.get(i) || 0n;
-    sharesMsat += amount > e.stakeMsat ? amount - e.stakeMsat : 0n;
+    const held = netStakeMsat(e);
+    sharesMsat += amount > held ? amount - held : 0n;
   });
 
   if (rows.length && poolMsat !== sharesMsat)
@@ -2833,15 +2918,16 @@ function holdAfter({ action, authorised = false, nobodyActs = false }) {
  *                      the money to a preimage the committee's shares do not
  *                      reconstruct, so nobody can ever settle it and nobody
  *                      can prove why.
- *   the amount         must be `stakeMsat` exactly. Over, and the player has
- *                      staked more than the round they signed; under, and the
- *                      pool the winner is paid from is short.
+ *   the amount         must be the NET stake exactly - `stakeMsat` less the
+ *                      fee and the donation that come out of it (22A). Over,
+ *                      and the hold carries money that belongs to the fee or
+ *                      the donation and would be cancelled back to a winner
+ *                      with it; under, and the pool the winner is paid from
+ *                      is short.
  *
- * BOTH COME OFF THE SIGNED ENTRY CONTRACT, so this needs nothing from a node
- * and takes nobody's word: the player is checking an invoice against the thing
- * they themselves signed. Fees and the donation are charged ON TOP at entry
- * (18) and are not part of the held stake, which is why the comparison is
- * exact rather than a floor.
+ * ALL OF IT COMES OFF THE SIGNED ENTRY CONTRACT, so this needs nothing from a
+ * node and takes nobody's word: the player is checking an invoice against the
+ * thing they themselves signed. The comparison is exact rather than a floor.
  *
  * IT DOES NOT ISSUE, SETTLE OR CANCEL ANYTHING. There is no Lightning here.
  */
@@ -2860,10 +2946,14 @@ function invoiceMatchesEntry({ paymentHash, amountMsat, entry }) {
       why: `that invoice is for ${hex(paymentHash)}, and this entry commits to `
         + `${hex(entry.stakeCommitment)}: nobody could ever settle it`,
     };
-  if (amountMsat !== entry.stakeMsat)
+  let held;
+  try { held = netStakeMsat(entry); }
+  catch (e) { return { ok: false, why: e.message }; }
+  if (amountMsat !== held)
     return {
       ok: false,
-      why: `that invoice asks ${amountMsat} msat and the entry staked ${entry.stakeMsat}`,
+      why: `that invoice asks ${amountMsat} msat and this entry holds ${held}: a stake of `
+        + `${entry.stakeMsat} less a fee of ${entry.feeMsat} and a donation of ${entry.donationMsat}`,
     };
   return { ok: true, why: 'the hash and the amount are the ones this entry signed' };
 }
@@ -2897,6 +2987,7 @@ function invoiceMatchesEntry({ paymentHash, amountMsat, entry }) {
 //
 // THE CURVE IS INJECTED, like everywhere else in this package: `@blwp/client`
 // carries no crypto, and `page-curve.js` is what the page loads beside it.
+
 
 // `webcrypto` AND NOT `subtle`, which `seal.js` already declares at its own top
 // level. The bundle is a concatenation - `tools/bundle.js` refuses two private
@@ -3066,6 +3157,35 @@ function spentLine(log) {
   return `${sats} sat over ${log.count} stake${log.count === 1 ? '' : 's'}`
     + ` in ${rounds} round${rounds === 1 ? '' : 's'}`;
 }
+
+/**
+ * WHAT THIS SEAT COSTS, AS ONE LINE, and it is 22A's Transparency list.
+ *
+ * "Before wallet approval the client MUST display: total wallet commitment,
+ * the node fee and donation coming OUT of it, the resulting net game stake".
+ * Every number is off the ENTRY the player signed; the only thing taken from
+ * the quote is what the wallet is being asked for and the hold's state, and
+ * the quote reaching here has already passed `invoiceMatchesEntry` - so the
+ * amount asked IS the net stake, and the line shows both so a player can see
+ * that it is.
+ *
+ * `netStakeMsat` does the subtraction. A page that took 2 from 100 itself
+ * would be a second arithmetic for the one number a player parts with money
+ * over.
+ */
+function owedLine(entry, quote) {
+  if (!entry) return 'this seat owes —';
+  let net;
+  try { net = netStakeMsat(entry); } catch (e) { return `this seat cannot be paid: ${e.message}`; }
+  const split = `${sats(entry.stakeMsat)} round: ${sats(entry.feeMsat)} fee and `
+    + `${sats(entry.donationMsat)} donation out of it, ${sats(net)} staked`;
+  return quote
+    ? `${split} · the wallet is asked ${sats(quote.amountMsat)} · ${quote.state}`
+    : `${split} · no quote yet`;
+}
+
+/** Whole sats where they are whole, and the millisatoshi where they are not. */
+const sats = (msat) => (msat % 1000n === 0n ? `${msat / 1000n} sat` : `${msat} msat`);
 
 /**
  * NIP-04: AES-256-CBC over the ECDH x-coordinate, base64, `?iv=` base64.
@@ -6154,10 +6274,11 @@ class Client {
    *
    * THE CHECK IS THE PROTOCOL'S OWN AND IT IS NOT OPTIONAL. A hold invoice
    * names a payment hash and an amount; the entry the player SIGNED already
-   * names both - `stakeCommitment` is the hash, `stakeMsat` is the amount - so
-   * a node quoting anything else is quoting somebody else's invoice, or one
-   * nobody could ever settle. `invoiceMatchesEntry` is that rule and it is
-   * imported rather than restated.
+   * names both - `stakeCommitment` is the hash, and the amount is the net
+   * stake: `stakeMsat` less the fee and the donation that come out of it
+   * (22A) - so a node quoting anything else is quoting somebody else's
+   * invoice, or one nobody could ever settle. `invoiceMatchesEntry` is that
+   * rule and it is imported rather than restated.
    *
    * THE ENTRY IS THE CALLER'S, NOT THE NODE'S. Asking the node for the entry
    * and then checking the invoice against it would be asking one party both
@@ -7902,22 +8023,26 @@ function feeTableId(table) {
 }
 
 /**
- * WHAT ONE ENTRY OWES IN FEE, 18's way: ON TOP of the stake.
+ * WHAT ONE ENTRY OWES IN FEE: 2% OF THE WALLET COMMITMENT, TAKEN OUT OF IT.
  *
- * "Node fees and the player-selected donation are charged on top of the stake
- * at entry and therefore do not reduce the pool." So `stakeMsat` is the gross
- * stake, the fee rides beside it, and 2% of it is what the player was charged.
+ * 22A, "Collection: inclusive in the stake (changed)": "'Play for 100' now
+ * means 100 leaves the wallet, and the wallet dialog agrees with the button
+ * that was pressed." `stakeMsat` is that commitment, the fee is 2% of it, and
+ * `netStakeMsat` is what is left for the pool once the fee and the donation
+ * have come out.
+ *
+ * RETRACTED (6e). This comment used to call Collection "the error" and charge
+ * 18's older "on top of the stake", on the ground that the net reading turns
+ * 22A's 61 x 100 example into 117.12 sat. It does not. 22A's fee base is
+ * `gross_round_volume`, "(61 x 100, the wallet commitments)", so the fee is 2%
+ * of 6,100 = 122 sat and it is the POOL that is net: 6,100 - 122 - 122 =
+ * 5,856. 117.12 was 2% of the net stake, a base 22A never uses. Measured in
+ * `inclusive.test.js`.
  *
  * THE RATE IS A CONSTANT AND NOT A CONTRACT FIELD. 22A calls it "2%,
  * identical for everyone", so one rate covers every entry of every round; a
  * field would let an operator price its own round's fee, which is the fault
  * contract fields exist to prevent rather than one to import.
- *
- * 22A's Collection section describes the opposite - a 100 sat commitment
- * yielding a 96 sat net stake - and it contradicts 18 AND 22A's own worked
- * example, where 61 x 100 sat gross gives a 122 sat fee, exactly what 61
- * players paying 2 sat each hand over. The net reading gives 117.12 sat, which
- * is not a whole satoshi. Collection's 96 is the error and is not implemented.
  *
  * The same integer floor the table uses, so one rate is applied one way.
  */
@@ -7941,23 +8066,35 @@ const entryFeeMsat = (stakeMsat) => {
  * not made to catch.
  */
 function feeMatchesEntry(entry) {
+  // STRICT, AND ON PURPOSE. Every entry the door judges is decoded from signed
+  // bytes, so its amounts are BigInt - a free seat is three zeros, not three
+  // missing fields. Coercing a Number or a missing amount here would have
+  // hidden the wiring fault that refused the Daily's free seat at 11:15 (the
+  // door not yet passing the donation) instead of naming it.
   if (!entry || typeof entry.stakeMsat !== 'bigint' || typeof entry.feeMsat !== 'bigint')
     return { ok: false, why: 'an entry carries a BigInt millisatoshi stake and fee' };
   if (entry.stakeMsat < 0n || entry.feeMsat < 0n)
     return { ok: false, why: 'a stake and a fee cannot be negative' };
 
   const owed = entryFeeMsat(entry.stakeMsat);
-  if (entry.feeMsat === owed)
-    return { ok: true, owed, why: `${owed} is 2% of ${entry.stakeMsat}` };
+  if (entry.feeMsat !== owed)
+    return {
+      ok: false,
+      owed,
+      why: entry.feeMsat > owed
+        ? `that entry was charged ${entry.feeMsat} where 2% of ${entry.stakeMsat} is ${owed}: `
+          + `the ${entry.feeMsat - owed} over is money no fee table allocates`
+        : `that entry was charged ${entry.feeMsat} where 2% of ${entry.stakeMsat} is ${owed}`,
+    };
 
-  return {
-    ok: false,
-    owed,
-    why: entry.feeMsat > owed
-      ? `that entry was charged ${entry.feeMsat} where 2% of ${entry.stakeMsat} is ${owed}: `
-        + `the ${entry.feeMsat - owed} over is money no fee table allocates`
-      : `that entry was charged ${entry.feeMsat} where 2% of ${entry.stakeMsat} is ${owed}`,
-  };
+  // AND THE DONATION COMES OUT OF THE SAME COMMITMENT, so together they cannot
+  // come to more than it. Measured before 6e: a donation of 200000 msat on a
+  // 100000 stake stood here, because nothing looked at the donation at all -
+  // an entry promising the donation set twice what the player put up.
+  let net;
+  try { net = netStakeMsat(entry); }
+  catch (e) { return { ok: false, owed, why: e.message }; }
+  return { ok: true, owed, net, why: `${owed} is 2% of ${entry.stakeMsat}, and ${net} of it is staked` };
 }
 
 // ---- blwp-client/src/join.js
@@ -8427,8 +8564,10 @@ function entryFor(round, { playerPubkey, random, joinTick = 0, stake } = {}) {
     // the signed bytes either way - so an entry that has shares and one that
     // has none can never be the same entry id.
     vssSharesRef: stake ? stake.vssSharesRef : NO_SHARES,
-    stakeMsat: round.stakeMsat,
-    // THE NODE FEE, AND IT IS 2% OF THIS ENTRY'S OWN STAKE.
+    stakeMsat: BigInt(round.stakeMsat || 0n),
+    // THE NODE FEE, AND IT IS 2% OF THIS ENTRY'S OWN STAKE - taken OUT of it,
+    // never on top (22A). The stake is the one number the wallet commits; the
+    // hold is for what is left once the fee and the donation are out.
     //
     // This was `0n` on every entry the page ever built, and `feeMatchesEntry`
     // - the rule that says an entry's fee must be exactly `entryFeeMsat` of
@@ -8524,6 +8663,7 @@ return { Client: Client, markState: markState,
          stakeFor: stakeFor, fetchSettlementSeats: fetchSettlementSeats,
          roundPays: roundPays, postHandout: postHandout,
          tabWallet: tabWallet, spendLog: spendLog, spentLine: spentLine,
+         owedLine: owedLine,
          parseConnection: parseConnection,
          walletBudget: walletBudget, budgetLine: budgetLine,
          decodeRoundContract: decodeRoundContract,

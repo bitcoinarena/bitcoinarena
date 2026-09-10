@@ -73,7 +73,7 @@ function node(stakeMsat = 100000n) {
 }
 
 const entriesOf = (stakeMsat, ...spec) => spec.map(([p, outcome, score]) =>
-  ({ entryId: b32(p.n), pubkey: p.pubkey, outcome, score, stakeMsat }));
+  ({ entryId: b32(p.n), pubkey: p.pubkey, outcome, score, stakeMsat, feeMsat: 0n, donationMsat: 0n }));
 
 test('the table this node signs is the one it computed, and a stranger is not a seat', () => {
   const { round, rid, contract } = node();
@@ -565,9 +565,9 @@ test('a round that still owes somebody is PAID_IN_PART, never PAID', async () =>
   const losers = [6, 7].map(player);
   const entries = [
     ...winners.map((p, i) => ({ entryId: b32(i + 1), pubkey: p.pubkey,
-      outcome: DELIVERED, score: 90 - i * 10, stakeMsat: 1000000n })),
+      outcome: DELIVERED, score: 90 - i * 10, stakeMsat: 1000000n, feeMsat: 0n, donationMsat: 0n })),
     ...losers.map((p, i) => ({ entryId: b32(i + 6), pubkey: p.pubkey,
-      outcome: FORFEIT, score: 0, stakeMsat: 1000000n })),
+      outcome: FORFEIT, score: 0, stakeMsat: 1000000n, feeMsat: 0n, donationMsat: 0n })),
   ];
   const dealt = poolFor();
   const chain = fakeChain();

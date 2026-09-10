@@ -721,10 +721,11 @@ export class Client {
    *
    * THE CHECK IS THE PROTOCOL'S OWN AND IT IS NOT OPTIONAL. A hold invoice
    * names a payment hash and an amount; the entry the player SIGNED already
-   * names both - `stakeCommitment` is the hash, `stakeMsat` is the amount - so
-   * a node quoting anything else is quoting somebody else's invoice, or one
-   * nobody could ever settle. `invoiceMatchesEntry` is that rule and it is
-   * imported rather than restated.
+   * names both - `stakeCommitment` is the hash, and the amount is the net
+   * stake: `stakeMsat` less the fee and the donation that come out of it
+   * (22A) - so a node quoting anything else is quoting somebody else's
+   * invoice, or one nobody could ever settle. `invoiceMatchesEntry` is that
+   * rule and it is imported rather than restated.
    *
    * THE ENTRY IS THE CALLER'S, NOT THE NODE'S. Asking the node for the entry
    * and then checking the invoice against it would be asking one party both

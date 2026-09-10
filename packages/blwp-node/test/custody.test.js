@@ -15,7 +15,7 @@ import assert from 'node:assert/strict';
 import { openStore } from '../src/store.js';
 import { Round } from '../src/round.js';
 import { Custody, HELD, SETTLED, CANCELLED, EXPIRED, ACTING } from '../src/custody.js';
-import { DELIVERED, FORFEIT, VOID } from '../../protocol/src/payout.js';
+import { DELIVERED, FORFEIT, VOID, netStakeMsat } from '../../protocol/src/payout.js';
 import { entryId as entryIdOf } from '../../protocol/src/contracts.js';
 import { MIN_ENTRY_WINDOW_MS } from '../../protocol/src/constants.js';
 import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
@@ -107,7 +107,7 @@ test('the hold is issued against the entry\'s own signed numbers, once', async (
 
   const row = custody.stateOf(entryIdOf(entry));
   assert.equal(row.state, HELD);
-  assert.equal(row.amountMsat, entry.stakeMsat);
+  assert.equal(row.amountMsat, netStakeMsat(entry), "the hold is not the net stake (22A)");
   assert.match(row.why, /in nobody's balance/);
 
   // ASKED TWICE IS HELD ONCE. A second invoice for one entry is a second claim
@@ -142,7 +142,7 @@ test('DELIVERED cancels, FORFEIT settles, and a VOID is never touched', async ()
   for (const e of [winner, loser, voided]) { round.enter(e); await custody.hold(e); }
 
   const summary = (e, outcome, score = 0) =>
-    ({ entryId: entryIdOf(e), pubkey: e.playerPubkey, outcome, score, stakeMsat: e.stakeMsat });
+    ({ entryId: entryIdOf(e), pubkey: e.playerPubkey, outcome, score, stakeMsat: e.stakeMsat, feeMsat: e.feeMsat, donationMsat: e.donationMsat });
 
   const out = await custody.settleHeldInvoices({
     roundId: rid, minScore: 1,
@@ -180,7 +180,7 @@ test('no stake moves without a final result, and nothing is paid to anybody', as
   for (const e of [winner, loser]) { round.enter(e); await custody.hold(e); }
 
   const summary = (e, outcome, score = 0) =>
-    ({ entryId: entryIdOf(e), pubkey: e.playerPubkey, outcome, score, stakeMsat: e.stakeMsat });
+    ({ entryId: entryIdOf(e), pubkey: e.playerPubkey, outcome, score, stakeMsat: e.stakeMsat, feeMsat: e.feeMsat, donationMsat: e.donationMsat });
 
   // THE COMMITTEE HAS NOT AGREED. Not a refusal: the stakes simply stay in
   // flight, and a hold nobody may act on expires back to its payer.
@@ -207,8 +207,8 @@ test('a stake that has already moved is not moved twice', async () => {
   const once = {
     roundId: rid, minScore: 1, finalFor: () => true,
     entries: [
-      { entryId: entryIdOf(winner), pubkey: winner.playerPubkey, outcome: DELIVERED, score: 9, stakeMsat: winner.stakeMsat },
-      { entryId: entryIdOf(loser), pubkey: loser.playerPubkey, outcome: FORFEIT, score: 0, stakeMsat: loser.stakeMsat },
+      { entryId: entryIdOf(winner), pubkey: winner.playerPubkey, outcome: DELIVERED, score: 9, stakeMsat: winner.stakeMsat, feeMsat: winner.feeMsat, donationMsat: winner.donationMsat },
+      { entryId: entryIdOf(loser), pubkey: loser.playerPubkey, outcome: FORFEIT, score: 0, stakeMsat: loser.stakeMsat, feeMsat: loser.feeMsat, donationMsat: loser.donationMsat },
     ],
   };
 
@@ -240,15 +240,15 @@ test('the score the round asked for is the score the pool pays by', async () => 
   const out = await custody.settleHeldInvoices({
     roundId: rid, minScore: 3, finalFor: () => true,
     entries: [
-      { entryId: entryIdOf(placed), pubkey: placed.playerPubkey, outcome: DELIVERED, score: 5, stakeMsat: placed.stakeMsat },
-      { entryId: entryIdOf(cautious), pubkey: cautious.playerPubkey, outcome: DELIVERED, score: 1, stakeMsat: cautious.stakeMsat },
-      { entryId: entryIdOf(loser), pubkey: loser.playerPubkey, outcome: FORFEIT, score: 0, stakeMsat: loser.stakeMsat },
+      { entryId: entryIdOf(placed), pubkey: placed.playerPubkey, outcome: DELIVERED, score: 5, stakeMsat: placed.stakeMsat, feeMsat: placed.feeMsat, donationMsat: placed.donationMsat },
+      { entryId: entryIdOf(cautious), pubkey: cautious.playerPubkey, outcome: DELIVERED, score: 1, stakeMsat: cautious.stakeMsat, feeMsat: cautious.feeMsat, donationMsat: cautious.donationMsat },
+      { entryId: entryIdOf(loser), pubkey: loser.playerPubkey, outcome: FORFEIT, score: 0, stakeMsat: loser.stakeMsat, feeMsat: loser.feeMsat, donationMsat: loser.donationMsat },
     ],
   });
   assert.equal(out.ok, true, out.why);
 
   const paid = (e) => out.table.table.find((r) => toHex(r.pubkey) === toHex(e.playerPubkey)).amountMsat;
-  assert.equal(paid(placed), placed.stakeMsat + loser.stakeMsat, 'the only qualifier did not take the whole pool');
+  assert.equal(paid(placed), netStakeMsat(placed) + netStakeMsat(loser), 'the only qualifier did not take the whole pool');
   assert.equal(paid(cautious), 0n, 'a player below the score placed anyway');
 
   // AND BOTH DELIVERED STAKES COME BACK REGARDLESS. Placing nowhere is a legal
@@ -270,8 +270,8 @@ async function midAct(port) {
   const close = {
     roundId: rid, minScore: 1, finalFor: () => true,
     entries: [
-      { entryId: entryIdOf(loser), pubkey: loser.playerPubkey, outcome: FORFEIT, score: 0, stakeMsat: loser.stakeMsat },
-      { entryId: entryIdOf(winner), pubkey: winner.playerPubkey, outcome: DELIVERED, score: 9, stakeMsat: winner.stakeMsat },
+      { entryId: entryIdOf(loser), pubkey: loser.playerPubkey, outcome: FORFEIT, score: 0, stakeMsat: loser.stakeMsat, feeMsat: loser.feeMsat, donationMsat: loser.donationMsat },
+      { entryId: entryIdOf(winner), pubkey: winner.playerPubkey, outcome: DELIVERED, score: 9, stakeMsat: winner.stakeMsat, feeMsat: winner.feeMsat, donationMsat: winner.donationMsat },
     ],
   };
   return { round, rid, custody, loser, winner, id: entryIdOf(loser), close };
@@ -369,8 +369,8 @@ test('a node with no preimage cannot settle, and the stake expires to its player
   const out = await custody.settleHeldInvoices({
     roundId: rid, minScore: 1, finalFor: () => true,
     entries: [
-      { entryId: entryIdOf(loser), pubkey: loser.playerPubkey, outcome: FORFEIT, score: 0, stakeMsat: loser.stakeMsat },
-      { entryId: entryIdOf(winner), pubkey: winner.playerPubkey, outcome: DELIVERED, score: 9, stakeMsat: winner.stakeMsat },
+      { entryId: entryIdOf(loser), pubkey: loser.playerPubkey, outcome: FORFEIT, score: 0, stakeMsat: loser.stakeMsat, feeMsat: loser.feeMsat, donationMsat: loser.donationMsat },
+      { entryId: entryIdOf(winner), pubkey: winner.playerPubkey, outcome: DELIVERED, score: 9, stakeMsat: winner.stakeMsat, feeMsat: winner.feeMsat, donationMsat: winner.donationMsat },
     ],
   });
   assert.equal(out.ok, true, out.why);
@@ -393,8 +393,8 @@ test('a preimage that is not the one the hold was made for is refused', async ()
   const out = await custody.settleHeldInvoices({
     roundId: rid, minScore: 1, finalFor: () => true,
     entries: [
-      { entryId: entryIdOf(loser), pubkey: loser.playerPubkey, outcome: FORFEIT, score: 0, stakeMsat: loser.stakeMsat },
-      { entryId: entryIdOf(winner), pubkey: winner.playerPubkey, outcome: DELIVERED, score: 9, stakeMsat: winner.stakeMsat },
+      { entryId: entryIdOf(loser), pubkey: loser.playerPubkey, outcome: FORFEIT, score: 0, stakeMsat: loser.stakeMsat, feeMsat: loser.feeMsat, donationMsat: loser.donationMsat },
+      { entryId: entryIdOf(winner), pubkey: winner.playerPubkey, outcome: DELIVERED, score: 9, stakeMsat: winner.stakeMsat, feeMsat: winner.feeMsat, donationMsat: winner.donationMsat },
     ],
   });
   assert.match(out.actions[0].why, /not the one this hold was made for/);
@@ -417,8 +417,8 @@ test('the preimage reaches the port, because releasing it is the settlement', as
   await custody.settleHeldInvoices({
     roundId: rid, minScore: 1, finalFor: () => true,
     entries: [
-      { entryId: entryIdOf(loser), pubkey: loser.playerPubkey, outcome: FORFEIT, score: 0, stakeMsat: loser.stakeMsat },
-      { entryId: entryIdOf(winner), pubkey: winner.playerPubkey, outcome: DELIVERED, score: 9, stakeMsat: winner.stakeMsat },
+      { entryId: entryIdOf(loser), pubkey: loser.playerPubkey, outcome: FORFEIT, score: 0, stakeMsat: loser.stakeMsat, feeMsat: loser.feeMsat, donationMsat: loser.donationMsat },
+      { entryId: entryIdOf(winner), pubkey: winner.playerPubkey, outcome: DELIVERED, score: 9, stakeMsat: winner.stakeMsat, feeMsat: winner.feeMsat, donationMsat: winner.donationMsat },
     ],
   });
   assert.equal(seen.length, 1);
@@ -439,7 +439,7 @@ test('a round nobody finished moves no stake and keeps nothing for this node', a
   const out = await custody.settleHeldInvoices({
     roundId: rid, minScore: 1, finalFor: () => true,
     entries: [a, b].map((e) => ({ entryId: entryIdOf(e), pubkey: e.playerPubkey,
-      outcome: FORFEIT, score: 0, stakeMsat: e.stakeMsat })),
+      outcome: FORFEIT, score: 0, stakeMsat: e.stakeMsat, feeMsat: e.feeMsat, donationMsat: e.donationMsat })),
   });
   assert.equal(out.ok, false);
   assert.match(out.why, /no stake moves/);

@@ -21,6 +21,7 @@
 // there is no change output, so an operator cannot take the remainder by
 // building a transaction that pays itself the difference.
 import { FIELD } from './shares.js';
+import { netStakeMsat } from './payout.js';
 
 /** BIP-341 P2TR: OP_1, a 32-byte push, the key. */
 export const P2TR_BYTES = 34;
@@ -52,12 +53,23 @@ export const payToKey = (pubkey) => {
 };
 
 /**
- * WHAT THE POOL OWES EACH PLAYER: the row, less the stake that came back on
- * its own. Rows that owe nothing are dropped rather than paid zero.
+ * WHAT THE POOL OWES EACH PLAYER: the row, less the NET stake that came back on
+ * its own when the hold was cancelled. Rows that owe nothing are dropped rather
+ * than paid zero.
+ *
+ * `stakes` are the entries' own three numbers - stake, fee, donation - and
+ * `netStakeMsat` takes the difference, because the hold held the net (22A,
+ * 23.5). Subtracting the commitment instead would short every winner by their
+ * own fee and donation, and leave that much in a pool nobody is owed it from.
  */
 export function winnings({ table, stakes }) {
   if (!Array.isArray(table)) return { ok: false, why: 'that is not a payout table' };
-  const byKey = new Map(stakes.map((s) => [hex(s.pubkey), s.stakeMsat]));
+  const byKey = new Map();
+  for (const s of stakes) {
+    let held;
+    try { held = netStakeMsat(s); } catch (e) { return { ok: false, why: e.message }; }
+    byKey.set(hex(s.pubkey), held);
+  }
   const rows = [];
   let owed = 0n;
   for (const row of table) {

@@ -254,10 +254,7 @@ export class Payouts {
     if (!seen.final)
       return { ok: false, agreed: seen.agreed, needed: seen.needed, why: seen.why };
 
-    const owed = winnings({
-      table: built.table,
-      stakes: entries.map((e) => ({ pubkey: e.pubkey, stakeMsat: e.stakeMsat })),
-    });
+    const owed = winnings({ table: built.table, stakes: entries });
     if (!owed.ok) return { ok: false, why: owed.why };
     if (!owed.rows.length) {
       this.round.putPayout({

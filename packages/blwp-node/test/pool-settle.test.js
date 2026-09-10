@@ -35,7 +35,7 @@ import { poolOutput } from '../../protocol/src/pool.js';
 import { payToKey } from '../../protocol/src/payout-spend.js';
 import { encodeRoundContract, encodeEntryContract, roundId, entryId as entryIdOf } from '../../protocol/src/contracts.js';
 import { encodePlayerResult, resultId, joinSignedResult } from '../../protocol/src/result.js';
-import { DELIVERED, FORFEIT } from '../../protocol/src/payout.js';
+import { DELIVERED, FORFEIT, netStakeMsat } from '../../protocol/src/payout.js';
 import { scalarFrom32, FIELD, SHARES_NEEDED, SHARES_TOTAL } from '../../protocol/src/shares.js';
 import { MIN_ENTRY_WINDOW_MS } from '../../protocol/src/constants.js';
 import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
@@ -356,7 +356,7 @@ test('a down asker strands nothing: the next seat pays after the wait', async ()
     const tx = parseTransaction(sent[0]);
     const toWinner = tx.outputs.filter((o) => toHex(o.script) === toHex(payToKey(c.winner.pubkey)));
     assert.equal(toWinner.length, 1);
-    assert.equal(toWinner[0].value, 1000n, 'the takeover paid a different amount');
+    assert.equal(toWinner[0].value, netStakeMsat({ stakeMsat: c.contract.stakeMsat, feeMsat: entryFeeMsat(c.contract.stakeMsat), donationMsat: 0n }) / 1000n, 'the takeover paid a different amount');
     assert.equal(tx.outputs.filter((o) => toHex(o.script) === toHex(payToKey(c.loser.pubkey))).length, 0);
     console.log(`  after ${TAKEOVER_BLOCKS} blocks seat ${2} of ${ring.of} paid `
       + `${toWinner[0].value} sats - the same table`);

@@ -297,7 +297,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       .filter((r) => r && r.stored && r.outcome)
       .map((r) => ({
         entryId: r.entryId, pubkey: r.playerPubkey, outcome: r.outcome,
-        score: r.score, stakeMsat: r.stakeMsat,
+        score: r.score, stakeMsat: r.stakeMsat, feeMsat: r.feeMsat, donationMsat: r.donationMsat,
       }));
     if (!entries.length) return { ok: true, actions: [], why: 'that round produced no result to pay on' };
 

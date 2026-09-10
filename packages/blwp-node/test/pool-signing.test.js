@@ -66,9 +66,9 @@ test('five seats on five stores sign one spend of the pool, and no share ever mo
   // amounts; what is checked here is that the seats built exactly those.
   const entries = signingEntries(c.rounds[0], c.rid);
   const table = tableFor({ roundId: c.rid, entries, minScore: c.minScore }).table;
-  const owed = winnings({
-    table, stakes: entries.map((e) => ({ pubkey: e.pubkey, stakeMsat: e.stakeMsat })),
-  });
+  // the entries themselves: `winnings` subtracts the NET stake (22A), so it
+  // needs the fee and the donation beside the stake
+  const owed = winnings({ table, stakes: entries });
   assert.equal(owed.ok, true, owed.why);
   assert.equal(owed.rows.length, 1, 'this fixture owes exactly the one winner');
   const want = payoutOutputs({ rows: owed.rows, poolSats: POOL_SATS });

@@ -402,11 +402,17 @@ export function payoutInputsId({ roundId, entries, minScore = 0 }) {
       if (a.pubkey[i] !== b.pubkey[i]) return a.pubkey[i] - b.pubkey[i];
     return 0;
   });
+  // ALL THREE AMOUNTS, because F reads all three (22A): the pool and every
+  // share are NET stakes. Committing to the stake alone would give two inputs
+  // that differ only in a donation - and so in their honest tables - one id,
+  // and an accuser could pick whichever split makes the accused wrong.
   w.vec(rows, (e, ww) => {
     ww.bytes32(e.pubkey);
     ww.u8(outcomeByte(e.outcome));
     ww.u32(e.score);
     ww.u64(e.stakeMsat);
+    ww.u64(e.feeMsat);
+    ww.u64(e.donationMsat);
   });
   return taggedHash(TAG.payoutInputs, w.finish());
 }

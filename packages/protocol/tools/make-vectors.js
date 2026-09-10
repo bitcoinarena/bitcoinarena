@@ -115,17 +115,20 @@ out.tagged = {
 /* ------------------------------------------------------------------ payout */
 {
   const pk = (n) => b32(n);
+  // 6e: an entry as the door takes it - 100 sat committed, the 2% fee OUT of
+  // it, no donation - so every amount below is a net stake of 98 sat.
+  const money = { stakeMsat: 100000n, feeMsat: 2000n, donationMsat: 0n };
   const entries = [];
-  for (let i = 0; i < 50; i++) entries.push({ pubkey: pk(i), stakeMsat: 100000n, outcome: DELIVERED, score: 50 });
-  for (let i = 0; i < 25; i++) entries.push({ pubkey: pk(100 + i), stakeMsat: 100000n, outcome: DELIVERED, score: 900 });
-  for (let i = 0; i < 25; i++) entries.push({ pubkey: pk(200 + i), stakeMsat: 100000n, outcome: FAILED, score: 0 });
+  for (let i = 0; i < 50; i++) entries.push({ pubkey: pk(i), ...money, outcome: DELIVERED, score: 50 });
+  for (let i = 0; i < 25; i++) entries.push({ pubkey: pk(100 + i), ...money, outcome: DELIVERED, score: 900 });
+  for (let i = 0; i < 25; i++) entries.push({ pubkey: pk(200 + i), ...money, outcome: FAILED, score: 0 });
   const r = computePayoutTable({ roundId: b32(9), entries, minScore: 1 });
 
   out.payout = {
-    what: 'The worked example from specification 18A.6: 100 players at 100 sat, fifty on the quiet route and all arriving, fifty in the corridor with half of them lost.',
+    what: 'The worked example from specification 18A.6: 100 players at 100 sat, fifty on the quiet route and all arriving, fifty in the corridor with half of them lost. Collected inclusively (22A): each commits 100 sat, 2 of it the node fee, 98 staked.',
     roundId: toHex(b32(9)),
     minScore: 1,
-    input: { delivered_low_score: 50, delivered_high_score: 25, failed: 25, stakeMsat: '100000' },
+    input: { delivered_low_score: 50, delivered_high_score: 25, failed: 25, stakeMsat: '100000', feeMsat: '2000', donationMsat: '0' },
     pool: r.pool.toString(),
     qualifiers: r.qualifiers,
     payingRanks: r.payingRanks,
@@ -137,7 +140,9 @@ out.tagged = {
       'Rank weights are 3^(i-1) * 4^(K-i): the geometric curve with r = 3/4, multiplied through so it is exact.',
       'K = ceil(qualifiers / 4), at least one.',
       'Floor each share, then hand the leftover out one millisatoshi at a time in ascending H(round_id || pubkey).',
-      'sum(payouts) must equal sum(activated stakes). Fees are charged on top at entry and never appear here. A node that cannot satisfy this refuses to sign.',
+      'Every amount is a NET stake: stakeMsat less the feeMsat and donationMsat that come out of it (22A, inclusive). The hold invoice is for the net, and the pool is the net stakes of FAILED and FORFEIT entries.',
+      'sum(payouts) must equal sum(activated net stakes). A node that cannot satisfy this refuses to sign.',
+      'Qualifiers who staked different nets are refused while there is a pool: 22A weights a share by net stake and, as written, that does not spend the pool.',
     ],
   };
 }

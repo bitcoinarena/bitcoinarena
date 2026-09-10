@@ -200,9 +200,9 @@ test('the board carries no money and names what a final cannot tell it', () => {
 test('the board shows each player\'s payout from the round\'s own table', () => {
   const rows = [row(0x21, 900), row(0x22, 800), row(0x23, 700, FAILED)];
   const entries = [
-    { pubkey: b32(0x21), stakeMsat: 100000n, outcome: DELIVERED, score: 900 },
-    { pubkey: b32(0x22), stakeMsat: 100000n, outcome: DELIVERED, score: 800 },
-    { pubkey: b32(0x23), stakeMsat: 100000n, outcome: FAILED, score: 700 },
+    { pubkey: b32(0x21), stakeMsat: 100000n, feeMsat: 0n, donationMsat: 0n, outcome: DELIVERED, score: 900 },
+    { pubkey: b32(0x22), stakeMsat: 100000n, feeMsat: 0n, donationMsat: 0n, outcome: DELIVERED, score: 800 },
+    { pubkey: b32(0x23), stakeMsat: 100000n, feeMsat: 0n, donationMsat: 0n, outcome: FAILED, score: 700 },
   ];
 
   const board = leaderboard(rows, { contract, payout: { entries, minScore: 1 } });
@@ -239,8 +239,8 @@ test('the board shows each player\'s payout from the round\'s own table', () => 
   // paid nothing, while a lower-scoring delivery is ranked second and paid.
   const crossed = [row(0x31, 900, FAILED), row(0x32, 500)];
   const crossedEntries = [
-    { pubkey: b32(0x31), stakeMsat: 100000n, outcome: FAILED, score: 900 },
-    { pubkey: b32(0x32), stakeMsat: 100000n, outcome: DELIVERED, score: 500 },
+    { pubkey: b32(0x31), stakeMsat: 100000n, feeMsat: 0n, donationMsat: 0n, outcome: FAILED, score: 900 },
+    { pubkey: b32(0x32), stakeMsat: 100000n, feeMsat: 0n, donationMsat: 0n, outcome: DELIVERED, score: 500 },
   ];
   const mixed = leaderboard(crossed, { contract, payout: { entries: crossedEntries, minScore: 1 } });
 
@@ -259,9 +259,9 @@ test('the board shows each player\'s payout from the round\'s own table', () => 
 test('a refunded player has no amount, while a player paid nothing has zero', () => {
   const rows = [row(0x21, 900), row(0x22, 800, VOID), row(0x23, 700, FAILED)];
   const entries = [
-    { pubkey: b32(0x21), stakeMsat: 100000n, outcome: DELIVERED, score: 900 },
-    { pubkey: b32(0x22), stakeMsat: 100000n, outcome: VOID, score: 800 },
-    { pubkey: b32(0x23), stakeMsat: 100000n, outcome: FAILED, score: 700 },
+    { pubkey: b32(0x21), stakeMsat: 100000n, feeMsat: 0n, donationMsat: 0n, outcome: DELIVERED, score: 900 },
+    { pubkey: b32(0x22), stakeMsat: 100000n, feeMsat: 0n, donationMsat: 0n, outcome: VOID, score: 800 },
+    { pubkey: b32(0x23), stakeMsat: 100000n, feeMsat: 0n, donationMsat: 0n, outcome: FAILED, score: 700 },
   ];
 
   const board = leaderboard(rows, { contract, payout: { entries, minScore: 1 } });
@@ -282,8 +282,8 @@ test('a refunded player has no amount, while a player paid nothing has zero', ()
 test('a payout input that disagrees with the final results is refused', () => {
   const rows = [row(0x21, 900), row(0x22, 800, FAILED)];
   const honest = [
-    { pubkey: b32(0x21), stakeMsat: 100000n, outcome: DELIVERED, score: 900 },
-    { pubkey: b32(0x22), stakeMsat: 100000n, outcome: FAILED, score: 800 },
+    { pubkey: b32(0x21), stakeMsat: 100000n, feeMsat: 0n, donationMsat: 0n, outcome: DELIVERED, score: 900 },
+    { pubkey: b32(0x22), stakeMsat: 100000n, feeMsat: 0n, donationMsat: 0n, outcome: FAILED, score: 800 },
   ];
   assert.equal(leaderboard(rows, { contract, payout: { entries: honest, minScore: 1 } }).ok, true);
 
@@ -295,7 +295,7 @@ test('a payout input that disagrees with the final results is refused', () => {
   assert.match(leaderboard(rows, { contract, payout: { entries: inflated, minScore: 1 } }).why,
     /scores a player 9999 where the final says 800/);
 
-  const stranger = [...honest, { pubkey: b32(0x99), stakeMsat: 100000n, outcome: DELIVERED, score: 999 }];
+  const stranger = [...honest, { pubkey: b32(0x99), stakeMsat: 100000n, feeMsat: 0n, donationMsat: 0n, outcome: DELIVERED, score: 999 }];
   assert.match(leaderboard(rows, { contract, payout: { entries: stranger, minScore: 1 } }).why,
     /counts a player the committee has made no result final for/);
 
@@ -343,8 +343,8 @@ test('the board says it counted signatures rather than verifying them', () => {
 
   // and with payouts in play it is still only the report that moves
   const entries = [
-    { pubkey: b32(0x21), stakeMsat: 100000n, outcome: DELIVERED, score: 900 },
-    { pubkey: b32(0x22), stakeMsat: 100000n, outcome: DELIVERED, score: 800 },
+    { pubkey: b32(0x21), stakeMsat: 100000n, feeMsat: 0n, donationMsat: 0n, outcome: DELIVERED, score: 900 },
+    { pubkey: b32(0x22), stakeMsat: 100000n, feeMsat: 0n, donationMsat: 0n, outcome: DELIVERED, score: 800 },
   ];
   const paid = leaderboard(rows, { contract, payout: { entries, minScore: 1 } });
   const paidChecked = leaderboard(rows,
@@ -464,7 +464,7 @@ test("a final from another round is not on this round's board, and is named", ()
   // AND THE FOREIGN PLAYER IS ABSENT, NOT PAID NOTHING. A pool that counts
   // them is refused outright: they have no final in this round, so there is
   // nobody to check the entry against.
-  const stake = { stakeMsat: 100000n, outcome: DELIVERED };
+  const stake = { stakeMsat: 100000n, feeMsat: 0n, donationMsat: 0n, outcome: DELIVERED };
   const ours = [0x21, 0x22, 0x23].map((n, i) => ({ pubkey: b32(n), ...stake, score: [900, 700, 500][i] }));
   const paid = leaderboard([...mine, foreign(0x30, 800)], { contract, payout: { entries: ours, minScore: 1 } });
   assert.equal(paid.ok, true, paid.why);

@@ -58,23 +58,21 @@ export const isRefund = (outcome) => REFUNDS.includes(outcome);
  * refused rather than read as zero, because zero is exactly the on-top reading
  * coming back through a missing field.
  */
-function msat(v) {
-  if (typeof v === 'bigint') return v;
-  if (v == null || v === '') return 0n;
-  if (typeof v === 'number' && Number.isInteger(v)) return BigInt(v);
-  if (typeof v === 'string') return BigInt(v);
-  throw new Error('stakes must be BigInt millisatoshi, and an entry names its stake, its fee '
-    + 'and its donation: the net stake is the first less the other two (22A)');
-}
-
+// A FREE SEAT IS THREE ZEROS, NOT THREE MISSING FIELDS. Every entry the door
+// takes is decoded from signed bytes, so its three amounts are BigInt whether
+// the round asks 0 or 100000; the free seat the owner photographed refused at
+// 11:15 was a daemon started between two edits, when the fee rule already
+// asked for the donation and the door did not yet pass it. Coercing a missing
+// or numeric amount to BigInt here would hide exactly that kind of wiring
+// fault - and a float stake is refused outright, as it always was.
 export function netStakeMsat(e) {
-  if (!e) {
+  if (!e || typeof e.stakeMsat !== 'bigint' || typeof e.feeMsat !== 'bigint'
+      || typeof e.donationMsat !== 'bigint')
     throw new Error('stakes must be BigInt millisatoshi, and an entry names its stake, its fee '
       + 'and its donation: the net stake is the first less the other two (22A)');
-  }
-  const stake = msat(e.stakeMsat);
-  const fee = msat(e.feeMsat);
-  const donation = msat(e.donationMsat);
+  const stake = e.stakeMsat;
+  const fee = e.feeMsat;
+  const donation = e.donationMsat;
   if (stake < 0n || fee < 0n || donation < 0n)
     throw new Error('a stake, a fee and a donation cannot be negative');
   const net = stake - fee - donation;

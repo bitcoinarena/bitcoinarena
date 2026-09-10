@@ -32,11 +32,14 @@ import { HELD } from '../../protocol/src/payout.js';
 import { MIN_ENTRY_WINDOW_MS } from '../../protocol/src/constants.js';
 import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
 import { sha256, toHex } from '../../protocol/src/hash.js';
+import { owedLine } from '../src/nwc.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const rand = (n) => new Uint8Array(randomBytes(n));
 const NOW = 1788700000000;
 const STAKE = 100000n;
+// 6e: the hold is the NET stake - 100000 committed, the 2% fee out of it (22A).
+const NET = STAKE - entryFeeMsat(STAKE);
 const PREIMAGE = 'ab'.repeat(32);
 const session = ed25519.utils.randomSecretKey();
 
@@ -225,7 +228,7 @@ test('a connected wallet pays the hold invoice this seat owes', async () => {
     assert.equal(paid.ok, true, paid.why);
     assert.equal(paid.paid, true);
     assert.equal(paid.preimage, PREIMAGE);
-    assert.equal(paid.amountMsat, STAKE);
+    assert.equal(paid.amountMsat, NET);
     assert.deepEqual(paid.paymentHash, c.entry.stakeCommitment,
       'the hash paid against is not the one this entry commits to');
 
@@ -274,7 +277,7 @@ test('a lying node sends nothing to the wallet either', async () => {
   const http = await import('node:http');
   const honest = {
     entry: toHex(c.eid), paymentHash: toHex(c.entry.stakeCommitment),
-    amountMsat: String(STAKE), state: HELD, request: 'lnbcrt1-liar',
+    amountMsat: String(NET), state: HELD, request: 'lnbcrt1-liar',
   };
   const liars = [
     [{ ...honest, amountMsat: String(STAKE * 3n) }, /asks 300000 msat/, 'a wrong amount'],
@@ -455,9 +458,9 @@ test('every payment is written down with its hash and its round', async () => {
     assert.equal(paid.ok, true, paid.why);
 
     assert.equal(log.count, 1);
-    assert.equal(log.totalMsat, STAKE);
+    assert.equal(log.totalMsat, NET);
     const [one] = log.entries();
-    assert.equal(one.amountMsat, STAKE);
+    assert.equal(one.amountMsat, NET);
     assert.deepEqual(one.paymentHash, c.entry.stakeCommitment,
       'the log recorded a hash that is not the one this seat paid against');
     assert.deepEqual(one.roundId, c.entry.roundId);
@@ -475,7 +478,7 @@ test('every payment is written down with its hash and its round', async () => {
     });
     assert.equal(refused.ok, false);
     assert.equal(log.count, 1, 'a refused payment was counted as spent');
-    assert.equal(log.totalMsat, STAKE);
+    assert.equal(log.totalMsat, NET);
     console.log(`  a refused payment: still ${log.count} entry, still ${log.totalMsat} msat`);
   } finally { await w.close(); await c.close(); }
 });
@@ -565,10 +568,13 @@ test('a round that asks no money gets no payment box, driven off the shipped pag
     'document', 'window', 'BLWPCLIENT', 'wallet', 'spent', 'owed', 'paying', 'walletWhy', 'budget',
     `${src}\n return paintWallet();`,
   )(
-    { getElementById: el }, { BLWP_ROUND: round, BLWP_CURVE: {} },
+    { getElementById: el },
+    { BLWP_ROUND: round, BLWP_CURVE: {},
+      BLWP_ENTRY: { stakeMsat: round.stakeMsat, feeMsat: entryFeeMsat(round.stakeMsat), donationMsat: 0n } },
     {
       roundPays: (r) => !!r && BigInt(r.stakeMsat || 0n) > 0n,
       spentLine: () => 'nothing paid this session',
+      owedLine,
       budgetLine,
     },
     walletState, null, owedState, false, '', budgetState,
@@ -581,13 +587,16 @@ test('a round that asks no money gets no payment box, driven off the shipped pag
   // A PAYING ROUND WITH NO QUOTE YET: shown, and the button cannot be pressed.
   run({ stakeMsat: 100000n }, { connected: false }, null);
   assert.equal(made['blwp-wallet'].style.display, 'block');
-  assert.match(made['blwp-owed'].textContent, /owes —/);
+  assert.match(made['blwp-owed'].textContent, /100 sat round: 2 sat fee and 0 sat donation out of it, 98 sat staked · no quote yet/);
   assert.equal(made['blwp-pay'].disabled, true, 'a player could pay before there was a quote');
 
   // AND WITH ONE: the amount is in sats, off the client's own quote.
-  run({ stakeMsat: 100000n }, { connected: true }, { amountMsat: 100000n, state: 'HELD' },
+  run({ stakeMsat: 100000n }, { connected: true }, { amountMsat: NET, state: 'HELD' },
     { ok: true, kind: 'budget', totalMsat: 1000000n, usedMsat: 250000n, leftMsat: 750000n });
-  assert.match(made['blwp-owed'].textContent, /owes 100 sat · HELD/);
+  // 22A's TRANSPARENCY LIST: the commitment, the fee and the donation OUT of it,
+  // the net stake, and what the wallet is asked - which is the net.
+  assert.match(made['blwp-owed'].textContent,
+    /100 sat round: 2 sat fee and 0 sat donation out of it, 98 sat staked · the wallet is asked 98 sat · HELD/);
   assert.equal(made['blwp-pay'].disabled, false);
   assert.match(made['blwp-nwc'].placeholder, /wallet connected/);
 
@@ -596,11 +605,11 @@ test('a round that asks no money gets no payment box, driven off the shipped pag
 
   // A DISCONNECTED WALLET SHOWS NO BUDGET LINE AT ALL - "budget not asked for
   // yet" beside a box with nothing connected would be noise.
-  run({ stakeMsat: 100000n }, { connected: false }, { amountMsat: 100000n, state: 'HELD' }, null);
+  run({ stakeMsat: 100000n }, { connected: false }, { amountMsat: NET, state: 'HELD' }, null);
   assert.equal(made['blwp-budget'].textContent, '');
 
   // AND A WALLET THAT CANNOT SAY SHOWS THE WORDS, never a blank.
-  run({ stakeMsat: 100000n }, { connected: true }, { amountMsat: 100000n, state: 'HELD' },
+  run({ stakeMsat: 100000n }, { connected: true }, { amountMsat: NET, state: 'HELD' },
     { ok: true, kind: 'none' });
   assert.equal(made['blwp-budget'].textContent, 'this wallet does not report a budget');
   console.log(`  free round: hidden · paying, no quote: "${made['blwp-owed'].textContent}" `

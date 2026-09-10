@@ -90,13 +90,18 @@ test('tickets, weights and the chosen committee match', () => {
 
 test('the payout table matches the specification worked example', () => {
   const v = load('payout');
+  const money = {
+    stakeMsat: BigInt(v.input.stakeMsat),
+    feeMsat: BigInt(v.input.feeMsat),
+    donationMsat: BigInt(v.input.donationMsat),
+  };
   const entries = [];
   for (let i = 0; i < v.input.delivered_low_score; i++)
-    entries.push({ pubkey: b32(i), stakeMsat: BigInt(v.input.stakeMsat), outcome: DELIVERED, score: 50 });
+    entries.push({ pubkey: b32(i), ...money, outcome: DELIVERED, score: 50 });
   for (let i = 0; i < v.input.delivered_high_score; i++)
-    entries.push({ pubkey: b32(100 + i), stakeMsat: BigInt(v.input.stakeMsat), outcome: DELIVERED, score: 900 });
+    entries.push({ pubkey: b32(100 + i), ...money, outcome: DELIVERED, score: 900 });
   for (let i = 0; i < v.input.failed; i++)
-    entries.push({ pubkey: b32(200 + i), stakeMsat: BigInt(v.input.stakeMsat), outcome: FAILED, score: 0 });
+    entries.push({ pubkey: b32(200 + i), ...money, outcome: FAILED, score: 0 });
 
   const r = computePayoutTable({ roundId: fromHex(v.roundId), entries, minScore: v.minScore });
   assert.equal(r.pool.toString(), v.pool);

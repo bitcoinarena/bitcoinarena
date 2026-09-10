@@ -133,10 +133,7 @@ export class PoolSigning {
     if (!seen.final)
       return { ok: false, why: `${seen.agreed} of ${seen.needed} seats signed this table` };
 
-    const owed = winnings({
-      table: built.table,
-      stakes: entries.entries.map((e) => ({ pubkey: e.pubkey, stakeMsat: e.stakeMsat })),
-    });
+    const owed = winnings({ table: built.table, stakes: entries.entries });
     if (!owed.ok) return { ok: false, why: owed.why };
     if (!owed.rows.length) return { ok: false, why: 'that round owes nobody anything' };
 
@@ -355,6 +352,7 @@ export class PoolSigning {
       out.push({
         entryId, pubkey: result.playerPubkey, outcome: result.outcome,
         score: result.score, stakeMsat: entry.stakeMsat,
+        feeMsat: entry.feeMsat, donationMsat: entry.donationMsat,
       });
     }
     if (!out.length)

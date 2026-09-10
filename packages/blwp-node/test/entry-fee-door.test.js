@@ -67,7 +67,10 @@ async function door(stakeMsat = STAKE) {
     };
     const said = await fetch(`http://127.0.0.1:${node.port}/entry`,
       { method: 'POST', body: encodeEntryContract(entry) });
-    return { status: said.status, why: said.status === 201 ? '' : (await said.text()).trim() };
+    return {
+      status: said.status, why: said.status === 201 ? '' : (await said.text()).trim(),
+      hold: said.headers.get('x-hold'), holdWhy: said.headers.get('x-hold-why'),
+    };
   };
   return { node, contract, rid, knock, close: () => node.close() };
 }
@@ -104,7 +107,7 @@ test('the door takes the round\'s own fee and refuses every other', async () => 
     let took = 0;
     for (const [fee, what] of cases) {
       const said = await d.knock(STAKE, fee);
-      const rule = feeMatchesEntry({ stakeMsat: STAKE, feeMsat: fee });
+      const rule = feeMatchesEntry({ stakeMsat: STAKE, feeMsat: fee, donationMsat: 0n });
       console.log(`  ${what.padEnd(22)} fee ${String(fee).padStart(7)}  door ${said.status}  `
         + `rule ${rule.ok ? 'stands' : 'no'}`);
       // THE DOOR AND THE RULE AGREE ON EVERY ONE, which is the property: a
@@ -141,7 +144,7 @@ test('a stake the round did not ask for is refused, even paying 2% of it', async
     let took = 0;
     for (const [stake, fee, what] of cases) {
       const said = await d.knock(stake, fee);
-      const rule = feeMatchesEntry({ stakeMsat: stake, feeMsat: fee });
+      const rule = feeMatchesEntry({ stakeMsat: stake, feeMsat: fee, donationMsat: 0n });
       assert.equal(rule.ok, true, 'this matrix is meant to satisfy the 2% rule throughout');
       console.log(`  ${what.padEnd(28)} stake ${String(stake).padStart(9)} fee ${String(fee).padStart(7)}  `
         + `door ${said.status}  rule stands`);
@@ -167,6 +170,11 @@ test('a round that asks no stake takes a free entry and refuses a paid one', asy
   try {
     const free = await d.knock(0n, 0n);
     assert.equal(free.status, 201, free.why);
+    // AND IT SEATS ON A NODE WITH NO LIGHTNING AT ALL - `door()` gives this
+    // daemon no port - as a free seat, not as a Lightning fault. the owner 11:15:
+    // the Daily refused exactly this seat, with 22A's BigInt refusal.
+    assert.equal(free.hold, 'FREE', `a free seat was reported as ${free.hold}: ${free.holdWhy}`);
+    assert.equal(free.holdWhy, null, 'a free seat carried a reason, as if something had failed');
 
     // A player cannot pay INTO a round that asks nothing either: the fee table
     // would owe nodes a share of money the round never collected.

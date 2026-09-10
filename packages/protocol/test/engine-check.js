@@ -15,8 +15,8 @@ const c = {
 };
 say('round_id ' + toHex(roundId(c)));
 const entries = [];
-for (let i = 0; i < 50; i++) entries.push({ pubkey: b32(i), stakeMsat: 100000n, outcome: DELIVERED, score: 50 });
-for (let i = 0; i < 25; i++) entries.push({ pubkey: b32(100 + i), stakeMsat: 100000n, outcome: DELIVERED, score: 900 });
-for (let i = 0; i < 25; i++) entries.push({ pubkey: b32(200 + i), stakeMsat: 100000n, outcome: FAILED, score: 0 });
+for (let i = 0; i < 50; i++) entries.push({ pubkey: b32(i), stakeMsat: 100000n, feeMsat: 0n, donationMsat: 0n, outcome: DELIVERED, score: 50 });
+for (let i = 0; i < 25; i++) entries.push({ pubkey: b32(100 + i), stakeMsat: 100000n, feeMsat: 0n, donationMsat: 0n, outcome: DELIVERED, score: 900 });
+for (let i = 0; i < 25; i++) entries.push({ pubkey: b32(200 + i), stakeMsat: 100000n, feeMsat: 0n, donationMsat: 0n, outcome: FAILED, score: 0 });
 const r = computePayoutTable({ roundId: b32(9), entries, minScore: 1 });
 say('payout ' + r.pool + ' ' + r.payingRanks + ' ' + r.table.reduce((s,t)=>s+t.amountMsat,0n));

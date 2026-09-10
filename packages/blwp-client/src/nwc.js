@@ -27,6 +27,7 @@
 // THE CURVE IS INJECTED, like everywhere else in this package: `@blwp/client`
 // carries no crypto, and `page-curve.js` is what the page loads beside it.
 import { toHex, fromHex, sha256 } from '../../protocol/src/hash.js';
+import { netStakeMsat } from '../../protocol/src/payout.js';
 
 // `webcrypto` AND NOT `subtle`, which `seal.js` already declares at its own top
 // level. The bundle is a concatenation - `tools/bundle.js` refuses two private
@@ -196,6 +197,35 @@ export function spentLine(log) {
   return `${sats} sat over ${log.count} stake${log.count === 1 ? '' : 's'}`
     + ` in ${rounds} round${rounds === 1 ? '' : 's'}`;
 }
+
+/**
+ * WHAT THIS SEAT COSTS, AS ONE LINE, and it is 22A's Transparency list.
+ *
+ * "Before wallet approval the client MUST display: total wallet commitment,
+ * the node fee and donation coming OUT of it, the resulting net game stake".
+ * Every number is off the ENTRY the player signed; the only thing taken from
+ * the quote is what the wallet is being asked for and the hold's state, and
+ * the quote reaching here has already passed `invoiceMatchesEntry` - so the
+ * amount asked IS the net stake, and the line shows both so a player can see
+ * that it is.
+ *
+ * `netStakeMsat` does the subtraction. A page that took 2 from 100 itself
+ * would be a second arithmetic for the one number a player parts with money
+ * over.
+ */
+export function owedLine(entry, quote) {
+  if (!entry) return 'this seat owes —';
+  let net;
+  try { net = netStakeMsat(entry); } catch (e) { return `this seat cannot be paid: ${e.message}`; }
+  const split = `${sats(entry.stakeMsat)} round: ${sats(entry.feeMsat)} fee and `
+    + `${sats(entry.donationMsat)} donation out of it, ${sats(net)} staked`;
+  return quote
+    ? `${split} · the wallet is asked ${sats(quote.amountMsat)} · ${quote.state}`
+    : `${split} · no quote yet`;
+}
+
+/** Whole sats where they are whole, and the millisatoshi where they are not. */
+const sats = (msat) => (msat % 1000n === 0n ? `${msat / 1000n} sat` : `${msat} msat`);
 
 /**
  * NIP-04: AES-256-CBC over the ECDH x-coordinate, base64, `?iv=` base64.

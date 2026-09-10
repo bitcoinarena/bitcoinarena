@@ -314,8 +314,8 @@ test('a handout no five seats can open forfeits, and does not refund the dealer'
  */
 test('the saboteur s stake pays the winner, and the operator takes none of it', () => {
   const b = (n) => new Uint8Array(32).fill(n);
-  const winner = { entryId: b(1), pubkey: b(1), outcome: DELIVERED, score: 100, stakeMsat: 100000n };
-  const saboteur = { entryId: b(2), pubkey: b(2), outcome: FORFEIT, score: 0, stakeMsat: 100000n };
+  const winner = { entryId: b(1), pubkey: b(1), outcome: DELIVERED, score: 100, stakeMsat: 100000n, feeMsat: 0n, donationMsat: 0n };
+  const saboteur = { entryId: b(2), pubkey: b(2), outcome: FORFEIT, score: 0, stakeMsat: 100000n, feeMsat: 0n, donationMsat: 0n };
 
   const s = holdSettlement({ roundId: b(9), minScore: 1, entries: [winner, saboteur] });
   const said = new Map(s.actions.map((a) => [a.entry, a.action]));

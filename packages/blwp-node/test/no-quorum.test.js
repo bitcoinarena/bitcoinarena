@@ -133,9 +133,9 @@ test('equivocation forfeits, and disagreement without a fork proof is VOID', asy
  * refund on every losing round.
  */
 test('the forfeited stake pays the winner and the void stake stays out', () => {
-  const winner = { entryId: b32(1), pubkey: b32(1), outcome: DELIVERED, score: 100, stakeMsat: 100000n };
-  const forker = { entryId: b32(2), pubkey: b32(2), outcome: FORFEIT, score: 0, stakeMsat: 100000n };
-  const voided = { entryId: b32(3), pubkey: b32(3), outcome: VOID, score: 0, stakeMsat: 100000n };
+  const winner = { entryId: b32(1), pubkey: b32(1), outcome: DELIVERED, score: 100, stakeMsat: 100000n, feeMsat: 0n, donationMsat: 0n };
+  const forker = { entryId: b32(2), pubkey: b32(2), outcome: FORFEIT, score: 0, stakeMsat: 100000n, feeMsat: 0n, donationMsat: 0n };
+  const voided = { entryId: b32(3), pubkey: b32(3), outcome: VOID, score: 0, stakeMsat: 100000n, feeMsat: 0n, donationMsat: 0n };
 
   const t = computePayoutTable({ roundId: b32(9), minScore: 1, entries: [winner, forker, voided] });
 
@@ -205,8 +205,8 @@ test('a result that is already FINAL is not voided by a later low count', () => 
 
   // and the hold is not refunded a second time: FINAL is not a refund state
   const entries = [
-    { entryId: b32(1), pubkey: b32(1), outcome: DELIVERED, score: 100, stakeMsat: 100000n },
-    { entryId: b32(2), pubkey: b32(2), outcome: FORFEIT, score: 0, stakeMsat: 100000n },
+    { entryId: b32(1), pubkey: b32(1), outcome: DELIVERED, score: 100, stakeMsat: 100000n, feeMsat: 0n, donationMsat: 0n },
+    { entryId: b32(2), pubkey: b32(2), outcome: FORFEIT, score: 0, stakeMsat: 100000n, feeMsat: 0n, donationMsat: 0n },
   ];
   const s = holdSettlement({ roundId: b32(9), minScore: 1, entries });
   assert.equal(s.refundedMsat, 100000n, 'only the winner s own stake goes home');
@@ -233,10 +233,10 @@ test('a result that is already FINAL is not voided by a later low count', () => 
  * ENTRY_VOID is an entry that never activated.
  */
 test('an entry that never activated is ENTRY_VOID, and neither word touches the pool', () => {
-  const winner = { entryId: b32(1), pubkey: b32(1), outcome: DELIVERED, score: 100, stakeMsat: 100000n };
-  const loser = { entryId: b32(2), pubkey: b32(2), outcome: FORFEIT, score: 0, stakeMsat: 100000n };
-  const voided = { entryId: b32(3), pubkey: b32(3), outcome: VOID, score: 0, stakeMsat: 100000n };
-  const never = { entryId: b32(4), pubkey: b32(4), outcome: ENTRY_VOID, score: 0, stakeMsat: 100000n };
+  const winner = { entryId: b32(1), pubkey: b32(1), outcome: DELIVERED, score: 100, stakeMsat: 100000n, feeMsat: 0n, donationMsat: 0n };
+  const loser = { entryId: b32(2), pubkey: b32(2), outcome: FORFEIT, score: 0, stakeMsat: 100000n, feeMsat: 0n, donationMsat: 0n };
+  const voided = { entryId: b32(3), pubkey: b32(3), outcome: VOID, score: 0, stakeMsat: 100000n, feeMsat: 0n, donationMsat: 0n };
+  const never = { entryId: b32(4), pubkey: b32(4), outcome: ENTRY_VOID, score: 0, stakeMsat: 100000n, feeMsat: 0n, donationMsat: 0n };
 
   const s = holdSettlement({ roundId: b32(9), minScore: 1, entries: [winner, loser, voided, never] });
   const said = new Map(s.actions.map((a) => [a.entry, a.action]));
