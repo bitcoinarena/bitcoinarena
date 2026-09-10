@@ -166,6 +166,36 @@ test('counted from the seat: a watch started before anybody paid reaches committ
   } finally { client.close(); await c.close(); }
 });
 
+test('a count that is over is not started again: committed, ended or closed, watchStake asks nobody', async () => {
+  // The chip paints every 500 ms and starts the count from the seat. What
+  // stops it restarting a finished count is a rule, and a rule in index.html is
+  // one node --test cannot run - so it lives here, where the suite does.
+  const c = await committee(2);
+  const client = new Client({ base: c.bases[0], core, sign, verify });
+  let asked = 0;
+  const counting = (u, o) => { asked++; return fetch(u, o); };
+  try {
+    await client.join(c.entry);
+    c.pay(2);
+    const args = { seats: c.keys, nodes: c.bases, contract: c.contract, everyMs: 20, fetcher: counting };
+    const done = await client.watchStake(args);
+    assert.equal(done.committed, true);
+    const polls = client.stakePolls;
+    const before = asked;
+    const again = await client.watchStake(args);
+    assert.equal(client.stakePolls, polls, 'a committed count was started again');
+    assert.equal(asked, before, `a committed count asked the nodes ${asked - before} more times`);
+    assert.equal(again.committed, true, 'the last count was not handed back');
+
+    const other = new Client({ base: c.bases[0], core, sign, verify });
+    await other.join(c.entry);
+    other.close();
+    const closedAsk = asked;
+    await other.watchStake(args);
+    assert.equal(asked, closedAsk, 'a closed client counted the stake');
+  } finally { client.close(); await c.close(); }
+});
+
 test('the page counts from the seat, whatever payStake answered, and hands the count to the chip', async () => {
   const { readFileSync } = await import('node:fs');
   const page = readFileSync(new URL('../../../unity-proto/Assets/WebGLTemplates/BtcLogistics/index.html', import.meta.url), 'utf8');

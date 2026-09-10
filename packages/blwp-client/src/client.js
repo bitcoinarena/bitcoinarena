@@ -1249,9 +1249,15 @@ export class Client {
   // polling every seat twice.
   watchStake({ seats, nodes, contract, everyMs = 2000, fetcher } = {}) {
     if (this.stakeWatch) return this.stakeWatch;
+    // A COUNT THAT IS OVER STAYS OVER. Committed, the run ended, or this client
+    // closed: the last count is handed back and no node is asked. The chip
+    // paints every 500 ms, and this is what stops it restarting a finished
+    // count - a rule here, where the suite runs it, not only in index.html.
+    // Measured before: a second call after committed polled every seat again.
+    if (this.stakeCommitted || this.ended || this.stakeWatchStopped)
+      return Promise.resolve(this.stakeCount);
     const eid = (this.where && this.where.entryId) || (this.seatEntry && entryId(this.seatEntry));
     if (!eid) return Promise.reject(new Error('there is no seat to count: join first'));
-    this.stakeWatchStopped = false;
     this.stakeWatch = (async () => {
       for (;;) {
         const s = await stakeSeenBy({ entryId: eid, seats, nodes, contract, ...(fetcher ? { fetcher } : {}) });
