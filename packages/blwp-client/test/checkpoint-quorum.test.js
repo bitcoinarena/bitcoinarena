@@ -165,3 +165,98 @@ test('a client that reaches one daemon of two is refused past its first link, an
     await round.close();
   }
 });
+
+// THE INPUTS, NOT ONLY THE CHECKPOINTS.
+//
+// Measured 2026-09-10 on the Daily, after checkpoints reached both daemons: B
+// held 0 ticks of either run (A: 588 and 630). A node that receipts a run's
+// checkpoints without its inputs signs a claim it cannot replay.
+
+/** How many ticks of this run a daemon HOLDS, on its own public door. */
+async function heldTicks(base, rid, eid) {
+  const r = await fetch(`${base}/transcript?round=${toHex(rid)}&entry=${toHex(eid)}`);
+  await r.arrayBuffer();
+  return Number(r.headers.get('x-ticks'));
+}
+
+/** Everything recorded published to this client's node, and every peer fed. */
+async function publishAll(client) {
+  for (let i = 0; i < 500 && (client.hold.length || client.publishing); i++) {
+    await (client.drain() || client.publishing);
+    await client.awaitPublishes();
+  }
+  await client.awaitPeers();
+}
+
+test('every batch reaches both daemons, tick for tick, and the checkpoint chain still grows on both', async () => {
+  const round = await standUpRound({ host: '127.0.0.1', portA: 18254, portB: 18255 });
+  let t;
+  try {
+    const named = await joinFromQuery(new URL(round.url).search);
+    t = await tab(round, named, { pageNodes: true });
+    const { client, rid, eid } = t;
+    const [A, B] = [client.base, ...client.peers];
+
+    for (const tick of [60, 120, 180, 240]) {
+      for (let i = 0; i < 60; i++) client.record([45875, 0, 0, 0, 0]);
+      await publishAll(client);
+      const r = await client.markNow(driven(7, tick), tick);
+      await client.awaitPeers();
+      const ticks = [await heldTicks(A, rid, eid), await heldTicks(B, rid, eid)];
+      const marks = [await stored(A, rid, eid), await stored(B, rid, eid)];
+      console.log(`  tick ${tick}: held A ${ticks[0]} B ${ticks[1]} | checkpoints A ${marks[0]} B ${marks[1]}, live ${r.live}`);
+      assert.deepEqual(ticks, [tick, tick], `at ${tick} A and B hold ${ticks} ticks of the run`);
+      assert.equal(r.live, true, `the checkpoint at ${tick} did not go live`);
+      assert.deepEqual(r.refused, []);
+      assert.deepEqual(marks, [tick / 60, tick / 60]);
+    }
+
+    // B HOLDS THE SAME TRANSCRIPT, not only as many ticks.
+    const hashOf = async (base) => (await fetch(
+      `${base}/transcript?round=${toHex(rid)}&entry=${toHex(eid)}`)).headers.get('x-transcript-hash');
+    assert.equal(await hashOf(B), await hashOf(A), 'B holds different inputs from A');
+
+    assert.deepEqual(client.peerBatches().map(({ ticks, lag, refused }) => ({ ticks, lag, refused })),
+      [{ ticks: 240, lag: 0, refused: 0 }]);
+    assert.equal(/inputs refused/.test(client.status(240)), false);
+  } finally {
+    if (t) { t.client.ended = true; t.client.close(); }
+    await round.close();
+  }
+});
+
+test('a peer that never had the seat is seated when it refuses, and caught up from the first batch', async () => {
+  const round = await standUpRound({ host: '127.0.0.1', portA: 18256, portB: 18257 });
+  let t;
+  try {
+    const named = await joinFromQuery(new URL(round.url).search);
+    // THE DAILY BEFORE: no node list, so the entry and the inputs reach A alone.
+    t = await tab(round, named, { pageNodes: false });
+    const { client, rid, eid } = t;
+    const B = named.nodes.map((n) => String(n).replace(/\/+$/, '')).find((n) => n !== client.base);
+    for (let i = 0; i < 60; i++) client.record([45875, 0, 0, 0, 0]);
+    await publishAll(client);
+    const before = [await heldTicks(client.base, rid, eid), await heldTicks(B, rid, eid)];
+    assert.deepEqual(before, [60, 0], `without the node list A and B hold ${before}`);
+
+    // NOW THE NODE LIST ARRIVES, with B never having seen the entry.
+    client.deliverTo(named.nodes);
+    for (let i = 0; i < 60; i++) client.record([45875, 0, 0, 0, 0]);
+    await publishAll(client);
+    assert.equal(client.peerBatchesRefused, 1, 'B was expected to refuse once, for the missing seat');
+    assert.match(client.peerBatches()[0].why, /no such entry/);
+    assert.match(client.status(120), / inputs refused 1\b/, 'a refused input was not on the line');
+
+    // THE NEXT TRY CARRIES B FROM THE FIRST BATCH THIS CLIENT KEPT.
+    client.pumpPeers();
+    await client.awaitPeers();
+    const after = [await heldTicks(client.base, rid, eid), await heldTicks(B, rid, eid)];
+    console.log(`  late peer: before A ${before[0]} B ${before[1]}, after A ${after[0]} B ${after[1]}`);
+    assert.deepEqual(after, [120, 120],
+      'B was not caught up across the ticks published before the node list arrived');
+    assert.equal(client.peerBatches()[0].lag, 0);
+  } finally {
+    if (t) { t.client.ended = true; t.client.close(); }
+    await round.close();
+  }
+});

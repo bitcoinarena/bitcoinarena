@@ -5861,6 +5861,14 @@ class Client {
     this.peers = [];              // the other committee nodes' bases
     this.peerLinks = new Map();   // base -> { sock, said, opening }
     this.peerSeats = [];
+    // THE RUN'S INPUTS, FOR THE OTHER COMMITTEE NODES. Measured 2026-09-10 on
+    // the Daily: with checkpoints reaching both daemons, B held 0 ticks of
+    // either run (A: 588 and 630) - B was receipting runs it could not replay.
+    // Every batch this client's node took is kept here, and each peer is fed
+    // them in order from where it last answered.
+    this.published = [];          // { bytes, through } per accepted batch
+    this.peerFeeds = new Map();   // base -> { next, ticks, refused, why, running }
+    this.peerBatchesRefused = 0;
     this.publishing = null;
     this.marking = null;
     this.said = [];
@@ -5981,12 +5989,7 @@ class Client {
     // A node that will not seat it is written down, not thrown: this node took
     // the entry, and the run can still be played.
     this.seatEntry = entry;
-    this.peerSeats = await Promise.all(this.peers.map(async (base) => {
-      try {
-        const p = await fetch(`${base}/entry`, { method: 'POST', body: encodeEntryContract(entry) });
-        return { base, ok: p.status === 201, why: p.status === 201 ? null : (await p.text()).trim() };
-      } catch (e) { return { base, ok: false, why: e.message }; }
-    }));
+    this.peerSeats = await Promise.all(this.peers.map((base) => this.seatOn(base)));
     return seated;
   }
 
@@ -6020,6 +6023,81 @@ class Client {
     const link = await this.peerLink(base);
     if (!link.sock || link.sock.readyState !== 1) return `error no socket to ${base}`;
     return new Promise((r) => { link.said.push(r); link.sock.send(message); });
+  }
+
+  /** Seats this client's entry on one other committee node. */
+  async seatOn(base) {
+    try {
+      const p = await fetch(`${base}/entry`, { method: 'POST', body: encodeEntryContract(this.seatEntry) });
+      return { base, ok: p.status === 201, why: p.status === 201 ? null : (await p.text()).trim() };
+    } catch (e) { return { base, ok: false, why: e.message }; }
+  }
+
+  /**
+   * THE SAME INPUTS TO EVERY OTHER COMMITTEE NODE. Section 11: "the client
+   * periodically sends batches and checkpoints" - both, to the committee.
+   *
+   * Each peer is fed the batches this client's node took, IN ORDER, from the
+   * first one it has not answered: the node refuses a batch that does not
+   * follow its own chain head, so a peer that missed one is caught up rather
+   * than skipped past. A repeat is answered "0" and is not an error, so a
+   * retry costs nothing. A refusal stops that peer's feed until the next batch
+   * or checkpoint tries again, and is counted with the node's own words. The
+   * node's answer to a batch is a count of new ticks and is not signed - there
+   * is no batch receipt in the protocol to verify - so what is checked is that
+   * the answer IS a count, from that node, for that batch.
+   */
+  pumpPeers() {
+    for (const base of this.peers) this.#feed(base);
+  }
+
+  peerFeed(base) {
+    let f = this.peerFeeds.get(base);
+    if (!f) {
+      f = { base, next: 0, ticks: 0, refused: 0, why: null, running: null, again: false };
+      this.peerFeeds.set(base, f);
+    }
+    return f;
+  }
+
+  #feed(base) {
+    const f = this.peerFeed(base);
+    if (f.running) { f.again = true; return f.running; }
+    f.running = (async () => {
+      do {
+        f.again = false;
+        while (f.next < this.published.length) {
+          const one = this.published[f.next];
+          const a = await this.sendPeer(base, one.bytes);
+          if (typeof a !== 'string' || !/^[0-9]+$/.test(a)) {
+            f.refused++;
+            this.peerBatchesRefused++;
+            f.why = typeof a === 'string' ? a : `${a.length} bytes where a tick count was due`;
+            // A NODE THAT LOST THE SEAT IS GIVEN IT AGAIN; the next feed retries.
+            if (/no such entry/.test(f.why) && this.seatEntry) await this.seatOn(base);
+            return;
+          }
+          f.next++;
+          f.ticks = one.through;
+        }
+      } while (f.again);
+    })().finally(() => { f.running = null; });
+    return f.running;
+  }
+
+  /** Every peer's feed settled - for tests and for measuring the lag. */
+  async awaitPeers() {
+    for (;;) {
+      const running = [...this.peerFeeds.values()].map((f) => f.running).filter(Boolean);
+      if (!running.length) return;
+      await Promise.all(running.map((p) => p.catch(() => {})));
+    }
+  }
+
+  /** How far each peer holds this run's inputs, against this client's node. */
+  peerBatches() {
+    return [...this.peerFeeds.values()].map(({ base, ticks, refused, why }) =>
+      ({ base, ticks, lag: this.nextTick - ticks, refused, why }));
   }
 
   /**
@@ -6361,13 +6439,21 @@ class Client {
       liquidations,
       loads,
     };
-    const answer = await this.send(encodeInputBatch(b));
+    const bytes = encodeInputBatch(b);
+    const answer = await this.send(bytes);
 
     // The node answers how many ticks were NEW. A refusal is a named string
     // and the chain must not move on one, the same rule the marks follow.
     if (typeof answer !== 'string' || !/^[0-9]+$/.test(answer)) return { batch: b, answer };
     this.batchHead = batchId(b);
     this.nextTick = b.firstTick + ticks.length;
+    // AND THE SAME BYTES GO TO EVERY OTHER COMMITTEE NODE, in the order this
+    // node took them - see `pumpPeers`. Every batch is KEPT, peers or not: a
+    // node refuses a batch that does not follow its own head, so a peer that
+    // arrives late can only be caught up from the run's first batch. A whole
+    // run is at most blockTicks x 20 bytes of words.
+    this.published.push({ bytes, through: this.nextTick });
+    if (this.peers.length) this.pumpPeers();
     return { batch: b, answer, accepted: Number(answer) };
   }
 
@@ -6694,6 +6780,9 @@ class Client {
     this.marksAccepted = 0;
     this.marksRefused = 0;
     this.marksRefusedWhy = null;
+    this.published = [];
+    this.peerFeeds = new Map();
+    this.peerBatchesRefused = 0;
     this.publishing = null;
     this.marking = null;
     this.offered = 0;
@@ -6942,6 +7031,9 @@ class Client {
    * transcript.
    */
   markNow(stateHash, tick, inputChainHash = GENESIS) {
+    // A PEER WHOSE FEED STOPPED ON A REFUSAL IS TRIED AGAIN once a second,
+    // here, so a peer that was briefly down catches up without a batch of its own.
+    this.pumpPeers();
     // A mark after the run has ended would commit to a world whose inputs
     // nobody can produce - it names a tick the transcript cannot reach.
     if (this.ended) return null;
@@ -6983,6 +7075,7 @@ class Client {
       + (this.marksSkipped ? ` skipped ${this.marksSkipped}` : '')
       + (this.peers.length ? ` accepted ${this.marksAccepted}` : '')
       + (this.marksRefused ? ` refused ${this.marksRefused}` : '')
+      + (this.peerBatchesRefused ? ` inputs refused ${this.peerBatchesRefused}` : '')
       + (this.drops ? ` drops ${this.drops} tries ${this.tries} resumed ${this.resumedAt}` : '')
       + (this.ended ? ` ${this.ending} ${this.endingReason}` : '');
   }
