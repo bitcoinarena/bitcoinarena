@@ -29,7 +29,7 @@ import { fileURLToPath } from 'node:url';
 
 import { openStore } from '../src/store.js';
 import { Round } from '../src/round.js';
-import { Custody, HELD, SETTLED, CANCELLED, ACTING } from '../src/custody.js';
+import { Custody, HELD, SETTLED, CANCELLED, MID_ACT } from '../src/custody.js';
 import { entryId as entryIdOf } from '../../protocol/src/contracts.js';
 import { DELIVERED, FORFEIT, VOID } from '../../protocol/src/payout.js';
 import { MIN_ENTRY_WINDOW_MS } from '../../protocol/src/constants.js';
@@ -135,6 +135,10 @@ async function custodianMidSettle(dbPath, logPath) {
     entries: entries.map((e, i) => ({
       entryId: entryIdOf(e), pubkey: e.playerPubkey, outcome: outcomes[i],
       score: outcomes[i] === DELIVERED ? 9 : 0, stakeMsat: e.stakeMsat,
+      // 22A: the table asks for all three, and without them it refused the
+      // whole close - so this child never reached its settle, before 9.4's
+      // names too (measured on a clean copy of 70d35e1).
+      feeMsat: e.feeMsat, donationMsat: e.donationMsat,
     })),
   });
   console.log('THE CHILD SURVIVED ITS OWN SETTLE');
@@ -256,7 +260,8 @@ async function main() {
   console.log(`  lightning was told to settle ${settled.length} stake(s)`);
   for (const l of settled) console.log(`    ${l}  and this node's store says ${stateOf.get(l.split(' ')[1])}`);
 
-  const acting = r2.holdsOf(new Uint8Array(rid2)).filter((h) => h.state === ACTING);
+  // 9.4's REQUESTED names (and the old ACTING label a store may still hold).
+  const acting = r2.holdsOf(new Uint8Array(rid2)).filter((h) => MID_ACT.includes(h.state));
   console.log(`  stakes this node knows it was in the middle of acting on: ${acting.length}`);
 
   // THE RESTARTED NODE ASKS LIGHTNING FIRST, then runs the same close again,
@@ -274,7 +279,8 @@ async function main() {
     entries: PLAYERS.map((n, i) => {
       const e = entryFor(new Uint8Array(rid2), n);
       return { entryId: entryIdOf(e), pubkey: e.playerPubkey, outcome: outs[i],
-        score: outs[i] === DELIVERED ? 9 : 0, stakeMsat: e.stakeMsat };
+        score: outs[i] === DELIVERED ? 9 : 0, stakeMsat: e.stakeMsat,
+        feeMsat: e.feeMsat, donationMsat: e.donationMsat };
     }),
   });
   const twice = readFileSync(log2, 'utf8').trim().split('\n').filter(Boolean)

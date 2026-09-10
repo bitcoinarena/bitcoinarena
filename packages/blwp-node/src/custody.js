@@ -40,18 +40,36 @@ export { HELD, SETTLED, CANCELLED, EXPIRED, SETTLE, CANCEL, NOTHING };
 export const FREE = 'FREE';
 
 /**
- * THE ONLY STATE IN THIS FILE THAT IS NOT 23.2'S.
+ * 9.4'S NAMES FOR THE MOMENTS BEFORE A CALL, written BEFORE the call.
  *
- * Between telling Lightning to settle and writing down that it was told, there
- * is a window one SIGKILL wide, and a crash inside it was measured: the log
- * said the preimage was released and this node's store still said HELD, so the
- * node that came back settled the same stake a second time. `ACTING` is
- * written BEFORE the call, so what a restarted node finds is not "nothing
- * happened" but "something may have". It is a node's own bookkeeping, not a
- * state a stake can be in as far as the spec is concerned - a stake in it is
- * either still held or already moved, and only Lightning knows which.
+ *   AWAITING_INVOICE -> HELD -> (result FINAL)
+ *     qualifying: CANCEL_REQUESTED -> CANCELLED -> PAYOUT_QUEUED -> PAID
+ *     losing:     ... -> SETTLE_REQUESTED -> SETTLED
+ *
+ * Between telling Lightning to act and writing down that it was told there is
+ * a window one SIGKILL wide, and a crash inside it was measured: the log said
+ * the preimage was released and this node's store still said HELD, so the node
+ * that came back settled the same stake a second time. A REQUESTED row is what
+ * a restarted node finds instead - not "nothing happened" but "this was asked
+ * for, and only Lightning knows whether it landed" - so it asks.
+ *
+ * AWAITING_INVOICE is the same idea one step earlier: the stake's hash and
+ * amount are on disk before the endpoint is asked for an invoice, and a row in
+ * it carries no invoice, so it is asked for again rather than called held.
+ */
+export const AWAITING_INVOICE = 'AWAITING_INVOICE';
+export const CANCEL_REQUESTED = 'CANCEL_REQUESTED';
+export const SETTLE_REQUESTED = 'SETTLE_REQUESTED';
+
+/**
+ * THE LABEL BOTH ACTS WERE WRITTEN UNDER BEFORE 9.4'S NAMES, and nothing writes
+ * it now. It is still READ: a store written before the rename may hold a row in
+ * it, and that row means exactly what a REQUESTED one means.
  */
 export const ACTING = 'ACTING';
+
+/** Every label meaning "an act was asked for and its answer never came back". */
+export const MID_ACT = [CANCEL_REQUESTED, SETTLE_REQUESTED, ACTING];
 
 /** A port that reaches no Lightning at all, which is the shipping default. */
 export const NO_LIGHTNING = null;
@@ -137,13 +155,26 @@ export class Custody {
 
     const entryId = entryIdOf(entry);
     const held = this.round.hold(entryId);
-    if (held) return { ok: true, state: held.state, paymentHash: held.paymentHash,
-      invoice: held.request, why: 'this entry already has a hold', already: true };
+    // A ROW STILL AWAITING ITS INVOICE IS NOT A HOLD: this node died between
+    // asking and hearing back, so it asks again - the endpoint takes up an
+    // invoice it already made (lnd-port.js) - rather than answer with none.
+    if (held && held.state !== AWAITING_INVOICE)
+      return { ok: true, state: held.state, paymentHash: held.paymentHash,
+        invoice: held.request, why: 'this entry already has a hold', already: true };
 
     // THE HOLD IS FOR THE NET STAKE. The fee and the donation come out of the
     // commitment (22A) and are paid from their own entry-time commitment, not
     // the pool (23.5) - and a DELIVERED hold is cancelled back whole, so a hold
     // for the commitment would return every winner their own fee.
+    //
+    // ON DISK BEFORE THE ENDPOINT IS ASKED (9.4's AWAITING_INVOICE): the hash
+    // and the amount are the entry's own, so they are known before the call.
+    this.round.putHold({
+      entryId, roundId: entry.roundId,
+      paymentHash: entry.stakeCommitment, amountMsat: netStakeMsat(entry),
+      state: AWAITING_INVOICE,
+      why: 'asking the endpoint for this stake\'s hold invoice; if this node dies here, ask again',
+    });
     const invoice = await this.port.createHeld({
       paymentHash: entry.stakeCommitment,
       amountMsat: netStakeMsat(entry),
@@ -159,7 +190,12 @@ export class Custody {
       amountMsat: invoice && invoice.amountMsat,
       entry,
     });
-    if (!matches.ok) return { ok: false, why: `the invoice does not match the entry: ${matches.why}` };
+    if (!matches.ok) {
+      // A REFUSED ANSWER IS A KNOWN ONE, unlike a call that never came back:
+      // nothing was held, so the AWAITING_INVOICE row goes and nothing stays.
+      this.round.dropHold(entryId);
+      return { ok: false, why: `the invoice does not match the entry: ${matches.why}` };
+    }
 
     this.round.putHold({
       entryId, roundId: entry.roundId,
@@ -217,8 +253,12 @@ export class Custody {
         return { ok: false, why: 'every entry handed to a settlement carries the id this node stored it under' };
       const row = this.round.hold(entryId);
       if (!row) { done.push({ entryId, action, state: null, why: 'this node holds no stake for that entry' }); continue; }
-      if (row.state === ACTING) {
-        done.push({ entryId, action, state: ACTING, why: 'this node died in the middle of that act; reconcile it against Lightning first' });
+      if (MID_ACT.includes(row.state)) {
+        done.push({ entryId, action, state: row.state, why: 'this node died in the middle of that act; reconcile it against Lightning first' });
+        continue;
+      }
+      if (row.state === AWAITING_INVOICE) {
+        done.push({ entryId, action, state: AWAITING_INVOICE, why: 'no invoice was ever confirmed for that stake, so there is nothing to act on' });
         continue;
       }
       if (row.state !== HELD) { done.push({ entryId, action, state: row.state, why: 'that hold has already moved' }); continue; }
@@ -261,7 +301,8 @@ export class Custody {
       if (ends.state === SETTLED || ends.state === CANCELLED) {
         this.round.putHold({
           entryId, roundId: row.roundId, paymentHash: row.paymentHash,
-          amountMsat: row.amountMsat, state: ACTING,
+          amountMsat: row.amountMsat,
+          state: ends.state === SETTLED ? SETTLE_REQUESTED : CANCEL_REQUESTED,
           why: `about to ${ends.state === SETTLED ? 'settle' : 'cancel'}; if this node dies here, ask Lightning`,
         });
         if (ends.state === SETTLED) await this.port.settle({ paymentHash: row.paymentHash, preimage, entryId });
@@ -301,10 +342,13 @@ export class Custody {
     // NO ROUND NAMED MEANS EVERY ROUND. A node that has just started does not
     // know which round it died in the middle of, which is the whole reason the
     // question is asked on start.
-    const rows = roundId ? this.round.holdsOf(roundId) : this.round.holdsInState(ACTING);
+    // EVERY LABEL THAT MEANS "ASKED, NEVER ANSWERED": 9.4's two, and the old
+    // one a store written before them may still hold.
+    const rows = roundId ? this.round.holdsOf(roundId)
+      : MID_ACT.flatMap((s) => this.round.holdsInState(s));
     const asked = [];
     for (const row of rows) {
-      if (row.state !== ACTING) continue;
+      if (!MID_ACT.includes(row.state)) continue;
       const seen = await this.port.look({ paymentHash: row.paymentHash, entryId: row.entryId });
       const state = seen && seen.state;
       if (![HELD, SETTLED, CANCELLED, EXPIRED].includes(state))

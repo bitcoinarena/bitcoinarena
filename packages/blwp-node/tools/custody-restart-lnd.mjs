@@ -12,7 +12,7 @@
 // player delivered and one forfeited. A child process runs the close with
 // bob's real port and is SIGKILLed inside the forfeit's settle:
 //
-//   --point=1   after ACTING is on disk, before `settleinvoice` leaves
+//   --point=1   after SETTLE_REQUESTED is on disk, before `settleinvoice` leaves
 //   --point=2   after lnd took `settleinvoice`, before SETTLED is written
 //
 // Then the store is started as `node src/main.js <port> <store>`, twice:
@@ -36,7 +36,7 @@ import { fileURLToPath } from 'node:url';
 
 import { openStore } from '../src/store.js';
 import { Round } from '../src/round.js';
-import { Custody, HELD, SETTLED, CANCELLED, ACTING } from '../src/custody.js';
+import { Custody, HELD, SETTLED, CANCELLED, SETTLE_REQUESTED } from '../src/custody.js';
 import { lndPort } from '../src/lnd-port.js';
 import { DELIVERED, FORFEIT } from '../../protocol/src/payout.js';
 import { entryId as entryIdOf } from '../../protocol/src/contracts.js';
@@ -172,7 +172,13 @@ async function main() {
     mine(6);
     await until('alice to see her coins', () => BigInt(lnj('alice', 'walletbalance').confirmed_balance) > 0n);
     ln('alice', 'connect', `${bobKey}@127.0.0.1:${P.bob.listen}`);
-    ln('alice', 'openchannel', `--node_key=${bobKey}`, '--local_amt=2000000', '--push_amt=1000000');
+    // SEEING COINS IS NOT BEING SYNCED: measured under load, lnd refused the
+    // open with "channels cannot be created before the wallet is fully synced"
+    // after the balance was already visible. Asked again until it takes it.
+    await until('alice\'s wallet to accept a channel open', () => {
+      ln('alice', 'openchannel', `--node_key=${bobKey}`, '--local_amt=2000000', '--push_amt=1000000');
+      return true;
+    }, 120000, 2000);
     mine(6);
     await until('the channel', () => (lnj('alice', 'listchannels').channels || []).find((c) => c.active));
     const bobMsat = () => BigInt((lnj('bob', 'listchannels').channels[0] || {}).local_balance || 0) * 1000n;
@@ -273,7 +279,7 @@ async function main() {
     say(`the close, killed at point ${POINT}: ${died}`);
     say(`  the forfeit: this node's row ${rowOf()}, lnd says ${await lndSays()}`);
     if (died !== 'SIGKILL') problems.push(`the child was not killed where it was meant to be: ${died}`);
-    if (rowOf() !== ACTING) problems.push(`the killed node's row says ${rowOf()}, not ACTING`);
+    if (rowOf() !== SETTLE_REQUESTED) problems.push(`the killed node's row says ${rowOf()}, not SETTLE_REQUESTED`);
     if (await lndSays() !== expected) problems.push(`lnd says ${await lndSays()} after the kill, not ${expected}`);
 
     // ---- RESTART (a): the real launcher, as every launch path started it. ----

@@ -249,7 +249,7 @@ export function openStore(path = ':memory:') {
     -- One row per round, not per entry: the payout is ONE transaction spending
     -- ONE pool output, so PAYOUT_QUEUED and PAID are facts about the round.
     -- The state is written BEFORE the spend goes out, for the same reason
-    -- ACTING is written before a settle - a node that died in between must find
+    -- SETTLE_REQUESTED is written before a settle - a node that died in between must find
     -- out what happened rather than assume nothing did.
     CREATE TABLE IF NOT EXISTS payouts (
       round_id   BLOB PRIMARY KEY,

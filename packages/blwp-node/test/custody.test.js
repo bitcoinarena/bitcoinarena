@@ -15,6 +15,7 @@ import assert from 'node:assert/strict';
 import { openStore } from '../src/store.js';
 import { Round } from '../src/round.js';
 import { Custody, HELD, SETTLED, CANCELLED, EXPIRED, ACTING } from '../src/custody.js';
+import * as custodyStates from '../src/custody.js';
 import { DELIVERED, FORFEIT, VOID, netStakeMsat } from '../../protocol/src/payout.js';
 import { entryId as entryIdOf } from '../../protocol/src/contracts.js';
 import { MIN_ENTRY_WINDOW_MS } from '../../protocol/src/constants.js';
@@ -277,6 +278,94 @@ async function midAct(port) {
   return { round, rid, custody, loser, winner, id: entryIdOf(loser), close };
 }
 
+// 9.4'S NAMES ON THE SEATS, NOT A STAND-IN. IMPLEMENTATION.md 9.4:
+//
+//   AWAITING_INVOICE -> HELD -> (result FINAL)
+//     qualifying: CANCEL_REQUESTED -> CANCELLED -> ...
+//     losing:     ... -> SETTLE_REQUESTED -> SETTLED
+//
+// Measured before this: the moment before an invoice exists was not written at
+// all, and both acts were written as `ACTING`, a label of this file's own. The
+// names are the spec's strings, so the tests say them literally.
+test('every act is on disk under 9.4\'s name when the call is made - CANCEL_REQUESTED, SETTLE_REQUESTED - never the old stand-in', async () => {
+  assert.equal(custodyStates.CANCEL_REQUESTED, 'CANCEL_REQUESTED');
+  assert.equal(custodyStates.SETTLE_REQUESTED, 'SETTLE_REQUESTED');
+  const port = fakePort();
+  const { custody, loser, winner, close } = await midAct(port);
+  const at = {};
+  const settle = port.settle.bind(port);
+  const cancel = port.cancel.bind(port);
+  port.settle = async (a) => { at.settle = custody.stateOf(entryIdOf(loser)).state; return settle(a); };
+  port.cancel = async (a) => { at.cancel = custody.stateOf(entryIdOf(winner)).state; return cancel(a); };
+
+  const out = await custody.settleHeldInvoices(close);
+  assert.equal(out.ok, true, out.why);
+  assert.equal(at.cancel, 'CANCEL_REQUESTED', `a cancel was written as ${at.cancel}`);
+  assert.equal(at.settle, 'SETTLE_REQUESTED', `a settle was written as ${at.settle}`);
+  assert.notEqual(at.cancel, ACTING);
+  assert.notEqual(at.settle, ACTING);
+  assert.equal(custody.stateOf(entryIdOf(winner)).state, CANCELLED);
+  assert.equal(custody.stateOf(entryIdOf(loser)).state, SETTLED);
+});
+
+test('AWAITING_INVOICE is on disk before the invoice is asked for, and HELD once it is checked', async () => {
+  assert.equal(custodyStates.AWAITING_INVOICE, 'AWAITING_INVOICE');
+  const port = fakePort();
+  const { round, rid, custody } = seated(port);
+  const e = entryFor(rid, 1);
+  round.enter(e);
+  const eid = entryIdOf(e);
+  let during = null;
+  const create = port.createHeld.bind(port);
+  port.createHeld = async (a) => { const r = round.hold(eid); during = r && r.state; return create(a); };
+
+  const held = await custody.hold(e);
+  assert.equal(held.ok, true, held.why);
+  assert.equal(during, 'AWAITING_INVOICE', `when the invoice was asked for, the row was ${during}`);
+  const row = round.hold(eid);
+  assert.equal(row.state, HELD);
+  assert.equal(toHex(row.paymentHash), toHex(e.stakeCommitment));
+  assert.equal(row.amountMsat, netStakeMsat(e));
+});
+
+test('a node that died awaiting its invoice asks for it again and holds, rather than calling it held', async () => {
+  const port = fakePort();
+  const { round, rid, custody } = seated(port);
+  const e = entryFor(rid, 1);
+  round.enter(e);
+  const eid = entryIdOf(e);
+  const create = port.createHeld.bind(port);
+  port.createHeld = async () => { throw new Error('the node stopped here'); };
+  await assert.rejects(() => custody.hold(e));
+  assert.equal(round.hold(eid).state, 'AWAITING_INVOICE');
+  assert.equal(round.hold(eid).request, null, 'an invoice was recorded that nobody issued');
+
+  // A ROW WITH NO INVOICE IS NOT A HOLD: the next ask issues it (the endpoint
+  // takes up one it already made - lnd-port.test.js), and nothing is acted on
+  // in between.
+  port.createHeld = create;
+  const held = await custody.hold(e);
+  assert.equal(held.ok, true, held.why);
+  assert.equal(held.state, HELD);
+  assert.match(held.invoice, /^lnbcrt-/);
+  assert.equal(port.calls.filter((c) => c[0] === 'createHeld').length, 1);
+});
+
+test('a store written under the old ACTING label is still asked about, and resolved', async () => {
+  const port = fakePort();
+  const { round, rid, custody } = seated(port);
+  const e = entryFor(rid, 2);
+  round.enter(e);
+  const eid = entryIdOf(e);
+  round.putHold({ entryId: eid, roundId: rid, paymentHash: e.stakeCommitment,
+    amountMsat: netStakeMsat(e), state: 'ACTING', why: 'written before 9.4\'s names' });
+  port.look = async () => ({ state: SETTLED });
+  const asked = await custody.reconcile();
+  assert.equal(asked.ok, true, asked.why);
+  assert.deepEqual(asked.asked.map((a) => a.state), [SETTLED]);
+  assert.equal(round.hold(eid).state, SETTLED);
+});
+
 test('a node that died mid-act asks Lightning rather than acting again', async () => {
   // The window is one SIGKILL wide: Lightning has been told and this node has
   // not written it down. `custody-crash.mjs` kills a real process inside it;
@@ -290,7 +379,7 @@ test('a node that died mid-act asks Lightning rather than acting again', async (
     throw new Error('the node stopped here');
   };
   await assert.rejects(() => custody.settleHeldInvoices(close));
-  assert.equal(custody.stateOf(id).state, ACTING,
+  assert.equal(custody.stateOf(id).state, 'SETTLE_REQUESTED',
     'the intent was not on disk before the call, so a restart cannot know it was made');
   assert.match(custody.stateOf(id).why, /ask Lightning/);
 
@@ -339,7 +428,7 @@ test('a port that cannot be asked what it did leaves an interrupted act alone', 
   const asked = await custody.reconcile({ roundId: close.roundId });
   assert.equal(asked.ok, false);
   assert.match(asked.why, /cannot be asked what it did/);
-  assert.equal(custody.stateOf(id).state, ACTING, 'a guess was written down instead of an answer');
+  assert.equal(custody.stateOf(id).state, 'SETTLE_REQUESTED', 'a guess was written down instead of an answer');
 });
 
 test('reconcile refuses an answer that is not a state a hold can be in', async () => {
@@ -353,7 +442,7 @@ test('reconcile refuses an answer that is not a state a hold can be in', async (
   const asked = await custody.reconcile({ roundId: close.roundId });
   assert.equal(asked.ok, false);
   assert.match(asked.why, /not a state a hold can be in/);
-  assert.equal(custody.stateOf(id).state, ACTING);
+  assert.equal(custody.stateOf(id).state, 'SETTLE_REQUESTED');
 });
 
 test('a node with no preimage cannot settle, and the stake expires to its player', async () => {

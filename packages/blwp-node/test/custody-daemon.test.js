@@ -17,7 +17,7 @@ import { WebSocket } from 'ws';
 import { openStore } from '../src/store.js';
 import { serve } from '../src/server.js';
 import { Round } from '../src/round.js';
-import { HELD, SETTLED, ACTING } from '../src/custody.js';
+import { HELD, SETTLED } from '../src/custody.js';
 import { assumeSeated } from './seating.js';
 import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
 import {
@@ -326,7 +326,7 @@ test('a daemon asks Lightning about an act it died in the middle of, on start', 
   const eid = entryId(entry);
   round.putHold({
     entryId: eid, roundId: rid, paymentHash: entry.stakeCommitment,
-    amountMsat: entry.stakeMsat, state: ACTING, request: 'lnbcrt-x',
+    amountMsat: entry.stakeMsat, state: 'SETTLE_REQUESTED', request: 'lnbcrt-x',
     why: 'about to settle; if this node dies here, ask Lightning',
   });
 

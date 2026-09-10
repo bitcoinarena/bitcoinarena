@@ -1135,6 +1135,15 @@ export class Round {
     return state;
   }
 
+  /**
+   * FORGET A HOLD THAT NEVER WAS. Only for a row still AWAITING_INVOICE whose
+   * invoice came back and was refused: no invoice was ever confirmed, so there
+   * is nothing to keep, and the entry stands exactly as it did before it asked.
+   */
+  dropHold(entryIdBytes) {
+    this.db.prepare('DELETE FROM holds WHERE entry_id = ?').run(Buffer.from(entryIdBytes));
+  }
+
   /** The hold for one entry, or nothing. */
   hold(entryIdBytes) {
     const row = this.db.prepare(
