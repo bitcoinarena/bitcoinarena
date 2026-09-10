@@ -51,11 +51,16 @@ const LND = process.env.LND_BIN || '/mnt/bitcoin/lnd-linux-amd64-v0.21.3-beta';
 const LNCLI = join(LND, 'lncli');
 const KEEP = process.argv.includes('--keep');
 const STAKE_MSAT = 100000n;
+// WHICH DAEMON IS TOLD TO CLOSE FIRST (M3.3-25): AB or BA. Each order on its
+// own ports, so the two can run side by side.
+const CLOSE_ORDER = (process.argv.find((a) => a.startsWith('--close-order=')) || '--close-order=AB').split('=')[1];
+if (!['AB', 'BA'].includes(CLOSE_ORDER)) throw new Error(`--close-order is AB or BA, not ${CLOSE_ORDER}`);
+const OFF = CLOSE_ORDER === 'BA' ? 100 : 0;
 // NON-DEFAULT, ALL OF THEM; p2p+1 is bitcoind's own; never 8080 (signal-cli).
-const P = { rpc: 29901, p2p: 29902, zmqBlock: 29905, zmqTx: 29906,
-  alice: { rpc: 29907, listen: 29908, rest: 29909 },
-  bob: { rpc: 29910, listen: 29911, rest: 29912 },
-  daemonA: 18701, daemonB: 18702 };
+const P = { rpc: 29901 + OFF, p2p: 29902 + OFF, zmqBlock: 29905 + OFF, zmqTx: 29906 + OFF,
+  alice: { rpc: 29907 + OFF, listen: 29908 + OFF, rest: 29909 + OFF },
+  bob: { rpc: 29910 + OFF, listen: 29911 + OFF, rest: 29912 + OFF },
+  daemonA: 18701 + OFF, daemonB: 18702 + OFF };
 
 const say = (s) => console.log(s);
 const sh = (bin, args) => execFileSync(bin, args,
@@ -86,13 +91,16 @@ const transcriptOf = (n) => ({ ticks: Array.from({ length: n }, (_, t) => ({ tic
  * choosing one is playing, not arranging. Returns the secret and the first
  * 60-tick boundary at or after the run's end.
  */
-function worldFor(base, randomness, want, { tries = 400, span = 3000 } = {}) {
+function worldFor(base, randomness, want, { tries = 400, span = 3000, minScore = 1 } = {}) {
   for (let i = 0; i < tries; i++) {
     const worldSecret = new Uint8Array(32);
     worldSecret[0] = i & 255; worldSecret[1] = i >> 8; worldSecret[31] = want === 'DELIVERED' ? 0xd1 : 0xfa;
     const entry = { ...base, worldSecret };
     const r = replay(transcriptOf(span), entry, { roundRandomness: randomness });
     if (!r.ok || r.outcome !== want) continue;
+    // A WINNER THAT QUALIFIES. Measured: a delivery scoring 0 under the round's
+    // minScore 1 left nobody to hand the pool to, and both closes refused.
+    if (want === 'DELIVERED' && r.score < minScore) continue;
     // WHERE IT ENDS, so the run published is the run replayed and no longer.
     let ends = span;
     for (let n = 60; n <= span; n += 60) {
@@ -322,9 +330,32 @@ async function main() {
       ws.on('message', (d) => { resolve(String(d)); ws.close(); });
       ws.on('error', (e) => resolve(`error ${e.message}`));
     });
-    for (const base of named.nodes) say(`  close on ${base}: ${await closeOn(base)}`);
     const daemons = [['A', round.a], ['B', round.b]];
     const who = (eid) => (players.find((p) => p.eid && toHex(p.eid) === toHex(eid)) || { name: toHex(eid).slice(0, 8) }).name;
+    // THE RACE, TIMED (M3.3-25): when each daemon stores its OWN result for a
+    // run, and when each gathers one and what it found. Instrumentation only -
+    // the daemons' own methods, wrapped; the close path is theirs.
+    const t0 = Date.now();
+    const stamps = [];
+    for (const [name, d] of daemons) {
+      const put = d.round.putResult.bind(d.round);
+      d.round.putResult = (rid, eid, pub, id, bytes) => {
+        if (toHex(pub) === toHex(d.round.pubkey)) stamps.push({ t: Date.now() - t0, what: `${name} stores its own ${who(eid)} result` });
+        return put(rid, eid, pub, id, bytes);
+      };
+      const gather = d.verifier.gather.bind(d.verifier);
+      d.verifier.gather = async (rid, eid) => {
+        const at = Date.now() - t0;
+        const g = await gather(rid, eid);
+        stamps.push({ t: at, what: `${name} gathers ${who(eid)} -> ${g.final ? 'FINAL' : `not final: ${g.why}`} (answered +${Date.now() - t0} ms)` });
+        return g;
+      };
+    }
+    const order = CLOSE_ORDER === 'BA' ? [named.nodes[1], named.nodes[0]] : named.nodes;
+    say(`  close order ${CLOSE_ORDER}`);
+    for (const base of order) say(`  close on ${base} at +${Date.now() - t0} ms: ${await closeOn(base)}`);
+    for (const [, d] of daemons) { try { await d.verifier.settling; } catch { /* reported below */ } }
+    for (const s of stamps.sort((x, y) => x.t - y.t)) say(`    +${String(s.t).padStart(5)} ms  ${s.what}`);
     for (const [name, d] of daemons) {
       for (const p of d.verifier.done || []) { try { await p; } catch { /* reported below */ } }
       // WHAT THIS DAEMON'S CLOSE SAW, instrumented rather than guessed: each
