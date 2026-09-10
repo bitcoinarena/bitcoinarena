@@ -318,6 +318,16 @@ export class Payouts {
     const tip = await watch.tip();
     if (!tip.ok) return tip;
 
+    // THE POOL MAY ALREADY BE PAID, and that is asked BEFORE whose turn it is:
+    // a seat that is not the asker never sends the payment, so its row stayed
+    // PAYOUT_QUEUED while the chain carried it - measured: 6 of 6 other seats
+    // at every kill point, the returning asker included. If a transaction since
+    // the round's beacon spent this pool and pays EXACTLY the outputs this
+    // seat's own table computes for that input, it is recorded. A spend paying
+    // anything else is refused by name and changes nothing.
+    const onChain = await this.paidOnChain({ roundId, contract, signing, watch, fromHeight: beaconHeight.height });
+    if (onChain) return onChain;
+
     const turn = eligibleAsker({
       roundId, seats, beaconHeight: beaconHeight.height, tipHeight: tip.height, takeoverBlocks,
     });
@@ -374,6 +384,38 @@ export class Payouts {
     if (!given || !Number.isInteger(given.height))
       return { ok: false, why: 'that round names no beacon height to wait from' };
     return { ok: true, height: given.height };
+  }
+
+  /**
+   * THE PAYMENT, IF THE CHAIN ALREADY CARRIES IT - checked against this seat's
+   * own table, never taken on the payer's word. Answers null when there is
+   * nothing to say (no spend found, or a watch that cannot scan), so the sweep
+   * carries on exactly as it did.
+   */
+  async paidOnChain({ roundId, contract, signing, watch, fromHeight }) {
+    if (!watch || typeof watch.spentBy !== 'function') return null;
+    const seen = await watch.spentBy({ fromHeight });
+    if (!seen || !seen.ok || !seen.spends.length) return null;
+    const row = this.round.payout(roundId);
+    for (const s of seen.spends) {
+      const mine = signing.spendFor({ roundId, utxo: s.spent, contract });
+      const txid = toHex(Uint8Array.from(s.txid).reverse());
+      if (!mine.ok)
+        return { ok: false, why: `the pool was spent by ${txid} and this seat cannot check it: ${mine.why}` };
+      const same = mine.outputs.length === s.outputs.length && mine.outputs.every((o, i) =>
+        o.value === s.outputs[i].value && toHex(o.script) === toHex(s.outputs[i].script));
+      if (!same)
+        return { ok: false, spentElsewhere: true,
+          why: `the pool was spent by ${txid} and it does not pay what this seat's table pays` };
+      const state = mine.owed && mine.owed.length ? PAID_IN_PART : PAID;
+      this.round.putPayout({
+        roundId, tableId: row.tableId, state, txid: s.txid, raw: s.raw,
+        ...(state === PAID_IN_PART ? { owedSats: mine.owedSats, owedCount: mine.owed.length } : {}),
+        why: `the chain carries this round's payment in block ${s.height}, and it pays this seat's table`,
+      });
+      return { ok: true, state, txid: s.txid, already: true, onChain: true };
+    }
+    return null;
   }
 
   /**

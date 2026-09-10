@@ -224,6 +224,9 @@ export class PoolSigning {
     const sighash = tapSighash({ inputs, prevouts, outputs: spend.outputs, inputIndex: 0 });
     return {
       ok: true, sighash, inputs, outputs: spend.outputs, tableId: built.tableId,
+      // Who this spend still leaves owed (under the relay floor), so a seat can
+      // tell PAID from PAID_IN_PART when it finds the spend on the chain.
+      owed: spend.owed || [], owedSats: spend.owedSats || 0n,
       groupPublicKey: poolSigningKey(out.outputKey),
       share: poolShare({ share: this.seat.share, tweak: out.tweak, negated: out.negated }),
     };

@@ -187,6 +187,42 @@ export class PoolWatch {
   }
 
   /**
+   * WHAT ALREADY SPENT THIS POOL, block by block from `fromHeight` to the tip.
+   *
+   * `unspent` answers from the UTXO set, so a pool output that has been paid
+   * out is simply absent - and a seat that did not send the payment had no way
+   * to learn it was made. Measured: after the asker paid, 6 of 6 other seats
+   * stayed PAYOUT_QUEUED at every kill point. This reads each block with its
+   * inputs' previous outputs (`getblock` verbosity 3) and returns every
+   * transaction spending an output with this pool's script: the output it
+   * spent and the outputs it paid, as the chain has them. It judges nothing.
+   */
+  async spentBy({ fromHeight }) {
+    const mine = this.scriptOf();
+    if (!mine.ok) return mine;
+    const tip = await this.tip();
+    if (!tip.ok) return tip;
+    const want = toHex(mine.script);
+    const spends = [];
+    for (let h = Math.max(0, fromHeight | 0); h <= tip.height; h++) {
+      let block;
+      try { block = await this.call('getblock', [await this.call('getblockhash', [h]), 3]); }
+      catch (e) { return { ok: false, why: `the chain would not answer getblock at ${h}: ${e.message}` }; }
+      for (const tx of (block && block.tx) || []) {
+        const v = (tx.vin || []).find((i) => i.prevout && i.prevout.scriptPubKey
+          && i.prevout.scriptPubKey.hex === want);
+        if (!v) continue;
+        spends.push({
+          height: h, txid: txidFromRpc(tx.txid), raw: fromHex(tx.hex),
+          spent: { txid: txidFromRpc(v.txid), vout: Number(v.vout), value: satsOf(v.prevout.value), script: mine.script },
+          outputs: (tx.vout || []).map((o) => ({ value: satsOf(o.value), script: fromHex(o.scriptPubKey.hex) })),
+        });
+      }
+    }
+    return { ok: true, spends };
+  }
+
+  /**
    * THE OUTPUT A ROUND MAY SPEND WHEN NOBODY NAMED ONE, AND ONLY WHEN THERE IS
    * EXACTLY ONE ANSWER.
    *

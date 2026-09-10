@@ -508,6 +508,16 @@ async function main() {
     const landed = final.inBlocks[0];
     if (landed && killed && killed.raw)
       say(`\n  the spend that landed is the one written before the kill, byte for byte: ${landed.hex === killed.raw}`);
+    // EVERY RUNNING SEAT'S NEXT SWEEP, as a live daemon makes it, now that the
+    // payment is on the chain. The seats that ran as processes (the killed one,
+    // and at point 4 the returning asker) answer from their own store.
+    const sweeps = [];
+    for (const [i, n] of nodes.entries()) {
+      if (closed.has(i)) continue;
+      const r = await n.payouts.settleQueued({ roundId: rid, contract, signing: n.signing, watch: n.poolWatch });
+      sweeps.push(`${i}:${r.ok ? r.state : r.why}`);
+    }
+    say(`  the other seats' next sweep: ${sweeps.join(' | ')}`);
     const states = nodes.map((_, i) => rowOnDisk(i));
     say(`  every seat's row: ${JSON.stringify(states.map((s, i) => (i === victimIdx ? `killed:${s}` : i === askerIdx ? `asker:${s}` : s)))}`);
 
