@@ -56,6 +56,28 @@ export const satsOf = (btc) => {
 export const txidToRpc = (txid) => toHex(Uint8Array.from(txid).reverse());
 export const txidFromRpc = (hex) => Uint8Array.from(fromHex(hex)).reverse();
 
+/**
+ * SEND AND LOOK, over the same RPC the watch reads - the two things a payout
+ * asks of a chain. Kept in this file because this is the one file in `src/`
+ * that asks the chain about transactions (`pool-outpoint.test.js` pins that).
+ *
+ * `send` answers `{ ok, txid }`, the txid in internal byte order, or the
+ * node's own refusal; `look` answers whether the node knows a transaction at
+ * all (mempool, or a block where `-txindex` is on).
+ */
+export function chainSpendOver(call) {
+  return {
+    async send(raw) {
+      try { return { ok: true, txid: txidFromRpc(await call('sendrawtransaction', [toHex(raw)])) }; }
+      catch (e) { return { ok: false, why: e.message }; }
+    },
+    async look(txid) {
+      try { await call('getrawtransaction', [txidToRpc(txid)]); return { known: true }; }
+      catch { return { known: false }; }
+    },
+  };
+}
+
 export class PoolWatch {
   /**
    * `call` is `bitcoindRpc`'s, `pool` is `{ groupPublicKey }`, `curve` the

@@ -30,7 +30,7 @@ import {
 // THE GROUP THE HANDOUT CHECK NEEDS. The protocol package carries no curve on
 // purpose, so the daemon brings one - the same secp256k1 it already brings to
 // the census, and the same one the bonds and BIP-340 use.
-import { feldmanGroup } from './curve.js';
+import { feldmanGroup, tweakPoint } from './curve.js';
 import {
   SIGNED_RECEIPT_BYTES, decodeCheckpointReceipt, splitSignedReceipt,
 } from '../../protocol/src/receipt.js';
@@ -148,7 +148,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   preflight = null,
   // The pool's key material and something that can broadcast. A daemon given
   // neither still agrees on what the round owes; it just does not spend.
-  poolKey = null, chainSpend = null, poolCurve = feldmanGroup,
+  // The default curve carries the taproot tweak: without it a daemon started
+  // with no curve of its own could not even name the pool's output.
+  poolKey = null, chainSpend = null, poolCurve = { ...feldmanGroup, tweakPoint },
   // THIS NODE'S OWN SHARE OF THE POOL, and nobody else's. `{ id, share }`,
   // dealt today because a dealerless DKG is its own letter. Absent, the
   // daemon runs exactly as it did and answers the two signing doors with a
@@ -239,6 +241,34 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // output, and until this the daemon had no way to produce one, so every
   // closed round stopped at PAYOUT_QUEUED with the winner unpaid.
   const poolWatch = new PoolWatch({ call: poolCall, pool: poolKey, curve: poolCurve });
+
+  // THE SEAT AND THE POOL KEY, READ BACK FROM THIS NODE'S OWN STORE.
+  //
+  // Measured 2026-09-10 on an isolated regtest: a seat SIGKILLed mid-settlement
+  // and started again as `src/main.js` starts a daemon recovered nothing at any
+  // of four kill points - the share it made in the key ceremony was on disk,
+  // and nothing read it back, so `canSpend` was false and neither the
+  // reconcile nor the sweep ran. The committee of a round this node still owes
+  // a payout on comes first; otherwise the newest committee it holds a share
+  // of. A seat and key the caller passed in are never replaced.
+  if (!poolSeat || !poolKey) {
+    const held = (() => {
+      for (const row of round.payoutsInState(PAYOUT_QUEUED)) {
+        const r = round.get(row.roundId);
+        if (!r) continue;
+        const got = dkg.seatFor(decodeRoundContract(new Uint8Array(r.contract)).nodes);
+        if (got.ok) return got;
+      }
+      const seats = round.latestSharedEpochSeats();
+      return seats ? dkg.seatFor(seats) : null;
+    })();
+    if (held && held.ok) {
+      if (!signing.seat) signing.seat = held.seat;
+      if (!signing.pool) signing.pool = held.pool;
+      if (!payouts.pool) payouts.pool = held.pool;
+      if (!poolWatch.pool) poolWatch.pool = held.pool;
+    }
+  }
 
   // WHO MAY HOLD A ROUND, from the chain. The census stopped being library
   // code here: this is the daemon's only caller of it, and `chainFor` is the

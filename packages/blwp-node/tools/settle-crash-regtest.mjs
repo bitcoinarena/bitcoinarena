@@ -16,8 +16,8 @@
 //
 // After each kill, two restarts of the killed seat on the same store and port:
 //
-//   (a) as a real daemon starts: `serve(openStore(path), { port, host })`,
-//       exactly what `src/main.js` passes
+//   (a) the real `src/main.js`, with BLWP_BITCOIND_URL and BLWP_BITCOIND_COOKIE
+//       and nothing else - a real daemon's launch
 //   (b) with the chain it spends on, the RPC its pool watch reads, and the
 //       seat and pool key read back from its OWN store (`Dkg.seatFor`)
 //
@@ -42,6 +42,7 @@ import { openStore } from '../src/store.js';
 import { Round } from '../src/round.js';
 import { Dkg } from '../src/dkg.js';
 import { bitcoindRpc } from '../src/chain-rpc.js';
+import { chainBeacon } from '../src/beacon-source.js';
 import { serve } from '../src/server.js';
 import { askerOrder, PAYOUT_QUEUED, TAKEOVER_BLOCKS } from '../src/payout.js';
 import { PoolSigning } from '../src/pool-signing.js';
@@ -66,13 +67,16 @@ const POINT = Number(process.env.KILL_POINT
 // Each point on its own ports, so the four can run side by side.
 const P = { rpc: 29697 + 10 * (POINT - 1), p2p: 29698 + 10 * (POINT - 1) };
 const PORT0 = 18300 + 10 * (POINT - 1);            // daemon i listens on PORT0 + i
-const NOW = 1788700000000;
+// The round's committee time: set by the parent from the chain's own clock,
+// handed to each child as NOW_MS.
+let NOW = Number(process.env.NOW_MS || 0);
 const STAKE_MSAT = 1000000n;                       // a 1000-sat stake
 const curve = { ...feldmanGroup, tweakPoint };
 const rand = (n) => new Uint8Array(randomBytes(n));
 const b32 = (n) => new Uint8Array(32).fill(n);
 const say = (s) => console.log(s);
 const SELF = fileURLToPath(import.meta.url);
+const MAIN = fileURLToPath(new URL('../src/main.js', import.meta.url));
 
 // ---------------------------------------------------------------- shared
 const btcArgsFor = (dir) => ['-regtest', `-datadir=${join(dir, 'btc')}`, `-rpcport=${P.rpc}`];
@@ -181,6 +185,32 @@ async function child(mode) {
   process.exit(4);
 }
 
+// THE REAL LAUNCHER, on the seat's store and port, with the two settings. It is
+// stopped once its start-up recovery has said something about this round (or
+// after 25 s); what it printed is kept.
+function runMain(env, ridPrefix) {
+  return new Promise((resolve) => {
+    const c = spawn(process.execPath, [MAIN, env.PORT, env.STORE], {
+      env: { ...process.env, BLWP_BIND: '127.0.0.1', BLWP_BITCOIND_URL: `http://127.0.0.1:${P.rpc}/`,
+        BLWP_BITCOIND_COOKIE: join(env.DIR, 'btc', 'regtest', '.cookie') },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    const lines = [];
+    let done = false;
+    const finish = () => { if (done) return; done = true; setTimeout(() => c.kill('SIGTERM'), 300); };
+    const take = (chunk) => {
+      for (const l of String(chunk).split('\n').filter(Boolean)) {
+        lines.push(l);
+        if (/^\[payout\]/.test(l) && l.includes(ridPrefix)) finish();
+      }
+    };
+    c.stdout.on('data', take);
+    c.stderr.on('data', take);
+    const bail = setTimeout(finish, 25000);
+    c.on('exit', (code, signal) => { clearTimeout(bail); resolve({ code, signal, lines }); });
+  });
+}
+
 function run(mode, env) {
   return new Promise((resolve) => {
     const c = spawn(process.execPath, [SELF, mode], {
@@ -222,11 +252,16 @@ async function main() {
     const mine = (n) => cli('generatetoaddress', String(n), cli('getnewaddress'));
     if (Number(cli('getblockcount')) < 200) mine(200 - Number(cli('getblockcount')));
     const chain = chainFor(cli);
-    const beacon = {
-      hash: fromHex(cli('getblockhash', cli('getblockcount'))),
-      height: Number(cli('getblockcount')), timeMs: BigInt(NOW),
-    };
-    say(`bitcoind at height ${beacon.height}, rpc ${P.rpc}; the round's beacon is block ${beacon.height}`);
+    // THE ROUND'S COMMITTEE TIME IS A REAL INSTANT ON THIS CHAIN'S CLOCK: blocks
+    // before it, then blocks after it, so the beacon rule can name the first
+    // block past it - read off the chain by every daemon, as a real one reads
+    // it, rather than handed in. (A fixed date before this chain existed made a
+    // real launcher refuse: "already after this round's committee time".)
+    NOW = Date.now() + 2000;
+    await new Promise((r) => setTimeout(r, 3000));
+    mine(20);
+    let beacon = null;
+    say(`bitcoind at height ${cli('getblockcount')}, rpc ${P.rpc}; the round's committee time is ${NOW}`);
 
     for (let i = 0; i < SHARES_TOTAL; i++) {
       nodes.push(await serve(openStore(join(dir, `node-${i}.db`)), {
@@ -261,6 +296,11 @@ async function main() {
       nodes: committee,
     };
     const rid = roundId(contract);
+    const beaconSrc = chainBeacon({ call: rpcFor(dir), window: 400 });
+    const seenBeacon = await beaconSrc.refresh(contract);
+    if (!seenBeacon.ok) throw new Error(`the chain names no beacon for this round: ${seenBeacon.why}`);
+    beacon = beaconSrc.for({ contract });
+    say(`the round's beacon, read off the chain: block ${beacon.height}`);
     const winnerSecret = rand(32);
     const session = ed25519.utils.randomSecretKey();
     const players = [
@@ -349,7 +389,7 @@ async function main() {
     };
     // KILL_POINT goes with the child, or it computes point 2's bitcoind port.
     const envFor = (i, tag) => ({
-      KILL_POINT: String(POINT),
+      KILL_POINT: String(POINT), NOW_MS: String(NOW),
       DIR: dir, STORE: join(dir, `node-${i}.db`), PORT: String(PORT0 + i), RID: toHex(rid), TAG: tag,
       PEERS: nodes.filter((_, j) => j !== i).map((n) => `http://127.0.0.1:${n.port}`).join(','),
       BEACON_HEIGHT: String(beacon.height), BEACON_HASH: toHex(beacon.hash),
@@ -383,13 +423,13 @@ async function main() {
     }
 
     // ---- RESTART (a): as src/main.js starts a daemon. ----
-    const a = await run('launcher', envFor(victimIdx, 'victim'));
-    const la = read('victim-launcher.json');
+    const a = await runMain(envFor(victimIdx, 'victim'), toHex(rid).slice(0, 16));
     mine(1);
     const afterA = onChain();
-    say(`\n  RESTART (a), as src/main.js starts it: ${a.code === 0 ? 'up and down' : 'exit ' + a.code}`);
-    say(`    canSpend ${la && la.canSpend}; start-up recovery: ${la && (la.reconcile.ok === false ? la.reconcile.why : JSON.stringify(la.reconcile))}`);
-    say(`    its row ${la && la.row ? la.row.state : 'none'}; chain (a block mined after): ${line(afterA)}`);
+    const rowA = rowOnDisk(victimIdx);
+    say(`\n  RESTART (a), the real src/main.js with BLWP_BITCOIND_URL and BLWP_BITCOIND_COOKIE, same store and port:`);
+    for (const l of a.lines) say(`    | ${l}`);
+    say(`    its row ${rowA}; chain (a block mined after): ${line(afterA)}`);
 
     // ---- RESTART (b): chain access, and the seat and key from its own store. ----
     const b = await run('restore', envFor(victimIdx, 'victim'));
@@ -404,13 +444,12 @@ async function main() {
 
     // ---- POINT 4: AND THE ORIGINAL ASKER COMES BACK. ----
     if (POINT === 4) {
-      const c = await run('restore', envFor(askerIdx, 'asker'));
-      const lc = read('asker-restore.json');
+      const c = await runMain(envFor(askerIdx, 'asker'), toHex(rid).slice(0, 16));
       mine(1);
       final = onChain();
-      say(`\n  THE ORIGINAL ASKER COMES BACK (daemon ${askerIdx}, restored as (b)): ${c.code === 0 ? 'up and down' : 'exit ' + c.code}`);
-      say(`    swept ${JSON.stringify((((lc && lc.reconcile.swept) || {}).settled || []).map((x) => (x.ok ? x.state : x.why)))}; `
-        + `its row ${lc && lc.row ? lc.row.state : 'none'}; chain: ${line(final)}`);
+      say(`\n  THE ORIGINAL ASKER COMES BACK (daemon ${askerIdx}), the real src/main.js:`);
+      for (const l of c.lines) say(`    | ${l}`);
+      say(`    its row ${rowOnDisk(askerIdx)}; chain: ${line(final)}`);
     }
 
     const landed = final.inBlocks[0];
@@ -428,8 +467,11 @@ async function main() {
     const victimStale = states[victimIdx] !== 'PAID' && states[victimIdx] !== 'PAID_IN_PART';
     if (total === 1 && victimStale) problems.push(`the killed seat's row says ${states[victimIdx]} while the chain carries the payment`);
     if (total === 1 && stale) problems.push(`${stale} of ${SHARES_TOTAL - 1} other seats still say PAYOUT_QUEUED while the chain carries the payment`);
-    if (la && la.canSpend === false)
-      problems.push('restarted as src/main.js starts a daemon, the killed seat recovers nothing: no chain, no seat, no sweep');
+    // RESTARTED THE WAY A REAL DAEMON STARTS, IT MUST RECOVER - not only when the
+    // harness hands it its chain and key.
+    const totalA = afterA.inBlocks.length + afterA.inMempool.length;
+    if (totalA !== 1 || (rowA !== 'PAID' && rowA !== 'PAID_IN_PART'))
+      problems.push(`restarted as the real src/main.js, the killed seat did not recover: ${totalA} spend(s), its row ${rowA}`);
   } finally {
     for (const [i, n] of nodes.entries()) if (!closed.has(i)) { try { await n.close(); } catch { /* going down */ } }
     try { sh(join(BITCOIN, 'bitcoin-cli'), [...btcArgsFor(dir), 'stop']); } catch { /* gone */ }

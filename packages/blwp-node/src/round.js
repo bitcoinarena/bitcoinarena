@@ -1288,6 +1288,17 @@ export class Round {
     return true;
   }
 
+  /** The committee of the newest key this node holds a share of, or null. */
+  latestSharedEpochSeats() {
+    const row = this.db.prepare(
+      'SELECT seats FROM dkg_epochs WHERE share IS NOT NULL ORDER BY updated_ms DESC LIMIT 1').get();
+    if (!row) return null;
+    const flat = new Uint8Array(row.seats);
+    const seats = [];
+    for (let at = 0; at < flat.length; at += 32) seats.push(flat.slice(at, at + 32));
+    return seats;
+  }
+
   /** What this node holds for an epoch, or null if it has never seen one. */
   epoch(epochIdBytes) {
     const row = this.db.prepare(
