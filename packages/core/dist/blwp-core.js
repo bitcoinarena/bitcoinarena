@@ -3571,7 +3571,7 @@ const sortieWait = (rng) => mulFast(SORTIE_SECONDS, between(rng, JITTER_MIN, JIT
 
 
 
-
+var heatForLoad = heat;
 
 
 

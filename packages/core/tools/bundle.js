@@ -57,6 +57,15 @@ out += '// Verified against the module build by test/bundle.test.js.\n';
 out += 'var BLWP = (function () {\n"use strict";\n';
 for (const file of order) {
   const body = readFileSync(file, 'utf8')
+    // AN IMPORT UNDER ANOTHER NAME KEEPS THAT NAME. `import { heat as
+    // heatForLoad }` was stripped like any import, so the flat bundle had `heat`
+    // and no `heatForLoad`, and the page threw "heatForLoad is not defined" on
+    // every ROLL OUT (two-Chrome look, 2026-09-10) - the modules and every
+    // suite that loads them were fine. The alias becomes a declaration where
+    // the import stood; the module it names is earlier in `order`.
+    .replace(/^import\s*\{([^{}]*)\}\s*from\s+'[^']+';\s*$/gm, (all, names) => names
+      .split(',').map((n) => n.trim().match(/^([A-Za-z_$][\w$]*)\s+as\s+([A-Za-z_$][\w$]*)$/))
+      .filter(Boolean).map(([, from, to]) => `var ${to} = ${from};`).join('\n'))
     // whole import statements, however many lines they span
     .replace(/^import\s[\s\S]*?;\s*$/gm, '')
     // re-exports carry no declaration of their own

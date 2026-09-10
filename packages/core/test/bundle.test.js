@@ -86,3 +86,45 @@ test('every exported name in src is declared in the bundle', async () => {
   assert.ok(checked > 50, `only ${checked} exported names were checked`);
   assert.deepEqual(missing, [], `the bundle uses names it never declares: ${missing.join(', ')}`);
 });
+
+/**
+ * AND EVERY NAME A MODULE IMPORTS UNDER ANOTHER NAME IS DECLARED TOO.
+ *
+ * Found in two real Chromes on the Daily, 2026-09-10: ROLL OUT threw
+ * "heatForLoad is not defined". `sim.js` imports `heat as heatForLoad`, the
+ * bundler stripped the import, and the flat bundle had `heat` and no
+ * `heatForLoad`. The export check above could not see it - nothing was
+ * exported under that name - and no test ran the load through the bundle.
+ */
+test('every aliased import in the bundled modules is declared in the bundle', async () => {
+  const { readFileSync } = await import('node:fs');
+  const src = new URL('../src/', import.meta.url).pathname;
+  const dist = readFileSync(new URL('../dist/blwp-core.js', import.meta.url).pathname, 'utf8');
+  const included = [...dist.matchAll(/^\/\/ ---- (\S+\.js)$/gm)].map((m) => m[1]);
+  const aliases = [];
+  for (const rel of included)
+    for (const m of readFileSync(src + rel, 'utf8').matchAll(/^import\s*\{([^{}]*)\}\s*from/gm))
+      for (const n of m[1].split(',')) {
+        const a = n.trim().match(/^[A-Za-z_$][\w$]*\s+as\s+([A-Za-z_$][\w$]*)$/);
+        if (a) aliases.push(`${a[1]} (${rel})`);
+      }
+  assert.ok(aliases.length >= 1, 'no aliased import was found, so this checks nothing');
+  const missing = aliases.filter((a) => !new RegExp(`^(?:var|const|let|function)\\s+${a.split(' ')[0]}\\b`, 'm').test(dist));
+  assert.deepEqual(missing, [], `the bundle uses aliases it never declares: ${missing.join(', ')}`);
+});
+
+/**
+ * THE LOAD, THROUGH THE BUNDLE THE PAGE RUNS - the exact path that threw.
+ */
+test('a load submitted to the bundle heats the run exactly as the modules do', async () => {
+  const { submitLoad, heatOf } = await import('../src/sim.js');
+  const a = init(7);
+  const b = bundled.init(7);
+  for (const [fee, btc] of [[22011, 3], [40000, 0], [0, 250]]) {
+    assert.doesNotThrow(() => bundled.submitLoad(b, fee, btc), 'the bundle threw on a load');
+    submitLoad(a, fee, btc);
+    assert.equal(bundled.heatOf(b), heatOf(a), `heat parted on a load of ${fee} sat, ${btc}/100 BTC`);
+    for (let t = 0; t < 60; t++) { step(a, 45875, 0, 0, 0, 0); bundled.step(b, 45875, 0, 0, 0, 0); }
+    assert.equal(bundled.hash(b), hash(a), 'the bundle and the modules parted after a load');
+  }
+});
