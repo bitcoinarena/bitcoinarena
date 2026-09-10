@@ -392,6 +392,48 @@ test('a relay that never answers times out rather than hanging', async () => {
   } finally { await new Promise((r) => wss.close(r)); await c.close(); }
 });
 
+/**
+ * A HOLD INVOICE IS PAID LONG BEFORE THE WALLET SAYS SO.
+ *
+ * A real wallet answers `pay_invoice` when the payment completes, and a hold
+ * invoice's payment completes only when the round settles or cancels it -
+ * minutes later, and as a FAILURE for every winner, whose stake is cancelled
+ * back. So the wallet's silence is the normal case, and the fixture above that
+ * answers at once with a preimage is the unusual one. What says the stake is
+ * held is the node (23.1 step 5), which now answers exactly that.
+ */
+test('a wallet that holds the payment and says nothing is paid once the node sees the stake held', async () => {
+  const c = await seated();
+  const w = await walletOnARelay({ answer: () => null });
+  // The node's Lightning shows the HTLC held in full once the wallet was asked.
+  c.port.look = async () => ({ state: HELD, amountMsat: NET, paidMsat: w.asked.length ? NET : 0n });
+  const spent = [];
+  try {
+    const said = await c.client.payStake(c.entry, {
+      connection: w.uri, entryId: c.eid, ...pays, timeoutMs: 3000,
+      log: { record: (r) => spent.push(r) },
+    });
+    assert.equal(said.ok, true, `a stake the node sees held was reported unpaid: ${said.why}`);
+    assert.equal(said.paid, true);
+    assert.equal(said.held, true, 'the answer does not say the node saw it held');
+    assert.equal(said.preimage, null, 'a preimage was invented for a wallet that has not answered');
+    assert.equal(said.amountMsat, NET);
+    assert.equal(w.asked.length, 1);
+    assert.equal(spent.length, 1, 'a held stake was not written down as spent');
+  } finally { await w.close(); await c.close(); }
+});
+
+test('a wallet that says nothing while the node never sees the stake is still not paid', async () => {
+  const c = await seated();
+  const w = await walletOnARelay({ answer: () => null });
+  c.port.look = async () => ({ state: HELD, amountMsat: NET, paidMsat: 0n });
+  try {
+    const said = await c.client.payStake(c.entry, { connection: w.uri, entryId: c.eid, ...pays, timeoutMs: 400 });
+    assert.equal(said.ok, false);
+    assert.match(said.why, /did not answer in 400 ms/);
+  } finally { await w.close(); await c.close(); }
+});
+
 /** A per-tab storage, the same fixture `tabIdentity`'s own tests use. */
 const tab = () => {
   const m = new Map();

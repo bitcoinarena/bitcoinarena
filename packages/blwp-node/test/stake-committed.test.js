@@ -102,6 +102,31 @@ test('an input batch for a stake nobody paid is refused by name, and taken once 
   } finally { p.ws.close(); await node.close(); }
 });
 
+test('GET /stake says whether this node has seen an entry\'s stake held, and asks nobody for a stranger', async () => {
+  const port = payablePort();
+  const node = await serve(openStore(':memory:'), { port: 0, ...FUNDED, ...READY, lightning: port });
+  const p = await seatAndPlay(node, 100000n);
+  const at = (id) => fetch(`http://127.0.0.1:${node.port}/stake?entry=${id}`);
+  try {
+    const before = await at(toHex(entryId(p.entry)));
+    assert.equal(before.status, 409);
+    assert.match(await before.text(), /^stake not seen: .*0 of 98000 msat/);
+
+    port.paid = port.amount;
+    const after = await at(toHex(entryId(p.entry)));
+    assert.equal(after.status, 200);
+    const body = await after.json();
+    assert.equal(body.state, HELD);
+    assert.equal(body.paidMsat, String(netStakeMsat(p.entry)));
+
+    const looks = port.looks;
+    const stranger = await at('ee'.repeat(32));
+    assert.equal(stranger.status, 404);
+    assert.equal((await at('beef')).status, 400);
+    assert.equal(port.looks, looks, 'a stranger made this node ask Lightning');
+  } finally { p.ws.close(); await node.close(); }
+});
+
 test('a free round plays with no Lightning at all, and a paying round on a node with none is refused', async () => {
   const free = await serve(openStore(':memory:'), { port: 0, ...FUNDED });
   const f = await seatAndPlay(free, 0n);

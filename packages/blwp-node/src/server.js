@@ -655,6 +655,28 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
        * fund that player's stake, never take it. What would be wrong is this
        * node inventing an invoice for an entry it never seated.
        */
+      /**
+       * HAS THIS NODE SEEN THE STAKE HELD? 23.1 step 5, asked by the player.
+       *
+       * A hold invoice is paid long before the wallet says so: `pay_invoice`
+       * answers when the payment completes, and a held one completes only when
+       * the round settles or cancels it. So the page asks the node, which asks
+       * its own Lightning once and remembers. A stranger's entry asks nobody.
+       */
+      if (req.method === 'GET' && url.pathname === '/stake') {
+        const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
+        if (eid.length !== 32) return text(res, 400, 'a stake is asked for by entry id');
+        if (!round.entry(eid)) return text(res, 404, 'this node seated no such entry');
+        let seen;
+        try { seen = await custody.seenPaid(new Uint8Array(eid)); }
+        catch (e) { seen = { ok: false, why: e.message }; }
+        if (!seen.ok) return text(res, 409, STAKE_NOT_SEEN + seen.why);
+        res.writeHead(200, { 'content-type': 'application/json', ...CORS });
+        return res.end(JSON.stringify({
+          entry: eid.toString('hex'), state: seen.state, paidMsat: String(seen.paidMsat ?? 0n),
+        }) + '\n');
+      }
+
       if (req.method === 'GET' && url.pathname === '/invoice') {
         const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
         if (eid.length !== 32) return text(res, 400, 'an invoice is asked for by entry id');

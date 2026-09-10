@@ -6720,12 +6720,43 @@ class Client {
     const quote = await this.invoice(entry, { entryId: id });
     if (!quote.ok) return { ...quote, paid: false, asked: false };
 
-    const paid = await payInvoice(where, quote.request, {
+    // THE WALLET'S ANSWER AND THE NODE'S, WHICHEVER COMES FIRST.
+    //
+    // A wallet answers `pay_invoice` when the payment completes, and a HOLD
+    // invoice completes only when the round settles or cancels it - minutes
+    // later, and as a failure for every winner. Measured before this: a wallet
+    // that took the payment and waited, as a real one does, was reported "did
+    // not answer in 3000 ms" while the node's Lightning showed the stake held.
+    // So the node is asked too (23.1 step 5, `GET /stake`), and a stake it has
+    // seen held IS paid, preimage or not. The last word before a failure is
+    // the node's as well: a wallet that timed out may have paid anyway.
+    const eid = id || (this.where && this.where.entryId) || entryId(entry);
+    let answered = false;
+    const asked = payInvoice(where, quote.request, {
       curve,
       random: options.random || ((n) => crypto.getRandomValues(new Uint8Array(n))),
       ...options,
-    });
-    if (!paid.ok) return { ...paid, paid: false, asked: true, quoted: quote };
+    }).finally(() => { answered = true; });
+    const pollMs = options.pollMs || 500;
+    const watched = (async () => {
+      while (!answered) {
+        const s = await this.stakeSeen(eid);
+        if (s.ok) return s;
+        await new Promise((r) => setTimeout(r, pollMs));
+      }
+      return null;
+    })();
+    const first = await Promise.race([asked.then((p) => ({ p })), watched.then((s) => ({ s }))]);
+    let seen = first.s || null;
+    const paid = first.p || null;
+    if (!seen && paid && !paid.ok) {
+      const last = await this.stakeSeen(eid);
+      if (last.ok) seen = last;
+    }
+    answered = true;
+    if (!seen && (!paid || !paid.ok))
+      return { ...(paid || { ok: false, why: 'neither the wallet nor the node said the stake is held' }),
+        paid: false, asked: true, quoted: quote };
 
     // WHAT WAS SPENT, WRITTEN DOWN WHERE THE SPENDING HAPPENS.
     //
@@ -6744,12 +6775,31 @@ class Client {
 
     return {
       ok: true, paid: true, asked: true,
-      preimage: paid.preimage,
+      // HELD: the node saw it. The preimage is the wallet's and arrives only
+      // with the wallet's answer, which for a hold may be minutes away.
+      held: Boolean(seen),
+      preimage: paid && paid.ok ? paid.preimage : null,
       amountMsat: quote.amountMsat,
       paymentHash: quote.paymentHash,
       request: quote.request,
-      feesPaidMsat: paid.feesPaidMsat,
+      feesPaidMsat: paid && paid.ok ? paid.feesPaidMsat : undefined,
     };
+  }
+
+  /**
+   * HAS THE NODE SEEN THIS SEAT'S STAKE HELD? `GET /stake` (23.1 step 5).
+   * An answer, never a throw: `{ ok, state, paidMsat }` or `{ ok: false, why }`.
+   */
+  async stakeSeen(eid) {
+    try {
+      const r = await fetch(`${this.base}/stake?entry=${toHex(eid)}`);
+      const body = await r.text();
+      if (!r.ok) return { ok: false, status: r.status, why: body.trim() };
+      const said = JSON.parse(body);
+      return { ok: true, state: said.state, paidMsat: BigInt(said.paidMsat) };
+    } catch (e) {
+      return { ok: false, why: `the node would not say whether it saw the stake: ${e.message}` };
+    }
   }
 
   /**
