@@ -355,6 +355,21 @@ async function main() {
     say(`  close order ${CLOSE_ORDER}`);
     for (const base of order) say(`  close on ${base} at +${Date.now() - t0} ms: ${await closeOn(base)}`);
     for (const [, d] of daemons) { try { await d.verifier.settling; } catch { /* reported below */ } }
+    // WHAT EACH DAEMON ENDS WITH (M3.3-25): the close now keeps asking, so its
+    // latest result is read until both played runs are final or 30 s pass.
+    const played = players.filter((p) => p.ticks && p.eid).map((p) => toHex(p.eid));
+    for (const [name, d] of daemons) {
+      const stop = Date.now() + 30000;
+      let money = await d.stakes();
+      while (Date.now() < stop && !played.every((e) => (money.agreed || []).includes(e))) {
+        await wait(250);
+        money = await d.stakes();
+      }
+      const row = d.round.payout(fromHex(round.id));
+      say(`  ${name} ENDS at +${Date.now() - t0} ms: final ${played.filter((e) => (money.agreed || []).includes(e)).length} of ${played.length} `
+        + `(${played.filter((e) => (money.agreed || []).includes(e)).map(who).join(', ') || 'none'}); `
+        + `table ${row ? row.state : 'none'}, ${d.round.payoutSignatures(fromHex(round.id)).length} of 2 seats signed`);
+    }
     for (const s of stamps.sort((x, y) => x.t - y.t)) say(`    +${String(s.t).padStart(5)} ms  ${s.what}`);
     for (const [name, d] of daemons) {
       for (const p of d.verifier.done || []) { try { await p; } catch { /* reported below */ } }
