@@ -415,6 +415,45 @@ test('a node that died mid-send asks the chain rather than building a second spe
   assert.equal(chain.sent.size, 1, 'a second spend of one pool output was built');
 });
 
+test('a node that died mid-send on a table it cannot pay in full comes back PAID_IN_PART, debt intact', async () => {
+  // Measured on regtest before this: at every kill point the restarted seat
+  // wrote PAID with 0 owed, while the six seats around it read PAID_IN_PART
+  // with 252 sats owed to one player.
+  const stake = 300000n;
+  const { round, rid, contract } = node(stake);
+  const ps = [1, 2, 3, 4, 5, 6, 7].map(player);
+  const entries = entriesOf(stake,
+    ...[90, 80, 70, 60, 50].map((score, i) => [ps[i], DELIVERED, score]),
+    [ps[5], FORFEIT, 0], [ps[6], FORFEIT, 0]);
+  const dealt = poolFor();
+  const chain = fakeChain();
+  const payouts = new Payouts(round, { curve, random: rand, chain, pool: dealt });
+
+  const built = tableFor({ roundId: rid, entries, minScore: 1 });
+  for (let i = 1; i < 5; i++)
+    round.putPayoutSignature(rid, seatKeys[i],
+      signPayoutTable({ tableId: built.tableId, secret: seatSecrets[i], pubkey: seatKeys[i] }));
+  const queued = payouts.queue({ roundId: rid, entries, minScore: 1, contract });
+  const sats = queued.rows.map((r) => r.msat / 1000n);
+  const under = sats.filter((x) => x < DUST_SATS);
+  assert.ok(under.length && sats.some((x) => x >= DUST_SATS), `the fixture must straddle the floor: ${sats}`);
+
+  const utxo = { txid: rand(32), vout: 0, value: sats.reduce((a, x) => a + x, 0n) };
+  chain.send = async (raw) => {
+    chain.sent.set(toHex(parseTransaction(raw).txid), raw);
+    throw new Error('the node stopped here');
+  };
+  await assert.rejects(() => payouts.pay({ roundId: rid, rows: queued.rows, utxo, signers: dealt.shares.slice(0, 5) }));
+
+  const asked = await payouts.reconcile();
+  assert.deepEqual(asked.asked.map((a) => a.state), [PAID_IN_PART]);
+  const row = round.payout(rid);
+  assert.equal(row.state, PAID_IN_PART, 'a table that left somebody owed was recorded as paid');
+  assert.equal(row.owedCount, under.length);
+  assert.equal(row.owedSats, under.reduce((a, x) => a + x, 0n), 'the debt did not survive the restart');
+  assert.equal(chain.sent.size, 1);
+});
+
 test('a payout with no chain moves nothing and says so', async () => {
   const { round, rid, contract } = node(1000000n);
   const payouts = new Payouts(round, { curve, random: rand });

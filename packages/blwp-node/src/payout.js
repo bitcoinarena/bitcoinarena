@@ -542,18 +542,29 @@ export class Payouts {
     });
 
     // ON DISK BEFORE THE WIRE, the same rule `pay` keeps.
+    // THE DEBT GOES DOWN WITH THE BYTES, so a restart that finds these bytes -
+    // on the chain, or still unsent - records the same state this call would
+    // have: PAID_IN_PART when the table leaves rows owed under the relay
+    // floor. It used to write PAID here whatever the table left owed, while a
+    // seat finding the same spend on the chain wrote PAID_IN_PART.
+    const owedCount = (mine.owed || []).length;
+    const state = owedCount ? PAID_IN_PART : PAID;
     this.round.putPayout({
       roundId, tableId: row.tableId, state: PAYOUT_QUEUED, raw,
+      owedSats: mine.owedSats || 0n, owedCount,
       why: `${shares.length} of ${needed} seats signed this spend; about to send`,
     });
     const sent = await this.chain.send(raw);
     if (!sent.ok) return { ok: false, why: sent.why, raw, signed: shares.length };
 
     this.round.putPayout({
-      roundId, tableId: row.tableId, state: PAID, txid: sent.txid, raw,
-      why: `paid by ${shares.length} of ${needed} seats`,
+      roundId, tableId: row.tableId, state, txid: sent.txid, raw,
+      why: owedCount
+        ? `paid by ${shares.length} of ${needed} seats; ${owedCount} still owed ${mine.owedSats} sats, under the relay floor`
+        : `paid by ${shares.length} of ${needed} seats`,
     });
-    return { ok: true, state: PAID, txid: sent.txid, raw, signed: shares.length,
+    return { ok: true, state, txid: sent.txid, raw, signed: shares.length,
+      owed: mine.owed || [], owedSats: mine.owedSats || 0n,
       seats: asked.map((a) => a.where) };
   }
 
@@ -635,6 +646,7 @@ export class Payouts {
     // ON DISK BEFORE THE WIRE.
     this.round.putPayout({
       roundId, tableId: row.tableId, state: PAYOUT_QUEUED, raw,
+      owedSats: built.owedSats || 0n, owedCount: built.owed.length,
       why: `${built.paidSats} sats to ${built.outputs.length}, ${built.feeSats} left as fee; about to send`,
     });
 
@@ -675,13 +687,16 @@ export class Payouts {
     for (const row of this.round.payoutsInState(PAYOUT_QUEUED)) {
       if (!row.raw) continue;
       const txid = parseTransaction(row.raw).txid;
+      // PAID only for a table paid in full: the debt written beside the bytes
+      // says whether this spend left anybody owed.
+      const done = row.owedCount > 0 ? PAID_IN_PART : PAID;
       const seen = await this.chain.look(txid);
       if (seen && seen.known) {
         this.round.putPayout({
-          roundId: row.roundId, tableId: row.tableId, state: PAID, txid, raw: row.raw,
+          roundId: row.roundId, tableId: row.tableId, state: done, txid, raw: row.raw,
           why: 'this node died mid-send; the chain already has that transaction',
         });
-        asked.push({ roundId: row.roundId, state: PAID });
+        asked.push({ roundId: row.roundId, state: done });
         continue;
       }
       // THIS SEAT'S OWN FULLY SIGNED SPEND, WHICH THE CHAIN HAS NOT HEARD OF: the
@@ -694,10 +709,10 @@ export class Payouts {
       catch (err) { sent = { ok: false, why: err.message }; }
       if (sent && sent.ok) {
         this.round.putPayout({
-          roundId: row.roundId, tableId: row.tableId, state: PAID, txid, raw: row.raw,
+          roundId: row.roundId, tableId: row.tableId, state: done, txid, raw: row.raw,
           why: 'this node died before sending; the bytes it had written were sent on restart',
         });
-        asked.push({ roundId: row.roundId, state: PAID, sent: true });
+        asked.push({ roundId: row.roundId, state: done, sent: true });
       } else {
         asked.push({ roundId: row.roundId, state: PAYOUT_QUEUED, why: sent && sent.why });
       }

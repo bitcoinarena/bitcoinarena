@@ -61,7 +61,7 @@ import { Ghosts } from './ghosts.js';
 import { Roster } from './roster.js';
 import { Custody, NO_LIGHTNING } from './custody.js';
 import { Preimages, encodeShareAnswer, SEALED_ANSWER_BYTES } from './preimage.js';
-import { Payouts, PAYOUT_QUEUED, PAID, NOTHING_OWED } from './payout.js';
+import { Payouts, PAYOUT_QUEUED, PAID, PAID_IN_PART, NOTHING_OWED } from './payout.js';
 import { PoolSigning } from './pool-signing.js';
 import { PoolWatch } from './pool-watch.js';
 import { Dkg } from './dkg.js';
@@ -430,9 +430,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const reconcilingPayouts = payouts.canSpend
     ? payouts.reconcile()
       .then((asked) => {
-        const list = (asked && asked.asked) || [];
-        const had = list.filter((a) => a.state === PAID && !a.sent).length;
-        const sent = list.filter((a) => a.state === PAID && a.sent).length;
+        // A table that leaves rows owed under the floor reconciles to
+        // PAID_IN_PART, and that is a payout this node recovered too.
+        const list = ((asked && asked.asked) || [])
+          .filter((a) => a.state === PAID || a.state === PAID_IN_PART);
+        const had = list.filter((a) => !a.sent).length;
+        const sent = list.filter((a) => a.sent).length;
         if (had) console.log(`[payout] the chain already had ${had} payout(s) this node died sending`);
         if (sent) console.log(`[payout] sent ${sent} payout(s) this node had signed and written but not sent`);
         return asked;

@@ -62,18 +62,25 @@ import { bondSetFor } from '../src/curve.js';
 import { parseTransaction } from '../../protocol/src/tx.js';
 import { toHex, fromHex } from '../../protocol/src/hash.js';
 import { entryFeeMsat } from '../../protocol/src/fee.js';
+import { DUST_SATS } from '../../protocol/src/payout-spend.js';
 
 const BITCOIN = process.env.BITCOIN_BIN || '/mnt/bitcoin/bitcoin-31.1/bin';
 const KEEP = process.argv.includes('--keep');
 const POINT = Number(process.env.KILL_POINT
   || (process.argv.find((a) => a.startsWith('--point=')) || '--point=2').split('=')[1]);
-// Each point on its own ports, so the four can run side by side.
-const P = { rpc: 29697 + 10 * (POINT - 1), p2p: 29698 + 10 * (POINT - 1) };
-const PORT0 = 18300 + 10 * (POINT - 1);            // daemon i listens on PORT0 + i
+// --part: a table the spend cannot pay in full. Five qualifiers place two ranks,
+// and at a 300-sat stake rank 2's 252 sats sit under the relay floor - DUST_SATS,
+// the 330 every daemon already uses, imported and not chosen here.
+const PART = process.argv.includes('--part') || process.env.PART === '1';
+// Each point on its own ports, so the four can run side by side (and --part beside them).
+const P = { rpc: 29697 + 10 * (POINT - 1) + (PART ? 50 : 0), p2p: 29698 + 10 * (POINT - 1) + (PART ? 50 : 0) };
+const PORT0 = 18300 + 10 * (POINT - 1) + (PART ? 50 : 0);   // daemon i listens on PORT0 + i
 // The round's committee time: set by the parent from the chain's own clock,
 // handed to each child as NOW_MS.
 let NOW = Number(process.env.NOW_MS || 0);
-const STAKE_MSAT = 1000000n;                       // a 1000-sat stake
+const STAKE_MSAT = PART ? 300000n : 1000000n;      // a 300- or 1000-sat stake
+const POOL_BTC = PART ? '0.00000900' : '0.00001200';
+const POOL_SATS = Math.round(Number(POOL_BTC) * 1e8);
 const curve = { ...feldmanGroup, tweakPoint };
 const rand = (n) => new Uint8Array(randomBytes(n));
 const b32 = (n) => new Uint8Array(32).fill(n);
@@ -355,10 +362,14 @@ async function main() {
     if (beacon.height <= censusHeight) problems.push(`the beacon (block ${beacon.height}) is not after the census height ${censusHeight}`);
     const winnerSecret = rand(32);
     const session = ed25519.utils.randomSecretKey();
-    const players = [
-      { pubkey: schnorr.getPublicKey(winnerSecret), outcome: DELIVERED, score: 9 },
-      { pubkey: schnorr.getPublicKey(rand(32)), outcome: FORFEIT, score: 0 },
-    ].map((p) => ({ ...p, contract: {
+    const players = (PART
+      ? [90, 80, 70, 60, 50].map((score, i) => ({
+        pubkey: schnorr.getPublicKey(i ? rand(32) : winnerSecret), outcome: DELIVERED, score,
+      })).concat([0, 0].map(() => ({ pubkey: schnorr.getPublicKey(rand(32)), outcome: FORFEIT, score: 0 })))
+      : [
+        { pubkey: schnorr.getPublicKey(winnerSecret), outcome: DELIVERED, score: 9 },
+        { pubkey: schnorr.getPublicKey(rand(32)), outcome: FORFEIT, score: 0 },
+      ]).map((p) => ({ ...p, contract: {
       roundId: rid, playerPubkey: p.pubkey, sessionPubkey: ed25519.getPublicKey(session),
       stakeCommitment: b32(7), stakeMsat: STAKE_MSAT, feeMsat: entryFeeMsat(STAKE_MSAT), donationMsat: 0n,
       joinTick: 0, worldSecret: b32(0x5e), vssSharesRef: new Uint8Array(32),
@@ -390,6 +401,7 @@ async function main() {
     const entriesOf = (n) => new PoolSigning(n.round, {}).entriesFor(rid).entries;
     for (const n of nodes) n.payouts.sign({ roundId: rid, entries: entriesOf(n), minScore: contract.minScore });
     let owedMsat = null;
+    let tableRows = null;
     for (const [i, n] of nodes.entries()) {
       n.payouts.peers = nodes.filter((o) => o !== n).map((o) => `http://127.0.0.1:${o.port}`);
       await n.payouts.gather({ roundId: rid });
@@ -397,24 +409,32 @@ async function main() {
       if (POINT === 1 && i === victimIdx) continue;
       const q = n.payouts.queue({ roundId: rid, entries: entriesOf(n), minScore: contract.minScore, contract });
       if (!q.ok || q.state !== PAYOUT_QUEUED) problems.push(`a seat did not queue: ${q.why}`);
-      if (owedMsat === null) owedMsat = q.owedMsat;
+      if (owedMsat === null) { owedMsat = q.owedMsat; tableRows = q.rows; }
       else if (q.owedMsat !== owedMsat) problems.push('two seats queued different amounts');
     }
     // THE TABLE'S OWN AMOUNT, read off the queue - not the stake. The winnings
     // are computed on the net stake (6e), so this is what the key must hold.
     const owedSats = Number(BigInt(owedMsat) / 1000n);
+    // WHAT THE TABLE MAKES OF THE FLOOR: rows at or over it are an output, rows
+    // under it are owed - and every seat's row must say exactly that.
+    const rowSats = tableRows.map((r) => r.msat / 1000n);
+    const expectedDebt = rowSats.filter((x) => x < DUST_SATS).reduce((a, x) => a + x, 0n);
+    const expectedCount = rowSats.filter((x) => x < DUST_SATS).length;
+    const expectedState = expectedCount ? 'PAID_IN_PART' : 'PAID';
+    say(`the table: ${rowSats.join(' + ')} sats owed; the floor ${DUST_SATS}; `
+      + `${expectedCount} row(s) under it (${expectedDebt} sats) -> every row must read ${expectedState}`);
     const call = rpcFor(dir);
     for (const n of nodes) n.poolWatch.call = call;
 
     const out = poolOutput({ groupPublicKey: pool.groupPublicKey, curve });
     const poolAddress = JSON.parse(cli('decodescript', toHex(out.script))).address;
-    const fundTxid = cli('sendtoaddress', poolAddress, '0.00001200');
+    const fundTxid = cli('sendtoaddress', poolAddress, POOL_BTC);
     mine(1);
     const fundTx = JSON.parse(cli('getrawtransaction', fundTxid, 'true'));
     const fundVout = fundTx.vout.find((o) => o.scriptPubKey.hex === toHex(out.script)).n;
     const fundHeight = Number(cli('getblockcount'));
     const winnerAddress = JSON.parse(cli('decodescript', '5120' + toHex(schnorr.getPublicKey(winnerSecret)))).address;
-    say(`the table owes the winner ${owedSats} sats (stake ${STAKE_MSAT / 1000n}); the pool holds 1200 sats`);
+    say(`the table owes ${owedSats} sats (stake ${STAKE_MSAT / 1000n}); the pool holds ${POOL_SATS} sats`);
 
     // WHAT THE CHAIN SAYS, counted rather than inferred.
     const onChain = () => {
@@ -430,9 +450,25 @@ async function main() {
         if (tx.vin.some((v) => v.txid === fundTxid && v.vout === fundVout)) inMempool.push({ hex: tx.hex });
       }
       const w = JSON.parse(cli('scantxoutset', 'start', JSON.stringify([`addr(${winnerAddress})`])));
-      return { inBlocks, inMempool, winnerSats: Math.round((w.total_amount || 0) * 1e8) };
+      const satsAt = (pubkey) => {
+        const a = JSON.parse(cli('decodescript', '5120' + toHex(pubkey))).address;
+        return BigInt(Math.round((JSON.parse(cli('scantxoutset', 'start', JSON.stringify([`addr(${a})`]))).total_amount || 0) * 1e8));
+      };
+      const received = tableRows.map((r) => ({ owed: r.msat / 1000n, got: satsAt(r.pubkey) }));
+      return { inBlocks, inMempool, winnerSats: Math.round((w.total_amount || 0) * 1e8), received };
     };
     const line = (c) => `${c.inBlocks.length} spend(s) in blocks, ${c.inMempool.length} in the mempool; winner ${c.winnerSats} sats`;
+    const rowFull = (i) => {
+      let r;
+      if (!closed.has(i)) r = nodes[i].round.payout(rid);
+      else {
+        const db = openStore(join(dir, `node-${i}.db`));
+        r = new Round(db, () => NOW).payout(rid);
+        try { db.close(); } catch { /* node:sqlite */ }
+      }
+      return r ? { state: r.state, owedSats: BigInt(r.owedSats || 0), owedCount: Number(r.owedCount || 0) }
+        : { state: 'none', owedSats: 0n, owedCount: 0 };
+    };
     const rowOnDisk = (i) => {
       if (!closed.has(i)) { const r = nodes[i].round.payout(rid); return r ? r.state : 'none'; }
       const db = openStore(join(dir, `node-${i}.db`));
@@ -442,7 +478,7 @@ async function main() {
     };
     // KILL_POINT goes with the child, or it computes point 2's bitcoind port.
     const envFor = (i, tag) => ({
-      KILL_POINT: String(POINT), NOW_MS: String(NOW),
+      KILL_POINT: String(POINT), NOW_MS: String(NOW), PART: PART ? '1' : '0',
       DIR: dir, STORE: join(dir, `node-${i}.db`), PORT: String(PORT0 + i), RID: toHex(rid), TAG: tag,
       PEERS: nodes.filter((_, j) => j !== i).map((n) => `http://127.0.0.1:${n.port}`).join(','),
       BEACON_HEIGHT: String(beacon.height), BEACON_HASH: toHex(beacon.hash),
@@ -518,23 +554,38 @@ async function main() {
       sweeps.push(`${i}:${r.ok ? r.state : r.why}`);
     }
     say(`  the other seats' next sweep: ${sweeps.join(' | ')}`);
-    const states = nodes.map((_, i) => rowOnDisk(i));
-    say(`  every seat's row: ${JSON.stringify(states.map((s, i) => (i === victimIdx ? `killed:${s}` : i === askerIdx ? `asker:${s}` : s)))}`);
-
     const total = final.inBlocks.length + final.inMempool.length;
     if (total !== 1) problems.push(`${total} spends of the pool output, not 1`);
-    if (final.winnerSats !== owedSats) problems.push(`the winner holds ${final.winnerSats} sats, not the table's ${owedSats}`);
+    // EACH ROW: what it was owed, and what its key holds now.
+    say(`  each row, owed -> received: ${final.received.map((r) => `${r.owed} -> ${r.got}`).join(', ')}`);
+    for (const r of final.received) {
+      const due = r.owed >= DUST_SATS ? r.owed : 0n;
+      if (r.got !== due) problems.push(`a row owed ${r.owed} sats received ${r.got}, not ${due}`);
+    }
+    if (landed) {
+      const dec = JSON.parse(cli('decoderawtransaction', landed.hex));
+      const outSats = dec.vout.reduce((a, o) => a + Math.round(o.value * 1e8), 0);
+      say(`  the spend: ${POOL_SATS} sats in, ${outSats} out to ${dec.vout.length} output(s), fee ${POOL_SATS - outSats}`
+        + `${expectedDebt ? ` (the ${expectedDebt} owed sats are part of it: no change output)` : ''}`);
+    }
     if (landed && killed && killed.raw && landed.hex !== killed.raw)
       problems.push('the spend that landed is not the one written before the kill');
-    const stale = states.filter((s, i) => i !== victimIdx && s !== 'PAID' && s !== 'PAID_IN_PART').length;
-    const victimStale = states[victimIdx] !== 'PAID' && states[victimIdx] !== 'PAID_IN_PART';
-    if (total === 1 && victimStale) problems.push(`the killed seat's row says ${states[victimIdx]} while the chain carries the payment`);
-    if (total === 1 && stale) problems.push(`${stale} of ${SHARES_TOTAL - 1} other seats still say PAYOUT_QUEUED while the chain carries the payment`);
+    // EVERY SEATED ROW AGAINST THE TABLE THE CHAIN PAID: the state, and the debt.
+    const full = nodes.map((_, i) => rowFull(i));
+    say(`  every seat's row: ${JSON.stringify(full.map((f, i) => `${i === victimIdx ? 'killed:' : i === askerIdx ? 'asker:' : ''}`
+      + `${f.state}${f.owedCount ? ` owed ${f.owedSats}/${f.owedCount}` : ''}`))}`);
+    if (total === 1) {
+      const wrong = full.map((f, i) => ({ f, i }))
+        .filter(({ f }) => f.state !== expectedState || f.owedSats !== expectedDebt || f.owedCount !== expectedCount);
+      if (wrong.length)
+        problems.push(`${wrong.length} of ${SHARES_TOTAL} rows do not read ${expectedState} with ${expectedDebt} sats owed `
+          + `to ${expectedCount}: ${wrong.map(({ f, i }) => `${i}:${f.state} ${f.owedSats}/${f.owedCount}`).join(', ')}`);
+    }
     // RESTARTED THE WAY A REAL DAEMON STARTS, IT MUST RECOVER - not only when the
     // harness hands it its chain and key.
     const totalA = afterA.inBlocks.length + afterA.inMempool.length;
-    if (totalA !== 1 || (rowA !== 'PAID' && rowA !== 'PAID_IN_PART'))
-      problems.push(`restarted as the real src/main.js, the killed seat did not recover: ${totalA} spend(s), its row ${rowA}`);
+    if (totalA !== 1 || rowA !== expectedState)
+      problems.push(`restarted as the real src/main.js, the killed seat did not reach ${expectedState}: ${totalA} spend(s), its row ${rowA}`);
   } finally {
     for (const [i, n] of nodes.entries()) if (!closed.has(i)) { try { await n.close(); } catch { /* going down */ } }
     try { sh(join(BITCOIN, 'bitcoin-cli'), [...btcArgsFor(dir), 'stop']); } catch { /* gone */ }
