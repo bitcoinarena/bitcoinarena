@@ -403,3 +403,145 @@ test('through the real client and daemon, this player\'s pre-reload seat is itse
       + `the other named at tick ${at.tick}`);
   } finally { await node.close(); }
 });
+
+/* ------------------------------------------------ what Unity is left holding */
+
+import { RETIRE_TICK } from '../src/ghost-field.js';
+
+/**
+ * WHAT `GhostField.Show` DOES WITH EACH DRAINED ITEM: make or move one truck per
+ * seat, and take one away on a tick below zero. Replayed here so the page's
+ * rule is measured by the trucks it leaves Unity holding.
+ *
+ * Measured 2026-09-10 on the Daily, before this: a reload handed Unity 9 and 11
+ * seats, 8 and 10 of them abandoned (one picture each, frozen), and a watched
+ * player's reload left its 105-picture seat frozen beside the new one.
+ */
+const render = (trucks, items) => {
+  for (const g of items) {
+    const s = toHex(g.entryId);
+    if (g.tick < 0) trucks.delete(s); else trucks.set(s, g);
+  }
+  return trucks;
+};
+const watcher = (me = b32(0xa1)) => {
+  const client = { watch: () => Promise.resolve('watching'), playerPubkey: me };
+  return { client, field: watchGhosts(client, { roundId: b32(1), entryId: b32(0xc0) }) };
+};
+
+test('after a reload the abandoned seats never stand in Unity: the measured 8 leave 0 trucks', () => {
+  assert.equal(RETIRE_TICK < 0, true, 'a retire must be a tick no picture can carry');
+  const them = b32(0xb2);
+  const { client, field } = watcher();
+  const trucks = new Map();
+  // the subscribing burst as P1 measured it: eight abandoned seats, one picture each, then the live one
+  [5315, 173, 5309, 5579, 8993, 173, 125, 4227].forEach((t, i) => client.onGhost(seatPic(0x30 + i, them, t, -100.4, i)));
+  client.onGhost(seatPic(0x7f, them, 29, -100.4, -44.2));
+  render(trucks, field.drain());
+  for (let t = 35; t <= 149; t += 6) client.onGhost(seatPic(0x7f, them, t, -100.4, -44.2));
+  render(trucks, field.drain());
+  assert.deepEqual([...trucks.keys()], [toHex(b32(0x7f))], `Unity is left holding ${trucks.size} trucks`);
+  assert.equal(field.retired, 8);
+  console.log(`  burst of 8 abandoned seats and the live one: Unity holds ${trucks.size} truck, ${field.retired} retired`);
+});
+
+test('a watched player who reloads leaves no truck behind: the old seat goes when the new one proves live', () => {
+  const them = b32(0xb2);
+  const { client, field } = watcher();
+  const trucks = new Map();
+  for (let t = 5; t < 5 + 105 * 8; t += 8) client.onGhost(seatPic(0xe3, them, t, -100.4, 30.6));   // 105 pictures
+  render(trucks, field.drain());
+  client.onGhost(seatPic(0xaf, them, 5, -100.4, -37.4));      // the reloaded seat's first picture
+  assert.equal(field.superseded, 1, 'the new seat\'s first picture was drawn while the old seat was live');
+  assert.equal(field.retired, 0, 'the live seat was retired on one picture of another');
+  client.onGhost(seatPic(0xaf, them, 11, -100.4, -37.4));     // ... and its second: now it is the live one
+  render(trucks, field.drain());
+  assert.deepEqual([...trucks.keys()], [toHex(b32(0xaf))], `Unity is left holding ${trucks.size} trucks`);
+  assert.equal(field.retired, 1);
+});
+
+test('an abandoned seat arriving after the live one is proven never reaches Unity', () => {
+  const them = b32(0xb2);
+  const { client, field } = watcher();
+  client.onGhost(seatPic(0x7f, them, 29, -100.4, -44.2));
+  client.onGhost(seatPic(0x7f, them, 35, -100.4, -44.2));
+  client.onGhost(seatPic(0xc5, them, 4227, -100.4, 57.8));    // one picture, frozen
+  const items = field.drain();
+  assert.equal(items.some((g) => toHex(g.entryId) === toHex(b32(0xc5))), false, 'the abandoned seat reached Unity');
+  assert.deepEqual([...render(new Map(), items).keys()], [toHex(b32(0x7f))]);
+  assert.equal(field.superseded, 1);
+});
+
+test('a player whose only seat has finished keeps their truck: one picture alone is not an abandoned seat', () => {
+  const { client, field } = watcher();
+  client.onGhost(seatPic(0x44, b32(0xd4), 9000, -20, 110));
+  assert.deepEqual([...render(new Map(), field.drain()).keys()], [toHex(b32(0x44))]);
+  assert.equal(field.retired, 0);
+});
+
+test('two players are two trucks in Unity, not one', () => {
+  const { client, field } = watcher();
+  client.onGhost(seatPic(0x11, b32(0xb2), 500, 1, 2));
+  client.onGhost(seatPic(0x12, b32(0xb3), 700, 3, 4));
+  client.onGhost(seatPic(0x11, b32(0xb2), 506, 1, 2));
+  client.onGhost(seatPic(0x12, b32(0xb3), 706, 3, 4));
+  assert.equal(render(new Map(), field.drain()).size, 2);
+  assert.equal(field.retired, 0);
+});
+
+test('a retire is never shed from a full queue, or that truck would stand for good', () => {
+  const client = { watch: () => Promise.resolve('watching'), playerPubkey: b32(0xa1) };
+  const field = watchGhosts(client, { roundId: b32(1), entryId: b32(0xc0) }, { limit: 3 });
+  client.onGhost(seatPic(0x21, b32(0xb2), 10, 0, 0));      // a one-picture seat ...
+  client.onGhost(seatPic(0x22, b32(0xb2), 20, 0, 0));      // ... superseded by another: a retire is queued
+  for (let t = 1; t <= 10; t++) client.onGhost(seatPic(0x33, b32(0xb3), t, 0, 0));   // and a flood behind it
+  const items = field.drain();
+  assert.equal(items.length, 3);
+  assert.ok(items.some((g) => g.tick < 0 && toHex(g.entryId) === toHex(b32(0x21))), 'the retire was shed');
+  assert.ok(field.shed > 0, 'nothing was shed, so this proves nothing');
+});
+
+test('through a real daemon\'s subscribe burst, the other player\'s abandoned seats leave no truck in Unity', async () => {
+  const { node, client, rid, drive, where, theirEid } = await rig();
+  try {
+    // THE OTHER PLAYER'S ABANDONED SEATS: the same key, other world secrets, so
+    // other entries - each with a run of its own that then stops, as a reload
+    // leaves one. The daemon sends the latest picture of every seat on watch.
+    const abandoned = [0x61, 0x62, 0x63].map((w) => ({
+      roundId: rid, playerPubkey: b32(9), sessionPubkey: b32(w), stakeCommitment: b32(7),
+      stakeMsat: 100000n, feeMsat: entryFeeMsat(100000n), donationMsat: 0n,
+      joinTick: 0, worldSecret: b32(w), vssSharesRef: new Uint8Array(32),
+    }));
+    for (const seat of abandoned) {
+      await fetch(`http://127.0.0.1:${node.port}/entry`, { method: 'POST', body: encodeEntryContract(seat) });
+      node.round.batch(encodeInputBatch({
+        roundId: rid, entryId: entryIdOf(seat), previousHash: GENESIS, firstTick: 0,
+        ticks: Array.from({ length: 40 }, (_, i) => words(9)(i)), liquidations: [],
+      }));
+    }
+    drive(0, 60);                                   // the live seat, before the watch
+
+    const field = watchGhosts(client, where);
+    await field.watching;
+    await wait(80);
+    // AND IT MOVES ON, SENT THE WAY THE PAGE SENDS IT: over the /play socket.
+    // `drive` stores straight into the round, which pushes nothing to anyone.
+    const { WebSocket } = await import('ws');
+    const sock = new WebSocket(`ws://127.0.0.1:${node.port}/play`);
+    await new Promise((r) => sock.on('open', r));
+    const answered = new Promise((r) => sock.once('message', r));
+    sock.send(encodeInputBatch({
+      roundId: rid, entryId: theirEid, previousHash: node.round.head(rid, theirEid), firstTick: 60,
+      ticks: Array.from({ length: 30 }, (_, i) => words(9)(60 + i)), liquidations: [],
+    }));
+    await answered;
+    await wait(120);
+    sock.close();
+
+    const trucks = render(new Map(), field.drain());
+    console.log(`  real daemon: ${field.seen} pictures, ${field.retired} retired, ${field.superseded} held back, `
+      + `Unity left holding ${trucks.size}`);
+    assert.deepEqual([...trucks.keys()], [toHex(theirEid)],
+      `Unity is left holding ${trucks.size} trucks: ${[...trucks.keys()].map((k) => k.slice(0, 8)).join(', ')}`);
+  } finally { await node.close(); }
+});

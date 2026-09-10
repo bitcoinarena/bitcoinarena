@@ -21,6 +21,13 @@ import { toHex } from '../../protocol/src/hash.js';
 export const GHOST_BACKLOG = 240;
 
 /**
+ * THE TICK WORD OF A RETIRE. No picture has a negative tick, so the same twelve
+ * words `BlwpNextGhost` already carries say "take this seat's truck away" -
+ * `GhostField.Show` reads a tick below zero as exactly that.
+ */
+export const RETIRE_TICK = -1;
+
+/**
  * Subscribe for the round this player is in, and keep what arrives.
  *
  * `where` is the client's own `{ roundId, entryId }` - the same object
@@ -49,7 +56,20 @@ export function watchGhosts(client, where, { limit = GHOST_BACKLOG } = {}) {
   // seat never sends again, so the live seat's next picture replaces it. A
   // picture that names no player is keyed by its entry, as before.
   const whoOf = (g) => (g.playerPubkey ? 'p:' + toHex(g.playerPubkey) : 'e:' + toHex(g.entryId));
+  // AND ONE SEAT OF EACH PLAYER IS THE ONE UNITY DRAWS. Unity keeps a truck per
+  // seat and never removed one, so every seat a player had left stood frozen:
+  // measured 2026-09-10 on the Daily, a reload handed Unity 9 and 11 seats, 8
+  // and 10 of them abandoned (one picture each), and a watched player's reload
+  // left its 105-picture seat frozen beside the new one. A seat is PROVEN once
+  // it sends a second picture - an abandoned seat never does.
+  const drawnSeat = new Map();   // player -> { e, entryId, playerPubkey }
+  const pictures = new Map();    // seat -> pictures seen
   const queue = [];
+  const retire = (seat) => {
+    queue.push({ entryId: seat.entryId, playerPubkey: seat.playerPubkey, x: 0, z: 0, heading: 0,
+      tick: RETIRE_TICK, retire: true });
+    field.retired++;
+  };
   // WHO IS HERE, independent of the drain the renderer takes. A picture
   // Unity has already drawn is gone from the queue; it is still a player
   // in the round, and the page's count has to say so.
@@ -58,6 +78,10 @@ export function watchGhosts(client, where, { limit = GHOST_BACKLOG } = {}) {
     seen: 0,
     self: 0,
     shed: 0,
+    // seats a player left, told to Unity to take away; and first pictures of
+    // another seat while this player's drawn seat is live, never drawn
+    retired: 0,
+    superseded: 0,
     // HOW MANY PICTURES SOMEBODY ACTUALLY TOOK TO DRAW.
     //
     // A field that is filling and never drained looks exactly like a field
@@ -117,12 +141,32 @@ export function watchGhosts(client, where, { limit = GHOST_BACKLOG } = {}) {
     if (toHex(ghost.entryId) === mine
         || (myKey && ghost.playerPubkey && toHex(ghost.playerPubkey) === myKey)) { field.self++; return; }
 
-    present.set(whoOf(ghost), ghost);
+    const who = whoOf(ghost);
+    const seat = toHex(ghost.entryId);
+    const n = (pictures.get(seat) || 0) + 1;
+    pictures.set(seat, n);
+    const drawn = drawnSeat.get(who);
+    if (drawn && drawn.e !== seat) {
+      // A FIRST PICTURE OF ANOTHER SEAT WHILE THE DRAWN ONE IS LIVE is a seat
+      // that player left: it never reaches Unity.
+      if (n < 2 && (pictures.get(drawn.e) || 0) >= 2) { field.superseded++; return; }
+      // Otherwise the drawn seat is the one superseded, and Unity is told.
+      retire(drawn);
+    }
+    drawnSeat.set(who, { e: seat, entryId: ghost.entryId, playerPubkey: ghost.playerPubkey });
+
+    present.set(who, ghost);
     queue.push(ghost);
     // A FULL QUEUE SHEDS PICTURES OLDEST FIRST, which is piece 2 of letter 18
     // stated for the page: a picture of where a truck WAS is worth less than
-    // the one behind it, and a backlog of them is worse than none.
-    while (queue.length > limit) { queue.shift(); field.shed++; }
+    // the one behind it, and a backlog of them is worse than none. A RETIRE IS
+    // NEVER SHED: dropping one would leave that truck standing for good.
+    while (queue.length > limit) {
+      const i = queue.findIndex((g) => !g.retire);
+      if (i < 0) break;
+      queue.splice(i, 1);
+      field.shed++;
+    }
   };
 
   field.watching = client.watch(where.roundId, where.entryId);

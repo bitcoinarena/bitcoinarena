@@ -134,6 +134,36 @@ public class GhostFieldTests
     }
 
     /// <summary>
+    /// A SEAT ITS PLAYER LEFT IS TAKEN AWAY, AND NOTHING ELSE IS.
+    ///
+    /// Measured 2026-09-10 on the Daily: this field kept a truck per seat and
+    /// never removed one, so after a reload it held 9 and 11 trucks, 8 and 10 of
+    /// them abandoned seats standing frozen, and a watched player's reload left
+    /// its 105-picture seat frozen beside the new one. The page now sends a
+    /// retire - the same twelve words, tick -1 - for a seat that was left.
+    /// </summary>
+    [UnityTest]
+    public IEnumerator ARetiredSeatLeavesNoTruckBehind()
+    {
+        var field = Field(
+            new GhostPicture("aaaaaaaa", 3 * ONE, 4 * ONE, 0, 100),
+            new GhostPicture("bbbbbbbb", -7 * ONE, 11 * ONE, 0, 100),
+            new GhostPicture("aaaaaaaa", 0, 0, 0, -1),
+            new GhostPicture("cccccccc", 0, 0, 0, -1));   // never drawn: nothing to take away
+        field.enabled = false;
+
+        Assert.AreEqual(4, field.Draw(10), "the field did not take every word it was offered");
+        Assert.AreEqual(1, field.Trucks, "the retired seat's truck is still in the field");
+        Assert.AreEqual(1, field.Retired, "a retire of a seat never drawn counted, or the real one did not");
+        Assert.AreEqual(2, field.Shown, "a retire was counted as a picture shown");
+
+        yield return null;   // Destroy takes effect at the end of the frame
+        var left = field.GetComponentsInChildren<GhostTruck>(true);
+        Assert.AreEqual(1, left.Length, "the retired truck is still standing in the scene");
+        Assert.IsTrue(left[0].gameObject.name.EndsWith("bbbbbbbb"), "the wrong truck was taken away");
+    }
+
+    /// <summary>
     /// The field takes what it is asked for and leaves the rest for the next
     /// frame, so a backlog cannot stall drawing.
     /// </summary>

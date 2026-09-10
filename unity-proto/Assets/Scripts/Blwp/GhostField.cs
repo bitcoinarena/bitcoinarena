@@ -94,6 +94,8 @@ namespace Blwp
 
         public int Shown { get; private set; }
         public int Trucks => trucks.Count;
+        /// <summary>Trucks taken away because their seat was left.</summary>
+        public int Retired { get; private set; }
 
         private readonly Dictionary<string, GhostTruck> trucks = new Dictionary<string, GhostTruck>();
         private readonly int[] words = new int[Words];
@@ -145,6 +147,25 @@ namespace Blwp
         public void Show(GhostPicture picture)
         {
             if (string.IsNullOrEmpty(picture.Entry)) return;
+
+            // A RETIRE, NOT A PICTURE. The page sends tick -1 for a seat its
+            // player has left - a reload keeps the key and draws a new seat - so
+            // the truck stops standing where that abandoned run stopped.
+            // Measured 2026-09-10 on the Daily: a reload handed this field 9 and
+            // 11 seats, 8 and 10 of them abandoned and frozen, and a watched
+            // player's reload left its 105-picture seat frozen beside the new
+            // one. Which seat is left is the page's rule (`ghost-field.js`);
+            // this only takes the truck away.
+            if (picture.Tick < 0)
+            {
+                if (trucks.TryGetValue(picture.Entry, out var gone))
+                {
+                    trucks.Remove(picture.Entry);
+                    if (gone != null) Destroy(gone.gameObject);
+                    Retired++;
+                }
+                return;
+            }
 
             if (!trucks.TryGetValue(picture.Entry, out var ghost) || ghost == null)
             {
