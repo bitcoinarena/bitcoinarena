@@ -28,8 +28,7 @@ import { bitcoindRpc, blocksOver } from './chain-rpc.js';
 import { chainSpendOver } from './pool-watch.js';
 import { chainBeacon } from './beacon-source.js';
 import { PAYOUT_QUEUED } from './payout.js';
-import { lndPort } from './lnd-port.js';
-import { lndPreflight, PLAYABLE } from './preflight.js';
+import { lightningFromEnv } from './lnd-settings.js';
 import { decodeRoundContract } from '../../protocol/src/contracts.js';
 
 const port = Number(process.argv[2] || 8080);
@@ -42,42 +41,23 @@ if (Boolean(url) !== Boolean(cookiePath)) {
   process.exit(2);
 }
 
-// LIGHTNING COMES FROM FOUR SETTINGS, ALL OR NONE:
-//
-//     BLWP_LNCLI         the lncli binary
-//     BLWP_LND_DIR       the lnd's own directory (its admin macaroon is found there)
-//     BLWP_LND_RPC       its gRPC address, e.g. 127.0.0.1:10009
-//     BLWP_LND_NETWORK   testnet4 or regtest - never mainnet here
-//
-// With them the daemon holds stakes, and on start asks that lnd about every
-// stake it died in the middle of settling or cancelling. Measured without them
+// LIGHTNING COMES FROM FOUR SETTINGS, ALL OR NONE - BLWP_LNCLI, BLWP_LND_DIR,
+// BLWP_LND_RPC, BLWP_LND_NETWORK - parsed in `lnd-settings.js`. With them the
+// daemon holds stakes, and on start asks that lnd about every stake it died in
+// the middle of settling or cancelling. Measured without them
 // (tools/custody-restart-lnd.mjs): a custodian killed inside a settle and
-// restarted as this file left the stake ACTING whatever lnd said, because no
-// launch path handed a daemon its Lightning node.
-//
-// The preflight that gates a paying round asks the lnd with its read-only key
-// and only knows testnet4; on regtest none is passed, so a regtest daemon
-// reconciles and settles but opens no paying round - the gate fails closed.
-const LND_SETTINGS = ['BLWP_LNCLI', 'BLWP_LND_DIR', 'BLWP_LND_RPC', 'BLWP_LND_NETWORK'];
-const lnd = Object.fromEntries(LND_SETTINGS.map((k) => [k, process.env[k] || '']));
-const lndGiven = LND_SETTINGS.filter((k) => lnd[k]);
-if (lndGiven.length && lndGiven.length !== LND_SETTINGS.length) {
-  console.error(`BLWP_LNCLI, BLWP_LND_DIR, BLWP_LND_RPC and BLWP_LND_NETWORK go together: set all four, or none `
-    + `(missing: ${LND_SETTINGS.filter((k) => !lnd[k]).join(', ')})`);
-  process.exit(2);
-}
-if (lndGiven.length && !PLAYABLE.includes(lnd.BLWP_LND_NETWORK)) {
-  console.error(`${lnd.BLWP_LND_NETWORK} is not a network a round may hold stakes on here (${PLAYABLE.join(', ')})`);
+// restarted as this file left the stake ACTING whatever lnd said.
+const ln = lightningFromEnv(process.env);
+if (!ln.ok) {
+  console.error(ln.why);
   process.exit(2);
 }
 
 const db = openStore(path);
 const options = { port, host };
-if (lndGiven.length) {
-  options.lightning = lndPort({ lncli: lnd.BLWP_LNCLI, args: [`--lnddir=${lnd.BLWP_LND_DIR}`,
-    `--rpcserver=${lnd.BLWP_LND_RPC}`, `--network=${lnd.BLWP_LND_NETWORK}`] });
-  if (lnd.BLWP_LND_NETWORK === 'testnet4')
-    options.preflight = lndPreflight({ lncli: lnd.BLWP_LNCLI, lnddir: lnd.BLWP_LND_DIR });
+if (ln.given) {
+  options.lightning = ln.lightning;
+  if (ln.preflight) options.preflight = ln.preflight;
 }
 if (url) {
   const call = bitcoindRpc({ url, cookiePath });
@@ -132,4 +112,4 @@ if (url) {
 }
 const node = await serve(db, options);
 console.log(`blwp-node on http://${host}:${node.port}  (${path})${url ? `, chain ${url}` : ''}`
-  + `${lndGiven.length ? `, lnd ${lnd.BLWP_LND_RPC} (${lnd.BLWP_LND_NETWORK})` : ''}`);
+  + `${ln.given ? `, lnd ${ln.rpc} (${ln.network})` : ''}`);
