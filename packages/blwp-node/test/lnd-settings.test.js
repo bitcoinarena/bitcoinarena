@@ -29,11 +29,14 @@ test('mainnet, or a network spelled wrong, is refused', () => {
   }
 });
 
-test('regtest gets a port and no preflight; testnet4 gets both', () => {
+test('regtest and testnet4 each get a port and a preflight', () => {
+  // A regtest daemon given Lightning and NO preflight opened no paying round:
+  // measured 503 "this node holds stakes and has no preflight". It gets the
+  // regtest ask now, with the same flags the port uses.
   const reg = lightningFromEnv({ ...all, BLWP_LND_NETWORK: 'regtest' });
   assert.equal(reg.ok, true);
   assert.equal(typeof reg.lightning.look, 'function');
-  assert.equal(reg.preflight, null, 'a preflight that only knows testnet4 was handed a regtest node');
+  assert.equal(typeof reg.preflight, 'function', 'a regtest daemon with Lightning can open no paying round');
   const t4 = lightningFromEnv({ ...all, BLWP_LND_NETWORK: 'testnet4' });
   assert.equal(typeof t4.lightning.settle, 'function');
   assert.equal(typeof t4.preflight, 'function');

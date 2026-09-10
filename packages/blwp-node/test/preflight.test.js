@@ -6,7 +6,7 @@
 // stake, and until this file nothing said so before a player's payment failed.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { lightningPreflight, askLnd, MIN_PLAYERS_PER_ROUND } from '../src/preflight.js';
+import { lightningPreflight, askLnd, askLndRegtest, MIN_PLAYERS_PER_ROUND } from '../src/preflight.js';
 import { entryFeeMsat } from '../../protocol/src/fee.js';
 import { openStore } from '../src/store.js';
 import { serve } from '../src/server.js';
@@ -190,4 +190,28 @@ test('askLnd refuses a node that is not testnet4 by its own lnd.conf, before any
       `a call carried another key: ${a.join(' ')}`);
     assert.ok(a.includes('--network=testnet4') && a.includes('--rpcserver=127.0.0.1:11009'));
   }
+});
+
+test('a regtest lnd is asked with its read-only key and the port\'s own flags, and refused if it answers as another network', () => {
+  // Before: a regtest daemon given Lightning had no preflight at all, and a
+  // node with a port and no preflight opens no paying round (measured 503).
+  const asked = [];
+  const answering = (network) => (bin, argv) => {
+    asked.push(argv);
+    if (argv.includes('--help')) return '';
+    if (argv[argv.length - 1] === 'getinfo')
+      return JSON.stringify({ synced_to_chain: true, chains: [{ network }] });
+    return JSON.stringify({ channels: [{ active: true, remote_balance: '500000', local_balance: '0' }] });
+  };
+  const got = askLndRegtest({ lncli: 'lncli', lnddir: '/x/bob', rpc: '127.0.0.1:1', run: answering('regtest') });
+  assert.equal(got.info.chains[0].network, 'regtest');
+  assert.equal(got.channels.length, 1);
+  assert.equal(got.holdInvoices, true);
+  for (const argv of asked.filter((a) => !a.includes('--help'))) {
+    assert.ok(argv.includes('--macaroonpath=/x/bob/data/chain/bitcoin/regtest/readonly.macaroon'),
+      `asked without the read-only key: ${argv.join(' ')}`);
+    assert.ok(argv.includes('--rpcserver=127.0.0.1:1') && argv.includes('--network=regtest'));
+  }
+  assert.throws(() => askLndRegtest({ lncli: 'lncli', lnddir: '/x/bob', rpc: '127.0.0.1:1', run: answering('testnet4') }),
+    /answers as testnet4, not regtest/);
 });

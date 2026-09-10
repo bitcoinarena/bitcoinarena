@@ -64,7 +64,10 @@ const b32 = (n) => new Uint8Array(32).fill(n);
  */
 export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8081,
                                      store = ':memory:', rpc = null, cli = null,
-                                     page = 'https://btc-logistics-core.pages.dev' } = {}) {
+                                     page = 'https://btc-logistics-core.pages.dev',
+                                     // A PAYING ROUND, for a rehearsal with Lightning. Every
+                                     // existing caller asks for none and gets a free round.
+                                     stakeMsat = 0n } = {}) {
   const funded = () => true;
 
   // THE BEACON IS THE CHAIN'S OR THERE IS NONE.
@@ -341,7 +344,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     entryCloseMs: committeeTimeMs + MIN_ENTRY_WINDOW_MS + 120000n,
     objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20,
     slashRemainder: 'BURN', donationSetId: b32(0xd0), censusHeight,
-    censusRoot: new Uint8Array(32), stakeMsat: 0n, bondMinSats: 50000n, blockTicks: 9000,
+    censusRoot: new Uint8Array(32), stakeMsat, bondMinSats: 50000n, blockTicks: 9000,
     exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
     timeFloor: 30, timeCeil: 150, minScore: 1, rankNumerator: 3, rankDenominator: 4,
     nodes: [a.round.pubkey, b.round.pubkey],

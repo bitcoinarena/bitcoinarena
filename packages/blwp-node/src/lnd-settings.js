@@ -17,7 +17,7 @@
 // and only knows testnet4; on regtest none is returned, so a regtest daemon
 // reconciles and settles but opens no paying round - the gate fails closed.
 import { lndPort } from './lnd-port.js';
-import { lndPreflight, PLAYABLE } from './preflight.js';
+import { lndPreflight, lndPreflightRegtest, PLAYABLE } from './preflight.js';
 
 export const LND_SETTINGS = ['BLWP_LNCLI', 'BLWP_LND_DIR', 'BLWP_LND_RPC', 'BLWP_LND_NETWORK'];
 
@@ -40,7 +40,11 @@ export function lightningFromEnv(env) {
     ok: true, given: true, rpc: lnd.BLWP_LND_RPC, network: lnd.BLWP_LND_NETWORK,
     lightning: lndPort({ lncli: lnd.BLWP_LNCLI, args: [`--lnddir=${lnd.BLWP_LND_DIR}`,
       `--rpcserver=${lnd.BLWP_LND_RPC}`, `--network=${lnd.BLWP_LND_NETWORK}`] }),
+    // TESTNET4 BY ITS lnd.conf; REGTEST BY THE SAME FLAGS THE PORT USES. Both
+    // with the read-only key. Measured before the regtest one: a paying round
+    // on a regtest daemon with Lightning -> 503 "no preflight".
     preflight: lnd.BLWP_LND_NETWORK === 'testnet4'
-      ? lndPreflight({ lncli: lnd.BLWP_LNCLI, lnddir: lnd.BLWP_LND_DIR }) : null,
+      ? lndPreflight({ lncli: lnd.BLWP_LNCLI, lnddir: lnd.BLWP_LND_DIR })
+      : lndPreflightRegtest({ lncli: lnd.BLWP_LNCLI, lnddir: lnd.BLWP_LND_DIR, rpc: lnd.BLWP_LND_RPC }),
   };
 }

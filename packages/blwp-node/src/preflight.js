@@ -50,6 +50,41 @@ export function askLnd({ lncli, lnddir, run = execFileSync, read = readFileSync 
 }
 
 /**
+ * THE SAME QUESTIONS OF A REGTEST LND, ASKED WITH ITS OWN READ-ONLY KEY.
+ *
+ * `askLnd` knows only a testnet4 lnd by its own lnd.conf, so a regtest daemon
+ * handed Lightning had NO preflight - and a node given a port and no preflight
+ * opens no paying round. Measured through the launchers' own settings parse:
+ * POST /round at 100000 msat -> 503 "this node holds stakes and has no
+ * preflight", 0 msat -> 201. So no paying round could ever be rehearsed on
+ * regtest through the real daemons.
+ *
+ * A regtest lnd is named the way the port names it - its directory, its RPC
+ * address - and asked with `readonly.macaroon`, so this can move no money
+ * either. It refuses anything that is not regtest by the node's own answer.
+ */
+export function askLndRegtest({ lncli, lnddir, rpc, run = execFileSync }) {
+  const args = [`--lnddir=${lnddir}`, '--network=regtest', `--rpcserver=${rpc}`,
+    `--macaroonpath=${lnddir}/data/chain/bitcoin/regtest/readonly.macaroon`];
+  const ask = (...argv) => JSON.parse(run(lncli, [...args, ...argv], { encoding: 'utf8', timeout: 30000 }));
+  const info = ask('getinfo');
+  const network = info && info.chains && info.chains[0] && info.chains[0].network;
+  if (network !== 'regtest') throw new Error(`${lnddir} answers as ${network}, not regtest`);
+  let holdInvoices = false;
+  try { run(lncli, ['addholdinvoice', '--help'], { stdio: 'ignore' }); holdInvoices = true; } catch { /* absent */ }
+  return { info, channels: ask('listchannels').channels || [], holdInvoices };
+}
+
+/** The regtest preflight a daemon is given - the same verdict, a regtest lnd. */
+export const lndPreflightRegtest = ({ lncli, lnddir, rpc, run }) => async ({ contract }) => {
+  const stakeMsat = contract.stakeMsat;
+  return lightningPreflight({
+    ...askLndRegtest({ lncli, lnddir, rpc, ...(run ? { run } : {}) }), players: MIN_PLAYERS_PER_ROUND,
+    entry: { stakeMsat, feeMsat: entryFeeMsat(stakeMsat), donationMsat: 0n },
+  });
+};
+
+/**
  * THE PREFLIGHT A DAEMON IS GIVEN, for the round it is asked to open: the
  * fewest seats a round opens for, each at the round's stake with the fee out
  * of it and no donation - the largest hold a seat can ask for.
