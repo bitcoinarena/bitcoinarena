@@ -20,7 +20,12 @@ import { parse } from 'acorn';
 // amount the player never signed.
 const MONEY = ['payout.js', 'sortition.js', 'census.js', 'contracts.js', 'encode.js',
                'batch.js', 'transcript.js', 'chain.js', 'tx.js', 'slash.js', 'fee.js',
-               'donation.js', '../../blwp-node/src/custody.js',
+               'donation.js',
+               // `authority.js` decides WHICH set the money goes to. Its serial
+               // is the ordering a theft is undone by, and a serial that arrived
+               // as a float is two nodes disagreeing about which publication is
+               // the highest - at 2^53 silently, and the object is signed.
+               'authority.js', '../../blwp-node/src/custody.js',
                // `frost.js` and `frost-bip340.js` are on it for `slash.js`'s
                // reason rather than for a stake's: what they decide is whether
                // an output may be spent away from the pool. A float in a

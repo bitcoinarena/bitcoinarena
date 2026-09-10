@@ -6,7 +6,11 @@
 import { Writer } from './encode.js';
 import { taggedHash } from './hash.js';
 import { bondMarker } from './constants.js';
-import { ARBITRATION_KEYS_REGTEST, ARBITRATION_KEYS_TESTNET4 } from './genesis-ids.js';
+import {
+  ARBITRATION_KEYS_REGTEST, ARBITRATION_KEYS_TESTNET4,
+  AUTHORITY_PUBKEY_REGTEST, RECOVERY_PUBKEY_REGTEST,
+  AUTHORITY_PUBKEY_TESTNET4, RECOVERY_PUBKEY_TESTNET4,
+} from './genesis-ids.js';
 import { NODE_FEE_BPS } from './fee.js';
 import {
   EXPOSURE_REFERENCE, APRON_RADIUS, FRONT_SCORE_SPAN, T_FLOOR, T_CEIL,
@@ -162,4 +166,28 @@ export function genesisFor(network) {
   if (network === 'testnet4' || network === 'testnet')
     return testnetShape('bitcoin-testnet4', bondMarker('testnet'), ARBITRATION_KEYS_TESTNET4);
   throw new Error('no genesis for ' + network);
+}
+
+/**
+ * THE TWO KEYS 27A.4 PUTS IN THE NETWORK'S NAME, looked up by network.
+ *
+ * They have been generated, written into `genesis-ids.js` and hashed into
+ * `network_id` by `computeNetworkId` since letter 24 - and until `authority.js`
+ * nothing read them. A key that decides where donations go and that no code
+ * consults is not a control; it is a comment.
+ *
+ * The authority is what a published donation set is checked against, and the
+ * recovery key is what a rotation is checked against - never the other way
+ * round. 27A.4's table is exhaustive: the authority signs sets and nothing
+ * else, the recovery key names a new authority and nothing else.
+ *
+ * the owner 2026-09-08: these are test keys on disk for regtest and testnet4.
+ * A mainnet recovery key belongs in a safe, and this build has no mainnet.
+ */
+export function donationKeysFor(network) {
+  if (network === 'regtest')
+    return { authority: AUTHORITY_PUBKEY_REGTEST, recovery: RECOVERY_PUBKEY_REGTEST };
+  if (network === 'testnet4' || network === 'testnet')
+    return { authority: AUTHORITY_PUBKEY_TESTNET4, recovery: RECOVERY_PUBKEY_TESTNET4 };
+  throw new Error('no donation authority has been generated for ' + network);
 }

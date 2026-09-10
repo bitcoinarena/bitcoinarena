@@ -142,6 +142,28 @@ export const TYPE_VSS_HANDOUT = 0x12;
  */
 export const TYPE_DKG_CONTRIBUTION = 0x13;
 
+/**
+ * 27A.4'S DONATION SET, WHICH IS NOT THE RECIPIENT LIST.
+ *
+ * `TYPE_DONATION_SET` above is 22A's list of payees and shares - the thing a
+ * Round Contract's `donationSetId` names. 27A.4 specifies the object that
+ * PUBLISHES one:
+ *
+ *     DonationSet { network_id, serial, entries[], valid_from, signature }
+ *
+ * and the difference decides money. A list stands or fails on its own shares;
+ * this says WHICH list is the network's, FROM WHEN, and WHO SAID SO. Two type
+ * bytes and not one, because a signed publication that could be read as a bare
+ * list - or the reverse - is a set with two encodings, and the authority's
+ * signature over one would carry to the other.
+ *
+ * `TYPE_AUTHORITY_ROTATION` is the recovery key's only sentence: it names a
+ * new authority and can do nothing else. Its own byte for the same reason -
+ * a rotation read as a donation set would be the cold key publishing payees.
+ */
+export const TYPE_SIGNED_DONATION_SET = 0x14;
+export const TYPE_AUTHORITY_ROTATION = 0x15;
+
 // A SEALED SHARE IS A FIXED SIZE, and it is not a choice: 32 bytes of scalar
 // under AES-GCM plus the 16-byte tag that makes a wrong key a REFUSAL rather
 // than a garbage scalar. The nonce is derived rather than carried, so it is
@@ -188,6 +210,12 @@ export const TAG = {
   // every seat's share. A proof names which table, or the accuser picks one.
   feeTable: 'BLWP/v1/FeeTable',
   donationSet: 'BLWP/v1/DonationSet',
+  // The signed publication of a set, and the cold key's rotation. Separate
+  // tags from `donationSet` and from each other: the authority signs a digest,
+  // and a digest that could be produced by hashing a different object is a
+  // signature that carries somewhere it was never given.
+  signedDonationSet: 'BLWP/v1/SignedDonationSet',
+  authorityRotation: 'BLWP/v1/AuthorityRotation',
   // A picture of another player's truck. Its own tag so a ghost's id can never
   // collide with a checkpoint's or a batch's over the same bytes: 0.10 says a
   // ghost is never an input, and a shared tag would be one way to forget it.
