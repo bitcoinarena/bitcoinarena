@@ -5711,6 +5711,18 @@ function agrees(mine, theirs, what) {
  */
 const MARK_INPUT_WAIT_MS = 10000;
 
+/**
+ * THE WORD FOR NO CONNECTION, distinct from every word a node says.
+ *
+ * A node's own refusal arrives as `error ...`. A peer that could not be reached
+ * - down, restarting, unroutable - never said anything, and counting it with
+ * the refusals put "inputs refused 20" on the line for a daemon that was off.
+ * A refusal and a disconnect decide different things (a node that says no is
+ * a node that holds something else; one that is gone holds nothing yet), so
+ * they are kept apart from the first place they could be confused.
+ */
+const CLOSED = 'closed: ';
+
 class Client {
   /**
    * A client that reaches a node because Bitcoin says where it is, AND because
@@ -5877,7 +5889,11 @@ class Client {
     // them in order from where it last answered.
     this.published = [];          // { bytes, through } per accepted batch
     this.peerFeeds = new Map();   // base -> { next, ticks, refused, why, running }
-    this.peerBatchesRefused = 0;
+    this.peerBatchesRefused = 0;  // a peer node SAID NO to a batch
+    this.peerInputsClosed = 0;    // a batch could not reach a peer at all
+    this.peerDowns = 0;           // times a peer went from answering to unreachable
+    this.marksUnreached = 0;      // marks some peer never received (not refusals)
+    this.marksUnreachedWhy = null;
     this.inputWaiters = [];       // marks waiting for every node to hold their inputs
     this.marksWaited = 0;
     this.markWaitMs = MARK_INPUT_WAIT_MS;
@@ -6027,7 +6043,7 @@ class Client {
       sock.addEventListener('error', () => { link.opening = null; resolve(link); });
       sock.addEventListener('close', () => {
         const waiting = link.said; link.said = [];
-        for (const w of waiting) w('error the socket closed');
+        for (const w of waiting) w(`${CLOSED}the socket to ${base} closed`);
         if (link.sock === sock) link.sock = null;
       });
     });
@@ -6038,7 +6054,7 @@ class Client {
   /** One message to another committee node, answered the way `send` answers. */
   async sendPeer(base, message) {
     const link = await this.peerLink(base);
-    if (!link.sock || link.sock.readyState !== 1) return `error no socket to ${base}`;
+    if (!link.sock || link.sock.readyState !== 1) return `${CLOSED}no socket to ${base}`;
     return new Promise((r) => { link.said.push(r); link.sock.send(message); });
   }
 
@@ -6071,7 +6087,8 @@ class Client {
   peerFeed(base) {
     let f = this.peerFeeds.get(base);
     if (!f) {
-      f = { base, next: 0, ticks: 0, refused: 0, why: null, running: null, again: false };
+      f = { base, next: 0, ticks: 0, refused: 0, closed: 0, down: false, downs: 0,
+        why: null, running: null, again: false };
       this.peerFeeds.set(base, f);
     }
     return f;
@@ -6086,6 +6103,16 @@ class Client {
         while (f.next < this.published.length) {
           const one = this.published[f.next];
           const a = await this.sendPeer(base, one.bytes);
+          // NO CONNECTION IS NOT A NO: counted as closed, and as one drop per
+          // time the peer went away, never as a refusal. The feed stops and
+          // the next batch or mark tries again, exactly as it did.
+          if (typeof a === 'string' && a.startsWith(CLOSED)) {
+            f.closed++;
+            this.peerInputsClosed++;
+            if (!f.down) { f.down = true; f.downs++; this.peerDowns++; }
+            f.why = a;
+            return;
+          }
           if (typeof a !== 'string' || !/^[0-9]+$/.test(a)) {
             f.refused++;
             this.peerBatchesRefused++;
@@ -6094,6 +6121,7 @@ class Client {
             if (/no such entry/.test(f.why) && this.seatEntry) await this.seatOn(base);
             return;
           }
+          f.down = false;
           f.next++;
           f.ticks = one.through;
           this.#wakeMarks();
@@ -6114,8 +6142,8 @@ class Client {
 
   /** How far each peer holds this run's inputs, against this client's node. */
   peerBatches() {
-    return [...this.peerFeeds.values()].map(({ base, ticks, refused, why }) =>
-      ({ base, ticks, lag: this.nextTick - ticks, refused, why }));
+    return [...this.peerFeeds.values()].map(({ base, ticks, refused, closed, down, downs, why }) =>
+      ({ base, ticks, lag: this.nextTick - ticks, refused, closed, down, downs, why }));
   }
 
   /** Has every committee node answered that it holds this run's inputs before `tick`? */
@@ -6151,13 +6179,17 @@ class Client {
     const answers = await Promise.all([
       this.send(link.bytes), ...this.peers.map((b) => this.sendPeer(b, link.bytes))]);
     const refused = [];
+    const unreached = [];
     answers.forEach((a, i) => {
-      if (typeof a === 'string') { refused.push(`${bases[i]}: ${a}`); return; }
+      if (typeof a === 'string') {
+        (a.startsWith(CLOSED) ? unreached : refused).push(`${bases[i]}: ${a}`);
+        return;
+      }
       try { this.readReceipt(a, link.id); } catch (e) { refused.push(`${bases[i]}: ${e.message}`); }
     });
     const live = this.live(link.id);
     if (live) { this.pendingLink = null; this.marksRelinked++; }
-    return { live, refused, tick: link.tick };
+    return { live, refused, unreached, tick: link.tick };
   }
 
   /** Sends every waiting mark whose inputs every node now holds. */
@@ -6349,10 +6381,12 @@ class Client {
     // committee holds it - on the Daily's 2-of-2, both.
     const [answer, ...theirs] = await Promise.all([
       this.send(built.bytes), ...this.peers.map((b) => this.sendPeer(b, built.bytes))]);
+    // A PEER THAT NEVER GOT IT IS `unreached`, NOT `refused` - see CLOSED.
     const refused = [];
+    const unreached = [];
     this.peers.forEach((base, i) => {
       const a = theirs[i];
-      if (typeof a === 'string') { refused.push(`${base}: ${a}`); return; }
+      if (typeof a === 'string') { (a.startsWith(CLOSED) ? unreached : refused).push(`${base}: ${a}`); return; }
       try { this.readReceipt(a, built.id); } catch (e) { refused.push(`${base}: ${e.message}`); }
     });
     let receipt = null;
@@ -6372,7 +6406,7 @@ class Client {
     // mark goes out before then - see `markNow`.
     if (live) this.pendingLink = null;
     else if (this.witnessed(built.id) > 0) this.pendingLink = { id: built.id, bytes: built.bytes, tick };
-    return { ...built, answer: receipt ? 'receipted' : answer, receipt, refused, live };
+    return { ...built, answer: receipt ? 'receipted' : answer, receipt, refused, unreached, live };
   }
 
   async checkpoint(st, { roundId, entryId, tick, inputChainHash = GENESIS }) {
@@ -6866,6 +6900,10 @@ class Client {
     this.published = [];
     this.peerFeeds = new Map();
     this.peerBatchesRefused = 0;
+    this.peerInputsClosed = 0;
+    this.peerDowns = 0;
+    this.marksUnreached = 0;
+    this.marksUnreachedWhy = null;
     for (const w of this.inputWaiters) clearTimeout(w.timer);
     this.inputWaiters = [];
     this.marksWaited = 0;
@@ -7211,6 +7249,10 @@ class Client {
       if (r.answer === 'receipted') this.marksSent++;
       if (r.live) this.marksAccepted++;
       if (r.refused && r.refused.length) { this.marksRefused++; this.marksRefusedWhy = r.refused.join('; '); }
+      if (r.unreached && r.unreached.length) {
+        this.marksUnreached++;
+        this.marksUnreachedWhy = r.unreached.join('; ');
+      }
       this.marking = null;
       return r;
     }).catch((e) => { this.marking = null; throw e; });
@@ -7235,7 +7277,9 @@ class Client {
       + (this.marksSkipped ? ` skipped ${this.marksSkipped}` : '')
       + (this.peers.length ? ` accepted ${this.marksAccepted}` : '')
       + (this.marksRefused ? ` refused ${this.marksRefused}` : '')
+      + (this.marksUnreached ? ` unreached ${this.marksUnreached}` : '')
       + (this.peerBatchesRefused ? ` inputs refused ${this.peerBatchesRefused}` : '')
+      + (this.peerDowns ? ` peer drops ${this.peerDowns}` : '')
       + (this.markWaiting !== null ? ` waiting ${this.markWaiting}` : '')
       + (this.marksTimedOut ? ` timed out ${this.marksTimedOut}` : '')
       + (this.pendingLink ? ` pending link ${this.pendingLink.tick}` : '')

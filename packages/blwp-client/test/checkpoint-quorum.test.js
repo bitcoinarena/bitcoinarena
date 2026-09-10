@@ -387,7 +387,12 @@ test('a stopped daemon holds a checkpoint for a bounded time: it is sent to nobo
     line = client.status(180);
     console.log(`  after: A stores ${await stored(A, rid, eid)} checkpoint, holds ${await heldTicks(A, rid, eid)} ticks; ${line}`);
     assert.match(line, / timed out 2\b/);
-    assert.match(line, / inputs refused \d+/, 'the refused inputs to B are not on the line');
+    // A STOPPED DAEMON IS DOWN, NOT REFUSING: its failed connections are
+    // counted as closed and as one drop, never as refused inputs.
+    assert.equal(client.peerBatchesRefused, 0, `B was off and was counted as refusing inputs: ${line}`);
+    assert.ok(client.peerBatches()[0].closed >= 1, 'no closed connection was counted while B was off');
+    assert.match(line, / peer drops 1\b/, `the line does not say B dropped: ${line}`);
+    assert.equal(/refused/.test(line), false, `the line says refused for a daemon that was off: ${line}`);
   } finally {
     if (t) { t.client.ended = true; t.client.close(); }
     try { await round.close(); } catch { /* B was already stopped */ }
@@ -422,7 +427,8 @@ test('an honest next checkpoint is not a fork proof because a peer was down: the
     const half = await client.markNow(driven(7, 60), 60);
     assert.equal(half.answer, 'receipted', 'A holds the inputs and signs');
     assert.equal(half.live, false, 'one receipt of two went live');
-    assert.equal(half.refused.length, 1, 'B was down and should be named');
+    assert.deepEqual(half.refused, [], `B was down, not refusing: ${half.refused}`);
+    assert.equal(half.unreached.length, 1, 'B was down and should be named as unreached');
     assert.equal(await stored(A, rid, eid), 1, 'A stored the half-published link');
     assert.match(client.status(60), / pending link 60\b/, `the line does not name the pending link: ${client.status(60)}`);
 
@@ -458,6 +464,84 @@ test('an honest next checkpoint is not a fork proof because a peer was down: the
     assert.equal(/pending link/.test(line), false, `the line still names a pending link: ${line}`);
     assert.match(line, / relinked 1\b/);
   } finally {
+    if (t) { t.client.ended = true; t.client.close(); }
+    await round.close();
+  }
+});
+
+// A PEER THAT IS DOWN IS NOT A PEER THAT SAYS NO.
+//
+// Measured 2026-09-10 at e3f24c2, B down 2 s while the next mark waited:
+// "inputs refused 20" and "refused 1" - every failed connection to B counted
+// in the numbers a node uses to say it will not take something.
+test('a peer that is down is counted as down, not as refusing, and the re-sent checkpoint still lands on both with no fork proof', async () => {
+  const round = await standUpRound({ host: '127.0.0.1', portA: 18266, portB: 18267 });
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  let t;
+  let play = null;
+  try {
+    const named = await joinFromQuery(new URL(round.url).search);
+    t = await tab(round, named, { pageNodes: true });
+    const { client, rid, eid } = t;
+    const [A, B] = [client.base, ...client.peers];
+
+    drive(client, 60);
+    await publishAll(client);
+    await round.b.close();
+    await wait(100);
+    const half = await client.markNow(driven(7, 60), 60);
+    assert.equal(half.live, false);
+    assert.deepEqual(half.refused, [], `B was down and was counted as refusing: ${half.refused}`);
+    assert.equal(half.unreached.length, 1);
+
+    // THE NEXT MARK WAITS WHILE B IS DOWN, and the page keeps playing.
+    drive(client, 60);
+    const pending = client.markNow(driven(7, 120), 120);
+    play = setInterval(() => {
+      drive(client, 6);
+      const d = client.drain();
+      if (d && d.catch) d.catch(() => {});
+    }, 100);
+    await wait(2000);
+    const feed = client.peerBatches()[0];
+    const line = client.status(client.nextTick);
+    console.log(`  B down 2 s: inputs refused ${client.peerBatchesRefused}, closed ${feed.closed}, `
+      + `peer drops ${client.peerDowns}; marks refused ${client.marksRefused}, unreached `
+      + `${client.marksUnreached}; ${line}`);
+    assert.equal(client.peerBatchesRefused, 0, 'a closed connection was counted as B refusing inputs');
+    assert.equal(feed.refused, 0);
+    assert.ok(feed.closed >= 1, 'no closed connection was counted while B was down');
+    assert.equal(feed.down, true);
+    assert.equal(client.peerDowns, 1, 'B went down once');
+    assert.equal(client.marksRefused, 0, 'a checkpoint B never received was counted as refused');
+    assert.equal(client.marksUnreached, 1);
+    assert.equal(/refused/.test(line), false, `the line says refused for a daemon that was off: ${line}`);
+    assert.match(line, / unreached 1\b/);
+    assert.match(line, / peer drops 1\b/);
+    assert.match(line, / waiting 120\b/);
+
+    // B COMES BACK, inside the bound: the re-send lands mark 60 on both and
+    // mark 120 chains onto it.
+    await round.restartB();
+    const next = await pending;
+    clearInterval(play);
+    play = null;
+    await publishAll(client);
+    const marks = [await stored(A, rid, eid), await stored(B, rid, eid)];
+    const proofs = [await equivocation(A, rid, eid), await equivocation(B, rid, eid)];
+    console.log(`  B back: mark 120 ${next.answer}, live ${next.live}, names mark 60 `
+      + `${toHex(next.checkpoint.previousHash) === toHex(half.id)}; checkpoints A ${marks[0]} B ${marks[1]}; `
+      + `/equivocation A ${proofs[0]} B ${proofs[1]}; ${client.status(client.nextTick)}`);
+    assert.equal(next.live, true, `mark 120 did not go live: ${next.answer}`);
+    assert.equal(toHex(next.checkpoint.previousHash), toHex(half.id));
+    assert.equal(client.witnessed(half.id), 2, 'the re-sent mark 60 is not carried by both');
+    assert.deepEqual(marks, [2, 2]);
+    assert.deepEqual(proofs, [204, 204], 'a daemon holds a fork proof against an honest player');
+    assert.equal(await chainOn(B, rid, eid), await chainOn(A, rid, eid), 'A and B hold different chains');
+    assert.equal(client.peerBatchesRefused, 0, 'B never said no, and the count says it did');
+    assert.equal(client.peerBatches()[0].down, false, 'B answers again and is still marked down');
+  } finally {
+    if (play) clearInterval(play);
     if (t) { t.client.ended = true; t.client.close(); }
     await round.close();
   }
