@@ -149,6 +149,15 @@ function agrees(mine, theirs, what) {
   return mine;
 }
 
+/**
+ * HOW LONG A CHECKPOINT WAITS FOR EVERY NODE TO HOLD ITS INPUTS, in ms.
+ *
+ * Longer than the reconnect backoff's 8 s ceiling, so a node that restarts
+ * comes back inside it; short enough that a node which never comes back costs
+ * a handful of the one-a-second marks, not the run's.
+ */
+export const MARK_INPUT_WAIT_MS = 10000;
+
 export class Client {
   /**
    * A client that reaches a node because Bitcoin says where it is, AND because
@@ -318,6 +327,10 @@ export class Client {
     this.peerBatchesRefused = 0;
     this.inputWaiters = [];       // marks waiting for every node to hold their inputs
     this.marksWaited = 0;
+    this.markWaitMs = MARK_INPUT_WAIT_MS;
+    this.markWaiting = null;      // the tick of the mark now waiting for its inputs
+    this.marksTimedOut = 0;       // marks never sent: a node did not hold their inputs in time
+    this.marksTimedOutWhy = null;
     this.publishing = null;
     this.marking = null;
     this.said = [];
@@ -557,12 +570,24 @@ export class Client {
     return true;
   }
 
+  /** Which committee nodes do not yet hold the inputs before `tick`, and how far they got. */
+  #behind(tick) {
+    const out = [];
+    if (this.nextTick < tick) out.push(`${this.base} holds inputs before tick ${this.nextTick}`);
+    for (const base of this.peers) {
+      const f = this.peerFeed(base);
+      if (f.ticks < tick)
+        out.push(`${base} holds inputs before tick ${f.ticks}${f.why ? ` (${f.why})` : ''}`);
+    }
+    return out;
+  }
+
   /** Sends every waiting mark whose inputs every node now holds. */
   #wakeMarks() {
     if (!this.inputWaiters.length) return;
     const still = [];
     for (const w of this.inputWaiters) {
-      if (this.#holdsThrough(w.tick)) w.resolve(); else still.push(w);
+      if (this.#holdsThrough(w.tick)) { clearTimeout(w.timer); w.resolve(true); } else still.push(w);
     }
     this.inputWaiters = still;
   }
@@ -1251,8 +1276,12 @@ export class Client {
     this.published = [];
     this.peerFeeds = new Map();
     this.peerBatchesRefused = 0;
+    for (const w of this.inputWaiters) clearTimeout(w.timer);
     this.inputWaiters = [];
     this.marksWaited = 0;
+    this.markWaiting = null;
+    this.marksTimedOut = 0;
+    this.marksTimedOutWhy = null;
     this.publishing = null;
     this.marking = null;
     this.offered = 0;
@@ -1529,17 +1558,48 @@ export class Client {
     // answered that it holds them; then it goes. A mark cannot race its
     // batches and be refused for it, and a node that is behind is caught up
     // from the first batch before it is asked to sign anything.
+    //
+    // AND NOT FOR EVER. A node that never catches up - stopped, unreachable,
+    // refusing - held the mark, and with it every later mark (skipped while
+    // one waits) and `awaitPublishes`, which never returned. So the wait is
+    // bounded by `markWaitMs`, and when it passes the mark is SENT TO NOBODY.
+    // That is failing closed: sent to the nodes that do hold the inputs, it
+    // would be stored there and not where the rest could agree, and the next
+    // link would name a head the rest of the committee never had. The mark is
+    // counted ("timed out N", naming who was behind and how far), the head
+    // stays where every node has it, and the next mark tries again.
     const where = this.where;
-    const ready = this.#holdsThrough(tick) ? null
-      : new Promise((resolve) => { this.inputWaiters.push({ tick, resolve }); });
-    if (ready) {
+    const ready = this.#holdsThrough(tick) ? true : new Promise((resolve) => {
+      const w = { tick, resolve };
+      w.timer = setTimeout(() => {
+        this.inputWaiters = this.inputWaiters.filter((x) => x !== w);
+        resolve(false);
+      }, this.markWaitMs);
+      if (w.timer && w.timer.unref) w.timer.unref();
+      this.inputWaiters.push(w);
+    });
+    if (ready !== true) {
       this.marksWaited++;
+      this.markWaiting = tick;
       const d = this.drain();
       if (d && d.catch) d.catch(() => {});
     }
-    this.marking = Promise.resolve(ready).then(() => this.mark(stateHash, {
-      roundId: where.roundId, entryId: where.entryId, tick, inputChainHash,
-    })).then((r) => {
+    this.marking = Promise.resolve(ready).then((held) => {
+      this.markWaiting = null;
+      if (held) {
+        return this.mark(stateHash, {
+          roundId: where.roundId, entryId: where.entryId, tick, inputChainHash,
+        });
+      }
+      return {
+        answer: `timed out after ${this.markWaitMs} ms waiting for the inputs before tick ${tick}`,
+        timedOut: true, behind: this.#behind(tick), refused: [], live: false, receipt: null,
+      };
+    }).then((r) => {
+      if (r.timedOut) {
+        this.marksTimedOut++;
+        this.marksTimedOutWhy = `tick ${tick}: ${r.behind.join('; ')}`;
+      }
       if (r.answer === 'receipted') this.marksSent++;
       if (r.live) this.marksAccepted++;
       if (r.refused && r.refused.length) { this.marksRefused++; this.marksRefusedWhy = r.refused.join('; '); }
@@ -1568,6 +1628,8 @@ export class Client {
       + (this.peers.length ? ` accepted ${this.marksAccepted}` : '')
       + (this.marksRefused ? ` refused ${this.marksRefused}` : '')
       + (this.peerBatchesRefused ? ` inputs refused ${this.peerBatchesRefused}` : '')
+      + (this.markWaiting !== null ? ` waiting ${this.markWaiting}` : '')
+      + (this.marksTimedOut ? ` timed out ${this.marksTimedOut}` : '')
       + (this.drops ? ` drops ${this.drops} tries ${this.tries} resumed ${this.resumedAt}` : '')
       + (this.ended ? ` ${this.ending} ${this.endingReason}` : '');
   }

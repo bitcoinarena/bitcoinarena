@@ -300,3 +300,76 @@ test('a daemon that has not caught up refuses rather than signs, then signs once
     await round.close();
   }
 });
+
+// A NODE THAT NEVER CATCHES UP.
+//
+// The cut above made a mark wait until every node holds its inputs, and the
+// wait had no end: with one daemon gone the mark waited for ever, every later
+// mark was skipped behind it, and `awaitPublishes` never returned.
+test('a stopped daemon holds a checkpoint for a bounded time: it is sent to nobody, publishing returns, and the next mark tries again', async () => {
+  const round = await standUpRound({ host: '127.0.0.1', portA: 18258, portB: 18259 });
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  let t;
+  try {
+    const named = await joinFromQuery(new URL(round.url).search);
+    t = await tab(round, named, { pageNodes: true });
+    const { client, rid, eid } = t;
+    const [A, B] = [client.base, ...client.peers];
+    client.markWaitMs = 1500;
+
+    drive(client, 60);
+    const first = await client.markNow(driven(7, 60), 60);
+    assert.equal(first.live, true, 'with both daemons up the first mark goes live');
+
+    // DAEMON B STOPS.
+    await round.b.close();
+    await wait(100);
+
+    drive(client, 60);
+    const pending = client.markNow(driven(7, 120), 120);
+    assert.ok(pending, 'the mark was skipped instead of waiting for its inputs');
+    assert.match(client.status(120), / waiting 120\b/, `the line does not say a mark is waiting: ${client.status(120)}`);
+
+    // PUBLISHING RETURNS, inside the bound - it used to wait for ever here.
+    const t0 = Date.now();
+    await client.awaitPublishes();
+    const waited = Date.now() - t0;
+    const r = await pending;
+    console.log(`  B stopped: awaitPublishes returned after ${waited} ms (bound ${client.markWaitMs}); `
+      + `${r.answer}; behind: ${r.behind.join('; ')}`);
+    assert.ok(waited >= client.markWaitMs - 100 && waited < client.markWaitMs + 2000,
+      `awaitPublishes returned after ${waited} ms against a ${client.markWaitMs} ms bound`);
+    assert.equal(r.timedOut, true);
+    assert.equal(r.live, false);
+    assert.ok(r.behind.some((w) => w.startsWith(B)), `B is not named as the node behind: ${r.behind}`);
+    assert.equal(r.behind.some((w) => w.startsWith(A)), false, 'A holds the inputs and was named as behind');
+
+    // FAIL CLOSED: sent to nobody, so A stores no link B could never agree to -
+    // but A still took the inputs.
+    assert.equal(await stored(A, rid, eid), 1, 'the timed-out mark was sent to A anyway');
+    assert.equal(await heldTicks(A, rid, eid), 120, 'the inputs stopped going to A');
+    assert.equal(client.marksTimedOut, 1);
+    assert.match(client.marksTimedOutWhy, /tick 120/);
+    let line = client.status(120);
+    assert.match(line, / timed out 1\b/, `the line does not count the mark that was never sent: ${line}`);
+    assert.equal(/ waiting /.test(line), false, `the line still says waiting: ${line}`);
+
+    // THE NEXT MARK IS NOT SKIPPED FOR EVER: it is tried, waits its own bound,
+    // and is counted again while B stays down.
+    drive(client, 60);
+    const again = await client.markNow(driven(7, 180), 180);
+    assert.ok(again, 'the next mark was skipped');
+    assert.equal(again.timedOut, true);
+    assert.equal(client.marksTimedOut, 2);
+    assert.equal(client.marksSkipped, 0, 'no mark was skipped: each was tried and counted');
+    assert.equal(await stored(A, rid, eid), 1);
+    assert.equal(await heldTicks(A, rid, eid), 180);
+    line = client.status(180);
+    console.log(`  after: A stores ${await stored(A, rid, eid)} checkpoint, holds ${await heldTicks(A, rid, eid)} ticks; ${line}`);
+    assert.match(line, / timed out 2\b/);
+    assert.match(line, / inputs refused \d+/, 'the refused inputs to B are not on the line');
+  } finally {
+    if (t) { t.client.ended = true; t.client.close(); }
+    try { await round.close(); } catch { /* B was already stopped */ }
+  }
+});
