@@ -196,6 +196,10 @@ async function main() {
     const rid = round.open(contract);
     const port = lndPort({ lncli: LNCLI, args: lncliFor(dir, 'bob') });
     const custody = new Custody(round, { port });
+    const dbB = openStore(join(dir, 'second-node.db'));
+    const roundB = new Round(dbB, () => NOW);
+    roundB.open(contract);
+    const custodyB = new Custody(roundB, { port });
     const players = [
       { n: 1, outcome: DELIVERED, score: 9 },
       { n: 2, outcome: FORFEIT, score: 0 },
@@ -209,9 +213,18 @@ async function main() {
       };
       const entered = round.enter(p.entry);
       if (entered && entered.ok === false) throw new Error(`the door refused an entry: ${entered.why}`);
+      roundB.enter(p.entry);
       const held = await custody.hold(p.entry);
       if (!held.ok) throw new Error(`bob could not hold a stake: ${held.why}`);
       p.id = entryIdOf(p.entry);
+      // A SECOND DAEMON ON THE SAME ENDPOINT. §23.1: "the settlement
+      // committee's Lightning endpoint issues a hold invoice" - one endpoint,
+      // several daemons, and the client posts the entry to every one of them.
+      const heldB = await custodyB.hold(p.entry);
+      say(`  a second daemon on bob's endpoint holds the same entry: `
+        + `${heldB.ok ? `${heldB.state}, ${heldB.invoice === held.invoice ? 'the same invoice' : 'A DIFFERENT INVOICE'}` : heldB.why}`);
+      if (!heldB.ok) problems.push(`a second daemon on the committee's one endpoint could not hold the stake: ${heldB.why}`);
+      else if (heldB.invoice !== held.invoice) problems.push('the second daemon holds a different invoice for the same hash');
       p.pay = new Promise((resolve) => execFile(LNCLI,
         [...lncliFor(dir, 'alice'), 'payinvoice', '--force', '--timeout', '600s', held.invoice],
         { maxBuffer: 8 << 20 }, (err, o) => resolve((o || '') + (err ? err.message : ''))));

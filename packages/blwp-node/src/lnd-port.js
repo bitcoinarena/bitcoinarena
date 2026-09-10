@@ -68,13 +68,30 @@ export function lndPort({ lncli, args = [], timeoutMs = 60000, expirySeconds = 3
       // AN EXPIRY IS NOT OPTIONAL. A VOID round is refunded by nobody acting,
       // and "nobody acting" only ever ends if the invoice runs out - a hold
       // that never expires is one an operator can sit on forever.
-      const made = await json(['addholdinvoice', hash, '--amt_msat', String(amountMsat),
-        '--expiry', String(expirySeconds)]);
+      // ONE ENDPOINT, SEVERAL DAEMONS. §23.1: "the settlement committee's
+      // Lightning endpoint issues a hold invoice", and the client posts each
+      // entry to every daemon - so a second daemon asking this endpoint for
+      // the same hash is the design, not a fault. Measured on a real lnd
+      // before this: "invoice with payment hash already exists", thrown, and
+      // the second daemon held nothing. It now takes up the endpoint's hold -
+      // only while it is still a hold (OPEN or ACCEPTED), and read back like
+      // any other, so `invoiceMatchesEntry` still checks what comes back.
+      let made;
+      try {
+        made = await json(['addholdinvoice', hash, '--amt_msat', String(amountMsat),
+          '--expiry', String(expirySeconds)]);
+      } catch (err) {
+        if (!/invoice with payment hash already exists/.test(err.message)) throw err;
+        made = null;
+      }
       const back = await json(['lookupinvoice', hash]);
+      if (!made && back.state !== 'OPEN' && back.state !== 'ACCEPTED')
+        throw new Error(`this endpoint already had an invoice for that hash and it is ${back.state}, not a hold still in flight`);
       return {
         paymentHash: Buffer.from(back.r_hash, 'hex'),
         amountMsat: BigInt(back.value_msat),
-        request: made.payment_request,
+        request: made ? made.payment_request : back.payment_request,
+        ...(made ? {} : { already: true }),
       };
     },
 

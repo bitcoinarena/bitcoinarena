@@ -41,6 +41,37 @@ test('a hold invoice is asked for by hash and amount, then read back', async () 
   assert.equal(made.request, 'lnbcrt1');
 });
 
+// §23.1's one endpoint and several daemons. lnd's own words, measured on
+// regtest: "invoice with payment hash already exists".
+const DUP = new Error('lncli addholdinvoice refused: [lncli] rpc error: code = Unknown desc = invoice with payment hash already exists');
+
+test('a second daemon on the same endpoint takes up the hold it already has, read back', async () => {
+  for (const state of ['OPEN', 'ACCEPTED']) {
+    const { port, said } = fakeLncli((argv) => {
+      if (argv[0] === 'addholdinvoice') throw DUP;
+      return JSON.stringify({ r_hash: hex(hash), value_msat: '98000', state, payment_request: 'lnbcrt-first' });
+    });
+    const made = await port.createHeld({ paymentHash: hash, amountMsat: 98000n });
+    assert.deepEqual(said.map((a) => a[0]), ['addholdinvoice', 'lookupinvoice']);
+    assert.equal(made.request, 'lnbcrt-first', `${state}: not the endpoint's own invoice`);
+    assert.equal(made.amountMsat, 98000n, 'the amount must come from lnd, so the entry check can refuse it');
+    assert.equal(made.already, true);
+  }
+});
+
+test('an invoice for that hash that is no longer a hold is refused, and other errors still throw', async () => {
+  for (const state of ['SETTLED', 'CANCELED']) {
+    const { port } = fakeLncli((argv) => {
+      if (argv[0] === 'addholdinvoice') throw DUP;
+      return JSON.stringify({ r_hash: hex(hash), value_msat: '98000', state, payment_request: 'x' });
+    });
+    await assert.rejects(() => port.createHeld({ paymentHash: hash, amountMsat: 98000n }),
+      new RegExp(`it is ${state}, not a hold still in flight`));
+  }
+  const { port } = fakeLncli(() => { throw new Error('lncli addholdinvoice refused: connection refused'); });
+  await assert.rejects(() => port.createHeld({ paymentHash: hash, amountMsat: 1n }), /connection refused/);
+});
+
 test('a settle sends the preimage and a cancel sends the hash', async () => {
   const { port, said } = fakeLncli(() => '{}');
   await port.settle({ paymentHash: hash, preimage });
