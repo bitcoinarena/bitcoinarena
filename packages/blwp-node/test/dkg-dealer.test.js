@@ -100,11 +100,14 @@ test('nothing that ships deals the pool key, and no launch path holds a share', 
   // dealer; the two that still split in one process are ABOUT a transaction -
   // `payout-regtest` proves a payout's bytes and `pool-regtest` proves the
   // sighash - and both say so in their own headers. Named rather than counted,
-  // so a third cannot appear quietly.
+  // so a fourth cannot appear quietly. The third, `swap-into-pool`, is the
+  // 13:53 probe of the submarine swap (SUPERSEDED at 14:19 by the stake lock):
+  // a harness committee that measures one claim transaction and launches
+  // nothing.
   const tools = readdirSync(new URL('../tools/', import.meta.url))
     .filter((f) => f.endsWith('.mjs'))
     .filter((f) => /trustedDealerSplit\s*\(/.test(readFileSync(new URL(`../tools/${f}`, import.meta.url), 'utf8')));
-  assert.deepEqual(tools.sort(), ['payout-regtest.mjs', 'pool-regtest.mjs'],
+  assert.deepEqual(tools.sort(), ['payout-regtest.mjs', 'pool-regtest.mjs', 'swap-into-pool.mjs'],
     'a launch path deals the pool key again, or one that measures a transaction stopped');
   for (const f of ['payout-committee-regtest.mjs', 'settle-regtest.mjs']) {
     const text = readFileSync(new URL(`../tools/${f}`, import.meta.url), 'utf8');

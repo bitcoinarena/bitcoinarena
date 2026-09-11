@@ -6,12 +6,14 @@ import assert from 'node:assert/strict';
 import { NETWORK_ID_REGTEST } from '../src/genesis-ids.js';
 import { Writer, Reader } from '../src/encode.js';
 import { taggedHash, toHex, fromHex } from '../src/hash.js';
-import { TAG, CUSTODY, SLASH_REMAINDERS } from '../src/constants.js';
+import { TAG, CUSTODY, SLASH_REMAINDERS, STAKE_EXPIRY_BLOCKS } from '../src/constants.js';
 import { commitCensus, merkleRoot, compareEntries, leafHash } from '../src/census.js';
 import { chainOf as minedChain } from '../tools/chainview.js';
 import { selectCommittee, weightOf, ticketFor } from '../src/sortition.js';
 import { computePayoutTable, rankWeights, payingRanks, DELIVERED, FAILED, FORFEIT, VOID } from '../src/payout.js';
-import { encodeRoundContract, decodeRoundContract, roundId, contractWarnings } from '../src/contracts.js';
+import {
+  encodeRoundContract, decodeRoundContract, roundId, contractWarnings, custodyFieldsAreValid,
+} from '../src/contracts.js';
 
 /**
  * A view spanning the census height: from it to `tip`. A view that begins
@@ -330,7 +332,7 @@ test('a flat rank curve is flagged before anyone stakes', () => {
 
 function sampleContract() {
   return {
-    networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations: 6, gameVerifySlots: 7, settlementSlots: 7, simCoreHash: b32(1), startTimeMs: 1788200000000n, entryCloseMs: 1788200060000n, objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'BURN', donationSetId: new Uint8Array(32).fill(0xd0),
+    networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations: 6, gameVerifySlots: 7, settlementSlots: 7, simCoreHash: b32(1), startTimeMs: 1788200000000n, entryCloseMs: 1788200060000n, objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'BURN', federationId: new Uint8Array(32), stakeExpiryBlocks: 144, publicationRelays: [], donationSetId: new Uint8Array(32).fill(0xd0),
     censusHeight: 964900, censusRoot: b32(2), committeeTimeMs: 500n, randomnessRule: 'bitcoin-block-hash',
     stakeMsat: 100000n, bondMinSats: 100000n, blockTicks: 9000,
     exposureReference: 12451840, corridorHalfWidth: 3014656, spawnFreeRadius: 1441792,
@@ -409,4 +411,58 @@ test('a round fixes where a slashed bond\'s other half goes, and it is in the id
   assert.throws(() => encodeRoundContract({ ...c, slashRemainder: 'THE OPERATOR' }),
     /is not one of BURN, COMMITTEE/);
   assert.throws(() => encodeRoundContract({ ...c, slashRemainder: undefined }), /is not one of/);
+});
+
+/**
+ * THE v4.6.2 CUSTODY FIELDS (section 6): `federation_id`, `stake_expiry_blocks`
+ * and `publication_relays[]`. Each is signed with the round, so each is in the
+ * id: a custodian, an expiry or a relay list changed after entry would be one
+ * the creator picked after seeing who entered.
+ */
+test('the federation, the lock expiry and the relays are in the round, and in its id', () => {
+  const c = {
+    ...sampleContract(), federationId: b32(0xfe),
+    publicationRelays: ['wss://relay.example/blwp', 'https://mirror.example/rounds'],
+  };
+  const back = decodeRoundContract(encodeRoundContract(c));
+  assert.deepEqual(back.federationId, c.federationId);
+  assert.equal(back.stakeExpiryBlocks, STAKE_EXPIRY_BLOCKS);
+  assert.deepEqual(back.publicationRelays, c.publicationRelays);
+  assert.equal(toHex(encodeRoundContract(back)), toHex(encodeRoundContract(c)));
+
+  for (const moved of [
+    { federationId: b32(0xfd) },
+    { stakeExpiryBlocks: 143 },
+    { publicationRelays: [...c.publicationRelays].reverse() },
+    { publicationRelays: [] },
+  ]) assert.notDeepEqual(roundId({ ...c, ...moved }), roundId(c), JSON.stringify(moved));
+
+  // a contract with no field is refused rather than encoded as a default
+  assert.throws(() => encodeRoundContract({ ...c, federationId: undefined }));
+  assert.throws(() => encodeRoundContract({ ...c, stakeExpiryBlocks: undefined }));
+  assert.throws(() => encodeRoundContract({ ...c, publicationRelays: undefined }),
+    /publicationRelays is a list of URLs/);
+
+  // and publication_txid is not one of them: it names a transaction carrying
+  // H(RoundContract), so a contract holding it would have no fixed point
+  assert.equal(toHex(roundId({ ...c, publicationTxid: b32(0x77) })), toHex(roundId(c)));
+});
+
+test('the custody fields say what v4.6.2 rules, or the round is refused by name', () => {
+  const c = { ...sampleContract(), federationId: b32(0xfe), publicationRelays: ['wss://r.example'] };
+  assert.deepEqual(custodyFieldsAreValid(c), { ok: true });
+  assert.equal(STAKE_EXPIRY_BLOCKS, 144);
+
+  assert.match(custodyFieldsAreValid({ ...c, stakeExpiryBlocks: 12 }).why,
+    /stake_expiry_blocks 12 where §23\.1 rules 144/);
+  assert.match(custodyFieldsAreValid({ ...c, federationId: new Uint8Array(32) }).why,
+    /takes a stake into a FEDERATION and names no federation_id/);
+  // a round that takes no stake needs no custodian
+  assert.equal(custodyFieldsAreValid({ ...c, federationId: new Uint8Array(32), stakeMsat: 0n }).ok, true);
+  assert.match(custodyFieldsAreValid({ ...c, publicationRelays: ['ftp://r.example'] }).why,
+    /is not an http\(s\) or ws\(s\) URL/);
+  assert.match(custodyFieldsAreValid({ ...c, publicationRelays: ['not a url'] }).why,
+    /is not an http\(s\) or ws\(s\) URL/);
+  assert.match(custodyFieldsAreValid({ ...c, publicationRelays: ['wss://r.example', 'wss://r.example'] }).why,
+    /named twice/);
 });

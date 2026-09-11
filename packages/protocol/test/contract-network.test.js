@@ -34,7 +34,7 @@ const sample = () => ({
   networkId: b32(0x4e), configHash: b32(0x43), censusConfirmations: 6, gameVerifySlots: 7, settlementSlots: 7, simCoreHash: b32(1),
   startTimeMs: 1788200000000n, entryCloseMs: 1788200060000n,
   objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20,
-  slashRemainder: 'BURN', donationSetId: b32(0xd0),
+  slashRemainder: 'BURN', federationId: new Uint8Array(32), stakeExpiryBlocks: 144, publicationRelays: [], donationSetId: b32(0xd0),
   censusHeight: 964900, censusRoot: b32(2), committeeTimeMs: 500n, randomnessRule: 'bitcoin-block-hash',
   stakeMsat: 100000n, bondMinSats: 100000n, blockTicks: 9000,
   exposureReference: 12451840, corridorHalfWidth: 3014656, spawnFreeRadius: 1441792,

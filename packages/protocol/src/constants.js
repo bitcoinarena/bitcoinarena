@@ -439,3 +439,11 @@ export const custodyByte = (which) => {
   if (at < 0) throw new Error(`${which} is not one of ${CUSTODY.join(', ')}`);
   return at;
 };
+
+/**
+ * HOW LONG A STAKE LOCK RUNS, in the federation's blocks: 144, one day (§23.1,
+ * ruled 2026-09-11). It covers round + objection window + the settlement
+ * transaction only - a forfeit stays redeemable after expiry, and after it the
+ * player's key alone refunds, so delay is never loss.
+ */
+export const STAKE_EXPIRY_BLOCKS = 144;

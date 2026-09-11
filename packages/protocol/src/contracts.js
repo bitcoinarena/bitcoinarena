@@ -17,6 +17,7 @@ import { BLOCK_TICKS } from '../../core/src/rules/gate.js';
 import {
   TAG, PROTOCOL_VERSION, TYPE_ROUND_CONTRACT, TYPE_ENTRY_CONTRACT, ROLES,
   CUSTODY, custodyByte, slashRemainderByte, slashRemainderOf, MIN_ENTRY_WINDOW_MS,
+  STAKE_EXPIRY_BLOCKS,
 } from './constants.js';
 
 /**
@@ -68,6 +69,16 @@ export function encodeRoundContract(c) {
   // and different maturity, and a player is entitled to know which one they
   // staked into before they pay. Naming it is not implementing it.
   w.u8(custodyByte(c.custody));
+
+  // WHICH FEDERATION HOLDS THE STAKE LOCKS, AND HOW LONG A LOCK MUST RUN,
+  // section 6 (v4.6.2): "federation_id - the federation holding the stake
+  // locks" and "stake_expiry_blocks - replaces htlc_cltv_days; 144 (§23.1)".
+  // In the id because a custodian named after entry is one the creator picked
+  // after seeing who entered, and a shorter expiry lets a loser refund before
+  // settlement. All zeros names no federation: no stake lock is wired into the
+  // node or the client yet, and a made-up id would claim one.
+  w.bytes32(c.federationId);
+  w.u32(c.stakeExpiryBlocks);
 
   // WHAT A NODE HAS TO HAVE DONE TO EARN ITS FEE SHARE, section 22A: "A
   // selected node earns its share only if it performed the CONTRACT-DEFINED
@@ -127,6 +138,20 @@ export function encodeRoundContract(c) {
   w.u64(c.committeeTimeMs);
   w.str(c.randomnessRule);
 
+  // WHERE TRANSCRIPTS, ATTESTATIONS AND OBJECTIONS ARE POSTED, section 6
+  // (v4.6.2) and 13A: a result is FINAL only once >=5 settlement seats have
+  // posted its transcript to these. "Data in the contract - any URL, any
+  // relay, several - never infrastructure of this protocol." In the author's
+  // order, because that order is what they signed.
+  //
+  // `publication_txid` is NOT here although section 6 lists it: it is the id
+  // of a transaction carrying H(RoundContract), so a contract holding it has
+  // no fixed point - like `round_id` and `creator_signature`, it rides beside
+  // the contract, not in it.
+  if (!Array.isArray(c.publicationRelays))
+    throw new Error('publicationRelays is a list of URLs, and it may be empty');
+  w.vec(c.publicationRelays, (s, ww) => ww.str(s));
+
   // HOW MANY SEATS EACH POOL HAS, section 5A.7: "GAME/VERIFY: 7 slots... 
   // SETTLEMENT: 7 slots". Section 6 carries them and says what they mean:
   // "echoed for readability; MUST equal genesis_parameters, which network_id
@@ -178,6 +203,8 @@ export function decodeRoundContract(bytes) {
     entryCloseMs: r.u64(),
     objectionWindowMs: r.u64(),
     custody: CUSTODY[r.u8()],
+    federationId: r.bytes32(),
+    stakeExpiryBlocks: r.u32(),
     slashMinimumServed: r.u32(),
     slashRemainder: slashRemainderOf(r.u8()),
     donationSetId: r.bytes32(),
@@ -186,6 +213,7 @@ export function decodeRoundContract(bytes) {
     censusRoot: r.bytes32(),
     committeeTimeMs: r.u64(),
     randomnessRule: r.str(),
+    publicationRelays: r.vec((rr) => rr.str()),
     gameVerifySlots: r.u8(),
     settlementSlots: r.u8(),
     stakeMsat: r.u64(),
@@ -405,6 +433,46 @@ export function roundWindowsAreValid(c) {
     };
 
   return { ok: true, opensAt, earliestStart };
+}
+
+/**
+ * DO THE CUSTODY FIELDS SAY WHAT v4.6.2 RULES?
+ *
+ * Three things the spec states and a contract can get wrong: the expiry is
+ * 144 blocks (ruled 2026-09-11, §23.1) - not a number an author tunes; a round
+ * that takes a stake into a FEDERATION names which one (§23.6); and every relay
+ * is a URL, each once (§13A). Whether the named federation's guardians are
+ * bonded census nodes is the client's check against the census, not this one.
+ */
+const RELAY_SCHEMES = ['http:', 'https:', 'ws:', 'wss:'];
+
+export function custodyFieldsAreValid(c) {
+  if (!c) return { ok: false, why: 'no contract' };
+  if (c.stakeExpiryBlocks !== STAKE_EXPIRY_BLOCKS)
+    return {
+      ok: false,
+      why: `that round names stake_expiry_blocks ${c.stakeExpiryBlocks} where §23.1 rules `
+        + `${STAKE_EXPIRY_BLOCKS}`,
+    };
+  if (!is32(c.federationId)) return { ok: false, why: 'that round names no 32-byte federation_id' };
+  if (c.custody === 'FEDERATION' && c.stakeMsat > 0n && c.federationId.every((b) => b === 0))
+    return {
+      ok: false,
+      why: 'that round takes a stake into a FEDERATION and names no federation_id, '
+        + 'so nothing says who holds its stake locks',
+    };
+  if (!Array.isArray(c.publicationRelays))
+    return { ok: false, why: 'that round names no publication relays list' };
+  const seen = new Set();
+  for (const relay of c.publicationRelays) {
+    let url;
+    try { url = new URL(relay); } catch { url = null; }
+    if (!url || !RELAY_SCHEMES.includes(url.protocol))
+      return { ok: false, why: `publication relay ${JSON.stringify(relay)} is not an http(s) or ws(s) URL` };
+    if (seen.has(relay)) return { ok: false, why: `publication relay ${relay} is named twice` };
+    seen.add(relay);
+  }
+  return { ok: true };
 }
 
 export function contractWarnings(c) {
