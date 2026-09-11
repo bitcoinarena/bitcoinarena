@@ -70,7 +70,7 @@ attacker could take the whole pool.
 
 | # | Change | Closes | Cost |
 |---|---|---|---|
-| 1 | **Committee seed comes from randomness published *after* the round_id** (drand round at `committee_time`, §5A.5). | **Grinding attack.** In v4.4 the creator chose `round_id`, and `committee_seed = H(public_randomness ‖ census_epoch ‖ round_id)` with randomness already known. An attacker could brute-force round_ids offline until the deterministic selection returned his own nodes for *both* committees, publish that round, and sign himself the win and the payout. §5A.11 did not help — he overwrote nothing, he computed legally. | Committee is unknown until `committee_time`; the lobby shows "committee pending" until then, and entry opens only afterwards. |
+| 1 | **Committee seed comes from randomness published *after* the round_id** (the first Bitcoin block after `committee_time`, §5A.5; drand in v4.6, Bitcoin since v4.6.2). | **Grinding attack.** In v4.4 the creator chose `round_id`, and `committee_seed = H(public_randomness ‖ census_epoch ‖ round_id)` with randomness already known. An attacker could brute-force round_ids offline until the deterministic selection returned his own nodes for *both* committees, publish that round, and sign himself the win and the payout. §5A.11 did not help — he overwrote nothing, he computed legally. | Committee is unknown until `committee_time`; the lobby shows "committee pending" until then, and entry opens only afterwards. |
 | 2 | **Bonds are mandatory and slashable; thresholds raised to 5-of-7 for both roles; selection is linear bond-weighted stateless sortition.** | **Free Sybil + thin quorums.** v4.4 made bonds optional ("if the protocol adopts bonding"), defined no slashing, and used 2-of-3 settlement. Two colluding operators drained a round. With a free identity and 12 eligible settlement nodes of which an attacker ran 4, P(≥2 of 3 selected are his) = **23.6%**; for game/verify (20 eligible, 8 his, 5 chosen, 3 needed) = **29.6%**. Roughly every third to fourth round was fully controllable at zero cost. | Node operation now requires capital. Small networks must run at capped stakes (§5A.10). |
 | 3 | **A node may not sign for a round in which its operator plays.** | **Self-signing.** v4.4 separated game/verify from settlement but never separated *player* from *node*. | Nodes declare an operator identity; overlapping entries forfeit the fee and the signature right. |
 | 4 | **The custody chapter exists** (§23): hold invoice, preimage VSS-shared to the settlement committee, threshold-signed movement, expiry-as-default refund. | **The missing mechanism.** v4.4 said "stake commitment" and "2-of-3 Lightning settlement" but never stated where a stake lives during a round or which key moves it. Without it, "non-custodial" was unsupported and outages had no refund path. | The most complex part of the protocol; the interim construction is named honestly (§23.6). |
@@ -858,12 +858,27 @@ H(
 with the hard rule:
 
 ```text
-round_randomness = drand.round(committee_time)
+beacon_block     = the first Bitcoin block whose median-time-past is after
+                   committee_time, at the round's confirmation depth
+round_randomness = H(hash(beacon_block) || height(beacon_block))
 ```
 
-that is, a public randomness beacon value that **does not exist yet** when
-`round_id` is published. The Round Contract commits to *which* beacon round
-will be used (`randomness_rule`), not to its value.
+**Bitcoin is the mainnet source** *(ruled, the owner 2026-09-11; drand
+removed)*. The beacon is a value that **does not exist yet** when the
+contract is published — and since v4.6.2 "published" is objective: the
+contract's hash confirms in a block strictly below the beacon block
+(`publication_txid`). The Round Contract commits to *which* block will be
+used (`randomness_rule`, derived — never a height an author could name),
+not to its value. The height is derived because a named height would be a
+choice, and a choice is a grinding surface.
+
+What Bitcoin buys and costs against drand: no external federation to reach
+and no second trust assumption — the client already verifies headers for the
+census (§5A.4). What it costs is miner influence: a miner can discard a
+block whose hash he dislikes, at the price of that block's reward. Against
+pools of thousands of sats that is no attack; the stake ceiling (§5A.10)
+keeps it that way, and §27A.6 lists the source as a genesis parameter so a
+network that ever needed another could only be a successor (§27A.8).
 
 > **Why:** in v4.4 the creator chose `round_id` while `public_randomness` was
 > already known, so committee selection was a pure function of a value the
@@ -871,8 +886,8 @@ will be used (`randomness_rule`), not to its value.
 > consisted of his own nodes was trivial and undetectable — §5A.11's
 > "committee cannot be overwritten" check passed, because nothing was
 > overwritten. Sourcing the seed from a *future* beacon makes the committee
-> unknowable at creation time. Grinding now requires predicting drand, which
-> is the beacon's security assumption.
+> unknowable at creation time. Grinding now requires predicting a Bitcoin
+> block hash, which is the chain's own security assumption.
 
 ### The `committee_time` window *(4.6.1 — blocker 4)*
 
@@ -941,10 +956,10 @@ gets no entry receipts.
 - Between `published_at` and `committee_time` the lobby shows
   **"committee: pending"**. No stake may be committed in this state, and the
   client offers no entry button.
-- Fallback if the beacon is unavailable at `committee_time`: the contract's
-  declared fallback (hash of the first Bitcoin block after `committee_time`).
-  If neither is available within the grace period, the round never opens for
-  entry; since no stake was committed, nothing needs refunding.
+- There is no fallback beacon *(v4.6.2)*: the beacon is a Bitcoin block, and
+  a client that cannot see Bitcoin cannot verify the census either. If no
+  block confirms within the grace period, the round never opens for entry;
+  since no stake was committed, nothing needs refunding.
 
 ## 5A.6 Selection — bond-weighted stateless sortition
 *(replaces the stateful rotation of v4.5)*
@@ -1336,8 +1351,7 @@ RoundContract {
   game_verify_census_root
   settlement_census_root
   selection_algorithm_version      // linear-weight sortition (§5A.6)
-  randomness_rule                  // WHICH future beacon, at committee_time
-  randomness_fallback              // first block hash after committee_time
+  randomness_rule                  // the first Bitcoin block after committee_time, at depth (§5A.5)
   published_at
   committee_time                   // >= published_at + min_publication_lead
   entry_open_time                  // == committee_time (§5A.5)
@@ -1535,7 +1549,7 @@ therefore cannot be finalized as a win — withholding is never an advantage.
 # 12. Randomness
 
 ```text
-round_randomness = drand.round(committee_time)      // also the committee seed source
+round_randomness = H(beacon_block hash || height)   // §5A.5; also the committee seed source
 player_seed      = H(round_randomness || player_pubkey || player_secret)
 ```
 
@@ -3097,7 +3111,7 @@ a state whose origin nobody can check.
 | `bond_maturity` | ~30 days | ~1 day | **100 blocks** |
 | `notice_period` | ~30 days | ~1 day | **10 blocks** |
 | stake ceiling | §5A.10 table | testnet sats | play money only |
-| beacon | drand | drand | **mock, seeded** |
+| beacon | Bitcoin block after `committee_time` | Bitcoin block | **mock, seeded** |
 | governance | 1008 / 1440 / 2016 | 144 / 144 / 0 | **1 / 6 / 1** |
 
 Two nodes and 2-of-2 on regtest is the point of it: the whole settlement
@@ -3112,12 +3126,13 @@ the protocol changes shape: `census_height` is a real height, bonds are real
 UTXOs at a real depth, `bond_maturity` is a real `nLockTime`. Where mainnet
 waits thirty days for a bond to mature, you mine 100 blocks in a second.
 
-The beacon is the part that does **not** come from the chain. Committee
-selection uses the drand round at `committee_time` (§5A.5) precisely because
-it is published *after* `round_id` and nobody can grind against it. That
-property is worthless in a test and the dependency is harmful: an external
-service every regtest run must reach, and a seed you cannot fix, so no test
-can select a known committee twice.
+The beacon is the one part regtest does **not** take from its chain.
+Committee selection uses the first Bitcoin block after `committee_time`
+(§5A.5) precisely because it is mined *after* the contract confirmed and
+nobody can grind against it. That property is worthless in a test and gets
+in its way: whoever runs regtest mines the block, so the seed is theirs
+anyway, and a hash you cannot fix means no test can select a known
+committee twice.
 
 Regtest therefore declares `randomness_source = mock:<seed>` and the beacon
 becomes `H(seed ‖ committee_time)`. A test can then assert *which* nodes get
@@ -3649,7 +3664,7 @@ stopped existing, so the way back is to keep running it.
 | A parameter that does not exist yet - weather, night rounds, cargo types | `game_config` is a fixed shape and a ballot votes on a complete instance of it; a new field has nowhere to live |
 | A new message type in the committee protocol | 5-of-7 must agree on what a message *is* before it can agree on its contents |
 | Changing the committee shape, or the beacon | `genesis_parameters` - immutable by construction (§27A.6) |
-| Replacing drand with something else | Same, and it changes what "unpredictable" means for sortition |
+| Replacing the Bitcoin beacon with something else | Same, and it changes what "unpredictable" means for sortition |
 | Moving the bond script template to a new Taproot layout | Old and new bonds are not comparable capital; the census would be counting two different things |
 
 And, for contrast, what does **not** need it: damage numbers, round length,
@@ -3676,7 +3691,7 @@ is §27A.7, because none of it changes what a transcript *is*.
 | 3+ settlement nodes down | Settlement delayed; unclaimed stake locks expire → refund to the player's key |
 | A gateway down or refusing | Client uses another listed gateway; a gateway cannot keep a payment |
 | Federation halted below its threshold | Every lock frozen, refunds included — the stated residual (§22) |
-| Beacon unavailable at `committee_time` | Fallback beacon; if that fails, the entry window never opens — no stake was committed, so nothing needs refunding |
+| No block after `committee_time` within the grace period | The entry window never opens — no stake was committed, so nothing needs refunding |
 | Census roots in a contract do not match the chain | Contract invalid; no node issues receipts; no entry possible |
 | Client's chain view is wrong (bad header source) | If the forged view is also the contract's, the player locks to the forger's committee and loses the stake — the corrected statement of v4.6.2 (§5A.4). Prevented only by verifying headers from ≥2 independent sources (§25.1); a mismatch between an honest view and the contract fails the entry safely |
 | Arbitration set inactive | No slashing; deterrence lost. Rounds settle and refund normally; bonds recoverable by the node after `bond_maturity` |
@@ -3833,8 +3848,9 @@ A player trusts:
 - their own wallet;
 - the exact Round Contract they signed;
 - the exact `sim_wasm_hash`, checked against the client's known-good list;
-- the drand beacon (or its declared fallback) for committee selection and
-  round randomness;
+- the Bitcoin block after `committee_time` for committee selection and
+  round randomness — miner influence bounded by the block reward against
+  the stake ceiling (§5A.5);
 - their client's view of the Bitcoin chain for the census (§5A.4) — **not
   bounded**: a forged view that matches a forged contract hands the stake to
   the forger, which is why paying rounds need headers from ≥2 independent
