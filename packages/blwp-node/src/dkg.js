@@ -20,7 +20,8 @@ import {
   epochId, dealContribution, acceptContribution, openMyContribution,
   groupKeyOf, combineShares, encodeContribution, decodeContribution,
 } from '../../protocol/src/dkg.js';
-import { scalarFrom32, scalarTo32, FIELD, SHARES_NEEDED } from '../../protocol/src/shares.js';
+import { scalarFrom32, scalarTo32, FIELD } from '../../protocol/src/shares.js';
+import { receiptsNeeded } from '../../protocol/src/threshold.js';
 import { toHex } from '../../protocol/src/hash.js';
 
 const same = (a, b) => a instanceof Uint8Array && b instanceof Uint8Array
@@ -32,13 +33,12 @@ export class Dkg {
    * makes the secrets; `peers` and `fetcher` are how a contribution reaches
    * the other seats, injected the way `Payouts` injects them.
    */
-  constructor(round, { curve, random, peers = [], fetcher = null, needed = SHARES_NEEDED } = {}) {
+  constructor(round, { curve, random, peers = [], fetcher = null } = {}) {
     this.round = round;
     this.curve = curve;
     this.random = random;
     this.peers = peers;
     this.fetcher = fetcher;
-    this.needed = needed;
   }
 
   get canDeal() { return !!(this.curve && this.random && this.round.identity); }
@@ -76,6 +76,14 @@ export class Dkg {
     if (held && held.mine)
       return { ok: true, contribution: decodeContribution(held.mine), again: true };
 
+    // THE COMMITTEE'S OWN THRESHOLD (M3.3-28): 2 of 2, 5 of 7 - the rule the
+    // stake follows (`receiptsNeeded`). One `needed` of 5 for every committee
+    // this daemon was ever on refused a two-seat one outright - "a threshold of
+    // 5 cannot be dealt to 2 seats" - and its round's pool had no key at all.
+    let needed;
+    try { needed = receiptsNeeded(seats.length); }
+    catch (e) { return { ok: false, why: e.message }; }
+
     const order = [...seats].sort((a, b) => (toHex(a) < toHex(b) ? -1 : toHex(a) > toHex(b) ? 1 : 0));
     // A SECRET BELOW THE ORDER, or it is not a scalar of the group. The same
     // rule `stakeFor` follows, and the answer is another one rather than this
@@ -89,9 +97,9 @@ export class Dkg {
     const dealt = await dealContribution({
       secret, seats: order, epochId: where.epochId, from: this.round.pubkey,
       ephemeralSecret, ephemeralPubkey: this.curve.pointX(ephemeralSecret),
-      coefficients: Array.from({ length: this.needed - 1 },
+      coefficients: Array.from({ length: needed - 1 },
         () => scalarFrom32(this.random(32)) % FIELD),
-      needed: this.needed, curve: this.curve,
+      needed, curve: this.curve,
     });
     if (!dealt.ok) return dealt;
 

@@ -27,7 +27,8 @@ import { parseTransaction } from '../../protocol/src/tx.js';
 import { poolOutput, poolShare, poolSigningKey, poolWitness } from '../../protocol/src/pool.js';
 import { signShare340, aggregate340, enoughToSign } from '../../protocol/src/frost-bip340.js';
 import { nonceGenerate } from '../../protocol/src/frost.js';
-import { SHARES_NEEDED } from '../../protocol/src/shares.js';
+import { receiptsNeeded } from '../../protocol/src/threshold.js';
+import { decodeRoundContract } from '../../protocol/src/contracts.js';
 import { tableFor, signPayoutTable, verifiedTable, splitSignedTable } from './payout-table.js';
 import { toHex } from '../../protocol/src/hash.js';
 import { encodeUtxo, decodeCommitments, decodeShare, encodeShareRequest } from './pool-wire.js';
@@ -483,7 +484,12 @@ export class Payouts {
    * `signing` is handed in rather than imported so this file keeps knowing
    * nothing about how a seat holds a share.
    */
-  async payWithCommittee({ roundId, utxo, contract, signing, seats = [], needed = SHARES_NEEDED }) {
+  async payWithCommittee({ roundId, utxo, contract, signing, seats = [] }) {
+    // THE COMMITTEE'S OWN THRESHOLD (M3.3-28), off the round's contract - not a
+    // flat 5, which asked a two-seat committee for five signers.
+    let needed;
+    try { needed = receiptsNeeded(contract.settlementSlots); }
+    catch (e) { return { ok: false, why: e.message }; }
     const row = this.round.payout(roundId);
     if (!row) return { ok: false, why: 'that round has no queued payout' };
     if (row.state === PAID || row.state === PAID_IN_PART)
@@ -618,8 +624,16 @@ export class Payouts {
       return { ok: false, why: `that payout is ${row.state}, so there is nothing to send` };
     if (!this.canSpend) return { ok: false, why: 'this node reaches no chain, so it spends nothing' };
 
+    // THE PAID ROUND'S OWN THRESHOLD (M3.3-28), read off its contract: two
+    // signers of a two-seat committee were "2 of 5 signers" under a flat 5.
+    const heldRound = this.round.get(roundId);
+    if (!heldRound)
+      return { ok: false, why: 'this node holds no such round, so it cannot say how many signers it needs' };
+    let needed;
+    try { needed = receiptsNeeded(decodeRoundContract(new Uint8Array(heldRound.contract)).settlementSlots); }
+    catch (e) { return { ok: false, why: e.message }; }
     const enough = enoughToSign({
-      commitments: signers.map((s) => ({ id: s.id })), needed: SHARES_NEEDED,
+      commitments: signers.map((s) => ({ id: s.id })), needed,
     });
     if (!enough.ok) return { ok: false, why: enough.why };
 

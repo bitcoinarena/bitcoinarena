@@ -17,7 +17,11 @@
 // Own datadir, non-default ports, cookie auth, stopped when the numbers are
 // in. It touches no mainnet and no testnet4 datadir. The coins are worthless.
 //
-//   node packages/blwp-node/tools/payout-committee-regtest.mjs [--keep]
+//   node packages/blwp-node/tools/payout-committee-regtest.mjs [--seats=N] [--keep]
+//
+// --seats=N (M3.3-28): N daemons, their own key ceremony, and the committee's
+// own threshold (`receiptsNeeded`: 2 of 2, 5 of 7) - one short of it is
+// refused and the threshold itself pays. Default 7.
 import { execFileSync, spawn } from 'node:child_process';
 import { mkdtempSync, mkdirSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -34,20 +38,23 @@ import { encodeUtxo } from '../src/pool-wire.js';
 import { poolOutput } from '../../protocol/src/pool.js';
 import { encodeRoundContract, encodeEntryContract, roundId, entryId } from '../../protocol/src/contracts.js';
 import { encodePlayerResult, resultId, joinSignedResult } from '../../protocol/src/result.js';
-import { DELIVERED, FORFEIT } from '../../protocol/src/payout.js';
-import { scalarFrom32, FIELD, SHARES_NEEDED, SHARES_TOTAL } from '../../protocol/src/shares.js';
+import { DELIVERED, FORFEIT, netStakeMsat } from '../../protocol/src/payout.js';
+import { scalarFrom32, FIELD, SHARES_TOTAL } from '../../protocol/src/shares.js';
 import { MIN_ENTRY_WINDOW_MS } from '../../protocol/src/constants.js';
 import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
 import { feldmanGroup, tweakPoint } from '../src/curve.js';
 import { assumeSeated } from '../test/seating.js';
 import { parseTransaction } from '../../protocol/src/tx.js';
 import { toHex, fromHex } from '../../protocol/src/hash.js';
+import { receiptsNeeded } from '../../protocol/src/threshold.js';
 
 // The node fee is 27A.7's 2% of the stake, and the door checks it now
 // (M3.3 item 20) - so a fixture carries the RULE rather than a number.
 import { entryFeeMsat } from '../../protocol/src/fee.js';
 const BITCOIN = process.env.BITCOIN_BIN || '/mnt/bitcoin/bitcoin-31.1/bin';
 const KEEP = process.argv.includes('--keep');
+const SEATS = Number((process.argv.find((a) => a.startsWith('--seats=')) || `--seats=${SHARES_TOTAL}`).split('=')[1]);
+const NEEDED = receiptsNeeded(SEATS);   // the committee's own threshold, never a leftover 5
 const P = { rpc: 29683, p2p: 29684 };
 const rand = (n) => new Uint8Array(randomBytes(n));
 const b32 = (n) => new Uint8Array(32).fill(n);
@@ -114,13 +121,13 @@ async function main() {
     };
 
     // ---- SEVEN DAEMONS, EACH WITH ITS OWN STORE AND ITS OWN SHARE. ----
-    for (let i = 0; i < SHARES_TOTAL; i++) {
+    for (let i = 0; i < SEATS; i++) {
       nodes.push(await serve(openStore(join(dir, `node-${i}.db`)), {
         port: 0, funded: () => true, now: () => NOW,
         poolCurve: curve, chainSpend: chain,
       }));
     }
-    say(`\nseven daemons on ports ${nodes.map((n) => n.port).join(', ')}`);
+    say(`\n${SEATS} daemons on ports ${nodes.map((n) => n.port).join(', ')}; the committee's threshold is ${NEEDED} of ${SEATS}`);
 
     // ---- AND THEY MAKE THEIR OWN KEY (M3.3 item 14). ----
     const committee = nodes.map((n) => n.round.pubkey);
@@ -133,7 +140,7 @@ async function main() {
     const keys = new Set(seatsHeld.filter((h) => h.ok).map((h) => toHex(h.pool.groupPublicKey)));
     if (keys.size !== 1) problems.push(`the daemons named ${keys.size} different keys`);
     const pool = { groupPublicKey: seatsHeld[0].pool.groupPublicKey };
-    say(`each made its own share; one key across all ${SHARES_TOTAL}, and this process holds none`);
+    say(`each made its own share; ${keys.size === 1 ? 'one key' : `${keys.size} keys`} across all ${SEATS}, and this process holds none`);
     say(`  the committee's key: ${toHex(pool.groupPublicKey).slice(0, 32)}…`);
     for (const [i, n] of nodes.entries()) {
       n.signing.seat = seatsHeld[i].seat;
@@ -143,7 +150,7 @@ async function main() {
 
     const contract = {
       networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations: 1,
-      gameVerifySlots: SHARES_TOTAL, settlementSlots: SHARES_TOTAL, simCoreHash: b32(1),
+      gameVerifySlots: SEATS, settlementSlots: SEATS, simCoreHash: b32(1),
       committeeTimeMs: BigInt(NOW), randomnessRule: 'bitcoin-block-hash',
       startTimeMs: BigInt(NOW) + MIN_ENTRY_WINDOW_MS,
       entryCloseMs: BigInt(NOW) + MIN_ENTRY_WINDOW_MS + 200000n,
@@ -191,6 +198,7 @@ async function main() {
 
     // ---- EVERY SEAT SIGNS THE TABLE IT COMPUTED, AND FETCHES THE OTHERS'. ----
     const entriesOf = (n) => new PoolSigning(n.round, {}).entriesFor(rid).entries;
+    let askerRows = null;   // what the committee's own table owes, as the asker queued it
     for (const n of nodes)
       n.payouts.sign({ roundId: rid, entries: entriesOf(n), minScore: contract.minScore });
     for (const n of nodes) {
@@ -201,10 +209,29 @@ async function main() {
       });
       if (!queued.ok || queued.state !== PAYOUT_QUEUED)
         problems.push(`a seat did not queue the payout: ${queued.why}`);
+      if (n === nodes[0]) askerRows = queued.rows;
     }
-    say(`\nall seven queued the payout; it owes the winner ${STAKE_MSAT / 1000n} sats`);
+    // WHAT THE WINNER IS OWED IS THE TABLE'S, not a constant. This checked
+    // STAKE_MSAT/1000 = 1000 sats until ea23cdf put the 2% fee in the entries:
+    // since then the pool holds the loser's NET stake (22A) and pays the winner
+    // that - 980 - so the old number was one the committee never agreed to owe.
+    // Two checks now, not one: the winner's row IS the loser's net stake, and
+    // the chain pays the winner that row.
+    const winnerHex = toHex(players[0].pubkey);
+    const winnerRow = (askerRows || []).find((r) => toHex(r.pubkey) === winnerHex);
+    const owedSats = winnerRow ? winnerRow.msat / 1000n : null;
+    const loserNetSats = netStakeMsat(players[1].contract) / 1000n;
+    if (owedSats === null) problems.push('the queued table owes the winner nothing');
+    else if (owedSats !== loserNetSats)
+      problems.push(`the table owes the winner ${owedSats} sats, not the loser's net stake ${loserNetSats} (22A)`);
+    say(`\nall ${SEATS} queued the payout; the table owes the winner ${owedSats} sats - the loser's net stake, ${loserNetSats} (22A)`);
 
-    // ---- THE POOL, FUNDED ON THE CHAIN. ----
+    // ---- THE POOL, FUNDED ON THE CHAIN - BY THIS HARNESS. ----
+    //
+    // A STAND-IN, named as one (M3.3-28): regtest coins sent to the pool's
+    // address from this harness's own wallet, so the committee's spend can be
+    // measured. It is NOT the parked ruling on how a settled stake reaches the
+    // pool, and says nothing about it.
     const out = poolOutput({ groupPublicKey: pool.groupPublicKey, curve });
     const poolAddress = JSON.parse(cli('decodescript', toHex(out.script))).address;
     const funding = cli('sendtoaddress', poolAddress, '0.00001200');
@@ -215,7 +242,7 @@ async function main() {
       txid: fromHex(funding).reverse(), vout,
       value: fundingTx.outputs[vout].value, script: out.script,
     };
-    say(`the pool holds ${utxo.value} sats at ${poolAddress}`);
+    say(`the pool holds ${utxo.value} sats at ${poolAddress} - funded by this harness on regtest, a STAND-IN for the parked ruling on how a settled stake reaches the pool`);
 
     // ---- A ROGUE ASKER. ----
     //
@@ -231,28 +258,28 @@ async function main() {
       else problems.push('a seat committed to a spend of an output that is not the pool');
       if (n === nodes[0]) say(`\na rogue asker naming its own output: ${got.status} ${why}`);
     }
-    say(`  ${refusedRogue} of ${SHARES_TOTAL} seats refused it`);
+    say(`  ${refusedRogue} of ${SEATS} seats refused it`);
 
-    // ---- FOUR OF SEVEN. ----
+    // ---- ONE SHORT OF THE THRESHOLD (4 of 7; 1 of 2). ----
     const asker = nodes[0];
     const four = await asker.payouts.payWithCommittee({
       roundId: rid, utxo, contract, signing: asker.signing,
-      seats: nodes.slice(1, SHARES_NEEDED - 1).map((n) => `http://127.0.0.1:${n.port}`),
+      seats: nodes.slice(1, NEEDED - 1).map((n) => `http://127.0.0.1:${n.port}`),
     });
-    say(`\nfour of seven: ${four.ok ? 'PAID' : 'refused: ' + four.why}`);
-    if (four.ok) problems.push('four of seven paid the winner');
+    say(`\n${NEEDED - 1} of ${SEATS}: ${four.ok ? 'PAID' : 'refused: ' + four.why}`);
+    if (four.ok) problems.push(`${NEEDED - 1} of ${SEATS} paid the winner`);
     if (asker.round.payout(rid).state !== PAYOUT_QUEUED)
       problems.push('a short committee moved the payout row');
 
-    // ---- FIVE OF SEVEN, IN FRONT OF CONSENSUS. ----
+    // ---- THE THRESHOLD, IN FRONT OF CONSENSUS (5 of 7; 2 of 2). ----
     const paid = await asker.payouts.payWithCommittee({
       roundId: rid, utxo, contract, signing: asker.signing,
-      seats: nodes.slice(1, SHARES_NEEDED).map((n) => `http://127.0.0.1:${n.port}`),
+      seats: nodes.slice(1, NEEDED).map((n) => `http://127.0.0.1:${n.port}`),
     });
-    say('\nfive of seven, each on its own socket with its own share:');
+    say(`\n${NEEDED} of ${SEATS}, each on its own socket with its own share:`);
     if (!paid.ok) {
       say(`  REJECTED: ${paid.why}`);
-      problems.push(`five of seven were rejected: ${paid.why}`);
+      problems.push(`${NEEDED} of ${SEATS} were rejected: ${paid.why}`);
     } else {
       say(`  sendrawtransaction -> ${toHex(new Uint8Array(paid.txid).reverse())}`);
       mine(1);
@@ -268,8 +295,8 @@ async function main() {
         JSON.stringify([`addr(${winnerAddress})`])));
       const sats = Math.round((held.total_amount || 0) * 1e8);
       say(`  the winner's own key holds ${sats} sats at ${winnerAddress}`);
-      if (BigInt(sats) !== STAKE_MSAT / 1000n)
-        problems.push(`the winner holds ${sats} sats, not ${STAKE_MSAT / 1000n}`);
+      if (owedSats === null || BigInt(sats) !== owedSats)
+        problems.push(`the winner holds ${sats} sats, not the ${owedSats} the table owes`);
       if (asker.round.payout(rid).state !== PAID)
         problems.push('the row was not marked PAID');
       say(`  the asker's own store says ${asker.round.payout(rid).state}, signed by ${paid.signed} seats`);
