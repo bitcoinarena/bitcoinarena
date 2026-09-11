@@ -19,7 +19,9 @@
 import {
   epochId, dealContribution, acceptContribution, openMyContribution,
   groupKeyOf, combineShares, encodeContribution, decodeContribution,
+  contributionSetOf, encodeAgreement, agreementId, splitSignedAgreement, agreementHolds,
 } from '../../protocol/src/dkg.js';
+import { schnorr } from '@noble/curves/secp256k1.js';
 import { scalarFrom32, scalarTo32, FIELD } from '../../protocol/src/shares.js';
 import { receiptsNeeded } from '../../protocol/src/threshold.js';
 import { toHex } from '../../protocol/src/hash.js';
@@ -185,6 +187,27 @@ export class Dkg {
     });
     if (!combined.ok) return combined;
 
+    // AND EVERY SEAT COMBINED THE SAME SET, or this one keeps nothing.
+    // Measured without it: a dealer sent two valid contributions to two halves
+    // of a 5-of-7 committee and the honest seats finished on two keys and two
+    // pool addresses. Each seat signs the set it holds; a share is written only
+    // when every seat of the committee has signed the same one.
+    const own = this.agreementBytes(where.epochId);
+    if (!own.ok) return own;
+    const statements = [splitSignedAgreement(own.bytes)];
+    for (const peer of this.peers) {
+      try {
+        const r = await (this.fetcher || fetch)(`${peer.replace(/\/+$/, '')}/dkg-agreement?epoch=${toHex(where.epochId)}`);
+        if (!r.ok) continue;
+        statements.push(splitSignedAgreement(new Uint8Array(await r.arrayBuffer())));
+      } catch { /* a seat that does not answer is waited for, by name */ }
+    }
+    const agreed = agreementHolds({
+      epochId: where.epochId, seats: held.seats, statements,
+      verify: (sig, digest, key) => schnorr.verify(sig, digest, key),
+    });
+    if (!agreed.ok) return { ok: false, why: agreed.why };
+
     this.round.putEpoch({
       epochId: where.epochId, seats: held.seats,
       share: scalarTo32(combined.share), seatNo: combined.seat,
@@ -194,6 +217,28 @@ export class Dkg {
       ok: true, seat: combined.seat,
       groupPublicKey: combined.groupPublicKey, negated: combined.negated,
     };
+  }
+
+  /**
+   * WHICH CONTRIBUTIONS THIS SEAT COMBINED FOR AN EPOCH, SIGNED BY ITS OWN KEY.
+   * Only once it holds one from every seat: before that it has combined nothing
+   * and says so rather than signing a partial set.
+   */
+  agreementBytes(epochIdBytes) {
+    const held = this.round.epoch(epochIdBytes);
+    if (!held) return { ok: false, why: 'this node has dealt nothing for that committee' };
+    const stored = this.round.contributionsOf(epochIdBytes);
+    if (stored.length !== held.seats.length)
+      return { ok: false, why: `this node holds ${stored.length} of the committee's ${held.seats.length} contributions and has combined nothing yet` };
+    const agreement = {
+      epochId: epochIdBytes, seat: this.round.pubkey,
+      held: contributionSetOf(stored.map((r) => decodeContribution(r.bytes))),
+    };
+    const body = encodeAgreement(agreement);
+    const signature = schnorr.sign(agreementId(agreement), this.round.identity.secret);
+    const bytes = new Uint8Array(body.length + signature.length);
+    bytes.set(body, 0); bytes.set(signature, body.length);
+    return { ok: true, bytes };
   }
 
   /**

@@ -1377,6 +1377,17 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         return res.end(Buffer.from(held.mine));
       }
 
+      // WHICH CONTRIBUTIONS THIS SEAT COMBINED, SIGNED. Every seat asks every other
+      // before it keeps a share, and keeps it only if all of them said the same set.
+      if (req.method === 'GET' && url.pathname === '/dkg-agreement') {
+        const id = Buffer.from(url.searchParams.get('epoch') || '', 'hex');
+        if (id.length !== 32) return text(res, 400, 'that is not an epoch id');
+        const said = dkg.agreementBytes(new Uint8Array(id));
+        if (!said.ok) return text(res, 409, said.why);
+        res.writeHead(200, { 'content-type': 'application/octet-stream', ...CORS });
+        return res.end(Buffer.from(said.bytes));
+      }
+
       if (req.method === 'GET' && url.pathname === '/committee') {
         const id = Buffer.from(url.searchParams.get('round') || '', 'hex');
         const role = url.searchParams.get('role') || 'game';

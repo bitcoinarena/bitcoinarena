@@ -27,7 +27,7 @@
 // THE CURVE IS INJECTED, like everywhere else in this package: nothing here
 // vendors an implementation of the thing that pins money.
 import { Writer, Reader } from './encode.js';
-import { TAG, TYPE_DKG_CONTRIBUTION, PROTOCOL_VERSION } from './constants.js';
+import { TAG, TYPE_DKG_CONTRIBUTION, TYPE_DKG_AGREEMENT, PROTOCOL_VERSION } from './constants.js';
 import { taggedHash, toHex, bytesToBigInt } from './hash.js';
 import { shareOpensTo, splitSecret, FIELD, SHARES_NEEDED, scalarFrom32, scalarTo32 } from './shares.js';
 import { openShare, sealShare, VSS_SEALED_BYTES } from './seal.js';
@@ -437,4 +437,105 @@ export function combineShares({ opened, seats, contributions, curve }) {
     };
   }
   return { ok: true, share: sum, seat: [...at][0] };
+}
+
+/**
+ * EVERY SEAT COMBINED THE SAME CONTRIBUTIONS, OR NOBODY KEEPS A SHARE.
+ *
+ * Measured without this (dkg-equivocation.test.js): on a 5-of-7 committee a
+ * dealer sent two DIFFERENT contributions - both with valid proofs, valid
+ * shares for every seat - to two halves of the honest seats. Every check
+ * passed, all six honest seats finished, and they held shares of TWO group
+ * keys with two pool addresses: a committee that cannot sign, and sats sent to
+ * either address that could stick.
+ *
+ * So each seat signs the set it combined - (dealer, contribution id) for every
+ * seat, sorted by dealer - and keeps its share only when every seat of the
+ * committee has signed the same set. A dealer who equivocates is named, by the
+ * contribution the seats disagree on. The price is liveness, not money: a seat
+ * that never says anything stops the key from forming, which it could always
+ * do by not dealing.
+ */
+export const AGREEMENT_SIGNATURE_BYTES = 64;
+
+const byDealer = (a, b) => (toHex(a.dealer) < toHex(b.dealer) ? -1 : toHex(a.dealer) > toHex(b.dealer) ? 1 : 0);
+
+/** The set a seat combined: one (dealer, contribution id) per contribution, sorted by dealer. */
+export const contributionSetOf = (contributions) =>
+  contributions.map((c) => ({ dealer: c.from, id: contributionId(c) })).sort(byDealer);
+
+export function encodeAgreement(a) {
+  const w = new Writer();
+  w.u8(TYPE_DKG_AGREEMENT);
+  w.u16(PROTOCOL_VERSION);
+  w.bytes32(a.epochId);
+  // WHO SAYS SO is in the signed bytes, so a statement cannot be moved to another seat.
+  w.bytes32(a.seat);
+  w.vec(a.held, (h, ww) => { ww.bytes32(h.dealer); ww.bytes32(h.id); }, { sortedBy: byDealer });
+  return w.finish();
+}
+
+export function decodeAgreement(bytes) {
+  const r = new Reader(bytes);
+  if (r.u8() !== TYPE_DKG_AGREEMENT) throw new Error('not a DKG agreement');
+  const version = r.u16();
+  if (version !== PROTOCOL_VERSION) throw new Error('protocol version ' + version);
+  const a = { epochId: r.bytes32(), seat: r.bytes32(), held: r.vec((rr) => ({ dealer: rr.bytes32(), id: rr.bytes32() })) };
+  r.end();
+  return a;
+}
+
+/** What a seat signs. */
+export const agreementId = (a) => taggedHash(TAG.dkgAgreement, encodeAgreement(a));
+
+/** A signed statement on the wire: the agreement, then its 64-byte signature. */
+export function splitSignedAgreement(bytes) {
+  if (!(bytes instanceof Uint8Array) || bytes.length <= AGREEMENT_SIGNATURE_BYTES)
+    throw new Error('that is not a signed DKG agreement');
+  return {
+    agreement: decodeAgreement(bytes.subarray(0, bytes.length - AGREEMENT_SIGNATURE_BYTES)),
+    signature: bytes.subarray(bytes.length - AGREEMENT_SIGNATURE_BYTES),
+  };
+}
+
+/**
+ * DID EVERY SEAT SAY THE SAME SET? `statements` are `{ agreement, signature }`;
+ * `verify(signature, digest, seatKey)` is injected, as everywhere here. Two
+ * valid statements that differ refuse at once, naming the dealer they differ
+ * on; a seat that has not said anything yet is waited for, by name.
+ */
+export function agreementHolds({ epochId: id, seats, statements, verify } = {}) {
+  if (typeof verify !== 'function') return { ok: false, why: 'checking an agreement needs a verifier, and none was injected' };
+  if (!Array.isArray(seats) || !seats.length) return { ok: false, why: 'an agreement is over a committee, and that is nobody' };
+  const seated = new Set(seats.map(toHex));
+  const said = new Map();
+  for (const s of statements || []) {
+    const a = s && s.agreement;
+    if (!a || !same(a.epochId, id) || !seated.has(toHex(a.seat))) continue;
+    let good = false;
+    try { good = !!verify(s.signature, agreementId(a), a.seat); } catch { good = false; }
+    if (!good) continue;
+    const who = toHex(a.seat);
+    const set = a.held.map((h) => `${toHex(h.dealer)}:${toHex(h.id)}`).join(',');
+    if (said.has(who) && said.get(who).set !== set)
+      return { ok: false, why: `seat ${who.slice(0, 16)} signed two different contribution sets` };
+    said.set(who, { set, held: a.held });
+  }
+  const sets = [...said.values()];
+  for (const other of sets.slice(1)) {
+    if (other.set === sets[0].set) continue;
+    const mine = new Map(sets[0].held.map((h) => [toHex(h.dealer), toHex(h.id)]));
+    const differ = other.held.filter((h) => mine.get(toHex(h.dealer)) !== toHex(h.id)).map((h) => toHex(h.dealer).slice(0, 16));
+    return {
+      ok: false,
+      why: `the seats hold different contribution sets - they differ on the deal of ${differ.join(', ') || 'a missing dealer'}: `
+        + 'a dealer sent different contributions to different seats, and combining would split the committee onto different keys',
+    };
+  }
+  if (said.size < seats.length)
+    return { ok: false, have: said.size, of: seats.length,
+      why: `${said.size} of the committee's ${seats.length} seats have said which contributions they combined; all must agree before a share is kept` };
+  if (sets[0].held.length !== seats.length || sets[0].held.some((h) => !seated.has(toHex(h.dealer))))
+    return { ok: false, why: 'the agreed set is not one contribution from every seat of the committee' };
+  return { ok: true, of: seats.length };
 }

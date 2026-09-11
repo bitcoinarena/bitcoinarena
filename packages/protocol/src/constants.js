@@ -178,6 +178,10 @@ export const TYPE_AUTHORITY_ROTATION = 0x15;
 // v4.6.2): a client locks a stake to a claim_pk only with the round's
 // threshold of these, so no single seat can serve a key of its own (F3).
 export const TYPE_CLAIM_KEY_ATTESTATION = 0x16;
+// ONE SEAT SAYING WHICH DKG CONTRIBUTIONS IT COMBINED, signed. A seat keeps its
+// share only when every seat of the committee has said the same set - so a
+// dealer who sent different contributions to different seats splits nobody.
+export const TYPE_DKG_AGREEMENT = 0x17;
 
 // A SEALED SHARE IS A FIXED SIZE, and it is not a choice: 32 bytes of scalar
 // under AES-GCM plus the 16-byte tag that makes a wrong key a REFUSAL rather
@@ -263,6 +267,8 @@ export const TAG = {
   // The nonce of a DKG dealer's round-1 proof of knowledge, derived from its
   // own secret so no randomness source can repeat it across two proofs.
   dkgProofNonce: 'BLWP/v1/DkgProofNonce',
+  // What a seat signs to say which contributions it combined for an epoch.
+  dkgAgreement: 'BLWP/v1/DkgAgreement',
 };
 
 /**
