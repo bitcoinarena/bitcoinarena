@@ -20,7 +20,7 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 
 import { standUpRound } from '../../blwp-node/tools/round-2of2.mjs';
 import { Client } from '../src/client.js';
-import { joinFromQuery, tabIdentity, entryFor } from '../src/join.js';
+import { joinFromQuery, tabSeed, playerFor, entryFor } from '../src/join.js';
 import { feldmanGroup } from '../../blwp-node/src/curve.js';
 import { watchGhosts } from '../src/ghost-field.js';
 import { roundId } from '../../protocol/src/contracts.js';
@@ -105,8 +105,8 @@ test('a person opens the printed URL twice and the two tabs are on one round', a
     for (const which of ['one', 'two']) {
       const secret = ed25519.utils.randomSecretKey();
       const sessionPubkey = ed25519.getPublicKey(secret);
-      const player = tabIdentity({ storage: storage(), random, curve: feldmanGroup });
-      const seat = entryFor(named.round, { playerPubkey: player.pubkey, random });
+      const player = playerFor(named.round, { seed: tabSeed({ storage: storage(), random }), curve: feldmanGroup });
+      const seat = entryFor(named.round, { seed: player.seed, curve: feldmanGroup, random });
 
       // EXACTLY WHAT THE JSLIB HANDS OVER, including the round id the player
       // was given - the door refuses a contract that does not hash to it.
@@ -201,8 +201,8 @@ test('a tab that has not driven is still shown the truck that is driving', async
     for (const which of ['driver', 'watcher']) {
       const secret = ed25519.utils.randomSecretKey();
       const sessionPubkey = ed25519.getPublicKey(secret);
-      const player = tabIdentity({ storage: storage(), random, curve: feldmanGroup });
-      const seat = entryFor(named.round, { playerPubkey: player.pubkey, random });
+      const player = playerFor(named.round, { seed: tabSeed({ storage: storage(), random }), curve: feldmanGroup });
+      const seat = entryFor(named.round, { seed: player.seed, curve: feldmanGroup, random });
       const client = await Client.at({
         headers: named.chain.headers, bonds: named.chain.bonds,
         signedAdvert: fromHexHere(named.advert.signedAdvert),
@@ -279,8 +279,8 @@ test('a renderer that drains one picture a frame keeps getting the driver\'s new
     for (const which of ['driver', 'watcher']) {
       const secret = ed25519.utils.randomSecretKey();
       const sessionPubkey = ed25519.getPublicKey(secret);
-      const player = tabIdentity({ storage: storage(), random, curve: feldmanGroup });
-      const seat = entryFor(named.round, { playerPubkey: player.pubkey, random });
+      const player = playerFor(named.round, { seed: tabSeed({ storage: storage(), random }), curve: feldmanGroup });
+      const seat = entryFor(named.round, { seed: player.seed, curve: feldmanGroup, random });
       const client = await Client.at({
         headers: named.chain.headers, bonds: named.chain.bonds,
         signedAdvert: fromHexHere(named.advert.signedAdvert),
@@ -419,8 +419,8 @@ test('the shipped bridge writes the driver\'s entry and pose in the twelve ints 
     for (const which of ['driver', 'watcher']) {
       const secret = ed25519.utils.randomSecretKey();
       const sessionPubkey = ed25519.getPublicKey(secret);
-      const player = tabIdentity({ storage: storage(), random, curve: feldmanGroup });
-      const seat = entryFor(named.round, { playerPubkey: player.pubkey, random });
+      const player = playerFor(named.round, { seed: tabSeed({ storage: storage(), random }), curve: feldmanGroup });
+      const seat = entryFor(named.round, { seed: player.seed, curve: feldmanGroup, random });
       const client = await Client.at({
         headers: named.chain.headers, bonds: named.chain.bonds,
         signedAdvert: fromHexHere(named.advert.signedAdvert),

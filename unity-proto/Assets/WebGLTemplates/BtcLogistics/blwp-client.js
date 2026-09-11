@@ -728,6 +728,10 @@ const TAG = {
   // entry names as `claim_key_attestation_ref` (§7, §23.1 step 0, v4.6.2).
   claimKeyAttestation: 'BLWP/v1/ClaimKeyAttestation',
   claimKeyAttestationSet: 'BLWP/v1/ClaimKeyAttestationSet',
+  // The player's per-round key from their own seed, and the fingerprint of the
+  // refund key it makes - what the player compares outside the page (§24, F2).
+  playerKey: 'BLWP/v1/PlayerKey',
+  refundFingerprint: 'BLWP/v1/RefundFingerprint',
 };
 
 /**
@@ -3237,7 +3241,7 @@ function parseConnection(uri) {
 /**
  * THE CONNECTION THIS TAB IS USING, HELD WHERE THE PLAYER KEY IS HELD.
  *
- * `sessionStorage`, for the reason `tabIdentity` uses it and one more. Per tab,
+ * `sessionStorage`, for the reason `tabSeed` uses it and one more. Per tab,
  * so two tabs are two players and neither borrows the other's wallet; gone when
  * the tab closes; and NOT `localStorage`, which every tab of a browser shares -
  * that would make one paste spend from every round open in the browser.
@@ -5916,6 +5920,154 @@ function seedWordForEntry(entry, roundRandomness) {
   }));
 }
 
+// ---- protocol/src/stake-lock.js
+// A SEAT CHECKS EVERY FIELD OF A LOCK BEFORE IT COUNTS A STAKE.
+//
+// Section 23.1 step 5 (v4.6.2, F4): "STAKE_COMMITTED is recorded once >=5
+// settlement nodes have VERIFIED the locks: the contract id at
+// stake_lock_outpoint (and the fee lock's) equals the hash of a contract whose
+// payment_image is the entry's stake_point (resp. H(F)), whose amount is the
+// entry's net stake (resp. fee), whose claim_pk is the attested key, whose
+// refund_pk is player_pubkey, and whose expiration is >= current height +
+// stake_expiry_blocks. Seeing the lock is not enough: the player built it, and
+// a short expiry alone would let a loser refund before settlement."
+//
+// THE FIELDS, NOT THE ID. A contract id is Fedimint's hash of the whole
+// contract (FEDERATION.md, audit point 8), and the seat's stock federation
+// client answers `(contract_id, expiration)` for an outpoint. That client, not
+// this package, hashes a contract the seat was handed and compares it with
+// the id at the outpoint; what this checks is that the contract it hashed is
+// the one the entry committed to, field by field, refused by name.
+//
+// AND F5: the fee lock's image is H(F), and F must never be the stake's P - a
+// winner's fee lock is claimed too, and claiming it would publish the winner's
+// P. With the stake a point and the fee a hash the images cannot collide; what
+// can still be caught is F = P while the entry also carries H(P).
+
+
+
+const eq = (a, b) => a instanceof Uint8Array && b instanceof Uint8Array
+  && a.length === b.length && a.every((x, i) => x === b[i]);
+
+/**
+ * THE REFUND KEY AN ENTRY NAMES. `player_pubkey` is a BIP-340 x-only key; a
+ * federation contract takes a compressed point, so it is the even-y one.
+ */
+const refundKeyOf = (playerPubkey) => Uint8Array.from([0x02, ...playerPubkey]);
+
+function lockMatchesEntry({ lock, entry, kind, claimPk, height } = {}) {
+  if (kind !== 'stake' && kind !== 'fee') return { ok: false, why: 'a lock is a stake lock or a fee lock' };
+  if (!lock || !entry) return { ok: false, why: 'there is no lock or no entry to compare' };
+  if (!Number.isInteger(height) || height < 0)
+    return { ok: false, why: 'there is no federation height, so nothing says the expiry is far enough' };
+
+  const image = lock.paymentImage || {};
+  if (kind === 'stake') {
+    if (!(entry.stakePoint instanceof Uint8Array) || entry.stakePoint.every((b) => b === 0))
+      return { ok: false, why: 'that entry names no stake point, so no stake lock can match it' };
+    if (image.kind !== 'point' || !eq(image.bytes, entry.stakePoint))
+      return { ok: false, why: 'that stake lock\'s payment image is not the entry\'s stake point' };
+  } else {
+    const hf = sha256(entry.feePreimage);
+    if (image.kind !== 'hash' || !eq(image.bytes, hf))
+      return { ok: false, why: 'that fee lock\'s payment image is not H(F) of the entry\'s fee preimage' };
+    if (eq(hf, entry.stakeCommitment))
+      return { ok: false, why: 'the fee preimage is the stake\'s own secret: claiming the fee would publish P (F5)' };
+  }
+
+  const want = kind === 'stake' ? netStakeMsat(entry) : entry.feeMsat;
+  if (lock.amountMsat !== want)
+    return {
+      ok: false,
+      why: `that ${kind} lock holds ${lock.amountMsat} msat, and the entry's `
+        + `${kind === 'stake' ? 'net stake' : 'fee'} is ${want}`,
+    };
+  if (!eq(lock.claimPk, claimPk))
+    return { ok: false, why: `that ${kind} lock's claim_pk is not this round's attested claim key` };
+  if (!eq(lock.refundPk, refundKeyOf(entry.playerPubkey)))
+    return { ok: false, why: `that ${kind} lock's refund_pk is not the entry's player key` };
+  if (!Number.isInteger(lock.expiration) || lock.expiration < height + STAKE_EXPIRY_BLOCKS)
+    return {
+      ok: false,
+      why: `that ${kind} lock expires at ${lock.expiration}, before ${height} + ${STAKE_EXPIRY_BLOCKS}: `
+        + 'a loser could refund before settlement',
+    };
+  return { ok: true };
+}
+
+// ---- protocol/src/player-key.js
+// THE PLAYER'S KEY COMES FROM THE PLAYER'S SEED, AND THE PLAYER CAN CHECK IT.
+//
+// Section 24 (v4.6.2, F2): "Under the stake lock the money returns to
+// `refund_pk`, a key the client builds the lock with - not to the wallet that
+// paid. A lying client would set it to an attacker's key and the wallet would
+// show only a deposit. Therefore `player_pubkey` is derived from a PLAYER SEED
+// the player holds and backs up, FRESH PER ROUND (so locks are not linkable
+// across rounds), and the client shows its FINGERPRINT where the player can
+// compare it outside the page." The payout of a qualifier goes to the same key.
+//
+// THE RULE, ALL OF IT:
+//
+//   secret      = the first taggedHash("BLWP/v1/PlayerKey", seed || round_id || c),
+//                 c = 0, 1, ..., that is a scalar of the group (0 < s < n)
+//   player key  = x-only(secret . G)                      (BIP-340)
+//   refund key  = 0x02 || player key                      (stake-lock.js)
+//   fingerprint = the first 8 bytes of
+//                 taggedHash("BLWP/v1/RefundFingerprint", refund key),
+//                 as four groups of four hex digits
+//
+// Nothing in it needs the page: a player with the seed and the round id can
+// run it anywhere (`blwp-node/tools/refund-key.mjs` is one such place) and
+// compare the fingerprint the page shows. The spec names the rule's parts and
+// not the hash; this is the smallest thing that meets them, in the tagged-hash
+// form every other derivation here uses. The curve is injected, as always.
+
+
+
+
+const PLAYER_SEED_BYTES = 32;
+
+const isPlayerBytes32 = (b) => b instanceof Uint8Array && b.length === 32;
+
+/** This round's player secret from the player's seed. */
+function playerSecretFor(seed, roundId) {
+  if (!isPlayerBytes32(seed)) throw new Error('a player seed is 32 bytes');
+  if (!isPlayerBytes32(roundId)) throw new Error('a round id is 32 bytes');
+  const msg = new Uint8Array(65);
+  msg.set(seed, 0);
+  msg.set(roundId, 32);
+  for (let c = 0; c < 256; c++) {
+    msg[64] = c;
+    const secret = taggedHash(TAG.playerKey, msg);
+    const v = scalarFrom32(secret);
+    if (v > 0n && v < FIELD) return secret;
+  }
+  throw new Error('no scalar of the group in 256 tries, which should not happen');
+}
+
+/** What the player compares outside the page: 64 bits of the refund key's hash. */
+function refundFingerprint(playerPubkey) {
+  if (!isPlayerBytes32(playerPubkey)) throw new Error('a player key is 32 bytes');
+  const h = taggedHash(TAG.refundFingerprint, refundKeyOf(playerPubkey));
+  return toHex(h.subarray(0, 8)).match(/.{4}/g).join('-');
+}
+
+/** Is this the key that seed makes for this round? Only the seed's holder can ask. */
+function playerKeyIsDerived({ seed, roundId, playerPubkey, curve } = {}) {
+  if (!curve || typeof curve.pointX !== 'function')
+    return { ok: false, why: 'deriving a player key needs a curve, and none was injected' };
+  if (!isPlayerBytes32(playerPubkey)) return { ok: false, why: 'that is not a 32-byte player key' };
+  let want;
+  try { want = curve.pointX(playerSecretFor(seed, roundId)); } catch (e) { return { ok: false, why: e.message }; }
+  if (toHex(want) !== toHex(playerPubkey))
+    return {
+      ok: false,
+      why: 'that player key is not the one this seed makes for this round: a payout or refund '
+        + 'to it reaches a key the player cannot check',
+    };
+  return { ok: true, fingerprint: refundFingerprint(playerPubkey) };
+}
+
 // ---- protocol/src/fee.js
 // 22A: WHAT EACH NODE IS OWED, AND THE FACT THAT SOMEBODY COMPUTES IT.
 //
@@ -6213,6 +6365,7 @@ function receiptsNeeded(slots) {
 // first server felt like returning - a different stake, a different committee,
 // a different core hash - which is precisely the substitution the round id
 // exists to prevent. Same rule as the entry a resuming client re-hashes.
+
 
 
 
@@ -6728,33 +6881,43 @@ async function joinFromQuery(search, { fetcher = fetch } = {}) {
  * REFUSAL rather than random bytes: seating a player at a money round under a
  * key nobody can spend from is worse than not seating them.
  */
-function tabIdentity({ storage, random, curve, key = 'blwp.player' } = {}) {
-  if (!curve || typeof curve.pointX !== 'function')
-    throw new Error('a player identity is a key on a curve, and none was injected');
-
+//
+// WHAT IS KEPT NOW IS THE SEED, NOT A KEY (§24, v4.6.2, F2). The tab used to
+// keep one secret and hand its point out as `player_pubkey` for every round -
+// a key the player never backed up and could not check, the same in every
+// round, so every lock it made was linkable. A payout and a refund go to that
+// key. The spec's rule: the key comes from a PLAYER SEED the player holds and
+// backs up, fresh per round, with a fingerprint the player compares outside
+// the page. So the tab keeps 32 bytes of seed, and `playerFor` makes each
+// round's key from it by `protocol/src/player-key.js`.
+function tabSeed({ storage, random, key = 'blwp.player.seed' } = {}) {
   const held = storage && storage.getItem(key);
-  let secret = held && /^[0-9a-f]{64}$/i.test(held) ? fromHex(held.toLowerCase()) : null;
-  // A STORED VALUE THAT IS NOT A SCALAR IS NOT A KEY. Anything written by the
-  // version that stored random bytes is read the same way - as a secret - and
-  // replaced if it does not name a point.
-  if (secret !== null && !isScalar(secret)) secret = null;
-
-  if (secret === null) {
-    for (let tries = 0; ; tries++) {
-      secret = random(32);
-      if (isScalar(secret)) break;
-      if (tries > 8) throw new Error('this randomness never produced a scalar of the group');
-    }
-    if (storage) storage.setItem(key, toHex(secret));
-  }
-  return { secret, pubkey: curve.pointX(secret) };
+  if (held && /^[0-9a-f]{64}$/i.test(held)) return fromHex(held.toLowerCase());
+  const seed = random(32);
+  if (!(seed instanceof Uint8Array) || seed.length !== 32) throw new Error('a player seed is 32 random bytes');
+  if (storage) storage.setItem(key, toHex(seed));
+  return seed;
 }
 
-/** Non-zero and below the group order, which is what a secret key has to be. */
-const isScalar = (bytes) => {
-  const v = scalarFrom32(bytes);
-  return v > 0n && v < FIELD;
-};
+/** The 32-byte id of a round: its own when it carries one, else its contract's hash. */
+const roundIdOf = (round) => (round.id instanceof Uint8Array && round.id.length === 32 ? round.id : roundId(round));
+
+/**
+ * THIS ROUND'S PLAYER, from the seed: the secret, the x-only key a payout and a
+ * refund go to, and the fingerprint the page shows for the player to compare
+ * outside it (`blwp-node/tools/refund-key.mjs <seed> <round id>`).
+ */
+function playerFor(round, { seed, curve } = {}) {
+  if (!round) throw new Error('there is no round to take a seat at');
+  if (!curve || typeof curve.pointX !== 'function')
+    throw new Error('a player identity is a key on a curve, and none was injected');
+  if (!(seed instanceof Uint8Array) || seed.length !== 32)
+    throw new Error('a player key comes from the player\'s 32-byte seed, and none was given');
+  const rid = roundIdOf(round);
+  const secret = playerSecretFor(seed, rid);
+  const pubkey = curve.pointX(secret);
+  return { seed, roundId: rid, secret, pubkey, fingerprint: refundFingerprint(pubkey) };
+}
 
 /**
  * The seat this page takes at a round it did not write.
@@ -6772,16 +6935,25 @@ const isScalar = (bytes) => {
  * their world, and a node that had it could predict the round they are about
  * to drive.
  */
-function entryFor(round, { playerPubkey, random, joinTick = 0, stake } = {}) {
+function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 0, stake } = {}) {
   if (!round) throw new Error('there is no round to take a seat at');
-  if (!playerPubkey || playerPubkey.length !== 32)
-    throw new Error('a player is 32 bytes of key');
+  // THE SEAT'S KEY IS THE SEED'S KEY FOR THIS ROUND, and nothing else (§24,
+  // v4.6.2, F2). A payout and a refund go to it, so a page that seated a player
+  // under any other key - a bug, or a host that lies - would send the money
+  // where the player's own check (`refund-key.mjs`) cannot find it. So the key
+  // is derived here, and a key or a dealt stake naming another is refused.
+  const player = playerFor(round, { seed, curve });
+  if (playerPubkey !== undefined && toHex(playerPubkey) !== toHex(player.pubkey))
+    throw new Error('that player key is not the one this seed makes for this round: a payout or '
+      + 'refund to it reaches a key the player cannot check');
+  if (stake && stake.handout && toHex(stake.handout.playerPubkey) !== toHex(player.pubkey))
+    throw new Error('that stake was dealt under another player key than this seed\'s for this round');
   if (stake && (!stake.stakeCommitment || !stake.vssSharesRef))
     throw new Error('that is not a dealt stake: it names no commitment or no shares');
   if (stake && stake.vssSharesRef.some((b) => b !== 0) && !stake.stakePoint)
     throw new Error('that stake publishes shares and names no stake point, so no seat could check them');
   return {
-    playerPubkey,
+    playerPubkey: player.pubkey,
     stakeCommitment: stake ? stake.stakeCommitment : random(32),
     worldSecret: random(32),
     // 23.1's `vss_shares_ref`. With a dealt stake it names the handout the
@@ -9828,7 +10000,7 @@ return { Client: Client, markState: markState,
          fetchRound: fetchRound, bondProvider: bondProvider,
          fetchRandomness: fetchRandomness, worldSeedFor: worldSeedFor,
          seedWordForEntry: seedWordForEntry,
-         tabIdentity: tabIdentity, entryFor: entryFor,
+         tabSeed: tabSeed, playerFor: playerFor, entryFor: entryFor,
          stakeFor: stakeFor, fetchSettlementSeats: fetchSettlementSeats,
          roundPays: roundPays, postHandout: postHandout,
          sharesNeededFor: sharesNeededFor,

@@ -434,7 +434,7 @@ test('a wallet that says nothing while the node never sees the stake is still no
   } finally { await w.close(); await c.close(); }
 });
 
-/** A per-tab storage, the same fixture `tabIdentity`'s own tests use. */
+/** A per-tab storage, the same fixture `tabSeed`'s own tests use. */
 const tab = () => {
   const m = new Map();
   return {

@@ -25,6 +25,7 @@ import { httpProvider } from './headers.js';
 import { NO_SHARES, dealHandout, encodeHandout } from '../../protocol/src/handout.js';
 import { FIELD, scalarFrom32 } from '../../protocol/src/shares.js';
 import { seedWordForEntry } from '../../protocol/src/seed.js';
+import { playerSecretFor, refundFingerprint } from '../../protocol/src/player-key.js';
 import { entryFeeMsat } from '../../protocol/src/fee.js';
 import { receiptsNeeded } from '../../protocol/src/threshold.js';
 import { readWithOneRetry } from './reread.js';
@@ -535,33 +536,43 @@ export async function joinFromQuery(search, { fetcher = fetch } = {}) {
  * REFUSAL rather than random bytes: seating a player at a money round under a
  * key nobody can spend from is worse than not seating them.
  */
-export function tabIdentity({ storage, random, curve, key = 'blwp.player' } = {}) {
-  if (!curve || typeof curve.pointX !== 'function')
-    throw new Error('a player identity is a key on a curve, and none was injected');
-
+//
+// WHAT IS KEPT NOW IS THE SEED, NOT A KEY (§24, v4.6.2, F2). The tab used to
+// keep one secret and hand its point out as `player_pubkey` for every round -
+// a key the player never backed up and could not check, the same in every
+// round, so every lock it made was linkable. A payout and a refund go to that
+// key. The spec's rule: the key comes from a PLAYER SEED the player holds and
+// backs up, fresh per round, with a fingerprint the player compares outside
+// the page. So the tab keeps 32 bytes of seed, and `playerFor` makes each
+// round's key from it by `protocol/src/player-key.js`.
+export function tabSeed({ storage, random, key = 'blwp.player.seed' } = {}) {
   const held = storage && storage.getItem(key);
-  let secret = held && /^[0-9a-f]{64}$/i.test(held) ? fromHex(held.toLowerCase()) : null;
-  // A STORED VALUE THAT IS NOT A SCALAR IS NOT A KEY. Anything written by the
-  // version that stored random bytes is read the same way - as a secret - and
-  // replaced if it does not name a point.
-  if (secret !== null && !isScalar(secret)) secret = null;
-
-  if (secret === null) {
-    for (let tries = 0; ; tries++) {
-      secret = random(32);
-      if (isScalar(secret)) break;
-      if (tries > 8) throw new Error('this randomness never produced a scalar of the group');
-    }
-    if (storage) storage.setItem(key, toHex(secret));
-  }
-  return { secret, pubkey: curve.pointX(secret) };
+  if (held && /^[0-9a-f]{64}$/i.test(held)) return fromHex(held.toLowerCase());
+  const seed = random(32);
+  if (!(seed instanceof Uint8Array) || seed.length !== 32) throw new Error('a player seed is 32 random bytes');
+  if (storage) storage.setItem(key, toHex(seed));
+  return seed;
 }
 
-/** Non-zero and below the group order, which is what a secret key has to be. */
-const isScalar = (bytes) => {
-  const v = scalarFrom32(bytes);
-  return v > 0n && v < FIELD;
-};
+/** The 32-byte id of a round: its own when it carries one, else its contract's hash. */
+const roundIdOf = (round) => (round.id instanceof Uint8Array && round.id.length === 32 ? round.id : roundId(round));
+
+/**
+ * THIS ROUND'S PLAYER, from the seed: the secret, the x-only key a payout and a
+ * refund go to, and the fingerprint the page shows for the player to compare
+ * outside it (`blwp-node/tools/refund-key.mjs <seed> <round id>`).
+ */
+export function playerFor(round, { seed, curve } = {}) {
+  if (!round) throw new Error('there is no round to take a seat at');
+  if (!curve || typeof curve.pointX !== 'function')
+    throw new Error('a player identity is a key on a curve, and none was injected');
+  if (!(seed instanceof Uint8Array) || seed.length !== 32)
+    throw new Error('a player key comes from the player\'s 32-byte seed, and none was given');
+  const rid = roundIdOf(round);
+  const secret = playerSecretFor(seed, rid);
+  const pubkey = curve.pointX(secret);
+  return { seed, roundId: rid, secret, pubkey, fingerprint: refundFingerprint(pubkey) };
+}
 
 /**
  * The seat this page takes at a round it did not write.
@@ -579,16 +590,25 @@ const isScalar = (bytes) => {
  * their world, and a node that had it could predict the round they are about
  * to drive.
  */
-export function entryFor(round, { playerPubkey, random, joinTick = 0, stake } = {}) {
+export function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 0, stake } = {}) {
   if (!round) throw new Error('there is no round to take a seat at');
-  if (!playerPubkey || playerPubkey.length !== 32)
-    throw new Error('a player is 32 bytes of key');
+  // THE SEAT'S KEY IS THE SEED'S KEY FOR THIS ROUND, and nothing else (§24,
+  // v4.6.2, F2). A payout and a refund go to it, so a page that seated a player
+  // under any other key - a bug, or a host that lies - would send the money
+  // where the player's own check (`refund-key.mjs`) cannot find it. So the key
+  // is derived here, and a key or a dealt stake naming another is refused.
+  const player = playerFor(round, { seed, curve });
+  if (playerPubkey !== undefined && toHex(playerPubkey) !== toHex(player.pubkey))
+    throw new Error('that player key is not the one this seed makes for this round: a payout or '
+      + 'refund to it reaches a key the player cannot check');
+  if (stake && stake.handout && toHex(stake.handout.playerPubkey) !== toHex(player.pubkey))
+    throw new Error('that stake was dealt under another player key than this seed\'s for this round');
   if (stake && (!stake.stakeCommitment || !stake.vssSharesRef))
     throw new Error('that is not a dealt stake: it names no commitment or no shares');
   if (stake && stake.vssSharesRef.some((b) => b !== 0) && !stake.stakePoint)
     throw new Error('that stake publishes shares and names no stake point, so no seat could check them');
   return {
-    playerPubkey,
+    playerPubkey: player.pubkey,
     stakeCommitment: stake ? stake.stakeCommitment : random(32),
     worldSecret: random(32),
     // 23.1's `vss_shares_ref`. With a dealt stake it names the handout the

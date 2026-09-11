@@ -23,7 +23,7 @@ import { ed25519 } from '@noble/curves/ed25519.js';
 import { openStore } from '../../blwp-node/src/store.js';
 import { serve } from '../../blwp-node/src/server.js';
 import { feldmanGroup } from '../../blwp-node/src/curve.js';
-import { stakeFor, entryFor, fetchSettlementSeats, roundPays, postHandout } from '../src/join.js';
+import { stakeFor, entryFor, playerFor, fetchSettlementSeats, roundPays, postHandout } from '../src/join.js';
 import { playersLine, stakeLine } from '../src/ghost-field.js';
 import { Client } from '../src/client.js';
 import { readFileSync } from 'node:fs';
@@ -83,8 +83,7 @@ async function daemons(n = SHARES_TOTAL, { stakeMsat = 100000n } = {}) {
 
 /** The page's own sequence, in the order `index.html` runs it. */
 async function pageJoins(world, settlementSeats, { reachable = world.nodes, needed = SHARES_NEEDED } = {}) {
-  const player = { secret: rand(32) };
-  player.pubkey = schnorr.getPublicKey(player.secret);
+  const player = playerFor(world.contract, { seed: rand(32), curve: feldmanGroup });
 
   const pays = roundPays(world.contract);
   let stake = null;
@@ -104,7 +103,7 @@ async function pageJoins(world, settlementSeats, { reachable = world.nodes, need
   const entry = {
     roundId: world.rid, sessionPubkey: ed25519.getPublicKey(ed25519.utils.randomSecretKey()),
     ...entryFor(world.contract, {
-      playerPubkey: player.pubkey, random: rand, ...(stake ? { stake } : {}),
+      seed: player.seed, curve: feldmanGroup, random: rand, ...(stake ? { stake } : {}),
     }),
   };
   return { player, stake, entry, accepted, refused, pays, put };

@@ -21,7 +21,7 @@ import { ed25519 } from '@noble/curves/ed25519.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
 
 import { standUpRound } from '../../blwp-node/tools/round-2of2.mjs';
-import { joinFromQuery, tabIdentity, entryFor, fetchRandomness } from '../src/join.js';
+import { joinFromQuery, tabSeed, playerFor, entryFor, fetchRandomness } from '../src/join.js';
 import { pageCurve } from '../src/page-curve.js';
 import { feldmanGroup } from '../../blwp-node/src/curve.js';
 import { seedWordForEntry } from '../../protocol/src/seed.js';
@@ -84,8 +84,8 @@ test('nothing on a live round reads the constant seed, and the core is in the ro
     // to the constant would be somewhere this test can see.
     let player, seat, entry, want;
     for (let tries = 0; ; tries++) {
-      player = tabIdentity({ storage: storage(), random, curve: feldmanGroup });
-      seat = entryFor(named.round, { playerPubkey: player.pubkey, random });
+      player = playerFor(named.round, { seed: tabSeed({ storage: storage(), random }), curve: feldmanGroup });
+      seat = entryFor(named.round, { seed: player.seed, curve: feldmanGroup, random });
       entry = { ...seat, roundId: rid };
       want = seedWordForEntry({ ...entry, sessionPubkey: new Uint8Array(32) }, beacon.randomness);
       if (spawnBay(want) !== spawnBay(SOLO_SEED)) break;
@@ -226,8 +226,8 @@ test('once a round is joined, a later Init from C# cannot put the core back in t
 
     let player, seat, entry, want;
     for (let tries = 0; ; tries++) {
-      player = tabIdentity({ storage: storage(), random, curve: feldmanGroup });
-      seat = entryFor(named.round, { playerPubkey: player.pubkey, random });
+      player = playerFor(named.round, { seed: tabSeed({ storage: storage(), random }), curve: feldmanGroup });
+      seat = entryFor(named.round, { seed: player.seed, curve: feldmanGroup, random });
       entry = { ...seat, roundId: rid };
       want = seedWordForEntry({ ...entry, sessionPubkey: new Uint8Array(32) }, beacon.randomness);
       if (spawnBay(want) !== spawnBay(SOLO_SEED)) break;
@@ -366,8 +366,8 @@ test('a join held open while the game steps publishes from the tick the core is 
   let Module = null;
   try {
     const named = await joinFromQuery(new URL(round.url).search);
-    const player = tabIdentity({ storage: storage(), random, curve: feldmanGroup });
-    const seat = entryFor(named.round, { playerPubkey: player.pubkey, random });
+    const player = playerFor(named.round, { seed: tabSeed({ storage: storage(), random }), curve: feldmanGroup });
+    const seat = entryFor(named.round, { seed: player.seed, curve: feldmanGroup, random });
 
     const heap = new Int32Array(64);
     Module = { HEAPU8: new Uint8Array(heap.buffer), blwpNet: null };

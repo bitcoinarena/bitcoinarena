@@ -15,7 +15,8 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 import { openStore } from '../../blwp-node/src/store.js';
 import { serve } from '../../blwp-node/src/server.js';
 import { Client } from '../src/client.js';
-import { joinQuery, joinFromQuery, fetchRound, tabIdentity, entryFor, stakeFor, fetchSettlementSeats, roundPays } from '../src/join.js';
+import { joinQuery, joinFromQuery, fetchRound, tabSeed, playerFor, entryFor, stakeFor, fetchSettlementSeats, roundPays } from '../src/join.js';
+import { playerSecretFor, refundFingerprint } from '../../protocol/src/player-key.js';
 import { entryFeeMsat, feeMatchesEntry } from '../../protocol/src/fee.js';
 import { NO_SHARES } from '../../protocol/src/handout.js';
 import { feldmanGroup } from '../../blwp-node/src/curve.js';
@@ -144,36 +145,81 @@ test('two tabs are two players, and one tab is one player twice', () => {
   const random = (len) => new Uint8Array(len).fill(++n);
 
   const one = tab(), two = tab();
-  // THE CURVE IS INJECTED, because this bundle carries none - and an identity
-  // is a key now, not 32 bytes that looked like one.
-  const a = tabIdentity({ storage: one, random, curve: feldmanGroup });
-  const again = tabIdentity({ storage: one, random, curve: feldmanGroup });
-  const b = tabIdentity({ storage: two, random, curve: feldmanGroup });
+  // THE TAB KEEPS A SEED (§24, v4.6.2, F2); each round's key comes from it.
+  const round = { id: b32(0x0a) };
+  const a = playerFor(round, { seed: tabSeed({ storage: one, random }), curve: feldmanGroup });
+  const again = playerFor(round, { seed: tabSeed({ storage: one, random }), curve: feldmanGroup });
+  const b = playerFor(round, { seed: tabSeed({ storage: two, random }), curve: feldmanGroup });
 
   assert.equal(toHex(a.pubkey), toHex(again.pubkey), 'a reload made the tab a different player');
-  assert.equal(toHex(a.secret), toHex(again.secret), 'a reload drew a new secret');
+  assert.equal(toHex(a.seed), toHex(again.seed), 'a reload drew a new seed');
   assert.notEqual(toHex(a.pubkey), toHex(b.pubkey), 'two tabs are the same player, so each drops the other');
 
   // AND IT IS A KEY ON THE CURVE, which is the whole point: a payout is an
   // output and an output pays to a key.
   assert.equal(a.pubkey.length, 32);
   assert.deepEqual(a.pubkey, schnorr.getPublicKey(a.secret));
-  assert.notDeepEqual(a.pubkey, a.secret, 'the secret was handed out as the public key');
+  assert.notDeepEqual(a.pubkey, a.seed, 'the seed was handed out as the public key');
 
-  // A TAB CARRYING RUBBISH GETS A NEW KEY rather than a seat nobody can pay.
-  const junk = tab(); junk.setItem('blwp.player', 'not-a-key');
-  assert.equal(tabIdentity({ storage: junk, random, curve: feldmanGroup }).pubkey.length, 32);
+  // FRESH PER ROUND: the same seed, another round, another key - so two
+  // rounds' locks do not link.
+  const next = playerFor({ id: b32(0x0b) }, { seed: a.seed, curve: feldmanGroup });
+  assert.notEqual(toHex(next.pubkey), toHex(a.pubkey), 'one key for two rounds');
+
+  // A TAB CARRYING RUBBISH GETS A NEW SEED rather than a seat nobody can pay.
+  const junk = tab(); junk.setItem('blwp.player.seed', 'not-a-seed');
+  assert.equal(tabSeed({ storage: junk, random }).length, 32);
 
   // AND A PAGE WITH NO CURVE IS REFUSED, rather than handed random bytes.
-  assert.throws(() => tabIdentity({ storage: tab(), random }),
-    /a player identity is a key on a curve/);
+  assert.throws(() => playerFor(round, { seed: a.seed }), /a player identity is a key on a curve/);
+});
+
+/**
+ * THE REFUND AND PAYOUT KEY IS THE SEED'S, AND THE PAGE WILL NOT SEAT ANOTHER
+ * (§24, v4.6.2, F2). Before: `entryFor` took any 32 bytes as `playerPubkey` -
+ * a key from one random secret per tab, never backed up, the same for every
+ * round - and a stake dealt under any key. A payout and a refund go to that
+ * key, and the player had nothing to check it against.
+ */
+test('a seat carries the seed\'s key for the round, its fingerprint is the player\'s to check, and any other key is refused', async () => {
+  const seed = b32(0x5e);
+  const round = { id: b32(0x11), stakeMsat: 100000n, settlementSlots: 7 };
+  const random = (n) => new Uint8Array(n).fill(9);
+  const player = playerFor(round, { seed, curve: feldmanGroup });
+
+  // DERIVABLE WITHOUT THE PAGE: the rule is protocol's, the curve is BIP-340.
+  assert.deepEqual(player.pubkey, schnorr.getPublicKey(playerSecretFor(seed, round.id)));
+  assert.equal(player.fingerprint, refundFingerprint(player.pubkey));
+  assert.match(player.fingerprint, /^[0-9a-f]{4}(-[0-9a-f]{4}){3}$/);
+
+  const seat = entryFor(round, { seed, curve: feldmanGroup, random });
+  assert.deepEqual(seat.playerPubkey, player.pubkey, 'the seat is not the seed\'s key');
+  assert.deepEqual(entryFor(round, { seed, curve: feldmanGroup, playerPubkey: player.pubkey, random }).playerPubkey,
+    player.pubkey);
+
+  // ANOTHER KEY IS REFUSED: a stranger's, and this seed's key for another round.
+  const otherRound = playerFor({ id: b32(0x12) }, { seed, curve: feldmanGroup }).pubkey;
+  for (const wrong of [schnorr.getPublicKey(b32(0x77)), otherRound])
+    assert.throws(() => entryFor(round, { seed, curve: feldmanGroup, playerPubkey: wrong, random }),
+      /not the one this seed makes for this round/);
+
+  // AND SO IS A STAKE DEALT UNDER ANOTHER KEY.
+  const { randomBytes } = await import('node:crypto');
+  const rand = (n) => new Uint8Array(randomBytes(n));
+  const seats = Array.from({ length: 7 }, () => schnorr.getPublicKey(rand(32)));
+  const theirs = await stakeFor(round, { seats, curve: feldmanGroup, random: rand, playerPubkey: otherRound });
+  assert.throws(() => entryFor(round, { seed, curve: feldmanGroup, random, stake: theirs }),
+    /dealt under another player key/);
+
+  assert.throws(() => entryFor(round, { curve: feldmanGroup, random }), /32-byte seed/);
 });
 
 test('the seat a page takes carries the round\'s own amounts', () => {
-  const round = { stakeMsat: 100000n, blockTicks: 9000 };
+  const round = { id: b32(0x0c), stakeMsat: 100000n, blockTicks: 9000 };
   let n = 0;
   const random = (len) => new Uint8Array(len).fill(++n);
-  const seat = entryFor(round, { playerPubkey: b32(5), random });
+  const me = { seed: b32(5), curve: feldmanGroup };
+  const seat = entryFor(round, { ...me, random });
 
   assert.equal(seat.stakeMsat, 100000n, 'the page asked for a stake the round does not name');
 
@@ -190,7 +236,7 @@ test('the seat a page takes carries the round\'s own amounts', () => {
   assert.equal(seat.feeMsat, entryFeeMsat(100000n));
   assert.equal(seat.feeMsat, 2000n, 'a paying round is charged 2% of its stake');
   assert.equal(feeMatchesEntry(seat).ok, true);
-  const free = entryFor({ stakeMsat: 0n, blockTicks: 9000 }, { playerPubkey: b32(5), random });
+  const free = entryFor({ id: b32(0x0d), stakeMsat: 0n, blockTicks: 9000 }, { ...me, random });
   assert.equal(free.feeMsat, 0n, 'a round that asks no money is charged some');
   assert.equal(feeMatchesEntry(free).ok, true);
 
@@ -201,9 +247,9 @@ test('the seat a page takes carries the round\'s own amounts', () => {
   assert.notEqual(toHex(seat.stakeCommitment), toHex(seat.worldSecret),
     'the commitment and the world secret are one value, so one leaks the other');
 
-  assert.throws(() => entryFor(null, { playerPubkey: b32(5), random }), /no round/);
-  assert.throws(() => entryFor(round, { playerPubkey: b32(5).slice(0, 8), random }),
-    /32 bytes of key/);
+  assert.throws(() => entryFor(null, { ...me, random }), /no round/);
+  assert.throws(() => entryFor(round, { seed: b32(5).slice(0, 8), curve: feldmanGroup, random }),
+    /32-byte seed/);
 });
 
 // THE SHIPPING PAGE, READ AS A FILE.
@@ -218,7 +264,7 @@ test('the page joins a named round and still invents none', () => {
     new URL('../../../unity-proto/Assets/WebGLTemplates/BtcLogistics/index.html',
       import.meta.url).pathname, 'utf8');
 
-  for (const call of ['joinFromQuery', 'entryFor', 'tabIdentity'])
+  for (const call of ['joinFromQuery', 'entryFor', 'tabSeed', 'playerFor'])
     assert.ok(new RegExp('BLWPCLIENT\\.' + call + '\\s*\\(').test(page),
       'the page never calls ' + call + ', so the round in the URL reaches nothing');
 
@@ -373,8 +419,9 @@ test('a page deals its own stake: the commitment is a hash and the ref is a hand
   const seats = secrets.map((s) => schnorr.getPublicKey(s));
   const round = { id: b32(0x11), stakeMsat: 100000n, settlementSlots: 7 };
 
+  const me = { seed: b32(5), curve: feldmanGroup };
   const stake = await stakeFor(round, {
-    seats, curve: feldmanGroup, random: rand, playerPubkey: b32(5),
+    seats, curve: feldmanGroup, random: rand, playerPubkey: playerFor(round, me).pubkey,
   });
 
   // THE COMMITMENT IS A HASH OF SOMETHING, which is what a hold invoice needs
@@ -399,10 +446,10 @@ test('a page deals its own stake: the commitment is a hash and the ref is a hand
 
   // AND THE ENTRY CARRIES IT. Without a dealt stake the seat is still the M2
   // one: a commitment to nothing, and no shares.
-  const seat = entryFor(round, { playerPubkey: b32(5), random: rand, stake });
+  const seat = entryFor(round, { ...me, random: rand, stake });
   assert.deepEqual(seat.stakeCommitment, stake.stakeCommitment);
   assert.deepEqual(seat.vssSharesRef, stake.vssSharesRef);
-  const plain = entryFor(round, { playerPubkey: b32(5), random: rand });
+  const plain = entryFor(round, { ...me, random: rand });
   assert.deepEqual(plain.vssSharesRef, NO_SHARES);
 });
 

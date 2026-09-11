@@ -2,7 +2,7 @@
 //
 // The client bundle itself still carries no crypto. This file is the
 // injection: the same `@noble/curves` secp256k1 the daemons use, assigned to
-// `BLWP_CURVE` so `tabIdentity` can name a real key.
+// `BLWP_CURVE` so `playerFor` can name a real key.
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';

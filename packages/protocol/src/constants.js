@@ -256,6 +256,10 @@ export const TAG = {
   // entry names as `claim_key_attestation_ref` (§7, §23.1 step 0, v4.6.2).
   claimKeyAttestation: 'BLWP/v1/ClaimKeyAttestation',
   claimKeyAttestationSet: 'BLWP/v1/ClaimKeyAttestationSet',
+  // The player's per-round key from their own seed, and the fingerprint of the
+  // refund key it makes - what the player compares outside the page (§24, F2).
+  playerKey: 'BLWP/v1/PlayerKey',
+  refundFingerprint: 'BLWP/v1/RefundFingerprint',
 };
 
 /**

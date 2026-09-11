@@ -111,7 +111,7 @@ export function parseConnection(uri) {
 /**
  * THE CONNECTION THIS TAB IS USING, HELD WHERE THE PLAYER KEY IS HELD.
  *
- * `sessionStorage`, for the reason `tabIdentity` uses it and one more. Per tab,
+ * `sessionStorage`, for the reason `tabSeed` uses it and one more. Per tab,
  * so two tabs are two players and neither borrows the other's wallet; gone when
  * the tab closes; and NOT `localStorage`, which every tab of a browser shares -
  * that would make one paste spend from every round open in the browser.

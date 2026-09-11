@@ -23,7 +23,7 @@ import { ed25519 } from '@noble/curves/ed25519.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
 
 import { standUpRound } from '../../blwp-node/tools/round-2of2.mjs';
-import { joinFromQuery, tabIdentity, entryFor, fetchRandomness, worldSeedFor } from '../src/join.js';
+import { joinFromQuery, tabSeed, playerFor, entryFor, fetchRandomness, worldSeedFor } from '../src/join.js';
 import { feldmanGroup } from '../../blwp-node/src/curve.js';
 import { seedWordForEntry } from '../../protocol/src/seed.js';
 import { init as coreInit, step as coreStep, spawnBay, bayZ } from '../../core/src/sim.js';
@@ -107,8 +107,8 @@ test('the ghost a watcher is shown is the driver\'s own core pose, and the harne
     const offBay = () => {
       for (let tries = 0; tries < 200; tries++) {
         const secret = ed25519.utils.randomSecretKey();
-        const player = tabIdentity({ storage: storage(), random, curve: feldmanGroup });
-        const seat = entryFor(named.round, { playerPubkey: player.pubkey, random });
+        const player = playerFor(named.round, { seed: tabSeed({ storage: storage(), random }), curve: feldmanGroup });
+        const seat = entryFor(named.round, { seed: player.seed, curve: feldmanGroup, random });
         const entry = { ...seat, roundId: rid0, sessionPubkey: ed25519.getPublicKey(secret) };
         if (spawnBay(seedWordForEntry(entry, beacon.randomness)) !== SOLO_BAY)
           return { secret, seat };
@@ -120,8 +120,7 @@ test('the ghost a watcher is shown is the driver\'s own core pose, and the harne
       const drawn = which === 'driver' ? offBay()
         : { secret: ed25519.utils.randomSecretKey(),
             seat: entryFor(named.round, {
-              playerPubkey: tabIdentity({ storage: storage(), random, curve: feldmanGroup }).pubkey,
-              random,
+              seed: tabSeed({ storage: storage(), random }), curve: feldmanGroup, random,
             }) };
       const secret = drawn.secret;
       const seat = drawn.seat;

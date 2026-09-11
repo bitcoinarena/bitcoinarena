@@ -25,7 +25,7 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 
 import { standUpRound } from '../../blwp-node/tools/round-2of2.mjs';
 import { Client, receiptsForLive } from '../src/client.js';
-import { joinFromQuery, tabIdentity, entryFor } from '../src/join.js';
+import { joinFromQuery, tabSeed, playerFor, entryFor } from '../src/join.js';
 import { feldmanGroup } from '../../blwp-node/src/curve.js';
 import { toHex } from '../../protocol/src/hash.js';
 import { NO_PREVIOUS } from '../../protocol/src/checkpoint.js';
@@ -48,8 +48,8 @@ const fromHexHere = (hex) => {
 /** A seated, connected tab - exactly the page's steps, with the page's node list or without it. */
 async function tab(round, named, { pageNodes }) {
   const secret = ed25519.utils.randomSecretKey();
-  const player = tabIdentity({ storage: storage(), random, curve: feldmanGroup });
-  const seat = entryFor(named.round, { playerPubkey: player.pubkey, random });
+  const player = playerFor(named.round, { seed: tabSeed({ storage: storage(), random }), curve: feldmanGroup });
+  const seat = entryFor(named.round, { seed: player.seed, curve: feldmanGroup, random });
   // `nodes` is what the page's wrapper of `Client.at` adds (`index.html`): the
   // round's node list, `window.BLWP_NODES`. Without it, the Daily before this.
   const client = await Client.at({

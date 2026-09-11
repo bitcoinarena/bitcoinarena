@@ -11,6 +11,7 @@ import { entryFor } from '../src/join.js';
 import { NO_SHARES } from '../../protocol/src/handout.js';
 import { entryFeeMsat } from '../../protocol/src/fee.js';
 import { toHex } from '../../protocol/src/hash.js';
+import { feldmanGroup } from '../../blwp-node/src/curve.js';
 
 const round = { id: new Uint8Array(32).fill(7), stakeMsat: 1000000n };
 const NET = round.stakeMsat - entryFeeMsat(round.stakeMsat);
@@ -38,7 +39,7 @@ test('the stake commits to the node\'s federation invoice hash, deals no shares,
   assert.equal(toHex(stake.stakeCommitment), HASH);
   assert.equal(toHex(stake.vssSharesRef), toHex(NO_SHARES), 'a federation stake dealt shares');
   assert.equal(stake.request, 'lnbcrt-fed');
-  const entry = entryFor(round, { playerPubkey: new Uint8Array(32).fill(5), random: (n) => new Uint8Array(n).fill(9), stake });
+  const entry = entryFor(round, { seed: new Uint8Array(32).fill(5), curve: feldmanGroup, random: (n) => new Uint8Array(n).fill(9), stake });
   assert.equal(toHex(entry.stakeCommitment), HASH);
   assert.equal(toHex(entry.vssSharesRef), toHex(NO_SHARES));
 });

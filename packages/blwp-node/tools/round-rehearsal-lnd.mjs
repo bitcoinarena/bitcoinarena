@@ -39,7 +39,7 @@ import { replay } from '../src/replay.js';
 import { feldmanGroup } from '../src/curve.js';
 import { Client, federationStakeFor } from '../../blwp-client/src/client.js';
 import {
-  joinFromQuery, tabIdentity, entryFor, fetchSettlementSeats, stakeFor, postHandout,
+  joinFromQuery, tabSeed, playerFor, entryFor, fetchSettlementSeats, stakeFor, postHandout,
   worldSeedFor, stakeSeenBy, sharesNeededFor,
 } from '../../blwp-client/src/join.js';
 import { toHex, fromHex } from '../../protocol/src/hash.js';
@@ -358,7 +358,7 @@ async function main() {
     const players = [];
     for (const [name, want] of [['P1', 'DELIVERED'], ['P2', 'FAILED'], ['P3', 'VOID']]) {
       const session = ed25519.utils.randomSecretKey();
-      const player = tabIdentity({ storage: storage(), random, curve: feldmanGroup });
+      const player = playerFor(named.round, { seed: tabSeed({ storage: storage(), random }), curve: feldmanGroup });
       let stake;
       if (FEDERATION) {
         // INVOICE FIRST: the round's federation invoice, and no shares dealt.
@@ -374,7 +374,7 @@ async function main() {
       }
       const base = {
         roundId: fromHex(round.id), sessionPubkey: ed25519.getPublicKey(session),
-        ...entryFor(named.round, { playerPubkey: player.pubkey, random, stake }),
+        ...entryFor(named.round, { seed: player.seed, curve: feldmanGroup, random, stake }),
       };
       players.push({ name, want, session, player, stake, base });
     }
