@@ -41,7 +41,11 @@ HOLD_SECS=${HOLD_SECS:-0}
 mkdir -p $P/btc $P/alice $P/bob $P/gw $P/client $FH
 : > $P/pids
 ZB=30105; ZT=30106
-declare -A LRPC=([alice]=30107 [bob]=30110) LLIS=([alice]=30108 [bob]=30111) LREST=([alice]=30109 [bob]=30112)
+declare -A LRPC=([alice]=30107 [bob]=30110 [carol]=30113) LLIS=([alice]=30108 [bob]=30111 [carol]=30114) LREST=([alice]=30109 [bob]=30112 [carol]=30115)
+# SECOND_GATEWAY=1 (rehearsal step 5, own chain only): a second lnd, carol's,
+# with a channel to alice funded both ways, and gateway B on it at 30180 -
+# joined, pegged in and vetted like A. Off by default: steps 1-4 unchanged.
+WHO="alice bob"; [ -n "${SECOND_GATEWAY:-}" ] && WHO="alice bob carol"
 # AN EXTERNAL CHAIN (the rehearsal's): with EXT_RPC_PORT set, no bitcoind, lnd
 # or channel of this tool's own - the federation stands up on that bitcoind
 # (cookie auth: fedimintd and gatewayd take `__cookie__` and its secret as a
@@ -92,7 +96,8 @@ until_ bitcoind 60 bcn getblockcount >/dev/null 2>&1
 bcn createwallet probe >/dev/null
 MINE=$(bc getnewaddress)
 bc generatetoaddress 250 $MINE >/dev/null
-for who in alice bob; do
+for who in $WHO; do
+  mkdir -p $P/$who
   setsid nohup $L/lnd --lnddir=$P/$who --bitcoin.regtest --bitcoin.node=bitcoind \
     --bitcoind.rpchost=127.0.0.1:$RPC --bitcoind.rpcuser=blwp --bitcoind.rpcpass=blwp \
     --bitcoind.zmqpubrawblock=tcp://127.0.0.1:$ZB --bitcoind.zmqpubrawtx=tcp://127.0.0.1:$ZT \
@@ -103,6 +108,7 @@ done
 synced() { [ "$(ln_ $1 getinfo 2>/dev/null | js 'o=>o.synced_to_chain')" = true ]; }
 until_ "alice's lnd" 120 synced alice
 until_ "bob's lnd" 120 synced bob
+[ -n "${SECOND_GATEWAY:-}" ] && until_ "carol's lnd" 120 synced carol
 BOBKEY=$(ln_ bob getinfo | js 'o=>o.identity_pubkey')
 bc sendtoaddress "$(ln_ alice newaddress p2tr | js 'o=>o.address')" 5 >/dev/null
 bc generatetoaddress 6 $MINE >/dev/null
@@ -115,6 +121,16 @@ bc generatetoaddress 6 $MINE >/dev/null
 active() { [ "$(ln_ alice listchannels | js 'o=>(o.channels||[]).filter(c=>c.active).length')" -gt 0 ]; }
 until_ "the channel" 120 active
 say "chain at $(bcn getblockcount); channel alice->bob active"
+if [ -n "${SECOND_GATEWAY:-}" ]; then
+  CAROLKEY=$(ln_ carol getinfo | js 'o=>o.identity_pubkey')
+  ln_ alice connect $CAROLKEY@127.0.0.1:${LLIS[carol]} >/dev/null
+  opened_c() { ln_ alice openchannel --node_key=$CAROLKEY --local_amt=2000000 --push_amt=1000000 >/dev/null 2>&1; }
+  until_ "the channel to carol open" 120 opened_c
+  bc generatetoaddress 6 $MINE >/dev/null
+  active2() { [ "$(ln_ alice listchannels | js 'o=>(o.channels||[]).filter(c=>c.active).length')" -gt 1 ]; }
+  until_ "the channel to carol" 120 active2
+  say "channel alice->carol active, funded both ways"
+fi
 else
   MINE=$(bc getnewaddress)
   say "the external chain at $(bcn getblockcount); the gateway goes on the lnd at $BOB_RPC"
@@ -165,10 +181,34 @@ until_ "the gateway's peg-in" 180 pegged
 fc join "$INV" >/dev/null
 for g in 0 1 2 3; do fc --our-id $g --password probe module lnv2 gateways add http://127.0.0.1:30170 >/dev/null; done
 say "gateway on bob's lnd: joined, pegged in, vetted by $(fc module lnv2 gateways list | js 'o=>o.length') list(s) of 4 guardians"
+GWB=""
+if [ -n "${SECOND_GATEWAY:-}" ]; then
+  # ---- GATEWAY B ON CAROL'S LND, the same way ----
+  mkdir -p $P/gwb
+  ( export HOME=$FH FM_GATEWAY_DATA_DIR=$P/gwb FM_GATEWAY_LISTEN_ADDR=127.0.0.1:30180 FM_GATEWAY_API_ADDR=http://127.0.0.1:30180 \
+      FM_GATEWAY_BCRYPT_PASSWORD_HASH="$HASH" FM_GATEWAY_NETWORK=regtest FM_BITCOIND_URL=http://127.0.0.1:$RPC \
+      FM_BITCOIND_USERNAME=$BTC_USER FM_BITCOIND_PASSWORD=$BTC_PASS FM_GATEWAY_SKIP_SETUP=true \
+      FM_GATEWAY_IROH_LISTEN_ADDR=127.0.0.1:30181 FM_GATEWAY_METRICS_LISTEN_ADDR=127.0.0.1:30182 \
+      FM_LND_RPC_ADDR=https://127.0.0.1:${LRPC[carol]} FM_LND_TLS_CERT=$P/carol/tls.cert \
+      FM_LND_MACAROON=$P/carol/data/chain/bitcoin/regtest/admin.macaroon
+    setsid nohup $F/gatewayd lnd > $P/gwb/gatewayd.out 2>&1 < /dev/null & echo "$! gatewayd-b" >> $P/pids )
+  running_b() { grep -q "Gateway is running" $P/gwb/gatewayd.out 2>/dev/null; }
+  until_ "gateway B" 180 running_b
+  gwb() { HOME=$FH timeout 120 $F/gateway-cli -a http://127.0.0.1:30180 --rpcpassword probe "$@"; }
+  gwb connect-fed "$INV" >/dev/null
+  PEGINB=$(gwb ecash pegin --federation-id $FED | js 'o=>o.address||o')
+  bc sendtoaddress "$PEGINB" 0.01 >/dev/null
+  bc generatetoaddress 20 $MINE >/dev/null
+  pegged_b() { local e=$(gwb get-balances | js 'o=>(o.ecash_balances||[]).reduce((t,b)=>t+Number(b.ecash_balance_msats||0),0)'); [ "$e" != 0 ] && [ "$e" != '?' ] || { bc generatetoaddress 1 $MINE >/dev/null; false; }; }
+  until_ "gateway B's peg-in" 180 pegged_b
+  for g in 0 1 2 3; do fc --our-id $g --password probe module lnv2 gateways add http://127.0.0.1:30180 >/dev/null; done
+  say "gateway B on carol's lnd: joined, pegged in, vetted; the guardians' list: $(fc module lnv2 gateways list | js 'o=>JSON.stringify(o)')"
+  GWB=" gateway_b=http://127.0.0.1:30180"
+fi
 # SETUP ONLY (the rehearsal's way in): the federation is left running, and
 # whoever called this stops it with the process groups in the pids file.
 if [ -n "${SETUP_ONLY:-}" ]; then
-  say "FEDERATION_READY invite=$INV client=$P/client gateway=http://127.0.0.1:30170 pids=$P/pids"
+  say "FEDERATION_READY invite=$INV client=$P/client gateway=http://127.0.0.1:30170 pids=$P/pids$GWB"
   trap - EXIT
   exit 0
 fi
