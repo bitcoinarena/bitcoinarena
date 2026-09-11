@@ -57,6 +57,7 @@ import { stakeSeenBy } from './join.js';
 import { decodeGhost } from '../../protocol/src/ghost.js';
 import { TYPE_GHOST } from '../../protocol/src/constants.js';
 import { discover } from './directory.js';
+import { readWithOneRetry } from './reread.js';
 
 /**
  * Five, out of the seven a committee has.
@@ -236,7 +237,12 @@ export class Client {
     }
 
     const seen = await discover({ ...discovery, committee: contract.nodes });
-    if (!seen.ok) throw new Error(`no proven endpoint: ${seen.why}`);
+    // WHICH PROVIDER, AND WHY (M3.3-27): `discover` hands back each provider's
+    // own refusal, and the door used to drop it - the rehearsal's flake read
+    // "only 1 of 2 providers gave a chain" and nothing more.
+    if (!seen.ok)
+      throw Object.assign(new Error(`no proven endpoint: ${seen.why}`
+        + (seen.refused ? ` (${seen.refused})` : '')), { refused: seen.refused });
 
     // 5A.1 ends the body with "signature - by node_pubkey over all of the
     // above". The tagged id is what is signed, as everywhere else in this
@@ -982,7 +988,7 @@ export class Client {
    * receipt taken on a node's word is not evidence of anything.
    */
   async recoverReceipts({ roundId, entryId }) {
-    const r = await fetch(
+    const r = await readWithOneRetry(fetch,
       `${this.base}/receipts?round=${toHex(roundId)}&entry=${toHex(entryId)}`);
     if (!r.ok) throw new Error(`the node refused the receipts: ${(await r.text()).trim()}`);
     const bytes = new Uint8Array(await r.arrayBuffer());
@@ -1093,7 +1099,7 @@ export class Client {
 
     let said;
     try {
-      const r = await fetch(`${this.base}/invoice?entry=${toHex(eid)}`);
+      const r = await readWithOneRetry(fetch, `${this.base}/invoice?entry=${toHex(eid)}`);
       const body = await r.text();
       if (!r.ok) return { ok: false, status: r.status, why: body.trim() };
       said = JSON.parse(body);
@@ -1278,7 +1284,7 @@ export class Client {
    */
   async stakeSeen(eid) {
     try {
-      const r = await fetch(`${this.base}/stake?entry=${toHex(eid)}`);
+      const r = await readWithOneRetry(fetch, `${this.base}/stake?entry=${toHex(eid)}`);
       const body = await r.text();
       if (!r.ok) return { ok: false, status: r.status, why: body.trim() };
       const said = JSON.parse(body);
@@ -1317,7 +1323,7 @@ export class Client {
    * rule - a provider may omit, and it may not forge.
    */
   async entryFor(id) {
-    const r = await fetch(`${this.base}/entry?id=${toHex(id)}`);
+    const r = await readWithOneRetry(fetch, `${this.base}/entry?id=${toHex(id)}`);
     if (!r.ok) throw new Error(`the node has no entry ${toHex(id)}: ${(await r.text()).trim()}`);
 
     let entry;
@@ -1349,7 +1355,7 @@ export class Client {
         `this run ended ${this.ending}: ${this.endingReason} - a socket coming `
         + 'back does not resume it');
 
-    const r = await fetch(
+    const r = await readWithOneRetry(fetch,
       `${this.base}/transcript?round=${toHex(roundId)}&entry=${toHex(entryId)}`);
     if (!r.ok) throw new Error(`the node refused the transcript: ${(await r.text()).trim()}`);
 
@@ -1433,7 +1439,7 @@ export class Client {
     // cannot inflate the count and a receipt that fails its mark, the
     // committee or its signature never reached the count at all.
     const marks = await this.recoverReceipts({ roundId, entryId });
-    const c = await fetch(
+    const c = await readWithOneRetry(fetch,
       `${this.base}/checkpoints?round=${toHex(roundId)}&entry=${toHex(entryId)}`);
     const cb = new Uint8Array(await c.arrayBuffer());
     if (cb.length % SIGNED_CHECKPOINT_BYTES !== 0)

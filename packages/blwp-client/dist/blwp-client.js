@@ -4728,6 +4728,39 @@ function acceptAdvert({
   };
 }
 
+// ---- blwp-client/src/reread.js
+// A READ THAT SURVIVES A DEAD KEPT-ALIVE SOCKET (M3.3-27).
+//
+// Measured on the regtest rehearsal: after the event loop was held past the
+// server's keep-alive (5 s by Node's default) - a replay does that - the next
+// read went out on a pooled socket the server had already closed, and failed
+// `fetch failed: ECONNRESET` in a few ms. The provider was counted as having
+// given no chain, and `Client.at` refused. Asked again, the same read succeeds:
+// measured 5 of 5 on the second attempt.
+//
+// So a READ is asked once more, and only when the failure is the connection's
+// own - a reset, a broken pipe, the other side closed - never an HTTP answer
+// and never a refused connection (a server that is down is down; asking twice
+// is waiting twice). A write is never asked twice: posting a round, an entry or
+// a handout again is a second act, whatever the door would make of it. A
+// browser's fetch does this retry by itself, which is why the page never met
+// the flake; Node's does not.
+const CONNECTION_LOST = new Set(['ECONNRESET', 'EPIPE', 'UND_ERR_SOCKET']);
+
+/** Did this fetch fail because the connection it rode was already gone? */
+const connectionLost = (e) => !!(e && e.cause && CONNECTION_LOST.has(e.cause.code));
+
+/** `fetcher(url, opts)`, asked once more if a read lost its connection. */
+async function readWithOneRetry(fetcher, url, opts) {
+  try {
+    return await fetcher(url, opts);
+  } catch (e) {
+    const method = String((opts && opts.method) || 'GET').toUpperCase();
+    if (method !== 'GET' || !connectionLost(e) || (opts && opts.signal && opts.signal.aborted)) throw e;
+    return fetcher(url, opts);
+  }
+}
+
 // ---- blwp-client/src/headers.js
 // WHERE THE CHAIN COMES FROM, AND WHY MORE THAN ONE OF THEM.
 //
@@ -4759,6 +4792,7 @@ function acceptAdvert({
 
 
 
+
 /**
  * One provider's answer, over HTTP, as 80-byte records back to back.
  *
@@ -4776,7 +4810,7 @@ function acceptAdvert({
  */
 async function headersOverHttp(url, { fetcher = fetch, signal, maxHeaders = 100000 } = {}) {
   const cap = maxHeaders * HEADER_BYTES;
-  const r = await fetcher(url, { signal });
+  const r = await readWithOneRetry(fetcher, url, { signal });
   if (!r.ok) throw new Error(`the provider answered ${r.status}`);
 
   const offered = Number(r.headers.get('content-length') || 0);
@@ -4910,10 +4944,14 @@ async function agreedChain(providers, { least = 2, timeoutMs = 10000, ask, ancho
       // the anchor is not an inferior answer to the question, it is an answer
       // to a different one, and it must not be weighed at all.
       if (!hashes.includes(toHex(anchor)))
-        return { at, ok: false, why: `this chain does not contain ${toHex(anchor)}, the block this client is anchored to` };
+        return { at, ok: false, why: `this chain does not contain ${toHex(anchor)}, the block this client is anchored to`
+          + ` (it answered ${headers.length} headers, tip ${hashes[hashes.length - 1]})` };
       return { at, ok: true, headers, work: seen.work, hashes };
     } catch (e) {
-      return { at, ok: false, why: e.message };
+      // THE CAUSE, NOT ONLY "fetch failed" (M3.3-27): Node's fetch puts the
+      // socket's own words - a reset, a closed keep-alive - in `cause`.
+      const cause = e.cause ? `: ${[e.cause.code, e.cause.message].filter(Boolean).join(' ')}` : '';
+      return { at, ok: false, why: `${e.message}${cause}` };
     } finally { clearTimeout(timer); }
   }));
 
@@ -6006,6 +6044,7 @@ function receiptsNeeded(slots) {
 
 
 
+
 /**
  * HOW MANY SHARES OPEN THIS ROUND'S STAKES - the round's number, not the
  * player's: 2 of 2, 5 of 7 (`receiptsNeeded` over the settlement slots). The
@@ -6089,7 +6128,7 @@ async function fetchRound(id, nodes, { fetcher = fetch } = {}) {
   for (const node of nodes) {
     const at = node.replace(/\/+$/, '') + '/round?id=' + id;
     try {
-      const r = await fetcher(at);
+      const r = await readWithOneRetry(fetcher, at);
       if (!r.ok) { refused.push(`${node}: answered ${r.status}`); continue; }
       const bytes = new Uint8Array(await r.arrayBuffer());
       const contract = decodeRoundContract(bytes);
@@ -6136,7 +6175,7 @@ async function fetchRandomness(id, nodes, { fetcher = fetch } = {}) {
   for (const node of nodes) {
     const at = node.replace(/\/+$/, '') + '/randomness?round=' + id;
     try {
-      const r = await fetcher(at);
+      const r = await readWithOneRetry(fetcher, at);
       if (!r.ok) { refused.push(`${node}: answered ${r.status} ${(await r.text()).trim()}`); continue; }
       const bytes = new Uint8Array(await r.arrayBuffer());
       if (bytes.length !== 32) { refused.push(`${node}: answered ${bytes.length} bytes`); continue; }
@@ -6259,13 +6298,13 @@ async function stakeSeenBy({ entryId, seats, nodes, contract, fetcher = fetch } 
     const base = String(node).replace(/\/+$/, '');
     let key;
     try {
-      const r = await fetcher(base + '/identity');
+      const r = await readWithOneRetry(fetcher, base + '/identity');
       if (!r.ok) { per.push({ node, why: `identity answered ${r.status}` }); continue; }
       key = toHex(new Uint8Array(await r.arrayBuffer()));
     } catch (e) { per.push({ node, why: e.message }); continue; }
     if (!want.has(key) || answered.has(key)) continue;
     try {
-      const r = await fetcher(`${base}/stake?entry=${eid}`);
+      const r = await readWithOneRetry(fetcher, `${base}/stake?entry=${eid}`);
       answered.add(key);
       if (r.ok) { seen++; per.push({ node, key, seen: true }); }
       else per.push({ node, key, seen: false, why: (await r.text()).trim() });
@@ -6307,7 +6346,7 @@ async function fetchSettlementSeats(id, nodes, { fetcher = fetch } = {}) {
   for (const node of nodes) {
     const at = node.replace(/\/+$/, '') + '/committee?role=settlement&round=' + id;
     try {
-      const r = await fetcher(at);
+      const r = await readWithOneRetry(fetcher, at);
       if (!r.ok) { refused.push(`${node}: answered ${r.status} ${(await r.text()).trim()}`); continue; }
       const bytes = new Uint8Array(await r.arrayBuffer());
       if (!bytes.length || bytes.length % 32 !== 0) {
@@ -6373,7 +6412,7 @@ async function worldSeedFor({ entry, round, nodes, fetcher = fetch } = {}) {
  */
 function bondProvider(where, { fetcher = fetch } = {}) {
   const get = async (ask, opts) => {
-    const r = await fetcher(where, opts);
+    const r = await readWithOneRetry(fetcher, where, opts);
     if (!r.ok) throw new Error(`the bond provider answered ${r.status}`);
     const o = await r.json();
     return {
@@ -6401,7 +6440,7 @@ async function joinFromQuery(search, { fetcher = fetch } = {}) {
   const advert = /^[0-9a-f]{128}$/i.test(named.advert)
     ? named.advert.toLowerCase()
     : await (async () => {
-        const r = await fetcher(named.advert);
+        const r = await readWithOneRetry(fetcher, named.advert);
         if (!r.ok) throw new Error(`the advertisement answered ${r.status}`);
         const hex = (await r.text()).trim().toLowerCase();
         if (!/^[0-9a-f]{128}$/.test(hex))
@@ -7256,6 +7295,7 @@ async function discover({
 
 
 
+
 /**
  * Five, out of the seven a committee has.
  *
@@ -7434,7 +7474,12 @@ class Client {
     }
 
     const seen = await discover({ ...discovery, committee: contract.nodes });
-    if (!seen.ok) throw new Error(`no proven endpoint: ${seen.why}`);
+    // WHICH PROVIDER, AND WHY (M3.3-27): `discover` hands back each provider's
+    // own refusal, and the door used to drop it - the rehearsal's flake read
+    // "only 1 of 2 providers gave a chain" and nothing more.
+    if (!seen.ok)
+      throw Object.assign(new Error(`no proven endpoint: ${seen.why}`
+        + (seen.refused ? ` (${seen.refused})` : '')), { refused: seen.refused });
 
     // 5A.1 ends the body with "signature - by node_pubkey over all of the
     // above". The tagged id is what is signed, as everywhere else in this
@@ -8180,7 +8225,7 @@ class Client {
    * receipt taken on a node's word is not evidence of anything.
    */
   async recoverReceipts({ roundId, entryId }) {
-    const r = await fetch(
+    const r = await readWithOneRetry(fetch,
       `${this.base}/receipts?round=${toHex(roundId)}&entry=${toHex(entryId)}`);
     if (!r.ok) throw new Error(`the node refused the receipts: ${(await r.text()).trim()}`);
     const bytes = new Uint8Array(await r.arrayBuffer());
@@ -8291,7 +8336,7 @@ class Client {
 
     let said;
     try {
-      const r = await fetch(`${this.base}/invoice?entry=${toHex(eid)}`);
+      const r = await readWithOneRetry(fetch, `${this.base}/invoice?entry=${toHex(eid)}`);
       const body = await r.text();
       if (!r.ok) return { ok: false, status: r.status, why: body.trim() };
       said = JSON.parse(body);
@@ -8476,7 +8521,7 @@ class Client {
    */
   async stakeSeen(eid) {
     try {
-      const r = await fetch(`${this.base}/stake?entry=${toHex(eid)}`);
+      const r = await readWithOneRetry(fetch, `${this.base}/stake?entry=${toHex(eid)}`);
       const body = await r.text();
       if (!r.ok) return { ok: false, status: r.status, why: body.trim() };
       const said = JSON.parse(body);
@@ -8515,7 +8560,7 @@ class Client {
    * rule - a provider may omit, and it may not forge.
    */
   async entryFor(id) {
-    const r = await fetch(`${this.base}/entry?id=${toHex(id)}`);
+    const r = await readWithOneRetry(fetch, `${this.base}/entry?id=${toHex(id)}`);
     if (!r.ok) throw new Error(`the node has no entry ${toHex(id)}: ${(await r.text()).trim()}`);
 
     let entry;
@@ -8547,7 +8592,7 @@ class Client {
         `this run ended ${this.ending}: ${this.endingReason} - a socket coming `
         + 'back does not resume it');
 
-    const r = await fetch(
+    const r = await readWithOneRetry(fetch,
       `${this.base}/transcript?round=${toHex(roundId)}&entry=${toHex(entryId)}`);
     if (!r.ok) throw new Error(`the node refused the transcript: ${(await r.text()).trim()}`);
 
@@ -8631,7 +8676,7 @@ class Client {
     // cannot inflate the count and a receipt that fails its mark, the
     // committee or its signature never reached the count at all.
     const marks = await this.recoverReceipts({ roundId, entryId });
-    const c = await fetch(
+    const c = await readWithOneRetry(fetch,
       `${this.base}/checkpoints?round=${toHex(roundId)}&entry=${toHex(entryId)}`);
     const cb = new Uint8Array(await c.arrayBuffer());
     if (cb.length % SIGNED_CHECKPOINT_BYTES !== 0)

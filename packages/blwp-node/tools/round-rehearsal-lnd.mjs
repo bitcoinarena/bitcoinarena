@@ -22,6 +22,7 @@
 //
 //   node packages/blwp-node/tools/round-rehearsal-lnd.mjs [--keep]
 import { execFile, execFileSync, spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdtempSync, mkdirSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -31,6 +32,8 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 import { WebSocket } from 'ws';
 
 import { standUpRound } from './round-2of2.mjs';
+import { watchSockets } from './socket-watch.mjs';
+const sockets = watchSockets();
 import { bitcoindRpc } from '../src/chain-rpc.js';
 import { replay } from '../src/replay.js';
 import { feldmanGroup } from '../src/curve.js';
@@ -68,6 +71,29 @@ const sh = (bin, args) => execFileSync(bin, args,
 const random = (n) => crypto.getRandomValues(new Uint8Array(n));
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 const verify = (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } };
+// EVERY FETCH IN THIS PROCESS, TIMED PER ORIGIN (M3.3-27) - the client's own
+// included, because `headersOverHttp` reads the global fetch when it is called.
+const lastFetch = new Map();
+// HOW LONG THE EVENT LOOP WAS HELD SINCE THE LAST FETCH, from a 100 ms tick:
+// the longest gap between ticks, and the gap still open now - a hold that has
+// just ended has not yet let a tick run, so it shows only as the open gap.
+let lastTick = Date.now();
+let longestGap = 0;
+setInterval(() => { const t = Date.now(); longestGap = Math.max(longestGap, t - lastTick); lastTick = t; }, 100).unref();
+const stallMs = () => Math.max(longestGap, Date.now() - lastTick);
+const realFetch = globalThis.fetch;
+globalThis.fetch = async (url, opts) => {
+  const origin = new URL(String(url)).origin;
+  try { return await realFetch(url, opts); } finally { lastFetch.set(origin, Date.now()); longestGap = 0; lastTick = Date.now(); }
+};
+const idleOf = (base) => {
+  const at = lastFetch.get(new URL(base).origin);
+  return at === undefined ? 'never fetched' : `idle ${Date.now() - at} ms`;
+};
+const tipOf = (b) => (b.length >= 80
+  ? Buffer.from(createHash('sha256').update(createHash('sha256').update(b.subarray(b.length - 80)).digest()).digest())
+    .reverse().toString('hex').slice(0, 16)
+  : 'none');
 const storage = () => { const m = new Map(); return { getItem: (k) => m.get(k) ?? null, setItem: (k, v) => m.set(k, v) }; };
 
 async function until(what, check, ms = 120000, every = 1000) {
@@ -179,6 +205,8 @@ async function main() {
       throw e;
     }
     say(`round ${round.id.slice(0, 16)} on ${round.nodes.join(' ')}, stake ${STAKE_MSAT} msat`);
+    sockets.watchServer('A', round.a.http);
+    sockets.watchServer('B', round.b.http);
     const named = await joinFromQuery(new URL(round.url).search);
     const seats = await fetchSettlementSeats(round.id, named.nodes);
     say(`settlement seats: ${seats.seats.length}, agreed by ${seats.agreed}`);
@@ -206,11 +234,13 @@ async function main() {
     const randomness = seedOf.randomness;
     for (const p of players) {
       if (p.want === 'VOID') { p.entry = p.base; continue; }
+      const searchStarted = Date.now();
       const found = worldFor(p.base, randomness, p.want);
+      const searchMs = Date.now() - searchStarted;
       if (!found) { hole('code', `no world secret in 400 where this drive ends ${p.want}`); p.entry = p.base; continue; }
       p.entry = { ...p.base, worldSecret: found.worldSecret };
       p.ticks = found.ticks;
-      say(`  ${p.name}: world secret #${found.tried} ends ${p.want} by tick ${found.ticks} (score ${found.score})`);
+      say(`  ${p.name}: world secret #${found.tried} ends ${p.want} by tick ${found.ticks} (score ${found.score}); the search held the event loop ${searchMs} ms`);
     }
 
     // THE ENTRY DOOR READS THE WALL CLOCK, and committee_time is the chain's
@@ -225,6 +255,8 @@ async function main() {
     }
     for (const p of players) {
       const started = Date.now();
+      const idle = named.nodes.map((b) => `${b} ${idleOf(b)}`).join(', ')
+        + `; the event loop stalled up to ${stallMs()} ms since the last fetch`;
       try {
         p.client = await Client.at({
           headers: named.chain.headers, bonds: named.chain.bonds,
@@ -237,12 +269,14 @@ async function main() {
         // WHICH PROVIDER DID NOT GIVE A CHAIN, AND HOW LONG IT TOOK - asked
         // of each daemon's own door, not guessed.
         say(`  ${p.name}: Client.at refused after ${Date.now() - started} ms: ${e.message}`);
+        say(`    before the ask: ${idle}`);
+        for (const f of sockets.report(started)) say(`    socket: ${JSON.stringify(f)}`);
         for (const base of named.nodes) {
           const t0 = Date.now();
           try {
             const r = await fetch(`${base}/headers`);
             const b = new Uint8Array(await r.arrayBuffer());
-            say(`    ${base}/headers -> ${r.status}, ${b.length} bytes (${b.length / 80} headers) in ${Date.now() - t0} ms`);
+            say(`    ${base}/headers -> ${r.status}, ${b.length} bytes (${b.length / 80} headers, tip ${tipOf(b)}) in ${Date.now() - t0} ms`);
           } catch (f) { say(`    ${base}/headers -> ${f.message} after ${Date.now() - t0} ms`); }
         }
         throw e;

@@ -28,6 +28,7 @@
 import { chainWork, blockHashOf } from '../../protocol/src/chain.js';
 import { HEADER_BYTES } from '../../protocol/src/chain.js';
 import { toHex } from '../../protocol/src/hash.js';
+import { readWithOneRetry } from './reread.js';
 
 /**
  * One provider's answer, over HTTP, as 80-byte records back to back.
@@ -46,7 +47,7 @@ import { toHex } from '../../protocol/src/hash.js';
  */
 export async function headersOverHttp(url, { fetcher = fetch, signal, maxHeaders = 100000 } = {}) {
   const cap = maxHeaders * HEADER_BYTES;
-  const r = await fetcher(url, { signal });
+  const r = await readWithOneRetry(fetcher, url, { signal });
   if (!r.ok) throw new Error(`the provider answered ${r.status}`);
 
   const offered = Number(r.headers.get('content-length') || 0);
@@ -180,10 +181,14 @@ export async function agreedChain(providers, { least = 2, timeoutMs = 10000, ask
       // the anchor is not an inferior answer to the question, it is an answer
       // to a different one, and it must not be weighed at all.
       if (!hashes.includes(toHex(anchor)))
-        return { at, ok: false, why: `this chain does not contain ${toHex(anchor)}, the block this client is anchored to` };
+        return { at, ok: false, why: `this chain does not contain ${toHex(anchor)}, the block this client is anchored to`
+          + ` (it answered ${headers.length} headers, tip ${hashes[hashes.length - 1]})` };
       return { at, ok: true, headers, work: seen.work, hashes };
     } catch (e) {
-      return { at, ok: false, why: e.message };
+      // THE CAUSE, NOT ONLY "fetch failed" (M3.3-27): Node's fetch puts the
+      // socket's own words - a reset, a closed keep-alive - in `cause`.
+      const cause = e.cause ? `: ${[e.cause.code, e.cause.message].filter(Boolean).join(' ')}` : '';
+      return { at, ok: false, why: `${e.message}${cause}` };
     } finally { clearTimeout(timer); }
   }));
 

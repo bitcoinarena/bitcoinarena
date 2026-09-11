@@ -27,6 +27,7 @@ import { FIELD, scalarFrom32 } from '../../protocol/src/shares.js';
 import { seedWordForEntry } from '../../protocol/src/seed.js';
 import { entryFeeMsat } from '../../protocol/src/fee.js';
 import { receiptsNeeded } from '../../protocol/src/threshold.js';
+import { readWithOneRetry } from './reread.js';
 
 /**
  * HOW MANY SHARES OPEN THIS ROUND'S STAKES - the round's number, not the
@@ -111,7 +112,7 @@ export async function fetchRound(id, nodes, { fetcher = fetch } = {}) {
   for (const node of nodes) {
     const at = node.replace(/\/+$/, '') + '/round?id=' + id;
     try {
-      const r = await fetcher(at);
+      const r = await readWithOneRetry(fetcher, at);
       if (!r.ok) { refused.push(`${node}: answered ${r.status}`); continue; }
       const bytes = new Uint8Array(await r.arrayBuffer());
       const contract = decodeRoundContract(bytes);
@@ -158,7 +159,7 @@ export async function fetchRandomness(id, nodes, { fetcher = fetch } = {}) {
   for (const node of nodes) {
     const at = node.replace(/\/+$/, '') + '/randomness?round=' + id;
     try {
-      const r = await fetcher(at);
+      const r = await readWithOneRetry(fetcher, at);
       if (!r.ok) { refused.push(`${node}: answered ${r.status} ${(await r.text()).trim()}`); continue; }
       const bytes = new Uint8Array(await r.arrayBuffer());
       if (bytes.length !== 32) { refused.push(`${node}: answered ${bytes.length} bytes`); continue; }
@@ -281,13 +282,13 @@ export async function stakeSeenBy({ entryId, seats, nodes, contract, fetcher = f
     const base = String(node).replace(/\/+$/, '');
     let key;
     try {
-      const r = await fetcher(base + '/identity');
+      const r = await readWithOneRetry(fetcher, base + '/identity');
       if (!r.ok) { per.push({ node, why: `identity answered ${r.status}` }); continue; }
       key = toHex(new Uint8Array(await r.arrayBuffer()));
     } catch (e) { per.push({ node, why: e.message }); continue; }
     if (!want.has(key) || answered.has(key)) continue;
     try {
-      const r = await fetcher(`${base}/stake?entry=${eid}`);
+      const r = await readWithOneRetry(fetcher, `${base}/stake?entry=${eid}`);
       answered.add(key);
       if (r.ok) { seen++; per.push({ node, key, seen: true }); }
       else per.push({ node, key, seen: false, why: (await r.text()).trim() });
@@ -329,7 +330,7 @@ export async function fetchSettlementSeats(id, nodes, { fetcher = fetch } = {}) 
   for (const node of nodes) {
     const at = node.replace(/\/+$/, '') + '/committee?role=settlement&round=' + id;
     try {
-      const r = await fetcher(at);
+      const r = await readWithOneRetry(fetcher, at);
       if (!r.ok) { refused.push(`${node}: answered ${r.status} ${(await r.text()).trim()}`); continue; }
       const bytes = new Uint8Array(await r.arrayBuffer());
       if (!bytes.length || bytes.length % 32 !== 0) {
@@ -395,7 +396,7 @@ export async function worldSeedFor({ entry, round, nodes, fetcher = fetch } = {}
  */
 export function bondProvider(where, { fetcher = fetch } = {}) {
   const get = async (ask, opts) => {
-    const r = await fetcher(where, opts);
+    const r = await readWithOneRetry(fetcher, where, opts);
     if (!r.ok) throw new Error(`the bond provider answered ${r.status}`);
     const o = await r.json();
     return {
@@ -423,7 +424,7 @@ export async function joinFromQuery(search, { fetcher = fetch } = {}) {
   const advert = /^[0-9a-f]{128}$/i.test(named.advert)
     ? named.advert.toLowerCase()
     : await (async () => {
-        const r = await fetcher(named.advert);
+        const r = await readWithOneRetry(fetcher, named.advert);
         if (!r.ok) throw new Error(`the advertisement answered ${r.status}`);
         const hex = (await r.text()).trim().toLowerCase();
         if (!/^[0-9a-f]{128}$/.test(hex))
