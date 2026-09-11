@@ -49,101 +49,10 @@ import { hash as stateHash } from '../../core/src/state.js';
 import { seedWordForEntry } from '../../protocol/src/seed.js';
 import { toHex, fromHex, sha256 } from '../../protocol/src/hash.js';
 import { entryFeeMsat } from '../../protocol/src/fee.js';
+import {
+  b32, rand, RANDOMNESS, BEACON, STAKE, WINDOW_MS, HTLC_EXPIRY, wait, WINNER, LOSER, paidPort, contractFor, say, seatAndPlay, opts, sevenSeats, object,
+} from './window-fixture.js';
 
-const b32 = (n) => new Uint8Array(32).fill(n);
-const rand = (n) => new Uint8Array(randomBytes(n));
-const RANDOMNESS = b32(0x9b);
-const BEACON = { hash: RANDOMNESS, height: 900001, timeMs: 900n };
-const GENESIS_HASH = (await import('../../protocol/src/transcript.js')).GENESIS;
-const wordsAt = (t) => [45875, ((t * 977) % 30000) - 15000, (t % 700) < 40 ? 65536 : 0, 0, 0];
-const STAKE = 100000n;
-const WINDOW_MS = 3000;
-const HTLC_EXPIRY = 500;   // the height the fake lnd says each paid HTLC expires at
-const wait = (ms) => new Promise((r) => setTimeout(r, ms));
-
-// second-closer's two players: the winner DELIVERS by tick 1320, the loser
-// wrecks at tick 547.
-const WINNER = { name: 'winner', key: b32(0x0a), worldSecret: fromHex(`01${'00'.repeat(30)}d1`), ticks: 1320 };
-const LOSER = { name: 'loser', key: b32(5), worldSecret: b32(0x16), ticks: 1000 };
-
-/** A Lightning node whose players have paid, and which writes down WHEN it was told to act. */
-function paidPort() {
-  const amounts = new Map();
-  const settled = [];
-  const cancelled = [];
-  return {
-    settled, cancelled,
-    async createHeld({ paymentHash, amountMsat }) { amounts.set(toHex(paymentHash), amountMsat); return { paymentHash, amountMsat, request: 'lnbcrt-x' }; },
-    async look({ paymentHash }) { const a = amounts.get(toHex(paymentHash)) || 0n; return { state: HELD, amountMsat: a, paidMsat: a, expiryHeight: HTLC_EXPIRY }; },
-    async settle({ paymentHash, preimage }) { settled.push({ paymentHash: toHex(paymentHash), preimage: toHex(preimage), at: Date.now() }); },
-    async cancel({ paymentHash }) { cancelled.push({ paymentHash: toHex(paymentHash), at: Date.now() }); },
-  };
-}
-
-const contractFor = (nodes, objectionWindowMs) => ({
-  networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations: 1,
-  gameVerifySlots: nodes.length, settlementSlots: nodes.length, simCoreHash: b32(1), startTimeMs: 60500n,
-  entryCloseMs: 2000n, objectionWindowMs, custody: 'FEDERATION',
-  slashMinimumServed: 20, slashRemainder: 'BURN', federationId: new Uint8Array(32), stakeExpiryBlocks: 144, publicationRelays: [], donationSetId: b32(0xd0),
-  censusHeight: 900000, censusRoot: b32(2), committeeTimeMs: 500n,
-  randomnessRule: 'bitcoin-block-hash', stakeMsat: STAKE, bondMinSats: 50000n,
-  blockTicks: 9000, exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
-  timeFloor: 30, timeCeil: 150, minScore: 1, rankNumerator: 3, rankDenominator: 4, nodes,
-});
-
-const say = (port, message) => new Promise((resolve, reject) => {
-  const ws = new WebSocket(`ws://127.0.0.1:${port}/play`);
-  ws.on('open', () => ws.send(message));
-  ws.on('message', (d, bin) => { resolve(bin ? new Uint8Array(d) : d.toString()); ws.close(); });
-  ws.on('error', reject);
-});
-
-const secretScalar = () => { let p = rand(32); while (scalarFrom32(p) >= FIELD) p = rand(32); return p; };
-
-/** One player's stake dealt at `needed` to every seat, seated, paid and played on `daemons`. */
-async function seatAndPlay(daemons, c, rid, who, needed) {
-  const session = ed25519.utils.randomSecretKey();
-  const preimage = secretScalar();
-  const e = rand(32);
-  const dealt = await dealHandout({
-    preimage, seats: c.nodes, roundId: rid, playerPubkey: who.key,
-    ephemeralSecret: e, ephemeralPubkey: feldmanGroup.pointX(e),
-    coefficients: Array.from({ length: needed - 1 }, () => scalarFrom32(rand(32)) % FIELD),
-    needed, curve: feldmanGroup,
-  });
-  assert.equal(dealt.ok, true, dealt.why);
-  const entry = {
-    roundId: rid, playerPubkey: who.key, sessionPubkey: ed25519.getPublicKey(session),
-    stakeCommitment: sha256(preimage), stakeMsat: STAKE, feeMsat: entryFeeMsat(STAKE), donationMsat: 0n,
-    joinTick: 0, worldSecret: who.worldSecret, vssSharesRef: handoutId(dealt.handout), stakePoint: dealt.handout.commitments[0], feePreimage: new Uint8Array(32), stakeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, feeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, claimKeyAttestationRef: new Uint8Array(32),
-  };
-  const eid = entryId(entry);
-  const input = { roundId: rid, entryId: eid, previousHash: GENESIS_HASH, firstTick: 0,
-    ticks: Array.from({ length: who.ticks }, (_, t) => wordsAt(t)), liquidations: [] };
-  const st = init(seedWordForEntry(entry, RANDOMNESS));
-  for (let t = 0; t < who.ticks; t++) step(st, ...wordsAt(t));
-  const mark = { roundId: rid, entryId: eid, tick: who.ticks,
-    stateHash: Uint8Array.from(stateHash(st).match(/../g).map((x) => parseInt(x, 16))),
-    inputChainHash: batchId(input), previousHash: NO_PREVIOUS, sessionPubkey: ed25519.getPublicKey(session) };
-  const signedMark = joinSigned(encodeCheckpoint(mark), ed25519.sign(checkpointId(mark), session));
-  for (const d of daemons) {
-    const took = await fetch(`http://127.0.0.1:${d.port}/handout`, { method: 'POST', body: encodeHandout(dealt.handout) });
-    assert.equal(took.status, 201, `${who.name}'s handout: ${await took.text()}`);
-    const seated = await fetch(`http://127.0.0.1:${d.port}/entry`, { method: 'POST', body: encodeEntryContract(entry) });
-    assert.equal(seated.status, 201, `${who.name}'s entry: ${await seated.text()}`);
-    const quote = await fetch(`http://127.0.0.1:${d.port}/invoice?entry=${toHex(eid)}`);
-    assert.equal(quote.status, 200, `${who.name}'s invoice: ${await quote.text()}`);
-    // SEEN THE WAY A PAGE SEES IT: `GET /stake` asks the node's own Lightning,
-    // which is also when the node learns the HTLC's expiry height.
-    const seen = await fetch(`http://127.0.0.1:${d.port}/stake?entry=${toHex(eid)}`);
-    assert.equal(seen.status, 200, `${who.name}'s stake was not seen: ${await seen.text()}`);
-    assert.equal(await say(d.port, encodeInputBatch(input)), String(who.ticks));
-    assert.equal((await say(d.port, signedMark)).length, SIGNED_RECEIPT_BYTES);
-  }
-  return { eid, entry, preimage, mid: checkpointId(mark) };
-}
-
-const opts = { funded: () => true, randomnessFor: () => BEACON, preflight: async () => ({ ready: true, why: 'test port' }) };
 
 test('two seats, a 3 s window: nothing is settled, cancelled or handed out inside it, and the loser settles and the winner cancels after it', async () => {
   const portA = paidPort();
@@ -360,51 +269,6 @@ test('two seats restarted inside a 3 s window: after it the loser settles and th
   }
 });
 
-/**
- * ONE DAEMON ON A SEVEN-SEAT ROUND, the other six seats' keys this test holds.
- * Two losers play on it and it signs its own result for each; then `sign` has
- * five of the other seats sign - the same run it did, or a rewritten one - and
- * the run is PROVISIONALLY_FINAL on it.
- */
-async function sevenSeats(windowMs) {
-  const holder = await serve(openStore(':memory:'), { port: 0, ...opts, lightning: paidPort() });
-  try {
-    const others = Array.from({ length: 6 }, () => rand(32));
-    const c = contractFor([holder.round.pubkey, ...others.map((s) => schnorr.getPublicKey(s))], BigInt(windowMs));
-    const rid = roundId(c);
-    await fetch(`http://127.0.0.1:${holder.port}/round`, { method: 'POST', body: encodeRoundContract(c) });
-    assumeSeated(holder.round, rid, c.nodes);
-    const runs = {};
-    for (const [name, key] of [['agrees', 5], ['dissents', 6]]) {
-      runs[name] = await seatAndPlay([holder], c, rid, { ...LOSER, name, key: b32(key) }, 5);
-      // FIVE OF SEVEN RECEIPTS MAKE THE TRANSCRIPT CANONICAL: its own and four seats'.
-      for (const secret of others.slice(0, 4)) {
-        const receipt = { checkpointId: runs[name].mid, receivedAtMs: 1234n, nodePubkey: schnorr.getPublicKey(secret) };
-        assert.equal(await say(holder.port, joinSignedReceipt(encodeCheckpointReceipt(receipt),
-          schnorr.sign(receiptId(receipt), secret))), 'held');
-      }
-    }
-    assert.equal(await say(holder.port, `close ${toHex(rid)}`), 'closed');
-    for (const p of holder.verifier.done) await p;
-    await holder.verifier.settling;
-
-    const sign = (name, rewrite) => {
-      const eid = runs[name].eid;
-      const mine = holder.round.results(rid, eid).find((r) => toHex(r.nodePubkey) === toHex(holder.round.pubkey));
-      assert.ok(mine, `the holder signed no result for ${name}`);
-      const shape = decodePlayerResult(splitSignedResult(mine.bytes).body);
-      assert.equal(shape.outcome, 'FAILED', `${name} did not lose`);
-      for (const secret of others.slice(0, 5)) {
-        const r = { ...shape, ...rewrite(shape), nodePubkey: schnorr.getPublicKey(secret) };
-        const id = resultId(r);
-        holder.round.putResult(rid, eid, r.nodePubkey, id, joinSignedResult(encodePlayerResult(r), schnorr.sign(id, secret)));
-      }
-    };
-    return { holder, rid, runs, sign, close: () => holder.close() };
-  } catch (err) { await holder.close(); throw err; }
-}
-
-const object = (w, eid) => fetch(`http://127.0.0.1:${w.holder.port}/objection?round=${toHex(w.rid)}&entry=${toHex(eid)}`, { method: 'POST' });
 
 test('seven seats: an objection filed in the window against a run this node replayed differently SUSPENDS it - no share, before or after the window; one against a run it agrees with does not', async () => {
   const w = await sevenSeats(1500);
