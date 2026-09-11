@@ -8,15 +8,17 @@
  }
  
  impl std::fmt::Display for DbKeyPrefix {
-@@ -227,6 +228,29 @@
+@@ -227,6 +228,31 @@
      query_prefix = IncomingContractIndexPrefix
  );
  
 +/// WHEN THIS GUARDIAN SAW AN INCOMING CONTRACT FUNDED, in unix milliseconds by
-+/// its own clock. Its decryption share is made and served only
-+/// `FM_LNV2_INCOMING_HOLD_SECS` after this - a round's objection window - so
-+/// the gateway cannot settle the payer's HTLC, and nobody can spend the stake,
-+/// before the window has closed.
++/// its own clock, AND THE CONTRACT. Its decryption share is made and served
++/// only `FM_LNV2_INCOMING_HOLD_SECS` after this - a round's objection window -
++/// so the gateway cannot settle the payer's HTLC before the window has closed.
++/// The contract is kept here because a receiver's claim removes it from
++/// `IncomingContractKey`: measured, a claim inside the hold left the share
++/// endpoint nothing to make a share from, and the gateway never settled.
 +#[derive(Debug, Clone, Eq, PartialEq, Hash, Deserialize, Serialize, Encodable, Decodable)]
 +pub struct IncomingContractFundedAtKey(pub OutPoint);
 +
@@ -25,7 +27,7 @@
 +
 +impl_db_record!(
 +    key = IncomingContractFundedAtKey,
-+    value = u64,
++    value = (u64, IncomingContract),
 +    db_prefix = DbKeyPrefix::IncomingContractFundedAt,
 +    notify_on_modify = true
 +);
@@ -71,7 +73,7 @@
 +                        dbtx,
 +                        IncomingContractFundedAtPrefix,
 +                        IncomingContractFundedAtKey,
-+                        u64,
++                        (u64, IncomingContract),
 +                        lightning,
 +                        "Lightning Incoming Contract Funded At"
 +                    );
@@ -100,7 +102,7 @@
      }
  
      async fn init(&self, args: &ServerModuleInitArgs<Self>) -> anyhow::Result<Self::Module> {
-@@ -583,9 +612,20 @@
+@@ -583,10 +612,24 @@
                  dbtx.insert_entry(&IncomingContractStreamIndexKey, &(stream_index + 1))
                      .await;
  
@@ -119,11 +121,16 @@
 +                let funded_at_ms = u64::try_from(duration_since_epoch().as_millis()).unwrap_or(u64::MAX);
  
 -                dbtx.insert_entry(&DecryptionKeyShareKey(outpoint), &dk_share)
-+                dbtx.insert_entry(&IncomingContractFundedAtKey(outpoint), &funded_at_ms)
-                     .await;
+-                    .await;
++                dbtx.insert_entry(
++                    &IncomingContractFundedAtKey(outpoint),
++                    &(funded_at_ms, contract.clone()),
++                )
++                .await;
  
                  contract.commitment.amount
-@@ -666,16 +706,33 @@
+             }
+@@ -666,16 +709,28 @@
              public_api_endpoint! {
                  DECRYPTION_KEY_SHARE_ENDPOINT,
                  ApiVersion::new(0, 0),
@@ -140,8 +147,10 @@
 +                    // `FM_LNV2_INCOMING_HOLD_SECS` after this guardian saw it funded,
 +                    // counted from the funding and not from the request, so a retried
 +                    // request neither waits again nor gets it sooner.
-+                    let funded_at_ms = context
-+                        .db()
++                    let (funded_at_ms, contract) = context
+                         .db()
+-                        .wait_key_exists(&DecryptionKeyShareKey(params))
+-                        .await)
 +                        .wait_key_exists(&IncomingContractFundedAtKey(params))
 +                        .await;
 +                    let release_at_ms =
@@ -153,15 +162,8 @@
 +                        }
 +                        fedimint_core::runtime::sleep(Duration::from_millis(release_at_ms - now_ms)).await;
 +                    }
-+                    let contract = context
-                         .db()
--                        .wait_key_exists(&DecryptionKeyShareKey(params))
--                        .await)
-+                        .begin_transaction_nc()
-+                        .await
-+                        .get_value(&IncomingContractKey(params))
-+                        .await
-+                        .ok_or_else(|| ApiError::not_found("no incoming contract at that outpoint".to_string()))?;
++                    // The contract as it was funded - not `IncomingContractKey`, which a
++                    // receiver's claim removes.
 +                    Ok(contract.create_decryption_key_share(&module.cfg.private.sk))
                  }
              },
