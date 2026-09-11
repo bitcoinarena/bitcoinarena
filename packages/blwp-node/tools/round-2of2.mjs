@@ -72,7 +72,12 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
                                      // THE ROUND'S OBJECTION WINDOW (M3.3-32): nothing moves
                                      // until it has closed. The spec's reference unless a
                                      // rehearsal names a shorter one to watch both sides of it.
-                                     objectionWindowMs = 600000n } = {}) {
+                                     objectionWindowMs = 600000n,
+                                     // A HARNESS'S WAIT JUST BEFORE THE ROUND IS POSTED - after
+                                     // the beacon loop has mined its last block, which is when
+                                     // a daemon's Lightning preflight asks whether its lnd is
+                                     // synced. None by default: nothing changes for a launcher.
+                                     beforeRound = null } = {}) {
   // WHAT THESE DAEMONS FUND (M3.3-31): a PAYING round goes through the
   // launcher's own rule - the round its operator names, and entries into a
   // paying round the node holds when it reaches Lightning - not a harness's
@@ -422,6 +427,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   // THE OPERATOR NAMES ITS ROUND, now that the contract that names both
   // daemons gives it an id - what BLWP_FUNDED_ROUNDS does for main.js.
   if (funded.nameRound) funded.nameRound(roundId(contract));
+  if (beforeRound) await beforeRound();
   const body = encodeRoundContract(contract);
   const opened = [];
   try {

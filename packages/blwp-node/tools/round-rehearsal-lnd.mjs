@@ -74,6 +74,12 @@ const HOLD_BEFORE_SIT = Number((process.argv.find((a) => a.startsWith('--hold-be
 // short one - 30 s unless told otherwise - to watch both sides of it; the
 // spec's reference is 600000.
 const OBJECTION_WINDOW_MS = Number((process.argv.find((a) => a.startsWith('--objection-window=')) || '--objection-window=30000').split('=')[1]);
+// --mine-before-round=N: mine N blocks just before the round is posted - the
+// beacon loop's last batch at its worst moment - so the 1-of-69 "not synced"
+// refusal is met on purpose. --no-tip-wait: do not wait for the lnds to reach
+// the tip first (the before of that measurement).
+const MINE_BEFORE_ROUND = Number((process.argv.find((a) => a.startsWith('--mine-before-round=')) || '--mine-before-round=0').split('=')[1]);
+const TIP_WAIT = !process.argv.includes('--no-tip-wait');
 // NON-DEFAULT, ALL OF THEM; p2p+1 is bitcoind's own; never 8080 (signal-cli).
 const P = { rpc: 29901 + OFF, p2p: 29902 + OFF, zmqBlock: 29905 + OFF, zmqTx: 29906 + OFF,
   alice: { rpc: 29907 + OFF, listen: 29908 + OFF, rest: 29909 + OFF },
@@ -215,7 +221,31 @@ async function main() {
     try {
       round = await standUpRound({ host: '127.0.0.1', portA: P.daemonA, portB: P.daemonB,
         rpc, cli, stakeMsat: STAKE_MSAT, page: 'http://127.0.0.1:1',
-        objectionWindowMs: BigInt(OBJECTION_WINDOW_MS) });
+        objectionWindowMs: BigInt(OBJECTION_WINDOW_MS),
+        // BOTH LNDS AT THE TIP BEFORE THE ROUND IS POSTED. The beacon loop
+        // mines, and the daemon's preflight then asks bob's lnd whether it is
+        // synced; 1 of 69 earlier logs found it still catching up and the round
+        // was refused - rightly. Waited for here, and counted every run.
+        beforeRound: async () => {
+          if (MINE_BEFORE_ROUND) mine(MINE_BEFORE_ROUND);
+          if (!TIP_WAIT) {
+            const tip = Number(cli('getblockcount'));
+            const i = lnj('bob', 'getinfo');
+            say(`  lnd NOT waited for (--no-tip-wait): bob ${i.block_height}/${tip}, synced ${i.synced_to_chain}`);
+            return;
+          }
+          const t = Date.now();
+          let behind = 0;
+          const seen = [];
+          await until('both lnds at the tip', () => {
+            const tip = Number(cli('getblockcount'));
+            const lag = ['alice', 'bob'].map((who) => [who, lnj(who, 'getinfo')])
+              .filter(([, i]) => i.synced_to_chain !== true || Number(i.block_height) !== tip);
+            if (lag.length) { behind++; if (seen.length < 3) seen.push(lag.map(([who, i]) => `${who} ${i.block_height}/${tip} synced ${i.synced_to_chain}`).join(', ')); }
+            return !lag.length;
+          }, 60000, 25);
+          say(`  lnd at the tip before the round is posted: ${behind ? `BEHIND on ${behind} poll(s) (${seen.join('; ')}), waited ${Date.now() - t} ms` : 'already'}`);
+        } });
     } catch (e) {
       hole('code', `the two daemons could not open a paying round: ${e.message}`);
       throw e;
