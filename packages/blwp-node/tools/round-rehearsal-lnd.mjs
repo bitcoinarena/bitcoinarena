@@ -62,6 +62,11 @@ const OFF = CLOSE_ORDER === 'BA' ? 100 : 0;
 // --hold-before-sit=MS (M3.3-27): hold the event loop SYNCHRONOUSLY for MS ms
 // just before the first player sits - what a long world search does by chance
 // - so the condition of the Client.at flake is met on purpose, every run.
+// --close-gap=MS (M3.3-29): send the second close MS ms after the first,
+// without waiting for the first's answer; 0 closes both at the same instant.
+// Unset, each close is awaited in turn, as before.
+const CLOSE_GAP_ARG = process.argv.find((a) => a.startsWith('--close-gap='));
+const CLOSE_GAP = CLOSE_GAP_ARG ? Number(CLOSE_GAP_ARG.split('=')[1]) : null;
 const HOLD_BEFORE_SIT = Number((process.argv.find((a) => a.startsWith('--hold-before-sit=')) || '--hold-before-sit=0').split('=')[1]);
 // NON-DEFAULT, ALL OF THEM; p2p+1 is bitcoind's own; never 8080 (signal-cli).
 const P = { rpc: 29901 + OFF, p2p: 29902 + OFF, zmqBlock: 29905 + OFF, zmqTx: 29906 + OFF,
@@ -393,10 +398,30 @@ async function main() {
         stamps.push({ t: at, what: `${name} gathers ${who(eid)} -> ${g.final ? 'FINAL' : `not final: ${g.why}`} (answered +${Date.now() - t0} ms)` });
         return g;
       };
+      // AND EVERY SHARE ASK (M3.3-29): when this daemon asked for a stake's
+      // shares, and what it got back - the settle's own `open`, wrapped.
+      const open = d.preimages.open.bind(d.preimages);
+      d.preimages.open = async (q) => {
+        const at = Date.now() - t0;
+        const o = await open(q);
+        const peer = !o.ok && o.why && o.why.includes(' (') ? ` [${o.why.slice(o.why.indexOf(' (') + 2, o.why.indexOf(' (') + 110)}]` : '';
+        stamps.push({ t: at, what: `${name} asks for ${who(q.entryId)}'s shares -> ${o.ok ? `OPENED with ${o.held}` : (o.why || '').split(' (')[0]}${peer} (answered +${Date.now() - t0} ms)` });
+        return o;
+      };
     }
     const order = CLOSE_ORDER === 'BA' ? [named.nodes[1], named.nodes[0]] : named.nodes;
-    say(`  close order ${CLOSE_ORDER}`);
-    for (const base of order) say(`  close on ${base} at +${Date.now() - t0} ms: ${await closeOn(base)}`);
+    say(`  close order ${CLOSE_ORDER}${CLOSE_GAP === null ? '' : `, second close ${CLOSE_GAP} ms after the first`}`);
+    if (CLOSE_GAP === null) {
+      for (const base of order) say(`  close on ${base} at +${Date.now() - t0} ms: ${await closeOn(base)}`);
+    } else {
+      const replies = [];
+      for (const [i, base] of order.entries()) {
+        if (i) await wait(CLOSE_GAP);
+        const at = Date.now() - t0;
+        replies.push(closeOn(base).then((r) => say(`  close on ${base} at +${at} ms: ${r}`)));
+      }
+      await Promise.all(replies);
+    }
     for (const [, d] of daemons) { try { await d.verifier.settling; } catch { /* reported below */ } }
     // WHAT EACH DAEMON ENDS WITH (M3.3-25): the close now keeps asking, so its
     // latest result is read until both played runs are final or 30 s pass.
@@ -511,6 +536,7 @@ async function main() {
     await wait(3000);
     const end = { alice: msatOf('alice'), bob: msatOf('bob') };
 
+    const heldAfterSettled = [];
     say('\nWHERE EACH PLAYER\'S MSAT ENDED UP (net stake ' + (players[0] && players[0].amountMsat) + ' msat each):');
     for (const p of players) {
       if (!p.hash) continue;
@@ -519,8 +545,14 @@ async function main() {
         : inv.state === 'CANCELED' ? 'back to the player (alice)'
           : inv.state === 'ACCEPTED' ? 'still in flight' : inv.state;
       say(`  ${p.name} ${p.want.padEnd(9)} lnd ${String(inv.state).padEnd(9)} -> ${wentTo}`);
+      // WHAT EACH DAEMON STILL BELIEVES (M3.3-29), beside what lnd did.
+      const rowOf = (d) => (p.eid && d.round.hold(p.eid)) || null;
+      say(`      custody rows: ${daemons.map(([n, d]) => `${n} ${rowOf(d) ? rowOf(d).state : 'no row'}`).join(', ')}`);
+      if (inv.state === 'SETTLED')
+        for (const [n, d] of daemons) if (!rowOf(d) || rowOf(d).state !== 'SETTLED') heldAfterSettled.push(`${p.name} on ${n}: ${rowOf(d) ? rowOf(d).state : 'no row'}`);
       p.lnd = inv.state;
     }
+    say(`  HELD AFTER LND SETTLED: ${heldAfterSettled.length}${heldAfterSettled.length ? ` (${heldAfterSettled.join('; ')})` : ''}`);
     say(`  alice ${before.alice} -> ${end.alice} msat (${end.alice - before.alice}); `
       + `bob (the operator) ${before.bob} -> ${end.bob} msat (+${end.bob - before.bob}); `
       + `after the close, before P3 expired: alice ${afterClose.alice}, bob ${afterClose.bob}`);
