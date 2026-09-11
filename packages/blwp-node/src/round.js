@@ -1450,6 +1450,22 @@ export class Round {
       .map((r) => ({ seatPubkey: new Uint8Array(r.seat_pubkey), bytes: new Uint8Array(r.bytes), seenMs: Number(r.seen_ms) }));
   }
 
+  /** A slash proof this node filed, with its evidence; one per accused seat per run. */
+  putSlashProof(roundIdBytes, entryIdBytes, nodePubkey, proofId, bytes) {
+    return this.db.prepare(
+      'INSERT OR IGNORE INTO slash_proofs (round_id, entry_id, node_pubkey, proof_id, bytes, seen_ms) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(roundIdBytes, entryIdBytes, nodePubkey, proofId, bytes, this.now()).changes;
+  }
+
+  /** Every slash proof this node filed for a run. */
+  slashProofs(roundIdBytes, entryIdBytes) {
+    return this.db.prepare(
+      'SELECT node_pubkey, proof_id, bytes, seen_ms FROM slash_proofs WHERE round_id = ? AND entry_id = ? ORDER BY node_pubkey')
+      .all(roundIdBytes, entryIdBytes)
+      .map((r) => ({ nodePubkey: new Uint8Array(r.node_pubkey), proofId: new Uint8Array(r.proof_id),
+        bytes: new Uint8Array(r.bytes), seenMs: Number(r.seen_ms) }));
+  }
+
   /** A transcript kept as a relay, under the hash its bytes have (checked by the door). */
   relayPut(hashBytes, bytes) {
     return this.db.prepare('INSERT OR IGNORE INTO relayed (hash, bytes, seen_ms) VALUES (?, ?, ?)')

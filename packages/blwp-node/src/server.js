@@ -36,7 +36,7 @@ import { feldmanGroup, tweakPoint } from './curve.js';
 import {
   SIGNED_RECEIPT_BYTES, decodeCheckpointReceipt, splitSignedReceipt,
 } from '../../protocol/src/receipt.js';
-import { SIGNED_RESULT_BYTES } from '../../protocol/src/result.js';
+import { SIGNED_RESULT_BYTES, resultId, decodePlayerResult, splitSignedResult } from '../../protocol/src/result.js';
 
 /**
  * The largest frame this socket will accept, and it is derived rather than
@@ -67,6 +67,7 @@ import { resultFinality } from './finality.js';
 import { FINAL, PROVISIONALLY_FINAL, SUSPENDED } from '../../protocol/src/objection.js';
 import { transcriptBytesHash, SIGNED_POSTING_BYTES } from '../../protocol/src/posting.js';
 import { SIGNED_RERUN_BYTES } from '../../protocol/src/rerun.js';
+import { splitSlashEvidence, slashProofId, SLASH_EVIDENCE_BYTES } from '../../protocol/src/slash.js';
 import { Preimages, encodeShareAnswer, SEALED_ANSWER_BYTES } from './preimage.js';
 import { Payouts, PAYOUT_QUEUED, PAID, PAID_IN_PART, NOTHING_OWED } from './payout.js';
 import { PoolSigning } from './pool-signing.js';
@@ -183,6 +184,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // from the close and, while a run waits on its window, from that window's
   // end (M3.3-32).
   finality = {},
+  // THE SEATS' ADVERTISEMENTS, by round (Map node key hex -> advert), so a slash
+  // proof names each accused seat's own bond. Defaults to this node's census.
+  advertsFor = null,
   // WHERE THIS NODE'S OWN CHAIN IS (M3.3-30): a height, asked of its own
   // bitcoind. Given none, the pool's chain call answers it when there is one.
   chainTip = null,
@@ -385,6 +389,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   }
 
   const verifier = new Verifier(round, {
+    advertsFor: advertsFor || ((rid) => {
+      const census = roster.censusFor(rid);
+      return census.ok ? new Map(census.entries.map((e) => [toHex(e.pubkey), e.advert])) : null;
+    }),
     ...(randomnessFor ? { randomnessFor } : {}),
     // THE SAME CHAIN THE SEAT WAS CHECKED AGAINST. A node that closes a round
     // on a beacon its own chain does not name computes a different world for
@@ -455,6 +463,52 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
    * settle short of shares still has as long to ask as it had before.
    */
   const finalityTimers = new Set();
+
+  /**
+   * ONE SUSPENDED RUN'S RE-RUN, AND THE SLASH PROOFS ONCE IT IS AUTHORITATIVE.
+   * Re-runs (13A) while SUSPENDED - this seat's own once, the other seats'
+   * gathered each time - and, once the re-run has made the run FINAL, files a
+   * REPLAY_CONTRADICTS proof against every seat that signed the contradicted
+   * result (5A.3B step 1). Returns whether it is done.
+   */
+  async function rerunAndFile(rid, eid) {
+    const s = resultFinality(round, rid, eid);
+    if (s.state === SUSPENDED && s.runId) {
+      const r = await verifier.rerun(rid, eid, Buffer.from(s.runId, 'hex'));
+      console.log(`[rerun] ${toHex(eid).slice(0, 16)} ${r.ok ? `agreed ${r.agreed} of ${r.needed}` : r.why}`);
+    }
+    const now = resultFinality(round, rid, eid);
+    if (now.state !== FINAL || !now.contradictedRunId) return false;
+    const f = await verifier.fileSlashProofs(rid, eid, Buffer.from(now.contradictedRunId, 'hex'), Buffer.from(now.runId, 'hex'));
+    for (const who of f.filed) console.log(`[slash] ${toHex(eid).slice(0, 16)} filed REPLAY_CONTRADICTS against ${who.slice(0, 16)}`);
+    for (const why of f.refused) console.log(`[slash] ${toHex(eid).slice(0, 16)} ${why}`);
+    return true;
+  }
+
+  /**
+   * AND A WATCH FOR IT, started when an objection suspends a run: the other
+   * seats' re-runs arrive over time, so it asks again every `everyMs` until the
+   * run is decided or its budget - `finality.rerunMs`, else the contract's own
+   * objection window - runs out. How long 13C should wait is the parked result
+   * window; a re-run that lands later is acted on at the next close logic.
+   */
+  const rerunTimers = new Set();
+  function watchRerun(rid, eid) {
+    const row = round.get(rid);
+    if (!row) return;
+    const contract = decodeRoundContract(new Uint8Array(row.contract));
+    const everyMs = finality.everyMs ?? 2000;
+    const until = Date.now() + (finality.rerunMs ?? Number(contract.objectionWindowMs));
+    const tick = async () => {
+      if (shuttingDown) return;
+      let done = false;
+      try { done = await rerunAndFile(rid, eid); } catch (e) { console.error(`[rerun] ${e.message}`); }
+      if (done || shuttingDown || Date.now() >= until) return;
+      const t = setTimeout(() => { rerunTimers.delete(t); tick(); }, everyMs);
+      rerunTimers.add(t);
+    };
+    tick();
+  }
   let shuttingDown = false;
   function watchFinality(roundIdBytes, closed, money) {
     const row = round.get(roundIdBytes);
@@ -563,12 +617,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // this seat's own re-run once, and the other seats' gathered every time.
     for (const g of (closed && closed.gathered) || []) {
       if (!(g && g.ok && g.final)) continue;
-      const s = resultFinality(round, roundIdBytes, g.entryId);
-      if (s.state !== SUSPENDED || !s.runId) continue;
-      try {
-        const r = await verifier.rerun(roundIdBytes, g.entryId, Buffer.from(s.runId, 'hex'));
-        console.log(`[rerun] ${toHex(g.entryId).slice(0, 16)} ${r.ok ? `agreed ${r.agreed} of ${r.needed}` : r.why}`);
-      } catch (e) { console.error(`[rerun] ${e.message}`); }
+      try { await rerunAndFile(roundIdBytes, g.entryId); } catch (e) { console.error(`[rerun] ${e.message}`); }
     }
     if (!custody.reaches) return { ok: false, why: 'this node reaches no Lightning, so it settles nothing' };
     const row = round.get(roundIdBytes);
@@ -1350,6 +1399,41 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         return res.end(Buffer.from(out));
       }
 
+      // EVERY SLASH PROOF THIS NODE FILED FOR A RUN (5A.3B step 1), each with
+      // the signed result it accuses, fixed-size records back to back.
+      if (req.method === 'GET' && url.pathname === '/slash-proofs') {
+        const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
+        const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
+        const held = round.slashProofs(rid, eid);
+        const out = new Uint8Array(held.length * SLASH_EVIDENCE_BYTES);
+        held.forEach((p, i) => out.set(p.bytes, i * SLASH_EVIDENCE_BYTES));
+        res.writeHead(200, { 'content-type': 'application/octet-stream', 'x-slash-proofs': String(held.length), ...CORS });
+        return res.end(Buffer.from(out));
+      }
+
+      // A RELAY KEEPS A SLASH PROOF TOO, under the proof's own id and only with
+      // the signed result it names beside it - so it serves no proof under
+      // another's name and no proof without its evidence.
+      const slashed = /^\/slash\/([0-9a-f]{64})$/.exec(url.pathname);
+      if (slashed && req.method === 'PUT') {
+        const bytes = await read(req);
+        let got;
+        try { got = splitSlashEvidence(new Uint8Array(bytes)); } catch (e) { return text(res, 400, e.message); }
+        if (toHex(slashProofId(got.proof)) !== slashed[1]) return text(res, 409, 'that is not the proof that id names');
+        let named;
+        try { named = toHex(resultId(decodePlayerResult(splitSignedResult(got.signedResult).body))); }
+        catch (e) { return text(res, 409, `the evidence is not a signed result: ${e.message}`); }
+        if (named !== toHex(got.proof.signedResultId)) return text(res, 409, 'the evidence is not the result the proof names');
+        round.relayPut(Buffer.from(slashed[1], 'hex'), bytes);
+        return text(res, 201, 'kept');
+      }
+      if (slashed && req.method === 'GET') {
+        const kept = round.relayGet(Buffer.from(slashed[1], 'hex'));
+        if (!kept) return text(res, 404, 'this relay holds no slash proof under that id');
+        res.writeHead(200, { 'content-type': 'application/octet-stream', ...CORS });
+        return res.end(Buffer.from(kept));
+      }
+
       // A PUBLICATION RELAY (v4.6.2 §13A): any node can be one of a contract's
       // `publication_relays[]`. It keeps a transcript only under the hash its
       // own bytes have, so it can never serve one run's transcript as another's.
@@ -1378,10 +1462,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           const fresh = round.object(rid, eid);
           // AN OBJECTION THAT HOLDS SUSPENDS THE RESULT, AND THE COMMITTEE
           // RE-RUNS IT (13A): this seat starts its own re-run at once.
-          const standing = resultFinality(round, rid, eid);
-          if (standing.state === SUSPENDED && standing.runId)
-            verifier.rerun(new Uint8Array(rid), new Uint8Array(eid), Buffer.from(standing.runId, 'hex'))
-              .catch((e) => console.error(`[rerun] ${e.message}`));
+          if (resultFinality(round, rid, eid).state === SUSPENDED) watchRerun(new Uint8Array(rid), new Uint8Array(eid));
           return text(res, fresh ? 201 : 200, fresh ? 'objected' : 'already objected');
         } catch (err) { return text(res, 404, err.message); }
       }
@@ -1779,6 +1860,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (expiryTimer) clearInterval(expiryTimer);
         for (const t of finalityTimers) clearTimeout(t);
         finalityTimers.clear();
+        for (const t of rerunTimers) clearTimeout(t);
+        rerunTimers.clear();
         for (const sock of wss.clients) sock.terminate();
         wss.close();
         http.closeAllConnections();

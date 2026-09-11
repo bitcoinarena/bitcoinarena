@@ -449,6 +449,19 @@ export function openStore(path = ':memory:') {
       PRIMARY KEY (round_id, entry_id, seat_pubkey)
     );
 
+    -- A SLASH PROOF THIS NODE FILED (5A.3B step 1): REPLAY_CONTRADICTS against
+    -- a seat that signed a result the committee's re-run contradicted, with the
+    -- signed result beside it. One per accused seat per run.
+    CREATE TABLE IF NOT EXISTS slash_proofs (
+      round_id    BLOB NOT NULL,
+      entry_id    BLOB NOT NULL,
+      node_pubkey BLOB NOT NULL,
+      proof_id    BLOB NOT NULL,
+      bytes       BLOB NOT NULL,
+      seen_ms     INTEGER NOT NULL,
+      PRIMARY KEY (round_id, entry_id, node_pubkey)
+    );
+
     -- WHAT THIS NODE KEEPS AS A RELAY: transcripts by their own hash, so any
     -- node can be one of a contract's publication_relays[] and serve nothing
     -- under a name its bytes do not have.

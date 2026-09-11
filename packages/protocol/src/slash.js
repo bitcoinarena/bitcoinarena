@@ -34,7 +34,7 @@ import {
 } from './constants.js';
 import { entryId } from './contracts.js';
 import { feeOwed, feeTableId } from './fee.js';
-import { decodePlayerResult, resultId, splitSignedResult } from './result.js';
+import { decodePlayerResult, resultId, splitSignedResult, SIGNED_RESULT_BYTES } from './result.js';
 import {
   computePayoutTable, payoutTableId, decodePayoutTable,
   settlementAction, actionByte, actionOf, NOTHING,
@@ -151,6 +151,32 @@ export function decodeSlashProof(bytes) {
 }
 
 export const slashProofId = (p) => taggedHash(TAG.slashProof, encodeSlashProof(p));
+
+/** 1 type + 2 version + six 32-byte fields + a 4-byte vout. */
+export const SLASH_PROOF_BYTES = 199;
+export const SLASH_EVIDENCE_BYTES = SLASH_PROOF_BYTES + SIGNED_RESULT_BYTES;
+
+/**
+ * A PROOF AS IT IS PUBLISHED (5A.3B step 1, "anyone publishes a fraud
+ * proof"): the proof and, beside it, the signed result it accuses. Both fixed
+ * sizes, so a stream of them cuts without a framing rule, and a reader holds
+ * everything `slashHolds` needs from the round except the replay verdict.
+ */
+export function joinSlashEvidence(proofBytes, signedResult) {
+  if (proofBytes.length !== SLASH_PROOF_BYTES) throw new Error(`a slash proof is ${SLASH_PROOF_BYTES} bytes, got ${proofBytes.length}`);
+  if (signedResult.length !== SIGNED_RESULT_BYTES) throw new Error(`a signed result is ${SIGNED_RESULT_BYTES} bytes, got ${signedResult.length}`);
+  const out = new Uint8Array(SLASH_EVIDENCE_BYTES);
+  out.set(proofBytes, 0);
+  out.set(signedResult, SLASH_PROOF_BYTES);
+  return out;
+}
+
+export function splitSlashEvidence(bytes) {
+  if (!(bytes instanceof Uint8Array) || bytes.length !== SLASH_EVIDENCE_BYTES)
+    throw new Error(`a published slash proof is ${SLASH_EVIDENCE_BYTES} bytes`);
+  const proofBytes = bytes.subarray(0, SLASH_PROOF_BYTES);
+  return { proof: decodeSlashProof(proofBytes), proofBytes, signedResult: bytes.subarray(SLASH_PROOF_BYTES) };
+}
 
 /**
  * WHAT THE SLASHING TRANSACTION HAS TO CARRY, 5A.3B step 4:

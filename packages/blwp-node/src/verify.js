@@ -21,6 +21,7 @@ import {
   encodeRerunResult, rerunResultId, joinSignedRerun, splitSignedRerun, decodeRerunResult, rerunIsAgreed,
   SIGNED_RERUN_BYTES,
 } from '../../protocol/src/rerun.js';
+import { encodeSlashProof, slashProofId, slashHolds, joinSlashEvidence } from '../../protocol/src/slash.js';
 import {
   joinSignedResult, splitSignedResult, decodePlayerResult, resultId, SIGNED_RESULT_BYTES,
 } from '../../protocol/src/result.js';
@@ -100,8 +101,14 @@ export const NO_RANDOMNESS_SOURCE = () => undefined;
 export class Verifier {
   constructor(round, {
     randomnessFor = NO_RANDOMNESS_SOURCE, chainFor = null, pool = new ReplayPool(), peers = [],
-    peersFor = null,
+    peersFor = null, advertsFor = null,
   } = {}) {
+    /**
+     * THE SEATS' OWN ADVERTISEMENTS, by round: a Map of node key (hex) to the
+     * decoded advertisement, whose bond outpoint a slash proof must name. The
+     * daemon passes its census's (5A.2 resolves the bodies out of the blocks).
+     */
+    this.advertsFor = advertsFor;
     /**
      * THE OTHER SEATS OF ONE ROUND, when the operator named none: a function
      * of the round, because a committee is a round's. The daemon passes the
@@ -499,6 +506,70 @@ export class Verifier {
       verify: (s, m, k) => schnorr.verify(s, m, k),
     });
     return { ...count, ...report };
+  }
+
+  /**
+   * FILE A SLASH PROOF AGAINST EVERY SEAT THE RE-RUN CONTRADICTED (§13A, 5A.3B).
+   *
+   * "Every node that signed the contradicted result is slashed (§5A.3)." 5A.3B
+   * step 1, anyone publishes the fraud proof; step 2, it is mechanically
+   * checkable. So for each result this node holds whose run is the contradicted
+   * one: a REPLAY_CONTRADICTS proof naming the canonical transcript, the signed
+   * result and the bond the seat's OWN advertisement names - filed only if
+   * `slashHolds` says it slashes, kept beside its evidence, served, and posted
+   * to the round's relays. The one judgement, that the replay differed, is this
+   * node's own replay: it is the re-run's authoritative outcome and not the
+   * contradicted one. Steps 3 and 5 are the arbitration set's.
+   */
+  async fileSlashProofs(roundIdBytes, entryIdBytes, contradictedRunId, authoritativeRunId) {
+    const row = this.round.get(roundIdBytes);
+    if (!row) return { filed: [], refused: ['no such round'] };
+    const contract = decodeRoundContract(new Uint8Array(row.contract));
+    const seats = this.round.seats(roundIdBytes);
+    const report = { filed: [], refused: [] };
+    let canonical;
+    try { canonical = this.round.canonicalTranscript(roundIdBytes, entryIdBytes); }
+    catch (e) { report.refused.push(e.message); return report; }
+
+    const held = this.round.results(roundIdBytes, entryIdBytes);
+    const mine = held.find((r) => hex(r.nodePubkey) === hex(this.round.pubkey));
+    if (!mine) { report.refused.push('this node signed no result for that run, so it has no replay to accuse with'); return report; }
+    const myRun = hex(runId(decodePlayerResult(splitSignedResult(mine.bytes).body)));
+    const replayDiffers = myRun !== hex(contradictedRunId) && myRun === hex(authoritativeRunId);
+
+    let adverts = null;
+    try { adverts = this.advertsFor ? this.advertsFor(roundIdBytes) : null; } catch { adverts = null; }
+    const filed = new Set(this.round.slashProofs(roundIdBytes, entryIdBytes).map((p) => hex(p.nodePubkey)));
+    for (const r of held) {
+      let body;
+      try { body = decodePlayerResult(splitSignedResult(r.bytes).body); } catch { continue; }
+      if (hex(runId(body)) !== hex(contradictedRunId)) continue;
+      const who = hex(body.nodePubkey);
+      if (filed.has(who)) continue;
+      const advert = adverts instanceof Map ? adverts.get(who) : null;
+      if (!advert) { report.refused.push(`${who.slice(0, 16)}: no advertisement names its bond`); continue; }
+      const proof = {
+        roundId: roundIdBytes, playerPubkey: body.playerPubkey, nodePubkey: body.nodePubkey,
+        transcriptHash: canonical.hash, signedResultId: resultId(body),
+        bondTxid: advert.bondTxid, bondVout: advert.bondVout,
+      };
+      const check = slashHolds({
+        proof, signedResult: r.bytes, advert, committee: seats,
+        canonicalTranscriptHash: canonical.hash, replayDiffers,
+      });
+      if (!check.slashed) { report.refused.push(`${who.slice(0, 16)}: ${check.why}`); continue; }
+      const id = slashProofId(proof);
+      const record = joinSlashEvidence(encodeSlashProof(proof), r.bytes);
+      this.round.putSlashProof(roundIdBytes, entryIdBytes, body.nodePubkey, id, record);
+      report.filed.push(who);
+      for (const relay of contract.publicationRelays || []) {
+        try {
+          const put = await fetch(`${String(relay).replace(/\/+$/, '')}/slash/${hex(id)}`, { method: 'PUT', body: record });
+          if (!put.ok) report.refused.push(`${relay}: kept no proof (${put.status})`);
+        } catch (e) { report.refused.push(`${relay}: ${e.message}`); }
+      }
+    }
+    return report;
   }
 
   /** One re-run from a peer: about this round and player, from a seated seat, and signed by it. */

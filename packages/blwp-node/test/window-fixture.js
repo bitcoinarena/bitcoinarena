@@ -145,10 +145,16 @@ export const opts = { funded: () => true, randomnessFor: () => BEACON, preflight
  * five of the other seats sign - the same run it did, or a rewritten one - and
  * the run is PROVISIONALLY_FINAL on it.
  */
-export async function sevenSeats(windowMs, relays, { storedBeforeTheRule = false } = {}) {
-  const holder = await serve(openStore(':memory:'), { port: 0, ...opts, lightning: paidPort() });
+export async function sevenSeats(windowMs, relays, { storedBeforeTheRule = false, finality = null } = {}) {
+  // EVERY SEAT'S ADVERTISEMENT, as a census would give it: each names its own
+  // bond outpoint, which a slash proof must name (5A.3B). Filled once the keys exist.
+  const adverts = new Map();
+  const holder = await serve(openStore(':memory:'), {
+    port: 0, ...opts, lightning: paidPort(), advertsFor: () => adverts, ...(finality ? { finality } : {}) });
   try {
     const others = Array.from({ length: 6 }, () => rand(32));
+    [holder.round.pubkey, ...others.map((s) => schnorr.getPublicKey(s))].forEach((k, i) =>
+      adverts.set(toHex(k), { nodePubkey: k, bondTxid: b32(0xb0 + i), bondVout: i }));
     const c = contractFor([holder.round.pubkey, ...others.map((s) => schnorr.getPublicKey(s))], BigInt(windowMs),
       relays === undefined ? [`http://127.0.0.1:${holder.port}`] : relays);
     const rid = roundId(c);
@@ -213,7 +219,7 @@ export async function sevenSeats(windowMs, relays, { storedBeforeTheRule = false
           joinSignedRerun(encodeRerunResult(x), schnorr.sign(rerunResultId(x), secret)));
       }
     };
-    return { holder, rid, runs, sign, post, rerunBy, others, contract: c, close: () => holder.close() };
+    return { holder, rid, runs, sign, post, rerunBy, others, adverts, contract: c, close: () => holder.close() };
   } catch (err) { await holder.close(); throw err; }
 }
 
