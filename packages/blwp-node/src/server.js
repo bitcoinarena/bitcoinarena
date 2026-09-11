@@ -456,6 +456,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       && typeof latest.owed.agreed === 'number');
     const settleShort = () => !!(latest && (latest.actions || [])
       .some((a) => a.action === SETTLE && a.state === HELD && a.final));
+    // A PAYOUT THIS SEAT QUEUED AND HAS NOT SEEN PAID IS SHORT TOO. Measured
+    // on the real-lnd rehearsal with the daemons' own 2-of-2 pool, 2 of 2
+    // runs: the seat whose one ask came before the other had queued stopped at
+    // "1 of 2 seats committed to this spend" and kept PAYOUT_QUEUED after the
+    // chain carried the other seat's payment. Asked again on the same cadence,
+    // `settleQueued` reads the chain first and writes PAID. Only a seat that
+    // can spend and watch the pool is ever short of this.
+    const payoutShort = () => !!(payouts.canSpend && poolWatch.reaches && latest && latest.owed
+      && latest.owed.ok && latest.owed.state === PAYOUT_QUEUED && !(latest.paid && latest.paid.ok));
     const waitingOn = () => (latest && latest.waiting) || [];
     const windowDue = () => waitingOn().some((w) => round.now() >= w.closesAtMs);
     // closesAtMs is on the round's clock and `until` on this watch's, so the
@@ -469,12 +478,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (shuttingDown) return;
       stretch();
       const short = stored.filter((r) => !isFinal(r.entryId));
-      if (!short.length && !tableShort() && !settleShort() && !waitingOn().length) return;
+      if (!short.length && !tableShort() && !settleShort() && !waitingOn().length && !payoutShort()) return;
       if (Date.now() >= until) {
         console.log(`[verify] ${toHex(roundIdBytes).slice(0, 16)} the objection window passed with `
           + `${short.length} run(s) short of final${tableShort() ? ' and the table short' : ''}`
           + `${settleShort() ? ' and a lost stake still unsettled' : ''}`
-          + `${waitingOn().length ? ' and a run still inside its objection window' : ''}`);
+          + `${waitingOn().length ? ' and a run still inside its objection window' : ''}`
+          + `${payoutShort() ? ' and a queued payout this seat has not seen paid' : ''}`);
         return;
       }
       let turned = false;
@@ -486,7 +496,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (g && g.ok && g.final) turned = true;
       }
       if (shuttingDown) return;
-      if (turned || tableShort() || settleShort() || windowDue()) {
+      if (turned || tableShort() || settleShort() || windowDue() || payoutShort()) {
         stakes = settleTheStakes(roundIdBytes, { replayed: closed.replayed, gathered })
           .catch((e) => { console.error(`[verify] ${e.message}`); return { ok: false, why: e.message }; });
         latest = await stakes;
