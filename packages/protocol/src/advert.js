@@ -31,6 +31,16 @@ import { Writer, Reader } from './encode.js';
 import { taggedHash } from './hash.js';
 import { PROTOCOL_VERSION, TYPE_ADVERT, TAG, ROLES, roleByte } from './constants.js';
 
+/** A Fedimint guardian's broadcast key: a compressed secp256k1 point. */
+export const GUARDIAN_KEY_BYTES = 33;
+
+const guardianBytesOrder = (a, b) => {
+  for (let i = 0; i < Math.min(a.length, b.length); i++) if (a[i] !== b[i]) return a[i] - b[i];
+  return a.length - b.length;
+};
+const compareGuardian = (a, b) =>
+  guardianBytesOrder(a.federationId, b.federationId) || guardianBytesOrder(a.guardianKey, b.guardianKey);
+
 export function encodeAdvert(a) {
   const w = new Writer();
   w.u8(TYPE_ADVERT);
@@ -67,6 +77,17 @@ export function encodeAdvert(a) {
   w.u16(a.bondScriptTemplateVersion);
 
   w.bytes32(a.payoutPubkey);
+
+  // WHICH FEDERATIONS THIS OPERATOR IS A GUARDIAN OF, 5A.1 (v4.6.2): "(federation_id,
+  // guardian peer key) this operator runs". A paying round's federation is
+  // valid only if its threshold of guardians are bonded census nodes that say
+  // so here (§23.6, P3) - otherwise a creator names a federation that is all
+  // his. The key is the guardian's broadcast key, Fedimint's
+  // secp256k1::PublicKey: 33 bytes. Sorted by federation, then key, asserted.
+  // Carried in the signed body the bond commits to, so it changes with a new
+  // bond or not at all. Added before the first bond outside regtest exists.
+  w.vec(a.guardianOf, (g, ww) => { ww.bytes32(g.federationId); ww.bytes(g.guardianKey, GUARDIAN_KEY_BYTES); },
+    { sortedBy: compareGuardian });
   w.u64(a.timestamp);
   return w.finish();
 }
@@ -97,6 +118,7 @@ export function decodeAdvert(bytes) {
     bondVout: r.u32(),
     bondScriptTemplateVersion: r.u16(),
     payoutPubkey: r.bytes32(),
+    guardianOf: r.vec((rr) => ({ federationId: rr.bytes32(), guardianKey: rr.bytes(GUARDIAN_KEY_BYTES) })),
     timestamp: r.u64(),
   };
   if (r.at !== bytes.length) throw new Error('trailing bytes after the advertisement');

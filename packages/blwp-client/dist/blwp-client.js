@@ -646,6 +646,10 @@ const TYPE_DKG_CONTRIBUTION = 0x13;
  */
 const TYPE_SIGNED_DONATION_SET = 0x14;
 const TYPE_AUTHORITY_ROTATION = 0x15;
+// ONE SETTLEMENT SEAT SAYING "this is the round's claim key" (§23.1 step 0,
+// v4.6.2): a client locks a stake to a claim_pk only with the round's
+// threshold of these, so no single seat can serve a key of its own (F3).
+const TYPE_CLAIM_KEY_ATTESTATION = 0x16;
 
 // A SEALED SHARE IS A FIXED SIZE, and it is not a choice: 32 bytes of scalar
 // under AES-GCM plus the 16-byte tag that makes a wrong key a REFUSAL rather
@@ -720,6 +724,10 @@ const TAG = {
   // never be produced by hashing a single share.
   vssHandout: 'BLWP/v1/VssHandout',
   remainder: 'BLWP/v1/Remainder',
+  // One seat's attestation of (round_id, claim_pk), and the attested set an
+  // entry names as `claim_key_attestation_ref` (§7, §23.1 step 0, v4.6.2).
+  claimKeyAttestation: 'BLWP/v1/ClaimKeyAttestation',
+  claimKeyAttestationSet: 'BLWP/v1/ClaimKeyAttestationSet',
 };
 
 /**
@@ -3623,6 +3631,16 @@ async function payInvoice(where, invoice, options = {}) {
 
 
 
+/** A Fedimint guardian's broadcast key: a compressed secp256k1 point. */
+const GUARDIAN_KEY_BYTES = 33;
+
+const guardianBytesOrder = (a, b) => {
+  for (let i = 0; i < Math.min(a.length, b.length); i++) if (a[i] !== b[i]) return a[i] - b[i];
+  return a.length - b.length;
+};
+const compareGuardian = (a, b) =>
+  guardianBytesOrder(a.federationId, b.federationId) || guardianBytesOrder(a.guardianKey, b.guardianKey);
+
 function encodeAdvert(a) {
   const w = new Writer();
   w.u8(TYPE_ADVERT);
@@ -3659,6 +3677,17 @@ function encodeAdvert(a) {
   w.u16(a.bondScriptTemplateVersion);
 
   w.bytes32(a.payoutPubkey);
+
+  // WHICH FEDERATIONS THIS OPERATOR IS A GUARDIAN OF, 5A.1 (v4.6.2): "(federation_id,
+  // guardian peer key) this operator runs". A paying round's federation is
+  // valid only if its threshold of guardians are bonded census nodes that say
+  // so here (§23.6, P3) - otherwise a creator names a federation that is all
+  // his. The key is the guardian's broadcast key, Fedimint's
+  // secp256k1::PublicKey: 33 bytes. Sorted by federation, then key, asserted.
+  // Carried in the signed body the bond commits to, so it changes with a new
+  // bond or not at all. Added before the first bond outside regtest exists.
+  w.vec(a.guardianOf, (g, ww) => { ww.bytes32(g.federationId); ww.bytes(g.guardianKey, GUARDIAN_KEY_BYTES); },
+    { sortedBy: compareGuardian });
   w.u64(a.timestamp);
   return w.finish();
 }
@@ -3689,6 +3718,7 @@ function decodeAdvert(bytes) {
     bondVout: r.u32(),
     bondScriptTemplateVersion: r.u16(),
     payoutPubkey: r.bytes32(),
+    guardianOf: r.vec((rr) => ({ federationId: rr.bytes32(), guardianKey: rr.bytes(GUARDIAN_KEY_BYTES) })),
     timestamp: r.u64(),
   };
   if (r.at !== bytes.length) throw new Error('trailing bytes after the advertisement');

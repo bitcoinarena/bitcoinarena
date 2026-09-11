@@ -47,7 +47,7 @@ const advert = {
   region: 'eu-west', capacityClass: 2, softwareHash: b32(3),
   settlementCapabilities: 0, lightningCapabilities: 0,
   bondTxid: new Uint8Array(32), bondVout: 0, bondScriptTemplateVersion: 1,
-  payoutPubkey: b32(4), timestamp: 1788700000000n,
+  payoutPubkey: b32(4), guardianOf: [], timestamp: 1788700000000n,
 };
 const signedAdvert = ed25519.sign(advertId(advert), operator);
 const transaction = bondTransaction(advert, { signature: signedAdvert });

@@ -80,7 +80,7 @@ const advertFor = (endpoint, nodePubkey = operatorPubkey) => ({
   // All zero: the bond is an output of the transaction that carries this body,
   // which is the only value expressible when the txid is not knowable yet.
   bondTxid: new Uint8Array(32), bondVout: 0, bondScriptTemplateVersion: 1,
-  payoutPubkey: b32(4), timestamp: 1788700000000n,
+  payoutPubkey: b32(4), guardianOf: [], timestamp: 1788700000000n,
 });
 
 /** The bond transaction a node would post, with its body actually signed. */

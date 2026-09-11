@@ -35,7 +35,7 @@ const advertFor = (n, over = {}) => ({
   roles: ['game'], endpoint: `ws://node${n}`, region: 'eu-west', capacityClass: 1,
   softwareHash: b32(2), settlementCapabilities: 0, lightningCapabilities: 0,
   bondTxid: new Uint8Array(32), bondVout: 0, bondScriptTemplateVersion: 1,
-  payoutPubkey: b32(3), timestamp: 1788700000000n, ...over,
+  payoutPubkey: b32(3), guardianOf: [], timestamp: 1788700000000n, ...over,
 });
 // THE OUTPUT IS THE ONE GENESIS SAYS IT MUST BE. The fixtures used to leave
 // the builder's filler key in place, which was invisible while nothing

@@ -250,7 +250,7 @@ out.tagged = {
     roles: ['game', 'verify'], endpoint: 'wss://node.example:443', region: 'eu-west',
     capacityClass: 2, softwareHash: b32(0x33), settlementCapabilities: 0,
     lightningCapabilities: 0, bondTxid: b32(0x44), bondVout: 0,
-    bondScriptTemplateVersion: 1, payoutPubkey: b32(0x55), timestamp: 1788700000000n,
+    bondScriptTemplateVersion: 1, payoutPubkey: b32(0x55), guardianOf: [], timestamp: 1788700000000n,
   };
   const moved = { ...one, endpoint: 'wss://somewhere-else.example:443' };
   out.advert = {

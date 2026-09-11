@@ -154,7 +154,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
       region: 'eu-west', capacityClass: 2, softwareHash: b32(3),
       settlementCapabilities: 0, lightningCapabilities: 0,
       bondTxid: new Uint8Array(32), bondVout: 0, bondScriptTemplateVersion: 1,
-      payoutPubkey: b32(4), timestamp: BigInt(Date.now()),
+      payoutPubkey: b32(4), guardianOf: [], timestamp: BigInt(Date.now()),
     };
     // BIP-340, because letter 26 made a node's identity ITS BOND KEY: every
     // signature a node makes is schnorr under the key its bond was posted

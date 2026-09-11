@@ -37,7 +37,7 @@ const advertFor = (n) => ({
   roles: ['game'], endpoint: `ws://node${n}`, region: 'eu-west', capacityClass: 1,
   softwareHash: b32(2), settlementCapabilities: 0, lightningCapabilities: 0,
   bondTxid: new Uint8Array(32), bondVout: 0, bondScriptTemplateVersion: 1,
-  payoutPubkey: b32(3), timestamp: 1788700000000n,
+  payoutPubkey: b32(3), guardianOf: [], timestamp: 1788700000000n,
 });
 const BOND = bondTransaction(advertFor(0x11), {
   previousTxid: b32(0xa1), previousVout: 0, value: 60000,

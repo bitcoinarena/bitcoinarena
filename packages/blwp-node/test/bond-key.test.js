@@ -167,7 +167,7 @@ test('a bond built with the template is recognised, and its key recomputes', () 
     nodePubkey: NODE, operatorId: 'operator', protocolVersions: [1], roles: ['game'],
     endpoint: 'ws://node', region: 'eu-west', capacityClass: 1, softwareHash: b32(2),
     settlementCapabilities: 0, lightningCapabilities: 0, bondTxid: new Uint8Array(32),
-    bondVout: 0, bondScriptTemplateVersion: 1, payoutPubkey: b32(3),
+    bondVout: 0, bondScriptTemplateVersion: 1, payoutPubkey: b32(3), guardianOf: [],
     timestamp: 1788700000000n,
   };
   const tx = parseTransaction(bondTransaction(advert, { outputKey: built.outputKey }));
@@ -358,7 +358,7 @@ test('a second node rebuilds the same output key and both control blocks from ge
     endpoint: 'ws://node', region: 'eu-west', capacityClass: 1, softwareHash: b32(2),
     settlementCapabilities: 0, lightningCapabilities: 0, bondTxid: new Uint8Array(32),
     bondVout: 0, bondScriptTemplateVersion: BOND_SCRIPT_TEMPLATE_VERSION,
-    payoutPubkey: b32(3), timestamp: 1788700000000n,
+    payoutPubkey: b32(3), guardianOf: [], timestamp: 1788700000000n,
   };
   const theirs = genesisFor('regtest');
   const rebuilt = bondOutputKey({
@@ -412,7 +412,7 @@ test('recognizeBond recomputes the output key and drops it from unchecked', () =
     endpoint: 'ws://node', region: 'eu-west', capacityClass: 1, softwareHash: b32(2),
     settlementCapabilities: 0, lightningCapabilities: 0, bondTxid: new Uint8Array(32),
     bondVout: 0, bondScriptTemplateVersion: BOND_SCRIPT_TEMPLATE_VERSION,
-    payoutPubkey: b32(3), timestamp: 1788700000000n,
+    payoutPubkey: b32(3), guardianOf: [], timestamp: 1788700000000n,
   };
   const tx = parseTransaction(bondTransaction(advert, { outputKey: key.outputKey }));
 
@@ -472,7 +472,7 @@ const bodyFor = (nodeKey, over = {}) => ({
   endpoint: 'ws://node', region: 'eu-west', capacityClass: 1, softwareHash: b32(2),
   settlementCapabilities: 0, lightningCapabilities: 0, bondTxid: new Uint8Array(32),
   bondVout: 0, bondScriptTemplateVersion: BOND_SCRIPT_TEMPLATE_VERSION,
-  payoutPubkey: b32(3), timestamp: 1788700000000n, ...over,
+  payoutPubkey: b32(3), guardianOf: [], timestamp: 1788700000000n, ...over,
 });
 
 /** A bond for a node key, over the network's set unless told otherwise. */

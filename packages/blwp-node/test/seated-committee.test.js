@@ -61,7 +61,7 @@ const advertFor = (key, n) => ({
   roles: ['game', 'settlement'], endpoint: `ws://node${n}`, region: 'eu-west',
   capacityClass: 1, softwareHash: b32(2), settlementCapabilities: 0, lightningCapabilities: 0,
   bondTxid: new Uint8Array(32), bondVout: 0, bondScriptTemplateVersion: 1,
-  payoutPubkey: b32(3), timestamp: 1788700000000n,
+  payoutPubkey: b32(3), guardianOf: [], timestamp: 1788700000000n,
 });
 /** A real bond for a node's OWN identity key - possible since step 1. */
 const bondOfKey = (key, n) => bondTransaction(advertFor(key, n), {

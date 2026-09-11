@@ -85,7 +85,7 @@ export function regtest(cli, { wallet = 'blwp', network = 'regtest' } = {}) {
       softwareHash: new Uint8Array(32).fill(2),
       settlementCapabilities: 0, lightningCapabilities: 0,
       bondTxid: new Uint8Array(32), bondVout: 0, bondScriptTemplateVersion: 1,
-      payoutPubkey: new Uint8Array(32).fill(3), timestamp: 1788700000000n,
+      payoutPubkey: new Uint8Array(32).fill(3), guardianOf: [], timestamp: 1788700000000n,
     };
     const id = advertId(advert);
     const body = joinSignedAdvert(encodeAdvert(advert), schnorr.sign(id, nodeSecret));

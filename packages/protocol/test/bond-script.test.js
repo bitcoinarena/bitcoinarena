@@ -220,7 +220,7 @@ test('the bond builder no longer writes a key derived from nothing', async () =>
     nodePubkey: NODE, operatorId: 'operator', protocolVersions: [1], roles: ['game'],
     endpoint: 'ws://node', region: 'eu-west', capacityClass: 1, softwareHash: b32(2),
     settlementCapabilities: 0, lightningCapabilities: 0, bondTxid: new Uint8Array(32),
-    bondVout: 0, bondScriptTemplateVersion: 1, payoutPubkey: b32(3),
+    bondVout: 0, bondScriptTemplateVersion: 1, payoutPubkey: b32(3), guardianOf: [],
     timestamp: 1788700000000n,
   };
   const built = bondOutputKey(inputs, { tweakPoint, combine });

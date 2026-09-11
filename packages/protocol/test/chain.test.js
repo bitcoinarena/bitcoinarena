@@ -132,7 +132,7 @@ const advert = (endpoint = 'wss://node.example:443') => ({
   roles: ['game', 'verify'], endpoint, region: 'eu-west', capacityClass: 2,
   softwareHash: b32(3), settlementCapabilities: 0, lightningCapabilities: 0,
   bondTxid: txidBytes(TX_AT_1), bondVout: 0, bondScriptTemplateVersion: 1,
-  payoutPubkey: b32(4), timestamp: 1788700000000n,
+  payoutPubkey: b32(4), guardianOf: [], timestamp: 1788700000000n,
 });
 
 test('an advertisement survives the wire unchanged', () => {
