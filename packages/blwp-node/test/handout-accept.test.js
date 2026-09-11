@@ -54,10 +54,10 @@ const contractFor = (node) => ({
   nodes: [node.round.pubkey, b32(9)],
 });
 
-const entryOn = (roundId, ref) => ({
+const entryOn = (roundId, ref, stakePoint = new Uint8Array(33)) => ({
   roundId, playerPubkey: b32(5), sessionPubkey: b32(6), stakeCommitment: b32(7),
   stakeMsat: 100000n, feeMsat: entryFeeMsat(100000n), donationMsat: 0n, joinTick: 0,
-  worldSecret: b32(0x5e), vssSharesRef: ref, stakePoint: new Uint8Array(33), feePreimage: new Uint8Array(32), stakeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, feeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, claimKeyAttestationRef: new Uint8Array(32),
+  worldSecret: b32(0x5e), vssSharesRef: ref, stakePoint, feePreimage: new Uint8Array(32), stakeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, feeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, claimKeyAttestationRef: new Uint8Array(32),
 });
 
 /**
@@ -127,7 +127,7 @@ test('an honest handout is accepted, and the entry that names it joins', async (
     const id = answer.bytes;
     assert.equal(toHex(id), toHex(handoutId(handout)), 'the node named a different handout');
 
-    const entry = entryOn(rid, id);
+    const entry = entryOn(rid, id, handout.commitments[0]);
     const joined = await post(node.port, '/entry', encodeEntryContract(entry));
     assert.equal(joined.status, 201, joined.text);
     assert.equal(toHex(joined.bytes), toHex(entryId(entry)));
@@ -137,6 +137,34 @@ test('an honest handout is accepted, and the entry that names it joins', async (
     const back = await fetch(`http://127.0.0.1:${node.port}/handout?id=${toHex(id)}`);
     assert.equal(back.status, 200);
     assert.deepEqual(new Uint8Array(await back.arrayBuffer()), encodeHandout(handout));
+  } finally { await node.close(); }
+});
+
+/**
+ * ONE POLYNOMIAL IS NOT ENOUGH: IT HAS TO BE THE STAKE'S (§23.1 step 2, F1).
+ * The handout door proves the shares are consistent; only the entry says what
+ * they must open to. A loser who dealt honest shares of some Q != P would pass
+ * the door, lose, watch reconstruction fail and be refunded at expiry. Before
+ * this check both entries below joined 201.
+ */
+test('an entry whose stake point is not its handout\'s A0 is refused, and so is one naming none', async () => {
+  const node = await serve(openStore(':memory:'), { port: 0, ...FUNDED });
+  try {
+    const contract = contractFor(node);
+    const rid = (await post(node.port, '/round', encodeRoundContract(contract))).bytes;
+    const handout = await handoutOf(rid, sha256(b32(6)).slice(0, 32), { seats: seatsFor(node) });
+    const accepted = await post(node.port, '/handout', encodeHandout(handout));
+    assert.equal(accepted.status, 201, accepted.text);
+
+    const elsewhere = new Uint8Array(handout.commitments[1]);
+    const wrong = await post(node.port, '/entry',
+      encodeEntryContract(entryOn(rid, accepted.bytes, elsewhere)));
+    assert.notEqual(wrong.status, 201, 'an entry whose shares open to another secret joined');
+    assert.match(wrong.text, /A0 is not the entry's stake point/);
+
+    const none = await post(node.port, '/entry', encodeEntryContract(entryOn(rid, accepted.bytes)));
+    assert.notEqual(none.status, 201, 'an entry with shares and no stake point joined');
+    assert.match(none.text, /names no stake point/);
   } finally { await node.close(); }
 });
 

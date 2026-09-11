@@ -585,6 +585,8 @@ export function entryFor(round, { playerPubkey, random, joinTick = 0, stake } = 
     throw new Error('a player is 32 bytes of key');
   if (stake && (!stake.stakeCommitment || !stake.vssSharesRef))
     throw new Error('that is not a dealt stake: it names no commitment or no shares');
+  if (stake && stake.vssSharesRef.some((b) => b !== 0) && !stake.stakePoint)
+    throw new Error('that stake publishes shares and names no stake point, so no seat could check them');
   return {
     playerPubkey,
     stakeCommitment: stake ? stake.stakeCommitment : random(32),
@@ -594,10 +596,11 @@ export function entryFor(round, { playerPubkey, random, joinTick = 0, stake } = 
     // the signed bytes either way - so an entry that has shares and one that
     // has none can never be the same entry id.
     vssSharesRef: stake ? stake.vssSharesRef : NO_SHARES,
-    // §7's stake-lock fields (v4.6.2). No stake lock is wired into the page
-    // yet - the hold invoice is what ships - so each names none, in zeros,
-    // said here rather than defaulted by the encoder.
-    stakePoint: new Uint8Array(33),
+    // §7's stake-lock fields (v4.6.2). A dealt stake names its point - the
+    // handout's A0, which every seat checks the shares against (F1). No stake
+    // lock is wired into the page yet - the hold invoice is what ships - so
+    // the rest name none, in zeros, said here rather than defaulted.
+    stakePoint: stake && stake.stakePoint ? stake.stakePoint : new Uint8Array(33),
     feePreimage: new Uint8Array(32),
     stakeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n },
     feeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n },
@@ -684,6 +687,9 @@ export async function stakeFor(round, { seats, curve, random, playerPubkey, need
     preimage,
     stakeCommitment: sha256(preimage),
     vssSharesRef: dealt.id,
+    // §23.1 step 1 (v4.6.2): P.G, which IS the handout's constant commitment
+    // A0 - so every seat can check the shares open to this stake (F1).
+    stakePoint: dealt.handout.commitments[0],
     handout: dealt.handout,
     // Ready to POST to every seat, because a handout no seat accepted is a
     // reference the entry cannot name.

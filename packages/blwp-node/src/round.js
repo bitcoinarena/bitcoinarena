@@ -29,6 +29,8 @@ import { toHex } from '../../protocol/src/hash.js';
 import { feeMatchesEntry } from '../../protocol/src/fee.js';
 import { OPEN, CLOSED, nodeIdentity } from './store.js';
 import { receiptsNeeded } from '../../protocol/src/genesis.js';
+import { decodeHandout } from '../../protocol/src/handout.js';
+import { stakePointIsTheHandouts } from '../../protocol/src/contracts.js';
 
 /**
  * 5-of-7 unless the round's contract is the 2-slot test genesis.
@@ -358,6 +360,12 @@ export class Round {
           + 'publish the handout first, and it is refused if it is not one polynomial');
       if (!held.roundId.every((b, i) => b === contract.roundId[i]))
         throw new Error('that handout was published for another round');
+      // AND THE SHARES OPEN TO THE ENTRY'S OWN STAKE POINT (§23.1 step 2, F1).
+      // The door checked that the shares are ONE polynomial; this checks it is
+      // the right one. Without it a player deals consistent shares of Q != P,
+      // loses, watches reconstruction fail, and takes the stake back.
+      const same = stakePointIsTheHandouts(contract, decodeHandout(new Uint8Array(held.bytes)));
+      if (!same.ok) throw new Error(same.why);
     }
 
     // Same as the round above: the id is the hash of the contract, so the same
