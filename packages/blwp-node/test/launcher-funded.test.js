@@ -162,3 +162,21 @@ test('main.js itself wires the rule: an unnamed paying round is 402; a named one
     assert.equal(entry.status, 402, `main.js with no lnd seated an entry it cannot hold the stake of: ${entry.status} ${entry.text}`);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('a round named in BLWP_FUNDED_ROUNDS_FILE is funded without a restart - the file is read on every ask', async () => {
+  const { writeFileSync, appendFileSync } = await import('node:fs');
+  const dir = mkdtempSync(join(tmpdir(), 'funded-file-'));
+  const file = join(dir, 'rounds');
+  writeFileSync(file, '# rounds this operator funds, one id per line\n');
+  const node = await serve(openStore(':memory:'), {
+    port: 0, ...READY, lightning: unpaidPort(), funded: fundingFromEnv({ BLWP_FUNDED_ROUNDS_FILE: file }),
+  });
+  try {
+    const c = contractFor([node.round.pubkey, schnorr.getPublicKey(b32(9))]);
+    const before = await post(node.port, '/round', encodeRoundContract(c));
+    assert.equal(before.status, 402, `a round the file does not name was opened: ${before.status}`);
+    appendFileSync(file, `${toHex(roundId(c)).toUpperCase()}\n`);   // named after start, in capitals
+    const after = await post(node.port, '/round', encodeRoundContract(c));
+    assert.equal(after.status, 201, `a round named in the file after start was refused: ${after.status} ${after.text}`);
+  } finally { await node.close(); rmSync(dir, { recursive: true, force: true }); }
+});
