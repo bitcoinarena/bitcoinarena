@@ -28,7 +28,18 @@
 // BIP-340's verifier, which is the same one a taproot output uses.
 import { taggedHash, bytesToBigInt, toHex } from './hash.js';
 import { FIELD, scalarTo32, scalarFrom32 } from './shares.js';
-import { bindingFactors, groupCommitment, interpolatingValue } from './frost.js';
+import { bindingFactors, groupCommitment, interpolatingValue, nonceGenerate } from './frost.js';
+
+/**
+ * THE TAPROOT CIPHERSUITE'S CONTEXT STRING - Zcash Foundation's frost-secp256k1-tr
+ * (v3.0.0). RFC 9591's secp256k1 suite is `frost.js`'s CONTEXT; the two differ in
+ * H1, H3, H4 and H5 by this string and in H2 by BIP-340's challenge. Signing
+ * under it reproduces the ZF vectors byte for byte (zf-frost-tr.test.js).
+ */
+export const TR_CONTEXT = 'FROST-secp256k1-SHA256-TR-v1';
+
+/** A nonce under the taproot suite's H3: what every BIP-340 signer here draws. */
+export const nonceGenerate340 = (randomBytes, share) => nonceGenerate(randomBytes, share, TR_CONTEXT);
 
 /** R.x || z. */
 export const SIGNATURE_BYTES = 64;
@@ -75,7 +86,7 @@ export function evenGroupSecret(secret, curve) {
 export function signShare340({ id, share, groupPublicKey, nonces, message, commitments, curve }) {
   if (!hasEvenY(groupPublicKey))
     throw new Error('that group key has odd y: normalise the secret when it is dealt, not here');
-  const factors = bindingFactors({ groupPublicKey, commitments, message });
+  const factors = bindingFactors({ groupPublicKey, commitments, message, context: TR_CONTEXT });
   const mine = factors.find((f) => String(f.id) === String(id));
   if (!mine) throw new Error(`participant ${id} did not commit to this signature`);
 
@@ -93,7 +104,7 @@ export function signShare340({ id, share, groupPublicKey, nonces, message, commi
 
 /** R.x from the commitments, z as the plain sum: a 64-byte BIP-340 signature. */
 export function aggregate340({ commitments, message, groupPublicKey, shares, curve }) {
-  const factors = bindingFactors({ groupPublicKey, commitments, message });
+  const factors = bindingFactors({ groupPublicKey, commitments, message, context: TR_CONTEXT });
   const commitment = groupCommitment({ commitments, factors, curve });
   let z = 0n;
   for (const s of shares) z = mod(z + s);

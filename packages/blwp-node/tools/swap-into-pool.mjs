@@ -30,7 +30,8 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { schnorr } from '@noble/curves/secp256k1.js';
-import { trustedDealerSplit, nonceGenerate } from '../../protocol/src/frost.js';
+import { trustedDealerSplit } from '../../protocol/src/frost.js';
+import { nonceGenerate340 } from '../../protocol/src/frost-bip340.js';
 import { evenGroupSecret, signShare340, aggregate340 } from '../../protocol/src/frost-bip340.js';
 import { poolOutput } from '../../protocol/src/pool.js';
 import { tapLeafHash, tapBranchHash, tapTweak, TAPLEAF_VERSION } from '../../protocol/src/bond-script.js';
@@ -101,8 +102,8 @@ try {
       const gk = fromHex(s.groupPublicKey);
       const seats = s.shares.filter((x) => ids.includes(x.id)).map((x) => {
         const share = BigInt('0x' + x.share);
-        const hiding = nonceGenerate(rand(32), share);
-        const binding = nonceGenerate(rand(32), share);
+        const hiding = nonceGenerate340(rand(32), share);
+        const binding = nonceGenerate340(rand(32), share);
         return { id: x.id, share, hiding, binding, commitment: { id: x.id, hiding: feldmanGroup.pointFromScalar(hiding), binding: feldmanGroup.pointFromScalar(binding) } };
       });
       const cs = seats.map((x) => x.commitment);

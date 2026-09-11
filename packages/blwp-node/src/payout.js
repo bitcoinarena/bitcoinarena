@@ -26,7 +26,7 @@ import { tapSighash, serializeSpend } from '../../protocol/src/bond-spend.js';
 import { parseTransaction } from '../../protocol/src/tx.js';
 import { poolOutput, poolShare, poolSigningKey, poolWitness } from '../../protocol/src/pool.js';
 import { signShare340, aggregate340, enoughToSign } from '../../protocol/src/frost-bip340.js';
-import { nonceGenerate } from '../../protocol/src/frost.js';
+import { nonceGenerate340 } from '../../protocol/src/frost-bip340.js';
 import { receiptsNeeded } from '../../protocol/src/threshold.js';
 import { decodeRoundContract } from '../../protocol/src/contracts.js';
 import { tableFor, signPayoutTable, verifiedTable, splitSignedTable } from './payout-table.js';
@@ -663,8 +663,8 @@ export class Payouts {
     const groupPublicKey = poolSigningKey(out.outputKey);
     const round1 = signers.map((s) => {
       const share = poolShare({ share: s.share, tweak: out.tweak, negated: out.negated });
-      const hiding = nonceGenerate(this.random(32), share);
-      const binding = nonceGenerate(this.random(32), share);
+      const hiding = nonceGenerate340(this.random(32), share);
+      const binding = nonceGenerate340(this.random(32), share);
       return { id: s.id, share, hiding, binding,
         commitment: { id: s.id,
           hiding: this.curve.pointFromScalar(hiding),

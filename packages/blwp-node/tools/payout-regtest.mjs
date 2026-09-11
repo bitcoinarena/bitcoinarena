@@ -33,7 +33,7 @@ import { evenGroupSecret } from '../../protocol/src/frost-bip340.js';
 import { poolOutput, poolShare, poolSigningKey, poolWitness } from '../../protocol/src/pool.js';
 import { tapSighash, serializeSpend } from '../../protocol/src/bond-spend.js';
 import { signShare340, aggregate340 } from '../../protocol/src/frost-bip340.js';
-import { nonceGenerate } from '../../protocol/src/frost.js';
+import { nonceGenerate340 } from '../../protocol/src/frost-bip340.js';
 import { payoutOutputs } from '../../protocol/src/payout-spend.js';
 import { payToKey } from '../../protocol/src/payout-spend.js';
 import { DELIVERED, FORFEIT } from '../../protocol/src/payout.js';
@@ -204,8 +204,8 @@ async function main() {
     const gk = poolSigningKey(out.outputKey);
     const r1 = dealt.shares.slice(0, 4).map((s) => {
       const share = poolShare({ share: s.share, tweak: out.tweak, negated: out.negated });
-      const hiding = nonceGenerate(rand(32), share);
-      const binding = nonceGenerate(rand(32), share);
+      const hiding = nonceGenerate340(rand(32), share);
+      const binding = nonceGenerate340(rand(32), share);
       return { id: s.id, share, hiding, binding,
         commitment: { id: s.id,
           hiding: feldmanGroup.pointFromScalar(hiding),

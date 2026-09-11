@@ -16,7 +16,7 @@ import { readFileSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { signShare340, aggregate340 } from '../../protocol/src/frost-bip340.js';
-import { nonceGenerate } from '../../protocol/src/frost.js';
+import { nonceGenerate340 } from '../../protocol/src/frost-bip340.js';
 import { toHex, fromHex } from '../../protocol/src/hash.js';
 import { feldmanGroup, tweakPoint } from '../src/curve.js';
 
@@ -36,8 +36,8 @@ if (seats.length !== wanted.length) throw new Error(`no such seat among ${keys.s
 // harness that holds both files - the arithmetic is each seat's own.
 const signers = seats.map((s) => {
   const share = BigInt('0x' + s.share);
-  const hiding = nonceGenerate(new Uint8Array(randomBytes(32)), share);
-  const binding = nonceGenerate(new Uint8Array(randomBytes(32)), share);
+  const hiding = nonceGenerate340(new Uint8Array(randomBytes(32)), share);
+  const binding = nonceGenerate340(new Uint8Array(randomBytes(32)), share);
   return { id: s.seat, share, hiding, binding,
     commitment: { id: s.seat, hiding: curve.pointFromScalar(hiding), binding: curve.pointFromScalar(binding) } };
 });

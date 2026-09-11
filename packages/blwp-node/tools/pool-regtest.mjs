@@ -24,7 +24,8 @@ import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { schnorr } from '@noble/curves/secp256k1.js';
 
-import { trustedDealerSplit, nonceGenerate } from '../../protocol/src/frost.js';
+import { trustedDealerSplit } from '../../protocol/src/frost.js';
+import { nonceGenerate340 } from '../../protocol/src/frost-bip340.js';
 import { signShare340, aggregate340, evenGroupSecret } from '../../protocol/src/frost-bip340.js';
 import { poolOutput, poolShare, poolSigningKey, poolWitness } from '../../protocol/src/pool.js';
 import { tapSighash, serializeSpend } from '../../protocol/src/bond-spend.js';
@@ -74,8 +75,8 @@ function sign({ dealt, out, sighash, who }) {
       share: dealt.shares.find((s) => s.id === id).share,
       tweak: out.tweak, negated: out.negated,
     });
-    const hiding = nonceGenerate(rand(32), share);
-    const binding = nonceGenerate(rand(32), share);
+    const hiding = nonceGenerate340(rand(32), share);
+    const binding = nonceGenerate340(rand(32), share);
     return { id, share, hiding, binding,
       commitment: { id,
         hiding: feldmanGroup.pointFromScalar(hiding),

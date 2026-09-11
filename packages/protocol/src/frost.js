@@ -98,14 +98,30 @@ function expandMessageXmd(message, dst, lengthBytes) {
  * bias smaller than anything that could be exploited, which is the reason the
  * RFC says 48.
  */
-const hashToScalar = (label, message) =>
-  mod(bytesToBigInt(expandMessageXmd(message, utf8Encode(CONTEXT + label), 48)));
+const hashToScalar = (label, message, context = CONTEXT) =>
+  mod(bytesToBigInt(expandMessageXmd(message, utf8Encode(context + label), 48)));
 
-export const H1 = (m) => hashToScalar('rho', m);
-export const H2 = (m) => hashToScalar('chal', m);
-export const H3 = (m) => hashToScalar('nonce', m);
-export const H4 = (m) => sha256(cat(utf8Encode(CONTEXT + 'msg'), m));
-export const H5 = (m) => sha256(cat(utf8Encode(CONTEXT + 'com'), m));
+/**
+ * H1..H5 UNDER A CIPHERSUITE'S CONTEXT STRING. RFC 9591's secp256k1 suite by
+ * default; the taproot suite (`frost-bip340.js`, Zcash Foundation's
+ * frost-secp256k1-tr) differs from it only here - measured: with this string
+ * changed and nothing else, its published nonces, binding factors, signature
+ * shares and signature all come out byte for byte.
+ */
+export const hashesFor = (context) => ({
+  H1: (m) => hashToScalar('rho', m, context),
+  H2: (m) => hashToScalar('chal', m, context),
+  H3: (m) => hashToScalar('nonce', m, context),
+  H4: (m) => sha256(cat(utf8Encode(context + 'msg'), m)),
+  H5: (m) => sha256(cat(utf8Encode(context + 'com'), m)),
+});
+const RFC_HASHES = hashesFor(CONTEXT);
+
+export const H1 = RFC_HASHES.H1;
+export const H2 = RFC_HASHES.H2;
+export const H3 = RFC_HASHES.H3;
+export const H4 = RFC_HASHES.H4;
+export const H5 = RFC_HASHES.H5;
 
 /**
  * A NONCE FROM A SECRET AND SOME RANDOMNESS (section 4.1).
@@ -115,8 +131,8 @@ export const H5 = (m) => sha256(cat(utf8Encode(CONTEXT + 'com'), m));
  * nonce - and a nonce reused across two signatures over different messages
  * hands over the signing share.
  */
-export const nonceGenerate = (randomBytes, share) =>
-  H3(cat(randomBytes, scalarTo32(share)));
+export const nonceGenerate = (randomBytes, share, context = CONTEXT) =>
+  hashesFor(context).H3(cat(randomBytes, scalarTo32(share)));
 
 /** SerializeScalar of an identifier, per the ciphersuite: 32 big-endian bytes. */
 const idBytes = (i) => scalarTo32(BigInt(i));
@@ -137,13 +153,14 @@ export function encodeCommitmentList(commitments) {
 }
 
 /** Section 4.4: one binding factor per participant, over the whole list. */
-export function bindingFactors({ groupPublicKey, commitments, message }) {
-  const prefix = cat(groupPublicKey, H4(message), H5(encodeCommitmentList(commitments)));
+export function bindingFactors({ groupPublicKey, commitments, message, context = CONTEXT }) {
+  const suite = hashesFor(context);
+  const prefix = cat(groupPublicKey, suite.H4(message), suite.H5(encodeCommitmentList(commitments)));
   const sorted = [...commitments].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   return sorted.map((c) => ({
     id: c.id,
     input: cat(prefix, idBytes(c.id)),
-    factor: H1(cat(prefix, idBytes(c.id))),
+    factor: suite.H1(cat(prefix, idBytes(c.id))),
   }));
 }
 

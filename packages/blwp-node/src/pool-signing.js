@@ -38,7 +38,8 @@ import { winnings, payoutOutputs, DUST_SATS } from '../../protocol/src/payout-sp
 import { tapSighash } from '../../protocol/src/bond-spend.js';
 import { poolOutput, poolShare, poolSigningKey, poolOwns } from '../../protocol/src/pool.js';
 import { signShare340 } from '../../protocol/src/frost-bip340.js';
-import { nonceGenerate, encodeCommitmentList } from '../../protocol/src/frost.js';
+import { encodeCommitmentList } from '../../protocol/src/frost.js';
+import { nonceGenerate340 } from '../../protocol/src/frost-bip340.js';
 import { decodePlayerResult, splitSignedResult } from '../../protocol/src/result.js';
 import { toHex } from '../../protocol/src/hash.js';
 import { scalarFrom32, scalarTo32 } from '../../protocol/src/shares.js';
@@ -269,8 +270,8 @@ export class PoolSigning {
       return { ok: true, commitment: held.commitment, id: this.seat.id, again: true };
     }
 
-    const hiding = nonceGenerate(random(32), spend.share);
-    const binding = nonceGenerate(random(32), spend.share);
+    const hiding = nonceGenerate340(random(32), spend.share);
+    const binding = nonceGenerate340(random(32), spend.share);
     const commitment = {
       id: this.seat.id,
       hiding: this.curve.pointFromScalar(hiding),
