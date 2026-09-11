@@ -9,6 +9,8 @@
 //
 //     BLWP_BITCOIND_URL      the bitcoind RPC, e.g. http://127.0.0.1:8332/
 //     BLWP_BITCOIND_COOKIE   the path of its .cookie file
+//     BLWP_FUNDED_ROUNDS     round ids this operator funds (paying rounds only)
+//     BLWP_FUNDED_ROUNDS_FILE  the same, one id per line, read on every ask
 //
 // Both or neither. With them the daemon can find the pool's output, send and
 // look up a payout, read each round's beacon, and derive each round's census -
@@ -29,6 +31,7 @@ import { chainSpendOver } from './pool-watch.js';
 import { chainBeacon } from './beacon-source.js';
 import { PAYOUT_QUEUED } from './payout.js';
 import { lightningFromEnv } from './lnd-settings.js';
+import { fundingFromEnv } from './funding.js';
 import { decodeRoundContract } from '../../protocol/src/contracts.js';
 
 const port = Number(process.argv[2] || 8080);
@@ -54,7 +57,9 @@ if (!ln.ok) {
 }
 
 const db = openStore(path);
-const options = { port, host };
+// WHAT THIS DAEMON FUNDS (M3.3-31): the paying rounds its operator names, and
+// entries into them - off by default, so an unnamed round is still 402.
+const options = { port, host, funded: fundingFromEnv(process.env) };
 if (ln.given) {
   options.lightning = ln.lightning;
   if (ln.preflight) options.preflight = ln.preflight;

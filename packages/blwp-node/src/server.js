@@ -220,6 +220,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     port: lightning, preimageFor: preimageFor || fromTheCommittee,
   });
 
+  // WHAT `funded` MAY KNOW OF THIS NODE (M3.3-31): whether it holds a round, and
+  // whether it reaches Lightning - the launcher's rule funds an entry only into
+  // a paying round this node holds and can hold the stake of.
+  const fundingView = {
+    holds: (roundIdBytes) => round.get(roundIdBytes),
+    get reachesLightning() { return custody.reaches; },
+  };
+
   /**
    * A HOLD GONE PAST ITS HTLC'S EXPIRY IS WRITTEN EXPIRED (M3.3-30), on this
    * node's own chain height - never on what Lightning later calls the invoice.
@@ -670,7 +678,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const contract = decodeRoundContract(await read(req));
         // Asked BEFORE anything is decoded into the database, so a refusal
         // costs a parse and nothing else.
-        if (!funded({ kind: 'round', contract }))
+        if (!funded({ kind: 'round', contract, node: fundingView }))
           return text(res, 402, 'this node stores nothing for a round nobody has funded');
 
         // A ROUND THAT ASKS A STAKE, ON A NODE THAT HOLDS STAKES, IS OPENED ONLY
@@ -777,7 +785,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
 
       if (req.method === 'POST' && url.pathname === '/entry') {
         const contract = decodeEntryContract(await read(req));
-        if (!funded({ kind: 'entry', contract }))
+        if (!funded({ kind: 'entry', contract, node: fundingView }))
           return text(res, 402, 'this node stores nothing for an entry nobody has funded');
         const seated = round.enter(contract);
 

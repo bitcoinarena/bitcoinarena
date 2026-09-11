@@ -40,6 +40,7 @@ import { beaconFromChain, medianTimePast } from '../../protocol/src/beacon.js';
 import { regtest } from './regtest-bond.mjs';
 import { chainOf } from '../../protocol/tools/chainview.js';
 import { bitcoindRpc } from '../src/chain-rpc.js';
+import { operatorFunding } from '../src/funding.js';
 import { serve } from '../src/server.js';
 import { lightningFromEnv } from '../src/lnd-settings.js';
 import { toHex } from '../../protocol/src/hash.js';
@@ -68,7 +69,11 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
                                      // A PAYING ROUND, for a rehearsal with Lightning. Every
                                      // existing caller asks for none and gets a free round.
                                      stakeMsat = 0n } = {}) {
-  const funded = () => true;
+  // WHAT THESE DAEMONS FUND (M3.3-31): a PAYING round goes through the
+  // launcher's own rule - the round its operator names, and entries into a
+  // paying round the node holds when it reaches Lightning - not a harness's
+  // `() => true`. A free round keeps `() => true`: the launcher opens none.
+  const funded = stakeMsat > 0n ? operatorFunding() : () => true;
 
   // THE BEACON IS THE CHAIN'S OR THERE IS NONE.
   //
@@ -410,6 +415,9 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   // WHAT IS OPENED IS CLOSED, even when the round is refused. A daemon left
   // listening after a throw is a port nobody frees and a test run that never
   // exits - measured, the first version of this hung the suite.
+  // THE OPERATOR NAMES ITS ROUND, now that the contract that names both
+  // daemons gives it an id - what BLWP_FUNDED_ROUNDS does for main.js.
+  if (funded.nameRound) funded.nameRound(roundId(contract));
   const body = encodeRoundContract(contract);
   const opened = [];
   try {
