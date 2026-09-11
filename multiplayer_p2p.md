@@ -2,8 +2,21 @@
 ## Providerless P2P Multiplayer Protocol
 
 **Status:** architecture concept, security-hardened
-**Version:** 4.6.1 (supersedes v4.4/v4.5 and the earlier v1.x P2P drafts; all remain in git history)
-**Date:** 2026-08-31
+**Version:** 4.6.2 (supersedes v4.4/v4.5 and the earlier v1.x P2P drafts; all remain in git history)
+**Date:** 2026-09-11
+
+> **Revision 4.6.2 — the custody construction is fixed (the owner 2026-09-11).**
+> A stake no longer waits as a held HTLC in a Lightning node. It waits as a
+> **stake lock**: a contract inside a Fedimint-class federation, enforced by
+> the guardians' consensus, that only the round's settlement committee can
+> claim, only the player can take back, and that returns to the player on
+> expiry. Lightning is used only to deposit into and withdraw from the
+> federation, through any of several gateways, each payment atomic. No single
+> node is needed and no single node can take money. There is no pool wallet:
+> each round settles in one atomic transaction from losers' locks to
+> qualifiers' payout contracts. Changed: §6 fields, §9, §13C, §16, §22, §23,
+> §24A, the worked example, §27A, §28, §32, §35A. Details and the rehearsal
+> that must pass: `FEDERATION.md`.
 
 > **Revision 4.6.1 — four release blockers closed.** The v4.6 architecture is
 > unchanged; four under-specified places that would have blocked a real-money
@@ -1285,8 +1298,9 @@ RoundContract {
   equivocation_rule_hash           // v4.6
   no_quorum_rule_hash              // v4.6
 
-  custody_rules                    // v4.6, see §23
-  htlc_cltv_days
+  custody_rules                    // v4.6, see §23; names FEDERATION (§23.6)
+  federation_id                    // v4.6.2: the federation holding the stake locks
+  stake_expiry_blocks              // v4.6.2: replaces htlc_cltv_days (§23.1)
   claim_window_days
 
   disconnect_rule
@@ -1369,8 +1383,8 @@ committee (§23.1).
 2. committee_time reached          beacon value appears
 3. committees selected + verified  client recomputes them itself (§5A.11)
 4. player builds Entry Contract    P generated, VSS shares to THIS committee
-5. hold invoice issued             by the settlement committee's endpoint
-6. player's wallet pays            HTLC held, not settled
+5. player's wallet pays a deposit  into the federation, via any listed gateway
+6. client locks the stake          stake lock in the federation (§23.1), not settled
 7. >=5 EntryReceipts               STAKE_COMMITTED
 8. play
 ```
@@ -1380,7 +1394,7 @@ A player is financially admitted if:
 ```text
 valid Entry Contract
 + built against the round's published, verified committees
-+ stake committed as a held HTLC (§23)
++ stake committed as a stake lock in the round's federation (§23)
 + 5-of-7 game/verify nodes issued an EntryReceipt
 + between entry_open_time and entry_close_time
 ```
@@ -1571,7 +1585,7 @@ signatures:
 1. If the disagreement is explained by proven player equivocation (§13B) →
    `FORFEIT`.
 2. Otherwise the fault is on the operator side → the entry becomes `VOID`,
-   the stake is refunded by letting the HTLC expire, and the entry is
+   the stake is refunded by forfeit or by the stake lock's expiry, and the entry is
    excluded from the pool and from the payout table.
 3. Nodes whose signature contradicts a replay of the canonical transcript
    are slashed.
@@ -1629,7 +1643,7 @@ determines the final state; the player normally becomes `FAILED` or
 
 **After commitment, before the first financial tick:** if fewer than 5
 game/verify nodes are available, the entry becomes `ENTRY_VOID` and the
-stake is refunded by HTLC expiry.
+stake is refunded by forfeit or by the stake lock's expiry (§23.2).
 
 **During active play:** with 5-of-7 available, continue. Below threshold,
 protocol progress pauses; a short grace period is allowed. No finalized
@@ -1898,13 +1912,22 @@ Residual assumptions:
     -> can corrupt result finality
 
 5-of-7 malicious SETTLEMENT slots
-    -> can corrupt or censor settlement of in-transit funds
+    -> can corrupt or censor settlement of that round's stake locks
+
+threshold of the round's federation guardians (v4.6.2, §23.6)
+    -> can take the federation's reserves, every round's locks included
+federation halted below its threshold
+    -> every lock freezes, refunds included; there is no unilateral exit
 ```
 
-Both require five bonded operators to collude and forfeit five bonds, in a
-round whose committee they could not choose (§5A.5) and in which they may
-not be playing (§5A.13). This is the same trust class as a Fedimint
-federation, stated without cosmetics.
+The first two require five bonded operators to collude and forfeit five
+bonds, in a round whose committee they could not choose (§5A.5) and in which
+they may not be playing (§5A.13). The last two are the federation's own
+trust statement, stated without cosmetics: they are why the guardians MUST
+be independent bonded census operators, why a round names its federation,
+and why a federation's exposure is capped alongside §5A.10's stake ceiling.
+Gateways are not in this list: a gateway can refuse a deposit or a
+withdrawal, never keep one.
 
 ---
 
@@ -2175,38 +2198,61 @@ been removed from this document.
    **5-of-7**) and encrypts one share to each settlement-committee member;
    `vss_shares_ref` points at the published shares. Verifiability means each
    node can confirm its share is consistent without reconstructing `P`.
-3. The settlement committee's Lightning endpoint (§23.6) issues a **hold
-   invoice** for `payment_hash`.
-4. The player's wallet pays it. The HTLC is now **in flight** — accepted but
-   not settled. It is in nobody's balance.
-5. `STAKE_COMMITTED` is recorded once ≥5 settlement nodes have seen the held
-   HTLC. Play begins only after this.
+3. The player's wallet pays a Lightning **deposit invoice** for the stake
+   into the round's federation (`federation_id`, §23.6), made through any
+   gateway the federation lists. The gateway pays the federation first and
+   learns the preimage only from its consensus, so it cannot keep the
+   payment; a gateway that fails is replaced by the next.
+4. The player's client locks the received amount — in the same federation
+   transaction where it can — as a **stake lock**, a contract inside the
+   federation:
 
-CLTV is sized in **days**, comfortably beyond round + objection window +
-result window + claim window, so that delay is never loss.
+   ```text
+   payment_image  payment_hash
+   amount         net stake (§22A); the node fee in a second lock, same keys
+   claim_pk       the round's settlement committee's threshold group key
+   refund_pk      the player's key, named by the Entry Contract
+   expiration     federation block height + stake_expiry_blocks
+   ```
+
+   It is in nobody's balance. The federation's consensus lets it go only the
+   three ways of §23.2.
+5. `STAKE_COMMITTED` is recorded once ≥5 settlement nodes have seen the lock
+   confirmed by the federation. Play begins only after this.
+
+`stake_expiry_blocks` is sized in **days** of blocks, comfortably beyond
+round + objection window + result window + claim window, so that delay is
+never loss.
 
 ## 23.2 What each outcome does
 
 | Outcome | Action | Requires |
 |---|---|---|
-| `DELIVERED` (qualifying) | Cancel the HTLC → stake returns to the player | 5-of-7 settlement signatures; cancelling can only return money to its owner |
-| `FAILED` / `FORFEIT` | Settle the HTLC → stake enters the pool wallet | `FINAL` result + elapsed `W` + no valid objection + ≥5 preimage shares released + 5-of-7 settlement signature |
-| `VOID` / `ENTRY_VOID` | Do nothing | The HTLC expires and the wallet is refunded automatically |
-| Payout to a qualifier | Lightning payment from the pool wallet | Final payout table (5-of-7) + 5-of-7 settlement signature |
+| `DELIVERED` (qualifying) | Forfeit the stake lock → it returns to the player's key | 5-of-7 settlement signature; a forfeit can only return money to its owner |
+| `FAILED` / `FORFEIT` | Claim the stake lock inside the round's settlement transaction | `FINAL` result + elapsed `W` + no valid objection + ≥5 preimage shares released + 5-of-7 settlement signature over that transaction |
+| `VOID` / `ENTRY_VOID` | Forfeit at once; if nobody acts, the lock expires | Nothing — after expiry only the player's key can take it |
+| Payout to a qualifier | A payout contract in the same settlement transaction, redeemable only by the qualifier's key | Final payout table (5-of-7) + 5-of-7 settlement signature |
+
+The **settlement transaction** is one atomic federation transaction per
+round: every loser's stake lock and every fee lock in; one payout contract
+per qualifier and per paid node slot out. Every settlement node rebuilds it
+from the public payout table and signs only the transaction it rebuilt.
 
 The default path — nobody acting — is always the refund. That is what makes
-infrastructure failure safe.
+infrastructure failure safe. It holds while the federation runs; a halted
+federation is §22's residual, not a refund path.
 
 ## 23.3 Why a loser cannot escape
 
-The money left the player's wallet at entry and sits in a held HTLC. Every
+The money left the player's wallet at entry and sits in a stake lock. Every
 step afterwards — attestation, objection window, share release, settlement
 — runs without the player's cooperation. Closing the browser, refusing to
 answer, or deleting the client changes nothing.
 
 ## 23.4 Why a committee cannot quietly take it
 
-Settling a loser's HTLC requires reconstructing `P`, which requires 5 of the
+Claiming a loser's stake lock requires the committee's threshold signature
+and reconstructing `P`, which requires 5 of the
 7 shares, which the mechanical rule releases only against a `FINAL` result —
 and finality requires 5-of-7 game/verify signatures plus an objection window
 that anyone in the world may use to disprove the result by replay (§13A).
@@ -2214,30 +2260,46 @@ The two committees are separately selected and overlap-minimized (§5A.9),
 every participant is bonded, and every one of these steps leaves a signed
 artifact.
 
-## 23.5 The pool wallet
+## 23.5 No pool wallet *(v4.6.2)*
 
-Settled loser stakes accumulate in a wallet whose every operation requires a
-**5-of-7 threshold signature** of the settlement committee. No node and no
-minority can move a satoshi, at any moment, including during payout. Fees
-and donations are paid from separate entry-time commitments, not from the
-pool wallet, so a fee dispute can never touch player stakes.
+The loser pool is per round (§18), so it never has to rest anywhere. It
+exists only as the settlement transaction, which moves losers' locks straight
+into qualifiers' payout contracts. No node and no minority holds a pooled
+balance at any moment — there is none. The node fee travels in its own lock
+(§23.1) and leaves by the same transaction, so a fee dispute never touches
+another player's stake. Donations are not locked in the federation; how a
+§27A.4 recipient is paid under this construction is an open ruling.
 
 ## 23.6 Construction and maturity — stated honestly
 
 Two constructions satisfy the property "no single party can move funds":
 
 - **Threshold-signed Lightning node** (FROST-style Schnorr over channel
-  operations, VLS-style remote signing generalized): the cleanest fit, and
-  **emerging technology** rather than a solved product.
-- **Fedimint-class federation with a Lightning gateway**: production-ready
-  today, with an identical trust statement — a quorum of guardians, no
-  single custodian.
+  operations, VLS-style remote signing generalized): the cleanest fit on
+  paper, still **emerging technology**. Measured in this project: lnd's
+  remote signer asks for ECDSA by the node key and for MuSig2 shares, which
+  a FROST committee does not produce. Not used.
+- **Fedimint-class federation, stake lock inside it — V1.** Built from stock
+  parts, unpatched:
+  - the stake lock is Fedimint LNv2's `OutgoingContract`: claim by preimage
+    and claim key, forfeit by the claim key to the refund key, refund to the
+    refund key after expiry — enforced by the guardians' consensus;
+  - the claim key is a FROST (RFC 9591) BIP-340 key, which the federation
+    checks like any other key;
+  - Lightning only at the edges: deposits and withdrawals through any of at
+    least two gateways run by different operators, each payment atomic and
+    over in seconds. No gateway holds a round's money or is needed by it.
 
-The Round Contract names which construction it uses. V1 deployments should
-use the mature one and migrate when threshold-LN hardens. Either way, the
-residual is the same and is stated in §22: five colluding bonded operators
-control in-transit funds. This is the minimum achievable under a
-browser-only client constraint today, not a comfortable claim.
+  Not used, by rule: a single-operator Lightning endpoint of any kind, a
+  patched federation, a Lightning node run by the committee.
+
+The Round Contract names `FEDERATION` and its `federation_id`. The residual
+has two layers, both stated in §22: the settlement committee over one
+round's locks, and the guardians over the federation — including that a
+halted federation freezes refunds, because Fedimint has no unilateral exit.
+This is the minimum achievable today under a browser-only client with no
+central node, not a comfortable claim. Migration to threshold-signed
+Lightning stays open for when it hardens.
 
 ---
 
@@ -2261,7 +2323,7 @@ for half an hour signs fifteen payments. That is not a payments problem, it
 is the reason they stop playing.
 
 The fix is to remove the **approvals**, never the payments. Every round keeps
-its own hold invoice, its own `payment_hash` bound to its own Entry Contract,
+its own stake lock, its own `payment_hash` bound to its own Entry Contract,
 its own VSS-shared preimage and its own expiry refund (§23). What changes is
 only how often the player is interrupted.
 
@@ -2269,7 +2331,7 @@ only how often the player is interrupted.
 
 Nostr Wallet Connect carries a budget — "1000 sats per hour to this
 connection" — and that is exactly the shape needed. The player grants it
-once; the client pays each round's hold invoice inside it; no approval
+once; the client pays each round's deposit invoice inside it; no approval
 screen appears again until the budget is spent or its window closes.
 
 **Nothing about settlement changes.** No node holds a balance, because there
@@ -2287,11 +2349,12 @@ time-boxed rather than open-ended.
 
 | Direction | Mechanism |
 |---|---|
-| Player pays a stake | BOLT11 hold invoice per round; NWC budget, QR, deep link or WebLN |
-| Player is paid a win | LNURL-withdraw, or a BOLT11 invoice the player supplies |
-| Donations are paid | LNURL per recipient, by share (§27A.4) |
+| Player pays a stake | BOLT11 deposit invoice per round through any listed gateway, locked at once (§23.1); NWC budget, QR, deep link or WebLN |
+| Player is paid a win | A payout contract to the player's key; the client withdraws it over Lightning through any listed gateway |
+| Donations are paid | LNURL per recipient, by share (§27A.4) — how, under §23.6, is an open ruling |
 
-Ordinary Lightning in both directions, one round at a time.
+Ordinary Lightning in both directions, one round at a time; the stake itself
+waits in the federation (§23.6).
 
 ## 24A.3 What was considered and rejected: session balances
 
@@ -2317,6 +2380,16 @@ custody. Three properties killed it, in order of severity:
 The problem it was meant to solve — approval fatigue — is solved by §24A.1
 at zero cost to the trust model. **Paying for a wallet limitation with a
 permanent protocol property is the wrong trade.**
+
+**The stake lock is not a session balance (v4.6.2).** Each round's deposit
+is locked the moment it arrives, with the player's own key as the refund
+key; nothing waits between rounds, and winnings are withdrawn to the
+player's wallet. Properties 2 and 3 above still hold: a committee that goes
+dark costs a wait until expiry, and expiry returns the stake to the player's
+own key with nobody else acting. Property 1 does not, and it is said here
+rather than hidden: a stake lock has no exit to Bitcoin, so a federation that
+halts freezes it. That is the price of having no single node in the stake
+path, bounded by the stake ceiling and the federation exposure cap (§22).
 
 ---
 
@@ -2531,8 +2604,9 @@ opens. Between 11:55 and 12:00, 37 players enter. At 12:00 the round starts.
 
 Alice joins at 12:01. Because the committees have been known since 11:55,
 she can build a valid entry: she generates `P`, VSS-shares it to the seven
-settlement nodes, signs her Entry Contract, and her wallet pays the 104 sat
-hold invoice. Five settlement nodes confirm the held HTLC; five game/verify
+settlement nodes, signs her Entry Contract, and her wallet pays a 100 sat
+deposit that her client locks in the federation. Five settlement nodes
+confirm the lock; five game/verify
 nodes issue EntryReceipts. She rolls out, publishes inputs and checkpoints,
 and delivers.
 
@@ -2543,10 +2617,10 @@ objection window closes at 12:15; nobody objects; it is `FINAL`.
 
 At 12:07 entry closes: 61 players. Final results: 24 delivered, 31 failed,
 6 forfeit → loser pool 3,700 sat. The deterministic payout table is signed
-5-of-7. The settlement committee cancels the qualifiers' HTLCs, releases
-preimage shares for the losers, settles those HTLCs into the pool wallet,
-and pays the rank-weighted shares — every action a 5-of-7 threshold
-ceremony.
+5-of-7. The settlement committee forfeits the qualifiers' locks back to
+them, releases preimage shares for the losers, and signs one settlement
+transaction that moves the losers' locks straight into the qualifiers'
+rank-weighted payout contracts — every action a 5-of-7 threshold ceremony.
 
 Alice receives her 100 sat stake back plus her rank share. No central game
 server decided she won, and at no instant did any single party hold her
@@ -2853,7 +2927,7 @@ a state whose origin nobody can check.
 | governance | 1008 / 1440 / 2016 | 144 / 144 / 0 | **1 / 6 / 1** |
 
 Two nodes and 2-of-2 on regtest is the point of it: the whole settlement
-path - hold invoices, VSS, a 2-of-2 FROST signature, the objection window,
+path - stake locks in a regtest federation, VSS, a 2-of-2 FROST signature, the objection window,
 the payout table - runs on one laptop.
 
 ### Where blocks come from on regtest
@@ -3374,7 +3448,7 @@ scheme sits:
 - **In-flight rounds are untouched.** A round binds to its `network_id` and
   `config_hash` at creation (§27A.7.5). Activation cannot reach into a round
   that is running, and cannot rescore a `FINAL` result.
-- **Stakes are not reachable.** Settlement is HTLCs against a committee that
+- **Stakes are not reachable.** Settlement is stake locks whose claim key is a committee that
   existed under the old rules; a new network cannot sign for an old one,
   because the keys are the old census's.
 - **Bonds are not reachable.** They are timelocked outputs with recovery
@@ -3425,7 +3499,9 @@ is §27A.7, because none of it changes what a transcript *is*.
 | Player closes browser / loses internet | Deterministic disconnect path (§15) |
 | Result already `FINAL`, then nodes fail | Result stays `FINAL`; settlement delayed |
 | 1–2 settlement nodes down | Settlement continues (5-of-7) |
-| 3+ settlement nodes down | Settlement delayed; unsettled HTLCs expire → refund |
+| 3+ settlement nodes down | Settlement delayed; unclaimed stake locks expire → refund to the player's key |
+| A gateway down or refusing | Client uses another listed gateway; a gateway cannot keep a payment |
+| Federation halted below its threshold | Every lock frozen, refunds included — the stated residual (§22) |
 | Beacon unavailable at `committee_time` | Fallback beacon; if that fails, the entry window never opens — no stake was committed, so nothing needs refunding |
 | Census roots in a contract do not match the chain | Contract invalid; no node issues receipts; no entry possible |
 | Client's chain view is wrong (bad header source) | Wrong committee expectation; entry fails for lack of matching receipts. Funds are never at risk — settlement still needs 5-of-7 and still refunds by expiry |
@@ -3520,7 +3596,8 @@ Can users create rounds?                 YES
 Can anyone download/run blwp-node?       YES
 Can nodes enable either/both roles?      YES
 Can existing rounds finish?              YES
-Can stakes be refunded if nothing runs?  YES (HTLC expiry, §23)
+Can stakes be refunded if nothing runs?  YES (stake-lock expiry, §23), while
+                                         the federation itself runs (§22)
 Is developer approval needed?            NO
 Is a developer admin key needed?         NO (the donation authority of
                                          §27A.4 signs the donation set and
@@ -3611,7 +3688,9 @@ committee nor outcome).
 | Colluding quorum **inflates a score** rather than faking a win | 5 bonded operators | Not considered | Same objection path: the canonical transcript replays to one score only; a table that does not equal `F(...)` is slashable (§13A, §20) |
 | Player runs multiple forks and submits the winner | Modified client | Undefined handling | Automatic forfeit on proven equivocation; receipt gossip surfaces it (§13B, §10) |
 | Committee disagreement | Node faults | Funds stuck, undefined | `VOID` + refund, or forfeit if caused by equivocation (§13C) |
-| Who holds the stake during the round | — | **Unspecified** | Held HTLC; refund is the default; movement needs quorum + preimage shares (§23) |
+| Who holds the stake during the round | — | **Unspecified** | A stake lock in the federation; refund is the default; movement needs a quorum signature + preimage shares; no pool wallet (§23) |
+| Guardians collude, or the federation halts | Guardian threshold | Not considered | Guardians are independent bonded census operators; the round names its federation; exposure capped; no unilateral exit is a stated residual (§22, §23.6) |
+| A gateway withholds a deposit or withdrawal | One gateway | Single-operator endpoint | Atomic payments: it cannot keep money; the client falls back to another listed gateway (§23.6) |
 | Compromised web host sets a huge donation | Serve a lying client | Uncapped | Capped at 100%, second confirmation above 5% (§22A) |
 | Round with a backdoored simulation core | Publish a round | Player trusts the hash blindly | Client refuses unknown `sim_wasm_hash` for real money (§5) |
 | **Census divergence** — participants disagree on who is eligible | Selective gossip, withheld advertisements | Committee disputes, ungrounded rounds | Census is chain state at `census_height`; subjective criteria removed; outpoint ordering is unmineable (§5A.2–5A.4) |
