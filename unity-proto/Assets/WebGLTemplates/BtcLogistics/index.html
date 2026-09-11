@@ -347,13 +347,23 @@
       // seed, not a key; each round's key is derived from it, and its refund
       // fingerprint is shown so the player can compare it OUTSIDE this page:
       //   node packages/blwp-node/tools/refund-key.mjs <seed> <round id>
+      //
+      // A SEED THE PLAYER ALREADY HOLDS is what makes the check mean anything: a
+      // seed this page minted is one this page knows. So the player can paste
+      // their own (or the backup from an earlier session) and the page reloads
+      // and joins under it. A tab that imported nothing mints its own, for this
+      // tab only, and nothing is kept where every tab reads it: a returning
+      // session pastes the backup again.
       const seed = BLWPCLIENT.tabSeed({ storage: window.sessionStorage, random });
+      const origin = BLWPCLIENT.seedOrigin({ storage: window.sessionStorage });
       const player = BLWPCLIENT.playerFor(
         Object.assign({}, named.round, { id: BLWPCLIENT.fromHex(named.roundIdHex) }),
         { seed, curve: window.BLWP_CURVE });
       const refundEl = document.getElementById('blwp-refund');
       if (refundEl) {
         refundEl.textContent = 'refund key fingerprint ' + player.fingerprint
+          + (origin === 'imported' ? ' (from the seed you imported)'
+            : ' (from a seed this page made: back it up, or use your own below)')
           + ' - check it: refund-key.mjs <your seed> ' + named.roundIdHex;
         const backup = document.createElement('details');
         const label = document.createElement('summary');
@@ -361,7 +371,20 @@
         const code = document.createElement('code');
         code.textContent = BLWPCLIENT.toHex ? BLWPCLIENT.toHex(seed) : Array.from(seed, (b) => b.toString(16).padStart(2, '0')).join('');
         backup.append(label, code);
-        refundEl.append(backup);
+        const own = document.createElement('div');
+        const paste = document.createElement('input');
+        paste.type = 'password'; paste.autocomplete = 'off'; paste.placeholder = 'your seed (64 hex)';
+        const use = document.createElement('button');
+        use.type = 'button'; use.textContent = 'use my seed';
+        const why = document.createElement('div');
+        use.addEventListener('click', () => {
+          try {
+            BLWPCLIENT.importSeed(paste.value, { storage: window.sessionStorage });
+            location.reload();
+          } catch (e) { why.textContent = e.message; }
+        });
+        own.append(paste, use, why);
+        refundEl.append(backup, own);
       }
 
       // AND THE PAGE DEALS ITS OWN STAKE (23.1 steps 1 and 2).

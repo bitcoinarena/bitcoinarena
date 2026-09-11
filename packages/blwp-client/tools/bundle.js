@@ -105,7 +105,7 @@ out += '         fetchRound: fetchRound, bondProvider: bondProvider,\n';
 // exactly what it could not do before letter 36.
 out += '         fetchRandomness: fetchRandomness, worldSeedFor: worldSeedFor,\n';
 out += '         seedWordForEntry: seedWordForEntry,\n';
-out += '         tabSeed: tabSeed, playerFor: playerFor, entryFor: entryFor,\n';
+out += '         tabSeed: tabSeed, importSeed: importSeed, seedOrigin: seedOrigin,\n'; out += '         playerFor: playerFor, entryFor: entryFor,\n';
 // THE STAKE THE PAGE DEALS, and the seats it is dealt to. `stakeFor` was in
 // this bundle already and had ZERO CALLERS - the page took a seat with 32
 // random bytes where `sha256(P)` belongs and 32 zero bytes where the shares

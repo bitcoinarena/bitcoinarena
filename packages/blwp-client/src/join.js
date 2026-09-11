@@ -545,14 +545,42 @@ export async function joinFromQuery(search, { fetcher = fetch } = {}) {
 // backs up, fresh per round, with a fingerprint the player compares outside
 // the page. So the tab keeps 32 bytes of seed, and `playerFor` makes each
 // round's key from it by `protocol/src/player-key.js`.
+//
+// AND A SEED THE PLAYER ALREADY HOLDS COMES BACK IN. A seed this page minted is
+// a seed this page knows: a lying page could mint one, show it as the backup,
+// and seat the player under it, and the fingerprint would agree with itself.
+// The check means something only for a seed that existed BEFORE this page -
+// the player's backup, pasted in (`importSeed`). So: the tab's seed - imported
+// or minted - if it has one; else a fresh one for this tab alone. Nothing goes
+// in storage every tab shares, so two tabs that never imported stay two
+// players; a returning session pastes the backup again.
+const SEED_FROM = 'blwp.player.seed.from';
+const HEX_SEED = /^[0-9a-f]{64}$/i;
+
 export function tabSeed({ storage, random, key = 'blwp.player.seed' } = {}) {
   const held = storage && storage.getItem(key);
-  if (held && /^[0-9a-f]{64}$/i.test(held)) return fromHex(held.toLowerCase());
+  if (held && HEX_SEED.test(held)) return fromHex(held.toLowerCase());
   const seed = random(32);
   if (!(seed instanceof Uint8Array) || seed.length !== 32) throw new Error('a player seed is 32 random bytes');
-  if (storage) storage.setItem(key, toHex(seed));
+  if (storage) { storage.setItem(key, toHex(seed)); storage.setItem(SEED_FROM, 'minted'); }
   return seed;
 }
+
+/**
+ * THE PLAYER'S OWN SEED, PASTED IN: from now on it is this tab's seed. 64 hex
+ * digits, the form the page's backup and `refund-key.mjs` use.
+ */
+export function importSeed(text, { storage, key = 'blwp.player.seed' } = {}) {
+  const hex = String(text == null ? '' : text).trim().toLowerCase();
+  if (!HEX_SEED.test(hex))
+    throw new Error('a player seed is 64 hex digits - the backup this page showed you, or your own');
+  if (storage) { storage.setItem(key, hex); storage.setItem(SEED_FROM, 'imported'); }
+  return fromHex(hex);
+}
+
+/** Whether this tab's seed is one the player brought ('imported') or the page made ('minted'). */
+export const seedOrigin = ({ storage } = {}) =>
+  (storage && storage.getItem(SEED_FROM) === 'imported' ? 'imported' : 'minted');
 
 /** The 32-byte id of a round: its own when it carries one, else its contract's hash. */
 const roundIdOf = (round) => (round.id instanceof Uint8Array && round.id.length === 32 ? round.id : roundId(round));
