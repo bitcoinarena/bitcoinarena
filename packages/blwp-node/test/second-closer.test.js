@@ -70,10 +70,13 @@ function paidPort() {
   };
 }
 
+// A ROUND WITH NO OBJECTION WINDOW: final at the quorum, which is the moment
+// this race is about. objection-window.test.js pins the window (M3.3-32); the
+// watch's budget is named in `finality` instead.
 const contractFor = (nodes) => ({
   networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations: 1,
   gameVerifySlots: 2, settlementSlots: 2, simCoreHash: b32(1), startTimeMs: 60500n,
-  entryCloseMs: 2000n, objectionWindowMs: 600000n, custody: 'FEDERATION',
+  entryCloseMs: 2000n, objectionWindowMs: 0n, custody: 'FEDERATION',
   slashMinimumServed: 20, slashRemainder: 'BURN', donationSetId: b32(0xd0),
   censusHeight: 900000, censusRoot: b32(2), committeeTimeMs: 500n,
   randomnessRule: 'bitcoin-block-hash', stakeMsat: STAKE, bondMinSats: 50000n,
@@ -135,7 +138,8 @@ async function seatAndPlay(daemons, c, rid, who) {
  * rehearsal - and each on the daemon's own 2 s finality watch.
  */
 async function closedWithGap(gapMs) {
-  const opts = { funded: () => true, randomnessFor: () => BEACON, preflight: async () => ({ ready: true, why: 'test port' }) };
+  const opts = { funded: () => true, randomnessFor: () => BEACON, preflight: async () => ({ ready: true, why: 'test port' }),
+    finality: { windowMs: 20000 } };
   const portA = paidPort();
   const portB = paidPort();
   const a = await serve(openStore(':memory:'), { port: 0, ...opts, lightning: portA });

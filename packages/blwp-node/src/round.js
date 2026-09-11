@@ -1450,6 +1450,14 @@ export class Round {
       .get(roundIdBytes, entryIdBytes);
   }
 
+  /** When the objection against this run arrived here, or null if none did. */
+  objectedAt(roundIdBytes, entryIdBytes) {
+    const row = this.db.prepare(
+      'SELECT seen_ms FROM objections WHERE round_id = ? AND entry_id = ?')
+      .get(roundIdBytes, entryIdBytes);
+    return row ? row.seen_ms : null;
+  }
+
   /** Which tick numbers are missing between the first and the last stored. */
   gaps(roundIdBytes, entryIdBytes) {
     const rows = this.db.prepare(

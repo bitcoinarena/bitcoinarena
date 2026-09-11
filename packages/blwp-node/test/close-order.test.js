@@ -49,10 +49,13 @@ function paidPort() {
   };
 }
 
+// A ROUND WITH NO OBJECTION WINDOW: final at the quorum. This file is about
+// who closes first, not the window - objection-window.test.js pins that
+// (M3.3-32) - so the watch's budget is named in `finality` instead.
 const contractFor = (nodes) => ({
   networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations: 1,
   gameVerifySlots: 2, settlementSlots: 2, simCoreHash: b32(1), startTimeMs: 60500n,
-  entryCloseMs: 2000n, objectionWindowMs: 600000n, custody: 'FEDERATION',
+  entryCloseMs: 2000n, objectionWindowMs: 0n, custody: 'FEDERATION',
   slashMinimumServed: 20, slashRemainder: 'BURN', donationSetId: b32(0xd0),
   censusHeight: 900000, censusRoot: b32(2), committeeTimeMs: 500n,
   randomnessRule: 'bitcoin-block-hash', stakeMsat: STAKE, bondMinSats: 50000n,
@@ -132,7 +135,7 @@ async function settles(d, rid, eid, ms = 8000) {
 
 for (const [first, second] of [['a', 'b'], ['b', 'a']]) {
   test(`closing ${first.toUpperCase()} first and ${second.toUpperCase()} later: both end with the run final and the payout table 2 of 2`, async () => {
-    const w = await played({ finality: { everyMs: 50 } });
+    const w = await played({ finality: { everyMs: 50, windowMs: 10000 } });
     try {
       // THE FIRST TO CLOSE IS SHORT - its one gather finds nobody else's result.
       const early = await closeOn(w[first], w.rid);

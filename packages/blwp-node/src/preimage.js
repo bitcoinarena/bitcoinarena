@@ -32,7 +32,8 @@ import { sealShare, openShare } from '../../protocol/src/seal.js';
 
 import { decodePlayerResult, splitSignedResult } from '../../protocol/src/result.js';
 import { settlementAction, SETTLE } from '../../protocol/src/payout.js';
-import { verifiedFinal } from './verdict.js';
+import { resultFinality } from './finality.js';
+import { FINAL } from '../../protocol/src/objection.js';
 import { decodeRoundContract, decodeEntryContract } from '../../protocol/src/contracts.js';
 import { toHex } from '../../protocol/src/hash.js';
 
@@ -114,15 +115,18 @@ export class Preimages {
   mayRelease(roundIdBytes, entryIdBytes) {
     const row = this.round.get(roundIdBytes);
     if (!row) return { ok: false, why: 'no such round' };
-    const contract = decodeRoundContract(new Uint8Array(row.contract));
     const held = this.round.results(roundIdBytes, entryIdBytes);
     if (!held.length) return { ok: false, why: 'this node has replayed nothing for that run' };
 
-    const seen = verifiedFinal(held.map((r) => r.bytes), {
-      contract, seats: this.round.seats(roundIdBytes),
-    });
-    if (!seen.ok || !seen.final)
-      return { ok: false, why: `no share is handed out before the result is final: ${seen.why || 'not final'}` };
+    // FINAL, NOT MERELY AGREED (M3.3-32): the threshold makes a run
+    // PROVISIONALLY_FINAL, and a share handed out inside the objection window
+    // settles a stake an objection could still have kept - measured, a seven
+    // seat run gave its share up before its window closed.
+    const standing = resultFinality(this.round, roundIdBytes, entryIdBytes);
+    if (standing.state !== FINAL)
+      return { ok: false, state: standing.state,
+        why: `no share is handed out before the result is final: ${standing.why}`
+          + `${standing.objection ? `; the objection filed against it: ${standing.objection}` : ''}` };
 
     // THIS NODE'S OWN RESULT, not whichever arrived first. A peer's record is
     // a peer's claim; what this node is willing to act on is what it replayed.

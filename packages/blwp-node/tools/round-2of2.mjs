@@ -68,7 +68,11 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
                                      page = 'https://btc-logistics-core.pages.dev',
                                      // A PAYING ROUND, for a rehearsal with Lightning. Every
                                      // existing caller asks for none and gets a free round.
-                                     stakeMsat = 0n } = {}) {
+                                     stakeMsat = 0n,
+                                     // THE ROUND'S OBJECTION WINDOW (M3.3-32): nothing moves
+                                     // until it has closed. The spec's reference unless a
+                                     // rehearsal names a shorter one to watch both sides of it.
+                                     objectionWindowMs = 600000n } = {}) {
   // WHAT THESE DAEMONS FUND (M3.3-31): a PAYING round goes through the
   // launcher's own rule - the round its operator names, and entries into a
   // paying round the node holds when it reaches Lightning - not a harness's
@@ -351,7 +355,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     committeeTimeMs, randomnessRule: 'bitcoin-block-hash',
     startTimeMs: committeeTimeMs + MIN_ENTRY_WINDOW_MS,
     entryCloseMs: committeeTimeMs + MIN_ENTRY_WINDOW_MS + 120000n,
-    objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20,
+    objectionWindowMs, custody: 'FEDERATION', slashMinimumServed: 20,
     slashRemainder: 'BURN', donationSetId: b32(0xd0), censusHeight,
     censusRoot: new Uint8Array(32), stakeMsat, bondMinSats: 50000n, blockTicks: 9000,
     exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,

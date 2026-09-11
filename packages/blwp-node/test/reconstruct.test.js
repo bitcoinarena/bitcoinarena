@@ -85,10 +85,12 @@ const session = ed25519.utils.randomSecretKey();
 // that make a run final, the receipts that make a transcript canonical, and
 // the shares that open a stake. `genesis.js` fixes those together and this
 // letter is about the third one, so the other two are not going to be two.
+// AND NO OBJECTION WINDOW: final at the quorum. The window is
+// objection-window.test.js's to pin (M3.3-32), not this letter's.
 const contractFor = (nodes) => ({
   networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations: 1,
   gameVerifySlots: 7, settlementSlots: 7, simCoreHash: b32(1), startTimeMs: 60500n,
-  entryCloseMs: 2000n, objectionWindowMs: 600000n, custody: 'FEDERATION',
+  entryCloseMs: 2000n, objectionWindowMs: 0n, custody: 'FEDERATION',
   slashMinimumServed: 20, slashRemainder: 'BURN', donationSetId: b32(0xd0),
   censusHeight: 900000, censusRoot: b32(2), committeeTimeMs: 500n,
   randomnessRule: 'bitcoin-block-hash', stakeMsat: 100000n, bondMinSats: 50000n,

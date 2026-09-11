@@ -147,11 +147,15 @@ export function objectionHolds({
  * valid objection, SUSPENDED the moment one holds. The window comes off the
  * ROUND CONTRACT - `objectionWindowMs` - and not from an argument, because a
  * window the caller chooses is a window the operator chooses.
+ *
+ * `needed` is the committee's threshold and is passed on to
+ * `provisionallyFinal` as it is: a two-seat round is agreed at 2 of 2, not at
+ * the default five (M3.3-26's rule, `receiptsNeeded`).
  */
 export function finality({
-  signedBy, committee, contract, provisionalAtMs, now, objections = [],
+  signedBy, committee, contract, provisionalAtMs, now, objections = [], needed,
 }) {
-  const agreed = provisionallyFinal(signedBy, { committee });
+  const agreed = provisionallyFinal(signedBy, needed === undefined ? { committee } : { committee, needed });
   if (!agreed.final) return { state: null, why: agreed.why, ...agreed };
 
   const window = contract && contract.objectionWindowMs;

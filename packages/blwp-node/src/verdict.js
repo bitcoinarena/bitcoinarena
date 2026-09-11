@@ -193,4 +193,4 @@ export function verifiedFinal(records, { contract, seats: seated }) {
  * two seats' records can be asked "is this the same run?" without the answer
  * being "no, because you are not me".
  */
-const runId = (r) => resultId({ ...r, nodePubkey: new Uint8Array(32) });
+export const runId = (r) => resultId({ ...r, nodePubkey: new Uint8Array(32) });

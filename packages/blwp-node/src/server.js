@@ -62,6 +62,8 @@ import { Ghosts } from './ghosts.js';
 import { Roster, endpointsOf } from './roster.js';
 import { receiptsNeeded as roundThreshold } from '../../protocol/src/genesis.js';
 import { Custody, NO_LIGHTNING, SETTLE, HELD } from './custody.js';
+import { resultFinality } from './finality.js';
+import { FINAL, PROVISIONALLY_FINAL, SUSPENDED } from '../../protocol/src/objection.js';
 import { Preimages, encodeShareAnswer, SEALED_ANSWER_BYTES } from './preimage.js';
 import { Payouts, PAYOUT_QUEUED, PAID, PAID_IN_PART, NOTHING_OWED } from './payout.js';
 import { PoolSigning } from './pool-signing.js';
@@ -166,7 +168,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   poolCall = null,
   // HOW LONG A CLOSED ROUND KEEPS ASKING ITS PEERS FOR THE RESULTS IT IS SHORT
   // OF (M3.3-25): every `everyMs`, until final or `windowMs` has passed -
-  // the round's own objection window unless a test names a shorter one.
+  // the round's own objection window unless a test names another, counted
+  // from the close and, while a run waits on its window, from that window's
+  // end (M3.3-32).
   finality = {},
   // WHERE THIS NODE'S OWN CHAIN IS (M3.3-30): a height, asked of its own
   // bitcoind. Given none, the pool's chain call answers it when there is one.
@@ -428,6 +432,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
    * through the first. A final run whose settle is still HELD is now asked
    * again on the same cadence, inside the same window; the settle asks for the
    * shares again, and a hold that moved meanwhile is left alone.
+   *
+   * AND A RUN INSIDE ITS OBJECTION WINDOW IS WAITING (M3.3-32). The close
+   * settles nothing on a PROVISIONALLY_FINAL run, so this watch keeps going
+   * until that run's window has closed, then runs the close logic again - and
+   * its deadline moves out to a whole window past the latest close, so a
+   * settle short of shares still has as long to ask as it had before.
    */
   const finalityTimers = new Set();
   let shuttingDown = false;
@@ -437,7 +447,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const contract = decodeRoundContract(new Uint8Array(row.contract));
     const everyMs = finality.everyMs ?? 2000;
     const windowMs = finality.windowMs ?? Number(contract.objectionWindowMs);
-    const until = Date.now() + windowMs;
+    let until = Date.now() + windowMs;
     const gathered = [...((closed && closed.gathered) || [])];
     const stored = ((closed && closed.replayed) || []).filter((r) => r && r.stored);
     let latest = money;
@@ -446,16 +456,25 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       && typeof latest.owed.agreed === 'number');
     const settleShort = () => !!(latest && (latest.actions || [])
       .some((a) => a.action === SETTLE && a.state === HELD && a.final));
+    const waitingOn = () => (latest && latest.waiting) || [];
+    const windowDue = () => waitingOn().some((w) => round.now() >= w.closesAtMs);
+    // closesAtMs is on the round's clock and `until` on this watch's, so the
+    // distance is carried across rather than the number.
+    const stretch = () => {
+      for (const w of waitingOn()) until = Math.max(until, Date.now() + (w.closesAtMs - round.now()) + windowMs);
+    };
     let timer = null;
     const tick = async () => {
       finalityTimers.delete(timer);
       if (shuttingDown) return;
+      stretch();
       const short = stored.filter((r) => !isFinal(r.entryId));
-      if (!short.length && !tableShort() && !settleShort()) return;
+      if (!short.length && !tableShort() && !settleShort() && !waitingOn().length) return;
       if (Date.now() >= until) {
         console.log(`[verify] ${toHex(roundIdBytes).slice(0, 16)} the objection window passed with `
           + `${short.length} run(s) short of final${tableShort() ? ' and the table short' : ''}`
-          + `${settleShort() ? ' and a lost stake still unsettled' : ''}`);
+          + `${settleShort() ? ' and a lost stake still unsettled' : ''}`
+          + `${waitingOn().length ? ' and a run still inside its objection window' : ''}`);
         return;
       }
       let turned = false;
@@ -467,7 +486,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (g && g.ok && g.final) turned = true;
       }
       if (shuttingDown) return;
-      if (turned || tableShort() || settleShort()) {
+      if (turned || tableShort() || settleShort() || windowDue()) {
         stakes = settleTheStakes(roundIdBytes, { replayed: closed.replayed, gathered })
           .catch((e) => { console.error(`[verify] ${e.message}`); return { ok: false, why: e.message }; });
         latest = await stakes;
@@ -503,12 +522,46 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // the operator - is two places to get it wrong, and a mutation that made
     // the predicate say yes to everything survived every test while the list
     // still said the truth.
-    const isFinal = (entryId) => agreed.has(toHex(entryId));
+    //
+    // AND FINAL IS THE OBJECTION WINDOW'S WORD, NOT THE QUORUM'S (M3.3-32). A
+    // run the threshold signed is PROVISIONALLY_FINAL; `resultFinality` says
+    // FINAL once the contract's window has closed on this node's clock with no
+    // valid objection, SUSPENDED if one arrived inside it. Measured before: the
+    // loser settled and the winner cancelled 586-977 ms after the close of a
+    // round whose contract named 3000 ms. Only a run the gather agreed on is
+    // asked, so a run nobody agreed on is still simply not final.
+    const standing = new Map(entries.map((e) => [toHex(e.entryId),
+      agreed.has(toHex(e.entryId)) ? resultFinality(round, roundIdBytes, e.entryId) : { state: null }]));
+    const stateOf = (entryId) => (standing.get(toHex(entryId)) || {}).state;
+    const isFinal = (entryId) => stateOf(entryId) === FINAL;
+    const waiting = entries.filter((e) => stateOf(e.entryId) === PROVISIONALLY_FINAL)
+      .map((e) => ({ entryId: toHex(e.entryId), closesAtMs: Number(standing.get(toHex(e.entryId)).closesAtMs) }));
+    const suspended = entries.filter((e) => stateOf(e.entryId) === SUSPENDED).map((e) => toHex(e.entryId));
     const done = await custody.settleHeldInvoices({
       roundId: roundIdBytes, entries, minScore: contract.minScore, finalFor: isFinal,
     });
     for (const a of done.actions || [])
       console.log(`[custody] ${toHex(a.entryId).slice(0, 16)} ${a.action} -> ${a.state}: ${a.why}`);
+    for (const w of waiting)
+      console.log(`[custody] ${w.entryId.slice(0, 16)} waits for its objection window, which closes at ${w.closesAtMs}`);
+    for (const s of suspended)
+      console.log(`[custody] ${s.slice(0, 16)} is SUSPENDED by a valid objection: nothing moves, and its hold expires to its player`);
+    const said = {
+      agreed: entries.filter((e) => agreed.has(toHex(e.entryId))).map((e) => toHex(e.entryId)),
+      final: entries.filter((e) => isFinal(e.entryId)).map((e) => toHex(e.entryId)),
+      waiting, suspended, considered: entries.length,
+    };
+
+    // ...AND THE POOL WAITS WITH THEM. Paying the winner out of the pool is
+    // money moving on these same results, so a round with a run still inside
+    // its window, or suspended, queues no payout yet; the finality watch runs
+    // this close logic again once the window has closed.
+    if (waiting.length || suspended.length) {
+      const why = `no payout while ${waiting.length} run(s) are inside their objection window`
+        + ` and ${suspended.length} are suspended`;
+      console.log(`[payout] ${why}`);
+      return { ...done, ...said, owed: { ok: false, why }, paid: null };
+    }
 
     // ...AND WHAT THE ROUND OWES. The stakes moving is 23.2; who is owed what
     // out of the pool is §20, and it needs its own five of seven. This node
@@ -537,13 +590,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // nothing still has to be able to say which runs the committee agreed on -
     // otherwise "nothing moved" and "nothing was agreed" are the same sentence
     // to an operator, and they are very different problems.
-    return {
-      ...done,
-      agreed: entries.filter((e) => isFinal(e.entryId)).map((e) => toHex(e.entryId)),
-      considered: entries.length,
-      owed,
-      paid,
-    };
+    return { ...done, ...said, owed, paid };
   }
 
   /**

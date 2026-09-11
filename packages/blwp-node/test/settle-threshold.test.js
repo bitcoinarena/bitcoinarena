@@ -63,10 +63,13 @@ function paidPort() {
   };
 }
 
+// A ROUND WITH NO OBJECTION WINDOW: final at the quorum. This file is about
+// the threshold a settle opens at; objection-window.test.js pins the window
+// (M3.3-32), and the watch's budget is named in `finality` instead.
 const contractFor = (nodes) => ({
   networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations: 1,
   gameVerifySlots: nodes.length, settlementSlots: nodes.length, simCoreHash: b32(1), startTimeMs: 60500n,
-  entryCloseMs: 2000n, objectionWindowMs: 600000n, custody: 'FEDERATION',
+  entryCloseMs: 2000n, objectionWindowMs: 0n, custody: 'FEDERATION',
   slashMinimumServed: 20, slashRemainder: 'BURN', donationSetId: b32(0xd0),
   censusHeight: 900000, censusRoot: b32(2), committeeTimeMs: 500n,
   randomnessRule: 'bitcoin-block-hash', stakeMsat: STAKE, bondMinSats: 50000n,
@@ -90,7 +93,7 @@ const secretScalar = () => { let p = rand(32); while (scalarFrom32(p) >= FIELD) 
  */
 async function lostStake({ seats, up }) {
   const opts = { funded: () => true, randomnessFor: () => BEACON,
-    preflight: async () => ({ ready: true, why: 'test port' }), finality: { everyMs: 50 } };
+    preflight: async () => ({ ready: true, why: 'test port' }), finality: { everyMs: 50, windowMs: 10000 } };
   const daemons = [];
   for (let i = 0; i < up; i++) daemons.push(await serve(openStore(':memory:'), { port: 0, ...opts, lightning: paidPort() }));
   const close = async () => { for (const d of daemons) await d.close(); };

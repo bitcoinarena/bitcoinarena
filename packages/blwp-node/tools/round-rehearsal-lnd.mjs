@@ -46,6 +46,7 @@ import { toHex, fromHex } from '../../protocol/src/hash.js';
 import { entryId as entryIdOf } from '../../protocol/src/contracts.js';
 import { init as coreInit, step as coreStep } from '../../core/src/sim.js';
 import { splitSignedReceipt, decodeCheckpointReceipt, SIGNED_RECEIPT_BYTES } from '../../protocol/src/receipt.js';
+import { resultFinality } from '../src/finality.js';
 
 const require = createRequire(import.meta.url);
 const core = require('../../core/dist/blwp-core.js');
@@ -68,6 +69,11 @@ const OFF = CLOSE_ORDER === 'BA' ? 100 : 0;
 const CLOSE_GAP_ARG = process.argv.find((a) => a.startsWith('--close-gap='));
 const CLOSE_GAP = CLOSE_GAP_ARG ? Number(CLOSE_GAP_ARG.split('=')[1]) : null;
 const HOLD_BEFORE_SIT = Number((process.argv.find((a) => a.startsWith('--hold-before-sit=')) || '--hold-before-sit=0').split('=')[1]);
+// --objection-window=MS (M3.3-32): the round contract's objection window. No
+// stake moves and no share leaves until it has closed, so the rehearsal names a
+// short one - 30 s unless told otherwise - to watch both sides of it; the
+// spec's reference is 600000.
+const OBJECTION_WINDOW_MS = Number((process.argv.find((a) => a.startsWith('--objection-window=')) || '--objection-window=30000').split('=')[1]);
 // NON-DEFAULT, ALL OF THEM; p2p+1 is bitcoind's own; never 8080 (signal-cli).
 const P = { rpc: 29901 + OFF, p2p: 29902 + OFF, zmqBlock: 29905 + OFF, zmqTx: 29906 + OFF,
   alice: { rpc: 29907 + OFF, listen: 29908 + OFF, rest: 29909 + OFF },
@@ -208,7 +214,8 @@ async function main() {
     const rpc = bitcoindRpc({ url: `http://127.0.0.1:${P.rpc}/`, cookiePath: cookie });
     try {
       round = await standUpRound({ host: '127.0.0.1', portA: P.daemonA, portB: P.daemonB,
-        rpc, cli, stakeMsat: STAKE_MSAT, page: 'http://127.0.0.1:1' });
+        rpc, cli, stakeMsat: STAKE_MSAT, page: 'http://127.0.0.1:1',
+        objectionWindowMs: BigInt(OBJECTION_WINDOW_MS) });
     } catch (e) {
       hole('code', `the two daemons could not open a paying round: ${e.message}`);
       throw e;
@@ -388,6 +395,26 @@ async function main() {
     // the harness's own PROBE asks too, after each daemon has reported; its asks
     // are marked, so a daemon's second ask on its 2 s watch is not mistaken for one
     let probing = false;
+    // EVERY ACT A DAEMON TELLS LND TO DO, timed (M3.3-32): the port's own
+    // settle and cancel, wrapped, so "nothing moved inside the window" is a
+    // count against each daemon's own window rather than a reading of its log.
+    // EACH DAEMON GETS ITS OWN VIEW OF THE PORT: in this one process both
+    // daemons may hold the same port object, and wrapping it twice stamped
+    // every act under both names - measured, each act twice at the same ms.
+    const acts = [];
+    for (const [name, d] of daemons) {
+      const shared = d.custody.port;
+      const own = Object.create(shared);
+      for (const kind of ['settle', 'cancel']) {
+        own[kind] = async (q) => {
+          const t = Date.now() - t0;
+          acts.push({ name, d, eid: q.entryId, kind, t });
+          stamps.push({ t, what: `${name} tells lnd to ${kind.toUpperCase()} ${q.entryId ? who(q.entryId) : '?'}` });
+          return shared[kind](q);
+        };
+      }
+      d.custody.port = own;
+    }
     for (const [name, d] of daemons) {
       const put = d.round.putResult.bind(d.round);
       d.round.putResult = (rid, eid, pub, id, bytes) => {
@@ -427,10 +454,12 @@ async function main() {
     }
     for (const [, d] of daemons) { try { await d.verifier.settling; } catch { /* reported below */ } }
     // WHAT EACH DAEMON ENDS WITH (M3.3-25): the close now keeps asking, so its
-    // latest result is read until both played runs are final or 30 s pass.
+    // latest result is read until both played runs are final or 30 s pass -
+    // counted from the end of the objection window, before which no table is
+    // queued (M3.3-32).
     const played = players.filter((p) => p.ticks && p.eid).map((p) => toHex(p.eid));
     for (const [name, d] of daemons) {
-      const stop = Date.now() + 30000;
+      const stop = Date.now() + OBJECTION_WINDOW_MS + 30000;
       let money = await d.stakes();
       // THE RUNS FINAL AND THE TABLE WRITTEN: the table can lag the runs by a
       // re-gather, and reading it early printed "table none" on a seat that
@@ -445,8 +474,26 @@ async function main() {
         + `(${played.filter((e) => (money.agreed || []).includes(e)).map(who).join(', ') || 'none'}); `
         + `table ${row ? row.state : 'none'}, ${d.round.payoutSignatures(fromHex(round.id)).length} of 2 seats signed`);
     }
+    // EACH DAEMON'S OWN WINDOW, per run: it opens when that daemon held the
+    // threshold and closes the contract's length later (M3.3-32).
+    const closesAt = new Map();
+    for (const [name, d] of daemons)
+      for (const p of players.filter((x) => x.ticks && x.eid)) {
+        const f = resultFinality(d.round, fromHex(round.id), p.eid);
+        if (f.closesAtMs === undefined) continue;
+        const rel = Number(f.closesAtMs) - t0;
+        closesAt.set(`${name}:${toHex(p.eid)}`, rel);
+        stamps.push({ t: rel, what: `${name}'s objection window on ${p.name} closes (opened +${Number(f.provisionalAtMs) - t0} ms; ${f.state})` });
+      }
+    const early = acts.filter((a) => {
+      const c = closesAt.get(`${a.name}:${a.eid ? toHex(a.eid) : ''}`);
+      return c === undefined || a.t < c;
+    });
     const printedStamps = stamps.length;
     for (const s of stamps.sort((x, y) => x.t - y.t)) say(`    +${String(s.t).padStart(5)} ms  ${s.what}`);
+    say(`  OBJECTION WINDOW ${OBJECTION_WINDOW_MS} ms; ACTS BEFORE THE WINDOW CLOSED: ${early.length} of ${acts.length}`
+      + `${early.length ? ` (${early.map((a) => `${a.name} ${a.kind} ${a.eid ? who(a.eid) : '?'} at +${a.t}`).join('; ')})` : ''}`);
+    if (early.length) hole('code', `${early.length} act(s) reached lnd before that daemon's objection window closed`);
     for (const [name, d] of daemons) {
       for (const p of d.verifier.done || []) { try { await p; } catch { /* reported below */ } }
       // WHAT THIS DAEMON'S CLOSE SAW, instrumented rather than guessed: each
