@@ -72,18 +72,20 @@ collects it inclusive, from every player, not only from losers).
    seen the lock confirmed by the federation. Play starts only then.
 5. After `FINAL` + objection window:
    - **Alice DELIVERED:** the committee FROST-signs the forfeit of her
-     lock. That signature can only send money to `refund_pk`; her client
-     redeems it.
+     lock and publishes that signature. It can only send money to
+     `refund_pk`; her client builds and signs the redeem (audit point 1).
    - **Bob FAILED / FORFEIT:** the seats release `P` shares (as today). Each
      seat then rebuilds **one settlement transaction** from the public payout
      table. Inputs: every loser's stake lock (`Claim(P)`) and every fee lock.
-     Outputs: one payout contract per qualifier (`claim_pk = refund_pk` = the
-     qualifier's key) and one per paid node slot (§22A). A seat signs only
-     the txid it rebuilt itself; one FROST signing covers every input.
+     Outputs: one payout contract per qualifier (a pre-expired lock,
+     `refund_pk` = the qualifier's key, audit point 2) and one per paid node
+     slot (§22A). A seat signs only the txid it rebuilt itself; one FROST
+     signing covers every input (audit point 3).
    - **VOID / ENTRY_VOID:** the committee forfeits the locks at once. If
      nobody acts, the lock expires and the player's client takes it back with
      its own key.
-6. **Payout.** Alice's client redeems her payout contract with her key and
+6. **Payout.** Alice's client redeems her payout contract with her key
+   (`Refund`, open at once) and
    withdraws over Lightning through any gateway. That is stock LNv2 send:
    the gateway is paid only against the preimage; otherwise the contract
    refunds her.
@@ -184,10 +186,65 @@ Regtest, unpatched fedimintd 0.12.0 (4 guardians, 3 of 4), two gateways, a
 
 ---
 
-## Open rulings (the owner)
+## Rulings (the owner 2026-09-11)
 
-- `stake_expiry_blocks` (replaces `htlc_cltv_days`).
-- Donations: §27A.4's recipients are LNURLs with no Fedimint key. Either the
-  player's wallet pays them directly at entry, or recipients get a key.
+- `stake_expiry_blocks` = **144** (one day). It must cover only round +
+  objection window + the committee's settlement transaction: a forfeit is
+  redeemable after expiry too, and after expiry the player's key alone
+  refunds.
+- **Donations:** the player's wallet pays the §27A.4 recipients directly,
+  every game, at entry, outside the federation. Nothing of a donation is
+  locked.
+
+## Still open (the owner)
+
 - Which federation(s), and who the guardians are.
 - Inbound liquidity moves from our lnd to the gateways.
+
+---
+
+## Source audit (Fable, 2026-09-11 14:40) — what the concept must say exactly
+
+Read from fedimint 0.12.0; each point changes a line above or adds one.
+
+1. **A forfeit needs the player.** `Cancel(sig)` returns `refund_pk` as the
+   key that must sign the *transaction* (`lnv2-server/src/lib.rs:522-528`).
+   So the committee publishes its forfeit signature (a BIP-340 signature by
+   `claim_pk` over the contract id), and the **player's client** builds and
+   signs the redeem. A player who never returns is refunded by expiry with
+   the same key. Nobody else can ever redeem it.
+2. **A payout contract is a pre-expired lock.** `expiration = 0`, `refund_pk`
+   = the qualifier, any `payment_image`. `Refund` passes at once
+   (`lib.rs:515-521`), signed by the qualifier alone. No forfeit signature,
+   no preimage. Outputs are only inserted, never validated (`lib.rs:577-582`).
+3. **The committee signs raw.** Every input's key is checked as BIP-340
+   over the txid (`fedimint-core/src/transaction.rs:105-120`) and the server
+   collects one key per input (`fedimint-server/src/consensus/
+   transaction.rs:50-77`). One FROST signature over the txid serves every
+   input of the settlement transaction. The stock client's
+   `finalize_and_submit_transaction` wants `Keypair`s (`fedimint-client-
+   module/src/transaction/builder.rs:31-35`), so the committee builds the
+   `Transaction`, FROST-signs its hash, sets `NaiveMultisig` and submits
+   through the API's `submit_transaction` (`fedimint-api-client/src/api/
+   mod.rs:478`).
+4. **Expiry is Bitcoin height by guardian vote:** the threshold-th highest
+   vote (`lib.rs:801-821`). 144 blocks is one day at the target; on regtest
+   blocks must be mined for a Refund to open.
+5. **Fees are per input and per output** (`lib.rs:561-565, 640`): 1 sat each
+   by default, 100 msat per note. Run the federation with
+   `disable_base_fees`, or the payout table carries the fee. Amounts are
+   msat; there is no dust floor, so a 98 sat payout is a valid contract.
+6. **One transaction is at most ~50 KB** (`MAX_TX_SIZE`,
+   `fedimint-core/src/config.rs:38`): about 300 locks and contracts. A round
+   larger than that settles in several transactions, split by a
+   deterministic rule; atomicity is then per chunk.
+7. **The browser needs its own wasm.** `fedimint-client-wasm` dispatches to
+   ln (v1), mint, wallet, meta only (`fedimint-client-rpc/src/lib.rs:
+   343-372`); LNv2 is absent. A small Rust crate on the stock client
+   crates, built to wasm, exposes: receive via gateway, lock, redeem
+   forfeit/refund, withdraw. Rust code, ours, no consensus code.
+8. **Seeing a lock:** `outgoing_contract_expiration(outpoint)` returns
+   `(contract_id, expiration)` (`lib.rs:737-743`). A contract id is the hash
+   of the whole contract, so a seat that has the contract from the player and
+   sees its id at that outpoint has verified every field. The entry commits
+   to the lock's outpoint.

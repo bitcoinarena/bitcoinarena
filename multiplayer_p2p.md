@@ -1300,7 +1300,7 @@ RoundContract {
 
   custody_rules                    // v4.6, see §23; names FEDERATION (§23.6)
   federation_id                    // v4.6.2: the federation holding the stake locks
-  stake_expiry_blocks              // v4.6.2: replaces htlc_cltv_days (§23.1)
+  stake_expiry_blocks              // v4.6.2: replaces htlc_cltv_days; 144 (§23.1)
   claim_window_days
 
   disconnect_rule
@@ -2220,18 +2220,20 @@ been removed from this document.
 5. `STAKE_COMMITTED` is recorded once ≥5 settlement nodes have seen the lock
    confirmed by the federation. Play begins only after this.
 
-`stake_expiry_blocks` is sized in **days** of blocks, comfortably beyond
-round + objection window + result window + claim window, so that delay is
-never loss.
+`stake_expiry_blocks` is **144** — one day of blocks (ruled 2026-09-11).
+It needs to cover only round + objection window + the settlement
+transaction: a forfeit stays redeemable after expiry, and after expiry the
+player's key alone refunds, so delay is never loss. The height is the
+federation's own consensus view of Bitcoin.
 
 ## 23.2 What each outcome does
 
 | Outcome | Action | Requires |
 |---|---|---|
-| `DELIVERED` (qualifying) | Forfeit the stake lock → it returns to the player's key | 5-of-7 settlement signature; a forfeit can only return money to its owner |
+| `DELIVERED` (qualifying) | Forfeit the stake lock → it returns to the player's key | 5-of-7 settlement signature over the lock, published; the player's own client redeems it, and only the player can |
 | `FAILED` / `FORFEIT` | Claim the stake lock inside the round's settlement transaction | `FINAL` result + elapsed `W` + no valid objection + ≥5 preimage shares released + 5-of-7 settlement signature over that transaction |
 | `VOID` / `ENTRY_VOID` | Forfeit at once; if nobody acts, the lock expires | Nothing — after expiry only the player's key can take it |
-| Payout to a qualifier | A payout contract in the same settlement transaction, redeemable only by the qualifier's key | Final payout table (5-of-7) + 5-of-7 settlement signature |
+| Payout to a qualifier | A payout contract in the same settlement transaction: a lock already past expiry whose refund key is the qualifier, redeemable at once by that key alone | Final payout table (5-of-7) + 5-of-7 settlement signature |
 
 The **settlement transaction** is one atomic federation transaction per
 round: every loser's stake lock and every fee lock in; one payout contract
@@ -2267,8 +2269,9 @@ exists only as the settlement transaction, which moves losers' locks straight
 into qualifiers' payout contracts. No node and no minority holds a pooled
 balance at any moment — there is none. The node fee travels in its own lock
 (§23.1) and leaves by the same transaction, so a fee dispute never touches
-another player's stake. Donations are not locked in the federation; how a
-§27A.4 recipient is paid under this construction is an open ruling.
+another player's stake. Donations are not locked in the federation: the
+player's wallet pays the §27A.4 recipients directly, every game, at entry
+(ruled 2026-09-11).
 
 ## 23.6 Construction and maturity — stated honestly
 
@@ -2351,7 +2354,7 @@ time-boxed rather than open-ended.
 |---|---|
 | Player pays a stake | BOLT11 deposit invoice per round through any listed gateway, locked at once (§23.1); NWC budget, QR, deep link or WebLN |
 | Player is paid a win | A payout contract to the player's key; the client withdraws it over Lightning through any listed gateway |
-| Donations are paid | LNURL per recipient, by share (§27A.4) — how, under §23.6, is an open ruling |
+| Donations are paid | LNURL per recipient, by share (§27A.4), from the player's wallet directly at entry — never through the federation |
 
 Ordinary Lightning in both directions, one round at a time; the stake itself
 waits in the federation (§23.6).
