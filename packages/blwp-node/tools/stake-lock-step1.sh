@@ -87,4 +87,12 @@ say "  bitcoin height $H0 (regtest); player's ecash $E1 -> $E2 msat (lock $LOCK_
 # tool adds their own block count back. The id is the hash of the whole
 # contract, so a matching id is every field, claim_pk included.
 say "STEP 1: $(echo "$LJ" | js 'o=>o.ids_match && o.stored_expiration===o.computed_expiration ? "ACCEPTED - the guardians stored contract "+o.stored_contract_id+" at "+o.txid+":"+o.out_idx+", expiring at block "+o.stored_expiration+" ("+o.stored_blocks_left+" left at their count "+o.block_count_at_read+"), claim_pk = the committee key" : "MISMATCH: "+JSON.stringify(o)')"
+echo "$LJ" > $P/lock.json
+# STAY_UP=1 (step 2's way in): the federation, the gateway, the chain and the
+# player's client are left running for whoever called this; it stops them
+# with the process groups in $P/pids and `bitcoin-cli stop`.
+if [ -n "${STAY_UP:-}" ]; then
+  trap - EXIT
+  say "STEP1_STATE probe=$P lock=$P/lock.json keys=$P/keys.json"
+fi
 say "probe dir: $P"
