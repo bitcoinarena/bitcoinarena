@@ -6315,6 +6315,67 @@ async function stakeSeenBy({ entryId, seats, nodes, contract, fetcher = fetch } 
   return { seen, of, needed, unanswered: of - answered.size, committed: seen >= needed, per };
 }
 
+/** The hold states a stake does not leave. */
+const SETTLEMENT_OVER = ['SETTLED', 'CANCELLED', 'EXPIRED', 'FREE', 'none'];
+
+/**
+ * WHERE THIS STAKE STANDS, asked of every settlement seat (MF item 14).
+ *
+ * Each seat answers `GET /settlement` for itself - its hold now, where the
+ * run's result stands, when its objection window closes, the height its hold
+ * refunds at - and the seats are found at the page's addresses the way
+ * `stakeSeenBy` finds them, one answer per seat key. The answer is one word
+ * per field:
+ *
+ *   hold          the seats' own word when they agree, HELD while any differs
+ *   finality      SUSPENDED if any seat says so, FINAL when all do,
+ *                 PROVISIONALLY_FINAL when any has a result, else null
+ *   windowClosesAtMs  the LATEST seat's window end - nothing moves before it
+ *   refundHeight  the lowest height any seat names
+ *
+ *   { of, answered, hold, finality, windowClosesAtMs, refundHeight, per }
+ */
+async function settlementBy({ entryId, seats, nodes, fetcher = fetch } = {}) {
+  const want = new Set((seats || []).map((k) => toHex(k)));
+  const eid = typeof entryId === 'string' ? entryId : toHex(entryId);
+  const answered = new Map();
+  const per = [];
+  for (const node of nodes || []) {
+    const base = String(node).replace(/\/+$/, '');
+    let key;
+    try {
+      const r = await readWithOneRetry(fetcher, base + '/identity');
+      if (!r.ok) { per.push({ node, why: `identity answered ${r.status}` }); continue; }
+      key = toHex(new Uint8Array(await r.arrayBuffer()));
+    } catch (e) { per.push({ node, why: e.message }); continue; }
+    if (!want.has(key) || answered.has(key)) continue;
+    try {
+      const r = await readWithOneRetry(fetcher, `${base}/settlement?entry=${eid}`);
+      const body = await r.text();
+      if (!r.ok) { per.push({ node, key, why: body.trim() }); continue; }
+      const said = JSON.parse(body);
+      answered.set(key, said);
+      per.push({ node, key, ...said });
+    } catch (e) { per.push({ node, key, why: e.message }); }
+  }
+  const all = [...answered.values()];
+  const holds = new Set(all.map((a) => a.hold));
+  const states = all.map((a) => a.finality);
+  const ends = all.map((a) => a.windowClosesAtMs).filter((v) => v !== null && v !== undefined).map(Number);
+  const refunds = all.map((a) => a.refundHeight).filter((v) => Number.isInteger(v));
+  return {
+    of: want.size,
+    answered: answered.size,
+    hold: !all.length ? null : (holds.size === 1 ? all[0].hold : 'HELD'),
+    finality: states.includes('SUSPENDED') ? 'SUSPENDED'
+      : (all.length && states.every((f) => f === 'FINAL')) ? 'FINAL'
+        : states.some((f) => f === 'PROVISIONALLY_FINAL' || f === 'FINAL') ? 'PROVISIONALLY_FINAL' : null,
+    windowClosesAtMs: ends.length ? Math.max(...ends) : null,
+    refundHeight: refunds.length ? Math.min(...refunds) : null,
+    per,
+  };
+}
+
 /**
  * WHO THE SETTLEMENT COMMITTEE IS, ASKED OF EVERY NODE THE ROUND NAMED.
  *
@@ -7555,6 +7616,12 @@ class Client {
     this.stakePolls = 0;
     this.stakeWatchStopped = false;
     this.stakeWatch = null;         // the running count, so a second start joins it
+    // AND WHERE THE STAKE STANDS AFTER THE RUN (MF item 14), asked once it is
+    // committed and until every seat has moved the hold.
+    this.settlement = null;
+    this.settlementWatch = null;
+    this.settlementPolls = 0;
+    this.settlementOver = false;
     this.refusedWhy = null;
     this.refusedAt = null;
     this.resynced = false;
@@ -8490,7 +8557,7 @@ class Client {
   // ONE WATCH AT A TIME. The page starts it from the seat and again after a
   // payment; a second start returns the watch already running rather than
   // polling every seat twice.
-  watchStake({ seats, nodes, contract, everyMs = 2000, fetcher } = {}) {
+  watchStake({ seats, nodes, contract, everyMs = 2000, settlementEveryMs = 5000, fetcher } = {}) {
     if (this.stakeWatch) return this.stakeWatch;
     // A COUNT THAT IS OVER STAYS OVER. Committed, the run ended, or this client
     // closed: the last count is handed back and no node is asked. The chip
@@ -8507,12 +8574,46 @@ class Client {
         this.stakePolls++;
         this.stakeCount = s;
         this.stakeCommitted = s.committed;
+        // COMMITTED IS WHERE THE NEXT WAIT BEGINS: the run, the close, the
+        // objection window, the settle. The seats are asked about that now.
+        if (s.committed && !this.stakeWatchStopped)
+          this.watchSettlement({ seats, nodes, everyMs: settlementEveryMs, ...(fetcher ? { fetcher } : {}) })
+            .catch(() => { /* a stake with no seat to ask has nothing to say */ });
         if (s.committed || this.ended || this.stakeWatchStopped) return s;
         await new Promise((r) => setTimeout(r, everyMs));
         if (this.ended || this.stakeWatchStopped) return this.stakeCount;
       }
     })().finally(() => { this.stakeWatch = null; });
     return this.stakeWatch;
+  }
+
+  /**
+   * WHERE THIS SEAT'S STAKE STANDS, asked of every settlement seat (MF item
+   * 14): "the player is waiting on other people's machines and must be told
+   * so, with the refund path visible the whole time". Started once the stake
+   * is committed, asked every `everyMs`, and stopped when every seat that
+   * answers has moved the hold (settled, handed back, expired) or this client
+   * closes. The answer rides on `stakeCount`, which is what the page already
+   * hands the chip, so the chip says it with no new wiring.
+   */
+  watchSettlement({ seats, nodes, everyMs = 5000, fetcher } = {}) {
+    if (this.settlementWatch) return this.settlementWatch;
+    if (this.settlementOver || this.stakeWatchStopped) return Promise.resolve(this.settlement);
+    const eid = (this.where && this.where.entryId) || (this.seatEntry && entryId(this.seatEntry));
+    if (!eid) return Promise.reject(new Error('there is no seat to ask about: join first'));
+    this.settlementWatch = (async () => {
+      for (;;) {
+        const s = await settlementBy({ entryId: eid, seats, nodes, ...(fetcher ? { fetcher } : {}) });
+        this.settlementPolls++;
+        this.settlement = s;
+        this.stakeCount = { ...(this.stakeCount || {}), settlement: s };
+        if (s.answered && SETTLEMENT_OVER.includes(s.hold)) { this.settlementOver = true; return s; }
+        if (this.stakeWatchStopped) return s;
+        await new Promise((r) => setTimeout(r, everyMs));
+        if (this.stakeWatchStopped) return this.settlement;
+      }
+    })().finally(() => { this.settlementWatch = null; });
+    return this.settlementWatch;
   }
 
   /**
@@ -9433,7 +9534,7 @@ function playersLine({ seated, others, stalled = false, at = null, refused = nul
  * "stake seen by N of M nodes (T needed)", with the seats that did not answer
  * named and "committed" only at N >= T.
  */
-function stakeLine(stake) {
+function stakeLine(stake, nowMs = Date.now()) {
   if (!stake) return '';
   if (stake.free) return ' · free seat';
   if (!stake.dealt) return '';
@@ -9446,12 +9547,38 @@ function stakeLine(stake) {
   if (s && typeof s.seen === 'number' && !(noHold && s.seen === 0)) {
     return ` · stake seen by ${s.seen} of ${s.of} nodes (${s.needed} needed)`
       + (s.unanswered ? `, ${s.unanswered} did not answer` : '')
-      + (s.committed ? ' · committed' : '');
+      + (s.committed ? ' · committed' : '')
+      + settlementLine(s.settlement, nowMs);
   }
   const held = stake.hold && stake.hold.state;
   if (held && held !== 'none') return ' · stake dealt, not yet counted';
   const why = stake.hold && stake.hold.why;
   return ' · stake dealt, unpaid' + (why ? ` (${why})` : '');
+}
+
+/**
+ * WHERE THE STAKE STANDS AFTER THE RUN, in the settlement seats' words (MF
+ * item 14): "the player is waiting on other people's machines and must be told
+ * so, with the refund path visible the whole time". `s` is `settlementBy`'s
+ * answer. Nothing is added until the seats have a result to wait on - before
+ * that the count above is the whole story.
+ *
+ * SETTLED says the run lost the stake, and no more: where a settled stake goes
+ * next is a ruling still open, and the chip does not claim it.
+ */
+function settlementLine(s, nowMs = Date.now()) {
+  if (!s || !s.answered) return '';
+  const refund = Number.isInteger(s.refundHeight) ? ` · refunds at block ${s.refundHeight} if nobody acts` : '';
+  if (s.hold === 'SETTLED') return ' · stake settled: this run lost it';
+  if (s.hold === 'CANCELLED') return ' · stake handed back';
+  if (s.hold === 'EXPIRED') return ' · stake refunded: its hold expired';
+  if (s.finality === 'SUSPENDED') return ' · suspended by an objection' + refund;
+  if (s.finality === 'FINAL') return ' · final: the committee is settling it' + refund;
+  if (s.finality === 'PROVISIONALLY_FINAL' && Number.isFinite(s.windowClosesAtMs)) {
+    const left = Math.max(0, Math.ceil((s.windowClosesAtMs - nowMs) / 1000));
+    return ` · waiting for the objection window, ${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')} left` + refund;
+  }
+  return '';
 }
 
 return { Client: Client, markState: markState,
