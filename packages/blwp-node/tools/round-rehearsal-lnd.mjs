@@ -23,7 +23,7 @@
 //   node packages/blwp-node/tools/round-rehearsal-lnd.mjs [--keep]
 import { execFile, execFileSync, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdtempSync, mkdirSync, existsSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createRequire } from 'node:module';
@@ -37,7 +37,7 @@ const sockets = watchSockets();
 import { bitcoindRpc } from '../src/chain-rpc.js';
 import { replay } from '../src/replay.js';
 import { feldmanGroup } from '../src/curve.js';
-import { Client } from '../../blwp-client/src/client.js';
+import { Client, federationStakeFor } from '../../blwp-client/src/client.js';
 import {
   joinFromQuery, tabIdentity, entryFor, fetchSettlementSeats, stakeFor, postHandout,
   worldSeedFor, stakeSeenBy, sharesNeededFor,
@@ -65,6 +65,13 @@ const STAKE_MSAT = BigInt((process.argv.find((a) => a.startsWith('--stake-msat='
 // pays the winner from it after the window - or says why not.
 const POOL = process.argv.includes('--pool');
 const POOL_SATS = BigInt((process.argv.find((a) => a.startsWith('--pool-sats=')) || '--pool-sats=1200').split('=')[1]);
+// --federation: the round's stakes go through a Fedimint federation (V1's
+// pool, the owner 2026-09-11) - 4 guardians, threshold 3, on this chain, with the
+// gateway on bob's lnd - invoice first: a node asks the federation for the
+// round's invoice and each entry commits to its hash, no shares dealt.
+// FEDIMINT_BIN names the (patched) builds; HOLD_SECS the guardians' hold.
+const FEDERATION = process.argv.includes('--federation');
+const FED_HOLD_SECS = Number(process.env.HOLD_SECS || 30);
 // WHICH DAEMON IS TOLD TO CLOSE FIRST (M3.3-25): AB or BA. Each order on its
 // own ports, so the two can run side by side.
 const CLOSE_ORDER = (process.argv.find((a) => a.startsWith('--close-order=')) || '--close-order=AB').split('=')[1];
@@ -175,7 +182,11 @@ async function main() {
   say(`an isolated regtest of its own: ${dir}`);
   const running = [];
   const btcArgs = ['-regtest', `-datadir=${join(dir, 'btc')}`, `-rpcport=${P.rpc}`];
-  const cli = (...a) => sh(join(BITCOIN, 'bitcoin-cli'), [...btcArgs, ...a]).trim();
+  // ONE WALLET NAMED ON EVERY CALL once it exists: a Fedimint gateway loads
+  // its own wallet into this bitcoind, and then an unnamed wallet call fails
+  // with "Multiple wallets are loaded" (measured on the probe).
+  const walletArg = [];
+  const cli = (...a) => sh(join(BITCOIN, 'bitcoin-cli'), [...btcArgs, ...walletArg, ...a]).trim();
   const cookie = join(dir, 'btc', 'regtest', '.cookie');
   const lncliFor = (who) => [`--lnddir=${join(dir, who)}`, `--rpcserver=127.0.0.1:${P[who].rpc}`, '--network=regtest'];
   const ln = (who, ...a) => sh(LNCLI, [...lncliFor(who), ...a]);
@@ -183,6 +194,7 @@ async function main() {
   const holes = [];
   const hole = (kind, what) => { holes.push({ kind, what }); say(`  HOLE [${kind}] ${what}`); };
   let round = null;
+  let fedPids = null;   // the federation's process groups, when --federation stood one up
   const clients = [];
 
   try {
@@ -193,6 +205,7 @@ async function main() {
       '-daemon'], { stdio: 'ignore' });
     await until('bitcoind', () => existsSync(cookie) && cli('getblockcount'));
     try { cli('createwallet', 'blwp'); } catch { cli('loadwallet', 'blwp'); }
+    walletArg.push('-rpcwallet=blwp');
     const addr = cli('getnewaddress');
     const mine = (n) => cli('generatetoaddress', String(n), addr);
     mine(250);
@@ -222,6 +235,43 @@ async function main() {
     const msatOf = (who) => BigInt((lnj(who, 'listchannels').channels[0] || {}).local_balance || 0) * 1000n;
     say(`bitcoind at ${cli('getblockcount')}; channel alice->bob active`);
 
+    // ---- THE FEDERATION ON THIS CHAIN (--federation) ----
+    // Stood up by tools/federation-hold-probe.sh on this bitcoind and this bob,
+    // left running, and stopped in `finally`. The daemons' receiver asks it for
+    // an LNv2 invoice without blocking their event loop.
+    let federation = null;
+    if (FEDERATION) {
+      if (!process.env.FEDIMINT_BIN) throw new Error('--federation needs FEDIMINT_BIN, the directory holding the Fedimint builds');
+      const t = Date.now();
+      const out = await new Promise((resolve) => execFile('bash', [join(import.meta.dirname, 'federation-hold-probe.sh')], {
+        env: { ...process.env, PROBE_DIR: join(dir, 'fed'), HOLD_SECS: String(FED_HOLD_SECS), SETUP_ONLY: '1',
+          EXT_RPC_PORT: String(P.rpc), EXT_COOKIE: cookie, EXT_WALLET: 'blwp',
+          EXT_BOB_LNDDIR: join(dir, 'bob'), EXT_BOB_RPC: `127.0.0.1:${P.bob.rpc}` },
+        maxBuffer: 16 << 20, timeout: 600000,
+      }, (err, so, se) => resolve(`${so || ''}${se || ''}${err ? `\n${err.message}` : ''}`)));
+      const ready = /FEDERATION_READY invite=(\S+) client=(\S+) gateway=(\S+) pids=(\S+)/.exec(out);
+      if (!ready) {
+        say(out.split('\n').slice(-12).join('\n'));
+        hole('code', 'the federation did not come up on this chain');
+        throw new Error('the federation did not come up');
+      }
+      fedPids = ready[4];
+      const clientDir = ready[2];
+      const gatewayUrl = ready[3];
+      const FB = process.env.FEDIMINT_BIN;
+      const FHOME = process.env.FEDIMINT_HOME || join(FB, 'home');
+      federation = {
+        receive: ({ amountMsat }) => new Promise((resolve, reject) => execFile(join(FB, 'fedimint-cli'),
+          ['--data-dir', clientDir, 'module', 'lnv2', 'receive', String(amountMsat), '--gateway', gatewayUrl],
+          { env: { ...process.env, HOME: FHOME }, maxBuffer: 8 << 20, timeout: 120000 }, (err, so) => {
+            const m = /lnbcrt[0-9a-z]+/.exec(so || '');
+            if (!m) return reject(new Error(`fedimint-cli made no invoice: ${(so || '').slice(0, 200)}${err ? ` ${err.message}` : ''}`));
+            return resolve({ request: m[0] });
+          })),
+      };
+      say(`  the federation: 4 guardians, threshold 3, guardians' hold ${FED_HOLD_SECS} s, gateway on bob's lnd - up in ${Date.now() - t} ms`);
+    }
+
     // ---- TWO DAEMONS ON BOB, THROUGH THE LAUNCHERS' OWN SETTINGS ----
     Object.assign(process.env, {
       BLWP_LNCLI: LNCLI, BLWP_LND_DIR: join(dir, 'bob'),
@@ -233,6 +283,7 @@ async function main() {
         rpc, cli, stakeMsat: STAKE_MSAT, page: 'http://127.0.0.1:1',
         objectionWindowMs: BigInt(OBJECTION_WINDOW_MS),
         poolChain: POOL,
+        ...(federation ? { federation } : {}),
         // BOTH LNDS AT THE TIP BEFORE THE ROUND IS POSTED. The beacon loop
         // mines, and the daemon's preflight then asks bob's lnd whether it is
         // synced; 1 of 69 earlier logs found it still catching up and the round
@@ -308,12 +359,19 @@ async function main() {
     for (const [name, want] of [['P1', 'DELIVERED'], ['P2', 'FAILED'], ['P3', 'VOID']]) {
       const session = ed25519.utils.randomSecretKey();
       const player = tabIdentity({ storage: storage(), random, curve: feldmanGroup });
-      const stake = await stakeFor({ ...named.round, id: fromHex(round.id) }, {
-        seats: seats.seats, curve: feldmanGroup, random, playerPubkey: player.pubkey,
-        needed: sharesNeededFor(named.round),
-      });
-      const put = await postHandout(stake, named.nodes, { needed: sharesNeededFor(named.round) });
-      if (!put.ok) { hole('code', `${name}'s handout: ${put.why}`); continue; }
+      let stake;
+      if (FEDERATION) {
+        // INVOICE FIRST: the round's federation invoice, and no shares dealt.
+        try { stake = await federationStakeFor({ ...named.round, id: fromHex(round.id) }, { nodes: named.nodes }); }
+        catch (e) { hole('code', `${name}'s federation stake: ${e.message}`); continue; }
+      } else {
+        stake = await stakeFor({ ...named.round, id: fromHex(round.id) }, {
+          seats: seats.seats, curve: feldmanGroup, random, playerPubkey: player.pubkey,
+          needed: sharesNeededFor(named.round),
+        });
+        const put = await postHandout(stake, named.nodes, { needed: sharesNeededFor(named.round) });
+        if (!put.ok) { hole('code', `${name}'s handout: ${put.why}`); continue; }
+      }
       const base = {
         roundId: fromHex(round.id), sessionPubkey: ed25519.getPublicKey(session),
         ...entryFor(named.round, { playerPubkey: player.pubkey, random, stake }),
@@ -388,14 +446,31 @@ async function main() {
 
     // ---- ALICE PAYS EVERY HOLD ----
     const before = { alice: msatOf('alice'), bob: msatOf('bob') };
+    const payT0 = Date.now();   // when the stakes were paid, against the round's close and window
     for (const p of players) {
       const q = await p.client.invoice(p.entry, { entryId: p.eid });
       if (!q.ok) { hole('code', `${p.name} got no quote: ${q.why}`); continue; }
       p.hash = toHex(q.paymentHash);
       p.amountMsat = q.amountMsat;
+      p.request = q.request;
+      p.payStart = Date.now();
       p.pay = new Promise((resolve) => execFile(LNCLI,
         [...lncliFor('alice'), 'payinvoice', '--force', '--timeout', '900s', q.request],
-        { maxBuffer: 8 << 20 }, (err, o) => resolve((o || '') + (err ? err.message : ''))));
+        { maxBuffer: 8 << 20 }, (err, o) => { p.payMs = Date.now() - p.payStart; resolve((o || '') + (err ? err.message : '')); }));
+    }
+    // THE HOLD, READ 10 s INTO IT (--federation): bob's side of each stake, and
+    // whether the entry, the node's quote and the invoice itself carry one hash.
+    if (FEDERATION) {
+      await wait(10000);
+      for (const p of players) {
+        if (!p.hash) continue;
+        const inv = lnj('bob', 'lookupinvoice', p.hash);
+        const dec = lnj('bob', 'decodepayreq', p.request);
+        p.hashMatch = toHex(p.entry.stakeCommitment) === p.hash && dec.payment_hash === p.hash;
+        say(`  ${p.name} at pay +10 s: bob's invoice ${inv.state}, HTLCs ${(inv.htlcs || []).map((h) => h.state).join(',') || 'none'}; `
+          + `entry ${toHex(p.entry.stakeCommitment).slice(0, 12)}, quoted ${p.hash.slice(0, 12)}, invoice ${dec.payment_hash.slice(0, 12)} - ${p.hashMatch ? 'ONE HASH' : 'HASHES DIFFER'}`);
+      }
+      say(`  bob's channel at pay +10 s: ${msatOf('bob')} msat (before paying ${before.bob})`);
     }
     for (const p of players) {
       if (!p.hash) continue;
@@ -655,11 +730,19 @@ async function main() {
       const expiry = inv.htlcs && inv.htlcs[0] ? Number(inv.htlcs[0].expiry_height) : null;
       say(`  P3 (VOID) after the close: lnd ${inv.state}; its HTLC expires at ${expiry}, chain at ${cli('getblockcount')}`);
       if (expiry) {
+        let voidSettled = false;
         await until('the void stake to time out', () => {
-          if (lookup(voided.hash).state === 'CANCELED') return true;
+          const st = lookup(voided.hash).state;
+          if (st === 'CANCELED') return true;
+          // A FEDERATION ROUND'S GUARDIANS RELEASE ON A TIMER, so the gateway
+          // can SETTLE a VOID stake instead of it going back - measured: the
+          // first --federation run waited this loop's 300 s out. A hole to
+          // report, not a wait.
+          if (st === 'SETTLED') { voidSettled = true; return true; }
           if (Number(cli('getblockcount')) < expiry + 10) mine(10);
           return false;
         }, 300000, 3000).catch((e) => hole('code', `P3's hold did not expire back: ${e.message}`));
+        if (voidSettled) hole('code', 'P3 (VOID) was SETTLED through the federation - not handed back to alice: the guardians release on a timer, not on the round\'s result');
         // LND CANCELS BEFORE THE EXPIRY HEIGHT. Measured: it failed the HTLC
         // back with the chain at 353 for an expiry of 366 - its own margin -
         // so the chain is mined PAST the expiry, as a real chain would go on,
@@ -710,6 +793,24 @@ async function main() {
     }
     say(`  VOID ROWS HELD AFTER LND CANCELED: ${voidHeldAfterCanceled.length}${voidHeldAfterCanceled.length ? ` (${voidHeldAfterCanceled.join('; ')})` : ''}`);
     say(`  HELD AFTER LND SETTLED: ${heldAfterSettled.length}${heldAfterSettled.length ? ` (${heldAfterSettled.join('; ')})` : ''}`);
+    // WHEN EACH STAKE WAS RELEASED, AGAINST THE ROUND'S OWN WINDOW: the
+    // guardians' hold counts from the payment, the window from the close.
+    if (FEDERATION) say(`  FEDERATION: the stakes were paid ${t0 - payT0} ms before the first close`);
+    if (FEDERATION) for (const p of players) {
+      if (!p.hash) continue;
+      const inv = lookup(p.hash);
+      const h = (inv.htlcs || [])[0] || {};
+      const held = Number(h.resolve_time) > 0 ? Number(h.resolve_time) - Number(h.accept_time) : null;
+      const released = p.payMs === undefined ? null : p.payStart + p.payMs - t0;
+      const windows = daemons.map(([n]) => closesAt.get(`${n}:${p.eid ? toHex(p.eid) : ''}`)).filter((v) => v !== undefined);
+      const firstWindow = windows.length ? Math.min(...windows) : null;
+      const verdict = released === null || firstWindow === null ? ''
+        : released < firstWindow ? ` - RELEASED ${firstWindow - released} ms BEFORE THE WINDOW CLOSED` : ' - after the window';
+      say(`  FEDERATION ${p.name}: bob's invoice ${inv.state}, HTLC held ${held === null ? 'unresolved' : `${held} s`}; `
+        + `alice's payment ${p.payMs === undefined ? 'still in flight' : `returned after ${p.payMs} ms`}; one hash: ${p.hashMatch}; `
+        + `released at ${released === null ? '-' : `${released >= 0 ? '+' : ''}${released} ms`} from the first close, `
+        + `its window closes at ${firstWindow === null ? '- (no result)' : `+${firstWindow} ms`}${verdict}`);
+    }
     say(`  alice ${before.alice} -> ${end.alice} msat (${end.alice - before.alice}); `
       + `bob (the operator) ${before.bob} -> ${end.bob} msat (+${end.bob - before.bob}); `
       + `after the close, before P3 expired: alice ${afterClose.alice}, bob ${afterClose.bob}`);
@@ -773,10 +874,22 @@ async function main() {
     for (const h of holes) say(`  [${h.kind}] ${h.what}`);
     for (const c of clients) { try { c.endRun && c.endRun('rehearsal over'); c.close(); } catch { /* gone */ } }
     if (round) { try { await round.close(); } catch { /* gone */ } }
+    // THE FEDERATION'S WHOLE PROCESS GROUPS: its builds are wrappers, and the
+    // wrapper's PID alone left the daemons running (measured on the probe).
+    const fedGroups = [];
+    if (fedPids) {
+      try {
+        for (const line of readFileSync(fedPids, 'utf8').split('\n')) {
+          const pid = Number(line.split(' ')[0]);
+          if (pid) { fedGroups.push(pid); try { process.kill(-pid, 'SIGTERM'); } catch { /* gone */ } }
+        }
+      } catch { /* no pids file */ }
+    }
     if (!KEEP) {
       for (const p of running) { try { p.kill('SIGTERM'); } catch { /* gone */ } }
       await wait(3000);
       for (const p of running) { try { p.kill('SIGKILL'); } catch { /* gone */ } }
+      for (const pid of fedGroups) { try { process.kill(-pid, 'SIGKILL'); } catch { /* gone */ } }
       try { sh(join(BITCOIN, 'bitcoin-cli'), [...btcArgs, 'stop']); } catch { /* gone */ }
     } else say(`left running, --keep: ${dir}`);
     setTimeout(() => process.exit(0), 2000);

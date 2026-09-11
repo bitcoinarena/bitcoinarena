@@ -113,5 +113,14 @@ export function lndPort({ lncli, args = [], timeoutMs = 60000, expirySeconds = 3
     async settle({ preimage }) { await call(['settleinvoice', '--preimage', toHex(preimage)]); },
 
     async cancel({ paymentHash }) { await call(['cancelinvoice', toHex(paymentHash)]); },
+
+    // READ AN INVOICE THIS NODE DID NOT MAKE, and nothing more: a federation
+    // round's invoice comes from the federation (invoice first, the owner
+    // 2026-09-11), and the node has to say which hash and amount it carries
+    // before a player commits to them. `decodepayreq` is local and read-only.
+    async decode({ request }) {
+      const d = await json(['decodepayreq', String(request)]);
+      return { paymentHash: Buffer.from(d.payment_hash, 'hex'), amountMsat: BigInt(d.num_msat || 0) };
+    },
   };
 }

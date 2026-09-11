@@ -19,6 +19,7 @@ import { randomBytes } from 'node:crypto';
 import { WebSocketServer } from 'ws';
 import { decodeRoundContract, decodeEntryContract } from '../../protocol/src/contracts.js';
 import { toHex } from '../../protocol/src/hash.js';
+import { entryFeeMsat } from '../../protocol/src/fee.js';
 import { TYPE_CHECKPOINT, TYPE_INPUT_BATCH, STAKE_NOT_SEEN } from '../../protocol/src/constants.js';
 import { splitSigned, decodeCheckpoint } from '../../protocol/src/checkpoint.js';
 import { MAX_INPUT_BATCH_BYTES, decodeInputBatch } from '../../protocol/src/batch.js';
@@ -146,6 +147,11 @@ export const NOTHING_IS_FUNDED = () => false;
 export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FUNDED,
   randomnessFor, chainFor, peers = [], headerBytes, bondProof,
   lightning = NO_LIGHTNING, preimageFor = null,
+  // THE FEDERATION'S RECEIVING SIDE, when this node's rounds take their stakes
+  // through it (V1's pool is a FEDERATION, the owner 2026-09-11): `receive({
+  // amountMsat })` answers `{ request }`, an LNv2 invoice the federation's
+  // gateway holds. None by default: a node makes its own hold invoices.
+  federation = null,
   // CAN THAT LIGHTNING NODE HOLD A ROUND'S STAKES? `lndPreflight` asks it with
   // a read-only key. A node given a port and no preflight opens no paying
   // round: the gate fails closed.
@@ -987,6 +993,44 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           finalityWhy: standing.why || null,
           windowClosesAtMs: standing.closesAtMs === undefined ? null : String(standing.closesAtMs),
           refundHeight: refund ?? null,
+        }) + '\n');
+      }
+
+      /**
+       * A FEDERATION ROUND'S STAKE INVOICE, BEFORE THE ENTRY EXISTS.
+       *
+       * Invoice first (the owner 2026-09-11, decision 1): an LNv2 invoice's
+       * secret belongs to its receiver - the federation, which holds it
+       * threshold-wise - so the player cannot choose it; the player's entry
+       * commits to THIS invoice's hash instead. Asked for exactly the net
+       * stake with no donation, because `/entry` then takes the gateway's
+       * hold invoice up (lnd-port.js) and `invoiceMatchesEntry` refuses any
+       * other amount. The hash and the amount are read off the invoice, not
+       * taken from the federation's word.
+       */
+      if (req.method === 'GET' && url.pathname === '/federation-invoice') {
+        if (!federation || typeof federation.receive !== 'function')
+          return text(res, 409, 'this node makes no federation invoices');
+        const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
+        const held = rid.length === 32 ? round.get(rid) : null;
+        if (!held) return text(res, 404, 'this node holds no such round');
+        const contract = decodeRoundContract(new Uint8Array(held.contract));
+        if (!(contract.stakeMsat > 0n)) return text(res, 409, 'that round asks no stake, so there is nothing to invoice');
+        if (typeof lightning.decode !== 'function')
+          return text(res, 503, 'this node cannot read a Lightning invoice, so it cannot say what one commits to');
+        const amountMsat = contract.stakeMsat - entryFeeMsat(contract.stakeMsat);
+        let made;
+        let read;
+        try {
+          made = await federation.receive({ amountMsat, roundId: new Uint8Array(rid) });
+          read = await lightning.decode({ request: made.request });
+        } catch (e) { return text(res, 503, `the federation made no invoice: ${e.message}`); }
+        if (read.amountMsat !== amountMsat)
+          return text(res, 502, `the federation's invoice is for ${read.amountMsat} msat, not the ${amountMsat} msat net stake`);
+        res.writeHead(200, { 'content-type': 'application/json', ...CORS });
+        return res.end(JSON.stringify({
+          round: rid.toString('hex'), paymentHash: toHex(read.paymentHash),
+          amountMsat: String(amountMsat), request: made.request,
         }) + '\n');
       }
 

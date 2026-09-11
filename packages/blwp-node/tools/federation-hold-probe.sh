@@ -19,6 +19,10 @@
 #   FEDIMINT_BIN=<dir with fedimintd gatewayd fedimint-cli gateway-cli v0.12.0> \
 #     bash tools/federation-hold-probe.sh [window-seconds] [stake-msat]
 #
+# EXT_RPC_PORT, EXT_COOKIE, EXT_WALLET, EXT_BOB_LNDDIR and EXT_BOB_RPC put the
+# federation on an existing regtest instead (the rehearsal's); SETUP_ONLY=1
+# stops after the gateway is vetted, prints FEDERATION_READY, and leaves it up.
+#
 # The Fedimint builds are self-extracting bundles that unpack into
 # $HOME/.cache; FEDIMINT_HOME (default $FEDIMINT_BIN/home) keeps that inside
 # the directory the operator chose. Nothing is installed or put on PATH.
@@ -36,8 +40,24 @@ AMOUNT_MSAT=${2:-1000000}
 HOLD_SECS=${HOLD_SECS:-0}
 mkdir -p $P/btc $P/alice $P/bob $P/gw $P/client $FH
 : > $P/pids
-RPC=30101; ZB=30105; ZT=30106
+ZB=30105; ZT=30106
 declare -A LRPC=([alice]=30107 [bob]=30110) LLIS=([alice]=30108 [bob]=30111) LREST=([alice]=30109 [bob]=30112)
+# AN EXTERNAL CHAIN (the rehearsal's): with EXT_RPC_PORT set, no bitcoind, lnd
+# or channel of this tool's own - the federation stands up on that bitcoind
+# (cookie auth: fedimintd and gatewayd take `__cookie__` and its secret as a
+# user and password) with its gateway on that bob's lnd.
+EXT=${EXT_RPC_PORT:-}
+if [ -n "$EXT" ]; then
+  RPC=$EXT_RPC_PORT
+  BTC_USER=__cookie__; BTC_PASS=$(cut -d: -f2- "$EXT_COOKIE")
+  BTC_AUTH=("-rpccookiefile=$EXT_COOKIE"); WALLET=${EXT_WALLET:-blwp}
+  BOB_DIR=$EXT_BOB_LNDDIR; BOB_RPC=$EXT_BOB_RPC
+else
+  RPC=30101
+  BTC_USER=blwp; BTC_PASS=blwp
+  BTC_AUTH=("-datadir=$P/btc" -rpcuser=blwp -rpcpassword=blwp); WALLET=probe
+  BOB_DIR=$P/bob; BOB_RPC=127.0.0.1:${LRPC[bob]}
+fi
 say() { echo "$@"; }
 # EACH DAEMON'S WHOLE PROCESS GROUP. The Fedimint builds are wrappers that
 # start the real daemon as a child; killing the recorded PID alone left four
@@ -45,14 +65,18 @@ say() { echo "$@"; }
 # started under `setsid`, so its group id is the recorded PID.
 stop() {
   for pid in $(cut -d' ' -f1 $P/pids 2>/dev/null); do kill -TERM -- -$pid 2>/dev/null; done
-  $B/bitcoin-cli -regtest -datadir=$P/btc -rpcport=$RPC -rpcuser=blwp -rpcpassword=blwp stop >/dev/null 2>&1
+  [ -n "$EXT" ] || bcn stop >/dev/null 2>&1
   sleep 5
   for pid in $(cut -d' ' -f1 $P/pids 2>/dev/null); do kill -KILL -- -$pid 2>/dev/null; done
 }
 trap stop EXIT
-bcn() { $B/bitcoin-cli -regtest -datadir=$P/btc -rpcport=$RPC -rpcuser=blwp -rpcpassword=blwp "$@"; }
-bc() { bcn -rpcwallet=probe "$@"; }
-ln_() { local who=$1; shift; $L/lncli --lnddir=$P/$who --rpcserver=127.0.0.1:${LRPC[$who]} --network=regtest "$@"; }
+bcn() { $B/bitcoin-cli -regtest -rpcport=$RPC "${BTC_AUTH[@]}" "$@"; }
+bc() { bcn -rpcwallet=$WALLET "$@"; }
+ln_() {
+  local who=$1; shift
+  if [ "$who" = bob ]; then $L/lncli --lnddir=$BOB_DIR --rpcserver=$BOB_RPC --network=regtest "$@";
+  else $L/lncli --lnddir=$P/$who --rpcserver=127.0.0.1:${LRPC[$who]} --network=regtest "$@"; fi
+}
 js() { node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{try{process.stdout.write(String(($1)(JSON.parse(s))))}catch(e){process.stdout.write('?')}})"; }
 gw() { HOME=$FH timeout 120 $F/gateway-cli -a http://127.0.0.1:30170 --rpcpassword probe "$@"; }
 fc() { HOME=$FH timeout 120 $F/fedimint-cli --data-dir $P/client "$@"; }
@@ -60,6 +84,7 @@ setup() { HOME=$FH timeout 120 $F/fedimint-cli --password probe admin setup "$@"
 until_() { local what=$1 n=$2; shift 2; for i in $(seq $n); do "$@" && return 0; sleep 1; done; say "GAVE UP waiting for $what"; exit 1; }
 
 # ---- THE CHAIN AND THE TWO LIGHTNING NODES, the rehearsal's shape ----
+if [ -z "$EXT" ]; then
 $B/bitcoind -regtest -datadir=$P/btc -rpcport=$RPC -rpcuser=blwp -rpcpassword=blwp -port=30102 -listen=0 \
   -listenonion=0 -fallbackfee=0.0001 -txindex -zmqpubrawblock=tcp://127.0.0.1:$ZB \
   -zmqpubrawtx=tcp://127.0.0.1:$ZT -daemon >/dev/null
@@ -90,13 +115,17 @@ bc generatetoaddress 6 $MINE >/dev/null
 active() { [ "$(ln_ alice listchannels | js 'o=>(o.channels||[]).filter(c=>c.active).length')" -gt 0 ]; }
 until_ "the channel" 120 active
 say "chain at $(bcn getblockcount); channel alice->bob active"
+else
+  MINE=$(bc getnewaddress)
+  say "the external chain at $(bcn getblockcount); the gateway goes on the lnd at $BOB_RPC"
+fi
 
 # ---- FOUR GUARDIANS, started one after another: the bundles share one
 # unpack directory, and two first runs at once found it half-written ----
 for g in 0 1 2 3; do
   base=$((30120 + g * 10)); mkdir -p $P/g$g
   ( export HOME=$FH FM_DATA_DIR=$P/g$g FM_BITCOIN_NETWORK=regtest \
-      FM_BITCOIND_URL=http://127.0.0.1:$RPC FM_BITCOIND_USERNAME=blwp FM_BITCOIND_PASSWORD=blwp \
+      FM_BITCOIND_URL=http://127.0.0.1:$RPC FM_BITCOIND_USERNAME=$BTC_USER FM_BITCOIND_PASSWORD=$BTC_PASS \
       FM_BIND_P2P=127.0.0.1:$base FM_BIND_API=127.0.0.1:$((base+1)) FM_BIND_UI=127.0.0.1:$((base+2)) \
       FM_BIND_METRICS=127.0.0.1:$((base+3)) FM_P2P_URL=fedimint://127.0.0.1:$base FM_API_URL=ws://127.0.0.1:$((base+1)) \
       FM_ENABLE_IROH=false FM_PASSWORD_API=probe FM_PASSWORD_UI=probe \
@@ -120,10 +149,10 @@ say "federation of 4 guardians, threshold 3: ${INV:0:24}..."
 HASH=$(HOME=$FH timeout 120 $F/gateway-cli create-password-hash probe | tr -d '"\n')
 ( export HOME=$FH FM_GATEWAY_DATA_DIR=$P/gw FM_GATEWAY_LISTEN_ADDR=127.0.0.1:30170 FM_GATEWAY_API_ADDR=http://127.0.0.1:30170 \
     FM_GATEWAY_BCRYPT_PASSWORD_HASH="$HASH" FM_GATEWAY_NETWORK=regtest FM_BITCOIND_URL=http://127.0.0.1:$RPC \
-    FM_BITCOIND_USERNAME=blwp FM_BITCOIND_PASSWORD=blwp FM_GATEWAY_SKIP_SETUP=true \
+    FM_BITCOIND_USERNAME=$BTC_USER FM_BITCOIND_PASSWORD=$BTC_PASS FM_GATEWAY_SKIP_SETUP=true \
     FM_GATEWAY_IROH_LISTEN_ADDR=127.0.0.1:30171 FM_GATEWAY_METRICS_LISTEN_ADDR=127.0.0.1:30172 \
-    FM_LND_RPC_ADDR=https://127.0.0.1:${LRPC[bob]} FM_LND_TLS_CERT=$P/bob/tls.cert \
-    FM_LND_MACAROON=$P/bob/data/chain/bitcoin/regtest/admin.macaroon
+    FM_LND_RPC_ADDR=https://$BOB_RPC FM_LND_TLS_CERT=$BOB_DIR/tls.cert \
+    FM_LND_MACAROON=$BOB_DIR/data/chain/bitcoin/regtest/admin.macaroon
   setsid nohup $F/gatewayd lnd > $P/gw/gatewayd.out 2>&1 < /dev/null & echo "$! gatewayd" >> $P/pids )
 running() { grep -q "Gateway is running" $P/gw/gatewayd.out 2>/dev/null; }
 until_ "the gateway" 180 running
@@ -136,6 +165,13 @@ until_ "the gateway's peg-in" 180 pegged
 fc join "$INV" >/dev/null
 for g in 0 1 2 3; do fc --our-id $g --password probe module lnv2 gateways add http://127.0.0.1:30170 >/dev/null; done
 say "gateway on bob's lnd: joined, pegged in, vetted by $(fc module lnv2 gateways list | js 'o=>o.length') list(s) of 4 guardians"
+# SETUP ONLY (the rehearsal's way in): the federation is left running, and
+# whoever called this stops it with the process groups in the pids file.
+if [ -n "${SETUP_ONLY:-}" ]; then
+  say "FEDERATION_READY invite=$INV client=$P/client gateway=http://127.0.0.1:30170 pids=$P/pids"
+  trap - EXIT
+  exit 0
+fi
 
 # ---- THE MEASUREMENT ----
 T0=$(date +%s%3N)

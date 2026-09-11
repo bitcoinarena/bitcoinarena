@@ -81,7 +81,11 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
                                      // THE POOL'S CHAIN, OPT-IN: both daemons get the regtest
                                      // bitcoind to find the pool's output and send its
                                      // payout. Off by default - a launcher spends nothing.
-                                     poolChain = false } = {}) {
+                                     poolChain = false,
+                                     // THE FEDERATION'S RECEIVING SIDE (invoice first): both
+                                     // daemons answer `/federation-invoice` through it. None
+                                     // by default.
+                                     federation = null } = {}) {
   // WHAT THESE DAEMONS FUND (M3.3-31): a PAYING round goes through the
   // launcher's own rule - the round its operator names, and entries into a
   // paying round the node holds when it reaches Lightning - not a harness's
@@ -313,9 +317,11 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     },
   } : {};
   const a = await serve(dbA, { port: portA, host, funded, headerBytes, bondProof, chainFor,
-    ...(randomnessFor ? { randomnessFor } : {}), ...lightning, ...chainTip, ...spendOn });
+    ...(randomnessFor ? { randomnessFor } : {}), ...lightning, ...chainTip, ...spendOn,
+    ...(federation ? { federation } : {}) });
   const optsB = { port: portB, host, funded, headerBytes, bondProof, chainFor,
-    ...(randomnessFor ? { randomnessFor } : {}), ...lightning, ...chainTip, ...spendOn };
+    ...(randomnessFor ? { randomnessFor } : {}), ...lightning, ...chainTip, ...spendOn,
+    ...(federation ? { federation } : {}) };
   let b = await serve(dbB, optsB);
   if (a.port !== portA)
     throw new Error(`node A came up on ${a.port} and the bond names ${portA}`);

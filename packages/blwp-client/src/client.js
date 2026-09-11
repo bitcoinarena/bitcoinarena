@@ -58,6 +58,47 @@ import { decodeGhost } from '../../protocol/src/ghost.js';
 import { TYPE_GHOST } from '../../protocol/src/constants.js';
 import { discover } from './directory.js';
 import { readWithOneRetry } from './reread.js';
+import { NO_SHARES } from '../../protocol/src/handout.js';
+import { entryFeeMsat } from '../../protocol/src/fee.js';
+
+/**
+ * A FEDERATION ROUND'S STAKE: THE INVOICE COMES FIRST (the owner 2026-09-11).
+ *
+ * Here, and not in join.js, because this is the file that asks a node what a
+ * player pays (session-pay.test.js: one file quotes a player). V1's pool is a
+ * federation, and an LNv2 invoice's secret belongs to its receiver - held by
+ * the guardians threshold-wise, which is the job the player's dealt shares do
+ * on a round without one. So no P is chosen and no handout is dealt: a node
+ * asks the federation for the round's invoice (`GET /federation-invoice`),
+ * and the entry commits to that invoice's hash, with `NO_SHARES` as its
+ * shares reference. The amount must be the round's net stake - the stake less
+ * the 2% fee, no donation - or the committee's hold check refuses the entry.
+ */
+export async function federationStakeFor(round, { nodes, fetcher = fetch } = {}) {
+  const stakeMsat = BigInt((round && round.stakeMsat) || 0n);
+  if (!(stakeMsat > 0n)) throw new Error('a round that asks no stake has nothing to invoice');
+  const want = stakeMsat - entryFeeMsat(stakeMsat);
+  const id = toHex(round.id);
+  const refused = [];
+  for (const node of nodes || []) {
+    const base = String(node).replace(/\/+$/, '');
+    try {
+      const r = await readWithOneRetry(fetcher, `${base}/federation-invoice?round=${id}`);
+      const body = await r.text();
+      if (!r.ok) { refused.push(`${base}: ${r.status} ${body.trim()}`); continue; }
+      const said = JSON.parse(body);
+      const hash = fromHex(String(said.paymentHash || ''));
+      if (hash.length !== 32) { refused.push(`${base}: a payment hash is 32 bytes`); continue; }
+      if (BigInt(said.amountMsat) !== want) {
+        refused.push(`${base}: an invoice for ${said.amountMsat} msat, and this round's net stake is ${want}`);
+        continue;
+      }
+      return { federation: true, stakeCommitment: hash, vssSharesRef: NO_SHARES,
+        request: said.request, amountMsat: want, node: base };
+    } catch (e) { refused.push(`${base}: ${e.message}`); }
+  }
+  throw new Error(`no node made this round's federation invoice: ${refused.join('; ') || 'no node to ask'}`);
+}
 
 /**
  * Five, out of the seven a committee has.
