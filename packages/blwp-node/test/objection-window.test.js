@@ -171,6 +171,19 @@ test('a player can ask where their stake stands: inside the window HELD, provisi
       return { status: r.status, body, json: r.status === 200 ? JSON.parse(body) : null };
     };
     const stakeSays = async (d, eid) => (await (await fetch(`http://127.0.0.1:${d.port}/stake?entry=${toHex(eid)}`)).text()).trim();
+    // SINCE P2 THE WINDOW OPENS WHEN BOTH SEATS HAVE POSTED THE RUN'S
+    // TRANSCRIPT, which can land a tick after they agree: measured under load,
+    // B was asked in between and named no window end. Wait until every seat
+    // names one for every run - still a second inside the window - then ask.
+    const opened = async () => {
+      for (const d of [a, b])
+        for (const run of [winner, loser]) {
+          const s = await ask(d, run.eid);
+          if (!s.json || s.json.windowClosesAtMs === null) return false;
+        }
+      return true;
+    };
+    while (Date.now() < stop && !(await opened())) await wait(50);
 
     for (const [name, d] of [['A', a], ['B', b]])
       for (const [who, run] of [['winner', winner], ['loser', loser]]) {

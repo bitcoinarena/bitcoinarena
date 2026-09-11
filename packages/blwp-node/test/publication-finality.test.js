@@ -96,8 +96,10 @@ test('seven seats: postings from keys that are not seated, or about another tran
   } finally { await w.close(); }
 });
 
+// A paying round naming no relay is refused where it would be opened now
+// (seat-relay.test.js); one stored before that rule must still never go final.
 test('seven seats: a contract that names no relay is never final, whatever five postings say', async () => {
-  const w = await sevenSeats(500, []);
+  const w = await sevenSeats(500, [], { storedBeforeTheRule: true });
   try {
     w.sign('agrees', () => ({}));
     await wait(700);

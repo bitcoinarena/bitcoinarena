@@ -17,7 +17,7 @@
 import { createServer } from 'node:http';
 import { randomBytes } from 'node:crypto';
 import { WebSocketServer } from 'ws';
-import { decodeRoundContract, decodeEntryContract } from '../../protocol/src/contracts.js';
+import { decodeRoundContract, decodeEntryContract, publicationRelaysAreValid } from '../../protocol/src/contracts.js';
 import { toHex } from '../../protocol/src/hash.js';
 import { entryFeeMsat } from '../../protocol/src/fee.js';
 import { TYPE_CHECKPOINT, TYPE_INPUT_BATCH, STAKE_NOT_SEEN } from '../../protocol/src/constants.js';
@@ -829,6 +829,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // A round that asks nothing never asks (M3.3-19), and a node with no
         // Lightning holds nothing and opens as it always did.
         if (contract.stakeMsat > 0n && custody.reaches) {
+          // AND NAMES WHERE ITS TRANSCRIPTS ARE POSTED (§13A, P2). None of a
+          // paying round's results is final until they are, so a round naming
+          // no relay could never settle a stake this node took - measured: both
+          // stakes held, nothing final after the window. A node that holds no
+          // stakes takes none, and opens it as it always did.
+          const relays = publicationRelaysAreValid(contract);
+          if (!relays.ok) return text(res, 409, relays.why);
           if (!preflight)
             return text(res, 503, 'this node holds stakes and has no preflight: it opens a paying '
               + 'round only once its Lightning node is shown able to hold one');
@@ -927,6 +934,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const contract = decodeEntryContract(await read(req));
         if (!funded({ kind: 'entry', contract, node: fundingView }))
           return text(res, 402, 'this node stores nothing for an entry nobody has funded');
+        // AND NO STAKE IS SEATED IN A ROUND NONE OF WHOSE RESULTS CAN BE FINAL -
+        // the round's own contract, as stored, however it came to be stored:
+        // refused before the entry is kept and before any hold is issued.
+        const into = custody.reaches ? round.get(contract.roundId) : null;
+        if (into) {
+          const relays = publicationRelaysAreValid(decodeRoundContract(new Uint8Array(into.contract)));
+          if (!relays.ok) return text(res, 409, `this node seats no stake in that round: ${relays.why}`);
+        }
         const seated = round.enter(contract);
 
         // THE SEAT IS WHERE THE HOLD IS ISSUED. 23.1: the endpoint issues a

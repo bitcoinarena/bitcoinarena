@@ -87,7 +87,7 @@ export const say = (port, message) => new Promise((resolve, reject) => {
 export const secretScalar = () => { let p = rand(32); while (scalarFrom32(p) >= FIELD) p = rand(32); return p; };
 
 /** One player's stake dealt at `needed` to every seat, seated, paid and played on `daemons`. */
-export async function seatAndPlay(daemons, c, rid, who, needed) {
+export async function seatAndPlay(daemons, c, rid, who, needed, { direct = false } = {}) {
   const session = ed25519.utils.randomSecretKey();
   const preimage = secretScalar();
   const e = rand(32);
@@ -115,14 +115,22 @@ export async function seatAndPlay(daemons, c, rid, who, needed) {
   for (const d of daemons) {
     const took = await fetch(`http://127.0.0.1:${d.port}/handout`, { method: 'POST', body: encodeHandout(dealt.handout) });
     assert.equal(took.status, 201, `${who.name}'s handout: ${await took.text()}`);
-    const seated = await fetch(`http://127.0.0.1:${d.port}/entry`, { method: 'POST', body: encodeEntryContract(entry) });
-    assert.equal(seated.status, 201, `${who.name}'s entry: ${await seated.text()}`);
-    const quote = await fetch(`http://127.0.0.1:${d.port}/invoice?entry=${toHex(eid)}`);
-    assert.equal(quote.status, 200, `${who.name}'s invoice: ${await quote.text()}`);
-    // SEEN THE WAY A PAGE SEES IT: `GET /stake` asks the node's own Lightning,
-    // which is also when the node learns the HTLC's expiry height.
-    const seen = await fetch(`http://127.0.0.1:${d.port}/stake?entry=${toHex(eid)}`);
-    assert.equal(seen.status, 200, `${who.name}'s stake was not seen: ${await seen.text()}`);
+    if (direct) {
+      // SEATED BEFORE THE RELAY RULE: the door refuses a stake in a paying
+      // round naming no relay now, so a test about one kept from before stores
+      // the entry, and the stake it saw, the way they were kept.
+      d.round.enter(entry);
+      assumeStakeSeen(d.round, entry);
+    } else {
+      const seated = await fetch(`http://127.0.0.1:${d.port}/entry`, { method: 'POST', body: encodeEntryContract(entry) });
+      assert.equal(seated.status, 201, `${who.name}'s entry: ${await seated.text()}`);
+      const quote = await fetch(`http://127.0.0.1:${d.port}/invoice?entry=${toHex(eid)}`);
+      assert.equal(quote.status, 200, `${who.name}'s invoice: ${await quote.text()}`);
+      // SEEN THE WAY A PAGE SEES IT: `GET /stake` asks the node's own Lightning,
+      // which is also when the node learns the HTLC's expiry height.
+      const seen = await fetch(`http://127.0.0.1:${d.port}/stake?entry=${toHex(eid)}`);
+      assert.equal(seen.status, 200, `${who.name}'s stake was not seen: ${await seen.text()}`);
+    }
     assert.equal(await say(d.port, encodeInputBatch(input)), String(who.ticks));
     assert.equal((await say(d.port, signedMark)).length, SIGNED_RECEIPT_BYTES);
   }
@@ -136,18 +144,21 @@ export const opts = { funded: () => true, randomnessFor: () => BEACON, preflight
  * five of the other seats sign - the same run it did, or a rewritten one - and
  * the run is PROVISIONALLY_FINAL on it.
  */
-export async function sevenSeats(windowMs, relays) {
+export async function sevenSeats(windowMs, relays, { storedBeforeTheRule = false } = {}) {
   const holder = await serve(openStore(':memory:'), { port: 0, ...opts, lightning: paidPort() });
   try {
     const others = Array.from({ length: 6 }, () => rand(32));
     const c = contractFor([holder.round.pubkey, ...others.map((s) => schnorr.getPublicKey(s))], BigInt(windowMs),
       relays === undefined ? [`http://127.0.0.1:${holder.port}`] : relays);
     const rid = roundId(c);
-    await fetch(`http://127.0.0.1:${holder.port}/round`, { method: 'POST', body: encodeRoundContract(c) });
+    // A PAYING ROUND NAMING NO RELAY is refused at the door now; a test about
+    // one stored before that rule stores it the way such a round was kept.
+    if (storedBeforeTheRule) holder.round.open(c);
+    else await fetch(`http://127.0.0.1:${holder.port}/round`, { method: 'POST', body: encodeRoundContract(c) });
     assumeSeated(holder.round, rid, c.nodes);
     const runs = {};
     for (const [name, key] of [['agrees', 5], ['dissents', 6]]) {
-      runs[name] = await seatAndPlay([holder], c, rid, { ...LOSER, name, key: b32(key) }, 5);
+      runs[name] = await seatAndPlay([holder], c, rid, { ...LOSER, name, key: b32(key) }, 5, { direct: storedBeforeTheRule });
       // FIVE OF SEVEN RECEIPTS MAKE THE TRANSCRIPT CANONICAL: its own and four seats'.
       for (const secret of others.slice(0, 4)) {
         const receipt = { checkpointId: runs[name].mid, receivedAtMs: 1234n, nodePubkey: schnorr.getPublicKey(secret) };

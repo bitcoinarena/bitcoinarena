@@ -13,6 +13,7 @@ import { selectCommittee, weightOf, ticketFor } from '../src/sortition.js';
 import { computePayoutTable, rankWeights, payingRanks, DELIVERED, FAILED, FORFEIT, VOID } from '../src/payout.js';
 import {
   encodeRoundContract, decodeRoundContract, roundId, contractWarnings, custodyFieldsAreValid,
+  publicationRelaysAreValid,
   encodeEntryContract, decodeEntryContract, entryId, stakePointIsTheHandouts, STAKE_POINT_BYTES,
 } from '../src/contracts.js';
 import { COMMITMENT_BYTES } from '../src/handout.js';
@@ -467,6 +468,22 @@ test('the custody fields say what v4.6.2 rules, or the round is refused by name'
     /is not an http\(s\) or ws\(s\) URL/);
   assert.match(custodyFieldsAreValid({ ...c, publicationRelays: ['wss://r.example', 'wss://r.example'] }).why,
     /named twice/);
+});
+
+// SINCE P2 NO RESULT IS FINAL UNTIL ITS TRANSCRIPT IS POSTED TO THE ROUND'S
+// RELAYS (§13A), so a round that takes a stake and names none could never
+// settle it. A free round moves no money and may name none.
+test('a round that takes a stake names at least one publication relay; a free round may name none', () => {
+  const c = { ...sampleContract(), federationId: b32(0xfe), publicationRelays: ['wss://r.example'] };
+  assert.ok(c.stakeMsat > 0n, 'the sample round takes a stake');
+  assert.deepEqual(publicationRelaysAreValid(c), { ok: true });
+  assert.match(publicationRelaysAreValid({ ...c, publicationRelays: [] }).why,
+    /takes a stake and names no publication relay/);
+  assert.match(custodyFieldsAreValid({ ...c, publicationRelays: [] }).why,
+    /takes a stake and names no publication relay/);
+  assert.deepEqual(publicationRelaysAreValid({ ...c, publicationRelays: [], stakeMsat: 0n }), { ok: true });
+  assert.match(publicationRelaysAreValid({ ...c, publicationRelays: ['not a url'] }).why,
+    /is not an http\(s\) or ws\(s\) URL/);
 });
 
 /**

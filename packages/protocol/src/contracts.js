@@ -525,6 +525,20 @@ export function custodyFieldsAreValid(c) {
       why: 'that round takes a stake into a FEDERATION and names no federation_id, '
         + 'so nothing says who holds its stake locks',
     };
+  return publicationRelaysAreValid(c);
+}
+
+/**
+ * CAN THIS ROUND'S TRANSCRIPTS BE POSTED ANYWHERE? Every relay a URL, each
+ * once (§13A) - and at least one on a round that takes a stake. Since P2 no
+ * result is FINAL until the round's settlement seats have posted its
+ * transcript to these relays, so a paying round naming none could never settle
+ * a stake it took: measured, two daemons opened one, held both players' stakes
+ * and were still provisionally final after the window. A free round moves no
+ * money and may name none.
+ */
+export function publicationRelaysAreValid(c) {
+  if (!c) return { ok: false, why: 'no contract' };
   if (!Array.isArray(c.publicationRelays))
     return { ok: false, why: 'that round names no publication relays list' };
   const seen = new Set();
@@ -536,6 +550,12 @@ export function custodyFieldsAreValid(c) {
     if (seen.has(relay)) return { ok: false, why: `publication relay ${relay} is named twice` };
     seen.add(relay);
   }
+  if (c.stakeMsat > 0n && !c.publicationRelays.length)
+    return {
+      ok: false,
+      why: 'that round takes a stake and names no publication relay: none of its results can become '
+        + 'final (§13A), so no stake in it could ever settle',
+    };
   return { ok: true };
 }
 
