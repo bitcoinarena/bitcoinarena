@@ -125,3 +125,43 @@ test('only a HELD row with a recorded expiry height is expired: a settled, a can
   assert.equal(round.hold(rows.cancelled).state, CANCELLED);
   assert.equal(round.hold(rows.unrecorded).state, HELD, 'a row with no recorded expiry was guessed at');
 });
+
+test('a launcher that gives only its own bitcoind (poolCall, as main.js does) still expires the hold on that chain\'s height', async () => {
+  // `main.js` hands the daemon `poolCall` - its bitcoind - and no `chainTip`.
+  // A daemon that read its height only from `chainTip` would never expire a
+  // row in production while every test and rehearsal passed.
+  const port = paidPort();
+  let tip = 300;
+  const asked = [];
+  const poolCall = async (method) => {
+    asked.push(method);
+    if (method === 'getblockcount') return tip;
+    throw new Error(`this test's bitcoind was asked ${method}`);
+  };
+  const node = await serve(openStore(':memory:'), {
+    port: 0, funded: () => true, ...READY, lightning: port, poolCall, expiry: { everyMs: 50 },
+  });
+  try {
+    const c = contractFor(node.round.pubkey);
+    const rid = roundId(c);
+    await fetch(`http://127.0.0.1:${node.port}/round`, { method: 'POST', body: encodeRoundContract(c) });
+    assumeSeated(node.round, rid, c.nodes);
+    const entry = {
+      roundId: rid, playerPubkey: b32(6), sessionPubkey: ed25519.getPublicKey(session),
+      stakeCommitment: sha256(b32(66)), stakeMsat: STAKE, feeMsat: entryFeeMsat(STAKE),
+      donationMsat: 0n, joinTick: 0, worldSecret: b32(0x16), vssSharesRef: new Uint8Array(32),
+    };
+    const eid = entryId(entry);
+    assert.equal((await fetch(`http://127.0.0.1:${node.port}/entry`, { method: 'POST', body: encodeEntryContract(entry) })).status, 201);
+    assert.equal((await fetch(`http://127.0.0.1:${node.port}/invoice?entry=${toHex(eid)}`)).status, 200);
+    assert.equal((await fetch(`http://127.0.0.1:${node.port}/stake?entry=${toHex(eid)}`)).status, 200);
+    const stateOf = () => (node.round.hold(eid) || {}).state;
+    await wait(300);
+    assert.equal(stateOf(), HELD);
+    tip = EXPIRY + 1;
+    const stop = Date.now() + 3000;
+    while (Date.now() < stop && stateOf() !== EXPIRED) await wait(50);
+    assert.equal(stateOf(), EXPIRED, `the launcher's own bitcoind is past the expiry and the row still says ${stateOf()}`);
+    assert.ok(asked.includes('getblockcount'), 'the daemon never asked its own bitcoind for a height');
+  } finally { await node.close(); }
+});
