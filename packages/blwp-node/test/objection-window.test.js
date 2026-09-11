@@ -20,6 +20,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { WebSocket } from 'ws';
@@ -209,6 +212,77 @@ test('two seats, a 3 s window: nothing is settled, cancelled or handed out insid
         assert.ok(act.at >= closedAt + WINDOW_MS, `an act ${act.at - closedAt} ms after the close, inside a ${WINDOW_MS} ms window`);
     }
   } finally { await a.close(); await b.close(); }
+});
+
+// A DAEMON RESTARTED INSIDE THE WINDOW STILL ACTS AFTER IT (M3.3-33).
+//
+// The finality watch lives in memory and is started by a close. With the
+// reference window that is ten minutes in which a daemon that restarts - an
+// upgrade, a crash, a reboot - comes back with nothing to settle its closed
+// round: its holds stay HELD and expire back to the players, the loser's
+// included. The store has everything the close logic needs, so a daemon that
+// starts picks up every closed round it still holds a HELD stake for.
+test('two seats restarted inside a 3 s window: after it the loser settles and the winner cancels on both', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'window-restart-'));
+  const portA = paidPort();
+  const portB = paidPort();
+  const start = (file, port) => serve(openStore(join(dir, file)), { port: 0, ...opts, lightning: port, finality: { everyMs: 100 } });
+  const wire = (x, y) => {
+    for (const [d, other] of [[x, y], [y, x]]) {
+      const there = [`http://127.0.0.1:${other.port}`];
+      d.verifier.peers = there;
+      d.payouts.peers = there;
+      d.preimages.peers = there;
+    }
+  };
+  let a = await start('a.sqlite', portA);
+  let b = await start('b.sqlite', portB);
+  try {
+    wire(a, b);
+    const c = contractFor([a.round.pubkey, b.round.pubkey], BigInt(WINDOW_MS));
+    const rid = roundId(c);
+    for (const d of [a, b]) {
+      await fetch(`http://127.0.0.1:${d.port}/round`, { method: 'POST', body: encodeRoundContract(c) });
+      assumeSeated(d.round, rid, c.nodes);
+    }
+    const winner = await seatAndPlay([a, b], c, rid, WINNER, 2);
+    const loser = await seatAndPlay([a, b], c, rid, LOSER, 2);
+
+    const closedAt = Date.now();
+    assert.deepEqual(await Promise.all([say(a.port, `close ${toHex(rid)}`), say(b.port, `close ${toHex(rid)}`)]), ['closed', 'closed']);
+    await a.verifier.settling;
+    await b.verifier.settling;
+    const agreedOn = async (d) => ((await d.stakes()).agreed || []).length === 2;
+    const stop = Date.now() + WINDOW_MS - 1000;
+    while (Date.now() < stop && !(await agreedOn(a) && await agreedOn(b))) await wait(50);
+    assert.ok(await agreedOn(a) && await agreedOn(b), 'the committee did not agree on both runs early in the window');
+
+    // BOTH RESTART, inside the window, on their own stores and the same lnd.
+    await a.close();
+    await b.close();
+    assert.ok(Date.now() < closedAt + WINDOW_MS, 'the restart came after the window, so it tests nothing');
+    a = await start('a.sqlite', portA);
+    b = await start('b.sqlite', portB);
+    wire(a, b);
+
+    const stateOf = (d, eid) => (d.round.hold(eid) || {}).state;
+    const done = Date.now() + WINDOW_MS + 10000;
+    const moved = () => [a, b].every((d) => stateOf(d, loser.eid) === SETTLED && stateOf(d, winner.eid) === CANCELLED);
+    while (Date.now() < done && !moved()) await wait(100);
+    for (const [name, d] of [['A', a], ['B', b]]) {
+      assert.equal(stateOf(d, loser.eid), SETTLED, `${name}, restarted inside the window, never settled the lost stake: ${(d.round.hold(loser.eid) || {}).why}`);
+      assert.equal(stateOf(d, winner.eid), CANCELLED, `${name}, restarted inside the window, never cancelled the winner's stake`);
+    }
+    for (const p of [portA, portB]) {
+      assert.deepEqual(p.settled.map((s) => [s.paymentHash, s.preimage]), [[toHex(loser.entry.stakeCommitment), toHex(loser.preimage)]]);
+      for (const act of [...p.settled, ...p.cancelled])
+        assert.ok(act.at >= closedAt + WINDOW_MS, `an act ${act.at - closedAt} ms after the close, inside a ${WINDOW_MS} ms window`);
+    }
+  } finally {
+    await a.close();
+    await b.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 /**

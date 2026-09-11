@@ -499,6 +499,24 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     finalityTimers.add(timer);
   }
 
+  /**
+   * WHAT A CLOSE SETS OFF: replay and gather, then the money, then the watch.
+   * One function, because a close and a start that picks up a closed round
+   * (M3.3-33) are the same work and must not become two paths.
+   */
+  function afterClose(roundIdBytes) {
+    stakes = verifier.settleRound(roundIdBytes)
+      .then(async (closed) => {
+        // A daemon taken away while it replayed acts on nothing afterwards.
+        if (shuttingDown) return { ok: false, why: 'this node was shut down before its close logic ran' };
+        const money = await settleTheStakes(roundIdBytes, closed);
+        watchFinality(roundIdBytes, closed, money);
+        return money;
+      })
+      .catch((e) => { console.error(`[verify] ${e.message}`); return { ok: false, why: e.message }; });
+    return stakes;
+  }
+
   async function settleTheStakes(roundIdBytes, closed) {
     if (!custody.reaches) return { ok: false, why: 'this node reaches no Lightning, so it settles nothing' };
     const row = round.get(roundIdBytes);
@@ -679,6 +697,35 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       })
       .catch((e) => { console.error(`[custody] ${e.message}`); return { ok: false, why: e.message }; })
     : Promise.resolve({ ok: false, why: 'this node reaches no Lightning, so it asks it nothing' });
+
+  /**
+   * AND EVERY CLOSED ROUND THIS NODE STILL HOLDS A STAKE IN (M3.3-33).
+   *
+   * The finality watch lives in memory and a close starts it. Since M3.3-32 a
+   * close moves nothing until the objection window has closed - ten minutes at
+   * the reference - and a daemon restarted inside it came back with nothing
+   * to settle that round: measured, its holds stayed HELD past the window and
+   * would have expired back to the players, the loser's included. So a start
+   * runs the close logic again for every CLOSED round with a stake still
+   * HELD here, after `reconcile` has asked Lightning about any act it died in
+   * the middle of, one round at a time. A hold that moved is left alone.
+   */
+  const resuming = reconciling.then(async () => {
+    if (!custody.reaches) return [];
+    const rounds = new Map();
+    for (const h of round.holdsInState(HELD)) {
+      const row = h.roundId && round.get(h.roundId);
+      if (row && row.state === CLOSED) rounds.set(toHex(h.roundId), h.roundId);
+    }
+    const picked = [];
+    for (const [key, rid] of rounds) {
+      if (shuttingDown) break;
+      console.log(`[custody] ${key.slice(0, 16)} closed with a stake still HELD here: running its close logic again`);
+      picked.push(key);
+      await afterClose(rid);
+    }
+    return picked;
+  }).catch((e) => { console.error(`[custody] ${e.message}`); return []; });
 
   const http = createServer(async (req, res) => {
     try {
@@ -1408,15 +1455,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             // on purpose: `Verifier.settleRound` replays and gathers and moves
             // nothing, and `Custody.settleHeldInvoices` is the only thing in
             // this daemon that can settle a stake.
-            if (shut) {
-              stakes = verifier.settleRound(id)
-                .then(async (closed) => {
-                  const money = await settleTheStakes(id, closed);
-                  watchFinality(id, closed, money);
-                  return money;
-                })
-                .catch((e) => { console.error(`[verify] ${e.message}`); return { ok: false, why: e.message }; });
-            }
+            if (shut) afterClose(id);
             return sock.send(shut ? 'closed' : 'already closed');
           }
           return sock.send('error unknown text message');
@@ -1510,7 +1549,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
 
   return new Promise((resolve) => {
     http.listen(port, host, () => resolve({
-      http, wss, round, host, verifier, ghosts, roster, custody, reconciling, preimages,
+      http, wss, round, host, verifier, ghosts, roster, custody, reconciling, resuming, preimages,
       payouts, reconcilingPayouts, signing, poolWatch, dkg,
       // What the last close did with the money, and the same door an operator
       // uses to run a settlement again by hand.
