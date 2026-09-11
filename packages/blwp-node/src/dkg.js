@@ -242,6 +242,33 @@ export class Dkg {
   }
 
   /**
+   * EVERY SEAT'S PUBLIC SHARE OF THE COMMITTEE'S KEY, from the commitments this
+   * seat stored - public data every seat holds - so a payout can check one
+   * signer's share against what that signer must have. Y_j is the sum, over
+   * every dealer's polynomial, of A_k * j^k; negated with the key when the key
+   * came out odd, as the secret shares were.
+   */
+  publicSharesFor(seats) {
+    const where = this.epochFor(seats);
+    if (!where.ok) return where;
+    const held = this.round.epoch(where.epochId);
+    if (!held || !held.share) return { ok: false, why: 'this node holds no share of that committee\'s key yet' };
+    const contributions = this.round.contributionsOf(where.epochId).map((r) => decodeContribution(r.bytes));
+    const shares = new Map();
+    for (let j = 1; j <= held.seats.length; j++) {
+      const terms = [];
+      for (const c of contributions) {
+        let x = 1n;
+        for (const A of c.commitments) { terms.push({ point: A, coefficient: x }); x = (x * BigInt(j)) % FIELD; }
+      }
+      let P = this.curve.combinePoints(terms);
+      if (held.negated) P = this.curve.combinePoints([{ point: P, coefficient: FIELD - 1n }]);
+      shares.set(String(j), P);
+    }
+    return { ok: true, shares };
+  }
+
+  /**
    * WHAT THIS SEAT HOLDS, in the shape `PoolSigning` already takes.
    *
    * `{ id, share }` is what a seat was HANDED before this letter, by whoever

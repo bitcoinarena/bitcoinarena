@@ -36,7 +36,7 @@
 // a slower route.
 import { winnings, payoutOutputs, DUST_SATS } from '../../protocol/src/payout-spend.js';
 import { tapSighash } from '../../protocol/src/bond-spend.js';
-import { poolOutput, poolShare, poolSigningKey, poolOwns } from '../../protocol/src/pool.js';
+import { poolOutput, poolPublicShare, poolShare, poolSigningKey, poolOwns } from '../../protocol/src/pool.js';
 import { signShare340 } from '../../protocol/src/frost-bip340.js';
 import { encodeCommitmentList } from '../../protocol/src/frost.js';
 import { nonceGenerate340 } from '../../protocol/src/frost-bip340.js';
@@ -56,12 +56,25 @@ const same = (a, b) => a && b && a.length === b.length && a.every((v, i) => v ==
  * but from here on the dealt value stays where it was dealt.
  */
 export class PoolSigning {
-  constructor(round, { curve, seat = null, pool = null, dustSats = DUST_SATS } = {}) {
+  constructor(round, { curve, seat = null, pool = null, dustSats = DUST_SATS, publicShares = null } = {}) {
     this.round = round;
     this.curve = curve;
     this.seat = seat;
     this.pool = pool;
     this.dustSats = dustSats;
+    // EVERY SEAT'S PUBLIC SHARE of the key (a Map: seat id -> point), from the
+    // DKG's commitments - what a signature share is checked against, so a bad
+    // one can be NAMED. A dealt pool is handed them with its shares.
+    this.publicShares = publicShares;
+  }
+
+  /** A seat's public share moved onto the pool's output key, or null if this seat holds none. */
+  signingPublicShare(id) {
+    const P = this.publicShares instanceof Map ? this.publicShares.get(String(id)) : null;
+    if (!P || !this.pool || !this.curve) return null;
+    const out = poolOutput({ groupPublicKey: this.pool.groupPublicKey, curve: this.curve });
+    if (!out.ok) return null;
+    return poolPublicShare({ publicShare: P, tweak: out.tweak, negated: out.negated, curve: this.curve });
   }
 
   /**
@@ -84,6 +97,7 @@ export class PoolSigning {
     if (String(row.seatId) !== String(this.seat.id))
       return { wrongSeat: row.seatId };
     return {
+      attempt: row.attempt || 0,
       sighash: row.sighash,
       hiding: row.hiding === null ? null : scalarFrom32(row.hiding),
       binding: row.binding === null ? null : scalarFrom32(row.binding),
@@ -95,7 +109,7 @@ export class PoolSigning {
   }
 
   /** The same row, written. `hiding`/`binding` null once the pair is used. */
-  keep(roundId, { sighash, hiding, binding, commitment, spent }) {
+  keep(roundId, { sighash, hiding, binding, commitment, spent, attempt = 0 }) {
     return this.round.putPoolNonce({
       roundId, seatId: this.seat.id, sighash,
       hiding: hiding === null ? null : scalarTo32(hiding),
@@ -103,6 +117,7 @@ export class PoolSigning {
       commitHiding: commitment.hiding, commitBinding: commitment.binding,
       spentList: spent ? spent.list : null,
       spentShare: spent ? scalarTo32(spent.share) : null,
+      attempt,
     });
   }
 
@@ -243,7 +258,7 @@ export class PoolSigning {
    * one signature, and a seat holding two live pairs is a seat an asker can
    * walk into signing twice.
    */
-  commit({ roundId, utxo, contract, random }) {
+  commit({ roundId, utxo, contract, random, attempt = 0 }) {
     // THE STORED PAIR IS READ FIRST, because whether this seat already holds
     // one decides whether it may answer about a round its own row calls PAID.
     const held = this.held(roundId);
@@ -254,7 +269,16 @@ export class PoolSigning {
 
     if (held && held.wrongSeat)
       return { ok: false, why: `that round's pair was made by seat ${held.wrongSeat}, not this one` };
-    if (held && held.spent) {
+    // A LATER SIGNING ATTEMPT OF THE SAME SPEND gets a FRESH pair. The one kept
+    // is never used again - spent, or discarded unused - so no nonce ever signs
+    // under two lists; a second signature over the SAME sighash is the same
+    // transaction and the same txid. An older attempt is refused: it is over.
+    if (held && attempt < held.attempt)
+      return { ok: false, why: `this seat has moved on to signing attempt ${held.attempt} of this round` };
+    const fresh = !!held && attempt > held.attempt;
+    if (fresh && !same(held.sighash, spend.sighash))
+      return { ok: false, why: 'this seat is already committed to a different spend of this round' };
+    if (!fresh && held && held.spent) {
       // A SPENT PAIR STILL ANSWERS, and that is the whole of the takeover.
       // A second asker - the round's own, later, or a seat taking over after
       // the wait - gets the SAME commitment back and rebuilds the same
@@ -264,7 +288,7 @@ export class PoolSigning {
         return { ok: false, why: 'this seat has signed a different spend of this round and keeps no second pair' };
       return { ok: true, commitment: held.commitment, id: this.seat.id, again: true };
     }
-    if (held) {
+    if (!fresh && held) {
       if (!same(held.sighash, spend.sighash))
         return { ok: false, why: 'this seat is already committed to a different spend of this round' };
       return { ok: true, commitment: held.commitment, id: this.seat.id, again: true };
@@ -277,7 +301,7 @@ export class PoolSigning {
       hiding: this.curve.pointFromScalar(hiding),
       binding: this.curve.pointFromScalar(binding),
     };
-    this.keep(roundId, { sighash: spend.sighash, hiding, binding, commitment, spent: false });
+    this.keep(roundId, { sighash: spend.sighash, hiding, binding, commitment, spent: false, attempt });
     return { ok: true, commitment, id: this.seat.id };
   }
 
@@ -294,11 +318,13 @@ export class PoolSigning {
    * wearing a different hat. A seat that has signed keeps the share it made
    * and hands the same bytes back for the same list; anything else is refused.
    */
-  signatureShare({ roundId, utxo, contract, commitments }) {
+  signatureShare({ roundId, utxo, contract, commitments, attempt = 0 }) {
     const held = this.held(roundId);
     if (!held) return { ok: false, why: 'this seat committed to nothing for that round' };
     if (held.wrongSeat)
       return { ok: false, why: `that round's pair was made by seat ${held.wrongSeat}, not this one` };
+    if (held.attempt !== attempt)
+      return { ok: false, why: `this seat committed to signing attempt ${held.attempt} of this round, not ${attempt}` };
 
     const spend = this.spendFor({ roundId, utxo, contract, settled: true });
     if (!spend.ok) return spend;
@@ -332,7 +358,7 @@ export class PoolSigning {
     // signature over the same input.
     this.keep(roundId, {
       sighash: held.sighash, commitment: held.commitment,
-      hiding: null, binding: null, spent: { list, share },
+      hiding: null, binding: null, spent: { list, share }, attempt: held.attempt,
     });
     return { ok: true, share, id: this.seat.id };
   }

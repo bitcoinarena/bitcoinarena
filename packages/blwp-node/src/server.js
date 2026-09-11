@@ -166,6 +166,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // daemon runs exactly as it did and answers the two signing doors with a
   // refusal rather than a signature.
   poolSeat = null,
+  // EVERY SEAT'S PUBLIC SHARE (Map seat id -> point) for a DEALT pool, so a bad
+  // signature share can be named. A DKG committee's come from its commitments.
+  poolPublicShares = null,
   // AND SOMETHING THAT CAN ASK THE CHAIN WHICH OUTPUT HOLDS THE POOL.
   // `bitcoindRpc`'s `call`, injected the way everything else that reaches the
   // network is. Without it a close still queues the payout and stops - which
@@ -293,7 +296,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // transaction is right; this decides whether THIS seat will put its own
   // share behind it, and it rebuilds the transaction itself before it does.
   const signing = new PoolSigning(round, {
-    curve: poolCurve, seat: poolSeat, pool: poolKey,
+    curve: poolCurve, seat: poolSeat, pool: poolKey, publicShares: poolPublicShares,
   });
 
   // AND THIS NODE'S HALF OF MAKING THE COMMITTEE'S KEY.
@@ -329,14 +332,18 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const r = round.get(row.roundId);
         if (!r) continue;
         const got = dkg.seatFor(decodeRoundContract(new Uint8Array(r.contract)).nodes);
-        if (got.ok) return got;
+        if (got.ok) return { ...got, seats: decodeRoundContract(new Uint8Array(r.contract)).nodes };
       }
       const seats = round.latestSharedEpochSeats();
-      return seats ? dkg.seatFor(seats) : null;
+      return seats ? { ...dkg.seatFor(seats), seats } : null;
     })();
     if (held && held.ok) {
       if (!signing.seat) signing.seat = held.seat;
       if (!signing.pool) signing.pool = held.pool;
+      if (!signing.publicShares && held.seats) {
+        const pub = dkg.publicSharesFor(held.seats);
+        if (pub.ok) signing.publicShares = pub.shares;
+      }
       if (!payouts.pool) payouts.pool = held.pool;
       if (!poolWatch.pool) poolWatch.pool = held.pool;
     }
@@ -1217,6 +1224,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           roundId: new Uint8Array(rid), utxo,
           contract: decodeRoundContract(new Uint8Array(held.contract)),
           random: (n) => new Uint8Array(randomBytes(n)),
+          attempt: Number(url.searchParams.get('attempt') || 0),
         });
         if (!got.ok) return text(res, 409, got.why);
         res.writeHead(200, { 'content-type': 'application/octet-stream', ...CORS });
@@ -1243,6 +1251,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const got = signing.signatureShare({
           roundId: new Uint8Array(rid), utxo, commitments,
           contract: decodeRoundContract(new Uint8Array(held.contract)),
+          attempt: Number(url.searchParams.get('attempt') || 0),
         });
         if (!got.ok) return text(res, 409, got.why);
         res.writeHead(200, { 'content-type': 'application/octet-stream', ...CORS });

@@ -140,3 +140,32 @@ export function enoughToSign({ commitments, needed }) {
 
 /** For a refusal that wants to name the key it could not move. */
 export const keyName = (point) => toHex(xOnly(point)).slice(0, 16);
+
+/**
+ * IS ONE SIGNER'S SHARE WHAT ITS PUBLIC SHARE SAYS IT MUST BE?
+ *
+ * RFC 9591 section 5.4's verify_signature_share, over BIP-340:
+ *   z_i.G = s.(D_i + rho_i.E_i) + c.lambda_i.Y_i,  s = +1, or -1 if R is odd,
+ * the same sign `signShare340` applies to the nonces. `publicShare` is Y_i, the
+ * point of the very share the seat signs with. A payout that does not verify
+ * checks each share with this to NAME the one that broke it (pool-bad-share).
+ */
+export function verifyShare340({ id, share, publicShare, groupPublicKey, message, commitments, curve }) {
+  if (typeof share !== 'bigint' || share <= 0n || share >= FIELD) return false;
+  const factors = bindingFactors({ groupPublicKey, commitments, message, context: TR_CONTEXT });
+  const mine = factors.find((f) => String(f.id) === String(id));
+  const own = commitments.find((c) => String(c.id) === String(id));
+  if (!mine || !own) return false;
+  const R = groupCommitment({ commitments, factors, curve });
+  const sign = hasEvenY(R) ? 1n : FIELD - 1n;
+  const c = challenge340(xOnly(R), xOnly(groupPublicKey), message);
+  const lambda = interpolatingValue(commitments.map((x) => x.id), id);
+  try {
+    const rhs = curve.combinePoints([
+      { point: own.hiding, coefficient: sign },
+      { point: own.binding, coefficient: mod(sign * mine.factor) },
+      { point: publicShare, coefficient: mod(c * lambda) },
+    ]);
+    return toHex(curve.pointFromScalar(share)) === toHex(rhs);
+  } catch { return false; }
+}

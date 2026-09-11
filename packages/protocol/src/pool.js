@@ -114,3 +114,16 @@ export function poolOwns(script, outputKey) {
       return { ok: false, why: 'that output pays a different key than this pool' };
   return { ok: true, why: 'that output is the pool\'s' };
 }
+
+/**
+ * THE PUBLIC SIDE OF `poolShare`: a seat's public share moved onto the output
+ * key the same way its secret share is - plus tG, negated for an odd output
+ * key. What a payout checks one signer's signature share against.
+ */
+export function poolPublicShare({ publicShare, tweak, negated, curve }) {
+  const t = tweak instanceof Uint8Array
+    ? mod(BigInt('0x' + [...tweak].map((b) => b.toString(16).padStart(2, '0')).join('')))
+    : mod(tweak);
+  const moved = curve.combinePoints([{ point: publicShare, coefficient: 1n }, { point: curve.pointFromScalar(t), coefficient: 1n }]);
+  return negated ? curve.combinePoints([{ point: moved, coefficient: FIELD - 1n }]) : moved;
+}

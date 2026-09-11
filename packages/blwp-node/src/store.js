@@ -317,6 +317,7 @@ export function openStore(path = ':memory:') {
       commit_binding BLOB NOT NULL,
       spent_list     BLOB,
       spent_share    BLOB,
+      attempt        INTEGER NOT NULL DEFAULT 0,
       updated_ms     INTEGER NOT NULL
     );
 
@@ -437,6 +438,10 @@ export function openStore(path = ':memory:') {
       PRIMARY KEY (round_id, entry_id)
     );
   `);
+  // A STORE MADE BEFORE A NONCE ROW CARRIED ITS SIGNING ATTEMPT gets the column:
+  // every row it already holds was attempt 0.
+  if (!db.prepare('PRAGMA table_info(pool_nonces)').all().some((c) => c.name === 'attempt'))
+    db.exec('ALTER TABLE pool_nonces ADD COLUMN attempt INTEGER NOT NULL DEFAULT 0');
   return db;
 }
 

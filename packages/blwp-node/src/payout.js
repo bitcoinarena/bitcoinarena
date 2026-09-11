@@ -25,7 +25,8 @@ import { winnings, payoutOutputs, DUST_SATS } from '../../protocol/src/payout-sp
 import { tapSighash, serializeSpend } from '../../protocol/src/bond-spend.js';
 import { parseTransaction } from '../../protocol/src/tx.js';
 import { poolOutput, poolShare, poolSigningKey, poolWitness } from '../../protocol/src/pool.js';
-import { signShare340, aggregate340, enoughToSign } from '../../protocol/src/frost-bip340.js';
+import { signShare340, aggregate340, enoughToSign, verifyShare340 } from '../../protocol/src/frost-bip340.js';
+import { schnorr } from '@noble/curves/secp256k1.js';
 import { nonceGenerate340 } from '../../protocol/src/frost-bip340.js';
 import { receiptsNeeded } from '../../protocol/src/threshold.js';
 import { decodeRoundContract } from '../../protocol/src/contracts.js';
@@ -506,67 +507,114 @@ export class Payouts {
     if (!mine.ok) return { ok: false, why: `this seat will not sign it either: ${mine.why}` };
 
     const body = encodeUtxo(utxo);
-    const asked = [];
-    const own = signing.commit({ roundId, utxo, contract, random: this.random });
-    if (own.ok) asked.push({ where: 'this seat', commitment: own.commitment });
+    const rid = toHex(roundId);
     const refused = [];
-    // EVERY SEAT IS ASKED, AND THE FIVE ARE CHOSEN BY SEAT ID.
-    //
-    // This used to stop at the first `needed` that answered, so the five in
-    // the list were whichever five were quickest - and letter 19 measured what
-    // that costs. THE COMMITMENT LIST IS PART OF WHAT IS SIGNED: it goes into
-    // the binding factors and therefore into the challenge, so a seat that has
-    // signed under one list refuses to sign under another, by name. Two
-    // askers - the round's own and a seat taking over after it went down -
-    // assembled different lists and the takeover was refused by every seat
-    // that had already signed.
-    //
-    // Sorted by id, the healthy committee's five are the same five whoever
-    // asks, the list is identical, and the spent shares are handed straight
-    // back: the takeover rebuilds the transaction byte for byte instead of
-    // competing with it. It costs two more requests than stopping early.
-    for (const peer of seats) {
-      const got = await this.askSeat(`${peer}/pool/commit?round=${toHex(roundId)}`, body);
-      if (!got.ok) { refused.push(`${peer}: ${got.why}`); continue; }
-      let one;
-      try { one = decodeCommitments(got.bytes); }
-      catch (err) { refused.push(`${peer}: ${err.message}`); continue; }
-      if (one.length !== 1) { refused.push(`${peer}: answered with ${one.length} commitments`); continue; }
-      asked.push({ where: peer, commitment: one[0] });
-    }
-    if (asked.length < needed)
-      return { ok: false, committed: asked.length, needed,
-        why: `${asked.length} of ${needed} seats committed to this spend`, refused };
-
-    asked.sort((a, b) => (String(a.commitment.id) < String(b.commitment.id) ? -1
-      : String(a.commitment.id) > String(b.commitment.id) ? 1 : 0));
-    asked.length = needed;
-    const commitments = asked.map((a) => a.commitment);
-    const shares = [];
-    // THE SHARES COME FROM THE SEATS IN THE LIST, and this seat is asked only
-    // if it is one of them. It used to be asked unconditionally, which was
-    // harmless while the five were the first five to answer and wrong the
-    // moment they became the five lowest ids: an asker whose own id is the
-    // sixth is not in the list it built, and asking it for a share got "this
-    // seat is not in the commitment list" reported as a withdrawal.
-    for (const a of asked) {
-      if (a.where === 'this seat') {
-        const got = signing.signatureShare({ roundId, utxo, contract, commitments });
-        if (!got.ok) return { ok: false, why: `this seat withdrew: ${got.why}` };
-        shares.push(got.share);
-        continue;
+    // WHO GAVE A SHARE THAT DOES NOT CHECK, by seat id - named, and left out of
+    // the next attempt. Measured without this (pool-bad-share.test.js): one
+    // garbage share made an invalid spend that was written as queued and sent,
+    // nobody was named, and the payout was locked for good.
+    const culprits = new Map();
+    const named = () => [...culprits.entries()].map(([id, where]) => ({ id, where }));
+    const blame = () => (culprits.size
+      ? `; a bad signature share came from ${[...culprits.entries()].map(([id, where]) => `seat ${id} (${where})`).join(', ')}`
+      : '');
+    let asked = [];
+    let shares = [];
+    let sig = null;
+    // A CALL AFTER AN EARLIER ONE GOES ON FROM THE ATTEMPT THIS SEAT'S OWN ROW
+    // STANDS AT: the same list there gives back the same shares and the same
+    // bytes (a restart, a takeover); a seat that signed under another list
+    // refuses, and that attempt is over.
+    const kept = signing.held ? signing.held(roundId) : null;
+    let attempt = kept && !kept.wrongSeat ? kept.attempt : 0;
+    const OVER = /signed under another commitment list/;
+    for (let tries = 0; tries <= seats.length + 2 && !sig; tries++, attempt++) {
+      // EVERY SEAT IS ASKED, AND THE FIVE ARE CHOSEN BY SEAT ID - so the healthy
+      // committee's five are the same five whoever asks, the commitment list is
+      // identical, and a takeover rebuilds the same transaction byte for byte
+      // (letter 19). A seat named for a bad share is not chosen again, and each
+      // attempt is numbered so every seat signs it with a FRESH nonce pair.
+      const chosen = [];
+      let ahead = -1;
+      const own = signing.commit({ roundId, utxo, contract, random: this.random, attempt });
+      if (own.ok && !culprits.has(String(own.commitment.id))) chosen.push({ where: 'this seat', commitment: own.commitment });
+      for (const peer of seats) {
+        const got = await this.askSeat(`${peer}/pool/commit?round=${rid}&attempt=${attempt}`, body);
+        if (!got.ok) {
+          refused.push(`${peer}: ${got.why}`);
+          const moved = /moved on to signing attempt (\d+)/.exec(got.why || '');
+          if (moved) ahead = Math.max(ahead, Number(moved[1]));
+          continue;
+        }
+        let one;
+        try { one = decodeCommitments(got.bytes); }
+        catch (err) { refused.push(`${peer}: ${err.message}`); continue; }
+        if (one.length !== 1) { refused.push(`${peer}: answered with ${one.length} commitments`); continue; }
+        if (culprits.has(String(one[0].id))) continue;
+        chosen.push({ where: peer, commitment: one[0] });
       }
-      const got = await this.askSeat(`${a.where}/pool/share?round=${toHex(roundId)}`,
-        encodeShareRequest(utxo, commitments));
-      if (!got.ok)
-        return { ok: false, why: `${a.where} committed and then would not sign: ${got.why}` };
-      try { shares.push(decodeShare(got.bytes)); }
-      catch (err) { return { ok: false, why: `${a.where}: ${err.message}` }; }
-    }
+      // SEATS ALREADY ON A LATER ATTEMPT (another asker got there first): join them.
+      if (chosen.length < needed && ahead > attempt) { attempt = ahead - 1; continue; }
+      if (chosen.length < needed)
+        return { ok: false, committed: chosen.length, needed,
+          why: `${chosen.length} of ${needed} seats committed to this spend`
+            + (culprits.size ? ' once the seats that gave a bad share were left out' : '') + blame(),
+          refused, culprits: named() };
 
-    const sig = aggregate340({
-      commitments, message: mine.sighash, groupPublicKey: mine.groupPublicKey, shares, curve: this.curve,
-    });
+      chosen.sort((a, b) => (String(a.commitment.id) < String(b.commitment.id) ? -1
+        : String(a.commitment.id) > String(b.commitment.id) ? 1 : 0));
+      chosen.length = needed;
+      const commitments = chosen.map((a) => a.commitment);
+      // THE SHARES COME FROM THE SEATS IN THE LIST, and this seat only if it is one.
+      const got = [];
+      let over = false;
+      for (const a of chosen) {
+        if (a.where === 'this seat') {
+          const ownShare = signing.signatureShare({ roundId, utxo, contract, commitments, attempt });
+          if (!ownShare.ok && OVER.test(ownShare.why)) { over = true; break; }
+          if (!ownShare.ok) return { ok: false, why: `this seat withdrew: ${ownShare.why}${blame()}`, culprits: named() };
+          got.push(ownShare.share);
+          continue;
+        }
+        const one = await this.askSeat(`${a.where}/pool/share?round=${rid}&attempt=${attempt}`,
+          encodeShareRequest(utxo, commitments));
+        if (!one.ok && OVER.test(one.why || '')) { refused.push(`${a.where}: ${one.why}`); over = true; break; }
+        if (!one.ok)
+          return { ok: false, why: `${a.where} committed and then would not sign: ${one.why}${blame()}`, culprits: named() };
+        try { got.push(decodeShare(one.bytes)); }
+        catch (err) { return { ok: false, why: `${a.where}: ${err.message}${blame()}`, culprits: named() }; }
+      }
+
+      // A SEAT ALREADY SPENT THIS ATTEMPT'S PAIR UNDER ANOTHER LIST: every seat
+      // takes a fresh pair for the next one.
+      if (over) continue;
+      const tried = aggregate340({
+        commitments, message: mine.sighash, groupPublicKey: mine.groupPublicKey, shares: got, curve: this.curve,
+      });
+      // THE AGGREGATE IS CHECKED BEFORE ANYTHING IS WRITTEN OR SENT: an invalid
+      // spend is never queued and never reaches a chain.
+      if (schnorr.verify(tried.signature, mine.sighash, mine.groupPublicKey.subarray(1))) {
+        sig = tried; asked = chosen; shares = got;
+        break;
+      }
+      // AND WHOSE SHARE BROKE IT: each checked against that seat's public share.
+      let unknown = 0;
+      const bad = [];
+      chosen.forEach((a, i) => {
+        const Y = signing.signingPublicShare ? signing.signingPublicShare(a.commitment.id) : null;
+        if (!Y) { unknown++; return; }
+        if (!verifyShare340({ id: a.commitment.id, share: got[i], publicShare: Y, groupPublicKey: mine.groupPublicKey,
+          message: mine.sighash, commitments, curve: this.curve })) bad.push(a);
+      });
+      if (!bad.length)
+        return { ok: false, culprits: named(),
+          why: 'the committee\'s signature does not verify and no share could be shown to be the bad one'
+            + (unknown ? ` (${unknown} seat(s) have no public share here to check against)` : '')
+            + ' - nothing was written or sent' + blame() };
+      for (const b of bad) culprits.set(String(b.commitment.id), b.where);
+    }
+    if (!sig)
+      return { ok: false, why: 'no signing attempt produced a signature that verifies - nothing was written or sent' + blame(), culprits: named() };
     const raw = serializeSpend({
       inputs: mine.inputs, outputs: mine.outputs, witnesses: [poolWitness(sig.signature)],
     });
@@ -595,7 +643,7 @@ export class Payouts {
     });
     return { ok: true, state, txid: sent.txid, raw, signed: shares.length,
       owed: mine.owed || [], owedSats: mine.owedSats || 0n,
-      seats: asked.map((a) => a.where) };
+      seats: asked.map((a) => a.where), culprits: named() };
   }
 
   /** One ask of one seat, and a refusal is an answer rather than a throw. */
@@ -677,6 +725,9 @@ export class Payouts {
       message: sighash, commitments, curve: this.curve,
     }));
     const sig = aggregate340({ commitments, message: sighash, groupPublicKey, shares, curve: this.curve });
+    // CHECKED BEFORE ANYTHING IS WRITTEN OR SENT, as the committee's path is.
+    if (!schnorr.verify(sig.signature, sighash, groupPublicKey.subarray(1)))
+      return { ok: false, why: 'the signature these shares make does not verify - nothing was written or sent' };
     const raw = serializeSpend({
       inputs, outputs: built.outputs, witnesses: [poolWitness(sig.signature)],
     });

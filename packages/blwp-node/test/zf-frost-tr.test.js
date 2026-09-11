@@ -18,7 +18,7 @@ import { createHash } from 'node:crypto';
 import { schnorr } from '@noble/curves/secp256k1.js';
 
 import { trustedDealerSplit, bindingFactors } from '../../protocol/src/frost.js';
-import { TR_CONTEXT, nonceGenerate340, signShare340, aggregate340 } from '../../protocol/src/frost-bip340.js';
+import { TR_CONTEXT, nonceGenerate340, signShare340, aggregate340, verifyShare340 } from '../../protocol/src/frost-bip340.js';
 import { splitSecret, scalarFrom32, scalarTo32, FIELD } from '../../protocol/src/shares.js';
 import { groupKeyOf, knowledgeIsProven } from '../../protocol/src/dkg.js';
 import { poolTweak, poolShare } from '../../protocol/src/pool.js';
@@ -120,5 +120,23 @@ test('DKG round 1: ZF\'s published proofs of knowledge verify under our checker,
     assert.match(knowledgeIsProven({ id: P.identifier, commitment, proof: flipped, curve }).why, /does not verify/);
     assert.match(knowledgeIsProven({ id: P.identifier + 1, commitment, proof, curve }).why, /does not verify/);
     assert.match(knowledgeIsProven({ id: P.identifier, commitment, proof: proof.subarray(0, 63), curve }).why, /no 64-byte proof/);
+  }
+});
+
+test('one signature share checked alone: each of ZF\'s verifies against its signer\'s public share, a changed one does not', () => {
+  const gpk = h(V.inputs.verifying_key_key);
+  const message = h(V.inputs.message);
+  const commitments = V.round_one_outputs.outputs.map((o) => ({
+    id: o.identifier, hiding: h(o.hiding_nonce_commitment), binding: h(o.binding_nonce_commitment) }));
+  const publicOf = (id) => curve.pointFromScalar(sc(V.inputs.participant_shares.find((p) => p.identifier === id).participant_share));
+  const check = (id, share, publicShare = publicOf(id)) =>
+    verifyShare340({ id, share, publicShare, groupPublicKey: gpk, message, commitments, curve });
+  const ids = V.round_two_outputs.outputs.map((o) => o.identifier);
+  for (const o of V.round_two_outputs.outputs) {
+    assert.equal(check(o.identifier, sc(o.sig_share)), true, `participant ${o.identifier}`);
+    assert.equal(check(o.identifier, (sc(o.sig_share) + 1n) % FIELD), false, 'a changed share verified');
+    const other = ids.find((i) => i !== o.identifier);
+    assert.equal(check(o.identifier, sc(o.sig_share), publicOf(other)), false, 'another seat\'s public share verified it');
+    assert.equal(check(o.identifier, 0n), false, 'a zero share verified');
   }
 });

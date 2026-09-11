@@ -20,6 +20,7 @@ import { nonceGenerate } from '../../protocol/src/frost.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { randomBytes } from 'node:crypto';
 import { toHex } from '../../protocol/src/hash.js';
+import { feldmanGroup as dkgCurve } from '../src/curve.js';
 
 const rand = (n) => new Uint8Array(randomBytes(n));
 const curve = { ...feldmanGroup, tweakPoint };
@@ -64,6 +65,16 @@ test('every daemon deals once, keeps one share, and they all name the same key',
     assert.equal(new Set(held.map((h) => h.seat.share)).size, SHARES_TOTAL,
       'two daemons hold the same share');
     assert.deepEqual([...held.map((h) => h.seat.id)].sort((a, b) => a - b), [1, 2, 3, 4, 5, 6, 7]);
+
+    // EVERY SEAT'S PUBLIC SHARE, each daemon computing all seven from the
+    // commitments alone - the point of the very share each seat holds.
+    for (const node of c.nodes) {
+      const pub = node.dkg.publicSharesFor(c.seats);
+      assert.equal(pub.ok, true, pub.why);
+      for (const h of held)
+        assert.equal(Buffer.from(pub.shares.get(String(h.seat.id))).toString('hex'),
+          Buffer.from(dkgCurve.pointFromScalar(h.seat.share)).toString('hex'), `seat ${h.seat.id}'s public share`);
+    }
 
     // AND THE SAME GROUP KEY, computed by each of them from public data.
     const keys = held.map((h) => toHex(h.pool.groupPublicKey));

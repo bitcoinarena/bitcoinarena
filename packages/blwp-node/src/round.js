@@ -1282,18 +1282,18 @@ export class Round {
    * serialisation - so nothing here decides how a secret is written down.
    */
   putPoolNonce({ roundId, seatId, sighash, hiding, binding, commitHiding, commitBinding,
-    spentList = null, spentShare = null }) {
+    spentList = null, spentShare = null, attempt = 0 }) {
     this.db.prepare(
       'INSERT OR REPLACE INTO pool_nonces (round_id, seat_id, sighash, hiding, binding, '
-      + 'commit_hiding, commit_binding, spent_list, spent_share, updated_ms) '
-      + 'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      + 'commit_hiding, commit_binding, spent_list, spent_share, attempt, updated_ms) '
+      + 'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
       .run(Buffer.from(roundId), String(seatId), Buffer.from(sighash),
         hiding === null ? null : Buffer.from(hiding),
         binding === null ? null : Buffer.from(binding),
         Buffer.from(commitHiding), Buffer.from(commitBinding),
         spentList === null ? null : Buffer.from(spentList),
         spentShare === null ? null : Buffer.from(spentShare),
-        this.now());
+        attempt, this.now());
     return true;
   }
 
@@ -1301,7 +1301,7 @@ export class Round {
   poolNonce(roundIdBytes) {
     const row = this.db.prepare(
       'SELECT seat_id, sighash, hiding, binding, commit_hiding, commit_binding, '
-      + 'spent_list, spent_share FROM pool_nonces WHERE round_id = ?')
+      + 'spent_list, spent_share, attempt FROM pool_nonces WHERE round_id = ?')
       .get(Buffer.from(roundIdBytes));
     if (!row) return null;
     return {
@@ -1313,6 +1313,7 @@ export class Round {
       commitBinding: new Uint8Array(row.commit_binding),
       spentList: row.spent_list ? new Uint8Array(row.spent_list) : null,
       spentShare: row.spent_share ? new Uint8Array(row.spent_share) : null,
+      attempt: Number(row.attempt || 0),
     };
   }
 
