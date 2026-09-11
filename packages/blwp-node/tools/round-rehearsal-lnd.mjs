@@ -385,6 +385,9 @@ async function main() {
     // the daemons' own methods, wrapped; the close path is theirs.
     const t0 = Date.now();
     const stamps = [];
+    // the harness's own PROBE asks too, after each daemon has reported; its asks
+    // are marked, so a daemon's second ask on its 2 s watch is not mistaken for one
+    let probing = false;
     for (const [name, d] of daemons) {
       const put = d.round.putResult.bind(d.round);
       d.round.putResult = (rid, eid, pub, id, bytes) => {
@@ -405,7 +408,7 @@ async function main() {
         const at = Date.now() - t0;
         const o = await open(q);
         const peer = !o.ok && o.why && o.why.includes(' (') ? ` [${o.why.slice(o.why.indexOf(' (') + 2, o.why.indexOf(' (') + 110)}]` : '';
-        stamps.push({ t: at, what: `${name} asks for ${who(q.entryId)}'s shares -> ${o.ok ? `OPENED with ${o.held}` : (o.why || '').split(' (')[0]}${peer} (answered +${Date.now() - t0} ms)` });
+        stamps.push({ t: at, what: `${name} asks for ${who(q.entryId)}'s shares -> ${o.ok ? `OPENED with ${o.held}` : (o.why || '').split(' (')[0]}${peer} (answered +${Date.now() - t0} ms)${probing ? ' [probe]' : ''}` });
         return o;
       };
     }
@@ -482,6 +485,7 @@ async function main() {
         say(`    ${name} holds ${lost.name}'s handout: ${h.ok ? `dealt ${h.handout.needed}-of-${h.handout.shares.length}` : h.why}; `
           + `its own share: ${mine.ok ? `seat ${mine.share.seat}` : mine.why}`);
       }
+      probing = true;
       for (const [name, d] of daemons) {
         const peers = d.preimages.peersOf(fromHex(round.id));
         // at the ROUND'S threshold, the one the settle asks for (M3.3-26) - the
@@ -491,6 +495,7 @@ async function main() {
         say(`    PROBE ${name} opens ${lost.name}'s preimage: asks ${JSON.stringify(peers)} -> `
           + `${o.ok ? `OPENED with ${o.held} shares` : `${o.held ?? '?'} held - ${o.why}`}`);
       }
+      probing = false;
       say(`    payout peers per round: A ${JSON.stringify(round.a.payouts.peersOf(fromHex(round.id)))}, `
         + `B ${JSON.stringify(round.b.payouts.peersOf(fromHex(round.id)))}`);
     }
