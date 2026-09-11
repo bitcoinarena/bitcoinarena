@@ -442,6 +442,7 @@ async function main() {
         + `(${played.filter((e) => (money.agreed || []).includes(e)).map(who).join(', ') || 'none'}); `
         + `table ${row ? row.state : 'none'}, ${d.round.payoutSignatures(fromHex(round.id)).length} of 2 seats signed`);
     }
+    const printedStamps = stamps.length;
     for (const s of stamps.sort((x, y) => x.t - y.t)) say(`    +${String(s.t).padStart(5)} ms  ${s.what}`);
     for (const [name, d] of daemons) {
       for (const p of d.verifier.done || []) { try { await p; } catch { /* reported below */ } }
@@ -536,6 +537,12 @@ async function main() {
     await wait(3000);
     const end = { alice: msatOf('alice'), bob: msatOf('bob') };
 
+    // AND WHAT THE WATCH DID AFTER THOSE WERE PRINTED (M3.3-29): the stamps
+    // above are printed once both daemons end; a share asked again on the 2 s
+    // watch comes later, so every stamp since is printed here, marked late.
+    const late = stamps.slice(printedStamps).sort((x, y) => x.t - y.t);
+    say(`  LATE STAMPS (after the first print): ${late.length}`);
+    for (const s of late) say(`    +${String(s.t).padStart(5)} ms  ${s.what}  [late]`);
     const heldAfterSettled = [];
     say('\nWHERE EACH PLAYER\'S MSAT ENDED UP (net stake ' + (players[0] && players[0].amountMsat) + ' msat each):');
     for (const p of players) {
