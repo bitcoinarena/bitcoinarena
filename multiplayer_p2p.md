@@ -2770,7 +2770,7 @@ GAME/VERIFY:           7 slots, 5-of-7   (known from 11:55)
 SETTLEMENT:            7 slots, 5-of-7   (known from 11:55)
 ```
 
-At 11:50 the contract is published and timestamped by five census nodes; the
+At 11:50 the contract's hash confirms on Bitcoin (`publication_txid`); the
 lobby shows it with **committee: pending** and no entry button. At 11:55 the
 beacon value appears, both committees are selected, and every client
 recomputes and verifies them against the census roots. The entry window
