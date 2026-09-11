@@ -42,3 +42,46 @@ test('of 4096 stranger keys none opens an envelope sealed to another pair, and t
   const pair = await nip04Decrypt(sealed, { secret: theirs, theirPubkey: pageCurve.pointX(mine), curve: pageCurve });
   assert.deepEqual({ opened, sawMessage, pairOpens: pair.ok && pair.plaintext }, { opened: 0, sawMessage: 0, pairOpens: 'pay_invoice' });
 });
+
+// THE PAGE DOES NOT RUN src/nwc.js. It runs dist/blwp-client.js, built by
+// tools/bundle.js (concatenated source, no transforms), and the WebGL template
+// ships a byte copy of it. `nip04Decrypt` is not in the bundle's exports - the
+// page reaches it through the NWC calls - so it is exposed here IN MEMORY ONLY,
+// by adding it to the bundle's return object before evaluating the file's own
+// bytes. The files on disk are not touched.
+import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+
+const ROOT = new URL('../../../', import.meta.url).pathname;
+const SHIPPED = {
+  dist: ROOT + 'packages/blwp-client/dist/blwp-client.js',
+  template: ROOT + 'unity-proto/Assets/WebGLTemplates/BtcLogistics/blwp-client.js',
+};
+const loadShipped = (path) => {
+  const src = readFileSync(path, 'utf8');
+  const patched = src.replace('return { Client: Client,', 'return { nip04Decrypt: nip04Decrypt, Client: Client,');
+  assert.notEqual(patched, src, `${path}: the bundle's return object is not where it was`);
+  const module = { exports: null };
+  new Function('module', patched)(module);
+  return module.exports;
+};
+
+test('MEASURED: the bundle the page runs, and the template\'s copy, still let 15 of 4096 strangers "open" an envelope', async () => {
+  const mine = det('mine', 0);
+  const theirs = det('theirs', 0);
+  let n = 0;
+  const random = (len) => det('iv', n++).slice(0, len);
+  const sealed = await nip04Encrypt('pay_invoice', { secret: mine, theirPubkey: pageCurve.pointX(theirs), curve: pageCurve, random });
+  const facts = {};
+  for (const [name, path] of Object.entries(SHIPPED)) {
+    const shipped = loadShipped(path);
+    let opened = 0;
+    for (let i = 0; i < TRIES; i++) {
+      const r = await shipped.nip04Decrypt(sealed, { secret: det('stranger', i), theirPubkey: pageCurve.pointX(mine), curve: pageCurve });
+      if (r.ok) opened++;
+    }
+    facts[name] = { opened, sha256: createHash('sha256').update(readFileSync(path)).digest('hex').slice(0, 16) };
+  }
+  console.log(`  FACTS (shipped bundles, ${TRIES} stranger keys):`, JSON.stringify(facts));
+  assert.deepEqual({ dist: facts.dist.opened, template: facts.template.opened }, { dist: 15, template: 15 });
+});
