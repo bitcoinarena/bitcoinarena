@@ -59,6 +59,10 @@ const STAKE_MSAT = 100000n;
 const CLOSE_ORDER = (process.argv.find((a) => a.startsWith('--close-order=')) || '--close-order=AB').split('=')[1];
 if (!['AB', 'BA'].includes(CLOSE_ORDER)) throw new Error(`--close-order is AB or BA, not ${CLOSE_ORDER}`);
 const OFF = CLOSE_ORDER === 'BA' ? 100 : 0;
+// --hold-before-sit=MS (M3.3-27): hold the event loop SYNCHRONOUSLY for MS ms
+// just before the first player sits - what a long world search does by chance
+// - so the condition of the Client.at flake is met on purpose, every run.
+const HOLD_BEFORE_SIT = Number((process.argv.find((a) => a.startsWith('--hold-before-sit=')) || '--hold-before-sit=0').split('=')[1]);
 // NON-DEFAULT, ALL OF THEM; p2p+1 is bitcoind's own; never 8080 (signal-cli).
 const P = { rpc: 29901 + OFF, p2p: 29902 + OFF, zmqBlock: 29905 + OFF, zmqTx: 29906 + OFF,
   alice: { rpc: 29907 + OFF, listen: 29908 + OFF, rest: 29909 + OFF },
@@ -252,6 +256,11 @@ async function main() {
     if (Date.now() < opensAt) {
       say(`  waiting ${opensAt - Date.now()} ms for the round's committee time`);
       await until('the round\'s committee time', () => Date.now() >= opensAt, 180000, 500);
+    }
+    if (HOLD_BEFORE_SIT > 0) {
+      say(`  holding the event loop ${HOLD_BEFORE_SIT} ms before anyone sits`);
+      const end = Date.now() + HOLD_BEFORE_SIT;
+      while (Date.now() < end) { /* held, as a long search holds it */ }
     }
     for (const p of players) {
       const started = Date.now();
