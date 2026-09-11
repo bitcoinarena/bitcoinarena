@@ -299,6 +299,67 @@ export async function stakeSeenBy({ entryId, seats, nodes, contract, fetcher = f
   return { seen, of, needed, unanswered: of - answered.size, committed: seen >= needed, per };
 }
 
+/** The hold states a stake does not leave. */
+export const SETTLEMENT_OVER = ['SETTLED', 'CANCELLED', 'EXPIRED', 'FREE', 'none'];
+
+/**
+ * WHERE THIS STAKE STANDS, asked of every settlement seat (MF item 14).
+ *
+ * Each seat answers `GET /settlement` for itself - its hold now, where the
+ * run's result stands, when its objection window closes, the height its hold
+ * refunds at - and the seats are found at the page's addresses the way
+ * `stakeSeenBy` finds them, one answer per seat key. The answer is one word
+ * per field:
+ *
+ *   hold          the seats' own word when they agree, HELD while any differs
+ *   finality      SUSPENDED if any seat says so, FINAL when all do,
+ *                 PROVISIONALLY_FINAL when any has a result, else null
+ *   windowClosesAtMs  the LATEST seat's window end - nothing moves before it
+ *   refundHeight  the lowest height any seat names
+ *
+ *   { of, answered, hold, finality, windowClosesAtMs, refundHeight, per }
+ */
+export async function settlementBy({ entryId, seats, nodes, fetcher = fetch } = {}) {
+  const want = new Set((seats || []).map((k) => toHex(k)));
+  const eid = typeof entryId === 'string' ? entryId : toHex(entryId);
+  const answered = new Map();
+  const per = [];
+  for (const node of nodes || []) {
+    const base = String(node).replace(/\/+$/, '');
+    let key;
+    try {
+      const r = await readWithOneRetry(fetcher, base + '/identity');
+      if (!r.ok) { per.push({ node, why: `identity answered ${r.status}` }); continue; }
+      key = toHex(new Uint8Array(await r.arrayBuffer()));
+    } catch (e) { per.push({ node, why: e.message }); continue; }
+    if (!want.has(key) || answered.has(key)) continue;
+    try {
+      const r = await readWithOneRetry(fetcher, `${base}/settlement?entry=${eid}`);
+      const body = await r.text();
+      if (!r.ok) { per.push({ node, key, why: body.trim() }); continue; }
+      const said = JSON.parse(body);
+      answered.set(key, said);
+      per.push({ node, key, ...said });
+    } catch (e) { per.push({ node, key, why: e.message }); }
+  }
+  const all = [...answered.values()];
+  const holds = new Set(all.map((a) => a.hold));
+  const states = all.map((a) => a.finality);
+  const ends = all.map((a) => a.windowClosesAtMs).filter((v) => v !== null && v !== undefined).map(Number);
+  const refunds = all.map((a) => a.refundHeight).filter((v) => Number.isInteger(v));
+  return {
+    of: want.size,
+    answered: answered.size,
+    hold: !all.length ? null : (holds.size === 1 ? all[0].hold : 'HELD'),
+    finality: states.includes('SUSPENDED') ? 'SUSPENDED'
+      : (all.length && states.every((f) => f === 'FINAL')) ? 'FINAL'
+        : states.some((f) => f === 'PROVISIONALLY_FINAL' || f === 'FINAL') ? 'PROVISIONALLY_FINAL' : null,
+    windowClosesAtMs: ends.length ? Math.max(...ends) : null,
+    refundHeight: refunds.length ? Math.min(...refunds) : null,
+    per,
+  };
+}
+
 /**
  * WHO THE SETTLEMENT COMMITTEE IS, ASKED OF EVERY NODE THE ROUND NAMED.
  *

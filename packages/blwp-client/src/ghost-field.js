@@ -259,7 +259,7 @@ export function playersLine({ seated, others, stalled = false, at = null, refuse
  * "stake seen by N of M nodes (T needed)", with the seats that did not answer
  * named and "committed" only at N >= T.
  */
-export function stakeLine(stake) {
+export function stakeLine(stake, nowMs = Date.now()) {
   if (!stake) return '';
   if (stake.free) return ' · free seat';
   if (!stake.dealt) return '';
@@ -272,10 +272,36 @@ export function stakeLine(stake) {
   if (s && typeof s.seen === 'number' && !(noHold && s.seen === 0)) {
     return ` · stake seen by ${s.seen} of ${s.of} nodes (${s.needed} needed)`
       + (s.unanswered ? `, ${s.unanswered} did not answer` : '')
-      + (s.committed ? ' · committed' : '');
+      + (s.committed ? ' · committed' : '')
+      + settlementLine(s.settlement, nowMs);
   }
   const held = stake.hold && stake.hold.state;
   if (held && held !== 'none') return ' · stake dealt, not yet counted';
   const why = stake.hold && stake.hold.why;
   return ' · stake dealt, unpaid' + (why ? ` (${why})` : '');
+}
+
+/**
+ * WHERE THE STAKE STANDS AFTER THE RUN, in the settlement seats' words (MF
+ * item 14): "the player is waiting on other people's machines and must be told
+ * so, with the refund path visible the whole time". `s` is `settlementBy`'s
+ * answer. Nothing is added until the seats have a result to wait on - before
+ * that the count above is the whole story.
+ *
+ * SETTLED says the run lost the stake, and no more: where a settled stake goes
+ * next is a ruling still open, and the chip does not claim it.
+ */
+export function settlementLine(s, nowMs = Date.now()) {
+  if (!s || !s.answered) return '';
+  const refund = Number.isInteger(s.refundHeight) ? ` · refunds at block ${s.refundHeight} if nobody acts` : '';
+  if (s.hold === 'SETTLED') return ' · stake settled: this run lost it';
+  if (s.hold === 'CANCELLED') return ' · stake handed back';
+  if (s.hold === 'EXPIRED') return ' · stake refunded: its hold expired';
+  if (s.finality === 'SUSPENDED') return ' · suspended by an objection' + refund;
+  if (s.finality === 'FINAL') return ' · final: the committee is settling it' + refund;
+  if (s.finality === 'PROVISIONALLY_FINAL' && Number.isFinite(s.windowClosesAtMs)) {
+    const left = Math.max(0, Math.ceil((s.windowClosesAtMs - nowMs) / 1000));
+    return ` · waiting for the objection window, ${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')} left` + refund;
+  }
+  return '';
 }

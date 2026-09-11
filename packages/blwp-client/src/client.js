@@ -53,7 +53,7 @@ import {
 import { invoiceMatchesEntry } from '../../protocol/src/payout.js';
 import { parseConnection, payInvoice } from './nwc.js';
 import { STAKE_NOT_SEEN } from '../../protocol/src/constants.js';
-import { stakeSeenBy } from './join.js';
+import { stakeSeenBy, settlementBy, SETTLEMENT_OVER } from './join.js';
 import { decodeGhost } from '../../protocol/src/ghost.js';
 import { TYPE_GHOST } from '../../protocol/src/constants.js';
 import { discover } from './directory.js';
@@ -318,6 +318,12 @@ export class Client {
     this.stakePolls = 0;
     this.stakeWatchStopped = false;
     this.stakeWatch = null;         // the running count, so a second start joins it
+    // AND WHERE THE STAKE STANDS AFTER THE RUN (MF item 14), asked once it is
+    // committed and until every seat has moved the hold.
+    this.settlement = null;
+    this.settlementWatch = null;
+    this.settlementPolls = 0;
+    this.settlementOver = false;
     this.refusedWhy = null;
     this.refusedAt = null;
     this.resynced = false;
@@ -1253,7 +1259,7 @@ export class Client {
   // ONE WATCH AT A TIME. The page starts it from the seat and again after a
   // payment; a second start returns the watch already running rather than
   // polling every seat twice.
-  watchStake({ seats, nodes, contract, everyMs = 2000, fetcher } = {}) {
+  watchStake({ seats, nodes, contract, everyMs = 2000, settlementEveryMs = 5000, fetcher } = {}) {
     if (this.stakeWatch) return this.stakeWatch;
     // A COUNT THAT IS OVER STAYS OVER. Committed, the run ended, or this client
     // closed: the last count is handed back and no node is asked. The chip
@@ -1270,12 +1276,46 @@ export class Client {
         this.stakePolls++;
         this.stakeCount = s;
         this.stakeCommitted = s.committed;
+        // COMMITTED IS WHERE THE NEXT WAIT BEGINS: the run, the close, the
+        // objection window, the settle. The seats are asked about that now.
+        if (s.committed && !this.stakeWatchStopped)
+          this.watchSettlement({ seats, nodes, everyMs: settlementEveryMs, ...(fetcher ? { fetcher } : {}) })
+            .catch(() => { /* a stake with no seat to ask has nothing to say */ });
         if (s.committed || this.ended || this.stakeWatchStopped) return s;
         await new Promise((r) => setTimeout(r, everyMs));
         if (this.ended || this.stakeWatchStopped) return this.stakeCount;
       }
     })().finally(() => { this.stakeWatch = null; });
     return this.stakeWatch;
+  }
+
+  /**
+   * WHERE THIS SEAT'S STAKE STANDS, asked of every settlement seat (MF item
+   * 14): "the player is waiting on other people's machines and must be told
+   * so, with the refund path visible the whole time". Started once the stake
+   * is committed, asked every `everyMs`, and stopped when every seat that
+   * answers has moved the hold (settled, handed back, expired) or this client
+   * closes. The answer rides on `stakeCount`, which is what the page already
+   * hands the chip, so the chip says it with no new wiring.
+   */
+  watchSettlement({ seats, nodes, everyMs = 5000, fetcher } = {}) {
+    if (this.settlementWatch) return this.settlementWatch;
+    if (this.settlementOver || this.stakeWatchStopped) return Promise.resolve(this.settlement);
+    const eid = (this.where && this.where.entryId) || (this.seatEntry && entryId(this.seatEntry));
+    if (!eid) return Promise.reject(new Error('there is no seat to ask about: join first'));
+    this.settlementWatch = (async () => {
+      for (;;) {
+        const s = await settlementBy({ entryId: eid, seats, nodes, ...(fetcher ? { fetcher } : {}) });
+        this.settlementPolls++;
+        this.settlement = s;
+        this.stakeCount = { ...(this.stakeCount || {}), settlement: s };
+        if (s.answered && SETTLEMENT_OVER.includes(s.hold)) { this.settlementOver = true; return s; }
+        if (this.stakeWatchStopped) return s;
+        await new Promise((r) => setTimeout(r, everyMs));
+        if (this.stakeWatchStopped) return this.settlement;
+      }
+    })().finally(() => { this.settlementWatch = null; });
+    return this.settlementWatch;
   }
 
   /**
