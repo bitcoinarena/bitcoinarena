@@ -61,7 +61,7 @@ import { Verifier } from './verify.js';
 import { Ghosts } from './ghosts.js';
 import { Roster, endpointsOf } from './roster.js';
 import { receiptsNeeded as roundThreshold } from '../../protocol/src/genesis.js';
-import { Custody, NO_LIGHTNING } from './custody.js';
+import { Custody, NO_LIGHTNING, SETTLE, HELD } from './custody.js';
 import { Preimages, encodeShareAnswer, SEALED_ANSWER_BYTES } from './preimage.js';
 import { Payouts, PAYOUT_QUEUED, PAID, PAID_IN_PART, NOTHING_OWED } from './payout.js';
 import { PoolSigning } from './pool-signing.js';
@@ -378,6 +378,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
    * settle and cancel (a hold that moved is left alone), then the table's
    * gather and queue (a row that moved on is kept). It stops when nothing is
    * short, or when the round's objection window has passed, and says which.
+   *
+   * A SETTLE THAT FOUND NO PREIMAGE IS SHORT TOO (M3.3-29). Measured on the
+   * rehearsal, 6 of 21: the second daemon to close was final at its own close,
+   * settled, and asked the first for its share while the first was still short
+   * - "no share is handed out before the result is final" - so it wrote HELD,
+   * and this watch stopped, having nothing short, while lnd settled the stake
+   * through the first. A final run whose settle is still HELD is now asked
+   * again on the same cadence, inside the same window; the settle asks for the
+   * shares again, and a hold that moved meanwhile is left alone.
    */
   const finalityTimers = new Set();
   let shuttingDown = false;
@@ -394,15 +403,18 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const isFinal = (eid) => gathered.some((g) => g && g.ok && g.final && toHex(g.entryId) === toHex(eid));
     const tableShort = () => !!(latest && latest.owed && latest.owed.ok === false
       && typeof latest.owed.agreed === 'number');
+    const settleShort = () => !!(latest && (latest.actions || [])
+      .some((a) => a.action === SETTLE && a.state === HELD && a.final));
     let timer = null;
     const tick = async () => {
       finalityTimers.delete(timer);
       if (shuttingDown) return;
       const short = stored.filter((r) => !isFinal(r.entryId));
-      if (!short.length && !tableShort()) return;
+      if (!short.length && !tableShort() && !settleShort()) return;
       if (Date.now() >= until) {
         console.log(`[verify] ${toHex(roundIdBytes).slice(0, 16)} the objection window passed with `
-          + `${short.length} run(s) short of final${tableShort() ? ' and the table short' : ''}`);
+          + `${short.length} run(s) short of final${tableShort() ? ' and the table short' : ''}`
+          + `${settleShort() ? ' and a lost stake still unsettled' : ''}`);
         return;
       }
       let turned = false;
@@ -414,7 +426,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (g && g.ok && g.final) turned = true;
       }
       if (shuttingDown) return;
-      if (turned || tableShort()) {
+      if (turned || tableShort() || settleShort()) {
         stakes = settleTheStakes(roundIdBytes, { replayed: closed.replayed, gathered })
           .catch((e) => { console.error(`[verify] ${e.message}`); return { ok: false, why: e.message }; });
         latest = await stakes;
