@@ -3,32 +3,105 @@
 // "A valid objection suspends finality. The full committee re-runs the
 // canonical transcript; the replay outcome is authoritative. Every node that
 // signed the contradicted result is slashed (§5A.3). If the committee cannot
-// reach 5-of-7 on the re-run, §13C applies." PRIORITIES: "a SUSPENDED run has
-// no committee re-run (13A) yet; it cannot happen on 2 of 2" - on seven seats
-// it can: five sign a result this node's own replay contradicts.
+// reach 5-of-7 on the re-run, §13C applies."
 //
-// MEASURED FIRST, asserted as it stands.
+// THE FIXTURE, measured before (TASKBOOK, 2f01ea1): seven seats (the holder and
+// six keys), five sign a result with the score rewritten, the holder's own
+// replay contradicts it, an objection is filed inside an 800 ms window - and
+// two windows later the run was still SUSPENDED, no share released, 0 re-run
+// results, because the node had no re-run.
+//
+// Now the holder re-runs by itself when the objection holds, the other seats'
+// re-runs are counted, and 5 of 7 on one outcome replace SUSPENDED. Short of
+// that it stays SUSPENDED: 13C is timed from the result window, which the
+// contract does not carry yet (PRIORITIES, parked).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { resultFinality } from '../src/finality.js';
+import { decodePlayerResult, splitSignedResult } from '../../protocol/src/result.js';
+import { runOf, decodeRerunResult, splitSignedRerun } from '../../protocol/src/rerun.js';
 import { toHex } from '../../protocol/src/hash.js';
-import { wait, sevenSeats, object } from './window-fixture.js';
+import { b32, rand, wait, sevenSeats, object } from './window-fixture.js';
 
-test('MEASURED: seven seats, five sign a result this node\'s replay contradicts, an objection holds - two windows later the run is still SUSPENDED and nothing re-ran', async () => {
+/** Wait until the holder has signed its own re-run of `eid`, and return it. */
+async function holdersRerun(w, eid, ms = 8000) {
+  const stop = Date.now() + ms;
+  while (Date.now() < stop) {
+    const own = w.holder.round.reruns(w.rid, eid).find((r) => toHex(r.seatPubkey) === toHex(w.holder.round.pubkey));
+    if (own) return decodeRerunResult(splitSignedRerun(own.bytes).body);
+    await wait(50);
+  }
+  return null;
+}
+
+/** The fixture: five sign the rewritten score, the objection is filed; returns the suspended run. */
+async function suspended(w) {
+  w.sign('dissents', (r) => ({ score: r.score + 1 }));
+  const eid = w.runs.dissents.eid;
+  assert.equal((await object(w, eid)).status, 201);
+  const mine = w.holder.round.results(w.rid, eid).find((r) => toHex(r.nodePubkey) === toHex(w.holder.round.pubkey));
+  return { eid, replay: decodePlayerResult(splitSignedResult(mine.bytes).body), filedAt: Date.now() };
+}
+
+test('the committee re-runs a suspended result: the holder re-runs by itself, four seats agree, and two windows later the re-run\'s outcome is FINAL and its share is released', async () => {
   const w = await sevenSeats(800);
   try {
-    w.sign('dissents', (r) => ({ score: r.score + 1 }));
-    assert.equal((await object(w, w.runs.dissents.eid)).status, 201);
-    const eid = w.runs.dissents.eid;
-    const before = resultFinality(w.holder.round, w.rid, eid).state;
-    await wait(1700);                      // two windows
-    const after = resultFinality(w.holder.round, w.rid, eid);
-    const may = w.holder.preimages.mayRelease(w.rid, eid);
-    const results = w.holder.round.results(w.rid, eid).length;
-    const facts = { before, after: after.state, shareReleased: may.ok, resultsHeld: results, rerunResults: 0 };
-    console.log('  FACTS (7 seats, contradicted result, objection):', JSON.stringify(facts), '|', after.why);
-    assert.deepEqual(facts, { before: 'SUSPENDED', after: 'SUSPENDED', shareReleased: false, resultsHeld: 6, rerunResults: 0 });
-    assert.equal(typeof w.holder.verifier.rerun, 'undefined', 'a re-run already exists');
+    const s = await suspended(w);
+    const state = resultFinality(w.holder.round, w.rid, s.eid).state;
+    const own = await holdersRerun(w, s.eid);
+    assert.ok(own, 'the holder never re-ran the suspended result');
+    w.rerunBy('dissents', 4);
+    await wait(Math.max(0, s.filedAt + 1700 - Date.now()));      // two windows, as measured before
+    const after = resultFinality(w.holder.round, w.rid, s.eid);
+    const may = w.holder.preimages.mayRelease(w.rid, s.eid);
+    const facts = {
+      suspendedByTheObjection: state,
+      holderReranItsReplay: toHex(runOf(own.result)) === toHex(runOf(s.replay)),
+      holderNamedTheContradictedRun: toHex(own.contradictedRunId) === toHex(w.runs.dissents.contradicted),
+      reruns: w.holder.round.reruns(w.rid, s.eid).length,
+      after: after.state,
+      authoritativeRun: after.runId === toHex(runOf(s.replay)),
+      shareReleased: may.ok,
+      outcome: may.outcome,
+    };
+    console.log('  FACTS (7 seats, contradicted result, re-run 5 of 7):', JSON.stringify(facts), '|', after.why);
+    assert.deepEqual(facts, {
+      suspendedByTheObjection: 'SUSPENDED', holderReranItsReplay: true, holderNamedTheContradictedRun: true,
+      reruns: 5, after: 'FINAL', authoritativeRun: true, shareReleased: true, outcome: 'FAILED',
+    });
+    assert.match(after.why, /re-run by 5 of 7 committee seats: the replay outcome is authoritative/);
+  } finally { await w.close(); }
+});
+
+test('four re-runs are not five: two windows later the result is still SUSPENDED and no share leaves (13C, timed from the parked result window, is not applied)', async () => {
+  const w = await sevenSeats(800);
+  try {
+    const s = await suspended(w);
+    assert.ok(await holdersRerun(w, s.eid), 'the holder never re-ran the suspended result');
+    w.rerunBy('dissents', 3);
+    await wait(Math.max(0, s.filedAt + 1700 - Date.now()));
+    const after = resultFinality(w.holder.round, w.rid, s.eid);
+    const may = w.holder.preimages.mayRelease(w.rid, s.eid);
+    assert.equal(after.state, 'SUSPENDED', `four re-runs replaced SUSPENDED: ${after.why}`);
+    assert.match(after.why, /4 of 5 committee seats have re-run/);
+    assert.equal(may.ok, false, 'a share left a result four seats re-ran');
+    assert.match(may.why, /suspend/i);
+  } finally { await w.close(); }
+});
+
+test('re-runs from keys that are not seated, about another contradicted run, or to another outcome count for nothing', async () => {
+  const w = await sevenSeats(800);
+  try {
+    const s = await suspended(w);
+    assert.ok(await holdersRerun(w, s.eid), 'the holder never re-ran the suspended result');
+    w.rerunBy('dissents', 2);                                                           // two honest: 3 with the holder
+    w.rerunBy('dissents', 2, { keys: [rand(32), rand(32)] });                           // two strangers
+    w.rerunBy('dissents', 1, { keys: w.others.slice(2), contradicted: b32(0x66) });     // another contradicted run
+    w.rerunBy('dissents', 1, { keys: w.others.slice(3), over: { score: s.replay.score + 2 } }); // another outcome
+    await wait(Math.max(0, s.filedAt + 1700 - Date.now()));
+    const after = resultFinality(w.holder.round, w.rid, s.eid);
+    assert.equal(after.state, 'SUSPENDED', `strangers, another run or another outcome made five: ${after.why}`);
+    assert.match(after.why, /3 of 5 committee seats have re-run/);
   } finally { await w.close(); }
 });

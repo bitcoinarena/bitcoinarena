@@ -18,6 +18,10 @@ import {
   transcriptBytesHash, relayPath, transcriptIsPublished, SIGNED_POSTING_BYTES,
 } from '../../protocol/src/posting.js';
 import {
+  encodeRerunResult, rerunResultId, joinSignedRerun, splitSignedRerun, decodeRerunResult, rerunIsAgreed,
+  SIGNED_RERUN_BYTES,
+} from '../../protocol/src/rerun.js';
+import {
   joinSignedResult, splitSignedResult, decodePlayerResult, resultId, SIGNED_RESULT_BYTES,
 } from '../../protocol/src/result.js';
 import { decodeRoundContract } from '../../protocol/src/contracts.js';
@@ -420,6 +424,97 @@ export class Verifier {
       seats, settlementSlots: contract.settlementSlots, verify: (s, m, k) => schnorr.verify(s, m, k),
     });
     return { ...count, entryId: entryIdBytes, ...report };
+  }
+
+  /**
+   * RE-RUN A SUSPENDED RESULT, AND COUNT THE COMMITTEE'S RE-RUNS (v4.6.2 §13A).
+   *
+   * "The full committee re-runs the canonical transcript; the replay outcome is
+   * authoritative." Measured before this: a result five of seven signed and a
+   * valid objection contradicted stayed SUSPENDED two windows later, nothing
+   * released and nothing re-run (rerun.test.js, 2f01ea1).
+   *
+   * This seat, if it is one and has not re-run this run yet: replays the run
+   * again through the same pool as the close - a new job, not its old answer -
+   * and signs the result the CURRENT canonical transcript gives, tied to the
+   * contradicted run. Then takes every peer's re-runs, each checked. Returns the
+   * count; whether it replaces SUSPENDED is `resultFinality`'s to say.
+   */
+  async rerun(roundIdBytes, entryIdBytes, contradictedRunId) {
+    const row = this.round.get(roundIdBytes);
+    if (!row) return { ok: false, why: 'no such round' };
+    const contract = decodeRoundContract(new Uint8Array(row.contract));
+    const seats = this.round.seats(roundIdBytes);
+    const found = this.round.entriesOf(roundIdBytes).find((e) => hex(e.entryId) === hex(entryIdBytes));
+    if (!found) return { ok: false, why: 'no such entry in that round' };
+    const report = { refused: [] };
+
+    const seated = seats.some((s) => hex(s) === hex(this.round.pubkey));
+    const done = this.round.reruns(roundIdBytes, entryIdBytes).some((r) => hex(r.seatPubkey) === hex(this.round.pubkey));
+    if (seated && !done) {
+      const beacon = beaconFor(this.randomnessFor, contract, roundIdBytes, found.entry, entryIdBytes, this.chainFor);
+      if (!beacon.ok) report.refused.push(beacon.why);
+      else {
+        const answer = await this.pool.submit({
+          key: `${hex(roundIdBytes)}:${hex(entryIdBytes)}:rerun`,
+          objected: true,
+          transcript: this.round.transcript(roundIdBytes, entryIdBytes),
+          entry: found.entry,
+          options: { roundRandomness: beacon.hash },
+        });
+        let canonical = null;
+        if (!answer.ok) report.refused.push(answer.why);
+        else {
+          try { canonical = this.round.canonicalTranscript(roundIdBytes, entryIdBytes); }
+          catch (e) { report.refused.push(e.message); }
+        }
+        const built = canonical && resultFrom({
+          answer, contract, entry: found.entry, transcript: canonical, entryId: entryIdBytes,
+          nodePubkey: this.round.pubkey,
+        });
+        if (built && !built.ok) report.refused.push(built.why);
+        if (built && built.ok) {
+          const x = { contradictedRunId, result: built.result };
+          const signature = schnorr.sign(rerunResultId(x), this.round.identity.secret);
+          this.round.putRerun(roundIdBytes, entryIdBytes, this.round.pubkey, joinSignedRerun(encodeRerunResult(x), signature));
+        }
+      }
+    }
+
+    // AND THE OTHER SEATS' RE-RUNS, each checked here, never taken on arrival.
+    for (const peer of this.peersOf(roundIdBytes)) {
+      let body;
+      try {
+        const answer = await fetch(`${peer}/reruns?round=${hex(roundIdBytes)}&entry=${hex(entryIdBytes)}`);
+        if (!answer.ok) continue;
+        body = new Uint8Array(await answer.arrayBuffer());
+      } catch { continue; }
+      for (let at = 0; at + SIGNED_RERUN_BYTES <= body.length; at += SIGNED_RERUN_BYTES)
+        this.#keepPeerRerun(roundIdBytes, body.slice(at, at + SIGNED_RERUN_BYTES), found.entry.playerPubkey, seats, entryIdBytes);
+    }
+
+    const count = rerunIsAgreed({
+      roundId: roundIdBytes, playerPubkey: found.entry.playerPubkey, contradictedRunId,
+      records: this.round.reruns(roundIdBytes, entryIdBytes), seats, slots: contract.gameVerifySlots,
+      verify: (s, m, k) => schnorr.verify(s, m, k),
+    });
+    return { ...count, ...report };
+  }
+
+  /** One re-run from a peer: about this round and player, from a seated seat, and signed by it. */
+  #keepPeerRerun(roundIdBytes, record, playerPubkey, seats, entryIdBytes) {
+    let x, signature;
+    try {
+      const split = splitSignedRerun(record);
+      signature = split.signature;
+      x = decodeRerunResult(split.body);
+    } catch { return false; }
+    if (hex(x.result.roundId) !== hex(roundIdBytes) || hex(x.result.playerPubkey) !== hex(playerPubkey)) return false;
+    if (!seats.some((s) => hex(s) === hex(x.result.nodePubkey))) return false;
+    let ok = false;
+    try { ok = schnorr.verify(signature, rerunResultId(x), x.result.nodePubkey); } catch { ok = false; }
+    if (!ok) return false;
+    return this.round.putRerun(roundIdBytes, entryIdBytes, x.result.nodePubkey, record) === 1;
   }
 
   /** The transcript a hash names: this node's canonical one, else a peer's - only bytes with that hash. */

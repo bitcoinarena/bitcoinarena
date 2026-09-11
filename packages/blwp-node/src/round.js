@@ -1435,6 +1435,21 @@ export class Round {
       .map((r) => ({ seatPubkey: new Uint8Array(r.seat_pubkey), bytes: new Uint8Array(r.bytes), seenMs: Number(r.seen_ms) }));
   }
 
+  /** One seat's signed re-run of a suspended result; one per seat (13A). */
+  putRerun(roundIdBytes, entryIdBytes, seatPubkey, bytes) {
+    return this.db.prepare(
+      'INSERT OR IGNORE INTO reruns (round_id, entry_id, seat_pubkey, bytes, seen_ms) VALUES (?, ?, ?, ?, ?)')
+      .run(roundIdBytes, entryIdBytes, seatPubkey, bytes, this.now()).changes;
+  }
+
+  /** Every signed re-run this node holds for a run, its own included. */
+  reruns(roundIdBytes, entryIdBytes) {
+    return this.db.prepare(
+      'SELECT seat_pubkey, bytes, seen_ms FROM reruns WHERE round_id = ? AND entry_id = ? ORDER BY seat_pubkey')
+      .all(roundIdBytes, entryIdBytes)
+      .map((r) => ({ seatPubkey: new Uint8Array(r.seat_pubkey), bytes: new Uint8Array(r.bytes), seenMs: Number(r.seen_ms) }));
+  }
+
   /** A transcript kept as a relay, under the hash its bytes have (checked by the door). */
   relayPut(hashBytes, bytes) {
     return this.db.prepare('INSERT OR IGNORE INTO relayed (hash, bytes, seen_ms) VALUES (?, ?, ?)')

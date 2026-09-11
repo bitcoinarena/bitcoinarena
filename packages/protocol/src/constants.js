@@ -186,6 +186,10 @@ export const TYPE_DKG_AGREEMENT = 0x17;
 // round's publication relays, signed. A result is FINAL only once the round's
 // threshold of seats have said so (§13A, v4.6.2 P2).
 export const TYPE_TRANSCRIPT_POSTING = 0x18;
+// ONE COMMITTEE SEAT'S RE-RUN OF A SUSPENDED RESULT (§13A), signed: the result
+// its replay of the canonical transcript produces, tied to the contradicted run.
+// The spec names no wire object for it; this is that object.
+export const TYPE_RERUN_RESULT = 0x19;
 
 // A SEALED SHARE IS A FIXED SIZE, and it is not a choice: 32 bytes of scalar
 // under AES-GCM plus the 16-byte tag that makes a wrong key a REFUSAL rather
@@ -275,6 +279,8 @@ export const TAG = {
   dkgAgreement: 'BLWP/v1/DkgAgreement',
   // What a settlement seat signs once it has posted a run's transcript (§13A).
   transcriptPosting: 'BLWP/v1/TranscriptPosting',
+  // What a seat signs when it re-runs a suspended result (§13A).
+  rerunResult: 'BLWP/v1/RerunResult',
 };
 
 /**

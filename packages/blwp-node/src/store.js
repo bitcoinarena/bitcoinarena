@@ -438,6 +438,17 @@ export function openStore(path = ':memory:') {
       PRIMARY KEY (round_id, entry_id, seat_pubkey)
     );
 
+    -- A COMMITTEE SEAT'S RE-RUN OF A SUSPENDED RESULT (13A), its own and the
+    -- other seats', one per seat: counted to 5 of 7, it replaces SUSPENDED.
+    CREATE TABLE IF NOT EXISTS reruns (
+      round_id    BLOB NOT NULL,
+      entry_id    BLOB NOT NULL,
+      seat_pubkey BLOB NOT NULL,
+      bytes       BLOB NOT NULL,
+      seen_ms     INTEGER NOT NULL,
+      PRIMARY KEY (round_id, entry_id, seat_pubkey)
+    );
+
     -- WHAT THIS NODE KEEPS AS A RELAY: transcripts by their own hash, so any
     -- node can be one of a contract's publication_relays[] and serve nothing
     -- under a name its bytes do not have.

@@ -23,7 +23,8 @@
 // nothing: it would let anybody hold every stake past its window and hand it
 // back to its player.
 import { schnorr } from '@noble/curves/secp256k1.js';
-import { finality, objectionHolds } from '../../protocol/src/objection.js';
+import { finality, objectionHolds, FINAL, SUSPENDED } from '../../protocol/src/objection.js';
+import { rerunIsAgreed } from '../../protocol/src/rerun.js';
 import { decodeRoundContract } from '../../protocol/src/contracts.js';
 import { splitSignedResult, decodePlayerResult, resultId } from '../../protocol/src/result.js';
 import {
@@ -109,6 +110,39 @@ export function resultFinality(round, roundIdBytes, entryIdBytes, { now = round.
     committee, contract, provisionalAtMs, publishedAtMs: published.ok && !unpostable ? published.atMs : null,
     now, objections, needed: seen.needed,
   });
+  // A SUSPENDED RESULT IS DECIDED BY THE COMMITTEE'S RE-RUN (v4.6.2 §13A): once
+  // the round's threshold of seats have re-run the contradicted result to one
+  // outcome, that outcome is authoritative - FINAL, once its transcript is
+  // posted (P2). Short of the threshold it stays SUSPENDED: what 13C does then
+  // is timed from the result window, which the contract does not carry yet.
+  if (f.state === SUSPENDED) {
+    const verify = (s, m, k) => schnorr.verify(s, m, k);
+    const rerun = rerunIsAgreed({
+      roundId: roundIdBytes, playerPubkey: agreeing[0].playerPubkey, contradictedRunId: agreeing[0].run,
+      records: round.reruns(roundIdBytes, entryIdBytes), seats: committee, slots: contract.gameVerifySlots, verify,
+    });
+    const said = { agreed: rerun.agreed || 0, needed: rerun.needed };
+    if (rerun.ok) {
+      const posted = transcriptIsPublished({
+        roundId: roundIdBytes, playerPubkey: agreeing[0].playerPubkey, transcriptHash: rerun.result.transcriptHash,
+        postings: round.postings(roundIdBytes, entryIdBytes), seats: committee,
+        settlementSlots: contract.settlementSlots, verify,
+      });
+      if (posted.ok && !unpostable)
+        return {
+          state: FINAL, rerun: { ...said, runId: hex(rerun.runId) }, published: true, posted: posted.posted,
+          why: `re-run by ${rerun.agreed} of ${committee.length} committee seats: the replay outcome is authoritative (13A)`,
+          provisionalAtMs, runId: hex(rerun.runId), contradictedRunId: seen.runId, objection: objection && objection.why,
+        };
+      return { ...f, rerun: said, published: false, posted: posted.posted || 0,
+        why: `${f.why}; the re-run agreed, and its transcript is not posted: ${unpostable ? 'the round names no relay' : posted.why}`,
+        provisionalAtMs, runId: seen.runId, objection: objection && objection.why };
+    }
+    return { ...f, rerun: said, published: published.ok, posted: published.posted || 0,
+      why: `${f.why}; re-run so far: ${rerun.why}`,
+      provisionalAtMs, runId: seen.runId, objection: objection && objection.why };
+  }
+
   const why = f.published === false
     ? `${unpostable ? 'the round contract names no publication relay, so no result of it can become final' : published.why}`
       + ': the objection window opens only when its transcript is posted'

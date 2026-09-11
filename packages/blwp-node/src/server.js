@@ -66,6 +66,7 @@ import { Custody, NO_LIGHTNING, SETTLE, HELD } from './custody.js';
 import { resultFinality } from './finality.js';
 import { FINAL, PROVISIONALLY_FINAL, SUSPENDED } from '../../protocol/src/objection.js';
 import { transcriptBytesHash, SIGNED_POSTING_BYTES } from '../../protocol/src/posting.js';
+import { SIGNED_RERUN_BYTES } from '../../protocol/src/rerun.js';
 import { Preimages, encodeShareAnswer, SEALED_ANSWER_BYTES } from './preimage.js';
 import { Payouts, PAYOUT_QUEUED, PAID, PAID_IN_PART, NOTHING_OWED } from './payout.js';
 import { PoolSigning } from './pool-signing.js';
@@ -484,6 +485,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // A run whose transcript is not posted yet: the close logic runs again,
     // which posts and gathers the seats' postings (P2).
     const unposted = () => waitingOn().some((w) => w.published === false);
+    // A SUSPENDED RUN: the close logic runs again, which re-runs and gathers (13A).
+    const suspendedShort = () => !!(latest && (latest.suspended || []).length);
     // closesAtMs is on the round's clock and `until` on this watch's, so the
     // distance is carried across rather than the number.
     const stretch = () => {
@@ -496,7 +499,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (shuttingDown) return;
       stretch();
       const short = stored.filter((r) => !isFinal(r.entryId));
-      if (!short.length && !tableShort() && !settleShort() && !waitingOn().length && !payoutShort()) return;
+      if (!short.length && !tableShort() && !settleShort() && !waitingOn().length && !payoutShort() && !suspendedShort()) return;
       if (Date.now() >= until) {
         console.log(`[verify] ${toHex(roundIdBytes).slice(0, 16)} the objection window passed with `
           + `${short.length} run(s) short of final${tableShort() ? ' and the table short' : ''}`
@@ -514,7 +517,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (g && g.ok && g.final) turned = true;
       }
       if (shuttingDown) return;
-      if (turned || tableShort() || settleShort() || windowDue() || payoutShort() || unposted()) {
+      if (turned || tableShort() || settleShort() || windowDue() || payoutShort() || unposted() || suspendedShort()) {
         stakes = settleTheStakes(roundIdBytes, { replayed: closed.replayed, gathered })
           .catch((e) => { console.error(`[verify] ${e.message}`); return { ok: false, why: e.message }; });
         latest = await stakes;
@@ -555,6 +558,17 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const p = await verifier.publish(roundIdBytes, g.entryId);
         for (const r of p.refused || []) console.log(`[publish] ${toHex(g.entryId).slice(0, 16)} ${r}`);
       } catch (e) { console.error(`[publish] ${e.message}`); }
+    }
+    // AND A SUSPENDED RESULT IS RE-RUN (13A), each time the close logic runs:
+    // this seat's own re-run once, and the other seats' gathered every time.
+    for (const g of (closed && closed.gathered) || []) {
+      if (!(g && g.ok && g.final)) continue;
+      const s = resultFinality(round, roundIdBytes, g.entryId);
+      if (s.state !== SUSPENDED || !s.runId) continue;
+      try {
+        const r = await verifier.rerun(roundIdBytes, g.entryId, Buffer.from(s.runId, 'hex'));
+        console.log(`[rerun] ${toHex(g.entryId).slice(0, 16)} ${r.ok ? `agreed ${r.agreed} of ${r.needed}` : r.why}`);
+      } catch (e) { console.error(`[rerun] ${e.message}`); }
     }
     if (!custody.reaches) return { ok: false, why: 'this node reaches no Lightning, so it settles nothing' };
     const row = round.get(roundIdBytes);
@@ -1325,6 +1339,17 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         return res.end(Buffer.from(out));
       }
 
+      // EVERY SEAT'S RE-RUN OF A SUSPENDED RESULT (13A), fixed-size records.
+      if (req.method === 'GET' && url.pathname === '/reruns') {
+        const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
+        const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
+        const held = round.reruns(rid, eid);
+        const out = new Uint8Array(held.length * SIGNED_RERUN_BYTES);
+        held.forEach((r, i) => out.set(r.bytes, i * SIGNED_RERUN_BYTES));
+        res.writeHead(200, { 'content-type': 'application/octet-stream', 'x-reruns': String(held.length), ...CORS });
+        return res.end(Buffer.from(out));
+      }
+
       // A PUBLICATION RELAY (v4.6.2 §13A): any node can be one of a contract's
       // `publication_relays[]`. It keeps a transcript only under the hash its
       // own bytes have, so it can never serve one run's transcript as another's.
@@ -1351,6 +1376,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
         try {
           const fresh = round.object(rid, eid);
+          // AN OBJECTION THAT HOLDS SUSPENDS THE RESULT, AND THE COMMITTEE
+          // RE-RUNS IT (13A): this seat starts its own re-run at once.
+          const standing = resultFinality(round, rid, eid);
+          if (standing.state === SUSPENDED && standing.runId)
+            verifier.rerun(new Uint8Array(rid), new Uint8Array(eid), Buffer.from(standing.runId, 'hex'))
+              .catch((e) => console.error(`[rerun] ${e.message}`));
           return text(res, fresh ? 201 : 200, fresh ? 'objected' : 'already objected');
         } catch (err) { return text(res, 404, err.message); }
       }

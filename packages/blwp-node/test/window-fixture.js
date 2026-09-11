@@ -34,6 +34,7 @@ import { hash as stateHash } from '../../core/src/state.js';
 import { seedWordForEntry } from '../../protocol/src/seed.js';
 import { toHex, fromHex, sha256 } from '../../protocol/src/hash.js';
 import { encodeTranscriptPosting, transcriptPostingId, joinSignedPosting } from '../../protocol/src/posting.js';
+import { encodeRerunResult, rerunResultId, joinSignedRerun } from '../../protocol/src/rerun.js';
 import { entryFeeMsat } from '../../protocol/src/fee.js';
 
 export const b32 = (n) => new Uint8Array(32).fill(n);
@@ -190,6 +191,8 @@ export async function sevenSeats(windowMs, relays, { storedBeforeTheRule = false
       assert.ok(mine, `the holder signed no result for ${name}`);
       const shape = decodePlayerResult(splitSignedResult(mine.bytes).body);
       assert.equal(shape.outcome, 'FAILED', `${name} did not lose`);
+      // THE RUN THEY SIGNED, which an objection contradicts and a re-run names.
+      runs[name].contradicted = resultId({ ...shape, ...rewrite(shape), nodePubkey: new Uint8Array(32) });
       for (const secret of others.slice(0, 5)) {
         const r = { ...shape, ...rewrite(shape), nodePubkey: schnorr.getPublicKey(secret) };
         const id = resultId(r);
@@ -197,7 +200,20 @@ export async function sevenSeats(windowMs, relays, { storedBeforeTheRule = false
       }
       if (posted) post(name);
     };
-    return { holder, rid, runs, sign, post, others, contract: c, close: () => holder.close() };
+    // OTHER SEATS' RE-RUNS OF A SUSPENDED RESULT (13A): the first `count` of the
+    // six re-run the holder's own replay - the same run - unless `over` says
+    // otherwise, each tied to the run the five signed (or `contradicted`).
+    const rerunBy = (name, count, { keys = others, over = {}, contradicted = runs[name].contradicted } = {}) => {
+      const eid = runs[name].eid;
+      const mine = holder.round.results(rid, eid).find((r) => toHex(r.nodePubkey) === toHex(holder.round.pubkey));
+      const shape = decodePlayerResult(splitSignedResult(mine.bytes).body);
+      for (const secret of keys.slice(0, count)) {
+        const x = { contradictedRunId: contradicted, result: { ...shape, ...over, nodePubkey: schnorr.getPublicKey(secret) } };
+        holder.round.putRerun(rid, eid, x.result.nodePubkey,
+          joinSignedRerun(encodeRerunResult(x), schnorr.sign(rerunResultId(x), secret)));
+      }
+    };
+    return { holder, rid, runs, sign, post, rerunBy, others, contract: c, close: () => holder.close() };
   } catch (err) { await holder.close(); throw err; }
 }
 
