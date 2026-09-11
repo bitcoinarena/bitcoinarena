@@ -66,7 +66,7 @@ const loadShipped = (path) => {
   return module.exports;
 };
 
-test('MEASURED: the bundle the page runs, and the template\'s copy, still let 15 of 4096 strangers "open" an envelope', async () => {
+test('the bundle the page runs, and the template\'s copy, let none of 4096 strangers open an envelope (was 15 each, e625085)', async () => {
   const mine = det('mine', 0);
   const theirs = det('theirs', 0);
   let n = 0;
@@ -83,5 +83,6 @@ test('MEASURED: the bundle the page runs, and the template\'s copy, still let 15
     facts[name] = { opened, sha256: createHash('sha256').update(readFileSync(path)).digest('hex').slice(0, 16) };
   }
   console.log(`  FACTS (shipped bundles, ${TRIES} stranger keys):`, JSON.stringify(facts));
-  assert.deepEqual({ dist: facts.dist.opened, template: facts.template.opened }, { dist: 15, template: 15 });
+  assert.deepEqual({ dist: facts.dist.opened, template: facts.template.opened }, { dist: 0, template: 0 });
+  assert.equal(facts.dist.sha256, facts.template.sha256, 'the template does not ship the bundle the suites measure');
 });

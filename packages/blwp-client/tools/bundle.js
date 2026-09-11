@@ -18,7 +18,9 @@ import { dirname, resolve, relative } from 'node:path';
 
 const SRC = new URL('../src/', import.meta.url).pathname;
 const ROOT = new URL('../../', import.meta.url).pathname;
-const OUT = new URL('../dist/', import.meta.url).pathname;
+// BLWP_BUNDLE_OUT builds into another directory, so a test can build this
+// source and compare it with what is committed; unset, it writes dist/ as ever.
+const OUT = process.env.BLWP_BUNDLE_OUT ? process.env.BLWP_BUNDLE_OUT.replace(/\/?$/, '/') : new URL('../dist/', import.meta.url).pathname;
 
 const seen = new Set();
 const order = [];

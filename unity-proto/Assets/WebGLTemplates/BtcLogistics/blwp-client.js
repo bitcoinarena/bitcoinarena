@@ -650,6 +650,18 @@ const TYPE_AUTHORITY_ROTATION = 0x15;
 // v4.6.2): a client locks a stake to a claim_pk only with the round's
 // threshold of these, so no single seat can serve a key of its own (F3).
 const TYPE_CLAIM_KEY_ATTESTATION = 0x16;
+// ONE SEAT SAYING WHICH DKG CONTRIBUTIONS IT COMBINED, signed. A seat keeps its
+// share only when every seat of the committee has said the same set - so a
+// dealer who sent different contributions to different seats splits nobody.
+const TYPE_DKG_AGREEMENT = 0x17;
+// ONE SETTLEMENT SEAT SAYING IT POSTED A RUN'S CANONICAL TRANSCRIPT to the
+// round's publication relays, signed. A result is FINAL only once the round's
+// threshold of seats have said so (§13A, v4.6.2 P2).
+const TYPE_TRANSCRIPT_POSTING = 0x18;
+// ONE COMMITTEE SEAT'S RE-RUN OF A SUSPENDED RESULT (§13A), signed: the result
+// its replay of the canonical transcript produces, tied to the contradicted run.
+// The spec names no wire object for it; this is that object.
+const TYPE_RERUN_RESULT = 0x19;
 
 // A SEALED SHARE IS A FIXED SIZE, and it is not a choice: 32 bytes of scalar
 // under AES-GCM plus the 16-byte tag that makes a wrong key a REFUSAL rather
@@ -732,6 +744,15 @@ const TAG = {
   // refund key it makes - what the player compares outside the page (§24, F2).
   playerKey: 'BLWP/v1/PlayerKey',
   refundFingerprint: 'BLWP/v1/RefundFingerprint',
+  // The nonce of a DKG dealer's round-1 proof of knowledge, derived from its
+  // own secret so no randomness source can repeat it across two proofs.
+  dkgProofNonce: 'BLWP/v1/DkgProofNonce',
+  // What a seat signs to say which contributions it combined for an epoch.
+  dkgAgreement: 'BLWP/v1/DkgAgreement',
+  // What a settlement seat signs once it has posted a run's transcript (§13A).
+  transcriptPosting: 'BLWP/v1/TranscriptPosting',
+  // What a seat signs when it re-runs a suspended result (§13A).
+  rerunResult: 'BLWP/v1/RerunResult',
 };
 
 /**
@@ -1908,6 +1929,20 @@ function custodyFieldsAreValid(c) {
       why: 'that round takes a stake into a FEDERATION and names no federation_id, '
         + 'so nothing says who holds its stake locks',
     };
+  return publicationRelaysAreValid(c);
+}
+
+/**
+ * CAN THIS ROUND'S TRANSCRIPTS BE POSTED ANYWHERE? Every relay a URL, each
+ * once (§13A) - and at least one on a round that takes a stake. Since P2 no
+ * result is FINAL until the round's settlement seats have posted its
+ * transcript to these relays, so a paying round naming none could never settle
+ * a stake it took: measured, two daemons opened one, held both players' stakes
+ * and were still provisionally final after the window. A free round moves no
+ * money and may name none.
+ */
+function publicationRelaysAreValid(c) {
+  if (!c) return { ok: false, why: 'no contract' };
   if (!Array.isArray(c.publicationRelays))
     return { ok: false, why: 'that round names no publication relays list' };
   const seen = new Set();
@@ -1919,6 +1954,12 @@ function custodyFieldsAreValid(c) {
     if (seen.has(relay)) return { ok: false, why: `publication relay ${relay} is named twice` };
     seen.add(relay);
   }
+  if (c.stakeMsat > 0n && !c.publicationRelays.length)
+    return {
+      ok: false,
+      why: 'that round takes a stake and names no publication relay: none of its results can become '
+        + 'final (§13A), so no stake in it could ever settle',
+    };
   return { ok: true };
 }
 
@@ -3386,7 +3427,15 @@ async function nip04Decrypt(content, { secret, theirPubkey, curve }) {
   } catch (e) {
     return { ok: false, why: `that answer would not open: ${e.message}` };
   }
-  return { ok: true, plaintext: fromUtf8(plain) };
+  // A NIP-04 MESSAGE IS TEXT. AES-CBC carries no MAC, so a key the envelope was
+  // not sealed to yields garbage, and about 1 in 256 of those passes the
+  // padding check - measured, 15 of 4096 strangers "opened" one and were told
+  // ok with U+FFFD soup. Bytes that are not UTF-8 are not a NIP-04 message, so
+  // the decode is strict and they are refused, not replaced.
+  let text;
+  try { text = new TextDecoder('utf-8', { fatal: true }).decode(plain); }
+  catch { return { ok: false, why: 'that answer is not text, so it was not sealed to this key' }; }
+  return { ok: true, plaintext: text };
 }
 
 /**
