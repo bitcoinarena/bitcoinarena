@@ -14,7 +14,7 @@ import { openStore } from '../src/store.js';
 import { Round } from '../src/round.js';
 import { Roster } from '../src/roster.js';
 import { serve } from '../src/server.js';
-import { chainOf, FIRST_TIME, SPACING } from '../../protocol/tools/chainview.js';
+import { chainOf, FIRST_TIME, SPACING, publicationOf } from '../../protocol/tools/chainview.js';
 import { bondTransaction } from '../../protocol/tools/bond.js';
 import { encodeRoundContract, decodeRoundContract, roundId } from '../../protocol/src/contracts.js';
 import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
@@ -83,9 +83,12 @@ const bondOf = (n, roles = ['game']) => bondTransaction(advertFor(n, roles), {
 });
 
 /** A mined chain carrying those bonds well under the census height. */
-const chainWith = (bonds) => {
+const chainWith = (bonds, contract) => {
   const blocks = [];
   for (let h = FROM; h <= TIP; h++) blocks.push({ transactions: h === FROM ? bonds : [] });
+  // AND THE ROUND'S PUBLICATION, well below any beacon (5A.5, v4.6.2): a node
+  // seats only a round its own chain shows published before the beacon block.
+  if (contract) blocks[1] = { transactions: [publicationOf(contract)] };
   return chainOf(blocks, FROM);
 };
 
@@ -121,8 +124,8 @@ function daemon(bonds, over = {}) {
   const round = new Round(openStore(), () => AFTER_COMMITTEE);
   const contract = contractFor({ ...over, censusRoot: rootFor(bonds, over) });
   const rid = round.open(contract);
-  const roster = new Roster(round, { chainFor: () => chainWith(bonds),
-    randomnessFor: ({ contract }) => beaconOf(chainWith(bonds), contract) });
+  const roster = new Roster(round, { chainFor: ({ contract } = {}) => chainWith(bonds, contract),
+    randomnessFor: ({ contract }) => beaconOf(chainWith(bonds, contract), contract) });
   return { round, rid, contract, roster };
 }
 
@@ -191,13 +194,13 @@ test('two bonded nodes, one game and one settlement, hold neither role', () => {
 
 test('the caller cannot name a minimum of its own', () => {
   const { round, rid } = daemon([bondOf(0x11)]);
-  const chainFor = () => chainWith([bondOf(0x11)]);
+  const chainFor = ({ contract } = {}) => chainWith([bondOf(0x11)], contract);
 
   // Every shape a caller might try it in: on the roster, on the call, and on
   // the contract the round was opened with.
   for (const tried of [{ minimum: 1 }, { censusMinNodes: 1 }, { min: 1 }]) {
     const roster = new Roster(round, { chainFor,
-      randomnessFor: ({ contract }) => beaconOf(chainFor(), contract), ...tried });
+      randomnessFor: ({ contract }) => beaconOf(chainFor({ contract }), contract), ...tried });
     const seats = roster.committeeFor(rid, 'game', tried);
     assert.equal(seats.ok, false, `a caller lowered the minimum with ${Object.keys(tried)[0]}`);
     assert.match(seats.why, /born needing 2/);
@@ -221,8 +224,8 @@ test('a node with no chain view holds no round, and says which it is missing', (
 test('the committee door answers off the chain, and refuses a short census by name', async () => {
   const bonds = [bondOf(0x11), bondOf(0x12)];
   const node = await serve(openStore(), {
-    port: 0, funded: () => true, chainFor: () => chainWith(bonds),
-    randomnessFor: ({ contract }) => beaconOf(chainWith(bonds), contract),
+    port: 0, funded: () => true, chainFor: ({ contract } = {}) => chainWith(bonds, contract),
+    randomnessFor: ({ contract }) => beaconOf(chainWith(bonds, contract), contract),
   });
   try {
     const c = contractFor({ censusRoot: rootFor(bonds) });
@@ -241,8 +244,8 @@ test('the committee door answers off the chain, and refuses a short census by na
   } finally { await node.close(); }
 
   const thin = await serve(openStore(), {
-    port: 0, funded: () => true, chainFor: () => chainWith([bondOf(0x11)]),
-    randomnessFor: ({ contract }) => beaconOf(chainWith([bondOf(0x11)]), contract),
+    port: 0, funded: () => true, chainFor: ({ contract } = {}) => chainWith([bondOf(0x11)], contract),
+    randomnessFor: ({ contract }) => beaconOf(chainWith([bondOf(0x11)], contract), contract),
   });
   try {
     const c = contractFor({ censusRoot: rootFor([bondOf(0x11)]) });
@@ -307,8 +310,8 @@ test('a round whose census root is not the chain\'s is refused, not served', () 
 
   const round = new Round(openStore(), () => AFTER_COMMITTEE);
   const rid = round.open(contractFor({ censusRoot: b32(0x5a) }));
-  const roster = new Roster(round, { chainFor: () => chainWith(bonds),
-    randomnessFor: ({ contract }) => beaconOf(chainWith(bonds), contract) });
+  const roster = new Roster(round, { chainFor: ({ contract } = {}) => chainWith(bonds, contract),
+    randomnessFor: ({ contract }) => beaconOf(chainWith(bonds, contract), contract) });
 
   const census = roster.censusFor(rid);
   assert.equal(census.ok, false, 'a round naming somebody else\'s census root was served');
@@ -324,15 +327,15 @@ test('a round whose census root is not the chain\'s is refused, not served', () 
   // THE SAME BLOCKS, THE ROOT THEY REALLY PRODUCE: held.
   const good = new Round(openStore(), () => AFTER_COMMITTEE);
   const goodId = good.open(contractFor({ censusRoot: honest }));
-  const right = new Roster(good, { chainFor: () => chainWith(bonds),
-    randomnessFor: ({ contract }) => beaconOf(chainWith(bonds), contract) });
+  const right = new Roster(good, { chainFor: ({ contract } = {}) => chainWith(bonds, contract),
+    randomnessFor: ({ contract }) => beaconOf(chainWith(bonds, contract), contract) });
   assert.equal(right.committeeFor(goodId, 'game').ok, true);
 
   // AND A ROUND THAT NAMES NO ROOT AT ALL IS NOT A ROUND EITHER. A contract
   // always carries thirty-two bytes there, so this is the shape a caller
   // building one by hand would hit.
-  const bare = new Roster(good, { chainFor: () => chainWith(bonds),
-    randomnessFor: ({ contract }) => beaconOf(chainWith(bonds), contract) });
+  const bare = new Roster(good, { chainFor: ({ contract } = {}) => chainWith(bonds, contract),
+    randomnessFor: ({ contract }) => beaconOf(chainWith(bonds, contract), contract) });
   bare.round = { get: () => ({ contract: encodeRoundContract(contractFor({ censusRoot: b32(0) })) }) };
   assert.match(bare.censusFor(goodId).why, /names census root 0000000000000000 and the chain gives/);
 });
@@ -357,7 +360,7 @@ test('the daemon seats on the beacon\'s seed, and on nothing else', async () => 
   const contract = decodeRoundContract(new Uint8Array(round.get(rid).contract));
   const fromBeacon = committeeSeedFrom({
     censusRootGameVerify: contract.censusRoot, censusRootSettlement: contract.censusRoot,
-    roundId: rid, roundRandomness: beaconOf(chainWith(many), contract).hash,
+    roundId: rid, roundRandomness: beaconOf(chainWith(many, contract), contract).hash,
   });
   const seatedBy = (seed) => selectCommittee({
     entries: roster.censusFor(rid).entries, contract, role: 'game', committeeSeed: seed,
@@ -379,7 +382,7 @@ test('a node with no beacon, or one the creator already had, seats nobody', () =
   const { round, rid } = daemon(bonds);
 
   // NO BEACON: refused by name, and never a fallback to the contract's bytes.
-  const blind = new Roster(round, { chainFor: () => chainWith(bonds) });
+  const blind = new Roster(round, { chainFor: ({ contract } = {}) => chainWith(bonds, contract) });
   const seats = blind.committeeFor(rid, 'game');
   assert.equal(seats.ok, false, 'a node with no beacon seated a committee anyway');
   assert.match(seats.why, /no beacon for that round/);
@@ -389,10 +392,10 @@ test('a node with no beacon, or one the creator already had, seats nobody', () =
   // exists - "committee_time: beacon value appears".
   for (const timeMs of [COMMITTEE_TIME, COMMITTEE_TIME - 1n, 0n]) {
     const early = new Roster(round, {
-      chainFor: () => chainWith(bonds),
+      chainFor: ({ contract } = {}) => chainWith(bonds, contract),
       // The chain's own block, with only its TIME moved back - so what is
       // being measured is 27's rule and not a wrong block.
-      randomnessFor: ({ contract }) => ({ ...beaconOf(chainWith(bonds), contract), timeMs }),
+      randomnessFor: ({ contract }) => ({ ...beaconOf(chainWith(bonds, contract), contract), timeMs }),
     });
     const out = early.committeeFor(rid, 'game');
     assert.equal(out.ok, false, `a beacon at ${timeMs} seeded a round it predates`);
@@ -415,7 +418,9 @@ test('the roster refuses a beacon that is late but not the block its chain names
   const { blockHashOf } = await import('../../protocol/src/chain.js');
 
   const bonds = [bondOf(0x11), bondOf(0x12)];
-  const view = chainWith(bonds);
+  // The chain the daemon's round is published on - `daemon` opens exactly this
+  // contract - so the later block below is a real block of the chain it reads.
+  const view = chainWith(bonds, contractFor({ censusRoot: rootFor(bonds, {}) }));
   const headers = { headers: view.blocks.map((b) => b.header), firstHeight: view.firstHeight };
 
   // THE HONEST PATH FIRST, and it says the check RAN. A green seat that
@@ -441,7 +446,7 @@ test('the roster refuses a beacon that is late but not the block its chain names
   const round = new Round(openStore(), () => AFTER_COMMITTEE);
   const wrongId = round.open(contractFor({ censusRoot: rootFor(bonds, {}) }));
   const crooked = new Roster(round, {
-    chainFor: () => chainWith(bonds), randomnessFor: () => wrong,
+    chainFor: ({ contract } = {}) => chainWith(bonds, contract), randomnessFor: () => wrong,
   });
   const refused = crooked.seedFor(wrongId, contract);
   assert.equal(refused.ok, false, 'a later block seated a committee');
@@ -532,4 +537,38 @@ test('a node closing a round refuses a beacon its own chain does not name', asyn
   assert.equal(good.queued.length, 1);
   assert.equal(good.queued[0].refused, undefined, good.queued[0].refused);
   console.log(`  closing: chain names ${named.height}; block ${later} offered -> refused`);
+});
+
+/**
+ * A ROUND EXISTS ONLY ONCE ITS HASH IS ON BITCOIN, BELOW ITS BEACON BLOCK
+ * (5A.5, v4.6.2, P1). Before this a round was seated with no publication at
+ * all, so a creator could publish many candidates for free, wait for the
+ * beacon, and promote the one whose committee was his.
+ */
+test('a round its chain never published, or published in its beacon block, is not seated', () => {
+  const bonds = [bondOf(0x11), bondOf(0x12)];
+  const contract = contractFor({ censusRoot: rootFor(bonds, {}) });
+  const round = new Round(openStore(), () => AFTER_COMMITTEE);
+  const rid = round.open(contract);
+
+  const unpublished = new Roster(round, { chainFor: () => chainWith(bonds),
+    randomnessFor: ({ contract: c }) => beaconOf(chainWith(bonds), c) });
+  assert.match(unpublished.seedFor(rid, contract).why, /no publication transaction/);
+
+  const beaconHeight = beaconOf(chainWith(bonds), contract).height;
+  const inBeacon = () => {
+    const blocks = [];
+    for (let h = FROM; h <= TIP; h++)
+      blocks.push({ transactions: h === FROM ? bonds : h === beaconHeight ? [publicationOf(contract)] : [] });
+    return chainOf(blocks, FROM);
+  };
+  const atBeacon = new Roster(round, { chainFor: inBeacon,
+    randomnessFor: ({ contract: c }) => beaconOf(inBeacon(), c) });
+  assert.match(atBeacon.seedFor(rid, contract).why, new RegExp(`at or after its beacon block ${beaconHeight}`));
+
+  const published = new Roster(round, { chainFor: ({ contract: c } = {}) => chainWith(bonds, c),
+    randomnessFor: ({ contract: c }) => beaconOf(chainWith(bonds, c), c) });
+  const seeded = published.seedFor(rid, contract);
+  assert.equal(seeded.ok, true, seeded.why);
+  assert.equal(seeded.checkedAgainstChain, true);
 });

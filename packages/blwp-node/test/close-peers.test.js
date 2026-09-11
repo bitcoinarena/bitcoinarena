@@ -20,7 +20,7 @@ import { Payouts } from '../src/payout.js';
 import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
 import { encodeRoundContract, decodeRoundContract } from '../../protocol/src/contracts.js';
 import { toHex } from '../../protocol/src/hash.js';
-import { chainOf, FIRST_TIME, SPACING } from '../../protocol/tools/chainview.js';
+import { chainOf, FIRST_TIME, SPACING, publicationOf } from '../../protocol/tools/chainview.js';
 import { bondTransaction } from '../../protocol/tools/bond.js';
 import { deriveCensus } from '../../protocol/src/census.js';
 import { parseTransaction } from '../../protocol/src/tx.js';
@@ -100,9 +100,12 @@ const advertFor = (key, endpoint) => ({
 const bondOf = (key, n, endpoint) => bondTransaction(advertFor(key, endpoint), {
   previousTxid: b32(0xa0 + n), previousVout: 0, outputKey: bondFor(key),
 });
-const chainWith = (bonds) => {
+const chainWith = (bonds, contract) => {
   const blocks = [];
   for (let h = FROM; h <= TIP; h++) blocks.push({ transactions: h === FROM ? bonds : [] });
+  // AND THE ROUND'S PUBLICATION, well below any beacon (5A.5, v4.6.2): a node
+  // seats only a round its own chain shows published before the beacon block.
+  if (contract) blocks[1] = { transactions: [publicationOf(contract)] };
   return chainOf(blocks, FROM);
 };
 const contractFor = (nodes, censusRoot) => ({
@@ -133,14 +136,15 @@ test('a daemon given no peers asks the other settlement seat, off the census, fo
     });
     assert.equal(census.ok, true, census.why);
     const c = contractFor(keys, census.root);
-    const named = beaconFromChain(c, { headers: view.blocks.map((x) => x.header), firstHeight: view.firstHeight });
+    const published = chainWith(bonds, c);
+    const named = beaconFromChain(c, { headers: published.blocks.map((x) => x.header), firstHeight: published.firstHeight });
     const beacon = { hash: named.hash, height: named.height, timeMs: named.timeMs };
     const storeA = a.round.db;
     await a.close();
-    const again = await serve(storeA, { port: a.port, ...FUNDED, chainFor: () => view, randomnessFor: () => beacon });
+    const again = await serve(storeA, { port: a.port, ...FUNDED, chainFor: () => published, randomnessFor: () => beacon });
     try {
       const rid = again.round.open(c);
-      const seated = new Roster(again.round, { chainFor: () => view, randomnessFor: () => beacon }).seatRound(rid);
+      const seated = new Roster(again.round, { chainFor: () => published, randomnessFor: () => beacon }).seatRound(rid);
       assert.equal(seated.ok, true, seated.why);
       const other = [`http://127.0.0.1:${b.port}`];
       assert.deepEqual(again.preimages.peersOf(rid), other, 'the preimage ask does not reach the other settlement seat');

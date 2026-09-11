@@ -7,7 +7,7 @@ import { fromHex, toHex } from '../src/hash.js';
 import { parseTransaction } from '../src/tx.js';
 import { serializeSpend } from '../src/bond-spend.js';
 import {
-  publicationPayload, publicationOutput, publishesRound, publicationIsBeforeBeacon,
+  publicationPayload, publicationOutput, publishesRound, publicationIsBeforeBeacon, findPublication,
   PUBLICATION_BYTES, PUBLICATION_KIND_ROUND,
 } from '../src/publication.js';
 
@@ -60,4 +60,25 @@ test('a publication counts only strictly below the beacon block, and never witho
     /does not carry OP_RETURN "BLW" ROUND/);
   assert.match(publicationIsBeforeBeacon({ roundId: RID, txHeight: 99, beaconHeight: 100 }).why,
     /no publication transaction/);
+});
+
+test('a node finds the publication in its own chain view, at the lowest height it confirmed', () => {
+  const rawWith = (outputs) => serializeSpend({
+    inputs: [{ txid: b32(0x22), vout: 0, sequence: 0xffffffff }],
+    outputs: [{ value: 5000n, script: fromHex('0014' + '33'.repeat(20)) }, ...outputs],
+    witnesses: [[new Uint8Array(64)]],
+  });
+  const view = {
+    firstHeight: 200,
+    blocks: [
+      { transactions: [rawWith([])] },
+      { transactions: [new Uint8Array([1, 2, 3]), rawWith([publicationOutput(RID)])] },
+      { transactions: [rawWith([publicationOutput(RID)])] },
+    ],
+  };
+  const found = findPublication(view, RID);
+  assert.equal(found.height, 201, 'not the lowest publication, or not the chain\'s height');
+  assert.equal(publishesRound(found.tx, RID), true);
+  assert.equal(findPublication(view, b32(0xab)), null);
+  assert.equal(findPublication({ blocks: [] }, RID), null, 'a view with no first height named a height');
 });

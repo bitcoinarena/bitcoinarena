@@ -11,6 +11,9 @@
 // nonce works and the arithmetic is still Bitcoin's.
 import { hash256, parseTransaction, blockMerkleRoot } from '../src/tx.js';
 import { blockHashOf, meetsTarget } from '../src/chain.js';
+import { serializeSpend } from '../src/bond-spend.js';
+import { publicationOutput } from '../src/publication.js';
+import { roundId } from '../src/contracts.js';
 
 const EASY = 0x207fffff;
 // Harder, and still findable in a test: about 2^16 tries rather than mainnet's
@@ -61,6 +64,20 @@ export function chainOf(blocks, firstHeight, { bits = EASY } = {}) {
     previous = header;
   }
   return { blocks: out, firstHeight };
+}
+
+/**
+ * A ROUND'S PUBLICATION, as one real transaction a fixture block can carry:
+ * OP_RETURN "BLW" ROUND round_id (5A.5, v4.6.2). Its input names the round id
+ * as a previous txid, so two rounds' publications are two transactions.
+ */
+export function publicationOf(contract) {
+  const rid = roundId(contract);
+  return serializeSpend({
+    inputs: [{ txid: rid, vout: 0, sequence: 0xffffffff }],
+    outputs: [publicationOutput(rid)],
+    witnesses: [[new Uint8Array(64)]],
+  });
 }
 
 export { EASY, HARD, mine, hash256, FIRST_TIME, SPACING };

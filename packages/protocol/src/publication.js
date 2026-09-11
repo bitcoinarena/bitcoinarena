@@ -21,7 +21,7 @@
 // THE KIND BYTE IS OURS. The spec writes `ROUND` and fixes no value for it; it
 // is 0x52, 'R', in keeping with the ASCII "BLW". A vote (27A.7.3) carries no
 // kind byte but is 76 bytes, so the exact length keeps the two apart.
-import { commitmentsOf, OP_RETURN } from './tx.js';
+import { commitmentsOf, parseTransaction, OP_RETURN } from './tx.js';
 
 export const PUBLICATION_MAGIC = Uint8Array.from([0x42, 0x4c, 0x57]);   // "BLW"
 export const PUBLICATION_KIND_ROUND = 0x52;                             // 'R'
@@ -54,6 +54,26 @@ export function publishesRound(tx, roundIdBytes) {
   const want = publicationPayload(roundIdBytes);
   return commitmentsOf(tx).some((p) => p.length === PUBLICATION_BYTES
     && p.every((b, i) => b === want[i]));
+}
+
+/**
+ * WHERE A ROUND WAS PUBLISHED, IN A CHAIN VIEW THIS NODE READ ITSELF.
+ *
+ * The same view the census is derived from - `{ firstHeight, blocks: [{
+ * header, transactions }] }` - so the height is the chain's, and nobody has to
+ * be believed about a txid. The LOWEST publication counts: a creator who
+ * publishes the same round twice gained nothing by the second.
+ */
+export function findPublication(view, roundIdBytes) {
+  if (!view || !Array.isArray(view.blocks) || !Number.isInteger(view.firstHeight)) return null;
+  for (let i = 0; i < view.blocks.length; i++) {
+    for (const raw of view.blocks[i].transactions || []) {
+      let tx;
+      try { tx = parseTransaction(raw); } catch { continue; }
+      if (publishesRound(tx, roundIdBytes)) return { tx, height: view.firstHeight + i };
+    }
+  }
+  return null;
 }
 
 /**

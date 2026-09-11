@@ -21,6 +21,7 @@ import { parseTransaction } from '../../protocol/src/tx.js';
 import { networkOf } from '../../protocol/src/constants.js';
 import { toHex } from '../../protocol/src/hash.js';
 import { committeeSeedFromBeacon, beaconFromChain, beaconIsTheChains } from '../../protocol/src/beacon.js';
+import { findPublication, publicationIsBeforeBeacon } from '../../protocol/src/publication.js';
 import { bondSetFor } from './curve.js';
 
 /**
@@ -137,6 +138,19 @@ export class Roster {
         hash: randomness, height: given && given.height, timeMs: given && given.timeMs,
       }, headers);
       if (!agrees.ok) return agrees;
+
+      // AND THE ROUND WAS ON THE CHAIN BEFORE THAT BLOCK (§5A.5, v4.6.2, P1).
+      // "A round with no publication, or one confirmed at or after the beacon
+      // block, is invalid and gets no entry receipts." Without this a creator
+      // publishes many candidate rounds for free, waits for the beacon, and
+      // promotes the one whose committee is his. Found in this node's own
+      // view, so the height is the chain's and no txid is taken on trust.
+      const published = findPublication(view, roundIdBytes);
+      const before = publicationIsBeforeBeacon({
+        roundId: roundIdBytes, tx: published && published.tx,
+        txHeight: published ? published.height : undefined, beaconHeight: named.height,
+      });
+      if (!before.ok) return before;
       checkedAgainstChain = true;
     }
 

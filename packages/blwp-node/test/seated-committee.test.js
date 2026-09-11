@@ -16,7 +16,7 @@ import { openStore } from '../src/store.js';
 import { Round } from '../src/round.js';
 import { Roster } from '../src/roster.js';
 import { serve } from '../src/server.js';
-import { chainOf, FIRST_TIME, SPACING } from '../../protocol/tools/chainview.js';
+import { chainOf, FIRST_TIME, SPACING, publicationOf } from '../../protocol/tools/chainview.js';
 import { bondTransaction } from '../../protocol/tools/bond.js';
 import { encodeRoundContract, decodeRoundContract, roundId } from '../../protocol/src/contracts.js';
 import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
@@ -47,7 +47,7 @@ const HEIGHT = 900000;
 // answer is derived from the same blocks the census is, which is the thing the
 // rule is for: one chain, one committee.
 const beaconOf = (bonds, contract) => {
-  const view = chainWith(bonds);
+  const view = chainWith(bonds, contract);
   const named = beaconFromChain(contract,
     { headers: view.blocks.map((b) => b.header), firstHeight: view.firstHeight });
   if (!named.ok) throw new Error('this fixture chain names no beacon: ' + named.why);
@@ -67,9 +67,12 @@ const advertFor = (key, n) => ({
 const bondOfKey = (key, n) => bondTransaction(advertFor(key, n), {
   previousTxid: b32(0xa0 + n), previousVout: 0, outputKey: bondFor(key),
 });
-const chainWith = (bonds) => {
+const chainWith = (bonds, contract) => {
   const blocks = [];
   for (let h = FROM; h <= TIP; h++) blocks.push({ transactions: h === FROM ? bonds : [] });
+  // AND THE ROUND'S PUBLICATION, well below any beacon (5A.5, v4.6.2): a node
+  // seats only a round its own chain shows published before the beacon block.
+  if (contract) blocks[1] = { transactions: [publicationOf(contract)] };
   return chainOf(blocks, FROM);
 };
 const contractWith = (nodes, censusRoot) => ({
@@ -111,7 +114,7 @@ test('two daemons bond their own identities and are seated from the chain', asyn
     const root = rootFor(bonds, keys);
 
     for (const node of [a, b]) {
-      const roster = new Roster(node.round, { chainFor: () => chainWith(bonds), randomnessFor: ({ contract }) => beaconOf(bonds, contract) });
+      const roster = new Roster(node.round, { chainFor: ({ contract } = {}) => chainWith(bonds, contract), randomnessFor: ({ contract }) => beaconOf(bonds, contract) });
       const c = contractWith(keys, root);
       const rid = node.round.open(c);
       const seated = roster.seatRound(rid);
@@ -134,7 +137,7 @@ test('a contract that names a stranger, or misses a seated node, is refused by n
     const keys = [mine, other];
     const bonds = [bondOfKey(mine, 1), bondOfKey(other, 2)];
     const root = rootFor(bonds, keys);
-    const roster = new Roster(node.round, { chainFor: () => chainWith(bonds), randomnessFor: ({ contract }) => beaconOf(bonds, contract) });
+    const roster = new Roster(node.round, { chainFor: ({ contract } = {}) => chainWith(bonds, contract), randomnessFor: ({ contract }) => beaconOf(bonds, contract) });
 
     const seat = (nodes) => {
       const c = contractWith(nodes, root);
@@ -180,7 +183,7 @@ test('the round door refuses a chain-unsupported committee, and seats a supporte
   const root = rootFor(bonds, keys);
 
   const node = await serve(openStore(':memory:'), {
-    port: 0, funded: () => true, chainFor: () => chainWith(bonds), randomnessFor: ({ contract }) => beaconOf(bonds, contract),
+    port: 0, funded: () => true, chainFor: ({ contract } = {}) => chainWith(bonds, contract), randomnessFor: ({ contract }) => beaconOf(bonds, contract),
   });
   try {
     const good = contractWith(keys, root);
@@ -212,7 +215,7 @@ test('a seated key with a bad signature and a well-signed stranger fail differen
   const peer = new Round(openStore(':memory:'), () => AFTER_COMMITTEE);
   const keys = [round.pubkey, peer.pubkey];
   const bonds = [bondOfKey(keys[0], 1), bondOfKey(keys[1], 2)];
-  const roster = new Roster(round, { chainFor: () => chainWith(bonds), randomnessFor: ({ contract }) => beaconOf(bonds, contract) });
+  const roster = new Roster(round, { chainFor: ({ contract } = {}) => chainWith(bonds, contract), randomnessFor: ({ contract }) => beaconOf(bonds, contract) });
   const rid = round.open(contractWith(keys, rootFor(bonds, keys)));
   assert.equal(roster.seatRound(rid).ok, true);
 

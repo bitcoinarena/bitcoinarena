@@ -38,13 +38,14 @@ import { openStore, nodeIdentity } from '../src/store.js';
 import { chainBeacon } from '../src/beacon-source.js';
 import { beaconFromChain, medianTimePast } from '../../protocol/src/beacon.js';
 import { regtest } from './regtest-bond.mjs';
-import { chainOf } from '../../protocol/tools/chainview.js';
+import { chainOf, publicationOf } from '../../protocol/tools/chainview.js';
 import { bitcoindRpc } from '../src/chain-rpc.js';
 import { operatorFunding } from '../src/funding.js';
 import { serve } from '../src/server.js';
 import { lightningFromEnv } from '../src/lnd-settings.js';
 import { toHex } from '../../protocol/src/hash.js';
-import { BITCOIN_MAINNET_GENESIS_HEADER, blockHashOf } from '../../protocol/src/chain.js';
+import { BITCOIN_MAINNET_GENESIS_HEADER, blockHashOf, blockTimeOf } from '../../protocol/src/chain.js';
+import { publicationPayload } from '../../protocol/src/publication.js';
 import { hash256, parseTransaction } from '../../protocol/src/tx.js';
 import { advertId } from '../../protocol/src/advert.js';
 import { bondTransaction, blockOf } from '../../protocol/tools/bond.js';
@@ -213,6 +214,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   let onChain = null;
   let bondHeight = 0;
   let localChain = null;
+  let localBlocks = null;
   if (cli) {
     const rt = regtest(cli);
     onChain = rt;
@@ -251,6 +253,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     for (let i = 0; i < 40; i++)
       carried.push({ transactions: i === 2 ? [bonded[0].transaction]
         : i === 3 ? [bonded[1].transaction] : [] });
+    localBlocks = carried;
     const mined = chainOf(carried, 0);
     censusView = mined;
     censusHeight = 9;                 // six clear of the deeper bond at height 3
@@ -355,30 +358,18 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     committeeTimeMs = BigInt(medianTimePast(localChain, 0, localChain.length - 12)) * 1000n;
   }
   if (onChain) {
-    const clock = onChain.blocksFrom(Math.max(0, onChain.height() - 20), onChain.height());
-    const tipMedian = medianTimePast(clock.blocks.map((b) => b.header),
-      clock.firstHeight, onChain.height());
-    committeeTimeMs = BigInt(tipMedian) * 1000n;
-
-    // AND THE CHAIN MOVES PAST IT. Mined in batches until the rule can name a
-    // block, rather than a fixed number nobody measured - and bounded, so a
-    // chain that will never name one says so instead of mining for ever.
-    const at = { networkId: NETWORK_ID_REGTEST, committeeTimeMs,
-      censusConfirmations, censusRoot: new Uint8Array(32), randomnessRule: 'bitcoin-block-hash' };
-    let tries = 0;
-    for (;;) {
-      // FROM WELL BEFORE THE BONDS, because the view has to reach back past
-      // committee_time or the rule refuses it - "it cannot say which block is
-      // the FIRST one, only which is the first it holds". Measured: a view
-      // beginning at 150 had an earliest median one second after a
-      // committee_time of 1788912428000 and was refused, correctly.
-      censusView = onChain.blocksFrom(Math.max(0, bondHeight - 20), onChain.height());
-      const named = beaconFromChain(at,
-        { headers: censusView.blocks.map((b) => b.header), firstHeight: censusView.firstHeight });
-      if (named.ok) break;
-      if (++tries > 8) throw new Error('this chain names no beacon after 8 batches: ' + named.why);
-      onChain.mine(6);
-    }
+    // JUST PAST THE TIP'S OWN TIMESTAMP, not its median (v4.6.2). The round is
+    // published in the NEXT block, and a publication counts only strictly
+    // below the beacon block - the first whose median time passes
+    // committee_time. That block's median is over eleven timestamps, ten of
+    // them at or before the tip's, so it cannot pass the tip's own time: the
+    // publication block is never the beacon. The tip's MEDIAN, used before,
+    // is already passed by the next block's on a fast regtest.
+    const tip = onChain.blocksFrom(onChain.height(), onChain.height()).blocks[0].header;
+    committeeTimeMs = (BigInt(blockTimeOf(tip)) + 2n) * 1000n;
+    // FROM WELL BEFORE THE BONDS: the census is read from here now, and the
+    // beacon's view below reaches back past committee_time from the same start.
+    censusView = onChain.blocksFrom(Math.max(0, bondHeight - 20), onChain.height());
   }
   const contract = {
     networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations,
@@ -428,6 +419,40 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   });
   if (!census.ok) throw new Error('this tool could not derive its own census: ' + census.why);
   contract.censusRoot = census.root;
+
+  // AND THE ROUND IS PUBLISHED BELOW ITS BEACON BLOCK (5A.5, v4.6.2): a node
+  // seats only a round its own chain shows published strictly before the
+  // beacon. On the local chain the publication goes into block 10 - above the
+  // census height (9), far below the beacon - and the chain is mined again.
+  // The times do not move, so committee_time and the beacon's index do not;
+  // the census root does not either, because it is the bonds', not the hashes'.
+  if (localBlocks) {
+    localBlocks[10] = { transactions: [publicationOf(contract)] };
+    const again = chainOf(localBlocks, 0);
+    censusView = again;
+    localChain = again.blocks.map((x) => x.header);
+  }
+  // ON REGTEST: bitcoind's own OP_RETURN data output, funded and signed by its
+  // wallet, in the next block - then the chain moves past committee_time.
+  // Mined in batches until the rule names a block, waiting out the seconds the
+  // chain's clock needs, and bounded, so a chain that never names one says so.
+  if (onChain) {
+    const raw = cli('createrawtransaction', '[]',
+      JSON.stringify([{ data: toHex(publicationPayload(roundId(contract))) }]));
+    const funded = JSON.parse(cli('fundrawtransaction', raw)).hex;
+    onChain.include([JSON.parse(cli('signrawtransactionwithwallet', funded)).hex]);
+    let tries = 0;
+    for (;;) {
+      censusView = onChain.blocksFrom(Math.max(0, bondHeight - 20), onChain.height());
+      const named = beaconFromChain(contract,
+        { headers: censusView.blocks.map((b) => b.header), firstHeight: censusView.firstHeight });
+      if (named.ok) break;
+      if (++tries > 8) throw new Error('this chain names no beacon after 8 batches: ' + named.why);
+      const wait = Number(committeeTimeMs) + 1500 - Date.now();
+      if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+      onChain.mine(6);
+    }
+  }
 
   // AND THE BEACON IS READ BEFORE THE ROUND IS POSTED, because posting is when
   // a node seats: `POST /round` calls `seatRound`, seating needs the committee
