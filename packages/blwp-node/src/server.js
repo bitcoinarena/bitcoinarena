@@ -1061,6 +1061,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (!held) return text(res, 404, 'this node holds no such round');
         const contract = decodeRoundContract(new Uint8Array(held.contract));
         if (!(contract.stakeMsat > 0n)) return text(res, 409, 'that round asks no stake, so there is nothing to invoice');
+        // AND NO STAKE INVOICE FOR A ROUND NONE OF WHOSE RESULTS CAN BE FINAL
+        // (§13A, P2): the player would pay into a round that could never settle.
+        const relays = publicationRelaysAreValid(contract);
+        if (!relays.ok) return text(res, 409, `no stake invoice is made for that round: ${relays.why}`);
         if (typeof lightning.decode !== 'function')
           return text(res, 503, 'this node cannot read a Lightning invoice, so it cannot say what one commits to');
         const amountMsat = contract.stakeMsat - entryFeeMsat(contract.stakeMsat);

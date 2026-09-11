@@ -87,14 +87,17 @@ test('the same paying round naming a relay opens, and a free round naming none o
 // for an entry already kept (Custody.hold, the one funnel to createHeld), and
 // `/federation-invoice` asks the federation for a round's stake invoice. Both
 // read what is stored, so a round and an entry kept before the rule reach them.
-// MEASURED FIRST, asserted as they stand.
+// MEASURED BEFORE (TASKBOOK, 0872735): /invoice 200 with 1 hold asked of
+// Lightning and the row HELD; /federation-invoice 200 with the federation asked
+// once. Now Custody.hold - the one funnel to createHeld - refuses, and so does
+// the federation invoice door.
 const bareEntry = (rid) => ({
   roundId: rid, playerPubkey: b32(5), sessionPubkey: ed25519.getPublicKey(ed25519.utils.randomSecretKey()),
   stakeCommitment: b32(7), stakeMsat: STAKE, feeMsat: entryFeeMsat(STAKE), donationMsat: 0n,
   joinTick: 0, worldSecret: b32(0x5e), vssSharesRef: new Uint8Array(32), stakePoint: new Uint8Array(33), feePreimage: new Uint8Array(32), stakeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, feeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, claimKeyAttestationRef: new Uint8Array(32),
 });
 
-test('MEASURED: an entry kept before the rule, in a paying round naming no relay, is quoted a hold at /invoice', async () => {
+test('an entry kept before the rule, in a paying round naming no relay, is quoted no hold at /invoice, and Lightning is asked for none', async () => {
   const port = countingPort();
   const d = await serve(openStore(':memory:'), { port: 0, ...opts, lightning: port });
   try {
@@ -104,13 +107,15 @@ test('MEASURED: an entry kept before the rule, in a paying round naming no relay
     const entry = bareEntry(rid);
     d.round.enter(entry);
     const r = await fetch(`http://127.0.0.1:${d.port}/invoice?entry=${Buffer.from(entryId(entry)).toString('hex')}`);
+    const why = await r.text();
     const facts = { status: r.status, holdsAsked: port.asked, holdRow: (d.round.hold(entryId(entry)) || {}).state || null };
-    console.log('  FACTS (/invoice, no relay):', JSON.stringify(facts), '|', (await r.text()).slice(0, 100));
-    assert.deepEqual(facts, { status: 200, holdsAsked: 1, holdRow: 'HELD' });
+    console.log('  FACTS (/invoice, no relay):', JSON.stringify(facts), '|', why.slice(0, 100));
+    assert.deepEqual(facts, { status: 503, holdsAsked: 0, holdRow: null });
+    assert.match(why, /no hold is issued in that round: that round takes a stake and names no publication relay/);
   } finally { await d.close(); }
 });
 
-test('MEASURED: a stored paying round naming no relay is given a federation stake invoice at /federation-invoice', async () => {
+test('a stored paying round naming no relay is given no federation stake invoice, and the federation is not asked', async () => {
   const fed = { asked: 0, amountMsat: null };
   const federation = { async receive({ amountMsat }) { fed.asked++; fed.amountMsat = amountMsat; return { request: 'lnbcrt-federation' }; } };
   const lightning = { ...countingPort(), async decode() { return { paymentHash: b32(0x44), amountMsat: fed.amountMsat }; } };
@@ -120,8 +125,10 @@ test('MEASURED: a stored paying round naming no relay is given a federation stak
     const rid = d.round.open(c);
     assumeSeated(d.round, rid, c.nodes);
     const r = await fetch(`http://127.0.0.1:${d.port}/federation-invoice?round=${Buffer.from(rid).toString('hex')}`);
+    const why = await r.text();
     const facts = { status: r.status, federationAsked: fed.asked };
-    console.log('  FACTS (/federation-invoice, no relay):', JSON.stringify(facts), '|', (await r.text()).slice(0, 100));
-    assert.deepEqual(facts, { status: 200, federationAsked: 1 });
+    console.log('  FACTS (/federation-invoice, no relay):', JSON.stringify(facts), '|', why.slice(0, 100));
+    assert.deepEqual(facts, { status: 409, federationAsked: 0 });
+    assert.match(why, /no stake invoice is made for that round: that round takes a stake and names no publication relay/);
   } finally { await d.close(); }
 });

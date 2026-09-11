@@ -31,7 +31,7 @@ import {
   holdSettlement, holdAfter, invoiceMatchesEntry, netStakeMsat,
   SETTLE, CANCEL, NOTHING, HELD, SETTLED, CANCELLED, EXPIRED,
 } from '../../protocol/src/payout.js';
-import { decodeEntryContract, entryId as entryIdOf } from '../../protocol/src/contracts.js';
+import { decodeEntryContract, entryId as entryIdOf, decodeRoundContract, publicationRelaysAreValid } from '../../protocol/src/contracts.js';
 import { toHex, sha256 } from '../../protocol/src/hash.js';
 
 export { HELD, SETTLED, CANCELLED, EXPIRED, SETTLE, CANCEL, NOTHING };
@@ -155,6 +155,17 @@ export class Custody {
 
     if (!this.reaches)
       return { ok: false, why: 'this node reaches no Lightning, so it holds no stakes' };
+
+    // NO HOLD IN A PAYING ROUND THAT NAMES NO PUBLICATION RELAY (§13A, P2):
+    // none of its results can become final, so no stake in it could settle.
+    // Here, the one funnel to createHeld, so /entry, /invoice and any later
+    // caller all meet it - and before an existing hold is looked up, so an
+    // invoice kept from before the rule is not quoted again either.
+    const into = this.round.get(entry.roundId);
+    if (into) {
+      const relays = publicationRelaysAreValid(decodeRoundContract(new Uint8Array(into.contract)));
+      if (!relays.ok) return { ok: false, why: `no hold is issued in that round: ${relays.why}` };
+    }
 
     const entryId = entryIdOf(entry);
     const held = this.round.hold(entryId);
