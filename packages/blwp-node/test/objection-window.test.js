@@ -58,6 +58,7 @@ const GENESIS_HASH = (await import('../../protocol/src/transcript.js')).GENESIS;
 const wordsAt = (t) => [45875, ((t * 977) % 30000) - 15000, (t % 700) < 40 ? 65536 : 0, 0, 0];
 const STAKE = 100000n;
 const WINDOW_MS = 3000;
+const HTLC_EXPIRY = 500;   // the height the fake lnd says each paid HTLC expires at
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // second-closer's two players: the winner DELIVERS by tick 1320, the loser
@@ -73,7 +74,7 @@ function paidPort() {
   return {
     settled, cancelled,
     async createHeld({ paymentHash, amountMsat }) { amounts.set(toHex(paymentHash), amountMsat); return { paymentHash, amountMsat, request: 'lnbcrt-x' }; },
-    async look({ paymentHash }) { const a = amounts.get(toHex(paymentHash)) || 0n; return { state: HELD, amountMsat: a, paidMsat: a }; },
+    async look({ paymentHash }) { const a = amounts.get(toHex(paymentHash)) || 0n; return { state: HELD, amountMsat: a, paidMsat: a, expiryHeight: HTLC_EXPIRY }; },
     async settle({ paymentHash, preimage }) { settled.push({ paymentHash: toHex(paymentHash), preimage: toHex(preimage), at: Date.now() }); },
     async cancel({ paymentHash }) { cancelled.push({ paymentHash: toHex(paymentHash), at: Date.now() }); },
   };
@@ -132,7 +133,10 @@ async function seatAndPlay(daemons, c, rid, who, needed) {
     assert.equal(seated.status, 201, `${who.name}'s entry: ${await seated.text()}`);
     const quote = await fetch(`http://127.0.0.1:${d.port}/invoice?entry=${toHex(eid)}`);
     assert.equal(quote.status, 200, `${who.name}'s invoice: ${await quote.text()}`);
-    assumeStakeSeen(d.round, entry);
+    // SEEN THE WAY A PAGE SEES IT: `GET /stake` asks the node's own Lightning,
+    // which is also when the node learns the HTLC's expiry height.
+    const seen = await fetch(`http://127.0.0.1:${d.port}/stake?entry=${toHex(eid)}`);
+    assert.equal(seen.status, 200, `${who.name}'s stake was not seen: ${await seen.text()}`);
     assert.equal(await say(d.port, encodeInputBatch(input)), String(who.ticks));
     assert.equal((await say(d.port, signedMark)).length, SIGNED_RECEIPT_BYTES);
   }
@@ -211,6 +215,77 @@ test('two seats, a 3 s window: nothing is settled, cancelled or handed out insid
       for (const act of [...p.settled, ...p.cancelled])
         assert.ok(act.at >= closedAt + WINDOW_MS, `an act ${act.at - closedAt} ms after the close, inside a ${WINDOW_MS} ms window`);
     }
+  } finally { await a.close(); await b.close(); }
+});
+
+// THE PLAYER IS TOLD WHAT IS HAPPENING TO THEIR STAKE (MF item 14).
+//
+// "Waiting for settlement. Held stake, threshold signing, refund on expiry.
+// The player is waiting on other people's machines and must be told so, with
+// the refund path visible the whole time." Since M3.3-32 that wait is a whole
+// objection window. `GET /settlement` answers, for an entry this node seated,
+// what its hold is, where the run's result stands (13A), when the window
+// closes, and the height at which the hold refunds itself if nobody acts.
+test('a player can ask where their stake stands: inside the window HELD, provisionally final, the window\'s end and the refund height; after it SETTLED or CANCELLED and FINAL', async () => {
+  const a = await serve(openStore(':memory:'), { port: 0, ...opts, lightning: paidPort(), finality: { everyMs: 100 } });
+  const b = await serve(openStore(':memory:'), { port: 0, ...opts, lightning: paidPort(), finality: { everyMs: 100 } });
+  try {
+    for (const [d, other] of [[a, b], [b, a]]) {
+      const there = [`http://127.0.0.1:${other.port}`];
+      d.verifier.peers = there;
+      d.payouts.peers = there;
+      d.preimages.peers = there;
+    }
+    const c = contractFor([a.round.pubkey, b.round.pubkey], BigInt(WINDOW_MS));
+    const rid = roundId(c);
+    for (const d of [a, b]) {
+      await fetch(`http://127.0.0.1:${d.port}/round`, { method: 'POST', body: encodeRoundContract(c) });
+      assumeSeated(d.round, rid, c.nodes);
+    }
+    const winner = await seatAndPlay([a, b], c, rid, WINNER, 2);
+    const loser = await seatAndPlay([a, b], c, rid, LOSER, 2);
+    const closedAt = Date.now();
+    assert.deepEqual(await Promise.all([say(a.port, `close ${toHex(rid)}`), say(b.port, `close ${toHex(rid)}`)]), ['closed', 'closed']);
+    await a.verifier.settling;
+    await b.verifier.settling;
+    const agreedOn = async (d) => ((await d.stakes()).agreed || []).length === 2;
+    const stop = Date.now() + WINDOW_MS - 1000;
+    while (Date.now() < stop && !(await agreedOn(a) && await agreedOn(b))) await wait(50);
+
+    const ask = async (d, eid) => {
+      const r = await fetch(`http://127.0.0.1:${d.port}/settlement?entry=${toHex(eid)}`);
+      const body = await r.text();
+      return { status: r.status, body, json: r.status === 200 ? JSON.parse(body) : null };
+    };
+    const stakeSays = async (d, eid) => (await (await fetch(`http://127.0.0.1:${d.port}/stake?entry=${toHex(eid)}`)).text()).trim();
+
+    for (const [name, d] of [['A', a], ['B', b]])
+      for (const [who, run] of [['winner', winner], ['loser', loser]]) {
+        const s = await ask(d, run.eid);
+        console.log(`[settlement] inside the window, ${name} on the ${who}: /settlement ${s.status} ${s.body.trim().slice(0, 160)}; /stake ${await stakeSays(d, run.eid)}`);
+        assert.equal(s.status, 200, `${name} would not say where the ${who}'s stake stands: ${s.status} ${s.body}`);
+        assert.equal(s.json.hold, HELD);
+        assert.equal(s.json.finality, 'PROVISIONALLY_FINAL');
+        const closes = Number(s.json.windowClosesAtMs);
+        assert.ok(closes >= closedAt + WINDOW_MS && closes <= Date.now() + WINDOW_MS,
+          `${name} names a window end ${closes - closedAt} ms after the close, for a ${WINDOW_MS} ms window`);
+        assert.equal(s.json.refundHeight, HTLC_EXPIRY, `${name} does not name the height the ${who}'s hold refunds at`);
+      }
+
+    const stateOf = (d, eid) => (d.round.hold(eid) || {}).state;
+    const done = Date.now() + WINDOW_MS + 8000;
+    while (Date.now() < done && ![a, b].every((d) => stateOf(d, loser.eid) === SETTLED && stateOf(d, winner.eid) === CANCELLED)) await wait(100);
+    for (const [name, d] of [['A', a], ['B', b]])
+      for (const [who, run, want] of [['winner', winner, CANCELLED], ['loser', loser, SETTLED]]) {
+        const s = await ask(d, run.eid);
+        console.log(`[settlement] after the window, ${name} on the ${who}: /settlement ${s.status} ${s.body.trim().slice(0, 160)}; /stake ${await stakeSays(d, run.eid)}`);
+        assert.equal(s.status, 200);
+        assert.equal(s.json.hold, want, `${name} says the ${who}'s stake is ${s.json.hold} after the window`);
+        assert.equal(s.json.finality, 'FINAL');
+      }
+
+    const stranger = await fetch(`http://127.0.0.1:${a.port}/settlement?entry=${'ab'.repeat(32)}`);
+    assert.equal(stranger.status, 404, 'a node answered for an entry it never seated');
   } finally { await a.close(); await b.close(); }
 });
 

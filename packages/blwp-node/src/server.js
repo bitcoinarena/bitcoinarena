@@ -946,6 +946,40 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         }) + '\n');
       }
 
+      /**
+       * WHERE THIS STAKE STANDS, for the player waiting on it (MF item 14).
+       *
+       * "The player is waiting on other people's machines and must be told
+       * so, with the refund path visible the whole time." Since M3.3-32 that
+       * wait is a whole objection window, and the only question a page could
+       * ask was `/stake` - "has this node seen it held" - which keeps saying
+       * HELD after the stake has been settled or handed back, because that is
+       * what it was asked. This says what the hold IS now, where the run's
+       * result stands (13A), when the window closes on this node's clock, and
+       * the height at which the hold refunds itself if nobody acts. Read
+       * only; a stranger's entry is not answered for.
+       */
+      if (req.method === 'GET' && url.pathname === '/settlement') {
+        const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
+        if (eid.length !== 32) return text(res, 400, 'a settlement is asked for by entry id');
+        const stored = round.entry(eid);
+        if (!stored) return text(res, 404, 'this node seated no such entry');
+        const entry = decodeEntryContract(stored);
+        const row = round.hold(eid);
+        const standing = resultFinality(round, entry.roundId, new Uint8Array(eid));
+        const refund = round.holdExpiry(eid);
+        res.writeHead(200, { 'content-type': 'application/json', ...CORS });
+        return res.end(JSON.stringify({
+          entry: eid.toString('hex'),
+          hold: entry.stakeMsat === 0n ? 'FREE' : (row ? row.state : 'none'),
+          why: row ? row.why : null,
+          finality: standing.state,
+          finalityWhy: standing.why || null,
+          windowClosesAtMs: standing.closesAtMs === undefined ? null : String(standing.closesAtMs),
+          refundHeight: refund ?? null,
+        }) + '\n');
+      }
+
       if (req.method === 'GET' && url.pathname === '/invoice') {
         const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
         if (eid.length !== 32) return text(res, 400, 'an invoice is asked for by entry id');
