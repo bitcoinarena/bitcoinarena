@@ -78,7 +78,7 @@ function stored(ticks, { player = 5 } = {}) {
   const entry = {
     roundId: rid, playerPubkey: b32(player), sessionPubkey: ed25519.getPublicKey(session),
     stakeCommitment: b32(7), stakeMsat: 100000n, feeMsat: entryFeeMsat(100000n), donationMsat: 0n,
-    joinTick: 0, worldSecret: b32(0x16), vssSharesRef: new Uint8Array(32),
+    joinTick: 0, worldSecret: b32(0x16), vssSharesRef: new Uint8Array(32), stakePoint: new Uint8Array(33), feePreimage: new Uint8Array(32), stakeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, feeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, claimKeyAttestationRef: new Uint8Array(32),
   };
   const eid = r.enter(entry);
   const rows = [];

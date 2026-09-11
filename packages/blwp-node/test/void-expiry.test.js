@@ -75,7 +75,7 @@ test('a paid hold turns EXPIRED once the daemon\'s own chain is past its HTLC\'s
     const entry = {
       roundId: rid, playerPubkey: b32(5), sessionPubkey: ed25519.getPublicKey(session),
       stakeCommitment: sha256(b32(65)), stakeMsat: STAKE, feeMsat: entryFeeMsat(STAKE),
-      donationMsat: 0n, joinTick: 0, worldSecret: b32(0x16), vssSharesRef: new Uint8Array(32),
+      donationMsat: 0n, joinTick: 0, worldSecret: b32(0x16), vssSharesRef: new Uint8Array(32), stakePoint: new Uint8Array(33), feePreimage: new Uint8Array(32), stakeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, feeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, claimKeyAttestationRef: new Uint8Array(32),
     };
     const eid = entryId(entry);
     const seated = await fetch(`http://127.0.0.1:${node.port}/entry`, { method: 'POST', body: encodeEntryContract(entry) });
@@ -149,7 +149,7 @@ test('a launcher that gives only its own bitcoind (poolCall, as main.js does) st
     const entry = {
       roundId: rid, playerPubkey: b32(6), sessionPubkey: ed25519.getPublicKey(session),
       stakeCommitment: sha256(b32(66)), stakeMsat: STAKE, feeMsat: entryFeeMsat(STAKE),
-      donationMsat: 0n, joinTick: 0, worldSecret: b32(0x16), vssSharesRef: new Uint8Array(32),
+      donationMsat: 0n, joinTick: 0, worldSecret: b32(0x16), vssSharesRef: new Uint8Array(32), stakePoint: new Uint8Array(33), feePreimage: new Uint8Array(32), stakeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, feeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, claimKeyAttestationRef: new Uint8Array(32),
     };
     const eid = entryId(entry);
     assert.equal((await fetch(`http://127.0.0.1:${node.port}/entry`, { method: 'POST', body: encodeEntryContract(entry) })).status, 201);

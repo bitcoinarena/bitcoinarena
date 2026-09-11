@@ -63,7 +63,7 @@ async function rig() {
   const mine = {
     roundId: rid, playerPubkey: b32(5), sessionPubkey: ed25519.getPublicKey(session),
     stakeCommitment: b32(7), stakeMsat: 100000n, feeMsat: entryFeeMsat(100000n), donationMsat: 0n,
-    joinTick: 0, worldSecret: b32(0x5e), vssSharesRef: new Uint8Array(32),
+    joinTick: 0, worldSecret: b32(0x5e), vssSharesRef: new Uint8Array(32), stakePoint: new Uint8Array(33), feePreimage: new Uint8Array(32), stakeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, feeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, claimKeyAttestationRef: new Uint8Array(32),
   };
   const eid = await client.join(mine);
   assumeStakeSeen(node.round, mine);
@@ -73,7 +73,7 @@ async function rig() {
   // THE OTHER PLAYER, driven straight through the daemon's door: this file is
   // about what the PAGE does with what arrives.
   const theirs = {
-    ...mine, playerPubkey: b32(9), sessionPubkey: b32(10), worldSecret: b32(0x59), vssSharesRef: new Uint8Array(32),
+    ...mine, playerPubkey: b32(9), sessionPubkey: b32(10), worldSecret: b32(0x59), vssSharesRef: new Uint8Array(32), stakePoint: new Uint8Array(33), feePreimage: new Uint8Array(32), stakeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, feeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, claimKeyAttestationRef: new Uint8Array(32),
   };
   await fetch(`http://127.0.0.1:${node.port}/entry`, { method: 'POST', body: encodeEntryContract(theirs) });
   assumeStakeSeen(node.round, theirs);
@@ -383,7 +383,7 @@ test('through the real client and daemon, this player\'s pre-reload seat is itse
     const before = {
       roundId: rid, playerPubkey: b32(5), sessionPubkey: b32(0x55), stakeCommitment: b32(7),
       stakeMsat: 100000n, feeMsat: entryFeeMsat(100000n), donationMsat: 0n,
-      joinTick: 0, worldSecret: b32(0x5d), vssSharesRef: new Uint8Array(32),
+      joinTick: 0, worldSecret: b32(0x5d), vssSharesRef: new Uint8Array(32), stakePoint: new Uint8Array(33), feePreimage: new Uint8Array(32), stakeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, feeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, claimKeyAttestationRef: new Uint8Array(32),
     };
     await fetch(`http://127.0.0.1:${node.port}/entry`, { method: 'POST', body: encodeEntryContract(before) });
     assumeStakeSeen(node.round, before);
@@ -514,7 +514,7 @@ test('through a real daemon\'s subscribe burst, the other player\'s abandoned se
     const abandoned = [0x61, 0x62, 0x63].map((w) => ({
       roundId: rid, playerPubkey: b32(9), sessionPubkey: b32(w), stakeCommitment: b32(7),
       stakeMsat: 100000n, feeMsat: entryFeeMsat(100000n), donationMsat: 0n,
-      joinTick: 0, worldSecret: b32(w), vssSharesRef: new Uint8Array(32),
+      joinTick: 0, worldSecret: b32(w), vssSharesRef: new Uint8Array(32), stakePoint: new Uint8Array(33), feePreimage: new Uint8Array(32), stakeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, feeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, claimKeyAttestationRef: new Uint8Array(32),
     }));
     for (const seat of abandoned) {
       await fetch(`http://127.0.0.1:${node.port}/entry`, { method: 'POST', body: encodeEntryContract(seat) });

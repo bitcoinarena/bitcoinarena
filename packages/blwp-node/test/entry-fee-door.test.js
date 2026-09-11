@@ -63,7 +63,7 @@ async function door(stakeMsat = STAKE) {
       roundId: rid, playerPubkey: schnorr.getPublicKey(rand(32)),
       sessionPubkey: ed25519.getPublicKey(ed25519.utils.randomSecretKey()),
       stakeCommitment: rand(32), stakeMsat: stake, feeMsat: fee, donationMsat: 0n,
-      joinTick: 0, worldSecret: rand(32), vssSharesRef: new Uint8Array(32),
+      joinTick: 0, worldSecret: rand(32), vssSharesRef: new Uint8Array(32), stakePoint: new Uint8Array(33), feePreimage: new Uint8Array(32), stakeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, feeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, claimKeyAttestationRef: new Uint8Array(32),
     };
     const said = await fetch(`http://127.0.0.1:${node.port}/entry`,
       { method: 'POST', body: encodeEntryContract(entry) });
@@ -205,7 +205,7 @@ test('the check is in enter, so nothing that seats an entry can skip it', async 
     roundId: rid, playerPubkey: schnorr.getPublicKey(rand(32)),
     sessionPubkey: ed25519.getPublicKey(ed25519.utils.randomSecretKey()),
     stakeCommitment: rand(32), stakeMsat, feeMsat, donationMsat: 0n,
-    joinTick: 0, worldSecret: rand(32), vssSharesRef: new Uint8Array(32),
+    joinTick: 0, worldSecret: rand(32), vssSharesRef: new Uint8Array(32), stakePoint: new Uint8Array(33), feePreimage: new Uint8Array(32), stakeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, feeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, claimKeyAttestationRef: new Uint8Array(32),
   });
 
   assert.ok(r.enter(entry(STAKE, OWED)), 'the right pair was refused');

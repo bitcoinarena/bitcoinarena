@@ -49,7 +49,7 @@ const entryFor = (rid, n) => ({
   roundId: rid, playerPubkey: b32(n), sessionPubkey: b32(n + 40),
   stakeCommitment: sha256(preimageOf(n)),
   stakeMsat: 100000n, feeMsat: entryFeeMsat(100000n), donationMsat: 0n, joinTick: 0,
-  worldSecret: b32(0x5e), vssSharesRef: new Uint8Array(32),
+  worldSecret: b32(0x5e), vssSharesRef: new Uint8Array(32), stakePoint: new Uint8Array(33), feePreimage: new Uint8Array(32), stakeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, feeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, claimKeyAttestationRef: new Uint8Array(32),
 });
 
 /** A Lightning node that keeps a log and no money. */

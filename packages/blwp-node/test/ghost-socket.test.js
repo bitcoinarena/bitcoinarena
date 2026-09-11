@@ -41,7 +41,7 @@ const contract = (stakeMsat = 100000n) => ({
 });
 const entryFor = (rid, n, stakeMsat = 100000n) => ({
   roundId: rid, playerPubkey: b32(n), sessionPubkey: b32(n + 1), stakeCommitment: b32(7),
-  stakeMsat, feeMsat: entryFeeMsat(stakeMsat), donationMsat: 0n, joinTick: 0, worldSecret: b32(0x50 + n), vssSharesRef: new Uint8Array(32),
+  stakeMsat, feeMsat: entryFeeMsat(stakeMsat), donationMsat: 0n, joinTick: 0, worldSecret: b32(0x50 + n), vssSharesRef: new Uint8Array(32), stakePoint: new Uint8Array(33), feePreimage: new Uint8Array(32), stakeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, feeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, claimKeyAttestationRef: new Uint8Array(32),
 });
 
 // THE ROUND'S RANDOMNESS IS THE FIXTURE'S OWN 32 BYTES, exactly as

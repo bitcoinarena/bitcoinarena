@@ -75,7 +75,7 @@ async function committee(n) {
   const entry = {
     roundId: rid, playerPubkey: b32(5), sessionPubkey: ed25519.getPublicKey(session),
     stakeCommitment: b32(7), stakeMsat: STAKE, feeMsat: entryFeeMsat(STAKE), donationMsat: 0n,
-    joinTick: 0, worldSecret: b32(0x5e), vssSharesRef: new Uint8Array(32),
+    joinTick: 0, worldSecret: b32(0x5e), vssSharesRef: new Uint8Array(32), stakePoint: new Uint8Array(33), feePreimage: new Uint8Array(32), stakeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, feeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, claimKeyAttestationRef: new Uint8Array(32),
   };
   for (const d of nodes) {
     const base = `http://127.0.0.1:${d.port}`;

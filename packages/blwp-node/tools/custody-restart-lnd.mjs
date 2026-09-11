@@ -215,7 +215,7 @@ async function main() {
         roundId: rid, playerPubkey: b32(p.n), sessionPubkey: b32(p.n + 40),
         stakeCommitment: sha256(preimageOf(p.n)),
         stakeMsat: STAKE_MSAT, feeMsat: entryFeeMsat(STAKE_MSAT), donationMsat: 0n, joinTick: 0,
-        worldSecret: b32(0x5e), vssSharesRef: new Uint8Array(32),
+        worldSecret: b32(0x5e), vssSharesRef: new Uint8Array(32), stakePoint: new Uint8Array(33), feePreimage: new Uint8Array(32), stakeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, feeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, claimKeyAttestationRef: new Uint8Array(32),
       };
       const entered = round.enter(p.entry);
       if (entered && entered.ok === false) throw new Error(`the door refused an entry: ${entered.why}`);

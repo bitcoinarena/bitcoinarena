@@ -48,7 +48,7 @@ const contractFor = (nodePubkey, stakeMsat) => ({
 const entryFor = (rid, stakeMsat, n = 5) => ({
   roundId: rid, playerPubkey: b32(n), sessionPubkey: ed25519.getPublicKey(session),
   stakeCommitment: sha256(b32(n + 60)), stakeMsat, feeMsat: entryFeeMsat(stakeMsat),
-  donationMsat: 0n, joinTick: 0, worldSecret: b32(0x16), vssSharesRef: new Uint8Array(32),
+  donationMsat: 0n, joinTick: 0, worldSecret: b32(0x16), vssSharesRef: new Uint8Array(32), stakePoint: new Uint8Array(33), feePreimage: new Uint8Array(32), stakeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, feeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, claimKeyAttestationRef: new Uint8Array(32),
 });
 
 /** A Lightning node whose one invoice is paid when the test says so. */

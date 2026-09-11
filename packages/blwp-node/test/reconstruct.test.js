@@ -120,7 +120,7 @@ async function playedRound(node, c, stake, seats) {
   const entry = {
     roundId: rid, playerPubkey: b32(5), sessionPubkey: ed25519.getPublicKey(session),
     stakeCommitment: stake.stakeCommitment, stakeMsat: 100000n, feeMsat: entryFeeMsat(100000n),
-    donationMsat: 0n, joinTick: 0, worldSecret: b32(0x16), vssSharesRef: stake.ref,
+    donationMsat: 0n, joinTick: 0, worldSecret: b32(0x16), vssSharesRef: stake.ref, stakePoint: new Uint8Array(33), feePreimage: new Uint8Array(32), stakeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, feeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, claimKeyAttestationRef: new Uint8Array(32),
   };
   const eid = entryId(entry);
   const joined = await fetch(`http://127.0.0.1:${node.port}/entry`,
@@ -337,7 +337,7 @@ test('a delivered run never gives up its preimage, and neither does one that is 
       roundId: orid, playerPubkey: b32(6), sessionPubkey: ed25519.getPublicKey(session),
       stakeCommitment: sha256(b32(0x77)), stakeMsat: 100000n, feeMsat: entryFeeMsat(100000n),
       donationMsat: 0n, joinTick: 0, worldSecret: b32(0x16),
-      vssSharesRef: new Uint8Array(32),
+      vssSharesRef: new Uint8Array(32), stakePoint: new Uint8Array(33), feePreimage: new Uint8Array(32), stakeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, feeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, claimKeyAttestationRef: new Uint8Array(32),
     };
     const wid = entryId(winner);
     holder.round.enter(winner);
@@ -525,7 +525,7 @@ test('a seat that never replayed the run hands over nothing', async () => {
     const entry = {
       roundId: orid, playerPubkey: b32(8), sessionPubkey: ed25519.getPublicKey(session),
       stakeCommitment: sha256(b32(0x7a)), stakeMsat: 100000n, feeMsat: entryFeeMsat(100000n),
-      donationMsat: 0n, joinTick: 0, worldSecret: b32(0x16), vssSharesRef: new Uint8Array(32),
+      donationMsat: 0n, joinTick: 0, worldSecret: b32(0x16), vssSharesRef: new Uint8Array(32), stakePoint: new Uint8Array(33), feePreimage: new Uint8Array(32), stakeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, feeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, claimKeyAttestationRef: new Uint8Array(32),
     };
     const wid = entryId(entry);
     quiet.round.enter(entry);

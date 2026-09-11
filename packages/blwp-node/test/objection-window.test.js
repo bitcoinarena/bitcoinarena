@@ -115,7 +115,7 @@ async function seatAndPlay(daemons, c, rid, who, needed) {
   const entry = {
     roundId: rid, playerPubkey: who.key, sessionPubkey: ed25519.getPublicKey(session),
     stakeCommitment: sha256(preimage), stakeMsat: STAKE, feeMsat: entryFeeMsat(STAKE), donationMsat: 0n,
-    joinTick: 0, worldSecret: who.worldSecret, vssSharesRef: handoutId(dealt.handout),
+    joinTick: 0, worldSecret: who.worldSecret, vssSharesRef: handoutId(dealt.handout), stakePoint: new Uint8Array(33), feePreimage: new Uint8Array(32), stakeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, feeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, claimKeyAttestationRef: new Uint8Array(32),
   };
   const eid = entryId(entry);
   const input = { roundId: rid, entryId: eid, previousHash: GENESIS_HASH, firstTick: 0,

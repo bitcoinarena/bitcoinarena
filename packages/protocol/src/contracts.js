@@ -305,8 +305,40 @@ export function encodeEntryContract(e) {
   // entry that forgot the field and an entry that has no shares must not be
   // the same bytes by accident.
   w.bytes32(e.vssSharesRef);
+
+  // THE STAKE LOCK'S HALF OF THE ENTRY, section 7 (v4.6.2), §23.1 steps 0-5:
+  //
+  //   stake_point                P.G - a POINT, so a seat can check Feldman's
+  //                              A0 against it; with only H(P) a loser could
+  //                              deal consistent shares of Q != P and escape
+  //                              at expiry (F1)
+  //   fee_preimage               F in clear: opens the fee lock once FINAL
+  //   stake_lock_outpoint,       where the federation holds the two locks -
+  //   fee_lock_outpoint          Fedimint's (txid, out_idx)
+  //   claim_key_attestation_ref  the >=5 seat signatures on (round_id, claim_pk)
+  //
+  // `stakeCommitment` = H(P) stays above them while the hold invoice is the
+  // path that ships: its payment hash is that hash. Zeros in every one of these
+  // name "no stake lock", which is every entry until the lock is wired - said
+  // by the caller, never supplied here.
+  w.bytes(e.stakePoint, STAKE_POINT_BYTES);
+  w.bytes32(e.feePreimage);
+  writeOutpoint(w, e.stakeLockOutpoint, 'stakeLockOutpoint');
+  writeOutpoint(w, e.feeLockOutpoint, 'feeLockOutpoint');
+  w.bytes32(e.claimKeyAttestationRef);
   return w.finish();
 }
+
+/** The same compressed point as a Feldman commitment (`handout.js`). */
+export const STAKE_POINT_BYTES = 33;
+
+function writeOutpoint(w, o, name) {
+  if (!o || typeof o !== 'object') throw new Error(`${name} is a federation outpoint { txid, outIdx }`);
+  w.bytes32(o.txid);
+  w.u64(o.outIdx);
+}
+
+const readOutpoint = (r) => ({ txid: r.bytes32(), outIdx: r.u64() });
 
 export function decodeEntryContract(bytes) {
   const r = new Reader(bytes);
@@ -324,12 +356,44 @@ export function decodeEntryContract(bytes) {
     joinTick: r.u32(),
     worldSecret: r.bytes32(),
     vssSharesRef: r.bytes32(),
+    stakePoint: r.bytes(STAKE_POINT_BYTES),
+    feePreimage: r.bytes32(),
+    stakeLockOutpoint: readOutpoint(r),
+    feeLockOutpoint: readOutpoint(r),
+    claimKeyAttestationRef: r.bytes32(),
   };
   r.end();
   return e;
 }
 
 export const entryId = (e) => taggedHash(TAG.entryContract, encodeEntryContract(e));
+
+/**
+ * DO THE SHARES OPEN TO THE LOCK'S OWN SECRET? §23.1 step 2 (v4.6.2, F1): "Each
+ * seat verifies its share against the commitments AND THAT THE CONSTANT
+ * COMMITMENT A0 EQUALS stake_point, and refuses the entry otherwise."
+ *
+ * Byte equality of two compressed points is point equality. An entry naming no
+ * stake point is refused rather than passed: "no point" must never read as "a
+ * point that matched".
+ */
+export function stakePointIsTheHandouts(entry, handout) {
+  if (!entry || !(entry.stakePoint instanceof Uint8Array) || entry.stakePoint.length !== STAKE_POINT_BYTES)
+    return { ok: false, why: 'that entry names no 33-byte stake point' };
+  if (entry.stakePoint.every((b) => b === 0))
+    return { ok: false, why: 'that entry names no stake point, so no share can be checked against it' };
+  const a0 = handout && Array.isArray(handout.commitments) ? handout.commitments[0] : undefined;
+  if (!(a0 instanceof Uint8Array) || a0.length !== STAKE_POINT_BYTES)
+    return { ok: false, why: 'that handout publishes no constant commitment A0' };
+  for (let i = 0; i < STAKE_POINT_BYTES; i++)
+    if (a0[i] !== entry.stakePoint[i])
+      return {
+        ok: false,
+        why: 'the handout\'s A0 is not the entry\'s stake point: these shares open to a '
+          + 'different secret than the lock',
+      };
+  return { ok: true };
+}
 
 /**
  * IS THIS ROUND'S RUN LENGTH THE ONE THE SIMULATOR ACTUALLY USES?

@@ -594,6 +594,14 @@ export function entryFor(round, { playerPubkey, random, joinTick = 0, stake } = 
     // the signed bytes either way - so an entry that has shares and one that
     // has none can never be the same entry id.
     vssSharesRef: stake ? stake.vssSharesRef : NO_SHARES,
+    // §7's stake-lock fields (v4.6.2). No stake lock is wired into the page
+    // yet - the hold invoice is what ships - so each names none, in zeros,
+    // said here rather than defaulted by the encoder.
+    stakePoint: new Uint8Array(33),
+    feePreimage: new Uint8Array(32),
+    stakeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n },
+    feeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n },
+    claimKeyAttestationRef: new Uint8Array(32),
     stakeMsat: BigInt(round.stakeMsat || 0n),
     // THE NODE FEE, AND IT IS 2% OF THIS ENTRY'S OWN STAKE - taken OUT of it,
     // never on top (22A). The stake is the one number the wallet commits; the

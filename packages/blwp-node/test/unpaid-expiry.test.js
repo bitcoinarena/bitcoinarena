@@ -84,7 +84,7 @@ async function issued(node, n = 5) {
   const entry = {
     roundId: rid, playerPubkey: b32(n), sessionPubkey: ed25519.getPublicKey(session),
     stakeCommitment: sha256(b32(n + 60)), stakeMsat: STAKE, feeMsat: entryFeeMsat(STAKE),
-    donationMsat: 0n, joinTick: 0, worldSecret: b32(0x16), vssSharesRef: new Uint8Array(32),
+    donationMsat: 0n, joinTick: 0, worldSecret: b32(0x16), vssSharesRef: new Uint8Array(32), stakePoint: new Uint8Array(33), feePreimage: new Uint8Array(32), stakeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, feeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, claimKeyAttestationRef: new Uint8Array(32),
   };
   const eid = entryId(entry);
   const seated = await fetch(`http://127.0.0.1:${node.port}/entry`, { method: 'POST', body: encodeEntryContract(entry) });

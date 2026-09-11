@@ -209,7 +209,7 @@ test('the key a ghost names is the entry\'s, or it is reported unchecked', () =>
   const t = chainOf();
   const entry = {
     roundId: b32(1), playerPubkey: b32(7), sessionPubkey: b32(8), stakeCommitment: b32(9),
-    stakeMsat: 100000n, feeMsat: 2000n, donationMsat: 0n, joinTick: 0, worldSecret: b32(0x5e), vssSharesRef: new Uint8Array(32),
+    stakeMsat: 100000n, feeMsat: 2000n, donationMsat: 0n, joinTick: 0, worldSecret: b32(0x5e), vssSharesRef: new Uint8Array(32), stakePoint: new Uint8Array(33), feePreimage: new Uint8Array(32), stakeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, feeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, claimKeyAttestationRef: new Uint8Array(32),
   };
   const bound = { ...ghostAt(t, 1, 4), entryId: entryId(entry) };
   const withEntry = { ...bound, roundId: t.roundId };

@@ -13,7 +13,9 @@ import { selectCommittee, weightOf, ticketFor } from '../src/sortition.js';
 import { computePayoutTable, rankWeights, payingRanks, DELIVERED, FAILED, FORFEIT, VOID } from '../src/payout.js';
 import {
   encodeRoundContract, decodeRoundContract, roundId, contractWarnings, custodyFieldsAreValid,
+  encodeEntryContract, decodeEntryContract, entryId, stakePointIsTheHandouts, STAKE_POINT_BYTES,
 } from '../src/contracts.js';
+import { COMMITMENT_BYTES } from '../src/handout.js';
 
 /**
  * A view spanning the census height: from it to `tip`. A view that begins
@@ -465,4 +467,55 @@ test('the custody fields say what v4.6.2 rules, or the round is refused by name'
     /is not an http\(s\) or ws\(s\) URL/);
   assert.match(custodyFieldsAreValid({ ...c, publicationRelays: ['wss://r.example', 'wss://r.example'] }).why,
     /named twice/);
+});
+
+/**
+ * THE ENTRY'S STAKE-LOCK FIELDS (section 7, v4.6.2): stake_point, fee_preimage,
+ * the two lock outpoints and the claim-key attestation. All signed by the
+ * player, so all in the entry id - a lock outpoint swapped after signing would
+ * point the seats at a lock the player did not commit to.
+ */
+const lockedEntry = () => ({
+  roundId: b32(0x01), playerPubkey: b32(0x02), sessionPubkey: b32(0x03), stakeCommitment: b32(0x04),
+  stakeMsat: 100000n, feeMsat: 2000n, donationMsat: 0n, joinTick: 0, worldSecret: b32(0x05),
+  vssSharesRef: b32(0x06), stakePoint: new Uint8Array(33).fill(0x02),
+  feePreimage: b32(0x07), stakeLockOutpoint: { txid: b32(0x08), outIdx: 0n },
+  feeLockOutpoint: { txid: b32(0x08), outIdx: 1n }, claimKeyAttestationRef: b32(0x09),
+});
+
+test('an entry carries its stake point, fee preimage, lock outpoints and claim-key attestation, in its id', () => {
+  assert.equal(STAKE_POINT_BYTES, COMMITMENT_BYTES, 'a stake point is not the shape of Feldman\'s A0');
+  const e = lockedEntry();
+  const back = decodeEntryContract(encodeEntryContract(e));
+  for (const k of ['stakePoint', 'feePreimage', 'stakeLockOutpoint', 'feeLockOutpoint', 'claimKeyAttestationRef'])
+    assert.deepEqual(back[k], e[k], k);
+  assert.equal(toHex(encodeEntryContract(back)), toHex(encodeEntryContract(e)));
+
+  for (const moved of [
+    { stakePoint: new Uint8Array(33).fill(0x03) },
+    { feePreimage: b32(0x70) },
+    { stakeLockOutpoint: { txid: b32(0x08), outIdx: 2n } },
+    { feeLockOutpoint: { txid: b32(0x80), outIdx: 1n } },
+    { claimKeyAttestationRef: b32(0x90) },
+  ]) assert.notDeepEqual(entryId({ ...e, ...moved }), entryId(e), Object.keys(moved)[0]);
+
+  // absent is refused, never defaulted
+  assert.throws(() => encodeEntryContract({ ...e, stakePoint: b32(0x02) }));
+  assert.throws(() => encodeEntryContract({ ...e, stakeLockOutpoint: undefined }), /federation outpoint/);
+  assert.throws(() => encodeEntryContract({ ...e, feeLockOutpoint: { txid: b32(1), outIdx: 1 } }), /BigInt/);
+  assert.throws(() => encodeEntryContract({ ...e, claimKeyAttestationRef: undefined }));
+});
+
+test('a seat takes shares only if their A0 is the entry\'s stake point (F1)', () => {
+  const e = lockedEntry();
+  const handout = { commitments: [new Uint8Array(e.stakePoint), new Uint8Array(33).fill(0x03)] };
+  assert.deepEqual(stakePointIsTheHandouts(e, handout), { ok: true });
+
+  const other = new Uint8Array(e.stakePoint); other[32] ^= 1;
+  assert.match(stakePointIsTheHandouts(e, { commitments: [other] }).why,
+    /A0 is not the entry's stake point/);
+  assert.match(stakePointIsTheHandouts({ ...e, stakePoint: new Uint8Array(33) }, handout).why,
+    /names no stake point/);
+  assert.match(stakePointIsTheHandouts(e, { commitments: [] }).why, /no constant commitment A0/);
+  assert.match(stakePointIsTheHandouts({ ...e, stakePoint: undefined }, handout).why, /no 33-byte stake point/);
 });

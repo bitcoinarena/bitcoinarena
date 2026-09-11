@@ -59,7 +59,7 @@ const entryFor = (rid, joinTick) => ({
   // replays (the owner, e942580). Nothing in this file uses it - a late join is
   // about which TICK a run starts at - but an entry without one no longer
   // encodes, and an entry that does not encode has no id to be late with.
-  worldSecret: b32(0x5c), vssSharesRef: new Uint8Array(32),
+  worldSecret: b32(0x5c), vssSharesRef: new Uint8Array(32), stakePoint: new Uint8Array(33), feePreimage: new Uint8Array(32), stakeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, feeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, claimKeyAttestationRef: new Uint8Array(32),
 });
 
 async function joinedAt(joinTick) {

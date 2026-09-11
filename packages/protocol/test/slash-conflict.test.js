@@ -36,7 +36,7 @@ const advert = { nodePubkey: NODE, operatorId: toHex(OPERATOR), bondTxid: BOND, 
 const entry = {
   roundId: ROUND, playerPubkey: OPERATOR, sessionPubkey: b32(0x0b),
   stakeCommitment: b32(0x0c), stakeMsat: 100000n, feeMsat: entryFeeMsat(100000n),
-  donationMsat: 0n, joinTick: 0, worldSecret: b32(0x5e), vssSharesRef: new Uint8Array(32),
+  donationMsat: 0n, joinTick: 0, worldSecret: b32(0x5e), vssSharesRef: new Uint8Array(32), stakePoint: new Uint8Array(33), feePreimage: new Uint8Array(32), stakeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, feeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, claimKeyAttestationRef: new Uint8Array(32),
 };
 
 const result = {

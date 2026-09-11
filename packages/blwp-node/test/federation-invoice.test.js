@@ -109,7 +109,7 @@ test('a paying round gets the federation\'s invoice for its net stake, and an en
     const entry = {
       roundId: rid, playerPubkey: b32(5), sessionPubkey: ed25519.getPublicKey(session),
       stakeCommitment: fed.hash, stakeMsat: STAKE, feeMsat: entryFeeMsat(STAKE), donationMsat: 0n,
-      joinTick: 0, worldSecret: b32(0x16), vssSharesRef: NO_SHARES,
+      joinTick: 0, worldSecret: b32(0x16), vssSharesRef: NO_SHARES, stakePoint: new Uint8Array(33), feePreimage: new Uint8Array(32), stakeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, feeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, claimKeyAttestationRef: new Uint8Array(32),
     };
     const seated = await fetch(`http://127.0.0.1:${node.port}/entry`, { method: 'POST', body: encodeEntryContract(entry) });
     assert.equal(seated.status, 201, await seated.text());

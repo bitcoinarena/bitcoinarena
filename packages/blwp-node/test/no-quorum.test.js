@@ -63,7 +63,7 @@ function player(round, rid, seed, { forks = false } = {}) {
   const session = ed25519.utils.randomSecretKey();
   const eid = round.enter({
     roundId: rid, playerPubkey: b32(seed), sessionPubkey: ed25519.getPublicKey(session),
-    stakeCommitment: b32(7), stakeMsat: 100000n, feeMsat: entryFeeMsat(100000n), donationMsat: 0n, joinTick: 0, worldSecret: b32(0x5e), vssSharesRef: new Uint8Array(32),
+    stakeCommitment: b32(7), stakeMsat: 100000n, feeMsat: entryFeeMsat(100000n), donationMsat: 0n, joinTick: 0, worldSecret: b32(0x5e), vssSharesRef: new Uint8Array(32), stakePoint: new Uint8Array(33), feePreimage: new Uint8Array(32), stakeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, feeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, claimKeyAttestationRef: new Uint8Array(32),
   });
   const sign = (m) => joinSigned(encodeCheckpoint(m), ed25519.sign(checkpointId(m), session));
   // THE INPUTS FIRST, as a client sends them: a node refuses a checkpoint at a

@@ -150,7 +150,7 @@ async function seated() {
     roundId: rid, playerPubkey: schnorr.getPublicKey(rand(32)),
     sessionPubkey: ed25519.getPublicKey(session), stakeCommitment: sha256(rand(32)),
     stakeMsat: STAKE, feeMsat: entryFeeMsat(STAKE), donationMsat: 0n,
-    joinTick: 0, worldSecret: rand(32), vssSharesRef: new Uint8Array(32),
+    joinTick: 0, worldSecret: rand(32), vssSharesRef: new Uint8Array(32), stakePoint: new Uint8Array(33), feePreimage: new Uint8Array(32), stakeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, feeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, claimKeyAttestationRef: new Uint8Array(32),
   };
   const took = await fetch(`http://127.0.0.1:${node.port}/entry`,
     { method: 'POST', body: encodeEntryContract(entry) });
