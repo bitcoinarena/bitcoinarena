@@ -196,6 +196,87 @@ Regtest, unpatched fedimintd 0.12.0 (4 guardians, 3 of 4), two gateways, a
   every game, at entry, outside the federation. Nothing of a donation is
   locked.
 
+## Security findings (Fable, 2026-09-11 15:00) — open, each needs a ruling
+
+Adversarial pass over the stake lock. Ranked. None is a Fedimint bug; each
+is a hole in how *we* use it, and each has a fix from tested parts.
+
+**F1 — A loser can escape by dealing shares of the wrong secret. HIGH.**
+The player deals `P` by Feldman VSS and commits `H(P)` as the lock's
+`payment_image`. Feldman proves the shares are consistent, not that they
+open to the preimage of a sha256 hash (PRIORITIES: "the Feldman residual on
+the split preimage - no discrete-log group"). So a player deals consistent
+shares of `Q ≠ P`, plays, loses; the committee reconstructs `Q`, the claim
+fails, the lock expires, the loser is refunded. The hold-invoice design had
+the same hole. The lock closes it: LNv2 accepts
+`PaymentImage::Point(pk)` with the preimage as the scalar
+(`lnv2-common/src/contracts.rs`, `verify_preimage`). With a point image,
+Feldman's constant commitment `A0 = P·G` must equal the image, so every seat
+verifies at dealing time that its share is a share of the lock's own secret.
+Fix: the Entry Contract commits to a point, not a hash; seats refuse an
+entry whose Feldman `A0` is not that point. The Lightning deposit stays a
+stock invoice — no PTLC on Lightning.
+
+**F2 — The page chooses the refund key. HIGH.**
+Under a hold invoice a refund went back to the wallet that paid, by
+construction. Now the client builds the lock, and a lying client (the
+compromised web host of §35A) sets `refund_pk` — and the payout key — to
+the attacker's key. The wallet's own screen shows a deposit and nothing
+about where the refund goes. Bounds: the NWC budget caps the loss per hour;
+§5's known-good client hash for real money; the player's key derived from a
+seed the player holds and can check. Fix to rule: the refund and payout key
+is derived from the player's seed and shown as a fingerprint the player can
+compare outside the page; a client whose hash is not on the known-good list
+cannot enter a paying round.
+
+**F3 — A seat can substitute the committee key. HIGH.**
+The player asks a seat for `claim_pk`. A rogue seat serves its own key; the
+player locks to it; after `FINAL FAILED` the honest seats release shares,
+the rogue reconstructs `P` and claims the loser's stake for itself. Fix:
+`claim_pk` is valid only with signatures from a threshold of the round's
+settlement seats over `(round_id, claim_pk)`; the client refuses to lock
+without them.
+
+**F4 — Lock fields must be verified before STAKE_COMMITTED. HIGH.**
+The player builds the lock, so a seat MUST check every field through the
+contract id (audit point 8): `payment_image` = the entry's commitment,
+`amount` = net stake, `claim_pk` = this round's key, `refund_pk` = the
+entry's player key, `expiration ≥ current height + 144`. A short expiry
+alone lets a loser refund before settlement. §23.1 step 5 must say this.
+
+**F5 — The fee lock must not share `P`. MEDIUM.**
+Fees are collected from everyone (§22A), so the fee lock is claimed for
+winners too. If it carries the same image as the stake lock, claiming it
+publishes the winner's `P`, breaking "a DELIVERED run's preimage never
+leaves". Fix: the fee lock carries its own image with a secret `F` the
+player hands the seats openly at entry — the fee is owed once the round is
+FINAL, whatever the result.
+
+**F6 — A settlement stall favours losers. MEDIUM.**
+Three seats that refuse to sign the settlement transaction stall it; locks
+expire; losers are refunded and winners are not paid. §28 lists it as delay
+→ refund, but it is also an incentive: a loser with friends on three seats.
+§5A.13 keeps operators out of rounds they play; the objection window and
+bonds do not reach a refusal to sign, because it leaves no artifact. Fix to
+rule: a seat's signing round is logged and a missing signature after the
+window is slashable by the others' signed record; or accept it as residual.
+
+**F7 — A gateway can grief a deposit. LOW.**
+It cannot keep money, but it can hold the player's Lightning HTLC up to the
+invoice's CLTV, or fund the contract after entry closes. The player is out
+of the round, not out of money; the deposit is then withdrawn. Fix: short
+deposit CLTV, several gateways, the client moves on after a timeout.
+
+**F8 — Refund keys are linkable. LOW.**
+Every lock is public in the federation with its `refund_pk`. A fresh key per
+round from the player's seed removes the link; the guardians still see
+amounts and timing.
+
+**F9 — The federation exposure cap is policy, not protocol.**
+Fedimint has no per-federation limit we can enforce. The cap is the stake
+ceiling (§5A.10) times rounds in flight, kept by the round contracts naming
+that federation.
+
 ## Still open (the owner)
 
 - Which federation(s), and who the guardians are.
