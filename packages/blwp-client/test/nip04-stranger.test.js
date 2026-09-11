@@ -9,7 +9,9 @@
 // DETERMINISTIC, so the count is a number and not a draw: every key and the
 // iv come from sha256 of a counter.
 //
-// MEASURED FIRST, asserted as it stands.
+// MEASURED BEFORE (TASKBOOK, eb12873): 15 of 4096 strangers "opened" it,
+// told ok with U+FFFD soup. A NIP-04 message is text, so the decode is strict
+// now and bytes that are not UTF-8 are refused.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -20,7 +22,7 @@ import { sha256 } from '../../protocol/src/hash.js';
 const det = (tag, i) => sha256(new TextEncoder().encode(`${tag}:${i}`));
 const TRIES = 4096;
 
-test('MEASURED: of 4096 stranger keys, some "open" an envelope sealed to another pair - none sees the message', async () => {
+test('of 4096 stranger keys none opens an envelope sealed to another pair, and the pair still does', async () => {
   const mine = det('mine', 0);
   const theirs = det('theirs', 0);
   let n = 0;
@@ -37,5 +39,6 @@ test('MEASURED: of 4096 stranger keys, some "open" an envelope sealed to another
     if (samples.length < 3) samples.push(JSON.stringify(r.plaintext));
   }
   console.log(`  FACTS (${TRIES} stranger keys): opened ${opened}, saw the message ${sawMessage}; e.g. ${samples.join(' ')}`);
-  assert.deepEqual({ opened, sawMessage }, { opened: 15, sawMessage: 0 });
+  const pair = await nip04Decrypt(sealed, { secret: theirs, theirPubkey: pageCurve.pointX(mine), curve: pageCurve });
+  assert.deepEqual({ opened, sawMessage, pairOpens: pair.ok && pair.plaintext }, { opened: 0, sawMessage: 0, pairOpens: 'pay_invoice' });
 });
