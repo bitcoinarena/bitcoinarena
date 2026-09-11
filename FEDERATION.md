@@ -196,7 +196,14 @@ Regtest, unpatched fedimintd 0.12.0 (4 guardians, 3 of 4), two gateways, a
   every game, at entry, outside the federation. Nothing of a donation is
   locked.
 
-## Security findings (Fable, 2026-09-11 15:00) — open, each needs a ruling
+## Security findings (Fable, 2026-09-11 15:00) — RESOLVED in spec v4.6.2 (the owner 15:10: "alles dokumentieren und lösen")
+
+Where each fix now lives: F1 §7 + §23.1 steps 1–2 (`stake_point`, Feldman
+`A0`); F2 §24 (seed-derived key, fingerprint, known-good client hash); F3
+§23.1 step 0 (attested `claim_pk`); F4 §23.1 step 5 (field verification);
+F5 §23.1 step 2/4 (`fee_preimage`); F6 §5A.3 (withheld signature is an
+offence); F7 §23.1 step 3 (short CLTV, timeout); F8 §24 (fresh key per
+round); F9 §22 (policy cap). All in §35A's table.
 
 Adversarial pass over the stake lock. Ranked. None is a Fedimint bug; each
 is a hole in how *we* use it, and each has a fix from tested parts.

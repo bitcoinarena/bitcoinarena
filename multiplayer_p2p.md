@@ -17,6 +17,14 @@
 > qualifiers' payout contracts. Changed: §6 fields, §9, §13C, §16, §22, §23,
 > §24A, the worked example, §27A, §28, §32, §35A. Details and the rehearsal
 > that must pass: `FEDERATION.md`.
+>
+> The security pass on it (FEDERATION.md F1–F9) closed one hole the hold
+> invoice never could: the stake commitment is now a **point** `P·G`, so
+> Feldman VSS is checked against the lock's own secret at dealing time and a
+> loser cannot escape by dealing shares of something else (§7, §23.1). It
+> also added the committee's attested claim key, mandatory lock-field
+> verification, a separate fee preimage, seed-derived refund keys (§24) and
+> a slashing offence for withheld settlement signatures (§5A.3).
 
 > **Revision 4.6.1 — four release blockers closed.** The v4.6 architecture is
 > unchanged; four under-specified places that would have blocked a real-money
@@ -630,6 +638,7 @@ a transaction is §5A.3B.
 | Settlement action without the required 5-of-7 result and payout signatures | The settlement record |
 | Signing for a round in which the operator played (§5A.13) | Entry Contract + node signature |
 | Claiming a fee share without meeting the availability rule (§22A) | Receipt record |
+| Withholding a settlement signature (v4.6.2): a seat that acknowledged the round's settlement transaction and did not sign it before the locks expired | The signed acknowledgement + the transaction + the expiry — a stall refunds losers and unpays winners, so it is an offence and not only a delay |
 
 Slashed bonds are distributed: half to the affected players of that round,
 half burned or to the remaining honest committee members of the round, as
@@ -1329,8 +1338,12 @@ PlayerEntryContract {
   vehicle, loadout, cargo
 
   seed_commitment                  // H(player_secret)
-  payment_hash                     // H(P), P = player-generated preimage (§23)
-  vss_shares_ref                   // P shared to the settlement committee (§23)
+  stake_point                      // P·G, P = player-generated scalar (§23.1) — a point, not a hash, so VSS is checkable against it
+  vss_shares_ref                   // P shared to the settlement committee (§23); Feldman A0 == stake_point
+  fee_preimage                     // F, in clear: opens the fee lock (§23.1)
+  stake_lock_outpoint              // the stake lock in the federation (§23.1)
+  fee_lock_outpoint
+  claim_key_attestation_ref        // the settlement seats' signed claim key (§23.1)
 
   sim_wasm_hash
   payout_hash, fee_hash
@@ -1382,7 +1395,8 @@ committee (§23.1).
 1. round published                 committee unknowable; no entry possible
 2. committee_time reached          beacon value appears
 3. committees selected + verified  client recomputes them itself (§5A.11)
-4. player builds Entry Contract    P generated, VSS shares to THIS committee
+3b. settlement seats publish        claim_pk, signed by >=5 seats (§23.1 step 0)
+4. player builds Entry Contract    P generated, Feldman shares to THIS committee, A0 = P·G
 5. player's wallet pays a deposit  into the federation, via any listed gateway
 6. client locks the stake          stake lock in the federation (§23.1), not settled
 7. >=5 EntryReceipts               STAKE_COMMITTED
@@ -2192,33 +2206,59 @@ settlement committee*, so no part of this sequence can run earlier. Any
 statement that a stake may be committed before the committee is known has
 been removed from this document.
 
-1. The player generates a random preimage `P` and puts
-   `payment_hash = H(P)` in the Entry Contract.
-2. The player splits `P` with verifiable secret sharing (Shamir, threshold
-   **5-of-7**) and encrypts one share to each settlement-committee member;
-   `vss_shares_ref` points at the published shares. Verifiability means each
-   node can confirm its share is consistent without reconstructing `P`.
+0. **The committee's claim key.** Once selected, the settlement seats run a
+   dealerless DKG for this round's threshold key `claim_pk` and each seat
+   signs `(round_id, claim_pk)`. The key is valid only with signatures from
+   ≥5 seats (`claim_key_attestation_ref`); a client MUST refuse to lock to
+   a key without them. Otherwise one seat could serve its own key and, after
+   the shares are released, claim a loser's stake for itself.
+1. The player generates a random scalar `P` and puts the **point**
+   `stake_point = P·G` in the Entry Contract — a point, not a hash, because
+   only a point lets step 2 be checked.
+2. The player splits `P` with **Feldman** verifiable secret sharing
+   (threshold **5-of-7**) and encrypts one share to each settlement seat;
+   `vss_shares_ref` points at the published shares and commitments. Each
+   seat verifies its share against the commitments **and that the constant
+   commitment `A0` equals `stake_point`**, and refuses the entry otherwise.
+   This is what closes the loser's escape: with a hash, a player could deal
+   consistent shares of some `Q ≠ P`, lose, watch reconstruction fail and be
+   refunded at expiry. With a point the shares provably open to the lock's
+   own secret.
+   The player also chooses `F`, the fee preimage, and puts it in the Entry
+   Contract in clear: the fee is owed once the round is `FINAL`, whatever
+   the result, and must never share `P` — claiming a winner's fee lock would
+   otherwise publish the winner's `P`.
 3. The player's wallet pays a Lightning **deposit invoice** for the stake
    into the round's federation (`federation_id`, §23.6), made through any
    gateway the federation lists. The gateway pays the federation first and
    learns the preimage only from its consensus, so it cannot keep the
-   payment; a gateway that fails is replaced by the next.
+   payment. It can delay: the invoice's CLTV is short, and a client moves to
+   the next gateway after a timeout — a slow gateway costs the round, never
+   the money.
 4. The player's client locks the received amount — in the same federation
-   transaction where it can — as a **stake lock**, a contract inside the
-   federation:
+   transaction where it can — as a **stake lock** and a **fee lock**,
+   contracts inside the federation:
 
    ```text
-   payment_image  payment_hash
-   amount         net stake (§22A); the node fee in a second lock, same keys
-   claim_pk       the round's settlement committee's threshold group key
-   refund_pk      the player's key, named by the Entry Contract
+   stake lock                          fee lock
+   payment_image  Point(stake_point)   Hash(H(F))
+   amount         net stake (§22A)     node fee (§22A)
+   claim_pk       the attested claim_pk of step 0
+   refund_pk      player_pubkey, derived from the player's seed (§24)
    expiration     federation block height + stake_expiry_blocks
    ```
 
    It is in nobody's balance. The federation's consensus lets it go only the
    three ways of §23.2.
-5. `STAKE_COMMITTED` is recorded once ≥5 settlement nodes have seen the lock
-   confirmed by the federation. Play begins only after this.
+5. `STAKE_COMMITTED` is recorded once ≥5 settlement nodes have **verified**
+   the locks: the contract id at `stake_lock_outpoint` (and the fee lock's)
+   equals the hash of a contract whose `payment_image` is the entry's
+   `stake_point` (resp. `H(F)`), whose `amount` is the entry's net stake
+   (resp. fee), whose `claim_pk` is the attested key, whose `refund_pk` is
+   `player_pubkey`, and whose `expiration` is ≥ current height +
+   `stake_expiry_blocks`. Seeing the lock is not enough: the player built
+   it, and a short expiry alone would let a loser refund before settlement.
+   Play begins only after this.
 
 `stake_expiry_blocks` is **144** — one day of blocks (ruled 2026-09-11).
 It needs to cover only round + objection window + the settlement
@@ -2315,7 +2355,23 @@ stake amount must be visible; permissions minimal; and **no assumption that
 generic NWC permissions cryptographically encode the Round Contract** — NWC
 budgets are wallet-side policy, and the reliable boundary is the budget
 ceiling plus the wallet's own confirmation screen. The protocol binds the
-stake to the Entry Contract via `payment_hash`, not via wallet permissions.
+stake to the Entry Contract via `stake_point`, not via wallet permissions.
+
+**The refund key (v4.6.2).** Under the stake lock the money returns to
+`refund_pk`, a key the client builds the lock with — not to the wallet that
+paid. A lying client (§35A) would set it to an attacker's key and the wallet
+would show only a deposit. Therefore:
+
+- `player_pubkey` is derived from a **player seed** the player holds and
+  backs up, fresh per round (so locks are not linkable across rounds), and
+  the client shows its fingerprint where the player can compare it outside
+  the page;
+- a client whose hash is not on the known-good list (§5) cannot enter a
+  paying round, the same rule as `sim_wasm_hash`;
+- the NWC budget bounds what a compromised client can lose per window.
+
+A lost player seed loses the locks it can refund. That is the trade for
+having no node in the refund path.
 
 ---
 
@@ -2326,7 +2382,7 @@ for half an hour signs fifteen payments. That is not a payments problem, it
 is the reason they stop playing.
 
 The fix is to remove the **approvals**, never the payments. Every round keeps
-its own stake lock, its own `payment_hash` bound to its own Entry Contract,
+its own stake lock, its own `stake_point` bound to its own Entry Contract,
 its own VSS-shared preimage and its own expiry refund (§23). What changes is
 only how often the player is interrupted.
 
@@ -2344,7 +2400,7 @@ interrupt anybody.
 The caveat from §24 stands and matters more here, not less: **an NWC budget
 is wallet-side policy and encodes nothing about the round.** It bounds the
 loss if the client is compromised; it does not bind a payment to a contract.
-The binding is still `payment_hash` in the Entry Contract. So a client MUST
+The binding is still `stake_point` in the Entry Contract. So a client MUST
 show the running total and what it was spent on, and a budget MUST be
 time-boxed rather than open-ended.
 
@@ -3694,6 +3750,11 @@ committee nor outcome).
 | Who holds the stake during the round | — | **Unspecified** | A stake lock in the federation; refund is the default; movement needs a quorum signature + preimage shares; no pool wallet (§23) |
 | Guardians collude, or the federation halts | Guardian threshold | Not considered | Guardians are independent bonded census operators; the round names its federation; exposure capped; no unilateral exit is a stated residual (§22, §23.6) |
 | A gateway withholds a deposit or withdrawal | One gateway | Single-operator endpoint | Atomic payments: it cannot keep money; the client falls back to another listed gateway (§23.6) |
+| **Loser deals shares of the wrong secret**, reconstruction fails, the lock expires to him | Any player | Undetectable with a hash: Feldman proves consistency, not the preimage of sha256 | `stake_point` is a point and Feldman's `A0` must equal it; a seat refuses the entry otherwise (§23.1) |
+| **Lying client sets the refund or payout key** | Compromised web host | Refund went to the paying wallet by construction | Key from the player's seed with a visible fingerprint; known-good client hash for paying rounds; NWC budget (§24) |
+| **A seat serves its own key as `claim_pk`** | One settlement seat | Not considered | `claim_pk` valid only with ≥5 seats' signatures (§23.1 step 0) |
+| **Player builds a lock with a short expiry or wrong fields** | Any player | Not considered | STAKE_COMMITTED only after ≥5 seats verified every field via the contract id (§23.1 step 5) |
+| **Three seats stall settlement** so losers are refunded | 3 settlement seats | Listed as delay only | Withholding an acknowledged settlement signature is a slashing offence (§5A.3) |
 | Compromised web host sets a huge donation | Serve a lying client | Uncapped | Capped at 100%, second confirmation above 5% (§22A) |
 | Round with a backdoored simulation core | Publish a round | Player trusts the hash blindly | Client refuses unknown `sim_wasm_hash` for real money (§5) |
 | **Census divergence** — participants disagree on who is eligible | Selective gossip, withheld advertisements | Committee disputes, ungrounded rounds | Census is chain state at `census_height`; subjective criteria removed; outpoint ordering is unmineable (§5A.2–5A.4) |
