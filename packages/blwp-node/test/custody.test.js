@@ -198,6 +198,36 @@ test('no stake moves without a final result, and nothing is paid to anybody', as
   for (const a of out.actions) assert.match(a.why, /in flight|expires/);
 });
 
+test('a stake whose hold already EXPIRED is not settled: a later close answers already moved and sends lnd nothing (M3.3-30)', async () => {
+  // The 2 s share retry (M3.3-29) runs the close again while a lost stake is
+  // HELD. Once the daemon's own chain has taken it past its HTLC's expiry the
+  // row is EXPIRED, and the next close must leave it where it is: releasing a
+  // preimage for an HTLC that expired settles nothing and says the wrong thing.
+  const port = fakePort();
+  const { round, rid, custody } = seated(port);
+  const winner = entryFor(rid, 1);
+  const loser = entryFor(rid, 2);
+  for (const e of [winner, loser]) { round.enter(e); await custody.hold(e); }
+  round.putHoldExpiry({ entryId: entryIdOf(loser), expiryHeight: 400 });
+  const swept = custody.expire({ tipHeight: 401 });
+  assert.deepEqual(swept.expired.map(toHex), [toHex(entryIdOf(loser))], 'the sweep did not expire the lost stake');
+  assert.equal(custody.stateOf(entryIdOf(loser)).state, EXPIRED);
+
+  const close = await custody.settleHeldInvoices({
+    roundId: rid, minScore: 1, finalFor: () => true,
+    entries: [
+      { entryId: entryIdOf(winner), pubkey: winner.playerPubkey, outcome: DELIVERED, score: 9, stakeMsat: winner.stakeMsat, feeMsat: winner.feeMsat, donationMsat: winner.donationMsat },
+      { entryId: entryIdOf(loser), pubkey: loser.playerPubkey, outcome: FORFEIT, score: 0, stakeMsat: loser.stakeMsat, feeMsat: loser.feeMsat, donationMsat: loser.donationMsat },
+    ],
+  });
+  assert.equal(close.ok, true, close.why);
+  const lost = close.actions.find((a) => toHex(a.entryId) === toHex(entryIdOf(loser)));
+  assert.match(lost.why, /already moved/, `a close tried to act on an expired hold: ${lost.why}`);
+  assert.equal(custody.stateOf(entryIdOf(loser)).state, EXPIRED, 'the expired row was overwritten');
+  assert.equal(port.calls.filter((c) => c[0] === 'settle').length, 0, 'a preimage was released for an HTLC that had expired');
+  assert.equal(custody.stateOf(entryIdOf(winner)).state, CANCELLED, 'the winner\'s own stake was not handed back');
+});
+
 test('a stake that has already moved is not moved twice', async () => {
   const port = fakePort();
   const { round, rid, custody } = seated(port);
