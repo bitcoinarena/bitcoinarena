@@ -20,7 +20,7 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 import { trustedDealerSplit, bindingFactors } from '../../protocol/src/frost.js';
 import { TR_CONTEXT, nonceGenerate340, signShare340, aggregate340 } from '../../protocol/src/frost-bip340.js';
 import { splitSecret, scalarFrom32, scalarTo32, FIELD } from '../../protocol/src/shares.js';
-import { groupKeyOf } from '../../protocol/src/dkg.js';
+import { groupKeyOf, knowledgeIsProven } from '../../protocol/src/dkg.js';
 import { poolTweak, poolShare } from '../../protocol/src/pool.js';
 import { feldmanGroup as curve } from '../src/curve.js';
 import { fromHex, toHex, bytesToBigInt } from '../../protocol/src/hash.js';
@@ -107,5 +107,18 @@ test('DKG: commitments, round-2 shares and final key shares are ZF\'s, under our
     // and the pool's own form, negated for an odd output key, is the same key
     const odd = Q[0] === 0x03;
     assert.equal(poolShare({ share: gk.negated ? FIELD - s : s, tweak, negated: odd }), odd ? FIELD - share : share);
+  }
+});
+
+test('DKG round 1: ZF\'s published proofs of knowledge verify under our checker, and a changed proof does not', () => {
+  for (const i of ['1', '2', '3']) {
+    const P = K.inputs[i];
+    const commitment = h(P.vss_commitments[0]);
+    const proof = h(P.proof_of_knowledge);
+    assert.deepEqual(knowledgeIsProven({ id: P.identifier, commitment, proof, curve }), { ok: true }, `participant ${i}`);
+    const flipped = new Uint8Array(proof); flipped[40] ^= 1;
+    assert.match(knowledgeIsProven({ id: P.identifier, commitment, proof: flipped, curve }).why, /does not verify/);
+    assert.match(knowledgeIsProven({ id: P.identifier + 1, commitment, proof, curve }).why, /does not verify/);
+    assert.match(knowledgeIsProven({ id: P.identifier, commitment, proof: proof.subarray(0, 63), curve }).why, /no 64-byte proof/);
   }
 });

@@ -28,14 +28,88 @@
 // vendors an implementation of the thing that pins money.
 import { Writer, Reader } from './encode.js';
 import { TAG, TYPE_DKG_CONTRIBUTION, PROTOCOL_VERSION } from './constants.js';
-import { taggedHash, toHex } from './hash.js';
-import { shareOpensTo, splitSecret, FIELD, SHARES_NEEDED } from './shares.js';
+import { taggedHash, toHex, bytesToBigInt } from './hash.js';
+import { shareOpensTo, splitSecret, FIELD, SHARES_NEEDED, scalarFrom32, scalarTo32 } from './shares.js';
 import { openShare, sealShare, VSS_SEALED_BYTES } from './seal.js';
 import { COMMITMENT_BYTES } from './handout.js';
+import { hashesFor } from './frost.js';
+import { TR_CONTEXT } from './frost-bip340.js';
 
 const mod = (v) => ((v % FIELD) + FIELD) % FIELD;
 const same = (a, b) => a instanceof Uint8Array && b instanceof Uint8Array
   && a.length === b.length && a.every((v, i) => v === b[i]);
+const cat = (...parts) => {
+  const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+  let at = 0;
+  for (const p of parts) { out.set(p, at); at += p.length; }
+  return out;
+};
+
+/**
+ * THE DEALER KNOWS THE SECRET BEHIND ITS FIRST COMMITMENT, OR ITS DEAL IS REFUSED.
+ *
+ * Measured without this (dkg-rogue.test.js, 734a2ec): in a 2-of-2 committee
+ * the seat that deals LAST takes the honest seat's first commitment, publishes
+ * A0 = X - (honest A0) for a key X it owns, and solves its second commitment
+ * as a point so the one share it deals the honest seat still verifies. Every
+ * check passed, the group key was X, and that seat alone signed for the pool.
+ * Feldman proves a share lies on the published polynomial; it does not prove
+ * the dealer knows the polynomial's secret. This does.
+ *
+ * Zcash Foundation frost-core round 1, taproot suite (frost-secp256k1-tr
+ * v3.0.0), exactly: c = HDKG(id || A0 || R) with the id a 32-byte scalar and A0,
+ * R compressed points; mu = k + a0*c; written as R's x (32) || mu (32), R read
+ * back with even y. Verified against ZF's published proofs (zf-frost-tr.test).
+ * The prover makes R even itself, which every such verifier accepts.
+ */
+export const PROOF_BYTES = 64;
+const HDKG = (m) => hashesFor(TR_CONTEXT).HDKG(m);
+const idBytes = (id) => scalarTo32(BigInt(id));
+
+export function proveKnowledge({ id, secret, commitment, nonce, curve }) {
+  let k = mod(nonce);
+  if (k === 0n) throw new Error('a proof nonce of zero proves nothing');
+  let R = curve.pointFromScalar(k);
+  if (R[0] !== 0x02) { k = FIELD - k; R = curve.pointFromScalar(k); }
+  const c = HDKG(cat(idBytes(id), commitment, R));
+  return cat(R.subarray(1), scalarTo32(mod(k + mod(mod(secret) * c))));
+}
+
+export function knowledgeIsProven({ id, commitment, proof, curve } = {}) {
+  if (!(proof instanceof Uint8Array) || proof.length !== PROOF_BYTES)
+    return { ok: false, why: 'that contribution carries no 64-byte proof of knowledge' };
+  if (!curve || typeof curve.combinePoints !== 'function')
+    return { ok: false, why: 'checking a proof of knowledge needs a curve, and none was injected' };
+  const refuse = {
+    ok: false,
+    why: `seat ${id}'s proof of knowledge does not verify: it has not shown it knows the secret behind `
+      + 'its first commitment, and a seat that dealt after seeing the others could otherwise choose the group key',
+  };
+  const R = cat(Uint8Array.of(0x02), proof.subarray(0, 32));
+  const mu = scalarFrom32(proof.subarray(32));
+  if (mu === 0n || mu >= FIELD) return refuse;
+  const c = HDKG(cat(idBytes(id), commitment, R));
+  let rhs;
+  try {
+    rhs = curve.combinePoints([{ point: curve.pointFromScalar(mu), coefficient: 1n },
+      { point: commitment, coefficient: FIELD - c }]);
+  } catch { return refuse; }
+  return toHex(rhs) === toHex(R) ? { ok: true } : refuse;
+}
+
+/** The dealer's own seat number in its deal: the x its proof names. */
+const dealerSeat = (c) => {
+  const s = c && Array.isArray(c.shares) ? c.shares.find((x) => same(x.seatPubkey, c.from)) : null;
+  return s ? s.seat : null;
+};
+
+function proofHolds(c, curve) {
+  const id = dealerSeat(c);
+  if (!id) return { ok: false, why: 'that seat dealt to a committee it is not on' };
+  if (!Array.isArray(c.commitments) || !c.commitments.length)
+    return { ok: false, why: 'a contribution that publishes no polynomial cannot be checked' };
+  return knowledgeIsProven({ id, commitment: c.commitments[0], proof: c.proof, curve });
+}
 
 /**
  * WHICH COMMITTEE THIS KEY BELONGS TO, AND IT IS THE SEATS THEMSELVES.
@@ -84,6 +158,8 @@ export function encodeContribution(c) {
   w.bytes32(c.ephemeralPubkey);
   w.u16(c.needed);
   w.vec(c.commitments, (p, ww) => ww.bytes(p, COMMITMENT_BYTES));
+  // THE PROOF THAT THE DEALER KNOWS a0 - carried with the polynomial it proves.
+  w.bytes(c.proof, PROOF_BYTES);
   w.vec(c.shares, (s, ww) => {
     ww.u16(s.seat);
     ww.bytes32(s.seatPubkey);
@@ -103,6 +179,7 @@ export function decodeContribution(bytes) {
     ephemeralPubkey: r.bytes32(),
     needed: r.u16(),
     commitments: r.vec((rr) => rr.bytes(COMMITMENT_BYTES)),
+    proof: r.bytes(PROOF_BYTES),
     shares: r.vec((rr) => ({
       seat: rr.u16(),
       seatPubkey: rr.bytes32(),
@@ -156,9 +233,17 @@ export async function dealContribution({ secret, seats, epochId: id, from,
       }),
     });
   }
+  // AND THE PROOF THAT THIS SEAT KNOWS a0. Its nonce is derived from the secret,
+  // the epoch and the commitment, so two proofs never share one.
+  const seatNo = seats.findIndex((k) => same(k, from)) + 1;
+  const nonce = mod(bytesToBigInt(taggedHash(TAG.dkgProofNonce, cat(secret, id, split.commitments[0]))));
+  let proof;
+  try {
+    proof = proveKnowledge({ id: seatNo, secret: scalarFrom32(secret), commitment: split.commitments[0], nonce, curve });
+  } catch (e) { return { ok: false, why: e.message }; }
   return {
     ok: true,
-    contribution: { epochId: id, from, ephemeralPubkey, needed, commitments: split.commitments, shares },
+    contribution: { epochId: id, from, ephemeralPubkey, needed, commitments: split.commitments, proof, shares },
   };
 }
 
@@ -170,7 +255,7 @@ export async function dealContribution({ secret, seats, epochId: id, from,
  * shares for one seat, or a seat numbered zero each describe a deal that would
  * pass a per-share check and still be unusable.
  */
-export function acceptContribution(c) {
+export function acceptContribution(c, { curve } = {}) {
   if (!c || !Array.isArray(c.shares) || c.shares.length === 0)
     return { ok: false, why: 'a contribution of no shares is not a contribution' };
   if (!Array.isArray(c.commitments) || c.commitments.length === 0)
@@ -205,6 +290,10 @@ export function acceptContribution(c) {
   if (!keys.has(toHex(c.from)))
     return { ok: false, why: 'that seat dealt to a committee it is not on' };
 
+  // AND THE DEALER KNOWS a0. Without this a seat dealing last chose the key.
+  const known = proofHolds(c, curve);
+  if (!known.ok) return known;
+
   return { ok: true, why: `${c.shares.length} sealed shares, threshold ${c.needed}` };
 }
 
@@ -223,6 +312,9 @@ export async function openMyContribution(c, { pubkey, secret, curve } = {}) {
     return { ok: false, why: 'a seat opens a share with its own 32-byte key, and that is not one' };
   const mine = c.shares.find((s) => toHex(s.seatPubkey) === toHex(pubkey));
   if (!mine) return { ok: false, why: 'this node is not one of the seats that contribution was dealt to' };
+  // A SHARE ON A POLYNOMIAL NOBODY KNOWS IS NOT A SHARE: refused before it is opened.
+  const known = proofHolds(c, curve);
+  if (!known.ok) return known;
 
   const opened = await openShare({
     sealed: mine.sealed, seat: mine.seat, secret, ephemeralPubkey: c.ephemeralPubkey, curve,
@@ -329,6 +421,11 @@ export function combineShares({ opened, seats, contributions, curve }) {
   // is optional only because the epoch and the wire are measured without one;
   // a caller that means to sign passes it, and `groupKeyOf` says which way.
   if (curve) {
+    // EVERY DEALER PROVED IT KNOWS ITS a0, or the key is one a dealer chose.
+    for (const c of contributions) {
+      const known = proofHolds(c, curve);
+      if (!known.ok) return known;
+    }
     const key = groupKeyOf(contributions, curve);
     if (!key.ok) return key;
     return {

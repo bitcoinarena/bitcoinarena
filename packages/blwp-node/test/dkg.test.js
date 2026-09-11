@@ -99,7 +99,7 @@ test('every seat ends with one share of a key nobody made', async () => {
   for (let i = 0; i < c.seats.length; i++) {
     const opened = [];
     for (const one of contributions) {
-      assert.equal(acceptContribution(one).ok, true, acceptContribution(one).why);
+      assert.equal(acceptContribution(one, { curve }).ok, true, acceptContribution(one, { curve }).why);
       const mine = await openMyContribution(one, {
         pubkey: c.seats[i], secret: c.secrets[i], curve,
       });
@@ -170,7 +170,7 @@ test('a seat that deals a crooked polynomial is refused by the seat it cheated, 
   const { contributions } = await runDkg({ ...c, crooked: { dealer: 0, victim: 3 } });
 
   // The shape is fine - that is what makes this the interesting case.
-  assert.equal(acceptContribution(contributions[0]).ok, true);
+  assert.equal(acceptContribution(contributions[0], { curve }).ok, true);
 
   let refused = 0;
   const why = [];

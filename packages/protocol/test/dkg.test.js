@@ -20,6 +20,7 @@ const keys = (n) => Array.from({ length: n }, () => rand(32));
 const shaped = (seats, from, id) => ({
   epochId: id, from, ephemeralPubkey: rand(32), needed: 5,
   commitments: Array.from({ length: 5 }, () => rand(33)),
+  proof: rand(64),
   shares: seats.map((k, i) => ({ seat: i + 1, seatPubkey: k, sealed: rand(VSS_SEALED_BYTES) })),
 });
 
@@ -71,7 +72,11 @@ test('a contribution that could not be used is refused by shape', () => {
   const seats = keys(7);
   const id = epochId(seats);
   const one = shaped(seats, seats[0], id);
-  assert.equal(acceptContribution(one).ok, true, acceptContribution(one).why);
+  // SHAPE PASSES, AND THEN THE DEALER'S PROOF OF KNOWLEDGE IS WHAT IS ASKED -
+  // which needs a curve, and this package carries none. A contribution nobody
+  // can check the proof of is not accepted; the accepted case is measured in
+  // blwp-node/test/dkg.test.js, with a curve.
+  assert.match(acceptContribution(one).why, /checking a proof of knowledge needs a curve/);
 
   // A threshold that disagrees with the polynomial is a different polynomial,
   // not a shorter list.

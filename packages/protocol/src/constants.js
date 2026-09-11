@@ -260,6 +260,9 @@ export const TAG = {
   // refund key it makes - what the player compares outside the page (§24, F2).
   playerKey: 'BLWP/v1/PlayerKey',
   refundFingerprint: 'BLWP/v1/RefundFingerprint',
+  // The nonce of a DKG dealer's round-1 proof of knowledge, derived from its
+  // own secret so no randomness source can repeat it across two proofs.
+  dkgProofNonce: 'BLWP/v1/DkgProofNonce',
 };
 
 /**

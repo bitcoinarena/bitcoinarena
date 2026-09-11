@@ -114,6 +114,9 @@ export const hashesFor = (context) => ({
   H3: (m) => hashToScalar('nonce', m, context),
   H4: (m) => sha256(cat(utf8Encode(context + 'msg'), m)),
   H5: (m) => sha256(cat(utf8Encode(context + 'com'), m)),
+  // The DKG round-1 proof of knowledge's challenge (frost-core `challenge`,
+  // label "dkg"), used by `dkg.js` under the taproot suite.
+  HDKG: (m) => hashToScalar('dkg', m, context),
 });
 const RFC_HASHES = hashesFor(CONTEXT);
 

@@ -124,7 +124,7 @@ export class Dkg {
     try { c = decodeContribution(bytes); }
     catch (e) { return { ok: false, why: 'that is not a contribution: ' + e.message }; }
 
-    const shaped = acceptContribution(c);
+    const shaped = acceptContribution(c, { curve: this.curve });
     if (!shaped.ok) return shaped;
 
     const held = this.round.epoch(c.epochId);

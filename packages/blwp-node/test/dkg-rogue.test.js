@@ -1,4 +1,9 @@
-// MEASURED: A DISHONEST 2-OF-2 SEAT CAN MAKE THE COMMITTEE'S KEY ONE IT OWNS.
+// A DISHONEST 2-OF-2 SEAT CAN NO LONGER MAKE THE COMMITTEE'S KEY ONE IT OWNS.
+//
+// Measured at 734a2ec, before round 1 carried a proof of knowledge: all four
+// protocol facts were YES (accepted, honest share verified, combine emitted
+// the attacker's key, the attacker alone signed) and on the daemon the rogue
+// deal was taken 201 and the pool's output key was the attacker's alone.
 //
 // The slice's goal is a federation that signs without a trusted dealer. Our DKG
 // round 1 carries no proof of knowledge (Zcash Foundation's frost-secp256k1-tr
@@ -7,9 +12,9 @@
 // solve its second commitment as a POINT so the one share it gives the honest
 // seat still lies on the polynomial. The group key is then X.
 //
-// This file RECORDS what the code does today, fact by fact, and asserts those
-// facts - so any change in behaviour shows up here. When the proof of knowledge
-// lands, the assertions flip to "refused". It is a measurement, not a fix.
+// The construction is unchanged, and the attacker now also attaches its best
+// try at a proof - made with a secret it guesses, because it cannot know the
+// one behind the A0 it published. Every fact must now be NO.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
@@ -21,7 +26,7 @@ import { serve } from '../src/server.js';
 import { feldmanGroup, tweakPoint } from '../src/curve.js';
 import {
   epochId, dealContribution, acceptContribution, openMyContribution, combineShares,
-  encodeContribution, decodeContribution,
+  encodeContribution, decodeContribution, proveKnowledge,
 } from '../../protocol/src/dkg.js';
 import { sealShare } from '../../protocol/src/seal.js';
 import { poolOutput, poolShare } from '../../protocol/src/pool.js';
@@ -58,13 +63,15 @@ async function rogueContribution({ honestA0, x, order, honestPub, attackerPub, e
     { seat: jh, seatPubkey: honestPub, sealed: await sealShare({ value: r, seat: jh, seatPubkey: honestPub, ephemeralSecret: e, curve }) },
     { seat: ja, seatPubkey: attackerPub, sealed: await sealShare({ value: 1n, seat: ja, seatPubkey: attackerPub, ephemeralSecret: e, curve }) },
   ].sort((a, b) => a.seat - b.seat);
-  return { epochId: epoch, from: attackerPub, ephemeralPubkey: curve.pointX(e), needed: 2, commitments: [A0, A1], shares };
+  // ITS BEST TRY AT A PROOF: it does not know A0's secret, so it guesses one.
+  const proof = proveKnowledge({ id: ja, secret: scalar(), commitment: A0, nonce: scalar(), curve });
+  return { epochId: epoch, from: attackerPub, ephemeralPubkey: curve.pointX(e), needed: 2, commitments: [A0, A1], proof, shares };
 }
 
 /** What the attacker alone signs with: X made even, as the group key is. */
 const attackerSecret = (x) => (curve.pointFromScalar(x)[0] === 0x02 ? x : FIELD - x);
 
-test('2-of-2, in the protocol: four facts about a rogue contribution made after seeing the honest A0', async () => {
+test('2-of-2, in the protocol: a rogue contribution made after seeing the honest A0 is refused at every step', async () => {
   const hs = rand(32); const honestPub = curve.pointX(hs);
   const as = rand(32); const attackerPub = curve.pointX(as);
   const order = sortKeys([honestPub, attackerPub]);
@@ -78,11 +85,13 @@ test('2-of-2, in the protocol: four facts about a rogue contribution made after 
   const rogue = await rogueContribution({ honestA0: honest.commitments[0], x, order, honestPub, attackerPub, epoch });
 
   const facts = {};
-  facts.acceptContribution = acceptContribution(rogue).ok;
+  const accepted = acceptContribution(rogue, { curve });
+  facts.acceptContribution = accepted.ok;
   const openedRogue = await openMyContribution(rogue, { pubkey: honestPub, secret: hs, curve });
   facts.honestShareStillVerifies = openedRogue.ok;
   const openedOwn = await openMyContribution(honest, { pubkey: honestPub, secret: hs, curve });
-  const combined = combineShares({ opened: [openedOwn, openedRogue], seats: order, contributions: [honest, rogue], curve });
+  const combined = combineShares({ opened: [openedOwn, openedRogue.ok ? openedRogue : { share: { value: 1n }, seat: openedOwn.seat }],
+    seats: order, contributions: [honest, rogue], curve });
   const xEven = attackerSecret(x);
   facts.combineEmitsAttackersKey = combined.ok
     && toHex(combined.groupPublicKey.subarray(1)) === toHex(schnorr.getPublicKey(scalarTo32(xEven)));
@@ -90,14 +99,18 @@ test('2-of-2, in the protocol: four facts about a rogue contribution made after 
   facts.attackerAloneSignsForGroupKey = combined.ok && schnorr.verify(sig, MESSAGE, combined.groupPublicKey.subarray(1));
   console.log('  FACTS (protocol, 2 of 2):', JSON.stringify(facts));
 
-  // What the code does TODAY - the hole. These flip when a proof of knowledge is required.
+  // Before the proof of knowledge all four were true (734a2ec). Now each is refused, by the proof.
   assert.deepEqual(facts, {
-    acceptContribution: true, honestShareStillVerifies: true,
-    combineEmitsAttackersKey: true, attackerAloneSignsForGroupKey: true,
+    acceptContribution: false, honestShareStillVerifies: false,
+    combineEmitsAttackersKey: false, attackerAloneSignsForGroupKey: false,
   });
+  for (const why of [accepted.why, openedRogue.why, combined.why]) assert.match(why, /proof of knowledge does not verify/);
+  // and the honest seat's own contribution still passes every check
+  assert.equal(acceptContribution(honest, { curve }).ok, true);
+  assert.equal(openedOwn.ok, true);
 });
 
-test('2-of-2, on the daemon: the honest seat hands over its A0 before the other seat deals, then combines to the attacker\'s key', async () => {
+test('2-of-2, on the daemon: the honest seat still sends its A0 first, and the rogue deal built from it is refused', async () => {
   const log = [];
   const say = (s) => { log.push(s); };
   const honest = await serve(openStore(':memory:'), { port: 0, funded: () => true, poolCurve: curve });
@@ -140,7 +153,7 @@ test('2-of-2, on the daemon: the honest seat hands over its A0 before the other 
     say(`attacker: POST /dkg (rogue, built from the honest A0) -> ${posted.status} ${(await posted.text()).trim()}`);
 
     const done = await honest.dkg.finish(order);
-    say(`honest: finish() ok=${done.ok} group key ${done.groupPublicKey ? toHex(done.groupPublicKey).slice(0, 18) : '-'}...`);
+    say(`honest: finish() ok=${done.ok} group key ${done.groupPublicKey ? toHex(done.groupPublicKey).slice(0, 18) : '-'}... ${done.why || ''}`);
     const xEven = attackerSecret(x);
     const attackersKey = toHex(schnorr.getPublicKey(scalarTo32(xEven)));
     const facts = {
@@ -149,16 +162,22 @@ test('2-of-2, on the daemon: the honest seat hands over its A0 before the other 
       groupKeyIsAttackers: done.ok && toHex(done.groupPublicKey.subarray(1)) === attackersKey,
     };
     // and the pool's own output key - where a round's money would sit - is the attacker's to spend
-    const out = poolOutput({ groupPublicKey: done.groupPublicKey, curve });
-    const spendKey = poolShare({ share: xEven, tweak: out.tweak, negated: out.negated });
-    facts.attackerAloneSpendsPoolOutput = schnorr.verify(schnorr.sign(MESSAGE, scalarTo32(spendKey)), MESSAGE, out.outputKey);
+    if (done.ok) {
+      const out = poolOutput({ groupPublicKey: done.groupPublicKey, curve });
+      const spendKey = poolShare({ share: xEven, tweak: out.tweak, negated: out.negated });
+      facts.attackerAloneSpendsPoolOutput = schnorr.verify(schnorr.sign(MESSAGE, scalarTo32(spendKey)), MESSAGE, out.outputKey);
+    } else facts.attackerAloneSpendsPoolOutput = false;      // no group key was ever formed
     console.log('  ORDER (daemon, 2 of 2):\n    ' + log.join('\n    '));
     console.log('  FACTS (daemon, 2 of 2):', JSON.stringify(facts));
 
+    // Before (734a2ec): the rogue was taken 201, the key was the attacker's, and it spent the pool
+    // output alone. The window is still there - the honest seat still sends first - but it is useless.
     assert.deepEqual(facts, {
-      honestPushedBeforeAttackerDealt: true, honestAcceptedRogue: true,
-      groupKeyIsAttackers: true, attackerAloneSpendsPoolOutput: true,
+      honestPushedBeforeAttackerDealt: true, honestAcceptedRogue: false,
+      groupKeyIsAttackers: false, attackerAloneSpendsPoolOutput: false,
     });
+    assert.equal(posted.status, 409);
+    assert.match(log.find((l) => l.includes('rogue')), /proof of knowledge does not verify/);
   } finally {
     stub.close();
     await honest.close();
