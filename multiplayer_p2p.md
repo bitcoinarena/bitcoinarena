@@ -25,6 +25,19 @@
 > also added the committee's attested claim key, mandatory lock-field
 > verification, a separate fee preimage, seed-derived refund keys (§24) and
 > a slashing offence for withheld settlement signatures (§5A.3).
+>
+> The pass over the whole protocol (P1–P8, §35A) found two holes that were
+> free to exploit and two false claims. Free: **round grinding by mass
+> publication** (timestamp receipts cost nothing; now `publication_txid`
+> on chain before the beacon block, §5A.5) and **a self-dealing quorum that
+> never publishes its transcript** (now `FINAL` requires the settlement
+> seats to retrieve and post it, §13A). False: "a wrong chain view never
+> costs funds" (it costs the stake, §5A.4) and "replay catches
+> self-dealing" (a player-run quorum's fork selection is genuine and
+> replays; it is a capital residual, §22). Also: the creator can no longer
+> name his own federation (§23.6), bonds are sized against gross volume
+> (§5A.3), one ticket per node (§5A.6), and `publication_relays[]` give the
+> objection window somewhere to look (§25.2).
 
 > **Revision 4.6.1 — four release blockers closed.** The v4.6 architecture is
 > unchanged; four under-specified places that would have blocked a real-money
@@ -517,6 +530,7 @@ NodeAdvertisement {
   bond_outpoint                // MANDATORY; the census entry itself (§5A.2)
   bond_script_template_version
   payout_pubkey                // where fee shares are paid
+  guardian_of[]                // v4.6.2: (federation_id, guardian peer key) this operator runs (§23.6)
   timestamp
   signature                    // by node_pubkey over all of the above
 }
@@ -618,9 +632,15 @@ being spent by a slashing transaction, which makes the output no longer
 unspent at the next `census_height`.
 
 ```text
-bond_min(settlement)  >= max_round_pool of the rounds it may serve
-bond_min(game_verify) >= max_round_pool of the rounds it may serve
+bond_min(settlement)  >= max_round_volume of the rounds it may serve
+bond_min(game_verify) >= max_round_volume of the rounds it may serve
 ```
+
+`max_round_volume` is the **gross** volume — every stake locked, winners'
+included — not the loser pool *(v4.6.2, P7)*: five colluding settlement
+seats hold five shares of every `P` and the claim key, so what they can
+take is every lock of the round, roughly twice the pool. §5A.10's tables
+read `max_round_pool` as this gross figure.
 
 The bond is what makes identity expensive. Without it, a Sybil attacker
 creates arbitrarily many nodes for free and buys arbitrarily many selection
@@ -809,10 +829,18 @@ root by (a) following the block-header chain and checking Merkle inclusion
 of the bond transactions (SPV), and/or (b) querying several independent
 chain providers and requiring agreement. This is a **named residual**: a
 browser client's view of Bitcoin is only as good as its header source. It is
-the same assumption every browser Bitcoin application makes, it is bounded
-(a wrong census means a wrong committee, not stolen funds — funds still need
-5-of-7 and still refund by expiry), and it is why the reference client ships
-with multiple providers and a hard-coded checkpoint.
+the same assumption every browser Bitcoin application makes — and it is
+**not** bounded the way 4.6.1 claimed *(corrected in v4.6.2, P4)*. 4.6.1
+said a wrong census costs a failed entry, never funds. That was false under
+every construction: a client that accepts a forged census accepts the
+forger's committee, deals it the preimage shares, locks to its attested
+claim key (§23.1), and that committee signs itself a `FAILED` and claims
+the stake. A forged chain view is the whole round handed to the forger.
+This is why §25.1's verification rule is normative and why, for a paying
+round, a client MUST obtain headers from at least two independent sources
+and MUST refuse a census any one source alone vouches for. The reference
+client ships with multiple providers and a hard-coded checkpoint for that
+reason, not for convenience.
 
 ## 5A.5 Committee seed — from randomness published *after* the round
 *(changed in v4.6 — closes the grinding attack)*
@@ -877,12 +905,38 @@ entry_open_time == committee_time
 start_time      >= committee_time + min_entry_window     (reference: 60 s)
 ```
 
-**Anti-grinding still holds, and is now checkable.** The creator must obtain
-timestamp receipts for the contract from at least 5 census nodes, and those
-receipts must predate `round_randomness`. A node refuses to timestamp a
-contract whose `committee_time` has already passed. A contract without valid
-pre-randomness receipts is invalid, and entries against it get no entry
-receipts — so a creator cannot publish after seeing the beacon and backdate.
+**Anti-grinding is anchored on chain, not on receipts** *(v4.6.2, P1)*. 4.6.1
+had the creator collect timestamp receipts from five census nodes predating
+the beacon. That was two holes. Any five bonded nodes — not selected ones,
+any five — could backdate a receipt, which put the grinding attack back at
+the price of five cheap census entries. And receipts were free, so a creator
+could publish a thousand candidate contracts, let honest nodes timestamp
+them all, wait for the beacon, and promote only the one whose committee was
+his: each candidate is a fresh draw, and with 20% of the bonded capital
+(≈0.5% per draw, §5A.10) two hundred free draws make a captured committee
+near certain. Nothing in the client can see the difference, because
+`operator_id` is self-declared.
+
+Both close the same way: **a Round Contract exists only once its hash is in
+a Bitcoin block before the beacon block.**
+
+```text
+publication_txid      a transaction carrying
+                      OP_RETURN "BLW" ROUND H(RoundContract)     (36 bytes)
+                      confirmed at a height strictly below the beacon block
+```
+
+The ordering is then objective — the beacon block's hash did not exist when
+the publication confirmed — and every candidate costs a transaction. The
+arithmetic that makes this enough: with per-draw probability `p` and a
+publication costing `c`, a captured committee costs the attacker `c / p` in
+expectation — at 200 sat and 20% capital about 40,000 sat per capture, more
+than any 100-sat-bracket round holds — and a capture spent on settlement
+theft is a public federation transaction that slashes five bonds at two to
+four times the round's gross volume each (§5A.3, §5A.10). The publication
+cost prices small rounds; slashing prices large ones. A round with no
+publication, or one confirmed at or after the beacon block, is invalid and
+gets no entry receipts.
 
 - Between `published_at` and `committee_time` the lobby shows
   **"committee: pending"**. No stake may be committed in this state, and the
@@ -928,6 +982,10 @@ capital C, j identities   : weight C/(j*bond_min) each, total C/bond_min
 - **Deterministic tie-breaking.** Tickets are drawn over the *outpoint*, not
   the pubkey, so a node cannot mine a favourable identity: it would have to
   choose a txid.
+- **One ticket per node** *(v4.6.2, P8)*. A node holding several bond
+  outputs (§5A.10B) draws one ticket, over its lowest outpoint, with the
+  summed weight. One ticket per outpoint would hand a node one draw per
+  output — the splitting advantage back through the front door.
 
 ### What the weighting does and does not buy
 
@@ -1171,7 +1229,7 @@ game_verify_census_root
 settlement_census_root
 randomness_rule                 // WHICH future beacon round, at committee_time
 selection_algorithm_version     // linear-weight sortition
-timestamp_receipts[]            // >=5, predating the beacon (§5A.5)
+publication_txid                // H(contract) in a block before the beacon block (§5A.5)
 ```
 
 and, published at `committee_time` once the beacon value exists:
@@ -1283,7 +1341,8 @@ RoundContract {
   published_at
   committee_time                   // >= published_at + min_publication_lead
   entry_open_time                  // == committee_time (§5A.5)
-  timestamp_receipts[]             // >=5 census-node receipts predating the beacon
+  publication_txid                 // v4.6.2: H(contract) on chain before the beacon block (§5A.5)
+  publication_relays[]             // v4.6.2: where transcripts, attestations and objections are posted (§13A, §25.2)
 
   game_verify_slots = 7,  game_verify_threshold = 5
   settlement_slots  = 7,  settlement_threshold  = 5
@@ -1308,7 +1367,8 @@ RoundContract {
   no_quorum_rule_hash              // v4.6
 
   custody_rules                    // v4.6, see §23; names FEDERATION (§23.6)
-  federation_id                    // v4.6.2: the federation holding the stake locks
+  federation_id                    // v4.6.2: the federation holding the stake locks;
+                                   //   valid only if its guardians are bonded census nodes (§23.6)
   stake_expiry_blocks              // v4.6.2: replaces htlc_cltv_days; 144 (§23.1)
   claim_window_days
 
@@ -1558,6 +1618,32 @@ also ensure that no honest node, no third-party mirror and no watchtower
 holds the victim's receipted transcript. Their fabrication is permanently
 provable afterwards, and their bonds are slashable by whoever proves it.
 
+**Publication is a condition of finality** *(v4.6.2, P2)*. As 4.6.1 stood,
+the objection needed a transcript, and the transcript lived only with the
+nodes that received it. When the cheater is the player — an operator whose
+five nodes are the quorum — he sends the honest two nothing, his five
+receipt and sign whatever he likes, the canonical chain (§13C) is his by
+construction, and no honest party ever holds an object to replay. The
+residual of §22 ("the victim's transcript unavailable") was satisfied by
+the attacker at no cost. Therefore:
+
+- a `PROVISIONALLY_FINAL` result is not `FINAL` until the canonical
+  transcript it names by `transcript_hash` has been **retrieved by ≥5
+  settlement seats** from any game/verify node and **posted by them to the
+  round's `publication_relays[]`**, and the window `W` counts from that
+  posting, not from the fifth signature;
+- a settlement seat that cannot retrieve the transcript within the result
+  window treats the entry as `VOID` (§13C): a result nobody can replay does
+  not settle;
+- once posted, anyone can replay it. A transcript that replays to the signed
+  result was honestly played; one that does not is an objection; and a
+  second signed checkpoint chain in an honest node's hands is an equivocation
+  proof (§13B).
+
+`publication_relays[]` are data in the contract — any URL, any relay,
+several — never infrastructure of this protocol: anyone may mirror, and the
+objects carry their own verification.
+
 ---
 
 # 13B. Player equivocation *(new in v4.6)*
@@ -1685,9 +1771,9 @@ loser_pool = Σ FAILED stakes + Σ FORFEIT stakes
 
 Qualifiers (`DELIVERED` and score ≥ minimum) receive their own stake back
 plus a rank-weighted share of `loser_pool`. Node fees and the player-selected
-donation are charged **on top** of the stake at entry and therefore do not
-reduce the pool. `VOID` and `ENTRY_VOID` entries neither contribute to nor
-draw from the pool.
+donation are **inclusive** in the wallet commitment (§22A, changed); the
+pool is the sum of net stakes, and entitlement is weighted by net stake.
+`VOID` and `ENTRY_VOID` entries neither contribute to nor draw from the pool.
 
 ---
 
@@ -1933,6 +2019,17 @@ threshold of the round's federation guardians (v4.6.2, §23.6)
 federation halted below its threshold
     -> every lock freezes, refunds included; there is no unilateral exit
 ```
+
+5-of-7 GAME/VERIFY slots run by a PLAYER of the round (v4.6.2, P5)
+    -> can run many forks and submit the best: undetectable, because the
+       submitted transcript is genuine and replays to its own result.
+       Not caught by the objection window; caught only by capital (§5A.6)
+       and by publication (§13A), which forces the chosen fork into the open
+
+3 SETTLEMENT or GAME/VERIFY slots withholding receipts or signatures (P6)
+    -> can void a winner's entry (refund instead of winnings). Griefing,
+       not theft; a withheld settlement signature is slashable (§5A.3),
+       a withheld receipt leaves no artifact and is not
 
 The first two require five bonded operators to collude and forfeit five
 bonds, in a round whose committee they could not choose (§5A.5) and in which
@@ -2336,6 +2433,22 @@ Two constructions satisfy the property "no single party can move funds":
   Not used, by rule: a single-operator Lightning endpoint of any kind, a
   patched federation, a Lightning node run by the committee.
 
+**The creator does not get to pick the custodian** *(v4.6.2, P3)*. The
+Round Contract names `federation_id`, and a creator could name a federation
+whose guardians are all his — then §22's guardian residual is not a residual
+but the design. A federation is therefore valid for a paying round only if:
+
+- at least its own threshold of guardians are **distinct bonded census
+  nodes** at `census_height`, each advertising that guardian peer key under
+  `guardian_of[]` (§5A.1) with a bond at or above the bracket's
+  `bond_min_settlement`, so a guardian who colludes is slashable like any
+  seat;
+- the client has fetched the federation's configuration from its guardians
+  and its hash equals `federation_id`;
+- `federation_id` is on the client's known-good list, or the client shows it
+  and its guardians and requires an explicit confirmation — the same rule as
+  `sim_wasm_hash` (§5).
+
 The Round Contract names `FEDERATION` and its `federation_id`. The residual
 has two layers, both stated in §22: the settlement committee over one
 round's locks, and the guardians over the federation — including that a
@@ -2580,9 +2693,11 @@ it needs no trusted channel, only *some* channel. But it has a deadline
 (the objection window) and it accuses somebody. Sent only peer to peer, it
 may travel through the party it accuses, or through that party's siblings
 under a shared `operator_id` (§5A.13). It MUST therefore also go somewhere
-public that the accused does not control. This protocol does not specify
-which channel: the proof carries its own verification, so any will do, and
-naming one would make it infrastructure.
+public that the accused does not control. The Round Contract names where:
+`publication_relays[]` (§6, §13A) — data, not infrastructure, and anyone may
+add a mirror. A proof carries its own verification, so any channel will do;
+what a watchtower needs is to know where to look, and a contract that named
+none left the objection window with nothing to watch.
 
 > Direct is fast and bounded; public is censorship-resistant. A proof that
 > is both accusing and time-limited needs both.
@@ -3563,7 +3678,7 @@ is §27A.7, because none of it changes what a transcript *is*.
 | Federation halted below its threshold | Every lock frozen, refunds included — the stated residual (§22) |
 | Beacon unavailable at `committee_time` | Fallback beacon; if that fails, the entry window never opens — no stake was committed, so nothing needs refunding |
 | Census roots in a contract do not match the chain | Contract invalid; no node issues receipts; no entry possible |
-| Client's chain view is wrong (bad header source) | Wrong committee expectation; entry fails for lack of matching receipts. Funds are never at risk — settlement still needs 5-of-7 and still refunds by expiry |
+| Client's chain view is wrong (bad header source) | If the forged view is also the contract's, the player locks to the forger's committee and loses the stake — the corrected statement of v4.6.2 (§5A.4). Prevented only by verifying headers from ≥2 independent sources (§25.1); a mismatch between an honest view and the contract fails the entry safely |
 | Arbitration set inactive | No slashing; deterrence lost. Rounds settle and refund normally; bonds recoverable by the node after `bond_maturity` |
 | Arbitration set slashes without a valid proof | Bond stolen from that node. Publicly provable from the committed proof hash; player funds untouched (arbitration cannot reach stakes) |
 | Lightning payout route fails | Retry within the claim window |
@@ -3720,8 +3835,10 @@ A player trusts:
 - the exact `sim_wasm_hash`, checked against the client's known-good list;
 - the drand beacon (or its declared fallback) for committee selection and
   round randomness;
-- their client's view of the Bitcoin chain for the census (§5A.4) — bounded:
-  a wrong view costs a failed entry, never funds;
+- their client's view of the Bitcoin chain for the census (§5A.4) — **not
+  bounded**: a forged view that matches a forged contract hands the stake to
+  the forger, which is why paying rounds need headers from ≥2 independent
+  sources (§25.1);
 - for slashing *deterrence only*, the arbitration set (§5A.3B) — it can
   never touch a player stake, and the protocol settles and refunds correctly
   without it;
@@ -3764,6 +3881,12 @@ committee nor outcome).
 | **Arbitration slashes without cause** | k-of-m arbitration keys | Bond theft from an honest node | Slash must commit to a retrievable proof; unilateral recovery at `bond_maturity`; arbitration is disjoint from committees and cannot reach stakes (§5A.3B) |
 | **Undeclared operator playing his own round** | Anonymous operator | Self-signed win | `operator_id` does **not** stop this; the 5-of-7 capital requirement (§5A.6) and the replay objection (§13A) do (§5A.13) |
 | DDoS after a loss is final | Network attack | Already handled | Unchanged: `FINAL` results survive (§14) |
+| **Round grinding by mass publication** — publish many contracts, promote the one whose committee is yours | Any creator with census share | Free: timestamp receipts cost nothing and any five nodes could backdate them | `publication_txid`: the contract's hash in a block before the beacon block; every candidate costs a transaction, ordering is objective (§5A.5, P1) |
+| **Self-dealing quorum never publishes its transcript** — nothing to replay, objection impossible | Player running 5 game/verify slots | Result `FINAL` on five signatures | `FINAL` only after ≥5 settlement seats retrieved and posted the transcript to `publication_relays[]`; `W` counts from posting (§13A, P2) |
+| **Creator names his own federation** | Round creator | Not considered | A federation is valid only if its threshold of guardians are bonded census nodes, config hash matches, known-good list (§23.6, P3) |
+| **Forged chain view** | Whoever feeds the client its headers/census | "Never funds" — false | Corrected: it is the stake; ≥2 independent header sources mandatory for paying rounds (§5A.4, §25.1, P4) |
+| **Fork selection by a player-run quorum** | 5 game/verify slots | Claimed caught by replay — false, the fork is genuine | Stated residual, priced by capital; publication makes the chosen fork public (§22, P5) |
+| **Receipt withholding** to void a winner | 3 slots | Not considered | Griefing, not theft; unpunishable, stated residual (§22, P6) |
 
 ---
 
