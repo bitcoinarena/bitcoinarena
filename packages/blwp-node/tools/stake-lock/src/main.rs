@@ -1,6 +1,7 @@
 //! THE STAKE LOCK: ONE STOCK LNv2 `OutgoingContract`, FUNDED FROM THE PLAYER'S
-//! OWN ECASH, WITH THE ROUND'S COMMITTEE AS `claim_pk` (FEDERATION.md, step 1),
-//! AND THE PLAYER'S REDEEM OF THE COMMITTEE'S FORFEIT (step 2).
+//! OWN ECASH, WITH THE ROUND'S COMMITTEE AS `claim_pk` (FEDERATION.md, step 1);
+//! THE PLAYER'S REDEEM OF THE COMMITTEE'S FORFEIT (step 2); AND THE
+//! COMMITTEE'S ONE SETTLEMENT TRANSACTION (step 3a).
 //!
 //! --mode lock (default). The stock client's `send` builds this same
 //! contract, but always with the gateway's key as `claim_pk`; nothing in
@@ -26,18 +27,33 @@
 //! `OutgoingWitness::Cancel(sig)` and then want the TRANSACTION signed by the
 //! contract's `refund_pk` (lnv2-server lib.rs:491-497). This spends the lock
 //! with the given forfeit signature, signs with the given key, and lets the
-//! stock builder turn the value into the signer's ecash. It prints what the
-//! guardians said - accepted, or their refusal word for word - and what they
-//! hold at the outpoint before and after.
+//! stock builder turn the value into the signer's ecash.
+//!
+//! --mode settle. The committee cannot hand the stock builder a `Keypair` -
+//! its key is split - so this builds the raw `Transaction` itself: every given
+//! lock in as `Claim(P)`, one payout out. The payout is a PRE-EXPIRED lock
+//! (expiration 0) whose claim and refund keys are the qualifier's, so only the
+//! qualifier can ever move it (FEDERATION.md, source audit point 2). Its value
+//! is the inputs less the guardians' own LNv2 fees, read from the federation's
+//! config: `base + amount * ppm / 1e6` on every input and every output
+//! (lnv2-common config.rs). Without --signature it prints the txid and the
+//! 32 bytes the guardians verify; with one it submits. The guardians check one
+//! BIP-340 signature PER INPUT over the txid, each under that input's key
+//! (fedimint-core transaction.rs, `validate_signatures`): every lock names the
+//! committee, so the one signature is listed once per input.
 //!
 //!   blwp-stake-lock --data-dir D --amount-msat N --hash HEX --claim-pk HEX \
 //!     --refund-pk HEX --expiry-delta BLOCKS
 //!   blwp-stake-lock --mode redeem --data-dir D --outpoint TXID:IDX \
 //!     --amount-msat N --hash HEX --claim-pk HEX --refund-pk HEX \
 //!     --expiration BLOCK --forfeit-sig HEX --signer-secret HEX
+//!   blwp-stake-lock --mode settle --data-dir D --claim-pk HEX \
+//!     --locks TXID:IDX:PREIMAGE:MSAT[,...] --qualifier-pk HEX --nonce HEX16 \
+//!     [--signature HEX]
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::str::FromStr;
+use std::time::Duration;
 
 use anyhow::{Context, anyhow, bail};
 use fedimint_api_client::api::{DynModuleApi, FederationApiExt};
@@ -49,13 +65,15 @@ use fedimint_client::transaction::{
 };
 use fedimint_client::{Client, ClientHandle, RootSecret};
 use fedimint_connectors::ConnectorRegistry;
-use fedimint_core::bitcoin::hashes::sha256;
+use fedimint_core::bitcoin::hashes::{Hash, sha256};
 use fedimint_core::core::{IntoDynInstance, ModuleInstanceId, OperationId};
 use fedimint_core::db::Database;
 use fedimint_core::module::{Amounts, ApiRequestErased};
 use fedimint_core::secp256k1::schnorr::Signature;
-use fedimint_core::secp256k1::{PublicKey, SECP256K1, SecretKey};
+use fedimint_core::secp256k1::{Message, PublicKey, SECP256K1, SecretKey};
+use fedimint_core::transaction::{Transaction, TransactionSignature};
 use fedimint_core::{Amount, OutPoint, TransactionId};
+use fedimint_lnv2_common::config::LightningClientConfig;
 use fedimint_lnv2_common::contracts::{OutgoingContract, PaymentImage};
 use fedimint_lnv2_common::endpoint_constants::{
     CONSENSUS_BLOCK_COUNT_ENDPOINT, OUTGOING_CONTRACT_EXPIRATION_ENDPOINT,
@@ -65,7 +83,9 @@ use fedimint_lnv2_common::{
     OutgoingWitness,
 };
 
-fn args() -> anyhow::Result<HashMap<String, String>> {
+type Args = HashMap<String, String>;
+
+fn args() -> anyhow::Result<Args> {
     let mut out = HashMap::new();
     let mut it = std::env::args().skip(1);
     while let Some(k) = it.next() {
@@ -75,8 +95,22 @@ fn args() -> anyhow::Result<HashMap<String, String>> {
     Ok(out)
 }
 
-fn need<'a>(a: &'a HashMap<String, String>, k: &str) -> anyhow::Result<&'a str> {
+fn need<'a>(a: &'a Args, k: &str) -> anyhow::Result<&'a str> {
     a.get(k).map(String::as_str).with_context(|| format!("--{k} is required"))
+}
+
+fn hex_bytes(s: &str) -> anyhow::Result<Vec<u8>> {
+    if s.len() % 2 != 0 { bail!("odd-length hex") }
+    (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16).map_err(Into::into)).collect()
+}
+
+fn hex(b: &[u8]) -> String {
+    b.iter().map(|x| format!("{x:02x}")).collect()
+}
+
+fn outpoint(s: &str) -> anyhow::Result<OutPoint> {
+    let (txid, idx) = s.split_once(':').context("an outpoint is TXID:IDX")?;
+    Ok(OutPoint { txid: TransactionId::from_str(txid)?, out_idx: idx.parse()? })
 }
 
 /// THE PLAYER'S CLIENT, OPENED AS fedimint-cli OPENS IT: the same modules, the
@@ -128,48 +162,38 @@ fn stored_json(s: Option<(ContractId, u64)>) -> serde_json::Value {
     }
 }
 
+/// The stake lock's own fields, as the lock and redeem modes name them.
+fn stake_contract(a: &Args, expiration: u64) -> anyhow::Result<OutgoingContract> {
+    let refund_pk = PublicKey::from_str(need(a, "refund-pk")?)?;
+    Ok(OutgoingContract {
+        payment_image: PaymentImage::Hash(sha256::Hash::from_str(need(a, "hash")?)?),
+        amount: Amount::from_msats(need(a, "amount-msat")?.parse()?),
+        expiration,
+        claim_pk: PublicKey::from_str(need(a, "claim-pk")?)?,
+        refund_pk,
+        ephemeral_pk: refund_pk,
+    })
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let a = args()?;
     let mode = a.get("mode").map_or("lock", String::as_str).to_owned();
-    let data_dir = PathBuf::from(need(&a, "data-dir")?);
-    let amount = Amount::from_msats(need(&a, "amount-msat")?.parse()?);
-    let hash = sha256::Hash::from_str(need(&a, "hash")?)?;
-    let claim_pk = PublicKey::from_str(need(&a, "claim-pk")?)?;
-    let refund_pk = PublicKey::from_str(need(&a, "refund-pk")?)?;
-
-    let client = open(data_dir).await?;
+    let client = open(PathBuf::from(need(&a, "data-dir")?)).await?;
     let lnv2 = client.get_first_instance(&KIND).context("this federation has no lnv2 module")?;
     let api = client.api().with_module(lnv2);
-
     match mode.as_str() {
-        "lock" => lock(&a, &client, lnv2, &api, amount, hash, claim_pk, refund_pk).await,
-        "redeem" => redeem(&a, &client, lnv2, &api, amount, hash, claim_pk, refund_pk).await,
-        other => bail!("no mode {other}: lock or redeem"),
+        "lock" => lock(&a, &client, lnv2, &api).await,
+        "redeem" => redeem(&a, &client, lnv2, &api).await,
+        "settle" => settle(&a, &client, lnv2, &api).await,
+        other => bail!("no mode {other}: lock, redeem or settle"),
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-async fn lock(
-    a: &HashMap<String, String>,
-    client: &ClientHandle,
-    lnv2: ModuleInstanceId,
-    api: &DynModuleApi,
-    amount: Amount,
-    hash: sha256::Hash,
-    claim_pk: PublicKey,
-    refund_pk: PublicKey,
-) -> anyhow::Result<()> {
+async fn lock(a: &Args, client: &ClientHandle, lnv2: ModuleInstanceId, api: &DynModuleApi) -> anyhow::Result<()> {
     let delta: u64 = need(a, "expiry-delta")?.parse()?;
     let count = block_count(api).await?;
-    let contract = OutgoingContract {
-        payment_image: PaymentImage::Hash(hash),
-        amount,
-        expiration: count + delta,
-        claim_pk,
-        refund_pk,
-        ephemeral_pk: refund_pk,
-    };
+    let contract = stake_contract(a, count + delta)?;
     let contract_id = contract.contract_id();
 
     let bundle = ClientOutputBundle::new_no_sm(vec![ClientOutput {
@@ -214,8 +238,8 @@ async fn lock(
                     "stored_expiration": stored_expiration,
                     "ids_match": stored_id == contract_id,
                     "amount_msat": contract.amount.msats,
-                    "claim_pk": claim_pk.to_string(),
-                    "refund_pk": refund_pk.to_string(),
+                    "claim_pk": contract.claim_pk.to_string(),
+                    "refund_pk": contract.refund_pk.to_string(),
                 })
             );
             return Ok(());
@@ -224,33 +248,15 @@ async fn lock(
     bail!("the lock transaction {txid} was accepted but no outpoint of it holds an outgoing contract")
 }
 
-#[allow(clippy::too_many_arguments)]
-async fn redeem(
-    a: &HashMap<String, String>,
-    client: &ClientHandle,
-    lnv2: ModuleInstanceId,
-    api: &DynModuleApi,
-    amount: Amount,
-    hash: sha256::Hash,
-    claim_pk: PublicKey,
-    refund_pk: PublicKey,
-) -> anyhow::Result<()> {
-    let (txid, idx) = need(a, "outpoint")?.split_once(':').context("--outpoint is TXID:IDX")?;
-    let outpoint = OutPoint { txid: TransactionId::from_str(txid)?, out_idx: idx.parse()? };
+async fn redeem(a: &Args, client: &ClientHandle, lnv2: ModuleInstanceId, api: &DynModuleApi) -> anyhow::Result<()> {
+    let outpoint = outpoint(need(a, "outpoint")?)?;
     let expiration: u64 = need(a, "expiration")?.parse()?;
     let forfeit = Signature::from_slice(&hex_bytes(need(a, "forfeit-sig")?)?)?;
     let signer = SecretKey::from_slice(&hex_bytes(need(a, "signer-secret")?)?)?.keypair(SECP256K1);
 
     // THE CONTRACT, REBUILT FROM ITS FIELDS: its id must be the one the
     // guardians hold at that outpoint, or this is some other lock.
-    let contract = OutgoingContract {
-        payment_image: PaymentImage::Hash(hash),
-        amount,
-        expiration,
-        claim_pk,
-        refund_pk,
-        ephemeral_pk: refund_pk,
-    };
+    let contract = stake_contract(a, expiration)?;
     let before = stored_at(api, outpoint).await?;
     let count = block_count(api).await?;
     let forfeit_verifies = contract.verify_forfeit_signature(&forfeit);
@@ -288,7 +294,7 @@ async fn redeem(
             "expiration": expiration,
             "forfeit_verifies_under_claim_pk": forfeit_verifies,
             "signer_pk": signer.public_key().to_string(),
-            "signer_is_refund_pk": signer.public_key() == refund_pk,
+            "signer_is_refund_pk": signer.public_key() == contract.refund_pk,
             "accepted": accepted,
             "txid": redeem_txid.map(|t| t.to_string()),
             "error": error,
@@ -298,7 +304,134 @@ async fn redeem(
     Ok(())
 }
 
-fn hex_bytes(s: &str) -> anyhow::Result<Vec<u8>> {
-    if s.len() % 2 != 0 { bail!("odd-length hex") }
-    (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16).map_err(Into::into)).collect()
+async fn settle(a: &Args, client: &ClientHandle, lnv2: ModuleInstanceId, api: &DynModuleApi) -> anyhow::Result<()> {
+    let claim_pk = PublicKey::from_str(need(a, "claim-pk")?)?;
+    let qualifier = PublicKey::from_str(need(a, "qualifier-pk")?)?;
+    let nonce: [u8; 8] = hex_bytes(need(a, "nonce")?)?.try_into().map_err(|_| anyhow!("--nonce is 8 bytes"))?;
+
+    // THE GUARDIANS' OWN FEE RULE, off the federation's config - not assumed.
+    let config = client.config().await;
+    let fee = config
+        .modules
+        .get(&lnv2)
+        .context("no lnv2 config")?
+        .cast::<LightningClientConfig>()?
+        .fee_consensus
+        .clone();
+
+    // EVERY LOCK IN, AS Claim(P).
+    let mut locks = Vec::new();
+    let mut inputs = Vec::new();
+    let mut input_msats = 0u64;
+    let mut input_fee_msats = 0u64;
+    for spec in need(a, "locks")?.split(',') {
+        let parts: Vec<&str> = spec.split(':').collect();
+        let [txid, idx, preimage, msat] = parts[..] else { bail!("a lock is TXID:IDX:PREIMAGE:MSAT") };
+        let op = OutPoint { txid: TransactionId::from_str(txid)?, out_idx: idx.parse()? };
+        let preimage: [u8; 32] = hex_bytes(preimage)?.try_into().map_err(|_| anyhow!("a preimage is 32 bytes"))?;
+        let amount = Amount::from_msats(msat.parse()?);
+        input_msats += amount.msats;
+        input_fee_msats += fee.fee(amount).msats;
+        inputs.push(LightningInput::V0(LightningInputV0::Outgoing(op, OutgoingWitness::Claim(preimage))).into_dyn(lnv2));
+        locks.push(op);
+    }
+
+    // ONE PAYOUT OUT, THE LARGEST THAT THE INPUTS PAY FOR: out + fee(out) <=
+    // inputs - their fees. Stepped down from the top, so the figure is the
+    // rule's and not an estimate of it.
+    let spendable = input_msats - input_fee_msats;
+    let mut out = spendable;
+    while out > 0 && out + fee.fee(Amount::from_msats(out)).msats > spendable {
+        out -= 1;
+    }
+    let output_fee_msats = fee.fee(Amount::from_msats(out)).msats;
+    let payout = OutgoingContract {
+        // Unused: the lock is pre-expired, so Claim is refused for everybody,
+        // and its claim key is the qualifier's anyway.
+        payment_image: PaymentImage::Hash(sha256::Hash::from_byte_array([0u8; 32])),
+        amount: Amount::from_msats(out),
+        expiration: 0,
+        claim_pk: qualifier,
+        refund_pk: qualifier,
+        ephemeral_pk: qualifier,
+    };
+    let outputs = vec![LightningOutput::V0(LightningOutputV0::Outgoing(payout.clone())).into_dyn(lnv2)];
+    let txid = Transaction::tx_hash_from_parts(&inputs, &outputs, nonce);
+    let message_hex = hex(&txid[..]);
+
+    let mut report = serde_json::json!({
+        "mode": "settle",
+        "txid": txid.to_string(),
+        "message_hex": message_hex,
+        "inputs": locks.iter().map(|o| format!("{}:{}", o.txid, o.out_idx)).collect::<Vec<_>>(),
+        "input_msat": input_msats,
+        "fee_ppm": fee.parts_per_million,
+        "fee_base_msat": fee.base.msats,
+        "input_fees_msat": input_fee_msats,
+        "payout_msat": out,
+        "output_fee_msat": output_fee_msats,
+        "unspent_msat": input_msats - input_fee_msats - out - output_fee_msats,
+        "payout_contract_id": payout.contract_id().0.to_string(),
+        "qualifier_pk": qualifier.to_string(),
+    });
+    let Some(sig_hex) = a.get("signature") else {
+        println!("{report}");
+        return Ok(());
+    };
+
+    let signature = Signature::from_slice(&hex_bytes(sig_hex)?)?;
+    let verifies = SECP256K1
+        .verify_schnorr(&signature, &Message::from_digest_slice(&txid[..])?, &claim_pk.x_only_public_key().0)
+        .is_ok();
+    let before: Vec<_> = futures_join(api, &locks).await?;
+    let count = block_count(api).await?;
+    let tx = Transaction {
+        inputs,
+        outputs,
+        nonce,
+        // ONE SIGNATURE PER INPUT, each under that input's key: every lock names
+        // the committee, so the committee's one signature is listed per input.
+        signatures: TransactionSignature::NaiveMultisig(vec![signature; locks.len()]),
+    };
+    let outcome = client
+        .api()
+        .submit_transaction(tx)
+        .await
+        .try_into_inner(client.decoders())
+        .map_err(|e| anyhow!("the guardians' answer did not decode: {e}"))?;
+    let (accepted, error) = match outcome.0 {
+        Ok(_) => (true, None),
+        Err(e) => (false, Some(e.to_string())),
+    };
+
+    // AND WHAT THE GUARDIANS HOLD AFTERWARDS. An accepted submission is then
+    // processed in consensus, so the payout is waited for (up to 60 s).
+    let payout_outpoint = OutPoint { txid, out_idx: 0 };
+    let mut payout_stored = stored_at(api, payout_outpoint).await?;
+    let started = std::time::Instant::now();
+    while accepted && payout_stored.is_none() && started.elapsed() < Duration::from_secs(60) {
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        payout_stored = stored_at(api, payout_outpoint).await?;
+    }
+    let after: Vec<_> = futures_join(api, &locks).await?;
+    let obj = report.as_object_mut().expect("an object");
+    obj.insert("signature_verifies_under_claim_pk".into(), verifies.into());
+    obj.insert("signatures_listed".into(), locks.len().into());
+    obj.insert("block_count_at_submit".into(), count.into());
+    obj.insert("locks_before".into(), serde_json::Value::Array(before));
+    obj.insert("accepted".into(), accepted.into());
+    obj.insert("error".into(), error.into());
+    obj.insert("locks_after".into(), serde_json::Value::Array(after));
+    obj.insert("payout_stored".into(), stored_json(payout_stored));
+    obj.insert("payout_wait_ms".into(), (started.elapsed().as_millis() as u64).into());
+    println!("{report}");
+    Ok(())
+}
+
+async fn futures_join(api: &DynModuleApi, locks: &[OutPoint]) -> anyhow::Result<Vec<serde_json::Value>> {
+    let mut out = Vec::new();
+    for op in locks {
+        out.push(stored_json(stored_at(api, *op).await?));
+    }
+    Ok(out)
 }
