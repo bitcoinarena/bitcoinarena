@@ -13,9 +13,9 @@
 // AND A CONTRACT CANNOT NAME THE SEED EITHER, which is why the field had to
 // stop being an input rather than start being checked: `round_id` hashes the
 // contract, so a contract carrying the seed derived from its own id has no
-// fixed point. Measured below. The spec's Round Contract (§6) carries
-// `randomness_rule`, `randomness_fallback`, `committee_time` and
-// `entry_open_time` - and no committee seed at all.
+// fixed point. Measured below. The spec's Round Contract (§6, v4.6.2) carries
+// `randomness_rule`, `committee_time` and `entry_open_time` - and no committee
+// seed at all.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { selectCommittee } from '../../protocol/src/sortition.js';
@@ -207,9 +207,10 @@ test('two beacons that differ only after committee_time seat different committee
 });
 
 test('a fallback is the same beacon or it is nothing', () => {
-  // Section 6 lists `randomness_fallback` beside the rule: "first block hash
-  // after committee_time". On a network born reading `bitcoin-block-hash` that
-  // IS the rule, so the only honest values are absent, empty, or the born rule
+  // Spec v4.6.2 has no fallback beacon (§6 dropped `randomness_fallback`); the
+  // beacon is the first Bitcoin block after committee_time. On a network born
+  // reading `bitcoin-block-hash` that IS the rule, so the only honest values
+  // are absent, empty, or the born rule
   // itself. Anything else is a SECOND randomness source - and a second source
   // is a second committee, since a creator free to fall back would fall back
   // to the beacon that seats their own nodes.

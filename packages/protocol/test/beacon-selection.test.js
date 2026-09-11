@@ -1,10 +1,10 @@
 // WHICH BLOCK SEEDS A COMMITTEE, AND WHY IT CANNOT BE THE TIP.
 //
-// 5A.5 names the beacon by TIME - "round_randomness = drand.round(committee_
-// time)" - so every node lands on one value without anybody naming it. This
-// network reads Bitcoin rather than drand, and `bitcoin-block-hash` is a
-// SOURCE, not a selection: two honest nodes polling at different moments take
-// different tips and seat different committees. This is the selection.
+// 5A.5 (spec v4.6.2) names the beacon by TIME - the first Bitcoin block whose
+// median-time-past is after committee_time - so every node lands on one value
+// without anybody naming it. But `bitcoin-block-hash` is a SOURCE, not a
+// selection: two honest nodes polling at different moments take different tips
+// and seat different committees. This is the selection.
 //
 // The timestamps here are chosen, not mined, which is the point: a fixture
 // with a known clock is the only way to assert WHICH block the rule picks.

@@ -341,10 +341,10 @@ function sampleContract() {
 }
 
 /**
- * 23.6: "The Round Contract names which construction it uses." Two exist -
- * a threshold-signed Lightning node, which the spec calls emerging technology,
- * and a Fedimint-class federation, which it calls production-ready today - and
- * they carry the same residual with different maturity. A player is entitled
+ * 23.6 (spec v4.6.2): "The Round Contract names which construction it uses."
+ * Two exist - a threshold-signed Lightning node, which the spec calls emerging
+ * and measured-not-used, and the Fedimint-class federation with the stake lock
+ * inside it, which is V1 - with different residual layers. A player is entitled
  * to know which one they staked into, and a round settled under one cannot be
  * replayed as if it were the other. Naming it is not implementing it.
  */

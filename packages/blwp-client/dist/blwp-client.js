@@ -878,23 +878,31 @@ function genesisConfigHash() {
 const OBJECTION_WINDOW_REFERENCE_MS = 600000n;
 
 /**
- * WHICH CUSTODY CONSTRUCTION A ROUND USES. Section 23.6 names two and says
- * "The Round Contract names which construction it uses":
+ * WHICH CUSTODY CONSTRUCTION A ROUND USES. Section 23.6 (spec v4.6.2) names
+ * two and says "The Round Contract names which construction it uses":
  *
  *   THRESHOLD_LN   a threshold-signed Lightning node - FROST-style Schnorr
- *                  over channel operations - which 23.6 calls "the cleanest
- *                  fit, and emerging technology rather than a solved product"
- *   FEDERATION     a Fedimint-class federation with a Lightning gateway,
- *                  "production-ready today, with an identical trust statement"
+ *                  over channel operations - "the cleanest fit on paper,
+ *                  still emerging technology". Measured in this project and
+ *                  NOT USED: lnd's remote signer asks for ECDSA by the node
+ *                  key and for MuSig2 shares, which a FROST committee does
+ *                  not produce.
+ *   FEDERATION     V1. A Fedimint-class federation with the STAKE LOCK inside
+ *                  it - LNv2's OutgoingContract, claimed by preimage and the
+ *                  claim key, forfeited by the claim key to the refund key,
+ *                  refunded after expiry, all enforced by the guardians'
+ *                  consensus. Lightning only at the edges: deposits and
+ *                  withdrawals through any of at least two gateways run by
+ *                  different operators. No gateway holds a round's money.
  *
- * "V1 deployments should use the mature one and migrate when threshold-LN
- * hardens", so a round has to SAY which one it ran under: the residual is the
- * same either way (22: five colluding bonded operators control in-transit
- * funds) but a player is entitled to know which construction they staked into,
- * and a round settled under one cannot be replayed as if it were the other.
+ * A round has to SAY which one it ran under: the residual differs by layer
+ * (22: the settlement committee over a round's locks, and the guardians over
+ * the federation - a halted federation freezes refunds), and a round settled
+ * under one cannot be replayed as if it were the other.
  *
- * Naming them is not implementing them. Neither construction exists in this
- * repo and this field does not bring one.
+ * Naming a construction is not implementing one. The FEDERATION stake lock is
+ * rehearsed on stock fedimintd 0.12.0 in blwp-node/tools, but this field and
+ * its byte do not bring custody into the node or the client.
  */
 const CUSTODY = ['THRESHOLD_LN', 'FEDERATION'];
 const custodyByte = (which) => {

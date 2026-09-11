@@ -101,10 +101,11 @@ export function beaconIsAfterRound(contract, { height, timeMs } = {}) {
 
   // AND A FALLBACK IS THE SAME BEACON OR IT IS NOTHING.
   //
-  // Section 6 lists `randomness_fallback` beside the rule: "first block hash
-  // after committee_time". On a network born reading `bitcoin-block-hash` that
-  // IS the rule - there is nothing else it could name - so the only honest
-  // values are absent, empty, or the born rule itself. Anything else is a
+  // Spec v4.6.2 has no fallback beacon: §6 dropped `randomness_fallback`, and
+  // 5A.5's beacon is the first Bitcoin block after committee_time. On a network
+  // born reading `bitcoin-block-hash` that IS the rule - there is nothing else
+  // a fallback could name - so the only honest values are absent, empty, or
+  // the born rule itself. Anything else is a
   // SECOND randomness source, and a second source is a second committee: a
   // creator who could fall back to a beacon of their own choosing would pick
   // the one that seats their nodes, which is 5A.5's whole attack with an extra
@@ -194,10 +195,13 @@ export function medianTimePast(headers, firstHeight, at) {
 /**
  * WHICH BLOCK SEEDS THIS ROUND'S COMMITTEE, from the chain and nothing else.
  *
- * 5A.5 names a beacon by TIME - "round_randomness = drand.round(committee_time)"
- * - so that every node lands on the same value without anybody naming it. This
- * network reads Bitcoin instead of drand (`genesis.randomnessSource` is
- * `bitcoin-block-hash`), and a source is not a selection: two honest nodes
+ * 5A.5 (spec v4.6.2) names a beacon by TIME - the first Bitcoin block whose
+ * median-time-past is after committee_time - so that every node lands on the
+ * same value without anybody naming it (`genesis.randomnessSource` is
+ * `bitcoin-block-hash`). The spec then takes round_randomness =
+ * H(hash(beacon_block) || height(beacon_block)); the callers here still seed
+ * with the block hash itself, which this function does not change. But a
+ * source is not a selection: two honest nodes
  * polling at different moments would take different tips, derive different
  * seeds and seat different committees. This is the missing half.
  *

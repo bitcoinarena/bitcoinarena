@@ -1,7 +1,7 @@
 // WHERE A NODE'S OWN CHAIN VIEW COMES FROM: its bitcoind, over RPC.
 //
-// The committee seed is a block hash published after `committee_time` (5A.5,
-// and this network reads bitcoin-block-hash where the spec's text says drand).
+// The committee seed is a Bitcoin block hash published after `committee_time`
+// (5A.5, spec v4.6.2: the first block whose median-time-past is after it).
 // `beaconFromChain` already says WHICH block that is, given headers. Until
 // something reads a real chain, that rule is a function of headers somebody
 // handed in - and "somebody handed in" is exactly the party the rule exists to

@@ -84,8 +84,8 @@ export function selectCommittee({ entries, contract, role, exclude, committeeSee
   //   committee_seed = H(census_root_gv || census_root_settle
   //                      || round_id || round_randomness)
   //
-  // and the spec's Round Contract carries `randomness_rule`,
-  // `randomness_fallback`, `committee_time` and `entry_open_time` - and NO
+  // and the spec's Round Contract (v4.6.2) carries `randomness_rule`,
+  // `committee_time` and `entry_open_time` - and NO
   // committee seed, because a contract cannot name one: `round_id` hashes the
   // contract, so a contract carrying the seed derived from its own id has no
   // fixed point. Measured, six iterations, never equal.
