@@ -46,7 +46,9 @@
 //!     --refund-pk HEX --expiry-delta BLOCKS
 //!   blwp-stake-lock --mode redeem --data-dir D --outpoint TXID:IDX \
 //!     --amount-msat N --hash HEX --claim-pk HEX --refund-pk HEX \
-//!     --expiration BLOCK --forfeit-sig HEX --signer-secret HEX
+//!     --expiration BLOCK [--witness cancel --forfeit-sig HEX | --witness refund] \
+//!     --signer-secret HEX
+//!   blwp-stake-lock --mode status --data-dir D --outpoint TXID:IDX
 //!   blwp-stake-lock --mode settle --data-dir D --claim-pk HEX \
 //!     --locks TXID:IDX:PREIMAGE:MSAT[,...] --qualifier-pk HEX --nonce HEX16 \
 //!     [--signature HEX]
@@ -186,7 +188,8 @@ async fn main() -> anyhow::Result<()> {
         "lock" => lock(&a, &client, lnv2, &api).await,
         "redeem" => redeem(&a, &client, lnv2, &api).await,
         "settle" => settle(&a, &client, lnv2, &api).await,
-        other => bail!("no mode {other}: lock, redeem or settle"),
+        "status" => status(&a, &api).await,
+        other => bail!("no mode {other}: lock, redeem, settle or status"),
     }
 }
 
@@ -251,7 +254,6 @@ async fn lock(a: &Args, client: &ClientHandle, lnv2: ModuleInstanceId, api: &Dyn
 async fn redeem(a: &Args, client: &ClientHandle, lnv2: ModuleInstanceId, api: &DynModuleApi) -> anyhow::Result<()> {
     let outpoint = outpoint(need(a, "outpoint")?)?;
     let expiration: u64 = need(a, "expiration")?.parse()?;
-    let forfeit = Signature::from_slice(&hex_bytes(need(a, "forfeit-sig")?)?)?;
     let signer = SecretKey::from_slice(&hex_bytes(need(a, "signer-secret")?)?)?.keypair(SECP256K1);
 
     // THE CONTRACT, REBUILT FROM ITS FIELDS: its id must be the one the
@@ -259,10 +261,25 @@ async fn redeem(a: &Args, client: &ClientHandle, lnv2: ModuleInstanceId, api: &D
     let contract = stake_contract(a, expiration)?;
     let before = stored_at(api, outpoint).await?;
     let count = block_count(api).await?;
-    let forfeit_verifies = contract.verify_forfeit_signature(&forfeit);
+
+    // WHICH WAY OUT (lnv2-server lib.rs:466-497): `cancel` is the committee's
+    // forfeit - a signature by claim_pk over the contract id, any time;
+    // `refund` needs no signature in the witness at all, only the lock's
+    // expiration at or below the guardians' block count. Both then want the
+    // TRANSACTION signed by refund_pk.
+    let witness_kind = a.get("witness").map_or("cancel", String::as_str).to_owned();
+    let (witness, forfeit_verifies) = match witness_kind.as_str() {
+        "cancel" => {
+            let forfeit = Signature::from_slice(&hex_bytes(need(a, "forfeit-sig")?)?)?;
+            let verifies = contract.verify_forfeit_signature(&forfeit);
+            (OutgoingWitness::Cancel(forfeit), Some(verifies))
+        }
+        "refund" => (OutgoingWitness::Refund, None),
+        other => bail!("no witness {other}: cancel or refund"),
+    };
 
     let bundle = ClientInputBundle::new_no_sm(vec![ClientInput {
-        input: LightningInput::V0(LightningInputV0::Outgoing(outpoint, OutgoingWitness::Cancel(forfeit))),
+        input: LightningInput::V0(LightningInputV0::Outgoing(outpoint, witness)),
         keys: vec![signer],
         amounts: Amounts::new_bitcoin(contract.amount),
     }])
@@ -286,6 +303,7 @@ async fn redeem(a: &Args, client: &ClientHandle, lnv2: ModuleInstanceId, api: &D
         "{}",
         serde_json::json!({
             "mode": "redeem",
+            "witness": witness_kind,
             "outpoint": format!("{}:{}", outpoint.txid, outpoint.out_idx),
             "contract_id": contract.contract_id().0.to_string(),
             "ids_match_before": before.map(|(id, _)| id == contract.contract_id()),
@@ -301,6 +319,16 @@ async fn redeem(a: &Args, client: &ClientHandle, lnv2: ModuleInstanceId, api: &D
             "stored_after": stored_json(after),
         })
     );
+    Ok(())
+}
+
+/// What the guardians hold at an outpoint, and their block count - for a
+/// caller waiting on the guardians' count to reach an expiry.
+async fn status(a: &Args, api: &DynModuleApi) -> anyhow::Result<()> {
+    let op = outpoint(need(a, "outpoint")?)?;
+    let count = block_count(api).await?;
+    let stored = stored_at(api, op).await?;
+    println!("{}", serde_json::json!({ "mode": "status", "block_count": count, "stored": stored_json(stored) }));
     Ok(())
 }
 
