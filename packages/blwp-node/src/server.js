@@ -227,16 +227,23 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
    */
   const tipOf = chainTip || (poolCall ? async () => Number(await poolCall('getblockcount', [])) : null);
   let expiryTimer = null;
-  if (tipOf && custody.reaches) {
+  if (custody.reaches) {
     let sweeping = false;
     expiryTimer = setInterval(async () => {
       if (sweeping || shuttingDown) return;
       sweeping = true;
       try {
-        const tipHeight = Number(await tipOf());
-        const out = custody.expire({ tipHeight });
-        for (const e of out.expired || [])
-          console.log(`[custody] ${toHex(e).slice(0, 16)} HELD -> EXPIRED: this node's chain is at ${tipHeight}, past its HTLC's expiry`);
+        // AN INVOICE NOBODY PAID, on this node's clock and the expiry it set.
+        const unpaid = await custody.expireUnpaid();
+        for (const e of unpaid.expired || [])
+          console.log(`[custody] ${toHex(e).slice(0, 16)} HELD -> EXPIRED: its invoice ran out unpaid`);
+        // A PAID HOLD, on this node's chain and the HTLC expiry seen with it.
+        if (tipOf) {
+          const tipHeight = Number(await tipOf());
+          const out = custody.expire({ tipHeight });
+          for (const e of out.expired || [])
+            console.log(`[custody] ${toHex(e).slice(0, 16)} HELD -> EXPIRED: this node's chain is at ${tipHeight}, past its HTLC's expiry`);
+        }
       } catch (e) { console.error(`[custody] expiry: ${e.message}`); } finally { sweeping = false; }
     }, expiry.everyMs ?? 5000);
     if (expiryTimer.unref) expiryTimer.unref();

@@ -206,6 +206,12 @@ export class Custody {
       state: HELD, request: invoice.request,
       why: 'in flight, in nobody\'s balance, until a final result says otherwise',
     });
+    // WHEN IT RUNS OUT IF NOBODY PAYS (M3.3-30): now plus the expiry this node
+    // asked for. A second daemon taking up the endpoint's invoice counts from
+    // its own issue, which is later - a row that stays HELD a little long, never
+    // one that says EXPIRED while the invoice can still be paid.
+    if (Number.isInteger(invoice.expirySeconds) && invoice.expirySeconds > 0)
+      this.round.putInvoiceExpiry({ entryId, expiresMs: this.round.now() + invoice.expirySeconds * 1000 });
     return { ok: true, state: HELD, paymentHash: invoice.paymentHash, invoice: invoice.request };
   }
 
@@ -390,6 +396,38 @@ export class Custody {
         entryId: row.entryId, roundId: row.roundId, paymentHash: row.paymentHash,
         amountMsat: row.amountMsat, state: EXPIRED,
         why: `its HTLC expired at height ${at} and this node's chain is at ${tipHeight}: the hold went back to its player`,
+      });
+      expired.push(row.entryId);
+    }
+    return { ok: true, expired };
+  }
+
+  /**
+   * AN INVOICE NOBODY PAID IS NOT HELD (M3.3-30).
+   *
+   * HELD means money in flight in nobody's balance, and for an invoice never
+   * paid that is false. A HELD row this node never saw paid, past the expiry it
+   * recorded when it issued the invoice, is EXPIRED - its own clock on its own
+   * number. But "never seen paid" is not "never paid": a player can pay and be
+   * seen by nobody, and that HTLC is held in lnd past any invoice expiry. So the
+   * one seen-time question is asked first, whether it is paid; a paid hold is
+   * then seen, its HTLC expiry recorded, and it follows the chain-height rule
+   * (`expire`). Only "not paid" expires a row; an answer this node cannot get
+   * leaves it alone.
+   */
+  async expireUnpaid({ nowMs = this.round.now() } = {}) {
+    const expired = [];
+    for (const row of this.round.holdsInState(HELD)) {
+      const until = this.round.invoiceExpiry(row.entryId);
+      if (until === null || !(nowMs > until)) continue;
+      if (this.round.stakeSeen(row.entryId)) continue;   // paid: the chain decides
+      let seen;
+      try { seen = await this.seenPaid(row.entryId); } catch { continue; }
+      if (!seen || seen.ok || !/^the stake is not paid and held/.test(seen.why || '')) continue;
+      this.round.putHold({
+        entryId: row.entryId, roundId: row.roundId, paymentHash: row.paymentHash,
+        amountMsat: row.amountMsat, state: EXPIRED,
+        why: `its invoice ran out unpaid at ${new Date(until).toISOString()}: nothing was ever sent`,
       });
       expired.push(row.entryId);
     }

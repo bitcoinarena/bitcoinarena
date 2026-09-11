@@ -255,6 +255,15 @@ export function openStore(path = ':memory:') {
       seen_ms       INTEGER NOT NULL
     );
 
+    -- WHEN AN INVOICE NOBODY PAYS RUNS OUT (M3.3-30): the moment this node
+    -- issued it plus the expiry it asked Lightning for. Its own number, never
+    -- read back; an unpaid row still HELD past it is EXPIRED - nothing was ever
+    -- sent. A table of its own so a store written before it gains it.
+    CREATE TABLE IF NOT EXISTS invoice_expiry (
+      entry_id    BLOB PRIMARY KEY REFERENCES entries(entry_id),
+      expires_ms  INTEGER NOT NULL
+    );
+
     -- WHAT A ROUND OWES AND WHETHER IT HAS BEEN PAID (9.4's qualifying tail).
     --
     -- One row per round, not per entry: the payout is ONE transaction spending

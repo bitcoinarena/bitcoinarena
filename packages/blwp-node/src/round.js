@@ -1208,6 +1208,18 @@ export class Round {
     return row ? row.expiry_height : null;
   }
 
+  /** When the invoice this node issued runs out unpaid - written once, at issue (M3.3-30). */
+  putInvoiceExpiry({ entryId, expiresMs }) {
+    this.db.prepare('INSERT OR IGNORE INTO invoice_expiry (entry_id, expires_ms) VALUES (?, ?)')
+      .run(Buffer.from(entryId), expiresMs);
+  }
+
+  invoiceExpiry(entryIdBytes) {
+    const row = this.db.prepare('SELECT expires_ms FROM invoice_expiry WHERE entry_id = ?')
+      .get(Buffer.from(entryIdBytes));
+    return row ? Number(row.expires_ms) : null;
+  }
+
   /**
    * WHAT THIS NODE BELIEVES ABOUT A ROUND'S PAYOUT, and how it changed.
    *

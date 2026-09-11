@@ -91,6 +91,9 @@ export function lndPort({ lncli, args = [], timeoutMs = 60000, expirySeconds = 3
         paymentHash: Buffer.from(back.r_hash, 'hex'),
         amountMsat: BigInt(back.value_msat),
         request: made ? made.payment_request : back.payment_request,
+        // THE EXPIRY THIS NODE ASKED FOR (M3.3-30) - its own number, so an
+        // invoice nobody pays is known to have run out without asking lnd.
+        expirySeconds,
         ...(made ? {} : { already: true }),
       };
     },
