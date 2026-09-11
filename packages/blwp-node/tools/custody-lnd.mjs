@@ -28,6 +28,7 @@
 // SINGLE-NODE CUSTODY, NOT §23.5. Bob is one node holding everyone's money.
 //
 //   node packages/blwp-node/tools/custody-lnd.mjs [--keep]
+import { CORE_HASH } from './core-hash.mjs';
 import { execFile, execFileSync, spawn } from 'node:child_process';
 import { mkdtempSync, mkdirSync, existsSync, appendFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -143,7 +144,7 @@ async function main() {
     const round = new Round(openStore(join(dir, 'bob-node.db')), () => NOW);
     const contract = {
       networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations: 6,
-      gameVerifySlots: 2, settlementSlots: 2, simCoreHash: b32(1),
+      gameVerifySlots: 2, settlementSlots: 2, simCoreHash: CORE_HASH,
       committeeTimeMs: BigInt(NOW), randomnessRule: 'bitcoin-block-hash',
       startTimeMs: BigInt(NOW) + MIN_ENTRY_WINDOW_MS,
       entryCloseMs: BigInt(NOW) + MIN_ENTRY_WINDOW_MS + 200000n,

@@ -8,6 +8,7 @@
 // loaded by this process at all, and a gate that let a round through could
 // still not issue a hold. It opens one round that asks 100000 msat and one
 // that asks nothing, in memory, on a loopback port, and prints both answers.
+import { CORE_HASH } from './core-hash.mjs';
 import { openStore } from '../src/store.js';
 import { serve } from '../src/server.js';
 import { lndPreflight } from '../src/preflight.js';
@@ -29,7 +30,7 @@ const NOW = Date.now();
 const b32 = (n) => new Uint8Array(32).fill(n);
 const contractFor = (nodes, stakeMsat) => ({
   networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations: 1,
-  gameVerifySlots: 7, settlementSlots: 7, simCoreHash: b32(1),
+  gameVerifySlots: 7, settlementSlots: 7, simCoreHash: CORE_HASH,
   committeeTimeMs: BigInt(NOW), randomnessRule: 'bitcoin-block-hash',
   startTimeMs: BigInt(NOW) + MIN_ENTRY_WINDOW_MS, entryCloseMs: BigInt(NOW) + MIN_ENTRY_WINDOW_MS + 200000n,
   objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20,

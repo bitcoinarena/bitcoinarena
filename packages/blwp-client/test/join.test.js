@@ -17,15 +17,17 @@ import { serve } from '../../blwp-node/src/server.js';
 import { Client } from '../src/client.js';
 import { joinQuery, joinFromQuery, fetchRound, tabSeed, playerFor, entryFor, stakeFor, fetchSettlementSeats, roundPays } from '../src/join.js';
 import { playerSecretFor, refundFingerprint } from '../../protocol/src/player-key.js';
+import { coreHashHex } from '../../core/tools/hash-core.js';
 import { entryFeeMsat, feeMatchesEntry } from '../../protocol/src/fee.js';
 import { NO_SHARES } from '../../protocol/src/handout.js';
 import { feldmanGroup } from '../../blwp-node/src/curve.js';
 import { encodeRoundContract, roundId } from '../../protocol/src/contracts.js';
 import { MIN_ENTRY_WINDOW_MS } from '../../protocol/src/constants.js';
 import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
-import { toHex } from '../../protocol/src/hash.js';
+import { toHex, fromHex } from '../../protocol/src/hash.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
+const CORE = fromHex(coreHashHex());
 const session = ed25519.utils.randomSecretKey();
 const sign = (id) => ed25519.sign(id, session);
 const verify = (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } };
@@ -183,7 +185,7 @@ test('two tabs are two players, and one tab is one player twice', () => {
  */
 test('a seat carries the seed\'s key for the round, its fingerprint is the player\'s to check, and any other key is refused', async () => {
   const seed = b32(0x5e);
-  const round = { id: b32(0x11), stakeMsat: 100000n, settlementSlots: 7 };
+  const round = { id: b32(0x11), stakeMsat: 100000n, settlementSlots: 7, simCoreHash: CORE };
   const random = (n) => new Uint8Array(n).fill(9);
   const player = playerFor(round, { seed, curve: feldmanGroup });
 
@@ -215,7 +217,7 @@ test('a seat carries the seed\'s key for the round, its fingerprint is the playe
 });
 
 test('the seat a page takes carries the round\'s own amounts', () => {
-  const round = { id: b32(0x0c), stakeMsat: 100000n, blockTicks: 9000 };
+  const round = { id: b32(0x0c), stakeMsat: 100000n, blockTicks: 9000, simCoreHash: CORE };
   let n = 0;
   const random = (len) => new Uint8Array(len).fill(++n);
   const me = { seed: b32(5), curve: feldmanGroup };
@@ -417,7 +419,7 @@ test('a page deals its own stake: the commitment is a hash and the ref is a hand
 
   const secrets = Array.from({ length: 7 }, () => rand(32));
   const seats = secrets.map((s) => schnorr.getPublicKey(s));
-  const round = { id: b32(0x11), stakeMsat: 100000n, settlementSlots: 7 };
+  const round = { id: b32(0x11), stakeMsat: 100000n, settlementSlots: 7, simCoreHash: CORE };
 
   const me = { seed: b32(5), curve: feldmanGroup };
   const stake = await stakeFor(round, {
@@ -459,7 +461,7 @@ test('a page refuses to deal without a curve, a committee, or a player', async (
   const rand = (n) => new Uint8Array(randomBytes(n));
   const { schnorr } = await import('@noble/curves/secp256k1.js');
   const seats = Array.from({ length: 7 }, () => schnorr.getPublicKey(rand(32)));
-  const round = { id: b32(0x11), stakeMsat: 100000n, settlementSlots: 7 };
+  const round = { id: b32(0x11), stakeMsat: 100000n, settlementSlots: 7, simCoreHash: CORE };
 
   await assert.rejects(() => stakeFor(round, { seats, random: rand, playerPubkey: b32(5) }),
     /needs a curve, and none was injected/);

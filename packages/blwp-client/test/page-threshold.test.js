@@ -11,8 +11,11 @@ import { randomBytes } from 'node:crypto';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { sharesNeededFor, stakeFor, postHandout, stakeSeenNeeded } from '../src/join.js';
 import { feldmanGroup } from '../../blwp-node/src/curve.js';
+import { fromHex } from '../../protocol/src/hash.js';
+import { coreHashHex } from '../../core/tools/hash-core.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
+const CORE = fromHex(coreHashHex());
 const rand = (n) => new Uint8Array(randomBytes(n));
 const seatsOf = (n) => Array.from({ length: n }, () => schnorr.getPublicKey(rand(32)));
 const deal = (round, seats, extra = {}) =>
@@ -22,18 +25,18 @@ test('stakeFor deals at the round\'s threshold unless told otherwise, and refuse
   // ITS DEFAULT WAS A FLAT 5, whatever the round. The page and the harness now
   // pass the round's number, but a default that contradicts a 2-of-2 is the
   // same player-chosen threshold the node's door refuses, one caller away.
-  const two = { id: b32(0x11), stakeMsat: 100000n, settlementSlots: 2 };
-  const seven = { id: b32(0x12), stakeMsat: 100000n, settlementSlots: 7 };
+  const two = { id: b32(0x11), stakeMsat: 100000n, settlementSlots: 2, simCoreHash: CORE };
+  const seven = { id: b32(0x12), stakeMsat: 100000n, settlementSlots: 7, simCoreHash: CORE };
   assert.equal((await deal(two, seatsOf(2))).handout.needed, 2);
   assert.equal((await deal(seven, seatsOf(7))).handout.needed, 5);
   await assert.rejects(() => deal(two, seatsOf(2), { needed: 5 }), /this round's stakes open at 2 of 2/);
   await assert.rejects(() => deal(seven, seatsOf(7), { needed: 7 }), /this round's stakes open at 5 of 7/);
-  await assert.rejects(() => deal({ id: b32(0x13), stakeMsat: 100000n }, seatsOf(7)),
+  await assert.rejects(() => deal({ id: b32(0x13), stakeMsat: 100000n, simCoreHash: CORE }, seatsOf(7)),
     /names no settlement slots/);
 });
 
 test('postHandout counts against the threshold the stake was dealt at, not a flat 5', async () => {
-  const two = { id: b32(0x11), stakeMsat: 100000n, settlementSlots: 2 };
+  const two = { id: b32(0x11), stakeMsat: 100000n, settlementSlots: 2, simCoreHash: CORE };
   const stake = await deal(two, seatsOf(2), { needed: 2 });
   const took = async () => ({ ok: true, text: async () => '' });
   const put = await postHandout(stake, ['http://a', 'http://b'], { fetcher: took });

@@ -29,7 +29,8 @@ import { Client } from '../src/client.js';
 import { readFileSync } from 'node:fs';
 import { encodeRoundContract, encodeEntryContract, roundId, entryId } from '../../protocol/src/contracts.js';
 import { handoutId, decodeHandout, openMyShare, NO_SHARES } from '../../protocol/src/handout.js';
-import { sha256, toHex } from '../../protocol/src/hash.js';
+import { sha256, toHex, fromHex } from '../../protocol/src/hash.js';
+import { coreHashHex } from '../../core/tools/hash-core.js';
 import { MIN_ENTRY_WINDOW_MS } from '../../protocol/src/constants.js';
 import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
 import { SHARES_TOTAL, SHARES_NEEDED } from '../../protocol/src/shares.js';
@@ -42,7 +43,7 @@ const FUNDED = { funded: () => true };
 
 const contractFor = (nodes, stakeMsat) => ({
   networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations: 1,
-  gameVerifySlots: SHARES_TOTAL, settlementSlots: SHARES_TOTAL, simCoreHash: b32(1),
+  gameVerifySlots: SHARES_TOTAL, settlementSlots: SHARES_TOTAL, simCoreHash: fromHex(coreHashHex()),
   committeeTimeMs: BigInt(NOW), randomnessRule: 'bitcoin-block-hash',
   startTimeMs: BigInt(NOW) + MIN_ENTRY_WINDOW_MS,
   entryCloseMs: BigInt(NOW) + MIN_ENTRY_WINDOW_MS + 200000n,

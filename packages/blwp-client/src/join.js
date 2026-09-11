@@ -26,6 +26,7 @@ import { NO_SHARES, dealHandout, encodeHandout } from '../../protocol/src/handou
 import { FIELD, scalarFrom32 } from '../../protocol/src/shares.js';
 import { seedWordForEntry } from '../../protocol/src/seed.js';
 import { playerSecretFor, refundFingerprint } from '../../protocol/src/player-key.js';
+import { coreIsKnownGood } from '../../protocol/src/known-core.js';
 import { entryFeeMsat } from '../../protocol/src/fee.js';
 import { receiptsNeeded } from '../../protocol/src/threshold.js';
 import { readWithOneRetry } from './reread.js';
@@ -620,6 +621,9 @@ export function playerFor(round, { seed, curve } = {}) {
  */
 export function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 0, stake } = {}) {
   if (!round) throw new Error('there is no round to take a seat at');
+  // A PAYING ROUND ON AN UNKNOWN CORE IS REFUSED (§5): no override, no flag. A
+  // free round risks nothing and is seated as before.
+  if (roundPays(round)) { const core = coreIsKnownGood(round.simCoreHash); if (!core.ok) throw new Error(core.why); }
   // THE SEAT'S KEY IS THE SEED'S KEY FOR THIS ROUND, and nothing else (§24,
   // v4.6.2, F2). A payout and a refund go to it, so a page that seated a player
   // under any other key - a bug, or a host that lies - would send the money
@@ -697,6 +701,9 @@ export function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 
  */
 export async function stakeFor(round, { seats, curve, random, playerPubkey, needed: asked } = {}) {
   if (!round || !round.id) throw new Error('a stake is dealt for a round, and that is not one');
+  // NO STAKE ON A CORE THIS CLIENT DOES NOT KNOW (§5). Refused before anything
+  // is dealt, so a backdoored round gets no handout, no hold and no seat.
+  { const core = coreIsKnownGood(round.simCoreHash); if (!core.ok) throw new Error(core.why); }
   // AT THE ROUND'S THRESHOLD, the one the node's door takes and its settle
   // opens at (M3.3-26). The default was a flat 5 whatever the round, and any
   // other number is a stake the door refuses - so it is refused here first.

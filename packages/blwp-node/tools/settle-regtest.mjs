@@ -24,6 +24,7 @@
 // in. It touches no mainnet and no testnet4 datadir. The coins are worthless.
 //
 //   node packages/blwp-node/tools/settle-regtest.mjs [--keep]
+import { CORE_HASH } from './core-hash.mjs';
 import { execFileSync, spawn } from 'node:child_process';
 import { mkdtempSync, mkdirSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -178,7 +179,7 @@ async function main() {
 
     const contract = {
       networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations: 1,
-      gameVerifySlots: SHARES_TOTAL, settlementSlots: SHARES_TOTAL, simCoreHash: b32(1),
+      gameVerifySlots: SHARES_TOTAL, settlementSlots: SHARES_TOTAL, simCoreHash: CORE_HASH,
       committeeTimeMs: BigInt(NOW), randomnessRule: 'bitcoin-block-hash',
       startTimeMs: BigInt(NOW) + MIN_ENTRY_WINDOW_MS,
       entryCloseMs: BigInt(NOW) + MIN_ENTRY_WINDOW_MS + 200000n,

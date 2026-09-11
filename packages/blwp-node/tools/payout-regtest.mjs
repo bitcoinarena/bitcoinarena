@@ -16,6 +16,7 @@
 // It touches no mainnet and no testnet4 datadir. The coins are worthless.
 //
 //   node packages/blwp-node/tools/payout-regtest.mjs [--keep]
+import { CORE_HASH } from './core-hash.mjs';
 import { execFileSync, spawn } from 'node:child_process';
 import { mkdtempSync, mkdirSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -98,7 +99,7 @@ async function main() {
     const round = new Round(openStore(join(dir, 'node.db')), () => NOW);
     const contract = {
       networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations: 1,
-      gameVerifySlots: 7, settlementSlots: 7, simCoreHash: b32(1),
+      gameVerifySlots: 7, settlementSlots: 7, simCoreHash: CORE_HASH,
       committeeTimeMs: BigInt(NOW), randomnessRule: 'bitcoin-block-hash',
       startTimeMs: BigInt(NOW) + MIN_ENTRY_WINDOW_MS,
       entryCloseMs: BigInt(NOW) + MIN_ENTRY_WINDOW_MS + 200000n,

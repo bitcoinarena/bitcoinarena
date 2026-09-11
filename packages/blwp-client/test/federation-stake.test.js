@@ -10,10 +10,11 @@ import { federationStakeFor } from '../src/client.js';
 import { entryFor } from '../src/join.js';
 import { NO_SHARES } from '../../protocol/src/handout.js';
 import { entryFeeMsat } from '../../protocol/src/fee.js';
-import { toHex } from '../../protocol/src/hash.js';
+import { toHex, fromHex } from '../../protocol/src/hash.js';
+import { coreHashHex } from '../../core/tools/hash-core.js';
 import { feldmanGroup } from '../../blwp-node/src/curve.js';
 
-const round = { id: new Uint8Array(32).fill(7), stakeMsat: 1000000n };
+const round = { id: new Uint8Array(32).fill(7), stakeMsat: 1000000n, simCoreHash: fromHex(coreHashHex()) };
 const NET = round.stakeMsat - entryFeeMsat(round.stakeMsat);
 const HASH = 'aa'.repeat(32);
 

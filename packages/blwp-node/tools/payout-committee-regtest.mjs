@@ -22,6 +22,7 @@
 // --seats=N (M3.3-28): N daemons, their own key ceremony, and the committee's
 // own threshold (`receiptsNeeded`: 2 of 2, 5 of 7) - one short of it is
 // refused and the threshold itself pays. Default 7.
+import { CORE_HASH } from './core-hash.mjs';
 import { execFileSync, spawn } from 'node:child_process';
 import { mkdtempSync, mkdirSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -150,7 +151,7 @@ async function main() {
 
     const contract = {
       networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations: 1,
-      gameVerifySlots: SEATS, settlementSlots: SEATS, simCoreHash: b32(1),
+      gameVerifySlots: SEATS, settlementSlots: SEATS, simCoreHash: CORE_HASH,
       committeeTimeMs: BigInt(NOW), randomnessRule: 'bitcoin-block-hash',
       startTimeMs: BigInt(NOW) + MIN_ENTRY_WINDOW_MS,
       entryCloseMs: BigInt(NOW) + MIN_ENTRY_WINDOW_MS + 200000n,

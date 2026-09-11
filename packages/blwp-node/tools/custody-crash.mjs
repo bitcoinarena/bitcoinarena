@@ -21,6 +21,7 @@
 // SINGLE-NODE CUSTODY, NOT §23.5. One node, one port, no threshold.
 //
 //   node packages/blwp-node/tools/custody-crash.mjs
+import { CORE_HASH } from './core-hash.mjs';
 import { spawn } from 'node:child_process';
 import { mkdtempSync, readFileSync, appendFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -48,7 +49,7 @@ const preimageFor = (id, e) => preimageOf(e.pubkey[0]);
 const NOW = 1788700000000;
 const CONTRACT = {
   networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations: 6,
-  gameVerifySlots: 2, settlementSlots: 2, simCoreHash: b32(1),
+  gameVerifySlots: 2, settlementSlots: 2, simCoreHash: CORE_HASH,
   committeeTimeMs: BigInt(NOW), randomnessRule: 'bitcoin-block-hash',
   startTimeMs: BigInt(NOW) + MIN_ENTRY_WINDOW_MS,
   entryCloseMs: BigInt(NOW) + MIN_ENTRY_WINDOW_MS + 200000n,

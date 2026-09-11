@@ -28,6 +28,7 @@
 // (as in `custody-lnd.mjs`): what is measured is the restart, not 23.4.
 //
 //   node packages/blwp-node/tools/custody-restart-lnd.mjs --point=1|2 [--keep]
+import { CORE_HASH } from './core-hash.mjs';
 import { execFile, execFileSync, spawn } from 'node:child_process';
 import { mkdtempSync, mkdirSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -188,7 +189,7 @@ async function main() {
     const round = new Round(db, () => NOW);
     const contract = {
       networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations: 6,
-      gameVerifySlots: 2, settlementSlots: 2, simCoreHash: b32(1),
+      gameVerifySlots: 2, settlementSlots: 2, simCoreHash: CORE_HASH,
       committeeTimeMs: BigInt(NOW), randomnessRule: 'bitcoin-block-hash',
       startTimeMs: BigInt(NOW) + MIN_ENTRY_WINDOW_MS,
       entryCloseMs: BigInt(NOW) + MIN_ENTRY_WINDOW_MS + 200000n,
