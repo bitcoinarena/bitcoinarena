@@ -537,6 +537,24 @@ async function main() {
           if (Number(cli('getblockcount')) < expiry + 10) mine(10);
           return false;
         }, 300000, 3000).catch((e) => hole('code', `P3's hold did not expire back: ${e.message}`));
+        // LND CANCELS BEFORE THE EXPIRY HEIGHT. Measured: it failed the HTLC
+        // back with the chain at 353 for an expiry of 366 - its own margin -
+        // so the chain is mined PAST the expiry, as a real chain would go on,
+        // before the daemons' rows are read.
+        const canceledAt = Number(cli('getblockcount'));
+        say(`  P3 (VOID): lnd CANCELED it at chain height ${canceledAt}, ${expiry - canceledAt} block(s) before its HTLC's expiry ${expiry}`);
+        const heldWhileBack = daemons.map(([n, d]) => `${n} ${((voided.eid && d.round.hold(voided.eid)) || {}).state || 'no row'}`).join(', ');
+        say(`  P3 (VOID) rows while lnd has it back and the chain is not past ${expiry}: ${heldWhileBack}`);
+        while (Number(cli('getblockcount')) <= expiry) mine(1);
+        // AND WHAT EACH DAEMON NOW BELIEVES (M3.3-30): its row follows its own
+        // chain past the HTLC's expiry, never lnd's label; its sweep runs every
+        // 5 s, so it is given 20 s to have looked.
+        const voidRows = () => daemons.map(([n, d]) => [n, ((voided.eid && d.round.hold(voided.eid)) || {}).state || 'no row']);
+        const t1 = Date.now();
+        await until('both daemons to leave HELD on the void stake', () => voidRows().every(([, st]) => st !== 'HELD'), 20000, 500)
+          .catch(() => { /* reported below */ });
+        say(`  P3 (VOID) rows once lnd CANCELED it, chain at ${cli('getblockcount')} (HTLC expiry ${expiry}): `
+          + `${voidRows().map(([n, st]) => `${n} ${st}`).join(', ')} (+${Date.now() - t1} ms)`);
       }
     }
     await wait(3000);
@@ -549,6 +567,7 @@ async function main() {
     say(`  LATE STAMPS (after the first print): ${late.length}`);
     for (const s of late) say(`    +${String(s.t).padStart(5)} ms  ${s.what}  [late]`);
     const heldAfterSettled = [];
+    const voidHeldAfterCanceled = [];
     say('\nWHERE EACH PLAYER\'S MSAT ENDED UP (net stake ' + (players[0] && players[0].amountMsat) + ' msat each):');
     for (const p of players) {
       if (!p.hash) continue;
@@ -562,8 +581,11 @@ async function main() {
       say(`      custody rows: ${daemons.map(([n, d]) => `${n} ${rowOf(d) ? rowOf(d).state : 'no row'}`).join(', ')}`);
       if (inv.state === 'SETTLED')
         for (const [n, d] of daemons) if (!rowOf(d) || rowOf(d).state !== 'SETTLED') heldAfterSettled.push(`${p.name} on ${n}: ${rowOf(d) ? rowOf(d).state : 'no row'}`);
+      if (inv.state === 'CANCELED' && p.want === 'VOID')
+        for (const [n, d] of daemons) if (rowOf(d) && rowOf(d).state === 'HELD') voidHeldAfterCanceled.push(`${p.name} on ${n}`);
       p.lnd = inv.state;
     }
+    say(`  VOID ROWS HELD AFTER LND CANCELED: ${voidHeldAfterCanceled.length}${voidHeldAfterCanceled.length ? ` (${voidHeldAfterCanceled.join('; ')})` : ''}`);
     say(`  HELD AFTER LND SETTLED: ${heldAfterSettled.length}${heldAfterSettled.length ? ` (${heldAfterSettled.join('; ')})` : ''}`);
     say(`  alice ${before.alice} -> ${end.alice} msat (${end.alice - before.alice}); `
       + `bob (the operator) ${before.bob} -> ${end.bob} msat (+${end.bob - before.bob}); `

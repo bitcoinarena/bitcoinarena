@@ -99,7 +99,12 @@ export function lndPort({ lncli, args = [], timeoutMs = 60000, expirySeconds = 3
       const back = await json(['lookupinvoice', toHex(paymentHash)]);
       const state = STATE_OF[back.state];
       if (!state) throw new Error(`lnd called that invoice ${back.state}, which is not a state a hold can be in`);
-      return { state, amountMsat: BigInt(back.value_msat), paidMsat: BigInt(back.amt_paid_msat || 0) };
+      // AND WHEN IT EXPIRES (M3.3-30): the earliest expiry height among the
+      // HTLCs lnd has accepted for it - after that block nobody can claim it.
+      const heights = (back.htlcs || []).filter((h) => h.state === 'ACCEPTED')
+        .map((h) => Number(h.expiry_height)).filter((h) => Number.isInteger(h) && h > 0);
+      return { state, amountMsat: BigInt(back.value_msat), paidMsat: BigInt(back.amt_paid_msat || 0),
+        ...(heights.length ? { expiryHeight: Math.min(...heights) } : {}) };
     },
 
     async settle({ preimage }) { await call(['settleinvoice', '--preimage', toHex(preimage)]); },

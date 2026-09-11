@@ -126,6 +126,9 @@ export class Custody {
     if (!got || got.state !== HELD || paid === 0n || paid < row.amountMsat)
       return { ok: false, why: `the stake is not paid and held: ${paid} of ${row.amountMsat} msat, Lightning says ${got && got.state}` };
     this.round.putStakeSeen({ entryId, paidMsat: paid });
+    // THE ONE FACT LIGHTNING SUPPLIES NOW (M3.3-30): when the HTLC expires. Past
+    // that height on this node's own chain the hold is gone back to its player.
+    if (Number.isInteger(got.expiryHeight)) this.round.putHoldExpiry({ entryId, expiryHeight: got.expiryHeight });
     return { ok: true, state: HELD, paidMsat: paid };
   }
 
@@ -363,6 +366,34 @@ export class Custody {
       asked.push({ entryId: row.entryId, state });
     }
     return { ok: true, asked };
+  }
+
+  /**
+   * A HOLD WHOSE HTLC HAS EXPIRED IS NOT HELD (M3.3-30).
+   *
+   * Measured on the regtest rehearsal: a VOID stake timed out in lnd -
+   * CANCELED, back with the player - and both daemons still listed it HELD, 35
+   * of 35 runs; nothing moved a row to EXPIRED. The row now follows the chain:
+   * a HELD row whose recorded expiry height this node's own chain is PAST is
+   * EXPIRED. At the height itself the HTLC can still be claimed, so it is not.
+   * Lightning is not asked here - its later label is not the node's truth - and
+   * a row with no recorded height is left alone rather than guessed at.
+   */
+  expire({ tipHeight }) {
+    if (!Number.isInteger(tipHeight))
+      return { ok: false, why: 'no chain height to measure an expiry against', expired: [] };
+    const expired = [];
+    for (const row of this.round.holdsInState(HELD)) {
+      const at = this.round.holdExpiry(row.entryId);
+      if (at === null || !(tipHeight > at)) continue;
+      this.round.putHold({
+        entryId: row.entryId, roundId: row.roundId, paymentHash: row.paymentHash,
+        amountMsat: row.amountMsat, state: EXPIRED,
+        why: `its HTLC expired at height ${at} and this node's chain is at ${tipHeight}: the hold went back to its player`,
+      });
+      expired.push(row.entryId);
+    }
+    return { ok: true, expired };
   }
 
   /** What this node believes about one stake, for an operator who asks. */

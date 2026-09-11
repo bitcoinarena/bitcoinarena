@@ -1196,6 +1196,18 @@ export class Round {
     return row ? { paidMsat: BigInt(row.paid_msat), seenMs: row.seen_ms } : null;
   }
 
+  /** The hold's HTLC expiry height, written once, when it was first seen paid (M3.3-30). */
+  putHoldExpiry({ entryId, expiryHeight }) {
+    this.db.prepare('INSERT OR IGNORE INTO hold_expiry (entry_id, expiry_height, seen_ms) VALUES (?, ?, ?)')
+      .run(Buffer.from(entryId), expiryHeight, this.now());
+  }
+
+  holdExpiry(entryIdBytes) {
+    const row = this.db.prepare('SELECT expiry_height FROM hold_expiry WHERE entry_id = ?')
+      .get(Buffer.from(entryIdBytes));
+    return row ? row.expiry_height : null;
+  }
+
   /**
    * WHAT THIS NODE BELIEVES ABOUT A ROUND'S PAYOUT, and how it changed.
    *

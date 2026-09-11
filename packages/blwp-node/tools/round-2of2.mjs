@@ -274,10 +274,14 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   if (!ln.ok) throw new Error(ln.why);
   const lightning = ln.given
     ? { lightning: ln.lightning, ...(ln.preflight ? { preflight: ln.preflight } : {}) } : {};
+  // THIS CHAIN'S HEIGHT, from the regtest bitcoind when there is one (M3.3-30):
+  // a hold past its HTLC's expiry is written EXPIRED on it. Not `poolCall`,
+  // which would also switch on the pool's spending.
+  const chainTip = rpc ? { chainTip: async () => Number(await rpc('getblockcount', [])) } : {};
   const a = await serve(dbA, { port: portA, host, funded, headerBytes, bondProof, chainFor,
-    ...(randomnessFor ? { randomnessFor } : {}), ...lightning });
+    ...(randomnessFor ? { randomnessFor } : {}), ...lightning, ...chainTip });
   const optsB = { port: portB, host, funded, headerBytes, bondProof, chainFor,
-    ...(randomnessFor ? { randomnessFor } : {}), ...lightning };
+    ...(randomnessFor ? { randomnessFor } : {}), ...lightning, ...chainTip };
   let b = await serve(dbB, optsB);
   if (a.port !== portA)
     throw new Error(`node A came up on ${a.port} and the bond names ${portA}`);

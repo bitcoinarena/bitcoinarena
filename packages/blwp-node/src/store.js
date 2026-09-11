@@ -244,6 +244,17 @@ export function openStore(path = ':memory:') {
       seen_ms    INTEGER NOT NULL
     );
 
+    -- THE HTLC'S EXPIRY HEIGHT, the one fact Lightning supplies when a hold is
+    -- first seen paid (M3.3-30). A hold still HELD once this node's own chain
+    -- is past it has gone back to its player, and the row says EXPIRED - the
+    -- node's own arithmetic, never Lightning's later label. A table of its own
+    -- so a store written before it gains it.
+    CREATE TABLE IF NOT EXISTS hold_expiry (
+      entry_id      BLOB PRIMARY KEY REFERENCES entries(entry_id),
+      expiry_height INTEGER NOT NULL,
+      seen_ms       INTEGER NOT NULL
+    );
+
     -- WHAT A ROUND OWES AND WHETHER IT HAS BEEN PAID (9.4's qualifying tail).
     --
     -- One row per round, not per entry: the payout is ONE transaction spending

@@ -167,7 +167,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // HOW LONG A CLOSED ROUND KEEPS ASKING ITS PEERS FOR THE RESULTS IT IS SHORT
   // OF (M3.3-25): every `everyMs`, until final or `windowMs` has passed -
   // the round's own objection window unless a test names a shorter one.
-  finality = {} } = {}) {
+  finality = {},
+  // WHERE THIS NODE'S OWN CHAIN IS (M3.3-30): a height, asked of its own
+  // bitcoind. Given none, the pool's chain call answers it when there is one.
+  chainTip = null,
+  expiry = {} } = {}) {
   const round = new Round(db);
 
   // WHAT HOLDS THE PLAYERS' MONEY. 23.1's hold invoice and 23.2's table, and
@@ -215,6 +219,28 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const custody = new Custody(round, {
     port: lightning, preimageFor: preimageFor || fromTheCommittee,
   });
+
+  /**
+   * A HOLD GONE PAST ITS HTLC'S EXPIRY IS WRITTEN EXPIRED (M3.3-30), on this
+   * node's own chain height - never on what Lightning later calls the invoice.
+   * Every `everyMs` while the node reaches both a chain and Lightning.
+   */
+  const tipOf = chainTip || (poolCall ? async () => Number(await poolCall('getblockcount', [])) : null);
+  let expiryTimer = null;
+  if (tipOf && custody.reaches) {
+    let sweeping = false;
+    expiryTimer = setInterval(async () => {
+      if (sweeping || shuttingDown) return;
+      sweeping = true;
+      try {
+        const tipHeight = Number(await tipOf());
+        const out = custody.expire({ tipHeight });
+        for (const e of out.expired || [])
+          console.log(`[custody] ${toHex(e).slice(0, 16)} HELD -> EXPIRED: this node's chain is at ${tipHeight}, past its HTLC's expiry`);
+      } catch (e) { console.error(`[custody] expiry: ${e.message}`); } finally { sweeping = false; }
+    }, expiry.everyMs ?? 5000);
+    if (expiryTimer.unref) expiryTimer.unref();
+  }
 
   /**
    * WHAT THE ROUND OWES, AND WHETHER IT HAS BEEN PAID.
@@ -1438,6 +1464,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       close: () => new Promise((r) => {
         // NO RE-GATHER OUTLIVES THE DAEMON.
         shuttingDown = true;
+        if (expiryTimer) clearInterval(expiryTimer);
         for (const t of finalityTimers) clearTimeout(t);
         finalityTimers.clear();
         for (const sock of wss.clients) sock.terminate();
