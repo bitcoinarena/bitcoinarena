@@ -382,8 +382,12 @@ export class Payouts {
     if (!still.ok)
       return { ok: false, spending: true, why: `that output is already going: ${still.why}` };
 
+    // THE ROUND'S OWN SEATS SIGN IT: a given list, else the census's - the same
+    // `peersOf` the table's gather asks. It was `this.peers`, the operator's
+    // list only, so a daemon given none (the rehearsal's, the Daily's,
+    // `main.js` at a live close) stopped at "1 of 2 seats committed".
     return this.payWithCommittee({
-      roundId, utxo: found.utxo, contract, signing, seats: this.peers,
+      roundId, utxo: found.utxo, contract, signing, seats: this.peersOf(roundId),
     });
   }
 

@@ -77,7 +77,11 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
                                      // the beacon loop has mined its last block, which is when
                                      // a daemon's Lightning preflight asks whether its lnd is
                                      // synced. None by default: nothing changes for a launcher.
-                                     beforeRound = null } = {}) {
+                                     beforeRound = null,
+                                     // THE POOL'S CHAIN, OPT-IN: both daemons get the regtest
+                                     // bitcoind to find the pool's output and send its
+                                     // payout. Off by default - a launcher spends nothing.
+                                     poolChain = false } = {}) {
   // WHAT THESE DAEMONS FUND (M3.3-31): a PAYING round goes through the
   // launcher's own rule - the round its operator names, and entries into a
   // paying round the node holds when it reaches Lightning - not a harness's
@@ -292,10 +296,26 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   // a hold past its HTLC's expiry is written EXPIRED on it. Not `poolCall`,
   // which would also switch on the pool's spending.
   const chainTip = rpc ? { chainTip: async () => Number(await rpc('getblockcount', [])) } : {};
+  // AND, ASKED FOR, THE POOL'S CHAIN: `poolCall` finds the pool's output and
+  // `chainSpend` sends the committee's payout, both through the same bitcoind.
+  const hexOf = (u8) => Buffer.from(u8).toString('hex');
+  const spendOn = poolChain && rpc ? {
+    poolCall: rpc,
+    chainSpend: {
+      async send(raw) {
+        try { return { ok: true, txid: Uint8Array.from(Buffer.from(await rpc('sendrawtransaction', [hexOf(raw)]), 'hex')).reverse() }; }
+        catch (e) { return { ok: false, why: e.message }; }
+      },
+      async look(txid) {
+        try { await rpc('getrawtransaction', [hexOf(Uint8Array.from(txid).reverse())]); return { known: true }; }
+        catch { return { known: false }; }
+      },
+    },
+  } : {};
   const a = await serve(dbA, { port: portA, host, funded, headerBytes, bondProof, chainFor,
-    ...(randomnessFor ? { randomnessFor } : {}), ...lightning, ...chainTip });
+    ...(randomnessFor ? { randomnessFor } : {}), ...lightning, ...chainTip, ...spendOn });
   const optsB = { port: portB, host, funded, headerBytes, bondProof, chainFor,
-    ...(randomnessFor ? { randomnessFor } : {}), ...lightning, ...chainTip };
+    ...(randomnessFor ? { randomnessFor } : {}), ...lightning, ...chainTip, ...spendOn };
   let b = await serve(dbB, optsB);
   if (a.port !== portA)
     throw new Error(`node A came up on ${a.port} and the bond names ${portA}`);

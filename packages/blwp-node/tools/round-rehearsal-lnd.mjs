@@ -47,6 +47,10 @@ import { entryId as entryIdOf } from '../../protocol/src/contracts.js';
 import { init as coreInit, step as coreStep } from '../../core/src/sim.js';
 import { splitSignedReceipt, decodeCheckpointReceipt, SIGNED_RECEIPT_BYTES } from '../../protocol/src/receipt.js';
 import { resultFinality } from '../src/finality.js';
+import { tweakPoint } from '../src/curve.js';
+import { PAID, PAID_IN_PART } from '../src/payout.js';
+import { poolOutput } from '../../protocol/src/pool.js';
+import { netStakeMsat } from '../../protocol/src/payout.js';
 
 const require = createRequire(import.meta.url);
 const core = require('../../core/dist/blwp-core.js');
@@ -54,7 +58,13 @@ const BITCOIN = process.env.BITCOIN_BIN || '/mnt/bitcoin/bitcoin-31.1/bin';
 const LND = process.env.LND_BIN || '/mnt/bitcoin/lnd-linux-amd64-v0.21.3-beta';
 const LNCLI = join(LND, 'lncli');
 const KEEP = process.argv.includes('--keep');
-const STAKE_MSAT = 100000n;
+// --stake-msat=N: the round's stake (a rehearsal's own number, not a rule).
+const STAKE_MSAT = BigInt((process.argv.find((a) => a.startsWith('--stake-msat=')) || '--stake-msat=100000').split('=')[1]);
+// --pool: the daemons make the pool's 2-of-2 key, this harness funds it with
+// --pool-sats (a STAND-IN for the open ruling), and the daemons' own close
+// pays the winner from it after the window - or says why not.
+const POOL = process.argv.includes('--pool');
+const POOL_SATS = BigInt((process.argv.find((a) => a.startsWith('--pool-sats=')) || '--pool-sats=1200').split('=')[1]);
 // WHICH DAEMON IS TOLD TO CLOSE FIRST (M3.3-25): AB or BA. Each order on its
 // own ports, so the two can run side by side.
 const CLOSE_ORDER = (process.argv.find((a) => a.startsWith('--close-order=')) || '--close-order=AB').split('=')[1];
@@ -222,6 +232,7 @@ async function main() {
       round = await standUpRound({ host: '127.0.0.1', portA: P.daemonA, portB: P.daemonB,
         rpc, cli, stakeMsat: STAKE_MSAT, page: 'http://127.0.0.1:1',
         objectionWindowMs: BigInt(OBJECTION_WINDOW_MS),
+        poolChain: POOL,
         // BOTH LNDS AT THE TIP BEFORE THE ROUND IS POSTED. The beacon loop
         // mines, and the daemon's preflight then asks bob's lnd whether it is
         // synced; 1 of 69 earlier logs found it still catching up and the round
@@ -256,6 +267,41 @@ async function main() {
     const named = await joinFromQuery(new URL(round.url).search);
     const seats = await fetchSettlementSeats(round.id, named.nodes);
     say(`settlement seats: ${seats.seats.length}, agreed by ${seats.agreed}`);
+
+    // ---- THE COMMITTEE'S POOL ON THIS CHAIN (--pool) ----
+    // The two daemons make the pool's key themselves - no dealer, this process
+    // holds no share - and THIS HARNESS funds it: a STAND-IN, named as one, for
+    // the open ruling on how a settled stake reaches the pool. Everything after
+    // the funding is the daemons' own close.
+    let pool = null;
+    if (POOL) {
+      const keys = round.a.round.seats(fromHex(round.id));
+      const pair = [round.a, round.b];
+      for (const d of pair) d.dkg.peers = pair.filter((o) => o !== d).map((o) => `http://127.0.0.1:${o.port}`);
+      for (const d of pair) await d.dkg.run(keys);
+      for (const d of pair) await d.dkg.run(keys);
+      const held = pair.map((d) => d.dkg.seatFor(keys));
+      const bad = held.find((h) => !h.ok);
+      if (bad) hole('code', `the pool's key ceremony left a seat with no share: ${bad.why}`);
+      else {
+        const groupKeys = new Set(held.map((h) => toHex(h.pool.groupPublicKey)));
+        if (groupKeys.size !== 1) hole('code', `the two daemons made ${groupKeys.size} pool keys`);
+        pool = { groupPublicKey: held[0].pool.groupPublicKey };
+        pair.forEach((d, i) => {
+          d.signing.seat = held[i].seat; d.signing.pool = pool; d.payouts.pool = pool; d.poolWatch.pool = pool;
+        });
+        const out = poolOutput({ groupPublicKey: pool.groupPublicKey, curve: { ...feldmanGroup, tweakPoint } });
+        const address = JSON.parse(cli('decodescript', toHex(out.script))).address;
+        const funding = cli('sendtoaddress', address, (Number(POOL_SATS) / 1e8).toFixed(8));
+        mine(1);
+        await until('both lnds at the tip after the pool funding', () => ['alice', 'bob'].every((who) => {
+          const i = lnj(who, 'getinfo');
+          return i.synced_to_chain === true && Number(i.block_height) === Number(cli('getblockcount'));
+        }), 60000, 25);
+        say(`  the pool: 2 of 2, its key made by the two daemons (one key: ${groupKeys.size === 1}); ${POOL_SATS} sats at `
+          + `${address} - funded by THIS HARNESS, a STAND-IN for the open ruling (tx ${funding.slice(0, 16)}...)`);
+      }
+    }
 
     // ---- THREE PLAYERS, THE PAGE'S OWN STEPS ----
     const players = [];
@@ -668,6 +714,38 @@ async function main() {
       + `bob (the operator) ${before.bob} -> ${end.bob} msat (+${end.bob - before.bob}); `
       + `after the close, before P3 expired: alice ${afterClose.alice}, bob ${afterClose.bob}`);
 
+    // ---- THE WINNER, PAID BY THE POOL'S 2-OF-2 SIGNATURE (--pool) ----
+    let poolPaid = false;
+    if (POOL && pool) {
+      const rid = fromHex(round.id);
+      const rows = () => daemons.map(([n, d]) => [n, d.round.payout(rid)]);
+      const t1 = Date.now();
+      await until('a seat to write the payout PAID', () => rows().some(([, r]) => r && (r.state === PAID || r.state === PAID_IN_PART)), 120000, 1000)
+        .catch(() => { /* reported below */ });
+      say(`  POOL PAYOUT rows: ${rows().map(([n, r]) => `${n} ${r ? r.state : 'none'}${r && r.why ? ` (${r.why})` : ''}`).join('; ')} (+${Date.now() - t1} ms)`);
+      for (const [n, d] of daemons) {
+        const m = await d.stakes();
+        if (m.paid) say(`    ${n}'s last pool spend: ${m.paid.ok ? m.paid.state : m.paid.why}`);
+      }
+      const loser = players.find((p) => p.want === 'FAILED');
+      const owedSats = loser && loser.entry ? Number(netStakeMsat(loser.entry) / 1000n) : null;
+      const sent = rows().map(([, r]) => r).find((r) => r && r.txid);
+      if (sent) {
+        mine(1);
+        const txid = toHex(Uint8Array.from(sent.txid).reverse());
+        const tx = JSON.parse(cli('getrawtransaction', txid, 'true'));
+        const winner = players.find((p) => p.want === 'DELIVERED');
+        const winAddr = JSON.parse(cli('decodescript', '5120' + toHex(winner.player.pubkey))).address;
+        const scan = JSON.parse(cli('scantxoutset', 'start', JSON.stringify([`addr(${winAddr})`])));
+        const sats = Math.round((scan.total_amount || 0) * 1e8);
+        const outs = tx.vout.map((o) => Math.round(o.value * 1e8));
+        say(`  THE WINNER'S OWN KEY HOLDS ${sats} sats (the table owes ${owedSats}); payout ${txid.slice(0, 16)}... `
+          + `${tx.blockhash ? 'in a block' : 'NOT in a block'}, ${POOL_SATS} in, outputs [${outs.join(', ')}], fee ${Number(POOL_SATS) - outs.reduce((s, v) => s + v, 0)}`);
+        poolPaid = sats > 0;
+        if (poolPaid && sats !== owedSats) hole('code', `the winner holds ${sats} sats, not the ${owedSats} the table owes`);
+      } else say(`  THE WINNER'S OWN KEY HOLDS nothing: no seat sent a payout (the table owes ${owedSats} sats)`);
+    }
+
     // ---- THE HOLES, EACH WITH ITS KIND ----
     const p1 = players.find((p) => p.name === 'P1');
     const p2 = players.find((p) => p.name === 'P2');
@@ -682,7 +760,7 @@ async function main() {
     if (p1 && p1.lnd !== 'CANCELED') hole('code', `P1 (DELIVERED) was not cancelled back (lnd ${p1.lnd}) - ${actOn(p1)}`);
     const owed = daemons.map(([name, d]) => `${name}: ${d.money && d.money.owed ? (d.money.owed.ok ? d.money.owed.state : d.money.owed.why) : 'nothing owed'}`);
     const paid = daemons.map(([, d]) => d.money && d.money.paid).filter(Boolean);
-    if (!paid.some((x) => x.ok)) {
+    if (!paid.some((x) => x.ok) && !poolPaid) {
       const short = owed.some((o) => /seats signed this table/.test(o));
       hole(short ? 'code' : 'ruling', `the winner's payout was not paid - ${owed.join('; ')}`
         + `${paid.length ? `; spend: ${paid.map((x) => x.why).join(' | ')}` : ''}`);

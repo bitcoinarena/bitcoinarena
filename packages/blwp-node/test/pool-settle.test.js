@@ -282,6 +282,43 @@ test('the round\'s own asker finds the pool and pays the winner', async () => {
 });
 
 /**
+ * AND WITH NO PEER LIST, THE ROUND'S OWN SEATS SIGN IT.
+ *
+ * Measured on the real-lnd rehearsal with the daemons' own 2-of-2 pool: both
+ * seats signed and queued the table, and the round's asker stopped at "1 of 2
+ * seats committed to this spend". `settleQueued` handed the signing round
+ * `this.peers` - the list an operator passes - while the table's gather beside
+ * it asks `peersOf`, which falls back to the round's settlement seats off the
+ * census (M3.3-24). A daemon given no list - the rehearsal's, the Daily's,
+ * `main.js` at a live close - asked nobody for a signature.
+ */
+test('with no peer list, the round\'s asker asks the round\'s own seats and pays the winner', async () => {
+  const sent = [];
+  const chain = { send: async (raw) => { sent.push(raw); return { ok: true, txid: b32(0xce) }; } };
+  const c = await committee({ chain });
+  try {
+    // WHAT A LAUNCHED DAEMON HAS: no operator list, only the census's seats.
+    for (const n of c.nodes) {
+      const others = c.nodes.filter((o) => o !== n).map((o) => `http://127.0.0.1:${o.port}`);
+      n.payouts.peers = [];
+      n.payouts.peersFor = () => others;
+    }
+    const who = askerFor(c.rid, c.nodes[0].round.seats(c.rid));
+    const asker = c.nodes.find((n) => toHex(n.round.pubkey) === toHex(who.asker));
+    const paid = await asker.payouts.settleQueued({
+      roundId: c.rid, contract: c.contract, signing: asker.signing, watch: asker.poolWatch,
+    });
+    assert.equal(paid.ok, true, `the asker with no peer list did not pay: ${paid.why}`);
+    assert.equal(paid.state, PAID);
+    assert.equal(paid.signed, SHARES_NEEDED);
+    assert.equal(sent.length, 1);
+    const tx = parseTransaction(sent[0]);
+    assert.equal(tx.outputs.filter((o) => toHex(o.script) === toHex(payToKey(c.winner.pubkey))).length, 1,
+      'the winner has no output in the transaction');
+  } finally { await c.close(); }
+});
+
+/**
  * AND THE SIX OTHERS DO NOT, AT THE HEIGHT THE ROUND CLOSES AT.
  *
  * The round's own asker is first in the order and is alone at beacon+0. Every
