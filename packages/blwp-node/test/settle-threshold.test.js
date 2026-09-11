@@ -1,16 +1,26 @@
-// A LOST STAKE OPENS AT THE ROUND'S THRESHOLD, THROUGH THE REAL CLOSE (M3.3-26).
+// A LOST STAKE OPENS AT THE ROUND'S THRESHOLD, THROUGH THE REAL SHARE ASK (M3.3-26).
 //
 // Measured on the regtest rehearsal before the fix: both daemons reached the
 // loser's settle holding both shares of a stake dealt 2-of-2, and stopped at
 // "2 of 5 shares" - the settle's `open()` asked SHARES_NEEDED, whatever the
 // round. The door tests pin what a handout may be dealt at; this pins what the
-// settle opens at: two daemons, one 2-of-2 stake, one run that wrecks and turns
-// final on both, and each daemon's settle hook must open the preimage the hold
-// was made for. A mutant that drops the round's number from `open()` opens none.
+// settle opens at. Two shapes, because two mutants: a settle that asks the
+// default 5 is caught on 2 of 2; a settle that asks the SLOT COUNT - item 23's
+// "every seat a vote", moved from the page into the settle - is the same number
+// as the threshold on two seats, and is caught only on seven seats with two of
+// them down, where 5 shares exist and 7 are asked for.
+//
+// A lone loser moves no stake - the round's money rule refuses a pool with
+// nobody handed anything ("the operator would keep 98000 msat") - so the close
+// never reaches the settle here; the rehearsal, with a winner beside the
+// loser, does. What the settle calls is the custody's `preimageFor`, which is
+// the daemon's `fromTheCommittee`: its own share plus the other seats', asked
+// for over HTTP once the run is final on them, opened at the round's number.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { ed25519 } from '@noble/curves/ed25519.js';
+import { schnorr } from '@noble/curves/secp256k1.js';
 import { WebSocket } from 'ws';
 
 import { openStore } from '../src/store.js';
@@ -24,6 +34,7 @@ import { encodeInputBatch, batchId } from '../../protocol/src/batch.js';
 import { encodeCheckpoint, checkpointId, joinSigned, NO_PREVIOUS } from '../../protocol/src/checkpoint.js';
 import { SIGNED_RECEIPT_BYTES } from '../../protocol/src/receipt.js';
 import { dealHandout, encodeHandout, handoutId } from '../../protocol/src/handout.js';
+import { receiptsNeeded } from '../../protocol/src/threshold.js';
 import { FIELD, scalarFrom32 } from '../../protocol/src/shares.js';
 import { init, step } from '../../core/src/sim.js';
 import { hash as stateHash } from '../../core/src/state.js';
@@ -54,7 +65,7 @@ function paidPort() {
 
 const contractFor = (nodes) => ({
   networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations: 1,
-  gameVerifySlots: 2, settlementSlots: 2, simCoreHash: b32(1), startTimeMs: 60500n,
+  gameVerifySlots: nodes.length, settlementSlots: nodes.length, simCoreHash: b32(1), startTimeMs: 60500n,
   entryCloseMs: 2000n, objectionWindowMs: 600000n, custody: 'FEDERATION',
   slashMinimumServed: 20, slashRemainder: 'BURN', donationSetId: b32(0xd0),
   censusHeight: 900000, censusRoot: b32(2), committeeTimeMs: 500n,
@@ -72,29 +83,37 @@ const say = (port, message) => new Promise((resolve, reject) => {
 
 const secretScalar = () => { let p = rand(32); while (scalarFrom32(p) >= FIELD) p = rand(32); return p; };
 
-test('each daemon\'s settle opens a 2-of-2 stake with its 2 shares - not "2 of 5"', async () => {
+/**
+ * A round of `seats` settlement seats of which `up` run a daemon, one stake
+ * dealt at the round's threshold to all of them, one run that wrecks played on
+ * every daemon, closed on every daemon, and final on every daemon.
+ */
+async function lostStake({ seats, up }) {
   const opts = { funded: () => true, randomnessFor: () => BEACON,
     preflight: async () => ({ ready: true, why: 'test port' }), finality: { everyMs: 50 } };
-  const portA = paidPort();
-  const portB = paidPort();
-  const a = await serve(openStore(':memory:'), { port: 0, ...opts, lightning: portA });
-  const b = await serve(openStore(':memory:'), { port: 0, ...opts, lightning: portB });
+  const daemons = [];
+  for (let i = 0; i < up; i++) daemons.push(await serve(openStore(':memory:'), { port: 0, ...opts, lightning: paidPort() }));
+  const close = async () => { for (const d of daemons) await d.close(); };
   try {
-    for (const [d, other] of [[a, b], [b, a]]) {
-      d.verifier.peers = [`http://127.0.0.1:${other.port}`];
-      d.payouts.peers = [`http://127.0.0.1:${other.port}`];
-      d.preimages.peers = [`http://127.0.0.1:${other.port}`];   // no census here: the operator's list
+    for (const d of daemons) {
+      // no census here: the operator's list, the same for every ask
+      const others = daemons.filter((o) => o !== d).map((o) => `http://127.0.0.1:${o.port}`);
+      d.verifier.peers = others;
+      d.payouts.peers = others;
+      d.preimages.peers = others;
     }
-    const c = contractFor([a.round.pubkey, b.round.pubkey]);
+    const down = Array.from({ length: seats - up }, () => schnorr.getPublicKey(rand(32)));
+    const c = contractFor([...daemons.map((d) => d.round.pubkey), ...down]);
     const rid = roundId(c);
+    const needed = receiptsNeeded(seats);
 
-    // THE STAKE, DEALT THE WAY THE PAGE DEALS IT: the round's 2 of its 2 seats.
     const preimage = secretScalar();
     const e = rand(32);
     const dealt = await dealHandout({
       preimage, seats: c.nodes, roundId: rid, playerPubkey: b32(5),
       ephemeralSecret: e, ephemeralPubkey: feldmanGroup.pointX(e),
-      coefficients: [scalarFrom32(rand(32)) % FIELD], needed: 2, curve: feldmanGroup,
+      coefficients: Array.from({ length: needed - 1 }, () => scalarFrom32(rand(32)) % FIELD),
+      needed, curve: feldmanGroup,
     });
     assert.equal(dealt.ok, true, dealt.why);
 
@@ -113,7 +132,7 @@ test('each daemon\'s settle opens a 2-of-2 stake with its 2 shares - not "2 of 5
       inputChainHash: batchId(input), previousHash: NO_PREVIOUS, sessionPubkey: ed25519.getPublicKey(session) };
     const signedMark = joinSigned(encodeCheckpoint(mark), ed25519.sign(checkpointId(mark), session));
 
-    for (const d of [a, b]) {
+    for (const d of daemons) {
       await fetch(`http://127.0.0.1:${d.port}/round`, { method: 'POST', body: encodeRoundContract(c) });
       assumeSeated(d.round, rid, c.nodes);
       const took = await fetch(`http://127.0.0.1:${d.port}/handout`, { method: 'POST', body: encodeHandout(dealt.handout) });
@@ -126,26 +145,36 @@ test('each daemon\'s settle opens a 2-of-2 stake with its 2 shares - not "2 of 5
       assert.equal(await say(d.port, encodeInputBatch(input)), String(TICKS));
       assert.equal((await say(d.port, signedMark)).length, SIGNED_RECEIPT_BYTES);
     }
-
-    for (const d of [a, b]) {
+    for (const d of daemons) {
       assert.equal(await say(d.port, `close ${toHex(rid)}`), 'closed');
       await d.verifier.settling;
     }
     const final = async (d) => ((await d.stakes()).agreed || []).includes(toHex(eid));
-    const stop = Date.now() + 8000;
-    while (Date.now() < stop && !((await final(a)) && (await final(b)))) await wait(50);
-    for (const d of [a, b]) assert.equal(await final(d), true, 'the run never turned final on both seats');
+    const stop = Date.now() + 10000;
+    while (Date.now() < stop && !(await Promise.all(daemons.map(final))).every(Boolean)) await wait(50);
+    for (const [i, d] of daemons.entries())
+      assert.equal(await final(d), true, `the run never turned final on seat ${i + 1} of the ${up} up`);
+    return { daemons, entry, eid, rid, preimage, needed, close };
+  } catch (err) { await close(); throw err; }
+}
 
-    // THE SETTLE'S OWN OPENING. A lone loser moves no stake - the round's money
-    // rule refuses a pool with nobody handed anything ("the operator would keep
-    // 98000 msat") - so the close never reaches it here; the rehearsal, with a
-    // winner beside the loser, does. What the settle calls is the custody's
-    // `preimageFor`, which is the daemon's `fromTheCommittee`: its own share
-    // plus the other seat's, asked for over HTTP, opened at the round's number.
-    for (const [name, d] of [['A', a], ['B', b]]) {
-      const got = await d.custody.preimageFor(eid, entry, rid);
+test('each daemon\'s settle opens a 2-of-2 stake with its 2 shares - not "2 of 5"', async () => {
+  const w = await lostStake({ seats: 2, up: 2 });
+  try {
+    for (const [name, d] of [['A', w.daemons[0]], ['B', w.daemons[1]]]) {
+      const got = await d.custody.preimageFor(w.eid, w.entry, w.rid);
       assert.ok(got instanceof Uint8Array, `${name} opened no preimage from the 2 shares of a 2-of-2 stake`);
-      assert.equal(toHex(got), toHex(preimage), `${name} opened a different preimage`);
+      assert.equal(toHex(got), toHex(w.preimage), `${name} opened a different preimage`);
     }
-  } finally { await a.close(); await b.close(); }
+  } finally { await w.close(); }
+});
+
+test('seven seats, two of them down: the settle opens a 5-of-7 stake with the 5 shares that exist - not "5 of 7"', async () => {
+  const w = await lostStake({ seats: 7, up: 5 });
+  try {
+    assert.equal(w.needed, 5);
+    const got = await w.daemons[0].custody.preimageFor(w.eid, w.entry, w.rid);
+    assert.ok(got instanceof Uint8Array, 'the settle opened no preimage from the 5 shares a 5-of-7 stake needs');
+    assert.equal(toHex(got), toHex(w.preimage), 'the settle opened a different preimage');
+  } finally { await w.close(); }
 });
