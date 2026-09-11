@@ -163,6 +163,12 @@ PAYER=$!
 sleep 10
 snap "INSIDE WINDOW (pay +10 s)"
 say "  bob's lnd at pay +10 s: $(ln_ bob listinvoices | js 'o=>o.invoices.map(i=>`invoice ${i.state}, ${(i.htlcs||[]).map(h=>h.state).join(",") || "no HTLC"}`).join("; ")')"
+# AND THE RECEIVER'S SIDE, DRIVEN: `info` exits before a claim can run, so it
+# cannot tell "not claimable" from "not yet run". The receiver's own
+# await-receive is given 8 s inside the window; one client process at a time.
+s2=$(date +%s%3N)
+CL=$(HOME=$FH timeout 8 $F/fedimint-cli --data-dir $P/client module lnv2 await-receive "$OP" 2>&1 | tr -d '\n ')
+say "  the receiver's claim inside the window (await-receive, 8 s max): ${CL:-no answer - still pending} after $(( $(date +%s%3N) - s2 )) ms, at pay +$(( $(date +%s%3N) - t )) ms; receiver ecash then $(fc info 2>/dev/null | js 'o=>Math.floor(Number(o.total_amount_msat)/1000)')"
 wait $PAYER
 say "  alice's payinvoice returned after $(cat $P/pay.ms) ms: $(grep -oE 'Payment status: [A-Z_]+' $P/pay.out | tail -1)"
 snap "AFTER PAY"
