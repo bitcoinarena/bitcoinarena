@@ -1420,6 +1420,32 @@ export class Round {
       .map((r) => ({ nodePubkey: new Uint8Array(r.node_pubkey), bytes: new Uint8Array(r.bytes) }));
   }
 
+  /** One seat's signed posting of a run's transcript; one per seat (P2). */
+  putPosting(roundIdBytes, entryIdBytes, seatPubkey, bytes) {
+    return this.db.prepare(
+      'INSERT OR IGNORE INTO postings (round_id, entry_id, seat_pubkey, bytes, seen_ms) VALUES (?, ?, ?, ?, ?)')
+      .run(roundIdBytes, entryIdBytes, seatPubkey, bytes, this.now()).changes;
+  }
+
+  /** Every signed posting this node holds for a run, its own included, with when each arrived. */
+  postings(roundIdBytes, entryIdBytes) {
+    return this.db.prepare(
+      'SELECT seat_pubkey, bytes, seen_ms FROM postings WHERE round_id = ? AND entry_id = ? ORDER BY seat_pubkey')
+      .all(roundIdBytes, entryIdBytes)
+      .map((r) => ({ seatPubkey: new Uint8Array(r.seat_pubkey), bytes: new Uint8Array(r.bytes), seenMs: Number(r.seen_ms) }));
+  }
+
+  /** A transcript kept as a relay, under the hash its bytes have (checked by the door). */
+  relayPut(hashBytes, bytes) {
+    return this.db.prepare('INSERT OR IGNORE INTO relayed (hash, bytes, seen_ms) VALUES (?, ?, ?)')
+      .run(hashBytes, bytes, this.now()).changes;
+  }
+
+  relayGet(hashBytes) {
+    const row = this.db.prepare('SELECT bytes FROM relayed WHERE hash = ?').get(hashBytes);
+    return row ? new Uint8Array(row.bytes) : null;
+  }
+
   /** Every signed result this node holds for a run, its own included. */
   results(roundIdBytes, entryIdBytes) {
     return this.db.prepare(

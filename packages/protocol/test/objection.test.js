@@ -318,3 +318,27 @@ test('an objection about another round, or another result, does not touch this o
     /no round and result to check this objection against/);
   assert.equal(objectionHolds({ objection: objection(), ...good, roundId: b32(1) }).holds, false);
 });
+
+// PUBLICATION IS A CONDITION OF FINALITY (v4.6.2 §13A, P2).
+test('a result nobody has posted is never final, and the window counts from the posting, not the signatures', () => {
+  const c = contract({ objectionWindowMs: 1000n });
+  const at = 10000n;
+  const ask = (now, publishedAtMs) => finality({
+    signedBy: signedBy(5), committee, contract: c, provisionalAtMs: at, publishedAtMs, now,
+  });
+  const never = ask(at + 1000000n, null);
+  assert.equal(never.state, PROVISIONALLY_FINAL, 'a result nobody posted became final');
+  assert.equal(never.published, false);
+  assert.equal(never.closesAtMs, undefined, 'an unposted result names a window end');
+  assert.match(never.why, /not been posted/);
+
+  // posted 5 s after the fifth signature: W runs from there
+  const posted = at + 5000n;
+  assert.equal(ask(at + 1000n, posted).state, PROVISIONALLY_FINAL, 'the window ran from the signatures');
+  assert.equal(ask(posted + 999n, posted).state, PROVISIONALLY_FINAL);
+  assert.equal(ask(posted + 1000n, posted).state, FINAL);
+  assert.equal(ask(posted + 1000n, posted).closesAtMs, posted + 1000n);
+  // a posting dated before the threshold does not open the window early
+  assert.equal(ask(at + 999n, at - 5000n).state, PROVISIONALLY_FINAL);
+  assert.equal(ask(at + 1000n, at - 5000n).state, FINAL);
+});

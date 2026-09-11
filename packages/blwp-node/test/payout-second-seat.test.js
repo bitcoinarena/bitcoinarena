@@ -123,11 +123,13 @@ function dealThePool() {
   return trustedDealerSplit({ secret: even.secret, max: 2, min: 2, coefficients: [scalarFrom32(rand(32))], curve });
 }
 
-const contractFor = (nodes) => ({
+// P2 (v4.6.2 §13A): the relays each run's transcript is posted to - the
+// daemons' own doors - or no result of the round can become final.
+const contractFor = (nodes, publicationRelays) => ({
   networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations: 1,
   gameVerifySlots: 2, settlementSlots: 2, simCoreHash: b32(1), startTimeMs: 60500n,
   entryCloseMs: 2000n, objectionWindowMs: BigInt(WINDOW_MS), custody: 'FEDERATION',
-  slashMinimumServed: 20, slashRemainder: 'BURN', federationId: new Uint8Array(32), stakeExpiryBlocks: 144, publicationRelays: [], donationSetId: b32(0xd0),
+  slashMinimumServed: 20, slashRemainder: 'BURN', federationId: new Uint8Array(32), stakeExpiryBlocks: 144, publicationRelays, donationSetId: b32(0xd0),
   censusHeight: 900000, censusRoot: b32(2), committeeTimeMs: 500n,
   randomnessRule: 'bitcoin-block-hash', stakeMsat: STAKE, bondMinSats: 50000n,
   blockTicks: 9000, exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
@@ -194,7 +196,7 @@ test('the seat whose payout ask came before the other had queued ends PAID once 
       const there = [`http://127.0.0.1:${other.port}`];
       d.verifier.peers = there; d.payouts.peers = there; d.preimages.peers = there;
     }
-    const c = contractFor([a.round.pubkey, b.round.pubkey]);
+    const c = contractFor([a.round.pubkey, b.round.pubkey], [a, b].map((d) => `http://127.0.0.1:${d.port}`));
     const rid = roundId(c);
     for (const d of [a, b]) {
       assert.equal((await fetch(`http://127.0.0.1:${d.port}/round`, { method: 'POST', body: encodeRoundContract(c) })).status, 201);

@@ -73,11 +73,13 @@ function paidPort() {
 // A ROUND WITH NO OBJECTION WINDOW: final at the quorum, which is the moment
 // this race is about. objection-window.test.js pins the window (M3.3-32); the
 // watch's budget is named in `finality` instead.
-const contractFor = (nodes) => ({
+// P2 (v4.6.2 §13A): the relays each run's transcript is posted to - the
+// daemons' own doors - or no result of the round can become final.
+const contractFor = (nodes, publicationRelays) => ({
   networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations: 1,
   gameVerifySlots: 2, settlementSlots: 2, simCoreHash: b32(1), startTimeMs: 60500n,
   entryCloseMs: 2000n, objectionWindowMs: 0n, custody: 'FEDERATION',
-  slashMinimumServed: 20, slashRemainder: 'BURN', federationId: new Uint8Array(32), stakeExpiryBlocks: 144, publicationRelays: [], donationSetId: b32(0xd0),
+  slashMinimumServed: 20, slashRemainder: 'BURN', federationId: new Uint8Array(32), stakeExpiryBlocks: 144, publicationRelays, donationSetId: b32(0xd0),
   censusHeight: 900000, censusRoot: b32(2), committeeTimeMs: 500n,
   randomnessRule: 'bitcoin-block-hash', stakeMsat: STAKE, bondMinSats: 50000n,
   blockTicks: 9000, exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
@@ -137,7 +139,7 @@ async function seatAndPlay(daemons, c, rid, who) {
  * second close sent `gapMs` after the first, as `--close-gap` sends it on the
  * rehearsal - and each on the daemon's own 2 s finality watch.
  */
-async function closedWithGap(gapMs) {
+async function closedWithGap(gapMs, { bLateToAMs = 0 } = {}) {
   const opts = { funded: () => true, randomnessFor: () => BEACON, preflight: async () => ({ ready: true, why: 'test port' }),
     finality: { windowMs: 20000 } };
   const portA = paidPort();
@@ -152,7 +154,7 @@ async function closedWithGap(gapMs) {
       d.payouts.peers = there;
       d.preimages.peers = there;
     }
-    const c = contractFor([a.round.pubkey, b.round.pubkey]);
+    const c = contractFor([a.round.pubkey, b.round.pubkey], [a, b].map((d) => `http://127.0.0.1:${d.port}`));
     const rid = roundId(c);
     for (const d of [a, b]) {
       await fetch(`http://127.0.0.1:${d.port}/round`, { method: 'POST', body: encodeRoundContract(c) });
@@ -160,6 +162,33 @@ async function closedWithGap(gapMs) {
     }
     const winner = await seatAndPlay([a, b], c, rid, WINNER);
     const loser = await seatAndPlay([a, b], c, rid, LOSER);
+    // EVERY HOLD EITHER SEAT WRITES on the lost stake, in order, so the race
+    // can be seen on whichever seat it lands.
+    const held = { A: [], B: [] };
+    for (const [name, d] of [['A', a], ['B', b]]) {
+      const put = d.round.putHold.bind(d.round);
+      d.round.putHold = (row) => {
+        if (toHex(row.entryId) === toHex(loser.eid)) held[name].push({ state: row.state, why: row.why });
+        return put(row);
+      };
+    }
+
+    // B'S POSTING REACHES A LATE, when a test says so: A's store takes it only
+    // `bLateToAMs` after the close - a slow link, and the state the race needs:
+    // B final, A not yet (P2). And every share A answers for the lost stake.
+    const t0 = Date.now();
+    if (bLateToAMs) {
+      const keep = a.round.putPosting.bind(a.round);
+      a.round.putPosting = (r, e, seat, bytes) =>
+        (toHex(seat) === toHex(b.round.pubkey) && Date.now() < t0 + bLateToAMs ? 0 : keep(r, e, seat, bytes));
+    }
+    const answeredByA = [];
+    const release = a.preimages.mayRelease.bind(a.preimages);
+    a.preimages.mayRelease = (r, e) => {
+      const x = release(r, e);
+      if (toHex(e) === toHex(loser.eid)) answeredByA.push({ atMs: Date.now() - t0, ok: x.ok, why: x.why || '' });
+      return x;
+    };
 
     const first = say(a.port, `close ${toHex(rid)}`);
     if (gapMs) await wait(gapMs);
@@ -169,27 +198,38 @@ async function closedWithGap(gapMs) {
     await b.verifier.settling;
     const early = await b.stakes();
     const stateOf = (d, eid) => (d.round.hold(eid) || {}).state;
+    // THE WHOLE END STATE the tests assert: since P2 each run is final on its
+    // own transcript's posting, so the winner's cancel can land a tick after
+    // the loser's settle - waiting on the loser alone asserted the winner early.
     const settledBoth = async (ms) => {
       const stop = Date.now() + ms;
-      while (Date.now() < stop && !(stateOf(a, loser.eid) === SETTLED && stateOf(b, loser.eid) === SETTLED)) await wait(100);
+      const ended = () => [a, b].every((d) => stateOf(d, loser.eid) === SETTLED && stateOf(d, winner.eid) === CANCELLED);
+      while (Date.now() < stop && !ended()) await wait(100);
     };
-    return { a, b, portA, portB, winner, loser, early, stateOf, settledBoth, close };
+    return { a, b, portA, portB, winner, loser, early, stateOf, settledBoth, held, answeredByA, close };
   } catch (err) { await close(); throw err; }
 }
 
 const wantOf = (loser) => ({ paymentHash: toHex(loser.entry.stakeCommitment), preimage: toHex(loser.preimage) });
 const bigints = (k, v) => (typeof v === 'bigint' ? String(v) : v);
 
+// SINCE P2 (v4.6.2 §13A) NO SEAT IS FINAL AT ITS OWN CLOSE: final needs both
+// seats' postings of the run's transcript, so the race is a matter of which
+// seat holds both postings first. Measured at an 800 ms gap: no seat was
+// refused at all; with the cadences skewed it came and went. So the state the
+// race needs is made here: B's posting reaches A 3 s after the close. B is final
+// first, asks A, and A - genuinely not final ("1 of 2 settlement seats have
+// posted") - refuses: the second closer refused its first share, as before P2.
 test('closed 800 ms apart: the second closer, refused its first share, ends SETTLED on the lost stake lnd settled through the first', async () => {
-  const w = await closedWithGap(800);
+  const w = await closedWithGap(800, { bLateToAMs: 3000 });
   try {
-    // THE RACE HAPPENED: B's close was final, settled, and was refused A's share.
-    const first = (w.early.actions || []).find((x) => toHex(x.entryId) === toHex(w.loser.eid));
-    assert.ok(first, `B's close did not act on the lost stake at all: ${w.early.why || JSON.stringify(w.early, bigints)}`);
-    assert.equal(first.state, HELD, `the race did not happen at 800 ms - B's close left it ${first.state}`);
-    assert.match(first.why, /no preimage/, 'B held the stake for another reason than the race');
-
     await w.settledBoth(12000);
+
+    // THE RACE HAPPENED: B was final, settled, and asked A for its share, and A
+    // - not final yet - refused it.
+    const refused = w.answeredByA.filter((x) => !x.ok && /1 of 2 settlement seats have posted/.test(x.why));
+    assert.ok(refused.length, `the race did not happen - A never refused B's ask for its share: ${JSON.stringify(w.answeredByA)}`);
+    assert.ok(w.answeredByA.some((x) => x.ok && x.atMs > refused[0].atMs), 'A never handed B its share after refusing it');
     assert.equal(w.stateOf(w.a, w.loser.eid), SETTLED, 'the first closer never settled the lost stake');
     assert.deepEqual(w.portA.settled, [wantOf(w.loser)], 'A released something other than the lost stake\'s own preimage');
     assert.equal(w.stateOf(w.b, w.loser.eid), SETTLED,

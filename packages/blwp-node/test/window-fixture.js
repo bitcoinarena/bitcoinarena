@@ -33,6 +33,7 @@ import { init, step } from '../../core/src/sim.js';
 import { hash as stateHash } from '../../core/src/state.js';
 import { seedWordForEntry } from '../../protocol/src/seed.js';
 import { toHex, fromHex, sha256 } from '../../protocol/src/hash.js';
+import { encodeTranscriptPosting, transcriptPostingId, joinSignedPosting } from '../../protocol/src/posting.js';
 import { entryFeeMsat } from '../../protocol/src/fee.js';
 
 export const b32 = (n) => new Uint8Array(32).fill(n);
@@ -135,11 +136,12 @@ export const opts = { funded: () => true, randomnessFor: () => BEACON, preflight
  * five of the other seats sign - the same run it did, or a rewritten one - and
  * the run is PROVISIONALLY_FINAL on it.
  */
-export async function sevenSeats(windowMs, relays = []) {
+export async function sevenSeats(windowMs, relays) {
   const holder = await serve(openStore(':memory:'), { port: 0, ...opts, lightning: paidPort() });
   try {
     const others = Array.from({ length: 6 }, () => rand(32));
-    const c = contractFor([holder.round.pubkey, ...others.map((s) => schnorr.getPublicKey(s))], BigInt(windowMs), relays);
+    const c = contractFor([holder.round.pubkey, ...others.map((s) => schnorr.getPublicKey(s))], BigInt(windowMs),
+      relays === undefined ? [`http://127.0.0.1:${holder.port}`] : relays);
     const rid = roundId(c);
     await fetch(`http://127.0.0.1:${holder.port}/round`, { method: 'POST', body: encodeRoundContract(c) });
     assumeSeated(holder.round, rid, c.nodes);
@@ -157,7 +159,21 @@ export async function sevenSeats(windowMs, relays = []) {
     for (const p of holder.verifier.done) await p;
     await holder.verifier.settling;
 
-    const sign = (name, rewrite) => {
+    // SEATS SAYING THEY POSTED THE RUN'S TRANSCRIPT (P2): the first `count` of
+    // the other six, about the transcript the holder's own result names unless
+    // `over` says otherwise. A result is FINAL only once five of these agree.
+    const post = (name, count = 5, over = {}, keys = others) => {
+      const eid = runs[name].eid;
+      const mine = holder.round.results(rid, eid).find((r) => toHex(r.nodePubkey) === toHex(holder.round.pubkey));
+      const shape = decodePlayerResult(splitSignedResult(mine.bytes).body);
+      for (const secret of keys.slice(0, count)) {
+        const p = { roundId: rid, playerPubkey: shape.playerPubkey, transcriptHash: shape.transcriptHash,
+          seatPubkey: schnorr.getPublicKey(secret), ...over };
+        holder.round.putPosting(rid, eid, p.seatPubkey,
+          joinSignedPosting(encodeTranscriptPosting(p), schnorr.sign(transcriptPostingId(p), secret)));
+      }
+    };
+    const sign = (name, rewrite, { posted = true } = {}) => {
       const eid = runs[name].eid;
       const mine = holder.round.results(rid, eid).find((r) => toHex(r.nodePubkey) === toHex(holder.round.pubkey));
       assert.ok(mine, `the holder signed no result for ${name}`);
@@ -168,8 +184,9 @@ export async function sevenSeats(windowMs, relays = []) {
         const id = resultId(r);
         holder.round.putResult(rid, eid, r.nodePubkey, id, joinSignedResult(encodePlayerResult(r), schnorr.sign(id, secret)));
       }
+      if (posted) post(name);
     };
-    return { holder, rid, runs, sign, close: () => holder.close() };
+    return { holder, rid, runs, sign, post, others, contract: c, close: () => holder.close() };
   } catch (err) { await holder.close(); throw err; }
 }
 

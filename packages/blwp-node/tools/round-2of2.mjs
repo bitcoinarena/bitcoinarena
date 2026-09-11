@@ -379,7 +379,12 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     startTimeMs: committeeTimeMs + MIN_ENTRY_WINDOW_MS,
     entryCloseMs: committeeTimeMs + MIN_ENTRY_WINDOW_MS + 120000n,
     objectionWindowMs, custody: 'FEDERATION', slashMinimumServed: 20,
-    slashRemainder: 'BURN', federationId: new Uint8Array(32), stakeExpiryBlocks: 144, publicationRelays: [], donationSetId: b32(0xd0), censusHeight,
+    slashRemainder: 'BURN', federationId: new Uint8Array(32), stakeExpiryBlocks: 144,
+    // WHERE THE SEATS POST EACH RUN'S TRANSCRIPT (v4.6.2 §13A, P2): the two
+    // daemons' own relay doors. A result is final only once both have posted
+    // it, and a round naming no relay could never settle a stake.
+    publicationRelays: [`http://${host}:${portA}`, `http://${host}:${portB}`],
+    donationSetId: b32(0xd0), censusHeight,
     censusRoot: new Uint8Array(32), stakeMsat, bondMinSats: 50000n, blockTicks: 9000,
     exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
     timeFloor: 30, timeCeil: 150, minScore: 1, rankNumerator: 3, rankDenominator: 4,

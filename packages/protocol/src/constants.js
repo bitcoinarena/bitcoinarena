@@ -182,6 +182,10 @@ export const TYPE_CLAIM_KEY_ATTESTATION = 0x16;
 // share only when every seat of the committee has said the same set - so a
 // dealer who sent different contributions to different seats splits nobody.
 export const TYPE_DKG_AGREEMENT = 0x17;
+// ONE SETTLEMENT SEAT SAYING IT POSTED A RUN'S CANONICAL TRANSCRIPT to the
+// round's publication relays, signed. A result is FINAL only once the round's
+// threshold of seats have said so (§13A, v4.6.2 P2).
+export const TYPE_TRANSCRIPT_POSTING = 0x18;
 
 // A SEALED SHARE IS A FIXED SIZE, and it is not a choice: 32 bytes of scalar
 // under AES-GCM plus the 16-byte tag that makes a wrong key a REFUSAL rather
@@ -269,6 +273,8 @@ export const TAG = {
   dkgProofNonce: 'BLWP/v1/DkgProofNonce',
   // What a seat signs to say which contributions it combined for an epoch.
   dkgAgreement: 'BLWP/v1/DkgAgreement',
+  // What a settlement seat signs once it has posted a run's transcript (§13A).
+  transcriptPosting: 'BLWP/v1/TranscriptPosting',
 };
 
 /**

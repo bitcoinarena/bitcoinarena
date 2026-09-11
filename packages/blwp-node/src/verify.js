@@ -12,7 +12,11 @@
 // does, and this file only decides which runs are handed to it.
 import { ReplayPool } from './pool.js';
 import { SIGNED_RECEIPT_BYTES } from '../../protocol/src/receipt.js';
-import { resultFrom, signResult, verifiedFinal } from './verdict.js';
+import { resultFrom, signResult, verifiedFinal, runId } from './verdict.js';
+import {
+  encodeTranscriptPosting, transcriptPostingId, joinSignedPosting, splitSignedPosting, decodeTranscriptPosting,
+  transcriptBytesHash, relayPath, transcriptIsPublished, SIGNED_POSTING_BYTES,
+} from '../../protocol/src/posting.js';
 import {
   joinSignedResult, splitSignedResult, decodePlayerResult, resultId, SIGNED_RESULT_BYTES,
 } from '../../protocol/src/result.js';
@@ -331,6 +335,126 @@ export class Verifier {
     // The entry is in the answer because a caller with a round's worth of
     // them cannot otherwise say which run each one is about.
     return { ok: true, entryId: entryIdBytes, fetched, kept, refused, held: held.length, ...seen };
+  }
+
+  /**
+   * POST THE AGREED RUN'S TRANSCRIPT WHERE ANYONE CAN REPLAY IT, AND SAY SO (P2).
+   *
+   * v4.6.2 §13A: a result is not FINAL until the canonical transcript it names
+   * has been retrieved by the round's threshold of settlement seats and posted
+   * by them to the contract's `publication_relays[]`. Measured before this: a
+   * seven-seat run and a two-daemon round went FINAL and moved money with the
+   * contract's relay asked nothing (publication-finality.test.js).
+   *
+   * This seat, if it is one: take the transcript the agreed result names - its
+   * own canonical one, else a peer's `/canonical`, either way only if its bytes
+   * hash to that name - PUT it to every relay, read it back, and only when at
+   * least one relay gives back the same bytes sign a posting. Then take every
+   * peer's postings, each checked as far as it can be. Idempotent: a seat that
+   * has posted does not post again, and the gather is the same gather.
+   */
+  async publish(roundIdBytes, entryIdBytes) {
+    const row = this.round.get(roundIdBytes);
+    if (!row) return { ok: false, why: 'no such round' };
+    const contract = decodeRoundContract(new Uint8Array(row.contract));
+    const seats = this.round.seats(roundIdBytes);
+    const mine = this.round.entriesOf(roundIdBytes).find((e) => hex(e.entryId) === hex(entryIdBytes));
+    if (!mine) return { ok: false, why: 'no such entry in that round' };
+    const playerPubkey = mine.entry.playerPubkey;
+
+    // WHICH TRANSCRIPT: the one the agreed run names, and no other.
+    const held = this.round.results(roundIdBytes, entryIdBytes);
+    const seen = verifiedFinal(held.map((r) => r.bytes), { contract, seats });
+    if (!seen.ok || !seen.final) return { ok: false, why: seen.why || 'no run of that entry is agreed yet' };
+    let transcriptHash = null;
+    for (const r of held) {
+      try {
+        const res = decodePlayerResult(splitSignedResult(r.bytes).body);
+        if (hex(runId(res)) === seen.runId) { transcriptHash = res.transcriptHash; break; }
+      } catch { /* a record that does not decode names nothing */ }
+    }
+    if (!transcriptHash) return { ok: false, why: 'the agreed run names no transcript this node can read' };
+
+    const report = { relays: [], refused: [] };
+    const seated = seats.some((s) => hex(s) === hex(this.round.pubkey));
+    const said = this.round.postings(roundIdBytes, entryIdBytes).some((p) => hex(p.seatPubkey) === hex(this.round.pubkey));
+    const relays = contract.publicationRelays || [];
+    if (seated && !said && !relays.length)
+      report.refused.push('the round contract names no publication relay, so this seat can post its transcript nowhere');
+    if (seated && !said && relays.length) {
+      const bytes = await this.#transcriptNamed(roundIdBytes, entryIdBytes, transcriptHash, report);
+      let readBack = 0;
+      for (const relay of bytes ? relays : []) {
+        const at = `${String(relay).replace(/\/+$/, '')}${relayPath(transcriptHash)}`;
+        try {
+          const put = await fetch(at, { method: 'PUT', body: bytes });
+          if (!put.ok) { report.refused.push(`${relay}: kept nothing (${put.status})`); continue; }
+          const back = new Uint8Array(await (await fetch(at)).arrayBuffer());
+          if (hex(back) !== hex(bytes)) { report.refused.push(`${relay}: gave back other bytes`); continue; }
+          readBack++;
+          report.relays.push(relay);
+        } catch (e) { report.refused.push(`${relay}: ${e.message}`); }
+      }
+      if (readBack) {
+        const posting = { roundId: roundIdBytes, playerPubkey, transcriptHash, seatPubkey: this.round.pubkey };
+        const body = encodeTranscriptPosting(posting);
+        const signature = schnorr.sign(transcriptPostingId(posting), this.round.identity.secret);
+        this.round.putPosting(roundIdBytes, entryIdBytes, this.round.pubkey, joinSignedPosting(body, signature));
+      }
+    }
+
+    // AND THE OTHER SEATS' WORD, each checked here, never taken on arrival.
+    for (const peer of this.peersOf(roundIdBytes)) {
+      let body;
+      try {
+        const answer = await fetch(`${peer}/postings?round=${hex(roundIdBytes)}&entry=${hex(entryIdBytes)}`);
+        if (!answer.ok) continue;
+        body = new Uint8Array(await answer.arrayBuffer());
+      } catch { continue; }                  // a peer that is down is not a fault
+      for (let at = 0; at + SIGNED_POSTING_BYTES <= body.length; at += SIGNED_POSTING_BYTES)
+        this.#keepPeerPosting(roundIdBytes, entryIdBytes, body.slice(at, at + SIGNED_POSTING_BYTES), playerPubkey, seats);
+    }
+
+    const count = transcriptIsPublished({
+      roundId: roundIdBytes, playerPubkey, transcriptHash, postings: this.round.postings(roundIdBytes, entryIdBytes),
+      seats, settlementSlots: contract.settlementSlots, verify: (s, m, k) => schnorr.verify(s, m, k),
+    });
+    return { ...count, entryId: entryIdBytes, ...report };
+  }
+
+  /** The transcript a hash names: this node's canonical one, else a peer's - only bytes with that hash. */
+  async #transcriptNamed(roundIdBytes, entryIdBytes, transcriptHash, report) {
+    try {
+      const own = this.round.canonicalTranscript(roundIdBytes, entryIdBytes);
+      if (hex(own.hash) === hex(transcriptHash)) return own.bytes;
+    } catch { /* not held here; a peer may */ }
+    for (const peer of this.peersOf(roundIdBytes)) {
+      try {
+        const answer = await fetch(`${peer}/canonical?round=${hex(roundIdBytes)}&entry=${hex(entryIdBytes)}`);
+        if (!answer.ok) continue;
+        const bytes = new Uint8Array(await answer.arrayBuffer());
+        if (hex(transcriptBytesHash(bytes)) === hex(transcriptHash)) return bytes;
+        report.refused.push(`${peer}: served a transcript that is not the one the agreed result names`);
+      } catch { /* the next peer may have it */ }
+    }
+    report.refused.push('no seat served the transcript the agreed result names');
+    return null;
+  }
+
+  /** One posting from a peer: about this round and player, from a seated seat, and signed by it. */
+  #keepPeerPosting(roundIdBytes, entryIdBytes, record, playerPubkey, seats) {
+    let p, signature;
+    try {
+      const split = splitSignedPosting(record);
+      signature = split.signature;
+      p = decodeTranscriptPosting(split.body);
+    } catch { return false; }
+    if (hex(p.roundId) !== hex(roundIdBytes) || hex(p.playerPubkey) !== hex(playerPubkey)) return false;
+    if (!seats.some((s) => hex(s) === hex(p.seatPubkey))) return false;
+    let ok = false;
+    try { ok = schnorr.verify(signature, transcriptPostingId(p), p.seatPubkey); } catch { ok = false; }
+    if (!ok) return false;
+    return this.round.putPosting(roundIdBytes, entryIdBytes, p.seatPubkey, record) === 1;
   }
 
   /** One record from a peer, believed only as far as it can be checked. */

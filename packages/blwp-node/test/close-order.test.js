@@ -52,11 +52,13 @@ function paidPort() {
 // A ROUND WITH NO OBJECTION WINDOW: final at the quorum. This file is about
 // who closes first, not the window - objection-window.test.js pins that
 // (M3.3-32) - so the watch's budget is named in `finality` instead.
-const contractFor = (nodes) => ({
+// P2 (v4.6.2 §13A): the relays each run's transcript is posted to - the
+// daemons' own doors - or no result of the round can become final.
+const contractFor = (nodes, publicationRelays) => ({
   networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations: 1,
   gameVerifySlots: 2, settlementSlots: 2, simCoreHash: b32(1), startTimeMs: 60500n,
   entryCloseMs: 2000n, objectionWindowMs: 0n, custody: 'FEDERATION',
-  slashMinimumServed: 20, slashRemainder: 'BURN', federationId: new Uint8Array(32), stakeExpiryBlocks: 144, publicationRelays: [], donationSetId: b32(0xd0),
+  slashMinimumServed: 20, slashRemainder: 'BURN', federationId: new Uint8Array(32), stakeExpiryBlocks: 144, publicationRelays, donationSetId: b32(0xd0),
   censusHeight: 900000, censusRoot: b32(2), committeeTimeMs: 500n,
   randomnessRule: 'bitcoin-block-hash', stakeMsat: STAKE, bondMinSats: 50000n,
   blockTicks: 9000, exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
@@ -80,7 +82,7 @@ async function played({ finality } = {}) {
   b.verifier.peers = [`http://127.0.0.1:${a.port}`];
   a.payouts.peers = [`http://127.0.0.1:${b.port}`];
   b.payouts.peers = [`http://127.0.0.1:${a.port}`];
-  const c = contractFor([a.round.pubkey, b.round.pubkey]);
+  const c = contractFor([a.round.pubkey, b.round.pubkey], [a, b].map((d) => `http://127.0.0.1:${d.port}`));
   const rid = roundId(c);
   const entry = {
     roundId: rid, playerPubkey: b32(5), sessionPubkey: ed25519.getPublicKey(session),

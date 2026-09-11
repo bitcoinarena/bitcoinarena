@@ -24,6 +24,7 @@ import { assumeSeated } from '../../blwp-node/test/seating.js';
 import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
 import { encodeRoundContract, encodeEntryContract, roundId, entryId } from '../../protocol/src/contracts.js';
 import { encodePlayerResult, resultId, joinSignedResult } from '../../protocol/src/result.js';
+import { encodeTranscriptPosting, transcriptPostingId, joinSignedPosting } from '../../protocol/src/posting.js';
 import { entryFeeMsat } from '../../protocol/src/fee.js';
 import { toHex } from '../../protocol/src/hash.js';
 import { Client } from '../src/client.js';
@@ -66,7 +67,9 @@ async function committee() {
     networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations: 1,
     gameVerifySlots: 2, settlementSlots: 2, simCoreHash: b32(1), startTimeMs: 60500n,
     entryCloseMs: 2000n, objectionWindowMs: WINDOW_MS, custody: 'FEDERATION',
-    slashMinimumServed: 20, slashRemainder: 'BURN', federationId: new Uint8Array(32), stakeExpiryBlocks: 144, publicationRelays: [], donationSetId: b32(0xd0),
+    slashMinimumServed: 20, slashRemainder: 'BURN', federationId: new Uint8Array(32), stakeExpiryBlocks: 144,
+    // P2: the two seats' own relay doors, where each run's transcript is posted.
+    publicationRelays: nodes.map((d) => `http://127.0.0.1:${d.port}`), donationSetId: b32(0xd0),
     censusHeight: 900000, censusRoot: b32(2), committeeTimeMs: 500n,
     randomnessRule: 'bitcoin-block-hash', stakeMsat: STAKE, bondMinSats: 50000n,
     blockTicks: 9000, exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
@@ -96,8 +99,9 @@ async function committee() {
       for (const p of ports) p.paid = true;
       for (const base of bases) assert.equal((await fetch(`${base}/stake?entry=${toHex(eid)}`)).status, 200);
     },
-    // THE ROUND CLOSED AND BOTH SEATS SIGNED THE SAME LOST RUN: its result is
-    // provisionally final and the objection window is running.
+    // THE ROUND CLOSED AND BOTH SEATS SIGNED THE SAME LOST RUN, AND BOTH POSTED
+    // ITS TRANSCRIPT (v4.6.2 §13A, P2): its result is provisionally final and
+    // the objection window is running.
     agree: () => {
       for (const d of nodes)
         for (const signer of nodes) {
@@ -106,6 +110,9 @@ async function committee() {
           const id = resultId(r);
           d.round.putResult(rid, eid, signer.round.pubkey, id,
             joinSignedResult(encodePlayerResult(r), schnorr.sign(id, signer.round.identity.secret)));
+          const p = { roundId: rid, playerPubkey: entry.playerPubkey, transcriptHash: b32(0x11), seatPubkey: signer.round.pubkey };
+          d.round.putPosting(rid, eid, signer.round.pubkey,
+            joinSignedPosting(encodeTranscriptPosting(p), schnorr.sign(transcriptPostingId(p), signer.round.identity.secret)));
         }
     },
     // EVERY SEAT MOVES THE HOLD, as a settle or a cancel writes it.

@@ -65,6 +65,7 @@ import { receiptsNeeded as roundThreshold } from '../../protocol/src/genesis.js'
 import { Custody, NO_LIGHTNING, SETTLE, HELD } from './custody.js';
 import { resultFinality } from './finality.js';
 import { FINAL, PROVISIONALLY_FINAL, SUSPENDED } from '../../protocol/src/objection.js';
+import { transcriptBytesHash, SIGNED_POSTING_BYTES } from '../../protocol/src/posting.js';
 import { Preimages, encodeShareAnswer, SEALED_ANSWER_BYTES } from './preimage.js';
 import { Payouts, PAYOUT_QUEUED, PAID, PAID_IN_PART, NOTHING_OWED } from './payout.js';
 import { PoolSigning } from './pool-signing.js';
@@ -479,11 +480,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const payoutShort = () => !!(payouts.canSpend && poolWatch.reaches && latest && latest.owed
       && latest.owed.ok && latest.owed.state === PAYOUT_QUEUED && !(latest.paid && latest.paid.ok));
     const waitingOn = () => (latest && latest.waiting) || [];
-    const windowDue = () => waitingOn().some((w) => round.now() >= w.closesAtMs);
+    const windowDue = () => waitingOn().some((w) => w.closesAtMs !== null && round.now() >= w.closesAtMs);
+    // A run whose transcript is not posted yet: the close logic runs again,
+    // which posts and gathers the seats' postings (P2).
+    const unposted = () => waitingOn().some((w) => w.published === false);
     // closesAtMs is on the round's clock and `until` on this watch's, so the
     // distance is carried across rather than the number.
     const stretch = () => {
-      for (const w of waitingOn()) until = Math.max(until, Date.now() + (w.closesAtMs - round.now()) + windowMs);
+      for (const w of waitingOn())
+        if (w.closesAtMs !== null) until = Math.max(until, Date.now() + (w.closesAtMs - round.now()) + windowMs);
     };
     let timer = null;
     const tick = async () => {
@@ -509,7 +514,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (g && g.ok && g.final) turned = true;
       }
       if (shuttingDown) return;
-      if (turned || tableShort() || settleShort() || windowDue() || payoutShort()) {
+      if (turned || tableShort() || settleShort() || windowDue() || payoutShort() || unposted()) {
         stakes = settleTheStakes(roundIdBytes, { replayed: closed.replayed, gathered })
           .catch((e) => { console.error(`[verify] ${e.message}`); return { ok: false, why: e.message }; });
         latest = await stakes;
@@ -541,6 +546,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   }
 
   async function settleTheStakes(roundIdBytes, closed) {
+    // FIRST THE TRANSCRIPTS GO WHERE ANYONE CAN REPLAY THEM (P2), whether or
+    // not this node holds a stake: another seat's finality counts this one's
+    // posting. Every run the gather agreed on, each time the close logic runs.
+    for (const g of (closed && closed.gathered) || []) {
+      if (!(g && g.ok && g.final)) continue;
+      try {
+        const p = await verifier.publish(roundIdBytes, g.entryId);
+        for (const r of p.refused || []) console.log(`[publish] ${toHex(g.entryId).slice(0, 16)} ${r}`);
+      } catch (e) { console.error(`[publish] ${e.message}`); }
+    }
     if (!custody.reaches) return { ok: false, why: 'this node reaches no Lightning, so it settles nothing' };
     const row = round.get(roundIdBytes);
     if (!row) return { ok: false, why: 'no such round' };
@@ -575,8 +590,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       agreed.has(toHex(e.entryId)) ? resultFinality(round, roundIdBytes, e.entryId) : { state: null }]));
     const stateOf = (entryId) => (standing.get(toHex(entryId)) || {}).state;
     const isFinal = (entryId) => stateOf(entryId) === FINAL;
+    // A RUN WHOSE TRANSCRIPT IS NOT POSTED YET waits too, with no window end:
+    // its window has not opened (P2).
     const waiting = entries.filter((e) => stateOf(e.entryId) === PROVISIONALLY_FINAL)
-      .map((e) => ({ entryId: toHex(e.entryId), closesAtMs: Number(standing.get(toHex(e.entryId)).closesAtMs) }));
+      .map((e) => {
+        const s = standing.get(toHex(e.entryId));
+        return { entryId: toHex(e.entryId), published: s.published !== false,
+          closesAtMs: s.closesAtMs === undefined ? null : Number(s.closesAtMs), why: s.why };
+      });
     const suspended = entries.filter((e) => stateOf(e.entryId) === SUSPENDED).map((e) => toHex(e.entryId));
     const done = await custody.settleHeldInvoices({
       roundId: roundIdBytes, entries, minScore: contract.minScore, finalFor: isFinal,
@@ -584,7 +605,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     for (const a of done.actions || [])
       console.log(`[custody] ${toHex(a.entryId).slice(0, 16)} ${a.action} -> ${a.state}: ${a.why}`);
     for (const w of waiting)
-      console.log(`[custody] ${w.entryId.slice(0, 16)} waits for its objection window, which closes at ${w.closesAtMs}`);
+      console.log(w.published
+        ? `[custody] ${w.entryId.slice(0, 16)} waits for its objection window, which closes at ${w.closesAtMs}`
+        : `[custody] ${w.entryId.slice(0, 16)} waits: ${w.why}`);
     for (const s of suspended)
       console.log(`[custody] ${s.slice(0, 16)} is SUSPENDED by a valid objection: nothing moves, and its hold expires to its player`);
     const said = {
@@ -1269,6 +1292,36 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           'x-results': String(held.length), ...CORS,
         });
         return res.end(Buffer.from(out));
+      }
+
+      // EVERY SEAT'S WORD THAT IT POSTED A RUN'S TRANSCRIPT (P2), fixed-size
+      // records back to back, as `/results` serves results.
+      if (req.method === 'GET' && url.pathname === '/postings') {
+        const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
+        const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
+        const held = round.postings(rid, eid);
+        const out = new Uint8Array(held.length * SIGNED_POSTING_BYTES);
+        held.forEach((p, i) => out.set(p.bytes, i * SIGNED_POSTING_BYTES));
+        res.writeHead(200, { 'content-type': 'application/octet-stream', 'x-postings': String(held.length), ...CORS });
+        return res.end(Buffer.from(out));
+      }
+
+      // A PUBLICATION RELAY (v4.6.2 §13A): any node can be one of a contract's
+      // `publication_relays[]`. It keeps a transcript only under the hash its
+      // own bytes have, so it can never serve one run's transcript as another's.
+      const relayed = /^\/transcript\/([0-9a-f]{64})$/.exec(url.pathname);
+      if (relayed && req.method === 'PUT') {
+        const bytes = await read(req);
+        if (toHex(transcriptBytesHash(new Uint8Array(bytes))) !== relayed[1])
+          return text(res, 409, 'those bytes are not the transcript that hash names');
+        round.relayPut(Buffer.from(relayed[1], 'hex'), bytes);
+        return text(res, 201, 'kept');
+      }
+      if (relayed && req.method === 'GET') {
+        const kept = round.relayGet(Buffer.from(relayed[1], 'hex'));
+        if (!kept) return text(res, 404, 'this relay holds no transcript under that hash');
+        res.writeHead(200, { 'content-type': 'application/octet-stream', ...CORS });
+        return res.end(Buffer.from(kept));
       }
 
       // AN OBJECTION AGAINST A RUN (13A intake). What an objection costs and

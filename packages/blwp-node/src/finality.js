@@ -30,6 +30,7 @@ import {
   splitSignedReceipt, decodeCheckpointReceipt, SIGNED_RECEIPT_BYTES,
 } from '../../protocol/src/receipt.js';
 import { verifiedFinal, runId } from './verdict.js';
+import { transcriptIsPublished } from '../../protocol/src/posting.js';
 
 const hex = (b) => [...b].map((v) => v.toString(16).padStart(2, '0')).join('');
 
@@ -66,7 +67,9 @@ export function resultFinality(round, roundIdBytes, entryIdBytes, { now = round.
     if (!ok) continue;
     const run = runId(result);
     if (who === hex(round.pubkey)) mine = run;
-    if (hex(run) === seen.runId) agreeing.push({ run, nodePubkey: result.nodePubkey, seenMs: r.seenMs });
+    if (hex(run) === seen.runId)
+      agreeing.push({ run, nodePubkey: result.nodePubkey, seenMs: r.seenMs,
+        playerPubkey: result.playerPubkey, transcriptHash: result.transcriptHash });
   }
   const provisionalAtMs = agreeing.map((a) => a.seenMs).sort((x, y) => x - y)[seen.needed - 1];
   const signedResultId = agreeing[0].run;
@@ -90,9 +93,26 @@ export function resultFinality(round, roundIdBytes, entryIdBytes, { now = round.
     objections.push(objection);
   }
 
+  // AND WHETHER ANYONE CAN REPLAY IT (v4.6.2 §13A, P2): the transcript the
+  // agreed run names must have been posted to the contract's relays by the
+  // round's threshold of settlement seats. Until then the window has not
+  // opened and nothing moves; W counts from when that threshold was held here.
+  const published = transcriptIsPublished({
+    roundId: roundIdBytes, playerPubkey: agreeing[0].playerPubkey, transcriptHash: agreeing[0].transcriptHash,
+    postings: round.postings(roundIdBytes, entryIdBytes), seats: committee,
+    settlementSlots: contract.settlementSlots, verify: (s, m, k) => schnorr.verify(s, m, k),
+  });
+  const unpostable = !(contract.publicationRelays || []).length;
+
   const f = finality({
     signedBy: agreeing.map((a) => ({ resultId: a.run, nodePubkey: a.nodePubkey })),
-    committee, contract, provisionalAtMs, now, objections, needed: seen.needed,
+    committee, contract, provisionalAtMs, publishedAtMs: published.ok && !unpostable ? published.atMs : null,
+    now, objections, needed: seen.needed,
   });
-  return { ...f, provisionalAtMs, runId: seen.runId, objection: objection && objection.why };
+  const why = f.published === false
+    ? `${unpostable ? 'the round contract names no publication relay, so no result of it can become final' : published.why}`
+      + ': the objection window opens only when its transcript is posted'
+    : f.why;
+  return { ...f, why, published: published.ok, posted: published.posted || 0,
+    provisionalAtMs, runId: seen.runId, objection: objection && objection.why };
 }

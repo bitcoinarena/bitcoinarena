@@ -66,11 +66,13 @@ function paidPort() {
 // A ROUND WITH NO OBJECTION WINDOW: final at the quorum. This file is about
 // the threshold a settle opens at; objection-window.test.js pins the window
 // (M3.3-32), and the watch's budget is named in `finality` instead.
-const contractFor = (nodes) => ({
+// P2 (v4.6.2 §13A): the relays each run's transcript is posted to - the
+// daemons' own doors - or no result of the round can become final.
+const contractFor = (nodes, publicationRelays) => ({
   networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations: 1,
   gameVerifySlots: nodes.length, settlementSlots: nodes.length, simCoreHash: b32(1), startTimeMs: 60500n,
   entryCloseMs: 2000n, objectionWindowMs: 0n, custody: 'FEDERATION',
-  slashMinimumServed: 20, slashRemainder: 'BURN', federationId: new Uint8Array(32), stakeExpiryBlocks: 144, publicationRelays: [], donationSetId: b32(0xd0),
+  slashMinimumServed: 20, slashRemainder: 'BURN', federationId: new Uint8Array(32), stakeExpiryBlocks: 144, publicationRelays, donationSetId: b32(0xd0),
   censusHeight: 900000, censusRoot: b32(2), committeeTimeMs: 500n,
   randomnessRule: 'bitcoin-block-hash', stakeMsat: STAKE, bondMinSats: 50000n,
   blockTicks: 9000, exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
@@ -106,7 +108,7 @@ async function lostStake({ seats, up }) {
       d.preimages.peers = others;
     }
     const down = Array.from({ length: seats - up }, () => schnorr.getPublicKey(rand(32)));
-    const c = contractFor([...daemons.map((d) => d.round.pubkey), ...down]);
+    const c = contractFor([...daemons.map((d) => d.round.pubkey), ...down], daemons.map((d) => `http://127.0.0.1:${d.port}`));
     const rid = roundId(c);
     const needed = receiptsNeeded(seats);
 

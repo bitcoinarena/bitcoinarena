@@ -66,7 +66,9 @@ test('two seats, a 3 s window: nothing is settled, cancelled or handed out insid
       d.payouts.peers = there;
       d.preimages.peers = there;
     }
-    const c = contractFor([a.round.pubkey, b.round.pubkey], BigInt(WINDOW_MS));
+    // P2: each seat posts the run's transcript to the other's relay door and its own.
+    const c = contractFor([a.round.pubkey, b.round.pubkey], BigInt(WINDOW_MS),
+      [`http://127.0.0.1:${a.port}`, `http://127.0.0.1:${b.port}`]);
     const rid = roundId(c);
     for (const d of [a, b]) {
       await fetch(`http://127.0.0.1:${d.port}/round`, { method: 'POST', body: encodeRoundContract(c) });
@@ -145,7 +147,9 @@ test('a player can ask where their stake stands: inside the window HELD, provisi
       d.payouts.peers = there;
       d.preimages.peers = there;
     }
-    const c = contractFor([a.round.pubkey, b.round.pubkey], BigInt(WINDOW_MS));
+    // P2: each seat posts the run's transcript to the other's relay door and its own.
+    const c = contractFor([a.round.pubkey, b.round.pubkey], BigInt(WINDOW_MS),
+      [`http://127.0.0.1:${a.port}`, `http://127.0.0.1:${b.port}`]);
     const rid = roundId(c);
     for (const d of [a, b]) {
       await fetch(`http://127.0.0.1:${d.port}/round`, { method: 'POST', body: encodeRoundContract(c) });
@@ -223,7 +227,9 @@ test('two seats restarted inside a 3 s window: after it the loser settles and th
   let b = await start('b.sqlite', portB);
   try {
     wire(a, b);
-    const c = contractFor([a.round.pubkey, b.round.pubkey], BigInt(WINDOW_MS));
+    // P2: each seat posts the run's transcript to the other's relay door and its own.
+    const c = contractFor([a.round.pubkey, b.round.pubkey], BigInt(WINDOW_MS),
+      [`http://127.0.0.1:${a.port}`, `http://127.0.0.1:${b.port}`]);
     const rid = roundId(c);
     for (const d of [a, b]) {
       await fetch(`http://127.0.0.1:${d.port}/round`, { method: 'POST', body: encodeRoundContract(c) });

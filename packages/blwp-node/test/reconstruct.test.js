@@ -39,6 +39,7 @@ import {
 import {
   splitSignedResult, decodePlayerResult, encodePlayerResult, joinSignedResult, resultId,
 } from '../../protocol/src/result.js';
+import { encodeTranscriptPosting, transcriptPostingId, joinSignedPosting } from '../../protocol/src/posting.js';
 import { init, step } from '../../core/src/sim.js';
 import { hash as stateHash } from '../../core/src/state.js';
 import { seedWordForEntry } from '../../protocol/src/seed.js';
@@ -87,17 +88,27 @@ const session = ed25519.utils.randomSecretKey();
 // letter is about the third one, so the other two are not going to be two.
 // AND NO OBJECTION WINDOW: final at the quorum. The window is
 // objection-window.test.js's to pin (M3.3-32), not this letter's.
+// P2 (v4.6.2 §13A): the relays each run's transcript is posted to - the
+// committee's own doors, set when `committee` stands the daemons up, so every
+// contract this file builds for them names the same ones and has the same id.
+let committeeRelays = [];
 const contractFor = (nodes) => ({
   networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations: 1,
   gameVerifySlots: 7, settlementSlots: 7, simCoreHash: b32(1), startTimeMs: 60500n,
   entryCloseMs: 2000n, objectionWindowMs: 0n, custody: 'FEDERATION',
-  slashMinimumServed: 20, slashRemainder: 'BURN', federationId: new Uint8Array(32), stakeExpiryBlocks: 144, publicationRelays: [], donationSetId: b32(0xd0),
+  slashMinimumServed: 20, slashRemainder: 'BURN', federationId: new Uint8Array(32), stakeExpiryBlocks: 144, publicationRelays: committeeRelays, donationSetId: b32(0xd0),
   censusHeight: 900000, censusRoot: b32(2), committeeTimeMs: 500n,
   randomnessRule: 'bitcoin-block-hash', stakeMsat: 100000n, bondMinSats: 50000n,
   blockTicks: 9000, exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
   timeFloor: 30, timeCeil: 150, minScore: 1, rankNumerator: 3, rankDenominator: 4,
   nodes,
 });
+
+/** One seat's signed posting of the transcript a result names (P2). */
+const postedBy = (who, rid, result) => {
+  const p = { roundId: rid, playerPubkey: result.playerPubkey, transcriptHash: result.transcriptHash, seatPubkey: who.round.pubkey };
+  return joinSignedPosting(encodeTranscriptPosting(p), schnorr.sign(transcriptPostingId(p), who.round.identity.secret));
+};
 
 /** Seven daemons, and the round they all hold. */
 async function committee(n = 7) {
@@ -106,6 +117,7 @@ async function committee(n = 7) {
     nodes.push(await serve(openStore(':memory:'), {
       port: 0, funded: () => true, randomnessFor: () => BEACON,
     }));
+  committeeRelays = nodes.map((d) => `http://127.0.0.1:${d.port}`);
   return nodes;
 }
 
@@ -202,6 +214,14 @@ async function everyoneReplays(nodes, stake) {
   for (const node of nodes) every.push(...node.round.results(rid, out.eid));
   for (const node of nodes)
     for (const r of every) node.round.putResult(rid, out.eid, r.nodePubkey, r.resultId, r.bytes);
+
+  // AND EACH POSTS THE TRANSCRIPT THE AGREED RESULT NAMES to the relays, and
+  // they tell each other that too (P2): final needs five of these as well.
+  for (const node of nodes) await node.verifier.publish(rid, out.eid);
+  const posted = [];
+  for (const node of nodes) posted.push(...node.round.postings(rid, out.eid));
+  for (const node of nodes)
+    for (const p of posted) node.round.putPosting(rid, out.eid, p.seatPubkey, p.bytes);
 
   const outcome = decodePlayerResult(splitSignedResult(
     nodes[0].round.results(rid, out.eid)[0].bytes).body).outcome;
@@ -352,6 +372,7 @@ test('a delivered run never gives up its preimage, and neither does one that is 
       const id = resultId(delivered);
       holder.round.putResult(orid, wid, who.round.pubkey, id,
         joinSignedResult(encodePlayerResult(delivered), schnorr.sign(id, who.round.identity.secret)));
+      holder.round.putPosting(orid, wid, who.round.pubkey, postedBy(who, orid, delivered));
     }
 
     const may = holder.preimages.mayRelease(orid, wid);
@@ -541,6 +562,7 @@ test('a seat that never replayed the run hands over nothing', async () => {
       const id = resultId(failed);
       quiet.round.putResult(orid, wid, who.round.pubkey, id,
         joinSignedResult(encodePlayerResult(failed), schnorr.sign(id, who.round.identity.secret)));
+      quiet.round.putPosting(orid, wid, who.round.pubkey, postedBy(who, orid, failed));
     }
 
     const may = quiet.preimages.mayRelease(orid, wid);

@@ -153,7 +153,7 @@ export function objectionHolds({
  * the default five (M3.3-26's rule, `receiptsNeeded`).
  */
 export function finality({
-  signedBy, committee, contract, provisionalAtMs, now, objections = [], needed,
+  signedBy, committee, contract, provisionalAtMs, publishedAtMs, now, objections = [], needed,
 }) {
   const agreed = provisionallyFinal(signedBy, needed === undefined ? { committee } : { committee, needed });
   if (!agreed.final) return { state: null, why: agreed.why, ...agreed };
@@ -170,7 +170,20 @@ export function finality({
   // other end: "once a player's result is FINAL, later infrastructure failure
   // does not erase it". Anyone able to produce one valid objection could
   // otherwise un-finalise a settled round at any time.
-  const closesAtMs = BigInt(provisionalAtMs) + window;
+  // PUBLICATION IS A CONDITION OF FINALITY (v4.6.2, P2): the window W counts
+  // from the moment the round's threshold of settlement seats had posted the
+  // transcript, not from the fifth signature, and a result nobody has posted is
+  // never FINAL. `null` says "not posted"; a caller that tracks no posting at
+  // all leaves it out, and the window runs from the threshold as it did.
+  if (publishedAtMs === null)
+    return {
+      state: PROVISIONALLY_FINAL, published: false, signers: agreed.signers,
+      why: 'the transcript has not been posted to the round\'s publication relays by its '
+        + 'threshold of settlement seats, so the objection window has not opened',
+    };
+  const opensAtMs = publishedAtMs === undefined || BigInt(publishedAtMs) < BigInt(provisionalAtMs)
+    ? BigInt(provisionalAtMs) : BigInt(publishedAtMs);
+  const closesAtMs = opensAtMs + window;
   const open = BigInt(now) < closesAtMs;
 
   // AND AN OBJECTION COUNTS ONLY IF IT AROSE WHILE THE WINDOW WAS OPEN. Its

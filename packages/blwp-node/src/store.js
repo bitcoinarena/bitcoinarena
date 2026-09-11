@@ -426,6 +426,27 @@ export function openStore(path = ':memory:') {
       PRIMARY KEY (round_id, entry_id, node_pubkey)
     );
 
+    -- A SETTLEMENT SEAT'S WORD THAT IT POSTED A RUN'S TRANSCRIPT (P2, 13A),
+    -- its own and the other seats', one per seat. A result is FINAL only once
+    -- the round's threshold of these agree, and W opens when that was so here.
+    CREATE TABLE IF NOT EXISTS postings (
+      round_id    BLOB NOT NULL,
+      entry_id    BLOB NOT NULL,
+      seat_pubkey BLOB NOT NULL,
+      bytes       BLOB NOT NULL,
+      seen_ms     INTEGER NOT NULL,
+      PRIMARY KEY (round_id, entry_id, seat_pubkey)
+    );
+
+    -- WHAT THIS NODE KEEPS AS A RELAY: transcripts by their own hash, so any
+    -- node can be one of a contract's publication_relays[] and serve nothing
+    -- under a name its bytes do not have.
+    CREATE TABLE IF NOT EXISTS relayed (
+      hash     BLOB PRIMARY KEY,
+      bytes    BLOB NOT NULL,
+      seen_ms  INTEGER NOT NULL
+    );
+
     -- AN OBJECTION AGAINST A RUN, 13A. Only what the pool needs to know that
     -- one exists: the run it is against and when it arrived. The objection
     -- PROTOCOL - who may file, what it costs, how it is settled - is not here
