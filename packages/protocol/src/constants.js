@@ -174,6 +174,10 @@ export const TYPE_DKG_CONTRIBUTION = 0x13;
  */
 export const TYPE_SIGNED_DONATION_SET = 0x14;
 export const TYPE_AUTHORITY_ROTATION = 0x15;
+// ONE SETTLEMENT SEAT SAYING "this is the round's claim key" (§23.1 step 0,
+// v4.6.2): a client locks a stake to a claim_pk only with the round's
+// threshold of these, so no single seat can serve a key of its own (F3).
+export const TYPE_CLAIM_KEY_ATTESTATION = 0x16;
 
 // A SEALED SHARE IS A FIXED SIZE, and it is not a choice: 32 bytes of scalar
 // under AES-GCM plus the 16-byte tag that makes a wrong key a REFUSAL rather
@@ -248,6 +252,10 @@ export const TAG = {
   // never be produced by hashing a single share.
   vssHandout: 'BLWP/v1/VssHandout',
   remainder: 'BLWP/v1/Remainder',
+  // One seat's attestation of (round_id, claim_pk), and the attested set an
+  // entry names as `claim_key_attestation_ref` (§7, §23.1 step 0, v4.6.2).
+  claimKeyAttestation: 'BLWP/v1/ClaimKeyAttestation',
+  claimKeyAttestationSet: 'BLWP/v1/ClaimKeyAttestationSet',
 };
 
 /**
