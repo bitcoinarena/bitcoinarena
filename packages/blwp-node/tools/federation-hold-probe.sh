@@ -31,6 +31,9 @@ B=${BITCOIN_BIN:-/mnt/bitcoin/bitcoin-31.1/bin}
 L=${LND_BIN:-/mnt/bitcoin/lnd-linux-amd64-v0.21.3-beta}
 WINDOW_S=${1:-30}
 AMOUNT_MSAT=${2:-1000000}
+# THE GUARDIANS' HOLD (FM_LNV2_INCOMING_HOLD_SECS): only a fedimintd built with
+# the hold patch reads it; 0, the default, is upstream's timing.
+HOLD_SECS=${HOLD_SECS:-0}
 mkdir -p $P/btc $P/alice $P/bob $P/gw $P/client $FH
 : > $P/pids
 RPC=30101; ZB=30105; ZT=30106
@@ -96,7 +99,8 @@ for g in 0 1 2 3; do
       FM_BITCOIND_URL=http://127.0.0.1:$RPC FM_BITCOIND_USERNAME=blwp FM_BITCOIND_PASSWORD=blwp \
       FM_BIND_P2P=127.0.0.1:$base FM_BIND_API=127.0.0.1:$((base+1)) FM_BIND_UI=127.0.0.1:$((base+2)) \
       FM_BIND_METRICS=127.0.0.1:$((base+3)) FM_P2P_URL=fedimint://127.0.0.1:$base FM_API_URL=ws://127.0.0.1:$((base+1)) \
-      FM_ENABLE_IROH=false FM_PASSWORD_API=probe FM_PASSWORD_UI=probe
+      FM_ENABLE_IROH=false FM_PASSWORD_API=probe FM_PASSWORD_UI=probe \
+      FM_LNV2_INCOMING_HOLD_SECS=$HOLD_SECS
     setsid nohup $F/fedimintd > $P/g$g/fedimintd.out 2>&1 < /dev/null & echo "$! fedimintd-$g" >> $P/pids )
   up() { grep -q "Setup UI running" $P/g$g/fedimintd.out 2>/dev/null; }
   until_ "guardian $g" 180 up
@@ -145,15 +149,22 @@ snap() {
     "| receiver ecash $(fc info 2>/dev/null | js 'o=>Math.floor(Number(o.total_amount_msat)/1000)')" \
     "| federation audit net assets (sat) $(fc --our-id 0 --password probe admin audit 2>/dev/null | js 'o=>JSON.stringify(Object.fromEntries(Object.entries(o.module_summaries).map(([k,v])=>[v.kind||k,Math.round(Number(v.net_assets)/1000)])))')"
 }
-say "STAKE $((AMOUNT_MSAT / 1000)) sats, window ${WINDOW_S} s"
+say "STAKE $((AMOUNT_MSAT / 1000)) sats, window ${WINDOW_S} s, guardians' hold ${HOLD_SECS} s"
 snap "BEFORE PAY"
 RECV=$(fc module lnv2 receive $AMOUNT_MSAT 2>&1)
 INVOICE=$(echo "$RECV" | grep -oE 'lnbcrt[0-9a-z]+' | head -1)
 OP=$(echo "$RECV" | grep -oE '[0-9a-f]{64}' | head -1)
 [ -n "$INVOICE" ] || { say "NO INVOICE - nothing was measured: $(echo "$RECV" | tr -d '\n' | cut -c1-200)"; exit 1; }
+# ALICE PAYS IN THE BACKGROUND, so the table can be read WHILE her payment is
+# in flight: a held stake must not be in bob's balance inside the window.
 t=$(date +%s%3N)
-PAY=$(timeout $((WINDOW_S + 60)) $L/lncli --lnddir=$P/alice --rpcserver=127.0.0.1:${LRPC[alice]} --network=regtest payinvoice --force "$INVOICE" 2>&1)
-say "  alice's payinvoice returned after $(( $(date +%s%3N) - t )) ms: $(echo "$PAY" | grep -oE 'Payment status: [A-Z_]+' | tail -1)"
+( timeout $((WINDOW_S + HOLD_SECS + 120)) $L/lncli --lnddir=$P/alice --rpcserver=127.0.0.1:${LRPC[alice]} --network=regtest payinvoice --force "$INVOICE" > $P/pay.out 2>&1; echo "$(( $(date +%s%3N) - t ))" > $P/pay.ms ) &
+PAYER=$!
+sleep 10
+snap "INSIDE WINDOW (pay +10 s)"
+say "  bob's lnd at pay +10 s: $(ln_ bob listinvoices | js 'o=>o.invoices.map(i=>`invoice ${i.state}, ${(i.htlcs||[]).map(h=>h.state).join(",") || "no HTLC"}`).join("; ")')"
+wait $PAYER
+say "  alice's payinvoice returned after $(cat $P/pay.ms) ms: $(grep -oE 'Payment status: [A-Z_]+' $P/pay.out | tail -1)"
 snap "AFTER PAY"
 say "  the receiver's operation: $(fc module lnv2 await-receive "$OP" 2>&1 | tr -d '\n ')"
 say "  bob's lnd: $(ln_ bob listinvoices | js 'o=>o.invoices.map(i=>`invoice ${i.state}, HTLC accepted at height ${(i.htlcs[0]||{}).accept_height}, held ${Number((i.htlcs[0]||{}).resolve_time)-Number((i.htlcs[0]||{}).accept_time)} s`).join("; ")')"
