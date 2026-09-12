@@ -44,6 +44,9 @@ walk(SRC + 'ghost-field.js');
 // client exists at all: nothing imports it, because a client that publishes a
 // run must not depend on how the page was told which round to publish to.
 walk(SRC + 'join.js');
+// AND THE LOBBY (M3.3-34): what a page with no round in its link lists - the
+// named nodes' rounds, each checked against its own contract.
+walk(SRC + 'lobby.js');
 
 // One scope, so a name declared twice would collide. EVERY top-level name is
 // checked, not only the exported ones: two files with a private helper of the
@@ -125,6 +128,9 @@ out += '         sharesNeededFor: sharesNeededFor,\n';
 out += '         lockStake: lockStake, handLock: handLock, lockSecretFor: lockSecretFor, lockLine: lockLine,\n';
 out += '         saveLock: saveLock, savedLock: savedLock, markLockCommitted: markLockCommitted,\n';
 out += '         findLock: findLock, refundStake: refundStake, forfeitOf: forfeitOf, redeemStake: redeemStake,\n';
+// THE LOBBY (M3.3-34): a link that names nodes and no round lists what they
+// hold, every row checked against its own contract; Join is the join link.
+out += '         lobbyQuery: lobbyQuery, fetchLobby: fetchLobby, lobbyLine: lobbyLine, lobbyJoinSearch: lobbyJoinSearch,\n';
 // THE WALLET THE PAGE RENDERS. `tabWallet` holds the connection per tab,
 // `spendLog` is what §24A.1 requires a client to show, and `spentLine` turns it
 // into one sentence - so the page renders a total it did not add up.
