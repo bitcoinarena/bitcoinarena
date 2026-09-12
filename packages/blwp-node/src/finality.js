@@ -46,7 +46,15 @@ export function resultFinality(round, roundIdBytes, entryIdBytes, { now = round.
   const committee = round.seats(roundIdBytes);
   const held = round.results(roundIdBytes, entryIdBytes);
   const seen = verifiedFinal(held.map((r) => r.bytes), { contract, seats: committee });
-  if (!seen.ok || !seen.final) return { state: null, why: seen.why || 'not final' };
+  if (!seen.ok || !seen.final) {
+    // §13C'S NO-QUORUM OUTCOME (M3.3-34), on this seat's own record once the
+    // result window passed with no result at the threshold: VOID - or FORFEIT,
+    // proven equivocation. Only where no quorum is: §14, reachable only from
+    // PROVISIONAL.
+    const nq = typeof round.noQuorum === 'function' ? round.noQuorum(entryIdBytes) : null;
+    if (nq) return { state: nq.outcome, why: nq.why, noQuorum: true };
+    return { state: null, why: seen.why || 'not final' };
+  }
 
   // WHO SIGNED THE AGREED RUN, and when this node held each of them. The
   // same checks `verifiedFinal` counted under: a seat, and a signature that

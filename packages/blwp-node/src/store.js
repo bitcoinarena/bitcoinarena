@@ -528,6 +528,31 @@ export function openStore(path = ':memory:') {
       decided_ms     INTEGER NOT NULL
     );
 
+    -- A FIRST MARK THIS SEAT, UP, REFUSED (M3.3-34, one-seat refusal): the
+    -- player's own signed, on-time first mark of an entry seated here, refused
+    -- when another seat handed it on (the stake not seen here, or the mark not
+    -- taken), while this seat holds no first mark of that entry. What lets this
+    -- seat reach §13C's VOID from its own store, as the seat that took it does.
+    CREATE TABLE IF NOT EXISTS refused_first_marks (
+      entry_id    BLOB PRIMARY KEY,
+      round_id    BLOB NOT NULL,
+      mark        BLOB NOT NULL,
+      why         TEXT NOT NULL,
+      at_ms       INTEGER NOT NULL
+    );
+
+    -- §13C'S NO-QUORUM OUTCOME, decided here once the result window passed with
+    -- no result at the threshold: VOID (the operator side's fault - nothing is
+    -- signed or moved, the lock returns at its expiry) or FORFEIT (proven
+    -- player equivocation). Reachable only from PROVISIONAL (§14).
+    CREATE TABLE IF NOT EXISTS no_quorum (
+      entry_id    BLOB PRIMARY KEY,
+      round_id    BLOB NOT NULL,
+      outcome     TEXT NOT NULL,
+      why         TEXT NOT NULL,
+      decided_ms  INTEGER NOT NULL
+    );
+
     -- WHAT A SEATED PLAYER CHOSE TO BE CALLED IN A ROUND (M3.3-34): the record
     -- as the player signed it with the round key it is seated under
     -- (lobby-name.js), kept to be shown to the other players. Nothing replays

@@ -14,6 +14,13 @@ import { ReplayPool } from './pool.js';
 import { SIGNED_RECEIPT_BYTES } from '../../protocol/src/receipt.js';
 import { resultFrom, signResult, verifiedFinal, runId } from './verdict.js';
 import { stoppedOutcome } from '../../protocol/src/first-mark.js';
+import { noQuorumOutcome as noQuorumRule } from '../../protocol/src/payout.js';
+import {
+  provesEquivocation, SIGNED_CHECKPOINT_BYTES as SIGNED_MARK_BYTES, splitSigned as splitMark,
+  decodeCheckpoint as decodeMark, checkpointId as markIdOf,
+} from '../../protocol/src/checkpoint.js';
+import { ed25519 as sessionCurve } from '@noble/curves/ed25519.js';
+import { resultFinality as finalityOf } from './finality.js';
 
 let retryJobs = 0;                     // each re-tried close is its own pool job
 import { encodeTranscript, transcriptHash as hashOfTranscript } from '../../protocol/src/transcript.js';
@@ -285,6 +292,14 @@ export class Verifier {
         why: `waiting on ${down} seat(s): ${(carried && carried.down.length ? carried.down.join('; ') : 'none of them answered').slice(0, 160)}`
           + `${noCanonical ? ` - ${noCanonical}` : ''}` };
 
+    // §13C, ONE SEAT REFUSED (M3.3-34): no mark carried at the threshold, every
+    // seat answered, and the seats it is short of were up and refused the
+    // on-time first mark - held until the result window passes, then VOID (or
+    // FORFEIT on proven equivocation), decided here once.
+    if (!canonical) {
+      const nq = await this.#noQuorum(roundIdBytes, entryId, contract, down);
+      if (nq) return nq;
+    }
     if (!canonical && this.#neverStarted(roundIdBytes, entryId)) {
       const ruled = stoppedOutcome({ receiptedMarks: 0, deadlinePassed: true });
       return this.#sign({ roundIdBytes, entryId, entry, contract,
@@ -348,6 +363,82 @@ export class Verifier {
     if (this.round.entryVoid(entryId)) return false;
     const carried = this.carried.get(`${hex(roundIdBytes)}:${hex(entryId)}`);
     return !!carried && this.#unreached(roundIdBytes, carried) === 0 && carried.refused.length === 0 && carried.taken === 0;
+  }
+
+  /**
+   * §13C'S NO-QUORUM RULE FOR A ONE-SEAT REFUSAL (M3.3-34, ruled). The evidence,
+   * on this seat's own record: it holds the player's on-time first mark with
+   * fewer than the threshold's receipts, and the seats it is short of answered
+   * the forward and REFUSED it (they were up - not §16's outage); or it is the
+   * seat that refused (refused_first_marks) and holds no first mark. Only when
+   * no seat is unreachable (a seat that cannot be reached may still carry the
+   * mark: the hold goes on). Before the result window has passed - this seat's
+   * close plus the round's objection window - it holds; after it, VOID, or
+   * FORFEIT when the player's equivocation is proven (§13B). Not ENTRY_VOID, not
+   * a late start, never a FINAL result (§14). Answers null when this is not
+   * that case.
+   */
+  async #noQuorum(roundIdBytes, entryId, contract, down) {
+    const had = this.round.noQuorum(entryId);
+    if (had) return { entryId, stored: false, decided: had.outcome, why: had.why };
+    if (down || this.round.entryVoid(entryId) || this.round.startForfeit(entryId)) return null;
+    const line = this.round.startLine(roundIdBytes, entryId);
+    if (!line) return null;
+    const held = this.round.firstMarkHeld(roundIdBytes, entryId);
+    let evidence;
+    if (held) {
+      let c;
+      try { c = decodeMark(splitMark(held).body); } catch { return null; }
+      if (c.tick > line.lastTick || !c.previousHash.every((x) => x === 0)) return null;
+      const receipts = this.round.receiptCount(markIdOf(c));
+      if (receipts >= line.needed) return null;
+      const refused = Object.values(this.round.firstMarkOffers(entryId)).filter((a) => a === 'refused').length;
+      if (refused < line.needed - receipts) return null;
+      evidence = `the on-time first mark here has ${receipts} of ${line.needed} receipts and ${refused} seat(s) that were up refused it`;
+    } else {
+      const r = this.round.refusedFirstMark(entryId);
+      if (!r) return null;
+      evidence = `this seat was up, refused the player's on-time first mark (${String(r.why).slice(0, 90)}) and holds none`;
+    }
+    const row = this.round.get(roundIdBytes);
+    const closedMs = row && row.closed_ms !== null && row.closed_ms !== undefined ? Number(row.closed_ms) : null;
+    const due = closedMs === null ? null : closedMs + Number(contract.objectionWindowMs);
+    if (due === null || this.round.now() < due)
+      return { entryId, stored: false, waiting: true,
+        why: `no quorum yet: ${evidence} - VOID only once the result window passes${due === null ? '' : ` at ${due}`}` };
+    const signers = new Set(this.round.results(roundIdBytes, entryId).map((r) => hex(r.nodePubkey))).size;
+    const d = noQuorumRule({ signatures: signers, needed: line.needed,
+      equivocationProven: await this.#equivocationProven(roundIdBytes, entryId),
+      state: finalityOf(this.round, roundIdBytes, entryId).state });
+    if (!d.outcome) return null;
+    this.round.putNoQuorum({ entryId, roundId: roundIdBytes, outcome: d.outcome, why: `${d.why} - ${evidence}` });
+    return { entryId, stored: false, decided: d.outcome, why: d.why };
+  }
+
+  /**
+   * IS THE PLAYER'S EQUIVOCATION PROVEN (§13B)? A pair of the entry's own signed
+   * marks that `provesEquivocation` accepts - from this seat's store, or from
+   * any seat's /equivocation door, each pair checked here and never taken on
+   * a peer's word.
+   */
+  async #equivocationProven(roundIdBytes, entryId) {
+    const found = this.round.entriesOf(roundIdBytes).find((e) => hex(e.entryId) === hex(entryId));
+    if (!found) return false;
+    const verify = (sig, msg, pub) => { try { return sessionCurve.verify(sig, msg, pub); } catch { return false; } };
+    const pairs = this.round.equivocation(roundIdBytes, entryId).map((f) => [f.stored, f.offered]);
+    for (const peer of this.peersOf(roundIdBytes)) {
+      try {
+        const r = await fetch(`${peer}/equivocation?round=${hex(roundIdBytes)}&entry=${hex(entryId)}`);
+        if (r.status !== 200) continue;
+        const body = new Uint8Array(await r.arrayBuffer());
+        for (let at = 0; at + 2 * SIGNED_MARK_BYTES <= body.length; at += 2 * SIGNED_MARK_BYTES)
+          pairs.push([body.slice(at, at + SIGNED_MARK_BYTES), body.slice(at + SIGNED_MARK_BYTES, at + 2 * SIGNED_MARK_BYTES)]);
+      } catch { /* a seat that cannot answer proves nothing */ }
+    }
+    for (const [a, b] of pairs) {
+      try { if ((await provesEquivocation(a, b, found.entry.sessionPubkey, verify)).ok) return true; } catch { /* not a proof */ }
+    }
+    return false;
   }
 
   /**

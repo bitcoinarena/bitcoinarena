@@ -108,7 +108,7 @@ const CORS = {
   // sees the body and none of the counts.
   'access-control-expose-headers':
     'x-state, x-ticks, x-transcript-hash, x-checkpoints, x-receipts, '
-    + 'x-marks, x-dropped, x-through-tick, x-equivocations, x-ticks-at, '
+    + 'x-marks, x-dropped, x-through-tick, x-equivocations, x-ticks-at, x-no-quorum, '
     + 'x-foreign-receipts',
 };
 
@@ -710,13 +710,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // a run this seat has signed is SIGNED, whatever an older build kept
       state: h.state === 'HOLDING' && round.hasResult(h.roundId, h.entryId, round.pubkey) ? 'SIGNED' : h.state,
       attempts: h.attempts, sinceMs: h.sinceMs, lastWhy: h.lastWhy, signedMs: h.signedMs });
-  const holding = (rid, eid, { why = null, tried = false, signed = false } = {}) => {
+  const holding = (rid, eid, { why = null, tried = false, signed = false, decided = null } = {}) => {
     const k = `${toHex(rid)}:${toHex(eid)}`;
     const s = closing.get(k) || { round: toHex(rid), entry: toHex(eid), state: 'HOLDING', attempts: 0,
       sinceMs: Date.now(), lastWhy: null, signedMs: null };
     if (tried) s.attempts++;
     if (why) s.lastWhy = String(why).slice(0, 220);
     if (signed) { s.state = 'SIGNED'; s.signedMs = Date.now(); }
+    // §13C's no-quorum outcome, decided after the result window: not HOLDING.
+    if (decided) s.state = decided;
     closing.set(k, s);
     round.putCloseHold({ roundId: rid, entryId: eid, state: s.state, attempts: s.attempts, sinceMs: s.sinceMs,
       lastWhy: s.lastWhy, signedMs: s.signedMs });
@@ -865,10 +867,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // re-ran the close of rounds with one run short, and their signed, FINAL
     // runs came back HOLDING and were retried. A late start IS tried again
     // (M3.3-34, ruled): it is signed FORFEIT 0 once no seat is unreachable.
+    // Nor one §13C's no-quorum rule already decided (VOID or FORFEIT, after the
+    // result window): that is its outcome, not a hold.
     const unsigned = ((closed && closed.replayed) || [])
-      .filter((r) => r && !r.stored && r.entryId && !round.entryVoid(r.entryId)
-        && !round.hasResult(roundIdBytes, r.entryId, round.pubkey));
+      .filter((r) => r && !r.stored && !r.decided && r.entryId && !round.entryVoid(r.entryId)
+        && !round.noQuorum(r.entryId) && !round.hasResult(roundIdBytes, r.entryId, round.pubkey));
     for (const u of unsigned) holding(roundIdBytes, u.entryId, { why: u.why });
+    for (const r of (closed && closed.replayed) || [])
+      if (r && r.decided && r.entryId) holding(roundIdBytes, r.entryId, { why: r.why, decided: r.decided });
     let latest = money;
     const isFinal = (eid) => gathered.some((g) => g && g.ok && g.final && toHex(g.entryId) === toHex(eid));
     const tableShort = () => !!(latest && latest.owed && latest.owed.ok === false
@@ -912,8 +918,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         try { r = await verifier.retryClose(roundIdBytes, u.entryId); } catch (e) { r = { stored: false, why: e.message }; }
         if (shuttingDown) return;
         const s = holding(roundIdBytes, u.entryId, { why: r && r.stored ? `signed ${r.outcome}/${r.score}` : r && r.why,
-          tried: true, signed: !!(r && r.stored) });
-        if (r && r.stored) {
+          tried: true, signed: !!(r && r.stored), decided: r && r.decided ? r.decided : null });
+        if (r && r.decided) {
+          // §13C, AFTER THE RESULT WINDOW: no quorum, and the outcome is decided
+          // here (VOID, or FORFEIT on proven equivocation) - asked no more.
+          unsigned.splice(unsigned.indexOf(u), 1);
+          console.log(`[close] ${toHex(u.entryId).slice(0, 16)} ${r.decided} after ${s.attempts} attempt(s): ${String(r.why).slice(0, 140)}`);
+        } else if (r && r.stored) {
           unsigned.splice(unsigned.indexOf(u), 1);
           stored.push(r);
           const at = closed.replayed.findIndex((x) => x && toHex(x.entryId) === toHex(u.entryId));
@@ -1252,7 +1263,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       const key = toHex(rid);
       if ((already || []).includes(key)) continue;
       if (!round.seats(rid).some((s) => toHex(s) === toHex(round.pubkey))) continue;
-      const short = round.entriesOf(rid).filter(({ entryId }) => !round.entryVoid(entryId)
+      const short = round.entriesOf(rid).filter(({ entryId }) => !round.entryVoid(entryId) && !round.noQuorum(entryId)
         && resultFinality(round, rid, entryId).state !== 'FINAL');
       if (!short.length) continue;
       console.log(`[close] ${key.slice(0, 16)} closed with ${short.length} run(s) short of final here: running its close logic again`);
@@ -1405,7 +1416,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (!round.entry(c.entryId)) return answer(404, { why: 'this seat seated no such entry' });
         let seen;
         try { seen = await custody.seenPaid(c.entryId); } catch (e) { seen = { ok: false, why: e.message }; }
-        if (!seen.ok) return answer(409, { why: STAKE_NOT_SEEN + seen.why });
+        // A SEAT THAT IS UP AND REFUSES keeps what it refused (M3.3-34): the
+        // player's own on-time first mark, so it can reach §13C's VOID from its
+        // own store as the seat that took it does (round.putRefusedFirstMark
+        // keeps nothing forged, late, or conflicting with a mark held here).
+        if (!seen.ok) {
+          round.putRefusedFirstMark({ bytes, why: STAKE_NOT_SEEN + seen.why });
+          return answer(409, { why: STAKE_NOT_SEEN + seen.why });
+        }
         // §16: A FIRST MARK THIS SEAT DOES NOT HOLD, handed on after the start
         // deadline passed - shown by the player's own signed mark past the line,
         // or by this seat's round being closed - is refused and recorded
@@ -1422,7 +1440,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         }
         let receipt;
         try { receipt = round.checkpoint(bytes); }
-        catch (e) { return answer(409, /^FORFEIT/.test(e.message) ? { forfeit: true, why: e.message } : { why: e.message }); }
+        catch (e) {
+          if (!/^FORFEIT/.test(e.message) && !/the round is closed/.test(e.message)) round.putRefusedFirstMark({ bytes, why: e.message });
+          return answer(409, /^FORFEIT/.test(e.message) ? { forfeit: true, why: e.message } : { why: e.message });
+        }
         if (got.receipt) { try { round.takeReceipt(fromHex(String(got.receipt))); } catch { /* not this mark's */ } }
         return answer(200, { receipt: toHex(receipt) });
       }
@@ -1994,9 +2015,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const held = round.results(rid, eid);
         const out = new Uint8Array(held.length * SIGNED_RESULT_BYTES);
         held.forEach((r, i) => out.set(r.bytes, i * SIGNED_RESULT_BYTES));
+        // AND §13C'S NO-QUORUM OUTCOME, when this seat decided one (M3.3-34):
+        // VOID has no signed result to serve, so it is said here.
+        const nq = eid.length === 32 ? round.noQuorum(new Uint8Array(eid)) : null;
         res.writeHead(200, {
           'content-type': 'application/octet-stream',
-          'x-results': String(held.length), ...CORS,
+          'x-results': String(held.length), ...(nq ? { 'x-no-quorum': nq.outcome } : {}), ...CORS,
         });
         return res.end(Buffer.from(out));
       }

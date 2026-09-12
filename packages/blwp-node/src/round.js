@@ -1596,6 +1596,56 @@ export class Round {
       evidence: r.evidence ? new Uint8Array(r.evidence) : null, why: r.why, decidedMs: r.decided_ms } : null;
   }
 
+  /**
+   * A FIRST MARK THIS SEAT, UP, REFUSED (M3.3-34, one-seat refusal) - kept only
+   * when it is the player's own (the entry's session key signs it), a first mark
+   * of an entry seated here, on time (a late one is FORFEIT, first-mark.js), and
+   * this seat holds no first mark of that entry (a second one is 13B's, not a
+   * refusal). Anything else is not kept: a forged or conflicting mark proves no
+   * refusal. Answers whether it was kept.
+   */
+  putRefusedFirstMark({ bytes, why }) {
+    let c; let signature;
+    try { const s = splitSigned(bytes); signature = s.signature; c = decodeCheckpoint(s.body); } catch { return false; }
+    if (!same(c.previousHash, NO_PREVIOUS)) return false;
+    const entry = this.db.prepare('SELECT round_id, contract FROM entries WHERE entry_id = ?').get(c.entryId);
+    if (!entry || !same(new Uint8Array(entry.round_id), c.roundId)) return false;
+    const round = this.get(c.roundId);
+    if (!round) return false;
+    const joined = decodeEntryContract(new Uint8Array(entry.contract));
+    let ok = false;
+    try { ok = ed25519.verify(signature, checkpointId(c), joined.sessionPubkey); } catch { ok = false; }
+    if (!ok) return false;
+    let decided;
+    try {
+      decided = firstMarkOutcome({ joinTick: joined.joinTick,
+        deadlineTicks: startDeadlineOf(decodeRoundContract(new Uint8Array(round.contract))),
+        firstMark: { tick: c.tick, previousHash: c.previousHash } });
+    } catch { return false; }
+    if (decided.outcome) return false;
+    if (this.firstMarkHeld(c.roundId, c.entryId)) return false;
+    return this.db.prepare('INSERT OR IGNORE INTO refused_first_marks (entry_id, round_id, mark, why, at_ms) VALUES (?, ?, ?, ?, ?)')
+      .run(c.entryId, c.roundId, bytes, String(why || 'refused').slice(0, 300), this.now()).changes > 0;
+  }
+
+  /** The on-time first mark this seat, up, refused - or null. */
+  refusedFirstMark(entryIdBytes) {
+    const r = this.db.prepare('SELECT * FROM refused_first_marks WHERE entry_id = ?').get(entryIdBytes);
+    return r ? { roundId: new Uint8Array(r.round_id), mark: new Uint8Array(r.mark), why: r.why, atMs: r.at_ms } : null;
+  }
+
+  /** §13C's no-quorum outcome for an entry, decided here once: VOID or FORFEIT. */
+  putNoQuorum({ entryId, roundId, outcome, why }) {
+    this.db.prepare('INSERT OR IGNORE INTO no_quorum (entry_id, round_id, outcome, why, decided_ms) VALUES (?, ?, ?, ?, ?)')
+      .run(entryId, roundId, outcome, why, this.now());
+  }
+
+  /** The no-quorum outcome this seat decided for an entry, or null. */
+  noQuorum(entryIdBytes) {
+    const r = this.db.prepare('SELECT * FROM no_quorum WHERE entry_id = ?').get(entryIdBytes);
+    return r ? { roundId: new Uint8Array(r.round_id), outcome: r.outcome, why: r.why, decidedMs: r.decided_ms } : null;
+  }
+
   /** A seated player's signed name record for a round (M3.3-34). A newer one replaces it; an older one does not. */
   putLobbyName({ roundId, playerPubkey, record, signature, atMs }) {
     return this.db.prepare('INSERT INTO lobby_names (round_id, player_pubkey, record, signature, at_ms) VALUES (?, ?, ?, ?, ?) '

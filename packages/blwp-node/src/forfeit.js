@@ -73,6 +73,10 @@ export class Forfeit {
     const voided = this.round.entryVoid ? this.round.entryVoid(entryIdBytes) : null;
     if (!voided) {
       const standing = resultFinality(this.round, roundIdBytes, entryIdBytes);
+      // VOID (§13C, §23.2 "do nothing"): nothing is forfeited - nobody acts, and
+      // the lock returns to the player at its expiry. Not ENTRY_VOID's forfeit.
+      if (standing.state === 'VOID')
+        return refuse('that entry is VOID (§13C): nothing is forfeited - nobody acts, and the lock returns to the player at its expiry');
       if (standing.state !== FINAL)
         return refuse(`no forfeit before the result is final with its objection window closed: ${standing.why || standing.state}`);
       const mine = this.round.results(roundIdBytes, entryIdBytes).find((r) => toHex(r.nodePubkey) === toHex(this.round.pubkey));
