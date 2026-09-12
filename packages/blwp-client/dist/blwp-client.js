@@ -10878,6 +10878,113 @@ function decodeLobbyName(bytes) {
 /** What the seated player signs (BIP-340, its round key) for its name in one round. */
 const lobbyNameId = (record) => taggedHash(TAG.lobbyName, encodeLobbyName(record));
 
+// ---- protocol/src/display-name.js
+// 0.12 DISPLAY NAME. Identity is the player key. The name is presentation.
+//
+// the owner 2026-09-08 18:55 (M3): default name is derived from the key so every
+// client shows the same string for the same player. A player may override it.
+// The override lives next to the secret in the browser, not on the signed
+// final, so the board still cannot be injected with a name (letter 20).
+// Donation LNURL comments carry the player public key as hex, not the name
+// (the owner 2026-09-08 18:59).
+//
+//   default = adjective-animal-NNNN
+//   digest  = taggedHash('BLWP/v1/DISPLAY_NAME', playerPubkey)
+//
+// Two wordlists would name one player twice, which is why this file exists
+// rather than letting a client invent one.
+
+
+const DISPLAY_NAME_TAG = 'BLWP/v1/DISPLAY_NAME';
+const DISPLAY_NAME_MAX = 32;
+
+const ADJECTIVES = Object.freeze([
+  'amber', 'azure', 'bold', 'brave', 'brisk', 'calm', 'cool', 'coral',
+  'crisp', 'dark', 'dawn', 'deep', 'dry', 'dusk', 'eager', 'even',
+  'fair', 'firm', 'flat', 'glad', 'gold', 'grim', 'harsh', 'holy',
+  'icy', 'idle', 'iron', 'jade', 'jolly', 'keen', 'kind', 'late',
+  'loud', 'lush', 'merry', 'mild', 'mint', 'neat', 'near', 'noble',
+  'odd', 'open', 'pale', 'plain', 'proud', 'quick', 'quiet', 'rapid',
+  'rare', 'royal', 'safe', 'sharp', 'silent', 'steel', 'swift', 'tall',
+  'true', 'urban', 'vast', 'vivid', 'warm', 'wild', 'young', 'zinc',
+]);
+
+const ANIMALS = Object.freeze([
+  'otter', 'hawk', 'wolf', 'bear', 'fox', 'lynx', 'stag', 'elk',
+  'moose', 'swan', 'crow', 'raven', 'dove', 'lark', 'wren', 'pike',
+  'perch', 'trout', 'carp', 'bass', 'eel', 'crab', 'seal', 'whale',
+  'shark', 'ray', 'frog', 'toad', 'newt', 'deer', 'boar', 'ram',
+  'colt', 'mare', 'ox', 'yak', 'ape', 'bat', 'cub', 'doe',
+  'emu', 'gnu', 'hen', 'hog', 'jay', 'owl', 'pup', 'sow',
+  'asp', 'bee', 'cat', 'cow', 'dog', 'fly', 'goat', 'hare',
+  'ibis', 'koi', 'mole', 'puma', 'rook', 'tern', 'orca', 'kiwi',
+]);
+
+if (ADJECTIVES.length !== 64 || ANIMALS.length !== 64) {
+  throw new Error('display-name wordlists must be 64 each');
+}
+if (new Set(ADJECTIVES).size !== 64 || new Set(ANIMALS).size !== 64) {
+  throw new Error('display-name wordlists must be unique');
+}
+
+function requirePubkey(playerPubkey) {
+  if (!(playerPubkey instanceof Uint8Array) || playerPubkey.length !== 32) {
+    throw new Error('a display name is derived from a 32-byte player key');
+  }
+}
+
+/** Default name every client derives for this key. adjective-animal-NNNN */
+function displayNameFromKey(playerPubkey) {
+  requirePubkey(playerPubkey);
+  const d = taggedHash(DISPLAY_NAME_TAG, playerPubkey);
+  const adj = ADJECTIVES[d[0] & 63];
+  const animal = ANIMALS[d[1] & 63];
+  const num = ((d[2] << 8) | d[3]) % 10000;
+  return adj + '-' + animal + '-' + String(num).padStart(4, '0');
+}
+
+/**
+ * A custom name the player typed. Empty / invalid means "use the default".
+ * No em dash. Max 32. Printable ASCII letters, digits, space, dot, _ -.
+ */
+function normalizeDisplayName(raw) {
+  if (raw == null) return null;
+  if (typeof raw !== 'string') return null;
+  const s = raw.trim();
+  if (!s) return null;
+  if (s.length > DISPLAY_NAME_MAX) return null;
+  if (/[—–]/.test(s)) return null;
+  if (!/^[A-Za-z0-9][A-Za-z0-9._ -]{0,31}$/.test(s)) return null;
+  return s;
+}
+
+/** Name to show on the board and in the client. Not the donation comment. */
+function displayNameFor(playerPubkey, custom) {
+  return normalizeDisplayName(custom) || displayNameFromKey(playerPubkey);
+}
+
+/** LNURL-pay comment: the player public key as hex. Not the display name. */
+function donationCommentFor(playerPubkey, commentAllowed = 140) {
+  requirePubkey(playerPubkey);
+  const hex = toHex(playerPubkey);
+  const max = Number(commentAllowed);
+  if (!Number.isFinite(max) || max < hex.length) return '';
+  return hex;
+}
+
+/**
+ * What the browser stores. secretKey never leaves the machine except via the
+ * player's own backup download. displayName null = derive from the key.
+ */
+function playerStoreRecord({ secretKey, displayName = null }) {
+  requirePubkey(secretKey);
+  return {
+    version: 1,
+    secretKey: toHex(secretKey),
+    displayName: normalizeDisplayName(displayName),
+  };
+}
+
 // ---- blwp-client/src/identity.js
 // WHO THIS TAB IS IN THE LOBBY (M3.3-34): a key the page generated, a name
 // made from that key, and the name the player chose instead, if they did.
@@ -10904,27 +11011,21 @@ const lobbyNameId = (record) => taggedHash(TAG.lobbyName, encodeLobbyName(record
 
 
 
+
 /** Where a tab keeps the name its player chose. */
 const CUSTOM_NAME_KEY = 'blwp.player.name';
 
 /** The longest name a player may choose, in characters - the seats' rule too. */
 const PLAYER_NAME_MAX = LOBBY_NAME_MAX;
 
-const NAME_ADJECTIVES = ['Swift', 'Steady', 'Bold', 'Quiet', 'Rusty', 'Lucky', 'Brave', 'Sly',
-  'Iron', 'Amber', 'Frosty', 'Dusty', 'Keen', 'Calm', 'Wild', 'Noble', 'Stubborn', 'Nimble',
-  'Sturdy', 'Gritty', 'Clever', 'Silent', 'Rapid', 'Loyal', 'Fierce', 'Gentle', 'Hardy', 'Jolly',
-  'Mellow', 'Plucky', 'Rugged', 'Sharp'];
-const NAME_NOUNS = ['Trucker', 'Courier', 'Hauler', 'Miner', 'Driver', 'Convoy', 'Carrier', 'Rover',
-  'Pilot', 'Runner', 'Ranger', 'Trader', 'Porter', 'Scout', 'Rider', 'Nomad', 'Drifter', 'Freighter',
-  'Mechanic', 'Navigator', 'Dispatcher', 'Loader', 'Teamster', 'Wrangler', 'Outrider', 'Pathfinder',
-  'Shipper', 'Packer', 'Roadie', 'Voyager', 'Wanderer', 'Stoker'];
-
-/** A name made from a public key: two words and four digits, the same for one key always. */
-function generatedName(pubkey) {
-  if (!(pubkey instanceof Uint8Array) || pubkey.length !== 32) throw new Error('a name is made from a 32-byte public key');
-  const digits = ((pubkey[2] << 8) | pubkey[3]) % 10000;
-  return `${NAME_ADJECTIVES[pubkey[0] % 32]}${NAME_NOUNS[pubkey[1] % 32]}-${String(digits).padStart(4, '0')}`;
-}
+/**
+ * THE NAME MADE FROM A PLAYER'S IDENTITY KEY: §0.12's one default,
+ * adjective-animal-NNNN from display-name.js - the only wordlist that names a
+ * player (ruled 2026-09-12: a second list here named one player twice). Made
+ * from the tab's stable identity key, never a round key, so one player shows
+ * one generated name in the lobby, on the board and in every round.
+ */
+const generatedName = (identityPubkey) => displayNameFromKey(identityPubkey);
 
 /** 64 bits of the identity key, grouped, for a player to recognise it by. */
 const identityFingerprint = (pubkey) => toHex(pubkey.subarray(0, 8)).match(/.{4}/g).join('-');
@@ -11018,20 +11119,43 @@ function checkedNames(items, roundIdHex, verify) {
     .map(([player, r]) => ({ player, name: shownNameOf(r), chosen: r.name !== '' }));
 }
 
-/** The names a round's seats keep (GET /names), checked as above. */
+/**
+ * The names a round's seats keep (GET /names), checked as above. A seat that
+ * does not answer is one of several; when NONE answers that is an error, not
+ * an empty round - a page that drew "nobody named" there would wipe the names
+ * it had (measured: a busy page whose every ask timed out lost them).
+ */
 async function namesOf({ roundId, nodes, fetcher = fetch, verify } = {}) {
   if (typeof verify !== 'function') throw new Error('names are checked against the players\' keys, and no verify was injected');
   const id = typeof roundId === 'string' ? roundId.toLowerCase() : toHex(roundId);
   const items = [];
+  const refused = [];
+  let answered = 0;
   for (const node of [...new Set(nodes || [])]) {
     try {
       const r = await fetcher(`${String(node).replace(/\/+$/, '')}/names?round=${id}`);
-      if (!r.ok) continue;
+      if (!r.ok) { refused.push(`${node}: ${r.status}`); continue; }
       const body = await r.json();
+      answered++;
       if (body && Array.isArray(body.names)) items.push(...body.names);
-    } catch { /* a seat that does not answer is one of several */ }
+    } catch (e) { refused.push(`${node}: ${e.name === 'TimeoutError' ? 'no answer in time' : e.message}`); }
   }
+  if (!answered) throw new Error(`no seat answered for the names: ${refused.join('; ') || 'no seats named'}`);
   return checkedNames(items, id, verify);
+}
+
+/**
+ * A BOARD'S ROWS WITH THE NAME TO DRAW BESIDE EACH - presentation only. The
+ * board (leaderboard.js) is built from signed finals and carries no name; this
+ * puts each row's checked display name (`checkedNames`: the custom name, or the
+ * generated one from the identity key its record carries) beside it by the
+ * row's player key. A row whose player published no record gets none - never a
+ * name made from its round key, which would rename that player every round.
+ */
+function boardNames(rows, names) {
+  const byPlayer = new Map((Array.isArray(names) ? names : []).map((n) => [n.player, n.name]));
+  return (Array.isArray(rows) ? rows : []).map((row) => ({ row,
+    name: (row && row.playerPubkey instanceof Uint8Array && byPlayer.get(toHex(row.playerPubkey))) || null }));
 }
 
 // ---- protocol/src/lobby-listing.js
@@ -11267,6 +11391,7 @@ return { Client: Client, markState: markState,
          lobbyQuery: lobbyQuery, fetchLobby: fetchLobby, lobbyLine: lobbyLine, lobbyJoinSearch: lobbyJoinSearch,
          tabIdentity: tabIdentity, setPlayerName: setPlayerName, generatedName: generatedName,
          nameRecordFor: nameRecordFor, postName: postName, namesOf: namesOf, checkedNames: checkedNames, shownNameOf: shownNameOf,
+         boardNames: boardNames,
          tabWallet: tabWallet, spendLog: spendLog, spentLine: spentLine,
          owedLine: owedLine,
          parseConnection: parseConnection,

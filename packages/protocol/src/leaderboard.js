@@ -45,13 +45,16 @@ import { VOID, ENTRY_VOID, compareBytes, computePayoutTable } from './payout.js'
  * rows.
  */
 export const NOT_ON_A_FINAL = [
-  // The key IS on the row. Default name is derived in display-name.js so every
-  // client shows the same adjective-animal-NNNN. A custom name is browser-local
-  // and is not a column of this board - injecting one here would be a second
-  // identity the signed final does not carry.
-  'pseudonym (0.12: default is adjective-animal-NNNN from the player key on the '
-  + 'row via displayNameFromKey; a custom name is local browser storage and is '
-  + 'not a column of this board)',
+  // The key IS on the row; the name is not. A board draws each row's name from
+  // the player's verified display record (identity.js `boardNames`): the custom
+  // name, or adjective-animal-NNNN (display-name.js) from the IDENTITY key the
+  // record carries - never from the round key on the row, which would rename a
+  // player every round. Injecting either here would be a second identity the
+  // signed final does not carry.
+  'pseudonym (0.12: not a column of this board - drawn beside the player key on the '
+  + 'row from the player\'s verified display record: its custom name, or '
+  + 'adjective-animal-NNNN via displayNameFromKey from the identity key it carries, '
+  + 'never from the round key)',
 
   // The core carries cargo in its state, so a replay has it. A final does not,
   // and this board reads finals.

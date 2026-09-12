@@ -34,7 +34,7 @@ test('a tab generates its identity key once, from its seed, and it is no round\'
     anotherTabAnotherKey: other.pubkeyHex !== me.pubkeyHex,
     notARoundKey: me.pubkeyHex !== toHex(playerFor({ id: random(32) }, { seed, curve }).pubkey),
     noSecretHandedOut: !('secret' in me) && !('seed' in me),
-    name: /^[A-Z][a-z]+[A-Z][a-z]+-\d{4}$/.test(me.name), custom: me.custom,
+    name: /^[a-z]+-[a-z]+-\d{4}$/.test(me.name), custom: me.custom,
   };
   console.log(`  identity ${me.fingerprint} is ${me.name}:`, JSON.stringify(facts));
   assert.deepEqual(facts, { sameOnReload: true, isTheSeedsIdentity: true, anotherTabAnotherKey: true,

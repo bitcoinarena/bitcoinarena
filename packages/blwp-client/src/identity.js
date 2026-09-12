@@ -23,6 +23,7 @@ import { tabSeed, playerFor } from './join.js';
 import { identitySecretFor } from '../../protocol/src/player-key.js';
 import { toHex, fromHex } from '../../protocol/src/hash.js';
 import { encodeLobbyName, decodeLobbyName, lobbyNameId, lobbyNameIsValid, LOBBY_NAME_MAX } from '../../protocol/src/lobby-name.js';
+import { displayNameFromKey } from '../../protocol/src/display-name.js';
 
 /** Where a tab keeps the name its player chose. */
 export const CUSTOM_NAME_KEY = 'blwp.player.name';
@@ -30,21 +31,14 @@ export const CUSTOM_NAME_KEY = 'blwp.player.name';
 /** The longest name a player may choose, in characters - the seats' rule too. */
 export const PLAYER_NAME_MAX = LOBBY_NAME_MAX;
 
-const NAME_ADJECTIVES = ['Swift', 'Steady', 'Bold', 'Quiet', 'Rusty', 'Lucky', 'Brave', 'Sly',
-  'Iron', 'Amber', 'Frosty', 'Dusty', 'Keen', 'Calm', 'Wild', 'Noble', 'Stubborn', 'Nimble',
-  'Sturdy', 'Gritty', 'Clever', 'Silent', 'Rapid', 'Loyal', 'Fierce', 'Gentle', 'Hardy', 'Jolly',
-  'Mellow', 'Plucky', 'Rugged', 'Sharp'];
-const NAME_NOUNS = ['Trucker', 'Courier', 'Hauler', 'Miner', 'Driver', 'Convoy', 'Carrier', 'Rover',
-  'Pilot', 'Runner', 'Ranger', 'Trader', 'Porter', 'Scout', 'Rider', 'Nomad', 'Drifter', 'Freighter',
-  'Mechanic', 'Navigator', 'Dispatcher', 'Loader', 'Teamster', 'Wrangler', 'Outrider', 'Pathfinder',
-  'Shipper', 'Packer', 'Roadie', 'Voyager', 'Wanderer', 'Stoker'];
-
-/** A name made from a public key: two words and four digits, the same for one key always. */
-export function generatedName(pubkey) {
-  if (!(pubkey instanceof Uint8Array) || pubkey.length !== 32) throw new Error('a name is made from a 32-byte public key');
-  const digits = ((pubkey[2] << 8) | pubkey[3]) % 10000;
-  return `${NAME_ADJECTIVES[pubkey[0] % 32]}${NAME_NOUNS[pubkey[1] % 32]}-${String(digits).padStart(4, '0')}`;
-}
+/**
+ * THE NAME MADE FROM A PLAYER'S IDENTITY KEY: §0.12's one default,
+ * adjective-animal-NNNN from display-name.js - the only wordlist that names a
+ * player (ruled 2026-09-12: a second list here named one player twice). Made
+ * from the tab's stable identity key, never a round key, so one player shows
+ * one generated name in the lobby, on the board and in every round.
+ */
+export const generatedName = (identityPubkey) => displayNameFromKey(identityPubkey);
 
 /** 64 bits of the identity key, grouped, for a player to recognise it by. */
 export const identityFingerprint = (pubkey) => toHex(pubkey.subarray(0, 8)).match(/.{4}/g).join('-');
@@ -138,18 +132,41 @@ export function checkedNames(items, roundIdHex, verify) {
     .map(([player, r]) => ({ player, name: shownNameOf(r), chosen: r.name !== '' }));
 }
 
-/** The names a round's seats keep (GET /names), checked as above. */
+/**
+ * The names a round's seats keep (GET /names), checked as above. A seat that
+ * does not answer is one of several; when NONE answers that is an error, not
+ * an empty round - a page that drew "nobody named" there would wipe the names
+ * it had (measured: a busy page whose every ask timed out lost them).
+ */
 export async function namesOf({ roundId, nodes, fetcher = fetch, verify } = {}) {
   if (typeof verify !== 'function') throw new Error('names are checked against the players\' keys, and no verify was injected');
   const id = typeof roundId === 'string' ? roundId.toLowerCase() : toHex(roundId);
   const items = [];
+  const refused = [];
+  let answered = 0;
   for (const node of [...new Set(nodes || [])]) {
     try {
       const r = await fetcher(`${String(node).replace(/\/+$/, '')}/names?round=${id}`);
-      if (!r.ok) continue;
+      if (!r.ok) { refused.push(`${node}: ${r.status}`); continue; }
       const body = await r.json();
+      answered++;
       if (body && Array.isArray(body.names)) items.push(...body.names);
-    } catch { /* a seat that does not answer is one of several */ }
+    } catch (e) { refused.push(`${node}: ${e.name === 'TimeoutError' ? 'no answer in time' : e.message}`); }
   }
+  if (!answered) throw new Error(`no seat answered for the names: ${refused.join('; ') || 'no seats named'}`);
   return checkedNames(items, id, verify);
+}
+
+/**
+ * A BOARD'S ROWS WITH THE NAME TO DRAW BESIDE EACH - presentation only. The
+ * board (leaderboard.js) is built from signed finals and carries no name; this
+ * puts each row's checked display name (`checkedNames`: the custom name, or the
+ * generated one from the identity key its record carries) beside it by the
+ * row's player key. A row whose player published no record gets none - never a
+ * name made from its round key, which would rename that player every round.
+ */
+export function boardNames(rows, names) {
+  const byPlayer = new Map((Array.isArray(names) ? names : []).map((n) => [n.player, n.name]));
+  return (Array.isArray(rows) ? rows : []).map((row) => ({ row,
+    name: (row && row.playerPubkey instanceof Uint8Array && byPlayer.get(toHex(row.playerPubkey))) || null }));
 }

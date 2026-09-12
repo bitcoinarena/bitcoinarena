@@ -291,16 +291,20 @@ A keypair. The public key identifies the player; the private key signs Entry
 Contracts, session data and protocol messages. No email or password. Wallet
 identity and game identity need not be the same key.
 
-**Display name (the owner 2026-09-08, M3).** Default is derived from the player
-public key so every client shows the same string:
-`taggedHash('BLWP/v1/DISPLAY_NAME', pubkey)` → `adjective-animal-NNNN`
+**Display name (the owner 2026-09-08, M3; key ruled 2026-09-12).** Default is
+derived from the player's **identity key** - the tab's stable key, never a
+round key - so every client shows the same string for one player in the lobby,
+on the board and in every round:
+`taggedHash('BLWP/v1/DISPLAY_NAME', identityPubkey)` → `adjective-animal-NNNN`
 (64 adjectives, 64 animals, four-digit number). Locked in
-`packages/protocol/src/display-name.js`. The name is **changeable**: a custom
+`packages/protocol/src/display-name.js`, the only wordlist that names a
+player. The name is **changeable**: a custom
 name lives next to the secret in the browser, may be published to the round's
 seats as a player-signed display record (the other players' pages verify it
 before they draw it; a seat can omit it, never invent it), and is never on the
-signed final. Other
-players' board rows always show the default derived from *their* key. The
+signed final. Other players' rows - seated view, lobby, board - show the name
+from their verified display record: the custom name if they chose one, else
+the default from the identity key the record carries. The
 LNURL-pay `comment` on donations is the player **public key as hex**, not the
 display name (the owner 2026-09-08). It is omitted if `commentAllowed` is under
 64 characters.

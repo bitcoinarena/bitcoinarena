@@ -846,25 +846,42 @@
     // others' - every record checked against its player's key before its name
     // is drawn. A seat that has not seated this player yet refuses it (409), so
     // it is handed again until every seat has kept it. The name decides nothing.
+    // Each ask is given 8 s, and one exchange runs at a time: a seat that does
+    // not answer must not hold the others' names back. When no seat answers,
+    // `namesOf` says so and the names already drawn stay drawn.
     const namesKept = new Set();
+    let namesBusy = false;
+    const namesFetch = (u, o) => fetch(u, Object.assign({}, o, { signal: AbortSignal.timeout(8000) }));
     async function exchangeNames() {
-      if (typeof BLWPCLIENT === 'undefined' || !BLWPCLIENT.namesOf) return;
+      if (namesBusy || typeof BLWPCLIENT === 'undefined' || !BLWPCLIENT.namesOf) return;
       if (!window.BLWP_ROUND || !window.BLWP_ENTRY || !window.BLWP_CURVE) return;
-      const nodes = window.BLWP_NODES || [];
-      const left = nodes.filter((n) => !namesKept.has(n));
-      if (left.length) {
-        try {
-          const signed = BLWPCLIENT.nameRecordFor(window.BLWP_ROUND, { storage: window.sessionStorage,
-            random: (n) => crypto.getRandomValues(new Uint8Array(n)), curve: window.BLWP_CURVE });
-          for (const s of await BLWPCLIENT.postName(signed, left)) if (s.status === 201 || s.status === 200) namesKept.add(s.node);
-        } catch (e) { console.error('[blwp] name: ' + e.message); }
-      }
+      namesBusy = true;
+      const said = { posted: [], error: null };
       try {
-        const mine = window.BLWP_ENTRY.playerPubkey ? BLWPCLIENT.toHex(window.BLWP_ENTRY.playerPubkey) : null;
-        const all = await BLWPCLIENT.namesOf({ roundId: BLWPCLIENT.roundId(window.BLWP_ROUND), nodes,
-          verify: (s, m, k) => !!window.BLWP_CURVE.verify(s, m, k) });
-        window.BLWP_OTHER_NAMES = all.filter((x) => x.player !== mine).map((x) => x.name);
-      } catch (e) { console.error('[blwp] names: ' + e.message); }
+        const nodes = window.BLWP_NODES || [];
+        const left = nodes.filter((n) => !namesKept.has(n));
+        if (left.length) {
+          try {
+            const signed = BLWPCLIENT.nameRecordFor(window.BLWP_ROUND, { storage: window.sessionStorage,
+              random: (n) => crypto.getRandomValues(new Uint8Array(n)), curve: window.BLWP_CURVE });
+            for (const s of await BLWPCLIENT.postName(signed, left, { fetcher: namesFetch })) {
+              said.posted.push(s.node + ' ' + s.status);
+              if (s.status === 201 || s.status === 200) namesKept.add(s.node);
+            }
+          } catch (e) { said.error = 'name: ' + e.message; console.error('[blwp] name: ' + e.message); }
+        }
+        try {
+          const mine = window.BLWP_ENTRY.playerPubkey ? BLWPCLIENT.toHex(window.BLWP_ENTRY.playerPubkey) : null;
+          const all = await BLWPCLIENT.namesOf({ roundId: BLWPCLIENT.roundId(window.BLWP_ROUND), nodes, fetcher: namesFetch,
+            verify: (s, m, k) => !!window.BLWP_CURVE.verify(s, m, k) });
+          window.BLWP_OTHER_NAMES = all.filter((x) => x.player !== mine).map((x) => x.name);
+        } catch (e) { said.error = 'names: ' + e.message; console.error('[blwp] names: ' + e.message); }
+      } finally {
+        // WHAT THE LAST EXCHANGE DID, for a harness or a player's console.
+        window.BLWP_NAMES_SAID = { posted: said.posted, kept: [...namesKept], shown: window.BLWP_OTHER_NAMES || [],
+          error: said.error, atMs: Date.now() };
+        namesBusy = false;
+      }
     }
     setInterval(exchangeNames, 3000);
     setInterval(paintPlayers, 500);
