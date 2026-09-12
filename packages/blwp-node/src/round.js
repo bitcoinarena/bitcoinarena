@@ -1596,6 +1596,20 @@ export class Round {
       evidence: r.evidence ? new Uint8Array(r.evidence) : null, why: r.why, decidedMs: r.decided_ms } : null;
   }
 
+  /** A seated player's signed name record for a round (M3.3-34). A newer one replaces it; an older one does not. */
+  putLobbyName({ roundId, playerPubkey, record, signature, atMs }) {
+    return this.db.prepare('INSERT INTO lobby_names (round_id, player_pubkey, record, signature, at_ms) VALUES (?, ?, ?, ?, ?) '
+      + 'ON CONFLICT (round_id, player_pubkey) DO UPDATE SET record = excluded.record, signature = excluded.signature, '
+      + 'at_ms = excluded.at_ms WHERE excluded.at_ms > lobby_names.at_ms')
+      .run(roundId, playerPubkey, record, signature, Number(atMs)).changes > 0;
+  }
+
+  /** Every name record this seat keeps for a round, as the players signed them. */
+  lobbyNames(roundIdBytes) {
+    return this.db.prepare('SELECT record, signature FROM lobby_names WHERE round_id = ? ORDER BY player_pubkey')
+      .all(roundIdBytes).map((r) => ({ record: new Uint8Array(r.record), signature: new Uint8Array(r.signature) }));
+  }
+
   /** The entry's first mark as this seat stores it (the chain's first link), or null. */
   firstMarkHeld(roundIdBytes, entryIdBytes) {
     const r = this.db.prepare('SELECT bytes FROM checkpoints WHERE round_id = ? AND entry_id = ? ORDER BY tick LIMIT 1')

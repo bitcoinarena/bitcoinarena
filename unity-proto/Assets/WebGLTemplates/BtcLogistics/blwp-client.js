@@ -770,6 +770,9 @@ const TAG = {
   // ONE SEAT'S SIGNED WORD ABOUT A ROUND IN ITS LOBBY (M3.3-34): the page
   // offers Join only when the round's threshold of its own seats signed it.
   lobbyListing: 'BLWP/v1/LobbyListing',
+  // A SEATED PLAYER'S NAME FOR ONE ROUND (lobby-name.js), signed with the
+  // round key it is seated under, so a seat can serve it but not write it.
+  lobbyName: 'BLWP/v1/LobbyName',
   // The nonce of a DKG dealer's round-1 proof of knowledge, derived from its
   // own secret so no randomness source can repeat it across two proofs.
   dkgProofNonce: 'BLWP/v1/DkgProofNonce',
@@ -10703,7 +10706,7 @@ function newestPose(field) {
  * the other side, and neither tab had a number that said so.
  */
 function playersLine({ seated, others, stalled = false, at = null, refused = null,
-  seatRefused = null, stake = null } = {}) {
+  seatRefused = null, stake = null, names = [] } = {}) {
   // WHY THERE IS NO SEAT, AND NOT MERELY THAT THERE IS NONE.
   //
   // Letter 15 made the page refuse a paying round whose settlement committee
@@ -10727,7 +10730,12 @@ function playersLine({ seated, others, stalled = false, at = null, refused = nul
   // when it took the entry; a page that printed "not paid" as a constant would
   // be reporting its own assumption as the player's balance.
   const funding = stakeLine(stake);
-  const n = 1 + (others | 0);
+  // AND WHO THE OTHERS ARE, BY THE NAMES THEY CHOSE (M3.3-34): each from a
+  // record its player signed (identity.js `namesOf`), never a key. A player the
+  // seats keep no name for is counted, not stubbed. A named player who has not
+  // driven yet is still in the round, so the count is the larger of the two.
+  const shown = (Array.isArray(names) ? names : []).filter((x) => typeof x === 'string' && x);
+  const n = 1 + Math.max(others | 0, shown.length);
   // THE FUNDING WORD IS ON EVERY BRANCH, and it was not: this returned early
   // for a lone player, so the one line a player sits looking at while they
   // wait for somebody else - the longest-lived line on the chip - was the one
@@ -10738,7 +10746,8 @@ function playersLine({ seated, others, stalled = false, at = null, refused = nul
   // made the 11:51 retest a guess: five players on the chip, one truck on the
   // screen, and no number between them.
   const where = at ? ` · other at ${Math.round(at.x)},${Math.round(at.z)} m` : '';
-  return n + ' players in this round' + (stalled ? ' · none drawn' : '') + where + funding;
+  const who = shown.length ? ': ' + shown.join(', ') + (n - 1 > shown.length ? ` +${n - 1 - shown.length} more` : '') : '';
+  return n + ' players in this round' + who + (stalled ? ' · none drawn' : '') + where + funding;
 }
 
 /**
@@ -10800,6 +10809,229 @@ function settlementLine(s, nowMs = Date.now()) {
     return ` · waiting for the objection window, ${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')} left` + refund;
   }
   return '';
+}
+
+// ---- protocol/src/lobby-name.js
+// A PLAYER'S CHOSEN NAME, AS THE OTHER PLAYERS OF ITS ROUND ARE SHOWN IT (M3.3-34).
+//
+// The name decides nothing (§0.12): it is in no entry, no mark and no result,
+// and the board still shows the name made from a player's key. But a lobby two
+// players share shows each the other's name, so a tab hands its seats ONE
+// RECORD: this round, the round key it is seated under, the tab's identity key
+// (its generated name is made from that), the name the player chose - empty
+// for none - and when. The seated player's round key signs it (BIP-340), so a
+// seat that serves it can leave a name out but cannot write one, and a record
+// for one round is no record for another. The newest record of a player wins.
+
+
+
+/** The longest name a player may choose, in characters. */
+const LOBBY_NAME_MAX = 24;
+
+/**
+ * WHETHER A CHOSEN NAME STANDS, and the name as it is kept: trimmed, inner
+ * spaces collapsed, 1 to 24 characters, letters and digits with space, dot,
+ * dash and underscore between them. Anything else is refused by name.
+ */
+function lobbyNameIsValid(text) {
+  const name = String(text == null ? '' : text).normalize('NFC').trim().replace(/\s+/g, ' ');
+  if (!name) return { ok: false, why: 'a name is at least one character' };
+  if ([...name].length > LOBBY_NAME_MAX) return { ok: false, why: `a name is at most ${LOBBY_NAME_MAX} characters` };
+  if (!/^[\p{L}\p{N}](?:[\p{L}\p{N} ._-]*[\p{L}\p{N}])?$/u.test(name))
+    return { ok: false, why: 'a name is letters and digits, with space, dot, dash or underscore between them' };
+  return { ok: true, name };
+}
+
+const nameIs32 = (b) => b instanceof Uint8Array && b.length === 32;
+
+function encodeLobbyName({ roundId, playerPubkey, identityPubkey, name = '', atMs } = {}) {
+  if (!nameIs32(roundId)) throw new Error('a name record names a 32-byte round id');
+  if (!nameIs32(playerPubkey)) throw new Error('a name record is signed by a 32-byte player key');
+  if (!nameIs32(identityPubkey)) throw new Error('a name record carries the 32-byte identity key its generated name is made from');
+  const at = BigInt(atMs);
+  if (at < 0n) throw new Error('a name record\'s time is not negative');
+  const text = name == null ? '' : name;
+  if (typeof text !== 'string') throw new Error('a name is text');
+  if (text !== '') {
+    const kept = lobbyNameIsValid(text);
+    if (!kept.ok) throw new Error(kept.why);
+    if (kept.name !== text) throw new Error('a name is signed as it is kept: trimmed, one space between words');
+  }
+  const w = new Writer();
+  w.bytes32(roundId);
+  w.bytes32(playerPubkey);
+  w.bytes32(identityPubkey);
+  w.u64(at);
+  w.str(text);
+  return w.finish();
+}
+
+/** A record as a seat or a page receives it; held to the same rules as one written. */
+function decodeLobbyName(bytes) {
+  const r = new Reader(bytes);
+  const record = { roundId: r.bytes32(), playerPubkey: r.bytes32(), identityPubkey: r.bytes32(), atMs: r.u64(), name: r.str() };
+  r.end();
+  encodeLobbyName(record);
+  return record;
+}
+
+/** What the seated player signs (BIP-340, its round key) for its name in one round. */
+const lobbyNameId = (record) => taggedHash(TAG.lobbyName, encodeLobbyName(record));
+
+// ---- blwp-client/src/identity.js
+// WHO THIS TAB IS IN THE LOBBY (M3.3-34): a key the page generated, a name
+// made from that key, and the name the player chose instead, if they did.
+//
+// THE KEY COMES FROM THE TAB'S SEED - the seed every round's player key is
+// derived from (§24, F2) - under its own tag (`identitySecretFor`), so it is
+// never a round's key, and the seed backup the page already shows is the backup
+// of this key too. The private half never leaves this module: the page is
+// handed the public key and its fingerprint. Two tabs are two players, as they
+// always were, because the seed is kept per tab.
+//
+// THE NAME DECIDES NOTHING. It is in no entry, no mark and no result; nothing a
+// node replays reads it. The generated name is a function of the public key, so
+// one key always shows one name, and a custom name is kept in the tab beside
+// the seed - cleared, the generated one comes back.
+//
+// AND THE OTHER PLAYERS OF A ROUND ARE SHOWN IT: once seated, the tab hands the
+// round's seats one record - this round, the round key it is seated under, its
+// identity key, the name it chose (empty for none) - signed with that round key
+// (lobby-name.js). The other pages check each record before they draw its name,
+// so a seat can leave a name out but cannot write one, and nobody is shown a
+// key in place of a name: no record, no name, only a count.
+
+
+
+
+/** Where a tab keeps the name its player chose. */
+const CUSTOM_NAME_KEY = 'blwp.player.name';
+
+/** The longest name a player may choose, in characters - the seats' rule too. */
+const PLAYER_NAME_MAX = LOBBY_NAME_MAX;
+
+const NAME_ADJECTIVES = ['Swift', 'Steady', 'Bold', 'Quiet', 'Rusty', 'Lucky', 'Brave', 'Sly',
+  'Iron', 'Amber', 'Frosty', 'Dusty', 'Keen', 'Calm', 'Wild', 'Noble', 'Stubborn', 'Nimble',
+  'Sturdy', 'Gritty', 'Clever', 'Silent', 'Rapid', 'Loyal', 'Fierce', 'Gentle', 'Hardy', 'Jolly',
+  'Mellow', 'Plucky', 'Rugged', 'Sharp'];
+const NAME_NOUNS = ['Trucker', 'Courier', 'Hauler', 'Miner', 'Driver', 'Convoy', 'Carrier', 'Rover',
+  'Pilot', 'Runner', 'Ranger', 'Trader', 'Porter', 'Scout', 'Rider', 'Nomad', 'Drifter', 'Freighter',
+  'Mechanic', 'Navigator', 'Dispatcher', 'Loader', 'Teamster', 'Wrangler', 'Outrider', 'Pathfinder',
+  'Shipper', 'Packer', 'Roadie', 'Voyager', 'Wanderer', 'Stoker'];
+
+/** A name made from a public key: two words and four digits, the same for one key always. */
+function generatedName(pubkey) {
+  if (!(pubkey instanceof Uint8Array) || pubkey.length !== 32) throw new Error('a name is made from a 32-byte public key');
+  const digits = ((pubkey[2] << 8) | pubkey[3]) % 10000;
+  return `${NAME_ADJECTIVES[pubkey[0] % 32]}${NAME_NOUNS[pubkey[1] % 32]}-${String(digits).padStart(4, '0')}`;
+}
+
+/** 64 bits of the identity key, grouped, for a player to recognise it by. */
+const identityFingerprint = (pubkey) => toHex(pubkey.subarray(0, 8)).match(/.{4}/g).join('-');
+
+/**
+ * WHETHER A CHOSEN NAME STANDS, and the name as it is kept: the protocol's
+ * rule (lobby-name.js), so a seat keeps exactly the names a page lets through.
+ */
+const playerNameIsValid = lobbyNameIsValid;
+
+/**
+ * THE PLAYER'S OWN NAME, OVER THE GENERATED ONE - or, blank, back to the
+ * generated one. A name that does not stand is refused and nothing is kept.
+ */
+function setPlayerName(text, { storage } = {}) {
+  if (!storage) throw new Error('a name is kept in the tab, and no storage was given');
+  if (String(text == null ? '' : text).trim() === '') { storage.removeItem(CUSTOM_NAME_KEY); return { ok: true, custom: false }; }
+  const checked = playerNameIsValid(text);
+  if (!checked.ok) return checked;
+  storage.setItem(CUSTOM_NAME_KEY, checked.name);
+  return { ok: true, custom: true, name: checked.name };
+}
+
+/**
+ * WHO THIS TAB IS: the identity key's public half and fingerprint, the
+ * generated name, and the name shown - the player's own if they chose one.
+ * The curve is injected, as everywhere in this bundle.
+ */
+function tabIdentity({ storage, random, curve } = {}) {
+  if (!curve || typeof curve.pointX !== 'function') throw new Error('an identity is a key on a curve, and none was injected');
+  const seed = tabSeed({ storage, random });
+  const pubkey = curve.pointX(identitySecretFor(seed));
+  const generated = generatedName(pubkey);
+  const kept = storage ? storage.getItem(CUSTOM_NAME_KEY) : null;
+  const chosen = kept ? playerNameIsValid(kept) : null;
+  const custom = !!(chosen && chosen.ok);
+  return { pubkey, pubkeyHex: toHex(pubkey), fingerprint: identityFingerprint(pubkey), generated,
+    name: custom ? chosen.name : generated, custom };
+}
+
+/**
+ * THE NAME THIS TAB HANDS THE SEATS OF A ROUND IT IS SEATED IN: the round, the
+ * round key it is seated under, its identity key, the name the player chose -
+ * empty for none, and the others are then shown the generated one - and now,
+ * signed with that round key. The others are shown what this tab shows itself.
+ */
+function nameRecordFor(round, { storage, random, curve, nowMs = Date.now() } = {}) {
+  if (!curve || typeof curve.signSchnorr !== 'function') throw new Error('a name is signed with the round key, and no signer was injected');
+  const me = tabIdentity({ storage, random, curve });
+  const player = playerFor(round, { seed: tabSeed({ storage, random }), curve });
+  const record = { roundId: player.roundId, playerPubkey: player.pubkey, identityPubkey: me.pubkey,
+    name: me.custom ? me.name : '', atMs: BigInt(Math.floor(nowMs)) };
+  return { record: toHex(encodeLobbyName(record)), sig: toHex(curve.signSchnorr(lobbyNameId(record), player.secret)) };
+}
+
+/** The signed record, handed to every seat (POST /name); what each answered. */
+async function postName(signed, nodes, { fetcher = fetch } = {}) {
+  const said = [];
+  for (const node of [...new Set(nodes || [])]) {
+    try {
+      const r = await fetcher(`${String(node).replace(/\/+$/, '')}/name`, { method: 'POST', body: JSON.stringify(signed) });
+      said.push({ node, status: r.status });
+    } catch (e) { said.push({ node, status: 0, why: e.message }); }
+  }
+  return said;
+}
+
+/** The name a checked record shows: the one its player chose, or the one made from its identity key. */
+const shownNameOf = (record) => record.name || generatedName(record.identityPubkey);
+
+/**
+ * ONE ROUND'S PLAYERS BY NAME, CHECKED: each record decodes, is for THIS round,
+ * and verifies under the player key it names; a player's newest record wins.
+ * Anything else is dropped, never shown. `verify` is BIP-340, injected.
+ * @returns {{ player: string, name: string, chosen: boolean }[]} by player key
+ */
+function checkedNames(items, roundIdHex, verify) {
+  const newest = new Map();
+  for (const x of Array.isArray(items) ? items : []) {
+    let record;
+    try {
+      record = decodeLobbyName(fromHex(String(x && x.record)));
+      if (toHex(record.roundId) !== String(roundIdHex).toLowerCase()) continue;
+      if (!verify(fromHex(String(x.sig)), lobbyNameId(record), record.playerPubkey)) continue;
+    } catch { continue; }
+    const player = toHex(record.playerPubkey);
+    const had = newest.get(player);
+    if (!had || record.atMs > had.atMs) newest.set(player, record);
+  }
+  return [...newest.entries()].sort(([a], [b]) => (a < b ? -1 : 1))
+    .map(([player, r]) => ({ player, name: shownNameOf(r), chosen: r.name !== '' }));
+}
+
+/** The names a round's seats keep (GET /names), checked as above. */
+async function namesOf({ roundId, nodes, fetcher = fetch, verify } = {}) {
+  if (typeof verify !== 'function') throw new Error('names are checked against the players\' keys, and no verify was injected');
+  const id = typeof roundId === 'string' ? roundId.toLowerCase() : toHex(roundId);
+  const items = [];
+  for (const node of [...new Set(nodes || [])]) {
+    try {
+      const r = await fetcher(`${String(node).replace(/\/+$/, '')}/names?round=${id}`);
+      if (!r.ok) continue;
+      const body = await r.json();
+      if (body && Array.isArray(body.names)) items.push(...body.names);
+    } catch { /* a seat that does not answer is one of several */ }
+  }
+  return checkedNames(items, id, verify);
 }
 
 // ---- protocol/src/lobby-listing.js
@@ -10872,6 +11104,11 @@ const lobbyListingId = (listing) => taggedHash(TAG.lobbyListing, encodeLobbyList
 //
 // Joining is the join link: the same query with `round=` added. Nothing here
 // seats anybody, and nothing here mints a round.
+//
+// AND WHO IS SEATED, BY THE NAMES THEY CHOSE: each seat serves the name records
+// its seated players signed (lobby-name.js); a row carries the ones that check
+// (identity.js `checkedNames`) - never a key in place of a name.
+
 
 
 
@@ -10938,7 +11175,8 @@ async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), verify, 
         const signed = /^[0-9a-f]{64}$/.test(nodeKey) && Number.isFinite(at) && lobbySigned(verify, { id, nodeKey, nowMs: at, x });
         said.get(id).push({ node, key: nodeKey, seated: Number(x.seated) || 0, playing: Number(x.playing) || 0,
           watching: Number(x.watching) || 0, free: !!x.free, phase: x.phase, seatedHere: !!x.seatedHere,
-          signed, fresh: Number.isFinite(at) && Math.abs(at - nowMs) <= skewMs });
+          signed, fresh: Number.isFinite(at) && Math.abs(at - nowMs) <= skewMs,
+          names: Array.isArray(x.names) ? x.names : [] });
       }
     } catch (e) { refused.push(`${node}: ${e.message}`); }
   }
@@ -10974,6 +11212,7 @@ async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), verify, 
       // A NODE THAT CALLED A PAYING ROUND FREE, OR THE REVERSE, IS NAMED: the row
       // says what the contract says, and the disagreement is shown beside it.
       disagrees: counts.filter((c) => c.free !== !pays).map((c) => c.node),
+      names: checkedNames(counts.flatMap((c) => c.names), id, verify),
       contract,
     });
   }
@@ -10996,95 +11235,9 @@ function lobbyLine(row, nowMs = Date.now()) {
   const agree = `${row.seatsAgree} of ${row.needed} seats agree`
     + (row.phase === 'open' && !row.joinable ? ` - waiting for ${row.needed - row.seatsAgree} more` : '');
   const counts = row.said.map((c) => `${c.seated} seated, ${c.playing} playing (says ${c.node})`).join('; ');
-  return `${money} · ${when} · ${agree} · ${counts || 'no seat counts'}`
+  const who = row.names && row.names.length ? ` · players: ${row.names.map((n) => n.name).join(', ')}` : '';
+  return `${money} · ${when} · ${agree} · ${counts || 'no seat counts'}${who}`
     + (row.disagrees.length ? ` · ${row.disagrees.join(', ')} listed it as ${row.free ? 'paying' : 'free'}` : '');
-}
-
-// ---- blwp-client/src/identity.js
-// WHO THIS TAB IS IN THE LOBBY (M3.3-34): a key the page generated, a name
-// made from that key, and the name the player chose instead, if they did.
-//
-// THE KEY COMES FROM THE TAB'S SEED - the seed every round's player key is
-// derived from (§24, F2) - under its own tag (`identitySecretFor`), so it is
-// never a round's key, and the seed backup the page already shows is the backup
-// of this key too. The private half never leaves this module: the page is
-// handed the public key and its fingerprint. Two tabs are two players, as they
-// always were, because the seed is kept per tab.
-//
-// THE NAME DECIDES NOTHING. It is in no entry, no mark and no result; nothing a
-// node replays reads it. The generated name is a function of the public key, so
-// one key always shows one name, and a custom name is kept in the tab beside
-// the seed - cleared, the generated one comes back.
-
-
-
-/** Where a tab keeps the name its player chose. */
-const CUSTOM_NAME_KEY = 'blwp.player.name';
-
-/** The longest name a player may choose, in characters. */
-const PLAYER_NAME_MAX = 24;
-
-const NAME_ADJECTIVES = ['Swift', 'Steady', 'Bold', 'Quiet', 'Rusty', 'Lucky', 'Brave', 'Sly',
-  'Iron', 'Amber', 'Frosty', 'Dusty', 'Keen', 'Calm', 'Wild', 'Noble', 'Stubborn', 'Nimble',
-  'Sturdy', 'Gritty', 'Clever', 'Silent', 'Rapid', 'Loyal', 'Fierce', 'Gentle', 'Hardy', 'Jolly',
-  'Mellow', 'Plucky', 'Rugged', 'Sharp'];
-const NAME_NOUNS = ['Trucker', 'Courier', 'Hauler', 'Miner', 'Driver', 'Convoy', 'Carrier', 'Rover',
-  'Pilot', 'Runner', 'Ranger', 'Trader', 'Porter', 'Scout', 'Rider', 'Nomad', 'Drifter', 'Freighter',
-  'Mechanic', 'Navigator', 'Dispatcher', 'Loader', 'Teamster', 'Wrangler', 'Outrider', 'Pathfinder',
-  'Shipper', 'Packer', 'Roadie', 'Voyager', 'Wanderer', 'Stoker'];
-
-/** A name made from a public key: two words and four digits, the same for one key always. */
-function generatedName(pubkey) {
-  if (!(pubkey instanceof Uint8Array) || pubkey.length !== 32) throw new Error('a name is made from a 32-byte public key');
-  const digits = ((pubkey[2] << 8) | pubkey[3]) % 10000;
-  return `${NAME_ADJECTIVES[pubkey[0] % 32]}${NAME_NOUNS[pubkey[1] % 32]}-${String(digits).padStart(4, '0')}`;
-}
-
-/** 64 bits of the identity key, grouped, for a player to recognise it by. */
-const identityFingerprint = (pubkey) => toHex(pubkey.subarray(0, 8)).match(/.{4}/g).join('-');
-
-/**
- * WHETHER A CHOSEN NAME STANDS, and the name as it is kept: trimmed, inner
- * spaces collapsed, 1 to 24 characters, letters and digits with space, dot,
- * dash and underscore between them. Anything else is refused by name.
- */
-function playerNameIsValid(text) {
-  const name = String(text == null ? '' : text).normalize('NFC').trim().replace(/\s+/g, ' ');
-  if (!name) return { ok: false, why: 'a name is at least one character' };
-  if ([...name].length > PLAYER_NAME_MAX) return { ok: false, why: `a name is at most ${PLAYER_NAME_MAX} characters` };
-  if (!/^[\p{L}\p{N}](?:[\p{L}\p{N} ._-]*[\p{L}\p{N}])?$/u.test(name))
-    return { ok: false, why: 'a name is letters and digits, with space, dot, dash or underscore between them' };
-  return { ok: true, name };
-}
-
-/**
- * THE PLAYER'S OWN NAME, OVER THE GENERATED ONE - or, blank, back to the
- * generated one. A name that does not stand is refused and nothing is kept.
- */
-function setPlayerName(text, { storage } = {}) {
-  if (!storage) throw new Error('a name is kept in the tab, and no storage was given');
-  if (String(text == null ? '' : text).trim() === '') { storage.removeItem(CUSTOM_NAME_KEY); return { ok: true, custom: false }; }
-  const checked = playerNameIsValid(text);
-  if (!checked.ok) return checked;
-  storage.setItem(CUSTOM_NAME_KEY, checked.name);
-  return { ok: true, custom: true, name: checked.name };
-}
-
-/**
- * WHO THIS TAB IS: the identity key's public half and fingerprint, the
- * generated name, and the name shown - the player's own if they chose one.
- * The curve is injected, as everywhere in this bundle.
- */
-function tabIdentity({ storage, random, curve } = {}) {
-  if (!curve || typeof curve.pointX !== 'function') throw new Error('an identity is a key on a curve, and none was injected');
-  const seed = tabSeed({ storage, random });
-  const pubkey = curve.pointX(identitySecretFor(seed));
-  const generated = generatedName(pubkey);
-  const kept = storage ? storage.getItem(CUSTOM_NAME_KEY) : null;
-  const chosen = kept ? playerNameIsValid(kept) : null;
-  const custom = !!(chosen && chosen.ok);
-  return { pubkey, pubkeyHex: toHex(pubkey), fingerprint: identityFingerprint(pubkey), generated,
-    name: custom ? chosen.name : generated, custom };
 }
 
 return { Client: Client, markState: markState,
@@ -11113,6 +11266,7 @@ return { Client: Client, markState: markState,
          findLock: findLock, refundStake: refundStake, forfeitOf: forfeitOf, redeemStake: redeemStake,
          lobbyQuery: lobbyQuery, fetchLobby: fetchLobby, lobbyLine: lobbyLine, lobbyJoinSearch: lobbyJoinSearch,
          tabIdentity: tabIdentity, setPlayerName: setPlayerName, generatedName: generatedName,
+         nameRecordFor: nameRecordFor, postName: postName, namesOf: namesOf, checkedNames: checkedNames, shownNameOf: shownNameOf,
          tabWallet: tabWallet, spendLog: spendLog, spentLine: spentLine,
          owedLine: owedLine,
          parseConnection: parseConnection,

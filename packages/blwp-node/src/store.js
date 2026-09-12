@@ -528,6 +528,19 @@ export function openStore(path = ':memory:') {
       decided_ms     INTEGER NOT NULL
     );
 
+    -- WHAT A SEATED PLAYER CHOSE TO BE CALLED IN A ROUND (M3.3-34): the record
+    -- as the player signed it with the round key it is seated under
+    -- (lobby-name.js), kept to be shown to the other players. Nothing replays
+    -- it and nothing is paid on it. A player's newest record wins.
+    CREATE TABLE IF NOT EXISTS lobby_names (
+      round_id       BLOB NOT NULL,
+      player_pubkey  BLOB NOT NULL,
+      record         BLOB NOT NULL,
+      signature      BLOB NOT NULL,
+      at_ms          INTEGER NOT NULL,
+      PRIMARY KEY (round_id, player_pubkey)
+    );
+
     -- WHAT THIS NODE KEEPS AS A RELAY: transcripts by their own hash, so any
     -- node can be one of a contract's publication_relays[] and serve nothing
     -- under a name its bytes do not have.

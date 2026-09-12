@@ -837,10 +837,36 @@
         })
         : null;
       const who = (typeof BLWPCLIENT !== 'undefined' && BLWPCLIENT.playersLine)
-        ? BLWPCLIENT.playersLine({ seated, others, stalled, at, refused, seatRefused, stake })
+        ? BLWPCLIENT.playersLine({ seated, others, stalled, at, refused, seatRefused, stake, names: window.BLWP_OTHER_NAMES || [] })
         : (seated ? (others ? (1 + others) + ' players in this round' : '1 player · waiting') : 'round named · not seated');
       el.textContent = ab + '\n' + playLine(net) + '\n' + who;
     }
+    // WHO THE OTHER PLAYERS ARE (M3.3-34): this tab hands the round's seats its
+    // name, signed with the round key it is seated under, and asks them for the
+    // others' - every record checked against its player's key before its name
+    // is drawn. A seat that has not seated this player yet refuses it (409), so
+    // it is handed again until every seat has kept it. The name decides nothing.
+    const namesKept = new Set();
+    async function exchangeNames() {
+      if (typeof BLWPCLIENT === 'undefined' || !BLWPCLIENT.namesOf) return;
+      if (!window.BLWP_ROUND || !window.BLWP_ENTRY || !window.BLWP_CURVE) return;
+      const nodes = window.BLWP_NODES || [];
+      const left = nodes.filter((n) => !namesKept.has(n));
+      if (left.length) {
+        try {
+          const signed = BLWPCLIENT.nameRecordFor(window.BLWP_ROUND, { storage: window.sessionStorage,
+            random: (n) => crypto.getRandomValues(new Uint8Array(n)), curve: window.BLWP_CURVE });
+          for (const s of await BLWPCLIENT.postName(signed, left)) if (s.status === 201 || s.status === 200) namesKept.add(s.node);
+        } catch (e) { console.error('[blwp] name: ' + e.message); }
+      }
+      try {
+        const mine = window.BLWP_ENTRY.playerPubkey ? BLWPCLIENT.toHex(window.BLWP_ENTRY.playerPubkey) : null;
+        const all = await BLWPCLIENT.namesOf({ roundId: BLWPCLIENT.roundId(window.BLWP_ROUND), nodes,
+          verify: (s, m, k) => !!window.BLWP_CURVE.verify(s, m, k) });
+        window.BLWP_OTHER_NAMES = all.filter((x) => x.player !== mine).map((x) => x.name);
+      } catch (e) { console.error('[blwp] names: ' + e.message); }
+    }
+    setInterval(exchangeNames, 3000);
     setInterval(paintPlayers, 500);
     const payButton = document.getElementById('blwp-pay');
     if (payButton) payButton.addEventListener('click', payTheStake);

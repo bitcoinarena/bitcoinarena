@@ -137,6 +137,9 @@ out += '         lobbyQuery: lobbyQuery, fetchLobby: fetchLobby, lobbyLine: lobb
 // WHO THE TAB IS IN THE LOBBY (M3.3-34): the generated key's public half, the
 // name made from it, and the player's own name over it.
 out += '         tabIdentity: tabIdentity, setPlayerName: setPlayerName, generatedName: generatedName,\n';
+// AND THE OTHERS' NAMES (M3.3-34): this tab's signed record for its seats, and
+// the round's records fetched and checked before a name is drawn.
+out += '         nameRecordFor: nameRecordFor, postName: postName, namesOf: namesOf, checkedNames: checkedNames, shownNameOf: shownNameOf,\n';
 // THE WALLET THE PAGE RENDERS. `tabWallet` holds the connection per tab,
 // `spendLog` is what §24A.1 requires a client to show, and `spentLine` turns it
 // into one sentence - so the page renders a total it did not add up.

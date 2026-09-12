@@ -133,6 +133,8 @@ const keeper = round.keepOpen({ everyMs: 3000, leadMs: 60000,
   onError: (e) => say({ step: 'opener', error: e.message }) });
 
 const tabs = [];
+const TWO_NAME = 'Road Owl 42';
+let idTwoNamed = null;
 let code = 0;
 try {
   const seats = [round.a, round.b];
@@ -180,6 +182,12 @@ try {
   // TAB 2 IS ANOTHER PLAYER: its own generated key and name.
   const idTwo = await identity(two);
   say({ step: 'tab 2 identity', identity: idTwo, anotherKey: !!(idTwo && idBefore && idTwo.pubkey !== idBefore.pubkey) });
+  // TAB 2 CHOOSES ITS OWN NAME before it joins: the name tab 1 must be shown.
+  const typedTwo = await two.evaluate(`(() => { const i = document.getElementById('blwp-name'); if (!i) return false;
+    i.value = ${JSON.stringify(TWO_NAME)}; document.getElementById('blwp-name-save').click(); return true; })()`);
+  await wait(300);
+  idTwoNamed = await identity(two);
+  say({ step: 'tab 2 names itself', typed: typedTwo, identity: idTwoNamed });
   const pressed2 = await pressJoin(two, target.id);
   const joined = await Promise.all([one, two].map((b) => until(b, 200000, (x) => seatedIn(x) || x.pageError)));
   await one.shot(`${P}/joined-tab1.png`);
@@ -238,6 +246,31 @@ try {
     lightningOrWalletRequests: [...new Set(lightning.map((q) => { try { return `${q.method} ${new URL(q.url).pathname}`; } catch { return q.url; } }))],
     lightningOrWalletRequestCount: lightning.length, seats: perSeat,
     exceptions: [one, two].map((b) => b.logs.filter((l) => l.startsWith('EXCEPTION')).length) });
+
+  // WHAT THE OTHER PLAYER IS SHOWN OF TAB 2'S NAME: tab 1's seated view, then a
+  // lobby's row for the round - fresh, after the list's own repaint, and after
+  // a reload. A key stub of tab 2 in place of the name counts as not shown.
+  const twoKeys = [idTwoNamed && idTwoNamed.pubkey, idTwoNamed && idTwoNamed.fingerprint, s2.player]
+    .filter(Boolean).map((k) => String(k).replace(/-/g, '').slice(0, 8));
+  const seen = (t) => ({ text: t == null ? t : String(t).slice(0, 500), hasName: String(t || '').includes(TWO_NAME),
+    keyStub: twoKeys.filter((k) => String(t || '').replace(/-/g, '').includes(k)) });
+  const rowText = (b) => b.evaluate(`(() => { for (const row of document.querySelectorAll('#blwp-lobby .row'))
+    if (row.textContent.includes(${JSON.stringify(target.id)})) return row.textContent; return null; })()`);
+  const look = await browse(round.lobbyUrl);
+  tabs.push(look);
+  await until(look, 60000, (x) => Array.isArray(x.lobby) && x.lobby.some((r) => r.id === target.id));
+  const rowFirst = await rowText(look);
+  await wait(6000);
+  const rowRepaint = await rowText(look);
+  await look.evaluate('location.reload(); true');
+  await wait(1500);
+  await until(look, 60000, (x) => Array.isArray(x.lobby) && x.lobby.some((r) => r.id === target.id));
+  const rowReload = await rowText(look);
+  await look.shot(`${P}/lobby-names.png`);
+  const chipLater = (await stateOf(one)).chip;
+  await one.shot(`${P}/names-tab1.png`);
+  say({ step: 'names shown to others', tab2Chose: TWO_NAME, tab1Seated: seen(s.chip), tab1SeatedLater: seen(chipLater),
+    lobbyRow: seen(rowFirst), afterRepaint: seen(rowRepaint), afterReload: seen(rowReload) });
 
   // 2 OF 2: WITH BOTH SEATS UP A ROW IS JOINABLE; WITH ONE SEAT DOWN IT IS NOT.
   // Seat B goes away, a fresh lobby is opened, and the round the two tabs

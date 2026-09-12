@@ -20,6 +20,7 @@ import { WebSocketServer } from 'ws';
 import { decodeRoundContract, decodeEntryContract, publicationRelaysAreValid } from '../../protocol/src/contracts.js';
 import { toHex, fromHex } from '../../protocol/src/hash.js';
 import { lobbyListingId } from '../../protocol/src/lobby-listing.js';
+import { decodeLobbyName, lobbyNameId } from '../../protocol/src/lobby-name.js';
 import { entryFeeMsat } from '../../protocol/src/fee.js';
 import { TYPE_CHECKPOINT, TYPE_INPUT_BATCH, STAKE_NOT_SEEN } from '../../protocol/src/constants.js';
 import { splitSigned, decodeCheckpoint, checkpointId } from '../../protocol/src/checkpoint.js';
@@ -507,6 +508,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // the census; a node with none (an in-process test) falls back to its DKG's.
   // AND OF AN ENTRY_VOID LOCK (§16, §23.2), at once: the evidence is shown to
   // the other seats first, so a seat that was down can record the same Void.
+  // THE NAMES THIS SEAT KEEPS FOR A ROUND, as the players signed them (M3.3-34).
+  const namesHeld = (rid) => round.lobbyNames(rid).map((n) => ({ record: toHex(n.record), sig: toHex(n.signature) }));
+
   const forfeits = new Forfeit(round, {
     dkg, port: stakeLocks, curve: poolCurve, random: (n) => new Uint8Array(randomBytes(n)),
     peersFor: (rid) => {
@@ -1276,6 +1280,38 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           offers: round.firstMarkOffers(new Uint8Array(eid)) }));
       }
 
+      // A SEATED PLAYER'S NAME FOR A ROUND (M3.3-34): the record the player signed
+      // with the round key it is seated under (lobby-name.js). Kept only from a
+      // player THIS seat seated in that round, the newest winning, and served
+      // beside the listing and at /names so the other players are shown it. The
+      // page checks every record again: a seat can leave a name out, never write one.
+      if (req.method === 'POST' && url.pathname === '/name') {
+        const answer = (status, body) => { res.writeHead(status, { 'content-type': 'application/json', ...CORS }); return res.end(JSON.stringify(body)); };
+        let bytes;
+        let sig;
+        let rec;
+        try {
+          const got = JSON.parse(Buffer.from(await read(req)).toString('utf8'));
+          bytes = fromHex(String(got.record));
+          sig = fromHex(String(got.sig));
+          rec = decodeLobbyName(bytes);
+        } catch (e) { return answer(400, { why: `that is not a signed name record: ${e.message}` }); }
+        let signed = false;
+        try { signed = sig.length === 64 && schnorr.verify(sig, lobbyNameId(rec), rec.playerPubkey); } catch { signed = false; }
+        if (!signed) return answer(400, { why: 'the signature does not verify under the player key the record names' });
+        if (!round.get(rec.roundId)) return answer(404, { why: 'this seat holds no such round' });
+        if (!round.entriesOf(rec.roundId).some((e) => toHex(e.entry.playerPubkey) === toHex(rec.playerPubkey)))
+          return answer(409, { why: 'this seat has seated no player with that key in that round' });
+        const kept = round.putLobbyName({ roundId: rec.roundId, playerPubkey: rec.playerPubkey, record: bytes, signature: sig, atMs: rec.atMs });
+        return kept ? answer(201, { kept: true }) : answer(200, { kept: false, why: 'this seat keeps a newer name of that player' });
+      }
+      if (req.method === 'GET' && url.pathname === '/names') {
+        const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
+        if (rid.length !== 32) return text(res, 400, 'names are asked for by a round id');
+        res.writeHead(200, { 'content-type': 'application/json', ...CORS });
+        return res.end(JSON.stringify({ round: toHex(rid), names: namesHeld(new Uint8Array(rid)) }));
+      }
+
       // WHAT THIS SEAT HOLDS ABOUT AN ENTRY'S START: FORFEIT for a late start, with the
       // first mark's tick and the line it missed, or 404 - no mark is no record.
       if (req.method === 'GET' && url.pathname === '/start-forfeit') {
@@ -1326,6 +1362,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             // federation stake lock. A free round needs no wallet and no Lightning.
             free, wallet: free ? 'none' : (locks ? 'federation-lock' : 'lightning'),
             seatedHere, seated: players.seated, playing: players.playing, watching: watchers,
+            // AND WHAT ITS SEATED PLAYERS CHOSE TO BE CALLED - each record its
+            // player's own signature (lobby-name.js), not this seat's word.
+            names: namesHeld(held.roundId),
             needed, seats: c.nodes.length,
             // THIS SEAT'S SIGNED WORD (lobby-listing.js): round, node, time, phase,
             // seated here, and the two counts. `watching` is not signed.

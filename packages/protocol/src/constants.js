@@ -298,6 +298,9 @@ export const TAG = {
   // ONE SEAT'S SIGNED WORD ABOUT A ROUND IN ITS LOBBY (M3.3-34): the page
   // offers Join only when the round's threshold of its own seats signed it.
   lobbyListing: 'BLWP/v1/LobbyListing',
+  // A SEATED PLAYER'S NAME FOR ONE ROUND (lobby-name.js), signed with the
+  // round key it is seated under, so a seat can serve it but not write it.
+  lobbyName: 'BLWP/v1/LobbyName',
   // The nonce of a DKG dealer's round-1 proof of knowledge, derived from its
   // own secret so no randomness source can repeat it across two proofs.
   dkgProofNonce: 'BLWP/v1/DkgProofNonce',

@@ -13,6 +13,8 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 import { lobbyQuery, lobbyJoinSearch, fetchLobby, lobbyLine } from '../src/lobby.js';
 import { encodeRoundContract, roundId } from '../../protocol/src/contracts.js';
 import { lobbyListingId } from '../../protocol/src/lobby-listing.js';
+import { encodeLobbyName, lobbyNameId } from '../../protocol/src/lobby-name.js';
+import { generatedName } from '../src/identity.js';
 import { MIN_ENTRY_WINDOW_MS } from '../../protocol/src/constants.js';
 import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
 import { toHex, fromHex } from '../../protocol/src/hash.js';
@@ -178,4 +180,31 @@ test('what does not count toward 2 of 2: a node down, a stranger\'s key, one key
   });
   assert.match(cases.nodeDown.refused.join('; '), new RegExp(`${B.replace(/[.]/g, '\\.')}: answered 503`));
   await assert.rejects(fetchLobby({ nodes: [A, B], fetcher: network({ nodes: {}, contracts }).fetcher, nowMs: NOW }), /no verify was injected/);
+});
+
+test('a row names its seated players by the names they signed; a seat\'s forgery and a record for another round are not shown', async () => {
+  const { contracts, id } = roundsOf({ r: contractAt(BigInt(NOW) - 1000n) });
+  const rid = fromHex(id.r);
+  const player = schnorr.utils.randomSecretKey();
+  const other = schnorr.utils.randomSecretKey();
+  const signed = (secret, fields) => {
+    const r = { roundId: rid, identityPubkey: b32(7), atMs: 1000n, name: '', ...fields };
+    return { record: toHex(encodeLobbyName(r)), sig: toHex(schnorr.sign(lobbyNameId(r), secret)) };
+  };
+  const named = signed(player, { playerPubkey: keyOf(player), name: 'Road Owl 42' });
+  const plain = signed(other, { playerPubkey: keyOf(other), identityPubkey: b32(8) });
+  const forged = signed(seatB, { playerPubkey: keyOf(player), name: 'Mallory', atMs: 9000n });
+  const elsewhere = signed(player, { roundId: b32(0x77), playerPubkey: keyOf(player), name: 'Elsewhere', atMs: 9000n });
+  const net = network({ contracts, nodes: {
+    [A]: { secret: seatA, rounds: [{ ...listing(seatA, id.r, { seated: 2, playing: 2 }), names: [named, plain] }] },
+    [B]: { secret: seatB, rounds: [{ ...listing(seatB, id.r, { seated: 2, playing: 2 }), names: [forged, elsewhere] }] },
+  } });
+  const { rows } = await fetchLobby({ nodes: [A, B], fetcher: net.fetcher, nowMs: NOW, verify });
+  const line = lobbyLine(rows[0], NOW);
+  console.log(`  ${line}`);
+  assert.deepEqual(rows[0].names.map((n) => n.name).sort(), ['Road Owl 42', generatedName(b32(8))].sort());
+  assert.match(line, / · players: .*Road Owl 42/);
+  assert.doesNotMatch(line, /Mallory|Elsewhere/);
+  assert.equal(line.includes(toHex(keyOf(player)).slice(0, 8)), false, 'a key in place of a name');
+  assert.equal(rows[0].joinable, true, 'names are no part of 2 of 2');
 });

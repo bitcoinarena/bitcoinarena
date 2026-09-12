@@ -207,7 +207,7 @@ export function newestPose(field) {
  * the other side, and neither tab had a number that said so.
  */
 export function playersLine({ seated, others, stalled = false, at = null, refused = null,
-  seatRefused = null, stake = null } = {}) {
+  seatRefused = null, stake = null, names = [] } = {}) {
   // WHY THERE IS NO SEAT, AND NOT MERELY THAT THERE IS NONE.
   //
   // Letter 15 made the page refuse a paying round whose settlement committee
@@ -231,7 +231,12 @@ export function playersLine({ seated, others, stalled = false, at = null, refuse
   // when it took the entry; a page that printed "not paid" as a constant would
   // be reporting its own assumption as the player's balance.
   const funding = stakeLine(stake);
-  const n = 1 + (others | 0);
+  // AND WHO THE OTHERS ARE, BY THE NAMES THEY CHOSE (M3.3-34): each from a
+  // record its player signed (identity.js `namesOf`), never a key. A player the
+  // seats keep no name for is counted, not stubbed. A named player who has not
+  // driven yet is still in the round, so the count is the larger of the two.
+  const shown = (Array.isArray(names) ? names : []).filter((x) => typeof x === 'string' && x);
+  const n = 1 + Math.max(others | 0, shown.length);
   // THE FUNDING WORD IS ON EVERY BRANCH, and it was not: this returned early
   // for a lone player, so the one line a player sits looking at while they
   // wait for somebody else - the longest-lived line on the chip - was the one
@@ -242,7 +247,8 @@ export function playersLine({ seated, others, stalled = false, at = null, refuse
   // made the 11:51 retest a guess: five players on the chip, one truck on the
   // screen, and no number between them.
   const where = at ? ` · other at ${Math.round(at.x)},${Math.round(at.z)} m` : '';
-  return n + ' players in this round' + (stalled ? ' · none drawn' : '') + where + funding;
+  const who = shown.length ? ': ' + shown.join(', ') + (n - 1 > shown.length ? ` +${n - 1 - shown.length} more` : '') : '';
+  return n + ' players in this round' + who + (stalled ? ' · none drawn' : '') + where + funding;
 }
 
 /**

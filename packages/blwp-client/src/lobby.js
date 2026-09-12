@@ -21,7 +21,12 @@
 //
 // Joining is the join link: the same query with `round=` added. Nothing here
 // seats anybody, and nothing here mints a round.
+//
+// AND WHO IS SEATED, BY THE NAMES THEY CHOSE: each seat serves the name records
+// its seated players signed (lobby-name.js); a row carries the ones that check
+// (identity.js `checkedNames`) - never a key in place of a name.
 import { joinQuery, fetchRound, roundPays, roundLocks } from './join.js';
+import { checkedNames } from './identity.js';
 import { lobbyListingId } from '../../protocol/src/lobby-listing.js';
 import { receiptsNeeded } from '../../protocol/src/threshold.js';
 import { toHex, fromHex } from '../../protocol/src/hash.js';
@@ -88,7 +93,8 @@ export async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), v
         const signed = /^[0-9a-f]{64}$/.test(nodeKey) && Number.isFinite(at) && lobbySigned(verify, { id, nodeKey, nowMs: at, x });
         said.get(id).push({ node, key: nodeKey, seated: Number(x.seated) || 0, playing: Number(x.playing) || 0,
           watching: Number(x.watching) || 0, free: !!x.free, phase: x.phase, seatedHere: !!x.seatedHere,
-          signed, fresh: Number.isFinite(at) && Math.abs(at - nowMs) <= skewMs });
+          signed, fresh: Number.isFinite(at) && Math.abs(at - nowMs) <= skewMs,
+          names: Array.isArray(x.names) ? x.names : [] });
       }
     } catch (e) { refused.push(`${node}: ${e.message}`); }
   }
@@ -124,6 +130,7 @@ export async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), v
       // A NODE THAT CALLED A PAYING ROUND FREE, OR THE REVERSE, IS NAMED: the row
       // says what the contract says, and the disagreement is shown beside it.
       disagrees: counts.filter((c) => c.free !== !pays).map((c) => c.node),
+      names: checkedNames(counts.flatMap((c) => c.names), id, verify),
       contract,
     });
   }
@@ -146,6 +153,7 @@ export function lobbyLine(row, nowMs = Date.now()) {
   const agree = `${row.seatsAgree} of ${row.needed} seats agree`
     + (row.phase === 'open' && !row.joinable ? ` - waiting for ${row.needed - row.seatsAgree} more` : '');
   const counts = row.said.map((c) => `${c.seated} seated, ${c.playing} playing (says ${c.node})`).join('; ');
-  return `${money} · ${when} · ${agree} · ${counts || 'no seat counts'}`
+  const who = row.names && row.names.length ? ` · players: ${row.names.map((n) => n.name).join(', ')}` : '';
+  return `${money} · ${when} · ${agree} · ${counts || 'no seat counts'}${who}`
     + (row.disagrees.length ? ` · ${row.disagrees.join(', ')} listed it as ${row.free ? 'paying' : 'free'}` : '');
 }
