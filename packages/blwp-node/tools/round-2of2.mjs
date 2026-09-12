@@ -65,7 +65,7 @@ const b32 = (n) => new Uint8Array(32).fill(n);
  * Exported so the test can drive exactly what an operator runs, rather than a
  * second arrangement that looks like it.
  */
-export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8081,
+export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8081, bDownAtStart = false,
                                      store = ':memory:', rpc = null, cli = null,
                                      page = 'https://btc-logistics-core.pages.dev',
                                      // A PAYING ROUND, for a rehearsal with Lightning. Every
@@ -297,7 +297,26 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   const beacon = source ? chainBeacon({ call: source, window: 400 }) : null;
   const randomnessFor = beacon ? beacon.for : undefined;
 
-  const chainFor = () => censusView;
+  // AN OLDER ROUND GETS A VIEW THAT REACHES BACK TO IT (M3.3-34). The seats'
+  // view begins 20 below the bonds this start posted, and every start posts
+  // them again: measured, a view from 2232 against a round whose beacon is 2139,
+  // so both restarted seats held that round for ever on "this view begins at
+  // height 2232 ... after this round's committee time". Moving the seats' own
+  // view back was measured too and is wrong: its census then counted earlier
+  // starts' bonds and the next round was refused ("the census seats 1"). So a
+  // round whose census height is below the seats' view gets its own - from 20
+  // below that height to the tip, read once: its bonds and beacon are deep.
+  const older = new Map();
+  const chainFor = ({ contract } = {}) => {
+    if (!onChain || !censusView || !contract) return censusView;
+    const from = Math.max(0, contract.censusHeight - 20);
+    if (from >= censusView.firstHeight) return censusView;
+    if (!older.has(from)) {
+      older.set(from, onChain.blocksFrom(from, onChain.height()));
+      console.log(`[view] a round with census ${contract.censusHeight} reads its own view from ${from}; the seats' begins at ${censusView.firstHeight}`);
+    }
+    return older.get(from);
+  };
   // THE COMMITTEE'S ONE LIGHTNING ENDPOINT, OPT-IN (§23.1): the four BLWP_LND*
   // settings, the same parse src/main.js uses, and the same port for both
   // daemons - the second takes up the hold the first issued. Unset, both hold
@@ -332,7 +351,11 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   const optsB = { port: portB, host, funded, headerBytes, bondProof, chainFor,
     ...(randomnessFor ? { randomnessFor } : {}), ...lightning, ...chainTip, ...spendOn,
     ...(federation ? { federation } : {}), ...seat };
-  let b = await serve(dbB, optsB);
+  // B DOWN AT START (`bDownAtStart`, an operator's look at seat A restarted
+  // while it holds a close that needs B): B is served on a port nobody names -
+  // the bond, the relays and every peer say `portB` - only so the first round
+  // can be posted to it; the caller closes it, and restartB serves it on portB.
+  let b = await serve(dbB, bDownAtStart ? { ...optsB, port: 0 } : optsB);
   if (a.port !== portA)
     throw new Error(`node A came up on ${a.port} and the bond names ${portA}`);
 
@@ -543,7 +566,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   };
   const reach = [
     publicFor(a.port, `http://${host}:${a.port}`),
-    publicFor(b.port, `http://${host}:${b.port}`),
+    publicFor(portB, `http://${host}:${portB}`),
   ];
 
   // `headers=` is not named: the client already forms `<node>/headers` from

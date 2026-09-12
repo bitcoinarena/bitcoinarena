@@ -15,7 +15,7 @@
 import { mkdtempSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import { DatabaseSync } from 'node:sqlite';
 import WebSocket from 'ws';
 
@@ -71,6 +71,9 @@ const STATE = `JSON.stringify({ lobby: window.BLWP_LOBBY || null, from: window.B
   round: window.BLWP_ROUND && typeof BLWPCLIENT !== 'undefined' ? Array.from(BLWPCLIENT.roundId(window.BLWP_ROUND), (x) => x.toString(16).padStart(2, '0')).join('') : null,
   player: window.BLWP_ENTRY && window.BLWP_ENTRY.playerPubkey ? Array.from(window.BLWP_ENTRY.playerPubkey, (x) => x.toString(16).padStart(2, '0')).join('') : null,
   unity: !!window.unityInstance, chip: (document.getElementById('blwp-players') || {}).textContent || null,
+  seatRefused: window.BLWP_SEAT_REFUSED || null, nodes: window.BLWP_NODES || null,
+  ...((c) => c ? { peers: c.peers || null, peerSeats: c.peerSeats || null } : {})(
+    window.unityInstance && window.unityInstance.Module && window.unityInstance.Module.blwpNet && window.unityInstance.Module.blwpNet.client),
   error: (document.getElementById('err') || {}).textContent || null })`;
 const stateOf = async (b) => { const v = await b.evaluate(STATE); try { return JSON.parse(v); } catch { return {}; } };
 const until = async (b, ms, done) => { let s = {}; for (let t = Date.now(); Date.now() - t < ms; await wait(1000)) { s = await stateOf(b); if (done(s)) break; } return s; };
@@ -89,6 +92,10 @@ const view = (seat, rid, eid) => ({
 
 const tabs = [];
 let code = 0;
+// A KILLED LOOK CLOSES ITS BROWSERS: measured, a killed run left its Chrome
+// drawing Unity in software at 778% CPU, and the next runs' tabs could not
+// seat a player in 60 s.
+for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, () => { for (const t of tabs) t.close(); process.exit(143); });
 try {
   const P = await browse(ROOT);
   tabs.push(P);
@@ -114,7 +121,11 @@ try {
     && !(entryOf(seats[0], rid, w.player) && entryOf(seats[1], rid, w.player)); await wait(500));
   const wSeatedAt = [entryOf(seats[0], rid, w.player), entryOf(seats[1], rid, w.player)].map(Boolean);
   W.close();
-  if (!wSeatedAt.every(Boolean)) throw new Error(`W was seated at ${wSeatedAt.filter(Boolean).length} of 2 seats in 60 s: no 2-of-2 walk-away to measure`);
+  if (!wSeatedAt.every(Boolean)) {
+    const pAt = [entryOf(seats[0], rid, p.player), entryOf(seats[1], rid, p.player)].map(Boolean);
+    say({ step: 'W not seated', w, p: { player: p.player, round: p.round, error: p.error, seatedAtAB: pAt } });
+    throw new Error(`W was seated at ${wSeatedAt.filter(Boolean).length} of 2 seats in 60 s: no 2-of-2 walk-away to measure`);
+  }
   say({ step: 'joined', p: { player: p.player && p.player.slice(0, 16), unity: p.unity, error: p.error },
     w: { player: w.player && w.player.slice(0, 16), seatedAtAB: wSeatedAt, tabClosedBeforeAnyMark: true } });
 
@@ -165,8 +176,33 @@ try {
     await at(75000);
     say({ step: 'B down, 75 s after the end', closingAtA: await closingA(), atA: atA(),
       publicResultsAtA: { P: await publicA(p.player), W: await publicA(w.player) } });
-    process.kill(launcher, 'SIGUSR2');
-    say({ step: 'seat B back' });
+    // PAST SEAT A'S OBJECTION WINDOW (HOLD_S seconds after the end): a snapshot
+    // midway and one 20 s before the hold ends.
+    const holdMs = Number(env.HOLD_S || 0) * 1000;
+    if (holdMs > 75000) {
+      for (const t of [Math.round(holdMs / 2), holdMs - 20000]) {
+        await at(t);
+        say({ step: `B down, ${Math.round(t / 1000)} s after the end`, closingAtA: await closingA(), atA: atA(),
+          publicResultsAtA: { P: await publicA(p.player), W: await publicA(w.player) } });
+      }
+    }
+    // AND THEN EITHER SEAT B ALONE COMES BACK, OR - RESTART_CMD - THE LAUNCHER
+    // RESTARTS WITH SEAT B STILL DOWN: seat A restarted while holding, a minute
+    // on its own store, and only then seat B back.
+    if (env.RESTART_CMD) {
+      const said = execFileSync('bash', [env.RESTART_CMD, 'b-down'], { encoding: 'utf8', timeout: 400000 });
+      const again = Number((said.match(/launcher pid (\d+)/) || [])[1] || 0);
+      say({ step: 'launcher restarted, seat B down: seat A restarted while holding', pid: again, said: said.trim().split('\n').slice(-3) });
+      if (!again) throw new Error('the launcher did not come back');
+      await wait(60000);
+      say({ step: 'seat A restarted 60 s ago, B still down', closingAtA: await closingA(), atA: atA(),
+        publicResultsAtA: { P: await publicA(p.player), W: await publicA(w.player) } });
+      process.kill(again, 'SIGUSR2');
+      say({ step: 'seat B back' });
+    } else {
+      process.kill(launcher, 'SIGUSR2');
+      say({ step: 'seat B back' });
+    }
   }
 
   // NOBODY CLOSES IT: wait for both seats to close it, sign both runs and reach FINAL.

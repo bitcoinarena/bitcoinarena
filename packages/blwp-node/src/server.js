@@ -213,6 +213,31 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   expiry = {} } = {}) {
   const round = new Round(db);
 
+  // THE BEACON IS KEPT WITH THE ROUND (M3.3-34). A seat restarted while it holds
+  // a close must still name the block its chain named: measured on the Daily,
+  // whose chain reader keeps its answers in memory, a restarted seat held its
+  // pre-restart rounds for ever on "that randomness names no time". The first
+  // block after committee_time does not change as the chain grows, so a kept
+  // answer is the same answer - and `beaconFor` still checks it against this
+  // seat's own chain view. The reader's answer wins whenever it has one.
+  if (randomnessFor) {
+    const read = randomnessFor;
+    const written = new Map();
+    randomnessFor = (q) => {
+      const given = read(q);
+      const id = q && q.roundIdBytes;
+      if (!id) return given;
+      const key = Buffer.from(id).toString('hex');
+      if (given && given.hash instanceof Uint8Array && given.hash.length === 32
+          && Number.isInteger(given.height) && typeof given.timeMs === 'bigint') {
+        const said = `${Buffer.from(given.hash).toString('hex')}:${given.height}:${given.timeMs}`;
+        if (written.get(key) !== said) { round.putBeacon(id, given); written.set(key, said); }
+        return given;
+      }
+      return given || round.beaconOf(id);
+    };
+  }
+
   // WHAT HOLDS THE PLAYERS' MONEY. 23.1's hold invoice and 23.2's table, and
   // the port is injected for the same reason the chain and the randomness are:
   // a daemon given none holds no stakes and says so rather than pretending.
@@ -677,7 +702,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // again on the finality watch's cadence - until SIGNED. Served at /closing.
   // Never a refund and never a VOID: a seat that cannot reach its peer can
   // neither form the receipted transcript nor rule out a first mark it lacks.
+  // KEPT IN THE STORE and read back at start, so a restart does not forget a
+  // run it was holding or how long it had been asking.
   const closing = new Map();          // `${round}:${entry}` -> state
+  for (const h of round.closeHolds())
+    closing.set(`${toHex(h.roundId)}:${toHex(h.entryId)}`, { round: toHex(h.roundId), entry: toHex(h.entryId),
+      // a run this seat has signed is SIGNED, whatever an older build kept
+      state: h.state === 'HOLDING' && round.hasResult(h.roundId, h.entryId, round.pubkey) ? 'SIGNED' : h.state,
+      attempts: h.attempts, sinceMs: h.sinceMs, lastWhy: h.lastWhy, signedMs: h.signedMs });
   const holding = (rid, eid, { why = null, tried = false, signed = false } = {}) => {
     const k = `${toHex(rid)}:${toHex(eid)}`;
     const s = closing.get(k) || { round: toHex(rid), entry: toHex(eid), state: 'HOLDING', attempts: 0,
@@ -686,6 +718,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if (why) s.lastWhy = String(why).slice(0, 220);
     if (signed) { s.state = 'SIGNED'; s.signedMs = Date.now(); }
     closing.set(k, s);
+    round.putCloseHold({ roundId: rid, entryId: eid, state: s.state, attempts: s.attempts, sinceMs: s.sinceMs,
+      lastWhy: s.lastWhy, signedMs: s.signedMs });
     return s;
   };
 
@@ -817,13 +851,22 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const everyMs = finality.everyMs ?? 2000;
     const windowMs = finality.windowMs ?? Number(contract.objectionWindowMs);
     let until = Date.now() + windowMs;
+    // PAST THE WINDOW a run still short of its signatures is still asked for,
+    // backing off to `maxEveryMs` (M3.3-34).
+    let every = everyMs;
+    let pastWindow = false;
+    const maxEveryMs = finality.maxEveryMs ?? 60000;
     const gathered = [...((closed && closed.gathered) || [])];
     const stored = ((closed && closed.replayed) || []).filter((r) => r && r.stored);
     // A RUN THIS SEAT COULD NOT SIGN AT ITS CLOSE - a peer down or unreachable -
     // is tried again on this cadence (verifier.retryClose), HOLDING meanwhile.
-    // A run already decided otherwise (ENTRY_VOID, a late start) is not.
+    // A run already decided otherwise (ENTRY_VOID, a late start) is not, and
+    // neither is one this seat has already signed: one seat, one result.
+    // Measured: a restart re-ran the close of rounds with one run short, and
+    // their signed, FINAL runs came back HOLDING and were retried.
     const unsigned = ((closed && closed.replayed) || [])
-      .filter((r) => r && !r.stored && r.entryId && !round.entryVoid(r.entryId) && !round.startForfeit(r.entryId));
+      .filter((r) => r && !r.stored && r.entryId && !round.entryVoid(r.entryId) && !round.startForfeit(r.entryId)
+        && !round.hasResult(roundIdBytes, r.entryId, round.pubkey));
     for (const u of unsigned) holding(roundIdBytes, u.entryId, { why: u.why });
     let latest = money;
     const isFinal = (eid) => gathered.some((g) => g && g.ok && g.final && toHex(g.entryId) === toHex(eid));
@@ -847,6 +890,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const unposted = () => waitingOn().some((w) => w.published === false);
     // A SUSPENDED RUN: the close logic runs again, which re-runs and gathers (13A).
     const suspendedShort = () => !!(latest && (latest.suspended || []).length);
+    // A RUN AGREED 2 OF 2 BUT NOT FINAL HERE YET - the other seat's posting or
+    // its window still pending - is short too, past the window as inside it
+    // (M3.3-34). Measured: a seat that signed after the window stopped here with
+    // "1 of 2 settlement seats have posted" while its peer was FINAL.
+    const notFinalYet = () => stored.some((r) => resultFinality(round, roundIdBytes, r.entryId).state !== 'FINAL');
     // closesAtMs is on the round's clock and `until` on this watch's, so the
     // distance is carried across rather than the number.
     const stretch = () => {
@@ -875,11 +923,20 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         }
       }
       const short = stored.filter((r) => !isFinal(r.entryId));
-      if (!short.length && !unsigned.length && !tableShort() && !settleShort() && !waitingOn().length && !payoutShort() && !suspendedShort()) return;
-      if (Date.now() >= until) {
-        for (const u of unsigned)
-          holding(roundIdBytes, u.entryId, { why: 'the watch\'s window passed with a peer still silent: not signed here - not a refund, not a VOID' });
-        if (unsigned.length) console.log(`[close] ${toHex(roundIdBytes).slice(0, 16)} ${unsigned.length} run(s) still HOLDING at the window's end`);
+      if (!short.length && !unsigned.length && !tableShort() && !settleShort() && !waitingOn().length && !payoutShort() && !suspendedShort()
+        && !notFinalYet()) return;
+      if (Date.now() >= until && (unsigned.length || short.length || notFinalYet())) {
+        // THE WINDOW IS FOR OBJECTIONS, NOT FOR ABANDONING 2 OF 2 (M3.3-34).
+        // Measured before: the watch stopped here, and a seat whose peer came
+        // back after it never signed and never gathered - stuck at 1 of 2. A
+        // run unsigned here or short of final keeps being asked for, backing
+        // off; only the one transcript every seat can reach is ever signed.
+        if (!pastWindow)
+          console.log(`[close] ${toHex(roundIdBytes).slice(0, 16)} past the window with ${unsigned.length} run(s) unsigned here `
+            + `and ${short.length} short of final: still asking, backing off to ${Math.round(maxEveryMs / 1000)} s`);
+        pastWindow = true;
+        every = Math.min(every * 2, maxEveryMs);
+      } else if (Date.now() >= until) {
         console.log(`[verify] ${toHex(roundIdBytes).slice(0, 16)} the objection window passed with `
           + `${short.length} run(s) short of final${tableShort() ? ' and the table short' : ''}`
           + `${settleShort() ? ' and a lost stake still unsettled' : ''}`
@@ -896,13 +953,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (g && g.ok && g.final) turned = true;
       }
       if (shuttingDown) return;
-      if (turned || tableShort() || settleShort() || windowDue() || payoutShort() || unposted() || suspendedShort()) {
+      if (turned || tableShort() || settleShort() || windowDue() || payoutShort() || unposted() || suspendedShort()
+        || (pastWindow && notFinalYet())) {
         stakes = settleTheStakes(roundIdBytes, { replayed: closed.replayed, gathered })
           .catch((e) => { console.error(`[verify] ${e.message}`); return { ok: false, why: e.message }; });
         latest = await stakes;
       }
       if (shuttingDown) return;
-      timer = setTimeout(tick, everyMs);
+      timer = setTimeout(tick, every);
       finalityTimers.add(timer);
     };
     timer = setTimeout(tick, everyMs);
@@ -1178,6 +1236,31 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     return picked;
   }).catch((e) => { console.error(`[custody] ${e.message}`); return []; });
 
+  // AND EVERY CLOSED ROUND WITH A RUN STILL SHORT OF FINAL HERE (M3.3-34).
+  //
+  // The finality watch - the retries of a close this seat could not sign, the
+  // asks for the second signature - lives in memory, and a restart used to drop
+  // it for every round without a Lightning stake: a run held at 0 or 1 of 2
+  // stayed there. Read off the store (results, entries), a start now runs the
+  // close logic again for such a round, one at a time, after the stakes' own
+  // pick-up. A run decided otherwise (ENTRY_VOID, a late start) does not count.
+  const resumingCloses = resuming.then(async (already) => {
+    const picked = [];
+    for (const rid of round.closedRounds()) {
+      if (shuttingDown) break;
+      const key = toHex(rid);
+      if ((already || []).includes(key)) continue;
+      if (!round.seats(rid).some((s) => toHex(s) === toHex(round.pubkey))) continue;
+      const short = round.entriesOf(rid).filter(({ entryId }) => !round.entryVoid(entryId) && !round.startForfeit(entryId)
+        && resultFinality(round, rid, entryId).state !== 'FINAL');
+      if (!short.length) continue;
+      console.log(`[close] ${key.slice(0, 16)} closed with ${short.length} run(s) short of final here: running its close logic again`);
+      picked.push(key);
+      await afterClose(rid);
+    }
+    return picked;
+  }).catch((e) => { console.error(`[close] ${e.message}`); return []; });
+
   // AND EVERY ROUND THAT IS OVER, CLOSED BY THIS SEAT ITSELF (closeAtEnd).
   //
   // Measured before (M3.3-34): nothing on the Daily ever closed a round - only
@@ -1280,6 +1363,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             return text(res, 503, `this node's Lightning cannot hold this round's stakes: ${said ? said.why : 'no answer'}`);
         }
         const id = round.open(contract);
+        // AND KEEP THE BEACON THIS SEAT CAN NAME FOR IT NOW (M3.3-34), through
+        // the kept reader above: a seat restarted before it ever replays a run
+        // of this round still has the block to replay from.
+        if (randomnessFor) { try { randomnessFor({ contract, roundIdBytes: new Uint8Array(id) }); } catch { /* none yet */ } }
 
         // AND SEAT IT FROM THE CHAIN, when this node can see one. The seated
         // set is the only committee that counts (26), so a contract naming

@@ -158,18 +158,28 @@ for (const [first, second] of [['a', 'b'], ['b', 'a']]) {
   });
 }
 
-test('a run that never turns final stops being asked about once the round\'s window has passed', async () => {
-  const w = await played({ finality: { everyMs: 20, windowMs: 200 } });
-  let asked = 0;
+// RULED 2026-09-12 (M3.3-34): the window is for objections, not for abandoning
+// 2 of 2 - a seat still short of the second signature keeps asking after it.
+// What this test guarded stays guarded: a run that never turns final is asked
+// about EVER MORE RARELY, backing off to `maxEveryMs`, never at the watch's
+// cadence for ever. Measured before the ruling: A stopped asking at the window.
+test('a run that never turns final is asked about ever more rarely after the round\'s window, never given up', async () => {
+  const w = await played({ finality: { everyMs: 20, windowMs: 200, maxEveryMs: 400 } });
+  const asks = [];
   const gather = w.a.verifier.gather.bind(w.a.verifier);
-  w.a.verifier.gather = async (...x) => { asked++; return gather(...x); };
+  w.a.verifier.gather = async (...x) => { asks.push(Date.now()); return gather(...x); };
   try {
     await closeOn(w.a, w.rid);            // B never closes, so B never signs a result
     await wait(600);
-    const atDeadline = asked;
+    const atDeadline = asks.length;
     assert.ok(atDeadline >= 3, `A asked again only ${atDeadline} times before its window closed`);
-    await wait(300);
-    assert.equal(asked, atDeadline, 'A kept asking after the round\'s window had passed');
+    await wait(1500);
+    const after = asks.slice(atDeadline);
+    const gaps = after.slice(1).map((t, i) => t - after[i]);
+    console.log('  FACTS (never final):', JSON.stringify({ inWindow: atDeadline, afterWindow: after.length, gapsMs: gaps }));
+    assert.ok(after.length >= 1, 'A gave up the second signature at the window');
+    assert.ok(after.length <= 8, `A asked ${after.length} times in 1.5 s after its window: not backing off (at its 20 ms cadence it would be ~75)`);
+    assert.ok(gaps.length && gaps[gaps.length - 1] >= 350, `the last gap was ${gaps[gaps.length - 1]} ms: not backed off to the 400 ms cap`);
     assert.equal((await state(w.a, w.rid, w.eid)).final, false);
   } finally { await w.close(); }
 });

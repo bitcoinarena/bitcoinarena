@@ -220,13 +220,14 @@ export class Verifier {
    * could not. Kept in `carried` so a close can say what it was offered.
    */
   async carryReceipts(roundIdBytes, entryIdBytes) {
-    const report = { taken: 0, refused: [], down: [] };
+    const report = { taken: 0, refused: [], down: [], answered: 0 };
     for (const peer of this.peersOf(roundIdBytes)) {
       let body;
       try {
         const answer = await fetch(`${peer}/receipts?round=${hex(roundIdBytes)}&entry=${hex(entryIdBytes)}`);
         if (!answer.ok) { report.down.push(`${peer}: answered ${answer.status}`); continue; }
         body = new Uint8Array(await answer.arrayBuffer());
+        report.answered++;
       } catch (e) { report.down.push(`${peer}: ${e.message}`); continue; }
       for (let at = 0; at + SIGNED_RECEIPT_BYTES <= body.length; at += SIGNED_RECEIPT_BYTES) {
         try {
@@ -274,12 +275,13 @@ export class Verifier {
     // down to carry the next mark) stops nothing. An entry with no mark here
     // waits while any seat is down: that seat may hold the first mark.
     const carried = this.carried.get(`${hex(roundIdBytes)}:${hex(entryId)}`);
-    const down = carried ? carried.down.length : 0;
+    const down = this.#unreached(roundIdBytes, carried);
     const noMarkHere = !this.round.firstMarkHeld(roundIdBytes, entryId);
     if (down && (noMarkHere ? !this.round.entryVoid(entryId) && !this.round.startForfeit(entryId)
       : this.#mightGrow(roundIdBytes, entryId, down)))
       return { entryId, stored: false, waiting: true,
-        why: `waiting on ${down} seat(s): ${carried.down.join('; ').slice(0, 160)}${noCanonical ? ` - ${noCanonical}` : ''}` };
+        why: `waiting on ${down} seat(s): ${(carried && carried.down.length ? carried.down.join('; ') : 'none of them answered').slice(0, 160)}`
+          + `${noCanonical ? ` - ${noCanonical}` : ''}` };
 
     if (!canonical && this.#neverStarted(roundIdBytes, entryId)) {
       const ruled = stoppedOutcome({ receiptedMarks: 0, deadlinePassed: true });
@@ -307,6 +309,19 @@ export class Verifier {
    * decides: with `down` more receipts it would be carried. Every mark carried
    * already, nothing a missing seat holds can lengthen the prefix of marks here.
    */
+  /**
+   * HOW MANY OF THE ROUND'S OTHER SEATS THIS CLOSE'S RECEIPT PULL DID NOT HEAR
+   * FROM: the seats seated here, less this one, less the peers that answered -
+   * or the peers that were down, whichever is more. A seat that asked nobody
+   * (measured: a restart ran its close before it knew its peers) heard from
+   * none of them; "nobody answered" is not "nobody is missing".
+   */
+  #unreached(roundIdBytes, carried) {
+    if (!carried) return 0;
+    const others = this.round.seats(roundIdBytes).filter((s) => hex(s) !== hex(this.round.pubkey)).length;
+    return Math.max(carried.down.length, others - (carried.answered || 0));
+  }
+
   #mightGrow(roundIdBytes, entryId, down) {
     const line = this.round.startLine(roundIdBytes, entryId);
     if (!line) return false;
@@ -328,7 +343,7 @@ export class Verifier {
     if (this.round.entryVoid(entryId)) return false;
     if (this.round.startForfeit(entryId)) return false;
     const carried = this.carried.get(`${hex(roundIdBytes)}:${hex(entryId)}`);
-    return !!carried && carried.down.length === 0 && carried.refused.length === 0 && carried.taken === 0;
+    return !!carried && this.#unreached(roundIdBytes, carried) === 0 && carried.refused.length === 0 && carried.taken === 0;
   }
 
   /**
@@ -408,6 +423,9 @@ export class Verifier {
    * never a refund, never a VOID.
    */
   async retryClose(roundIdBytes, entryIdBytes) {
+    // A RUN THIS SEAT HAS SIGNED IS NOT CLOSED AGAIN (as `retry`): one seat, one result.
+    if (this.round.hasResult(roundIdBytes, entryIdBytes, this.round.pubkey))
+      return { entryId: entryIdBytes, stored: false, why: 'this seat has already signed this run' };
     const row = this.round.get(roundIdBytes);
     if (!row) return { entryId: entryIdBytes, stored: false, why: 'no such round' };
     const contract = decodeRoundContract(new Uint8Array(row.contract));
@@ -418,9 +436,10 @@ export class Verifier {
     const carried = await this.carryReceipts(roundIdBytes, entryIdBytes);
     // THE CHEAP ANSWER FIRST: still waiting on a seat that matters, no replay.
     const noMarkHere = !this.round.firstMarkHeld(roundIdBytes, entryIdBytes);
-    if (carried.down.length && (noMarkHere || this.#mightGrow(roundIdBytes, entryIdBytes, carried.down.length)))
+    const down = this.#unreached(roundIdBytes, carried);
+    if (down && (noMarkHere || this.#mightGrow(roundIdBytes, entryIdBytes, down)))
       return { entryId: entryIdBytes, stored: false, waiting: true,
-        why: `waiting on ${carried.down.length} seat(s): ${carried.down.join('; ').slice(0, 160)}` };
+        why: `waiting on ${down} seat(s): ${(carried.down.length ? carried.down.join('; ') : 'none of them answered').slice(0, 160)}` };
     const options = { roundRandomness: beacon.hash };
     const answer = await this.pool.submit({ key: `${hex(roundIdBytes)}:${hex(entryIdBytes)}:retry:${++retryJobs}`,
       objected: this.round.objected(roundIdBytes, entryIdBytes),

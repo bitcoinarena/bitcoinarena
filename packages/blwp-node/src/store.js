@@ -541,6 +541,32 @@ export function openStore(path = ':memory:') {
       PRIMARY KEY (round_id, player_pubkey)
     );
 
+    -- WHERE THIS SEAT'S CLOSE OF A RUN STANDS, when it could not sign it at its
+    -- close (M3.3-34): HOLDING while a peer that matters is unreachable and the
+    -- close is tried again, SIGNED once it was. Kept here, beside everything
+    -- else this seat must not forget across a restart.
+    CREATE TABLE IF NOT EXISTS close_holds (
+      round_id   BLOB NOT NULL,
+      entry_id   BLOB NOT NULL,
+      state      TEXT NOT NULL,
+      attempts   INTEGER NOT NULL,
+      since_ms   INTEGER NOT NULL,
+      last_why   TEXT,
+      signed_ms  INTEGER,
+      PRIMARY KEY (round_id, entry_id)
+    );
+
+    -- THE BEACON THIS SEAT'S CHAIN NAMED FOR A ROUND (M3.3-34): the block, its
+    -- height and time. A held close is retried after a restart, and a retry
+    -- replays from this beacon; a chain reader that keeps its answers in memory
+    -- has none for a round it has not read again.
+    CREATE TABLE IF NOT EXISTS round_beacons (
+      round_id   BLOB PRIMARY KEY,
+      hash       BLOB NOT NULL,
+      height     INTEGER NOT NULL,
+      time_ms    INTEGER NOT NULL
+    );
+
     -- WHAT THIS NODE KEEPS AS A RELAY: transcripts by their own hash, so any
     -- node can be one of a contract's publication_relays[] and serve nothing
     -- under a name its bytes do not have.

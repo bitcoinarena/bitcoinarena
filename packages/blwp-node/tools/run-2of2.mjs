@@ -58,7 +58,11 @@ const cli = (...a) => execFileSync(env.BITCOIN_CLI || '/mnt/bitcoin/bitcoin-31.1
 
 // BOTH SEATS CLOSE EACH ROUND AT ITS END, by their own clocks (server closeAtEnd,
 // protocol roundEndMs), so every run is replayed, signed and made final.
-const round = await standUpRound({ host, portA, portB, store: dir, rpc, cli, page, seat: { closeAtEnd: true } });
+const round = await standUpRound({ host, portA, portB, store: dir, rpc, cli, page, seat: { closeAtEnd: true },
+  bDownAtStart: !!env.BLWP_START_B_DOWN });
+// SEAT B STARTS DOWN (BLWP_START_B_DOWN=1), for an operator's look at seat A
+// restarted while it holds a close that needs B; SIGUSR2 brings B up.
+if (env.BLWP_START_B_DOWN) { await round.b.close(); say({ seatB: 'down', atStart: true }); }
 say({ up: true, a: round.nodes[0], b: round.nodes[1], bound: [`${host}:${portA}`, `${host}:${portB}`],
   slots: 2, threshold: 2, firstRound: round.id,
   beacon: round.beacon && round.beacon.ok ? round.beacon.height : null, chain: `regtest at ${env.RT}` });

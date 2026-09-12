@@ -1618,6 +1618,36 @@ export class Round {
   }
 
   /** The entry's start line - join tick + the round's start deadline - and the round's threshold. */
+  /** The rounds this node has closed. */
+  closedRounds() {
+    return this.db.prepare('SELECT round_id FROM rounds WHERE state = ?').all(CLOSED).map((r) => new Uint8Array(r.round_id));
+  }
+
+  /** Where this seat's close of a run stands (M3.3-34), kept across a restart. */
+  putCloseHold({ roundId, entryId, state, attempts, sinceMs, lastWhy = null, signedMs = null }) {
+    this.db.prepare('INSERT OR REPLACE INTO close_holds (round_id, entry_id, state, attempts, since_ms, last_why, signed_ms) '
+      + 'VALUES (?, ?, ?, ?, ?, ?, ?)').run(roundId, entryId, state, attempts, sinceMs, lastWhy, signedMs);
+  }
+
+  /** Every kept close state. */
+  closeHolds() {
+    return this.db.prepare('SELECT * FROM close_holds').all().map((r) => ({ roundId: new Uint8Array(r.round_id),
+      entryId: new Uint8Array(r.entry_id), state: r.state, attempts: r.attempts, sinceMs: r.since_ms,
+      lastWhy: r.last_why, signedMs: r.signed_ms }));
+  }
+
+  /** Keep the beacon this seat's chain named for a round: the block, its height, its time. */
+  putBeacon(roundIdBytes, { hash, height, timeMs }) {
+    this.db.prepare('INSERT OR REPLACE INTO round_beacons (round_id, hash, height, time_ms) VALUES (?, ?, ?, ?)')
+      .run(roundIdBytes, hash, height, Number(timeMs));
+  }
+
+  /** The beacon kept for a round, or nothing. */
+  beaconOf(roundIdBytes) {
+    const r = this.db.prepare('SELECT * FROM round_beacons WHERE round_id = ?').get(roundIdBytes);
+    return r ? { hash: new Uint8Array(r.hash), height: r.height, timeMs: BigInt(r.time_ms) } : undefined;
+  }
+
   /** The checkpoint ids this node holds for an entry, in tick order. */
   markIds(roundIdBytes, entryIdBytes) {
     return this.db.prepare('SELECT checkpoint_id FROM checkpoints WHERE round_id = ? AND entry_id = ? ORDER BY tick')
