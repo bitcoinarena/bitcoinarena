@@ -1,0 +1,168 @@
+// THE DAILY'S CLOSE, MEASURED ON THE LIVE PAGE (M3.3-34). A TOOL, not a test:
+// it wants the deployed Daily page, a headless Chrome and the Daily's running
+// seats (tools/run-2of2.mjs with closeAtEnd).
+//
+// Two players open the bare root (btc-logistics-core.pages.dev, daily.json's
+// lobby) and join the same free round:
+//   P plays - PLAY, AUTO, depart, throttle held for about a run
+//   W seats and walks away - its tab closes before any first mark
+// Nobody sends `close`: the seats must close the round at its end by their own
+// clocks. Then, read-only from both seats' own stores and from the public
+// /results through the tunnels: each run's outcome and score at each seat,
+// how many seats signed it, its finality, and no ENTRY_VOID.
+//
+//   node tools/daily-close-look.mjs
+import { mkdtempSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { spawn } from 'node:child_process';
+import { DatabaseSync } from 'node:sqlite';
+import WebSocket from 'ws';
+
+import { Round } from '../../blwp-node/src/round.js';
+import { resultFinality } from '../../blwp-node/src/finality.js';
+import { decodeEntryContract } from '../../protocol/src/contracts.js';
+import { decodePlayerResult, splitSignedResult, SIGNED_RESULT_BYTES } from '../../protocol/src/result.js';
+import { decodeRoundContract } from '../../protocol/src/contracts.js';
+import { roundEndMs } from '../../protocol/src/first-mark.js';
+import { toHex, fromHex } from '../../protocol/src/hash.js';
+
+const env = process.env;
+const ROOT = env.DAILY || 'https://btc-logistics-core.pages.dev/';
+const DIR = env.BLWP_2OF2_DIR || '/mnt/bitcoin/blwp-2of2';
+const CHROME = env.CHROME || '/home/arena/.cache/ms-playwright/chromium-1234/chrome-linux64/chrome';
+const say = (o) => console.log(JSON.stringify({ at: new Date().toISOString(), ...o }, (k, v) => (typeof v === 'bigint' ? String(v) : v)));
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function browse(url) {
+  const profile = mkdtempSync(join(tmpdir(), 'daily-close-'));
+  const chrome = spawn(CHROME, ['--headless=new', '--remote-debugging-port=0', `--user-data-dir=${profile}`,
+    '--no-sandbox', '--window-size=1280,800', '--use-gl=swiftshader', '--enable-unsafe-swiftshader',
+    '--disable-dev-shm-usage', 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe'] });
+  const port = await new Promise((r) => { let b = ''; chrome.stderr.on('data', (d) => { b += d; const m = b.match(/DevTools listening on ws:\/\/127\.0\.0\.1:(\d+)/); if (m) r(m[1]); }); });
+  let target = null;
+  for (let i = 0; i < 40 && !target; i++) { target = (await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()).find((t) => t.type === 'page'); if (!target) await wait(250); }
+  const ws = new WebSocket(target.webSocketDebuggerUrl, { maxPayload: 256 * 1024 * 1024 });
+  await new Promise((r) => ws.on('open', r));
+  let n = 0;
+  const pending = new Map();
+  ws.on('message', (raw) => { const m = JSON.parse(raw); if (m.id && pending.has(m.id)) { pending.get(m.id)(m); pending.delete(m.id); } });
+  const send = (method, params = {}) => new Promise((r, no) => {
+    const i = ++n;
+    const timer = setTimeout(() => { pending.delete(i); no(new Error(`the browser did not answer ${method} in 30 s`)); }, 30000);
+    pending.set(i, (m) => { clearTimeout(timer); r(m); });
+    ws.send(JSON.stringify({ id: i, method, params }));
+  });
+  const evaluate = async (expression) => {
+    try {
+      const r = await send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true });
+      return r.result && r.result.result ? r.result.result.value : undefined;
+    } catch (e) { return { threw: e.message }; }
+  };
+  await send('Runtime.enable'); await send('Page.enable');
+  await send('Page.navigate', { url });
+  const click = async (x, y) => { for (const type of ['mousePressed', 'mouseReleased']) await send('Input.dispatchMouseEvent', { type, x, y, button: 'left', clickCount: 1, buttons: 1 }); await wait(600); };
+  const key = (type) => send('Input.dispatchKeyEvent', { type, code: 'KeyW', key: 'w', windowsVirtualKeyCode: 87, nativeVirtualKeyCode: 87, ...(type === 'keyDown' ? { text: 'w' } : {}) });
+  const close = () => { try { ws.close(); } catch {} try { chrome.kill('SIGKILL'); } catch {} };
+  return { evaluate, click, key, close };
+}
+
+const STATE = `JSON.stringify({ lobby: window.BLWP_LOBBY || null, from: window.BLWP_LOBBY_FROM || null,
+  round: window.BLWP_ROUND && typeof BLWPCLIENT !== 'undefined' ? Array.from(BLWPCLIENT.roundId(window.BLWP_ROUND), (x) => x.toString(16).padStart(2, '0')).join('') : null,
+  player: window.BLWP_ENTRY && window.BLWP_ENTRY.playerPubkey ? Array.from(window.BLWP_ENTRY.playerPubkey, (x) => x.toString(16).padStart(2, '0')).join('') : null,
+  unity: !!window.unityInstance, chip: (document.getElementById('blwp-players') || {}).textContent || null,
+  error: (document.getElementById('err') || {}).textContent || null })`;
+const stateOf = async (b) => { const v = await b.evaluate(STATE); try { return JSON.parse(v); } catch { return {}; } };
+const until = async (b, ms, done) => { let s = {}; for (let t = Date.now(); Date.now() - t < ms; await wait(1000)) { s = await stateOf(b); if (done(s)) break; } return s; };
+const pressJoin = (b, id) => b.evaluate(`(() => { for (const row of document.querySelectorAll('#blwp-lobby .row')) {
+  if (row.textContent.includes(${JSON.stringify(id)})) { const a = row.querySelector('a.join'); if (a) { a.click(); return true; } } } return false; })()`);
+const leftOf = (line) => { const m = String(line).match(/closes in (\d+):(\d\d)/); return m ? Number(m[1]) * 60 + Number(m[2]) : -1; };
+
+// THE SEATS' OWN STORES, READ-ONLY: what each seat signed and how final it is.
+const seats = ['a', 'b'].map((n) => new Round(new DatabaseSync(join(DIR, `${n}.db`), { readOnly: true })));
+const entryOf = (seat, rid, playerHex) => seat.entriesOf(fromHex(rid)).find((e) => toHex(e.entry.playerPubkey) === playerHex);
+const view = (seat, rid, eid) => ({
+  results: [...new Set(seat.results(fromHex(rid), eid).map((r) => { const p = decodePlayerResult(splitSignedResult(r.bytes).body); return `${p.outcome}/${p.score}`; }))],
+  signers: new Set(seat.results(fromHex(rid), eid).map((r) => toHex(r.nodePubkey))).size,
+  finality: resultFinality(seat, fromHex(rid), eid).state, entryVoid: !!seat.entryVoid(eid),
+  closed: seat.get(fromHex(rid)).state === 1 });
+
+const tabs = [];
+let code = 0;
+try {
+  const P = await browse(ROOT);
+  tabs.push(P);
+  const s0 = await until(P, 60000, (x) => Array.isArray(x.lobby) && x.lobby.some((r) => r.join));
+  const rows = (s0.lobby || []).filter((r) => r.join).sort((x, y) => leftOf(y.line) - leftOf(x.line));
+  if (!rows.length) throw new Error('the Daily root listed no joinable round');
+  const rid = rows[0].id;
+  const c = decodeRoundContract(seats[0].get(fromHex(rid)).contract ? new Uint8Array(seats[0].get(fromHex(rid)).contract) : new Uint8Array());
+  const endAt = roundEndMs(c);
+  say({ step: 'picked', round: rid.slice(0, 16), from: s0.from, entryLeftS: leftOf(rows[0].line), roundEndsAt: new Date(Number(endAt)).toISOString() });
+
+  await pressJoin(P, rid);
+  const p = await until(P, 200000, (x) => (x.player && x.unity && x.round === rid) || x.error);
+  const W = await browse(ROOT);
+  tabs.push(W);
+  await until(W, 60000, (x) => Array.isArray(x.lobby) && x.lobby.some((r) => r.id === rid && r.join));
+  await pressJoin(W, rid);
+  const w = await until(W, 200000, (x) => (x.player && x.round === rid) || x.error);
+  // W WALKS AWAY ONLY ONCE BOTH SEATS HOLD ITS ENTRY: measured, a tab closed as
+  // soon as seat A held it left seat B without it - seated 1 of 2, no member
+  // of a 2-of-2 round, and nothing that could become final.
+  for (let t = Date.now(); Date.now() - t < 60000
+    && !(entryOf(seats[0], rid, w.player) && entryOf(seats[1], rid, w.player)); await wait(500));
+  const wSeatedAt = [entryOf(seats[0], rid, w.player), entryOf(seats[1], rid, w.player)].map(Boolean);
+  W.close();
+  if (!wSeatedAt.every(Boolean)) throw new Error(`W was seated at ${wSeatedAt.filter(Boolean).length} of 2 seats in 60 s: no 2-of-2 walk-away to measure`);
+  say({ step: 'joined', p: { player: p.player && p.player.slice(0, 16), unity: p.unity, error: p.error },
+    w: { player: w.player && w.player.slice(0, 16), seatedAtAB: wSeatedAt, tabClosedBeforeAnyMark: true } });
+
+  // P PLAYS: PLAY, AUTO, depart, throttle held for about a run.
+  await P.click(486, 554); await wait(3000);
+  await P.click(303, 617); await wait(1200); await P.click(660, 617); await wait(1500);
+  await P.key('keyDown');
+  for (let t = Date.now(); Date.now() - t < 160000; await wait(10000)) {
+    const s = await stateOf(P);
+    if (s.error) break;
+  }
+  await P.key('keyUp');
+  const pChip = (await stateOf(P)).chip;
+  say({ step: 'played', chip: pChip });
+
+  // NOBODY CLOSES IT: wait for both seats to close it, sign both runs and reach FINAL.
+  const started = Date.now();
+  let got = null;
+  for (; Date.now() - started < 30 * 60000; await wait(10000)) {
+    const eP = [0, 1].map((i) => entryOf(seats[i], rid, p.player));
+    const eW = [0, 1].map((i) => entryOf(seats[i], rid, w.player));
+    if (!eP.every(Boolean) || !eW.every(Boolean)) continue;
+    got = { P: seats.map((s, i) => view(s, rid, eP[i].entryId)), W: seats.map((s, i) => view(s, rid, eW[i].entryId)) };
+    if ([...got.P, ...got.W].every((x) => x.finality === 'FINAL')) break;
+    if ((Date.now() - started) % 120000 < 10000) say({ step: 'waiting', got });
+  }
+  // AND WHAT ANYONE CAN READ: /results on each seat's public address.
+  const daily = await (await fetch(new URL('daily.json', ROOT))).json();
+  const pub = {};
+  for (const [who, player] of [['P', p.player], ['W', w.player]]) {
+    const eid = entryOf(seats[0], rid, player).entryId;
+    pub[who] = [];
+    for (const node of daily.node) {
+      const body = new Uint8Array(await (await fetch(`${node}/results?round=${rid}&entry=${toHex(eid)}`)).arrayBuffer());
+      const seen = [];
+      for (let at = 0; at + SIGNED_RESULT_BYTES <= body.length; at += SIGNED_RESULT_BYTES) {
+        const r = decodePlayerResult(splitSignedResult(body.subarray(at, at + SIGNED_RESULT_BYTES)).body);
+        seen.push(`${r.outcome}/${r.score}`);
+      }
+      pub[who].push({ node: node.replace(/^https:\/\//, '').slice(0, 24), results: seen });
+    }
+  }
+  say({ step: 'after the round ended', round: rid.slice(0, 16), roundEndsAt: new Date(Number(endAt)).toISOString(),
+    waitedS: Math.round((Date.now() - started) / 1000), played: got && got.P, walkedAway: got && got.W, public: pub });
+} catch (e) {
+  say({ error: e.message, stack: String(e.stack).split('\n').slice(1, 3).join(' | ') });
+  code = 1;
+} finally {
+  for (const t of tabs) t.close();
+}
+process.exit(code);

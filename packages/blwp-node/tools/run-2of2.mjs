@@ -56,7 +56,9 @@ const rpc = bitcoindRpc({ url: `http://127.0.0.1:${rpcport}/`, cookiePath: `${en
 const cli = (...a) => execFileSync(env.BITCOIN_CLI || '/mnt/bitcoin/bitcoin-31.1/bin/bitcoin-cli',
   ['-regtest', `-datadir=${env.RT}`, `-rpcport=${rpcport}`, ...a], { encoding: 'utf8' }).trim();
 
-const round = await standUpRound({ host, portA, portB, store: dir, rpc, cli, page });
+// BOTH SEATS CLOSE EACH ROUND AT ITS END, by their own clocks (server closeAtEnd,
+// protocol roundEndMs), so every run is replayed, signed and made final.
+const round = await standUpRound({ host, portA, portB, store: dir, rpc, cli, page, seat: { closeAtEnd: true } });
 say({ up: true, a: round.nodes[0], b: round.nodes[1], bound: [`${host}:${portA}`, `${host}:${portB}`],
   slots: 2, threshold: 2, firstRound: round.id,
   beacon: round.beacon && round.beacon.ok ? round.beacon.height : null, chain: `regtest at ${env.RT}` });

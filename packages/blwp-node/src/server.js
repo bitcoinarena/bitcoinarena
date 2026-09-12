@@ -21,6 +21,7 @@ import { decodeRoundContract, decodeEntryContract, publicationRelaysAreValid } f
 import { toHex, fromHex } from '../../protocol/src/hash.js';
 import { lobbyListingId } from '../../protocol/src/lobby-listing.js';
 import { decodeLobbyName, lobbyNameId } from '../../protocol/src/lobby-name.js';
+import { roundEndMs } from '../../protocol/src/first-mark.js';
 import { entryFeeMsat } from '../../protocol/src/fee.js';
 import { TYPE_CHECKPOINT, TYPE_INPUT_BATCH, STAKE_NOT_SEEN } from '../../protocol/src/constants.js';
 import { splitSigned, decodeCheckpoint, checkpointId } from '../../protocol/src/checkpoint.js';
@@ -192,6 +193,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // from the close and, while a run waits on its window, from that window's
   // end (M3.3-32).
   finality = {},
+  // THE DAILY'S CLOSE (M3.3-34), OPT-IN: close each round this seat holds by
+  // its own clock once it is over (protocol roundEndMs). `true`, or
+  // `{ everyMs }`. Off by default: a harness closes its rounds when it says so.
+  closeAtEnd = false,
   // THE SEATS' ADVERTISEMENTS, by round (Map node key hex -> advert), so a slash
   // proof names each accused seat's own bond. Defaults to this node's census.
   advertsFor = null,
@@ -1130,6 +1135,35 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     }
     return picked;
   }).catch((e) => { console.error(`[custody] ${e.message}`); return []; });
+
+  // AND EVERY ROUND THAT IS OVER, CLOSED BY THIS SEAT ITSELF (closeAtEnd).
+  //
+  // Measured before (M3.3-34): nothing on the Daily ever closed a round - only
+  // a `close <round>` message does, and no launcher, opener or page sent one -
+  // so no run there was ever replayed, signed or made final, a walk-away was
+  // refunded at its lock's expiry and a delivery was never paid. With this on,
+  // the seat closes a round once `roundEndMs` has passed on its own clock, by
+  // the very path that message takes, and at start for any round already over.
+  let endTimer = null;
+  if (closeAtEnd) {
+    const sweep = () => {
+      if (shuttingDown) return;
+      const nowMs = BigInt(round.now());
+      for (const held of round.openRounds()) {
+        let c;
+        try { c = decodeRoundContract(held.contract); } catch { continue; }
+        let end;
+        try { end = roundEndMs(c); } catch { continue; }
+        if (nowMs < end) continue;
+        if (round.close(held.roundId)) {
+          console.log(`[close] ${toHex(held.roundId).slice(0, 16)} is over at ${end}: closed by this seat`);
+          afterClose(held.roundId);
+        }
+      }
+    };
+    endTimer = setInterval(sweep, (closeAtEnd && closeAtEnd.everyMs) || 2000);
+    sweep();
+  }
 
   const http = createServer(async (req, res) => {
     try {
@@ -2433,6 +2467,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       close: () => new Promise((r) => {
         // NO RE-GATHER OUTLIVES THE DAEMON.
         shuttingDown = true;
+        if (endTimer) clearInterval(endTimer);
         if (expiryTimer) clearInterval(expiryTimer);
         for (const t of finalityTimers) clearTimeout(t);
         finalityTimers.clear();

@@ -22,6 +22,8 @@
 // refunds at expiry: the money hole every loser has, listed, not closed.
 import { START_DEADLINE_TICKS } from './constants.js';
 import { FORFEIT, FAILED } from './payout.js';
+import { msForTicks } from './tick.js';
+import { BLOCK_TICKS } from '../../core/src/rules/gate.js';
 
 /** The round's start deadline, in ticks after a player's join tick. */
 export const startDeadlineOf = (contract) =>
@@ -86,4 +88,21 @@ export function stoppedOutcome({ receiptedMarks, liveAtLast = false, deadlinePas
   if (liveAtLast)
     return { outcome: FAILED, why: 'the checkpoints stopped before the round closed: the run ends at its last receipted checkpoint, undelivered - FAILED' };
   return { outcome: null, why: 'the run ended on its own: its replay decides' };
+}
+
+/**
+ * WHEN A ROUND IS OVER, so its seats close it (M3.3-34, the Daily's close): the
+ * latest a player can join (entry close), plus the start deadline their first
+ * tick may take, a whole run (BLOCK_TICKS - the network's, which every valid
+ * contract carries), and the start deadline once more for the last mark to
+ * reach the seats: the window the first mark already gets, not a new constant.
+ * Rounded UP to the millisecond, so no run is cut short by a remainder. By then
+ * every run has ended or stopped (§15), and the close decides nothing a player
+ * could still change.
+ * @returns {bigint} milliseconds
+ */
+export function roundEndMs(contract) {
+  if (!contract || contract.entryCloseMs === undefined) throw new Error('a round\'s end is counted from its entry close, and it names none');
+  const span = msForTicks(2 * startDeadlineOf(contract) + BLOCK_TICKS);
+  return BigInt(contract.entryCloseMs) + span.ms + (span.exact ? 0n : 1n);
 }
