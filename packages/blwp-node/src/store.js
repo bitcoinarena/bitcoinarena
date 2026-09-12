@@ -124,6 +124,20 @@ export function openStore(path = ':memory:') {
       PRIMARY KEY (round_id, entry_id, tick)
     );
 
+    -- TWO FIRST MARKS OF ONE ENTRY, NEITHER HELD HERE AS A CHECKPOINT (M3.3-34,
+    -- ruled 2026-09-12): the on-time first mark another seat voided and a
+    -- different one the player sent here. Both chain to nothing - one parent,
+    -- two chains (13B) - so the pair is the proof, served at /equivocation so
+    -- the other seats can pull it. Never a checkpoint; never a refund.
+    CREATE TABLE IF NOT EXISTS first_mark_pairs (
+      round_id BLOB NOT NULL,
+      entry_id BLOB NOT NULL REFERENCES entries(entry_id),
+      first_a  BLOB NOT NULL,
+      first_b  BLOB NOT NULL,
+      seen_ms  INTEGER NOT NULL,
+      PRIMARY KEY (entry_id, first_a, first_b)
+    );
+
     -- A RECEIPT FOR A MARK THIS NODE HAS NEVER SEEN.
     --
     -- Dropped at the door until now, and that is the signal 13B built receipt

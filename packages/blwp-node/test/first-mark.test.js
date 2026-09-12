@@ -142,7 +142,14 @@ async function seatAndBuild(w, { firstAt = 60 } = {}) {
   const lb = batchOf(0, END, GENESIS_HASH);
   const lm = markOf(END, Uint8Array.from(stateHash(lateSt).match(/../g).map((x) => parseInt(x, 16))), lb, NO_PREVIOUS);
   const late = [encodeInputBatch(lb), sign(lm)];
-  return { entry, eid, outpoint, messages, firstId, late };
+  // AND A SECOND ON-TIME FIRST MARK (tick 30, from nothing): the other half of a
+  // player who sent one on-time first mark to one seat and a different one to another.
+  const otherSt = init(seedWordForEntry(entry, RANDOMNESS));
+  for (let t = 0; t < 30; t++) step(otherSt, ...wordsAt(t));
+  const ob = batchOf(0, 30, GENESIS_HASH);
+  const om = markOf(30, Uint8Array.from(stateHash(otherSt).match(/../g).map((x) => parseInt(x, 16))), ob, NO_PREVIOUS);
+  const other = [encodeInputBatch(ob), sign(om)];
+  return { entry, eid, outpoint, messages, firstId, late, other };
 }
 
 const answer = (s) => (typeof s === 'string' ? (s.length > 30 && !s.startsWith('error') ? 'receipt' : s.slice(0, 90)) : 'receipt');
@@ -465,6 +472,56 @@ test('late start at close (5c): B records ENTRY_VOID on a real outage, then the 
     assert.equal(after.aAgain, 409, 'A signs the refund once B has shown it the Void');
     assert.equal(after.b.entryVoid, true, 'B\'s ENTRY_VOID record was not kept as history');
     assert.equal(after.aVoidAfterDoors, false, 'A recorded ENTRY_VOID from B\'s evidence');
+    assert.deepEqual(after.forfeitKept, [false, false], 'a seat keeps a refund of the lock');
+    assert.equal(after.lockHeld, true);
+  } finally { await w.close(); }
+});
+
+// A SECOND ON-TIME FIRST MARK AFTER THE VOID (M3.3-34, ruled 2026-09-12, path 1):
+// B down, A records ENTRY_VOID on a real outage, B back - and the player sends B
+// a DIFFERENT on-time first mark. Same-mark Void evidence only: B refuses it and
+// keeps the pair; FORFEIT at both, no refund signed, the lock held.
+test('late start at close (5d): A records ENTRY_VOID on a real outage, then the player sends B a different on-time first mark - FORFEIT at both, no refund signed, the lock held', async () => {
+  const w = await seats();
+  try {
+    const run = await seatAndBuild(w);
+    await w.downB();
+    for (const m of run.messages) await say(w.a.port, m);                   // on time, then past the line, to A only (B down)
+    await wait(500);
+    const aVoidFirst = !!w.a.round.entryVoid(run.eid);
+    await w.upB();
+    const saidB = [];
+    for (const m of run.other) saidB.push(answer(await say(w.b.port, m)));  // a different on-time first mark, to B
+    await wait(1000);
+    const aDoor = await (await fetch(`http://127.0.0.1:${w.a.port}/entry-void?entry=${toHex(run.eid)}`)).json().catch(() => null);
+    const before = { aVoidFirst, saidB, bVoid: !!w.b.round.entryVoid(run.eid),
+      aVoidDoor: aDoor && { evidenceKind: aDoor.evidenceKind, evidence: !!aDoor.evidence, receipt: !!aDoor.receipt },
+      bPeers: w.b.verifier.peersOf(w.rid).length,
+      proofAtA: w.a.round.equivocation(w.rid, run.eid).length, proofAtB: w.b.round.equivocation(w.rid, run.eid).length };
+    await Promise.all([say(w.a.port, `close ${toHex(w.rid)}`), say(w.b.port, `close ${toHex(w.rid)}`)]);
+    await wait(WINDOW_MS + 3000);
+    const at2 = async (d) => {
+      const s = await signedAt(d, w, run);
+      const nq = d.round.noQuorum(run.eid);
+      return { entryVoid: s.entryVoid, results: s.results, finality: s.finality, noQuorum: nq ? nq.outcome : null, forfeit: s.forfeit,
+        proof: d.round.equivocation(w.rid, run.eid).length };
+    };
+    // Each seat's forfeit door - B, then A (whose door may show B its Void), then B again.
+    const after = { b: await at2(w.b), a: await at2(w.a) };
+    after.bAgain = (await fetch(`http://127.0.0.1:${w.b.port}/forfeit?round=${toHex(w.rid)}&entry=${toHex(run.eid)}`)).status;
+    after.bVoidAfterDoors = !!w.b.round.entryVoid(run.eid);
+    after.forfeitKept = [w.a, w.b].map((d) => !!d.round.forfeit(run.eid));
+    after.lockHeld = lockHeldOf(w, run);
+    console.log('  FACTS (late close 5d, a second on-time first mark after the Void):', JSON.stringify({ before, after }));
+    assert.equal(before.aVoidFirst, true, 'A did not record ENTRY_VOID before the second mark: not the case the test names');
+    for (const s of ['a', 'b']) {
+      assert.equal(after[s].noQuorum, 'FORFEIT', `${s} did not decide FORFEIT: ${JSON.stringify(after[s])}`);
+      assert.equal(after[s].finality, 'FORFEIT', `${s}'s finality is not FORFEIT: ${JSON.stringify(after[s])}`);
+      assert.equal(after[s].forfeit, 409, `${s} will sign the refund of the lock to the player`);
+    }
+    assert.equal(after.bAgain, 409, 'B signs the refund once A has shown it the Void');
+    assert.equal(after.a.entryVoid, true, 'A\'s ENTRY_VOID record was not kept as history');
+    assert.equal(after.bVoidAfterDoors, false, 'B recorded ENTRY_VOID for a different first mark than the one A voided');
     assert.deepEqual(after.forfeitKept, [false, false], 'a seat keeps a refund of the lock');
     assert.equal(after.lockHeld, true);
   } finally { await w.close(); }

@@ -409,7 +409,9 @@ export class Verifier {
     // outcome - never ENTRY_VOID (measured before: ENTRY_VOID and the lock
     // forfeited to the player at both seats).
     const lateHere = !!this.round.startForfeit(entryId);
-    const twoFirst = lateHere || voided ? await this.#equivocationProven(roundIdBytes, entryId) : false;
+    // ...or a proof this seat holds itself (it refused a second first mark).
+    const suspect = lateHere || voided || this.round.equivocation(roundIdBytes, entryId).length > 0;
+    const twoFirst = suspect ? await this.#equivocationProven(roundIdBytes, entryId) : false;
     if ((lateHere || voided) && !twoFirst) return null;
     const held = this.round.firstMarkHeld(roundIdBytes, entryId);
     let evidence;
@@ -476,7 +478,14 @@ export class Verifier {
       } catch { /* a seat that cannot answer proves nothing */ }
     }
     for (const [a, b] of pairs) {
-      try { if ((await provesEquivocation(a, b, found.entry.sessionPubkey, verify)).ok) return true; } catch { /* not a proof */ }
+      try {
+        if ((await provesEquivocation(a, b, found.entry.sessionPubkey, verify)).ok) {
+          // A PULLED PAIR OF FIRST MARKS IS KEPT HERE TOO, so this seat's own
+          // record (its forfeit door, its close) says two first marks from now on.
+          this.round.putFirstMarkPair({ a, b });
+          return true;
+        }
+      } catch { /* not a proof */ }
     }
     return false;
   }

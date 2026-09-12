@@ -981,7 +981,34 @@ export class Round {
     if (late && heldFirst && !same(late.mark, heldFirst))
       out.push({ how: 'two first marks, one of them late', tick: late.markTick, stored: heldFirst, offered: late.mark,
         seenMs: late.decidedMs });
+    // AND TWO FIRST MARKS KEPT AS A PAIR (first_mark_pairs): this seat holds
+    // neither as a checkpoint - e.g. a peer's voided one and a different one sent here.
+    for (const r of this.db.prepare('SELECT first_a, first_b, seen_ms FROM first_mark_pairs WHERE round_id = ? AND entry_id = ?')
+      .all(roundIdBytes, entryIdBytes)) {
+      const a = new Uint8Array(r.first_a);
+      const b = new Uint8Array(r.first_b);
+      const tickOf = (m) => decodeCheckpoint(splitSigned(m).body).tick;
+      out.push({ how: 'two first marks', tick: Math.min(tickOf(a), tickOf(b)), stored: a, offered: b, seenMs: r.seen_ms });
+    }
     return out.sort((a, b) => a.tick - b.tick);
+  }
+
+  /**
+   * KEEP TWO FIRST MARKS AS THE PLAYER'S PROOF (§13B; M3.3-34, ruled 2026-09-12):
+   * both signed by the entry's session key, both chaining to nothing, and not
+   * the same mark - the pair provesEquivocation checks. Anything else is not
+   * kept. Answers whether the pair is held here now.
+   */
+  putFirstMarkPair({ a, b }) {
+    let ca;
+    let cb;
+    try { ca = this.playerSigned(a); cb = this.playerSigned(b); } catch { return false; }
+    if (same(a, b) || !same(ca.entryId, cb.entryId) || !same(ca.roundId, cb.roundId)) return false;
+    if (!same(ca.previousHash, NO_PREVIOUS) || !same(cb.previousHash, NO_PREVIOUS)) return false;
+    const [x, y] = Buffer.compare(Buffer.from(a), Buffer.from(b)) < 0 ? [a, b] : [b, a];
+    this.db.prepare('INSERT OR IGNORE INTO first_mark_pairs (round_id, entry_id, first_a, first_b, seen_ms) VALUES (?, ?, ?, ?, ?)')
+      .run(ca.roundId, ca.entryId, x, y, this.now());
+    return true;
   }
 
   /**

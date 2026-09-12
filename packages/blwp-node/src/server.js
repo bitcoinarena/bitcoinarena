@@ -444,13 +444,30 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // late first mark, A's forfeit showed B the Void, B recorded it too, both
   // signed the refund and the player redeemed the lock before its expiry.
   const TWO_FIRST_MARKS = 'the player signed another first mark for this entry (§13B): two first marks are FORFEIT, never an outage refund';
-  const secondFirstMark = (c, bytes) => {
+  // SAME-MARK ONLY (path 1): a first mark that differs from the one this seat
+  // voided or kept as a late start is the second one - refused, and the pair
+  // kept as the proof other seats pull at /equivocation. A first mark this seat
+  // HOLDS is counted only before a Void (`orHeld`): at the door a different
+  // one already goes to the chain's own refusal, which keeps that proof
+  // (equivocation at a tick, or a parent that is not the head).
+  const secondFirstMark = (c, bytes, { orHeld = false } = {}) => {
+    if (round.equivocation(c.roundId, c.entryId).length > 0) return true;
     const late = round.startForfeit(c.entryId);
-    return (!!late && toHex(late.mark) !== toHex(bytes)) || round.equivocation(c.roundId, c.entryId).length > 0;
+    const voided = round.entryVoid(c.entryId);
+    const other = [late && late.mark, voided && voided.firstMark, orHeld && round.firstMarkHeld(c.roundId, c.entryId)]
+      .find((m) => m && toHex(m) !== toHex(bytes));
+    return !!other && round.putFirstMarkPair({ a: other, b: bytes });
   };
-  // AN ENTRY_VOID THAT STANDS: no second first mark here. One that does not is
-  // decided by the close's no-quorum rule (FORFEIT), so the close keeps it.
-  const voidStands = (rid, eid) => !!round.entryVoid(eid) && !round.twoFirstMarks(rid, eid);
+  // AN ENTRY_VOID THAT STANDS: no second first mark here, and the result window
+  // has passed without one pulled from a peer. Until then the close keeps
+  // asking (a peer may hold the pair); one that does not stand is decided by
+  // the close's no-quorum rule (FORFEIT), so the close keeps it.
+  const voidStands = (rid, eid) => {
+    if (!round.entryVoid(eid) || round.twoFirstMarks(rid, eid)) return false;
+    const row = round.get(rid);
+    if (!row || row.closed_ms === null || row.closed_ms === undefined) return true;
+    return round.now() >= Number(row.closed_ms) + Number(decodeRoundContract(new Uint8Array(row.contract)).objectionWindowMs);
+  };
   function decideOutage(rid, eid, { evidenceKind, evidence = null }) {
     const had = round.entryVoid(eid);
     if (had) return had;
@@ -514,7 +531,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   function voidHere(c, bytes, late, givenReceipts = []) {
     const had = round.entryVoid(c.entryId);
     if (had) return had;
-    if (secondFirstMark(c, bytes)) return null;
+    if (secondFirstMark(c, bytes, { orHeld: true })) return null;
     // THE PLAYER'S OWN FIRST MARK, OR NO VOID HERE. A seat records ENTRY_VOID
     // only for a first mark it holds in the player's own hand - signed by the
     // entry's session key, from the player or in a forward - never on another
@@ -536,12 +553,25 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       evidence: late.evidence, why: `this seat was offered the on-time first mark only after the start deadline had passed; ${d.why}` });
     return round.entryVoid(c.entryId);
   }
-  async function lateByPeers(c) {
+  async function lateByPeers(c, bytes) {
     for (const peer of verifier.peersOf(c.roundId)) {
       try {
         const r = await fetch(`${String(peer).replace(/\/+$/, '')}/entry-void?entry=${toHex(c.entryId)}`, { signal: AbortSignal.timeout(1500) });
         if (!r.ok) continue;
         const got = await r.json();
+        // SAME-MARK VOID EVIDENCE ONLY (M3.3-34, ruled 2026-09-12, path 1): a
+        // peer's Void of a DIFFERENT first mark is the player's second first
+        // mark. Measured before: this seat took it as a normal mark (the peer's
+        // receipt was of its own mark, so no Void here), later recorded the
+        // peer's Void too, and both seats signed the refund - the player
+        // redeemed the lock before its expiry. Now the pair is kept, the mark
+        // refused. An ON-TIME mark only: a late one keeps its own rule (a late
+        // start, FORFEIT, recorded as such), and the pair forms where the
+        // on-time mark is held.
+        const theirs = got.firstMark ? fromHex(String(got.firstMark)) : null;
+        const line = round.startLine(c.roundId, c.entryId);
+        if (theirs && line && c.tick <= line.lastTick && toHex(theirs) !== toHex(bytes)
+          && round.putFirstMarkPair({ a: theirs, b: bytes })) return { twoFirst: true };
         const late = lateEvidenceHere(c, { kind: got.evidenceKind, evidence: got.evidence }, got.receipt ? fromHex(String(got.receipt)) : null);
         if (late) return { late, receipts: got.receipt ? [fromHex(String(got.receipt))] : [] };
       } catch { /* a seat that is down proves nothing */ }
@@ -2636,7 +2666,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           return sock.send('error FORFEIT: ' + TWO_FIRST_MARKS);
         if (firstMark && !round.holdsMark(checkpointId(firstMark.c))) {
           const own = lateEvidenceHere(firstMark.c, null);
-          const found = own ? { late: own, receipts: [] } : await lateByPeers(firstMark.c);
+          const found = own ? { late: own, receipts: [] } : await lateByPeers(firstMark.c, firstMark.bytes);
+          if (found && found.twoFirst) return sock.send('error FORFEIT: ' + TWO_FIRST_MARKS);
           if (found) {
             const v = voidHere(firstMark.c, firstMark.bytes, found.late, found.receipts);
             if (v) return sock.send('error ENTRY_VOID: ' + v.why);

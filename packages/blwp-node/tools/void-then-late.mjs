@@ -149,16 +149,18 @@ try {
   for (let t = Date.now(); Date.now() - t < 20000 && !round.a.round.entryVoid(eid); await wait(500));
   say({ step: 'B down, the player plays at A: on time, then past the line', saidA, A: recorded(round.a) });
 
-  // B COMES BACK - AND ONLY THEN THE PLAYER SENDS B A LATE FIRST MARK (960, from nothing).
+  // B COMES BACK - AND ONLY THEN THE PLAYER SENDS B A SECOND FIRST MARK, from
+  // nothing: late (960, the default) or, MODE=ontime, a different ON-TIME one (30).
   await round.restartB();
+  const SECOND = env.MODE === 'ontime' ? 30 : PAST;
   const lst = init(seedWordForEntry(entry, randomness));
-  for (let t = 0; t < PAST; t++) step(lst, ...wordsAt(t));
-  const lb = { roundId: rid, entryId: eid, previousHash: GENESIS, firstTick: 0, ticks: Array.from({ length: PAST }, (_, t) => wordsAt(t)), liquidations: [] };
-  const lm = { roundId: rid, entryId: eid, tick: PAST, stateHash: hex32(lst), inputChainHash: batchId(lb), previousHash: NO_PREVIOUS, sessionPubkey: ed25519.getPublicKey(session) };
+  for (let t = 0; t < SECOND; t++) step(lst, ...wordsAt(t));
+  const lb = { roundId: rid, entryId: eid, previousHash: GENESIS, firstTick: 0, ticks: Array.from({ length: SECOND }, (_, t) => wordsAt(t)), liquidations: [] };
+  const lm = { roundId: rid, entryId: eid, tick: SECOND, stateHash: hex32(lst), inputChainHash: batchId(lb), previousHash: NO_PREVIOUS, sessionPubkey: ed25519.getPublicKey(session) };
   const saidB = [];
   for (const m of [encodeInputBatch(lb), sign(lm)]) saidB.push(answer(await ws(B, m)));
   await wait(2000);
-  say({ step: 'B back; the player sends B a late first mark', saidB, A: recorded(round.a), B: recorded(round.b) });
+  say({ step: `B back; the player sends B a second first mark at ${SECOND} (${SECOND > 900 ? 'late' : 'on time'})`, saidB, A: recorded(round.a), B: recorded(round.b) });
 
   // BOTH SEATS CLOSE; THE NO-QUORUM RULE DECIDES AFTER THE RESULT WINDOW.
   const closed = [];
