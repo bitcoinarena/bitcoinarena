@@ -1618,6 +1618,12 @@ export class Round {
   }
 
   /** The entry's start line - join tick + the round's start deadline - and the round's threshold. */
+  /** The checkpoint ids this node holds for an entry, in tick order. */
+  markIds(roundIdBytes, entryIdBytes) {
+    return this.db.prepare('SELECT checkpoint_id FROM checkpoints WHERE round_id = ? AND entry_id = ? ORDER BY tick')
+      .all(roundIdBytes, entryIdBytes).map((r) => new Uint8Array(r.checkpoint_id));
+  }
+
   startLine(roundIdBytes, entryIdBytes) {
     const row = this.get(roundIdBytes);
     const e = this.db.prepare('SELECT contract FROM entries WHERE entry_id = ?').get(entryIdBytes);

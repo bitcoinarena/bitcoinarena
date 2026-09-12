@@ -14,6 +14,8 @@ import { ReplayPool } from './pool.js';
 import { SIGNED_RECEIPT_BYTES } from '../../protocol/src/receipt.js';
 import { resultFrom, signResult, verifiedFinal, runId } from './verdict.js';
 import { stoppedOutcome } from '../../protocol/src/first-mark.js';
+
+let retryJobs = 0;                     // each re-tried close is its own pool job
 import { encodeTranscript, transcriptHash as hashOfTranscript } from '../../protocol/src/transcript.js';
 import {
   encodeTranscriptPosting, transcriptPostingId, joinSignedPosting, splitSignedPosting, decodeTranscriptPosting,
@@ -262,6 +264,23 @@ export class Verifier {
     try { canonical = this.round.canonicalTranscript(roundIdBytes, entryId); }
     catch (err) { noCanonical = err.message; }
 
+    // A SEAT THAT COULD NOT REACH A PEER WHOSE RECEIPTS COULD LENGTHEN THE
+    // RECEIPTED TRANSCRIPT cannot know that transcript, so it signs nothing and
+    // waits: the finality watch tries the close again (retryClose). Measured on
+    // the Daily (round a09ce9a5): seat B down at the end, seat A signed a played
+    // run over the one mark it held B's receipt of, seat B later signed the same
+    // run over all 94 - two transcripts, never 2 of 2, stuck. A peer whose
+    // receipts could not change it (the prefix already whole, or too few seats
+    // down to carry the next mark) stops nothing. An entry with no mark here
+    // waits while any seat is down: that seat may hold the first mark.
+    const carried = this.carried.get(`${hex(roundIdBytes)}:${hex(entryId)}`);
+    const down = carried ? carried.down.length : 0;
+    const noMarkHere = !this.round.firstMarkHeld(roundIdBytes, entryId);
+    if (down && (noMarkHere ? !this.round.entryVoid(entryId) && !this.round.startForfeit(entryId)
+      : this.#mightGrow(roundIdBytes, entryId, down)))
+      return { entryId, stored: false, waiting: true,
+        why: `waiting on ${down} seat(s): ${carried.down.join('; ').slice(0, 160)}${noCanonical ? ` - ${noCanonical}` : ''}` };
+
     if (!canonical && this.#neverStarted(roundIdBytes, entryId)) {
       const ruled = stoppedOutcome({ receiptedMarks: 0, deadlinePassed: true });
       return this.#sign({ roundIdBytes, entryId, entry, contract,
@@ -282,6 +301,23 @@ export class Verifier {
    * - a seat that is down may hold the first mark, and a receipt this seat
    * could not take is a mark it does not hold. Any doubt is no FORFEIT.
    */
+  /**
+   * COULD SEATS THIS CLOSE COULD NOT REACH LENGTHEN THE RECEIPTED TRANSCRIPT?
+   * The first mark this seat holds that is short of the round's receipts
+   * decides: with `down` more receipts it would be carried. Every mark carried
+   * already, nothing a missing seat holds can lengthen the prefix of marks here.
+   */
+  #mightGrow(roundIdBytes, entryId, down) {
+    const line = this.round.startLine(roundIdBytes, entryId);
+    if (!line) return false;
+    for (const id of this.round.markIds(roundIdBytes, entryId)) {
+      const n = this.round.receiptCount(id);
+      if (n >= line.needed) continue;
+      return n + down >= line.needed;
+    }
+    return false;
+  }
+
   /** The empty receipted transcript of an entry that never started: what its FORFEIT is signed over and posted as. */
   #unstarted(roundIdBytes, entryId) {
     return { roundId: new Uint8Array(roundIdBytes), entryId: new Uint8Array(entryId), batches: [], marks: [] };
@@ -358,6 +394,38 @@ export class Verifier {
           .map((d) => this.gather(roundIdBytes, d.entryId))),
       }));
     return this.settling;
+  }
+
+  /**
+   * THE CLOSE, ONCE MORE, FOR A RUN THIS SEAT COULD NOT SIGN AT ITS CLOSE
+   * (M3.3-34, the Daily's close). A seat whose peer was down or unreachable at
+   * the close could not pull that peer's receipts, so it could neither form the
+   * receipted transcript of a run that played nor tell that no seat held a
+   * walk-away's first mark - it signed nothing, and nothing asked again.
+   * Measured: both runs silent at the live seat. The finality watch calls this
+   * on its cadence: the cheap pull first, and only once every peer answered,
+   * the same replay and signature the close makes. Until then it is waiting -
+   * never a refund, never a VOID.
+   */
+  async retryClose(roundIdBytes, entryIdBytes) {
+    const row = this.round.get(roundIdBytes);
+    if (!row) return { entryId: entryIdBytes, stored: false, why: 'no such round' };
+    const contract = decodeRoundContract(new Uint8Array(row.contract));
+    const found = this.round.entriesOf(roundIdBytes).find((e) => hex(e.entryId) === hex(entryIdBytes));
+    if (!found) return { entryId: entryIdBytes, stored: false, why: 'no such entry in that round' };
+    const beacon = beaconFor(this.randomnessFor, contract, roundIdBytes, found.entry, entryIdBytes, this.chainFor);
+    if (!beacon.ok) return { entryId: entryIdBytes, stored: false, why: beacon.why };
+    const carried = await this.carryReceipts(roundIdBytes, entryIdBytes);
+    // THE CHEAP ANSWER FIRST: still waiting on a seat that matters, no replay.
+    const noMarkHere = !this.round.firstMarkHeld(roundIdBytes, entryIdBytes);
+    if (carried.down.length && (noMarkHere || this.#mightGrow(roundIdBytes, entryIdBytes, carried.down.length)))
+      return { entryId: entryIdBytes, stored: false, waiting: true,
+        why: `waiting on ${carried.down.length} seat(s): ${carried.down.join('; ').slice(0, 160)}` };
+    const options = { roundRandomness: beacon.hash };
+    const answer = await this.pool.submit({ key: `${hex(roundIdBytes)}:${hex(entryIdBytes)}:retry:${++retryJobs}`,
+      objected: this.round.objected(roundIdBytes, entryIdBytes),
+      transcript: this.round.transcript(roundIdBytes, entryIdBytes), entry: found.entry, options });
+    return this.#keep({ roundIdBytes, entryId: entryIdBytes, entry: found.entry, contract, answer, options });
   }
 
   /**

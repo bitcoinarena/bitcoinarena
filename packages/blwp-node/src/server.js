@@ -672,6 +672,23 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
    */
   const finalityTimers = new Set();
 
+  // WHERE THIS SEAT'S CLOSE OF A RUN STANDS, for a run it could not sign at its
+  // close (M3.3-34): HOLDING - its peer down or unreachable, the close tried
+  // again on the finality watch's cadence - until SIGNED. Served at /closing.
+  // Never a refund and never a VOID: a seat that cannot reach its peer can
+  // neither form the receipted transcript nor rule out a first mark it lacks.
+  const closing = new Map();          // `${round}:${entry}` -> state
+  const holding = (rid, eid, { why = null, tried = false, signed = false } = {}) => {
+    const k = `${toHex(rid)}:${toHex(eid)}`;
+    const s = closing.get(k) || { round: toHex(rid), entry: toHex(eid), state: 'HOLDING', attempts: 0,
+      sinceMs: Date.now(), lastWhy: null, signedMs: null };
+    if (tried) s.attempts++;
+    if (why) s.lastWhy = String(why).slice(0, 220);
+    if (signed) { s.state = 'SIGNED'; s.signedMs = Date.now(); }
+    closing.set(k, s);
+    return s;
+  };
+
   /**
    * ONE SUSPENDED RUN'S RE-RUN, AND THE SLASH PROOFS ONCE IT IS AUTHORITATIVE.
    * Re-runs (13A) while SUSPENDED - this seat's own once, the other seats'
@@ -802,6 +819,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     let until = Date.now() + windowMs;
     const gathered = [...((closed && closed.gathered) || [])];
     const stored = ((closed && closed.replayed) || []).filter((r) => r && r.stored);
+    // A RUN THIS SEAT COULD NOT SIGN AT ITS CLOSE - a peer down or unreachable -
+    // is tried again on this cadence (verifier.retryClose), HOLDING meanwhile.
+    // A run already decided otherwise (ENTRY_VOID, a late start) is not.
+    const unsigned = ((closed && closed.replayed) || [])
+      .filter((r) => r && !r.stored && r.entryId && !round.entryVoid(r.entryId) && !round.startForfeit(r.entryId));
+    for (const u of unsigned) holding(roundIdBytes, u.entryId, { why: u.why });
     let latest = money;
     const isFinal = (eid) => gathered.some((g) => g && g.ok && g.final && toHex(g.entryId) === toHex(eid));
     const tableShort = () => !!(latest && latest.owed && latest.owed.ok === false
@@ -835,9 +858,28 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       finalityTimers.delete(timer);
       if (shuttingDown) return;
       stretch();
+      for (const u of [...unsigned]) {
+        let r;
+        try { r = await verifier.retryClose(roundIdBytes, u.entryId); } catch (e) { r = { stored: false, why: e.message }; }
+        if (shuttingDown) return;
+        const s = holding(roundIdBytes, u.entryId, { why: r && r.stored ? `signed ${r.outcome}/${r.score}` : r && r.why,
+          tried: true, signed: !!(r && r.stored) });
+        if (r && r.stored) {
+          unsigned.splice(unsigned.indexOf(u), 1);
+          stored.push(r);
+          const at = closed.replayed.findIndex((x) => x && toHex(x.entryId) === toHex(u.entryId));
+          if (at >= 0) closed.replayed[at] = r;
+          console.log(`[close] ${toHex(u.entryId).slice(0, 16)} signed ${r.outcome}/${r.score} after ${s.attempts} attempt(s)`);
+        } else if (s.attempts === 1 || s.attempts % 30 === 0) {
+          console.log(`[close] ${toHex(u.entryId).slice(0, 16)} HOLDING (attempt ${s.attempts}): ${String(r && r.why).slice(0, 140)}`);
+        }
+      }
       const short = stored.filter((r) => !isFinal(r.entryId));
-      if (!short.length && !tableShort() && !settleShort() && !waitingOn().length && !payoutShort() && !suspendedShort()) return;
+      if (!short.length && !unsigned.length && !tableShort() && !settleShort() && !waitingOn().length && !payoutShort() && !suspendedShort()) return;
       if (Date.now() >= until) {
+        for (const u of unsigned)
+          holding(roundIdBytes, u.entryId, { why: 'the watch\'s window passed with a peer still silent: not signed here - not a refund, not a VOID' });
+        if (unsigned.length) console.log(`[close] ${toHex(roundIdBytes).slice(0, 16)} ${unsigned.length} run(s) still HOLDING at the window's end`);
         console.log(`[verify] ${toHex(roundIdBytes).slice(0, 16)} the objection window passed with `
           + `${short.length} run(s) short of final${tableShort() ? ' and the table short' : ''}`
           + `${settleShort() ? ' and a lost stake still unsettled' : ''}`
@@ -1847,6 +1889,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (!got.ok) return text(res, 409, got.why);
         res.writeHead(200, { 'content-type': 'application/octet-stream', ...CORS });
         return res.end(Buffer.from(encodeShare(got.share)));
+      }
+
+      // WHERE THIS SEAT'S CLOSE OF EACH RUN STANDS (M3.3-34): only runs it could
+      // not sign at its close - HOLDING while a peer is down or unreachable and
+      // the close is tried again, SIGNED once it is. Never a refund or a VOID.
+      if (req.method === 'GET' && url.pathname === '/closing') {
+        const rid = (url.searchParams.get('round') || '').toLowerCase();
+        res.writeHead(200, { 'content-type': 'application/json', ...CORS });
+        return res.end(JSON.stringify([...closing.values()].filter((s) => !rid || s.round === rid)));
       }
 
       if (req.method === 'GET' && url.pathname === '/results') {

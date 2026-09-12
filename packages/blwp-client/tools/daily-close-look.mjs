@@ -130,6 +130,45 @@ try {
   const pChip = (await stateOf(P)).chip;
   say({ step: 'played', chip: pChip });
 
+  // SEAT B DOWN ACROSS THE ROUND'S END (DOWN_B_PID = the launcher's pid: SIGUSR1
+  // takes seat B down, SIGUSR2 brings it back): from 15 s before the end to 75 s
+  // after it. Seat A must close on its own clock, hold what it cannot sign, and
+  // sign once B is back - no Void, no refund.
+  const launcher = Number(env.DOWN_B_PID || 0);
+  if (launcher) {
+    const daily0 = await (await fetch(new URL('daily.json', ROOT))).json();
+    const at = (ms) => wait(Math.max(0, Number(endAt) + ms - Date.now()));
+    const closingA = async () => { try { return await (await fetch(`${daily0.node[0]}/closing?round=${rid}`)).json(); } catch (e) { return e.message; } };
+    const publicA = async (player) => {
+      const e = entryOf(seats[0], rid, player);
+      const r = await fetch(`${daily0.node[0]}/results?round=${rid}&entry=${toHex(e.entryId)}`);
+      return Number(r.headers.get('x-results'));
+    };
+    const atA = () => ({ P: view(seats[0], rid, entryOf(seats[0], rid, p.player).entryId), W: view(seats[0], rid, entryOf(seats[0], rid, w.player).entryId) });
+    await at(-15000);
+    process.kill(launcher, 'SIGUSR1');
+    say({ step: 'seat B down', msBeforeTheEnd: Number(endAt) - Date.now() });
+    let closedAtA = null;
+    for (let t = Date.now(); Date.now() - t < 40000 && closedAtA === null; await wait(250)) {
+      const row = seats[0].get(fromHex(rid));
+      if (row && row.state === 1) closedAtA = Number(row.closed_ms);
+    }
+    await at(20000);
+    const look = await browse(ROOT);
+    tabs.push(look);
+    const sl = await until(look, 30000, (x) => Array.isArray(x.lobby) && x.lobby.length > 0);
+    say({ step: 'B down, 20 s after the end', seatAClosedMsAfterTheEnd: closedAtA === null ? null : closedAtA - Number(endAt),
+      closingAtA: await closingA(), atA: atA(), publicResultsAtA: { P: await publicA(p.player), W: await publicA(w.player) },
+      thisRoundInTheLobby: (sl.lobby || []).some((r) => r.id === rid),
+      lobbyRows: (sl.lobby || []).map((r) => ({ id: r.id.slice(0, 16), agree: `${r.seatsAgree}/${r.needed}`, join: !!r.join })) });
+    look.close();
+    await at(75000);
+    say({ step: 'B down, 75 s after the end', closingAtA: await closingA(), atA: atA(),
+      publicResultsAtA: { P: await publicA(p.player), W: await publicA(w.player) } });
+    process.kill(launcher, 'SIGUSR2');
+    say({ step: 'seat B back' });
+  }
+
   // NOBODY CLOSES IT: wait for both seats to close it, sign both runs and reach FINAL.
   const started = Date.now();
   let got = null;
