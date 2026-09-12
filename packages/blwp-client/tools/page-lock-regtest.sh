@@ -30,7 +30,6 @@ UP=$(PROBE_DIR=$P SETUP_ONLY=1 FEDIMINT_BIN=$F FEDIMINT_HOME=$FH bash $NODE_TOOL
 echo "$UP" | grep -q FEDERATION_READY || { echo "$UP" | tail -15; echo "THE FEDERATION DID NOT COME UP"; exit 1; }
 INVITE=$(echo "$UP" | grep -oE 'invite=[^ ]+' | tail -1 | cut -d= -f2-)
 echo "federation up in $(( $(date +%s) - t )) s, invite ${INVITE:0:24}..."
-node $NODE_TOOLS/stake-lock-keys.mjs $P/keys.json >/dev/null || { echo "NO KEYS"; exit 1; }
 PROBE=$P INVITE=$INVITE LND_BIN=$L LOCK_BIN=$LOCK_BIN \
   node $HERE/page-lock.mjs "$@" > $P/page-lock.log 2>&1
 code=$?

@@ -447,9 +447,17 @@
         // key short of it refuses the seat by name - one seat serving its own
         // key must not be the key a stake is locked to.
         if (BLWPCLIENT.roundLocks(named.round)) {
-          const att = await BLWPCLIENT.attestedClaimKey({
+          // WAITED FOR, A LITTLE: the seats make the key when they seat the
+          // round, and a link opened at once can find one seat still making it.
+          const stageNow = document.getElementById('stage');
+          const att = await BLWPCLIENT.awaitAttestedClaimKey({
             round: Object.assign({}, named.round, { id: BLWPCLIENT.fromHex(named.roundIdHex) }),
             seats: seats.seats, nodes: named.nodes, curve: window.BLWP_CURVE,
+          }, {
+            onWait: (short) => {
+              if (stageNow) stageNow.textContent = 'Waiting for the round\'s seats to make its claim key: '
+                + String(short.attested || 0) + ' of ' + String(short.needed || '?') + ' …';
+            },
           });
           if (!att.ok) {
             window.BLWP_SEAT_REFUSED = att.why;

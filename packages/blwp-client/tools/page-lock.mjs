@@ -41,7 +41,8 @@ copyFileSync(join(dist, 'blwp_lock_client.js'), join(glueDir, 'blwp_lock_client.
 const glue = await import(join(glueDir, 'blwp_lock_client.mjs'));
 await glue.default({ module_or_path: readFileSync(join(dist, 'blwp_lock_client_bg.wasm')) });
 const federationId = fromHex(glue.LockClient.federationIdOf(env.INVITE));
-const claimPk = fromHex(JSON.parse(readFileSync(`${P}/keys.json`, 'utf8')).claimPk);
+// NO CLAIM KEY IS HANDED TO THE SEATS: they make the round's key themselves
+// when they seat it, and the page attests and locks to that key.
 const port = stakeLockPort({ bin: env.LOCK_BIN, dataDir: `${P}/client` });
 const lncliPay = (invoice) => new Promise((done) => execFile(`${env.LND_BIN}/lncli`,
   [`--lnddir=${P}/alice`, '--rpcserver=127.0.0.1:30107', '--network=regtest', 'payinvoice', '--force', invoice],
@@ -186,7 +187,7 @@ async function one({ label, dir }, i) {
   const base = Number(env.PORT_BASE || 18361);
   const round = await standUpRound({ host: '127.0.0.1', portA: base + 2 * i, portB: base + 1 + 2 * i,
     page: `http://127.0.0.1:${page.port}`, stakeMsat: 1000000n, federationId, invite: env.INVITE,
-    seat: { claimKeyFor: () => claimPk, stakeLocks: port } });
+    seat: { stakeLocks: port } });
   const b = await browse(round.url);
   const t0 = Date.now();
   const timings = {};

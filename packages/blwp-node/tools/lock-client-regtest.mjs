@@ -51,6 +51,8 @@ if (typeof globalThis.window === 'undefined') globalThis.window = globalThis;
 const require = createRequire(import.meta.url);
 const { LockClient } = require(`${env.WASM_PKG}/blwp_lock_client.js`);
 
+// HARNESS KEY (W1a): the seats are handed the rehearsal's claim key. The page
+// rehearsal (blwp-client/tools/page-lock.mjs) uses the seats' own.
 const claimPk = fromHex(JSON.parse(readFileSync(`${P}/keys.json`, 'utf8')).claimPk);
 const port = stakeLockPort({ bin: env.LOCK_BIN, dataDir: `${P}/client` });
 const seats = [];

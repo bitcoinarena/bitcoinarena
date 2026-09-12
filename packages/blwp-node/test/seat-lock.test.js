@@ -22,6 +22,8 @@ import { toHex } from '../../protocol/src/hash.js';
 import { b32 } from './window-fixture.js';
 import { CLAIM, seatedWithLock } from './lock-fixture.js';
 
+// HARNESS KEY: the seat is handed its claim key, to measure the lock check in
+// isolation. The shipping path makes its own: claim-key-own.test.js.
 const WITH_KEY = { claimKeyFor: () => CLAIM };
 const handOver = (s, fields) => fetch(`http://127.0.0.1:${s.d.port}/lock?entry=${toHex(s.eid)}`,
   { method: 'POST', body: JSON.stringify(lockFieldsToJson(fields)) });

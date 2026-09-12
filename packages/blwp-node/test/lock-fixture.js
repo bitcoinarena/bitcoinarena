@@ -19,6 +19,9 @@ import { toHex, sha256 } from '../../protocol/src/hash.js';
 import { b32, rand, STAKE, WINDOW_MS, contractFor, opts } from './window-fixture.js';
 
 const secretScalar = () => { let p = rand(32); while (scalarFrom32(p) >= FIELD) p = rand(32); return p; };
+// HARNESS KEY: a claim key the tests hand a seat (`claimKeyFor`), to measure the
+// lock check in isolation. The shipping path's seats make their own
+// (claim-key-own.test.js).
 export const CLAIM = Uint8Array.from([0x02, ...b32(0xc1)]);
 
 /** A federation port that holds locks by outpoint and counts every ask. */

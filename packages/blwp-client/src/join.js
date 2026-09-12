@@ -321,6 +321,27 @@ export async function attestedClaimKey({ round, seats, nodes, curve, fetcher = f
  * (2 of 2, 5 of 7). It was its own copy - "2 on two slots, 5 otherwise" - and
  * counted a stake committed on committees the node has no threshold for.
  */
+/**
+ * THE ATTESTED CLAIM KEY, WAITED FOR - A LITTLE. The seats make the round's
+ * claim key themselves when they seat it, and one of them can need a second
+ * run: measured on a Daily 2-of-2 paying round, one seat held the key 266 ms
+ * after the round was up and the other at 1582 ms, and a page opened on the
+ * link at once counted "1 of 2" and refused the seat. So the page asks again,
+ * every `everyMs`, for up to `waitMs`, and says each short count through
+ * `onWait`. The rule is unchanged: nothing short of the round's threshold is
+ * ever accepted, and at the end the last answer - a refusal - is returned.
+ */
+export async function awaitAttestedClaimKey(args, { waitMs = 30000, everyMs = 1000, onWait = () => {},
+  ask = attestedClaimKey, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), now = () => Date.now() } = {}) {
+  const until = now() + waitMs;
+  for (;;) {
+    const got = await ask(args);
+    if (got.ok || now() + everyMs > until) return got;
+    onWait(got);
+    await sleep(everyMs);
+  }
+}
+
 export function stakeSeenNeeded(contract) {
   return receiptsNeeded(contract?.settlementSlots ?? contract?.nodes?.length);
 }

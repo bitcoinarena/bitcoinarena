@@ -520,6 +520,66 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       return held && held.ok ? held.pool.groupPublicKey : null;
     } catch { return null; }
   }
+
+  /**
+   * THE ROUND'S CLAIM KEY, MADE BY ITS OWN SEATS WHEN THEY SEAT IT.
+   *
+   * Measured before (TASKBOOK, W5 step 1): on a Daily 2-of-2 seated from its
+   * census with no key injected, neither seat held a group key and /claim-key
+   * answered 409 on both - nothing in the daemon ran the key generation, and a
+   * run by hand found no peer ("1 of the committee's 2 seats have
+   * contributed"). Every lock rehearsal had injected a key. So a seat that
+   * seats a round runs its half of the key generation with the same seats
+   * `claimKeyOf` reads, reaching the others at the endpoints the census gives
+   * (the rule the verify and payout paths use). A seat that seats first holds
+   * only its own contribution until the other deals, and running twice is
+   * harmless by design, so it runs again - every second while the round's
+   * entries are open, and at least `CLAIM_KEY_MIN_TRIES` times - until the key
+   * exists. A harness that hands a key (`claimKeyFor`) makes none.
+   */
+  const CLAIM_KEY_EVERY_MS = 1000;
+  const CLAIM_KEY_MIN_TRIES = 30;
+  const claimKeyRuns = new Set();
+  function makeClaimKey(rid) {
+    if (claimKeyFor || !dkg.canDeal) return;
+    const key = toHex(rid);
+    const row = round.get(rid);
+    if (!row || claimKeyRuns.has(key)) return;
+    const contract = decodeRoundContract(new Uint8Array(row.contract));
+    const seats = contract.nodes;
+    // A ROUND POSTED AGAIN - a player's session opens it too - to a seat that
+    // already holds its key makes nothing: measured, the key was made twice.
+    if (dkg.seatFor(seats).ok) return;
+    const peersOf = () => {
+      const found = new Set();
+      for (const role of ['settlement', 'game']) {
+        const picked = roster.committeeFor(rid, role);
+        if (picked.ok) for (const u of endpointsOf(picked.committee, round.pubkey)) found.add(u);
+      }
+      return [...found];
+    };
+    claimKeyRuns.add(key);
+    let tries = 0;
+    const attempt = async () => {
+      if (shuttingDown) { claimKeyRuns.delete(key); return; }
+      let said;
+      try { said = await dkg.run(seats, peersOf()); } catch (e) { said = { ok: false, why: e.message }; }
+      tries++;
+      if (dkg.seatFor(seats).ok) {
+        claimKeyRuns.delete(key);
+        console.log(`[claim-key] ${key.slice(0, 16)}: this seat holds the round's key (${tries} run(s))`);
+        return;
+      }
+      if (tries >= CLAIM_KEY_MIN_TRIES && Date.now() >= Number(contract.entryCloseMs)) {
+        claimKeyRuns.delete(key);
+        console.error(`[claim-key] ${key.slice(0, 16)}: no key after ${tries} runs - ${said && said.why}`);
+        return;
+      }
+      const t = setTimeout(attempt, CLAIM_KEY_EVERY_MS);
+      if (t.unref) t.unref();
+    };
+    attempt();
+  }
   function watchRerun(rid, eid) {
     const row = round.get(rid);
     if (!row) return;
@@ -949,6 +1009,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (chainFor) {
           const seated = roster.seatRound(id);
           if (!seated.ok) return text(res, 409, seated.why);
+          // AND ITS SEATS MAKE ITS CLAIM KEY, in the background (see makeClaimKey).
+          makeClaimKey(id);
         }
         return bytes(res, 201, id);
       }

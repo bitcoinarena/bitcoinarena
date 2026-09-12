@@ -36,7 +36,11 @@ const ROOT = new URL('../../../', import.meta.url).pathname;
 const CLAIM = Uint8Array.from([0x02, ...b32(0xc1)]);
 const ROGUE = Uint8Array.from([0x03, ...b32(0xe7)]);
 
-/** A paying round that names a federation, and its seats' daemons; `keyOf(i)` is the claim key seat i holds. */
+/**
+ * A paying round that names a federation, and its seats' daemons; `keyOf(i)` is the claim key seat i holds.
+ * HARNESS KEY: each seat is handed its key, so a disagreeing or rogue seat can be staged. The shipping
+ * path, where the seats make the key themselves, is blwp-node/test/claim-key-own.test.js.
+ */
 async function federationRound({ seats = 2, keyOf = () => CLAIM, federationId = b32(0xfe) } = {}) {
   const daemons = [];
   for (let i = 0; i < seats; i++)

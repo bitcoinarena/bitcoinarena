@@ -153,7 +153,7 @@ export class Dkg {
    * the whole committee has contributed. `combineShares` says so itself; this
    * is where the answer is kept.
    */
-  async finish(seats) {
+  async finish(seats, peers = this.peers) {
     const where = this.epochFor(seats);
     if (!where.ok) return where;
     const held = this.round.epoch(where.epochId);
@@ -195,7 +195,11 @@ export class Dkg {
     const own = this.agreementBytes(where.epochId);
     if (!own.ok) return own;
     const statements = [splitSignedAgreement(own.bytes)];
-    for (const peer of this.peers) {
+    // THE SAME PEERS THE CONTRIBUTIONS CAME FROM. Measured: a run handed the
+    // committee's census peers exchanged both contributions and then asked
+    // nobody for their agreement - "1 of the committee's 2 seats have said which
+    // contributions they combined" - because this read the daemon-wide list.
+    for (const peer of peers) {
       try {
         const r = await (this.fetcher || fetch)(`${peer.replace(/\/+$/, '')}/dkg-agreement?epoch=${toHex(where.epochId)}`);
         if (!r.ok) continue;
@@ -307,15 +311,17 @@ export class Dkg {
    * never start. Running it twice is harmless: the deal is made once and the
    * contributions are keyed by dealer.
    */
-  async run(seats) {
+  async run(seats, peers = this.peers) {
     const dealt = await this.deal(seats);
     if (!dealt.ok) return dealt;
     const bytes = encodeContribution(dealt.contribution);
     const id = toHex(dealt.contribution.epochId);
 
+    // THE PEERS OF THIS COMMITTEE, when the caller names them: a daemon on many
+    // rounds has one committee per round, read from each round's own census.
     const told = [];
     const refused = [];
-    for (const peer of this.peers) {
+    for (const peer of peers) {
       const said = await this.tell(`${peer.replace(/\/+$/, '')}/dkg?epoch=${id}`, bytes);
       if (said.ok) told.push(peer); else refused.push(`${peer}: ${said.why}`);
     }
@@ -323,7 +329,7 @@ export class Dkg {
     // AND ASK FOR THEIRS. A peer serves its own contribution for an epoch, so
     // this fills in whatever did not arrive by being pushed.
     const got = [];
-    for (const peer of this.peers) {
+    for (const peer of peers) {
       try {
         const r = await (this.fetcher || fetch)(`${peer.replace(/\/+$/, '')}/dkg?epoch=${id}`);
         if (!r.ok) { refused.push(`${peer}: ${r.status} ${(await r.text()).trim()}`); continue; }
@@ -333,7 +339,7 @@ export class Dkg {
       } catch (e) { refused.push(`${peer}: ${e.message}`); }
     }
 
-    const done = await this.finish(seats);
+    const done = await this.finish(seats, peers);
     return { ok: done.ok, told: told.length, got: got.length, refused, ...done };
   }
 }
