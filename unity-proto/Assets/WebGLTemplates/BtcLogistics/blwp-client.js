@@ -2663,6 +2663,13 @@ function remainderOrder(roundId, entries) {
  * hold the node REFUSES TO SIGN rather than signing something inconsistent -
  * one assertion that catches a whole class of mistakes for free.
  */
+/**
+ * A QUALIFIER (§18): DELIVERED and score >= min_score. One rule, read by the
+ * payout table, by the preimage release and by the forfeit (W5b) - a Delivered
+ * run below the score is not a qualifier; it keeps its stake by the refund.
+ */
+const isQualifier = (e, minScore = 0) => e.outcome === DELIVERED && e.score >= minScore;
+
 function computePayoutTable({ roundId, entries, minScore = 0 }) {
   const net = new Map(entries.map((e) => [e, netStakeMsat(e)]));
 
@@ -2675,7 +2682,7 @@ function computePayoutTable({ roundId, entries, minScore = 0 }) {
   // and simply does not place. Disqualifying them would move their stake into
   // the pool, which is a levy on a legal strategy rather than balance.
   const qualifiers = activated
-    .filter((e) => e.outcome === DELIVERED && e.score >= minScore)
+    .filter((e) => isQualifier(e, minScore))
     .sort((a, b) => {
       if (b.score !== a.score) return b.score - a.score;
       // ties decided by the same rule the remainder uses, so the order is not

@@ -76,6 +76,7 @@ import { Payouts, PAYOUT_QUEUED, PAID, PAID_IN_PART, NOTHING_OWED } from './payo
 import { PoolSigning } from './pool-signing.js';
 import { PoolWatch } from './pool-watch.js';
 import { Dkg } from './dkg.js';
+import { Forfeit } from './forfeit.js';
 import { decodeUtxo, decodeCommitments, encodeCommitments, encodeShare, UTXO_BYTES } from './pool-wire.js';
 import { SIGNED_TABLE_BYTES } from './payout-table.js';
 
@@ -327,6 +328,17 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const dkg = new Dkg(round, {
     curve: poolCurve, random: (n) => new Uint8Array(randomBytes(n)),
     peers, fetcher: (u, o) => fetch(u, o),
+  });
+
+  // THE SEATS' FORFEIT OF A QUALIFIER'S STAKE LOCK (W5b), with this seat's share
+  // of the round's claim key. Its peers are the round's settlement seats, from
+  // the census; a node with none (an in-process test) falls back to its DKG's.
+  const forfeits = new Forfeit(round, {
+    dkg, port: stakeLocks, curve: poolCurve, random: (n) => new Uint8Array(randomBytes(n)),
+    peersFor: (rid) => {
+      const picked = roster.committeeFor(rid, 'settlement');
+      return picked.ok ? endpointsOf(picked.committee, round.pubkey) : (dkg.peers || []);
+    },
   });
 
   // AND WHICH OUTPUT THE POOL IS IN, asked of the chain rather than
@@ -706,7 +718,6 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (!(g && g.ok && g.final)) continue;
       try { await rerunAndFile(roundIdBytes, g.entryId); } catch (e) { console.error(`[rerun] ${e.message}`); }
     }
-    if (!custody.reaches) return { ok: false, why: 'this node reaches no Lightning, so it settles nothing' };
     const row = round.get(roundIdBytes);
     if (!row) return { ok: false, why: 'no such round' };
     const contract = decodeRoundContract(new Uint8Array(row.contract));
@@ -749,6 +760,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           closesAtMs: s.closesAtMs === undefined ? null : Number(s.closesAtMs), why: s.why };
       });
     const suspended = entries.filter((e) => stateOf(e.entryId) === SUSPENDED).map((e) => toHex(e.entryId));
+    // A SEAT THAT REACHES NO LIGHTNING - a lock round's seat - holds no invoice
+    // to act on, and its runs still wait: to be posted, and for their window;
+    // the forfeit waits on FINAL. So what is waiting is handed back and the
+    // finality watch keeps posting and gathering. Measured before (W5b): this
+    // returned first, the watch ended after one pass, and the seat that posted
+    // first never gathered the other's posting - "1 of 2 settlement seats have
+    // posted", never FINAL, no forfeit.
+    if (!custody.reaches) return { ok: false, why: 'this node reaches no Lightning, so it settles nothing', waiting, suspended };
     const done = await custody.settleHeldInvoices({
       roundId: roundIdBytes, entries, minScore: contract.minScore, finalFor: isFinal,
     });
@@ -1508,6 +1527,50 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           return text(res, 400, 'a stake lock is asked for by a round id and a 33-byte refund key');
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
         return res.end(JSON.stringify(round.stakeLocksFor(new Uint8Array(rid), refund)));
+      }
+
+      // THE COMMITTEE'S FORFEIT OF A QUALIFIER'S STAKE LOCK (§23.2 row 1, W5b).
+      // Between seats: round one (a nonce commitment), round two (a signature
+      // share over one commitment list), and the combined signature handed
+      // over. Each seat answers only for a forfeit it rebuilt from its own
+      // verified lock, final and qualifying by its own record (forfeit.js).
+      if (req.method === 'POST' && ['/forfeit-commit', '/forfeit-share', '/forfeit-signature'].includes(url.pathname)) {
+        const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
+        const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
+        if (rid.length !== 32 || eid.length !== 32) return text(res, 400, 'a forfeit is asked for by a round id and an entry id');
+        const r8 = new Uint8Array(rid);
+        const e8 = new Uint8Array(eid);
+        if (url.pathname === '/forfeit-commit') {
+          const got = await forfeits.commit(r8, e8);
+          if (!got.ok) return text(res, got.status || 409, got.why);
+          res.writeHead(200, { 'content-type': 'application/octet-stream', ...CORS });
+          return res.end(Buffer.from(encodeCommitments([got.commitment])));
+        }
+        if (url.pathname === '/forfeit-share') {
+          let list;
+          try { list = decodeCommitments(new Uint8Array(await read(req))); } catch (e) { return text(res, 400, e.message); }
+          const got = await forfeits.share(r8, e8, list);
+          if (!got.ok) return text(res, got.status || 409, got.why);
+          res.writeHead(200, { 'content-type': 'application/octet-stream', ...CORS });
+          return res.end(Buffer.from(encodeShare(got.share)));
+        }
+        const signature = new Uint8Array(await read(req));
+        if (signature.length !== 64) return text(res, 400, 'a forfeit is a 64-byte signature');
+        const got = await forfeits.take(r8, e8, signature);
+        return got.ok ? text(res, 201, 'forfeit kept') : text(res, got.status || 409, got.why);
+      }
+
+      // AND IN PUBLIC: the forfeit of a qualifier's lock - kept, or made now with
+      // the other seats if it is due. A loser's, or one inside its window, is 409.
+      if (req.method === 'GET' && url.pathname === '/forfeit') {
+        const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
+        const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
+        if (rid.length !== 32 || eid.length !== 32) return text(res, 400, 'a forfeit is asked for by a round id and an entry id');
+        const got = await forfeits.forfeit(new Uint8Array(rid), new Uint8Array(eid));
+        if (!got.ok) return text(res, got.status || 409, got.why);
+        res.writeHead(200, { 'content-type': 'application/json', ...CORS });
+        return res.end(JSON.stringify({ signature: toHex(got.signature), contractId: toHex(got.message),
+          claimPk: toHex(got.claimPk), kept: !!got.kept }));
       }
 
       // THIS SEAT'S SIGNED CLAIM KEY (v4.6.2 §23.1 step 0, F3): "each seat signs

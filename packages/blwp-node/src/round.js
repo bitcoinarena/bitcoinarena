@@ -1490,6 +1490,17 @@ export class Round {
       .filter((l) => String(l.fields.refundPk).toLowerCase() === String(refundHex).toLowerCase());
   }
 
+  /** The committee's forfeit of a qualifier's lock, as this seat keeps it (W5b). */
+  putForfeit({ entryId, roundId, message, signature, claimPk }) {
+    this.db.prepare('INSERT OR IGNORE INTO forfeits (entry_id, round_id, message, signature, claim_pk, made_ms) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(Buffer.from(entryId), Buffer.from(roundId), Buffer.from(message), Buffer.from(signature), Buffer.from(claimPk), this.now());
+  }
+
+  forfeit(entryIdBytes) {
+    const r = this.db.prepare('SELECT message, signature, claim_pk, made_ms FROM forfeits WHERE entry_id = ?').get(Buffer.from(entryIdBytes));
+    return r ? { message: new Uint8Array(r.message), signature: new Uint8Array(r.signature), claimPk: new Uint8Array(r.claim_pk), madeMs: Number(r.made_ms) } : null;
+  }
+
   /** The entry a verified lock at this outpoint already stakes, or null: one lock is one seat. */
   stakeLockAt(outpoint) {
     const r = this.db.prepare('SELECT entry_id FROM stake_locks WHERE outpoint = ?')

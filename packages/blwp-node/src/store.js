@@ -473,6 +473,18 @@ export function openStore(path = ':memory:') {
       verified_ms  INTEGER NOT NULL
     );
 
+    -- A QUALIFIER'S STAKE LOCK, RELEASED (§23.2 row 1, W5b): the committee's
+    -- forfeit signature over the lock's contract id, which only the lock's
+    -- refund key can spend. The seat's record that it released the stake.
+    CREATE TABLE IF NOT EXISTS forfeits (
+      entry_id     BLOB PRIMARY KEY,
+      round_id     BLOB NOT NULL,
+      message      BLOB NOT NULL,
+      signature    BLOB NOT NULL,
+      claim_pk     BLOB NOT NULL,
+      made_ms      INTEGER NOT NULL
+    );
+
     -- WHAT THIS NODE KEEPS AS A RELAY: transcripts by their own hash, so any
     -- node can be one of a contract's publication_relays[] and serve nothing
     -- under a name its bytes do not have.

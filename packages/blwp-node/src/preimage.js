@@ -31,7 +31,7 @@ import { openMyShare, decodeHandout } from '../../protocol/src/handout.js';
 import { sealShare, openShare } from '../../protocol/src/seal.js';
 
 import { decodePlayerResult, splitSignedResult } from '../../protocol/src/result.js';
-import { settlementAction, SETTLE } from '../../protocol/src/payout.js';
+import { settlementAction, SETTLE, isQualifier } from '../../protocol/src/payout.js';
 import { resultFinality } from './finality.js';
 import { FINAL } from '../../protocol/src/objection.js';
 import { decodeRoundContract, decodeEntryContract } from '../../protocol/src/contracts.js';
@@ -133,8 +133,11 @@ export class Preimages {
     const mine = held.find((r) => toHex(r.nodePubkey) === toHex(this.round.pubkey));
     if (!mine) return { ok: false, why: 'this node signed no result for that run, so it releases nothing' };
     const result = decodePlayerResult(splitSignedResult(mine.bytes).body);
+    // A QUALIFIER IS DELIVERED AND AT THE SCORE (§18), the payout table's own
+    // rule - not the word Delivered alone. A Delivered run below it still
+    // cancels its hold (`settlementAction`): its stake was never at risk.
     const said = settlementAction({
-      outcome: result.outcome, qualifies: result.outcome === 'DELIVERED',
+      outcome: result.outcome, qualifies: isQualifier(result, decodeRoundContract(new Uint8Array(row.contract)).minScore),
       state: 'FINAL', shares: SHARES_NEEDED, signatures: SHARES_NEEDED,
     });
     if (said.action !== SETTLE)
