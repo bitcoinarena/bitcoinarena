@@ -225,6 +225,11 @@ try {
       hold: await Promise.all(entries.map(async (e) => (await d.custody.seenPaid(e.entryId)).state)),
       receipts: entries.map((e) => d.round.receipts(rid, e.entryId).count),
       batches: entries.map((e) => d.round.db.prepare('SELECT COUNT(*) n FROM batches WHERE round_id = ? AND entry_id = ?').get(rid, e.entryId).n),
+      // THE HONEST FIRST MARK (ENTRY_VOID's deadline): each player's join tick
+      // and the tick of the first mark this seat stored, as the page sent them.
+      joinTick: entries.map((e) => e.entry.joinTick),
+      firstMarkTick: entries.map((e) => d.round.db.prepare('SELECT MIN(tick) t FROM checkpoints WHERE round_id = ? AND entry_id = ?').get(rid, e.entryId).t),
+      markTicks: entries.map((e) => d.round.db.prepare('SELECT tick FROM checkpoints WHERE round_id = ? AND entry_id = ? ORDER BY tick').all(rid, e.entryId).map((r) => r.tick).slice(0, 8)),
     };
   }));
   const lightning = [...one.requests, ...two.requests].filter((q) => /\/(invoice|federation-invoice|stake-lock|lock)\b/.test(q.url) || /nostr|walletconnect/i.test(q.url));
