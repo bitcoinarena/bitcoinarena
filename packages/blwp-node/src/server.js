@@ -440,6 +440,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   function decideOutage(rid, eid, { evidenceKind, evidence = null }) {
     const had = round.entryVoid(eid);
     if (had) return had;
+    // THE PLAYER'S TWO FIRST MARKS ARE NOT AN OUTAGE (§13B, §13C). Measured: an
+    // on-time first mark to B while A was down and a late one to A - both seats
+    // recorded ENTRY_VOID and forfeited the lock to the player at once, a refund
+    // for the player's own split start. With the proof held here, no Void: the
+    // close's no-quorum rule makes it FORFEIT (verify #noQuorum).
+    if (round.equivocation(rid, eid).length) return null;
     const f = firstMarkMessage(rid, eid);
     const line = round.startLine(rid, eid);
     if (!f || !line) return null;

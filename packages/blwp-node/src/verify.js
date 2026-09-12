@@ -395,12 +395,23 @@ export class Verifier {
   async #noQuorum(roundIdBytes, entryId, contract, down) {
     const had = this.round.noQuorum(entryId);
     if (had) return { entryId, stored: false, decided: had.outcome, why: had.why };
-    if (down || this.round.entryVoid(entryId) || this.round.startForfeit(entryId)) return null;
+    if (down || this.round.entryVoid(entryId)) return null;
     const line = this.round.startLine(roundIdBytes, entryId);
     if (!line) return null;
+    // A LATE START IS FORFEIT 0 AT THE CLOSE (a390ca0) - unless the player also
+    // signed an on-time first mark somewhere: two first marks, one parent, the
+    // player's equivocation (§13B). Then no quorum is reachable and the rule's
+    // answer is FORFEIT, decided here after the window like every no-quorum
+    // outcome - never ENTRY_VOID (measured before: ENTRY_VOID and the lock
+    // forfeited to the player at both seats).
+    const lateHere = !!this.round.startForfeit(entryId);
+    const twoFirst = lateHere ? await this.#equivocationProven(roundIdBytes, entryId) : false;
+    if (lateHere && !twoFirst) return null;
     const held = this.round.firstMarkHeld(roundIdBytes, entryId);
     let evidence;
-    if (held) {
+    if (twoFirst) {
+      evidence = 'the player signed two first marks for this entry - one of them late (§13B)';
+    } else if (held) {
       let c;
       try { c = decodeMark(splitMark(held).body); } catch { return null; }
       if (c.tick > line.lastTick || !c.previousHash.every((x) => x === 0)) return null;

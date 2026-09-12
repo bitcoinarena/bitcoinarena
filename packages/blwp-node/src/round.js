@@ -971,6 +971,16 @@ export class Round {
         });
       }
     }
+    // AND TWO FIRST MARKS (M3, the guard case's leftover): the first mark this
+    // seat holds and a DIFFERENT one it refused as a late start. Both chain to
+    // nothing - one parent, two chains, 13B's second limb - and the pair is the
+    // same portable proof `provesEquivocation` checks. Measured before: without
+    // it both seats recorded ENTRY_VOID for the player's own split start.
+    const late = this.startForfeit(entryIdBytes);
+    const heldFirst = this.firstMarkHeld(roundIdBytes, entryIdBytes);
+    if (late && heldFirst && !same(late.mark, heldFirst))
+      out.push({ how: 'two first marks, one of them late', tick: late.markTick, stored: heldFirst, offered: late.mark,
+        seenMs: late.decidedMs });
     return out.sort((a, b) => a.tick - b.tick);
   }
 

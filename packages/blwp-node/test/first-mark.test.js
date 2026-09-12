@@ -384,6 +384,42 @@ test('late start at close (5): an on-time first mark at B and a late one at A, B
   } finally { await w.close(); }
 });
 
+// TWO FIRST MARKS ARE THE PLAYER'S EQUIVOCATION (§13B), NOT AN OUTAGE (M3, the
+// guard case's leftover): an on-time first mark to B while A was down, and a
+// late one to A. The player signed two chains from one parent, so the entry is
+// FORFEIT - never ENTRY_VOID, which would refund a stake the player chose to
+// split (§13C: "a player cannot manufacture a refund").
+test('late start at close (5b): an on-time first mark at B and a late one at A, both seats up at the close - FORFEIT, never ENTRY_VOID or a refund', async () => {
+  const w = await seats();
+  try {
+    const run = await seatAndBuild(w);
+    await w.downA();
+    for (const m of run.messages.slice(0, 2)) await say(w.b.port, m);      // on time, to B only (A down)
+    await w.upA();
+    for (const m of run.late) await say(w.a.port, m);                       // late, to A
+    await wait(1000);
+    const before = { bOnTime: holdsFirst(w.b, run), aLate: !!w.a.round.startForfeit(run.eid), bLate: !!w.b.round.startForfeit(run.eid),
+      offersAtB: w.b.round.firstMarkOffers(run.eid) };
+    await Promise.all([say(w.a.port, `close ${toHex(w.rid)}`), say(w.b.port, `close ${toHex(w.rid)}`)]);
+    await wait(WINDOW_MS + 3000);
+    const at2 = async (d) => {
+      const s = await signedAt(d, w, run);
+      const nq = d.round.noQuorum(run.eid);
+      return { entryVoid: s.entryVoid, results: s.results, finality: s.finality, noQuorum: nq ? nq.outcome : null, forfeit: s.forfeit };
+    };
+    const after = { a: await at2(w.a), b: await at2(w.b), lockHeld: lockHeldOf(w, run) };
+    console.log('  FACTS (late close 5b, two first marks):', JSON.stringify({ before, after }));
+    assert.equal(before.bOnTime, true, 'B does not hold the on-time first mark: not the case the test names');
+    assert.equal(before.aLate, true, 'A recorded no late start: not the case the test names');
+    for (const s of ['a', 'b']) {
+      assert.equal(after[s].entryVoid, false, `${s} recorded ENTRY_VOID: a refund for the player's own two first marks`);
+      assert.notEqual(after[s].forfeit, 200, `${s} forfeited the lock to the player`);
+      assert.ok(after[s].results.includes('FORFEIT/0') || after[s].noQuorum === 'FORFEIT', `${s} did not reach FORFEIT: ${JSON.stringify(after[s])}`);
+    }
+    assert.equal(after.lockHeld, true);
+  } finally { await w.close(); }
+});
+
 test('late start at close (7): a late mark after both seats have signed FORFEIT 0 changes nothing - the same result, the same transcript', async () => {
   const w = await seats();
   try {
