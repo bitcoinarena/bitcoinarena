@@ -46,6 +46,28 @@
     #err { display: none; color: #ff6b6b; max-width: 560px; text-align: center; font-size: 14px; }
     #err.show { display: block; }
 
+    /* THE LOBBY (M3.3-34): a link naming nodes and no round lists the rounds
+       they hold, over everything else, until the player joins one. Every row
+       is the client's line - checked against its contract - and Join is the
+       round's own link. Hidden unless the link is a lobby link. */
+    #blwp-lobby {
+      position: absolute; inset: 0; z-index: 30; display: none; overflow: auto;
+      padding: 32px 18px; background: rgba(13, 16, 20, 0.96);
+    }
+    #blwp-lobby.show { display: block; }
+    #blwp-lobby h2 { margin: 0 0 4px; font-size: 22px; }
+    #blwp-lobby .sub { color: #8b949e; font-size: 13px; margin-bottom: 18px; }
+    #blwp-lobby .row { display: flex; gap: 14px; align-items: center; max-width: 820px;
+      padding: 12px 14px; margin-bottom: 10px; border-radius: 6px; background: #161b22;
+      border-left: 3px solid #3a3f45; }
+    #blwp-lobby .row.free { border-left-color: #f7931a; }
+    #blwp-lobby .row .line { flex: 1; font-size: 14px; }
+    #blwp-lobby .row .id { color: #8b949e; font: 400 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }
+    #blwp-lobby a.join { color: #0d1014; background: #f7931a; padding: 8px 14px; border-radius: 4px;
+      font-weight: 700; text-decoration: none; white-space: nowrap; }
+    #blwp-lobby .none, #blwp-lobby .refused { color: #8b949e; font-size: 13px; max-width: 820px; }
+    #blwp-lobby .refused { margin-top: 14px; white-space: pre-wrap; }
+
     /* Who is in this round. Hidden until a round is named. Pointer-events none
        so it cannot steal the canvas. */
     #blwp-players {
@@ -85,6 +107,7 @@
 </head>
 <body>
   <canvas id="canvas" tabindex="-1"></canvas>
+  <div id="blwp-lobby"></div>
   <div id="blwp-players"></div>
   <div id="blwp-refund"></div>
   <div id="blwp-wallet">
@@ -620,6 +643,10 @@
       // A LOCK ROUND'S STAKE IS THE LOCK (W1b), not a hold invoice: no node
       // quotes it, and asking would be a question with no answer.
       if (window.BLWP_ROUND && BLWPCLIENT.roundLocks(window.BLWP_ROUND)) return;
+      // A FREE ROUND ASKS NOBODY FOR AN INVOICE (M3.3-34): there is no stake,
+      // no wallet and no Lightning in it. Measured before this: two free seats
+      // asked GET /invoice 37 times in 55 s, each refused by the node.
+      if (window.BLWP_ROUND && !BLWPCLIENT.roundPays(window.BLWP_ROUND)) return;
       // THE SEATED ENTRY, which carries its round id and session key. This
       // passed BLWP_ENTRY, which carries neither, so every quote threw
       // "expected 32 bytes, got nothing" in entryId and the button never lit -
@@ -837,9 +864,134 @@
         .catch(fail);
     };
 
-    joinTheRoundIfOneWasNamed()
-      .then(() => document.body.appendChild(script))
-      .catch((e) => fail('That round link cannot be used: ' + e.message));
+    // THE LOBBY (M3.3-34, §25), when the link names nodes and no round.
+    //
+    // "A lobby carries nothing": the named nodes say which rounds they hold,
+    // and `fetchLobby` fetches and hashes every one before it is a row - free
+    // or paying and open or pending are the CONTRACT's, and the seat counts are
+    // shown as what each node says. Join is the round's own link, so the seat
+    // is taken by exactly the path a shared round link takes. Unity is not
+    // loaded here: a lobby is a list, and the player comes back through Join.
+    async function showTheLobbyIfOneWasNamed() {
+      if (typeof BLWPCLIENT === 'undefined' || !BLWPCLIENT.lobbyQuery) return false;
+      const named = BLWPCLIENT.lobbyQuery(location.search);
+      if (!named) return false;
+      const lobbyEl = document.getElementById('blwp-lobby');
+      lobbyEl.classList.add('show');
+      // WHO THIS TAB IS (M3.3-34): the identity key the page generated from the
+      // tab's seed, the name made from it, and the player's own name over it.
+      // Its own box, painted on a save and never by the list's 5 s repaint, so
+      // a name being typed is not wiped. The name decides nothing.
+      const meBox = document.createElement('div');
+      meBox.style.cssText = 'max-width:820px;margin-bottom:22px;padding:12px 14px;border-radius:6px;background:#161b22;border-left:3px solid #58a6ff;font-size:14px';
+      const list = document.createElement('div');
+      lobbyEl.append(meBox, list);
+      const tabRandom = (n) => crypto.getRandomValues(new Uint8Array(n));
+      const paintMe = (said) => {
+        meBox.textContent = '';
+        let me;
+        try { me = BLWPCLIENT.tabIdentity({ storage: window.sessionStorage, random: tabRandom, curve: window.BLWP_CURVE }); }
+        catch (e) { meBox.textContent = 'this tab has no identity: ' + e.message; return; }
+        window.BLWP_IDENTITY = { name: me.name, generated: me.generated, custom: me.custom, pubkey: me.pubkeyHex, fingerprint: me.fingerprint };
+        const who = document.createElement('div');
+        const b = document.createElement('b');
+        b.textContent = me.name;
+        who.append('You are ', b, me.custom ? ' (your name)' : ' (made from your key)');
+        const key = document.createElement('div');
+        key.style.cssText = 'color:#8b949e;font-size:12px;margin-top:4px';
+        key.textContent = 'identity key ' + me.fingerprint + ' - generated in this tab from its seed; the private key stays here';
+        const row = document.createElement('div');
+        row.style.cssText = 'margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center';
+        const input = document.createElement('input');
+        input.id = 'blwp-name';
+        input.maxLength = 64;
+        input.placeholder = me.generated;
+        input.value = me.custom ? me.name : '';
+        input.style.cssText = 'padding:6px 8px;border-radius:4px;border:1px solid #3a3f45;background:#0d1014;color:#e8eaed;min-width:14em';
+        const save = document.createElement('button');
+        save.type = 'button'; save.id = 'blwp-name-save'; save.textContent = 'Save name';
+        const reset = document.createElement('button');
+        reset.type = 'button'; reset.id = 'blwp-name-reset'; reset.textContent = 'Use generated';
+        for (const x of [save, reset]) x.style.cssText = 'padding:6px 12px;border-radius:4px;border:0;background:#30363d;color:#e8eaed;cursor:pointer';
+        const why = document.createElement('div');
+        why.id = 'blwp-name-why';
+        why.style.cssText = 'color:#ff6b6b;font-size:12px;width:100%';
+        why.textContent = said || '';
+        save.addEventListener('click', () => {
+          const r = BLWPCLIENT.setPlayerName(input.value, { storage: window.sessionStorage });
+          paintMe(r.ok ? '' : r.why);
+        });
+        reset.addEventListener('click', () => { BLWPCLIENT.setPlayerName('', { storage: window.sessionStorage }); paintMe(''); });
+        row.append(input, save, reset, why);
+        const backup = document.createElement('details');
+        backup.style.cssText = 'margin-top:8px;font-size:12px;color:#8b949e';
+        const label = document.createElement('summary');
+        label.textContent = 'private key backup (this tab\'s seed)';
+        const code = document.createElement('code');
+        code.textContent = BLWPCLIENT.toHex(BLWPCLIENT.tabSeed({ storage: window.sessionStorage, random: tabRandom }));
+        backup.append(label, code);
+        meBox.append(who, key, row, backup);
+      };
+      paintMe('');
+      const paint = async () => {
+        const el = list;
+        let got;
+        try { got = await BLWPCLIENT.fetchLobby({ nodes: named.nodes }); }
+        catch (e) { got = { rows: [], refused: [e.message] }; }
+        const now = Date.now();
+        window.BLWP_LOBBY = got.rows.map((r) => ({ id: r.id, phase: r.phase, free: r.free, wallet: r.wallet,
+          line: BLWPCLIENT.lobbyLine(r, now), join: r.phase === 'open' ? BLWPCLIENT.lobbyJoinSearch(location.search, r.id) : null }));
+        el.textContent = '';
+        const h = document.createElement('h2');
+        h.textContent = 'Rounds you can join';
+        const sub = document.createElement('div');
+        sub.className = 'sub';
+        sub.textContent = 'listed by ' + named.nodes.join(' and ')
+          + ' - every round is checked against its own contract before it is shown';
+        el.append(h, sub);
+        for (const r of window.BLWP_LOBBY) {
+          const row = document.createElement('div');
+          row.className = 'row' + (r.free ? ' free' : '');
+          const line = document.createElement('div');
+          line.className = 'line';
+          line.textContent = r.line;
+          const id = document.createElement('div');
+          id.className = 'id';
+          id.textContent = 'round ' + r.id;
+          line.append(id);
+          row.append(line);
+          if (r.join) {
+            const a = document.createElement('a');
+            a.className = 'join';
+            a.href = r.join;
+            a.textContent = r.free ? 'Join free' : 'Join';
+            row.append(a);
+          }
+          el.append(row);
+        }
+        if (!window.BLWP_LOBBY.length) {
+          const none = document.createElement('div');
+          none.className = 'none';
+          none.textContent = 'No round is open for entry right now. This list asks again every 5 seconds.';
+          el.append(none);
+        }
+        if (got.refused.length) {
+          const why = document.createElement('div');
+          why.className = 'refused';
+          why.textContent = 'not listed:\n' + got.refused.join('\n');
+          el.append(why);
+        }
+      };
+      await paint();
+      setInterval(paint, 5000);
+      return true;
+    }
+
+    showTheLobbyIfOneWasNamed()
+      .catch((e) => { fail('That lobby link cannot be used: ' + e.message); return true; })
+      .then((lobby) => (lobby ? null : joinTheRoundIfOneWasNamed()
+        .then(() => document.body.appendChild(script))
+        .catch((e) => fail('That round link cannot be used: ' + e.message))));
   </script>
 </body>
 </html>
