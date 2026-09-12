@@ -438,11 +438,19 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // HAS THE START DEADLINE PASSED, as far as THIS seat can check, for a first
   // mark it has never held? Its own record, its own round closed, or the
   // player's own signed mark past the line - never a peer's word alone.
-  function lateEvidenceHere(c, claim) {
+  function lateEvidenceHere(c, claim, claimReceipt = null) {
     const line = round.startLine(c.roundId, c.entryId);
     if (!line || c.tick > line.lastTick) return null;             // a late START is FORFEIT's
     if (round.entryVoid(c.entryId)) return { kind: 'recorded', evidence: null };
     if (line.closed) return { kind: 'closed', evidence: null };
+    // A ROUND SEAT THAT CLOSED WITH THE ENTRY VOID: this seat does not hold the
+    // first mark, and a seat of the round - proven by its own signed receipt of
+    // THIS first mark, taken in time - says the round closed without it reaching
+    // the threshold. This seat records only what it knows: it never took the
+    // first mark. A seat that holds it never gets here, so a run that started
+    // cannot be voided this way; the lock goes back to the player, never to anyone else.
+    if (claim && claim.kind === 'closed' && claimReceipt && round.receiptVerifies(claimReceipt, checkpointId(c), c.roundId))
+      return { kind: 'closed', evidence: null };
     if (claim && claim.kind === 'mark' && claim.evidence) {
       try {
         const evidence = fromHex(String(claim.evidence));
@@ -471,7 +479,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const r = await fetch(`${String(peer).replace(/\/+$/, '')}/entry-void?entry=${toHex(c.entryId)}`, { signal: AbortSignal.timeout(1500) });
         if (!r.ok) continue;
         const got = await r.json();
-        const late = lateEvidenceHere(c, { kind: got.evidenceKind, evidence: got.evidence });
+        const late = lateEvidenceHere(c, { kind: got.evidenceKind, evidence: got.evidence }, got.receipt ? fromHex(String(got.receipt)) : null);
         if (late) return { late, receipts: got.receipt ? [fromHex(String(got.receipt))] : [] };
       } catch { /* a seat that is down proves nothing */ }
     }
@@ -1224,7 +1232,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // or by this seat's round being closed - is refused and recorded
         // ENTRY_VOID here. A claim of it this seat cannot check is refused.
         if (!round.holdsMark(checkpointId(c))) {
-          const late = lateEvidenceHere(c, got.entryVoid);
+          const late = lateEvidenceHere(c, got.entryVoid, got.receipt ? fromHex(String(got.receipt)) : null);
           if (late) {
             const v = voidHere(c, bytes, late, got.receipt ? [fromHex(String(got.receipt))] : []);
             if (v) return answer(409, { entryVoid: true, why: v.why });

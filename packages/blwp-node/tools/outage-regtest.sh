@@ -25,7 +25,7 @@ UP=$(PROBE_DIR=$P SETUP_ONLY=1 FEDIMINT_BIN=$F FEDIMINT_HOME=$FH bash $HERE/fede
 echo "$UP" | grep -q FEDERATION_READY || { echo "$UP" | tail -15; echo "THE FEDERATION DID NOT COME UP"; exit 1; }
 INVITE=$(echo "$UP" | grep -oE 'invite=[^ ]+' | tail -1 | cut -d= -f2-)
 echo "federation up in $(( $(date +%s) - t )) s, invite ${INVITE:0:24}..."
-PROBE=$P INVITE=$INVITE LND_BIN=$L LOCK_BIN=$LOCK_BIN BITCOIN_BIN=$B node $HERE/outage.mjs > $P/outage.log 2>&1
+PROBE=$P INVITE=$INVITE LND_BIN=$L LOCK_BIN=$LOCK_BIN BITCOIN_BIN=$B node $HERE/${OUTAGE_SCRIPT:-outage.mjs} > $P/outage.log 2>&1
 code=$?
 grep -E '^\{' $P/outage.log | sed 's/^/OUTAGE /'
 echo "outage exit $code; log: $P/outage.log"

@@ -243,3 +243,78 @@ test('(e) a player who sends the first mark to one seat while the other is up ge
     assert.deepEqual(facts, { bHoldsTheFirstMark: true, receiptsAtA: 2, a: null, b: null });
   } finally { await w.close(); }
 });
+
+// WHEN THE PLAYER'S CHAIN NEVER PASSES THE START LINE: the seat holding the
+// on-time first mark decides at its close ("closed"), and a seat that does not
+// hold the first mark takes a round seat's closed Void - proven by that seat's
+// own signed receipt of this first mark - and refuses the mark itself (pick (1)).
+// MEASURED BEFORE (tools/closed-line-probe.mjs): (ii) forfeit 409 while B was
+// open; (iii) B took the player's first mark, recorded nothing, forfeit 409 -
+// the lock only at expiry.
+const closeAt = (d, w) => say(d.port, `close ${toHex(w.rid)}`);
+const firstOnly = (run) => run.messages.slice(0, 2);
+
+test('(i) the chain stops at 60 and A closes while B is down: ENTRY_VOID (closed) at both seats, the lock back at once', async () => {
+  const w = await seats();
+  try {
+    const run = await seatAndBuild(w);
+    await w.downB();
+    for (const m of firstOnly(run)) await say(w.a.port, m);
+    await wait(500);
+    const aBeforeClose = recordAt(w.a, w, run);
+    await closeAt(w.a, w);
+    await until(() => w.a.round.entryVoid(run.eid));
+    await w.upB();
+    await closeAt(w.b, w);
+    await wait(500);
+    const forfeit = await forfeitAt(w.a, w, run);
+    const facts = { aBeforeClose, a: recordAt(w.a, w, run), b: recordAt(w.b, w, run), forfeit };
+    console.log('  FACTS (i):', JSON.stringify(facts));
+    assert.deepEqual(facts, { aBeforeClose: { recorded: null, results: [], finality: null },
+      a: { recorded: 'ENTRY_VOID (closed)', results: [], finality: null },
+      b: { recorded: 'ENTRY_VOID (closed)', results: [], finality: null },
+      forfeit: { status: 200, verifies: true, isTheLocksId: true } });
+  } finally { await w.close(); }
+});
+
+test('(ii) the forfeit asked while the down seat is back and still open: it takes the closed Void at once, the lock back at once', async () => {
+  const w = await seats();
+  try {
+    const run = await seatAndBuild(w);
+    await w.downB();
+    for (const m of firstOnly(run)) await say(w.a.port, m);
+    await wait(500);
+    await closeAt(w.a, w);
+    await until(() => w.a.round.entryVoid(run.eid));
+    await w.upB();
+    const bOpen = w.b.round.get(w.rid).state === 0;
+    const forfeit = await forfeitAt(w.a, w, run);
+    const facts = { bOpen, a: recordAt(w.a, w, run), b: recordAt(w.b, w, run), forfeit, bKeepsIt: !!w.b.round.forfeit(run.eid) };
+    console.log('  FACTS (ii):', JSON.stringify(facts));
+    assert.deepEqual(facts, { bOpen: true, a: { recorded: 'ENTRY_VOID (closed)', results: [], finality: null },
+      b: { recorded: 'ENTRY_VOID (closed)', results: [], finality: null },
+      forfeit: { status: 200, verifies: true, isTheLocksId: true }, bKeepsIt: true });
+  } finally { await w.close(); }
+});
+
+test('(iii) the player sends the first mark to the down seat once it is back and still open: refused as ENTRY_VOID, both seats Void, the lock back at once', async () => {
+  const w = await seats();
+  try {
+    const run = await seatAndBuild(w);
+    await w.downB();
+    for (const m of firstOnly(run)) await say(w.a.port, m);
+    await wait(500);
+    await closeAt(w.a, w);
+    await until(() => w.a.round.entryVoid(run.eid));
+    await w.upB();
+    const saidB = [];
+    for (const m of firstOnly(run)) saidB.push(answer(await say(w.b.port, m)));
+    const forfeit = await forfeitAt(w.a, w, run);
+    const facts = { saidB, bHoldsTheFirstMark: w.b.round.holdsMark(run.firstId), a: recordAt(w.a, w, run), b: recordAt(w.b, w, run), forfeit };
+    console.log('  FACTS (iii):', JSON.stringify(facts));
+    assert.deepEqual(facts, { saidB: ['60', 'error ENTRY_VOID'], bHoldsTheFirstMark: false,
+      a: { recorded: 'ENTRY_VOID (closed)', results: [], finality: null },
+      b: { recorded: 'ENTRY_VOID (closed)', results: [], finality: null },
+      forfeit: { status: 200, verifies: true, isTheLocksId: true } });
+  } finally { await w.close(); }
+});
