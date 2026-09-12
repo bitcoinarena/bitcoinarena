@@ -34,6 +34,15 @@
     #stage { color: #8b949e; font-size: 13px; min-height: 1.5em; text-align: center; }
     #note { color: #5c6570; font-size: 12px; max-width: 460px; text-align: center; }
 
+    /* THE DEPOSIT A LOCK ROUND ASKS FOR, ON THE LOADING SCREEN - the only thing
+       a player sees while the page waits for it (W1b). Selectable, so any
+       wallet can be given the invoice. Empty, it takes no room. */
+    #blwp-deposit { max-width: min(560px, 90vw); text-align: center; font-size: 13px; color: #e8eaed; }
+    #blwp-deposit:empty { display: none; }
+    #blwp-deposit code { display: block; margin-top: 8px; padding: 8px 10px; border-radius: 4px;
+      background: #0d1014; border: 1px solid #3a3f45; color: #ffc46b; word-break: break-all;
+      user-select: all; font: 400 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }
+
     #err { display: none; color: #ff6b6b; max-width: 560px; text-align: center; font-size: 14px; }
     #err.show { display: block; }
 
@@ -78,7 +87,6 @@
   <canvas id="canvas" tabindex="-1"></canvas>
   <div id="blwp-players"></div>
   <div id="blwp-refund"></div>
-  <div id="blwp-deposit"></div>
   <div id="blwp-wallet">
     <div class="owed" id="blwp-owed"></div>
     <div class="spent" id="blwp-spent"></div>
@@ -194,6 +202,7 @@
     <div id="stage">Connecting …</div>
     <div id="note"><span id="total">…</span> to load. The first time is the
       slowest — after that most of it is in the browser cache.</div>
+    <div id="blwp-deposit"></div>
     <div id="err"></div>
   </div>
 
@@ -452,7 +461,14 @@
         // `round.id` IS BYTES, and the page holds the hex it was sent. The
         // contract decodes without an id - it is the hash OF the contract -
         // so it is put back on here rather than left for `stakeFor` to guess.
-        stake = await BLWPCLIENT.stakeFor(
+        // A LOCK THIS TAB ALREADY MADE FOR THIS ROUND, THAT NO SEAT HAS COMMITTED
+        // (W1b): the same stake and the same lock, not a second deal and a second
+        // deposit - a reload between the lock and the seat taking the entry.
+        const kept = BLWPCLIENT.roundLocks(named.round)
+          ? BLWPCLIENT.savedLock(window.sessionStorage, { roundId: BLWPCLIENT.fromHex(named.roundIdHex), playerPubkey: player.pubkey })
+          : null;
+        const reuse = kept && !kept.committedTo ? kept : null;
+        stake = reuse ? reuse.stake : await BLWPCLIENT.stakeFor(
           Object.assign({}, named.round, { id: BLWPCLIENT.fromHex(named.roundIdHex) }), {
             seats: seats.seats, curve: window.BLWP_CURVE, random, playerPubkey: player.pubkey,
             needed: BLWPCLIENT.sharesNeededFor(named.round),
@@ -465,7 +481,9 @@
         //
         // The posting and the threshold are in `@blwp/client` for the reason
         // `roundPays` is: this file is the one `node --test` cannot load.
-        const put = await BLWPCLIENT.postHandout(stake, named.nodes, { needed: BLWPCLIENT.sharesNeededFor(named.round) });
+        // A kept stake's handout was taken by the seats before its lock was made.
+        const put = reuse ? { ok: true, accepted: seats.seats.length, refused: [] }
+          : await BLWPCLIENT.postHandout(stake, named.nodes, { needed: BLWPCLIENT.sharesNeededFor(named.round) });
         if (!put.ok) {
           window.BLWP_SEAT_REFUSED = put.why;
           console.error('[blwp] seat refused: ' + put.why + ' — ' + put.refused.join('; '));
@@ -480,23 +498,46 @@
         // The deposit invoice is shown here for the player's own wallet to pay.
         if (BLWPCLIENT.roundLocks(named.round)) {
           const depositEl = document.getElementById('blwp-deposit');
-          const say = (text) => { if (depositEl) depositEl.textContent = text; };
-          try {
+          // ON THE LOADING SCREEN, which is all a player sees while this waits:
+          // the step on the stage line, the invoice in its own selectable box.
+          const stageEl = document.getElementById('stage');
+          const whose = { roundId: BLWPCLIENT.fromHex(named.roundIdHex), playerPubkey: player.pubkey };
+          const committedTo = (eid) => BLWPCLIENT.markLockCommitted(window.sessionStorage, Object.assign({ entryId: eid }, whose));
+          if (reuse) {
+            stakeLock = { outpoint: reuse.lock.outpoint, fields: reuse.lock.fields,
+              needed: BLWPCLIENT.sharesNeededFor(named.round), onCommitted: committedTo };
+            window.BLWP_STAKE_LOCK = stakeLock;
+            if (stageEl) stageEl.textContent = BLWPCLIENT.lockLine(stakeLock);
+            console.log('[blwp] stake lock kept from before the reload, at '
+              + BLWPCLIENT.toHex(stakeLock.outpoint.txid) + ':' + String(stakeLock.outpoint.outIdx));
+          } else try {
             const wasm = await import('./blwp_lock_client.js');
             await wasm.default();
             const made = await BLWPCLIENT.lockStake({
               round: named.round, roundId: BLWPCLIENT.fromHex(named.roundIdHex), invite: named.federation,
               seed, stake, claimKey, playerPubkey: player.pubkey, LockClient: wasm.LockClient,
-              onStep: (step) => { say('stake lock: ' + step); console.log('[blwp] stake lock: ' + step); },
+              storage: window.sessionStorage,
+              onStep: (step) => { if (stageEl) stageEl.textContent = 'Stake lock: ' + step + ' …'; console.log('[blwp] stake lock: ' + step); },
               onDeposit: (d) => {
                 window.BLWP_DEPOSIT = { invoice: d.invoice, amountMsat: String(d.amountMsat) };
-                say('pay ' + String(d.amountMsat / 1000n) + ' sat into the round\'s federation to lock your stake: ' + d.invoice);
+                if (depositEl) {
+                  depositEl.textContent = 'Pay ' + String((d.amountMsat + 999n) / 1000n) + ' sat into the round\'s federation '
+                    + 'from any Lightning wallet to lock your stake:';
+                  const box = document.createElement('code');
+                  box.textContent = d.invoice;
+                  depositEl.appendChild(box);
+                }
                 console.log('[blwp] stake lock deposit: ' + String(d.amountMsat) + ' msat, ' + d.invoice);
               },
             });
-            stakeLock = { outpoint: made.outpoint, fields: made.fields, needed: BLWPCLIENT.sharesNeededFor(named.round) };
+            stakeLock = { outpoint: made.outpoint, fields: made.fields, needed: BLWPCLIENT.sharesNeededFor(named.round),
+              onCommitted: committedTo };
+            // KEPT BEFORE ANYTHING ELSE CAN HAPPEN TO THE TAB: a reload from here
+            // on uses this lock, not a second deposit.
+            BLWPCLIENT.saveLock(window.sessionStorage, Object.assign({ stake, lock: made }, whose));
             window.BLWP_STAKE_LOCK = stakeLock;
-            say('stake locked at ' + BLWPCLIENT.toHex(made.outpoint.txid) + ':' + String(made.outpoint.outIdx));
+            if (depositEl) depositEl.textContent = '';
+            if (stageEl) stageEl.textContent = BLWPCLIENT.lockLine(stakeLock);
             console.log('[blwp] stake locked at ' + BLWPCLIENT.toHex(made.outpoint.txid) + ':' + String(made.outpoint.outIdx));
           } catch (e) {
             window.BLWP_SEAT_REFUSED = 'this round\'s stake goes into a federation lock, and it was not made: ' + e.message;
@@ -568,8 +609,15 @@
      */
     async function askWhatIsOwed() {
       const client = theClient();
-      if (!client || !window.BLWP_ENTRY || owed) return;
-      const said = await client.invoice(window.BLWP_ENTRY);
+      // A LOCK ROUND'S STAKE IS THE LOCK (W1b), not a hold invoice: no node
+      // quotes it, and asking would be a question with no answer.
+      if (window.BLWP_ROUND && BLWPCLIENT.roundLocks(window.BLWP_ROUND)) return;
+      // THE SEATED ENTRY, which carries its round id and session key. This
+      // passed BLWP_ENTRY, which carries neither, so every quote threw
+      // "expected 32 bytes, got nothing" in entryId and the button never lit -
+      // measured on the page, today's included.
+      if (!client || !client.seatEntry || owed) return;
+      const said = await client.invoice(client.seatEntry);
       if (said.ok) owed = said;
       else if (said.status !== 404) walletWhy = said.why;
       paintWallet();
@@ -596,7 +644,8 @@
 
     async function payTheStake() {
       const client = theClient();
-      if (paying || !client || !window.BLWP_ENTRY) return;
+      if (paying || !client || !client.seatEntry
+          || (window.BLWP_ROUND && BLWPCLIENT.roundLocks(window.BLWP_ROUND))) return;
       const pasted = document.getElementById('blwp-nwc').value.trim();
       if (pasted) {
         const took = wallet.connect(pasted);
@@ -610,7 +659,7 @@
       paying = true;
       walletWhy = 'asking the wallet…';
       paintWallet();
-      const said = await client.payStake(window.BLWP_ENTRY, {
+      const said = await client.payStake(client.seatEntry, {
         connection: held, curve: window.BLWP_CURVE, log: spent,
         random: (n) => crypto.getRandomValues(new Uint8Array(n)),
       });
@@ -646,6 +695,19 @@
       const pays = window.BLWP_ROUND && BLWPCLIENT.roundPays(window.BLWP_ROUND);
       if (!pays) { el.style.display = 'none'; return; }
       el.style.display = 'block';
+      // A LOCK ROUND'S STAKE GOES INTO ITS LOCK (W1b), from the deposit on the
+      // loading screen: the panel says so, then where the lock is and when it
+      // comes back - and never offers a hold invoice. Keyed on the ROUND, not on
+      // the lock: measured, keyed on the lock the hold panel stood beside the
+      // deposit invoice the whole time the page waited for it.
+      if (window.BLWP_ROUND && BLWPCLIENT.roundLocks(window.BLWP_ROUND)) {
+        document.getElementById('blwp-owed').textContent = window.BLWP_STAKE_LOCK
+          ? BLWPCLIENT.lockLine(window.BLWP_STAKE_LOCK)
+          : 'this round\'s stake goes into a federation lock: pay the deposit shown below';
+        for (const id of ['blwp-spent', 'blwp-budget', 'blwp-why']) document.getElementById(id).textContent = '';
+        for (const id of ['blwp-nwc', 'blwp-pay']) document.getElementById(id).style.display = 'none';
+        return;
+      }
 
       // THE BREAKDOWN IS THE CLIENT'S. 22A: the commitment, the fee and the
       // donation coming OUT of it, the net stake, and what the wallet is asked

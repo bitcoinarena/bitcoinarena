@@ -9,11 +9,18 @@
 //
 // AND IT HANDS THE LOCK TO THE SEATS once they hold the entry: a seat verifies
 // it in the federation and only then counts the stake (§23.1 step 5).
-import { taggedHash, toHex } from '../../protocol/src/hash.js';
+//
+// A RELOAD LOSES NOTHING. The lock client's wallet is kept in the tab
+// (`lockStoreFor`), so a reload between the deposit and the lock reopens the
+// wallet that holds it; and a lock already made, that no seat has committed
+// yet, is kept with its stake (`saveLock`), so a reload before the seat takes
+// the entry uses that lock instead of dealing and paying again.
+import { taggedHash, toHex, fromHex, sha256 } from '../../protocol/src/hash.js';
 import { TAG } from '../../protocol/src/constants.js';
 import { netStakeMsat } from '../../protocol/src/payout.js';
 import { entryFeeMsat } from '../../protocol/src/fee.js';
-import { refundKeyOf, lockFieldsToJson } from '../../protocol/src/stake-lock.js';
+import { refundKeyOf, lockFieldsToJson, lockFieldsFromJson } from '../../protocol/src/stake-lock.js';
+import { decodeHandout, handoutId } from '../../protocol/src/handout.js';
 import { lockFromClient } from './lock-result.js';
 import { roundLocks } from './join.js';
 
@@ -28,9 +35,7 @@ const namesNothing = (b) => !(b instanceof Uint8Array) || b.every((x) => x === 0
 
 /**
  * THE LOCK CLIENT'S SECRET FOR THIS ROUND, FROM THE PLAYER'S SEED. The ecash a
- * deposit buys, before it is locked, is then the seed's and not this tab's: a
- * reload joins the same wallet (fedimint's own recovery finds it), where a
- * random secret would lose it with the tab.
+ * deposit buys, before it is locked, is then the seed's and not this tab's.
  */
 export function lockSecretFor(seed, roundId) {
   if (!(seed instanceof Uint8Array) || seed.length !== 32)
@@ -43,6 +48,46 @@ export function lockSecretFor(seed, roundId) {
   return taggedHash(TAG.lockClientSecret, msg);
 }
 
+/**
+ * WHERE THE LOCK CLIENT'S WALLET IS KEPT: the tab's storage, one key per
+ * database key, under this round and this seed's secret (its hash, never the
+ * secret). The shape `lock-client/src/store.rs` reads: `entries()` as JSON.
+ */
+export function lockStoreFor(storage, roundId, secret) {
+  const prefix = `blwp.lockdb.${toHex(roundId).slice(0, 16)}.${toHex(sha256(secret)).slice(0, 16)}.`;
+  return {
+    entries() {
+      const out = [];
+      for (let i = 0; i < storage.length; i++) {
+        const k = storage.key(i);
+        if (k && k.startsWith(prefix)) out.push([k.slice(prefix.length), storage.getItem(k)]);
+      }
+      return JSON.stringify(out);
+    },
+    put(k, v) { storage.setItem(prefix + k, v); },
+    remove(k) { storage.removeItem(prefix + k); },
+  };
+}
+
+/** The same shape, kept nowhere: for a caller that hands no storage. */
+function unkeptLockStore() {
+  const held = new Map();
+  return { entries: () => JSON.stringify([...held]), put: (k, v) => { held.set(k, v); }, remove: (k) => { held.delete(k); } };
+}
+
+/**
+ * THE LOCK, AS THE PLAYER IS SHOWN IT: how much, where, and when the contract
+ * lets it come back to their own key if nobody settles it. The refund itself is
+ * made by the player's key after that block (the lock's refund_pk).
+ */
+export function lockLine(stakeLock) {
+  if (!stakeLock || !stakeLock.outpoint || !(stakeLock.outpoint.txid instanceof Uint8Array)) return '';
+  const f = stakeLock.fields || {};
+  return `stake locked in the round's federation: ${String(f.amountMsat)} msat at `
+    + `${toHex(stakeLock.outpoint.txid).slice(0, 16)}…:${String(stakeLock.outpoint.outIdx)}`
+    + (Number.isInteger(f.expiration) ? ` · back to your key from federation block ${f.expiration} if nobody settles it` : '');
+}
+
 /** The net stake a lock holds: the stake less the node fee and the donation (§22A). */
 export const lockAmountMsat = (round) => {
   const stakeMsat = BigInt(round.stakeMsat || 0n);
@@ -52,12 +97,13 @@ export const lockAmountMsat = (round) => {
 /**
  * JOIN THE ROUND'S FEDERATION, FUND THE LOCK, AND MAKE IT.
  *
- * `LockClient` is the wasm class; `onDeposit({ invoice, amountMsat })` is told
- * each invoice the player's wallet must pay - the page shows it. Returns the
- * outpoint and the contract (`lockFromClient`), and the client that holds it.
+ * `LockClient` is the wasm class; `storage` the tab's (the wallet is kept
+ * there); `onDeposit({ invoice, amountMsat })` is told each invoice the
+ * player's wallet must pay - the page shows it. Returns the outpoint and the
+ * contract (`lockFromClient`), and the client that holds it.
  */
 export async function lockStake({ round, roundId, invite, seed, stake, claimKey, playerPubkey, LockClient,
-  onDeposit = () => {}, onStep = () => {} } = {}) {
+  storage, onDeposit = () => {}, onStep = () => {} } = {}) {
   if (!round || !roundLocks(round)) throw new Error('this round names no federation, so its stake is not a lock');
   if (!invite)
     throw new Error('this round\'s stake goes into a federation lock, and the link names no federation '
@@ -71,8 +117,12 @@ export async function lockStake({ round, roundId, invite, seed, stake, claimKey,
     throw new Error('a lock refunds to the player\'s key, and that is 32 bytes');
 
   const amount = lockAmountMsat(round);
-  onStep('joining the federation');
-  const client = await LockClient.join(invite, toHex(round.federationId), toHex(lockSecretFor(seed, roundId)));
+  const secret = lockSecretFor(seed, roundId);
+  const store = storage ? lockStoreFor(storage, roundId, secret) : unkeptLockStore();
+  const kept = JSON.parse(store.entries()).length;
+  onStep(kept ? 'reopening the wallet this tab kept for this round' : 'joining the federation');
+  const client = await LockClient.join(invite, toHex(round.federationId), toHex(secret), store);
+  onStep(`holding ${await client.balanceMsat()} msat`);
 
   // FUNDED FROM THE PLAYER'S OWN DEPOSIT. The federation's fee for the lock is
   // quoted as a dry run over the notes the client holds, so an empty client
@@ -92,10 +142,10 @@ export async function lockStake({ round, roundId, invite, seed, stake, claimKey,
     if (tries >= 3) throw new Error(`after ${tries} deposits the lock client holds ${have} msat and cannot fund a ${amount} msat lock`);
     const short = cost !== null ? cost - have : amount + allowance - have;
     const plan = JSON.parse(await client.depositFor(String(short > 0n ? short : allowance)));
-    const asked = JSON.parse(await client.receive(String(plan.invoice_msat), String(plan.gateway || '')));
-    onDeposit({ invoice: asked.invoice, amountMsat: BigInt(plan.invoice_msat), creditsMsat: BigInt(plan.credited_msat) });
+    const invoice = JSON.parse(await client.receive(String(plan.invoice_msat), String(plan.gateway || '')));
+    onDeposit({ invoice: invoice.invoice, amountMsat: BigInt(plan.invoice_msat), creditsMsat: BigInt(plan.credited_msat) });
     onStep('waiting for the deposit');
-    const final = await client.awaitReceive(asked.operation);
+    const final = await client.awaitReceive(invoice.operation);
     if (final !== 'Claimed') throw new Error(`the deposit was not claimed: ${final}`);
   }
 
@@ -107,6 +157,48 @@ export async function lockStake({ round, roundId, invite, seed, stake, claimKey,
   if (lock.fields.amountMsat !== amount)
     throw new Error(`the lock client locked ${lock.fields.amountMsat} msat, and this entry's net stake is ${amount}`);
   return { ...lock, client };
+}
+
+const savedLockKey = (roundId, playerPubkey) => `blwp.lock.saved.${toHex(roundId)}.${toHex(playerPubkey).slice(0, 16)}`;
+
+/**
+ * A LOCK THIS TAB MADE, WITH THE STAKE IT LOCKS - kept so a reload before any
+ * seat has committed it uses the same stake and the same lock. The stake's
+ * preimage is kept where the player's seed already is (the tab's storage), and
+ * its handout as the bytes the seats took.
+ */
+export function saveLock(storage, { roundId, playerPubkey, stake, lock }) {
+  storage.setItem(savedLockKey(roundId, playerPubkey), JSON.stringify({
+    preimage: toHex(stake.preimage), body: toHex(stake.body),
+    outpoint: { txid: toHex(lock.outpoint.txid), outIdx: String(lock.outpoint.outIdx) },
+    fields: lockFieldsToJson(lock.fields), committedTo: null,
+  }));
+}
+
+/** The kept lock for this round and player, rebuilt - or null. `committedTo` names the entry a seat committed it to. */
+export function savedLock(storage, { roundId, playerPubkey }) {
+  let raw = null;
+  try { raw = storage && storage.getItem(savedLockKey(roundId, playerPubkey)); } catch { return null; }
+  if (!raw) return null;
+  const j = JSON.parse(raw);
+  const preimage = fromHex(j.preimage);
+  const body = fromHex(j.body);
+  const handout = decodeHandout(body);
+  if (toHex(handout.playerPubkey) !== toHex(playerPubkey)) return null;
+  return {
+    stake: { preimage, stakeCommitment: sha256(preimage), vssSharesRef: handoutId(handout),
+      stakePoint: handout.commitments[0], handout, body },
+    lock: { outpoint: { txid: fromHex(j.outpoint.txid), outIdx: BigInt(j.outpoint.outIdx) }, fields: lockFieldsFromJson(j.fields) },
+    committedTo: j.committedTo || null,
+  };
+}
+
+/** A seat committed the kept lock to `entryId`: from now on it is that seat's stake, not one to reuse. */
+export function markLockCommitted(storage, { roundId, playerPubkey, entryId }) {
+  const key = savedLockKey(roundId, playerPubkey);
+  const raw = storage.getItem(key);
+  if (!raw) return;
+  storage.setItem(key, JSON.stringify({ ...JSON.parse(raw), committedTo: toHex(entryId) }));
 }
 
 /**

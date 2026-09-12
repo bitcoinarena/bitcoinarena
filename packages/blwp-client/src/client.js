@@ -549,9 +549,15 @@ export class Client {
     // the stake; before the entry is seated it has nothing to check it against.
     // The count is kept, not thrown: the seat is taken either way, and the
     // stake is committed or not by the seats' own answers.
-    if (this.stakeLock)
+    if (this.stakeLock) {
       this.lockHanded = await handLock({ entryId: mine, fields: this.stakeLock.fields,
         nodes: [this.base, ...this.peers], needed: this.stakeLock.needed });
+      // AND THE PAGE IS TOLD WHICH SEAT NOW HOLDS IT, so a reload does not
+      // hand the same lock to a second entry (a seat refuses that anyway).
+      if (this.lockHanded.ok && typeof this.stakeLock.onCommitted === 'function') {
+        try { this.stakeLock.onCommitted(mine); } catch { /* the page's bookkeeping, not the seat's */ }
+      }
+    }
     return seated;
   }
 

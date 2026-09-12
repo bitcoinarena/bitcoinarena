@@ -1478,6 +1478,13 @@ export class Round {
     return r ? { outpoint: r.outpoint, fields: JSON.parse(r.fields), contractId: r.contract_id, verifiedMs: Number(r.verified_ms) } : null;
   }
 
+  /** The entry a verified lock at this outpoint already stakes, or null: one lock is one seat. */
+  stakeLockAt(outpoint) {
+    const r = this.db.prepare('SELECT entry_id FROM stake_locks WHERE outpoint = ?')
+      .get(`${Buffer.from(outpoint.txid).toString('hex')}:${outpoint.outIdx}`);
+    return r ? { entryId: new Uint8Array(r.entry_id) } : null;
+  }
+
   /** A transcript kept as a relay, under the hash its bytes have (checked by the door). */
   relayPut(hashBytes, bytes) {
     return this.db.prepare('INSERT OR IGNORE INTO relayed (hash, bytes, seen_ms) VALUES (?, ?, ?)')

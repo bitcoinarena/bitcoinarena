@@ -25,6 +25,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 anyhow = { workspace = true }
+async-trait = { workspace = true }
 fedimint-api-client = { workspace = true }
 fedimint-client = { workspace = true }
 fedimint-connectors = { workspace = true }
@@ -33,6 +34,9 @@ fedimint-derive-secret = { workspace = true }
 fedimint-lnv2-client = { workspace = true }
 fedimint-lnv2-common = { workspace = true }
 fedimint-mintv2-client = { workspace = true }
+futures = { workspace = true }
+imbl = { workspace = true }
+macro_rules_attribute = { workspace = true }
 serde_json = { workspace = true }
 wasm-bindgen = { workspace = true }
 wasm-bindgen-futures = { workspace = true }

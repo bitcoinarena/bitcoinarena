@@ -13,6 +13,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { WebSocketServer } from 'ws';
 import { readFileSync } from 'node:fs';
+import { roundLocks } from '../src/join.js';
+import { lockLine } from '../src/page-lock.js';
 import { randomBytes } from 'node:crypto';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { ed25519 } from '@noble/curves/ed25519.js';
@@ -565,7 +567,12 @@ test('the page pastes a connection, shows the amount and the total, and calls pa
   assert.match(page, /id="blwp-spent"/, 'the page never shows the running total');
   assert.match(page, /BLWPCLIENT\.tabWallet\(/, 'the page does not hold a connection per tab');
   assert.match(page, /window\.sessionStorage/, 'the connection is not held per tab');
-  assert.match(page, /client\.payStake\(window\.BLWP_ENTRY/,
+  // THE SEATED ENTRY - this seat's own, with its round id and session key. It
+  // was `window.BLWP_ENTRY`, which carries neither: measured on the page, every
+  // quote and every pay threw "expected 32 bytes, got nothing" in entryId
+  // (Client.invoice -> entryId -> encodeEntryContract), so no stake was ever
+  // paid through this path.
+  assert.match(page, /client\.payStake\(client\.seatEntry/,
     'the page does not pay this seat\'s stake with its own entry');
   assert.match(page, /BLWPCLIENT\.spentLine\(/, 'the page adds up its own total');
 
@@ -606,15 +613,17 @@ test('a round that asks no money gets no payment box, driven off the shipped pag
 
   const made = {};
   const el = (id) => (made[id] = made[id] || { style: {}, textContent: '', placeholder: '', disabled: false });
-  const run = (round, walletState, owedState, budgetState = null) => new Function(
+  const run = (round, walletState, owedState, budgetState = null, stakeLock = undefined) => new Function(
     'document', 'window', 'BLWPCLIENT', 'wallet', 'spent', 'owed', 'paying', 'walletWhy', 'budget',
     `${src}\n return paintWallet();`,
   )(
     { getElementById: el },
-    { BLWP_ROUND: round, BLWP_CURVE: {},
+    { BLWP_ROUND: round, BLWP_CURVE: {}, BLWP_STAKE_LOCK: stakeLock,
       BLWP_ENTRY: { stakeMsat: round.stakeMsat, feeMsat: entryFeeMsat(round.stakeMsat), donationMsat: 0n } },
     {
       roundPays: (r) => !!r && BigInt(r.stakeMsat || 0n) > 0n,
+      roundLocks,
+      lockLine,
       spentLine: () => 'nothing paid this session',
       owedLine,
       budgetLine,
@@ -656,6 +665,22 @@ test('a round that asks no money gets no payment box, driven off the shipped pag
   assert.equal(made['blwp-budget'].textContent, 'this wallet does not report a budget');
   console.log(`  free round: hidden · paying, no quote: "${made['blwp-owed'].textContent}" `
     + `is what a quote turns into`);
+
+  // A ROUND WHOSE STAKE GOES INTO A FEDERATION LOCK (W1b) NEVER SHOWS A HOLD
+  // INVOICE TO PAY: while the deposit waits the panel points at it, and once
+  // the lock is made it shows the lock. Measured on the page before this, the
+  // hold panel ("this seat owes", "Pay the stake") stood beside the invoice.
+  const lockRound = { stakeMsat: 1000000n, custody: 'FEDERATION', federationId: new Uint8Array(32).fill(0xfe) };
+  for (const id of ['blwp-nwc', 'blwp-pay']) el(id).style.display = '';
+  run(lockRound, { connected: false }, null);
+  assert.equal(made['blwp-wallet'].style.display, 'block');
+  assert.equal(made['blwp-owed'].textContent, 'this round\'s stake goes into a federation lock: pay the deposit shown below');
+  assert.equal(made['blwp-nwc'].style.display, 'none', 'a lock round offered a wallet connection to pay a hold invoice');
+  assert.equal(made['blwp-pay'].style.display, 'none', 'a lock round offered "Pay the stake"');
+  const stakeLock = { outpoint: { txid: new Uint8Array(32).fill(0xa2), outIdx: 0n }, fields: { amountMsat: 980000n, expiration: 464 } };
+  run(lockRound, { connected: false }, null, null, stakeLock);
+  assert.equal(made['blwp-owed'].textContent, lockLine(stakeLock));
+  console.log(`  lock round: "${made['blwp-owed'].textContent}"`);
 });
 
 /**

@@ -223,7 +223,14 @@ test('a player can ask where their stake stands: inside the window HELD, provisi
 // round: its holds stay HELD and expire back to the players, the loser's
 // included. The store has everything the close logic needs, so a daemon that
 // starts picks up every closed round it still holds a HELD stake for.
-test('two seats restarted inside a 3 s window: after it the loser settles and the winner cancels on both', async () => {
+// ITS OWN WINDOW, 10 s. On the shared 3 s one, measured in the full node suite
+// (on HEAD aed4357 too): the committee agreed with under a second of it left,
+// closing two daemons under that load took longer, and the test's own guard
+// said "the restart came after the window, so it tests nothing". The window is
+// what is restarted inside; every check below is unchanged.
+const RESTART_WINDOW_MS = 10000;
+test('two seats restarted inside the objection window: after it the loser settles and the winner cancels on both', async () => {
+  const WINDOW_MS = RESTART_WINDOW_MS;
   const dir = mkdtempSync(join(tmpdir(), 'window-restart-'));
   const portA = paidPort();
   const portB = paidPort();
@@ -263,7 +270,8 @@ test('two seats restarted inside a 3 s window: after it the loser settles and th
     // BOTH RESTART, inside the window, on their own stores and the same lnd.
     await a.close();
     await b.close();
-    assert.ok(Date.now() < closedAt + WINDOW_MS, 'the restart came after the window, so it tests nothing');
+    assert.ok(Date.now() < closedAt + WINDOW_MS,
+      `the restart came ${Date.now() - closedAt - WINDOW_MS} ms after the window, so it tests nothing`);
     a = await start('a.sqlite', portA);
     b = await start('b.sqlite', portB);
     wire(a, b);

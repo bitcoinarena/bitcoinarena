@@ -42,6 +42,11 @@ export async function verifyStakeLock({ round, port, entryIdBytes, fields, claim
   if (!port) return { ok: false, why: 'this node reaches no federation, so it cannot verify a stake lock' };
   const outpoint = entry.stakeLockOutpoint;
   if (!outpoint || zero(outpoint.txid)) return { ok: false, why: 'that entry names no stake lock outpoint' };
+  // ONE LOCK IS ONE SEAT. A lock this seat already counted for another entry
+  // cannot stake a second: two seats on one stake is one seat played free.
+  const taken = round.stakeLockAt ? round.stakeLockAt(outpoint) : null;
+  if (taken && !Buffer.from(taken.entryId).equals(Buffer.from(entryIdBytes)))
+    return { ok: false, why: 'that stake lock already stakes another entry in this round: one lock is one seat' };
 
   const st = await port.status(outpoint);
   if (!st || !st.stored) return { ok: false, why: 'the federation holds no lock at the entry\'s stake_lock_outpoint' };

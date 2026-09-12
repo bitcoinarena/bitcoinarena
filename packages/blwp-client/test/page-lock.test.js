@@ -12,8 +12,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { lockStake, handLock, lockSecretFor, lockAmountMsat, LOCK_EXPIRY_MARGIN_BLOCKS } from '../src/page-lock.js';
-import { entryFor, joinQuery } from '../src/join.js';
+import { lockStake, handLock, lockSecretFor, lockAmountMsat, lockLine, saveLock, savedLock, markLockCommitted,
+  LOCK_EXPIRY_MARGIN_BLOCKS } from '../src/page-lock.js';
+import { entryFor, joinQuery, stakeFor } from '../src/join.js';
 import { pageCurve } from '../src/page-curve.js';
 import { playerSecretFor } from '../../protocol/src/player-key.js';
 import { refundKeyOf } from '../../protocol/src/stake-lock.js';
@@ -52,10 +53,19 @@ const claimKey = { ok: true, claimPk: CLAIM, ref: b32(0x9a) };
  */
 function lockClient({ idsMatch = true, lockedMsat, lockFee = 2528n } = {}) {
   const log = [];
+  // Its wallet is kept in the store it is handed, as the real one's database
+  // is: one key, the balance, written when a deposit is claimed.
   class Fake {
-    static async join(invite, federationId, secret) { log.push({ join: { invite, federationId, secret } }); return new Fake(); }
+    static async join(invite, federationId, secret, store) {
+      const kept = store ? JSON.parse(store.entries()) : [];
+      log.push({ join: { invite, federationId, secret, kept: kept.length } });
+      const f = new Fake(store);
+      const bal = kept.find(([k]) => k === 'ba');
+      if (bal) f.balance = BigInt(`0x${bal[1]}`);
+      return f;
+    }
     static lockAllowanceMsat(msat) { return String(2000n + BigInt(msat) * 3000n / 1000000n); }
-    constructor() { this.balance = 0n; this.coming = 0n; }
+    constructor(store) { this.store = store; this.balance = 0n; this.coming = 0n; }
     async lockCostMsat(msat) {
       const cost = BigInt(msat) + lockFee;
       if (this.balance < cost) throw new Error('Insufficient funds');
@@ -64,7 +74,11 @@ function lockClient({ idsMatch = true, lockedMsat, lockFee = 2528n } = {}) {
     async balanceMsat() { return String(this.balance); }
     async depositFor(msat) { return JSON.stringify({ invoice_msat: String(BigInt(msat) + 16064n), credited_msat: msat, gateway: 'http://gw' }); }
     async receive(msat, gateway) { log.push({ receive: { msat, gateway } }); this.coming = BigInt(msat) - 16064n; return JSON.stringify({ invoice: 'lnbcrt1page', operation: 'op' }); }
-    async awaitReceive() { this.balance += this.coming; return 'Claimed'; }
+    async awaitReceive() {
+      this.balance += this.coming;
+      if (this.store) this.store.put('ba', this.balance.toString(16).padStart(2, '0'));
+      return 'Claimed';
+    }
     async lock(point, amount, claim, refund, delta) {
       log.push({ lock: { point, amount, claim, refund, delta } });
       const expiration = 1000 + delta;
@@ -113,6 +127,68 @@ test('a lock whose fee the allowance does not cover is topped up after the quote
   assert.deepEqual(deposits, [String(lockAmountMsat(round) + 4940n), '4940']);
   assert.equal(log.filter((l) => l.lock).length, 1);
   await assert.rejects(() => ask({ LockClient: lockClient({ lockFee: 10n ** 12n }).LockClient }), /after 3 deposits the lock client/);
+});
+
+/** The tab's storage, as the page has it (sessionStorage's shape). */
+function tabStorage() {
+  const m = new Map();
+  return { get length() { return m.size; }, key: (i) => [...m.keys()][i] ?? null, getItem: (k) => (m.has(k) ? m.get(k) : null),
+    setItem: (k, v) => { m.set(k, String(v)); }, removeItem: (k) => { m.delete(k); }, m };
+}
+
+test('a tab reloaded between the deposit and the lock reopens the wallet that holds the deposit, and is not asked to pay again', async () => {
+  const tab = tabStorage();
+  // THE FIRST LOAD: pays the deposit, and the tab goes away before the lock.
+  const first = lockClient();
+  const deposits = [];
+  await assert.rejects(() => ask({ LockClient: first.LockClient, storage: tab, onDeposit: (d) => deposits.push(d),
+    onStep: (s) => { if (s === 'locking the stake') throw new Error('the tab closed'); } }), /the tab closed/);
+  assert.equal(deposits.length, 1);
+  assert.ok([...tab.m.keys()].some((k) => k.startsWith('blwp.lockdb.')), 'the wallet was kept nowhere');
+  assert.ok(![...tab.m.keys()].some((k) => k.includes(toHex(lockSecretFor(seed, rid)))), 'the lock client\'s secret is in the tab\'s keys');
+  // THE RELOAD: the same seed's wallet for this round is reopened, deposit and all.
+  const again = lockClient();
+  const more = [];
+  const steps = [];
+  const got = await ask({ LockClient: again.LockClient, storage: tab, onDeposit: (d) => more.push(d), onStep: (s) => steps.push(s) });
+  const joined = again.log.find((l) => l.join).join;
+  assert.ok(joined.kept > 0, 'the reloaded page joined an empty wallet');
+  assert.equal(more.length, 0, 'the reloaded page asked the player to pay again');
+  assert.ok(steps.includes('reopening the wallet this tab kept for this round'));
+  assert.ok(steps.includes(`holding ${lockAmountMsat(round) + 4940n} msat`));
+  assert.equal(`${toHex(got.outpoint.txid)}:${got.outpoint.outIdx}`, `${'ab'.repeat(32)}:0`);
+  // AND ANOTHER SEED IN THE SAME TAB DOES NOT OPEN THAT WALLET.
+  const other = lockClient();
+  await ask({ LockClient: other.LockClient, storage: tab, seed: b32(0x52) });
+  assert.equal(other.log.find((l) => l.join).join.kept, 0, 'another seed opened this seed\'s wallet');
+});
+
+test('a lock the tab made is kept with its stake until a seat commits it: rebuilt exactly, and marked once committed', async () => {
+  const seats = [0x21, 0x22].map((n) => pageCurve.pointX(b32(n)));
+  const player2 = pageCurve.pointX(b32(0x62));
+  const stake = await stakeFor({ ...round, id: rid }, { seats, curve: pageCurve, random: (n) => new Uint8Array(n).fill(9), playerPubkey: player2, needed: 2 });
+  const lock = { outpoint: { txid: b32(0xd8), outIdx: 1n },
+    fields: { paymentImage: { kind: 'point', bytes: stake.stakePoint }, amountMsat: 980000n, claimPk: CLAIM, refundPk: refundKeyOf(player2), expiration: 464 } };
+  const tab = tabStorage();
+  const who = { roundId: rid, playerPubkey: player2 };
+  assert.equal(savedLock(tab, who), null);
+  saveLock(tab, { ...who, stake, lock });
+  const back = savedLock(tab, who);
+  for (const k of ['preimage', 'stakeCommitment', 'vssSharesRef', 'stakePoint', 'body'])
+    assert.equal(toHex(back.stake[k]), toHex(stake[k]), `the kept stake's ${k} is not the dealt one`);
+  assert.equal(`${toHex(back.lock.outpoint.txid)}:${back.lock.outpoint.outIdx}`, `${toHex(b32(0xd8))}:1`);
+  assert.deepEqual({ ...back.lock.fields, paymentImage: toHex(back.lock.fields.paymentImage.bytes), claimPk: toHex(back.lock.fields.claimPk), refundPk: toHex(back.lock.fields.refundPk) },
+    { ...lock.fields, paymentImage: toHex(stake.stakePoint), claimPk: toHex(CLAIM), refundPk: toHex(refundKeyOf(player2)) });
+  assert.equal(back.committedTo, null);
+  markLockCommitted(tab, { ...who, entryId: b32(0xee) });
+  assert.equal(savedLock(tab, who).committedTo, toHex(b32(0xee)));
+  assert.equal(savedLock(tab, { roundId: rid, playerPubkey: b32(0x63) }), null, 'another player got this player\'s kept lock');
+});
+
+test('the lock is shown as what it is: the amount, where, and the block it comes back to the player\'s key from', () => {
+  const line = lockLine({ outpoint: { txid: b32(0xd8), outIdx: 0n }, fields: { amountMsat: 980000n, expiration: 465 } });
+  assert.equal(line, `stake locked in the round's federation: 980000 msat at ${'d8'.repeat(8)}…:0 · back to your key from federation block 465 if nobody settles it`);
+  assert.equal(lockLine(null), '');
 });
 
 test('no lock is made for a link naming no federation, a key without its attestation, a round naming no federation, or a stake with no point', async () => {

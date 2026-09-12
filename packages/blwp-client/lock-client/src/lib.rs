@@ -3,10 +3,12 @@
 //! built to wasm. One `LockClient` holds one in-memory client for one session:
 //!
 //!   federationIdOf(invite)             the federation an invite names, hex
-//!   join(invite, federation_id, secret)
+//!   join(invite, federation_id, secret, store)
 //!                                      the round's federation - refused if the
 //!                                      invite names another - under the
-//!                                      player's own secret for this round
+//!                                      player's own secret for this round, its
+//!                                      state kept in the tab (store.rs): a
+//!                                      reloaded page reopens the same wallet
 //!   lockCostMsat(msat)                 what locking msat costs this ecash: the
 //!                                      amount and the federation's fee quote
 //!   depositFor(msat)                   the invoice that credits msat of ecash,
@@ -26,13 +28,14 @@
 //! hashes itself.
 use std::str::FromStr;
 
+mod store;
+
 use fedimint_api_client::api::{DynModuleApi, FederationApiExt};
 use fedimint_client::transaction::{ClientOutput, ClientOutputBundle, TransactionBuilder};
 use fedimint_client::{Client, ClientHandle, RootSecret};
 use fedimint_connectors::ConnectorRegistry;
 use fedimint_core::core::{IntoDynInstance, ModuleInstanceId, OperationId};
 use fedimint_core::db::Database;
-use fedimint_core::db::mem_impl::MemDatabase;
 use fedimint_core::invite_code::InviteCode;
 use fedimint_core::module::{Amounts, ApiRequestErased};
 use fedimint_core::secp256k1::PublicKey;
@@ -49,6 +52,26 @@ use fedimint_lnv2_common::{Bolt11InvoiceDescription, ContractId, KIND, Lightning
 use wasm_bindgen::prelude::{JsError, wasm_bindgen};
 
 fn js(e: impl std::fmt::Display) -> JsError { JsError::new(&e.to_string()) }
+
+#[wasm_bindgen]
+extern "C" {
+    #[wasm_bindgen(js_namespace = console, js_name = error)]
+    fn console_error(s: &str);
+    #[wasm_bindgen(js_namespace = console, js_name = trace)]
+    fn console_trace(s: &str);
+}
+
+/// A PANIC IS SAID, NOT SWALLOWED. Without this a panic in the stock client is
+/// a bare `RuntimeError: unreachable` and the page's promise never settles -
+/// measured: a reloaded page sat on "recovering" with no word of why.
+#[wasm_bindgen(start)]
+pub fn said_on_panic() {
+    std::panic::set_hook(Box::new(|info| {
+        console_error(&format!("blwp-lock-client panicked: {info}"));
+        // AND WHERE FROM: the JS stack carries the wasm frames by name.
+        console_trace("blwp-lock-client panic stack");
+    }));
+}
 
 fn secret_from_hex(s: &str) -> Result<[u8; 32], JsError> {
     if s.len() != 64 || !s.is_ascii() {
@@ -93,12 +116,19 @@ impl LockClient {
         Ok(InviteCode::from_str(&invite).map_err(js)?.federation_id().to_string())
     }
 
-    /// A client of the federation the invite names, its state in memory -
-    /// REFUSED unless that federation is `federation_id` (hex, the round's),
-    /// so a link cannot send the stake to another federation. Its root is the
-    /// player's own `secret` (32 bytes hex, from their seed, per round), so the
-    /// ecash it holds belongs to the seed, not to this tab.
-    pub async fn join(invite: String, federation_id: String, secret: String) -> Result<LockClient, JsError> {
+    /// A client of the federation the invite names - REFUSED unless that
+    /// federation is `federation_id` (hex, the round's), so a link cannot send
+    /// the stake to another federation. Its root is the player's own `secret`
+    /// (32 bytes hex, from their seed, per round), and its state is kept in
+    /// `store`, the tab's: a page reloaded after the deposit reopens the wallet
+    /// that holds it - and a deposit still being claimed resumes - instead of
+    /// joining an empty one.
+    pub async fn join(
+        invite: String,
+        federation_id: String,
+        secret: String,
+        store: store::LockStore,
+    ) -> Result<LockClient, JsError> {
         let invite = InviteCode::from_str(&invite).map_err(js)?;
         let named = invite.federation_id().to_string();
         if named != federation_id.to_ascii_lowercase() {
@@ -111,10 +141,18 @@ impl LockClient {
         builder.with_module(fedimint_mintv2_client::MintClientInit);
         builder.with_module(fedimint_lnv2_client::LightningClientInit::default());
         let connectors = ConnectorRegistry::build_from_client_defaults().bind().await.map_err(js)?;
-        let preview = builder.preview(connectors, &invite).await.map_err(js)?;
         let root = RootSecret::StandardDoubleDerive(DerivableSecret::new_root(&secret, b"BLWP/v1/LockClient"));
-        let db: Database = MemDatabase::new().into();
-        let client = preview.join(db, root).await.map_err(js)?;
+        let (tab, _kept) = store::TabDatabase::load(store).map_err(js)?;
+        let db: Database = tab.into();
+        let client = if Client::is_initialized(&db).await {
+            builder.open(connectors, db, root).await.map_err(js)?
+        } else {
+            let preview = builder.preview(connectors, &invite).await.map_err(js)?;
+            preview.join(db, root).await.map_err(js)?
+        };
+        if client.federation_id().to_string() != named {
+            return Err(js("the wallet this tab kept is another federation's"));
+        }
         let lnv2 = client.get_first_instance(&KIND).ok_or_else(|| js("this federation has no lnv2 module"))?;
         Ok(LockClient { client, lnv2 })
     }

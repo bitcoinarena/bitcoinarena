@@ -3,16 +3,17 @@
 // page on disk, a headless Chrome, and the federation page-lock-regtest.sh
 // stands up (stock fedimintd 0.12.0, one gateway, regtest).
 //
-//   node tools/page-lock.mjs before=<page dir> after=<page dir> nolock=<page dir>
+//   node tools/page-lock.mjs label=<page dir> ...
 //
 // Each run is the Daily's own 2-of-2 round (`standUpRound`: bonded seats, a
 // census, a published round) naming the federation, both seats holding the
 // attested claim key and the real stake-lock port. The page is opened on the
 // round's link, as a player opens it; the harness pays the deposit invoice the
 // page shows (the player's wallet), and reads everything else off the browser -
-// what the page built, every request it made - and off the seats and the
-// federation. `nolock` serves the page with its lock step switched off: the
-// mutant that must not be seated.
+// what the page built and showed, every request it made - and off the seats and
+// the federation. Labels:
+//   nolock...  the page served with its lock step switched off (the mutant)
+//   reload...  the tab is reloaded once, after the deposit and before the lock
 import { readFileSync, writeFileSync, copyFileSync, mkdtempSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -48,6 +49,36 @@ const lncliPay = (invoice) => new Promise((done) => execFile(`${env.LND_BIN}/lnc
 
 // THE MUTANT: the page's lock step never runs. Everything else is the page.
 const LOCK_STEP = 'if (BLWPCLIENT.roundLocks(named.round)) {\n          const depositEl';
+// THE RELOAD: once, when the page is about to lock - the deposit paid and
+// claimed - the tab goes away and comes back. Harness instrumentation in the
+// served page, not in the client: it wraps the page's call and throws at that
+// step, so no lock is made, then reloads.
+const RELOAD_ONCE = `<script>(function () {
+  var real = BLWPCLIENT.lockStake;
+  BLWPCLIENT.lockStake = function (o) {
+    var step = o.onStep || function () {};
+    return real(Object.assign({}, o, { onStep: function (s) {
+      if (s === 'locking the stake' && !sessionStorage.getItem('blwp.harness.reloaded')) {
+        sessionStorage.setItem('blwp.harness.reloaded', '1');
+        setTimeout(function () { location.reload(); }, 0);
+        throw new Error('harness: the tab went away before the lock');
+      }
+      step(s);
+    } }));
+  };
+})();</script>`;
+// THE RELOAD AFTER THE LOCK: once, the moment the page has made its lock and
+// before Unity's session posts the entry - the window where a seat has not yet
+// committed it.
+const RELOAD_AFTER_LOCK = `<script>(function () {
+  var t = setInterval(function () {
+    if (window.BLWP_STAKE_LOCK && !sessionStorage.getItem('blwp.harness.reloaded')) {
+      sessionStorage.setItem('blwp.harness.reloaded', '1');
+      clearInterval(t);
+      location.reload();
+    }
+  }, 20);
+})();</script>`;
 const MIME = { '.html': 'text/html', '.js': 'application/javascript', '.wasm': 'application/wasm', '.json': 'application/json' };
 const servePageAs = (dir, label) => new Promise((ok) => {
   const s = createServer((req, res) => {
@@ -55,10 +86,16 @@ const servePageAs = (dir, label) => new Promise((ok) => {
     if (p === '/') p = '/index.html';
     let body;
     try { body = readFileSync(join(dir, p.replace(/\.\.+/g, ''))); } catch { res.writeHead(404); return res.end('no'); }
-    if (p === '/index.html' && label === 'nolock') {
-      const html = body.toString('utf8');
-      if (!html.includes(LOCK_STEP)) { res.writeHead(500); return res.end('this page has no lock step to switch off'); }
-      body = Buffer.from(html.replace(LOCK_STEP, 'if (false) {\n          const depositEl'));
+    if (p === '/index.html' && (label.startsWith('nolock') || label.startsWith('reload') || label.startsWith('relock'))) {
+      let html = body.toString('utf8');
+      if (label.startsWith('nolock')) {
+        if (!html.includes(LOCK_STEP)) { res.writeHead(500); return res.end('this page has no lock step to switch off'); }
+        html = html.replace(LOCK_STEP, 'if (false) {\n          const depositEl');
+      } else {
+        html = html.replace('<script src="blwp-client.js"></script>', '<script src="blwp-client.js"></script>'
+          + (label.startsWith('relock') ? RELOAD_AFTER_LOCK : RELOAD_ONCE));
+      }
+      body = Buffer.from(html);
     }
     const ext = p.slice(p.lastIndexOf('.'));
     res.writeHead(200, { 'content-type': MIME[ext] || 'application/octet-stream' });
@@ -94,42 +131,87 @@ async function browse(url) {
     if (m.method === 'Network.responseReceived' && requests.has(m.params.requestId))
       requests.get(m.params.requestId).status = m.params.response.status;
   });
-  const send = (method, params = {}) => new Promise((r) => { const i = ++n; pending.set(i, r); ws.send(JSON.stringify({ id: i, method, params })); });
+  // EVERY ASK OF THE BROWSER IS BOUNDED. Measured: a run's Chrome went away
+  // (DevTools refusing connections) and an unbounded ask left the harness
+  // waiting for good, its runs never reported. A dead browser now fails the run.
+  const send = (method, params = {}) => new Promise((r, no) => {
+    const i = ++n;
+    const timer = setTimeout(() => { pending.delete(i); no(new Error(`the browser did not answer ${method} in 30 s`)); }, 30000);
+    pending.set(i, (m) => { clearTimeout(timer); r(m); });
+    try { ws.send(JSON.stringify({ id: i, method, params })); } catch (e) { clearTimeout(timer); pending.delete(i); no(e); }
+  });
   const evaluate = async (expression) => (await send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true })).result?.result?.value;
+  const shot = async (file) => { const r = await send('Page.captureScreenshot', { format: 'png' }); if (r.result) writeFileSync(file, Buffer.from(r.result.data, 'base64')); };
   await send('Runtime.enable');
   await send('Network.enable');
+  await send('Page.enable');
   await send('Page.navigate', { url });
   const close = () => { try { ws.close(); } catch {} try { chrome.kill('SIGKILL'); } catch {} };
-  return { evaluate, requests, logs, close };
+  const click = async (x, y) => {
+    for (const type of ['mousePressed', 'mouseReleased'])
+      await send('Input.dispatchMouseEvent', { type, x, y, button: 'left', clickCount: 1, buttons: 1 });
+    await wait(600);
+  };
+  const key = (type) => send('Input.dispatchKeyEvent', { type, code: 'KeyW', key: 'w', windowsVirtualKeyCode: 87,
+    nativeVirtualKeyCode: 87, ...(type === 'keyDown' ? { text: 'w' } : {}) });
+  return { evaluate, shot, click, key, requests, logs, close };
 }
 
 const pathOf = (q) => { try { return new URL(q.url).pathname; } catch { return q.url; } };
 
+// WHAT THE PAGE HAS DONE AND SHOWS, read in whatever document is current (a
+// reload resets the globals). `depositView` is whether the invoice a player
+// must pay is on screen: something drawn, and the topmost thing at its centre.
+const STATE = `JSON.stringify({
+  deposit: window.BLWP_DEPOSIT || null, entry: !!window.BLWP_ENTRY, refused: window.BLWP_SEAT_REFUSED || null,
+  lock: window.BLWP_STAKE_LOCK ? 1 : 0, pageError: (document.getElementById('err') || {}).textContent || null,
+  reloadedDoc: (performance.getEntriesByType('navigation')[0] || {}).type === 'reload',
+  depositView: (() => {
+    const el = document.getElementById('blwp-deposit'); if (!el) return null;
+    const box = el.querySelector('code') || el; const r = box.getBoundingClientRect();
+    const hit = r.width && r.height ? document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2) : null;
+    return { drawn: r.width > 0 && r.height > 0, onTop: !!hit && (hit === box || box.contains(hit)),
+      carriesInvoice: !!window.BLWP_DEPOSIT && (box.textContent || '').includes(window.BLWP_DEPOSIT.invoice) };
+  })(),
+})`;
+const VIEW = `JSON.stringify({
+  chip: (document.getElementById('blwp-players') || {}).textContent || null,
+  panel: (document.getElementById('blwp-owed') || {}).textContent || null,
+  refusedWhy: (() => { const i = window.unityInstance; const m = (i && i.Module) || window.Module;
+    return (m && m.blwpNet && m.blwpNet.client && m.blwpNet.client.refusedWhy) || null; })(),
+})`;
+
 async function one({ label, dir }, i) {
   const page = await servePageAs(dir, label);
-  const round = await standUpRound({ host: '127.0.0.1', portA: 18361 + 2 * i, portB: 18362 + 2 * i,
+  const base = Number(env.PORT_BASE || 18361);
+  const round = await standUpRound({ host: '127.0.0.1', portA: base + 2 * i, portB: base + 1 + 2 * i,
     page: `http://127.0.0.1:${page.port}`, stakeMsat: 1000000n, federationId, invite: env.INVITE,
     seat: { claimKeyFor: () => claimPk, stakeLocks: port } });
   const b = await browse(round.url);
   const t0 = Date.now();
   const timings = {};
-  let paid = null;
+  const deposits = [];
+  let depositView = null;
+  const state = async () => JSON.parse(await b.evaluate(STATE) || '{}');
+  const until = async (ms, done) => { let s = {}; for (let t = Date.now(); Date.now() - t < ms; await wait(250)) { s = await state(); if (done(s)) break; } return s; };
   try {
-    // THE PAGE SHOWS A DEPOSIT, BUILDS ITS ENTRY, OR REFUSES THE SEAT - whichever it does first.
-    // `pageError` is the page's own refusal of the link (`fail(...)` into #err): Unity is never started.
-    const state = () => b.evaluate("JSON.stringify({ deposit: window.BLWP_DEPOSIT || null, entry: !!window.BLWP_ENTRY, refused: window.BLWP_SEAT_REFUSED || null, lock: window.BLWP_STAKE_LOCK ? 1 : 0, pageError: (document.getElementById('err') || {}).textContent || null })");
-    let s = {};
-    for (let t = Date.now(); Date.now() - t < 120000; await wait(250)) {
-      s = JSON.parse(await state() || '{}');
-      if (s.deposit || s.entry || s.refused || s.pageError) break;
-    }
+    // THE PAGE SHOWS A DEPOSIT, BUILDS ITS ENTRY, OR REFUSES - whichever it does first.
+    let s = await until(120000, (x) => x.deposit || x.entry || x.refused || x.pageError);
     if (s.deposit) {
       timings.depositShownMs = Date.now() - t0;
-      paid = await lncliPay(s.deposit.invoice);
-      timings.paidMs = Date.now() - t0;
-      for (let t = Date.now(); Date.now() - t < 120000; await wait(250)) {
-        s = JSON.parse(await state() || '{}');
-        if (s.entry || s.refused || s.pageError) break;
+      depositView = s.depositView;
+      await b.shot(`${P}/${label}-deposit.png`);
+      deposits.push({ amountMsat: s.deposit.amountMsat, paid: await lncliPay(s.deposit.invoice) });
+      if (label.startsWith('reload') || label.startsWith('relock')) {
+        // THE RELOADED TAB: it either asks for a deposit again, or locks with what it recovered.
+        s = await until(180000, (x) => x.reloadedDoc && (x.deposit || x.entry || x.refused || x.pageError));
+        timings.reloadedDecidedMs = Date.now() - t0;
+        if (s.reloadedDoc && s.deposit) {
+          deposits.push({ amountMsat: s.deposit.amountMsat, paid: await lncliPay(s.deposit.invoice), afterReload: true });
+          s = await until(120000, (x) => x.entry || x.refused || x.pageError);
+        }
+      } else {
+        s = await until(120000, (x) => x.entry || x.refused || x.pageError);
       }
       timings.lockedMs = Date.now() - t0;
     }
@@ -137,32 +219,63 @@ async function one({ label, dir }, i) {
     const reqs = () => [...b.requests.values()];
     const posted = (p) => reqs().filter((q) => q.method === 'POST' && pathOf(q) === p);
     for (let t = Date.now(); Date.now() - t < 240000 && !s.refused && !s.pageError; await wait(1000)) {
-      if (s.lock ? posted('/lock').length >= 2 && posted('/lock').every((q) => q.status) : posted('/entry').length && posted('/entry').every((q) => q.status)) break;
+      if (s.lock ? posted('/lock').filter((q) => q.status).length >= 2 : posted('/entry').length && posted('/entry').every((q) => q.status)) break;
     }
-    await wait(3000);
-    const entry = await b.evaluate(`(() => { const e = window.BLWP_ENTRY; if (!e) return null; const h = BLWPCLIENT.toHex;
-      return { outpoint: h(e.stakeLockOutpoint.txid) + ':' + String(e.stakeLockOutpoint.outIdx), stakePoint: h(e.stakePoint) }; })()`);
-    const lock = await b.evaluate(`(() => { const l = window.BLWP_STAKE_LOCK; return l ? BLWPCLIENT.toHex(l.outpoint.txid) + ':' + String(l.outpoint.outIdx) : null; })()`);
-    const refused = await b.evaluate('window.BLWP_SEAT_REFUSED || null');
     const lockPosts = posted('/lock');
-    const eid = lockPosts.length ? new URL(lockPosts[0].url).searchParams.get('entry') : null;
+    const eid = lockPosts.length ? new URL(lockPosts[lockPosts.length - 1].url).searchParams.get('entry') : null;
     const seats = [round.a, round.b];
+    const rid = fromHex(round.id);
+    const receiptsOf = () => (eid ? seats.map((d) => { try { return d.round.receipts(rid, fromHex(eid)).count; } catch (e) { return `? ${e.message}`; } }) : [null, null]);
+    // WHAT EACH SEAT STORED. The daemons are fresh for every run, so every
+    // batch and checkpoint in them is this player's.
+    const stored = () => seats.map((d) => { try {
+      const n = (t) => d.round.db.prepare(`SELECT COUNT(*) n FROM ${t}`).get().n;
+      return { batches: n('batches'), checkpoints: n('checkpoints') };
+    } catch (e) { return `? ${e.message}`; } });
+    // AND PLAY, as a player starts it (screen.mjs's clicks on the same build):
+    // PLAY on the title, AUTO to fill the bed, depart, and six seconds of
+    // throttle. Only then is there a run whose batches a seat can take or refuse.
+    const beforePlay = eid ? { receipts: receiptsOf(), stored: stored() } : null;
+    if (s.lock) {
+      await b.click(486, 554); await wait(3000);
+      await b.click(303, 617); await wait(1200);
+      await b.click(660, 617); await wait(2000);
+      await b.key('keyDown'); await wait(6000); await b.key('keyUp'); await wait(2000);
+    }
+    // THE PLAYER'S VIEW AFTER THE LOCK, and whether play is taken: the chip
+    // counts the seats that saw the stake, and a seat that took the run's
+    // batches returns checkpoint receipts for it.
+    let view = {};
+    for (let t = Date.now(); Date.now() - t < 60000; await wait(1000)) {
+      view = JSON.parse(await b.evaluate(VIEW) || '{}');
+      const r = receiptsOf();
+      if (!eid || ((view.chip || '').includes('committed') && r.every((x) => typeof x === 'number' && x > 0))) break;
+    }
+    if (s.lock) await b.shot(`${P}/${label}-playing.png`);
+    const entry = await b.evaluate(`(() => { const e = window.BLWP_ENTRY; if (!e) return null; const h = BLWPCLIENT.toHex;
+      return { outpoint: h(e.stakeLockOutpoint.txid) + ':' + String(e.stakeLockOutpoint.outIdx) }; })()`);
+    const lock = await b.evaluate(`(() => { const l = window.BLWP_STAKE_LOCK; return l ? BLWPCLIENT.toHex(l.outpoint.txid) + ':' + String(l.outpoint.outIdx) : null; })()`);
     let federation = null;
     if (lock) {
       const [txid, outIdx] = lock.split(':');
       const st = await port.status({ txid: fromHex(txid), outIdx: BigInt(outIdx) });
       federation = st && st.stored ? { holds: true, blocksLeft: st.stored.blocksLeft, blockCount: st.blockCount } : { holds: false };
     }
+    const exceptions = b.logs.filter((l) => l.startsWith('EXCEPTION'));
     const facts = {
-      run: label, seatRefused: refused, pageError: s.pageError || null, deposit: s.deposit ? { amountMsat: s.deposit.amountMsat, paid } : null,
+      run: label, seatRefused: s.refused || null, pageError: s.pageError || null, deposits, depositView,
+      holding: b.logs.filter((l) => /stake lock: (holding|recovering)/.test(l)).map((l) => l.replace('[blwp] stake lock: ', '')),
       lockMadeAt: lock, entryOutpoint: entry && entry.outpoint,
       entryOutpointIsZero: entry ? /^0{64}:0$/.test(entry.outpoint) : null,
-      entryNamesTheLock: !!(entry && lock && entry.outpoint === lock),
-      federation,
+      entryNamesTheLock: !!(entry && lock && entry.outpoint === lock), federation,
       lockClientLoaded: reqs().filter((q) => /blwp_lock_client/.test(q.url)).map((q) => `${pathOf(q)} ${q.status}`),
       handouts: posted('/handout').map((q) => q.status), entries: posted('/entry').map((q) => q.status),
       locks: lockPosts.map((q) => q.status),
       committedMsat: eid ? seats.map((d) => { const seen = d.round.stakeSeen(fromHex(eid)); return seen ? String(seen.paidMsat) : null; }) : [null, null],
+      beforePlay, afterPlay: eid ? { receipts: receiptsOf(), stored: stored() } : null,
+      chip: view.chip ? view.chip.split('\n').pop() : null, panel: view.panel || null,
+      batchesRefused: view.refusedWhy || null,
+      exceptions: exceptions.length, firstException: exceptions.length ? exceptions[0].split('\n').slice(0, 3).join(' | ') : null,
       timings,
     };
     say(facts);
@@ -172,7 +285,7 @@ async function one({ label, dir }, i) {
     await round.close();
     page.server.close();
     console.log(`--- ${label}: page console ---`);
-    for (const l of b.logs) if (/\[blwp\]|EXCEPTION|lock|refused/i.test(l) && !/\[seat\]/.test(l)) console.log('   ', l.slice(0, 240));
+    for (const l of b.logs) if (/\[blwp\]|EXCEPTION|lock|refused/i.test(l) && !/\[seat\]/.test(l)) console.log('   ', l.slice(0, 400));
   }
 }
 

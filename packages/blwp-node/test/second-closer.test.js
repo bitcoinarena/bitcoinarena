@@ -177,11 +177,6 @@ async function closedWithGap(gapMs, { bLateToAMs = 0 } = {}) {
     // `bLateToAMs` after the close - a slow link, and the state the race needs:
     // B final, A not yet (P2). And every share A answers for the lost stake.
     const t0 = Date.now();
-    if (bLateToAMs) {
-      const keep = a.round.putPosting.bind(a.round);
-      a.round.putPosting = (r, e, seat, bytes) =>
-        (toHex(seat) === toHex(b.round.pubkey) && Date.now() < t0 + bLateToAMs ? 0 : keep(r, e, seat, bytes));
-    }
     const answeredByA = [];
     const release = a.preimages.mayRelease.bind(a.preimages);
     a.preimages.mayRelease = (r, e) => {
@@ -189,6 +184,18 @@ async function closedWithGap(gapMs, { bLateToAMs = 0 } = {}) {
       if (toHex(e) === toHex(loser.eid)) answeredByA.push({ atMs: Date.now() - t0, ok: x.ok, why: x.why || '' });
       return x;
     };
+    // B'S POSTING IS KEPT FROM A UNTIL A HAS REFUSED B ONE SHARE - the order the
+    // race is about, held by the event itself. It was a 3 s wall clock from the
+    // close: measured in the full node suite, B's first ask reached A at 5587 ms,
+    // A was final by then and handed the share over, and the race never ran
+    // ("A never refused B's ask") - on HEAD aed4357 too. Held by the refusal, A
+    // cannot be final before B asks, however slow the machine.
+    if (bLateToAMs) {
+      const keep = a.round.putPosting.bind(a.round);
+      const refusedOnce = () => answeredByA.some((x) => !x.ok);
+      a.round.putPosting = (r, e, seat, bytes) =>
+        (toHex(seat) === toHex(b.round.pubkey) && !refusedOnce() ? 0 : keep(r, e, seat, bytes));
+    }
 
     const first = say(a.port, `close ${toHex(rid)}`);
     if (gapMs) await wait(gapMs);

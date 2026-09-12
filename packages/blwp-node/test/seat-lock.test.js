@@ -14,7 +14,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
+import { ed25519 } from '@noble/curves/ed25519.js';
 import { lockFieldsToJson } from '../src/stake-lock-seat.js';
+import { encodeEntryContract, entryId } from '../../protocol/src/contracts.js';
 import { netStakeMsat } from '../../protocol/src/payout.js';
 import { toHex } from '../../protocol/src/hash.js';
 import { b32 } from './window-fixture.js';
@@ -69,6 +71,29 @@ test('a lock that is not the entry\'s is refused by name, and the stake stays un
     } finally { await s.close(); }
   }
   console.log(`  ${facts.length} wrong locks refused by name: ${facts.join('; ')}`);
+});
+
+test('one lock stakes one seat: a second entry naming a lock already committed for another is refused, and its stake stays unseen', async () => {
+  const s = await seatedWithLock(WITH_KEY);
+  try {
+    assert.equal((await handOver(s, s.fields)).status, 201);
+    // The same entry handing its own lock again is still its own.
+    assert.equal((await handOver(s, s.fields)).status, 201);
+    // A second entry of the same player, naming the same outpoint - a reload
+    // that reused a lock a seat had already taken, or a player trying one stake twice.
+    const second = { ...s.entry, worldSecret: b32(0x17), sessionPubkey: ed25519.getPublicKey(ed25519.utils.randomSecretKey()) };
+    const seated = await fetch(`http://127.0.0.1:${s.d.port}/entry`, { method: 'POST', body: encodeEntryContract(second) });
+    assert.equal(seated.status, 201, await seated.text());
+    const eid2 = entryId(second);
+    const r = await fetch(`http://127.0.0.1:${s.d.port}/lock?entry=${toHex(eid2)}`,
+      { method: 'POST', body: JSON.stringify(lockFieldsToJson(s.fields)) });
+    const said = await r.text();
+    console.log(`  the lock handed for a second entry: ${r.status} ${said.trim()}`);
+    assert.equal(r.status, 409, `a second entry was staked by one lock: ${said}`);
+    assert.match(said, /already stakes another entry in this round: one lock is one seat/);
+    assert.equal(s.d.round.stakeSeen(eid2), null, 'the second entry\'s stake was seen');
+    assert.ok(s.d.round.stakeSeen(s.eid), 'the first entry lost its stake');
+  } finally { await s.close(); }
 });
 
 test('a round that names no federation takes no lock: its stake is not one', async () => {
