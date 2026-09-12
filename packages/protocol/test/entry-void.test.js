@@ -3,9 +3,10 @@
 // not Void; a first mark after the line is; no mark at all is not (§15's hole).
 //
 // The numbers are the ones measured on the node (tools/entry-void-before.mjs):
-// join tick 0, first mark at tick 60, the run's next mark at 1320 - and the
+// join tick 0, first mark at tick 60, the run's next mark at 1320 - the
 // fixtures elsewhere whose single first mark is at 1320 (forfeit.test.js) or
-// 1197 (the W5b rehearsal).
+// 1197 (the W5b rehearsal) - and on the built page (lobby-regtest.sh): first
+// mark at tick 60, and 720 after one timed-out 10 s input wait.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -20,17 +21,33 @@ import { toHex } from '../src/hash.js';
 const b32 = (n) => new Uint8Array(32).fill(n);
 const said = (joinTick, deadlineTicks, firstMark) => entryVoidOutcome({ joinTick, deadlineTicks, firstMark }).outcome;
 
-test('the three measured cases, as predicates: in time is not Void, after the deadline is, no mark is not', () => {
+test('the three measured cases, on a round that names the tight line of 120: in time is not Void, after it is, no mark is not', () => {
   const facts = {
-    defaultDeadline: START_DEADLINE_TICKS,
     markAt60: said(0, 120, { tick: 60 }),
     markAt1320: said(0, 120, { tick: 1320 }),
     markAt1197: said(0, 120, { tick: 1197 }),
     noMark: said(0, 120, null),
   };
-  console.log('  FACTS (ENTRY_VOID predicates):', JSON.stringify(facts));
-  assert.deepEqual(facts, { defaultDeadline: 120, markAt60: null, markAt1320: ENTRY_VOID, markAt1197: ENTRY_VOID, noMark: null });
+  console.log('  FACTS (ENTRY_VOID predicates, deadline 120):', JSON.stringify(facts));
+  assert.deepEqual(facts, { markAt60: null, markAt1320: ENTRY_VOID, markAt1197: ENTRY_VOID, noMark: null });
   assert.match(entryVoidOutcome({ joinTick: 0, deadlineTicks: 120, firstMark: null }).why, /not ENTRY_VOID.*§15/);
+});
+
+test('the omitted default is the page\'s window: the measured honest first marks are in time, the fixture plants are not', () => {
+  const d = START_DEADLINE_TICKS;
+  const facts = {
+    defaultDeadline: d,
+    pageFirstMark60: said(0, d, { tick: 60 }),
+    afterOneInputWait720: said(0, d, { tick: 720 }),
+    onTheLine: said(0, d, { tick: d }),
+    oneTickPast: said(0, d, { tick: d + 1 }),
+    w5bPlant1197: said(0, d, { tick: 1197 }),
+    forfeitPlant1320: said(0, d, { tick: 1320 }),
+    noMark: said(0, d, null),
+  };
+  console.log('  FACTS (ENTRY_VOID predicates, omitted default):', JSON.stringify(facts));
+  assert.deepEqual(facts, { defaultDeadline: 900, pageFirstMark60: null, afterOneInputWait720: null, onTheLine: null,
+    oneTickPast: ENTRY_VOID, w5bPlant1197: ENTRY_VOID, forfeitPlant1320: ENTRY_VOID, noMark: null });
 });
 
 test('the line is join tick + deadline, inclusive, and a late joiner counts from its own join', () => {
@@ -63,11 +80,13 @@ test('the round names its start deadline, or omits it and gets the named default
   const facts = {
     omittedDecodes: startDeadlineOf(decodeRoundContract(encodeRoundContract(plain))),
     explicitDefaultIsTheSameRound: toHex(encodeRoundContract(contract({ startDeadlineTicks: START_DEADLINE_TICKS }))) === bytes,
-    namedRoundTrips: decodeRoundContract(encodeRoundContract(contract({ startDeadlineTicks: 300 }))).startDeadlineTicks,
-    namedIsAnotherRound: toHex(roundId(contract({ startDeadlineTicks: 300 }))) !== toHex(roundId(plain)),
+    tight120RoundTrips: decodeRoundContract(encodeRoundContract(contract({ startDeadlineTicks: 120 }))).startDeadlineTicks,
+    tight120IsAnotherRound: toHex(roundId(contract({ startDeadlineTicks: 120 }))) !== toHex(roundId(plain)),
+    named1400IsAnotherRound: toHex(roundId(contract({ startDeadlineTicks: 1400 }))) !== toHex(roundId(plain)),
   };
   console.log('  FACTS (deadline field):', JSON.stringify(facts));
-  assert.deepEqual(facts, { omittedDecodes: 120, explicitDefaultIsTheSameRound: true, namedRoundTrips: 300, namedIsAnotherRound: true });
+  assert.deepEqual(facts, { omittedDecodes: 900, explicitDefaultIsTheSameRound: true, tight120RoundTrips: 120,
+    tight120IsAnotherRound: true, named1400IsAnotherRound: true });
   // ONE ENCODING PER ROUND: the default written out, zero, or a deadline past the run is refused.
   const withTail = (n) => { const b = encodeRoundContract(plain); const out = new Uint8Array(b.length + 4); out.set(b); new DataView(out.buffer).setUint32(b.length, n); return out; };
   assert.throws(() => decodeRoundContract(withTail(START_DEADLINE_TICKS)), /written by omitting it/);
