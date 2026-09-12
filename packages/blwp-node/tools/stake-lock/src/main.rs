@@ -165,10 +165,19 @@ fn stored_json(s: Option<(ContractId, u64)>) -> serde_json::Value {
 }
 
 /// The stake lock's own fields, as the lock and redeem modes name them.
+///
+/// THE IMAGE IS A POINT for a stake lock (v4.6.2 §23.1 step 4, F1): `--point`
+/// is the entry's stake_point, the Feldman A0 of the dealt shares, so the seats
+/// can check the shares against it. `--hash` stays for a fee lock's H(F) and for
+/// the rehearsal's earlier hash-image locks.
 fn stake_contract(a: &Args, expiration: u64) -> anyhow::Result<OutgoingContract> {
     let refund_pk = PublicKey::from_str(need(a, "refund-pk")?)?;
+    let payment_image = match a.get("point") {
+        Some(point) => PaymentImage::Point(PublicKey::from_str(point)?),
+        None => PaymentImage::Hash(sha256::Hash::from_str(need(a, "hash")?)?),
+    };
     Ok(OutgoingContract {
-        payment_image: PaymentImage::Hash(sha256::Hash::from_str(need(a, "hash")?)?),
+        payment_image,
         amount: Amount::from_msats(need(a, "amount-msat")?.parse()?),
         expiration,
         claim_pk: PublicKey::from_str(need(a, "claim-pk")?)?,
@@ -181,6 +190,14 @@ fn stake_contract(a: &Args, expiration: u64) -> anyhow::Result<OutgoingContract>
 async fn main() -> anyhow::Result<()> {
     let a = args()?;
     let mode = a.get("mode").map_or("lock", String::as_str).to_owned();
+    // THE CONTRACT ID OF A HANDED-OVER CONTRACT, the stock client's own hash: a
+    // seat compares it with the id the guardians hold at the entry's outpoint
+    // (§23.1 step 5). Local arithmetic - no client, no federation.
+    if mode == "id" {
+        let contract = stake_contract(&a, need(&a, "expiration")?.parse()?)?;
+        println!("{}", serde_json::json!({ "mode": "id", "contract_id": contract.contract_id().0.to_string() }));
+        return Ok(());
+    }
     let client = open(PathBuf::from(need(&a, "data-dir")?)).await?;
     let lnv2 = client.get_first_instance(&KIND).context("this federation has no lnv2 module")?;
     let api = client.api().with_module(lnv2);
@@ -189,7 +206,7 @@ async fn main() -> anyhow::Result<()> {
         "redeem" => redeem(&a, &client, lnv2, &api).await,
         "settle" => settle(&a, &client, lnv2, &api).await,
         "status" => status(&a, &api).await,
-        other => bail!("no mode {other}: lock, redeem, settle or status"),
+        other => bail!("no mode {other}: lock, redeem, settle, status or id"),
     }
 }
 

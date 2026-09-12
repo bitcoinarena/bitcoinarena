@@ -67,6 +67,7 @@ import { resultFinality } from './finality.js';
 import { FINAL, PROVISIONALLY_FINAL, SUSPENDED } from '../../protocol/src/objection.js';
 import { transcriptBytesHash, SIGNED_POSTING_BYTES } from '../../protocol/src/posting.js';
 import { SIGNED_RERUN_BYTES } from '../../protocol/src/rerun.js';
+import { verifyStakeLock, lockFieldsFromJson } from './stake-lock-seat.js';
 import { splitSlashEvidence, slashProofId, SLASH_EVIDENCE_BYTES } from '../../protocol/src/slash.js';
 import { Preimages, encodeShareAnswer, SEALED_ANSWER_BYTES } from './preimage.js';
 import { Payouts, PAYOUT_QUEUED, PAID, PAID_IN_PART, NOTHING_OWED } from './payout.js';
@@ -187,6 +188,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // THE SEATS' ADVERTISEMENTS, by round (Map node key hex -> advert), so a slash
   // proof names each accused seat's own bond. Defaults to this node's census.
   advertsFor = null,
+  // THE ROUND'S FEDERATION, as a port (23.1 step 5): `status(outpoint)` and
+  // `contractId(fields)`, the stock client's answers (blwp-stake-lock). Null:
+  // this node verifies no stake lock.
+  stakeLocks = null,
+  // THE ROUND'S CLAIM KEY, by round (33 bytes). Defaults to this seat's own
+  // DKG committee key - the key the settlement seats hold for that round.
+  claimKeyFor = null,
   // WHERE THIS NODE'S OWN CHAIN IS (M3.3-30): a height, asked of its own
   // bitcoind. Given none, the pool's chain call answers it when there is one.
   chainTip = null,
@@ -1386,6 +1394,34 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         held.forEach((p, i) => out.set(p.bytes, i * SIGNED_POSTING_BYTES));
         res.writeHead(200, { 'content-type': 'application/octet-stream', 'x-postings': String(held.length), ...CORS });
         return res.end(Buffer.from(out));
+      }
+
+      // THE PLAYER'S STAKE LOCK, handed to a seat to verify (23.1 step 5): the
+      // contract it locked, as JSON. The seat asks the federation what it holds
+      // at the entry's outpoint, hashes the contract, checks every field against
+      // the entry, and only then counts the stake as seen.
+      if (req.method === 'POST' && url.pathname === '/lock') {
+        const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
+        if (eid.length !== 32) return text(res, 400, 'a lock is handed over for an entry id');
+        let fields;
+        try { fields = lockFieldsFromJson(JSON.parse(Buffer.from(await read(req)).toString('utf8'))); }
+        catch (e) { return text(res, 400, `that is not a stake lock: ${e.message}`); }
+        const stored = round.entry(eid);
+        if (!stored) return text(res, 404, 'this node seated no such entry');
+        const rid = decodeEntryContract(stored).roundId;
+        let claimPk = null;
+        try {
+          claimPk = claimKeyFor ? claimKeyFor(rid) : (() => {
+            const r = round.get(rid);
+            const held = r ? dkg.seatFor(decodeRoundContract(new Uint8Array(r.contract)).nodes) : null;
+            return held && held.ok ? held.pool.groupPublicKey : null;
+          })();
+        } catch { claimPk = null; }
+        let got;
+        try { got = await verifyStakeLock({ round, port: stakeLocks, entryIdBytes: new Uint8Array(eid), fields, claimPk }); }
+        catch (e) { got = { ok: false, why: `the federation could not be asked: ${e.message}` }; }
+        if (!got.ok) return text(res, 409, got.why);
+        return text(res, 201, `stake lock verified: contract ${got.contractId} holds ${got.paidMsat} msat`);
       }
 
       // EVERY SEAT'S RE-RUN OF A SUSPENDED RESULT (13A), fixed-size records.

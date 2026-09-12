@@ -1466,6 +1466,18 @@ export class Round {
         bytes: new Uint8Array(r.bytes), seenMs: Number(r.seen_ms) }));
   }
 
+  /** A stake lock this seat verified: the handed contract (JSON), its id, its outpoint. */
+  putStakeLock({ entryId, roundId, outpoint, fields, contractId }) {
+    this.db.prepare('INSERT OR REPLACE INTO stake_locks (entry_id, round_id, outpoint, fields, contract_id, verified_ms) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(Buffer.from(entryId), Buffer.from(roundId), `${Buffer.from(outpoint.txid).toString('hex')}:${outpoint.outIdx}`,
+        JSON.stringify(fields), contractId, this.now());
+  }
+
+  stakeLock(entryIdBytes) {
+    const r = this.db.prepare('SELECT outpoint, fields, contract_id, verified_ms FROM stake_locks WHERE entry_id = ?').get(Buffer.from(entryIdBytes));
+    return r ? { outpoint: r.outpoint, fields: JSON.parse(r.fields), contractId: r.contract_id, verifiedMs: Number(r.verified_ms) } : null;
+  }
+
   /** A transcript kept as a relay, under the hash its bytes have (checked by the door). */
   relayPut(hashBytes, bytes) {
     return this.db.prepare('INSERT OR IGNORE INTO relayed (hash, bytes, seen_ms) VALUES (?, ?, ?)')

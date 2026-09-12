@@ -462,6 +462,17 @@ export function openStore(path = ':memory:') {
       PRIMARY KEY (round_id, entry_id, node_pubkey)
     );
 
+    -- A STAKE LOCK THIS SEAT VERIFIED (23.1 step 5): the contract the player
+    -- handed over, the federation's id for it, and where it sits.
+    CREATE TABLE IF NOT EXISTS stake_locks (
+      entry_id     BLOB PRIMARY KEY,
+      round_id     BLOB NOT NULL,
+      outpoint     TEXT NOT NULL,
+      fields       TEXT NOT NULL,
+      contract_id  TEXT NOT NULL,
+      verified_ms  INTEGER NOT NULL
+    );
+
     -- WHAT THIS NODE KEEPS AS A RELAY: transcripts by their own hash, so any
     -- node can be one of a contract's publication_relays[] and serve nothing
     -- under a name its bytes do not have.

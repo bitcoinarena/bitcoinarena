@@ -11,6 +11,8 @@
 //     BLWP_BITCOIND_COOKIE   the path of its .cookie file
 //     BLWP_FUNDED_ROUNDS     round ids this operator funds (paying rounds only)
 //     BLWP_FUNDED_ROUNDS_FILE  the same, one id per line, read on every ask
+//     BLWP_STAKE_LOCK_BIN    blwp-stake-lock (tools/stake-lock), for stake-lock rounds
+//     BLWP_FEDERATION_CLIENT_DIR  the data dir of a client joined to the round's federation
 //
 // Both or neither. With them the daemon can find the pool's output, send and
 // look up a payout, read each round's beacon, and derive each round's census -
@@ -31,6 +33,7 @@ import { chainSpendOver } from './pool-watch.js';
 import { chainBeacon } from './beacon-source.js';
 import { PAYOUT_QUEUED } from './payout.js';
 import { lightningFromEnv } from './lnd-settings.js';
+import { stakeLocksFromEnv } from './stake-lock-port.js';
 import { fundingFromEnv } from './funding.js';
 import { decodeRoundContract } from '../../protocol/src/contracts.js';
 
@@ -51,6 +54,10 @@ if (Boolean(url) !== Boolean(cookiePath)) {
 // (tools/custody-restart-lnd.mjs): a custodian killed inside a settle and
 // restarted as this file left the stake ACTING whatever lnd said.
 const ln = lightningFromEnv(process.env);
+// AND THE ROUND'S FEDERATION, when this node seats stake-lock rounds (23.1
+// step 5): BLWP_STAKE_LOCK_BIN and BLWP_FEDERATION_CLIENT_DIR, both or neither.
+const fed = stakeLocksFromEnv(process.env);
+if (!fed.ok) { console.error(fed.why); process.exit(2); }
 if (!ln.ok) {
   console.error(ln.why);
   process.exit(2);
@@ -59,7 +66,7 @@ if (!ln.ok) {
 const db = openStore(path);
 // WHAT THIS DAEMON FUNDS (M3.3-31): the paying rounds its operator names, and
 // entries into them - off by default, so an unnamed round is still 402.
-const options = { port, host, funded: fundingFromEnv(process.env) };
+const options = { port, host, funded: fundingFromEnv(process.env), ...(fed.given ? { stakeLocks: fed.stakeLocks } : {}) };
 if (ln.given) {
   options.lightning = ln.lightning;
   if (ln.preflight) options.preflight = ln.preflight;
