@@ -58,6 +58,9 @@ const lncli = (...a) => new Promise((done) => execFile(`${env.LND_BIN}/lncli`,
   [`--lnddir=${P}/alice`, '--rpcserver=127.0.0.1:30107', '--network=regtest', ...a],
   { timeout: 120000 }, (err, out) => done({ err: err ? err.message.slice(0, 160) : null, out: String(out) })));
 const pay = async (invoice) => ((await lncli('payinvoice', '--force', invoice)).out.match(/Payment status: [A-Z_]+/) || ['?'])[0];
+const bcn = (...a) => new Promise((done) => execFile(`${env.BITCOIN_BIN}/bitcoin-cli`,
+  ['-regtest', '-rpcport=30101', '-rpcuser=blwp', '-rpcpassword=blwp', ...a],
+  { timeout: 120000 }, (err, out) => done({ err: err ? err.message.slice(0, 160) : null, out: String(out || '') })));
 const port = stakeLockPort({ bin: env.LOCK_BIN, dataDir: `${P}/client` });
 const ws = (base, message) => new Promise((resolve, reject) => {
   const s = new WebSocket(`${base.replace(/^http/, 'ws')}/play`);
@@ -196,6 +199,34 @@ try {
     refundBeforeExpiry: { accepted: rf.accepted, error: rf.error ? String(rf.error).slice(0, 160) : null,
       federationBlockCount: rf.block_count, expiration: rf.expiration },
     ...(await lockView(lock)) });
+
+  // PATH 5 (EXPIRY=1): PAST THE LOCK'S EXPIRY. Held until then, the lock comes
+  // back only through the refund at expiry - the accepted W4 gap, never a
+  // committee refund. Measured after the expiry as before it: both seats'
+  // records, their forfeit doors, the redeem through the seats, the refund.
+  if (env.EXPIRY) {
+    const view0 = await lockView(lock);
+    const need = Math.max(1, (view0.blocksLeft || 0) + 2);
+    // bitcoind here has no wallet: the address is the regtest lnd's own.
+    const addr = (JSON.parse((await lncli('newaddress', 'p2wkh')).out || '{}')).address || '';
+    const mined = await bcn('-named', 'generatetoaddress', `nblocks=${need}`, `address=${addr}`);
+    let view = await lockView(lock);
+    for (let t = Date.now(); Date.now() - t < 120000 && view.blocksLeft !== null && view.blocksLeft > 0; await wait(2000)) view = await lockView(lock);
+    const doorsAfter = { A: await door(A), B: await door(B) };
+    let viaSeatsAfter;
+    try {
+      const r = await redeemStake({ round: contract, roundId: rid, invite: env.INVITE, seed, curve: pageCurve, LockClient, storage: tab(), nodes: round.nodes });
+      const one = r.redeems[0];
+      viaSeatsAfter = { accepted: one.accepted, error: one.error ? String(one.error).slice(0, 160) : null };
+    } catch (e) { viaSeatsAfter = `refused: ${e.message.slice(0, 200)}`; }
+    const rf2 = (await refundStake({ round: contract, roundId: rid, invite: env.INVITE, seed, curve: pageCurve, LockClient, storage: tab(), nodes: round.nodes })).refunds[0];
+    say({ step: 'past the expiry: both seats, their doors, the redeem through the seats, the refund', mined: need, mineError: mined.err,
+      viewAtExpiry: view, A: recorded(round.a), B: recorded(round.b), doors: doorsAfter, viaSeats: viaSeatsAfter,
+      refundAfterExpiry: { accepted: rf2.accepted, error: rf2.error ? String(rf2.error).slice(0, 160) : null,
+        federationBlockCount: rf2.block_count, expiration: rf2.expiration,
+        creditedMsat: rf2.balance_after !== undefined && rf2.balance_before !== undefined ? rf2.balance_after - rf2.balance_before : null },
+      ...(await lockView(lock)) });
+  }
 } catch (e) {
   say({ error: e.message, stack: String(e.stack).split('\n').slice(1, 4).join(' | ') });
   code = 1;
