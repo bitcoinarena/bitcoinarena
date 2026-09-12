@@ -948,6 +948,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const unposted = () => waitingOn().some((w) => w.published === false);
     // A SUSPENDED RUN: the close logic runs again, which re-runs and gathers (13A).
     const suspendedShort = () => !!(latest && (latest.suspended || []).length);
+    // A NO-QUORUM DECISION STILL TO COME (path 3): the money waits for it, so the
+    // watch keeps asking until it lands and the table can hold the FORFEIT.
+    // Measured before: the watch stopped with "still to decide", no seat settled.
+    const pendingShort = () => !!(latest && latest.pendingNoQuorum && latest.pendingNoQuorum.length);
     // A RUN AGREED 2 OF 2 BUT NOT FINAL HERE YET - the other seat's posting or
     // its window still pending - is short too, past the window as inside it
     // (M3.3-34). Measured: a seat that signed after the window stopped here with
@@ -987,8 +991,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       }
       const short = stored.filter((r) => !isFinal(r.entryId));
       if (!short.length && !unsigned.length && !tableShort() && !settleShort() && !waitingOn().length && !payoutShort() && !suspendedShort()
-        && !notFinalYet()) return;
-      if (Date.now() >= until && (unsigned.length || short.length || notFinalYet())) {
+        && !notFinalYet() && !pendingShort()) return;
+      if (Date.now() >= until && (unsigned.length || short.length || notFinalYet() || pendingShort())) {
         // THE WINDOW IS FOR OBJECTIONS, NOT FOR ABANDONING 2 OF 2 (M3.3-34).
         // Measured before: the watch stopped here, and a seat whose peer came
         // back after it never signed and never gathered - stuck at 1 of 2. A
@@ -1016,7 +1020,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (g && g.ok && g.final) turned = true;
       }
       if (shuttingDown) return;
-      if (turned || tableShort() || settleShort() || windowDue() || payoutShort() || unposted() || suspendedShort()
+      if (turned || tableShort() || settleShort() || windowDue() || payoutShort() || unposted() || suspendedShort() || pendingShort()
         || (pastWindow && notFinalYet())) {
         stakes = settleTheStakes(roundIdBytes, { replayed: closed.replayed, gathered })
           .catch((e) => { console.error(`[verify] ${e.message}`); return { ok: false, why: e.message }; });
@@ -1089,6 +1093,39 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         entryId: r.entryId, pubkey: r.playerPubkey, outcome: r.outcome,
         score: r.score, stakeMsat: r.stakeMsat, feeMsat: r.feeMsat, donationMsat: r.donationMsat,
       }));
+    // A NO-QUORUM FORFEIT (§13C; M3.3-34, ruled 2026-09-13, path 3): the
+    // player's proven equivocation, decided on this seat's own record after the
+    // result window - no run was carried, so no result was signed and none is
+    // made up. It is a loser: FORFEIT, score 0, its stake from its own Entry
+    // Contract, and its hold settles into the pool like any FORFEIT. Measured
+    // before: left out of the table, its hold stayed HELD - expiring back to
+    // the player - while the winner was paid its own stake from a pool of 0.
+    // A no-quorum VOID stays out: nothing is forfeited (§13C).
+    // Read LIVE from this seat's store, not from `closed`: the finality watch
+    // hands this the close's first snapshot again and again, and the rule
+    // decides after it (measured: the snapshot's "pending" never cleared).
+    const listed = new Set(entries.map((e) => toHex(e.entryId)));
+    const noQuorumForfeits = new Set();
+    const pendingNoQuorum = [];
+    for (const { entryId, entry } of round.entriesOf(roundIdBytes)) {
+      const key = toHex(entryId);
+      if (listed.has(key)) continue;
+      const nq = round.noQuorum(entryId);
+      if (nq && nq.outcome === 'FORFEIT') {
+        noQuorumForfeits.add(key);
+        entries.push({ entryId, pubkey: entry.playerPubkey, outcome: 'FORFEIT', score: 0,
+          stakeMsat: entry.stakeMsat, feeMsat: entry.feeMsat, donationMsat: entry.donationMsat });
+      } else if (!nq && (closed.replayed || []).some((r) => r && r.noQuorumPending && r.entryId && toHex(r.entryId) === key)) {
+        pendingNoQuorum.push(key);
+      }
+    }
+    // AND NOTHING MOVES WHILE THE RULE IS STILL TO DECIDE AN ENTRY: a table
+    // without a FORFEIT to come would hand the winner a pool without it, and
+    // the settled stake would stay with the operator. Bounded: the no-quorum
+    // rule decides once the result window has passed.
+    if (pendingNoQuorum.length)
+      return { ok: false, why: `no stake moves while the no-quorum rule is still to decide ${pendingNoQuorum.length} entry(ies)`,
+        waiting: [], suspended: [], pendingNoQuorum };
     if (!entries.length) return { ok: true, actions: [], why: 'that round produced no result to pay on' };
 
     // ONE PLACE DECIDES WHETHER A RUN IS FINAL, and the same answer is both
@@ -1107,7 +1144,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const standing = new Map(entries.map((e) => [toHex(e.entryId),
       agreed.has(toHex(e.entryId)) ? resultFinality(round, roundIdBytes, e.entryId) : { state: null }]));
     const stateOf = (entryId) => (standing.get(toHex(entryId)) || {}).state;
-    const isFinal = (entryId) => stateOf(entryId) === FINAL;
+    // A no-quorum FORFEIT is final on its own record (written only after the window).
+    const isFinal = (entryId) => stateOf(entryId) === FINAL || noQuorumForfeits.has(toHex(entryId));
     // A RUN WHOSE TRANSCRIPT IS NOT POSTED YET waits too, with no window end:
     // its window has not opened (P2).
     const waiting = entries.filter((e) => stateOf(e.entryId) === PROVISIONALLY_FINAL)

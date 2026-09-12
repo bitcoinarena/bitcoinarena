@@ -442,7 +442,7 @@ export class Verifier {
     const closedMs = row && row.closed_ms !== null && row.closed_ms !== undefined ? Number(row.closed_ms) : null;
     const due = closedMs === null ? null : closedMs + Number(contract.objectionWindowMs);
     if (due === null || this.round.now() < due)
-      return { entryId, stored: false, waiting: true,
+      return { entryId, stored: false, waiting: true, noQuorumPending: true,
         why: `no quorum yet: ${evidence} - VOID only once the result window passes${due === null ? '' : ` at ${due}`}` };
     const signers = new Set(this.round.results(roundIdBytes, entryId).map((r) => hex(r.nodePubkey))).size;
     const d = noQuorumRule({ signatures: signers, needed: line.needed,

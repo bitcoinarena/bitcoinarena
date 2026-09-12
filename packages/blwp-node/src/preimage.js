@@ -116,6 +116,14 @@ export class Preimages {
     const row = this.round.get(roundIdBytes);
     if (!row) return { ok: false, why: 'no such round' };
     const held = this.round.results(roundIdBytes, entryIdBytes);
+    // A NO-QUORUM FORFEIT (§13C; M3.3-34, ruled 2026-09-13, path 3): no run was
+    // carried, so there is no result to read - this seat's own no-quorum record,
+    // written only after the result window with the player's equivocation
+    // proven, says FORFEIT, and a FORFEIT settles its hold into the pool (23.2).
+    // Measured before: "this node has replayed nothing for that run" at both
+    // seats, so the hold could never settle and expired to the player.
+    const nq = !held.length && typeof this.round.noQuorum === 'function' ? this.round.noQuorum(entryIdBytes) : null;
+    if (nq && nq.outcome === 'FORFEIT') return { ok: true, outcome: 'FORFEIT', noQuorum: true };
     if (!held.length) return { ok: false, why: 'this node has replayed nothing for that run' };
 
     // FINAL, NOT MERELY AGREED (M3.3-32): the threshold makes a run

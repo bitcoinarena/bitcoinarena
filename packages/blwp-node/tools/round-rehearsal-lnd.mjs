@@ -43,6 +43,9 @@ import {
   worldSeedFor, stakeSeenBy, sharesNeededFor,
 } from '../../blwp-client/src/join.js';
 import { toHex, fromHex } from '../../protocol/src/hash.js';
+import { encodeInputBatch, batchId } from '../../protocol/src/batch.js';
+import { encodeCheckpoint, checkpointId, joinSigned, NO_PREVIOUS } from '../../protocol/src/checkpoint.js';
+import { GENESIS } from '../../protocol/src/transcript.js';
 import { entryId as entryIdOf } from '../../protocol/src/contracts.js';
 import { init as coreInit, step as coreStep } from '../../core/src/sim.js';
 import { splitSignedReceipt, decodeCheckpointReceipt, SIGNED_RECEIPT_BYTES } from '../../protocol/src/receipt.js';
@@ -71,6 +74,12 @@ const POOL_SATS = BigInt((process.argv.find((a) => a.startsWith('--pool-sats='))
 // round's invoice and each entry commits to its hash, no shares dealt.
 // FEDIMINT_BIN names the (patched) builds; HOLD_SECS the guardians' hold.
 const FEDERATION = process.argv.includes('--federation');
+// --two-first (M3.3-34, path 3): P2 is not FAILED but a player who signs TWO
+// on-time first marks - one to A while B is down, a different one to B once B
+// is back - so no quorum carries either and the equivocation is proven: FORFEIT
+// by the no-quorum rule, with no signed result. Ruled: the player does not get
+// the hold back.
+const TWO_FIRST = process.argv.includes('--two-first');
 const FED_HOLD_SECS = Number(process.env.HOLD_SECS || 30);
 // WHICH DAEMON IS TOLD TO CLOSE FIRST (M3.3-25): AB or BA. Each order on its
 // own ports, so the two can run side by side.
@@ -356,7 +365,7 @@ async function main() {
 
     // ---- THREE PLAYERS, THE PAGE'S OWN STEPS ----
     const players = [];
-    for (const [name, want] of [['P1', 'DELIVERED'], ['P2', 'FAILED'], ['P3', 'VOID']]) {
+    for (const [name, want] of [['P1', 'DELIVERED'], ['P2', TWO_FIRST ? 'TWOFIRST' : 'FAILED'], ['P3', 'VOID']]) {
       const session = ed25519.utils.randomSecretKey();
       const player = playerFor(named.round, { seed: tabSeed({ storage: storage(), random }), curve: feldmanGroup });
       let stake;
@@ -383,7 +392,7 @@ async function main() {
     const seedOf = await worldSeedFor({ entry: players[0].base, round: round.id, nodes: named.nodes });
     const randomness = seedOf.randomness;
     for (const p of players) {
-      if (p.want === 'VOID') { p.entry = p.base; continue; }
+      if (p.want === 'VOID' || p.want === 'TWOFIRST') { p.entry = p.base; continue; }
       const searchStarted = Date.now();
       const found = worldFor(p.base, randomness, p.want);
       const searchMs = Date.now() - searchStarted;
@@ -485,6 +494,41 @@ async function main() {
     const paidIn = { alice: msatOf('alice'), bob: msatOf('bob') };
     say(`after paying: alice ${before.alice} -> ${paidIn.alice} msat (${before.alice - paidIn.alice} in flight)`);
 
+    // ---- --two-first: P2 SIGNS TWO ON-TIME FIRST MARKS (M3.3-34, path 3) ----
+    // B down; the first mark at 60 to A only; B back; a DIFFERENT first mark at
+    // 30 to B. Raw frames on each daemon's own /play, signed by P2's session key.
+    const twoFirst = players.find((p) => p.want === 'TWOFIRST' && p.eid);
+    if (twoFirst) {
+      const { seedWord } = await worldSeedFor({ entry: twoFirst.entry, round: round.id, nodes: named.nodes });
+      const sign = (m) => joinSigned(encodeCheckpoint(m), ed25519.sign(checkpointId(m), twoFirst.session));
+      const hashBytes = (h) => (typeof h === 'string' ? fromHex(h) : Uint8Array.from(h));
+      const firstAt = (tick) => {
+        const st = coreInit(seedWord);
+        for (let t = 0; t < tick; t++) coreStep(st, ...wordsAt(t));
+        const b = { roundId: fromHex(round.id), entryId: twoFirst.eid, previousHash: GENESIS, firstTick: 0,
+          ticks: Array.from({ length: tick }, (_, t) => wordsAt(t)), liquidations: [] };
+        const m = { roundId: fromHex(round.id), entryId: twoFirst.eid, tick, stateHash: hashBytes(core.hash(st)),
+          inputChainHash: batchId(b), previousHash: NO_PREVIOUS, sessionPubkey: twoFirst.entry.sessionPubkey };
+        return [encodeInputBatch(b), sign(m)];
+      };
+      const sendOn = (base, msg) => new Promise((resolve) => {
+        const ws = new WebSocket(base.replace(/^http/, 'ws') + '/play');
+        const t = setTimeout(() => { try { ws.close(); } catch { /* gone */ } resolve('no answer'); }, 15000);
+        ws.on('open', () => ws.send(msg));
+        ws.on('message', (d, bin) => { clearTimeout(t); resolve(bin ? `${d.length} bytes` : String(d).slice(0, 120)); ws.close(); });
+        ws.on('error', (e) => { clearTimeout(t); resolve(`error ${e.message}`); });
+      });
+      await round.b.close();
+      const toA = [];
+      for (const m of firstAt(60)) toA.push(await sendOn(named.nodes[0], m));
+      await round.restartB();
+      await wait(1000);
+      const toB = [];
+      for (const m of firstAt(30)) toB.push(await sendOn(named.nodes[1], m));
+      await wait(2000);
+      say(`  P2 (TWOFIRST): B down, first mark 60 to A -> ${toA.join(' | ')}; B back, a different first mark 30 to B -> ${toB.join(' | ')}; `
+        + `proof A ${round.a.round.equivocation(fromHex(round.id), twoFirst.eid).length}, B ${round.b.round.equivocation(fromHex(round.id), twoFirst.eid).length}`);
+    }
     // ---- P1 AND P2 DRIVE; P3 NEVER DOES ----
     for (const p of players) {
       if (p.want === 'VOID' || !p.ticks) continue;
@@ -850,6 +894,16 @@ async function main() {
     // ---- THE HOLES, EACH WITH ITS KIND ----
     const p1 = players.find((p) => p.name === 'P1');
     const p2 = players.find((p) => p.name === 'P2');
+    // --two-first: EACH SEAT'S CLOSE OF P2, ITS SHARE, AND EACH SEAT'S PAYOUT TABLE.
+    if (p2 && p2.want === 'TWOFIRST' && p2.eid)
+      for (const [name, d] of daemons) {
+        const nq = d.round.noQuorum(p2.eid);
+        const m = d.preimages.mayRelease(fromHex(round.id), p2.eid);
+        const t = d.money && d.money.table;
+        say(`  ${name} on P2 (TWOFIRST): no-quorum ${nq ? nq.outcome : 'none'}, finality ${resultFinality(d.round, fromHex(round.id), p2.eid).state}, `
+          + `${d.round.results(fromHex(round.id), p2.eid).length} signed result(s), share ${m.ok ? `ok ${m.outcome}` : m.why.slice(0, 70)}; `
+          + `payout table pool ${t ? t.pool : 'none'}, rows ${t ? t.table.map((r) => `${toHex(r.pubkey).slice(0, 8)} ${r.amountMsat}`).join(', ') : 'none'}`);
+      }
     if (p2 && p2.lnd === 'SETTLED')
       hole('ruling', `P2's lost stake settled into the operator's lnd (bob +${end.bob - before.bob} msat), not the pool - how a settled stake reaches the pool`);
     // IN EACH DAEMON'S OWN WORDS, not a label guessed from the end state.
@@ -857,7 +911,7 @@ async function main() {
       const a = ((d.money && d.money.actions) || []).find((x) => p && p.eid && toHex(x.entryId) === toHex(p.eid));
       return `${name}: ${a ? `${a.action} -> ${a.state} (${a.why})` : 'no act'}`;
     }).join('; ');
-    if (p2 && p2.lnd !== 'SETTLED') hole('code', `P2 (FAILED) was not settled (lnd ${p2.lnd}) - ${actOn(p2)}`);
+    if (p2 && p2.lnd !== 'SETTLED') hole('code', `P2 (${p2.want}) was not settled (lnd ${p2.lnd}) - ${actOn(p2)}`);
     if (p1 && p1.lnd !== 'CANCELED') hole('code', `P1 (DELIVERED) was not cancelled back (lnd ${p1.lnd}) - ${actOn(p1)}`);
     const owed = daemons.map(([name, d]) => `${name}: ${d.money && d.money.owed ? (d.money.owed.ok ? d.money.owed.state : d.money.owed.why) : 'nothing owed'}`);
     const paid = daemons.map(([, d]) => d.money && d.money.paid).filter(Boolean);
