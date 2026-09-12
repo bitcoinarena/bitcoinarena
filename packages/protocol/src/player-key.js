@@ -48,6 +48,24 @@ export function playerSecretFor(seed, roundId) {
   throw new Error('no scalar of the group in 256 tries, which should not happen');
 }
 
+/**
+ * THE TAB'S LOBBY IDENTITY SECRET (M3.3-34), from the same seed as every round's
+ * player key and under its own tag: it is never a round's key, it pays and
+ * refunds nothing, and the seed backup the page shows backs it up too.
+ */
+export function identitySecretFor(seed) {
+  if (!isPlayerBytes32(seed)) throw new Error('a player seed is 32 bytes');
+  const msg = new Uint8Array(33);
+  msg.set(seed, 0);
+  for (let c = 0; c < 256; c++) {
+    msg[32] = c;
+    const secret = taggedHash(TAG.lobbyIdentity, msg);
+    const v = scalarFrom32(secret);
+    if (v > 0n && v < FIELD) return secret;
+  }
+  throw new Error('no scalar of the group in 256 tries, which should not happen');
+}
+
 /** What the player compares outside the page: 64 bits of the refund key's hash. */
 export function refundFingerprint(playerPubkey) {
   if (!isPlayerBytes32(playerPubkey)) throw new Error('a player key is 32 bytes');

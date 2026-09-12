@@ -47,6 +47,9 @@ walk(SRC + 'join.js');
 // AND THE LOBBY (M3.3-34): what a page with no round in its link lists - the
 // named nodes' rounds, each checked against its own contract.
 walk(SRC + 'lobby.js');
+// AND WHO THE TAB IS IN IT: a generated key, a name from that key, and the
+// player's own name over it (M3.3-34).
+walk(SRC + 'identity.js');
 
 // One scope, so a name declared twice would collide. EVERY top-level name is
 // checked, not only the exported ones: two files with a private helper of the
@@ -131,6 +134,9 @@ out += '         findLock: findLock, refundStake: refundStake, forfeitOf: forfei
 // THE LOBBY (M3.3-34): a link that names nodes and no round lists what they
 // hold, every row checked against its own contract; Join is the join link.
 out += '         lobbyQuery: lobbyQuery, fetchLobby: fetchLobby, lobbyLine: lobbyLine, lobbyJoinSearch: lobbyJoinSearch,\n';
+// WHO THE TAB IS IN THE LOBBY (M3.3-34): the generated key's public half, the
+// name made from it, and the player's own name over it.
+out += '         tabIdentity: tabIdentity, setPlayerName: setPlayerName, generatedName: generatedName,\n';
 // THE WALLET THE PAGE RENDERS. `tabWallet` holds the connection per tab,
 // `spendLog` is what §24A.1 requires a client to show, and `spentLine` turns it
 // into one sentence - so the page renders a total it did not add up.
