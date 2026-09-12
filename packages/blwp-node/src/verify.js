@@ -243,6 +243,19 @@ export class Verifier {
         } catch (e) { report.refused.push(`${peer}: ${e.message}`); }
       }
     }
+    // AND ANY SEAT'S REFUSED FIRST MARK (M3.3-34): the player's own on-time first
+    // mark that a seat, up, refused - checked here (round.onTimeFirstMark). It
+    // shows the player started, so the close does not read a walk-away.
+    report.refusedMarks = [];
+    for (const peer of this.peersOf(roundIdBytes)) {
+      try {
+        const r = await fetch(`${peer}/refused-first-mark?entry=${hex(entryIdBytes)}`);
+        if (r.status !== 200) continue;
+        const got = await r.json();
+        const c = this.round.onTimeFirstMark(Uint8Array.from(Buffer.from(String(got.mark || ''), 'hex')));
+        if (c && hex(c.entryId) === hex(entryIdBytes)) report.refusedMarks.push({ peer, why: String(got.why || '').slice(0, 120) });
+      } catch { /* a seat that cannot answer shows nothing */ }
+    }
     this.carried.set(`${hex(roundIdBytes)}:${hex(entryIdBytes)}`, report);
     return report;
   }
@@ -362,7 +375,8 @@ export class Verifier {
     if (this.round.firstMarkHeld(roundIdBytes, entryId)) return false;
     if (this.round.entryVoid(entryId)) return false;
     const carried = this.carried.get(`${hex(roundIdBytes)}:${hex(entryId)}`);
-    return !!carried && this.#unreached(roundIdBytes, carried) === 0 && carried.refused.length === 0 && carried.taken === 0;
+    return !!carried && this.#unreached(roundIdBytes, carried) === 0 && carried.refused.length === 0 && carried.taken === 0
+      && !(carried.refusedMarks && carried.refusedMarks.length);
   }
 
   /**
@@ -396,9 +410,16 @@ export class Verifier {
       if (refused < line.needed - receipts) return null;
       evidence = `the on-time first mark here has ${receipts} of ${line.needed} receipts and ${refused} seat(s) that were up refused it`;
     } else {
+      // THIS SEAT REFUSED IT, or ANOTHER SEAT SHOWS IT REFUSED IT (checked in
+      // this close's pull): the first mark reached only a seat that refused it,
+      // and no seat holds it. Measured before: FORFEIT 0 at both seats.
       const r = this.round.refusedFirstMark(entryId);
-      if (!r) return null;
-      evidence = `this seat was up, refused the player's on-time first mark (${String(r.why).slice(0, 90)}) and holds none`;
+      const carried = this.carried.get(`${hex(roundIdBytes)}:${hex(entryId)}`);
+      const shown = carried && carried.refusedMarks && carried.refusedMarks.length ? carried.refusedMarks : null;
+      if (!r && !shown) return null;
+      evidence = r
+        ? `this seat was up, refused the player's on-time first mark (${String(r.why).slice(0, 90)}) and holds none`
+        : `${shown.length} seat(s) that were up refused the player's on-time first mark (${shown[0].why.slice(0, 80)}), and no seat holds it`;
     }
     const row = this.round.get(roundIdBytes);
     const closedMs = row && row.closed_ms !== null && row.closed_ms !== undefined ? Number(row.closed_ms) : null;

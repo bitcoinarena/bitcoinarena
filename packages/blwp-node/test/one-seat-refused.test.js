@@ -245,6 +245,36 @@ test('one seat refused (4): the refusing seat is unreachable at the close - A ho
   } finally { await w.close(); }
 });
 
+// THE FIRST MARK REACHED ONLY THE SEAT THAT REFUSED IT (M3.3-34 follow-up): the
+// player's direct send, not A's forward. Refused while the refusing seat was up,
+// the operator side's fault (§13C) - VOID at both seats after the window, never
+// the walk-away's FORFEIT 0 at one seat or both.
+test('one seat refused (8): the first mark reached only the seat that refused it - both HOLD, then VOID at both, never FORFEIT 0', async () => {
+  const w = await seats();
+  try {
+    const run = await seatAndBuild(w, { lockAt: ['a'] });
+    const saidB = [];
+    for (const m of run.messages.slice(0, 2)) saidB.push(String(await say(w.b.port, m)).slice(0, 40));   // to B only
+    await wait(500);
+    const refusedAtB = !!w.b.round.refusedFirstMark(run.eid);
+    await Promise.all([say(w.a.port, `close ${toHex(w.rid)}`), say(w.b.port, `close ${toHex(w.rid)}`)]);
+    await until(async () => (await Promise.all([w.a, w.b].map(async (d) => ((await (await fetch(
+      `http://127.0.0.1:${d.port}/closing?round=${toHex(w.rid)}`)).json()).some((s) => s.entry === toHex(run.eid)))))).every(Boolean)
+      || [w.a, w.b].every((d) => d.round.results(w.rid, run.eid).length > 0), 10000);
+    const inWindow = { a: await at(w.a, w, run), b: await at(w.b, w, run) };
+    await until(() => [w.a, w.b].every((d) => d.round.noQuorum(run.eid) || resultFinality(d.round, w.rid, run.eid).state === 'FINAL'));
+    await wait(300);
+    const after = { a: await at(w.a, w, run), b: await at(w.b, w, run), lockHeld: lockHeld(w, run) };
+    console.log('  FACTS (refused, 8 - reached only the refusing seat):', JSON.stringify({ saidB, refusedAtB, inWindow, after }));
+    for (const s of ['a', 'b']) {
+      assert.deepEqual(inWindow[s].results, [], `${s} signed at the close`);
+      assert.equal(inWindow[s].closing && inWindow[s].closing.state, 'HOLDING', s);
+      assert.deepEqual(brief(after[s]), VOIDED, s);
+    }
+    assert.equal(after.lockHeld, true);
+  } finally { await w.close(); }
+});
+
 test('one seat refused (5, 6): B refuses, then sees the stake and takes the mark in time - 2 of 2, the run\'s own outcome, FINAL, never voided', async () => {
   const w = await seats();
   try {

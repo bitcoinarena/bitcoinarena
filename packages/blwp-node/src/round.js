@@ -1605,27 +1605,38 @@ export class Round {
    * refusal. Answers whether it was kept.
    */
   putRefusedFirstMark({ bytes, why }) {
+    const c = this.onTimeFirstMark(bytes);
+    if (!c || this.firstMarkHeld(c.roundId, c.entryId)) return false;
+    return this.db.prepare('INSERT OR IGNORE INTO refused_first_marks (entry_id, round_id, mark, why, at_ms) VALUES (?, ?, ?, ?, ?)')
+      .run(c.entryId, c.roundId, bytes, String(why || 'refused').slice(0, 300), this.now()).changes > 0;
+  }
+
+  /**
+   * THE PLAYER'S OWN ON-TIME FIRST MARK of an entry seated here, decoded - or
+   * null: not a signed mark, not a first mark, not an entry of a round held
+   * here, not signed by the entry's session key, or past the start line (a late
+   * start is FORFEIT, first-mark.js). One check for a refusal kept here and a
+   * refusal another seat shows.
+   */
+  onTimeFirstMark(bytes) {
     let c; let signature;
-    try { const s = splitSigned(bytes); signature = s.signature; c = decodeCheckpoint(s.body); } catch { return false; }
-    if (!same(c.previousHash, NO_PREVIOUS)) return false;
+    try { const s = splitSigned(bytes); signature = s.signature; c = decodeCheckpoint(s.body); } catch { return null; }
+    if (!same(c.previousHash, NO_PREVIOUS)) return null;
     const entry = this.db.prepare('SELECT round_id, contract FROM entries WHERE entry_id = ?').get(c.entryId);
-    if (!entry || !same(new Uint8Array(entry.round_id), c.roundId)) return false;
+    if (!entry || !same(new Uint8Array(entry.round_id), c.roundId)) return null;
     const round = this.get(c.roundId);
-    if (!round) return false;
+    if (!round) return null;
     const joined = decodeEntryContract(new Uint8Array(entry.contract));
     let ok = false;
     try { ok = ed25519.verify(signature, checkpointId(c), joined.sessionPubkey); } catch { ok = false; }
-    if (!ok) return false;
+    if (!ok) return null;
     let decided;
     try {
       decided = firstMarkOutcome({ joinTick: joined.joinTick,
         deadlineTicks: startDeadlineOf(decodeRoundContract(new Uint8Array(round.contract))),
         firstMark: { tick: c.tick, previousHash: c.previousHash } });
-    } catch { return false; }
-    if (decided.outcome) return false;
-    if (this.firstMarkHeld(c.roundId, c.entryId)) return false;
-    return this.db.prepare('INSERT OR IGNORE INTO refused_first_marks (entry_id, round_id, mark, why, at_ms) VALUES (?, ?, ?, ?, ?)')
-      .run(c.entryId, c.roundId, bytes, String(why || 'refused').slice(0, 300), this.now()).changes > 0;
+    } catch { return null; }
+    return decided.outcome ? null : c;
   }
 
   /** The on-time first mark this seat, up, refused - or null. */

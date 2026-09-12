@@ -1499,6 +1499,18 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
 
       // WHAT THIS SEAT HOLDS ABOUT AN ENTRY'S START: FORFEIT for a late start, with the
       // first mark's tick and the line it missed, or 404 - no mark is no record.
+      // A FIRST MARK THIS SEAT, UP, REFUSED (M3.3-34): the player's own signed
+      // on-time first mark and why, for a seat closing the round - which checks
+      // it again, and so never reads the player as never started. 404: none.
+      if (req.method === 'GET' && url.pathname === '/refused-first-mark') {
+        const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
+        if (eid.length !== 32) return text(res, 400, 'an entry is asked for by its id');
+        const r = round.refusedFirstMark(new Uint8Array(eid));
+        if (!r) return text(res, 404, 'this seat refused no first mark of that entry');
+        res.writeHead(200, { 'content-type': 'application/json', ...CORS });
+        return res.end(JSON.stringify({ mark: toHex(r.mark), why: r.why }));
+      }
+
       if (req.method === 'GET' && url.pathname === '/start-forfeit') {
         const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
         if (eid.length !== 32) return text(res, 400, 'an entry is asked for by its id');
@@ -2583,7 +2595,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           let seen;
           try { seen = await custody.seenPaid(eid); } catch (e) { seen = { ok: false, why: e.message }; }
           // A WAIT, SAID AS ONE: the client holds the ticks and asks again.
-          if (!seen.ok) return sock.send('error ' + STAKE_NOT_SEEN + seen.why);
+          if (!seen.ok) {
+            // A FIRST MARK REFUSED HERE IS KEPT (M3.3-34): the player's own
+            // on-time first mark, refused by a seat that was up, is served at
+            // /refused-first-mark - so no seat reads the player as never started
+            // (measured before: FORFEIT 0 at both seats, final 2 of 2).
+            const fm = firstMarkOf(data, isBinary);
+            if (fm) round.putRefusedFirstMark({ bytes: fm.bytes, why: STAKE_NOT_SEEN + seen.why });
+            return sock.send('error ' + STAKE_NOT_SEEN + seen.why);
+          }
         }
         const firstMark = firstMarkOf(data, isBinary);
         // §16: A FIRST MARK THIS SEAT HAS NEVER HELD, reaching it after the start
