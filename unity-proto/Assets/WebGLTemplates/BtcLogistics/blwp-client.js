@@ -715,6 +715,9 @@ const TAG = {
   // signature that carries somewhere it was never given.
   signedDonationSet: 'BLWP/v1/SignedDonationSet',
   authorityRotation: 'BLWP/v1/AuthorityRotation',
+  // The player's lock client's root, per round, from their seed (W1b). Its own
+  // tag: it must never be the player key the same seed makes for the round.
+  lockClientSecret: 'BLWP/v1/LockClientSecret',
   // A picture of another player's truck. Its own tag so a ghost's id can never
   // collide with a checkpoint's or a batch's over the same bytes: 0.10 says a
   // ghost is never an input, and a shared tag would be one way to forget it.
@@ -5995,6 +5998,31 @@ function seedWordForEntry(entry, roundRandomness) {
 
 
 
+/**
+ * THE CONTRACT A PLAYER HANDS A SEAT (POST /lock), as JSON: hex bytes, the
+ * amount as a decimal string. Here, not in the node, because the page writes
+ * it and the seat reads it - one encoding, not two that look alike.
+ */
+function lockFieldsFromJson(j) {
+  if (!j || typeof j !== 'object') throw new Error('a stake lock is a JSON object');
+  const img = j.paymentImage || {};
+  if (img.kind !== 'point' && img.kind !== 'hash') throw new Error('a payment image is a point or a hash');
+  const f = {
+    paymentImage: { kind: img.kind, bytes: fromHex(String(img.bytes || '')) },
+    amountMsat: BigInt(String(j.amountMsat)),
+    claimPk: fromHex(String(j.claimPk || '')),
+    refundPk: fromHex(String(j.refundPk || '')),
+    expiration: Number(j.expiration),
+  };
+  if (!Number.isSafeInteger(f.expiration) || f.expiration < 0) throw new Error('an expiration is a block height');
+  return f;
+}
+
+const lockFieldsToJson = (f) => ({
+  paymentImage: { kind: f.paymentImage.kind, bytes: toHex(f.paymentImage.bytes) },
+  amountMsat: String(f.amountMsat), claimPk: toHex(f.claimPk), refundPk: toHex(f.refundPk), expiration: f.expiration,
+});
+
 const eq = (a, b) => a instanceof Uint8Array && b instanceof Uint8Array
   && a.length === b.length && a.every((x, i) => x === b[i]);
 
@@ -6641,7 +6669,17 @@ function joinQuery(search) {
   if (!/^[0-9a-f]{128}$/i.test(advert) && !origin(advert))
     throw new Error('an advertisement is 64 signed bytes or a place to fetch them from');
 
-  return { round, nodes, chainFrom, bond, advert };
+  // THE FEDERATION A LOCK ROUND'S STAKE GOES INTO, as its invite code. The
+  // round names only the federation's id; the invite says where its guardians
+  // answer, and the lock client refuses one whose federation is not the round's.
+  // Optional here: only a round whose stake is a lock needs it, and that is
+  // refused later, by name, when it is missing.
+  const federation = (q.get('federation') || '').trim().toLowerCase();
+  // bech32m: the prefix `fed1`, the separator `1`, then the data (no `1` in it).
+  if (federation && !/^fed11[02-9ac-hj-np-z]+$/.test(federation))
+    throw new Error('that is not a federation invite code (fed1...): ' + federation.slice(0, 24));
+
+  return { round, nodes, chainFrom, bond, advert, federation: federation || null };
 }
 
 /**
@@ -7103,6 +7141,7 @@ async function joinFromQuery(search, { fetcher = fetch } = {}) {
     // naming the world this player drives - and a second parse of the query is
     // a second place for the list to be wrong.
     nodes: named.nodes,
+    federation: named.federation,
     chain: {
       headers: named.chainFrom.map((u) => httpProvider(u.replace(/\/+$/, '') + '/headers', { tag: sourceKey(u) })),
       bonds: [bondProvider(named.bond, { fetcher })],
@@ -7217,7 +7256,7 @@ function playerFor(round, { seed, curve } = {}) {
  * their world, and a node that had it could predict the round they are about
  * to drive.
  */
-function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 0, stake, claimKey } = {}) {
+function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 0, stake, claimKey, stakeLock } = {}) {
   if (!round) throw new Error('there is no round to take a seat at');
   // A PAYING ROUND ON AN UNKNOWN CORE IS REFUSED (§5): no override, no flag. A
   // free round risks nothing and is seated as before.
@@ -7243,6 +7282,19 @@ function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 0, stak
   if (roundLocks(round) && !(claimKey && claimKey.ref instanceof Uint8Array && claimKey.ref.some((b) => b !== 0)))
     throw new Error('this round\'s stake goes into a federation lock, and no claim key has its seats\' '
       + 'attestation: a client must refuse to lock to a key without it (23.1 step 0)');
+  // AND IT NAMES THE LOCK ITSELF (§7 stake_lock_outpoint, W1b). The page used to
+  // write zeros here for every round, so a lock round's seat named no lock and
+  // the seat could only refuse it. A lock round's entry is not built without a
+  // real outpoint, and a round that locks nothing is not handed one.
+  if (roundLocks(round) && !(stakeLock && stakeLock.outpoint && stakeLock.outpoint.txid instanceof Uint8Array
+    && stakeLock.outpoint.txid.length === 32 && stakeLock.outpoint.txid.some((b) => b !== 0)))
+    throw new Error('this round\'s stake goes into a federation lock, and no lock was made: an entry naming '
+      + 'no stake lock outpoint is one no seat can commit (23.1 step 5)');
+  if (!roundLocks(round) && stakeLock)
+    throw new Error('this round names no federation, so there is no lock for its entry to name');
+  if (stakeLock && stake && stake.stakePoint && !(stakeLock.fields && stakeLock.fields.paymentImage
+    && toHex(stakeLock.fields.paymentImage.bytes) === toHex(stake.stakePoint)))
+    throw new Error('that lock is not to this stake\'s point, so it is not this entry\'s lock');
   return {
     playerPubkey: player.pubkey,
     stakeCommitment: stake ? stake.stakeCommitment : random(32),
@@ -7253,12 +7305,14 @@ function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 0, stak
     // has none can never be the same entry id.
     vssSharesRef: stake ? stake.vssSharesRef : NO_SHARES,
     // §7's stake-lock fields (v4.6.2). A dealt stake names its point - the
-    // handout's A0, which every seat checks the shares against (F1). No stake
-    // lock is wired into the page yet - the hold invoice is what ships - so
-    // the rest name none, in zeros, said here rather than defaulted.
+    // handout's A0, which every seat checks the shares against (F1). A lock
+    // round's entry names its lock's outpoint (W1b); the fee lock is not made
+    // yet (parked), so it and a non-locking round's outpoint are zeros, said
+    // here rather than defaulted.
     stakePoint: stake && stake.stakePoint ? stake.stakePoint : new Uint8Array(33),
     feePreimage: new Uint8Array(32),
-    stakeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n },
+    stakeLockOutpoint: stakeLock ? { txid: stakeLock.outpoint.txid, outIdx: BigInt(stakeLock.outpoint.outIdx) }
+      : { txid: new Uint8Array(32), outIdx: 0n },
     feeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n },
     claimKeyAttestationRef: roundLocks(round) ? claimKey.ref : new Uint8Array(32),
     stakeMsat: BigInt(round.stakeMsat || 0n),
@@ -7354,6 +7408,167 @@ async function stakeFor(round, { seats, curve, random, playerPubkey, needed: ask
     // reference the entry cannot name.
     body: encodeHandout(dealt.handout),
   };
+}
+
+// ---- blwp-client/src/lock-result.js
+// WHAT THE LOCK CLIENT'S ANSWER MEANS FOR THE ENTRY AND THE SEATS (W1a).
+//
+// The lock client (lock-client/, the stock fedimint client crates built to
+// wasm) funds one OutgoingContract and answers what the guardians stored at its
+// outpoint beside what it computed. This turns that answer into the two things
+// the round needs: the entry's stake_lock_outpoint (§7), and the contract a
+// seat is handed at POST /lock (§23.1 step 5). An answer whose stored contract
+// is not the one computed, or whose stored expiry is not the computed one, is
+// refused here - the player would otherwise commit to a lock that is not theirs.
+// Not in the bundle yet: the page drives it in W1b.
+
+function lockFromClient(answer, { point, claimPk, refundPk }) {
+  const j = typeof answer === 'string' ? JSON.parse(answer) : answer;
+  if (!j || typeof j.txid !== 'string' || !/^[0-9a-f]{64}$/.test(j.txid)) throw new Error('the lock client named no transaction');
+  if (!Number.isInteger(j.out_idx) || j.out_idx < 0) throw new Error('the lock client named no output');
+  if (j.ids_match !== true || j.stored_contract_id !== j.computed_contract_id)
+    throw new Error('the guardians hold another contract at that outpoint than the one the lock client built');
+  if (j.stored_expiration !== j.computed_expiration)
+    throw new Error(`the guardians hold expiration ${j.stored_expiration}, and the lock client built ${j.computed_expiration}`);
+  return {
+    outpoint: { txid: fromHex(j.txid), outIdx: BigInt(j.out_idx) },
+    fields: {
+      paymentImage: { kind: 'point', bytes: point }, amountMsat: BigInt(j.amount_msat),
+      claimPk, refundPk, expiration: j.computed_expiration,
+    },
+    contractId: j.stored_contract_id,
+  };
+}
+
+// ---- blwp-client/src/page-lock.js
+// THE PLAYER'S STAKE LOCK, MADE FROM THE PAGE (W1b; v4.6.2 §23.1 steps 3-5).
+//
+// The lock client (lock-client/, the stock fedimint 0.12.0 client crates built
+// to wasm) is INJECTED, like the curve: this bundle carries no crypto and no
+// federation code. What is here decides only what the lock client is asked -
+// which federation, under whose secret, how much, to which keys, until when,
+// all read off the round, the dealt stake and the attested claim key - and it
+// refuses an answer that is not the lock it asked for (`lockFromClient`).
+//
+// AND IT HANDS THE LOCK TO THE SEATS once they hold the entry: a seat verifies
+// it in the federation and only then counts the stake (§23.1 step 5).
+
+
+
+
+
+
+
+// THE BLOCKS OVER stake_expiry_blocks A LOCK IS MADE FOR. The seat requires
+// expiration >= its federation height + 144 when it verifies, and the chain
+// moves between the lock and the check; W1a locked with 150 and both seats
+// committed. How large this margin must be is a parked ruling (the expiry
+// margin, §23.1 step 4 vs step 5) - it is W1a's number, named, not a choice.
+const LOCK_EXPIRY_MARGIN_BLOCKS = 6;
+
+const namesNothing = (b) => !(b instanceof Uint8Array) || b.every((x) => x === 0);
+
+/**
+ * THE LOCK CLIENT'S SECRET FOR THIS ROUND, FROM THE PLAYER'S SEED. The ecash a
+ * deposit buys, before it is locked, is then the seed's and not this tab's: a
+ * reload joins the same wallet (fedimint's own recovery finds it), where a
+ * random secret would lose it with the tab.
+ */
+function lockSecretFor(seed, roundId) {
+  if (!(seed instanceof Uint8Array) || seed.length !== 32)
+    throw new Error('the lock client\'s secret comes from the player\'s 32-byte seed, and none was given');
+  if (!(roundId instanceof Uint8Array) || roundId.length !== 32)
+    throw new Error('the lock client\'s secret is per round, and no round id was given');
+  const msg = new Uint8Array(64);
+  msg.set(seed, 0);
+  msg.set(roundId, 32);
+  return taggedHash(TAG.lockClientSecret, msg);
+}
+
+/** The net stake a lock holds: the stake less the node fee and the donation (§22A). */
+const lockAmountMsat = (round) => {
+  const stakeMsat = BigInt(round.stakeMsat || 0n);
+  return netStakeMsat({ stakeMsat, feeMsat: entryFeeMsat(stakeMsat), donationMsat: 0n });
+};
+
+/**
+ * JOIN THE ROUND'S FEDERATION, FUND THE LOCK, AND MAKE IT.
+ *
+ * `LockClient` is the wasm class; `onDeposit({ invoice, amountMsat })` is told
+ * each invoice the player's wallet must pay - the page shows it. Returns the
+ * outpoint and the contract (`lockFromClient`), and the client that holds it.
+ */
+async function lockStake({ round, roundId, invite, seed, stake, claimKey, playerPubkey, LockClient,
+  onDeposit = () => {}, onStep = () => {} } = {}) {
+  if (!round || !roundLocks(round)) throw new Error('this round names no federation, so its stake is not a lock');
+  if (!invite)
+    throw new Error('this round\'s stake goes into a federation lock, and the link names no federation '
+      + 'to make it in - add federation=<invite code>');
+  if (!LockClient || typeof LockClient.join !== 'function')
+    throw new Error('a stake lock is made by the lock client, and none was loaded');
+  if (!stake || namesNothing(stake.stakePoint)) throw new Error('a lock is to the stake\'s point, and this stake names none');
+  if (!claimKey || !claimKey.ok || namesNothing(claimKey.claimPk))
+    throw new Error('no claim key has its seats\' attestation: a client must refuse to lock to a key without it (23.1 step 0)');
+  if (!(playerPubkey instanceof Uint8Array) || playerPubkey.length !== 32)
+    throw new Error('a lock refunds to the player\'s key, and that is 32 bytes');
+
+  const amount = lockAmountMsat(round);
+  onStep('joining the federation');
+  const client = await LockClient.join(invite, toHex(round.federationId), toHex(lockSecretFor(seed, roundId)));
+
+  // FUNDED FROM THE PLAYER'S OWN DEPOSIT. The federation's fee for the lock is
+  // quoted as a dry run over the notes the client holds, so an empty client
+  // cannot be quoted - measured on regtest, the first page rehearsal refused
+  // its seat with "Insufficient funds" before asking for any deposit. So the
+  // first deposit is the net stake and the stock fee allowance
+  // (`LockClient.lockAllowanceMsat`); after it the quote decides, and a quote
+  // that still finds the funds short is topped up by the allowance again.
+  const allowance = BigInt(LockClient.lockAllowanceMsat(String(amount)));
+  for (let tries = 0; ; tries++) {
+    const have = BigInt(await client.balanceMsat());
+    let cost = null;
+    try { cost = BigInt(await client.lockCostMsat(String(amount))); } catch (e) {
+      if (!/insufficient funds/i.test(String((e && e.message) || e))) throw e;
+    }
+    if (cost !== null && have >= cost) break;
+    if (tries >= 3) throw new Error(`after ${tries} deposits the lock client holds ${have} msat and cannot fund a ${amount} msat lock`);
+    const short = cost !== null ? cost - have : amount + allowance - have;
+    const plan = JSON.parse(await client.depositFor(String(short > 0n ? short : allowance)));
+    const asked = JSON.parse(await client.receive(String(plan.invoice_msat), String(plan.gateway || '')));
+    onDeposit({ invoice: asked.invoice, amountMsat: BigInt(plan.invoice_msat), creditsMsat: BigInt(plan.credited_msat) });
+    onStep('waiting for the deposit');
+    const final = await client.awaitReceive(asked.operation);
+    if (final !== 'Claimed') throw new Error(`the deposit was not claimed: ${final}`);
+  }
+
+  onStep('locking the stake');
+  const refundPk = refundKeyOf(playerPubkey);
+  const answer = await client.lock(toHex(stake.stakePoint), String(amount), toHex(claimKey.claimPk), toHex(refundPk),
+    Number(round.stakeExpiryBlocks) + LOCK_EXPIRY_MARGIN_BLOCKS);
+  const lock = lockFromClient(answer, { point: stake.stakePoint, claimPk: claimKey.claimPk, refundPk });
+  if (lock.fields.amountMsat !== amount)
+    throw new Error(`the lock client locked ${lock.fields.amountMsat} msat, and this entry's net stake is ${amount}`);
+  return { ...lock, client };
+}
+
+/**
+ * THE LOCK, HANDED TO EVERY SEAT (POST /lock). A seat that verifies it in the
+ * federation answers 201 and counts the stake; `ok` is `needed` of them.
+ */
+async function handLock({ entryId, fields, nodes, needed, fetcher = fetch } = {}) {
+  if (!(entryId instanceof Uint8Array) || entryId.length !== 32) throw new Error('a lock is handed over for an entry, by its id');
+  const body = JSON.stringify(lockFieldsToJson(fields));
+  const said = [];
+  for (const node of [...new Set(nodes || [])]) {
+    try {
+      const r = await fetcher(`${String(node).replace(/\/+$/, '')}/lock?entry=${toHex(entryId)}`, { method: 'POST', body });
+      said.push({ node, status: r.status, why: (await r.text()).trim() });
+    } catch (e) {
+      said.push({ node, status: 0, why: e.message });
+    }
+  }
+  const committed = said.filter((s) => s.status === 201).length;
+  return { ok: committed >= needed, committed, needed, said };
 }
 
 // ---- protocol/src/ghost.js
@@ -8016,6 +8231,7 @@ async function discover({
 
 
 
+
 /**
  * A FEDERATION ROUND'S STAKE: THE INVOICE COMES FIRST (the owner 2026-09-11).
  *
@@ -8190,7 +8406,7 @@ class Client {
    * the node's own fixtures talk to a process on localhost that has no bond
    * and never will - and a test that wants the real door calls this one.
    */
-  static async at(discovery, { core, sign, verify, contract, roundIdGiven }) {
+  static async at(discovery, { core, sign, verify, contract, roundIdGiven, stakeLock }) {
     if (!contract || !contract.nodes)
       throw new Error('no round contract, so there is no committee to check against');
 
@@ -8265,6 +8481,9 @@ class Client {
     // once it verifies under a key the round's own contract names. A page that
     // lies here can make a checkpoint fail to go live, never make one live.
     client.deliverTo(discovery.nodes || []);
+    // THE PLAYER'S STAKE LOCK, made by the page before the entry was built
+    // (W1b), handed to the seats by `join` once they hold the entry.
+    if (stakeLock) client.stakeLock = stakeLock;
     return client;
   }
 
@@ -8494,6 +8713,15 @@ class Client {
     // the entry, and the run can still be played.
     this.seatEntry = entry;
     this.peerSeats = await Promise.all(this.peers.map((base) => this.seatOn(base)));
+
+    // AND THE STAKE LOCK GOES TO EVERY SEAT NOW THAT THE ENTRY IS THERE (§23.1
+    // step 5, W1b). A seat verifies it in the federation and only then counts
+    // the stake; before the entry is seated it has nothing to check it against.
+    // The count is kept, not thrown: the seat is taken either way, and the
+    // stake is committed or not by the seats' own answers.
+    if (this.stakeLock)
+      this.lockHanded = await handLock({ entryId: mine, fields: this.stakeLock.fields,
+        nodes: [this.base, ...this.peers], needed: this.stakeLock.needed });
     return seated;
   }
 
@@ -10299,6 +10527,7 @@ return { Client: Client, markState: markState,
          stakeFor: stakeFor, fetchSettlementSeats: fetchSettlementSeats,
          roundPays: roundPays, postHandout: postHandout, attestedClaimKey: attestedClaimKey, roundLocks: roundLocks,
          sharesNeededFor: sharesNeededFor,
+         lockStake: lockStake, handLock: handLock, lockSecretFor: lockSecretFor,
          tabWallet: tabWallet, spendLog: spendLog, spentLine: spentLine,
          owedLine: owedLine,
          parseConnection: parseConnection,

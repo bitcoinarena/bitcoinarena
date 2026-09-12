@@ -66,6 +66,12 @@ public static class SyncCore
             File.Copy(Path.Combine(clientRoot, "dist/blwp-curve.js"),
                       Path.Combine(Application.dataPath,
                                    "WebGLTemplates/BtcLogistics/blwp-curve.js"), true);
+            // AND THE LOCK CLIENT (W1b), which a page joining a lock round loads
+            // to make the player's stake lock. Built outside Unity (the stock
+            // fedimint crates to wasm) and committed in dist; copied as it is.
+            foreach (string lockFile in new[] { "blwp_lock_client.js", "blwp_lock_client_bg.wasm" })
+                File.Copy(Path.Combine(clientRoot, "dist", lockFile),
+                          Path.Combine(Application.dataPath, "WebGLTemplates/BtcLogistics", lockFile), true);
         }
 
         AssetDatabase.Refresh();

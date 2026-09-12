@@ -119,6 +119,9 @@ out += '         roundPays: roundPays, postHandout: postHandout, attestedClaimKe
 // THE THRESHOLD THE STAKE IS DEALT AT - the round's (2 of 2, 5 of 7), the
 // same rule the node's door and settle read, never the slot count (M3.3-26).
 out += '         sharesNeededFor: sharesNeededFor,\n';
+// THE PLAYER'S STAKE LOCK (W1b): what the injected lock client is asked, and the
+// hand-over of the lock it made to every seat.
+out += '         lockStake: lockStake, handLock: handLock, lockSecretFor: lockSecretFor,\n';
 // THE WALLET THE PAGE RENDERS. `tabWallet` holds the connection per tab,
 // `spendLog` is what §24A.1 requires a client to show, and `spentLine` turns it
 // into one sentence - so the page renders a total it did not add up.

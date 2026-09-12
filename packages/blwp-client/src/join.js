@@ -99,7 +99,17 @@ export function joinQuery(search) {
   if (!/^[0-9a-f]{128}$/i.test(advert) && !origin(advert))
     throw new Error('an advertisement is 64 signed bytes or a place to fetch them from');
 
-  return { round, nodes, chainFrom, bond, advert };
+  // THE FEDERATION A LOCK ROUND'S STAKE GOES INTO, as its invite code. The
+  // round names only the federation's id; the invite says where its guardians
+  // answer, and the lock client refuses one whose federation is not the round's.
+  // Optional here: only a round whose stake is a lock needs it, and that is
+  // refused later, by name, when it is missing.
+  const federation = (q.get('federation') || '').trim().toLowerCase();
+  // bech32m: the prefix `fed1`, the separator `1`, then the data (no `1` in it).
+  if (federation && !/^fed11[02-9ac-hj-np-z]+$/.test(federation))
+    throw new Error('that is not a federation invite code (fed1...): ' + federation.slice(0, 24));
+
+  return { round, nodes, chainFrom, bond, advert, federation: federation || null };
 }
 
 /**
@@ -561,6 +571,7 @@ export async function joinFromQuery(search, { fetcher = fetch } = {}) {
     // naming the world this player drives - and a second parse of the query is
     // a second place for the list to be wrong.
     nodes: named.nodes,
+    federation: named.federation,
     chain: {
       headers: named.chainFrom.map((u) => httpProvider(u.replace(/\/+$/, '') + '/headers', { tag: sourceKey(u) })),
       bonds: [bondProvider(named.bond, { fetcher })],
@@ -675,7 +686,7 @@ export function playerFor(round, { seed, curve } = {}) {
  * their world, and a node that had it could predict the round they are about
  * to drive.
  */
-export function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 0, stake, claimKey } = {}) {
+export function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 0, stake, claimKey, stakeLock } = {}) {
   if (!round) throw new Error('there is no round to take a seat at');
   // A PAYING ROUND ON AN UNKNOWN CORE IS REFUSED (§5): no override, no flag. A
   // free round risks nothing and is seated as before.
@@ -701,6 +712,19 @@ export function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 
   if (roundLocks(round) && !(claimKey && claimKey.ref instanceof Uint8Array && claimKey.ref.some((b) => b !== 0)))
     throw new Error('this round\'s stake goes into a federation lock, and no claim key has its seats\' '
       + 'attestation: a client must refuse to lock to a key without it (23.1 step 0)');
+  // AND IT NAMES THE LOCK ITSELF (§7 stake_lock_outpoint, W1b). The page used to
+  // write zeros here for every round, so a lock round's seat named no lock and
+  // the seat could only refuse it. A lock round's entry is not built without a
+  // real outpoint, and a round that locks nothing is not handed one.
+  if (roundLocks(round) && !(stakeLock && stakeLock.outpoint && stakeLock.outpoint.txid instanceof Uint8Array
+    && stakeLock.outpoint.txid.length === 32 && stakeLock.outpoint.txid.some((b) => b !== 0)))
+    throw new Error('this round\'s stake goes into a federation lock, and no lock was made: an entry naming '
+      + 'no stake lock outpoint is one no seat can commit (23.1 step 5)');
+  if (!roundLocks(round) && stakeLock)
+    throw new Error('this round names no federation, so there is no lock for its entry to name');
+  if (stakeLock && stake && stake.stakePoint && !(stakeLock.fields && stakeLock.fields.paymentImage
+    && toHex(stakeLock.fields.paymentImage.bytes) === toHex(stake.stakePoint)))
+    throw new Error('that lock is not to this stake\'s point, so it is not this entry\'s lock');
   return {
     playerPubkey: player.pubkey,
     stakeCommitment: stake ? stake.stakeCommitment : random(32),
@@ -711,12 +735,14 @@ export function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 
     // has none can never be the same entry id.
     vssSharesRef: stake ? stake.vssSharesRef : NO_SHARES,
     // §7's stake-lock fields (v4.6.2). A dealt stake names its point - the
-    // handout's A0, which every seat checks the shares against (F1). No stake
-    // lock is wired into the page yet - the hold invoice is what ships - so
-    // the rest name none, in zeros, said here rather than defaulted.
+    // handout's A0, which every seat checks the shares against (F1). A lock
+    // round's entry names its lock's outpoint (W1b); the fee lock is not made
+    // yet (parked), so it and a non-locking round's outpoint are zeros, said
+    // here rather than defaulted.
     stakePoint: stake && stake.stakePoint ? stake.stakePoint : new Uint8Array(33),
     feePreimage: new Uint8Array(32),
-    stakeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n },
+    stakeLockOutpoint: stakeLock ? { txid: stakeLock.outpoint.txid, outIdx: BigInt(stakeLock.outpoint.outIdx) }
+      : { txid: new Uint8Array(32), outIdx: 0n },
     feeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n },
     claimKeyAttestationRef: roundLocks(round) ? claimKey.ref : new Uint8Array(32),
     stakeMsat: BigInt(round.stakeMsat || 0n),

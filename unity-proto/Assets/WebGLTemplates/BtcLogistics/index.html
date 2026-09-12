@@ -78,6 +78,7 @@
   <canvas id="canvas" tabindex="-1"></canvas>
   <div id="blwp-players"></div>
   <div id="blwp-refund"></div>
+  <div id="blwp-deposit"></div>
   <div id="blwp-wallet">
     <div class="owed" id="blwp-owed"></div>
     <div class="spent" id="blwp-spent"></div>
@@ -296,8 +297,10 @@
         // run stored 1 checkpoint on A and 0 on B, and every later one was
         // refused. The client proves one node; these are where else to deliver.
         const nodes = discovery.nodes || window.BLWP_NODES;
+        // AND THE PLAYER'S STAKE LOCK, if this page made one (W1b): `join`
+        // hands it to every seat once the seat holds the entry.
         return at(Object.assign({}, discovery, { nodes: nodes }),
-          Object.assign({}, opts, { verify: verify }));
+          Object.assign({}, opts, { verify: verify, stakeLock: window.BLWP_STAKE_LOCK || undefined }));
       };
     }
 
@@ -414,6 +417,7 @@
       const pays = BLWPCLIENT.roundPays(named.round);
       let stake = null;
       let claimKey = null;
+      let stakeLock = null;
       if (pays) {
         let seats = null;
         try {
@@ -467,6 +471,39 @@
           console.error('[blwp] seat refused: ' + put.why + ' — ' + put.refused.join('; '));
           return;
         }
+        // AND A ROUND WHOSE STAKE GOES INTO A FEDERATION LOCK GETS ITS LOCK
+        // NOW, BEFORE THE ENTRY IS BUILT (W1b; 23.1 steps 3-5). The entry names
+        // the lock's outpoint, so there is no entry without one - this page used
+        // to write zeros there and every seat could only refuse it. The lock
+        // client is the stock fedimint client built to wasm; what it is asked is
+        // decided in `@blwp/client` (`lockStake`), where `node --test` drives it.
+        // The deposit invoice is shown here for the player's own wallet to pay.
+        if (BLWPCLIENT.roundLocks(named.round)) {
+          const depositEl = document.getElementById('blwp-deposit');
+          const say = (text) => { if (depositEl) depositEl.textContent = text; };
+          try {
+            const wasm = await import('./blwp_lock_client.js');
+            await wasm.default();
+            const made = await BLWPCLIENT.lockStake({
+              round: named.round, roundId: BLWPCLIENT.fromHex(named.roundIdHex), invite: named.federation,
+              seed, stake, claimKey, playerPubkey: player.pubkey, LockClient: wasm.LockClient,
+              onStep: (step) => { say('stake lock: ' + step); console.log('[blwp] stake lock: ' + step); },
+              onDeposit: (d) => {
+                window.BLWP_DEPOSIT = { invoice: d.invoice, amountMsat: String(d.amountMsat) };
+                say('pay ' + String(d.amountMsat / 1000n) + ' sat into the round\'s federation to lock your stake: ' + d.invoice);
+                console.log('[blwp] stake lock deposit: ' + String(d.amountMsat) + ' msat, ' + d.invoice);
+              },
+            });
+            stakeLock = { outpoint: made.outpoint, fields: made.fields, needed: BLWPCLIENT.sharesNeededFor(named.round) };
+            window.BLWP_STAKE_LOCK = stakeLock;
+            say('stake locked at ' + BLWPCLIENT.toHex(made.outpoint.txid) + ':' + String(made.outpoint.outIdx));
+            console.log('[blwp] stake locked at ' + BLWPCLIENT.toHex(made.outpoint.txid) + ':' + String(made.outpoint.outIdx));
+          } catch (e) {
+            window.BLWP_SEAT_REFUSED = 'this round\'s stake goes into a federation lock, and it was not made: ' + e.message;
+            console.error('[blwp] seat refused: ' + window.BLWP_SEAT_REFUSED);
+            return;
+          }
+        }
         window.BLWP_STAKE = {
           dealt: true, seats: seats.seats.length, agreed: seats.agreed,
           accepted: put.accepted, refused: put.refused, paid: false,
@@ -490,7 +527,7 @@
       window.BLWP_ENTRY = BLWPCLIENT.entryFor(
         Object.assign({}, named.round, { id: BLWPCLIENT.fromHex(named.roundIdHex) }), {
           seed, curve: window.BLWP_CURVE, playerPubkey: player.pubkey, random, ...(stake ? { stake } : {}),
-          ...(claimKey ? { claimKey } : {}),
+          ...(claimKey ? { claimKey } : {}), ...(stakeLock ? { stakeLock } : {}),
         });
       console.log('[blwp] joining round ' + named.roundIdHex + ' from ' + named.from);
     }

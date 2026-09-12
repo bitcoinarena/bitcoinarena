@@ -243,6 +243,9 @@ export const TAG = {
   // signature that carries somewhere it was never given.
   signedDonationSet: 'BLWP/v1/SignedDonationSet',
   authorityRotation: 'BLWP/v1/AuthorityRotation',
+  // The player's lock client's root, per round, from their seed (W1b). Its own
+  // tag: it must never be the player key the same seed makes for the round.
+  lockClientSecret: 'BLWP/v1/LockClientSecret',
   // A picture of another player's truck. Its own tag so a ghost's id can never
   // collide with a checkpoint's or a batch's over the same bytes: 0.10 says a
   // ghost is never an input, and a shared tag would be one way to forget it.

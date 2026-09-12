@@ -54,6 +54,7 @@ import { invoiceMatchesEntry } from '../../protocol/src/payout.js';
 import { parseConnection, payInvoice } from './nwc.js';
 import { STAKE_NOT_SEEN } from '../../protocol/src/constants.js';
 import { stakeSeenBy, settlementBy, SETTLEMENT_OVER } from './join.js';
+import { handLock } from './page-lock.js';
 import { decodeGhost } from '../../protocol/src/ghost.js';
 import { TYPE_GHOST } from '../../protocol/src/constants.js';
 import { discover } from './directory.js';
@@ -235,7 +236,7 @@ export class Client {
    * the node's own fixtures talk to a process on localhost that has no bond
    * and never will - and a test that wants the real door calls this one.
    */
-  static async at(discovery, { core, sign, verify, contract, roundIdGiven }) {
+  static async at(discovery, { core, sign, verify, contract, roundIdGiven, stakeLock }) {
     if (!contract || !contract.nodes)
       throw new Error('no round contract, so there is no committee to check against');
 
@@ -310,6 +311,9 @@ export class Client {
     // once it verifies under a key the round's own contract names. A page that
     // lies here can make a checkpoint fail to go live, never make one live.
     client.deliverTo(discovery.nodes || []);
+    // THE PLAYER'S STAKE LOCK, made by the page before the entry was built
+    // (W1b), handed to the seats by `join` once they hold the entry.
+    if (stakeLock) client.stakeLock = stakeLock;
     return client;
   }
 
@@ -539,6 +543,15 @@ export class Client {
     // the entry, and the run can still be played.
     this.seatEntry = entry;
     this.peerSeats = await Promise.all(this.peers.map((base) => this.seatOn(base)));
+
+    // AND THE STAKE LOCK GOES TO EVERY SEAT NOW THAT THE ENTRY IS THERE (§23.1
+    // step 5, W1b). A seat verifies it in the federation and only then counts
+    // the stake; before the entry is seated it has nothing to check it against.
+    // The count is kept, not thrown: the seat is taken either way, and the
+    // stake is committed or not by the seats' own answers.
+    if (this.stakeLock)
+      this.lockHanded = await handLock({ entryId: mine, fields: this.stakeLock.fields,
+        nodes: [this.base, ...this.peers], needed: this.stakeLock.needed });
     return seated;
   }
 

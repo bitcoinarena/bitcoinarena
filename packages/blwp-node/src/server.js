@@ -255,6 +255,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const fundingView = {
     holds: (roundIdBytes) => round.get(roundIdBytes),
     get reachesLightning() { return custody.reaches; },
+    // AND WHETHER IT REACHES A FEDERATION, which is how a lock round's stake is held (§23.1 step 5).
+    get reachesFederation() { return !!stakeLocks; },
   };
 
   /**

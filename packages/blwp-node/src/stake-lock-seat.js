@@ -21,31 +21,13 @@
 // crates). The fee lock is not checked here: its claim hash and the §22A node
 // slots wait on a ruling (PRIORITIES).
 import { decodeEntryContract, decodeRoundContract } from '../../protocol/src/contracts.js';
-import { lockMatchesEntry } from '../../protocol/src/stake-lock.js';
-import { toHex, fromHex } from '../../protocol/src/hash.js';
+import { lockMatchesEntry, lockFieldsFromJson, lockFieldsToJson } from '../../protocol/src/stake-lock.js';
 
 const zero = (b) => !(b instanceof Uint8Array) || b.every((x) => x === 0);
 
-/** The contract a player hands over, as JSON: hex bytes, amount as a decimal string. */
-export function lockFieldsFromJson(j) {
-  if (!j || typeof j !== 'object') throw new Error('a stake lock is a JSON object');
-  const img = j.paymentImage || {};
-  if (img.kind !== 'point' && img.kind !== 'hash') throw new Error('a payment image is a point or a hash');
-  const f = {
-    paymentImage: { kind: img.kind, bytes: fromHex(String(img.bytes || '')) },
-    amountMsat: BigInt(String(j.amountMsat)),
-    claimPk: fromHex(String(j.claimPk || '')),
-    refundPk: fromHex(String(j.refundPk || '')),
-    expiration: Number(j.expiration),
-  };
-  if (!Number.isSafeInteger(f.expiration) || f.expiration < 0) throw new Error('an expiration is a block height');
-  return f;
-}
-
-export const lockFieldsToJson = (f) => ({
-  paymentImage: { kind: f.paymentImage.kind, bytes: toHex(f.paymentImage.bytes) },
-  amountMsat: String(f.amountMsat), claimPk: toHex(f.claimPk), refundPk: toHex(f.refundPk), expiration: f.expiration,
-});
+// The contract a player hands over, as JSON - one encoding, in protocol, which
+// the page's bundle writes with.
+export { lockFieldsFromJson, lockFieldsToJson };
 
 export async function verifyStakeLock({ round, port, entryIdBytes, fields, claimPk }) {
   const stored = round.entry(entryIdBytes);

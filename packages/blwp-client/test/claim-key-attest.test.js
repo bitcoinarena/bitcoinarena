@@ -75,7 +75,8 @@ test('two seats both attest the claim key: the page accepts it and its entry nam
     const got = await f.ask();
     assert.equal(got.ok, true, got.why);
     assert.equal(toHex(got.claimPk), toHex(CLAIM));
-    const entry = entryWith(f, { claimKey: got });
+    // A lock round's entry now names its lock too (W1b); the outpoint is not what this test measures.
+    const entry = entryWith(f, { claimKey: got, stakeLock: { outpoint: { txid: b32(0x7a), outIdx: 0n } } });
     const bundled = require('../dist/blwp-client.js');
     const facts = {
       attested: got.attested, needed: got.needed, entryRef: toHex(entry.claimKeyAttestationRef) === toHex(got.ref),

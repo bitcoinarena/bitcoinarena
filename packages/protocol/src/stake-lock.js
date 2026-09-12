@@ -20,9 +20,34 @@
 // winner's fee lock is claimed too, and claiming it would publish the winner's
 // P. With the stake a point and the fee a hash the images cannot collide; what
 // can still be caught is F = P while the entry also carries H(P).
-import { sha256 } from './hash.js';
+import { sha256, toHex, fromHex } from './hash.js';
 import { netStakeMsat } from './payout.js';
 import { STAKE_EXPIRY_BLOCKS } from './constants.js';
+
+/**
+ * THE CONTRACT A PLAYER HANDS A SEAT (POST /lock), as JSON: hex bytes, the
+ * amount as a decimal string. Here, not in the node, because the page writes
+ * it and the seat reads it - one encoding, not two that look alike.
+ */
+export function lockFieldsFromJson(j) {
+  if (!j || typeof j !== 'object') throw new Error('a stake lock is a JSON object');
+  const img = j.paymentImage || {};
+  if (img.kind !== 'point' && img.kind !== 'hash') throw new Error('a payment image is a point or a hash');
+  const f = {
+    paymentImage: { kind: img.kind, bytes: fromHex(String(img.bytes || '')) },
+    amountMsat: BigInt(String(j.amountMsat)),
+    claimPk: fromHex(String(j.claimPk || '')),
+    refundPk: fromHex(String(j.refundPk || '')),
+    expiration: Number(j.expiration),
+  };
+  if (!Number.isSafeInteger(f.expiration) || f.expiration < 0) throw new Error('an expiration is a block height');
+  return f;
+}
+
+export const lockFieldsToJson = (f) => ({
+  paymentImage: { kind: f.paymentImage.kind, bytes: toHex(f.paymentImage.bytes) },
+  amountMsat: String(f.amountMsat), claimPk: toHex(f.claimPk), refundPk: toHex(f.refundPk), expiration: f.expiration,
+});
 
 const eq = (a, b) => a instanceof Uint8Array && b instanceof Uint8Array
   && a.length === b.length && a.every((x, i) => x === b[i]);

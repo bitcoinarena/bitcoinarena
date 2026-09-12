@@ -15,7 +15,8 @@ const at = (p) => fileURLToPath(new URL(p, import.meta.url));
 const TOOL = at('../tools/client-hash.mjs');
 const LIST = JSON.parse(readFileSync(at('../../blwp-client/known-good-clients.json'), 'utf8'));
 const TEMPLATE = at('../../../unity-proto/Assets/WebGLTemplates/BtcLogistics');
-const SCRIPTS = ['blwp-client.js', 'blwp-curve.js', 'blwp-core.js'];
+// The lock client (W1b) makes the player's stake lock, so it is pinned too.
+const SCRIPTS = ['blwp-client.js', 'blwp-curve.js', 'blwp-core.js', 'blwp_lock_client.js', 'blwp_lock_client_bg.wasm'];
 const sha = (p) => createHash('sha256').update(readFileSync(p)).digest('hex');
 const run = (arg) => new Promise((done) => {
   execFile(process.execPath, [TOOL, arg], { encoding: 'utf8' }, (err, stdout) =>
@@ -26,7 +27,9 @@ const lineOf = (out, name) => (out.split('\n').find((l) => l.startsWith(name + '
 test('the list pins the scripts the rebuilt bundle and the template carry, and not index.html', () => {
   assert.deepEqual(Object.keys(LIST.pinned).sort(), [...SCRIPTS].sort());
   for (const [name, source] of [['blwp-client.js', '../../blwp-client/dist/blwp-client.js'],
-    ['blwp-curve.js', '../../blwp-client/dist/blwp-curve.js'], ['blwp-core.js', '../../core/dist/blwp-core.js']]) {
+    ['blwp-curve.js', '../../blwp-client/dist/blwp-curve.js'], ['blwp-core.js', '../../core/dist/blwp-core.js'],
+    ['blwp_lock_client.js', '../../blwp-client/dist/blwp_lock_client.js'],
+    ['blwp_lock_client_bg.wasm', '../../blwp-client/dist/blwp_lock_client_bg.wasm']]) {
     assert.ok(LIST.pinned[name].includes(sha(at(source))), `${name}: the built file is not on the list`);
     assert.equal(sha(join(TEMPLATE, name)), sha(at(source)), `${name}: the template is not the built file`);
   }

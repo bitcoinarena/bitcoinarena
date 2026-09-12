@@ -16,6 +16,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createHash } from 'node:crypto';
 
 const ROOT = new URL('../../../', import.meta.url).pathname;
 const TEMPLATE = ROOT + 'unity-proto/Assets/WebGLTemplates/BtcLogistics/';
@@ -38,4 +39,21 @@ test('each script a page serves that decides money is the build of the source in
     console.log(`  FACTS (freshness): ${stale.length ? stale.join('; ') : 'all three fresh in dist and the template'}`);
     assert.deepEqual(stale, []);
   } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+// THE LOCK CLIENT (W1b) IS NOT BUILT BY A NODE TOOL: it is the stock fedimint
+// crates compiled to wasm with a Rust toolchain that is not on the shipping
+// path (lock-client/Cargo.toml says how). So this cannot rebuild it from the
+// source; what it holds is that the template serves exactly what dist
+// commits, and that both are on the known-good list.
+test('the WebGL template carries the lock client dist commits, byte for byte, and the list pins it', () => {
+  const pins = JSON.parse(readFileSync(ROOT + 'packages/blwp-client/known-good-clients.json', 'utf8')).pinned;
+  const off = [];
+  for (const name of ['blwp_lock_client.js', 'blwp_lock_client_bg.wasm']) {
+    const committed = readFileSync(ROOT + 'packages/blwp-client/dist/' + name);
+    if (Buffer.compare(committed, readFileSync(TEMPLATE + name))) off.push(`${name}: the template is not dist's`);
+    const sha = createHash('sha256').update(committed).digest('hex');
+    if (!(pins[name] || []).includes(sha)) off.push(`${name}: dist's is not on the known-good list`);
+  }
+  assert.deepEqual(off, []);
 });

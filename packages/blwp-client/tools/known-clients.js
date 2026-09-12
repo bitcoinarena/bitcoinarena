@@ -24,6 +24,10 @@ const SOURCES = {
   'blwp-client.js': at('../dist/blwp-client.js'),
   'blwp-curve.js': at('../dist/blwp-curve.js'),
   'blwp-core.js': at('../../core/dist/blwp-core.js'),
+  // THE LOCK CLIENT (W1b): the player's stake is locked by this code, so it
+  // decides money. Its glue and its wasm, as wasm-bindgen wrote them.
+  'blwp_lock_client.js': at('../dist/blwp_lock_client.js'),
+  'blwp_lock_client_bg.wasm': at('../dist/blwp_lock_client_bg.wasm'),
 };
 const sha = (p) => createHash('sha256').update(readFileSync(p)).digest('hex');
 

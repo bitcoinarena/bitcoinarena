@@ -128,6 +128,27 @@ test('a daemon that reaches no Lightning seats no entry, even into a named payin
     'an entry was funded on a node that cannot hold its stake');
 });
 
+// A ROUND NAMING A FEDERATION TAKES ITS STAKE AS A LOCK THERE (§23.1, W1b), and
+// the seat verifies that lock in the federation - so what a node needs to hold
+// such a stake is the federation, not Lightning. Measured before: a lock
+// round's entry on a node reaching only the federation was 402 by this rule,
+// so no page could be seated in one on a launched daemon.
+test('a lock round\'s entry is funded on a node that reaches its federation, and not on one that reaches only Lightning', () => {
+  const nodes = [schnorr.getPublicKey(b32(1)), schnorr.getPublicKey(b32(9))];
+  const lockRound = { ...contractFor(nodes), federationId: b32(0xfe) };
+  const holdRound = contractFor(nodes);
+  const funded = fundingFromEnv({ BLWP_FUNDED_ROUNDS: [roundId(lockRound), roundId(holdRound)].map(toHex).join(',') });
+  const ask = (c, node) => funded({ kind: 'entry', contract: entryFor(roundId(c)),
+    node: { holds: () => ({ contract: encodeRoundContract(c) }), ...node } });
+  assert.equal(ask(lockRound, { reachesFederation: true, reachesLightning: false }), true,
+    'a lock round\'s entry was refused on a node that can verify its lock');
+  assert.equal(ask(lockRound, { reachesFederation: false, reachesLightning: true }), false,
+    'a lock round\'s entry was funded on a node that cannot verify its lock');
+  assert.equal(ask(lockRound, { reachesFederation: false, reachesLightning: false }), false);
+  assert.equal(ask(holdRound, { reachesFederation: true, reachesLightning: false }), false,
+    'a hold round\'s entry was funded on a node with no Lightning to hold it');
+});
+
 test('main.js itself wires the rule: an unnamed paying round is 402; a named one is opened, and with no lnd its entries are 402', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'launcher-funded-'));
   const PORT = 18902;   // never 8080: main.js defaults to it and signal-cli owns it

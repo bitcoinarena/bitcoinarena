@@ -87,7 +87,13 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
                                      // THE FEDERATION'S RECEIVING SIDE (invoice first): both
                                      // daemons answer `/federation-invoice` through it. None
                                      // by default.
-                                     federation = null } = {}) {
+                                     federation = null,
+                                     // A ROUND WHOSE STAKE GOES INTO A FEDERATION LOCK (W1b):
+                                     // the federation's id on the contract, its invite in the
+                                     // join link, and what each seat needs to verify a lock
+                                     // (`claimKeyFor`, `stakeLocks`). None by default: every
+                                     // existing caller's round names no federation, as before.
+                                     federationId = new Uint8Array(32), invite = null, seat = {} } = {}) {
   // WHAT THESE DAEMONS FUND (M3.3-31): a PAYING round goes through the
   // launcher's own rule - the round its operator names, and entries into a
   // paying round the node holds when it reaches Lightning - not a harness's
@@ -322,10 +328,10 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   } : {};
   const a = await serve(dbA, { port: portA, host, funded, headerBytes, bondProof, chainFor,
     ...(randomnessFor ? { randomnessFor } : {}), ...lightning, ...chainTip, ...spendOn,
-    ...(federation ? { federation } : {}) });
+    ...(federation ? { federation } : {}), ...seat });
   const optsB = { port: portB, host, funded, headerBytes, bondProof, chainFor,
     ...(randomnessFor ? { randomnessFor } : {}), ...lightning, ...chainTip, ...spendOn,
-    ...(federation ? { federation } : {}) };
+    ...(federation ? { federation } : {}), ...seat };
   let b = await serve(dbB, optsB);
   if (a.port !== portA)
     throw new Error(`node A came up on ${a.port} and the bond names ${portA}`);
@@ -379,7 +385,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     startTimeMs: committeeTimeMs + MIN_ENTRY_WINDOW_MS,
     entryCloseMs: committeeTimeMs + MIN_ENTRY_WINDOW_MS + 120000n,
     objectionWindowMs, custody: 'FEDERATION', slashMinimumServed: 20,
-    slashRemainder: 'BURN', federationId: new Uint8Array(32), stakeExpiryBlocks: 144,
+    slashRemainder: 'BURN', federationId, stakeExpiryBlocks: 144,
     // WHERE THE SEATS POST EACH RUN'S TRANSCRIPT (v4.6.2 §13A, P2): the two
     // daemons' own relay doors. A result is final only once both have posted
     // it, and a round naming no relay could never settle a stake.
@@ -535,7 +541,8 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   const url = `${page}/?round=${id}`
     + `&node=${reach[0]},${reach[1]}`
     + `&bond=${reach[0]}/bond`
-    + `&advert=${toHex(bonded[0].signature)}`;
+    + `&advert=${toHex(bonded[0].signature)}`
+    + (invite ? `&federation=${invite}` : '');
 
   return {
     id, url, contract, a, get b() { return b; }, beacon: beaconSeen,

@@ -12,7 +12,8 @@
 #   cargo build --release --target wasm32-unknown-unknown -p blwp-lock-client
 #     (secp256k1-sys compiles C: CC_wasm32_unknown_unknown=<llvm>/bin/clang,
 #      AR_wasm32_unknown_unknown=<llvm>/bin/llvm-ar)
-#   wasm-bindgen --target nodejs (0.2.106, the lockfile's) on the .wasm
+#   wasm-bindgen --target web (0.2.106, the lockfile's) on the .wasm: the page
+#     loads it as a module; Node loads the same output from its bytes
 [package]
 name = "blwp-lock-client"
 version = "0.1.0"
@@ -25,14 +26,13 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 anyhow = { workspace = true }
 fedimint-api-client = { workspace = true }
-fedimint-bip39 = { workspace = true }
 fedimint-client = { workspace = true }
 fedimint-connectors = { workspace = true }
 fedimint-core = { workspace = true }
+fedimint-derive-secret = { workspace = true }
 fedimint-lnv2-client = { workspace = true }
 fedimint-lnv2-common = { workspace = true }
 fedimint-mintv2-client = { workspace = true }
-rand = { workspace = true }
 serde_json = { workspace = true }
 wasm-bindgen = { workspace = true }
 wasm-bindgen-futures = { workspace = true }

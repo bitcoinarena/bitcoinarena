@@ -151,8 +151,17 @@ test('the client can enter, ask what it owes, and play - and cannot send a satos
     const speaks = code.filter((s) => s.text.split('\n')
       .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l))
       .some((l) => /invoice|bolt11|payment_request|paymentHash/i.test(l)));
-    assert.deepEqual(speaks.map((s) => s.f).sort(), ['client.js', 'nwc.js'],
+    // page-lock.js (W1b) names one too: the deposit invoice the player's OWN
+    // lock client makes, which the player's wallet pays into their own
+    // federation wallet. No node quotes it - so the rule that matters is kept
+    // below, exactly: only client.js asks a node what a player owes.
+    assert.deepEqual(speaks.map((s) => s.f).sort(), ['client.js', 'nwc.js', 'page-lock.js'],
       'the ask moved out of client.js, or a second file learned to quote a player');
+    const asksANode = code.filter((s) => s.text.split('\n')
+      .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l))
+      .some((l) => /\/invoice\?/.test(l)));
+    assert.deepEqual(asksANode.map((s) => s.f), ['client.js'],
+      'a second file asks a node to quote a player');
     console.log(`  files in blwp-client/src that name an invoice in code: `
       + `${speaks.length} (${speaks.map((s) => s.f).join(', ')})`);
   } finally { await c.close(); }
