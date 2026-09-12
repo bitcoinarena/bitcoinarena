@@ -6431,6 +6431,115 @@ function receiptsNeeded(slots) {
   throw new Error(`no committee threshold for ${slots} slots`);
 }
 
+// ---- protocol/src/claim-key.js
+// THE ROUND'S CLAIM KEY, AND WHY ONE SEAT'S WORD FOR IT IS NOT ENOUGH.
+//
+// Section 23.1 step 0 (v4.6.2): "Once selected, the settlement seats run a
+// dealerless DKG for this round's threshold key `claim_pk` and each seat signs
+// `(round_id, claim_pk)`. The key is valid only with signatures from >=5 seats
+// (`claim_key_attestation_ref`); a client MUST refuse to lock to a key without
+// them. Otherwise one seat could serve its own key and, after the shares are
+// released, claim a loser's stake for itself." (F3)
+//
+// So there are two objects. One seat's attestation - what it signs. And the
+// attested SET - one round, one key, the valid signatures sorted by seat - whose
+// id an entry names, so the attestation a player locked under is pinned in
+// the bytes they signed.
+//
+// "5" is the reference committee's threshold. The round's own is what counts
+// (2 of 2 on a test net, 5 of 7 otherwise), read off its settlement slots the
+// way every other threshold in this protocol is, never passed in by a caller.
+// The curve is not this package's business: `verify(signature, digest, key)` is
+// injected, as `authority.js` takes it.
+
+
+
+
+/** A compressed secp256k1 point, as `groupKeyOf` computes the committee's key. */
+const CLAIM_KEY_BYTES = 33;
+const ATTESTATION_SIGNATURE_BYTES = 64;
+
+const isClaimRound32 = (b) => b instanceof Uint8Array && b.length === 32;
+const isClaimKeyPoint = (b) => b instanceof Uint8Array && b.length === CLAIM_KEY_BYTES && (b[0] === 0x02 || b[0] === 0x03);
+const claimSeatOrder = (a, b) => { for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return a[i] - b[i]; return 0; };
+
+function encodeClaimKeyAttestation(a) {
+  const w = new Writer();
+  w.u8(TYPE_CLAIM_KEY_ATTESTATION);
+  w.u16(PROTOCOL_VERSION);
+  w.bytes32(a.roundId);
+  w.bytes(a.claimPk, CLAIM_KEY_BYTES);
+  // WHO SAYS SO is in the signed bytes, so a signature cannot be moved from one
+  // seat's record to another's.
+  w.bytes32(a.seatPubkey);
+  return w.finish();
+}
+
+function decodeClaimKeyAttestation(bytes) {
+  const r = new Reader(bytes);
+  if (r.u8() !== TYPE_CLAIM_KEY_ATTESTATION) throw new Error('not a claim-key attestation');
+  const version = r.u16();
+  if (version !== PROTOCOL_VERSION) throw new Error('protocol version ' + version);
+  const a = { roundId: r.bytes32(), claimPk: r.bytes(CLAIM_KEY_BYTES), seatPubkey: r.bytes32() };
+  r.end();
+  return a;
+}
+
+/** What one seat signs. */
+const claimKeyAttestationId = (a) =>
+  taggedHash(TAG.claimKeyAttestation, encodeClaimKeyAttestation(a));
+
+/**
+ * THE ID AN ENTRY NAMES: the round, the key, and the signatures sorted by seat
+ * key - asserted sorted, not sorted here, as every committed list is.
+ */
+function claimKeyAttestationRef({ roundId, claimPk, signatures }) {
+  const w = new Writer();
+  w.bytes32(roundId);
+  w.bytes(claimPk, CLAIM_KEY_BYTES);
+  w.vec(signatures, (s, ww) => { ww.bytes32(s.seatPubkey); ww.bytes(s.signature, ATTESTATION_SIGNATURE_BYTES); },
+    { sortedBy: (a, b) => claimSeatOrder(a.seatPubkey, b.seatPubkey) });
+  return taggedHash(TAG.claimKeyAttestationSet, w.finish());
+}
+
+/**
+ * IS THIS CLAIM KEY THE COMMITTEE'S? Counted over the round's SEATED
+ * settlement committee - the roster's answer, not the contract's list - and
+ * only once per seat: a signature from a key that is not seated, a second one
+ * from the same seat, and one that does not verify all count for nothing.
+ */
+function claimKeyIsAttested({ roundId, claimPk, signatures, seats, settlementSlots, verify } = {}) {
+  if (!isClaimRound32(roundId)) return { ok: false, why: 'that attestation names no 32-byte round id' };
+  if (!isClaimKeyPoint(claimPk)) return { ok: false, why: 'that claim key is not a 33-byte compressed point' };
+  if (typeof verify !== 'function') return { ok: false, why: 'checking a claim key needs a verifier, and none was injected' };
+  if (!Array.isArray(seats) || !seats.length)
+    return { ok: false, why: 'this round has no seated settlement committee to attest a claim key' };
+  let needed;
+  try { needed = receiptsNeeded(settlementSlots); } catch (e) { return { ok: false, why: e.message }; }
+
+  const seated = new Set(seats.map(toHex));
+  const counted = new Map();
+  for (const s of signatures || []) {
+    if (!s || !isClaimRound32(s.seatPubkey) || !(s.signature instanceof Uint8Array)
+      || s.signature.length !== ATTESTATION_SIGNATURE_BYTES) continue;
+    const who = toHex(s.seatPubkey);
+    if (!seated.has(who) || counted.has(who)) continue;
+    const digest = claimKeyAttestationId({ roundId, claimPk, seatPubkey: s.seatPubkey });
+    let good = false;
+    try { good = !!verify(s.signature, digest, s.seatPubkey); } catch { good = false; }
+    if (good) counted.set(who, s);
+  }
+
+  if (counted.size < needed)
+    return {
+      ok: false, attested: counted.size, needed,
+      why: `${counted.size} of ${seats.length} seats attest this claim key, and this round needs ${needed}: `
+        + 'a client does not lock a stake to it',
+    };
+  const valid = [...counted.values()].sort((a, b) => claimSeatOrder(a.seatPubkey, b.seatPubkey));
+  return { ok: true, attested: counted.size, needed, ref: claimKeyAttestationRef({ roundId, claimPk, signatures: valid }) };
+}
+
 // ---- blwp-client/src/join.js
 // THE ROUND A PAGE WAS SENT TO, NAMED IN ITS OWN URL.
 //
@@ -6453,6 +6562,7 @@ function receiptsNeeded(slots) {
 // first server felt like returning - a different stake, a different committee,
 // a different core hash - which is precisely the substitution the round id
 // exists to prevent. Same rule as the entry a resuming client re-hashes.
+
 
 
 
@@ -6681,6 +6791,61 @@ async function postHandout(stake, nodes, { fetcher = fetch, needed: asked } = {}
  * and reads nothing off the round itself.
  */
 const roundPays = (round) => !!round && BigInt(round.stakeMsat || 0n) > 0n;
+
+/**
+ * DOES THIS ROUND'S STAKE GO INTO A FEDERATION LOCK? A paying round that names
+ * its federation (§6 federation_id, §23.6). A hold-invoice round names none.
+ */
+const roundLocks = (round) => roundPays(round) && round.custody === 'FEDERATION'
+  && round.federationId instanceof Uint8Array && round.federationId.some((b) => b !== 0);
+
+/** 1 type + 2 version + 32 round + 33 claim key + 32 seat, then a 64-byte signature. */
+const ATTESTATION_BYTES = 100;
+
+/**
+ * THE CLAIM KEY A LOCK MAY NAME (v4.6.2 §23.1 step 0, F3): "The key is valid
+ * only with signatures from >=5 seats; a client MUST refuse to lock to a key
+ * without them. Otherwise one seat could serve its own key and, after the
+ * shares are released, claim a loser's stake for itself."
+ *
+ * Every node the page holds is asked for its seat's signed (round_id,
+ * claim_pk); the answers are grouped by key and counted by protocol
+ * `claimKeyIsAttested` over the round's SETTLEMENT seats - the same list the
+ * stake is dealt to - at the round's own threshold. A key short of it is
+ * refused by name; the one that stands comes back with the attested set's id,
+ * which the entry names as claim_key_attestation_ref.
+ */
+async function attestedClaimKey({ round, seats, nodes, curve, fetcher = fetch } = {}) {
+  if (!round || !(round.id instanceof Uint8Array)) throw new Error('there is no round id to ask a claim key for');
+  if (!curve || typeof curve.verify !== 'function') throw new Error('checking a claim key needs the page\'s curve');
+  const id = toHex(round.id);
+  const byKey = new Map();
+  const refused = [];
+  for (const node of nodes || []) {
+    try {
+      const r = await readWithOneRetry(fetcher, node.replace(/\/+$/, '') + '/claim-key?round=' + id);
+      if (!r.ok) { refused.push(`${node}: answered ${r.status} ${(await r.text()).trim()}`); continue; }
+      const bytes = new Uint8Array(await r.arrayBuffer());
+      if (bytes.length !== ATTESTATION_BYTES + 64) { refused.push(`${node}: answered ${bytes.length} bytes, not one signed claim key`); continue; }
+      const a = decodeClaimKeyAttestation(bytes.subarray(0, ATTESTATION_BYTES));
+      if (toHex(a.roundId) !== id) { refused.push(`${node}: attested a claim key for another round`); continue; }
+      const k = toHex(a.claimPk);
+      if (!byKey.has(k)) byKey.set(k, { claimPk: a.claimPk, signatures: [] });
+      byKey.get(k).signatures.push({ seatPubkey: a.seatPubkey, signature: bytes.subarray(ATTESTATION_BYTES) });
+    } catch (e) { refused.push(`${node}: ${e.message}`); }
+  }
+  let best = null;
+  for (const { claimPk, signatures } of byKey.values()) {
+    const said = claimKeyIsAttested({ roundId: round.id, claimPk, signatures, seats,
+      settlementSlots: round.settlementSlots, verify: (s, m, k) => curve.verify(s, m, k) });
+    if (said.ok) return { ok: true, claimPk, ref: said.ref, attested: said.attested, needed: said.needed, refused };
+    if (!best || (said.attested || 0) > (best.attested || 0)) best = said;
+  }
+  return {
+    ok: false, refused, attested: best ? best.attested || 0 : 0,
+    why: best ? `no claim key has this round's attestation: ${best.why}` : `no seat served a claim key for this round${refused.length ? ': ' + refused.join('; ') : ''}`,
+  };
+}
 
 /**
  * HOW MANY SETTLEMENT NODES MUST HAVE SEEN A STAKE HELD (23.1 step 5): the
@@ -7052,7 +7217,7 @@ function playerFor(round, { seed, curve } = {}) {
  * their world, and a node that had it could predict the round they are about
  * to drive.
  */
-function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 0, stake } = {}) {
+function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 0, stake, claimKey } = {}) {
   if (!round) throw new Error('there is no round to take a seat at');
   // A PAYING ROUND ON AN UNKNOWN CORE IS REFUSED (§5): no override, no flag. A
   // free round risks nothing and is seated as before.
@@ -7072,6 +7237,12 @@ function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 0, stak
     throw new Error('that is not a dealt stake: it names no commitment or no shares');
   if (stake && stake.vssSharesRef.some((b) => b !== 0) && !stake.stakePoint)
     throw new Error('that stake publishes shares and names no stake point, so no seat could check them');
+  // A LOCKING ROUND'S ENTRY NAMES THE ATTESTED CLAIM KEY (§23.1 step 0): with
+  // no attestation the page refuses the seat - "a client MUST refuse to lock
+  // to a key without them" - rather than name a key nobody vouched for.
+  if (roundLocks(round) && !(claimKey && claimKey.ref instanceof Uint8Array && claimKey.ref.some((b) => b !== 0)))
+    throw new Error('this round\'s stake goes into a federation lock, and no claim key has its seats\' '
+      + 'attestation: a client must refuse to lock to a key without it (23.1 step 0)');
   return {
     playerPubkey: player.pubkey,
     stakeCommitment: stake ? stake.stakeCommitment : random(32),
@@ -7089,7 +7260,7 @@ function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 0, stak
     feePreimage: new Uint8Array(32),
     stakeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n },
     feeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n },
-    claimKeyAttestationRef: new Uint8Array(32),
+    claimKeyAttestationRef: roundLocks(round) ? claimKey.ref : new Uint8Array(32),
     stakeMsat: BigInt(round.stakeMsat || 0n),
     // THE NODE FEE, AND IT IS 2% OF THIS ENTRY'S OWN STAKE - taken OUT of it,
     // never on top (22A). The stake is the one number the wallet commits; the
@@ -10126,7 +10297,7 @@ return { Client: Client, markState: markState,
          tabSeed: tabSeed, importSeed: importSeed, seedOrigin: seedOrigin,
          playerFor: playerFor, entryFor: entryFor,
          stakeFor: stakeFor, fetchSettlementSeats: fetchSettlementSeats,
-         roundPays: roundPays, postHandout: postHandout,
+         roundPays: roundPays, postHandout: postHandout, attestedClaimKey: attestedClaimKey, roundLocks: roundLocks,
          sharesNeededFor: sharesNeededFor,
          tabWallet: tabWallet, spendLog: spendLog, spentLine: spentLine,
          owedLine: owedLine,

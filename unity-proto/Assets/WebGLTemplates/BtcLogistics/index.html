@@ -413,6 +413,7 @@
       // where `node --test` can drive it.
       const pays = BLWPCLIENT.roundPays(named.round);
       let stake = null;
+      let claimKey = null;
       if (pays) {
         let seats = null;
         try {
@@ -426,6 +427,23 @@
             + 'could not be learned, so no stake could be dealt: ' + e.message;
           console.error('[blwp] seat refused: ' + window.BLWP_SEAT_REFUSED);
           return;
+        }
+        // A ROUND WHOSE STAKE GOES INTO A FEDERATION LOCK NAMES AN ATTESTED
+        // CLAIM KEY (23.1 step 0): the settlement seats' signatures, counted in
+        // `@blwp/client` against the same seats, at the round's threshold. A
+        // key short of it refuses the seat by name - one seat serving its own
+        // key must not be the key a stake is locked to.
+        if (BLWPCLIENT.roundLocks(named.round)) {
+          const att = await BLWPCLIENT.attestedClaimKey({
+            round: Object.assign({}, named.round, { id: BLWPCLIENT.fromHex(named.roundIdHex) }),
+            seats: seats.seats, nodes: named.nodes, curve: window.BLWP_CURVE,
+          });
+          if (!att.ok) {
+            window.BLWP_SEAT_REFUSED = att.why;
+            console.error('[blwp] seat refused: ' + att.why);
+            return;
+          }
+          claimKey = att;
         }
         // `round.id` IS BYTES, and the page holds the hex it was sent. The
         // contract decodes without an id - it is the hash OF the contract -
@@ -472,6 +490,7 @@
       window.BLWP_ENTRY = BLWPCLIENT.entryFor(
         Object.assign({}, named.round, { id: BLWPCLIENT.fromHex(named.roundIdHex) }), {
           seed, curve: window.BLWP_CURVE, playerPubkey: player.pubkey, random, ...(stake ? { stake } : {}),
+          ...(claimKey ? { claimKey } : {}),
         });
       console.log('[blwp] joining round ' + named.roundIdHex + ' from ' + named.from);
     }

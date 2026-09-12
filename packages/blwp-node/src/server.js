@@ -68,6 +68,8 @@ import { FINAL, PROVISIONALLY_FINAL, SUSPENDED } from '../../protocol/src/object
 import { transcriptBytesHash, SIGNED_POSTING_BYTES } from '../../protocol/src/posting.js';
 import { SIGNED_RERUN_BYTES } from '../../protocol/src/rerun.js';
 import { verifyStakeLock, lockFieldsFromJson } from './stake-lock-seat.js';
+import { encodeClaimKeyAttestation, claimKeyAttestationId } from '../../protocol/src/claim-key.js';
+import { schnorr } from '@noble/curves/secp256k1.js';
 import { splitSlashEvidence, slashProofId, SLASH_EVIDENCE_BYTES } from '../../protocol/src/slash.js';
 import { Preimages, encodeShareAnswer, SEALED_ANSWER_BYTES } from './preimage.js';
 import { Payouts, PAYOUT_QUEUED, PAID, PAID_IN_PART, NOTHING_OWED } from './payout.js';
@@ -501,6 +503,21 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
    * window; a re-run that lands later is acted on at the next close logic.
    */
   const rerunTimers = new Set();
+
+  /**
+   * THE ROUND'S CLAIM KEY AS THIS SEAT HOLDS IT (33 bytes), or null: the
+   * `claimKeyFor` option, else this seat's own DKG committee key for the round.
+   * One place, so the key a seat attests (/claim-key) and the key it checks a
+   * lock against (/lock) cannot be two keys.
+   */
+  function claimKeyOf(rid) {
+    try {
+      if (claimKeyFor) return claimKeyFor(rid);
+      const r = round.get(rid);
+      const held = r ? dkg.seatFor(decodeRoundContract(new Uint8Array(r.contract)).nodes) : null;
+      return held && held.ok ? held.pool.groupPublicKey : null;
+    } catch { return null; }
+  }
   function watchRerun(rid, eid) {
     const row = round.get(rid);
     if (!row) return;
@@ -1408,20 +1425,37 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         catch (e) { return text(res, 400, `that is not a stake lock: ${e.message}`); }
         const stored = round.entry(eid);
         if (!stored) return text(res, 404, 'this node seated no such entry');
-        const rid = decodeEntryContract(stored).roundId;
-        let claimPk = null;
-        try {
-          claimPk = claimKeyFor ? claimKeyFor(rid) : (() => {
-            const r = round.get(rid);
-            const held = r ? dkg.seatFor(decodeRoundContract(new Uint8Array(r.contract)).nodes) : null;
-            return held && held.ok ? held.pool.groupPublicKey : null;
-          })();
-        } catch { claimPk = null; }
+        const claimPk = claimKeyOf(decodeEntryContract(stored).roundId);
         let got;
         try { got = await verifyStakeLock({ round, port: stakeLocks, entryIdBytes: new Uint8Array(eid), fields, claimPk }); }
         catch (e) { got = { ok: false, why: `the federation could not be asked: ${e.message}` }; }
         if (!got.ok) return text(res, 409, got.why);
         return text(res, 201, `stake lock verified: contract ${got.contractId} holds ${got.paidMsat} msat`);
+      }
+
+      // THIS SEAT'S SIGNED CLAIM KEY (v4.6.2 §23.1 step 0, F3): "each seat signs
+      // (round_id, claim_pk). The key is valid only with signatures from >=5
+      // seats; a client MUST refuse to lock to a key without them." The
+      // attestation's bytes and, beside them, this node's BIP-340 signature over
+      // their id - the seat key is in the signed bytes, so a signature cannot be
+      // moved to another seat's record. Only a SEATED node attests.
+      if (req.method === 'GET' && url.pathname === '/claim-key') {
+        const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
+        if (rid.length !== 32) return text(res, 400, 'that is not a round id');
+        if (!round.get(rid)) return text(res, 404, 'this node holds no such round');
+        if (!round.seats(rid).some((k) => toHex(k) === toHex(round.pubkey)))
+          return text(res, 409, 'this node is not seated on that round, so it attests no claim key for it');
+        const claimPk = claimKeyOf(new Uint8Array(rid));
+        if (!(claimPk instanceof Uint8Array) || claimPk.length !== 33)
+          return text(res, 409, 'this seat holds no claim key for that round yet');
+        const a = { roundId: new Uint8Array(rid), claimPk, seatPubkey: round.pubkey };
+        const body = encodeClaimKeyAttestation(a);
+        const sig = schnorr.sign(claimKeyAttestationId(a), round.identity.secret);
+        const out = new Uint8Array(body.length + sig.length);
+        out.set(body, 0);
+        out.set(sig, body.length);
+        res.writeHead(200, { 'content-type': 'application/octet-stream', ...CORS });
+        return res.end(Buffer.from(out));
       }
 
       // EVERY SEAT'S RE-RUN OF A SUSPENDED RESULT (13A), fixed-size records.

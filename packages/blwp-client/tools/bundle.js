@@ -115,7 +115,7 @@ out += '         tabSeed: tabSeed, importSeed: importSeed, seedOrigin: seedOrigi
 // committee: `contract.nodes` is the UNION of the role committees, and shares
 // sealed to a game-verify seat are a stake nobody can open at payout.
 out += '         stakeFor: stakeFor, fetchSettlementSeats: fetchSettlementSeats,\n';
-out += '         roundPays: roundPays, postHandout: postHandout,\n';
+out += '         roundPays: roundPays, postHandout: postHandout, attestedClaimKey: attestedClaimKey, roundLocks: roundLocks,\n';
 // THE THRESHOLD THE STAKE IS DEALT AT - the round's (2 of 2, 5 of 7), the
 // same rule the node's door and settle read, never the slot count (M3.3-26).
 out += '         sharesNeededFor: sharesNeededFor,\n';

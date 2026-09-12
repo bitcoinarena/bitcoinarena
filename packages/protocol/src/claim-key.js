@@ -26,9 +26,9 @@ import { receiptsNeeded } from './threshold.js';
 export const CLAIM_KEY_BYTES = 33;
 export const ATTESTATION_SIGNATURE_BYTES = 64;
 
-const is32 = (b) => b instanceof Uint8Array && b.length === 32;
-const isKey = (b) => b instanceof Uint8Array && b.length === CLAIM_KEY_BYTES && (b[0] === 0x02 || b[0] === 0x03);
-const compare = (a, b) => { for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return a[i] - b[i]; return 0; };
+const isClaimRound32 = (b) => b instanceof Uint8Array && b.length === 32;
+const isClaimKeyPoint = (b) => b instanceof Uint8Array && b.length === CLAIM_KEY_BYTES && (b[0] === 0x02 || b[0] === 0x03);
+const claimSeatOrder = (a, b) => { for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return a[i] - b[i]; return 0; };
 
 export function encodeClaimKeyAttestation(a) {
   const w = new Writer();
@@ -65,7 +65,7 @@ export function claimKeyAttestationRef({ roundId, claimPk, signatures }) {
   w.bytes32(roundId);
   w.bytes(claimPk, CLAIM_KEY_BYTES);
   w.vec(signatures, (s, ww) => { ww.bytes32(s.seatPubkey); ww.bytes(s.signature, ATTESTATION_SIGNATURE_BYTES); },
-    { sortedBy: (a, b) => compare(a.seatPubkey, b.seatPubkey) });
+    { sortedBy: (a, b) => claimSeatOrder(a.seatPubkey, b.seatPubkey) });
   return taggedHash(TAG.claimKeyAttestationSet, w.finish());
 }
 
@@ -76,8 +76,8 @@ export function claimKeyAttestationRef({ roundId, claimPk, signatures }) {
  * from the same seat, and one that does not verify all count for nothing.
  */
 export function claimKeyIsAttested({ roundId, claimPk, signatures, seats, settlementSlots, verify } = {}) {
-  if (!is32(roundId)) return { ok: false, why: 'that attestation names no 32-byte round id' };
-  if (!isKey(claimPk)) return { ok: false, why: 'that claim key is not a 33-byte compressed point' };
+  if (!isClaimRound32(roundId)) return { ok: false, why: 'that attestation names no 32-byte round id' };
+  if (!isClaimKeyPoint(claimPk)) return { ok: false, why: 'that claim key is not a 33-byte compressed point' };
   if (typeof verify !== 'function') return { ok: false, why: 'checking a claim key needs a verifier, and none was injected' };
   if (!Array.isArray(seats) || !seats.length)
     return { ok: false, why: 'this round has no seated settlement committee to attest a claim key' };
@@ -87,7 +87,7 @@ export function claimKeyIsAttested({ roundId, claimPk, signatures, seats, settle
   const seated = new Set(seats.map(toHex));
   const counted = new Map();
   for (const s of signatures || []) {
-    if (!s || !is32(s.seatPubkey) || !(s.signature instanceof Uint8Array)
+    if (!s || !isClaimRound32(s.seatPubkey) || !(s.signature instanceof Uint8Array)
       || s.signature.length !== ATTESTATION_SIGNATURE_BYTES) continue;
     const who = toHex(s.seatPubkey);
     if (!seated.has(who) || counted.has(who)) continue;
@@ -103,6 +103,6 @@ export function claimKeyIsAttested({ roundId, claimPk, signatures, seats, settle
       why: `${counted.size} of ${seats.length} seats attest this claim key, and this round needs ${needed}: `
         + 'a client does not lock a stake to it',
     };
-  const valid = [...counted.values()].sort((a, b) => compare(a.seatPubkey, b.seatPubkey));
+  const valid = [...counted.values()].sort((a, b) => claimSeatOrder(a.seatPubkey, b.seatPubkey));
   return { ok: true, attested: counted.size, needed, ref: claimKeyAttestationRef({ roundId, claimPk, signatures: valid }) };
 }
