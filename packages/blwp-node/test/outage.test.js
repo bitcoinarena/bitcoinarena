@@ -12,7 +12,8 @@
 // and records the same Void, and the lock is forfeited to the player's refund
 // key at once - both seats sign, each on its own record. A seat that comes back
 // and is caught up by the player directly refuses the first mark too (§13C).
-// Unchanged: a late first mark is FORFEIT; no mark is neither.
+// Unchanged: a late first mark is FORFEIT. No mark at all is FORFEIT at the
+// close (§15's walk-away, ruled 2026-09-12) - never ENTRY_VOID.
 //
 // MEASURED BEFORE (tools/outage-before.mjs, 3300558): (b) nothing recorded, no
 // result, forfeit 409, a silent refund at expiry; (b') DELIVERED at both.
@@ -209,7 +210,7 @@ test("(b') the player catches the down seat up after seeing the run: it refuses 
   } finally { await w.close(); }
 });
 
-test('(c) a late first mark is still FORFEIT at both seats - never Void, never a refund; (d) no mark is still neither', async () => {
+test('(c) a late first mark is still FORFEIT at both seats - never Void, never a refund; (d) no mark is FORFEIT at the close, never Void', async () => {
   const w = await seats();
   try {
     const late = await seatAndBuild(w, { firstAt: END });
@@ -223,7 +224,8 @@ test('(c) a late first mark is still FORFEIT at both seats - never Void, never a
     console.log('  FACTS (c, d):', JSON.stringify(facts));
     assert.deepEqual(facts, {
       late: { a: { recorded: 'FORFEIT', results: [], finality: null }, b: { recorded: 'FORFEIT', results: [], finality: null }, forfeit: 409 },
-      noMark: { a: { recorded: null, results: [], finality: null }, b: { recorded: null, results: [], finality: null }, forfeit: 409, lockHeld: true } });
+      // (d) ruled 2026-09-12 (§15): measured before, no result at either seat.
+      noMark: { a: { recorded: null, results: ['FORFEIT'], finality: 'FINAL' }, b: { recorded: null, results: ['FORFEIT'], finality: 'FINAL' }, forfeit: 409, lockHeld: true } });
   } finally { await w.close(); }
 });
 

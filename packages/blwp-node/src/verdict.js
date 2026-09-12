@@ -26,6 +26,7 @@ import {
 } from '../../protocol/src/result.js';
 import { transcriptHash } from '../../protocol/src/transcript.js';
 import { receiptsNeeded } from '../../protocol/src/genesis.js';
+import { stoppedOutcome } from '../../protocol/src/first-mark.js';
 
 const hex = (b) => [...b].map((v) => v.toString(16).padStart(2, '0')).join('');
 
@@ -39,10 +40,20 @@ const hex = (b) => [...b].map((v) => v.toString(16).padStart(2, '0')).join('');
  * because a node that could be told what a run came to would not need to
  * replay it.
  */
-export function resultFrom({ answer, contract, entry, transcript, entryId, nodePubkey }) {
+export function resultFrom({ answer, contract, entry, transcript, entryId, nodePubkey, stopped = false }) {
   if (!answer || !answer.ok) return { ok: false, why: answer ? answer.why : 'no replay to sign' };
-  if (answer.outcome === null)
-    return { ok: false, why: 'that run is still LIVE at its last stored tick, so it came to nothing yet' };
+  // A RUN STILL LIVE AT ITS LAST TICK came to nothing yet - unless the round
+  // has closed on it (`stopped`, the close's own call): then §15 applies, as
+  // ruled 2026-09-12 - its checkpoints stopped before the close, the valid run
+  // ends at its last receipted one, and it did not deliver (stoppedOutcome).
+  let outcome = answer.outcome;
+  if (outcome === null) {
+    if (!stopped) return { ok: false, why: 'that run is still LIVE at its last stored tick, so it came to nothing yet' };
+    // The canonical transcript carries its marks as a count; a built one as a list.
+    const marks = !transcript ? 0 : Number.isInteger(transcript.marks) ? transcript.marks
+      : Array.isArray(transcript.marks) ? transcript.marks.length : 0;
+    outcome = stoppedOutcome({ receiptedMarks: marks, liveAtLast: true, deadlinePassed: true }).outcome;
+  }
   if (!contract || !(contract.simCoreHash instanceof Uint8Array))
     return { ok: false, why: 'that round names no simulation core to have replayed under' };
   if (!entry || !(entry.roundId instanceof Uint8Array) || !(entry.playerPubkey instanceof Uint8Array))
@@ -68,7 +79,7 @@ export function resultFrom({ answer, contract, entry, transcript, entryId, nodeP
   const result = {
     roundId: entry.roundId,
     playerPubkey: entry.playerPubkey,
-    outcome: answer.outcome,
+    outcome,
     score: answer.score,
     // The canonical transcript already carries its own digest; a second
     // encoding here could differ from the one the committee agreed on.

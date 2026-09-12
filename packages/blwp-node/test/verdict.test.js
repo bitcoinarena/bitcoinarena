@@ -254,6 +254,25 @@ test('a run that has not ended is not signed as a failure', async () => {
 });
 
 /**
+ * §15 AT THE CLOSE (ruled 2026-09-12): the close's own call says the round has
+ * closed on the run (`stopped`), and then a run LIVE at its last receipted mark
+ * is FAILED there, with the score the replay reached - not a refund, and not
+ * the silence the test above keeps for every other caller.
+ */
+test('a run the round closed on while LIVE is signed FAILED with its own score', async () => {
+  const s = stored(120);
+  const answer = await replayInWorker(s.transcript, s.entry, { roundRandomness: RANDOMNESS });
+  assert.equal(answer.outcome, null);
+  const built = resultFrom({ answer, contract: s.contract, entry: s.entry,
+    transcript: s.canonical, nodePubkey: COMMITTEE[0], stopped: true });
+  assert.equal(built.ok, true, built.why);
+  assert.equal(built.result.outcome, 'FAILED');
+  assert.equal(built.result.score, answer.score);
+  assert.equal(resultFrom({ answer, contract: s.contract, entry: s.entry, transcript: s.canonical,
+    nodePubkey: COMMITTEE[0] }).ok, false, 'without the close it is still not signed');
+});
+
+/**
  * AND THE THRESHOLD IS STILL NOT A NUMBER IN THIS FILE.
  */
 test('the committee size decides the threshold, and an unknown size is refused', async () => {

@@ -14,13 +14,14 @@
 // nodes are available ... refunded"), and it is not decided here.
 //
 // In time: nothing is decided here; the mark goes on as any mark. No first mark
-// at all: nothing - not ENTRY_VOID and not FORFEIT (§15's walk-away, unbuilt).
+// at the door: nothing yet - not ENTRY_VOID and not FORFEIT. A walk-away is
+// decided at the round's close (`stoppedOutcome`, §15, ruled 2026-09-12).
 //
 // THE LOCK: a FORFEIT stake is claimed in the round's settlement transaction
 // (§23.2) - W4, parked behind the fee-lock ruling. Until then a FORFEIT lock
 // refunds at expiry: the money hole every loser has, listed, not closed.
 import { START_DEADLINE_TICKS } from './constants.js';
-import { FORFEIT } from './payout.js';
+import { FORFEIT, FAILED } from './payout.js';
 
 /** The round's start deadline, in ticks after a player's join tick. */
 export const startDeadlineOf = (contract) =>
@@ -45,7 +46,7 @@ export function firstMarkOutcome({ joinTick, deadlineTicks, firstMark } = {}) {
   const lastTick = joinTick + deadlineTicks;
   if (firstMark == null)
     return { outcome: null, lastTick,
-      why: 'no first mark: nothing is decided - not ENTRY_VOID and not FORFEIT (a walk-away is §15\'s, and unbuilt)' };
+      why: 'no first mark yet: nothing is decided at the door - not ENTRY_VOID and not FORFEIT (a walk-away is §15\'s, decided at the round\'s close)' };
   if (!Number.isInteger(firstMark.tick) || firstMark.tick < joinTick)
     throw new Error(`a first mark is at a tick at or after the join tick ${joinTick}`);
   if (!firstMarkIsChainStart(firstMark.previousHash))
@@ -56,4 +57,33 @@ export function firstMarkOutcome({ joinTick, deadlineTicks, firstMark } = {}) {
   return { outcome: FORFEIT, lastTick,
     why: `the first mark at tick ${firstMark.tick} is after the start deadline (join ${joinTick} + ${deadlineTicks} = ${lastTick}): `
       + 'a late start is the player\'s own act, not a refund' };
+}
+
+/**
+ * §15 AT THE ROUND'S CLOSE: "A TRANSCRIPT THAT STOPS BECOMES A DETERMINISTIC
+ * RESULT" - never a refund (ruled 2026-09-12). Closing the tab is no escape:
+ *   - no receipted first mark once the start deadline has passed (the round's
+ *     close is past it) is FORFEIT: the player never started - the late
+ *     start's family - score 0, over the empty receipted transcript;
+ *   - a run whose checkpoints stopped before the close ends at its last
+ *     receipted checkpoint; one still LIVE there did not deliver: FAILED,
+ *     scored at that checkpoint.
+ * Neither is VOID (§13C: seats that cannot agree through no fault of the
+ * player) or ENTRY_VOID (§16: seats out before the first tick). A run that
+ * ended on its own is its replay's, and nothing is decided here.
+ *
+ *   receiptedMarks  marks the committee carried (the canonical prefix)
+ *   liveAtLast      that prefix replays to a run still LIVE at its last mark
+ *   deadlinePassed  the round's start deadline has passed
+ * @returns {{ outcome: 'FORFEIT' | 'FAILED' | null, why: string }}
+ */
+export function stoppedOutcome({ receiptedMarks, liveAtLast = false, deadlinePassed } = {}) {
+  if (!Number.isInteger(receiptedMarks) || receiptedMarks < 0) throw new Error('receipted marks are a whole count');
+  if (receiptedMarks === 0)
+    return deadlinePassed
+      ? { outcome: FORFEIT, why: 'no receipted first mark by the start deadline: the player never started - FORFEIT, score 0, as a late start is; not a refund' }
+      : { outcome: null, why: 'no first mark yet, and the start deadline has not passed' };
+  if (liveAtLast)
+    return { outcome: FAILED, why: 'the checkpoints stopped before the round closed: the run ends at its last receipted checkpoint, undelivered - FAILED' };
+  return { outcome: null, why: 'the run ended on its own: its replay decides' };
 }

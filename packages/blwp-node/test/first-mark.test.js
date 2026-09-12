@@ -5,7 +5,8 @@
 // FORFEIT, not ENTRY_VOID: a refund the player could choose by starting late is
 // one §13C forbids. The seat refuses the mark and keeps it as evidence. A first
 // mark in time decides nothing, even where one seat has not seen it. No first
-// mark at all is neither ENTRY_VOID nor FORFEIT (§15's walk-away, unbuilt).
+// mark at all is FORFEIT at the round's close (§15's walk-away, ruled
+// 2026-09-12: protocol stoppedOutcome) - never ENTRY_VOID, never a refund.
 //
 // Forwarding: a seat that takes or refuses a first mark hands it - with the
 // batches it commits to - to the round's other seats, so a seat the player
@@ -210,7 +211,9 @@ test('a down seat caught up late with a late first mark does not turn DELIVERED:
   } finally { await w.close(); }
 });
 
-test('no first mark at all is neither ENTRY_VOID nor FORFEIT at either seat (the §15 walk-away stays a hole)', async () => {
+// MEASURED BEFORE the ruling (2026-09-12, no-mark-probe.mjs): no result at either
+// seat, finality null, and the lock back to the player at its expiry.
+test('no first mark at all is FORFEIT at both seats at the close - final 2 of 2, never ENTRY_VOID, the lock not handed back', async () => {
   const w = await seats();
   try {
     const run = await seatAndBuild(w);
@@ -218,7 +221,7 @@ test('no first mark at all is neither ENTRY_VOID nor FORFEIT at either seat (the
     const facts = { a: await outcomeAt(w.a, w, run), b: await outcomeAt(w.b, w, run),
       lockHeld: w.port.locks.has(`${toHex(run.outpoint.txid)}:${run.outpoint.outIdx}`) };
     console.log('  FACTS (no mark):', JSON.stringify(facts));
-    assert.deepEqual(facts, { a: { lateStart: null, results: [], finality: null, forfeit: 409 },
-      b: { lateStart: null, results: [], finality: null, forfeit: 409 }, lockHeld: true });
+    assert.deepEqual(facts, { a: { lateStart: null, results: ['FORFEIT'], finality: 'FINAL', forfeit: 409 },
+      b: { lateStart: null, results: ['FORFEIT'], finality: 'FINAL', forfeit: 409 }, lockHeld: true });
   } finally { await w.close(); }
 });

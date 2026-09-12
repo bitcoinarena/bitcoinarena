@@ -12,6 +12,7 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 
 import { openStore } from '../src/store.js';
 import { serve } from '../src/server.js';
+import { resultFinality } from '../src/finality.js';
 import { feldmanGroup, tweakPoint } from '../src/curve.js';
 import { assumeSeated } from '../test/seating.js';
 import { lockPort } from '../test/lock-fixture.js';
@@ -105,9 +106,17 @@ async function closeAndLook(w, run) {
       return (s && s.replayed || []).map((r) => (r ? { stored: r.stored, outcome: r.outcome, score: r.score, why: r.why ? String(r.why).slice(0, 150) : undefined } : r));
     } catch (e) { return [{ error: e.message }]; }
   }));
-  await wait(2000);
+  // WAIT FOR FINALITY: until the forfeit door stops saying "before the result is final", up to 20 s.
+  const waited = Date.now();
+  for (; Date.now() - waited < 20000; await wait(250)) {
+    if (!run.fields) { if ([w.a, w.b].every((d) => resultFinality(d.round, w.rid, run.eid).state === 'FINAL')) break; continue; }
+    const f = await fetch(`http://127.0.0.1:${w.a.port}/forfeit?round=${toHex(w.rid)}&entry=${toHex(run.eid)}`);
+    if (f.ok || !/before the result is final/.test(await f.text())) break;
+  }
+  await wait(500);
   const seat = (d) => ({
     results: d.round.results(w.rid, run.eid).map((r) => { const p = decodePlayerResult(splitSignedResult(r.bytes).body); return `${p.outcome}/${p.score}`; }),
+    finality: resultFinality(d.round, w.rid, run.eid).state,
     entryVoid: !!d.round.entryVoid(run.eid), startForfeit: !!d.round.startForfeit(run.eid),
     holdsFirstMark: d.round.holdsMark(run.firstId), roundClosed: d.round.get(w.rid).state === 1 });
   let forfeit = 'free round: no lock';

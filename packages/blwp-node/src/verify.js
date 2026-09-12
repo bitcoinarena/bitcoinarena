@@ -13,6 +13,8 @@
 import { ReplayPool } from './pool.js';
 import { SIGNED_RECEIPT_BYTES } from '../../protocol/src/receipt.js';
 import { resultFrom, signResult, verifiedFinal, runId } from './verdict.js';
+import { stoppedOutcome } from '../../protocol/src/first-mark.js';
+import { encodeTranscript, transcriptHash as hashOfTranscript } from '../../protocol/src/transcript.js';
 import {
   encodeTranscriptPosting, transcriptPostingId, joinSignedPosting, splitSignedPosting, decodeTranscriptPosting,
   transcriptBytesHash, relayPath, transcriptIsPublished, SIGNED_POSTING_BYTES,
@@ -188,7 +190,8 @@ export class Verifier {
         entry,
         // The WORLD seed's half of the same published value.
         options: { roundRandomness: beacon.hash },
-      })).then((answer) => this.#keep({ roundIdBytes, entryId, entry, contract, answer }));
+      })).then((answer) => this.#keep({ roundIdBytes, entryId, entry, contract, answer,
+        options: { roundRandomness: beacon.hash } }));
     });
 
     this.done = work;
@@ -244,16 +247,76 @@ export class Verifier {
    * swallowed: a node that signed over the rows it happened to hold would be
    * signing a different object from the one its peers signed.
    */
-  #keep({ roundIdBytes, entryId, entry, contract, answer }) {
-    if (!answer.ok) return { entryId, stored: false, why: answer.why };
-
-    let canonical;
+  //
+  // §15 AT THE CLOSE (ruled 2026-09-12): A TRANSCRIPT THAT STOPS BECOMES A
+  // DETERMINISTIC RESULT, never a refund. This is only ever called on a close,
+  // so a run still LIVE here had its checkpoints stop before the close: it ends
+  // at its last receipted checkpoint, FAILED, scored there. And an entry that
+  // never started - no mark at this seat or any other, no ENTRY_VOID, no late
+  // start already FORFEIT at the door - is FORFEIT, score 0, over the empty
+  // receipted transcript. Measured before: both came to no result at all, and
+  // the stake lock went back to the player at its expiry (no-mark-probe.mjs).
+  async #keep({ roundIdBytes, entryId, entry, contract, answer, options }) {
+    let canonical = null;
+    let noCanonical = null;
     try { canonical = this.round.canonicalTranscript(roundIdBytes, entryId); }
-    catch (err) { return { entryId, stored: false, why: err.message }; }
+    catch (err) { noCanonical = err.message; }
 
+    if (!canonical && this.#neverStarted(roundIdBytes, entryId)) {
+      const ruled = stoppedOutcome({ receiptedMarks: 0, deadlinePassed: true });
+      return this.#sign({ roundIdBytes, entryId, entry, contract,
+        answer: { ok: true, outcome: ruled.outcome, score: 0 }, transcript: this.#unstarted(roundIdBytes, entryId) });
+    }
+    if (!answer.ok) return { entryId, stored: false, why: answer.why };
+    if (!canonical) return { entryId, stored: false, why: noCanonical };
+    const scored = answer.outcome === null
+      ? await this.#atLastMark(roundIdBytes, entryId, entry, answer, canonical, options) : answer;
+    return this.#sign({ roundIdBytes, entryId, entry, contract, answer: scored, transcript: canonical, stopped: true });
+  }
+
+  /**
+   * DID THIS PLAYER NEVER START, as far as the round's seats can say? This seat
+   * holds no mark of the entry, has recorded no ENTRY_VOID (§16, a first mark
+   * some seat held) and no late start (FORFEIT at the door, first-mark.js),
+   * and every other seat answered the close's receipt pull with nothing for it
+   * - a seat that is down may hold the first mark, and a receipt this seat
+   * could not take is a mark it does not hold. Any doubt is no FORFEIT.
+   */
+  /** The empty receipted transcript of an entry that never started: what its FORFEIT is signed over and posted as. */
+  #unstarted(roundIdBytes, entryId) {
+    return { roundId: new Uint8Array(roundIdBytes), entryId: new Uint8Array(entryId), batches: [], marks: [] };
+  }
+
+  #neverStarted(roundIdBytes, entryId) {
+    if (this.round.firstMarkHeld(roundIdBytes, entryId)) return false;
+    if (this.round.entryVoid(entryId)) return false;
+    if (this.round.startForfeit(entryId)) return false;
+    const carried = this.carried.get(`${hex(roundIdBytes)}:${hex(entryId)}`);
+    return !!carried && carried.down.length === 0 && carried.refused.length === 0 && carried.taken === 0;
+  }
+
+  /**
+   * THE REPLAY AT THE LAST RECEIPTED CHECKPOINT of a run the close found LIVE:
+   * where §15 says the valid run ends. Ticks this seat stored past that mark
+   * were never carried, so they are replayed away - the prefix alone is
+   * submitted to the same pool - and when there are none the answer stands.
+   */
+  async #atLastMark(roundIdBytes, entryId, entry, answer, canonical, options) {
+    const last = canonical.throughTick;
+    if (!Number.isInteger(last)) return answer;
+    const full = this.round.transcript(roundIdBytes, entryId);
+    const reach = full.ticks.length ? full.ticks[full.ticks.length - 1].tick + 1 : entry.joinTick;
+    if (reach <= last) return answer;
+    const prefix = { ticks: full.ticks.filter((t) => t.tick < last),
+      liquidations: full.liquidations.filter((l) => l[0] < last), loads: full.loads.filter((l) => l[0] < last) };
+    return this.pool.submit({ key: `${hex(roundIdBytes)}:${hex(entryId)}:stopped`, objected: false,
+      transcript: prefix, entry, options });
+  }
+
+  #sign({ roundIdBytes, entryId, entry, contract, answer, transcript, stopped = false }) {
     const built = resultFrom({
-      answer, contract, entry, transcript: canonical, entryId,
-      nodePubkey: this.round.pubkey,
+      answer, contract, entry, transcript, entryId,
+      nodePubkey: this.round.pubkey, stopped,
     });
     if (!built.ok) return { entryId, stored: false, why: built.why };
 
@@ -475,9 +538,14 @@ export class Verifier {
           try { canonical = this.round.canonicalTranscript(roundIdBytes, entryIdBytes); }
           catch (e) { report.refused.push(e.message); }
         }
+        // A RE-RUN IS AFTER THE CLOSE TOO: a run LIVE at its last receipted
+        // mark is the same FAILED the close signed (§15, ruled 2026-09-12).
+        const scored = canonical && answer.outcome === null
+          ? await this.#atLastMark(roundIdBytes, entryIdBytes, found.entry, answer, canonical, { roundRandomness: beacon.hash })
+          : answer;
         const built = canonical && resultFrom({
-          answer, contract, entry: found.entry, transcript: canonical, entryId: entryIdBytes,
-          nodePubkey: this.round.pubkey,
+          answer: scored, contract, entry: found.entry, transcript: canonical, entryId: entryIdBytes,
+          nodePubkey: this.round.pubkey, stopped: true,
         });
         if (built && !built.ok) report.refused.push(built.why);
         if (built && built.ok) {
@@ -594,6 +662,10 @@ export class Verifier {
       const own = this.round.canonicalTranscript(roundIdBytes, entryIdBytes);
       if (hex(own.hash) === hex(transcriptHash)) return own.bytes;
     } catch { /* not held here; a peer may */ }
+    // AN ENTRY THAT NEVER STARTED (§15 at the close): its FORFEIT names the empty
+    // receipted transcript, which every seat builds alike and none holds as marks.
+    const empty = this.#unstarted(roundIdBytes, entryIdBytes);
+    if (hex(hashOfTranscript(empty)) === hex(transcriptHash)) return encodeTranscript(empty);
     for (const peer of this.peersOf(roundIdBytes)) {
       try {
         const answer = await fetch(`${peer}/canonical?round=${hex(roundIdBytes)}&entry=${hex(entryIdBytes)}`);
