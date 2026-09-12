@@ -77,8 +77,9 @@ const STATE = `JSON.stringify({ lobby: window.BLWP_LOBBY || null, from: window.B
   error: (document.getElementById('err') || {}).textContent || null })`;
 const stateOf = async (b) => { const v = await b.evaluate(STATE); try { return JSON.parse(v); } catch { return {}; } };
 const until = async (b, ms, done) => { let s = {}; for (let t = Date.now(); Date.now() - t < ms; await wait(1000)) { s = await stateOf(b); if (done(s)) break; } return s; };
-const pressJoin = (b, id) => b.evaluate(`(() => { for (const row of document.querySelectorAll('#blwp-lobby .row')) {
-  if (row.textContent.includes(${JSON.stringify(id)})) { const a = row.querySelector('a.join'); if (a) { a.click(); return true; } } } return false; })()`);
+// THE LOBBY IS UNITY'S TITLE SCREEN (M3.3-34): its PLAY calls the page's
+// BLWP_LOBBY_ACT.join - the round's own link with play=1 - and so does this.
+const pressJoin = (b, id) => b.evaluate(`!!(window.BLWP_LOBBY_ACT && window.BLWP_LOBBY_ACT.join(${JSON.stringify(id)}))`);
 const leftOf = (line) => { const m = String(line).match(/closes in (\d+):(\d\d)/); return m ? Number(m[1]) * 60 + Number(m[2]) : -1; };
 
 // THE SEATS' OWN STORES, READ-ONLY: what each seat signed and how final it is.
@@ -130,7 +131,13 @@ try {
     w: { player: w.player && w.player.slice(0, 16), seatedAtAB: wSeatedAt, tabClosedBeforeAnyMark: true } });
 
   // P PLAYS: PLAY, AUTO, depart, throttle held for about a run.
-  await P.click(486, 554); await wait(3000);
+  // PLAY IN THE LOBBY ALREADY STARTED THE ROUND (play=1): wait for Unity to say
+  // its title screen is gone, instead of pressing PLAY a second time.
+  for (let t = Date.now(); Date.now() - t < 30000; await wait(500)) {
+    const shown = await P.evaluate('window.BLWP_UNITY_LOBBY ? JSON.stringify(window.BLWP_UNITY_LOBBY) : null');
+    try { if (shown && JSON.parse(shown).showing === false) break; } catch { /* not yet */ }
+  }
+  await wait(3000);
   await P.click(303, 617); await wait(1200); await P.click(660, 617); await wait(1500);
   await P.key('keyDown');
   for (let t = Date.now(); Date.now() - t < 160000; await wait(10000)) {

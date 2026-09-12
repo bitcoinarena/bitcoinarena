@@ -656,6 +656,49 @@ mergeInto(LibraryManager.library, {
     return (n && n.client) ? (n.client.marksSent | 0) : 0;
   },
 
+  // THE DAILY'S LOBBY, DRAWN BY UNITY (M3.3-34, the owner 2026-09-12). The page
+  // decides it - the seats' signed listings, the 2-of-2 Join, the tab's key and
+  // name (index.html, BLWP_LOBBY_VIEW / BLWP_LOBBY_ACT) - and these only carry
+  // it across: the lobby as JSON, and the player's presses back.
+  // THE CANVAS'S PIXELS PER CSS PIXEL: a phone draws at 2-3x, and a title
+  // screen laid out in device pixels is a quarter of the size a player reads
+  // (measured on an iPhone at 3x). Unity scales its title screen by this.
+  BlwpUiScale: function () {
+    var c = Module.canvas;
+    return (c && c.clientWidth > 0) ? c.width / c.clientWidth : 1;
+  },
+
+  BlwpLobbyState: function () {
+    var s = '';
+    try { if (typeof window.BLWP_LOBBY_VIEW === 'function') s = JSON.stringify(window.BLWP_LOBBY_VIEW()); } catch (e) { s = ''; }
+    var n = lengthBytesUTF8(s) + 1;
+    var p = _malloc(n);
+    stringToUTF8(s, p, n);
+    return p;
+  },
+
+  BlwpLobbyJoin: function (idPtr) {
+    try { return (window.BLWP_LOBBY_ACT && window.BLWP_LOBBY_ACT.join(UTF8ToString(idPtr))) ? 1 : 0; } catch (e) { return 0; }
+  },
+
+  BlwpLobbyEditName: function () {
+    var s = '';
+    try { s = window.BLWP_LOBBY_ACT ? String(window.BLWP_LOBBY_ACT.editName() || '') : ''; } catch (e) { s = String((e && e.message) || e); }
+    var n = lengthBytesUTF8(s) + 1;
+    var p = _malloc(n);
+    stringToUTF8(s, p, n);
+    return p;
+  },
+
+  BlwpLobbyKeyBackup: function () {
+    try { if (window.BLWP_LOBBY_ACT) window.BLWP_LOBBY_ACT.keyBackup(); } catch (e) { /* the prompt was refused */ }
+  },
+
+  // WHAT UNITY DREW, for whoever measures the page: rows, buttons, where.
+  BlwpLobbyShown: function (jsonPtr) {
+    try { window.BLWP_UNITY_LOBBY = JSON.parse(UTF8ToString(jsonPtr)); } catch (e) { /* not JSON: nothing to keep */ }
+  },
+
   BlwpQueryParam: function (namePtr, outPtr, cap) {
     var name = UTF8ToString(namePtr);
     var v = null;

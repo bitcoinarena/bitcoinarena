@@ -28,6 +28,18 @@ public class SplashScreen : MonoBehaviour
     Texture2D _flat;
     GUIStyle _title, _sub, _body, _btn;
 
+    // THE DAILY'S LOBBY (M3.3-34, the owner 2026-09-12 22:11-22:16): this screen is
+    // the lobby when the page is one - the rounds, who you are, PLAY and
+    // SPECTATE. Null when the page is not a lobby (offline, or a round).
+    Blwp.LobbyState _lobby;
+    float _polledAt = -10f, _shownAt = -10f;
+    string _pickId = "", _nameWhy = "";
+    int _offset;
+    bool _joining, _autoPlay, _hiddenTold;
+    Rect _lastName, _lastKey, _lastMore;
+    readonly System.Collections.Generic.List<(Blwp.LobbyRow row, Rect rect)> _drawnRows =
+        new System.Collections.Generic.List<(Blwp.LobbyRow row, Rect rect)>();
+
     void Awake()
     {
         _flat = new Texture2D(1, 1);
@@ -49,13 +61,33 @@ public class SplashScreen : MonoBehaviour
 
         // the whole field, from above, while the rules are being read
         if (chase != null && chase.View != ChaseCamera.Mode.God) chase.Toggle();
+
+        // SENT HERE BY PLAY IN THE LOBBY: the round starts, with no second PLAY.
+        _autoPlay = Blwp.DailyLobby.AutoPlay();
     }
 
     void Update()
     {
-        if (!Showing) return;
+        if (!Showing)
+        {
+            if (!_hiddenTold && Blwp.DailyLobby.Compiled) { _hiddenTold = true; Blwp.DailyLobby.Shown("{\"showing\":false}"); }
+            return;
+        }
         // held here, whatever else thinks it should be driveable
         if (truck != null) truck.controlsLocked = true;
+        if (_autoPlay && Time.frameCount > 3) { _autoPlay = false; Play(); return; }
+
+        // The page's lobby, asked again every 0.75 s (it asks the seats every 5 s).
+        if (Time.unscaledTime - _polledAt > 0.75f)
+        {
+            _polledAt = Time.unscaledTime;
+            _lobby = Blwp.DailyLobby.Poll();
+            if (_lobby != null)
+            {
+                int k = Blwp.DailyLobby.Keep(_lobby.rows, _pickId);
+                _pickId = k >= 0 ? _lobby.rows[k].id : "";
+            }
+        }
     }
 
     /// <summary>Free camera, without starting the round.</summary>
@@ -110,9 +142,9 @@ public class SplashScreen : MonoBehaviour
         if (loadout != null) loadout.Open();      // straight to the ramp
     }
 
-    void Styles()
+    void Styles(int sw, int sh)
     {
-        int min = Mathf.Min(Screen.width, Screen.height);
+        int min = Mathf.Min(sw, sh);
         if (_title == null)
         {
             _title = new GUIStyle(GUI.skin.label) { alignment = TextAnchor.MiddleCenter, fontStyle = FontStyle.Bold };
@@ -161,13 +193,18 @@ public class SplashScreen : MonoBehaviour
         var head = new Rect(panel.x, panel.y, panel.width, Mathf.Clamp(ph * 0.13f, 44f, 96f));
 
         float pad = pw * 0.07f;
+        // AND NO MORE THAN 7% OF THE HEIGHT, up and down. The pad is the width's,
+        // and on a phone held sideways that is a wide margin on a short screen:
+        // measured, at 800x360 the lobby had 55 px for its rounds - one row
+        // (LobbyScreenTests). Across, the pad stays the width's.
+        float padV = Mathf.Min(pad, ph * 0.07f);
         float inner = panel.width - pad * 2f;
         float bh = Mathf.Max(30f, btnFont * 2.0f);
-        float gap = Mathf.Max(8f, pad * 0.35f);
+        float gap = Mathf.Max(8f, padV * 0.35f);
 
         // one row, one baseline, one height - the primary takes two thirds
         // because it is the one to press
-        float row = panel.yMax - pad * 0.6f - bh;
+        float row = panel.yMax - padV * 0.6f - bh;
         float wide = (inner - gap) * 0.62f;
         var play = new Rect(panel.x + pad, row, wide, bh);
         var spectate = new Rect(play.xMax + gap, row, inner - wide - gap, bh);
@@ -186,7 +223,7 @@ public class SplashScreen : MonoBehaviour
 
         float top = build.yMax + ph * 0.02f;
         var copy = new Rect(panel.x + pad, top, inner,
-                            Mathf.Max(0f, hint.y - pad * 0.25f - top));
+                            Mathf.Max(0f, hint.y - padV * 0.25f - top));
 
         return new Frame { panel = panel, head = head, copy = copy, hint = hint,
                            play = play, spectate = spectate, pad = pad, build = build };
@@ -195,10 +232,17 @@ public class SplashScreen : MonoBehaviour
     void OnGUI()
     {
         if (!Showing) return;
-        Styles();
+        // LAID OUT IN CSS PIXELS, DRAWN AT THE SCREEN'S SCALE. A phone's canvas is
+        // 2-3x its CSS size, and a title screen laid out in device pixels showed an
+        // iPhone text about 8 points high (measured, M3.3-34). IMGUI's matrix
+        // scales the drawing and the touches alike.
+        float scale = Blwp.DailyLobby.UiScale();
+        var screenMatrix = GUI.matrix;
+        GUI.matrix = Matrix4x4.Scale(new Vector3(scale, scale, 1f));
+        int w = Mathf.RoundToInt(Screen.width / scale), h = Mathf.RoundToInt(Screen.height / scale);
+        Styles(w, h);
         GUI.depth = -200;                          // in front of everything
 
-        int w = Screen.width, h = Screen.height;
 
         // A wash rather than a curtain: the battle behind this is the best
         // argument the game has, and it is running whether anyone watches or
@@ -213,7 +257,8 @@ public class SplashScreen : MonoBehaviour
         // phone in landscape has about a third of the height this was drawn
         // for.
         var f = Measure(w, h, _sub.fontSize, _btn.fontSize);
-        for (int guard = 0; guard < 8 && _body.fontSize > 10; guard++)
+        bool lobby = _lobby != null;
+        for (int guard = 0; !lobby && guard < 8 && _body.fontSize > 10; guard++)
         {
             if (Copy(f.copy.width, false, 0f, 0f) <= f.copy.height) break;
             Shrink(0.92f);
@@ -253,10 +298,175 @@ public class SplashScreen : MonoBehaviour
         stamp.normal.textColor = new Color(1f, 1f, 1f, 0.5f);
         GUI.Label(f.build, $"build {BuildStamp.Current}", stamp);
 
-        Copy(f.copy.width, true, f.copy.x, f.copy.y);
+        if (lobby) Lobby(f.copy); else Copy(f.copy.width, true, f.copy.x, f.copy.y);
         Buttons(f);
 
         PanelSkin.Corners(panel, PanelSkin.Gold, 4f);
+        Report(w, h, f);
+        GUI.matrix = screenMatrix;
+    }
+
+    // ------------------------------------------------------------ the lobby
+
+    /// <summary>
+    /// The lobby in the copy area: who you are with NAME and KEY, then the
+    /// rounds - each with its seats' word - and the one PLAY will join picked
+    /// out. Laid out by `DailyLobby.MeasureLobby`, which is measured on every
+    /// phone shape (LobbyScreenTests). Every word comes from the page.
+    /// </summary>
+    void Lobby(Rect copy)
+    {
+        float font = _sub.fontSize;
+        var l = Blwp.DailyLobby.MeasureLobby(copy, font);
+        _lastName = l.name; _lastKey = l.key; _lastMore = l.more;
+        var you = _lobby.you;
+
+        var youStyle = new GUIStyle(_body)
+            { fontSize = Mathf.RoundToInt(font), wordWrap = true, richText = true, alignment = TextAnchor.MiddleLeft };
+        youStyle.normal.textColor = Color.white;
+        string second = string.IsNullOrEmpty(_nameWhy)
+            ? $"<color=#9fb3c8>key {Escape(you.fingerprint)}</color>"
+            : $"<color=#ff7b72>{Escape(_nameWhy)}</color>";
+        // SET SMALLER UNTIL IT FITS ITS BOX. Measured on an iPhone (390x844 at 3x):
+        // the name wrapped to a third line in a two-line box, and the box clipped
+        // "You are" at the top and the key at the bottom (the owner 22:16: every
+        // element fully visible).
+        var youText = new GUIContent($"You are <b>{Escape(you.name)}</b> · {(you.custom ? "your name" : "made from your key")}\n{second}");
+        while (youStyle.fontSize > 10 && youStyle.CalcHeight(youText, l.you.width) > l.you.height) youStyle.fontSize--;
+        GUI.Label(l.you, youText, youStyle);
+        if (SmallButton(l.name, "NAME")) { WakeAudio(); _nameWhy = Blwp.DailyLobby.EditName(); _polledAt = -10f; }
+        if (SmallButton(l.key, "KEY")) Blwp.DailyLobby.KeyBackup();
+
+        var rows = _lobby.rows;
+        int needed = 2;
+        foreach (var r in rows) if (r.needed > 0) { needed = r.needed; break; }
+        var head = new GUIStyle(_body)
+            { fontSize = Mathf.RoundToInt(font), fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleLeft, wordWrap = false };
+        head.normal.textColor = PanelSkin.Gold;
+        GUI.Label(l.head, Fit(head, $"ROUNDS · JOIN NEEDS {needed} OF {needed} SEATS", l.head.width), head);
+        if (_offset >= rows.Length) _offset = 0;
+        if (l.rows > 0 && rows.Length > l.rows)
+        {
+            int pages = (rows.Length + l.rows - 1) / l.rows;
+            if (SmallButton(l.more, $"{_offset / l.rows + 1}/{pages} >")) _offset = (_offset + l.rows) % rows.Length;
+        }
+        else _offset = 0;
+
+        _drawnRows.Clear();
+        var rowStyle = new GUIStyle(_body)
+            { fontSize = Mathf.RoundToInt(font), alignment = TextAnchor.MiddleLeft, wordWrap = false, clipping = TextClipping.Clip };
+        for (int i = 0; i < l.rows && _offset + i < rows.Length; i++)
+        {
+            var r = rows[_offset + i];
+            var rect = new Rect(l.list.x, l.list.y + i * l.rowH, l.list.width, l.rowH - 4f);
+            bool picked = r.joinable && r.id == _pickId;
+            PanelSkin.Gradient(rect,
+                r.joinable ? new Color(0.13f, 0.12f, 0.07f, 0.95f) : new Color(0.08f, 0.09f, 0.10f, 0.90f),
+                r.joinable ? new Color(0.08f, 0.075f, 0.05f, 0.95f) : new Color(0.06f, 0.065f, 0.075f, 0.90f));
+            PanelSkin.Border(rect, picked ? PanelSkin.Gold : new Color(1f, 1f, 1f, r.joinable ? 0.35f : 0.15f));
+            rowStyle.fontSize = Mathf.RoundToInt(font);
+            rowStyle.normal.textColor = r.joinable ? (picked ? PanelSkin.Gold : Color.white) : new Color(1f, 1f, 1f, 0.5f);
+            var inner = new Rect(rect.x + 8f, rect.y, rect.width - 16f, rect.height);
+            GUI.Label(inner, FitWords(rowStyle, Blwp.DailyLobby.RowWords(r), inner.width), rowStyle);
+            if (r.joinable && GUI.Button(rect, GUIContent.none, GUIStyle.none)) _pickId = r.id;
+            _drawnRows.Add((r, rect));
+        }
+        if (rows.Length == 0 && l.list.height > 0)
+        {
+            var none = new GUIStyle(_body) { fontSize = Mathf.RoundToInt(font), wordWrap = true };
+            none.normal.textColor = new Color(1f, 1f, 1f, 0.7f);
+            GUI.Label(l.list, "No round is open for entry right now. The seats are asked again every 5 seconds."
+                + (_lobby.refused.Length > 0 ? $"\nNot listed: {_lobby.refused.Length}" : ""), none);
+        }
+    }
+
+    /// <summary>What PLAY will do, on the hint line - short enough for a phone.</summary>
+    string LobbyHint()
+    {
+        if (_joining) return "joining the round …";
+        int k = Blwp.DailyLobby.Keep(_lobby.rows, _pickId);
+        if (k >= 0)
+        {
+            var r = _lobby.rows[k];
+            return $"PLAY joins round {Short(r.id)} - {r.agree} of {r.needed} seats agree";
+        }
+        return _lobby.rows.Length > 0 ? "PLAY waits for a round both seats agree on" : "PLAY waits for an open round";
+    }
+
+    void JoinPicked()
+    {
+        WakeAudio();
+        _joining = Blwp.DailyLobby.Join(_pickId);
+        if (!_joining) _polledAt = -10f;
+    }
+
+    bool SmallButton(Rect r, string label)
+    {
+        PanelSkin.Gradient(r, new Color(0.10f, 0.14f, 0.20f, 0.95f), new Color(0.06f, 0.09f, 0.13f, 0.95f));
+        PanelSkin.Border(r, new Color(0.55f, 0.75f, 1f, 0.75f));
+        var s = new GUIStyle(_btn) { fontSize = Mathf.RoundToInt(Mathf.Min(_btn.fontSize, _sub.fontSize * 1.1f)) };
+        s.normal.textColor = new Color(0.70f, 0.85f, 1f);
+        Shrink(s, label, r);
+        return GUI.Button(r, label, s);
+    }
+
+    static string Fit(GUIStyle style, string text, float width)
+    {
+        var c = new GUIContent(text);
+        while (style.fontSize > 10 && style.CalcSize(c).x > width) style.fontSize--;
+        return text;
+    }
+
+    /// <summary>The longest of the wordings that fits; the shortest, smaller, when none does.</summary>
+    static string FitWords(GUIStyle style, string[] words, float width)
+    {
+        foreach (var w in words)
+            if (style.CalcSize(new GUIContent(w)).x <= width) return w;
+        return Fit(style, words[words.Length - 1], width);
+    }
+
+    static string Escape(string s) => (s ?? "").Replace("<", "‹").Replace(">", "›");
+    static string Short(string id) => string.IsNullOrEmpty(id) ? "" : (id.Length > 8 ? id.Substring(0, 8) : id);
+
+    static string R(Rect r) => string.Format(System.Globalization.CultureInfo.InvariantCulture,
+        "[{0:0},{1:0},{2:0},{3:0}]", r.x, r.y, r.width, r.height);
+    static string J(string s) => "\"" + (s ?? "").Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"";
+
+    /// <summary>
+    /// WHAT WAS DRAWN, told to the page twice a second: the rows as shown, the
+    /// buttons and where they are, and whether PLAY can be pressed. OnGUI
+    /// cannot be read from outside, so without this "the lobby is visible" is
+    /// an assumption; with it a probe measures it and presses the real buttons.
+    /// </summary>
+    void Report(int w, int h, Frame f)
+    {
+        if (!Blwp.DailyLobby.Compiled || Event.current.type != EventType.Repaint) return;
+        if (Time.unscaledTime - _shownAt < 0.5f) return;
+        _shownAt = Time.unscaledTime;
+        var sb = new System.Text.StringBuilder();
+        sb.Append("{\"showing\":true,\"lobby\":").Append(_lobby != null ? "true" : "false");
+        sb.Append(",\"screen\":[").Append(w).Append(',').Append(h).Append(']');
+        sb.Append(",\"panel\":").Append(R(f.panel));
+        sb.Append(",\"play\":").Append(R(f.play)).Append(",\"playEnabled\":")
+          .Append(_lobby == null || (!_joining && !string.IsNullOrEmpty(_pickId)) ? "true" : "false");
+        sb.Append(",\"spectate\":").Append(R(f.spectate)).Append(",\"hint\":").Append(R(f.hint));
+        if (_lobby != null)
+        {
+            sb.Append(",\"you\":").Append(J(_lobby.you.name)).Append(",\"name\":").Append(R(_lastName))
+              .Append(",\"key\":").Append(R(_lastKey)).Append(",\"picked\":").Append(J(_pickId))
+              .Append(",\"listed\":").Append(_lobby.rows.Length).Append(",\"rows\":[");
+            for (int i = 0; i < _drawnRows.Count; i++)
+            {
+                var (row, rect) = _drawnRows[i];
+                if (i > 0) sb.Append(',');
+                sb.Append("{\"id\":").Append(J(row.id)).Append(",\"joinable\":").Append(row.joinable ? "true" : "false")
+                  .Append(",\"agree\":").Append(row.agree).Append(",\"needed\":").Append(row.needed)
+                  .Append(",\"rect\":").Append(R(rect)).Append('}');
+            }
+            sb.Append(']');
+        }
+        sb.Append('}');
+        Blwp.DailyLobby.Shown(sb.ToString());
     }
 
     public const string Title = "BTC LOGISTICS WAR";
@@ -336,18 +546,30 @@ public class SplashScreen : MonoBehaviour
     void Buttons(Frame f)
     {
         _sub.normal.textColor = new Color(1f, 1f, 1f, 0.42f);
-        GUI.Label(f.hint, Hint, _sub);
+        if (_lobby != null)
+        {
+            var hint = new GUIStyle(_sub) { wordWrap = false };
+            hint.normal.textColor = new Color(1f, 1f, 1f, 0.6f);
+            GUI.Label(f.hint, Fit(hint, LobbyHint(), f.hint.width), hint);
+        }
+        else GUI.Label(f.hint, Hint, _sub);
 
+        // IN THE LOBBY, PLAY JOINS THE PICKED ROUND - and there is nothing to
+        // press until a round has both of its seats' word (M3.3-34).
+        bool canPlay = _lobby == null || (!_joining && !string.IsNullOrEmpty(_pickId));
         // the button breathes, so the eye finds it
         float pulse = 0.5f + 0.5f * Mathf.Sin(Time.unscaledTime * 2.4f);
-        PanelSkin.Glow(f.play, PanelSkin.Gold, 4, 0.18f + 0.22f * pulse);
-        PanelSkin.Gradient(f.play, new Color(0.30f, 0.24f, 0.06f, 0.95f),
-                                   new Color(0.16f, 0.13f, 0.04f, 0.95f));
-        PanelSkin.Border(f.play, PanelSkin.Gold);
+        if (canPlay) PanelSkin.Glow(f.play, PanelSkin.Gold, 4, 0.18f + 0.22f * pulse);
+        PanelSkin.Gradient(f.play, canPlay ? new Color(0.30f, 0.24f, 0.06f, 0.95f) : new Color(0.14f, 0.14f, 0.14f, 0.9f),
+                                   canPlay ? new Color(0.16f, 0.13f, 0.04f, 0.95f) : new Color(0.09f, 0.09f, 0.09f, 0.9f));
+        PanelSkin.Border(f.play, canPlay ? PanelSkin.Gold : new Color(1f, 1f, 1f, 0.25f));
         var gold = new GUIStyle(_btn);
-        gold.normal.textColor = PanelSkin.Gold;
+        gold.normal.textColor = canPlay ? PanelSkin.Gold : new Color(1f, 1f, 1f, 0.35f);
         Shrink(gold, PlayLabel, f.play);
-        if (GUI.Button(f.play, PlayLabel, gold)) Play();
+        if (GUI.Button(f.play, PlayLabel, gold) && canPlay)
+        {
+            if (_lobby != null) JoinPicked(); else Play();
+        }
 
         // A free camera, offered before the run rather than hidden behind a
         // key. The two buildings are the most expensive things in the project
