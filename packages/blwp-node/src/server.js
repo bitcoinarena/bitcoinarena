@@ -19,6 +19,7 @@ import { randomBytes } from 'node:crypto';
 import { WebSocketServer } from 'ws';
 import { decodeRoundContract, decodeEntryContract, publicationRelaysAreValid } from '../../protocol/src/contracts.js';
 import { toHex } from '../../protocol/src/hash.js';
+import { lobbyListingId } from '../../protocol/src/lobby-listing.js';
 import { entryFeeMsat } from '../../protocol/src/fee.js';
 import { TYPE_CHECKPOINT, TYPE_INPUT_BATCH, STAKE_NOT_SEEN } from '../../protocol/src/constants.js';
 import { splitSigned, decodeCheckpoint } from '../../protocol/src/checkpoint.js';
@@ -1053,25 +1054,36 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           const locks = c.custody === 'FEDERATION' && !c.federationId.every((x) => x === 0);
           let watchers = 0;
           for (const w of watching.values()) if (toHex(w.roundId) === id) watchers++;
+          // §5A.5: before committee_time the lobby shows "committee: pending"
+          // and offers no entry; the entry door refuses by the same rule.
+          const phase = nowMs < c.committeeTimeMs ? 'pending' : 'open';
+          const seatedHere = round.seats(held.roundId).length > 0;
+          // THE ROUND'S THRESHOLD, from its contract: 2 of 2 here, 5 of 7 on
+          // mainnet. A round is playable only when that many of its seats hold
+          // it, so the page counts seats, and this one signs what it says.
+          let needed = null;
+          try { needed = roundThreshold(c.gameVerifySlots); } catch { needed = null; }
+          const sig = schnorr.sign(lobbyListingId({ roundId: held.roundId, nodePubkey: round.pubkey, nowMs, phase,
+            seatedHere, seated: players.seated, playing: players.playing }), round.identity.secret);
           listed.push({
-            id,
-            // §5A.5: before committee_time the lobby shows "committee: pending"
-            // and offers no entry; the entry door refuses by the same rule.
-            phase: nowMs < c.committeeTimeMs ? 'pending' : 'open',
+            id, phase,
             committeeTimeMs: String(c.committeeTimeMs), startTimeMs: String(c.startTimeMs),
             entryCloseMs: String(c.entryCloseMs), stakeMsat: String(c.stakeMsat),
             // WHAT JOINING ASKS OF THE PLAYER: nothing, a Lightning payment, or a
             // federation stake lock. A free round needs no wallet and no Lightning.
             free, wallet: free ? 'none' : (locks ? 'federation-lock' : 'lightning'),
-            seatedHere: round.seats(held.roundId).length > 0,
-            seated: players.seated, playing: players.playing, watching: watchers,
+            seatedHere, seated: players.seated, playing: players.playing, watching: watchers,
+            needed, seats: c.nodes.length,
+            // THIS SEAT'S SIGNED WORD (lobby-listing.js): round, node, time, phase,
+            // seated here, and the two counts. `watching` is not signed.
+            sig: toHex(sig),
           });
         }
         listed.sort((x, y) => (x.phase === y.phase
           ? (BigInt(x.entryCloseMs) < BigInt(y.entryCloseMs) ? -1 : 1)
           : (x.phase === 'open' ? -1 : 1)));
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
-        return res.end(JSON.stringify({ nowMs: String(nowMs), rounds: listed }));
+        return res.end(JSON.stringify({ node: toHex(round.pubkey), nowMs: String(nowMs), rounds: listed }));
       }
 
       if (req.method === 'GET' && url.pathname === '/round') {

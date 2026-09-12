@@ -24,7 +24,8 @@ import { b32, rand, STAKE, contractFor, say } from './window-fixture.js';
 import { encodeRoundContract, roundId, encodeEntryContract, entryId } from '../../protocol/src/contracts.js';
 import { encodeInputBatch } from '../../protocol/src/batch.js';
 import { GENESIS } from '../../protocol/src/transcript.js';
-import { toHex } from '../../protocol/src/hash.js';
+import { toHex, fromHex } from '../../protocol/src/hash.js';
+import { lobbyListingId } from '../../protocol/src/lobby-listing.js';
 
 const WINDOW = 60000n;          // MIN_ENTRY_WINDOW_MS: committee -> start
 const ENTRY = 120000n;          // start -> entry close, as round-2of2 opens them
@@ -93,5 +94,22 @@ test('the node lists the rounds a player can still join - free or paying, open o
     });
     // The times the page needs to say "entry closes in 1:42", as the contract has them.
     assert.equal(byId[ids.freeOpen].entryCloseMs, String(rounds.freeOpen.entryCloseMs));
+
+    // 2-OF-2: EACH ROW IS THIS SEAT'S SIGNED WORD, and says the round's threshold.
+    // The page counts distinct seats of the round that signed "open, seated";
+    // what one seat signed cannot be read as another's, or changed after.
+    assert.equal(body.node, toHex(d.round.pubkey));
+    const signedAs = (x, change = {}) => lobbyListingId({ roundId: fromHex(x.id), nodePubkey: d.round.pubkey,
+      nowMs: BigInt(body.nowMs), phase: x.phase, seatedHere: x.seatedHere, seated: x.seated, playing: x.playing, ...change });
+    const verified = listed.map((x) => schnorr.verify(fromHex(x.sig), signedAs(x), d.round.pubkey));
+    const open = byId[ids.freeOpen];
+    const tampered = {
+      seated: schnorr.verify(fromHex(open.sig), signedAs(open, { seated: open.seated + 1 }), d.round.pubkey),
+      seatedHere: schnorr.verify(fromHex(open.sig), signedAs(open, { seatedHere: false }), d.round.pubkey),
+      anotherKey: schnorr.verify(fromHex(open.sig), signedAs(open, { nodePubkey: b32(0x33) }), b32(0x33)),
+    };
+    console.log('  signed (2-of-2):', JSON.stringify({ verified, needed: open.needed, seats: open.seats, tampered }));
+    assert.deepEqual({ verified, needed: open.needed, seats: open.seats, tampered },
+      { verified: [true, true, true], needed: 2, seats: 2, tampered: { seated: false, seatedHere: false, anotherKey: false } });
   } finally { await d.close(); }
 });

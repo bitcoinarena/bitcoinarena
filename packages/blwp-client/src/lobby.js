@@ -9,12 +9,25 @@
 //
 // WHAT A ROW SAYS COMES FROM THE CONTRACT, NOT FROM THE LISTING. Whether a round
 // is free (no stake, no wallet, no Lightning) and whether its entry is open are
-// read off the verified contract and this page's clock. The seat counts are the
-// only thing taken from a node, and they are shown as what that node says.
+// read off the verified contract and this page's clock. The seat counts are
+// shown as what each node says.
+//
+// AND JOIN IS OFFERED AT THE ROUND'S THRESHOLD OF ITS OWN SEATS (2 of 2 here,
+// 5 of 7 on mainnet). Every mark needs that many receipts, so a round only one
+// seat of a 2-of-2 holds is a round nobody can play. Each seat signs its
+// listing under its node key (lobby-listing.js); a row is joinable only when
+// that many DISTINCT keys the verified contract names have signed "open,
+// seated here", recently. One server cannot sign for two seats.
 //
 // Joining is the join link: the same query with `round=` added. Nothing here
 // seats anybody, and nothing here mints a round.
 import { joinQuery, fetchRound, roundPays, roundLocks } from './join.js';
+import { lobbyListingId } from '../../protocol/src/lobby-listing.js';
+import { receiptsNeeded } from '../../protocol/src/threshold.js';
+import { toHex, fromHex } from '../../protocol/src/hash.js';
+
+/** How far a seat's signed time may be from this page's clock and still count. */
+export const LOBBY_SKEW_MS = 60000;
 
 /**
  * WHAT A LOBBY LINK NAMES, or null when this is not one: a link that names a
@@ -41,27 +54,41 @@ export function lobbyJoinSearch(search, id) {
   return '?' + q.toString();
 }
 
+/** Is this node's listing of this round its seat's own signed word? */
+function lobbySigned(verify, { id, nodeKey, nowMs, x }) {
+  try {
+    return !!verify(fromHex(String(x.sig)), lobbyListingId({ roundId: fromHex(id), nodePubkey: fromHex(nodeKey), nowMs: BigInt(nowMs),
+      phase: x.phase, seatedHere: !!x.seatedHere, seated: Number(x.seated), playing: Number(x.playing) }), fromHex(nodeKey));
+  } catch { return false; }
+}
+
 /**
- * EVERY JOINABLE ROUND THE NAMED NODES HOLD, CHECKED.
+ * EVERY ROUND THE NAMED NODES HOLD, CHECKED, AND WHICH OF THEM ITS SEATS AGREE ON.
  *
+ * `verify(sig, msg, key)` is BIP-340, injected like every curve in this bundle.
  * @returns {{ rows: object[], refused: string[] }} rows open before pending,
  *   soonest entry close first; a round past its entry close is not a row.
  */
-export async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now() } = {}) {
+export async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), verify, skewMs = LOBBY_SKEW_MS } = {}) {
   if (!Array.isArray(nodes) || !nodes.length) throw new Error('a lobby asks the nodes it was named, and it was named none');
+  if (typeof verify !== 'function') throw new Error('a lobby checks each seat\'s signed listing, and no verify was injected');
   const refused = [];
-  const said = new Map();                                   // id -> [{ node, seated, playing, watching }]
+  const said = new Map();                                   // id -> [{ node, key, ... }]
   for (const node of [...new Set(nodes)]) {
     try {
       const r = await fetcher(`${String(node).replace(/\/+$/, '')}/rounds`);
       if (!r.ok) { refused.push(`${node}: answered ${r.status}`); continue; }
       const body = await r.json();
+      const nodeKey = String(body && body.node).toLowerCase();
+      const at = Number(body && body.nowMs);
       for (const x of (body && Array.isArray(body.rounds)) ? body.rounds : []) {
         const id = String(x && x.id).toLowerCase();
         if (!/^[0-9a-f]{64}$/.test(id)) { refused.push(`${node}: listed something that is not a round id`); continue; }
         if (!said.has(id)) said.set(id, []);
-        said.get(id).push({ node, seated: Number(x.seated) || 0, playing: Number(x.playing) || 0,
-          watching: Number(x.watching) || 0, free: !!x.free });
+        const signed = /^[0-9a-f]{64}$/.test(nodeKey) && Number.isFinite(at) && lobbySigned(verify, { id, nodeKey, nowMs: at, x });
+        said.get(id).push({ node, key: nodeKey, seated: Number(x.seated) || 0, playing: Number(x.playing) || 0,
+          watching: Number(x.watching) || 0, free: !!x.free, phase: x.phase, seatedHere: !!x.seatedHere,
+          signed, fresh: Number.isFinite(at) && Math.abs(at - nowMs) <= skewMs });
       }
     } catch (e) { refused.push(`${node}: ${e.message}`); }
   }
@@ -73,15 +100,27 @@ export async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now() } 
     const now = BigInt(Math.floor(nowMs));
     if (now >= contract.entryCloseMs) continue;
     const pays = roundPays(contract);
+    const phase = now < contract.committeeTimeMs ? 'pending' : 'open';
+    // WHO COUNTS: a seat of THIS round (its key in the verified contract), its
+    // own signature, recent, saying open and seated. Each key once.
+    const seats = new Set(contract.nodes.map((k) => toHex(k)));
+    let needed;
+    try { needed = receiptsNeeded(contract.gameVerifySlots); } catch { needed = contract.nodes.length; }
+    const agreeing = new Set();
+    for (const c of counts) {
+      c.counts = !!(c.signed && c.fresh && seats.has(c.key) && c.phase === 'open' && c.seatedHere);
+      if (c.counts) agreeing.add(c.key);
+    }
     rows.push({
-      id,
-      phase: now < contract.committeeTimeMs ? 'pending' : 'open',
+      id, phase,
       free: !pays,
       wallet: !pays ? 'none' : (roundLocks(contract) ? 'federation-lock' : 'lightning'),
       stakeMsat: contract.stakeMsat,
       committeeTimeMs: Number(contract.committeeTimeMs), startTimeMs: Number(contract.startTimeMs),
       entryCloseMs: Number(contract.entryCloseMs),
       said: counts,
+      seatsAgree: agreeing.size, needed, seats: seats.size,
+      joinable: phase === 'open' && agreeing.size >= needed,
       // A NODE THAT CALLED A PAYING ROUND FREE, OR THE REVERSE, IS NAMED: the row
       // says what the contract says, and the disagreement is shown beside it.
       disagrees: counts.filter((c) => c.free !== !pays).map((c) => c.node),
@@ -104,7 +143,9 @@ export function lobbyLine(row, nowMs = Date.now()) {
   const when = row.phase === 'pending'
     ? `committee: pending, entry opens in ${lobbyClock(row.committeeTimeMs - nowMs)}`
     : `entry open, closes in ${lobbyClock(row.entryCloseMs - nowMs)}`;
+  const agree = `${row.seatsAgree} of ${row.needed} seats agree`
+    + (row.phase === 'open' && !row.joinable ? ` - waiting for ${row.needed - row.seatsAgree} more` : '');
   const counts = row.said.map((c) => `${c.seated} seated, ${c.playing} playing (says ${c.node})`).join('; ');
-  return `${money} · ${when} · ${counts || 'no seat counts'}`
+  return `${money} · ${when} · ${agree} · ${counts || 'no seat counts'}`
     + (row.disagrees.length ? ` · ${row.disagrees.join(', ')} listed it as ${row.free ? 'paying' : 'free'}` : '');
 }

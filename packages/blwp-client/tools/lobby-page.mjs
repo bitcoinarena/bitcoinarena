@@ -234,6 +234,19 @@ try {
     lightningOrWalletRequestCount: lightning.length, seats: perSeat,
     exceptions: [one, two].map((b) => b.logs.filter((l) => l.startsWith('EXCEPTION')).length) });
 
+  // 2 OF 2: WITH BOTH SEATS UP A ROW IS JOINABLE; WITH ONE SEAT DOWN IT IS NOT.
+  // Seat B goes away, a fresh lobby is opened, and the round the two tabs
+  // played in (entry still open) must say 1 of 2 and offer no Join. B comes back.
+  const agreedBefore = (Array.isArray(s1.lobby) ? s1.lobby : []).map((r) => `${r.seatsAgree}/${r.needed} ${r.joinable ? 'join' : 'no join'}`);
+  await round.b.close();
+  const four = await browse(round.lobbyUrl);
+  tabs.push(four);
+  const s4 = await until(four, 60000, (x) => (Array.isArray(x.lobby) && x.lobby.length > 0) || x.pageError);
+  await four.shot(`${P}/lobby-one-seat.png`);
+  await round.restartB();
+  say({ step: '2 of 2', bothUp: agreedBefore,
+    bDown: (Array.isArray(s4.lobby) ? s4.lobby : []).map((r) => ({ id: r.id.slice(0, 16), agree: `${r.seatsAgree}/${r.needed}`, join: !!r.join, line: r.line })) });
+
   // AFTER THIS ROUND'S ENTRY CLOSES: the lobby is not empty.
   const closesAt = Number(round.rounds().find((r) => r.id === target.id).entryCloseMs);
   const left = closesAt - Date.now();

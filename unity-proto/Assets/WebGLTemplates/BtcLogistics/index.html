@@ -936,11 +936,17 @@
       const paint = async () => {
         const el = list;
         let got;
-        try { got = await BLWPCLIENT.fetchLobby({ nodes: named.nodes }); }
-        catch (e) { got = { rows: [], refused: [e.message] }; }
+        // 2 OF 2 (M3.3-34): each seat's listing is its own BIP-340 signature,
+        // checked with the curve the daemons sign under; Join is offered only
+        // when the round's threshold of its own seats say open and seated.
+        try {
+          got = await BLWPCLIENT.fetchLobby({ nodes: named.nodes,
+            verify: (s, m, k) => !!(window.BLWP_CURVE && window.BLWP_CURVE.verify && window.BLWP_CURVE.verify(s, m, k)) });
+        } catch (e) { got = { rows: [], refused: [e.message] }; }
         const now = Date.now();
         window.BLWP_LOBBY = got.rows.map((r) => ({ id: r.id, phase: r.phase, free: r.free, wallet: r.wallet,
-          line: BLWPCLIENT.lobbyLine(r, now), join: r.phase === 'open' ? BLWPCLIENT.lobbyJoinSearch(location.search, r.id) : null }));
+          seatsAgree: r.seatsAgree, needed: r.needed, joinable: r.joinable,
+          line: BLWPCLIENT.lobbyLine(r, now), join: r.joinable ? BLWPCLIENT.lobbyJoinSearch(location.search, r.id) : null }));
         el.textContent = '';
         const h = document.createElement('h2');
         h.textContent = 'Rounds you can join';

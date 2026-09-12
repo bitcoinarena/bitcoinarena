@@ -278,6 +278,9 @@ export const TAG = {
   // WHO A TAB IS IN THE LOBBY (M3.3-34): its identity key, from the same seed
   // as every round's player key but under its own tag, so it is never one.
   lobbyIdentity: 'BLWP/v1/LobbyIdentity',
+  // ONE SEAT'S SIGNED WORD ABOUT A ROUND IN ITS LOBBY (M3.3-34): the page
+  // offers Join only when the round's threshold of its own seats signed it.
+  lobbyListing: 'BLWP/v1/LobbyListing',
   // The nonce of a DKG dealer's round-1 proof of knowledge, derived from its
   // own secret so no randomness source can repeat it across two proofs.
   dkgProofNonce: 'BLWP/v1/DkgProofNonce',
