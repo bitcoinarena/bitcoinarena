@@ -17,7 +17,7 @@ import { BLOCK_TICKS } from '../../core/src/rules/gate.js';
 import {
   TAG, PROTOCOL_VERSION, TYPE_ROUND_CONTRACT, TYPE_ENTRY_CONTRACT, ROLES,
   CUSTODY, custodyByte, slashRemainderByte, slashRemainderOf, MIN_ENTRY_WINDOW_MS,
-  STAKE_EXPIRY_BLOCKS,
+  STAKE_EXPIRY_BLOCKS, START_DEADLINE_TICKS,
 } from './constants.js';
 
 /**
@@ -180,6 +180,17 @@ export function encodeRoundContract(c) {
   w.u8(c.rankDenominator);
 
   w.vec([...c.nodes].sort(compare32), (n, ww) => ww.bytes32(n), { sortedBy: compare32 });
+
+  // THE START DEADLINE (§16), in ticks after a player's join tick - and LAST,
+  // AND ONLY WHEN IT IS NOT THE DEFAULT. A round that names none (or names
+  // START_DEADLINE_TICKS) encodes exactly as it did before the field existed,
+  // so every round id already published stays what it was; one encoding per
+  // contract, because the default and its omission are the same round.
+  if (c.startDeadlineTicks !== undefined && c.startDeadlineTicks !== START_DEADLINE_TICKS) {
+    if (!Number.isInteger(c.startDeadlineTicks) || c.startDeadlineTicks < 1 || c.startDeadlineTicks >= c.blockTicks)
+      throw new Error(`startDeadlineTicks is a whole number of ticks from 1 to below the round's ${c.blockTicks}`);
+    w.u32(c.startDeadlineTicks);
+  }
   return w.finish();
 }
 
@@ -229,6 +240,14 @@ export function decodeRoundContract(bytes) {
     rankDenominator: r.u8(),
     nodes: r.vec((rr) => rr.bytes32()),
   };
+  // The start deadline, present only when the round named one that is not the
+  // default. Written as the default it would be a second encoding of one round.
+  if (r.at < r.b.length) {
+    const d = r.u32();
+    if (d === START_DEADLINE_TICKS) throw new Error('a start deadline equal to the default is written by omitting it');
+    if (d < 1 || d >= c.blockTicks) throw new Error(`a start deadline of ${d} ticks is outside 1 to below the round's ${c.blockTicks}`);
+    c.startDeadlineTicks = d;
+  }
   r.end();
   return c;
 }

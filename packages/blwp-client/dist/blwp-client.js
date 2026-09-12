@@ -503,6 +503,19 @@ const PROTOCOL_VERSION = 1;
  */
 const MIN_ENTRY_WINDOW_MS = 60000n;
 
+/**
+ * THE START DEADLINE A ROUND GETS WHEN IT NAMES NONE (§16), in ticks after a
+ * player's join tick. A first mark signed at a tick after join_tick + this is
+ * too late to be the first financial tick: the entry is ENTRY_VOID
+ * (entry-void.js). §16 names no number; 120 is the named pick (M3, ENTRY_VOID).
+ *
+ * 120 ticks is 2 s at the core's 60 Hz. The page marks once a second, and a
+ * mark can wait up to 10 s for its inputs (MARK_INPUT_WAIT_MS): wiring this
+ * into a seat must weigh an honest first mark that lands after tick 120.
+ * It is not the active-play grace period.
+ */
+const START_DEADLINE_TICKS = 120;
+
 const TYPE_ROUND_CONTRACT = 0x01;
 const TYPE_ENTRY_CONTRACT = 0x02;
 const TYPE_ADVERT = 0x03;
@@ -1593,6 +1606,17 @@ function encodeRoundContract(c) {
   w.u8(c.rankDenominator);
 
   w.vec([...c.nodes].sort(compare32), (n, ww) => ww.bytes32(n), { sortedBy: compare32 });
+
+  // THE START DEADLINE (§16), in ticks after a player's join tick - and LAST,
+  // AND ONLY WHEN IT IS NOT THE DEFAULT. A round that names none (or names
+  // START_DEADLINE_TICKS) encodes exactly as it did before the field existed,
+  // so every round id already published stays what it was; one encoding per
+  // contract, because the default and its omission are the same round.
+  if (c.startDeadlineTicks !== undefined && c.startDeadlineTicks !== START_DEADLINE_TICKS) {
+    if (!Number.isInteger(c.startDeadlineTicks) || c.startDeadlineTicks < 1 || c.startDeadlineTicks >= c.blockTicks)
+      throw new Error(`startDeadlineTicks is a whole number of ticks from 1 to below the round's ${c.blockTicks}`);
+    w.u32(c.startDeadlineTicks);
+  }
   return w.finish();
 }
 
@@ -1642,6 +1666,14 @@ function decodeRoundContract(bytes) {
     rankDenominator: r.u8(),
     nodes: r.vec((rr) => rr.bytes32()),
   };
+  // The start deadline, present only when the round named one that is not the
+  // default. Written as the default it would be a second encoding of one round.
+  if (r.at < r.b.length) {
+    const d = r.u32();
+    if (d === START_DEADLINE_TICKS) throw new Error('a start deadline equal to the default is written by omitting it');
+    if (d < 1 || d >= c.blockTicks) throw new Error(`a start deadline of ${d} ticks is outside 1 to below the round's ${c.blockTicks}`);
+    c.startDeadlineTicks = d;
+  }
   r.end();
   return c;
 }

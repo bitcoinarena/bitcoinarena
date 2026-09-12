@@ -31,6 +31,19 @@ export const PROTOCOL_VERSION = 1;
  */
 export const MIN_ENTRY_WINDOW_MS = 60000n;
 
+/**
+ * THE START DEADLINE A ROUND GETS WHEN IT NAMES NONE (§16), in ticks after a
+ * player's join tick. A first mark signed at a tick after join_tick + this is
+ * too late to be the first financial tick: the entry is ENTRY_VOID
+ * (entry-void.js). §16 names no number; 120 is the named pick (M3, ENTRY_VOID).
+ *
+ * 120 ticks is 2 s at the core's 60 Hz. The page marks once a second, and a
+ * mark can wait up to 10 s for its inputs (MARK_INPUT_WAIT_MS): wiring this
+ * into a seat must weigh an honest first mark that lands after tick 120.
+ * It is not the active-play grace period.
+ */
+export const START_DEADLINE_TICKS = 120;
+
 export const TYPE_ROUND_CONTRACT = 0x01;
 export const TYPE_ENTRY_CONTRACT = 0x02;
 export const TYPE_ADVERT = 0x03;
