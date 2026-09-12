@@ -152,7 +152,7 @@ export const opts = { funded: () => true, randomnessFor: () => BEACON, preflight
  * five of the other seats sign - the same run it did, or a rewritten one - and
  * the run is PROVISIONALLY_FINAL on it.
  */
-export async function sevenSeats(windowMs, relays, { storedBeforeTheRule = false, finality = null } = {}) {
+export async function sevenSeats(windowMs, relays, { storedBeforeTheRule = false, finality = null, play = {} } = {}) {
   // EVERY SEAT'S ADVERTISEMENT, as a census would give it: each names its own
   // bond outpoint, which a slash proof must name (5A.3B). Filled once the keys exist.
   const adverts = new Map();
@@ -172,7 +172,9 @@ export async function sevenSeats(windowMs, relays, { storedBeforeTheRule = false
     assumeSeated(holder.round, rid, c.nodes);
     const runs = {};
     for (const [name, key] of [['agrees', 5], ['dissents', 6]]) {
-      runs[name] = await seatAndPlay([holder], c, rid, { ...LOSER, name, key: b32(key) }, 5, { direct: storedBeforeTheRule });
+      // `play` names who plays a run instead of the loser - a run that stops while
+      // still LIVE, for one (M3.3-34 walk-away step 7).
+      runs[name] = await seatAndPlay([holder], c, rid, { ...(play[name] || LOSER), name, key: b32(key) }, 5, { direct: storedBeforeTheRule });
       // FIVE OF SEVEN RECEIPTS MAKE THE TRANSCRIPT CANONICAL: its own and four seats'.
       for (const secret of others.slice(0, 4)) {
         const receipt = { checkpointId: runs[name].mid, receivedAtMs: 1234n, nodePubkey: schnorr.getPublicKey(secret) };

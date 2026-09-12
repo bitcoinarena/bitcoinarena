@@ -22,7 +22,7 @@ import { resultFinality } from '../src/finality.js';
 import { decodePlayerResult, splitSignedResult } from '../../protocol/src/result.js';
 import { runOf, decodeRerunResult, splitSignedRerun } from '../../protocol/src/rerun.js';
 import { toHex } from '../../protocol/src/hash.js';
-import { b32, rand, wait, sevenSeats, object } from './window-fixture.js';
+import { b32, rand, wait, sevenSeats, object, WINNER } from './window-fixture.js';
 
 /** Wait until the holder has signed its own re-run of `eid`, and return it. */
 async function holdersRerun(w, eid, ms = 8000) {
@@ -71,6 +71,35 @@ test('the committee re-runs a suspended result: the holder re-runs by itself, fo
       reruns: 5, after: 'FINAL', authoritativeRun: true, shareReleased: true, outcome: 'FAILED',
     });
     assert.match(after.why, /re-run by 5 of 7 committee seats: the replay outcome is authoritative/);
+  } finally { await w.close(); }
+});
+
+// AN OBJECTED STOPPED RUN (M3.3-34 walk-away step 7): the winner's checkpoints
+// cease at tick 600 while its run is still LIVE, so the close ends it FAILED at
+// its last receipted checkpoint (§15, ruled 2026-09-12). Five seats sign it with
+// the score rewritten; the objection holds; the holder's own re-run must apply
+// the same rule - FAILED at that checkpoint, the same score, the same run - and
+// five of seven re-runs make that FINAL.
+test('an objected stopped run is re-run under the same rule: FAILED at its last receipted checkpoint, the same run, FINAL at five of seven', async () => {
+  const w = await sevenSeats(800, undefined, { play: { dissents: { ...WINNER, ticks: 600 } } });
+  try {
+    const s = await suspended(w);
+    const state = resultFinality(w.holder.round, w.rid, s.eid).state;
+    const own = await holdersRerun(w, s.eid);
+    assert.ok(own, 'the holder never re-ran the suspended stopped run');
+    w.rerunBy('dissents', 4);
+    await wait(Math.max(0, s.filedAt + 1700 - Date.now()));
+    const after = resultFinality(w.holder.round, w.rid, s.eid);
+    const facts = {
+      replay: `${s.replay.outcome}/${s.replay.score}`, suspendedByTheObjection: state,
+      rerun: `${own.result.outcome}/${own.result.score}`, sameRun: toHex(runOf(own.result)) === toHex(runOf(s.replay)),
+      reruns: w.holder.round.reruns(w.rid, s.eid).length, after: after.state, authoritativeRun: after.runId === toHex(runOf(s.replay)),
+    };
+    console.log('  FACTS (objected stopped run):', JSON.stringify(facts), '|', after.why);
+    assert.match(facts.replay, /^FAILED\//, 'the stopped run did not end FAILED at its last receipted checkpoint');
+    assert.deepEqual({ ...facts, replay: undefined, rerun: undefined },
+      { replay: undefined, rerun: undefined, suspendedByTheObjection: 'SUSPENDED', sameRun: true, reruns: 5, after: 'FINAL', authoritativeRun: true });
+    assert.equal(facts.rerun, facts.replay, 'the re-run did not apply the stopped rule the close applied');
   } finally { await w.close(); }
 });
 
