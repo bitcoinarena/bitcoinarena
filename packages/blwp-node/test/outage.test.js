@@ -318,3 +318,46 @@ test('(iii) the player sends the first mark to the down seat once it is back and
       forfeit: { status: 200, verifies: true, isTheLocksId: true } });
   } finally { await w.close(); }
 });
+
+// ONE SEAT'S WORD IS NOT A VOID AT THE OTHER (§16, §13C). A seat that does not
+// hold the first mark records a round seat's closed ENTRY_VOID only with the
+// PLAYER'S OWN signed first mark in hand - never with a mark a seat made up.
+// MEASURED BEFORE (tools/closed-claim-probe.mjs): an invented first mark with
+// A's own receipt over it and "closed" -> B recorded ENTRY_VOID (closed), and
+// with A's side planted the lock was forfeited at once (200), though the
+// player never sent a mark.
+test('(f) a seat cannot void the other seat\'s entry with an invented first mark and its own receipt: no Void, no forfeit, the lock held', async () => {
+  const w = await seats();
+  try {
+    const run = await seatAndBuild(w);
+    const { encodeCheckpointReceipt, receiptId, joinSignedReceipt } = await import('../../protocol/src/receipt.js');
+    const receiptBy = (d, id) => {
+      const r = { checkpointId: id, receivedAtMs: BigInt(Date.now()), nodePubkey: d.round.pubkey };
+      return joinSignedReceipt(encodeCheckpointReceipt(r), schnorr.sign(receiptId(r), d.round.identity.secret));
+    };
+    const post = async (body) => {
+      const r = await fetch(`http://127.0.0.1:${w.b.port}/first-mark`, { method: 'POST', body: JSON.stringify(body) });
+      let j;
+      try { j = await r.json(); } catch { j = {}; }
+      return { status: r.status, entryVoid: !!j.entryVoid };
+    };
+    // A CLAIM AND A RECEIPT, NO MARK.
+    const noMark = await post({ receipt: toHex(receiptBy(w.a, run.firstId)), entryVoid: { kind: 'closed', evidence: null } });
+    // A MARK A SEAT MADE UP: the right entry, tick 60, signed by a key that is not the player's.
+    const fakeKey = ed25519.utils.randomSecretKey();
+    const fake = { roundId: w.rid, entryId: run.eid, tick: 60, stateHash: rand(32), inputChainHash: GENESIS_HASH,
+      previousHash: NO_PREVIOUS, sessionPubkey: ed25519.getPublicKey(fakeKey) };
+    const fakeBytes = joinSigned(encodeCheckpoint(fake), ed25519.sign(checkpointId(fake), fakeKey));
+    const invented = await post({ mark: toHex(fakeBytes), batches: [], receipt: toHex(receiptBy(w.a, checkpointId(fake))),
+      entryVoid: { kind: 'closed', evidence: null } });
+    const b = recordAt(w.b, w, run);
+    // A LYING SEAT CONTROLS ITS OWN STORE: its side of the Void, planted - the other seat must still not sign.
+    w.a.round.putEntryVoid({ entryId: run.eid, roundId: w.rid, firstMark: fakeBytes, evidenceKind: 'closed', evidence: null, why: 'planted by a lying seat' });
+    const forfeit = await forfeitAt(w.a, w, run);
+    const facts = { noMark, invented, b, forfeit: forfeit.status,
+      lockHeld: w.port.locks.has(`${toHex(run.outpoint.txid)}:${run.outpoint.outIdx}`) };
+    console.log('  FACTS (f):', JSON.stringify(facts));
+    assert.deepEqual(facts, { noMark: { status: 400, entryVoid: false }, invented: { status: 409, entryVoid: false },
+      b: { recorded: null, results: [], finality: null }, forfeit: 409, lockHeld: true });
+  } finally { await w.close(); }
+});

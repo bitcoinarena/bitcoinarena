@@ -463,6 +463,17 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   function voidHere(c, bytes, late, givenReceipts = []) {
     const had = round.entryVoid(c.entryId);
     if (had) return had;
+    // THE PLAYER'S OWN FIRST MARK, OR NO VOID HERE. A seat records ENTRY_VOID
+    // only for a first mark it holds in the player's own hand - signed by the
+    // entry's session key, from the player or in a forward - never on another
+    // seat's word alone. Measured before this (closed-claim-probe.mjs): a mark
+    // one seat invented, with its own receipt over it and "closed", voided the
+    // entry at the other seat and the lock was forfeited though the player
+    // never sent a mark. Such a mark now goes on to the door's own checks,
+    // which refuse its signature.
+    let signed;
+    try { signed = round.playerSigned(bytes); } catch { return null; }
+    if (toHex(checkpointId(signed)) !== toHex(checkpointId(c)) || !signed.previousHash.every((x) => x === 0)) return null;
     const line = round.startLine(c.roundId, c.entryId);
     const id = checkpointId(c);
     const receipts = givenReceipts.filter((r) => round.receiptVerifies(r, id, c.roundId)).length;
