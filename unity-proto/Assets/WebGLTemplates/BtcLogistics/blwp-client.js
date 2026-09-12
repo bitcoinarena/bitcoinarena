@@ -11265,6 +11265,26 @@ function lobbyJoinSearch(search, id) {
   return '?' + q.toString();
 }
 
+/**
+ * THE DAILY'S LOBBY AT THE BARE ROOT: `daily.json`, deployed beside the page,
+ * names what a lobby link names - the seats, where the bond is asked for, the
+ * signed advertisement - and nothing else. It becomes that link's query, held
+ * to the same rules (`lobbyQuery`), so it trusts nothing a link would not; a
+ * file that names a round, or fails a rule, is no lobby, and the root stays
+ * the offline daily.
+ * @returns {string|null} '?node=...&bond=...&advert=...' or null
+ */
+function dailyLobbySearch(daily) {
+  if (!daily || typeof daily !== 'object' || Array.isArray(daily)) return null;
+  if ('round' in daily) return null;
+  const nodes = Array.isArray(daily.node) ? daily.node.map(String) : [];
+  if (nodes.length < 2 || typeof daily.bond !== 'string' || !/^[0-9a-f]{128}$/.test(String(daily.advert))) return null;
+  const q = new URLSearchParams({ node: nodes.join(','), bond: daily.bond, advert: daily.advert });
+  if (typeof daily.federation === 'string' && daily.federation) q.set('federation', daily.federation);
+  const search = '?' + q.toString();
+  try { return lobbyQuery(search) ? search : null; } catch { return null; }
+}
+
 /** Is this node's listing of this round its seat's own signed word? */
 function lobbySigned(verify, { id, nodeKey, nowMs, x }) {
   try {
@@ -11389,6 +11409,7 @@ return { Client: Client, markState: markState,
          saveLock: saveLock, savedLock: savedLock, markLockCommitted: markLockCommitted,
          findLock: findLock, refundStake: refundStake, forfeitOf: forfeitOf, redeemStake: redeemStake,
          lobbyQuery: lobbyQuery, fetchLobby: fetchLobby, lobbyLine: lobbyLine, lobbyJoinSearch: lobbyJoinSearch,
+         dailyLobbySearch: dailyLobbySearch,
          tabIdentity: tabIdentity, setPlayerName: setPlayerName, generatedName: generatedName,
          nameRecordFor: nameRecordFor, postName: postName, namesOf: namesOf, checkedNames: checkedNames, shownNameOf: shownNameOf,
          boardNames: boardNames,

@@ -915,10 +915,30 @@
     // shown as what each node says. Join is the round's own link, so the seat
     // is taken by exactly the path a shared round link takes. Unity is not
     // loaded here: a lobby is a list, and the player comes back through Join.
+    //
+    // AND AT THE BARE ROOT, THE DAILY'S OWN LOBBY: a visitor who opens the page
+    // with no link at all is shown the rounds the Daily's seats hold, named by
+    // `daily.json` deployed beside this page - the same names a lobby link
+    // carries, held to the same rules (`dailyLobbySearch`). Read only when the
+    // address carries no query; a missing or broken file leaves the root the
+    // offline daily it was.
+    async function dailySearch() {
+      if (location.search.replace(/^\?/, '') !== '' || !BLWPCLIENT.dailyLobbySearch) return null;
+      try {
+        const r = await fetch('daily.json', { cache: 'no-store' });
+        return r.ok ? BLWPCLIENT.dailyLobbySearch(await r.json()) : null;
+      } catch { return null; }
+    }
     async function showTheLobbyIfOneWasNamed() {
       if (typeof BLWPCLIENT === 'undefined' || !BLWPCLIENT.lobbyQuery) return false;
-      const named = BLWPCLIENT.lobbyQuery(location.search);
+      let search = location.search;
+      let named = BLWPCLIENT.lobbyQuery(search);
+      if (!named) {
+        const daily = await dailySearch();
+        if (daily) { search = daily; named = BLWPCLIENT.lobbyQuery(search); }
+      }
       if (!named) return false;
+      window.BLWP_LOBBY_FROM = search === location.search ? 'link' : 'daily.json';
       const lobbyEl = document.getElementById('blwp-lobby');
       lobbyEl.classList.add('show');
       // WHO THIS TAB IS (M3.3-34): the identity key the page generated from the
@@ -989,7 +1009,7 @@
         const now = Date.now();
         window.BLWP_LOBBY = got.rows.map((r) => ({ id: r.id, phase: r.phase, free: r.free, wallet: r.wallet,
           seatsAgree: r.seatsAgree, needed: r.needed, joinable: r.joinable,
-          line: BLWPCLIENT.lobbyLine(r, now), join: r.joinable ? BLWPCLIENT.lobbyJoinSearch(location.search, r.id) : null }));
+          line: BLWPCLIENT.lobbyLine(r, now), join: r.joinable ? BLWPCLIENT.lobbyJoinSearch(search, r.id) : null }));
         el.textContent = '';
         const h = document.createElement('h2');
         h.textContent = 'Rounds you can join';

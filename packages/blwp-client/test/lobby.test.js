@@ -10,7 +10,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { schnorr } from '@noble/curves/secp256k1.js';
 
-import { lobbyQuery, lobbyJoinSearch, fetchLobby, lobbyLine } from '../src/lobby.js';
+import { lobbyQuery, lobbyJoinSearch, fetchLobby, lobbyLine, dailyLobbySearch } from '../src/lobby.js';
 import { encodeRoundContract, roundId } from '../../protocol/src/contracts.js';
 import { lobbyListingId } from '../../protocol/src/lobby-listing.js';
 import { encodeLobbyName, lobbyNameId } from '../../protocol/src/lobby-name.js';
@@ -207,4 +207,25 @@ test('a row names its seated players by the names they signed; a seat\'s forgery
   assert.doesNotMatch(line, /Mallory|Elsewhere/);
   assert.equal(line.includes(toHex(keyOf(player)).slice(0, 8)), false, 'a key in place of a name');
   assert.equal(rows[0].joinable, true, 'names are no part of 2 of 2');
+});
+
+test('the bare root\'s daily.json becomes exactly a lobby link\'s names, or no lobby at all', () => {
+  const daily = { node: [A, B], bond: `${A}/bond`, advert: ADVERT };
+  const search = dailyLobbySearch(daily);
+  const named = lobbyQuery(search);
+  assert.deepEqual(named.nodes, [A, B]);
+  assert.equal(named.bond, `${A}/bond`);
+  assert.deepEqual(named, lobbyQuery(LINK), 'daily.json names what the lobby link names');
+  assert.equal(new URLSearchParams(lobbyJoinSearch(search, 'cd'.repeat(32)).slice(1)).get('node'), `${A},${B}`);
+  // WHAT IS NO LOBBY: the root stays the offline daily.
+  const refused = {
+    oneSeat: { ...daily, node: [A] },
+    notAUrl: { ...daily, node: ['not a url', B] },
+    badAdvert: { ...daily, advert: 'ab' },
+    noBond: { node: [A, B], advert: ADVERT },
+    namesARound: { ...daily, round: 'cd'.repeat(32) },
+    notAnObject: [A, B],
+    nothing: null,
+  };
+  for (const [what, d] of Object.entries(refused)) assert.equal(dailyLobbySearch(d), null, what);
 });

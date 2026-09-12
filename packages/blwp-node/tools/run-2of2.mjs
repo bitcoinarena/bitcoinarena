@@ -62,6 +62,11 @@ say({ up: true, a: round.nodes[0], b: round.nodes[1], bound: [`${host}:${portA}`
   beacon: round.beacon && round.beacon.ok ? round.beacon.height : null, chain: `regtest at ${env.RT}` });
 // THE LOBBY LINK, where an operator picks it up without reading the log.
 writeFileSync(join(dir, 'lobby-url.txt'), round.lobbyUrl + '\n');
+// AND THE SAME NAMES AS daily.json, which the Daily page deploys beside itself
+// so its bare root shows this lobby (lobby.js `dailyLobbySearch`). The public
+// addresses change with the tunnels, and then the page is deployed again.
+writeFileSync(join(dir, 'daily.json'),
+  JSON.stringify({ node: round.nodes, bond: round.bond, advert: round.advert }, null, 2) + '\n');
 console.log(round.lobbyUrl);
 round.keepOpen({ onOpen: (id) => say({ opened: id }), onError: (e) => say({ notOpened: e.message }) });
 

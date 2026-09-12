@@ -134,6 +134,8 @@ out += '         findLock: findLock, refundStake: refundStake, forfeitOf: forfei
 // THE LOBBY (M3.3-34): a link that names nodes and no round lists what they
 // hold, every row checked against its own contract; Join is the join link.
 out += '         lobbyQuery: lobbyQuery, fetchLobby: fetchLobby, lobbyLine: lobbyLine, lobbyJoinSearch: lobbyJoinSearch,\n';
+// AND THE DAILY'S OWN LOBBY AT THE BARE ROOT, from daily.json beside the page.
+out += '         dailyLobbySearch: dailyLobbySearch,\n';
 // WHO THE TAB IS IN THE LOBBY (M3.3-34): the generated key's public half, the
 // name made from it, and the player's own name over it.
 out += '         tabIdentity: tabIdentity, setPlayerName: setPlayerName, generatedName: generatedName,\n';
