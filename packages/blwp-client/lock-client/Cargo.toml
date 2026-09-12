@@ -7,6 +7,12 @@
 # Like tools/stake-lock, it builds only as a member of a fedimint v0.12.0 source
 # tree, whose workspace pins every dependency:
 #
+#   ONE STOCK LINE PATCHED (W5a): fedimint-lnv2-send-expiry.patch, against the
+#     v0.12.0 tree (patch -p1 < it, from the tree's root). LNv2 `send` checks
+#     `invoice.is_expired()`, which reads std's clock and panics on
+#     wasm32-unknown-unknown - measured, every withdraw from the page panicked;
+#     the patch makes the same check against fedimint's own clock. The rest of
+#     `send` is stock.
 #   ln -s <this directory> <fedimint-0.12.0>/blwp-lock-client
 #   add "blwp-lock-client" to <fedimint-0.12.0>/Cargo.toml [workspace] members
 #   cargo build --release --target wasm32-unknown-unknown -p blwp-lock-client
@@ -36,6 +42,7 @@ fedimint-lnv2-common = { workspace = true }
 fedimint-mintv2-client = { workspace = true }
 futures = { workspace = true }
 imbl = { workspace = true }
+lightning-invoice = { workspace = true }
 macro_rules_attribute = { workspace = true }
 serde_json = { workspace = true }
 wasm-bindgen = { workspace = true }

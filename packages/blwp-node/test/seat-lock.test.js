@@ -98,6 +98,30 @@ test('one lock stakes one seat: a second entry naming a lock already committed f
   } finally { await s.close(); }
 });
 
+test('a seat says where a player\'s verified lock is by its refund key, and nothing for another key (W5a)', async () => {
+  const s = await seatedWithLock(WITH_KEY);
+  try {
+    const ask = async (refund) => {
+      const r = await fetch(`http://127.0.0.1:${s.d.port}/stake-lock?round=${toHex(s.rid)}&refund=${refund}`);
+      return { status: r.status, body: r.ok ? await r.json() : (await r.text()).trim() };
+    };
+    const mine = toHex(s.fields.refundPk);
+    const before = await ask(mine);
+    assert.equal((await handOver(s, s.fields)).status, 201);
+    const after = await ask(mine);
+    const other = await ask(`02${'77'.repeat(32)}`);
+    const bad = await ask('02zz');
+    console.log(`  /stake-lock by refund key: before ${before.body.length}, after ${after.body.length} (${after.body[0] && after.body[0].outpoint.slice(0, 20)}...), another key ${other.body.length}, a bad key ${bad.status}`);
+    assert.deepEqual([before.status, before.body.length], [200, 0], 'a lock no seat verified was answered');
+    assert.equal(after.body.length, 1);
+    assert.equal(after.body[0].outpoint, `${toHex(s.outpoint.txid)}:${s.outpoint.outIdx}`);
+    assert.equal(after.body[0].entryId, toHex(s.eid));
+    assert.deepEqual(after.body[0].fields, lockFieldsToJson(s.fields));
+    assert.deepEqual([other.status, other.body.length], [200, 0], 'another key was answered with this player\'s lock');
+    assert.equal(bad.status, 400);
+  } finally { await s.close(); }
+});
+
 test('a round that names no federation takes no lock: its stake is not one', async () => {
   const s = await seatedWithLock(WITH_KEY, { federationId: new Uint8Array(32) });
   try {

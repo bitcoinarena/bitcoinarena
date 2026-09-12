@@ -22,7 +22,7 @@ import { entryFeeMsat } from '../../protocol/src/fee.js';
 import { refundKeyOf, lockFieldsToJson, lockFieldsFromJson } from '../../protocol/src/stake-lock.js';
 import { decodeHandout, handoutId } from '../../protocol/src/handout.js';
 import { lockFromClient } from './lock-result.js';
-import { roundLocks } from './join.js';
+import { roundLocks, playerFor } from './join.js';
 
 // THE BLOCKS OVER stake_expiry_blocks A LOCK IS MADE FOR. The seat requires
 // expiration >= its federation height + 144 when it verifies, and the chain
@@ -199,6 +199,58 @@ export function markLockCommitted(storage, { roundId, playerPubkey, entryId }) {
   const raw = storage.getItem(key);
   if (!raw) return;
   storage.setItem(key, JSON.stringify({ ...JSON.parse(raw), committedTo: toHex(entryId) }));
+}
+
+/**
+ * THE PLAYER'S LOCKS IN A ROUND, FOUND BY THEIR REFUND KEY (W5a): what a
+ * session holding only the seed can ask - the refund key is derived from it,
+ * the outpoint and stake point were random. Each seat answers with the locks it
+ * verified; the lock client then refuses one the guardians do not hold as
+ * rebuilt, so a lying seat can point at nothing this key can spend.
+ */
+export async function findLock({ roundId, playerPubkey, nodes, fetcher = fetch } = {}) {
+  const refund = toHex(refundKeyOf(playerPubkey));
+  const found = new Map();
+  for (const node of [...new Set(nodes || [])]) {
+    try {
+      const r = await fetcher(`${String(node).replace(/\/+$/, '')}/stake-lock?round=${toHex(roundId)}&refund=${refund}`);
+      if (!r.ok) continue;
+      for (const l of await r.json()) {
+        const [txid, outIdx] = String(l.outpoint).split(':');
+        if (!found.has(l.outpoint))
+          found.set(l.outpoint, { outpoint: { txid: fromHex(txid), outIdx: BigInt(outIdx) }, fields: lockFieldsFromJson(l.fields), entryId: l.entryId });
+      }
+    } catch { /* a seat that does not answer is one of several */ }
+  }
+  return [...found.values()];
+}
+
+/**
+ * THE PLAYER'S REFUND, FROM THE SEED ALONE (§23.2: the default path - nobody
+ * acts, the lock expires, the player's key takes it back). The seed gives the
+ * round's player key and the lock client's secret; the seats say where the lock
+ * is; a fresh wallet under the seed's secret spends it with the player's key.
+ * The guardians refuse it before the lock's expiration - reported, not thrown.
+ */
+export async function refundStake({ round, roundId, invite, seed, curve, LockClient, storage, nodes, fetcher = fetch,
+  onStep = () => {} } = {}) {
+  if (!round || !roundLocks(round)) throw new Error('this round names no federation, so its stake is not a lock');
+  const player = playerFor({ ...round, id: roundId }, { seed, curve });
+  onStep('asking the seats where this seed\'s lock is');
+  const locks = await findLock({ roundId, playerPubkey: player.pubkey, nodes, fetcher });
+  if (!locks.length) throw new Error('no seat knows a stake lock that refunds to this seed\'s key in this round');
+  const secret = lockSecretFor(seed, roundId);
+  const store = storage ? lockStoreFor(storage, roundId, secret) : unkeptLockStore();
+  onStep('joining the federation');
+  const client = await LockClient.join(invite, toHex(round.federationId), toHex(secret), store);
+  const refunds = [];
+  for (const l of locks) {
+    onStep('refunding the lock');
+    const said = JSON.parse(await client.refund(toHex(l.outpoint.txid), Number(l.outpoint.outIdx),
+      JSON.stringify(lockFieldsToJson(l.fields)), toHex(player.secret)));
+    refunds.push({ outpoint: l.outpoint, ...said });
+  }
+  return { client, refunds };
 }
 
 /**

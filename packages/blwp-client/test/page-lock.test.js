@@ -13,8 +13,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { lockStake, handLock, lockSecretFor, lockAmountMsat, lockLine, saveLock, savedLock, markLockCommitted,
-  LOCK_EXPIRY_MARGIN_BLOCKS } from '../src/page-lock.js';
-import { entryFor, joinQuery, stakeFor } from '../src/join.js';
+  refundStake, LOCK_EXPIRY_MARGIN_BLOCKS } from '../src/page-lock.js';
+import { entryFor, joinQuery, stakeFor, playerFor } from '../src/join.js';
+import { lockFieldsToJson } from '../../protocol/src/stake-lock.js';
 import { pageCurve } from '../src/page-curve.js';
 import { playerSecretFor } from '../../protocol/src/player-key.js';
 import { refundKeyOf } from '../../protocol/src/stake-lock.js';
@@ -233,6 +234,35 @@ test('a lock round\'s entry names its lock\'s outpoint and is not built without 
   const hold = { ...round, federationId: new Uint8Array(32) };
   assert.throws(() => entryFor(hold, { ...opts, stakeLock: { outpoint } }), /names no federation, so there is no lock/);
   assert.equal(entryFor(hold, opts).stakeLockOutpoint.txid.every((b) => b === 0), true);
+});
+
+test('the refund from the seed alone: the seats are asked by the seed\'s refund key, and the lock client refunds that lock with the player\'s key', async () => {
+  const player = playerFor({ ...round, id: rid }, { seed, curve: pageCurve });
+  const refund = toHex(refundKeyOf(player.pubkey));
+  const fields = { paymentImage: { kind: 'point', bytes: POINT }, amountMsat: 980000n, claimPk: CLAIM, refundPk: refundKeyOf(player.pubkey), expiration: 464 };
+  const asked = [];
+  const fetcher = async (url) => {
+    asked.push(url);
+    const hit = url.includes(`refund=${refund}`);
+    return new Response(JSON.stringify(hit ? [{ entryId: 'ee'.repeat(32), outpoint: `${'ab'.repeat(32)}:0`, fields: lockFieldsToJson(fields), contractId: 'c1' }] : []), { status: 200 });
+  };
+  const refunded = [];
+  class Fake {
+    static async join(invite, federationId, secret) { refunded.push({ join: { federationId, secret } }); return new Fake(); }
+    async refund(txid, outIdx, f, key) { refunded.push({ refund: { txid, outIdx, f: JSON.parse(f), key } }); return JSON.stringify({ accepted: true, balance_after: 978000 }); }
+  }
+  const got = await refundStake({ round, roundId: rid, invite: INVITE, seed, curve: pageCurve, LockClient: Fake,
+    nodes: ['http://a.test', 'http://b.test'], fetcher });
+  assert.equal(asked.length, 2, 'not every seat was asked');
+  assert.ok(asked.every((u) => u.includes(`round=${toHex(rid)}`) && u.includes(`refund=${refund}`)));
+  const r = refunded.find((x) => x.refund).refund;
+  assert.deepEqual([r.txid, r.outIdx, r.key], ['ab'.repeat(32), 0, toHex(player.secret)]);
+  assert.deepEqual(r.f, lockFieldsToJson(fields));
+  assert.equal(refunded.find((x) => x.join).join.secret, toHex(lockSecretFor(seed, rid)));
+  assert.deepEqual(got.refunds.map((x) => x.accepted), [true]);
+  // AND ANOTHER SEED FINDS NOTHING TO REFUND.
+  await assert.rejects(() => refundStake({ round, roundId: rid, invite: INVITE, seed: b32(0x53), curve: pageCurve, LockClient: Fake,
+    nodes: ['http://a.test'], fetcher }), /no seat knows a stake lock that refunds to this seed's key/);
 });
 
 test('the join link carries the federation\'s invite, and refuses one that is not an invite code', () => {

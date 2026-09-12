@@ -31,24 +31,29 @@ use std::str::FromStr;
 mod store;
 
 use fedimint_api_client::api::{DynModuleApi, FederationApiExt};
-use fedimint_client::transaction::{ClientOutput, ClientOutputBundle, TransactionBuilder};
+use fedimint_client::transaction::{
+    ClientInput, ClientInputBundle, ClientOutput, ClientOutputBundle, TransactionBuilder,
+};
 use fedimint_client::{Client, ClientHandle, RootSecret};
 use fedimint_connectors::ConnectorRegistry;
 use fedimint_core::core::{IntoDynInstance, ModuleInstanceId, OperationId};
 use fedimint_core::db::Database;
 use fedimint_core::invite_code::InviteCode;
 use fedimint_core::module::{Amounts, ApiRequestErased};
-use fedimint_core::secp256k1::PublicKey;
+use fedimint_core::secp256k1::{PublicKey, SECP256K1, SecretKey};
 use fedimint_core::util::SafeUrl;
-use fedimint_core::{Amount, OutPoint};
+use fedimint_core::{Amount, OutPoint, TransactionId};
 use fedimint_derive_secret::DerivableSecret;
-use fedimint_lnv2_client::{FinalReceiveOperationState, LightningClientModule};
+use fedimint_lnv2_client::{FinalReceiveOperationState, FinalSendOperationState, LightningClientModule};
 use fedimint_lnv2_common::contracts::{OutgoingContract, PaymentImage};
 use fedimint_lnv2_common::gateway_api::PaymentFee;
 use fedimint_lnv2_common::endpoint_constants::{
     CONSENSUS_BLOCK_COUNT_ENDPOINT, OUTGOING_CONTRACT_EXPIRATION_ENDPOINT,
 };
-use fedimint_lnv2_common::{Bolt11InvoiceDescription, ContractId, KIND, LightningOutput, LightningOutputV0};
+use fedimint_lnv2_common::{
+    Bolt11InvoiceDescription, ContractId, KIND, LightningInput, LightningInputV0, LightningOutput, LightningOutputV0,
+    OutgoingWitness,
+};
 use wasm_bindgen::prelude::{JsError, wasm_bindgen};
 
 fn js(e: impl std::fmt::Display) -> JsError { JsError::new(&e.to_string()) }
@@ -155,6 +160,138 @@ impl LockClient {
         }
         let lnv2 = client.get_first_instance(&KIND).ok_or_else(|| js("this federation has no lnv2 module"))?;
         Ok(LockClient { client, lnv2 })
+    }
+
+    /// THE PLAYER'S REFUND (§23.2: nobody acted, and the lock expired). The
+    /// stake lock at `txid:out_idx`, rebuilt from `fields` (the JSON a seat
+    /// keeps: paymentImage, amountMsat, claimPk, refundPk, expiration), spent by
+    /// `OutgoingWitness::Refund` and signed by the player's own key -
+    /// `player_secret`, 32 bytes hex, negated when its point is odd-y, since the
+    /// lock's refund_pk is the even-y point of the x-only player key. The
+    /// guardians take it only at or past the lock's expiration; a refusal is
+    /// reported, not thrown. JSON: { accepted, txid, error, block_count,
+    /// expiration, stored_before, stored_after, balance_before, balance_after }.
+    pub async fn refund(
+        &self,
+        txid: String,
+        out_idx: u32,
+        fields: String,
+        player_secret: String,
+    ) -> Result<String, JsError> {
+        let f: serde_json::Value = serde_json::from_str(&fields).map_err(js)?;
+        let text = |k: &str| {
+            f.get(k).and_then(|v| v.as_str()).map(str::to_owned).ok_or_else(|| js(format!("the lock names no {k}")))
+        };
+        let image = f.get("paymentImage").ok_or_else(|| js("the lock names no payment image"))?;
+        if image.get("kind").and_then(|v| v.as_str()) != Some("point") {
+            return Err(js("only a stake lock, whose image is a point, is refunded here"));
+        }
+        let point = image.get("bytes").and_then(|v| v.as_str()).ok_or_else(|| js("the lock's image has no bytes"))?;
+        let refund_pk = PublicKey::from_str(&text("refundPk")?).map_err(js)?;
+        let expiration = f.get("expiration").and_then(|v| v.as_u64()).ok_or_else(|| js("the lock names no expiration"))?;
+        let contract = OutgoingContract {
+            payment_image: PaymentImage::Point(PublicKey::from_str(point).map_err(js)?),
+            amount: Amount::from_msats(text("amountMsat")?.parse().map_err(js)?),
+            expiration,
+            claim_pk: PublicKey::from_str(&text("claimPk")?).map_err(js)?,
+            refund_pk,
+            ephemeral_pk: refund_pk,
+        };
+        let mut secret = SecretKey::from_slice(&secret_from_hex(&player_secret)?).map_err(js)?;
+        if PublicKey::from_secret_key(SECP256K1, &secret) != refund_pk {
+            secret = secret.negate();
+        }
+        if PublicKey::from_secret_key(SECP256K1, &secret) != refund_pk {
+            return Err(js("that key is not the lock's refund key"));
+        }
+        let signer = secret.keypair(SECP256K1);
+        let api = self.client.api().with_module(self.lnv2);
+        let outpoint = OutPoint { txid: TransactionId::from_str(&txid).map_err(js)?, out_idx: u64::from(out_idx) };
+        let before = stored_at(&api, outpoint).await.map_err(js)?;
+        if let Some((id, _)) = before {
+            if id != contract.contract_id() {
+                return Err(js("the guardians hold another contract at that outpoint than this lock's"));
+            }
+        }
+        let count = block_count(&api).await.map_err(js)?;
+        let balance_before = self.client.get_balance_for_btc().await.map_err(js)?;
+        let bundle = ClientInputBundle::new_no_sm(vec![ClientInput {
+            input: LightningInput::V0(LightningInputV0::Outgoing(outpoint, OutgoingWitness::Refund)),
+            keys: vec![signer],
+            amounts: Amounts::new_bitcoin(contract.amount),
+        }])
+        .into_dyn(self.lnv2);
+        let operation = OperationId::new_random();
+        let (accepted, refund_txid, error) = match self
+            .client
+            .finalize_and_submit_transaction(operation, "blwp-stake-refund", |_| (), TransactionBuilder::new().with_inputs(bundle))
+            .await
+        {
+            Err(e) => (false, None, Some(format!("not submitted: {e}"))),
+            Ok(change) => {
+                let t = change.txid();
+                match self.client.transaction_updates(operation).await.await_tx_accepted(t).await {
+                    Ok(()) => (true, Some(t), None),
+                    Err(e) => (false, Some(t), Some(e)),
+                }
+            }
+        };
+        // THE NOTES THE REFUND MINTS arrive after the transaction is accepted;
+        // the balance is read once they have (bounded).
+        let mut balance_after = self.client.get_balance_for_btc().await.map_err(js)?;
+        for _ in 0..100 {
+            if !accepted || balance_after > balance_before {
+                break;
+            }
+            fedimint_core::runtime::sleep(fedimint_core::runtime::Duration::from_millis(200)).await;
+            balance_after = self.client.get_balance_for_btc().await.map_err(js)?;
+        }
+        let after = stored_at(&api, outpoint).await.map_err(js)?;
+        let stored = |s: Option<(ContractId, u64)>| s.map(|(id, left)| serde_json::json!({ "contract_id": id.0.to_string(), "blocks_left": left }));
+        Ok(serde_json::json!({
+            "accepted": accepted, "txid": refund_txid.map(|t| t.to_string()), "error": error,
+            "block_count": count, "expiration": expiration, "amount_msat": contract.amount.msats,
+            "stored_before": stored(before), "stored_after": stored(after),
+            "balance_before": balance_before.msats, "balance_after": balance_after.msats,
+        })
+        .to_string())
+    }
+
+    /// The largest invoice this client can pay out of its balance through a
+    /// gateway the federation lists - the gateway's fee and the federation's
+    /// both taken off (the stock client's own sum), in msat.
+    #[wasm_bindgen(js_name = withdrawableMsat)]
+    pub async fn withdrawable_msat(&self) -> Result<String, JsError> {
+        let ln = self.client.get_first_module::<LightningClientModule>().map_err(js)?;
+        let balance = self.client.get_balance_for_btc().await.map_err(js)?;
+        Ok(ln.spendable_amount(balance, None).await.map_err(js)?.msats.to_string())
+    }
+
+    /// THE WITHDRAW: the stock LNv2 send of this client's ecash to `invoice`
+    /// (the player's own wallet's), through a gateway the federation lists. The
+    /// gateway is paid only against the invoice's preimage; otherwise the
+    /// contract refunds this client. JSON: { state, preimage, invoice_msat,
+    /// balance_before, balance_after }.
+    pub async fn withdraw(&self, invoice: String) -> Result<String, JsError> {
+        let ln = self.client.get_first_module::<LightningClientModule>().map_err(js)?;
+        let invoice: lightning_invoice::Bolt11Invoice = invoice.trim().parse().map_err(|e| js(format!("{e:?}")))?;
+        let invoice_msat = invoice.amount_milli_satoshis();
+        let balance_before = self.client.get_balance_for_btc().await.map_err(js)?;
+        // THE GATEWAY `send` WOULD PICK, picked by the same stock call and
+        // handed to it, so the withdraw can say which one carried it.
+        let (gateway, _) = ln.select_gateway(Some(invoice.clone())).await.map_err(js)?;
+        let op = ln.send(invoice, Some(gateway.clone()), serde_json::Value::Null).await.map_err(js)?;
+        let (state, preimage) = match ln.await_final_send_operation_state(op).await.map_err(js)? {
+            FinalSendOperationState::Success(p) => ("Success", Some(p.iter().map(|b| format!("{b:02x}")).collect::<String>())),
+            FinalSendOperationState::Refunded => ("Refunded", None),
+            FinalSendOperationState::Failure => ("Failure", None),
+        };
+        let balance_after = self.client.get_balance_for_btc().await.map_err(js)?;
+        Ok(serde_json::json!({
+            "state": state, "preimage": preimage, "invoice_msat": invoice_msat, "gateway": gateway.to_string(),
+            "balance_before": balance_before.msats, "balance_after": balance_after.msats,
+        })
+        .to_string())
     }
 
     /// The client's ecash, in msat, as a decimal string.

@@ -1478,6 +1478,18 @@ export class Round {
     return r ? { outpoint: r.outpoint, fields: JSON.parse(r.fields), contractId: r.contract_id, verifiedMs: Number(r.verified_ms) } : null;
   }
 
+  /**
+   * THE VERIFIED LOCKS OF ONE ROUND THAT REFUND TO `refundHex` (66 hex, the
+   * lock's refund_pk): what a player who kept only their seed asks for to find
+   * the lock to refund (W5a). Public, as every lock in the federation is.
+   */
+  stakeLocksFor(roundIdBytes, refundHex) {
+    return this.db.prepare('SELECT entry_id, outpoint, fields, contract_id FROM stake_locks WHERE round_id = ?')
+      .all(Buffer.from(roundIdBytes))
+      .map((r) => ({ entryId: Buffer.from(r.entry_id).toString('hex'), outpoint: r.outpoint, fields: JSON.parse(r.fields), contractId: r.contract_id }))
+      .filter((l) => String(l.fields.refundPk).toLowerCase() === String(refundHex).toLowerCase());
+  }
+
   /** The entry a verified lock at this outpoint already stakes, or null: one lock is one seat. */
   stakeLockAt(outpoint) {
     const r = this.db.prepare('SELECT entry_id FROM stake_locks WHERE outpoint = ?')

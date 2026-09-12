@@ -1497,6 +1497,19 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         return text(res, 201, `stake lock verified: contract ${got.contractId} holds ${got.paidMsat} msat`);
       }
 
+      // WHERE A PLAYER'S STAKE LOCK IS, BY ITS REFUND KEY (W5a). A player who
+      // comes back with only their seed can derive the round's refund key, and
+      // nothing else - the outpoint and the stake point were random. Every lock
+      // is public in the federation; this seat answers with the ones it verified.
+      if (req.method === 'GET' && url.pathname === '/stake-lock') {
+        const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
+        const refund = (url.searchParams.get('refund') || '').toLowerCase();
+        if (rid.length !== 32 || !/^0[23][0-9a-f]{64}$/.test(refund))
+          return text(res, 400, 'a stake lock is asked for by a round id and a 33-byte refund key');
+        res.writeHead(200, { 'content-type': 'application/json', ...CORS });
+        return res.end(JSON.stringify(round.stakeLocksFor(new Uint8Array(rid), refund)));
+      }
+
       // THIS SEAT'S SIGNED CLAIM KEY (v4.6.2 §23.1 step 0, F3): "each seat signs
       // (round_id, claim_pk). The key is valid only with signatures from >=5
       // seats; a client MUST refuse to lock to a key without them." The
