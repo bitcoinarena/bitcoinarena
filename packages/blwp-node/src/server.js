@@ -1034,6 +1034,46 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         return bytes(res, 201, id);
       }
 
+      // THE LOBBY (M3.3-34, §25): the rounds THIS node holds that a player can
+      // still come to - open, entry not yet closed - with what joining asks of
+      // them and how many players this node has seated and taken ticks from.
+      // "A lobby carries nothing": every id here is a name, and the page fetches
+      // each contract and hashes it before it shows a row. `free` and `wallet`
+      // are read off the contract this node stores; the counts are its own.
+      if (req.method === 'GET' && url.pathname === '/rounds') {
+        const nowMs = BigInt(round.now());
+        const listed = [];
+        for (const held of round.openRounds()) {
+          let c;
+          try { c = decodeRoundContract(held.contract); } catch { continue; }
+          if (nowMs >= c.entryCloseMs) continue;          // entry is over: nobody can join it
+          const id = toHex(held.roundId);
+          const players = round.playersOf(held.roundId);
+          const free = c.stakeMsat === 0n;
+          const locks = c.custody === 'FEDERATION' && !c.federationId.every((x) => x === 0);
+          let watchers = 0;
+          for (const w of watching.values()) if (toHex(w.roundId) === id) watchers++;
+          listed.push({
+            id,
+            // §5A.5: before committee_time the lobby shows "committee: pending"
+            // and offers no entry; the entry door refuses by the same rule.
+            phase: nowMs < c.committeeTimeMs ? 'pending' : 'open',
+            committeeTimeMs: String(c.committeeTimeMs), startTimeMs: String(c.startTimeMs),
+            entryCloseMs: String(c.entryCloseMs), stakeMsat: String(c.stakeMsat),
+            // WHAT JOINING ASKS OF THE PLAYER: nothing, a Lightning payment, or a
+            // federation stake lock. A free round needs no wallet and no Lightning.
+            free, wallet: free ? 'none' : (locks ? 'federation-lock' : 'lightning'),
+            seatedHere: round.seats(held.roundId).length > 0,
+            seated: players.seated, playing: players.playing, watching: watchers,
+          });
+        }
+        listed.sort((x, y) => (x.phase === y.phase
+          ? (BigInt(x.entryCloseMs) < BigInt(y.entryCloseMs) ? -1 : 1)
+          : (x.phase === 'open' ? -1 : 1)));
+        res.writeHead(200, { 'content-type': 'application/json', ...CORS });
+        return res.end(JSON.stringify({ nowMs: String(nowMs), rounds: listed }));
+      }
+
       if (req.method === 'GET' && url.pathname === '/round') {
         const row = round.get(Buffer.from(url.searchParams.get('id') || '', 'hex'));
         if (!row) return text(res, 404, 'no such round');

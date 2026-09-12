@@ -1078,6 +1078,24 @@ export class Round {
    * EVERY ENTRY OF A ROUND, so a daemon that has just closed one can find the
    * runs it must replay without being told what they are.
    */
+  /**
+   * EVERY ROUND THIS NODE HOLDS THAT IS STILL OPEN, for the lobby door (§25,
+   * M3.3-34): the contract as stored and when this node opened it. A closed
+   * round is nobody's lobby business.
+   */
+  openRounds() {
+    return this.db.prepare('SELECT round_id, contract, opened_ms FROM rounds WHERE state = ? ORDER BY opened_ms')
+      .all(OPEN)
+      .map((r) => ({ roundId: new Uint8Array(r.round_id), contract: new Uint8Array(r.contract), openedMs: r.opened_ms }));
+  }
+
+  /** How many players this node seated in a round, and how many it has taken ticks from. */
+  playersOf(roundIdBytes) {
+    const seated = this.db.prepare('SELECT COUNT(*) n FROM entries WHERE round_id = ?').get(roundIdBytes).n;
+    const playing = this.db.prepare('SELECT COUNT(DISTINCT entry_id) n FROM ticks WHERE round_id = ?').get(roundIdBytes).n;
+    return { seated, playing };
+  }
+
   entriesOf(roundIdBytes) {
     return this.db.prepare(
       'SELECT entry_id, contract FROM entries WHERE round_id = ? ORDER BY entry_id')
