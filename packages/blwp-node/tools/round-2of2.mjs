@@ -409,13 +409,16 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   // rather than typed into a literal, and the census refuses a round that
   // names none - so deriving from the object in hand would ask a different
   // question from the one the node asks.
+  // A FUNCTION OF THE CONTRACT AND THE VIEW, because every round this tool
+  // opens (M3.3-34's opener) derives its own root the same way.
+  const censusRootFor = (c) => {
   const byTxid = new Map();
   for (const block of censusView.blocks)
     for (const raw of block.transactions || []) {
       try { byTxid.set(toHex(parseTransaction(raw).txid), raw); } catch { /* not one */ }
     }
 
-  const asSeen = decodeRoundContract(encodeRoundContract(contract));
+  const asSeen = decodeRoundContract(encodeRoundContract(c));
   const census = deriveCensus(censusView, {
     contract: asSeen,
     bond: bondSetFor('regtest'),
@@ -430,7 +433,9 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     },
   });
   if (!census.ok) throw new Error('this tool could not derive its own census: ' + census.why);
-  contract.censusRoot = census.root;
+  return census.root;
+  };
+  contract.censusRoot = censusRootFor(contract);
 
   // AND THE ROUND IS PUBLISHED BELOW ITS BEACON BLOCK (5A.5, v4.6.2): a node
   // seats only a round its own chain shows published strictly before the
@@ -448,23 +453,26 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   // wallet, in the next block - then the chain moves past committee_time.
   // Mined in batches until the rule names a block, waiting out the seconds the
   // chain's clock needs, and bounded, so a chain that never names one says so.
-  if (onChain) {
+  // One function for every round this tool publishes: the first, and each one
+  // the opener adds (M3.3-34) - each under its own beacon block.
+  async function publishOnChain(c) {
     const raw = cli('createrawtransaction', '[]',
-      JSON.stringify([{ data: toHex(publicationPayload(roundId(contract))) }]));
-    const funded = JSON.parse(cli('fundrawtransaction', raw)).hex;
-    onChain.include([JSON.parse(cli('signrawtransactionwithwallet', funded)).hex]);
+      JSON.stringify([{ data: toHex(publicationPayload(roundId(c))) }]));
+    const paid = JSON.parse(cli('fundrawtransaction', raw)).hex;
+    onChain.include([JSON.parse(cli('signrawtransactionwithwallet', paid)).hex]);
     let tries = 0;
     for (;;) {
       censusView = onChain.blocksFrom(Math.max(0, bondHeight - 20), onChain.height());
-      const named = beaconFromChain(contract,
+      const named = beaconFromChain(c,
         { headers: censusView.blocks.map((b) => b.header), firstHeight: censusView.firstHeight });
-      if (named.ok) break;
+      if (named.ok) return named;
       if (++tries > 8) throw new Error('this chain names no beacon after 8 batches: ' + named.why);
-      const wait = Number(committeeTimeMs) + 1500 - Date.now();
+      const wait = Number(c.committeeTimeMs) + 1500 - Date.now();
       if (wait > 0) await new Promise((r) => setTimeout(r, wait));
       onChain.mine(6);
     }
   }
+  if (onChain) await publishOnChain(contract);
 
   // AND THE BEACON IS READ BEFORE THE ROUND IS POSTED, because posting is when
   // a node seats: `POST /round` calls `seatRound`, seating needs the committee
@@ -491,22 +499,25 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   // daemons gives it an id - what BLWP_FUNDED_ROUNDS does for main.js.
   if (funded.nameRound) funded.nameRound(roundId(contract));
   if (beforeRound) await beforeRound();
-  const body = encodeRoundContract(contract);
-  const opened = [];
-  try {
+  // BOTH DAEMONS, ONE ROUND: posted to each, and both must name it the same.
+  async function postRound(c) {
+    const body = encodeRoundContract(c);
+    const opened = [];
     for (const node of [a, b]) {
       const r = await fetch(`http://${host}:${node.port}/round`, { method: 'POST', body });
       if (!r.ok) throw new Error(`${node.port} refused the round: ${await r.text()}`);
       opened.push(toHex(new Uint8Array(await r.arrayBuffer())));
     }
-  } catch (e) {
+    const rid = toHex(roundId(c));
+    if (opened.some((o) => o !== rid))
+      throw new Error('the two daemons named the round differently: ' + opened.join(' '));
+    return rid;
+  }
+  let id;
+  try { id = await postRound(contract); } catch (e) {
     await a.close(); await b.close();
     throw e;
   }
-  const id = toHex(roundId(contract));
-
-  if (opened.some((o) => o !== id))
-    throw new Error('the two daemons named the round differently: ' + opened.join(' '));
 
   // WHERE A BROWSER CAN ACTUALLY REACH THESE DAEMONS.
   //
@@ -543,9 +554,73 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     + `&bond=${reach[0]}/bond`
     + `&advert=${toHex(bonded[0].signature)}`
     + (invite ? `&federation=${invite}` : '');
+  // THE LOBBY'S LINK (M3.3-34): the same names, and no round. The page asks the
+  // named nodes what they hold and checks every round it is told of.
+  const lobbyUrl = `${page}/?node=${reach[0]},${reach[1]}`
+    + `&bond=${reach[0]}/bond`
+    + `&advert=${toHex(bonded[0].signature)}`
+    + (invite ? `&federation=${invite}` : '');
+
+  // THE NEXT ROUND, ON THE SAME TWO DAEMONS AND THE SAME CHAIN (M3.3-34).
+  //
+  // A lobby with one round in it is empty two minutes after that round's entry
+  // closes. So the tool opens another the way it opened the first: the same
+  // committee's contract with new times - committee_time just past the tip's
+  // own timestamp, the same entry window - its census root derived again, its
+  // hash published in the next block and the chain mined until its beacon block
+  // is named ABOVE that publication, and then posted to both daemons.
+  //
+  // ONLY ON A BITCOIND. The fixture chain's clock is fixed (its blocks are dated
+  // from 2026-09-06), so a round opened on it today would be past its entry
+  // close before anybody saw it: refused by name rather than listed as open.
+  const held = [contract];
+  async function openNext() {
+    if (!onChain) throw new Error('a later round needs a bitcoind: the fixture chain\'s clock is fixed, '
+      + 'so a round opened on it now would already be past its entry close');
+    // JUST PAST THE LATER OF THE TIP'S TIME AND NOW. The tip's own time is what
+    // keeps the publication block from being the beacon (its median cannot pass
+    // it) - and it is the LAST block's time, not the clock's. Measured: with no
+    // block mined since the first round, the tip was two minutes old, the next
+    // round opened with 59 s of its 180 s entry left, and the keeper opened a
+    // second one 6 s later. Now is later than that tip, so the rule still holds.
+    const tip = onChain.blocksFrom(onChain.height(), onChain.height()).blocks[0].header;
+    const committee = (BigInt(Math.max(blockTimeOf(tip), Math.floor(Date.now() / 1000))) + 2n) * 1000n;
+    const next = { ...contract, committeeTimeMs: committee, startTimeMs: committee + MIN_ENTRY_WINDOW_MS,
+      entryCloseMs: committee + MIN_ENTRY_WINDOW_MS + (contract.entryCloseMs - contract.startTimeMs) };
+    censusView = onChain.blocksFrom(Math.max(0, bondHeight - 20), onChain.height());
+    next.censusRoot = censusRootFor(next);
+    await publishOnChain(next);
+    const seen = beacon ? await beacon.refresh(next) : { ok: false, why: 'no beacon' };
+    if (!seen.ok) throw new Error('the next round names no beacon: ' + seen.why);
+    if (funded.nameRound) funded.nameRound(roundId(next));
+    const nextId = await postRound(next);
+    held.push(next);
+    return nextId;
+  }
+
+  // AND KEEP ONE JOINABLE: whenever no round this tool opened has more than
+  // `leadMs` of entry left, open the next. One at a time; a failure is handed
+  // to `onError` and the next check tries again.
+  let keeper = null;
+  function keepOpen({ everyMs = 5000, leadMs = 60000, onOpen = () => {}, onError = () => {} } = {}) {
+    if (keeper) return keeper;
+    let opening = null;
+    const check = () => {
+      if (opening) return;
+      const now = BigInt(Date.now());
+      if (held.some((c) => c.entryCloseMs > now + BigInt(leadMs))) return;
+      opening = openNext().then(onOpen, onError).finally(() => { opening = null; });
+    };
+    const timer = setInterval(check, everyMs);
+    check();
+    keeper = { stop() { clearInterval(timer); keeper = null; }, get opening() { return opening; } };
+    return keeper;
+  }
 
   return {
-    id, url, contract, a, get b() { return b; }, beacon: beaconSeen,
+    id, url, lobbyUrl, contract, openNext, keepOpen,
+    rounds: () => held.map((c) => ({ id: toHex(roundId(c)), committeeTimeMs: c.committeeTimeMs, entryCloseMs: c.entryCloseMs })),
+    a, get b() { return b; }, beacon: beaconSeen,
     // DAEMON B RESTARTS: the same store, identity, options and port, served
     // again - what an operator's restart is, for measuring what a client does
     // across one. Nothing it held is lost, because the store is the same.
@@ -554,7 +629,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     headers: [`${reach[0]}/headers`, `${reach[1]}/headers`],
     bond: `${reach[0]}/bond`,
     advert: toHex(bonded[0].signature),
-    async close() { await a.close(); await b.close(); },
+    async close() { if (keeper) keeper.stop(); await a.close(); await b.close(); },
   };
 }
 
@@ -671,6 +746,21 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   console.log('');
   console.log(round.url);
   console.log('');
+  // THE LOBBY (M3.3-34): the same link with no round - the page lists what the
+  // daemons hold. With a bitcoind the tool keeps a free round joinable; on the
+  // fixture chain it cannot (its clock is fixed) and says so.
+  console.log('Or open the LOBBY, which lists the rounds these daemons hold:');
+  console.log('');
+  console.log(round.lobbyUrl);
+  console.log('');
+  if (rpc) {
+    round.keepOpen({
+      onOpen: (id) => console.log(`opened   ${id} - the lobby lists it`),
+      onError: (e) => console.log(`NOT OPENED: ${e.message}`),
+    });
+  } else {
+    console.log('NOTE: no bitcoind, so no further round is opened: the lobby empties when this one\'s entry closes.');
+  }
 
   // MIXED CONTENT IS A REAL WALL AND IS NAMED HERE RATHER THAN DISCOVERED.
   // An https page fetching http://127.0.0.1 is a mixed-content request; a
