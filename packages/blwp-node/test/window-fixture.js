@@ -67,7 +67,7 @@ export function paidPort() {
   };
 }
 
-// THE START DEADLINE THESE ROUNDS NAME (§16, ENTRY_VOID): every player here
+// THE START DEADLINE THESE ROUNDS NAME (§15, a late start): every player here
 // plants ONE first mark at the end of its run, so the round names a deadline
 // past it (planted-marks.js says why); the omitted default is not moved.
 import { PLANTED_FIRST_MARK_DEADLINE } from './planted-marks.js';

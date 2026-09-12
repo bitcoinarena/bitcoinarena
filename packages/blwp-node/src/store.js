@@ -485,11 +485,13 @@ export function openStore(path = ':memory:') {
       made_ms      INTEGER NOT NULL
     );
 
-    -- AN ENTRY THIS SEAT HOLDS ENTRY_VOID (§16): its first mark, signed by the
-    -- player, names a tick after join_tick + the round's start deadline. The
-    -- mark is the evidence and is kept whole; it was refused, not receipted.
-    -- Not a PlayerResult: nothing was played to a result. No mark, no row.
-    CREATE TABLE IF NOT EXISTS entry_voids (
+    -- AN ENTRY THIS SEAT HOLDS FORFEIT FOR A LATE START (§15, §13C): its first
+    -- mark, signed by the player, names a tick after join_tick + the round's
+    -- start deadline - the player's own act, not an outage and not a refund.
+    -- The mark is the evidence and is kept whole; it was refused, not
+    -- receipted. Not a PlayerResult: nothing was played. No mark, no row. The
+    -- lock is claimed only by W4's settlement; until then it refunds at expiry.
+    CREATE TABLE IF NOT EXISTS start_forfeits (
       entry_id    BLOB PRIMARY KEY,
       round_id    BLOB NOT NULL,
       mark_tick   INTEGER NOT NULL,

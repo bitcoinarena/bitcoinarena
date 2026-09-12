@@ -1,22 +1,25 @@
-// SEATS RECORD ENTRY_VOID FROM THE PLAYER'S FIRST MARK (§16), AND FORWARD IT.
+// A LATE FIRST MARK IS FORFEIT AT BOTH SEATS (§15, §13C), AND IS FORWARDED.
 //
-// The rule (protocol entry-void.js): a first mark signed at a tick after
-// join_tick + the round's start deadline is ENTRY_VOID - the seat refuses it
-// and keeps the signed mark as evidence. A first mark in time is not Void,
-// even where one seat has not seen it. No first mark at all is NOT ENTRY_VOID
-// (§15's walk-away, unbuilt, listed).
+// The rule (protocol first-mark.js): a first mark signed at a tick after
+// join_tick + the round's start deadline is the player's own late start -
+// FORFEIT, not ENTRY_VOID: a refund the player could choose by starting late is
+// one §13C forbids. The seat refuses the mark and keeps it as evidence. A first
+// mark in time decides nothing, even where one seat has not seen it. No first
+// mark at all is neither ENTRY_VOID nor FORFEIT (§15's walk-away, unbuilt).
 //
-// Forwarding: a seat that takes a first mark hands it - with the batches it
-// commits to - to the round's other seats, so a seat the player never reached
-// holds it (and a late one is Void there too).
+// Forwarding: a seat that takes or refuses a first mark hands it - with the
+// batches it commits to - to the round's other seats, so a seat the player
+// never reached holds it (and a late one is FORFEIT there too).
 //
 // Two in-process seats of a lock round, the fixture's delivering winner (join
 // tick 0): a run of inputs 0..59, a mark at 60, inputs 60..1319, a mark at 1320.
 // A LATE run is the same drive with its FIRST mark at 1320. The round omits the
-// deadline: 900 ticks.
+// deadline: 900 ticks. The lock is not spent: until W4 a FORFEIT lock refunds
+// at expiry, the money hole every loser has.
 //
-// MEASURED BEFORE (tools/entry-void-before.mjs, cc3102b): no seat records a
-// Void, no seat forwards a mark, and a down seat caught up late turned DELIVERED.
+// MEASURED BEFORE (tools/entry-void-before.mjs, cc3102b): no seat recorded
+// anything for a late start, no seat forwarded a mark, and a down seat caught
+// up late turned DELIVERED.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { ed25519 } from '@noble/curves/ed25519.js';
@@ -132,10 +135,10 @@ async function seatAndBuild(w, { firstAt = 60 } = {}) {
 const answer = (s) => (typeof s === 'string' ? (s.length > 30 && !s.startsWith('error') ? 'receipt' : s.slice(0, 90)) : 'receipt');
 const holdsFirst = (d, run) => d.round.holdsMark(run.firstId);
 async function outcomeAt(d, w, run) {
-  const v = d.round.entryVoid(run.eid);
+  const v = d.round.startForfeit(run.eid);
   const results = d.round.results(w.rid, run.eid).map((r) => decodePlayerResult(splitSignedResult(r.bytes).body).outcome);
   const f = await fetch(`http://127.0.0.1:${d.port}/forfeit?round=${toHex(w.rid)}&entry=${toHex(run.eid)}`);
-  return { entryVoid: v ? `ENTRY_VOID at ${v.markTick} > ${v.lastTick}` : null, results: [...new Set(results)], finality: resultFinality(d.round, w.rid, run.eid).state,
+  return { lateStart: v ? `FORFEIT at ${v.markTick} > ${v.lastTick}` : null, results: [...new Set(results)], finality: resultFinality(d.round, w.rid, run.eid).state,
     forfeit: f.status };
 }
 async function closeAndSettle(w, run) {
@@ -145,9 +148,9 @@ async function closeAndSettle(w, run) {
     if (f.ok || !/before the result is final/.test(await f.text())) break;
   }
 }
-const untilForwarded = async (d, run) => { for (let t = Date.now(); Date.now() - t < 5000; await wait(100)) if (holdsFirst(d, run) || d.round.entryVoid(run.eid)) return true; return false; };
+const untilForwarded = async (d, run) => { for (let t = Date.now(); Date.now() - t < 5000; await wait(100)) if (holdsFirst(d, run) || d.round.startForfeit(run.eid)) return true; return false; };
 
-test('a first mark in time is not Void - at both seats with the player at both, and at B by forward when the player reaches only A', async () => {
+test('a first mark in time decides nothing - at both seats with the player at both, and at B by forward when the player reaches only A', async () => {
   const w = await seats();
   try {
     const run = await seatAndBuild(w);
@@ -164,12 +167,12 @@ test('a first mark in time is not Void - at both seats with the player at both, 
     console.log('  FACTS (in time):', JSON.stringify(facts));
     assert.deepEqual(facts, { deadline: 900, firstMarkTick: 60, saidA: ['60', 'receipt'], bHoldsTheFirstMarkByForward: true,
       receiptsOfTheFirstMarkAtB: 2,
-      a: { entryVoid: null, results: ['DELIVERED'], finality: 'FINAL', forfeit: 200 },
-      b: { entryVoid: null, results: ['DELIVERED'], finality: 'FINAL', forfeit: 200 } });
+      a: { lateStart: null, results: ['DELIVERED'], finality: 'FINAL', forfeit: 200 },
+      b: { lateStart: null, results: ['DELIVERED'], finality: 'FINAL', forfeit: 200 } });
   } finally { await w.close(); }
 });
 
-test('a first mark after join + deadline is ENTRY_VOID at the seat it reaches, and at the other by forward; nothing is DELIVERED', async () => {
+test('a first mark after join + deadline is FORFEIT at the seat it reaches, and at the other by forward; nothing is DELIVERED', async () => {
   const w = await seats();
   try {
     const run = await seatAndBuild(w, { firstAt: END });
@@ -177,17 +180,17 @@ test('a first mark after join + deadline is ENTRY_VOID at the seat it reaches, a
     for (const m of run.messages) saidA.push(answer(await say(w.a.port, m)));
     const forwarded = await untilForwarded(w.b, run);
     await closeAndSettle(w, run);
-    const facts = { firstMarkTick: END, saidA: saidA.map((s) => s.replace(/: the first mark.*/, '')), bVoidByForward: forwarded,
+    const facts = { firstMarkTick: END, saidA: saidA.map((s) => s.replace(/: the first mark.*/, '')), bForfeitByForward: forwarded,
       a: await outcomeAt(w.a, w, run), b: await outcomeAt(w.b, w, run), aStoredTheMark: holdsFirst(w.a, run) };
     console.log('  FACTS (late):', JSON.stringify(facts));
-    assert.deepEqual(facts, { firstMarkTick: 1320, saidA: ['1320', 'error ENTRY_VOID'], bVoidByForward: true,
-      a: { entryVoid: 'ENTRY_VOID at 1320 > 900', results: [], finality: null, forfeit: 409 },
-      b: { entryVoid: 'ENTRY_VOID at 1320 > 900', results: [], finality: null, forfeit: 409 },
+    assert.deepEqual(facts, { firstMarkTick: 1320, saidA: ['1320', 'error FORFEIT'], bForfeitByForward: true,
+      a: { lateStart: 'FORFEIT at 1320 > 900', results: [], finality: null, forfeit: 409 },
+      b: { lateStart: 'FORFEIT at 1320 > 900', results: [], finality: null, forfeit: 409 },
       aStoredTheMark: false });
   } finally { await w.close(); }
 });
 
-test('a down seat caught up late with a late first mark does not turn DELIVERED: it is ENTRY_VOID there too', async () => {
+test('a down seat caught up late with a late first mark does not turn DELIVERED: it is FORFEIT there too', async () => {
   const w = await seats();
   try {
     const run = await seatAndBuild(w, { firstAt: END });
@@ -201,13 +204,13 @@ test('a down seat caught up late with a late first mark does not turn DELIVERED:
     const facts = { saidA: saidA.map((s) => s.replace(/: the first mark.*/, '')), saidB: saidB.map((s) => s.replace(/: the first mark.*/, '')),
       a: await outcomeAt(w.a, w, run), b: await outcomeAt(w.b, w, run) };
     console.log('  FACTS (caught up late):', JSON.stringify(facts));
-    assert.deepEqual(facts, { saidA: ['1320', 'error ENTRY_VOID'], saidB: ['1320', 'error ENTRY_VOID'],
-      a: { entryVoid: 'ENTRY_VOID at 1320 > 900', results: [], finality: null, forfeit: 409 },
-      b: { entryVoid: 'ENTRY_VOID at 1320 > 900', results: [], finality: null, forfeit: 409 } });
+    assert.deepEqual(facts, { saidA: ['1320', 'error FORFEIT'], saidB: ['1320', 'error FORFEIT'],
+      a: { lateStart: 'FORFEIT at 1320 > 900', results: [], finality: null, forfeit: 409 },
+      b: { lateStart: 'FORFEIT at 1320 > 900', results: [], finality: null, forfeit: 409 } });
   } finally { await w.close(); }
 });
 
-test('no first mark at all is not ENTRY_VOID at either seat (the §15 walk-away stays a hole, not a Void)', async () => {
+test('no first mark at all is neither ENTRY_VOID nor FORFEIT at either seat (the §15 walk-away stays a hole)', async () => {
   const w = await seats();
   try {
     const run = await seatAndBuild(w);
@@ -215,7 +218,7 @@ test('no first mark at all is not ENTRY_VOID at either seat (the §15 walk-away 
     const facts = { a: await outcomeAt(w.a, w, run), b: await outcomeAt(w.b, w, run),
       lockHeld: w.port.locks.has(`${toHex(run.outpoint.txid)}:${run.outpoint.outIdx}`) };
     console.log('  FACTS (no mark):', JSON.stringify(facts));
-    assert.deepEqual(facts, { a: { entryVoid: null, results: [], finality: null, forfeit: 409 },
-      b: { entryVoid: null, results: [], finality: null, forfeit: 409 }, lockHeld: true });
+    assert.deepEqual(facts, { a: { lateStart: null, results: [], finality: null, forfeit: 409 },
+      b: { lateStart: null, results: [], finality: null, forfeit: 409 }, lockHeld: true });
   } finally { await w.close(); }
 });

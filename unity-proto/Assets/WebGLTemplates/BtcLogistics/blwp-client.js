@@ -506,8 +506,8 @@ const MIN_ENTRY_WINDOW_MS = 60000n;
 /**
  * THE START DEADLINE A ROUND GETS WHEN IT NAMES NONE (§16), in ticks after a
  * player's join tick. A first mark signed at a tick after join_tick + this is
- * too late to be the first financial tick: the entry is ENTRY_VOID
- * (entry-void.js). §16 names no number; this is the page's own window.
+ * the player's own late start: the entry is FORFEIT, not ENTRY_VOID
+ * (first-mark.js; §13C). §16 names no number; this is the page's own window.
  *
  * MEASURED, not chosen: the core runs 65536/1092 = 60.015 ticks a second; the
  * page marks once a second (MarkEvery 60), so its first mark names tick 60 -

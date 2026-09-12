@@ -31,7 +31,7 @@ import { OPEN, CLOSED, nodeIdentity } from './store.js';
 import { receiptsNeeded } from '../../protocol/src/genesis.js';
 import { decodeHandout } from '../../protocol/src/handout.js';
 import { stakePointIsTheHandouts } from '../../protocol/src/contracts.js';
-import { entryVoidOutcome, startDeadlineOf } from '../../protocol/src/entry-void.js';
+import { firstMarkOutcome, startDeadlineOf } from '../../protocol/src/first-mark.js';
 
 /**
  * 5-of-7 unless the round's contract is the 2-slot test genesis.
@@ -597,25 +597,26 @@ export class Round {
     try { ok = ed25519.verify(signature, id, sessionPubkey); } catch { ok = false; }
     if (!ok) throw new Error('the signature does not verify under the entry\'s session key');
 
-    // ENTRY_VOID (§16): A FIRST MARK SIGNED AFTER join_tick + THE START DEADLINE.
+    // A FIRST MARK SIGNED AFTER join_tick + THE START DEADLINE IS FORFEIT (§15).
     //
     // The first mark is the one that chains to nothing. Its tick is the
     // player's own, under the entry's session key, so every seat reads the same
-    // number and no clock is consulted. Past the round's line it came too late
-    // to be the first financial tick: it is refused - no receipt - and kept as
-    // the evidence the entry is ENTRY_VOID. In time, it goes on as any mark.
-    // A player with no first mark is not decided here at all (§15, unbuilt).
+    // number and no clock is consulted. Past the round's line it is the
+    // player's own late start: refused - no receipt - and kept as the evidence
+    // the entry is FORFEIT. Not ENTRY_VOID: a refund the player could choose by
+    // starting late is one §13C forbids. In time, it goes on as any mark. A
+    // player with no first mark is not decided here at all (§15, unbuilt).
     if (same(c.previousHash, NO_PREVIOUS)) {
       const joined = decodeEntryContract(new Uint8Array(entry.contract));
       let decided;
       try {
-        decided = entryVoidOutcome({ joinTick: joined.joinTick,
+        decided = firstMarkOutcome({ joinTick: joined.joinTick,
           deadlineTicks: startDeadlineOf(decodeRoundContract(new Uint8Array(round.contract))),
           firstMark: { tick: c.tick, previousHash: c.previousHash } });
       } catch (e) { throw new Error(`that first mark is refused: ${e.message}`); }
       if (decided.outcome) {
-        this.putEntryVoid({ entryId: c.entryId, roundId: c.roundId, markTick: c.tick, lastTick: decided.lastTick, mark: bytes, why: decided.why });
-        throw new Error(`ENTRY_VOID: ${decided.why}`);
+        this.putStartForfeit({ entryId: c.entryId, roundId: c.roundId, markTick: c.tick, lastTick: decided.lastTick, mark: bytes, why: decided.why });
+        throw new Error(`FORFEIT: ${decided.why}`);
       }
     }
 
@@ -1533,14 +1534,14 @@ export class Round {
   }
 
   /** The committee's forfeit of a qualifier's lock, as this seat keeps it (W5b). */
-  /** §16: this seat holds the entry ENTRY_VOID - its first mark, kept whole, is after the line. */
-  putEntryVoid({ entryId, roundId, markTick, lastTick, mark, why }) {
-    this.db.prepare('INSERT OR IGNORE INTO entry_voids (entry_id, round_id, mark_tick, last_tick, mark, why, decided_ms) '
+  /** §15: this seat holds the entry FORFEIT for a late start - its first mark, kept whole, is after the line. */
+  putStartForfeit({ entryId, roundId, markTick, lastTick, mark, why }) {
+    this.db.prepare('INSERT OR IGNORE INTO start_forfeits (entry_id, round_id, mark_tick, last_tick, mark, why, decided_ms) '
       + 'VALUES (?, ?, ?, ?, ?, ?, ?)').run(entryId, roundId, markTick, lastTick, mark, why, this.now());
   }
 
-  entryVoid(entryIdBytes) {
-    const r = this.db.prepare('SELECT * FROM entry_voids WHERE entry_id = ?').get(entryIdBytes);
+  startForfeit(entryIdBytes) {
+    const r = this.db.prepare('SELECT * FROM start_forfeits WHERE entry_id = ?').get(entryIdBytes);
     return r ? { roundId: new Uint8Array(r.round_id), markTick: r.mark_tick, lastTick: r.last_tick,
       mark: new Uint8Array(r.mark), why: r.why, decidedMs: r.decided_ms } : null;
   }

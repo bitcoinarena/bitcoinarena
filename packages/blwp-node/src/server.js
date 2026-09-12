@@ -331,11 +331,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     peers, fetcher: (u, o) => fetch(u, o),
   });
 
-  // THE PLAYER'S FIRST MARK, FORWARDED TO THE ROUND'S OTHER SEATS (§16).
+  // THE PLAYER'S FIRST MARK, FORWARDED TO THE ROUND'S OTHER SEATS.
   //
-  // A seat the player never reached cannot tell a Void from a run, and cannot
-  // receipt a run it never saw start. So a seat that takes a first mark - or
-  // refuses it as ENTRY_VOID - hands it on at once: the signed mark, the
+  // A seat the player never reached cannot tell a late start from a run, and
+  // cannot receipt a run it never saw start. So a seat that takes a first mark
+  // - or refuses it as a late start, FORFEIT - hands it on at once: the signed mark, the
   // batches it commits to (a seat receipts only a mark whose inputs it holds),
   // and this seat's own receipt. Each other seat applies the same rule to the
   // same signed tick. What each answered is kept by entry, for whoever asks.
@@ -352,7 +352,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   async function forwardFirstMark({ bytes, c }) {
     const id = checkpointId(c);
     const held = round.holdsMark(id);
-    if (!held && !round.entryVoid(c.entryId)) return null;      // refused for another reason: nothing to hand on
+    if (!held && !round.startForfeit(c.entryId)) return null;      // refused for another reason: nothing to hand on
     const batches = held ? round.batchesThrough(c.roundId, c.entryId, c.inputChainHash) : [];
     const own = held ? round.ownReceipt(id) : null;
     const body = JSON.stringify({ mark: toHex(bytes), batches: batches.map((b) => toHex(b)), receipt: own ? toHex(own) : null });
@@ -363,7 +363,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         let got;
         try { got = JSON.parse(await r.text()); } catch { got = {}; }
         if (r.ok && got.receipt) { try { round.takeReceipt(fromHex(String(got.receipt))); } catch { /* not this mark's */ } }
-        said.push({ peer, status: r.status, answer: got.void ? 'ENTRY_VOID' : (got.receipt ? 'receipted' : String(got.why || '').slice(0, 120)) });
+        said.push({ peer, status: r.status, answer: got.forfeit ? 'FORFEIT' : (got.receipt ? 'receipted' : String(got.why || '').slice(0, 120)) });
       } catch (e) { said.push({ peer, status: 0, answer: e.message }); }
     }
     firstMarkForwards.set(toHex(c.entryId), said);
@@ -1074,10 +1074,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         return bytes(res, 201, id);
       }
 
-      // A FIRST MARK HANDED ON BY ANOTHER SEAT (§16). The same checks a player's
+      // A FIRST MARK HANDED ON BY ANOTHER SEAT. The same checks a player's
       // own send meets - a seated entry, a stake this seat has seen, the mark's
       // own signature and chain - and the same rule: taken and receipted in
-      // time, refused and recorded ENTRY_VOID after join_tick + the deadline.
+      // time, refused and recorded FORFEIT (a late start) after join_tick + the deadline.
       // The forwarder's receipt is kept beside this seat's own.
       if (req.method === 'POST' && url.pathname === '/first-mark') {
         const answer = (status, body) => { res.writeHead(status, { 'content-type': 'application/json', ...CORS }); return res.end(JSON.stringify(body)); };
@@ -1098,20 +1098,20 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         }
         let receipt;
         try { receipt = round.checkpoint(bytes); }
-        catch (e) { return answer(409, /^ENTRY_VOID/.test(e.message) ? { void: true, why: e.message } : { why: e.message }); }
+        catch (e) { return answer(409, /^FORFEIT/.test(e.message) ? { forfeit: true, why: e.message } : { why: e.message }); }
         if (got.receipt) { try { round.takeReceipt(fromHex(String(got.receipt))); } catch { /* not this mark's */ } }
         return answer(200, { receipt: toHex(receipt) });
       }
 
-      // WHAT THIS SEAT HOLDS ABOUT AN ENTRY'S START (§16): ENTRY_VOID with the
+      // WHAT THIS SEAT HOLDS ABOUT AN ENTRY'S START: FORFEIT for a late start, with the
       // first mark's tick and the line it missed, or 404 - no mark is no record.
-      if (req.method === 'GET' && url.pathname === '/entry-void') {
+      if (req.method === 'GET' && url.pathname === '/start-forfeit') {
         const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
         if (eid.length !== 32) return text(res, 400, 'an entry is asked for by its id');
-        const v = round.entryVoid(new Uint8Array(eid));
-        if (!v) return text(res, 404, 'this seat holds no ENTRY_VOID for that entry');
+        const v = round.startForfeit(new Uint8Array(eid));
+        if (!v) return text(res, 404, 'this seat holds no FORFEIT for a late first mark of that entry');
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
-        return res.end(JSON.stringify({ outcome: 'ENTRY_VOID', markTick: v.markTick, lastTick: v.lastTick, why: v.why,
+        return res.end(JSON.stringify({ outcome: 'FORFEIT', markTick: v.markTick, lastTick: v.lastTick, why: v.why,
           mark: toHex(v.mark), forwarded: firstMarkForwards.get(toHex(eid)) || null }));
       }
 
