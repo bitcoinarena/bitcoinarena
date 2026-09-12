@@ -218,12 +218,19 @@ test('(c) a late first mark is still FORFEIT at both seats - never Void, never a
     await until(() => w.b.round.startForfeit(late.eid));
     const none = await seatAndBuild(w);
     await closeAndSettle(w, late);
+    // WAITED ON, NOT RACED: the late start is now signed and final at once, so
+    // the wait above ends before the no-mark entry need be FINAL at both seats
+    // (measured in the full suite: A PROVISIONALLY_FINAL, B FINAL). Both are read
+    // once both are FINAL - the values asserted are unchanged.
+    await until(() => [w.a, w.b].every((d) => resultFinality(d.round, w.rid, none.eid).state === 'FINAL'), 15000);
     const facts = { late: { a: recordAt(w.a, w, late), b: recordAt(w.b, w, late), forfeit: (await forfeitAt(w.a, w, late)).status },
       noMark: { a: recordAt(w.a, w, none), b: recordAt(w.b, w, none), forfeit: (await forfeitAt(w.a, w, none)).status,
         lockHeld: w.port.locks.has(`${toHex(none.outpoint.txid)}:${none.outpoint.outIdx}`) } };
     console.log('  FACTS (c, d):', JSON.stringify(facts));
     assert.deepEqual(facts, {
-      late: { a: { recorded: 'FORFEIT', results: [], finality: null }, b: { recorded: 'FORFEIT', results: [], finality: null }, forfeit: 409 },
+      // (c) ruled 2026-09-12 (M3.3-34, late start at close): measured before,
+      // no result at either seat, finality null.
+      late: { a: { recorded: 'FORFEIT', results: ['FORFEIT'], finality: 'FINAL' }, b: { recorded: 'FORFEIT', results: ['FORFEIT'], finality: 'FINAL' }, forfeit: 409 },
       // (d) ruled 2026-09-12 (§15): measured before, no result at either seat.
       noMark: { a: { recorded: null, results: ['FORFEIT'], finality: 'FINAL' }, b: { recorded: null, results: ['FORFEIT'], finality: 'FINAL' }, forfeit: 409, lockHeld: true } });
   } finally { await w.close(); }

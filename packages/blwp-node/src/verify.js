@@ -273,11 +273,13 @@ export class Verifier {
     // run over all 94 - two transcripts, never 2 of 2, stuck. A peer whose
     // receipts could not change it (the prefix already whole, or too few seats
     // down to carry the next mark) stops nothing. An entry with no mark here
-    // waits while any seat is down: that seat may hold the first mark.
+    // waits while any seat is down: that seat may hold the first mark - and so
+    // does a late start's (M3.3-34, ruled): a seat holding only a late first
+    // mark cannot know that a seat it cannot reach holds no on-time one.
     const carried = this.carried.get(`${hex(roundIdBytes)}:${hex(entryId)}`);
     const down = this.#unreached(roundIdBytes, carried);
     const noMarkHere = !this.round.firstMarkHeld(roundIdBytes, entryId);
-    if (down && (noMarkHere ? !this.round.entryVoid(entryId) && !this.round.startForfeit(entryId)
+    if (down && (noMarkHere ? !this.round.entryVoid(entryId)
       : this.#mightGrow(roundIdBytes, entryId, down)))
       return { entryId, stored: false, waiting: true,
         why: `waiting on ${down} seat(s): ${(carried && carried.down.length ? carried.down.join('; ') : 'none of them answered').slice(0, 160)}`
@@ -298,10 +300,13 @@ export class Verifier {
   /**
    * DID THIS PLAYER NEVER START, as far as the round's seats can say? This seat
    * holds no mark of the entry, has recorded no ENTRY_VOID (§16, a first mark
-   * some seat held) and no late start (FORFEIT at the door, first-mark.js),
-   * and every other seat answered the close's receipt pull with nothing for it
-   * - a seat that is down may hold the first mark, and a receipt this seat
-   * could not take is a mark it does not hold. Any doubt is no FORFEIT.
+   * some seat held), and every other seat answered the close's receipt pull
+   * with nothing for it - a seat that is down may hold the first mark, and a
+   * receipt this seat could not take is a mark it does not hold. Any doubt is
+   * no FORFEIT. A LATE START IS NEVER A START (M3.3-34, ruled): its only mark
+   * was refused at the door and never receipted, so it is signed FORFEIT 0
+   * over the same empty transcript as no mark - at the seat that recorded the
+   * late mark and at the one that never saw it alike.
    */
   /**
    * COULD SEATS THIS CLOSE COULD NOT REACH LENGTHEN THE RECEIPTED TRANSCRIPT?
@@ -341,7 +346,6 @@ export class Verifier {
   #neverStarted(roundIdBytes, entryId) {
     if (this.round.firstMarkHeld(roundIdBytes, entryId)) return false;
     if (this.round.entryVoid(entryId)) return false;
-    if (this.round.startForfeit(entryId)) return false;
     const carried = this.carried.get(`${hex(roundIdBytes)}:${hex(entryId)}`);
     return !!carried && this.#unreached(roundIdBytes, carried) === 0 && carried.refused.length === 0 && carried.taken === 0;
   }

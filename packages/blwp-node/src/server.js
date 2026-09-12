@@ -860,12 +860,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const stored = ((closed && closed.replayed) || []).filter((r) => r && r.stored);
     // A RUN THIS SEAT COULD NOT SIGN AT ITS CLOSE - a peer down or unreachable -
     // is tried again on this cadence (verifier.retryClose), HOLDING meanwhile.
-    // A run already decided otherwise (ENTRY_VOID, a late start) is not, and
-    // neither is one this seat has already signed: one seat, one result.
-    // Measured: a restart re-ran the close of rounds with one run short, and
-    // their signed, FINAL runs came back HOLDING and were retried.
+    // A run already decided otherwise (ENTRY_VOID) is not, and neither is one
+    // this seat has already signed: one seat, one result. Measured: a restart
+    // re-ran the close of rounds with one run short, and their signed, FINAL
+    // runs came back HOLDING and were retried. A late start IS tried again
+    // (M3.3-34, ruled): it is signed FORFEIT 0 once no seat is unreachable.
     const unsigned = ((closed && closed.replayed) || [])
-      .filter((r) => r && !r.stored && r.entryId && !round.entryVoid(r.entryId) && !round.startForfeit(r.entryId)
+      .filter((r) => r && !r.stored && r.entryId && !round.entryVoid(r.entryId)
         && !round.hasResult(roundIdBytes, r.entryId, round.pubkey));
     for (const u of unsigned) holding(roundIdBytes, u.entryId, { why: u.why });
     let latest = money;
@@ -1251,7 +1252,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       const key = toHex(rid);
       if ((already || []).includes(key)) continue;
       if (!round.seats(rid).some((s) => toHex(s) === toHex(round.pubkey))) continue;
-      const short = round.entriesOf(rid).filter(({ entryId }) => !round.entryVoid(entryId) && !round.startForfeit(entryId)
+      const short = round.entriesOf(rid).filter(({ entryId }) => !round.entryVoid(entryId)
         && resultFinality(round, rid, entryId).state !== 'FINAL');
       if (!short.length) continue;
       console.log(`[close] ${key.slice(0, 16)} closed with ${short.length} run(s) short of final here: running its close logic again`);

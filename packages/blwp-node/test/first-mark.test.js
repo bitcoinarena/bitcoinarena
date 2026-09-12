@@ -53,9 +53,11 @@ const END = WINNER.ticks;                      // 1320: the run delivers here
 async function seats() {
   const port = lockPort();
   const mk = (db, p = 0) => serve(db, { port: p, ...opts, stakeLocks: port, poolCurve: curve, finality: { everyMs: 100 } });
+  const dbA = openStore(':memory:');
   const dbB = openStore(':memory:');
-  const a = await mk(openStore(':memory:'));
+  let a = await mk(dbA);
   let b = await mk(dbB);
+  const aPort = a.port;
   const bPort = b.port;
   const wire = () => {
     for (const [d, o] of [[a, b], [b, a]]) {
@@ -76,10 +78,12 @@ async function seats() {
   }
   for (let pass = 0; pass < 2; pass++) for (const d of [a, b]) await d.dkg.run(c.nodes);
   return {
-    a, get b() { return b; }, c, rid, port, claimPk: a.dkg.seatFor(c.nodes).pool.groupPublicKey,
+    get a() { return a; }, get b() { return b; }, c, rid, port, claimPk: a.dkg.seatFor(c.nodes).pool.groupPublicKey,
+    async downA() { await a.close(); },
+    async upA() { a = await mk(dbA, aPort); wire(); },
     async downB() { await b.close(); },
     async upB() { b = await mk(dbB, bPort); wire(); },
-    async close() { await a.close(); try { await b.close(); } catch { /* already down */ } },
+    async close() { try { await a.close(); } catch { /* already down */ } try { await b.close(); } catch { /* already down */ } },
   };
 }
 
@@ -130,7 +134,15 @@ async function seatAndBuild(w, { firstAt = 60 } = {}) {
     messages = [encodeInputBatch(b1), sign(m1)];
     firstId = checkpointId(m1);
   }
-  return { entry, eid, outpoint, messages, firstId };
+  // AND A LATE FIRST MARK FOR THE SAME ENTRY, under the same session key: its
+  // first batch 0..1319 and a first mark at 1320 - the other half of a player
+  // who sent an on-time first mark to one seat and a late one to another.
+  const lateSt = init(seedWordForEntry(entry, RANDOMNESS));
+  for (let t = 0; t < END; t++) step(lateSt, ...wordsAt(t));
+  const lb = batchOf(0, END, GENESIS_HASH);
+  const lm = markOf(END, Uint8Array.from(stateHash(lateSt).match(/../g).map((x) => parseInt(x, 16))), lb, NO_PREVIOUS);
+  const late = [encodeInputBatch(lb), sign(lm)];
+  return { entry, eid, outpoint, messages, firstId, late };
 }
 
 const answer = (s) => (typeof s === 'string' ? (s.length > 30 && !s.startsWith('error') ? 'receipt' : s.slice(0, 90)) : 'receipt');
@@ -184,9 +196,11 @@ test('a first mark after join + deadline is FORFEIT at the seat it reaches, and 
     const facts = { firstMarkTick: END, saidA: saidA.map((s) => s.replace(/: the first mark.*/, '')), bForfeitByForward: forwarded,
       a: await outcomeAt(w.a, w, run), b: await outcomeAt(w.b, w, run), aStoredTheMark: holdsFirst(w.a, run) };
     console.log('  FACTS (late):', JSON.stringify(facts));
+    // RULED 2026-09-12 (M3.3-34, late start at close): signed FORFEIT at the
+    // close, FINAL 2 of 2. Measured before: results [], finality null.
     assert.deepEqual(facts, { firstMarkTick: 1320, saidA: ['1320', 'error FORFEIT'], bForfeitByForward: true,
-      a: { lateStart: 'FORFEIT at 1320 > 900', results: [], finality: null, forfeit: 409 },
-      b: { lateStart: 'FORFEIT at 1320 > 900', results: [], finality: null, forfeit: 409 },
+      a: { lateStart: 'FORFEIT at 1320 > 900', results: ['FORFEIT'], finality: 'FINAL', forfeit: 409 },
+      b: { lateStart: 'FORFEIT at 1320 > 900', results: ['FORFEIT'], finality: 'FINAL', forfeit: 409 },
       aStoredTheMark: false });
   } finally { await w.close(); }
 });
@@ -205,9 +219,11 @@ test('a down seat caught up late with a late first mark does not turn DELIVERED:
     const facts = { saidA: saidA.map((s) => s.replace(/: the first mark.*/, '')), saidB: saidB.map((s) => s.replace(/: the first mark.*/, '')),
       a: await outcomeAt(w.a, w, run), b: await outcomeAt(w.b, w, run) };
     console.log('  FACTS (caught up late):', JSON.stringify(facts));
+    // RULED 2026-09-12 (M3.3-34, late start at close): signed FORFEIT at the
+    // close, FINAL 2 of 2. Measured before: results [], finality null.
     assert.deepEqual(facts, { saidA: ['1320', 'error FORFEIT'], saidB: ['1320', 'error FORFEIT'],
-      a: { lateStart: 'FORFEIT at 1320 > 900', results: [], finality: null, forfeit: 409 },
-      b: { lateStart: 'FORFEIT at 1320 > 900', results: [], finality: null, forfeit: 409 } });
+      a: { lateStart: 'FORFEIT at 1320 > 900', results: ['FORFEIT'], finality: 'FINAL', forfeit: 409 },
+      b: { lateStart: 'FORFEIT at 1320 > 900', results: ['FORFEIT'], finality: 'FINAL', forfeit: 409 } });
   } finally { await w.close(); }
 });
 
@@ -223,5 +239,169 @@ test('no first mark at all is FORFEIT at both seats at the close - final 2 of 2,
     console.log('  FACTS (no mark):', JSON.stringify(facts));
     assert.deepEqual(facts, { a: { lateStart: null, results: ['FORFEIT'], finality: 'FINAL', forfeit: 409 },
       b: { lateStart: null, results: ['FORFEIT'], finality: 'FINAL', forfeit: 409 }, lockHeld: true });
+  } finally { await w.close(); }
+});
+
+// LATE START AT THE CLOSE (M3.3-34, ruled 2026-09-12). A seated player whose
+// first mark came after join tick + the start deadline has forfeited, whenever
+// the close comes: FORFEIT, score 0, over the empty receipted transcript,
+// signed by both seats, FINAL 2 of 2 - not VOID, not ENTRY_VOID, not FAILED,
+// nothing refunded, the lock held. The same FORFEIT 0 as no mark at all,
+// whichever seat recorded the late mark. MEASURED BEFORE: FORFEIT recorded at
+// the door, no signed result at either seat, finality null.
+async function signedAt(d, w, run) {
+  const rs = d.round.results(w.rid, run.eid).map((r) => decodePlayerResult(splitSignedResult(r.bytes).body));
+  const f = await fetch(`http://127.0.0.1:${d.port}/forfeit?round=${toHex(w.rid)}&entry=${toHex(run.eid)}`);
+  return { lateStart: !!d.round.startForfeit(run.eid), results: [...new Set(rs.map((p) => `${p.outcome}/${p.score}`))],
+    transcripts: [...new Set(rs.map((p) => toHex(p.transcriptHash).slice(0, 16)))],
+    signers: new Set(d.round.results(w.rid, run.eid).map((r) => toHex(r.nodePubkey))).size,
+    finality: resultFinality(d.round, w.rid, run.eid).state, entryVoid: !!d.round.entryVoid(run.eid), forfeit: f.status };
+}
+const transcriptsAcross = (x, y) => new Set([...x.transcripts, ...y.transcripts]).size;
+const lockHeldOf = (w, run) => w.port.locks.has(`${toHex(run.outpoint.txid)}:${run.outpoint.outIdx}`);
+const closingOf = async (d, w, run) => ((await (await fetch(`http://127.0.0.1:${d.port}/closing?round=${toHex(w.rid)}`)).json())
+  .find((s) => s.entry === toHex(run.eid)) || null);
+const finalAtBoth = async (w, run, ms = 20000) => {
+  for (let t = Date.now(); Date.now() - t < ms; await wait(250))
+    if ([w.a, w.b].every((d) => resultFinality(d.round, w.rid, run.eid).state === 'FINAL')) return true;
+  return false;
+};
+const SIGNED_FORFEIT_0 = { results: ['FORFEIT/0'], signers: 2, finality: 'FINAL', entryVoid: false, forfeit: 409 };
+const brief = (s) => ({ results: s.results, signers: s.signers, finality: s.finality, entryVoid: s.entryVoid, forfeit: s.forfeit });
+
+test('late start at close (1): a late first mark at both seats is signed FORFEIT 0 by both, one transcript, FINAL 2 of 2, the lock held', async () => {
+  const w = await seats();
+  try {
+    const run = await seatAndBuild(w, { firstAt: END });
+    for (const m of run.messages) await say(w.a.port, m);
+    await untilForwarded(w.b, run);
+    await closeAndSettle(w, run);
+    const a = await signedAt(w.a, w, run);
+    const b = await signedAt(w.b, w, run);
+    const facts = { a, b, transcriptsAcrossSeats: transcriptsAcross(a, b), lockHeld: lockHeldOf(w, run) };
+    console.log('  FACTS (late close 1):', JSON.stringify(facts));
+    assert.deepEqual({ a: { ...brief(a), lateStart: a.lateStart }, b: { ...brief(b), lateStart: b.lateStart }, n: facts.transcriptsAcrossSeats, lockHeld: facts.lockHeld },
+      { a: { ...SIGNED_FORFEIT_0, lateStart: true }, b: { ...SIGNED_FORFEIT_0, lateStart: true }, n: 1, lockHeld: true });
+  } finally { await w.close(); }
+});
+
+test('late start at close (2): seat B down, then caught up late - both sign the same FORFEIT 0, FINAL 2 of 2', async () => {
+  const w = await seats();
+  try {
+    const run = await seatAndBuild(w, { firstAt: END });
+    await w.downB();
+    for (const m of run.messages) await say(w.a.port, m);
+    await w.upB();
+    for (const m of run.messages) await say(w.b.port, m);
+    await closeAndSettle(w, run);
+    const a = await signedAt(w.a, w, run);
+    const b = await signedAt(w.b, w, run);
+    const facts = { a, b, transcriptsAcrossSeats: transcriptsAcross(a, b), lockHeld: lockHeldOf(w, run) };
+    console.log('  FACTS (late close 2):', JSON.stringify(facts));
+    assert.deepEqual({ a: { ...brief(a), lateStart: a.lateStart }, b: { ...brief(b), lateStart: b.lateStart }, n: facts.transcriptsAcrossSeats, lockHeld: facts.lockHeld },
+      { a: { ...SIGNED_FORFEIT_0, lateStart: true }, b: { ...SIGNED_FORFEIT_0, lateStart: true }, n: 1, lockHeld: true });
+  } finally { await w.close(); }
+});
+
+test('late start at close (3): the late mark reached A only and its forward was lost - B never saw it, and both still sign the same FORFEIT 0', async () => {
+  const w = await seats();
+  try {
+    const run = await seatAndBuild(w, { firstAt: END });
+    await w.downB();
+    for (const m of run.messages) await say(w.a.port, m);
+    await w.upB();                              // nobody catches B up
+    await wait(1000);
+    const bSawIt = !!w.b.round.startForfeit(run.eid);
+    await closeAndSettle(w, run);
+    const a = await signedAt(w.a, w, run);
+    const b = await signedAt(w.b, w, run);
+    const facts = { bSawTheLateMarkBeforeTheClose: bSawIt, a, b, transcriptsAcrossSeats: transcriptsAcross(a, b), lockHeld: lockHeldOf(w, run) };
+    console.log('  FACTS (late close 3):', JSON.stringify(facts));
+    assert.equal(bSawIt, false, 'B was handed the late mark: this is not the case the test names');
+    assert.deepEqual({ a: { ...brief(a), lateStart: a.lateStart }, b: { ...brief(b), lateStart: b.lateStart }, n: facts.transcriptsAcrossSeats, lockHeld: facts.lockHeld },
+      { a: { ...SIGNED_FORFEIT_0, lateStart: true }, b: { ...SIGNED_FORFEIT_0, lateStart: false }, n: 1, lockHeld: true });
+  } finally { await w.close(); }
+});
+
+test('late start at close (4): the peer is down at the close - the seat holds, signs nothing, and both sign FORFEIT 0 when it is back', async () => {
+  const w = await seats();
+  try {
+    const run = await seatAndBuild(w, { firstAt: END });
+    for (const m of run.messages) await say(w.a.port, m);
+    await untilForwarded(w.b, run);
+    await w.downB();
+    assert.equal(await say(w.a.port, `close ${toHex(w.rid)}`), 'closed');
+    await wait(1500);
+    const held = await closingOf(w.a, w, run);
+    const whileDown = await signedAt(w.a, w, run);
+    await w.upB();
+    assert.equal(await say(w.b.port, `close ${toHex(w.rid)}`), 'closed');
+    const final = await finalAtBoth(w, run);
+    const a = await signedAt(w.a, w, run);
+    const b = await signedAt(w.b, w, run);
+    const facts = { held: held && { state: held.state, attempts: held.attempts, why: String(held.lastWhy).slice(0, 40) },
+      whileDown: brief(whileDown), final, a, b, transcriptsAcrossSeats: transcriptsAcross(a, b), lockHeld: lockHeldOf(w, run) };
+    console.log('  FACTS (late close 4):', JSON.stringify(facts));
+    assert.equal(held.state, 'HOLDING');
+    assert.match(held.lastWhy, /waiting on 1 seat/);
+    assert.deepEqual(whileDown.results, []);
+    assert.equal(whileDown.signers, 0);
+    assert.deepEqual({ a: brief(a), b: brief(b), n: facts.transcriptsAcrossSeats, lockHeld: facts.lockHeld },
+      { a: SIGNED_FORFEIT_0, b: SIGNED_FORFEIT_0, n: 1, lockHeld: true });
+  } finally { await w.close(); }
+});
+
+// THE GUARD (ruled required): a seat holding only a late first mark waits while
+// any other seat is unreachable, because that seat may hold an on-time first
+// mark. How such a conflict resolves is ENTRY_VOID territory - parked; only the
+// hold is measured here.
+test('late start at close (5): an on-time first mark at B and a late one at A, B down at A\'s close - A holds and signs nothing', async () => {
+  const w = await seats();
+  try {
+    const run = await seatAndBuild(w);
+    await w.downA();
+    const saidB = [];
+    for (const m of run.messages.slice(0, 2)) saidB.push(answer(await say(w.b.port, m)));
+    await w.upA();
+    const saidA = [];
+    for (const m of run.late) saidA.push(answer(await say(w.a.port, m)).replace(/: the first mark.*/, ''));
+    await wait(500);
+    const bHeld = { onTimeFirstMark: holdsFirst(w.b, run), lateStart: !!w.b.round.startForfeit(run.eid) };
+    await w.downB();
+    assert.equal(await say(w.a.port, `close ${toHex(w.rid)}`), 'closed');
+    await wait(1500);
+    const held = await closingOf(w.a, w, run);
+    const atA = await signedAt(w.a, w, run);
+    const facts = { saidB, saidA, bBeforeItWentDown: bHeld, aLateStart: atA.lateStart,
+      held: held && { state: held.state, attempts: held.attempts, why: String(held.lastWhy).slice(0, 40) }, atA: brief(atA) };
+    console.log('  FACTS (late close 5, guard):', JSON.stringify(facts));
+    assert.equal(bHeld.onTimeFirstMark, true, 'B does not hold the on-time first mark: this is not the case the test names');
+    assert.equal(atA.lateStart, true, 'A recorded no late start: this is not the case the test names');
+    assert.equal(held.state, 'HOLDING');
+    assert.match(held.lastWhy, /waiting on 1 seat/);
+    assert.deepEqual(atA.results, []);
+    assert.equal(atA.signers, 0);
+  } finally { await w.close(); }
+});
+
+test('late start at close (7): a late mark after both seats have signed FORFEIT 0 changes nothing - the same result, the same transcript', async () => {
+  const w = await seats();
+  try {
+    const run = await seatAndBuild(w);
+    await closeAndSettle(w, run);
+    const beforeA = await signedAt(w.a, w, run);
+    const beforeB = await signedAt(w.b, w, run);
+    const saidA = [];
+    for (const m of run.late) saidA.push(answer(await say(w.a.port, m)).slice(0, 60));
+    await wait(1000);
+    const a = await signedAt(w.a, w, run);
+    const b = await signedAt(w.b, w, run);
+    const facts = { before: { a: brief(beforeA), b: brief(beforeB), transcripts: [...new Set([...beforeA.transcripts, ...beforeB.transcripts])] },
+      saidA, after: { a: brief(a), b: brief(b), transcripts: [...new Set([...a.transcripts, ...b.transcripts])] }, lockHeld: lockHeldOf(w, run) };
+    console.log('  FACTS (late close 7):', JSON.stringify(facts));
+    assert.deepEqual(facts.before.a, SIGNED_FORFEIT_0);
+    assert.deepEqual(facts.after, { a: SIGNED_FORFEIT_0, b: SIGNED_FORFEIT_0, transcripts: facts.before.transcripts });
+    assert.equal(facts.before.transcripts.length, 1);
+    assert.equal(facts.lockHeld, true);
   } finally { await w.close(); }
 });
