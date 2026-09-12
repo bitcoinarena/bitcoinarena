@@ -13,7 +13,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { lockStake, handLock, lockSecretFor, lockAmountMsat, lockLine, saveLock, savedLock, markLockCommitted,
-  refundStake, LOCK_EXPIRY_MARGIN_BLOCKS } from '../src/page-lock.js';
+  refundStake, redeemStake, LOCK_EXPIRY_MARGIN_BLOCKS } from '../src/page-lock.js';
 import { entryFor, joinQuery, stakeFor, playerFor } from '../src/join.js';
 import { lockFieldsToJson } from '../../protocol/src/stake-lock.js';
 import { pageCurve } from '../src/page-curve.js';
@@ -263,6 +263,37 @@ test('the refund from the seed alone: the seats are asked by the seed\'s refund 
   // AND ANOTHER SEED FINDS NOTHING TO REFUND.
   await assert.rejects(() => refundStake({ round, roundId: rid, invite: INVITE, seed: b32(0x53), curve: pageCurve, LockClient: Fake,
     nodes: ['http://a.test'], fetcher }), /no seat knows a stake lock that refunds to this seed's key/);
+});
+
+test('the redeem from the seed alone: the seats\' forfeit and the player\'s key go to the lock client; a lock no seat forfeits is not redeemed', async () => {
+  const player = playerFor({ ...round, id: rid }, { seed, curve: pageCurve });
+  const refund = toHex(refundKeyOf(player.pubkey));
+  const fields = { paymentImage: { kind: 'point', bytes: POINT }, amountMsat: 980000n, claimPk: CLAIM, refundPk: refundKeyOf(player.pubkey), expiration: 464 };
+  const SIG = 'ab'.repeat(64);
+  const seatsSay = (forfeitStatus) => async (url) => {
+    if (url.includes('/stake-lock'))
+      return new Response(JSON.stringify(url.includes(`refund=${refund}`) ? [{ entryId: 'ee'.repeat(32), outpoint: `${'cd'.repeat(32)}:0`, fields: lockFieldsToJson(fields), contractId: 'c1' }] : []), { status: 200 });
+    if (url.includes('/forfeit'))
+      return forfeitStatus === 200
+        ? new Response(JSON.stringify({ signature: SIG, contractId: 'c1', claimPk: toHex(CLAIM) }), { status: 200 })
+        : new Response('that run is FAILED with score 128 and this round\'s minimum is 1: not a qualifier', { status: 409 });
+    return new Response('no', { status: 404 });
+  };
+  const calls = [];
+  class Fake {
+    static async join() { return new Fake(); }
+    async redeem(txid, outIdx, f, sig, key) { calls.push({ txid, outIdx, sig, key, f: JSON.parse(f) }); return JSON.stringify({ forfeit_verifies: true, accepted: true }); }
+  }
+  const got = await redeemStake({ round, roundId: rid, invite: INVITE, seed, curve: pageCurve, LockClient: Fake,
+    nodes: ['http://a.test', 'http://b.test'], fetcher: seatsSay(200) });
+  assert.deepEqual(calls.map((c) => [c.txid, c.outIdx, c.sig, c.key]), [['cd'.repeat(32), 0, SIG, toHex(player.secret)]]);
+  assert.deepEqual(calls[0].f, lockFieldsToJson(fields));
+  assert.deepEqual(got.redeems.map((r) => [r.accepted, r.forfeitFrom]), [[true, 'http://a.test']]);
+  // A LOSER'S: every seat refuses the forfeit, and nothing reaches the lock client.
+  calls.length = 0;
+  await assert.rejects(() => redeemStake({ round, roundId: rid, invite: INVITE, seed, curve: pageCurve, LockClient: Fake,
+    nodes: ['http://a.test', 'http://b.test'], fetcher: seatsSay(409) }), /no seat gave a forfeit of this lock: .*not a qualifier/);
+  assert.equal(calls.length, 0, 'a lock no seat forfeited was sent to the federation');
 });
 
 test('the join link carries the federation\'s invite, and refuses one that is not an invite code', () => {

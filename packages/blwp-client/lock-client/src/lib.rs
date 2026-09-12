@@ -257,6 +257,108 @@ impl LockClient {
         .to_string())
     }
 
+    /// THE PLAYER'S REDEEM OF A FORFEITED LOCK (§23.2 row 1: "the player's own
+    /// client redeems it, and only the player can"). The lock at `txid:out_idx`,
+    /// rebuilt from `fields` as `refund` rebuilds it, spent by
+    /// `OutgoingWitness::Cancel(forfeit)` - the committee's BIP-340 signature by
+    /// claim_pk over the contract id - and signed by the player's own key. Open
+    /// at any time, before the expiry or after. The stock contract says whether
+    /// the forfeit verifies; the transaction is submitted either way, so a
+    /// forfeit that does not verify is refused by the guardians, not by this
+    /// client. JSON: { forfeit_verifies, accepted, txid, error, block_count,
+    /// expiration, stored_before, stored_after, balance_before, balance_after }.
+    pub async fn redeem(
+        &self,
+        txid: String,
+        out_idx: u32,
+        fields: String,
+        forfeit: String,
+        player_secret: String,
+    ) -> Result<String, JsError> {
+        let f: serde_json::Value = serde_json::from_str(&fields).map_err(js)?;
+        let text = |k: &str| {
+            f.get(k).and_then(|v| v.as_str()).map(str::to_owned).ok_or_else(|| js(format!("the lock names no {k}")))
+        };
+        let image = f.get("paymentImage").ok_or_else(|| js("the lock names no payment image"))?;
+        if image.get("kind").and_then(|v| v.as_str()) != Some("point") {
+            return Err(js("only a stake lock, whose image is a point, is redeemed here"));
+        }
+        let point = image.get("bytes").and_then(|v| v.as_str()).ok_or_else(|| js("the lock's image has no bytes"))?;
+        let refund_pk = PublicKey::from_str(&text("refundPk")?).map_err(js)?;
+        let expiration = f.get("expiration").and_then(|v| v.as_u64()).ok_or_else(|| js("the lock names no expiration"))?;
+        let contract = OutgoingContract {
+            payment_image: PaymentImage::Point(PublicKey::from_str(point).map_err(js)?),
+            amount: Amount::from_msats(text("amountMsat")?.parse().map_err(js)?),
+            expiration,
+            claim_pk: PublicKey::from_str(&text("claimPk")?).map_err(js)?,
+            refund_pk,
+            ephemeral_pk: refund_pk,
+        };
+        let sig_bytes = (0..forfeit.len())
+            .step_by(2)
+            .map(|i| forfeit.get(i..i + 2).and_then(|b| u8::from_str_radix(b, 16).ok()))
+            .collect::<Option<Vec<u8>>>()
+            .ok_or_else(|| js("a forfeit is 64 bytes of hex"))?;
+        let sig = fedimint_core::secp256k1::schnorr::Signature::from_slice(&sig_bytes).map_err(js)?;
+        let forfeit_verifies = contract.verify_forfeit_signature(&sig);
+        let mut secret = SecretKey::from_slice(&secret_from_hex(&player_secret)?).map_err(js)?;
+        if PublicKey::from_secret_key(SECP256K1, &secret) != refund_pk {
+            secret = secret.negate();
+        }
+        if PublicKey::from_secret_key(SECP256K1, &secret) != refund_pk {
+            return Err(js("that key is not the lock's refund key"));
+        }
+        let signer = secret.keypair(SECP256K1);
+        let api = self.client.api().with_module(self.lnv2);
+        let outpoint = OutPoint { txid: TransactionId::from_str(&txid).map_err(js)?, out_idx: u64::from(out_idx) };
+        let before = stored_at(&api, outpoint).await.map_err(js)?;
+        if let Some((id, _)) = before {
+            if id != contract.contract_id() {
+                return Err(js("the guardians hold another contract at that outpoint than this lock's"));
+            }
+        }
+        let count = block_count(&api).await.map_err(js)?;
+        let balance_before = self.client.get_balance_for_btc().await.map_err(js)?;
+        let bundle = ClientInputBundle::new_no_sm(vec![ClientInput {
+            input: LightningInput::V0(LightningInputV0::Outgoing(outpoint, OutgoingWitness::Cancel(sig))),
+            keys: vec![signer],
+            amounts: Amounts::new_bitcoin(contract.amount),
+        }])
+        .into_dyn(self.lnv2);
+        let operation = OperationId::new_random();
+        let (accepted, redeem_txid, error) = match self
+            .client
+            .finalize_and_submit_transaction(operation, "blwp-stake-redeem", |_| (), TransactionBuilder::new().with_inputs(bundle))
+            .await
+        {
+            Err(e) => (false, None, Some(format!("not submitted: {e}"))),
+            Ok(change) => {
+                let t = change.txid();
+                match self.client.transaction_updates(operation).await.await_tx_accepted(t).await {
+                    Ok(()) => (true, Some(t), None),
+                    Err(e) => (false, Some(t), Some(e)),
+                }
+            }
+        };
+        let mut balance_after = self.client.get_balance_for_btc().await.map_err(js)?;
+        for _ in 0..100 {
+            if !accepted || balance_after > balance_before {
+                break;
+            }
+            fedimint_core::runtime::sleep(fedimint_core::runtime::Duration::from_millis(200)).await;
+            balance_after = self.client.get_balance_for_btc().await.map_err(js)?;
+        }
+        let after = stored_at(&api, outpoint).await.map_err(js)?;
+        let stored = |s: Option<(ContractId, u64)>| s.map(|(id, left)| serde_json::json!({ "contract_id": id.0.to_string(), "blocks_left": left }));
+        Ok(serde_json::json!({
+            "forfeit_verifies": forfeit_verifies, "accepted": accepted, "txid": redeem_txid.map(|t| t.to_string()),
+            "error": error, "block_count": count, "expiration": expiration, "amount_msat": contract.amount.msats,
+            "stored_before": stored(before), "stored_after": stored(after),
+            "balance_before": balance_before.msats, "balance_after": balance_after.msats,
+        })
+        .to_string())
+    }
+
     /// The largest invoice this client can pay out of its balance through a
     /// gateway the federation lists - the gateway's fee and the federation's
     /// both taken off (the stock client's own sum), in msat.

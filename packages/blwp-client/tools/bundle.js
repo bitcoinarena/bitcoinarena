@@ -124,7 +124,7 @@ out += '         sharesNeededFor: sharesNeededFor,\n';
 // hand-over of the lock it made to every seat.
 out += '         lockStake: lockStake, handLock: handLock, lockSecretFor: lockSecretFor, lockLine: lockLine,\n';
 out += '         saveLock: saveLock, savedLock: savedLock, markLockCommitted: markLockCommitted,\n';
-out += '         findLock: findLock, refundStake: refundStake,\n';
+out += '         findLock: findLock, refundStake: refundStake, forfeitOf: forfeitOf, redeemStake: redeemStake,\n';
 // THE WALLET THE PAGE RENDERS. `tabWallet` holds the connection per tab,
 // `spendLog` is what §24A.1 requires a client to show, and `spentLine` turns it
 // into one sentence - so the page renders a total it did not add up.

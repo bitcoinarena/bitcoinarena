@@ -7724,6 +7724,63 @@ async function refundStake({ round, roundId, invite, seed, curve, LockClient, st
 }
 
 /**
+ * THE COMMITTEE'S FORFEIT OF THIS PLAYER'S LOCK, from the seats (GET /forfeit,
+ * W5b): a BIP-340 signature by the round's claim key over the lock's contract
+ * id, made only for a qualifier after the window. The first seat that has it
+ * answers; a loser's is refused by every seat, with the seats' reasons. The
+ * lock client checks it under the contract (and the guardians again) - a seat
+ * that answers with bytes that are not the forfeit gets nothing through.
+ */
+async function forfeitOf({ roundId, entryId, nodes, fetcher = fetch } = {}) {
+  const refused = [];
+  for (const node of [...new Set(nodes || [])]) {
+    try {
+      const r = await fetcher(`${String(node).replace(/\/+$/, '')}/forfeit?round=${toHex(roundId)}&entry=${entryId}`);
+      if (!r.ok) { refused.push(`${node}: ${r.status} ${(await r.text()).trim()}`); continue; }
+      const j = await r.json();
+      if (/^[0-9a-f]{128}$/.test(String(j.signature))) return { ok: true, signature: j.signature, contractId: j.contractId, claimPk: j.claimPk, from: node };
+      refused.push(`${node}: answered no signature`);
+    } catch (e) { refused.push(`${node}: ${e.message}`); }
+  }
+  return { ok: false, why: `no seat gave a forfeit of this lock: ${refused.join('; ')}`, refused };
+}
+
+/**
+ * THE PLAYER'S REDEEM OF A FORFEITED LOCK, FROM THE SEED ALONE (§23.2 row 1:
+ * "the player's own client redeems it, and only the player can"). The seed
+ * gives the round's player key and the lock client's secret; the seats say
+ * where the lock is and give the committee's forfeit; a fresh wallet under the
+ * seed's secret spends the lock with the player's key.
+ */
+async function redeemStake({ round, roundId, invite, seed, curve, LockClient, storage, nodes, fetcher = fetch,
+  onStep = () => {} } = {}) {
+  if (!round || !roundLocks(round)) throw new Error('this round names no federation, so its stake is not a lock');
+  const player = playerFor({ ...round, id: roundId }, { seed, curve });
+  onStep('asking the seats where this seed\'s lock is');
+  const locks = await findLock({ roundId, playerPubkey: player.pubkey, nodes, fetcher });
+  if (!locks.length) throw new Error('no seat knows a stake lock that refunds to this seed\'s key in this round');
+  const forfeits = [];
+  for (const l of locks) {
+    onStep('asking the seats for the forfeit of the lock');
+    const f = await forfeitOf({ roundId, entryId: l.entryId, nodes, fetcher });
+    if (!f.ok) throw new Error(f.why);
+    forfeits.push({ lock: l, forfeit: f });
+  }
+  const secret = lockSecretFor(seed, roundId);
+  const store = storage ? lockStoreFor(storage, roundId, secret) : unkeptLockStore();
+  onStep('joining the federation');
+  const client = await LockClient.join(invite, toHex(round.federationId), toHex(secret), store);
+  const redeems = [];
+  for (const { lock: l, forfeit: f } of forfeits) {
+    onStep('redeeming the lock');
+    const said = JSON.parse(await client.redeem(toHex(l.outpoint.txid), Number(l.outpoint.outIdx),
+      JSON.stringify(lockFieldsToJson(l.fields)), f.signature, toHex(player.secret)));
+    redeems.push({ outpoint: l.outpoint, forfeitFrom: f.from, ...said });
+  }
+  return { client, redeems };
+}
+
+/**
  * THE LOCK, HANDED TO EVERY SEAT (POST /lock). A seat that verifies it in the
  * federation answers 201 and counts the stake; `ok` is `needed` of them.
  */
@@ -10708,7 +10765,7 @@ return { Client: Client, markState: markState,
          sharesNeededFor: sharesNeededFor,
          lockStake: lockStake, handLock: handLock, lockSecretFor: lockSecretFor, lockLine: lockLine,
          saveLock: saveLock, savedLock: savedLock, markLockCommitted: markLockCommitted,
-         findLock: findLock, refundStake: refundStake,
+         findLock: findLock, refundStake: refundStake, forfeitOf: forfeitOf, redeemStake: redeemStake,
          tabWallet: tabWallet, spendLog: spendLog, spentLine: spentLine,
          owedLine: owedLine,
          parseConnection: parseConnection,
