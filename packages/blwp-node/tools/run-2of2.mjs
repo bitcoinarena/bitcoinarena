@@ -65,6 +65,12 @@ writeFileSync(join(dir, 'lobby-url.txt'), round.lobbyUrl + '\n');
 console.log(round.lobbyUrl);
 round.keepOpen({ onOpen: (id) => say({ opened: id }), onError: (e) => say({ notOpened: e.message }) });
 
+// SEAT B DOWN AND BACK, for an operator's 2-of-2 look: SIGUSR1 closes seat B,
+// SIGUSR2 serves it again on the same store and port (standUpRound's own
+// restartB). With B down a lobby row must read 1 of 2 and offer no Join.
+process.on('SIGUSR1', async () => { await round.b.close(); say({ seatB: 'down' }); });
+process.on('SIGUSR2', async () => { await round.restartB(); say({ seatB: 'up' }); });
+
 const stop = async () => { say({ stopping: true }); await round.close(); process.exit(0); };
 process.on('SIGINT', stop);
 process.on('SIGTERM', stop);
