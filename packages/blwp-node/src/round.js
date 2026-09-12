@@ -1607,6 +1607,22 @@ export class Round {
   }
 
   /**
+   * THE PLAYER'S TWO FIRST MARKS, AS THIS SEAT HOLDS THEM (§13B, §13C; ruled
+   * 2026-09-12): a proof of equivocation here, or a late first mark kept for
+   * FORFEIT that is not the on-time first mark this seat voided or holds. Then
+   * the entry is FORFEIT and never the outage refund - even when a real outage
+   * made this seat record ENTRY_VOID first; that record stays as history (§14).
+   */
+  twoFirstMarks(roundIdBytes, entryIdBytes) {
+    if (this.equivocation(roundIdBytes, entryIdBytes).length) return true;
+    const late = this.startForfeit(entryIdBytes);
+    if (!late) return false;
+    const voided = this.entryVoid(entryIdBytes);
+    const onTime = voided ? voided.firstMark : this.firstMarkHeld(roundIdBytes, entryIdBytes);
+    return !!onTime && !same(onTime, late.mark);
+  }
+
+  /**
    * A FIRST MARK THIS SEAT, UP, REFUSED (M3.3-34, one-seat refusal) - kept only
    * when it is the player's own (the entry's session key signs it), a first mark
    * of an entry seated here, on time (a late one is FORFEIT, first-mark.js), and

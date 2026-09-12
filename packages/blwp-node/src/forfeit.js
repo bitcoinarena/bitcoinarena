@@ -71,6 +71,15 @@ export class Forfeit {
     // now, instead of at expiry. Everything else below still holds: the lock
     // this seat verified, the round's claim key, the contract rebuilt here.
     const voided = this.round.entryVoid ? this.round.entryVoid(entryIdBytes) : null;
+    // TWO FIRST MARKS AFTER THE VOID (§13B, §13C; ruled 2026-09-12): once this
+    // seat holds the player's second first mark - or its no-quorum rule decided
+    // FORFEIT - the Void stays as history and it signs no refund. Measured before
+    // on a fresh federation: both seats signed it and the player redeemed the
+    // lock before its expiry.
+    const nq = voided && this.round.noQuorum ? this.round.noQuorum(entryIdBytes) : null;
+    if (voided && ((this.round.twoFirstMarks && this.round.twoFirstMarks(roundIdBytes, entryIdBytes)) || (nq && nq.outcome === 'FORFEIT')))
+      return refuse('the player signed two first marks for this entry (§13B): FORFEIT, never the outage refund - '
+        + 'this seat\'s ENTRY_VOID stays as history, and it signs no forfeit of the lock to the player');
     if (!voided) {
       const standing = resultFinality(this.round, roundIdBytes, entryIdBytes);
       // VOID (§13C, §23.2 "do nothing"): nothing is forfeited - nobody acts, and

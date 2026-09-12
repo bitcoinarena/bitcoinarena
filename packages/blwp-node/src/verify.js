@@ -395,7 +395,11 @@ export class Verifier {
   async #noQuorum(roundIdBytes, entryId, contract, down) {
     const had = this.round.noQuorum(entryId);
     if (had) return { entryId, stored: false, decided: had.outcome, why: had.why };
-    if (down || this.round.entryVoid(entryId)) return null;
+    if (down) return null;
+    // AN OUTAGE-VOID, THEN THE PLAYER'S SECOND FIRST MARK (ruled 2026-09-12): the
+    // Void stays as history and the entry is decided here like any two first
+    // marks - FORFEIT after the window. A Void with no such proof stands.
+    const voided = !!this.round.entryVoid(entryId);
     const line = this.round.startLine(roundIdBytes, entryId);
     if (!line) return null;
     // A LATE START IS FORFEIT 0 AT THE CLOSE (a390ca0) - unless the player also
@@ -405,8 +409,8 @@ export class Verifier {
     // outcome - never ENTRY_VOID (measured before: ENTRY_VOID and the lock
     // forfeited to the player at both seats).
     const lateHere = !!this.round.startForfeit(entryId);
-    const twoFirst = lateHere ? await this.#equivocationProven(roundIdBytes, entryId) : false;
-    if (lateHere && !twoFirst) return null;
+    const twoFirst = lateHere || voided ? await this.#equivocationProven(roundIdBytes, entryId) : false;
+    if ((lateHere || voided) && !twoFirst) return null;
     const held = this.round.firstMarkHeld(roundIdBytes, entryId);
     let evidence;
     if (twoFirst) {
@@ -458,6 +462,10 @@ export class Verifier {
     if (!found) return false;
     const verify = (sig, msg, pub) => { try { return sessionCurve.verify(sig, msg, pub); } catch { return false; } };
     const pairs = this.round.equivocation(roundIdBytes, entryId).map((f) => [f.stored, f.offered]);
+    // The on-time first mark this seat voided and the late one it kept: one parent, two chains.
+    const voided = this.round.entryVoid(entryId);
+    const late = this.round.startForfeit(entryId);
+    if (voided && late) pairs.push([voided.firstMark, late.mark]);
     for (const peer of this.peersOf(roundIdBytes)) {
       try {
         const r = await fetch(`${peer}/equivocation?round=${hex(roundIdBytes)}&entry=${hex(entryId)}`);

@@ -423,7 +423,11 @@ test('late start at close (5b): an on-time first mark at B and a late one at A, 
 // THE OTHER ORDER (5b's NOT COVERED): B decides its outage BEFORE the late first
 // mark reaches it - the player's chain passes the line at B while A is down, so
 // B records ENTRY_VOID - and only then does the player send A a late first mark.
-test('late start at close (5c): B records ENTRY_VOID on a real outage, then the player sends A a late first mark - measured', async () => {
+// RULED (2026-09-12): two first marks are FORFEIT at both seats, never a refund,
+// even after a real outage-Void; B's Void stays as history, B signs no refund.
+// MEASURED BEFORE: A 409 when asked first, then B's forfeit showed A the Void,
+// A recorded it, and B's door answered 200 - a refund signed 2 of 2.
+test('late start at close (5c): B records ENTRY_VOID on a real outage, then the player sends A a late first mark - FORFEIT at both, no refund signed, the lock held', async () => {
   const w = await seats();
   try {
     const run = await seatAndBuild(w);
@@ -444,13 +448,24 @@ test('late start at close (5c): B records ENTRY_VOID on a real outage, then the 
       return { entryVoid: s.entryVoid, results: s.results, finality: s.finality, noQuorum: nq ? nq.outcome : null, forfeit: s.forfeit,
         proof: d.round.equivocation(w.rid, run.eid).length };
     };
-    const after = { a: await at2(w.a), b: await at2(w.b), lockHeld: lockHeldOf(w, run) };
+    // Each seat's forfeit door is asked - A, then B, then A again (B's door may show A its Void).
+    const after = { a: await at2(w.a), b: await at2(w.b) };
+    after.aAgain = (await fetch(`http://127.0.0.1:${w.a.port}/forfeit?round=${toHex(w.rid)}&entry=${toHex(run.eid)}`)).status;
+    after.aVoidAfterDoors = !!w.a.round.entryVoid(run.eid);
+    after.forfeitKept = [w.a, w.b].map((d) => !!d.round.forfeit(run.eid));
+    after.lockHeld = lockHeldOf(w, run);
     console.log('  FACTS (late close 5c, ENTRY_VOID first):', JSON.stringify({ before, after }));
     assert.equal(before.bVoidFirst, true, 'B did not record ENTRY_VOID before the late mark: not the case the test names');
     assert.equal(before.aLate, true, 'A recorded no late start: not the case the test names');
-    // WHICHEVER WAY THE ORDER IS RULED, no refund leaves on one seat's Void: the
-    // forfeit is 2 of 2, and a seat holding only the late start never gives it.
-    assert.ok(!(after.a.forfeit === 200 && after.b.forfeit === 200), 'both seats forfeited the lock to the player');
+    for (const s of ['a', 'b']) {
+      assert.equal(after[s].noQuorum, 'FORFEIT', `${s} did not decide FORFEIT: ${JSON.stringify(after[s])}`);
+      assert.equal(after[s].finality, 'FORFEIT', `${s}'s finality is not FORFEIT: ${JSON.stringify(after[s])}`);
+      assert.equal(after[s].forfeit, 409, `${s} will sign the refund of the lock to the player`);
+    }
+    assert.equal(after.aAgain, 409, 'A signs the refund once B has shown it the Void');
+    assert.equal(after.b.entryVoid, true, 'B\'s ENTRY_VOID record was not kept as history');
+    assert.equal(after.aVoidAfterDoors, false, 'A recorded ENTRY_VOID from B\'s evidence');
+    assert.deepEqual(after.forfeitKept, [false, false], 'a seat keeps a refund of the lock');
     assert.equal(after.lockHeld, true);
   } finally { await w.close(); }
 });

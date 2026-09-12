@@ -1756,6 +1756,33 @@ tolerance, the valid run ends at the last receipted checkpoint; replay
 determines the final state; the player normally becomes `FAILED` or
 `FORFEIT`. Closing the browser does not escape a losing stake.
 
+At the round's close *(ruled 2026-09-12)*:
+
+- A seated player whose stake was committed and who sent no first mark is
+  `FORFEIT`, score 0, signed by the committee over the empty transcript —
+  never `ENTRY_VOID`, never a refund.
+- A first mark signed after the start deadline is a late start: `FORFEIT`,
+  score 0, the same as no mark.
+- A run whose checkpoints stop is `FAILED` at its last receipted checkpoint,
+  and a re-run under §13A applies the same rule.
+
+**Two first marks are `FORFEIT`, never a refund.** A player who signs two
+first marks for one entry — on time at some seats and another one, late or
+not, at others — has equivocated (§13B). This holds even when a real outage
+had already made a seat record `ENTRY_VOID` (§16) for the on-time mark:
+
+1. that seat's `ENTRY_VOID` record stays as history (§14 lets nothing undo
+   it);
+2. a seat that holds the proof of the two first marks refuses its signature
+   on the forfeit of the stake lock to the player, and records no
+   `ENTRY_VOID` from another seat's evidence;
+3. after the result window the no-quorum rule (§13C) decides `FORFEIT` at
+   every seat;
+4. the lock follows a forfeited entry's path — held until its expiry or
+   claimed as a forfeit — and is never handed back by the committee.
+
+A disconnect is not an escape hatch for the stake.
+
 ---
 
 # 16. Infrastructure outage before finality

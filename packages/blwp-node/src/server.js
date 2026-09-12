@@ -437,6 +437,20 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const c = decodeCheckpoint(splitSigned(bytes).body);
     return c.previousHash.every((x) => x === 0) ? { bytes, c } : null;
   };
+  // THE PLAYER'S SECOND FIRST MARK (§13B; ruled 2026-09-12): a first mark this
+  // seat does not hold, while it keeps a DIFFERENT first mark as a late start or
+  // holds a proof of two - refused, never taken and never voided here. Measured
+  // before on a fresh federation: A voided on a real outage, the player sent B a
+  // late first mark, A's forfeit showed B the Void, B recorded it too, both
+  // signed the refund and the player redeemed the lock before its expiry.
+  const TWO_FIRST_MARKS = 'the player signed another first mark for this entry (§13B): two first marks are FORFEIT, never an outage refund';
+  const secondFirstMark = (c, bytes) => {
+    const late = round.startForfeit(c.entryId);
+    return (!!late && toHex(late.mark) !== toHex(bytes)) || round.equivocation(c.roundId, c.entryId).length > 0;
+  };
+  // AN ENTRY_VOID THAT STANDS: no second first mark here. One that does not is
+  // decided by the close's no-quorum rule (FORFEIT), so the close keeps it.
+  const voidStands = (rid, eid) => !!round.entryVoid(eid) && !round.twoFirstMarks(rid, eid);
   function decideOutage(rid, eid, { evidenceKind, evidence = null }) {
     const had = round.entryVoid(eid);
     if (had) return had;
@@ -500,6 +514,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   function voidHere(c, bytes, late, givenReceipts = []) {
     const had = round.entryVoid(c.entryId);
     if (had) return had;
+    if (secondFirstMark(c, bytes)) return null;
     // THE PLAYER'S OWN FIRST MARK, OR NO VOID HERE. A seat records ENTRY_VOID
     // only for a first mark it holds in the player's own hand - signed by the
     // entry's session key, from the player or in a forward - never on another
@@ -876,7 +891,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // Nor one §13C's no-quorum rule already decided (VOID or FORFEIT, after the
     // result window): that is its outcome, not a hold.
     const unsigned = ((closed && closed.replayed) || [])
-      .filter((r) => r && !r.stored && !r.decided && r.entryId && !round.entryVoid(r.entryId)
+      .filter((r) => r && !r.stored && !r.decided && r.entryId && !voidStands(roundIdBytes, r.entryId)
         && !round.noQuorum(r.entryId) && !round.hasResult(roundIdBytes, r.entryId, round.pubkey));
     for (const u of unsigned) holding(roundIdBytes, u.entryId, { why: u.why });
     for (const r of (closed && closed.replayed) || [])
@@ -1269,7 +1284,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       const key = toHex(rid);
       if ((already || []).includes(key)) continue;
       if (!round.seats(rid).some((s) => toHex(s) === toHex(round.pubkey))) continue;
-      const short = round.entriesOf(rid).filter(({ entryId }) => !round.entryVoid(entryId) && !round.noQuorum(entryId)
+      const short = round.entriesOf(rid).filter(({ entryId }) => !voidStands(rid, entryId) && !round.noQuorum(entryId)
         && resultFinality(round, rid, entryId).state !== 'FINAL');
       if (!short.length) continue;
       console.log(`[close] ${key.slice(0, 16)} closed with ${short.length} run(s) short of final here: running its close logic again`);
@@ -1434,6 +1449,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // deadline passed - shown by the player's own signed mark past the line,
         // or by this seat's round being closed - is refused and recorded
         // ENTRY_VOID here. A claim of it this seat cannot check is refused.
+        if (!round.holdsMark(checkpointId(c)) && secondFirstMark(c, bytes)) return answer(409, { why: TWO_FIRST_MARKS });
         if (!round.holdsMark(checkpointId(c))) {
           const late = lateEvidenceHere(c, got.entryVoid, got.receipt ? fromHex(String(got.receipt)) : null);
           if (late) {
@@ -2616,6 +2632,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // deadline passed - this seat's own evidence first, then the other
         // seats' - is ENTRY_VOID here, not a run taken late. A player cannot
         // keep a run by catching a down seat up after seeing it (§13C).
+        if (firstMark && !round.holdsMark(checkpointId(firstMark.c)) && secondFirstMark(firstMark.c, firstMark.bytes))
+          return sock.send('error FORFEIT: ' + TWO_FIRST_MARKS);
         if (firstMark && !round.holdsMark(checkpointId(firstMark.c))) {
           const own = lateEvidenceHere(firstMark.c, null);
           const found = own ? { late: own, receipts: [] } : await lateByPeers(firstMark.c);
