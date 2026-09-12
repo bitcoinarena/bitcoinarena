@@ -1,0 +1,38 @@
+# THE LOCK CLIENT (W1a): the player's own client code for the stake lock,
+# built to wasm on the stock fedimint 0.12.0 client crates (FEDERATION.md item
+# 7: fedimint-client-wasm dispatches no LNv2). It joins a federation, takes a
+# deposit through a gateway, locks Point(stake_point) to the attested claim_pk
+# and reads the outpoint back. Redeem, forfeit, refund and withdraw are W5.
+#
+# Like tools/stake-lock, it builds only as a member of a fedimint v0.12.0 source
+# tree, whose workspace pins every dependency:
+#
+#   ln -s <this directory> <fedimint-0.12.0>/blwp-lock-client
+#   add "blwp-lock-client" to <fedimint-0.12.0>/Cargo.toml [workspace] members
+#   cargo build --release --target wasm32-unknown-unknown -p blwp-lock-client
+#     (secp256k1-sys compiles C: CC_wasm32_unknown_unknown=<llvm>/bin/clang,
+#      AR_wasm32_unknown_unknown=<llvm>/bin/llvm-ar)
+#   wasm-bindgen --target nodejs (0.2.106, the lockfile's) on the .wasm
+[package]
+name = "blwp-lock-client"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+anyhow = { workspace = true }
+fedimint-api-client = { workspace = true }
+fedimint-bip39 = { workspace = true }
+fedimint-client = { workspace = true }
+fedimint-connectors = { workspace = true }
+fedimint-core = { workspace = true }
+fedimint-lnv2-client = { workspace = true }
+fedimint-lnv2-common = { workspace = true }
+fedimint-mintv2-client = { workspace = true }
+rand = { workspace = true }
+serde_json = { workspace = true }
+wasm-bindgen = { workspace = true }
+wasm-bindgen-futures = { workspace = true }
