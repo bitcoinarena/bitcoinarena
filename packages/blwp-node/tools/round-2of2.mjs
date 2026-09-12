@@ -345,9 +345,10 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
       },
     },
   } : {};
-  const a = await serve(dbA, { port: portA, host, funded, headerBytes, bondProof, chainFor,
+  const optsA = { port: portA, host, funded, headerBytes, bondProof, chainFor,
     ...(randomnessFor ? { randomnessFor } : {}), ...lightning, ...chainTip, ...spendOn,
-    ...(federation ? { federation } : {}), ...seat });
+    ...(federation ? { federation } : {}), ...seat };
+  let a = await serve(dbA, optsA);
   const optsB = { port: portB, host, funded, headerBytes, bondProof, chainFor,
     ...(randomnessFor ? { randomnessFor } : {}), ...lightning, ...chainTip, ...spendOn,
     ...(federation ? { federation } : {}), ...seat };
@@ -643,7 +644,9 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   return {
     id, url, lobbyUrl, contract, openNext, keepOpen,
     rounds: () => held.map((c) => ({ id: toHex(roundId(c)), committeeTimeMs: c.committeeTimeMs, entryCloseMs: c.entryCloseMs })),
-    a, get b() { return b; }, beacon: beaconSeen,
+    get a() { return a; }, get b() { return b; }, beacon: beaconSeen,
+    // AND DAEMON A, the same way (M3.3-34 path 2: a forward to A lost while A is down).
+    async restartA() { await a.close(); a = await serve(dbA, optsA); return a; },
     // DAEMON B RESTARTS: the same store, identity, options and port, served
     // again - what an operator's restart is, for measuring what a client does
     // across one. Nothing it held is lost, because the store is the same.

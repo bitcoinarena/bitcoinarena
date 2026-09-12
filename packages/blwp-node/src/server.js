@@ -1919,6 +1919,21 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         return res.end(body);
       }
 
+      // THE PLAYER'S LATE FIRST MARK, AS THIS SEAT KEEPS IT (M3.3-34, path 2):
+      // the other half of a two-first-marks proof, for a seat that missed its
+      // forward to pull at its close. Measured before on a fresh federation: the
+      // forward to the Void seat lost, neither seat decided anything in 92 s -
+      // ENTRY_VOID at one, a late start at the other - and the Void seat's door
+      // tried to gather the refund. 204: this seat keeps none.
+      if (req.method === 'GET' && url.pathname === '/late-first-mark') {
+        const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
+        if (eid.length !== 32) return text(res, 400, 'an entry is asked for by its id');
+        const late = round.startForfeit(new Uint8Array(eid));
+        if (!late) return text(res, 204, 'this seat keeps no late first mark for that entry');
+        res.writeHead(200, { 'content-type': 'application/octet-stream', ...CORS });
+        return res.end(Buffer.from(late.mark));
+      }
+
       // THE CANONICAL TRANSCRIPT (13C), which is not the same object as the
       // transcript above: that one is everything this node was given, and this
       // one is only what the committee has carried. A node serving the first

@@ -468,6 +468,25 @@ export class Verifier {
     const voided = this.round.entryVoid(entryId);
     const late = this.round.startForfeit(entryId);
     if (voided && late) pairs.push([voided.firstMark, late.mark]);
+    // THE PLAYER'S OTHER FIRST MARK, PULLED (M3.3-34, path 2): a peer's late first
+    // mark, or the first mark a peer voided - paired with this seat's own first
+    // mark, so a lost forward still leaves the pair to be pulled at the close.
+    const mine = [voided && voided.firstMark, late && late.mark, this.round.firstMarkHeld(roundIdBytes, entryId)].filter(Boolean);
+    if (mine.length) {
+      for (const peer of this.peersOf(roundIdBytes)) {
+        try {
+          const r = await fetch(`${peer}/late-first-mark?round=${hex(roundIdBytes)}&entry=${hex(entryId)}`);
+          if (r.status === 200) { const theirs = new Uint8Array(await r.arrayBuffer()); for (const m of mine) pairs.push([m, theirs]); }
+        } catch { /* a seat that cannot answer proves nothing */ }
+        try {
+          const r = await fetch(`${peer}/entry-void?entry=${hex(entryId)}`);
+          if (r.status === 200) {
+            const got = await r.json();
+            if (got.firstMark) { const theirs = Uint8Array.from(Buffer.from(String(got.firstMark), 'hex')); for (const m of mine) pairs.push([m, theirs]); }
+          }
+        } catch { /* a seat that cannot answer proves nothing */ }
+      }
+    }
     for (const peer of this.peersOf(roundIdBytes)) {
       try {
         const r = await fetch(`${peer}/equivocation?round=${hex(roundIdBytes)}&entry=${hex(entryId)}`);

@@ -527,6 +527,56 @@ test('late start at close (5d): A records ENTRY_VOID on a real outage, then the 
   } finally { await w.close(); }
 });
 
+// A VOID SEAT THAT MISSED THE LATE MARK'S FORWARD (M3.3-34, ruled, path 2): A
+// down, B records ENTRY_VOID; A back; B down while the player sends A a late
+// first mark - so A's forward of it to B is lost; B back. The late mark is
+// pullable proof: after the window, BEFORE any forfeit door is asked (a door can
+// show a seat the Void and make the pair there), both seats hold the pair and
+// close FORFEIT; then no door signs a refund, and the lock is held.
+test('late start at close (5e): B records ENTRY_VOID, the late first mark reaches only A and its forward to B is lost - pulled at the close, FORFEIT at both, no refund', async () => {
+  const w = await seats();
+  try {
+    const run = await seatAndBuild(w);
+    await w.downA();
+    for (const m of run.messages) await say(w.b.port, m);                   // on time, then past the line, to B only (A down)
+    await wait(500);
+    const bVoidFirst = !!w.b.round.entryVoid(run.eid);
+    await w.upA();
+    await w.downB();
+    for (const m of run.late) await say(w.a.port, m);                       // late, to A - its forward to B is lost (B down)
+    await wait(500);
+    await w.upB();
+    await wait(500);
+    const before = { bVoidFirst, aLate: !!w.a.round.startForfeit(run.eid), aVoid: !!w.a.round.entryVoid(run.eid),
+      proofAtA: w.a.round.equivocation(w.rid, run.eid).length, proofAtB: w.b.round.equivocation(w.rid, run.eid).length };
+    await Promise.all([say(w.a.port, `close ${toHex(w.rid)}`), say(w.b.port, `close ${toHex(w.rid)}`)]);
+    await wait(WINDOW_MS + 3000);
+    const state = (d) => {
+      const nq = d.round.noQuorum(run.eid);
+      return { entryVoid: !!d.round.entryVoid(run.eid), noQuorum: nq ? nq.outcome : null, finality: resultFinality(d.round, w.rid, run.eid).state,
+        proof: d.round.equivocation(w.rid, run.eid).length, results: d.round.results(w.rid, run.eid).length };
+    };
+    const pulled = { a: state(w.a), b: state(w.b) };                        // after the window, before any door
+    const door = async (d) => (await fetch(`http://127.0.0.1:${d.port}/forfeit?round=${toHex(w.rid)}&entry=${toHex(run.eid)}`)).status;
+    const doors = { b: await door(w.b), a: await door(w.a), bAgain: await door(w.b) };
+    const after = { aVoid: !!w.a.round.entryVoid(run.eid), forfeitKept: [w.a, w.b].map((d) => !!d.round.forfeit(run.eid)), lockHeld: lockHeldOf(w, run) };
+    console.log('  FACTS (late close 5e, the late mark\'s forward lost):', JSON.stringify({ before, pulled, doors, after }));
+    assert.equal(before.bVoidFirst, true, 'B did not record ENTRY_VOID first: not the case the test names');
+    assert.equal(before.aLate, true, 'A recorded no late start: not the case the test names');
+    assert.equal(before.proofAtB, 0, 'B holds the pair before the close: the forward was not lost - not the case the test names');
+    for (const s of ['a', 'b']) {
+      assert.equal(pulled[s].noQuorum, 'FORFEIT', `${s} did not decide FORFEIT from the pull: ${JSON.stringify(pulled[s])}`);
+      assert.equal(pulled[s].finality, 'FORFEIT', `${s}'s finality is not FORFEIT: ${JSON.stringify(pulled[s])}`);
+    }
+    assert.ok(pulled.b.proof >= 1, 'B never pulled the late mark: the Void seat has no pair');
+    assert.equal(pulled.b.entryVoid, true, 'B\'s ENTRY_VOID record was not kept as history');
+    assert.deepEqual(doors, { b: 409, a: 409, bAgain: 409 }, 'a forfeit door signs the refund of the lock to the player');
+    assert.equal(after.aVoid, false, 'A recorded ENTRY_VOID from B\'s evidence');
+    assert.deepEqual(after.forfeitKept, [false, false], 'a seat keeps a refund of the lock');
+    assert.equal(after.lockHeld, true);
+  } finally { await w.close(); }
+});
+
 test('late start at close (7): a late mark after both seats have signed FORFEIT 0 changes nothing - the same result, the same transcript', async () => {
   const w = await seats();
   try {

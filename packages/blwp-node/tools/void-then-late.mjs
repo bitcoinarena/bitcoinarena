@@ -124,7 +124,9 @@ try {
   const handed = await handLock({ entryId: eid, fields: lock.fields, nodes: round.nodes, needed: 2 });
   say({ step: 'locked', deposit: paid, outpoint: `${toHex(lock.outpoint.txid)}:${lock.outpoint.outIdx}`, amountMsat: lock.fields.amountMsat,
     expiration: lock.fields.expiration, handouts: put.accepted, entries: seated, locks: handed.said.map((s) => s.status),
+    lockWhy: handed.said.filter((s) => s.status !== 201).map((s) => String(s.why).slice(0, 200)),
     committed: handed.committed, harnessSearch: { tries }, ...(await lockView(lock)) });
+  if (!handed.ok) throw new Error(`the seats did not commit the lock (${handed.committed} of ${handed.needed}): not the case this run measures`);
 
   const recorded = (d) => {
     const sf = d.round.startForfeit(eid);
@@ -157,8 +159,12 @@ try {
   for (let t = 0; t < SECOND; t++) step(lst, ...wordsAt(t));
   const lb = { roundId: rid, entryId: eid, previousHash: GENESIS, firstTick: 0, ticks: Array.from({ length: SECOND }, (_, t) => wordsAt(t)), liquidations: [] };
   const lm = { roundId: rid, entryId: eid, tick: SECOND, stateHash: hex32(lst), inputChainHash: batchId(lb), previousHash: NO_PREVIOUS, sessionPubkey: ed25519.getPublicKey(session) };
+  // MODE=lostforward (path 2): seat A is down while the player sends B the late
+  // mark, so B's forward of it to A is lost; A comes back after.
+  if (env.MODE === 'lostforward') await round.a.close();
   const saidB = [];
   for (const m of [encodeInputBatch(lb), sign(lm)]) saidB.push(answer(await ws(B, m)));
+  if (env.MODE === 'lostforward') { await wait(1000); await round.restartA(); }
   await wait(2000);
   say({ step: `B back; the player sends B a second first mark at ${SECOND} (${SECOND > 900 ? 'late' : 'on time'})`, saidB, A: recorded(round.a), B: recorded(round.b) });
 
