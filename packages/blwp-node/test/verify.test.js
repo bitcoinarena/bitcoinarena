@@ -6,6 +6,7 @@
 // event. Here the close goes over the socket, the way a real one does, and
 // what is checked afterwards is what the node has WRITTEN DOWN - not anything
 // this test handed it.
+import { PLANTED_FIRST_MARK_DEADLINE } from './planted-marks.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { assumeSeated, assumeStakeSeen } from './seating.js';
@@ -64,7 +65,7 @@ const peer = ed25519.utils.randomSecretKey();          // the second committee s
 
 /** Two slots, so two receipts make a mark canonical - genesis.js's own rule. */
 const contractFor = (nodePubkey) => ({
-  networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations: 1, gameVerifySlots: 2,
+  startDeadlineTicks: PLANTED_FIRST_MARK_DEADLINE, networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations: 1, gameVerifySlots: 2,
   settlementSlots: 2, simCoreHash: b32(1), startTimeMs: 60500n, entryCloseMs: 2000n,
   objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20,
   slashRemainder: 'BURN', federationId: new Uint8Array(32), stakeExpiryBlocks: 144, publicationRelays: [], donationSetId: b32(0xd0), censusHeight: 900000, censusRoot: b32(2),

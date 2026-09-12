@@ -13,6 +13,7 @@
 // refund, which 13C says a player cannot manufacture. So each daemon PULLS its
 // peers' receipts at the close, and every record goes through `takeReceipt`
 // unchanged - the mark held here, the signer seated, the signature verified.
+import { PLANTED_FIRST_MARK_DEADLINE } from './planted-marks.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
@@ -60,7 +61,7 @@ const session = ed25519.utils.randomSecretKey();
 
 /** A free round - carrying receipts is not about money, so no Lightning. */
 const contractFor = (nodes) => ({
-  networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations: 1,
+  startDeadlineTicks: PLANTED_FIRST_MARK_DEADLINE, networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations: 1,
   gameVerifySlots: 2, settlementSlots: 2, simCoreHash: b32(1), startTimeMs: 60500n,
   entryCloseMs: 2000n, objectionWindowMs: 600000n, custody: 'FEDERATION',
   slashMinimumServed: 20, slashRemainder: 'BURN', federationId: new Uint8Array(32), stakeExpiryBlocks: 144, publicationRelays: [], donationSetId: b32(0xd0),

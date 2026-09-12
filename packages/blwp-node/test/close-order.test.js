@@ -9,6 +9,7 @@
 // is final or the round's objection window has passed - and a run that turns
 // final re-runs that round's close logic: settle and cancel, then the payout
 // table's gather and queue. No second close path.
+import { PLANTED_FIRST_MARK_DEADLINE } from './planted-marks.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { ed25519 } from '@noble/curves/ed25519.js';
@@ -55,7 +56,7 @@ function paidPort() {
 // P2 (v4.6.2 §13A): the relays each run's transcript is posted to - the
 // daemons' own doors - or no result of the round can become final.
 const contractFor = (nodes, publicationRelays) => ({
-  networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations: 1,
+  startDeadlineTicks: PLANTED_FIRST_MARK_DEADLINE, networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations: 1,
   gameVerifySlots: 2, settlementSlots: 2, simCoreHash: b32(1), startTimeMs: 60500n,
   entryCloseMs: 2000n, objectionWindowMs: 0n, custody: 'FEDERATION',
   slashMinimumServed: 20, slashRemainder: 'BURN', federationId: new Uint8Array(32), stakeExpiryBlocks: 144, publicationRelays, donationSetId: b32(0xd0),

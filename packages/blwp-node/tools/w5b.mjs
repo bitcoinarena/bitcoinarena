@@ -131,14 +131,28 @@ try {
     const seated = [];
     for (const b of round.nodes) seated.push((await fetch(`${b}/entry`, { method: 'POST', body: encodeEntryContract(entry) })).status);
     const handed = await handLock({ entryId: eid, fields: lock.fields, nodes: round.nodes, needed: 2 });
-    const input = { roundId: rid, entryId: eid, previousHash: GENESIS, firstTick: 0,
-      ticks: Array.from({ length: run.ticks }, (_, t) => wordsAt(t)), liquidations: [] };
-    const mark = { roundId: rid, entryId: eid, tick: run.ticks,
-      stateHash: Uint8Array.from(stateHash(run.st).match(/../g).map((x) => parseInt(x, 16))),
-      inputChainHash: batchId(input), previousHash: NO_PREVIOUS, sessionPubkey: ed25519.getPublicKey(session) };
-    const signedMark = joinSigned(encodeCheckpoint(mark), ed25519.sign(checkpointId(mark), session));
+    // THE FIRST MARK WHERE THE PAGE PUTS IT (§16): at tick 60, inside the start
+    // deadline the round omits (900) - then the rest of the run and its end mark,
+    // chained. A single first mark at the run's end (this harness's 1197 before)
+    // is after the line: ENTRY_VOID, and the run would never settle.
+    const FIRST = 60;
+    const hex32 = (st) => Uint8Array.from(stateHash(st).match(/../g).map((x) => parseInt(x, 16)));
+    const early = init(seedWordForEntry(entry, randomness));
+    for (let t = 0; t < FIRST; t++) step(early, ...wordsAt(t));
+    const first = { roundId: rid, entryId: eid, previousHash: GENESIS, firstTick: 0,
+      ticks: Array.from({ length: FIRST }, (_, t) => wordsAt(t)), liquidations: [] };
+    const firstMark = { roundId: rid, entryId: eid, tick: FIRST, stateHash: hex32(early),
+      inputChainHash: batchId(first), previousHash: NO_PREVIOUS, sessionPubkey: ed25519.getPublicKey(session) };
+    const input = { roundId: rid, entryId: eid, previousHash: batchId(first), firstTick: FIRST,
+      ticks: Array.from({ length: run.ticks - FIRST }, (_, t) => wordsAt(FIRST + t)), liquidations: [] };
+    const mark = { roundId: rid, entryId: eid, tick: run.ticks, stateHash: hex32(run.st),
+      inputChainHash: batchId(input), previousHash: checkpointId(firstMark), sessionPubkey: ed25519.getPublicKey(session) };
+    const sign = (m) => joinSigned(encodeCheckpoint(m), ed25519.sign(checkpointId(m), session));
     const played = [];
-    for (const b of round.nodes) played.push([await ws(b, encodeInputBatch(input)), (await ws(b, signedMark)).length]);
+    for (const b of round.nodes) {
+      played.push([await ws(b, encodeInputBatch(first)), (await ws(b, sign(firstMark))).length,
+        await ws(b, encodeInputBatch(input)), (await ws(b, sign(mark))).length]);
+    }
     players[role] = { seed, player, lock, eid, entry };
     say({ step: 'locked and played', role, outpoint: `${toHex(lock.outpoint.txid)}:${lock.outpoint.outIdx}`,
       amountMsat: lock.fields.amountMsat, expiration: lock.fields.expiration, handouts: put.accepted, entries: seated,

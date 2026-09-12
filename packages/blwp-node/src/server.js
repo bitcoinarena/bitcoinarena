@@ -18,11 +18,11 @@ import { createServer } from 'node:http';
 import { randomBytes } from 'node:crypto';
 import { WebSocketServer } from 'ws';
 import { decodeRoundContract, decodeEntryContract, publicationRelaysAreValid } from '../../protocol/src/contracts.js';
-import { toHex } from '../../protocol/src/hash.js';
+import { toHex, fromHex } from '../../protocol/src/hash.js';
 import { lobbyListingId } from '../../protocol/src/lobby-listing.js';
 import { entryFeeMsat } from '../../protocol/src/fee.js';
 import { TYPE_CHECKPOINT, TYPE_INPUT_BATCH, STAKE_NOT_SEEN } from '../../protocol/src/constants.js';
-import { splitSigned, decodeCheckpoint } from '../../protocol/src/checkpoint.js';
+import { splitSigned, decodeCheckpoint, checkpointId } from '../../protocol/src/checkpoint.js';
 import { MAX_INPUT_BATCH_BYTES, decodeInputBatch } from '../../protocol/src/batch.js';
 import { SIGNED_CHECKPOINT_BYTES } from '../../protocol/src/checkpoint.js';
 import { TYPE_CHECKPOINT_RECEIPT } from '../../protocol/src/constants.js';
@@ -330,6 +330,45 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     curve: poolCurve, random: (n) => new Uint8Array(randomBytes(n)),
     peers, fetcher: (u, o) => fetch(u, o),
   });
+
+  // THE PLAYER'S FIRST MARK, FORWARDED TO THE ROUND'S OTHER SEATS (§16).
+  //
+  // A seat the player never reached cannot tell a Void from a run, and cannot
+  // receipt a run it never saw start. So a seat that takes a first mark - or
+  // refuses it as ENTRY_VOID - hands it on at once: the signed mark, the
+  // batches it commits to (a seat receipts only a mark whose inputs it holds),
+  // and this seat's own receipt. Each other seat applies the same rule to the
+  // same signed tick. What each answered is kept by entry, for whoever asks.
+  const firstMarkForwards = new Map();
+  const firstMarkOf = (data, isBinary) => {
+    if (!isBinary) return null;
+    const bytes = new Uint8Array(data);
+    if (bytes[0] !== TYPE_CHECKPOINT) return null;
+    try {
+      const c = decodeCheckpoint(splitSigned(bytes).body);
+      return c.previousHash.every((x) => x === 0) ? { bytes, c } : null;
+    } catch { return null; }
+  };
+  async function forwardFirstMark({ bytes, c }) {
+    const id = checkpointId(c);
+    const held = round.holdsMark(id);
+    if (!held && !round.entryVoid(c.entryId)) return null;      // refused for another reason: nothing to hand on
+    const batches = held ? round.batchesThrough(c.roundId, c.entryId, c.inputChainHash) : [];
+    const own = held ? round.ownReceipt(id) : null;
+    const body = JSON.stringify({ mark: toHex(bytes), batches: batches.map((b) => toHex(b)), receipt: own ? toHex(own) : null });
+    const said = [];
+    for (const peer of verifier.peersOf(c.roundId)) {
+      try {
+        const r = await fetch(`${String(peer).replace(/\/+$/, '')}/first-mark`, { method: 'POST', body, signal: AbortSignal.timeout(5000) });
+        let got;
+        try { got = JSON.parse(await r.text()); } catch { got = {}; }
+        if (r.ok && got.receipt) { try { round.takeReceipt(fromHex(String(got.receipt))); } catch { /* not this mark's */ } }
+        said.push({ peer, status: r.status, answer: got.void ? 'ENTRY_VOID' : (got.receipt ? 'receipted' : String(got.why || '').slice(0, 120)) });
+      } catch (e) { said.push({ peer, status: 0, answer: e.message }); }
+    }
+    firstMarkForwards.set(toHex(c.entryId), said);
+    return said;
+  }
 
   // THE SEATS' FORFEIT OF A QUALIFIER'S STAKE LOCK (W5b), with this seat's share
   // of the round's claim key. Its peers are the round's settlement seats, from
@@ -1033,6 +1072,47 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           makeClaimKey(id);
         }
         return bytes(res, 201, id);
+      }
+
+      // A FIRST MARK HANDED ON BY ANOTHER SEAT (§16). The same checks a player's
+      // own send meets - a seated entry, a stake this seat has seen, the mark's
+      // own signature and chain - and the same rule: taken and receipted in
+      // time, refused and recorded ENTRY_VOID after join_tick + the deadline.
+      // The forwarder's receipt is kept beside this seat's own.
+      if (req.method === 'POST' && url.pathname === '/first-mark') {
+        const answer = (status, body) => { res.writeHead(status, { 'content-type': 'application/json', ...CORS }); return res.end(JSON.stringify(body)); };
+        let got;
+        try { got = JSON.parse(Buffer.from(await read(req)).toString('utf8')); }
+        catch { return answer(400, { why: 'a first mark is handed on as JSON' }); }
+        let bytes;
+        let c;
+        try { bytes = fromHex(String(got.mark)); c = decodeCheckpoint(splitSigned(bytes).body); }
+        catch (e) { return answer(400, { why: `that is not a signed mark: ${e.message}` }); }
+        if (!c.previousHash.every((x) => x === 0)) return answer(400, { why: 'only a first mark is handed on' });
+        if (!round.entry(c.entryId)) return answer(404, { why: 'this seat seated no such entry' });
+        let seen;
+        try { seen = await custody.seenPaid(c.entryId); } catch (e) { seen = { ok: false, why: e.message }; }
+        if (!seen.ok) return answer(409, { why: STAKE_NOT_SEEN + seen.why });
+        for (const b of Array.isArray(got.batches) ? got.batches : []) {
+          try { round.batch(fromHex(String(b))); } catch { /* held already, or refused: the mark says which */ }
+        }
+        let receipt;
+        try { receipt = round.checkpoint(bytes); }
+        catch (e) { return answer(409, /^ENTRY_VOID/.test(e.message) ? { void: true, why: e.message } : { why: e.message }); }
+        if (got.receipt) { try { round.takeReceipt(fromHex(String(got.receipt))); } catch { /* not this mark's */ } }
+        return answer(200, { receipt: toHex(receipt) });
+      }
+
+      // WHAT THIS SEAT HOLDS ABOUT AN ENTRY'S START (§16): ENTRY_VOID with the
+      // first mark's tick and the line it missed, or 404 - no mark is no record.
+      if (req.method === 'GET' && url.pathname === '/entry-void') {
+        const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
+        if (eid.length !== 32) return text(res, 400, 'an entry is asked for by its id');
+        const v = round.entryVoid(new Uint8Array(eid));
+        if (!v) return text(res, 404, 'this seat holds no ENTRY_VOID for that entry');
+        res.writeHead(200, { 'content-type': 'application/json', ...CORS });
+        return res.end(JSON.stringify({ outcome: 'ENTRY_VOID', markTick: v.markTick, lastTick: v.lastTick, why: v.why,
+          mark: toHex(v.mark), forwarded: firstMarkForwards.get(toHex(eid)) || null }));
       }
 
       // THE LOBBY (M3.3-34, §25): the rounds THIS node holds that a player can
@@ -2096,7 +2176,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           // A WAIT, SAID AS ONE: the client holds the ticks and asks again.
           if (!seen.ok) return sock.send('error ' + STAKE_NOT_SEEN + seen.why);
         }
-        return handle(data, isBinary);
+        const firstMark = firstMarkOf(data, isBinary);
+        const handled = handle(data, isBinary);
+        // A FIRST MARK THIS SEAT TOOK OR VOIDED GOES ON TO THE OTHER SEATS (§16),
+        // after the player has its answer: the player is never kept waiting on
+        // a peer, and a peer that is down is named in the forward's record.
+        if (firstMark) forwardFirstMark(firstMark).catch((e) => console.error(`[first-mark] ${e.message}`));
+        return handled;
       }).catch((e) => console.error(`[play] ${e.message}`));
     });
   });

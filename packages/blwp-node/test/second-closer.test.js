@@ -16,6 +16,7 @@
 // here, though it is on the rehearsal (0 of 8 HELD): two in-process closes are
 // handled one after the other, and before the fix B was still left HELD
 // ("B is HELD on the lost stake") - the same race, which the fix also closes.
+import { PLANTED_FIRST_MARK_DEADLINE } from './planted-marks.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
@@ -76,7 +77,7 @@ function paidPort() {
 // P2 (v4.6.2 §13A): the relays each run's transcript is posted to - the
 // daemons' own doors - or no result of the round can become final.
 const contractFor = (nodes, publicationRelays) => ({
-  networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations: 1,
+  startDeadlineTicks: PLANTED_FIRST_MARK_DEADLINE, networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations: 1,
   gameVerifySlots: 2, settlementSlots: 2, simCoreHash: b32(1), startTimeMs: 60500n,
   entryCloseMs: 2000n, objectionWindowMs: 0n, custody: 'FEDERATION',
   slashMinimumServed: 20, slashRemainder: 'BURN', federationId: new Uint8Array(32), stakeExpiryBlocks: 144, publicationRelays, donationSetId: b32(0xd0),

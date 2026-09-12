@@ -31,6 +31,7 @@ import { OPEN, CLOSED, nodeIdentity } from './store.js';
 import { receiptsNeeded } from '../../protocol/src/genesis.js';
 import { decodeHandout } from '../../protocol/src/handout.js';
 import { stakePointIsTheHandouts } from '../../protocol/src/contracts.js';
+import { entryVoidOutcome, startDeadlineOf } from '../../protocol/src/entry-void.js';
 
 /**
  * 5-of-7 unless the round's contract is the 2-slot test genesis.
@@ -595,6 +596,29 @@ export class Round {
     // `node_pubkey`.
     try { ok = ed25519.verify(signature, id, sessionPubkey); } catch { ok = false; }
     if (!ok) throw new Error('the signature does not verify under the entry\'s session key');
+
+    // ENTRY_VOID (§16): A FIRST MARK SIGNED AFTER join_tick + THE START DEADLINE.
+    //
+    // The first mark is the one that chains to nothing. Its tick is the
+    // player's own, under the entry's session key, so every seat reads the same
+    // number and no clock is consulted. Past the round's line it came too late
+    // to be the first financial tick: it is refused - no receipt - and kept as
+    // the evidence the entry is ENTRY_VOID. In time, it goes on as any mark.
+    // A player with no first mark is not decided here at all (§15, unbuilt).
+    if (same(c.previousHash, NO_PREVIOUS)) {
+      const joined = decodeEntryContract(new Uint8Array(entry.contract));
+      let decided;
+      try {
+        decided = entryVoidOutcome({ joinTick: joined.joinTick,
+          deadlineTicks: startDeadlineOf(decodeRoundContract(new Uint8Array(round.contract))),
+          firstMark: { tick: c.tick, previousHash: c.previousHash } });
+      } catch (e) { throw new Error(`that first mark is refused: ${e.message}`); }
+      if (decided.outcome) {
+        this.putEntryVoid({ entryId: c.entryId, roundId: c.roundId, markTick: c.tick, lastTick: decided.lastTick, mark: bytes, why: decided.why });
+        throw new Error(`ENTRY_VOID: ${decided.why}`);
+      }
+    }
+
     const at = this.db.prepare(
       'SELECT checkpoint_id FROM checkpoints WHERE round_id = ? AND entry_id = ? AND tick = ?')
       .get(c.roundId, c.entryId, c.tick);
@@ -1509,6 +1533,41 @@ export class Round {
   }
 
   /** The committee's forfeit of a qualifier's lock, as this seat keeps it (W5b). */
+  /** §16: this seat holds the entry ENTRY_VOID - its first mark, kept whole, is after the line. */
+  putEntryVoid({ entryId, roundId, markTick, lastTick, mark, why }) {
+    this.db.prepare('INSERT OR IGNORE INTO entry_voids (entry_id, round_id, mark_tick, last_tick, mark, why, decided_ms) '
+      + 'VALUES (?, ?, ?, ?, ?, ?, ?)').run(entryId, roundId, markTick, lastTick, mark, why, this.now());
+  }
+
+  entryVoid(entryIdBytes) {
+    const r = this.db.prepare('SELECT * FROM entry_voids WHERE entry_id = ?').get(entryIdBytes);
+    return r ? { roundId: new Uint8Array(r.round_id), markTick: r.mark_tick, lastTick: r.last_tick,
+      mark: new Uint8Array(r.mark), why: r.why, decidedMs: r.decided_ms } : null;
+  }
+
+  /** Whether this seat stores that mark in an entry's chain. */
+  holdsMark(checkpointIdBytes) {
+    return !!this.db.prepare('SELECT 1 k FROM checkpoints WHERE checkpoint_id = ?').get(checkpointIdBytes);
+  }
+
+  /** This seat's own receipt of a mark it holds, or null - never a new one. */
+  ownReceipt(checkpointIdBytes) {
+    const r = this.db.prepare('SELECT bytes FROM receipts WHERE checkpoint_id = ? AND node_pubkey = ?')
+      .get(checkpointIdBytes, this.identity.pubkey);
+    return r ? new Uint8Array(r.bytes) : null;
+  }
+
+  /** An entry's batches in chain order, through the one a mark names. */
+  batchesThrough(roundIdBytes, entryIdBytes, inputChainHash) {
+    const out = [];
+    for (const r of this.db.prepare('SELECT batch_id, bytes FROM batches WHERE round_id = ? AND entry_id = ? ORDER BY seq')
+      .all(roundIdBytes, entryIdBytes)) {
+      out.push(new Uint8Array(r.bytes));
+      if (same(new Uint8Array(r.batch_id), inputChainHash)) return out;
+    }
+    return same(inputChainHash, GENESIS) ? [] : out;
+  }
+
   putForfeit({ entryId, roundId, message, signature, claimPk }) {
     this.db.prepare('INSERT OR IGNORE INTO forfeits (entry_id, round_id, message, signature, claim_pk, made_ms) VALUES (?, ?, ?, ?, ?, ?)')
       .run(Buffer.from(entryId), Buffer.from(roundId), Buffer.from(message), Buffer.from(signature), Buffer.from(claimPk), this.now());

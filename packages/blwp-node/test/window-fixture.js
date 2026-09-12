@@ -67,7 +67,14 @@ export function paidPort() {
   };
 }
 
+// THE START DEADLINE THESE ROUNDS NAME (§16, ENTRY_VOID): every player here
+// plants ONE first mark at the end of its run, so the round names a deadline
+// past it (planted-marks.js says why); the omitted default is not moved.
+import { PLANTED_FIRST_MARK_DEADLINE } from './planted-marks.js';
+export { PLANTED_FIRST_MARK_DEADLINE };
+
 export const contractFor = (nodes, objectionWindowMs, publicationRelays = []) => ({
+  startDeadlineTicks: PLANTED_FIRST_MARK_DEADLINE,
   networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations: 1,
   gameVerifySlots: nodes.length, settlementSlots: nodes.length, simCoreHash: b32(1), startTimeMs: 60500n,
   entryCloseMs: 2000n, objectionWindowMs, custody: 'FEDERATION',

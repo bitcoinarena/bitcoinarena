@@ -485,6 +485,20 @@ export function openStore(path = ':memory:') {
       made_ms      INTEGER NOT NULL
     );
 
+    -- AN ENTRY THIS SEAT HOLDS ENTRY_VOID (§16): its first mark, signed by the
+    -- player, names a tick after join_tick + the round's start deadline. The
+    -- mark is the evidence and is kept whole; it was refused, not receipted.
+    -- Not a PlayerResult: nothing was played to a result. No mark, no row.
+    CREATE TABLE IF NOT EXISTS entry_voids (
+      entry_id    BLOB PRIMARY KEY,
+      round_id    BLOB NOT NULL,
+      mark_tick   INTEGER NOT NULL,
+      last_tick   INTEGER NOT NULL,
+      mark        BLOB NOT NULL,
+      why         TEXT NOT NULL,
+      decided_ms  INTEGER NOT NULL
+    );
+
     -- WHAT THIS NODE KEEPS AS A RELAY: transcripts by their own hash, so any
     -- node can be one of a contract's publication_relays[] and serve nothing
     -- under a name its bytes do not have.
