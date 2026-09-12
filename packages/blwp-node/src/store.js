@@ -501,6 +501,33 @@ export function openStore(path = ':memory:') {
       decided_ms  INTEGER NOT NULL
     );
 
+    -- WHAT EACH OTHER SEAT ANSWERED when this seat offered it the player's
+    -- on-time first mark (§16's evidence): receipted, unanswered, late, refused.
+    -- A receipted answer is never written over.
+    CREATE TABLE IF NOT EXISTS first_mark_offers (
+      entry_id  BLOB NOT NULL,
+      peer      TEXT NOT NULL,
+      answer    TEXT NOT NULL,
+      at_ms     INTEGER NOT NULL,
+      PRIMARY KEY (entry_id, peer)
+    );
+
+    -- AN ENTRY THIS SEAT HOLDS ENTRY_VOID (§16, the outage refund): an on-time
+    -- first mark that, when the start deadline passed, had fewer than the
+    -- threshold's receipts, the seats it was short of offered it and silent.
+    -- The first mark and the evidence the deadline passed - the player's own
+    -- signed mark past the line, or this round closed - are kept whole. Its
+    -- lock is forfeited at once to the player's refund key (§23.2).
+    CREATE TABLE IF NOT EXISTS entry_voids (
+      entry_id       BLOB PRIMARY KEY,
+      round_id       BLOB NOT NULL,
+      first_mark     BLOB NOT NULL,
+      evidence_kind  TEXT NOT NULL,
+      evidence       BLOB,
+      why            TEXT NOT NULL,
+      decided_ms     INTEGER NOT NULL
+    );
+
     -- WHAT THIS NODE KEEPS AS A RELAY: transcripts by their own hash, so any
     -- node can be one of a contract's publication_relays[] and serve nothing
     -- under a name its bytes do not have.

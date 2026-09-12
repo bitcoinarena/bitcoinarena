@@ -1569,6 +1569,73 @@ export class Round {
     return same(inputChainHash, GENESIS) ? [] : out;
   }
 
+  /** §16's evidence: what a peer answered when this seat offered it the on-time first mark. */
+  putFirstMarkOffer({ entryId, peer, answer }) {
+    this.db.prepare(
+      'INSERT INTO first_mark_offers (entry_id, peer, answer, at_ms) VALUES (?, ?, ?, ?) '
+      + 'ON CONFLICT (entry_id, peer) DO UPDATE SET answer = excluded.answer, at_ms = excluded.at_ms '
+      + "WHERE first_mark_offers.answer != 'receipted'")
+      .run(entryId, peer, answer, this.now());
+  }
+
+  firstMarkOffers(entryIdBytes) {
+    const out = {};
+    for (const r of this.db.prepare('SELECT peer, answer FROM first_mark_offers WHERE entry_id = ?').all(entryIdBytes)) out[r.peer] = r.answer;
+    return out;
+  }
+
+  /** §16: this seat holds the entry ENTRY_VOID - an outage before the first financial tick. */
+  putEntryVoid({ entryId, roundId, firstMark, evidenceKind, evidence = null, why }) {
+    this.db.prepare('INSERT OR IGNORE INTO entry_voids (entry_id, round_id, first_mark, evidence_kind, evidence, why, decided_ms) '
+      + 'VALUES (?, ?, ?, ?, ?, ?, ?)').run(entryId, roundId, firstMark, evidenceKind, evidence, why, this.now());
+  }
+
+  entryVoid(entryIdBytes) {
+    const r = this.db.prepare('SELECT * FROM entry_voids WHERE entry_id = ?').get(entryIdBytes);
+    return r ? { roundId: new Uint8Array(r.round_id), firstMark: new Uint8Array(r.first_mark), evidenceKind: r.evidence_kind,
+      evidence: r.evidence ? new Uint8Array(r.evidence) : null, why: r.why, decidedMs: r.decided_ms } : null;
+  }
+
+  /** The entry's first mark as this seat stores it (the chain's first link), or null. */
+  firstMarkHeld(roundIdBytes, entryIdBytes) {
+    const r = this.db.prepare('SELECT bytes FROM checkpoints WHERE round_id = ? AND entry_id = ? ORDER BY tick LIMIT 1')
+      .get(roundIdBytes, entryIdBytes);
+    return r ? new Uint8Array(r.bytes) : null;
+  }
+
+  /** The entry's start line - join tick + the round's start deadline - and the round's threshold. */
+  startLine(roundIdBytes, entryIdBytes) {
+    const row = this.get(roundIdBytes);
+    const e = this.db.prepare('SELECT contract FROM entries WHERE entry_id = ?').get(entryIdBytes);
+    if (!row || !e) return null;
+    const contract = decodeRoundContract(new Uint8Array(row.contract));
+    return { lastTick: decodeEntryContract(new Uint8Array(e.contract)).joinTick + startDeadlineOf(contract),
+      needed: receiptsNeeded(contract.gameVerifySlots), closed: row.state === CLOSED };
+  }
+
+  /** A mark the entry's own session key signed: decoded, or a throw. Checks nothing else. */
+  playerSigned(bytes) {
+    const { body, signature } = splitSigned(bytes);
+    const c = decodeCheckpoint(body);
+    const e = this.db.prepare('SELECT contract FROM entries WHERE entry_id = ?').get(c.entryId);
+    if (!e) throw new Error('no such entry');
+    let ok = false;
+    try { ok = ed25519.verify(signature, checkpointId(c), decodeEntryContract(new Uint8Array(e.contract)).sessionPubkey); } catch { ok = false; }
+    if (!ok) throw new Error('that mark is not signed by the entry\'s session key');
+    return c;
+  }
+
+  /** Is this a seated member's signed receipt of that mark? Stores nothing. */
+  receiptVerifies(bytes, checkpointIdBytes, roundIdBytes) {
+    try {
+      const { body, signature } = splitSignedReceipt(bytes);
+      const r = decodeCheckpointReceipt(body);
+      if (!same(r.checkpointId, checkpointIdBytes)) return false;
+      if (!this.seats(roundIdBytes).some((n) => same(n, r.nodePubkey))) return false;
+      return verifyNode(signature, receiptId(r), r.nodePubkey);
+    } catch { return false; }
+  }
+
   putForfeit({ entryId, roundId, message, signature, claimPk }) {
     this.db.prepare('INSERT OR IGNORE INTO forfeits (entry_id, round_id, message, signature, claim_pk, made_ms) VALUES (?, ?, ?, ?, ?, ?)')
       .run(Buffer.from(entryId), Buffer.from(roundId), Buffer.from(message), Buffer.from(signature), Buffer.from(claimPk), this.now());

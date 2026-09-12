@@ -43,7 +43,7 @@ export class Forfeit {
    * federation (it hashes a contract the way the guardians do); `peersFor(rid)`
    * names the other settlement seats' bases.
    */
-  constructor(round, { dkg, port, curve, random, peersFor = () => [], fetcher = (u, o) => fetch(u, o) } = {}) {
+  constructor(round, { dkg, port, curve, random, peersFor = () => [], fetcher = (u, o) => fetch(u, o), onVoid = null } = {}) {
     this.round = round;
     this.dkg = dkg;
     this.port = port;
@@ -51,6 +51,9 @@ export class Forfeit {
     this.random = random;
     this.peersFor = peersFor;
     this.fetcher = fetcher;
+    // ENTRY_VOID's evidence, handed to the other seats before a Void lock is
+    // forfeited: a seat that was down records the Void only when shown it.
+    this.onVoid = onVoid;
     this.pairs = new Map();          // contract id hex -> { hiding, binding, commitment, list, share }
   }
 
@@ -61,15 +64,24 @@ export class Forfeit {
     const contract = decodeRoundContract(new Uint8Array(row.contract));
     const lock = this.round.stakeLock(entryIdBytes);
     if (!lock) return refuse('this seat verified no stake lock for that entry, so it forfeits nothing');
-    const standing = resultFinality(this.round, roundIdBytes, entryIdBytes);
-    if (standing.state !== FINAL)
-      return refuse(`no forfeit before the result is final with its objection window closed: ${standing.why || standing.state}`);
-    const mine = this.round.results(roundIdBytes, entryIdBytes).find((r) => toHex(r.nodePubkey) === toHex(this.round.pubkey));
-    if (!mine) return refuse('this seat signed no result for that run, so it forfeits nothing');
-    const result = decodePlayerResult(splitSignedResult(mine.bytes).body);
-    if (!isQualifier(result, contract.minScore))
-      return refuse(`that run is ${result.outcome} with score ${result.score} and this round's minimum is `
-        + `${contract.minScore}: not a qualifier, so its stake lock is not forfeited`);
+    // ENTRY_VOID (§16, §23.2 "forfeit at once; if nobody acts, the lock expires"):
+    // an outage refund, on THIS seat's own record of it - never on an asker's
+    // word, and never for a late start (that is FORFEIT, first-mark.js) or a
+    // run with no first mark. The lock goes back to the player's refund key
+    // now, instead of at expiry. Everything else below still holds: the lock
+    // this seat verified, the round's claim key, the contract rebuilt here.
+    const voided = this.round.entryVoid ? this.round.entryVoid(entryIdBytes) : null;
+    if (!voided) {
+      const standing = resultFinality(this.round, roundIdBytes, entryIdBytes);
+      if (standing.state !== FINAL)
+        return refuse(`no forfeit before the result is final with its objection window closed: ${standing.why || standing.state}`);
+      const mine = this.round.results(roundIdBytes, entryIdBytes).find((r) => toHex(r.nodePubkey) === toHex(this.round.pubkey));
+      if (!mine) return refuse('this seat signed no result for that run, so it forfeits nothing');
+      const result = decodePlayerResult(splitSignedResult(mine.bytes).body);
+      if (!isQualifier(result, contract.minScore))
+        return refuse(`that run is ${result.outcome} with score ${result.score} and this round's minimum is `
+          + `${contract.minScore}: not a qualifier, so its stake lock is not forfeited`);
+    }
     const held = this.dkg.seatFor(contract.nodes);
     if (!held.ok) return refuse(`this seat holds no share of the round's claim key: ${held.why}`);
     const claimPk = held.pool.groupPublicKey;
@@ -136,6 +148,11 @@ export class Forfeit {
     if (kept) return { ok: true, ...kept, kept: true };
     const m = await this.message(roundIdBytes, entryIdBytes);
     if (!m.ok) return m;
+    // AN ENTRY_VOID LOCK: the evidence goes to the other seats before they are
+    // asked to sign, so a seat that was down records the same Void on its own.
+    if (this.onVoid && this.round.entryVoid && this.round.entryVoid(entryIdBytes)) {
+      try { await this.onVoid(roundIdBytes, entryIdBytes); } catch { /* each seat still signs only on its own record */ }
+    }
     const q = `round=${toHex(roundIdBytes)}&entry=${toHex(entryIdBytes)}`;
     const own = await this.commit(roundIdBytes, entryIdBytes);
     if (!own.ok) return own;

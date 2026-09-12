@@ -65,6 +65,8 @@ import { Roster, endpointsOf } from './roster.js';
 import { receiptsNeeded as roundThreshold } from '../../protocol/src/genesis.js';
 import { Custody, NO_LIGHTNING, SETTLE, HELD } from './custody.js';
 import { resultFinality } from './finality.js';
+import { outageOutcome } from '../../protocol/src/entry-void.js';
+import { ENTRY_VOID } from '../../protocol/src/payout.js';
 import { FINAL, PROVISIONALLY_FINAL, SUSPENDED } from '../../protocol/src/objection.js';
 import { transcriptBytesHash, SIGNED_POSTING_BYTES } from '../../protocol/src/posting.js';
 import { SIGNED_RERUN_BYTES } from '../../protocol/src/rerun.js';
@@ -355,30 +357,144 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if (!held && !round.startForfeit(c.entryId)) return null;      // refused for another reason: nothing to hand on
     const batches = held ? round.batchesThrough(c.roundId, c.entryId, c.inputChainHash) : [];
     const own = held ? round.ownReceipt(id) : null;
-    const body = JSON.stringify({ mark: toHex(bytes), batches: batches.map((b) => toHex(b)), receipt: own ? toHex(own) : null });
+    // AND ONCE THIS SEAT HOLDS THE ENTRY ENTRY_VOID (§16), THE EVIDENCE GOES WITH
+    // IT: the player's own signed mark past the start line, or "closed". A seat
+    // that was down records the Void from it instead of taking the mark late.
+    const voided = held ? round.entryVoid(c.entryId) : null;
+    const body = JSON.stringify({ mark: toHex(bytes), batches: batches.map((b) => toHex(b)), receipt: own ? toHex(own) : null,
+      entryVoid: voided ? { kind: voided.evidenceKind, evidence: voided.evidence ? toHex(voided.evidence) : null } : null });
+    const offers = held ? round.firstMarkOffers(c.entryId) : {};
     const said = [];
     for (const peer of verifier.peersOf(c.roundId)) {
+      const at = String(peer).replace(/\/+$/, '');
+      if (held && !voided && offers[at] === 'receipted') continue;       // it has the mark already
+      let answer;
+      let why;
       try {
-        const r = await fetch(`${String(peer).replace(/\/+$/, '')}/first-mark`, { method: 'POST', body, signal: AbortSignal.timeout(5000) });
+        const r = await fetch(`${at}/first-mark`, { method: 'POST', body, signal: AbortSignal.timeout(3000) });
         let got;
         try { got = JSON.parse(await r.text()); } catch { got = {}; }
-        if (r.ok && got.receipt) { try { round.takeReceipt(fromHex(String(got.receipt))); } catch { /* not this mark's */ } }
-        said.push({ peer, status: r.status, answer: got.forfeit ? 'FORFEIT' : (got.receipt ? 'receipted' : String(got.why || '').slice(0, 120)) });
-      } catch (e) { said.push({ peer, status: 0, answer: e.message }); }
+        why = got.why ? String(got.why).slice(0, 120) : undefined;
+        if (r.ok && got.receipt) { try { round.takeReceipt(fromHex(String(got.receipt))); } catch { /* not this mark's */ } answer = 'receipted'; }
+        else if (got.entryVoid) answer = 'late';
+        else if (got.forfeit) answer = 'FORFEIT';
+        else answer = 'refused';
+        said.push({ peer: at, status: r.status, answer, why });
+      } catch (e) { answer = 'unanswered'; said.push({ peer: at, status: 0, answer, why: e.message }); }
+      // WHAT THE PEER ANSWERED THE ON-TIME FIRST MARK is §16's evidence (entry-void.js).
+      if (held && answer !== 'FORFEIT') round.putFirstMarkOffer({ entryId: c.entryId, peer: at, answer });
     }
     firstMarkForwards.set(toHex(c.entryId), said);
     return said;
   }
 
+  // ENTRY_VOID (§16), THE OUTAGE REFUND, ON THIS SEAT'S OWN RECORD.
+  //
+  // The player's on-time first mark is forwarded at once and what each other
+  // seat answered is kept (forwardFirstMark). When the start deadline passes
+  // HERE - this seat takes a mark the player signed past join tick + deadline,
+  // or its round closes - and the first mark is still short of the threshold's
+  // receipts, with the seats it is short of offered it and silent, the entry is
+  // ENTRY_VOID (entry-void.js), and the evidence goes to the other seats. A
+  // seat that was down refuses a first mark reaching it after that line -
+  // forwarded, or sent by the player directly - and records the same Void, so a
+  // run cannot be kept by catching a down seat up after seeing it (§13C).
+  // A late START is FORFEIT (first-mark.js) and is not decided here.
+  const firstMarkMessage = (rid, eid) => {
+    const bytes = round.firstMarkHeld(rid, eid);
+    if (!bytes) return null;
+    const c = decodeCheckpoint(splitSigned(bytes).body);
+    return c.previousHash.every((x) => x === 0) ? { bytes, c } : null;
+  };
+  function decideOutage(rid, eid, { evidenceKind, evidence = null }) {
+    const had = round.entryVoid(eid);
+    if (had) return had;
+    const f = firstMarkMessage(rid, eid);
+    const line = round.startLine(rid, eid);
+    if (!f || !line) return null;
+    const d = outageOutcome({ firstMark: true, lateStart: f.c.tick > line.lastTick, deadlinePassed: true,
+      receipts: round.receiptCount(checkpointId(f.c)), needed: line.needed,
+      offers: Object.values(round.firstMarkOffers(eid)), state: resultFinality(round, rid, eid).state });
+    if (d.outcome !== ENTRY_VOID) return null;
+    round.putEntryVoid({ entryId: eid, roundId: rid, firstMark: f.bytes, evidenceKind, evidence, why: d.why });
+    return round.entryVoid(eid);
+  }
+  // AFTER A LATER MARK IS TAKEN HERE: inside the start line, offer the first mark
+  // again to any seat that has not taken it (it may be back); past it, decide.
+  async function afterMarkTaken(bytes) {
+    let c;
+    try { c = decodeCheckpoint(splitSigned(bytes).body); } catch { return; }
+    if (!round.holdsMark(checkpointId(c))) return;
+    const f = firstMarkMessage(c.roundId, c.entryId);
+    const line = round.startLine(c.roundId, c.entryId);
+    if (!f || !line || toHex(checkpointId(f.c)) === toHex(checkpointId(c))) return;
+    if (c.tick <= line.lastTick) {
+      if (Object.values(round.firstMarkOffers(c.entryId)).some((a) => a !== 'receipted')) await forwardFirstMark(f);
+      return;
+    }
+    if (round.entryVoid(c.entryId)) return;
+    if (decideOutage(c.roundId, c.entryId, { evidenceKind: 'mark', evidence: bytes })) await forwardFirstMark(f);
+  }
+  // HAS THE START DEADLINE PASSED, as far as THIS seat can check, for a first
+  // mark it has never held? Its own record, its own round closed, or the
+  // player's own signed mark past the line - never a peer's word alone.
+  function lateEvidenceHere(c, claim) {
+    const line = round.startLine(c.roundId, c.entryId);
+    if (!line || c.tick > line.lastTick) return null;             // a late START is FORFEIT's
+    if (round.entryVoid(c.entryId)) return { kind: 'recorded', evidence: null };
+    if (line.closed) return { kind: 'closed', evidence: null };
+    if (claim && claim.kind === 'mark' && claim.evidence) {
+      try {
+        const evidence = fromHex(String(claim.evidence));
+        const e = round.playerSigned(evidence);
+        if (toHex(e.entryId) === toHex(c.entryId) && e.tick > line.lastTick) return { kind: 'mark', evidence };
+      } catch { /* not the player's mark: proves nothing */ }
+    }
+    return null;
+  }
+  function voidHere(c, bytes, late, givenReceipts = []) {
+    const had = round.entryVoid(c.entryId);
+    if (had) return had;
+    const line = round.startLine(c.roundId, c.entryId);
+    const id = checkpointId(c);
+    const receipts = givenReceipts.filter((r) => round.receiptVerifies(r, id, c.roundId)).length;
+    const d = outageOutcome({ firstMark: true, lateStart: false, deadlinePassed: true, receipts, needed: line.needed,
+      offers: ['late'], state: null });
+    if (d.outcome !== ENTRY_VOID) return null;
+    round.putEntryVoid({ entryId: c.entryId, roundId: c.roundId, firstMark: bytes, evidenceKind: late.kind === 'recorded' ? 'mark' : late.kind,
+      evidence: late.evidence, why: `this seat was offered the on-time first mark only after the start deadline had passed; ${d.why}` });
+    return round.entryVoid(c.entryId);
+  }
+  async function lateByPeers(c) {
+    for (const peer of verifier.peersOf(c.roundId)) {
+      try {
+        const r = await fetch(`${String(peer).replace(/\/+$/, '')}/entry-void?entry=${toHex(c.entryId)}`, { signal: AbortSignal.timeout(1500) });
+        if (!r.ok) continue;
+        const got = await r.json();
+        const late = lateEvidenceHere(c, { kind: got.evidenceKind, evidence: got.evidence });
+        if (late) return { late, receipts: got.receipt ? [fromHex(String(got.receipt))] : [] };
+      } catch { /* a seat that is down proves nothing */ }
+    }
+    return null;
+  }
+  async function pushVoid(rid, eid) {
+    if (!round.entryVoid(eid)) return;
+    const f = firstMarkMessage(rid, eid);
+    if (f) await forwardFirstMark(f);
+  }
+
   // THE SEATS' FORFEIT OF A QUALIFIER'S STAKE LOCK (W5b), with this seat's share
   // of the round's claim key. Its peers are the round's settlement seats, from
   // the census; a node with none (an in-process test) falls back to its DKG's.
+  // AND OF AN ENTRY_VOID LOCK (§16, §23.2), at once: the evidence is shown to
+  // the other seats first, so a seat that was down can record the same Void.
   const forfeits = new Forfeit(round, {
     dkg, port: stakeLocks, curve: poolCurve, random: (n) => new Uint8Array(randomBytes(n)),
     peersFor: (rid) => {
       const picked = roster.committeeFor(rid, 'settlement');
       return picked.ok ? endpointsOf(picked.committee, round.pubkey) : (dkg.peers || []);
     },
+    onVoid: (rid, eid) => pushVoid(rid, eid),
   });
 
   // AND WHICH OUTPUT THE POOL IS IN, asked of the chain rather than
@@ -729,6 +845,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
    * (M3.3-33) are the same work and must not become two paths.
    */
   function afterClose(roundIdBytes) {
+    // §16 AT THE CLOSE: an entry whose on-time first mark is still short of the
+    // threshold, the seats it is short of offered it and silent, is ENTRY_VOID
+    // with "closed" as the evidence - and the other seats are shown it.
+    (async () => {
+      for (const { entryId } of round.entriesOf(roundIdBytes)) {
+        const f = firstMarkMessage(roundIdBytes, entryId);
+        if (!f || round.entryVoid(entryId)) continue;
+        if (decideOutage(roundIdBytes, entryId, { evidenceKind: 'closed' })) await forwardFirstMark(f);
+      }
+    })().catch((e) => console.error(`[entry-void] ${e.message}`));
     stakes = verifier.settleRound(roundIdBytes)
       .then(async (closed) => {
         // A daemon taken away while it replayed acts on nothing afterwards.
@@ -1093,6 +1219,17 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         let seen;
         try { seen = await custody.seenPaid(c.entryId); } catch (e) { seen = { ok: false, why: e.message }; }
         if (!seen.ok) return answer(409, { why: STAKE_NOT_SEEN + seen.why });
+        // §16: A FIRST MARK THIS SEAT DOES NOT HOLD, handed on after the start
+        // deadline passed - shown by the player's own signed mark past the line,
+        // or by this seat's round being closed - is refused and recorded
+        // ENTRY_VOID here. A claim of it this seat cannot check is refused.
+        if (!round.holdsMark(checkpointId(c))) {
+          const late = lateEvidenceHere(c, got.entryVoid);
+          if (late) {
+            const v = voidHere(c, bytes, late, got.receipt ? [fromHex(String(got.receipt))] : []);
+            if (v) return answer(409, { entryVoid: true, why: v.why });
+          } else if (got.entryVoid) return answer(409, { why: 'that ENTRY_VOID claim does not verify at this seat' });
+        }
         for (const b of Array.isArray(got.batches) ? got.batches : []) {
           try { round.batch(fromHex(String(b))); } catch { /* held already, or refused: the mark says which */ }
         }
@@ -1101,6 +1238,23 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         catch (e) { return answer(409, /^FORFEIT/.test(e.message) ? { forfeit: true, why: e.message } : { why: e.message }); }
         if (got.receipt) { try { round.takeReceipt(fromHex(String(got.receipt))); } catch { /* not this mark's */ } }
         return answer(200, { receipt: toHex(receipt) });
+      }
+
+      // ENTRY_VOID (§16), AS THIS SEAT HOLDS IT: why, the first mark, the evidence
+      // the start deadline passed, and this seat's receipt of the first mark if
+      // it took it in time - what a returning seat checks before it records the
+      // same Void. 404: this seat holds none.
+      if (req.method === 'GET' && url.pathname === '/entry-void') {
+        const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
+        if (eid.length !== 32) return text(res, 400, 'an entry is asked for by its id');
+        const v = round.entryVoid(new Uint8Array(eid));
+        if (!v) return text(res, 404, 'this seat holds no ENTRY_VOID for that entry');
+        let own = null;
+        try { own = round.ownReceipt(checkpointId(decodeCheckpoint(splitSigned(v.firstMark).body))); } catch { own = null; }
+        res.writeHead(200, { 'content-type': 'application/json', ...CORS });
+        return res.end(JSON.stringify({ outcome: 'ENTRY_VOID', why: v.why, firstMark: toHex(v.firstMark),
+          evidenceKind: v.evidenceKind, evidence: v.evidence ? toHex(v.evidence) : null, receipt: own ? toHex(own) : null,
+          offers: round.firstMarkOffers(new Uint8Array(eid)) }));
       }
 
       // WHAT THIS SEAT HOLDS ABOUT AN ENTRY'S START: FORFEIT for a late start, with the
@@ -2177,11 +2331,27 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           if (!seen.ok) return sock.send('error ' + STAKE_NOT_SEEN + seen.why);
         }
         const firstMark = firstMarkOf(data, isBinary);
+        // §16: A FIRST MARK THIS SEAT HAS NEVER HELD, reaching it after the start
+        // deadline passed - this seat's own evidence first, then the other
+        // seats' - is ENTRY_VOID here, not a run taken late. A player cannot
+        // keep a run by catching a down seat up after seeing it (§13C).
+        if (firstMark && !round.holdsMark(checkpointId(firstMark.c))) {
+          const own = lateEvidenceHere(firstMark.c, null);
+          const found = own ? { late: own, receipts: [] } : await lateByPeers(firstMark.c);
+          if (found) {
+            const v = voidHere(firstMark.c, firstMark.bytes, found.late, found.receipts);
+            if (v) return sock.send('error ENTRY_VOID: ' + v.why);
+          }
+        }
         const handled = handle(data, isBinary);
-        // A FIRST MARK THIS SEAT TOOK OR VOIDED GOES ON TO THE OTHER SEATS (§16),
-        // after the player has its answer: the player is never kept waiting on
-        // a peer, and a peer that is down is named in the forward's record.
+        // A FIRST MARK THIS SEAT TOOK OR REFUSED GOES ON TO THE OTHER SEATS, after
+        // the player has its answer: the player is never kept waiting on a peer,
+        // and a peer that is down is named in the forward's record. A LATER mark
+        // re-offers the first to a seat that has not taken it, or - past the
+        // start line - decides §16's outage (afterMarkTaken).
         if (firstMark) forwardFirstMark(firstMark).catch((e) => console.error(`[first-mark] ${e.message}`));
+        else if (isBinary && new Uint8Array(data)[0] === TYPE_CHECKPOINT)
+          afterMarkTaken(new Uint8Array(data)).catch((e) => console.error(`[first-mark] ${e.message}`));
         return handled;
       }).catch((e) => console.error(`[play] ${e.message}`));
     });
