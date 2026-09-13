@@ -2069,6 +2069,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // result this seat signed (measured: a seat that had signed FAILED refused).
         if (!said.ok && (url.searchParams.get('proof') === '1' || !round.results(ask.roundId, ask.entryId).length)
           && await verifier.pullFirstMarkProof(ask.roundId, ask.entryId)) said = await preimages.answer(ask);
+        // A SEAT HOLDING THE PROOF GATHERS TOO, while the seats are up (M3.3-34):
+        // measured before on 5 of 7 - seats that learned the proof here, when
+        // asked, never gathered; with the two seats that had gathered down, the
+        // four up reached 4 of 5 shares and the hold went back to the player
+        // (98000 msat). In the background: the asker is answered now.
+        if (round.provenTwoFirstMarks(ask.roundId, ask.entryId)) gatherOnProof(ask.roundId, ask.entryId);
         if (!said.ok) return text(res, 409, said.why);
         res.writeHead(200, {
           'content-type': 'application/octet-stream',
