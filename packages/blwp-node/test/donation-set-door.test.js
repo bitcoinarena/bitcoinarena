@@ -16,7 +16,7 @@ import {
 } from '../../protocol/src/genesis-ids.js';
 import { TEST_DONATION_SET_REGTEST, TEST_DONATION_SET_TESTNET4, TEST_DONATION_ENDPOINTS } from '../../protocol/src/test-donation-sets.js';
 import { donationSetId, donationSetMatchesRound, splitDonation } from '../../protocol/src/donation.js';
-import { donationSetBodyId, decodeDonationSetBody, DONATION_SIGNATURE_BYTES } from '../../protocol/src/authority.js';
+import { donationSetBodyId, decodeDonationSetBody, DONATION_SIGNATURE_BYTES, authorityRotationId, decodeAuthorityRotation } from '../../protocol/src/authority.js';
 import { urlOfLnurl } from '../../protocol/src/bech32.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
@@ -37,10 +37,10 @@ const contractFor = (nodes, donationSetIdOfRound) => ({
   minScore: 1, rankNumerator: 3, rankDenominator: 4, nodes,
 });
 
-async function seatsWith(setsPerSeat) {
+async function seatsWith(setsPerSeat, rotationsPerSeat = []) {
   const seats = [];
-  for (const donationSets of setsPerSeat)
-    seats.push(await serve(openStore(':memory:'), { port: 0, funded: () => true, now: () => NOW, donationSets }));
+  for (const [i, donationSets] of setsPerSeat.entries())
+    seats.push(await serve(openStore(':memory:'), { port: 0, funded: () => true, now: () => NOW, donationSets, donationRotations: rotationsPerSeat[i] || [] }));
   const nodes = seats.map((s) => s.round.pubkey);
   const post = async (contract) => {
     for (const s of seats) {
@@ -100,5 +100,21 @@ test('a seat serves no set it cannot stand behind: the placeholder, none held, o
     const unknown = await w.ask(w.seats[0], b32(0x77));
     assert.equal(unknown.status, 404);
     console.log(`  placeholder ${onPlaceholder.map((x) => x.status)}; named: held ${onNamed[0].status}, none ${onNamed[1].status}, forged ${onNamed[2].status}`);
+  } finally { await w.close(); }
+});
+
+test('a seat serves the authority rotations it holds for the round\'s network, and an empty list when it holds none', async () => {
+  const recovery = ed25519.utils.randomSecretKey();
+  const body = { networkId: NETWORK_ID_REGTEST, serial: 1n, newAuthority: ed25519.getPublicKey(ed25519.utils.randomSecretKey()), validFrom: 5 };
+  const rotation = { ...body, signature: ed25519.sign(authorityRotationId(body), recovery) };
+  const w = await seatsWith([[SET], [SET]], [[rotation], []]);
+  try {
+    const rid = await w.post(contractFor(w.nodes, SET_ID));
+    const said = await Promise.all(w.seats.map(async (s) => (await fetch(`http://127.0.0.1:${s.port}/donation-rotations?round=${hex(rid)}`)).json()));
+    assert.equal(said[0].rotations.length, 1);
+    const back = decodeAuthorityRotation(Uint8Array.from(Buffer.from(said[0].rotations[0].body, 'hex')));
+    assert.equal(hex(back.newAuthority), hex(body.newAuthority));
+    assert.equal(said[0].rotations[0].signature, hex(rotation.signature));
+    assert.deepEqual(said[1].rotations, []);
   } finally { await w.close(); }
 });

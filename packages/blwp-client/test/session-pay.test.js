@@ -121,18 +121,20 @@ test('the client can enter, ask what it owes, and play - and cannot send a satos
     // ASK: one method, and it is the whole pay surface of this letter.
     assert.equal(typeof c.client.invoice, 'function', 'the client cannot ask what it owes');
 
-    // AND EXACTLY ONE THING THAT SENDS MONEY, which arrived with item 6.
-    // While item 5 stood alone this was 0, and the assertion said so.
+    // AND EXACTLY TWO THINGS THAT SEND MONEY: the stake (item 6) and the
+    // player's donation (M3.2 6e, ruled 2026-09-13, pick A) - each a method of
+    // this Client, each taking an entry and never an invoice. While item 5
+    // stood alone this was 0; from item 6 until the donation was paid it was 1.
     //
     // `send` IS NOT ON THIS LIST and was, wrongly: `Client.send` puts a
     // protocol message on the play socket and has since the first batch went
     // out. A probe that cannot tell a websocket write from a payment would
     // fail on every future letter for the wrong reason.
-    const sends = ['pay', 'payInvoice', 'sendPayment', 'nwc', 'wallet', 'payStake']
+    const sends = ['pay', 'payInvoice', 'sendPayment', 'nwc', 'wallet', 'payStake', 'payDonation']
       .filter((m) => typeof c.client[m] === 'function');
-    assert.deepEqual(sends, ['payStake'],
+    assert.deepEqual(sends, ['payStake', 'payDonation'],
       `methods that move a satoshi: ${sends.join(', ') || 'none'}`);
-    console.log('  enter: 3 methods · ask: 1 · play: 6 · moves a satoshi: 1 (payStake)');
+    console.log('  enter: 3 methods · ask: 1 · play: 6 · moves a satoshi: 2 (payStake, payDonation)');
 
     // AND THE FOURTH WORD IS NOT A NAME COLLISION ANY MORE. `settle()` waited
     // for two promises and settled nothing; 9.4's settle is a stake moving

@@ -359,6 +359,14 @@
     // Two tabs are two players, because the key is in `sessionStorage` and
     // that is per tab. Without a round named, none of this runs and the page
     // is the single-player daily it has always been.
+    // THE DONATION AUTHORITY'S SCHEME IS Ed25519 (ruled 2026-09-13), and this page
+    // checks it with the browser's own crypto - as the session key is made.
+    async function pageEd25519Verify(sig, msg, pub) {
+      try {
+        const key = await crypto.subtle.importKey('raw', pub, { name: 'Ed25519' }, false, ['verify']);
+        return await crypto.subtle.verify({ name: 'Ed25519' }, key, sig, msg);
+      } catch { return false; }
+    }
     async function joinTheRoundIfOneWasNamed() {
       if (typeof BLWPCLIENT === 'undefined') return;
       const named = await BLWPCLIENT.joinFromQuery(location.search);
@@ -460,9 +468,22 @@
       // second time. Kept per round in this tab, so a reload over a kept lock
       // writes the same amount. The rule is `chooseDonation`, where node --test
       // drives it; this page only asks and passes the answer on.
-      const donation = pays
+      // THE ROUND'S DONATION SET FIRST (M3.2 6e, §22A): from every seat of the
+      // round, checked - the network's Ed25519 donation authority at the round's
+      // height, rotations included, and the set the round names - so the prompt
+      // lists every recipient before the wallet approves. With no set that
+      // checks there is no donation to choose: it stays 0, and the page says why.
+      let donationSet = null;
+      if (pays) {
+        const ds = await BLWPCLIENT.fetchDonationSet({ round: named.round, nodes: named.nodes, verifyEd25519: pageEd25519Verify });
+        if (ds.ok) donationSet = ds.set;
+        else { window.BLWP_DONATION_SET_WHY = ds.why; console.error('[blwp] no donation: ' + ds.why); }
+      }
+      window.BLWP_DONATION_SET = donationSet;
+      const donation = pays && donationSet
         ? BLWPCLIENT.chooseDonation({ roundIdHex: named.roundIdHex, round: named.round,
-          ask: (m, d) => window.prompt(m, d), confirm: (m) => window.confirm(m), storage: window.sessionStorage })
+          ask: (m, d) => window.prompt(m, d), confirm: (m) => window.confirm(m), storage: window.sessionStorage,
+          recipientsLine: BLWPCLIENT.donationRecipientsLine(donationSet) })
         : { bps: 0, donationMsat: 0n };
       window.BLWP_DONATION = { bps: donation.bps, donationMsat: String(donation.donationMsat), kept: !!donation.kept };
       let stake = null;
@@ -649,6 +670,7 @@
     let owed = null;          // the last quote, as the client checked it
     let budget = null;        // what the WALLET said it will still let us spend
     let paying = false;
+    let donationPaying = false;       // the donation is paid once per seat
     let walletWhy = '';
 
     function theClient() {
@@ -850,6 +872,27 @@
       // payment that lands after payStake gave up would otherwise never be
       // counted. Started once; stopped at N >= T, at the run's end, or on close.
       const c = net && net.client;
+      // AND THE DONATION, ONCE THE SEATS HAVE TAKEN THE ENTRY (M3.2 6e, §24A.2):
+      // the player's wallet pays each recipient of the checked set its share,
+      // through the player's own Client (\`payDonation\`) - an entry and a set,
+      // never an invoice. A failed
+      // share is reported and not redirected; the entry stands either way. It
+      // waits for a connected wallet, and runs once.
+      if (c && c.seatEntry && window.BLWP_DONATION_SET && typeof c.seatEntry.donationMsat === 'bigint'
+          && c.seatEntry.donationMsat > 0n && !donationPaying && wallet) {
+        const heldWallet = wallet.current();
+        if (heldWallet.ok) {
+          donationPaying = true;
+          window.BLWP_DONATION_PAID = { state: 'paying' };
+          c.payDonation(c.seatEntry, window.BLWP_DONATION_SET, {
+            round: window.BLWP_ROUND, connection: heldWallet, curve: window.BLWP_CURVE, log: spent,
+            random: (n) => crypto.getRandomValues(new Uint8Array(n)),
+          }).then((said) => {
+            window.BLWP_DONATION_PAID = { state: said.ok ? 'paid' : 'part', paidMsat: String(said.paidMsat),
+              unpaid: said.failed.map((f) => f.why), why: said.why };
+          }).catch((e) => { window.BLWP_DONATION_PAID = { state: 'error', why: e.message }; });
+        }
+      }
       if (c && c.watchStake && c.seatEntry && window.BLWP_STAKE && window.BLWP_STAKE.seatKeys
           && !c.stakeWatch && !c.stakeCommitted && !c.ended && !c.stakeWatchStopped) {
         net.client.watchStake({

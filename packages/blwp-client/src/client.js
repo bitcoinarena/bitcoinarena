@@ -61,6 +61,11 @@ import { discover } from './directory.js';
 import { readWithOneRetry } from './reread.js';
 import { NO_SHARES } from '../../protocol/src/handout.js';
 import { entryFeeMsat } from '../../protocol/src/fee.js';
+// THE PLAYER'S DONATION (M3.2 6e): the split, the failure rule, the LNURL checks.
+import { donationSetMatchesRound, splitDonation, donationAfterFailures } from '../../protocol/src/donation.js';
+import { donationKeysForNetworkId } from '../../protocol/src/donation-keys.js';
+import { urlOfLnurl } from '../../protocol/src/bech32.js';
+import { payRequestStands, callbackFor, invoiceAnswersPayRequest } from '../../protocol/src/lnurl-pay.js';
 
 /**
  * A FEDERATION ROUND'S STAKE: THE INVOICE COMES FIRST (the owner 2026-09-11).
@@ -1203,7 +1208,8 @@ export class Client {
   /**
    * PAY THE HOLD INVOICE THIS SEAT OWES, AND NOTHING ELSE EVER.
    *
-   * M3.2 item 6, and the only method in this client that moves a satoshi.
+   * M3.2 item 6 - one of the two methods in this client that move a satoshi;
+   * the other is `payDonation` (6e), the player's donation.
    *
    * IT TAKES AN ENTRY, NOT AN INVOICE. That is the whole safety property and
    * it is a signature, not a check: there is no argument here that could carry
@@ -1302,6 +1308,57 @@ export class Client {
       request: quote.request,
       feesPaidMsat: paid && paid.ok ? paid.feesPaidMsat : undefined,
     };
+  }
+
+  /**
+   * PAY THE ENTRY'S DONATION TO THE SET, SHARE BY SHARE. Takes an entry and a
+   * set; there is no argument an invoice could arrive in.
+   */
+  async payDonation(entry, set, { round, connection, curve, fetcher = (u) => fetch(u), log, random, ...options } = {}) {
+    const none = { paid: [], failed: [], paidMsat: 0n, asked: 0 };
+    if (!entry || typeof entry.donationMsat !== 'bigint') return { ok: false, ...none, why: 'there is no entry whose donation to pay' };
+    if (entry.donationMsat === 0n) return { ok: true, ...none, why: 'this entry donates nothing, so nothing is paid' };
+    if (!set || !Array.isArray(set.recipients)) return { ok: false, ...none, why: 'there is no donation set to pay' };
+    if (round) {
+      const named = donationSetMatchesRound(round, set.recipients);
+      if (!named.ok) return { ok: false, ...none, why: named.why };
+    }
+    const where = typeof connection === 'string' ? parseConnection(connection) : connection;
+    if (!where || !where.ok) return { ok: false, ...none, why: (where && where.why) || 'there is no wallet connection to pay the donation with' };
+    if (!curve || typeof curve.ecdhShared !== 'function' || typeof curve.signSchnorr !== 'function')
+      return { ok: false, ...none, why: 'talking to a wallet needs a curve, and none was injected' };
+    const split = splitDonation({ donationMsat: entry.donationMsat, recipients: set.recipients });
+    if (!split.owed) return { ok: false, ...none, why: split.why };
+    const network = round && donationKeysForNetworkId(round.networkId) ? donationKeysForNetworkId(round.networkId).network : null;
+    const comment = entry.playerPubkey instanceof Uint8Array ? toHex(entry.playerPubkey) : '';
+
+    const paid = [];
+    const failed = [];
+    for (const share of split.shares) {
+      if (share.amountMsat === 0n) continue;
+      const unpaid = (why) => failed.push({ lnurl: share.lnurl, amountMsat: share.amountMsat, why });
+      let url;
+      try { url = urlOfLnurl(share.lnurl); } catch (e) { unpaid(`that recipient is no LNURL: ${e.message}`); continue; }
+      let asks;
+      try { asks = payRequestStands(await (await fetcher(url)).json(), share.amountMsat); }
+      catch (e) { unpaid(`the recipient's endpoint did not answer: ${e.message}`); continue; }
+      if (!asks.ok) { unpaid(asks.why); continue; }
+      let answer;
+      try { answer = await (await fetcher(callbackFor({ callback: asks.callback, amountMsat: share.amountMsat, comment, commentAllowed: asks.commentAllowed }))).json(); }
+      catch (e) { unpaid(`the recipient's callback did not answer: ${e.message}`); continue; }
+      if (answer && answer.status === 'ERROR') { unpaid(`the recipient refused: ${String(answer.reason || '').slice(0, 120)}`); continue; }
+      const fits = invoiceAnswersPayRequest({ invoice: answer && answer.pr, amountMsat: share.amountMsat, metadata: asks.metadata, network });
+      if (!fits.ok) { unpaid(fits.why); continue; }
+      const wallet = await payInvoice(where, answer.pr, {
+        curve, random: random || ((n) => crypto.getRandomValues(new Uint8Array(n))), ...options,
+      });
+      if (!wallet.ok) { unpaid(`the wallet did not pay it: ${wallet.why}`); continue; }
+      paid.push({ lnurl: share.lnurl, url, amountMsat: share.amountMsat, paymentHash: fits.paymentHash, preimage: wallet.preimage });
+      if (log && typeof log.record === 'function') log.record({ amountMsat: share.amountMsat, paymentHash: fits.paymentHash, roundId: entry.roundId || (this.where && this.where.roundId) });
+    }
+    const after = donationAfterFailures({ shares: split.shares.filter((s) => s.amountMsat > 0n), failed: failed.map((f) => f.lnurl) });
+    return { ok: failed.length === 0, paid, failed, paidMsat: paid.reduce((t, p) => t + p.amountMsat, 0n),
+      unpaidMsat: after.unpaidMsat, asked: paid.length, why: after.why };
   }
 
   /**

@@ -8472,6 +8472,596 @@ async function discover({
   };
 }
 
+// ---- protocol/src/donation.js
+// 22A: THE PLAYER'S DONATION, WHICH GOES TO A SET AND NOT TO AN ADDRESS.
+//
+// "A donation goes to a set of recipients with declared shares, not to one
+// address... `share_bps` are basis points and MUST sum to exactly 10000."
+//
+// `donationMsat` has been on every Entry Contract since it was written and
+// read by nothing - the same state `feeMsat` was in before the fee table.
+// This is the arithmetic and the one rule that decides where the money does
+// NOT go when a payment fails.
+//
+// THE ROUNDING IS NOT THE FEE'S ROUNDING, and that is deliberate rather than
+// an oversight to be tidied. 22A gives the node fee's remainder to the
+// ascending `H(round_id || node_pubkey)` order and gives the donation's to
+// "the first recipient in the set as published. Deterministic, and the
+// amounts are too small for anything cleverer to be worth its complexity."
+// Two rules, written down separately, and copying either onto the other would
+// be inventing a third.
+//
+// WHAT IS DELIBERATELY NOT HERE. 22A also says the set "is named in the Round
+// Contract and its hash is part of the contract hash". That is a signed field
+// and it moves every round id, so it is a decision before it is work - the
+// same split the fee table took before `feeMsat`. And there is no Lightning
+// here: a recipient is an opaque `lnurl` string, because this package pays
+// nobody and inventing a payment layer to test one would be inventing a
+// second protocol.
+
+
+
+
+/** Basis points, and 22A's MUST: the shares sum to exactly this. */
+const DONATION_BPS_TOTAL = 10000;
+
+/**
+ * AN LNURL IS BECH32, AND BECH32 DECIDES ITS OWN CASE RULES.
+ *
+ * Two of them, and both are the encoding's, not this file's invention:
+ * a string may not be MIXED case, and case carries no meaning - `LNURL1ABC`
+ * and `lnurl1abc` are one address.
+ *
+ * Treating the string as opaque bytes instead was measured and was a hole:
+ * `[{LNURL1ABC, 5000}, {lnurl1abc, 5000}]` stood, which is ONE PARTY HOLDING
+ * TWO SHARES - exactly what the duplicate check exists to prevent - and the
+ * same payee produced two different set ids, so two honest nodes handed the
+ * same recipients in different case disagreed about which set was used.
+ *
+ * FOLDED IN ASCII AND NOT BY `toLowerCase`, deliberately. `toLowerCase` is
+ * Unicode and in a Turkish locale maps `I` to a dotless `ı`, so two
+ * implementations of this protocol could canonicalise one address two ways and
+ * disagree about who is being paid. Bech32 is ASCII; the fold is ASCII.
+ */
+const upper = (c) => c >= 65 && c <= 90;
+const lower = (c) => c >= 97 && c <= 122;
+
+function canonicalLnurl(lnurl) {
+  let out = '';
+  for (let i = 0; i < lnurl.length; i++) {
+    const c = lnurl.charCodeAt(i);
+    out += upper(c) ? String.fromCharCode(c + 32) : lnurl[i];
+  }
+  return out;
+}
+
+function isMixedCase(lnurl) {
+  let hasUpper = false;
+  let hasLower = false;
+  for (let i = 0; i < lnurl.length; i++) {
+    const c = lnurl.charCodeAt(i);
+    if (upper(c)) hasUpper = true;
+    else if (lower(c)) hasLower = true;
+  }
+  return hasUpper && hasLower;
+}
+
+/**
+ * DOES THIS SET STAND?
+ *
+ * A set whose shares do not sum to exactly 10000 is not a division of the
+ * player's donation: under it money is either left over with nobody named to
+ * receive it, or promised twice. Either way the player's chosen amount is not
+ * what the set hands out, and 22A says MUST.
+ *
+ * Answered rather than thrown, like every other decision in this package.
+ */
+function donationSetStands(recipients) {
+  if (!Array.isArray(recipients) || !recipients.length)
+    return { ok: false, why: 'a donation goes to a set, and this names nobody' };
+
+  let sum = 0;
+  const seen = new Set();
+  for (const [at, r] of recipients.entries()) {
+    if (!r || typeof r.lnurl !== 'string' || !r.lnurl.length)
+      return { ok: false, why: `recipient ${at} has no address to be paid at` };
+    if (!Number.isInteger(r.shareBps) || r.shareBps < 0)
+      return { ok: false, why: `recipient ${at} has no whole share in basis points` };
+
+    // BECH32 FORBIDS MIXED CASE, so an address in it is not an address.
+    if (isMixedCase(r.lnurl))
+      return {
+        ok: false,
+        why: `recipient ${at} is mixed case, which bech32 does not allow in an address`,
+      };
+
+    // ONE RECIPIENT LISTED TWICE IS TWO SHARES FOR ONE PARTY, and the set is
+    // "a parameter the network can hold an opinion about" - an opinion it
+    // cannot form if the same address can appear under two weights.
+    //
+    // COMPARED CANONICALLY, because case carries no meaning in bech32: the two
+    // spellings of one payee are one payee, and listing both was measured
+    // standing before this line existed.
+    const key = canonicalLnurl(r.lnurl);
+    if (seen.has(key))
+      return {
+        ok: false,
+        why: `${r.lnurl} is listed twice, which is one party with two shares`,
+      };
+    seen.add(key);
+    sum += r.shareBps;
+  }
+
+  if (sum !== DONATION_BPS_TOTAL)
+    return {
+      ok: false,
+      why: `those shares sum to ${sum} basis points and 22A says exactly `
+        + `${DONATION_BPS_TOTAL}: the player's donation is not what that set hands out`,
+    };
+  return { ok: true, why: `${recipients.length} recipients sharing exactly ${sum} basis points` };
+}
+
+/**
+ * WHAT EACH RECIPIENT IS OWED OF ONE PLAYER'S DONATION.
+ *
+ * "Rounding: compute in millisatoshis, floor each share, and give the
+ * remainder to the first recipient in the set AS PUBLISHED."
+ *
+ * So the split is EXACT - the remainder is handed to a named party rather than
+ * dropped - and the sum of the shares is the donation, to the millisatoshi.
+ * That is a different property from the node fee, where each entry's own floor
+ * can collect less than the round's table owes; here there is nothing to
+ * collect less of, and no gap for anybody to keep.
+ *
+ * A PLAYER WHO DONATES NOTHING PAYS NOTHING, and the set is irrelevant to that
+ * entry - 22A says so - so a zero donation is answered without judging the
+ * set at all.
+ *
+ * THE ANSWER IS `owed`, NOT `ok`, and the difference is the whole reason it
+ * was renamed. A zero donation returns successfully with a set that would NOT
+ * stand, because 22A says the set is irrelevant to that entry - and a field
+ * called `ok` invites a caller to read that as "this set stands", which it
+ * does not say and must never be taken to. `owed` says what this function
+ * actually answers: what each recipient is owed. Whether a set stands is
+ * `donationSetStands`, and it is a different question with a different name.
+ */
+function splitDonation({ donationMsat, recipients }) {
+  if (typeof donationMsat !== 'bigint')
+    return { owed: false, why: 'a donation is BigInt millisatoshi' };
+  if (donationMsat < 0n)
+    return { owed: false, why: 'a donation cannot be negative' };
+
+  if (donationMsat === 0n)
+    return {
+      owed: true,
+      shares: (Array.isArray(recipients) ? recipients : []).map((r) => ({
+        lnurl: r && r.lnurl, amountMsat: 0n,
+      })),
+      why: 'donations are off for this entry, and the set is irrelevant to it',
+    };
+
+  const stands = donationSetStands(recipients);
+  if (!stands.ok) return { owed: false, why: stands.why };
+
+  const shares = recipients.map((r) => ({
+    lnurl: r.lnurl,
+    amountMsat: (donationMsat * BigInt(r.shareBps)) / BigInt(DONATION_BPS_TOTAL),
+  }));
+
+  // The remainder to the first as published - not to the largest share, not
+  // to a hash order, and not dropped.
+  const handed = shares.reduce((sum, s) => sum + s.amountMsat, 0n);
+  shares[0].amountMsat += donationMsat - handed;
+
+  const total = shares.reduce((sum, s) => sum + s.amountMsat, 0n);
+  if (total !== donationMsat)
+    throw new Error(`donation split broken: ${total} of ${donationMsat}`);
+
+  return { owed: true, shares, why: `${donationMsat} split over ${shares.length} recipients` };
+}
+
+/**
+ * WHAT ACTUALLY MOVES WHEN A PAYMENT FAILS, and where it does NOT go.
+ *
+ * 22A: "Payment failure to one recipient does not void the entry or the round.
+ * A donation is voluntary and outside the pool; an unreachable LNURL is a
+ * failed payment and nothing more. Clients SHOULD report it and MUST NOT
+ * redirect the share to the remaining recipients, WHICH WOULD LET ONE
+ * UNREACHABLE ENDPOINT QUIETLY REDISTRIBUTE OTHER PEOPLE'S MONEY."
+ *
+ * So an unpaid share stays unpaid. Every other recipient is owed exactly what
+ * it was owed before, and the failure changes one number: what was paid. This
+ * is the money-law clause and not a retry policy - whether a client tries
+ * again is its business, and where the money may go is not.
+ *
+ * The entry stands either way: a donation is outside the pool, so a failure
+ * here can neither void a round nor touch a stake.
+ */
+function donationAfterFailures({ shares, failed = [] }) {
+  const out = new Set(failed);
+  const paid = [];
+  const unpaid = [];
+  for (const s of shares) (out.has(s.lnurl) ? unpaid : paid).push({ ...s });
+
+  return {
+    paid,
+    unpaid,
+    paidMsat: paid.reduce((sum, s) => sum + s.amountMsat, 0n),
+    unpaidMsat: unpaid.reduce((sum, s) => sum + s.amountMsat, 0n),
+    entryStands: true,
+    why: unpaid.length
+      ? `${unpaid.length} recipient(s) unreachable; their share is not redistributed`
+      : 'every recipient was paid its share',
+  };
+}
+
+/**
+ * The donations of a round, for the rounds where somebody wants the total.
+ * Refunded entries are excluded for the reason the fee base excludes them: a
+ * VOID entry is money that never moved.
+ */
+const donatedMsat = (entries) =>
+  entries.filter((e) => !isRefund(e.outcome)).reduce((sum, e) => sum + e.donationMsat, 0n);
+
+/**
+ * THE SET AS BYTES, so a committee can check one instead of being handed an
+ * array.
+ *
+ * Every other object here that decides money encodes and carries a tagged id -
+ * the payout table, the settlement record, the fee claim, the service record,
+ * the slash proof - and until this the donation set was the only one that did
+ * not. That is what stopped two independent nodes agreeing on WHICH set a
+ * player donated under, and nothing could be bound to one.
+ *
+ * THE ORDER IS PART OF THE SET AND IS NOT SORTED. Everywhere else in this
+ * package a vector is sorted so that two honest callers agree - the payout
+ * table by pubkey, the committee by key - and here that would be a bug: 22A
+ * gives the remainder to "the first recipient in the set AS PUBLISHED", so the
+ * order decides who is topped up. A set reordered is a set that pays somebody
+ * else the odd millisatoshi, and it must therefore be a different set with a
+ * different id.
+ *
+ * A SET THAT DOES NOT STAND DOES NOT ENCODE. There would otherwise be bytes
+ * with a real tagged id naming shares that sum to 9999 - an object that looks
+ * exactly as published as an honest one and hands out a different amount than
+ * the player chose. Refused at the encoder, so no such id can exist.
+ */
+function encodeDonationSet(recipients) {
+  const stands = donationSetStands(recipients);
+  if (!stands.ok) throw new Error(`that set does not stand: ${stands.why}`);
+
+  const w = new Writer();
+  w.u8(TYPE_DONATION_SET);
+  w.u16(PROTOCOL_VERSION);
+  w.vec(recipients, (r, ww) => {
+    // THE ADDRESS, CANONICALLY. 22A's "the client MUST show every recipient
+    // before wallet approval - a donation to an undisclosed address is not a
+    // donation" is about WHICH payee, and bech32 says case is not part of
+    // that: the same list typed in upper and in lower is the same set and must
+    // therefore hash to one id, or two honest nodes disagree over spelling.
+    ww.str(canonicalLnurl(r.lnurl));
+    ww.u16(r.shareBps);
+  });
+  return w.finish();
+}
+
+function decodeDonationSet(bytes) {
+  const r = new Reader(bytes);
+  if (r.u8() !== TYPE_DONATION_SET) throw new Error('not a donation set');
+  if (r.u16() !== PROTOCOL_VERSION) throw new Error('unknown protocol version');
+  const recipients = r.vec((rr) => ({ lnurl: rr.str(), shareBps: rr.u16() }));
+  if (r.at !== bytes.length) throw new Error('trailing bytes after the donation set');
+
+  // Checked on the way in as well as on the way out: bytes are where a set
+  // arrives from a stranger, and a stranger is exactly who might send one that
+  // does not stand.
+  const stands = donationSetStands(recipients);
+  if (!stands.ok) throw new Error(`that set does not stand: ${stands.why}`);
+
+  // AND THE BYTES THEMSELVES MUST BE CANONICAL, or one set has two of them.
+  //
+  // The encoder folds, so nothing this package writes is ever uppercase - but
+  // a stranger does not use this encoder. Hand-crafted bytes spelling the
+  // payee `LNURL1ABC` decoded happily and stood, which left ONE SET WITH TWO
+  // BYTE STRINGS: a committee comparing what it received, or hashing it
+  // directly instead of re-encoding, would see two different sets and
+  // disagree - the very disagreement folding was adopted to remove. Measured
+  // before this check existed.
+  //
+  // Refused rather than quietly folded on the way in: bytes that are not the
+  // set's own encoding are not that set, and accepting them would make the id
+  // depend on who did the hashing.
+  for (const [at, r] of recipients.entries())
+    if (r.lnurl !== canonicalLnurl(r.lnurl))
+      throw new Error(
+        `recipient ${at} is not canonical: a set has one encoding, and these `
+        + 'bytes are not it');
+
+  return recipients;
+}
+
+/** What 22A means by naming a set: one hash, over the recipients as published. */
+const donationSetId = (recipients) =>
+  taggedHash(TAG.donationSet, encodeDonationSet(recipients));
+
+/**
+ * IS THIS THE SET THE ROUND NAMED? 22A's binding, checked.
+ *
+ * "The set is named in the Round Contract and its hash is part of the contract
+ * hash, SO IT CANNOT CHANGE AFTER ENTRY." A set with an id and nothing naming
+ * which one applies leaves two honest nodes able to agree on a set's bytes and
+ * still disagree about whether it was this round's - and a player's donation
+ * split by a list nobody signed up to.
+ *
+ * Answered rather than thrown, like every other decision here: a set that does
+ * not stand has no id at all, and that is a refusal rather than a crash.
+ */
+function donationSetMatchesRound(contract, recipients) {
+  if (!contract || !(contract.donationSetId instanceof Uint8Array)
+      || contract.donationSetId.length !== 32)
+    return { ok: false, why: 'that round names no donation set' };
+
+  let id;
+  try { id = donationSetId(recipients); }
+  catch (e) { return { ok: false, why: e.message }; }
+
+  const same = id.every((b, i) => b === contract.donationSetId[i]);
+  return same
+    ? { ok: true, why: 'that is the set this round named' }
+    : {
+      ok: false,
+      why: 'that set is not the one this round named, and 22A says it cannot '
+        + 'change after entry',
+    };
+}
+
+// ---- protocol/src/donation-keys.js
+/**
+ * THE DONATION AUTHORITY AND RECOVERY KEYS, BY THE NETWORK ID A ROUND CONTRACT
+ * CARRIES (M3.2 6e, §27A.4). A seat and a page know a round's network by its
+ * id, not by a name; a network with no generated donation authority answers
+ * null. Its own module, reading only genesis-ids.js, so the page bundle can use
+ * it without genesis.js (which reads the core's game rules).
+ */
+
+function donationKeysForNetworkId(networkId) {
+  const is = (known) => networkId instanceof Uint8Array && networkId.length === 32
+    && networkId.every((x, i) => x === known[i]);
+  if (is(NETWORK_ID_REGTEST)) return { network: 'regtest', authority: AUTHORITY_PUBKEY_REGTEST, recovery: RECOVERY_PUBKEY_REGTEST };
+  if (is(NETWORK_ID_TESTNET4)) return { network: 'testnet4', authority: AUTHORITY_PUBKEY_TESTNET4, recovery: RECOVERY_PUBKEY_TESTNET4 };
+  return null;
+}
+
+// ---- protocol/src/bech32.js
+/**
+ * BECH32 (BIP-173), FOR LNURL (LUD-01).
+ *
+ * An LNURL is a URL written in bech32 under the human-readable part `lnurl`,
+ * with no length limit. The donation set names its recipients as LNURLs
+ * (§22A), and before this nothing in the repo could turn one into the URL a
+ * wallet has to ask - `donation.js` only folded their case. Written out here
+ * because it is sixty lines and a dependency for sixty lines is a dependency
+ * that decides which address gets paid.
+ *
+ * CASE IS THE ENCODING'S: an all-lowercase and an all-uppercase string are the
+ * same address, mixed case is not an address at all (BIP-173), folded in ASCII
+ * as `canonicalLnurl` folds it.
+ */
+const CHARSET = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l';
+const GENERATOR = [0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3];
+
+function polymod(values) {
+  let chk = 1;
+  for (const v of values) {
+    const top = chk >>> 25;
+    chk = ((chk & 0x1ffffff) << 5) ^ v;
+    for (let i = 0; i < 5; i++) if ((top >>> i) & 1) chk ^= GENERATOR[i];
+  }
+  return chk >>> 0;
+}
+
+const hrpExpand = (hrp) => [...hrp].map((c) => c.charCodeAt(0) >> 5).concat([0], [...hrp].map((c) => c.charCodeAt(0) & 31));
+const asciiLower = (s) => s.replace(/[A-Z]/g, (c) => String.fromCharCode(c.charCodeAt(0) + 32));
+const asciiUpper = (s) => s.replace(/[a-z]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 32));
+
+/** 5-bit words under `hrp`, with the six-word checksum. */
+function bech32Encode(hrp, words) {
+  const chk = polymod([...hrpExpand(hrp), ...words, 0, 0, 0, 0, 0, 0]) ^ 1;
+  const sum = [];
+  for (let i = 0; i < 6; i++) sum.push((chk >>> (5 * (5 - i))) & 31);
+  return `${hrp}1${[...words, ...sum].map((w) => CHARSET[w]).join('')}`;
+}
+
+/** `{ hrp, words }` of a bech32 string, or a throw naming what is wrong. `limit` is BIP-173's 90; LNURL has none. */
+function bech32Decode(str, { limit = 90 } = {}) {
+  if (typeof str !== 'string') throw new Error('a bech32 string is a string');
+  if (str.length > limit) throw new Error(`a bech32 string is at most ${limit} characters`);
+  for (const c of str) {
+    const code = c.charCodeAt(0);
+    if (code < 33 || code > 126) throw new Error('a bech32 string is printable ASCII');
+  }
+  if (str !== asciiLower(str) && str !== asciiUpper(str)) throw new Error('bech32 does not allow mixed case');
+  const s = asciiLower(str);
+  const at = s.lastIndexOf('1');
+  if (at < 1) throw new Error('a bech32 string names a human-readable part before its separator');
+  if (at + 7 > s.length) throw new Error('a bech32 string ends in a six-character checksum');
+  const hrp = s.slice(0, at);
+  const words = [];
+  for (const c of s.slice(at + 1)) {
+    const w = CHARSET.indexOf(c);
+    if (w < 0) throw new Error(`"${c}" is not a bech32 character`);
+    words.push(w);
+  }
+  if (polymod([...hrpExpand(hrp), ...words]) !== 1) throw new Error('that bech32 checksum does not verify');
+  return { hrp, words: words.slice(0, -6) };
+}
+
+/** Regroups bits: 8 -> 5 with padding, 5 -> 8 without (and the leftover must be zeros). */
+function convertBits(data, from, to, pad) {
+  let acc = 0;
+  let bits = 0;
+  const out = [];
+  const max = (1 << to) - 1;
+  for (const v of data) {
+    if (v < 0 || v >> from) throw new Error('a value is wider than its group');
+    acc = ((acc << from) | v) & 0xffffff;
+    bits += from;
+    while (bits >= to) { bits -= to; out.push((acc >> bits) & max); }
+  }
+  if (pad) { if (bits > 0) out.push((acc << (to - bits)) & max); }
+  else if (bits >= from || ((acc << (to - bits)) & max)) throw new Error('bech32 data carries non-zero padding');
+  return out;
+}
+
+/** The LNURL of a URL: lowercase, `lnurl` + bech32 of its UTF-8 bytes. */
+function lnurlFor(url) {
+  return bech32Encode('lnurl', convertBits([...new TextEncoder().encode(String(url))], 8, 5, true));
+}
+
+/** The URL an LNURL names, or a throw: it must be bech32 under `lnurl`. */
+function urlOfLnurl(lnurl) {
+  const { hrp, words } = bech32Decode(lnurl, { limit: Infinity });
+  if (hrp !== 'lnurl') throw new Error(`that is bech32 under "${hrp}", not an LNURL`);
+  return new TextDecoder('utf-8', { fatal: true }).decode(Uint8Array.from(convertBits(words, 5, 8, false)));
+}
+
+// ---- protocol/src/bolt11.js
+/**
+ * A BOLT11 INVOICE, READ (M3.2 item 6e): the network, the amount, the payment
+ * hash, the description and the description hash - what a donor's page must
+ * check before its wallet pays an invoice a recipient's LNURL endpoint handed
+ * it (LUD-06: the amount is the one asked, the description hash is the
+ * endpoint's own metadata). The node's signature is NOT checked here: the
+ * wallet that pays does that, and nothing in this reader decides who is paid.
+ *
+ * Tested against the examples BOLT11 itself publishes.
+ */
+
+const NETWORKS = { bc: 'bitcoin', tb: 'testnet', tbs: 'signet', bcrt: 'regtest', sb: 'simnet' };
+const MSAT_PER_UNIT = { m: 100000000n, u: 100000n, n: 100n };     // p: a tenth of a msat, below
+const TAG_PAYMENT_HASH = 1;        // 'p'
+const TAG_DESCRIPTION = 13;        // 'd'
+const TAG_DESCRIPTION_HASH = 23;   // 'h'
+const SIGNATURE_WORDS = 104;       // 65 bytes
+
+/** The amount a BOLT11 prefix names, in msat, or null for "any amount". */
+function hrpAmountMsat(hrp) {
+  const m = String(hrp).match(/^ln(bcrt|bc|tbs|tb|sb)(\d*)([munp]?)$/);
+  if (!m) throw new Error(`"${hrp}" is not a BOLT11 prefix`);
+  if (!m[2]) {
+    if (m[3]) throw new Error('an amount multiplier with no amount');
+    return null;
+  }
+  if (m[2].length > 1 && m[2][0] === '0') throw new Error('a BOLT11 amount has no leading zero');
+  const n = BigInt(m[2]);
+  if (!m[3]) return n * 100000000000n;
+  if (m[3] === 'p') {
+    // BOLT11: "if the `p` multiplier is used the last decimal of `amount` MUST be `0`"
+    if (n % 10n !== 0n) throw new Error('a pico amount must end in 0: there is no tenth of a millisatoshi');
+    return n / 10n;
+  }
+  return n * MSAT_PER_UNIT[m[3]];
+}
+
+const bytesOf = (words) => Uint8Array.from(convertBits(words, 5, 8, false));
+
+function decodeBolt11(invoice) {
+  const { hrp, words } = bech32Decode(String(invoice).trim(), { limit: Infinity });
+  const network = NETWORKS[(hrp.match(/^ln(bcrt|bc|tbs|tb|sb)/) || [])[1]];
+  const amountMsat = hrpAmountMsat(hrp);
+  if (words.length < 7 + SIGNATURE_WORDS) throw new Error('that invoice is too short to carry a timestamp and a signature');
+  const data = words.slice(0, words.length - SIGNATURE_WORDS);
+  let timestamp = 0;
+  for (let i = 0; i < 7; i++) timestamp = timestamp * 32 + data[i];
+  let paymentHash = null;
+  let descriptionHash = null;
+  let description = null;
+  for (let at = 7; at < data.length;) {
+    if (at + 3 > data.length) throw new Error('a tagged field is cut short');
+    const type = data[at];
+    const len = data[at + 1] * 32 + data[at + 2];
+    at += 3;
+    if (at + len > data.length) throw new Error('a tagged field runs past the invoice');
+    const field = data.slice(at, at + len);
+    at += len;
+    // BOLT11: a reader MUST skip a p or h field whose length is not 52 words.
+    if (type === TAG_PAYMENT_HASH && len === 52 && !paymentHash) paymentHash = bytesOf(field);
+    else if (type === TAG_DESCRIPTION_HASH && len === 52 && !descriptionHash) descriptionHash = bytesOf(field);
+    else if (type === TAG_DESCRIPTION && description === null) description = new TextDecoder('utf-8', { fatal: true }).decode(bytesOf(field));
+  }
+  if (!paymentHash) throw new Error('that invoice names no payment hash');
+  return { network, amountMsat, timestamp, paymentHash, descriptionHash, description };
+}
+
+// ---- protocol/src/lnurl-pay.js
+/**
+ * LNURL-PAY (LUD-06, LUD-12), THE DONOR'S SIDE, AS RULES (M3.2 item 6e;
+ * ruled 2026-09-13).
+ *
+ * A donation share is paid to a recipient's LNURL endpoint: the wallet asks the
+ * endpoint for its pay request, asks the callback for an invoice of exactly the
+ * share, and pays it only if the invoice is that - "the invoice amount equals
+ * the user's requested amount" and "the description hash matches SHA256 of the
+ * metadata string" (LUD-06, MUST). These are the decisions; the fetching and
+ * the paying are the client's.
+ *
+ * The comment is the player's public key as hex (§22A, the owner 2026-09-08), and
+ * it is left out when the endpoint takes fewer than 64 characters (LUD-12).
+ */
+
+
+/** A player's public key as hex is 64 characters; an endpoint allowing fewer gets no comment. */
+const COMMENT_KEY_CHARS = 64;
+
+/** Does this first answer stand as a pay request for `amountMsat`? `{ ok, callback, metadata, commentAllowed }` or why not. */
+function payRequestStands(said, amountMsat) {
+  if (!said || typeof said !== 'object') return { ok: false, why: 'the endpoint did not answer with a pay request' };
+  if (said.status === 'ERROR') return { ok: false, why: `the endpoint refused: ${String(said.reason || '').slice(0, 120)}` };
+  if (said.tag !== 'payRequest') return { ok: false, why: `the endpoint answered a "${String(said.tag).slice(0, 20)}", not a payRequest` };
+  if (typeof said.callback !== 'string' || !/^https?:\/\//.test(said.callback))
+    return { ok: false, why: 'the pay request names no callback URL' };
+  if (typeof said.metadata !== 'string') return { ok: false, why: 'the pay request carries no metadata to hash' };
+  const min = said.minSendable;
+  const max = said.maxSendable;
+  if (!Number.isSafeInteger(min) || !Number.isSafeInteger(max) || min < 1 || min > max)
+    return { ok: false, why: 'the pay request names no sendable range' };
+  if (typeof amountMsat !== 'bigint' || amountMsat < BigInt(min) || amountMsat > BigInt(max))
+    return { ok: false, why: `${amountMsat} msat is outside what the endpoint takes (${min}..${max} msat)` };
+  const commentAllowed = Number.isSafeInteger(said.commentAllowed) && said.commentAllowed > 0 ? said.commentAllowed : 0;
+  return { ok: true, callback: said.callback, metadata: said.metadata, commentAllowed };
+}
+
+/** The callback asked for exactly `amountMsat`, with the comment only if the endpoint takes a whole key. */
+function callbackFor({ callback, amountMsat, comment, commentAllowed = 0 }) {
+  const u = new URL(callback);
+  u.searchParams.set('amount', String(amountMsat));
+  if (comment && commentAllowed >= COMMENT_KEY_CHARS && String(comment).length <= commentAllowed)
+    u.searchParams.set('comment', String(comment));
+  return u.toString();
+}
+
+/** Round networks as an invoice names them. */
+const INVOICE_NETWORK = { regtest: 'regtest', testnet4: 'testnet', testnet: 'testnet', bitcoin: 'bitcoin', mainnet: 'bitcoin' };
+
+/**
+ * IS THIS THE INVOICE THE SHARE MAY BE PAID WITH? Exactly `amountMsat`, under
+ * the endpoint's own metadata hash, and - when named - on the round's network.
+ */
+function invoiceAnswersPayRequest({ invoice, amountMsat, metadata, network } = {}) {
+  if (typeof invoice !== 'string' || !invoice) return { ok: false, why: 'the callback handed no invoice' };
+  let d;
+  try { d = decodeBolt11(invoice); }
+  catch (e) { return { ok: false, why: `that is not an invoice: ${e.message}` }; }
+  if (d.amountMsat !== amountMsat)
+    return { ok: false, why: `the invoice asks ${d.amountMsat === null ? 'any amount' : `${d.amountMsat} msat`}, and this recipient's share is ${amountMsat} msat` };
+  const want = sha256(new TextEncoder().encode(String(metadata)));
+  if (!d.descriptionHash || toHex(d.descriptionHash) !== toHex(want))
+    return { ok: false, why: 'the invoice\'s description hash is not the endpoint\'s own metadata (LUD-06)' };
+  if (network && INVOICE_NETWORK[network] && d.network !== INVOICE_NETWORK[network])
+    return { ok: false, why: `that invoice is for ${d.network}, and this round is on ${network}` };
+  return { ok: true, paymentHash: d.paymentHash, amountMsat: d.amountMsat, network: d.network };
+}
+
 // ---- blwp-client/src/client.js
 // THE PLAYER'S HALF OF THE PROTOCOL.
 //
@@ -8523,6 +9113,11 @@ async function discover({
 
 
 
+
+
+
+
+// THE PLAYER'S DONATION (M3.2 6e): the split, the failure rule, the LNURL checks.
 
 
 
@@ -9668,7 +10263,8 @@ class Client {
   /**
    * PAY THE HOLD INVOICE THIS SEAT OWES, AND NOTHING ELSE EVER.
    *
-   * M3.2 item 6, and the only method in this client that moves a satoshi.
+   * M3.2 item 6 - one of the two methods in this client that move a satoshi;
+   * the other is `payDonation` (6e), the player's donation.
    *
    * IT TAKES AN ENTRY, NOT AN INVOICE. That is the whole safety property and
    * it is a signature, not a check: there is no argument here that could carry
@@ -9767,6 +10363,57 @@ class Client {
       request: quote.request,
       feesPaidMsat: paid && paid.ok ? paid.feesPaidMsat : undefined,
     };
+  }
+
+  /**
+   * PAY THE ENTRY'S DONATION TO THE SET, SHARE BY SHARE. Takes an entry and a
+   * set; there is no argument an invoice could arrive in.
+   */
+  async payDonation(entry, set, { round, connection, curve, fetcher = (u) => fetch(u), log, random, ...options } = {}) {
+    const none = { paid: [], failed: [], paidMsat: 0n, asked: 0 };
+    if (!entry || typeof entry.donationMsat !== 'bigint') return { ok: false, ...none, why: 'there is no entry whose donation to pay' };
+    if (entry.donationMsat === 0n) return { ok: true, ...none, why: 'this entry donates nothing, so nothing is paid' };
+    if (!set || !Array.isArray(set.recipients)) return { ok: false, ...none, why: 'there is no donation set to pay' };
+    if (round) {
+      const named = donationSetMatchesRound(round, set.recipients);
+      if (!named.ok) return { ok: false, ...none, why: named.why };
+    }
+    const where = typeof connection === 'string' ? parseConnection(connection) : connection;
+    if (!where || !where.ok) return { ok: false, ...none, why: (where && where.why) || 'there is no wallet connection to pay the donation with' };
+    if (!curve || typeof curve.ecdhShared !== 'function' || typeof curve.signSchnorr !== 'function')
+      return { ok: false, ...none, why: 'talking to a wallet needs a curve, and none was injected' };
+    const split = splitDonation({ donationMsat: entry.donationMsat, recipients: set.recipients });
+    if (!split.owed) return { ok: false, ...none, why: split.why };
+    const network = round && donationKeysForNetworkId(round.networkId) ? donationKeysForNetworkId(round.networkId).network : null;
+    const comment = entry.playerPubkey instanceof Uint8Array ? toHex(entry.playerPubkey) : '';
+
+    const paid = [];
+    const failed = [];
+    for (const share of split.shares) {
+      if (share.amountMsat === 0n) continue;
+      const unpaid = (why) => failed.push({ lnurl: share.lnurl, amountMsat: share.amountMsat, why });
+      let url;
+      try { url = urlOfLnurl(share.lnurl); } catch (e) { unpaid(`that recipient is no LNURL: ${e.message}`); continue; }
+      let asks;
+      try { asks = payRequestStands(await (await fetcher(url)).json(), share.amountMsat); }
+      catch (e) { unpaid(`the recipient's endpoint did not answer: ${e.message}`); continue; }
+      if (!asks.ok) { unpaid(asks.why); continue; }
+      let answer;
+      try { answer = await (await fetcher(callbackFor({ callback: asks.callback, amountMsat: share.amountMsat, comment, commentAllowed: asks.commentAllowed }))).json(); }
+      catch (e) { unpaid(`the recipient's callback did not answer: ${e.message}`); continue; }
+      if (answer && answer.status === 'ERROR') { unpaid(`the recipient refused: ${String(answer.reason || '').slice(0, 120)}`); continue; }
+      const fits = invoiceAnswersPayRequest({ invoice: answer && answer.pr, amountMsat: share.amountMsat, metadata: asks.metadata, network });
+      if (!fits.ok) { unpaid(fits.why); continue; }
+      const wallet = await payInvoice(where, answer.pr, {
+        curve, random: random || ((n) => crypto.getRandomValues(new Uint8Array(n))), ...options,
+      });
+      if (!wallet.ok) { unpaid(`the wallet did not pay it: ${wallet.why}`); continue; }
+      paid.push({ lnurl: share.lnurl, url, amountMsat: share.amountMsat, paymentHash: fits.paymentHash, preimage: wallet.preimage });
+      if (log && typeof log.record === 'function') log.record({ amountMsat: share.amountMsat, paymentHash: fits.paymentHash, roundId: entry.roundId || (this.where && this.where.roundId) });
+    }
+    const after = donationAfterFailures({ shares: split.shares.filter((s) => s.amountMsat > 0n), failed: failed.map((f) => f.lnurl) });
+    return { ok: failed.length === 0, paid, failed, paidMsat: paid.reduce((t, p) => t + p.amountMsat, 0n),
+      unpaidMsat: after.unpaidMsat, asked: paid.length, why: after.why };
   }
 
   /**
@@ -11411,8 +12058,9 @@ function lobbyLine(row, nowMs = Date.now()) {
  * lock would have held 98000 msat where the seat's check wants the net, 96000.
  * The seat's door already took and stored a 2% donor's entry (201).
  *
- * Paying the recipients (LNURL, the seats' DonationSet) is the next commit;
- * this one writes the choice into the entry.
+ * Paying the recipients is `donation-pay.js`: the page fetches the set the
+ * round's seats serve, lists every recipient in this prompt, and pays each its
+ * share over LNURL once the seats have taken the entry.
  */
 
 /** Above this many basis points of the stake (5%) the page asks a second time (§22A). */
@@ -11466,7 +12114,7 @@ const keyFor = (roundIdHex) => `blwp.donation.${roundIdHex}`;
  * `ask(message, default)` is the prompt (null = cancel = none); up to `tries`
  * answers are judged; with none standing, the donation is 0.
  */
-function chooseDonation({ roundIdHex, round, stakeMsat, ask, confirm, storage, tries = 3 } = {}) {
+function chooseDonation({ roundIdHex, round, stakeMsat, ask, confirm, storage, tries = 3, recipientsLine = '' } = {}) {
   // THE STAKE IS THE ROUND'S, read here - the page names no amount of its own
   // (it joins a round, it does not write one).
   if (stakeMsat === undefined && round) stakeMsat = BigInt(round.stakeMsat || 0n);
@@ -11482,7 +12130,9 @@ function chooseDonation({ roundIdHex, round, stakeMsat, ask, confirm, storage, t
   if (typeof ask !== 'function') return keep(none);
   let why = '';
   for (let i = 0; i < tries; i++) {
-    const typed = ask(`${why ? `${why}\n\n` : ''}Donation to the developers, in percent of your ${stakeMsat / 1000n} sat stake. `
+    // EVERY RECIPIENT IS SHOWN BEFORE THE WALLET APPROVES (§22A): the page passes
+    // the set it checked, and the prompt lists it.
+    const typed = ask(`${why ? `${why}\n\n` : ''}${recipientsLine ? `${recipientsLine}\n\n` : ''}Donation to the developers, in percent of your ${stakeMsat / 1000n} sat stake. `
       + 'It comes out of the stake, not on top. 0 = none; above 5% asks again.', '0');
     if (typed === null || typed === undefined) return keep(none);          // cancel: none
     const c = donationChoice({ typed, stakeMsat, confirm });
@@ -11490,6 +12140,501 @@ function chooseDonation({ roundIdHex, round, stakeMsat, ask, confirm, storage, t
     why = c.why;
   }
   return keep({ ...none, why: `no answer stood (${why}), so the donation is 0` });
+}
+
+// ---- protocol/src/authority.js
+// 27A.4: WHICH DONATION SET IS THE NETWORK'S, FROM WHEN, AND WHO SAID SO.
+//
+// `donation.js` answers a different question and answers it well: given a list
+// of payees and shares, does it stand, and what is each owed. It cannot answer
+// this one. A list that stands is a list ANYBODY can write - the bytes are
+// checked against their own shares and against nothing else - so before this
+// file a thief and the network's own operator published objects that were
+// indistinguishable.
+//
+// The section gives the object:
+//
+//     DonationSet {
+//       network_id
+//       serial          monotonic; the highest validly signed one wins
+//       entries[]       lnurl + share_bps, summing to 10000
+//       valid_from      block height
+//       signature       by donation_authority_pubkey
+//     }
+//
+// Four of those five fields had no code. What each one is for, in the order
+// they stop a different failure:
+//
+//   network_id   27A.9: "the trust anchor is the client's own built-in
+//                network_id, NEVER A VALUE FROM THE CONTRACT". A set for
+//                another network is somebody else's payees, and forking the
+//                code to write your own address in "has not captured the
+//                donations - you have left".
+//   serial       Two sets and no order is two nodes paying different people.
+//                The highest validly signed one wins, and an older one
+//                published later changes nothing - that is what "cannot be
+//                rolled back" means when the publication is on a chain that
+//                anybody can add to.
+//   valid_from   A set with no start applies from whenever each node happened
+//                to see it, which is not a time two nodes can agree on.
+//   signature    The whole point. One key signs this object and nothing else
+//                in the protocol.
+//
+// AND THE ROTATION, which is the half that is easy to leave for later and must
+// not be. 27A.4's own row: authority stolen, "the thief signs a set with a
+// higher serial pointing at their own LNURLs" - and the remedy is a rotation
+// from the cold key, "no fork, the census survives". A revocation path nobody
+// has exercised is a revocation path that does not work, so the rotation here
+// is not a field: it is checked, it is ordered, and from its `valid_from` the
+// old key's sets are refused whatever serial they carry.
+//
+// WHAT THE KEYS CANNOT DO is not enforced here because it cannot be reached
+// from here: 27A.4's exhaustive list - no pause, no fee, no threshold, no
+// node, no round, no result, no player's money - is a statement about which
+// objects carry an authority signature, and this file is the only one that
+// checks for one. Nothing else in the protocol reads these keys, and that is
+// the enforcement.
+//
+// NO CURVE, like every other file in this package: `verify` is injected, and
+// the caller one package over brings the real BIP-340. NO MONEY: nothing here
+// pays an LNURL, and what a donation costs a player is 6e's letter, not this
+// one.
+
+
+
+
+/** The 64 bytes beside the object, as for every other signature in here. */
+const DONATION_SIGNATURE_BYTES = 64;
+
+const isDonationBytes32 = (b) => b instanceof Uint8Array && b.length === 32;
+const sameDonationBytes32 = (a, b) => a.every((x, i) => x === b[i]);
+
+/**
+ * THE BYTES THE AUTHORITY SIGNS.
+ *
+ * The recipients go in AS THE SET'S OWN ENCODING - `encodeDonationSet`, the
+ * function 22A's id is taken over - and not as a second copy of the same
+ * vector written out again here. A signed publication holding a differently
+ * encoded version of the list would be an object whose signature covers bytes
+ * that are not the set the Round Contract names, and then the network's
+ * authority has endorsed one thing while the round binds another.
+ *
+ * That import also means a set that does not stand cannot be published: the
+ * encoder refuses it, so there are no signed bytes naming shares that sum to
+ * 9999.
+ */
+function encodeDonationSetBody(set) {
+  if (!isDonationBytes32(set.networkId)) throw new Error('a donation set names a 32-byte network');
+  if (typeof set.serial !== 'bigint') throw new Error('a serial is a BigInt');
+  if (set.serial < 0n) throw new Error('a serial cannot be negative');
+  if (!Number.isInteger(set.validFrom) || set.validFrom < 0)
+    throw new Error('valid_from is a block height');
+
+  const entries = encodeDonationSet(set.recipients);
+  const w = new Writer();
+  w.u8(TYPE_SIGNED_DONATION_SET);
+  w.u16(PROTOCOL_VERSION);
+  w.bytes32(set.networkId);
+  w.u64(set.serial);
+  w.u32(set.validFrom);
+  w.u16(entries.length);
+  w.bytes(entries);
+  return w.finish();
+}
+
+function decodeDonationSetBody(bytes) {
+  const r = new Reader(bytes);
+  if (r.u8() !== TYPE_SIGNED_DONATION_SET) throw new Error('not a signed donation set');
+  if (r.u16() !== PROTOCOL_VERSION) throw new Error('unknown protocol version');
+  const networkId = r.bytes32();
+  const serial = r.u64();
+  const validFrom = r.u32();
+  const entries = r.bytes(r.u16());
+  if (r.at !== bytes.length) throw new Error('trailing bytes after the donation set');
+  // Through the set's own decoder, so a publication inherits every check the
+  // list has: the shares, the duplicates, the mixed case, and the one byte
+  // string a set is allowed to have.
+  return { networkId, serial, validFrom, recipients: decodeDonationSet(entries) };
+}
+
+/** What a marked output commits to: H(DonationSet), 27A.4's publication. */
+const donationSetBodyId = (set) =>
+  taggedHash(TAG.signedDonationSet, encodeDonationSetBody(set));
+
+/**
+ * THE COLD KEY'S ONLY SENTENCE.
+ *
+ *     AuthorityRotation { network_id, serial, new_authority, valid_from,
+ *                         signature by donation_recovery_pubkey }
+ *
+ * Its own serial, "monotonic, separate from the donation set's", because the
+ * two objects are ordered against their own kind: a rotation is not newer than
+ * a set and the question never arises.
+ */
+function encodeAuthorityRotation(rotation) {
+  if (!isDonationBytes32(rotation.networkId)) throw new Error('a rotation names a 32-byte network');
+  if (typeof rotation.serial !== 'bigint') throw new Error('a serial is a BigInt');
+  if (rotation.serial < 0n) throw new Error('a serial cannot be negative');
+  if (!isDonationBytes32(rotation.newAuthority))
+    throw new Error('a rotation names a 32-byte authority key');
+  if (!Number.isInteger(rotation.validFrom) || rotation.validFrom < 0)
+    throw new Error('valid_from is a block height');
+
+  const w = new Writer();
+  w.u8(TYPE_AUTHORITY_ROTATION);
+  w.u16(PROTOCOL_VERSION);
+  w.bytes32(rotation.networkId);
+  w.u64(rotation.serial);
+  w.bytes32(rotation.newAuthority);
+  w.u32(rotation.validFrom);
+  return w.finish();
+}
+
+function decodeAuthorityRotation(bytes) {
+  const r = new Reader(bytes);
+  if (r.u8() !== TYPE_AUTHORITY_ROTATION) throw new Error('not an authority rotation');
+  if (r.u16() !== PROTOCOL_VERSION) throw new Error('unknown protocol version');
+  const rotation = {
+    networkId: r.bytes32(),
+    serial: r.u64(),
+    newAuthority: r.bytes32(),
+    validFrom: r.u32(),
+  };
+  if (r.at !== bytes.length) throw new Error('trailing bytes after the rotation');
+  return rotation;
+}
+
+const authorityRotationId = (rotation) =>
+  taggedHash(TAG.authorityRotation, encodeAuthorityRotation(rotation));
+
+/**
+ * ONE PUBLICATION, CHECKED. Answered rather than thrown, like every other
+ * decision in this package: a malformed object from a stranger is a refusal.
+ *
+ * `signature` is not in the encoded body and cannot be - the id is what the
+ * key signs, so an object whose bytes included its own signature could not be
+ * signed at all. It rides beside it, as the advertisement's does.
+ */
+function signedBy(object, { id, key, signature, verify, what }) {
+  if (!isDonationBytes32(key)) return { ok: false, why: `no ${what} key to check that against` };
+  if (!(signature instanceof Uint8Array) || signature.length !== DONATION_SIGNATURE_BYTES)
+    return { ok: false, why: `a ${what} signature is ${DONATION_SIGNATURE_BYTES} bytes` };
+  if (typeof verify !== 'function')
+    return { ok: false, why: 'no verifier: this package carries no curve' };
+
+  let digest;
+  try { digest = id(object); }
+  catch (e) { return { ok: false, why: e.message }; }
+
+  let ok = false;
+  try { ok = !!verify(signature, digest, key); }
+  catch { ok = false; }
+  return ok
+    ? { ok: true, id: digest, why: `signed by ${toHex(key).slice(0, 16)}` }
+    : { ok: false, id: digest, why: `that ${what} signature is not ${toHex(key).slice(0, 16)}'s` };
+}
+
+const donationSetSignedBy = (set, { authority, verify }) =>
+  signedBy(set, {
+    id: donationSetBodyId, key: authority, signature: set && set.signature,
+    verify, what: 'authority',
+  });
+
+const rotationSignedBy = (rotation, { recovery, verify }) =>
+  signedBy(rotation, {
+    id: authorityRotationId, key: recovery, signature: rotation && rotation.signature,
+    verify, what: 'recovery',
+  });
+
+/**
+ * THE HIGHEST VALIDLY SIGNED ONE WINS, and equivocation at a serial loses that
+ * serial rather than picking a winner.
+ *
+ * 27A.4 orders publications by serial and says nothing about two of them
+ * carrying the same one, because an honest authority does not do that. A
+ * dishonest or duplicated key does, and then "the highest validly signed one"
+ * names two different objects - so a rule is needed, and the choice is between
+ * two deterministic answers.
+ *
+ * PICKING ONE BY ITS BYTES was rejected. It would pay whichever list happened
+ * to hash lower, which is a coin flip decided by a party who has already shown
+ * they will sign twice - and it would do it silently.
+ *
+ * SO A CONTESTED SERIAL IS UNUSABLE and the search falls back to the highest
+ * serial below it that is not. Every node reaches the same answer from the
+ * same objects, nobody is paid on a signature the authority contradicted, and
+ * the network lands exactly where 27A.4's "both lost" row already puts it:
+ * "the set freezes at its last published serial and every donation keeps going
+ * where it was already going". A frozen set is a bounded failure. Paying a
+ * thief is not.
+ */
+function bestBySerial(accepted, idOf) {
+  const bySerial = new Map();
+  for (const item of accepted) {
+    const list = bySerial.get(item.serial);
+    if (list) list.push(item);
+    else bySerial.set(item.serial, [item]);
+  }
+
+  const serials = [...bySerial.keys()].sort((a, b) => (a < b ? 1 : a > b ? -1 : 0));
+  const contested = [];
+  for (const serial of serials) {
+    const list = bySerial.get(serial);
+    const ids = new Set(list.map((item) => toHex(idOf(item))));
+    if (ids.size === 1) return { best: list[0], contested };
+    contested.push(serial);
+  }
+  return { best: null, contested };
+}
+
+/**
+ * WHO THE AUTHORITY IS AT A HEIGHT.
+ *
+ * 27A.4: "Published like the donation set. From `valid_from`, sets signed by
+ * the old authority are rejected and only the new one is accepted, WHATEVER
+ * SERIAL THE OLD KEY PUBLISHES." So the answer is a function of the height a
+ * node is asking about and not of when anything arrived, and it is the genesis
+ * key until a rotation is in force.
+ *
+ * ROTATIONS ARE CHECKED AGAINST THE GENESIS RECOVERY KEY AND ONLY IT. The
+ * section's table is exhaustive - "recovery CAN name a new authority" - and
+ * that is the whole list. A rotation that could name a new recovery key would
+ * let one theft of the cold key close the door behind itself, which is the
+ * fault the two-key split exists to prevent.
+ */
+function authorityAt({
+  networkId, authority, recovery, rotations = [], height, verify,
+}) {
+  const refused = [];
+  if (!isDonationBytes32(authority)) throw new Error('a network has a 32-byte donation authority');
+  if (!Number.isInteger(height) || height < 0) throw new Error('a height is a block height');
+
+  const accepted = [];
+  for (const [at, rotation] of rotations.entries()) {
+    if (!rotation || !isDonationBytes32(rotation.networkId) || !sameDonationBytes32(rotation.networkId, networkId)) {
+      refused.push(`rotation ${at} is for another network`);
+      continue;
+    }
+    if (!Number.isInteger(rotation.validFrom) || rotation.validFrom > height) {
+      refused.push(`rotation ${at} is not in force at ${height}`);
+      continue;
+    }
+    const signed = rotationSignedBy(rotation, { recovery, verify });
+    if (!signed.ok) {
+      refused.push(`rotation ${at}: ${signed.why}`);
+      continue;
+    }
+    accepted.push(rotation);
+  }
+
+  const { best, contested } = bestBySerial(accepted, authorityRotationId);
+  for (const serial of contested)
+    refused.push(`two different rotations are signed at serial ${serial}, so that serial is unusable`);
+
+  return best
+    ? {
+      authority: best.newAuthority,
+      serial: best.serial,
+      rotated: true,
+      validFrom: best.validFrom,
+      refused,
+      why: `the recovery key named ${toHex(best.newAuthority).slice(0, 16)} from height ${best.validFrom}`,
+    }
+    : {
+      authority, serial: null, rotated: false, validFrom: 0, refused,
+      why: 'no rotation is in force, so the genesis authority still signs',
+    };
+}
+
+/**
+ * AND THE ANSWER THE REST OF THE PROTOCOL WANTS: which recipients, at this
+ * height, on this network.
+ *
+ * The refusals are returned rather than swallowed. A node that pays nobody
+ * because every set it holds is for another network must be able to say so -
+ * "no set is in force" and "I threw them all away" are different facts, and
+ * only one of them is a bug.
+ *
+ * A ROTATION BLANKS THE LIST, and that is 27A.4's own reading rather than a
+ * strictness of taste: "from `valid_from`, sets signed by the old authority
+ * are rejected". Every set the old key signed dies with it, including the
+ * honest ones it signed before the theft - so between a rotation and the new
+ * authority's first publication this network has no set in force and pays
+ * nobody.
+ *
+ * The alternative was measured and is worse: grandfathering what the old key
+ * published before the rotation keeps the THIEF'S set alive too, because the
+ * thief published before the rotation as well. A revocation that leaves the
+ * stolen list in force is not a revocation.
+ *
+ * NO SET IN FORCE IS NOT AN ERROR. A network can run without one and 22A's
+ * player donating nothing is unaffected: `splitDonation` already answers a
+ * zero donation without judging a set at all. What must never happen is a set
+ * being IN FORCE without a signature to point at, and that is what this
+ * returns `ok` for.
+ */
+function donationSetInForce({
+  networkId, authority, recovery, sets = [], rotations = [], height, verify,
+}) {
+  if (!isDonationBytes32(networkId)) throw new Error('a network is a 32-byte id');
+  const inForce = authorityAt({ networkId, authority, recovery, rotations, height, verify });
+  const refused = [...inForce.refused];
+
+  const accepted = [];
+  for (const [at, set] of sets.entries()) {
+    if (!set || !isDonationBytes32(set.networkId) || !sameDonationBytes32(set.networkId, networkId)) {
+      refused.push(`set ${at} is for another network`);
+      continue;
+    }
+    if (!Number.isInteger(set.validFrom) || set.validFrom > height) {
+      refused.push(`set ${at} is not in force at ${height}`);
+      continue;
+    }
+    // The list itself, before the key: a set that does not stand is not a set,
+    // and saying so names the actual fault rather than reporting a signature
+    // over bytes that could not be produced.
+    const stands = donationSetStands(set.recipients);
+    if (!stands.ok) {
+      refused.push(`set ${at}: ${stands.why}`);
+      continue;
+    }
+    const signed = donationSetSignedBy(set, { authority: inForce.authority, verify });
+    if (!signed.ok) {
+      refused.push(`set ${at}: ${signed.why}`);
+      continue;
+    }
+    accepted.push(set);
+  }
+
+  const { best, contested } = bestBySerial(accepted, donationSetBodyId);
+  for (const serial of contested)
+    refused.push(`two different sets are signed at serial ${serial}, so that serial is unusable`);
+
+  if (!best)
+    return {
+      ok: false, recipients: null, serial: null, validFrom: null,
+      authority: inForce.authority, rotated: inForce.rotated, refused,
+      why: sets.length
+        ? `none of the ${sets.length} sets offered is in force at height ${height}`
+        : 'this network has published no donation set',
+    };
+
+  return {
+    ok: true,
+    recipients: best.recipients,
+    serial: best.serial,
+    validFrom: best.validFrom,
+    setId: donationSetBodyId(best),
+    authority: inForce.authority,
+    rotated: inForce.rotated,
+    refused,
+    why: `serial ${best.serial}, in force from height ${best.validFrom}, `
+      + `${best.recipients.length} recipients`,
+  };
+}
+
+// ---- blwp-client/src/donation-pay.js
+/**
+ * THE PLAYER'S DONATION, PAID (M3.2 item 6e; §22A, §24A.2, §27A.4; ruled
+ * 2026-09-13).
+ *
+ * "Donations are paid: LNURL per recipient, by share, from the player's wallet
+ * directly at entry - never through the federation" (§24A.2). Two halves:
+ *
+ * `fetchDonationSet` - the set the round names, as EVERY seat of the round
+ * serves it (a seat that serves another, or none, is a refusal), signed by the
+ * network's donation authority at the round's height with rotations included,
+ * checked with Ed25519 (the authority's scheme). The page shows every
+ * recipient from it before the wallet approves (§22A).
+ *
+ * `Client.payDonation(entry, set)` (client.js, beside `payStake`) - AN ENTRY AND
+ * A SET, NEVER AN INVOICE. The amounts
+ * come from `splitDonation` over the entry's own donation; each recipient's
+ * endpoint is asked for its pay request and then for an invoice of exactly its
+ * share, and only an invoice that is that share under the endpoint's own
+ * metadata hash (LUD-06) reaches the wallet, through the same `payInvoice` the
+ * stake uses. A failed share is reported and never redirected to the others
+ * (§22A); the entry stands either way. A 0% entry pays nothing and asks nobody.
+ *
+ * MEASURED BEFORE: no LNURL, bech32 or BOLT11 code existed; `splitDonation`
+ * had no caller; `pay_invoice` had one call site, the stake; a 2% donor's 2000
+ * msat was taken by nobody.
+ */
+
+
+
+
+
+
+/** Every recipient of a set, with its share and where it is paid - what the page shows before the wallet approves. */
+function donationRecipientsLine(set) {
+  if (!set || !Array.isArray(set.recipients)) return 'no donation set';
+  return 'Recipients: ' + set.recipients.map((r) => {
+    let where;
+    try { where = urlOfLnurl(r.lnurl); } catch { where = r.lnurl; }
+    return `${(r.shareBps / 100).toFixed(2)}% to ${where}`;
+  }).join(', ');
+}
+
+/**
+ * THE DONATION SET THIS ROUND NAMES, AS ALL OF ITS SEATS SERVE IT, CHECKED.
+ * `verifyEd25519(sig, msg, pub)` may be async (the browser's crypto.subtle);
+ * every answer is awaited here before `authorityAt` sees a settled boolean.
+ * `keys` overrides the network's donation keys (tests only).
+ */
+async function fetchDonationSet({ round, nodes, fetcher = (u) => fetch(u), verifyEd25519, keys } = {}) {
+  if (!round || !(round.donationSetId instanceof Uint8Array)) return { ok: false, why: 'there is no round to fetch a donation set for' };
+  if (typeof verifyEd25519 !== 'function') return { ok: false, why: 'checking a donation set needs an Ed25519 verifier, and none was injected' };
+  const networkKeys = keys || donationKeysForNetworkId(round.networkId);
+  if (!networkKeys) return { ok: false, why: 'this round\'s network has no donation authority this page knows' };
+  if (!Array.isArray(nodes) || !nodes.length) return { ok: false, why: 'the round names no seats to ask for its donation set' };
+  const rid = toHex(roundId(round));
+  const answers = await Promise.all(nodes.map(async (node) => {
+    const base = String(node).replace(/\/+$/, '');
+    try {
+      const r = await fetcher(`${base}/donation-set?round=${rid}`);
+      if (r.status !== 200) return { node: base, why: `${r.status} ${(await r.text()).trim().slice(0, 100)}` };
+      const bytes = new Uint8Array(await r.arrayBuffer());
+      let rotations = [];
+      try {
+        const rr = await fetcher(`${base}/donation-rotations?round=${rid}`);
+        if (rr.status === 200) rotations = (await rr.json()).rotations || [];
+      } catch { rotations = []; }
+      return { node: base, bytes, rotations };
+    } catch (e) { return { node: base, why: e.message }; }
+  }));
+  const missing = answers.filter((a) => !a.bytes);
+  if (missing.length)
+    return { ok: false, why: `not every seat of this round serves its donation set: ${missing.map((a) => `${a.node}: ${a.why}`).join('; ')}` };
+  const served = toHex(answers[0].bytes);
+  if (answers.some((a) => toHex(a.bytes) !== served)) return { ok: false, why: 'the seats of this round serve different donation sets' };
+  const bytes = answers[0].bytes;
+  if (bytes.length <= DONATION_SIGNATURE_BYTES) return { ok: false, why: 'that is no signed donation set' };
+  let set;
+  try { set = { ...decodeDonationSetBody(bytes.slice(0, -DONATION_SIGNATURE_BYTES)), signature: bytes.slice(-DONATION_SIGNATURE_BYTES) }; }
+  catch (e) { return { ok: false, why: `that is no donation set: ${e.message}` }; }
+  if (toHex(set.networkId) !== toHex(round.networkId)) return { ok: false, why: 'that donation set is for another network' };
+  const named = donationSetMatchesRound(round, set.recipients);
+  if (!named.ok) return { ok: false, why: named.why };
+  if (!(set.validFrom <= round.censusHeight)) return { ok: false, why: 'that donation set is not in force at the round\'s height' };
+
+  // EVERY SEAT'S ROTATIONS, EACH CHECKED HERE against the network's recovery
+  // key: a seat that hides a rotation cannot hide it from the other seats.
+  const offered = new Map();
+  for (const a of answers) for (const r of a.rotations) {
+    try { offered.set(`${r.body}:${r.signature}`, { ...decodeAuthorityRotation(fromHex(String(r.body))), signature: fromHex(String(r.signature)) }); }
+    catch { /* not a rotation: nothing to apply */ }
+  }
+  const rotations = [...offered.values()];
+  const signedRotations = new Set();
+  for (const rot of rotations)
+    if (await verifyEd25519(rot.signature, authorityRotationId(rot), networkKeys.recovery) === true) signedRotations.add(toHex(rot.signature));
+  const inForce = authorityAt({ networkId: round.networkId, authority: networkKeys.authority, recovery: networkKeys.recovery,
+    rotations, height: round.censusHeight, verify: (sig) => signedRotations.has(toHex(sig)) });
+  if (await verifyEd25519(set.signature, donationSetBodyId(set), inForce.authority) !== true)
+    return { ok: false, why: 'that donation set is not signed by the network\'s donation authority at the round\'s height' };
+  return { ok: true, set, seats: answers.length, rotated: inForce.rotated,
+    why: `${answers.length} seat(s) serve the set this round names, signed by its donation authority` };
 }
 
 return { Client: Client, markState: markState,
@@ -11510,6 +12655,7 @@ return { Client: Client, markState: markState,
          tabSeed: tabSeed, importSeed: importSeed, seedOrigin: seedOrigin,
          playerFor: playerFor, entryFor: entryFor,
          chooseDonation: chooseDonation, donationChoice: donationChoice, DONATION_CONFIRM_BPS: DONATION_CONFIRM_BPS,
+         fetchDonationSet: fetchDonationSet, donationRecipientsLine: donationRecipientsLine,
          stakeFor: stakeFor, fetchSettlementSeats: fetchSettlementSeats,
          roundPays: roundPays, postHandout: postHandout, attestedClaimKey: attestedClaimKey, roundLocks: roundLocks,
          awaitAttestedClaimKey: awaitAttestedClaimKey,

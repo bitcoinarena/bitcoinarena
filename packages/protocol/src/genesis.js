@@ -10,7 +10,6 @@ import {
   ARBITRATION_KEYS_REGTEST, ARBITRATION_KEYS_TESTNET4,
   AUTHORITY_PUBKEY_REGTEST, RECOVERY_PUBKEY_REGTEST,
   AUTHORITY_PUBKEY_TESTNET4, RECOVERY_PUBKEY_TESTNET4,
-  NETWORK_ID_REGTEST, NETWORK_ID_TESTNET4,
 } from './genesis-ids.js';
 import { NODE_FEE_BPS } from './fee.js';
 import {
@@ -189,15 +188,5 @@ export function donationKeysFor(network) {
   throw new Error('no donation authority has been generated for ' + network);
 }
 
-/**
- * THE SAME TWO KEYS, BY THE NETWORK ID A ROUND CONTRACT CARRIES (M3.2 6e). A
- * seat knows a round's network by its id, not by a name; a network with no
- * generated donation authority answers null.
- */
-export function donationKeysForNetworkId(networkId) {
-  const is = (known) => networkId instanceof Uint8Array && networkId.length === 32
-    && networkId.every((x, i) => x === known[i]);
-  if (is(NETWORK_ID_REGTEST)) return donationKeysFor('regtest');
-  if (is(NETWORK_ID_TESTNET4)) return donationKeysFor('testnet4');
-  return null;
-}
+// THE SAME TWO KEYS BY NETWORK ID: donation-keys.js, re-exported (M3.2 6e).
+export { donationKeysForNetworkId } from './donation-keys.js';

@@ -348,20 +348,26 @@ test('a wallet that claims it paid and shows no preimage is not believed', async
  *
  * `payStake` takes an ENTRY. That is a signature and not a check: no caller can
  * walk this client into paying a bolt11 somebody handed it, because there is no
- * argument to put one in.
+ * argument to put one in. So does `payDonation` (M3.2 6e, ruled 2026-09-13,
+ * pick A) - an entry and a donation set. This counted one method until the
+ * donation was paid; it names both now, and both are held to the same shape.
  */
-test('the client has one method that moves a satoshi, and it takes an entry', () => {
+test('the client has two methods that move a satoshi, and each takes an entry, never an invoice', () => {
   const p = Client.prototype;
-  const moves = ['payStake', 'pay', 'payInvoice', 'sendPayment', 'nwc', 'wallet']
+  const moves = ['payStake', 'payDonation', 'pay', 'payInvoice', 'sendPayment', 'nwc', 'wallet']
     .filter((m) => typeof p[m] === 'function');
-  assert.deepEqual(moves, ['payStake'], `methods that move a satoshi: ${moves.join(', ')}`);
+  assert.deepEqual(moves, ['payStake', 'payDonation'], `methods that move a satoshi: ${moves.join(', ')}`);
 
   // The first argument is the entry, and there is no invoice parameter.
   const src = p.payStake.toString();
   assert.match(src, /^async payStake\(entry, \{/, 'payStake no longer takes an entry first');
   assert.equal(/\binvoice\s*[,)]/.test(src.slice(0, src.indexOf('{', 20))), false,
     'payStake takes an invoice as an argument');
-  console.log(`  methods that move a satoshi: 1 (${moves[0]}), and it takes an entry`);
+  const donation = p.payDonation.toString();
+  assert.match(donation, /^async payDonation\(entry, set, \{/, 'payDonation no longer takes an entry and a set first');
+  assert.equal(/\b(invoice|pr|bolt11)\s*[,)=]/.test(donation.slice(0, donation.indexOf('{', 30))), false,
+    'payDonation takes an invoice as an argument');
+  console.log(`  methods that move a satoshi: 2 (${moves.join(', ')}), each takes an entry`);
 });
 
 test('paying needs a connection and a curve, and says which is missing', async () => {

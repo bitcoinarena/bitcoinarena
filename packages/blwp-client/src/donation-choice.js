@@ -21,8 +21,9 @@
  * lock would have held 98000 msat where the seat's check wants the net, 96000.
  * The seat's door already took and stored a 2% donor's entry (201).
  *
- * Paying the recipients (LNURL, the seats' DonationSet) is the next commit;
- * this one writes the choice into the entry.
+ * Paying the recipients is `donation-pay.js`: the page fetches the set the
+ * round's seats serve, lists every recipient in this prompt, and pays each its
+ * share over LNURL once the seats have taken the entry.
  */
 import { entryFeeMsat, feeMatchesEntry } from '../../protocol/src/fee.js';
 
@@ -77,7 +78,7 @@ const keyFor = (roundIdHex) => `blwp.donation.${roundIdHex}`;
  * `ask(message, default)` is the prompt (null = cancel = none); up to `tries`
  * answers are judged; with none standing, the donation is 0.
  */
-export function chooseDonation({ roundIdHex, round, stakeMsat, ask, confirm, storage, tries = 3 } = {}) {
+export function chooseDonation({ roundIdHex, round, stakeMsat, ask, confirm, storage, tries = 3, recipientsLine = '' } = {}) {
   // THE STAKE IS THE ROUND'S, read here - the page names no amount of its own
   // (it joins a round, it does not write one).
   if (stakeMsat === undefined && round) stakeMsat = BigInt(round.stakeMsat || 0n);
@@ -93,7 +94,9 @@ export function chooseDonation({ roundIdHex, round, stakeMsat, ask, confirm, sto
   if (typeof ask !== 'function') return keep(none);
   let why = '';
   for (let i = 0; i < tries; i++) {
-    const typed = ask(`${why ? `${why}\n\n` : ''}Donation to the developers, in percent of your ${stakeMsat / 1000n} sat stake. `
+    // EVERY RECIPIENT IS SHOWN BEFORE THE WALLET APPROVES (§22A): the page passes
+    // the set it checked, and the prompt lists it.
+    const typed = ask(`${why ? `${why}\n\n` : ''}${recipientsLine ? `${recipientsLine}\n\n` : ''}Donation to the developers, in percent of your ${stakeMsat / 1000n} sat stake. `
       + 'It comes out of the stake, not on top. 0 = none; above 5% asks again.', '0');
     if (typed === null || typed === undefined) return keep(none);          // cancel: none
     const c = donationChoice({ typed, stakeMsat, confirm });

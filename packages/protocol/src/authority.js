@@ -64,8 +64,8 @@ import { encodeDonationSet, decodeDonationSet, donationSetStands } from './donat
 /** The 64 bytes beside the object, as for every other signature in here. */
 export const DONATION_SIGNATURE_BYTES = 64;
 
-const is32 = (b) => b instanceof Uint8Array && b.length === 32;
-const same32 = (a, b) => a.every((x, i) => x === b[i]);
+const isDonationBytes32 = (b) => b instanceof Uint8Array && b.length === 32;
+const sameDonationBytes32 = (a, b) => a.every((x, i) => x === b[i]);
 
 /**
  * THE BYTES THE AUTHORITY SIGNS.
@@ -82,7 +82,7 @@ const same32 = (a, b) => a.every((x, i) => x === b[i]);
  * 9999.
  */
 export function encodeDonationSetBody(set) {
-  if (!is32(set.networkId)) throw new Error('a donation set names a 32-byte network');
+  if (!isDonationBytes32(set.networkId)) throw new Error('a donation set names a 32-byte network');
   if (typeof set.serial !== 'bigint') throw new Error('a serial is a BigInt');
   if (set.serial < 0n) throw new Error('a serial cannot be negative');
   if (!Number.isInteger(set.validFrom) || set.validFrom < 0)
@@ -130,10 +130,10 @@ export const donationSetBodyId = (set) =>
  * a set and the question never arises.
  */
 export function encodeAuthorityRotation(rotation) {
-  if (!is32(rotation.networkId)) throw new Error('a rotation names a 32-byte network');
+  if (!isDonationBytes32(rotation.networkId)) throw new Error('a rotation names a 32-byte network');
   if (typeof rotation.serial !== 'bigint') throw new Error('a serial is a BigInt');
   if (rotation.serial < 0n) throw new Error('a serial cannot be negative');
-  if (!is32(rotation.newAuthority))
+  if (!isDonationBytes32(rotation.newAuthority))
     throw new Error('a rotation names a 32-byte authority key');
   if (!Number.isInteger(rotation.validFrom) || rotation.validFrom < 0)
     throw new Error('valid_from is a block height');
@@ -174,7 +174,7 @@ export const authorityRotationId = (rotation) =>
  * signed at all. It rides beside it, as the advertisement's does.
  */
 function signedBy(object, { id, key, signature, verify, what }) {
-  if (!is32(key)) return { ok: false, why: `no ${what} key to check that against` };
+  if (!isDonationBytes32(key)) return { ok: false, why: `no ${what} key to check that against` };
   if (!(signature instanceof Uint8Array) || signature.length !== DONATION_SIGNATURE_BYTES)
     return { ok: false, why: `a ${what} signature is ${DONATION_SIGNATURE_BYTES} bytes` };
   if (typeof verify !== 'function')
@@ -264,12 +264,12 @@ export function authorityAt({
   networkId, authority, recovery, rotations = [], height, verify,
 }) {
   const refused = [];
-  if (!is32(authority)) throw new Error('a network has a 32-byte donation authority');
+  if (!isDonationBytes32(authority)) throw new Error('a network has a 32-byte donation authority');
   if (!Number.isInteger(height) || height < 0) throw new Error('a height is a block height');
 
   const accepted = [];
   for (const [at, rotation] of rotations.entries()) {
-    if (!rotation || !is32(rotation.networkId) || !same32(rotation.networkId, networkId)) {
+    if (!rotation || !isDonationBytes32(rotation.networkId) || !sameDonationBytes32(rotation.networkId, networkId)) {
       refused.push(`rotation ${at} is for another network`);
       continue;
     }
@@ -334,13 +334,13 @@ export function authorityAt({
 export function donationSetInForce({
   networkId, authority, recovery, sets = [], rotations = [], height, verify,
 }) {
-  if (!is32(networkId)) throw new Error('a network is a 32-byte id');
+  if (!isDonationBytes32(networkId)) throw new Error('a network is a 32-byte id');
   const inForce = authorityAt({ networkId, authority, recovery, rotations, height, verify });
   const refused = [...inForce.refused];
 
   const accepted = [];
   for (const [at, set] of sets.entries()) {
-    if (!set || !is32(set.networkId) || !same32(set.networkId, networkId)) {
+    if (!set || !isDonationBytes32(set.networkId) || !sameDonationBytes32(set.networkId, networkId)) {
       refused.push(`set ${at} is for another network`);
       continue;
     }

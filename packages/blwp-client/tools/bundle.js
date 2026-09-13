@@ -52,6 +52,9 @@ walk(SRC + 'lobby.js');
 walk(SRC + 'identity.js');
 // AND THE PLAYER'S DONATION (M3.2 6e): the choice, judged and kept per round.
 walk(SRC + 'donation-choice.js');
+// AND ITS SET (M3.2 6e): the round's donation set from its seats, checked. The
+// donation itself is paid by the player's own Client (payDonation).
+walk(SRC + 'donation-pay.js');
 
 // One scope, so a name declared twice would collide. EVERY top-level name is
 // checked, not only the exported ones: two files with a private helper of the
@@ -117,6 +120,7 @@ out += '         fetchRandomness: fetchRandomness, worldSeedFor: worldSeedFor,\n
 out += '         seedWordForEntry: seedWordForEntry,\n';
 out += '         tabSeed: tabSeed, importSeed: importSeed, seedOrigin: seedOrigin,\n'; out += '         playerFor: playerFor, entryFor: entryFor,\n';
 out += '         chooseDonation: chooseDonation, donationChoice: donationChoice, DONATION_CONFIRM_BPS: DONATION_CONFIRM_BPS,\n';
+out += '         fetchDonationSet: fetchDonationSet, donationRecipientsLine: donationRecipientsLine,\n';
 // THE STAKE THE PAGE DEALS, and the seats it is dealt to. `stakeFor` was in
 // this bundle already and had ZERO CALLERS - the page took a seat with 32
 // random bytes where `sha256(P)` belongs and 32 zero bytes where the shares

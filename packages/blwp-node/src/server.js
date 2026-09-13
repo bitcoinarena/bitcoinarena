@@ -65,7 +65,7 @@ import { Verifier } from './verify.js';
 import { Ghosts } from './ghosts.js';
 import { Roster, endpointsOf } from './roster.js';
 import { receiptsNeeded as roundThreshold, donationKeysForNetworkId } from '../../protocol/src/genesis.js';
-import { authorityAt, donationSetSignedBy, encodeDonationSetBody } from '../../protocol/src/authority.js';
+import { authorityAt, donationSetSignedBy, encodeDonationSetBody, encodeAuthorityRotation } from '../../protocol/src/authority.js';
 import { donationSetId } from '../../protocol/src/donation.js';
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { Custody, NO_LIGHTNING, SETTLE, HELD } from './custody.js';
@@ -2360,6 +2360,21 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // THE DONATION SET THIS ROUND NAMES (M3.2 6e, §22A): its signed bytes then
       // the 64-byte Ed25519 signature, or 404 - a seat serves no set it cannot
       // stand behind. Before: no seat served one (404 for every round).
+      // AND THE AUTHORITY ROTATIONS THIS SEAT HOLDS FOR THE ROUND'S NETWORK
+      // (§27A.4), so a page applies them too: a set the old authority signed
+      // after a rotation is in force is no set. Served as held; the page checks
+      // each against the network's recovery key itself.
+      if (req.method === 'GET' && url.pathname === '/donation-rotations') {
+        const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
+        if (rid.length !== 32) return text(res, 400, 'that is not a round id');
+        const row = round.get(rid);
+        if (!row) return text(res, 404, 'this node holds no such round');
+        const network = toHex(decodeRoundContract(new Uint8Array(row.contract)).networkId);
+        const held = donationRotations.filter((r) => r && r.networkId instanceof Uint8Array && toHex(r.networkId) === network);
+        res.writeHead(200, { 'content-type': 'application/json', ...CORS });
+        return res.end(JSON.stringify({ rotations: held.map((r) => ({ body: toHex(encodeAuthorityRotation(r)), signature: toHex(r.signature) })) }));
+      }
+
       if (req.method === 'GET' && url.pathname === '/donation-set') {
         const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
         if (rid.length !== 32) return text(res, 400, 'that is not a round id');
