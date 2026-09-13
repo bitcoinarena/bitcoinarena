@@ -163,6 +163,9 @@ out += '         boardNames: boardNames,\n';
 // `spendLog` is what §24A.1 requires a client to show, and `spentLine` turns it
 // into one sentence - so the page renders a total it did not add up.
 out += '         tabWallet: tabWallet, spendLog: spendLog, spentLine: spentLine,\n';
+// A STAKE THAT CAME BACK (its hold CANCELLED or EXPIRED) is written into the log as
+// returned, so the running total counts only what left the wallet and stayed gone.
+out += '         noteSettlement: noteSettlement,\n';
 // WHAT THE SEAT COSTS, AS 22A's TRANSPARENCY LIST: the commitment, the fee and
 // the donation out of it, the net stake, and what the wallet is asked. The
 // page renders it; the subtraction is `netStakeMsat`'s.

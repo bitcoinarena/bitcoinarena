@@ -278,7 +278,7 @@ const A = TEST_DONATION_ENDPOINTS[0];
 const B = TEST_DONATION_ENDPOINTS[1];
 
 /** Runs the page's own paintWallet for this seat and answers every element it painted. */
-function paintThePage({ round, entry, donationPaid, settlement }) {
+function paintThePage({ round, entry, donationPaid, settlement, spent = SHIPPED.spendLog() }) {
   const page = readFileSync(PAGE, 'utf8');
   const body = page.slice(page.indexOf('function paintWallet()'));
   const src = body.slice(0, body.indexOf('\n    }') + 6);
@@ -287,9 +287,62 @@ function paintThePage({ round, entry, donationPaid, settlement }) {
   new Function('document', 'window', 'BLWPCLIENT', 'wallet', 'spent', 'owed', 'paying', 'walletWhy', 'budget',
     `${src}\n return paintWallet();`)(
     { getElementById: el }, { BLWP_ROUND: round, BLWP_ENTRY: entry, BLWP_DONATION_PAID: donationPaid, BLWP_SETTLEMENT: settlement },
-    SHIPPED, { connected: false }, SHIPPED.spendLog(), null, false, '', null);
+    SHIPPED, { connected: false }, spent, null, false, '', null);
   return made;
 }
+
+/**
+ * Runs the shipping page's own settlement poll (askTheSettlement, with its flag) against
+ * seats that answer `hold`, then its paintWallet - both off the shipped bundle.
+ */
+async function settleOnThePage({ hold, spent, stakeCommitment, round }) {
+  const page = readFileSync(PAGE, 'utf8');
+  const from = page.indexOf('    let settlementAsking = false;');
+  const fn = page.indexOf('async function askTheSettlement()', from);
+  const src = page.slice(from, page.indexOf('\n    }\n', fn) + 6);
+  const seatKeys = [b32(0x71), b32(0x72)];
+  const fetcher = async (url) => {
+    const u = new URL(url);
+    if (u.pathname === '/identity') return new Response(seatKeys[u.port === '1' ? 0 : 1], { status: 200 });
+    return new Response(JSON.stringify({ entry: 'ee'.repeat(32), hold, holdMsat: '98000', poolMsat: '98000', finality: 'FINAL' }), { status: 200 });
+  };
+  const client = { seatEntry: { stakeCommitment }, where: { entryId: 'ee'.repeat(32) } };
+  const win = { BLWP_ROUND: round, BLWP_STAKE: { seatKeys, nodes: ['http://127.0.0.1:1', 'http://127.0.0.1:2'] } };
+  const BL = { ...SHIPPED, settlementBy: (o) => SHIPPED.settlementBy({ ...o, fetcher }) };
+  await new Function('window', 'BLWPCLIENT', 'theClient', 'spent', 'paintWallet', `${src}\n return askTheSettlement();`)(
+    win, BL, () => client, spent, () => {});
+  return win.BLWP_SETTLEMENT;
+}
+
+test('a stake that came back is not counted as spent: a cancelled winner and an expired refund read nothing spent, a settled loser still reads its stake', async () => {
+  // BEFORE (measured on the bundle the daily page ran, 915f64c9): all three read
+  // "98 sat over 1 stake in 1 round", beside "Returned: ..." / "Expired: ..." / "Settled: ...".
+  const round = contractFor([b32(1), b32(2)]);
+  const want = {
+    CANCELLED: 'nothing spent this session · 98 sat came back (1 stake cancelled)',
+    EXPIRED: 'nothing spent this session · 98 sat came back (1 stake expired)',
+    SETTLED: '98 sat over 1 stake in 1 round',
+  };
+  for (const [hold, line] of Object.entries(want)) {
+    const storage = tabStorage();
+    const spent = SHIPPED.spendLog({ storage });
+    const stakeCommitment = b32(0x61);
+    spent.record({ amountMsat: 98000n, paymentHash: stakeCommitment, roundId: b32(0x21), kind: 'stake' });
+    const s = await settleOnThePage({ hold, spent, stakeCommitment, round });
+    assert.equal(s.hold, hold);
+    const made = paintThePage({ round, entry: entryOf(0n), donationPaid: undefined, settlement: s, spent });
+    assert.equal(made['blwp-spent'].textContent, line, `${hold}: the running total the page paints`);
+    assert.deepEqual([spent.totalMsat, spent.returnedMsat], hold === 'SETTLED' ? [98000n, 0n] : [0n, 98000n], `${hold}: what the log holds`);
+    // AND A RELOAD KEEPS IT: the tab's log reads the same after the page is gone.
+    assert.equal(SHIPPED.spentLine(SHIPPED.spendLog({ storage })), line, `${hold}: after a reload`);
+    console.log(`  ${hold.padEnd(9)}: "${made['blwp-spent'].textContent}" beside "${made['blwp-settled'].textContent.slice(0, 60)}…"`);
+  }
+  // A STAKE THE PAGE NEVER PAID, or a donation share, is not marked: only this seat's stake.
+  const other = SHIPPED.spendLog();
+  other.record({ amountMsat: 1334n, paymentHash: b32(0x62), roundId: b32(0x21), kind: 'donation' });
+  assert.equal(SHIPPED.noteSettlement(other, { hold: 'CANCELLED' }, b32(0x62)), false);
+  assert.equal(SHIPPED.spentLine(other), '1334 msat over 1 donation share in 1 round');
+});
 
 /** What one page load shows, painted the way the page paints it after payDonation answers. */
 function shown(load, round, storage) {

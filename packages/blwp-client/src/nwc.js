@@ -170,6 +170,22 @@ export function tabWallet({ storage, key = 'blwp.wallet' } = {}) {
  * counted once however often it is recorded.
  */
 export const SPEND_LOG_KEY = 'blwp.spend.log';
+/** The hold end states in which a stake comes back to the payer. */
+const RETURNED = ['CANCELLED', 'EXPIRED'];
+
+/**
+ * WHAT THE SEATS SAID HAPPENED TO THIS SEAT'S STAKE, WRITTEN INTO THE LOG (M3.2 6e).
+ * Measured before, on the bundle the daily page runs: a winner read "98 sat over 1
+ * stake in 1 round" beside "Returned: ... cancelled back to the wallet", and a
+ * refunded player the same beside "Expired: ... came back to the wallet". A hold
+ * that ends CANCELLED or EXPIRED is money that came back; one that SETTLED left and
+ * stays spent. `settlement` is `settlementBy`'s answer; `paymentHash` the stake's.
+ */
+export function noteSettlement(log, settlement, paymentHash) {
+  if (!log || typeof log.markReturned !== 'function' || !settlement) return false;
+  if (!RETURNED.includes(settlement.hold)) return false;
+  return log.markReturned({ paymentHash, state: settlement.hold });
+}
 
 export function spendLog({ storage = null, key = SPEND_LOG_KEY } = {}) {
   const paid = [];
@@ -180,7 +196,8 @@ export function spendLog({ storage = null, key = SPEND_LOG_KEY } = {}) {
     for (const p of Array.isArray(kept) ? kept : []) {
       try {
         paid.push({ amountMsat: BigInt(p.amountMsat), paymentHash: p.paymentHash ? fromHex(p.paymentHash) : undefined,
-          roundId: p.roundId ? fromHex(p.roundId) : undefined, at: p.at, kind: kindOf(p.kind) });
+          roundId: p.roundId ? fromHex(p.roundId) : undefined, at: p.at, kind: kindOf(p.kind),
+          ...(RETURNED.includes(p.returned) ? { returned: p.returned } : {}) });
       } catch { /* an entry this page cannot read is not counted */ }
     }
   }
@@ -189,15 +206,31 @@ export function spendLog({ storage = null, key = SPEND_LOG_KEY } = {}) {
     try {
       storage.setItem(key, JSON.stringify(paid.map((p) => ({ amountMsat: String(p.amountMsat),
         paymentHash: p.paymentHash instanceof Uint8Array ? toHex(p.paymentHash) : null,
-        roundId: p.roundId instanceof Uint8Array ? toHex(p.roundId) : null, at: p.at, kind: p.kind }))));
+        roundId: p.roundId instanceof Uint8Array ? toHex(p.roundId) : null, at: p.at, kind: p.kind,
+        ...(p.returned ? { returned: p.returned } : {}) }))));
     } catch { /* a tab that keeps nothing forgets on a reload, as before */ }
   };
+  const kept = () => paid.filter((p) => !p.returned);
   return {
-    /** Every payment this page has made, oldest first. */
+    /** Every payment this page has made, oldest first - a returned stake carries `returned`. */
     entries: () => paid.slice(),
     get count() { return paid.length; },
-    /** Millisatoshi, summed. */
-    get totalMsat() { return paid.reduce((t, p) => t + p.amountMsat, 0n); },
+    /** Millisatoshi that left the wallet and stayed gone: a stake that came back is not in it. */
+    get totalMsat() { return kept().reduce((t, p) => t + p.amountMsat, 0n); },
+    /** Millisatoshi of stakes that came back (their hold CANCELLED or EXPIRED). */
+    get returnedMsat() { return paid.filter((p) => p.returned).reduce((t, p) => t + p.amountMsat, 0n); },
+    /**
+     * A STAKE THAT CAME BACK (M3.2 6e): its hold ended CANCELLED - a winner's, handed
+     * back - or EXPIRED - nobody acted, the HTLC timed out to the payer. Answers
+     * whether a stake with that payment hash was marked.
+     */
+    markReturned({ paymentHash, state }) {
+      if (!(paymentHash instanceof Uint8Array) || !RETURNED.includes(state)) return false;
+      const p = paid.find((x) => x.kind === 'stake' && x.paymentHash instanceof Uint8Array && toHex(x.paymentHash) === toHex(paymentHash));
+      if (!p) return false;
+      if (p.returned !== state) { p.returned = state; save(); }
+      return true;
+    },
     record({ amountMsat, paymentHash, roundId, at, kind = 'stake' }) {
       if (paymentHash instanceof Uint8Array
         && paid.some((p) => p.paymentHash instanceof Uint8Array && toHex(p.paymentHash) === toHex(paymentHash)))
@@ -223,14 +256,21 @@ export function spendLog({ storage = null, key = SPEND_LOG_KEY } = {}) {
  */
 export function spentLine(log) {
   if (!log || !log.count) return 'nothing paid this session';
-  const all = log.entries();
+  // A STAKE THAT CAME BACK IS NOT SPENT (M3.2 6e): it is named, and left out of the total.
+  const back = log.entries().filter((p) => p.returned);
+  const backMsat = back.reduce((t, p) => t + p.amountMsat, 0n);
+  const states = [...new Set(back.map((p) => p.returned.toLowerCase()))].join('/');
+  const cameBack = back.length ? ` · ${backMsat % 1000n === 0n ? `${backMsat / 1000n} sat` : `${backMsat} msat`} came back `
+    + `(${back.length} stake${back.length === 1 ? '' : 's'} ${states})` : '';
+  const all = log.entries().filter((p) => !p.returned);
+  if (!all.length) return `nothing spent this session${cameBack}`;
   const rounds = new Set(all.map((p) => toHex(p.roundId || new Uint8Array(0)))).size;
   const inRounds = ` in ${rounds} round${rounds === 1 ? '' : 's'}`;
   const donations = all.filter((p) => p.kind === 'donation').length;
   const stakes = all.length - donations;
   if (!donations) {
     const sats = log.totalMsat / 1000n;
-    return `${sats} sat over ${stakes} stake${stakes === 1 ? '' : 's'}${inRounds}`;
+    return `${sats} sat over ${stakes} stake${stakes === 1 ? '' : 's'}${inRounds}${cameBack}`;
   }
   // A DONATION SHARE IS NOT A STAKE (M3.2 6e): measured before, a 96 sat stake
   // and a 1334 msat share read "97 sat over 2 stakes". And the total is exact -
@@ -240,7 +280,7 @@ export function spentLine(log) {
   const parts = [];
   if (stakes) parts.push(`${stakes} stake${stakes === 1 ? '' : 's'}`);
   parts.push(`${donations} donation share${donations === 1 ? '' : 's'}`);
-  return `${amount} over ${parts.join(' and ')}${inRounds}`;
+  return `${amount} over ${parts.join(' and ')}${inRounds}${cameBack}`;
 }
 
 /**

@@ -837,6 +837,11 @@
         window.BLWP_SETTLEMENT = await BLWPCLIENT.settlementBy({
           entryId: c.where.entryId, seats: window.BLWP_STAKE.seatKeys, nodes: window.BLWP_STAKE.nodes,
         });
+        // A STAKE THAT CAME BACK IS NOT SPENT (M3.2 6e): a hold the seats say ended
+        // CANCELLED or EXPIRED is marked returned in the running total - the rule is
+        // the client's; the hash is the hold's (the entry's stake commitment).
+        if (spent && c.seatEntry.stakeCommitment)
+          BLWPCLIENT.noteSettlement(spent, window.BLWP_SETTLEMENT, c.seatEntry.stakeCommitment);
       } catch (e) { console.error('[blwp] settlement: ' + e.message); }
       settlementAsking = false;
       paintWallet();
