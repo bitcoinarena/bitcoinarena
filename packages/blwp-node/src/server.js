@@ -623,6 +623,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       return picked.ok ? endpointsOf(picked.committee, round.pubkey) : (dkg.peers || []);
     },
     onVoid: (rid, eid) => pushVoid(rid, eid),
+    // Before a Void lock is refunded: the other seats' proof of two first marks.
+    pullProof: (rid, eid) => verifier.pullFirstMarkProof(rid, eid),
   });
 
   // AND WHICH OUTPUT THE POOL IS IN, asked of the chain rather than

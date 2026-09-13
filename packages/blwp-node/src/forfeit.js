@@ -43,8 +43,12 @@ export class Forfeit {
    * federation (it hashes a contract the way the guardians do); `peersFor(rid)`
    * names the other settlement seats' bases.
    */
-  constructor(round, { dkg, port, curve, random, peersFor = () => [], fetcher = (u, o) => fetch(u, o), onVoid = null } = {}) {
+  constructor(round, { dkg, port, curve, random, peersFor = () => [], fetcher = (u, o) => fetch(u, o), onVoid = null, pullProof = null } = {}) {
     this.round = round;
+    // THE OTHER SEATS' PROOF OF TWO FIRST MARKS, pulled and checked here before a
+    // Void lock is refunded (M3.3-34): `pullProof(rid, eid)` keeps a pair that
+    // verifies in this seat's own store.
+    this.pullProof = pullProof;
     this.dkg = dkg;
     this.port = port;
     this.curve = curve;
@@ -76,6 +80,15 @@ export class Forfeit {
     // FORFEIT - the Void stays as history and it signs no refund. Measured before
     // on a fresh federation: both seats signed it and the player redeemed the
     // lock before its expiry.
+    // A VOID SEAT ASKS THE OTHERS FIRST (M3.3-34, a lock with receipts lost
+    // between seats that are up): a refund signed on this seat's own Void record
+    // alone forms while another seat holds the proof. Measured before: five seats
+    // that each kept only their own receipt recorded the Void, signed at once -
+    // five signatures - and the player could redeem 98000 msat before the lock's
+    // expiry; seat 5 held the proof. The pair pulled here is checked and kept.
+    if (voided && this.pullProof && !(this.round.twoFirstMarks && this.round.twoFirstMarks(roundIdBytes, entryIdBytes))) {
+      try { await this.pullProof(roundIdBytes, entryIdBytes); } catch { /* a seat that cannot answer proves nothing */ }
+    }
     const nq = voided && this.round.noQuorum ? this.round.noQuorum(entryIdBytes) : null;
     if (voided && ((this.round.twoFirstMarks && this.round.twoFirstMarks(roundIdBytes, entryIdBytes)) || (nq && nq.outcome === 'FORFEIT')))
       return refuse('the player signed two first marks for this entry (§13B): FORFEIT, never the outage refund - '
