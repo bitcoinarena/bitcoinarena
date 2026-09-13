@@ -100,4 +100,34 @@ public class LobbyScreenTests
         Assert.AreEqual(-1, DailyLobby.PickDefault(new LobbyRow[0]), "nothing to join, nothing picked");
         Assert.IsFalse(DailyLobby.Join("aaaa1111"), "outside a WebGL page nothing is joined");
     }
+
+    /// <summary>
+    /// PLAY STARTS THE ROUND, IN THIS PAGE (M3.3-34, the owner 2026-09-13 07:11:
+    /// "after PLAY the loading screen must not come again"). The page takes the
+    /// seat without a reload and says so; the round starts once the page says
+    /// joined and the session is open - or after the patience without one - and
+    /// a refusal comes back to the title screen with the page's reason.
+    /// </summary>
+    [Test]
+    public void PlayStartsTheRoundWhenThePageSaysJoinedWithoutAReload()
+    {
+        var before = DailyLobby.Parse(Sample);
+        Assert.AreEqual("", before.join.state, "a lobby with no press yet carries an empty join");
+        Assert.AreEqual("wait", DailyLobby.AfterJoin(before, true, 0f));
+
+        var joining = DailyLobby.Parse(Sample.Replace("\"nodes\":2}", "\"nodes\":2,\"join\":{\"state\":\"joining\",\"why\":\"\",\"stage\":\"stake lock: deposit\"}}"));
+        Assert.AreEqual("stake lock: deposit", joining.join.stage);
+        Assert.AreEqual("wait", DailyLobby.AfterJoin(joining, true, 60f), "no round starts before the page has the seat");
+
+        var joined = DailyLobby.Parse(Sample.Replace("\"nodes\":2}", "\"nodes\":2,\"join\":{\"state\":\"joined\"}}"));
+        Assert.AreEqual("play", DailyLobby.AfterJoin(joined, true, 0f), "joined with the session open: the round starts");
+        Assert.AreEqual("wait", DailyLobby.AfterJoin(joined, false, DailyLobby.SessionPatienceS - 0.1f));
+        Assert.AreEqual("play", DailyLobby.AfterJoin(joined, false, DailyLobby.SessionPatienceS),
+            "a session that has not opened does not keep the player on the title screen");
+
+        var refused = DailyLobby.Parse(Sample.Replace("\"nodes\":2}", "\"nodes\":2,\"join\":{\"state\":\"refused\",\"why\":\"no seat\"}}"));
+        Assert.AreEqual("refused", DailyLobby.AfterJoin(refused, true, 60f));
+        Assert.AreEqual("no seat", refused.join.why);
+        Assert.AreEqual("wait", DailyLobby.AfterJoin(null, true, 60f));
+    }
 }

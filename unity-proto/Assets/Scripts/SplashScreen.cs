@@ -36,6 +36,8 @@ public class SplashScreen : MonoBehaviour
     string _pickId = "", _nameWhy = "";
     int _offset;
     bool _joining, _autoPlay, _hiddenTold;
+    string _joinWhy = "";
+    float _joinedAt = -1f;
     Rect _lastName, _lastKey, _lastMore;
     readonly System.Collections.Generic.List<(Blwp.LobbyRow row, Rect rect)> _drawnRows =
         new System.Collections.Generic.List<(Blwp.LobbyRow row, Rect rect)>();
@@ -87,6 +89,18 @@ public class SplashScreen : MonoBehaviour
                 int k = Blwp.DailyLobby.Keep(_lobby.rows, _pickId);
                 _pickId = k >= 0 ? _lobby.rows[k].id : "";
             }
+        }
+
+        // PLAY IN THE LOBBY TAKES THE SEAT IN THIS PAGE (the owner 2026-09-13 07:11):
+        // no reload, so no second loading screen - the round starts here once the
+        // page has joined it.
+        if (_joining && _lobby != null)
+        {
+            if (_lobby.join.state == "joined" && _joinedAt < 0f) _joinedAt = Time.unscaledTime;
+            string next = Blwp.DailyLobby.AfterJoin(_lobby, Blwp.BlwpNet.Running,
+                                                    _joinedAt < 0f ? 0f : Time.unscaledTime - _joinedAt);
+            if (next == "play") { _joining = false; Play(); return; }
+            if (next == "refused") { _joining = false; _joinWhy = _lobby.join.why; _polledAt = -10f; }
         }
     }
 
@@ -383,7 +397,8 @@ public class SplashScreen : MonoBehaviour
     /// <summary>What PLAY will do, on the hint line - short enough for a phone.</summary>
     string LobbyHint()
     {
-        if (_joining) return "joining the round …";
+        if (_joining) return string.IsNullOrEmpty(_lobby.join.stage) ? "joining the round …" : $"joining the round - {_lobby.join.stage} …";
+        if (!string.IsNullOrEmpty(_joinWhy)) return $"not seated: {_joinWhy}";
         int k = Blwp.DailyLobby.Keep(_lobby.rows, _pickId);
         if (k >= 0)
         {
@@ -396,8 +411,12 @@ public class SplashScreen : MonoBehaviour
     void JoinPicked()
     {
         WakeAudio();
+        _joinWhy = "";
+        _joinedAt = -1f;
         _joining = Blwp.DailyLobby.Join(_pickId);
-        if (!_joining) _polledAt = -10f;
+        // the last poll still holds the press before this one: it is not this join's answer
+        if (_joining && _lobby != null) _lobby.join = new Blwp.LobbyJoin { state = "joining" };
+        _polledAt = -10f;
     }
 
     bool SmallButton(Rect r, string label)

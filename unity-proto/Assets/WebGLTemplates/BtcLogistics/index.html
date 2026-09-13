@@ -39,6 +39,11 @@
        wallet can be given the invoice. Empty, it takes no room. */
     #blwp-deposit { max-width: min(560px, 90vw); text-align: center; font-size: 13px; color: #e8eaed; }
     #blwp-deposit:empty { display: none; }
+    /* ...AND OVER THE GAME once the loading screen is gone: PLAY in the lobby
+       takes the seat in the running page (M3.3-34), so a lock round's deposit
+       is asked for after Unity loaded. */
+    body > #blwp-deposit { position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 25;
+      padding: 12px 14px; border-radius: 6px; background: rgba(13, 16, 20, 0.94); border: 1px solid #3a3f45; }
     #blwp-deposit code { display: block; margin-top: 8px; padding: 8px 10px; border-radius: 4px;
       background: #0d1014; border: 1px solid #3a3f45; color: #ffc46b; word-break: break-all;
       user-select: all; font: 400 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }
@@ -360,8 +365,10 @@
       if (!named) return;
 
       window.BLWP_ROUND = named.round;
-      window.BLWP_CHAIN = named.chain;
-      window.BLWP_ADVERT = named.advert;
+      // BLWP_CHAIN AND BLWP_ADVERT ARE SET LAST, beside BLWP_ENTRY (M3.3-34): they
+      // are what tells Unity there is a session to open (BlwpNetNodeUrl), and a
+      // seat PLAY takes in this page lands while Unity is already running - a
+      // session opened before the entry exists fails and cannot be opened again.
       // THE NODES THIS ROUND NAMED, so the bridge can ask all of them what the
       // round's randomness is. The player's own world is seeded from it, and a
       // page that asked one node would let that node put this player alone in
@@ -548,7 +555,11 @@
               round: named.round, roundId: BLWPCLIENT.fromHex(named.roundIdHex), invite: named.federation,
               seed, stake, claimKey, playerPubkey: player.pubkey, LockClient: wasm.LockClient,
               storage: window.sessionStorage,
-              onStep: (step) => { if (stageEl) stageEl.textContent = 'Stake lock: ' + step + ' …'; console.log('[blwp] stake lock: ' + step); },
+              onStep: (step) => {
+                if (stageEl) stageEl.textContent = 'Stake lock: ' + step + ' …';
+                if (window.BLWP_JOIN) window.BLWP_JOIN.stage = 'stake lock: ' + step;
+                console.log('[blwp] stake lock: ' + step);
+              },
               onDeposit: (d) => {
                 window.BLWP_DEPOSIT = { invoice: d.invoice, amountMsat: String(d.amountMsat) };
                 if (depositEl) {
@@ -601,6 +612,8 @@
           seed, curve: window.BLWP_CURVE, playerPubkey: player.pubkey, random, ...(stake ? { stake } : {}),
           ...(claimKey ? { claimKey } : {}), ...(stakeLock ? { stakeLock } : {}),
         });
+      window.BLWP_CHAIN = named.chain;
+      window.BLWP_ADVERT = named.advert;
       console.log('[blwp] joining round ' + named.roundIdHex + ' from ' + named.from);
     }
 
@@ -900,6 +913,9 @@
         .then((instance) => {
           window.unityInstance = instance;
           show(1);
+          // the deposit box outlives the loading screen: a seat taken later asks there
+          const deposit = document.getElementById('blwp-deposit');
+          if (deposit) document.body.appendChild(deposit);
           boot.classList.add('done');
           setTimeout(() => boot.remove(), 600);
           canvas.focus();
@@ -977,14 +993,40 @@
           : { name: 'no identity', custom: false, generated: '', fingerprint: '' },
         rows: (window.BLWP_LOBBY || []).map((r) => ({ id: r.id, line: r.line, free: !!r.free, agree: r.seatsAgree | 0,
           needed: r.needed | 0, joinable: !!r.join, leftS: leftOf(r.line), seated: seatedOf(r.line) })),
-        refused: refused.map(String), nodes: named.nodes.length });
+        refused: refused.map(String), nodes: named.nodes.length,
+        join: window.BLWP_JOIN ? { state: window.BLWP_JOIN.state, why: String(window.BLWP_JOIN.why || ''), stage: String(window.BLWP_JOIN.stage || '') }
+          : { state: '', why: '', stage: '' } });
       window.BLWP_LOBBY_ACT = {
         // PLAY: the round's own link, so the seat is taken by exactly the path a
-        // shared round link takes - and `play=1` starts the round on arrival.
+        // shared round link takes - IN THIS PAGE (the owner 2026-09-13 07:11: "after
+        // PLAY the loading screen must not come again. PLAY starts the round").
+        // It used to navigate to the link: the page reloaded, Unity loaded a
+        // second time, and the player sat through the loading screen again. Now
+        // the address becomes the round's link (with `play=1`, so a reload still
+        // starts the round), the seat is taken by the same code a round link
+        // runs, and Unity starts the round when BLWP_JOIN says joined.
         join(id) {
           const r = (window.BLWP_LOBBY || []).find((x) => x.id === id && x.join);
           if (!r) return false;
-          location.search = r.join + (r.join.indexOf('?') >= 0 ? '&' : '?') + 'play=1';
+          if (window.BLWP_JOIN && window.BLWP_JOIN.state === 'joining') return true;
+          const back = location.search;
+          history.replaceState(null, '', location.pathname + r.join + '&play=1');
+          window.BLWP_SEAT_REFUSED = null;
+          const join = window.BLWP_JOIN = { state: 'joining', why: '', stage: '' };
+          const refuse = (why) => {
+            join.state = 'refused';
+            join.why = String(why);
+            // not seated: the lobby's address back, and no round left named for Unity to open
+            window.BLWP_ROUND = undefined;
+            window.BLWP_ENTRY = undefined;
+            history.replaceState(null, '', location.pathname + back);
+          };
+          joinTheRoundIfOneWasNamed()
+            .then(() => {
+              if (window.BLWP_ENTRY) join.state = 'joined';
+              else refuse(window.BLWP_SEAT_REFUSED || 'this page took no seat in that round');
+            })
+            .catch((e) => refuse(e && e.message ? e.message : e));
           return true;
         },
         // THE NAME, in the browser's own prompt: a phone's keyboard types into it.

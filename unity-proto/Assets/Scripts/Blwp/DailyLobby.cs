@@ -30,6 +30,15 @@ namespace Blwp
         public string fingerprint = "";
     }
 
+    /// <summary>The seat PLAY asked for, as the page took it: "" before any press, then joining, joined or refused - and why, and the step it is on.</summary>
+    [Serializable]
+    public class LobbyJoin
+    {
+        public string state = "";
+        public string why = "";
+        public string stage = "";
+    }
+
     /// <summary>What the page hands Unity to draw: the lobby, or nothing.</summary>
     [Serializable]
     public class LobbyState
@@ -40,6 +49,7 @@ namespace Blwp
         public LobbyRow[] rows = new LobbyRow[0];
         public string[] refused = new string[0];
         public int nodes;
+        public LobbyJoin join = new LobbyJoin();
     }
 
     /// <summary>
@@ -94,7 +104,28 @@ namespace Blwp
             if (s.rows == null) s.rows = new LobbyRow[0];
             if (s.refused == null) s.refused = new string[0];
             if (s.you == null) s.you = new LobbyYou();
+            if (s.join == null) s.join = new LobbyJoin();
             return s;
+        }
+
+        /// <summary>How long a joined seat waits for its session before the round starts anyway.</summary>
+        public const float SessionPatienceS = 5f;
+
+        /// <summary>
+        /// WHAT PLAY DOES ONCE THE PAGE HAS THE SEAT (M3.3-34, the owner 2026-09-13
+        /// 07:11: "after PLAY the loading screen must not come again. PLAY starts
+        /// the round"). The seat is taken in THIS page - PLAY used to navigate to
+        /// the round's link, the page reloaded and Unity loaded a second time. The
+        /// round starts when the page says joined and the session has opened, or
+        /// `SessionPatienceS` after joined without one. "refused" hands the page's
+        /// reason back to the title screen; anything else waits.
+        /// </summary>
+        public static string AfterJoin(LobbyState s, bool sessionRunning, float joinedForS)
+        {
+            if (s == null || s.join == null) return "wait";
+            if (s.join.state == "refused") return "refused";
+            if (s.join.state != "joined") return "wait";
+            return sessionRunning || joinedForS >= SessionPatienceS ? "play" : "wait";
         }
 
         /// <summary>

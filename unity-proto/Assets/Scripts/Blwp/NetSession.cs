@@ -68,8 +68,18 @@ namespace Blwp
             if (string.IsNullOrEmpty(nodeUrl)) nodeUrl = BlwpNet.NodeUrl();
         }
 
+        float _nextAsk;
+
         void Update()
         {
+            // AND ASKED AGAIN WHILE THERE IS NONE (M3.3-34, the owner 2026-09-13 07:11):
+            // PLAY in the lobby takes its seat in this page, after Start - the page
+            // is no longer reloaded, so a round named later has to be seen here.
+            if (string.IsNullOrEmpty(nodeUrl) && Time.unscaledTime >= _nextAsk)
+            {
+                _nextAsk = Time.unscaledTime + 0.5f;
+                nodeUrl = BlwpNet.NodeUrl();
+            }
             if (ShouldOpen(nodeUrl, BlwpCore.Available, BlwpNet.Running,
                            BlwpCore.Tick, settleTicks))
                 BlwpNet.Start(nodeUrl);
