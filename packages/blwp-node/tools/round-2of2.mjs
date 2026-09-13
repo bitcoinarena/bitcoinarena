@@ -407,7 +407,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     gameVerifySlots: 2, settlementSlots: 2, simCoreHash: CORE_HASH,
     committeeTimeMs, randomnessRule: 'bitcoin-block-hash',
     startTimeMs: committeeTimeMs + MIN_ENTRY_WINDOW_MS,
-    entryCloseMs: committeeTimeMs + MIN_ENTRY_WINDOW_MS + 120000n,
+    entryCloseMs: committeeTimeMs + MIN_ENTRY_WINDOW_MS + 1_800_000n,
     objectionWindowMs, custody: 'FEDERATION', slashMinimumServed: 20,
     slashRemainder: 'BURN', federationId, stakeExpiryBlocks: 144,
     // WHERE THE SEATS POST EACH RUN'S TRANSCRIPT (v4.6.2 §13A, P2): the two
