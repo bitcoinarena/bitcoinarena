@@ -1295,6 +1295,7 @@ export class Client {
         amountMsat: quote.amountMsat,
         paymentHash: quote.paymentHash,
         roundId: this.where && this.where.roundId,
+        kind: 'stake',
       });
     }
 
@@ -1382,7 +1383,7 @@ export class Client {
       if (!wallet.ok) { unpaid(`the wallet did not pay it: ${wallet.why}`); continue; }
       paid.push({ lnurl: share.lnurl, url, amountMsat: share.amountMsat, paymentHash: fits.paymentHash, preimage: wallet.preimage });
       note({ state: 'paid', url });
-      if (log && typeof log.record === 'function') log.record({ amountMsat: share.amountMsat, paymentHash: fits.paymentHash, roundId: entry.roundId || (this.where && this.where.roundId) });
+      if (log && typeof log.record === 'function') log.record({ amountMsat: share.amountMsat, paymentHash: fits.paymentHash, roundId: entry.roundId || (this.where && this.where.roundId), kind: 'donation' });
     }
     const after = donationAfterFailures({ shares: split.shares.filter((s) => s.amountMsat > 0n), failed: failed.map((f) => f.lnurl) });
     const sum = (list) => list.reduce((t, p) => t + p.amountMsat, 0n);

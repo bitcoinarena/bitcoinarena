@@ -3371,23 +3371,54 @@ function tabWallet({ storage, key = 'blwp.wallet' } = {}) {
  * be showing the player a figure nobody checked.
  *
  * ONE ENTRY PER PAYMENT, and the payment hash is in it: "what it was spent on"
- * means a round and a seat, not a running number. Kept in memory for the life
- * of the page, because a spend log is a display and the authority for what was
- * paid is the chain of hold invoices, not this.
+ * means a round and a seat, not a running number. A spend log is a display and
+ * the authority for what was paid is the chain of invoices, not this.
+ *
+ * KEPT IN THE TAB WHEN HANDED ITS STORAGE (M3.2 6e). Measured before, on the
+ * daily page: after a reload the panel said "nothing paid this session" beside
+ * "1334 msat paid" while 97334 msat had left the wallet - the log was page
+ * memory. Without `storage` it is page memory, as before. Each entry says what
+ * it paid for (`kind`: a stake, or a donation share), and a payment hash is
+ * counted once however often it is recorded.
  */
-function spendLog() {
+const SPEND_LOG_KEY = 'blwp.spend.log';
+
+function spendLog({ storage = null, key = SPEND_LOG_KEY } = {}) {
   const paid = [];
+  const kindOf = (k) => (k === 'donation' ? 'donation' : 'stake');
+  if (storage) {
+    let kept = [];
+    try { kept = JSON.parse(storage.getItem(key) || '[]'); } catch { kept = []; }
+    for (const p of Array.isArray(kept) ? kept : []) {
+      try {
+        paid.push({ amountMsat: BigInt(p.amountMsat), paymentHash: p.paymentHash ? fromHex(p.paymentHash) : undefined,
+          roundId: p.roundId ? fromHex(p.roundId) : undefined, at: p.at, kind: kindOf(p.kind) });
+      } catch { /* an entry this page cannot read is not counted */ }
+    }
+  }
+  const save = () => {
+    if (!storage) return;
+    try {
+      storage.setItem(key, JSON.stringify(paid.map((p) => ({ amountMsat: String(p.amountMsat),
+        paymentHash: p.paymentHash instanceof Uint8Array ? toHex(p.paymentHash) : null,
+        roundId: p.roundId instanceof Uint8Array ? toHex(p.roundId) : null, at: p.at, kind: p.kind }))));
+    } catch { /* a tab that keeps nothing forgets on a reload, as before */ }
+  };
   return {
     /** Every payment this page has made, oldest first. */
     entries: () => paid.slice(),
     get count() { return paid.length; },
     /** Millisatoshi, summed. */
     get totalMsat() { return paid.reduce((t, p) => t + p.amountMsat, 0n); },
-    record({ amountMsat, paymentHash, roundId, at }) {
+    record({ amountMsat, paymentHash, roundId, at, kind = 'stake' }) {
+      if (paymentHash instanceof Uint8Array
+        && paid.some((p) => p.paymentHash instanceof Uint8Array && toHex(p.paymentHash) === toHex(paymentHash)))
+        return paid.length;
       paid.push({
         amountMsat: BigInt(amountMsat), paymentHash, roundId,
-        at: at === undefined ? Date.now() : at,
+        at: at === undefined ? Date.now() : at, kind: kindOf(kind),
       });
+      save();
       return paid.length;
     },
   };
@@ -3404,10 +3435,24 @@ function spendLog() {
  */
 function spentLine(log) {
   if (!log || !log.count) return 'nothing paid this session';
-  const sats = log.totalMsat / 1000n;
-  const rounds = new Set(log.entries().map((p) => toHex(p.roundId || new Uint8Array(0)))).size;
-  return `${sats} sat over ${log.count} stake${log.count === 1 ? '' : 's'}`
-    + ` in ${rounds} round${rounds === 1 ? '' : 's'}`;
+  const all = log.entries();
+  const rounds = new Set(all.map((p) => toHex(p.roundId || new Uint8Array(0)))).size;
+  const inRounds = ` in ${rounds} round${rounds === 1 ? '' : 's'}`;
+  const donations = all.filter((p) => p.kind === 'donation').length;
+  const stakes = all.length - donations;
+  if (!donations) {
+    const sats = log.totalMsat / 1000n;
+    return `${sats} sat over ${stakes} stake${stakes === 1 ? '' : 's'}${inRounds}`;
+  }
+  // A DONATION SHARE IS NOT A STAKE (M3.2 6e): measured before, a 96 sat stake
+  // and a 1334 msat share read "97 sat over 2 stakes". And the total is exact -
+  // a share is rarely whole sats, and 96000 + 1334 is 97334 msat, not 97 sat.
+  const t = log.totalMsat;
+  const amount = t % 1000n === 0n ? `${t / 1000n} sat` : `${t} msat`;
+  const parts = [];
+  if (stakes) parts.push(`${stakes} stake${stakes === 1 ? '' : 's'}`);
+  parts.push(`${donations} donation share${donations === 1 ? '' : 's'}`);
+  return `${amount} over ${parts.join(' and ')}${inRounds}`;
 }
 
 /**
@@ -7271,8 +7316,10 @@ async function joinFromQuery(search, { fetcher = fetch } = {}) {
 // players; a returning session pastes the backup again.
 const SEED_FROM = 'blwp.player.seed.from';
 const HEX_SEED = /^[0-9a-f]{64}$/i;
+/** Where the tab keeps its seed - read, never minted, by the donation notes a failed round link shows. */
+const TAB_SEED_KEY = 'blwp.player.seed';
 
-function tabSeed({ storage, random, key = 'blwp.player.seed' } = {}) {
+function tabSeed({ storage, random, key = TAB_SEED_KEY } = {}) {
   const held = storage && storage.getItem(key);
   if (held && HEX_SEED.test(held)) return fromHex(held.toLowerCase());
   const seed = random(32);
@@ -9486,6 +9533,7 @@ function donationSetInForce({
 
 
 
+
 /**
  * WHAT THIS TAB HAS ALREADY ASKED ITS WALLET TO DONATE, per round and player
  * key, share by share (M3.2 6e). Measured before: the page's once-only flag
@@ -9570,6 +9618,54 @@ function donationPaidLine(p) {
     + (s.state === 'paid' ? '' : ` (${s.why})`));
   const kept = p.unpaidMsat > 0n ? ` · ${msatOrSat(p.unpaidMsat)} unpaid stays in your wallet, sent nowhere else` : '';
   return `Donation: ${each.join(' · ')}${kept}`;
+}
+
+const SHARE_OF_NOTE = { paid: 'paid', unpaid: 'unpaid', asked: 'unknown' };
+const UNKNOWN_WHY = 'this tab asked its wallet for it before a reload and never heard the answer, so it is not asked again';
+
+/**
+ * THE DONATION AS THE TAB'S NOTES HAVE IT - NO SEAT, NO SET (M3.2 6e). Measured
+ * before, on the daily page: a reload whose round link failed to fetch showed
+ * the loading screen's refusal and nothing else - no wallet panel, no line -
+ * while the notes held "paid 1334, unpaid 666". The line was painted only after
+ * `payDonation`, which needs a seat. The notes are what the wallet was asked and
+ * what it answered, so they are enough to say it. Null when the tab has none.
+ */
+function donationNotedState(storage, whose) {
+  const noted = donationPaidRecord(storage, whose);
+  if (!noted) return null;
+  const said = { ok: true, paid: [], failed: [], unknown: [] };
+  const recipients = [];
+  for (const [lnurl, n] of Object.entries(noted.shares)) {
+    let amountMsat;
+    try { amountMsat = BigInt(n.amountMsat); } catch { continue; }
+    const as = SHARE_OF_NOTE[n.state];
+    if (!as) continue;
+    recipients.push({ lnurl });
+    if (as === 'paid') said.paid.push({ lnurl, amountMsat });
+    else if (as === 'unpaid') { said.failed.push({ lnurl, amountMsat, why: n.why || 'unpaid' }); said.ok = false; }
+    else { said.unknown.push({ lnurl, amountMsat, why: UNKNOWN_WHY }); said.ok = false; }
+  }
+  if (!recipients.length) return null;
+  return { ...donationPaidState({ recipients }, said), from: 'notes' };
+}
+
+/**
+ * AND FOR THE ROUND A LINK NAMES, when the round itself cannot be reached: the
+ * round id off the link, this tab's key for it from the tab's own seed (read,
+ * never minted - a tab with no seed has donated nothing), and that key's notes.
+ * Nothing is asked of a node or a wallet.
+ */
+function notedDonationForLink(search, { storage, curve } = {}) {
+  let hex = null;
+  try { hex = new URLSearchParams(String(search || '')).get('round'); } catch { return null; }
+  if (!hex || !/^[0-9a-f]{64}$/i.test(hex) || !storage) return null;
+  let seedHex = null;
+  try { seedHex = storage.getItem(TAB_SEED_KEY); } catch { return null; }
+  if (!seedHex || !/^[0-9a-f]{64}$/i.test(seedHex)) return null;
+  let player;
+  try { player = playerFor({ id: fromHex(hex.toLowerCase()) }, { seed: fromHex(seedHex.toLowerCase()), curve }); } catch { return null; }
+  return donationNotedState(storage, { roundId: player.roundId, playerPubkey: player.pubkey });
 }
 
 /** Every recipient of a set, with its share and where it is paid - what the page shows before the wallet approves. */
@@ -10931,6 +11027,7 @@ class Client {
         amountMsat: quote.amountMsat,
         paymentHash: quote.paymentHash,
         roundId: this.where && this.where.roundId,
+        kind: 'stake',
       });
     }
 
@@ -11018,7 +11115,7 @@ class Client {
       if (!wallet.ok) { unpaid(`the wallet did not pay it: ${wallet.why}`); continue; }
       paid.push({ lnurl: share.lnurl, url, amountMsat: share.amountMsat, paymentHash: fits.paymentHash, preimage: wallet.preimage });
       note({ state: 'paid', url });
-      if (log && typeof log.record === 'function') log.record({ amountMsat: share.amountMsat, paymentHash: fits.paymentHash, roundId: entry.roundId || (this.where && this.where.roundId) });
+      if (log && typeof log.record === 'function') log.record({ amountMsat: share.amountMsat, paymentHash: fits.paymentHash, roundId: entry.roundId || (this.where && this.where.roundId), kind: 'donation' });
     }
     const after = donationAfterFailures({ shares: split.shares.filter((s) => s.amountMsat > 0n), failed: failed.map((f) => f.lnurl) });
     const sum = (list) => list.reduce((t, p) => t + p.amountMsat, 0n);
@@ -12773,6 +12870,7 @@ return { Client: Client, markState: markState,
          chooseDonation: chooseDonation, donationChoice: donationChoice, DONATION_CONFIRM_BPS: DONATION_CONFIRM_BPS,
          fetchDonationSet: fetchDonationSet, donationRecipientsLine: donationRecipientsLine,
          donationPaidState: donationPaidState, donationPaidLine: donationPaidLine,
+         donationNotedState: donationNotedState, notedDonationForLink: notedDonationForLink,
          stakeFor: stakeFor, fetchSettlementSeats: fetchSettlementSeats,
          roundPays: roundPays, postHandout: postHandout, attestedClaimKey: attestedClaimKey, roundLocks: roundLocks,
          awaitAttestedClaimKey: awaitAttestedClaimKey,

@@ -645,8 +645,10 @@ export async function joinFromQuery(search, { fetcher = fetch } = {}) {
 // players; a returning session pastes the backup again.
 const SEED_FROM = 'blwp.player.seed.from';
 const HEX_SEED = /^[0-9a-f]{64}$/i;
+/** Where the tab keeps its seed - read, never minted, by the donation notes a failed round link shows. */
+export const TAB_SEED_KEY = 'blwp.player.seed';
 
-export function tabSeed({ storage, random, key = 'blwp.player.seed' } = {}) {
+export function tabSeed({ storage, random, key = TAB_SEED_KEY } = {}) {
   const held = storage && storage.getItem(key);
   if (held && HEX_SEED.test(held)) return fromHex(held.toLowerCase());
   const seed = random(32);

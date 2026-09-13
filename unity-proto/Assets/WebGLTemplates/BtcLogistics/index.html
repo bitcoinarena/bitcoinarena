@@ -50,6 +50,10 @@
 
     #err { display: none; color: #ff6b6b; max-width: 560px; text-align: center; font-size: 14px; }
     #err.show { display: block; }
+    /* A donation that already left the wallet, from the tab's notes, under a
+       refusal: the player is told what was paid even when the round is gone. */
+    #blwp-donation-noted { display: none; color: #e8eaed; max-width: 560px; text-align: center; font-size: 14px; }
+    #blwp-donation-noted.show { display: block; }
 
     /* THE LOBBY (M3.3-34): a link naming nodes and no round lists the rounds
        they hold, over everything else, until the player joins one. Every row
@@ -108,6 +112,23 @@
       background: #f7931a; color: #14171a; font: 600 13px/1 inherit; cursor: pointer;
     }
     #blwp-wallet button[disabled] { opacity: 0.5; cursor: default; }
+    /* A PHONE ON ITS SIDE (M3.2 6e). Measured on the daily page at 844x390: the
+       320x428 panel at the right edge ended 52 px below the screen ("Pay the
+       stake" cut) and lay over the throttle. The touch pads are Unity's
+       TouchPad.RectFor: button s = 20% and margin m = 3.5% of the short side,
+       so the throttle starts s + m = 23.5% of it in from the right, and the
+       bottom row (steering, brake, handbrake) starts s + m up from the bottom.
+       The panel keeps left of the one and above the other, wide enough that
+       its lines are few; the input and the button share a row. The height cap
+       only guards a longer why - it scrolls rather than run off the screen. */
+    @media (orientation: landscape) and (max-height: 500px) {
+      #blwp-wallet {
+        left: 14px; right: calc(23.5vh + 12px); max-width: none;
+        max-height: calc(76.5vh - 22px); overflow-y: auto;
+      }
+      #blwp-wallet input { width: calc(100% - 150px); margin-right: 8px; vertical-align: middle; }
+      #blwp-wallet button { vertical-align: middle; }
+    }
   </style>
 </head>
 <body>
@@ -233,6 +254,7 @@
       slowest — after that most of it is in the browser cache.</div>
     <div id="blwp-deposit"></div>
     <div id="err"></div>
+    <div id="blwp-donation-noted"></div>
   </div>
 
   <!-- The deterministic core, loaded before Unity so the jslib glue can reach
@@ -292,6 +314,22 @@
       for (let i = STAGES.length - 1; i >= 0; i--) {
         if (clamped >= STAGES[i][0]) { stage.textContent = STAGES[i][1]; break; }
       }
+    }
+
+    // A DONATION THAT LEFT THE WALLET IS SHOWN EVEN WHEN THE ROUND CANNOT BE
+    // REACHED (M3.2 6e). Measured before: a reload whose round link failed to
+    // fetch showed only this screen's refusal - no wallet panel, no line - while
+    // the tab's notes held "paid 1334, unpaid 666". The client reads the notes
+    // for the round this link names and this tab's own key; no node and no
+    // wallet is asked anything.
+    function showNotedDonation() {
+      const el = document.getElementById('blwp-donation-noted');
+      if (!el || typeof BLWPCLIENT === 'undefined' || !BLWPCLIENT.notedDonationForLink) return;
+      let noted = null;
+      try { noted = BLWPCLIENT.notedDonationForLink(location.search, { storage: window.sessionStorage, curve: window.BLWP_CURVE }); } catch { noted = null; }
+      if (!noted) return;
+      el.textContent = BLWPCLIENT.donationPaidLine(noted);
+      el.classList.add('show');
     }
 
     function fail(message) {
@@ -410,6 +448,13 @@
       const player = BLWPCLIENT.playerFor(
         Object.assign({}, named.round, { id: BLWPCLIENT.fromHex(named.roundIdHex) }),
         { seed, curve: window.BLWP_CURVE });
+      // WHAT THIS TAB ALREADY DONATED TO THIS ROUND, FROM ITS NOTES, before any
+      // seat (M3.2 6e): the panel shows it even if the seat is refused later;
+      // payDonation's own answer replaces it when it comes.
+      if (!window.BLWP_DONATION_PAID) {
+        window.BLWP_DONATION_PAID = BLWPCLIENT.donationNotedState(window.sessionStorage,
+          { roundId: player.roundId, playerPubkey: player.pubkey }) || undefined;
+      }
       const refundEl = document.getElementById('blwp-refund');
       if (refundEl) {
         refundEl.textContent = 'refund key fingerprint ' + player.fingerprint
@@ -666,8 +711,10 @@
     // no argument here that could carry an invoice and no second way to pay.
     const wallet = (typeof BLWPCLIENT !== 'undefined' && BLWPCLIENT.tabWallet)
       ? BLWPCLIENT.tabWallet({ storage: window.sessionStorage }) : null;
+    // KEPT IN THE TAB (M3.2 6e): measured before, a reload said "nothing paid
+    // this session" beside "1334 msat paid" - the log was page memory.
     const spent = (typeof BLWPCLIENT !== 'undefined' && BLWPCLIENT.spendLog)
-      ? BLWPCLIENT.spendLog() : null;
+      ? BLWPCLIENT.spendLog({ storage: window.sessionStorage }) : null;
     let owed = null;          // the last quote, as the client checked it
     let budget = null;        // what the WALLET said it will still let us spend
     let paying = false;
@@ -1119,7 +1166,7 @@
       .catch((e) => { console.error('[blwp] that lobby cannot be read: ' + e.message); return false; })
       .then((lobby) => (lobby ? null : joinTheRoundIfOneWasNamed()))
       .then(() => document.body.appendChild(script))
-      .catch((e) => fail('That round link cannot be used: ' + e.message));
+      .catch((e) => { fail('That round link cannot be used: ' + e.message); showNotedDonation(); });
   </script>
 </body>
 </html>

@@ -159,23 +159,54 @@ export function tabWallet({ storage, key = 'blwp.wallet' } = {}) {
  * be showing the player a figure nobody checked.
  *
  * ONE ENTRY PER PAYMENT, and the payment hash is in it: "what it was spent on"
- * means a round and a seat, not a running number. Kept in memory for the life
- * of the page, because a spend log is a display and the authority for what was
- * paid is the chain of hold invoices, not this.
+ * means a round and a seat, not a running number. A spend log is a display and
+ * the authority for what was paid is the chain of invoices, not this.
+ *
+ * KEPT IN THE TAB WHEN HANDED ITS STORAGE (M3.2 6e). Measured before, on the
+ * daily page: after a reload the panel said "nothing paid this session" beside
+ * "1334 msat paid" while 97334 msat had left the wallet - the log was page
+ * memory. Without `storage` it is page memory, as before. Each entry says what
+ * it paid for (`kind`: a stake, or a donation share), and a payment hash is
+ * counted once however often it is recorded.
  */
-export function spendLog() {
+export const SPEND_LOG_KEY = 'blwp.spend.log';
+
+export function spendLog({ storage = null, key = SPEND_LOG_KEY } = {}) {
   const paid = [];
+  const kindOf = (k) => (k === 'donation' ? 'donation' : 'stake');
+  if (storage) {
+    let kept = [];
+    try { kept = JSON.parse(storage.getItem(key) || '[]'); } catch { kept = []; }
+    for (const p of Array.isArray(kept) ? kept : []) {
+      try {
+        paid.push({ amountMsat: BigInt(p.amountMsat), paymentHash: p.paymentHash ? fromHex(p.paymentHash) : undefined,
+          roundId: p.roundId ? fromHex(p.roundId) : undefined, at: p.at, kind: kindOf(p.kind) });
+      } catch { /* an entry this page cannot read is not counted */ }
+    }
+  }
+  const save = () => {
+    if (!storage) return;
+    try {
+      storage.setItem(key, JSON.stringify(paid.map((p) => ({ amountMsat: String(p.amountMsat),
+        paymentHash: p.paymentHash instanceof Uint8Array ? toHex(p.paymentHash) : null,
+        roundId: p.roundId instanceof Uint8Array ? toHex(p.roundId) : null, at: p.at, kind: p.kind }))));
+    } catch { /* a tab that keeps nothing forgets on a reload, as before */ }
+  };
   return {
     /** Every payment this page has made, oldest first. */
     entries: () => paid.slice(),
     get count() { return paid.length; },
     /** Millisatoshi, summed. */
     get totalMsat() { return paid.reduce((t, p) => t + p.amountMsat, 0n); },
-    record({ amountMsat, paymentHash, roundId, at }) {
+    record({ amountMsat, paymentHash, roundId, at, kind = 'stake' }) {
+      if (paymentHash instanceof Uint8Array
+        && paid.some((p) => p.paymentHash instanceof Uint8Array && toHex(p.paymentHash) === toHex(paymentHash)))
+        return paid.length;
       paid.push({
         amountMsat: BigInt(amountMsat), paymentHash, roundId,
-        at: at === undefined ? Date.now() : at,
+        at: at === undefined ? Date.now() : at, kind: kindOf(kind),
       });
+      save();
       return paid.length;
     },
   };
@@ -192,10 +223,24 @@ export function spendLog() {
  */
 export function spentLine(log) {
   if (!log || !log.count) return 'nothing paid this session';
-  const sats = log.totalMsat / 1000n;
-  const rounds = new Set(log.entries().map((p) => toHex(p.roundId || new Uint8Array(0)))).size;
-  return `${sats} sat over ${log.count} stake${log.count === 1 ? '' : 's'}`
-    + ` in ${rounds} round${rounds === 1 ? '' : 's'}`;
+  const all = log.entries();
+  const rounds = new Set(all.map((p) => toHex(p.roundId || new Uint8Array(0)))).size;
+  const inRounds = ` in ${rounds} round${rounds === 1 ? '' : 's'}`;
+  const donations = all.filter((p) => p.kind === 'donation').length;
+  const stakes = all.length - donations;
+  if (!donations) {
+    const sats = log.totalMsat / 1000n;
+    return `${sats} sat over ${stakes} stake${stakes === 1 ? '' : 's'}${inRounds}`;
+  }
+  // A DONATION SHARE IS NOT A STAKE (M3.2 6e): measured before, a 96 sat stake
+  // and a 1334 msat share read "97 sat over 2 stakes". And the total is exact -
+  // a share is rarely whole sats, and 96000 + 1334 is 97334 msat, not 97 sat.
+  const t = log.totalMsat;
+  const amount = t % 1000n === 0n ? `${t / 1000n} sat` : `${t} msat`;
+  const parts = [];
+  if (stakes) parts.push(`${stakes} stake${stakes === 1 ? '' : 's'}`);
+  parts.push(`${donations} donation share${donations === 1 ? '' : 's'}`);
+  return `${amount} over ${parts.join(' and ')}${inRounds}`;
 }
 
 /**

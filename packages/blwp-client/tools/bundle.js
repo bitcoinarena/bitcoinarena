@@ -124,6 +124,9 @@ out += '         fetchDonationSet: fetchDonationSet, donationRecipientsLine: don
 // EACH DONATION SHARE, PAID / UNPAID / OUTCOME UNKNOWN - the state off
 // `payDonation`'s answer and the line the page paints from it.
 out += '         donationPaidState: donationPaidState, donationPaidLine: donationPaidLine,\n';
+// AND THE SAME LINE FROM THE TAB'S NOTES ALONE, for a round link that cannot be
+// reached - no seat, no set, nothing asked of a wallet.
+out += '         donationNotedState: donationNotedState, notedDonationForLink: notedDonationForLink,\n';
 // THE STAKE THE PAGE DEALS, and the seats it is dealt to. `stakeFor` was in
 // this bundle already and had ZERO CALLERS - the page took a seat with 32
 // random bytes where `sha256(P)` belongs and 32 zero bytes where the shares

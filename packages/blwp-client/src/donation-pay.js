@@ -33,6 +33,7 @@ import { donationKeysForNetworkId } from '../../protocol/src/donation-keys.js';
 import { urlOfLnurl } from '../../protocol/src/bech32.js';
 import { roundId } from '../../protocol/src/contracts.js';
 import { toHex, fromHex } from '../../protocol/src/hash.js';
+import { playerFor, TAB_SEED_KEY } from './join.js';
 
 /**
  * WHAT THIS TAB HAS ALREADY ASKED ITS WALLET TO DONATE, per round and player
@@ -118,6 +119,54 @@ export function donationPaidLine(p) {
     + (s.state === 'paid' ? '' : ` (${s.why})`));
   const kept = p.unpaidMsat > 0n ? ` · ${msatOrSat(p.unpaidMsat)} unpaid stays in your wallet, sent nowhere else` : '';
   return `Donation: ${each.join(' · ')}${kept}`;
+}
+
+const SHARE_OF_NOTE = { paid: 'paid', unpaid: 'unpaid', asked: 'unknown' };
+const UNKNOWN_WHY = 'this tab asked its wallet for it before a reload and never heard the answer, so it is not asked again';
+
+/**
+ * THE DONATION AS THE TAB'S NOTES HAVE IT - NO SEAT, NO SET (M3.2 6e). Measured
+ * before, on the daily page: a reload whose round link failed to fetch showed
+ * the loading screen's refusal and nothing else - no wallet panel, no line -
+ * while the notes held "paid 1334, unpaid 666". The line was painted only after
+ * `payDonation`, which needs a seat. The notes are what the wallet was asked and
+ * what it answered, so they are enough to say it. Null when the tab has none.
+ */
+export function donationNotedState(storage, whose) {
+  const noted = donationPaidRecord(storage, whose);
+  if (!noted) return null;
+  const said = { ok: true, paid: [], failed: [], unknown: [] };
+  const recipients = [];
+  for (const [lnurl, n] of Object.entries(noted.shares)) {
+    let amountMsat;
+    try { amountMsat = BigInt(n.amountMsat); } catch { continue; }
+    const as = SHARE_OF_NOTE[n.state];
+    if (!as) continue;
+    recipients.push({ lnurl });
+    if (as === 'paid') said.paid.push({ lnurl, amountMsat });
+    else if (as === 'unpaid') { said.failed.push({ lnurl, amountMsat, why: n.why || 'unpaid' }); said.ok = false; }
+    else { said.unknown.push({ lnurl, amountMsat, why: UNKNOWN_WHY }); said.ok = false; }
+  }
+  if (!recipients.length) return null;
+  return { ...donationPaidState({ recipients }, said), from: 'notes' };
+}
+
+/**
+ * AND FOR THE ROUND A LINK NAMES, when the round itself cannot be reached: the
+ * round id off the link, this tab's key for it from the tab's own seed (read,
+ * never minted - a tab with no seed has donated nothing), and that key's notes.
+ * Nothing is asked of a node or a wallet.
+ */
+export function notedDonationForLink(search, { storage, curve } = {}) {
+  let hex = null;
+  try { hex = new URLSearchParams(String(search || '')).get('round'); } catch { return null; }
+  if (!hex || !/^[0-9a-f]{64}$/i.test(hex) || !storage) return null;
+  let seedHex = null;
+  try { seedHex = storage.getItem(TAB_SEED_KEY); } catch { return null; }
+  if (!seedHex || !/^[0-9a-f]{64}$/i.test(seedHex)) return null;
+  let player;
+  try { player = playerFor({ id: fromHex(hex.toLowerCase()) }, { seed: fromHex(seedHex.toLowerCase()), curve }); } catch { return null; }
+  return donationNotedState(storage, { roundId: player.roundId, playerPubkey: player.pubkey });
 }
 
 /** Every recipient of a set, with its share and where it is paid - what the page shows before the wallet approves. */

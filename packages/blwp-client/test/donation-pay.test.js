@@ -20,7 +20,7 @@ import { createRequire } from 'node:module';
 import { Client } from '../src/client.js';
 import { chooseDonation } from '../src/donation-choice.js';
 import { entryFor } from '../src/join.js';
-import { spendLog, nip04Decrypt, nip04Encrypt, signEvent, NWC_REQUEST, NWC_RESPONSE } from '../src/nwc.js';
+import { spendLog, spentLine, nip04Decrypt, nip04Encrypt, signEvent, NWC_REQUEST, NWC_RESPONSE } from '../src/nwc.js';
 import { pageCurve } from '../src/page-curve.js';
 import { feldmanGroup } from '../../blwp-node/src/curve.js';
 import { openStore } from '../../blwp-node/src/store.js';
@@ -200,9 +200,8 @@ const tabStorage = () => ({ m: new Map(), getItem(k) { return this.m.has(k) ? th
  * NEW entry" (client.js, join). What it keeps is the tab's storage, and the
  * wallet and recipients, which live outside the page.
  */
-async function pageLoad({ storage, endpoints, wallet, donationMsat = 2000n }) {
+async function pageLoad({ storage, endpoints, wallet, donationMsat = 2000n, log = spendLog() }) {
   const entry = entryOf(donationMsat);
-  const log = spendLog();
   const client = new Client({ base: 'http://127.0.0.1:9', core: {}, sign: async () => new Uint8Array(64), verify: () => true });
   const askedBefore = wallet.asked.length;
   const issuedBefore = endpoints.issued.length;
@@ -382,6 +381,77 @@ test('the page shows each donation share as paid, unpaid or outcome unknown, mat
   assert.match(page, /window\.BLWP_DONATION_PAID = BLWPCLIENT\.donationPaidState\(window\.BLWP_DONATION_SET, said\);\s*paintWallet\(\);/,
     'the page does not store the client\'s donation state and repaint when payDonation answers');
   for (const line of report) console.log(`  ${line}`);
+});
+
+/** Runs the shipping page's own showNotedDonation - the failure path's - against a stubbed DOM. */
+function showNotedOnThePage({ search, storage }) {
+  const page = readFileSync(PAGE, 'utf8');
+  const body = page.slice(page.indexOf('function showNotedDonation()'));
+  const src = body.slice(0, body.indexOf('\n    }') + 6);
+  const made = {};
+  const el = (id) => (made[id] = made[id] || { textContent: '', classes: new Set(), classList: { add(c) { made[id].classes.add(c); } } });
+  new Function('document', 'window', 'BLWPCLIENT', 'location', `${src}\n return showNotedDonation();`)(
+    { getElementById: el }, { sessionStorage: storage, BLWP_CURVE: pageCurve }, SHIPPED, { search });
+  return made['blwp-donation-noted'];
+}
+
+test('a reload whose round link cannot be reached still shows the donation from the tab\'s notes, and asks the wallet nothing', async () => {
+  const storage = tabStorage();
+  storage.setItem('blwp.player.seed', toHex(seed));
+  const endpoints = await recipients();
+  const wallet = await walletOnARelay({ refuseMsat: 666n });
+  try {
+    const first = await pageLoad({ storage, endpoints, wallet });
+    assert.deepEqual([first.said.paidMsat, first.said.unpaidMsat], [1334n, 666n]);
+    const askedBefore = wallet.asked.length;
+    const issuedBefore = endpoints.issued.length;
+
+    // THE ROUND LINK OF THAT ROUND, ITS NODES GONE: no seat, no set, no payDonation.
+    const shown = showNotedOnThePage({ search: `?round=${toHex(b32(0x21))}&node=http://127.0.0.1:1,http://127.0.0.1:2`, storage });
+    assert.equal(shown.classes.has('show'), true, `the loading screen shows no donation: "${shown.textContent}"`);
+    assert.match(shown.textContent, /1334 msat paid to http:\/\/127\.0\.0\.1:18777\/lnurlp\/blwp-test-a/);
+    assert.match(shown.textContent, /666 msat UNPAID to \S+blwp-test-b \(.*NO_ROUTE\)/);
+    assert.match(shown.textContent, /666 msat unpaid stays in your wallet, sent nowhere else/);
+    assert.deepEqual([wallet.asked.length - askedBefore, endpoints.issued.length - issuedBefore], [0, 0], 'showing the notes asked the wallet or a recipient');
+
+    // AND ONLY THIS TAB'S OWN DONATION TO THIS ROUND: another round, or a tab with no seed, shows nothing.
+    const other = showNotedOnThePage({ search: `?round=${toHex(b32(0x22))}`, storage });
+    assert.deepEqual([other.textContent, other.classes.has('show')], ['', false]);
+    const bare = tabStorage();
+    for (const [k, v] of storage.m) if (k !== 'blwp.player.seed') bare.setItem(k, v);
+    const noSeed = showNotedOnThePage({ search: `?round=${toHex(b32(0x21))}`, storage: bare });
+    assert.deepEqual([noSeed.textContent, noSeed.classes.has('show'), bare.getItem('blwp.player.seed')], ['', false, null], 'a seed was minted to read the notes');
+    console.log(`  no seat, round unreachable: "${shown.textContent}"`);
+  } finally { await endpoints.close(); await wallet.close(); }
+});
+
+test('the running total survives a reload and counts a donation share as a donation, not a stake', async () => {
+  const storage = tabStorage();
+  const endpoints = await recipients();
+  const wallet = await walletOnARelay({ refuseMsat: 666n });
+  try {
+    // WHAT LEFT THE WALLET: the stake hold (recorded as payStake records it) and the settled share.
+    const load1 = spendLog({ storage });
+    load1.record({ amountMsat: 96000n, paymentHash: b32(0x51), roundId: b32(0x21), kind: 'stake' });
+    const first = await pageLoad({ storage, endpoints, wallet, log: load1 });
+    assert.deepEqual([first.said.paidMsat, first.said.unpaidMsat], [1334n, 666n]);
+    assert.equal(load1.totalMsat, 97334n);
+    assert.equal(spentLine(load1), '97334 msat over 1 stake and 1 donation share in 1 round');
+
+    // THE RELOAD: a new page, the same tab.
+    const load2 = spendLog({ storage });
+    assert.equal(load2.totalMsat, 97334n, 'the reload forgot what left the wallet');
+    assert.equal(spentLine(load2), '97334 msat over 1 stake and 1 donation share in 1 round');
+    const second = await pageLoad({ storage, endpoints, wallet, log: load2 });
+    assert.deepEqual([second.asked.length, second.issued.length], [0, 0], 'the reload asked the wallet or a recipient again');
+    assert.deepEqual([load2.totalMsat, load2.count], [97334n, 2], 'the reload counted a payment twice');
+    assert.deepEqual(load2.entries().map((p) => [p.kind, p.amountMsat]), [['stake', 96000n], ['donation', 1334n]]);
+    // A donation share alone is a donation, never "1 stake".
+    const only = spendLog();
+    only.record({ amountMsat: 1334n, paymentHash: b32(0x52), roundId: b32(0x21), kind: 'donation' });
+    assert.equal(spentLine(only), '1334 msat over 1 donation share in 1 round');
+    console.log(`  reload: "${spentLine(load2)}" (was "nothing paid this session"); wallet asked ${second.asked.length}`);
+  } finally { await endpoints.close(); await wallet.close(); }
 });
 
 test('a tab that cannot keep the record does not ask the wallet at all', async () => {
