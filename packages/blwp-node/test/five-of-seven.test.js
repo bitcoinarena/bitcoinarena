@@ -832,3 +832,63 @@ test('5 of 7, a stake lock, receipts lost between seats that are up, and no seco
     assert.ok(now.kept > 0, 'no seat keeps the refund of a genuine outage-VOID');
   } finally { await w.close(); }
 });
+
+// ---- ENTRY_VOID ON 5 OF 7 (§16; M3.3-34, the slice after the lobby) ----
+// A GENUINE OUTAGE, SEATS DOWN: seats 4-6 down while the player's first mark
+// (60) and a mark past the line (1500) reach seats 0-3 - fewer than five seats
+// available, so the entry must be ENTRY_VOID (§16). Then seats 4-6 come back and
+// the player's client catches them up (the first mark and the mark past the
+// line), as 2 of 2's "caught up late" case does. The player signed NO second
+// first mark: nothing here is the player's doing. Measured: what each seat
+// records, and where the stake goes. Asserted: only the money the rule leaves no
+// choice on - no seat signs FAILED or DELIVERED for this entry, the hold never
+// settles into the pool, the committee never claims the lock. Which VOID each
+// seat records is printed, not asserted.
+async function outageCaughtUp(w, run) {
+  const voidedFirst = await voidAtZeroToThree(w, run);
+  await w.back(4, 5, 6);
+  const caughtUp = {};
+  for (const i of [4, 5, 6]) {
+    caughtUp[i] = [];
+    for (const m of [...run.first, ...run.past]) caughtUp[i].push(answer(await say(w.seats[i].port, m)));
+  }
+  await wait(2000);
+  return { voidedFirst, caughtUp, voids: w.seats.map((d) => (d.round.entryVoid(run.eid) ? 1 : 0)),
+    receipts: receiptsAt(w, run), proof: w.seats.map((d) => (d.round.provenTwoFirstMarks(w.rid, run.eid) ? 1 : 0)) };
+}
+const signedOutcomes = (w, run) => w.seats.map((d, i) => {
+  if (!w.up.has(i)) return 'down';
+  return d.round.results(w.rid, run.eid).map((r) => decodePlayerResult(splitSignedResult(r.bytes).body).outcome)
+    .filter((o, k, a) => a.indexOf(o) === k).join('+') || null;
+});
+
+test('5 of 7, a hold, genuine outage-VOID: seats 4-6 down, then caught up late - measured: what each seat records, where the stake goes', async () => {
+  const w = await sevenSeats('hold');
+  try {
+    const run = await seatWithTwoFirstMarks(w, 'hold');
+    const setup = await outageCaughtUp(w, run);
+    const winner = await playWinner(w);
+    const after = await holdAfterClose(w, run, winner);
+    const facts = { ...setup, after, signedOutcomes: signedOutcomes(w, run), seats: [0, 1, 2, 3, 4, 5, 6].map((i) => seatHolds(w, run, i)) };
+    console.log('  FACTS (5 of 7, hold, genuine outage-VOID, caught up late):', JSON.stringify(facts));
+    assert.equal(setup.voidedFirst, 4, 'seats 0-3 did not all record ENTRY_VOID: not the case the test names');
+    assert.deepEqual(setup.proof, Array(7).fill(0), 'a seat holds a proof of two first marks: not the case the test names');
+    assert.ok(!facts.signedOutcomes.some((o) => o && /FAILED|DELIVERED/.test(o)), `a seat signed a run for an entry that must VOID: ${JSON.stringify(facts.signedOutcomes)}`);
+    assert.deepEqual(after.hold.settled, Array(7).fill(0), 'the stake of an entry that must VOID was settled into the pool');
+  } finally { await w.close(); }
+});
+
+test('5 of 7, a stake lock, genuine outage-VOID: seats 4-6 down, then caught up late - measured: what each seat records, the refund doors', async () => {
+  const w = await sevenSeats('lock');
+  try {
+    const run = await seatWithTwoFirstMarks(w, 'lock');
+    const setup = await outageCaughtUp(w, run);
+    const now = await refundNow(w, run);
+    const closed = await lockAfterClose(w, run);
+    const facts = { ...setup, now, closed, signedOutcomes: signedOutcomes(w, run), seats: [0, 1, 2, 3, 4, 5, 6].map((i) => seatHolds(w, run, i)),
+      msatBackByCommittee: now.kept || closed.kept ? String(NET) : '0', lockMsat: closed.lockHeld ? String(NET) : '0' };
+    console.log('  FACTS (5 of 7, lock, genuine outage-VOID, caught up late):', JSON.stringify(facts));
+    assert.equal(setup.voidedFirst, 4, 'seats 0-3 did not all record ENTRY_VOID: not the case the test names');
+    assert.ok(!facts.signedOutcomes.some((o) => o && /FAILED|DELIVERED/.test(o)), `a seat signed a run for an entry that must VOID: ${JSON.stringify(facts.signedOutcomes)}`);
+  } finally { await w.close(); }
+});
