@@ -77,6 +77,13 @@ async function sevenSeats(custody) {
     seats, holdPorts, locks, c, rid, up,
     async down(...is) { for (const i of is) { await seats[i].close(); up.delete(i); } },
     async back(...is) { for (const i of is) { seats[i] = await mk(i, ports[i]); up.add(i); } wire(); },
+    // A PARTITION BETWEEN SEATS THAT ARE UP: each named seat's peers point where
+    // nothing listens - its forwards and receipts are lost - until heal().
+    cut(...is) {
+      const dead = [1, 2, 3, 4, 5, 6].map((p) => `http://127.0.0.1:${p}`);
+      for (const i of is) { const d = seats[i]; d.verifier.peers = dead; d.payouts.peers = dead; d.preimages.peers = dead; d.dkg.peers = dead; }
+    },
+    heal() { wire(); },
     async close() { for (const i of [...up]) { try { await seats[i].close(); } catch { /* down */ } } },
   };
 }
@@ -694,5 +701,62 @@ test('5 of 7, a stake lock, path 2, seat 4 down from its refusal through the loc
     assert.ok(!now.doors.some((s) => s >= 200 && s < 300) && !closed.doors.some((s) => s >= 200 && s < 300), 'a refund door answered 2xx');
     assert.equal(now.kept + closed.kept, 0, 'a seat keeps a refund of the lock');
     assert.equal(closed.lockHeld, true);
+  } finally { await w.close(); }
+});
+
+// A LOCK WITH RECEIPTS LOST BETWEEN SEATS THAT ARE UP (M3.3-34, the order TASKBOOK
+// lists): five seats each holding the on-time first mark and each short of five
+// receipts would all record the Void and could sign a refund at once, before
+// their close pulls the proof. Every seat is up; their links to each other are
+// cut while the player's first mark (60) and a mark past the line (1500) reach
+// seats 0-4 - each keeps its own receipt only, its six offers unanswered. Then the
+// links heal and a DIFFERENT on-time first mark (30) reaches seat 5.
+
+/** Receipts each seat holds for each of the entry's marks, in chain order. */
+const receiptsAt = (w, run) => w.seats.map((d, i) => (w.up.has(i) ? d.round.markIds(w.rid, run.eid).map((id) => d.round.receiptCount(id)) : 'down'));
+
+async function voidAtZeroToFourCut(w, run) {
+  w.cut(0, 1, 2, 3, 4, 5, 6);
+  for (const i of [0, 1, 2, 3, 4]) for (const m of [...run.first, ...run.past]) await say(w.seats[i].port, m);
+  for (let t = Date.now(); Date.now() - t < 10000 && [0, 1, 2, 3, 4].some((i) => !w.seats[i].round.entryVoid(run.eid)); await wait(200));
+  const receiptsCut = receiptsAt(w, run);
+  const voided = [0, 1, 2, 3, 4].filter((i) => w.seats[i].round.entryVoid(run.eid)).length;
+  w.heal();
+  const said5 = [];
+  for (const m of run.other) said5.push(answer(await say(w.seats[5].port, m)));
+  await wait(2000);
+  return { voided, receiptsCut, said5, receiptsHealed: receiptsAt(w, run),
+    proof: w.seats.map((d) => (d.round.provenTwoFirstMarks(w.rid, run.eid) ? 1 : 0)) };
+}
+
+test('5 of 7, a stake lock, receipts lost between seats that are up: seats 0-4 each record ENTRY_VOID, then a different on-time first mark reaches seat 5 - measured: refund signatures, whether a committee refund forms, the lock', async () => {
+  const w = await sevenSeats('lock');
+  try {
+    const run = await seatWithTwoFirstMarks(w, 'lock');
+    const setup = await voidAtZeroToFourCut(w, run);
+    const now = await refundNow(w, run);
+    const closed = await lockAfterClose(w, run);
+    const facts = { ...setup, now, closed, seats: [0, 1, 2, 3, 4, 5, 6].map((i) => seatHolds(w, run, i)),
+      msatBackByCommittee: now.kept || closed.kept ? String(NET) : '0', lockMsat: closed.lockHeld ? String(NET) : '0' };
+    console.log('  FACTS (5 of 7, lock, receipts lost between up seats):', JSON.stringify(facts));
+    assert.equal(setup.voided, 5, 'seats 0-4 did not all record ENTRY_VOID: not the case the test names');
+    assert.ok(!now.doors.some((s) => s >= 200 && s < 300) && !closed.doors.some((s) => s >= 200 && s < 300), 'a refund door answered 2xx - five signatures formed');
+    assert.equal(now.kept + closed.kept, 0, 'a seat keeps a refund of the lock');
+    assert.equal(closed.lockHeld, true);
+  } finally { await w.close(); }
+});
+
+test('5 of 7, a hold, receipts lost between seats that are up: seats 0-4 each record ENTRY_VOID, then a different on-time first mark reaches seat 5 - measured: where the stake goes', async () => {
+  const w = await sevenSeats('hold');
+  try {
+    const run = await seatWithTwoFirstMarks(w, 'hold');
+    const setup = await voidAtZeroToFourCut(w, run);
+    const winner = await playWinner(w);
+    const after = await holdAfterClose(w, run, winner);
+    const facts = { ...setup, after, seats: [0, 1, 2, 3, 4, 5, 6].map((i) => seatHolds(w, run, i)) };
+    console.log('  FACTS (5 of 7, hold, receipts lost between up seats):', JSON.stringify(facts));
+    assert.equal(setup.voided, 5, 'seats 0-4 did not all record ENTRY_VOID: not the case the test names');
+    assert.deepEqual(after.hold.cancelled, Array(7).fill(0), 'the two-first-marks hold was cancelled back to the player');
+    assert.ok(after.hold.settled.some((n) => n > 0), `no seat settled the hold: ${after.msatBack} back to the player`);
   } finally { await w.close(); }
 });
