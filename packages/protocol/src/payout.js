@@ -182,40 +182,26 @@ export function computePayoutTable({ roundId, entries, minScore = 0 }) {
 
   const k = Math.min(payingRanks(qualifiers.length), qualifiers.length);
 
-  // QUALIFIERS WHO STAKED DIFFERENT NETS ARE NOT GUESSED AT.
+  // 22A'S NET-STAKE WEIGHTING (M3.2-6e, ruled 2026-09-13, pick A). With an
+  // inclusive donation "players no longer contribute equally", and left there
+  // "donating would be rewarded twice". So within the paying ranks a player's
+  // weight is its §18A rank weight TIMES its own net stake, the pool is split
+  // in proportion to those weights - each share floored - and the leftover goes
+  // out by §18A.6's rule, ascending H(round_id || pubkey), unchanged. The pool
+  // is spent exactly.
   //
-  // 22A: with an inclusive donation "players no longer contribute equally",
-  // and left there "donating would be rewarded twice", so "each rank's share
-  // is then scaled by that player's net stake against the mean net stake of
-  // the qualifiers." AS WRITTEN THAT DOES NOT SPEND THE POOL, and both ways of
-  // making it do so were measured:
+  // WITH EVERY NET EQUAL THE NET CANCELS EXACTLY: floor(pool*w*n / (W*n)) is
+  // floor(pool*w / W), so such a table is byte-identical to the unweighted one
+  // and no round played with no donation moves.
   //
-  //   literal, against the     one winner at 98 above three qualifiers at 93,
-  //   qualifiers' mean         K = 1: 98/94.25 of the pool - 104% of money
-  //                            that is not there, and 19 forbids it; the other
-  //                            way round it leaves part of the pool with
-  //                            nobody named to receive it
-  //   normalised over the      conserves exactly - and at K = 1, every round
-  //   paying ranks             of four qualifiers or fewer, the one paying
-  //                            rank takes the whole pool whatever it donated:
-  //                            the double reward 22A exists to remove
+  // THE LIMIT, ACCEPTED: with one paying rank - every round of four qualifiers
+  // or fewer - the winner takes the whole pool whatever it donated; "no double
+  // reward for donating" bites only when two or more ranks pay.
   //
-  // Where the difference goes is a money rule the spec does not make, so this
-  // does not make one. Such a table is REFUSED, which is the inaction every
-  // refusal here means: no stake moves and every hold expires to its player.
-  // Nothing live reaches it - the door fixes the stake and the fee and the
-  // client writes no donation - and a player choosing one is 6b's, behind the
-  // ruling this names. With every net equal the curve is unscaled, which is
-  // what the weighting reduces to, so nothing is lost by waiting.
-  if (pool > 0n) {
-    const nets = new Set(qualifiers.map((e) => net.get(e)));
-    if (nets.size > 1)
-      throw new Error(`the qualifiers staked different nets (${[...nets].join(', ')} msat): 22A `
-        + 'weights a share by net stake and, as written, that does not spend the pool - no '
-        + 'table until it is ruled, so every hold expires to its player');
-  }
-
-  const weights = rankWeights(k);
+  // Measured before (TASKBOOK, 6e): qualifiers with different nets were refused
+  // and every hold expired - one 2% donor, and the pool got 0 of the loser's
+  // 98000 msat.
+  const weights = rankWeights(k).map((w, i) => w * net.get(qualifiers[i]));
   const total = weights.reduce((s, w) => s + w, 0n);
 
   let handed = 0n;

@@ -129,25 +129,49 @@ test('a loser settles 96 into the pool, and the winner is paid exactly that', ()
 });
 
 /**
- * WHERE 22A LEAVES A HOLE, NOTHING IS INVENTED.
- *
- * "each rank's share is then scaled by that player's net stake against the
- * mean net stake of the qualifiers" does not spend the pool as written, and
- * the normalised form lets a sole paying rank take the whole pool whatever it
- * donated. A table whose qualifiers staked different nets while there is a
- * pool is refused - no stake moves and every hold expires to its player.
+ * 22A'S NET-STAKE WEIGHTING, AS RULED (M3.2-6e, 2026-09-13, pick A): within the
+ * paying ranks a player's weight is its §18A rank weight times its own net
+ * stake; the pool is split in proportion, floored, and the leftover goes out
+ * by §18A.6 (ascending H(round_id || pubkey)). Before: such a table was
+ * refused and every hold expired - one donor, and the pool got nothing.
  */
-test('qualifiers who staked different nets are refused, not guessed at', () => {
-  const donor = seat(1, DELIVERED, { score: 900, donationMsat: 5000n });
+test('qualifiers who staked different nets are paid by rank weight times net stake, the pool spent exactly', () => {
+  const donor = seat(1, DELIVERED, { score: 900, donationMsat: 5000n });   // net 93000
   const others = [2, 3, 4].map((n) => seat(n, DELIVERED, { score: 500 + n }));
   const loser = seat(50, FAILED);
 
-  assert.throws(
-    () => computePayoutTable({ roundId: b32(9), minScore: 1, entries: [donor, ...others, loser] }),
-    /the qualifiers staked different nets \(93000, 98000 msat\)/);
-  assert.throws(
-    () => holdSettlement({ roundId: b32(9), minScore: 1, entries: [donor, ...others, loser] }),
-    /no table until it is ruled/);
+  // ONE PAYING RANK (four qualifiers), THE ACCEPTED LIMIT: the winner takes the
+  // whole pool whatever it donated - the donation weighs nothing against itself.
+  const one = computePayoutTable({ roundId: b32(9), minScore: 1, entries: [donor, ...others, loser] });
+  assert.equal(one.payingRanks, 1);
+  assert.equal(one.pool, 98000n);
+  assert.equal(one.table[0].amountMsat, 93000n + 98000n, 'the sole paying rank: own net back plus the whole pool');
+  assert.deepEqual(one.table.slice(1, 4).map((r) => r.amountMsat), [98000n, 98000n, 98000n]);
+  assert.equal(one.table[4].amountMsat, 0n);
+
+  // AND THE HOLDS FOLLOW IT: the loser's net is settled into the pool, the
+  // qualifiers' holds come back - no longer a refund of everybody.
+  const held = holdSettlement({ roundId: b32(9), minScore: 1, entries: [donor, ...others, loser] });
+  assert.equal(held.poolMsat, 98000n, 'the loser s net enters the pool');
+  assert.equal(held.sharesMsat, 98000n);
+  assert.deepEqual(held.actions.map((a) => a.action), ['CANCEL', 'CANCEL', 'CANCEL', 'CANCEL', 'SETTLE']);
+
+  // TWO PAYING RANKS (five qualifiers): rank weights 4 and 3, times the nets
+  // 93000 (the donor, first) and 98000 (second) - 372000 and 294000 of 666000.
+  const fifth = seat(5, DELIVERED, { score: 505 });
+  const two = computePayoutTable({ roundId: b32(9), minScore: 1, entries: [donor, ...others, fifth, loser] });
+  assert.equal(two.payingRanks, 2);
+  const first = (98000n * 372000n) / 666000n;                    // 54738, floored
+  const second = (98000n * 294000n) / 666000n;                   // 43261, floored
+  assert.equal(first, 54738n);
+  assert.equal(second, 43261n);
+  const shareOf = (row, own) => row.amountMsat - own;
+  const donorShare = shareOf(two.table[0], 93000n);
+  const secondShare = shareOf(two.table.find((r, i) => i > 0 && r.amountMsat > 98000n), 98000n);
+  assert.equal(donorShare + secondShare, 98000n, 'the pool is spent exactly');
+  assert.ok(donorShare - first <= 1n && secondShare - second <= 1n && donorShare >= first && secondShare >= second,
+    `each share is its floor or one leftover msat above it: ${donorShare}, ${secondShare}`);
+  assert.ok(donorShare < 56000n, `the donor's share is scaled down from the unweighted 4/7 of the pool (56000): ${donorShare}`);
 
   // LOSERS MAY DIFFER: they only feed the pool, and each puts in its own net
   const giving = seat(51, FAILED, { donationMsat: 5000n });
