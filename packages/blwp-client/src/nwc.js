@@ -298,16 +298,22 @@ export function spentLine(log) {
  * would be a second arithmetic for the one number a player parts with money
  * over.
  */
-export function owedLine(entry, quote) {
+export function owedLine(entry, quote, settlement = null) {
   if (!entry) return 'this seat owes —';
   let net;
   try { net = netStakeMsat(entry); } catch (e) { return `this seat cannot be paid: ${e.message}`; }
   const split = `${sats(entry.stakeMsat)} round: ${sats(entry.feeMsat)} fee and `
     + `${sats(entry.donationMsat)} donation out of it, ${sats(net)} staked`;
+  // A HOLD THAT HAS ENDED IS NOT HELD (M3.2 6e). The quote is asked once, at
+  // payment, so its state stays HELD; measured on the daily page after settlement:
+  // "... · HELD" beside "Settled: ...". When the seats say the hold ended (settled,
+  // cancelled, expired), that is the state this line reads.
+  const ended = settlement && ENDED_HOLDS.includes(settlement.hold) ? settlement.hold : null;
   return quote
-    ? `${split} · the wallet is asked ${sats(quote.amountMsat)} · ${quote.state}`
+    ? `${split} · the wallet is asked ${sats(quote.amountMsat)} · ${ended || quote.state}`
     : `${split} · no quote yet`;
 }
+const ENDED_HOLDS = ['SETTLED', 'CANCELLED', 'EXPIRED'];
 
 /** Whole sats where they are whole, and the millisatoshi where they are not. */
 const sats = (msat) => (msat % 1000n === 0n ? `${msat / 1000n} sat` : `${msat} msat`);

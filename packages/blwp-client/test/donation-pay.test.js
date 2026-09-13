@@ -278,7 +278,7 @@ const A = TEST_DONATION_ENDPOINTS[0];
 const B = TEST_DONATION_ENDPOINTS[1];
 
 /** Runs the page's own paintWallet for this seat and answers every element it painted. */
-function paintThePage({ round, entry, donationPaid, settlement, spent = SHIPPED.spendLog() }) {
+function paintThePage({ round, entry, donationPaid, settlement, spent = SHIPPED.spendLog(), owed = null }) {
   const page = readFileSync(PAGE, 'utf8');
   const body = page.slice(page.indexOf('function paintWallet()'));
   const src = body.slice(0, body.indexOf('\n    }') + 6);
@@ -287,9 +287,27 @@ function paintThePage({ round, entry, donationPaid, settlement, spent = SHIPPED.
   new Function('document', 'window', 'BLWPCLIENT', 'wallet', 'spent', 'owed', 'paying', 'walletWhy', 'budget',
     `${src}\n return paintWallet();`)(
     { getElementById: el }, { BLWP_ROUND: round, BLWP_ENTRY: entry, BLWP_DONATION_PAID: donationPaid, BLWP_SETTLEMENT: settlement },
-    SHIPPED, { connected: false }, spent, null, false, '', null);
+    SHIPPED, { connected: false }, spent, owed, false, '', null);
   return made;
 }
+
+test('a hold that has ended does not read HELD: the stake line takes the seats\' end state - SETTLED, CANCELLED, EXPIRED - and stays HELD only while it is', () => {
+  // BEFORE (bundle e9f22a89, live on the daily page): every one read "... · the wallet is
+  // asked 98 sat · HELD" - the quote is asked once, at payment - beside "Settled: ...".
+  const round = contractFor([b32(1), b32(2)]);
+  const entry = { stakeMsat: 100000n, feeMsat: 2000n, donationMsat: 0n };
+  const owed = { amountMsat: 98000n, state: 'HELD' };
+  const base = '100 sat round: 2 sat fee and 0 sat donation out of it, 98 sat staked · the wallet is asked 98 sat · ';
+  for (const [hold, finality, want] of [['SETTLED', 'FINAL', 'SETTLED'], ['CANCELLED', 'FINAL', 'CANCELLED'], ['EXPIRED', 'FINAL', 'EXPIRED'],
+    ['HELD', 'PROVISIONALLY_FINAL', 'HELD']]) {
+    const s = { answered: 2, of: 2, hold, holdMsat: 98000n, poolMsat: 98000n, finality };
+    const made = paintThePage({ round, entry, donationPaid: undefined, settlement: s, owed });
+    assert.equal(made['blwp-owed'].textContent, base + want, `seats say ${hold}`);
+    console.log(`  seats say ${hold.padEnd(9)} -> "${made['blwp-owed'].textContent.slice(-40)}" beside "${made['blwp-settled'].textContent.slice(0, 40)}…"`);
+  }
+  // NO ANSWER FROM THE SEATS YET: the quote's own state, as before.
+  assert.equal(paintThePage({ round, entry, donationPaid: undefined, settlement: undefined, owed })['blwp-owed'].textContent, base + 'HELD');
+});
 
 /**
  * Runs the shipping page's own settlement poll (askTheSettlement, with its flag) against

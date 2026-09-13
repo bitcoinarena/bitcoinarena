@@ -880,7 +880,7 @@
       // donation coming OUT of it, the net stake, and what the wallet is asked
       // - all off the entry this player signed, none of it subtracted here.
       document.getElementById('blwp-owed').textContent =
-        BLWPCLIENT.owedLine(window.BLWP_ENTRY, owed);
+        BLWPCLIENT.owedLine(window.BLWP_ENTRY, owed, window.BLWP_SETTLEMENT);
       // THE TOTAL IS THE CLIENT'S. A page that added up its own payments would
       // be showing a figure nobody checked.
       document.getElementById('blwp-spent').textContent = BLWPCLIENT.spentLine(spent);
