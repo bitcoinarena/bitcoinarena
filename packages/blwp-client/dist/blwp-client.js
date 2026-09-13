@@ -7159,6 +7159,7 @@ async function settlementBy({ entryId, seats, nodes, fetcher = fetch } = {}) {
     answered: answered.size,
     holdMsat: agreed('holdMsat'),
     poolMsat: agreed('poolMsat'),
+    owedMsat: agreed('owedMsat'),
     hold: !all.length ? null : (holds.size === 1 ? all[0].hold : 'HELD'),
     finality: states.includes('SUSPENDED') ? 'SUSPENDED'
       : (all.length && states.every((f) => f === 'FINAL')) ? 'FINAL'
@@ -7179,8 +7180,12 @@ function settledLine(s) {
   if (!s || !s.answered) return '';
   const held = s.holdMsat !== null && s.holdMsat !== undefined ? `${s.holdMsat} msat ` : '';
   const pool = s.poolMsat !== null && s.poolMsat !== undefined ? ` · the round's pool ${s.poolMsat} msat` : '';
-  if (s.hold === 'SETTLED') return `Settled: this seat's ${held}stake went into the pool${pool}`;
-  if (s.hold === 'CANCELLED') return `Returned: this seat's ${held}stake was cancelled back to the wallet${pool}`;
+  // WHAT THE ROUND OWES THIS SEAT (M3.2 6e): its row of the payout table as the
+  // seats serve it - shown when there is something owed; a loser's row is 0.
+  const owed = s.owedMsat !== null && s.owedMsat !== undefined && BigInt(s.owedMsat) > 0n
+    ? ` · the round's payout table: ${s.owedMsat} msat for this seat` : '';
+  if (s.hold === 'SETTLED') return `Settled: this seat's ${held}stake went into the pool${owed}${pool}`;
+  if (s.hold === 'CANCELLED') return `Returned: this seat's ${held}stake was cancelled back to the wallet${owed}${pool}`;
   if (s.hold === 'EXPIRED') return `Expired: this seat's ${held}stake came back to the wallet when its hold ran out`;
   if (s.hold === 'HELD') return `Settlement: this seat's ${held}stake is held${s.finality ? `, the result ${s.finality}` : ', no result yet'}`;
   return '';

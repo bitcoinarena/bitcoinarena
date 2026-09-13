@@ -254,6 +254,10 @@ test('a 2% donor who loses: the pool takes the loser\'s net stake, 96000 msat, a
       console.log(`[pool] ${name}: loser ${lost.hold} hold ${lost.holdMsat} pool ${lost.poolMsat}; winner ${won.hold} hold ${won.holdMsat} pool ${won.poolMsat}`);
       assert.deepEqual([lost.hold, lost.holdMsat, lost.poolMsat], [SETTLED, '96000', '96000'], `${name}: the loser's net stake is not what the pool took`);
       assert.deepEqual([won.hold, won.holdMsat, won.poolMsat], [CANCELLED, '98000', '96000'], `${name}: the winner's hold or the pool is off`);
+      // AND EACH SEAT'S ROW OF THE TABLE: the winner is owed its own 98000 and the pool's
+      // 96000, 194000 msat; the loser 0. Measured before: /settlement served no row at all.
+      console.log(`[owed] ${name}: winner owed ${won.owedMsat}, loser owed ${lost.owedMsat}`);
+      assert.deepEqual([won.owedMsat, lost.owedMsat], ['194000', '0'], `${name}: the seat does not serve what the round owes`);
     }
   } finally { await a.close(); await b.close(); }
 });

@@ -314,6 +314,33 @@ async function settleOnThePage({ hold, spent, stakeCommitment, round }) {
   return win.BLWP_SETTLEMENT;
 }
 
+test('a winner is shown what the round owes it: the seats\' own payout-table row, 194000 msat beside its returned 96000 msat stake and the 98000 msat pool', async () => {
+  // BEFORE (bundle 675d62d1): the seats served hold and pool only, and a winner's line
+  // read "Returned: this seat's 96000 msat stake was cancelled back to the wallet · the
+  // round's pool 98000 msat" - no winnings figure. Round 1's D2: hold 96000, row 194000.
+  const seatKeys = [b32(0x71), b32(0x72)];
+  const nodes = ['http://127.0.0.1:1', 'http://127.0.0.1:2'];
+  const answers = (owed) => async (url) => {
+    const u = new URL(url);
+    const i = u.port === '1' ? 0 : 1;
+    if (u.pathname === '/identity') return new Response(seatKeys[i], { status: 200 });
+    return new Response(JSON.stringify({ entry: 'ee'.repeat(32), hold: 'CANCELLED', holdMsat: '96000', poolMsat: '98000', owedMsat: owed[i], finality: 'FINAL' }), { status: 200 });
+  };
+  const won = await SHIPPED.settlementBy({ entryId: 'ee'.repeat(32), seats: seatKeys, nodes, fetcher: answers(['194000', '194000']) });
+  assert.deepEqual([won.hold, won.holdMsat, won.owedMsat, won.poolMsat], ['CANCELLED', 96000n, 194000n, 98000n]);
+  const made = paintThePage({ round: contractFor([b32(1), b32(2)]), entry: entryOf(2000n), donationPaid: undefined, settlement: won });
+  assert.equal(made['blwp-settled'].textContent,
+    'Returned: this seat\'s 96000 msat stake was cancelled back to the wallet · the round\'s payout table: 194000 msat for this seat · the round\'s pool 98000 msat');
+  // SEATS THAT DISAGREE ON THE ROW SHOW NO ROW - the page never picks one.
+  const split = await SHIPPED.settlementBy({ entryId: 'ee'.repeat(32), seats: seatKeys, nodes, fetcher: answers(['194000', '193999']) });
+  assert.equal(split.owedMsat, null);
+  assert.doesNotMatch(SHIPPED.settledLine(split), /payout table/);
+  // A LOSER'S ROW IS 0 AND ADDS NOTHING: its line reads as before.
+  assert.equal(SHIPPED.settledLine({ answered: 2, hold: 'SETTLED', holdMsat: 98000n, poolMsat: 98000n, owedMsat: 0n }),
+    'Settled: this seat\'s 98000 msat stake went into the pool · the round\'s pool 98000 msat');
+  console.log(`  winner: "${made['blwp-settled'].textContent}"`);
+});
+
 test('a stake that came back is not counted as spent: a cancelled winner and an expired refund read nothing spent, a settled loser still reads its stake', async () => {
   // BEFORE (measured on the bundle the daily page ran, 915f64c9): all three read
   // "98 sat over 1 stake in 1 round", beside "Returned: ..." / "Expired: ..." / "Settled: ...".

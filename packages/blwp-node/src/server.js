@@ -850,6 +850,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // it (M3.2 6e): `holdSettlement`'s own figure, served on /settlement so a
   // page can show it - nobody outside the committee works it out again.
   const settledPools = new Map();     // round hex -> poolMsat
+  // AND EACH SEAT'S ROW OF THAT TABLE (M3.2 6e): computePayoutTable's own rows,
+  // by player key, so a winner's page can show what the round owes it.
+  const settledRows = new Map();      // round hex -> Map(player key hex -> amountMsat)
   for (const h of round.closeHolds())
     closing.set(`${toHex(h.roundId)}:${toHex(h.entryId)}`, { round: toHex(h.roundId), entry: toHex(h.entryId),
       // a run this seat has signed is SIGNED, whatever an older build kept
@@ -1261,6 +1264,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       roundId: roundIdBytes, entries, minScore: contract.minScore, finalFor: isFinal,
     });
     if (done && done.ok && typeof done.poolMsat === 'bigint') settledPools.set(toHex(roundIdBytes), done.poolMsat);
+    if (done && done.ok && done.table && Array.isArray(done.table.table))
+      settledRows.set(toHex(roundIdBytes), new Map(done.table.table.map((r) => [toHex(r.pubkey), r.amountMsat])));
     for (const a of done.actions || [])
       console.log(`[custody] ${toHex(a.entryId).slice(0, 16)} ${a.action} -> ${a.state}: ${a.why}`);
     for (const w of waiting)
@@ -1941,6 +1946,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           // it, and custody's `holdSettlement` pool - null until it has run.
           holdMsat: row && row.amountMsat !== undefined && row.amountMsat !== null ? String(row.amountMsat) : null,
           poolMsat: pool === undefined ? null : String(pool),
+          // THIS SEAT'S ROW OF THE PAYOUT TABLE (M3.2 6e) - what the round owes it,
+          // its own stake included; null until custody has run, or with no row.
+          owedMsat: (() => { const rows = settledRows.get(toHex(entry.roundId)); const v = rows && rows.get(toHex(entry.playerPubkey)); return v === undefined ? null : String(v); })(),
           why: row ? row.why : null,
           finality: standing.state,
           finalityWhy: standing.why || null,
