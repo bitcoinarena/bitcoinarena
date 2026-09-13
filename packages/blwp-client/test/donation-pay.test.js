@@ -14,7 +14,7 @@ import { createServer } from 'node:http';
 import { createHash, randomBytes } from 'node:crypto';
 import { WebSocketServer } from 'ws';
 import { ed25519 } from '@noble/curves/ed25519.js';
-import { fetchDonationSet, donationRecipientsLine } from '../src/donation-pay.js';
+import { fetchDonationSet, donationRecipientsLine, noteDonationShare } from '../src/donation-pay.js';
 import { Client } from '../src/client.js';
 import { chooseDonation } from '../src/donation-choice.js';
 import { entryFor } from '../src/join.js';
@@ -86,8 +86,12 @@ async function recipients(behave = {}) {
     close: () => new Promise((r) => srv.close(r)) };
 }
 
-/** A NIP-47 wallet on a local relay that pays whatever reaches it and keeps every invoice it was asked. */
-async function walletOnARelay() {
+/**
+ * A NIP-47 wallet on a local relay that pays whatever reaches it and keeps every invoice it was asked.
+ * `refuseMsat`: an invoice of that amount fails as lnd's NO_ROUTE does (the 666 msat share under a
+ * 1000 msat min_htlc, measured live).
+ */
+async function walletOnARelay({ refuseMsat = null } = {}) {
   const walletSecret = rand(32);
   const walletPubkey = pageCurve.pointX(walletSecret);
   const asked = [];
@@ -106,7 +110,10 @@ async function walletOnARelay() {
       if (!opened.ok) return;
       const said = JSON.parse(opened.plaintext);
       if (said.method === 'pay_invoice') asked.push(said.params.invoice);
-      const content = await nip04Encrypt(JSON.stringify({ result_type: 'pay_invoice', result: { preimage: 'ab'.repeat(32), fees_paid: 0 } }),
+      const refused = refuseMsat !== null && said.method === 'pay_invoice' && decodeBolt11(said.params.invoice).amountMsat === refuseMsat;
+      const content = await nip04Encrypt(JSON.stringify(refused
+        ? { result_type: 'pay_invoice', error: { code: 'PAYMENT_FAILED', message: 'FAILURE_REASON_NO_ROUTE' } }
+        : { result_type: 'pay_invoice', result: { preimage: 'ab'.repeat(32), fees_paid: 0 } }),
         { secret: walletSecret, theirPubkey: fromHex(event.pubkey), curve: pageCurve, random: rand });
       const reply = await signEvent({ kind: NWC_RESPONSE, tags: [['p', event.pubkey], ['e', event.id]], content, secret: walletSecret, curve: pageCurve });
       for (const sub of subs) sock.send(JSON.stringify(['EVENT', sub, reply]));
@@ -174,6 +181,98 @@ test('an endpoint that takes fewer than 64 characters gets no comment', async ()
   const { said, issued } = await pay(entryOf(2000n), { 'blwp-test-a': 'short-comment', 'blwp-test-b': 'short-comment' });
   assert.equal(said.ok, true);
   assert.deepEqual(issued.map((i) => i.comment), [null, null]);
+});
+
+// ---- a reload (M3.2 6e): the page's memory goes, the tab's sessionStorage stays
+//
+// Measured before, from the code: the page's once-only flag (`donationPaying`,
+// index.html) and its spend log are page memory, while the lock, the chosen
+// donation and the wallet connection survive a reload in sessionStorage - so a
+// reload over a kept lock met the pay condition again and paid the shares again.
+
+const tabStorage = () => ({ m: new Map(), getItem(k) { return this.m.has(k) ? this.m.get(k) : null; }, setItem(k, v) { this.m.set(k, String(v)); } });
+
+/**
+ * ONE PAGE LOAD. Everything a reload loses is new - the Client, the spend log,
+ * and the entry: "a reload keeps the player's key (sessionStorage) and draws a
+ * NEW entry" (client.js, join). What it keeps is the tab's storage, and the
+ * wallet and recipients, which live outside the page.
+ */
+async function pageLoad({ storage, endpoints, wallet, donationMsat = 2000n }) {
+  const entry = entryOf(donationMsat);
+  const log = spendLog();
+  const client = new Client({ base: 'http://127.0.0.1:9', core: {}, sign: async () => new Uint8Array(64), verify: () => true });
+  const askedBefore = wallet.asked.length;
+  const issuedBefore = endpoints.issued.length;
+  const said = await client.payDonation(entry, SET, { storage, connection: wallet.uri, curve: pageCurve, fetcher: endpoints.fetcher, log, random: rand, timeoutMs: 5000 });
+  const asked = wallet.asked.slice(askedBefore);
+  return { entry, said, log, asked, askedMsat: asked.reduce((t, pr) => t + decodeBolt11(pr).amountMsat, 0n), issued: endpoints.issued.slice(issuedBefore) };
+}
+
+test('a reload over a kept lock does not pay the donation twice: the second load sends 0 msat and asks the wallet nothing', async () => {
+  const storage = tabStorage();
+  const endpoints = await recipients();
+  const wallet = await walletOnARelay();
+  try {
+    const first = await pageLoad({ storage, endpoints, wallet });
+    assert.equal(first.said.ok, true, first.said.why);
+    assert.deepEqual(first.asked.map((pr) => decodeBolt11(pr).amountMsat), [1334n, 666n]);
+    assert.equal(first.log.totalMsat, 2000n);
+
+    const second = await pageLoad({ storage, endpoints, wallet });
+    assert.notEqual(toHex(second.entry.worldSecret), toHex(first.entry.worldSecret), 'the reload drew the same entry, so this says nothing about a new one');
+    assert.deepEqual(second.entry.playerPubkey, first.entry.playerPubkey);
+    assert.deepEqual([second.asked.length, second.issued.length, second.log.totalMsat], [0, 0, 0n],
+      `the reload asked the wallet ${second.asked.length} more time(s), for ${second.askedMsat} msat`);
+    assert.deepEqual([second.said.ok, second.said.paidMsat, second.said.kept], [true, 2000n, 2], 'the reload reports what the first load paid');
+    console.log(`  reload: first load sent ${first.log.totalMsat} msat in ${first.asked.length} payments; `
+      + `second load sent ${second.log.totalMsat} msat, wallet asked ${second.asked.length}, recipients invoiced ${second.issued.length}`);
+  } finally { await endpoints.close(); await wallet.close(); }
+});
+
+test('a part-paid donation stays part-paid across a reload: the 666 msat share that did not route is not asked again, and 1334 is not paid again', async () => {
+  const storage = tabStorage();
+  const endpoints = await recipients();
+  const wallet = await walletOnARelay({ refuseMsat: 666n });
+  try {
+    const first = await pageLoad({ storage, endpoints, wallet });
+    assert.deepEqual([first.said.ok, first.said.paidMsat, first.said.unpaidMsat, first.log.totalMsat], [false, 1334n, 666n, 1334n]);
+    assert.match(first.said.failed[0].why, /NO_ROUTE/);
+
+    const second = await pageLoad({ storage, endpoints, wallet });
+    assert.deepEqual([second.asked.length, second.issued.length, second.log.totalMsat], [0, 0, 0n],
+      `the reload asked the wallet ${second.asked.length} more time(s), for ${second.askedMsat} msat`);
+    assert.deepEqual([second.said.ok, second.said.paidMsat, second.said.unpaidMsat], [false, 1334n, 666n]);
+    assert.deepEqual(second.said.failed.map((f) => [urlOfLnurl(f.lnurl), f.amountMsat]), [[TEST_DONATION_ENDPOINTS[1], 666n]]);
+    assert.match(second.said.failed[0].why, /NO_ROUTE/, 'the reload lost why the share was unpaid');
+    console.log(`  part-paid reload: first load sent ${first.log.totalMsat} msat (666 unpaid); second load sent ${second.log.totalMsat} msat, wallet asked ${second.asked.length}`);
+  } finally { await endpoints.close(); await wallet.close(); }
+});
+
+test('a share the wallet was asked for before the tab died is not asked again - its outcome is unknown, not unpaid', async () => {
+  const storage = tabStorage();
+  const before = entryOf(2000n);
+  assert.equal(noteDonationShare(storage, { roundId: before.roundId, playerPubkey: before.playerPubkey }, SET.recipients[0].lnurl,
+    { state: 'asked', amountMsat: 1334n }), true);
+  const endpoints = await recipients();
+  const wallet = await walletOnARelay();
+  try {
+    const load = await pageLoad({ storage, endpoints, wallet });
+    assert.deepEqual(load.asked.map((pr) => decodeBolt11(pr).amountMsat), [666n], 'only the share nobody asked for yet is paid');
+    assert.deepEqual([load.said.ok, load.said.paidMsat, load.said.unpaidMsat, load.said.unknownMsat], [false, 666n, 0n, 1334n]);
+    assert.deepEqual(load.said.unknown.map((u) => [urlOfLnurl(u.lnurl), u.amountMsat]), [[TEST_DONATION_ENDPOINTS[0], 1334n]]);
+  } finally { await endpoints.close(); await wallet.close(); }
+});
+
+test('a tab that cannot keep the record does not ask the wallet at all', async () => {
+  const cannot = { getItem: () => null, setItem() { throw new Error('QuotaExceededError'); } };
+  const endpoints = await recipients();
+  const wallet = await walletOnARelay();
+  try {
+    const load = await pageLoad({ storage: cannot, endpoints, wallet });
+    assert.deepEqual([load.asked.length, load.log.totalMsat, load.said.paidMsat, load.said.unpaidMsat], [0, 0n, 0n, 2000n]);
+    for (const f of load.said.failed) assert.match(f.why, /could not keep a record/);
+  } finally { await endpoints.close(); await wallet.close(); }
 });
 
 // ---- the set, from the seats

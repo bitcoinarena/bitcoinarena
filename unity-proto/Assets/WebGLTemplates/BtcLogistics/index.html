@@ -877,7 +877,10 @@
       // through the player's own Client (\`payDonation\`) - an entry and a set,
       // never an invoice. A failed
       // share is reported and not redirected; the entry stands either way. It
-      // waits for a connected wallet, and runs once.
+      // waits for a connected wallet, and runs once per page - and ONCE PER
+      // PLAYER PER ROUND ACROSS A RELOAD: handed the tab's sessionStorage, the
+      // Client notes each share before its wallet is asked and never asks a
+      // noted one again, so a reload over a kept lock reports and sends nothing.
       if (c && c.seatEntry && window.BLWP_DONATION_SET && typeof c.seatEntry.donationMsat === 'bigint'
           && c.seatEntry.donationMsat > 0n && !donationPaying && wallet) {
         const heldWallet = wallet.current();
@@ -885,7 +888,7 @@
           donationPaying = true;
           window.BLWP_DONATION_PAID = { state: 'paying' };
           c.payDonation(c.seatEntry, window.BLWP_DONATION_SET, {
-            round: window.BLWP_ROUND, connection: heldWallet, curve: window.BLWP_CURVE, log: spent,
+            round: window.BLWP_ROUND, connection: heldWallet, curve: window.BLWP_CURVE, log: spent, storage: window.sessionStorage,
             random: (n) => crypto.getRandomValues(new Uint8Array(n)),
           }).then((said) => {
             window.BLWP_DONATION_PAID = { state: said.ok ? 'paid' : 'part', paidMsat: String(said.paidMsat),

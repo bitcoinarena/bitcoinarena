@@ -9062,6 +9062,536 @@ function invoiceAnswersPayRequest({ invoice, amountMsat, metadata, network } = {
   return { ok: true, paymentHash: d.paymentHash, amountMsat: d.amountMsat, network: d.network };
 }
 
+// ---- protocol/src/authority.js
+// 27A.4: WHICH DONATION SET IS THE NETWORK'S, FROM WHEN, AND WHO SAID SO.
+//
+// `donation.js` answers a different question and answers it well: given a list
+// of payees and shares, does it stand, and what is each owed. It cannot answer
+// this one. A list that stands is a list ANYBODY can write - the bytes are
+// checked against their own shares and against nothing else - so before this
+// file a thief and the network's own operator published objects that were
+// indistinguishable.
+//
+// The section gives the object:
+//
+//     DonationSet {
+//       network_id
+//       serial          monotonic; the highest validly signed one wins
+//       entries[]       lnurl + share_bps, summing to 10000
+//       valid_from      block height
+//       signature       by donation_authority_pubkey
+//     }
+//
+// Four of those five fields had no code. What each one is for, in the order
+// they stop a different failure:
+//
+//   network_id   27A.9: "the trust anchor is the client's own built-in
+//                network_id, NEVER A VALUE FROM THE CONTRACT". A set for
+//                another network is somebody else's payees, and forking the
+//                code to write your own address in "has not captured the
+//                donations - you have left".
+//   serial       Two sets and no order is two nodes paying different people.
+//                The highest validly signed one wins, and an older one
+//                published later changes nothing - that is what "cannot be
+//                rolled back" means when the publication is on a chain that
+//                anybody can add to.
+//   valid_from   A set with no start applies from whenever each node happened
+//                to see it, which is not a time two nodes can agree on.
+//   signature    The whole point. One key signs this object and nothing else
+//                in the protocol.
+//
+// AND THE ROTATION, which is the half that is easy to leave for later and must
+// not be. 27A.4's own row: authority stolen, "the thief signs a set with a
+// higher serial pointing at their own LNURLs" - and the remedy is a rotation
+// from the cold key, "no fork, the census survives". A revocation path nobody
+// has exercised is a revocation path that does not work, so the rotation here
+// is not a field: it is checked, it is ordered, and from its `valid_from` the
+// old key's sets are refused whatever serial they carry.
+//
+// WHAT THE KEYS CANNOT DO is not enforced here because it cannot be reached
+// from here: 27A.4's exhaustive list - no pause, no fee, no threshold, no
+// node, no round, no result, no player's money - is a statement about which
+// objects carry an authority signature, and this file is the only one that
+// checks for one. Nothing else in the protocol reads these keys, and that is
+// the enforcement.
+//
+// NO CURVE, like every other file in this package: `verify` is injected, and
+// the caller one package over brings the real BIP-340. NO MONEY: nothing here
+// pays an LNURL, and what a donation costs a player is 6e's letter, not this
+// one.
+
+
+
+
+/** The 64 bytes beside the object, as for every other signature in here. */
+const DONATION_SIGNATURE_BYTES = 64;
+
+const isDonationBytes32 = (b) => b instanceof Uint8Array && b.length === 32;
+const sameDonationBytes32 = (a, b) => a.every((x, i) => x === b[i]);
+
+/**
+ * THE BYTES THE AUTHORITY SIGNS.
+ *
+ * The recipients go in AS THE SET'S OWN ENCODING - `encodeDonationSet`, the
+ * function 22A's id is taken over - and not as a second copy of the same
+ * vector written out again here. A signed publication holding a differently
+ * encoded version of the list would be an object whose signature covers bytes
+ * that are not the set the Round Contract names, and then the network's
+ * authority has endorsed one thing while the round binds another.
+ *
+ * That import also means a set that does not stand cannot be published: the
+ * encoder refuses it, so there are no signed bytes naming shares that sum to
+ * 9999.
+ */
+function encodeDonationSetBody(set) {
+  if (!isDonationBytes32(set.networkId)) throw new Error('a donation set names a 32-byte network');
+  if (typeof set.serial !== 'bigint') throw new Error('a serial is a BigInt');
+  if (set.serial < 0n) throw new Error('a serial cannot be negative');
+  if (!Number.isInteger(set.validFrom) || set.validFrom < 0)
+    throw new Error('valid_from is a block height');
+
+  const entries = encodeDonationSet(set.recipients);
+  const w = new Writer();
+  w.u8(TYPE_SIGNED_DONATION_SET);
+  w.u16(PROTOCOL_VERSION);
+  w.bytes32(set.networkId);
+  w.u64(set.serial);
+  w.u32(set.validFrom);
+  w.u16(entries.length);
+  w.bytes(entries);
+  return w.finish();
+}
+
+function decodeDonationSetBody(bytes) {
+  const r = new Reader(bytes);
+  if (r.u8() !== TYPE_SIGNED_DONATION_SET) throw new Error('not a signed donation set');
+  if (r.u16() !== PROTOCOL_VERSION) throw new Error('unknown protocol version');
+  const networkId = r.bytes32();
+  const serial = r.u64();
+  const validFrom = r.u32();
+  const entries = r.bytes(r.u16());
+  if (r.at !== bytes.length) throw new Error('trailing bytes after the donation set');
+  // Through the set's own decoder, so a publication inherits every check the
+  // list has: the shares, the duplicates, the mixed case, and the one byte
+  // string a set is allowed to have.
+  return { networkId, serial, validFrom, recipients: decodeDonationSet(entries) };
+}
+
+/** What a marked output commits to: H(DonationSet), 27A.4's publication. */
+const donationSetBodyId = (set) =>
+  taggedHash(TAG.signedDonationSet, encodeDonationSetBody(set));
+
+/**
+ * THE COLD KEY'S ONLY SENTENCE.
+ *
+ *     AuthorityRotation { network_id, serial, new_authority, valid_from,
+ *                         signature by donation_recovery_pubkey }
+ *
+ * Its own serial, "monotonic, separate from the donation set's", because the
+ * two objects are ordered against their own kind: a rotation is not newer than
+ * a set and the question never arises.
+ */
+function encodeAuthorityRotation(rotation) {
+  if (!isDonationBytes32(rotation.networkId)) throw new Error('a rotation names a 32-byte network');
+  if (typeof rotation.serial !== 'bigint') throw new Error('a serial is a BigInt');
+  if (rotation.serial < 0n) throw new Error('a serial cannot be negative');
+  if (!isDonationBytes32(rotation.newAuthority))
+    throw new Error('a rotation names a 32-byte authority key');
+  if (!Number.isInteger(rotation.validFrom) || rotation.validFrom < 0)
+    throw new Error('valid_from is a block height');
+
+  const w = new Writer();
+  w.u8(TYPE_AUTHORITY_ROTATION);
+  w.u16(PROTOCOL_VERSION);
+  w.bytes32(rotation.networkId);
+  w.u64(rotation.serial);
+  w.bytes32(rotation.newAuthority);
+  w.u32(rotation.validFrom);
+  return w.finish();
+}
+
+function decodeAuthorityRotation(bytes) {
+  const r = new Reader(bytes);
+  if (r.u8() !== TYPE_AUTHORITY_ROTATION) throw new Error('not an authority rotation');
+  if (r.u16() !== PROTOCOL_VERSION) throw new Error('unknown protocol version');
+  const rotation = {
+    networkId: r.bytes32(),
+    serial: r.u64(),
+    newAuthority: r.bytes32(),
+    validFrom: r.u32(),
+  };
+  if (r.at !== bytes.length) throw new Error('trailing bytes after the rotation');
+  return rotation;
+}
+
+const authorityRotationId = (rotation) =>
+  taggedHash(TAG.authorityRotation, encodeAuthorityRotation(rotation));
+
+/**
+ * ONE PUBLICATION, CHECKED. Answered rather than thrown, like every other
+ * decision in this package: a malformed object from a stranger is a refusal.
+ *
+ * `signature` is not in the encoded body and cannot be - the id is what the
+ * key signs, so an object whose bytes included its own signature could not be
+ * signed at all. It rides beside it, as the advertisement's does.
+ */
+function signedBy(object, { id, key, signature, verify, what }) {
+  if (!isDonationBytes32(key)) return { ok: false, why: `no ${what} key to check that against` };
+  if (!(signature instanceof Uint8Array) || signature.length !== DONATION_SIGNATURE_BYTES)
+    return { ok: false, why: `a ${what} signature is ${DONATION_SIGNATURE_BYTES} bytes` };
+  if (typeof verify !== 'function')
+    return { ok: false, why: 'no verifier: this package carries no curve' };
+
+  let digest;
+  try { digest = id(object); }
+  catch (e) { return { ok: false, why: e.message }; }
+
+  let ok = false;
+  try { ok = !!verify(signature, digest, key); }
+  catch { ok = false; }
+  return ok
+    ? { ok: true, id: digest, why: `signed by ${toHex(key).slice(0, 16)}` }
+    : { ok: false, id: digest, why: `that ${what} signature is not ${toHex(key).slice(0, 16)}'s` };
+}
+
+const donationSetSignedBy = (set, { authority, verify }) =>
+  signedBy(set, {
+    id: donationSetBodyId, key: authority, signature: set && set.signature,
+    verify, what: 'authority',
+  });
+
+const rotationSignedBy = (rotation, { recovery, verify }) =>
+  signedBy(rotation, {
+    id: authorityRotationId, key: recovery, signature: rotation && rotation.signature,
+    verify, what: 'recovery',
+  });
+
+/**
+ * THE HIGHEST VALIDLY SIGNED ONE WINS, and equivocation at a serial loses that
+ * serial rather than picking a winner.
+ *
+ * 27A.4 orders publications by serial and says nothing about two of them
+ * carrying the same one, because an honest authority does not do that. A
+ * dishonest or duplicated key does, and then "the highest validly signed one"
+ * names two different objects - so a rule is needed, and the choice is between
+ * two deterministic answers.
+ *
+ * PICKING ONE BY ITS BYTES was rejected. It would pay whichever list happened
+ * to hash lower, which is a coin flip decided by a party who has already shown
+ * they will sign twice - and it would do it silently.
+ *
+ * SO A CONTESTED SERIAL IS UNUSABLE and the search falls back to the highest
+ * serial below it that is not. Every node reaches the same answer from the
+ * same objects, nobody is paid on a signature the authority contradicted, and
+ * the network lands exactly where 27A.4's "both lost" row already puts it:
+ * "the set freezes at its last published serial and every donation keeps going
+ * where it was already going". A frozen set is a bounded failure. Paying a
+ * thief is not.
+ */
+function bestBySerial(accepted, idOf) {
+  const bySerial = new Map();
+  for (const item of accepted) {
+    const list = bySerial.get(item.serial);
+    if (list) list.push(item);
+    else bySerial.set(item.serial, [item]);
+  }
+
+  const serials = [...bySerial.keys()].sort((a, b) => (a < b ? 1 : a > b ? -1 : 0));
+  const contested = [];
+  for (const serial of serials) {
+    const list = bySerial.get(serial);
+    const ids = new Set(list.map((item) => toHex(idOf(item))));
+    if (ids.size === 1) return { best: list[0], contested };
+    contested.push(serial);
+  }
+  return { best: null, contested };
+}
+
+/**
+ * WHO THE AUTHORITY IS AT A HEIGHT.
+ *
+ * 27A.4: "Published like the donation set. From `valid_from`, sets signed by
+ * the old authority are rejected and only the new one is accepted, WHATEVER
+ * SERIAL THE OLD KEY PUBLISHES." So the answer is a function of the height a
+ * node is asking about and not of when anything arrived, and it is the genesis
+ * key until a rotation is in force.
+ *
+ * ROTATIONS ARE CHECKED AGAINST THE GENESIS RECOVERY KEY AND ONLY IT. The
+ * section's table is exhaustive - "recovery CAN name a new authority" - and
+ * that is the whole list. A rotation that could name a new recovery key would
+ * let one theft of the cold key close the door behind itself, which is the
+ * fault the two-key split exists to prevent.
+ */
+function authorityAt({
+  networkId, authority, recovery, rotations = [], height, verify,
+}) {
+  const refused = [];
+  if (!isDonationBytes32(authority)) throw new Error('a network has a 32-byte donation authority');
+  if (!Number.isInteger(height) || height < 0) throw new Error('a height is a block height');
+
+  const accepted = [];
+  for (const [at, rotation] of rotations.entries()) {
+    if (!rotation || !isDonationBytes32(rotation.networkId) || !sameDonationBytes32(rotation.networkId, networkId)) {
+      refused.push(`rotation ${at} is for another network`);
+      continue;
+    }
+    if (!Number.isInteger(rotation.validFrom) || rotation.validFrom > height) {
+      refused.push(`rotation ${at} is not in force at ${height}`);
+      continue;
+    }
+    const signed = rotationSignedBy(rotation, { recovery, verify });
+    if (!signed.ok) {
+      refused.push(`rotation ${at}: ${signed.why}`);
+      continue;
+    }
+    accepted.push(rotation);
+  }
+
+  const { best, contested } = bestBySerial(accepted, authorityRotationId);
+  for (const serial of contested)
+    refused.push(`two different rotations are signed at serial ${serial}, so that serial is unusable`);
+
+  return best
+    ? {
+      authority: best.newAuthority,
+      serial: best.serial,
+      rotated: true,
+      validFrom: best.validFrom,
+      refused,
+      why: `the recovery key named ${toHex(best.newAuthority).slice(0, 16)} from height ${best.validFrom}`,
+    }
+    : {
+      authority, serial: null, rotated: false, validFrom: 0, refused,
+      why: 'no rotation is in force, so the genesis authority still signs',
+    };
+}
+
+/**
+ * AND THE ANSWER THE REST OF THE PROTOCOL WANTS: which recipients, at this
+ * height, on this network.
+ *
+ * The refusals are returned rather than swallowed. A node that pays nobody
+ * because every set it holds is for another network must be able to say so -
+ * "no set is in force" and "I threw them all away" are different facts, and
+ * only one of them is a bug.
+ *
+ * A ROTATION BLANKS THE LIST, and that is 27A.4's own reading rather than a
+ * strictness of taste: "from `valid_from`, sets signed by the old authority
+ * are rejected". Every set the old key signed dies with it, including the
+ * honest ones it signed before the theft - so between a rotation and the new
+ * authority's first publication this network has no set in force and pays
+ * nobody.
+ *
+ * The alternative was measured and is worse: grandfathering what the old key
+ * published before the rotation keeps the THIEF'S set alive too, because the
+ * thief published before the rotation as well. A revocation that leaves the
+ * stolen list in force is not a revocation.
+ *
+ * NO SET IN FORCE IS NOT AN ERROR. A network can run without one and 22A's
+ * player donating nothing is unaffected: `splitDonation` already answers a
+ * zero donation without judging a set at all. What must never happen is a set
+ * being IN FORCE without a signature to point at, and that is what this
+ * returns `ok` for.
+ */
+function donationSetInForce({
+  networkId, authority, recovery, sets = [], rotations = [], height, verify,
+}) {
+  if (!isDonationBytes32(networkId)) throw new Error('a network is a 32-byte id');
+  const inForce = authorityAt({ networkId, authority, recovery, rotations, height, verify });
+  const refused = [...inForce.refused];
+
+  const accepted = [];
+  for (const [at, set] of sets.entries()) {
+    if (!set || !isDonationBytes32(set.networkId) || !sameDonationBytes32(set.networkId, networkId)) {
+      refused.push(`set ${at} is for another network`);
+      continue;
+    }
+    if (!Number.isInteger(set.validFrom) || set.validFrom > height) {
+      refused.push(`set ${at} is not in force at ${height}`);
+      continue;
+    }
+    // The list itself, before the key: a set that does not stand is not a set,
+    // and saying so names the actual fault rather than reporting a signature
+    // over bytes that could not be produced.
+    const stands = donationSetStands(set.recipients);
+    if (!stands.ok) {
+      refused.push(`set ${at}: ${stands.why}`);
+      continue;
+    }
+    const signed = donationSetSignedBy(set, { authority: inForce.authority, verify });
+    if (!signed.ok) {
+      refused.push(`set ${at}: ${signed.why}`);
+      continue;
+    }
+    accepted.push(set);
+  }
+
+  const { best, contested } = bestBySerial(accepted, donationSetBodyId);
+  for (const serial of contested)
+    refused.push(`two different sets are signed at serial ${serial}, so that serial is unusable`);
+
+  if (!best)
+    return {
+      ok: false, recipients: null, serial: null, validFrom: null,
+      authority: inForce.authority, rotated: inForce.rotated, refused,
+      why: sets.length
+        ? `none of the ${sets.length} sets offered is in force at height ${height}`
+        : 'this network has published no donation set',
+    };
+
+  return {
+    ok: true,
+    recipients: best.recipients,
+    serial: best.serial,
+    validFrom: best.validFrom,
+    setId: donationSetBodyId(best),
+    authority: inForce.authority,
+    rotated: inForce.rotated,
+    refused,
+    why: `serial ${best.serial}, in force from height ${best.validFrom}, `
+      + `${best.recipients.length} recipients`,
+  };
+}
+
+// ---- blwp-client/src/donation-pay.js
+/**
+ * THE PLAYER'S DONATION, PAID (M3.2 item 6e; §22A, §24A.2, §27A.4; ruled
+ * 2026-09-13).
+ *
+ * "Donations are paid: LNURL per recipient, by share, from the player's wallet
+ * directly at entry - never through the federation" (§24A.2). Two halves:
+ *
+ * `fetchDonationSet` - the set the round names, as EVERY seat of the round
+ * serves it (a seat that serves another, or none, is a refusal), signed by the
+ * network's donation authority at the round's height with rotations included,
+ * checked with Ed25519 (the authority's scheme). The page shows every
+ * recipient from it before the wallet approves (§22A).
+ *
+ * `Client.payDonation(entry, set)` (client.js, beside `payStake`) - AN ENTRY AND
+ * A SET, NEVER AN INVOICE. The amounts
+ * come from `splitDonation` over the entry's own donation; each recipient's
+ * endpoint is asked for its pay request and then for an invoice of exactly its
+ * share, and only an invoice that is that share under the endpoint's own
+ * metadata hash (LUD-06) reaches the wallet, through the same `payInvoice` the
+ * stake uses. A failed share is reported and never redirected to the others
+ * (§22A); the entry stands either way. A 0% entry pays nothing and asks nobody.
+ *
+ * MEASURED BEFORE: no LNURL, bech32 or BOLT11 code existed; `splitDonation`
+ * had no caller; `pay_invoice` had one call site, the stake; a 2% donor's 2000
+ * msat was taken by nobody.
+ */
+
+
+
+
+
+
+/**
+ * WHAT THIS TAB HAS ALREADY ASKED ITS WALLET TO DONATE, per round and player
+ * key, share by share (M3.2 6e). Measured before: the page's once-only flag
+ * and its spend log were page memory while the lock, the chosen donation and
+ * the wallet survived a reload in sessionStorage, so a reload over a kept lock
+ * paid every share again.
+ *
+ * KEYED BY ROUND AND PLAYER, NOT BY ENTRY ID: a reload keeps the player's key
+ * and draws a NEW entry (client.js, `join`), so an entry-id key would miss the
+ * very reload it is for. One donation per player per round.
+ *
+ * A share's note is `asked` (written BEFORE the wallet is asked, so a tab that
+ * dies mid-payment never asks twice), then `paid` or `unpaid`. Any note at all
+ * means the share is not asked again.
+ */
+const DONATION_PAID_PREFIX = 'blwp-donation-paid:';
+const donationPaidKey = ({ roundId, playerPubkey }) => `${DONATION_PAID_PREFIX}${toHex(roundId)}:${toHex(playerPubkey)}`;
+
+function donationPaidRecord(storage, whose) {
+  let raw;
+  try { raw = storage && storage.getItem(donationPaidKey(whose)); } catch { return null; }
+  if (!raw) return null;
+  try { const o = JSON.parse(raw); return o && o.shares && typeof o.shares === 'object' ? o : null; } catch { return null; }
+}
+
+/** Answers false when the tab could not keep the note - and then the wallet must not be asked. */
+function noteDonationShare(storage, whose, lnurl, { amountMsat, ...note }) {
+  try {
+    const was = donationPaidRecord(storage, whose) || { shares: {} };
+    was.shares[lnurl] = { ...note, amountMsat: String(amountMsat) };
+    storage.setItem(donationPaidKey(whose), JSON.stringify(was));
+    return true;
+  } catch { return false; }
+}
+
+/** Every recipient of a set, with its share and where it is paid - what the page shows before the wallet approves. */
+function donationRecipientsLine(set) {
+  if (!set || !Array.isArray(set.recipients)) return 'no donation set';
+  return 'Recipients: ' + set.recipients.map((r) => {
+    let where;
+    try { where = urlOfLnurl(r.lnurl); } catch { where = r.lnurl; }
+    return `${(r.shareBps / 100).toFixed(2)}% to ${where}`;
+  }).join(', ');
+}
+
+/**
+ * THE DONATION SET THIS ROUND NAMES, AS ALL OF ITS SEATS SERVE IT, CHECKED.
+ * `verifyEd25519(sig, msg, pub)` may be async (the browser's crypto.subtle);
+ * every answer is awaited here before `authorityAt` sees a settled boolean.
+ * `keys` overrides the network's donation keys (tests only).
+ */
+async function fetchDonationSet({ round, nodes, fetcher = (u) => fetch(u), verifyEd25519, keys } = {}) {
+  if (!round || !(round.donationSetId instanceof Uint8Array)) return { ok: false, why: 'there is no round to fetch a donation set for' };
+  if (typeof verifyEd25519 !== 'function') return { ok: false, why: 'checking a donation set needs an Ed25519 verifier, and none was injected' };
+  const networkKeys = keys || donationKeysForNetworkId(round.networkId);
+  if (!networkKeys) return { ok: false, why: 'this round\'s network has no donation authority this page knows' };
+  if (!Array.isArray(nodes) || !nodes.length) return { ok: false, why: 'the round names no seats to ask for its donation set' };
+  const rid = toHex(roundId(round));
+  const answers = await Promise.all(nodes.map(async (node) => {
+    const base = String(node).replace(/\/+$/, '');
+    try {
+      const r = await fetcher(`${base}/donation-set?round=${rid}`);
+      if (r.status !== 200) return { node: base, why: `${r.status} ${(await r.text()).trim().slice(0, 100)}` };
+      const bytes = new Uint8Array(await r.arrayBuffer());
+      let rotations = [];
+      try {
+        const rr = await fetcher(`${base}/donation-rotations?round=${rid}`);
+        if (rr.status === 200) rotations = (await rr.json()).rotations || [];
+      } catch { rotations = []; }
+      return { node: base, bytes, rotations };
+    } catch (e) { return { node: base, why: e.message }; }
+  }));
+  const missing = answers.filter((a) => !a.bytes);
+  if (missing.length)
+    return { ok: false, why: `not every seat of this round serves its donation set: ${missing.map((a) => `${a.node}: ${a.why}`).join('; ')}` };
+  const served = toHex(answers[0].bytes);
+  if (answers.some((a) => toHex(a.bytes) !== served)) return { ok: false, why: 'the seats of this round serve different donation sets' };
+  const bytes = answers[0].bytes;
+  if (bytes.length <= DONATION_SIGNATURE_BYTES) return { ok: false, why: 'that is no signed donation set' };
+  let set;
+  try { set = { ...decodeDonationSetBody(bytes.slice(0, -DONATION_SIGNATURE_BYTES)), signature: bytes.slice(-DONATION_SIGNATURE_BYTES) }; }
+  catch (e) { return { ok: false, why: `that is no donation set: ${e.message}` }; }
+  if (toHex(set.networkId) !== toHex(round.networkId)) return { ok: false, why: 'that donation set is for another network' };
+  const named = donationSetMatchesRound(round, set.recipients);
+  if (!named.ok) return { ok: false, why: named.why };
+  if (!(set.validFrom <= round.censusHeight)) return { ok: false, why: 'that donation set is not in force at the round\'s height' };
+
+  // EVERY SEAT'S ROTATIONS, EACH CHECKED HERE against the network's recovery
+  // key: a seat that hides a rotation cannot hide it from the other seats.
+  const offered = new Map();
+  for (const a of answers) for (const r of a.rotations) {
+    try { offered.set(`${r.body}:${r.signature}`, { ...decodeAuthorityRotation(fromHex(String(r.body))), signature: fromHex(String(r.signature)) }); }
+    catch { /* not a rotation: nothing to apply */ }
+  }
+  const rotations = [...offered.values()];
+  const signedRotations = new Set();
+  for (const rot of rotations)
+    if (await verifyEd25519(rot.signature, authorityRotationId(rot), networkKeys.recovery) === true) signedRotations.add(toHex(rot.signature));
+  const inForce = authorityAt({ networkId: round.networkId, authority: networkKeys.authority, recovery: networkKeys.recovery,
+    rotations, height: round.censusHeight, verify: (sig) => signedRotations.has(toHex(sig)) });
+  if (await verifyEd25519(set.signature, donationSetBodyId(set), inForce.authority) !== true)
+    return { ok: false, why: 'that donation set is not signed by the network\'s donation authority at the round\'s height' };
+  return { ok: true, set, seats: answers.length, rotated: inForce.rotated,
+    why: `${answers.length} seat(s) serve the set this round names, signed by its donation authority` };
+}
+
 // ---- blwp-client/src/client.js
 // THE PLAYER'S HALF OF THE PROTOCOL.
 //
@@ -9118,6 +9648,7 @@ function invoiceAnswersPayRequest({ invoice, amountMsat, metadata, network } = {
 
 
 // THE PLAYER'S DONATION (M3.2 6e): the split, the failure rule, the LNURL checks.
+
 
 
 
@@ -10368,9 +10899,14 @@ class Client {
   /**
    * PAY THE ENTRY'S DONATION TO THE SET, SHARE BY SHARE. Takes an entry and a
    * set; there is no argument an invoice could arrive in.
+   *
+   * ONCE PER PLAYER PER ROUND, ACROSS A RELOAD, when handed the tab's
+   * `storage`: every share is noted there before the wallet is asked, and a
+   * share already noted is never asked again - a reload over a kept lock
+   * reports what was paid and left unpaid, and sends nothing.
    */
-  async payDonation(entry, set, { round, connection, curve, fetcher = (u) => fetch(u), log, random, ...options } = {}) {
-    const none = { paid: [], failed: [], paidMsat: 0n, asked: 0 };
+  async payDonation(entry, set, { round, connection, curve, fetcher = (u) => fetch(u), log, random, storage, ...options } = {}) {
+    const none = { paid: [], failed: [], unknown: [], paidMsat: 0n, asked: 0 };
     if (!entry || typeof entry.donationMsat !== 'bigint') return { ok: false, ...none, why: 'there is no entry whose donation to pay' };
     if (entry.donationMsat === 0n) return { ok: true, ...none, why: 'this entry donates nothing, so nothing is paid' };
     if (!set || !Array.isArray(set.recipients)) return { ok: false, ...none, why: 'there is no donation set to pay' };
@@ -10386,12 +10922,30 @@ class Client {
     if (!split.owed) return { ok: false, ...none, why: split.why };
     const network = round && donationKeysForNetworkId(round.networkId) ? donationKeysForNetworkId(round.networkId).network : null;
     const comment = entry.playerPubkey instanceof Uint8Array ? toHex(entry.playerPubkey) : '';
+    const whose = storage ? { roundId: entry.roundId || (this.where && this.where.roundId), playerPubkey: entry.playerPubkey } : null;
+    if (whose && !(whose.roundId instanceof Uint8Array && whose.roundId.length === 32
+      && whose.playerPubkey instanceof Uint8Array && whose.playerPubkey.length === 32))
+      return { ok: false, ...none, why: 'the entry names no round and player to keep the donation\'s record under' };
+    const noted = whose ? donationPaidRecord(storage, whose) : null;
 
     const paid = [];
     const failed = [];
+    const unknown = [];
+    let kept = 0;
     for (const share of split.shares) {
       if (share.amountMsat === 0n) continue;
-      const unpaid = (why) => failed.push({ lnurl: share.lnurl, amountMsat: share.amountMsat, why });
+      // ALREADY NOTED: paid, unpaid, or asked when the tab went away. Never asked again.
+      const before = noted && noted.shares[share.lnurl];
+      if (before) {
+        kept++;
+        const at = { lnurl: share.lnurl, amountMsat: BigInt(before.amountMsat), kept: true };
+        if (before.state === 'paid') paid.push({ ...at, url: before.url });
+        else if (before.state === 'unpaid') failed.push({ ...at, why: before.why });
+        else unknown.push({ ...at, why: 'this tab asked its wallet for it before a reload and never heard the answer, so it is not asked again' });
+        continue;
+      }
+      const note = (n) => (whose ? noteDonationShare(storage, whose, share.lnurl, { amountMsat: share.amountMsat, ...n }) : true);
+      const unpaid = (why) => { failed.push({ lnurl: share.lnurl, amountMsat: share.amountMsat, why }); note({ state: 'unpaid', why }); };
       let url;
       try { url = urlOfLnurl(share.lnurl); } catch (e) { unpaid(`that recipient is no LNURL: ${e.message}`); continue; }
       let asks;
@@ -10404,16 +10958,22 @@ class Client {
       if (answer && answer.status === 'ERROR') { unpaid(`the recipient refused: ${String(answer.reason || '').slice(0, 120)}`); continue; }
       const fits = invoiceAnswersPayRequest({ invoice: answer && answer.pr, amountMsat: share.amountMsat, metadata: asks.metadata, network });
       if (!fits.ok) { unpaid(fits.why); continue; }
+      // NOTED BEFORE THE WALLET IS ASKED: a tab that cannot keep the note does
+      // not ask, because a reload would ask again.
+      if (!note({ state: 'asked' })) { unpaid('this tab could not keep a record of the payment, so the wallet is not asked - a reload would ask it again'); continue; }
       const wallet = await payInvoice(where, answer.pr, {
         curve, random: random || ((n) => crypto.getRandomValues(new Uint8Array(n))), ...options,
       });
       if (!wallet.ok) { unpaid(`the wallet did not pay it: ${wallet.why}`); continue; }
       paid.push({ lnurl: share.lnurl, url, amountMsat: share.amountMsat, paymentHash: fits.paymentHash, preimage: wallet.preimage });
+      note({ state: 'paid', url });
       if (log && typeof log.record === 'function') log.record({ amountMsat: share.amountMsat, paymentHash: fits.paymentHash, roundId: entry.roundId || (this.where && this.where.roundId) });
     }
     const after = donationAfterFailures({ shares: split.shares.filter((s) => s.amountMsat > 0n), failed: failed.map((f) => f.lnurl) });
-    return { ok: failed.length === 0, paid, failed, paidMsat: paid.reduce((t, p) => t + p.amountMsat, 0n),
-      unpaidMsat: after.unpaidMsat, asked: paid.length, why: after.why };
+    const sum = (list) => list.reduce((t, p) => t + p.amountMsat, 0n);
+    return { ok: failed.length === 0 && unknown.length === 0, paid, failed, unknown, paidMsat: sum(paid),
+      unpaidMsat: after.unpaidMsat, unknownMsat: sum(unknown), kept, asked: paid.length - paid.filter((p) => p.kept).length,
+      why: unknown.length ? `${unknown.length} share(s) asked of the wallet before a reload, outcome unknown; ${after.why}` : after.why };
   }
 
   /**
@@ -12140,501 +12700,6 @@ function chooseDonation({ roundIdHex, round, stakeMsat, ask, confirm, storage, t
     why = c.why;
   }
   return keep({ ...none, why: `no answer stood (${why}), so the donation is 0` });
-}
-
-// ---- protocol/src/authority.js
-// 27A.4: WHICH DONATION SET IS THE NETWORK'S, FROM WHEN, AND WHO SAID SO.
-//
-// `donation.js` answers a different question and answers it well: given a list
-// of payees and shares, does it stand, and what is each owed. It cannot answer
-// this one. A list that stands is a list ANYBODY can write - the bytes are
-// checked against their own shares and against nothing else - so before this
-// file a thief and the network's own operator published objects that were
-// indistinguishable.
-//
-// The section gives the object:
-//
-//     DonationSet {
-//       network_id
-//       serial          monotonic; the highest validly signed one wins
-//       entries[]       lnurl + share_bps, summing to 10000
-//       valid_from      block height
-//       signature       by donation_authority_pubkey
-//     }
-//
-// Four of those five fields had no code. What each one is for, in the order
-// they stop a different failure:
-//
-//   network_id   27A.9: "the trust anchor is the client's own built-in
-//                network_id, NEVER A VALUE FROM THE CONTRACT". A set for
-//                another network is somebody else's payees, and forking the
-//                code to write your own address in "has not captured the
-//                donations - you have left".
-//   serial       Two sets and no order is two nodes paying different people.
-//                The highest validly signed one wins, and an older one
-//                published later changes nothing - that is what "cannot be
-//                rolled back" means when the publication is on a chain that
-//                anybody can add to.
-//   valid_from   A set with no start applies from whenever each node happened
-//                to see it, which is not a time two nodes can agree on.
-//   signature    The whole point. One key signs this object and nothing else
-//                in the protocol.
-//
-// AND THE ROTATION, which is the half that is easy to leave for later and must
-// not be. 27A.4's own row: authority stolen, "the thief signs a set with a
-// higher serial pointing at their own LNURLs" - and the remedy is a rotation
-// from the cold key, "no fork, the census survives". A revocation path nobody
-// has exercised is a revocation path that does not work, so the rotation here
-// is not a field: it is checked, it is ordered, and from its `valid_from` the
-// old key's sets are refused whatever serial they carry.
-//
-// WHAT THE KEYS CANNOT DO is not enforced here because it cannot be reached
-// from here: 27A.4's exhaustive list - no pause, no fee, no threshold, no
-// node, no round, no result, no player's money - is a statement about which
-// objects carry an authority signature, and this file is the only one that
-// checks for one. Nothing else in the protocol reads these keys, and that is
-// the enforcement.
-//
-// NO CURVE, like every other file in this package: `verify` is injected, and
-// the caller one package over brings the real BIP-340. NO MONEY: nothing here
-// pays an LNURL, and what a donation costs a player is 6e's letter, not this
-// one.
-
-
-
-
-/** The 64 bytes beside the object, as for every other signature in here. */
-const DONATION_SIGNATURE_BYTES = 64;
-
-const isDonationBytes32 = (b) => b instanceof Uint8Array && b.length === 32;
-const sameDonationBytes32 = (a, b) => a.every((x, i) => x === b[i]);
-
-/**
- * THE BYTES THE AUTHORITY SIGNS.
- *
- * The recipients go in AS THE SET'S OWN ENCODING - `encodeDonationSet`, the
- * function 22A's id is taken over - and not as a second copy of the same
- * vector written out again here. A signed publication holding a differently
- * encoded version of the list would be an object whose signature covers bytes
- * that are not the set the Round Contract names, and then the network's
- * authority has endorsed one thing while the round binds another.
- *
- * That import also means a set that does not stand cannot be published: the
- * encoder refuses it, so there are no signed bytes naming shares that sum to
- * 9999.
- */
-function encodeDonationSetBody(set) {
-  if (!isDonationBytes32(set.networkId)) throw new Error('a donation set names a 32-byte network');
-  if (typeof set.serial !== 'bigint') throw new Error('a serial is a BigInt');
-  if (set.serial < 0n) throw new Error('a serial cannot be negative');
-  if (!Number.isInteger(set.validFrom) || set.validFrom < 0)
-    throw new Error('valid_from is a block height');
-
-  const entries = encodeDonationSet(set.recipients);
-  const w = new Writer();
-  w.u8(TYPE_SIGNED_DONATION_SET);
-  w.u16(PROTOCOL_VERSION);
-  w.bytes32(set.networkId);
-  w.u64(set.serial);
-  w.u32(set.validFrom);
-  w.u16(entries.length);
-  w.bytes(entries);
-  return w.finish();
-}
-
-function decodeDonationSetBody(bytes) {
-  const r = new Reader(bytes);
-  if (r.u8() !== TYPE_SIGNED_DONATION_SET) throw new Error('not a signed donation set');
-  if (r.u16() !== PROTOCOL_VERSION) throw new Error('unknown protocol version');
-  const networkId = r.bytes32();
-  const serial = r.u64();
-  const validFrom = r.u32();
-  const entries = r.bytes(r.u16());
-  if (r.at !== bytes.length) throw new Error('trailing bytes after the donation set');
-  // Through the set's own decoder, so a publication inherits every check the
-  // list has: the shares, the duplicates, the mixed case, and the one byte
-  // string a set is allowed to have.
-  return { networkId, serial, validFrom, recipients: decodeDonationSet(entries) };
-}
-
-/** What a marked output commits to: H(DonationSet), 27A.4's publication. */
-const donationSetBodyId = (set) =>
-  taggedHash(TAG.signedDonationSet, encodeDonationSetBody(set));
-
-/**
- * THE COLD KEY'S ONLY SENTENCE.
- *
- *     AuthorityRotation { network_id, serial, new_authority, valid_from,
- *                         signature by donation_recovery_pubkey }
- *
- * Its own serial, "monotonic, separate from the donation set's", because the
- * two objects are ordered against their own kind: a rotation is not newer than
- * a set and the question never arises.
- */
-function encodeAuthorityRotation(rotation) {
-  if (!isDonationBytes32(rotation.networkId)) throw new Error('a rotation names a 32-byte network');
-  if (typeof rotation.serial !== 'bigint') throw new Error('a serial is a BigInt');
-  if (rotation.serial < 0n) throw new Error('a serial cannot be negative');
-  if (!isDonationBytes32(rotation.newAuthority))
-    throw new Error('a rotation names a 32-byte authority key');
-  if (!Number.isInteger(rotation.validFrom) || rotation.validFrom < 0)
-    throw new Error('valid_from is a block height');
-
-  const w = new Writer();
-  w.u8(TYPE_AUTHORITY_ROTATION);
-  w.u16(PROTOCOL_VERSION);
-  w.bytes32(rotation.networkId);
-  w.u64(rotation.serial);
-  w.bytes32(rotation.newAuthority);
-  w.u32(rotation.validFrom);
-  return w.finish();
-}
-
-function decodeAuthorityRotation(bytes) {
-  const r = new Reader(bytes);
-  if (r.u8() !== TYPE_AUTHORITY_ROTATION) throw new Error('not an authority rotation');
-  if (r.u16() !== PROTOCOL_VERSION) throw new Error('unknown protocol version');
-  const rotation = {
-    networkId: r.bytes32(),
-    serial: r.u64(),
-    newAuthority: r.bytes32(),
-    validFrom: r.u32(),
-  };
-  if (r.at !== bytes.length) throw new Error('trailing bytes after the rotation');
-  return rotation;
-}
-
-const authorityRotationId = (rotation) =>
-  taggedHash(TAG.authorityRotation, encodeAuthorityRotation(rotation));
-
-/**
- * ONE PUBLICATION, CHECKED. Answered rather than thrown, like every other
- * decision in this package: a malformed object from a stranger is a refusal.
- *
- * `signature` is not in the encoded body and cannot be - the id is what the
- * key signs, so an object whose bytes included its own signature could not be
- * signed at all. It rides beside it, as the advertisement's does.
- */
-function signedBy(object, { id, key, signature, verify, what }) {
-  if (!isDonationBytes32(key)) return { ok: false, why: `no ${what} key to check that against` };
-  if (!(signature instanceof Uint8Array) || signature.length !== DONATION_SIGNATURE_BYTES)
-    return { ok: false, why: `a ${what} signature is ${DONATION_SIGNATURE_BYTES} bytes` };
-  if (typeof verify !== 'function')
-    return { ok: false, why: 'no verifier: this package carries no curve' };
-
-  let digest;
-  try { digest = id(object); }
-  catch (e) { return { ok: false, why: e.message }; }
-
-  let ok = false;
-  try { ok = !!verify(signature, digest, key); }
-  catch { ok = false; }
-  return ok
-    ? { ok: true, id: digest, why: `signed by ${toHex(key).slice(0, 16)}` }
-    : { ok: false, id: digest, why: `that ${what} signature is not ${toHex(key).slice(0, 16)}'s` };
-}
-
-const donationSetSignedBy = (set, { authority, verify }) =>
-  signedBy(set, {
-    id: donationSetBodyId, key: authority, signature: set && set.signature,
-    verify, what: 'authority',
-  });
-
-const rotationSignedBy = (rotation, { recovery, verify }) =>
-  signedBy(rotation, {
-    id: authorityRotationId, key: recovery, signature: rotation && rotation.signature,
-    verify, what: 'recovery',
-  });
-
-/**
- * THE HIGHEST VALIDLY SIGNED ONE WINS, and equivocation at a serial loses that
- * serial rather than picking a winner.
- *
- * 27A.4 orders publications by serial and says nothing about two of them
- * carrying the same one, because an honest authority does not do that. A
- * dishonest or duplicated key does, and then "the highest validly signed one"
- * names two different objects - so a rule is needed, and the choice is between
- * two deterministic answers.
- *
- * PICKING ONE BY ITS BYTES was rejected. It would pay whichever list happened
- * to hash lower, which is a coin flip decided by a party who has already shown
- * they will sign twice - and it would do it silently.
- *
- * SO A CONTESTED SERIAL IS UNUSABLE and the search falls back to the highest
- * serial below it that is not. Every node reaches the same answer from the
- * same objects, nobody is paid on a signature the authority contradicted, and
- * the network lands exactly where 27A.4's "both lost" row already puts it:
- * "the set freezes at its last published serial and every donation keeps going
- * where it was already going". A frozen set is a bounded failure. Paying a
- * thief is not.
- */
-function bestBySerial(accepted, idOf) {
-  const bySerial = new Map();
-  for (const item of accepted) {
-    const list = bySerial.get(item.serial);
-    if (list) list.push(item);
-    else bySerial.set(item.serial, [item]);
-  }
-
-  const serials = [...bySerial.keys()].sort((a, b) => (a < b ? 1 : a > b ? -1 : 0));
-  const contested = [];
-  for (const serial of serials) {
-    const list = bySerial.get(serial);
-    const ids = new Set(list.map((item) => toHex(idOf(item))));
-    if (ids.size === 1) return { best: list[0], contested };
-    contested.push(serial);
-  }
-  return { best: null, contested };
-}
-
-/**
- * WHO THE AUTHORITY IS AT A HEIGHT.
- *
- * 27A.4: "Published like the donation set. From `valid_from`, sets signed by
- * the old authority are rejected and only the new one is accepted, WHATEVER
- * SERIAL THE OLD KEY PUBLISHES." So the answer is a function of the height a
- * node is asking about and not of when anything arrived, and it is the genesis
- * key until a rotation is in force.
- *
- * ROTATIONS ARE CHECKED AGAINST THE GENESIS RECOVERY KEY AND ONLY IT. The
- * section's table is exhaustive - "recovery CAN name a new authority" - and
- * that is the whole list. A rotation that could name a new recovery key would
- * let one theft of the cold key close the door behind itself, which is the
- * fault the two-key split exists to prevent.
- */
-function authorityAt({
-  networkId, authority, recovery, rotations = [], height, verify,
-}) {
-  const refused = [];
-  if (!isDonationBytes32(authority)) throw new Error('a network has a 32-byte donation authority');
-  if (!Number.isInteger(height) || height < 0) throw new Error('a height is a block height');
-
-  const accepted = [];
-  for (const [at, rotation] of rotations.entries()) {
-    if (!rotation || !isDonationBytes32(rotation.networkId) || !sameDonationBytes32(rotation.networkId, networkId)) {
-      refused.push(`rotation ${at} is for another network`);
-      continue;
-    }
-    if (!Number.isInteger(rotation.validFrom) || rotation.validFrom > height) {
-      refused.push(`rotation ${at} is not in force at ${height}`);
-      continue;
-    }
-    const signed = rotationSignedBy(rotation, { recovery, verify });
-    if (!signed.ok) {
-      refused.push(`rotation ${at}: ${signed.why}`);
-      continue;
-    }
-    accepted.push(rotation);
-  }
-
-  const { best, contested } = bestBySerial(accepted, authorityRotationId);
-  for (const serial of contested)
-    refused.push(`two different rotations are signed at serial ${serial}, so that serial is unusable`);
-
-  return best
-    ? {
-      authority: best.newAuthority,
-      serial: best.serial,
-      rotated: true,
-      validFrom: best.validFrom,
-      refused,
-      why: `the recovery key named ${toHex(best.newAuthority).slice(0, 16)} from height ${best.validFrom}`,
-    }
-    : {
-      authority, serial: null, rotated: false, validFrom: 0, refused,
-      why: 'no rotation is in force, so the genesis authority still signs',
-    };
-}
-
-/**
- * AND THE ANSWER THE REST OF THE PROTOCOL WANTS: which recipients, at this
- * height, on this network.
- *
- * The refusals are returned rather than swallowed. A node that pays nobody
- * because every set it holds is for another network must be able to say so -
- * "no set is in force" and "I threw them all away" are different facts, and
- * only one of them is a bug.
- *
- * A ROTATION BLANKS THE LIST, and that is 27A.4's own reading rather than a
- * strictness of taste: "from `valid_from`, sets signed by the old authority
- * are rejected". Every set the old key signed dies with it, including the
- * honest ones it signed before the theft - so between a rotation and the new
- * authority's first publication this network has no set in force and pays
- * nobody.
- *
- * The alternative was measured and is worse: grandfathering what the old key
- * published before the rotation keeps the THIEF'S set alive too, because the
- * thief published before the rotation as well. A revocation that leaves the
- * stolen list in force is not a revocation.
- *
- * NO SET IN FORCE IS NOT AN ERROR. A network can run without one and 22A's
- * player donating nothing is unaffected: `splitDonation` already answers a
- * zero donation without judging a set at all. What must never happen is a set
- * being IN FORCE without a signature to point at, and that is what this
- * returns `ok` for.
- */
-function donationSetInForce({
-  networkId, authority, recovery, sets = [], rotations = [], height, verify,
-}) {
-  if (!isDonationBytes32(networkId)) throw new Error('a network is a 32-byte id');
-  const inForce = authorityAt({ networkId, authority, recovery, rotations, height, verify });
-  const refused = [...inForce.refused];
-
-  const accepted = [];
-  for (const [at, set] of sets.entries()) {
-    if (!set || !isDonationBytes32(set.networkId) || !sameDonationBytes32(set.networkId, networkId)) {
-      refused.push(`set ${at} is for another network`);
-      continue;
-    }
-    if (!Number.isInteger(set.validFrom) || set.validFrom > height) {
-      refused.push(`set ${at} is not in force at ${height}`);
-      continue;
-    }
-    // The list itself, before the key: a set that does not stand is not a set,
-    // and saying so names the actual fault rather than reporting a signature
-    // over bytes that could not be produced.
-    const stands = donationSetStands(set.recipients);
-    if (!stands.ok) {
-      refused.push(`set ${at}: ${stands.why}`);
-      continue;
-    }
-    const signed = donationSetSignedBy(set, { authority: inForce.authority, verify });
-    if (!signed.ok) {
-      refused.push(`set ${at}: ${signed.why}`);
-      continue;
-    }
-    accepted.push(set);
-  }
-
-  const { best, contested } = bestBySerial(accepted, donationSetBodyId);
-  for (const serial of contested)
-    refused.push(`two different sets are signed at serial ${serial}, so that serial is unusable`);
-
-  if (!best)
-    return {
-      ok: false, recipients: null, serial: null, validFrom: null,
-      authority: inForce.authority, rotated: inForce.rotated, refused,
-      why: sets.length
-        ? `none of the ${sets.length} sets offered is in force at height ${height}`
-        : 'this network has published no donation set',
-    };
-
-  return {
-    ok: true,
-    recipients: best.recipients,
-    serial: best.serial,
-    validFrom: best.validFrom,
-    setId: donationSetBodyId(best),
-    authority: inForce.authority,
-    rotated: inForce.rotated,
-    refused,
-    why: `serial ${best.serial}, in force from height ${best.validFrom}, `
-      + `${best.recipients.length} recipients`,
-  };
-}
-
-// ---- blwp-client/src/donation-pay.js
-/**
- * THE PLAYER'S DONATION, PAID (M3.2 item 6e; §22A, §24A.2, §27A.4; ruled
- * 2026-09-13).
- *
- * "Donations are paid: LNURL per recipient, by share, from the player's wallet
- * directly at entry - never through the federation" (§24A.2). Two halves:
- *
- * `fetchDonationSet` - the set the round names, as EVERY seat of the round
- * serves it (a seat that serves another, or none, is a refusal), signed by the
- * network's donation authority at the round's height with rotations included,
- * checked with Ed25519 (the authority's scheme). The page shows every
- * recipient from it before the wallet approves (§22A).
- *
- * `Client.payDonation(entry, set)` (client.js, beside `payStake`) - AN ENTRY AND
- * A SET, NEVER AN INVOICE. The amounts
- * come from `splitDonation` over the entry's own donation; each recipient's
- * endpoint is asked for its pay request and then for an invoice of exactly its
- * share, and only an invoice that is that share under the endpoint's own
- * metadata hash (LUD-06) reaches the wallet, through the same `payInvoice` the
- * stake uses. A failed share is reported and never redirected to the others
- * (§22A); the entry stands either way. A 0% entry pays nothing and asks nobody.
- *
- * MEASURED BEFORE: no LNURL, bech32 or BOLT11 code existed; `splitDonation`
- * had no caller; `pay_invoice` had one call site, the stake; a 2% donor's 2000
- * msat was taken by nobody.
- */
-
-
-
-
-
-
-/** Every recipient of a set, with its share and where it is paid - what the page shows before the wallet approves. */
-function donationRecipientsLine(set) {
-  if (!set || !Array.isArray(set.recipients)) return 'no donation set';
-  return 'Recipients: ' + set.recipients.map((r) => {
-    let where;
-    try { where = urlOfLnurl(r.lnurl); } catch { where = r.lnurl; }
-    return `${(r.shareBps / 100).toFixed(2)}% to ${where}`;
-  }).join(', ');
-}
-
-/**
- * THE DONATION SET THIS ROUND NAMES, AS ALL OF ITS SEATS SERVE IT, CHECKED.
- * `verifyEd25519(sig, msg, pub)` may be async (the browser's crypto.subtle);
- * every answer is awaited here before `authorityAt` sees a settled boolean.
- * `keys` overrides the network's donation keys (tests only).
- */
-async function fetchDonationSet({ round, nodes, fetcher = (u) => fetch(u), verifyEd25519, keys } = {}) {
-  if (!round || !(round.donationSetId instanceof Uint8Array)) return { ok: false, why: 'there is no round to fetch a donation set for' };
-  if (typeof verifyEd25519 !== 'function') return { ok: false, why: 'checking a donation set needs an Ed25519 verifier, and none was injected' };
-  const networkKeys = keys || donationKeysForNetworkId(round.networkId);
-  if (!networkKeys) return { ok: false, why: 'this round\'s network has no donation authority this page knows' };
-  if (!Array.isArray(nodes) || !nodes.length) return { ok: false, why: 'the round names no seats to ask for its donation set' };
-  const rid = toHex(roundId(round));
-  const answers = await Promise.all(nodes.map(async (node) => {
-    const base = String(node).replace(/\/+$/, '');
-    try {
-      const r = await fetcher(`${base}/donation-set?round=${rid}`);
-      if (r.status !== 200) return { node: base, why: `${r.status} ${(await r.text()).trim().slice(0, 100)}` };
-      const bytes = new Uint8Array(await r.arrayBuffer());
-      let rotations = [];
-      try {
-        const rr = await fetcher(`${base}/donation-rotations?round=${rid}`);
-        if (rr.status === 200) rotations = (await rr.json()).rotations || [];
-      } catch { rotations = []; }
-      return { node: base, bytes, rotations };
-    } catch (e) { return { node: base, why: e.message }; }
-  }));
-  const missing = answers.filter((a) => !a.bytes);
-  if (missing.length)
-    return { ok: false, why: `not every seat of this round serves its donation set: ${missing.map((a) => `${a.node}: ${a.why}`).join('; ')}` };
-  const served = toHex(answers[0].bytes);
-  if (answers.some((a) => toHex(a.bytes) !== served)) return { ok: false, why: 'the seats of this round serve different donation sets' };
-  const bytes = answers[0].bytes;
-  if (bytes.length <= DONATION_SIGNATURE_BYTES) return { ok: false, why: 'that is no signed donation set' };
-  let set;
-  try { set = { ...decodeDonationSetBody(bytes.slice(0, -DONATION_SIGNATURE_BYTES)), signature: bytes.slice(-DONATION_SIGNATURE_BYTES) }; }
-  catch (e) { return { ok: false, why: `that is no donation set: ${e.message}` }; }
-  if (toHex(set.networkId) !== toHex(round.networkId)) return { ok: false, why: 'that donation set is for another network' };
-  const named = donationSetMatchesRound(round, set.recipients);
-  if (!named.ok) return { ok: false, why: named.why };
-  if (!(set.validFrom <= round.censusHeight)) return { ok: false, why: 'that donation set is not in force at the round\'s height' };
-
-  // EVERY SEAT'S ROTATIONS, EACH CHECKED HERE against the network's recovery
-  // key: a seat that hides a rotation cannot hide it from the other seats.
-  const offered = new Map();
-  for (const a of answers) for (const r of a.rotations) {
-    try { offered.set(`${r.body}:${r.signature}`, { ...decodeAuthorityRotation(fromHex(String(r.body))), signature: fromHex(String(r.signature)) }); }
-    catch { /* not a rotation: nothing to apply */ }
-  }
-  const rotations = [...offered.values()];
-  const signedRotations = new Set();
-  for (const rot of rotations)
-    if (await verifyEd25519(rot.signature, authorityRotationId(rot), networkKeys.recovery) === true) signedRotations.add(toHex(rot.signature));
-  const inForce = authorityAt({ networkId: round.networkId, authority: networkKeys.authority, recovery: networkKeys.recovery,
-    rotations, height: round.censusHeight, verify: (sig) => signedRotations.has(toHex(sig)) });
-  if (await verifyEd25519(set.signature, donationSetBodyId(set), inForce.authority) !== true)
-    return { ok: false, why: 'that donation set is not signed by the network\'s donation authority at the round\'s height' };
-  return { ok: true, set, seats: answers.length, rotated: inForce.rotated,
-    why: `${answers.length} seat(s) serve the set this round names, signed by its donation authority` };
 }
 
 return { Client: Client, markState: markState,

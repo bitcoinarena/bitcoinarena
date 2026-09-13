@@ -34,6 +34,41 @@ import { urlOfLnurl } from '../../protocol/src/bech32.js';
 import { roundId } from '../../protocol/src/contracts.js';
 import { toHex, fromHex } from '../../protocol/src/hash.js';
 
+/**
+ * WHAT THIS TAB HAS ALREADY ASKED ITS WALLET TO DONATE, per round and player
+ * key, share by share (M3.2 6e). Measured before: the page's once-only flag
+ * and its spend log were page memory while the lock, the chosen donation and
+ * the wallet survived a reload in sessionStorage, so a reload over a kept lock
+ * paid every share again.
+ *
+ * KEYED BY ROUND AND PLAYER, NOT BY ENTRY ID: a reload keeps the player's key
+ * and draws a NEW entry (client.js, `join`), so an entry-id key would miss the
+ * very reload it is for. One donation per player per round.
+ *
+ * A share's note is `asked` (written BEFORE the wallet is asked, so a tab that
+ * dies mid-payment never asks twice), then `paid` or `unpaid`. Any note at all
+ * means the share is not asked again.
+ */
+const DONATION_PAID_PREFIX = 'blwp-donation-paid:';
+export const donationPaidKey = ({ roundId, playerPubkey }) => `${DONATION_PAID_PREFIX}${toHex(roundId)}:${toHex(playerPubkey)}`;
+
+export function donationPaidRecord(storage, whose) {
+  let raw;
+  try { raw = storage && storage.getItem(donationPaidKey(whose)); } catch { return null; }
+  if (!raw) return null;
+  try { const o = JSON.parse(raw); return o && o.shares && typeof o.shares === 'object' ? o : null; } catch { return null; }
+}
+
+/** Answers false when the tab could not keep the note - and then the wallet must not be asked. */
+export function noteDonationShare(storage, whose, lnurl, { amountMsat, ...note }) {
+  try {
+    const was = donationPaidRecord(storage, whose) || { shares: {} };
+    was.shares[lnurl] = { ...note, amountMsat: String(amountMsat) };
+    storage.setItem(donationPaidKey(whose), JSON.stringify(was));
+    return true;
+  } catch { return false; }
+}
+
 /** Every recipient of a set, with its share and where it is paid - what the page shows before the wallet approves. */
 export function donationRecipientsLine(set) {
   if (!set || !Array.isArray(set.recipients)) return 'no donation set';

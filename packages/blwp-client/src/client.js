@@ -66,6 +66,7 @@ import { donationSetMatchesRound, splitDonation, donationAfterFailures } from '.
 import { donationKeysForNetworkId } from '../../protocol/src/donation-keys.js';
 import { urlOfLnurl } from '../../protocol/src/bech32.js';
 import { payRequestStands, callbackFor, invoiceAnswersPayRequest } from '../../protocol/src/lnurl-pay.js';
+import { donationPaidRecord, noteDonationShare } from './donation-pay.js';
 
 /**
  * A FEDERATION ROUND'S STAKE: THE INVOICE COMES FIRST (the owner 2026-09-11).
@@ -1313,9 +1314,14 @@ export class Client {
   /**
    * PAY THE ENTRY'S DONATION TO THE SET, SHARE BY SHARE. Takes an entry and a
    * set; there is no argument an invoice could arrive in.
+   *
+   * ONCE PER PLAYER PER ROUND, ACROSS A RELOAD, when handed the tab's
+   * `storage`: every share is noted there before the wallet is asked, and a
+   * share already noted is never asked again - a reload over a kept lock
+   * reports what was paid and left unpaid, and sends nothing.
    */
-  async payDonation(entry, set, { round, connection, curve, fetcher = (u) => fetch(u), log, random, ...options } = {}) {
-    const none = { paid: [], failed: [], paidMsat: 0n, asked: 0 };
+  async payDonation(entry, set, { round, connection, curve, fetcher = (u) => fetch(u), log, random, storage, ...options } = {}) {
+    const none = { paid: [], failed: [], unknown: [], paidMsat: 0n, asked: 0 };
     if (!entry || typeof entry.donationMsat !== 'bigint') return { ok: false, ...none, why: 'there is no entry whose donation to pay' };
     if (entry.donationMsat === 0n) return { ok: true, ...none, why: 'this entry donates nothing, so nothing is paid' };
     if (!set || !Array.isArray(set.recipients)) return { ok: false, ...none, why: 'there is no donation set to pay' };
@@ -1331,12 +1337,30 @@ export class Client {
     if (!split.owed) return { ok: false, ...none, why: split.why };
     const network = round && donationKeysForNetworkId(round.networkId) ? donationKeysForNetworkId(round.networkId).network : null;
     const comment = entry.playerPubkey instanceof Uint8Array ? toHex(entry.playerPubkey) : '';
+    const whose = storage ? { roundId: entry.roundId || (this.where && this.where.roundId), playerPubkey: entry.playerPubkey } : null;
+    if (whose && !(whose.roundId instanceof Uint8Array && whose.roundId.length === 32
+      && whose.playerPubkey instanceof Uint8Array && whose.playerPubkey.length === 32))
+      return { ok: false, ...none, why: 'the entry names no round and player to keep the donation\'s record under' };
+    const noted = whose ? donationPaidRecord(storage, whose) : null;
 
     const paid = [];
     const failed = [];
+    const unknown = [];
+    let kept = 0;
     for (const share of split.shares) {
       if (share.amountMsat === 0n) continue;
-      const unpaid = (why) => failed.push({ lnurl: share.lnurl, amountMsat: share.amountMsat, why });
+      // ALREADY NOTED: paid, unpaid, or asked when the tab went away. Never asked again.
+      const before = noted && noted.shares[share.lnurl];
+      if (before) {
+        kept++;
+        const at = { lnurl: share.lnurl, amountMsat: BigInt(before.amountMsat), kept: true };
+        if (before.state === 'paid') paid.push({ ...at, url: before.url });
+        else if (before.state === 'unpaid') failed.push({ ...at, why: before.why });
+        else unknown.push({ ...at, why: 'this tab asked its wallet for it before a reload and never heard the answer, so it is not asked again' });
+        continue;
+      }
+      const note = (n) => (whose ? noteDonationShare(storage, whose, share.lnurl, { amountMsat: share.amountMsat, ...n }) : true);
+      const unpaid = (why) => { failed.push({ lnurl: share.lnurl, amountMsat: share.amountMsat, why }); note({ state: 'unpaid', why }); };
       let url;
       try { url = urlOfLnurl(share.lnurl); } catch (e) { unpaid(`that recipient is no LNURL: ${e.message}`); continue; }
       let asks;
@@ -1349,16 +1373,22 @@ export class Client {
       if (answer && answer.status === 'ERROR') { unpaid(`the recipient refused: ${String(answer.reason || '').slice(0, 120)}`); continue; }
       const fits = invoiceAnswersPayRequest({ invoice: answer && answer.pr, amountMsat: share.amountMsat, metadata: asks.metadata, network });
       if (!fits.ok) { unpaid(fits.why); continue; }
+      // NOTED BEFORE THE WALLET IS ASKED: a tab that cannot keep the note does
+      // not ask, because a reload would ask again.
+      if (!note({ state: 'asked' })) { unpaid('this tab could not keep a record of the payment, so the wallet is not asked - a reload would ask it again'); continue; }
       const wallet = await payInvoice(where, answer.pr, {
         curve, random: random || ((n) => crypto.getRandomValues(new Uint8Array(n))), ...options,
       });
       if (!wallet.ok) { unpaid(`the wallet did not pay it: ${wallet.why}`); continue; }
       paid.push({ lnurl: share.lnurl, url, amountMsat: share.amountMsat, paymentHash: fits.paymentHash, preimage: wallet.preimage });
+      note({ state: 'paid', url });
       if (log && typeof log.record === 'function') log.record({ amountMsat: share.amountMsat, paymentHash: fits.paymentHash, roundId: entry.roundId || (this.where && this.where.roundId) });
     }
     const after = donationAfterFailures({ shares: split.shares.filter((s) => s.amountMsat > 0n), failed: failed.map((f) => f.lnurl) });
-    return { ok: failed.length === 0, paid, failed, paidMsat: paid.reduce((t, p) => t + p.amountMsat, 0n),
-      unpaidMsat: after.unpaidMsat, asked: paid.length, why: after.why };
+    const sum = (list) => list.reduce((t, p) => t + p.amountMsat, 0n);
+    return { ok: failed.length === 0 && unknown.length === 0, paid, failed, unknown, paidMsat: sum(paid),
+      unpaidMsat: after.unpaidMsat, unknownMsat: sum(unknown), kept, asked: paid.length - paid.filter((p) => p.kept).length,
+      why: unknown.length ? `${unknown.length} share(s) asked of the wallet before a reload, outcome unknown; ${after.why}` : after.why };
   }
 
   /**
