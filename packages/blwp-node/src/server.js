@@ -435,9 +435,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (held && answer !== 'FORFEIT') round.putFirstMarkOffer({ entryId: c.entryId, peer: at, answer });
     }
     firstMarkForwards.set(toHex(c.entryId), said);
-    // A PEER REFUSED THIS FIRST MARK: it may hold another one - pull its proof,
-    // and on two first marks gather the shares while the seats are up.
-    if (said.some((s) => s.answer === 'refused' || s.answer === 'FORFEIT')) gatherOnProof(c.roundId, c.entryId, { pull: true });
+    // A PEER REFUSED THIS FIRST MARK AS A CONFLICT (409): it may hold another one
+    // - pull its proof, and on two first marks gather the shares while the seats
+    // are up. Not on a 404 (a seat that has not seated the entry yet holds no
+    // mark of it): measured, payout-second-seat pulled twice per run for nothing.
+    if (said.some((s) => (s.answer === 'refused' && s.status === 409) || s.answer === 'FORFEIT')) gatherOnProof(c.roundId, c.entryId, { pull: true });
     return said;
   }
 

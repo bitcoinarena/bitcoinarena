@@ -415,8 +415,13 @@ export class Verifier {
     // outcome - never ENTRY_VOID (measured before: ENTRY_VOID and the lock
     // forfeited to the player at both seats).
     const lateHere = !!this.round.startForfeit(entryId);
-    // ...or a proof this seat holds itself (it refused a second first mark).
-    const suspect = lateHere || voided || this.round.equivocation(roundIdBytes, entryId).length > 0;
+    // ...or a proof this seat holds itself (it refused a second first mark) - or
+    // a first mark this seat holds that no quorum carried: the other seats may
+    // hold the player's other first mark, and the proof is portable, so it is
+    // asked of them. Measured before on 5 of 7: seats that took the second first
+    // mark by forward never saw the first, asked nobody, and decided nothing.
+    const suspect = lateHere || voided || this.round.equivocation(roundIdBytes, entryId).length > 0
+      || !!this.round.firstMarkHeld(roundIdBytes, entryId);
     const twoFirst = suspect ? await this.#equivocationProven(roundIdBytes, entryId) : false;
     if ((lateHere || voided) && !twoFirst) return null;
     const held = this.round.firstMarkHeld(roundIdBytes, entryId);
