@@ -9,6 +9,8 @@
 // still not issue a hold. It opens one round that asks 100000 msat and one
 // that asks nothing, in memory, on a loopback port, and prints both answers.
 import { CORE_HASH } from './core-hash.mjs';
+import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
+import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js';
 import { openStore } from '../src/store.js';
 import { serve } from '../src/server.js';
 import { lndPreflight } from '../src/preflight.js';
@@ -37,7 +39,7 @@ const contractFor = (nodes, stakeMsat) => ({
   slashRemainder: 'BURN', federationId: new Uint8Array(32), stakeExpiryBlocks: 144,
   // a paying round names a relay (§13A, else the door refuses it before the
   // preflight this measures); nothing here ever posts to it
-  publicationRelays: ['http://127.0.0.1:9'], donationSetId: b32(0xd0), censusHeight: 900000,
+  publicationRelays: ['http://127.0.0.1:9'], donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients), censusHeight: 900000,
   censusRoot: b32(2), stakeMsat, bondMinSats: 50000n, blockTicks: 9000,
   exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
   timeFloor: 30, timeCeil: 150, minScore: 1, rankNumerator: 3, rankDenominator: 4,

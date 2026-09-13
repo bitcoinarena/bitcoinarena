@@ -6,6 +6,8 @@
 //   node seat-lock-regtest.mjs prepare <dir>          three stakes: P, its point, an even-y player
 //   node seat-lock-regtest.mjs seat <dir> <keys.json>  a seat, the real port, the handovers
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
+import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js';
 import { randomBytes } from 'node:crypto';
 import { schnorr, secp256k1 } from '@noble/curves/secp256k1.js';
 import { ed25519 } from '@noble/curves/ed25519.js';
@@ -65,7 +67,7 @@ try {
     gameVerifySlots: 2, settlementSlots: 2, simCoreHash: CORE_HASH, startTimeMs: now + MIN_ENTRY_WINDOW_MS,
     entryCloseMs: now + MIN_ENTRY_WINDOW_MS + 600000n, objectionWindowMs: 3000n, custody: 'FEDERATION',
     slashMinimumServed: 20, slashRemainder: 'BURN', federationId: b32(0xfe), stakeExpiryBlocks: 144,
-    publicationRelays: [`http://127.0.0.1:${seat.port}`], donationSetId: b32(0xd0), censusHeight: 900000,
+    publicationRelays: [`http://127.0.0.1:${seat.port}`], donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients), censusHeight: 900000,
     censusRoot: b32(2), committeeTimeMs: now - 1000n, randomnessRule: 'bitcoin-block-hash', stakeMsat: STAKE,
     bondMinSats: 50000n, blockTicks: 9000, exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
     timeFloor: 30, timeCeil: 150, minScore: 1, rankNumerator: 3, rankDenominator: 4,

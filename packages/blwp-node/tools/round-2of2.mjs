@@ -28,6 +28,8 @@
  * the operator's own bitcoind, and no live node is touched from here.
  */
 import { CORE_HASH } from './core-hash.mjs';
+import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
+import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js';
 import { execFileSync } from 'node:child_process';
 import { schnorr } from '@noble/curves/secp256k1.js';
 
@@ -345,11 +347,11 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
       },
     },
   } : {};
-  const optsA = { port: portA, host, funded, headerBytes, bondProof, chainFor,
+  const optsA = { port: portA, host, funded, donationSets: [TEST_DONATION_SET_REGTEST], headerBytes, bondProof, chainFor,
     ...(randomnessFor ? { randomnessFor } : {}), ...lightning, ...chainTip, ...spendOn,
     ...(federation ? { federation } : {}), ...seat };
   let a = await serve(dbA, optsA);
-  const optsB = { port: portB, host, funded, headerBytes, bondProof, chainFor,
+  const optsB = { port: portB, host, funded, donationSets: [TEST_DONATION_SET_REGTEST], headerBytes, bondProof, chainFor,
     ...(randomnessFor ? { randomnessFor } : {}), ...lightning, ...chainTip, ...spendOn,
     ...(federation ? { federation } : {}), ...seat };
   // B DOWN AT START (`bDownAtStart`, an operator's look at seat A restarted
@@ -414,7 +416,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     // daemons' own relay doors. A result is final only once both have posted
     // it, and a round naming no relay could never settle a stake.
     publicationRelays: [`http://${host}:${portA}`, `http://${host}:${portB}`],
-    donationSetId: b32(0xd0), censusHeight,
+    donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients), censusHeight,
     censusRoot: new Uint8Array(32), stakeMsat, bondMinSats: 50000n, blockTicks: 9000,
     exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
     timeFloor: 30, timeCeil: 150, minScore: 1, rankNumerator: 3, rankDenominator: 4,

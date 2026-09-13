@@ -2,8 +2,9 @@
 //
 // `packages/protocol` carries no curve, so its own suite checks 27A.4's rules
 // against a stub verifier: the injection, the ordering, the refusals. This is
-// the same rotation done with BIP-340 keys nobody wrote by hand - the curve
-// the daemon already signs adverts, receipts and payout tables with - because
+// the same rotation done with real Ed25519 keys - the donation authority's
+// scheme (ruled 2026-09-13: the keys genesis hashes into the network ids are
+// Ed25519; this file used BIP-340 until then, with the same checks) - because
 // "the recovery key revokes the authority" is a sentence about a signature,
 // and a signature checked by a stub is a sentence nobody has spoken.
 //
@@ -12,7 +13,7 @@
 // No fork, no census lost, nothing else touched.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { schnorr } from '@noble/curves/secp256k1.js';
+import { ed25519 } from '@noble/curves/ed25519.js';
 
 import {
   donationSetBodyId, authorityRotationId, donationSetInForce, authorityAt,
@@ -23,12 +24,12 @@ import { networkAnchor } from '../../protocol/src/constants.js';
 
 const NETWORK = networkAnchor('regtest');
 const verify = (sig, digest, key) => {
-  try { return schnorr.verify(sig, digest, key); } catch { return false; }
+  try { return ed25519.verify(sig, digest, key); } catch { return false; }
 };
 
 const keypair = (fill) => {
   const secret = new Uint8Array(32).fill(fill);
-  return { secret, pubkey: schnorr.getPublicKey(secret) };
+  return { secret, pubkey: ed25519.getPublicKey(secret) };
 };
 
 const AUTHORITY = keypair(0x11);
@@ -43,12 +44,12 @@ const THEIRS = [{ lnurl: 'lnurl1thief', shareBps: 10000 }];
 
 const publish = (key, { serial, validFrom, recipients }) => {
   const body = { networkId: NETWORK, serial, validFrom, recipients };
-  return { ...body, signature: schnorr.sign(donationSetBodyId(body), key.secret) };
+  return { ...body, signature: ed25519.sign(donationSetBodyId(body), key.secret) };
 };
 
 const rotate = (key, { serial, newAuthority, validFrom }) => {
   const body = { networkId: NETWORK, serial, newAuthority, validFrom };
-  return { ...body, signature: schnorr.sign(authorityRotationId(body), key.secret) };
+  return { ...body, signature: ed25519.sign(authorityRotationId(body), key.secret) };
 };
 
 test('a stolen authority is revoked by the cold key, and the theft ends at a height', () => {

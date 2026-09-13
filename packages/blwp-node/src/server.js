@@ -64,7 +64,10 @@ import { Round } from './round.js';
 import { Verifier } from './verify.js';
 import { Ghosts } from './ghosts.js';
 import { Roster, endpointsOf } from './roster.js';
-import { receiptsNeeded as roundThreshold } from '../../protocol/src/genesis.js';
+import { receiptsNeeded as roundThreshold, donationKeysForNetworkId } from '../../protocol/src/genesis.js';
+import { authorityAt, donationSetSignedBy, encodeDonationSetBody } from '../../protocol/src/authority.js';
+import { donationSetId } from '../../protocol/src/donation.js';
+import { ed25519 } from '@noble/curves/ed25519.js';
 import { Custody, NO_LIGHTNING, SETTLE, HELD } from './custody.js';
 import { resultFinality } from './finality.js';
 import { outageOutcome } from '../../protocol/src/entry-void.js';
@@ -207,11 +210,36 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // THE ROUND'S CLAIM KEY, by round (33 bytes). Defaults to this seat's own
   // DKG committee key - the key the settlement seats hold for that round.
   claimKeyFor = null,
+  // THE SIGNED DONATION SETS ITS OPERATOR HANDED THIS SEAT (M3.2 6e, §22A,
+  // §27A.4), and any authority rotations: each checked here before it is ever
+  // served. None by default: a seat with none serves no set.
+  donationSets = [], donationRotations = [],
   // WHERE THIS NODE'S OWN CHAIN IS (M3.3-30): a height, asked of its own
   // bitcoind. Given none, the pool's chain call answers it when there is one.
   chainTip = null,
   expiry = {} } = {}) {
   const round = new Round(db);
+
+  // THE DONATION SET A ROUND NAMES, AS THIS SEAT CAN STAND BEHIND IT (M3.2 6e):
+  // one of the handed sets whose recipients hash to the id the round's contract
+  // names, for the round's network, in force at the round's census height, and
+  // signed by that network's donation authority at that height - Ed25519
+  // (ruled 2026-09-13), rotations included. Anything else is no set.
+  const verifyDonation = (sig, msg, pub) => { try { return ed25519.verify(sig, msg, pub); } catch { return false; } };
+  const donationSetFor = (contract) => {
+    const keys = donationKeysForNetworkId(contract.networkId);
+    if (!keys) return { ok: false, why: 'this round\'s network has no donation authority this seat knows' };
+    const want = toHex(contract.donationSetId);
+    const named = donationSets.filter((s) => { try { return toHex(donationSetId(s.recipients)) === want; } catch { return false; } });
+    if (!named.length) return { ok: false, why: 'this seat holds no signed donation set with the id this round names' };
+    const at = authorityAt({ networkId: contract.networkId, authority: keys.authority, recovery: keys.recovery,
+      rotations: donationRotations, height: contract.censusHeight, verify: verifyDonation });
+    for (const s of named) {
+      if (toHex(s.networkId) !== toHex(contract.networkId) || !(s.validFrom <= contract.censusHeight)) continue;
+      if (donationSetSignedBy(s, { authority: at.authority, verify: verifyDonation }).ok) return { ok: true, set: s };
+    }
+    return { ok: false, why: 'the set this round names is not signed by its network\'s donation authority at the round\'s height' };
+  };
 
   // THE BEACON IS KEPT WITH THE ROUND (M3.3-34). A seat restarted while it holds
   // a close must still name the block its chain named: measured on the Daily,
@@ -2329,6 +2357,24 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // attestation's bytes and, beside them, this node's BIP-340 signature over
       // their id - the seat key is in the signed bytes, so a signature cannot be
       // moved to another seat's record. Only a SEATED node attests.
+      // THE DONATION SET THIS ROUND NAMES (M3.2 6e, §22A): its signed bytes then
+      // the 64-byte Ed25519 signature, or 404 - a seat serves no set it cannot
+      // stand behind. Before: no seat served one (404 for every round).
+      if (req.method === 'GET' && url.pathname === '/donation-set') {
+        const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
+        if (rid.length !== 32) return text(res, 400, 'that is not a round id');
+        const row = round.get(rid);
+        if (!row) return text(res, 404, 'this node holds no such round');
+        const served = donationSetFor(decodeRoundContract(new Uint8Array(row.contract)));
+        if (!served.ok) return text(res, 404, served.why);
+        const body = encodeDonationSetBody(served.set);
+        const out = new Uint8Array(body.length + served.set.signature.length);
+        out.set(body, 0);
+        out.set(served.set.signature, body.length);
+        res.writeHead(200, { 'content-type': 'application/octet-stream', ...CORS });
+        return res.end(Buffer.from(out));
+      }
+
       if (req.method === 'GET' && url.pathname === '/claim-key') {
         const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
         if (rid.length !== 32) return text(res, 400, 'that is not a round id');

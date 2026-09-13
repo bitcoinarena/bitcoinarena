@@ -9,6 +9,8 @@
 // And two that must be refused: an outpoint that holds no lock, and a lock to
 // a key nobody attested.
 import { readFileSync } from 'node:fs';
+import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
+import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js';
 import { execFile } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { randomBytes } from 'node:crypto';
@@ -66,7 +68,7 @@ try {
     networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations: 1, gameVerifySlots: 2, settlementSlots: 2,
     simCoreHash: CORE_HASH, startTimeMs: now + MIN_ENTRY_WINDOW_MS, entryCloseMs: now + MIN_ENTRY_WINDOW_MS + 600000n,
     objectionWindowMs: 3000n, custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'BURN', federationId: b32(0xfe),
-    stakeExpiryBlocks: 144, publicationRelays: nodes, donationSetId: b32(0xd0), censusHeight: 900000, censusRoot: b32(2),
+    stakeExpiryBlocks: 144, publicationRelays: nodes, donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients), censusHeight: 900000, censusRoot: b32(2),
     committeeTimeMs: now - 1000n, randomnessRule: 'bitcoin-block-hash', stakeMsat: STAKE, bondMinSats: 50000n, blockTicks: 9000,
     exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20, timeFloor: 30, timeCeil: 150, minScore: 1,
     rankNumerator: 3, rankDenominator: 4, nodes: seats.map((d) => d.round.pubkey),
