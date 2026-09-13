@@ -252,19 +252,23 @@ test('rank weights are exact integers, not a float curve', () => {
   assert.equal(payingRanks(0), 0);
 });
 
+// INCLUSIVE, AS 22A AND THE PAYOUT VECTOR SAY (M3.2 6e): each player commits
+// 100 sat, the 2 sat fee comes out of it, 98 is staked. Before, this test wrote
+// the fee as 0 and asserted the on-top pool of 2,500 sat - the reading a zero
+// fee brings back - while test-vectors/protocol/payout.json already said 2,450.
 test("the worked example from 18A.6 comes out at the spec's numbers", () => {
   const entries = [];
-  for (let i = 0; i < 50; i++) entries.push({ pubkey: pk(i), stakeMsat: 100000n, feeMsat: 0n, donationMsat: 0n, outcome: DELIVERED, score: 50 });
-  for (let i = 0; i < 25; i++) entries.push({ pubkey: pk(100 + i), stakeMsat: 100000n, feeMsat: 0n, donationMsat: 0n, outcome: DELIVERED, score: 900 });
-  for (let i = 0; i < 25; i++) entries.push({ pubkey: pk(200 + i), stakeMsat: 100000n, feeMsat: 0n, donationMsat: 0n, outcome: FAILED, score: 0 });
+  for (let i = 0; i < 50; i++) entries.push({ pubkey: pk(i), stakeMsat: 100000n, feeMsat: 2000n, donationMsat: 0n, outcome: DELIVERED, score: 50 });
+  for (let i = 0; i < 25; i++) entries.push({ pubkey: pk(100 + i), stakeMsat: 100000n, feeMsat: 2000n, donationMsat: 0n, outcome: DELIVERED, score: 900 });
+  for (let i = 0; i < 25; i++) entries.push({ pubkey: pk(200 + i), stakeMsat: 100000n, feeMsat: 2000n, donationMsat: 0n, outcome: FAILED, score: 0 });
 
   const r = computePayoutTable({ roundId: b32(9), entries, minScore: 1 });
-  assert.equal(r.pool, 2500000n);
+  assert.equal(r.pool, 2450000n);
   assert.equal(r.qualifiers, 75);
   assert.equal(r.payingRanks, 19);
 
   const paid = r.table.reduce((s, t) => s + t.amountMsat, 0n);
-  assert.equal(paid, 10000000n, 'money was created or destroyed');
+  assert.equal(paid, 9800000n, 'money was created or destroyed');
 });
 
 test('nothing is created or destroyed, remainders included', () => {

@@ -1838,18 +1838,20 @@ EV. In a pool, nothing prices it. A cautious player simply arrives,
 qualifies under §18, and takes a rank-weighted share of a pool funded
 entirely by other people's failures.
 
-Worked example — 100 players, 100 sat stake, 2% in fees on top, 50 taking
-the map edge and all arriving, 50 taking the corridor with half of them dying:
+Worked example — 100 players at 100 sat, the 2% fee out of it (98 sat
+staked, §22A), 50 taking the map edge and all arriving, 50 taking the
+corridor with half of them dying:
 
 ```text
-loser_pool = 25 x 100 = 2,500 sat
-flat-ish rank curve: bottom 50 collectively take 20% -> 10 sat each
+loser_pool = 25 x 98 = 2,450 sat
+flat-ish rank curve: bottom 50 collectively take 20% -> 9.8 sat each
+                     top 25 take the other 80%       -> 78.4 sat each
 ```
 
 | Route | Expected value | Variance |
 |---|---|---|
-| Edge | 100 back + 10 share − 2 fee = **+8%** | ~zero |
-| Corridor | 0.5 × (100 + 80) − 102 = **−12%** | high |
+| Edge | 98 back + 9.8 share − 100 paid = **+7.8%** | ~zero |
+| Corridor | 0.5 × (98 + 78.4) − 100 = **−11.8%** | high |
 
 Exactly backwards. It is the same exploit class as "carry only the cheapest
 parcels" in the operator model, wearing a different costume, and the block
@@ -1940,7 +1942,7 @@ share_i = loser_pool · w_i / Σ w_j
 ```
 
 Everyone below rank K gets their stake back and nothing else. That is the
-mechanism that moves the edge route from +8% to −2%: it qualifies, it keeps
+mechanism that moves the edge route from +7.8% to −2%: it qualifies, it keeps
 its stake, it simply does not place.
 
 ## 18A.5 Qualification stays generous
@@ -1949,8 +1951,8 @@ its stake, it simply does not place.
 cautious player is **not** disqualified and does **not** forfeit.
 
 Disqualifying them is the obvious-looking fix and it is wrong. Their stakes
-would fall into the pool, raising it to 7,500 sat, handing corridor survivors
-+98% and the cautious −100%. That is not balancing, it is a levy on a legal
+would fall into the pool, raising it to 7,350 sat (75 x 98), handing corridor
+survivors +96% and the cautious −100%. That is not balancing, it is a levy on a legal
 strategy, and it re-creates the minimum-danger rule through the back door.
 The mechanism throughout is "earn nothing", never "lose everything".
 
@@ -1959,15 +1961,18 @@ The mechanism throughout is "earn nothing", never "lose everything".
 ```text
 50 edge players       E ≈ 0.05 -> score ≈ 50   -> ranks 26..75, share 0
 25 corridor survivors E ≈ 0.9  -> score ≈ 900  -> ranks 1..25
-25 corridor deaths                             -> loser_pool 2,500
+25 corridor deaths                             -> loser_pool 2,450 (25 x 98)
 K = ceil(0.25 · 75) = 19, all of them corridor survivors
 ```
 
+Each player pays 100 sat, 2 of it the fee, 98 staked (§22A); a qualifier
+gets its 98 back.
+
 | Route | Expected value |
 |---|---|
-| Edge | 100 − 102 = **−2%** |
-| Corridor | 0.5 × (100 + 100) − 102 = **−2%** |
-| Corridor at 70% personal survival | 0.7 × 200 − 102 = **+38%** |
+| Edge | 98 − 100 = **−2%** |
+| Corridor | 0.5 × (98 + 98) − 100 = **−2%** |
+| Corridor at 70% personal survival | 0.7 × 196 − 100 = **+37.2%** |
 
 Zero-sum holds: 100 players × −2 sat = −200 sat, exactly the fees collected
 under §18.
