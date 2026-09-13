@@ -15,6 +15,8 @@
 // answer. COMMITTED is a label, true only at N >= T. It does not gate driving:
 // the late-payer path stays, and each node still refuses its own receipt.
 import { test } from 'node:test';
+import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
+import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { ed25519 } from '@noble/curves/ed25519.js';
@@ -64,7 +66,7 @@ async function committee(n) {
     networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations: 1,
     gameVerifySlots: n, settlementSlots: n, simCoreHash: b32(1), startTimeMs: 60500n,
     entryCloseMs: 2000n, objectionWindowMs: 600000n, custody: 'FEDERATION',
-    slashMinimumServed: 20, slashRemainder: 'BURN', federationId: new Uint8Array(32), stakeExpiryBlocks: 144, publicationRelays: ['http://127.0.0.1:9'] /* a paying round names a relay (§13A); never posted to here */, donationSetId: b32(0xd0),
+    slashMinimumServed: 20, slashRemainder: 'BURN', federationId: new Uint8Array(32), stakeExpiryBlocks: 144, publicationRelays: ['http://127.0.0.1:9'] /* a paying round names a relay (§13A); never posted to here */, donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients),
     censusHeight: 900000, censusRoot: b32(2), committeeTimeMs: 500n,
     randomnessRule: 'bitcoin-block-hash', stakeMsat: STAKE, bondMinSats: 50000n,
     blockTicks: 9000, exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,

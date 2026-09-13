@@ -12,6 +12,8 @@
 // client asks every seat, once the stake is committed, until every seat that
 // answers has moved the hold; the chip adds what the seats said.
 import { test } from 'node:test';
+import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
+import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { ed25519 } from '@noble/curves/ed25519.js';
@@ -69,7 +71,7 @@ async function committee() {
     entryCloseMs: 2000n, objectionWindowMs: WINDOW_MS, custody: 'FEDERATION',
     slashMinimumServed: 20, slashRemainder: 'BURN', federationId: new Uint8Array(32), stakeExpiryBlocks: 144,
     // P2: the two seats' own relay doors, where each run's transcript is posted.
-    publicationRelays: nodes.map((d) => `http://127.0.0.1:${d.port}`), donationSetId: b32(0xd0),
+    publicationRelays: nodes.map((d) => `http://127.0.0.1:${d.port}`), donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients),
     censusHeight: 900000, censusRoot: b32(2), committeeTimeMs: 500n,
     randomnessRule: 'bitcoin-block-hash', stakeMsat: STAKE, bondMinSats: 50000n,
     blockTicks: 9000, exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,

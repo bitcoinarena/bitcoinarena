@@ -8,6 +8,8 @@
 //
 // What is measured here is the closing number: a stranger opens ZERO.
 import { test } from 'node:test';
+import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
+import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js';
 import assert from 'node:assert/strict';
 import { createHash, randomBytes } from 'node:crypto';
 import { schnorr } from '@noble/curves/secp256k1.js';
@@ -37,7 +39,7 @@ const contractFor = (node) => ({
   gameVerifySlots: 2, settlementSlots: 7, simCoreHash: b32(1), committeeTimeMs: 500n,
   randomnessRule: 'bitcoin-block-hash', startTimeMs: 500n + MIN_ENTRY_WINDOW_MS,
   entryCloseMs: 200000n, objectionWindowMs: 600000n, custody: 'FEDERATION',
-  slashMinimumServed: 20, slashRemainder: 'BURN', federationId: new Uint8Array(32), stakeExpiryBlocks: 144, publicationRelays: [], donationSetId: b32(0xd0),
+  slashMinimumServed: 20, slashRemainder: 'BURN', federationId: new Uint8Array(32), stakeExpiryBlocks: 144, publicationRelays: [], donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients),
   censusHeight: 900000, censusRoot: b32(2), stakeMsat: 100000n, bondMinSats: 50000n,
   blockTicks: 9000, exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
   timeFloor: 30, timeCeil: 150, minScore: 1, rankNumerator: 3, rankDenominator: 4,

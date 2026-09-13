@@ -11,6 +11,8 @@
 // identities are bonded on the chain and seated from the census, which step 1
 // of this slice made possible by making a node's identity its bond key.
 import { test } from 'node:test';
+import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
+import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js';
 import assert from 'node:assert/strict';
 import { openStore } from '../src/store.js';
 import { Round } from '../src/round.js';
@@ -81,7 +83,7 @@ const contractWith = (nodes, censusRoot) => ({
   startTimeMs: BigInt(FIRST_TIME + 15 * SPACING) * 1000n + 60500n,
   entryCloseMs: BigInt(FIRST_TIME + 15 * SPACING) * 1000n + 200000n,
   objectionWindowMs: 600000n, custody: 'FEDERATION',
-  slashMinimumServed: 20, slashRemainder: 'BURN', federationId: new Uint8Array(32), stakeExpiryBlocks: 144, publicationRelays: [], donationSetId: b32(0xd0),
+  slashMinimumServed: 20, slashRemainder: 'BURN', federationId: new Uint8Array(32), stakeExpiryBlocks: 144, publicationRelays: [], donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients),
   censusHeight: HEIGHT, censusRoot, committeeTimeMs: BigInt(FIRST_TIME + 15 * SPACING) * 1000n, randomnessRule: 'bitcoin-block-hash', stakeMsat: 100000n,
   bondMinSats: 50000n, blockTicks: 9000, exposureReference: 1000, corridorHalfWidth: 40,
   spawnFreeRadius: 20, timeFloor: 30, timeCeil: 150, minScore: 1,

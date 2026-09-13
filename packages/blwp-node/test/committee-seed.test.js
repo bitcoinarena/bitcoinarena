@@ -17,6 +17,8 @@
 // `randomness_rule`, `committee_time` and `entry_open_time` - and no committee
 // seed at all.
 import { test } from 'node:test';
+import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
+import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js';
 import assert from 'node:assert/strict';
 import { selectCommittee } from '../../protocol/src/sortition.js';
 import { committeeSeedFrom, committeeSeedFromBeacon } from '../../protocol/src/beacon.js';
@@ -38,7 +40,7 @@ const contract = (over = {}) => ({
   networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations: 6,
   gameVerifySlots: 2, settlementSlots: 2, simCoreHash: b32(1), startTimeMs: 60500n,
   entryCloseMs: 2000n, objectionWindowMs: 600000n, custody: 'FEDERATION',
-  slashMinimumServed: 20, slashRemainder: 'BURN', federationId: new Uint8Array(32), stakeExpiryBlocks: 144, publicationRelays: [], donationSetId: b32(0xd0),
+  slashMinimumServed: 20, slashRemainder: 'BURN', federationId: new Uint8Array(32), stakeExpiryBlocks: 144, publicationRelays: [], donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients),
   censusHeight: CENSUS_HEIGHT, censusRoot: b32(2), committeeTimeMs: 500n, randomnessRule: 'bitcoin-block-hash',
   stakeMsat: 100000n, bondMinSats: 100000n, blockTicks: 9000, exposureReference: 1000,
   corridorHalfWidth: 40, spawnFreeRadius: 20, timeFloor: 30, timeCeil: 150,
@@ -184,10 +186,17 @@ test('a round that names no committee time, or the wrong beacon, seeds nothing',
   assert.match(wrong.why, /names randomness rule "drand" where regtest was born reading "bitcoin-block-hash"/);
 });
 
-test('two beacons that differ only after committee_time seat different committees', () => {
+test('beacons after committee_time decide the committee: one beacon one pair, and 256 beacons every pair', () => {
   // The randomness has to DECIDE something, or binding it to committee_time
   // would be ceremony. Eight bonded nodes and two slots, so the draw has room
-  // to differ.
+  // to differ - 28 possible pairs.
+  //
+  // THE CLAIM IS NOT ABOUT TWO CHOSEN BEACONS. It used to be 0xbe against
+  // 0x9c, and those differed only by the luck of the round id: when this
+  // fixture took the real signed donation set (M3.2 6e) the round id moved and
+  // both seated the same pair - a 1-in-28 coincidence, measured, while all 28
+  // pairs stayed reachable. So the draw is swept instead, which is stronger
+  // than any two beacons differing and holds for whatever the round id is.
   const field = census(8);
   const c = contract();
   const rid = roundId(c);
@@ -202,8 +211,10 @@ test('two beacons that differ only after committee_time seat different committee
 
   const one = seatedBy(b32(0xbe));
   assert.deepEqual(one, seatedBy(b32(0xbe)), 'one beacon seated two committees');
-  assert.notDeepEqual(one, seatedBy(b32(0x9c)),
-    'two beacons seated the same pair, so the randomness decides nothing');
+  const pairs = new Set();
+  for (let k = 0; k < 256; k++) pairs.add(seatedBy(b32(k)).join('+'));
+  assert.equal(pairs.size, 28,
+    `256 beacons seated ${pairs.size} of the 28 pairs, so the randomness does not decide the committee`);
 });
 
 test('a fallback is the same beacon or it is nothing', () => {

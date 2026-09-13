@@ -10,6 +10,8 @@
 // core over the same inputs and compares. Unity is a television; nothing here
 // or there simulates the other truck.
 import { test } from 'node:test';
+import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
+import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { writeFileSync } from 'node:fs';
@@ -61,7 +63,7 @@ test('two daemons, one page: the other truck arrives where its own transcript pu
       committeeTimeMs: 500n, randomnessRule: 'bitcoin-block-hash',
       startTimeMs: 500n + MIN_ENTRY_WINDOW_MS, entryCloseMs: 200000n,
       objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20,
-      slashRemainder: 'BURN', federationId: new Uint8Array(32), stakeExpiryBlocks: 144, publicationRelays: [], donationSetId: b32(0xd0), censusHeight: 900000,
+      slashRemainder: 'BURN', federationId: new Uint8Array(32), stakeExpiryBlocks: 144, publicationRelays: [], donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients), censusHeight: 900000,
       censusRoot: b32(2), stakeMsat: 100000n, bondMinSats: 50000n, blockTicks: 9000,
       exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
       timeFloor: 30, timeCeil: 150, minScore: 1, rankNumerator: 3, rankDenominator: 4,

@@ -12,6 +12,8 @@
 // page's bundle had no way to check a key, entryFor wrote a zero attestation,
 // claimKeyIsAttested had 0 callers in node and client.
 import { test } from 'node:test';
+import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
+import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -51,7 +53,7 @@ async function federationRound({ seats = 2, keyOf = () => CLAIM, federationId = 
     gameVerifySlots: seats, settlementSlots: seats, simCoreHash: CORE_HASH, startTimeMs: now + MIN_ENTRY_WINDOW_MS,
     entryCloseMs: now + MIN_ENTRY_WINDOW_MS + 600000n, objectionWindowMs: 3000n, custody: 'FEDERATION',
     slashMinimumServed: 20, slashRemainder: 'BURN', federationId, stakeExpiryBlocks: 144,
-    publicationRelays: daemons.map((d) => `http://127.0.0.1:${d.port}`), donationSetId: b32(0xd0), censusHeight: 900000,
+    publicationRelays: daemons.map((d) => `http://127.0.0.1:${d.port}`), donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients), censusHeight: 900000,
     censusRoot: b32(2), committeeTimeMs: now - 1000n, randomnessRule: 'bitcoin-block-hash', stakeMsat: 100000n,
     bondMinSats: 50000n, blockTicks: 9000, exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
     timeFloor: 30, timeCeil: 150, minScore: 1, rankNumerator: 3, rankDenominator: 4,
