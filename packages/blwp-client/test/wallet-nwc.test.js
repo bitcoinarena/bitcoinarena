@@ -17,6 +17,7 @@ import { WebSocketServer } from 'ws';
 import { readFileSync } from 'node:fs';
 import { roundLocks } from '../src/join.js';
 import { lockLine } from '../src/page-lock.js';
+import { donationPaidLine } from '../src/donation-pay.js';
 import { randomBytes } from 'node:crypto';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { ed25519 } from '@noble/curves/ed25519.js';
@@ -635,6 +636,7 @@ test('a round that asks no money gets no payment box, driven off the shipped pag
       spentLine: () => 'nothing paid this session',
       owedLine,
       budgetLine,
+      donationPaidLine,
     },
     walletState, null, owedState, false, '', budgetState,
   );

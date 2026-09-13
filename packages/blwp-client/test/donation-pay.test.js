@@ -14,7 +14,9 @@ import { createServer } from 'node:http';
 import { createHash, randomBytes } from 'node:crypto';
 import { WebSocketServer } from 'ws';
 import { ed25519 } from '@noble/curves/ed25519.js';
-import { fetchDonationSet, donationRecipientsLine, noteDonationShare } from '../src/donation-pay.js';
+import { fetchDonationSet, donationRecipientsLine, noteDonationShare, donationPaidRecord } from '../src/donation-pay.js';
+import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { Client } from '../src/client.js';
 import { chooseDonation } from '../src/donation-choice.js';
 import { entryFor } from '../src/join.js';
@@ -262,6 +264,124 @@ test('a share the wallet was asked for before the tab died is not asked again - 
     assert.deepEqual([load.said.ok, load.said.paidMsat, load.said.unpaidMsat, load.said.unknownMsat], [false, 666n, 0n, 1334n]);
     assert.deepEqual(load.said.unknown.map((u) => [urlOfLnurl(u.lnurl), u.amountMsat]), [[TEST_DONATION_ENDPOINTS[0], 1334n]]);
   } finally { await endpoints.close(); await wallet.close(); }
+});
+
+// ---- what the player SEES: the shipped paintWallet, off the shipped bundle
+//
+// Driven, not grepped: `paintWallet` is pulled out of the shipping page and run
+// against a DOM stubbed down to what it touches, with dist/blwp-client.js as
+// BLWPCLIENT - the way wallet-nwc.test.js drives it.
+
+const PAGE = new URL('../../../unity-proto/Assets/WebGLTemplates/BtcLogistics/index.html', import.meta.url);
+const SHIPPED = createRequire(import.meta.url)('../dist/blwp-client.js');
+const NOTE_IS = { paid: 'paid', unpaid: 'unpaid', asked: 'unknown' };
+const A = TEST_DONATION_ENDPOINTS[0];
+const B = TEST_DONATION_ENDPOINTS[1];
+
+/** Runs the page's own paintWallet for this seat and answers every element it painted. */
+function paintThePage({ round, entry, donationPaid }) {
+  const page = readFileSync(PAGE, 'utf8');
+  const body = page.slice(page.indexOf('function paintWallet()'));
+  const src = body.slice(0, body.indexOf('\n    }') + 6);
+  const made = {};
+  const el = (id) => (made[id] = made[id] || { style: {}, textContent: '', placeholder: '', disabled: false });
+  new Function('document', 'window', 'BLWPCLIENT', 'wallet', 'spent', 'owed', 'paying', 'walletWhy', 'budget',
+    `${src}\n return paintWallet();`)(
+    { getElementById: el }, { BLWP_ROUND: round, BLWP_ENTRY: entry, BLWP_DONATION_PAID: donationPaid },
+    SHIPPED, { connected: false }, SHIPPED.spendLog(), null, false, '', null);
+  return made;
+}
+
+/** What one page load shows, painted the way the page paints it after payDonation answers. */
+function shown(load, round, storage) {
+  const state = SHIPPED.donationPaidState(SET, load.said);
+  const text = (paintThePage({ round, entry: load.entry, donationPaid: state })['blwp-donation'] || {}).textContent || '';
+  const rows = state.shares.map((s) => [s.url, s.amountMsat, s.state]);
+  const onScreen = state.shares.filter((s) => text.includes(`${s.amountMsat} msat ${({ paid: 'paid', unpaid: 'UNPAID', unknown: 'outcome unknown' })[s.state]} to ${s.url}`)).length;
+  // AND THE SCREEN SAYS WHAT THE TAB'S NOTES SAY, share by share.
+  const notes = donationPaidRecord(storage, { roundId: load.entry.roundId, playerPubkey: load.entry.playerPubkey });
+  const noted = state.shares.map((s) => NOTE_IS[notes.shares[s.lnurl].state]);
+  return { state, text, rows, onScreen, noted };
+}
+
+test('the page shows each donation share as paid, unpaid or outcome unknown, matching the tab\'s notes, before and after a reload', async () => {
+  const holdRound = contractFor([b32(1), b32(2)]);
+  const lockRound = { ...holdRound, federationId: b32(0xfe) };
+  assert.equal(SHIPPED.roundLocks(holdRound), false);
+  assert.equal(SHIPPED.roundLocks(lockRound), true);
+  const report = [];
+
+  // 1. FULLY PAID, THEN A RELOAD.
+  {
+    const storage = tabStorage();
+    const endpoints = await recipients();
+    const wallet = await walletOnARelay();
+    try {
+      for (const [n, load] of [[1, await pageLoad({ storage, endpoints, wallet })], [2, await pageLoad({ storage, endpoints, wallet })]]) {
+        const s = shown(load, holdRound, storage);
+        assert.deepEqual(s.rows, [[A, 1334n, 'paid'], [B, 666n, 'paid']], `fully paid, load ${n}`);
+        assert.equal(s.onScreen, 2, `fully paid, load ${n}: the page shows ${s.onScreen} of 2 shares: "${s.text}"`);
+        assert.deepEqual(s.noted, ['paid', 'paid'], `fully paid, load ${n}: the screen and the notes disagree`);
+        assert.doesNotMatch(s.text, /unpaid stays/);
+        if (n === 2) assert.equal(load.asked.length, 0, 'the reload asked the wallet again');
+        report.push(`fully paid, load ${n}: "${s.text}"`);
+      }
+    } finally { await endpoints.close(); await wallet.close(); }
+  }
+
+  // 2. PART-PAID - the 666 msat share under a 1000 msat min_htlc - THEN A RELOAD,
+  // on a hold round and on a lock round (whose panel returns early).
+  {
+    const storage = tabStorage();
+    const endpoints = await recipients();
+    const wallet = await walletOnARelay({ refuseMsat: 666n });
+    try {
+      for (const [n, load] of [[1, await pageLoad({ storage, endpoints, wallet })], [2, await pageLoad({ storage, endpoints, wallet })]]) {
+        for (const round of [holdRound, lockRound]) {
+          const s = shown(load, round, storage);
+          const kind = round === lockRound ? 'lock round' : 'hold round';
+          assert.deepEqual(s.rows, [[A, 1334n, 'paid'], [B, 666n, 'unpaid']], `part-paid, load ${n}, ${kind}`);
+          assert.equal(s.onScreen, 2, `part-paid, load ${n}, ${kind}: the page shows ${s.onScreen} of 2 shares: "${s.text}"`);
+          assert.deepEqual(s.noted, ['paid', 'unpaid'], `part-paid, load ${n}: the screen and the notes disagree`);
+          assert.match(s.text, /666 msat UNPAID to \S+blwp-test-b \(.*NO_ROUTE\)/, 'the page does not say why the share is unpaid');
+          assert.match(s.text, /666 msat unpaid stays in your wallet, sent nowhere else/);
+          assert.equal(s.state.state, 'part');
+        }
+        if (n === 2) assert.equal(load.asked.length, 0, 'the reload asked the wallet again');
+        report.push(`part-paid, load ${n}: "${shown(load, holdRound, storage).text}"`);
+      }
+    } finally { await endpoints.close(); await wallet.close(); }
+  }
+
+  // 3. THE TAB CLOSED WHILE THE WALLET WAS ASKED FOR 1334: unknown, and only 666 is asked.
+  {
+    const storage = tabStorage();
+    const before = entryOf(2000n);
+    noteDonationShare(storage, { roundId: before.roundId, playerPubkey: before.playerPubkey }, SET.recipients[0].lnurl, { state: 'asked', amountMsat: 1334n });
+    const endpoints = await recipients();
+    const wallet = await walletOnARelay();
+    try {
+      const load = await pageLoad({ storage, endpoints, wallet });
+      assert.deepEqual(load.asked.map((pr) => decodeBolt11(pr).amountMsat), [666n], 'only the remaining share is asked');
+      const s = shown(load, holdRound, storage);
+      assert.deepEqual(s.rows, [[A, 1334n, 'unknown'], [B, 666n, 'paid']]);
+      assert.equal(s.onScreen, 2, `mid-ask: the page shows ${s.onScreen} of 2 shares: "${s.text}"`);
+      assert.deepEqual(s.noted, ['unknown', 'paid'], 'mid-ask: the screen and the notes disagree');
+      assert.doesNotMatch(s.text, /unpaid stays/, 'an unknown share was called unpaid');
+      report.push(`mid-ask reload: "${s.text}"`);
+    } finally { await endpoints.close(); await wallet.close(); }
+  }
+
+  // AND BEFORE AND WHILE: nothing before a donation is under way, "paying" while it is.
+  assert.equal((paintThePage({ round: holdRound, entry: entryOf(2000n), donationPaid: undefined })['blwp-donation'] || {}).textContent, '');
+  assert.match(paintThePage({ round: holdRound, entry: entryOf(2000n), donationPaid: { state: 'paying' } })['blwp-donation'].textContent, /paying/);
+
+  // AND THE PAGE STORES THE CLIENT'S STATE AND REPAINTS when payDonation answers.
+  const page = readFileSync(PAGE, 'utf8');
+  assert.match(page, /id="blwp-donation"/, 'the page has nowhere to show the donation');
+  assert.match(page, /window\.BLWP_DONATION_PAID = BLWPCLIENT\.donationPaidState\(window\.BLWP_DONATION_SET, said\);\s*paintWallet\(\);/,
+    'the page does not store the client\'s donation state and repaint when payDonation answers');
+  for (const line of report) console.log(`  ${line}`);
 });
 
 test('a tab that cannot keep the record does not ask the wallet at all', async () => {

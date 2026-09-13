@@ -9521,6 +9521,57 @@ function noteDonationShare(storage, whose, lnurl, { amountMsat, ...note }) {
   } catch { return false; }
 }
 
+/**
+ * EACH SHARE OF THE DONATION, AS THE PLAYER SEES IT (M3.2 6e): paid, unpaid
+ * with its why, or outcome unknown - off `payDonation`'s answer, which on a
+ * reload is read back from the tab's notes, so the screen says what the notes
+ * say. In the set's order; a share that floored to 0 msat was owed nothing and
+ * has no row. Measured before: the page kept `{ state, paidMsat, unpaid }` on
+ * `window` and painted none of it - 0 of 2 shares on screen in every case.
+ */
+function donationPaidState(set, said) {
+  if (!said) return null;
+  const recipients = set && Array.isArray(set.recipients) ? set.recipients : [];
+  const noted = new Map();
+  for (const p of said.paid || []) noted.set(p.lnurl, { state: 'paid', amountMsat: p.amountMsat });
+  for (const f of said.failed || []) noted.set(f.lnurl, { state: 'unpaid', amountMsat: f.amountMsat, why: f.why });
+  for (const u of said.unknown || []) noted.set(u.lnurl, { state: 'unknown', amountMsat: u.amountMsat, why: u.why });
+  const shares = [];
+  for (const r of recipients) {
+    const s = noted.get(r.lnurl);
+    if (!s) continue;
+    let url;
+    try { url = urlOfLnurl(r.lnurl); } catch { url = r.lnurl; }
+    shares.push({ url, lnurl: r.lnurl, shareBps: r.shareBps, ...s });
+  }
+  const of = (st) => shares.filter((s) => s.state === st);
+  const sum = (list) => list.reduce((t, s) => t + s.amountMsat, 0n);
+  const paid = of('paid').length;
+  const state = !shares.length ? (said.ok ? 'none' : 'error')
+    : paid === shares.length ? 'paid'
+      : paid ? 'part'
+        : of('unpaid').length ? 'unpaid' : 'unknown';
+  return { state, shares, paidMsat: sum(of('paid')), unpaidMsat: sum(of('unpaid')), unknownMsat: sum(of('unknown')), why: said.why };
+}
+
+const msatOrSat = (msat) => (msat % 1000n === 0n ? `${msat / 1000n} sat` : `${msat} msat`);
+const SHARE_WORD = { paid: 'paid', unpaid: 'UNPAID', unknown: 'outcome unknown' };
+
+/**
+ * THE DONATION AS ONE LINE, so the page renders and does not compute. What is
+ * unpaid stays in the player's wallet (ruled 2026-09-13: never sent to the
+ * operator or the other recipient); an unknown share is said to be unknown.
+ */
+function donationPaidLine(p) {
+  if (!p || p.state === 'none') return '';
+  if (p.state === 'paying') return 'Donation: paying each recipient its share…';
+  if (!Array.isArray(p.shares) || !p.shares.length) return `Donation not paid: ${p.why || 'no answer'}`;
+  const each = p.shares.map((s) => `${msatOrSat(s.amountMsat)} ${SHARE_WORD[s.state]} to ${s.url}`
+    + (s.state === 'paid' ? '' : ` (${s.why})`));
+  const kept = p.unpaidMsat > 0n ? ` · ${msatOrSat(p.unpaidMsat)} unpaid stays in your wallet, sent nowhere else` : '';
+  return `Donation: ${each.join(' · ')}${kept}`;
+}
+
 /** Every recipient of a set, with its share and where it is paid - what the page shows before the wallet approves. */
 function donationRecipientsLine(set) {
   if (!set || !Array.isArray(set.recipients)) return 'no donation set';
@@ -12721,6 +12772,7 @@ return { Client: Client, markState: markState,
          playerFor: playerFor, entryFor: entryFor,
          chooseDonation: chooseDonation, donationChoice: donationChoice, DONATION_CONFIRM_BPS: DONATION_CONFIRM_BPS,
          fetchDonationSet: fetchDonationSet, donationRecipientsLine: donationRecipientsLine,
+         donationPaidState: donationPaidState, donationPaidLine: donationPaidLine,
          stakeFor: stakeFor, fetchSettlementSeats: fetchSettlementSeats,
          roundPays: roundPays, postHandout: postHandout, attestedClaimKey: attestedClaimKey, roundLocks: roundLocks,
          awaitAttestedClaimKey: awaitAttestedClaimKey,

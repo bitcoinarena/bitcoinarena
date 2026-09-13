@@ -118,6 +118,7 @@
   <div id="blwp-wallet">
     <div class="owed" id="blwp-owed"></div>
     <div class="spent" id="blwp-spent"></div>
+    <div class="spent" id="blwp-donation"></div>
     <div class="spent" id="blwp-budget"></div>
     <input id="blwp-nwc" type="password" autocomplete="off" spellcheck="false"
            placeholder="nostr+walletconnect://…">
@@ -778,6 +779,10 @@
       const pays = window.BLWP_ROUND && BLWPCLIENT.roundPays(window.BLWP_ROUND);
       if (!pays) { el.style.display = 'none'; return; }
       el.style.display = 'block';
+      // EACH DONATION SHARE, PAID / UNPAID / OUTCOME UNKNOWN (M3.2 6e): the
+      // client's line off the client's state - which on a reload is the tab's
+      // notes - painted before the lock branch, so a lock round shows it too.
+      document.getElementById('blwp-donation').textContent = BLWPCLIENT.donationPaidLine(window.BLWP_DONATION_PAID);
       // A LOCK ROUND'S STAKE GOES INTO ITS LOCK (W1b), from the deposit on the
       // loading screen: the panel says so, then where the lock is and when it
       // comes back - and never offers a hold invoice. Keyed on the ROUND, not on
@@ -891,9 +896,9 @@
             round: window.BLWP_ROUND, connection: heldWallet, curve: window.BLWP_CURVE, log: spent, storage: window.sessionStorage,
             random: (n) => crypto.getRandomValues(new Uint8Array(n)),
           }).then((said) => {
-            window.BLWP_DONATION_PAID = { state: said.ok ? 'paid' : 'part', paidMsat: String(said.paidMsat),
-              unpaid: said.failed.map((f) => f.why), why: said.why };
-          }).catch((e) => { window.BLWP_DONATION_PAID = { state: 'error', why: e.message }; });
+            window.BLWP_DONATION_PAID = BLWPCLIENT.donationPaidState(window.BLWP_DONATION_SET, said);
+            paintWallet();
+          }).catch((e) => { window.BLWP_DONATION_PAID = { state: 'error', why: e.message }; paintWallet(); });
         }
       }
       if (c && c.watchStake && c.seatEntry && window.BLWP_STAKE && window.BLWP_STAKE.seatKeys

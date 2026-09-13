@@ -121,6 +121,9 @@ out += '         seedWordForEntry: seedWordForEntry,\n';
 out += '         tabSeed: tabSeed, importSeed: importSeed, seedOrigin: seedOrigin,\n'; out += '         playerFor: playerFor, entryFor: entryFor,\n';
 out += '         chooseDonation: chooseDonation, donationChoice: donationChoice, DONATION_CONFIRM_BPS: DONATION_CONFIRM_BPS,\n';
 out += '         fetchDonationSet: fetchDonationSet, donationRecipientsLine: donationRecipientsLine,\n';
+// EACH DONATION SHARE, PAID / UNPAID / OUTCOME UNKNOWN - the state off
+// `payDonation`'s answer and the line the page paints from it.
+out += '         donationPaidState: donationPaidState, donationPaidLine: donationPaidLine,\n';
 // THE STAKE THE PAGE DEALS, and the seats it is dealt to. `stakeFor` was in
 // this bundle already and had ZERO CALLERS - the page took a seat with 32
 // random bytes where `sha256(P)` belongs and 32 zero bytes where the shares
