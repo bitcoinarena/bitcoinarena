@@ -956,7 +956,10 @@
       // payment that lands after payStake gave up would otherwise never be
       // counted. Started once; stopped at N >= T, at the run's end, or on close.
       const c = net && net.client;
-      // AND THE DONATION, ONCE THE SEATS HAVE TAKEN THE ENTRY (M3.2 6e, §24A.2):
+      // AND THE DONATION, ONCE THE SEATS HOLD THE STAKE (M3.2 6e, §24A.2, §22A):
+      // measured before, it went as soon as the seats took the entry - before
+      // "Pay the stake" - so a seated player who never paid the stake donated.
+      // `c.stakeCommitted` is the seats' count; the Client refuses before it too.
       // the player's wallet pays each recipient of the checked set its share,
       // through the player's own Client (\`payDonation\`) - an entry and a set,
       // never an invoice. A failed
@@ -966,7 +969,7 @@
       // Client notes each share before its wallet is asked and never asks a
       // noted one again, so a reload over a kept lock reports and sends nothing.
       if (c && c.seatEntry && window.BLWP_DONATION_SET && typeof c.seatEntry.donationMsat === 'bigint'
-          && c.seatEntry.donationMsat > 0n && !donationPaying && wallet) {
+          && c.seatEntry.donationMsat > 0n && c.stakeCommitted === true && !donationPaying && wallet) {
         const heldWallet = wallet.current();
         if (heldWallet.ok) {
           donationPaying = true;

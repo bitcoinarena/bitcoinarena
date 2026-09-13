@@ -1329,6 +1329,14 @@ export class Client {
     const none = { paid: [], failed: [], unknown: [], paidMsat: 0n, asked: 0 };
     if (!entry || typeof entry.donationMsat !== 'bigint') return { ok: false, ...none, why: 'there is no entry whose donation to pay' };
     if (entry.donationMsat === 0n) return { ok: true, ...none, why: 'this entry donates nothing, so nothing is paid' };
+    // NOT BEFORE THE SEATS HOLD THE STAKE (M3.2 6e, §22A): the donation is part of
+    // one wallet commitment, counted over financially activated entries only.
+    // Measured before: a seated entry whose stake nobody had seen paid 2000 msat
+    // to the recipients - a player who never paid the stake had donated anyway.
+    // `stakeCommitted` is the settlement seats' own count (`watchStake`), not
+    // this page's memory of having paid.
+    if (this.stakeCommitted !== true)
+      return { ok: false, ...none, why: 'the stake is not in yet: no seat count has committed it, so no donation leaves the wallet' };
     if (!set || !Array.isArray(set.recipients)) return { ok: false, ...none, why: 'there is no donation set to pay' };
     if (round) {
       const named = donationSetMatchesRound(round, set.recipients);

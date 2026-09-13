@@ -132,6 +132,7 @@ async function pay(entry, behave) {
   try {
     // THE PLAYER'S OWN CLIENT PAYS IT - the page calls this method, never a free function.
     const client = new Client({ base: 'http://127.0.0.1:9', core: {}, sign: async () => new Uint8Array(64), verify: () => true });
+    client.stakeCommitted = true;   // the seats hold the stake: only then does a donation go (6e)
     const said = await client.payDonation(entry, SET, { connection: wallet.uri, curve: pageCurve, fetcher: endpoints.fetcher, log, random: rand, timeoutMs: 5000 });
     return { said, issued: endpoints.issued, seen: endpoints.seen, asked: wallet.asked, log };
   } finally { await endpoints.close(); await wallet.close(); }
@@ -203,6 +204,7 @@ const tabStorage = () => ({ m: new Map(), getItem(k) { return this.m.has(k) ? th
 async function pageLoad({ storage, endpoints, wallet, donationMsat = 2000n, log = spendLog() }) {
   const entry = entryOf(donationMsat);
   const client = new Client({ base: 'http://127.0.0.1:9', core: {}, sign: async () => new Uint8Array(64), verify: () => true });
+  client.stakeCommitted = true;   // the seats hold the stake: only then does a donation go (6e)
   const askedBefore = wallet.asked.length;
   const issuedBefore = endpoints.issued.length;
   const said = await client.payDonation(entry, SET, { storage, connection: wallet.uri, curve: pageCurve, fetcher: endpoints.fetcher, log, random: rand, timeoutMs: 5000 });
@@ -651,4 +653,42 @@ test('a seat missing, a seat serving another set, a forged set, or a set the rot
   assert.match(stale.why, /not signed/, 'after the rotation the old authority\'s set is refused');
   const fresh = await fetchDonationSet({ round, nodes, verifyEd25519, keys, fetcher: serving({ 1: byNew, 2: byNew }, [rotation]) });
   assert.deepEqual([fresh.ok, fresh.rotated], [true, true]);
+});
+
+// NO DONATION BEFORE THE STAKE IS IN (M3.2 6e, §22A). The donation is part of one
+// wallet commitment, and the fee base and the donation count financially
+// activated entries only. Measured before: the page paid the donation as soon as
+// the seats took the entry - before "Pay the stake" was pressed - so a player
+// seated who never paid the stake, or whose wallet refused it, had donated anyway.
+test('no donation leaves the wallet before the seats hold the stake: uncommitted, the wallet is asked nothing; committed, 1334 + 666', async () => {
+  const endpoints = await recipients();
+  const wallet = await walletOnARelay();
+  const log = spendLog();
+  try {
+    const client = new Client({ base: 'http://127.0.0.1:9', core: {}, sign: async () => new Uint8Array(64), verify: () => true });
+    const entry = entryOf(2000n);
+    const ask = () => client.payDonation(entry, SET, { connection: wallet.uri, curve: pageCurve, fetcher: endpoints.fetcher, log, random: rand, timeoutMs: 5000 });
+
+    const early = await ask();
+    const earlyMsat = wallet.asked.map((pr) => decodeBolt11(pr).amountMsat);
+    console.log(`  stake not committed: wallet asked ${earlyMsat.length} time(s) for ${earlyMsat.reduce((t, a) => t + a, 0n)} msat, `
+      + `recipients invoiced ${endpoints.issued.length}, spent ${log.totalMsat} msat - ${early.why || 'paid'}`);
+    assert.deepEqual([earlyMsat.length, endpoints.issued.length, log.totalMsat], [0, 0, 0n], 'a donation left the wallet before the seats held the stake');
+    assert.equal(early.ok, false);
+    assert.match(early.why, /stake/);
+
+    client.stakeCommitted = true;
+    const late = await ask();
+    assert.equal(late.ok, true, late.why);
+    assert.deepEqual(wallet.asked.map((pr) => decodeBolt11(pr).amountMsat), [1334n, 666n]);
+    assert.equal(log.totalMsat, 2000n);
+  } finally { await endpoints.close(); await wallet.close(); }
+});
+
+test('the page asks for the donation only once the seats hold the stake', () => {
+  const page = readFileSync(PAGE, 'utf8');
+  const at = page.indexOf('c.payDonation(c.seatEntry');
+  assert.ok(at > 0, 'the page no longer pays the donation through its Client');
+  const guard = page.slice(page.lastIndexOf('if (c && c.seatEntry', at), at);
+  assert.match(guard, /c\.stakeCommitted/, `the page asks for the donation before the seats hold the stake: ${guard.replace(/\s+/g, ' ').slice(0, 200)}`);
 });
