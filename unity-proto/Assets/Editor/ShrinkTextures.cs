@@ -32,6 +32,8 @@ public static class ShrinkTextures
         {
             string path = AssetDatabase.GUIDToAssetPath(guid);
             if (!path.StartsWith("Assets/")) continue;               // leave packages alone
+            // the lobby's how-to art has words on it and is drawn small: whole (LobbyArtImport)
+            if (path.EndsWith("/" + LobbyArtImport.File)) continue;
 
             var importer = AssetImporter.GetAtPath(path) as TextureImporter;
             if (importer == null) continue;

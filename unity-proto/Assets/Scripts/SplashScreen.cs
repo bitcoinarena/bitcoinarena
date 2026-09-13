@@ -38,6 +38,10 @@ public class SplashScreen : MonoBehaviour
     bool _joining, _autoPlay, _hiddenTold;
     string _joinWhy = "";
     float _joinedAt = -1f;
+    // the how-to art (the owner 2026-09-13 08:58), loaded once, and where it was drawn
+    Texture2D _howTo;
+    bool _howToAsked;
+    Rect _lastHowTo;
     Rect _lastName, _lastKey, _lastMore;
     readonly System.Collections.Generic.List<(Blwp.LobbyRow row, Rect rect)> _drawnRows =
         new System.Collections.Generic.List<(Blwp.LobbyRow row, Rect rect)>();
@@ -332,8 +336,18 @@ public class SplashScreen : MonoBehaviour
     {
         float font = _sub.fontSize;
         var l = Blwp.DailyLobby.MeasureLobby(copy, font);
-        _lastName = l.name; _lastKey = l.key; _lastMore = l.more;
+        _lastName = l.name; _lastKey = l.key; _lastMore = l.more; _lastHowTo = l.howTo;
         var you = _lobby.you;
+
+        // ONE HOW-TO PICTURE, SMALL AND WHOLE (the owner 2026-09-13 08:58): load
+        // mempool TXs, cross the front (closer = more points), deliver to miners,
+        // stake sats and win. Only the four cards are drawn, never stretched.
+        if (!_howToAsked) { _howToAsked = true; _howTo = Resources.Load<Texture2D>(Blwp.DailyLobby.HowToResource); }
+        if (_howTo != null && l.howTo.width > 0f && l.howTo.height > 0f)
+        {
+            GUI.DrawTextureWithTexCoords(l.howTo, _howTo, Blwp.DailyLobby.HowToUv);
+            PanelSkin.Border(l.howTo, new Color(PanelSkin.Gold.r, PanelSkin.Gold.g, PanelSkin.Gold.b, 0.6f));
+        }
 
         var youStyle = new GUIStyle(_body)
             { fontSize = Mathf.RoundToInt(font), wordWrap = true, richText = true, alignment = TextAnchor.MiddleLeft };
@@ -472,7 +486,8 @@ public class SplashScreen : MonoBehaviour
         if (_lobby != null)
         {
             sb.Append(",\"you\":").Append(J(_lobby.you.name)).Append(",\"name\":").Append(R(_lastName))
-              .Append(",\"key\":").Append(R(_lastKey)).Append(",\"picked\":").Append(J(_pickId))
+              .Append(",\"key\":").Append(R(_lastKey)).Append(",\"howTo\":").Append(R(_lastHowTo))
+              .Append(",\"howToDrawn\":").Append(_howTo != null ? "true" : "false").Append(",\"picked\":").Append(J(_pickId))
               .Append(",\"listed\":").Append(_lobby.rows.Length).Append(",\"rows\":[");
             for (int i = 0; i < _drawnRows.Count; i++)
             {

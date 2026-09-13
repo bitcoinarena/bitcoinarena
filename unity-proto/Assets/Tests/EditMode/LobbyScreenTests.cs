@@ -56,7 +56,14 @@ public class LobbyScreenTests
                 Inside(r, f.panel, $"{what} {at}");
 
             var parts = new[] { (l.you, "who you are"), (l.name, "NAME"), (l.key, "KEY"), (l.head, "the rounds header"),
-                                (l.more, "the page button"), (l.list, "the round list") };
+                                (l.more, "the page button"), (l.list, "the round list"), (l.howTo, "the how-to art") };
+            // THE HOW-TO ART (the owner 08:58): small, and whole - never stretched, never a sliver
+            // in layout units, like every size checked here - the game lays the
+            // title screen out in CSS px and draws it at the screen's scale
+            Assert.GreaterOrEqual(l.howTo.height, 40f, $"the how-to art is under 40 px of layout high {at}: {l.howTo}");
+            Assert.AreEqual(DailyLobby.HowToAspect, l.howTo.width / l.howTo.height, 0.01f, $"the how-to art is stretched {at}");
+            Assert.IsFalse(l.howTo.Overlaps(f.play) || l.howTo.Overlaps(f.spectate) || l.howTo.Overlaps(f.hint),
+                $"the how-to art and the buttons overlap {at}");
             foreach (var (r, what) in parts) Inside(r, f.copy, $"{what} {at}");
             for (int i = 0; i < parts.Length; i++)
                 for (int j = i + 1; j < parts.Length; j++)
@@ -74,7 +81,17 @@ public class LobbyScreenTests
         }
     }
 
-    const string Sample = "{\"mode\":\"lobby\",\"from\":\"daily.json\",\"you\":{\"name\":\"azure-elk-1364\",\"custom\":false,"
+    /// <summary>The how-to art ships in Resources and is imported whole: 1280x720, not a power-of-two rounding.</summary>
+    [Test]
+    public void TheHowToArtLoadsWhole()
+    {
+        var t = Resources.Load<Texture2D>(DailyLobby.HowToResource);
+        Assert.IsNotNull(t, "the lobby's how-to art is not in Resources");
+        Assert.AreEqual(1280, t.width, "the how-to art was rescaled on import");
+        Assert.AreEqual(720, t.height, "the how-to art was rescaled on import");
+    }
+
+    const string Sample ="{\"mode\":\"lobby\",\"from\":\"daily.json\",\"you\":{\"name\":\"azure-elk-1364\",\"custom\":false,"
         + "\"generated\":\"azure-elk-1364\",\"fingerprint\":\"1a2b3c4d\"},\"rows\":["
         + "{\"id\":\"aaaa1111\",\"free\":true,\"agree\":2,\"needed\":2,\"joinable\":true,\"leftS\":40,\"seated\":0},"
         + "{\"id\":\"bbbb2222\",\"free\":true,\"agree\":1,\"needed\":2,\"joinable\":false,\"leftS\":170,\"seated\":0},"

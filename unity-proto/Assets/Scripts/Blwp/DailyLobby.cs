@@ -203,7 +203,7 @@ namespace Blwp
         /// <summary>Every rectangle of the lobby inside the title screen's copy area.</summary>
         public struct Frame
         {
-            public Rect you, name, key, head, more, list;
+            public Rect you, name, key, head, more, list, howTo;
             public float rowH;
             public int rows;
             public bool narrow;
@@ -225,6 +225,23 @@ namespace Blwp
             float btnH = Mathf.Max(font * 2.1f, 34f);
             float gap = Mathf.Max(4f, font * 0.4f);
             float btnW = Mathf.Max(font * 5.2f, 72f);
+
+            // THE HOW-TO ART (the owner 2026-09-13 08:58): ONE picture, small and
+            // whole - load, cross the front, deliver, stake and win. A copy area
+            // taller than it is wide-ish (a phone upright, a tablet, a desktop)
+            // gets it as a strip across the top; a wide, short one (a phone held
+            // sideways) as a column beside the rounds, where a strip would take
+            // the height the rounds need.
+            bool beside = copy.width >= copy.height * 2.2f;
+            Rect howTo = default;
+            if (!beside)
+            {
+                float hh = Mathf.Min(copy.width / HowToAspect, copy.height * 0.24f);
+                float hw = hh * HowToAspect;
+                howTo = new Rect(copy.x + (copy.width - hw) * 0.5f, copy.y, hw, hh);
+                copy = new Rect(copy.x, howTo.yMax + gap, copy.width, Mathf.Max(0f, copy.yMax - howTo.yMax - gap));
+            }
+
             bool narrow = copy.width < btnW * 2f + gap + font * 16f;
 
             Rect you, name, key;
@@ -255,10 +272,31 @@ namespace Blwp
 
             float rowH = Mathf.Max(font * 2.0f, 34f);
             var list = new Rect(copy.x, y, copy.width, Mathf.Max(0f, copy.yMax - y));
+            if (beside)
+            {
+                // the column: as tall as the list allows, no wider than 38% of it
+                float ah = Mathf.Min(list.height, list.width * 0.38f / HowToAspect);
+                float aw = ah * HowToAspect;
+                howTo = new Rect(list.xMax - aw, list.y, aw, ah);
+                list = new Rect(list.x, list.y, Mathf.Max(0f, list.width - aw - gap), list.height);
+            }
             int rows = Mathf.Max(0, Mathf.FloorToInt((list.height + 0.01f) / rowH));
             return new Frame { you = you, name = name, key = key, head = head, more = more, list = list,
-                               rowH = rowH, rows = rows, narrow = narrow };
+                               howTo = howTo, rowH = rowH, rows = rows, narrow = narrow };
         }
+
+        /// <summary>The how-to art, loaded from Resources (Assets/Art/Resources).</summary>
+        public const string HowToResource = "lobby-how-to-1-2-3-4";
+
+        /// <summary>
+        /// The part of the 1280x720 file that is drawn, as UVs (origin bottom-left):
+        /// the four cards, x 40-1240 and y 118-570 from the top - the empty margins
+        /// around them are not drawn, so the picture is as big as its room allows.
+        /// </summary>
+        public static readonly Rect HowToUv = new Rect(40f / 1280f, 150f / 720f, 1200f / 1280f, 452f / 720f);
+
+        /// <summary>Width over height of the part drawn.</summary>
+        public const float HowToAspect = 1200f / 452f;
 
         /// <summary>One row's words, shortest first to go: the round id, then the seated count.</summary>
         public static string[] RowWords(LobbyRow r)
