@@ -20,6 +20,8 @@
 // is no game_config to canonicalise. Both anchors are null and both accessors
 // refuse - the fields exist, the values wait.
 import { test } from 'node:test';
+import { TEST_DONATION_SET_REGTEST } from '../src/test-donation-sets.js';
+import { donationSetId as idOfDonationSet } from '../src/donation.js';
 import assert from 'node:assert/strict';
 import { toHex } from '../src/hash.js';
 import {
@@ -34,7 +36,7 @@ const sample = () => ({
   networkId: b32(0x4e), configHash: b32(0x43), censusConfirmations: 6, gameVerifySlots: 7, settlementSlots: 7, simCoreHash: b32(1),
   startTimeMs: 1788200000000n, entryCloseMs: 1788200060000n,
   objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20,
-  slashRemainder: 'BURN', federationId: new Uint8Array(32), stakeExpiryBlocks: 144, publicationRelays: [], donationSetId: b32(0xd0),
+  slashRemainder: 'BURN', federationId: new Uint8Array(32), stakeExpiryBlocks: 144, publicationRelays: [], donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients),
   censusHeight: 964900, censusRoot: b32(2), committeeTimeMs: 500n, randomnessRule: 'bitcoin-block-hash',
   stakeMsat: 100000n, bondMinSats: 100000n, blockTicks: 9000,
   exposureReference: 12451840, corridorHalfWidth: 3014656, spawnFreeRadius: 1441792,

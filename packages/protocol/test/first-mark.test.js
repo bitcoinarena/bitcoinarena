@@ -7,6 +7,8 @@
 // built page), 720 after one timed-out 10 s input wait, and the fixtures'
 // single first marks at 1197 (W5b's old plant) and 1320 (forfeit.test).
 import { test } from 'node:test';
+import { TEST_DONATION_SET_REGTEST } from '../src/test-donation-sets.js';
+import { donationSetId as idOfDonationSet } from '../src/donation.js';
 import assert from 'node:assert/strict';
 
 import { firstMarkOutcome, startDeadlineOf } from '../src/first-mark.js';
@@ -74,7 +76,7 @@ const contract = (extra = {}) => ({
   gameVerifySlots: 2, settlementSlots: 2, simCoreHash: b32(1), committeeTimeMs: 500n, randomnessRule: 'bitcoin-block-hash',
   startTimeMs: 500n + MIN_ENTRY_WINDOW_MS, entryCloseMs: 200000n, objectionWindowMs: 600000n, custody: 'FEDERATION',
   slashMinimumServed: 20, slashRemainder: 'BURN', federationId: new Uint8Array(32), stakeExpiryBlocks: 144, publicationRelays: [],
-  donationSetId: b32(0xd0), censusHeight: 900000, censusRoot: b32(2), stakeMsat: 0n, bondMinSats: 50000n, blockTicks: 9000,
+  donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients), censusHeight: 900000, censusRoot: b32(2), stakeMsat: 0n, bondMinSats: 50000n, blockTicks: 9000,
   exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20, timeFloor: 30, timeCeil: 150, minScore: 1,
   rankNumerator: 3, rankDenominator: 4, nodes: [b32(0x0a), b32(0x0b)], ...extra,
 });

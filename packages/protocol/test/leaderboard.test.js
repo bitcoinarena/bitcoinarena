@@ -11,6 +11,8 @@
 // arrived first would let a node put whoever it liked at the top without
 // forging anything.
 import { test } from 'node:test';
+import { TEST_DONATION_SET_REGTEST } from '../src/test-donation-sets.js';
+import { donationSetId as idOfDonationSet } from '../src/donation.js';
 import assert from 'node:assert/strict';
 import { toHex } from '../src/hash.js';
 import { resultId, RESULTS_FOR_FINAL } from '../src/result.js';
@@ -34,7 +36,7 @@ const contract = {
   gameVerifySlots: 7, settlementSlots: 7, simCoreHash: b32(1),
   startTimeMs: 60500n, entryCloseMs: 2000n, objectionWindowMs: 600000n,
   custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'BURN', federationId: new Uint8Array(32), stakeExpiryBlocks: 144, publicationRelays: [],
-  donationSetId: b32(0xd0), censusHeight: 900000,
+  donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients), censusHeight: 900000,
   censusRoot: b32(2), committeeTimeMs: 500n, randomnessRule: 'bitcoin-block-hash', stakeMsat: 100000n,
   bondMinSats: 50000n, blockTicks: 600, exposureReference: 1000,
   corridorHalfWidth: 40, spawnFreeRadius: 20, timeFloor: 30, timeCeil: 150,
