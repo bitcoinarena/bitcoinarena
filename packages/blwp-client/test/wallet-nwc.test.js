@@ -15,7 +15,7 @@ import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js
 import assert from 'node:assert/strict';
 import { WebSocketServer } from 'ws';
 import { readFileSync } from 'node:fs';
-import { roundLocks } from '../src/join.js';
+import { roundLocks, settledLine } from '../src/join.js';
 import { lockLine } from '../src/page-lock.js';
 import { donationPaidLine } from '../src/donation-pay.js';
 import { randomBytes } from 'node:crypto';
@@ -637,6 +637,7 @@ test('a round that asks no money gets no payment box, driven off the shipped pag
       owedLine,
       budgetLine,
       donationPaidLine,
+      settledLine,
     },
     walletState, null, owedState, false, '', budgetState,
   );

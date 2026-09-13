@@ -127,6 +127,9 @@ out += '         donationPaidState: donationPaidState, donationPaidLine: donatio
 // AND THE SAME LINE FROM THE TAB'S NOTES ALONE, for a round link that cannot be
 // reached - no seat, no set, nothing asked of a wallet.
 out += '         donationNotedState: donationNotedState, notedDonationForLink: notedDonationForLink,\n';
+// WHERE THE STAKE WENT, AFTER SETTLEMENT: the seats' hold state, the hold's
+// amount and the round's pool, asked of every settlement seat, and its line.
+out += '         settlementBy: settlementBy, settledLine: settledLine,\n';
 // THE STAKE THE PAGE DEALS, and the seats it is dealt to. `stakeFor` was in
 // this bundle already and had ZERO CALLERS - the page took a seat with 32
 // random bytes where `sha256(P)` belongs and 32 zero bytes where the shares

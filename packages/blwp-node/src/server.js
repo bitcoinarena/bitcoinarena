@@ -846,6 +846,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // KEPT IN THE STORE and read back at start, so a restart does not forget a
   // run it was holding or how long it had been asking.
   const closing = new Map();          // `${round}:${entry}` -> state
+  // THE POOL 23.2's TABLE DECIDED FOR A ROUND, as this seat's custody last ran
+  // it (M3.2 6e): `holdSettlement`'s own figure, served on /settlement so a
+  // page can show it - nobody outside the committee works it out again.
+  const settledPools = new Map();     // round hex -> poolMsat
   for (const h of round.closeHolds())
     closing.set(`${toHex(h.roundId)}:${toHex(h.entryId)}`, { round: toHex(h.roundId), entry: toHex(h.entryId),
       // a run this seat has signed is SIGNED, whatever an older build kept
@@ -1256,6 +1260,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const done = await custody.settleHeldInvoices({
       roundId: roundIdBytes, entries, minScore: contract.minScore, finalFor: isFinal,
     });
+    if (done && done.ok && typeof done.poolMsat === 'bigint') settledPools.set(toHex(roundIdBytes), done.poolMsat);
     for (const a of done.actions || [])
       console.log(`[custody] ${toHex(a.entryId).slice(0, 16)} ${a.action} -> ${a.state}: ${a.why}`);
     for (const w of waiting)
@@ -1926,10 +1931,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const row = round.hold(eid);
         const standing = resultFinality(round, entry.roundId, new Uint8Array(eid));
         const refund = round.holdExpiry(eid);
+        const pool = settledPools.get(toHex(entry.roundId));
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
         return res.end(JSON.stringify({
           entry: eid.toString('hex'),
           hold: entry.stakeMsat === 0n ? 'FREE' : (row ? row.state : 'none'),
+          // WHAT THIS HOLD HOLDS and THE POOL THE TABLE DECIDED (M3.2 6e), both
+          // this seat's own numbers: the hold's amount as Lightning was asked for
+          // it, and custody's `holdSettlement` pool - null until it has run.
+          holdMsat: row && row.amountMsat !== undefined && row.amountMsat !== null ? String(row.amountMsat) : null,
+          poolMsat: pool === undefined ? null : String(pool),
           why: row ? row.why : null,
           finality: standing.state,
           finalityWhy: standing.why || null,

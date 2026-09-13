@@ -339,7 +339,10 @@ export class Custody {
       done.push({ entryId, action, state, why: ends.why, final: isFinal });
     }
 
-    return { ok: true, actions: done, table: decided.table };
+    // AND THE POOL 23.2's TABLE DECIDED (M3.2 6e): `holdSettlement`'s own sum of
+    // the net stakes it settles - handed up so the seat can say it, not worked
+    // out a second time by anybody who wants to show it.
+    return { ok: true, actions: done, table: decided.table, poolMsat: decided.poolMsat };
   }
 
   /**

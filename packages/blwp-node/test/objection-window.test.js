@@ -215,6 +215,49 @@ test('a player can ask where their stake stands: inside the window HELD, provisi
   } finally { await a.close(); await b.close(); }
 });
 
+// A 2% DONOR WHO LOSES: THE POOL TAKES THE LOSER'S NET STAKE, AND THE SEAT SAYS SO (M3.2 6e).
+//
+// The pool is `holdSettlement`'s - computePayoutTable's table, 22A pick A - as
+// custody ran it; /settlement serves it beside the hold's own amount. Measured
+// before: /settlement said only the hold's state, and no number anywhere a page
+// could read said what the pool took.
+test('a 2% donor who loses: the pool takes the loser\'s net stake, 96000 msat, and both seats serve it beside the hold', async () => {
+  const a = await serve(openStore(':memory:'), { port: 0, ...opts, lightning: paidPort(), finality: { everyMs: 100 } });
+  const b = await serve(openStore(':memory:'), { port: 0, ...opts, lightning: paidPort(), finality: { everyMs: 100 } });
+  try {
+    for (const [d, other] of [[a, b], [b, a]]) {
+      const there = [`http://127.0.0.1:${other.port}`];
+      d.verifier.peers = there;
+      d.payouts.peers = there;
+      d.preimages.peers = there;
+    }
+    const c = contractFor([a.round.pubkey, b.round.pubkey], BigInt(WINDOW_MS),
+      [`http://127.0.0.1:${a.port}`, `http://127.0.0.1:${b.port}`]);
+    const rid = roundId(c);
+    for (const d of [a, b]) {
+      await fetch(`http://127.0.0.1:${d.port}/round`, { method: 'POST', body: encodeRoundContract(c) });
+      assumeSeated(d.round, rid, c.nodes);
+    }
+    const winner = await seatAndPlay([a, b], c, rid, WINNER, 2);
+    const loser = await seatAndPlay([a, b], c, rid, LOSER, 2, { donationMsat: 2000n });
+    assert.deepEqual([loser.entry.stakeMsat, loser.entry.feeMsat, loser.entry.donationMsat], [100000n, 2000n, 2000n]);
+    assert.deepEqual(await Promise.all([say(a.port, `close ${toHex(rid)}`), say(b.port, `close ${toHex(rid)}`)]), ['closed', 'closed']);
+    await a.verifier.settling;
+    await b.verifier.settling;
+    const stateOf = (d, eid) => (d.round.hold(eid) || {}).state;
+    const done = Date.now() + WINDOW_MS + 8000;
+    while (Date.now() < done && ![a, b].every((d) => stateOf(d, loser.eid) === SETTLED && stateOf(d, winner.eid) === CANCELLED)) await wait(100);
+    const ask = async (d, eid) => (await (await fetch(`http://127.0.0.1:${d.port}/settlement?entry=${toHex(eid)}`)).json());
+    for (const [name, d] of [['A', a], ['B', b]]) {
+      const lost = await ask(d, loser.eid);
+      const won = await ask(d, winner.eid);
+      console.log(`[pool] ${name}: loser ${lost.hold} hold ${lost.holdMsat} pool ${lost.poolMsat}; winner ${won.hold} hold ${won.holdMsat} pool ${won.poolMsat}`);
+      assert.deepEqual([lost.hold, lost.holdMsat, lost.poolMsat], [SETTLED, '96000', '96000'], `${name}: the loser's net stake is not what the pool took`);
+      assert.deepEqual([won.hold, won.holdMsat, won.poolMsat], [CANCELLED, '98000', '96000'], `${name}: the winner's hold or the pool is off`);
+    }
+  } finally { await a.close(); await b.close(); }
+});
+
 // A DAEMON RESTARTED INSIDE THE WINDOW STILL ACTS AFTER IT (M3.3-33).
 //
 // The finality watch lives in memory and is started by a close. With the

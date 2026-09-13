@@ -140,6 +140,7 @@
     <div class="owed" id="blwp-owed"></div>
     <div class="spent" id="blwp-spent"></div>
     <div class="spent" id="blwp-donation"></div>
+    <div class="spent" id="blwp-settled"></div>
     <div class="spent" id="blwp-budget"></div>
     <input id="blwp-nwc" type="password" autocomplete="off" spellcheck="false"
            placeholder="nostr+walletconnect://…">
@@ -818,6 +819,29 @@
       return paintWallet();
     }
 
+    // WHERE THIS SEAT'S STAKE WENT (M3.2 6e). Measured before: after a round
+    // settled the panel still said HELD - the quote is asked once and never
+    // again - and nothing on the page said what the pool took. Every settlement
+    // seat is asked, lightly, until the hold has left HELD; the answer is the
+    // seats' own (`settlementBy`), and the line is the client's.
+    let settlementAsking = false;
+    async function askTheSettlement() {
+      const c = theClient();
+      if (settlementAsking || !c || !c.seatEntry || !c.where || !c.where.entryId) return;
+      if (!window.BLWP_ROUND || !BLWPCLIENT.roundPays(window.BLWP_ROUND) || BLWPCLIENT.roundLocks(window.BLWP_ROUND)) return;
+      if (!window.BLWP_STAKE || !window.BLWP_STAKE.seatKeys) return;
+      const was = window.BLWP_SETTLEMENT;
+      if (was && ['SETTLED', 'CANCELLED', 'EXPIRED'].includes(was.hold)) return;
+      settlementAsking = true;
+      try {
+        window.BLWP_SETTLEMENT = await BLWPCLIENT.settlementBy({
+          entryId: c.where.entryId, seats: window.BLWP_STAKE.seatKeys, nodes: window.BLWP_STAKE.nodes,
+        });
+      } catch (e) { console.error('[blwp] settlement: ' + e.message); }
+      settlementAsking = false;
+      paintWallet();
+    }
+
     function paintWallet() {
       const el = document.getElementById('blwp-wallet');
       if (!el || !wallet || typeof BLWPCLIENT === 'undefined') return;
@@ -830,6 +854,9 @@
       // client's line off the client's state - which on a reload is the tab's
       // notes - painted before the lock branch, so a lock round shows it too.
       document.getElementById('blwp-donation').textContent = BLWPCLIENT.donationPaidLine(window.BLWP_DONATION_PAID);
+      // AND WHERE THE STAKE WENT once the round settled (M3.2 6e): the seats' own
+      // hold state, the hold's amount and the round's pool - read, not computed.
+      document.getElementById('blwp-settled').textContent = BLWPCLIENT.settledLine(window.BLWP_SETTLEMENT);
       // A LOCK ROUND'S STAKE GOES INTO ITS LOCK (W1b), from the deposit on the
       // loading screen: the panel says so, then where the lock is and when it
       // comes back - and never offers a hold invoice. Keyed on the ROUND, not on
@@ -1012,6 +1039,7 @@
     const payButton = document.getElementById('blwp-pay');
     if (payButton) payButton.addEventListener('click', payTheStake);
     setInterval(() => { askWhatIsOwed(); askTheBudget(); paintWallet(); }, 1000);
+    setInterval(askTheSettlement, 5000);
     probeNodes();
     setInterval(probeNodes, 2000);
     paintPlayers();

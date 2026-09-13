@@ -97,7 +97,7 @@ export const say = (port, message) => new Promise((resolve, reject) => {
 export const secretScalar = () => { let p = rand(32); while (scalarFrom32(p) >= FIELD) p = rand(32); return p; };
 
 /** One player's stake dealt at `needed` to every seat, seated, paid and played on `daemons`. */
-export async function seatAndPlay(daemons, c, rid, who, needed, { direct = false } = {}) {
+export async function seatAndPlay(daemons, c, rid, who, needed, { direct = false, donationMsat = 0n } = {}) {
   const session = ed25519.utils.randomSecretKey();
   const preimage = secretScalar();
   const e = rand(32);
@@ -110,7 +110,7 @@ export async function seatAndPlay(daemons, c, rid, who, needed, { direct = false
   assert.equal(dealt.ok, true, dealt.why);
   const entry = {
     roundId: rid, playerPubkey: who.key, sessionPubkey: ed25519.getPublicKey(session),
-    stakeCommitment: sha256(preimage), stakeMsat: STAKE, feeMsat: entryFeeMsat(STAKE), donationMsat: 0n,
+    stakeCommitment: sha256(preimage), stakeMsat: STAKE, feeMsat: entryFeeMsat(STAKE), donationMsat,
     joinTick: 0, worldSecret: who.worldSecret, vssSharesRef: handoutId(dealt.handout), stakePoint: dealt.handout.commitments[0], feePreimage: new Uint8Array(32), stakeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, feeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, claimKeyAttestationRef: new Uint8Array(32),
   };
   const eid = entryId(entry);

@@ -278,7 +278,7 @@ const A = TEST_DONATION_ENDPOINTS[0];
 const B = TEST_DONATION_ENDPOINTS[1];
 
 /** Runs the page's own paintWallet for this seat and answers every element it painted. */
-function paintThePage({ round, entry, donationPaid }) {
+function paintThePage({ round, entry, donationPaid, settlement }) {
   const page = readFileSync(PAGE, 'utf8');
   const body = page.slice(page.indexOf('function paintWallet()'));
   const src = body.slice(0, body.indexOf('\n    }') + 6);
@@ -286,7 +286,7 @@ function paintThePage({ round, entry, donationPaid }) {
   const el = (id) => (made[id] = made[id] || { style: {}, textContent: '', placeholder: '', disabled: false });
   new Function('document', 'window', 'BLWPCLIENT', 'wallet', 'spent', 'owed', 'paying', 'walletWhy', 'budget',
     `${src}\n return paintWallet();`)(
-    { getElementById: el }, { BLWP_ROUND: round, BLWP_ENTRY: entry, BLWP_DONATION_PAID: donationPaid },
+    { getElementById: el }, { BLWP_ROUND: round, BLWP_ENTRY: entry, BLWP_DONATION_PAID: donationPaid, BLWP_SETTLEMENT: settlement },
     SHIPPED, { connected: false }, SHIPPED.spendLog(), null, false, '', null);
   return made;
 }
@@ -452,6 +452,35 @@ test('the running total survives a reload and counts a donation share as a donat
     assert.equal(spentLine(only), '1334 msat over 1 donation share in 1 round');
     console.log(`  reload: "${spentLine(load2)}" (was "nothing paid this session"); wallet asked ${second.asked.length}`);
   } finally { await endpoints.close(); await wallet.close(); }
+});
+
+test('after settlement the page shows where the stake went and the round\'s pool, as the seats say them', async () => {
+  // THE SEATS' OWN ANSWERS, as /settlement serves them after a 2% donor lost:
+  // the hold settled, its amount, and custody's holdSettlement pool.
+  const seatKeys = [b32(0x71), b32(0x72)];
+  const answers = (over = {}) => async (url) => {
+    const u = new URL(url);
+    const i = u.port === '1' ? 0 : 1;
+    if (u.pathname === '/identity') return new Response(seatKeys[i], { status: 200 });
+    return new Response(JSON.stringify({ entry: 'ee'.repeat(32), hold: 'SETTLED', holdMsat: '96000', poolMsat: '96000',
+      finality: 'FINAL', windowClosesAtMs: null, refundHeight: null, ...(over[i] || {}) }), { status: 200 });
+  };
+  const nodes = ['http://127.0.0.1:1', 'http://127.0.0.1:2'];
+  const settled = await SHIPPED.settlementBy({ entryId: 'ee'.repeat(32), seats: seatKeys, nodes, fetcher: answers() });
+  assert.deepEqual([settled.hold, settled.holdMsat, settled.poolMsat, settled.finality], ['SETTLED', 96000n, 96000n, 'FINAL']);
+  const made = paintThePage({ round: contractFor([b32(1), b32(2)]), entry: entryOf(2000n), donationPaid: undefined, settlement: settled });
+  assert.equal(made['blwp-settled'].textContent, 'Settled: this seat\'s 96000 msat stake went into the pool · the round\'s pool 96000 msat');
+
+  // SEATS THAT DISAGREE ON THE POOL SHOW NO POOL - the page never picks one.
+  const split = await SHIPPED.settlementBy({ entryId: 'ee'.repeat(32), seats: seatKeys, nodes, fetcher: answers({ 1: { poolMsat: '98000' } }) });
+  assert.equal(split.poolMsat, null);
+  assert.equal(SHIPPED.settledLine(split), 'Settled: this seat\'s 96000 msat stake went into the pool');
+  // AND BEFORE SETTLEMENT: held, with the result's standing; nothing before anyone answered.
+  const held = await SHIPPED.settlementBy({ entryId: 'ee'.repeat(32), seats: seatKeys, nodes,
+    fetcher: answers({ 0: { hold: 'HELD', poolMsat: null, finality: 'PROVISIONALLY_FINAL' }, 1: { hold: 'HELD', poolMsat: null, finality: 'PROVISIONALLY_FINAL' } }) });
+  assert.equal(SHIPPED.settledLine(held), 'Settlement: this seat\'s 96000 msat stake is held, the result PROVISIONALLY_FINAL');
+  assert.equal(SHIPPED.settledLine(undefined), '');
+  console.log(`  after settlement: "${made['blwp-settled'].textContent}"`);
 });
 
 test('a tab that cannot keep the record does not ask the wallet at all', async () => {

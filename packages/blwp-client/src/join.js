@@ -436,9 +436,18 @@ export async function settlementBy({ entryId, seats, nodes, fetcher = fetch } = 
   const states = all.map((a) => a.finality);
   const ends = all.map((a) => a.windowClosesAtMs).filter((v) => v !== null && v !== undefined).map(Number);
   const refunds = all.map((a) => a.refundHeight).filter((v) => Number.isInteger(v));
+  // THE HOLD'S AMOUNT AND THE ROUND'S POOL (M3.2 6e), as the seats say them:
+  // a number only when every seat that answered says the same one.
+  const agreed = (field) => {
+    const said = all.map((a) => a[field]);
+    if (!said.length || said.some((v) => v === null || v === undefined)) return null;
+    return new Set(said.map(String)).size === 1 ? BigInt(said[0]) : null;
+  };
   return {
     of: want.size,
     answered: answered.size,
+    holdMsat: agreed('holdMsat'),
+    poolMsat: agreed('poolMsat'),
     hold: !all.length ? null : (holds.size === 1 ? all[0].hold : 'HELD'),
     finality: states.includes('SUSPENDED') ? 'SUSPENDED'
       : (all.length && states.every((f) => f === 'FINAL')) ? 'FINAL'
@@ -447,6 +456,23 @@ export async function settlementBy({ entryId, seats, nodes, fetcher = fetch } = 
     refundHeight: refunds.length ? Math.min(...refunds) : null,
     per,
   };
+}
+
+/**
+ * WHERE THIS SEAT'S STAKE WENT, AS ONE LINE (M3.2 6e), off `settlementBy` - the
+ * seats' own words and numbers, none worked out here. Measured before on the
+ * daily page: after a round settled the panel still read "HELD" (the quote was
+ * never asked again) and nothing anywhere showed the pool.
+ */
+export function settledLine(s) {
+  if (!s || !s.answered) return '';
+  const held = s.holdMsat !== null && s.holdMsat !== undefined ? `${s.holdMsat} msat ` : '';
+  const pool = s.poolMsat !== null && s.poolMsat !== undefined ? ` · the round's pool ${s.poolMsat} msat` : '';
+  if (s.hold === 'SETTLED') return `Settled: this seat's ${held}stake went into the pool${pool}`;
+  if (s.hold === 'CANCELLED') return `Returned: this seat's ${held}stake was cancelled back to the wallet${pool}`;
+  if (s.hold === 'EXPIRED') return `Expired: this seat's ${held}stake came back to the wallet when its hold ran out`;
+  if (s.hold === 'HELD') return `Settlement: this seat's ${held}stake is held${s.finality ? `, the result ${s.finality}` : ', no result yet'}`;
+  return '';
 }
 
 /**
