@@ -454,6 +454,17 @@
       // carried its own could carry its own committee next - and the rule sits
       // where `node --test` can drive it.
       const pays = BLWPCLIENT.roundPays(named.round);
+      // THE PLAYER'S DONATION (M3.2 6e, §22A): asked here in the browser's own
+      // prompt, like the name, and only for a round that asks a stake. Default 0
+      // - pressing nothing or cancelling donates nothing - and above 5% it asks a
+      // second time. Kept per round in this tab, so a reload over a kept lock
+      // writes the same amount. The rule is `chooseDonation`, where node --test
+      // drives it; this page only asks and passes the answer on.
+      const donation = pays
+        ? BLWPCLIENT.chooseDonation({ roundIdHex: named.roundIdHex, round: named.round,
+          ask: (m, d) => window.prompt(m, d), confirm: (m) => window.confirm(m), storage: window.sessionStorage })
+        : { bps: 0, donationMsat: 0n };
+      window.BLWP_DONATION = { bps: donation.bps, donationMsat: String(donation.donationMsat), kept: !!donation.kept };
       let stake = null;
       let claimKey = null;
       let stakeLock = null;
@@ -554,6 +565,7 @@
             const made = await BLWPCLIENT.lockStake({
               round: named.round, roundId: BLWPCLIENT.fromHex(named.roundIdHex), invite: named.federation,
               seed, stake, claimKey, playerPubkey: player.pubkey, LockClient: wasm.LockClient,
+              donationMsat: donation.donationMsat,
               storage: window.sessionStorage,
               onStep: (step) => {
                 if (stageEl) stageEl.textContent = 'Stake lock: ' + step + ' …';
@@ -611,6 +623,7 @@
         Object.assign({}, named.round, { id: BLWPCLIENT.fromHex(named.roundIdHex) }), {
           seed, curve: window.BLWP_CURVE, playerPubkey: player.pubkey, random, ...(stake ? { stake } : {}),
           ...(claimKey ? { claimKey } : {}), ...(stakeLock ? { stakeLock } : {}),
+          donationMsat: donation.donationMsat,
         });
       window.BLWP_CHAIN = named.chain;
       window.BLWP_ADVERT = named.advert;

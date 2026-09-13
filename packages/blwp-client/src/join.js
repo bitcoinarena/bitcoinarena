@@ -27,7 +27,7 @@ import { FIELD, scalarFrom32 } from '../../protocol/src/shares.js';
 import { seedWordForEntry } from '../../protocol/src/seed.js';
 import { playerSecretFor, refundFingerprint } from '../../protocol/src/player-key.js';
 import { coreIsKnownGood } from '../../protocol/src/known-core.js';
-import { entryFeeMsat } from '../../protocol/src/fee.js';
+import { entryFeeMsat, feeMatchesEntry } from '../../protocol/src/fee.js';
 import { receiptsNeeded } from '../../protocol/src/threshold.js';
 import { readWithOneRetry } from './reread.js';
 import { decodeClaimKeyAttestation, claimKeyIsAttested } from '../../protocol/src/claim-key.js';
@@ -707,8 +707,20 @@ export function playerFor(round, { seed, curve } = {}) {
  * their world, and a node that had it could predict the round they are about
  * to drive.
  */
-export function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 0, stake, claimKey, stakeLock } = {}) {
+export function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 0, stake, claimKey, stakeLock,
+  donationMsat = 0n } = {}) {
   if (!round) throw new Error('there is no round to take a seat at');
+  // THE PLAYER'S OWN DONATION (M3.2 6e, §22A), chosen on the page
+  // (`chooseDonation`) and written here - never rewritten by anybody else. It
+  // must leave the fee inside the stake, by the seat's own rule, so the page
+  // never builds an entry a seat refuses. Before: this wrote 0n on every entry.
+  if (typeof donationMsat !== 'bigint' || donationMsat < 0n)
+    throw new Error('a donation is a BigInt millisatoshi amount, 0 or more');
+  {
+    const stakeMsat = BigInt(round.stakeMsat || 0n);
+    const fee = feeMatchesEntry({ stakeMsat, feeMsat: entryFeeMsat(stakeMsat), donationMsat });
+    if (!fee.ok) throw new Error(fee.why);
+  }
   // A PAYING ROUND ON AN UNKNOWN CORE IS REFUSED (§5): no override, no flag. A
   // free round risks nothing and is seated as before.
   if (roundPays(round)) { const core = coreIsKnownGood(round.simCoreHash); if (!core.ok) throw new Error(core.why); }
@@ -781,7 +793,7 @@ export function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 
     // A free round is 2% of nothing, which is nothing, so the same line is
     // right for both and there is no branch to get wrong.
     feeMsat: entryFeeMsat(BigInt(round.stakeMsat || 0n)),
-    donationMsat: 0n,
+    donationMsat,
     joinTick,
   };
 }

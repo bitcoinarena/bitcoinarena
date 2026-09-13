@@ -88,10 +88,15 @@ export function lockLine(stakeLock) {
     + (Number.isInteger(f.expiration) ? ` · back to your key from federation block ${f.expiration} if nobody settles it` : '');
 }
 
-/** The net stake a lock holds: the stake less the node fee and the donation (§22A). */
-export const lockAmountMsat = (round) => {
+/**
+ * The net stake a lock holds: the stake less the node fee and the player's own
+ * donation (§22A) - the same net the seat's stake-lock check wants. It assumed
+ * 0 before the page could write a donation (M3.2 6e): a 2% donor's lock would
+ * have held 98000 msat where the seat wants 96000.
+ */
+export const lockAmountMsat = (round, donationMsat = 0n) => {
   const stakeMsat = BigInt(round.stakeMsat || 0n);
-  return netStakeMsat({ stakeMsat, feeMsat: entryFeeMsat(stakeMsat), donationMsat: 0n });
+  return netStakeMsat({ stakeMsat, feeMsat: entryFeeMsat(stakeMsat), donationMsat });
 };
 
 /**
@@ -103,7 +108,7 @@ export const lockAmountMsat = (round) => {
  * contract (`lockFromClient`), and the client that holds it.
  */
 export async function lockStake({ round, roundId, invite, seed, stake, claimKey, playerPubkey, LockClient,
-  storage, onDeposit = () => {}, onStep = () => {} } = {}) {
+  storage, donationMsat = 0n, onDeposit = () => {}, onStep = () => {} } = {}) {
   if (!round || !roundLocks(round)) throw new Error('this round names no federation, so its stake is not a lock');
   if (!invite)
     throw new Error('this round\'s stake goes into a federation lock, and the link names no federation '
@@ -116,7 +121,7 @@ export async function lockStake({ round, roundId, invite, seed, stake, claimKey,
   if (!(playerPubkey instanceof Uint8Array) || playerPubkey.length !== 32)
     throw new Error('a lock refunds to the player\'s key, and that is 32 bytes');
 
-  const amount = lockAmountMsat(round);
+  const amount = lockAmountMsat(round, donationMsat);
   const secret = lockSecretFor(seed, roundId);
   const store = storage ? lockStoreFor(storage, roundId, secret) : unkeptLockStore();
   const kept = JSON.parse(store.entries()).length;

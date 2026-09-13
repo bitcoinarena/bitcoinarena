@@ -58,11 +58,11 @@ async function door(stakeMsat = STAKE) {
   const r = await fetch(`http://127.0.0.1:${node.port}/round`,
     { method: 'POST', body: encodeRoundContract(contract) });
   assert.equal(r.status, 201);
-  const knock = async (stake, fee) => {
+  const knock = async (stake, fee, donation = 0n) => {
     const entry = {
       roundId: rid, playerPubkey: schnorr.getPublicKey(rand(32)),
       sessionPubkey: ed25519.getPublicKey(ed25519.utils.randomSecretKey()),
-      stakeCommitment: rand(32), stakeMsat: stake, feeMsat: fee, donationMsat: 0n,
+      stakeCommitment: rand(32), stakeMsat: stake, feeMsat: fee, donationMsat: donation,
       joinTick: 0, worldSecret: rand(32), vssSharesRef: new Uint8Array(32), stakePoint: new Uint8Array(33), feePreimage: new Uint8Array(32), stakeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, feeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, claimKeyAttestationRef: new Uint8Array(32),
     };
     const said = await fetch(`http://127.0.0.1:${node.port}/entry`,
@@ -212,4 +212,28 @@ test('the check is in enter, so nothing that seats an entry can skip it', async 
   assert.throws(() => r.enter(entry(STAKE, 0n)), /was charged 0 where 2% of 100000 is 2000/);
   assert.throws(() => r.enter(entry(0n, 0n)), /asks a stake of 100000 msat and that entry names 0/);
   console.log('  enter() refuses both directly, with no socket in the way');
+});
+
+/**
+ * THE PLAYER'S OWN DONATION, AT THE DOOR (M3.2 6e, commit 2). The page now
+ * writes it (`chooseDonation`, `entryFor`); the seat takes it out of the stake
+ * with the fee and keeps it on the entry the payout table reads - and refuses
+ * one msat more than the stake leaves once the fee is out.
+ */
+test('the door takes a player\'s own 2% donation out of the stake, and not a msat past it', async () => {
+  const d = await door();
+  try {
+    const donor = await d.knock(STAKE, OWED, 2000n);
+    assert.equal(donor.status, 201, donor.why);
+    const kept = d.node.round.entriesOf(d.rid).map((e) => (e.entry ? e.entry.donationMsat : e.donationMsat));
+    assert.deepEqual(kept.map(String), ['2000'], 'the seat keeps the donation the entry names');
+    const rule = feeMatchesEntry({ stakeMsat: STAKE, feeMsat: OWED, donationMsat: 2000n });
+    assert.equal(rule.net, 96000n, 'the net stake of a 2% donor');
+    const over = await d.knock(STAKE, OWED, STAKE - OWED + 1n);
+    assert.equal(over.status, 400);
+    assert.match(over.why, /cannot come to more than it/);
+    const all = await d.knock(STAKE, OWED, STAKE - OWED);
+    assert.equal(all.status, 201, 'the whole net donated is the player\'s own choice');
+    console.log(`  2% donor ${donor.status}, net ${rule.net}; one msat over the stake ${over.status}; all of the net ${all.status}`);
+  } finally { await d.close(); }
 });
