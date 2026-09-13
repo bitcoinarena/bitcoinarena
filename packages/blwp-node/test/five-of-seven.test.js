@@ -489,3 +489,73 @@ test('5 of 7, a hold, path 1, and seat 4 down from before the close through the 
     assert.ok(h.settled.some((n) => n > 0), `no seat settled the hold: ${facts.msatBack} back to the player - ${JSON.stringify(facts.signed)}`);
   } finally { await w.close(); }
 });
+
+// PATH 1 WITH SEATS 4-6 DOWN FROM BEFORE THE CLOSE THROUGH THE HOLD'S EXPIRY
+// (M3.3-34, measured before any change). The reading to test: the proof formed at
+// seat 4; seats 0-3 learned it by pulling and never gathered shares, so with 4-6
+// down they hold 4 of the 5 shares a settle needs and the hold expires back.
+
+/** What seat `i` actually holds for the entry: shares it can open (its own + kept envelopes), the proof, its decision, its custody row. */
+const seatHolds = (w, run, i) => {
+  const d = w.seats[i];
+  const nq = d.round.noQuorum(run.eid);
+  const mine = d.round.results(w.rid, run.eid).find((r) => toHex(r.nodePubkey) === toHex(d.round.pubkey));
+  return { seat: i, shares: 1 + d.round.heldShares(run.eid).length, proof: d.round.provenTwoFirstMarks(w.rid, run.eid),
+    decided: nq ? nq.outcome : null, signed: mine ? (() => { const p = decodePlayerResult(splitSignedResult(mine.bytes).body); return `${p.outcome}/${p.score}`; })() : null,
+    voided: !!d.round.entryVoid(run.eid), custody: (d.round.hold(run.eid) || {}).state || null };
+};
+
+test('5 of 7, a hold, path 1, seats 4-6 down from before the close through the hold\'s expiry - measured: where the stake goes', async () => {
+  const w = await sevenSeats('hold');
+  try {
+    const run = await seatWithTwoFirstMarks(w, 'hold');
+    const voidedFirst = await voidAtZeroToThree(w, run);
+    await w.back(4, 5, 6);
+    const said4 = [];
+    for (const m of run.other) said4.push(answer(await say(w.seats[4].port, m)));
+    await wait(2000);
+    const winner = await playWinner(w);
+    const beforeDown = [0, 1, 2, 3, 4, 5, 6].map((i) => seatHolds(w, run, i));
+    await w.down(4, 5, 6);                                                     // three seats: from before the close through the expiry
+    await Promise.all([0, 1, 2, 3].map((i) => say(w.seats[i].port, `close ${toHex(w.rid)}`)));
+    await wait(3 * WINDOW + 3000);
+    for (let t = Date.now(); Date.now() - t < 15000 && !holds(w, run.paymentHash).settled.some((n) => n); await wait(250));
+    await wait(1500);
+    const atClose = [0, 1, 2, 3].map((i) => seatHolds(w, run, i));
+    const h = holds(w, run.paymentHash);
+    const m = await w.seats[0].stakes();
+    const opened = await w.seats[0].preimages.open({ roundId: w.rid, entryId: run.eid, needed: NEEDED });
+    const facts = { voidedFirst, said4, beforeDown, atClose, hold: h, winnerHold: holds(w, toHex(sha256(winner.preimage))),
+      poolAt0: { ok: m.ok, why: m.ok === false ? String(m.why).slice(0, 90) : null, pool: m.table ? String(m.table.pool) : null,
+        owed: m.owed ? (m.owed.ok ? m.owed.state : String(m.owed.why).slice(0, 80)) : null },
+      seat0OpensAfter: opened.ok ? `OPENED with ${opened.held}` : String(opened.why).slice(0, 160),
+      msatBack: h.settled.some((n) => n) ? '0' : h.cancelled.some((n) => n) ? String(NET) : `${NET} at the hold's expiry`,
+      msatToPool: h.settled.some((n) => n) ? String(NET) : '0' };
+    console.log('  FACTS (5 of 7, hold, path 1, seats 4-6 down through the expiry):', JSON.stringify(facts));
+    assert.equal(voidedFirst, 4, 'seats 0-3 did not all record ENTRY_VOID: not the case the test names');
+    assert.deepEqual(h.cancelled, Array(7).fill(0), 'the two-first-marks hold was cancelled back to the player');
+    assert.ok(h.settled.some((n) => n > 0), `no seat settled the hold: ${facts.msatBack} back to the player`);
+  } finally { await w.close(); }
+});
+
+test('5 of 7, a stake lock, path 1, seats 4-6 down from before the close through the lock\'s expiry - measured: no refund forms, the lock held', async () => {
+  const w = await sevenSeats('lock');
+  try {
+    const run = await seatWithTwoFirstMarks(w, 'lock');
+    const voidedFirst = await voidAtZeroToThree(w, run);
+    await w.back(4, 5, 6);
+    const said4 = [];
+    for (const m of run.other) said4.push(answer(await say(w.seats[4].port, m)));
+    await wait(2000);
+    await w.down(4, 5, 6);
+    const now = await refundNow(w, run);
+    const closed = await lockAfterClose(w, run);
+    const facts = { voidedFirst, said4, now, closed, seats: [0, 1, 2, 3].map((i) => seatHolds(w, run, i)),
+      msatBackByCommittee: now.kept || closed.kept ? String(NET) : '0', lockMsat: closed.lockHeld ? String(NET) : '0' };
+    console.log('  FACTS (5 of 7, lock, path 1, seats 4-6 down through the expiry):', JSON.stringify(facts));
+    assert.equal(voidedFirst, 4, 'seats 0-3 did not all record ENTRY_VOID: not the case the test names');
+    assert.ok(!now.doors.some((s) => s >= 200 && s < 300) && !closed.doors.some((s) => s >= 200 && s < 300), 'a refund door answered 2xx');
+    assert.equal(now.kept + closed.kept, 0, 'a seat keeps a refund of the lock');
+    assert.equal(closed.lockHeld, true);
+  } finally { await w.close(); }
+});
