@@ -213,5 +213,22 @@ test('two first marks on a hold, and seat B down from before the close through t
     assert.equal(facts.hold.settledAtAB[0], 1, `A did not settle the two-first-marks hold: it expires back to the player - ${JSON.stringify(facts.a)}`);
     assert.equal(facts.hold.custodyRows[0], 'SETTLED', 'A\'s custody row is not SETTLED');
     assert.equal(facts.a.noQuorum, 'FORFEIT', `A did not decide FORFEIT with B down: ${JSON.stringify(facts.a)}`);
+
+    // THE TWO RESIDUALS (does either hand the stake back?): B comes back, with
+    // its custody row still HELD and A's settled stake waiting on B's payout
+    // signature. Measured: what B decides, what it tells its Lightning to do with
+    // the two-first-marks hold, and what A's payout is then.
+    await w.upB();
+    for (let t = Date.now(); Date.now() - t < 15000 && !w.b.round.noQuorum(run.eid); await wait(200));
+    await wait(3000);
+    const nqB = w.b.round.noQuorum(run.eid);
+    const back = {
+      b: { noQuorum: nqB ? nqB.outcome : null, results: w.b.round.results(w.rid, run.eid).length, custodyRow: rowOf(w.b) },
+      hold: { settledAtAB: count('settled', run.paymentHash), cancelledAtAB: count('cancelled', run.paymentHash) },
+      owedAtA: await w.a.stakes().then((x) => (x.owed ? (x.owed.ok ? x.owed.state : String(x.owed.why).slice(0, 80)) : null)),
+    };
+    console.log('  FACTS (B back after A settled):', JSON.stringify(back));
+    assert.deepEqual(back.hold.cancelledAtAB, [0, 0], 'a seat cancelled the two-first-marks hold back to the player once B was back');
+    assert.notEqual(back.b.noQuorum, 'VOID', 'B came back and voided the entry');
   } finally { await w.close(); }
 });
