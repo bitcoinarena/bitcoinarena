@@ -284,6 +284,25 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     port: lightning, preimageFor: preimageFor || fromTheCommittee,
   });
 
+  // TWO FIRST MARKS PROVEN HERE (§13B; M3.3-34, a seat that stays down): ask
+  // the other seats for their shares NOW, while they are up, and keep the
+  // envelopes (preimages.open) - so a seat that goes down later and stays down
+  // past the hold's expiry cannot hand the stake back. Measured before: A held
+  // the proof, B went down before the close, "1 of 2 shares" - the hold stayed
+  // in flight to expire back to the player. `pull`: this seat learned of the
+  // pair from a refused forward, and fetches the proof first.
+  const gathering = new Set();
+  function gatherOnProof(rid, eid, { pull = false } = {}) {
+    const key = toHex(eid);
+    if (!custody.reaches || !round.hold(eid) || gathering.has(key)) return;
+    gathering.add(key);
+    (async () => {
+      if (pull && !round.provenTwoFirstMarks(rid, eid)) await verifier.pullFirstMarkProof(rid, eid);
+      if (!round.provenTwoFirstMarks(rid, eid)) return;
+      await fromTheCommittee(eid, null, rid);
+    })().catch((e) => console.error(`[shares] ${e.message}`)).finally(() => gathering.delete(key));
+  }
+
   // WHAT `funded` MAY KNOW OF THIS NODE (M3.3-31): whether it holds a round, and
   // whether it reaches Lightning - the launcher's rule funds an entry only into
   // a paying round this node holds and can hold the stake of.
@@ -416,6 +435,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (held && answer !== 'FORFEIT') round.putFirstMarkOffer({ entryId: c.entryId, peer: at, answer });
     }
     firstMarkForwards.set(toHex(c.entryId), said);
+    // A PEER REFUSED THIS FIRST MARK: it may hold another one - pull its proof,
+    // and on two first marks gather the shares while the seats are up.
+    if (said.some((s) => s.answer === 'refused' || s.answer === 'FORFEIT')) gatherOnProof(c.roundId, c.entryId, { pull: true });
     return said;
   }
 
@@ -1517,7 +1539,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // deadline passed - shown by the player's own signed mark past the line,
         // or by this seat's round being closed - is refused and recorded
         // ENTRY_VOID here. A claim of it this seat cannot check is refused.
-        if (!round.holdsMark(checkpointId(c)) && secondFirstMark(c, bytes)) return answer(409, { why: TWO_FIRST_MARKS });
+        if (!round.holdsMark(checkpointId(c)) && secondFirstMark(c, bytes)) {
+          gatherOnProof(c.roundId, c.entryId);
+          return answer(409, { why: TWO_FIRST_MARKS });
+        }
         if (!round.holdsMark(checkpointId(c))) {
           const late = lateEvidenceHere(c, got.entryVoid, got.receipt ? fromHex(String(got.receipt)) : null);
           if (late) {
@@ -1532,6 +1557,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         try { receipt = round.checkpoint(bytes); }
         catch (e) {
           if (!/^FORFEIT/.test(e.message) && !/the round is closed/.test(e.message)) round.putRefusedFirstMark({ bytes, why: e.message });
+          gatherOnProof(c.roundId, c.entryId);                 // the refusal may have made the pair here
           return answer(409, /^FORFEIT/.test(e.message) ? { forfeit: true, why: e.message } : { why: e.message });
         }
         if (got.receipt) { try { round.takeReceipt(fromHex(String(got.receipt))); } catch { /* not this mark's */ } }
@@ -2032,9 +2058,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const asker = Buffer.from(url.searchParams.get('seat') || '', 'hex');
         if (rid.length !== 32 || eid.length !== 32)
           return text(res, 400, 'a share is asked for by round and entry');
-        const said = await preimages.answer({
-          roundId: new Uint8Array(rid), entryId: new Uint8Array(eid), asker: new Uint8Array(asker),
-        });
+        const ask = { roundId: new Uint8Array(rid), entryId: new Uint8Array(eid), asker: new Uint8Array(asker) };
+        let said = await preimages.answer(ask);
+        // A PROOF OF TWO FIRST MARKS THIS SEAT HAS NOT PULLED YET (M3.3-34): the
+        // asker's seats may hold it - pulled, checked here and kept, never taken
+        // on the asker's word; then asked of this seat's own record again.
+        if (!said.ok && !round.results(ask.roundId, ask.entryId).length
+          && await verifier.pullFirstMarkProof(ask.roundId, ask.entryId)) said = await preimages.answer(ask);
         if (!said.ok) return text(res, 409, said.why);
         res.writeHead(200, {
           'content-type': 'application/octet-stream',
@@ -2715,18 +2745,24 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // deadline passed - this seat's own evidence first, then the other
         // seats' - is ENTRY_VOID here, not a run taken late. A player cannot
         // keep a run by catching a down seat up after seeing it (§13C).
-        if (firstMark && !round.holdsMark(checkpointId(firstMark.c)) && secondFirstMark(firstMark.c, firstMark.bytes))
+        if (firstMark && !round.holdsMark(checkpointId(firstMark.c)) && secondFirstMark(firstMark.c, firstMark.bytes)) {
+          gatherOnProof(firstMark.c.roundId, firstMark.c.entryId);
           return sock.send('error FORFEIT: ' + TWO_FIRST_MARKS);
+        }
         if (firstMark && !round.holdsMark(checkpointId(firstMark.c))) {
           const own = lateEvidenceHere(firstMark.c, null);
           const found = own ? { late: own, receipts: [] } : await lateByPeers(firstMark.c, firstMark.bytes);
-          if (found && found.twoFirst) return sock.send('error FORFEIT: ' + TWO_FIRST_MARKS);
+          if (found && found.twoFirst) {
+            gatherOnProof(firstMark.c.roundId, firstMark.c.entryId);
+            return sock.send('error FORFEIT: ' + TWO_FIRST_MARKS);
+          }
           if (found) {
             const v = voidHere(firstMark.c, firstMark.bytes, found.late, found.receipts);
             if (v) return sock.send('error ENTRY_VOID: ' + v.why);
           }
         }
         const handled = handle(data, isBinary);
+        if (firstMark) Promise.resolve(handled).finally(() => gatherOnProof(firstMark.c.roundId, firstMark.c.entryId));
         // A FIRST MARK THIS SEAT TOOK OR REFUSED GOES ON TO THE OTHER SEATS, after
         // the player has its answer: the player is never kept waiting on a peer,
         // and a peer that is down is named in the forward's record. A LATER mark

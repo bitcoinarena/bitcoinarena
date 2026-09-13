@@ -1012,6 +1012,40 @@ export class Round {
   }
 
   /**
+   * DOES THIS SEAT HOLD THE PROOF OF TWO FIRST MARKS? (§13B; M3.3-34) Two
+   * different marks of this entry, both chaining to nothing, both signed by
+   * its session key - checked here, synchronously, from this seat's own store.
+   * That pair forfeits the entry with no quorum, no replay and no window.
+   */
+  provenTwoFirstMarks(roundIdBytes, entryIdBytes) {
+    const pairs = this.equivocation(roundIdBytes, entryIdBytes).map((f) => [f.stored, f.offered]);
+    const voided = this.entryVoid(entryIdBytes);
+    const late = this.startForfeit(entryIdBytes);
+    if (voided && late) pairs.push([voided.firstMark, late.mark]);
+    for (const [a, b] of pairs) {
+      try {
+        if (same(a, b)) continue;
+        const ca = this.playerSigned(a);
+        const cb = this.playerSigned(b);
+        if (same(ca.entryId, entryIdBytes) && same(cb.entryId, entryIdBytes)
+          && same(ca.previousHash, NO_PREVIOUS) && same(cb.previousHash, NO_PREVIOUS)) return true;
+      } catch { /* not the player's two first marks */ }
+    }
+    return false;
+  }
+
+  /** Another seat's sealed answer with its share of an entry's preimage, kept as it came. */
+  putHeldShare({ entryId, seat, bytes }) {
+    this.db.prepare('INSERT OR IGNORE INTO held_shares (entry_id, seat, answer, seen_ms) VALUES (?, ?, ?, ?)')
+      .run(entryId, seat, bytes, this.now());
+  }
+
+  heldShares(entryIdBytes) {
+    return this.db.prepare('SELECT answer FROM held_shares WHERE entry_id = ? ORDER BY seat').all(entryIdBytes)
+      .map((r) => new Uint8Array(r.answer));
+  }
+
+  /**
    * The entry contract, as the player signed it.
    *
    * The session key is in it, and 13B's proof cannot be checked without one -

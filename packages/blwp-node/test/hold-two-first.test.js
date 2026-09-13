@@ -167,3 +167,51 @@ test('two first marks on a Lightning hold, beside a winner: FORFEIT at both seat
     assert.ok(facts.winner.cancelledAtAB.some((n) => n > 0), 'the winner\'s hold was not cancelled back to it');
   } finally { await w.close(); }
 });
+
+// A SEAT THAT STAYS DOWN (M3.3-34, the hole named after path 3): the same two
+// first marks, the winner beside - and seat B goes down before the close and
+// stays down through the hold's expiry. Ruled: the down seat must not return the
+// stake; two first marks is FORFEIT, the hold settled into the pool, never left
+// to expire back to the player. (The fake port has no clock: a hold neither
+// settled nor cancelled here is one lnd hands back to the player at its expiry.)
+test('two first marks on a hold, and seat B down from before the close through the hold\'s expiry: the stake is settled into the pool, never left to expire back to the player', async () => {
+  const w = await twoSeatsOnHolds();
+  try {
+    const run = await seatWithTwoFirstMarks(w);
+    await w.downB();
+    for (const m of run.first) await say(w.a.port, m);                       // on time, to A only (B down)
+    await w.upB();
+    for (const m of run.other) await say(w.b.port, m);                       // a different on-time first mark, to B
+    await wait(1000);
+    const winner = await seatAndPlay([w.a, w.b], w.c, w.rid, WINNER, 2);
+    const winnerHash = toHex(sha256(winner.preimage));
+    const before = { proof: [w.a, w.b].map((d) => d.round.equivocation(w.rid, run.eid).length) };
+    await w.downB();                                                          // B unreachable from here through the expiry
+    assert.equal(await say(w.a.port, `close ${toHex(w.rid)}`), 'closed');
+    await wait(3 * WINDOW + 3000);                                            // three result windows
+    for (let t = Date.now(); Date.now() - t < 10000
+      && !w.ports[0].settled.some((s) => s.paymentHash === run.paymentHash); await wait(200));
+    const count = (list, hash) => w.ports.map((p) => p[list].filter((s) => s.paymentHash === hash).length);
+    const nq = w.a.round.noQuorum(run.eid);
+    const opened = await w.a.preimages.open({ roundId: w.rid, entryId: run.eid, needed: 2 });
+    const m = await w.a.stakes();
+    const row = ((m.table && m.table.table) || []).find((r) => toHex(r.pubkey) === toHex(WINNER.key));
+    const rowOf = (d) => { const h = d.round.hold(run.eid); return h ? h.state : null; };
+    const facts = {
+      before,
+      a: { noQuorum: nq ? nq.outcome : null, finality: resultFinality(w.a.round, w.rid, run.eid).state,
+        results: w.a.round.results(w.rid, run.eid).length, proof: w.a.round.equivocation(w.rid, run.eid).length,
+        opensPreimage: opened.ok ? 'OPENED' : String(opened.why).slice(0, 120) },
+      hold: { settledAtAB: count('settled', run.paymentHash), cancelledAtAB: count('cancelled', run.paymentHash), custodyRows: [rowOf(w.a), rowOf(w.b)] },
+      winnerHold: { settledAtAB: count('settled', winnerHash), cancelledAtAB: count('cancelled', winnerHash) },
+      tableAtA: { ok: m.ok, why: m.ok === false ? String(m.why).slice(0, 100) : null, pool: m.table ? String(m.table.pool) : null,
+        winnerMsat: row ? String(row.amountMsat) : null, owed: m.owed ? (m.owed.ok ? m.owed.state : String(m.owed.why).slice(0, 80)) : null },
+    };
+    console.log('  FACTS (two first marks on a hold, B down through the expiry):', JSON.stringify(facts));
+    assert.equal(facts.a.results, 0, 'A signed a result for a run no quorum ever carried');
+    assert.deepEqual(facts.hold.cancelledAtAB, [0, 0], 'the two-first-marks hold was cancelled back to the player');
+    assert.equal(facts.hold.settledAtAB[0], 1, `A did not settle the two-first-marks hold: it expires back to the player - ${JSON.stringify(facts.a)}`);
+    assert.equal(facts.hold.custodyRows[0], 'SETTLED', 'A\'s custody row is not SETTLED');
+    assert.equal(facts.a.noQuorum, 'FORFEIT', `A did not decide FORFEIT with B down: ${JSON.stringify(facts.a)}`);
+  } finally { await w.close(); }
+});

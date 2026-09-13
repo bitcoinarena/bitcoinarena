@@ -138,6 +138,17 @@ export function openStore(path = ':memory:') {
       PRIMARY KEY (entry_id, first_a, first_b)
     );
 
+    -- ANOTHER SEAT'S SHARE OF A STAKE'S PREIMAGE, AS IT SEALED IT TO THIS SEAT
+    -- (M3.3-34): the envelope, never the opened share - so a seat that released
+    -- its share and then went down cannot hand the stake back by staying down.
+    CREATE TABLE IF NOT EXISTS held_shares (
+      entry_id BLOB NOT NULL REFERENCES entries(entry_id),
+      seat     INTEGER NOT NULL,
+      answer   BLOB NOT NULL,
+      seen_ms  INTEGER NOT NULL,
+      PRIMARY KEY (entry_id, seat)
+    );
+
     -- A RECEIPT FOR A MARK THIS NODE HAS NEVER SEEN.
     --
     -- Dropped at the door until now, and that is the signal 13B built receipt

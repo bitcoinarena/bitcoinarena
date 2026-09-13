@@ -124,6 +124,14 @@ export class Preimages {
     // seats, so the hold could never settle and expired to the player.
     const nq = !held.length && typeof this.round.noQuorum === 'function' ? this.round.noQuorum(entryIdBytes) : null;
     if (nq && nq.outcome === 'FORFEIT') return { ok: true, outcome: 'FORFEIT', noQuorum: true };
+    // AND ON A PROOF THIS SEAT HOLDS ITSELF (M3.3-34, a seat that stays down):
+    // two different first marks signed by the entry's own session key - §13B's
+    // portable proof, which forfeits with no quorum, no replay and no window.
+    // Released while the seats are up, so a seat that goes down later cannot
+    // hand the stake back by staying down. Measured before: A held the proof,
+    // B went down, "1 of 2 shares" - the hold stayed in flight to expire back.
+    if (!held.length && typeof this.round.provenTwoFirstMarks === 'function'
+      && this.round.provenTwoFirstMarks(roundIdBytes, entryIdBytes)) return { ok: true, outcome: 'FORFEIT', proven: true };
     if (!held.length) return { ok: false, why: 'this node has replayed nothing for that run' };
 
     // FINAL, NOT MERELY AGREED (M3.3-32): the threshold makes a run
@@ -202,6 +210,23 @@ export class Preimages {
     const mine = await this.mine(entryId);
     if (mine.ok) bySeat.set(mine.share.seat, mine.share);
 
+    // THE ENVELOPES OTHER SEATS SEALED TO THIS ONE, KEPT (M3.3-34): opened here
+    // as they are opened from a peer, so a seat that released its share and then
+    // went down cannot hand the stake back by staying down.
+    const kept = typeof this.round.heldShares === 'function' ? this.round.heldShares(entryId) : [];
+    for (const raw of kept) {
+      if (bySeat.size >= needed) break;
+      try {
+        const back = decodeShareAnswer(raw);
+        if (bySeat.has(back.seat)) continue;
+        const opened = await openShare({
+          sealed: back.sealed, seat: back.seat, secret: this.round.identity.secret,
+          ephemeralPubkey: back.ephemeralPubkey, curve: this.curve,
+        });
+        if (opened.ok) bySeat.set(back.seat, { seat: back.seat, value: opened.share.value });
+      } catch { /* not an envelope this seat can open */ }
+    }
+
     let refused = 0;
     const why = [];
     for (const peer of this.peersOf(roundId)) {
@@ -211,13 +236,15 @@ export class Preimages {
           + `&seat=${toHex(this.round.pubkey)}`;
         const got = await this.fetch(url);
         if (!got.ok) { refused++; why.push(`${peer}: ${await got.text()}`); continue; }
-        const back = decodeShareAnswer(new Uint8Array(await got.arrayBuffer()));
+        const raw = new Uint8Array(await got.arrayBuffer());
+        const back = decodeShareAnswer(raw);
         const opened = await openShare({
           sealed: back.sealed, seat: back.seat, secret: this.round.identity.secret,
           ephemeralPubkey: back.ephemeralPubkey, curve: this.curve,
         });
         if (!opened.ok) { refused++; why.push(`${peer}: ${opened.why}`); continue; }
         bySeat.set(back.seat, { seat: back.seat, value: opened.share.value });
+        if (typeof this.round.putHeldShare === 'function') this.round.putHeldShare({ entryId, seat: back.seat, bytes: raw });
       } catch (e) { refused++; why.push(`${peer}: ${e.message}`); }
     }
 

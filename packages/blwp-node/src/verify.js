@@ -299,7 +299,9 @@ export class Verifier {
     const carried = this.carried.get(`${hex(roundIdBytes)}:${hex(entryId)}`);
     const down = this.#unreached(roundIdBytes, carried);
     const noMarkHere = !this.round.firstMarkHeld(roundIdBytes, entryId);
-    if (down && (noMarkHere ? !this.round.entryVoid(entryId)
+    // A PROOF OF TWO FIRST MARKS HELD HERE waits on nobody (§13B; M3.3-34, a
+    // seat that stays down): no transcript a down seat holds can unmake it.
+    if (down && !this.round.provenTwoFirstMarks(roundIdBytes, entryId) && (noMarkHere ? !this.round.entryVoid(entryId)
       : this.#mightGrow(roundIdBytes, entryId, down)))
       return { entryId, stored: false, waiting: true,
         why: `waiting on ${down} seat(s): ${(carried && carried.down.length ? carried.down.join('; ') : 'none of them answered').slice(0, 160)}`
@@ -395,7 +397,11 @@ export class Verifier {
   async #noQuorum(roundIdBytes, entryId, contract, down) {
     const had = this.round.noQuorum(entryId);
     if (had) return { entryId, stored: false, decided: had.outcome, why: had.why };
-    if (down) return null;
+    // A seat down stops the rule - unless this seat holds the proof of two first
+    // marks itself: that FORFEIT needs no quorum (§13B). Measured before: seat B
+    // down through the hold's expiry, A holding the proof decided nothing and
+    // the hold stayed in flight to expire back to the player.
+    if (down && !this.round.provenTwoFirstMarks(roundIdBytes, entryId)) return null;
     // AN OUTAGE-VOID, THEN THE PLAYER'S SECOND FIRST MARK (ruled 2026-09-12): the
     // Void stays as history and the entry is decided here like any two first
     // marks - FORFEIT after the window. A Void with no such proof stands.
@@ -459,6 +465,11 @@ export class Verifier {
    * any seat's /equivocation door, each pair checked here and never taken on
    * a peer's word.
    */
+  /** Pull the other seats' proof of two first marks and keep it here if it verifies (M3.3-34). */
+  async pullFirstMarkProof(roundIdBytes, entryId) {
+    return this.#equivocationProven(roundIdBytes, entryId);
+  }
+
   async #equivocationProven(roundIdBytes, entryId) {
     const found = this.round.entriesOf(roundIdBytes).find((e) => hex(e.entryId) === hex(entryId));
     if (!found) return false;
@@ -600,7 +611,11 @@ export class Verifier {
     // THE CHEAP ANSWER FIRST: still waiting on a seat that matters, no replay.
     const noMarkHere = !this.round.firstMarkHeld(roundIdBytes, entryIdBytes);
     const down = this.#unreached(roundIdBytes, carried);
-    if (down && (noMarkHere || this.#mightGrow(roundIdBytes, entryIdBytes, down)))
+    // ...and not for an entry this seat holds the proof of two first marks for
+    // (§13B; M3.3-34): measured, this wait kept seat A from deciding FORFEIT
+    // with B down through the hold's expiry, after #keep no longer waited.
+    if (down && !this.round.provenTwoFirstMarks(roundIdBytes, entryIdBytes)
+      && (noMarkHere || this.#mightGrow(roundIdBytes, entryIdBytes, down)))
       return { entryId: entryIdBytes, stored: false, waiting: true,
         why: `waiting on ${down} seat(s): ${(carried.down.length ? carried.down.join('; ') : 'none of them answered').slice(0, 160)}` };
     const options = { roundRandomness: beacon.hash };
