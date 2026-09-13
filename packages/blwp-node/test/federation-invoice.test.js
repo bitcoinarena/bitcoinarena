@@ -123,6 +123,54 @@ test('a paying round gets the federation\'s invoice for its net stake, and an en
   } finally { await node.close(); }
 });
 
+// ONE ARITHMETIC AT THIS DOOR TOO (M3.2 6e). The donation comes out of the stake,
+// so a 2% donor's hold is the stake less the fee and the donation - `netStakeMsat`,
+// which every other door reads. Measured before: this door asked the federation
+// for the stake less the fee only, whatever the player donates.
+test('a 2% donor\'s federation invoice is for the stake less the fee and the donation, and the donor\'s entry is seated and quoted on it', async () => {
+  const DONATION = STAKE * 2n / 100n;
+  const { fed, federation, lightning } = federationAndEndpoint();
+  const node = await serve(openStore(':memory:'), { port: 0, funded: () => true, ...READY, lightning, federation });
+  try {
+    const c = contractFor(node.round.pubkey);
+    const rid = await paying(node, c);
+    const r = await get(node.port, `/federation-invoice?round=${toHex(rid)}&donation=${DONATION}`);
+    const entry = {
+      roundId: rid, playerPubkey: b32(6), sessionPubkey: ed25519.getPublicKey(session),
+      stakeCommitment: fed.hash, stakeMsat: STAKE, feeMsat: entryFeeMsat(STAKE), donationMsat: DONATION,
+      joinTick: 0, worldSecret: b32(0x17), vssSharesRef: NO_SHARES, stakePoint: new Uint8Array(33), feePreimage: new Uint8Array(32), stakeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, feeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, claimKeyAttestationRef: new Uint8Array(32),
+    };
+    const seated = await fetch(`http://127.0.0.1:${node.port}/entry`, { method: 'POST', body: encodeEntryContract(entry) });
+    const seatedBody = await seated.text();
+    const quote = await get(node.port, `/invoice?entry=${toHex(entryId(entry))}`);
+    console.log('  FACTS (2% donor):', JSON.stringify({ asked: fed.asked.map(String), invoice: r.json && r.json.amountMsat,
+      entry: seated.status, quote: quote.status, quoted: quote.json ? quote.json.amountMsat : quote.body.trim().slice(0, 200) }));
+    assert.equal(r.status, 200, r.body);
+    assert.deepEqual(fed.asked, [NET - DONATION], 'the federation was not asked for the stake less the fee and the donation');
+    assert.equal(r.json.amountMsat, String(NET - DONATION));
+    assert.equal(seated.status, 201, seatedBody);
+    assert.equal(quote.status, 200, quote.body);
+    assert.equal(quote.json.paymentHash, toHex(fed.hash));
+    assert.equal(quote.json.amountMsat, String(NET - DONATION));
+  } finally { await node.close(); }
+});
+
+test('a donation this door cannot read, or one the stake cannot hold, gets no invoice and asks the federation nothing', async () => {
+  const { fed, federation, lightning } = federationAndEndpoint();
+  const node = await serve(openStore(':memory:'), { port: 0, funded: () => true, ...READY, lightning, federation });
+  try {
+    const rid = await paying(node, contractFor(node.round.pubkey));
+    for (const bad of ['-1', '1.5', 'abc', '0x10', String(NET + 1n)]) {
+      const r = await get(node.port, `/federation-invoice?round=${toHex(rid)}&donation=${encodeURIComponent(bad)}`);
+      assert.equal(r.status, 400, `donation ${bad}: ${r.status} ${r.body}`);
+    }
+    assert.deepEqual(fed.asked, [], 'the federation was asked for an invoice on a donation the door refused');
+    const none = await get(node.port, `/federation-invoice?round=${toHex(rid)}`);
+    assert.equal(none.status, 200, none.body);
+    assert.deepEqual(fed.asked, [NET], 'no donation named is a 0 donation');
+  } finally { await node.close(); }
+});
+
 test('a free round, and an invoice for any other amount, are refused', async () => {
   const skewed = federationAndEndpoint({ skewMsat: 1000n });
   const node = await serve(openStore(':memory:'), {

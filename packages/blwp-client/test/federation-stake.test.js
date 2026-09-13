@@ -57,6 +57,26 @@ test('an invoice for another amount is refused, and the next node is asked', asy
     /net stake is/);
 });
 
+// ONE ARITHMETIC (M3.2 6e): a donor's stake is the stake less the fee AND the
+// donation, and the entry it goes into names that donation - so the node is
+// asked for that amount and anything else is refused, the fee-only net included.
+test('a 2% donor asks for the stake less the fee and the donation, refuses the fee-only net, and its entry is that invoice', async () => {
+  const DONATION = round.stakeMsat * 2n / 100n;
+  const { fetcher, asked } = nodesAnswering({
+    'http://a': { status: 200, body: { paymentHash: HASH, amountMsat: String(NET), request: 'lnbcrt-fee-only' } },
+    'http://b': { status: 200, body: { paymentHash: 'bb'.repeat(32), amountMsat: String(NET - DONATION), request: 'lnbcrt-donor' } },
+  });
+  const stake = await federationStakeFor(round, { nodes: ['http://a', 'http://b'], fetcher, donationMsat: DONATION });
+  assert.equal(asked[0], `http://a/federation-invoice?round=${toHex(round.id)}&donation=${DONATION}`);
+  assert.equal(stake.request, 'lnbcrt-donor', 'the fee-only net was taken for a donor');
+  assert.equal(stake.amountMsat, NET - DONATION);
+  const entry = entryFor(round, { seed: new Uint8Array(32).fill(5), curve: feldmanGroup, random: (n) => new Uint8Array(n).fill(9), stake, donationMsat: DONATION });
+  assert.equal(toHex(entry.stakeCommitment), 'bb'.repeat(32));
+  assert.equal(entry.donationMsat, DONATION);
+  await assert.rejects(federationStakeFor(round, { nodes: ['http://a'], fetcher, donationMsat: DONATION }), /net stake is/);
+  await assert.rejects(federationStakeFor(round, { nodes: ['http://a'], fetcher, donationMsat: round.stakeMsat }), /cannot come to more than it/);
+});
+
 test('a free round, and nodes that make no federation invoice, give no stake', async () => {
   await assert.rejects(federationStakeFor({ ...round, stakeMsat: 0n }, { nodes: ['http://a'] }), /asks no stake/);
   const { fetcher } = nodesAnswering({ 'http://a': { status: 409, body: 'this node makes no federation invoices' } });

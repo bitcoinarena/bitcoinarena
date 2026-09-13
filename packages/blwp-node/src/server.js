@@ -71,7 +71,7 @@ import { ed25519 } from '@noble/curves/ed25519.js';
 import { Custody, NO_LIGHTNING, SETTLE, HELD } from './custody.js';
 import { resultFinality } from './finality.js';
 import { outageOutcome } from '../../protocol/src/entry-void.js';
-import { ENTRY_VOID } from '../../protocol/src/payout.js';
+import { ENTRY_VOID, netStakeMsat } from '../../protocol/src/payout.js';
 import { FINAL, PROVISIONALLY_FINAL, SUSPENDED } from '../../protocol/src/objection.js';
 import { transcriptBytesHash, SIGNED_POSTING_BYTES } from '../../protocol/src/posting.js';
 import { SIGNED_RERUN_BYTES } from '../../protocol/src/rerun.js';
@@ -1963,11 +1963,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
        * Invoice first (the owner 2026-09-11, decision 1): an LNv2 invoice's
        * secret belongs to its receiver - the federation, which holds it
        * threshold-wise - so the player cannot choose it; the player's entry
-       * commits to THIS invoice's hash instead. Asked for exactly the net
-       * stake with no donation, because `/entry` then takes the gateway's
-       * hold invoice up (lnd-port.js) and `invoiceMatchesEntry` refuses any
-       * other amount. The hash and the amount are read off the invoice, not
-       * taken from the federation's word.
+       * commits to THIS invoice's hash instead. Asked for exactly the entry's
+       * net stake - the stake less the fee and the donation the player names
+       * (`&donation=`, msat, none is 0) - because `/entry` then takes the
+       * gateway's hold invoice up (lnd-port.js) and `invoiceMatchesEntry`
+       * refuses any other amount. Measured before (M3.2 6e): the donation was
+       * left out, so a 2% donor was seated on a 980000 msat invoice and its
+       * quote refused it (the entry holds 960000). The hash and the amount
+       * are read off the invoice, not taken from the federation's word.
        */
       if (req.method === 'GET' && url.pathname === '/federation-invoice') {
         if (!federation || typeof federation.receive !== 'function')
@@ -1983,7 +1986,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (!relays.ok) return text(res, 409, `no stake invoice is made for that round: ${relays.why}`);
         if (typeof lightning.decode !== 'function')
           return text(res, 503, 'this node cannot read a Lightning invoice, so it cannot say what one commits to');
-        const amountMsat = contract.stakeMsat - entryFeeMsat(contract.stakeMsat);
+        const named = url.searchParams.get('donation');
+        if (named !== null && !/^[0-9]{1,20}$/.test(named))
+          return text(res, 400, 'a donation is named in whole millisatoshi, 0 or more');
+        let amountMsat;
+        try {
+          amountMsat = netStakeMsat({ stakeMsat: contract.stakeMsat, feeMsat: entryFeeMsat(contract.stakeMsat),
+            donationMsat: named === null ? 0n : BigInt(named) });
+        } catch (e) { return text(res, 400, e.message); }
         let made;
         let read;
         try {

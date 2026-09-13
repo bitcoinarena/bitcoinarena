@@ -61,6 +61,7 @@ import { discover } from './directory.js';
 import { readWithOneRetry } from './reread.js';
 import { NO_SHARES } from '../../protocol/src/handout.js';
 import { entryFeeMsat } from '../../protocol/src/fee.js';
+import { netStakeMsat } from '../../protocol/src/payout.js';
 // THE PLAYER'S DONATION (M3.2 6e): the split, the failure rule, the LNURL checks.
 import { donationSetMatchesRound, splitDonation, donationAfterFailures } from '../../protocol/src/donation.js';
 import { donationKeysForNetworkId } from '../../protocol/src/donation-keys.js';
@@ -78,19 +79,22 @@ import { donationPaidRecord, noteDonationShare } from './donation-pay.js';
  * on a round without one. So no P is chosen and no handout is dealt: a node
  * asks the federation for the round's invoice (`GET /federation-invoice`),
  * and the entry commits to that invoice's hash, with `NO_SHARES` as its
- * shares reference. The amount must be the round's net stake - the stake less
- * the 2% fee, no donation - or the committee's hold check refuses the entry.
+ * shares reference. The amount must be the entry's net stake - the stake less
+ * the 2% fee and the player's donation, `netStakeMsat` as at every other door -
+ * or the committee's hold check refuses the entry. Measured before (M3.2 6e):
+ * this asked for the stake less the fee only, so a 2% donor's entry was seated
+ * on a 980000 msat invoice it could never be quoted (it holds 960000).
  */
-export async function federationStakeFor(round, { nodes, fetcher = fetch } = {}) {
+export async function federationStakeFor(round, { nodes, fetcher = fetch, donationMsat = 0n } = {}) {
   const stakeMsat = BigInt((round && round.stakeMsat) || 0n);
   if (!(stakeMsat > 0n)) throw new Error('a round that asks no stake has nothing to invoice');
-  const want = stakeMsat - entryFeeMsat(stakeMsat);
+  const want = netStakeMsat({ stakeMsat, feeMsat: entryFeeMsat(stakeMsat), donationMsat });
   const id = toHex(round.id);
   const refused = [];
   for (const node of nodes || []) {
     const base = String(node).replace(/\/+$/, '');
     try {
-      const r = await readWithOneRetry(fetcher, `${base}/federation-invoice?round=${id}`);
+      const r = await readWithOneRetry(fetcher, `${base}/federation-invoice?round=${id}${donationMsat ? `&donation=${donationMsat}` : ''}`);
       const body = await r.text();
       if (!r.ok) { refused.push(`${base}: ${r.status} ${body.trim()}`); continue; }
       const said = JSON.parse(body);
