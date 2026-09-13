@@ -23,7 +23,7 @@ import { feldmanGroup, tweakPoint } from '../src/curve.js';
 import { assumeSeated } from './seating.js';
 import { lockPort } from './lock-fixture.js';
 import { paidPort, contractFor, say, wait, opts, rand, b32, secretScalar, STAKE, seatAndPlay, WINNER, LOSER,
-  RANDOMNESS, GENESIS_HASH, wordsAt } from './window-fixture.js';
+  RANDOMNESS, GENESIS_HASH, wordsAt, PLANTED_FIRST_MARK_DEADLINE } from './window-fixture.js';
 import { encodeRoundContract, roundId, encodeEntryContract, entryId } from '../../protocol/src/contracts.js';
 import { dealHandout, encodeHandout, handoutId } from '../../protocol/src/handout.js';
 import { FIELD, scalarFrom32 } from '../../protocol/src/shares.js';
@@ -37,9 +37,11 @@ import { init, step } from '../../core/src/sim.js';
 import { hash as stateHash } from '../../core/src/state.js';
 import { toHex, sha256 } from '../../protocol/src/hash.js';
 import { SIGNED_RECEIPT_BYTES } from '../../protocol/src/receipt.js';
+import { decodePlayerResult, splitSignedResult } from '../../protocol/src/result.js';
 
 const WINDOW = 800;
 const NEEDED = 5;
+const PAST = PLANTED_FIRST_MARK_DEADLINE + 100;          // past the round's start line
 const curve = { ...feldmanGroup, tweakPoint };
 const answer = (s) => (typeof s === 'string' ? (s.length > 30 && !s.startsWith('error') ? 'receipt' : s.slice(0, 90)) : 'receipt');
 
@@ -127,7 +129,21 @@ async function seatWithTwoFirstMarks(w, custody) {
       inputChainHash: batchId(b), previousHash: NO_PREVIOUS, sessionPubkey: entry.sessionPubkey };
     return [encodeInputBatch(b), sign(m)];
   };
-  return { eid, outpoint, paymentHash: toHex(sha256(preimage)), first: firstAt(60), other: firstAt(30) };
+  // THE CHAIN PAST THE START LINE (the outage-VOID orders): the first mark at 60,
+  // then a mark at PAST chaining to it - a seat holding that first mark short of
+  // its receipts, the seats it was offered to down, records ENTRY_VOID. And a LATE
+  // first mark at PAST, from nothing.
+  const hashAt = (tick) => {
+    const st = init(seedWordForEntry(entry, RANDOMNESS));
+    for (let t = 0; t < tick; t++) step(st, ...wordsAt(t));
+    return Uint8Array.from(stateHash(st).match(/../g).map((x) => parseInt(x, 16)));
+  };
+  const b1 = { roundId: w.rid, entryId: eid, previousHash: GENESIS_HASH, firstTick: 0, ticks: Array.from({ length: 60 }, (_, t) => wordsAt(t)), liquidations: [] };
+  const m1 = { roundId: w.rid, entryId: eid, tick: 60, stateHash: hashAt(60), inputChainHash: batchId(b1), previousHash: NO_PREVIOUS, sessionPubkey: entry.sessionPubkey };
+  const b2 = { roundId: w.rid, entryId: eid, previousHash: batchId(b1), firstTick: 60, ticks: Array.from({ length: PAST - 60 }, (_, t) => wordsAt(60 + t)), liquidations: [] };
+  const m2 = { roundId: w.rid, entryId: eid, tick: PAST, stateHash: hashAt(PAST), inputChainHash: batchId(b2), previousHash: checkpointId(m1), sessionPubkey: entry.sessionPubkey };
+  return { eid, outpoint, paymentHash: toHex(sha256(preimage)), first: firstAt(60), other: firstAt(30),
+    past: [encodeInputBatch(b2), sign(m2)], late: firstAt(PAST) };
 }
 
 /** Seats 4-6 down; the first mark to seat 0 (forwarded to 1-3); 4-6 back; a different one to seat 4 (forwarded to 5, 6). */
@@ -272,5 +288,204 @@ test('5 of 7, a stake lock: two first marks - FORFEIT at all seven, no seat sign
     assert.deepEqual(facts.doors, Array(7).fill(409), 'a seat signs the refund of the lock to the player');
     assert.deepEqual(facts.forfeitKept, Array(7).fill(0), 'a seat keeps a refund of the lock');
     assert.equal(facts.lockHeld, true);
+  } finally { await w.close(); }
+});
+
+// ---- THE OUTAGE-VOID ORDERS ON 5 OF 7 (ruled: two first marks is FORFEIT even
+// after a real outage made seats record ENTRY_VOID; on 5 of 7 one refusing seat
+// does not block a refund - five signatures form it). Measured, not read off 2 of 2.
+
+/** Seats 4-6 down; the first mark (60) and a mark past the start line to each of seats 0-3: a real outage, they record ENTRY_VOID. */
+async function voidAtZeroToThree(w, run) {
+  await w.down(4, 5, 6);
+  for (const i of [0, 1, 2, 3]) for (const m of [...run.first, ...run.past]) await say(w.seats[i].port, m);
+  for (let t = Date.now(); Date.now() - t < 10000 && [0, 1, 2, 3].some((i) => !w.seats[i].round.entryVoid(run.eid)); await wait(200));
+  return [0, 1, 2, 3].filter((i) => w.seats[i].round.entryVoid(run.eid)).length;
+}
+
+/**
+ * WHAT THE COMMITTEE WOULD DO WITH THE STAKE LOCK NOW, over the seats that are
+ * up: how many recorded the Void, how many hold both marks, how many would
+ * commit to the refund (POST /forfeit-commit, 200 = would sign), and every
+ * refund door (GET /forfeit, 200 = five signatures formed, a refund).
+ */
+async function refundNow(w, run) {
+  const q = `round=${toHex(w.rid)}&entry=${toHex(run.eid)}`;
+  const up = [...w.up].sort((a, b) => a - b);
+  const count = (f) => up.filter((i) => f(w.seats[i])).length;
+  const voids = count((d) => !!d.round.entryVoid(run.eid));
+  const both = count((d) => d.round.provenTwoFirstMarks(w.rid, run.eid));
+  const commits = [];
+  for (const i of up) commits.push((await fetch(`http://127.0.0.1:${w.seats[i].port}/forfeit-commit?${q}`, { method: 'POST' })).status);
+  const doors = [];
+  for (const i of up) doors.push((await fetch(`http://127.0.0.1:${w.seats[i].port}/forfeit?${q}`)).status);
+  return { up: up.length, voids, both, wouldSign: commits.filter((s) => s === 200).length, commits, doors,
+    voidsAfterDoors: count((d) => !!d.round.entryVoid(run.eid)), kept: count((d) => !!d.round.forfeit(run.eid)),
+    lockHeld: w.locks.locks.has(`${toHex(run.outpoint.txid)}:${run.outpoint.outIdx}`) };
+}
+const NET = STAKE - entryFeeMsat(STAKE);
+
+/** Each seat's own record of the run: the result it signed (outcome/score), its finality, its no-quorum reason. */
+const recordsOf = (w, run) => ({
+  signed: w.seats.map((d, i) => {
+    if (!w.up.has(i)) return 'down';
+    const mine = d.round.results(w.rid, run.eid).find((r) => toHex(r.nodePubkey) === toHex(d.round.pubkey));
+    if (!mine) return null;
+    const p = decodePlayerResult(splitSignedResult(mine.bytes).body);
+    return `${p.outcome}/${p.score}`;
+  }),
+  finality: w.seats.map((d, i) => (w.up.has(i) ? resultFinality(d.round, w.rid, run.eid).state : 'down')),
+  noQuorumWhy: w.seats.map((d, i) => { const nq = w.up.has(i) ? d.round.noQuorum(run.eid) : null; return nq ? String(nq.why).slice(0, 90) : null; }),
+});
+
+/** A lock round after every seat that is up closes and the window passes: each seat's record, and every refund door again. */
+async function lockAfterClose(w, run) {
+  const up = [...w.up].sort((a, b) => a - b);
+  await Promise.all(up.map((i) => say(w.seats[i].port, `close ${toHex(w.rid)}`)));
+  for (let t = Date.now(); Date.now() - t < 20000
+    && !up.every((i) => w.seats[i].round.noQuorum(run.eid) || w.seats[i].round.results(w.rid, run.eid).length); await wait(250));
+  await wait(WINDOW + 1500);
+  const q = `round=${toHex(w.rid)}&entry=${toHex(run.eid)}`;
+  const doors = [];
+  for (const i of up) doors.push((await fetch(`http://127.0.0.1:${w.seats[i].port}/forfeit?${q}`)).status);
+  return { seats: stateAt(w, run), ...recordsOf(w, run), doors, kept: up.filter((i) => !!w.seats[i].round.forfeit(run.eid)).length,
+    lockHeld: w.locks.locks.has(`${toHex(run.outpoint.txid)}:${run.outpoint.outIdx}`) };
+}
+
+/** On a hold: every seat closes, then what each decided, how many hold both marks, and where the hold went. */
+async function holdAfterClose(w, run, winner) {
+  await Promise.all(w.seats.map((d) => say(d.port, `close ${toHex(w.rid)}`)));
+  for (let t = Date.now(); Date.now() - t < 30000 && !w.seats.every((d) => d.round.noQuorum(run.eid)); await wait(250));
+  for (let t = Date.now(); Date.now() - t < 15000 && !holds(w, run.paymentHash).settled.some((n) => n); await wait(250));
+  await wait(1500);
+  const h = holds(w, run.paymentHash);
+  return { seats: stateAt(w, run), ...recordsOf(w, run), voids: w.seats.filter((d) => d.round.entryVoid(run.eid)).length,
+    both: w.seats.filter((d) => d.round.provenTwoFirstMarks(w.rid, run.eid)).length, hold: h,
+    winnerHold: holds(w, toHex(sha256(winner.preimage))),
+    msatBack: h.settled.some((n) => n) ? '0' : h.cancelled.some((n) => n) ? String(NET) : `${NET} at the hold's expiry` };
+}
+
+test('5 of 7, a stake lock, path 1: seats 0-3 record ENTRY_VOID on a real outage, then a different on-time first mark reaches seat 4 - no five refund signatures form, no refund door answers 2xx, the lock held', async () => {
+  const w = await sevenSeats('lock');
+  try {
+    const run = await seatWithTwoFirstMarks(w, 'lock');
+    const voidedFirst = await voidAtZeroToThree(w, run);
+    await w.back(4, 5, 6);
+    const said4 = [];
+    for (const m of run.other) said4.push(answer(await say(w.seats[4].port, m)));
+    await wait(2000);
+    const now = await refundNow(w, run);
+    const closed = await lockAfterClose(w, run);
+    const facts = { voidedFirst, said4, now, closed, msatBack: now.kept || closed.kept ? String(NET) : '0' };
+    console.log('  FACTS (5 of 7, lock, path 1):', JSON.stringify(facts));
+    assert.equal(voidedFirst, 4, 'seats 0-3 did not all record ENTRY_VOID: not the case the test names');
+    assert.ok(!now.doors.some((s) => s >= 200 && s < 300), `a refund door answered 2xx - five signatures formed: ${JSON.stringify(now.doors)}`);
+    assert.equal(now.kept, 0, 'a seat keeps a refund of the lock');
+    assert.ok(now.wouldSign < NEEDED, `${now.wouldSign} seats would sign the refund: five form it`);
+    assert.equal(now.lockHeld, true);
+    assert.ok(!closed.doors.some((s) => s >= 200 && s < 300), `after the close a refund door answered 2xx: ${JSON.stringify(closed.doors)}`);
+    assert.equal(closed.kept, 0, 'after the close a seat keeps a refund of the lock');
+    assert.equal(closed.lockHeld, true);
+  } finally { await w.close(); }
+});
+
+test('5 of 7, a stake lock, path 2: seats 0-3 record ENTRY_VOID, then a late first mark reaches seat 4 alone and its forward is lost - no five refund signatures form, no refund door answers 2xx, the lock held', async () => {
+  const w = await sevenSeats('lock');
+  try {
+    const run = await seatWithTwoFirstMarks(w, 'lock');
+    const voidedFirst = await voidAtZeroToThree(w, run);
+    await w.back(4);
+    await w.down(0, 1, 2, 3);                                                   // seat 4 alone: its forward goes nowhere
+    const said4 = [];
+    for (const m of run.late) said4.push(answer(await say(w.seats[4].port, m)));
+    await wait(1000);
+    await w.back(0, 1, 2, 3, 5, 6);
+    await wait(1000);
+    const now = await refundNow(w, run);
+    const closed = await lockAfterClose(w, run);
+    const facts = { voidedFirst, said4, lateAt4: !!w.seats[4].round.startForfeit(run.eid), now, closed, msatBack: now.kept || closed.kept ? String(NET) : '0' };
+    console.log('  FACTS (5 of 7, lock, path 2):', JSON.stringify(facts));
+    assert.equal(voidedFirst, 4, 'seats 0-3 did not all record ENTRY_VOID: not the case the test names');
+    assert.equal(facts.lateAt4, true, 'seat 4 kept no late first mark: not the case the test names');
+    assert.ok(!now.doors.some((s) => s >= 200 && s < 300), `a refund door answered 2xx - five signatures formed: ${JSON.stringify(now.doors)}`);
+    assert.equal(now.kept, 0, 'a seat keeps a refund of the lock');
+    assert.ok(now.wouldSign < NEEDED, `${now.wouldSign} seats would sign the refund: five form it`);
+    assert.equal(now.lockHeld, true);
+    assert.ok(!closed.doors.some((s) => s >= 200 && s < 300), `after the close a refund door answered 2xx: ${JSON.stringify(closed.doors)}`);
+    assert.equal(closed.kept, 0, 'after the close a seat keeps a refund of the lock');
+    assert.equal(closed.lockHeld, true);
+  } finally { await w.close(); }
+});
+
+test('5 of 7, a hold, path 1: seats 0-3 record ENTRY_VOID, then a different on-time first mark reaches seat 4 - FORFEIT, the hold SETTLED into the pool, 0 msat back', async () => {
+  const w = await sevenSeats('hold');
+  try {
+    const run = await seatWithTwoFirstMarks(w, 'hold');
+    const voidedFirst = await voidAtZeroToThree(w, run);
+    await w.back(4, 5, 6);
+    const said4 = [];
+    for (const m of run.other) said4.push(answer(await say(w.seats[4].port, m)));
+    await wait(2000);
+    const winner = await playWinner(w);
+    const after = await holdAfterClose(w, run, winner);
+    console.log('  FACTS (5 of 7, hold, path 1):', JSON.stringify({ voidedFirst, said4, after }));
+    assert.equal(voidedFirst, 4, 'seats 0-3 did not all record ENTRY_VOID: not the case the test names');
+    assert.deepEqual(after.hold.cancelled, Array(7).fill(0), 'the two-first-marks hold was cancelled back to the player');
+    assert.ok(after.hold.settled.some((n) => n > 0), `no seat settled the hold: it expires back to the player - ${JSON.stringify(after.seats)}`);
+  } finally { await w.close(); }
+});
+
+test('5 of 7, a hold, path 2: seats 0-3 record ENTRY_VOID, then a late first mark reaches seat 4 alone and its forward is lost - FORFEIT, the hold SETTLED into the pool, 0 msat back', async () => {
+  const w = await sevenSeats('hold');
+  try {
+    const run = await seatWithTwoFirstMarks(w, 'hold');
+    const voidedFirst = await voidAtZeroToThree(w, run);
+    await w.back(4);
+    await w.down(0, 1, 2, 3);
+    const said4 = [];
+    for (const m of run.late) said4.push(answer(await say(w.seats[4].port, m)));
+    await wait(1000);
+    await w.back(0, 1, 2, 3, 5, 6);
+    await wait(1000);
+    const winner = await playWinner(w);
+    const after = await holdAfterClose(w, run, winner);
+    console.log('  FACTS (5 of 7, hold, path 2):', JSON.stringify({ voidedFirst, said4, lateAt4: !!w.seats[4].round.startForfeit(run.eid), after }));
+    assert.equal(voidedFirst, 4, 'seats 0-3 did not all record ENTRY_VOID: not the case the test names');
+    assert.deepEqual(after.hold.cancelled, Array(7).fill(0), 'the two-first-marks hold was cancelled back to the player');
+    assert.ok(after.hold.settled.some((n) => n > 0), `no seat settled the hold: it expires back to the player - ${JSON.stringify(after.seats)}`);
+  } finally { await w.close(); }
+});
+
+// PATH 1 ON A HOLD, AND THE ONE SEAT THAT DECIDED FORFEIT GOES DOWN. Measured
+// before this test: in path 1 six seats sign a FAILED result (they took the first
+// mark late and carry a transcript) that never agrees 5 of 7, and only seat 4 -
+// which refused the second mark - decides FORFEIT and settles. Here seat 4 is
+// down from before the close through the hold's expiry: does any seat still keep
+// the stake from going back to the player?
+test('5 of 7, a hold, path 1, and seat 4 down from before the close through the hold\'s expiry - the hold still SETTLED into the pool, 0 msat back', async () => {
+  const w = await sevenSeats('hold');
+  try {
+    const run = await seatWithTwoFirstMarks(w, 'hold');
+    const voidedFirst = await voidAtZeroToThree(w, run);
+    await w.back(4, 5, 6);
+    const said4 = [];
+    for (const m of run.other) said4.push(answer(await say(w.seats[4].port, m)));
+    await wait(2000);
+    const winner = await playWinner(w);
+    await w.down(4);                                                           // the seat that refused the second mark
+    const up = [...w.up];
+    await Promise.all(up.map((i) => say(w.seats[i].port, `close ${toHex(w.rid)}`)));
+    await wait(3 * WINDOW + 3000);
+    for (let t = Date.now(); Date.now() - t < 15000 && !holds(w, run.paymentHash).settled.some((n) => n); await wait(250));
+    await wait(1500);
+    const h = holds(w, run.paymentHash);
+    const facts = { voidedFirst, said4, seats: stateAt(w, run), ...recordsOf(w, run),
+      both: up.filter((i) => w.seats[i].round.provenTwoFirstMarks(w.rid, run.eid)).length, hold: h,
+      winnerHold: holds(w, toHex(sha256(winner.preimage))),
+      msatBack: h.settled.some((n) => n) ? '0' : h.cancelled.some((n) => n) ? String(NET) : `${NET} at the hold's expiry` };
+    console.log('  FACTS (5 of 7, hold, path 1, seat 4 down through the expiry):', JSON.stringify(facts));
+    assert.equal(voidedFirst, 4, 'seats 0-3 did not all record ENTRY_VOID: not the case the test names');
+    assert.deepEqual(h.cancelled, Array(7).fill(0), 'the two-first-marks hold was cancelled back to the player');
+    assert.ok(h.settled.some((n) => n > 0), `no seat settled the hold: ${facts.msatBack} back to the player - ${JSON.stringify(facts.signed)}`);
   } finally { await w.close(); }
 });

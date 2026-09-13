@@ -311,7 +311,14 @@ export class Verifier {
     // seat answered, and the seats it is short of were up and refused the
     // on-time first mark - held until the result window passes, then VOID (or
     // FORFEIT on proven equivocation), decided here once.
-    if (!canonical) {
+    // §13B BEFORE ANY RESULT: a seat holding the proof of two first marks signs
+    // no run for that entry - the no-quorum rule decides it FORFEIT after the
+    // window. Measured before on 5 of 7 (an outage-VOID, a second first mark,
+    // the one seat that refused it down): six seats signed FAILED over a
+    // transcript the late-taken first mark made canonical - four of them holding
+    // the proof - the results never agreed, no seat settled, and the hold went
+    // back to the player at its expiry (98000 msat).
+    if (!canonical || this.round.provenTwoFirstMarks(roundIdBytes, entryId)) {
       const nq = await this.#noQuorum(roundIdBytes, entryId, contract, down);
       if (nq) return nq;
     }

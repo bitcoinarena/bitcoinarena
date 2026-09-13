@@ -2065,7 +2065,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // A PROOF OF TWO FIRST MARKS THIS SEAT HAS NOT PULLED YET (M3.3-34): the
         // asker's seats may hold it - pulled, checked here and kept, never taken
         // on the asker's word; then asked of this seat's own record again.
-        if (!said.ok && !round.results(ask.roundId, ask.entryId).length
+        // `proof=1`: the asker holds a proof of two first marks - pulled even over a
+        // result this seat signed (measured: a seat that had signed FAILED refused).
+        if (!said.ok && (url.searchParams.get('proof') === '1' || !round.results(ask.roundId, ask.entryId).length)
           && await verifier.pullFirstMarkProof(ask.roundId, ask.entryId)) said = await preimages.answer(ask);
         if (!said.ok) return text(res, 409, said.why);
         res.writeHead(200, {

@@ -122,6 +122,12 @@ export class Preimages {
     // proven, says FORFEIT, and a FORFEIT settles its hold into the pool (23.2).
     // Measured before: "this node has replayed nothing for that run" at both
     // seats, so the hold could never settle and expired to the player.
+    // A PROOF OF TWO FIRST MARKS HELD HERE RELEASES FIRST - even over a result
+    // this seat signed before it held the proof: §13B forfeits the entry whatever
+    // run was signed. Measured before on 5 of 7: seats that had signed FAILED
+    // (never final) refused, too few shares opened, the hold expired to the player.
+    if (typeof this.round.provenTwoFirstMarks === 'function' && this.round.provenTwoFirstMarks(roundIdBytes, entryIdBytes))
+      return { ok: true, outcome: 'FORFEIT', proven: true };
     const nq = !held.length && typeof this.round.noQuorum === 'function' ? this.round.noQuorum(entryIdBytes) : null;
     if (nq && nq.outcome === 'FORFEIT') return { ok: true, outcome: 'FORFEIT', noQuorum: true };
     // AND ON A PROOF THIS SEAT HOLDS ITSELF (M3.3-34, a seat that stays down):
@@ -232,8 +238,11 @@ export class Preimages {
     for (const peer of this.peersOf(roundId)) {
       if (bySeat.size >= needed) break;
       try {
+        // `proof=1`: this seat holds the proof of two first marks - the asked seat
+        // pulls and checks it itself before it refuses (never on this word alone).
+        const proven = typeof this.round.provenTwoFirstMarks === 'function' && this.round.provenTwoFirstMarks(roundId, entryId);
         const url = `${peer}/share?round=${toHex(roundId)}&entry=${toHex(entryId)}`
-          + `&seat=${toHex(this.round.pubkey)}`;
+          + `&seat=${toHex(this.round.pubkey)}${proven ? '&proof=1' : ''}`;
         const got = await this.fetch(url);
         if (!got.ok) { refused++; why.push(`${peer}: ${await got.text()}`); continue; }
         const raw = new Uint8Array(await got.arrayBuffer());
