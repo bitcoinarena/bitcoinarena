@@ -724,7 +724,7 @@ test('5 of 7, a stake lock, path 2, seat 4 down from its refusal through the loc
 /** Receipts each seat holds for each of the entry's marks, in chain order. */
 const receiptsAt = (w, run) => w.seats.map((d, i) => (w.up.has(i) ? d.round.markIds(w.rid, run.eid).map((id) => d.round.receiptCount(id)) : 'down'));
 
-async function voidAtZeroToFourCut(w, run) {
+async function voidAtZeroToFourCut(w, run, { second = true } = {}) {   // second: the different first mark to seat 5
   w.cut(0, 1, 2, 3, 4, 5, 6);
   for (const i of [0, 1, 2, 3, 4]) for (const m of [...run.first, ...run.past]) await say(w.seats[i].port, m);
   for (let t = Date.now(); Date.now() - t < 10000 && [0, 1, 2, 3, 4].some((i) => !w.seats[i].round.entryVoid(run.eid)); await wait(200));
@@ -732,7 +732,7 @@ async function voidAtZeroToFourCut(w, run) {
   const voided = [0, 1, 2, 3, 4].filter((i) => w.seats[i].round.entryVoid(run.eid)).length;
   w.heal();
   const said5 = [];
-  for (const m of run.other) said5.push(answer(await say(w.seats[5].port, m)));
+  if (second) for (const m of run.other) said5.push(answer(await say(w.seats[5].port, m)));
   await wait(2000);
   return { voided, receiptsCut, said5, receiptsHealed: receiptsAt(w, run),
     proof: w.seats.map((d) => (d.round.provenTwoFirstMarks(w.rid, run.eid) ? 1 : 0)) };
@@ -811,5 +811,24 @@ test('5 of 7, a hold, receipts lost, and seat 5 (the proof) unreachable from the
     assert.equal(setup.voided, 5, 'seats 0-4 did not all record ENTRY_VOID: not the case the test names');
     assert.deepEqual(after.hold.cancelled, Array(7).fill(0), 'the two-first-marks hold was cancelled back to the player');
     assert.ok(after.hold.settled.some((n) => n > 0), `no seat settled the hold: ${after.msatBack} back to the player`);
+  } finally { await w.close(); }
+});
+
+// A GENUINE OUTAGE-VOID ON THE SAME TOPOLOGY (M3.3-34, the path Plan A must not
+// break): receipts lost between seats that are up, seats 0-4 record ENTRY_VOID -
+// and the player signs NO second first mark. No seat holds a proof; the fast
+// committee refund of the lock must still form.
+test('5 of 7, a stake lock, receipts lost between seats that are up, and no second first mark - a genuine outage-VOID: the fast committee refund still forms', async () => {
+  const w = await sevenSeats('lock');
+  try {
+    const run = await seatWithTwoFirstMarks(w, 'lock');
+    const setup = await voidAtZeroToFourCut(w, run, { second: false });
+    const now = await refundNow(w, run);
+    const facts = { ...setup, now, msatBackByCommittee: now.kept ? String(NET) : '0' };
+    console.log('  FACTS (5 of 7, lock, receipts lost, a genuine outage-VOID):', JSON.stringify(facts));
+    assert.equal(setup.voided, 5, 'seats 0-4 did not all record ENTRY_VOID: not the case the test names');
+    assert.deepEqual(setup.proof, Array(7).fill(0), 'a seat holds a proof of two first marks: not the case the test names');
+    assert.ok(now.doors.some((s) => s === 200), `the genuine outage-VOID's fast refund did not form: ${JSON.stringify(now.doors)}`);
+    assert.ok(now.kept > 0, 'no seat keeps the refund of a genuine outage-VOID');
   } finally { await w.close(); }
 });

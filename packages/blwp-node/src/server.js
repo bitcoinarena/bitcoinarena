@@ -291,15 +291,28 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // the proof, B went down before the close, "1 of 2 shares" - the hold stayed
   // in flight to expire back to the player. `pull`: this seat learned of the
   // pair from a refused forward, and fetches the proof first.
+  // THE PROOF, SPREAD THE MOMENT IT FORMS - on a lock as on a hold (M3.3-34):
+  // every other seat is asked to pull the pair and check it itself (POST
+  // /proof-pull), while the seats are still reachable. Measured before on 5 of
+  // 7: receipts lost between seats that are up, the seat holding the proof cut
+  // off from the Void seats when the refund was asked - their pull found
+  // nothing, five signed, 98000 msat back to the player; on a hold the proof had
+  // spread through the share gathering and the stake settled.
+  async function spreadProof(rid, eid) {
+    const q = `round=${toHex(rid)}&entry=${toHex(eid)}`;
+    await Promise.all(verifier.peersOf(rid).map((peer) => fetch(`${String(peer).replace(/\/+$/, '')}/proof-pull?${q}`,
+      { method: 'POST', signal: AbortSignal.timeout(3000) }).catch(() => null)));
+  }
   const gathering = new Set();
   function gatherOnProof(rid, eid, { pull = false } = {}) {
     const key = toHex(eid);
-    if (!custody.reaches || !round.hold(eid) || gathering.has(key)) return;
+    if (gathering.has(key)) return;
     gathering.add(key);
     (async () => {
       if (pull && !round.provenTwoFirstMarks(rid, eid)) await verifier.pullFirstMarkProof(rid, eid);
       if (!round.provenTwoFirstMarks(rid, eid)) return;
-      await fromTheCommittee(eid, null, rid);
+      await spreadProof(rid, eid);                              // every custody
+      if (custody.reaches && round.hold(eid)) await fromTheCommittee(eid, null, rid);   // a hold: the shares too
     })().catch((e) => console.error(`[shares] ${e.message}`)).finally(() => gathering.delete(key));
   }
 
@@ -1993,6 +2006,19 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // forward to the Void seat lost, neither seat decided anything in 92 s -
       // ENTRY_VOID at one, a late start at the other - and the Void seat's door
       // tried to gather the refund. 204: this seat keeps none.
+      // PULL AND CHECK THE PROOF OF TWO FIRST MARKS NOW (M3.3-34): a seat that
+      // refused a second first mark asks this seat to pull the pair itself -
+      // checked here, never taken on the asker's word - while every seat is
+      // still reachable. Nothing is spread further from here.
+      if (req.method === 'POST' && url.pathname === '/proof-pull') {
+        const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
+        const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
+        if (rid.length !== 32 || eid.length !== 32) return text(res, 400, 'a proof is pulled for a round and an entry');
+        if (!round.entry(new Uint8Array(eid))) return text(res, 404, 'this seat seated no such entry');
+        const proven = await verifier.pullFirstMarkProof(new Uint8Array(rid), new Uint8Array(eid));
+        return text(res, 200, proven ? 'proven' : 'no proof');
+      }
+
       if (req.method === 'GET' && url.pathname === '/late-first-mark') {
         const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
         if (eid.length !== 32) return text(res, 400, 'an entry is asked for by its id');

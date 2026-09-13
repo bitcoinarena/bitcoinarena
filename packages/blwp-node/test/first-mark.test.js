@@ -385,7 +385,11 @@ test('late start at close (5): an on-time first mark at B and a late one at A, B
     assert.equal(bHeld.onTimeFirstMark, true, 'B does not hold the on-time first mark: this is not the case the test names');
     assert.equal(atA.lateStart, true, 'A recorded no late start: this is not the case the test names');
     assert.equal(held.state, 'HOLDING');
-    assert.match(held.lastWhy, /waiting on 1 seat/);
+    // THE REASON, RULED 2026-09-13 (M3.3-34, Plan A): A now holds the proof of the
+    // two first marks before its close - B's FORFEIT answer to A's forward makes A
+    // pull it - and a seat holding the proof does not wait on a down seat. It still
+    // holds and signs nothing; before Plan A this read "waiting on 1 seat".
+    assert.match(held.lastWhy, /no quorum yet: the player signed two first marks for this entry - one of them late \(§13B\)/);
     assert.deepEqual(atA.results, []);
     assert.equal(atA.signers, 0);
   } finally { await w.close(); }
