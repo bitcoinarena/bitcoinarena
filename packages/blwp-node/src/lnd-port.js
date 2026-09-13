@@ -110,6 +110,16 @@ export function lndPort({ lncli, args = [], timeoutMs = 60000, expirySeconds = 3
         ...(heights.length ? { expiryHeight: Math.min(...heights) } : {}) };
     },
 
+    // A PLAIN INVOICE, FOR A DONATION RECIPIENT (M3.2 6e): exactly the amount a
+    // donor's page asked, under the description hash the recipient's LNURL
+    // metadata hashes to (LUD-06) - the two things the page checks before its
+    // wallet pays. Not a hold: a donation is paid outright, outside the pool.
+    async invoice({ amountMsat, descriptionHash, expirySeconds: expiry = expirySeconds }) {
+      const made = await json(['addinvoice', '--amt_msat', String(amountMsat),
+        '--description_hash', toHex(descriptionHash), '--expiry', String(expiry)]);
+      return { request: made.payment_request, paymentHash: Buffer.from(String(made.r_hash), 'hex') };
+    },
+
     async settle({ preimage }) { await call(['settleinvoice', '--preimage', toHex(preimage)]); },
 
     async cancel({ paymentHash }) { await call(['cancelinvoice', toHex(paymentHash)]); },

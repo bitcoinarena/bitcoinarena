@@ -46,6 +46,7 @@ import { bitcoindRpc } from '../src/chain-rpc.js';
 import { operatorFunding } from '../src/funding.js';
 import { serve } from '../src/server.js';
 import { lightningFromEnv } from '../src/lnd-settings.js';
+import { serveDonationRecipients, TEST_RECIPIENT_PORT } from '../src/lnurl-recipients.js';
 import { toHex } from '../../protocol/src/hash.js';
 import { BITCOIN_MAINNET_GENESIS_HEADER, blockHashOf, blockTimeOf } from '../../protocol/src/chain.js';
 import { publicationPayload } from '../../protocol/src/publication.js';
@@ -95,7 +96,11 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
                                      // join link, and what each seat needs to verify a lock
                                      // (`claimKeyFor`, `stakeLocks`). None by default: every
                                      // existing caller's round names no federation, as before.
-                                     federationId = new Uint8Array(32), invite = null, seat = {} } = {}) {
+                                     federationId = new Uint8Array(32), invite = null, seat = {},
+                                     // THE DONATION SET'S TWO LOCAL TEST RECIPIENTS (M3.2 6e): bound
+                                     // for a paid round, at the address the signed set names. A
+                                     // free round asks no donation and binds nothing.
+                                     donationRecipients = stakeMsat > 0n ? { port: TEST_RECIPIENT_PORT } : null } = {}) {
   // WHAT THESE DAEMONS FUND (M3.3-31): a PAYING round goes through the
   // launcher's own rule - the round its operator names, and entries into a
   // paying round the node holds when it reaches Lightning - not a harness's
@@ -643,6 +648,18 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     return keeper;
   }
 
+  // THE RECIPIENTS A PAID ROUND'S PAGE PAYS (M3.2 6e, ruled 2026-09-13), bound
+  // LAST - once the round is up - so a round that is refused leaves nothing
+  // listening (measured: bound first, a refused paid round kept 18777 bound). The
+  // signed set names http://127.0.0.1:18777/lnurlp/blwp-test-a and -b, and until
+  // this nothing listened there. They invoice from this launcher's own Lightning
+  // endpoint - the same one that holds the stakes - and without one they answer
+  // and refuse to invoice, by name.
+  const recipients = donationRecipients
+    ? await serveDonationRecipients({ host: '127.0.0.1', port: donationRecipients.port ?? TEST_RECIPIENT_PORT,
+      invoice: donationRecipients.invoice || (ln.given ? (o) => ln.lightning.invoice(o) : null) })
+    : null;
+
   return {
     id, url, lobbyUrl, contract, openNext, keepOpen,
     rounds: () => held.map((c) => ({ id: toHex(roundId(c)), committeeTimeMs: c.committeeTimeMs, entryCloseMs: c.entryCloseMs })),
@@ -657,7 +674,8 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     headers: [`${reach[0]}/headers`, `${reach[1]}/headers`],
     bond: `${reach[0]}/bond`,
     advert: toHex(bonded[0].signature),
-    async close() { if (keeper) keeper.stop(); await a.close(); await b.close(); },
+    donationRecipients: recipients,
+    async close() { if (keeper) keeper.stop(); await a.close(); await b.close(); if (recipients) await recipients.close(); },
   };
 }
 
