@@ -86,13 +86,28 @@ export class Forfeit {
     // that each kept only their own receipt recorded the Void, signed at once -
     // five signatures - and the player could redeem 98000 msat before the lock's
     // expiry; seat 5 held the proof. The pair pulled here is checked and kept.
+    let pulled = null;
     if (voided && this.pullProof && !(this.round.twoFirstMarks && this.round.twoFirstMarks(roundIdBytes, entryIdBytes))) {
-      try { await this.pullProof(roundIdBytes, entryIdBytes); } catch { /* a seat that cannot answer proves nothing */ }
+      try { pulled = await this.pullProof(roundIdBytes, entryIdBytes); } catch { /* a seat that cannot answer proves nothing */ }
     }
     const nq = voided && this.round.noQuorum ? this.round.noQuorum(entryIdBytes) : null;
     if (voided && ((this.round.twoFirstMarks && this.round.twoFirstMarks(roundIdBytes, entryIdBytes)) || (nq && nq.outcome === 'FORFEIT')))
       return refuse('the player signed two first marks for this entry (§13B): FORFEIT, never the outage refund - '
         + 'this seat\'s ENTRY_VOID stays as history, and it signs no forfeit of the lock to the player');
+    // A VOID THIS SEAT LEARNED ONLY FROM A FORFEIT ASK SIGNS A LOCK REFUND ONLY IF
+    // ITS PROOF PULL REACHED EVERY OTHER SEAT (M3.3-34, ruled 2026-09-13 - "a seat
+    // down stops the rule", as no-quorum): with one unreachable, that seat may hold
+    // the proof of two first marks, so no refund - the lock returns to the player
+    // at its expiry. Measured before on 5 of 7 (path 2, seat 4 down from its
+    // refusal - the ruled limit, no lock refund): the ask handed seats 5 and 6 the
+    // full receipts, they recorded the Void and signed, and a committee refund
+    // formed at once with six signatures while the only proof sat on the seat that
+    // was down. Never signing at all took 2 of 2's outage refund away: there the
+    // forfeit ask is how the seat that was down learns the Void at all.
+    if (voided && voided.learned === 'forfeit-ask' && !(pulled && pulled.reached === pulled.peers))
+      return refuse('this seat learned the ENTRY_VOID only from a forfeit ask, and its proof pull reached '
+        + `${pulled ? `${pulled.reached} of ${pulled.peers}` : 'none'} of the other seats: it signs no refund of the lock - `
+        + 'a seat it cannot reach may hold the proof of two first marks; the lock returns to the player at its expiry');
     if (!voided) {
       const standing = resultFinality(this.round, roundIdBytes, entryIdBytes);
       // VOID (§13C, §23.2 "do nothing"): nothing is forfeited - nobody acts, and

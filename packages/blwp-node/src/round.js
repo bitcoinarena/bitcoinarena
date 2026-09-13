@@ -1629,6 +1629,22 @@ export class Round {
     return r ? new Uint8Array(r.bytes) : null;
   }
 
+  /** Every receipt this seat holds of one mark, one per signer (§16's Void evidence, M3.3-34). */
+  receiptsOfMark(checkpointIdBytes) {
+    return this.db.prepare('SELECT bytes FROM receipts WHERE checkpoint_id = ? ORDER BY node_pubkey')
+      .all(checkpointIdBytes).map((r) => new Uint8Array(r.bytes));
+  }
+
+  /** How many DIFFERENT seated members signed a receipt of that mark, among these - each checked here. Stores nothing. */
+  receiptSigners(receipts, checkpointIdBytes, roundIdBytes) {
+    const signers = new Set();
+    for (const bytes of receipts) {
+      if (!this.receiptVerifies(bytes, checkpointIdBytes, roundIdBytes)) continue;
+      try { signers.add(toHex(decodeCheckpointReceipt(splitSignedReceipt(bytes).body).nodePubkey)); } catch { /* verified above */ }
+    }
+    return signers.size;
+  }
+
   /** An entry's batches in chain order, through the one a mark names. */
   batchesThrough(roundIdBytes, entryIdBytes, inputChainHash) {
     const out = [];
@@ -1656,15 +1672,22 @@ export class Round {
   }
 
   /** §16: this seat holds the entry ENTRY_VOID - an outage before the first financial tick. */
-  putEntryVoid({ entryId, roundId, firstMark, evidenceKind, evidence = null, why }) {
-    this.db.prepare('INSERT OR IGNORE INTO entry_voids (entry_id, round_id, first_mark, evidence_kind, evidence, why, decided_ms) '
-      + 'VALUES (?, ?, ?, ?, ?, ?, ?)').run(entryId, roundId, firstMark, evidenceKind, evidence, why, this.now());
+  /**
+   * `learned` - HOW this seat came to hold the Void (M3.3-34, ruled 2026-09-13):
+   * 'own' (it held the first mark and decided the outage itself), 'player' (the
+   * player's own catch-up reached it, with the Void seats' receipts), 'forward'
+   * (another seat handed it on), 'forfeit-ask' (the push a forfeit ask makes).
+   * The first record stands.
+   */
+  putEntryVoid({ entryId, roundId, firstMark, evidenceKind, evidence = null, why, learned = 'own' }) {
+    this.db.prepare('INSERT OR IGNORE INTO entry_voids (entry_id, round_id, first_mark, evidence_kind, evidence, why, decided_ms, learned) '
+      + 'VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(entryId, roundId, firstMark, evidenceKind, evidence, why, this.now(), learned);
   }
 
   entryVoid(entryIdBytes) {
     const r = this.db.prepare('SELECT * FROM entry_voids WHERE entry_id = ?').get(entryIdBytes);
     return r ? { roundId: new Uint8Array(r.round_id), firstMark: new Uint8Array(r.first_mark), evidenceKind: r.evidence_kind,
-      evidence: r.evidence ? new Uint8Array(r.evidence) : null, why: r.why, decidedMs: r.decided_ms } : null;
+      evidence: r.evidence ? new Uint8Array(r.evidence) : null, why: r.why, decidedMs: r.decided_ms, learned: r.learned || 'own' } : null;
   }
 
   /**

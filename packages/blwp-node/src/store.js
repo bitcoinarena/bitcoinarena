@@ -550,7 +550,8 @@ export function openStore(path = ':memory:') {
       evidence_kind  TEXT NOT NULL,
       evidence       BLOB,
       why            TEXT NOT NULL,
-      decided_ms     INTEGER NOT NULL
+      decided_ms     INTEGER NOT NULL,
+      learned        TEXT NOT NULL DEFAULT 'own'
     );
 
     -- A FIRST MARK THIS SEAT, UP, REFUSED (M3.3-34, one-seat refusal): the
@@ -642,6 +643,10 @@ export function openStore(path = ':memory:') {
   // every row it already holds was attempt 0.
   if (!db.prepare('PRAGMA table_info(pool_nonces)').all().some((c) => c.name === 'attempt'))
     db.exec('ALTER TABLE pool_nonces ADD COLUMN attempt INTEGER NOT NULL DEFAULT 0');
+  // AND BEFORE AN ENTRY_VOID SAID HOW THIS SEAT LEARNED IT (M3.3-34): every row
+  // it already holds was decided on its own record.
+  if (!db.prepare('PRAGMA table_info(entry_voids)').all().some((c) => c.name === 'learned'))
+    db.exec("ALTER TABLE entry_voids ADD COLUMN learned TEXT NOT NULL DEFAULT 'own'");
   return db;
 }
 

@@ -318,10 +318,18 @@ export class Verifier {
     // transcript the late-taken first mark made canonical - four of them holding
     // the proof - the results never agreed, no seat settled, and the hold went
     // back to the player at its expiry (98000 msat).
-    if (!canonical || this.round.provenTwoFirstMarks(roundIdBytes, entryId)) {
+    const voided = !!this.round.entryVoid(entryId);
+    if (!canonical || voided || this.round.provenTwoFirstMarks(roundIdBytes, entryId)) {
       const nq = await this.#noQuorum(roundIdBytes, entryId, contract, down);
       if (nq) return nq;
     }
+    // AN ENTRY THIS SEAT HOLDS ENTRY_VOID (§16) GETS NO RUN SIGNED HERE (M3.3-34,
+    // ruled 2026-09-13): two first marks stay FORFEIT (the no-quorum rule just
+    // above); anything else is the Void. Measured before on 5 of 7: seats 0-3
+    // voided on a real outage, the down seats were caught up late, and all seven
+    // signed FAILED over the late-carried mark - the hold settled into the pool.
+    if (voided && !this.round.provenTwoFirstMarks(roundIdBytes, entryId))
+      return { entryId, stored: false, why: 'this seat holds the entry ENTRY_VOID (§16): it signs no run for it' };
     if (!canonical && this.#neverStarted(roundIdBytes, entryId)) {
       const ruled = stoppedOutcome({ receiptedMarks: 0, deadlinePassed: true });
       return this.#sign({ roundIdBytes, entryId, entry, contract,
@@ -482,7 +490,20 @@ export class Verifier {
     return this.#equivocationProven(roundIdBytes, entryId);
   }
 
-  async #equivocationProven(roundIdBytes, entryId) {
+  /**
+   * THE SAME PULL, AND WHETHER IT REACHED EVERY OTHER SEAT (M3.3-34, ruled
+   * 2026-09-13): `{ proven, peers, reached }` - a seat reached is one that
+   * answered its /equivocation ask at all. What a seat that learned the Void only
+   * from a forfeit ask needs before it signs a lock refund: with a seat
+   * unreachable, that seat may hold the proof ("a seat down stops the rule").
+   */
+  async pullFirstMarkProofReach(roundIdBytes, entryId) {
+    const report = { peers: 0, reached: 0 };
+    const proven = await this.#equivocationProven(roundIdBytes, entryId, report);
+    return { proven, peers: report.peers, reached: report.reached };
+  }
+
+  async #equivocationProven(roundIdBytes, entryId, report = null) {
     const found = this.round.entriesOf(roundIdBytes).find((e) => hex(e.entryId) === hex(entryId));
     if (!found) return false;
     const verify = (sig, msg, pub) => { try { return sessionCurve.verify(sig, msg, pub); } catch { return false; } };
@@ -511,8 +532,10 @@ export class Verifier {
       }
     }
     for (const peer of this.peersOf(roundIdBytes)) {
+      if (report) report.peers++;
       try {
         const r = await fetch(`${peer}/equivocation?round=${hex(roundIdBytes)}&entry=${hex(entryId)}`);
+        if (report) report.reached++;
         if (r.status !== 200) continue;
         const body = new Uint8Array(await r.arrayBuffer());
         for (let at = 0; at + 2 * SIGNED_MARK_BYTES <= body.length; at += 2 * SIGNED_MARK_BYTES)

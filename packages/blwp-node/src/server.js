@@ -414,7 +414,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       return c.previousHash.every((x) => x === 0) ? { bytes, c } : null;
     } catch { return null; }
   };
-  async function forwardFirstMark({ bytes, c }) {
+  async function forwardFirstMark({ bytes, c }, { ask = null } = {}) {
     const id = checkpointId(c);
     const held = round.holdsMark(id);
     if (!held && !round.startForfeit(c.entryId)) return null;      // refused for another reason: nothing to hand on
@@ -424,7 +424,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // IT: the player's own signed mark past the start line, or "closed". A seat
     // that was down records the Void from it instead of taking the mark late.
     const voided = held ? round.entryVoid(c.entryId) : null;
+    // WITH THE VOID, EVERY RECEIPT THIS SEAT HOLDS OF THE MARK (M3.3-34, ruled
+    // 2026-09-13, pick A): the returning seat counts them itself. Measured
+    // before: one receipt went, the returning seat read 1 of 5, took the mark
+    // late, and all seven signed FAILED - the hold settled into the pool.
     const body = JSON.stringify({ mark: toHex(bytes), batches: batches.map((b) => toHex(b)), receipt: own ? toHex(own) : null,
+      receipts: voided ? round.receiptsOfMark(id).map((r) => toHex(r)) : [], ask,
       entryVoid: voided ? { kind: voided.evidenceKind, evidence: voided.evidence ? toHex(voided.evidence) : null } : null });
     const offers = held ? round.firstMarkOffers(c.entryId) : {};
     const said = [];
@@ -493,7 +498,17 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const voided = round.entryVoid(c.entryId);
     const other = [late && late.mark, voided && voided.firstMark, orHeld && round.firstMarkHeld(c.roundId, c.entryId)]
       .find((m) => m && toHex(m) !== toHex(bytes));
-    return !!other && round.putFirstMarkPair({ a: other, b: bytes });
+    if (!other || !round.putFirstMarkPair({ a: other, b: bytes })) return false;
+    // A VOID SEAT ALSO KEEPS THE PLAYER'S LATE FIRST MARK AS A LATE START (M3.3-34,
+    // ruled 2026-09-13), next to the pair: the late start's own record, through
+    // the chain's own first-mark rule (signature checked, kept, refused FORFEIT).
+    // Measured before: seat 4, voided from the full receipts, refused the late
+    // mark as a second first mark and kept no late start of it.
+    const line = round.startLine(c.roundId, c.entryId);
+    if (voided && !late && line && c.tick > line.lastTick) {
+      try { round.checkpoint(bytes); } catch { /* FORFEIT: the late start is kept */ }
+    }
+    return true;
   };
   // AN ENTRY_VOID THAT STANDS: no second first mark here, and the result window
   // has passed without one pulled from a peer. Until then the close keeps
@@ -565,7 +580,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     }
     return null;
   }
-  function voidHere(c, bytes, late, givenReceipts = []) {
+  function voidHere(c, bytes, late, givenReceipts = [], learned = 'forward') {
     const had = round.entryVoid(c.entryId);
     if (had) return had;
     if (secondFirstMark(c, bytes, { orHeld: true })) return null;
@@ -582,14 +597,20 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if (toHex(checkpointId(signed)) !== toHex(checkpointId(c)) || !signed.previousHash.every((x) => x === 0)) return null;
     const line = round.startLine(c.roundId, c.entryId);
     const id = checkpointId(c);
-    const receipts = givenReceipts.filter((r) => round.receiptVerifies(r, id, c.roundId)).length;
+    // THE VOID SEATS' RECEIPTS, each checked here and counted once per signer:
+    // with this seat silent, the seats short of the threshold are the ones that
+    // were down - §16's outage, recorded here as the Void seats recorded it.
+    const receipts = round.receiptSigners(givenReceipts, id, c.roundId);
     const d = outageOutcome({ firstMark: true, lateStart: false, deadlinePassed: true, receipts, needed: line.needed,
       offers: ['late'], state: null });
     if (d.outcome !== ENTRY_VOID) return null;
     round.putEntryVoid({ entryId: c.entryId, roundId: c.roundId, firstMark: bytes, evidenceKind: late.kind === 'recorded' ? 'mark' : late.kind,
-      evidence: late.evidence, why: `this seat was offered the on-time first mark only after the start deadline had passed; ${d.why}` });
+      evidence: late.evidence, why: `this seat was offered the on-time first mark only after the start deadline had passed; ${d.why}`, learned });
     return round.entryVoid(c.entryId);
   }
+  /** The receipts a Void seat handed over: its own, and every one it holds of the mark. */
+  const receiptsGiven = (got) => [got.receipt, ...(Array.isArray(got.receipts) ? got.receipts : [])]
+    .filter(Boolean).flatMap((r) => { try { return [fromHex(String(r))]; } catch { return []; } });
   async function lateByPeers(c, bytes) {
     for (const peer of verifier.peersOf(c.roundId)) {
       try {
@@ -610,7 +631,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (theirs && line && c.tick <= line.lastTick && toHex(theirs) !== toHex(bytes)
           && round.putFirstMarkPair({ a: theirs, b: bytes })) return { twoFirst: true };
         const late = lateEvidenceHere(c, { kind: got.evidenceKind, evidence: got.evidence }, got.receipt ? fromHex(String(got.receipt)) : null);
-        if (late) return { late, receipts: got.receipt ? [fromHex(String(got.receipt))] : [] };
+        if (late) return { late, receipts: receiptsGiven(got) };
       } catch { /* a seat that is down proves nothing */ }
     }
     return null;
@@ -618,7 +639,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   async function pushVoid(rid, eid) {
     if (!round.entryVoid(eid)) return;
     const f = firstMarkMessage(rid, eid);
-    if (f) await forwardFirstMark(f);
+    // named as the forfeit ask's push: a seat that learns the Void only from it
+    // signs no lock refund before the result window passes (forfeit.js)
+    if (f) await forwardFirstMark(f, { ask: 'forfeit' });
   }
 
   // THE SEATS' FORFEIT OF A QUALIFIER'S STAKE LOCK (W5b), with this seat's share
@@ -637,7 +660,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     },
     onVoid: (rid, eid) => pushVoid(rid, eid),
     // Before a Void lock is refunded: the other seats' proof of two first marks.
-    pullProof: (rid, eid) => verifier.pullFirstMarkProof(rid, eid),
+    pullProof: (rid, eid) => verifier.pullFirstMarkProofReach(rid, eid),
   });
 
   // AND WHICH OUTPUT THE POOL IS IN, asked of the chain rather than
@@ -1563,7 +1586,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (!round.holdsMark(checkpointId(c))) {
           const late = lateEvidenceHere(c, got.entryVoid, got.receipt ? fromHex(String(got.receipt)) : null);
           if (late) {
-            const v = voidHere(c, bytes, late, got.receipt ? [fromHex(String(got.receipt))] : []);
+            const v = voidHere(c, bytes, late, receiptsGiven(got), got.ask === 'forfeit' ? 'forfeit-ask' : 'forward');
             if (v) return answer(409, { entryVoid: true, why: v.why });
           } else if (got.entryVoid) return answer(409, { why: 'that ENTRY_VOID claim does not verify at this seat' });
         }
@@ -1595,6 +1618,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
         return res.end(JSON.stringify({ outcome: 'ENTRY_VOID', why: v.why, firstMark: toHex(v.firstMark),
           evidenceKind: v.evidenceKind, evidence: v.evidence ? toHex(v.evidence) : null, receipt: own ? toHex(own) : null,
+          receipts: (() => { try { return round.receiptsOfMark(checkpointId(decodeCheckpoint(splitSigned(v.firstMark).body))).map((r) => toHex(r)); } catch { return []; } })(),
           offers: round.firstMarkOffers(new Uint8Array(eid)) }));
       }
 
@@ -2795,7 +2819,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             return sock.send('error FORFEIT: ' + TWO_FIRST_MARKS);
           }
           if (found) {
-            const v = voidHere(firstMark.c, firstMark.bytes, found.late, found.receipts);
+            const v = voidHere(firstMark.c, firstMark.bytes, found.late, found.receipts, 'player');
             if (v) return sock.send('error ENTRY_VOID: ' + v.why);
           }
         }

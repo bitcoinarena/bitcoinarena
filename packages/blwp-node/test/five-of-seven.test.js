@@ -420,10 +420,16 @@ test('5 of 7, a stake lock, path 2: seats 0-3 record ENTRY_VOID, then a late fir
     await wait(1000);
     const now = await refundNow(w, run);
     const closed = await lockAfterClose(w, run);
-    const facts = { voidedFirst, said4, lateAt4: !!w.seats[4].round.startForfeit(run.eid), now, closed, msatBack: now.kept || closed.kept ? String(NET) : '0' };
+    const facts = { voidedFirst, said4, lateAt4: !!w.seats[4].round.startForfeit(run.eid), voidAt4: !!w.seats[4].round.entryVoid(run.eid),
+      proofAt4: w.seats[4].round.provenTwoFirstMarks(w.rid, run.eid), now, closed, msatBack: now.kept || closed.kept ? String(NET) : '0' };
     console.log('  FACTS (5 of 7, lock, path 2):', JSON.stringify(facts));
     assert.equal(voidedFirst, 4, 'seats 0-3 did not all record ENTRY_VOID: not the case the test names');
-    assert.equal(facts.lateAt4, true, 'seat 4 kept no late first mark: not the case the test names');
+    // PICK A (ruled 2026-09-13): seat 4, back, records the same ENTRY_VOID from the
+    // full receipt set, so the player's late first mark reaching it is the second
+    // first mark - refused as such and the pair kept - not a late start.
+    assert.equal(facts.voidAt4, true, 'seat 4 did not record the Void from the full receipts: not the case the test names');
+    assert.ok(said4.some((a) => /FORFEIT: the player signed another first mark/.test(a)), `seat 4 did not refuse the late mark as a second first mark: ${JSON.stringify(said4)}`);
+    assert.equal(facts.proofAt4, true, 'seat 4 kept no proof of two first marks');
     assert.ok(!now.doors.some((s) => s >= 200 && s < 300), `a refund door answered 2xx - five signatures formed: ${JSON.stringify(now.doors)}`);
     assert.equal(now.kept, 0, 'a seat keeps a refund of the lock');
     assert.ok(now.wouldSign < NEEDED, `${now.wouldSign} seats would sign the refund: five form it`);
