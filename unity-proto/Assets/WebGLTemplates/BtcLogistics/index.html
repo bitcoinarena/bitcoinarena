@@ -930,18 +930,30 @@
           // settlement itself. Measured: a payout the page could not finish kept the stake
           // step from ever asking, and the winner's 980000 msat stayed in the federation.
           const s = await BLWPCLIENT.returnStake(Object.assign({}, ask, { client: p.client || null }));
+          // A LOCK NO SEAT WILL SETTLE (a player the fee-lock door refused, or a round that never
+          // settles): back by the player's own key after its expiry, from the tab's own record -
+          // the stake step would ask the seats for a forfeit none of them will ever give (W4 / 6d).
+          let k = null;
+          if (!s.ok && !s.final) {
+            try {
+              const own = p.client || await BLWPCLIENT.tabLockWallet(ask);
+              k = await BLWPCLIENT.refundKept(Object.assign({}, ask, { client: own }));
+              k.client = own;
+            } catch (e) { console.error('[blwp] refund: ' + e.message); }
+          }
           if (r === newest) {
             window.BLWP_COLLECT_LINE = null;
             window.BLWP_PAYOUT = Object.assign({}, p, { client: undefined });
             window.BLWP_STAKE_BACK = s ? Object.assign({}, s, { client: undefined }) : null;
+            window.BLWP_REFUND = k ? Object.assign({}, k, { client: undefined }) : null;
           }
           // AND WHAT THIS TAB'S WALLET NOW HOLDS FOR THE PLAYER TO WITHDRAW (6d's destination).
-          const open = (s && s.client) || p.client;
+          const open = (s && s.client) || p.client || (k && k.client);
           if (r === newest && open && typeof open.withdrawableMsat === 'function') {
             try { window.BLWP_WITHDRAWABLE = BigInt(await open.withdrawableMsat()); } catch (e) { console.error('[blwp] withdraw: ' + e.message); }
           }
-          if (p.final && s && s.final) {
-            const done = { payout: BLWPCLIENT.payoutLine(p), stake: BLWPCLIENT.stakeBackLine(s) };
+          if (p.final && s && (s.final || (k && k.final))) {
+            const done = { payout: BLWPCLIENT.payoutLine(p), stake: s.final ? BLWPCLIENT.stakeBackLine(s) : BLWPCLIENT.refundLine(k) };
             BLWPCLIENT.markCollectDone(window.sessionStorage, r.roundIdHex, done);
             console.log('[blwp] payout: ' + done.payout);
             console.log('[blwp] stake: ' + done.stake);
@@ -967,7 +979,8 @@
       const invoiceFor = async (msat) => {
         if (invoice && String(invoice).trim()) return { ok: true, invoice: String(invoice).trim() };
         const conn = wallet && wallet.connected ? wallet.current() : null;
-        if (conn && conn.ok) return BLWPCLIENT.makeInvoice(conn, msat);
+        if (conn && conn.ok) return BLWPCLIENT.makeInvoice(conn, msat, { curve: window.BLWP_CURVE,
+          random: (n) => crypto.getRandomValues(new Uint8Array(n)) });
         return { ok: false, why: `paste an invoice from your own wallet for ${msat} msat` };
       };
       const w = await BLWPCLIENT.withdrawCollected({ client, invoiceFor });
@@ -1012,7 +1025,7 @@
           ? BLWPCLIENT.lockLine(lockShown)
           : 'this round\'s stake goes into a federation lock: pay the deposit shown below';
         document.getElementById('blwp-settled').textContent = window.BLWP_COLLECT_LINE || [BLWPCLIENT.payoutLine(window.BLWP_PAYOUT),
-          BLWPCLIENT.stakeBackLine(window.BLWP_STAKE_BACK)].filter(Boolean).join(' · ');
+          window.BLWP_REFUND ? BLWPCLIENT.refundLine(window.BLWP_REFUND) : BLWPCLIENT.stakeBackLine(window.BLWP_STAKE_BACK)].filter(Boolean).join(' · ');
         // AND THE WITHDRAW: what is in the tab's wallet, what went, or why not; the field and
         // the button only while there is something to withdraw.
         const canWithdraw = window.BLWP_WITHDRAWABLE !== undefined && window.BLWP_WITHDRAWABLE !== null && window.BLWP_WITHDRAWABLE > 0n;

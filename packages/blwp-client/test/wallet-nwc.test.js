@@ -16,7 +16,7 @@ import assert from 'node:assert/strict';
 import { WebSocketServer } from 'ws';
 import { readFileSync } from 'node:fs';
 import { roundLocks, settledLine } from '../src/join.js';
-import { lockLine, payoutLine, stakeBackLine, withdrawLine } from '../src/page-lock.js';
+import { lockLine, payoutLine, stakeBackLine, withdrawLine, refundLine } from '../src/page-lock.js';
 import { donationPaidLine } from '../src/donation-pay.js';
 import { randomBytes } from 'node:crypto';
 import { schnorr } from '@noble/curves/secp256k1.js';
@@ -27,7 +27,7 @@ import { serve } from '../../blwp-node/src/server.js';
 import { Client } from '../src/client.js';
 import { pageCurve } from '../src/page-curve.js';
 import {
-  parseConnection, nip04Encrypt, nip04Decrypt, signEvent, payInvoice,
+  parseConnection, nip04Encrypt, nip04Decrypt, signEvent, payInvoice, makeInvoice,
   tabWallet, spendLog, spentLine, walletBudget, budgetLine,
   NWC_REQUEST, NWC_RESPONSE,
 } from '../src/nwc.js';
@@ -111,6 +111,31 @@ async function walletOnARelay({ answer = null, secret = rand(32) } = {}) {
     close: () => new Promise((r) => wss.close(r)),
   };
 }
+
+// 6d'S DESTINATION WITH A CONNECTED WALLET: the page asks it for the invoice it withdraws to.
+test('a connected wallet is asked for an invoice of exactly the withdrawable msat (NIP-47 make_invoice), and an answer that is no bolt11 is refused', async () => {
+  const params = [];
+  const w = await walletOnARelay({ answer: (said) => {
+    if (said.method !== 'make_invoice') return null;
+    params.push(said.params);
+    return { result_type: 'make_invoice', result: { invoice: said.params.amount === 1930649 ? 'lnbcrt19306490p1pwithdraw' : 'not an invoice' } };
+  } });
+  try {
+    const where = parseConnection(w.uri);
+    const got = await makeInvoice(where, 1930649n, { curve: pageCurve, random: rand, timeoutMs: 5000 });
+    console.log(`  make_invoice: ${JSON.stringify(params[0])} -> ${got.ok ? got.invoice : got.why}`);
+    assert.equal(got.ok, true, got.why);
+    assert.equal(got.invoice, 'lnbcrt19306490p1pwithdraw');
+    assert.equal(params[0].amount, 1930649, 'the wallet was asked for another amount than the withdrawable');
+    assert.deepEqual(w.asked.methods, ['make_invoice']);
+    const bad = await makeInvoice(where, 5n, { curve: pageCurve, random: rand, timeoutMs: 5000 });
+    assert.equal(bad.ok, false);
+    assert.match(bad.why, /no bolt11/);
+    const none = await makeInvoice(where, 0n, { curve: pageCurve, random: rand, timeoutMs: 5000 });
+    assert.equal(none.ok, false);
+    assert.equal(w.asked.methods.length, 2, 'an empty withdraw asked the wallet for an invoice');
+  } finally { await w.close(); }
+});
 
 /** A Lightning node that keeps a call log and no money. */
 function fakePort() {
@@ -636,6 +661,7 @@ test('a round that asks no money gets no payment box, driven off the shipped pag
       payoutLine,
       stakeBackLine,
       withdrawLine,
+      refundLine,
       spentLine: () => 'nothing paid this session',
       owedLine,
       budgetLine,

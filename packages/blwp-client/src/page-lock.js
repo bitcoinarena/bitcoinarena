@@ -609,6 +609,60 @@ export async function withdrawCollected({ client, invoiceFor, onStep = () => {} 
     why: ok ? undefined : `the withdraw ended ${said.state}${said.state === 'Refunded' ? ' - the money is back in this tab\'s wallet' : ''}` };
 }
 
+/**
+ * A LOCK NO SEAT WILL SETTLE, BACK BY THE PLAYER'S OWN KEY AFTER ITS EXPIRY (§23.2's default
+ * path: nobody acts, the lock expires, the player's key takes it back). W4 / 6d: a player the
+ * fee-lock door refused, or a round that never settles - no seat verified the lock or will
+ * forfeit it, so refundStake (which asks the seats where the lock is) finds nothing. The tab's
+ * own record (saveLock) holds both locks whole. Each is asked where it stands, spending
+ * nothing (lockStatus): gone - nothing to do; before its expiry - not final, and when it comes
+ * back; expired - refunded into the tab's wallet, from where the withdraw takes it.
+ */
+export async function refundKept({ round, roundId, seed, curve, client, storage, kept = null } = {}) {
+  if (!round || !roundLocks(round)) throw new Error('this round names no federation, so it has no lock to refund');
+  const player = playerFor({ ...round, id: roundId }, { seed, curve });
+  const held = kept || savedLock(storage, { roundId, playerPubkey: player.pubkey });
+  if (!held || !held.lock) return { ok: false, final: true, locks: [], why: 'this tab keeps no lock for this round' };
+  const locks = [{ kind: 'stake', outpoint: held.lock.outpoint, fields: held.lock.fields }];
+  if (held.lock.feeLock) locks.push({ kind: 'fee', outpoint: held.lock.feeLock.outpoint, fields: held.lock.feeLock.fields });
+  const each = [];
+  for (const l of locks) {
+    const txid = toHex(l.outpoint.txid);
+    const outIdx = Number(l.outpoint.outIdx);
+    const amountMsat = BigInt(l.fields.amountMsat);
+    const st = JSON.parse(await client.lockStatus(txid, outIdx));
+    if (!st.stored) { each.push({ kind: l.kind, state: 'gone', amountMsat }); continue; }
+    const left = Number(st.stored.blocks_left);
+    if (left > 0) {
+      each.push({ kind: l.kind, state: 'waiting', amountMsat, blocksLeft: left, blockCount: Number(st.block_count), expiration: Number(l.fields.expiration) });
+      continue;
+    }
+    const said = JSON.parse(await client.refund(txid, outIdx, JSON.stringify(lockFieldsToJson(l.fields)), toHex(player.secret)));
+    each.push({ kind: l.kind, state: said.accepted === true ? 'refunded' : 'refused', amountMsat, error: said.error || null,
+      balance_before: said.balance_before, balance_after: said.balance_after });
+  }
+  const refunded = each.filter((e) => e.state === 'refunded');
+  const open = each.some((e) => e.state === 'waiting' || e.state === 'refused');
+  return { ok: refunded.length > 0 && !open, final: !open, locks: each,
+    refundedMsat: refunded.reduce((t, e) => t + e.amountMsat, 0n),
+    balance_before: refunded.length ? refunded[0].balance_before : undefined,
+    balance_after: refunded.length ? refunded[refunded.length - 1].balance_after : undefined };
+}
+
+/** THE REFUND AS THE PLAYER SEES IT: when the locks come back, what came back, or that they are gone. */
+export function refundLine(k) {
+  if (!k || !Array.isArray(k.locks) || !k.locks.length) return '';
+  const waiting = k.locks.filter((e) => e.state === 'waiting');
+  if (waiting.length) {
+    const at = Math.max(...waiting.map((e) => e.expiration));
+    return `Your lock${waiting.length > 1 ? 's' : ''} (${waiting.map((e) => `${e.kind} ${e.amountMsat} msat`).join(', ')}) come${waiting.length > 1 ? '' : 's'} back to your key from federation block ${at} (now ${waiting[0].blockCount})`;
+  }
+  const refused = k.locks.filter((e) => e.state === 'refused');
+  if (refused.length) return `Refund refused: ${refused.map((e) => `${e.kind}: ${e.error || 'the federation did not accept it'}`).join('; ')} - asked again`;
+  if (k.ok) return `Back by your own key after expiry: ${k.refundedMsat} msat to this tab's wallet (${k.locks.filter((e) => e.state === 'refunded').map((e) => e.kind).join(' + ')} lock${k.locks.length > 1 ? 's' : ''}; balance ${k.balance_before} → ${k.balance_after} msat)`;
+  return 'No lock of yours is left in the federation for this round';
+}
+
 /** THE WITHDRAW AS THE PLAYER SEES IT: what can go, what went, or why not. */
 export function withdrawLine(w, withdrawableMsat = null) {
   if (w && w.ok) return `Withdrawn: ${String(w.invoiceMsat ?? w.withdrawableMsat)} msat to your own wallet over Lightning (this tab's wallet ${w.balance_before} → ${w.balance_after} msat)`;

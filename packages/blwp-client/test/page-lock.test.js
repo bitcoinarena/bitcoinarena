@@ -15,7 +15,7 @@ import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js
 import assert from 'node:assert/strict';
 
 import { lockStake, handLock, lockSecretFor, lockAmountMsat, lockLine, saveLock, savedLock, markLockCommitted,
-  refundStake, redeemStake, redeemPayout, payoutLine, returnStake, stakeBackLine, saveCollect, savedCollects, markCollectDone, keptLockUse, withdrawCollected, withdrawLine, LOCK_EXPIRY_MARGIN_BLOCKS, feeSecretFor } from '../src/page-lock.js';
+  refundStake, redeemStake, redeemPayout, payoutLine, returnStake, stakeBackLine, saveCollect, savedCollects, markCollectDone, keptLockUse, withdrawCollected, withdrawLine, refundKept, refundLine, LOCK_EXPIRY_MARGIN_BLOCKS, feeSecretFor } from '../src/page-lock.js';
 import { sha256 } from '../../protocol/src/hash.js';
 import { entryFor, joinQuery, stakeFor, playerFor } from '../src/join.js';
 import { lockFieldsToJson } from '../../protocol/src/stake-lock.js';
@@ -373,6 +373,46 @@ test('after the settlement the winner\'s page redeems its own stake by the seats
   assert.equal(unsettled.final, false);
   assert.equal(asked.filter((u) => u.includes('/forfeit') || u.includes('/stake-lock')).length, 0, 'a forfeit was asked for before the seats settled');
   assert.equal(joins + redeemed.length, 0);
+});
+
+// W4 / 6d: A LOCK NO SEAT WILL SETTLE COMES BACK BY THE PLAYER'S OWN KEY AFTER ITS EXPIRY.
+test('a lock no seat will settle comes back from the tab\'s own record by the player\'s key: before its expiry it waits and says when, after it both locks are refunded, and a lock already gone asks for nothing', async () => {
+  const lockRound = { ...round, custody: 'FEDERATION', federationId: b32(0xfe) };
+  const lr = roundId(lockRound);
+  const player = playerFor({ ...lockRound, id: lr }, { seed, curve: pageCurve });
+  const kept = { lock: {
+    outpoint: { txid: b32(0xd8), outIdx: 0n }, fields: { paymentImage: { kind: 'point', bytes: POINT }, amountMsat: 980000n, claimPk: CLAIM, refundPk: refundKeyOf(player.pubkey), expiration: 464 },
+    feeLock: { outpoint: { txid: b32(0xd9), outIdx: 0n }, fields: { paymentImage: { kind: 'hash', bytes: b32(0x44) }, amountMsat: 20000n, claimPk: CLAIM, refundPk: refundKeyOf(player.pubkey), expiration: 464 } },
+  } };
+  const refunded = [];
+  const wallet = (status) => ({
+    async lockStatus(txid) { return JSON.stringify(status(txid)); },
+    async refund(txid, outIdx, fields, key) {
+      refunded.push({ txid, key, amount: JSON.parse(fields).amountMsat });
+      return JSON.stringify({ accepted: true, error: null, balance_before: refunded.length === 1 ? 0 : 976000, balance_after: refunded.length === 1 ? 976000 : 993000 });
+    },
+  });
+  const ask = { round: lockRound, roundId: lr, seed, curve: pageCurve, kept };
+  const early = await refundKept({ ...ask, client: wallet(() => ({ block_count: 320, stored: { contract_id: 'c', blocks_left: 144 } })) });
+  console.log(`  before expiry: "${refundLine(early)}"`);
+  assert.equal(early.final, false);
+  assert.equal(refunded.length, 0, 'a lock was refunded before its expiry');
+  assert.match(refundLine(early), /come back to your key from federation block 464 \(now 320\)/);
+
+  const late = await refundKept({ ...ask, client: wallet(() => ({ block_count: 464, stored: { contract_id: 'c', blocks_left: 0 } })) });
+  console.log(`  after expiry: "${refundLine(late)}"`);
+  assert.equal(late.ok, true);
+  assert.equal(late.final, true);
+  assert.equal(late.refundedMsat, 1000000n);
+  assert.deepEqual(refunded.map((r) => [r.txid, r.key]), [[toHex(b32(0xd8)), toHex(player.secret)], [toHex(b32(0xd9)), toHex(player.secret)]]);
+  assert.match(refundLine(late), /^Back by your own key after expiry: 1000000 msat to this tab's wallet \(stake \+ fee locks; balance 0 → 993000 msat\)/);
+
+  refunded.length = 0;
+  const gone = await refundKept({ ...ask, client: wallet(() => ({ block_count: 470, stored: null })) });
+  assert.equal(gone.final, true);
+  assert.equal(gone.ok, false);
+  assert.equal(refunded.length, 0, 'a lock already gone was refunded');
+  assert.equal(refundLine(gone), 'No lock of yours is left in the federation for this round');
 });
 
 // 6d'S DESTINATION (24A.2): THE TAB'S WALLET WITHDRAWN OVER LIGHTNING TO THE PLAYER'S OWN.

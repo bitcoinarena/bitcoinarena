@@ -40,7 +40,7 @@ import { refundKeyOf, lockFieldsToJson } from '../../protocol/src/stake-lock.js'
 import { toHex, fromHex, sha256 } from '../../protocol/src/hash.js';
 import { playerFor } from '../../blwp-client/src/join.js';
 import { pageCurve } from '../../blwp-client/src/page-curve.js';
-import { redeemPayout, payoutLine, returnStake, stakeBackLine, withdrawCollected, withdrawLine } from '../../blwp-client/src/page-lock.js';
+import { redeemPayout, payoutLine, returnStake, stakeBackLine, withdrawCollected, withdrawLine, tabLockWallet, refundKept, refundLine } from '../../blwp-client/src/page-lock.js';
 
 const env = process.env;
 const P = env.PROBE;
@@ -264,19 +264,41 @@ async function collectOnScreen({ p, c, rid, urls, stakeMsat, held }) {
       let can = '';
       for (let t = Date.now(); Date.now() - t < 90000 && !can; await wait(1000))
         can = await b.evaluate(`String(window.BLWP_WITHDRAWABLE ?? '')`).catch(() => '');
-      if (!can) can = await b.evaluate(`(async () => { try {
-        const r = BLWPCLIENT.savedCollects(window.sessionStorage).pop(); const w = await import('./blwp_lock_client.js'); await w.default();
-        const c = await BLWPCLIENT.tabLockWallet({ round: r.round, roundId: BLWPCLIENT.fromHex(r.roundIdHex), invite: r.invite, seed: r.seed,
-          LockClient: w.LockClient, storage: window.sessionStorage });
-        return String(await c.withdrawableMsat()); } catch (e) { return 'error: ' + e.message; } })()`).catch((e) => `error: ${e.message}`);
+      // A LONG PAGE PROMISE IS NEVER AWAITED INSIDE ONE BOUNDED ASK (each ask is 30 s; measured, the
+      // on-screen withdraw ran past it): it is started, it writes its answer on window, and short asks poll.
+      const poll = async (expr, ms) => {
+        const t = Date.now();
+        for (; Date.now() - t < ms; await wait(1000)) {
+          const v = await b.evaluate(expr).catch(() => '');
+          if (v) return { v, ms: Date.now() - t };
+        }
+        return { v: '', ms: Date.now() - t };
+      };
+      const stages = { waitedForPageMs: null, askedWalletMs: null, withdrawMs: null };
+      stages.waitedForPageMs = 0;
+      if (!can) {
+        await b.evaluate(`(window.__harnessCan = null, (async () => { try {
+          const r = BLWPCLIENT.savedCollects(window.sessionStorage).pop(); const w = await import('./blwp_lock_client.js'); await w.default();
+          const c = await BLWPCLIENT.tabLockWallet({ round: r.round, roundId: BLWPCLIENT.fromHex(r.roundIdHex), invite: r.invite, seed: r.seed,
+            LockClient: w.LockClient, storage: window.sessionStorage });
+          window.__harnessCan = String(await c.withdrawableMsat()); } catch (e) { window.__harnessCan = 'error: ' + e.message; } })(), true)`).catch(() => null);
+        const got = await poll('window.__harnessCan || ""', 90000);
+        can = got.v; stages.askedWalletMs = got.ms;
+      }
       const made = can && /^\d+$/.test(can) ? JSON.parse((await run(`${env.LND_BIN}/lncli`, [`--lnddir=${P}/alice`, '--rpcserver=127.0.0.1:30107', '--network=regtest',
         'addinvoice', `--amt_msat=${can}`, '--memo=blwp payout on screen'])).so || '{}') : {};
-      const w = made.payment_request ? await b.evaluate(`window.BLWP_WITHDRAW(${JSON.stringify(made.payment_request)})
-        .then((w) => JSON.stringify(w, (k, v) => (typeof v === 'bigint' ? String(v) : v)))`) : null;
+      let w = null;
+      if (made.payment_request) {
+        await b.evaluate(`(window.__harnessWithdrawn = null, window.BLWP_WITHDRAW(${JSON.stringify(made.payment_request)})
+          .then((w) => { window.__harnessWithdrawn = JSON.stringify(w, (k, v) => (typeof v === 'bigint' ? String(v) : v)); },
+            (e) => { window.__harnessWithdrawn = JSON.stringify({ error: e.message }); }), true)`).catch(() => null);
+        const got = await poll('window.__harnessWithdrawn || ""', 120000);
+        w = got.v || null; stages.withdrawMs = got.ms;
+      }
       const seenAt = made.r_hash ? JSON.parse((await run(`${env.LND_BIN}/lncli`, [`--lnddir=${P}/alice`, '--rpcserver=127.0.0.1:30107', '--network=regtest',
         'lookupinvoice', made.r_hash])).so || '{}') : {};
       const line = await b.evaluate(`(document.getElementById('blwp-withdraw') || {}).textContent || ''`);
-      withdrawn = { withdrawableShown: can, result: w ? JSON.parse(w) : null, aliceInvoice: { state: seenAt.state, amtPaidMsat: seenAt.amt_paid_msat }, line };
+      withdrawn = { withdrawableShown: can, stages, result: w ? JSON.parse(w) : null, aliceInvoice: { state: seenAt.state, amtPaidMsat: seenAt.amt_paid_msat }, line };
     }
     await b.shot(shotFile);
     const holds = await tabState(b).catch((e) => ({ unread: e.message }));
@@ -397,7 +419,7 @@ async function round(stakeMsat) {
         const en = await fetch(`${at}/entry`, { method: 'POST', body: encodeEntryContract(entry) });
         seats.push({ entry: en.status, why: en.status === 201 ? 'seated' : await en.text(), stored: !!d.round.entry(eid), seen: !!d.round.stakeSeen(eid) });
       }
-      bare = { stake, seats };
+      bare = { stake, seats, seed };
       out({ round: `${stakeMsat / 1000n} sat`, check: 'a player with a stake lock and no fee lock, at the door',
         stakeLock: `${key(stake.outpoint)} ${stake.fields.amountMsat} msat`, seats,
         seatedSet: [a, b].map((d) => d.round.entriesOf(rid).length) });
@@ -496,11 +518,53 @@ async function round(stakeMsat) {
       if (back.client && back.client !== r.client && typeof back.client.free === 'function') back.client.free();
       if (r.client && typeof r.client.free === 'function') r.client.free();
     }
+    // W4 / 6d: THE PLAYER THE DOOR REFUSED GETS ITS STAKE BACK BY ITS OWN KEY AFTER EXPIRY - the
+    // page's own refundKept from its seed and tab wallet (no seat ever verified the lock): before
+    // the expiry it waits and says when; the chain is mined past it; then the refund, then the withdraw.
+    if (bare) {
+      const kept = { lock: { outpoint: bare.stake.outpoint, fields: bare.stake.fields } };
+      const own = await tabLockWallet({ round: c, roundId: rid, invite: env.INVITE, seed: bare.seed, LockClient });
+      const early = await refundKept({ round: c, roundId: rid, seed: bare.seed, curve: pageCurve, client: own, kept });
+      const exp = Number(bare.stake.fields.expiration);
+      const cli = (...a) => run(`${env.BITCOIN_BIN}/bitcoin-cli`, ['-regtest', '-rpcport=30101', '-rpcuser=blwp', '-rpcpassword=blwp', ...a]);
+      // THE SETUP'S OWN WALLET (federation-hold-probe: createwallet, then -rpcwallet for every address) -
+      // measured: getnewaddress without it answered nothing and the mining was refused, "Invalid address".
+      const listed = JSON.parse((await cli('listwallets')).so || '[]');
+      const walletName = listed[0] || 'probe';
+      const addr = (await cli(`-rpcwallet=${walletName}`, 'getnewaddress')).so.trim();
+      const chainAt = await chainHeight();
+      const mined = await cli('generatetoaddress', String(Math.max(0, exp - chainAt + 6)), addr);
+      const t = Date.now();
+      let counts = await countsNow();
+      for (; !mined.err && Date.now() - t < 240000 && counts[0] < exp + 1; await wait(3000)) counts = await countsNow();
+      const late = await refundKept({ round: c, roundId: rid, seed: bare.seed, curve: pageCurve, client: own, kept });
+      let wd = null; let made = null;
+      if (late.ok) {
+        wd = await withdrawCollected({ client: own, invoiceFor: async (msat) => {
+          made = JSON.parse((await run(`${env.LND_BIN}/lncli`, [`--lnddir=${P}/alice`, '--rpcserver=127.0.0.1:30107', '--network=regtest',
+            'addinvoice', `--amt_msat=${msat}`, '--memo=blwp refund'])).so || '{}');
+          return made.payment_request ? { ok: true, invoice: made.payment_request } : { ok: false, why: 'alice made no invoice' };
+        } });
+      }
+      const seenAt = made && made.r_hash ? JSON.parse((await run(`${env.LND_BIN}/lncli`, [`--lnddir=${P}/alice`, '--rpcserver=127.0.0.1:30107', '--network=regtest',
+        'lookupinvoice', made.r_hash])).so || '{}') : {};
+      out({ round: `${stakeMsat / 1000n} sat`, check: 'the refused player, refunded by its own key after expiry',
+        beforeExpiry: { final: early.final, locks: early.locks, screen: refundLine(early) },
+        mined: { chainBefore: chainAt, expiration: exp, blocks: (mined.so.match(/"/g) || []).length / 2, guardiansCountAfter: counts, waitedMs: Date.now() - t, err: mined.err ? mined.err.message : null },
+        afterExpiry: { ok: late.ok, final: late.final, refundedMsat: late.refundedMsat, balanceBefore: late.balance_before, balanceAfter: late.balance_after,
+          locks: late.locks, screen: refundLine(late) },
+        stakeLockStillHeld: !!(await ports[0].status(bare.stake.outpoint)).stored,
+        withdraw: wd && { state: wd.state, withdrawableMsat: wd.withdrawableMsat, walletBefore: wd.balance_before, walletAfter: wd.balance_after, screen: withdrawLine(wd) },
+        aliceInvoice: { state: seenAt.state, amtPaidMsat: seenAt.amt_paid_msat } });
+      if (typeof own.free === 'function') own.free();
+    }
   } finally { await a.close(); await b.close(); }
 }
 
 try {
-  await round(100000n);
+  // SKIP_100=1: the 1000 sat round alone (the 100 sat round's figures are measured; a run with the
+  // refused player's expiry refund must fit one bounded call).
+  if (env.SKIP_100 !== '1') await round(100000n);
   await round(1000000n);
 } catch (e) { out({ error: e.stack.split('\n').slice(0, 3).join(' | ') }); process.exitCode = 1; }
 // THE WASM CLIENT'S GUARDIAN WEBSOCKETS KEEP NODE UP after the last step (W1a, measured).

@@ -156,6 +156,8 @@ out += '         returnStake: returnStake, stakeBackLine: stakeBackLine,\n';
 out += '         saveCollect: saveCollect, savedCollects: savedCollects, markCollectDone: markCollectDone,\n';
 // AND 6d's DESTINATION: the tab's round wallet withdrawn over Lightning to the player's own.
 out += '         tabLockWallet: tabLockWallet, withdrawCollected: withdrawCollected, withdrawLine: withdrawLine, makeInvoice: makeInvoice,\n';
+// AND A LOCK NO SEAT WILL SETTLE, BACK BY THE PLAYER'S KEY AFTER ITS EXPIRY, from the tab's record.
+out += '         refundKept: refundKept, refundLine: refundLine,\n';
 // THE LOBBY (M3.3-34): a link that names nodes and no round lists what they
 // hold, every row checked against its own contract; Join is the join link.
 out += '         lobbyQuery: lobbyQuery, fetchLobby: fetchLobby, lobbyLine: lobbyLine, lobbyJoinSearch: lobbyJoinSearch,\n';

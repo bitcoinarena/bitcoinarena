@@ -366,6 +366,25 @@ impl LockClient {
         .to_string())
     }
 
+    /// WHERE A LOCK STANDS, asked of the guardians without spending anything (W4 / 6d): the
+    /// federation's block count and, while the contract is still at that outpoint, its id and
+    /// the blocks left before its expiration. A page refunding a lock no seat will settle asks
+    /// this first, so it does not send the guardians a refund they must refuse every few
+    /// seconds until the expiry block. JSON: { block_count, stored: { contract_id,
+    /// blocks_left } | null }.
+    #[wasm_bindgen(js_name = lockStatus)]
+    pub async fn lock_status(&self, txid: String, out_idx: u32) -> Result<String, JsError> {
+        let api = self.client.api().with_module(self.lnv2);
+        let outpoint = OutPoint { txid: TransactionId::from_str(&txid).map_err(js)?, out_idx: u64::from(out_idx) };
+        let count = block_count(&api).await.map_err(js)?;
+        let stored = stored_at(&api, outpoint).await.map_err(js)?;
+        Ok(serde_json::json!({
+            "block_count": count,
+            "stored": stored.map(|(id, left)| serde_json::json!({ "contract_id": id.0.to_string(), "blocks_left": left })),
+        })
+        .to_string())
+    }
+
     /// The largest invoice this client can pay out of its balance through a
     /// gateway the federation lists - the gateway's fee and the federation's
     /// both taken off (the stock client's own sum), in msat.
