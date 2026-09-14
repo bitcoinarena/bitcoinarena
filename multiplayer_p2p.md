@@ -2539,6 +2539,31 @@ would show only a deposit. Therefore:
 A lost player seed loses the locks it can refund. That is the trade for
 having no node in the refund path.
 
+**A withdrawal survives the tab (the owner 2026-09-14).** Collecting a payout and
+a stake from the federation and paying them out over Lightning takes minutes
+(measured live: 414 s from the press to the player's invoice settled). A tab
+closed inside that time used to take the collected e-cash with it, because
+the round's wallet was kept in the tab. So:
+
+- **What a round's money needs is kept in the browser, not in the tab**: the
+  round's record (the round, the invite, the seats, the lock, and the seed the
+  round's key comes from) and the round wallet's database. The next start of
+  the client - a reload, another tab, a restarted browser - opens the same
+  wallet under the same key. The seed a *new* round is played under stays per
+  tab (two tabs are two players, §0.12); only a round already entered is kept.
+- **A withdrawal can be claimed later.** On every start the client looks at
+  every kept round that is not final - what the federation still holds for
+  the round's key, and what the round's wallet holds - and offers the
+  Withdraw for it. Looking collects nothing (§23.6); the Withdraw is still the
+  one action that collects and pays out.
+- **The game tells the player.** After start the lobby shows that a
+  withdrawal is available, with the amount, until it is withdrawn.
+- **One tab at a time uses a kept round's wallet** (a browser lock); another
+  tab shows the round as open elsewhere and takes over when that tab closes.
+- A kept round is dropped only once it is final with nothing left in its
+  wallet. Cleared browser storage loses the wallet's e-cash; what the
+  federation still holds for the key comes back only through the seed backup.
+
 ---
 
 # 24A. Playing many rounds without approving each one

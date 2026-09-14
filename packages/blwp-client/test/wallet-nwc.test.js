@@ -627,7 +627,12 @@ test('the page pastes a connection, shows the amount and the total, and calls pa
   // AND localStorage IS STILL NOT USED. Two tabs are two players, and a
   // spending credential every tab shares is one paste spending from all of
   // them.
-  assert.equal(/localStorage/.test(code), false, 'the page keeps the wallet where every tab shares it');
+  // A KEPT ROUND'S MONEY is in vault() now (the owner 2026-09-14, spec §24) - the connection and
+  // what it spent never are.
+  assert.ok((code.match(/localStorage/g) || []).length <= 1 && !/localStorage/.test(code.replace(/function vault\(\) \{[^\n]*\n[^\n]*\n/, '')),
+    'the page names localStorage outside vault()');
+  for (const call of ['tabWallet', 'spendLog'])
+    assert.ok(!new RegExp(`${call}\\([^)]*vault\\(\\)`).test(code), `the page keeps the wallet (${call}) where every tab shares it`);
   console.log('  the page: 1 paste field, 1 amount, 1 total, 1 call to payStake, 0 bolt11');
 });
 

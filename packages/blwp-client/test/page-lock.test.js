@@ -17,7 +17,7 @@ import { bech32Encode, convertBits } from '../../protocol/src/bech32.js';
 import { decodeBolt11 } from '../../protocol/src/bolt11.js';
 
 import { lockStake, handLock, lockSecretFor, lockAmountMsat, lockLine, saveLock, savedLock, markLockCommitted,
-  refundStake, redeemStake, redeemPayout, payoutLine, returnStake, stakeBackLine, saveCollect, savedCollects, markCollectDone, keptLockUse, withdrawCollected, withdrawLine, refundKept, refundLine, lookOwed, owedToLine as owedLine, collectAndWithdraw, LOCK_EXPIRY_MARGIN_BLOCKS, feeSecretFor } from '../src/page-lock.js';
+  refundStake, redeemStake, redeemPayout, payoutLine, returnStake, stakeBackLine, saveCollect, savedCollects, markCollectDone, keptLockUse, withdrawCollected, withdrawLine, refundKept, refundLine, lookOwed, owedToLine as owedLine, collectAndWithdraw, tabLockWallet, LOCK_EXPIRY_MARGIN_BLOCKS, feeSecretFor } from '../src/page-lock.js';
 import { sha256 } from '../../protocol/src/hash.js';
 import { entryFor, joinQuery, stakeFor, playerFor } from '../src/join.js';
 import { lockFieldsToJson } from '../../protocol/src/stake-lock.js';
@@ -573,6 +573,103 @@ test('a winner\'s tab closed before withdrawing: the old timer\'s collect strand
   assert.equal(fits.withdraw.ok, true);
   assert.equal(inTab.tabs[0].balance, 0n);
   assert.deepEqual(inTab.paid.map((x) => x.msat), [1957000n]);
+});
+
+// A WITHDRAW SURVIVES THE TAB (the owner 2026-09-14, spec §24). Live, run A3: the page's Withdraw
+// collected both into the round's wallet, the tab was closed before it paid out, and >= 973312 msat
+// went with the tab's sessionStorage. The page now keeps the round's record and its wallet in the
+// browser's storage; this drives the page's own functions over one such storage.
+test('a Withdraw cut off after its collect: the next start finds the kept round, reopens the same wallet under the same key and pays it out; with the wallet kept in the tab the next tab reaches nothing', async () => {
+  const player = playerFor({ ...round, id: rid }, { seed, curve: pageCurve });
+  const mine = toHex(refundKeyOf(player.pubkey));
+  const PAYOUT = `${'ef'.repeat(32)}:0`;
+  const STAKE = `${'cd'.repeat(32)}:0`;
+  const fields = { paymentImage: { kind: 'point', bytes: POINT }, amountMsat: 980000n, claimPk: CLAIM, refundPk: refundKeyOf(player.pubkey), expiration: 464 };
+  const nodes = ['http://a.test'];
+  const seats = async (url) => {
+    if (url.includes('/lock-settlement')) return new Response(JSON.stringify({ state: 'ACCEPTED', txid: 'ef'.repeat(32),
+      moved: { payouts: [{ kind: 'qualifier', pk: mine, msat: '978000' }] } }), { status: 200 });
+    if (url.includes('/stake-lock')) return new Response(JSON.stringify([{ entryId: 'ee'.repeat(32), outpoint: STAKE, fields: lockFieldsToJson(fields), contractId: 'c1' }]), { status: 200 });
+    if (url.includes('/forfeit')) return new Response(JSON.stringify({ signature: 'ab'.repeat(64), contractId: 'c1', claimPk: toHex(CLAIM) }), { status: 200 });
+    return new Response('no', { status: 404 });
+  };
+  // THE FEDERATION, AND THE STOCK WALLET'S SHAPE: its notes in the store it is handed, read back by the next join.
+  const federation = () => {
+    const held = new Map([[PAYOUT, 978000n], [STAKE, 980000n]]);
+    const paid = [];
+    class Wallet {
+      static async join(invite, federationId, secret, store) {
+        const w = new Wallet(store);
+        const kept = JSON.parse(store.entries()).find(([k]) => k === 'notes');
+        if (kept) w.balance = BigInt(kept[1]);
+        return w;
+      }
+      constructor(store) { this.store = store; this.balance = 0n; }
+      keep() { this.store.put('notes', String(this.balance)); }
+      take(txid, i) {
+        const k = `${txid}:${i}`; const m = held.get(k);
+        if (m === undefined) return JSON.stringify({ accepted: false, stored_before: null, error: 'No contract found for given ContractId' });
+        held.delete(k); const before = this.balance; this.balance += m; this.keep();
+        return JSON.stringify({ accepted: true, forfeit_verifies: true, amount_msat: Number(m), balance_before: Number(before), balance_after: Number(this.balance), stored_before: { contract_id: 'c', blocks_left: 0 } });
+      }
+      async lockStatus(txid, i) { return JSON.stringify({ block_count: 500, stored: held.has(`${txid}:${i}`) ? { contract_id: 'c', blocks_left: 0 } : null }); }
+      async refund(txid, i) { return this.take(txid, i); }
+      async redeem(txid, i) { return this.take(txid, i); }
+      async balanceMsat() { return String(this.balance); }
+      async withdrawableMsat() { if (this.balance === 0n) throw new Error('Balance is too low to send any amount after fees'); return String(this.balance - 1000n); }
+      async withdraw(invoice) {
+        const amt = this.balance - 1000n; const before = this.balance; paid.push({ invoice, msat: amt }); this.balance = 0n; this.keep();
+        return JSON.stringify({ state: 'Success', invoice_msat: Number(amt), gateway: 'gw', balance_before: Number(before), balance_after: 0 });
+      }
+    }
+    return { held, paid, Wallet };
+  };
+  const ask = (storage, Wallet) => ({ round, roundId: rid, invite: INVITE, seed, curve: pageCurve, LockClient: Wallet, storage, nodes, fetcher: seats });
+  // THE FIRST START'S WITHDRAW, CUT OFF: the invoice is asked only after the collect, and the tab closes there.
+  const cutAfterCollect = async (storage, Wallet) => {
+    saveCollect(storage, { roundIdHex: toHex(rid), round, invite: INVITE, nodes, seed });
+    const w = await tabLockWallet(ask(storage, Wallet));
+    let cut; const reached = new Promise((r) => { cut = r; });
+    collectAndWithdraw({ ...ask(storage, Wallet), client: w, invoiceFor: async () => { cut(); return new Promise(() => {}); } });
+    await reached;
+    return w;
+  };
+
+  // BEFORE: the round's record and wallet in the tab's storage.
+  const was = federation();
+  const oldTab = tabStorage();
+  const cutOld = await cutAfterCollect(oldTab, was.Wallet);
+  const nextTab = tabStorage();
+  const oldKept = savedCollects(nextTab);
+  const oldNext = await tabLockWallet(ask(nextTab, was.Wallet));
+  console.log(`  before (wallet in the tab): the cut-off tab holds ${cutOld.balance} msat, the federation ${was.held.size} contracts; the next tab keeps ${oldKept.length} rounds and opens ${oldNext.balance} msat`);
+  assert.equal(was.held.size, 0);
+  assert.equal(cutOld.balance, 1958000n);
+  assert.equal(oldKept.length, 0);
+  assert.equal(oldNext.balance, 0n, 'a tab-kept wallet was reached from another tab');
+
+  // NOW: the browser's storage, shared by every start.
+  const fed = federation();
+  const browser = tabStorage();
+  const cut = await cutAfterCollect(browser, fed.Wallet);
+  assert.equal(fed.held.size, 0, 'the collect did not take both out of the federation');
+  assert.equal(cut.balance, 1958000n);
+  // THE NEXT START (a reload, another tab, a restarted browser): the kept round, the same key, the same wallet.
+  const kept = savedCollects(browser);
+  assert.equal(kept.length, 1, 'the next start found no kept round');
+  assert.equal(toHex(kept[0].seed), toHex(seed), 'the next start has another key');
+  const next = await tabLockWallet({ ...ask(browser, fed.Wallet), seed: kept[0].seed });
+  assert.equal(next.balance, 1958000n, 'the next start did not reopen the wallet the Withdraw collected into');
+  const seen = await lookOwed({ ...ask(browser, fed.Wallet), client: next });
+  assert.equal(seen.inTabMsat, 1957000n);
+  assert.equal(seen.owedMsat, 0n);
+  // CLAIMED LATER: its Withdraw pays it out.
+  const done = await collectAndWithdraw({ ...ask(browser, fed.Wallet), client: next, invoiceFor: async (msat) => ({ ok: true, invoice: `lnbcrt${msat}` }) });
+  console.log(`  now (wallet in the browser): the next start keeps ${kept.length} round, opens ${1958000} msat, looks "${owedLine(seen)}", withdraws "${withdrawLine(done.withdraw)}"`);
+  assert.equal(done.withdraw.ok, true);
+  assert.deepEqual(fed.paid, [{ invoice: 'lnbcrt1957000', msat: 1957000n }]);
+  const after = await tabLockWallet({ ...ask(browser, fed.Wallet), seed: kept[0].seed });
+  assert.equal(after.balance, 0n);
 });
 
 /** A BOLT11 invoice for tests: the real encoding, an all-zero signature (as donation-pay.test.js). */

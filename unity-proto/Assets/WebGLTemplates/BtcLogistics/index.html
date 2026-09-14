@@ -318,6 +318,35 @@
     const stage = document.getElementById('stage');
     const err = document.getElementById('err');
 
+    // A ROUND'S MONEY IS KEPT IN THE BROWSER, NOT IN THE TAB (the owner 2026-09-14, spec §24):
+    // live, collecting and paying out took 414 s, and a tab closed inside it (run A3) took the
+    // collected e-cash with it. The round's record (its seed included), its kept lock and its
+    // wallet's database live in the browser's own storage, so the next start - a reload, another tab, a
+    // restarted browser - opens the same wallet under the same key. The seed a NEW round is
+    // played under stays in the tab (two tabs are two players).
+    const VAULT_KEYS = ['blwp.collect.', 'blwp.lock.saved.', 'blwp.lockdb.'];
+    function vault() {
+      try { const s = window.localStorage; s.getItem('blwp.vault'); return s; } catch { return window.sessionStorage; }
+    }
+    // A TAB OPEN FROM A BUILD THAT KEPT THESE IN THE TAB: they move over once - a record when the
+    // browser has none under its key, a wallet's database only whole and only when none of it is there.
+    (function moveTabRecordsToVault() {
+      try {
+        const v = vault(); const t = window.sessionStorage;
+        if (v === t) return;
+        const dbOf = (k) => k.split('.').slice(0, 4).join('.') + '.';
+        const has = (prefix) => { for (let i = 0; i < v.length; i++) if ((v.key(i) || '').startsWith(prefix)) return true; return false; };
+        const keys = []; for (let i = 0; i < t.length; i++) keys.push(t.key(i));
+        const dbs = new Map();
+        for (const k of keys) {
+          if (!k || !VAULT_KEYS.some((p) => k.startsWith(p))) continue;
+          if (k.startsWith('blwp.lockdb.')) { const d = dbOf(k); if (!dbs.has(d)) dbs.set(d, []); dbs.get(d).push(k); }
+          else if (v.getItem(k) === null) v.setItem(k, t.getItem(k));
+        }
+        for (const [d, ks] of dbs) if (!has(d)) for (const k of ks) v.setItem(k, t.getItem(k));
+      } catch (e) { console.error('[blwp] kept rounds: ' + e.message); }
+    })();
+
     // Unity reports one number for the whole load. Naming what is happening at
     // each part of it is the difference between "it is stuck" and "it is
     // working" - at 35 MB that judgement gets made by the person waiting.
@@ -613,7 +642,7 @@
         // (W1b): the same stake and the same lock, not a second deal and a second
         // deposit - a reload between the lock and the seat taking the entry.
         const kept = BLWPCLIENT.roundLocks(named.round)
-          ? BLWPCLIENT.savedLock(window.sessionStorage, { roundId: BLWPCLIENT.fromHex(named.roundIdHex), playerPubkey: player.pubkey })
+          ? BLWPCLIENT.savedLock(vault(), { roundId: BLWPCLIENT.fromHex(named.roundIdHex), playerPubkey: player.pubkey })
           : null;
         // A LOCK A SEAT ALREADY COMMITTED (6d, W4 hole 1): no new stake and no second
         // deposit - measured before, a reload onto the round link set out to fund a second
@@ -663,7 +692,7 @@
           // WHAT THE PAYOUT IS COLLECTED WITH after the window (6d): the same seed,
           // round and federation the lock was made with.
           window.BLWP_LOCK_JOIN = { invite: named.federation, roundIdHex: named.roundIdHex, seed, nodes: named.nodes };
-          const committedTo = (eid) => BLWPCLIENT.markLockCommitted(window.sessionStorage, Object.assign({ entryId: eid }, whose));
+          const committedTo = (eid) => BLWPCLIENT.markLockCommitted(vault(), Object.assign({ entryId: eid }, whose));
           if (reuse) {
             stakeLock = { outpoint: reuse.lock.outpoint, fields: reuse.lock.fields, feeLock: reuse.lock.feeLock || null,
               needed: BLWPCLIENT.sharesNeededFor(named.round), onCommitted: committedTo };
@@ -678,7 +707,7 @@
               round: named.round, roundId: BLWPCLIENT.fromHex(named.roundIdHex), invite: named.federation,
               seed, stake, claimKey, playerPubkey: player.pubkey, LockClient: wasm.LockClient,
               donationMsat: donation.donationMsat,
-              storage: window.sessionStorage,
+              storage: vault(),
               onStep: (step) => {
                 if (stageEl) stageEl.textContent = 'Stake lock: ' + step + ' …';
                 if (window.BLWP_JOIN) window.BLWP_JOIN.stage = 'stake lock: ' + step;
@@ -703,7 +732,7 @@
             console.log('[blwp] fee lock: ' + (made.feeLock ? 'minted, ' + String(made.feeLock.fields.amountMsat) + ' msat' : 'none - ' + made.feeGate.why));
             // KEPT BEFORE ANYTHING ELSE CAN HAPPEN TO THE TAB: a reload from here
             // on uses this lock, not a second deposit.
-            BLWPCLIENT.saveLock(window.sessionStorage, Object.assign({ stake, lock: made }, whose));
+            BLWPCLIENT.saveLock(vault(), Object.assign({ stake, lock: made }, whose));
             window.BLWP_STAKE_LOCK = stakeLock;
             if (depositEl) depositEl.textContent = '';
             if (stageEl) stageEl.textContent = BLWPCLIENT.lockLine(stakeLock);
@@ -715,7 +744,7 @@
           }
           // AND WHAT THE COLLECT NEEDS AFTER THE WINDOW, KEPT IN THE TAB (6d): a reload -
           // onto the round link or anywhere - collects from this, not from the join.
-          BLWPCLIENT.saveCollect(window.sessionStorage, Object.assign({}, window.BLWP_LOCK_JOIN, { round: named.round, stakeLock }));
+          BLWPCLIENT.saveCollect(vault(), Object.assign({}, window.BLWP_LOCK_JOIN, { round: named.round, stakeLock }));
         }
         window.BLWP_STAKE = {
           dealt: true, seats: seats.seats.length, agreed: seats.agreed,
@@ -908,10 +937,28 @@
     const roundWallets = new Map();
     function roundAsk(r, LockClient) {
       return { round: r.round, roundId: BLWPCLIENT.fromHex(r.roundIdHex), invite: r.invite, seed: r.seed,
-        curve: window.BLWP_CURVE, LockClient, storage: window.sessionStorage, nodes: r.nodes };
+        curve: window.BLWP_CURVE, LockClient, storage: vault(), nodes: r.nodes };
     }
-    // ONE WALLET PER ROUND in this tab - the one the withdraw collects into and pays from.
+    // ONE TAB AT A TIME USES A KEPT ROUND'S WALLET (spec §24): its database is shared by every
+    // tab of this browser now, and two wallets over one database would spend the same notes. The
+    // tab that opens it holds a browser lock on the round for as long as it lives; another tab
+    // skips the round and says so, and takes it over once that tab is closed.
+    const heldRounds = new Set();
+    function holdRound(id) {
+      if (heldRounds.has(id)) return Promise.resolve(true);
+      if (!navigator.locks || typeof navigator.locks.request !== 'function') return Promise.resolve(true);
+      return new Promise((resolve) => {
+        navigator.locks.request('blwp.round.' + id, { ifAvailable: true }, (lock) => {
+          if (!lock) { resolve(false); return null; }
+          heldRounds.add(id); resolve(true);
+          return new Promise(() => {});
+        }).catch(() => resolve(false));
+      });
+    }
+    // ONE WALLET PER ROUND in this tab - the one the withdraw collects into and pays from; none
+    // while another tab of this browser holds the round.
     async function roundWallet(r) {
+      if (!(await holdRound(r.roundIdHex))) return null;
       if (!roundWallets.has(r.roundIdHex)) {
         const wasm = await import('./blwp_lock_client.js');
         await wasm.default();
@@ -919,9 +966,12 @@
       }
       return roundWallets.get(r.roundIdHex);
     }
+    // CLAIMED LATER (the owner 2026-09-14): the newest kept round that is not final, so an older
+    // round still owed is looked at and withdrawn once the newer ones are done; else the newest.
     function newestKept() {
-      const kept = BLWPCLIENT.savedCollects(window.sessionStorage).filter((r) => BLWPCLIENT.roundLocks(r.round));
-      return kept.length ? kept[kept.length - 1] : null;
+      const kept = BLWPCLIENT.savedCollects(vault()).filter((r) => BLWPCLIENT.roundLocks(r.round));
+      const open = kept.filter((r) => !r.done);
+      return open.length ? open[open.length - 1] : (kept.length ? kept[kept.length - 1] : null);
     }
     async function lookThePayout() {
       if (payoutAsking || typeof BLWPCLIENT === 'undefined' || !BLWPCLIENT.savedCollects) return;
@@ -936,13 +986,15 @@
       payoutAsking = true;
       try {
         const w = await roundWallet(newest);
-        const look = await BLWPCLIENT.lookOwed(Object.assign(roundAsk(newest, w.LockClient), { client: w.client }));
-        window.BLWP_OWED = look;
-        window.BLWP_WITHDRAWABLE = look.inTabMsat;
-        if (newest.done) window.BLWP_COLLECT_LINE = [newest.done.payout, newest.done.stake].filter(Boolean).join(' · ');
+        // OPEN IN ANOTHER TAB OF THIS BROWSER: that tab looks and withdraws; this one says so.
+        window.BLWP_ELSEWHERE = w ? null : newest.roundIdHex;
+        const look = w ? await BLWPCLIENT.lookOwed(Object.assign(roundAsk(newest, w.LockClient), { client: w.client })) : null;
+        if (look) { window.BLWP_OWED = look; window.BLWP_WITHDRAWABLE = look.inTabMsat; }
+        if (!look) { /* looked at in the other tab */ }
+        else if (newest.done) window.BLWP_COLLECT_LINE = [newest.done.payout, newest.done.stake].filter(Boolean).join(' · ');
         else if (look.final && look.inTabMsat === 0n) {
           const line = BLWPCLIENT.owedToLine(look);
-          BLWPCLIENT.markCollectDone(window.sessionStorage, newest.roundIdHex, { payout: line, stake: null });
+          BLWPCLIENT.markCollectDone(vault(), newest.roundIdHex, { payout: line, stake: null });
           console.log('[blwp] owed: ' + line);
         }
       } catch (e) { console.error('[blwp] owed: ' + e.message); }
@@ -973,6 +1025,7 @@
         return { ok: false, why: `paste an invoice from your own wallet for ${msat} msat` };
       };
       const own = await roundWallet(r);
+      if (!own) return { ok: false, why: 'this round\'s withdrawal is open in another tab of this browser - withdraw it there, or close that tab' };
       const ask = roundAsk(r, own.LockClient);
       payoutAsking = true;
       // WHILE IT RUNS THE SCREEN SAYS SO (live, run A3: a Withdraw ran ~5 min with no line, the tab
@@ -1041,8 +1094,9 @@
         const canWithdraw = inTab || !!(window.BLWP_OWED && window.BLWP_OWED.owedMsat > 0n);
         document.getElementById('blwp-withdraw').textContent = window.BLWP_WITHDRAWING
           ? `Withdrawing - do not close this tab until it says Withdrawn (what is collected is kept in this tab): ${window.BLWP_WITHDRAW_STEP || ''}`
+          : window.BLWP_ELSEWHERE ? 'This round\'s withdrawal is open in another tab of this browser - withdraw it there, or close that tab'
           : BLWPCLIENT.withdrawLine(window.BLWP_WITHDRAWN, canWithdraw ? window.BLWP_WITHDRAWABLE : null);
-        const offer = canWithdraw && !window.BLWP_WITHDRAWING;
+        const offer = canWithdraw && !window.BLWP_WITHDRAWING && !window.BLWP_ELSEWHERE;
         for (const id of ['blwp-withdraw-invoice', 'blwp-withdraw-go']) document.getElementById(id).style.display = offer ? '' : 'none';
         for (const id of ['blwp-spent', 'blwp-budget', 'blwp-why']) document.getElementById(id).textContent = '';
         for (const id of ['blwp-nwc', 'blwp-pay']) document.getElementById(id).style.display = 'none';
@@ -1316,7 +1370,15 @@
           needed: r.needed | 0, joinable: !!r.join, leftS: leftOf(r.line), seated: seatedOf(r.line) })),
         refused: refused.map(String), nodes: named.nodes.length,
         join: window.BLWP_JOIN ? { state: window.BLWP_JOIN.state, why: String(window.BLWP_JOIN.why || ''), stage: String(window.BLWP_JOIN.stage || '') }
-          : { state: '', why: '', stage: '' } });
+          : { state: '', why: '', stage: '' },
+        // A WITHDRAWAL AVAILABLE (the owner 2026-09-14): what the kept round still owes, as the page
+        // looked at it - the federation's part and the round wallet's - for the lobby to say so.
+        withdraw: (() => {
+          const o = window.BLWP_OWED;
+          const inTab = typeof window.BLWP_WITHDRAWABLE === 'bigint' ? window.BLWP_WITHDRAWABLE : 0n;
+          const msat = (o && typeof o.owedMsat === 'bigint' ? o.owedMsat : 0n) + inTab;
+          return { available: msat > 0n || !!window.BLWP_ELSEWHERE, msat: String(msat), elsewhere: !!window.BLWP_ELSEWHERE };
+        })() });
       window.BLWP_LOBBY_ACT = {
         // PLAY: the round's own link, so the seat is taken by exactly the path a
         // shared round link takes - IN THIS PAGE (the owner 2026-09-13 07:11: "after
