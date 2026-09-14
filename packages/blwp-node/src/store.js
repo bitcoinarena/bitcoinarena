@@ -527,6 +527,16 @@ export function openStore(path = ':memory:') {
       made_ms      INTEGER NOT NULL
     );
 
+    -- WHAT THE SIGNED SETTLEMENT MOVES (W6): its claimed outpoints and how many
+    -- payout contracts it makes, kept with its intent - so a seat restarted inside
+    -- it asks the federation without rebuilding the bytes it signed.
+    CREATE TABLE IF NOT EXISTS lock_settlement_moves (
+      round_id     BLOB PRIMARY KEY,
+      txid         TEXT NOT NULL,
+      claims       TEXT NOT NULL,
+      payouts      INTEGER NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS forfeits (
       entry_id     BLOB PRIMARY KEY,
       round_id     BLOB NOT NULL,

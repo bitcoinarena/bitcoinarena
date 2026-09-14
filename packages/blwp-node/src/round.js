@@ -1890,6 +1890,23 @@ export class Round {
     return r ? { txid: r.txid, message: new Uint8Array(r.message), signature: new Uint8Array(r.signature), state: r.state, why: r.why, madeMs: Number(r.made_ms) } : null;
   }
 
+  /** Every round whose lock settlement this seat holds in `state` (W6: SUBMITTING, asked again at start). */
+  lockSettlementsIn(state) {
+    return this.db.prepare('SELECT round_id FROM lock_settlements WHERE state = ? ORDER BY made_ms').all(state)
+      .map((r) => new Uint8Array(r.round_id));
+  }
+
+  /** What the signed settlement moves (W6): its claimed outpoints ("txid:idx") and its payout count. */
+  putLockSettlementMoves({ roundId, txid, claims, payouts }) {
+    this.db.prepare('INSERT OR REPLACE INTO lock_settlement_moves (round_id, txid, claims, payouts) VALUES (?, ?, ?, ?)')
+      .run(Buffer.from(roundId), String(txid), JSON.stringify(claims), Number(payouts));
+  }
+
+  lockSettlementMoves(roundIdBytes) {
+    const r = this.db.prepare('SELECT txid, claims, payouts FROM lock_settlement_moves WHERE round_id = ?').get(Buffer.from(roundIdBytes));
+    return r ? { txid: r.txid, claims: JSON.parse(r.claims), payouts: Number(r.payouts) } : null;
+  }
+
   /**
    * THE ROUNDS WHOSE LOCKS WERE SETTLED SINCE `sinceMs`, oldest first, with their locks' refund keys
    * (spec §24, the owner 2026-09-14: a withdrawal claimed on another device). Public, as the

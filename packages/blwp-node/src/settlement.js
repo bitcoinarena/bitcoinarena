@@ -224,10 +224,56 @@ export class LockSettlement {
     const m = await this.message(roundIdBytes);
     if (!m.ok) return m;
     if (!schnorr.verify(signature, m.message, m.claimPk.subarray(1))) return refuse('that settlement signature does not verify under the round\'s claim key');
-    if (!this.round.lockSettlement(roundIdBytes))
+    if (!this.round.lockSettlement(roundIdBytes)) {
+      this.keepMoves(roundIdBytes, m);
       this.round.putLockSettlement({ roundId: roundIdBytes, txid: m.txid, message: m.message, signature, state: SUBMITTING,
         why: 'signed by the seats; submitted by the seat that combined it' });
+    }
     return { ok: true };
+  }
+
+  /** What the signed settlement moves, kept with its intent (W6). */
+  keepMoves(roundIdBytes, m) {
+    this.round.putLockSettlementMoves({ roundId: roundIdBytes, txid: m.txid,
+      claims: m.claims.map((c) => `${toHex(c.outpoint.txid)}:${c.outpoint.outIdx}`), payouts: m.plan.payouts.length });
+  }
+
+  /**
+   * DID THE SETTLEMENT THIS SEAT SIGNED GO THROUGH? (W6, the owner 2026-09-15). Asked of the
+   * federation from what the seat kept with its intent - never from a rebuild, which a restart
+   * may not manage or may make differently. IN: a payout contract of that txid is stored (only
+   * that transaction makes one) and none of its claimed locks is still held. OUT: every claimed
+   * lock still held and no payout of it stored. Anything else is not decided here - a claimed lock
+   * can leave by its own refund after expiry, and a winner can collect its payout.
+   */
+  async federationSaw(roundIdBytes, kept) {
+    const moves = this.round.lockSettlementMoves(roundIdBytes);
+    if (!moves || moves.txid !== kept.txid) return { verdict: 'unknown', why: 'this seat kept no record of what its settlement moves' };
+    if (!this.port || typeof this.port.status !== 'function') return { verdict: 'unknown', why: 'this seat reaches no federation to ask' };
+    const held = async (o) => !!(await this.port.status(o)).stored;
+    const claimsHeld = [];
+    for (const c of moves.claims) claimsHeld.push(await held(outpointOf(c)));
+    const payoutsHeld = [];
+    for (let i = 0; i < moves.payouts; i++) payoutsHeld.push(await held({ txid: fromHex(kept.txid), outIdx: BigInt(i) }));
+    const locksGone = claimsHeld.filter((x) => !x).length;
+    const paid = payoutsHeld.filter(Boolean).length;
+    const seen = `${paid} of ${moves.payouts} payout contract(s) of ${kept.txid.slice(0, 12)} stored, ${locksGone} of ${moves.claims.length} claimed lock(s) gone`;
+    if (paid > 0 && locksGone === moves.claims.length) return { verdict: 'in', why: seen };
+    if (paid === 0 && locksGone === 0) return { verdict: 'out', why: seen };
+    return { verdict: 'mixed', why: seen };
+  }
+
+  /**
+   * A SEAT STARTED AGAIN ASKS ABOUT EVERY SETTLEMENT IT WAS INSIDE (W6): each round it holds as
+   * SUBMITTING goes through settle(), which asks the federation before anything else.
+   */
+  async recover() {
+    const out = [];
+    for (const rid of this.round.lockSettlementsIn(SUBMITTING)) {
+      const got = await this.settle(rid).catch((e) => ({ ok: false, why: e.message }));
+      out.push({ round: toHex(rid), ok: !!got.ok, state: got.state || (this.round.lockSettlement(rid) || {}).state, why: got.why });
+    }
+    return out;
   }
 
   /**
@@ -238,9 +284,26 @@ export class LockSettlement {
   async settle(roundIdBytes) {
     const kept = this.round.lockSettlement(roundIdBytes);
     if (kept && kept.state === ACCEPTED) return { ok: true, kept: true, ...kept };
+    // A SETTLEMENT THIS SEAT WAS INSIDE (W6): the federation first. Measured before: a seat
+    // restarted inside one never asked again - its row stayed SUBMITTING whether the money had
+    // moved or not.
+    if (kept && kept.state === SUBMITTING) {
+      const saw = await this.federationSaw(roundIdBytes, kept);
+      if (saw.verdict === 'in') {
+        const why = `found in the federation after this seat was inside it: ${saw.why}`;
+        this.round.putLockSettlement({ roundId: roundIdBytes, txid: kept.txid, message: kept.message, signature: kept.signature, state: ACCEPTED, why });
+        return { ok: true, state: ACCEPTED, why, txid: kept.txid, signature: kept.signature, recovered: true };
+      }
+      if (saw.verdict === 'mixed') {
+        const why = `neither in nor out - not settled here, not submitted again: ${saw.why}`;
+        this.round.putLockSettlement({ roundId: roundIdBytes, txid: kept.txid, message: kept.message, signature: kept.signature, state: SUBMITTING, why });
+        return refuse(why, 409);
+      }
+    }
     const m = await this.message(roundIdBytes);
     if (!m.ok) return m;
-    let signature = kept && kept.signature;
+    // THE KEPT SIGNATURE ONLY OVER THE BYTES IT SIGNED: a plan rebuilt differently is signed afresh.
+    let signature = kept && kept.signature && kept.txid === m.txid ? kept.signature : null;
     if (!signature) {
       const q = `round=${toHex(roundIdBytes)}`;
       const own = await this.commit(roundIdBytes);
@@ -279,6 +342,7 @@ export class LockSettlement {
     }
     // THE INTENT IS ON DISK BEFORE THE SUBMIT, as a hold's settle is: a seat that
     // dies here comes back knowing it signed, and asks the federation.
+    this.keepMoves(roundIdBytes, m);
     this.round.putLockSettlement({ roundId: roundIdBytes, txid: m.txid, message: m.message, signature, state: SUBMITTING,
       why: 'about to submit; if this seat dies here, ask the federation for the claimed locks' });
     const sent = await this.port.settle({ claimPk: m.claimPk, claims: m.claims, payouts: m.plan.payouts, nonce: m.plan.nonce, signature });

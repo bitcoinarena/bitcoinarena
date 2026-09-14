@@ -34,4 +34,8 @@ echo "federation up in $(( $(date +%s) - t )) s, invite ${INVITE:0:24}..."
 PROBE=$P INVITE=$INVITE GATEWAY=http://127.0.0.1:30170 LND_BIN=$L LOCK_BIN=$LOCK_BIN WASM_PKG=$WASM_PKG BITCOIN_BIN=$B \
   FEDIMINT_BIN=$F FEDIMINT_HOME=$FH \
   node $HERE/settle-live-regtest.mjs 2>&1 | grep --line-buffered -E '^\{|Error|panicked' | sed -u 's/^/LIVE /'
+# W6_KILL=1: the driver was SIGKILLed after the guardians answered; the seats start again, same federation.
+if [ "${W6_KILL:-}" = "1" ]; then
+  PROBE=$P LOCK_BIN=$LOCK_BIN node $HERE/settle-live-w6-resume.mjs 2>&1 | grep --line-buffered -E '^\{|Error|panicked' | sed -u 's/^/LIVE /'
+fi
 echo "probe dir: $P"

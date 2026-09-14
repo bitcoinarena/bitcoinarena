@@ -8,7 +8,7 @@
 // Driven by settle-live-regtest.sh (the federation, the gateway, the deposit).
 import { execFile, spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
-import { readFileSync, writeFileSync, mkdtempSync } from 'node:fs';
+import { readFileSync, writeFileSync, writeSync, mkdtempSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createServer } from 'node:http';
@@ -445,9 +445,29 @@ async function claimOnAnotherDevice({ p, c, rid, urls, stakeMsat, held, payoutAt
   return res;
 }
 
+// W6 LIVE (W6_KILL=1): the seats keep their stores in files, and the process is SIGKILLed the moment
+// the real guardians have answered a signed settlement - before any seat can write that answer down.
+// What a restart needs (the seats' ports, the round, what the settlement moves) is written first,
+// synchronously; settle-live-w6-resume.mjs starts the seats again on the same stores and ports.
+const W6 = { state: {} };
+const dyingAfterAnswer = (p, i) => Object.assign(Object.create(p), {
+  async settle(args) {
+    const r = await p.settle(args);
+    if (!args.signature) return r;
+    const kill = { seat: i, txid: r.txid, accepted: r.accepted, error: r.error || null, ...W6.state,
+      claims: args.claims.map((c) => key(c.outpoint)), payouts: args.payouts.length };
+    writeFileSync(`${P}/w6-kill.json`, JSON.stringify(kill));
+    writeSync(1, JSON.stringify({ step: 'W6: the real guardians answered the signed settlement; SIGKILL before any seat writes it', ...kill }) + '\n');
+    process.kill(process.pid, 'SIGKILL');
+    return r;
+  },
+});
 async function round(stakeMsat) {
-  const mk = (i) => serve(openStore(':memory:'), { port: 0, ...opts, stakeLocks: ports[i], poolCurve: curve, finality: { everyMs: 250 } });
+  const w6 = env.W6_KILL === '1';
+  const mk = (i) => serve(openStore(w6 ? `${P}/seat-${i}.sqlite` : ':memory:'),
+    { port: 0, ...opts, stakeLocks: w6 ? dyingAfterAnswer(ports[i], i) : ports[i], poolCurve: curve, finality: { everyMs: 250 } });
   const a = await mk(0); const b = await mk(1);
+  W6.state.ports = [a.port, b.port];
   try {
     for (const [d, o] of [[a, b], [b, a]]) {
       const there = [`http://127.0.0.1:${o.port}`];
@@ -456,6 +476,7 @@ async function round(stakeMsat) {
     const c = { ...contractFor([a.round.pubkey, b.round.pubkey], BigInt(WINDOW_MS), [a, b].map((d) => `http://127.0.0.1:${d.port}`)),
       federationId: fromHex(LockClient.federationIdOf(env.INVITE)), minScore: 1, stakeMsat };
     const rid = roundId(c);
+    W6.state.rid = toHex(rid);
     for (const d of [a, b]) {
       const r = await fetch(`http://127.0.0.1:${d.port}/round`, { method: 'POST', body: encodeRoundContract(c) });
       if (r.status !== 201) throw new Error(`round: ${r.status} ${await r.text()}`);

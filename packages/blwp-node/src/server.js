@@ -85,7 +85,7 @@ import { PoolSigning } from './pool-signing.js';
 import { PoolWatch } from './pool-watch.js';
 import { Dkg } from './dkg.js';
 import { Forfeit } from './forfeit.js';
-import { LockSettlement, locksStake } from './settlement.js';
+import { LockSettlement, locksStake, SUBMITTING } from './settlement.js';
 import { decodeUtxo, decodeCommitments, encodeCommitments, encodeShare, UTXO_BYTES } from './pool-wire.js';
 import { SIGNED_TABLE_BYTES } from './payout-table.js';
 
@@ -1494,6 +1494,29 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     }
     return picked;
   }).catch((e) => { console.error(`[close] ${e.message}`); return []; });
+
+  // AND EVERY LOCK SETTLEMENT THIS SEAT WAS INSIDE (W6, the owner 2026-09-15). Measured before: the
+  // start above runs a close again only for a round with a run short of FINAL, and a lock
+  // settlement happens only once every run is FINAL - so a seat restarted inside one never asked
+  // again and its row stayed SUBMITTING whether the money had moved or not. After the closes, each
+  // SUBMITTING round goes through settle(), which asks the federation first; and again on a slow
+  // cadence, so one whose rebuild waited on a seat that was down is taken up once that seat is back.
+  let recoveringNow = null;
+  const recoverSettlements = () => {
+    if (recoveringNow || shuttingDown) return recoveringNow || Promise.resolve([]);
+    recoveringNow = settlements.recover()
+      .then((done) => { for (const d of done) console.log(`[settle] ${d.round.slice(0, 16)} asked again: ${d.state} - ${d.why}`); return done; })
+      .catch((e) => { console.error(`[settle] ${e.message}`); return []; })
+      .finally(() => { recoveringNow = null; });
+    return recoveringNow;
+  };
+  const recoveringSettlements = resumingCloses.then(() => recoverSettlements());
+  const settleRecoverTimer = setInterval(() => {
+    if (!shuttingDown && round.lockSettlementsIn(SUBMITTING).length) recoverSettlements();
+  }, finality.maxEveryMs ?? 60000);
+  // A BACKGROUND CHECK DOES NOT HOLD THE PROCESS UP: a running daemon's server does. Measured:
+  // without this, a test that left a seat open never let node --test exit.
+  settleRecoverTimer.unref();
 
   // AND EVERY ROUND THAT IS OVER, CLOSED BY THIS SEAT ITSELF (closeAtEnd).
   //
@@ -3080,6 +3103,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       close: () => new Promise((r) => {
         // NO RE-GATHER OUTLIVES THE DAEMON.
         shuttingDown = true;
+        clearInterval(settleRecoverTimer);
         if (endTimer) clearInterval(endTimer);
         if (expiryTimer) clearInterval(expiryTimer);
         for (const t of finalityTimers) clearTimeout(t);

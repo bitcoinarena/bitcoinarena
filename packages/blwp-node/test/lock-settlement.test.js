@@ -15,6 +15,9 @@
 // was 409, the lock stayed held and went back to the loser at its expiry.
 // HARNESS: lockRound and lockAndPlay as forfeit.test.js has them (file-local there).
 import { test } from 'node:test';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import assert from 'node:assert/strict';
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
@@ -237,6 +240,193 @@ test('the seats list the rounds they settled since a time with the keys each pay
     const atB = await (await fetch(`http://127.0.0.1:${w.b.port}/settled?since=0`)).json();
     assert.ok(atB.rounds.some((r) => r.id === toHex(w.rid)), 'the other seat does not list the round it settled');
     console.log(`  /settled: ${listed.rounds.length} round(s) at seat A, this one ${mine.state} at ${mine.madeMs}, paying ${mine.payouts.length} key, ${mine.refunds.length} refund keys; since ${Number(mine.madeMs) + 1}: ${later.rounds.length}; seat B lists it too`);
+  } finally { await w.close(); }
+});
+
+// W6 (the owner 2026-09-15): A SEAT KILLED INSIDE A LOCK SETTLEMENT RECOVERS TO THE RIGHT STATE ON
+// RESTART. Two seats on store files, each reaching the federation through a port that can die with
+// the seat: after the guardians took the settlement (a) or before it went (b). The seats are then
+// started again on their files - on the same ports, so the round's seat addresses still hold - and
+// sometimes cannot rebuild what they signed (c): the federation's fee rule changed, or the other seat
+// is down so no loser's P opens. Identical bytes sent again are ACCEPTED (stake-lock-step3.sh c1),
+// so that is not the failure; a rebuild that differs or refuses is. Each case prints what the row
+// and the federation held before and after the restart.
+async function lockRoundOnDisk() {
+  const dir = mkdtempSync(join(tmpdir(), 'w6-'));
+  const port = lockPort();
+  port.feeRule = REAL_FEES;
+  const death = { mode: 'none' };
+  const sent = [];
+  const dying = (name) => ({ ...port, async settle(args) {
+    if (!args.signature) return port.settle(args);
+    if (death.mode === 'before') throw new Error(`seat ${name} died before its settlement reached the guardians`);
+    const r = await port.settle(args);
+    sent.push({ seat: name, txid: r.txid, accepted: r.accepted, error: r.error,
+      signatureOverItsBytes: schnorr.verify(args.signature, fromHex(r.message), args.claimPk.subarray(1)) });
+    if (death.mode === 'after') throw new Error(`seat ${name} died after the guardians answered ${r.accepted ? 'accepted' : 'refused'}`);
+    return r;
+  } });
+  const start = (name, at = 0) => serve(openStore(join(dir, `${name}.sqlite`)),
+    { port: at, ...opts, stakeLocks: dying(name), poolCurve: curve, finality: { everyMs: 100 } });
+  const w = { dir, port, death, sent, a: await start('a'), b: await start('b') };
+  const wire = () => {
+    for (const [d, o] of [[w.a, w.b], [w.b, w.a]]) {
+      if (!d || !o) continue;
+      const there = [`http://127.0.0.1:${o.port}`];
+      d.verifier.peers = there; d.payouts.peers = there; d.preimages.peers = there; d.dkg.peers = there;
+    }
+  };
+  wire();
+  w.c = { ...contractFor([w.a.round.pubkey, w.b.round.pubkey], BigInt(WINDOW_MS), [w.a, w.b].map((d) => `http://127.0.0.1:${d.port}`)),
+    federationId: b32(0xfe), minScore: 1, stakeMsat: STAKE };
+  w.rid = roundId(w.c);
+  for (const d of [w.a, w.b]) {
+    const r = await fetch(`http://127.0.0.1:${d.port}/round`, { method: 'POST', body: encodeRoundContract(w.c) });
+    assert.equal(r.status, 201, await r.text());
+    assumeSeated(d.round, w.rid, w.c.nodes);
+  }
+  for (let pass = 0; pass < 2; pass++) for (const d of [w.a, w.b]) await d.dkg.run(w.c.nodes);
+  const held = w.a.dkg.seatFor(w.c.nodes);
+  assert.equal(held.ok, true, held.why);
+  w.claimPk = held.pool.groupPublicKey;
+  // STARTED AGAIN ON ITS FILE AND ITS PORT; a seat named in `down` stays down.
+  w.restart = async ({ down = [] } = {}) => {
+    const at = { a: w.a && w.a.port, b: w.b && w.b.port };
+    for (const n of ['a', 'b']) if (w[n]) { await w[n].close(); w[n] = null; }
+    for (const n of ['a', 'b']) if (!down.includes(n)) w[n] = await start(n, at[n]);
+    wire();
+  };
+  w.close = async () => { for (const n of ['a', 'b']) if (w[n]) await w[n].close(); rmSync(dir, { recursive: true, force: true }); };
+  return w;
+}
+const rowAt = (d, w) => (d ? d.round.lockSettlement(w.rid) : null);
+const heldAt = (w, o) => w.port.locks.has(key(o));
+const payoutAt = (w, txid, i = 0) => (txid ? w.port.locks.has(`${txid}:${i}`) : false);
+async function until(pred, ms = 10000) { for (const stop = Date.now() + ms; Date.now() < stop; await wait(100)) if (pred()) return true; return pred(); }
+// WHAT EACH SEAT'S ROW AND THE FEDERATION HOLD, printed before any assertion.
+const standingOf = (w, lost, signedTxid) => ({
+  a: rowAt(w.a, w) && { state: rowAt(w.a, w).state, txid: rowAt(w.a, w).txid.slice(0, 12), why: rowAt(w.a, w).why.slice(0, 90) },
+  b: rowAt(w.b, w) && { state: rowAt(w.b, w).state, txid: rowAt(w.b, w).txid.slice(0, 12) },
+  loserLockHeld: heldAt(w, lost.outpoint), payoutAtSignedTxid: payoutAt(w, signedTxid), submissions: w.sent.length,
+});
+async function playAndDie(w, mode) {
+  const won = await lockAndPlay(w, WINNER);
+  const lost = await lockAndPlay(w, LOSER);
+  w.death.mode = mode;
+  await closeRound(w);
+  await until(() => { const r = rowAt(w.a, w); return !!r && r.state === 'SUBMITTING' && (mode === 'before' || w.sent.length > 0); }, 30000);
+  await wait(300);
+  const signedTxid = rowAt(w.a, w) && rowAt(w.a, w).txid;
+  w.death.mode = 'none';
+  return { won, lost, signedTxid };
+}
+
+test('W6 (a): the guardians took the settlement and the seats died before saving it; started again on their stores with the same plan, the seats hold ACCEPTED', async () => {
+  const w = await lockRoundOnDisk();
+  try {
+    const { lost, signedTxid } = await playAndDie(w, 'after');
+    const before = standingOf(w, lost, signedTxid);
+    await w.restart();
+    await until(() => ['a', 'b'].every((n) => (rowAt(w[n], w) || {}).state !== 'SUBMITTING'));
+    const after = standingOf(w, lost, signedTxid);
+    console.log(`  (a) before the restart ${JSON.stringify(before)}`);
+    console.log(`  (a) after it          ${JSON.stringify(after)}`);
+    assert.equal(before.payoutAtSignedTxid, true, 'the guardians did not take it before the seats died');
+    assert.equal(before.a.state, 'SUBMITTING');
+    assert.equal(after.a.state, 'ACCEPTED', after.a.why);
+    assert.equal(after.b.state, 'ACCEPTED');
+    assert.equal(after.loserLockHeld, false);
+    assert.equal(after.payoutAtSignedTxid, true);
+  } finally { await w.close(); }
+});
+
+test('W6 (a)+(c): the guardians took it, the seats died before saving, and after the restart the plan rebuilt differs (the federation\'s fee rule changed) - the seats hold ACCEPTED from the federation, and no signature goes out over other bytes', async () => {
+  const w = await lockRoundOnDisk();
+  try {
+    const { lost, signedTxid } = await playAndDie(w, 'after');
+    const before = standingOf(w, lost, signedTxid);
+    w.port.feeRule = { ppm: 0n, baseMsat: 1500n };
+    await w.restart();
+    await until(() => ['a', 'b'].every((n) => (rowAt(w[n], w) || {}).state !== 'SUBMITTING'));
+    const after = standingOf(w, lost, signedTxid);
+    const overOther = w.sent.filter((x) => !x.signatureOverItsBytes).length;
+    console.log(`  (a)+(c) fee rule changed, before ${JSON.stringify(before)}`);
+    console.log(`  (a)+(c) fee rule changed, after  ${JSON.stringify(after)}; signatures sent over other bytes: ${overOther}`);
+    assert.equal(before.payoutAtSignedTxid, true, 'the guardians did not take it before the seats died');
+    assert.equal(after.a.state, 'ACCEPTED', `the money moved and seat A holds ${after.a.state}: ${after.a.why}`);
+    assert.equal(after.b.state, 'ACCEPTED', `the money moved and seat B holds ${after.b.state}`);
+    assert.equal(overOther, 0, 'a signature went out over bytes it does not sign');
+  } finally { await w.close(); }
+});
+
+test('W6 (a)+(c): the guardians took it, the seats died before saving, and after the restart seat B stays down so no loser\'s P opens - seat A holds ACCEPTED from the federation', async () => {
+  const w = await lockRoundOnDisk();
+  try {
+    const { lost, signedTxid } = await playAndDie(w, 'after');
+    const before = standingOf(w, lost, signedTxid);
+    await w.restart({ down: ['b'] });
+    await until(() => (rowAt(w.a, w) || {}).state !== 'SUBMITTING', 8000);
+    const after = standingOf(w, lost, signedTxid);
+    console.log(`  (a)+(c) seat B down, before ${JSON.stringify(before)}`);
+    console.log(`  (a)+(c) seat B down, after  ${JSON.stringify(after)}`);
+    assert.equal(before.payoutAtSignedTxid, true, 'the guardians did not take it before the seats died');
+    assert.equal(after.a.state, 'ACCEPTED', `the money moved and seat A holds ${after.a.state}: ${after.a.why}`);
+  } finally { await w.close(); }
+});
+
+test('W6 (b): the seats died before their settlement reached the guardians; started again, they submit it - the same txid - and hold ACCEPTED', async () => {
+  const w = await lockRoundOnDisk();
+  try {
+    const { lost, signedTxid } = await playAndDie(w, 'before');
+    const before = standingOf(w, lost, signedTxid);
+    await w.restart();
+    await until(() => ['a', 'b'].every((n) => (rowAt(w[n], w) || {}).state !== 'SUBMITTING'));
+    const after = standingOf(w, lost, signedTxid);
+    console.log(`  (b) before the restart ${JSON.stringify(before)}`);
+    console.log(`  (b) after it          ${JSON.stringify(after)}`);
+    assert.equal(before.loserLockHeld, true, 'the loser\'s lock was claimed before any submit');
+    assert.equal(before.payoutAtSignedTxid, false);
+    assert.equal(after.a.state, 'ACCEPTED', after.a.why);
+    assert.equal(after.loserLockHeld, false);
+    assert.equal(after.payoutAtSignedTxid, true, 'the settlement that went in is not the one signed');
+  } finally { await w.close(); }
+});
+
+test('W6 (b)+(c): the seats died before sending, and after the restart the plan rebuilt differs - the seats sign it afresh and hold ACCEPTED; no signature goes out over other bytes', async () => {
+  const w = await lockRoundOnDisk();
+  try {
+    const { lost, signedTxid } = await playAndDie(w, 'before');
+    const before = standingOf(w, lost, signedTxid);
+    w.port.feeRule = { ppm: 0n, baseMsat: 1500n };
+    await w.restart();
+    await until(() => ['a', 'b'].every((n) => (rowAt(w[n], w) || {}).state !== 'SUBMITTING'));
+    const now = rowAt(w.a, w);
+    const after = { ...standingOf(w, lost, signedTxid), payoutAtNewTxid: payoutAt(w, now && now.txid) };
+    const overOther = w.sent.filter((x) => !x.signatureOverItsBytes).length;
+    console.log(`  (b)+(c) fee rule changed, before ${JSON.stringify(before)}`);
+    console.log(`  (b)+(c) fee rule changed, after  ${JSON.stringify(after)}; signatures sent over other bytes: ${overOther}`);
+    assert.equal(overOther, 0, 'a signature went out over bytes it does not sign');
+    assert.equal(after.a.state, 'ACCEPTED', after.a.why);
+    assert.notEqual(now.txid.slice(0, 12), before.a.txid, 'the plan did not change, so this measures nothing');
+    assert.equal(after.loserLockHeld, false);
+    assert.equal(after.payoutAtNewTxid, true);
+  } finally { await w.close(); }
+});
+
+test('W6 mixed: the seats died before sending and the loser\'s lock then left the federation by itself (a refund after expiry) with no payout stored - the seats keep SUBMITTING with the reason and do not retry', async () => {
+  const w = await lockRoundOnDisk();
+  try {
+    const { lost, signedTxid } = await playAndDie(w, 'before');
+    const before = standingOf(w, lost, signedTxid);
+    w.port.locks.delete(key(lost.outpoint));
+    await w.restart();
+    await wait(3000);
+    const after = standingOf(w, lost, signedTxid);
+    console.log(`  mixed, before the restart ${JSON.stringify(before)}`);
+    console.log(`  mixed, after it          ${JSON.stringify(after)}`);
+    assert.equal(after.a.state, 'SUBMITTING', `a picture the federation does not settle was written ${after.a.state}`);
+    assert.match(after.a.why, /gone|payout/, 'the row does not say why it waits');
+    assert.equal(after.submissions, before.submissions, 'a settlement was retried over a picture that is neither in nor out');
   } finally { await w.close(); }
 });
 
