@@ -8369,6 +8369,23 @@ function savedLock(storage, { roundId, playerPubkey }) {
 }
 
 /** A seat committed the kept lock to `entryId`: from now on it is that seat's stake, not one to reuse. */
+/**
+ * WHAT A TAB DOES WITH THE LOCK IT KEPT FOR THIS ROUND, ON A RELOAD (6d, W4 hole 1). None:
+ * a new join. One no seat committed: the same stake and lock, no second deposit (W1b).
+ * One a seat COMMITTED to an entry: that seat is taken and its stake is locked - measured
+ * before: the page dealt a new stake and set out to fund "980000 + 20000 msat of lock",
+ * a second deposit for a round the player already stakes. The run itself cannot be
+ * resumed (its session key lives in the player and is not kept), so the join stops, says
+ * why, and the payout and stake are still collected from the tab's kept record.
+ */
+function keptLockUse(kept) {
+  if (!kept) return { use: 'new' };
+  if (!kept.committedTo) return { use: 'reuse', kept };
+  return { use: 'staked', kept,
+    why: `this tab's stake in this round is already locked and committed to entry ${String(kept.committedTo).slice(0, 16)}…: `
+      + 'no second deposit - the run cannot be resumed after a reload, and its payout and stake are collected after the window' };
+}
+
 function markLockCommitted(storage, { roundId, playerPubkey, entryId }) {
   const key = savedLockKey(roundId, playerPubkey);
   const raw = storage.getItem(key);
@@ -13691,7 +13708,7 @@ return { Client: Client, markState: markState,
          awaitAttestedClaimKey: awaitAttestedClaimKey,
          sharesNeededFor: sharesNeededFor,
          lockStake: lockStake, handLock: handLock, lockSecretFor: lockSecretFor, lockLine: lockLine,
-         saveLock: saveLock, savedLock: savedLock, markLockCommitted: markLockCommitted,
+         saveLock: saveLock, savedLock: savedLock, markLockCommitted: markLockCommitted, keptLockUse: keptLockUse,
          findLock: findLock, refundStake: refundStake, forfeitOf: forfeitOf, redeemStake: redeemStake,
          settlementOf: settlementOf, redeemPayout: redeemPayout, payoutLine: payoutLine,
          returnStake: returnStake, stakeBackLine: stakeBackLine,

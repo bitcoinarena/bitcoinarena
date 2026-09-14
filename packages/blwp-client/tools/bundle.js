@@ -145,7 +145,7 @@ out += '         sharesNeededFor: sharesNeededFor,\n';
 // THE PLAYER'S STAKE LOCK (W1b): what the injected lock client is asked, and the
 // hand-over of the lock it made to every seat.
 out += '         lockStake: lockStake, handLock: handLock, lockSecretFor: lockSecretFor, lockLine: lockLine,\n';
-out += '         saveLock: saveLock, savedLock: savedLock, markLockCommitted: markLockCommitted,\n';
+out += '         saveLock: saveLock, savedLock: savedLock, markLockCommitted: markLockCommitted, keptLockUse: keptLockUse,\n';
 out += '         findLock: findLock, refundStake: refundStake, forfeitOf: forfeitOf, redeemStake: redeemStake,\n';
 // AND THE WINNER'S PAYOUT (6d, W4): the seats' accepted settlement, the payout
 // contract to this seed's key spent into the tab's wallet, and its line.

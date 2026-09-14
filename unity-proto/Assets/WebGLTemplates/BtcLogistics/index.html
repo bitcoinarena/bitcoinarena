@@ -611,7 +611,17 @@
         const kept = BLWPCLIENT.roundLocks(named.round)
           ? BLWPCLIENT.savedLock(window.sessionStorage, { roundId: BLWPCLIENT.fromHex(named.roundIdHex), playerPubkey: player.pubkey })
           : null;
-        const reuse = kept && !kept.committedTo ? kept : null;
+        // A LOCK A SEAT ALREADY COMMITTED (6d, W4 hole 1): no new stake and no second
+        // deposit - measured before, a reload onto the round link set out to fund a second
+        // 980000 + 20000 msat. The join stops and says why; the collect runs from the
+        // record the first join kept.
+        const use = BLWPCLIENT.keptLockUse(kept);
+        if (use.use === 'staked') {
+          window.BLWP_SEAT_REFUSED = use.why;
+          console.error('[blwp] seat refused: ' + use.why);
+          return;
+        }
+        const reuse = use.use === 'reuse' ? use.kept : null;
         stake = reuse ? reuse.stake : await BLWPCLIENT.stakeFor(
           Object.assign({}, named.round, { id: BLWPCLIENT.fromHex(named.roundIdHex) }), {
             seats: seats.seats, curve: window.BLWP_CURVE, random, playerPubkey: player.pubkey,

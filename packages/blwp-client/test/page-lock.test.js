@@ -15,7 +15,7 @@ import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js
 import assert from 'node:assert/strict';
 
 import { lockStake, handLock, lockSecretFor, lockAmountMsat, lockLine, saveLock, savedLock, markLockCommitted,
-  refundStake, redeemStake, redeemPayout, payoutLine, returnStake, stakeBackLine, saveCollect, savedCollects, markCollectDone, LOCK_EXPIRY_MARGIN_BLOCKS, feeSecretFor } from '../src/page-lock.js';
+  refundStake, redeemStake, redeemPayout, payoutLine, returnStake, stakeBackLine, saveCollect, savedCollects, markCollectDone, keptLockUse, LOCK_EXPIRY_MARGIN_BLOCKS, feeSecretFor } from '../src/page-lock.js';
 import { sha256 } from '../../protocol/src/hash.js';
 import { entryFor, joinQuery, stakeFor, playerFor } from '../src/join.js';
 import { lockFieldsToJson } from '../../protocol/src/stake-lock.js';
@@ -350,6 +350,19 @@ test('after the settlement the winner\'s page redeems its own stake by the seats
   assert.equal(unsettled.final, false);
   assert.equal(asked.filter((u) => u.includes('/forfeit') || u.includes('/stake-lock')).length, 0, 'a forfeit was asked for before the seats settled');
   assert.equal(joins + redeemed.length, 0);
+});
+
+// 6d, W4 HOLE 1: A RELOAD ONTO THE ROUND LINK MUST NOT ASK A SECOND DEPOSIT.
+test('a reloaded tab with no kept lock joins anew; with a kept lock no seat committed it reuses it; with one a seat committed it stops and never stakes again', () => {
+  assert.deepEqual(keptLockUse(null), { use: 'new' });
+  const kept = { stake: { preimage: b32(1) }, lock: { outpoint: { txid: b32(0xd8), outIdx: 0n } }, committedTo: null };
+  const reuse = keptLockUse(kept);
+  assert.equal(reuse.use, 'reuse');
+  assert.equal(reuse.kept, kept);
+  const staked = keptLockUse({ ...kept, committedTo: 'ee'.repeat(32) });
+  assert.equal(staked.use, 'staked');
+  assert.match(staked.why, /already locked and committed to entry eeeeeeeeeeeeeeee…: no second deposit/);
+  assert.match(staked.why, /payout and stake are collected after the window/);
 });
 
 // 6d: A RELOAD MUST NOT LOSE THE COLLECT - measured, it left 978000 + 980000 msat in the federation.
