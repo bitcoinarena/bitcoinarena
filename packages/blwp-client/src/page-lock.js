@@ -500,10 +500,17 @@ export async function returnStake({ round, roundId, invite, seed, curve, LockCli
   }
   const rs = got.redeems;
   const ok = rs.length > 0 && rs.every((r) => r.accepted === true);
-  const res = { ok, final: ok, amountMsat: BigInt(rs.reduce((t, r) => t + Number(r.amount_msat || 0), 0)),
+  // ALREADY BACK: the seats forfeit only a qualifier's lock, and after that only this seed's
+  // refund key can spend it (the committee's claim needs P, which only a loser's gives up) -
+  // so a lock the guardians no longer hold came back to this key already (another tab, a
+  // reload mid-redeem). Final, and said so; measured before: "not back yet - ... No contract
+  // found for given ContractId", asked again every 5 s.
+  const spent = !ok && rs.length > 0 && rs.every((r) => r.accepted !== true && (r.stored_before === null || r.stored_before === undefined));
+  const res = { ok, final: ok || spent, spent, amountMsat: BigInt(rs.reduce((t, r) => t + Number(r.amount_msat || 0), 0)),
     balance_before: rs.length ? rs[0].balance_before : undefined, balance_after: rs.length ? rs[rs.length - 1].balance_after : undefined,
     txid: rs.length ? rs[0].txid : undefined, forfeitFrom: rs.length ? rs[0].forfeitFrom : undefined,
-    why: ok ? undefined : (rs.find((r) => r.error) || {}).error || 'the federation did not accept the redeem' };
+    why: ok ? undefined : spent ? 'the stake lock is already spent - back to this seed\'s key, the only key that can after the seats\' forfeit'
+      : (rs.find((r) => r.error) || {}).error || 'the federation did not accept the redeem' };
   if (ok && storage) {
     try { storage.setItem(noted, JSON.stringify({ ...res, amountMsat: String(res.amountMsat) })); } catch { /* unkept: a reload asks again */ }
   }
@@ -574,6 +581,7 @@ export function stakeBackLine(p) {
   if (!p) return '';
   if (p.ok) return `Stake returned: ${String(p.amountMsat)} msat back to this tab's federation wallet by the seats' forfeit`
     + (p.balance_after !== undefined ? ` (balance ${p.balance_before} → ${p.balance_after} msat)` : '');
+  if (p.spent) return `Stake already back: ${String(p.amountMsat)} msat - ${p.why}`;
   if (p.final) return `No stake back: ${p.why}`;
   return `Stake: not back yet - ${p.why}`;
 }

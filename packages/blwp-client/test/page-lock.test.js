@@ -341,6 +341,29 @@ test('after the settlement the winner\'s page redeems its own stake by the seats
   assert.match(stakeBackLine(lost), /^No stake back: .*went into the round's pool/);
   assert.equal(joins + redeemed.length, 0, 'a loser\'s page asked the lock client');
 
+  // A STAKE LOCK ALREADY BACK (another tab took it): refused, and the guardians hold no contract
+  // there - final, "Stake already back"; measured before: "not back yet - No contract found", for ever.
+  class SpentStake {
+    static async join() { return new SpentStake(); }
+    async redeem() { return JSON.stringify({ forfeit_verifies: true, accepted: false, error: 'The transaction had an invalid input: 0-No contract found for given ContractId',
+      amount_msat: 980000, stored_before: null, stored_after: null, balance_before: 0, balance_after: 0 }); }
+  }
+  const already = await returnStake({ ...ask, LockClient: SpentStake, fetcher: seats() });
+  assert.equal(already.ok, false);
+  assert.equal(already.final, true, 'a stake already back was asked for again for ever');
+  assert.equal(already.spent, true);
+  assert.equal(already.amountMsat, 980000n);
+  assert.match(stakeBackLine(already), /^Stake already back: 980000 msat - the stake lock is already spent/);
+  // AND ONE STILL HELD BUT REFUSED: not final, with the federation's own reason.
+  class BusyStake {
+    static async join() { return new BusyStake(); }
+    async redeem() { return JSON.stringify({ forfeit_verifies: true, accepted: false, error: 'guardians busy', amount_msat: 980000,
+      stored_before: { contract_id: 'c1', blocks_left: 140 }, balance_before: 0, balance_after: 0 }); }
+  }
+  const busy = await returnStake({ ...ask, LockClient: BusyStake, fetcher: seats() });
+  assert.equal(busy.final, false);
+  assert.match(stakeBackLine(busy), /^Stake: not back yet - guardians busy/);
+
   // INSIDE THE WINDOW, and UNSETTLED: not final, asked again later, the wallet untouched.
   const early = await returnStake({ ...ask, fetcher: seats({ forfeit: 'window' }) });
   assert.equal(early.final, false);
