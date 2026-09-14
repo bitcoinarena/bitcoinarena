@@ -210,8 +210,10 @@ async function withdrawWith(b, arg) {
   await b.evaluate(`(window.__harnessWithdrawn = null, window.__harnessInvoice = null, window.BLWP_WITHDRAW(${arg})
     .then((w) => { window.__harnessWithdrawn = JSON.stringify(w, (k, v) => (typeof v === 'bigint' ? String(v) : v)); },
       (e) => { window.__harnessWithdrawn = JSON.stringify({ error: e.message }); }), true)`).catch(() => null);
+  // 600 s: the page's Withdraw collects, redeems and pays out (live: collect 239.7 s + pay 90.6 s);
+  // run A3's 180 s cut it off mid-Withdraw and the closed tab kept what it had collected.
   const t = Date.now(); let w = '';
-  for (; Date.now() - t < 180000 && !w; await wait(1000)) w = await b.evaluate('window.__harnessWithdrawn || ""').catch(() => '');
+  for (; Date.now() - t < 600000 && !w; await wait(1000)) w = await b.evaluate('window.__harnessWithdrawn || ""').catch(() => '');
   return { result: w ? JSON.parse(w) : null, ms: Date.now() - t };
 }
 const pageReady = async (b) => {
