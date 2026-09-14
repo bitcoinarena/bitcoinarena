@@ -4,6 +4,7 @@
 // keys the test holds. Moved here unchanged, except that a contract can name
 // publication relays.
 import assert from 'node:assert/strict';
+import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
 import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js';
 import { randomBytes } from 'node:crypto';
@@ -79,7 +80,9 @@ export const contractFor = (nodes, objectionWindowMs, publicationRelays = []) =>
   startDeadlineTicks: PLANTED_FIRST_MARK_DEADLINE,
   networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations: 1,
   gameVerifySlots: nodes.length, settlementSlots: nodes.length, simCoreHash: b32(1), startTimeMs: 60500n,
-  entryCloseMs: 2000n, objectionWindowMs, custody: 'FEDERATION',
+  // NO FEDERATION IS NAMED, SO THE ROUND IS NOT A FEDERATION ROUND (W7): THRESHOLD_LN, the hold
+  // invoices these rounds run. A stake-lock test says FEDERATION and names TEST_FEDERATION_ID.
+  entryCloseMs: 2000n, objectionWindowMs, custody: 'THRESHOLD_LN',
   slashMinimumServed: 20, slashRemainder: 'BURN', federationId: new Uint8Array(32), stakeExpiryBlocks: 144, publicationRelays, donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients),
   censusHeight: 900000, censusRoot: b32(2), committeeTimeMs: 500n,
   randomnessRule: 'bitcoin-block-hash', stakeMsat: STAKE, bondMinSats: 50000n,

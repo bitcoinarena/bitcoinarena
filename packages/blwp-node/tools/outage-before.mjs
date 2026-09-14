@@ -16,6 +16,7 @@
 // Two in-process seats of a lock round; the fixture's delivering winner (join
 // tick 0); the round names no start deadline (900).
 import { ed25519 } from '@noble/curves/ed25519.js';
+import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
 
 import { openStore } from '../src/store.js';
 import { serve } from '../src/server.js';
@@ -57,7 +58,7 @@ async function seats() {
   };
   wire();
   const c = { ...contractFor([a.round.pubkey, b.round.pubkey], BigInt(WINDOW_MS), [a, b].map((d) => `http://127.0.0.1:${d.port}`)),
-    federationId: b32(0xfe), startDeadlineTicks: undefined };
+    custody: 'FEDERATION', federationId: TEST_FEDERATION_ID, startDeadlineTicks: undefined };
   const rid = roundId(c);
   for (const d of [a, b]) {
     await fetch(`http://127.0.0.1:${d.port}/round`, { method: 'POST', body: encodeRoundContract(c) });

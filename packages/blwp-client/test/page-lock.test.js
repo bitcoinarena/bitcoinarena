@@ -10,6 +10,7 @@
 // MEASURED BEFORE (TASKBOOK, W1b): the page built every entry with a zero
 // stake_lock_outpoint, loaded no lock client and posted no /lock.
 import { test } from 'node:test';
+import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
 import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js';
 import assert from 'node:assert/strict';
@@ -40,7 +41,7 @@ const now = BigInt(Date.now());
 const round = {
   networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations: 1, gameVerifySlots: 2, settlementSlots: 2,
   simCoreHash: CORE_HASH, startTimeMs: now + MIN_ENTRY_WINDOW_MS, entryCloseMs: now + MIN_ENTRY_WINDOW_MS + 600000n,
-  objectionWindowMs: 3000n, custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'BURN', federationId: b32(0xfe),
+  objectionWindowMs: 3000n, custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'BURN', federationId: TEST_FEDERATION_ID,
   stakeExpiryBlocks: 144, publicationRelays: ['http://127.0.0.1:9'], donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients), censusHeight: 900000,
   censusRoot: b32(2), committeeTimeMs: now - 1000n, randomnessRule: 'bitcoin-block-hash', stakeMsat: 1000000n,
   bondMinSats: 50000n, blockTicks: 9000, exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
@@ -132,7 +133,7 @@ test('the page asks the lock client for the round\'s own federation, under the s
   };
   console.log('  FACTS (the page\'s lock):', JSON.stringify(facts));
   assert.deepEqual(facts, {
-    federation: toHex(b32(0xfe)), invite: INVITE, secretIsTheSeedsForThisRound: true, secretIsNotThePlayerKey: true,
+    federation: toHex(TEST_FEDERATION_ID), invite: INVITE, secretIsTheSeedsForThisRound: true, secretIsNotThePlayerKey: true,
     // THE NET STAKE AND THE STOCK ALLOWANCE (2000 + 980000 x 3000 ppm = 4940),
     // grossed up by the gateway's fee: the empty client cannot be quoted.
     deposits: [['lnbcrt1page', String(lockAmountMsat(round) + 4940n + 16064n)]],
@@ -753,7 +754,7 @@ test('the page spends nothing on a timer: its interval functions only look, and 
 
 // W4 / 6d: A LOCK NO SEAT WILL SETTLE COMES BACK BY THE PLAYER'S OWN KEY AFTER ITS EXPIRY.
 test('a lock no seat will settle comes back from the tab\'s own record by the player\'s key: before its expiry it waits and says when, after it both locks are refunded, and a lock already gone asks for nothing', async () => {
-  const lockRound = { ...round, custody: 'FEDERATION', federationId: b32(0xfe) };
+  const lockRound = { ...round, custody: 'FEDERATION', federationId: TEST_FEDERATION_ID };
   const lr = roundId(lockRound);
   const player = playerFor({ ...lockRound, id: lr }, { seed, curve: pageCurve });
   const kept = { lock: {
@@ -848,7 +849,7 @@ test('what the tab still has to collect is kept per round across a reload: the r
   const tab = new Map();
   const storage = { getItem: (k) => (tab.has(k) ? tab.get(k) : null), setItem: (k, v) => tab.set(k, String(v)), removeItem: (k) => tab.delete(k),
     key: (i) => [...tab.keys()][i] ?? null, get length() { return tab.size; } };
-  const lockRound = { ...round, custody: 'FEDERATION', federationId: b32(0xfe) };
+  const lockRound = { ...round, custody: 'FEDERATION', federationId: TEST_FEDERATION_ID };
   const lr = toHex(roundId(lockRound));
   const stakeLock = { outpoint: { txid: b32(0xd8), outIdx: 1n },
     fields: { paymentImage: { kind: 'point', bytes: POINT }, amountMsat: 980000n, claimPk: CLAIM, refundPk: refundKeyOf(playerFor({ ...lockRound, id: roundId(lockRound) }, { seed, curve: pageCurve }).pubkey), expiration: 464 } };
@@ -958,6 +959,23 @@ test('the lock is shown as what it is: the amount, where, and the block it comes
   assert.equal(lockLine(null), '');
 });
 
+// M3 W7: THE CLIENT PUTS NO STAKE INTO A ROUND WHOSE CUSTODY FIELDS FAIL. Before: lockStake checked only
+// that the round named a non-zero federation; the 144-block expiry and the relays were not its business.
+test('no lock is made for a named FEDERATION round whose custody fields fail - the expiry is not 144 blocks, or it names no relay - and the lock client is not even joined', async () => {
+  for (const [what, bad, why] of [
+    ['expiry 12', { ...round, stakeExpiryBlocks: 12 }, /stake_expiry_blocks 12 where §23\.1 rules 144/],
+    ['no relay', { ...round, publicationRelays: [] }, /takes a stake and names no publication relay/],
+  ]) {
+    const { LockClient, log } = lockClient();
+    await assert.rejects(ask({ round: bad, invite: INVITE, LockClient }), (e) => {
+      assert.match(e.message, /^no stake is locked to this round: /);
+      assert.match(e.message, why);
+      return true;
+    }, what);
+    assert.equal(log.filter((x) => x.join).length, 0, `${what}: the lock client was joined for a round the page refused`);
+  }
+});
+
 test('no lock is made for a link naming no federation, a key without its attestation, a round naming no federation, or a stake with no point', async () => {
   const { LockClient, log } = lockClient();
   const cases = [
@@ -997,7 +1015,9 @@ test('a lock round\'s entry names its lock\'s outpoint and is not built without 
   assert.equal(`${toHex(entry.stakeLockOutpoint.txid)}:${entry.stakeLockOutpoint.outIdx}`, `${toHex(b32(0xab))}:3`);
   assert.throws(() => entryFor(round, opts), /no lock was made: an entry naming no stake lock outpoint/);
   assert.throws(() => entryFor(round, { ...opts, stakeLock: { outpoint: { txid: new Uint8Array(32), outIdx: 0n } } }), /no lock was made/);
-  const hold = { ...round, federationId: new Uint8Array(32) };
+  // A ROUND NAMING NO FEDERATION IS A THRESHOLD_LN ROUND (M3 W7): a paying FEDERATION round with a zero id is no contract.
+  assert.throws(() => entryFor({ ...round, federationId: new Uint8Array(32) }, opts), /takes a stake into a FEDERATION and names no federation_id/);
+  const hold = { ...round, custody: 'THRESHOLD_LN', federationId: new Uint8Array(32) };
   assert.throws(() => entryFor(hold, { ...opts, stakeLock: { outpoint } }), /names no federation, so there is no lock/);
   assert.equal(entryFor(hold, opts).stakeLockOutpoint.txid.every((b) => b === 0), true);
 });

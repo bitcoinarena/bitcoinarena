@@ -12,6 +12,7 @@
 // page's bundle had no way to check a key, entryFor wrote a zero attestation,
 // claimKeyIsAttested had 0 callers in node and client.
 import { test } from 'node:test';
+import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
 import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js';
 import assert from 'node:assert/strict';
@@ -43,7 +44,7 @@ const ROGUE = Uint8Array.from([0x03, ...b32(0xe7)]);
  * HARNESS KEY: each seat is handed its key, so a disagreeing or rogue seat can be staged. The shipping
  * path, where the seats make the key themselves, is blwp-node/test/claim-key-own.test.js.
  */
-async function federationRound({ seats = 2, keyOf = () => CLAIM, federationId = b32(0xfe) } = {}) {
+async function federationRound({ seats = 2, keyOf = () => CLAIM, federationId = TEST_FEDERATION_ID } = {}) {
   const daemons = [];
   for (let i = 0; i < seats; i++)
     daemons.push(await serve(openStore(':memory:'), { port: 0, funded: () => true, preflight: async () => ({ ready: true, why: 'test' }), claimKeyFor: () => keyOf(i) }));

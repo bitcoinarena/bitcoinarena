@@ -1466,6 +1466,9 @@ function outcome(state, x, z, hp, tickInBlock) {
  * safe route is +EV, and a client has to be able to see that before entering.
  */
 function encodeRoundContract(c) {
+  // A PAYING FEDERATION ROUND NAMES ITS FEDERATION, or it is not a contract (M3 W7).
+  const named = federationIsNamed(c);
+  if (!named.ok) throw new Error(named.why);
   const w = new Writer();
   w.u8(TYPE_ROUND_CONTRACT);
   w.u16(PROTOCOL_VERSION);
@@ -1689,6 +1692,9 @@ function decodeRoundContract(bytes) {
     c.startDeadlineTicks = d;
   }
   r.end();
+  // AND BYTES FROM ANYWHERE ARE HELD TO THE SAME (M3 W7): a paying FEDERATION round naming none is refused.
+  const named = federationIsNamed(c);
+  if (!named.ok) throw new Error(named.why);
   return c;
 }
 
@@ -1978,13 +1984,29 @@ function custodyFieldsAreValid(c) {
         + `${STAKE_EXPIRY_BLOCKS}`,
     };
   if (!is32(c.federationId)) return { ok: false, why: 'that round names no 32-byte federation_id' };
-  if (c.custody === 'FEDERATION' && c.stakeMsat > 0n && c.federationId.every((b) => b === 0))
+  const named = federationIsNamed(c);
+  if (!named.ok) return named;
+  return publicationRelaysAreValid(c);
+}
+
+/**
+ * DOES A ROUND THAT TAKES A STAKE INTO A FEDERATION SAY WHICH ONE? (§23.6, M3 W7). A zero
+ * federation_id on a paying FEDERATION round is unsigned custody - nothing says who holds its
+ * stake locks - so such a contract is not a contract: encoding and decoding refuse it, for every
+ * builder and for bytes from anywhere. A free round moves no money and a THRESHOLD_LN round names
+ * no federation; both pass. Whether the named federation's guardians are bonded census nodes is
+ * federationIsBonded, parked with "which guardians".
+ */
+function federationIsNamed(c) {
+  if (!c) return { ok: false, why: 'no contract' };
+  if (c.custody !== 'FEDERATION' || !(typeof c.stakeMsat === 'bigint' && c.stakeMsat > 0n)) return { ok: true };
+  if (!is32(c.federationId) || c.federationId.every((b) => b === 0))
     return {
       ok: false,
       why: 'that round takes a stake into a FEDERATION and names no federation_id, '
         + 'so nothing says who holds its stake locks',
     };
-  return publicationRelaysAreValid(c);
+  return { ok: true };
 }
 
 /**
@@ -8393,6 +8415,10 @@ const lockAmountMsat = (round, donationMsat = 0n) => {
 async function lockStake({ round, roundId, invite, seed, stake, claimKey, playerPubkey, LockClient,
   storage, donationMsat = 0n, onDeposit = () => {}, onStep = () => {} } = {}) {
   if (!round || !roundLocks(round)) throw new Error('this round names no federation, so its stake is not a lock');
+  // THE CUSTODY FIELDS IN FULL BEFORE ANYTHING IS LOCKED (M3 W7, §23): which federation, the
+  // 144-block expiry, the relays - a round that fails them is one this page puts no stake into.
+  const custody = custodyFieldsAreValid(round);
+  if (!custody.ok) throw new Error(`no stake is locked to this round: ${custody.why}`);
   if (!invite)
     throw new Error('this round\'s stake goes into a federation lock, and the link names no federation '
       + 'to make it in - add federation=<invite code>');

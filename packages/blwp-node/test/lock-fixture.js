@@ -18,6 +18,7 @@ import { refundKeyOf } from '../../protocol/src/stake-lock.js';
 import { entryFeeMsat } from '../../protocol/src/fee.js';
 import { toHex, sha256 } from '../../protocol/src/hash.js';
 import { b32, rand, STAKE, WINDOW_MS, contractFor, opts } from './window-fixture.js';
+import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
 
 const secretScalar = () => { let p = rand(32); while (scalarFrom32(p) >= FIELD) p = rand(32); return p; };
 // HARNESS KEY: a claim key the tests hand a seat (`claimKeyFor`), to measure the
@@ -29,6 +30,8 @@ export const CLAIM = Uint8Array.from([0x02, ...b32(0xc1)]);
 export function lockPort({ height = 1000 } = {}) {
   const locks = new Map();
   const port = {
+    // THE STAND-IN FEDERATION'S ID (W7): a round on this port names it, never an id of its own.
+    federationId: TEST_FEDERATION_ID,
     asked: 0, height, locks,
     async status(outpoint) {
       port.asked++;
@@ -99,12 +102,17 @@ export function lockPort({ height = 1000 } = {}) {
 }
 
 /** One seat of a paying FEDERATION round, a player's stake dealt and seated, the entry naming its lock. */
-export async function seatedWithLock(extra = {}, { federationId = b32(0xfe), outpoint: given } = {}) {
+export async function seatedWithLock(extra = {}, { federationId = TEST_FEDERATION_ID, custody = 'FEDERATION', outpoint: given } = {}) {
   const port = lockPort();
   const d = await serve(openStore(':memory:'), { port: 0, ...opts, stakeLocks: port, ...extra });
-  const c = { ...contractFor([d.round.pubkey, b32(0x33)], BigInt(WINDOW_MS), [`http://127.0.0.1:${d.port}`]), federationId };
-  const rid = roundId(c);
-  assert.equal((await fetch(`http://127.0.0.1:${d.port}/round`, { method: 'POST', body: encodeRoundContract(c) })).status, 201);
+  let c; let rid;
+  // A ROUND THE CODEC OR THE DOOR REFUSES (M3 W7) CLOSES THE SEAT IT STARTED: measured, a refused
+  // contract left this seat open and the test file never exited.
+  try {
+    c = { ...contractFor([d.round.pubkey, b32(0x33)], BigInt(WINDOW_MS), [`http://127.0.0.1:${d.port}`]), custody, federationId };
+    rid = roundId(c);
+    assert.equal((await fetch(`http://127.0.0.1:${d.port}/round`, { method: 'POST', body: encodeRoundContract(c) })).status, 201);
+  } catch (e) { await d.close(); throw e; }
   assumeSeated(d.round, rid, c.nodes);
   const preimage = secretScalar();
   const e = rand(32);

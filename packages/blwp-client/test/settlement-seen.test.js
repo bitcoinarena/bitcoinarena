@@ -68,7 +68,7 @@ async function committee() {
   const contract = {
     networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations: 1,
     gameVerifySlots: 2, settlementSlots: 2, simCoreHash: b32(1), startTimeMs: 60500n,
-    entryCloseMs: 2000n, objectionWindowMs: WINDOW_MS, custody: 'FEDERATION',
+    entryCloseMs: 2000n, objectionWindowMs: WINDOW_MS, custody: 'THRESHOLD_LN',
     slashMinimumServed: 20, slashRemainder: 'BURN', federationId: new Uint8Array(32), stakeExpiryBlocks: 144,
     // P2: the two seats' own relay doors, where each run's transcript is posted.
     publicationRelays: nodes.map((d) => `http://127.0.0.1:${d.port}`), donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients),

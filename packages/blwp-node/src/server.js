@@ -17,7 +17,7 @@
 import { createServer } from 'node:http';
 import { randomBytes } from 'node:crypto';
 import { WebSocketServer } from 'ws';
-import { decodeRoundContract, decodeEntryContract, publicationRelaysAreValid } from '../../protocol/src/contracts.js';
+import { decodeRoundContract, decodeEntryContract, publicationRelaysAreValid, custodyFieldsAreValid } from '../../protocol/src/contracts.js';
 import { toHex, fromHex } from '../../protocol/src/hash.js';
 import { lobbyListingId } from '../../protocol/src/lobby-listing.js';
 import { decodeLobbyName, lobbyNameId } from '../../protocol/src/lobby-name.js';
@@ -1589,11 +1589,21 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       }
 
       if (req.method === 'POST' && url.pathname === '/round') {
-        const contract = decodeRoundContract(await read(req));
+        // A PAYING FEDERATION ROUND NAMING NO FEDERATION IS NO CONTRACT (M3 W7): the decode refuses it.
+        let contract;
+        try { contract = decodeRoundContract(await read(req)); }
+        catch (e) { return text(res, 400, `that is not a round this seat opens: ${e.message}`); }
         // Asked BEFORE anything is decoded into the database, so a refusal
         // costs a parse and nothing else.
         if (!funded({ kind: 'round', contract, node: fundingView }))
           return text(res, 402, 'this node stores nothing for a round nobody has funded');
+        // AND A ROUND THAT TAKES A STAKE INTO A FEDERATION IS HELD TO THE CUSTODY FIELDS IN FULL
+        // (M3 W7, §23): which federation, the 144-block expiry, the relays - before anything of it
+        // exists on this seat. A free round and a THRESHOLD_LN round are the checks below.
+        if (contract.custody === 'FEDERATION' && contract.stakeMsat > 0n) {
+          const custodyOk = custodyFieldsAreValid(contract);
+          if (!custodyOk.ok) return text(res, 409, custodyOk.why);
+        }
 
         // A ROUND THAT ASKS A STAKE, ON A NODE THAT HOLDS STAKES, IS OPENED ONLY
         // WHEN THAT NODE CAN HOLD THEM. A hold invoice is RECEIVED money; the

@@ -6,6 +6,7 @@
 //   node seat-lock-regtest.mjs prepare <dir>          three stakes: P, its point, an even-y player
 //   node seat-lock-regtest.mjs seat <dir> <keys.json>  a seat, the real port, the handovers
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
 import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js';
 import { randomBytes } from 'node:crypto';
@@ -28,6 +29,8 @@ import { toHex, fromHex, sha256 } from '../../protocol/src/hash.js';
 import { MIN_ENTRY_WINDOW_MS } from '../../protocol/src/constants.js';
 import { CORE_HASH } from './core-hash.mjs';
 
+// THE FEDERATION THIS SETUP JOINED NAMES THE ROUND (M3 W7): its id from the setup's invite, read by the lock client.
+const { LockClient } = createRequire(import.meta.url)(`${process.env.WASM_PKG}/blwp_lock_client.js`);
 const [cmd, dir, keysPath] = process.argv.slice(2);
 const rand = (n) => new Uint8Array(randomBytes(n));
 const scalar = () => { for (;;) { const s = rand(32); const v = scalarFrom32(s); if (v > 0n && v < FIELD) return s; } };
@@ -66,7 +69,7 @@ try {
     networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations: 1,
     gameVerifySlots: 2, settlementSlots: 2, simCoreHash: CORE_HASH, startTimeMs: now + MIN_ENTRY_WINDOW_MS,
     entryCloseMs: now + MIN_ENTRY_WINDOW_MS + 600000n, objectionWindowMs: 3000n, custody: 'FEDERATION',
-    slashMinimumServed: 20, slashRemainder: 'BURN', federationId: b32(0xfe), stakeExpiryBlocks: 144,
+    slashMinimumServed: 20, slashRemainder: 'BURN', federationId: fromHex(LockClient.federationIdOf(process.env.INVITE)), stakeExpiryBlocks: 144,
     publicationRelays: [`http://127.0.0.1:${seat.port}`], donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients), censusHeight: 900000,
     censusRoot: b32(2), committeeTimeMs: now - 1000n, randomnessRule: 'bitcoin-block-hash', stakeMsat: STAKE,
     bondMinSats: 50000n, blockTicks: 9000, exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,

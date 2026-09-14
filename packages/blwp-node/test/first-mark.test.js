@@ -22,6 +22,7 @@
 // anything for a late start, no seat forwarded a mark, and a down seat caught
 // up late turned DELIVERED.
 import { test } from 'node:test';
+import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
 import assert from 'node:assert/strict';
 import { ed25519 } from '@noble/curves/ed25519.js';
 
@@ -69,7 +70,7 @@ async function seats() {
   // THIS ROUND NAMES NO START DEADLINE: it gets the page's own window, 900 -
   // not the 1400 the fixture's settling rounds name past their planted marks.
   const c = { ...contractFor([a.round.pubkey, b.round.pubkey], BigInt(WINDOW_MS), [a, b].map((d) => `http://127.0.0.1:${d.port}`)),
-    federationId: b32(0xfe), startDeadlineTicks: undefined };
+    custody: 'FEDERATION', federationId: TEST_FEDERATION_ID, startDeadlineTicks: undefined };
   const rid = roundId(c);
   for (const d of [a, b]) {
     const r = await fetch(`http://127.0.0.1:${d.port}/round`, { method: 'POST', body: encodeRoundContract(c) });

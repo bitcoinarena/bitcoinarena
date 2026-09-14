@@ -7,6 +7,7 @@
 // paying and open or pending off that contract and its own clock, and counts
 // DISTINCT SEATS OF THE ROUND whose signed listing says open and seated.
 import { test } from 'node:test';
+import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
 import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js';
 import assert from 'node:assert/strict';
@@ -39,7 +40,7 @@ const contractAt = (committeeTimeMs, extra = {}) => ({
   gameVerifySlots: 2, settlementSlots: 2, simCoreHash: b32(1),
   committeeTimeMs, randomnessRule: 'bitcoin-block-hash',
   startTimeMs: committeeTimeMs + MIN_ENTRY_WINDOW_MS, entryCloseMs: committeeTimeMs + MIN_ENTRY_WINDOW_MS + 120000n,
-  objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20,
+  objectionWindowMs: 600000n, custody: 'THRESHOLD_LN', slashMinimumServed: 20,
   slashRemainder: 'BURN', federationId: new Uint8Array(32), stakeExpiryBlocks: 144, publicationRelays: [],
   donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients), censusHeight: 900000, censusRoot: b32(2), stakeMsat: 0n, bondMinSats: 50000n,
   blockTicks: 9000, exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
@@ -102,7 +103,7 @@ test('2 of 2: Join only where both of the round\'s seats signed it open and seat
     oneSeat: contractAt(now - 6000n),
     freePending: contractAt(now + 90000n),
     freeOver: contractAt(now - 400000n),
-    payingOpen: contractAt(now - 8000n, { stakeMsat: 100000n, federationId: b32(0xfe) }),
+    payingOpen: contractAt(now - 8000n, { stakeMsat: 100000n, custody: 'FEDERATION', federationId: TEST_FEDERATION_ID }),
   });
   const forged = 'ee'.repeat(32);
   contracts[forged] = contracts[id.freeOpen];        // a listed id whose contract is another round's

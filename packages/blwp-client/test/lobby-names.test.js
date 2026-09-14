@@ -134,7 +134,7 @@ test('the board, built by leaderboard.js from signed results, is drawn with each
     networkId: b32(0x4e), configHash: b32(0x43), censusConfirmations: 6,
     gameVerifySlots: 7, settlementSlots: 7, simCoreHash: b32(1),
     startTimeMs: 60500n, entryCloseMs: 2000n, objectionWindowMs: 600000n,
-    custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'BURN', federationId: new Uint8Array(32), stakeExpiryBlocks: 144, publicationRelays: [],
+    custody: 'THRESHOLD_LN', slashMinimumServed: 20, slashRemainder: 'BURN', federationId: new Uint8Array(32), stakeExpiryBlocks: 144, publicationRelays: [],
     donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients), censusHeight: 900000,
     censusRoot: b32(2), committeeTimeMs: 500n, randomnessRule: 'bitcoin-block-hash', stakeMsat: 100000n,
     bondMinSats: 50000n, blockTicks: 600, exposureReference: 1000,

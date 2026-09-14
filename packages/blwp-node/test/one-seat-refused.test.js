@@ -18,6 +18,7 @@
 // 10 s - no result, finality null, no Void, forfeit 409 at both, lock held: a
 // hold for ever.
 import { test } from 'node:test';
+import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
 import assert from 'node:assert/strict';
 import { ed25519 } from '@noble/curves/ed25519.js';
 
@@ -61,7 +62,7 @@ async function seats() {
   };
   wire();
   const c = { ...contractFor([a.round.pubkey, b.round.pubkey], BigInt(WINDOW_MS), [a, b].map((d) => `http://127.0.0.1:${d.port}`)),
-    federationId: b32(0xfe), startDeadlineTicks: undefined };
+    custody: 'FEDERATION', federationId: TEST_FEDERATION_ID, startDeadlineTicks: undefined };
   const rid = roundId(c);
   for (const d of [a, b]) {
     assert.equal((await fetch(`http://127.0.0.1:${d.port}/round`, { method: 'POST', body: encodeRoundContract(c) })).status, 201);

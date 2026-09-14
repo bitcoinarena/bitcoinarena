@@ -9,6 +9,7 @@
 // Measured before: a 2% donor's 2000 msat was taken by nobody - no LNURL,
 // bech32 or BOLT11 code existed, and pay_invoice had one call site, the stake.
 import { test } from 'node:test';
+import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { createHash, randomBytes } from 'node:crypto';
@@ -405,7 +406,7 @@ function shown(load, round, storage) {
 
 test('the page shows each donation share as paid, unpaid or outcome unknown, matching the tab\'s notes, before and after a reload', async () => {
   const holdRound = contractFor([b32(1), b32(2)]);
-  const lockRound = { ...holdRound, federationId: b32(0xfe) };
+  const lockRound = { ...holdRound, custody: 'FEDERATION', federationId: TEST_FEDERATION_ID };
   assert.equal(SHIPPED.roundLocks(holdRound), false);
   assert.equal(SHIPPED.roundLocks(lockRound), true);
   const report = [];
@@ -599,7 +600,7 @@ test('a tab that cannot keep the record does not ask the wallet at all', async (
 const contractFor = (nodes) => ({
   networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations: 1, gameVerifySlots: 7, settlementSlots: 7, simCoreHash: b32(1),
   committeeTimeMs: BigInt(NOW), randomnessRule: 'bitcoin-block-hash', startTimeMs: BigInt(NOW) + MIN_ENTRY_WINDOW_MS,
-  entryCloseMs: BigInt(NOW) + MIN_ENTRY_WINDOW_MS + 200000n, objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20,
+  entryCloseMs: BigInt(NOW) + MIN_ENTRY_WINDOW_MS + 200000n, objectionWindowMs: 600000n, custody: 'THRESHOLD_LN', slashMinimumServed: 20,
   slashRemainder: 'BURN', federationId: new Uint8Array(32), stakeExpiryBlocks: 144, publicationRelays: [], donationSetId: SET_ID,
   censusHeight: 900000, censusRoot: b32(2), stakeMsat: 100000n, bondMinSats: 50000n, blockTicks: 9000, exposureReference: 1000,
   corridorHalfWidth: 40, spawnFreeRadius: 20, timeFloor: 30, timeCeil: 150, minScore: 1, rankNumerator: 3, rankDenominator: 4, nodes,

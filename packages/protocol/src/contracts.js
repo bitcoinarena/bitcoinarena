@@ -26,6 +26,9 @@ import {
  * safe route is +EV, and a client has to be able to see that before entering.
  */
 export function encodeRoundContract(c) {
+  // A PAYING FEDERATION ROUND NAMES ITS FEDERATION, or it is not a contract (M3 W7).
+  const named = federationIsNamed(c);
+  if (!named.ok) throw new Error(named.why);
   const w = new Writer();
   w.u8(TYPE_ROUND_CONTRACT);
   w.u16(PROTOCOL_VERSION);
@@ -249,6 +252,9 @@ export function decodeRoundContract(bytes) {
     c.startDeadlineTicks = d;
   }
   r.end();
+  // AND BYTES FROM ANYWHERE ARE HELD TO THE SAME (M3 W7): a paying FEDERATION round naming none is refused.
+  const named = federationIsNamed(c);
+  if (!named.ok) throw new Error(named.why);
   return c;
 }
 
@@ -538,13 +544,29 @@ export function custodyFieldsAreValid(c) {
         + `${STAKE_EXPIRY_BLOCKS}`,
     };
   if (!is32(c.federationId)) return { ok: false, why: 'that round names no 32-byte federation_id' };
-  if (c.custody === 'FEDERATION' && c.stakeMsat > 0n && c.federationId.every((b) => b === 0))
+  const named = federationIsNamed(c);
+  if (!named.ok) return named;
+  return publicationRelaysAreValid(c);
+}
+
+/**
+ * DOES A ROUND THAT TAKES A STAKE INTO A FEDERATION SAY WHICH ONE? (§23.6, M3 W7). A zero
+ * federation_id on a paying FEDERATION round is unsigned custody - nothing says who holds its
+ * stake locks - so such a contract is not a contract: encoding and decoding refuse it, for every
+ * builder and for bytes from anywhere. A free round moves no money and a THRESHOLD_LN round names
+ * no federation; both pass. Whether the named federation's guardians are bonded census nodes is
+ * federationIsBonded, parked with "which guardians".
+ */
+export function federationIsNamed(c) {
+  if (!c) return { ok: false, why: 'no contract' };
+  if (c.custody !== 'FEDERATION' || !(typeof c.stakeMsat === 'bigint' && c.stakeMsat > 0n)) return { ok: true };
+  if (!is32(c.federationId) || c.federationId.every((b) => b === 0))
     return {
       ok: false,
       why: 'that round takes a stake into a FEDERATION and names no federation_id, '
         + 'so nothing says who holds its stake locks',
     };
-  return publicationRelaysAreValid(c);
+  return { ok: true };
 }
 
 /**

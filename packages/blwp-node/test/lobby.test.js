@@ -13,6 +13,7 @@
 // MEASURED BEFORE (TASKBOOK, M3.3-34): GET /rounds was 404 - no door listed
 // rounds, and a page with no `round=` in its link could only be the offline game.
 import { test } from 'node:test';
+import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
 import assert from 'node:assert/strict';
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
@@ -44,7 +45,7 @@ test('the node lists the rounds a player can still join - free or paying, open o
       freeOpen: round(now - 1000n),
       freePending: round(now + 600000n),
       freeEntryOver: round(now - 400000n),
-      payingOpen: round(now - 2000n, { stakeMsat: STAKE, federationId: b32(0xfe) }),
+      payingOpen: round(now - 2000n, { stakeMsat: STAKE, custody: 'FEDERATION', federationId: TEST_FEDERATION_ID }),
       freeClosed: round(now - 3000n),
     };
     const ids = {};

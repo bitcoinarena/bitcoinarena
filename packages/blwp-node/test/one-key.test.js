@@ -104,7 +104,7 @@ test('a receipt is BIP-340 under the node key, and an ed25519 one is refused', (
   const rid = round.open({
     networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations: 6,
     gameVerifySlots: 2, settlementSlots: 2, simCoreHash: b32(1), startTimeMs: 60500n,
-    entryCloseMs: 2000n, objectionWindowMs: 600000n, custody: 'FEDERATION',
+    entryCloseMs: 2000n, objectionWindowMs: 600000n, custody: 'THRESHOLD_LN',
     slashMinimumServed: 20, slashRemainder: 'BURN', federationId: new Uint8Array(32), stakeExpiryBlocks: 144, publicationRelays: [], donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients),
     censusHeight: 900000, censusRoot: b32(2), committeeTimeMs: 500n, randomnessRule: 'bitcoin-block-hash', stakeMsat: 100000n,
     bondMinSats: 50000n, blockTicks: 9000, exposureReference: 1000, corridorHalfWidth: 40,

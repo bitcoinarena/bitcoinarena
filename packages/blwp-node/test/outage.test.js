@@ -18,6 +18,7 @@
 // MEASURED BEFORE (tools/outage-before.mjs, 3300558): (b) nothing recorded, no
 // result, forfeit 409, a silent refund at expiry; (b') DELIVERED at both.
 import { test } from 'node:test';
+import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
 import assert from 'node:assert/strict';
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
@@ -62,7 +63,7 @@ async function seats() {
   wire();
   // THIS ROUND NAMES NO START DEADLINE: the page's own window, 900.
   const c = { ...contractFor([a.round.pubkey, b.round.pubkey], BigInt(WINDOW_MS), [a, b].map((d) => `http://127.0.0.1:${d.port}`)),
-    federationId: b32(0xfe), startDeadlineTicks: undefined };
+    custody: 'FEDERATION', federationId: TEST_FEDERATION_ID, startDeadlineTicks: undefined };
   const rid = roundId(c);
   for (const d of [a, b]) {
     const r = await fetch(`http://127.0.0.1:${d.port}/round`, { method: 'POST', body: encodeRoundContract(c) });

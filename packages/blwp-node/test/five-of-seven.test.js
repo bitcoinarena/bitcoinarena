@@ -13,6 +13,7 @@
 // a DIFFERENT on-time first mark (30) to seat 4, which forwards it to 5 and 6
 // (three receipts). Neither mark can reach five, and seats 0-3 hold the pair.
 import { test } from 'node:test';
+import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
 import assert from 'node:assert/strict';
 import { ed25519 } from '@noble/curves/ed25519.js';
 
@@ -65,7 +66,7 @@ async function sevenSeats(custody) {
   };
   wire();
   const c = { ...contractFor(seats.map((d) => d.round.pubkey), BigInt(WINDOW), ports.map((p) => `http://127.0.0.1:${p}`)),
-    ...(custody === 'lock' ? { federationId: b32(0xfe) } : {}) };
+    ...(custody === 'lock' ? { custody: 'FEDERATION', federationId: TEST_FEDERATION_ID } : {}) };
   const rid = roundId(c);
   for (const d of seats) {
     const r = await fetch(`http://127.0.0.1:${d.port}/round`, { method: 'POST', body: encodeRoundContract(c) });

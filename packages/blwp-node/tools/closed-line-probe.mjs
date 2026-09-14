@@ -14,6 +14,7 @@
 // each seat stores, receipts of the first mark, the forfeit door, whether its
 // signature verifies over the lock's id, and the lock's expiry still ahead.
 import { ed25519 } from '@noble/curves/ed25519.js';
+import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
 
 import { openStore } from '../src/store.js';
@@ -56,7 +57,7 @@ async function seats() {
   };
   wire();
   const c = { ...contractFor([a.round.pubkey, b.round.pubkey], BigInt(WINDOW_MS), [a, b].map((d) => `http://127.0.0.1:${d.port}`)),
-    federationId: b32(0xfe), startDeadlineTicks: undefined };
+    custody: 'FEDERATION', federationId: TEST_FEDERATION_ID, startDeadlineTicks: undefined };
   const rid = roundId(c);
   for (const d of [a, b]) {
     await fetch(`http://127.0.0.1:${d.port}/round`, { method: 'POST', body: encodeRoundContract(c) });

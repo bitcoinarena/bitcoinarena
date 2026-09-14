@@ -8,6 +8,7 @@
 // the results each seat holds, ENTRY_VOID / start-FORFEIT records, and the forfeit
 // answer against the lock's expiry. Harness: closed-claim-probe.mjs's.
 import { ed25519 } from '@noble/curves/ed25519.js';
+import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
 
 import { openStore } from '../src/store.js';
@@ -44,7 +45,7 @@ async function seats({ free = false } = {}) {
     d.verifier.peers = there; d.payouts.peers = there; d.preimages.peers = there; d.dkg.peers = there;
   }
   let c = { ...contractFor([a.round.pubkey, b.round.pubkey], BigInt(WINDOW_MS), [a, b].map((d) => `http://127.0.0.1:${d.port}`)),
-    federationId: b32(0xfe), startDeadlineTicks: undefined };
+    custody: 'FEDERATION', federationId: TEST_FEDERATION_ID, startDeadlineTicks: undefined };
   if (free) c = { ...c, stakeMsat: 0n, federationId: new Uint8Array(32) };
   const rid = roundId(c);
   for (const d of [a, b]) {

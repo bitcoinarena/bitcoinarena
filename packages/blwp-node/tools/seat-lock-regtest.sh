@@ -9,6 +9,7 @@
 set -uo pipefail
 : "${FEDIMINT_BIN:?FEDIMINT_BIN must name the directory holding the released Fedimint v0.12.0 builds}"
 : "${LOCK_BIN:?LOCK_BIN must name the built blwp-stake-lock}"
+: "${WASM_PKG:?WASM_PKG must name the nodejs build of blwp-lock-client (the round names its federation by the setup's invite)}"
 F=$FEDIMINT_BIN
 FH=${FEDIMINT_HOME:-$F/home}
 P=${PROBE_DIR:-$(mktemp -d /tmp/seat-lock-XXXXXX)}
@@ -28,6 +29,7 @@ trap stop EXIT
 
 t=$(date +%s)
 UP=$(PROBE_DIR=$P SETUP_ONLY=1 FEDIMINT_BIN=$F FEDIMINT_HOME=$FH bash $HERE/federation-hold-probe.sh 2>&1)
+INVITE=$(echo "$UP" | grep -oE 'invite=[^ ]+' | tail -1 | cut -d= -f2-)
 echo "$UP" | grep -q FEDERATION_READY || { say "$UP" | tail -15; say "THE FEDERATION DID NOT COME UP"; exit 1; }
 say "federation up in $(( $(date +%s) - t )) s, $(grep -c fedimintd $P/pids) fedimintd processes"
 
@@ -39,7 +41,7 @@ RCV=$(fc module lnv2 await-receive "$OP" 2>&1 | tr -d '\n ')
 say "DEPOSIT 3000000 msat: alice's $PAY; receive $RCV; ecash $(fc info 2>/dev/null | js 'o=>o.total_amount_msat') msat"
 
 node $HERE/stake-lock-keys.mjs $P/keys.json >/dev/null || { say "NO KEYS"; exit 1; }
-PREP=$(node $HERE/seat-lock-regtest.mjs prepare $P) || { say "NO STAKES"; exit 1; }
+PREP=$(INVITE=$INVITE WASM_PKG=$WASM_PKG node $HERE/seat-lock-regtest.mjs prepare $P) || { say "NO STAKES"; exit 1; }
 CLAIM=$(node -e "console.log(JSON.parse(require('fs').readFileSync('$P/keys.json','utf8')).claimPk)")
 NET=$(echo "$PREP" | js 'o=>o.net')
 say "KEYS: claim_pk $CLAIM (2-of-2 DKG); net stake $NET msat"
@@ -55,5 +57,5 @@ done
 # THE SEAT. When it writes mine-now, two blocks are mined so the federation's
 # count moves on.
 ( while [ ! -e $P/mine-now ]; do sleep 1; done; ADDR=$(bcn getnewaddress 2>/dev/null || echo bcrt1qw508d6qejxtdg4y5r3zarvary0c5xw7kygt080); bcn generatetoaddress 2 "$ADDR" >/dev/null 2>&1 ) &
-LOCK_BIN=$LOCK_BIN node $HERE/seat-lock-regtest.mjs seat $P $P/keys.json 2>&1 | grep -E '^\{' | sed 's/^/SEAT /'
+INVITE=$INVITE WASM_PKG=$WASM_PKG LOCK_BIN=$LOCK_BIN node $HERE/seat-lock-regtest.mjs seat $P $P/keys.json 2>&1 | grep -E '^\{' | sed 's/^/SEAT /'
 say "probe dir: $P"

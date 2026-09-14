@@ -17,6 +17,7 @@
 // MEASURED BEFORE (TASKBOOK, W5b): no seat forfeited a verified lock; no door
 // served a FROST signature over a lock's contract id.
 import { test } from 'node:test';
+import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
 import assert from 'node:assert/strict';
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
@@ -58,7 +59,7 @@ async function lockRound({ minScore = 1 } = {}) {
     d.dkg.peers = there;
   }
   const c = { ...contractFor([a.round.pubkey, b.round.pubkey], BigInt(WINDOW_MS), [a, b].map((d) => `http://127.0.0.1:${d.port}`)),
-    federationId: b32(0xfe), minScore };
+    custody: 'FEDERATION', federationId: TEST_FEDERATION_ID, minScore };
   const rid = roundId(c);
   for (const d of [a, b]) {
     const r = await fetch(`http://127.0.0.1:${d.port}/round`, { method: 'POST', body: encodeRoundContract(c) });

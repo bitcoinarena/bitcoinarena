@@ -24,7 +24,7 @@ import { decodeHandout, handoutId } from '../../protocol/src/handout.js';
 import { lockFromClient } from './lock-result.js';
 import { feeLockPays } from '../../protocol/src/lock-settlement.js';
 import { roundLocks, playerFor } from './join.js';
-import { encodeRoundContract, decodeRoundContract, roundId as roundIdOf } from '../../protocol/src/contracts.js';
+import { encodeRoundContract, decodeRoundContract, roundId as roundIdOf, custodyFieldsAreValid } from '../../protocol/src/contracts.js';
 import { decodeBolt11 } from '../../protocol/src/bolt11.js';
 
 // THE BLOCKS OVER stake_expiry_blocks A LOCK IS MADE FOR. The seat requires
@@ -113,6 +113,10 @@ export const lockAmountMsat = (round, donationMsat = 0n) => {
 export async function lockStake({ round, roundId, invite, seed, stake, claimKey, playerPubkey, LockClient,
   storage, donationMsat = 0n, onDeposit = () => {}, onStep = () => {} } = {}) {
   if (!round || !roundLocks(round)) throw new Error('this round names no federation, so its stake is not a lock');
+  // THE CUSTODY FIELDS IN FULL BEFORE ANYTHING IS LOCKED (M3 W7, §23): which federation, the
+  // 144-block expiry, the relays - a round that fails them is one this page puts no stake into.
+  const custody = custodyFieldsAreValid(round);
+  if (!custody.ok) throw new Error(`no stake is locked to this round: ${custody.why}`);
   if (!invite)
     throw new Error('this round\'s stake goes into a federation lock, and the link names no federation '
       + 'to make it in - add federation=<invite code>');

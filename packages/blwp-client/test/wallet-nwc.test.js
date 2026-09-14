@@ -10,6 +10,7 @@
 // when the quote was one the entry did not sign - the answer there has to be
 // zero, and zero is a thing you can only see by counting.
 import { test } from 'node:test';
+import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
 import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js';
 import assert from 'node:assert/strict';
@@ -158,7 +159,7 @@ const contractFor = (nodes) => ({
   committeeTimeMs: BigInt(NOW), randomnessRule: 'bitcoin-block-hash',
   startTimeMs: BigInt(NOW) + MIN_ENTRY_WINDOW_MS,
   entryCloseMs: BigInt(NOW) + MIN_ENTRY_WINDOW_MS + 200000n,
-  objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20,
+  objectionWindowMs: 600000n, custody: 'THRESHOLD_LN', slashMinimumServed: 20,
   slashRemainder: 'BURN', federationId: new Uint8Array(32), stakeExpiryBlocks: 144, publicationRelays: ['http://127.0.0.1:9'] /* a paying round names a relay (§13A); never posted to here */, donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients), censusHeight: 900000,
   censusRoot: b32(2), stakeMsat: STAKE, bondMinSats: 50000n, blockTicks: 9000,
   exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
@@ -716,7 +717,7 @@ test('a round that asks no money gets no payment box, driven off the shipped pag
   // INVOICE TO PAY: while the deposit waits the panel points at it, and once
   // the lock is made it shows the lock. Measured on the page before this, the
   // hold panel ("this seat owes", "Pay the stake") stood beside the invoice.
-  const lockRound = { stakeMsat: 1000000n, custody: 'FEDERATION', federationId: new Uint8Array(32).fill(0xfe) };
+  const lockRound = { stakeMsat: 1000000n, custody: 'FEDERATION', federationId: TEST_FEDERATION_ID };
   for (const id of ['blwp-nwc', 'blwp-pay']) el(id).style.display = '';
   run(lockRound, { connected: false }, null);
   assert.equal(made['blwp-wallet'].style.display, 'block');

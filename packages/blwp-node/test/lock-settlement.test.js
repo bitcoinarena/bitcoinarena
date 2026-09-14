@@ -15,6 +15,7 @@
 // was 409, the lock stayed held and went back to the loser at its expiry.
 // HARNESS: lockRound and lockAndPlay as forfeit.test.js has them (file-local there).
 import { test } from 'node:test';
+import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -59,7 +60,7 @@ async function lockRound({ minScore = 1, stakeMsat = STAKE } = {}) {
     d.dkg.peers = there;
   }
   const c = { ...contractFor([a.round.pubkey, b.round.pubkey], BigInt(WINDOW_MS), [a, b].map((d) => `http://127.0.0.1:${d.port}`)),
-    federationId: b32(0xfe), minScore, stakeMsat };
+    custody: 'FEDERATION', federationId: TEST_FEDERATION_ID, minScore, stakeMsat };
   const rid = roundId(c);
   for (const d of [a, b]) {
     const r = await fetch(`http://127.0.0.1:${d.port}/round`, { method: 'POST', body: encodeRoundContract(c) });
@@ -278,7 +279,7 @@ async function lockRoundOnDisk() {
   };
   wire();
   w.c = { ...contractFor([w.a.round.pubkey, w.b.round.pubkey], BigInt(WINDOW_MS), [w.a, w.b].map((d) => `http://127.0.0.1:${d.port}`)),
-    federationId: b32(0xfe), minScore: 1, stakeMsat: STAKE };
+    custody: 'FEDERATION', federationId: TEST_FEDERATION_ID, minScore: 1, stakeMsat: STAKE };
   w.rid = roundId(w.c);
   for (const d of [w.a, w.b]) {
     const r = await fetch(`http://127.0.0.1:${d.port}/round`, { method: 'POST', body: encodeRoundContract(w.c) });

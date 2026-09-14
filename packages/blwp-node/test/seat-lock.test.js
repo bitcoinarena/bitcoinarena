@@ -123,7 +123,11 @@ test('a seat says where a player\'s verified lock is by its refund key, and noth
 });
 
 test('a round that names no federation takes no lock: its stake is not one', async () => {
-  const s = await seatedWithLock(WITH_KEY, { federationId: new Uint8Array(32) });
+  // M3 W7: a paying FEDERATION round naming no federation is no contract - it cannot be made at all.
+  await assert.rejects(seatedWithLock(WITH_KEY, { federationId: new Uint8Array(32) }),
+    /takes a stake into a FEDERATION and names no federation_id/);
+  // AND THE ROUND THAT NAMES NO FEDERATION - THRESHOLD_LN - STILL TAKES NO LOCK.
+  const s = await seatedWithLock(WITH_KEY, { custody: 'THRESHOLD_LN', federationId: new Uint8Array(32) });
   try {
     const r = await handOver(s, s.fields);
     assert.equal(r.status, 409);

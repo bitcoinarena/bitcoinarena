@@ -474,7 +474,7 @@ async function round(stakeMsat) {
       d.verifier.peers = there; d.payouts.peers = there; d.preimages.peers = there; d.dkg.peers = there;
     }
     const c = { ...contractFor([a.round.pubkey, b.round.pubkey], BigInt(WINDOW_MS), [a, b].map((d) => `http://127.0.0.1:${d.port}`)),
-      federationId: fromHex(LockClient.federationIdOf(env.INVITE)), minScore: 1, stakeMsat };
+      custody: 'FEDERATION', federationId: fromHex(LockClient.federationIdOf(env.INVITE)), minScore: 1, stakeMsat };
     const rid = roundId(c);
     W6.state.rid = toHex(rid);
     for (const d of [a, b]) {

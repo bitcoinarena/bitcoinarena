@@ -12,6 +12,7 @@
 // Lightning to hold it. Not "the invoice is paid": the hold is issued after the
 // entry is stored. Input batches stay gated on the stake being seen paid.
 import { test } from 'node:test';
+import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
 import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js';
 import assert from 'node:assert/strict';
@@ -42,7 +43,7 @@ const session = ed25519.utils.randomSecretKey();
 const contractFor = (nodes, stakeMsat = 100000n, tag = 0x43) => ({
   networkId: NETWORK_ID_REGTEST, configHash: b32(tag), censusConfirmations: 1,
   gameVerifySlots: 2, settlementSlots: 2, simCoreHash: b32(1), startTimeMs: 60500n,
-  entryCloseMs: 2000n, objectionWindowMs: 600000n, custody: 'FEDERATION',
+  entryCloseMs: 2000n, objectionWindowMs: 600000n, custody: 'THRESHOLD_LN',
   slashMinimumServed: 20, slashRemainder: 'BURN', federationId: new Uint8Array(32), stakeExpiryBlocks: 144, publicationRelays: ['http://127.0.0.1:9'] /* a paying round names a relay (§13A); never posted to here */, donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients),
   censusHeight: 900000, censusRoot: b32(2), committeeTimeMs: 500n,
   randomnessRule: 'bitcoin-block-hash', stakeMsat, bondMinSats: 50000n,
@@ -137,7 +138,7 @@ test('a daemon that reaches no Lightning seats no entry, even into a named payin
 // so no page could be seated in one on a launched daemon.
 test('a lock round\'s entry is funded on a node that reaches its federation, and not on one that reaches only Lightning', () => {
   const nodes = [schnorr.getPublicKey(b32(1)), schnorr.getPublicKey(b32(9))];
-  const lockRound = { ...contractFor(nodes), federationId: b32(0xfe) };
+  const lockRound = { ...contractFor(nodes), custody: 'FEDERATION', federationId: TEST_FEDERATION_ID };
   const holdRound = contractFor(nodes);
   const funded = fundingFromEnv({ BLWP_FUNDED_ROUNDS: [roundId(lockRound), roundId(holdRound)].map(toHex).join(',') });
   const ask = (c, node) => funded({ kind: 'entry', contract: entryFor(roundId(c)),

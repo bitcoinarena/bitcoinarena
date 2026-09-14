@@ -5,6 +5,7 @@
 // The run: inputs 0..59, first mark at 60; inputs 60..1319, mark at 1320.
 // 120 ticks is the agreed reference deadline - the contract cannot carry one.
 import { ed25519 } from '@noble/curves/ed25519.js';
+import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
 
 import { openStore } from '../src/store.js';
@@ -51,7 +52,7 @@ async function seats() {
   };
   wire();
   const c = { ...contractFor([a.round.pubkey, b.round.pubkey], BigInt(WINDOW_MS), [a, b].map((d) => `http://127.0.0.1:${d.port}`)),
-    federationId: b32(0xfe) };
+    custody: 'FEDERATION', federationId: TEST_FEDERATION_ID };
   const rid = roundId(c);
   for (const d of [a, b]) {
     const r = await fetch(`http://127.0.0.1:${d.port}/round`, { method: 'POST', body: encodeRoundContract(c) });
