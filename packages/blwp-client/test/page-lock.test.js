@@ -15,7 +15,7 @@ import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js
 import assert from 'node:assert/strict';
 
 import { lockStake, handLock, lockSecretFor, lockAmountMsat, lockLine, saveLock, savedLock, markLockCommitted,
-  refundStake, redeemStake, redeemPayout, payoutLine, returnStake, stakeBackLine, saveCollect, savedCollects, markCollectDone, keptLockUse, LOCK_EXPIRY_MARGIN_BLOCKS, feeSecretFor } from '../src/page-lock.js';
+  refundStake, redeemStake, redeemPayout, payoutLine, returnStake, stakeBackLine, saveCollect, savedCollects, markCollectDone, keptLockUse, withdrawCollected, withdrawLine, LOCK_EXPIRY_MARGIN_BLOCKS, feeSecretFor } from '../src/page-lock.js';
 import { sha256 } from '../../protocol/src/hash.js';
 import { entryFor, joinQuery, stakeFor, playerFor } from '../src/join.js';
 import { lockFieldsToJson } from '../../protocol/src/stake-lock.js';
@@ -373,6 +373,45 @@ test('after the settlement the winner\'s page redeems its own stake by the seats
   assert.equal(unsettled.final, false);
   assert.equal(asked.filter((u) => u.includes('/forfeit') || u.includes('/stake-lock')).length, 0, 'a forfeit was asked for before the seats settled');
   assert.equal(joins + redeemed.length, 0);
+});
+
+// 6d'S DESTINATION (24A.2): THE TAB'S WALLET WITHDRAWN OVER LIGHTNING TO THE PLAYER'S OWN.
+test('the collected payout and stake leave the tab: the whole withdrawable balance to an invoice from the player\'s own wallet; a refunded withdraw stays in the tab and says so; an empty wallet asks for no invoice', async () => {
+  const asked = [];
+  const wallet = (state, withdrawable = 1937000n) => ({
+    async withdrawableMsat() { return String(withdrawable); },
+    async withdraw(invoice) {
+      asked.push(invoice);
+      return JSON.stringify({ state, preimage: state === 'Success' ? 'ab'.repeat(32) : null, invoice_msat: Number(withdrawable), gateway: 'gw1',
+        balance_before: 1951232, balance_after: state === 'Success' ? 0 : 1951232 });
+    },
+  });
+  const invoices = [];
+  const invoiceFor = async (msat) => { invoices.push(msat); return { ok: true, invoice: `lnbcrt${msat}n1player` }; };
+  const out = await withdrawCollected({ client: wallet('Success'), invoiceFor });
+  console.log(`  withdrawn: "${withdrawLine(out)}"`);
+  assert.equal(out.ok, true);
+  assert.equal(out.final, true);
+  assert.deepEqual(invoices, [1937000n], 'the invoice was not for the whole withdrawable balance');
+  assert.deepEqual(asked, ['lnbcrt1937000n1player']);
+  assert.equal(withdrawLine(out), 'Withdrawn: 1937000 msat to your own wallet over Lightning (this tab\'s wallet 1951232 → 0 msat)');
+
+  const back = await withdrawCollected({ client: wallet('Refunded'), invoiceFor });
+  assert.equal(back.ok, false);
+  assert.equal(back.final, false, 'a refunded withdraw was taken as done');
+  assert.match(withdrawLine(back), /^Withdraw: the withdraw ended Refunded - the money is back in this tab's wallet/);
+
+  invoices.length = 0; asked.length = 0;
+  const empty = await withdrawCollected({ client: wallet('Success', 0n), invoiceFor });
+  assert.equal(empty.ok, false);
+  assert.equal(empty.final, true);
+  assert.equal(invoices.length + asked.length, 0, 'an empty wallet asked the player for an invoice');
+
+  const noInvoice = await withdrawCollected({ client: wallet('Success'), invoiceFor: async () => ({ ok: false, why: 'paste an invoice from your wallet' }) });
+  assert.equal(noInvoice.final, false);
+  assert.match(withdrawLine(noInvoice), /paste an invoice from your wallet/);
+  assert.equal(withdrawLine(null, 1937000n), '1937000 msat is in this tab\'s wallet - withdraw it to your own wallet before you close the tab');
+  assert.equal(withdrawLine(null, 0n), '');
 });
 
 // 6d, W4 HOLE 1: A RELOAD ONTO THE ROUND LINK MUST NOT ASK A SECOND DEPOSIT.

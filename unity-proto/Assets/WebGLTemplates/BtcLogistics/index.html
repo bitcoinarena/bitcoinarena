@@ -162,6 +162,10 @@
     <div class="spent" id="blwp-spent"></div>
     <div class="spent" id="blwp-donation"></div>
     <div class="spent" id="blwp-settled"></div>
+    <div class="spent" id="blwp-withdraw"></div>
+    <input id="blwp-withdraw-invoice" type="text" autocomplete="off" spellcheck="false"
+           placeholder="an invoice from your own wallet, for the amount above" style="display:none">
+    <button id="blwp-withdraw-go" type="button" style="display:none">Withdraw to my wallet</button>
     <div class="spent" id="blwp-budget"></div>
     <input id="blwp-nwc" type="password" autocomplete="off" spellcheck="false"
            placeholder="nostr+walletconnect://…">
@@ -931,6 +935,11 @@
             window.BLWP_PAYOUT = Object.assign({}, p, { client: undefined });
             window.BLWP_STAKE_BACK = s ? Object.assign({}, s, { client: undefined }) : null;
           }
+          // AND WHAT THIS TAB'S WALLET NOW HOLDS FOR THE PLAYER TO WITHDRAW (6d's destination).
+          const open = (s && s.client) || p.client;
+          if (r === newest && open && typeof open.withdrawableMsat === 'function') {
+            try { window.BLWP_WITHDRAWABLE = BigInt(await open.withdrawableMsat()); } catch (e) { console.error('[blwp] withdraw: ' + e.message); }
+          }
           if (p.final && s && s.final) {
             const done = { payout: BLWPCLIENT.payoutLine(p), stake: BLWPCLIENT.stakeBackLine(s) };
             BLWPCLIENT.markCollectDone(window.sessionStorage, r.roundIdHex, done);
@@ -942,6 +951,37 @@
       payoutAsking = false;
       paintWallet();
     }
+
+    // 6d'S DESTINATION (24A.2): "the client withdraws it over Lightning". The tab's round
+    // wallet - where the payout and the stake came back - paid to an invoice from the
+    // player's own wallet: made by their connected wallet, or pasted. Measured before: the
+    // money stayed in the tab's wallet, and closing the tab kept nothing.
+    window.BLWP_WITHDRAW = async function (invoice) {
+      const kept = BLWPCLIENT.savedCollects(window.sessionStorage).filter((r) => BLWPCLIENT.roundLocks(r.round));
+      const r = kept[kept.length - 1];
+      if (!r) return { ok: false, why: 'this tab holds no round to withdraw from' };
+      const wasm = await import('./blwp_lock_client.js');
+      await wasm.default();
+      const client = await BLWPCLIENT.tabLockWallet({ round: r.round, roundId: BLWPCLIENT.fromHex(r.roundIdHex), invite: r.invite,
+        seed: r.seed, LockClient: wasm.LockClient, storage: window.sessionStorage });
+      const invoiceFor = async (msat) => {
+        if (invoice && String(invoice).trim()) return { ok: true, invoice: String(invoice).trim() };
+        const conn = wallet && wallet.connected ? wallet.current() : null;
+        if (conn && conn.ok) return BLWPCLIENT.makeInvoice(conn, msat);
+        return { ok: false, why: `paste an invoice from your own wallet for ${msat} msat` };
+      };
+      const w = await BLWPCLIENT.withdrawCollected({ client, invoiceFor });
+      window.BLWP_WITHDRAWN = w;
+      try { window.BLWP_WITHDRAWABLE = BigInt(await client.withdrawableMsat()); } catch { /* shown as it was */ }
+      console.log('[blwp] withdraw: ' + BLWPCLIENT.withdrawLine(w, window.BLWP_WITHDRAWABLE));
+      paintWallet();
+      return w;
+    };
+    const withdrawGo = document.getElementById('blwp-withdraw-go');
+    if (withdrawGo) withdrawGo.addEventListener('click', () => {
+      const field = document.getElementById('blwp-withdraw-invoice');
+      window.BLWP_WITHDRAW(field ? field.value : null).catch((e) => console.error('[blwp] withdraw: ' + e.message));
+    });
 
     function paintWallet() {
       const el = document.getElementById('blwp-wallet');
@@ -973,6 +1013,12 @@
           : 'this round\'s stake goes into a federation lock: pay the deposit shown below';
         document.getElementById('blwp-settled').textContent = window.BLWP_COLLECT_LINE || [BLWPCLIENT.payoutLine(window.BLWP_PAYOUT),
           BLWPCLIENT.stakeBackLine(window.BLWP_STAKE_BACK)].filter(Boolean).join(' · ');
+        // AND THE WITHDRAW: what is in the tab's wallet, what went, or why not; the field and
+        // the button only while there is something to withdraw.
+        const canWithdraw = window.BLWP_WITHDRAWABLE !== undefined && window.BLWP_WITHDRAWABLE !== null && window.BLWP_WITHDRAWABLE > 0n;
+        document.getElementById('blwp-withdraw').textContent = BLWPCLIENT.withdrawLine(window.BLWP_WITHDRAWN,
+          canWithdraw ? window.BLWP_WITHDRAWABLE : null);
+        for (const id of ['blwp-withdraw-invoice', 'blwp-withdraw-go']) document.getElementById(id).style.display = canWithdraw ? '' : 'none';
         for (const id of ['blwp-spent', 'blwp-budget', 'blwp-why']) document.getElementById(id).textContent = '';
         for (const id of ['blwp-nwc', 'blwp-pay']) document.getElementById(id).style.display = 'none';
         return;

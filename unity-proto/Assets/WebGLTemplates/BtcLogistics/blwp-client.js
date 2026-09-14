@@ -3777,6 +3777,25 @@ function budgetLine(budget) {
  * There is no path from a caller's arbitrary invoice to this function that does
  * not go through that check.
  */
+/**
+ * ASK THE PLAYER'S OWN WALLET FOR AN INVOICE (NIP-47 make_invoice), for the page to pay it
+ * out of the round's federation wallet - 6d's destination: the client withdraws a payout
+ * over Lightning to the player. The amount is the caller's, in msat; the answer must be a
+ * bolt11 or it is refused. Nothing is remembered: the next withdraw asks again.
+ */
+async function makeInvoice(where, amountMsat, options = {}) {
+  const msat = BigInt(amountMsat);
+  if (msat <= 0n) return { ok: false, why: 'there is nothing to withdraw' };
+  const said = await nwcCall(where, {
+    method: 'make_invoice', params: { amount: Number(msat), description: options.description || 'btc-logistics payout' },
+  }, options);
+  if (!said.ok) return said;
+  const invoice = said.result && said.result.invoice;
+  if (typeof invoice !== 'string' || !/^ln(bc|tb|bcrt)/i.test(invoice.trim()))
+    return { ok: false, why: 'the wallet answered make_invoice with no bolt11' };
+  return { ok: true, invoice: invoice.trim() };
+}
+
 async function payInvoice(where, invoice, options = {}) {
   if (typeof invoice !== 'string' || !invoice.trim())
     return { ok: false, why: 'there is no invoice to pay' };
@@ -8675,6 +8694,48 @@ function markCollectDone(storage, roundIdHex, done) {
   } catch { return false; }
 }
 const COLLECT_NOTE = 'blwp.collect.';
+
+/**
+ * THE ROUND'S FEDERATION WALLET IN THIS TAB - the one the payout and the stake were
+ * collected into: the same secret (from the seed and the round) and the same store.
+ */
+async function tabLockWallet({ round, roundId, invite, seed, LockClient, storage }) {
+  if (!round || !roundLocks(round)) throw new Error('this round names no federation, so it has no wallet');
+  const secret = lockSecretFor(seed, roundId);
+  const store = storage ? lockStoreFor(storage, roundId, secret) : unkeptLockStore();
+  return LockClient.join(invite, toHex(round.federationId), toHex(secret), store);
+}
+
+/**
+ * 6d'S DESTINATION (24A.2): "the client withdraws it over Lightning through any listed
+ * gateway". Measured before: the page collected the payout and the stake back into the
+ * tab's own federation wallet and never withdrew - a winner who closed the tab kept
+ * nothing. The whole withdrawable balance (after the gateway's and the federation's fees,
+ * the stock client's own sum) goes to an invoice from the player's own wallet: made by
+ * their connected wallet, or pasted. Nothing is remembered between withdraws.
+ */
+async function withdrawCollected({ client, invoiceFor, onStep = () => {} } = {}) {
+  const withdrawable = BigInt(await client.withdrawableMsat());
+  if (withdrawable <= 0n) return { ok: false, final: true, withdrawableMsat: 0n, why: 'nothing in this tab\'s wallet to withdraw' };
+  onStep(`asking the player's wallet for an invoice of ${withdrawable} msat`);
+  const inv = await invoiceFor(withdrawable);
+  if (!inv || !inv.ok) return { ok: false, final: false, withdrawableMsat: withdrawable, why: (inv && inv.why) || 'no invoice to withdraw to' };
+  onStep('withdrawing over Lightning');
+  const said = JSON.parse(await client.withdraw(inv.invoice));
+  const ok = said.state === 'Success';
+  return { ok, final: ok, withdrawableMsat: withdrawable, invoiceMsat: said.invoice_msat == null ? null : BigInt(said.invoice_msat),
+    state: said.state, gateway: said.gateway, balance_before: said.balance_before, balance_after: said.balance_after,
+    why: ok ? undefined : `the withdraw ended ${said.state}${said.state === 'Refunded' ? ' - the money is back in this tab\'s wallet' : ''}` };
+}
+
+/** THE WITHDRAW AS THE PLAYER SEES IT: what can go, what went, or why not. */
+function withdrawLine(w, withdrawableMsat = null) {
+  if (w && w.ok) return `Withdrawn: ${String(w.invoiceMsat ?? w.withdrawableMsat)} msat to your own wallet over Lightning (this tab's wallet ${w.balance_before} → ${w.balance_after} msat)`;
+  if (w && !w.ok && w.why) return `Withdraw: ${w.why}`;
+  if (withdrawableMsat !== null && BigInt(withdrawableMsat) > 0n)
+    return `${String(withdrawableMsat)} msat is in this tab's wallet - withdraw it to your own wallet before you close the tab`;
+  return '';
+}
 
 /** THE STAKE AS THE PLAYER SEES IT AFTER THE WINDOW (6d): back, gone into the pool, or not yet. */
 function stakeBackLine(p) {
@@ -13721,6 +13782,7 @@ return { Client: Client, markState: markState,
          settlementOf: settlementOf, redeemPayout: redeemPayout, payoutLine: payoutLine,
          returnStake: returnStake, stakeBackLine: stakeBackLine,
          saveCollect: saveCollect, savedCollects: savedCollects, markCollectDone: markCollectDone,
+         tabLockWallet: tabLockWallet, withdrawCollected: withdrawCollected, withdrawLine: withdrawLine, makeInvoice: makeInvoice,
          lobbyQuery: lobbyQuery, fetchLobby: fetchLobby, lobbyLine: lobbyLine, lobbyJoinSearch: lobbyJoinSearch,
          dailyLobbySearch: dailyLobbySearch,
          tabIdentity: tabIdentity, setPlayerName: setPlayerName, generatedName: generatedName,

@@ -16,7 +16,7 @@ import assert from 'node:assert/strict';
 import { WebSocketServer } from 'ws';
 import { readFileSync } from 'node:fs';
 import { roundLocks, settledLine } from '../src/join.js';
-import { lockLine, payoutLine, stakeBackLine } from '../src/page-lock.js';
+import { lockLine, payoutLine, stakeBackLine, withdrawLine } from '../src/page-lock.js';
 import { donationPaidLine } from '../src/donation-pay.js';
 import { randomBytes } from 'node:crypto';
 import { schnorr } from '@noble/curves/secp256k1.js';
@@ -635,6 +635,7 @@ test('a round that asks no money gets no payment box, driven off the shipped pag
       lockLine,
       payoutLine,
       stakeBackLine,
+      withdrawLine,
       spentLine: () => 'nothing paid this session',
       owedLine,
       budgetLine,

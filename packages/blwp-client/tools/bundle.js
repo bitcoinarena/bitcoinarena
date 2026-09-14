@@ -154,6 +154,8 @@ out += '         settlementOf: settlementOf, redeemPayout: redeemPayout, payoutL
 out += '         returnStake: returnStake, stakeBackLine: stakeBackLine,\n';
 // AND WHAT THE TAB STILL HAS TO COLLECT, kept per round, so a reload collects too.
 out += '         saveCollect: saveCollect, savedCollects: savedCollects, markCollectDone: markCollectDone,\n';
+// AND 6d's DESTINATION: the tab's round wallet withdrawn over Lightning to the player's own.
+out += '         tabLockWallet: tabLockWallet, withdrawCollected: withdrawCollected, withdrawLine: withdrawLine, makeInvoice: makeInvoice,\n';
 // THE LOBBY (M3.3-34): a link that names nodes and no round lists what they
 // hold, every row checked against its own contract; Join is the join link.
 out += '         lobbyQuery: lobbyQuery, fetchLobby: fetchLobby, lobbyLine: lobbyLine, lobbyJoinSearch: lobbyJoinSearch,\n';

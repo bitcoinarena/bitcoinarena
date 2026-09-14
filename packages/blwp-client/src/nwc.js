@@ -558,6 +558,25 @@ export function budgetLine(budget) {
  * There is no path from a caller's arbitrary invoice to this function that does
  * not go through that check.
  */
+/**
+ * ASK THE PLAYER'S OWN WALLET FOR AN INVOICE (NIP-47 make_invoice), for the page to pay it
+ * out of the round's federation wallet - 6d's destination: the client withdraws a payout
+ * over Lightning to the player. The amount is the caller's, in msat; the answer must be a
+ * bolt11 or it is refused. Nothing is remembered: the next withdraw asks again.
+ */
+export async function makeInvoice(where, amountMsat, options = {}) {
+  const msat = BigInt(amountMsat);
+  if (msat <= 0n) return { ok: false, why: 'there is nothing to withdraw' };
+  const said = await nwcCall(where, {
+    method: 'make_invoice', params: { amount: Number(msat), description: options.description || 'btc-logistics payout' },
+  }, options);
+  if (!said.ok) return said;
+  const invoice = said.result && said.result.invoice;
+  if (typeof invoice !== 'string' || !/^ln(bc|tb|bcrt)/i.test(invoice.trim()))
+    return { ok: false, why: 'the wallet answered make_invoice with no bolt11' };
+  return { ok: true, invoice: invoice.trim() };
+}
+
 export async function payInvoice(where, invoice, options = {}) {
   if (typeof invoice !== 'string' || !invoice.trim())
     return { ok: false, why: 'there is no invoice to pay' };

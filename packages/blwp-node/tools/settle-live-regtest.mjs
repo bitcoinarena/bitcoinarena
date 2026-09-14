@@ -40,7 +40,7 @@ import { refundKeyOf, lockFieldsToJson } from '../../protocol/src/stake-lock.js'
 import { toHex, fromHex, sha256 } from '../../protocol/src/hash.js';
 import { playerFor } from '../../blwp-client/src/join.js';
 import { pageCurve } from '../../blwp-client/src/page-curve.js';
-import { redeemPayout, payoutLine, returnStake, stakeBackLine } from '../../blwp-client/src/page-lock.js';
+import { redeemPayout, payoutLine, returnStake, stakeBackLine, withdrawCollected, withdrawLine } from '../../blwp-client/src/page-lock.js';
 
 const env = process.env;
 const P = env.PROBE;
@@ -254,6 +254,30 @@ async function collectOnScreen({ p, c, rid, urls, stakeMsat, held }) {
       }, (k, v) => (typeof v === 'bigint' ? String(v) : v))`) || '{}');
       if (seen.payout && seen.payout.final && seen.stakeBack && seen.stakeBack.final && seen.settled) break;
     }
+    // 6d'S DESTINATION ON SCREEN: the winner's tab withdraws with the page's own BLWP_WITHDRAW to an
+    // invoice from alice's lnd (the player's wallet), for what the page says it can withdraw.
+    let withdrawn = null;
+    if (seen && seen.payout && seen.payout.ok) {
+      // THE PAGE SETS ITS LINES FIRST AND READS THE WITHDRAWABLE AFTER (seconds in the wasm):
+      // measured, reading at once found nothing. Up to 90 s for the page's own number; else the
+      // page's wallet is asked directly, and its error kept.
+      let can = '';
+      for (let t = Date.now(); Date.now() - t < 90000 && !can; await wait(1000))
+        can = await b.evaluate(`String(window.BLWP_WITHDRAWABLE ?? '')`).catch(() => '');
+      if (!can) can = await b.evaluate(`(async () => { try {
+        const r = BLWPCLIENT.savedCollects(window.sessionStorage).pop(); const w = await import('./blwp_lock_client.js'); await w.default();
+        const c = await BLWPCLIENT.tabLockWallet({ round: r.round, roundId: BLWPCLIENT.fromHex(r.roundIdHex), invite: r.invite, seed: r.seed,
+          LockClient: w.LockClient, storage: window.sessionStorage });
+        return String(await c.withdrawableMsat()); } catch (e) { return 'error: ' + e.message; } })()`).catch((e) => `error: ${e.message}`);
+      const made = can && /^\d+$/.test(can) ? JSON.parse((await run(`${env.LND_BIN}/lncli`, [`--lnddir=${P}/alice`, '--rpcserver=127.0.0.1:30107', '--network=regtest',
+        'addinvoice', `--amt_msat=${can}`, '--memo=blwp payout on screen'])).so || '{}') : {};
+      const w = made.payment_request ? await b.evaluate(`window.BLWP_WITHDRAW(${JSON.stringify(made.payment_request)})
+        .then((w) => JSON.stringify(w, (k, v) => (typeof v === 'bigint' ? String(v) : v)))`) : null;
+      const seenAt = made.r_hash ? JSON.parse((await run(`${env.LND_BIN}/lncli`, [`--lnddir=${P}/alice`, '--rpcserver=127.0.0.1:30107', '--network=regtest',
+        'lookupinvoice', made.r_hash])).so || '{}') : {};
+      const line = await b.evaluate(`(document.getElementById('blwp-withdraw') || {}).textContent || ''`);
+      withdrawn = { withdrawableShown: can, result: w ? JSON.parse(w) : null, aliceInvoice: { state: seenAt.state, amtPaidMsat: seenAt.amt_paid_msat }, line };
+    }
     await b.shot(shotFile);
     const holds = await tabState(b).catch((e) => ({ unread: e.message }));
     const po = seen && seen.payout;
@@ -266,7 +290,8 @@ async function collectOnScreen({ p, c, rid, urls, stakeMsat, held }) {
       stakeLockMsat: p.stake.fields.amountMsat, stakeLockHeldAfter: await held(p.stake.outpoint),
       shown: seen && seen.settled, drawn: seen && seen.onScreen, screenshot: shotFile,
       pageHolds: { collects: holds.collects, keys: holds.keys, collect: holds.collect, harnessSave: holds.harnessSave },
-      pageSaid: b.logs.filter((l) => /\[blwp\] (payout|stake)|EXCEPTION/.test(l)).map((l) => l.slice(0, 200)).slice(-4) };
+      withdrawnOnScreen: withdrawn,
+      pageSaid: b.logs.filter((l) => /\[blwp\] (payout|stake|withdraw)|EXCEPTION/.test(l)).map((l) => l.slice(0, 200)).slice(-6) };
   } finally { b.close(); }
 }
 
@@ -452,6 +477,22 @@ async function round(stakeMsat) {
       out({ round: `${stakeMsat / 1000n} sat`, page: p.want, stakeBack: back.ok, final: back.final, lockClientJoins: joins - joinsBefore,
         stakeLockMsat: p.stake.fields.amountMsat, returnedMsat: back.amountMsat, walletBefore: back.balance_before, walletAfter: back.balance_after,
         stakeLockHeldBefore: heldBefore, stakeLockHeldAfter: await held(p.stake.outpoint), screen: stakeBackLine(back) });
+      // AND 6d'S DESTINATION: the tab's wallet withdrawn over Lightning to the player's own - an
+      // invoice on alice's lnd (the gateway is on bob's), paid through the page's own withdrawCollected.
+      const wallet = back.client || r.client;
+      if (wallet && (r.ok || back.ok)) {
+        let made = null;
+        const wd = await withdrawCollected({ client: wallet, invoiceFor: async (msat) => {
+          made = JSON.parse((await run(`${env.LND_BIN}/lncli`, [`--lnddir=${P}/alice`, '--rpcserver=127.0.0.1:30107', '--network=regtest',
+            'addinvoice', `--amt_msat=${msat}`, '--memo=blwp payout'])).so || '{}');
+          return made.payment_request ? { ok: true, invoice: made.payment_request } : { ok: false, why: 'alice made no invoice' };
+        } });
+        const seen = made && made.r_hash ? JSON.parse((await run(`${env.LND_BIN}/lncli`, [`--lnddir=${P}/alice`, '--rpcserver=127.0.0.1:30107', '--network=regtest',
+          'lookupinvoice', made.r_hash])).so || '{}') : {};
+        out({ round: `${stakeMsat / 1000n} sat`, page: p.want, withdraw: wd.state || (wd.ok ? 'Success' : 'none'), withdrawableMsat: wd.withdrawableMsat,
+          gateway: wd.gateway, walletBefore: wd.balance_before, walletAfter: wd.balance_after,
+          aliceInvoice: { state: seen.state, amtPaidMsat: seen.amt_paid_msat }, screen: withdrawLine(wd) });
+      }
       if (back.client && back.client !== r.client && typeof back.client.free === 'function') back.client.free();
       if (r.client && typeof r.client.free === 'function') r.client.free();
     }
