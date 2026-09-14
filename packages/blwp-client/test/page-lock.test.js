@@ -13,6 +13,8 @@ import { test } from 'node:test';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
 import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js';
 import assert from 'node:assert/strict';
+import { bech32Encode, convertBits } from '../../protocol/src/bech32.js';
+import { decodeBolt11 } from '../../protocol/src/bolt11.js';
 
 import { lockStake, handLock, lockSecretFor, lockAmountMsat, lockLine, saveLock, savedLock, markLockCommitted,
   refundStake, redeemStake, redeemPayout, payoutLine, returnStake, stakeBackLine, saveCollect, savedCollects, markCollectDone, keptLockUse, withdrawCollected, withdrawLine, refundKept, refundLine, lookOwed, owedToLine as owedLine, collectAndWithdraw, LOCK_EXPIRY_MARGIN_BLOCKS, feeSecretFor } from '../src/page-lock.js';
@@ -462,7 +464,12 @@ test('a winner\'s tab closed before withdrawing: the old timer\'s collect strand
         async redeem(txid, i) { t.calls.push('redeem'); return take(txid, i); },
         async withdrawableMsat() { t.calls.push('withdrawableMsat'); if (t.balance === 0n) throw new Error('Balance is too low to send any amount after fees'); return String(t.balance - 1000n); },
         async withdraw(invoice) {
-          t.calls.push('withdraw'); const amt = t.balance - 1000n; const before = t.balance; paid.push({ invoice, msat: amt }); t.balance = 0n;
+          t.calls.push('withdraw');
+          // A REAL INVOICE IS PAID FOR ITS OWN AMOUNT, and fails when the balance after the fee is short of it.
+          let asks = null; try { asks = decodeBolt11(invoice).amountMsat; } catch { asks = null; }
+          if (asks !== null && asks > t.balance - 1000n)
+            return JSON.stringify({ state: 'Failure', invoice_msat: Number(asks), gateway: 'gw', balance_before: Number(t.balance), balance_after: Number(t.balance) });
+          const amt = asks !== null ? asks : t.balance - 1000n; const before = t.balance; paid.push({ invoice, msat: amt }); t.balance -= amt + 1000n;
           return JSON.stringify({ state: 'Success', invoice_msat: Number(amt), gateway: 'gw', balance_before: Number(before), balance_after: 0 });
         },
       };
@@ -527,7 +534,59 @@ test('a winner\'s tab closed before withdrawing: the old timer\'s collect strand
   assert.equal(other.final, true);
   assert.equal(other.owedMsat, 0n);
   assert.match(owedLine(other), /^Payout 978000 msat: no longer in the federation - your key collected it before .* · Stake 980000 msat: no longer in the federation - back to your key before$/);
+
+  // A PASTED INVOICE FOR THE OWED SUM. Before the rule: collected, then the withdraw fails - the
+  // money in the tab (the same hole as run 15, by another door).
+  const invoice = (msat) => bolt11For(msat);
+  const was2 = federation();
+  const t2 = was2.tab();
+  const before2 = await collectAndWithdraw({ ...ask(tabStorage()), client: t2, invoiceFor: async () => ({ ok: true, invoice: invoice(1958000n) }) });
+  console.log(`  pasted for the owed sum, no rule: federation ${was2.held.size} contracts, tab ${was2.tabs[0].balance} msat, "${withdrawLine(before2.withdraw)}"`);
+  assert.equal(before2.withdraw.ok, false);
+  assert.equal(was2.tabs[0].balance, 1958000n, 'the unruled paste did not strand the money in the tab');
+  // NOW: a pasted fixed invoice collects nothing while the federation holds the money.
+  const fed2 = federation();
+  const t3 = fed2.tab();
+  const s3 = tabStorage();
+  const refusedPaste = await collectAndWithdraw({ ...ask(s3), client: t3, pasted: invoice(1958000n), invoiceFor: async () => ({ ok: true, invoice: invoice(1958000n) }) });
+  console.log(`  pasted for the owed sum, ruled: federation ${fed2.held.size} contracts, tab ${fed2.tabs[0].balance} msat, "${withdrawLine(refusedPaste.withdraw)}"`);
+  assert.equal(refusedPaste.withdraw.ok, false);
+  assert.match(refusedPaste.withdraw.why, /nothing was collected, it stays in the federation$/);
+  assert.equal(fed2.held.size, 2, 'a pasted invoice collected from the federation');
+  assert.equal(fed2.tabs[0].balance, 0n);
+  assert.deepEqual([...new Set(fed2.tabs[0].calls)].sort(), ['lockStatus', 'withdrawableMsat']);
+  const notAnInvoice = await collectAndWithdraw({ ...ask(s3), client: t3, pasted: 'lnbcrt-nothing', invoiceFor: async () => ({ ok: false }) });
+  assert.match(notAnInvoice.withdraw.why, /^that is not an invoice/);
+  assert.equal(fed2.held.size, 2);
+  // MONEY ALREADY IN THE TAB (an earlier build's timer): a paste pays it when it fits, and is refused unmoved when it does not.
+  const inTab = federation();
+  const t4 = inTab.tab();
+  const s4 = tabStorage();
+  await redeemPayout({ ...ask(s4), client: t4 });
+  await returnStake({ ...ask(s4), client: t4 });
+  const tooBig = await collectAndWithdraw({ ...ask(s4), client: t4, pasted: invoice(1958000n), invoiceFor: async () => ({ ok: true, invoice: invoice(1958000n) }) });
+  assert.match(tooBig.withdraw.why, /^the invoice asks 1958000 msat and this tab's wallet can pay 1957000 msat/);
+  assert.equal(inTab.tabs[0].balance, 1958000n);
+  assert.equal(inTab.paid.length, 0);
+  const fits = await collectAndWithdraw({ ...ask(s4), client: t4, pasted: invoice(1957000n), invoiceFor: async () => ({ ok: true, invoice: invoice(1957000n) }) });
+  console.log(`  already in the tab, pasted for 1957000: "${withdrawLine(fits.withdraw)}"`);
+  assert.equal(fits.withdraw.ok, true);
+  assert.equal(inTab.tabs[0].balance, 0n);
+  assert.deepEqual(inTab.paid.map((x) => x.msat), [1957000n]);
 });
+
+/** A BOLT11 invoice for tests: the real encoding, an all-zero signature (as donation-pay.test.js). */
+function bolt11For(amountMsat) {
+  const amount = amountMsat % 100n === 0n ? `${amountMsat / 100n}n` : `${amountMsat * 10n}p`;
+  const ts = 1788700000;
+  const words = [];
+  for (let i = 6; i >= 0; i--) words.push(Math.floor(ts / 32 ** i) % 32);
+  const field = (type, bytes) => { const w = convertBits([...bytes], 8, 5, true); words.push(type, w.length >> 5, w.length & 31, ...w); };
+  field(1, b32(0x77));
+  field(23, b32(0x78));
+  for (let i = 0; i < 104; i++) words.push(0);
+  return bech32Encode(`lnbcrt${amount}`, words);
+}
 
 // W4 / 6d: THE PAGE'S TIMERS ONLY LOOK. The page's own code: nothing registered on an interval
 // collects, redeems, refunds or withdraws; the collect is reached from the Withdraw button only.

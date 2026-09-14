@@ -25,6 +25,7 @@ import { lockFromClient } from './lock-result.js';
 import { feeLockPays } from '../../protocol/src/lock-settlement.js';
 import { roundLocks, playerFor } from './join.js';
 import { encodeRoundContract, decodeRoundContract } from '../../protocol/src/contracts.js';
+import { decodeBolt11 } from '../../protocol/src/bolt11.js';
 
 // THE BLOCKS OVER stake_expiry_blocks A LOCK IS MADE FOR. The seat requires
 // expiration >= its federation height + 144 when it verifies, and the chain
@@ -721,10 +722,12 @@ export async function lookOwed({ round, roundId, seed, curve, nodes, fetcher = f
   // WHAT THIS TAB'S WALLET HOLDS - read, not spent (the stock client throws on an empty one).
   let inTabMsat = 0n;
   if (client) { try { inTabMsat = BigInt(await client.withdrawableMsat()); } catch { inTabMsat = 0n; } }
+  let tabBalanceMsat = null;
+  if (client && typeof client.balanceMsat === 'function') { try { tabBalanceMsat = BigInt(await client.balanceMsat()); } catch { tabBalanceMsat = null; } }
   // FINAL: the federation holds nothing more of this seed's in this round. The tab's own balance is apart.
   const final = ['none', 'gone', 'collected'].includes(payout.state) && ['lost', 'gone', 'none', 'collected'].includes(stake.state);
   return { payout, stake, payoutMsat, stakeMsat: owed('forfeit'), refundMsat: owed('refund'), stakeLost: stake.state === 'lost',
-    owedMsat: payoutMsat + owed('forfeit') + owed('refund'), inTabMsat, final, settled: s.ok };
+    owedMsat: payoutMsat + owed('forfeit') + owed('refund'), inTabMsat, tabBalanceMsat, final, settled: s.ok };
 }
 
 /** WHAT THE PLAYER IS OWED, AS THEY SEE IT: yours in the federation until you withdraw, when it comes back, or nothing. */
@@ -767,11 +770,25 @@ export async function collectOwed({ look, client, ...ask } = {}) {
  * COLLECT AND WITHDRAW IN ONE ACTION (W4 / 6d): looked at again as the player presses, collected
  * into the one wallet, and at once out to the player's own. With no invoice to pay (no wallet
  * connected, none pasted) nothing is collected: the money stays in the federation, not the tab.
+ * A PASTED INVOICE NEVER COLLECTS: it is for a fixed amount, and what the tab can pay after the
+ * federation's and the gateway's fees is known only once collected (live, run 15: 978000 +
+ * 980000 msat collected became a 1951232 msat balance) - an invoice for the owed amount would
+ * fail after the collect and leave the money in the tab. It pays what is already in the tab,
+ * and only when it fits; the federation's money leaves through a wallet asked for the exact sum.
  */
-export async function collectAndWithdraw({ look = null, client, invoiceFor, canInvoice = true, onStep = () => {}, ...ask } = {}) {
-  if (!canInvoice) return { payout: null, stake: null, refund: null, look,
-    withdraw: { ok: false, final: false, why: 'connect your wallet or paste an invoice from it - nothing was collected, it stays in the federation' } };
+export async function collectAndWithdraw({ look = null, client, invoiceFor, canInvoice = true, pasted = null, onStep = () => {}, ...ask } = {}) {
+  const none = (why) => ({ payout: null, stake: null, refund: null, look, withdraw: { ok: false, final: false, why } });
+  if (!canInvoice) return none('connect your wallet or paste an invoice from it - nothing was collected, it stays in the federation');
+  let fixed = null;
+  if (pasted) {
+    try { fixed = decodeBolt11(pasted).amountMsat; } catch (e) { return none(`that is not an invoice (${e.message}) - nothing was collected`); }
+    if (fixed === null) return none('that invoice names no amount, and this withdraw pays only an invoice with one - nothing was collected');
+  }
   const seen = look || await lookOwed({ ...ask, client });
+  if (fixed !== null && seen.owedMsat > 0n)
+    return { ...none(`an invoice pasted for a fixed ${fixed} msat cannot be matched to what this tab can pay after the federation's and the gateway's fees, known only once collected - connect your wallet to withdraw the ${seen.owedMsat} msat the federation holds for you; nothing was collected, it stays in the federation`), look: seen };
+  if (fixed !== null && fixed > seen.inTabMsat)
+    return { ...none(`the invoice asks ${fixed} msat and this tab's wallet can pay ${seen.inTabMsat} msat - paste one for at most that`), look: seen };
   const got = await collectOwed({ look: seen, client, onStep, ...ask });
   const withdraw = await withdrawCollected({ client, invoiceFor, onStep });
   return { ...got, look: seen, withdraw };

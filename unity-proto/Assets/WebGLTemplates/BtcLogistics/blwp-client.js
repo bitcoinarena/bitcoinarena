@@ -8117,6 +8117,167 @@ function feeSettlement({ entries, feeLocks, seats, contract, fees }) {
     unspentMsat: spendable - paidMsat - outputFeesMsat, unallocatedMsat: table.unallocated, hole: null };
 }
 
+// ---- protocol/src/bech32.js
+/**
+ * BECH32 (BIP-173), FOR LNURL (LUD-01).
+ *
+ * An LNURL is a URL written in bech32 under the human-readable part `lnurl`,
+ * with no length limit. The donation set names its recipients as LNURLs
+ * (§22A), and before this nothing in the repo could turn one into the URL a
+ * wallet has to ask - `donation.js` only folded their case. Written out here
+ * because it is sixty lines and a dependency for sixty lines is a dependency
+ * that decides which address gets paid.
+ *
+ * CASE IS THE ENCODING'S: an all-lowercase and an all-uppercase string are the
+ * same address, mixed case is not an address at all (BIP-173), folded in ASCII
+ * as `canonicalLnurl` folds it.
+ */
+const CHARSET = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l';
+const GENERATOR = [0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3];
+
+function polymod(values) {
+  let chk = 1;
+  for (const v of values) {
+    const top = chk >>> 25;
+    chk = ((chk & 0x1ffffff) << 5) ^ v;
+    for (let i = 0; i < 5; i++) if ((top >>> i) & 1) chk ^= GENERATOR[i];
+  }
+  return chk >>> 0;
+}
+
+const hrpExpand = (hrp) => [...hrp].map((c) => c.charCodeAt(0) >> 5).concat([0], [...hrp].map((c) => c.charCodeAt(0) & 31));
+const asciiLower = (s) => s.replace(/[A-Z]/g, (c) => String.fromCharCode(c.charCodeAt(0) + 32));
+const asciiUpper = (s) => s.replace(/[a-z]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 32));
+
+/** 5-bit words under `hrp`, with the six-word checksum. */
+function bech32Encode(hrp, words) {
+  const chk = polymod([...hrpExpand(hrp), ...words, 0, 0, 0, 0, 0, 0]) ^ 1;
+  const sum = [];
+  for (let i = 0; i < 6; i++) sum.push((chk >>> (5 * (5 - i))) & 31);
+  return `${hrp}1${[...words, ...sum].map((w) => CHARSET[w]).join('')}`;
+}
+
+/** `{ hrp, words }` of a bech32 string, or a throw naming what is wrong. `limit` is BIP-173's 90; LNURL has none. */
+function bech32Decode(str, { limit = 90 } = {}) {
+  if (typeof str !== 'string') throw new Error('a bech32 string is a string');
+  if (str.length > limit) throw new Error(`a bech32 string is at most ${limit} characters`);
+  for (const c of str) {
+    const code = c.charCodeAt(0);
+    if (code < 33 || code > 126) throw new Error('a bech32 string is printable ASCII');
+  }
+  if (str !== asciiLower(str) && str !== asciiUpper(str)) throw new Error('bech32 does not allow mixed case');
+  const s = asciiLower(str);
+  const at = s.lastIndexOf('1');
+  if (at < 1) throw new Error('a bech32 string names a human-readable part before its separator');
+  if (at + 7 > s.length) throw new Error('a bech32 string ends in a six-character checksum');
+  const hrp = s.slice(0, at);
+  const words = [];
+  for (const c of s.slice(at + 1)) {
+    const w = CHARSET.indexOf(c);
+    if (w < 0) throw new Error(`"${c}" is not a bech32 character`);
+    words.push(w);
+  }
+  if (polymod([...hrpExpand(hrp), ...words]) !== 1) throw new Error('that bech32 checksum does not verify');
+  return { hrp, words: words.slice(0, -6) };
+}
+
+/** Regroups bits: 8 -> 5 with padding, 5 -> 8 without (and the leftover must be zeros). */
+function convertBits(data, from, to, pad) {
+  let acc = 0;
+  let bits = 0;
+  const out = [];
+  const max = (1 << to) - 1;
+  for (const v of data) {
+    if (v < 0 || v >> from) throw new Error('a value is wider than its group');
+    acc = ((acc << from) | v) & 0xffffff;
+    bits += from;
+    while (bits >= to) { bits -= to; out.push((acc >> bits) & max); }
+  }
+  if (pad) { if (bits > 0) out.push((acc << (to - bits)) & max); }
+  else if (bits >= from || ((acc << (to - bits)) & max)) throw new Error('bech32 data carries non-zero padding');
+  return out;
+}
+
+/** The LNURL of a URL: lowercase, `lnurl` + bech32 of its UTF-8 bytes. */
+function lnurlFor(url) {
+  return bech32Encode('lnurl', convertBits([...new TextEncoder().encode(String(url))], 8, 5, true));
+}
+
+/** The URL an LNURL names, or a throw: it must be bech32 under `lnurl`. */
+function urlOfLnurl(lnurl) {
+  const { hrp, words } = bech32Decode(lnurl, { limit: Infinity });
+  if (hrp !== 'lnurl') throw new Error(`that is bech32 under "${hrp}", not an LNURL`);
+  return new TextDecoder('utf-8', { fatal: true }).decode(Uint8Array.from(convertBits(words, 5, 8, false)));
+}
+
+// ---- protocol/src/bolt11.js
+/**
+ * A BOLT11 INVOICE, READ (M3.2 item 6e): the network, the amount, the payment
+ * hash, the description and the description hash - what a donor's page must
+ * check before its wallet pays an invoice a recipient's LNURL endpoint handed
+ * it (LUD-06: the amount is the one asked, the description hash is the
+ * endpoint's own metadata). The node's signature is NOT checked here: the
+ * wallet that pays does that, and nothing in this reader decides who is paid.
+ *
+ * Tested against the examples BOLT11 itself publishes.
+ */
+
+const NETWORKS = { bc: 'bitcoin', tb: 'testnet', tbs: 'signet', bcrt: 'regtest', sb: 'simnet' };
+const MSAT_PER_UNIT = { m: 100000000n, u: 100000n, n: 100n };     // p: a tenth of a msat, below
+const TAG_PAYMENT_HASH = 1;        // 'p'
+const TAG_DESCRIPTION = 13;        // 'd'
+const TAG_DESCRIPTION_HASH = 23;   // 'h'
+const SIGNATURE_WORDS = 104;       // 65 bytes
+
+/** The amount a BOLT11 prefix names, in msat, or null for "any amount". */
+function hrpAmountMsat(hrp) {
+  const m = String(hrp).match(/^ln(bcrt|bc|tbs|tb|sb)(\d*)([munp]?)$/);
+  if (!m) throw new Error(`"${hrp}" is not a BOLT11 prefix`);
+  if (!m[2]) {
+    if (m[3]) throw new Error('an amount multiplier with no amount');
+    return null;
+  }
+  if (m[2].length > 1 && m[2][0] === '0') throw new Error('a BOLT11 amount has no leading zero');
+  const n = BigInt(m[2]);
+  if (!m[3]) return n * 100000000000n;
+  if (m[3] === 'p') {
+    // BOLT11: "if the `p` multiplier is used the last decimal of `amount` MUST be `0`"
+    if (n % 10n !== 0n) throw new Error('a pico amount must end in 0: there is no tenth of a millisatoshi');
+    return n / 10n;
+  }
+  return n * MSAT_PER_UNIT[m[3]];
+}
+
+const bytesOf = (words) => Uint8Array.from(convertBits(words, 5, 8, false));
+
+function decodeBolt11(invoice) {
+  const { hrp, words } = bech32Decode(String(invoice).trim(), { limit: Infinity });
+  const network = NETWORKS[(hrp.match(/^ln(bcrt|bc|tbs|tb|sb)/) || [])[1]];
+  const amountMsat = hrpAmountMsat(hrp);
+  if (words.length < 7 + SIGNATURE_WORDS) throw new Error('that invoice is too short to carry a timestamp and a signature');
+  const data = words.slice(0, words.length - SIGNATURE_WORDS);
+  let timestamp = 0;
+  for (let i = 0; i < 7; i++) timestamp = timestamp * 32 + data[i];
+  let paymentHash = null;
+  let descriptionHash = null;
+  let description = null;
+  for (let at = 7; at < data.length;) {
+    if (at + 3 > data.length) throw new Error('a tagged field is cut short');
+    const type = data[at];
+    const len = data[at + 1] * 32 + data[at + 2];
+    at += 3;
+    if (at + len > data.length) throw new Error('a tagged field runs past the invoice');
+    const field = data.slice(at, at + len);
+    at += len;
+    // BOLT11: a reader MUST skip a p or h field whose length is not 52 words.
+    if (type === TAG_PAYMENT_HASH && len === 52 && !paymentHash) paymentHash = bytesOf(field);
+    else if (type === TAG_DESCRIPTION_HASH && len === 52 && !descriptionHash) descriptionHash = bytesOf(field);
+    else if (type === TAG_DESCRIPTION && description === null) description = new TextDecoder('utf-8', { fatal: true }).decode(bytesOf(field));
+  }
+  if (!paymentHash) throw new Error('that invoice names no payment hash');
+  return { network, amountMsat, timestamp, paymentHash, descriptionHash, description };
+}
+
 // ---- blwp-client/src/page-lock.js
 // THE PLAYER'S STAKE LOCK, MADE FROM THE PAGE (W1b; v4.6.2 §23.1 steps 3-5).
 //
@@ -8135,6 +8296,7 @@ function feeSettlement({ entries, feeLocks, seats, contract, fees }) {
 // wallet that holds it; and a lock already made, that no seat has committed
 // yet, is kept with its stake (`saveLock`), so a reload before the seat takes
 // the entry uses that lock instead of dealing and paying again.
+
 
 
 
@@ -8840,10 +9002,12 @@ async function lookOwed({ round, roundId, seed, curve, nodes, fetcher = fetch, c
   // WHAT THIS TAB'S WALLET HOLDS - read, not spent (the stock client throws on an empty one).
   let inTabMsat = 0n;
   if (client) { try { inTabMsat = BigInt(await client.withdrawableMsat()); } catch { inTabMsat = 0n; } }
+  let tabBalanceMsat = null;
+  if (client && typeof client.balanceMsat === 'function') { try { tabBalanceMsat = BigInt(await client.balanceMsat()); } catch { tabBalanceMsat = null; } }
   // FINAL: the federation holds nothing more of this seed's in this round. The tab's own balance is apart.
   const final = ['none', 'gone', 'collected'].includes(payout.state) && ['lost', 'gone', 'none', 'collected'].includes(stake.state);
   return { payout, stake, payoutMsat, stakeMsat: owed('forfeit'), refundMsat: owed('refund'), stakeLost: stake.state === 'lost',
-    owedMsat: payoutMsat + owed('forfeit') + owed('refund'), inTabMsat, final, settled: s.ok };
+    owedMsat: payoutMsat + owed('forfeit') + owed('refund'), inTabMsat, tabBalanceMsat, final, settled: s.ok };
 }
 
 /** WHAT THE PLAYER IS OWED, AS THEY SEE IT: yours in the federation until you withdraw, when it comes back, or nothing. */
@@ -8886,11 +9050,25 @@ async function collectOwed({ look, client, ...ask } = {}) {
  * COLLECT AND WITHDRAW IN ONE ACTION (W4 / 6d): looked at again as the player presses, collected
  * into the one wallet, and at once out to the player's own. With no invoice to pay (no wallet
  * connected, none pasted) nothing is collected: the money stays in the federation, not the tab.
+ * A PASTED INVOICE NEVER COLLECTS: it is for a fixed amount, and what the tab can pay after the
+ * federation's and the gateway's fees is known only once collected (live, run 15: 978000 +
+ * 980000 msat collected became a 1951232 msat balance) - an invoice for the owed amount would
+ * fail after the collect and leave the money in the tab. It pays what is already in the tab,
+ * and only when it fits; the federation's money leaves through a wallet asked for the exact sum.
  */
-async function collectAndWithdraw({ look = null, client, invoiceFor, canInvoice = true, onStep = () => {}, ...ask } = {}) {
-  if (!canInvoice) return { payout: null, stake: null, refund: null, look,
-    withdraw: { ok: false, final: false, why: 'connect your wallet or paste an invoice from it - nothing was collected, it stays in the federation' } };
+async function collectAndWithdraw({ look = null, client, invoiceFor, canInvoice = true, pasted = null, onStep = () => {}, ...ask } = {}) {
+  const none = (why) => ({ payout: null, stake: null, refund: null, look, withdraw: { ok: false, final: false, why } });
+  if (!canInvoice) return none('connect your wallet or paste an invoice from it - nothing was collected, it stays in the federation');
+  let fixed = null;
+  if (pasted) {
+    try { fixed = decodeBolt11(pasted).amountMsat; } catch (e) { return none(`that is not an invoice (${e.message}) - nothing was collected`); }
+    if (fixed === null) return none('that invoice names no amount, and this withdraw pays only an invoice with one - nothing was collected');
+  }
   const seen = look || await lookOwed({ ...ask, client });
+  if (fixed !== null && seen.owedMsat > 0n)
+    return { ...none(`an invoice pasted for a fixed ${fixed} msat cannot be matched to what this tab can pay after the federation's and the gateway's fees, known only once collected - connect your wallet to withdraw the ${seen.owedMsat} msat the federation holds for you; nothing was collected, it stays in the federation`), look: seen };
+  if (fixed !== null && fixed > seen.inTabMsat)
+    return { ...none(`the invoice asks ${fixed} msat and this tab's wallet can pay ${seen.inTabMsat} msat - paste one for at most that`), look: seen };
   const got = await collectOwed({ look: seen, client, onStep, ...ask });
   const withdraw = await withdrawCollected({ client, invoiceFor, onStep });
   return { ...got, look: seen, withdraw };
@@ -9925,167 +10103,6 @@ function donationKeysForNetworkId(networkId) {
   if (is(NETWORK_ID_REGTEST)) return { network: 'regtest', authority: AUTHORITY_PUBKEY_REGTEST, recovery: RECOVERY_PUBKEY_REGTEST };
   if (is(NETWORK_ID_TESTNET4)) return { network: 'testnet4', authority: AUTHORITY_PUBKEY_TESTNET4, recovery: RECOVERY_PUBKEY_TESTNET4 };
   return null;
-}
-
-// ---- protocol/src/bech32.js
-/**
- * BECH32 (BIP-173), FOR LNURL (LUD-01).
- *
- * An LNURL is a URL written in bech32 under the human-readable part `lnurl`,
- * with no length limit. The donation set names its recipients as LNURLs
- * (§22A), and before this nothing in the repo could turn one into the URL a
- * wallet has to ask - `donation.js` only folded their case. Written out here
- * because it is sixty lines and a dependency for sixty lines is a dependency
- * that decides which address gets paid.
- *
- * CASE IS THE ENCODING'S: an all-lowercase and an all-uppercase string are the
- * same address, mixed case is not an address at all (BIP-173), folded in ASCII
- * as `canonicalLnurl` folds it.
- */
-const CHARSET = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l';
-const GENERATOR = [0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3];
-
-function polymod(values) {
-  let chk = 1;
-  for (const v of values) {
-    const top = chk >>> 25;
-    chk = ((chk & 0x1ffffff) << 5) ^ v;
-    for (let i = 0; i < 5; i++) if ((top >>> i) & 1) chk ^= GENERATOR[i];
-  }
-  return chk >>> 0;
-}
-
-const hrpExpand = (hrp) => [...hrp].map((c) => c.charCodeAt(0) >> 5).concat([0], [...hrp].map((c) => c.charCodeAt(0) & 31));
-const asciiLower = (s) => s.replace(/[A-Z]/g, (c) => String.fromCharCode(c.charCodeAt(0) + 32));
-const asciiUpper = (s) => s.replace(/[a-z]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 32));
-
-/** 5-bit words under `hrp`, with the six-word checksum. */
-function bech32Encode(hrp, words) {
-  const chk = polymod([...hrpExpand(hrp), ...words, 0, 0, 0, 0, 0, 0]) ^ 1;
-  const sum = [];
-  for (let i = 0; i < 6; i++) sum.push((chk >>> (5 * (5 - i))) & 31);
-  return `${hrp}1${[...words, ...sum].map((w) => CHARSET[w]).join('')}`;
-}
-
-/** `{ hrp, words }` of a bech32 string, or a throw naming what is wrong. `limit` is BIP-173's 90; LNURL has none. */
-function bech32Decode(str, { limit = 90 } = {}) {
-  if (typeof str !== 'string') throw new Error('a bech32 string is a string');
-  if (str.length > limit) throw new Error(`a bech32 string is at most ${limit} characters`);
-  for (const c of str) {
-    const code = c.charCodeAt(0);
-    if (code < 33 || code > 126) throw new Error('a bech32 string is printable ASCII');
-  }
-  if (str !== asciiLower(str) && str !== asciiUpper(str)) throw new Error('bech32 does not allow mixed case');
-  const s = asciiLower(str);
-  const at = s.lastIndexOf('1');
-  if (at < 1) throw new Error('a bech32 string names a human-readable part before its separator');
-  if (at + 7 > s.length) throw new Error('a bech32 string ends in a six-character checksum');
-  const hrp = s.slice(0, at);
-  const words = [];
-  for (const c of s.slice(at + 1)) {
-    const w = CHARSET.indexOf(c);
-    if (w < 0) throw new Error(`"${c}" is not a bech32 character`);
-    words.push(w);
-  }
-  if (polymod([...hrpExpand(hrp), ...words]) !== 1) throw new Error('that bech32 checksum does not verify');
-  return { hrp, words: words.slice(0, -6) };
-}
-
-/** Regroups bits: 8 -> 5 with padding, 5 -> 8 without (and the leftover must be zeros). */
-function convertBits(data, from, to, pad) {
-  let acc = 0;
-  let bits = 0;
-  const out = [];
-  const max = (1 << to) - 1;
-  for (const v of data) {
-    if (v < 0 || v >> from) throw new Error('a value is wider than its group');
-    acc = ((acc << from) | v) & 0xffffff;
-    bits += from;
-    while (bits >= to) { bits -= to; out.push((acc >> bits) & max); }
-  }
-  if (pad) { if (bits > 0) out.push((acc << (to - bits)) & max); }
-  else if (bits >= from || ((acc << (to - bits)) & max)) throw new Error('bech32 data carries non-zero padding');
-  return out;
-}
-
-/** The LNURL of a URL: lowercase, `lnurl` + bech32 of its UTF-8 bytes. */
-function lnurlFor(url) {
-  return bech32Encode('lnurl', convertBits([...new TextEncoder().encode(String(url))], 8, 5, true));
-}
-
-/** The URL an LNURL names, or a throw: it must be bech32 under `lnurl`. */
-function urlOfLnurl(lnurl) {
-  const { hrp, words } = bech32Decode(lnurl, { limit: Infinity });
-  if (hrp !== 'lnurl') throw new Error(`that is bech32 under "${hrp}", not an LNURL`);
-  return new TextDecoder('utf-8', { fatal: true }).decode(Uint8Array.from(convertBits(words, 5, 8, false)));
-}
-
-// ---- protocol/src/bolt11.js
-/**
- * A BOLT11 INVOICE, READ (M3.2 item 6e): the network, the amount, the payment
- * hash, the description and the description hash - what a donor's page must
- * check before its wallet pays an invoice a recipient's LNURL endpoint handed
- * it (LUD-06: the amount is the one asked, the description hash is the
- * endpoint's own metadata). The node's signature is NOT checked here: the
- * wallet that pays does that, and nothing in this reader decides who is paid.
- *
- * Tested against the examples BOLT11 itself publishes.
- */
-
-const NETWORKS = { bc: 'bitcoin', tb: 'testnet', tbs: 'signet', bcrt: 'regtest', sb: 'simnet' };
-const MSAT_PER_UNIT = { m: 100000000n, u: 100000n, n: 100n };     // p: a tenth of a msat, below
-const TAG_PAYMENT_HASH = 1;        // 'p'
-const TAG_DESCRIPTION = 13;        // 'd'
-const TAG_DESCRIPTION_HASH = 23;   // 'h'
-const SIGNATURE_WORDS = 104;       // 65 bytes
-
-/** The amount a BOLT11 prefix names, in msat, or null for "any amount". */
-function hrpAmountMsat(hrp) {
-  const m = String(hrp).match(/^ln(bcrt|bc|tbs|tb|sb)(\d*)([munp]?)$/);
-  if (!m) throw new Error(`"${hrp}" is not a BOLT11 prefix`);
-  if (!m[2]) {
-    if (m[3]) throw new Error('an amount multiplier with no amount');
-    return null;
-  }
-  if (m[2].length > 1 && m[2][0] === '0') throw new Error('a BOLT11 amount has no leading zero');
-  const n = BigInt(m[2]);
-  if (!m[3]) return n * 100000000000n;
-  if (m[3] === 'p') {
-    // BOLT11: "if the `p` multiplier is used the last decimal of `amount` MUST be `0`"
-    if (n % 10n !== 0n) throw new Error('a pico amount must end in 0: there is no tenth of a millisatoshi');
-    return n / 10n;
-  }
-  return n * MSAT_PER_UNIT[m[3]];
-}
-
-const bytesOf = (words) => Uint8Array.from(convertBits(words, 5, 8, false));
-
-function decodeBolt11(invoice) {
-  const { hrp, words } = bech32Decode(String(invoice).trim(), { limit: Infinity });
-  const network = NETWORKS[(hrp.match(/^ln(bcrt|bc|tbs|tb|sb)/) || [])[1]];
-  const amountMsat = hrpAmountMsat(hrp);
-  if (words.length < 7 + SIGNATURE_WORDS) throw new Error('that invoice is too short to carry a timestamp and a signature');
-  const data = words.slice(0, words.length - SIGNATURE_WORDS);
-  let timestamp = 0;
-  for (let i = 0; i < 7; i++) timestamp = timestamp * 32 + data[i];
-  let paymentHash = null;
-  let descriptionHash = null;
-  let description = null;
-  for (let at = 7; at < data.length;) {
-    if (at + 3 > data.length) throw new Error('a tagged field is cut short');
-    const type = data[at];
-    const len = data[at + 1] * 32 + data[at + 2];
-    at += 3;
-    if (at + len > data.length) throw new Error('a tagged field runs past the invoice');
-    const field = data.slice(at, at + len);
-    at += len;
-    // BOLT11: a reader MUST skip a p or h field whose length is not 52 words.
-    if (type === TAG_PAYMENT_HASH && len === 52 && !paymentHash) paymentHash = bytesOf(field);
-    else if (type === TAG_DESCRIPTION_HASH && len === 52 && !descriptionHash) descriptionHash = bytesOf(field);
-    else if (type === TAG_DESCRIPTION && description === null) description = new TextDecoder('utf-8', { fatal: true }).decode(bytesOf(field));
-  }
-  if (!paymentHash) throw new Error('that invoice names no payment hash');
-  return { network, amountMsat, timestamp, paymentHash, descriptionHash, description };
 }
 
 // ---- protocol/src/lnurl-pay.js

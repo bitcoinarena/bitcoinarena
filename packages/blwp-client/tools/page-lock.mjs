@@ -47,7 +47,7 @@ import { refundKeyOf, lockFieldsToJson } from '../../protocol/src/stake-lock.js'
 import { lockFromClient } from '../src/lock-result.js';
 import { playerFor } from '../src/join.js';
 import { pageCurve } from '../src/page-curve.js';
-import { redeemPayout, returnStake, payoutLine, stakeBackLine } from '../src/page-lock.js';
+import { lookOwed, owedToLine, tabLockWallet } from '../src/page-lock.js';
 
 const env = process.env;
 const P = env.PROBE;
@@ -243,7 +243,9 @@ function worldFor(base, lastTick, roundRandomness) {
   throw new Error(`no world in 600 where the drive is DELIVERED by tick ${lastTick}`);
 }
 const tabView = (b) => b.evaluate(`JSON.stringify({ lockJoin: !!window.BLWP_LOCK_JOIN, stakeLock: !!window.BLWP_STAKE_LOCK,
-  refused: window.BLWP_SEAT_REFUSED || null, join: window.BLWP_JOIN || null, payout: window.BLWP_PAYOUT || null, stakeBack: window.BLWP_STAKE_BACK || null,
+  refused: window.BLWP_SEAT_REFUSED || null, join: window.BLWP_JOIN || null,
+  // WHAT THE PAGE LOOKED AT (W4 / 6d): its lookOwed - nothing spent until the player's Withdraw.
+  owed: window.BLWP_OWED || null,
   settled: (document.getElementById('blwp-settled') || {}).textContent || '' }, (k, v) => (typeof v === 'bigint' ? String(v) : v))`)
   .then((x) => JSON.parse(x || '{}'));
 
@@ -349,21 +351,22 @@ async function collectAfterRealJoin({ b, round, label, playerLock }) {
     claims: got && got.moved && got.moved.claims, payouts: got && got.moved && got.moved.payouts.map((p) => ({ kind: p.kind, msat: p.msat })) };
   try { res.results = (await (await fetch(`${urls[0]}/results?round=${round.id}`)).text()).slice(0, 600); } catch (err) { res.results = err.message; }
 
-  // THE REAL TAB'S OWN COLLECT, off the state its own join set.
+  // THE REAL TAB'S OWN LOOK, off the state its own join set: final, or something owed to withdraw.
   let view = {};
   for (let t = Date.now(); Date.now() - t < 180000; await wait(2000)) {
     view = await tabView(b);
-    if (view.payout && view.payout.final && view.stakeBack && view.stakeBack.final) break;
+    if (view.owed && (view.owed.final || view.owed.owedMsat !== '0')) break;
   }
   await b.shot(`${P}/${label}-collected.png`);
   const [ltx, lix] = playerLock ? playerLock.split(':') : [null, null];
   const lst = ltx ? await port.status({ txid: fromHex(ltx), outIdx: BigInt(lix) }) : null;
   res.realTab = { ...view, itsLockStillHeld: lst ? !!lst.stored : null, screenshot: `${P}/${label}-collected.png` };
 
-  // AND THE WINNER'S, from Node with the page's own code: the round did pay somebody.
-  const pay = await redeemPayout({ round: c, roundId: rid, invite: env.INVITE, seed, curve: pageCurve, LockClient, nodes: urls });
-  const back = pay.final ? await returnStake({ round: c, roundId: rid, invite: env.INVITE, seed, curve: pageCurve, LockClient, nodes: urls, client: pay.client || null }) : null;
-  res.winnerCollects = { payout: payoutLine(pay), stake: back ? stakeBackLine(back) : null,
+  // AND THE WINNER'S, from Node with the page's own look: the round did pay somebody - and the
+  // look spends nothing, so the winner's lock is still held after it.
+  const own = await tabLockWallet({ round: c, roundId: rid, invite: env.INVITE, seed, LockClient });
+  const look = await lookOwed({ round: c, roundId: rid, seed, curve: pageCurve, nodes: urls, client: own });
+  res.winnerOwed = { line: owedToLine(look), owedMsat: look.owedMsat, payoutMsat: look.payoutMsat, stakeMsat: look.stakeMsat,
     winnerLockStillHeld: !!(await port.status(stake.outpoint)).stored };
 
   // A RELOAD OF THE REAL TAB after the window (leftover 1 on a real join): the page runs its own join again.

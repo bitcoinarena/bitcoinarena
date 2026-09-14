@@ -164,7 +164,7 @@
     <div class="spent" id="blwp-settled"></div>
     <div class="spent" id="blwp-withdraw"></div>
     <input id="blwp-withdraw-invoice" type="text" autocomplete="off" spellcheck="false"
-           placeholder="an invoice from your own wallet, for the amount above" style="display:none">
+           placeholder="connect your wallet to withdraw; an invoice pasted here pays only what is already in this tab" style="display:none">
     <button id="blwp-withdraw-go" type="button" style="display:none">Withdraw to my wallet</button>
     <div class="spent" id="blwp-budget"></div>
     <input id="blwp-nwc" type="password" autocomplete="off" spellcheck="false"
@@ -954,12 +954,17 @@
     // SPENDS (W4 / 6d): what is owed is looked at again, collected into the round's wallet in
     // this tab, and at once paid to an invoice from the player's own wallet - made by their
     // connected wallet, or pasted. With neither, nothing is collected: it stays in the federation.
+    // A WALLET HANDED IN - a function asked for an invoice of an exact amount, as the connected
+    // wallet is (the live harness hands its lnd's) - or a pasted invoice, which pays only what is
+    // already in the tab (collectAndWithdraw), or the connected wallet.
     window.BLWP_WITHDRAW = async function (invoice) {
       const r = newestKept();
       if (!r) return { ok: false, why: 'this tab holds no round to withdraw from' };
-      const pasted = invoice && String(invoice).trim() ? String(invoice).trim() : null;
+      const maker = typeof invoice === 'function' ? invoice : null;
+      const pasted = !maker && invoice && String(invoice).trim() ? String(invoice).trim() : null;
       const conn = wallet && wallet.connected ? wallet.current() : null;
       const invoiceFor = async (msat) => {
+        if (maker) return maker(msat);
         if (pasted) return { ok: true, invoice: pasted };
         if (conn && conn.ok) return BLWPCLIENT.makeInvoice(conn, msat, { curve: window.BLWP_CURVE,
           random: (n) => crypto.getRandomValues(new Uint8Array(n)) });
@@ -970,7 +975,8 @@
       payoutAsking = true;
       let done;
       try {
-        done = await BLWPCLIENT.collectAndWithdraw(Object.assign({}, ask, { client: own.client, invoiceFor, canInvoice: !!(pasted || (conn && conn.ok)),
+        done = await BLWPCLIENT.collectAndWithdraw(Object.assign({}, ask, { client: own.client, invoiceFor, pasted,
+          canInvoice: !!(maker || pasted || (conn && conn.ok)),
           onStep: (step) => console.log('[blwp] withdraw: ' + step) }));
         window.BLWP_WITHDRAWN = done.withdraw;
         window.BLWP_OWED = await BLWPCLIENT.lookOwed(Object.assign({}, ask, { client: own.client }));

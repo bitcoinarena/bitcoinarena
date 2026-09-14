@@ -122,8 +122,16 @@ const CHROME = env.CHROME || '/home/arena/.cache/ms-playwright/chromium-1234/chr
 const MIME = { '.html': 'text/html', '.js': 'application/javascript', '.wasm': 'application/wasm', '.json': 'application/json', '.png': 'image/png', '.data': 'application/octet-stream' };
 let served = null;
 const servePage = (dir) => served || (served = new Promise((ok) => {
-  const s = createServer((req, res) => {
+  const s = createServer(async (req, res) => {
     let p = decodeURIComponent(req.url.split('?')[0]);
+    // THE PLAYER'S WALLET, ASKED FOR AN EXACT SUM (as the connected NWC wallet is): an invoice on alice's lnd.
+    if (p === '/harness-invoice') {
+      const msat = new URL(req.url, 'http://h').searchParams.get('msat');
+      const made = /^\d+$/.test(msat || '') ? JSON.parse((await run(`${env.LND_BIN}/lncli`, [`--lnddir=${P}/alice`, '--rpcserver=127.0.0.1:30107', '--network=regtest',
+        'addinvoice', `--amt_msat=${msat}`, '--memo=blwp withdraw on screen'])).so || '{}') : {};
+      res.writeHead(200, { 'content-type': 'application/json' });
+      return res.end(JSON.stringify({ payment_request: made.payment_request || null, r_hash: made.r_hash || null, msat }));
+    }
     if (p === '/') p = '/index.html';
     let body;
     try { body = readFileSync(join(dir, p.replace(/\.\.+/g, ''))); } catch { res.writeHead(404); return res.end('no'); }
@@ -190,16 +198,32 @@ const injectFor = (p, c, rid, urls) => `(() => {
         encodeLock: BLWPCLIENT.lockFieldsToJson ? probe(() => BLWPCLIENT.lockFieldsToJson(window.BLWP_STAKE_LOCK.fields)) : 'lockFieldsToJson not in the bundle',
         keys: Object.keys(window.sessionStorage) };
       return true; })()`;
+// WHAT THE PAGE LOOKED AT (W4 / 6d): BLWP_OWED, its lookOwed - nothing spent until the Withdraw.
+const OWED = '(window.BLWP_OWED || null)';
+// THE PLAYER'S WALLET HANDED TO THE PAGE'S WITHDRAW: asked for an invoice of the exact sum, as the
+// connected (NWC) wallet is - here alice's lnd, through the page server's /harness-invoice.
+const MAKER = `async (msat) => { const r = await fetch('/harness-invoice?msat=' + msat); const j = await r.json();
+  window.__harnessInvoice = j; return j.payment_request ? { ok: true, invoice: j.payment_request } : { ok: false, why: 'alice made no invoice' }; }`;
+// A LONG PAGE PROMISE IS NEVER AWAITED INSIDE ONE BOUNDED ASK (each ask is 30 s; measured, the
+// on-screen withdraw ran past it): started, it writes its answer on window, and short asks poll.
+async function withdrawWith(b, arg) {
+  await b.evaluate(`(window.__harnessWithdrawn = null, window.__harnessInvoice = null, window.BLWP_WITHDRAW(${arg})
+    .then((w) => { window.__harnessWithdrawn = JSON.stringify(w, (k, v) => (typeof v === 'bigint' ? String(v) : v)); },
+      (e) => { window.__harnessWithdrawn = JSON.stringify({ error: e.message }); }), true)`).catch(() => null);
+  const t = Date.now(); let w = '';
+  for (; Date.now() - t < 180000 && !w; await wait(1000)) w = await b.evaluate('window.__harnessWithdrawn || ""').catch(() => '');
+  return { result: w ? JSON.parse(w) : null, ms: Date.now() - t };
+}
 const pageReady = async (b) => {
   for (let t = Date.now(); Date.now() - t < 90000; await wait(500))
-    if (await b.evaluate(`typeof BLWPCLIENT !== 'undefined' && !!BLWPCLIENT.redeemPayout && !!window.BLWP_CURVE`)) return true;
+    if (await b.evaluate(`typeof BLWPCLIENT !== 'undefined' && !!BLWPCLIENT.lookOwed && !!window.BLWP_CURVE`)) return true;
   return false;
 };
 // WHAT THE PAGE ACTUALLY HOLDS (instrumented: on 0.0.1236 the reload left 978000 + 980000 in
 // the federation and even a fresh tab collected nothing, with no console line): the kept
 // collect records, the tab's storage keys, BLWP_COLLECT, and the harness's own save probe.
-const tabState = (b) => b.evaluate(`JSON.stringify({ lockJoin: !!window.BLWP_LOCK_JOIN, payout: window.BLWP_PAYOUT || null,
-  stakeBack: window.BLWP_STAKE_BACK || null, settled: (document.getElementById('blwp-settled') || {}).textContent || '',
+const tabState = (b) => b.evaluate(`JSON.stringify({ lockJoin: !!window.BLWP_LOCK_JOIN, owed: ${OWED},
+  settled: (document.getElementById('blwp-settled') || {}).textContent || '',
   collects: (() => { try { return BLWPCLIENT.savedCollects(window.sessionStorage).map((r) => ({ round: r.roundIdHex.slice(0, 12),
     locks: BLWPCLIENT.roundLocks(r.round), lock: !!r.stakeLock, done: !!r.done })); } catch (e) { return 'savedCollects threw: ' + e.message; } })(),
   keys: (() => { try { return Object.keys(window.sessionStorage); } catch (e) { return e.message; } })(),
@@ -219,102 +243,95 @@ async function tabReloadedBeforeClose({ p, c, rid, urls }) {
   if (!(await pageReady(b))) { b.close(); return { error: 'the built page never loaded its client' }; }
   await b.evaluate(injectFor(p, c, rid, urls));
   let before = {};
-  for (let t = Date.now(); Date.now() - t < 30000; await wait(1000)) { before = await tabState(b); if (before.payout) break; }
+  for (let t = Date.now(); Date.now() - t < 30000; await wait(1000)) { before = await tabState(b); if (before.owed) break; }
   await b.reload();
   return { b, before, reloadedReady: await pageReady(b), afterReloadAtOnce: await tabState(b) };
 }
 
 /**
- * ONE PLAYER'S TAB COLLECTS ITS PAYOUT ON SCREEN: the built page, handed the join
- * state its own join sets for a lock round (the round, its lock, and BLWP_LOCK_JOIN -
- * the invite, the round and the tab's seed) - harness instrumentation, as page-lock's
- * reload mutants are; the join and play themselves are W1b's and daily-close-look's.
- * The page's own collectThePayout does the rest; this reads what it shows.
+ * ONE PLAYER'S TAB, ON SCREEN, CLOSED BEFORE THE WITHDRAW (W4 / 6d): the built page, handed the
+ * join state its own join sets for a lock round (the round, its lock, and BLWP_LOCK_JOIN - the
+ * invite, the round and the tab's seed) - harness instrumentation, as page-lock's reload mutants
+ * are. The page's own lookThePayout looks; the tab is closed with no withdraw; what the federation
+ * then holds; a fresh tab handed the same seed (the player's backup) and join record looks again;
+ * a pasted invoice for the owed sum is refused; the page's own BLWP_WITHDRAW, with the player's
+ * wallet handed in (alice's lnd asked for the exact sum, as the connected wallet is), collects and
+ * pays out; that tab and a third one look after.
  */
-async function collectOnScreen({ p, c, rid, urls, stakeMsat, held }) {
+async function collectOnScreen({ p, c, rid, urls, stakeMsat, held, payoutAt }) {
   const page = await servePage(env.PAGE_DIR);
-  const b = await browse(`http://127.0.0.1:${page.port}/`);
-  const shotFile = `${P}/payout-${stakeMsat / 1000n}sat-${p.want}.png`;
-  try {
-    let ready = false;
-    for (let t = Date.now(); Date.now() - t < 90000 && !ready; await wait(500))
-      ready = await b.evaluate(`typeof BLWPCLIENT !== 'undefined' && !!BLWPCLIENT.redeemPayout && !!window.BLWP_CURVE`);
-    if (!ready) return { page: p.want, error: 'the built page never had BLWPCLIENT.redeemPayout and BLWP_CURVE', logs: b.logs.slice(-5) };
+  const open = async () => {
+    const b = await browse(`http://127.0.0.1:${page.port}/`);
+    if (!(await pageReady(b))) { const logs = b.logs.slice(-5); b.close(); return { error: 'the built page never had BLWPCLIENT.lookOwed and BLWP_CURVE', logs }; }
     await b.evaluate(injectFor(p, c, rid, urls));
-    const t0 = Date.now();
-    let seen = null;
-    for (; Date.now() - t0 < 180000; await wait(1000)) {
-      seen = JSON.parse(await b.evaluate(`JSON.stringify({
-        payout: window.BLWP_PAYOUT || null,
-        stakeBack: window.BLWP_STAKE_BACK || null,
-        settled: (document.getElementById('blwp-settled') || {}).textContent || '',
-        onScreen: (() => { const el = document.getElementById('blwp-settled'); if (!el) return null; const r = el.getBoundingClientRect();
-          const hit = r.width && r.height ? document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2) : null;
-          return { w: Math.round(r.width), h: Math.round(r.height), onTop: !!hit && (hit === el || el.contains(hit)) }; })(),
-      }, (k, v) => (typeof v === 'bigint' ? String(v) : v))`) || '{}');
-      if (seen.payout && seen.payout.final && seen.stakeBack && seen.stakeBack.final && seen.settled) break;
+    return { b };
+  };
+  const federation = async () => ({ payoutHeld: payoutAt ? await held(payoutAt) : null, stakeLockHeld: await held(p.stake.outpoint) });
+  const view = (b) => b.evaluate(`JSON.stringify({ owed: ${OWED}, settled: (document.getElementById('blwp-settled') || {}).textContent || '',
+    withdrawLine: (document.getElementById('blwp-withdraw') || {}).textContent || '',
+    withdrawOffered: (document.getElementById('blwp-withdraw-go') || { style: {} }).style.display !== 'none',
+    onScreen: (() => { const el = document.getElementById('blwp-settled'); if (!el) return null; const r = el.getBoundingClientRect();
+      const hit = r.width && r.height ? document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2) : null;
+      return { w: Math.round(r.width), h: Math.round(r.height), onTop: !!hit && (hit === el || el.contains(hit)) }; })(),
+  }, (k, v) => (typeof v === 'bigint' ? String(v) : v))`).then((s) => JSON.parse(s || '{}'));
+  // LOOKED: final, or both answers in (neither still waiting) with something owed.
+  const looked = (o) => !!(o && o.owed && (o.owed.final
+    || (o.owed.owedMsat !== '0' && o.owed.payout.state !== 'waiting' && o.owed.stake.state !== 'waiting')));
+  const lookIn = async (b, done = looked, ms = 180000) => {
+    const t = Date.now(); let o = {};
+    for (; Date.now() - t < ms; await wait(1000)) { o = await view(b).catch((e) => ({ unread: e.message })); if (done(o)) break; }
+    return { ...o, lookedMs: Date.now() - t };
+  };
+  const said = (b) => b.logs.filter((l) => /\[blwp\] (owed|withdraw|payout|stake|refund)|EXCEPTION/.test(l)).map((l) => l.slice(0, 200)).slice(-8);
+  const res = { round: `${stakeMsat / 1000n} sat`, page: p.want, onScreen: true, stakeLockMsat: p.stake.fields.amountMsat, federationAtStart: await federation() };
+
+  // 1. THE FIRST TAB ONLY LOOKS - then three more of its 5 s loops - and is closed with no withdraw.
+  const first = await open();
+  if (first.error) return { ...res, error: first.error, logs: first.logs };
+  try {
+    res.firstTab = await lookIn(first.b);
+    await wait(16000);
+    res.firstTab.after16s = await view(first.b).catch((e) => ({ unread: e.message }));
+    res.firstTab.federation = await federation();
+    const shot = `${P}/owed-${stakeMsat / 1000n}sat-${p.want}-first.png`;
+    await first.b.shot(shot); res.firstTab.screenshot = shot;
+    res.firstTab.pageSaid = said(first.b);
+  } finally { first.b.close(); }
+  // 2. CLOSED: what the federation holds with the tab gone.
+  await wait(2000);
+  res.afterClose = await federation();
+
+  // 3. A FRESH TAB, the same seed restored (the player's backup) and the join record.
+  const fresh = await open();
+  if (fresh.error) return { ...res, error: fresh.error, logs: fresh.logs };
+  try {
+    res.freshTab = await lookIn(fresh.b);
+    res.freshTab.federation = await federation();
+    if (res.freshTab.owed && res.freshTab.owed.owedMsat !== '0') {
+      // 4a. A PASTED INVOICE FOR THE OWED SUM: refused, nothing collected (the paste rule).
+      const owedMsat = res.freshTab.owed.owedMsat;
+      const inv = JSON.parse((await run(`${env.LND_BIN}/lncli`, [`--lnddir=${P}/alice`, '--rpcserver=127.0.0.1:30107', '--network=regtest',
+        'addinvoice', `--amt_msat=${owedMsat}`, '--memo=blwp pasted for the owed sum'])).so || '{}');
+      const pasted = inv.payment_request ? await withdrawWith(fresh.b, JSON.stringify(inv.payment_request)) : { result: { error: 'alice made no invoice' } };
+      res.pastedForOwed = { invoiceMsat: owedMsat, ...pasted, federation: await federation(), owedAfter: (await view(fresh.b)).owed };
+      // 4b. WITHDRAW with the player's wallet handed in: alice's lnd asked for the exact sum.
+      const w = await withdrawWith(fresh.b, MAKER);
+      const asked = JSON.parse(await fresh.b.evaluate('JSON.stringify(window.__harnessInvoice || {})').catch(() => '{}') || '{}');
+      const seenAt = asked.r_hash ? JSON.parse((await run(`${env.LND_BIN}/lncli`, [`--lnddir=${P}/alice`, '--rpcserver=127.0.0.1:30107', '--network=regtest',
+        'lookupinvoice', asked.r_hash])).so || '{}') : {};
+      res.withdraw = { ...w, invoiceAskedMsat: asked.msat, aliceInvoice: { state: seenAt.state, amtPaidMsat: seenAt.amt_paid_msat }, federation: await federation() };
+      res.freshTabAfter = await lookIn(fresh.b, (o) => !!(o && o.owed && o.owed.final && o.owed.inTabMsat === '0'), 60000);
     }
-    // 6d'S DESTINATION ON SCREEN: the winner's tab withdraws with the page's own BLWP_WITHDRAW to an
-    // invoice from alice's lnd (the player's wallet), for what the page says it can withdraw.
-    let withdrawn = null;
-    if (seen && seen.payout && seen.payout.ok) {
-      // THE PAGE SETS ITS LINES FIRST AND READS THE WITHDRAWABLE AFTER (seconds in the wasm):
-      // measured, reading at once found nothing. Up to 90 s for the page's own number; else the
-      // page's wallet is asked directly, and its error kept.
-      let can = '';
-      for (let t = Date.now(); Date.now() - t < 90000 && !can; await wait(1000))
-        can = await b.evaluate(`String(window.BLWP_WITHDRAWABLE ?? '')`).catch(() => '');
-      // A LONG PAGE PROMISE IS NEVER AWAITED INSIDE ONE BOUNDED ASK (each ask is 30 s; measured, the
-      // on-screen withdraw ran past it): it is started, it writes its answer on window, and short asks poll.
-      const poll = async (expr, ms) => {
-        const t = Date.now();
-        for (; Date.now() - t < ms; await wait(1000)) {
-          const v = await b.evaluate(expr).catch(() => '');
-          if (v) return { v, ms: Date.now() - t };
-        }
-        return { v: '', ms: Date.now() - t };
-      };
-      const stages = { waitedForPageMs: null, askedWalletMs: null, withdrawMs: null };
-      stages.waitedForPageMs = 0;
-      if (!can) {
-        await b.evaluate(`(window.__harnessCan = null, (async () => { try {
-          const r = BLWPCLIENT.savedCollects(window.sessionStorage).pop(); const w = await import('./blwp_lock_client.js'); await w.default();
-          const c = await BLWPCLIENT.tabLockWallet({ round: r.round, roundId: BLWPCLIENT.fromHex(r.roundIdHex), invite: r.invite, seed: r.seed,
-            LockClient: w.LockClient, storage: window.sessionStorage });
-          window.__harnessCan = String(await c.withdrawableMsat()); } catch (e) { window.__harnessCan = 'error: ' + e.message; } })(), true)`).catch(() => null);
-        const got = await poll('window.__harnessCan || ""', 90000);
-        can = got.v; stages.askedWalletMs = got.ms;
-      }
-      const made = can && /^\d+$/.test(can) ? JSON.parse((await run(`${env.LND_BIN}/lncli`, [`--lnddir=${P}/alice`, '--rpcserver=127.0.0.1:30107', '--network=regtest',
-        'addinvoice', `--amt_msat=${can}`, '--memo=blwp payout on screen'])).so || '{}') : {};
-      let w = null;
-      if (made.payment_request) {
-        await b.evaluate(`(window.__harnessWithdrawn = null, window.BLWP_WITHDRAW(${JSON.stringify(made.payment_request)})
-          .then((w) => { window.__harnessWithdrawn = JSON.stringify(w, (k, v) => (typeof v === 'bigint' ? String(v) : v)); },
-            (e) => { window.__harnessWithdrawn = JSON.stringify({ error: e.message }); }), true)`).catch(() => null);
-        const got = await poll('window.__harnessWithdrawn || ""', 120000);
-        w = got.v || null; stages.withdrawMs = got.ms;
-      }
-      const seenAt = made.r_hash ? JSON.parse((await run(`${env.LND_BIN}/lncli`, [`--lnddir=${P}/alice`, '--rpcserver=127.0.0.1:30107', '--network=regtest',
-        'lookupinvoice', made.r_hash])).so || '{}') : {};
-      const line = await b.evaluate(`(document.getElementById('blwp-withdraw') || {}).textContent || ''`);
-      withdrawn = { withdrawableShown: can, stages, result: w ? JSON.parse(w) : null, aliceInvoice: { state: seenAt.state, amtPaidMsat: seenAt.amt_paid_msat }, line };
-    }
-    await b.shot(shotFile);
-    const holds = await tabState(b).catch((e) => ({ unread: e.message }));
-    const po = seen && seen.payout;
-    const sb = (seen && seen.stakeBack) || {};
-    const at = po && po.outIdx !== undefined ? { txid: fromHex(po.txid), outIdx: BigInt(po.outIdx) } : null;
-    return { round: `${stakeMsat / 1000n} sat`, page: p.want, onScreen: true, collected: !!(po && po.ok), final: !!(po && po.final),
-      collectedMs: Date.now() - t0, payoutMsat: po && po.amountMsat, walletBefore: po && po.balance_before, walletAfter: po && po.balance_after,
-      payoutStillHeldAfter: at ? await held(at) : null,
-      stakeBack: !!sb.ok, stakeBackFinal: !!sb.final, returnedMsat: sb.amountMsat, stakeWalletBefore: sb.balance_before, stakeWalletAfter: sb.balance_after,
-      stakeLockMsat: p.stake.fields.amountMsat, stakeLockHeldAfter: await held(p.stake.outpoint),
-      shown: seen && seen.settled, drawn: seen && seen.onScreen, screenshot: shotFile,
-      pageHolds: { collects: holds.collects, keys: holds.keys, collect: holds.collect, harnessSave: holds.harnessSave },
-      withdrawnOnScreen: withdrawn,
-      pageSaid: b.logs.filter((l) => /\[blwp\] (payout|stake|withdraw)|EXCEPTION/.test(l)).map((l) => l.slice(0, 200)).slice(-6) };
-  } finally { b.close(); }
+    const shot = `${P}/owed-${stakeMsat / 1000n}sat-${p.want}-fresh.png`;
+    await fresh.b.shot(shot); res.freshTab.screenshot = shot;
+    res.freshTab.pageSaid = said(fresh.b);
+  } finally { fresh.b.close(); }
+
+  // 5. A THIRD TAB, same seed: what is left.
+  const third = await open();
+  if (!third.error) { try { res.thirdTab = await lookIn(third.b, (o) => !!(o && o.owed && o.owed.final), 120000); } finally { third.b.close(); } }
+  res.federationAtEnd = await federation();
+  return res;
 }
 
 async function round(stakeMsat) {
@@ -462,7 +479,7 @@ async function round(stakeMsat) {
       if (reloaded.b) {
         for (; Date.now() - tAfter < 240000; await wait(2000)) {
           after = await tabState(reloaded.b).catch((e) => ({ unread: e.message }));
-          if (after.payout && after.payout.final && after.stakeBack && after.stakeBack.final) break;
+          if (after.owed && (after.owed.final || after.owed.owedMsat !== '0')) break;
         }
         after.secondsAfterSettlement = Math.round((Date.now() - tAfter) / 1000);
       }
@@ -481,9 +498,14 @@ async function round(stakeMsat) {
     // its seed alone, into a fresh wallet of this federation. Counted: how often each
     // page asked its lock client to join (a loser's must be never).
     const urls = [a, b].map((d) => `http://127.0.0.1:${d.port}`);
+    // WHERE THE SETTLEMENT PAYS THIS PLAYER'S KEY, if it does: the payout contract's outpoint.
+    const payoutOf = (p) => {
+      const i = got && got.moved ? got.moved.payouts.findIndex((x) => x.kind === 'qualifier' && String(x.pk).toLowerCase() === toHex(refundKeyOf(p.playerPubkey))) : -1;
+      return i < 0 ? null : { txid: fromHex(got.moved.txid), outIdx: BigInt(i) };
+    };
     for (const p of [winner, loser]) {
       // ON SCREEN FOR THE 1000 SAT ROUND when a build is named; the 100 sat round by Node.
-      if (env.PAGE_DIR && stakeMsat >= 1000000n && env.REFUSED_TAB_ONLY !== '1') { out(await collectOnScreen({ p, c, rid, urls, stakeMsat, held })); continue; }
+      if (env.PAGE_DIR && stakeMsat >= 1000000n && env.REFUSED_TAB_ONLY !== '1') { out(await collectOnScreen({ p, c, rid, urls, stakeMsat, held, payoutAt: payoutOf(p) })); continue; }
       let joins = 0;
       const Counting = { join: (...args) => { joins++; return LockClient.join(...args); } };
       const r = await redeemPayout({ round: c, roundId: rid, invite: env.INVITE, seed: p.seed, curve: pageCurve, LockClient: Counting, nodes: urls });
@@ -545,7 +567,7 @@ async function round(stakeMsat) {
     }
     // The Node path's values from the one mining pass, when there is no tab (the page's own code, from Node).
     let nodePath = null;
-    const refundView = (t) => t.evaluate(`JSON.stringify({ refund: window.BLWP_REFUND || null, settled: (document.getElementById('blwp-settled') || {}).textContent || '',
+    const refundView = (t) => t.evaluate(`JSON.stringify({ owed: ${OWED}, settled: (document.getElementById('blwp-settled') || {}).textContent || '',
       withdrawable: String(window.BLWP_WITHDRAWABLE ?? '') }, (k, v) => (typeof v === 'bigint' ? String(v) : v))`).then((s) => JSON.parse(s || '{}')).catch((e) => ({ unread: e.message }));
 
     if (bare) {
@@ -556,7 +578,7 @@ async function round(stakeMsat) {
       if (tab) {
         for (let t0 = Date.now(); Date.now() - t0 < 90000; await wait(2000)) {
           tabEarly = await refundView(tab);
-          if (tabEarly.refund && Array.isArray(tabEarly.refund.locks) && tabEarly.refund.locks.length) break;
+          if (tabEarly.owed && tabEarly.owed.stake && tabEarly.owed.stake.how === 'refund') break;
         }
       }
       const exp = Number(bare.stake.fields.expiration);
@@ -571,37 +593,35 @@ async function round(stakeMsat) {
       const t = Date.now();
       let counts = await countsNow();
       for (; !mined.err && Date.now() - t < 240000 && counts[0] < exp + 1; await wait(3000)) counts = await countsNow();
-      // THE TAB FIRST, when there is one: its own collect loop must refund, and the withdraw its own button's.
+      // THE TAB FIRST, when there is one: its own look must find the lock owed back by the player's
+      // key - nothing refunded by looking - and its Withdraw (a wallet handed in) collects and pays.
       if (tab) {
         let seen = {};
         const t1 = Date.now();
         for (; Date.now() - t1 < 150000; await wait(2000)) {
           seen = await refundView(tab);
-          if (seen.refund && seen.refund.final && /^\d+$/.test(seen.withdrawable || '') && seen.withdrawable !== '0') break;
+          if (seen.owed && seen.owed.refundMsat !== '0') break;
         }
         const refundedMs = Date.now() - t1;
+        const lockHeldWhileOwed = !!(await ports[0].status(bare.stake.outpoint)).stored;
         let w = null; let made = {};
-        if (/^\d+$/.test(seen.withdrawable || '') && seen.withdrawable !== '0') {
-          made = JSON.parse((await run(`${env.LND_BIN}/lncli`, [`--lnddir=${P}/alice`, '--rpcserver=127.0.0.1:30107', '--network=regtest',
-            'addinvoice', `--amt_msat=${seen.withdrawable}`, '--memo=blwp refund on screen'])).so || '{}');
-          if (made.payment_request) {
-            await tab.evaluate(`(window.__harnessWithdrawn = null, window.BLWP_WITHDRAW(${JSON.stringify(made.payment_request)})
-              .then((w) => { window.__harnessWithdrawn = JSON.stringify(w, (k, v) => (typeof v === 'bigint' ? String(v) : v)); },
-                (e) => { window.__harnessWithdrawn = JSON.stringify({ error: e.message }); }), true)`).catch(() => null);
-            for (let t2 = Date.now(); Date.now() - t2 < 120000 && !w; await wait(1000))
-              w = await tab.evaluate('window.__harnessWithdrawn || ""').catch(() => '') || null;
-          }
+        if (seen.owed && seen.owed.refundMsat !== '0') {
+          const got = await withdrawWith(tab, MAKER);
+          w = got.result ? JSON.stringify(got.result) : null;
+          made = JSON.parse(await tab.evaluate('JSON.stringify(window.__harnessInvoice || {})').catch(() => '{}') || '{}');
         }
+        let after = {};
+        for (let t3 = Date.now(); Date.now() - t3 < 60000; await wait(2000)) { after = await refundView(tab); if (after.owed && after.owed.final) break; }
         const seenAt = made.r_hash ? JSON.parse((await run(`${env.LND_BIN}/lncli`, [`--lnddir=${P}/alice`, '--rpcserver=127.0.0.1:30107', '--network=regtest',
           'lookupinvoice', made.r_hash])).so || '{}') : {};
         const shot = `${P}/refused-tab-refund.png`;
         await tab.shot(shot);
         const line = await tab.evaluate(`[(document.getElementById('blwp-settled') || {}).textContent, (document.getElementById('blwp-withdraw') || {}).textContent].join(' | ')`).catch(() => '');
         out({ round: `${stakeMsat / 1000n} sat`, check: 'the refused player\'s own tab, on screen',
-          beforeExpiry: tabEarly && { refundLocks: tabEarly.refund && tabEarly.refund.locks, settled: tabEarly.settled },
+          beforeExpiry: tabEarly && { owed: tabEarly.owed, settled: tabEarly.settled },
           mined: { chainBefore: chainAt, expiration: exp, guardiansCountAfter: counts, err: mined.err ? mined.err.message : null },
-          afterExpiry: { refund: seen.refund && { ok: seen.refund.ok, final: seen.refund.final, refundedMsat: seen.refund.refundedMsat,
-            balanceBefore: seen.refund.balance_before, balanceAfter: seen.refund.balance_after }, withdrawable: seen.withdrawable, refundedWithinMs: refundedMs },
+          afterExpiry: { owed: seen.owed, lockHeldWhileOwed, owedWithinMs: refundedMs },
+          afterWithdraw: { owed: after.owed, settled: after.settled },
           stakeLockStillHeld: !!(await ports[0].status(bare.stake.outpoint)).stored,
           withdraw: w ? JSON.parse(w) : null, aliceInvoice: { state: seenAt.state, amtPaidMsat: seenAt.amt_paid_msat }, onScreen: line, screenshot: shot,
           pageSaid: tab.logs.filter((l) => /\[blwp\] (refund|withdraw|payout|stake)|EXCEPTION/.test(l)).map((l) => l.slice(0, 220)).slice(-6) });
