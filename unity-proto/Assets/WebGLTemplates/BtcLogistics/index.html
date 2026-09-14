@@ -990,8 +990,20 @@
           BLWPCLIENT.saveCollect(vault(), { roundIdHex: f.roundIdHex, round: f.round, invite: named.federation, nodes: named.nodes, seed });
         window.BLWP_FOUND_OWED = found.map((f) => f.roundIdHex);
         if (found.length) { console.log('[blwp] owed: ' + found.length + ' round(s) settled in the last 24 h name this seed\'s key'); lookThePayout(); }
-      } catch (e) { console.error('[blwp] owed: ' + e.message); }
+        return window.BLWP_FOUND_OWED;
+      } catch (e) { console.error('[blwp] owed: ' + e.message); return []; }
     }
+    // THE SAME SCAN, ASKED BY THE LIVE HARNESS over its seats (as BLWP_WITHDRAW is the page's own Withdraw).
+    window.BLWP_FIND_OWED = (nodes, federation) => findTheRoundsOwed({ nodes, federation });
+    // WHAT THE LOBBY HANDS UNITY (the owner 2026-09-14): what the kept round still owes, as the page
+    // looked at it - the federation's part and the round wallet's - for the lobby to say so.
+    function withdrawAvailable() {
+      const o = window.BLWP_OWED;
+      const inTab = typeof window.BLWP_WITHDRAWABLE === 'bigint' ? window.BLWP_WITHDRAWABLE : 0n;
+      const msat = (o && typeof o.owedMsat === 'bigint' ? o.owedMsat : 0n) + inTab;
+      return { available: msat > 0n || !!window.BLWP_ELSEWHERE, msat: String(msat), elsewhere: !!window.BLWP_ELSEWHERE };
+    }
+    window.BLWP_WITHDRAW_AVAILABLE = withdrawAvailable;
     async function lookThePayout() {
       if (payoutAsking || typeof BLWPCLIENT === 'undefined' || !BLWPCLIENT.savedCollects) return;
       const newest = newestKept();
@@ -1391,14 +1403,8 @@
         refused: refused.map(String), nodes: named.nodes.length,
         join: window.BLWP_JOIN ? { state: window.BLWP_JOIN.state, why: String(window.BLWP_JOIN.why || ''), stage: String(window.BLWP_JOIN.stage || '') }
           : { state: '', why: '', stage: '' },
-        // A WITHDRAWAL AVAILABLE (the owner 2026-09-14): what the kept round still owes, as the page
-        // looked at it - the federation's part and the round wallet's - for the lobby to say so.
-        withdraw: (() => {
-          const o = window.BLWP_OWED;
-          const inTab = typeof window.BLWP_WITHDRAWABLE === 'bigint' ? window.BLWP_WITHDRAWABLE : 0n;
-          const msat = (o && typeof o.owedMsat === 'bigint' ? o.owedMsat : 0n) + inTab;
-          return { available: msat > 0n || !!window.BLWP_ELSEWHERE, msat: String(msat), elsewhere: !!window.BLWP_ELSEWHERE };
-        })() });
+        // A WITHDRAWAL AVAILABLE (the owner 2026-09-14), for the lobby to say so.
+        withdraw: withdrawAvailable() });
       window.BLWP_LOBBY_ACT = {
         // PLAY: the round's own link, so the seat is taken by exactly the path a
         // shared round link takes - IN THIS PAGE (the owner 2026-09-13 07:11: "after
@@ -1443,8 +1449,15 @@
         },
         // THE PRIVATE KEY BACKUP, shown where it can be selected and copied.
         keyBackup() {
-          window.prompt('Private key backup - this tab\'s seed. Copy it and keep it; it stays in this tab.',
-            BLWPCLIENT.toHex(BLWPCLIENT.tabSeed({ storage: window.sessionStorage, random: tabRandom })));
+          const mine = BLWPCLIENT.toHex(BLWPCLIENT.tabSeed({ storage: window.sessionStorage, random: tabRandom }));
+          // AND BACK IN (spec §24, the owner 2026-09-14): on another device the player pastes their own
+          // seed here; the page reloads under it and finds from the seats the rounds it is owed.
+          const typed = window.prompt('Private key backup - this tab\'s seed. Copy it and keep it. '
+            + 'On another device, paste your own seed here instead to find what you are owed.', mine);
+          if (typed && typed.trim().toLowerCase() !== mine) {
+            try { BLWPCLIENT.importSeed(typed, { storage: window.sessionStorage }); location.reload(); }
+            catch (e) { window.alert(e.message); }
+          }
         },
       };
       await paint();
