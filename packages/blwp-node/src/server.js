@@ -85,6 +85,7 @@ import { PoolSigning } from './pool-signing.js';
 import { PoolWatch } from './pool-watch.js';
 import { Dkg } from './dkg.js';
 import { Forfeit } from './forfeit.js';
+import { LockSettlement, locksStake } from './settlement.js';
 import { decodeUtxo, decodeCommitments, encodeCommitments, encodeShare, UTXO_BYTES } from './pool-wire.js';
 import { SIGNED_TABLE_BYTES } from './payout-table.js';
 
@@ -691,6 +692,17 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     pullProof: (rid, eid) => verifier.pullFirstMarkProofReach(rid, eid),
   });
 
+  // AND THE LOSERS' LOCKS, CLAIMED INTO THE ROUND'S ONE SETTLEMENT (W4, the owner
+  // 2026-09-14): the same seats, the same claim key, each loser's P opened by the
+  // share conversation, one txid rebuilt by every seat and signed once.
+  const settlements = new LockSettlement(round, {
+    dkg, port: stakeLocks, curve: poolCurve, random: (n) => new Uint8Array(randomBytes(n)), preimages,
+    peersFor: (rid) => {
+      const picked = roster.committeeFor(rid, 'settlement');
+      return picked.ok ? endpointsOf(picked.committee, round.pubkey) : (dkg.peers || []);
+    },
+  });
+
   // AND WHICH OUTPUT THE POOL IS IN, asked of the chain rather than
   // remembered. This is what a close was missing: `payWithCommittee` names an
   // output, and until this the daemon had no way to produce one, so every
@@ -1259,7 +1271,20 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // returned first, the watch ended after one pass, and the seat that posted
     // first never gathered the other's posting - "1 of 2 settlement seats have
     // posted", never FINAL, no forfeit.
-    if (!custody.reaches) return { ok: false, why: 'this node reaches no Lightning, so it settles nothing', waiting, suspended };
+    if (!custody.reaches) {
+      // A LOCK ROUND'S LOSERS ARE CLAIMED (W4, the owner 2026-09-14 07:22: "a loser
+      // loses the stake. The lock is claimed into the pool. Winners are paid from
+      // that."): once nothing waits inside its window and nothing is suspended,
+      // the seats' one settlement claims every loser's lock and pays each
+      // qualifier's payout contract. Measured before: nothing claimed a loser's
+      // lock, and it went back to the loser at its expiry.
+      let lockSettled = null;
+      if (locksStake(contract) && !waiting.length && !suspended.length) {
+        lockSettled = await settlements.settle(roundIdBytes).catch((e) => ({ ok: false, why: e.message }));
+        console.log(`[settle] ${toHex(roundIdBytes).slice(0, 16)} ${lockSettled.ok ? lockSettled.why : `nothing claimed: ${lockSettled.why}`}`);
+      }
+      return { ok: false, why: 'this node reaches no Lightning, so it settles nothing', waiting, suspended, lockSettled };
+    }
     const done = await custody.settleHeldInvoices({
       roundId: roundIdBytes, entries, minScore: contract.minScore, finalFor: isFinal,
     });
@@ -2365,6 +2390,45 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (signature.length !== 64) return text(res, 400, 'a forfeit is a 64-byte signature');
         const got = await forfeits.take(r8, e8, signature);
         return got.ok ? text(res, 201, 'forfeit kept') : text(res, got.status || 409, got.why);
+      }
+
+      // THE ROUND'S ONE SETTLEMENT OF ITS LOSERS' LOCKS (W4), between seats: a
+      // nonce commitment, a share over one commitment list, the combined
+      // signature. Each seat answers only for the txid it rebuilt itself from its
+      // own record (settlement.js).
+      if (req.method === 'POST' && ['/settle-commit', '/settle-share', '/settle-signature'].includes(url.pathname)) {
+        const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
+        if (rid.length !== 32) return text(res, 400, 'a settlement is asked for by a round id');
+        const r8 = new Uint8Array(rid);
+        if (url.pathname === '/settle-commit') {
+          const got = await settlements.commit(r8);
+          if (!got.ok) return text(res, got.status || 409, got.why);
+          res.writeHead(200, { 'content-type': 'application/octet-stream', ...CORS });
+          return res.end(Buffer.from(encodeCommitments([got.commitment])));
+        }
+        if (url.pathname === '/settle-share') {
+          let list;
+          try { list = decodeCommitments(new Uint8Array(await read(req))); } catch (e) { return text(res, 400, e.message); }
+          const got = await settlements.share(r8, list);
+          if (!got.ok) return text(res, got.status || 409, got.why);
+          res.writeHead(200, { 'content-type': 'application/octet-stream', ...CORS });
+          return res.end(Buffer.from(encodeShare(got.share)));
+        }
+        const signature = new Uint8Array(await read(req));
+        if (signature.length !== 64) return text(res, 400, 'a settlement signature is 64 bytes');
+        const got = await settlements.take(r8, signature);
+        return got.ok ? text(res, 201, 'settlement signature kept') : text(res, got.status || 409, got.why);
+      }
+
+      // AND IN PUBLIC: where the round's settlement of its losers' locks stands.
+      if (req.method === 'GET' && url.pathname === '/lock-settlement') {
+        const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
+        if (rid.length !== 32) return text(res, 400, 'a settlement is asked for by a round id');
+        const kept = round.lockSettlement(new Uint8Array(rid));
+        res.writeHead(200, { 'content-type': 'application/json', ...CORS });
+        return res.end(JSON.stringify(kept
+          ? { state: kept.state, txid: kept.txid, why: kept.why, signature: toHex(kept.signature), message: toHex(kept.message) }
+          : { state: 'NONE' }));
       }
 
       // AND IN PUBLIC: the forfeit of a qualifier's lock - kept, or made now with

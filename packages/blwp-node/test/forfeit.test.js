@@ -134,6 +134,9 @@ test('the qualifier\'s lock is forfeited by both seats after the window - it ver
     const early = await ask(w.a, w, winner.eid);
     assert.deepEqual(await closeRound(w), ['closed', 'closed']);
     const got = await untilForfeit(w, winner.eid);
+    // AND THE ROUND'S SETTLEMENT (W4), which waits for FINAL as the forfeit does and
+    // can land after it: the loser's lock is read once the seats have acted on it.
+    for (const stop = Date.now() + 20000; Date.now() < stop && !w.port.settlements.length; await wait(250)) { /* waiting */ }
     const id = String(await w.port.contractId(winner.fields));
     const sig = got.status === 200 ? fromHex(got.body.signature) : null;
     const onB = w.b.round.forfeit(winner.eid);
@@ -147,10 +150,16 @@ test('the qualifier\'s lock is forfeited by both seats after the window - it ver
       bKeepsTheSame: !!onB && !!sig && toHex(onB.signature) === toHex(sig), bAnswersTheSame: fromB.status === 200 && fromB.body.signature === got.body.signature,
       loser: lost.status, loserKeptBy: [w.a, w.b].filter((d) => d.round.forfeit(loser.eid)).length,
       loserLockHeld: w.port.locks.has(`${toHex(loser.outpoint.txid)}:${loser.outpoint.outIdx}`),
+      // W4 (the owner 2026-09-14 07:22: "a loser loses the stake. The lock is claimed
+      // into the pool."): the loser's lock is not forfeited - it is an input of the
+      // round's one settlement. Before W4 this read held (the parked hole: back to
+      // the loser at its expiry).
+      loserClaimedBySettlement: w.port.settlements.some((s) => s.claims.some((c) =>
+        toHex(c.outpoint.txid) === toHex(loser.outpoint.txid) && String(c.outpoint.outIdx) === String(loser.outpoint.outIdx))),
     };
     console.log('  FACTS (forfeit):', JSON.stringify(facts), '| before:', String(early.body).slice(0, 90), '| loser:', String(lost.body).slice(0, 110));
     assert.deepEqual(facts, { beforeClose: 409, forfeit: 200, isTheLocksId: true, claimPkIsTheRounds: true, verifies: true,
-      bKeepsTheSame: true, bAnswersTheSame: true, loser: 409, loserKeptBy: 0, loserLockHeld: true });
+      bKeepsTheSame: true, bAnswersTheSame: true, loser: 409, loserKeptBy: 0, loserLockHeld: false, loserClaimedBySettlement: true });
     assert.match(String(early.body), /no forfeit before the result is final/);
     assert.match(String(lost.body), /FAILED .* not a qualifier/);
 

@@ -501,6 +501,20 @@ export function openStore(path = ':memory:') {
     -- A QUALIFIER'S STAKE LOCK, RELEASED (§23.2 row 1, W5b): the committee's
     -- forfeit signature over the lock's contract id, which only the lock's
     -- refund key can spend. The seat's record that it released the stake.
+    -- THE ROUND'S ONE SETTLEMENT OF ITS LOSERS' STAKE LOCKS (W4): the txid the
+    -- seats rebuilt, their combined claim_pk signature over it, and where it
+    -- stands - SUBMITTING is written before the federation is asked, so a seat
+    -- that died there knows it signed.
+    CREATE TABLE IF NOT EXISTS lock_settlements (
+      round_id     BLOB PRIMARY KEY,
+      txid         TEXT NOT NULL,
+      message      BLOB NOT NULL,
+      signature    BLOB NOT NULL,
+      state        TEXT NOT NULL,
+      why          TEXT NOT NULL,
+      made_ms      INTEGER NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS forfeits (
       entry_id     BLOB PRIMARY KEY,
       round_id     BLOB NOT NULL,

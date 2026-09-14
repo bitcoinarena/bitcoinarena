@@ -4,6 +4,7 @@
 // entry's stake_lock_outpoint can be given (zeros, for the refusal).
 import assert from 'node:assert/strict';
 import { ed25519 } from '@noble/curves/ed25519.js';
+import { schnorr } from '@noble/curves/secp256k1.js';
 
 import { openStore } from '../src/store.js';
 import { serve } from '../src/server.js';
@@ -41,6 +42,50 @@ export function lockPort({ height = 1000 } = {}) {
         String(f.amountMsat), toHex(f.claimPk), toHex(f.refundPk), f.expiration]))));
     },
     async put(outpoint, fields) { locks.set(`${toHex(outpoint.txid)}:${outpoint.outIdx}`, { fields, id: await port.contractId(fields) }); port.asked--; },
+    // THE ROUND'S ONE SETTLEMENT (W4), checked as the guardians check it: every
+    // claimed lock stored at its outpoint, each P the scalar of that lock's
+    // point, the signature BIP-340 under the lock's claim_pk over the txid, and
+    // the payouts and their fees inside what the locks pay. Accepted: the locks
+    // are gone and the payouts stored. The txid stands in for the stock one: a
+    // hash of every input, output and the nonce.
+    feeRule: { ppm: 0n, baseMsat: 0n },
+    settlements: [],
+    payouts: new Map(),
+    async fees() { return port.feeRule; },
+    async settle({ claimPk, claims, payouts, nonce, signature = null }) {
+      const message = sha256(new TextEncoder().encode(JSON.stringify([
+        claims.map((c) => [toHex(c.outpoint.txid), String(c.outpoint.outIdx), toHex(c.preimage), String(c.amountMsat)]),
+        payouts.map((p) => [toHex(p.payoutPk), String(p.msat)]), toHex(nonce)])));
+      const said = { txid: toHex(message), message: toHex(message), accepted: false, error: null };
+      if (!signature) return said;
+      port.settlements.push({ claims, payouts, signature });
+      // THE SAME BYTES AGAIN ARE ACCEPTED AGAIN, as the real guardians answered
+      // (stake-lock-step3.sh, (c1)): two seats submitting one txid is harmless.
+      if (port.accepted.has(toHex(message))) return { ...said, accepted: true };
+      const fee = (m) => port.feeRule.baseMsat + (m * port.feeRule.ppm) / 1000000n;
+      for (const c of claims) {
+        const at = locks.get(`${toHex(c.outpoint.txid)}:${c.outpoint.outIdx}`);
+        if (!at) return { ...said, error: `no contract at ${toHex(c.outpoint.txid).slice(0, 12)}: already spent` };
+        if (toHex(feldmanGroup.pointFromScalar(scalarFrom32(c.preimage) % FIELD)) !== toHex(at.fields.paymentImage.bytes))
+          return { ...said, error: 'the preimage does not open that contract' };
+        let good = false;
+        try { good = schnorr.verify(signature, message, at.fields.claimPk.subarray(1)); } catch { good = false; }
+        if (!good) return { ...said, error: 'a signature does not verify under the input\'s claim key' };
+      }
+      const into = claims.reduce((t, c) => t + c.amountMsat - fee(c.amountMsat), 0n);
+      const out = payouts.reduce((t, p) => t + p.msat + fee(p.msat), 0n);
+      if (out > into) return { ...said, error: 'the transaction is unbalanced' };
+      for (const c of claims) locks.delete(`${toHex(c.outpoint.txid)}:${c.outpoint.outIdx}`);
+      payouts.forEach((p, i) => {
+        port.payouts.set(`${toHex(message)}:${i}`, { payoutPk: p.payoutPk, msat: p.msat });
+        // A PAYOUT IS A PRE-EXPIRED LOCK, stored where the federation stores locks.
+        locks.set(`${toHex(message)}:${i}`, { fields: { amountMsat: p.msat, refundPk: p.payoutPk, claimPk: p.payoutPk, expiration: 0 }, id: `payout-${i}` });
+      });
+      port.accepted.add(toHex(message));
+      void claimPk;
+      return { ...said, accepted: true };
+    },
+    accepted: new Set(),
   };
   return port;
 }

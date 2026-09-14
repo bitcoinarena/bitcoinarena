@@ -50,8 +50,14 @@
 //!     --signer-secret HEX
 //!   blwp-stake-lock --mode status --data-dir D --outpoint TXID:IDX
 //!   blwp-stake-lock --mode settle --data-dir D --claim-pk HEX \
-//!     --locks TXID:IDX:PREIMAGE:MSAT[,...] --qualifier-pk HEX --nonce HEX16 \
-//!     [--signature HEX]
+//!     --locks TXID:IDX:PREIMAGE:MSAT[,...] --nonce HEX16 \
+//!     (--payouts PK:MSAT[,...] | --qualifier-pk HEX) [--signature HEX]
+//!   blwp-stake-lock --mode fees --data-dir D
+//!
+//! W4 (the owner 2026-09-14): a loser loses the stake - the seats' settlement names
+//! every payout exactly with --payouts (their rule, blwp-node settlement.js),
+//! and this refuses any set the locks cannot pay for after the guardians' fees.
+//! --mode fees prints that fee rule, which the seats read before sizing them.
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -206,7 +212,8 @@ async fn main() -> anyhow::Result<()> {
         "redeem" => redeem(&a, &client, lnv2, &api).await,
         "settle" => settle(&a, &client, lnv2, &api).await,
         "status" => status(&a, &api).await,
-        other => bail!("no mode {other}: lock, redeem, settle, status or id"),
+        "fees" => fees(&client, lnv2).await,
+        other => bail!("no mode {other}: lock, redeem, settle, status, fees or id"),
     }
 }
 
@@ -349,9 +356,24 @@ async fn status(a: &Args, api: &DynModuleApi) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// THE GUARDIANS' OWN LNv2 FEE RULE, off the federation's config: `base +
+/// amount * ppm / 1e6` on every input and every output (lnv2-common config.rs).
+/// The seats read it before they size a settlement's payouts.
+async fn fees(client: &ClientHandle, lnv2: ModuleInstanceId) -> anyhow::Result<()> {
+    let config = client.config().await;
+    let fee = config
+        .modules
+        .get(&lnv2)
+        .context("no lnv2 config")?
+        .cast::<LightningClientConfig>()?
+        .fee_consensus
+        .clone();
+    println!("{}", serde_json::json!({ "mode": "fees", "fee_ppm": fee.parts_per_million, "fee_base_msat": fee.base.msats }));
+    Ok(())
+}
+
 async fn settle(a: &Args, client: &ClientHandle, lnv2: ModuleInstanceId, api: &DynModuleApi) -> anyhow::Result<()> {
     let claim_pk = PublicKey::from_str(need(a, "claim-pk")?)?;
-    let qualifier = PublicKey::from_str(need(a, "qualifier-pk")?)?;
     let nonce: [u8; 8] = hex_bytes(need(a, "nonce")?)?.try_into().map_err(|_| anyhow!("--nonce is 8 bytes"))?;
 
     // THE GUARDIANS' OWN FEE RULE, off the federation's config - not assumed.
@@ -381,26 +403,52 @@ async fn settle(a: &Args, client: &ClientHandle, lnv2: ModuleInstanceId, api: &D
         locks.push(op);
     }
 
-    // ONE PAYOUT OUT, THE LARGEST THAT THE INPUTS PAY FOR: out + fee(out) <=
-    // inputs - their fees. Stepped down from the top, so the figure is the
-    // rule's and not an estimate of it.
+    // THE PAYOUTS. With --payouts PK:MSAT[,...] exactly those, in that order -
+    // the amounts are the seats' rule (blwp-node settlement), not this tool's -
+    // and refused outright if they and their fees are more than the locks pay
+    // for. Without it, the rehearsal's shape: ONE payout to --qualifier-pk, the
+    // largest the inputs pay for (out + fee(out) <= inputs - their fees),
+    // stepped down from the top so the figure is the rule's.
     let spendable = input_msats - input_fee_msats;
-    let mut out = spendable;
-    while out > 0 && out + fee.fee(Amount::from_msats(out)).msats > spendable {
-        out -= 1;
+    let mut payouts: Vec<(PublicKey, u64)> = Vec::new();
+    if let Some(list) = a.get("payouts") {
+        for spec in list.split(',') {
+            let (pk, msat) = spec.split_once(':').context("a payout is PK:MSAT")?;
+            payouts.push((PublicKey::from_str(pk)?, msat.parse()?));
+        }
+    } else {
+        let qualifier = PublicKey::from_str(need(a, "qualifier-pk")?)?;
+        let mut out = spendable;
+        while out > 0 && out + fee.fee(Amount::from_msats(out)).msats > spendable {
+            out -= 1;
+        }
+        payouts.push((qualifier, out));
     }
-    let output_fee_msats = fee.fee(Amount::from_msats(out)).msats;
-    let payout = OutgoingContract {
-        // Unused: the lock is pre-expired, so Claim is refused for everybody,
-        // and its claim key is the qualifier's anyway.
-        payment_image: PaymentImage::Hash(sha256::Hash::from_byte_array([0u8; 32])),
-        amount: Amount::from_msats(out),
-        expiration: 0,
-        claim_pk: qualifier,
-        refund_pk: qualifier,
-        ephemeral_pk: qualifier,
-    };
-    let outputs = vec![LightningOutput::V0(LightningOutputV0::Outgoing(payout.clone())).into_dyn(lnv2)];
+    let mut outputs = Vec::new();
+    let mut contracts = Vec::new();
+    let mut out = 0u64;
+    let mut output_fee_msats = 0u64;
+    for (pk, msat) in &payouts {
+        let payout = OutgoingContract {
+            // Unused: the lock is pre-expired, so Claim is refused for everybody,
+            // and its claim key is the qualifier's anyway.
+            payment_image: PaymentImage::Hash(sha256::Hash::from_byte_array([0u8; 32])),
+            amount: Amount::from_msats(*msat),
+            expiration: 0,
+            claim_pk: *pk,
+            refund_pk: *pk,
+            ephemeral_pk: *pk,
+        };
+        out += msat;
+        output_fee_msats += fee.fee(Amount::from_msats(*msat)).msats;
+        outputs.push(LightningOutput::V0(LightningOutputV0::Outgoing(payout.clone())).into_dyn(lnv2));
+        contracts.push(payout);
+    }
+    if out + output_fee_msats > spendable {
+        bail!("the payouts ({out} msat, {output_fee_msats} msat in fees) are more than the locks pay for ({spendable} msat after their own fees)");
+    }
+    let payout = contracts[0].clone();
+    let qualifier = payouts[0].0;
     let txid = Transaction::tx_hash_from_parts(&inputs, &outputs, nonce);
     let message_hex = hex(&txid[..]);
 
@@ -418,6 +466,10 @@ async fn settle(a: &Args, client: &ClientHandle, lnv2: ModuleInstanceId, api: &D
         "unspent_msat": input_msats - input_fee_msats - out - output_fee_msats,
         "payout_contract_id": payout.contract_id().0.to_string(),
         "qualifier_pk": qualifier.to_string(),
+        "payouts": contracts.iter().enumerate().map(|(i, c)| serde_json::json!({
+            "out_idx": i, "pk": c.refund_pk.to_string(), "msat": c.amount.msats,
+            "contract_id": c.contract_id().0.to_string(),
+        })).collect::<Vec<_>>(),
     });
     let Some(sig_hex) = a.get("signature") else {
         println!("{report}");
@@ -459,7 +511,10 @@ async fn settle(a: &Args, client: &ClientHandle, lnv2: ModuleInstanceId, api: &D
         payout_stored = stored_at(api, payout_outpoint).await?;
     }
     let after: Vec<_> = futures_join(api, &locks).await?;
+    let payout_outpoints: Vec<OutPoint> = (0..contracts.len()).map(|i| OutPoint { txid, out_idx: i as u64 }).collect();
+    let payouts_stored: Vec<_> = futures_join(api, &payout_outpoints).await?;
     let obj = report.as_object_mut().expect("an object");
+    obj.insert("payouts_stored".into(), serde_json::Value::Array(payouts_stored));
     obj.insert("signature_verifies_under_claim_pk".into(), verifies.into());
     obj.insert("signatures_listed".into(), locks.len().into());
     obj.insert("block_count_at_submit".into(), count.into());

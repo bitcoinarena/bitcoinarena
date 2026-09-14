@@ -46,6 +46,27 @@ export function stakeLockPort({ bin, dataDir, timeoutMs = 60000 }) {
       const j = await run(bin, ['--mode', 'id', ...contractArgs(fields)], timeoutMs);
       return String(j.contract_id);
     },
+    /** The guardians' own LNv2 fee rule, off the federation's config (W4). */
+    async fees() {
+      const j = await run(bin, ['--mode', 'fees', '--data-dir', dataDir], timeoutMs);
+      return { ppm: BigInt(j.fee_ppm), baseMsat: BigInt(j.fee_base_msat) };
+    },
+    /**
+     * THE ROUND'S ONE SETTLEMENT (W4): every claimed lock in as Claim(P), the
+     * exact payouts out. Without `signature` the stock client only rebuilds it
+     * and answers the 32 bytes to sign; with one it submits and says what the
+     * guardians hold afterwards.
+     */
+    async settle({ claimPk, claims, payouts, nonce, signature = null }) {
+      const args = ['--mode', 'settle', '--data-dir', dataDir, '--claim-pk', toHex(claimPk),
+        '--locks', claims.map((c) => `${outpointArg(c.outpoint)}:${toHex(c.preimage)}:${c.amountMsat}`).join(','),
+        '--payouts', payouts.map((p) => `${toHex(p.payoutPk)}:${p.msat}`).join(','),
+        '--nonce', toHex(nonce), ...(signature ? ['--signature', toHex(signature)] : [])];
+      const j = await run(bin, args, timeoutMs);
+      return { txid: String(j.txid), message: String(j.message_hex), accepted: j.accepted === true, error: j.error || null,
+        payouts: j.payouts || [], payoutsStored: j.payouts_stored || null, locksAfter: j.locks_after || null,
+        unspentMsat: j.unspent_msat === undefined ? null : BigInt(j.unspent_msat) };
+    },
   };
 }
 

@@ -1867,6 +1867,17 @@ export class Round {
     return r ? { message: new Uint8Array(r.message), signature: new Uint8Array(r.signature), claimPk: new Uint8Array(r.claim_pk), madeMs: Number(r.made_ms) } : null;
   }
 
+  /** The round's one settlement of its losers' locks (W4): its intent, then where it stands. */
+  putLockSettlement({ roundId, txid, message, signature, state, why }) {
+    this.db.prepare('INSERT OR REPLACE INTO lock_settlements (round_id, txid, message, signature, state, why, made_ms) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .run(Buffer.from(roundId), String(txid), Buffer.from(message), Buffer.from(signature), state, why, this.now());
+  }
+
+  lockSettlement(roundIdBytes) {
+    const r = this.db.prepare('SELECT txid, message, signature, state, why, made_ms FROM lock_settlements WHERE round_id = ?').get(Buffer.from(roundIdBytes));
+    return r ? { txid: r.txid, message: new Uint8Array(r.message), signature: new Uint8Array(r.signature), state: r.state, why: r.why, madeMs: Number(r.made_ms) } : null;
+  }
+
   /** The entry a verified lock at this outpoint already stakes, or null: one lock is one seat. */
   stakeLockAt(outpoint) {
     const r = this.db.prepare('SELECT entry_id FROM stake_locks WHERE outpoint = ?')
