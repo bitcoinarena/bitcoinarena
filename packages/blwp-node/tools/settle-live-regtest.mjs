@@ -414,7 +414,9 @@ async function round(stakeMsat) {
     // the gate mints, each seat must refuse the entry at the door - not seated, its stake not
     // counted, its lock still its own - and the two who brought theirs settle as before.
     let bare = null;
-    if (stakeMsat >= 1000000n) {
+    // SKIP_REFUSED=1: no third player (its expiry refund mines ~160 blocks - the slow part of a run
+    // that must fit one bounded call); run it alone with REFUSED_TAB_ONLY=1.
+    if (stakeMsat >= 1000000n && env.SKIP_REFUSED !== '1') {
       const seed = rand(32);
       const playerPubkey = playerFor({ ...c, id: rid }, { seed, curve: pageCurve }).pubkey;
       const preimage = secretScalar();
@@ -505,7 +507,8 @@ async function round(stakeMsat) {
     };
     for (const p of [winner, loser]) {
       // ON SCREEN FOR THE 1000 SAT ROUND when a build is named; the 100 sat round by Node.
-      if (env.PAGE_DIR && stakeMsat >= 1000000n && env.REFUSED_TAB_ONLY !== '1') { out(await collectOnScreen({ p, c, rid, urls, stakeMsat, held, payoutAt: payoutOf(p) })); continue; }
+      // ON_SCREEN=DELIVERED|FAILED: only that player in the browser, the other by Node (one bounded call).
+      if (env.PAGE_DIR && stakeMsat >= 1000000n && env.REFUSED_TAB_ONLY !== '1' && (!env.ON_SCREEN || env.ON_SCREEN === p.want)) { out(await collectOnScreen({ p, c, rid, urls, stakeMsat, held, payoutAt: payoutOf(p) })); continue; }
       let joins = 0;
       const Counting = { join: (...args) => { joins++; return LockClient.join(...args); } };
       const r = await redeemPayout({ round: c, roundId: rid, invite: env.INVITE, seed: p.seed, curve: pageCurve, LockClient: Counting, nodes: urls });
