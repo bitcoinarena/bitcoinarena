@@ -44,6 +44,7 @@ public class SplashScreen : MonoBehaviour
     Rect _lastHowTo;
     Rect[] _lastHowToCells;
     Rect _lastName, _lastKey, _lastMore;
+    string _lastNotice = "";
     readonly System.Collections.Generic.List<(Blwp.LobbyRow row, Rect rect)> _drawnRows =
         new System.Collections.Generic.List<(Blwp.LobbyRow row, Rect rect)>();
 
@@ -359,9 +360,12 @@ public class SplashScreen : MonoBehaviour
         var youStyle = new GUIStyle(_body)
             { fontSize = Mathf.RoundToInt(font), wordWrap = true, richText = true, alignment = TextAnchor.MiddleLeft };
         youStyle.normal.textColor = Color.white;
-        string second = string.IsNullOrEmpty(_nameWhy)
-            ? $"<color=#9fb3c8>key {Escape(you.fingerprint)}</color>"
-            : $"<color=#ff7b72>{Escape(_nameWhy)}</color>";
+        // A WITHDRAWAL AVAILABLE (the owner 2026-09-14) takes the key's line until it is withdrawn;
+        // a name the page refused still comes first, and KEY still shows the key.
+        _lastNotice = Blwp.DailyLobby.WithdrawNotice(_lobby);
+        string second = !string.IsNullOrEmpty(_nameWhy) ? $"<color=#ff7b72>{Escape(_nameWhy)}</color>"
+            : !string.IsNullOrEmpty(_lastNotice) ? $"<color=#3fb950><b>{Escape(_lastNotice)}</b></color>"
+            : $"<color=#9fb3c8>key {Escape(you.fingerprint)}</color>";
         // SET SMALLER UNTIL IT FITS ITS BOX. Measured on an iPhone (390x844 at 3x):
         // the name wrapped to a third line in a two-line box, and the box clipped
         // "You are" at the top and the key at the bottom (the owner 22:16: every
@@ -492,7 +496,7 @@ public class SplashScreen : MonoBehaviour
         sb.Append(",\"spectate\":").Append(R(f.spectate)).Append(",\"hint\":").Append(R(f.hint));
         if (_lobby != null)
         {
-            sb.Append(",\"you\":").Append(J(_lobby.you.name)).Append(",\"name\":").Append(R(_lastName))
+            sb.Append(",\"you\":").Append(J(_lobby.you.name)).Append(",\"withdrawNotice\":").Append(J(_lastNotice)).Append(",\"name\":").Append(R(_lastName))
               .Append(",\"key\":").Append(R(_lastKey)).Append(",\"howTo\":").Append(R(_lastHowTo))
               .Append(",\"howToCells\":[").Append(_lastHowToCells == null ? "" : string.Join(",", System.Array.ConvertAll(_lastHowToCells, R))).Append(']')
               .Append(",\"howToDrawn\":").Append(_howToWhole != null && _lastHowToCells != null ? _lastHowToCells.Length : 0).Append(",\"picked\":").Append(J(_pickId))

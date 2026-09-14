@@ -40,6 +40,15 @@ namespace Blwp
     }
 
     /// <summary>What the page hands Unity to draw: the lobby, or nothing.</summary>
+    /// <summary>What a kept round still owes this browser's player (the owner 2026-09-14): looked at by the page, never collected by looking.</summary>
+    [Serializable]
+    public class LobbyWithdraw
+    {
+        public bool available;
+        public string msat = "";
+        public bool elsewhere;
+    }
+
     [Serializable]
     public class LobbyState
     {
@@ -50,6 +59,7 @@ namespace Blwp
         public string[] refused = new string[0];
         public int nodes;
         public LobbyJoin join = new LobbyJoin();
+        public LobbyWithdraw withdraw = new LobbyWithdraw();
     }
 
     /// <summary>
@@ -105,7 +115,23 @@ namespace Blwp
             if (s.refused == null) s.refused = new string[0];
             if (s.you == null) s.you = new LobbyYou();
             if (s.join == null) s.join = new LobbyJoin();
+            if (s.withdraw == null) s.withdraw = new LobbyWithdraw();
             return s;
+        }
+
+        /// <summary>
+        /// A WITHDRAWAL AVAILABLE (the owner 2026-09-14): after start the page looks at every kept
+        /// round, and while one still owes the player money the lobby says so, with the amount,
+        /// until it is withdrawn. Nothing is collected by looking; the Withdraw is the page's.
+        /// "" when there is none.
+        /// </summary>
+        public static string WithdrawNotice(LobbyState s)
+        {
+            if (s == null || s.withdraw == null || !s.withdraw.available) return "";
+            if (s.withdraw.elsewhere) return "Withdrawal available - open in another tab of this browser";
+            return long.TryParse(s.withdraw.msat, out var msat) && msat > 0
+                ? $"Withdrawal available: {msat / 1000} sat - press Withdraw in the wallet panel"
+                : "";
         }
 
         /// <summary>How long a joined seat waits for its session before the round starts anyway.</summary>

@@ -166,4 +166,25 @@ public class LobbyScreenTests
         Assert.AreEqual("no seat", refused.join.why);
         Assert.AreEqual("wait", DailyLobby.AfterJoin(null, true, 60f));
     }
+
+    /// <summary>
+    /// A WITHDRAWAL AVAILABLE, SAID IN THE LOBBY AFTER START (the owner 2026-09-14): the page looks
+    /// at every kept round and hands the lobby what one still owes; the lobby says so with the
+    /// amount until it is withdrawn, and says where when another tab of the browser holds it.
+    /// </summary>
+    [Test]
+    public void TheLobbySaysAWithdrawalIsAvailableWithItsAmountUntilItIsWithdrawn()
+    {
+        string With(string w) => Sample.Replace("\"nodes\":2}", "\"nodes\":2,\"withdraw\":" + w + "}");
+        Assert.AreEqual("", DailyLobby.WithdrawNotice(DailyLobby.Parse(Sample)), "a page that names no withdrawal showed one");
+        Assert.AreEqual("Withdrawal available: 1958 sat - press Withdraw in the wallet panel",
+            DailyLobby.WithdrawNotice(DailyLobby.Parse(With("{\"available\":true,\"msat\":\"1958000\",\"elsewhere\":false}"))));
+        Assert.AreEqual("Withdrawal available - open in another tab of this browser",
+            DailyLobby.WithdrawNotice(DailyLobby.Parse(With("{\"available\":true,\"msat\":\"0\",\"elsewhere\":true}"))));
+        Assert.AreEqual("", DailyLobby.WithdrawNotice(DailyLobby.Parse(With("{\"available\":false,\"msat\":\"0\",\"elsewhere\":false}"))),
+            "a withdrawn round still showed the notice");
+        Assert.AreEqual("", DailyLobby.WithdrawNotice(DailyLobby.Parse(With("{\"available\":true,\"msat\":\"0\",\"elsewhere\":false}"))),
+            "nothing owed was shown as available");
+        Assert.AreEqual("", DailyLobby.WithdrawNotice(null));
+    }
 }
