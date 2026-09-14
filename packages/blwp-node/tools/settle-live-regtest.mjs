@@ -140,17 +140,25 @@ const servePage = (dir) => served || (served = new Promise((ok) => {
   });
   s.listen(0, '127.0.0.1', () => ok({ server: s, port: s.address().port }));
 }));
-async function browse(url) {
-  const profile = mkdtempSync(join(tmpdir(), 'settle-live-chrome-'));
+// A PROFILE HANDED IN IS ONE BROWSER ACROSS STARTS (spec §24: the round's money is kept in the
+// browser's storage, so the next start in the same profile must find it).
+// REUSE: a browser started again on its profile brings back the tab it had open (measured: headless
+// Chrome restores it after Browser.close and after a SIGKILL, and that tab takes the round's lock
+// first). As a phone's browser coming back, the page drives the restored tab of this origin.
+async function browse(url, { profile = mkdtempSync(join(tmpdir(), 'settle-live-chrome-')), reuse = false } = {}) {
   const chrome = spawn(CHROME, ['--headless=new', '--remote-debugging-port=0', `--user-data-dir=${profile}`,
     '--no-sandbox', '--window-size=1280,800', '--use-gl=swiftshader', '--enable-unsafe-swiftshader',
     '--disable-dev-shm-usage', 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe'] });
   const debugPort = await new Promise((r) => { let buf = ''; chrome.stderr.on('data', (d) => { buf += d; const m = buf.match(/DevTools listening on ws:\/\/127\.0\.0\.1:(\d+)/); if (m) r(m[1]); }); });
-  let target = null;
+  let target = null; let pages = [];
+  if (reuse) await wait(2000);
   for (let i = 0; i < 40 && !target; i++) {
-    target = (await (await fetch(`http://127.0.0.1:${debugPort}/json/list`)).json()).find((t) => t.type === 'page');
+    pages = (await (await fetch(`http://127.0.0.1:${debugPort}/json/list`)).json()).filter((t) => t.type === 'page');
+    target = (reuse && pages.find((t) => t.url.startsWith(new URL(url).origin))) || pages.find((t) => t.url === 'about:blank') || pages[0] || null;
     if (!target) await wait(250);
   }
+  const restored = !!(reuse && target && target.url.startsWith(new URL(url).origin));
+  for (const t of pages) if (t.id !== target.id && t.url === 'about:blank') await fetch(`http://127.0.0.1:${debugPort}/json/close/${t.id}`).catch(() => null);
   const ws = new WebSocket(target.webSocketDebuggerUrl, { maxPayload: 256 * 1024 * 1024 });
   await new Promise((r) => ws.on('open', r));
   let n = 0;
@@ -173,9 +181,15 @@ async function browse(url) {
   await send('Runtime.enable');
   await send('Page.enable');
   await send('Page.navigate', { url });
-  const close = () => { try { ws.close(); } catch {} try { chrome.kill('SIGKILL'); } catch {} };
+  // CLOSED AS A BROWSER CLOSES, so what the page kept in its storage is on disk for the next start
+  // (a SIGKILL can lose the last writes); killed only if it has not exited within 10 s.
+  const close = async () => {
+    send('Browser.close').catch(() => {});
+    await new Promise((r) => { if (chrome.exitCode !== null) return r(); const t = setTimeout(r, 10000); chrome.once('exit', () => { clearTimeout(t); r(); }); });
+    try { ws.close(); } catch {} try { chrome.kill('SIGKILL'); } catch {}
+  };
   const reload = () => send('Page.reload', { ignoreCache: false });
-  return { evaluate, shot, logs, close, reload };
+  return { evaluate, shot, logs, close, reload, restored };
 }
 
 /** The join state the page's own join sets for a lock round (index.html's lock branch), as one evaluated script. */
@@ -188,15 +202,15 @@ const injectFor = (p, c, rid, urls) => `(() => {
           amountMsat: ${p.stake.fields.amountMsat}n, claimPk: BLWPCLIENT.fromHex('${toHex(p.stake.fields.claimPk)}'),
           refundPk: BLWPCLIENT.fromHex('${toHex(p.stake.fields.refundPk)}'), expiration: ${p.stake.fields.expiration} } };
       window.BLWP_LOCK_JOIN = { invite: '${env.INVITE}', roundIdHex: '${toHex(rid)}', seed: BLWPCLIENT.fromHex('${toHex(p.seed)}'), nodes: ${JSON.stringify(urls)} };
-      // AND WHAT THE JOIN KEEPS IN THE TAB for the collect (index.html's saveCollect call).
-      const saved = BLWPCLIENT.saveCollect ? BLWPCLIENT.saveCollect(window.sessionStorage,
+      // AND WHAT THE JOIN KEEPS for the collect - in the browser's storage, as index.html's vault() does.
+      const saved = BLWPCLIENT.saveCollect ? BLWPCLIENT.saveCollect(window.localStorage,
         Object.assign({}, window.BLWP_LOCK_JOIN, { round: window.BLWP_ROUND, stakeLock: window.BLWP_STAKE_LOCK })) : 'no saveCollect in the bundle';
       // INSTRUMENTED (the reload pair did not move on 0.0.1236): what saveCollect swallows.
       const probe = (f) => { try { f(); return 'ok'; } catch (e) { return String(e && e.message || e); } };
       window.BLWP_HARNESS_SAVE = { saved,
         encodeRound: probe(() => BLWPCLIENT.encodeRoundContract(window.BLWP_ROUND)),
         encodeLock: BLWPCLIENT.lockFieldsToJson ? probe(() => BLWPCLIENT.lockFieldsToJson(window.BLWP_STAKE_LOCK.fields)) : 'lockFieldsToJson not in the bundle',
-        keys: Object.keys(window.sessionStorage) };
+        keys: Object.keys(window.localStorage) };
       return true; })()`;
 // WHAT THE PAGE LOOKED AT (W4 / 6d): BLWP_OWED, its lookOwed - nothing spent until the Withdraw.
 const OWED = '(window.BLWP_OWED || null)';
@@ -332,6 +346,101 @@ async function collectOnScreen({ p, c, rid, urls, stakeMsat, held, payoutAt }) {
   // 5. A THIRD TAB, same seed: what is left.
   const third = await open();
   if (!third.error) { try { res.thirdTab = await lookIn(third.b, (o) => !!(o && o.owed && o.owed.final), 120000); } finally { third.b.close(); } }
+  res.federationAtEnd = await federation();
+  return res;
+}
+
+/**
+ * A WITHDRAWAL CLAIMED ON ANOTHER DEVICE, AND A WITHDRAW CUT OFF AFTER ITS COLLECT (spec §24,
+ * the owner 2026-09-14). alice's desktop looks and is closed with no withdraw; her "iPhone" - another
+ * browser profile - holds only her seed (the page's importSeed) and runs the page's own scan over
+ * the seats (BLWP_FIND_OWED: /settled, its key matched locally); its Withdraw collects and is cut
+ * off before the pay-out (the wallet never answers the invoice ask) and the browser is closed; the
+ * phone's next start - the same profile - reopens the kept round and its wallet from the browser's
+ * storage, and its Withdraw pays alice.
+ */
+async function claimOnAnotherDevice({ p, c, rid, urls, stakeMsat, held, payoutAt }) {
+  const page = await servePage(env.PAGE_DIR);
+  const url = `http://127.0.0.1:${page.port}/`;
+  const desktop = mkdtempSync(join(tmpdir(), 'settle-live-desktop-'));
+  const phone = mkdtempSync(join(tmpdir(), 'settle-live-phone-'));
+  const federation = async () => ({ payoutHeld: payoutAt ? await held(payoutAt) : null, stakeLockHeld: await held(p.stake.outpoint) });
+  const view = (b) => b.evaluate(`JSON.stringify({ owed: ${OWED}, settled: (document.getElementById('blwp-settled') || {}).textContent || '',
+    withdrawLine: (document.getElementById('blwp-withdraw') || {}).textContent || '',
+    forUnity: window.BLWP_WITHDRAW_AVAILABLE ? window.BLWP_WITHDRAW_AVAILABLE() : null,
+    kept: Object.keys(window.localStorage).filter((k) => k.startsWith('blwp.collect.')).length,
+    step: window.BLWP_WITHDRAW_STEP || '' }, (k, v) => (typeof v === 'bigint' ? String(v) : v))`).then((x) => JSON.parse(x || '{}'));
+  // THE LOBBY THE PHONE COMES BACK TO: a lobby link of the Daily's form (both seats, the bond at seat
+  // A, the federation) - the advertisement a placeholder of its form, which the lobby never reads.
+  const lobbyUrl = `${url}?node=${urls.join(',')}&bond=${urls[0]}/bond&advert=${'00'.repeat(64)}&federation=${env.INVITE}`;
+  const lookIn = async (b, done, ms = 180000) => {
+    const t = Date.now(); let o = {};
+    for (; Date.now() - t < ms; await wait(1000)) { o = await view(b).catch((e) => ({ unread: e.message })); if (done(o)) break; }
+    return { ...o, lookedMs: Date.now() - t };
+  };
+  const owedSome = (o) => !!(o && o.owed && o.owed.owedMsat !== '0' && o.owed.payout.state !== 'waiting' && o.owed.stake.state !== 'waiting');
+  const said = (b) => b.logs.filter((l) => /\[blwp\] (owed|withdraw|kept rounds)|EXCEPTION/.test(l)).map((l) => l.slice(0, 200)).slice(-8);
+  const open = async (profile, { reuse = false, at = url } = {}) => {
+    const b = await browse(at, { profile, reuse });
+    if (!(await pageReady(b))) { const logs = b.logs.slice(-5); await b.close(); return { error: 'the built page never loaded its client', logs }; }
+    return { b };
+  };
+  const res = { round: `${stakeMsat / 1000n} sat`, page: p.want, claimLater: true, federationAtStart: await federation() };
+
+  // 1. THE DESKTOP: the join's state, the look, closed with no withdraw (alice forgets).
+  const d = await open(desktop);
+  if (d.error) return { ...res, error: d.error, logs: d.logs };
+  try { await d.b.evaluate(injectFor(p, c, rid, urls)); res.desktop = await lookIn(d.b, owedSome); } finally { await d.b.close(); }
+  res.afterDesktop = await federation();
+
+  // 2. THE PHONE: another browser; only the seed brought in; the page's own scan over the seats.
+  const ph = await open(phone);
+  if (ph.error) return { ...res, error: ph.error, logs: ph.logs };
+  try {
+    res.phone = { keptBefore: (await view(ph.b)).kept };
+    await ph.b.evaluate(`(BLWPCLIENT.importSeed('${toHex(p.seed)}', { storage: window.sessionStorage }), true)`);
+    const t = Date.now();
+    res.phone.found = await ph.b.evaluate(`window.BLWP_FIND_OWED(${JSON.stringify(urls)}, '${env.INVITE}')`);
+    res.phone.foundMs = Date.now() - t;
+    Object.assign(res.phone, await lookIn(ph.b, owedSome));
+    res.phone.federation = await federation();
+    // 3. ITS WITHDRAW, CUT OFF AFTER THE COLLECT: the wallet never answers the invoice ask; the browser closes there.
+    await ph.b.evaluate('(window.BLWP_WITHDRAW(async () => new Promise(() => {})), true)');
+    const cut = await lookIn(ph.b, (o) => /invoice/.test(o.step || ''), 600000);
+    res.cut = { step: cut.step, ms: cut.lookedMs, withdrawLine: cut.withdrawLine, federation: await federation() };
+    res.phone.pageSaid = said(ph.b);
+    const shot = `${P}/claim-phone-cut.png`;
+    await ph.b.shot(shot); res.cut.screenshot = shot;
+  } finally { await ph.b.close(); }
+
+  // 4. THE PHONE'S NEXT START, the same profile, into the lobby: the kept round and its wallet from the
+  // browser's storage, and what Unity's lobby says.
+  const next = await open(phone, { reuse: true, at: lobbyUrl });
+  if (next.error) return { ...res, error: next.error, logs: next.logs };
+  try {
+    res.nextStart = await lookIn(next.b, (o) => !!(o && o.owed && o.owed.inTabMsat && o.owed.inTabMsat !== '0'));
+    res.nextStart.restoredTab = next.b.restored;
+    // WHAT UNITY'S LOBBY DREW (SplashScreen reports it to the page twice a second): the withdrawal notice.
+    const tU = Date.now(); let unity = null;
+    for (; Date.now() - tU < 180000; await wait(2000)) {
+      unity = await next.b.evaluate('JSON.stringify(window.BLWP_UNITY_LOBBY || null)').then((x) => JSON.parse(x || 'null')).catch(() => null);
+      if (unity && unity.withdrawNotice) break;
+    }
+    res.unity = { ms: Date.now() - tU, drew: unity && { showing: unity.showing, lobby: unity.lobby, withdrawNotice: unity.withdrawNotice, you: unity.you, screen: unity.screen } };
+    const lobbyShot = `${P}/claim-phone-lobby.png`;
+    await next.b.shot(lobbyShot); res.unity.screenshot = lobbyShot;
+    if (res.nextStart.owed && res.nextStart.owed.inTabMsat && res.nextStart.owed.inTabMsat !== '0') {
+      const w = await withdrawWith(next.b, MAKER);
+      const asked = JSON.parse(await next.b.evaluate('JSON.stringify(window.__harnessInvoice || {})').catch(() => '{}') || '{}');
+      const seenAt = asked.r_hash ? JSON.parse((await run(`${env.LND_BIN}/lncli`, [`--lnddir=${P}/alice`, '--rpcserver=127.0.0.1:30107', '--network=regtest',
+        'lookupinvoice', asked.r_hash])).so || '{}') : {};
+      res.withdraw = { ...w, invoiceAskedMsat: asked.msat, aliceInvoice: { state: seenAt.state, amtPaidMsat: seenAt.amt_paid_msat } };
+      res.after = await lookIn(next.b, (o) => !!(o && o.owed && o.owed.final && o.owed.inTabMsat === '0'), 60000);
+    }
+    res.nextStart.pageSaid = said(next.b);
+    const shot = `${P}/claim-phone-next.png`;
+    await next.b.shot(shot); res.nextStart.screenshot = shot;
+  } finally { await next.b.close(); }
   res.federationAtEnd = await federation();
   return res;
 }
@@ -510,6 +619,8 @@ async function round(stakeMsat) {
     for (const p of [winner, loser]) {
       // ON SCREEN FOR THE 1000 SAT ROUND when a build is named; the 100 sat round by Node.
       // ON_SCREEN=DELIVERED|FAILED: only that player in the browser, the other by Node (one bounded call).
+      // CLAIM_LATER=1: the winner's money claimed on another device holding only the seed, and a Withdraw cut off after its collect.
+      if (env.PAGE_DIR && stakeMsat >= 1000000n && env.CLAIM_LATER === '1' && p.want === 'DELIVERED') { out(await claimOnAnotherDevice({ p, c, rid, urls, stakeMsat, held, payoutAt: payoutOf(p) })); continue; }
       if (env.PAGE_DIR && stakeMsat >= 1000000n && env.REFUSED_TAB_ONLY !== '1' && (!env.ON_SCREEN || env.ON_SCREEN === p.want)) { out(await collectOnScreen({ p, c, rid, urls, stakeMsat, held, payoutAt: payoutOf(p) })); continue; }
       let joins = 0;
       const Counting = { join: (...args) => { joins++; return LockClient.join(...args); } };
