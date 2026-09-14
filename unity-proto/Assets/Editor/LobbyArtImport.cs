@@ -12,10 +12,13 @@ using UnityEngine;
 public class LobbyArtImport : AssetPostprocessor
 {
     public const string File = "lobby-how-to-1-2-3-4.jpg";
+    /// <summary>the owner's four panels and their whole (2026-09-14 07:55): PNG, white knocked out.</summary>
+    public const string Panels = "/lobby-howto";
 
     void OnPreprocessTexture()
     {
-        if (!assetPath.EndsWith("/" + File)) return;
+        bool panel = assetPath.Contains(Panels) && assetPath.EndsWith(".png");
+        if (!assetPath.EndsWith("/" + File) && !panel) return;
         var t = (TextureImporter)assetImporter;
         t.textureType = TextureImporterType.GUI;
         t.mipmapEnabled = false;
@@ -23,5 +26,13 @@ public class LobbyArtImport : AssetPostprocessor
         t.wrapMode = TextureWrapMode.Clamp;
         t.filterMode = FilterMode.Bilinear;
         t.maxTextureSize = 2048;
+        if (panel)
+        {
+            // THE KNOCKED-OUT WHITE IS THE POINT: alpha kept as transparency, and
+            // not compressed - words on a picture drawn small on a phone.
+            t.alphaIsTransparency = true;
+            t.alphaSource = TextureImporterAlphaSource.FromInput;
+            t.textureCompression = TextureImporterCompression.Uncompressed;
+        }
     }
 }

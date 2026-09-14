@@ -38,10 +38,11 @@ public class SplashScreen : MonoBehaviour
     bool _joining, _autoPlay, _hiddenTold;
     string _joinWhy = "";
     float _joinedAt = -1f;
-    // the how-to art (the owner 2026-09-13 08:58), loaded once, and where it was drawn
-    Texture2D _howTo;
+    // the owner's four how-to panels (2026-09-14 07:55), loaded once, and where they were drawn
+    Texture2D[] _howTo;
     bool _howToAsked;
     Rect _lastHowTo;
+    Rect[] _lastHowToCells;
     Rect _lastName, _lastKey, _lastMore;
     readonly System.Collections.Generic.List<(Blwp.LobbyRow row, Rect rect)> _drawnRows =
         new System.Collections.Generic.List<(Blwp.LobbyRow row, Rect rect)>();
@@ -335,19 +336,27 @@ public class SplashScreen : MonoBehaviour
     void Lobby(Rect copy)
     {
         float font = _sub.fontSize;
-        var l = Blwp.DailyLobby.MeasureLobby(copy, font);
-        _lastName = l.name; _lastKey = l.key; _lastMore = l.more; _lastHowTo = l.howTo;
+        var l = Blwp.DailyLobby.MeasureLobby(copy, font, Screen.height > Screen.width);
+        _lastName = l.name; _lastKey = l.key; _lastMore = l.more; _lastHowTo = l.howTo; _lastHowToCells = l.howToCells;
         var you = _lobby.you;
 
-        // ONE HOW-TO PICTURE, SMALL AND WHOLE (the owner 2026-09-13 08:58): load
+        // THE OWNER'S HOW-TO, FOUR PANELS, EACH WHOLE (2026-09-14 07:55): load
         // mempool TXs, cross the front (closer = more points), deliver to miners,
-        // stake sats and win. Only the four cards are drawn, never stretched.
-        if (!_howToAsked) { _howToAsked = true; _howTo = Resources.Load<Texture2D>(Blwp.DailyLobby.HowToResource); }
-        if (_howTo != null && l.howTo.width > 0f && l.howTo.height > 0f)
+        // stake sats and win. 1-2-3-4 in a row on a desktop, 1-2 over 3-4 on a
+        // phone; drawn with their alpha, so the knocked-out white shows the panel.
+        if (!_howToAsked)
         {
-            GUI.DrawTextureWithTexCoords(l.howTo, _howTo, Blwp.DailyLobby.HowToUv);
-            PanelSkin.Border(l.howTo, new Color(PanelSkin.Gold.r, PanelSkin.Gold.g, PanelSkin.Gold.b, 0.6f));
+            _howToAsked = true;
+            _howTo = new Texture2D[Blwp.DailyLobby.HowToPanels.Length];
+            for (int i = 0; i < _howTo.Length; i++) _howTo[i] = Resources.Load<Texture2D>(Blwp.DailyLobby.HowToPanels[i]);
         }
+        if (l.howToCells != null)
+            for (int i = 0; i < l.howToCells.Length && i < _howTo.Length; i++)
+            {
+                var cell = l.howToCells[i];
+                if (_howTo[i] == null || cell.width <= 0f || cell.height <= 0f) continue;
+                GUI.DrawTexture(cell, _howTo[i], ScaleMode.ScaleToFit, true);
+            }
 
         var youStyle = new GUIStyle(_body)
             { fontSize = Mathf.RoundToInt(font), wordWrap = true, richText = true, alignment = TextAnchor.MiddleLeft };
@@ -487,7 +496,8 @@ public class SplashScreen : MonoBehaviour
         {
             sb.Append(",\"you\":").Append(J(_lobby.you.name)).Append(",\"name\":").Append(R(_lastName))
               .Append(",\"key\":").Append(R(_lastKey)).Append(",\"howTo\":").Append(R(_lastHowTo))
-              .Append(",\"howToDrawn\":").Append(_howTo != null ? "true" : "false").Append(",\"picked\":").Append(J(_pickId))
+              .Append(",\"howToCells\":[").Append(_lastHowToCells == null ? "" : string.Join(",", System.Array.ConvertAll(_lastHowToCells, R))).Append(']')
+              .Append(",\"howToDrawn\":").Append(_howTo == null ? 0 : System.Array.FindAll(_howTo, t => t != null).Length).Append(",\"picked\":").Append(J(_pickId))
               .Append(",\"listed\":").Append(_lobby.rows.Length).Append(",\"rows\":[");
             for (int i = 0; i < _drawnRows.Count; i++)
             {

@@ -30,6 +30,21 @@
     #bar { height: 100%; width: 0; border-radius: 99px; background: linear-gradient(90deg, #f7931a, #ffc46b);
            transition: width .25s ease; }
 
+    /* THE OWNER'S HOW-TO ON THE LOADING SCREEN (2026-09-14 07:55): four panels,
+       each whole and never stretched, white knocked out for this dark ground -
+       1-2-3-4 in a row on a wide screen, 1-2 over 3-4 on a tall one, shrunk to
+       fit and no smaller than readable. A phone on its side gets a shorter row so
+       the bar and the words under it stay on screen. */
+    #howto { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; width: min(1100px, 94vw, 190vh); }
+    #howto img { display: block; width: 100%; height: auto; aspect-ratio: 724 / 543; max-width: 100%; }
+    @media (orientation: portrait) {
+      #howto { grid-template-columns: repeat(2, 1fr); width: min(620px, 94vw, 58vh); }
+    }
+    @media (orientation: landscape) and (max-height: 500px) {
+      #boot { gap: 8px; padding-block: 10px; }
+      #howto { width: min(94vw, 150vh); }
+    }
+
     #pct { font-variant-numeric: tabular-nums; font-size: 28px; font-weight: 600; }
     #stage { color: #8b949e; font-size: 13px; min-height: 1.5em; text-align: center; }
     #note { color: #5c6570; font-size: 12px; max-width: 460px; text-align: center; }
@@ -248,6 +263,12 @@
   <div id="boot">
     <div id="title">Bitcoin <span>Logistics</span> War</div>
     <div id="sub">build {{{ PRODUCT_VERSION }}}</div>
+    <div id="howto">
+      <img src="howto-1.png" alt="How to play, 1 of 4">
+      <img src="howto-2.png" alt="How to play, 2 of 4">
+      <img src="howto-3.png" alt="How to play, 3 of 4">
+      <img src="howto-4.png" alt="How to play, 4 of 4">
+    </div>
     <div id="pct">0%</div>
     <div id="track"><div id="bar"></div></div>
     <div id="stage">Connecting …</div>

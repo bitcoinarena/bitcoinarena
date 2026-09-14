@@ -48,7 +48,7 @@ public class LobbyScreenTests
             float sub = Mathf.Clamp(min * 0.028f, 14f, 24f);
             float btn = Mathf.Clamp(min * 0.040f, 18f, 34f);
             var f = SplashScreen.Measure(w, h, sub, btn);
-            var l = DailyLobby.MeasureLobby(f.copy, Mathf.Round(sub));
+            var l = DailyLobby.MeasureLobby(f.copy, Mathf.Round(sub), css.y > css.x);
             string at = $"at {css.x}x{css.y} css, {dpr}x";
 
             Inside(f.panel, new Rect(0, 0, w, h), $"the panel {at}");
@@ -57,11 +57,26 @@ public class LobbyScreenTests
 
             var parts = new[] { (l.you, "who you are"), (l.name, "NAME"), (l.key, "KEY"), (l.head, "the rounds header"),
                                 (l.more, "the page button"), (l.list, "the round list"), (l.howTo, "the how-to art") };
-            // THE HOW-TO ART (the owner 08:58): small, and whole - never stretched, never a sliver
-            // in layout units, like every size checked here - the game lays the
-            // title screen out in CSS px and draws it at the screen's scale
-            Assert.GreaterOrEqual(l.howTo.height, 40f, $"the how-to art is under 40 px of layout high {at}: {l.howTo}");
-            Assert.AreEqual(DailyLobby.HowToAspect, l.howTo.width / l.howTo.height, 0.01f, $"the how-to art is stretched {at}");
+            // THE OWNER'S HOW-TO, FOUR PANELS (2026-09-14 07:55): each whole - never
+            // stretched, never a sliver - in layout units, like every size checked
+            // here; 1-2 over 3-4 on a portrait screen, one row on a desktop.
+            Assert.IsNotNull(l.howToCells, $"no how-to panels {at}");
+            Assert.AreEqual(4, l.howToCells.Length, $"not four how-to panels {at}");
+            for (int i = 0; i < 4; i++)
+            {
+                var c = l.howToCells[i];
+                Assert.GreaterOrEqual(c.height, DailyLobby.HowToMinCell - 0.5f, $"how-to panel {i + 1} is under {DailyLobby.HowToMinCell} px high {at}: {c}");
+                Assert.AreEqual(DailyLobby.PanelAspect, c.width / c.height, 0.01f, $"how-to panel {i + 1} is stretched {at}: {c}");
+                Inside(c, l.howTo, $"how-to panel {i + 1} {at}");
+                for (int j = i + 1; j < 4; j++) Assert.IsFalse(c.Overlaps(l.howToCells[j]), $"how-to panels {i + 1} and {j + 1} overlap {at}");
+            }
+            if (css.y > css.x)
+            {
+                Assert.AreEqual(l.howToCells[0].y, l.howToCells[1].y, 0.5f, $"1 and 2 are not side by side {at}");
+                Assert.Greater(l.howToCells[2].y, l.howToCells[0].yMax - 0.5f, $"3-4 are not under 1-2 {at}");
+            }
+            if (css.x >= 1366f)
+                Assert.AreEqual(l.howToCells[0].y, l.howToCells[3].y, 0.5f, $"a wide desktop does not get 1-2-3-4 in one row {at}");
             Assert.IsFalse(l.howTo.Overlaps(f.play) || l.howTo.Overlaps(f.spectate) || l.howTo.Overlaps(f.hint),
                 $"the how-to art and the buttons overlap {at}");
             foreach (var (r, what) in parts) Inside(r, f.copy, $"{what} {at}");
@@ -71,7 +86,8 @@ public class LobbyScreenTests
             foreach (var (r, what) in new[] { (f.play, "PLAY"), (f.spectate, "SPECTATE"), (f.hint, "the hint") })
                 Assert.IsFalse(l.list.Overlaps(r) || l.you.Overlaps(r), $"the lobby and {what} overlap {at}");
 
-            Assert.GreaterOrEqual(l.rows, 2, $"fewer than two rounds fit {at}: list {l.list.height:0} px, row {l.rowH:0} px");
+            Assert.GreaterOrEqual(l.rows, 2, $"fewer than two rounds fit {at}: list {l.list.height:0} px, row {l.rowH:0} px"
+                + $" (copy {f.copy}, how-to {l.howTo} grid {l.howToGrid}, narrow {l.narrow}, you {l.you}, head {l.head}, list {l.list})");
             Assert.LessOrEqual(l.rows * l.rowH, l.list.height + 0.5f, $"the rows run out of the list {at}");
             foreach (var (r, what) in new[] { (l.name, "NAME"), (l.key, "KEY"), (l.more, "the page button") })
                 Assert.GreaterOrEqual(r.height, 27f, $"{what} is too small to press {at}");
@@ -81,14 +97,17 @@ public class LobbyScreenTests
         }
     }
 
-    /// <summary>The how-to art ships in Resources and is imported whole: 1280x720, not a power-of-two rounding.</summary>
+    /// <summary>the owner's four panels ship in Resources and are imported whole: 724x543, not a power-of-two rounding.</summary>
     [Test]
     public void TheHowToArtLoadsWhole()
     {
-        var t = Resources.Load<Texture2D>(DailyLobby.HowToResource);
-        Assert.IsNotNull(t, "the lobby's how-to art is not in Resources");
-        Assert.AreEqual(1280, t.width, "the how-to art was rescaled on import");
-        Assert.AreEqual(720, t.height, "the how-to art was rescaled on import");
+        foreach (var name in DailyLobby.HowToPanels)
+        {
+            var t = Resources.Load<Texture2D>(name);
+            Assert.IsNotNull(t, $"the lobby's how-to panel {name} is not in Resources");
+            Assert.AreEqual(724, t.width, $"{name} was rescaled on import");
+            Assert.AreEqual(543, t.height, $"{name} was rescaled on import");
+        }
     }
 
     const string Sample ="{\"mode\":\"lobby\",\"from\":\"daily.json\",\"you\":{\"name\":\"azure-elk-1364\",\"custom\":false,"

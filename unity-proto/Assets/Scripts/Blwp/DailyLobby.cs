@@ -204,6 +204,8 @@ namespace Blwp
         public struct Frame
         {
             public Rect you, name, key, head, more, list, howTo;
+            public Rect[] howToCells;
+            public bool howToGrid;
             public float rowH;
             public int rows;
             public bool narrow;
@@ -219,25 +221,69 @@ namespace Blwp
         /// ROUNDS header with its page button; then as many round rows as fit.
         /// Every button is at least 34 px high, a finger's width on a phone.
         /// </summary>
-        public static Frame MeasureLobby(Rect copy, float font)
+        public static Frame MeasureLobby(Rect copy, float font, bool portrait = false)
         {
             float line = font * 1.45f;
             float btnH = Mathf.Max(font * 2.1f, 34f);
             float gap = Mathf.Max(4f, font * 0.4f);
             float btnW = Mathf.Max(font * 5.2f, 72f);
 
-            // THE HOW-TO ART (the owner 2026-09-13 08:58): ONE picture, small and
-            // whole - load, cross the front, deliver, stake and win. A copy area
-            // taller than it is wide-ish (a phone upright, a tablet, a desktop)
-            // gets it as a strip across the top; a wide, short one (a phone held
-            // sideways) as a column beside the rounds, where a strip would take
-            // the height the rounds need.
+            // THE OWNER'S HOW-TO, FOUR PANELS (the owner 2026-09-14 07:55): load, cross
+            // the front, deliver, stake and win - each panel whole, never
+            // stretched. A desktop or any landscape copy area gets them as one
+            // row, 1-2-3-4; a portrait one (a phone upright, a tablet) as two
+            // rows, 1-2 over 3-4; a wide, short one (a phone held sideways) as the
+            // same two rows in a column beside the rounds, where a strip would
+            // take the height the rounds need. Shrunk to fit, never below
+            // HowToMinCell high. WHICH OF THE TWO is whichever draws each panel
+            // bigger in the room it has (a row on a tie): measured, a portrait
+            // phone's copy area is wider than tall inside the title panel, and a
+            // row there drew 64 px panels where two rows of two draw 127. Not by
+            // pixels: a phone's canvas is 1170 px wide at 3x.
+            // AND A PHONE HELD UPRIGHT IS ALWAYS 1-2 OVER 3-4 (the owner 07:55): its
+            // copy area is wider than tall inside the title panel, so the shape of
+            // the SCREEN is handed in - measured at 375x667, the bigger-panel rule
+            // alone chose a row (101 px panels) over a grid capped at 42% (82 px).
             bool beside = copy.width >= copy.height * 2.2f;
+            float cellGap = Mathf.Max(2f, gap * 0.5f);
+            float gridCap = portrait ? 0.48f : 0.42f;
+            // THE ROUNDS COME FIRST (the owner 22:16, "fully visible"): the panels take
+            // only what leaves who-you-are, NAME and KEY, the header and two round
+            // rows on screen. Measured at 375x667 2x: at 48% of the height the list
+            // kept 75 px - one round.
+            bool narrowHere = copy.width < btnW * 2f + gap + font * 16f;
+            float reserved = (narrowHere ? line * 2f + gap + btnH + gap : Mathf.Max(btnH, line * 2f) + gap)
+                           + Mathf.Max(line, btnH * 0.8f) + gap * 0.5f + 2f * Mathf.Max(font * 2.0f, 34f) + gap + 1f;
+            float room = Mathf.Max(0f, copy.height - reserved);
+            bool grid = beside || portrait || PanelHeight(2, 2, copy.width, Mathf.Min(copy.height * gridCap, room), cellGap)
+                                              > PanelHeight(4, 1, copy.width, Mathf.Min(copy.height * 0.34f, room), cellGap) + 0.5f;
+            float cols = grid ? 2f : 4f, rowsOf = grid ? 2f : 1f;
+            // The box from one side, so every cell is exactly PanelAspect whatever the gaps.
+            float WidthFor(float h) => cols * PanelAspect * Mathf.Max(0f, (h - (rowsOf - 1f) * cellGap) / rowsOf) + (cols - 1f) * cellGap;
+            float HeightFor(float w) => rowsOf * Mathf.Max(0f, (w - (cols - 1f) * cellGap) / cols) / PanelAspect + (rowsOf - 1f) * cellGap;
             Rect howTo = default;
-            if (!beside)
+            // A PHONE ON ITS SIDE: 1-2 over 3-4 in a column at the right. Where the
+            // rest can stay one line wide beside it, the column takes the FULL height
+            // of the copy area (bigger panels); where it cannot - stacked, who-you-are,
+            // NAME and KEY took the rounds' height: measured at 667x375 1x, a 58 px
+            // list, one round - it sits beside the round list only, as before.
+            // (1 px spare: measured, the left side landed a float hair under the
+            // one-line width and stacked - 667x375 1x, a 58 px list.)
+            float keepWide = copy.width - (btnW * 2f + gap + font * 16f) - gap - 1f;
+            bool besideAll = beside && keepWide >= WidthFor(2f * HowToMinCell + cellGap);
+            if (besideAll)
             {
-                float hh = Mathf.Min(copy.width / HowToAspect, copy.height * 0.24f);
-                float hw = hh * HowToAspect;
+                float aw = Mathf.Min(copy.width * 0.45f, WidthFor(copy.height), keepWide);
+                float ah = HeightFor(aw);
+                howTo = new Rect(copy.xMax - aw, copy.y, aw, ah);
+                copy = new Rect(copy.x, copy.y, Mathf.Max(0f, copy.width - aw - gap), copy.height);
+            }
+            else if (!beside)
+            {
+                float hh = Mathf.Min(HeightFor(copy.width), Mathf.Min(copy.height * (grid ? gridCap : 0.34f), room));
+                hh = Mathf.Max(hh, Mathf.Min(room, rowsOf * HowToMinCell + (rowsOf - 1f) * cellGap));
+                float hw = WidthFor(hh);
+                if (hw > copy.width) { hw = copy.width; hh = HeightFor(hw); }
                 howTo = new Rect(copy.x + (copy.width - hw) * 0.5f, copy.y, hw, hh);
                 copy = new Rect(copy.x, howTo.yMax + gap, copy.width, Mathf.Max(0f, copy.yMax - howTo.yMax - gap));
             }
@@ -272,31 +318,57 @@ namespace Blwp
 
             float rowH = Mathf.Max(font * 2.0f, 34f);
             var list = new Rect(copy.x, y, copy.width, Mathf.Max(0f, copy.yMax - y));
-            if (beside)
+            if (beside && !besideAll)
             {
-                // the column: as tall as the list allows, no wider than 38% of it
-                float ah = Mathf.Min(list.height, list.width * 0.38f / HowToAspect);
-                float aw = ah * HowToAspect;
+                // the column beside the round list: 1-2 over 3-4, as tall as the list, no wider than 45% of it
+                float aw = Mathf.Min(list.width * 0.45f, WidthFor(list.height));
+                float ah = HeightFor(aw);
                 howTo = new Rect(list.xMax - aw, list.y, aw, ah);
                 list = new Rect(list.x, list.y, Mathf.Max(0f, list.width - aw - gap), list.height);
             }
             int rows = Mathf.Max(0, Mathf.FloorToInt((list.height + 0.01f) / rowH));
             return new Frame { you = you, name = name, key = key, head = head, more = more, list = list,
-                               howTo = howTo, rowH = rowH, rows = rows, narrow = narrow };
+                               howTo = howTo, howToCells = HowToCells(howTo, grid, cellGap), howToGrid = grid,
+                               rowH = rowH, rows = rows, narrow = narrow };
         }
 
-        /// <summary>The how-to art, loaded from Resources (Assets/Art/Resources).</summary>
-        public const string HowToResource = "lobby-how-to-1-2-3-4";
+        /// <summary>How high one panel is drawn with `cols` x `rows` of them across `width`, the box no taller than `capH`.</summary>
+        public static float PanelHeight(int cols, int rows, float width, float capH, float cellGap)
+        {
+            float byWidth = Mathf.Max(0f, (width - (cols - 1) * cellGap) / cols) / PanelAspect;
+            float byHeight = Mathf.Max(0f, (capH - (rows - 1) * cellGap) / rows);
+            return Mathf.Min(byWidth, byHeight);
+        }
+
+        /// <summary>The four panels inside the how-to box: 1-2-3-4 in a row, or 1-2 over 3-4.</summary>
+        public static Rect[] HowToCells(Rect box, bool grid, float cellGap)
+        {
+            int cols = grid ? 2 : 4, rows = grid ? 2 : 1;
+            float cw = Mathf.Max(0f, (box.width - (cols - 1) * cellGap) / cols);
+            float ch = Mathf.Max(0f, (box.height - (rows - 1) * cellGap) / rows);
+            var cells = new Rect[4];
+            for (int i = 0; i < 4; i++)
+                cells[i] = new Rect(box.x + (i % cols) * (cw + cellGap), box.y + (i / cols) * (ch + cellGap), cw, ch);
+            return cells;
+        }
 
         /// <summary>
-        /// The part of the 1280x720 file that is drawn, as UVs (origin bottom-left):
-        /// the four cards, x 40-1240 and y 118-570 from the top - the empty margins
-        /// around them are not drawn, so the picture is as big as its room allows.
+        /// the owner's four how-to panels (2026-09-14 07:55), in Resources
+        /// (Assets/Art/Resources), white knocked out for the dark UI: 1 load,
+        /// 2 cross the front, 3 deliver, 4 stake and win.
         /// </summary>
-        public static readonly Rect HowToUv = new Rect(40f / 1280f, 150f / 720f, 1200f / 1280f, 452f / 720f);
+        public static readonly string[] HowToPanels = { "lobby-howto-1", "lobby-howto-2", "lobby-howto-3", "lobby-howto-4" };
 
-        /// <summary>Width over height of the part drawn.</summary>
-        public const float HowToAspect = 1200f / 452f;
+        /// <summary>Width over height of one panel: 724x543.</summary>
+        public const float PanelAspect = 724f / 543f;
+
+        /// <summary>
+        /// The smallest a panel is drawn, in layout px: the floor the 1-2-3-4 strip
+        /// before it was held to (40). A phone draws at 2-3x, so that is 80-120
+        /// device px; 60 could not be kept beside two rounds on a 667x375 screen
+        /// at 1x - measured - and no phone draws at 1x.
+        /// </summary>
+        public const float HowToMinCell = 40f;
 
         /// <summary>One row's words, shortest first to go: the round id, then the seated count.</summary>
         public static string[] RowWords(LobbyRow r)
