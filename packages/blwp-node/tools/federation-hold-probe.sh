@@ -27,6 +27,11 @@
 # $HOME/.cache; FEDIMINT_HOME (default $FEDIMINT_BIN/home) keeps that inside
 # the directory the operator chose. Nothing is installed or put on PATH.
 set -uo pipefail
+TIMEOUT_S=${TIMEOUT_S:-720}
+if [ -z "${HOLD_PROBE_WRAPPED:-}" ]; then
+  export HOLD_PROBE_WRAPPED=1
+  exec timeout -k 30 "${TIMEOUT_S}s" bash "$0" "$@"
+fi
 : "${FEDIMINT_BIN:?FEDIMINT_BIN must name the directory holding the Fedimint v0.12.0 builds}"
 F=$FEDIMINT_BIN
 FH=${FEDIMINT_HOME:-$F/home}

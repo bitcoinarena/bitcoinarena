@@ -8,6 +8,11 @@
 #   WASM_PKG=<wasm-bindgen --target nodejs output of blwp-lock-client>
 #     bash tools/settle-live-regtest.sh
 set -uo pipefail
+TIMEOUT_S=${TIMEOUT_S:-900}
+if [ -z "${SETTLE_LIVE_WRAPPED:-}" ]; then
+  export SETTLE_LIVE_WRAPPED=1
+  exec timeout -k 30 "${TIMEOUT_S}s" bash "$0" "$@"
+fi
 : "${FEDIMINT_BIN:?}" ; : "${LOCK_BIN:?}" ; : "${WASM_PKG:?}"
 F=$FEDIMINT_BIN; FH=${FEDIMINT_HOME:-$F/home}
 P=${PROBE_DIR:-$(mktemp -d /tmp/settle-live-XXXXXX)}
