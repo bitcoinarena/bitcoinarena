@@ -2454,7 +2454,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const kept = round.lockSettlement(new Uint8Array(rid));
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
         return res.end(JSON.stringify(kept
-          ? { state: kept.state, txid: kept.txid, why: kept.why, signature: toHex(kept.signature), message: toHex(kept.message) }
+          ? { state: kept.state, txid: kept.txid, why: kept.why, signature: toHex(kept.signature), message: toHex(kept.message),
+            madeMs: kept.madeMs, moved: settlements.summary(new Uint8Array(rid)) }
           : { state: 'NONE' }));
       }
 

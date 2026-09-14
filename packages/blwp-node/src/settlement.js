@@ -159,6 +159,26 @@ export class LockSettlement {
     return built;
   }
 
+  /**
+   * WHAT THE SEATS' SETTLEMENT MOVES, AS THIS SEAT BUILT IT - for a reader (GET
+   * /lock-settlement): every input with its kind and msat, every payout with its
+   * kind, key, msat and the federation's fee on it, the input fees, the txid. Null
+   * until this seat has built it.
+   */
+  summary(roundIdBytes) {
+    const m = this.built.get(toHex(roundIdBytes));
+    if (!m || !m.ok) return null;
+    const p = m.plan;
+    return {
+      txid: m.txid,
+      claims: p.claims.map((c) => ({ kind: c.kind || 'stake', msat: String(c.amountMsat) })),
+      payouts: p.payouts.map((x) => ({ kind: x.kind || 'qualifier', pk: toHex(x.payoutPk), msat: String(x.msat), feeMsat: String(x.feeMsat) })),
+      poolMsat: String(p.poolMsat), inputFeesMsat: String(p.inputFeesMsat), paidMsat: String(p.paidMsat),
+      feePoolMsat: String(p.feePoolMsat || 0n), feeInputFeesMsat: String(p.feeInputFeesMsat || 0n), feePaidMsat: String(p.feePaidMsat || 0n),
+      feeHole: p.feeHole ? p.feeHole.why : null,
+    };
+  }
+
   /** ROUND ONE: this seat's nonce commitment for the settlement it would sign. */
   async commit(roundIdBytes) {
     const m = await this.message(roundIdBytes);
