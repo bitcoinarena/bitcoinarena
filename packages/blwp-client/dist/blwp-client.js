@@ -8993,7 +8993,8 @@ async function lookOwed({ round, roundId, seed, curve, nodes, fetcher = fetch, c
         const total = ls.reduce((t, l) => t + BigInt(l.fields.amountMsat), 0n);
         if (waiting) stake = { state: 'waiting', how: 'refund', msat: total, ...waiting };
         else if (owed > 0n) stake = { state: 'owed', how: 'refund', msat: owed };
-        else stake = { state: 'gone', msat: total };
+        // GONE AFTER ITS EXPIRY: back to the player's key (this tab's refund, or another start's).
+        else stake = { state: 'gone', how: 'refund', msat: total };
       }
     }
   }
@@ -9024,7 +9025,8 @@ function owedToLine(o) {
     const p = { none: 'No payout', gone: `Payout ${o.payout.msat} msat: no longer in the federation - your key collected it before (another tab, or an earlier build)`,
       collected: `Payout ${o.payout.msat} msat collected` }[o.payout.state];
     const k = { lost: 'No stake back: the run did not qualify, so its stake went into the round\'s pool',
-      gone: o.stake.how === 'forfeit' ? `Stake ${o.stake.msat} msat: no longer in the federation - back to your key before` : 'No stake back: no lock of yours is left in the federation for this round',
+      gone: o.stake.how === 'forfeit' ? `Stake ${o.stake.msat} msat: no longer in the federation - back to your key before`
+        : o.stake.how === 'refund' ? `Stake ${o.stake.msat} msat: no longer in the federation - back to your key after its expiry` : 'No stake back: no lock of yours is left in the federation for this round',
       none: 'No stake back: nothing of yours is left in the federation for this round', collected: `Stake ${o.stake.msat} msat back` }[o.stake.state];
     return `${p} · ${k}`;
   }

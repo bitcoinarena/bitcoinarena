@@ -422,6 +422,13 @@ test('the page looks at what a seed is owed and spends nothing: a winner\'s payo
   const late = await lookOwed({ ...ask, fetcher: seats({ payout: false, known: false }), client: wallet(0), kept });
   assert.equal(late.refundMsat, 980000n);
   assert.deepEqual(spent, [], 'a lock owed after its expiry was refunded by looking at it');
+  // AND ONCE IT IS BACK BY THE PLAYER'S KEY (live, run B1: after its own Withdraw the refused
+  // player's tab read "No stake back: no lock of yours is left" for a stake that came back).
+  const refunded = { ...wallet(0), async lockStatus() { return JSON.stringify({ block_count: 470, stored: null }); } };
+  const back = await lookOwed({ ...ask, fetcher: seats({ payout: false, known: false }), client: refunded, kept });
+  assert.equal(back.stake.state, 'gone');
+  assert.match(owedLine(back), /Stake 980000 msat: no longer in the federation - back to your key after its expiry/);
+  assert.doesNotMatch(owedLine(back), /No stake back/, 'a stake back by the player\'s key read as no stake back');
 
   const invoiceFor = async (msat) => ({ ok: true, invoice: `lnbcrt${msat}n1p` });
   const done = await collectAndWithdraw({ ...ask, invite: INVITE, LockClient: { join: async () => { throw new Error('a second wallet was opened'); } },
