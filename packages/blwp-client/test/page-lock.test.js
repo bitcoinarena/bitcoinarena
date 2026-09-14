@@ -15,7 +15,7 @@ import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js
 import assert from 'node:assert/strict';
 
 import { lockStake, handLock, lockSecretFor, lockAmountMsat, lockLine, saveLock, savedLock, markLockCommitted,
-  refundStake, redeemStake, redeemPayout, payoutLine, returnStake, stakeBackLine, saveCollect, savedCollects, markCollectDone, keptLockUse, withdrawCollected, withdrawLine, refundKept, refundLine, LOCK_EXPIRY_MARGIN_BLOCKS, feeSecretFor } from '../src/page-lock.js';
+  refundStake, redeemStake, redeemPayout, payoutLine, returnStake, stakeBackLine, saveCollect, savedCollects, markCollectDone, keptLockUse, withdrawCollected, withdrawLine, refundKept, refundLine, lookOwed, owedToLine as owedLine, collectAndWithdraw, LOCK_EXPIRY_MARGIN_BLOCKS, feeSecretFor } from '../src/page-lock.js';
 import { sha256 } from '../../protocol/src/hash.js';
 import { entryFor, joinQuery, stakeFor, playerFor } from '../src/join.js';
 import { lockFieldsToJson } from '../../protocol/src/stake-lock.js';
@@ -373,6 +373,182 @@ test('after the settlement the winner\'s page redeems its own stake by the seats
   assert.equal(unsettled.final, false);
   assert.equal(asked.filter((u) => u.includes('/forfeit') || u.includes('/stake-lock')).length, 0, 'a forfeit was asked for before the seats settled');
   assert.equal(joins + redeemed.length, 0);
+});
+
+// W4 / 6d: NOTHING SPENT BEFORE THE PLAYER WITHDRAWS - the page only looks at what is owed.
+test('the page looks at what a seed is owed and spends nothing: a winner\'s payout and stake, a loser\'s none, a refused lock waiting then owed after expiry; collect and withdraw happen in one action', async () => {
+  const player = playerFor({ ...round, id: rid }, { seed, curve: pageCurve });
+  const mine = toHex(refundKeyOf(player.pubkey));
+  const fields = { paymentImage: { kind: 'point', bytes: POINT }, amountMsat: 980000n, claimPk: CLAIM, refundPk: refundKeyOf(player.pubkey), expiration: 464 };
+  const seats = ({ settled = true, payout = true, forfeit = 200, known = true } = {}) => async (url) => {
+    if (url.includes('/lock-settlement')) return new Response(JSON.stringify(settled ? { state: 'ACCEPTED', txid: 'ef'.repeat(32),
+      moved: { payouts: payout ? [{ kind: 'qualifier', pk: mine, msat: '978000' }] : [] } } : { state: 'NONE' }), { status: 200 });
+    if (url.includes('/stake-lock')) return new Response(JSON.stringify(known ? [{ entryId: 'ee'.repeat(32), outpoint: `${'cd'.repeat(32)}:0`, fields: lockFieldsToJson(fields), contractId: 'c1' }] : []), { status: 200 });
+    if (url.includes('/forfeit')) return forfeit === 200 ? new Response(JSON.stringify({ signature: 'ab'.repeat(64), contractId: 'c1', claimPk: toHex(CLAIM) }), { status: 200 })
+      : new Response('that run is FAILED with score 0 and this round\'s minimum is 1: not a qualifier', { status: 409 });
+    return new Response('no', { status: 404 });
+  };
+  const spent = [];
+  const wallet = (blocksLeft) => ({
+    async lockStatus() { return JSON.stringify({ block_count: 464 - blocksLeft, stored: { contract_id: 'c', blocks_left: blocksLeft } }); },
+    async refund() { spent.push('refund'); return JSON.stringify({ accepted: true, amount_msat: 978000, balance_before: 0, balance_after: 973312, stored_before: { contract_id: 'p', blocks_left: 0 } }); },
+    async redeem() { spent.push('redeem'); return JSON.stringify({ forfeit_verifies: true, accepted: true, amount_msat: 980000, balance_before: 973312, balance_after: 1951232 }); },
+    async withdrawableMsat() { return '1930649'; },
+    async withdraw() { spent.push('withdraw'); return JSON.stringify({ state: 'Success', invoice_msat: 1930649, gateway: 'gw', balance_before: 1951232, balance_after: 0 }); },
+  });
+  const ask = { round, roundId: rid, seed, curve: pageCurve, nodes: ['http://a.test'] };
+  const kept = { lock: { outpoint: { txid: b32(0xd8), outIdx: 0n }, fields } };
+
+  const won = await lookOwed({ ...ask, fetcher: seats(), client: wallet(0), kept });
+  console.log(`  winner, before withdrawing: "${owedLine(won)}"`);
+  assert.equal(won.payoutMsat, 978000n);
+  assert.equal(won.stakeMsat, 980000n);
+  assert.equal(won.owedMsat, 1958000n);
+  assert.deepEqual(spent, [], 'looking at what is owed spent something');
+  assert.match(owedLine(won), /^978000 msat payout and your 980000 msat stake - yours in the round's federation until you withdraw it/);
+
+  const lost = await lookOwed({ ...ask, fetcher: seats({ payout: false, forfeit: 409 }), client: wallet(0), kept });
+  assert.equal(lost.owedMsat, 0n);
+  assert.equal(lost.stakeLost, true);
+  assert.equal(lost.final, true);
+  assert.match(owedLine(lost), /^No payout · No stake back/);
+
+  const early = await lookOwed({ ...ask, fetcher: seats({ payout: false, known: false }), client: wallet(150), kept });
+  assert.equal(early.owedMsat, 0n);
+  assert.equal(early.final, false);
+  assert.match(owedLine(early), /from federation block 464 \(now 314\)/);
+  const late = await lookOwed({ ...ask, fetcher: seats({ payout: false, known: false }), client: wallet(0), kept });
+  assert.equal(late.refundMsat, 980000n);
+  assert.deepEqual(spent, [], 'a lock owed after its expiry was refunded by looking at it');
+
+  const invoiceFor = async (msat) => ({ ok: true, invoice: `lnbcrt${msat}n1p` });
+  const done = await collectAndWithdraw({ ...ask, invite: INVITE, LockClient: { join: async () => { throw new Error('a second wallet was opened'); } },
+    fetcher: seats(), client: wallet(0), invoiceFor });
+  console.log(`  collect and withdraw: ${spent.join(' -> ')}; "${withdrawLine(done.withdraw)}"`);
+  assert.deepEqual(spent, ['refund', 'redeem', 'withdraw'], 'the payout, the stake and the withdraw were not one action');
+  assert.equal(done.withdraw.ok, true);
+});
+
+// W4 / 6d: A CLOSED TAB LOSES NOTHING THE FEDERATION HELD - measured on a federation that keeps
+// its contracts and each tab's e-cash, the old timer's collect against the look.
+test('a winner\'s tab closed before withdrawing: the old timer\'s collect strands the money in the closed tab; the look leaves the federation holding the payout and the stake, and a fresh tab\'s withdraw collects and pays both out', async () => {
+  const player = playerFor({ ...round, id: rid }, { seed, curve: pageCurve });
+  const mine = toHex(refundKeyOf(player.pubkey));
+  const PAYOUT = `${'ef'.repeat(32)}:0`;
+  const STAKE = `${'cd'.repeat(32)}:0`;
+  const fields = { paymentImage: { kind: 'point', bytes: POINT }, amountMsat: 980000n, claimPk: CLAIM, refundPk: refundKeyOf(player.pubkey), expiration: 464 };
+  const seats = async (url) => {
+    if (url.includes('/lock-settlement')) return new Response(JSON.stringify({ state: 'ACCEPTED', txid: 'ef'.repeat(32),
+      moved: { payouts: [{ kind: 'qualifier', pk: mine, msat: '978000' }] } }), { status: 200 });
+    if (url.includes('/stake-lock')) return new Response(JSON.stringify([{ entryId: 'ee'.repeat(32), outpoint: STAKE, fields: lockFieldsToJson(fields), contractId: 'c1' }]), { status: 200 });
+    if (url.includes('/forfeit')) return new Response(JSON.stringify({ signature: 'ab'.repeat(64), contractId: 'c1', claimPk: toHex(CLAIM) }), { status: 200 });
+    return new Response('no', { status: 404 });
+  };
+  // THE FEDERATION: what it holds at each outpoint, each tab's e-cash, what went out over Lightning.
+  const federation = () => {
+    const held = new Map([[PAYOUT, 978000n], [STAKE, 980000n]]);
+    const tabs = []; const paid = [];
+    const tab = () => {
+      const t = { balance: 0n, calls: [] }; tabs.push(t);
+      const take = (txid, i) => {
+        const k = `${txid}:${i}`; const m = held.get(k);
+        if (m === undefined) return JSON.stringify({ accepted: false, stored_before: null, error: 'No contract found for given ContractId' });
+        held.delete(k); const before = t.balance; t.balance += m;
+        return JSON.stringify({ accepted: true, forfeit_verifies: true, amount_msat: Number(m), balance_before: Number(before), balance_after: Number(t.balance), stored_before: { contract_id: 'c', blocks_left: 0 } });
+      };
+      return {
+        async lockStatus(txid, i) { t.calls.push('lockStatus'); return JSON.stringify({ block_count: 500, stored: held.has(`${txid}:${i}`) ? { contract_id: 'c', blocks_left: 0 } : null }); },
+        async refund(txid, i) { t.calls.push('refund'); return take(txid, i); },
+        async redeem(txid, i) { t.calls.push('redeem'); return take(txid, i); },
+        async withdrawableMsat() { t.calls.push('withdrawableMsat'); if (t.balance === 0n) throw new Error('Balance is too low to send any amount after fees'); return String(t.balance - 1000n); },
+        async withdraw(invoice) {
+          t.calls.push('withdraw'); const amt = t.balance - 1000n; const before = t.balance; paid.push({ invoice, msat: amt }); t.balance = 0n;
+          return JSON.stringify({ state: 'Success', invoice_msat: Number(amt), gateway: 'gw', balance_before: Number(before), balance_after: 0 });
+        },
+      };
+    };
+    return { held, tabs, paid, tab };
+  };
+  const noJoin = { join: async () => { throw new Error('a second wallet was opened'); } };
+  const ask = (storage) => ({ round, roundId: rid, invite: INVITE, seed, curve: pageCurve, LockClient: noJoin, storage, nodes: ['http://a.test'], fetcher: seats });
+
+  // BEFORE: the old 5 s timer - redeemPayout and returnStake into the tab - then the tab closes.
+  const was = federation();
+  const oldTab = was.tab();
+  const oldStorage = tabStorage();
+  await redeemPayout({ ...ask(oldStorage), client: oldTab });
+  await returnStake({ ...ask(oldStorage), client: oldTab });
+  const oldFresh = await lookOwed({ ...ask(tabStorage()), client: was.tab() });
+  console.log(`  before (the timer collected, the tab closed): federation holds ${was.held.size} contracts, the closed tab ${was.tabs[0].balance} msat; a fresh tab: "${owedLine(oldFresh)}"`);
+  assert.equal(was.held.size, 0);
+  assert.equal(was.tabs[0].balance, 1958000n, 'the old path did not strand the money in the closed tab');
+  assert.equal(oldFresh.owedMsat, 0n);
+
+  // NOW: the tab only looks - three times, as the 5 s loop does - then closes without a withdraw.
+  const fed = federation();
+  const closed = fed.tab();
+  const closedStorage = tabStorage();
+  for (let i = 0; i < 3; i++) {
+    const l = await lookOwed({ ...ask(closedStorage), client: closed });
+    assert.equal(l.owedMsat, 1958000n);
+  }
+  assert.deepEqual([...fed.held], [[PAYOUT, 978000n], [STAKE, 980000n]], 'looking changed what the federation holds');
+  assert.equal(fed.tabs[0].balance, 0n, 'looking moved money into the tab');
+  assert.deepEqual([...new Set(fed.tabs[0].calls)].sort(), ['lockStatus', 'withdrawableMsat'], 'looking asked the wallet to spend');
+  assert.equal(closedStorage.m.size, 0, 'looking wrote to the tab');
+
+  // A FRESH TAB after the closed one: everything still owed, in the federation.
+  const fresh = fed.tab();
+  const freshStorage = tabStorage();
+  const seen = await lookOwed({ ...ask(freshStorage), client: fresh });
+  console.log(`  after (the tab only looked, then closed): federation holds ${fed.held.size} contracts; a fresh tab: "${owedLine(seen)}"`);
+  assert.equal(seen.payoutMsat, 978000n);
+  assert.equal(seen.stakeMsat, 980000n);
+  assert.equal(seen.final, false);
+
+  // WITHDRAW WITH NO INVOICE TO PAY: nothing collected, it stays in the federation.
+  const refused = await collectAndWithdraw({ ...ask(freshStorage), client: fresh, invoiceFor: async () => ({ ok: false }), canInvoice: false });
+  assert.equal(refused.withdraw.ok, false);
+  assert.equal(fed.held.size, 2, 'a withdraw with no invoice collected into the tab');
+  assert.equal(fed.tabs[1].balance, 0n);
+
+  // WITHDRAW: collected and paid out in the one action, through the one wallet.
+  const done = await collectAndWithdraw({ ...ask(freshStorage), client: fresh, invoiceFor: async (msat) => ({ ok: true, invoice: `lnbcrt${msat}` }) });
+  console.log(`  withdraw: ${fed.tabs[1].calls.filter((c) => !['lockStatus', 'withdrawableMsat'].includes(c)).join(' -> ')}; "${withdrawLine(done.withdraw)}"`);
+  assert.equal(done.withdraw.ok, true);
+  assert.equal(fed.held.size, 0);
+  assert.deepEqual(fed.paid, [{ invoice: 'lnbcrt1957000', msat: 1957000n }]);
+  assert.equal(fed.tabs[1].balance, 0n);
+  const after = await lookOwed({ ...ask(freshStorage), client: fresh });
+  assert.equal(after.final, true);
+  assert.equal(after.inTabMsat, 0n);
+  assert.equal(owedLine(after), 'Payout 978000 msat collected · Stake 980000 msat back');
+  const other = await lookOwed({ ...ask(tabStorage()), client: fed.tab() });
+  assert.equal(other.final, true);
+  assert.equal(other.owedMsat, 0n);
+  assert.match(owedLine(other), /^Payout 978000 msat: no longer in the federation - your key collected it before .* · Stake 980000 msat: no longer in the federation - back to your key before$/);
+});
+
+// W4 / 6d: THE PAGE'S TIMERS ONLY LOOK. The page's own code: nothing registered on an interval
+// collects, redeems, refunds or withdraws; the collect is reached from the Withdraw button only.
+test('the page spends nothing on a timer: its interval functions only look, and collect-and-withdraw is called from the Withdraw action alone', async () => {
+  const { readFileSync } = await import('node:fs');
+  const page = readFileSync(new URL('../../../unity-proto/Assets/WebGLTemplates/BtcLogistics/index.html', import.meta.url), 'utf8');
+  const spends = /redeemPayout|returnStake|refundKept|withdrawCollected|collectOwed|collectAndWithdraw|\.refund\(|\.redeem\(|\.withdraw\(/;
+  const timed = [...page.matchAll(/setInterval\((\w+), \d+\)/g)].map((m) => m[1]);
+  assert.ok(timed.includes('lookThePayout'), `the look is not on a timer (${timed.join(', ')})`);
+  for (const name of timed) {
+    const at = page.search(new RegExp(`function ${name}\\(`));
+    if (at < 0) continue;
+    const body = page.slice(at, page.indexOf('\n    }\n', at));
+    assert.doesNotMatch(body, spends, `${name}, on a timer, spends`);
+  }
+  for (const f of ['redeemPayout', 'returnStake', 'refundKept', 'withdrawCollected', 'collectOwed'])
+    assert.ok(!page.includes(`BLWPCLIENT.${f}(`), `the page calls ${f} itself`);
+  const calls = [...page.matchAll(/BLWPCLIENT\.collectAndWithdraw\(/g)].map((m) => m.index);
+  const withdrawAt = page.indexOf('window.BLWP_WITHDRAW = async function');
+  assert.equal(calls.length, 1);
+  assert.ok(calls[0] > withdrawAt && calls[0] < page.indexOf('\n    };\n', withdrawAt), 'collect-and-withdraw is called outside the Withdraw action');
 });
 
 // W4 / 6d: A LOCK NO SEAT WILL SETTLE COMES BACK BY THE PLAYER'S OWN KEY AFTER ITS EXPIRY.

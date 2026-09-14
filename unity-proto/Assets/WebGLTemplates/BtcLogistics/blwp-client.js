@@ -8552,7 +8552,7 @@ async function settlementOf({ roundId, nodes, fetcher = fetch } = {}) {
  * its forfeit (`redeemStake`).
  */
 async function redeemPayout({ round, roundId, invite, seed, curve, LockClient, storage, nodes, fetcher = fetch,
-  onStep = () => {} } = {}) {
+  client: given = null, onStep = () => {} } = {}) {
   if (!round || !roundLocks(round)) throw new Error('this round names no federation, so it has no payout contract');
   // A PAYOUT THIS TAB ALREADY COLLECTED is answered from the tab's note: after a
   // reload the contract is spent, and asking the federation again could only fail
@@ -8573,8 +8573,9 @@ async function redeemPayout({ round, roundId, invite, seed, curve, LockClient, s
   const fields = { paymentImage: { kind: 'hash', bytes: '00'.repeat(32) }, amountMsat: String(p.msat), claimPk: mine, refundPk: mine, expiration: 0 };
   const secret = lockSecretFor(seed, roundId);
   const store = storage ? lockStoreFor(storage, roundId, secret) : unkeptLockStore();
-  onStep('joining the federation');
-  const client = await LockClient.join(invite, toHex(round.federationId), toHex(secret), store);
+  // THE WALLET THE WITHDRAW WILL PAY FROM, when the caller has it open (one client over the store).
+  if (!given) onStep('joining the federation');
+  const client = given || await LockClient.join(invite, toHex(round.federationId), toHex(secret), store);
   onStep('collecting the payout');
   const said = JSON.parse(await client.refund(s.txid, at, JSON.stringify(fields), toHex(player.secret)));
   // ALREADY SPENT: the guardians hold no contract there any more, and only this key could
@@ -8766,6 +8767,133 @@ async function refundKept({ round, roundId, seed, curve, client, storage, kept =
     refundedMsat: refunded.reduce((t, e) => t + e.amountMsat, 0n),
     balance_before: refunded.length ? refunded[0].balance_before : undefined,
     balance_after: refunded.length ? refunded[refunded.length - 1].balance_after : undefined };
+}
+
+/**
+ * WHAT THIS SEED IS OWED IN THIS ROUND, SPENDING NOTHING (W4 / 6d). Measured before: the page
+ * collected the payout and redeemed the stake into the TAB's wallet (bearer e-cash in
+ * sessionStorage) every 5 s, and withdrawing waited for the player - a tab closed in between
+ * lost it, and the federation no longer held it (run 15). So the page only LOOKS until the
+ * player withdraws: the settlement (the payout to this key), the seats' /stake-lock and
+ * /forfeit (the stake back), and the federation's read-only lockStatus (a lock no seat will
+ * settle, after its expiry). `refund` and `redeem` are never called here.
+ */
+async function lookOwed({ round, roundId, seed, curve, nodes, fetcher = fetch, client = null, storage = null, kept = null } = {}) {
+  if (!round || !roundLocks(round)) throw new Error('this round names no federation, so nothing in it is owed from a lock');
+  const player = playerFor({ ...round, id: roundId }, { seed, curve });
+  const mine = toHex(refundKeyOf(player.pubkey));
+  const rid = toHex(roundId);
+  const note = (k) => { try { const v = storage && storage.getItem(k); return v ? JSON.parse(v) : null; } catch { return null; } };
+  // STILL AT ITS OUTPOINT? The federation's read-only answer; without a wallet it is not asked.
+  const held = async (txid, outIdx) => !client || !!JSON.parse(await client.lockStatus(txid, Number(outIdx))).stored;
+  const s = await settlementOf({ roundId, nodes, fetcher });
+  let payout;
+  const paidNote = note(`${PAYOUT_NOTE}${rid}`);
+  if (paidNote) payout = { state: 'collected', msat: BigInt(paidNote.amountMsat) };
+  else if (!s.ok) payout = { state: 'waiting', why: s.why };
+  else {
+    const at = s.moved.payouts.findIndex((x) => x.kind === 'qualifier' && String(x.pk).toLowerCase() === mine);
+    if (at < 0) payout = { state: 'none' };
+    // ALREADY SPENT - only this key can: collected before (another tab, an earlier build's timer).
+    else payout = { state: await held(s.txid, at) ? 'owed' : 'gone', msat: BigInt(s.moved.payouts[at].msat) };
+  }
+  let stake;
+  const backNote = note(`${STAKE_NOTE}${rid}`);
+  if (backNote) stake = { state: 'collected', msat: BigInt(backNote.amountMsat) };
+  else {
+    const locks = s.ok ? await findLock({ roundId, playerPubkey: player.pubkey, nodes, fetcher }) : [];
+    if (locks.length) {
+      let msat = 0n;
+      for (const l of locks) if (await held(toHex(l.outpoint.txid), l.outpoint.outIdx)) msat += BigInt(l.fields.amountMsat);
+      const whole = locks.reduce((t, l) => t + BigInt(l.fields.amountMsat), 0n);
+      if (msat === 0n) stake = { state: 'gone', how: 'forfeit', msat: whole };
+      else {
+        const f = await forfeitOf({ roundId, entryId: locks[0].entryId, nodes, fetcher });
+        if (f.ok) stake = { state: 'owed', msat, how: 'forfeit' };
+        else if (/that run is \S+ with score/.test(f.why)) stake = { state: 'lost', msat };
+        else stake = { state: 'waiting', msat, why: f.why };
+      }
+    } else {
+      // NO SEAT KNOWS THE LOCK (refused at the door) OR NO SETTLEMENT YET: the tab's own record,
+      // asked of the federation without spending - owed back by the player's key after expiry.
+      const held = kept || savedLock(storage, { roundId, playerPubkey: player.pubkey });
+      const ls = held && held.lock ? [held.lock, held.lock.feeLock].filter(Boolean) : [];
+      if (!ls.length) stake = { state: s.ok ? 'none' : 'waiting', why: 'this tab keeps no lock for this round' };
+      else if (!client) stake = { state: 'waiting', why: 'the federation was not asked yet' };
+      else {
+        let owed = 0n; let gone = 0; let waiting = null;
+        for (const l of ls) {
+          const st = JSON.parse(await client.lockStatus(toHex(l.outpoint.txid), Number(l.outpoint.outIdx)));
+          if (!st.stored) { gone++; continue; }
+          if (Number(st.stored.blocks_left) > 0) { waiting = { expiration: Number(l.fields.expiration), blockCount: Number(st.block_count) }; continue; }
+          owed += BigInt(l.fields.amountMsat);
+        }
+        const total = ls.reduce((t, l) => t + BigInt(l.fields.amountMsat), 0n);
+        if (waiting) stake = { state: 'waiting', how: 'refund', msat: total, ...waiting };
+        else if (owed > 0n) stake = { state: 'owed', how: 'refund', msat: owed };
+        else stake = { state: 'gone', msat: total };
+      }
+    }
+  }
+  const owed = (how) => (stake.state === 'owed' && stake.how === how ? stake.msat : 0n);
+  const payoutMsat = payout.state === 'owed' ? payout.msat : 0n;
+  // WHAT THIS TAB'S WALLET HOLDS - read, not spent (the stock client throws on an empty one).
+  let inTabMsat = 0n;
+  if (client) { try { inTabMsat = BigInt(await client.withdrawableMsat()); } catch { inTabMsat = 0n; } }
+  // FINAL: the federation holds nothing more of this seed's in this round. The tab's own balance is apart.
+  const final = ['none', 'gone', 'collected'].includes(payout.state) && ['lost', 'gone', 'none', 'collected'].includes(stake.state);
+  return { payout, stake, payoutMsat, stakeMsat: owed('forfeit'), refundMsat: owed('refund'), stakeLost: stake.state === 'lost',
+    owedMsat: payoutMsat + owed('forfeit') + owed('refund'), inTabMsat, final, settled: s.ok };
+}
+
+/** WHAT THE PLAYER IS OWED, AS THEY SEE IT: yours in the federation until you withdraw, when it comes back, or nothing. */
+function owedToLine(o) {
+  if (!o || !o.payout || !o.stake) return '';
+  const parts = [];
+  if (o.payoutMsat > 0n) parts.push(`${o.payoutMsat} msat payout`);
+  if (o.stakeMsat > 0n) parts.push(`your ${o.stakeMsat} msat stake`);
+  if (o.refundMsat > 0n) parts.push(`your ${o.refundMsat} msat of lock back by your own key`);
+  if (parts.length) return `${parts.join(' and ')} - yours in the round's federation until you withdraw it; nothing is taken out before you press Withdraw`;
+  if (o.stake.state === 'waiting' && o.stake.how === 'refund')
+    return `${o.payout.state === 'none' ? 'No payout · ' : ''}Your lock (stake ${o.stake.msat} msat) comes back to your key from federation block ${o.stake.expiration} (now ${o.stake.blockCount})`;
+  if (o.final) {
+    const p = { none: 'No payout', gone: `Payout ${o.payout.msat} msat: no longer in the federation - your key collected it before (another tab, or an earlier build)`,
+      collected: `Payout ${o.payout.msat} msat collected` }[o.payout.state];
+    const k = { lost: 'No stake back: the run did not qualify, so its stake went into the round\'s pool',
+      gone: o.stake.how === 'forfeit' ? `Stake ${o.stake.msat} msat: no longer in the federation - back to your key before` : 'No stake back: no lock of yours is left in the federation for this round',
+      none: 'No stake back: nothing of yours is left in the federation for this round', collected: `Stake ${o.stake.msat} msat back` }[o.stake.state];
+    return `${p} · ${k}`;
+  }
+  if (o.inTabMsat > 0n) return `${o.inTabMsat} msat is in this tab's wallet - withdraw it before you close the tab`;
+  if (!o.settled) return 'Waiting for the seats\' settlement';
+  return 'Waiting for the seats';
+}
+
+/**
+ * COLLECT WHAT IS OWED, INSIDE THE WITHDRAW ONLY (W4 / 6d): the payout redeemed, the stake back
+ * by the seats' forfeit or by the player's key after expiry - all into the one wallet the
+ * withdraw pays from, in the same action. Nothing is collected while the player is not there.
+ */
+async function collectOwed({ look, client, ...ask } = {}) {
+  const got = { payout: null, stake: null, refund: null };
+  if (look.payoutMsat > 0n) got.payout = await redeemPayout({ ...ask, client });
+  if (look.stakeMsat > 0n) got.stake = await returnStake({ ...ask, client });
+  if (look.refundMsat > 0n) got.refund = await refundKept({ ...ask, client });
+  return got;
+}
+
+/**
+ * COLLECT AND WITHDRAW IN ONE ACTION (W4 / 6d): looked at again as the player presses, collected
+ * into the one wallet, and at once out to the player's own. With no invoice to pay (no wallet
+ * connected, none pasted) nothing is collected: the money stays in the federation, not the tab.
+ */
+async function collectAndWithdraw({ look = null, client, invoiceFor, canInvoice = true, onStep = () => {}, ...ask } = {}) {
+  if (!canInvoice) return { payout: null, stake: null, refund: null, look,
+    withdraw: { ok: false, final: false, why: 'connect your wallet or paste an invoice from it - nothing was collected, it stays in the federation' } };
+  const seen = look || await lookOwed({ ...ask, client });
+  const got = await collectOwed({ look: seen, client, onStep, ...ask });
+  const withdraw = await withdrawCollected({ client, invoiceFor, onStep });
+  return { ...got, look: seen, withdraw };
 }
 
 /** THE REFUND AS THE PLAYER SEES IT: when the locks come back, what came back, or that they are gone. */
@@ -13838,6 +13966,7 @@ return { Client: Client, markState: markState,
          saveCollect: saveCollect, savedCollects: savedCollects, markCollectDone: markCollectDone,
          tabLockWallet: tabLockWallet, withdrawCollected: withdrawCollected, withdrawLine: withdrawLine, makeInvoice: makeInvoice,
          refundKept: refundKept, refundLine: refundLine,
+         lookOwed: lookOwed, owedToLine: owedToLine, collectOwed: collectOwed, collectAndWithdraw: collectAndWithdraw,
          lobbyQuery: lobbyQuery, fetchLobby: fetchLobby, lobbyLine: lobbyLine, lobbyJoinSearch: lobbyJoinSearch,
          dailyLobbySearch: dailyLobbySearch,
          tabIdentity: tabIdentity, setPlayerName: setPlayerName, generatedName: generatedName,

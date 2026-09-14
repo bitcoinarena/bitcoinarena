@@ -897,98 +897,88 @@
       paintWallet();
     }
 
-    // THE WINNER'S PAYOUT, COLLECTED BY THIS PAGE (6d, W4). After the window the
-    // seats' one settlement pays the winner a pre-expired payout contract to its
-    // key; the page asks the seats for it and spends it into this tab's federation
-    // wallet. A loser is told there is none, and its lock client is asked nothing.
-    // Which it is, is the client's (`redeemPayout`); this only asks and paints.
+    // WHAT THE PLAYER IS OWED, LOOKED AT - NOTHING SPENT (W4 / 6d). Measured before (run 15):
+    // this loop collected the payout and redeemed the stake into this tab's wallet every 5 s,
+    // and the withdraw waited for the player - a tab closed in between lost it, and the
+    // federation no longer held it. Now it only asks the seats and the federation what is owed
+    // (`lookOwed`); the collect happens inside the player's Withdraw, in the same action.
+    // FROM THE TAB'S KEPT RECORDS, NOT THE JOIN'S GLOBALS (a reload loses the globals); the
+    // newest round is the one painted and withdrawn.
     let payoutAsking = false;
-    async function collectThePayout() {
-      // FROM THE TAB'S KEPT RECORDS, NOT THE JOIN'S GLOBALS: measured, a reload lost the
-      // globals and left the winner's 978000 msat payout and 980000 msat stake in the
-      // federation. The newest round is the one painted.
-      if (payoutAsking || typeof BLWPCLIENT === 'undefined' || !BLWPCLIENT.savedCollects) return;
-      const kept = BLWPCLIENT.savedCollects(window.sessionStorage).filter((r) => BLWPCLIENT.roundLocks(r.round));
-      if (!kept.length) return;
-      const newest = kept[kept.length - 1];
-      window.BLWP_COLLECT = { roundIdHex: newest.roundIdHex, round: newest.round, stakeLock: newest.stakeLock };
-      if (newest.done) window.BLWP_COLLECT_LINE = [newest.done.payout, newest.done.stake].filter(Boolean).join(' · ');
-      const owed = kept.filter((r) => !r.done);
-      if (!owed.length) { paintWallet(); return; }
-      payoutAsking = true;
-      try {
+    const roundWallets = new Map();
+    function roundAsk(r, LockClient) {
+      return { round: r.round, roundId: BLWPCLIENT.fromHex(r.roundIdHex), invite: r.invite, seed: r.seed,
+        curve: window.BLWP_CURVE, LockClient, storage: window.sessionStorage, nodes: r.nodes };
+    }
+    // ONE WALLET PER ROUND in this tab - the one the withdraw collects into and pays from.
+    async function roundWallet(r) {
+      if (!roundWallets.has(r.roundIdHex)) {
         const wasm = await import('./blwp_lock_client.js');
         await wasm.default();
-        for (const r of owed) {
-          const ask = { round: r.round, roundId: BLWPCLIENT.fromHex(r.roundIdHex), invite: r.invite,
-            seed: r.seed, curve: window.BLWP_CURVE, LockClient: wasm.LockClient, storage: window.sessionStorage, nodes: r.nodes };
-          const p = await BLWPCLIENT.redeemPayout(ask);
-          // AND THE PLAYER'S OWN STAKE (6d): once the seats have settled - they forfeit a
-          // qualifier's lock only then - into the same wallet; a loser's is told it went
-          // into the pool.
-          // ASKED EVERY TIME, not only after a final payout: returnStake checks for the seats'
-          // settlement itself. Measured: a payout the page could not finish kept the stake
-          // step from ever asking, and the winner's 980000 msat stayed in the federation.
-          const s = await BLWPCLIENT.returnStake(Object.assign({}, ask, { client: p.client || null }));
-          // A LOCK NO SEAT WILL SETTLE (a player the fee-lock door refused, or a round that never
-          // settles): back by the player's own key after its expiry, from the tab's own record -
-          // the stake step would ask the seats for a forfeit none of them will ever give (W4 / 6d).
-          let k = null;
-          if (!s.ok && !s.final) {
-            try {
-              const own = p.client || await BLWPCLIENT.tabLockWallet(ask);
-              k = await BLWPCLIENT.refundKept(Object.assign({}, ask, { client: own }));
-              k.client = own;
-            } catch (e) { console.error('[blwp] refund: ' + e.message); }
-          }
-          if (r === newest) {
-            window.BLWP_COLLECT_LINE = null;
-            window.BLWP_PAYOUT = Object.assign({}, p, { client: undefined });
-            window.BLWP_STAKE_BACK = s ? Object.assign({}, s, { client: undefined }) : null;
-            window.BLWP_REFUND = k ? Object.assign({}, k, { client: undefined }) : null;
-          }
-          // AND WHAT THIS TAB'S WALLET NOW HOLDS FOR THE PLAYER TO WITHDRAW (6d's destination).
-          const open = (s && s.client) || p.client || (k && k.client);
-          if (r === newest && open && typeof open.withdrawableMsat === 'function') {
-            try { window.BLWP_WITHDRAWABLE = BigInt(await open.withdrawableMsat()); } catch (e) { console.error('[blwp] withdraw: ' + e.message); }
-          }
-          if (p.final && s && (s.final || (k && k.final))) {
-            const done = { payout: BLWPCLIENT.payoutLine(p), stake: s.final ? BLWPCLIENT.stakeBackLine(s) : BLWPCLIENT.refundLine(k) };
-            BLWPCLIENT.markCollectDone(window.sessionStorage, r.roundIdHex, done);
-            console.log('[blwp] payout: ' + done.payout);
-            console.log('[blwp] stake: ' + done.stake);
-          }
+        roundWallets.set(r.roundIdHex, { LockClient: wasm.LockClient, client: await BLWPCLIENT.tabLockWallet(roundAsk(r, wasm.LockClient)) });
+      }
+      return roundWallets.get(r.roundIdHex);
+    }
+    function newestKept() {
+      const kept = BLWPCLIENT.savedCollects(window.sessionStorage).filter((r) => BLWPCLIENT.roundLocks(r.round));
+      return kept.length ? kept[kept.length - 1] : null;
+    }
+    async function lookThePayout() {
+      if (payoutAsking || typeof BLWPCLIENT === 'undefined' || !BLWPCLIENT.savedCollects) return;
+      const newest = newestKept();
+      if (!newest) return;
+      window.BLWP_COLLECT = { roundIdHex: newest.roundIdHex, round: newest.round, stakeLock: newest.stakeLock };
+      if (newest.done && window.BLWP_WITHDRAWABLE !== undefined) {
+        window.BLWP_COLLECT_LINE = [newest.done.payout, newest.done.stake].filter(Boolean).join(' · ');
+        paintWallet();
+        return;
+      }
+      payoutAsking = true;
+      try {
+        const w = await roundWallet(newest);
+        const look = await BLWPCLIENT.lookOwed(Object.assign(roundAsk(newest, w.LockClient), { client: w.client }));
+        window.BLWP_OWED = look;
+        window.BLWP_WITHDRAWABLE = look.inTabMsat;
+        if (newest.done) window.BLWP_COLLECT_LINE = [newest.done.payout, newest.done.stake].filter(Boolean).join(' · ');
+        else if (look.final && look.inTabMsat === 0n) {
+          const line = BLWPCLIENT.owedToLine(look);
+          BLWPCLIENT.markCollectDone(window.sessionStorage, newest.roundIdHex, { payout: line, stake: null });
+          console.log('[blwp] owed: ' + line);
         }
-      } catch (e) { console.error('[blwp] payout: ' + e.message); }
+      } catch (e) { console.error('[blwp] owed: ' + e.message); }
       payoutAsking = false;
       paintWallet();
     }
 
-    // 6d'S DESTINATION (24A.2): "the client withdraws it over Lightning". The tab's round
-    // wallet - where the payout and the stake came back - paid to an invoice from the
-    // player's own wallet: made by their connected wallet, or pasted. Measured before: the
-    // money stayed in the tab's wallet, and closing the tab kept nothing.
+    // 6d'S DESTINATION (24A.2): "the client withdraws it over Lightning". THE ONE ACTION THAT
+    // SPENDS (W4 / 6d): what is owed is looked at again, collected into the round's wallet in
+    // this tab, and at once paid to an invoice from the player's own wallet - made by their
+    // connected wallet, or pasted. With neither, nothing is collected: it stays in the federation.
     window.BLWP_WITHDRAW = async function (invoice) {
-      const kept = BLWPCLIENT.savedCollects(window.sessionStorage).filter((r) => BLWPCLIENT.roundLocks(r.round));
-      const r = kept[kept.length - 1];
+      const r = newestKept();
       if (!r) return { ok: false, why: 'this tab holds no round to withdraw from' };
-      const wasm = await import('./blwp_lock_client.js');
-      await wasm.default();
-      const client = await BLWPCLIENT.tabLockWallet({ round: r.round, roundId: BLWPCLIENT.fromHex(r.roundIdHex), invite: r.invite,
-        seed: r.seed, LockClient: wasm.LockClient, storage: window.sessionStorage });
+      const pasted = invoice && String(invoice).trim() ? String(invoice).trim() : null;
+      const conn = wallet && wallet.connected ? wallet.current() : null;
       const invoiceFor = async (msat) => {
-        if (invoice && String(invoice).trim()) return { ok: true, invoice: String(invoice).trim() };
-        const conn = wallet && wallet.connected ? wallet.current() : null;
+        if (pasted) return { ok: true, invoice: pasted };
         if (conn && conn.ok) return BLWPCLIENT.makeInvoice(conn, msat, { curve: window.BLWP_CURVE,
           random: (n) => crypto.getRandomValues(new Uint8Array(n)) });
         return { ok: false, why: `paste an invoice from your own wallet for ${msat} msat` };
       };
-      const w = await BLWPCLIENT.withdrawCollected({ client, invoiceFor });
-      window.BLWP_WITHDRAWN = w;
-      try { window.BLWP_WITHDRAWABLE = BigInt(await client.withdrawableMsat()); } catch { /* shown as it was */ }
-      console.log('[blwp] withdraw: ' + BLWPCLIENT.withdrawLine(w, window.BLWP_WITHDRAWABLE));
+      const own = await roundWallet(r);
+      const ask = roundAsk(r, own.LockClient);
+      payoutAsking = true;
+      let done;
+      try {
+        done = await BLWPCLIENT.collectAndWithdraw(Object.assign({}, ask, { client: own.client, invoiceFor, canInvoice: !!(pasted || (conn && conn.ok)),
+          onStep: (step) => console.log('[blwp] withdraw: ' + step) }));
+        window.BLWP_WITHDRAWN = done.withdraw;
+        window.BLWP_OWED = await BLWPCLIENT.lookOwed(Object.assign({}, ask, { client: own.client }));
+        window.BLWP_WITHDRAWABLE = window.BLWP_OWED.inTabMsat;
+      } finally { payoutAsking = false; }
+      console.log('[blwp] withdraw: ' + BLWPCLIENT.withdrawLine(done.withdraw, window.BLWP_WITHDRAWABLE));
       paintWallet();
-      return w;
+      return done.withdraw;
     };
     const withdrawGo = document.getElementById('blwp-withdraw-go');
     if (withdrawGo) withdrawGo.addEventListener('click', () => {
@@ -1024,11 +1014,12 @@
         document.getElementById('blwp-owed').textContent = lockShown
           ? BLWPCLIENT.lockLine(lockShown)
           : 'this round\'s stake goes into a federation lock: pay the deposit shown below';
-        document.getElementById('blwp-settled').textContent = window.BLWP_COLLECT_LINE || [BLWPCLIENT.payoutLine(window.BLWP_PAYOUT),
-          window.BLWP_REFUND ? BLWPCLIENT.refundLine(window.BLWP_REFUND) : BLWPCLIENT.stakeBackLine(window.BLWP_STAKE_BACK)].filter(Boolean).join(' · ');
-        // AND THE WITHDRAW: what is in the tab's wallet, what went, or why not; the field and
-        // the button only while there is something to withdraw.
-        const canWithdraw = window.BLWP_WITHDRAWABLE !== undefined && window.BLWP_WITHDRAWABLE !== null && window.BLWP_WITHDRAWABLE > 0n;
+        // WHAT IS OWED, AS LOOKED AT (W4 / 6d): still in the federation until the player withdraws.
+        document.getElementById('blwp-settled').textContent = window.BLWP_COLLECT_LINE || BLWPCLIENT.owedToLine(window.BLWP_OWED);
+        // AND THE WITHDRAW: what is owed or already in the tab's wallet, what went, or why not;
+        // the field and the button only while there is something to withdraw.
+        const inTab = window.BLWP_WITHDRAWABLE !== undefined && window.BLWP_WITHDRAWABLE !== null && window.BLWP_WITHDRAWABLE > 0n;
+        const canWithdraw = inTab || !!(window.BLWP_OWED && window.BLWP_OWED.owedMsat > 0n);
         document.getElementById('blwp-withdraw').textContent = BLWPCLIENT.withdrawLine(window.BLWP_WITHDRAWN,
           canWithdraw ? window.BLWP_WITHDRAWABLE : null);
         for (const id of ['blwp-withdraw-invoice', 'blwp-withdraw-go']) document.getElementById(id).style.display = canWithdraw ? '' : 'none';
@@ -1209,7 +1200,7 @@
     if (payButton) payButton.addEventListener('click', payTheStake);
     setInterval(() => { askWhatIsOwed(); askTheBudget(); paintWallet(); }, 1000);
     setInterval(askTheSettlement, 5000);
-    setInterval(collectThePayout, 5000);
+    setInterval(lookThePayout, 5000);
     probeNodes();
     setInterval(probeNodes, 2000);
     paintPlayers();

@@ -16,7 +16,7 @@ import assert from 'node:assert/strict';
 import { WebSocketServer } from 'ws';
 import { readFileSync } from 'node:fs';
 import { roundLocks, settledLine } from '../src/join.js';
-import { lockLine, payoutLine, stakeBackLine, withdrawLine, refundLine } from '../src/page-lock.js';
+import { lockLine, payoutLine, stakeBackLine, withdrawLine, refundLine, owedToLine } from '../src/page-lock.js';
 import { donationPaidLine } from '../src/donation-pay.js';
 import { randomBytes } from 'node:crypto';
 import { schnorr } from '@noble/curves/secp256k1.js';
@@ -662,6 +662,7 @@ test('a round that asks no money gets no payment box, driven off the shipped pag
       stakeBackLine,
       withdrawLine,
       refundLine,
+      owedToLine,
       spentLine: () => 'nothing paid this session',
       owedLine,
       budgetLine,
@@ -721,19 +722,21 @@ test('a round that asks no money gets no payment box, driven off the shipped pag
   run(lockRound, { connected: false }, null, null, stakeLock);
   assert.equal(made['blwp-owed'].textContent, lockLine(stakeLock));
   console.log(`  lock round: "${made['blwp-owed'].textContent}"`);
-  // AND AFTER THE WINDOW (6d): the winner's collected payout, a loser's none - the
-  // client's line in the settled slot, nothing before the page has asked.
+  // AND AFTER THE WINDOW (6d): what the winner is owed - LOOKED AT, still in the federation
+  // until the Withdraw (W4 / 6d) - a loser's none; the client's line in the settled slot,
+  // nothing before the page has looked, and the Withdraw offered only while something is owed.
   assert.equal(made['blwp-settled'].textContent, '');
-  run(lockRound, { connected: false }, null, null, stakeLock, { ok: true, final: true, amountMsat: 978000n, balance_before: 0, balance_after: 974672 });
-  assert.equal(made['blwp-settled'].textContent, 'Payout collected: 978000 msat from the round\'s settlement into this tab\'s federation wallet (balance 0 → 974672 msat)');
-  run(lockRound, { connected: false }, null, null, stakeLock, { ok: false, final: true, why: 'the round\'s settlement pays this seed\'s key nothing: no payout to collect' });
-  assert.match(made['blwp-settled'].textContent, /^No payout: /);
+  const look = (o) => ({ BLWP_OWED: { payoutMsat: 0n, stakeMsat: 0n, refundMsat: 0n, owedMsat: 0n, inTabMsat: 0n, settled: true, final: false, ...o } });
+  const won = look({ payout: { state: 'owed', msat: 978000n }, stake: { state: 'owed', how: 'forfeit', msat: 980000n },
+    payoutMsat: 978000n, stakeMsat: 980000n, owedMsat: 1958000n });
+  run(lockRound, { connected: false }, null, null, stakeLock, undefined, undefined, won);
+  assert.equal(made['blwp-settled'].textContent, '978000 msat payout and your 980000 msat stake - yours in the round\'s federation until you withdraw it; nothing is taken out before you press Withdraw');
+  assert.equal(made['blwp-withdraw-go'].style.display, '', 'a winner owed 1958000 msat was not offered the Withdraw');
+  const lost = look({ payout: { state: 'none' }, stake: { state: 'lost', msat: 980000n }, stakeLost: true, final: true });
+  run(lockRound, { connected: false }, null, null, stakeLock, undefined, undefined, lost);
+  assert.match(made['blwp-settled'].textContent, /^No payout · No stake back: the run did not qualify/);
+  assert.equal(made['blwp-withdraw-go'].style.display, 'none', 'a loser owed nothing was offered the Withdraw');
   console.log(`  lock round after the window: "${made['blwp-settled'].textContent}"`);
-  // AND THE WINNER'S OWN STAKE BACK beside its payout, one line each, joined.
-  run(lockRound, { connected: false }, null, null, stakeLock, { ok: true, final: true, amountMsat: 978000n, balance_before: 0, balance_after: 973312 },
-    { ok: true, final: true, amountMsat: 980000n, balance_before: 973312, balance_after: 1950624 });
-  assert.equal(made['blwp-settled'].textContent, 'Payout collected: 978000 msat from the round\'s settlement into this tab\'s federation wallet (balance 0 → 973312 msat)'
-    + ' · Stake returned: 980000 msat back to this tab\'s federation wallet by the seats\' forfeit (balance 973312 → 1950624 msat)');
   // AFTER A RELOAD ONTO THE LOBBY (no round joined): the round the tab still collects
   // from shows the panel, its lock, and - once done - the lines it kept.
   for (const id of ['blwp-owed', 'blwp-settled']) el(id).textContent = '';
