@@ -35,7 +35,7 @@ const contractFor = (nodes, stakeMsat) => ({
   gameVerifySlots: 7, settlementSlots: 7, simCoreHash: CORE_HASH,
   committeeTimeMs: BigInt(NOW), randomnessRule: 'bitcoin-block-hash',
   startTimeMs: BigInt(NOW) + MIN_ENTRY_WINDOW_MS, entryCloseMs: BigInt(NOW) + MIN_ENTRY_WINDOW_MS + 200000n,
-  objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20,
+  objectionWindowMs: 600000n, custody: 'THRESHOLD_LN', slashMinimumServed: 20,
   slashRemainder: 'BURN', federationId: new Uint8Array(32), stakeExpiryBlocks: 144,
   // a paying round names a relay (§13A, else the door refuses it before the
   // preflight this measures); nothing here ever posts to it
