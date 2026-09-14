@@ -69,7 +69,7 @@ async function lockRound({ minScore = 1, stakeMsat = STAKE } = {}) {
   return { a, b, c, rid, port, claimPk: held.pool.groupPublicKey, close: async () => { await a.close(); await b.close(); } };
 }
 
-async function lockAndPlay(w, who, { feeLock = false } = {}) {
+async function lockAndPlay(w, who, { feeLock = false, feeFirst = false } = {}) {
   const session = ed25519.utils.randomSecretKey();
   const preimage = secretScalar();
   const e = rand(32);
@@ -107,12 +107,18 @@ async function lockAndPlay(w, who, { feeLock = false } = {}) {
     assert.equal((await fetch(`${base}/handout`, { method: 'POST', body: encodeHandout(dealt.handout) })).status, 201);
     const seated = await fetch(`${base}/entry`, { method: 'POST', body: encodeEntryContract(entry) });
     assert.equal(seated.status, 201, await seated.text());
-    const locked = await fetch(`${base}/lock?entry=${toHex(eid)}`, { method: 'POST', body: JSON.stringify(lockFieldsToJson(fields)) });
-    assert.equal(locked.status, 201, await locked.text());
-    if (feeLock) {
+    // PICK (a): THE STAKE COUNTS WHICHEVER LOCK COMES LAST - the fee lock may be handed first.
+    const handFee = async () => {
       const fee = await fetch(`${base}/fee-lock?entry=${toHex(eid)}`, { method: 'POST', body: JSON.stringify(lockFieldsToJson(feeFields)) });
       assert.equal(fee.status, 201, await fee.text());
+    };
+    if (feeLock && feeFirst) {
+      await handFee();
+      assert.equal(d.round.stakeSeen(eid), null, 'a stake counted on its fee lock alone, before its stake lock');
     }
+    const locked = await fetch(`${base}/lock?entry=${toHex(eid)}`, { method: 'POST', body: JSON.stringify(lockFieldsToJson(fields)) });
+    assert.equal(locked.status, 201, await locked.text());
+    if (feeLock && !feeFirst) await handFee();
     assert.equal(await say(d.port, encodeInputBatch(input)), String(who.ticks));
     assert.equal((await say(d.port, signedMark)).length, SIGNED_RECEIPT_BYTES);
   }
@@ -248,6 +254,24 @@ test('where the round mints, an entry that names a fee lock and never hands it o
     assert.equal(claimed.includes(key(lost.outpoint)), true);
     assert.equal(w.port.locks.has(key(half.outpoint)), true, 'the uncommitted player\'s lock did not stay theirs');
     assert.equal(w.port.locks.has(key(won.outpoint)), true);
+  } finally { await w.close(); }
+});
+
+test('where the round mints, a fee lock handed before its stake lock counts the stake once the stake lock comes: either order commits it, and the round settles as before', async () => {
+  const w = await lockRound({ stakeMsat: 1000000n });
+  try {
+    const won = await lockAndPlay(w, WINNER, { feeLock: true, feeFirst: true });
+    const lost = await lockAndPlay(w, LOSER, { feeLock: true });
+    for (const d of [w.a, w.b]) {
+      assert.ok(d.round.stakeSeen(won.eid), 'the fee-lock-first stake was never counted');
+      assert.ok(d.round.stakeSeen(lost.eid));
+    }
+    await closeRound(w);
+    const got = await untilSettled(w);
+    assert.equal(got.state, 'ACCEPTED', got.why);
+    const winner = [...w.port.payouts.values()].find((p) => toHex(p.payoutPk) === toHex(refundKeyOf(WINNER.key)));
+    console.log(`  fee lock first: ${got.why}; the winner ${winner && winner.msat}`);
+    assert.equal(winner.msat, 978000n);
   } finally { await w.close(); }
 });
 
