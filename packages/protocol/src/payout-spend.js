@@ -68,14 +68,14 @@ export function winnings({ table, stakes }) {
   for (const s of stakes) {
     let held;
     try { held = netStakeMsat(s); } catch (e) { return { ok: false, why: e.message }; }
-    byKey.set(hex(s.pubkey), held);
+    byKey.set(hexOf(s.pubkey), held);
   }
   const rows = [];
   let owed = 0n;
   for (const row of table) {
-    const stake = byKey.get(hex(row.pubkey));
+    const stake = byKey.get(hexOf(row.pubkey));
     if (stake === undefined)
-      return { ok: false, why: `the table pays a key this round never seated: ${hex(row.pubkey).slice(0, 16)}` };
+      return { ok: false, why: `the table pays a key this round never seated: ${hexOf(row.pubkey).slice(0, 16)}` };
     const msat = row.amountMsat > stake ? row.amountMsat - stake : 0n;
     if (msat > 0n) { rows.push({ pubkey: row.pubkey, msat }); owed += msat; }
   }
@@ -150,11 +150,11 @@ export function payoutOutputs({ rows, poolSats, dustSats = DUST_SATS, feeSats })
   return { ok: true, outputs, paidSats: paid, feeSats: left, owed, owedSats };
 }
 
-const hex = (b) => [...b].map((x) => x.toString(16).padStart(2, '0')).join('');
+const hexOf = (b) => [...b].map((x) => x.toString(16).padStart(2, '0')).join('');
 
 /** A row's key has to be a key, which is what makes it a destination. */
 export const payableKey = (pubkey) => {
   if (!(pubkey instanceof Uint8Array) || pubkey.length !== 32) return false;
-  const v = BigInt('0x' + hex(pubkey));
+  const v = BigInt('0x' + hexOf(pubkey));
   return v > 0n && v < FIELD;
 };

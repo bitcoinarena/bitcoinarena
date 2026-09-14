@@ -33,9 +33,10 @@
 // the round's order), each seat one pre-expired payout contract to its own key -
 // never to the donation recipients, and no split invented here. A VOID or
 // ENTRY_VOID entry's fee lock is not claimed: §22A's fee base leaves it out.
-import { holdSettlement, netStakeMsat, isRefund, SETTLE, CANCEL } from './payout.js';
+import { holdSettlement, netStakeMsat, isRefund, SETTLE, CANCEL, FAILED } from './payout.js';
 import { winnings } from './payout-spend.js';
-import { nodeFeeTable, GAME_VERIFY, SETTLEMENT } from './fee.js';
+import { nodeFeeTable, entryFeeMsat, GAME_VERIFY, SETTLEMENT } from './fee.js';
+import { MIN_PLAYERS_PER_ROUND } from './constants.js';
 import { refundKeyOf } from './stake-lock.js';
 import { sha256, toHex, fromHex } from './hash.js';
 
@@ -153,6 +154,45 @@ function finish(stake, fee) {
     feeClaims: fee.claims, seatPayouts: fee.payouts, feePoolMsat: fee.poolMsat, feeInputFeesMsat: fee.inputFeesMsat,
     feePaidMsat: fee.paidMsat, feeOutputFeesMsat: fee.outputFeesMsat, feeUnspentMsat: fee.unspentMsat, feeUnallocatedMsat: fee.unallocatedMsat,
     feeHole: fee.hole || null };
+}
+
+/**
+ * WHETHER A FEE LOCK CAN PAY A SEAT - THE GATE THE PAGE ASKS BEFORE IT MINTS ONE
+ * (Pick b, the owner 2026-09-14: "Do not mint a fee lock when claiming it cannot pay
+ * a sitting seat ... The operator must not take money that only pays the
+ * federation.").
+ *
+ * The seats' own fee arithmetic (`feeSettlement`), run on the round's WORST case:
+ * the fewest players a round opens for (more only raise each seat's share), and
+ * the round's game/verify and settlement slots as that many DIFFERENT seats (a
+ * seat in both pools, or fewer keys, only raise the shares). It pays only if
+ * every entitled seat would be paid strictly more than nothing after the
+ * federation's own fee on every input and output. `fees` is the federation's
+ * rule, read by the page's own lock client - not a seat's word.
+ */
+export function feeLockPays({ contract, fees, players = MIN_PLAYERS_PER_ROUND } = {}) {
+  if (!contract) return { pays: false, why: 'no round to size the fee lock for' };
+  if (!fees || typeof fees.ppm !== 'bigint' || typeof fees.baseMsat !== 'bigint')
+    return { pays: false, why: 'the federation\'s fee rule is not known, so no fee lock is minted' };
+  const stakeMsat = BigInt(contract.stakeMsat || 0n);
+  const lockMsat = entryFeeMsat(stakeMsat);
+  const base = { stakeMsat, lockMsat, players, seats: Number(contract.gameVerifySlots) + Number(contract.settlementSlots) };
+  if (lockMsat <= 0n) return { ...base, pays: false, why: 'this round owes no fee, so there is nothing to lock' };
+  const key = (tag, i) => { const k = new Uint8Array(32); k[0] = tag; k[1] = i; k[31] = 1; return k; };
+  const pools = {
+    [GAME_VERIFY]: Array.from({ length: Number(contract.gameVerifySlots) }, (_, i) => key(0xa1, i)),
+    [SETTLEMENT]: Array.from({ length: Number(contract.settlementSlots) }, (_, i) => key(0xa2, i)),
+  };
+  const entries = Array.from({ length: players }, (_, i) => ({ pubkey: key(0xb0, i), stakeMsat, feeMsat: lockMsat, donationMsat: 0n, outcome: FAILED, score: 0 }));
+  const feeLocks = new Map(entries.map((e, i) => [toHex(e.pubkey), { outpoint: { txid: key(0xc0, i), outIdx: BigInt(i) }, amountMsat: lockMsat, preimage: key(0xd0, i) }]));
+  const part = feeSettlement({ entries, feeLocks, seats: pools, contract, fees });
+  if (!part.ok) return { ...base, pays: false, why: part.why };
+  const out = { ...base, inputFeesMsat: part.inputFeesMsat, outputFeesMsat: part.outputFeesMsat,
+    perSeatNetMsat: part.payouts.map((p) => p.msat), unpaidSeats: part.unpaid.length };
+  if (part.hole) return { ...out, pays: false, why: part.hole.why };
+  if (part.unpaid.length) return { ...out, pays: false, why: `${part.unpaid.length} entitled seat(s) would be paid nothing after the federation's fees` };
+  if (!part.payouts.length || part.payouts.some((p) => p.msat <= 0n)) return { ...out, pays: false, why: 'a seat would be paid nothing after the federation\'s fees' };
+  return { ...out, pays: true, why: `every one of ${part.payouts.length} seats is paid more than nothing after the federation's fees` };
 }
 
 /**

@@ -22,6 +22,7 @@ import { entryFeeMsat } from '../../protocol/src/fee.js';
 import { refundKeyOf, lockFieldsToJson, lockFieldsFromJson } from '../../protocol/src/stake-lock.js';
 import { decodeHandout, handoutId } from '../../protocol/src/handout.js';
 import { lockFromClient } from './lock-result.js';
+import { feeLockPays } from '../../protocol/src/lock-settlement.js';
 import { roundLocks, playerFor } from './join.js';
 
 // THE BLOCKS OVER stake_expiry_blocks A LOCK IS MADE FOR. The seat requires
@@ -136,32 +137,79 @@ export async function lockStake({ round, roundId, invite, seed, stake, claimKey,
   // first deposit is the net stake and the stock fee allowance
   // (`LockClient.lockAllowanceMsat`); after it the quote decides, and a quote
   // that still finds the funds short is topped up by the allowance again.
-  const allowance = BigInt(LockClient.lockAllowanceMsat(String(amount)));
-  for (let tries = 0; ; tries++) {
-    const have = BigInt(await client.balanceMsat());
-    let cost = null;
-    try { cost = BigInt(await client.lockCostMsat(String(amount))); } catch (e) {
-      if (!/insufficient funds/i.test(String((e && e.message) || e))) throw e;
-    }
-    if (cost !== null && have >= cost) break;
-    if (tries >= 3) throw new Error(`after ${tries} deposits the lock client holds ${have} msat and cannot fund a ${amount} msat lock`);
-    const short = cost !== null ? cost - have : amount + allowance - have;
-    const plan = JSON.parse(await client.depositFor(String(short > 0n ? short : allowance)));
-    const invoice = JSON.parse(await client.receive(String(plan.invoice_msat), String(plan.gateway || '')));
-    onDeposit({ invoice: invoice.invoice, amountMsat: BigInt(plan.invoice_msat), creditsMsat: BigInt(plan.credited_msat) });
-    onStep('waiting for the deposit');
-    const final = await client.awaitReceive(invoice.operation);
-    if (final !== 'Claimed') throw new Error(`the deposit was not claimed: ${final}`);
+  // THE FEE LOCK'S GATE (Pick b, the owner 2026-09-14): a fee lock is minted only
+  // when claiming it can pay every entitled sitting seat something after the
+  // federation's own fee on every input and output - read from the federation
+  // this client joined, not a seat's word. A 100 sat round's 2000 msat fee lock
+  // cannot, so none is made and the player is not charged a lock that only
+  // expires; a 1000 sat round's 20000 msat lock can. No fee rule known: no lock.
+  let feeRule = null;
+  if (typeof client.feeRule === 'function') {
+    try { const r = JSON.parse(await client.feeRule()); feeRule = { ppm: BigInt(r.fee_ppm), baseMsat: BigInt(r.fee_base_msat) }; }
+    catch { feeRule = null; }
   }
+  const feeGate = feeLockPays({ contract: round, fees: feeRule });
+  const feeMsat = feeGate.pays ? feeGate.lockMsat : 0n;
+
+  const fund = async (msat) => {
+    const allowance = BigInt(LockClient.lockAllowanceMsat(String(msat)));
+    for (let tries = 0; ; tries++) {
+      const have = BigInt(await client.balanceMsat());
+      let cost = null;
+      try { cost = BigInt(await client.lockCostMsat(String(msat))); } catch (e) {
+        if (!/insufficient funds/i.test(String((e && e.message) || e))) throw e;
+      }
+      if (cost !== null && have >= cost) break;
+      if (tries >= 3) throw new Error(`after ${tries} deposits the lock client holds ${have} msat and cannot fund a ${msat} msat lock`);
+      const short = cost !== null ? cost - have : msat + allowance - have;
+      const plan = JSON.parse(await client.depositFor(String(short > 0n ? short : allowance)));
+      const invoice = JSON.parse(await client.receive(String(plan.invoice_msat), String(plan.gateway || '')));
+      onDeposit({ invoice: invoice.invoice, amountMsat: BigInt(plan.invoice_msat), creditsMsat: BigInt(plan.credited_msat) });
+      onStep('waiting for the deposit');
+      const final = await client.awaitReceive(invoice.operation);
+      if (final !== 'Claimed') throw new Error(`the deposit was not claimed: ${final}`);
+    }
+  };
+  // ONE DEPOSIT FOR BOTH LOCKS where the first quote covers it; a fee lock the
+  // stake lock's own fee left short is topped up before it is made.
+  await fund(amount + feeMsat);
 
   onStep('locking the stake');
   const refundPk = refundKeyOf(playerPubkey);
-  const answer = await client.lock(toHex(stake.stakePoint), String(amount), toHex(claimKey.claimPk), toHex(refundPk),
-    Number(round.stakeExpiryBlocks) + LOCK_EXPIRY_MARGIN_BLOCKS);
+  const delta = Number(round.stakeExpiryBlocks) + LOCK_EXPIRY_MARGIN_BLOCKS;
+  const answer = await client.lock(toHex(stake.stakePoint), String(amount), toHex(claimKey.claimPk), toHex(refundPk), delta);
   const lock = lockFromClient(answer, { point: stake.stakePoint, claimPk: claimKey.claimPk, refundPk });
   if (lock.fields.amountMsat !== amount)
     throw new Error(`the lock client locked ${lock.fields.amountMsat} msat, and this entry's net stake is ${amount}`);
-  return { ...lock, client };
+
+  let feeLock = null;
+  if (feeGate.pays) {
+    await fund(feeMsat);
+    onStep('locking the node fee');
+    const preimage = feeSecretFor(seed, roundId);
+    const image = sha256(preimage);
+    const said = await client.lockHash(toHex(image), String(feeMsat), toHex(claimKey.claimPk), toHex(refundPk), delta);
+    const made = lockFromClient(said, { hash: image, claimPk: claimKey.claimPk, refundPk });
+    if (made.fields.amountMsat !== feeMsat)
+      throw new Error(`the lock client locked ${made.fields.amountMsat} msat as the fee, and this entry's fee is ${feeMsat}`);
+    feeLock = { ...made, preimage };
+  }
+  return { ...lock, client, feeLock, feeGate };
+}
+
+const FEE_SECRET_TAG = new TextEncoder().encode('blwp fee preimage v1');
+
+/**
+ * THE FEE LOCK'S F, FROM THE SEED AND THE ROUND - handed over openly in the entry
+ * (F5), never the stake's P. Derived, so a reload that kept the lock names the
+ * same F.
+ */
+export function feeSecretFor(seed, roundId) {
+  if (!(seed instanceof Uint8Array) || seed.length !== 32) throw new Error('a fee secret comes from the player\'s 32-byte seed');
+  if (!(roundId instanceof Uint8Array) || roundId.length !== 32) throw new Error('a fee secret is per round');
+  const m = new Uint8Array(FEE_SECRET_TAG.length + 64);
+  m.set(FEE_SECRET_TAG); m.set(seed, FEE_SECRET_TAG.length); m.set(roundId, FEE_SECRET_TAG.length + 32);
+  return sha256(m);
 }
 
 const savedLockKey = (roundId, playerPubkey) => `blwp.lock.saved.${toHex(roundId)}.${toHex(playerPubkey).slice(0, 16)}`;
@@ -177,6 +225,10 @@ export function saveLock(storage, { roundId, playerPubkey, stake, lock }) {
     preimage: toHex(stake.preimage), body: toHex(stake.body),
     outpoint: { txid: toHex(lock.outpoint.txid), outIdx: String(lock.outpoint.outIdx) },
     fields: lockFieldsToJson(lock.fields), committedTo: null,
+    // AND ITS FEE LOCK, when one was minted (Pick b): the same reload keeps it.
+    feeLock: lock.feeLock ? { preimage: toHex(lock.feeLock.preimage),
+      outpoint: { txid: toHex(lock.feeLock.outpoint.txid), outIdx: String(lock.feeLock.outpoint.outIdx) },
+      fields: lockFieldsToJson(lock.feeLock.fields) } : null,
   }));
 }
 
@@ -193,7 +245,10 @@ export function savedLock(storage, { roundId, playerPubkey }) {
   return {
     stake: { preimage, stakeCommitment: sha256(preimage), vssSharesRef: handoutId(handout),
       stakePoint: handout.commitments[0], handout, body },
-    lock: { outpoint: { txid: fromHex(j.outpoint.txid), outIdx: BigInt(j.outpoint.outIdx) }, fields: lockFieldsFromJson(j.fields) },
+    lock: { outpoint: { txid: fromHex(j.outpoint.txid), outIdx: BigInt(j.outpoint.outIdx) }, fields: lockFieldsFromJson(j.fields),
+      feeLock: j.feeLock ? { preimage: fromHex(j.feeLock.preimage),
+        outpoint: { txid: fromHex(j.feeLock.outpoint.txid), outIdx: BigInt(j.feeLock.outpoint.outIdx) },
+        fields: lockFieldsFromJson(j.feeLock.fields) } : null },
     committedTo: j.committedTo || null,
   };
 }
@@ -319,13 +374,15 @@ export async function redeemStake({ round, roundId, invite, seed, curve, LockCli
  * THE LOCK, HANDED TO EVERY SEAT (POST /lock). A seat that verifies it in the
  * federation answers 201 and counts the stake; `ok` is `needed` of them.
  */
-export async function handLock({ entryId, fields, nodes, needed, fetcher = fetch } = {}) {
+export async function handLock({ entryId, fields, nodes, needed, fetcher = fetch, door = 'lock' } = {}) {
   if (!(entryId instanceof Uint8Array) || entryId.length !== 32) throw new Error('a lock is handed over for an entry, by its id');
+  // `door`: 'lock' for the stake lock, 'fee-lock' for the fee lock (Pick b).
+  if (door !== 'lock' && door !== 'fee-lock') throw new Error('a lock is handed to a seat\'s /lock or /fee-lock');
   const body = JSON.stringify(lockFieldsToJson(fields));
   const said = [];
   for (const node of [...new Set(nodes || [])]) {
     try {
-      const r = await fetcher(`${String(node).replace(/\/+$/, '')}/lock?entry=${toHex(entryId)}`, { method: 'POST', body });
+      const r = await fetcher(`${String(node).replace(/\/+$/, '')}/${door}?entry=${toHex(entryId)}`, { method: 'POST', body });
       said.push({ node, status: r.status, why: (await r.text()).trim() });
     } catch (e) {
       said.push({ node, status: 0, why: e.message });

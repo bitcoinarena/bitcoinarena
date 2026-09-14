@@ -16,6 +16,13 @@ import {
 export const PROTOCOL_VERSION = 1;
 
 /**
+ * THE FEWEST PLAYERS A ROUND OPENS FOR. The preflight sizes a seat's Lightning
+ * for it, and the fee-lock gate (lock-settlement.js `feeLockPays`) takes it as
+ * the worst case: more players only raise each seat's fee share.
+ */
+export const MIN_PLAYERS_PER_ROUND = 2;
+
+/**
  * THE ENTRY WINDOW, from 5A.5's own line:
  *
  *   committee_time  >= published_at + min_publication_lead   (reference: 5 min)

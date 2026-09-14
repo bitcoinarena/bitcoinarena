@@ -648,7 +648,7 @@
           const whose = { roundId: BLWPCLIENT.fromHex(named.roundIdHex), playerPubkey: player.pubkey };
           const committedTo = (eid) => BLWPCLIENT.markLockCommitted(window.sessionStorage, Object.assign({ entryId: eid }, whose));
           if (reuse) {
-            stakeLock = { outpoint: reuse.lock.outpoint, fields: reuse.lock.fields,
+            stakeLock = { outpoint: reuse.lock.outpoint, fields: reuse.lock.fields, feeLock: reuse.lock.feeLock || null,
               needed: BLWPCLIENT.sharesNeededFor(named.round), onCommitted: committedTo };
             window.BLWP_STAKE_LOCK = stakeLock;
             if (stageEl) stageEl.textContent = BLWPCLIENT.lockLine(stakeLock);
@@ -679,8 +679,11 @@
                 console.log('[blwp] stake lock deposit: ' + String(d.amountMsat) + ' msat, ' + d.invoice);
               },
             });
-            stakeLock = { outpoint: made.outpoint, fields: made.fields, needed: BLWPCLIENT.sharesNeededFor(named.round),
-              onCommitted: committedTo };
+            // AND ITS FEE LOCK, ONLY WHEN THE GATE SAID IT CAN PAY A SEAT (Pick b):
+            // a 100 sat round makes none, so the player is charged no lock that expires unused.
+            stakeLock = { outpoint: made.outpoint, fields: made.fields, feeLock: made.feeLock || null,
+              needed: BLWPCLIENT.sharesNeededFor(named.round), onCommitted: committedTo };
+            console.log('[blwp] fee lock: ' + (made.feeLock ? 'minted, ' + String(made.feeLock.fields.amountMsat) + ' msat' : 'none - ' + made.feeGate.why));
             // KEPT BEFORE ANYTHING ELSE CAN HAPPEN TO THE TAB: a reload from here
             // on uses this lock, not a second deposit.
             BLWPCLIENT.saveLock(window.sessionStorage, Object.assign({ stake, lock: made }, whose));

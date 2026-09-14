@@ -42,7 +42,7 @@ import { toHex, fromHex, sha256 } from '../../protocol/src/hash.js';
 const curve = { ...feldmanGroup, tweakPoint };
 const REAL_FEES = { ppm: 0n, baseMsat: 1000n };
 
-async function lockRound({ minScore = 1 } = {}) {
+async function lockRound({ minScore = 1, stakeMsat = STAKE } = {}) {
   const port = lockPort();
   port.feeRule = REAL_FEES;
   const mk = () => serve(openStore(':memory:'), { port: 0, ...opts, stakeLocks: port, poolCurve: curve, finality: { everyMs: 100 } });
@@ -56,7 +56,7 @@ async function lockRound({ minScore = 1 } = {}) {
     d.dkg.peers = there;
   }
   const c = { ...contractFor([a.round.pubkey, b.round.pubkey], BigInt(WINDOW_MS), [a, b].map((d) => `http://127.0.0.1:${d.port}`)),
-    federationId: b32(0xfe), minScore };
+    federationId: b32(0xfe), minScore, stakeMsat };
   const rid = roundId(c);
   for (const d of [a, b]) {
     const r = await fetch(`http://127.0.0.1:${d.port}/round`, { method: 'POST', body: encodeRoundContract(c) });
@@ -82,7 +82,7 @@ async function lockAndPlay(w, who, { feeLock = false } = {}) {
   const outpoint = { txid: rand(32), outIdx: 0n };
   const entry = {
     roundId: w.rid, playerPubkey: who.key, sessionPubkey: ed25519.getPublicKey(session),
-    stakeCommitment: sha256(preimage), stakeMsat: STAKE, feeMsat: entryFeeMsat(STAKE), donationMsat: 0n,
+    stakeCommitment: sha256(preimage), stakeMsat: w.c.stakeMsat, feeMsat: entryFeeMsat(w.c.stakeMsat), donationMsat: 0n,
     joinTick: 0, worldSecret: who.worldSecret, vssSharesRef: handoutId(dealt.handout), stakePoint: dealt.handout.commitments[0],
     feePreimage: feeSecret, stakeLockOutpoint: outpoint, feeLockOutpoint: feeOutpoint,
     claimKeyAttestationRef: b32(0x9a),
@@ -198,6 +198,32 @@ test('under the real guardians\' 1000 msat per input and output the 2000 msat fe
     assert.match(got.why, /no fee lock claimed: the fee locks hold 4000 msat and their inputs alone cost 2000/);
     assert.deepEqual(paid.map((p) => p.msat), [96000n]);
     assert.equal(w.port.locks.has(key(won.feeOutpoint)) && w.port.locks.has(key(lost.feeOutpoint)), true, 'a fee lock was claimed that pays no seat');
+  } finally { await w.close(); }
+});
+
+// PICK (b): AT THE SMALLEST BRACKET THE GATE MINTS FOR - 1000 sat - THE CLAIMED FEE LOCKS
+// PAY EVERY SITTING SEAT SOMETHING UNDER THE REAL GUARDIANS' 1000 msat PER INPUT AND OUTPUT.
+test('a 1000 sat round\'s 20000 msat fee locks are claimed under the real guardians\' fees and every sitting seat nets more than nothing', async () => {
+  const w = await lockRound({ stakeMsat: 1000000n });
+  try {
+    const won = await lockAndPlay(w, WINNER, { feeLock: true });
+    const lost = await lockAndPlay(w, LOSER, { feeLock: true });
+    await closeRound(w);
+    const got = await untilSettled(w);
+    const sent = w.port.settlements[0];
+    const seatKeys = w.c.nodes.map((k) => toHex(refundKeyOf(k)));
+    const paid = [...w.port.payouts.values()];
+    const seatNets = paid.filter((p) => seatKeys.includes(toHex(p.payoutPk))).map((p) => p.msat);
+    const feeIn = sent ? sent.claims.filter((c) => [key(won.feeOutpoint), key(lost.feeOutpoint)].includes(key(c.outpoint))) : [];
+    console.log(`  1000 sat: ${got.state} - ${got.why}`);
+    console.log(`  stake 1000000 msat, fee lock ${won.entry.feeMsat} msat x ${feeIn.length}, input fees ${feeIn.length * 1000} msat, `
+      + `output fees ${seatNets.length * 1000} msat, per-seat net [${seatNets.join(', ')}] msat; winner paid ${paid.filter((p) => toHex(p.payoutPk) === toHex(refundKeyOf(WINNER.key))).map((p) => p.msat).join(', ')}`);
+    assert.equal(got.state, 'ACCEPTED', got.why);
+    assert.equal(won.entry.feeMsat, 20000n);
+    assert.equal(feeIn.length, 2, 'both fee locks are claimed');
+    assert.equal(seatNets.length, 2, 'every sitting seat is paid');
+    for (const n of seatNets) assert.ok(n > 0n, `a seat nets ${n}`);
+    assert.equal([won.feeOutpoint, lost.feeOutpoint, lost.outpoint].some((o) => w.port.locks.has(key(o))), false);
   } finally { await w.close(); }
 });
 

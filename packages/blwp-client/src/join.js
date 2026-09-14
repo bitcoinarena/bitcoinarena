@@ -740,6 +740,24 @@ export function playerFor(round, { seed, curve } = {}) {
  * their world, and a node that had it could predict the round they are about
  * to drive.
  */
+/**
+ * THE FEE LOCK A STAKE LOCK CARRIES, CHECKED (Pick b): its image H(F) of the F it
+ * hands over and its amount the entry's own fee - or none. A fee lock that is not
+ * that is refused here, so the page never names one a seat would refuse.
+ */
+function feeLockOf(stakeLock, round) {
+  const f = stakeLock && stakeLock.feeLock;
+  if (!f) return null;
+  if (!(f.preimage instanceof Uint8Array) || f.preimage.length !== 32 || f.preimage.every((b) => b === 0))
+    throw new Error('that fee lock hands over no F, so it could never be claimed');
+  if (!f.fields || !f.fields.paymentImage || f.fields.paymentImage.kind !== 'hash'
+    || toHex(f.fields.paymentImage.bytes) !== toHex(sha256(f.preimage)))
+    throw new Error('that fee lock is not locked to H(F) of the F it hands over');
+  const want = entryFeeMsat(BigInt(round.stakeMsat || 0n));
+  if (f.fields.amountMsat !== want) throw new Error(`that fee lock holds ${f.fields.amountMsat} msat and the entry's fee is ${want}`);
+  return f;
+}
+
 export function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 0, stake, claimKey, stakeLock,
   donationMsat = 0n } = {}) {
   if (!round) throw new Error('there is no round to take a seat at');
@@ -806,10 +824,15 @@ export function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 
     // yet (parked), so it and a non-locking round's outpoint are zeros, said
     // here rather than defaulted.
     stakePoint: stake && stake.stakePoint ? stake.stakePoint : new Uint8Array(33),
-    feePreimage: new Uint8Array(32),
+    // AND ITS FEE LOCK, ONLY WHEN THE PAGE MADE ONE (Pick b: a fee lock is minted
+    // only when claiming it can pay a seat): F handed over openly (F5) and the
+    // lock's outpoint. Otherwise zeros, said here - no fee lock, nothing to claim.
+    feePreimage: feeLockOf(stakeLock, round) ? stakeLock.feeLock.preimage : new Uint8Array(32),
     stakeLockOutpoint: stakeLock ? { txid: stakeLock.outpoint.txid, outIdx: BigInt(stakeLock.outpoint.outIdx) }
       : { txid: new Uint8Array(32), outIdx: 0n },
-    feeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n },
+    feeLockOutpoint: feeLockOf(stakeLock, round)
+      ? { txid: stakeLock.feeLock.outpoint.txid, outIdx: BigInt(stakeLock.feeLock.outpoint.outIdx) }
+      : { txid: new Uint8Array(32), outIdx: 0n },
     claimKeyAttestationRef: roundLocks(round) ? claimKey.ref : new Uint8Array(32),
     stakeMsat: BigInt(round.stakeMsat || 0n),
     // THE NODE FEE, AND IT IS 2% OF THIS ENTRY'S OWN STAKE - taken OUT of it,

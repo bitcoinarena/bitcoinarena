@@ -25,7 +25,9 @@ export const PLAYABLE = ['testnet4', 'regtest'];
  * `min_players_per_round 2`; nothing in this package named it until a round
  * had to be sized against a node's inbound before anybody had entered.
  */
-export const MIN_PLAYERS_PER_ROUND = 2;
+// One number with the fee-lock gate: protocol constants.js.
+import { MIN_PLAYERS_PER_ROUND } from '../../protocol/src/constants.js';
+export { MIN_PLAYERS_PER_ROUND };
 
 /**
  * WHAT A TESTNET4 LND SAYS ABOUT ITSELF, ASKED WITH A KEY THAT CANNOT SPEND.

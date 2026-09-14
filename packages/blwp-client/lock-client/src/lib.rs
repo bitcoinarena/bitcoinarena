@@ -45,6 +45,8 @@ use fedimint_core::util::SafeUrl;
 use fedimint_core::{Amount, OutPoint, TransactionId};
 use fedimint_derive_secret::DerivableSecret;
 use fedimint_lnv2_client::{FinalReceiveOperationState, FinalSendOperationState, LightningClientModule};
+use fedimint_core::bitcoin::hashes::sha256;
+use fedimint_lnv2_common::config::LightningClientConfig;
 use fedimint_lnv2_common::contracts::{OutgoingContract, PaymentImage};
 use fedimint_lnv2_common::gateway_api::PaymentFee;
 use fedimint_lnv2_common::endpoint_constants::{
@@ -482,6 +484,24 @@ impl LockClient {
         .to_owned())
     }
 
+    /// THE FEDERATION'S OWN LNv2 FEE RULE, off its config - `base + amount *
+    /// ppm / 1e6` on every input and every output (lnv2-common config.rs) - as
+    /// JSON { fee_ppm, fee_base_msat }. The page's fee-lock gate reads it here,
+    /// from the federation it joined, and not from a seat's word.
+    #[wasm_bindgen(js_name = feeRule)]
+    pub async fn fee_rule(&self) -> Result<String, JsError> {
+        let config = self.client.config().await;
+        let fee = config
+            .modules
+            .get(&self.lnv2)
+            .ok_or_else(|| js("no lnv2 config"))?
+            .cast::<LightningClientConfig>()
+            .map_err(js)?
+            .fee_consensus
+            .clone();
+        Ok(serde_json::json!({ "fee_ppm": fee.parts_per_million, "fee_base_msat": fee.base.msats }).to_string())
+    }
+
     /// THE STAKE LOCK: one stock OutgoingContract funded from this client's
     /// ecash, then what the guardians stored at its outpoint beside what was
     /// computed. `point`, `claim_pk`, `refund_pk` are 33-byte compressed hex.
@@ -493,11 +513,40 @@ impl LockClient {
         refund_pk: String,
         expiry_delta: u32,
     ) -> Result<String, JsError> {
+        let image = PaymentImage::Point(PublicKey::from_str(&point).map_err(js)?);
+        self.lock_to(image, amount_msat, claim_pk, refund_pk, expiry_delta).await
+    }
+
+    /// THE FEE LOCK (F5, Pick b): the same contract to a HASH image, H(F) -
+    /// `hash` 32-byte hex - so claiming the fee never publishes the stake's P.
+    #[wasm_bindgen(js_name = lockHash)]
+    pub async fn lock_hash(
+        &self,
+        hash: String,
+        amount_msat: String,
+        claim_pk: String,
+        refund_pk: String,
+        expiry_delta: u32,
+    ) -> Result<String, JsError> {
+        let image = PaymentImage::Hash(sha256::Hash::from_str(&hash).map_err(js)?);
+        self.lock_to(image, amount_msat, claim_pk, refund_pk, expiry_delta).await
+    }
+}
+
+impl LockClient {
+    async fn lock_to(
+        &self,
+        payment_image: PaymentImage,
+        amount_msat: String,
+        claim_pk: String,
+        refund_pk: String,
+        expiry_delta: u32,
+    ) -> Result<String, JsError> {
         let api = self.client.api().with_module(self.lnv2);
         let count = block_count(&api).await.map_err(js)?;
         let refund_pk = PublicKey::from_str(&refund_pk).map_err(js)?;
         let contract = OutgoingContract {
-            payment_image: PaymentImage::Point(PublicKey::from_str(&point).map_err(js)?),
+            payment_image,
             amount: Amount::from_msats(amount_msat.parse().map_err(js)?),
             expiration: count + u64::from(expiry_delta),
             claim_pk: PublicKey::from_str(&claim_pk).map_err(js)?,

@@ -10,7 +10,9 @@
 // Not in the bundle yet: the page drives it in W1b.
 import { fromHex } from '../../protocol/src/hash.js';
 
-export function lockFromClient(answer, { point, claimPk, refundPk }) {
+// `point` for a stake lock (the stake point), or `hash` for a fee lock (H(F), Pick b).
+export function lockFromClient(answer, { point, hash, claimPk, refundPk }) {
+  if (!point === !hash) throw new Error('a lock is to a point or to a hash, and exactly one is named');
   const j = typeof answer === 'string' ? JSON.parse(answer) : answer;
   if (!j || typeof j.txid !== 'string' || !/^[0-9a-f]{64}$/.test(j.txid)) throw new Error('the lock client named no transaction');
   if (!Number.isInteger(j.out_idx) || j.out_idx < 0) throw new Error('the lock client named no output');
@@ -21,7 +23,7 @@ export function lockFromClient(answer, { point, claimPk, refundPk }) {
   return {
     outpoint: { txid: fromHex(j.txid), outIdx: BigInt(j.out_idx) },
     fields: {
-      paymentImage: { kind: 'point', bytes: point }, amountMsat: BigInt(j.amount_msat),
+      paymentImage: point ? { kind: 'point', bytes: point } : { kind: 'hash', bytes: hash }, amountMsat: BigInt(j.amount_msat),
       claimPk, refundPk, expiration: j.computed_expiration,
     },
     contractId: j.stored_contract_id,

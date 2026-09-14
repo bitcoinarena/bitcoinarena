@@ -15,7 +15,8 @@ import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js
 import assert from 'node:assert/strict';
 
 import { lockStake, handLock, lockSecretFor, lockAmountMsat, lockLine, saveLock, savedLock, markLockCommitted,
-  refundStake, redeemStake, LOCK_EXPIRY_MARGIN_BLOCKS } from '../src/page-lock.js';
+  refundStake, redeemStake, LOCK_EXPIRY_MARGIN_BLOCKS, feeSecretFor } from '../src/page-lock.js';
+import { sha256 } from '../../protocol/src/hash.js';
 import { entryFor, joinQuery, stakeFor, playerFor } from '../src/join.js';
 import { lockFieldsToJson } from '../../protocol/src/stake-lock.js';
 import { pageCurve } from '../src/page-curve.js';
@@ -54,7 +55,7 @@ const claimKey = { ok: true, claimPk: CLAIM, ref: b32(0x9a) };
  * hold, as the stock dry run does. The allowance is the stock
  * TRANSACTION_FEE_DEFAULT's arithmetic (2 sat + 3000 ppm).
  */
-function lockClient({ idsMatch = true, lockedMsat, lockFee = 2528n } = {}) {
+function lockClient({ idsMatch = true, lockedMsat, lockFee = 2528n, feeRule = null } = {}) {
   const log = [];
   // Its wallet is kept in the store it is handed, as the real one's database
   // is: one key, the balance, written when a deposit is claimed.
@@ -84,9 +85,22 @@ function lockClient({ idsMatch = true, lockedMsat, lockFee = 2528n } = {}) {
     }
     async lock(point, amount, claim, refund, delta) {
       log.push({ lock: { point, amount, claim, refund, delta } });
+      this.balance -= BigInt(amount) + lockFee;
       const expiration = 1000 + delta;
       return JSON.stringify({ txid: 'ab'.repeat(32), out_idx: 0, computed_contract_id: 'c1', stored_contract_id: idsMatch ? 'c1' : 'c2',
         ids_match: idsMatch, computed_expiration: expiration, stored_expiration: expiration, amount_msat: Number(lockedMsat ?? amount) });
+    }
+    // THE FEDERATION'S FEE RULE (Pick b's gate reads it), when this stand-in has one.
+    async feeRule() {
+      if (!feeRule) throw new Error('this stand-in names no fee rule');
+      return JSON.stringify({ fee_ppm: Number(feeRule.ppm), fee_base_msat: Number(feeRule.baseMsat) });
+    }
+    async lockHash(hash, amount, claim, refund, delta) {
+      log.push({ lockHash: { hash, amount, claim, refund, delta } });
+      this.balance -= BigInt(amount) + lockFee;
+      const expiration = 1000 + delta;
+      return JSON.stringify({ txid: 'cd'.repeat(32), out_idx: 1, computed_contract_id: 'f1', stored_contract_id: 'f1',
+        ids_match: true, computed_expiration: expiration, stored_expiration: expiration, amount_msat: Number(amount) });
     }
   }
   return { LockClient: Fake, log };
@@ -119,6 +133,69 @@ test('the page asks the lock client for the round\'s own federation, under the s
     outpoint: `${'ab'.repeat(32)}:0`,
   });
   assert.equal(lockAmountMsat(round), 980000n, 'the net stake of 1000000 msat less the 2% fee');
+});
+
+// PICK (b), THE GATE ON THE PAGE (the owner 2026-09-14): "Do not mint a fee lock when
+// claiming it cannot pay a sitting seat after this federation's 1000 msat input fee
+// and 1000 msat output fee." The stand-in answers the federation's real rule.
+const REAL_RULE = { ppm: 0n, baseMsat: 1000n };
+
+test('a 100 sat round with two players: the page mints no fee lock - the player deposits for the 98000 msat stake only, and the entry names no fee lock', async () => {
+  const round100 = { ...round, stakeMsat: 100000n };
+  const rid100 = roundId(round100);
+  const { LockClient, log } = lockClient({ feeRule: REAL_RULE });
+  const deposits = [];
+  const got = await lockStake({ round: round100, roundId: rid100, invite: INVITE, seed, stake: { stakePoint: POINT }, claimKey, playerPubkey: player,
+    LockClient, onDeposit: (d) => deposits.push(d) });
+  const hashLocks = log.filter((l) => l.lockHash).length;
+  console.log(`  100 sat: fee locks minted ${hashLocks}; deposits ${deposits.map((d) => String(d.amountMsat)).join(', ')} msat; stake lock ${got.fields.amountMsat}; gate: ${got.feeGate.why}`);
+  assert.equal(hashLocks, 0, 'a fee lock was minted that cannot pay a seat');
+  assert.equal(got.feeLock, null);
+  assert.equal(got.feeGate.pays, false);
+  // NOT CHARGED A LOCK IT CANNOT USE: the deposits are exactly those of the same page
+  // with no fee rule at all - the flow before the gate existed, stake lock only (its
+  // own fee top-up included: at 98000 msat the stock allowance, 2294, is below this
+  // stand-in's 2528 msat lock fee, with or without the gate).
+  const without = lockClient({});
+  const before = [];
+  await lockStake({ round: round100, roundId: rid100, invite: INVITE, seed, stake: { stakePoint: POINT }, claimKey, playerPubkey: player,
+    LockClient: without.LockClient, onDeposit: (d) => before.push(d) });
+  console.log(`  100 sat: deposits with the gate ${deposits.map((d) => String(d.amountMsat)).join(', ')}; without any fee rule ${before.map((d) => String(d.amountMsat)).join(', ')}`);
+  assert.deepEqual(deposits.map((d) => String(d.amountMsat)), before.map((d) => String(d.amountMsat)),
+    'the player was asked for more than the stake lock alone');
+  const entry = entryFor(round100, { seed, curve: pageCurve, random: (n) => new Uint8Array(n).fill(7), claimKey,
+    stake: { stakeCommitment: b32(0x71), vssSharesRef: new Uint8Array(32), stakePoint: POINT }, stakeLock: { outpoint: got.outpoint, fields: got.fields, feeLock: got.feeLock } });
+  assert.equal(toHex(entry.feePreimage), '00'.repeat(32));
+  assert.equal(toHex(entry.feeLockOutpoint.txid), '00'.repeat(32));
+});
+
+test('a 1000 sat round: the page mints one 20000 msat fee lock to H(F), names F and its outpoint in the entry, and hands it to each seat\'s /fee-lock', async () => {
+  const { LockClient, log } = lockClient({ feeRule: REAL_RULE });
+  const deposits = [];
+  const got = await ask({ LockClient, onDeposit: (d) => deposits.push(d) });
+  const minted = log.filter((l) => l.lockHash).map((l) => l.lockHash);
+  const F = feeSecretFor(seed, rid);
+  console.log(`  1000 sat: fee locks minted ${minted.length} (${minted.map((m) => `${m.amount} msat to ${m.hash.slice(0, 12)}`).join(', ')}); deposits ${deposits.map((d) => String(d.amountMsat)).join(', ')} msat; `
+    + `gate: stake ${got.feeGate.stakeMsat}, lock ${got.feeGate.lockMsat}, input fees ${got.feeGate.inputFeesMsat}, output fees ${got.feeGate.outputFeesMsat}, per-seat net [${got.feeGate.perSeatNetMsat.join(', ')}]`);
+  assert.equal(minted.length, 1);
+  assert.deepEqual(minted[0], { hash: toHex(sha256(F)), amount: '20000', claim: toHex(CLAIM), refund: toHex(refundKeyOf(player)), delta: 144 + LOCK_EXPIRY_MARGIN_BLOCKS });
+  assert.equal(got.feeGate.pays, true);
+  assert.equal(toHex(got.feeLock.preimage), toHex(F));
+  assert.equal(got.feeLock.fields.paymentImage.kind, 'hash');
+  const entry = entryFor(round, { seed, curve: pageCurve, random: (n) => new Uint8Array(n).fill(7), claimKey,
+    stake: { stakeCommitment: b32(0x71), vssSharesRef: new Uint8Array(32), stakePoint: POINT }, stakeLock: { outpoint: got.outpoint, fields: got.fields, feeLock: got.feeLock } });
+  assert.equal(toHex(entry.feePreimage), toHex(F));
+  assert.equal(`${toHex(entry.feeLockOutpoint.txid)}:${entry.feeLockOutpoint.outIdx}`, `${'cd'.repeat(32)}:1`);
+  assert.equal(entry.feeMsat, 20000n);
+  const asked = [];
+  const handed = await handLock({ entryId: b32(0x0e), fields: got.feeLock.fields, nodes: ['http://a', 'http://b'], needed: 2, door: 'fee-lock',
+    fetcher: async (url) => { asked.push(url); return { status: 201, text: async () => 'fee lock verified' }; } });
+  assert.deepEqual(asked, [`http://a/fee-lock?entry=${'0e'.repeat(32)}`, `http://b/fee-lock?entry=${'0e'.repeat(32)}`]);
+  assert.equal(handed.ok, true);
+  // AND A RELOAD KEEPS IT
+  const tab = new Map(); const storage = { getItem: (k) => tab.get(k) ?? null, setItem: (k, v) => tab.set(k, v) };
+  saveLock(storage, { roundId: rid, playerPubkey: player, stake: { preimage: b32(0x44), body: new Uint8Array(0) }, lock: got });
+  assert.equal(JSON.parse([...tab.values()][0]).feeLock.preimage, toHex(F));
 });
 
 test('a lock whose fee the allowance does not cover is topped up after the quote, and one that never funds is refused', async () => {

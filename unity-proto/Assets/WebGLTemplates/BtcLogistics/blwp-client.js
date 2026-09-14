@@ -488,6 +488,13 @@ const ARBITRATION_KEYS_TESTNET4 = [
 const PROTOCOL_VERSION = 1;
 
 /**
+ * THE FEWEST PLAYERS A ROUND OPENS FOR. The preflight sizes a seat's Lightning
+ * for it, and the fee-lock gate (lock-settlement.js `feeLockPays`) takes it as
+ * the worst case: more players only raise each seat's fee share.
+ */
+const MIN_PLAYERS_PER_ROUND = 2;
+
+/**
  * THE ENTRY WINDOW, from 5A.5's own line:
  *
  *   committee_time  >= published_at + min_publication_lead   (reference: 5 min)
@@ -7457,6 +7464,24 @@ function playerFor(round, { seed, curve } = {}) {
  * their world, and a node that had it could predict the round they are about
  * to drive.
  */
+/**
+ * THE FEE LOCK A STAKE LOCK CARRIES, CHECKED (Pick b): its image H(F) of the F it
+ * hands over and its amount the entry's own fee - or none. A fee lock that is not
+ * that is refused here, so the page never names one a seat would refuse.
+ */
+function feeLockOf(stakeLock, round) {
+  const f = stakeLock && stakeLock.feeLock;
+  if (!f) return null;
+  if (!(f.preimage instanceof Uint8Array) || f.preimage.length !== 32 || f.preimage.every((b) => b === 0))
+    throw new Error('that fee lock hands over no F, so it could never be claimed');
+  if (!f.fields || !f.fields.paymentImage || f.fields.paymentImage.kind !== 'hash'
+    || toHex(f.fields.paymentImage.bytes) !== toHex(sha256(f.preimage)))
+    throw new Error('that fee lock is not locked to H(F) of the F it hands over');
+  const want = entryFeeMsat(BigInt(round.stakeMsat || 0n));
+  if (f.fields.amountMsat !== want) throw new Error(`that fee lock holds ${f.fields.amountMsat} msat and the entry's fee is ${want}`);
+  return f;
+}
+
 function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 0, stake, claimKey, stakeLock,
   donationMsat = 0n } = {}) {
   if (!round) throw new Error('there is no round to take a seat at');
@@ -7523,10 +7548,15 @@ function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 0, stak
     // yet (parked), so it and a non-locking round's outpoint are zeros, said
     // here rather than defaulted.
     stakePoint: stake && stake.stakePoint ? stake.stakePoint : new Uint8Array(33),
-    feePreimage: new Uint8Array(32),
+    // AND ITS FEE LOCK, ONLY WHEN THE PAGE MADE ONE (Pick b: a fee lock is minted
+    // only when claiming it can pay a seat): F handed over openly (F5) and the
+    // lock's outpoint. Otherwise zeros, said here - no fee lock, nothing to claim.
+    feePreimage: feeLockOf(stakeLock, round) ? stakeLock.feeLock.preimage : new Uint8Array(32),
     stakeLockOutpoint: stakeLock ? { txid: stakeLock.outpoint.txid, outIdx: BigInt(stakeLock.outpoint.outIdx) }
       : { txid: new Uint8Array(32), outIdx: 0n },
-    feeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n },
+    feeLockOutpoint: feeLockOf(stakeLock, round)
+      ? { txid: stakeLock.feeLock.outpoint.txid, outIdx: BigInt(stakeLock.feeLock.outpoint.outIdx) }
+      : { txid: new Uint8Array(32), outIdx: 0n },
     claimKeyAttestationRef: roundLocks(round) ? claimKey.ref : new Uint8Array(32),
     stakeMsat: BigInt(round.stakeMsat || 0n),
     // THE NODE FEE, AND IT IS 2% OF THIS ENTRY'S OWN STAKE - taken OUT of it,
@@ -7635,7 +7665,9 @@ async function stakeFor(round, { seats, curve, random, playerPubkey, needed: ask
 // refused here - the player would otherwise commit to a lock that is not theirs.
 // Not in the bundle yet: the page drives it in W1b.
 
-function lockFromClient(answer, { point, claimPk, refundPk }) {
+// `point` for a stake lock (the stake point), or `hash` for a fee lock (H(F), Pick b).
+function lockFromClient(answer, { point, hash, claimPk, refundPk }) {
+  if (!point === !hash) throw new Error('a lock is to a point or to a hash, and exactly one is named');
   const j = typeof answer === 'string' ? JSON.parse(answer) : answer;
   if (!j || typeof j.txid !== 'string' || !/^[0-9a-f]{64}$/.test(j.txid)) throw new Error('the lock client named no transaction');
   if (!Number.isInteger(j.out_idx) || j.out_idx < 0) throw new Error('the lock client named no output');
@@ -7646,11 +7678,424 @@ function lockFromClient(answer, { point, claimPk, refundPk }) {
   return {
     outpoint: { txid: fromHex(j.txid), outIdx: BigInt(j.out_idx) },
     fields: {
-      paymentImage: { kind: 'point', bytes: point }, amountMsat: BigInt(j.amount_msat),
+      paymentImage: point ? { kind: 'point', bytes: point } : { kind: 'hash', bytes: hash }, amountMsat: BigInt(j.amount_msat),
       claimPk, refundPk, expiration: j.computed_expiration,
     },
     contractId: j.stored_contract_id,
   };
+}
+
+// ---- protocol/src/payout-spend.js
+// WHAT THE POOL PAYS OUT, AND TO WHOM, AS OUTPUTS.
+//
+// §20: "PayoutTable = F(RoundContract, Membership, FinalResults). Deterministic.
+// Nodes sign the payout-table hash; 5-of-7 matching signatures make it final."
+// `computePayoutTable` has computed that table since letter 20 and
+// `encodePayoutTable` has had the bytes since; what was missing is anything
+// that turns a row into a satoshi.
+//
+// A ROW IS NOT AN AMOUNT TO PAY. The table gives each qualifier their own stake
+// back PLUS their winnings, because that is the whole of what they end the
+// round holding. But their own stake never entered the pool - it came back over
+// Lightning when the hold was cancelled - so paying the row would pay it twice,
+// once by cancel and once out of other players' money. What the pool owes is
+// the part ABOVE the stake, and the sum of those is exactly the pool.
+// `holdSettlement` already asserts that equality and throws when it fails; this
+// file computes the same difference rather than a second opinion of it.
+//
+// AND MILLISATOSHI DO NOT FIT ON A CHAIN. A row is msat and an output is sats,
+// so every row is floored and what the flooring leaves behind, plus whatever
+// the pool holds above the table, is the miner's fee. NOBODY HERE KEEPS IT:
+// there is no change output, so an operator cannot take the remainder by
+// building a transaction that pays itself the difference.
+
+
+/** BIP-341 P2TR: OP_1, a 32-byte push, the key. */
+const P2TR_BYTES = 34;
+
+/**
+ * THE RELAY FLOOR, MEASURED RATHER THAN DERIVED.
+ *
+ * A default bitcoind refuses a P2TR output below this and takes it at this:
+ * 329 came back "Transaction amount too small" and 330 was accepted, on a
+ * node whose `minrelaytxfee` is 0.00000100 BTC/kvB. An arithmetic derivation
+ * from the dust-relay formula gave 796 and was WRONG - the node's own boundary
+ * is the number, which is why this is a default a caller overrides with what
+ * their chain said rather than a constant this file believes in.
+ *
+ * It is policy, not consensus: a miner may include a smaller output and a
+ * different node may relay one. That is exactly why a row below it is not
+ * discarded here - see `payoutOutputs`.
+ */
+const DUST_SATS = 330n;
+
+const payToKey = (pubkey) => {
+  if (!(pubkey instanceof Uint8Array) || pubkey.length !== 32)
+    throw new Error('a payout pays to a 32-byte x-only key');
+  const out = new Uint8Array(P2TR_BYTES);
+  out[0] = 0x51;
+  out[1] = 0x20;
+  out.set(pubkey, 2);
+  return out;
+};
+
+/**
+ * WHAT THE POOL OWES EACH PLAYER: the row, less the NET stake that came back on
+ * its own when the hold was cancelled. Rows that owe nothing are dropped rather
+ * than paid zero.
+ *
+ * `stakes` are the entries' own three numbers - stake, fee, donation - and
+ * `netStakeMsat` takes the difference, because the hold held the net (22A,
+ * 23.5). Subtracting the commitment instead would short every winner by their
+ * own fee and donation, and leave that much in a pool nobody is owed it from.
+ */
+function winnings({ table, stakes }) {
+  if (!Array.isArray(table)) return { ok: false, why: 'that is not a payout table' };
+  const byKey = new Map();
+  for (const s of stakes) {
+    let held;
+    try { held = netStakeMsat(s); } catch (e) { return { ok: false, why: e.message }; }
+    byKey.set(hexOf(s.pubkey), held);
+  }
+  const rows = [];
+  let owed = 0n;
+  for (const row of table) {
+    const stake = byKey.get(hexOf(row.pubkey));
+    if (stake === undefined)
+      return { ok: false, why: `the table pays a key this round never seated: ${hexOf(row.pubkey).slice(0, 16)}` };
+    const msat = row.amountMsat > stake ? row.amountMsat - stake : 0n;
+    if (msat > 0n) { rows.push({ pubkey: row.pubkey, msat }); owed += msat; }
+  }
+  return { ok: true, rows, owedMsat: owed };
+}
+
+/**
+ * THE OUTPUTS OF ONE PAYOUT, AND THE ROWS THAT COULD NOT BE ONE.
+ *
+ * A ROW BELOW THE RELAY FLOOR IS NOT AN OUTPUT AND NOT A LOSS. It used to
+ * refuse the whole payout, which was right about the row and wrong about the
+ * round: measured, one player owed 100 sats stopped a player owed 5000 from
+ * being paid at all. A single small winner should not hold everybody else's
+ * money in the pool.
+ *
+ * So the floor is PER ROW. Rows at or above it are paid; rows below it are
+ * left OWED, named and returned, and the caller writes that debt down. Three
+ * things are deliberately not done with those sats:
+ *
+ *   not bumped to the floor   that would pay a player out of other players'
+ *                             winnings, which the table did not say
+ *   not folded into the fee   the miner is not who the round owes
+ *   not dropped               dropping is the operator keeping money a player
+ *                             had no part in losing
+ *
+ * They stay in the pool with the debt recorded, and the round is not finished
+ * while they are there. Whether the answer is a balance that accumulates
+ * across rounds or a Lightning payout is a policy this file does not invent.
+ */
+function payoutOutputs({ rows, poolSats, dustSats = DUST_SATS, feeSats }) {
+  if (!Array.isArray(rows) || !rows.length)
+    return { ok: false, why: 'that round owes nobody anything, so there is nothing to spend' };
+  if (typeof poolSats !== 'bigint' || poolSats <= 0n)
+    return { ok: false, why: 'a payout spends a pool output, and that is not one' };
+
+  const outputs = [];
+  const owed = [];
+  let paid = 0n;
+  let owedSats = 0n;
+  for (const row of rows) {
+    const sats = row.msat / 1000n;
+    if (sats < dustSats) {
+      owed.push({ pubkey: row.pubkey, msat: row.msat, sats });
+      owedSats += sats;
+      continue;
+    }
+    outputs.push({ value: sats, script: payToKey(row.pubkey) });
+    paid += sats;
+  }
+
+  // A ROUND WHERE NOBODY CLEARS THE FLOOR SPENDS NOTHING. There is no
+  // transaction to make, and the debt is the whole of what happened.
+  if (!outputs.length)
+    return {
+      ok: false, owed, owedSats,
+      why: `every one of the ${owed.length} player(s) this round owes is under ${dustSats} sats, `
+        + 'so there is no output to make: the sats stay in the pool and the debt stands',
+    };
+
+  const left = poolSats - paid;
+  if (left < 0n)
+    return { ok: false, why: `the table owes ${paid} sats and the pool holds ${poolSats}` };
+  if (typeof feeSats === 'bigint' && left < feeSats)
+    return { ok: false, why: `${left} sats are left for a fee of ${feeSats}` };
+
+  // NO CHANGE OUTPUT, ON PURPOSE. Whatever the flooring and the pool's own
+  // rounding leave over goes to the miner, because the alternative is an
+  // output an operator chooses the destination of.
+  //
+  // THE OWED ROWS ARE PART OF THE ANSWER, not a footnote: a caller that
+  // ignored them would mark a round paid while somebody is still owed.
+  return { ok: true, outputs, paidSats: paid, feeSats: left, owed, owedSats };
+}
+
+const hexOf = (b) => [...b].map((x) => x.toString(16).padStart(2, '0')).join('');
+
+/** A row's key has to be a key, which is what makes it a destination. */
+const payableKey = (pubkey) => {
+  if (!(pubkey instanceof Uint8Array) || pubkey.length !== 32) return false;
+  const v = BigInt('0x' + hexOf(pubkey));
+  return v > 0n && v < FIELD;
+};
+
+// ---- protocol/src/lock-settlement.js
+// THE ROUND'S ONE SETTLEMENT OF STAKE LOCKS (FEDERATION.md, money flow step 5;
+// W4 - the owner 2026-09-14 07:22: "a loser loses the stake. The lock is claimed
+// into the pool. Winners are paid from that.").
+//
+// THE VERDICT IS THE HOLD PATH'S OWN. `holdSettlement` over one payout table
+// decides each entry, so a lock round and a hold round cannot decide the same
+// round differently:
+//   SETTLE   a loser's stake lock, claimed as an input (`Claim(P)`)
+//   CANCEL   a qualifier's own lock, forfeited back to them (forfeit.js, W5b)
+//   NOTHING  the lock is left to expire back to its player (VOID, a Delivered run
+//            below the score)
+// The outputs are one PRE-EXPIRED payout contract per qualifier owed a share:
+// `refund_pk` = the key that qualifier's own stake lock names, so only they can
+// ever move it (FEDERATION.md source audit, point 2). A qualifier's own stake is
+// not in it - that half comes back by the forfeit (`winnings`, as on a hold).
+//
+// THE GUARDIANS' FEES, AND WHO BEARS THEM. Every input and every output pays
+// `base + amount * ppm / 1e6` (lnv2-common config.rs), read from the federation
+// (`blwp-stake-lock --mode fees`). They come out of the pool pro rata to what
+// each qualifier is owed: target = floor(owed * spendable / pool), then the
+// largest payout with payout + fee(payout) <= target. What the floors leave is no
+// output and stays with the guardians as fee; a share too small to pay its own
+// output fee is reported unpaid, not bumped from anyone else's.
+//
+// ONE TRANSACTION EVERY SEAT REBUILDS BYTE FOR BYTE: inputs sorted by outpoint,
+// payouts by payout key, and the nonce derived from the round id - so the seats
+// sign one txid, and a seat signs only the txid it rebuilt itself.
+// AND THE FEE LOCKS (Pick A, the owner 2026-09-14): every counted entry's fee lock -
+// winners' too, the fee is owed whatever the result (F5) - claimed with its F,
+// handed over openly at entry, in the same transaction and the same signature.
+// They pay the round's SITTING SEATS by §22A's own weights (`nodeFeeTable`: 1% to
+// the game/verify pool, 1% to the settlement pool, per eligible seat, leftovers in
+// the round's order), each seat one pre-expired payout contract to its own key -
+// never to the donation recipients, and no split invented here. A VOID or
+// ENTRY_VOID entry's fee lock is not claimed: §22A's fee base leaves it out.
+
+
+
+
+
+
+const refuse = (why) => ({ ok: false, why });
+const outpointKey = (o) => `${toHex(o.txid)}:${String(o.outIdx)}`;
+
+/** The guardians' LNv2 fee on one input or output, in msat. */
+function lnv2FeeMsat({ ppm, baseMsat }, msat) {
+  return baseMsat + (msat * ppm) / 1000000n;
+}
+
+/** The largest payout whose value and its own fee fit in `target`. */
+function largestPayoutMsat(fees, target) {
+  if (target <= fees.baseMsat) return 0n;
+  let x = ((target - fees.baseMsat) * 1000000n) / (1000000n + fees.ppm);
+  while (x + 1n + lnv2FeeMsat(fees, x + 1n) <= target) x++;
+  while (x > 0n && x + lnv2FeeMsat(fees, x) > target) x--;
+  return x;
+}
+
+const NONCE_TAG = new TextEncoder().encode('blwp lock settlement v1');
+
+/** The settlement transaction's 8-byte nonce: one per round, the same at every seat. */
+function settlementNonce(roundId) {
+  if (!(roundId instanceof Uint8Array) || roundId.length !== 32) throw new Error('a round id is 32 bytes');
+  const m = new Uint8Array(NONCE_TAG.length + 32);
+  m.set(NONCE_TAG); m.set(roundId, NONCE_TAG.length);
+  return sha256(m).subarray(0, 8);
+}
+
+/**
+ * @param {object} o
+ * @param {Uint8Array} o.roundId
+ * @param {object[]} o.entries  computePayoutTable's entries: pubkey, stakeMsat, feeMsat, donationMsat, outcome, score
+ * @param {bigint} [o.minScore]
+ * @param {Map<string, {outpoint: {txid: Uint8Array, outIdx: bigint|number}, amountMsat: bigint, refundPk: Uint8Array}>} o.locks
+ *        every verified stake lock, keyed by the player's pubkey hex
+ * @param {{ppm: bigint, baseMsat: bigint}} o.fees  the guardians' LNv2 fee rule
+ */
+function lockSettlement({ roundId, entries, minScore = 0, locks, fees, feeLocks = new Map(), seats = null, contract = null }) {
+  if (!(locks instanceof Map)) return refuse('the verified stake locks are a Map by player key');
+  if (!(feeLocks instanceof Map)) return refuse('the verified fee locks are a Map by player key');
+  if (!fees || typeof fees.ppm !== 'bigint' || typeof fees.baseMsat !== 'bigint' || fees.ppm < 0n || fees.baseMsat < 0n)
+    return refuse('the guardians\' fee rule is BigInt ppm and base msat, 0 or more');
+  const feePart = feeSettlement({ entries, feeLocks, seats, contract, fees });
+  if (!feePart.ok) return feePart;
+  // THE STAKE PART'S VERDICT IS THE HOLD PATH'S. A round with losers and nobody to
+  // pay is refused there ("the operator would keep ..."), and so its stakes are not
+  // claimed here either - but its fee locks still are: the fee is owed.
+  let h;
+  try { h = holdSettlement({ roundId, entries, minScore }); } catch (e) {
+    if (!feePart.claims.length) return refuse(e.message);
+    return finish({ roundId, claims: [], payouts: [], unpaid: [], forfeits: [], poolMsat: 0n, inputFeesMsat: 0n, spendableMsat: 0n, stakeWhy: e.message }, feePart);
+  }
+
+  const lockOf = (e) => locks.get(toHex(e.pubkey));
+  const claims = [];
+  for (const a of h.actions) {
+    if (a.action !== SETTLE) continue;
+    const lock = lockOf(a.entry);
+    if (!lock) return refuse(`a loser's stake lock was never verified, so it cannot be claimed: ${toHex(a.entry.pubkey).slice(0, 16)}`);
+    const net = netStakeMsat(a.entry);
+    if (lock.amountMsat !== net)
+      return refuse(`a loser's lock holds ${lock.amountMsat} msat and its entry's net stake is ${net}`);
+    claims.push({ pubkey: a.entry.pubkey, outpoint: lock.outpoint, amountMsat: net });
+  }
+  const forfeits = h.actions.filter((a) => a.action === CANCEL).map((a) => a.entry.pubkey);
+  if (!claims.length && !feePart.claims.length)
+    return { ok: true, nothing: true, why: 'no loser\'s lock is claimed in this round', claims, payouts: [], unpaid: [], forfeits,
+      poolMsat: 0n, inputFeesMsat: 0n, spendableMsat: 0n, paidMsat: 0n, outputFeesMsat: 0n, unspentMsat: 0n,
+      feePoolMsat: 0n, seatPayouts: [], feeClaims: [] };
+  if (!claims.length)
+    return finish({ roundId, claims: [], payouts: [], unpaid: [], forfeits, poolMsat: 0n, inputFeesMsat: 0n, spendableMsat: 0n,
+      stakeWhy: 'no loser\'s lock is claimed in this round' }, feePart);
+
+  const owed = winnings({ table: h.table.table, stakes: h.table.activated });
+  if (!owed.ok) return refuse(owed.why);
+  const poolMsat = claims.reduce((s, c) => s + c.amountMsat, 0n);
+  if (owed.owedMsat !== poolMsat)
+    return refuse(`the table hands out ${owed.owedMsat} msat and the claimed locks hold ${poolMsat}`);
+  const inputFeesMsat = claims.reduce((s, c) => s + lnv2FeeMsat(fees, c.amountMsat), 0n);
+  const spendableMsat = poolMsat - inputFeesMsat;
+  if (spendableMsat <= 0n) return refuse(`the guardians' fees on the claimed locks (${inputFeesMsat} msat) take the whole pool of ${poolMsat}`);
+
+  const payouts = [];
+  const unpaid = [];
+  for (const row of owed.rows) {
+    const e = h.table.activated.find((x) => toHex(x.pubkey) === toHex(row.pubkey));
+    const lock = e && lockOf(e);
+    if (!lock) return refuse(`a qualifier's stake lock was never verified, so there is no key to pay: ${toHex(row.pubkey).slice(0, 16)}`);
+    const target = (row.msat * spendableMsat) / poolMsat;
+    const msat = largestPayoutMsat(fees, target);
+    if (msat === 0n) { unpaid.push({ pubkey: row.pubkey, owedMsat: row.msat, why: 'its share does not pay its own output fee' }); continue; }
+    payouts.push({ pubkey: row.pubkey, payoutPk: lock.refundPk, owedMsat: row.msat, msat, feeMsat: lnv2FeeMsat(fees, msat) });
+  }
+  return finish({ roundId, claims: claims.map((c) => ({ ...c, kind: 'stake' })), payouts: payouts.map((p) => ({ ...p, kind: 'qualifier' })),
+    unpaid, forfeits, poolMsat, inputFeesMsat, spendableMsat, stakeWhy: null }, feePart);
+}
+
+const byOutpoint = (a, b) => (outpointKey(a.outpoint) < outpointKey(b.outpoint) ? -1 : outpointKey(a.outpoint) > outpointKey(b.outpoint) ? 1 : 0);
+const byPayoutPk = (a, b) => (toHex(a.payoutPk) < toHex(b.payoutPk) ? -1 : toHex(a.payoutPk) > toHex(b.payoutPk) ? 1 : 0);
+
+/** The stake part and the fee part as ONE transaction: inputs by outpoint, payouts by key, the round's nonce. */
+function finish(stake, fee) {
+  const claims = [...stake.claims, ...fee.claims].sort(byOutpoint);
+  const payouts = [...stake.payouts, ...fee.payouts].sort(byPayoutPk);
+  const paidMsat = stake.payouts.reduce((s, p) => s + p.msat, 0n);
+  const outputFeesMsat = stake.payouts.reduce((s, p) => s + p.feeMsat, 0n);
+  const unspentMsat = stake.spendableMsat - paidMsat - outputFeesMsat;
+  if (unspentMsat < 0n) return refuse('the payouts and their fees come to more than the claimed locks pay for');
+  if (fee.unspentMsat < 0n) return refuse('the seats\' payouts and their fees come to more than the fee locks pay for');
+  return { ok: true, nothing: false, claims, payouts, unpaid: [...stake.unpaid, ...fee.unpaid], forfeits: stake.forfeits,
+    nonce: settlementNonce(stake.roundId), stakeWhy: stake.stakeWhy,
+    poolMsat: stake.poolMsat, inputFeesMsat: stake.inputFeesMsat, spendableMsat: stake.spendableMsat, paidMsat, outputFeesMsat, unspentMsat,
+    feeClaims: fee.claims, seatPayouts: fee.payouts, feePoolMsat: fee.poolMsat, feeInputFeesMsat: fee.inputFeesMsat,
+    feePaidMsat: fee.paidMsat, feeOutputFeesMsat: fee.outputFeesMsat, feeUnspentMsat: fee.unspentMsat, feeUnallocatedMsat: fee.unallocatedMsat,
+    feeHole: fee.hole || null };
+}
+
+/**
+ * WHETHER A FEE LOCK CAN PAY A SEAT - THE GATE THE PAGE ASKS BEFORE IT MINTS ONE
+ * (Pick b, the owner 2026-09-14: "Do not mint a fee lock when claiming it cannot pay
+ * a sitting seat ... The operator must not take money that only pays the
+ * federation.").
+ *
+ * The seats' own fee arithmetic (`feeSettlement`), run on the round's WORST case:
+ * the fewest players a round opens for (more only raise each seat's share), and
+ * the round's game/verify and settlement slots as that many DIFFERENT seats (a
+ * seat in both pools, or fewer keys, only raise the shares). It pays only if
+ * every entitled seat would be paid strictly more than nothing after the
+ * federation's own fee on every input and output. `fees` is the federation's
+ * rule, read by the page's own lock client - not a seat's word.
+ */
+function feeLockPays({ contract, fees, players = MIN_PLAYERS_PER_ROUND } = {}) {
+  if (!contract) return { pays: false, why: 'no round to size the fee lock for' };
+  if (!fees || typeof fees.ppm !== 'bigint' || typeof fees.baseMsat !== 'bigint')
+    return { pays: false, why: 'the federation\'s fee rule is not known, so no fee lock is minted' };
+  const stakeMsat = BigInt(contract.stakeMsat || 0n);
+  const lockMsat = entryFeeMsat(stakeMsat);
+  const base = { stakeMsat, lockMsat, players, seats: Number(contract.gameVerifySlots) + Number(contract.settlementSlots) };
+  if (lockMsat <= 0n) return { ...base, pays: false, why: 'this round owes no fee, so there is nothing to lock' };
+  const key = (tag, i) => { const k = new Uint8Array(32); k[0] = tag; k[1] = i; k[31] = 1; return k; };
+  const pools = {
+    [GAME_VERIFY]: Array.from({ length: Number(contract.gameVerifySlots) }, (_, i) => key(0xa1, i)),
+    [SETTLEMENT]: Array.from({ length: Number(contract.settlementSlots) }, (_, i) => key(0xa2, i)),
+  };
+  const entries = Array.from({ length: players }, (_, i) => ({ pubkey: key(0xb0, i), stakeMsat, feeMsat: lockMsat, donationMsat: 0n, outcome: FAILED, score: 0 }));
+  const feeLocks = new Map(entries.map((e, i) => [toHex(e.pubkey), { outpoint: { txid: key(0xc0, i), outIdx: BigInt(i) }, amountMsat: lockMsat, preimage: key(0xd0, i) }]));
+  const part = feeSettlement({ entries, feeLocks, seats: pools, contract, fees });
+  if (!part.ok) return { ...base, pays: false, why: part.why };
+  const out = { ...base, inputFeesMsat: part.inputFeesMsat, outputFeesMsat: part.outputFeesMsat,
+    perSeatNetMsat: part.payouts.map((p) => p.msat), unpaidSeats: part.unpaid.length };
+  if (part.hole) return { ...out, pays: false, why: part.hole.why };
+  if (part.unpaid.length) return { ...out, pays: false, why: `${part.unpaid.length} entitled seat(s) would be paid nothing after the federation's fees` };
+  if (!part.payouts.length || part.payouts.some((p) => p.msat <= 0n)) return { ...out, pays: false, why: 'a seat would be paid nothing after the federation\'s fees' };
+  return { ...out, pays: true, why: `every one of ${part.payouts.length} seats is paid more than nothing after the federation's fees` };
+}
+
+/**
+ * THE FEE PART: every counted entry's fee lock in, each sitting seat's §22A share
+ * out. `seats` names the round's sitting committee by pool ({ gameVerify,
+ * settlement }: x-only keys); `feeLocks` the verified fee locks by player key,
+ * each with its outpoint, amount and F.
+ */
+function feeSettlement({ entries, feeLocks, seats, contract, fees }) {
+  const none = { ok: true, claims: [], payouts: [], unpaid: [], poolMsat: 0n, inputFeesMsat: 0n, paidMsat: 0n, outputFeesMsat: 0n, unspentMsat: 0n, unallocatedMsat: 0n };
+  if (!feeLocks.size) return none;
+  if (!contract || !seats || !Array.isArray(seats[GAME_VERIFY]) || !Array.isArray(seats[SETTLEMENT]))
+    return refuse('fee locks are claimed for the round\'s sitting seats, and no contract or seats were named');
+  const counted = entries.filter((e) => !isRefund(e.outcome));
+  const claims = [];
+  for (const e of counted) {
+    const f = feeLocks.get(toHex(e.pubkey));
+    if (!f) return refuse(`an entry's fee lock was never verified, so the fee cannot be claimed: ${toHex(e.pubkey).slice(0, 16)}`);
+    if (f.amountMsat !== e.feeMsat) return refuse(`a fee lock holds ${f.amountMsat} msat and its entry's fee is ${e.feeMsat}`);
+    if (!(f.preimage instanceof Uint8Array) || f.preimage.length !== 32) return refuse('a fee lock is claimed with its F, and that is 32 bytes');
+    claims.push({ pubkey: e.pubkey, outpoint: f.outpoint, amountMsat: f.amountMsat, preimage: f.preimage, kind: 'fee' });
+  }
+  const eligible = new Set([...seats[GAME_VERIFY], ...seats[SETTLEMENT]].map(toHex));
+  let table;
+  try { table = nodeFeeTable({ contract, entries: counted, pools: seats, eligible }); } catch (e) { return refuse(e.message); }
+  const poolMsat = claims.reduce((s, c) => s + c.amountMsat, 0n);
+  if (table.fee !== poolMsat) return refuse(`the fee table owes the seats ${table.fee} msat and the fee locks hold ${poolMsat}`);
+  if (table.unallocated > 0n) return refuse(`${table.unallocated} msat of the fee has no eligible seat in its pool, so no fee lock is claimed`);
+  // ONE PAYOUT PER SEAT KEY: a seat in both pools is owed both shares (§22A), paid together.
+  const owed = new Map();
+  for (const [k, msat] of table.seats) { const key = k.slice(k.indexOf(':') + 1); owed.set(key, (owed.get(key) || 0n) + msat); }
+  const inputFeesMsat = claims.reduce((s, c) => s + lnv2FeeMsat(fees, c.amountMsat), 0n);
+  const spendable = poolMsat - inputFeesMsat;
+  if (spendable <= 0n) return refuse(`the guardians' fees on the fee locks (${inputFeesMsat} msat) take the whole fee of ${poolMsat}`);
+  const payouts = [];
+  const unpaid = [];
+  for (const [key, msat] of owed) {
+    const pubkey = fromHex(key);
+    const got = largestPayoutMsat(fees, (msat * spendable) / poolMsat);
+    if (got === 0n) { unpaid.push({ pubkey, owedMsat: msat, why: 'its fee share does not pay its own output fee' }); continue; }
+    payouts.push({ pubkey, payoutPk: refundKeyOf(pubkey), owedMsat: msat, msat: got, feeMsat: lnv2FeeMsat(fees, got), kind: 'seat' });
+  }
+  // A FEE THAT CANNOT REACH A SEAT IS NOT CLAIMED. Measured under the guardians'
+  // real rule (1000 msat per input and per output): two 2000 msat fee locks bring
+  // 4000, their inputs cost 2000, and each seat's 1000 msat share cannot pay its
+  // own output - claimed, the players' fees would only have paid the guardians.
+  // Left unclaimed, each fee lock expires back to its player; the hole is named.
+  if (!payouts.length)
+    return { ...none, unpaid, hole: { poolMsat, inputFeesMsat, owedMsat: [...owed.values()].reduce((s, m) => s + m, 0n),
+      why: `the fee locks hold ${poolMsat} msat and their inputs alone cost ${inputFeesMsat}: no seat's share pays its own output, `
+        + 'so no fee lock is claimed and each expires back to its player' } };
+  const paidMsat = payouts.reduce((s, p) => s + p.msat, 0n);
+  const outputFeesMsat = payouts.reduce((s, p) => s + p.feeMsat, 0n);
+  return { ok: true, claims, payouts, unpaid, poolMsat, inputFeesMsat, paidMsat, outputFeesMsat,
+    unspentMsat: spendable - paidMsat - outputFeesMsat, unallocatedMsat: table.unallocated, hole: null };
 }
 
 // ---- blwp-client/src/page-lock.js
@@ -7671,6 +8116,7 @@ function lockFromClient(answer, { point, claimPk, refundPk }) {
 // wallet that holds it; and a lock already made, that no seat has committed
 // yet, is kept with its stake (`saveLock`), so a reload before the seat takes
 // the entry uses that lock instead of dealing and paying again.
+
 
 
 
@@ -7791,32 +8237,79 @@ async function lockStake({ round, roundId, invite, seed, stake, claimKey, player
   // first deposit is the net stake and the stock fee allowance
   // (`LockClient.lockAllowanceMsat`); after it the quote decides, and a quote
   // that still finds the funds short is topped up by the allowance again.
-  const allowance = BigInt(LockClient.lockAllowanceMsat(String(amount)));
-  for (let tries = 0; ; tries++) {
-    const have = BigInt(await client.balanceMsat());
-    let cost = null;
-    try { cost = BigInt(await client.lockCostMsat(String(amount))); } catch (e) {
-      if (!/insufficient funds/i.test(String((e && e.message) || e))) throw e;
-    }
-    if (cost !== null && have >= cost) break;
-    if (tries >= 3) throw new Error(`after ${tries} deposits the lock client holds ${have} msat and cannot fund a ${amount} msat lock`);
-    const short = cost !== null ? cost - have : amount + allowance - have;
-    const plan = JSON.parse(await client.depositFor(String(short > 0n ? short : allowance)));
-    const invoice = JSON.parse(await client.receive(String(plan.invoice_msat), String(plan.gateway || '')));
-    onDeposit({ invoice: invoice.invoice, amountMsat: BigInt(plan.invoice_msat), creditsMsat: BigInt(plan.credited_msat) });
-    onStep('waiting for the deposit');
-    const final = await client.awaitReceive(invoice.operation);
-    if (final !== 'Claimed') throw new Error(`the deposit was not claimed: ${final}`);
+  // THE FEE LOCK'S GATE (Pick b, the owner 2026-09-14): a fee lock is minted only
+  // when claiming it can pay every entitled sitting seat something after the
+  // federation's own fee on every input and output - read from the federation
+  // this client joined, not a seat's word. A 100 sat round's 2000 msat fee lock
+  // cannot, so none is made and the player is not charged a lock that only
+  // expires; a 1000 sat round's 20000 msat lock can. No fee rule known: no lock.
+  let feeRule = null;
+  if (typeof client.feeRule === 'function') {
+    try { const r = JSON.parse(await client.feeRule()); feeRule = { ppm: BigInt(r.fee_ppm), baseMsat: BigInt(r.fee_base_msat) }; }
+    catch { feeRule = null; }
   }
+  const feeGate = feeLockPays({ contract: round, fees: feeRule });
+  const feeMsat = feeGate.pays ? feeGate.lockMsat : 0n;
+
+  const fund = async (msat) => {
+    const allowance = BigInt(LockClient.lockAllowanceMsat(String(msat)));
+    for (let tries = 0; ; tries++) {
+      const have = BigInt(await client.balanceMsat());
+      let cost = null;
+      try { cost = BigInt(await client.lockCostMsat(String(msat))); } catch (e) {
+        if (!/insufficient funds/i.test(String((e && e.message) || e))) throw e;
+      }
+      if (cost !== null && have >= cost) break;
+      if (tries >= 3) throw new Error(`after ${tries} deposits the lock client holds ${have} msat and cannot fund a ${msat} msat lock`);
+      const short = cost !== null ? cost - have : msat + allowance - have;
+      const plan = JSON.parse(await client.depositFor(String(short > 0n ? short : allowance)));
+      const invoice = JSON.parse(await client.receive(String(plan.invoice_msat), String(plan.gateway || '')));
+      onDeposit({ invoice: invoice.invoice, amountMsat: BigInt(plan.invoice_msat), creditsMsat: BigInt(plan.credited_msat) });
+      onStep('waiting for the deposit');
+      const final = await client.awaitReceive(invoice.operation);
+      if (final !== 'Claimed') throw new Error(`the deposit was not claimed: ${final}`);
+    }
+  };
+  // ONE DEPOSIT FOR BOTH LOCKS where the first quote covers it; a fee lock the
+  // stake lock's own fee left short is topped up before it is made.
+  await fund(amount + feeMsat);
 
   onStep('locking the stake');
   const refundPk = refundKeyOf(playerPubkey);
-  const answer = await client.lock(toHex(stake.stakePoint), String(amount), toHex(claimKey.claimPk), toHex(refundPk),
-    Number(round.stakeExpiryBlocks) + LOCK_EXPIRY_MARGIN_BLOCKS);
+  const delta = Number(round.stakeExpiryBlocks) + LOCK_EXPIRY_MARGIN_BLOCKS;
+  const answer = await client.lock(toHex(stake.stakePoint), String(amount), toHex(claimKey.claimPk), toHex(refundPk), delta);
   const lock = lockFromClient(answer, { point: stake.stakePoint, claimPk: claimKey.claimPk, refundPk });
   if (lock.fields.amountMsat !== amount)
     throw new Error(`the lock client locked ${lock.fields.amountMsat} msat, and this entry's net stake is ${amount}`);
-  return { ...lock, client };
+
+  let feeLock = null;
+  if (feeGate.pays) {
+    await fund(feeMsat);
+    onStep('locking the node fee');
+    const preimage = feeSecretFor(seed, roundId);
+    const image = sha256(preimage);
+    const said = await client.lockHash(toHex(image), String(feeMsat), toHex(claimKey.claimPk), toHex(refundPk), delta);
+    const made = lockFromClient(said, { hash: image, claimPk: claimKey.claimPk, refundPk });
+    if (made.fields.amountMsat !== feeMsat)
+      throw new Error(`the lock client locked ${made.fields.amountMsat} msat as the fee, and this entry's fee is ${feeMsat}`);
+    feeLock = { ...made, preimage };
+  }
+  return { ...lock, client, feeLock, feeGate };
+}
+
+const FEE_SECRET_TAG = new TextEncoder().encode('blwp fee preimage v1');
+
+/**
+ * THE FEE LOCK'S F, FROM THE SEED AND THE ROUND - handed over openly in the entry
+ * (F5), never the stake's P. Derived, so a reload that kept the lock names the
+ * same F.
+ */
+function feeSecretFor(seed, roundId) {
+  if (!(seed instanceof Uint8Array) || seed.length !== 32) throw new Error('a fee secret comes from the player\'s 32-byte seed');
+  if (!(roundId instanceof Uint8Array) || roundId.length !== 32) throw new Error('a fee secret is per round');
+  const m = new Uint8Array(FEE_SECRET_TAG.length + 64);
+  m.set(FEE_SECRET_TAG); m.set(seed, FEE_SECRET_TAG.length); m.set(roundId, FEE_SECRET_TAG.length + 32);
+  return sha256(m);
 }
 
 const savedLockKey = (roundId, playerPubkey) => `blwp.lock.saved.${toHex(roundId)}.${toHex(playerPubkey).slice(0, 16)}`;
@@ -7832,6 +8325,10 @@ function saveLock(storage, { roundId, playerPubkey, stake, lock }) {
     preimage: toHex(stake.preimage), body: toHex(stake.body),
     outpoint: { txid: toHex(lock.outpoint.txid), outIdx: String(lock.outpoint.outIdx) },
     fields: lockFieldsToJson(lock.fields), committedTo: null,
+    // AND ITS FEE LOCK, when one was minted (Pick b): the same reload keeps it.
+    feeLock: lock.feeLock ? { preimage: toHex(lock.feeLock.preimage),
+      outpoint: { txid: toHex(lock.feeLock.outpoint.txid), outIdx: String(lock.feeLock.outpoint.outIdx) },
+      fields: lockFieldsToJson(lock.feeLock.fields) } : null,
   }));
 }
 
@@ -7848,7 +8345,10 @@ function savedLock(storage, { roundId, playerPubkey }) {
   return {
     stake: { preimage, stakeCommitment: sha256(preimage), vssSharesRef: handoutId(handout),
       stakePoint: handout.commitments[0], handout, body },
-    lock: { outpoint: { txid: fromHex(j.outpoint.txid), outIdx: BigInt(j.outpoint.outIdx) }, fields: lockFieldsFromJson(j.fields) },
+    lock: { outpoint: { txid: fromHex(j.outpoint.txid), outIdx: BigInt(j.outpoint.outIdx) }, fields: lockFieldsFromJson(j.fields),
+      feeLock: j.feeLock ? { preimage: fromHex(j.feeLock.preimage),
+        outpoint: { txid: fromHex(j.feeLock.outpoint.txid), outIdx: BigInt(j.feeLock.outpoint.outIdx) },
+        fields: lockFieldsFromJson(j.feeLock.fields) } : null },
     committedTo: j.committedTo || null,
   };
 }
@@ -7974,13 +8474,15 @@ async function redeemStake({ round, roundId, invite, seed, curve, LockClient, st
  * THE LOCK, HANDED TO EVERY SEAT (POST /lock). A seat that verifies it in the
  * federation answers 201 and counts the stake; `ok` is `needed` of them.
  */
-async function handLock({ entryId, fields, nodes, needed, fetcher = fetch } = {}) {
+async function handLock({ entryId, fields, nodes, needed, fetcher = fetch, door = 'lock' } = {}) {
   if (!(entryId instanceof Uint8Array) || entryId.length !== 32) throw new Error('a lock is handed over for an entry, by its id');
+  // `door`: 'lock' for the stake lock, 'fee-lock' for the fee lock (Pick b).
+  if (door !== 'lock' && door !== 'fee-lock') throw new Error('a lock is handed to a seat\'s /lock or /fee-lock');
   const body = JSON.stringify(lockFieldsToJson(fields));
   const said = [];
   for (const node of [...new Set(nodes || [])]) {
     try {
-      const r = await fetcher(`${String(node).replace(/\/+$/, '')}/lock?entry=${toHex(entryId)}`, { method: 'POST', body });
+      const r = await fetcher(`${String(node).replace(/\/+$/, '')}/${door}?entry=${toHex(entryId)}`, { method: 'POST', body });
       said.push({ node, status: r.status, why: (await r.text()).trim() });
     } catch (e) {
       said.push({ node, status: 0, why: e.message });
@@ -10375,6 +10877,13 @@ class Client {
       // hand the same lock to a second entry (a seat refuses that anyway).
       if (this.lockHanded.ok && typeof this.stakeLock.onCommitted === 'function') {
         try { this.stakeLock.onCommitted(mine); } catch { /* the page's bookkeeping, not the seat's */ }
+      }
+      // AND THE FEE LOCK, WHEN THE PAGE MADE ONE (Pick b: only when it can pay a
+      // seat): each seat checks it against the entry's F and fee and keeps it for
+      // the round's one settlement.
+      if (this.stakeLock.feeLock) {
+        this.feeLockHanded = await handLock({ entryId: mine, fields: this.stakeLock.feeLock.fields,
+          nodes: [this.base, ...this.peers], needed: this.stakeLock.needed, door: 'fee-lock' });
       }
     }
     return seated;

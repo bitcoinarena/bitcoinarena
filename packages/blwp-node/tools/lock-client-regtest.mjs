@@ -25,6 +25,7 @@ import { lockFieldsToJson } from '../src/stake-lock-seat.js';
 import { assumeSeated } from '../test/seating.js';
 import { attestedClaimKey } from '../../blwp-client/src/join.js';
 import { lockFromClient } from '../../blwp-client/src/lock-result.js';
+import { feeLockPays } from '../../protocol/src/lock-settlement.js';
 import { pageCurve } from '../../blwp-client/src/page-curve.js';
 import { encodeRoundContract, roundId, encodeEntryContract, entryId } from '../../protocol/src/contracts.js';
 import { dealHandout, encodeHandout, handoutId } from '../../protocol/src/handout.js';
@@ -98,7 +99,7 @@ try {
   say({ step: 'deposit', msat: 3000000, alice: paid, final, ms: Date.now() - t, balanceMsat: await lc.balanceMsat() });
 
   const stakeOf = () => { const p = scalar(); return { p, point: feldmanGroup.pointFromScalar(scalarFrom32(p) % FIELD), player: evenPlayer() }; };
-  const seatEntry = async (s, outpoint, claimKey) => {
+  const seatEntry = async (s, outpoint, claimKey, fee = null) => {
     const e = rand(32);
     const dealt = await dealHandout({ preimage: s.p, seats: c.nodes, roundId: rid, playerPubkey: s.player,
       ephemeralSecret: e, ephemeralPubkey: feldmanGroup.pointX(e), coefficients: [scalarFrom32(rand(32)) % FIELD], needed: 2, curve: feldmanGroup });
@@ -106,7 +107,8 @@ try {
       roundId: rid, playerPubkey: s.player, sessionPubkey: ed25519.getPublicKey(ed25519.utils.randomSecretKey()),
       stakeCommitment: sha256(s.p), stakeMsat: STAKE, feeMsat: entryFeeMsat(STAKE), donationMsat: 0n, joinTick: 0,
       worldSecret: rand(32), vssSharesRef: handoutId(dealt.handout), stakePoint: dealt.handout.commitments[0],
-      feePreimage: new Uint8Array(32), stakeLockOutpoint: outpoint, feeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n },
+      feePreimage: fee ? fee.preimage : new Uint8Array(32), stakeLockOutpoint: outpoint,
+      feeLockOutpoint: fee ? fee.outpoint : { txid: new Uint8Array(32), outIdx: 0n },
       claimKeyAttestationRef: claimKey.ref,
     };
     for (const d of seats) {
@@ -147,6 +149,35 @@ try {
   const cc = lockFromClient(lockC, { point: C.point, claimPk: rogue, refundPk: refundKeyOf(C.player) });
   const eidC = await seatEntry(C, cc.outpoint, att);
   await handOver('C, locked to an unattested key', eidC, cc.fields);
+
+  // D (Pick b, the owner 2026-09-14): THE FEE LOCK, ONLY WHEN IT CAN PAY A SEAT. The
+  // federation's own fee rule, asked of the wasm client; the gate at this round's
+  // 1000 sat and, for contrast, at 100 sat; then at 1000 sat a real hash-image
+  // lock of the entry's 20000 msat fee to H(F), handed to both seats' /fee-lock.
+  const rule = JSON.parse(await lc.feeRule());
+  const fees = { ppm: BigInt(rule.fee_ppm), baseMsat: BigInt(rule.fee_base_msat) };
+  const gate1000 = feeLockPays({ contract: c, fees });
+  const gate100 = feeLockPays({ contract: { ...c, stakeMsat: 100000n }, fees });
+  say({ step: 'fee rule and gate', rule, gate1000: { pays: gate1000.pays, lock: String(gate1000.lockMsat), perSeatNet: (gate1000.perSeatNetMsat || []).map(String) },
+    gate100: { pays: gate100.pays, why: gate100.why.slice(0, 120) } });
+  if (!gate1000.pays) throw new Error(`the gate refused a 1000 sat round: ${gate1000.why}`);
+  const D = stakeOf();
+  const F = rand(32);
+  const lockD = await lc.lock(toHex(D.point), String(net), toHex(att.claimPk), toHex(refundKeyOf(D.player)), 150);
+  const d = lockFromClient(lockD, { point: D.point, claimPk: att.claimPk, refundPk: refundKeyOf(D.player) });
+  t = Date.now();
+  const feeD = await lc.lockHash(toHex(sha256(F)), String(entryFeeMsat(STAKE)), toHex(att.claimPk), toHex(refundKeyOf(D.player)), 150);
+  const fd = lockFromClient(feeD, { hash: sha256(F), claimPk: att.claimPk, refundPk: refundKeyOf(D.player) });
+  say({ step: 'fee lock D', ms: Date.now() - t, outpoint: `${toHex(fd.outpoint.txid)}:${fd.outpoint.outIdx}`, contract: fd.contractId,
+    msat: String(fd.fields.amountMsat), image: fd.fields.paymentImage.kind, balanceMsat: await lc.balanceMsat() });
+  const eidD = await seatEntry(D, d.outpoint, att, { preimage: F, outpoint: fd.outpoint });
+  await handOver('D, its stake lock', eidD, d.fields);
+  const feeOut = [];
+  for (const s of seats) {
+    const r = await fetch(`http://127.0.0.1:${s.port}/fee-lock?entry=${toHex(eidD)}`, { method: 'POST', body: JSON.stringify(lockFieldsToJson(fd.fields)) });
+    feeOut.push({ status: r.status, kept: !!s.round.feeLock(eidD), why: (await r.text()).trim().slice(0, 110) });
+  }
+  say({ handover: 'D, its fee lock to /fee-lock', seats: feeOut });
 } catch (e) {
   say({ error: e.message });
   process.exitCode = 1;

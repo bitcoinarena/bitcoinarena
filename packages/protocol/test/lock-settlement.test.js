@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { lockSettlement, lnv2FeeMsat, largestPayoutMsat, settlementNonce } from '../src/lock-settlement.js';
+import { lockSettlement, lnv2FeeMsat, largestPayoutMsat, settlementNonce, feeLockPays } from '../src/lock-settlement.js';
 import { DELIVERED, FAILED, FORFEIT, VOID } from '../src/payout.js';
 import { refundKeyOf } from '../src/stake-lock.js';
 import { toHex } from '../src/hash.js';
@@ -194,6 +194,46 @@ test('a counted entry with no verified fee lock, a fee lock of another amount, o
   assert.match(wrong.why, /fee lock holds 1999 msat and its entry's fee is 2000/);
   const noSeats = lockSettlement({ ...base, feeLocks: new Map([feeLockFor(W, 1), feeLockFor(L, 2)]) });
   assert.match(noSeats.why, /no contract or seats were named/);
+});
+
+// PICK (b) (the owner 2026-09-14): THE GATE - A FEE LOCK IS MINTED ONLY WHEN IT CAN PAY A SEAT.
+const REAL_RULE = { ppm: 0n, baseMsat: 1000n };   // measured on fedimintd 0.12.0 (stake-lock-step3.sh)
+const at = (stakeMsat) => ({ ...contractOf([SEAT(1), SEAT(2)]), stakeMsat });
+const show = (g) => `stake ${g.stakeMsat} msat, lock ${g.lockMsat}, ${g.players} players, ${g.seats} seats, input fees ${g.inputFeesMsat}, `
+  + `output fees ${g.outputFeesMsat}, per-seat net [${(g.perSeatNetMsat || []).join(', ')}], unpaid ${g.unpaidSeats} - ${g.pays ? 'MINT' : 'NO LOCK'}: ${g.why}`;
+
+test('the gate: a 100 sat round with two players mints no fee lock - its 2000 msat lock would only pay the federation', () => {
+  const g = feeLockPays({ contract: at(100000n), fees: REAL_RULE });
+  console.log(`  100 sat: ${show(g)}`);
+  assert.equal(g.pays, false);
+  assert.equal(g.lockMsat, 2000n);
+});
+
+test('the gate: a 1000 sat round mints its 20000 msat fee lock, and every sitting seat nets more than nothing after 1000 msat per input and per output', () => {
+  const g = feeLockPays({ contract: at(1000000n), fees: REAL_RULE });
+  console.log(`  1000 sat: ${show(g)}`);
+  assert.equal(g.pays, true, g.why);
+  assert.equal(g.lockMsat, 20000n);
+  assert.equal(g.perSeatNetMsat.length, 4, 'every entitled seat - two game/verify, two settlement, as different keys');
+  for (const net of g.perSeatNetMsat) assert.ok(net > 0n, `a seat nets ${net}`);
+  assert.equal(g.inputFeesMsat, 2000n, 'two fee locks in, 1000 msat each');
+  assert.equal(g.outputFeesMsat, 4000n, 'four seat payouts out, 1000 msat each');
+});
+
+test('the gate\'s floor, measured: the smallest stake it mints for, and 1000 sat the smallest bracket (10 / 100 / 1000 sat) above it', () => {
+  let lo = 1000n; let hi = 1000000n;   // 1 sat fails, 1000 sat passes (above)
+  assert.equal(feeLockPays({ contract: at(lo), fees: REAL_RULE }).pays, false);
+  while (hi - lo > 1000n) { const mid = ((lo + hi) / 2n / 1000n) * 1000n; if (feeLockPays({ contract: at(mid), fees: REAL_RULE }).pays) hi = mid; else lo = mid; }
+  const floor = feeLockPays({ contract: at(hi), fees: REAL_RULE });
+  console.log(`  the floor: ${hi / 1000n} sat mints (${show(floor)}); ${lo / 1000n} sat does not`);
+  assert.equal(floor.pays, true);
+  const brackets = [10000n, 100000n, 1000000n].map((s) => [s / 1000n, feeLockPays({ contract: at(s), fees: REAL_RULE }).pays]);
+  console.log(`  brackets: ${brackets.map(([s, p]) => `${s} sat ${p ? 'mints' : 'no lock'}`).join(', ')}`);
+  assert.deepEqual(brackets.map(([, p]) => p), [false, false, true]);
+});
+
+test('with no federation fee rule known the gate mints nothing', () => {
+  assert.equal(feeLockPays({ contract: at(1000000n), fees: null }).pays, false);
 });
 
 test('a round with losers and no qualifier: what the hold verdict decides, the lock settlement decides too', () => {

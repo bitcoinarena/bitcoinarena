@@ -567,6 +567,13 @@ export class Client {
       if (this.lockHanded.ok && typeof this.stakeLock.onCommitted === 'function') {
         try { this.stakeLock.onCommitted(mine); } catch { /* the page's bookkeeping, not the seat's */ }
       }
+      // AND THE FEE LOCK, WHEN THE PAGE MADE ONE (Pick b: only when it can pay a
+      // seat): each seat checks it against the entry's F and fee and keeps it for
+      // the round's one settlement.
+      if (this.stakeLock.feeLock) {
+        this.feeLockHanded = await handLock({ entryId: mine, fields: this.stakeLock.feeLock.fields,
+          nodes: [this.base, ...this.peers], needed: this.stakeLock.needed, door: 'fee-lock' });
+      }
     }
     return seated;
   }
