@@ -2479,6 +2479,28 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           : { state: 'NONE' }));
       }
 
+      // AND IN PUBLIC: THE ROUNDS SETTLED SINCE A TIME (spec §24, the owner 2026-09-14). A player on
+      // another device - alice on her iPhone two hours after the desktop - holds only the seed:
+      // it derives its key for each round listed here and matches it against the keys the round's
+      // settlement pays and the refund keys of its verified locks - both public already (the
+      // settlement at /lock-settlement, a refund key from the entry's player key). The device asks
+      // nothing per round, so no seat learns which rounds it looks for; the contract of a round it
+      // matched it takes from /round. At most 7 days back, at most 500 rounds.
+      if (req.method === 'GET' && url.pathname === '/settled') {
+        const nowMs = Number(round.now());
+        const asked = Number(url.searchParams.get('since') || '');
+        if (!Number.isFinite(asked) || asked < 0) return text(res, 400, 'rounds settled since a time are asked for with since=<ms>');
+        const since = Math.max(asked, nowMs - 7 * 24 * 3600 * 1000);
+        res.writeHead(200, { 'content-type': 'application/json', ...CORS });
+        return res.end(JSON.stringify({ node: toHex(round.pubkey), nowMs: String(nowMs), since: String(since),
+          rounds: round.settledSince(since).map((r) => {
+            const moved = settlements.summary(r.roundId);
+            return { id: toHex(r.roundId), state: r.state, madeMs: String(r.madeMs),
+              payouts: moved && Array.isArray(moved.payouts) ? moved.payouts.filter((p) => p.kind === 'qualifier').map((p) => String(p.pk).toLowerCase()) : [],
+              refunds: r.refunds };
+          }) }));
+      }
+
       // AND IN PUBLIC: the forfeit of a qualifier's lock - kept, or made now with
       // the other seats if it is due. A loser's, or one inside its window, is 409.
       if (req.method === 'GET' && url.pathname === '/forfeit') {

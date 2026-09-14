@@ -25,7 +25,7 @@ import { feldmanGroup, tweakPoint } from '../src/curve.js';
 import { assumeSeated } from './seating.js';
 import { lockPort } from './lock-fixture.js';
 import { b32, rand, RANDOMNESS, STAKE, WINDOW_MS, WINNER, LOSER, GENESIS_HASH, wordsAt, contractFor, say, secretScalar, opts, wait } from './window-fixture.js';
-import { encodeRoundContract, roundId, encodeEntryContract, entryId } from '../../protocol/src/contracts.js';
+import { encodeRoundContract, decodeRoundContract, roundId, encodeEntryContract, entryId } from '../../protocol/src/contracts.js';
 import { dealHandout, encodeHandout, handoutId } from '../../protocol/src/handout.js';
 import { FIELD, scalarFrom32 } from '../../protocol/src/shares.js';
 import { encodeInputBatch, batchId } from '../../protocol/src/batch.js';
@@ -201,6 +201,42 @@ test('after the window the loser\'s lock is claimed by one committee signature, 
     // AND THE WINNER'S OWN STAKE STILL COMES BACK BY ITS FORFEIT (W5b).
     const f = await fetch(`http://127.0.0.1:${w.a.port}/forfeit?round=${toHex(w.rid)}&entry=${toHex(won.eid)}`);
     assert.equal(f.status, 200, await f.text());
+  } finally { await w.close(); }
+});
+
+// A WITHDRAWAL CLAIMED ON ANOTHER DEVICE (spec §24, the owner 2026-09-14): alice plays on her desktop,
+// forgets to withdraw, and two hours later plays on her iPhone holding only her seed. The seats list
+// the rounds they settled since a time, each with the keys its settlement pays and its locks' refund
+// keys; the device derives its own key per round and matches it there, asking nothing per round.
+// Before: /rounds lists only rounds still open for entry.
+test('the seats list the rounds they settled since a time with the keys each pays and its locks\' refund keys, so a device holding only the seed finds what it is owed', async () => {
+  const w = await lockRound();
+  try {
+    const won = await lockAndPlay(w, WINNER);
+    const lost = await lockAndPlay(w, LOSER);
+    const settled = (since) => fetch(`http://127.0.0.1:${w.a.port}/settled?since=${since}`);
+    const before = await (await settled(0)).json();
+    assert.equal(before.rounds.some((r) => r.id === toHex(w.rid)), false, 'a round was listed as settled before it closed');
+    await closeRound(w);
+    const got = await untilSettled(w);
+    assert.equal(got.state, 'ACCEPTED', got.why);
+    const listed = await (await settled(0)).json();
+    const mine = listed.rounds.find((r) => r.id === toHex(w.rid));
+    assert.ok(mine, 'the settled round is not listed');
+    assert.equal(mine.state, 'ACCEPTED');
+    assert.deepEqual(mine.payouts, [toHex(refundKeyOf(WINNER.key))], 'the listed payout keys are not the qualifier\'s');
+    assert.deepEqual([...mine.refunds].sort(), [toHex(refundKeyOf(WINNER.key)), toHex(refundKeyOf(LOSER.key))].sort(), 'the listed refund keys are not the two locks\'');
+    assert.equal('contract' in mine, false, 'every listed round carries its contract');
+    // AND THE CONTRACT OF A ROUND A DEVICE MATCHED, FROM /round: its id.
+    const c = new Uint8Array(await (await fetch(`http://127.0.0.1:${w.a.port}/round?id=${mine.id}`)).arrayBuffer());
+    assert.equal(toHex(roundId(decodeRoundContract(c))), toHex(w.rid), 'the round\'s contract is not its id');
+    assert.ok(won.outpoint && lost.outpoint);
+    const later = await (await settled(Number(mine.madeMs) + 1)).json();
+    assert.equal(later.rounds.some((r) => r.id === toHex(w.rid)), false, 'a round settled before since= was listed');
+    assert.equal((await settled('x')).status, 400);
+    const atB = await (await fetch(`http://127.0.0.1:${w.b.port}/settled?since=0`)).json();
+    assert.ok(atB.rounds.some((r) => r.id === toHex(w.rid)), 'the other seat does not list the round it settled');
+    console.log(`  /settled: ${listed.rounds.length} round(s) at seat A, this one ${mine.state} at ${mine.madeMs}, paying ${mine.payouts.length} key, ${mine.refunds.length} refund keys; since ${Number(mine.madeMs) + 1}: ${later.rounds.length}; seat B lists it too`);
   } finally { await w.close(); }
 });
 

@@ -2563,6 +2563,19 @@ the round's wallet was kept in the tab. So:
 - A kept round is dropped only once it is final with nothing left in its
   wallet. Cleared browser storage loses the wallet's e-cash; what the
   federation still holds for the key comes back only through the seed backup.
+- **On another device** (the owner 2026-09-14: alice plays on her desktop, forgets
+  to withdraw, and plays on her iPhone two hours later): the seed backup is
+  brought in, and on start the client asks each seat for the rounds it settled
+  in the last 24 hours (`GET /settled?since=`), each listed with the keys its
+  settlement pays and the refund keys of its verified locks - both public
+  already. The client derives its key per round from the seed and matches it
+  there; it asks nothing per round, so no seat learns which rounds it looks
+  for. A matched round's contract comes from `/round` and must hash to its id;
+  the round is then kept and withdrawn like one the device joined. The node
+  stores nothing new and never holds the seed. What another device's Withdraw
+  already collected into its own wallet stays on that device until it starts
+  again; a lock refused at the door, known to no seat, comes back only on the
+  device that made it.
 
 ---
 

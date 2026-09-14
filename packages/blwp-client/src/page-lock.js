@@ -24,7 +24,7 @@ import { decodeHandout, handoutId } from '../../protocol/src/handout.js';
 import { lockFromClient } from './lock-result.js';
 import { feeLockPays } from '../../protocol/src/lock-settlement.js';
 import { roundLocks, playerFor } from './join.js';
-import { encodeRoundContract, decodeRoundContract } from '../../protocol/src/contracts.js';
+import { encodeRoundContract, decodeRoundContract, roundId as roundIdOf } from '../../protocol/src/contracts.js';
 import { decodeBolt11 } from '../../protocol/src/bolt11.js';
 
 // THE BLOCKS OVER stake_expiry_blocks A LOCK IS MADE FOR. The seat requires
@@ -577,6 +577,53 @@ export function markCollectDone(storage, roundIdHex, done) {
   } catch { return false; }
 }
 const COLLECT_NOTE = 'blwp.collect.';
+
+/**
+ * A WITHDRAWAL CLAIMED ON ANOTHER DEVICE (spec §24, the owner 2026-09-14: alice plays on her
+ * desktop, forgets to withdraw, and two hours later plays on her iPhone). The iPhone holds only
+ * the seed. Each seat lists the rounds it settled since `sinceMs` (/settled), each with the keys
+ * its settlement pays and the refund keys of its verified locks; this seed's key for each round
+ * is derived here and matched against them - the device asks nothing per round, so no seat
+ * learns which rounds it looks for. A matched round's contract is fetched (/round) and must be
+ * its id and name a federation. Nothing is spent. Returns the rounds worth keeping - the page
+ * keeps them and looks at them as its own.
+ */
+export async function findOwedRounds({ seed, curve, nodes = [], fetcher = fetch, sinceMs = 0, known = [] } = {}) {
+  if (!(seed instanceof Uint8Array) || seed.length !== 32)
+    throw new Error('the rounds owed to a player are found from the player\'s 32-byte seed, and none was given');
+  const base = (n) => String(n).replace(/\/+$/, '');
+  const skip = new Set(known.map((h) => String(h).toLowerCase()));
+  const listed = new Map();
+  for (const node of nodes) {
+    let got = null;
+    try { const r = await fetcher(`${base(node)}/settled?since=${Math.max(0, Math.floor(Number(sinceMs) || 0))}`); if (r.ok) got = await r.json(); } catch { got = null; }
+    for (const x of (got && Array.isArray(got.rounds) ? got.rounds : [])) {
+      const id = String(x.id || '').toLowerCase();
+      if (!/^[0-9a-f]{64}$/.test(id) || skip.has(id)) continue;
+      const l = listed.get(id) || { payouts: new Set(), refunds: new Set() };
+      for (const k of x.payouts || []) l.payouts.add(String(k).toLowerCase());
+      for (const k of x.refunds || []) l.refunds.add(String(k).toLowerCase());
+      listed.set(id, l);
+    }
+  }
+  const found = [];
+  for (const [id, l] of listed) {
+    const mine = toHex(refundKeyOf(playerFor({ id: fromHex(id) }, { seed, curve }).pubkey));
+    const payout = l.payouts.has(mine); const lock = l.refunds.has(mine);
+    if (!payout && !lock) continue;
+    let round = null;
+    for (const node of nodes) {
+      try {
+        const r = await fetcher(`${base(node)}/round?id=${id}`);
+        if (!r.ok) continue;
+        const c = decodeRoundContract(new Uint8Array(await r.arrayBuffer()));
+        if (toHex(roundIdOf(c)) === id && roundLocks(c)) { round = c; break; }
+      } catch { /* this seat did not answer, or not with the round */ }
+    }
+    if (round) found.push({ roundIdHex: id, round, payout, lock });
+  }
+  return found;
+}
 
 /**
  * THE ROUND'S FEDERATION WALLET IN THIS TAB - the one the payout and the stake were

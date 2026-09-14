@@ -1890,6 +1890,21 @@ export class Round {
     return r ? { txid: r.txid, message: new Uint8Array(r.message), signature: new Uint8Array(r.signature), state: r.state, why: r.why, madeMs: Number(r.made_ms) } : null;
   }
 
+  /**
+   * THE ROUNDS WHOSE LOCKS WERE SETTLED SINCE `sinceMs`, oldest first, with their locks' refund keys
+   * (spec §24, the owner 2026-09-14: a withdrawal claimed on another device). Public, as the
+   * contract and the settlement are; nothing here names a player - the device derives its own
+   * key per round from its seed and asks for it.
+   */
+  settledSince(sinceMs, limit = 500) {
+    const refunds = this.db.prepare('SELECT fields FROM stake_locks WHERE round_id = ?');
+    return this.db.prepare('SELECT round_id, state, made_ms FROM lock_settlements WHERE made_ms >= ? ORDER BY made_ms LIMIT ?')
+      .all(Number(sinceMs), limit)
+      .map((x) => ({ roundId: new Uint8Array(x.round_id), state: x.state, madeMs: Number(x.made_ms),
+        // THE REFUND KEYS OF THE LOCKS THIS SEAT VERIFIED - each a player key's, public in its entry.
+        refunds: refunds.all(x.round_id).map((l) => String(JSON.parse(l.fields).refundPk).toLowerCase()) }));
+  }
+
   /** The entry a verified lock at this outpoint already stakes, or null: one lock is one seat. */
   stakeLockAt(outpoint) {
     const r = this.db.prepare('SELECT entry_id FROM stake_locks WHERE outpoint = ?')

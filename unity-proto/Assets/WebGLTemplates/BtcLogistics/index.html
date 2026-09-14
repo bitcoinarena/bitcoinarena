@@ -973,6 +973,25 @@
       const open = kept.filter((r) => !r.done);
       return open.length ? open[open.length - 1] : (kept.length ? kept[kept.length - 1] : null);
     }
+    // A WITHDRAWAL CLAIMED ON ANOTHER DEVICE (spec §24, the owner 2026-09-14): alice plays on her
+    // desktop, forgets to withdraw, and plays on her iPhone two hours later with her seed brought
+    // in. The lobby's seats list what they settled in the last 24 h; the rounds whose keys this
+    // tab's seed derives are kept like the rounds this tab joined, and looked at and withdrawn the
+    // same way. The seats are asked nothing per round.
+    const OWED_LOOKBACK_MS = 24 * 3600 * 1000;
+    async function findTheRoundsOwed(named) {
+      if (typeof BLWPCLIENT === 'undefined' || !BLWPCLIENT.findOwedRounds || !window.BLWP_CURVE || !named || !named.federation) return;
+      try {
+        const seed = BLWPCLIENT.tabSeed({ storage: window.sessionStorage, random: (n) => crypto.getRandomValues(new Uint8Array(n)) });
+        const known = BLWPCLIENT.savedCollects(vault()).map((r) => r.roundIdHex);
+        const found = await BLWPCLIENT.findOwedRounds({ seed, curve: window.BLWP_CURVE, nodes: named.nodes,
+          sinceMs: Date.now() - OWED_LOOKBACK_MS, known });
+        for (const f of found)
+          BLWPCLIENT.saveCollect(vault(), { roundIdHex: f.roundIdHex, round: f.round, invite: named.federation, nodes: named.nodes, seed });
+        window.BLWP_FOUND_OWED = found.map((f) => f.roundIdHex);
+        if (found.length) { console.log('[blwp] owed: ' + found.length + ' round(s) settled in the last 24 h name this seed\'s key'); lookThePayout(); }
+      } catch (e) { console.error('[blwp] owed: ' + e.message); }
+    }
     async function lookThePayout() {
       if (payoutAsking || typeof BLWPCLIENT === 'undefined' || !BLWPCLIENT.savedCollects) return;
       const newest = newestKept();
@@ -1330,6 +1349,7 @@
       }
       if (!named) return false;
       window.BLWP_LOBBY_FROM = search === location.search ? 'link' : 'daily.json';
+      findTheRoundsOwed(named);
       // WHO THIS TAB IS (M3.3-34): the identity key the page generated from the
       // tab's seed, the name made from it, and the player's own name over it.
       // Unity draws it (SplashScreen, DailyLobby.cs); it is decided here. The

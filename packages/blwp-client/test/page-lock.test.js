@@ -17,7 +17,7 @@ import { bech32Encode, convertBits } from '../../protocol/src/bech32.js';
 import { decodeBolt11 } from '../../protocol/src/bolt11.js';
 
 import { lockStake, handLock, lockSecretFor, lockAmountMsat, lockLine, saveLock, savedLock, markLockCommitted,
-  refundStake, redeemStake, redeemPayout, payoutLine, returnStake, stakeBackLine, saveCollect, savedCollects, markCollectDone, keptLockUse, withdrawCollected, withdrawLine, refundKept, refundLine, lookOwed, owedToLine as owedLine, collectAndWithdraw, tabLockWallet, LOCK_EXPIRY_MARGIN_BLOCKS, feeSecretFor } from '../src/page-lock.js';
+  refundStake, redeemStake, redeemPayout, payoutLine, returnStake, stakeBackLine, saveCollect, savedCollects, markCollectDone, keptLockUse, withdrawCollected, withdrawLine, refundKept, refundLine, lookOwed, owedToLine as owedLine, collectAndWithdraw, tabLockWallet, findOwedRounds, LOCK_EXPIRY_MARGIN_BLOCKS, feeSecretFor } from '../src/page-lock.js';
 import { sha256 } from '../../protocol/src/hash.js';
 import { entryFor, joinQuery, stakeFor, playerFor } from '../src/join.js';
 import { lockFieldsToJson } from '../../protocol/src/stake-lock.js';
@@ -26,7 +26,7 @@ import { playerSecretFor } from '../../protocol/src/player-key.js';
 import { refundKeyOf } from '../../protocol/src/stake-lock.js';
 import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
 import { MIN_ENTRY_WINDOW_MS } from '../../protocol/src/constants.js';
-import { roundId } from '../../protocol/src/contracts.js';
+import { roundId, encodeRoundContract } from '../../protocol/src/contracts.js';
 import { toHex } from '../../protocol/src/hash.js';
 import { CORE_HASH } from '../../blwp-node/tools/core-hash.mjs';
 import { seatedWithLock, CLAIM } from '../../blwp-node/test/lock-fixture.js';
@@ -677,6 +677,43 @@ test('a Withdraw cut off after its collect: the next start finds the kept round,
   assert.deepEqual(fed.paid, [{ invoice: 'lnbcrt1957000', msat: 1957000n }]);
   const after = await tabLockWallet({ ...ask(browser, fed.Wallet), seed: kept[0].seed });
   assert.equal(after.balance, 0n);
+});
+
+// A WITHDRAWAL CLAIMED ON ANOTHER DEVICE (spec §24, the owner 2026-09-14: alice on her desktop, then her
+// iPhone two hours later, holding only her seed). The seats list what they settled; the device derives
+// its own key per round and asks for exactly that key.
+test('a device holding only the seed matches its own key against the keys each settled round pays and its locks\' refund keys, asks nothing per round, fetches only a matched round and checks it against its id', async () => {
+  const mineIn = (r) => toHex(refundKeyOf(playerFor({ ...r, id: roundId(r) }, { seed, curve: pageCurve }).pubkey));
+  const other = { ...round, stakeMsat: 100000n };
+  const refused = { ...round, stakeMsat: 200000n };
+  const stranger = toHex(refundKeyOf(b32(0x62)));
+  let asked = [];
+  const listing = [
+    { id: toHex(rid), state: 'ACCEPTED', payouts: [mineIn(round)], refunds: [mineIn(round), stranger] },
+    { id: toHex(roundId(other)), state: 'ACCEPTED', payouts: [stranger], refunds: [stranger] },
+    { id: toHex(roundId(refused)), state: 'ACCEPTED', payouts: [], refunds: [mineIn(refused)] },
+  ];
+  const contracts = new Map([[toHex(rid), encodeRoundContract(round)], [toHex(roundId(refused)), encodeRoundContract(other)]]);
+  const seats = async (url) => {
+    asked.push(url.replace('http://a.test', ''));
+    if (url.includes('/settled?since=')) return new Response(JSON.stringify({ rounds: listing }), { status: 200 });
+    const m = url.match(/\/round\?id=([0-9a-f]{64})/);
+    if (m && contracts.has(m[1])) return new Response(contracts.get(m[1]), { status: 200 });
+    return new Response('no', { status: 404 });
+  };
+  const ask = { seed, curve: pageCurve, nodes: ['http://a.test'], fetcher: seats, sinceMs: 1000 };
+  const found = await findOwedRounds(ask);
+  console.log(`  found ${found.length} of ${listing.length} listed: ${found.map((f) => `${f.roundIdHex.slice(0, 12)} payout=${f.payout} lock=${f.lock}`).join(', ')}; asked ${asked.join(' ')}`);
+  assert.deepEqual(found.map((f) => f.roundIdHex), [toHex(rid)], 'not exactly the round that pays this seed');
+  assert.equal(found[0].payout, true);
+  assert.equal(found[0].lock, true);
+  assert.deepEqual(asked, ['/settled?since=1000', `/round?id=${toHex(rid)}`, `/round?id=${toHex(roundId(refused))}`],
+    'the seats were asked more than the list and the matched rounds - or a round this seed has no key in');
+  // a matched round whose contract is not its id (above: the refused round's served as another) is dropped
+  asked = [];
+  assert.deepEqual(await findOwedRounds({ ...ask, known: [toHex(rid)] }), [], 'a kept round was found again');
+  assert.equal(asked.some((u) => u.includes(toHex(rid)) && u.startsWith('/round')), false, 'a kept round was fetched again');
+  assert.deepEqual(await findOwedRounds({ ...ask, seed: b32(0x52) }), [], 'another seed was paid this round');
 });
 
 /** A BOLT11 invoice for tests: the real encoding, an all-zero signature (as donation-pay.test.js). */

@@ -160,7 +160,7 @@ out += '         tabLockWallet: tabLockWallet, withdrawCollected: withdrawCollec
 out += '         refundKept: refundKept, refundLine: refundLine,\n';
 // AND NOTHING SPENT BEFORE THE PLAYER WITHDRAWS: the look that spends nothing, and the collect
 // that happens only inside a withdraw, in one action. (join's owedLine is the hold panel's.)
-out += '         lookOwed: lookOwed, owedToLine: owedToLine, collectOwed: collectOwed, collectAndWithdraw: collectAndWithdraw,\n';
+out += '         lookOwed: lookOwed, owedToLine: owedToLine, collectOwed: collectOwed, collectAndWithdraw: collectAndWithdraw, findOwedRounds: findOwedRounds,\n';
 // THE LOBBY (M3.3-34): a link that names nodes and no round lists what they
 // hold, every row checked against its own contract; Join is the join link.
 out += '         lobbyQuery: lobbyQuery, fetchLobby: fetchLobby, lobbyLine: lobbyLine, lobbyJoinSearch: lobbyJoinSearch,\n';
