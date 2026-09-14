@@ -152,6 +152,8 @@ out += '         findLock: findLock, refundStake: refundStake, forfeitOf: forfei
 out += '         settlementOf: settlementOf, redeemPayout: redeemPayout, payoutLine: payoutLine,\n';
 // AND THE PLAYER'S OWN STAKE BACK BY THE SEATS' FORFEIT, after the window, and its line.
 out += '         returnStake: returnStake, stakeBackLine: stakeBackLine,\n';
+// AND WHAT THE TAB STILL HAS TO COLLECT, kept per round, so a reload collects too.
+out += '         saveCollect: saveCollect, savedCollects: savedCollects, markCollectDone: markCollectDone,\n';
 // THE LOBBY (M3.3-34): a link that names nodes and no round lists what they
 // hold, every row checked against its own contract; Join is the join link.
 out += '         lobbyQuery: lobbyQuery, fetchLobby: fetchLobby, lobbyLine: lobbyLine, lobbyJoinSearch: lobbyJoinSearch,\n';

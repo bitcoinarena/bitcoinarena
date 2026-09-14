@@ -622,13 +622,13 @@ test('a round that asks no money gets no payment box, driven off the shipped pag
 
   const made = {};
   const el = (id) => (made[id] = made[id] || { style: {}, textContent: '', placeholder: '', disabled: false });
-  const run = (round, walletState, owedState, budgetState = null, stakeLock = undefined, payout = undefined, stakeBack = undefined) => new Function(
+  const run = (round, walletState, owedState, budgetState = null, stakeLock = undefined, payout = undefined, stakeBack = undefined, more = {}) => new Function(
     'document', 'window', 'BLWPCLIENT', 'wallet', 'spent', 'owed', 'paying', 'walletWhy', 'budget',
     `${src}\n return paintWallet();`,
   )(
     { getElementById: el },
     { BLWP_ROUND: round, BLWP_CURVE: {}, BLWP_STAKE_LOCK: stakeLock, BLWP_PAYOUT: payout, BLWP_STAKE_BACK: stakeBack,
-      BLWP_ENTRY: { stakeMsat: round.stakeMsat, feeMsat: entryFeeMsat(round.stakeMsat), donationMsat: 0n } },
+      BLWP_ENTRY: round ? { stakeMsat: round.stakeMsat, feeMsat: entryFeeMsat(round.stakeMsat), donationMsat: 0n } : undefined, ...more },
     {
       roundPays: (r) => !!r && BigInt(r.stakeMsat || 0n) > 0n,
       roundLocks,
@@ -707,6 +707,15 @@ test('a round that asks no money gets no payment box, driven off the shipped pag
     { ok: true, final: true, amountMsat: 980000n, balance_before: 973312, balance_after: 1950624 });
   assert.equal(made['blwp-settled'].textContent, 'Payout collected: 978000 msat from the round\'s settlement into this tab\'s federation wallet (balance 0 → 973312 msat)'
     + ' · Stake returned: 980000 msat back to this tab\'s federation wallet by the seats\' forfeit (balance 973312 → 1950624 msat)');
+  // AFTER A RELOAD ONTO THE LOBBY (no round joined): the round the tab still collects
+  // from shows the panel, its lock, and - once done - the lines it kept.
+  for (const id of ['blwp-owed', 'blwp-settled']) el(id).textContent = '';
+  el('blwp-wallet').style.display = 'none';
+  run(undefined, { connected: false }, null, null, undefined, undefined, undefined,
+    { BLWP_COLLECT: { roundIdHex: 'aa'.repeat(32), round: lockRound, stakeLock }, BLWP_COLLECT_LINE: 'Payout collected: 978000 msat · Stake returned: 980000 msat' });
+  assert.equal(made['blwp-wallet'].style.display, 'block', 'a reloaded tab still collecting showed no panel');
+  assert.equal(made['blwp-owed'].textContent, lockLine(stakeLock));
+  assert.equal(made['blwp-settled'].textContent, 'Payout collected: 978000 msat · Stake returned: 980000 msat');
 });
 
 /**

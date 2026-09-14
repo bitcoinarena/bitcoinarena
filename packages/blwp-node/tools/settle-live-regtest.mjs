@@ -166,7 +166,62 @@ async function browse(url) {
   await send('Page.enable');
   await send('Page.navigate', { url });
   const close = () => { try { ws.close(); } catch {} try { chrome.kill('SIGKILL'); } catch {} };
-  return { evaluate, shot, logs, close };
+  const reload = () => send('Page.reload', { ignoreCache: false });
+  return { evaluate, shot, logs, close, reload };
+}
+
+/** The join state the page's own join sets for a lock round (index.html's lock branch), as one evaluated script. */
+const injectFor = (p, c, rid, urls) => `(() => {
+      window.BLWP_ROUND = BLWPCLIENT.decodeRoundContract(BLWPCLIENT.fromHex('${toHex(encodeRoundContract(c))}'));
+      // THE LOCK AS THE JOIN HOLDS IT - every field lockFromClient gives the page (measured:
+      // amount and expiry alone did not encode, and saveCollect kept nothing).
+      window.BLWP_STAKE_LOCK = { outpoint: { txid: BLWPCLIENT.fromHex('${toHex(p.stake.outpoint.txid)}'), outIdx: ${p.stake.outpoint.outIdx}n },
+        fields: { paymentImage: { kind: 'point', bytes: BLWPCLIENT.fromHex('${toHex(p.stake.fields.paymentImage.bytes)}') },
+          amountMsat: ${p.stake.fields.amountMsat}n, claimPk: BLWPCLIENT.fromHex('${toHex(p.stake.fields.claimPk)}'),
+          refundPk: BLWPCLIENT.fromHex('${toHex(p.stake.fields.refundPk)}'), expiration: ${p.stake.fields.expiration} } };
+      window.BLWP_LOCK_JOIN = { invite: '${env.INVITE}', roundIdHex: '${toHex(rid)}', seed: BLWPCLIENT.fromHex('${toHex(p.seed)}'), nodes: ${JSON.stringify(urls)} };
+      // AND WHAT THE JOIN KEEPS IN THE TAB for the collect (index.html's saveCollect call).
+      const saved = BLWPCLIENT.saveCollect ? BLWPCLIENT.saveCollect(window.sessionStorage,
+        Object.assign({}, window.BLWP_LOCK_JOIN, { round: window.BLWP_ROUND, stakeLock: window.BLWP_STAKE_LOCK })) : 'no saveCollect in the bundle';
+      // INSTRUMENTED (the reload pair did not move on 0.0.1236): what saveCollect swallows.
+      const probe = (f) => { try { f(); return 'ok'; } catch (e) { return String(e && e.message || e); } };
+      window.BLWP_HARNESS_SAVE = { saved,
+        encodeRound: probe(() => BLWPCLIENT.encodeRoundContract(window.BLWP_ROUND)),
+        encodeLock: BLWPCLIENT.lockFieldsToJson ? probe(() => BLWPCLIENT.lockFieldsToJson(window.BLWP_STAKE_LOCK.fields)) : 'lockFieldsToJson not in the bundle',
+        keys: Object.keys(window.sessionStorage) };
+      return true; })()`;
+const pageReady = async (b) => {
+  for (let t = Date.now(); Date.now() - t < 90000; await wait(500))
+    if (await b.evaluate(`typeof BLWPCLIENT !== 'undefined' && !!BLWPCLIENT.redeemPayout && !!window.BLWP_CURVE`)) return true;
+  return false;
+};
+// WHAT THE PAGE ACTUALLY HOLDS (instrumented: on 0.0.1236 the reload left 978000 + 980000 in
+// the federation and even a fresh tab collected nothing, with no console line): the kept
+// collect records, the tab's storage keys, BLWP_COLLECT, and the harness's own save probe.
+const tabState = (b) => b.evaluate(`JSON.stringify({ lockJoin: !!window.BLWP_LOCK_JOIN, payout: window.BLWP_PAYOUT || null,
+  stakeBack: window.BLWP_STAKE_BACK || null, settled: (document.getElementById('blwp-settled') || {}).textContent || '',
+  collects: (() => { try { return BLWPCLIENT.savedCollects(window.sessionStorage).map((r) => ({ round: r.roundIdHex.slice(0, 12),
+    locks: BLWPCLIENT.roundLocks(r.round), lock: !!r.stakeLock, done: !!r.done })); } catch (e) { return 'savedCollects threw: ' + e.message; } })(),
+  keys: (() => { try { return Object.keys(window.sessionStorage); } catch (e) { return e.message; } })(),
+  collect: window.BLWP_COLLECT ? { round: window.BLWP_COLLECT.roundIdHex.slice(0, 12), lock: !!window.BLWP_COLLECT.stakeLock } : null,
+  harnessSave: window.BLWP_HARNESS_SAVE || null },
+  (k, v) => (typeof v === 'bigint' ? String(v) : v))`).then((s) => JSON.parse(s || '{}'));
+
+/**
+ * A RELOAD BEFORE THE COLLECT (6d leftover 1): the winner's tab is handed its join
+ * state before the close, left until its collect has asked (the seats have not
+ * settled yet), and reloaded - what a player's refresh during the window is. The
+ * round is then settled; what the reloaded page does is read after.
+ */
+async function tabReloadedBeforeClose({ p, c, rid, urls }) {
+  const page = await servePage(env.PAGE_DIR);
+  const b = await browse(`http://127.0.0.1:${page.port}/`);
+  if (!(await pageReady(b))) { b.close(); return { error: 'the built page never loaded its client' }; }
+  await b.evaluate(injectFor(p, c, rid, urls));
+  let before = {};
+  for (let t = Date.now(); Date.now() - t < 30000; await wait(1000)) { before = await tabState(b); if (before.payout) break; }
+  await b.reload();
+  return { b, before, reloadedReady: await pageReady(b), afterReloadAtOnce: await tabState(b) };
 }
 
 /**
@@ -185,12 +240,7 @@ async function collectOnScreen({ p, c, rid, urls, stakeMsat, held }) {
     for (let t = Date.now(); Date.now() - t < 90000 && !ready; await wait(500))
       ready = await b.evaluate(`typeof BLWPCLIENT !== 'undefined' && !!BLWPCLIENT.redeemPayout && !!window.BLWP_CURVE`);
     if (!ready) return { page: p.want, error: 'the built page never had BLWPCLIENT.redeemPayout and BLWP_CURVE', logs: b.logs.slice(-5) };
-    await b.evaluate(`(() => {
-      window.BLWP_ROUND = BLWPCLIENT.decodeRoundContract(BLWPCLIENT.fromHex('${toHex(encodeRoundContract(c))}'));
-      window.BLWP_STAKE_LOCK = { outpoint: { txid: BLWPCLIENT.fromHex('${toHex(p.stake.outpoint.txid)}'), outIdx: ${p.stake.outpoint.outIdx}n },
-        fields: { amountMsat: ${p.stake.fields.amountMsat}n, expiration: ${p.stake.fields.expiration} } };
-      window.BLWP_LOCK_JOIN = { invite: '${env.INVITE}', roundIdHex: '${toHex(rid)}', seed: BLWPCLIENT.fromHex('${toHex(p.seed)}'), nodes: ${JSON.stringify(urls)} };
-      return true; })()`);
+    await b.evaluate(injectFor(p, c, rid, urls));
     const t0 = Date.now();
     let seen = null;
     for (; Date.now() - t0 < 180000; await wait(1000)) {
@@ -205,6 +255,7 @@ async function collectOnScreen({ p, c, rid, urls, stakeMsat, held }) {
       if (seen.payout && seen.payout.final && seen.stakeBack && seen.stakeBack.final && seen.settled) break;
     }
     await b.shot(shotFile);
+    const holds = await tabState(b).catch((e) => ({ unread: e.message }));
     const po = seen && seen.payout;
     const sb = (seen && seen.stakeBack) || {};
     const at = po && po.outIdx !== undefined ? { txid: fromHex(po.txid), outIdx: BigInt(po.outIdx) } : null;
@@ -214,6 +265,7 @@ async function collectOnScreen({ p, c, rid, urls, stakeMsat, held }) {
       stakeBack: !!sb.ok, stakeBackFinal: !!sb.final, returnedMsat: sb.amountMsat, stakeWalletBefore: sb.balance_before, stakeWalletAfter: sb.balance_after,
       stakeLockMsat: p.stake.fields.amountMsat, stakeLockHeldAfter: await held(p.stake.outpoint),
       shown: seen && seen.settled, drawn: seen && seen.onScreen, screenshot: shotFile,
+      pageHolds: { collects: holds.collects, keys: holds.keys, collect: holds.collect, harnessSave: holds.harnessSave },
       pageSaid: b.logs.filter((l) => /\[blwp\] (payout|stake)|EXCEPTION/.test(l)).map((l) => l.slice(0, 200)).slice(-4) };
   } finally { b.close(); }
 }
@@ -294,6 +346,10 @@ async function round(stakeMsat) {
       players.push({ want, seed, playerPubkey, stake, fee, eid });
     }
 
+    // 6d LEFTOVER 1: the winner's tab reloaded while its collect waits (RELOAD_BEFORE_COLLECT, 1000 sat).
+    const urlsEarly = [a, b].map((d) => `http://127.0.0.1:${d.port}`);
+    const reloaded = env.PAGE_DIR && env.RELOAD_BEFORE_COLLECT && stakeMsat >= 1000000n
+      ? await tabReloadedBeforeClose({ p: players[0], c, rid, urls: urlsEarly }) : null;
     const closedAt = Date.now();
     await Promise.all([tell(a.port, `close ${toHex(rid)}`), tell(b.port, `close ${toHex(rid)}`)]);
     let got = null;
@@ -317,6 +373,30 @@ async function round(stakeMsat) {
       },
       winnerKey: toHex(refundKeyOf(winner.playerPubkey)).slice(0, 12), seatKeys: c.nodes.map((k) => toHex(refundKeyOf(k)).slice(0, 12)),
     });
+
+    if (reloaded) {
+      // THE RELOADED TAB'S OWN FINAL ANSWERS, up to 240 s after the settlement. Measured: a fixed
+      // 60 s cut the reloaded page off mid-collect (payout spent, stake not yet asked), where a
+      // fresh tab's payout-then-stake takes 77-122 s. The time it took is printed.
+      let after = {};
+      const tAfter = Date.now();
+      if (reloaded.b) {
+        for (; Date.now() - tAfter < 240000; await wait(2000)) {
+          after = await tabState(reloaded.b).catch((e) => ({ unread: e.message }));
+          if (after.payout && after.payout.final && after.stakeBack && after.stakeBack.final) break;
+        }
+        after.secondsAfterSettlement = Math.round((Date.now() - tAfter) / 1000);
+      }
+      const shotFile = `${P}/reload-before-collect-${stakeMsat / 1000n}sat.png`;
+      if (reloaded.b) await reloaded.b.shot(shotFile);
+      const q = got && got.moved ? got.moved.payouts.findIndex((x) => x.kind === 'qualifier') : -1;
+      out({ round: `${stakeMsat / 1000n} sat`, check: 'the winner\'s tab reloaded before its collect', error: reloaded.error,
+        beforeReload: reloaded.before, reloadedPageLoaded: reloaded.reloadedReady, atOnceAfterReload: reloaded.afterReloadAtOnce,
+        sixtySecondsAfterSettlement: after, federation: {
+          payoutStillHeld: q >= 0 ? await held({ txid: fromHex(got.moved.txid), outIdx: BigInt(q) }) : null,
+          winnerStakeLockStillHeld: await held(winner.stake.outpoint) }, screenshot: shotFile });
+      if (reloaded.b) reloaded.b.close();
+    }
 
     // 6d: EACH PLAYER'S PAGE COLLECTS ITS PAYOUT - the page's own `redeemPayout`, from
     // its seed alone, into a fresh wallet of this federation. Counted: how often each

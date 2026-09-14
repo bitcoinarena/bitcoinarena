@@ -699,6 +699,9 @@
             console.error('[blwp] seat refused: ' + window.BLWP_SEAT_REFUSED);
             return;
           }
+          // AND WHAT THE COLLECT NEEDS AFTER THE WINDOW, KEPT IN THE TAB (6d): a reload -
+          // onto the round link or anywhere - collects from this, not from the join.
+          BLWPCLIENT.saveCollect(window.sessionStorage, Object.assign({}, window.BLWP_LOCK_JOIN, { round: named.round, stakeLock }));
         }
         window.BLWP_STAKE = {
           dealt: true, seats: seats.seats.length, agreed: seats.agreed,
@@ -887,30 +890,43 @@
     // Which it is, is the client's (`redeemPayout`); this only asks and paints.
     let payoutAsking = false;
     async function collectThePayout() {
-      const j = window.BLWP_LOCK_JOIN;
-      if (payoutAsking || !j || !window.BLWP_STAKE_LOCK || !window.BLWP_ROUND || !BLWPCLIENT.roundLocks(window.BLWP_ROUND)) return;
-      const paid = () => window.BLWP_PAYOUT && window.BLWP_PAYOUT.final;
-      if (paid() && window.BLWP_STAKE_BACK && window.BLWP_STAKE_BACK.final) return;
+      // FROM THE TAB'S KEPT RECORDS, NOT THE JOIN'S GLOBALS: measured, a reload lost the
+      // globals and left the winner's 978000 msat payout and 980000 msat stake in the
+      // federation. The newest round is the one painted.
+      if (payoutAsking || typeof BLWPCLIENT === 'undefined' || !BLWPCLIENT.savedCollects) return;
+      const kept = BLWPCLIENT.savedCollects(window.sessionStorage).filter((r) => BLWPCLIENT.roundLocks(r.round));
+      if (!kept.length) return;
+      const newest = kept[kept.length - 1];
+      window.BLWP_COLLECT = { roundIdHex: newest.roundIdHex, round: newest.round, stakeLock: newest.stakeLock };
+      if (newest.done) window.BLWP_COLLECT_LINE = [newest.done.payout, newest.done.stake].filter(Boolean).join(' · ');
+      const owed = kept.filter((r) => !r.done);
+      if (!owed.length) { paintWallet(); return; }
       payoutAsking = true;
       try {
         const wasm = await import('./blwp_lock_client.js');
         await wasm.default();
-        const ask = { round: window.BLWP_ROUND, roundId: BLWPCLIENT.fromHex(j.roundIdHex), invite: j.invite,
-          seed: j.seed, curve: window.BLWP_CURVE, LockClient: wasm.LockClient, storage: window.sessionStorage, nodes: j.nodes };
-        let client = null;
-        if (!paid()) {
+        for (const r of owed) {
+          const ask = { round: r.round, roundId: BLWPCLIENT.fromHex(r.roundIdHex), invite: r.invite,
+            seed: r.seed, curve: window.BLWP_CURVE, LockClient: wasm.LockClient, storage: window.sessionStorage, nodes: r.nodes };
           const p = await BLWPCLIENT.redeemPayout(ask);
-          client = p.client || null;
-          window.BLWP_PAYOUT = Object.assign({}, p, { client: undefined });
-          if (p.final) console.log('[blwp] payout: ' + BLWPCLIENT.payoutLine(p));
-        }
-        // AND THE PLAYER'S OWN STAKE (6d): once the seats have settled - they forfeit a
-        // qualifier's lock only then - into the same wallet; a loser's is told it went
-        // into the pool.
-        if (paid()) {
-          const s = await BLWPCLIENT.returnStake(Object.assign({}, ask, { client }));
-          window.BLWP_STAKE_BACK = Object.assign({}, s, { client: undefined });
-          if (s.final) console.log('[blwp] stake: ' + BLWPCLIENT.stakeBackLine(s));
+          // AND THE PLAYER'S OWN STAKE (6d): once the seats have settled - they forfeit a
+          // qualifier's lock only then - into the same wallet; a loser's is told it went
+          // into the pool.
+          // ASKED EVERY TIME, not only after a final payout: returnStake checks for the seats'
+          // settlement itself. Measured: a payout the page could not finish kept the stake
+          // step from ever asking, and the winner's 980000 msat stayed in the federation.
+          const s = await BLWPCLIENT.returnStake(Object.assign({}, ask, { client: p.client || null }));
+          if (r === newest) {
+            window.BLWP_COLLECT_LINE = null;
+            window.BLWP_PAYOUT = Object.assign({}, p, { client: undefined });
+            window.BLWP_STAKE_BACK = s ? Object.assign({}, s, { client: undefined }) : null;
+          }
+          if (p.final && s && s.final) {
+            const done = { payout: BLWPCLIENT.payoutLine(p), stake: BLWPCLIENT.stakeBackLine(s) };
+            BLWPCLIENT.markCollectDone(window.sessionStorage, r.roundIdHex, done);
+            console.log('[blwp] payout: ' + done.payout);
+            console.log('[blwp] stake: ' + done.stake);
+          }
         }
       } catch (e) { console.error('[blwp] payout: ' + e.message); }
       payoutAsking = false;
@@ -922,7 +938,10 @@
       if (!el || !wallet || typeof BLWPCLIENT === 'undefined') return;
       // A ROUND THAT ASKS NO MONEY GETS NO WALLET. Nothing to pay, nothing to
       // show, and a payment box on a free round is a question with no answer.
-      const pays = window.BLWP_ROUND && BLWPCLIENT.roundPays(window.BLWP_ROUND);
+      // A ROUND THE TAB STILL COLLECTS FROM counts as shown when no round is joined (6d):
+      // after a reload onto the lobby the panel still says what came back.
+      const shown = window.BLWP_ROUND || (window.BLWP_COLLECT && window.BLWP_COLLECT.round);
+      const pays = shown && BLWPCLIENT.roundPays(shown);
       if (!pays) { el.style.display = 'none'; return; }
       el.style.display = 'block';
       // EACH DONATION SHARE, PAID / UNPAID / OUTCOME UNKNOWN (M3.2 6e): the
@@ -937,11 +956,12 @@
       // comes back - and never offers a hold invoice. Keyed on the ROUND, not on
       // the lock: measured, keyed on the lock the hold panel stood beside the
       // deposit invoice the whole time the page waited for it.
-      if (window.BLWP_ROUND && BLWPCLIENT.roundLocks(window.BLWP_ROUND)) {
-        document.getElementById('blwp-owed').textContent = window.BLWP_STAKE_LOCK
-          ? BLWPCLIENT.lockLine(window.BLWP_STAKE_LOCK)
+      if (shown && BLWPCLIENT.roundLocks(shown)) {
+        const lockShown = window.BLWP_STAKE_LOCK || (window.BLWP_COLLECT && window.BLWP_COLLECT.stakeLock);
+        document.getElementById('blwp-owed').textContent = lockShown
+          ? BLWPCLIENT.lockLine(lockShown)
           : 'this round\'s stake goes into a federation lock: pay the deposit shown below';
-        document.getElementById('blwp-settled').textContent = [BLWPCLIENT.payoutLine(window.BLWP_PAYOUT),
+        document.getElementById('blwp-settled').textContent = window.BLWP_COLLECT_LINE || [BLWPCLIENT.payoutLine(window.BLWP_PAYOUT),
           BLWPCLIENT.stakeBackLine(window.BLWP_STAKE_BACK)].filter(Boolean).join(' · ');
         for (const id of ['blwp-spent', 'blwp-budget', 'blwp-why']) document.getElementById(id).textContent = '';
         for (const id of ['blwp-nwc', 'blwp-pay']) document.getElementById(id).style.display = 'none';

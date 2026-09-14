@@ -15,7 +15,7 @@ import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js
 import assert from 'node:assert/strict';
 
 import { lockStake, handLock, lockSecretFor, lockAmountMsat, lockLine, saveLock, savedLock, markLockCommitted,
-  refundStake, redeemStake, redeemPayout, payoutLine, returnStake, stakeBackLine, LOCK_EXPIRY_MARGIN_BLOCKS, feeSecretFor } from '../src/page-lock.js';
+  refundStake, redeemStake, redeemPayout, payoutLine, returnStake, stakeBackLine, saveCollect, savedCollects, markCollectDone, LOCK_EXPIRY_MARGIN_BLOCKS, feeSecretFor } from '../src/page-lock.js';
 import { sha256 } from '../../protocol/src/hash.js';
 import { entryFor, joinQuery, stakeFor, playerFor } from '../src/join.js';
 import { lockFieldsToJson } from '../../protocol/src/stake-lock.js';
@@ -77,7 +77,13 @@ function lockClient({ idsMatch = true, lockedMsat, lockFee = 2528n, feeRule = nu
     }
     async balanceMsat() { return String(this.balance); }
     async depositFor(msat) { return JSON.stringify({ invoice_msat: String(BigInt(msat) + 16064n), credited_msat: msat, gateway: 'http://gw' }); }
-    async receive(msat, gateway) { log.push({ receive: { msat, gateway } }); this.coming = BigInt(msat) - 16064n; return JSON.stringify({ invoice: 'lnbcrt1page', operation: 'op' }); }
+    // A RECEIVE THAT SMALL IS REFUSED, as the federation's gateway refuses it (measured in a real
+    // browser: a 556 msat top-up, "Amount is too small to cover fees").
+    async receive(msat, gateway) {
+      log.push({ receive: { msat, gateway } });
+      if (BigInt(msat) - 16064n < 1000n) throw new Error('Amount is too small to cover fees');
+      this.coming = BigInt(msat) - 16064n; return JSON.stringify({ invoice: 'lnbcrt1page', operation: 'op' });
+    }
     async awaitReceive() {
       this.balance += this.coming;
       if (this.store) this.store.put('ba', this.balance.toString(16).padStart(2, '0'));
@@ -249,6 +255,25 @@ test('the winner\'s page collects its own payout contract from the seats\' settl
   assert.equal(asked.length, 0, 'a reloaded tab asked the lock client for a payout it already collected');
   assert.equal(payoutLine(again), payoutLine(first));
   asked.length = 0;
+  // A PAYOUT ALREADY SPENT (a reload mid-collect, another tab): the federation holds no contract
+  // there any more - final, said so, not "waiting ... undefined" for ever.
+  class SpentWallet {
+    static async join() { return new SpentWallet(); }
+    async refund() { return JSON.stringify({ accepted: false, error: 'input already spent', stored_before: null, stored_after: null, balance_before: 0, balance_after: 0 }); }
+  }
+  const spentOne = await redeemPayout({ round, roundId: rid, invite: INVITE, seed, curve: pageCurve, LockClient: SpentWallet, nodes: ['http://a'], fetcher: seats });
+  assert.equal(spentOne.ok, false);
+  assert.equal(spentOne.final, true, 'a payout already spent was asked again for ever');
+  assert.equal(spentOne.spent, true);
+  assert.match(payoutLine(spentOne), /^Payout already collected: 978000 msat - the payout contract is already spent/);
+  // AND ONE THE FEDERATION STILL HOLDS BUT REFUSED: not final, with the federation's reason.
+  class RefusedWallet {
+    static async join() { return new RefusedWallet(); }
+    async refund() { return JSON.stringify({ accepted: false, error: 'guardians busy', stored_before: { contract_id: 'c', blocks_left: 0 }, balance_before: 0, balance_after: 0 }); }
+  }
+  const refused = await redeemPayout({ round, roundId: rid, invite: INVITE, seed, curve: pageCurve, LockClient: RefusedWallet, nodes: ['http://a'], fetcher: seats });
+  assert.equal(refused.final, false);
+  assert.match(payoutLine(refused), /guardians busy/);
   const unsettled = await redeemPayout({ round, roundId: rid, invite: INVITE, seed, curve: pageCurve, LockClient: Wallet, nodes: ['http://a'],
     fetcher: async () => ({ ok: true, status: 200, json: async () => ({ state: 'NONE' }), text: async () => '' }) });
   assert.equal(unsettled.ok, false);
@@ -325,6 +350,48 @@ test('after the settlement the winner\'s page redeems its own stake by the seats
   assert.equal(unsettled.final, false);
   assert.equal(asked.filter((u) => u.includes('/forfeit') || u.includes('/stake-lock')).length, 0, 'a forfeit was asked for before the seats settled');
   assert.equal(joins + redeemed.length, 0);
+});
+
+// 6d: A RELOAD MUST NOT LOSE THE COLLECT - measured, it left 978000 + 980000 msat in the federation.
+test('what the tab still has to collect is kept per round across a reload: the round, invite, seats, seed and lock come back whole; a done round keeps its lines; an unreadable record is skipped', () => {
+  const tab = new Map();
+  const storage = { getItem: (k) => (tab.has(k) ? tab.get(k) : null), setItem: (k, v) => tab.set(k, String(v)), removeItem: (k) => tab.delete(k),
+    key: (i) => [...tab.keys()][i] ?? null, get length() { return tab.size; } };
+  const lockRound = { ...round, custody: 'FEDERATION', federationId: b32(0xfe) };
+  const lr = toHex(roundId(lockRound));
+  const stakeLock = { outpoint: { txid: b32(0xd8), outIdx: 1n },
+    fields: { paymentImage: { kind: 'point', bytes: POINT }, amountMsat: 980000n, claimPk: CLAIM, refundPk: refundKeyOf(playerFor({ ...lockRound, id: roundId(lockRound) }, { seed, curve: pageCurve }).pubkey), expiration: 464 } };
+  assert.equal(saveCollect(storage, { roundIdHex: lr, round: lockRound, invite: INVITE, nodes: ['http://a.test', 'http://b.test'], seed, stakeLock }), true);
+  tab.set('blwp.collect.' + 'ff'.repeat(32), 'not json');
+  const kept = savedCollects(storage);
+  assert.equal(kept.length, 1, 'an unreadable record was returned, or the kept one lost');
+  const k = kept[0];
+  assert.equal(k.roundIdHex, lr);
+  assert.equal(toHex(roundId(k.round)), lr, 'the round came back as another contract');
+  assert.equal(k.invite, INVITE);
+  assert.deepEqual(k.nodes, ['http://a.test', 'http://b.test']);
+  assert.equal(toHex(k.seed), toHex(seed));
+  assert.equal(toHex(k.stakeLock.outpoint.txid), toHex(b32(0xd8)));
+  assert.equal(k.stakeLock.outpoint.outIdx, 1n);
+  assert.deepEqual(lockFieldsToJson(k.stakeLock.fields), lockFieldsToJson(stakeLock.fields));
+  assert.equal(k.done, null);
+  // DONE: both answers final - kept with their lines, and a later save (a rejoin) does not undo it.
+  assert.equal(markCollectDone(storage, lr, { payout: 'Payout collected: 978000 msat', stake: 'Stake returned: 980000 msat' }), true);
+  saveCollect(storage, { roundIdHex: lr, round: lockRound, invite: INVITE, nodes: ['http://a.test'], seed, stakeLock });
+  assert.deepEqual(savedCollects(storage)[0].done, { payout: 'Payout collected: 978000 msat', stake: 'Stake returned: 980000 msat' });
+  assert.equal(markCollectDone(storage, 'ee'.repeat(32), {}), false, 'a round never kept was marked done');
+  // A LOCK THAT DOES NOT ENCODE (amount and expiry only) STILL LEAVES THE RECORD - without the
+  // lock; measured on 0.0.1236 it threw the record away and the collect never ran.
+  const other = { ...lockRound, stakeMsat: 2000000n };
+  const or = toHex(roundId(other));
+  assert.equal(saveCollect(storage, { roundIdHex: or, round: other, invite: INVITE, nodes: ['http://a.test'], seed,
+    stakeLock: { outpoint: { txid: b32(0xd9), outIdx: 0n }, fields: { amountMsat: 1960000n, expiration: 464 } } }), true);
+  const half = savedCollects(storage).find((r) => r.roundIdHex === or);
+  assert.ok(half, 'a record whose lock did not encode was not kept');
+  assert.equal(half.stakeLock, null);
+  assert.equal(toHex(half.seed), toHex(seed));
+  // NO STORAGE: nothing kept, nothing thrown.
+  assert.deepEqual(savedCollects(null), []);
 });
 
 test('a lock whose fee the allowance does not cover is topped up after the quote, and one that never funds is refused', async () => {

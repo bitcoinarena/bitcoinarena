@@ -30,7 +30,7 @@ UP=$(PROBE_DIR=$P SETUP_ONLY=1 FEDIMINT_BIN=$F FEDIMINT_HOME=$FH bash $NODE_TOOL
 echo "$UP" | grep -q FEDERATION_READY || { echo "$UP" | tail -15; echo "THE FEDERATION DID NOT COME UP"; exit 1; }
 INVITE=$(echo "$UP" | grep -oE 'invite=[^ ]+' | tail -1 | cut -d= -f2-)
 echo "federation up in $(( $(date +%s) - t )) s, invite ${INVITE:0:24}..."
-PROBE=$P INVITE=$INVITE LND_BIN=$L LOCK_BIN=$LOCK_BIN \
+PROBE=$P INVITE=$INVITE LND_BIN=$L LOCK_BIN=$LOCK_BIN GATEWAY=http://127.0.0.1:30170 WASM_PKG=${WASM_PKG:-} BITCOIN_BIN=$B \
   node $HERE/page-lock.mjs "$@" > $P/page-lock.log 2>&1
 code=$?
 grep -E '^\{' $P/page-lock.log | sed 's/^/W1B /'

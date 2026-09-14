@@ -24,6 +24,7 @@ import { decodeHandout, handoutId } from '../../protocol/src/handout.js';
 import { lockFromClient } from './lock-result.js';
 import { feeLockPays } from '../../protocol/src/lock-settlement.js';
 import { roundLocks, playerFor } from './join.js';
+import { encodeRoundContract, decodeRoundContract } from '../../protocol/src/contracts.js';
 
 // THE BLOCKS OVER stake_expiry_blocks A LOCK IS MADE FOR. The seat requires
 // expiration >= its federation height + 144 when it verifies, and the chain
@@ -151,18 +152,31 @@ export async function lockStake({ round, roundId, invite, seed, stake, claimKey,
   const feeGate = feeLockPays({ contract: round, fees: feeRule });
   const feeMsat = feeGate.pays ? feeGate.lockMsat : 0n;
 
-  const fund = async (msat) => {
-    const allowance = BigInt(LockClient.lockAllowanceMsat(String(msat)));
+  // FUNDED FOR EVERY LOCK ABOUT TO BE MADE, each quoted on its own. Measured in a real browser
+  // (0.0.1236): the page quoted one 1000000 msat lock (1004544), held 1005056, made the 980000
+  // stake lock (983552 with its fees), was left 21504 for a 20000 fee lock that costs more,
+  // and the 556 msat top-up was refused - "Amount is too small to cover fees" - with the stake
+  // already locked and no seat. Two locks are two transactions, each with its own fees.
+  const fund = async (msats) => {
+    const total = msats.reduce((t, m) => t + m, 0n);
+    const allowance = msats.reduce((t, m) => t + BigInt(LockClient.lockAllowanceMsat(String(m))), 0n);
     for (let tries = 0; ; tries++) {
       const have = BigInt(await client.balanceMsat());
-      let cost = null;
-      try { cost = BigInt(await client.lockCostMsat(String(msat))); } catch (e) {
-        if (!/insufficient funds/i.test(String((e && e.message) || e))) throw e;
+      let cost = 0n;
+      for (const m of msats) {
+        try { cost += BigInt(await client.lockCostMsat(String(m))); } catch (e) {
+          if (!/insufficient funds/i.test(String((e && e.message) || e))) throw e;
+          cost = null;
+          break;
+        }
       }
+      onStep(`funding ${msats.map(String).join(' + ')} msat of lock: holding ${have} msat, the locks cost ${cost === null ? 'more than that' : `${cost} msat`}`);
       if (cost !== null && have >= cost) break;
-      if (tries >= 3) throw new Error(`after ${tries} deposits the lock client holds ${have} msat and cannot fund a ${msat} msat lock`);
-      const short = cost !== null ? cost - have : msat + allowance - have;
-      const plan = JSON.parse(await client.depositFor(String(short > 0n ? short : allowance)));
+      if (tries >= 3) throw new Error(`after ${tries} deposits the lock client holds ${have} msat and cannot fund ${total} msat of lock`);
+      const short = cost !== null ? cost - have : total + allowance - have;
+      // NEVER A DEPOSIT SMALLER THAN THE LOCKS' ALLOWANCE: a Lightning receive that small is
+      // refused (measured, 556 msat), and the lock waiting for it is never made.
+      const plan = JSON.parse(await client.depositFor(String(short > allowance ? short : allowance)));
       const invoice = JSON.parse(await client.receive(String(plan.invoice_msat), String(plan.gateway || '')));
       onDeposit({ invoice: invoice.invoice, amountMsat: BigInt(plan.invoice_msat), creditsMsat: BigInt(plan.credited_msat) });
       onStep('waiting for the deposit');
@@ -170,10 +184,11 @@ export async function lockStake({ round, roundId, invite, seed, stake, claimKey,
       if (final !== 'Claimed') throw new Error(`the deposit was not claimed: ${final}`);
     }
   };
-  // ONE DEPOSIT FOR BOTH LOCKS where the first quote covers it; a fee lock the
-  // stake lock's own fee left short is topped up before it is made.
-  await fund(amount + feeMsat);
+  // ONE DEPOSIT FOR BOTH LOCKS, the stake lock's and the fee lock's costs quoted apart; a
+  // fee lock still short when its turn comes is topped up (by at least the allowance).
+  await fund(feeMsat > 0n ? [amount, feeMsat] : [amount]);
 
+  onStep(`holding ${await client.balanceMsat()} msat before locking ${amount} msat (and ${feeMsat} msat of node fee after it)`);
   onStep('locking the stake');
   const refundPk = refundKeyOf(playerPubkey);
   const delta = Number(round.stakeExpiryBlocks) + LOCK_EXPIRY_MARGIN_BLOCKS;
@@ -184,7 +199,7 @@ export async function lockStake({ round, roundId, invite, seed, stake, claimKey,
 
   let feeLock = null;
   if (feeGate.pays) {
-    await fund(feeMsat);
+    await fund([feeMsat]);
     onStep('locking the node fee');
     const preimage = feeSecretFor(seed, roundId);
     const image = sha256(preimage);
@@ -426,7 +441,12 @@ export async function redeemPayout({ round, roundId, invite, seed, curve, LockCl
   const client = await LockClient.join(invite, toHex(round.federationId), toHex(secret), store);
   onStep('collecting the payout');
   const said = JSON.parse(await client.refund(s.txid, at, JSON.stringify(fields), toHex(player.secret)));
-  const got = { ok: said.accepted === true, final: said.accepted === true, txid: s.txid, outIdx: at, amountMsat: BigInt(p.msat), from: s.from, ...said };
+  // ALREADY SPENT: the guardians hold no contract there any more, and only this key could
+  // spend it - collected before (a reload mid-collect, another tab). Final, and said so;
+  // measured before: "waiting ... undefined" for ever, and the stake never asked.
+  const spent = said.accepted !== true && (said.stored_before === null || said.stored_before === undefined);
+  const got = { ok: said.accepted === true, final: said.accepted === true || spent, spent, txid: s.txid, outIdx: at, amountMsat: BigInt(p.msat), from: s.from,
+    ...said, why: said.accepted === true ? undefined : spent ? 'the payout contract is already spent - by this seed\'s key, the only key that can' : (said.error || 'the federation did not accept the refund') };
   if (got.ok && storage) {
     try { storage.setItem(noted, JSON.stringify({ ...got, amountMsat: String(got.amountMsat) })); } catch { /* unkept: a reload asks again */ }
   }
@@ -474,6 +494,64 @@ export async function returnStake({ round, roundId, invite, seed, curve, LockCli
 }
 const STAKE_NOTE = 'blwp.stakeback.';
 
+/**
+ * WHAT A TAB STILL HAS TO COLLECT, KEPT IN THE TAB (6d). Measured before: a reload
+ * after the seats committed the entry lost the collect's state - the join's lock
+ * branch is its only setter, and a reload does not pass it - and 60 s after the
+ * settlement the federation still held the winner's 978000 msat payout and 980000
+ * msat stake. So the join keeps, per round, what the collect needs (the round, the
+ * invite, the seats, the tab's seed, the lock), and the page collects from these
+ * records on every load until both answers are final.
+ */
+export function saveCollect(storage, { roundIdHex, round, invite, nodes, seed, stakeLock = null } = {}) {
+  try {
+    const key = `${COLLECT_NOTE}${roundIdHex}`;
+    const was = storage.getItem(key);
+    const done = was ? (JSON.parse(was).done || null) : null;
+    // THE LOCK IS FOR THE PANEL'S LINE ONLY - the collect finds the lock through the seats.
+    // Measured on 0.0.1236: a lock that did not encode threw the whole record away, and
+    // with it the collect (978000 + 980000 msat left in the federation). Kept if it encodes.
+    let lock = null;
+    try {
+      if (stakeLock) lock = { outpoint: `${toHex(stakeLock.outpoint.txid)}:${String(stakeLock.outpoint.outIdx)}`, fields: lockFieldsToJson(stakeLock.fields) };
+    } catch { lock = null; }
+    storage.setItem(key, JSON.stringify({ roundIdHex, round: toHex(encodeRoundContract(round)), invite, nodes, seed: toHex(seed),
+      stakeLock: lock, done, savedMs: Date.now() }));
+    return true;
+  } catch { return false; }
+}
+
+/** Every collect this tab keeps, oldest first; an unreadable record is skipped. */
+export function savedCollects(storage) {
+  const out = [];
+  try {
+    for (let i = 0; i < storage.length; i++) {
+      const k = storage.key(i);
+      if (!k || !k.startsWith(COLLECT_NOTE)) continue;
+      try {
+        const r = JSON.parse(storage.getItem(k));
+        const [txid, outIdx] = r.stakeLock ? String(r.stakeLock.outpoint).split(':') : [null, null];
+        out.push({ roundIdHex: r.roundIdHex, round: decodeRoundContract(fromHex(r.round)), invite: r.invite, nodes: r.nodes, seed: fromHex(r.seed),
+          stakeLock: r.stakeLock ? { outpoint: { txid: fromHex(txid), outIdx: BigInt(outIdx) }, fields: lockFieldsFromJson(r.stakeLock.fields) } : null,
+          done: r.done || null, savedMs: Number(r.savedMs) || 0 });
+      } catch { /* an unreadable record is no record */ }
+    }
+  } catch { /* no storage: nothing kept */ }
+  return out.sort((a, b) => a.savedMs - b.savedMs);
+}
+
+/** A round whose payout and stake answers are both final: the lines kept, and it is not asked again. */
+export function markCollectDone(storage, roundIdHex, done) {
+  try {
+    const key = `${COLLECT_NOTE}${roundIdHex}`;
+    const r = JSON.parse(storage.getItem(key));
+    if (!r) return false;
+    storage.setItem(key, JSON.stringify({ ...r, done }));
+    return true;
+  } catch { return false; }
+}
+const COLLECT_NOTE = 'blwp.collect.';
+
 /** THE STAKE AS THE PLAYER SEES IT AFTER THE WINDOW (6d): back, gone into the pool, or not yet. */
 export function stakeBackLine(p) {
   if (!p) return '';
@@ -488,6 +566,7 @@ export function payoutLine(p) {
   if (!p) return '';
   if (p.ok) return `Payout collected: ${String(p.amountMsat)} msat from the round's settlement into this tab's federation wallet`
     + (p.balance_after !== undefined ? ` (balance ${p.balance_before} → ${p.balance_after} msat)` : '');
+  if (p.spent) return `Payout already collected: ${String(p.amountMsat)} msat - ${p.why}`;
   if (p.final) return `No payout: ${p.why}`;
   return `Payout: waiting for the seats' settlement - ${p.why}`;
 }
