@@ -1867,6 +1867,18 @@ export class Round {
     return r ? { message: new Uint8Array(r.message), signature: new Uint8Array(r.signature), claimPk: new Uint8Array(r.claim_pk), madeMs: Number(r.made_ms) } : null;
   }
 
+  /** A fee lock this seat verified (Pick A): the handed contract (JSON), its id, its outpoint. */
+  putFeeLock({ entryId, roundId, outpoint, fields, contractId }) {
+    this.db.prepare('INSERT OR REPLACE INTO fee_locks (entry_id, round_id, outpoint, fields, contract_id, verified_ms) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(Buffer.from(entryId), Buffer.from(roundId), `${Buffer.from(outpoint.txid).toString('hex')}:${outpoint.outIdx}`,
+        JSON.stringify(fields), contractId, this.now());
+  }
+
+  feeLock(entryIdBytes) {
+    const r = this.db.prepare('SELECT outpoint, fields, contract_id, verified_ms FROM fee_locks WHERE entry_id = ?').get(Buffer.from(entryIdBytes));
+    return r ? { outpoint: r.outpoint, fields: JSON.parse(r.fields), contractId: r.contract_id, verifiedMs: Number(r.verified_ms) } : null;
+  }
+
   /** The round's one settlement of its losers' locks (W4): its intent, then where it stands. */
   putLockSettlement({ roundId, txid, message, signature, state, why }) {
     this.db.prepare('INSERT OR REPLACE INTO lock_settlements (round_id, txid, message, signature, state, why, made_ms) VALUES (?, ?, ?, ?, ?, ?, ?)')

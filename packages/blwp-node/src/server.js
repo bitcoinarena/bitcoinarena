@@ -75,7 +75,7 @@ import { ENTRY_VOID, netStakeMsat } from '../../protocol/src/payout.js';
 import { FINAL, PROVISIONALLY_FINAL, SUSPENDED } from '../../protocol/src/objection.js';
 import { transcriptBytesHash, SIGNED_POSTING_BYTES } from '../../protocol/src/posting.js';
 import { SIGNED_RERUN_BYTES } from '../../protocol/src/rerun.js';
-import { verifyStakeLock, lockFieldsFromJson } from './stake-lock-seat.js';
+import { verifyStakeLock, verifyFeeLock, lockFieldsFromJson } from './stake-lock-seat.js';
 import { encodeClaimKeyAttestation, claimKeyAttestationId } from '../../protocol/src/claim-key.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { splitSlashEvidence, slashProofId, SLASH_EVIDENCE_BYTES } from '../../protocol/src/slash.js';
@@ -700,6 +700,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     peersFor: (rid) => {
       const picked = roster.committeeFor(rid, 'settlement');
       return picked.ok ? endpointsOf(picked.committee, round.pubkey) : (dkg.peers || []);
+    },
+    // WHO THE FEE LOCKS PAY (Pick A): the round's sitting seats, drawn from the
+    // census by role - the contract's own nodes where there is no census.
+    seatsFor: (rid, contract) => {
+      const game = roster.committeeFor(rid, 'game');
+      const settle = roster.committeeFor(rid, 'settlement');
+      return { gameVerify: game.ok ? game.committee.map((e) => e.pubkey) : contract.nodes,
+        settlement: settle.ok ? settle.committee.map((e) => e.pubkey) : contract.nodes };
     },
   });
 
@@ -2346,6 +2354,25 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         catch (e) { got = { ok: false, why: `the federation could not be asked: ${e.message}` }; }
         if (!got.ok) return text(res, 409, got.why);
         return text(res, 201, `stake lock verified: contract ${got.contractId} holds ${got.paidMsat} msat`);
+      }
+
+      // AND THE PLAYER'S FEE LOCK (Pick A, F5): the entry's 2% locked to H(F),
+      // checked field by field as the stake lock is, and claimed for the round's
+      // sitting seats in its one settlement.
+      if (req.method === 'POST' && url.pathname === '/fee-lock') {
+        const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
+        if (eid.length !== 32) return text(res, 400, 'a fee lock is handed over for an entry id');
+        let fields;
+        try { fields = lockFieldsFromJson(JSON.parse(Buffer.from(await read(req)).toString('utf8'))); }
+        catch (e) { return text(res, 400, `that is not a fee lock: ${e.message}`); }
+        const stored = round.entry(eid);
+        if (!stored) return text(res, 404, 'this node seated no such entry');
+        const claimPk = claimKeyOf(decodeEntryContract(stored).roundId);
+        let got;
+        try { got = await verifyFeeLock({ round, port: stakeLocks, entryIdBytes: new Uint8Array(eid), fields, claimPk }); }
+        catch (e) { got = { ok: false, why: `the federation could not be asked: ${e.message}` }; }
+        if (!got.ok) return text(res, 409, got.why);
+        return text(res, 201, `fee lock verified: contract ${got.contractId} holds ${got.feeMsat} msat`);
       }
 
       // WHERE A PLAYER'S STAKE LOCK IS, BY ITS REFUND KEY (W5a). A player who

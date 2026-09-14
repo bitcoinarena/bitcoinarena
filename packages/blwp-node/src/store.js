@@ -505,6 +505,18 @@ export function openStore(path = ':memory:') {
     -- seats rebuilt, their combined claim_pk signature over it, and where it
     -- stands - SUBMITTING is written before the federation is asked, so a seat
     -- that died there knows it signed.
+    -- A FEE LOCK THIS SEAT VERIFIED (Pick A, §23.1 step 5, F5): the entry's 2%
+    -- node fee locked to H(F), claimed for the sitting seats in the round's one
+    -- settlement with the F the entry hands over openly.
+    CREATE TABLE IF NOT EXISTS fee_locks (
+      entry_id     BLOB PRIMARY KEY,
+      round_id     BLOB NOT NULL,
+      outpoint     TEXT NOT NULL,
+      fields       TEXT NOT NULL,
+      contract_id  TEXT NOT NULL,
+      verified_ms  INTEGER NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS lock_settlements (
       round_id     BLOB PRIMARY KEY,
       txid         TEXT NOT NULL,

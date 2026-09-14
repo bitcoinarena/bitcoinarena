@@ -66,8 +66,10 @@ export function lockPort({ height = 1000 } = {}) {
       for (const c of claims) {
         const at = locks.get(`${toHex(c.outpoint.txid)}:${c.outpoint.outIdx}`);
         if (!at) return { ...said, error: `no contract at ${toHex(c.outpoint.txid).slice(0, 12)}: already spent` };
-        if (toHex(feldmanGroup.pointFromScalar(scalarFrom32(c.preimage) % FIELD)) !== toHex(at.fields.paymentImage.bytes))
-          return { ...said, error: 'the preimage does not open that contract' };
+        const opens = at.fields.paymentImage.kind === 'hash'
+          ? toHex(sha256(c.preimage)) === toHex(at.fields.paymentImage.bytes)
+          : toHex(feldmanGroup.pointFromScalar(scalarFrom32(c.preimage) % FIELD)) === toHex(at.fields.paymentImage.bytes);
+        if (!opens) return { ...said, error: 'the preimage does not open that contract' };
         let good = false;
         try { good = schnorr.verify(signature, message, at.fields.claimPk.subarray(1)); } catch { good = false; }
         if (!good) return { ...said, error: 'a signature does not verify under the input\'s claim key' };

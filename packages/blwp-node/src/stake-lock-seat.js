@@ -64,3 +64,38 @@ export async function verifyStakeLock({ round, port, entryIdBytes, fields, claim
   round.putStakeSeen({ entryId: entryIdBytes, paidMsat: fields.amountMsat });
   return { ok: true, contractId: String(id), paidMsat: fields.amountMsat, height: st.blockCount };
 }
+
+/**
+ * A SEAT VERIFIES THE PLAYER'S FEE LOCK (Pick A, the owner 2026-09-14; §23.1 step 5
+ * "and the fee lock's"; F5): the entry's 2% node fee, locked to H(F) with F in
+ * the entry, the round's claim key and the player's refund key - checked field
+ * by field against the entry as the stake lock is. It is claimed for the round's
+ * sitting seats in the one settlement, whatever the result.
+ */
+export async function verifyFeeLock({ round, port, entryIdBytes, fields, claimPk }) {
+  const stored = round.entry(entryIdBytes);
+  if (!stored) return { ok: false, why: 'this node seated no such entry' };
+  const entry = decodeEntryContract(stored);
+  if (entry.feeMsat === 0n) return { ok: false, why: 'that entry owes no fee, so there is no fee lock to verify' };
+  const row = round.get(entry.roundId);
+  if (!row) return { ok: false, why: 'this node holds no such round' };
+  const contract = decodeRoundContract(new Uint8Array(row.contract));
+  if (contract.custody !== 'FEDERATION' || zero(contract.federationId))
+    return { ok: false, why: 'that round names no federation, so its fee is not a lock' };
+  if (!port) return { ok: false, why: 'this node reaches no federation, so it cannot verify a fee lock' };
+  const outpoint = entry.feeLockOutpoint;
+  if (!outpoint || zero(outpoint.txid)) return { ok: false, why: 'that entry names no fee lock outpoint' };
+  if (zero(entry.feePreimage)) return { ok: false, why: 'that entry hands over no F, so its fee lock could never be claimed' };
+  const st = await port.status(outpoint);
+  if (!st || !st.stored) return { ok: false, why: 'the federation holds no lock at the entry\'s fee_lock_outpoint' };
+  const id = await port.contractId(fields);
+  if (String(id) !== String(st.stored.contractId))
+    return { ok: false, why: 'the lock at that outpoint is not the fee contract handed over: its id is another' };
+  if (fields.expiration !== st.blockCount + st.stored.blocksLeft)
+    return { ok: false, why: 'that fee contract\'s expiration is not the one the federation holds' };
+  if (!(claimPk instanceof Uint8Array)) return { ok: false, why: 'this seat holds no claim key for that round' };
+  const matches = lockMatchesEntry({ lock: fields, entry, kind: 'fee', claimPk, height: st.blockCount });
+  if (!matches.ok) return matches;
+  round.putFeeLock({ entryId: entryIdBytes, roundId: entry.roundId, outpoint, fields: lockFieldsToJson(fields), contractId: String(id) });
+  return { ok: true, contractId: String(id), feeMsat: fields.amountMsat, height: st.blockCount };
+}

@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 
 import { lockSettlement, lnv2FeeMsat, largestPayoutMsat, settlementNonce } from '../src/lock-settlement.js';
 import { DELIVERED, FAILED, FORFEIT, VOID } from '../src/payout.js';
+import { refundKeyOf } from '../src/stake-lock.js';
 import { toHex } from '../src/hash.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
@@ -101,6 +102,98 @@ test('every seat rebuilds the same transaction: the order of the entries it was 
   assert.equal(settlementNonce(RID).length, 8);
   assert.equal(toHex(settlementNonce(RID)), toHex(settlementNonce(b32(0x5f))));
   assert.notEqual(toHex(settlementNonce(RID)), toHex(settlementNonce(b32(0x60))));
+});
+
+// PICK A (the owner 2026-09-14): THE FEE LOCKS PAY THE SITTING SEATS, by §22A's weights.
+const SEAT = (n) => { const k = new Uint8Array(32); k[0] = 0xa0 + n; k[31] = n; return k; };
+const contractOf = (nodes) => ({
+  networkId: b32(0x4e), configHash: b32(0x43), censusConfirmations: 1, gameVerifySlots: 2, settlementSlots: 2, simCoreHash: b32(1),
+  startTimeMs: 60500n, entryCloseMs: 2000n, objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'BURN',
+  federationId: b32(0xfe), stakeExpiryBlocks: 144, publicationRelays: [], donationSetId: b32(0xd0), censusHeight: 900000, censusRoot: b32(2),
+  committeeTimeMs: 500n, randomnessRule: 'bitcoin-block-hash', stakeMsat: 100000n, bondMinSats: 50000n, blockTicks: 9000,
+  exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20, timeFloor: 30, timeCeil: 150, minScore: 1,
+  rankNumerator: 3, rankDenominator: 4, nodes,
+});
+const feeLockFor = (e, n, amountMsat = 2000n) =>
+  [toHex(e.pubkey), { outpoint: { txid: b32(0x80 + n), outIdx: BigInt(n) }, amountMsat, preimage: b32(0xf0 + n) }];
+
+test('every counted entry\'s 2000 msat fee lock is claimed in the same settlement and the two sitting seats are paid by §22A\'s weights - winners\' fee locks too, a VOID entry\'s not', () => {
+  const W = entry(1, DELIVERED, 3);
+  const L = entry(2, FAILED, 0);
+  const V = entry(3, VOID, 0);
+  const seats = [SEAT(1), SEAT(2)];
+  const s = lockSettlement({ roundId: RID, entries: [W, L, V], minScore: 1, fees: NO_FEES, contract: contractOf(seats),
+    seats: { gameVerify: seats, settlement: seats },
+    locks: new Map([lockFor(W, 1), lockFor(L, 2), lockFor(V, 3)]), feeLocks: new Map([feeLockFor(W, 1), feeLockFor(L, 2), feeLockFor(V, 3)]) });
+  assert.equal(s.ok, true, s.why);
+  assert.deepEqual(s.feeClaims.map((c) => toHex(c.pubkey)).sort(), [toHex(W.pubkey), toHex(L.pubkey)].sort(), 'the fee locks claimed are not exactly the counted entries\'');
+  assert.equal(s.feePoolMsat, 4000n, 'two counted entries at 2% of 100000');
+  // 1% + 1% of the 200000 gross, each seat in both pools: 2000 owed to each, paid whole with no guardian fee
+  assert.deepEqual(s.seatPayouts.map((p) => [toHex(p.payoutPk), p.owedMsat, p.msat]).sort(), seats.map((k) => [toHex(refundKeyOf(k)), 2000n, 2000n]).sort());
+  assert.equal(s.claims.length, 3, 'one stake lock and two fee locks in one transaction');
+  assert.ok(s.payouts.some((p) => p.kind === 'qualifier'), 'the winner is still paid');
+  assert.equal(s.feeHole, null);
+});
+
+// MEASURED: UNDER THE REAL GUARDIANS' RULE (1000 msat per input and output, stake-lock-step3.sh)
+// A 2000 msat fee lock cannot reach a seat - so it is not claimed, and the hole is named.
+test('under the real guardians\' 1000 msat per input and output, 100 sat rounds\' 2000 msat fee locks cannot pay a seat: none is claimed, each expires back, the hole is named in msat', () => {
+  const W = entry(1, DELIVERED, 3);
+  const L = entry(2, FAILED, 0);
+  const seats = [SEAT(1), SEAT(2)];
+  const s = lockSettlement({ roundId: RID, entries: [W, L], minScore: 1, fees: { ppm: 0n, baseMsat: 1000n }, contract: contractOf(seats),
+    seats: { gameVerify: seats, settlement: seats }, locks: new Map([lockFor(W, 1), lockFor(L, 2)]),
+    feeLocks: new Map([feeLockFor(W, 1), feeLockFor(L, 2)]) });
+  console.log(`  real fee rule: fee claims ${s.feeClaims.length}; hole ${s.feeHole && `${s.feeHole.poolMsat} msat pool, ${s.feeHole.inputFeesMsat} input fees, ${s.feeHole.owedMsat} owed`}; `
+    + `seats owed ${s.unpaid.filter((u) => /fee share/.test(u.why)).map((u) => u.owedMsat).join(', ')}; the winner still paid ${s.payouts.filter((p) => p.kind === 'qualifier').map((p) => p.msat).join(', ')}`);
+  assert.equal(s.ok, true, s.why);
+  assert.equal(s.feeClaims.length, 0, 'fee locks were claimed that pay no seat - the players\' fees would only pay the guardians');
+  assert.deepEqual([s.feeHole.poolMsat, s.feeHole.inputFeesMsat, s.feeHole.owedMsat], [4000n, 2000n, 4000n]);
+  assert.deepEqual(s.unpaid.filter((u) => /fee share/.test(u.why)).map((u) => u.owedMsat), [2000n, 2000n]);
+  assert.deepEqual(s.payouts.map((p) => [p.kind, p.msat]), [['qualifier', 96000n]], 'the stake part changed');
+});
+
+test('under a proportional fee rule each sitting seat is paid its share of the fee locks, less its part of the guardians\' fees', () => {
+  const players = [entry(1, DELIVERED, 900), entry(2, FAILED, 0), entry(3, FAILED, 0), entry(4, FORFEIT, 0)];
+  const seats = [SEAT(1), SEAT(2)];
+  const s = lockSettlement({ roundId: RID, entries: players, minScore: 1, fees: { ppm: 1000n, baseMsat: 0n }, contract: contractOf(seats),
+    seats: { gameVerify: seats, settlement: seats }, locks: new Map(players.map((e, i) => lockFor(e, i + 1))),
+    feeLocks: new Map(players.map((e, i) => feeLockFor(e, i + 1))) });
+  assert.equal(s.ok, true, s.why);
+  assert.equal(s.feePoolMsat, 8000n);
+  assert.equal(s.seatPayouts.length, 2);
+  for (const p of s.seatPayouts) {
+    assert.equal(p.owedMsat, 4000n, 'each seat is in both pools: 1% + 1% of 400000, halved');
+    assert.ok(p.msat + p.feeMsat <= 4000n - 4n, `a seat took more than its share less its part of the input fees: ${p.msat}+${p.feeMsat}`);
+  }
+  assert.equal(s.feeInputFeesMsat + s.feePaidMsat + s.feeOutputFeesMsat + s.feeUnspentMsat, s.feePoolMsat);
+  console.log(`  proportional: fee pool ${s.feePoolMsat}, input fees ${s.feeInputFeesMsat}, seats ${s.seatPayouts.map((p) => `${p.msat}+${p.feeMsat}`).join(', ')}, unspent ${s.feeUnspentMsat}`);
+});
+
+test('a round with losers and no qualifier still claims its fee locks for the seats, and claims no stake', () => {
+  const L1 = entry(1, FAILED, 0);
+  const L2 = entry(2, FORFEIT, 0);
+  const seats = [SEAT(1), SEAT(2)];
+  const s = lockSettlement({ roundId: RID, entries: [L1, L2], minScore: 1, fees: NO_FEES, contract: contractOf(seats),
+    seats: { gameVerify: seats, settlement: seats }, locks: new Map([lockFor(L1, 1), lockFor(L2, 2)]),
+    feeLocks: new Map([feeLockFor(L1, 1), feeLockFor(L2, 2)]) });
+  assert.equal(s.ok, true, s.why);
+  assert.equal(s.claims.every((c) => c.kind === 'fee'), true, 'a stake was claimed with nobody to pay');
+  assert.match(s.stakeWhy, /operator would keep/);
+  assert.deepEqual(s.seatPayouts.map((p) => p.msat).sort(), [2000n, 2000n]);
+});
+
+test('a counted entry with no verified fee lock, a fee lock of another amount, or no seats named: nothing is claimed', () => {
+  const W = entry(1, DELIVERED, 3);
+  const L = entry(2, FAILED, 0);
+  const seats = [SEAT(1), SEAT(2)];
+  const base = { roundId: RID, entries: [W, L], minScore: 1, fees: NO_FEES, contract: contractOf(seats), locks: new Map([lockFor(W, 1), lockFor(L, 2)]) };
+  const missing = lockSettlement({ ...base, seats: { gameVerify: seats, settlement: seats }, feeLocks: new Map([feeLockFor(W, 1)]) });
+  assert.match(missing.why, /fee lock was never verified/);
+  const wrong = lockSettlement({ ...base, seats: { gameVerify: seats, settlement: seats }, feeLocks: new Map([feeLockFor(W, 1), feeLockFor(L, 2, 1999n)]) });
+  assert.match(wrong.why, /fee lock holds 1999 msat and its entry's fee is 2000/);
+  const noSeats = lockSettlement({ ...base, feeLocks: new Map([feeLockFor(W, 1), feeLockFor(L, 2)]) });
+  assert.match(noSeats.why, /no contract or seats were named/);
 });
 
 test('a round with losers and no qualifier: what the hold verdict decides, the lock settlement decides too', () => {

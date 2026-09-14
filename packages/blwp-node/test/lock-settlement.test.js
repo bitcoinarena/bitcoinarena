@@ -69,10 +69,13 @@ async function lockRound({ minScore = 1 } = {}) {
   return { a, b, c, rid, port, claimPk: held.pool.groupPublicKey, close: async () => { await a.close(); await b.close(); } };
 }
 
-async function lockAndPlay(w, who) {
+async function lockAndPlay(w, who, { feeLock = false } = {}) {
   const session = ed25519.utils.randomSecretKey();
   const preimage = secretScalar();
   const e = rand(32);
+  // PICK A: the fee locked to H(F), F handed over openly in the entry (F5).
+  const feeSecret = feeLock ? rand(32) : new Uint8Array(32);
+  const feeOutpoint = feeLock ? { txid: rand(32), outIdx: 1n } : { txid: new Uint8Array(32), outIdx: 0n };
   const dealt = await dealHandout({ preimage, seats: w.c.nodes, roundId: w.rid, playerPubkey: who.key,
     ephemeralSecret: e, ephemeralPubkey: feldmanGroup.pointX(e), coefficients: [scalarFrom32(rand(32)) % FIELD], needed: 2, curve: feldmanGroup });
   assert.equal(dealt.ok, true, dealt.why);
@@ -81,13 +84,16 @@ async function lockAndPlay(w, who) {
     roundId: w.rid, playerPubkey: who.key, sessionPubkey: ed25519.getPublicKey(session),
     stakeCommitment: sha256(preimage), stakeMsat: STAKE, feeMsat: entryFeeMsat(STAKE), donationMsat: 0n,
     joinTick: 0, worldSecret: who.worldSecret, vssSharesRef: handoutId(dealt.handout), stakePoint: dealt.handout.commitments[0],
-    feePreimage: new Uint8Array(32), stakeLockOutpoint: outpoint, feeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n },
+    feePreimage: feeSecret, stakeLockOutpoint: outpoint, feeLockOutpoint: feeOutpoint,
     claimKeyAttestationRef: b32(0x9a),
   };
   const eid = entryId(entry);
   const fields = { paymentImage: { kind: 'point', bytes: entry.stakePoint }, amountMsat: netStakeMsat(entry), claimPk: w.claimPk,
     refundPk: refundKeyOf(who.key), expiration: w.port.height + 200 };
   await w.port.put(outpoint, fields);
+  const feeFields = feeLock ? { paymentImage: { kind: 'hash', bytes: sha256(feeSecret) }, amountMsat: entry.feeMsat, claimPk: w.claimPk,
+    refundPk: refundKeyOf(who.key), expiration: w.port.height + 200 } : null;
+  if (feeLock) await w.port.put(feeOutpoint, feeFields);
   const input = { roundId: w.rid, entryId: eid, previousHash: GENESIS_HASH, firstTick: 0,
     ticks: Array.from({ length: who.ticks }, (_, t) => wordsAt(t)), liquidations: [] };
   const st = init(seedWordForEntry(entry, RANDOMNESS));
@@ -103,10 +109,14 @@ async function lockAndPlay(w, who) {
     assert.equal(seated.status, 201, await seated.text());
     const locked = await fetch(`${base}/lock?entry=${toHex(eid)}`, { method: 'POST', body: JSON.stringify(lockFieldsToJson(fields)) });
     assert.equal(locked.status, 201, await locked.text());
+    if (feeLock) {
+      const fee = await fetch(`${base}/fee-lock?entry=${toHex(eid)}`, { method: 'POST', body: JSON.stringify(lockFieldsToJson(feeFields)) });
+      assert.equal(fee.status, 201, await fee.text());
+    }
     assert.equal(await say(d.port, encodeInputBatch(input)), String(who.ticks));
     assert.equal((await say(d.port, signedMark)).length, SIGNED_RECEIPT_BYTES);
   }
-  return { eid, entry, fields, outpoint };
+  return { eid, entry, fields, outpoint, feeOutpoint };
 }
 
 const standing = async (d, w) => (await fetch(`http://127.0.0.1:${d.port}/lock-settlement?round=${toHex(w.rid)}`)).json();
@@ -148,6 +158,46 @@ test('after the window the loser\'s lock is claimed by one committee signature, 
     // AND THE WINNER'S OWN STAKE STILL COMES BACK BY ITS FORFEIT (W5b).
     const f = await fetch(`http://127.0.0.1:${w.a.port}/forfeit?round=${toHex(w.rid)}&entry=${toHex(won.eid)}`);
     assert.equal(f.status, 200, await f.text());
+  } finally { await w.close(); }
+});
+
+// PICK A (the owner 2026-09-14): THE FEE LOCKS INTO THE SAME SETTLEMENT, FOR THE SITTING SEATS.
+test('each player\'s fee lock is verified by both seats and claimed in the round\'s one settlement: the winner paid 98000, each sitting seat 2000 to its own key', async () => {
+  const w = await lockRound();
+  w.port.feeRule = { ppm: 0n, baseMsat: 0n };
+  try {
+    const won = await lockAndPlay(w, WINNER, { feeLock: true });
+    const lost = await lockAndPlay(w, LOSER, { feeLock: true });
+    await closeRound(w);
+    const got = await untilSettled(w);
+    const paid = [...w.port.payouts.values()];
+    const sent = w.port.settlements[0];
+    console.log(`  fee locks: ${got.state} - ${got.why}; inputs ${sent ? sent.claims.length : 0}; payouts ${paid.map((p) => `${p.msat} to ${toHex(p.payoutPk).slice(0, 10)}`).join(', ')}`);
+    assert.equal(got.state, 'ACCEPTED', got.why);
+    assert.deepEqual(sent.claims.map((c) => key(c.outpoint)).sort(), [key(lost.outpoint), key(won.feeOutpoint), key(lost.feeOutpoint)].sort(),
+      'the inputs are not the loser\'s stake and both fee locks');
+    const seatKeys = w.c.nodes.map((k) => toHex(refundKeyOf(k))).sort();
+    assert.deepEqual(paid.filter((p) => seatKeys.includes(toHex(p.payoutPk))).map((p) => [toHex(p.payoutPk), p.msat]).sort(),
+      seatKeys.map((k) => [k, 2000n]), 'each sitting seat is not paid its 2000 msat (1% + 1% of 200000, both pools)');
+    assert.deepEqual(paid.filter((p) => toHex(p.payoutPk) === toHex(refundKeyOf(WINNER.key))).map((p) => p.msat), [98000n]);
+    assert.equal([won.feeOutpoint, lost.feeOutpoint, lost.outpoint].some((o) => w.port.locks.has(key(o))), false, 'a claimed lock is still held');
+    assert.equal(w.port.locks.has(key(won.outpoint)), true, 'the winner\'s own stake lock was spent - it comes back by its forfeit');
+  } finally { await w.close(); }
+});
+
+test('under the real guardians\' 1000 msat per input and output the 2000 msat fee locks cannot reach a seat: none is claimed, both stay held, the winner is still paid 96000', async () => {
+  const w = await lockRound();
+  try {
+    const won = await lockAndPlay(w, WINNER, { feeLock: true });
+    const lost = await lockAndPlay(w, LOSER, { feeLock: true });
+    await closeRound(w);
+    const got = await untilSettled(w);
+    const paid = [...w.port.payouts.values()];
+    console.log(`  real fee rule with fee locks: ${got.state} - ${got.why}; payouts ${paid.map((p) => p.msat).join(', ')}`);
+    assert.equal(got.state, 'ACCEPTED', got.why);
+    assert.match(got.why, /no fee lock claimed: the fee locks hold 4000 msat and their inputs alone cost 2000/);
+    assert.deepEqual(paid.map((p) => p.msat), [96000n]);
+    assert.equal(w.port.locks.has(key(won.feeOutpoint)) && w.port.locks.has(key(lost.feeOutpoint)), true, 'a fee lock was claimed that pays no seat');
   } finally { await w.close(); }
 });
 

@@ -52,8 +52,11 @@ export class LockSettlement {
    * federation (blwp-stake-lock); `preimages` opens a loser's P with the other
    * seats; `peersFor(rid)` names the other settlement seats' bases.
    */
-  constructor(round, { dkg, port, curve, random, preimages, peersFor = () => [], fetcher = (u, o) => fetch(u, o) } = {}) {
+  constructor(round, { dkg, port, curve, random, preimages, peersFor = () => [], fetcher = (u, o) => fetch(u, o),
+    seatsFor = (rid, contract) => ({ gameVerify: contract.nodes, settlement: contract.nodes }) } = {}) {
     this.round = round;
+    // THE ROUND'S SITTING SEATS BY POOL (Pick A): who the fee locks pay, §22A's weights.
+    this.seatsFor = seatsFor;
     this.dkg = dkg;
     this.port = port;
     this.curve = curve;
@@ -70,7 +73,8 @@ export class LockSettlement {
   entriesOnRecord(roundIdBytes, contract) {
     const entries = [];
     for (const { entryId, entry } of this.round.entriesOf(roundIdBytes)) {
-      const base = { entryId, pubkey: entry.playerPubkey, stakeMsat: entry.stakeMsat, feeMsat: entry.feeMsat, donationMsat: entry.donationMsat };
+      const base = { entryId, pubkey: entry.playerPubkey, stakeMsat: entry.stakeMsat, feeMsat: entry.feeMsat, donationMsat: entry.donationMsat,
+        feePreimage: entry.feePreimage };
       if (this.round.entryVoid && this.round.entryVoid(entryId)) { entries.push({ ...base, outcome: ENTRY_VOID, score: 0 }); continue; }
       const nq = this.round.noQuorum ? this.round.noQuorum(entryId) : null;
       if (nq && nq.outcome === FORFEIT) { entries.push({ ...base, outcome: FORFEIT, score: 0 }); continue; }
@@ -115,16 +119,28 @@ export class LockSettlement {
       locks.set(toHex(e.pubkey), { outpoint: outpointOf(lock.outpoint), amountMsat: fields.amountMsat, refundPk: fields.refundPk, fields });
       lockEntry.set(toHex(e.pubkey), e.entryId);
     }
+    // AND EVERY FEE LOCK THIS SEAT VERIFIED (Pick A), with the F its entry hands over.
+    const feeLocks = new Map();
+    for (const e of on.entries) {
+      const fl = this.round.feeLock ? this.round.feeLock(e.entryId) : null;
+      if (!fl) continue;
+      const fields = lockFieldsFromJson(fl.fields);
+      if (toHex(fields.claimPk) !== toHex(claimPk)) return refuse('a fee lock of this round names another claim key than the round\'s');
+      feeLocks.set(toHex(e.pubkey), { outpoint: outpointOf(fl.outpoint), amountMsat: fields.amountMsat, preimage: e.feePreimage });
+    }
     let fees = this.fees.get(key);
     if (!fees) { fees = await this.port.fees(); this.fees.set(key, fees); }
-    const plan = lockSettlement({ roundId: roundIdBytes, entries: on.entries, minScore: contract.minScore, locks, fees });
+    const plan = lockSettlement({ roundId: roundIdBytes, entries: on.entries, minScore: contract.minScore, locks, fees,
+      feeLocks, seats: feeLocks.size ? this.seatsFor(roundIdBytes, contract) : null, contract });
     if (!plan.ok) return refuse(`no lock is claimed: ${plan.why}`);
     if (plan.nothing) return refuse(`no lock is claimed: ${plan.why}`);
 
     // EACH LOSER'S P, OPENED WITH THE OTHER SEATS, AND IT HAS TO OPEN THAT LOCK:
-    // a stake lock's image is the stake point, so P is its scalar.
+    // a stake lock's image is the stake point, so P is its scalar. A fee claim
+    // carries its F already - the entry handed it over openly (F5).
     const claims = [];
     for (const c of plan.claims) {
+      if (c.kind === 'fee') { claims.push(c); continue; }
       const entryId = lockEntry.get(toHex(c.pubkey));
       const got = await this.preimages.open({ roundId: roundIdBytes, entryId, needed: receiptsNeeded(contract.nodes.length) });
       if (!got.ok) return refuse(`a loser's P could not be opened: ${got.why}`);
@@ -243,8 +259,13 @@ export class LockSettlement {
       why: 'about to submit; if this seat dies here, ask the federation for the claimed locks' });
     const sent = await this.port.settle({ claimPk: m.claimPk, claims: m.claims, payouts: m.plan.payouts, nonce: m.plan.nonce, signature });
     const state = sent.accepted ? ACCEPTED : REFUSED;
+    const stakeClaims = m.plan.claims.filter((c) => c.kind !== 'fee').length;
+    const qualifiers = m.plan.payouts.filter((p) => p.kind !== 'seat').length;
+    const feePart = m.plan.feeClaims && m.plan.feeClaims.length
+      ? `; fee locks ${m.plan.feeClaims.length}, ${m.plan.feePoolMsat} msat, paid ${m.plan.seatPayouts.length} seat(s) ${m.plan.feePaidMsat} msat`
+      : (m.plan.feeHole ? `; no fee lock claimed: ${m.plan.feeHole.why}` : '');
     const why = sent.accepted
-      ? `claimed ${m.plan.claims.length} loser lock(s), ${m.plan.poolMsat} msat; paid ${m.plan.payouts.length} qualifier(s) ${m.plan.paidMsat} msat`
+      ? `claimed ${stakeClaims} loser lock(s), ${m.plan.poolMsat} msat; paid ${qualifiers} qualifier(s) ${m.plan.paidMsat} msat${feePart}`
       : `the guardians refused it: ${sent.error}`;
     this.round.putLockSettlement({ roundId: roundIdBytes, txid: m.txid, message: m.message, signature, state, why });
     return { ok: sent.accepted, state, why, txid: m.txid, signature, plan: m.plan, answer: sent };
