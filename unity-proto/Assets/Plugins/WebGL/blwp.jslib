@@ -283,6 +283,11 @@ mergeInto(LibraryManager.library, {
         net.state = 'error';
         net.error = String(e && e.message ? e.message : e);
         console.error('[blwp] session: ' + net.error);
+        // AND ON SCREEN (pick a): a seat that refuses the entry - "this round mints fee
+        // locks: an entry that brings no fee lock is not seated" - is what the chip says,
+        // not "stake dealt, unpaid" (measured: the reason reached only the console). The
+        // page's own earlier refusal, when there is one, is kept.
+        if (typeof window !== 'undefined' && !window.BLWP_SEAT_REFUSED) window.BLWP_SEAT_REFUSED = net.error;
       });
 
     // THE THREE THINGS A SESSION DOES, as closures rather than as helpers on

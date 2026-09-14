@@ -65,9 +65,9 @@ const ports = [stakeLockPort({ bin: env.LOCK_BIN, dataDir: `${P}/client` }), sta
 const held = new Map();
 const memStore = { entries: () => JSON.stringify([...held]), put: (k, v) => { held.set(k, v); }, remove: (k) => { held.delete(k); } };
 const lc = await LockClient.join(env.INVITE, LockClient.federationIdOf(env.INVITE), toHex(rand(32)), memStore);
-const rcv = JSON.parse(await lc.receive('3000000', env.GATEWAY));
+const rcv = JSON.parse(await lc.receive('5000000', env.GATEWAY));
 const paid = await lncliPay(rcv.invoice);
-out({ step: 'deposit', msat: 3000000, alice: paid, final: await lc.awaitReceive(rcv.operation), balanceMsat: await lc.balanceMsat() });
+out({ step: 'deposit', msat: 5000000, alice: paid, final: await lc.awaitReceive(rcv.operation), balanceMsat: await lc.balanceMsat() });
 const rule = JSON.parse(await lc.feeRule());
 const fees = { ppm: BigInt(rule.fee_ppm), baseMsat: BigInt(rule.fee_base_msat) };
 out({ step: 'the federation\'s fee rule', rule });
@@ -344,6 +344,38 @@ async function round(stakeMsat) {
         stakeLock: `${key(stake.outpoint)} ${stake.fields.amountMsat} msat`, feeLock: fee ? `${key(fee.outpoint)} ${fee.fields.amountMsat} msat` : 'none (the gate)',
         world: `ticks ${world.ticks}`, seats: handed });
       players.push({ want, seed, playerPubkey, stake, fee, eid });
+    }
+
+    // PICK (a) (the owner 2026-09-14): A THIRD PLAYER WHO LOCKS A STAKE AND BRINGS NO FEE LOCK. Where
+    // the gate mints, each seat must refuse the entry at the door - not seated, its stake not
+    // counted, its lock still its own - and the two who brought theirs settle as before.
+    let bare = null;
+    if (stakeMsat >= 1000000n) {
+      const seed = rand(32);
+      const playerPubkey = playerFor({ ...c, id: rid }, { seed, curve: pageCurve }).pubkey;
+      const preimage = secretScalar();
+      const e = rand(32);
+      const dealt = await dealHandout({ preimage, seats: c.nodes, roundId: rid, playerPubkey, ephemeralSecret: e, ephemeralPubkey: feldmanGroup.pointX(e),
+        coefficients: [scalarFrom32(rand(32)) % FIELD], needed: 2, curve: feldmanGroup });
+      const entryBase = { roundId: rid, playerPubkey, sessionPubkey: ed25519.getPublicKey(ed25519.utils.randomSecretKey()), stakeCommitment: sha256(preimage), stakeMsat,
+        feeMsat: entryFeeMsat(stakeMsat), donationMsat: 0n, joinTick: 0, vssSharesRef: handoutId(dealt.handout), stakePoint: dealt.handout.commitments[0],
+        claimKeyAttestationRef: b32(0x9a), worldSecret: rand(32) };
+      const refundPk = refundKeyOf(playerPubkey);
+      const net = netStakeMsat({ stakeMsat, feeMsat: entryFeeMsat(stakeMsat), donationMsat: 0n });
+      const stake = lockFromClient(await lc.lock(toHex(entryBase.stakePoint), String(net), toHex(claimPk), toHex(refundPk), 150), { point: entryBase.stakePoint, claimPk, refundPk });
+      const entry = { ...entryBase, feePreimage: new Uint8Array(32), stakeLockOutpoint: stake.outpoint, feeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n } };
+      const eid = entryId(entry);
+      const seats = [];
+      for (const d of [a, b]) {
+        const at = `http://127.0.0.1:${d.port}`;
+        await fetch(`${at}/handout`, { method: 'POST', body: encodeHandout(dealt.handout) });
+        const en = await fetch(`${at}/entry`, { method: 'POST', body: encodeEntryContract(entry) });
+        seats.push({ entry: en.status, why: en.status === 201 ? 'seated' : await en.text(), stored: !!d.round.entry(eid), seen: !!d.round.stakeSeen(eid) });
+      }
+      bare = { stake, seats };
+      out({ round: `${stakeMsat / 1000n} sat`, check: 'a player with a stake lock and no fee lock, at the door',
+        stakeLock: `${key(stake.outpoint)} ${stake.fields.amountMsat} msat`, seats,
+        seatedSet: [a, b].map((d) => d.round.entriesOf(rid).length) });
     }
 
     // 6d LEFTOVER 1: the winner's tab reloaded while its collect waits (RELOAD_BEFORE_COLLECT, 1000 sat).

@@ -73,6 +73,10 @@ export class LockSettlement {
   entriesOnRecord(roundIdBytes, contract) {
     const entries = [];
     for (const { entryId, entry } of this.round.entriesOf(roundIdBytes)) {
+      // A STAKE THIS SEAT NEVER SAW COMMITTED IS NOT IN THE ROUND (§23.1 step 5: play begins
+      // only after it). With pick (a), a round whose gate mints counts a stake only with its
+      // fee lock, so an entry that brought none never reaches this set.
+      if (this.round.stakeSeen && !this.round.stakeSeen(entryId)) continue;
       const base = { entryId, pubkey: entry.playerPubkey, stakeMsat: entry.stakeMsat, feeMsat: entry.feeMsat, donationMsat: entry.donationMsat,
         feePreimage: entry.feePreimage };
       if (this.round.entryVoid && this.round.entryVoid(entryId)) { entries.push({ ...base, outcome: ENTRY_VOID, score: 0 }); continue; }

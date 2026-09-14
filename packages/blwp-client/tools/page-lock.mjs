@@ -112,6 +112,15 @@ const RELOAD_AFTER_LOCK = `<script>(function () {
     }
   }, 20);
 })();</script>`;
+// PICK (a)'s DOOR, SEEN FROM A REAL PAGE: the page locks its stake as it always does, but
+// brings no fee lock - what a client that does not mint would do. Harness instrumentation in
+// the served page: it wraps lockStake and drops the fee lock from what it returns.
+const NO_FEE_LOCK = `<script>(function () {
+  var real = BLWPCLIENT.lockStake;
+  BLWPCLIENT.lockStake = function (o) {
+    return real(o).then(function (m) { console.log('[harness] the fee lock dropped from the join'); return Object.assign({}, m, { feeLock: null }); });
+  };
+})();</script>`;
 const MIME = { '.html': 'text/html', '.js': 'application/javascript', '.wasm': 'application/wasm', '.json': 'application/json' };
 const servePageAs = (dir, label) => new Promise((ok) => {
   const s = createServer((req, res) => {
@@ -119,9 +128,11 @@ const servePageAs = (dir, label) => new Promise((ok) => {
     if (p === '/') p = '/index.html';
     let body;
     try { body = readFileSync(join(dir, p.replace(/\.\.+/g, ''))); } catch { res.writeHead(404); return res.end('no'); }
-    if (p === '/index.html' && (label.startsWith('nolock') || label.startsWith('reload') || label.startsWith('relock'))) {
+    if (p === '/index.html' && (label.startsWith('nolock') || label.startsWith('reload') || label.startsWith('relock') || label.startsWith('nofee'))) {
       let html = body.toString('utf8');
-      if (label.startsWith('nolock')) {
+      if (label.startsWith('nofee')) {
+        html = html.replace('<script src="blwp-client.js"></script>', '<script src="blwp-client.js"></script>' + NO_FEE_LOCK);
+      } else if (label.startsWith('nolock')) {
         if (!html.includes(LOCK_STEP)) { res.writeHead(500); return res.end('this page has no lock step to switch off'); }
         html = html.replace(LOCK_STEP, 'if (false) {\n          const depositEl');
       } else {

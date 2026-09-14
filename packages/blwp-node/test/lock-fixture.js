@@ -48,7 +48,13 @@ export function lockPort({ height = 1000 } = {}) {
     // the payouts and their fees inside what the locks pay. Accepted: the locks
     // are gone and the payouts stored. The txid stands in for the stock one: a
     // hash of every input, output and the nonce.
-    feeRule: { ppm: 0n, baseMsat: 0n },
+    // THE FEDERATION'S OWN LNv2 RULE BY DEFAULT - 1000 msat per input and output, 0 ppm,
+    // as the regtest guardians answered (feeRule, W4). Under it a 100 sat round mints no
+    // fee lock (Pick b's gate), so a round that is not about fees seats its entries as it
+    // always did; zero was no federation's rule, and under it the gate mints at 100 sat
+    // and pick (a)'s door rightly refuses an entry that brings no fee lock. A test about
+    // the fee arithmetic sets its own rule.
+    feeRule: { ppm: 0n, baseMsat: 1000n },
     settlements: [],
     payouts: new Map(),
     async fees() { return port.feeRule; },

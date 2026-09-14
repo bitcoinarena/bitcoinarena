@@ -119,6 +119,43 @@ async function lockAndPlay(w, who, { feeLock = false } = {}) {
   return { eid, entry, fields, outpoint, feeOutpoint };
 }
 
+// PICK (a) (the owner 2026-09-14): REFUSE AT THE DOOR. An entry that brings no fee lock - naming
+// none, or naming one it never hands over - seated as far as the seats let it, and its
+// first batch offered.
+async function seatWithout(w, who, { namesFeeLock }) {
+  const session = ed25519.utils.randomSecretKey();
+  const preimage = secretScalar();
+  const e = rand(32);
+  const dealt = await dealHandout({ preimage, seats: w.c.nodes, roundId: w.rid, playerPubkey: who.key,
+    ephemeralSecret: e, ephemeralPubkey: feldmanGroup.pointX(e), coefficients: [scalarFrom32(rand(32)) % FIELD], needed: 2, curve: feldmanGroup });
+  const outpoint = { txid: rand(32), outIdx: 0n };
+  const entry = {
+    roundId: w.rid, playerPubkey: who.key, sessionPubkey: ed25519.getPublicKey(session),
+    stakeCommitment: sha256(preimage), stakeMsat: w.c.stakeMsat, feeMsat: entryFeeMsat(w.c.stakeMsat), donationMsat: 0n,
+    joinTick: 0, worldSecret: who.worldSecret, vssSharesRef: handoutId(dealt.handout), stakePoint: dealt.handout.commitments[0],
+    feePreimage: namesFeeLock ? rand(32) : new Uint8Array(32),
+    stakeLockOutpoint: outpoint, feeLockOutpoint: namesFeeLock ? { txid: rand(32), outIdx: 1n } : { txid: new Uint8Array(32), outIdx: 0n },
+    claimKeyAttestationRef: b32(0x9a),
+  };
+  const eid = entryId(entry);
+  const fields = { paymentImage: { kind: 'point', bytes: entry.stakePoint }, amountMsat: netStakeMsat(entry), claimPk: w.claimPk,
+    refundPk: refundKeyOf(who.key), expiration: w.port.height + 200 };
+  await w.port.put(outpoint, fields);
+  const at = [];
+  for (const d of [w.a, w.b]) {
+    const base = `http://127.0.0.1:${d.port}`;
+    await fetch(`${base}/handout`, { method: 'POST', body: encodeHandout(dealt.handout) });
+    const seated = await fetch(`${base}/entry`, { method: 'POST', body: encodeEntryContract(entry) });
+    const why = seated.status === 201 ? 'seated' : await seated.text();
+    const locked = seated.status === 201 ? await fetch(`${base}/lock?entry=${toHex(eid)}`, { method: 'POST', body: JSON.stringify(lockFieldsToJson(fields)) }) : null;
+    at.push({ entry: seated.status, why, lock: locked ? locked.status : null, lockSaid: locked ? await locked.text() : null,
+      stored: !!d.round.entry(eid), seen: !!d.round.stakeSeen(eid) });
+  }
+  const input = { roundId: w.rid, entryId: eid, previousHash: GENESIS_HASH, firstTick: 0, ticks: Array.from({ length: 60 }, (_, t) => wordsAt(t)), liquidations: [] };
+  const played = String(await say(w.a.port, encodeInputBatch(input)));
+  return { eid, outpoint, at, played };
+}
+
 const standing = async (d, w) => (await fetch(`http://127.0.0.1:${d.port}/lock-settlement?round=${toHex(w.rid)}`)).json();
 const closeRound = (w) => Promise.all([say(w.a.port, `close ${toHex(w.rid)}`), say(w.b.port, `close ${toHex(w.rid)}`)]);
 async function untilSettled(w, ms = 30000) {
@@ -158,6 +195,59 @@ test('after the window the loser\'s lock is claimed by one committee signature, 
     // AND THE WINNER'S OWN STAKE STILL COMES BACK BY ITS FORFEIT (W5b).
     const f = await fetch(`http://127.0.0.1:${w.a.port}/forfeit?round=${toHex(w.rid)}&entry=${toHex(won.eid)}`);
     assert.equal(f.status, 200, await f.text());
+  } finally { await w.close(); }
+});
+
+// PICK (a) (the owner 2026-09-14): REFUSE AT THE DOOR - where the round's gate mints.
+test('where the round mints fee locks (1000 sat, the federation\'s own rule) a seat refuses at the door an entry that brings none - not seated, no stake counted - and the round of those who brought theirs settles as before', async () => {
+  const w = await lockRound({ stakeMsat: 1000000n });
+  try {
+    const bare = await seatWithout(w, { key: b32(0x07), worldSecret: b32(0x17) }, { namesFeeLock: false });
+    console.log(`  no fee lock named: ${bare.at.map((s) => `${s.entry} "${s.why.slice(0, 120)}"`).join(' / ')}; stored ${bare.at.map((s) => s.stored).join('/')}`);
+    for (const s of bare.at) {
+      assert.equal(s.entry, 409, 'an entry with no fee lock was seated in a round that mints them');
+      assert.match(s.why, /this round mints fee locks .*an entry that brings no fee lock is not seated/);
+      assert.equal(s.stored, false);
+      assert.equal(s.seen, false);
+    }
+    const won = await lockAndPlay(w, WINNER, { feeLock: true });
+    const lost = await lockAndPlay(w, LOSER, { feeLock: true });
+    await closeRound(w);
+    const got = await untilSettled(w);
+    assert.equal(got.state, 'ACCEPTED', got.why);
+    const paid = [...w.port.payouts.values()];
+    const winner = paid.find((p) => toHex(p.payoutPk) === toHex(refundKeyOf(WINNER.key)));
+    console.log(`  the round of those who brought theirs: ${got.why}; payouts ${paid.map((p) => String(p.msat)).join(', ')}`);
+    assert.equal(winner.msat, 978000n);
+    assert.deepEqual(paid.filter((p) => p !== winner).map((p) => p.msat), [18000n, 18000n]);
+    assert.equal(w.port.locks.has(key(lost.outpoint)), false, 'the loser\'s lock was not claimed');
+    assert.equal(w.port.locks.has(key(won.outpoint)), true);
+    assert.equal(w.port.locks.has(key(bare.outpoint)), true, 'a lock the round never took was claimed');
+  } finally { await w.close(); }
+});
+
+test('where the round mints, an entry that names a fee lock and never hands it over is never committed: its stake lock kept and not counted, its play refused, and the settlement runs without it', async () => {
+  const w = await lockRound({ stakeMsat: 1000000n });
+  try {
+    const half = await seatWithout(w, { key: b32(0x07), worldSecret: b32(0x17) }, { namesFeeLock: true });
+    console.log(`  a fee lock named, never handed: ${half.at.map((s) => `entry ${s.entry}, lock ${s.lock} "${String(s.lockSaid).slice(-70)}", seen ${s.seen}`).join(' / ')}; its batch: "${half.played.slice(0, 80)}"`);
+    for (const s of half.at) {
+      assert.equal(s.entry, 201);
+      assert.equal(s.lock, 201);
+      assert.match(s.lockSaid, /counted once its fee lock is verified/);
+      assert.equal(s.seen, false, 'a stake counted without its fee lock');
+    }
+    assert.match(half.played, /stake not seen/);
+    const won = await lockAndPlay(w, WINNER, { feeLock: true });
+    const lost = await lockAndPlay(w, LOSER, { feeLock: true });
+    await closeRound(w);
+    const got = await untilSettled(w);
+    assert.equal(got.state, 'ACCEPTED', got.why);
+    const claimed = w.port.settlements[0].claims.map((c) => key(c.outpoint));
+    assert.equal(claimed.includes(key(half.outpoint)), false, 'a stake never committed was claimed');
+    assert.equal(claimed.includes(key(lost.outpoint)), true);
+    assert.equal(w.port.locks.has(key(half.outpoint)), true, 'the uncommitted player\'s lock did not stay theirs');
+    assert.equal(w.port.locks.has(key(won.outpoint)), true);
   } finally { await w.close(); }
 });
 

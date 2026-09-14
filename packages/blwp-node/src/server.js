@@ -75,7 +75,7 @@ import { ENTRY_VOID, netStakeMsat } from '../../protocol/src/payout.js';
 import { FINAL, PROVISIONALLY_FINAL, SUSPENDED } from '../../protocol/src/objection.js';
 import { transcriptBytesHash, SIGNED_POSTING_BYTES } from '../../protocol/src/posting.js';
 import { SIGNED_RERUN_BYTES } from '../../protocol/src/rerun.js';
-import { verifyStakeLock, verifyFeeLock, lockFieldsFromJson } from './stake-lock-seat.js';
+import { verifyStakeLock, verifyFeeLock, lockFieldsFromJson, roundMintsFees } from './stake-lock-seat.js';
 import { encodeClaimKeyAttestation, claimKeyAttestationId } from '../../protocol/src/claim-key.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { splitSlashEvidence, slashProofId, SLASH_EVIDENCE_BYTES } from '../../protocol/src/slash.js';
@@ -1882,6 +1882,25 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           const relays = publicationRelaysAreValid(decodeRoundContract(new Uint8Array(into.contract)));
           if (!relays.ok) return text(res, 409, `this node seats no stake in that round: ${relays.why}`);
         }
+        // THE FEE-LOCK DOOR (the owner 2026-09-14, pick a). Where the round's gate mints fee locks,
+        // an entry that brings none is not seated: its stake would not be counted, and in the
+        // round's one settlement it would refuse everybody's claim (measured: "an entry's fee
+        // lock was never verified, so the fee cannot be claimed"). A round that mints nothing -
+        // the Daily's free rounds, a 100 sat round under the federation's 1000 msat rule - is
+        // not touched.
+        const lockRow = round.get(contract.roundId);
+        if (lockRow && contract.stakeMsat > 0n) {
+          const rc = decodeRoundContract(new Uint8Array(lockRow.contract));
+          if (rc.custody === 'FEDERATION' && rc.federationId.some((x) => x !== 0)) {
+            let gate;
+            try { gate = await roundMintsFees({ contract: rc, port: stakeLocks }); }
+            catch (e) { return text(res, 503, `this node could not read the federation's fee rule, so it seats no entry in a round that may mint fee locks: ${e.message}`); }
+            const namesNone = contract.feeLockOutpoint.txid.every((x) => x === 0) || contract.feePreimage.every((x) => x === 0);
+            if (gate.mints && namesNone)
+              return text(res, 409, `this round mints fee locks (${gate.why}): an entry that brings no fee lock is not seated - `
+                + 'its stake would not be counted, and it would block the round\'s settlement');
+          }
+        }
         const seated = round.enter(contract);
 
         // THE SEAT IS WHERE THE HOLD IS ISSUED. 23.1: the endpoint issues a
@@ -2353,7 +2372,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         try { got = await verifyStakeLock({ round, port: stakeLocks, entryIdBytes: new Uint8Array(eid), fields, claimPk }); }
         catch (e) { got = { ok: false, why: `the federation could not be asked: ${e.message}` }; }
         if (!got.ok) return text(res, 409, got.why);
-        return text(res, 201, `stake lock verified: contract ${got.contractId} holds ${got.paidMsat} msat`);
+        return text(res, 201, `stake lock verified: contract ${got.contractId} holds ${got.paidMsat} msat`
+          + (got.waitsForFeeLock ? ' - counted once its fee lock is verified (this round mints fee locks)' : ''));
       }
 
       // AND THE PLAYER'S FEE LOCK (Pick A, F5): the entry's 2% locked to H(F),

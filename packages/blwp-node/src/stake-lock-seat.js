@@ -22,6 +22,21 @@
 // slots wait on a ruling (PRIORITIES).
 import { decodeEntryContract, decodeRoundContract } from '../../protocol/src/contracts.js';
 import { lockMatchesEntry, lockFieldsFromJson, lockFieldsToJson } from '../../protocol/src/stake-lock.js';
+import { feeLockPays } from '../../protocol/src/lock-settlement.js';
+
+/**
+ * WHETHER THIS ROUND'S GATE MINTS FEE LOCKS (Pick b), by the federation's own fee rule
+ * - the same arithmetic the page runs before it locks. Where it mints, a seat takes no
+ * entry without a fee lock and counts no stake whose fee lock it has not verified
+ * (the owner 2026-09-14, pick (a): refuse at the door - measured before, one entry with no
+ * fee lock made the round's one settlement refuse everybody: "an entry's fee lock was
+ * never verified, so the fee cannot be claimed").
+ */
+export async function roundMintsFees({ contract, port }) {
+  if (!port || typeof port.fees !== 'function') return { mints: false, why: 'this seat reads no federation fee rule' };
+  const gate = feeLockPays({ contract, fees: await port.fees() });
+  return { mints: gate.pays, why: gate.why };
+}
 
 const zero = (b) => !(b instanceof Uint8Array) || b.every((x) => x === 0);
 
@@ -61,6 +76,11 @@ export async function verifyStakeLock({ round, port, entryIdBytes, fields, claim
   if (!matches.ok) return matches;
 
   round.putStakeLock({ entryId: entryIdBytes, roundId: entry.roundId, outpoint, fields: lockFieldsToJson(fields), contractId: String(id) });
+  // IN A ROUND WHOSE GATE MINTS, THE STAKE COUNTS ONLY WITH ITS FEE LOCK (pick a): kept,
+  // verified, and not seen - no play, no place in the settlement - until the fee lock is.
+  const gate = await roundMintsFees({ contract, port });
+  if (gate.mints && !(round.feeLock && round.feeLock(entryIdBytes)))
+    return { ok: true, contractId: String(id), paidMsat: fields.amountMsat, height: st.blockCount, waitsForFeeLock: true };
   round.putStakeSeen({ entryId: entryIdBytes, paidMsat: fields.amountMsat });
   return { ok: true, contractId: String(id), paidMsat: fields.amountMsat, height: st.blockCount };
 }
@@ -97,5 +117,8 @@ export async function verifyFeeLock({ round, port, entryIdBytes, fields, claimPk
   const matches = lockMatchesEntry({ lock: fields, entry, kind: 'fee', claimPk, height: st.blockCount });
   if (!matches.ok) return matches;
   round.putFeeLock({ entryId: entryIdBytes, roundId: entry.roundId, outpoint, fields: lockFieldsToJson(fields), contractId: String(id) });
+  // AND A STAKE LOCK ALREADY VERIFIED AND WAITING FOR THIS ONE IS COUNTED NOW (pick a).
+  const staked = round.stakeLock ? round.stakeLock(entryIdBytes) : null;
+  if (staked && !round.stakeSeen(entryIdBytes)) round.putStakeSeen({ entryId: entryIdBytes, paidMsat: lockFieldsFromJson(staked.fields).amountMsat });
   return { ok: true, contractId: String(id), feeMsat: fields.amountMsat, height: st.blockCount };
 }
