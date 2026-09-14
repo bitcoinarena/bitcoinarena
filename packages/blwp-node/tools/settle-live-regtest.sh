@@ -26,7 +26,7 @@ UP=$(PROBE_DIR=$P SETUP_ONLY=1 FEDIMINT_BIN=$F FEDIMINT_HOME=$FH bash $HERE/fede
 echo "$UP" | grep -q FEDERATION_READY || { echo "$UP" | tail -15; echo "THE FEDERATION DID NOT COME UP"; exit 1; }
 INVITE=$(echo "$UP" | grep -oE 'invite=[^ ]+' | tail -1 | cut -d= -f2-)
 echo "federation up in $(( $(date +%s) - t )) s, invite ${INVITE:0:24}..."
-PROBE=$P INVITE=$INVITE GATEWAY=http://127.0.0.1:30170 LND_BIN=$L LOCK_BIN=$LOCK_BIN WASM_PKG=$WASM_PKG \
+PROBE=$P INVITE=$INVITE GATEWAY=http://127.0.0.1:30170 LND_BIN=$L LOCK_BIN=$LOCK_BIN WASM_PKG=$WASM_PKG BITCOIN_BIN=$B \
   FEDIMINT_BIN=$F FEDIMINT_HOME=$FH \
   node $HERE/settle-live-regtest.mjs 2>&1 | grep -E '^\{|Error|panicked' | sed 's/^/LIVE /'
 echo "probe dir: $P"

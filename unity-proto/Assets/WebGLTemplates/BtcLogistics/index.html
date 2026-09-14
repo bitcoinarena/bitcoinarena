@@ -646,6 +646,9 @@
           // the step on the stage line, the invoice in its own selectable box.
           const stageEl = document.getElementById('stage');
           const whose = { roundId: BLWPCLIENT.fromHex(named.roundIdHex), playerPubkey: player.pubkey };
+          // WHAT THE PAYOUT IS COLLECTED WITH after the window (6d): the same seed,
+          // round and federation the lock was made with.
+          window.BLWP_LOCK_JOIN = { invite: named.federation, roundIdHex: named.roundIdHex, seed, nodes: named.nodes };
           const committedTo = (eid) => BLWPCLIENT.markLockCommitted(window.sessionStorage, Object.assign({ entryId: eid }, whose));
           if (reuse) {
             stakeLock = { outpoint: reuse.lock.outpoint, fields: reuse.lock.fields, feeLock: reuse.lock.feeLock || null,
@@ -877,6 +880,43 @@
       paintWallet();
     }
 
+    // THE WINNER'S PAYOUT, COLLECTED BY THIS PAGE (6d, W4). After the window the
+    // seats' one settlement pays the winner a pre-expired payout contract to its
+    // key; the page asks the seats for it and spends it into this tab's federation
+    // wallet. A loser is told there is none, and its lock client is asked nothing.
+    // Which it is, is the client's (`redeemPayout`); this only asks and paints.
+    let payoutAsking = false;
+    async function collectThePayout() {
+      const j = window.BLWP_LOCK_JOIN;
+      if (payoutAsking || !j || !window.BLWP_STAKE_LOCK || !window.BLWP_ROUND || !BLWPCLIENT.roundLocks(window.BLWP_ROUND)) return;
+      const paid = () => window.BLWP_PAYOUT && window.BLWP_PAYOUT.final;
+      if (paid() && window.BLWP_STAKE_BACK && window.BLWP_STAKE_BACK.final) return;
+      payoutAsking = true;
+      try {
+        const wasm = await import('./blwp_lock_client.js');
+        await wasm.default();
+        const ask = { round: window.BLWP_ROUND, roundId: BLWPCLIENT.fromHex(j.roundIdHex), invite: j.invite,
+          seed: j.seed, curve: window.BLWP_CURVE, LockClient: wasm.LockClient, storage: window.sessionStorage, nodes: j.nodes };
+        let client = null;
+        if (!paid()) {
+          const p = await BLWPCLIENT.redeemPayout(ask);
+          client = p.client || null;
+          window.BLWP_PAYOUT = Object.assign({}, p, { client: undefined });
+          if (p.final) console.log('[blwp] payout: ' + BLWPCLIENT.payoutLine(p));
+        }
+        // AND THE PLAYER'S OWN STAKE (6d): once the seats have settled - they forfeit a
+        // qualifier's lock only then - into the same wallet; a loser's is told it went
+        // into the pool.
+        if (paid()) {
+          const s = await BLWPCLIENT.returnStake(Object.assign({}, ask, { client }));
+          window.BLWP_STAKE_BACK = Object.assign({}, s, { client: undefined });
+          if (s.final) console.log('[blwp] stake: ' + BLWPCLIENT.stakeBackLine(s));
+        }
+      } catch (e) { console.error('[blwp] payout: ' + e.message); }
+      payoutAsking = false;
+      paintWallet();
+    }
+
     function paintWallet() {
       const el = document.getElementById('blwp-wallet');
       if (!el || !wallet || typeof BLWPCLIENT === 'undefined') return;
@@ -901,6 +941,8 @@
         document.getElementById('blwp-owed').textContent = window.BLWP_STAKE_LOCK
           ? BLWPCLIENT.lockLine(window.BLWP_STAKE_LOCK)
           : 'this round\'s stake goes into a federation lock: pay the deposit shown below';
+        document.getElementById('blwp-settled').textContent = [BLWPCLIENT.payoutLine(window.BLWP_PAYOUT),
+          BLWPCLIENT.stakeBackLine(window.BLWP_STAKE_BACK)].filter(Boolean).join(' · ');
         for (const id of ['blwp-spent', 'blwp-budget', 'blwp-why']) document.getElementById(id).textContent = '';
         for (const id of ['blwp-nwc', 'blwp-pay']) document.getElementById(id).style.display = 'none';
         return;
@@ -1078,6 +1120,7 @@
     if (payButton) payButton.addEventListener('click', payTheStake);
     setInterval(() => { askWhatIsOwed(); askTheBudget(); paintWallet(); }, 1000);
     setInterval(askTheSettlement, 5000);
+    setInterval(collectThePayout, 5000);
     probeNodes();
     setInterval(probeNodes, 2000);
     paintPlayers();

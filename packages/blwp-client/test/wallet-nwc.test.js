@@ -16,7 +16,7 @@ import assert from 'node:assert/strict';
 import { WebSocketServer } from 'ws';
 import { readFileSync } from 'node:fs';
 import { roundLocks, settledLine } from '../src/join.js';
-import { lockLine } from '../src/page-lock.js';
+import { lockLine, payoutLine, stakeBackLine } from '../src/page-lock.js';
 import { donationPaidLine } from '../src/donation-pay.js';
 import { randomBytes } from 'node:crypto';
 import { schnorr } from '@noble/curves/secp256k1.js';
@@ -622,17 +622,19 @@ test('a round that asks no money gets no payment box, driven off the shipped pag
 
   const made = {};
   const el = (id) => (made[id] = made[id] || { style: {}, textContent: '', placeholder: '', disabled: false });
-  const run = (round, walletState, owedState, budgetState = null, stakeLock = undefined) => new Function(
+  const run = (round, walletState, owedState, budgetState = null, stakeLock = undefined, payout = undefined, stakeBack = undefined) => new Function(
     'document', 'window', 'BLWPCLIENT', 'wallet', 'spent', 'owed', 'paying', 'walletWhy', 'budget',
     `${src}\n return paintWallet();`,
   )(
     { getElementById: el },
-    { BLWP_ROUND: round, BLWP_CURVE: {}, BLWP_STAKE_LOCK: stakeLock,
+    { BLWP_ROUND: round, BLWP_CURVE: {}, BLWP_STAKE_LOCK: stakeLock, BLWP_PAYOUT: payout, BLWP_STAKE_BACK: stakeBack,
       BLWP_ENTRY: { stakeMsat: round.stakeMsat, feeMsat: entryFeeMsat(round.stakeMsat), donationMsat: 0n } },
     {
       roundPays: (r) => !!r && BigInt(r.stakeMsat || 0n) > 0n,
       roundLocks,
       lockLine,
+      payoutLine,
+      stakeBackLine,
       spentLine: () => 'nothing paid this session',
       owedLine,
       budgetLine,
@@ -692,6 +694,19 @@ test('a round that asks no money gets no payment box, driven off the shipped pag
   run(lockRound, { connected: false }, null, null, stakeLock);
   assert.equal(made['blwp-owed'].textContent, lockLine(stakeLock));
   console.log(`  lock round: "${made['blwp-owed'].textContent}"`);
+  // AND AFTER THE WINDOW (6d): the winner's collected payout, a loser's none - the
+  // client's line in the settled slot, nothing before the page has asked.
+  assert.equal(made['blwp-settled'].textContent, '');
+  run(lockRound, { connected: false }, null, null, stakeLock, { ok: true, final: true, amountMsat: 978000n, balance_before: 0, balance_after: 974672 });
+  assert.equal(made['blwp-settled'].textContent, 'Payout collected: 978000 msat from the round\'s settlement into this tab\'s federation wallet (balance 0 → 974672 msat)');
+  run(lockRound, { connected: false }, null, null, stakeLock, { ok: false, final: true, why: 'the round\'s settlement pays this seed\'s key nothing: no payout to collect' });
+  assert.match(made['blwp-settled'].textContent, /^No payout: /);
+  console.log(`  lock round after the window: "${made['blwp-settled'].textContent}"`);
+  // AND THE WINNER'S OWN STAKE BACK beside its payout, one line each, joined.
+  run(lockRound, { connected: false }, null, null, stakeLock, { ok: true, final: true, amountMsat: 978000n, balance_before: 0, balance_after: 973312 },
+    { ok: true, final: true, amountMsat: 980000n, balance_before: 973312, balance_after: 1950624 });
+  assert.equal(made['blwp-settled'].textContent, 'Payout collected: 978000 msat from the round\'s settlement into this tab\'s federation wallet (balance 0 → 973312 msat)'
+    + ' · Stake returned: 980000 msat back to this tab\'s federation wallet by the seats\' forfeit (balance 973312 → 1950624 msat)');
 });
 
 /**

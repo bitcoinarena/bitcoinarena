@@ -6,8 +6,13 @@
 // locks), pays the winner and the sitting seats, under one committee signature
 // after the window. Run twice: a 100 sat round and a 1000 sat round.
 // Driven by settle-live-regtest.sh (the federation, the gateway, the deposit).
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
+import { readFileSync, writeFileSync, mkdtempSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { createServer } from 'node:http';
+import WebSocket from 'ws';
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { schnorr, secp256k1 } from '@noble/curves/secp256k1.js';
 
@@ -33,6 +38,9 @@ import { netStakeMsat } from '../../protocol/src/payout.js';
 import { entryFeeMsat } from '../../protocol/src/fee.js';
 import { refundKeyOf, lockFieldsToJson } from '../../protocol/src/stake-lock.js';
 import { toHex, fromHex, sha256 } from '../../protocol/src/hash.js';
+import { playerFor } from '../../blwp-client/src/join.js';
+import { pageCurve } from '../../blwp-client/src/page-curve.js';
+import { redeemPayout, payoutLine, returnStake, stakeBackLine } from '../../blwp-client/src/page-lock.js';
 
 const env = process.env;
 const P = env.PROBE;
@@ -41,7 +49,6 @@ const curve = { ...feldmanGroup, tweakPoint };
 const run = (bin, args, extra = {}) => new Promise((done) => execFile(bin, args, { timeout: 180000, ...extra }, (err, so, se) => done({ err, so: String(so), se: String(se) })));
 const lncliPay = async (invoice) => (await run(`${env.LND_BIN}/lncli`,
   [`--lnddir=${P}/alice`, '--rpcserver=127.0.0.1:30107', '--network=regtest', 'payinvoice', '--force', invoice])).so.match(/Payment status: [A-Z_]+/)?.[0] || '?';
-const evenPlayer = () => { let k; do { k = secp256k1.utils.randomSecretKey(); } while (secp256k1.getPublicKey(k, true)[0] !== 0x02); return schnorr.getPublicKey(k); };
 const transcriptOf = (n) => ({ ticks: Array.from({ length: n }, (_, t) => ({ tick: t, words: wordsAt(t) })), liquidations: [] });
 const key = (o) => `${toHex(o.txid)}:${o.outIdx}`;
 
@@ -65,19 +72,150 @@ const rule = JSON.parse(await lc.feeRule());
 const fees = { ppm: BigInt(rule.fee_ppm), baseMsat: BigInt(rule.fee_base_msat) };
 out({ step: 'the federation\'s fee rule', rule });
 
-/** A world secret under which the seats' own replay says `want` for this entry, and the tick it is reached by. */
-function worldFor(base, want) {
+// THE GUARDIANS' BLOCK COUNT REACHES THE CHAIN BEFORE ANY LOCK. The setup mines in
+// batches, and the federation's consensus count comes after: a lock made below it is
+// short of what a seat checks it against (measured twice: "expires at 452, before
+// 315 + 144", then "before 314 + 144" - after three reads 5 s apart had agreed on
+// 302, so the count does not creep, it holds and jumps). Measured here against
+// bitcoind's own height: every 5 s, both seats' counts and the chain's, until the
+// guardians' reach the chain (or 300 s).
+const nowhere = { txid: new Uint8Array(32), outIdx: 0n };
+const countsNow = async () => Promise.all(ports.map(async (p) => (await p.status(nowhere)).blockCount));
+const chainHeight = async () => Number((await run(`${env.BITCOIN_BIN}/bitcoin-cli`,
+  ['-regtest', '-rpcport=30101', '-rpcuser=blwp', '-rpcpassword=blwp', 'getblockcount'])).so.trim());
+{
+  const t = Date.now();
+  const seen = [];
+  for (; Date.now() - t < 300000; await wait(5000)) {
+    const [a, b] = await countsNow();
+    const chain = await chainHeight();
+    seen.push(`${Math.round((Date.now() - t) / 1000)}s ${a}/${b} chain ${chain}`);
+    if (a >= chain && b >= chain) break;
+  }
+  out({ step: 'the guardians\' block count against the chain', reads: seen.length, first: seen[0], last: seen[seen.length - 1],
+    changes: seen.filter((s, i) => i === 0 || s.split(' ').slice(1).join(' ') !== seen[i - 1].split(' ').slice(1).join(' ')) });
+}
+
+/**
+ * A world secret under which the seats' own replay says `want` for this entry, and the
+ * tick it is reached by - no later than `lastTick`, the round's first-mark deadline:
+ * the driver sends one first mark, and past that line a seat refuses it as FORFEIT
+ * (measured: a loser world decided at tick 2040, deadline 1400).
+ */
+function worldFor(base, want, lastTick) {
   for (let i = 0; i < 600; i++) {
     const worldSecret = new Uint8Array(32); worldSecret[0] = i & 255; worldSecret[1] = i >> 8; worldSecret[31] = want === 'DELIVERED' ? 0xd1 : 0xf1;
     const entry = { ...base, worldSecret };
     const r = replay(transcriptOf(3000), entry, { roundRandomness: RANDOMNESS });
     if (!r.ok || r.outcome !== want || (want === 'DELIVERED' && r.score < 1)) continue;
-    for (let n = 60; n <= 3000; n += 60) {
+    for (let n = 60; n <= lastTick; n += 60) {
       const s = replay(transcriptOf(n), entry, { roundRandomness: RANDOMNESS });
       if (s.ok && s.outcome === want) return { worldSecret, ticks: n, score: r.score };
     }
   }
   throw new Error(`no world in 600 where the drive is ${want}`);
+}
+
+// 6d ON SCREEN (PAGE_DIR = a WebGL build): the built page in headless Chrome collects
+// the payout itself. browse() and servePage() as page-lock.mjs (blwp-client) has them.
+const CHROME = env.CHROME || '/home/arena/.cache/ms-playwright/chromium-1234/chrome-linux64/chrome';
+const MIME = { '.html': 'text/html', '.js': 'application/javascript', '.wasm': 'application/wasm', '.json': 'application/json', '.png': 'image/png', '.data': 'application/octet-stream' };
+let served = null;
+const servePage = (dir) => served || (served = new Promise((ok) => {
+  const s = createServer((req, res) => {
+    let p = decodeURIComponent(req.url.split('?')[0]);
+    if (p === '/') p = '/index.html';
+    let body;
+    try { body = readFileSync(join(dir, p.replace(/\.\.+/g, ''))); } catch { res.writeHead(404); return res.end('no'); }
+    res.writeHead(200, { 'content-type': MIME[p.slice(p.lastIndexOf('.'))] || 'application/octet-stream' });
+    res.end(body);
+  });
+  s.listen(0, '127.0.0.1', () => ok({ server: s, port: s.address().port }));
+}));
+async function browse(url) {
+  const profile = mkdtempSync(join(tmpdir(), 'settle-live-chrome-'));
+  const chrome = spawn(CHROME, ['--headless=new', '--remote-debugging-port=0', `--user-data-dir=${profile}`,
+    '--no-sandbox', '--window-size=1280,800', '--use-gl=swiftshader', '--enable-unsafe-swiftshader',
+    '--disable-dev-shm-usage', 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe'] });
+  const debugPort = await new Promise((r) => { let buf = ''; chrome.stderr.on('data', (d) => { buf += d; const m = buf.match(/DevTools listening on ws:\/\/127\.0\.0\.1:(\d+)/); if (m) r(m[1]); }); });
+  let target = null;
+  for (let i = 0; i < 40 && !target; i++) {
+    target = (await (await fetch(`http://127.0.0.1:${debugPort}/json/list`)).json()).find((t) => t.type === 'page');
+    if (!target) await wait(250);
+  }
+  const ws = new WebSocket(target.webSocketDebuggerUrl, { maxPayload: 256 * 1024 * 1024 });
+  await new Promise((r) => ws.on('open', r));
+  let n = 0;
+  const pending = new Map();
+  const logs = [];
+  ws.on('message', (raw) => {
+    const m = JSON.parse(raw);
+    if (m.id && pending.has(m.id)) { pending.get(m.id)(m); pending.delete(m.id); }
+    if (m.method === 'Runtime.consoleAPICalled') logs.push(m.params.args.map((x) => x.value ?? x.description ?? '').join(' '));
+    if (m.method === 'Runtime.exceptionThrown') logs.push('EXCEPTION ' + (m.params.exceptionDetails.exception?.description || m.params.exceptionDetails.text));
+  });
+  const send = (method, params = {}) => new Promise((r, no) => {
+    const i = ++n;
+    const timer = setTimeout(() => { pending.delete(i); no(new Error(`the browser did not answer ${method} in 30 s`)); }, 30000);
+    pending.set(i, (m) => { clearTimeout(timer); r(m); });
+    try { ws.send(JSON.stringify({ id: i, method, params })); } catch (e) { clearTimeout(timer); pending.delete(i); no(e); }
+  });
+  const evaluate = async (expression) => (await send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true })).result?.result?.value;
+  const shot = async (file) => { const r = await send('Page.captureScreenshot', { format: 'png' }); if (r.result) writeFileSync(file, Buffer.from(r.result.data, 'base64')); };
+  await send('Runtime.enable');
+  await send('Page.enable');
+  await send('Page.navigate', { url });
+  const close = () => { try { ws.close(); } catch {} try { chrome.kill('SIGKILL'); } catch {} };
+  return { evaluate, shot, logs, close };
+}
+
+/**
+ * ONE PLAYER'S TAB COLLECTS ITS PAYOUT ON SCREEN: the built page, handed the join
+ * state its own join sets for a lock round (the round, its lock, and BLWP_LOCK_JOIN -
+ * the invite, the round and the tab's seed) - harness instrumentation, as page-lock's
+ * reload mutants are; the join and play themselves are W1b's and daily-close-look's.
+ * The page's own collectThePayout does the rest; this reads what it shows.
+ */
+async function collectOnScreen({ p, c, rid, urls, stakeMsat, held }) {
+  const page = await servePage(env.PAGE_DIR);
+  const b = await browse(`http://127.0.0.1:${page.port}/`);
+  const shotFile = `${P}/payout-${stakeMsat / 1000n}sat-${p.want}.png`;
+  try {
+    let ready = false;
+    for (let t = Date.now(); Date.now() - t < 90000 && !ready; await wait(500))
+      ready = await b.evaluate(`typeof BLWPCLIENT !== 'undefined' && !!BLWPCLIENT.redeemPayout && !!window.BLWP_CURVE`);
+    if (!ready) return { page: p.want, error: 'the built page never had BLWPCLIENT.redeemPayout and BLWP_CURVE', logs: b.logs.slice(-5) };
+    await b.evaluate(`(() => {
+      window.BLWP_ROUND = BLWPCLIENT.decodeRoundContract(BLWPCLIENT.fromHex('${toHex(encodeRoundContract(c))}'));
+      window.BLWP_STAKE_LOCK = { outpoint: { txid: BLWPCLIENT.fromHex('${toHex(p.stake.outpoint.txid)}'), outIdx: ${p.stake.outpoint.outIdx}n },
+        fields: { amountMsat: ${p.stake.fields.amountMsat}n, expiration: ${p.stake.fields.expiration} } };
+      window.BLWP_LOCK_JOIN = { invite: '${env.INVITE}', roundIdHex: '${toHex(rid)}', seed: BLWPCLIENT.fromHex('${toHex(p.seed)}'), nodes: ${JSON.stringify(urls)} };
+      return true; })()`);
+    const t0 = Date.now();
+    let seen = null;
+    for (; Date.now() - t0 < 180000; await wait(1000)) {
+      seen = JSON.parse(await b.evaluate(`JSON.stringify({
+        payout: window.BLWP_PAYOUT || null,
+        stakeBack: window.BLWP_STAKE_BACK || null,
+        settled: (document.getElementById('blwp-settled') || {}).textContent || '',
+        onScreen: (() => { const el = document.getElementById('blwp-settled'); if (!el) return null; const r = el.getBoundingClientRect();
+          const hit = r.width && r.height ? document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2) : null;
+          return { w: Math.round(r.width), h: Math.round(r.height), onTop: !!hit && (hit === el || el.contains(hit)) }; })(),
+      }, (k, v) => (typeof v === 'bigint' ? String(v) : v))`) || '{}');
+      if (seen.payout && seen.payout.final && seen.stakeBack && seen.stakeBack.final && seen.settled) break;
+    }
+    await b.shot(shotFile);
+    const po = seen && seen.payout;
+    const sb = (seen && seen.stakeBack) || {};
+    const at = po && po.outIdx !== undefined ? { txid: fromHex(po.txid), outIdx: BigInt(po.outIdx) } : null;
+    return { round: `${stakeMsat / 1000n} sat`, page: p.want, onScreen: true, collected: !!(po && po.ok), final: !!(po && po.final),
+      collectedMs: Date.now() - t0, payoutMsat: po && po.amountMsat, walletBefore: po && po.balance_before, walletAfter: po && po.balance_after,
+      payoutStillHeldAfter: at ? await held(at) : null,
+      stakeBack: !!sb.ok, stakeBackFinal: !!sb.final, returnedMsat: sb.amountMsat, stakeWalletBefore: sb.balance_before, stakeWalletAfter: sb.balance_after,
+      stakeLockMsat: p.stake.fields.amountMsat, stakeLockHeldAfter: await held(p.stake.outpoint),
+      shown: seen && seen.settled, drawn: seen && seen.onScreen, screenshot: shotFile,
+      pageSaid: b.logs.filter((l) => /\[blwp\] (payout|stake)|EXCEPTION/.test(l)).map((l) => l.slice(0, 200)).slice(-4) };
+  } finally { b.close(); }
 }
 
 async function round(stakeMsat) {
@@ -89,7 +227,7 @@ async function round(stakeMsat) {
       d.verifier.peers = there; d.payouts.peers = there; d.preimages.peers = there; d.dkg.peers = there;
     }
     const c = { ...contractFor([a.round.pubkey, b.round.pubkey], BigInt(WINDOW_MS), [a, b].map((d) => `http://127.0.0.1:${d.port}`)),
-      federationId: b32(0xfe), minScore: 1, stakeMsat };
+      federationId: fromHex(LockClient.federationIdOf(env.INVITE)), minScore: 1, stakeMsat };
     const rid = roundId(c);
     for (const d of [a, b]) {
       const r = await fetch(`http://127.0.0.1:${d.port}/round`, { method: 'POST', body: encodeRoundContract(c) });
@@ -103,7 +241,9 @@ async function round(stakeMsat) {
 
     const players = [];
     for (const want of ['DELIVERED', 'FAILED']) {
-      const playerPubkey = evenPlayer();
+      // THE PAGE'S OWN PLAYER KEY, from a tab seed (6d: the page finds its payout by it).
+      const seed = rand(32);
+      const playerPubkey = playerFor({ ...c, id: rid }, { seed, curve: pageCurve }).pubkey;
       const session = ed25519.utils.randomSecretKey();
       const preimage = secretScalar();
       const e = rand(32);
@@ -112,7 +252,7 @@ async function round(stakeMsat) {
       const base = { roundId: rid, playerPubkey, sessionPubkey: ed25519.getPublicKey(session), stakeCommitment: sha256(preimage), stakeMsat,
         feeMsat: entryFeeMsat(stakeMsat), donationMsat: 0n, joinTick: 0, vssSharesRef: handoutId(dealt.handout), stakePoint: dealt.handout.commitments[0],
         claimKeyAttestationRef: b32(0x9a) };
-      const world = worldFor({ ...base, feePreimage: new Uint8Array(32), stakeLockOutpoint: { txid: b32(1), outIdx: 0n }, feeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n } }, want);
+      const world = worldFor({ ...base, feePreimage: new Uint8Array(32), stakeLockOutpoint: { txid: b32(1), outIdx: 0n }, feeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n } }, want, c.startDeadlineTicks);
       const refundPk = refundKeyOf(playerPubkey);
       const net = netStakeMsat({ stakeMsat, feeMsat: entryFeeMsat(stakeMsat), donationMsat: 0n });
       const stake = lockFromClient(await lc.lock(toHex(base.stakePoint), String(net), toHex(claimPk), toHex(refundPk), 150),
@@ -148,9 +288,10 @@ async function round(stakeMsat) {
         const receipt = await tell(d.port, signedMark);
         if (receipt.length !== SIGNED_RECEIPT_BYTES) throw new Error(`the mark at tick ${world.ticks} was not receipted by seat ${d.port}: ${typeof receipt === 'string' ? receipt : `${receipt.length} bytes`}`);
       }
-      out({ player: want, stakeLock: `${key(stake.outpoint)} ${stake.fields.amountMsat} msat`, feeLock: fee ? `${key(fee.outpoint)} ${fee.fields.amountMsat} msat` : 'none (the gate)',
+      out({ player: want, expiration: stake.fields.expiration, countsAfterHandOver: await countsNow(), chain: await chainHeight(),
+        stakeLock: `${key(stake.outpoint)} ${stake.fields.amountMsat} msat`, feeLock: fee ? `${key(fee.outpoint)} ${fee.fields.amountMsat} msat` : 'none (the gate)',
         world: `ticks ${world.ticks}`, seats: handed });
-      players.push({ want, playerPubkey, stake, fee, eid });
+      players.push({ want, seed, playerPubkey, stake, fee, eid });
     }
 
     const closedAt = Date.now();
@@ -177,6 +318,31 @@ async function round(stakeMsat) {
       winnerKey: toHex(refundKeyOf(winner.playerPubkey)).slice(0, 12), seatKeys: c.nodes.map((k) => toHex(refundKeyOf(k)).slice(0, 12)),
     });
 
+    // 6d: EACH PLAYER'S PAGE COLLECTS ITS PAYOUT - the page's own `redeemPayout`, from
+    // its seed alone, into a fresh wallet of this federation. Counted: how often each
+    // page asked its lock client to join (a loser's must be never).
+    const urls = [a, b].map((d) => `http://127.0.0.1:${d.port}`);
+    for (const p of [winner, loser]) {
+      // ON SCREEN FOR THE 1000 SAT ROUND when a build is named; the 100 sat round by Node.
+      if (env.PAGE_DIR && stakeMsat >= 1000000n) { out(await collectOnScreen({ p, c, rid, urls, stakeMsat, held })); continue; }
+      let joins = 0;
+      const Counting = { join: (...args) => { joins++; return LockClient.join(...args); } };
+      const r = await redeemPayout({ round: c, roundId: rid, invite: env.INVITE, seed: p.seed, curve: pageCurve, LockClient: Counting, nodes: urls });
+      const at = r.outIdx !== undefined ? { txid: fromHex(r.txid), outIdx: BigInt(r.outIdx) } : null;
+      out({ round: `${stakeMsat / 1000n} sat`, page: p.want, collected: r.ok, final: r.final, lockClientJoins: joins, outIdx: r.outIdx,
+        payoutMsat: r.amountMsat, walletBefore: r.balance_before, walletAfter: r.balance_after,
+        payoutStillHeldAfter: at ? await held(at) : null, screen: payoutLine(r) });
+      // AND ITS OWN STAKE BACK BY THE SEATS' FORFEIT, into the same wallet (6d).
+      const joinsBefore = joins;
+      const heldBefore = await held(p.stake.outpoint);
+      const back = await returnStake({ round: c, roundId: rid, invite: env.INVITE, seed: p.seed, curve: pageCurve, LockClient: Counting,
+        nodes: urls, client: r.client || null });
+      out({ round: `${stakeMsat / 1000n} sat`, page: p.want, stakeBack: back.ok, final: back.final, lockClientJoins: joins - joinsBefore,
+        stakeLockMsat: p.stake.fields.amountMsat, returnedMsat: back.amountMsat, walletBefore: back.balance_before, walletAfter: back.balance_after,
+        stakeLockHeldBefore: heldBefore, stakeLockHeldAfter: await held(p.stake.outpoint), screen: stakeBackLine(back) });
+      if (back.client && back.client !== r.client && typeof back.client.free === 'function') back.client.free();
+      if (r.client && typeof r.client.free === 'function') r.client.free();
+    }
   } finally { await a.close(); await b.close(); }
 }
 

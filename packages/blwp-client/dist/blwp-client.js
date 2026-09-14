@@ -8443,7 +8443,7 @@ async function forfeitOf({ roundId, entryId, nodes, fetcher = fetch } = {}) {
  * seed's secret spends the lock with the player's key.
  */
 async function redeemStake({ round, roundId, invite, seed, curve, LockClient, storage, nodes, fetcher = fetch,
-  onStep = () => {} } = {}) {
+  client: given = null, onStep = () => {} } = {}) {
   if (!round || !roundLocks(round)) throw new Error('this round names no federation, so its stake is not a lock');
   const player = playerFor({ ...round, id: roundId }, { seed, curve });
   onStep('asking the seats where this seed\'s lock is');
@@ -8458,8 +8458,10 @@ async function redeemStake({ round, roundId, invite, seed, curve, LockClient, st
   }
   const secret = lockSecretFor(seed, roundId);
   const store = storage ? lockStoreFor(storage, roundId, secret) : unkeptLockStore();
-  onStep('joining the federation');
-  const client = await LockClient.join(invite, toHex(round.federationId), toHex(secret), store);
+  // THE WALLET THE PAYOUT WAS JUST COLLECTED INTO, when there is one (6d): one
+  // client over the tab's store, not a second opened beside it.
+  if (!given) onStep('joining the federation');
+  const client = given || await LockClient.join(invite, toHex(round.federationId), toHex(secret), store);
   const redeems = [];
   for (const { lock: l, forfeit: f } of forfeits) {
     onStep('redeeming the lock');
@@ -8468,6 +8470,126 @@ async function redeemStake({ round, roundId, invite, seed, curve, LockClient, st
     redeems.push({ outpoint: l.outpoint, forfeitFrom: f.from, ...said });
   }
   return { client, redeems };
+}
+
+/**
+ * THE ROUND'S SETTLEMENT AS THE SEATS HOLD IT (GET /lock-settlement, W4): the first
+ * seat whose settlement the guardians ACCEPTED - its txid and what it moved. The
+ * guardians check every payout again when it is spent, so a seat that lies here
+ * points at nothing this key can take.
+ */
+async function settlementOf({ roundId, nodes, fetcher = fetch } = {}) {
+  const said = [];
+  for (const node of [...new Set(nodes || [])]) {
+    try {
+      const r = await fetcher(`${String(node).replace(/\/+$/, '')}/lock-settlement?round=${toHex(roundId)}`);
+      if (!r.ok) { said.push(`${node}: ${r.status}`); continue; }
+      const j = await r.json();
+      if (j.state === 'ACCEPTED' && j.moved && Array.isArray(j.moved.payouts)) return { ok: true, txid: j.txid, moved: j.moved, from: node };
+      said.push(`${node}: ${j.state}`);
+    } catch (e) { said.push(`${node}: ${e.message}`); }
+  }
+  return { ok: false, why: `no seat holds an accepted settlement of this round yet (${said.join('; ')})` };
+}
+
+/**
+ * THE WINNER COLLECTS ITS PAYOUT (6d, W4): the pre-expired payout contract the
+ * seats' one settlement made to this seed's key for this round, spent by Refund
+ * under that key - open at once, and only that key can. A loser, or a player the
+ * table pays nothing on top of their own stake, finds no payout and is told so;
+ * nothing is asked of the lock client then. The winner's own stake comes back by
+ * its forfeit (`redeemStake`).
+ */
+async function redeemPayout({ round, roundId, invite, seed, curve, LockClient, storage, nodes, fetcher = fetch,
+  onStep = () => {} } = {}) {
+  if (!round || !roundLocks(round)) throw new Error('this round names no federation, so it has no payout contract');
+  // A PAYOUT THIS TAB ALREADY COLLECTED is answered from the tab's note: after a
+  // reload the contract is spent, and asking the federation again could only fail
+  // every time the page asks.
+  const noted = `${PAYOUT_NOTE}${toHex(roundId)}`;
+  try {
+    const kept = storage && storage.getItem(noted);
+    if (kept) return { ...JSON.parse(kept), amountMsat: BigInt(JSON.parse(kept).amountMsat), ok: true, final: true, kept: true };
+  } catch { /* an unreadable note is no note */ }
+  const player = playerFor({ ...round, id: roundId }, { seed, curve });
+  const mine = toHex(refundKeyOf(player.pubkey));
+  onStep('asking the seats for the round\'s settlement');
+  const s = await settlementOf({ roundId, nodes, fetcher });
+  if (!s.ok) return { ok: false, final: false, why: s.why };
+  const at = s.moved.payouts.findIndex((p) => p.kind === 'qualifier' && String(p.pk).toLowerCase() === mine);
+  if (at < 0) return { ok: false, final: true, txid: s.txid, why: 'the round\'s settlement pays this seed\'s key nothing: no payout to collect' };
+  const p = s.moved.payouts[at];
+  const fields = { paymentImage: { kind: 'hash', bytes: '00'.repeat(32) }, amountMsat: String(p.msat), claimPk: mine, refundPk: mine, expiration: 0 };
+  const secret = lockSecretFor(seed, roundId);
+  const store = storage ? lockStoreFor(storage, roundId, secret) : unkeptLockStore();
+  onStep('joining the federation');
+  const client = await LockClient.join(invite, toHex(round.federationId), toHex(secret), store);
+  onStep('collecting the payout');
+  const said = JSON.parse(await client.refund(s.txid, at, JSON.stringify(fields), toHex(player.secret)));
+  const got = { ok: said.accepted === true, final: said.accepted === true, txid: s.txid, outIdx: at, amountMsat: BigInt(p.msat), from: s.from, ...said };
+  if (got.ok && storage) {
+    try { storage.setItem(noted, JSON.stringify({ ...got, amountMsat: String(got.amountMsat) })); } catch { /* unkept: a reload asks again */ }
+  }
+  return { ...got, client };
+}
+const PAYOUT_NOTE = 'blwp.payout.';
+
+/**
+ * AND THE PLAYER'S OWN STAKE BACK, AFTER THE WINDOW (6d, §23.2 row 1). The seats
+ * forfeit a qualifier's lock only once its result is FINAL with the window closed;
+ * the page asks only once the seats hold an ACCEPTED settlement, which they make
+ * only then. Given, the lock is redeemed into the tab's wallet (`redeemStake`) and
+ * kept in the tab; refused because the run did not qualify, it is final - that
+ * stake went into the round's pool - and the lock client is asked nothing; refused
+ * for anything else (the window, a seat short), asked again.
+ */
+async function returnStake({ round, roundId, invite, seed, curve, LockClient, storage, nodes, fetcher = fetch,
+  client = null, onStep = () => {} } = {}) {
+  if (!round || !roundLocks(round)) throw new Error('this round names no federation, so its stake is not a lock');
+  const noted = `${STAKE_NOTE}${toHex(roundId)}`;
+  try {
+    const kept = storage && storage.getItem(noted);
+    if (kept) { const k = JSON.parse(kept); return { ...k, amountMsat: BigInt(k.amountMsat), ok: true, final: true, kept: true }; }
+  } catch { /* an unreadable note is no note */ }
+  const s = await settlementOf({ roundId, nodes, fetcher });
+  if (!s.ok) return { ok: false, final: false, why: s.why };
+  let got;
+  try {
+    got = await redeemStake({ round, roundId, invite, seed, curve, LockClient, storage, nodes, fetcher, client, onStep });
+  } catch (e) {
+    const lost = /that run is \S+ with score/.test(e.message);
+    return { ok: false, final: lost,
+      why: lost ? 'the seats forfeit this seed\'s lock to nobody: the run did not qualify, so its stake went into the round\'s pool' : e.message };
+  }
+  const rs = got.redeems;
+  const ok = rs.length > 0 && rs.every((r) => r.accepted === true);
+  const res = { ok, final: ok, amountMsat: BigInt(rs.reduce((t, r) => t + Number(r.amount_msat || 0), 0)),
+    balance_before: rs.length ? rs[0].balance_before : undefined, balance_after: rs.length ? rs[rs.length - 1].balance_after : undefined,
+    txid: rs.length ? rs[0].txid : undefined, forfeitFrom: rs.length ? rs[0].forfeitFrom : undefined,
+    why: ok ? undefined : (rs.find((r) => r.error) || {}).error || 'the federation did not accept the redeem' };
+  if (ok && storage) {
+    try { storage.setItem(noted, JSON.stringify({ ...res, amountMsat: String(res.amountMsat) })); } catch { /* unkept: a reload asks again */ }
+  }
+  return { ...res, client: got.client };
+}
+const STAKE_NOTE = 'blwp.stakeback.';
+
+/** THE STAKE AS THE PLAYER SEES IT AFTER THE WINDOW (6d): back, gone into the pool, or not yet. */
+function stakeBackLine(p) {
+  if (!p) return '';
+  if (p.ok) return `Stake returned: ${String(p.amountMsat)} msat back to this tab's federation wallet by the seats' forfeit`
+    + (p.balance_after !== undefined ? ` (balance ${p.balance_before} → ${p.balance_after} msat)` : '');
+  if (p.final) return `No stake back: ${p.why}`;
+  return `Stake: not back yet - ${p.why}`;
+}
+
+/** THE PAYOUT AS THE PLAYER SEES IT (6d): collected, none, or still waiting on the seats. */
+function payoutLine(p) {
+  if (!p) return '';
+  if (p.ok) return `Payout collected: ${String(p.amountMsat)} msat from the round's settlement into this tab's federation wallet`
+    + (p.balance_after !== undefined ? ` (balance ${p.balance_before} → ${p.balance_after} msat)` : '');
+  if (p.final) return `No payout: ${p.why}`;
+  return `Payout: waiting for the seats' settlement - ${p.why}`;
 }
 
 /**
@@ -13492,6 +13614,8 @@ return { Client: Client, markState: markState,
          lockStake: lockStake, handLock: handLock, lockSecretFor: lockSecretFor, lockLine: lockLine,
          saveLock: saveLock, savedLock: savedLock, markLockCommitted: markLockCommitted,
          findLock: findLock, refundStake: refundStake, forfeitOf: forfeitOf, redeemStake: redeemStake,
+         settlementOf: settlementOf, redeemPayout: redeemPayout, payoutLine: payoutLine,
+         returnStake: returnStake, stakeBackLine: stakeBackLine,
          lobbyQuery: lobbyQuery, fetchLobby: fetchLobby, lobbyLine: lobbyLine, lobbyJoinSearch: lobbyJoinSearch,
          dailyLobbySearch: dailyLobbySearch,
          tabIdentity: tabIdentity, setPlayerName: setPlayerName, generatedName: generatedName,

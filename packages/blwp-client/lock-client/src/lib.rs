@@ -185,14 +185,19 @@ impl LockClient {
             f.get(k).and_then(|v| v.as_str()).map(str::to_owned).ok_or_else(|| js(format!("the lock names no {k}")))
         };
         let image = f.get("paymentImage").ok_or_else(|| js("the lock names no payment image"))?;
-        if image.get("kind").and_then(|v| v.as_str()) != Some("point") {
-            return Err(js("only a stake lock, whose image is a point, is refunded here"));
-        }
-        let point = image.get("bytes").and_then(|v| v.as_str()).ok_or_else(|| js("the lock's image has no bytes"))?;
+        let bytes = image.get("bytes").and_then(|v| v.as_str()).ok_or_else(|| js("the lock's image has no bytes"))?;
+        // A STAKE LOCK'S IMAGE IS A POINT; A PAYOUT CONTRACT'S (W4, 6d) IS A HASH - a
+        // pre-expired lock the seats' settlement made to the winner's key, spent the
+        // same way, by Refund under that key, open at once.
+        let payment_image = match image.get("kind").and_then(|v| v.as_str()) {
+            Some("point") => PaymentImage::Point(PublicKey::from_str(bytes).map_err(js)?),
+            Some("hash") => PaymentImage::Hash(sha256::Hash::from_str(bytes).map_err(js)?),
+            _ => return Err(js("a lock's image is a point or a hash")),
+        };
         let refund_pk = PublicKey::from_str(&text("refundPk")?).map_err(js)?;
         let expiration = f.get("expiration").and_then(|v| v.as_u64()).ok_or_else(|| js("the lock names no expiration"))?;
         let contract = OutgoingContract {
-            payment_image: PaymentImage::Point(PublicKey::from_str(point).map_err(js)?),
+            payment_image,
             amount: Amount::from_msats(text("amountMsat")?.parse().map_err(js)?),
             expiration,
             claim_pk: PublicKey::from_str(&text("claimPk")?).map_err(js)?,

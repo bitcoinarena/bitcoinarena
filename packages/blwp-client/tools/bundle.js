@@ -147,6 +147,11 @@ out += '         sharesNeededFor: sharesNeededFor,\n';
 out += '         lockStake: lockStake, handLock: handLock, lockSecretFor: lockSecretFor, lockLine: lockLine,\n';
 out += '         saveLock: saveLock, savedLock: savedLock, markLockCommitted: markLockCommitted,\n';
 out += '         findLock: findLock, refundStake: refundStake, forfeitOf: forfeitOf, redeemStake: redeemStake,\n';
+// AND THE WINNER'S PAYOUT (6d, W4): the seats' accepted settlement, the payout
+// contract to this seed's key spent into the tab's wallet, and its line.
+out += '         settlementOf: settlementOf, redeemPayout: redeemPayout, payoutLine: payoutLine,\n';
+// AND THE PLAYER'S OWN STAKE BACK BY THE SEATS' FORFEIT, after the window, and its line.
+out += '         returnStake: returnStake, stakeBackLine: stakeBackLine,\n';
 // THE LOBBY (M3.3-34): a link that names nodes and no round lists what they
 // hold, every row checked against its own contract; Join is the join link.
 out += '         lobbyQuery: lobbyQuery, fetchLobby: fetchLobby, lobbyLine: lobbyLine, lobbyJoinSearch: lobbyJoinSearch,\n';

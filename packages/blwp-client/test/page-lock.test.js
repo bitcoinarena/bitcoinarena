@@ -15,7 +15,7 @@ import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js
 import assert from 'node:assert/strict';
 
 import { lockStake, handLock, lockSecretFor, lockAmountMsat, lockLine, saveLock, savedLock, markLockCommitted,
-  refundStake, redeemStake, LOCK_EXPIRY_MARGIN_BLOCKS, feeSecretFor } from '../src/page-lock.js';
+  refundStake, redeemStake, redeemPayout, payoutLine, returnStake, stakeBackLine, LOCK_EXPIRY_MARGIN_BLOCKS, feeSecretFor } from '../src/page-lock.js';
 import { sha256 } from '../../protocol/src/hash.js';
 import { entryFor, joinQuery, stakeFor, playerFor } from '../src/join.js';
 import { lockFieldsToJson } from '../../protocol/src/stake-lock.js';
@@ -196,6 +196,135 @@ test('a 1000 sat round: the page mints one 20000 msat fee lock to H(F), names F 
   const tab = new Map(); const storage = { getItem: (k) => tab.get(k) ?? null, setItem: (k, v) => tab.set(k, v) };
   saveLock(storage, { roundId: rid, playerPubkey: player, stake: { preimage: b32(0x44), body: new Uint8Array(0) }, lock: got });
   assert.equal(JSON.parse([...tab.values()][0]).feeLock.preimage, toHex(F));
+});
+
+// 6d (W4): THE WINNER COLLECTS ITS PAYOUT; A LOSER FINDS NONE.
+test('the winner\'s page collects its own payout contract from the seats\' settlement - by Refund under its key - and a loser\'s asks the wallet nothing', async () => {
+  const winner = playerFor({ ...round, id: rid }, { seed, curve: pageCurve });
+  const loserSeed = b32(0x52);
+  const winnerPk = toHex(refundKeyOf(winner.pubkey));
+  const settled = { state: 'ACCEPTED', txid: 'ef'.repeat(32), moved: { txid: 'ef'.repeat(32), payouts: [
+    { kind: 'seat', pk: '02' + 'aa'.repeat(32), msat: '18000', feeMsat: '1000' },
+    { kind: 'qualifier', pk: winnerPk, msat: '978000', feeMsat: '1000' },
+  ] } };
+  const seats = async (url) => ({ ok: true, status: 200, json: async () => settled, text: async () => '' });
+  const asked = [];
+  class Wallet {
+    static async join(invite, federationId, secret) { asked.push({ join: { invite, federationId, secret } }); return new Wallet(); }
+    async refund(txid, outIdx, fields, secret) {
+      asked.push({ refund: { txid, outIdx, fields: JSON.parse(fields), secret } });
+      return JSON.stringify({ accepted: true, balance_before: 0, balance_after: 977000, amount_msat: 978000 });
+    }
+  }
+  const won = await redeemPayout({ round, roundId: rid, invite: INVITE, seed, curve: pageCurve, LockClient: Wallet, nodes: ['http://a'], fetcher: seats });
+  console.log(`  winner: collected ${won.ok}, output ${won.outIdx}, ${won.amountMsat} msat, balance ${won.balance_before} -> ${won.balance_after}`);
+  assert.equal(won.ok, true, won.why);
+  assert.deepEqual(asked.find((a) => a.refund).refund, { txid: 'ef'.repeat(32), outIdx: 1, secret: toHex(winner.secret),
+    fields: { paymentImage: { kind: 'hash', bytes: '00'.repeat(32) }, amountMsat: '978000', claimPk: winnerPk, refundPk: winnerPk, expiration: 0 } });
+  asked.length = 0;
+  const lost = await redeemPayout({ round, roundId: rid, invite: INVITE, seed: loserSeed, curve: pageCurve, LockClient: Wallet, nodes: ['http://a'], fetcher: seats });
+  console.log(`  loser: collected ${lost.ok} - ${lost.why}; lock client asked ${asked.length} time(s)`);
+  assert.equal(lost.ok, false);
+  assert.equal(lost.final, true);
+  assert.match(lost.why, /pays this seed's key nothing/);
+  assert.equal(asked.length, 0, 'a loser\'s page asked the lock client for a payout');
+  // ON SCREEN (the wallet panel's settled line): collected, none, or waiting.
+  assert.match(payoutLine(won), /^Payout collected: 978000 msat .* \(balance 0 → 977000 msat\)$/);
+  assert.match(payoutLine(lost), /^No payout: /);
+  console.log(`  screen: "${payoutLine(won)}" / "${payoutLine(lost)}"`);
+  // A RELOADED TAB THAT ALREADY COLLECTED: answered from the tab's note, the lock
+  // client asked nothing - the contract is spent, and asking again could only fail.
+  const tab = new Map();
+  const storage = { getItem: (k) => (tab.has(k) ? tab.get(k) : null), setItem: (k, v) => tab.set(k, String(v)), removeItem: (k) => tab.delete(k),
+    key: (i) => [...tab.keys()][i] ?? null, get length() { return tab.size; } };
+  const first = await redeemPayout({ round, roundId: rid, invite: INVITE, seed, curve: pageCurve, LockClient: Wallet, storage, nodes: ['http://a'], fetcher: seats });
+  assert.equal(first.ok, true);
+  asked.length = 0;
+  const again = await redeemPayout({ round, roundId: rid, invite: INVITE, seed, curve: pageCurve, LockClient: Wallet, storage, nodes: ['http://a'],
+    fetcher: async () => { throw new Error('a kept payout asked the seats'); } });
+  assert.equal(again.ok, true);
+  assert.equal(again.final, true);
+  assert.equal(again.kept, true);
+  assert.equal(again.amountMsat, 978000n);
+  assert.equal(asked.length, 0, 'a reloaded tab asked the lock client for a payout it already collected');
+  assert.equal(payoutLine(again), payoutLine(first));
+  asked.length = 0;
+  const unsettled = await redeemPayout({ round, roundId: rid, invite: INVITE, seed, curve: pageCurve, LockClient: Wallet, nodes: ['http://a'],
+    fetcher: async () => ({ ok: true, status: 200, json: async () => ({ state: 'NONE' }), text: async () => '' }) });
+  assert.equal(unsettled.ok, false);
+  assert.equal(unsettled.final, false, 'a page gave up on a payout before the seats settled');
+  assert.match(payoutLine(unsettled), /^Payout: waiting for the seats' settlement/);
+  assert.match(unsettled.why, /no seat holds an accepted settlement/);
+  assert.equal(asked.length, 0);
+});
+
+// 6d: AND THE WINNER'S OWN STAKE BACK BY THE SEATS' FORFEIT, AFTER THE WINDOW.
+test('after the settlement the winner\'s page redeems its own stake by the seats\' forfeit into the same wallet; a loser\'s is final with the lock client asked nothing; inside the window or unsettled it asks again', async () => {
+  const player = playerFor({ ...round, id: rid }, { seed, curve: pageCurve });
+  const refund = toHex(refundKeyOf(player.pubkey));
+  const fields = { paymentImage: { kind: 'point', bytes: POINT }, amountMsat: 980000n, claimPk: CLAIM, refundPk: refundKeyOf(player.pubkey), expiration: 464 };
+  const SIG = 'ab'.repeat(64);
+  const asked = [];
+  const seats = ({ settled = true, forfeit = 200 } = {}) => async (url) => {
+    asked.push(url);
+    if (url.includes('/lock-settlement'))
+      return new Response(JSON.stringify(settled ? { state: 'ACCEPTED', txid: 'ef'.repeat(32), moved: { payouts: [] } } : { state: 'NONE' }), { status: 200 });
+    if (url.includes('/stake-lock'))
+      return new Response(JSON.stringify(url.includes(`refund=${refund}`) ? [{ entryId: 'ee'.repeat(32), outpoint: `${'cd'.repeat(32)}:0`, fields: lockFieldsToJson(fields), contractId: 'c1' }] : []), { status: 200 });
+    if (url.includes('/forfeit'))
+      return forfeit === 200 ? new Response(JSON.stringify({ signature: SIG, contractId: 'c1', claimPk: toHex(CLAIM) }), { status: 200 })
+        : new Response(forfeit === 'window' ? 'no forfeit before the result is final with its objection window closed: PROVISIONALLY_FINAL'
+          : 'that run is FAILED with score 0 and this round\'s minimum is 1: not a qualifier', { status: 409 });
+    return new Response('no', { status: 404 });
+  };
+  let joins = 0;
+  const redeemed = [];
+  class Wallet {
+    static async join() { joins++; return new Wallet(); }
+    async redeem(txid, outIdx, f, sig, key) {
+      redeemed.push({ txid, outIdx, sig, key });
+      return JSON.stringify({ forfeit_verifies: true, accepted: true, amount_msat: 980000, balance_before: 973312, balance_after: 1950624, stored_after: null });
+    }
+  }
+  const tab = new Map();
+  const storage = { getItem: (k) => (tab.has(k) ? tab.get(k) : null), setItem: (k, v) => tab.set(k, String(v)), removeItem: (k) => tab.delete(k),
+    key: (i) => [...tab.keys()][i] ?? null, get length() { return tab.size; } };
+  const ask = { round, roundId: rid, invite: INVITE, seed, curve: pageCurve, LockClient: Wallet, nodes: ['http://a.test'] };
+
+  // THE WINNER, handed the wallet its payout went into: no second join.
+  const given = new Wallet();
+  const back = await returnStake({ ...ask, storage, client: given, fetcher: seats() });
+  console.log(`  winner: "${stakeBackLine(back)}"; joins ${joins}`);
+  assert.equal(back.ok, true, back.why);
+  assert.equal(back.final, true);
+  assert.equal(back.amountMsat, 980000n);
+  assert.equal(joins, 0, 'the page opened a second wallet beside the one its payout is in');
+  assert.deepEqual(redeemed, [{ txid: 'cd'.repeat(32), outIdx: 0, sig: SIG, key: toHex(player.secret) }]);
+  assert.equal(stakeBackLine(back), 'Stake returned: 980000 msat back to this tab\'s federation wallet by the seats\' forfeit (balance 973312 → 1950624 msat)');
+  // A RELOAD: answered from the tab's note - seats and wallet asked nothing.
+  redeemed.length = 0; asked.length = 0;
+  const again = await returnStake({ ...ask, storage, fetcher: seats() });
+  assert.equal(again.kept, true);
+  assert.equal(again.amountMsat, 980000n);
+  assert.equal(asked.length + redeemed.length + joins, 0);
+
+  // A LOSER: every seat refuses the forfeit as not a qualifier - final, nothing asked of the wallet.
+  const lost = await returnStake({ ...ask, fetcher: seats({ forfeit: 409 }) });
+  console.log(`  loser: "${stakeBackLine(lost)}"; joins ${joins}, redeems ${redeemed.length}`);
+  assert.equal(lost.ok, false);
+  assert.equal(lost.final, true);
+  assert.match(stakeBackLine(lost), /^No stake back: .*went into the round's pool/);
+  assert.equal(joins + redeemed.length, 0, 'a loser\'s page asked the lock client');
+
+  // INSIDE THE WINDOW, and UNSETTLED: not final, asked again later, the wallet untouched.
+  const early = await returnStake({ ...ask, fetcher: seats({ forfeit: 'window' }) });
+  assert.equal(early.final, false);
+  assert.match(stakeBackLine(early), /^Stake: not back yet - .*objection window/);
+  asked.length = 0;
+  const unsettled = await returnStake({ ...ask, fetcher: seats({ settled: false }) });
+  assert.equal(unsettled.final, false);
+  assert.equal(asked.filter((u) => u.includes('/forfeit') || u.includes('/stake-lock')).length, 0, 'a forfeit was asked for before the seats settled');
+  assert.equal(joins + redeemed.length, 0);
 });
 
 test('a lock whose fee the allowance does not cover is topped up after the quote, and one that never funds is refused', async () => {
