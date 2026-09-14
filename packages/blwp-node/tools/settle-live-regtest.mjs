@@ -419,7 +419,7 @@ async function round(stakeMsat) {
         const en = await fetch(`${at}/entry`, { method: 'POST', body: encodeEntryContract(entry) });
         seats.push({ entry: en.status, why: en.status === 201 ? 'seated' : await en.text(), stored: !!d.round.entry(eid), seen: !!d.round.stakeSeen(eid) });
       }
-      bare = { stake, seats, seed };
+      bare = { stake, seats, seed, preimage, handout: dealt.handout, playerPubkey };
       out({ round: `${stakeMsat / 1000n} sat`, check: 'a player with a stake lock and no fee lock, at the door',
         stakeLock: `${key(stake.outpoint)} ${stake.fields.amountMsat} msat`, seats,
         seatedSet: [a, b].map((d) => d.round.entriesOf(rid).length) });
@@ -483,7 +483,7 @@ async function round(stakeMsat) {
     const urls = [a, b].map((d) => `http://127.0.0.1:${d.port}`);
     for (const p of [winner, loser]) {
       // ON SCREEN FOR THE 1000 SAT ROUND when a build is named; the 100 sat round by Node.
-      if (env.PAGE_DIR && stakeMsat >= 1000000n) { out(await collectOnScreen({ p, c, rid, urls, stakeMsat, held })); continue; }
+      if (env.PAGE_DIR && stakeMsat >= 1000000n && env.REFUSED_TAB_ONLY !== '1') { out(await collectOnScreen({ p, c, rid, urls, stakeMsat, held })); continue; }
       let joins = 0;
       const Counting = { join: (...args) => { joins++; return LockClient.join(...args); } };
       const r = await redeemPayout({ round: c, roundId: rid, invite: env.INVITE, seed: p.seed, curve: pageCurve, LockClient: Counting, nodes: urls });
@@ -521,10 +521,44 @@ async function round(stakeMsat) {
     // W4 / 6d: THE PLAYER THE DOOR REFUSED GETS ITS STAKE BACK BY ITS OWN KEY AFTER EXPIRY - the
     // page's own refundKept from its seed and tab wallet (no seat ever verified the lock): before
     // the expiry it waits and says when; the chain is mined past it; then the refund, then the withdraw.
+    // ON SCREEN (PAGE_DIR): THE REFUSED PLAYER'S OWN TAB - handed the two records its join keeps
+    // (saveLock: the stake and its lock; saveCollect: the round, the seats, the seed), then left to
+    // its own collect loop: before the expiry it must say when; after it, refund by its own key.
+    let tab = null;
+    if (bare && env.PAGE_DIR) {
+      const page = await servePage(env.PAGE_DIR);
+      tab = await browse(`http://127.0.0.1:${page.port}/`);
+      if (!(await pageReady(tab))) { out({ check: 'the refused tab', error: 'the built page never loaded its client' }); tab.close(); tab = null; }
+      else {
+        const f = bare.stake.fields;
+        await tab.evaluate(`(() => {
+          const round = BLWPCLIENT.decodeRoundContract(BLWPCLIENT.fromHex('${toHex(encodeRoundContract(c))}'));
+          const seed = BLWPCLIENT.fromHex('${toHex(bare.seed)}');
+          const lock = { outpoint: { txid: BLWPCLIENT.fromHex('${toHex(bare.stake.outpoint.txid)}'), outIdx: ${bare.stake.outpoint.outIdx}n },
+            fields: { paymentImage: { kind: 'point', bytes: BLWPCLIENT.fromHex('${toHex(f.paymentImage.bytes)}') }, amountMsat: ${f.amountMsat}n,
+              claimPk: BLWPCLIENT.fromHex('${toHex(f.claimPk)}'), refundPk: BLWPCLIENT.fromHex('${toHex(f.refundPk)}'), expiration: ${f.expiration} } };
+          BLWPCLIENT.saveLock(window.sessionStorage, { roundId: BLWPCLIENT.fromHex('${toHex(rid)}'), playerPubkey: BLWPCLIENT.fromHex('${toHex(bare.playerPubkey)}'),
+            stake: { preimage: BLWPCLIENT.fromHex('${toHex(bare.preimage)}'), body: BLWPCLIENT.fromHex('${toHex(encodeHandout(bare.handout))}') }, lock });
+          BLWPCLIENT.saveCollect(window.sessionStorage, { roundIdHex: '${toHex(rid)}', round, invite: '${env.INVITE}', nodes: ${JSON.stringify(urls)}, seed, stakeLock: lock });
+          return true; })()`);
+      }
+    }
+    // The Node path's values from the one mining pass, when there is no tab (the page's own code, from Node).
+    let nodePath = null;
+    const refundView = (t) => t.evaluate(`JSON.stringify({ refund: window.BLWP_REFUND || null, settled: (document.getElementById('blwp-settled') || {}).textContent || '',
+      withdrawable: String(window.BLWP_WITHDRAWABLE ?? '') }, (k, v) => (typeof v === 'bigint' ? String(v) : v))`).then((s) => JSON.parse(s || '{}')).catch((e) => ({ unread: e.message }));
+
     if (bare) {
       const kept = { lock: { outpoint: bare.stake.outpoint, fields: bare.stake.fields } };
       const own = await tabLockWallet({ round: c, roundId: rid, invite: env.INVITE, seed: bare.seed, LockClient });
       const early = await refundKept({ round: c, roundId: rid, seed: bare.seed, curve: pageCurve, client: own, kept });
+      let tabEarly = null;
+      if (tab) {
+        for (let t0 = Date.now(); Date.now() - t0 < 90000; await wait(2000)) {
+          tabEarly = await refundView(tab);
+          if (tabEarly.refund && Array.isArray(tabEarly.refund.locks) && tabEarly.refund.locks.length) break;
+        }
+      }
       const exp = Number(bare.stake.fields.expiration);
       const cli = (...a) => run(`${env.BITCOIN_BIN}/bitcoin-cli`, ['-regtest', '-rpcport=30101', '-rpcuser=blwp', '-rpcpassword=blwp', ...a]);
       // THE SETUP'S OWN WALLET (federation-hold-probe: createwallet, then -rpcwallet for every address) -
@@ -537,6 +571,48 @@ async function round(stakeMsat) {
       const t = Date.now();
       let counts = await countsNow();
       for (; !mined.err && Date.now() - t < 240000 && counts[0] < exp + 1; await wait(3000)) counts = await countsNow();
+      // THE TAB FIRST, when there is one: its own collect loop must refund, and the withdraw its own button's.
+      if (tab) {
+        let seen = {};
+        const t1 = Date.now();
+        for (; Date.now() - t1 < 150000; await wait(2000)) {
+          seen = await refundView(tab);
+          if (seen.refund && seen.refund.final && /^\d+$/.test(seen.withdrawable || '') && seen.withdrawable !== '0') break;
+        }
+        const refundedMs = Date.now() - t1;
+        let w = null; let made = {};
+        if (/^\d+$/.test(seen.withdrawable || '') && seen.withdrawable !== '0') {
+          made = JSON.parse((await run(`${env.LND_BIN}/lncli`, [`--lnddir=${P}/alice`, '--rpcserver=127.0.0.1:30107', '--network=regtest',
+            'addinvoice', `--amt_msat=${seen.withdrawable}`, '--memo=blwp refund on screen'])).so || '{}');
+          if (made.payment_request) {
+            await tab.evaluate(`(window.__harnessWithdrawn = null, window.BLWP_WITHDRAW(${JSON.stringify(made.payment_request)})
+              .then((w) => { window.__harnessWithdrawn = JSON.stringify(w, (k, v) => (typeof v === 'bigint' ? String(v) : v)); },
+                (e) => { window.__harnessWithdrawn = JSON.stringify({ error: e.message }); }), true)`).catch(() => null);
+            for (let t2 = Date.now(); Date.now() - t2 < 120000 && !w; await wait(1000))
+              w = await tab.evaluate('window.__harnessWithdrawn || ""').catch(() => '') || null;
+          }
+        }
+        const seenAt = made.r_hash ? JSON.parse((await run(`${env.LND_BIN}/lncli`, [`--lnddir=${P}/alice`, '--rpcserver=127.0.0.1:30107', '--network=regtest',
+          'lookupinvoice', made.r_hash])).so || '{}') : {};
+        const shot = `${P}/refused-tab-refund.png`;
+        await tab.shot(shot);
+        const line = await tab.evaluate(`[(document.getElementById('blwp-settled') || {}).textContent, (document.getElementById('blwp-withdraw') || {}).textContent].join(' | ')`).catch(() => '');
+        out({ round: `${stakeMsat / 1000n} sat`, check: 'the refused player\'s own tab, on screen',
+          beforeExpiry: tabEarly && { refundLocks: tabEarly.refund && tabEarly.refund.locks, settled: tabEarly.settled },
+          mined: { chainBefore: chainAt, expiration: exp, guardiansCountAfter: counts, err: mined.err ? mined.err.message : null },
+          afterExpiry: { refund: seen.refund && { ok: seen.refund.ok, final: seen.refund.final, refundedMsat: seen.refund.refundedMsat,
+            balanceBefore: seen.refund.balance_before, balanceAfter: seen.refund.balance_after }, withdrawable: seen.withdrawable, refundedWithinMs: refundedMs },
+          stakeLockStillHeld: !!(await ports[0].status(bare.stake.outpoint)).stored,
+          withdraw: w ? JSON.parse(w) : null, aliceInvoice: { state: seenAt.state, amtPaidMsat: seenAt.amt_paid_msat }, onScreen: line, screenshot: shot,
+          pageSaid: tab.logs.filter((l) => /\[blwp\] (refund|withdraw|payout|stake)|EXCEPTION/.test(l)).map((l) => l.slice(0, 220)).slice(-6) });
+        tab.close();
+        if (typeof own.free === 'function') own.free();
+      } else nodePath = { kept, own, early, exp, chainAt, mined, counts, t };
+    }
+    // THE PAGE'S OWN CODE FROM NODE, when no tab did it: the same wallet and the before-expiry answer
+    // from the one mining pass above - never a second "before" asked after the expiry.
+    if (nodePath) {
+      const { kept, own, early, exp, chainAt, mined, counts, t } = nodePath;
       const late = await refundKept({ round: c, roundId: rid, seed: bare.seed, curve: pageCurve, client: own, kept });
       let wd = null; let made = null;
       if (late.ok) {
