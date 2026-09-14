@@ -746,6 +746,32 @@ test('a round that asks no money gets no payment box, driven off the shipped pag
   assert.equal(made['blwp-wallet'].style.display, 'block', 'a reloaded tab still collecting showed no panel');
   assert.equal(made['blwp-owed'].textContent, lockLine(stakeLock));
   assert.equal(made['blwp-settled'].textContent, 'Payout collected: 978000 msat · Stake returned: 980000 msat');
+  // WHILE A WITHDRAW RUNS (live, run A3: ~5 min with no line, the tab closed mid-way, what it had
+  // collected lost with it): the line says so and names the step, and no second Withdraw is offered.
+  run(lockRound, { connected: false }, null, null, stakeLock, undefined, undefined,
+    { ...won, BLWP_WITHDRAWING: true, BLWP_WITHDRAW_STEP: 'collecting the payout' });
+  assert.equal(made['blwp-withdraw'].textContent,
+    'Withdrawing - do not close this tab until it says Withdrawn (what is collected is kept in this tab): collecting the payout');
+  assert.equal(made['blwp-withdraw-go'].style.display, 'none', 'a second Withdraw was offered while one ran');
+  console.log(`  while a Withdraw runs: "${made['blwp-withdraw'].textContent}"`);
+  run(lockRound, { connected: false }, null, null, stakeLock, undefined, undefined, { ...won, BLWP_WITHDRAWING: false });
+  assert.equal(made['blwp-withdraw-go'].style.display, '', 'the Withdraw was not offered again once the first ended');
+});
+
+test('closing the tab while a Withdraw runs or money is in it asks first, and a second Withdraw is refused before it collects, off the shipped page', () => {
+  const page = readFileSync(PAGE, 'utf8');
+  const at = "window.addEventListener('beforeunload', ";
+  const rest = page.slice(page.indexOf(at) + at.length);
+  const handlerSrc = rest.slice(0, rest.indexOf('\n    });') + 6);
+  const handler = new Function('window', 'return ' + handlerSrc + ';');
+  const asks = (win) => { const e = { prevented: false, preventDefault() { this.prevented = true; } }; handler(win)(e); return e.prevented; };
+  assert.equal(asks({ BLWP_WITHDRAWING: true, BLWP_WITHDRAWABLE: 0n }), true, 'a tab mid-Withdraw closed without asking');
+  assert.equal(asks({ BLWP_WITHDRAWING: false, BLWP_WITHDRAWABLE: 959456n }), true, 'a tab holding 959456 msat closed without asking');
+  assert.equal(asks({ BLWP_WITHDRAWING: false, BLWP_WITHDRAWABLE: 0n }), false, 'an empty tab asked before closing');
+  assert.equal(asks({}), false, 'a tab that never looked asked before closing');
+  const withdraw = page.slice(page.indexOf('window.BLWP_WITHDRAW = async function'));
+  const refusal = withdraw.indexOf("if (window.BLWP_WITHDRAWING) return { ok: false, why: 'a withdraw is already running in this tab' }");
+  assert.ok(refusal > 0 && refusal < withdraw.indexOf('collectAndWithdraw('), 'a second Withdraw can reach the collect');
 });
 
 /**

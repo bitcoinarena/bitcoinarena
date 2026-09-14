@@ -960,6 +960,8 @@
     window.BLWP_WITHDRAW = async function (invoice) {
       const r = newestKept();
       if (!r) return { ok: false, why: 'this tab holds no round to withdraw from' };
+      // ONE WITHDRAW AT A TIME: a second press while the first collects would collect twice.
+      if (window.BLWP_WITHDRAWING) return { ok: false, why: 'a withdraw is already running in this tab' };
       const maker = typeof invoice === 'function' ? invoice : null;
       const pasted = !maker && invoice && String(invoice).trim() ? String(invoice).trim() : null;
       const conn = wallet && wallet.connected ? wallet.current() : null;
@@ -973,15 +975,20 @@
       const own = await roundWallet(r);
       const ask = roundAsk(r, own.LockClient);
       payoutAsking = true;
+      // WHILE IT RUNS THE SCREEN SAYS SO (live, run A3: a Withdraw ran ~5 min with no line, the tab
+      // was closed mid-way and what it had collected was lost with the tab's wallet).
+      window.BLWP_WITHDRAWING = true;
+      window.BLWP_WITHDRAW_STEP = 'starting';
+      paintWallet();
       let done;
       try {
         done = await BLWPCLIENT.collectAndWithdraw(Object.assign({}, ask, { client: own.client, invoiceFor, pasted,
           canInvoice: !!(maker || pasted || (conn && conn.ok)),
-          onStep: (step) => console.log('[blwp] withdraw: ' + step) }));
+          onStep: (step) => { console.log('[blwp] withdraw: ' + step); window.BLWP_WITHDRAW_STEP = step; paintWallet(); } }));
         window.BLWP_WITHDRAWN = done.withdraw;
         window.BLWP_OWED = await BLWPCLIENT.lookOwed(Object.assign({}, ask, { client: own.client }));
         window.BLWP_WITHDRAWABLE = window.BLWP_OWED.inTabMsat;
-      } finally { payoutAsking = false; }
+      } finally { payoutAsking = false; window.BLWP_WITHDRAWING = false; }
       console.log('[blwp] withdraw: ' + BLWPCLIENT.withdrawLine(done.withdraw, window.BLWP_WITHDRAWABLE));
       paintWallet();
       return done.withdraw;
@@ -990,6 +997,12 @@
     if (withdrawGo) withdrawGo.addEventListener('click', () => {
       const field = document.getElementById('blwp-withdraw-invoice');
       window.BLWP_WITHDRAW(field ? field.value : null).catch((e) => console.error('[blwp] withdraw: ' + e.message));
+    });
+    // CLOSING THE TAB LOSES WHAT IS IN ITS WALLET (the notes are kept in this tab's
+    // sessionStorage): while a Withdraw runs, or money is in the tab, the browser asks first.
+    window.addEventListener('beforeunload', (e) => {
+      const inTab = typeof window.BLWP_WITHDRAWABLE === 'bigint' && window.BLWP_WITHDRAWABLE > 0n;
+      if (window.BLWP_WITHDRAWING || inTab) { e.preventDefault(); e.returnValue = ''; }
     });
 
     function paintWallet() {
@@ -1026,9 +1039,11 @@
         // the field and the button only while there is something to withdraw.
         const inTab = window.BLWP_WITHDRAWABLE !== undefined && window.BLWP_WITHDRAWABLE !== null && window.BLWP_WITHDRAWABLE > 0n;
         const canWithdraw = inTab || !!(window.BLWP_OWED && window.BLWP_OWED.owedMsat > 0n);
-        document.getElementById('blwp-withdraw').textContent = BLWPCLIENT.withdrawLine(window.BLWP_WITHDRAWN,
-          canWithdraw ? window.BLWP_WITHDRAWABLE : null);
-        for (const id of ['blwp-withdraw-invoice', 'blwp-withdraw-go']) document.getElementById(id).style.display = canWithdraw ? '' : 'none';
+        document.getElementById('blwp-withdraw').textContent = window.BLWP_WITHDRAWING
+          ? `Withdrawing - do not close this tab until it says Withdrawn (what is collected is kept in this tab): ${window.BLWP_WITHDRAW_STEP || ''}`
+          : BLWPCLIENT.withdrawLine(window.BLWP_WITHDRAWN, canWithdraw ? window.BLWP_WITHDRAWABLE : null);
+        const offer = canWithdraw && !window.BLWP_WITHDRAWING;
+        for (const id of ['blwp-withdraw-invoice', 'blwp-withdraw-go']) document.getElementById(id).style.display = offer ? '' : 'none';
         for (const id of ['blwp-spent', 'blwp-budget', 'blwp-why']) document.getElementById(id).textContent = '';
         for (const id of ['blwp-nwc', 'blwp-pay']) document.getElementById(id).style.display = 'none';
         return;
