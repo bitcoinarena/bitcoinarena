@@ -289,7 +289,7 @@ async function round(stakeMsat) {
     for (let pass = 0; pass < 2; pass++) for (const d of [a, b]) await d.dkg.run(c.nodes);
     const claimPk = a.dkg.seatFor(c.nodes).pool.groupPublicKey;
     const gate = feeLockPays({ contract: c, fees });
-    out({ round: `${stakeMsat / 1000n} sat`, gate: { mints: gate.pays, lock: gate.lockMsat, why: gate.why.slice(0, 110) } });
+    out({ round: `${stakeMsat / 1000n} sat`, roundId: toHex(rid), gate: { mints: gate.pays, lock: gate.lockMsat, why: gate.why.slice(0, 110) } });
 
     const players = [];
     for (const want of ['DELIVERED', 'FAILED']) {
