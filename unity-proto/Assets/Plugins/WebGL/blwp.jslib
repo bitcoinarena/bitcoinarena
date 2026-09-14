@@ -465,6 +465,19 @@ mergeInto(LibraryManager.library, {
 
     net.tick = function (words) {
       if (!net.client) return;
+      // PAST THE RUN'S LAST TICK THE GAME'S TICKS ARE NOT INPUTS. The game keeps
+      // stepping after a run ends; recorded, they went out in a batch every seat
+      // refused whole, and the run ended VOID (measured live: an idle page to
+      // tick 9113 of a run ending at 8999). Counted, not recorded or marked. What
+      // is still HELD is drained as before, every sixth tick: all of it is at or
+      // before the last tick, and a drain that found a publish in flight at the
+      // last tick would otherwise leave the end of the run unsent.
+      if (net.client.runOver()) {
+        net.pastEnd = (net.pastEnd | 0) + 1;
+        if (net.client.state === 'ready' && net.batchEvery > 0 && net.client.held > 0
+            && net.pastEnd % net.batchEvery === 0) net.client.drain();
+        return;
+      }
       net.client.record(words);
       net.seen++;
       if (net.client.state !== 'ready') return;

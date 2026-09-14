@@ -712,3 +712,55 @@ test('ticks offered before the round is known do not end the run', async () => {
     assert.equal(early.held, 1);
   } finally { client.close(); await node.close(); }
 });
+
+// THE RUN'S LAST TICK IS THE SEAT'S LINE. Measured live (round 5, the idle page):
+// after its run the page kept recording, a batch reaching tick 9113 of a run that
+// ends at 8999 was refused whole, and the client called its own run VOID - the
+// chip read "not publishing · error ... inputs past the end". The page's tick loop
+// (blwp.jslib `net.tick`) now asks `runOver()` before it records. `record`'s own
+// overflow rule is unchanged, and the first half shows what it does on its own.
+test('a run at its last tick takes no more: the seat holds exactly the run, nothing is refused, nothing is VOID', async () => {
+  const transcriptTicks = async (node, rid, eid) => Number((await fetch(`http://127.0.0.1:${node.port}/transcript`
+    + `?round=${Buffer.from(rid).toString('hex')}&entry=${Buffer.from(eid).toString('hex')}`)).headers.get('x-ticks'));
+
+  // WITHOUT THE QUESTION - the loop the page ran: the batch past the end is refused.
+  {
+    const { node, client, rid, eid } = await rig(0);
+    try {
+      for (let i = 0; i < BLOCK_TICKS + 600; i++) {
+        client.record([45875, 0, 0, 0, 0]);
+        if ((i + 1) % 600 === 0) await client.drain();
+      }
+      // AND IT KEEPS DRAINING, as the page does every sixth tick: a refused batch
+      // goes back to the hold and is offered again.
+      for (let k = 0; k < 3 && !client.ended; k++) await client.drain();
+      await client.awaitPublishes();
+      console.log(`  without runOver: ended ${client.ended} ${client.ending || ''} - ${String(client.endingReason || '').slice(0, 150)}; `
+        + `the seat holds ${await transcriptTicks(node, rid, eid)} ticks; held ${client.held}, nextTick ${client.nextTick}, `
+        + `batches ${client.batchesSent}, refusals ${JSON.stringify(client.refusals)}, refusedWhy ${String(client.refusedWhy || '').slice(0, 150)}`);
+      assert.equal(client.ended, true, 'the batch past the run\'s end was not refused');
+      assert.match(client.endingReason, /inputs past the end/);
+    } finally { client.close(); await node.close(); }
+  }
+
+  // WITH IT - what the page's loop does now.
+  {
+    const { node, client, rid, eid } = await rig(0);
+    try {
+      let past = 0;
+      for (let i = 0; i < BLOCK_TICKS + 600; i++) {
+        if (client.runOver()) { past++; continue; }
+        client.record([45875, 0, 0, 0, 0]);
+        if ((i + 1) % 600 === 0) await client.drain();
+      }
+      while (client.held > 0) { const held = client.held; await client.drain(); if (client.held === held) break; }
+      await client.awaitPublishes();
+      const held = await transcriptTicks(node, rid, eid);
+      console.log(`  with runOver: ${past} ticks past the end not recorded; ended ${client.ended}; published to ${client.nextTick}; the seat holds ${held} ticks`);
+      assert.equal(past, 600, 'the question answered past the end too early or too late');
+      assert.equal(client.ended, false, `the run ended: ${client.ending} ${client.endingReason}`);
+      assert.equal(client.nextTick, BLOCK_TICKS, 'the last batch did not end on the run\'s last tick');
+      assert.equal(held, BLOCK_TICKS, 'the seat does not hold exactly the run');
+    } finally { client.close(); await node.close(); }
+  }
+});

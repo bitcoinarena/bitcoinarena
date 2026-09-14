@@ -137,3 +137,19 @@ test('the page prints its own word only while there is no client to have one', (
   assert.match(line, /\(the node refused the round\)/);
   assert.equal(library.BlwpNetEnded(), 0, 'a session that never opened has not ended');
 });
+
+// THE GAME'S TICKS PAST THE RUN'S END ARE NOT INPUTS. `net.tick` is built inside the
+// session start, behind the network, so its first lines are read here: the Client's
+// `runOver()` is asked before anything is recorded, drained or marked. Measured live
+// before (round 5): an idle page recorded to tick 9113 of a run ending at 8999, the
+// seat refused the batch, and the page's run ended VOID.
+test('the page\'s tick loop asks whether the run is over before it records a tick', () => {
+  const src = readFileSync(JSLIB, 'utf8');
+  const at = src.indexOf('net.tick = function (words) {');
+  assert.ok(at > 0, 'the page no longer has its tick loop where this reads it');
+  const body = src.slice(at, src.indexOf('\n    };', at));
+  const asked = body.indexOf('net.client.runOver()');
+  const recorded = body.indexOf('net.client.record(words)');
+  assert.ok(asked > 0, `the tick loop never asks whether the run is over: ${body.replace(/\s+/g, ' ').slice(0, 200)}`);
+  assert.ok(asked < recorded, 'the tick loop records before it asks');
+});

@@ -11580,6 +11580,21 @@ class Client {
     return true;
   }
 
+  /**
+   * WHETHER THIS RUN HAS REACHED ITS LAST TICK - the seat's own line,
+   * `lastTickOfRun(joinTick)`, and not a number of this file's. The game keeps
+   * stepping after a run ends; those ticks are not inputs of the run, and a
+   * batch that carries them is refused whole by every seat. Measured live
+   * (round 5, an idle page): recorded to 9113 of a run ending at 8999, refused
+   * twice, and the run ended VOID - "inputs past the end". The page's tick loop
+   * asks this before it records, drains or marks.
+   */
+  runOver() {
+    if (!this.where || !(this.maxHold > 0)) return false;
+    const join = this.seatEntry && Number.isInteger(this.seatEntry.joinTick) ? this.seatEntry.joinTick : 0;
+    return this.nextTick + this.hold.length > lastTickOfRun(join);
+  }
+
   record(words) {
     if (this.ended) return false;
 
