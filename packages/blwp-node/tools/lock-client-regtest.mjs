@@ -90,7 +90,14 @@ try {
 
   // THE LOCK CLIENT: join, deposit through the gateway, and lock.
   let t = Date.now();
-  const lc = await LockClient.join(env.INVITE);
+  // THE LOCK CLIENT'S join TAKES FOUR NOW (W1b): the federation the invite names -
+  // refused unless it is the one given - a secret, and the tab's store. This driver
+  // still called the W1a one-argument join and died reading the missing store
+  // ("Cannot read properties of undefined (reading 'length')", measured 2026-09-14).
+  // A Node run has no tab: a store in memory, the shape store.rs reads.
+  const held = new Map();
+  const memStore = { entries: () => JSON.stringify([...held]), put: (k, v) => { held.set(k, v); }, remove: (k) => { held.delete(k); } };
+  const lc = await LockClient.join(env.INVITE, LockClient.federationIdOf(env.INVITE), toHex(rand(32)), memStore);
   say({ step: 'join', ms: Date.now() - t, balanceMsat: await lc.balanceMsat() });
   t = Date.now();
   const rcv = JSON.parse(await lc.receive('3000000', env.GATEWAY));
