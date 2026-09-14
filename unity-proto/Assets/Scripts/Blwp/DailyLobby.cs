@@ -255,12 +255,11 @@ namespace Blwp
             float reserved = (narrowHere ? line * 2f + gap + btnH + gap : Mathf.Max(btnH, line * 2f) + gap)
                            + Mathf.Max(line, btnH * 0.8f) + gap * 0.5f + 2f * Mathf.Max(font * 2.0f, 34f) + gap + 1f;
             float room = Mathf.Max(0f, copy.height - reserved);
-            bool grid = beside || portrait || PanelHeight(2, 2, copy.width, Mathf.Min(copy.height * gridCap, room), cellGap)
-                                              > PanelHeight(4, 1, copy.width, Mathf.Min(copy.height * 0.34f, room), cellGap) + 0.5f;
-            float cols = grid ? 2f : 4f, rowsOf = grid ? 2f : 1f;
-            // The box from one side, so every cell is exactly PanelAspect whatever the gaps.
-            float WidthFor(float h) => cols * PanelAspect * Mathf.Max(0f, (h - (rowsOf - 1f) * cellGap) / rowsOf) + (cols - 1f) * cellGap;
-            float HeightFor(float w) => rowsOf * Mathf.Max(0f, (w - (cols - 1f) * cellGap) / cols) / PanelAspect + (rowsOf - 1f) * cellGap;
+            bool grid = beside || portrait || SmallestIn(true, copy.width, Mathf.Min(copy.height * gridCap, room), cellGap)
+                                              > SmallestIn(false, copy.width, Mathf.Min(copy.height * 0.34f, room), cellGap) + 0.5f;
+            // The box from one side, so every cell is exactly its panel's shape whatever the gaps.
+            float WidthFor(float h) => BoxWidthFor(grid, h, cellGap);
+            float HeightFor(float w) => BoxHeightFor(grid, w, cellGap);
             Rect howTo = default;
             // A PHONE ON ITS SIDE: 1-2 over 3-4 in a column at the right. Where the
             // rest can stay one line wide beside it, the column takes the FULL height
@@ -270,7 +269,7 @@ namespace Blwp
             // (1 px spare: measured, the left side landed a float hair under the
             // one-line width and stacked - 667x375 1x, a 58 px list.)
             float keepWide = copy.width - (btnW * 2f + gap + font * 16f) - gap - 1f;
-            bool besideAll = beside && keepWide >= WidthFor(2f * HowToMinCell + cellGap);
+            bool besideAll = beside && keepWide >= WidthFor(MinBoxHeight(grid, cellGap));
             if (besideAll)
             {
                 float aw = Mathf.Min(copy.width * 0.45f, WidthFor(copy.height), keepWide);
@@ -281,7 +280,7 @@ namespace Blwp
             else if (!beside)
             {
                 float hh = Mathf.Min(HeightFor(copy.width), Mathf.Min(copy.height * (grid ? gridCap : 0.34f), room));
-                hh = Mathf.Max(hh, Mathf.Min(room, rowsOf * HowToMinCell + (rowsOf - 1f) * cellGap));
+                hh = Mathf.Max(hh, Mathf.Min(room, MinBoxHeight(grid, cellGap)));
                 float hw = WidthFor(hh);
                 if (hw > copy.width) { hw = copy.width; hh = HeightFor(hw); }
                 howTo = new Rect(copy.x + (copy.width - hw) * 0.5f, copy.y, hw, hh);
@@ -320,11 +319,17 @@ namespace Blwp
             var list = new Rect(copy.x, y, copy.width, Mathf.Max(0f, copy.yMax - y));
             if (beside && !besideAll)
             {
-                // the column beside the round list: 1-2 over 3-4, as tall as the list, no wider than 45% of it
-                float aw = Mathf.Min(list.width * 0.45f, WidthFor(list.height));
+                // the column beside the rounds: 1-2 over 3-4, from the rounds header
+                // down, no wider than 45% of the list; the header, its page button and
+                // the list give up its width. Measured beside the list only, with the
+                // panels at their own shapes: panel 3 drew 37 px at 667x375 1x.
+                float aw = Mathf.Min(list.width * 0.45f, WidthFor(copy.yMax - head.y));
                 float ah = HeightFor(aw);
-                howTo = new Rect(list.xMax - aw, list.y, aw, ah);
-                list = new Rect(list.x, list.y, Mathf.Max(0f, list.width - aw - gap), list.height);
+                howTo = new Rect(copy.xMax - aw, head.y, aw, ah);
+                float cut = aw + gap;
+                head = new Rect(head.x, head.y, Mathf.Max(0f, head.width - cut), head.height);
+                more = new Rect(more.x - cut, more.y, more.width, more.height);
+                list = new Rect(list.x, list.y, Mathf.Max(0f, list.width - cut), list.height);
             }
             int rows = Mathf.Max(0, Mathf.FloorToInt((list.height + 0.01f) / rowH));
             return new Frame { you = you, name = name, key = key, head = head, more = more, list = list,
@@ -332,35 +337,85 @@ namespace Blwp
                                rowH = rowH, rows = rows, narrow = narrow };
         }
 
-        /// <summary>How high one panel is drawn with `cols` x `rows` of them across `width`, the box no taller than `capH`.</summary>
-        public static float PanelHeight(int cols, int rows, float width, float capH, float cellGap)
+        /// <summary>
+        /// the owner's how-to, whole (2026-09-14 07:55), in Resources
+        /// (Assets/Art/Resources/lobby-howto.png, 1448x1086), white knocked out for
+        /// the dark UI: 1 load, 2 cross the front, 3 deliver, 4 stake and win.
+        /// EVERY PANEL IS DRAWN FROM IT BY ITS OWN BOX: the four tiles that came with
+        /// it were cut at half height (y 543), and the picture's rows really part at
+        /// y 625-649 - tile 3 carried the bottom of panel 1 (the players, the truck),
+        /// which showed as a sliver above 3 and 4 in one row (measured, 1280x800).
+        /// </summary>
+        public const string HowToWhole = "lobby-howto";
+        const float WholeW = 1448f, WholeH = 1086f;
+
+        /// <summary>Each panel's opaque box in the whole, x y w h from the top-left (tools/cut-howto.py).</summary>
+        public static readonly Rect[] PanelBoxes =
         {
-            float byWidth = Mathf.Max(0f, (width - (cols - 1) * cellGap) / cols) / PanelAspect;
-            float byHeight = Mathf.Max(0f, (capH - (rows - 1) * cellGap) / rows);
-            return Mathf.Min(byWidth, byHeight);
+            new Rect(32f, 80f, 667f, 545f), new Rect(726f, 82f, 714f, 543f),
+            new Rect(23f, 650f, 688f, 369f), new Rect(752f, 653f, 677f, 367f),
+        };
+
+        /// <summary>Width over height of panel `i` - they are not one shape: 1.22, 1.31, 1.86, 1.84.</summary>
+        public static float PanelAspectOf(int i) => PanelBoxes[i].width / PanelBoxes[i].height;
+
+        /// <summary>Panel `i`'s box as UVs in the whole (origin bottom-left).</summary>
+        public static Rect PanelUv(int i)
+        {
+            var b = PanelBoxes[i];
+            return new Rect(b.x / WholeW, 1f - (b.y + b.height) / WholeH, b.width / WholeW, b.height / WholeH);
         }
 
-        /// <summary>The four panels inside the how-to box: 1-2-3-4 in a row, or 1-2 over 3-4.</summary>
-        public static Rect[] HowToCells(Rect box, bool grid, float cellGap)
+        static float SumAspect => PanelAspectOf(0) + PanelAspectOf(1) + PanelAspectOf(2) + PanelAspectOf(3);
+        static float MaxAspect => Mathf.Max(Mathf.Max(PanelAspectOf(0), PanelAspectOf(1)), Mathf.Max(PanelAspectOf(2), PanelAspectOf(3)));
+        // two columns of width c: the top row as tall as its taller panel, the bottom row too
+        static float GridK => 1f / Mathf.Min(PanelAspectOf(0), PanelAspectOf(1)) + 1f / Mathf.Min(PanelAspectOf(2), PanelAspectOf(3));
+
+        /// <summary>How tall the how-to box is at `w` wide: one row at one height, or 1-2 over 3-4 in two equal columns.</summary>
+        public static float BoxHeightFor(bool grid, float w, float g)
+            => grid ? Mathf.Max(0f, (w - g) * 0.5f) * GridK + g : Mathf.Max(0f, w - 3f * g) / SumAspect;
+
+        /// <summary>How wide the how-to box is at `h` tall.</summary>
+        public static float BoxWidthFor(bool grid, float h, float g)
+            => grid ? 2f * Mathf.Max(0f, h - g) / GridK + g : h * SumAspect + 3f * g;
+
+        /// <summary>The box height at which the smallest panel is HowToMinCell high.</summary>
+        public static float MinBoxHeight(bool grid, float g) => grid ? HowToMinCell * MaxAspect * GridK + g : HowToMinCell;
+
+        /// <summary>How high the smallest panel is drawn in the biggest box of that kind inside `w` x `capH`.</summary>
+        public static float SmallestIn(bool grid, float w, float capH, float g)
         {
-            int cols = grid ? 2 : 4, rows = grid ? 2 : 1;
-            float cw = Mathf.Max(0f, (box.width - (cols - 1) * cellGap) / cols);
-            float ch = Mathf.Max(0f, (box.height - (rows - 1) * cellGap) / rows);
-            var cells = new Rect[4];
-            for (int i = 0; i < 4; i++)
-                cells[i] = new Rect(box.x + (i % cols) * (cw + cellGap), box.y + (i / cols) * (ch + cellGap), cw, ch);
-            return cells;
+            float h = Mathf.Min(BoxHeightFor(grid, w, g), capH);
+            float bw = BoxWidthFor(grid, h, g);
+            return grid ? Mathf.Max(0f, (bw - g) * 0.5f) / MaxAspect : h;
         }
 
         /// <summary>
-        /// the owner's four how-to panels (2026-09-14 07:55), in Resources
-        /// (Assets/Art/Resources), white knocked out for the dark UI: 1 load,
-        /// 2 cross the front, 3 deliver, 4 stake and win.
+        /// The four panels inside the how-to box, each exactly its own shape: 1-2-3-4
+        /// in a row at one height, or 1-2 over 3-4 in two equal columns, top-aligned.
         /// </summary>
-        public static readonly string[] HowToPanels = { "lobby-howto-1", "lobby-howto-2", "lobby-howto-3", "lobby-howto-4" };
-
-        /// <summary>Width over height of one panel: 724x543.</summary>
-        public const float PanelAspect = 724f / 543f;
+        public static Rect[] HowToCells(Rect box, bool grid, float g)
+        {
+            var cells = new Rect[4];
+            if (grid)
+            {
+                float c = Mathf.Max(0f, (box.width - g) * 0.5f);
+                float top = c / Mathf.Min(PanelAspectOf(0), PanelAspectOf(1));
+                for (int i = 0; i < 4; i++)
+                    cells[i] = new Rect(box.x + (i % 2) * (c + g), box.y + (i < 2 ? 0f : top + g), c, c / PanelAspectOf(i));
+            }
+            else
+            {
+                float x = box.x;
+                for (int i = 0; i < 4; i++)
+                {
+                    float w = box.height * PanelAspectOf(i);
+                    cells[i] = new Rect(x, box.y, w, box.height);
+                    x += w + g;
+                }
+            }
+            return cells;
+        }
 
         /// <summary>
         /// The smallest a panel is drawn, in layout px: the floor the 1-2-3-4 strip

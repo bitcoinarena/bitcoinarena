@@ -35,14 +35,20 @@
        1-2-3-4 in a row on a wide screen, 1-2 over 3-4 on a tall one, shrunk to
        fit and no smaller than readable. A phone on its side gets a shorter row so
        the bar and the words under it stay on screen. */
-    #howto { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; width: min(1100px, 94vw, 190vh); }
-    #howto img { display: block; width: 100%; height: auto; aspect-ratio: 724 / 543; max-width: 100%; }
+    /* Each panel is cut from the owner's whole at its true edges (tools/cut-howto.py)
+       and keeps its own shape: in a row all four share one height (6.248 = the
+       four widths over that height); 1-2 over 3-4 is two equal columns, each
+       panel at its natural height. */
+    #howto { --h: min(calc((min(1100px, 94vw) - 18px) / 6.248), 30vh);
+      display: flex; gap: 6px; justify-content: center; align-items: flex-start; }
+    #howto img { display: block; height: var(--h); width: auto; }
     @media (orientation: portrait) {
-      #howto { grid-template-columns: repeat(2, 1fr); width: min(620px, 94vw, 58vh); }
+      #howto { display: grid; grid-template-columns: repeat(2, 1fr); align-items: start; width: min(620px, 94vw, 66vh); }
+      #howto img { width: 100%; height: auto; }
     }
     @media (orientation: landscape) and (max-height: 500px) {
       #boot { gap: 8px; padding-block: 10px; }
-      #howto { width: min(94vw, 150vh); }
+      #howto { --h: min(calc((94vw - 18px) / 6.248), 26vh); }
     }
 
     #pct { font-variant-numeric: tabular-nums; font-size: 28px; font-weight: 600; }

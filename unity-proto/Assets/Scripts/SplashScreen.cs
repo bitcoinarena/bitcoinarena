@@ -39,7 +39,7 @@ public class SplashScreen : MonoBehaviour
     string _joinWhy = "";
     float _joinedAt = -1f;
     // the owner's four how-to panels (2026-09-14 07:55), loaded once, and where they were drawn
-    Texture2D[] _howTo;
+    Texture2D _howToWhole;
     bool _howToAsked;
     Rect _lastHowTo;
     Rect[] _lastHowToCells;
@@ -344,18 +344,16 @@ public class SplashScreen : MonoBehaviour
         // mempool TXs, cross the front (closer = more points), deliver to miners,
         // stake sats and win. 1-2-3-4 in a row on a desktop, 1-2 over 3-4 on a
         // phone; drawn with their alpha, so the knocked-out white shows the panel.
-        if (!_howToAsked)
-        {
-            _howToAsked = true;
-            _howTo = new Texture2D[Blwp.DailyLobby.HowToPanels.Length];
-            for (int i = 0; i < _howTo.Length; i++) _howTo[i] = Resources.Load<Texture2D>(Blwp.DailyLobby.HowToPanels[i]);
-        }
-        if (l.howToCells != null)
-            for (int i = 0; i < l.howToCells.Length && i < _howTo.Length; i++)
+        // EACH FROM THE OWNER'S WHOLE, BY ITS OWN BOX: the tiles that came with it
+        // were cut at half height and split panels 1 and 2 (measured, 1280x800).
+        // A cell is exactly its panel's shape, so nothing is stretched.
+        if (!_howToAsked) { _howToAsked = true; _howToWhole = Resources.Load<Texture2D>(Blwp.DailyLobby.HowToWhole); }
+        if (_howToWhole != null && l.howToCells != null)
+            for (int i = 0; i < l.howToCells.Length; i++)
             {
                 var cell = l.howToCells[i];
-                if (_howTo[i] == null || cell.width <= 0f || cell.height <= 0f) continue;
-                GUI.DrawTexture(cell, _howTo[i], ScaleMode.ScaleToFit, true);
+                if (cell.width <= 0f || cell.height <= 0f) continue;
+                GUI.DrawTextureWithTexCoords(cell, _howToWhole, Blwp.DailyLobby.PanelUv(i));
             }
 
         var youStyle = new GUIStyle(_body)
@@ -497,7 +495,7 @@ public class SplashScreen : MonoBehaviour
             sb.Append(",\"you\":").Append(J(_lobby.you.name)).Append(",\"name\":").Append(R(_lastName))
               .Append(",\"key\":").Append(R(_lastKey)).Append(",\"howTo\":").Append(R(_lastHowTo))
               .Append(",\"howToCells\":[").Append(_lastHowToCells == null ? "" : string.Join(",", System.Array.ConvertAll(_lastHowToCells, R))).Append(']')
-              .Append(",\"howToDrawn\":").Append(_howTo == null ? 0 : System.Array.FindAll(_howTo, t => t != null).Length).Append(",\"picked\":").Append(J(_pickId))
+              .Append(",\"howToDrawn\":").Append(_howToWhole != null && _lastHowToCells != null ? _lastHowToCells.Length : 0).Append(",\"picked\":").Append(J(_pickId))
               .Append(",\"listed\":").Append(_lobby.rows.Length).Append(",\"rows\":[");
             for (int i = 0; i < _drawnRows.Count; i++)
             {

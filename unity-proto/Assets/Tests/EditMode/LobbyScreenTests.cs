@@ -66,7 +66,7 @@ public class LobbyScreenTests
             {
                 var c = l.howToCells[i];
                 Assert.GreaterOrEqual(c.height, DailyLobby.HowToMinCell - 0.5f, $"how-to panel {i + 1} is under {DailyLobby.HowToMinCell} px high {at}: {c}");
-                Assert.AreEqual(DailyLobby.PanelAspect, c.width / c.height, 0.01f, $"how-to panel {i + 1} is stretched {at}: {c}");
+                Assert.AreEqual(DailyLobby.PanelAspectOf(i), c.width / c.height, 0.01f, $"how-to panel {i + 1} is stretched {at}: {c}");
                 Inside(c, l.howTo, $"how-to panel {i + 1} {at}");
                 for (int j = i + 1; j < 4; j++) Assert.IsFalse(c.Overlaps(l.howToCells[j]), $"how-to panels {i + 1} and {j + 1} overlap {at}");
             }
@@ -97,17 +97,17 @@ public class LobbyScreenTests
         }
     }
 
-    /// <summary>the owner's four panels ship in Resources and are imported whole: 724x543, not a power-of-two rounding.</summary>
+    /// <summary>
+    /// the owner's whole how-to ships in Resources and is imported whole - 1448x1086,
+    /// not a power-of-two rounding - because every panel is drawn from it by its box.
+    /// </summary>
     [Test]
     public void TheHowToArtLoadsWhole()
     {
-        foreach (var name in DailyLobby.HowToPanels)
-        {
-            var t = Resources.Load<Texture2D>(name);
-            Assert.IsNotNull(t, $"the lobby's how-to panel {name} is not in Resources");
-            Assert.AreEqual(724, t.width, $"{name} was rescaled on import");
-            Assert.AreEqual(543, t.height, $"{name} was rescaled on import");
-        }
+        var t = Resources.Load<Texture2D>(DailyLobby.HowToWhole);
+        Assert.IsNotNull(t, "the lobby's how-to is not in Resources");
+        Assert.AreEqual(1448, t.width, "the how-to was rescaled on import");
+        Assert.AreEqual(1086, t.height, "the how-to was rescaled on import");
     }
 
     const string Sample ="{\"mode\":\"lobby\",\"from\":\"daily.json\",\"you\":{\"name\":\"azure-elk-1364\",\"custom\":false,"
