@@ -653,16 +653,19 @@ mergeInto(LibraryManager.library, {
   // The same question as a number, because it is asked every tick and every
   // input read: a pinned buffer per frame to learn "no" would be a cost paid
   // by every player for the case that has not happened.
+  // OVER, NOT ONLY ENDED (the owner 2026-09-15 16:14): the run is over for the game the moment the page
+  // took the core's word - nothing is recorded from then - not once the last publish has landed.
+  // Measured live on 0.0.1334: waiting for `ended` put the lobby 2241 ms after DELIVERED.
   BlwpNetEnded: function () {
     var n = Module.blwpNet;
-    return (n && n.client && n.client.ended) ? 1 : 0;
+    return (n && n.client && n.client.over) ? 1 : 0;
   },
 
   BlwpNetEnding: function (ptr, cap) {
     var n = Module.blwpNet;
     var c = n && n.client;
-    if (!c || !c.ended) { Module.HEAPU8[ptr] = 0; return 0; }
-    var line = c.ending + ' ' + (c.endingReason || '');
+    var line = c ? c.endingLine() : '';
+    if (!line) { Module.HEAPU8[ptr] = 0; return 0; }
     var k = Math.min(line.length, (cap | 0) - 1);
     for (var i = 0; i < k; i++) Module.HEAPU8[ptr + i] = line.charCodeAt(i) & 255;
     Module.HEAPU8[ptr + k] = 0;

@@ -68,9 +68,18 @@ test('when the core says the run is over, every held tick reaches the node, noth
     await client.awaitPublishes();
     rec(47);                                     // held, not yet sent, when the core says it
     const heldAtFinish = client.hold.length;
+    assert.equal(client.over, false, 'a live run read as over');
+    assert.equal(client.endingLine(), '');
     const done = client.finish({ tick: recorded(), why: 'the core said DELIVERED at tick 107' });
+    // THE GAME IS TOLD AT THE WORD, not when the wire is done: measured live, waiting for the last
+    // publish put the lobby 2241 ms after DELIVERED.
+    const overAtWord = client.over, endedAtWord = client.ended, lineAtWord = client.endingLine();
     const tookAfter = rec(30);                   // the game keeps stepping; none of it is the run
     const r = await done;
+    assert.equal(overAtWord, true, 'the run was not over for the game at the core\'s word');
+    assert.equal(endedAtWord, false, 'the run ended before the last of it went out');
+    assert.match(lineAtWord, /^FINISHING the core said DELIVERED at tick 107$/);
+    assert.match(client.endingLine(), /^FINISHED the core said DELIVERED at tick 107$/);
     await wait(300);
     const held = await onNode();
     const line = client.status(client.offered);

@@ -1787,6 +1787,7 @@ export class Client {
   finish({ stateHash = null, tick = 0, why = 'the core ended the run' } = {}) {
     if (this.ended) return Promise.resolve(null);
     if (this.finishing) return this.finishing;
+    this.finishWhy = why;
     this.finishing = (async () => {
       const deadline = Date.now() + FINISH_WAIT_MS;
       while (!this.ended && (this.hold.length || this.publishing) && Date.now() < deadline) {
@@ -1809,6 +1810,23 @@ export class Client {
       return { unsent, mark };
     })();
     return this.finishing;
+  }
+
+  /**
+   * WHETHER THE RUN IS OVER FOR THE GAME: ended, or the core's word taken and the last of it on its
+   * way (`finish`). Measured live on the Daily (0.0.1334): the lobby came back 2241 ms after the
+   * core said DELIVERED, because the game was told only once the final publish had landed - the
+   * held batches and the last checkpoint, one round trip each through the tunnels at 450-500 ms.
+   * Nothing is recorded from the moment of the word, so the game is told then; the wire finishes
+   * on its own, and `ended` still says when it has.
+   */
+  get over() { return this.ended || !!this.finishing; }
+
+  /** The ending, as the game reads it: FINISHING while the last of the run goes out, then the word it ended with. */
+  endingLine() {
+    if (this.ended) return `${this.ending} ${this.endingReason || ''}`.trim();
+    if (this.finishing) return `FINISHING ${this.finishWhy || ''}`.trim();
+    return '';
   }
 
   /**
