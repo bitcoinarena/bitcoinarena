@@ -23,8 +23,12 @@
 #   Permissions:        Account | Cloudflare Pages | Edit          (nothing else)
 #   Account Resources:  Include | <that one account>
 #   Client IP filter / TTL: optional
-# With CLOUDFLARE_ACCOUNT_ID set, wrangler pages deploy needs no user or membership scope. Without
-# the file, wrangler falls back to its OAuth login. Nothing here prints the token.
+# With CLOUDFLARE_ACCOUNT_ID set, wrangler pages deploy needs no user or membership scope.
+# THE FILE IS READ ON EVERY PASS, so a token dropped in is used within 30 s with no restart - and
+# only from a file this user owns with mode 600. WITHOUT IT THE KEEPER DOES NOT DEPLOY (the owner
+# 2026-09-15): wrangler's browser login lapses and cannot be renewed unattended - measured, it
+# failed every 30 s - so the keeper says once why it holds and keeps the seats on the tunnels'
+# names. Nothing here prints the token.
 set -uo pipefail
 D="${BLWP_2OF2_DIR:-/mnt/bitcoin/blwp-2of2}"
 CODE="${BLWP_DAILY_CODE:-$D/code}"
@@ -39,6 +43,19 @@ tunnel() {
     | grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' | tail -1
 }
 answers() { curl -s -m 15 -o /dev/null -w '%{http_code}' "$1/rounds" | grep -q '^200$'; }
+CF="$D/cloudflare.env"
+HOLD=""; WHY=""
+# The keeper's own token, loaded fresh into this shell for the deploy that follows - or WHY not.
+auth() {
+  unset CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID
+  if [ ! -f "$CF" ]; then WHY="no $CF"; return 1; fi
+  if [ "$(stat -c '%U %a' "$CF")" != "$(id -un) 600" ]; then WHY="$CF is not this user's with mode 600"; return 1; fi
+  set -a; . "$CF"; set +a
+  if [ -z "${CLOUDFLARE_API_TOKEN:-}" ] || [ -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]; then
+    WHY="$CF names no CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID"; unset CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID; return 1
+  fi
+  WHY=""
+}
 
 while true; do
   A=$(tunnel a); B=$(tunnel b)
@@ -57,13 +74,18 @@ d = json.load(open(sys.argv[1]))
 sys.exit(0 if d.get('node') == [sys.argv[2], sys.argv[3]] else 1)
 PY
       if ! cmp -s "$D/daily.json" "$LAST"; then
-        AUTH=$([ -n "${CLOUDFLARE_API_TOKEN:-}" ] && echo "api token (Pages edit)" || echo "wrangler login")
-        say "\"daily.json\":\"changed since the last deploy\",\"deploying\":\"$D/page\",\"auth\":\"$AUTH\""
-        if BLWP_2OF2_DIR="$D" BLWP_BUILD_DIR="$D/page" "$CODE/deploy-core.sh" > "$D/keeper-deploy.log" 2>&1; then
-          cp "$D/daily.json" "$LAST"
-          say "\"deployed\":\"$(grep -oE 'https://[0-9a-f]{8}\.btc-logistics-core\.pages\.dev' "$D/keeper-deploy.log" | tail -1)\""
-        else
-          say "\"deployFailed\":\"$(tail -1 "$D/keeper-deploy.log" | tr -d '"\\' | cut -c1-200)\""
+        if auth; then
+          HOLD=""
+          say "\"daily.json\":\"changed since the last deploy\",\"deploying\":\"$D/page\",\"auth\":\"api token (Pages edit)\""
+          if BLWP_2OF2_DIR="$D" BLWP_BUILD_DIR="$D/page" "$CODE/deploy-core.sh" > "$D/keeper-deploy.log" 2>&1; then
+            cp "$D/daily.json" "$LAST"
+            say "\"deployed\":\"$(grep -oE 'https://[0-9a-f]{8}\.btc-logistics-core\.pages\.dev' "$D/keeper-deploy.log" | tail -1)\""
+          else
+            say "\"deployFailed\":\"$(grep -E 'ERROR|refusing' "$D/keeper-deploy.log" | tail -1 | tr -d '"\\' | cut -c1-200)\""
+          fi
+        elif [ "$WHY" != "$HOLD" ]; then
+          HOLD="$WHY"
+          say "\"holding\":\"daily.json changed since the last deploy, and the keeper deploys only with its own token: $WHY\""
         fi
       fi
     fi
