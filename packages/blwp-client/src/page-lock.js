@@ -146,14 +146,23 @@ export async function lockStake({ round, roundId, invite, seed, stake, claimKey,
   // THE FEE LOCK'S GATE (Pick b, the owner 2026-09-14): a fee lock is minted only
   // when claiming it can pay every entitled sitting seat something after the
   // federation's own fee on every input and output - read from the federation
-  // this client joined, not a seat's word. A 100 sat round's 2000 msat fee lock
-  // cannot, so none is made and the player is not charged a lock that only
-  // expires; a 1000 sat round's 20000 msat lock can. No fee rule known: no lock.
+  // this client joined, not a seat's word. Under the ruled rule - no base fee,
+  // below - a 100 sat round's 2000 msat fee lock pays its seats and a 1000 sat
+  // round's 20000 msat lock does; under the old 1000 msat base fee the 100 sat
+  // one could not. No fee rule known: no lock.
   let feeRule = null;
   if (typeof client.feeRule === 'function') {
     try { const r = JSON.parse(await client.feeRule()); feeRule = { ppm: BigInt(r.fee_ppm), baseMsat: BigInt(r.fee_base_msat) }; }
     catch { feeRule = null; }
   }
+  // AND THE FEDERATION CHARGES NO BASE FEE (FEDERATION.md item 4; the owner 2026-09-15 07:44: "Fedimint base
+  // fee is 0 - run the federation with disable_base_fees"). A base fee comes out of every input and output
+  // of the round's locks - the players' pool - so a federation that still charges one gets no stake from
+  // this page: refused here, before anything is deposited or locked. An unknown rule is not a base fee
+  // (the gate below then mints no fee lock, as before). Measured before: the page locked under any rule.
+  if (feeRule && feeRule.baseMsat > 0n)
+    throw new Error(`no stake is locked to this round: its federation charges a base fee of ${feeRule.baseMsat} msat `
+      + 'on every input and output - a federation for BLWP runs with disable_base_fees (FEDERATION.md)');
   const feeGate = feeLockPays({ contract: round, fees: feeRule });
   const feeMsat = feeGate.pays ? feeGate.lockMsat : 0n;
 

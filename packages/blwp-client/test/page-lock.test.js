@@ -145,42 +145,46 @@ test('the page asks the lock client for the round\'s own federation, under the s
   assert.equal(lockAmountMsat(round), 980000n, 'the net stake of 1000000 msat less the 2% fee');
 });
 
-// PICK (b), THE GATE ON THE PAGE (the owner 2026-09-14): "Do not mint a fee lock when
-// claiming it cannot pay a sitting seat after this federation's 1000 msat input fee
-// and 1000 msat output fee." The stand-in answers the federation's real rule.
-const REAL_RULE = { ppm: 0n, baseMsat: 1000n };
+// PICK (b), THE GATE ON THE PAGE (the owner 2026-09-14), UNDER THE RULED FEE (07:44: "Fedimint base fee is
+// 0 - run the federation with disable_base_fees"). The stand-in answers the ruled rule; the old one - 1000
+// msat on every input and output, what the regtest guardians answered before 07:44 - is now a federation
+// the page refuses. Until then this file's 100 sat test measured "no fee lock: the base fee would eat it".
+const RULE = { ppm: 0n, baseMsat: 0n };
+const BASE_FEE_RULE = { ppm: 0n, baseMsat: 1000n };
 
-test('a 100 sat round with two players: the page mints no fee lock - the player deposits for the 98000 msat stake only, and the entry names no fee lock', async () => {
+test('a federation that still charges a base fee gets no stake: the page refuses before it deposits or locks anything', async () => {
+  const round100 = { ...round, stakeMsat: 100000n };
+  const { LockClient, log } = lockClient({ feeRule: BASE_FEE_RULE });
+  const deposits = [];
+  await assert.rejects(() => lockStake({ round: round100, roundId: roundId(round100), invite: INVITE, seed, stake: { stakePoint: POINT }, claimKey,
+    playerPubkey: player, LockClient, onDeposit: (d) => deposits.push(d) }),
+  /its federation charges a base fee of 1000 msat on every input and output - a federation for BLWP runs with disable_base_fees/);
+  const locks = log.filter((l) => l.lock || l.lockHash).length;
+  console.log(`  base fee 1000: refused; deposits ${deposits.length}, locks ${locks}`);
+  assert.equal(deposits.length, 0, 'the player was asked to deposit into a federation the page refuses');
+  assert.equal(locks, 0, 'something was locked into a federation that charges a base fee');
+});
+
+test('a 100 sat round under the ruled fee: its 2000 msat fee lock pays the seats, so the page mints it and names it in the entry', async () => {
   const round100 = { ...round, stakeMsat: 100000n };
   const rid100 = roundId(round100);
-  const { LockClient, log } = lockClient({ feeRule: REAL_RULE });
+  const { LockClient, log } = lockClient({ feeRule: RULE });
   const deposits = [];
   const got = await lockStake({ round: round100, roundId: rid100, invite: INVITE, seed, stake: { stakePoint: POINT }, claimKey, playerPubkey: player,
     LockClient, onDeposit: (d) => deposits.push(d) });
-  const hashLocks = log.filter((l) => l.lockHash).length;
-  console.log(`  100 sat: fee locks minted ${hashLocks}; deposits ${deposits.map((d) => String(d.amountMsat)).join(', ')} msat; stake lock ${got.fields.amountMsat}; gate: ${got.feeGate.why}`);
-  assert.equal(hashLocks, 0, 'a fee lock was minted that cannot pay a seat');
-  assert.equal(got.feeLock, null);
-  assert.equal(got.feeGate.pays, false);
-  // NOT CHARGED A LOCK IT CANNOT USE: the deposits are exactly those of the same page
-  // with no fee rule at all - the flow before the gate existed, stake lock only (its
-  // own fee top-up included: at 98000 msat the stock allowance, 2294, is below this
-  // stand-in's 2528 msat lock fee, with or without the gate).
-  const without = lockClient({});
-  const before = [];
-  await lockStake({ round: round100, roundId: rid100, invite: INVITE, seed, stake: { stakePoint: POINT }, claimKey, playerPubkey: player,
-    LockClient: without.LockClient, onDeposit: (d) => before.push(d) });
-  console.log(`  100 sat: deposits with the gate ${deposits.map((d) => String(d.amountMsat)).join(', ')}; without any fee rule ${before.map((d) => String(d.amountMsat)).join(', ')}`);
-  assert.deepEqual(deposits.map((d) => String(d.amountMsat)), before.map((d) => String(d.amountMsat)),
-    'the player was asked for more than the stake lock alone');
+  const minted = log.filter((l) => l.lockHash).map((l) => l.lockHash);
+  console.log(`  100 sat: fee locks minted ${minted.length} (${minted.map((m) => `${m.amount} msat`).join(', ')}); deposits ${deposits.map((d) => String(d.amountMsat)).join(', ')} msat; gate: ${got.feeGate.why}`);
+  assert.equal(got.feeGate.pays, true, got.feeGate.why);
+  assert.equal(minted.length, 1);
+  assert.equal(minted[0].amount, '2000');
   const entry = entryFor(round100, { seed, curve: pageCurve, random: (n) => new Uint8Array(n).fill(7), claimKey,
     stake: { stakeCommitment: b32(0x71), vssSharesRef: new Uint8Array(32), stakePoint: POINT }, stakeLock: { outpoint: got.outpoint, fields: got.fields, feeLock: got.feeLock } });
-  assert.equal(toHex(entry.feePreimage), '00'.repeat(32));
-  assert.equal(toHex(entry.feeLockOutpoint.txid), '00'.repeat(32));
+  assert.equal(toHex(entry.feePreimage), toHex(feeSecretFor(seed, rid100)));
+  assert.notEqual(toHex(entry.feeLockOutpoint.txid), '00'.repeat(32));
 });
 
 test('a 1000 sat round: the page mints one 20000 msat fee lock to H(F), names F and its outpoint in the entry, and hands it to each seat\'s /fee-lock', async () => {
-  const { LockClient, log } = lockClient({ feeRule: REAL_RULE });
+  const { LockClient, log } = lockClient({ feeRule: RULE });
   const deposits = [];
   const got = await ask({ LockClient, onDeposit: (d) => deposits.push(d) });
   const minted = log.filter((l) => l.lockHash).map((l) => l.lockHash);
